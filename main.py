@@ -27,17 +27,14 @@ def find_dev_by_bdf(target_bdf: str) -> str | None:
 
 class Device:
   def __init__(self, path: str = "/dev/tenstorrent/0"):
-    self.path = path 
-    self._open()
-  
-  def _open(self):
+    self.path = path
     self.fd = os.open(self.path, os.O_RDWR | os.O_CLOEXEC)
-    self.arch = self._get_arch()
+    self._setup()
 
+  def _setup(self):
+    self.arch = self._get_arch()
     assert self.arch in ("p100a", "p150b"), "only blackhole is supported"
     print(f"opened blackhole {self.arch} at {self.get_bdf()}")
-
-    # mmap bar0 and bar1 // not sure if these are necessary
     self._map_bars()
 
   def _close(self):
@@ -71,7 +68,7 @@ class Device:
     self.mm0 = mmap.mmap(self.fd, bars[0].mapping_size, flags=mmap.MAP_SHARED, prot=mmap.PROT_READ | mmap.PROT_WRITE, offset=bars[0].mapping_base)
     self.mm1 = mmap.mmap(self.fd, bars[2].mapping_size, flags=mmap.MAP_SHARED, prot=mmap.PROT_READ | mmap.PROT_WRITE, offset=bars[2].mapping_base)
 
-  def reset(self) -> int:
+  def reset(self, dmc_reset: bool) -> int:
     bdf = self.get_bdf()
     print(f"resetting device {bdf}")
     in_sz, out_sz = ctypes.sizeof(ResetDeviceIn), ctypes.sizeof(ResetDeviceOut)
@@ -79,7 +76,7 @@ class Device:
     # trigger reset
     buf = bytearray(in_sz + out_sz)
     view = ResetDeviceIn.from_buffer(buf)
-    view.output_size_bytes, view.flags = out_sz, TENSTORRENT_RESET_DEVICE_ASIC_RESET
+    view.output_size_bytes, view.flags = out_sz, (TENSTORRENT_RESET_DEVICE_ASIC_DMC_RESET if dmc_reset else TENSTORRENT_RESET_DEVICE_ASIC_RESET)
     fcntl.ioctl(self.fd, _IO(IOCTL_RESET_DEVICE), buf, True)
     self._close()
 
@@ -106,11 +103,7 @@ class Device:
     result = ResetDeviceOut.from_buffer(buf, in_sz).result
     print(f"reset complete, result={result}")
 
-    # now hardware is reinitialized, do arch check and bar mapping
-    self.arch = self._get_arch()
-    assert self.arch in ("p100a", "p150b"), "only blackhole is supported"
-    self._map_bars()
-    print(f"reopened blackhole {self.arch}")
+    self._setup()
     return result
   
   def _get_arch(self):
@@ -122,6 +115,5 @@ class Device:
 def main():
   device = Device()
   device.reset()
-t 
 if __name__ == "__main__":
   main()
