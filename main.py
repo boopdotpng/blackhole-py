@@ -11,9 +11,40 @@ DEBUG = int(os.environ.get("DEBUG", 0)) > 1
 
 @dataclass
 class Harvesting:
-  pass
+  tensix: int
+  dram: int
+  eth: int
+  pcie: int
+
+  def __repr__(self) -> str:
+    return (
+      "Harvesting masks: "
+      f"tensix=0x{self.tensix:x} "
+      f"dram=0x{self.dram:x} "
+      f"eth=0x{self.eth:x} "
+      f"pcie=0x{self.pcie:x}"
+    )
+
+
+ARC_CORE = (8, 0)
+ARC_NOC_BASE = 0x80000000
+SCRATCH_RAM_13 = 0x30434
+CSM_START = 0x10000000
+CSM_END = 0x1007FFFF
+
+HARVESTING_NOC_LOCATIONS = [1, 16, 2, 15, 3, 14, 4, 13, 5, 12, 6, 11, 7, 10]
+SORTED_LOCATIONS = sorted(HARVESTING_NOC_LOCATIONS)
+HARVESTING_INDEX_BY_LOC = {loc: idx for idx, loc in enumerate(SORTED_LOCATIONS)}
 
 def _IO(nr: int) -> int: return (TENSTORRENT_IOCTL_MAGIC << 8) | nr
+def _align_down(value: int, alignment: int) -> int: return value & ~(alignment - 1)
+
+def shuffle_tensix_harvesting_mask(raw_mask: int) -> int:
+  new_mask = 0
+  for pos, loc in enumerate(HARVESTING_NOC_LOCATIONS):
+    if raw_mask & (1 << pos):
+      new_mask |= 1 << HARVESTING_INDEX_BY_LOC[loc]
+  return new_mask
 
 def _get_bdf_for_path(path: str) -> str | None:
   """Get BDF for a device path, or None if it fails."""
@@ -39,36 +70,78 @@ def find_dev_by_bdf(target_bdf: str) -> str | None:
   return None
 
 class Device:
-  MAX_TLBS_OPEN = 255
-
   def __init__(self, path: str = "/dev/tenstorrent/0"):
     self.path = path
     self.fd = os.open(self.path, os.O_RDWR | os.O_CLOEXEC)
     if DEBUG: print(f"opened {path}, file descriptor {self.fd}")
     self._setup()
     self.harvesting = self.get_harvesting()
+    print(self.harvesting)
 
-    # determine harvesting, very important
-    # different Tensix tiles and DRAM cores are turned off per p100a. you must not access them
-    # you can get these by mapping a TLB window onto the ARC tile
-  
+  # determine harvesting, very important
+  # different Tensix tiles and DRAM cores are turned off per p100a. you must not access them
+  # you can get these by mapping a TLB window onto the ARC tile
   def get_harvesting(self) -> Harvesting:
     tlb_config = TLBConfig(
-      addr = 0,
-      # ARC tile, make enum / nice naming for this later
-      start = (8,0),
-      end = (8,0),
+      addr = ARC_NOC_BASE,
+      start = ARC_CORE,
+      end = ARC_CORE,
       noc = 0,
       mcast = False,
       mode = TLBMode.STRICT
     )
 
     with TLBWindow(self.fd, TLBSize.MiB_2, tlb_config) as arc:
-      telem_values_ptr = arc.read32(0x30430)
-      telem_table_ptr = arc.read32(0x30434)
-      print(telem_values_ptr, telem_table_ptr)
+      telem_struct_addr = arc.read32(SCRATCH_RAM_13)
 
-    return Harvesting()
+      if telem_struct_addr == 0:
+        raise RuntimeError("telemetry struct address is 0 (ARC not ready)")
+      if not (CSM_START <= telem_struct_addr <= CSM_END):
+        raise RuntimeError(f"invalid telemetry struct address: 0x{telem_struct_addr:08x}")
+
+      csm_base = _align_down(telem_struct_addr, TLBSize.MiB_2)
+      csm_offset = telem_struct_addr - csm_base
+      arc.configure(TLBConfig(
+        addr = csm_base,
+        start = ARC_CORE,
+        end = ARC_CORE,
+        noc = 0,
+        mcast = False,
+        mode = TLBMode.STRICT
+      ))
+
+      entry_count = arc.read32(csm_offset + 4)
+      tags_base = csm_offset + 8
+      data_base = csm_offset + 8 + (entry_count * 4)
+
+      tag_to_offset = {}
+      for i in range(entry_count):
+        tag_offset = arc.read32(tags_base + (i * 4))
+        tag_to_offset[tag_offset & 0xFFFF] = (tag_offset >> 16) & 0xFFFF
+
+      def read_tag(tag: int, default: int) -> int:
+        if tag not in tag_to_offset: return default
+        return arc.read32(data_base + (tag_to_offset[tag] * 4))
+
+      tensix_enabled = read_tag(34, 0x3FFF)
+      eth_enabled = read_tag(35, 0x3FFF)
+      gddr_enabled = read_tag(36, 0xFF)
+      pcie_usage = read_tag(38, 0x5)
+
+      pcie_harvest = 0
+      if (pcie_usage & 0x3) != 1: pcie_harvest |= 0x1
+      if ((pcie_usage >> 2) & 0x3) != 1: pcie_harvest |= 0x2
+
+    return Harvesting(
+      # tensix tile harvesting is per-column; the mask is reordered to match sorted NOC X columns.
+      tensix = shuffle_tensix_harvesting_mask(~tensix_enabled & 0x3FFF),
+      # dram harvesting is a direct bank mask (bit N => DRAM bank N disabled).
+      dram = ~gddr_enabled & 0xFF,
+      # ethernet harvesting is a direct mask over 14 ETH cores (bit N => ETH core N disabled).
+      eth = ~eth_enabled & 0x3FFF,
+      # PCIe harvesting is a 2-bit mask: bit 0 = PCIe0 disabled, bit 1 = PCIe1 disabled.
+      pcie = pcie_harvest,
+    )
 
   def _setup(self, retried: bool = False):
     self.arch = self._get_arch()
@@ -123,19 +196,6 @@ class Device:
       print(f"mapped bar 0 (0x{bars[0].mapping_size:x} bytes) at address 0x{bars[0].mapping_base:x}")
       print(f"mapped bar 1 (0x{bars[2].mapping_size:x} bytes) at address 0x{bars[2].mapping_base:x}")
     
-    # tlb test, remove 
-    ARC_APB_BASE = 0x1FF00000
-    telem_values_ptr = int.from_bytes(self.mm0[ARC_APB_BASE + 0x30430 : ARC_APB_BASE + 0x30434], 'little')
-    telem_table_ptr = int.from_bytes(self.mm0[ARC_APB_BASE + 0x30434 : ARC_APB_BASE + 0x30438], 'little')
-
-    print(f"values ptr: {telem_values_ptr:#x}")
-    print(f"table ptr: {telem_table_ptr:#x}")
-
-    ARC_APB_BASE = 0x1FF00000
-    SCRATCH_RAM_2 = 0x30408
-
-    arc_status = int.from_bytes(self.mm0[ARC_APB_BASE + SCRATCH_RAM_2 : ARC_APB_BASE + SCRATCH_RAM_2 + 4], 'little')
-    print(f"ARC status: {arc_status:#x}")
   def reset(self, dmc_reset:bool=False) -> int:
     # mirrors reset logic in tt-kmd/tools/reset.c 
     bdf = self.get_bdf()
@@ -182,7 +242,6 @@ class Device:
 
 def main():
   device = Device()
-  
   device.close()
   
 if __name__ == "__main__":
