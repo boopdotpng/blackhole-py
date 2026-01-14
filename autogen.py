@@ -11,12 +11,20 @@ IOCTL_FREE_TLB = 12
 IOCTL_CONFIGURE_TLB = 13
 
 class QueryMappingsIn(ctypes.LittleEndianStructure):
+  output_mapping_count: int
+  reserved: int
+
   _fields_ = [
     ("output_mapping_count", ctypes.c_uint32),
     ("reserved", ctypes.c_uint32),
   ]
 
 class TenstorrentMapping(ctypes.LittleEndianStructure):
+  mapping_id: int
+  reserved: int
+  mapping_base: int
+  mapping_size: int
+
   _fields_ = [
     ("mapping_id", ctypes.c_uint32),
     ("reserved", ctypes.c_uint32),
@@ -24,23 +32,34 @@ class TenstorrentMapping(ctypes.LittleEndianStructure):
     ("mapping_size", ctypes.c_uint64),
   ]
 
-# reset device consts from tt-kmd
 TENSTORRENT_RESET_DEVICE_ASIC_RESET = 4
-TENSTORRENT_RESET_DEVICE_ASIC_DMC_RESET = 5 # use this when the NoC is hung, more full reset
+TENSTORRENT_RESET_DEVICE_ASIC_DMC_RESET = 5
 TENSTORRENT_RESET_DEVICE_POST_RESET = 6
+
 class ResetDeviceIn(ctypes.LittleEndianStructure):
+  output_size_bytes: int
+  flags: int
+
   _fields_ = [
     ("output_size_bytes", ctypes.c_uint32),
     ("flags", ctypes.c_uint32),
   ]
 
 class ResetDeviceOut(ctypes.LittleEndianStructure):
+  output_size_bytes: int
+  result: int
+
   _fields_ = [
     ("output_size_bytes", ctypes.c_uint32),
     ("result", ctypes.c_uint32),
   ]
 
 class PinPagesIn(ctypes.LittleEndianStructure):
+  output_size_bytes: int
+  flags: int
+  virtual_address: int
+  size: int
+
   _fields_ = [
     ("output_size_bytes", ctypes.c_uint32),
     ("flags", ctypes.c_uint32),
@@ -49,15 +68,26 @@ class PinPagesIn(ctypes.LittleEndianStructure):
   ]
 
 class PinPagesOut(ctypes.LittleEndianStructure):
-  _fields_ = [("physical_address", ctypes.c_uint64)]
+  physical_address: int
+
+  _fields_ = [
+    ("physical_address", ctypes.c_uint64),
+  ]
 
 class PinPagesOutExtended(ctypes.LittleEndianStructure):
+  physical_address: int
+  noc_address: int
+
   _fields_ = [
     ("physical_address", ctypes.c_uint64),
     ("noc_address", ctypes.c_uint64),
   ]
 
 class UnpinPagesIn(ctypes.LittleEndianStructure):
+  virtual_address: int
+  size: int
+  reserved: int
+
   _fields_ = [
     ("virtual_address", ctypes.c_uint64),
     ("size", ctypes.c_uint64),
@@ -65,12 +95,21 @@ class UnpinPagesIn(ctypes.LittleEndianStructure):
   ]
 
 class AllocateTlbIn(ctypes.LittleEndianStructure):
+  size: int
+  reserved: int
+
   _fields_ = [
     ("size", ctypes.c_uint64),
     ("reserved", ctypes.c_uint64),
   ]
 
 class AllocateTlbOut(ctypes.LittleEndianStructure):
+  tlb_id: int
+  reserved0: int
+  mmap_offset_uc: int
+  mmap_offset_wc: int
+  reserved1: int
+
   _fields_ = [
     ("tlb_id", ctypes.c_uint32),
     ("reserved0", ctypes.c_uint32),
@@ -80,9 +119,29 @@ class AllocateTlbOut(ctypes.LittleEndianStructure):
   ]
 
 class FreeTlbIn(ctypes.LittleEndianStructure):
-  _fields_ = [("tlb_id", ctypes.c_uint32)]
+  tlb_id: int
+
+  _fields_ = [
+    ("tlb_id", ctypes.c_uint32),
+  ]
 
 class NocTlbConfig(ctypes.LittleEndianStructure):
+  addr: int
+  x_end: int
+  y_end: int
+  x_start: int
+  y_start: int
+  noc: int
+  mcast: int
+  ordering: int
+  linked: int
+  static_vc: int
+  reserved0_0: int
+  reserved0_1: int
+  reserved0_2: int
+  reserved1_0: int
+  reserved1_1: int
+
   _fields_ = [
     ("addr", ctypes.c_uint64),
     ("x_end", ctypes.c_uint16),
@@ -102,6 +161,10 @@ class NocTlbConfig(ctypes.LittleEndianStructure):
   ]
 
 class ConfigureTlbIn(ctypes.LittleEndianStructure):
+  tlb_id: int
+  reserved: int
+  config: NocTlbConfig
+
   _fields_ = [
     ("tlb_id", ctypes.c_uint32),
     ("reserved", ctypes.c_uint32),
@@ -109,19 +172,31 @@ class ConfigureTlbIn(ctypes.LittleEndianStructure):
   ]
 
 class TenstorrentGetDeviceInfoIn(ctypes.LittleEndianStructure):
+  output_size_bytes: int
+
   _fields_ = [
     ("output_size_bytes", ctypes.c_uint32),
   ]
 
 class TenstorrentGetDeviceInfoOut(ctypes.LittleEndianStructure):
+  output_size_bytes: int
+  vendor_id: int
+  device_id: int
+  subsystem_vendor_id: int
+  subsystem_id: int
+  bus_dev_fn: int
+  max_dma_buf_size_log2: int
+  pci_domain: int
+  reserved: int
+
   _fields_ = [
     ("output_size_bytes", ctypes.c_uint32),
     ("vendor_id", ctypes.c_uint16),
     ("device_id", ctypes.c_uint16),
     ("subsystem_vendor_id", ctypes.c_uint16),
     ("subsystem_id", ctypes.c_uint16),
-    ("bus_dev_fn", ctypes.c_uint16),  # [0:2] function, [3:7] device, [8:15] bus
-    ("max_dma_buf_size_log2", ctypes.c_uint16),  
-    ("pci_domain", ctypes.c_uint16),  
+    ("bus_dev_fn", ctypes.c_uint16),
+    ("max_dma_buf_size_log2", ctypes.c_uint16),
+    ("pci_domain", ctypes.c_uint16),
     ("reserved", ctypes.c_uint16),
   ]
