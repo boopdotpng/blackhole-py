@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from enum import Enum
-from autogen import *
+from abi import *
 from configs import TLBSize
 from helpers import _IO, dbg, noc1, trace_ioctl, warn
 import fcntl, mmap

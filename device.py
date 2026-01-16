@@ -1,8 +1,7 @@
-from __future__ import annotations
 import ctypes, fcntl, mmap, os, time
 from dataclasses import dataclass
 from typing import ClassVar
-from autogen import *
+from abi import *
 from tlb import TLBConfig, TLBWindow, TLBMode, TLBSize
 from helpers import _IO, align_down, contiguous_ranges, dbg, find_dev_by_bdf, format_bdf, ioctl, load_pt_load, trace_ioctl
 from configs import Arc, Dram, HARVESTING_NOC_LOCATIONS, TensixL1, TensixMMIO
@@ -222,7 +221,9 @@ class Device:
     # we don't need to mmap global vram (4+5), that is done through the dram tiles and the NoC
     self.mm0 = mmap.mmap(self.fd, bars[0].mapping_size, flags=mmap.MAP_SHARED, prot=mmap.PROT_READ | mmap.PROT_WRITE, offset=bars[0].mapping_base)
     self.mm1 = mmap.mmap(self.fd, bars[2].mapping_size, flags=mmap.MAP_SHARED, prot=mmap.PROT_READ | mmap.PROT_WRITE, offset=bars[2].mapping_base)
-    dbg(3, "mmap", f"bar0 base={bars[0].mapping_base:#x} size={bars[0].mapping_size:#x} bar2 base={bars[2].mapping_base:#x} size={bars[2].mapping_size:#x}")
+    dbg(3, "mmap",
+        f"bar0 base={bars[0].mapping_base:#x} size={bars[0].mapping_size:#x} "
+        f"bar2 base={bars[2].mapping_base:#x} size={bars[2].mapping_size:#x}")
 
   def reset(self, dmc_reset: bool = False) -> int:
     bdf = self.get_bdf()

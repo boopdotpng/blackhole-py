@@ -1,6 +1,5 @@
 # Blackhole tile memory maps and constants
 # All addresses are offsets within the tile's local address space
-
 from enum import Enum
 
 class TLBSize(Enum):
@@ -18,6 +17,13 @@ class TensixL1:
   # Firmware + system-reserved regions (Blackhole, from tt-metal dev_mem_map.h)
   MAILBOX_BASE = 0x000060
   MAILBOX_SIZE = 0x0031e0  # 12768
+  # dev_msgs.h mailboxes_t offsets (Blackhole)
+  LAUNCH_MSG_RD_PTR = MAILBOX_BASE + 0x00000c
+  LAUNCH = MAILBOX_BASE + 0x000010
+  GO_MSG = MAILBOX_BASE + 0x000310
+  GO_MSG_INDEX = MAILBOX_BASE + 0x000340
+
+  KERNEL_CONFIG_BASE = 0x0082b0  # MEM_MAP_END in tt-metal dev_mem_map.h
   ZEROS_BASE = 0x003240
   ZEROS_SIZE = 0x000200
   LLK_DEBUG_BASE = 0x003440
@@ -64,8 +70,23 @@ class TensixMMIO:
   LOCAL_RAM_END = 0xFFB01FFF
   NOC0_NIU_START = 0xFFB20000
   NOC1_NIU_START = 0xFFB30000
+  RISCV_DEBUG_REGS_START = 0xFFB12000
   RISCV_DEBUG_REG_SOFT_RESET_0 = 0xFFB121B0
+  RISCV_DEBUG_REG_TRISC0_RESET_PC = 0xFFB12228
+  RISCV_DEBUG_REG_TRISC1_RESET_PC = 0xFFB1222C
+  RISCV_DEBUG_REG_TRISC2_RESET_PC = 0xFFB12230
+  RISCV_DEBUG_REG_NCRISC_RESET_PC = 0xFFB12238
   SOFT_RESET_ALL = 0x47800  # reset all 5 RISC-V cores (brisc, ncrisc, trisc0-2)
+
+class DevMsgs:
+  RUN_MSG_INIT = 0x40
+  RUN_MSG_GO = 0x80
+  RUN_MSG_RESET_READ_PTR = 0xC0
+  RUN_MSG_RESET_READ_PTR_FROM_HOST = 0xE0
+  RUN_MSG_DONE = 0x00
+
+  DISPATCH_MODE_DEV = 0
+  DISPATCH_MODE_HOST = 1
 
 
 class Arc:

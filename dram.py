@@ -19,11 +19,11 @@ class DramAllocator:
   """Manages interleaved DRAM allocation across banks.
 
   Data is striped across banks in page-sized chunks for parallelism.
-  All 3 tiles per bank expose the same 4GB, so we use one tile per bank.
+  All tiles per bank expose the same 4GB, so we use one tile per bank.
   """
   def __init__(self, fd: int, dram_tiles: list[tuple[int, int, int]]):
     self.fd = fd
-    self.bank_tiles = dram_tiles[::2]  # one tile per bank (all 3 expose same 4GB)
+    self.bank_tiles = dram_tiles[::Dram.TILES_PER_BANK]  # one tile per bank (all tiles expose same 4GB)
     self.next = Dram.DRAM_WRITE_OFFSET
     self.max_page_size = 2 * 1024 * 1024
     self.win = TLBWindow(self.fd, TLBSize.GiB_4)

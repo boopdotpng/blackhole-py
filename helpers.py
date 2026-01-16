@@ -1,9 +1,8 @@
-# pyright: basic
-import os, sys, ctypes, fcntl, struct
+import os, sys,  fcntl, struct
 from ctypes import sizeof
-from autogen import TENSTORRENT_IOCTL_MAGIC, TenstorrentGetDeviceInfoIn
-from autogen import TenstorrentGetDeviceInfoOut, IOCTL_GET_DEVICE_INFO
-from autogen import IOCTL_ALLOCATE_TLB, IOCTL_FREE_TLB, IOCTL_CONFIGURE_TLB
+from abi import TENSTORRENT_IOCTL_MAGIC, TenstorrentGetDeviceInfoIn
+from abi import TenstorrentGetDeviceInfoOut, IOCTL_GET_DEVICE_INFO
+from abi import IOCTL_ALLOCATE_TLB, IOCTL_FREE_TLB, IOCTL_CONFIGURE_TLB
 from dataclasses import dataclass
 from pathlib import Path
 from configs import TLBSize
@@ -115,3 +114,10 @@ def load_pt_load(path: str | os.PathLike[str]) -> list[PTLoad]:
     if p_offset + p_filesz > len(elf): raise ValueError("ELF truncated")
     segs.append(PTLoad(paddr=p_paddr, data=elf[p_offset:p_offset + p_filesz], memsz=p_memsz))
   return segs
+
+def pack_xip_elf(path: str | os.PathLike[str]) -> tuple[bytes, int]:
+  """Pack all PT_LOAD segments contiguously (tt-metal CONTIGUOUS_XIP style)."""
+  segs = load_pt_load(path)
+  if not segs: raise ValueError("no PT_LOAD segments")
+  pad4 = lambda b: b + b"\0" * (-len(b) & 3)
+  return b"".join(pad4(s.data) for s in segs if s.data), len(pad4(segs[0].data))
