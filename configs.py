@@ -8,7 +8,6 @@ class TLBSize(Enum):
   GiB_4 = 1 << 32  # BAR 4: 8 available, for GDDR6 banks
 
 class TensixL1:
-  """Tensix tile L1 memory map (1536 KiB)"""
   SIZE = 0x180000
 
   # Firmware + system-reserved regions (Blackhole, from tt-metal dev_mem_map.h)
@@ -56,7 +55,6 @@ class TensixL1:
   TRISC2_INIT_LOCAL_L1_BASE_SCRATCH = 0x00e2b0
 
 class TensixMMIO:
-  """Tensix tile-local MMIO / register space (tile-local view)"""
   LOCAL_RAM_START = 0xFFB00000
   LOCAL_RAM_END = 0xFFB01FFF
   NOC0_NIU_START = 0xFFB20000
@@ -66,7 +64,6 @@ class TensixMMIO:
 
 
 class Arc:
-  """ARC tile constants"""
   NOC_BASE = 0x80000000  # ARC NoC xbar base
 
   # Control system memory bounds
@@ -94,7 +91,6 @@ class Arc:
 
 
 class Dram:
-  """DRAM tile constants"""
   BANK_SIZE = 4 * 1024 * 1024 * 1024  # 4 GiB per bank
   BANK_COUNT = 8
   TILES_PER_BANK = 3
@@ -106,21 +102,6 @@ class Dram:
   }
   # Banks 0-3 at x=0, banks 4-7 at x=9
   BANK_X = {b: 0 if b < 4 else 9 for b in range(8)}
-
-
-class EthL1:
-  """Ethernet tile L1 memory map"""
-  FIRMWARE_BASE = 0x009040
-  L1_EPOCH_Q_BASE = 0x009000
-  L1_DRAM_POLLING_CTRL_BASE = 0x009020
-  COMMAND_Q_BASE = 0x011000
-  DATA_BUFFER_BASE = 0x012000
-  TILE_HEADER_BUFFER_BASE = 0x018000
-  EPOCH_RUNTIME_CONFIG_BASE = 0x020000
-  OVERLAY_BLOB_BASE = 0x020080
-  DATA_BUFFER_SPACE_BASE = 0x028000
-  ERISC_BARRIER_BASE = 0x011fe0
-
 
 # Harvesting: firmware stores tensix columns in this order (left/right alternating)
 # The bitmask from telemetry is applied to this ordering

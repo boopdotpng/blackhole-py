@@ -4,13 +4,8 @@ from autogen import TenstorrentGetDeviceInfoOut, IOCTL_GET_DEVICE_INFO
 from autogen import IOCTL_ALLOCATE_TLB, IOCTL_FREE_TLB, IOCTL_CONFIGURE_TLB
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
 from configs import TLBSize
 
-# UT3G cannot support fast dispatch because of the 1g iommu map requirement
-# will test this later
-# used by default
-# SLOW_DISPATCH = int(os.environ.get("TT_SLOW_DISPATCH", 0)) == 1
 DEBUG = int(os.environ.get("DEBUG", 0))
 TT_HOME = Path(os.environ.get("TT_HOME", ""))
 
@@ -40,7 +35,6 @@ def align_down(value: int, alignment: TLBSize) -> tuple[int, int]:
   return base, value - base
 
 def format_bdf(pci_domain: int, bus_dev_fn: int) -> str:
-  """Format PCI bus:device.function address."""
   return f"{pci_domain:04x}:{(bus_dev_fn >> 8) & 0xFF:02x}:{(bus_dev_fn >> 3) & 0x1F:02x}.{bus_dev_fn & 0x7}"
 
 def _get_bdf_for_path(path: str) -> str | None:
@@ -69,21 +63,15 @@ class PTLoad:
   data: bytes
   memsz: int
 
-def iter_pt_load(elf: bytes) -> Iterable[PTLoad]:
-  if elf[:4] != b"\x7fELF": raise ValueError("not an ELF")
-  if elf[4] != 1: raise ValueError("expected ELF32")
-  if elf[5] != 1: raise ValueError("expected little-endian")
-
+def load_pt_load(path: str | os.PathLike[str]) -> list[PTLoad]:
+  with open(os.fspath(path), "rb") as f: elf = f.read()
   e_phoff = struct.unpack_from("<I", elf, 28)[0]
   e_phentsize, e_phnum = struct.unpack_from("<HH", elf, 42)
+  segs = []
   for i in range(e_phnum):
     off = e_phoff + i * e_phentsize
     p_type, p_offset, _, p_paddr, p_filesz, p_memsz, _, _ = struct.unpack_from("<IIIIIIII", elf, off)
     if p_type != 1: continue  # PT_LOAD
     if p_offset + p_filesz > len(elf): raise ValueError("ELF truncated")
-    yield PTLoad(paddr=p_paddr, data=elf[p_offset:p_offset + p_filesz], memsz=p_memsz)
-
-
-def load_pt_load(elf_path: str | os.PathLike[str]) -> list[PTLoad]:
-  with open(os.fspath(elf_path), "rb") as f:
-    return list(iter_pt_load(f.read()))
+    segs.append(PTLoad(paddr=p_paddr, data=elf[p_offset:p_offset + p_filesz], memsz=p_memsz))
+  return segs

@@ -1,6 +1,6 @@
 from __future__ import annotations
 import ctypes, fcntl, mmap, os, time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import ClassVar
 from autogen import *
 from tlb import TLBConfig, TLBWindow, TLBMode, TLBSize
@@ -10,37 +10,25 @@ from pathlib import Path
 
 @dataclass
 class Harvesting:
-  tensix_cols: tuple[int, ...]   # disabled tensix column x-coords
-  dram_banks: tuple[int, ...]    # disabled DRAM bank indices (0-7)
-  all_eth_disabled: bool         # True if all ethernet cores are disabled (p100a)
-  pcie: tuple[int, ...]          # disabled PCIe instances (0 or 1)
+  tensix_cols: tuple[int, int]  # exactly 2 disabled tensix columns
+  dram_bank: int  # single disabled DRAM bank
+  all_eth_disabled: bool  # true if all ethernet cores are disabled (p100a)
 
   def __repr__(self) -> str:
-    return (
-      f"Harvesting(tensix_cols={self.tensix_cols}, dram_banks={self.dram_banks}, "
-      f"eth={'disabled' if self.all_eth_disabled else 'enabled'}, pcie={self.pcie})"
-    )
+    return f"harvesting(tensix={self.tensix_cols}, dram={self.dram_bank}, eth={'disabled' if self.all_eth_disabled else 'enabled'})"
 
 @dataclass
 class TileGrid:
-  ARC: ClassVar[tuple[int, int]] = (8, 0)     # ARC tile (same location on both boards)
+  ARC: ClassVar[tuple[int, int]] = (8, 0) # ARC tile (same location on both boards)
   TENSIX_Y: ClassVar[tuple[int, int]] = (2, 11)
-  tensix: list[tuple[int, int]]               # all valid tensix (x, y) for unicast
-  tensix_mcast: list[tuple[int, int]]         # multicast x-ranges: [(x0, x1), ...] (y is always TENSIX_Y)
-  dram: list[tuple[int, int, int]]            # (bank_id, x, y) in bank order
-  _dram_by_bank: dict[int, list[tuple[int, int]]] = field(default_factory=dict, repr=False)
-
-  @property
-  def dram_by_bank(self) -> dict[int, list[tuple[int, int]]]:
-    if not self._dram_by_bank:
-      for bank, x, y in self.dram:
-        self._dram_by_bank.setdefault(bank, []).append((x, y))
-    return self._dram_by_bank
+  tensix: list[tuple[int, int]] # all valid tensix (x, y) for unicast
+  tensix_mcast: list[tuple[int, int]] # multicast x-ranges: [(x0, x1), ...] (y is always 2-11)
+  dram: list[tuple[int, int, int]] # (bank_id, x, y)
 
   @classmethod
   def from_harvesting(cls, harvesting: Harvesting) -> TileGrid:
     dram_cols, l2cpu_col = (0, 9), 8
-    max_x = 16  # blackhole physical X is always 0..16
+    max_x = 16  # 16 columns on all blackhole cards
 
     # valid tensix columns (exclude dram, l2cpu, and harvested)
     disabled = set(harvesting.tensix_cols)
@@ -61,10 +49,10 @@ class TileGrid:
         prev = x
       tensix_mcast.append((start, prev))
 
-    # dram tiles in bank order
+    # dram tiles in bank order (skip the single harvested bank)
     dram = []
     for bank in range(Dram.BANK_COUNT):
-      if bank in harvesting.dram_banks: continue
+      if bank == harvesting.dram_bank: continue
       col = Dram.BANK_X[bank]
       dram.extend((bank, col, y) for y in Dram.BANK_TILE_YS[bank])
 
@@ -82,19 +70,15 @@ class Device:
 
     self.upload_firmware()
   
-  def _load_firmware_elfs(self):
+  # upload firmware to risc-v cores inside tensix tiles (required every fresh boot)
+  def upload_firmware(self):
     fw_dir = Path(__file__).parent / "riscv-firmware" / self.arch
     names = ("brisc.elf", "ncrisc.elf", "trisc0.elf", "trisc1.elf", "trisc2.elf")
     paths = [fw_dir / n for n in names]
-    for p in paths: assert p.is_file(), f"missing firmware ELF: {p}"
-    return [(p.name, load_pt_load(p)) for p in paths]
+    fws = [(p.name, load_pt_load(p)) for p in paths]
 
-  # upload firmware to risc-v cores inside tensix tiles (required every fresh boot)
-  def upload_firmware(self):
-    fw = self._load_firmware_elfs()
     reg_base, reg_off = align_down(TensixMMIO.RISCV_DEBUG_REG_SOFT_RESET_0, TLBSize.MiB_2)
 
-    # (expected_base, local_init_scratch) for each core
     fw_map = {
       "brisc.elf":  (TensixL1.BRISC_FIRMWARE_BASE,  TensixL1.BRISC_INIT_LOCAL_L1_BASE_SCRATCH),
       "ncrisc.elf": (TensixL1.NCRISC_FIRMWARE_BASE, TensixL1.NCRISC_INIT_LOCAL_L1_BASE_SCRATCH),
@@ -103,14 +87,10 @@ class Device:
       "trisc2.elf": (TensixL1.TRISC2_BASE,          TensixL1.TRISC2_INIT_LOCAL_L1_BASE_SCRATCH),
     }
 
-    for name, segs in fw:
-      exp_base, _ = fw_map[name]
-      assert any(s.paddr == exp_base for s in segs), f"{name}: missing expected pt_load base"
-
     dbg(1, "fw", f"upload tiles={len(self.tiles.tensix)} mcast_ranges={len(self.tiles.tensix_mcast)} cores={len(fw_map)}")
     stats = {
       name: (sum(1 for s in segs if s.data), sum(len(s.data) for s in segs if s.data))
-      for name, segs in fw
+      for name, segs in fws
     }
     for name, (base, init) in fw_map.items():
       seg_count, byte_count = stats[name]
@@ -132,13 +112,12 @@ class Device:
         win.writei32(reg_off, TensixMMIO.SOFT_RESET_ALL)
 
         cfg.mode = TLBMode.ORDERED_BULK
-        for name, segs in fw:
+        for name, segs in fws:
           _, init_base = fw_map[name]
-          core = name.removesuffix(".elf")
           for seg in segs:
             if not seg.data: continue
             addr = remap_addr(seg.paddr, init_base)
-            dbg(3, "fw", f"seg core={core} paddr=0x{seg.paddr:x} -> l1=0x{addr:x} bytes={len(seg.data)}")
+            dbg(3, "fw", f"seg core={name.removesuffix(".elf")} paddr=0x{seg.paddr:x} -> l1=0x{addr:x} bytes={len(seg.data)}")
             win.write(addr, seg.data, restore=False)
 
         cfg.addr, cfg.mode = reg_base, TLBMode.STRICT
@@ -158,14 +137,11 @@ class Device:
     with TLBWindow(self.fd, TLBSize.MiB_2, tlb_config) as arc:
       telem_struct_addr = arc.readi32(Arc.SCRATCH_RAM_13)
 
-      if telem_struct_addr == 0:
-        raise RuntimeError("telemetry struct address is 0 (ARC not ready)")
-      if not (Arc.CSM_START <= telem_struct_addr <= Arc.CSM_END):
-        raise RuntimeError(f"invalid telemetry struct address: 0x{telem_struct_addr:08x}")
+      if telem_struct_addr == 0 or (not (Arc.CSM_START <= telem_struct_addr <= Arc.CSM_END)):
+        raise RuntimeError("device probably not working, try tt-smi -r")
 
       csm_base, csm_offset = align_down(telem_struct_addr, TLBSize.MiB_2)
       
-      # change base address so we can read the where the pointer points
       tlb_config.addr = csm_base
       arc.configure(tlb_config)
 
@@ -185,30 +161,17 @@ class Device:
       tensix_enabled = read_tag(Arc.TAG_TENSIX_ENABLED, Arc.DEFAULT_TENSIX_ENABLED)
       eth_enabled = read_tag(Arc.TAG_ETH_ENABLED, Arc.DEFAULT_ETH_ENABLED)
       gddr_enabled = read_tag(Arc.TAG_GDDR_ENABLED, Arc.DEFAULT_GDDR_ENABLED)
-      pcie_usage = read_tag(Arc.TAG_PCIE_USAGE, Arc.DEFAULT_PCIE_USAGE)
 
-      pcie_disabled = tuple(
-        i for i in (0, 1)
-        if ((pcie_usage >> (i * 2)) & 0x3) != 1
-      )
+      tensix_off = sorted(loc for pos, loc in enumerate(HARVESTING_NOC_LOCATIONS) if ((tensix_enabled >> pos) & 1) == 0)
+      dram_off = [bank for bank in range(Dram.BANK_COUNT) if ((gddr_enabled >> bank) & 1) == 0]
 
-      tensix_cols = tuple(sorted(
-        loc for pos, loc in enumerate(HARVESTING_NOC_LOCATIONS)
-        if ((tensix_enabled >> pos) & 1) == 0
-      ))
-
-      dram_banks = tuple(
-        bank for bank in range(Dram.BANK_COUNT)
-        if ((gddr_enabled >> bank) & 1) == 0
-      )
-
-      all_eth_disabled = (eth_enabled & Arc.DEFAULT_ETH_ENABLED) == 0
+      assert len(tensix_off) == 2, f"expected 2 harvested tensix cols, got {tensix_off}"
+      assert len(dram_off) == 1, f"expected 1 harvested dram bank, got {dram_off}"
 
     return Harvesting(
-      tensix_cols=tensix_cols,
-      dram_banks=dram_banks,
-      all_eth_disabled=all_eth_disabled,
-      pcie=pcie_disabled,
+      tensix_cols=(tensix_off[0], tensix_off[1]),
+      dram_bank=dram_off[0],
+      all_eth_disabled=(eth_enabled & Arc.DEFAULT_ETH_ENABLED) == 0,
     )
 
   def _setup(self, retried: bool = False):
@@ -223,7 +186,6 @@ class Device:
         return
       os.close(self.fd)
       raise SystemExit("exiting")
-
 
     dbg(1, "dev", f"open arch={self.arch} bdf={self.get_bdf()} path={self.path}")
     self._map_bars()

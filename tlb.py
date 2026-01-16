@@ -1,53 +1,26 @@
-# the slow dispatch path involves mapping TLB windows to tiles and writing to offsets in mmapped memory 
-# this is slow because of the # of PCIe transactions needed to launch one kernel 
-# you can multicast, but it's still slower than fast dispatch (coming soon)
 from dataclasses import dataclass
-from typing import Literal, Optional
 from enum import Enum
 from autogen import *
 from configs import TLBSize
 from helpers import _IO, dbg, trace_ioctl, warn
-import fcntl, mmap, ctypes
+import fcntl, mmap
 
 class TLBMode(Enum):
-  """Common TLB config presets combining ordering + static_vc."""
-  # (ordering, static_vc)
-  STRICT = (1, 1)   # register access: full ordering, writes land in order
-  BULK = (0, 0)     # L1/DRAM data: max parallelism, no ordering guarantees
-  POSTED = (2, 0)   # fire-and-forget writes: fastest, weakest ordering
+  STRICT = (1, 1)        # register access: full ordering, writes land in order
+  BULK = (0, 0)          # L1/DRAM data: max parallelism, no ordering guarantees
+  POSTED = (2, 0)        # fire-and-forget writes: fastest, weakest ordering
   ORDERED_BULK = (0, 1)  # high throughput but packets stay in order through NoC
 
 Coord = tuple[int, int]
 
 @dataclass
 class TLBConfig:
-  """TLB window configuration for NoC addressing.
-
-  Use as a template (set start/end later) or with .to()/.rect() for one-shot configs.
-  """
   addr: int  # offset into target tile's local address space
-  start: Optional[Coord] = None  # start NoC coordinates (x, y)
-  end: Optional[Coord] = None    # end NoC coordinates (x, y); same as start for unicast
-  noc: Literal[0, 1] = 0
+  start: Coord | None = None  # start NoC coordinates (x, y)
+  end: Coord | None = None    # end NoC coordinates (x, y); same as start for unicast
+  noc: int = 0  # 0 or 1
   mcast: bool = False
   mode: TLBMode = TLBMode.BULK
-
-  def target(self, start: Coord, end: Coord | None = None) -> "TLBConfig":
-    """Set target coordinates. Returns self for chaining."""
-    self.start = start
-    self.end = end if end is not None else start
-    self.mcast = (end is not None and end != start)
-    return self
-
-  @classmethod
-  def to(cls, x: int, y: int, addr: int, **kw) -> "TLBConfig":
-    """Create config targeting a single tile (unicast)."""
-    return cls(addr=addr, start=(x, y), end=(x, y), mcast=False, **kw)
-
-  @classmethod
-  def rect(cls, x0: int, y0: int, x1: int, y1: int, addr: int, **kw) -> "TLBConfig":
-    """Create config targeting a rectangle of tiles (multicast)."""
-    return cls(addr=addr, start=(x0, y0), end=(x1, y1), mcast=True, **kw)
 
   def to_struct(self) -> NocTlbConfig:
     if self.start is None or self.end is None: raise ValueError("tlb start/end must be set before configure")
@@ -65,21 +38,21 @@ class TLBConfig:
     return cfg 
 
 class TLBWindow:
-  def __init__(self, fd: int, size: TLBSize, config: Optional[TLBConfig] = None):
+  def __init__(self, fd: int, size: TLBSize, config: TLBConfig | None = None):
     self.fd = fd
     self.size = size.value
-    self.config: Optional[TLBConfig] = None
+    self.config: TLBConfig | None = None
     self._allocate(size)
     self._mmap()
     if config is not None: self.configure(config)
 
   def _allocate(self, size: TLBSize):
-    buf = bytearray(ctypes.sizeof(AllocateTlbIn) + ctypes.sizeof(AllocateTlbOut))
+    buf = bytearray(sizeof(AllocateTlbIn) + sizeof(AllocateTlbOut))
     cfg = AllocateTlbIn.from_buffer(buf)
     cfg.size = size.value
     trace_ioctl(IOCTL_ALLOCATE_TLB, f"size={size.value:#x}")
     fcntl.ioctl(self.fd, _IO(IOCTL_ALLOCATE_TLB), buf, True)
-    out = AllocateTlbOut.from_buffer(buf, ctypes.sizeof(AllocateTlbIn))
+    out = AllocateTlbOut.from_buffer(buf, sizeof(AllocateTlbIn))
     self.tlb_id = out.tlb_id
     self._mmap_offset_uc = out.mmap_offset_uc
     self._mmap_offset_wc = out.mmap_offset_wc
@@ -94,7 +67,7 @@ class TLBWindow:
 
   def configure(self, config: TLBConfig):
     assert (config.addr & (self.size - 1)) == 0, f"tlb addr must be {self.size}-aligned"
-    buf = bytearray(ctypes.sizeof(ConfigureTlbIn) + ctypes.sizeof(NocTlbConfig))
+    buf = bytearray(sizeof(ConfigureTlbIn) + sizeof(NocTlbConfig))
     cfg = ConfigureTlbIn.from_buffer(buf)
     cfg.tlb_id = self.tlb_id
     cfg.config = config.to_struct()
@@ -135,7 +108,7 @@ class TLBWindow:
   def free(self):
     self.uc.close()
     self.wc.close()
-    buf = bytearray(ctypes.sizeof(FreeTlbIn))
+    buf = bytearray(sizeof(FreeTlbIn))
     cfg = FreeTlbIn.from_buffer(buf)
     cfg.tlb_id = self.tlb_id
     dbg(3, "tlb", f"free id={self.tlb_id}")
