@@ -7,6 +7,11 @@ class TLBSize(Enum):
   MiB_2 = 1 << 21  # BAR 0: 201 available, for L1/registers
   GiB_4 = 1 << 32  # BAR 4: 8 available, for GDDR6 banks
 
+# DRAM memory barrier + minimum allocation base (Blackhole)
+DRAM_BARRIER_BASE = 0x0
+DRAM_UNRESERVED_BASE = 0x40  # barrier uses 0x0..0x3f (aligned)
+DRAM_ALIGNMENT = 64
+
 class TensixL1:
   SIZE = 0x180000
 
@@ -94,14 +99,16 @@ class Dram:
   BANK_SIZE = 4 * 1024 * 1024 * 1024  # 4 GiB per bank
   BANK_COUNT = 8
   TILES_PER_BANK = 3
+  DRAM_WRITE_OFFSET = 0x40 # might be too small, there is some reserved space at the start of each dram tile
+  BARRIER_FLAGS = (0xAA, 0xBB)  # tt-metal MemBarFlag::{SET,RESET}
 
   # Y-coordinates for each bank's 3 tiles (all 3 expose same 4 GiB)
+  # Banks 0-3 share the same Y pattern as 4-7; each bank has 3 tiles at different Y coords
   BANK_TILE_YS = {
     0: (0, 1, 11), 1: (2, 3, 10), 2: (4, 8, 9), 3: (5, 6, 7),
     4: (0, 1, 11), 5: (2, 3, 10), 6: (4, 8, 9), 7: (5, 6, 7),
   }
-  # Banks 0-3 at x=0, banks 4-7 at x=9
-  BANK_X = {b: 0 if b < 4 else 9 for b in range(8)}
+  BANK_X = {b: 0 if b < 4 else 9 for b in range(8)}  # banks 0-3 at x=0, 4-7 at x=9
 
 # Harvesting: firmware stores tensix columns in this order (left/right alternating)
 # The bitmask from telemetry is applied to this ordering

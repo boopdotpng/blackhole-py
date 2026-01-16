@@ -2,10 +2,11 @@ from dataclasses import dataclass
 from enum import Enum
 from autogen import *
 from configs import TLBSize
-from helpers import _IO, dbg, trace_ioctl, warn
+from helpers import _IO, dbg, noc1, trace_ioctl, warn
 import fcntl, mmap
 
 class TLBMode(Enum):
+  # Values are (ordering, static_vc): ordering 0=relaxed, 1=ordered, 2=posted
   STRICT = (1, 1)        # register access: full ordering, writes land in order
   BULK = (0, 0)          # L1/DRAM data: max parallelism, no ordering guarantees
   POSTED = (2, 0)        # fire-and-forget writes: fastest, weakest ordering
@@ -26,10 +27,12 @@ class TLBConfig:
     if self.start is None or self.end is None: raise ValueError("tlb start/end must be set before configure")
     if (self.start == self.end) and self.mcast: warn("tlb", "warning: cannot multicast to one tile")
     ordering, static_vc = self.mode.value
+    start = noc1(*self.start) if self.noc == 1 else self.start
+    end = noc1(*self.end) if self.noc == 1 else self.end
     cfg = NocTlbConfig()
     cfg.addr = self.addr #! you must align this with the size of the TLB window. 2MB or 4GB
-    cfg.x_start, cfg.y_start = self.start
-    cfg.x_end, cfg.y_end = self.end
+    cfg.x_start, cfg.y_start = start
+    cfg.x_end, cfg.y_end = end
     cfg.noc = self.noc
     cfg.mcast = int(self.mcast)
     cfg.ordering = ordering
