@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from typing import ClassVar
 from autogen import *
 from tlb import TLBConfig, TLBWindow, TLBMode, TLBSize
-from helpers import DEBUG, _IO, align_down, find_dev_by_bdf, format_bdf, load_pt_load, trace_ioctl
+from helpers import _IO, align_down, dbg, find_dev_by_bdf, format_bdf, load_pt_load, trace_ioctl
 from configs import Arc, Dram, HARVESTING_NOC_LOCATIONS, TensixL1, TensixMMIO
 from pathlib import Path
 
@@ -23,7 +23,7 @@ class Harvesting:
 
 @dataclass
 class TileGrid:
-  ARC: ClassVar[tuple[int, int]] = (8, 0)     # ARC tile on both boards
+  ARC: ClassVar[tuple[int, int]] = (8, 0)     # ARC tile (same location on both boards)
   TENSIX_Y: ClassVar[tuple[int, int]] = (2, 11)
   tensix: list[tuple[int, int]]               # all valid tensix (x, y) for unicast
   tensix_mcast: list[tuple[int, int]]         # multicast x-ranges: [(x0, x1), ...] (y is always TENSIX_Y)
@@ -76,9 +76,9 @@ class Device:
     self.fd = os.open(self.path, os.O_RDWR | os.O_CLOEXEC)
     self._setup()
     self.harvesting = self.get_harvesting()
-    if DEBUG >= 2: print(self.harvesting)
+    dbg(2, "dev", f"harvesting {self.harvesting}")
     self.tiles = TileGrid.from_harvesting(self.harvesting)
-    if DEBUG >= 2: print(f"tensix tiles: {len(self.tiles.tensix)}")
+    dbg(2, "tiles", f"tensix={len(self.tiles.tensix)} dram={len(self.tiles.dram)} mcast={self.tiles.tensix_mcast}")
 
     self.upload_firmware()
   
@@ -107,9 +107,14 @@ class Device:
       exp_base, _ = fw_map[name]
       assert any(s.paddr == exp_base for s in segs), f"{name}: missing expected pt_load base"
 
-    if DEBUG >= 1: print(f"writing firmware to {len(self.tiles.tensix)} tensix tiles")
+    dbg(1, "fw", f"upload tiles={len(self.tiles.tensix)} mcast_ranges={len(self.tiles.tensix_mcast)} cores={len(fw_map)}")
+    stats = {
+      name: (sum(1 for s in segs if s.data), sum(len(s.data) for s in segs if s.data))
+      for name, segs in fw
+    }
     for name, (base, init) in fw_map.items():
-      if DEBUG >= 2: print(f"{name}: base=0x{base:x} init=0x{init:x}")
+      seg_count, byte_count = stats[name]
+      dbg(2, "fw", f"core={name.removesuffix('.elf')} base=0x{base:x} init=0x{init:x} segs={seg_count} bytes={byte_count}")
 
     def remap_addr(addr: int, init_base: int) -> int:
       if TensixMMIO.LOCAL_RAM_START <= addr <= TensixMMIO.LOCAL_RAM_END:
@@ -121,7 +126,7 @@ class Device:
     y0, y1 = self.tiles.TENSIX_Y
     with TLBWindow(self.fd, TLBSize.MiB_2) as win:
       for x0, x1 in self.tiles.tensix_mcast:
-        if DEBUG >= 2: print(f"mcast x=[{x0},{x1}] y=[{y0},{y1}]")
+        dbg(2, "fw", f"mcast x=[{x0},{x1}] y=[{y0},{y1}]")
         cfg.start, cfg.end, cfg.addr, cfg.mode = (x0, y0), (x1, y1), reg_base, TLBMode.STRICT
         win.configure(cfg)
         win.writei32(reg_off, TensixMMIO.SOFT_RESET_ALL)
@@ -129,10 +134,11 @@ class Device:
         cfg.mode = TLBMode.ORDERED_BULK
         for name, segs in fw:
           _, init_base = fw_map[name]
+          core = name.removesuffix(".elf")
           for seg in segs:
             if not seg.data: continue
             addr = remap_addr(seg.paddr, init_base)
-            if DEBUG >= 3: print(f"{name}: 0x{seg.paddr:x} -> 0x{addr:x} ({len(seg.data)} bytes)")
+            dbg(3, "fw", f"seg core={core} paddr=0x{seg.paddr:x} -> l1=0x{addr:x} bytes={len(seg.data)}")
             win.write(addr, seg.data, restore=False)
 
         cfg.addr, cfg.mode = reg_base, TLBMode.STRICT
@@ -219,7 +225,7 @@ class Device:
       raise SystemExit("exiting")
 
 
-    if DEBUG >= 1: print(f"opened blackhole {self.arch} at {self.get_bdf()}")
+    dbg(1, "dev", f"open arch={self.arch} bdf={self.get_bdf()} path={self.path}")
     self._map_bars()
 
   def _close(self):
@@ -250,23 +256,23 @@ class Device:
     # we don't need to mmap global vram (4+5), that is done through the dram tiles and the NoC
     self.mm0 = mmap.mmap(self.fd, bars[0].mapping_size, flags=mmap.MAP_SHARED, prot=mmap.PROT_READ | mmap.PROT_WRITE, offset=bars[0].mapping_base)
     self.mm1 = mmap.mmap(self.fd, bars[2].mapping_size, flags=mmap.MAP_SHARED, prot=mmap.PROT_READ | mmap.PROT_WRITE, offset=bars[2].mapping_base)
-    if DEBUG >= 3: print(f"mmap bar0: {bars[0].mapping_size:#x} bytes, bar2: {bars[2].mapping_size:#x} bytes")
+    dbg(3, "mmap", f"bar0 base={bars[0].mapping_base:#x} size={bars[0].mapping_size:#x} bar2 base={bars[2].mapping_base:#x} size={bars[2].mapping_size:#x}")
 
   def reset(self, dmc_reset: bool = False) -> int:
     bdf = self.get_bdf()
-    if DEBUG >= 1: print(f"resetting device {bdf}")
+    dbg(1, "dev", f"reset bdf={bdf} flags={'ASIC_DMC_RESET' if dmc_reset else 'ASIC_RESET'}")
     in_sz, out_sz = ctypes.sizeof(ResetDeviceIn), ctypes.sizeof(ResetDeviceOut)
 
     buf = bytearray(in_sz + out_sz)
     view = ResetDeviceIn.from_buffer(buf)
     view.output_size_bytes = out_sz
     view.flags = TENSTORRENT_RESET_DEVICE_ASIC_DMC_RESET if dmc_reset else TENSTORRENT_RESET_DEVICE_ASIC_RESET
-    trace_ioctl(IOCTL_RESET_DEVICE, "ASIC_DMC_RESET" if dmc_reset else "ASIC_RESET")
+    trace_ioctl(IOCTL_RESET_DEVICE, f"flags={'ASIC_DMC_RESET' if dmc_reset else 'ASIC_RESET'}")
     fcntl.ioctl(self.fd, _IO(IOCTL_RESET_DEVICE), buf, True)
     self._close()
 
     # poll for device to come back (up to 10s)
-    if DEBUG >= 2: print("waiting for device to come back...")
+    dbg(2, "dev", "reset waiting for device...")
     for _ in range(50):
       time.sleep(0.2)
       if (path := find_dev_by_bdf(bdf)):
@@ -275,17 +281,17 @@ class Device:
     else:
       raise RuntimeError(f"device {bdf} didn't come back after reset")
 
-    if DEBUG >= 2: print(f"device back at {self.path}")
+    dbg(2, "dev", f"reset device back path={self.path}")
     self.fd = os.open(self.path, os.O_RDWR | os.O_CLOEXEC)
 
     # POST_RESET reinits hardware
     buf = bytearray(in_sz + out_sz)
     view = ResetDeviceIn.from_buffer(buf)
     view.output_size_bytes, view.flags = out_sz, TENSTORRENT_RESET_DEVICE_POST_RESET
-    trace_ioctl(IOCTL_RESET_DEVICE, "POST_RESET")
+    trace_ioctl(IOCTL_RESET_DEVICE, "flags=POST_RESET")
     fcntl.ioctl(self.fd, _IO(IOCTL_RESET_DEVICE), buf, True)
     result = ResetDeviceOut.from_buffer(buf, in_sz).result
-    if DEBUG >= 1: print(f"reset complete, result={result}")
+    dbg(1, "dev", f"reset complete result={result}")
 
     self._setup(retried=True)
     return result

@@ -1,6 +1,7 @@
 import os, sys, ctypes, fcntl, struct
 from autogen import TENSTORRENT_IOCTL_MAGIC, TenstorrentGetDeviceInfoIn
 from autogen import TenstorrentGetDeviceInfoOut, IOCTL_GET_DEVICE_INFO
+from autogen import IOCTL_ALLOCATE_TLB, IOCTL_FREE_TLB, IOCTL_CONFIGURE_TLB
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
@@ -13,21 +14,24 @@ from configs import TLBSize
 DEBUG = int(os.environ.get("DEBUG", 0))
 TT_HOME = Path(os.environ.get("TT_HOME", ""))
 
-# DEBUG levels:
-#   0: errors/prompts only
-#   1: progress (device opened, reset complete, major ops)
-#   2: details (harvesting, tile counts, fw map, mcast ranges)
-#   3: data (segment writes, TLB alloc/free)
-#   4: trace (all ioctls, all TLB configures, memory writes)
-
 IOCTL_NAMES = {
   0: "GET_DEVICE_INFO", 2: "QUERY_MAPPINGS", 6: "RESET_DEVICE",
   7: "PIN_PAGES", 10: "UNPIN_PAGES", 11: "ALLOCATE_TLB",
   12: "FREE_TLB", 13: "CONFIGURE_TLB",
 }
 
+def dbg(level: int, tag: str, msg: str):
+  if DEBUG >= level: print(f"{tag}: {msg}")
+
+def warn(tag: str, msg: str):
+  print(f"{tag}: {msg}", file=sys.stderr)
+
+_TLB_IOCTLS = {IOCTL_ALLOCATE_TLB, IOCTL_FREE_TLB, IOCTL_CONFIGURE_TLB}
+
 def trace_ioctl(nr: int, extra: str = ""):
-  if DEBUG >= 4: print(f"ioctl: {IOCTL_NAMES.get(nr, nr)}{' ' + extra if extra else ''}")
+  if DEBUG < 4 or nr in _TLB_IOCTLS: return
+  name = IOCTL_NAMES.get(nr, str(nr))
+  dbg(4, "ioctl", f"{name}{' ' + extra if extra else ''}")
 
 def _IO(nr: int) -> int: return (TENSTORRENT_IOCTL_MAGIC << 8) | nr
 

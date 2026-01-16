@@ -24,13 +24,13 @@
 
 ## debug levels
 Set `DEBUG=N` to control verbosity:
-| Level | Output |
-|-------|--------|
-| 0 | errors/warnings only |
-| 1 | progress (device opened, reset complete, writing firmware) |
-| 2 | details (harvesting, tile counts, fw map, mcast ranges) |
-| 3 | data (segment writes, TLB alloc/free, BAR sizes) |
-| 4 | trace (all ioctls, all TLB configures, memory writes) |
+| Level | Output                                                     |
+| ----- | ---------------------------------------------------------- |
+| 0     | errors/warnings only                                       |
+| 1     | progress (device opened, reset complete, writing firmware) |
+| 2     | details (harvesting, tile counts, fw map, mcast ranges)    |
+| 3     | data (segment writes, TLB alloc/free, BAR sizes)           |
+| 4     | trace (non-TLB ioctls, all TLB configures, memory writes)  |
 
 ```bash
 DEBUG=2 python main.py
