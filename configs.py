@@ -94,13 +94,11 @@ class Arc:
 
   # Telemetry tags
   TAG_TENSIX_ENABLED = 34
-  TAG_ETH_ENABLED = 35
   TAG_GDDR_ENABLED = 36
   TAG_PCIE_USAGE = 38
 
   # Default telemetry values (all enabled)
   DEFAULT_TENSIX_ENABLED = 0x3FFF  # 14 tensix columns
-  DEFAULT_ETH_ENABLED = 0x3FFF    # 14 ethernet cores
   DEFAULT_GDDR_ENABLED = 0xFF     # 8 DRAM banks
   DEFAULT_PCIE_USAGE = 0x5        # both PCIe instances enabled
 

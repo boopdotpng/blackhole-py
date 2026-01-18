@@ -13,10 +13,9 @@ from dram import DramAllocator
 class Harvesting:
   tensix_cols: tuple[int, int]  # exactly 2 disabled tensix columns
   dram_bank: int  # single disabled DRAM bank
-  all_eth_disabled: bool  # true if all ethernet cores are disabled (p100a)
 
   def __repr__(self) -> str:
-    return f"harvesting(tensix={self.tensix_cols}, dram={self.dram_bank}, eth={'disabled' if self.all_eth_disabled else 'enabled'})"
+    return f"harvesting(tensix={self.tensix_cols}, dram={self.dram_bank})"
 
 @dataclass
 class TileGrid:
@@ -55,7 +54,7 @@ class Device:
     self.fd = os.open(self.path, os.O_RDWR | os.O_CLOEXEC)
     self._setup()
     self.harvesting = self.get_harvesting()
-    dbg(2, "dev", f"harvesting {self.harvesting}")
+    dbg(2, "dev", f"{self.harvesting}")
     self.tiles = TileGrid.from_harvesting(self.harvesting)
     dbg(2, "tiles", f"tensix={len(self.tiles.tensix)} dram={len(self.tiles.dram)} mcast={self.tiles.tensix_mcast}")
 
@@ -178,7 +177,6 @@ class Device:
         return default if off is None else arc.readi32(data_base + off * 4) 
 
       tensix_enabled = read_tag(Arc.TAG_TENSIX_ENABLED, Arc.DEFAULT_TENSIX_ENABLED)
-      eth_enabled = read_tag(Arc.TAG_ETH_ENABLED, Arc.DEFAULT_ETH_ENABLED)
       gddr_enabled = read_tag(Arc.TAG_GDDR_ENABLED, Arc.DEFAULT_GDDR_ENABLED)
 
       # HARVESTING_NOC_LOCATIONS maps bit positions to column IDs (alternating left/right)
@@ -192,7 +190,6 @@ class Device:
     return Harvesting(
       tensix_cols=(tensix_off[0], tensix_off[1]),
       dram_bank=dram_off[0],
-      all_eth_disabled=(eth_enabled & Arc.DEFAULT_ETH_ENABLED) == 0,
     )
 
   def _setup(self, retried: bool = False):
