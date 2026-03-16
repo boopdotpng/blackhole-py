@@ -91,7 +91,7 @@ def build_transfer_program(
   return Program(
     cores=n, name=name, reader_kernel=rk, compute_kernel=ck, writer_kernel=wk,
     cbs=[CBConfig(index=0, dtype=buf.dtype, tiles=1), CBConfig(index=16, dtype=buf.dtype, tiles=1)],
-    reader_args=tile_args, writer_args=tile_args, compute_args=compute_args, profile=False,
+    reader_args=tile_args, writer_args=tile_args, compute_args=compute_args,
   ), logical_bytes
 
 class Allocator:

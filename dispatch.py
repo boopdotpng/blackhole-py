@@ -119,7 +119,6 @@ class Program:
   reader_recv_kernel: str = ""
   writer_recv_kernel: str = ""
   grid: tuple[tuple[int, ...], tuple[int, ...]] | None = None
-  profile: bool = True
 
 def noc_mcast_xy(rect: Rect) -> tuple[int, int]:
   x0, x1, y0, y1 = rect

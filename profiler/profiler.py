@@ -223,7 +223,6 @@ def init_layout(cores, bank_count):
 def build_programs_info(programs, device_cores):
   result = []
   for i, prog in enumerate(programs):
-    if not prog.profile: continue
     sources = {}
     if prog.reader_kernel: sources["reader"] = prog.reader_kernel
     if prog.writer_kernel: sources["writer"] = prog.writer_kernel

@@ -255,7 +255,6 @@ class Device:
   def _collect_profiler_data(self):
     programs_info = []
     for i, prog in enumerate(self._programs):
-      if not prog.profile: continue
       sources = {}
       if prog.reader_kernel: sources["reader"] = prog.reader_kernel
       if prog.writer_kernel: sources["writer"] = prog.writer_kernel
@@ -384,10 +383,9 @@ class Device:
 
     programs = []
     for i, program in enumerate(self._programs):
-      profiled = program.profile
-      prof_id = (i + 1) if self._profiler and profiled else 0
+      prof_id = (i + 1) if self._profiler else 0
       ir = self._compile_ir(program, self._dispatch_mode, host_assigned_id=prof_id)
-      programs.append((ir, profiled))
+      programs.append((ir, self._profiler))
 
     timestamps = None
     if timing:
