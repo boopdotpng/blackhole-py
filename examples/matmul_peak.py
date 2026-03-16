@@ -1,25 +1,24 @@
 #!/usr/bin/env python3
 import os, sys
 from dataclasses import dataclass
-from pathlib import Path
 import numpy as np
 
 from hw import *
 from dispatch import *
 from device import Device, DramBuffer, Dtype, MathFidelity
 
-F32_ACC = os.environ.get("F32_ACC") == "1"
 IO_MODE = "f16" if os.environ.get("F16") == "1" else "bf16"
+# Blackhole does not have a real f32 matmul path. F32_ACC only enables the
+# internal DEST-accum variant for this benchmark while IO stays f16/bf16.
+F32_ACC = os.environ.get("F32_ACC") == "1"
 IO_DTYPE = Dtype.Float16 if IO_MODE == "f16" else Dtype.Float16_b
-_MATH_FIDELITY_MAP = {"lofi": MathFidelity.LoFi, "hifi2": MathFidelity.HiFi2,
-                      "hifi3": MathFidelity.HiFi3, "hifi4": MathFidelity.HiFi4}
+_MATH_FIDELITY_MAP = {"lofi": MathFidelity.LoFi, "hifi2": MathFidelity.HiFi2}
 MATH_FIDELITY_NAME = os.environ.get("MATH_FIDELITY", "hifi2").lower()
 MATH_FIDELITY = _MATH_FIDELITY_MAP.get(MATH_FIDELITY_NAME)
 if MATH_FIDELITY is None:
   raise SystemExit(f"Invalid MATH_FIDELITY={MATH_FIDELITY_NAME!r}. Expected: {', '.join(_MATH_FIDELITY_MAP)}")
 
-WARMUP_ITERS = 2
-TIMED_ITERS = 5
+NUM_ITERS = 3
 
 # --- matmul planner ---
 
@@ -77,7 +76,10 @@ def plan_matmul(M: int, K: int, N: int, cores: list[Core], io_dtype: Dtype = Dty
   ys = tuple(sorted({y for _, y in ordered}))
 
   def fits_l1(pcm, pcn, bw):
-    return (2 * pcm * bw * tile_bytes + 2 * pcn * bw * tile_bytes + pcm * pcn * max(tile_bytes, cb24_tile_bytes)) <= L1_DATA_BYTES
+    cb0 = 2 * pcm * bw * tile_bytes
+    cb1 = 2 * pcn * bw * tile_bytes
+    cb_out = max(pcm * pcn * tile_bytes, pcm * pcn * cb24_tile_bytes)
+    return cb0 + cb1 + cb_out <= L1_DATA_BYTES
 
   max_bw_cap = (1 << 30) if f32_acc else None
   kt_divs = _divisors(kt)
@@ -317,27 +319,29 @@ void kernel_main() {{
 }}"""
 
 def _compute_src(plan: MatmulPlan, f32_acc: bool):
-  f32_def = "#define FP32_DEST_ACC_EN 1\n" if f32_acc else ""
-  pack_inc = '#include "compute_kernel_api/pack.h"\n' if f32_acc else ""
-  reload_init = (
-    "copy_tile_to_dst_init_short_with_dt(tt::CBIndex::c_1, tt::CBIndex::c_24);"
-    if f32_acc else "copy_tile_to_dst_init_short(tt::CBIndex::c_24);"
-  )
-  mm_short = (
-    """mm_block_init_short_with_dt(
+  if f32_acc:
+    mode_defines = "#define FP32_DEST_ACC_EN 1\n"
+    pack_include = '#include "compute_kernel_api/pack.h"\n'
+    reload_init = "copy_tile_to_dst_init_short_with_dt(tt::CBIndex::c_1, tt::CBIndex::c_24);"
+    mm_short = """mm_block_init_short_with_dt(
       tt::CBIndex::c_0, tt::CBIndex::c_1, tt::CBIndex::c_24,
       transpose, out_subblock_w, out_subblock_h, in0_block_w);"""
-    if f32_acc else """mm_block_init_short(
+    pack16_reconfig = "PACK((pack_reconfig_data_format(tt::CBIndex::c_16)));"
+    pack24_reconfig = "PACK((pack_reconfig_data_format(tt::CBIndex::c_24)));"
+  else:
+    mode_defines = ""
+    pack_include = ""
+    reload_init = "copy_tile_to_dst_init_short(tt::CBIndex::c_24);"
+    mm_short = """mm_block_init_short(
       tt::CBIndex::c_0, tt::CBIndex::c_1,
       transpose, out_subblock_w, out_subblock_h, in0_block_w);"""
-  )
-  pack16 = "PACK((pack_reconfig_data_format(tt::CBIndex::c_16)));" if f32_acc else ""
-  pack24 = "PACK((pack_reconfig_data_format(tt::CBIndex::c_24)));" if f32_acc else ""
+    pack16_reconfig = ""
+    pack24_reconfig = ""
   return f"""\
 #include <cstdint>
-{f32_def}#define PACKER_L1_ACC 1
+{mode_defines}#define PACKER_L1_ACC 1
 #include "compute_kernel_api/matmul.h"
-{pack_inc}#include "compute_kernel_api/tile_move_copy.h"
+{pack_include}#include "compute_kernel_api/tile_move_copy.h"
 #include "tools/profiler/kernel_profiler.hpp"
 
 namespace NAMESPACE {{
@@ -388,7 +392,7 @@ void MAIN {{
     if (last_out) {{
       cb_reserve_back(tt::CBIndex::c_16, out_subblock_num_tiles);
       tile_regs_wait();
-      {pack16}
+      {pack16_reconfig}
       PACK((llk_pack_reconfig_l1_acc(0)));
       #pragma GCC unroll 0
       for (uint32_t i = 0; i < out_subblock_num_tiles; i++) {{ pack_tile(i, tt::CBIndex::c_16); }}
@@ -401,7 +405,7 @@ void MAIN {{
       }}
       cb_reserve_back(tt::CBIndex::c_24, out_subblock_num_tiles);
       tile_regs_wait();
-      if (block == 0) {{ {pack24} PACK((llk_pack_reconfig_l1_acc(0))); }}
+      if (block == 0) {{ {pack24_reconfig} PACK((llk_pack_reconfig_l1_acc(0))); }}
       else if (block == 1) {{ PACK((llk_pack_reconfig_l1_acc(1))); }}
       #pragma GCC unroll 0
       for (uint32_t i = 0; i < out_subblock_num_tiles; i++) {{ pack_tile(i, tt::CBIndex::c_24); }}
@@ -435,7 +439,6 @@ def build_matmul_program(
 
   grid = plan.grid()
   rows, cols = plan.rows, plan.cols
-  all_cores = sorted(plan.active_cores(), key=lambda core: (core[0], core[1]))
   core_to_rc = {grid[r][c]: (r, c) for r in range(len(rows)) for c in range(len(cols))}
   west_cols = [x for x in cols if x < 8]
   east_cols = [x for x in cols if x >= 10]
@@ -485,6 +488,7 @@ def build_matmul_program(
     writer_args=writer_args,
     math_fidelity=math_fidelity,
     dst_accum_mode=f32_acc,
+    dst_full_sync=f32_acc,
     semaphores=NUM_SEMS,
   )
 
@@ -562,13 +566,7 @@ def main():
 
     prog = build_matmul_program(plan, a_buf, b_buf, c_buf, io_dtype=IO_DTYPE, math_fidelity=MATH_FIDELITY, f32_acc=F32_ACC)
 
-    print(f"\nWarmup ({WARMUP_ITERS} iters)...")
-    for _ in range(WARMUP_ITERS):
-      device.queue(prog)
-    device.run()
-
-    print(f"Timing ({TIMED_ITERS} iters)...")
-    for _ in range(TIMED_ITERS):
+    for _ in range(NUM_ITERS):
       device.queue(prog)
     device.run()
 

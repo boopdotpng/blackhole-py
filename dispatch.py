@@ -71,7 +71,7 @@ CoreArgs = tuple[Args, Args, Args]  # (writer, reader, compute) per core
 FAST_CQ_NUM_CIRCULAR_BUFFERS = 32
 
 class Dtype(Enum):
-  Float32 = 0
+  Float32 = 0  # internal-only: used for f32_acc dest accumulation, not for host IO
   Float16 = 1
   Float16_b = 5
   Int32 = 8
@@ -91,8 +91,6 @@ class Dtype(Enum):
 class MathFidelity(Enum):
   LoFi = 0
   HiFi2 = 2
-  HiFi3 = 3
-  HiFi4 = 4
 
 @dataclass
 class CBConfig:
@@ -112,7 +110,7 @@ class Program:
   writer_args: RtArgs = field(default_factory=list)
   compute_args: RtArgs = field(default_factory=list)
   semaphores: int = 0
-  math_fidelity: MathFidelity = MathFidelity.HiFi4
+  math_fidelity: MathFidelity = MathFidelity.HiFi2
   approx: bool = False
   dst_accum_mode: bool = False
   dst_full_sync: bool = False
