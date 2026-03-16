@@ -432,9 +432,11 @@ class Device:
       t0 = self._read_ts_slot(ts_slot)
       t1 = self._read_ts_slot(ts_slot + 1)
       cycles = t1 - t0
-      timings.append({"cycles": cycles, "us": cycles / freq_mhz, "freq_mhz": freq_mhz})
+      name = self._programs[i].name
+      timings.append({"cycles": cycles, "us": cycles / freq_mhz, "freq_mhz": freq_mhz, "name": name})
     for i, t in enumerate(timings):
-      print(f"  [{i}] {t['us']:.1f} us ({t['cycles']} cycles)")
+      name = f" {t['name']}" if t["name"] else ""
+      print(f"  [{i}]{name} {t['us']:,.1f} us ({t['cycles']:,} cycles)")
     self.last_device_timing = timings
     return timings
 
