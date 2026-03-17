@@ -7,6 +7,7 @@ from hw import *
 from dispatch import Dtype, MathFidelity, Program
 
 PROFILER = os.environ.get("PROFILE") == "1"
+DEBUG = os.environ.get("DEBUG") == "1"
 
 _REPO = Path(__file__).resolve().parent
 _DEPS = _REPO / "tt-metal-deps"
@@ -260,6 +261,7 @@ def pack_xip_elf(elf: bytes, xip_relocate: bool = False) -> tuple[bytes, int]:
 class CompiledKernel:
   xip: bytes
   xip_text_bytes: int
+  elf_bytes: bytes | None = None  # full ELF with debug info (when DEBUG=1)
 
 _INIT_SCRATCH_BASE = TensixL1.KERNEL_CONFIG_BASE
 _INIT_SCRATCH = {
@@ -397,17 +399,19 @@ class Compiler:
           if f.is_file(): inc_content += f.read_bytes()
     key = _cache_hash("kern", kern, target, tuple(defines), opt, trisc,
                       xip_relocate, tuple(sorted(hdrs.items())), self._fw[target].elf_bytes, inc_content)
-    cached = _cache_load(key)
-    if cached is not None:
-      _zone_map.update(cached["zones"])
-      return cached["result"]
+    if not DEBUG:
+      cached = _cache_load(key)
+      if cached is not None:
+        _zone_map.update(cached["zones"])
+        return cached["result"]
 
     zones_before = dict(_zone_map)
     mcpu = ["-mcpu=tt-bh-tensix", "-mno-tt-tensix-optimize-replay"] if trisc else \
            ["-mcpu=tt-bh", "-mno-tt-tensix-optimize-replay", "-fno-tree-loop-distribute-patterns"]
     fw_src = _DEPS / "firmware-src" / ("trisck.cc" if trisc else f"{target}k.cc")
     includes = [*self._includes, *(f"-I{p}" for p in (extra_includes or []))]
-    compile_args = [opt, *_CFLAGS, "-MMD", *mcpu, *includes, *defines]
+    debug_flags = ["-g", "-gdwarf-4"] if DEBUG else []
+    compile_args = [opt, *_CFLAGS, *debug_flags, "-MMD", *mcpu, *includes, *defines]
 
     fw_link_elf: Path | None = None
     def _prepare(build: Path):
@@ -428,9 +432,11 @@ class Compiler:
 
     elf = _compile_and_link(cc=self._cc, src=fw_src, compile_args=compile_args,
                             link_args=_kernel_link_args, tmp_prefix=f"tt-{target}-", prepare=_prepare)
-    result = CompiledKernel(*pack_xip_elf(elf, xip_relocate=xip_relocate))
+    xip, xip_text_bytes = pack_xip_elf(elf, xip_relocate=xip_relocate)
+    result = CompiledKernel(xip=xip, xip_text_bytes=xip_text_bytes, elf_bytes=elf if DEBUG else None)
     new_zones = {k: v for k, v in _zone_map.items() if k not in zones_before}
-    _cache_store(key, {"result": result, "zones": new_zones})
+    if not DEBUG:
+      _cache_store(key, {"result": result, "zones": new_zones})
     return result
 
   def _weaken_fw_symbols(self, build: Path, fw: bytes) -> Path:

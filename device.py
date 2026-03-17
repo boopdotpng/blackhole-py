@@ -8,6 +8,7 @@ from dispatch import *
 from cq import *
 from cq import _HOST_TIMESTAMP_SLOTS
 from dram import DramBuffer, Allocator, Shape, tilize, untilize, build_transfer_program
+from compiler import DEBUG
 
 class Device:
   _PREFETCH_CORE: Core = (14, 2)
@@ -376,12 +377,24 @@ class Device:
   def run(self) -> list[dict] | None:
     self._set_power(True)
     try:
+      if DEBUG: return self._run_debug()
       if self._use_fast_dispatch: return self._run_fast_dispatch()
       else: return self._run_slow_dispatch()
     finally:
       self._programs.clear()
       self._sysmem_offset = 0
       self._set_power(False)
+
+  def _run_debug(self) -> list[dict] | None:
+    """DEBUG=1: compile, set breakpoints at kernel entry, dispatch one program at a time, drop into REPL."""
+    from debug.hook import debug_dispatch
+    for program in self._programs:
+      writer = self.compiler.compile_dataflow(program.writer_kernel, "brisc") if program.writer_kernel else None
+      reader = self.compiler.compile_dataflow(program.reader_kernel, "ncrisc") if program.reader_kernel else None
+      compute = self.compiler.compile_compute(program.compute_kernel, program) if program.compute_kernel else None
+      ir = self._compile_ir(program, self._dispatch_mode)
+      debug_dispatch(self, ir, writer=writer, reader=reader, compute=compute)
+    return None
 
   def _run_fast_dispatch(self) -> list[dict] | None:
     n = len(self._programs)
