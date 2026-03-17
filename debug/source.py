@@ -33,6 +33,25 @@ class ElfInfo:
     self._source_lines_cache: dict[str, list[str]] = {}  # filepath -> lines
     self._addr2line_ok = _ADDR2LINE.is_file()
     self._objdump_ok = _OBJDUMP.is_file()
+    # runtime offset: runtime_PC = elf_PC + _addr_offset
+    # set by hook.py once we know where the kernel text is loaded in L1
+    self._addr_offset: int = 0
+
+  def set_runtime_offset(self, runtime_text_base: int, elf_text_base: int):
+    """Set the offset between runtime L1 addresses and ELF link addresses.
+
+    After this, addr2line/disasm_at will automatically translate runtime
+    PCs to ELF PCs before lookup.
+    """
+    self._addr_offset = runtime_text_base - elf_text_base
+
+  def to_elf_pc(self, runtime_pc: int) -> int:
+    """Convert a runtime PC to the corresponding ELF address."""
+    return runtime_pc - self._addr_offset
+
+  def to_runtime_pc(self, elf_pc: int) -> int:
+    """Convert an ELF address to the corresponding runtime PC."""
+    return elf_pc + self._addr_offset
 
   def close(self):
     import shutil
@@ -44,13 +63,15 @@ class ElfInfo:
   # -- addr2line: PC -> (file, line, function) ----------------------------- #
 
   def addr2line(self, pc: int) -> tuple[str, int, str]:
-    """Resolve a PC to (source_file, line_number, function_name).
+    """Resolve a runtime PC to (source_file, line_number, function_name).
 
+    Automatically translates runtime PC to ELF PC before lookup.
     Returns ("??", 0, "??") if debug info is unavailable.
     """
     if pc in self._source_cache:
       return self._source_cache[pc]
-    result = self._raw_addr2line(pc)
+    elf_pc = self.to_elf_pc(pc)
+    result = self._raw_addr2line(elf_pc)
     self._source_cache[pc] = result
     return result
 
@@ -75,12 +96,12 @@ class ElfInfo:
       return ("??", 0, "??")
 
   def batch_addr2line(self, pcs: list[int]) -> dict[int, tuple[str, int, str]]:
-    """Resolve multiple PCs in one subprocess call (much faster)."""
+    """Resolve multiple runtime PCs in one subprocess call (much faster)."""
     if not self._addr2line_ok or not pcs:
       return {pc: ("??", 0, "??") for pc in pcs}
     uncached = [pc for pc in pcs if pc not in self._source_cache]
     if uncached:
-      addrs = "\n".join(f"0x{pc:x}" for pc in uncached)
+      addrs = "\n".join(f"0x{self.to_elf_pc(pc):x}" for pc in uncached)
       try:
         out = subprocess.run(
           [str(_ADDR2LINE), "-e", str(self._elf_path), "-f", "-C"],
@@ -163,21 +184,25 @@ class ElfInfo:
     return self._disasm_cache
 
   def disasm_at(self, pc: int, context: int = 5) -> list[tuple[int, str, bool]]:
-    """Disassembly lines around a PC.
+    """Disassembly lines around a runtime PC.
 
-    Returns [(address, asm_text, is_current), ...].
+    Returns [(runtime_address, asm_text, is_current), ...].
+    Internally translates to ELF addresses for lookup, then back
+    to runtime addresses for display.
     """
     disasm = self.disassemble()
     addrs = sorted(disasm.keys())
     if not addrs:
       return [(pc, "<no disassembly available>", True)]
-    # find closest address <= pc
-    idx = _bisect_right(addrs, pc) - 1
+    elf_pc = self.to_elf_pc(pc)
+    # find closest ELF address <= elf_pc
+    idx = _bisect_right(addrs, elf_pc) - 1
     if idx < 0:
       idx = 0
     start = max(0, idx - context)
     end = min(len(addrs), idx + context + 1)
-    return [(addrs[i], disasm[addrs[i]][1], addrs[i] == pc) for i in range(start, end)]
+    off = self._addr_offset
+    return [(addrs[i] + off, disasm[addrs[i]][1], addrs[i] == elf_pc) for i in range(start, end)]
 
   # -- combined source + disasm view --------------------------------------- #
 

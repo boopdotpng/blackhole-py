@@ -258,6 +258,58 @@ class DebugREPL(cmd.Cmd):
     except Exception as e:
       print(f"  error: {e}")
 
+  def do_ram(self, arg):
+    """Dump a RISC core's private data RAM: ram [risc] [addr] [count].
+
+    Each RISC has its own private scratch RAM accessible via NOC:
+      brisc:  8 KB @ 0xFFB14000    ncrisc: 8 KB @ 0xFFB16000
+      trisc0: 4 KB @ 0xFFB18000    trisc1: 4 KB @ 0xFFB1A000
+      trisc2: 4 KB @ 0xFFB1C000
+
+    Examples:
+      ram              dump first 64 bytes of current RISC's RAM
+      ram trisc1       dump first 64 bytes of trisc1's RAM
+      ram brisc 0 256  dump 256 bytes at offset 0 of brisc's RAM
+      ram trisc0 0x100 dump 64 bytes at offset 0x100 of trisc0's RAM
+    """
+    from debug.regs import PRIVATE_DATA_NOC_ADDR, PRIVATE_DATA_SIZE
+    parts = arg.strip().split()
+    risc = self.session.current_risc
+    offset, count = 0, 64
+    try:
+      idx = 0
+      if parts and parts[0] in PRIVATE_DATA_NOC_ADDR:
+        risc = parts[0]
+        idx = 1
+      if idx < len(parts):
+        offset = int(parts[idx], 0)
+        idx += 1
+      if idx < len(parts):
+        count = int(parts[idx], 0)
+    except ValueError:
+      print("  usage: ram [risc] [offset] [count]")
+      return
+    max_size = PRIVATE_DATA_SIZE.get(risc, 0)
+    if max_size == 0:
+      print(f"  error: unknown RISC '{risc}'")
+      return
+    if offset >= max_size:
+      print(f"  error: offset 0x{offset:x} out of range (max 0x{max_size:x})")
+      return
+    count = min(count, max_size - offset)
+    try:
+      data = self._insp().read_private_data(risc, offset, count)
+      noc_base = PRIVATE_DATA_NOC_ADDR[risc]
+      lines = [f"  {risc} private RAM ({max_size} bytes, NOC 0x{noc_base:08x}):"]
+      for i in range(0, len(data), 16):
+        row = data[i:i+16]
+        hexpart = " ".join(f"{b:02x}" for b in row)
+        ascpart = "".join(chr(b) if 32 <= b < 127 else "." for b in row)
+        lines.append(f"  0x{offset+i:04x}: {hexpart:<48s} {ascpart}")
+      print("\n".join(lines))
+    except Exception as e:
+      print(f"  error: {e}")
+
   # -- Tensix compute state ------------------------------------------------ #
 
   def do_dest(self, arg):

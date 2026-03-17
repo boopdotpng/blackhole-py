@@ -152,6 +152,13 @@ def debug_dispatch(device, ir_commands, writer=None, reader=None, compute=None):
     entry_points[risc] = entry_addr
     print(f"  debug: {risc:7s} kernel_text L1=0x{runtime_base:06x} entry=0x{entry_addr:06x} (offset +0x{entry_offset:x})")
 
+  # set runtime offsets on ElfInfo objects so addr2line can translate PCs
+  for risc in elf_text_bases:
+    elf_info = sess.elfs.get(risc)
+    if elf_info and risc in entry_points:
+      runtime_base = entry_points[risc] - elf_entry_offsets.get(risc, 0)
+      elf_info.set_runtime_offset(runtime_base, elf_text_bases[risc])
+
   if break_risc and break_risc in entry_points:
     bp_addr = entry_points[break_risc]
     print(f"  debug: setting breakpoint on {break_risc} at 0x{bp_addr:06x} on all {len(cores)} cores")

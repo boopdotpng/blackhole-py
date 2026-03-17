@@ -120,15 +120,19 @@ WALL_CLOCK_H = DEBUG_REGS_BASE | 0x1F8  # 0xFFB121F8  high 32 bits (snapshot)
 DBG_BUS_CTRL    = DEBUG_REGS_BASE | 0x54  # 0xFFB12054
 DBG_BUS_RD_DATA = DEBUG_REGS_BASE | 0x5C  # 0xFFB1205C
 
-# DBG_BUS_CTRL bit layout:
+# DBG_BUS_CTRL bit layout (from tensix.h):
 #   [15:0]  sig_sel     - signal selection
 #   [23:16] daisy_sel   - daisy chain tap
-#   [27:24] rd_sel      - which 32-bit slice of 128-bit group
+#   [27:24] rd_sel      - which 32-bit slice of 128-bit group (4 bits)
 #   [28]    reg_ovrd_en
 #   [29]    daisy_en    - must be 1 to enable
 #   [31:30] reserved
+#
+# NOTE: tt-exalens shifts rd_sel by 25 (not 24). The signal map rd_sel
+# values (0 for Wormhole, 1 for Blackhole) are logical indices that need
+# this extra shift to select the correct 32-bit slice. We match tt-exalens.
 def dbg_bus_cntl(sig_sel: int, daisy_sel: int, rd_sel: int) -> int:
-  return (1 << 29) | (rd_sel << 24) | (daisy_sel << 16) | sig_sel
+  return (1 << 29) | (rd_sel << 25) | (daisy_sel << 16) | sig_sel
 
 # PC signals: daisy_sel=7, rd_sel=1, sig_sel varies, mask=0x3FFFFFFF
 PC_SIGNALS = {

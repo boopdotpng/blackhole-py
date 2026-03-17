@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 import struct, time
+import numpy as np
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -27,9 +28,11 @@ from debug.regs import (
   STALL_SFPU, WAIT_SFPU, SFPU_FMT_FP32, LREG_COUNT,
   PRIVATE_DATA_NOC_ADDR, PRIVATE_DATA_SIZE,
   L1_SIZE,
+  RISC_DBG_CNTL_0, RISC_DBG_CNTL_1, RISC_DBG_STATUS_0, RISC_DBG_STATUS_1,
+  STATUS_0_READ_VALID, CNTL0_WRITE, CNTL0_READ,
+  DR_COMMAND_ARG_0, DR_COMMAND_ARG_1, DR_COMMAND, DR_COMMAND_RETURN_VALUE,
+  CMD_DEBUG_MODE, CMD_READ_MEMORY, CMD_WRITE_MEMORY,
 )
-
-DEST_TLB_BASE, DEST_TLB_OFFSET = tlb_align(DEST_BASE)
 
 
 class TileInspector:
@@ -57,6 +60,88 @@ class TileInspector:
   def _off(self, addr: int) -> int:
     """Convert absolute address to offset within current TLB window."""
     return addr - self._current_tlb_base
+
+  # -- DR protocol for private address space ------------------------------- #
+  #
+  # Dest (0xFFBD8000) is only accessible from a RISC core's private bus,
+  # NOT via NOC/TLB. We issue READ_MEMORY / WRITE_MEMORY commands through
+  # a halted TRISC0 using the debug register protocol, same as tt-exalens.
+
+  def _dr_read_words(self, base_addr: int, count: int) -> np.ndarray:
+    """Read `count` consecutive u32 words from TRISC0's address space.
+
+    Uses the DR (debug register) protocol: for each word, writes the
+    address to DR_COMMAND_ARG_0, issues CMD_READ_MEMORY, polls for
+    the result in DR_COMMAND_RETURN_VALUE.
+
+    TRISC0 must be halted. Returns a numpy uint32 array.
+    """
+    self._target(DEBUG_REGS_BASE)
+    cntl0_w = CNTL0_WRITE["trisc0"]
+    cntl0_r = CNTL0_READ["trisc0"]
+    # pre-compute TLB offsets for the four debug registers
+    off_cntl0 = self._off(RISC_DBG_CNTL_0)
+    off_cntl1 = self._off(RISC_DBG_CNTL_1)
+    off_stat0 = self._off(RISC_DBG_STATUS_0)
+    off_stat1 = self._off(RISC_DBG_STATUS_1)
+    w32, r32 = self.tlb.write32, self.tlb.read32
+    cmd_read = CMD_DEBUG_MODE | CMD_READ_MEMORY
+    wr_arg0 = cntl0_w | DR_COMMAND_ARG_0
+    wr_cmd  = cntl0_w | DR_COMMAND
+    rd_ret  = cntl0_r | DR_COMMAND_RETURN_VALUE
+
+    result = np.empty(count, dtype=np.uint32)
+    for i in range(count):
+      addr = base_addr + i * 4
+      # DR write: command_arg_0 = address
+      w32(off_cntl1, addr)
+      w32(off_cntl0, wr_arg0)
+      w32(off_cntl0, 0)
+      # DR write: command = READ_MEMORY
+      w32(off_cntl1, cmd_read)
+      w32(off_cntl0, wr_cmd)
+      w32(off_cntl0, 0)
+      # DR read: return_value
+      w32(off_cntl0, rd_ret)
+      w32(off_cntl0, 0)
+      for _ in range(500):
+        if r32(off_stat0) & STATUS_0_READ_VALID:
+          break
+      else:
+        raise TimeoutError(f"DR read timeout at 0x{addr:08x}")
+      result[i] = r32(off_stat1)
+    return result
+
+  def _dr_write_words(self, base_addr: int, data: np.ndarray):
+    """Write consecutive u32 words to TRISC0's address space via DR protocol.
+
+    TRISC0 must be halted.
+    """
+    self._target(DEBUG_REGS_BASE)
+    cntl0_w = CNTL0_WRITE["trisc0"]
+    off_cntl0 = self._off(RISC_DBG_CNTL_0)
+    off_cntl1 = self._off(RISC_DBG_CNTL_1)
+    w32 = self.tlb.write32
+    cmd_write = CMD_DEBUG_MODE | CMD_WRITE_MEMORY
+    wr_arg0 = cntl0_w | DR_COMMAND_ARG_0
+    wr_arg1 = cntl0_w | DR_COMMAND_ARG_1
+    wr_cmd  = cntl0_w | DR_COMMAND
+
+    for i in range(len(data)):
+      addr = base_addr + i * 4
+      val = int(data[i]) & 0xFFFFFFFF
+      # DR write: command_arg_1 = value
+      w32(off_cntl1, val)
+      w32(off_cntl0, wr_arg1)
+      w32(off_cntl0, 0)
+      # DR write: command_arg_0 = address
+      w32(off_cntl1, addr)
+      w32(off_cntl0, wr_arg0)
+      w32(off_cntl0, 0)
+      # DR write: command = WRITE_MEMORY
+      w32(off_cntl1, cmd_write)
+      w32(off_cntl0, wr_cmd)
+      w32(off_cntl0, 0)
 
   # -- L1 memory ----------------------------------------------------------- #
 
@@ -118,48 +203,40 @@ class TileInspector:
 
   # -- direct dest register access (Blackhole only) ------------------------ #
 
-  def read_dest_raw(self, num_tiles: int = 8) -> bytes:
-    """Read dest register file directly at 0xFFBD8000.
+  def read_dest_raw(self, num_tiles: int = 8) -> np.ndarray:
+    """Read dest register file at 0xFFBD8000 via DR protocol.
 
-    Returns raw bytes: num_tiles * 1024 * 4 bytes.
+    Returns numpy uint32 array of num_tiles * 1024 elements.
     Default format is FP32 (32 bits per datum, 1024 datums per tile,
     where each tile = 32 rows x 16 cols in the 32-bit view).
 
-    TRISC1 (math) should be halted to get a consistent snapshot.
+    Dest is a private address — not accessible via NOC/TLB.
+    Access goes through a halted TRISC0 using the debug register
+    READ_MEMORY command (same approach as tt-exalens).
     """
-    size = num_tiles * 1024 * 4
-    if size > DEST_SIZE:
-      size = DEST_SIZE
-    self._target(DEST_BASE)
-    result = bytearray(size)
-    for i in range(0, size, 4):
-      val = self.tlb.read32(i)
-      struct.pack_into("<I", result, i, val)
-    return bytes(result)
+    n_words = min(num_tiles * 1024, DEST_SIZE // 4)
+    return self._dr_read_words(DEST_BASE, n_words)
 
-  def read_dest_tile(self, tile: int = 0) -> list[list[float]]:
-    """Read one dest tile as 32x32 grid of FP32 values.
+  def read_dest_tile(self, tile: int = 0) -> np.ndarray:
+    """Read one dest tile as a 32x32 FP32 numpy array.
 
-    Returns list of 32 rows, each with 32 float values.
     Note: Tensix tiles are stored as 4 faces of 16x16, but the
     direct dest access gives them linearly.
     """
     if tile < 0 or tile >= self.DEST_TILES:
       raise ValueError(f"tile must be 0..{self.DEST_TILES - 1}")
-    raw = self.read_dest_raw(num_tiles=tile + 1)
-    tile_offset = tile * 1024 * 4
-    tile_data = raw[tile_offset:tile_offset + 1024 * 4]
-    floats = struct.unpack(f"<{1024}f", tile_data)
-    return [list(floats[r*32:(r+1)*32]) for r in range(32)]
+    # read only the requested tile (not all preceding tiles)
+    raw = self._dr_read_words(DEST_BASE + tile * 1024 * 4, 1024)
+    return raw.view(np.float32).reshape(32, 32)
 
   def dump_dest_summary(self, tile: int = 0) -> str:
     """Print a compact summary of a dest tile."""
     grid = self.read_dest_tile(tile)
     lines = [f"  Dest tile {tile} (32x32 FP32):"]
-    for r in range(min(4, len(grid))):  # first 4 rows
-      vals = " ".join(f"{v:8.4f}" for v in grid[r][:8])  # first 8 cols
+    for r in range(min(4, grid.shape[0])):  # first 4 rows
+      vals = " ".join(f"{v:8.4f}" for v in grid[r, :8])  # first 8 cols
       lines.append(f"    row {r:2d}: {vals} ...")
-    lines.append(f"    ... ({len(grid)} rows total)")
+    lines.append(f"    ... ({grid.shape[0]} rows total)")
     return "\n".join(lines)
 
   # -- debug array reads (SrcA, SrcB, Dest via array interface) ------------ #
@@ -414,16 +491,13 @@ class TileInspector:
     self._inject_end(MATH_THREAD)
     time.sleep(0.0002)
 
-    # read all lanes at once from dest
+    # read all lanes at once from dest via DR protocol
     result = {}
-    self._target(DEST_BASE)
+    total_words = len(to_read) * 32  # 32 lanes per LReg
+    raw_data = self._dr_read_words(DEST_BASE, total_words)
+    raw_floats = raw_data.view(np.float32)
     for slot, lreg_idx in enumerate(to_read):
-      base_off = slot * 128
-      lanes = []
-      for lane in range(32):
-        raw = self.tlb.read32(base_off + lane * 4)
-        lanes.append(struct.unpack("<f", struct.pack("<I", raw))[0])
-      result[lreg_idx] = lanes
+      result[lreg_idx] = raw_floats[slot * 32:(slot + 1) * 32].tolist()
 
     self._restore_dest_rows(0, saved)
     return result
@@ -435,20 +509,13 @@ class TileInspector:
       raise ValueError(f"LReg {index} is a known constant, not readable via injection")
     return result[index]
 
-  def _save_dest_rows(self, offset: int, size: int) -> bytes:
-    """Save dest bytes starting at offset (relative to DEST_BASE)."""
-    self._target(DEST_BASE)
-    data = bytearray(size)
-    for i in range(0, size, 4):
-      struct.pack_into("<I", data, i, self.tlb.read32(offset + i))
-    return bytes(data)
+  def _save_dest_rows(self, offset: int, size: int) -> np.ndarray:
+    """Save dest words starting at offset (relative to DEST_BASE)."""
+    return self._dr_read_words(DEST_BASE + offset, size // 4)
 
-  def _restore_dest_rows(self, offset: int, data: bytes):
-    """Restore dest bytes."""
-    self._target(DEST_BASE)
-    for i in range(0, len(data), 4):
-      val = struct.unpack_from("<I", data, i)[0]
-      self.tlb.write32(offset + i, val)
+  def _restore_dest_rows(self, offset: int, data: np.ndarray):
+    """Restore dest words."""
+    self._dr_write_words(DEST_BASE + offset, data)
 
   def dump_lregs(self) -> str:
     """Read and format all LRegs as a string."""
@@ -479,10 +546,12 @@ class TileInspector:
       size = max_size
     if offset + size > max_size:
       raise ValueError(f"{risc} private data: offset {offset} + size {size} > {max_size}")
-    self._target(noc_addr + offset)
+    start_addr = noc_addr + offset
+    self._target(start_addr)
+    tlb_off = start_addr - self._current_tlb_base
     result = bytearray(size)
     for i in range(0, size, 4):
       chunk = min(size - i, 4)
-      val = self.tlb.read32(i)
+      val = self.tlb.read32(tlb_off + i)
       result[i:i+chunk] = val.to_bytes(4, "little")[:chunk]
     return bytes(result)
