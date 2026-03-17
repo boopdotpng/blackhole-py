@@ -69,22 +69,40 @@ _CFLAGS = (
 )
 _LFLAGS = ("-Wl,-z,max-page-size=16", "-Wl,-z,common-page-size=16", "-nostartfiles")
 
-def _device_defines(num_dram_banks: int = 7, num_l1_banks: int = 110) -> list[str]:
-  is_pow2 = lambda n: n > 0 and (n & (n - 1)) == 0
-  return [
-    f"-DNUM_DRAM_BANKS={num_dram_banks}",
-    f"-DIS_NOT_POW2_NUM_DRAM_BANKS={0 if is_pow2(num_dram_banks) else 1}",
-    f"-DNUM_L1_BANKS={num_l1_banks}",
-    f"-DIS_NOT_POW2_NUM_L1_BANKS={0 if is_pow2(num_l1_banks) else 1}",
-    "-DPCIE_NOC_X=19", "-DPCIE_NOC_Y=24",
-  ]
+def _is_pow2(n: int) -> bool:
+  return n > 0 and (n & (n - 1)) == 0
 
-_DEVICE_DEFINES = _device_defines()  # default for standalone compilation
-_KERNEL_DEFINES_BASE = [
+def _device_defines(
+  num_dram_banks: int = 7,
+  num_l1_banks: int = 110,
+  prefetch_core: tuple[int, int] = (14, 2),
+  dispatch_core: tuple[int, int] = (14, 3),
+) -> list[str]:
+  defs = [
+    f"-DNUM_DRAM_BANKS={num_dram_banks}",
+    f"-DNUM_L1_BANKS={num_l1_banks}",
+    f"-DPREFETCH_NOC_X={prefetch_core[0]}",
+    f"-DPREFETCH_NOC_Y={prefetch_core[1]}",
+    f"-DDISPATCH_NOC_X={dispatch_core[0]}",
+    f"-DDISPATCH_NOC_Y={dispatch_core[1]}",
+    "-DPCIE_NOC_X=19",
+    "-DPCIE_NOC_Y=24",
+  ]
+  if _is_pow2(num_dram_banks):
+    defs.append(f"-DLOG_BASE_2_OF_NUM_DRAM_BANKS={(num_dram_banks.bit_length() - 1)}")
+  else:
+    defs.append("-DIS_NOT_POW2_NUM_DRAM_BANKS=1")
+  if _is_pow2(num_l1_banks):
+    defs.append(f"-DLOG_BASE_2_OF_NUM_L1_BANKS={(num_l1_banks.bit_length() - 1)}")
+  else:
+    defs.append("-DIS_NOT_POW2_NUM_L1_BANKS=1")
+  return defs
+
+_DEVICE_DEFINES = _device_defines()  # default P100 values for firmware compilation
+_KERNEL_DEFINES = [
   "-DTENSIX_FIRMWARE", "-DLOCAL_MEM_EN=0", "-DARCH_BLACKHOLE",
-  "-DDISPATCH_MESSAGE_ADDR=0xFFB70438", "-DKERNEL_BUILD",
+  "-DDISPATCH_MESSAGE_ADDR=0xFFB70438", "-DKERNEL_BUILD", *_DEVICE_DEFINES,
 ]
-_KERNEL_DEFINES = [*_KERNEL_DEFINES_BASE, *_DEVICE_DEFINES]
 
 _CQ_SRC_DIR = _REPO / "firmware" / "cq"
 _CQ_INC = [str(_CQ_SRC_DIR), str(_CQ_SRC_DIR / "includes")]
@@ -319,14 +337,28 @@ def _compile_and_link(cc: Path, src: Path, compile_args: list[str], link_args: l
   finally:
     shutil.rmtree(build, ignore_errors=True)
 
-def compile_firmware(profile: bool = PROFILER, device_defines: list[str] | None = None) -> dict[str, CompiledFirmware]:
+def compile_firmware(
+  num_dram_banks: int = 7,
+  num_l1_banks: int = 110,
+  prefetch_core: tuple[int, int] = (14, 2),
+  dispatch_core: tuple[int, int] = (14, 3),
+  profile: bool = PROFILER,
+) -> dict[str, CompiledFirmware]:
   cc = _SFPI / "riscv-tt-elf-g++"
   assert cc.is_file(), f"missing compiler: {cc}"
-  dev_defs = device_defines or _DEVICE_DEFINES
 
+  dev_defines = _device_defines(num_dram_banks, num_l1_banks, prefetch_core, dispatch_core)
   fw_src_dir = _REPO / "firmware"
   unique_srcs = sorted(set(s for s, *_ in _FW_TARGETS))
-  key = _cache_hash("fw", profile, tuple(dev_defs), tuple((n, (fw_src_dir / n).read_bytes()) for n in unique_srcs))
+  key = _cache_hash(
+    "fw",
+    profile,
+    num_dram_banks,
+    num_l1_banks,
+    prefetch_core,
+    dispatch_core,
+    tuple((n, (fw_src_dir / n).read_bytes()) for n in unique_srcs),
+  )
   cached = _cache_load(key)
   if cached is not None:
     _zone_map.update(cached["zones"])
@@ -335,7 +367,7 @@ def compile_firmware(profile: bool = PROFILER, device_defines: list[str] | None 
   zones_before = dict(_zone_map)
   common_defines = [
     "-DTENSIX_FIRMWARE", "-DFW_BUILD", "-DARCH_BLACKHOLE",
-    "-DLOCAL_MEM_EN=0", "-DDISPATCH_MESSAGE_ADDR=0xFFB70438", *dev_defs,
+    "-DLOCAL_MEM_EN=0", "-DDISPATCH_MESSAGE_ADDR=0xFFB70438", *dev_defines,
   ]
   if profile: common_defines += _PROFILE_DEFINES
   lib = _DEPS / "lib" / "blackhole"
@@ -357,19 +389,29 @@ def compile_firmware(profile: bool = PROFILER, device_defines: list[str] | None 
   return result
 
 class Compiler:
-  def __init__(self, num_dram_banks: int = 7, num_l1_banks: int = 110,
-               prefetch_core: tuple[int, int] = (14, 2), dispatch_core: tuple[int, int] = (14, 3),
-               num_worker_cores: int = 118, mcast_grid: int = 0x8102CE):
+  def __init__(
+    self,
+    num_dram_banks: int = 7,
+    num_l1_banks: int = 110,
+    prefetch_core: tuple[int, int] = (14, 2),
+    dispatch_core: tuple[int, int] = (14, 3),
+  ):
     self._cc = _SFPI / "riscv-tt-elf-g++"
     self._objcopy = _SFPI / "riscv-tt-elf-objcopy"
     self._includes = ["-I.", *_INCLUDES]
     assert self._cc.is_file(), f"missing compiler: {self._cc}\nDownload toolchain to {_DEPS / 'sfpi-toolchain'}"
-    self._dev_defines = _device_defines(num_dram_banks, num_l1_banks)
-    self._prefetch_core = prefetch_core
-    self._dispatch_core = dispatch_core
-    self._num_worker_cores = num_worker_cores
-    self._mcast_grid = mcast_grid
-    self._fw = compile_firmware(profile=PROFILER, device_defines=self._dev_defines)
+    self._device_defines = _device_defines(num_dram_banks, num_l1_banks, prefetch_core, dispatch_core)
+    self._kernel_defines = [
+      "-DTENSIX_FIRMWARE", "-DLOCAL_MEM_EN=0", "-DARCH_BLACKHOLE",
+      "-DDISPATCH_MESSAGE_ADDR=0xFFB70438", "-DKERNEL_BUILD", *self._device_defines,
+    ]
+    self._fw = compile_firmware(
+      num_dram_banks=num_dram_banks,
+      num_l1_banks=num_l1_banks,
+      prefetch_core=prefetch_core,
+      dispatch_core=dispatch_core,
+      profile=PROFILER,
+    )
 
   def compile_dataflow(self, src: str, processor: str, noc_index: int | None = None) -> CompiledKernel:
     if processor not in ("brisc", "ncrisc"):
@@ -385,7 +427,7 @@ class Compiler:
                         extra_includes: list[str] | None = None, xip_relocate: bool = False,
                         profiler: bool = True) -> CompiledKernel:
     defines = [
-      *_KERNEL_DEFINES_BASE, *self._dev_defines,
+      *self._kernel_defines,
       f"-DCOMPILE_FOR_{target.upper()}", f"-DPROCESSOR_INDEX={0 if target == 'brisc' else 1}",
       f"-DNOC_INDEX={noc_index}", "-DNOC_MODE=0", *(extra_defines or []),
     ]
@@ -397,8 +439,7 @@ class Compiler:
   def _compile_trisc(self, src: str, trisc_id: int, program: Program) -> CompiledKernel:
     stage = ("unpack", "math", "pack")[trisc_id]
     defines = [
-      *_KERNEL_DEFINES_BASE, *self._dev_defines,
-      f"-DCOMPILE_FOR_TRISC={trisc_id}", f"-DPROCESSOR_INDEX={trisc_id + 2}",
+      *self._kernel_defines, f"-DCOMPILE_FOR_TRISC={trisc_id}", f"-DPROCESSOR_INDEX={trisc_id + 2}",
       f"-DUCK_CHLKC_{stage.upper()}", f"-DNAMESPACE=chlkc_{stage}",
     ]
     if PROFILER: defines += _PROFILE_DEFINES
@@ -463,20 +504,8 @@ class Compiler:
     return out
 
   def compile_cq_kernels(self) -> dict[str, CompiledKernel]:
-    px, py = self._prefetch_core
-    dx, dy = self._dispatch_core
-    cq_defines = [
-      f"-DMY_NOC_X_OVERRIDE={px}", f"-DMY_NOC_Y_OVERRIDE={py}",
-      f"-DUPSTREAM_NOC_X_OVERRIDE={px}", f"-DUPSTREAM_NOC_Y_OVERRIDE={py}",
-      f"-DDOWNSTREAM_NOC_X_OVERRIDE={dx}", f"-DDOWNSTREAM_NOC_Y_OVERRIDE={dy}",
-      f"-DDOWNSTREAM_SUBORDINATE_NOC_X_OVERRIDE={dx}", f"-DDOWNSTREAM_SUBORDINATE_NOC_Y_OVERRIDE={dy}",
-      f"-DWORKER_MCAST_GRID_OVERRIDE=0x{self._mcast_grid:x}",
-      f"-DNUM_WORKER_CORES_TO_MCAST_OVERRIDE={self._num_worker_cores}",
-      f"-DPACKED_WRITE_MAX_UNICAST_SUB_CMDS_OVERRIDE={self._num_worker_cores}",
-    ]
     cq = lambda src, proc, noc: self._compile_dataflow(
-      (_CQ_SRC_DIR / src).read_text(), proc, noc_index=noc,
-      extra_includes=_CQ_INC, extra_defines=cq_defines, xip_relocate=True, profiler=False)
+      (_CQ_SRC_DIR / src).read_text(), proc, noc_index=noc, extra_includes=_CQ_INC, xip_relocate=True, profiler=False)
     return {
       "prefetch_brisc": cq("cq_prefetch.cpp", "brisc", 0),
       "dispatch_brisc": cq("cq_dispatch.cpp", "brisc", 1),
