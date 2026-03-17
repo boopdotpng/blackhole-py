@@ -54,10 +54,6 @@ class Arc:
   SCRATCH_RAM_13 = RESET_UNIT_OFFSET + 0x434
   TAG_GDDR_ENABLED = 36
   DEFAULT_GDDR_ENABLED = 0xFF
-  TAG_TENSIX_ENABLED_COL = 34
-  DEFAULT_TENSIX_ENABLED = 0x3FFF  # all 14 columns
-  # bit position → physical NOC X coordinate (hardware harvesting order)
-  TENSIX_COL_NOC_X = (1, 16, 2, 15, 3, 14, 4, 13, 5, 12, 6, 11, 7, 10)
 
 class Dram:
   BANK_COUNT = 8
@@ -204,53 +200,45 @@ class Sysmem:
 
 class TileGrid:
   ARC = (8, 0)
-  ALL_TENSIX_X = (*range(1, 8), *range(10, 17))  # all 14 physical columns
-  TENSIX_X = (*range(1, 8), *range(10, 15))       # default p100a (12 columns, 2 harvested)
+  TENSIX_X_P100 = (*range(1, 8), *range(10, 15))
+  TENSIX_X_P150 = (*range(1, 8), *range(10, 17))
+  TENSIX_X = TENSIX_X_P100  # default for back-compat
   WORKER_CORES = [(x, y) for x in TENSIX_X for y in range(2, 12)]
 
-def tensix_columns_from_mask(enabled_mask: int) -> tuple[int, ...]:
-  """Convert ENABLED_TENSIX_COL bitmask to sorted tuple of active NOC X coordinates."""
-  return tuple(sorted(Arc.TENSIX_COL_NOC_X[i] for i in range(14) if (enabled_mask >> i) & 1))
-
-def worker_cores_from_columns(columns: tuple[int, ...]) -> list[Core]:
-  """Build column-major worker core list from active tensix columns."""
-  return [(x, y) for x in columns for y in range(2, 12)]
-
-def compute_mcast_grid(worker_cores: list[Core]) -> int:
-  """Compute WORKER_MCAST_GRID value: (noc_xy_start << 16) | noc_xy_end."""
-  xs = [x for x, _ in worker_cores]
-  ys = [y for _, y in worker_cores]
-  return (noc_xy(min(xs), min(ys)) << 16) | noc_xy(max(xs), max(ys))
+def worker_cores(tensix_x: tuple[int, ...]) -> list[Core]:
+  return [(x, y) for x in tensix_x for y in range(2, 12)]
 
 USE_USB_DISPATCH = os.environ.get("TT_USB") == "1"
 
-def build_bank_noc_table(harvested_dram: int | None, worker_cores: list[Core],
-                         num_dram_banks: int = 7, num_l1_banks: int = 110) -> bytes:
+def build_bank_noc_table(harvested_dram_banks: list[int], worker_cores: list[Core], num_dram_banks: int, num_l1_banks: int) -> bytes:
   NOCS, PORTS = 2, 3
   # per-bank NOC port selection: bank -> [noc0_port, noc1_port]
   BANK_PORT = [[2,1],[0,1],[0,1],[0,1],[2,1],[2,1],[2,1],[2,1]]
 
-  # logical DRAM banks mapped to translated coords on x=17/18, 3 ports each, y from 12
-  # harvested bank's mirror gets pushed to the last slot on its column
-  half = 4
-  if harvested_dram is not None:
-    h = harvested_dram
+  if len(harvested_dram_banks) == 0:
+    # P150-style: all 8 banks, straightforward layout
+    bank_xy = {}
+    for b in range(Dram.BANK_COUNT):
+      x = 17 if b < 4 else 18
+      bank_xy[b] = (x, 12 + (b % 4) * PORTS)
+  elif len(harvested_dram_banks) == 1:
+    # P100-style: 7 banks, harvested bank's mirror pushed to last slot
+    h = harvested_dram_banks[0]
+    half = 4
     mirror = h + half - 1 if h < half else h - half
     if h < half:
       right = list(range(half - 1))
-      left = [b for b in range(half - 1, num_dram_banks) if b != mirror] + [mirror]
+      left = [b for b in range(half - 1, Dram.BANK_COUNT - 1) if b != mirror] + [mirror]
     else:
       left = [b for b in range(half) if b != mirror] + [mirror]
-      right = list(range(half, num_dram_banks))
+      right = list(range(half, Dram.BANK_COUNT - 1))
+    bank_xy = {}
+    for i, b in enumerate(right):
+      bank_xy[b] = (18, 12 + i * PORTS)
+    for i, b in enumerate(left):
+      bank_xy[b] = (17, 12 + i * PORTS)
   else:
-    # no harvested bank — split evenly across columns
-    left = list(range(half))
-    right = list(range(half, num_dram_banks))
-  bank_xy = {}
-  for i, b in enumerate(right):
-    bank_xy[b] = (18, 12 + i * PORTS)
-  for i, b in enumerate(left):
-    bank_xy[b] = (17, 12 + i * PORTS)
+    raise ValueError(f"unsupported harvested DRAM bank count: {len(harvested_dram_banks)}")
 
   # DRAM section: noc_xy per (noc, bank), selecting the right port
   dram = []
@@ -266,6 +254,5 @@ def build_bank_noc_table(harvested_dram: int | None, worker_cores: list[Core],
     for i in range(num_l1_banks):
       l1.append(noc_xy(cols[i % len(cols)], 2 + (i // len(cols)) % 10))
 
-  return struct.pack(f"<{len(dram)}H{len(l1)}H{num_dram_banks + num_l1_banks}i",
-                     *dram, *l1, *([0] * (num_dram_banks + num_l1_banks)))
+  return struct.pack(f"<{len(dram)}H{len(l1)}H{num_dram_banks + num_l1_banks}i", *dram, *l1, *([0] * (num_dram_banks + num_l1_banks)))
 
