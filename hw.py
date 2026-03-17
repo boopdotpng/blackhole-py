@@ -54,6 +54,10 @@ class Arc:
   SCRATCH_RAM_13 = RESET_UNIT_OFFSET + 0x434
   TAG_GDDR_ENABLED = 36
   DEFAULT_GDDR_ENABLED = 0xFF
+  TAG_TENSIX_ENABLED_COL = 34
+  DEFAULT_TENSIX_ENABLED = 0x3FFF  # all 14 columns
+  # bit position → physical NOC X coordinate (hardware harvesting order)
+  TENSIX_COL_NOC_X = (1, 16, 2, 15, 3, 14, 4, 13, 5, 12, 6, 11, 7, 10)
 
 class Dram:
   BANK_COUNT = 8
@@ -200,26 +204,48 @@ class Sysmem:
 
 class TileGrid:
   ARC = (8, 0)
-  TENSIX_X = (*range(1, 8), *range(10, 15))
+  ALL_TENSIX_X = (*range(1, 8), *range(10, 17))  # all 14 physical columns
+  TENSIX_X = (*range(1, 8), *range(10, 15))       # default p100a (12 columns, 2 harvested)
   WORKER_CORES = [(x, y) for x in TENSIX_X for y in range(2, 12)]
+
+def tensix_columns_from_mask(enabled_mask: int) -> tuple[int, ...]:
+  """Convert ENABLED_TENSIX_COL bitmask to sorted tuple of active NOC X coordinates."""
+  return tuple(sorted(Arc.TENSIX_COL_NOC_X[i] for i in range(14) if (enabled_mask >> i) & 1))
+
+def worker_cores_from_columns(columns: tuple[int, ...]) -> list[Core]:
+  """Build column-major worker core list from active tensix columns."""
+  return [(x, y) for x in columns for y in range(2, 12)]
+
+def compute_mcast_grid(worker_cores: list[Core]) -> int:
+  """Compute WORKER_MCAST_GRID value: (noc_xy_start << 16) | noc_xy_end."""
+  xs = [x for x, _ in worker_cores]
+  ys = [y for _, y in worker_cores]
+  return (noc_xy(min(xs), min(ys)) << 16) | noc_xy(max(xs), max(ys))
 
 USE_USB_DISPATCH = os.environ.get("TT_USB") == "1"
 
-def build_bank_noc_table(harvested_dram: int, worker_cores: list[Core]) -> bytes:
-  NOCS, DRAM_BANKS, L1_BANKS, PORTS = 2, 7, 110, 3
+def build_bank_noc_table(harvested_dram: int | None, worker_cores: list[Core],
+                         num_dram_banks: int = 7, num_l1_banks: int = 110) -> bytes:
+  NOCS, PORTS = 2, 3
   # per-bank NOC port selection: bank -> [noc0_port, noc1_port]
   BANK_PORT = [[2,1],[0,1],[0,1],[0,1],[2,1],[2,1],[2,1],[2,1]]
 
-  # 7 logical DRAM banks mapped to translated coords on x=17/18, 3 ports each, y from 12
+  # logical DRAM banks mapped to translated coords on x=17/18, 3 ports each, y from 12
   # harvested bank's mirror gets pushed to the last slot on its column
-  h, half = harvested_dram, 4
-  mirror = h + half - 1 if h < half else h - half
-  if h < half:
-    right = list(range(half - 1))
-    left = [b for b in range(half - 1, DRAM_BANKS) if b != mirror] + [mirror]
+  half = 4
+  if harvested_dram is not None:
+    h = harvested_dram
+    mirror = h + half - 1 if h < half else h - half
+    if h < half:
+      right = list(range(half - 1))
+      left = [b for b in range(half - 1, num_dram_banks) if b != mirror] + [mirror]
+    else:
+      left = [b for b in range(half) if b != mirror] + [mirror]
+      right = list(range(half, num_dram_banks))
   else:
-    left = [b for b in range(half) if b != mirror] + [mirror]
-    right = list(range(half, DRAM_BANKS))
+    # no harvested bank — split evenly across columns
+    left = list(range(half))
+    right = list(range(half, num_dram_banks))
   bank_xy = {}
   for i, b in enumerate(right):
     bank_xy[b] = (18, 12 + i * PORTS)
@@ -229,7 +255,7 @@ def build_bank_noc_table(harvested_dram: int, worker_cores: list[Core]) -> bytes
   # DRAM section: noc_xy per (noc, bank), selecting the right port
   dram = []
   for noc in range(NOCS):
-    for b in range(DRAM_BANKS):
+    for b in range(num_dram_banks):
       x, y0 = bank_xy[b]
       dram.append(noc_xy(x, y0 + BANK_PORT[b][noc]))
 
@@ -237,8 +263,9 @@ def build_bank_noc_table(harvested_dram: int, worker_cores: list[Core]) -> bytes
   cols = sorted({x for x, _ in worker_cores})
   l1 = []
   for _ in range(NOCS):
-    for i in range(L1_BANKS):
+    for i in range(num_l1_banks):
       l1.append(noc_xy(cols[i % len(cols)], 2 + (i // len(cols)) % 10))
 
-  return struct.pack(f"<{len(dram)}H{len(l1)}H{DRAM_BANKS + L1_BANKS}i", *dram, *l1, *([0] * (DRAM_BANKS + L1_BANKS)))
+  return struct.pack(f"<{len(dram)}H{len(l1)}H{num_dram_banks + num_l1_banks}i",
+                     *dram, *l1, *([0] * (num_dram_banks + num_l1_banks)))
 

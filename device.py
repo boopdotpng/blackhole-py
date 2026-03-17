@@ -3,23 +3,21 @@ from pathlib import Path
 from typing import Literal
 
 from hw import *
-from hw import _ioctl_set_power_state
+from hw import _ioctl_set_power_state, tensix_columns_from_mask, worker_cores_from_columns, compute_mcast_grid
 from dispatch import *
 from cq import *
 from cq import _HOST_TIMESTAMP_SLOTS
 from dram import DramBuffer, Allocator, Shape, tilize, untilize, build_transfer_program
 from compiler import DEBUG
 
-class Device:
-  _PREFETCH_CORE: Core = (14, 2)
-  _DISPATCH_CORE: Core = (14, 3)
-  _CQ_CORES = {_PREFETCH_CORE, _DISPATCH_CORE}
+_SUPPORTED_ARCHS = {"p100a", "p150a", "p150b", "p150c"}
 
+class Device:
   @functools.cached_property
   def cores(self) -> list[Core]:
     if self._use_fast_dispatch:
-      return [c for c in TileGrid.WORKER_CORES if c not in self._CQ_CORES]
-    return list(TileGrid.WORKER_CORES)
+      return [c for c in self.worker_cores if c not in self._cq_cores]
+    return list(self.worker_cores)
 
   def __init__(self, device: int = 0):
     self.device = device
@@ -28,17 +26,19 @@ class Device:
 
     card_type = Path(f"/sys/class/tenstorrent/tenstorrent!{device}/tt_card_type")
     self.arch = card_type.read_text().strip()
-    if self.arch != "p100a":
+    if self.arch not in _SUPPORTED_ARCHS:
       os.close(self.fd)
-      raise SystemExit(f"unsupported blackhole device {self.arch}; p100a only for now")
+      raise SystemExit(f"unsupported blackhole device {self.arch}; supported: {', '.join(sorted(_SUPPORTED_ARCHS))}")
 
-    self._init_dram_tiles()
+    self._init_harvesting()
     self.dram = Allocator(self.fd, self.dram_tiles)
     self._dispatch_mode = DevMsgs.DISPATCH_MODE_HOST if USE_USB_DISPATCH else DevMsgs.DISPATCH_MODE_DEV
     self._use_fast_dispatch = not USE_USB_DISPATCH
 
     from compiler import Compiler
-    self.compiler = Compiler()
+    self.compiler = Compiler(num_dram_banks=self.num_dram_banks, num_l1_banks=self.num_l1_banks,
+                             prefetch_core=self._prefetch_core, dispatch_core=self._dispatch_core,
+                             num_worker_cores=len(self.worker_cores) - 2, mcast_grid=self._mcast_grid)
     self._upload_firmware()
 
     self._dram_sysmem = Sysmem(self.fd) if self._use_fast_dispatch else None
@@ -48,8 +48,8 @@ class Device:
     if self._use_fast_dispatch:
       self._cq_hw = CQSysmem(
         self.fd,
-        prefetch_win=TLBWindow(self.fd, start=self._PREFETCH_CORE),
-        dispatch_win=TLBWindow(self.fd, start=self._DISPATCH_CORE),
+        prefetch_win=TLBWindow(self.fd, start=self._prefetch_core),
+        dispatch_win=TLBWindow(self.fd, start=self._dispatch_core),
       )
       self._start_dispatch_cores()
 
@@ -65,7 +65,7 @@ class Device:
     if self._profiler:
       self._init_profiler_dram()
 
-  def _init_dram_tiles(self):
+  def _init_harvesting(self):
     with TLBWindow(self.fd, start=TileGrid.ARC, addr=Arc.NOC_BASE) as arc:
       telem_ptr = arc.read32(Arc.SCRATCH_RAM_13)
       csm_base, csm_off = align_down(telem_ptr, TLBWindow.SIZE_2M)
@@ -79,14 +79,34 @@ class Device:
         tag_to_offset[tag_offset & 0xFFFF] = (tag_offset >> 16) & 0xFFFF
       off = tag_to_offset.get(Arc.TAG_GDDR_ENABLED)
       gddr_enabled = Arc.DEFAULT_GDDR_ENABLED if off is None else arc.read32(data_base + off * 4)
+      off = tag_to_offset.get(Arc.TAG_TENSIX_ENABLED_COL)
+      tensix_enabled = Arc.DEFAULT_TENSIX_ENABLED if off is None else arc.read32(data_base + off * 4)
+
+    # --- tensix harvesting ---
+    self.tensix_columns = tensix_columns_from_mask(tensix_enabled)
+    self.worker_cores = worker_cores_from_columns(self.tensix_columns)
+    num_cols = len(self.tensix_columns)
+    print(f"  {self.arch}: {num_cols} tensix columns ({num_cols * 10} cores), enabled_col=0x{tensix_enabled:04x}")
+
+    # CQ cores: top two rows of the rightmost active column
+    rightmost_x = self.tensix_columns[-1]
+    self._prefetch_core: Core = (rightmost_x, 2)
+    self._dispatch_core: Core = (rightmost_x, 3)
+    self._cq_cores = {self._prefetch_core, self._dispatch_core}
+    self._mcast_grid = compute_mcast_grid(self.worker_cores)
+
+    # --- DRAM harvesting ---
     harvested = [bank for bank in range(Dram.BANK_COUNT) if ((gddr_enabled >> bank) & 1) == 0]
-    self.harvested_dram = harvested[0]
+    self.harvested_dram = harvested[0] if harvested else None
+    self.num_dram_banks = Dram.BANK_COUNT - len(harvested)
+    self.num_l1_banks = (num_cols - 1) * 10
+    active_banks = [b for b in range(Dram.BANK_COUNT) if b not in harvested]
     self.dram_tiles = [
       (bank, Dram.BANK_X[bank], y)
-      for bank in range(Dram.BANK_COUNT)
-      if bank != self.harvested_dram
+      for bank in active_banks
       for y in Dram.BANK_TILE_YS[bank]
     ]
+    print(f"  {self.arch}: {self.num_dram_banks} DRAM banks, harvested={harvested or 'none'}")
 
   def _set_power(self, busy: bool):
     _ioctl_set_power_state(self.fd, validity=1, power_flags=int(busy))
@@ -113,8 +133,9 @@ class Device:
     brisc_base = TensixL1.BRISC_FIRMWARE_BASE
     jal = ((brisc_base & 0xFF000) | ((brisc_base & 0x800) << 9) | ((brisc_base & 0x7FE) << 20) | 0x6F).to_bytes(4, "little")
     go_init = struct.pack("<BBBB", 0, 0, 0, DevMsgs.RUN_MSG_INIT)
-    all_cores = list(TileGrid.WORKER_CORES)
-    bank_table = build_bank_noc_table(self.harvested_dram, all_cores)
+    all_cores = list(self.worker_cores)
+    bank_table = build_bank_noc_table(self.harvested_dram, all_cores,
+                                      num_dram_banks=self.num_dram_banks, num_l1_banks=self.num_l1_banks)
 
     rects = mcast_rects(all_cores)
     with TLBWindow(self.fd, start=all_cores[0]) as win:
@@ -170,12 +191,12 @@ class Device:
     disp_launch = self._build_cq_launch(kernel_off, ncrisc_off, sem_off=L1_ALIGN)
 
     self._upload_cq_core(
-      self._PREFETCH_CORE, pref_img, pref_launch,
+      self._prefetch_core, pref_img, pref_launch,
       [(kernel_off, cq_kernels["prefetch_brisc"].xip)],
     )
     # init dispatch core L1 state before launching firmware
     dwin = self._cq_hw._dispatch_win
-    dwin.target(self._DISPATCH_CORE)
+    dwin.target(self._dispatch_core)
     base_16b = self._cq_hw._completion_base_16b
     dwin.write32(CQ_COMPLETION_WR_PTR, base_16b)
     dwin.write32(CQ_COMPLETION_RD_PTR, base_16b)
@@ -183,7 +204,7 @@ class Device:
     dwin.write32(CQ_COMPLETION_Q1_EVENT, 0)
     dwin.uc[CQ_DISPATCH_SYNC_SEM : CQ_DISPATCH_SYNC_SEM + 8 * L1_ALIGN] = b"\0" * (8 * L1_ALIGN)
     self._upload_cq_core(
-      self._DISPATCH_CORE, disp_img, disp_launch,
+      self._dispatch_core, disp_img, disp_launch,
       [(kernel_off, cq_kernels["dispatch_brisc"].xip),
        (ncrisc_off, cq_kernels["dispatch_s_ncrisc"].xip)],
     )
@@ -206,7 +227,7 @@ class Device:
     return launch
 
   def _upload_cq_core(self, core: Core, img: bytes, launch: LaunchMsg, kernels: list[tuple[int, bytes]]):
-    win = self._cq_hw._prefetch_win if core == self._PREFETCH_CORE else self._cq_hw._dispatch_win
+    win = self._cq_hw._prefetch_win if core == self._prefetch_core else self._cq_hw._dispatch_win
     win.target(core)
     win.write(TensixL1.KERNEL_CONFIG_BASE, img)
     for off, xip in kernels:
@@ -219,7 +240,7 @@ class Device:
   def _go_word(self) -> int:
     go = GoMsg()
     go.bits.signal = DevMsgs.RUN_MSG_GO
-    go.bits.master_x, go.bits.master_y = self._DISPATCH_CORE
+    go.bits.master_x, go.bits.master_y = self._dispatch_core
     go.bits.dispatch_message_offset = 0
     return go.all
 
