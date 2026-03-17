@@ -28,11 +28,15 @@ _HOST_ISSUE_BASE       = 4 * PCIE_ALIGN
 _HOST_ISSUE_SIZE       = align_up(64 << 20, PCIE_ALIGN)
 _HOST_COMPLETION_BASE  = _HOST_ISSUE_BASE + _HOST_ISSUE_SIZE
 _HOST_COMPLETION_SIZE  = align_up(32 << 20, PCIE_ALIGN)
-_HOST_SYSMEM_SIZE      = align_up(128 << 20, PAGE_SIZE)
+_HOST_TIMESTAMP_BASE   = _HOST_COMPLETION_BASE + _HOST_COMPLETION_SIZE
+_HOST_TIMESTAMP_STRIDE = 16                    # 8 bytes timestamp + 8 padding per slot
+_HOST_TIMESTAMP_SLOTS  = 4096
+_HOST_TIMESTAMP_SIZE   = align_up(_HOST_TIMESTAMP_SLOTS * _HOST_TIMESTAMP_STRIDE, PCIE_ALIGN)
+_HOST_SYSMEM_SIZE      = align_up(_HOST_TIMESTAMP_BASE + _HOST_TIMESTAMP_SIZE, PAGE_SIZE)
 _HOST_CQ_WR_OFF        = 2 * PCIE_ALIGN
 _HOST_CQ_RD_OFF        = 3 * PCIE_ALIGN
 
-assert _HOST_COMPLETION_BASE + _HOST_COMPLETION_SIZE <= _HOST_SYSMEM_SIZE
+assert _HOST_TIMESTAMP_BASE + _HOST_TIMESTAMP_SIZE <= _HOST_SYSMEM_SIZE
 
 # CQ command type IDs
 _RELAY_INLINE       = 5
@@ -300,6 +304,18 @@ class CQSysmem:
       if time.perf_counter() > deadline:
         raise TimeoutError(f"timeout waiting for completion event {event_id} -- try tt-smi -r")
       time.sleep(0.0002)
+
+  def timestamp_noc_addr(self, slot: int) -> tuple[int, int]:
+    off = _HOST_TIMESTAMP_BASE + slot * _HOST_TIMESTAMP_STRIDE
+    # bit 24 of noc_xy encodes PCIe bit 60 after get_noc_addr_helper's << 36 shift
+    pcie_noc_xy = Sysmem.PCIE_NOC_XY | (1 << 24)
+    return pcie_noc_xy, self.noc_local + off
+
+  def read_timestamp(self, slot: int) -> int:
+    off = _HOST_TIMESTAMP_BASE + slot * _HOST_TIMESTAMP_STRIDE
+    lo = self._sysmem_read32(off)
+    hi = self._sysmem_read32(off + 4)
+    return (hi << 32) | lo
 
   def close(self):
     self._prefetch_win.close()

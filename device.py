@@ -6,10 +6,8 @@ from hw import *
 from hw import _ioctl_set_power_state
 from dispatch import *
 from cq import *
+from cq import _HOST_TIMESTAMP_SLOTS
 from dram import DramBuffer, Allocator, Shape, tilize, untilize, build_transfer_program
-
-_TS_STRIDE = 16
-_TS_MAX_SLOTS = 512
 
 class Device:
   _PREFETCH_CORE: Core = (14, 2)
@@ -35,7 +33,6 @@ class Device:
 
     self._init_dram_tiles()
     self.dram = Allocator(self.fd, self.dram_tiles)
-    self._init_timestamp_dram()
     self._dispatch_mode = DevMsgs.DISPATCH_MODE_HOST if USE_USB_DISPATCH else DevMsgs.DISPATCH_MODE_DEV
     self._use_fast_dispatch = not USE_USB_DISPATCH
 
@@ -223,23 +220,6 @@ class Device:
     go.bits.dispatch_message_offset = 0
     return go.all
 
-  def _init_timestamp_dram(self):
-    _, x, y = next((b, x, y) for b, x, y in self.dram.bank_tiles if y != 0)
-    self._ts_noc_xy = noc_xy(x, y)
-    self._ts_bank_tile = (x, y)
-    self._ts_addr = self.dram.next
-    self.dram.next = align_up(self._ts_addr + _TS_MAX_SLOTS * _TS_STRIDE, Dram.ALIGNMENT)
-
-  def _ts_noc_dest(self, slot: int) -> tuple[int, int]:
-    return self._ts_noc_xy, self._ts_addr + slot * _TS_STRIDE
-
-  def _read_ts_slot(self, slot: int) -> int:
-    self.dram.win.target(self._ts_bank_tile, mode=NocOrdering.RELAXED)
-    addr = self._ts_addr + slot * _TS_STRIDE
-    lo = self.dram.win.read32(addr)
-    hi = self.dram.win.read32(addr + 4)
-    return (hi << 32) | lo
-
   def _init_profiler_dram(self):
     cores = sorted(self.cores, key=lambda xy: (xy[0], xy[1]))
     self._profiler_flat_ids = {core: i for i, core in enumerate(cores)}
@@ -378,7 +358,6 @@ class Device:
       self._set_power(False)
 
   def _run_fast_dispatch(self) -> list[dict] | None:
-    timing = os.environ.get("TIMING") == "1"
     n = len(self._programs)
 
     programs = []
@@ -387,9 +366,8 @@ class Device:
       ir = self._compile_ir(program, self._dispatch_mode, host_assigned_id=prof_id)
       programs.append((ir, self._profiler))
 
-    timestamps = None
-    if timing:
-      timestamps = [self._ts_noc_dest(s) for s in range(min(2 * n, _TS_MAX_SLOTS))]
+    max_ts_slots = _HOST_TIMESTAMP_SLOTS
+    timestamps = [self._cq_hw.timestamp_noc_addr(s) for s in range(min(2 * n, max_ts_slots))]
 
     self.cq.extend(lower_fast(
       programs, self._go_word(), self.cores,
@@ -405,32 +383,33 @@ class Device:
 
     if self._profiler:
       self._collect_profiler_data()
-    if not timing:
-      return None
     return self._collect_timing_data(n)
 
   def _run_slow_dispatch(self) -> list[dict] | None:
-    timing = os.environ.get("TIMING") == "1"
-    t0 = time.perf_counter() if timing else 0
+    t0 = time.perf_counter()
     with TLBWindow(self.fd, start=self.cores[0]) as win:
       for program in self._programs:
         ir = self._compile_ir(program, self._dispatch_mode)
         slow_dispatch(win, ir)
-    if timing:
-      elapsed_us = (time.perf_counter() - t0) * 1e6
-      print(f"  slow dispatch: {elapsed_us:.1f} us (host wall-clock)")
-    return None
+    elapsed_us = (time.perf_counter() - t0) * 1e6
+    freq_mhz = 1350
+    timings = []
+    for i, program in enumerate(self._programs):
+      name = f" {program.name}" if program.name else ""
+      timings.append({"cycles": 0, "us": elapsed_us / len(self._programs), "freq_mhz": freq_mhz, "name": program.name})
+    print(f"  slow dispatch: {elapsed_us:,.1f} us total (host wall-clock, {len(self._programs)} programs)")
+    self.last_device_timing = timings
+    return timings
 
   def _collect_timing_data(self, n: int) -> list[dict]:
-    self.dram.barrier()
     freq_mhz = 1350
     timings = []
     for i in range(n):
       ts_slot = 2 * i
-      if ts_slot + 1 >= _TS_MAX_SLOTS:
+      if ts_slot + 1 >= _HOST_TIMESTAMP_SLOTS:
         break
-      t0 = self._read_ts_slot(ts_slot)
-      t1 = self._read_ts_slot(ts_slot + 1)
+      t0 = self._cq_hw.read_timestamp(ts_slot)
+      t1 = self._cq_hw.read_timestamp(ts_slot + 1)
       cycles = t1 - t0
       name = self._programs[i].name
       timings.append({"cycles": cycles, "us": cycles / freq_mhz, "freq_mhz": freq_mhz, "name": name})
