@@ -41,6 +41,7 @@ class Device:
     self._upload_firmware()
 
     self._dram_sysmem = Sysmem(self.fd) if self._use_fast_dispatch else None
+    self._sysmem_offset = 0
     self.cq = CommandQueue()
     self._cq_hw = None
     if self._use_fast_dispatch:
@@ -53,6 +54,7 @@ class Device:
 
     self._programs = []
     self.last_profile = None
+    self._profile_accumulated = []  # collect profiler data across multiple run() calls
 
     from compiler import PROFILER
     self._profiler = PROFILER and self._use_fast_dispatch
@@ -268,7 +270,7 @@ class Device:
       with TLBWindow(self.fd, start=core) as win:
         ctrl_regs[core] = bytes(win.uc[TensixL1.PROFILER_CONTROL : TensixL1.PROFILER_CONTROL + 128])
     import profiler
-    self.last_profile = profiler.collect(
+    batch = profiler.collect(
       programs_info,
       self.dram.read_raw_bank_pages(self._profiler_dram_addr, self._profiler_page_size),
       ctrl_regs,
@@ -276,25 +278,42 @@ class Device:
               "core_count_per_dram": self._profiler_core_count_per_dram},
       harvested_dram_bank=self.harvested_dram,
     )
-    profiler.print_summary(self.last_profile)
+    profiler.print_summary(batch)
+    self._profile_accumulated.extend(batch.get("programs", []))
+
+  def _finalize_profile(self):
+    """Combine accumulated profiler data from all run() calls into one profile."""
+    if not self._profile_accumulated: return
+    # re-index programs sequentially
+    for i, prog in enumerate(self._profile_accumulated):
+      prog["index"] = i
+    self.last_profile = {
+      "dispatch_mode": "fast",
+      "harvested_dram_bank": self.harvested_dram,
+      "programs": self._profile_accumulated,
+    }
+    self._profile_accumulated = []
 
   def alloc_write(self, data: bytes, dtype: Dtype, shape: Shape, name: str = "") -> DramBuffer:
     buf = self.dram.alloc(len(data) // dtype.tile_size, dtype, name, shape)
     self.dram_write(buf, data)
     return buf
 
-  def _run_transfer(self, buf: DramBuffer, direction: str):
-    prog, _ = build_transfer_program(buf, direction, len(self.cores), self._dram_sysmem.noc_addr)
-    assert not self._programs, "queue must be empty for DRAM transfers"
-    self.queue(prog)
-    self.run()
+  def _check_sysmem(self, size: int):
+    end = self._sysmem_offset + size
+    assert end <= self._dram_sysmem.size, \
+      f"sysmem overflow: need {end} bytes ({self._sysmem_offset} used + {size} new), have {self._dram_sysmem.size}"
+    return end
 
   def dram_write(self, buf: DramBuffer, data: bytes):
     assert len(data) <= buf.size
     if self._use_fast_dispatch and buf.shape is not None:
-      assert buf.size <= self._dram_sysmem.size, f"transfer {buf.size} exceeds sysmem {self._dram_sysmem.size}"
-      self._dram_sysmem.buf[:len(data)] = data
-      self._run_transfer(buf, "tilize")
+      self._check_sysmem(len(data))
+      off = self._sysmem_offset
+      self._dram_sysmem.buf[off : off + len(data)] = data
+      prog, _ = build_transfer_program(buf, "tilize", len(self.cores), self._dram_sysmem.noc_addr, sysmem_offset=off)
+      self.queue(prog)
+      self._sysmem_offset += len(data)
       return
     if buf.shape is not None:
       data = tilize(data, buf.dtype.bpe, buf.shape)
@@ -302,9 +321,15 @@ class Device:
 
   def dram_read(self, buf: DramBuffer) -> bytes:
     if self._use_fast_dispatch and buf.shape is not None:
-      assert buf.size <= self._dram_sysmem.size, f"transfer {buf.size} exceeds sysmem {self._dram_sysmem.size}"
-      self._run_transfer(buf, "untilize")
-      return bytes(self._dram_sysmem.buf[:buf.size])
+      self._check_sysmem(buf.size)
+      off = self._sysmem_offset
+      prog, _ = build_transfer_program(buf, "untilize", len(self.cores), self._dram_sysmem.noc_addr, sysmem_offset=off)
+      self.queue(prog)
+      self._sysmem_offset += buf.size
+      self.run()
+      return bytes(self._dram_sysmem.buf[off : off + buf.size])
+    if self._programs:
+      self.run()
     result = self.dram.read(buf)
     if buf.shape is not None: return untilize(result, buf.dtype.bpe, buf.shape)
     return result
@@ -355,6 +380,7 @@ class Device:
       else: return self._run_slow_dispatch()
     finally:
       self._programs.clear()
+      self._sysmem_offset = 0
       self._set_power(False)
 
   def _run_fast_dispatch(self) -> list[dict] | None:
@@ -420,6 +446,7 @@ class Device:
     return timings
 
   def serve_profile(self, port: int = int(os.environ.get("PORT", 8000))):
+    self._finalize_profile()
     from profiler import ui as profiler_ui
     profiler_ui.serve(self.last_profile, port=port)
 

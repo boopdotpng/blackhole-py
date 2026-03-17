@@ -568,12 +568,11 @@ def main():
 
     for _ in range(NUM_ITERS):
       device.queue(prog)
-    device.run()
 
     c_raw = device.dram_read(c_buf)
     _validate(a_ref, b_ref, c_raw, M, N, Mp, Np)
 
-    if device.last_profile is not None:
+    if device._profile_accumulated:
       device.serve_profile()
 
   finally:

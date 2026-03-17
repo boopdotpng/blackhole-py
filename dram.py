@@ -53,7 +53,7 @@ class DramBuffer:
     return self.num_tiles * self.page_size
 
 def build_transfer_program(
-  buf: DramBuffer, direction: str, n_cores: int, sysmem_noc_addr: int,
+  buf: DramBuffer, direction: str, n_cores: int, sysmem_noc_addr: int, sysmem_offset: int = 0,
 ) -> tuple[Program, int]:
   assert buf.shape is not None
   rows, cols = buf.shape[-2], buf.shape[-1]
@@ -68,7 +68,7 @@ def build_transfer_program(
   n = min(n_cores, total_tiles)
   tpc = (total_tiles + n - 1) // n
 
-  pcie_base = (Sysmem.PCIE_NOC_XY << 36) | (1 << 60) | (sysmem_noc_addr & ((1 << 36) - 1))
+  pcie_base = (Sysmem.PCIE_NOC_XY << 36) | (1 << 60) | ((sysmem_noc_addr + sysmem_offset) & ((1 << 36) - 1))
   tile_row_bytes = TILE_C * buf.dtype.bpe
   row_bytes = cols * buf.dtype.bpe
 
