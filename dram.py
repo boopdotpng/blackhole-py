@@ -66,18 +66,27 @@ def build_transfer_program(
   tile_cols = cols // TILE_C
   total_tiles = batch * (rows // TILE_R) * tile_cols
   n = min(n_cores, total_tiles)
-  tpc = (total_tiles + n - 1) // n
+  base_tpc = total_tiles // n
+  extra = total_tiles % n  # first `extra` cores get base_tpc+1, rest get base_tpc
 
   pcie_base = (Sysmem.PCIE_NOC_XY << 36) | (1 << 60) | ((sysmem_noc_addr + sysmem_offset) & ((1 << 36) - 1))
   tile_row_bytes = TILE_C * buf.dtype.bpe
   row_bytes = cols * buf.dtype.bpe
 
   def tile_args(ci, _xy, _n):
-    start = ci * tpc
-    return [start, min(tpc, total_tiles - start) if start < total_tiles else 0]
+    if ci < extra:
+      start = ci * (base_tpc + 1)
+      count = base_tpc + 1
+    else:
+      start = extra * (base_tpc + 1) + (ci - extra) * base_tpc
+      count = base_tpc
+    return [start, count if ci < n else 0]
   def compute_args(ci, _xy, _n):
-    start = ci * tpc
-    return [min(tpc, total_tiles - start) if start < total_tiles else 0]
+    if ci < extra:
+      count = base_tpc + 1
+    else:
+      count = base_tpc
+    return [count if ci < n else 0]
 
   if direction == "tilize":
     rk = tilize_reader(pcie_base, tile_row_bytes, tile_cols, row_bytes)
@@ -90,7 +99,7 @@ def build_transfer_program(
 
   return Program(
     cores=n, name=name, reader_kernel=rk, compute_kernel=ck, writer_kernel=wk,
-    cbs=[CBConfig(index=0, dtype=buf.dtype, tiles=1), CBConfig(index=16, dtype=buf.dtype, tiles=1)],
+    cbs=[CBConfig(index=0, dtype=buf.dtype, tiles=4), CBConfig(index=16, dtype=buf.dtype, tiles=4)],
     reader_args=tile_args, writer_args=tile_args, compute_args=compute_args,
   ), logical_bytes
 

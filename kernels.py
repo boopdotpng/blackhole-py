@@ -19,11 +19,28 @@ def tilize_reader(pcie_base: int, tile_row_bytes: int, tile_cols: int, row_bytes
 #include <cstdint>
 
 void kernel_main() {
-  for (uint32_t t = 0; t < A(1); ++t) {
-    uint32_t id = A(0) + t;
+  const uint32_t start = A(0), count = A(1);
+  const uint32_t ps = get_tile_size(tt::CBIndex::c_0);
+  uint32_t t = 0;
+  // batch pairs: issue reads for 2 tiles with one barrier instead of two
+  for (; t + 1 < count; t += 2) {
+    uint32_t id0 = start + t, id1 = start + t + 1;
+    uint32_t pr0 = (id0 / TILE_COLS) * 32, cb0 = (id0 % TILE_COLS) * TILE_ROW_BYTES;
+    uint32_t pr1 = (id1 / TILE_COLS) * 32, cb1 = (id1 % TILE_COLS) * TILE_ROW_BYTES;
+    cb_reserve_back(tt::CBIndex::c_0, 2);
+    uint32_t l1_0 = get_write_ptr(tt::CBIndex::c_0);
+    uint32_t l1_1 = l1_0 + ps;
+    for (uint32_t r = 0; r < 32; ++r) {
+      noc_async_read(PCIE_BASE + (uint64_t)(pr0 + r) * ROW_BYTES + cb0, l1_0 + r * TILE_ROW_BYTES, TILE_ROW_BYTES);
+      noc_async_read(PCIE_BASE + (uint64_t)(pr1 + r) * ROW_BYTES + cb1, l1_1 + r * TILE_ROW_BYTES, TILE_ROW_BYTES);
+    }
+    noc_async_read_barrier();
+    cb_push_back(tt::CBIndex::c_0, 2);
+  }
+  if (t < count) {
+    uint32_t id = start + t;
     uint32_t pixel_row = (id / TILE_COLS) * 32;
     uint32_t pixel_col_bytes = (id % TILE_COLS) * TILE_ROW_BYTES;
-
     cb_reserve_back(tt::CBIndex::c_0, 1);
     uint32_t l1 = get_write_ptr(tt::CBIndex::c_0);
     for (uint32_t r = 0; r < 32; ++r) {
@@ -61,14 +78,24 @@ def tilize_writer(dram_addr: int) -> str:
 #include <cstdint>
 
 void kernel_main() {
+  const uint32_t start = A(0), count = A(1);
+  const uint32_t ps = get_tile_size(tt::CBIndex::c_16);
   const InterleavedAddrGenFast<true> dram = {
-    .bank_base_address = DRAM_ADDR,
-    .page_size = get_tile_size(tt::CBIndex::c_16),
+    .bank_base_address = DRAM_ADDR, .page_size = ps,
     .data_format = get_dataformat(tt::CBIndex::c_16),
   };
-  for (uint32_t t = 0; t < A(1); ++t) {
+  uint32_t t = 0;
+  for (; t + 1 < count; t += 2) {
+    cb_wait_front(tt::CBIndex::c_16, 2);
+    uint32_t base = get_read_ptr(tt::CBIndex::c_16);
+    noc_async_write_tile(start + t, dram, base);
+    noc_async_write_tile(start + t + 1, dram, base + ps);
+    noc_async_write_barrier();
+    cb_pop_front(tt::CBIndex::c_16, 2);
+  }
+  if (t < count) {
     cb_wait_front(tt::CBIndex::c_16, 1);
-    noc_async_write_tile(A(0) + t, dram, get_read_ptr(tt::CBIndex::c_16));
+    noc_async_write_tile(start + t, dram, get_read_ptr(tt::CBIndex::c_16));
     noc_async_write_barrier();
     cb_pop_front(tt::CBIndex::c_16, 1);
   }
@@ -80,14 +107,24 @@ def untilize_reader(dram_addr: int) -> str:
 #include <cstdint>
 
 void kernel_main() {
+  const uint32_t start = A(0), count = A(1);
+  const uint32_t ps = get_tile_size(tt::CBIndex::c_0);
   const InterleavedAddrGenFast<true> dram = {
-    .bank_base_address = DRAM_ADDR,
-    .page_size = get_tile_size(tt::CBIndex::c_0),
+    .bank_base_address = DRAM_ADDR, .page_size = ps,
     .data_format = get_dataformat(tt::CBIndex::c_0),
   };
-  for (uint32_t t = 0; t < A(1); ++t) {
+  uint32_t t = 0;
+  for (; t + 1 < count; t += 2) {
+    cb_reserve_back(tt::CBIndex::c_0, 2);
+    uint32_t base = get_write_ptr(tt::CBIndex::c_0);
+    noc_async_read_tile(start + t, dram, base);
+    noc_async_read_tile(start + t + 1, dram, base + ps);
+    noc_async_read_barrier();
+    cb_push_back(tt::CBIndex::c_0, 2);
+  }
+  if (t < count) {
     cb_reserve_back(tt::CBIndex::c_0, 1);
-    noc_async_read_tile(A(0) + t, dram, get_write_ptr(tt::CBIndex::c_0));
+    noc_async_read_tile(start + t, dram, get_write_ptr(tt::CBIndex::c_0));
     noc_async_read_barrier();
     cb_push_back(tt::CBIndex::c_0, 1);
   }
@@ -120,11 +157,27 @@ def untilize_writer(pcie_base: int, tile_row_bytes: int, tile_cols: int, row_byt
 #include <cstdint>
 
 void kernel_main() {
-  for (uint32_t t = 0; t < A(1); ++t) {
-    uint32_t id = A(0) + t;
+  const uint32_t start = A(0), count = A(1);
+  const uint32_t ps = get_tile_size(tt::CBIndex::c_16);
+  uint32_t t = 0;
+  for (; t + 1 < count; t += 2) {
+    uint32_t id0 = start + t, id1 = start + t + 1;
+    uint32_t pr0 = (id0 / TILE_COLS) * 32, cb0 = (id0 % TILE_COLS) * TILE_ROW_BYTES;
+    uint32_t pr1 = (id1 / TILE_COLS) * 32, cb1 = (id1 % TILE_COLS) * TILE_ROW_BYTES;
+    cb_wait_front(tt::CBIndex::c_16, 2);
+    uint32_t l1_0 = get_read_ptr(tt::CBIndex::c_16);
+    uint32_t l1_1 = l1_0 + ps;
+    for (uint32_t r = 0; r < 32; ++r) {
+      noc_async_write(l1_0 + r * TILE_ROW_BYTES, PCIE_BASE + (uint64_t)(pr0 + r) * ROW_BYTES + cb0, TILE_ROW_BYTES);
+      noc_async_write(l1_1 + r * TILE_ROW_BYTES, PCIE_BASE + (uint64_t)(pr1 + r) * ROW_BYTES + cb1, TILE_ROW_BYTES);
+    }
+    noc_async_write_barrier();
+    cb_pop_front(tt::CBIndex::c_16, 2);
+  }
+  if (t < count) {
+    uint32_t id = start + t;
     uint32_t pixel_row = (id / TILE_COLS) * 32;
     uint32_t pixel_col_bytes = (id % TILE_COLS) * TILE_ROW_BYTES;
-
     cb_wait_front(tt::CBIndex::c_16, 1);
     uint32_t l1 = get_read_ptr(tt::CBIndex::c_16);
     for (uint32_t r = 0; r < 32; ++r) {
