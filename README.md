@@ -8,9 +8,9 @@ A minimal Python driver for the Tenstorrent Blackhole accelerator. Compiles and 
 
 ### Requirements
 
-- **Hardware**: Blackhole P100A or P150A (unharvested, pre-Jan 2026 units with 140 cores)
+- **Hardware**: Blackhole P100A or P150{a,b} (unharvested, pre-Jan 2026 units with 140 cores)
 - **Kernel driver**: tt-kmd >= 2.6.0
-- **Firmware**: < 19.5, or any firmware exposing all cores
+- **Firmware**: < 19.5, or any firmware exposing all cores (custom firmware will work)
 - **Python**: 3.10+, numpy
 
 Does not support multi-chip / distributed yet.
@@ -24,7 +24,7 @@ Does not support multi-chip / distributed yet.
 ### Usage
 
 ```sh
-PYTHONPATH=. uv run examples/matmul_peak.py 4096 4096 4096
+PYTHONPATH=. uv run examples/matmul_peak.py 
 ```
 
 #### Dispatch modes
