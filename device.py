@@ -1,44 +1,79 @@
 import functools, os, struct, time
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
 
 from hw import *
-from hw import _ioctl_set_power_state
+from hw import _ioctl_set_power_state, worker_cores as _worker_cores
 from dispatch import *
 from cq import *
 from cq import _HOST_TIMESTAMP_SLOTS
 from dram import DramBuffer, Allocator, Shape, tilize, untilize, build_transfer_program
 from compiler import DEBUG
 
-class Device:
-  _PREFETCH_CORE: Core = (14, 2)
-  _DISPATCH_CORE: Core = (14, 3)
-  _CQ_CORES = {_PREFETCH_CORE, _DISPATCH_CORE}
+@dataclass(frozen=True)
+class BoardConfig:
+  tensix_x: tuple[int, ...]
+  prefetch: tuple[int, int]
+  dispatch: tuple[int, int]
 
+P100 = BoardConfig(
+  tensix_x=(*range(1, 8), *range(10, 15)),
+  prefetch=(14, 2),
+  dispatch=(14, 3),
+)
+P150 = BoardConfig(
+  tensix_x=(*range(1, 8), *range(10, 17)),
+  prefetch=(16, 2),
+  dispatch=(16, 3),
+)
+_BOARDS = {"p100": P100, "p150": P150}
+
+class Device:
   @functools.cached_property
   def cores(self) -> list[Core]:
     if self._use_fast_dispatch:
-      return [c for c in TileGrid.WORKER_CORES if c not in self._CQ_CORES]
-    return list(TileGrid.WORKER_CORES)
+      return [c for c in self._all_worker_cores if c not in self._CQ_CORES]
+    return list(self._all_worker_cores)
 
-  def __init__(self, device: int = 0):
+  def __init__(self, device: int | None = None):
+    if device is None:
+      device = int(os.getenv("DEV", "0"))
     self.device = device
     self.path = f"/dev/tenstorrent/{device}"
     self.fd = os.open(self.path, os.O_RDWR | os.O_CLOEXEC)
 
     card_type = Path(f"/sys/class/tenstorrent/tenstorrent!{device}/tt_card_type")
     self.arch = card_type.read_text().strip()
-    if self.arch != "p100a":
+    if self.arch.startswith("p100"):
+      self.board = "p100"
+    elif self.arch.startswith("p150"):
+      self.board = "p150"
+    else:
       os.close(self.fd)
-      raise SystemExit(f"unsupported blackhole device {self.arch}; p100a only for now")
+      raise SystemExit(f"unsupported blackhole device {self.arch}")
+    print(f"device {self.device}: {self.arch}")
+
+    board = _BOARDS[self.board]
+    self._tensix_x = board.tensix_x
+    self._all_worker_cores = _worker_cores(self._tensix_x)
+    self._PREFETCH_CORE = board.prefetch
+    self._DISPATCH_CORE = board.dispatch
+    self._CQ_CORES = {self._PREFETCH_CORE, self._DISPATCH_CORE}
 
     self._init_dram_tiles()
+    self._num_dram_banks = Dram.BANK_COUNT - len(self.harvested_dram_banks)
+    self._num_l1_banks = len(self._all_worker_cores)
     self.dram = Allocator(self.fd, self.dram_tiles)
     self._dispatch_mode = DevMsgs.DISPATCH_MODE_HOST if USE_USB_DISPATCH else DevMsgs.DISPATCH_MODE_DEV
     self._use_fast_dispatch = not USE_USB_DISPATCH
 
     from compiler import Compiler
-    self.compiler = Compiler()
+    self.compiler = Compiler(
+      num_dram_banks=self._num_dram_banks,
+      num_l1_banks=self._num_l1_banks,
+      prefetch_core=self._PREFETCH_CORE,
+      dispatch_core=self._DISPATCH_CORE,
+    )
     self._upload_firmware()
 
     self._dram_sysmem = Sysmem(self.fd) if self._use_fast_dispatch else None
@@ -80,16 +115,25 @@ class Device:
       off = tag_to_offset.get(Arc.TAG_GDDR_ENABLED)
       gddr_enabled = Arc.DEFAULT_GDDR_ENABLED if off is None else arc.read32(data_base + off * 4)
     harvested = [bank for bank in range(Dram.BANK_COUNT) if ((gddr_enabled >> bank) & 1) == 0]
-    self.harvested_dram = harvested[0]
+    self.harvested_dram_banks = harvested
+    harvested_set = set(harvested)
     self.dram_tiles = [
       (bank, Dram.BANK_X[bank], y)
       for bank in range(Dram.BANK_COUNT)
-      if bank != self.harvested_dram
+      if bank not in harvested_set
       for y in Dram.BANK_TILE_YS[bank]
     ]
 
   def _set_power(self, busy: bool):
     _ioctl_set_power_state(self.fd, validity=1, power_flags=int(busy))
+
+  def _halt_cores(self, cores: list[Core]):
+    mmio_base, _ = align_down(TensixMMIO.RISCV_DEBUG_REG_SOFT_RESET_0, TLBWindow.SIZE_2M)
+    reset_off = TensixMMIO.RISCV_DEBUG_REG_SOFT_RESET_0 - mmio_base
+    with TLBWindow(self.fd, start=cores[0], addr=mmio_base) as win:
+      for core in cores:
+        win.target(core, addr=mmio_base)
+        win.write32(reset_off, TensixMMIO.SOFT_RESET_ALL)
 
   def _upload_firmware(self):
     fw = self.compiler._fw
@@ -113,8 +157,8 @@ class Device:
     brisc_base = TensixL1.BRISC_FIRMWARE_BASE
     jal = ((brisc_base & 0xFF000) | ((brisc_base & 0x800) << 9) | ((brisc_base & 0x7FE) << 20) | 0x6F).to_bytes(4, "little")
     go_init = struct.pack("<BBBB", 0, 0, 0, DevMsgs.RUN_MSG_INIT)
-    all_cores = list(TileGrid.WORKER_CORES)
-    bank_table = build_bank_noc_table(self.harvested_dram, all_cores)
+    all_cores = list(self._all_worker_cores)
+    bank_table = build_bank_noc_table(self.harvested_dram_banks, all_cores)
 
     rects = mcast_rects(all_cores)
     with TLBWindow(self.fd, start=all_cores[0]) as win:
@@ -224,45 +268,18 @@ class Device:
     return go.all
 
   def _init_profiler_dram(self):
-    cores = sorted(self.cores, key=lambda xy: (xy[0], xy[1]))
-    self._profiler_flat_ids = {core: i for i, core in enumerate(cores)}
-    bank_count = len(self.dram.bank_tiles)
-    self._profiler_core_count_per_dram = max(1, (len(cores) + bank_count - 1) // bank_count)
-    bytes_per_risc = TensixL1.PROFILER_HOST_BUFFER_BYTES_PER_RISC
-    page_size = bytes_per_risc * 5 * self._profiler_core_count_per_dram
+    import profiler
+    layout = profiler.init_layout(self.cores, len(self.dram.bank_tiles))
+    self._profiler_flat_ids = layout["flat_ids"]
+    self._profiler_core_count_per_dram = layout["core_count_per_dram"]
+    self._profiler_page_size = layout["page_size"]
     addr = self.dram.next
-    self.dram.next = align_up(addr + page_size, Dram.ALIGNMENT)
+    self.dram.next = align_up(addr + self._profiler_page_size, Dram.ALIGNMENT)
     self._profiler_dram_addr = addr
-    self._profiler_page_size = page_size
 
   def _collect_profiler_data(self):
-    programs_info = []
-    for i, prog in enumerate(self._programs):
-      sources = {}
-      if prog.reader_kernel: sources["reader"] = prog.reader_kernel
-      if prog.writer_kernel: sources["writer"] = prog.writer_kernel
-      if prog.compute_kernel: sources["compute"] = prog.compute_kernel
-      core_sources = None
-      if prog.grid is not None:
-        rows, cols = prog.grid
-        cores = sorted([(x, y) for x in cols for y in rows], key=lambda c: (c[0], c[1]))
-        if prog.reader_recv_kernel or prog.writer_recv_kernel:
-          core_sources = {}
-          for core in cores:
-            cs = {}
-            if prog.compute_kernel: cs["compute"] = prog.compute_kernel
-            c_idx = list(cols).index(core[0])
-            r_idx = list(rows).index(core[1])
-            reader_src = prog.reader_kernel if c_idx == 0 else (prog.reader_recv_kernel or prog.reader_kernel)
-            writer_src = prog.writer_kernel if r_idx == 0 else (prog.writer_recv_kernel or prog.writer_kernel)
-            if reader_src: cs["reader"] = reader_src
-            if writer_src: cs["writer"] = writer_src
-            core_sources[f"{core[0]},{core[1]}"] = cs
-      else:
-        cores = self.cores if prog.cores == "all" else self.cores[:prog.cores]
-      info = {"index": i, "name": prog.name or None, "cores": cores, "sources": sources}
-      if core_sources is not None: info["core_sources"] = core_sources
-      programs_info.append(info)
+    import profiler
+    programs_info = profiler.build_programs_info(self._programs, self.cores)
     if not programs_info: return
     self.dram.barrier()
     needed = sorted({c for info in programs_info for c in info["cores"]})
@@ -270,27 +287,27 @@ class Device:
     for core in needed:
       with TLBWindow(self.fd, start=core) as win:
         ctrl_regs[core] = bytes(win.mm[TensixL1.PROFILER_CONTROL : TensixL1.PROFILER_CONTROL + 128])
-    import profiler
     batch = profiler.collect(
       programs_info,
       self.dram.read_raw_bank_pages(self._profiler_dram_addr, self._profiler_page_size),
       ctrl_regs,
       layout={"flat_ids": self._profiler_flat_ids, "page_size": self._profiler_page_size,
               "core_count_per_dram": self._profiler_core_count_per_dram},
-      harvested_dram_bank=self.harvested_dram,
+      harvested_dram_bank=self.harvested_dram_banks[0] if self.harvested_dram_banks else None,
     )
     profiler.print_summary(batch)
     self._profile_accumulated.extend(batch.get("programs", []))
 
   def _finalize_profile(self):
-    """Combine accumulated profiler data from all run() calls into one profile."""
     if not self._profile_accumulated: return
     # re-index programs sequentially
     for i, prog in enumerate(self._profile_accumulated):
       prog["index"] = i
     self.last_profile = {
       "dispatch_mode": "fast",
-      "harvested_dram_bank": self.harvested_dram,
+      "harvested_dram_bank": self.harvested_dram_banks[0] if self.harvested_dram_banks else None,
+      "tensix_x": list(self._tensix_x),
+      "dispatch_cores": [list(self._PREFETCH_CORE), list(self._DISPATCH_CORE)],
       "programs": self._profile_accumulated,
     }
     self._profile_accumulated = []
@@ -358,7 +375,7 @@ class Device:
       top_row = [grid[0][c] for c in range(1, len(cols))]
       left_col = [grid[r][0] for r in range(1, len(rows))]
       interior = [grid[r][c] for r in range(1, len(rows)) for c in range(1, len(cols))]
-      roles: list[Role] = [(cs, rk, wk) for cs, rk, wk in [
+      roles = [Role(cs, rk, wk) for cs, rk, wk in [
         (top_left, reader, writer), (top_row, r_recv, writer), (left_col, reader, w_recv), (interior, r_recv, w_recv),
       ] if cs]
     else:
@@ -370,7 +387,7 @@ class Device:
          resolve_args(program.compute_args, i, c, n))
         for i, c in enumerate(cores)
       ]
-      roles = [(cores, reader, writer)]
+      roles = [Role(cores, reader, writer)]
 
     return build_ir(program, roles, compute, all_cores, per_core_args, dispatch_mode, host_assigned_id=host_assigned_id)
 
@@ -465,6 +482,10 @@ class Device:
 
   def close(self):
     self._set_power(False)
+    # halt dispatch cores before tearing down sysmem — they read from
+    # IOMMU-mapped host memory and will fault if it's unmapped first
+    if self._cq_hw is not None:
+      self._halt_cores([self._PREFETCH_CORE, self._DISPATCH_CORE])
     if self._dram_sysmem is not None:
       self._dram_sysmem.close()
     if self._cq_hw is not None:

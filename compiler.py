@@ -69,15 +69,28 @@ _CFLAGS = (
 )
 _LFLAGS = ("-Wl,-z,max-page-size=16", "-Wl,-z,common-page-size=16", "-nostartfiles")
 
-_DEVICE_DEFINES = [
-  "-DNUM_DRAM_BANKS=7", "-DIS_NOT_POW2_NUM_DRAM_BANKS=1",
-  "-DNUM_L1_BANKS=110", "-DIS_NOT_POW2_NUM_L1_BANKS=1",
-  "-DPCIE_NOC_X=19", "-DPCIE_NOC_Y=24",
-]
-_KERNEL_DEFINES = [
-  "-DTENSIX_FIRMWARE", "-DLOCAL_MEM_EN=0", "-DARCH_BLACKHOLE",
-  "-DDISPATCH_MESSAGE_ADDR=0xFFB70438", "-DKERNEL_BUILD", *_DEVICE_DEFINES,
-]
+def _device_defines(
+  num_dram_banks: int,
+  num_l1_banks: int,
+  prefetch_core: tuple[int, int],
+  dispatch_core: tuple[int, int],
+) -> list[str]:
+  defs = [
+    f"-DNUM_DRAM_BANKS={num_dram_banks}",
+    f"-DNUM_L1_BANKS={num_l1_banks}",
+    f"-DPREFETCH_NOC_X={prefetch_core[0]}",
+    f"-DPREFETCH_NOC_Y={prefetch_core[1]}",
+    f"-DDISPATCH_NOC_X={dispatch_core[0]}",
+    f"-DDISPATCH_NOC_Y={dispatch_core[1]}",
+    "-DPCIE_NOC_X=19", "-DPCIE_NOC_Y=24",
+    "-DIS_NOT_POW2_NUM_L1_BANKS=1",  # true for both p100 (110) and p150 (140)
+  ]
+  # p100: 7 banks (not pow2), p150: 8 banks (pow2)
+  if num_dram_banks == 8:
+    defs.append("-DLOG_BASE_2_OF_NUM_DRAM_BANKS=3")
+  else:
+    defs.append("-DIS_NOT_POW2_NUM_DRAM_BANKS=1")
+  return defs
 
 _CQ_SRC_DIR = _REPO / "firmware" / "cq"
 _CQ_INC = [str(_CQ_SRC_DIR), str(_CQ_SRC_DIR / "includes")]
@@ -107,24 +120,24 @@ def _ckernel_headers(program: Program) -> dict[str, str]:
   for cb in program.cbs:
     formats[cb.index] = cb.dtype.value
   tile_sizes = [Dtype(f).tile_size for f in formats]
-  a = lambda vs: ", ".join(str(v) for v in vs)
-  a32 = lambda v: a([v] * 32)
-  b = lambda v: "true" if v else "false"
+  join = lambda vs: ", ".join(str(v) for v in vs)
+  repeat32 = lambda v: join([v] * 32)
+  cbool = lambda v: "true" if v else "false"
 
   def data_fmt(prefix, ctype):
     return (f"#pragma once\n#include <cstdint>\n"
-            f"constexpr {ctype} {prefix}_src_format[32] = {{{a(formats)}}};\n"
-            f"constexpr {ctype} {prefix}_dst_format[32] = {{{a(formats)}}};\n")
+            f"constexpr {ctype} {prefix}_src_format[32] = {{{join(formats)}}};\n"
+            f"constexpr {ctype} {prefix}_dst_format[32] = {{{join(formats)}}};\n")
 
   def tile_dims(prefix):
     return (f"#pragma once\n#include <cstdint>\n"
-            f"constexpr uint8_t {prefix}_tile_num_faces[32] = {{{a32(4)}}};\n"
-            f"constexpr uint8_t {prefix}_partial_face[32] = {{{a32(0)}}};\n"
-            f"constexpr uint8_t {prefix}_tile_face_r_dim[32] = {{{a32(16)}}};\n"
-            f"constexpr uint8_t {prefix}_narrow_tile[32] = {{{a32(0)}}};\n"
-            f"constexpr uint8_t {prefix}_tile_r_dim[32] = {{{a32(32)}}};\n"
-            f"constexpr uint8_t {prefix}_tile_c_dim[32] = {{{a32(32)}}};\n"
-            f"constexpr uint16_t {prefix}_tile_size[32] = {{{a(tile_sizes)}}};\n")
+            f"constexpr uint8_t {prefix}_tile_num_faces[32] = {{{repeat32(4)}}};\n"
+            f"constexpr uint8_t {prefix}_partial_face[32] = {{{repeat32(0)}}};\n"
+            f"constexpr uint8_t {prefix}_tile_face_r_dim[32] = {{{repeat32(16)}}};\n"
+            f"constexpr uint8_t {prefix}_narrow_tile[32] = {{{repeat32(0)}}};\n"
+            f"constexpr uint8_t {prefix}_tile_r_dim[32] = {{{repeat32(32)}}};\n"
+            f"constexpr uint8_t {prefix}_tile_c_dim[32] = {{{repeat32(32)}}};\n"
+            f"constexpr uint16_t {prefix}_tile_size[32] = {{{join(tile_sizes)}}};\n")
 
   dst_sync = "DstSync::SyncFull" if program.dst_full_sync else "DstSync::SyncHalf"
   return {
@@ -132,10 +145,10 @@ def _ckernel_headers(program: Program) -> dict[str, str]:
     "chlkc_pack_data_format.h": data_fmt("pack", "unsigned char"),
     "chlkc_unpack_tile_dims.h": tile_dims("unpack"),
     "chlkc_pack_tile_dims.h": tile_dims("pack"),
-    "chlkc_dst_accum_mode.h": f"#pragma once\nconstexpr bool DST_ACCUM_MODE = {b(program.dst_accum_mode)};\n",
+    "chlkc_dst_accum_mode.h": f"#pragma once\nconstexpr bool DST_ACCUM_MODE = {cbool(program.dst_accum_mode)};\n",
     "chlkc_dst_sync_mode.h": f"#pragma once\n#define DST_SYNC_MODE {dst_sync}\n",
     "chlkc_math_fidelity.h": f"#pragma once\n#include <cstdint>\nconstexpr std::int32_t MATH_FIDELITY = {program.math_fidelity.value};\n",
-    "chlkc_math_approx_mode.h": f"#pragma once\nconstexpr bool APPROX = {b(program.approx)};\n",
+    "chlkc_math_approx_mode.h": f"#pragma once\nconstexpr bool APPROX = {cbool(program.approx)};\n",
   }
 
 @dataclass(frozen=True)
@@ -312,13 +325,28 @@ def _compile_and_link(cc: Path, src: Path, compile_args: list[str], link_args: l
   finally:
     shutil.rmtree(build, ignore_errors=True)
 
-def compile_firmware(profile: bool = PROFILER) -> dict[str, CompiledFirmware]:
+def compile_firmware(
+  num_dram_banks: int,
+  num_l1_banks: int,
+  prefetch_core: tuple[int, int],
+  dispatch_core: tuple[int, int],
+  profile: bool = PROFILER,
+) -> dict[str, CompiledFirmware]:
   cc = _SFPI / "riscv-tt-elf-g++"
   assert cc.is_file(), f"missing compiler: {cc}"
 
+  dev_defines = _device_defines(num_dram_banks, num_l1_banks, prefetch_core, dispatch_core)
   fw_src_dir = _REPO / "firmware"
   unique_srcs = sorted(set(s for s, *_ in _FW_TARGETS))
-  key = _cache_hash("fw", profile, tuple((n, (fw_src_dir / n).read_bytes()) for n in unique_srcs))
+  key = _cache_hash(
+    "fw",
+    profile,
+    num_dram_banks,
+    num_l1_banks,
+    prefetch_core,
+    dispatch_core,
+    tuple((n, (fw_src_dir / n).read_bytes()) for n in unique_srcs),
+  )
   cached = _cache_load(key)
   if cached is not None:
     _zone_map.update(cached["zones"])
@@ -327,7 +355,7 @@ def compile_firmware(profile: bool = PROFILER) -> dict[str, CompiledFirmware]:
   zones_before = dict(_zone_map)
   common_defines = [
     "-DTENSIX_FIRMWARE", "-DFW_BUILD", "-DARCH_BLACKHOLE",
-    "-DLOCAL_MEM_EN=0", "-DDISPATCH_MESSAGE_ADDR=0xFFB70438", *_DEVICE_DEFINES,
+    "-DLOCAL_MEM_EN=0", "-DDISPATCH_MESSAGE_ADDR=0xFFB70438", *dev_defines,
   ]
   if profile: common_defines += _PROFILE_DEFINES
   lib = _DEPS / "lib" / "blackhole"
@@ -349,12 +377,29 @@ def compile_firmware(profile: bool = PROFILER) -> dict[str, CompiledFirmware]:
   return result
 
 class Compiler:
-  def __init__(self):
+  def __init__(
+    self,
+    num_dram_banks: int,
+    num_l1_banks: int,
+    prefetch_core: tuple[int, int],
+    dispatch_core: tuple[int, int],
+  ):
     self._cc = _SFPI / "riscv-tt-elf-g++"
     self._objcopy = _SFPI / "riscv-tt-elf-objcopy"
     self._includes = ["-I.", *_INCLUDES]
     assert self._cc.is_file(), f"missing compiler: {self._cc}\nDownload toolchain to {_DEPS / 'sfpi-toolchain'}"
-    self._fw = compile_firmware(profile=PROFILER)
+    self._device_defines = _device_defines(num_dram_banks, num_l1_banks, prefetch_core, dispatch_core)
+    self._kernel_defines = [
+      "-DTENSIX_FIRMWARE", "-DLOCAL_MEM_EN=0", "-DARCH_BLACKHOLE",
+      "-DDISPATCH_MESSAGE_ADDR=0xFFB70438", "-DKERNEL_BUILD", *self._device_defines,
+    ]
+    self._fw = compile_firmware(
+      num_dram_banks=num_dram_banks,
+      num_l1_banks=num_l1_banks,
+      prefetch_core=prefetch_core,
+      dispatch_core=dispatch_core,
+      profile=PROFILER,
+    )
 
   def compile_dataflow(self, src: str, processor: str, noc_index: int | None = None) -> CompiledKernel:
     if processor not in ("brisc", "ncrisc"):
@@ -370,7 +415,7 @@ class Compiler:
                         extra_includes: list[str] | None = None, xip_relocate: bool = False,
                         profiler: bool = True) -> CompiledKernel:
     defines = [
-      *_KERNEL_DEFINES,
+      *self._kernel_defines,
       f"-DCOMPILE_FOR_{target.upper()}", f"-DPROCESSOR_INDEX={0 if target == 'brisc' else 1}",
       f"-DNOC_INDEX={noc_index}", "-DNOC_MODE=0", *(extra_defines or []),
     ]
@@ -382,7 +427,7 @@ class Compiler:
   def _compile_trisc(self, src: str, trisc_id: int, program: Program) -> CompiledKernel:
     stage = ("unpack", "math", "pack")[trisc_id]
     defines = [
-      *_KERNEL_DEFINES, f"-DCOMPILE_FOR_TRISC={trisc_id}", f"-DPROCESSOR_INDEX={trisc_id + 2}",
+      *self._kernel_defines, f"-DCOMPILE_FOR_TRISC={trisc_id}", f"-DPROCESSOR_INDEX={trisc_id + 2}",
       f"-DUCK_CHLKC_{stage.upper()}", f"-DNAMESPACE=chlkc_{stage}",
     ]
     if PROFILER: defines += _PROFILE_DEFINES

@@ -4,7 +4,7 @@ A minimal Python driver for the Tenstorrent Blackhole accelerator. Compiles and 
 
 > **~4k lines of code** — the entire driver, compiler, firmware, and dispatch stack. TT-Metal's `tt_metal/` directory alone is ~430k lines of C++.
 
-Does not support P150A or multi-chip / distributed yet.
+Does not support multi-chip / distributed yet.
 
 ### Setup
 
@@ -39,8 +39,8 @@ Fast dispatch uses on-device command queues (prefetch + dispatch cores). Slow di
 
 ### Requirements
 
-- **Hardware**: Blackhole P100A only
+- **Hardware**: Blackhole P100A or P150A (unharvested, pre-Jan 2026 units with 140 cores)
 - **Kernel driver**: tt-kmd >= 2.6.0
-- **Firmware**: < 19.5
+- **Firmware**: < 19.5, or any firmware exposing all cores
 - **Python**: 3.10+, numpy
 

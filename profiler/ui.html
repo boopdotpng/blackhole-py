@@ -84,22 +84,33 @@ pre.src code{font-size:12px;line-height:1.4;padding:10px!important;display:block
 const CELL=50, GAP=5, FREQ_MHZ=1350;
 const ZONE_COLORS = ['#e6a02f','#5b9bd5','#70ad47','#ed7d31','#a855f7','#06b6d4','#f472b6','#84cc16'];
 
-// P100A grid constants
-const GRID_X = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14];
-const GRID_Y = [0,1,2,3,4,5,6,7,8,9,10,11];
-const DISPATCH_CORES = new Set(['14,2','14,3']);
-const DRAM_TILES = [
-  {bank:0,x:0,ys:[0,1,11]},{bank:1,x:0,ys:[2,3,10]},{bank:2,x:0,ys:[4,8,9]},{bank:3,x:0,ys:[5,6,7]},
-  {bank:4,x:9,ys:[0,1,11]},{bank:5,x:9,ys:[2,3,10]},{bank:6,x:9,ys:[4,8,9]},{bank:7,x:9,ys:[5,6,7]},
-];
-const DRAM_MAP = new Map();
-for (const t of DRAM_TILES) for (const y of t.ys) DRAM_MAP.set(`${t.x},${y}`, t);
-const PCIE_TILES = new Set(['2,0','11,0']);
-const ARC_TILE = '8,0';
+// Grid constants — derived from device data at init time
+let GRID_X, GRID_Y, DISPATCH_CORES, DRAM_TILES, DRAM_MAP, PCIE_TILES, ARC_TILE;
+
+function initGrid(data) {
+  // Build GRID_X from tensix_x: 0..max(tensix_x) inclusive
+  const tensix_x = data.tensix_x || [1,2,3,4,5,6,7,10,11,12,13,14];
+  const maxX = Math.max(...tensix_x);
+  GRID_X = Array.from({length: maxX + 1}, (_, i) => i);
+  GRID_Y = [0,1,2,3,4,5,6,7,8,9,10,11];
+
+  // Dispatch cores from device data, fallback to P100A defaults
+  const dc = data.dispatch_cores || [[14,2],[14,3]];
+  DISPATCH_CORES = new Set(dc.map(c => `${c[0]},${c[1]}`));
+
+  DRAM_TILES = [
+    {bank:0,x:0,ys:[0,1,11]},{bank:1,x:0,ys:[2,3,10]},{bank:2,x:0,ys:[4,8,9]},{bank:3,x:0,ys:[5,6,7]},
+    {bank:4,x:9,ys:[0,1,11]},{bank:5,x:9,ys:[2,3,10]},{bank:6,x:9,ys:[4,8,9]},{bank:7,x:9,ys:[5,6,7]},
+  ];
+  DRAM_MAP = new Map();
+  for (const t of DRAM_TILES) for (const y of t.ys) DRAM_MAP.set(`${t.x},${y}`, t);
+  PCIE_TILES = new Set(['2,0','11,0']);
+  ARC_TILE = '8,0';
+}
 
 let D, selProg=0, selCore=null, rpanelWidth=500, rpanelOpen=false, dockHeight=220;
 
-fetch('/api/data').then(r=>r.json()).then(d=>{ D=d; init() });
+fetch('/api/data').then(r=>r.json()).then(d=>{ D=d; initGrid(d); init() });
 
 function init(){
   buildSidebar();

@@ -5,37 +5,28 @@
 #pragma once
 
 // blackhole-py runs CQ in a single fixed topology:
-// - prefetch BRISC on (14,2) with NOC_INDEX=0
-// - dispatch BRISC on (14,3) with NOC_INDEX=1
-// - dispatch subordinate NCRISC on (14,3) with NOC_INDEX=1
+// - prefetch BRISC on (PREFETCH_NOC_X,PREFETCH_NOC_Y) with NOC_INDEX=0
+// - dispatch BRISC on (DISPATCH_NOC_X,DISPATCH_NOC_Y) with NOC_INDEX=1
+// - dispatch subordinate NCRISC on (DISPATCH_NOC_X,DISPATCH_NOC_Y) with NOC_INDEX=1
 // Keep this file explicit and static so CQ behavior is easy to reason about.
 
-#ifndef DISPATCH_KERNEL
 #define DISPATCH_KERNEL 1
-#endif
-
-#ifndef FD_CORE_TYPE
 #define FD_CORE_TYPE 0
-#endif
-
-#ifndef IS_H_VARIANT
 #define IS_H_VARIANT 1
-#endif
-
-#ifndef IS_D_VARIANT
 #define IS_D_VARIANT 1
-#endif
+
+// PREFETCH_NOC_X/Y and DISPATCH_NOC_X/Y come from -D flags (board-specific)
 
 #if defined(COMPILE_FOR_BRISC) && (NOC_INDEX == 0)
 // cq_prefetch.cpp
-#define MY_NOC_X 14
-#define MY_NOC_Y 2
-#define UPSTREAM_NOC_X 14
-#define UPSTREAM_NOC_Y 2
-#define DOWNSTREAM_NOC_X 14
-#define DOWNSTREAM_NOC_Y 3
-#define DOWNSTREAM_SUBORDINATE_NOC_X 14
-#define DOWNSTREAM_SUBORDINATE_NOC_Y 3
+#define MY_NOC_X PREFETCH_NOC_X
+#define MY_NOC_Y PREFETCH_NOC_Y
+#define UPSTREAM_NOC_X PREFETCH_NOC_X
+#define UPSTREAM_NOC_Y PREFETCH_NOC_Y
+#define DOWNSTREAM_NOC_X DISPATCH_NOC_X
+#define DOWNSTREAM_NOC_Y DISPATCH_NOC_Y
+#define DOWNSTREAM_SUBORDINATE_NOC_X DISPATCH_NOC_X
+#define DOWNSTREAM_SUBORDINATE_NOC_Y DISPATCH_NOC_Y
 #define UPSTREAM_NOC_INDEX 0
 
 #define DOWNSTREAM_CB_BASE 0x1A000
@@ -71,14 +62,14 @@
 
 #elif defined(COMPILE_FOR_BRISC) && (NOC_INDEX == 1)
 // cq_dispatch.cpp
-#define MY_NOC_X 14
-#define MY_NOC_Y 3
-#define UPSTREAM_NOC_X 14
-#define UPSTREAM_NOC_Y 2
-#define DOWNSTREAM_NOC_X 14
-#define DOWNSTREAM_NOC_Y 3
-#define DOWNSTREAM_SUBORDINATE_NOC_X 14
-#define DOWNSTREAM_SUBORDINATE_NOC_Y 3
+#define MY_NOC_X DISPATCH_NOC_X
+#define MY_NOC_Y DISPATCH_NOC_Y
+#define UPSTREAM_NOC_X PREFETCH_NOC_X
+#define UPSTREAM_NOC_Y PREFETCH_NOC_Y
+#define DOWNSTREAM_NOC_X DISPATCH_NOC_X
+#define DOWNSTREAM_NOC_Y DISPATCH_NOC_Y
+#define DOWNSTREAM_SUBORDINATE_NOC_X DISPATCH_NOC_X
+#define DOWNSTREAM_SUBORDINATE_NOC_Y DISPATCH_NOC_Y
 #define UPSTREAM_NOC_INDEX 0
 
 #define DISPATCH_CB_BASE 0x1A000
@@ -123,12 +114,12 @@
 
 #elif defined(COMPILE_FOR_NCRISC) && (NOC_INDEX == 1)
 // cq_dispatch_subordinate.cpp
-#define MY_NOC_X 14
-#define MY_NOC_Y 3
-#define UPSTREAM_NOC_X 14
-#define UPSTREAM_NOC_Y 2
-#define DOWNSTREAM_NOC_X 14
-#define DOWNSTREAM_NOC_Y 3
+#define MY_NOC_X DISPATCH_NOC_X
+#define MY_NOC_Y DISPATCH_NOC_Y
+#define UPSTREAM_NOC_X PREFETCH_NOC_X
+#define UPSTREAM_NOC_Y PREFETCH_NOC_Y
+#define DOWNSTREAM_NOC_X DISPATCH_NOC_X
+#define DOWNSTREAM_NOC_Y DISPATCH_NOC_Y
 
 #define CB_BASE 0x9A000
 #define CB_LOG_PAGE_SIZE 8
