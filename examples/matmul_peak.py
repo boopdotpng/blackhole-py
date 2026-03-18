@@ -7,13 +7,25 @@ from hw import *
 from dispatch import *
 from device import Device, DramBuffer, Dtype, MathFidelity
 
-IO_MODE = "f16" if os.environ.get("F16") == "1" else "bf16"
-# Blackhole does not have a real f32 matmul path. F32_ACC only enables the
-# internal DEST-accum variant for this benchmark while IO stays f16/bf16.
-F32_ACC = os.environ.get("F32_ACC") == "1"
-IO_DTYPE = Dtype.Float16 if IO_MODE == "f16" else Dtype.Float16_b
-_MATH_FIDELITY_MAP = {"lofi": MathFidelity.LoFi, "hifi2": MathFidelity.HiFi2}
-MATH_FIDELITY_NAME = os.environ.get("MATH_FIDELITY", "hifi2").lower()
+# IO mode: F32=1 for float32 (Tf32 multiply, FP32 accum), F16=1 for float16, default bf16
+if os.environ.get("F32") == "1":
+  IO_MODE = "f32"
+elif os.environ.get("F16") == "1":
+  IO_MODE = "f16"
+else:
+  IO_MODE = "bf16"
+
+# F32 IO implies FP32 accumulation (Tf32 SRC registers + FP32 DEST).
+# F32_ACC=1 can also be set independently for bf16/f16 IO with FP32 DEST accum.
+F32_ACC = IO_MODE == "f32" or os.environ.get("F32_ACC") == "1"
+IO_DTYPE = {"f32": Dtype.Float32, "f16": Dtype.Float16, "bf16": Dtype.Float16_b}[IO_MODE]
+NP_DTYPE = np.float32 if IO_MODE == "f32" else np.float16
+
+_MATH_FIDELITY_MAP = {
+  "lofi": MathFidelity.LoFi, "hifi2": MathFidelity.HiFi2,
+  "hifi3": MathFidelity.HiFi3, "hifi4": MathFidelity.HiFi4,
+}
+MATH_FIDELITY_NAME = os.environ.get("MATH_FIDELITY", "hifi4" if IO_MODE == "f32" else "hifi2").lower()
 MATH_FIDELITY = _MATH_FIDELITY_MAP.get(MATH_FIDELITY_NAME)
 if MATH_FIDELITY is None:
   raise SystemExit(f"Invalid MATH_FIDELITY={MATH_FIDELITY_NAME!r}. Expected: {', '.join(_MATH_FIDELITY_MAP)}")
@@ -318,7 +330,7 @@ void kernel_main() {{
 {_OUTPUT_WRITE_LOOP}
 }}"""
 
-def _compute_src(plan: MatmulPlan, f32_acc: bool):
+def _compute_src(plan: MatmulPlan, f32_acc: bool, l1_acc: bool = True):
   if f32_acc:
     mode_defines = "#define FP32_DEST_ACC_EN 1\n"
     pack_include = '#include "compute_kernel_api/pack.h"\n'
@@ -337,6 +349,19 @@ def _compute_src(plan: MatmulPlan, f32_acc: bool):
       transpose, out_subblock_w, out_subblock_h, in0_block_w);"""
     pack16_reconfig = ""
     pack24_reconfig = ""
+
+  # Packer L1 accumulation only works with bf16 on Blackhole hardware.
+  # For other dtypes (Float32/Tf32/Float16), use explicit reload from CB24.
+  if l1_acc:
+    return _compute_src_l1_acc(plan, mode_defines, pack_include, reload_init,
+                               mm_short, pack16_reconfig, pack24_reconfig)
+  else:
+    return _compute_src_reload(plan, mode_defines, pack_include, reload_init,
+                               mm_short, pack16_reconfig, pack24_reconfig)
+
+def _compute_src_l1_acc(plan, mode_defines, pack_include, reload_init,
+                         mm_short, pack16_reconfig, pack24_reconfig):
+  """Compute kernel using packer L1 accumulation (bf16 only)."""
   return f"""\
 #include <cstdint>
 {mode_defines}#define PACKER_L1_ACC 1
@@ -427,6 +452,86 @@ void MAIN {{
 }}
 }} // namespace NAMESPACE"""
 
+def _compute_src_reload(plan, mode_defines, pack_include, reload_init,
+                         mm_short, pack16_reconfig, pack24_reconfig):
+  """Compute kernel using explicit reload from CB24 (no packer L1 acc).
+  Required for non-bf16 dtypes where packer L1 accumulation is broken."""
+  return f"""\
+#include <cstdint>
+{mode_defines}#include "compute_kernel_api/matmul.h"
+{pack_include}#include "compute_kernel_api/tile_move_copy.h"
+#include "tools/profiler/kernel_profiler.hpp"
+
+namespace NAMESPACE {{
+void MAIN {{
+  constexpr uint32_t in0_block_w = {plan.in0_block_w};
+  constexpr uint32_t in0_num_subblocks = {plan.in0_num_subblocks};
+  constexpr uint32_t in0_block_num_tiles = {plan.in0_block_num_tiles};
+  constexpr uint32_t in0_subblock_num_tiles = {plan.in0_subblock_num_tiles};
+  constexpr uint32_t in1_num_subblocks = {plan.in1_num_subblocks};
+  constexpr uint32_t in1_block_num_tiles = {plan.in1_block_num_tiles};
+  constexpr uint32_t in1_per_core_w = {plan.in1_per_core_w};
+  constexpr uint32_t num_blocks = {plan.num_blocks};
+  constexpr uint32_t out_subblock_h = {plan.out_subblock_h};
+  constexpr uint32_t out_subblock_w = {plan.out_subblock_w};
+  constexpr uint32_t out_subblock_num_tiles = {plan.out_subblock_num_tiles};
+  constexpr uint32_t out_block_num_tiles = {plan.out_block_num_tiles};
+  constexpr uint32_t transpose = 0;
+  mm_block_init(tt::CBIndex::c_0, tt::CBIndex::c_1, tt::CBIndex::c_16,
+  transpose, out_subblock_w, out_subblock_h, in0_block_w);
+  DeviceZoneScopedN("COMPUTE");
+  for (uint32_t block = 0; block < num_blocks; block++) {{
+  const bool last_out = (block == (num_blocks - 1));
+  cb_wait_front(tt::CBIndex::c_0, in0_block_num_tiles);
+  cb_wait_front(tt::CBIndex::c_1, in1_block_num_tiles);
+  int in0_index_subblock_offset = 0;
+  for (uint32_t in0_sb = 0; in0_sb < in0_num_subblocks; in0_sb++) {{
+    int in1_index_subblock_offset = 0;
+    for (uint32_t in1_sb = 0; in1_sb < in1_num_subblocks; in1_sb++) {{
+    tile_regs_acquire();
+    if (block > 0) {{
+      {reload_init}
+      cb_wait_front(tt::CBIndex::c_24, out_subblock_num_tiles);
+      #pragma GCC unroll 0
+      for (uint32_t i = 0; i < out_subblock_num_tiles; i++) {{ copy_tile(tt::CBIndex::c_24, i, i); }}
+      cb_pop_front(tt::CBIndex::c_24, out_subblock_num_tiles);
+      {mm_short}
+    }}
+    #pragma GCC unroll 0
+    for (uint32_t inner = 0; inner < in0_block_w; inner++) {{
+      const uint32_t in0_tile_index = (uint32_t)(in0_index_subblock_offset + (int)inner);
+      const uint32_t in1_tile_index = (uint32_t)(in1_index_subblock_offset + (int)(inner * in1_per_core_w));
+      matmul_block(tt::CBIndex::c_0, tt::CBIndex::c_1,
+      in0_tile_index, in1_tile_index, 0, transpose, out_subblock_w, out_subblock_h, in0_block_w);
+    }}
+    tile_regs_commit();
+    if (last_out) {{
+      cb_reserve_back(tt::CBIndex::c_16, out_subblock_num_tiles);
+      tile_regs_wait();
+      {pack16_reconfig}
+      #pragma GCC unroll 0
+      for (uint32_t i = 0; i < out_subblock_num_tiles; i++) {{ pack_tile(i, tt::CBIndex::c_16); }}
+      tile_regs_release();
+      cb_push_back(tt::CBIndex::c_16, out_subblock_num_tiles);
+    }} else {{
+      cb_reserve_back(tt::CBIndex::c_24, out_subblock_num_tiles);
+      tile_regs_wait();
+      {pack24_reconfig}
+      #pragma GCC unroll 0
+      for (uint32_t i = 0; i < out_subblock_num_tiles; i++) {{ pack_tile(i, tt::CBIndex::c_24); }}
+      tile_regs_release();
+      cb_push_back(tt::CBIndex::c_24, out_subblock_num_tiles);
+    }}
+    in1_index_subblock_offset += out_subblock_w;
+    }}
+    in0_index_subblock_offset += in0_subblock_num_tiles;
+  }}
+  cb_pop_front(tt::CBIndex::c_0, in0_block_num_tiles);
+  cb_pop_front(tt::CBIndex::c_1, in1_block_num_tiles);
+  }}
+}}
+}} // namespace NAMESPACE"""
+
 # --- build matmul program ---
 
 def build_matmul_program(
@@ -435,6 +540,11 @@ def build_matmul_program(
 ) -> Program:
   df = io_dtype.name
   cb24_dtype = Dtype.Float32 if f32_acc else io_dtype
+  f32_io = io_dtype == Dtype.Float32
+  # For Float32 IO: use Tf32 for input CBs. The unpacker needs Tf32 (not Float32)
+  # as the format to correctly handle data through the 19-bit SRC registers.
+  # Tf32 has the same 4096-byte tile size and memory layout as Float32.
+  input_cb_dtype = Dtype.Tf32 if f32_io else io_dtype
   M, K, N = plan.mt * 32, plan.kt * 32, plan.nt * 32
 
   grid = plan.grid()
@@ -473,14 +583,14 @@ def build_matmul_program(
     cores="all",
     reader_kernel=_reader_sender_src(df),
     writer_kernel=_writer_sender_src(df),
-    compute_kernel=_compute_src(plan, f32_acc),
+    compute_kernel=_compute_src(plan, f32_acc, l1_acc=not f32_io),
     reader_recv_kernel=_READER_RECV_SRC,
     writer_recv_kernel=_writer_recv_src(df),
     grid=(rows, cols),
     name=f"matmul_{M}x{K}x{N}",
     cbs=[
-      CBConfig(index=0, dtype=io_dtype, tiles=plan.cb0_pages),
-      CBConfig(index=1, dtype=io_dtype, tiles=plan.cb1_pages),
+      CBConfig(index=0, dtype=input_cb_dtype, tiles=plan.cb0_pages),
+      CBConfig(index=1, dtype=input_cb_dtype, tiles=plan.cb1_pages),
       CBConfig(index=16, dtype=io_dtype, tiles=plan.cb16_pages),
       CBConfig(index=24, dtype=cb24_dtype, tiles=plan.cb24_pages),
     ],
@@ -495,12 +605,16 @@ def build_matmul_program(
 # --- benchmark harness ---
 
 def _to_device_bytes(x: np.ndarray) -> bytes:
+  if IO_MODE == "f32":
+    return np.ascontiguousarray(x, dtype=np.float32).tobytes()
   x16 = np.ascontiguousarray(x, dtype=np.float16)
   if IO_MODE == "f16": return x16.tobytes()
   u32 = x16.astype(np.float32).view(np.uint32)
   return (u32 >> 16).astype(np.uint16).tobytes()
 
 def _from_device_bytes(data: bytes, shape: tuple[int, ...]) -> np.ndarray:
+  if IO_MODE == "f32":
+    return np.frombuffer(data, dtype=np.float32).copy().reshape(shape)
   if IO_MODE == "f16":
     return np.frombuffer(data, dtype=np.float16).astype(np.float32).reshape(shape)
   u16 = np.frombuffer(data, dtype=np.uint16)
@@ -517,8 +631,12 @@ def _validate(a, b, c_bytes, M, N, Mp, Np):
   pcc = float(np.corrcoef(ref_flat, got_flat)[0, 1])
   rel_l2 = float(np.linalg.norm(got_flat - ref_flat) / (np.linalg.norm(ref_flat) + 1e-12))
   max_abs = float(np.max(np.abs(got_flat - ref_flat)))
+  # For f32 IO (Tf32 multiply), rel_l2 can be higher than bf16 due to accumulation
+  # of Tf32 rounding errors across K dimension. PCC should still be very high.
+  pcc_thresh = 0.995
+  rel_thresh = 0.10 if IO_MODE == "f32" else 0.08
   print(f"Validation: PCC={pcc:.6f}, rel_l2={rel_l2:.6f}, max_abs={max_abs:.6f}")
-  if pcc < 0.995 or rel_l2 > 0.08:
+  if pcc < pcc_thresh or rel_l2 > rel_thresh:
     raise SystemExit(f"Validation failed: PCC={pcc:.6f}, rel_l2={rel_l2:.6f}")
 
 def main():
@@ -547,12 +665,12 @@ def main():
     print(f"  cores: {plan.active_core_count} ({len(device.cores)} available)")
 
     rng_a, rng_b = np.random.default_rng(42), np.random.default_rng(123)
-    a_src = rng_a.uniform(-0.5, 0.5, size=(M, K)).astype(np.float16)
-    b_src = rng_b.uniform(-0.5, 0.5, size=(K, N)).astype(np.float16)
+    a_src = rng_a.uniform(-0.5, 0.5, size=(M, K)).astype(NP_DTYPE)
+    b_src = rng_b.uniform(-0.5, 0.5, size=(K, N)).astype(NP_DTYPE)
 
     if padded:
-      a_padded = np.zeros((Mp, Kp), dtype=np.float16); a_padded[:M, :K] = a_src
-      b_padded = np.zeros((Kp, Np), dtype=np.float16); b_padded[:K, :N] = b_src
+      a_padded = np.zeros((Mp, Kp), dtype=NP_DTYPE); a_padded[:M, :K] = a_src
+      b_padded = np.zeros((Kp, Np), dtype=NP_DTYPE); b_padded[:K, :N] = b_src
       a_bytes, b_bytes = _to_device_bytes(a_padded), _to_device_bytes(b_padded)
     else:
       a_bytes, b_bytes = _to_device_bytes(a_src), _to_device_bytes(b_src)

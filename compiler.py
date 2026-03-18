@@ -119,6 +119,9 @@ def _ckernel_headers(program: Program) -> dict[str, str]:
   formats = [Dtype.Float16_b.value] * 32
   for cb in program.cbs:
     formats[cb.index] = cb.dtype.value
+  # Note: when dst_accum_mode (fp32_dest_acc_en) is True, Float32 data in SRC
+  # registers is implicitly truncated to Tf32 (19-bit) by the physical register
+  # width. We do NOT set dst_format=Tf32 explicitly — the HW handles it.
   tile_sizes = [Dtype(f).tile_size for f in formats]
   join = lambda vs: ", ".join(str(v) for v in vs)
   repeat32 = lambda v: join([v] * 32)
@@ -401,19 +404,20 @@ class Compiler:
       profile=PROFILER,
     )
 
-  def compile_dataflow(self, src: str, processor: str, noc_index: int | None = None) -> CompiledKernel:
+  def compile_dataflow(self, src: str, processor: str, noc_index: int | None = None,
+                       program: Program = _DEFAULT_PROGRAM) -> CompiledKernel:
     if processor not in ("brisc", "ncrisc"):
       raise ValueError(f"processor must be 'brisc' or 'ncrisc', got: {processor}")
     if noc_index is None:
       noc_index = 1 if processor == "brisc" else 0
-    return self._compile_dataflow(src, processor, noc_index=noc_index)
+    return self._compile_dataflow(src, processor, noc_index=noc_index, program=program)
 
   def compile_compute(self, src: str, program: Program) -> tuple[CompiledKernel, CompiledKernel, CompiledKernel]:
     return (self._compile_trisc(src, 0, program), self._compile_trisc(src, 1, program), self._compile_trisc(src, 2, program))
 
   def _compile_dataflow(self, src: str, target: str, noc_index: int, extra_defines: list[str] | None = None,
                         extra_includes: list[str] | None = None, xip_relocate: bool = False,
-                        profiler: bool = True) -> CompiledKernel:
+                        profiler: bool = True, program: Program = _DEFAULT_PROGRAM) -> CompiledKernel:
     defines = [
       *self._kernel_defines,
       f"-DCOMPILE_FOR_{target.upper()}", f"-DPROCESSOR_INDEX={0 if target == 'brisc' else 1}",
@@ -422,7 +426,7 @@ class Compiler:
     if PROFILER and profiler: defines += _PROFILE_DEFINES
     extra_objs = [str(_DEPS / "lib/blackhole/noc.o")] if target == "brisc" else []
     return self._build(src, target, defines, extra_objs, opt="-O2", trisc=False,
-                       extra_includes=extra_includes, xip_relocate=xip_relocate)
+                       extra_includes=extra_includes, xip_relocate=xip_relocate, program=program)
 
   def _compile_trisc(self, src: str, trisc_id: int, program: Program) -> CompiledKernel:
     stage = ("unpack", "math", "pack")[trisc_id]

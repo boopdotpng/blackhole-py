@@ -71,8 +71,9 @@ CoreArgs = tuple[Args, Args, Args]  # (writer, reader, compute) per core
 FAST_CQ_NUM_CIRCULAR_BUFFERS = 32
 
 class Dtype(Enum):
-  Float32 = 0  # internal-only: used for f32_acc dest accumulation, not for host IO
+  Float32 = 0
   Float16 = 1
+  Tf32 = 4     # E8M10, 19-bit stored in 32-bit container; internal SRC register format
   Float16_b = 5
   Int32 = 8
   UInt16 = 9
@@ -82,7 +83,7 @@ class Dtype(Enum):
 
   @property
   def bpe(self) -> int:
-    return {0: 4, 1: 2, 5: 2, 8: 4, 9: 2, 14: 1, 24: 4, 30: 1}[self.value]
+    return {0: 4, 1: 2, 4: 4, 5: 2, 8: 4, 9: 2, 14: 1, 24: 4, 30: 1}[self.value]
 
   @property
   def tile_size(self) -> int:
@@ -91,6 +92,8 @@ class Dtype(Enum):
 class MathFidelity(Enum):
   LoFi = 0
   HiFi2 = 2
+  HiFi3 = 3
+  HiFi4 = 4
 
 @dataclass
 class CBConfig:
