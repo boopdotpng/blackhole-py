@@ -129,7 +129,7 @@ class Allocator:
       bank_data = b''.join(bytes(view[p * ps : p * ps + ps]) for p in range(bi, n_pages, nb))
       if not bank_data: continue
       self.win.target((x, y), mode=NocOrdering.POSTED)
-      self.win.wc[buf.addr : buf.addr + len(bank_data)] = bank_data
+      self.win.mm[buf.addr : buf.addr + len(bank_data)] = bank_data
     self.barrier()
 
   def read(self, buf: DramBuffer) -> bytes:
@@ -139,7 +139,7 @@ class Allocator:
       bank_pages = list(range(bi, n_pages, nb))
       if not bank_pages: continue
       self.win.target((x, y), mode=NocOrdering.RELAXED)
-      bank_data = self.win.wc[buf.addr : buf.addr + len(bank_pages) * ps]
+      bank_data = self.win.mm[buf.addr : buf.addr + len(bank_pages) * ps]
       for i, p in enumerate(bank_pages):
         n = min(ps, buf.size - p * ps)
         result[p * ps : p * ps + n] = bank_data[i * ps : i * ps + n]
@@ -150,7 +150,7 @@ class Allocator:
     for bank_idx, (_, x, y) in enumerate(self.bank_tiles):
       self.win.target((x, y), mode=NocOrdering.RELAXED)
       off = bank_idx * page_size
-      result[off : off + page_size] = self.win.wc[addr : addr + page_size]
+      result[off : off + page_size] = self.win.mm[addr : addr + page_size]
     return bytes(result)
 
   def close(self):

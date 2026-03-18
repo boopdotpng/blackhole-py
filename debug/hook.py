@@ -174,7 +174,7 @@ def debug_dispatch(device, ir_commands, writer=None, reader=None, compute=None):
       go_blob = _struct.pack("<I", go.all)
       for x0, x1, y0, y1 in mcast_rects(launch_cores):
         win.target((x0, y0), (x1, y1))
-        win.uc[TensixL1.GO_MSG:TensixL1.GO_MSG + 4] = go_blob
+        win.mm[TensixL1.GO_MSG:TensixL1.GO_MSG + 4] = go_blob
 
   if break_risc and break_risc in entry_points:
     print(f"  debug: waiting for {break_risc} breakpoint hit...")
@@ -204,7 +204,7 @@ def debug_dispatch(device, ir_commands, writer=None, reader=None, compute=None):
       for x, y in launch_cores:
         win.target((x, y))
         deadline = _time.perf_counter() + 10.0
-        while win.uc[TensixL1.GO_MSG + 3] != DevMsgs.RUN_MSG_DONE:
+        while win.mm[TensixL1.GO_MSG + 3] != DevMsgs.RUN_MSG_DONE:
           if _time.perf_counter() > deadline:
             print(f"  debug: timeout waiting for core ({x},{y}) to finish")
             break

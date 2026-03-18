@@ -197,7 +197,7 @@ class Device:
       probe = (1, 2) if (1, 2) in all_cores else all_cores[0]
       win.target(probe)
       deadline = time.perf_counter() + 2.0
-      while win.uc[TensixL1.GO_MSG + 3] != DevMsgs.RUN_MSG_DONE:
+      while win.mm[TensixL1.GO_MSG + 3] != DevMsgs.RUN_MSG_DONE:
         if time.perf_counter() > deadline:
           raise TimeoutError(f"firmware not ready on {probe} -- try tt-smi -r")
         time.sleep(0.001)
@@ -225,7 +225,7 @@ class Device:
     dwin.write32(CQ_COMPLETION_RD_PTR, base_16b)
     dwin.write32(CQ_COMPLETION_Q0_EVENT, 0)
     dwin.write32(CQ_COMPLETION_Q1_EVENT, 0)
-    dwin.uc[CQ_DISPATCH_SYNC_SEM : CQ_DISPATCH_SYNC_SEM + 8 * L1_ALIGN] = b"\0" * (8 * L1_ALIGN)
+    dwin.mm[CQ_DISPATCH_SYNC_SEM : CQ_DISPATCH_SYNC_SEM + 8 * L1_ALIGN] = b"\0" * (8 * L1_ALIGN)
     self._upload_cq_core(
       self._DISPATCH_CORE, disp_img, disp_launch,
       [(kernel_off, cq_kernels["dispatch_brisc"].xip),
@@ -286,7 +286,7 @@ class Device:
     ctrl_regs = {}
     for core in needed:
       with TLBWindow(self.fd, start=core) as win:
-        ctrl_regs[core] = bytes(win.uc[TensixL1.PROFILER_CONTROL : TensixL1.PROFILER_CONTROL + 128])
+        ctrl_regs[core] = bytes(win.mm[TensixL1.PROFILER_CONTROL : TensixL1.PROFILER_CONTROL + 128])
     batch = profiler.collect(
       programs_info,
       self.dram.read_raw_bank_pages(self._profiler_dram_addr, self._profiler_page_size),
