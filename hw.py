@@ -202,15 +202,15 @@ class TileGrid:
   ARC = (8, 0)
   TENSIX_X_P100 = (*range(1, 8), *range(10, 15))
   TENSIX_X_P150 = (*range(1, 8), *range(10, 17))
-  TENSIX_X = TENSIX_X_P100  # default for back-compat
-  WORKER_CORES = [(x, y) for x in TENSIX_X for y in range(2, 12)]
 
 def worker_cores(tensix_x: tuple[int, ...]) -> list[Core]:
   return [(x, y) for x in tensix_x for y in range(2, 12)]
 
 USE_USB_DISPATCH = os.environ.get("TT_USB") == "1"
 
-def build_bank_noc_table(harvested_dram_banks: list[int], worker_cores: list[Core], num_dram_banks: int, num_l1_banks: int) -> bytes:
+def build_bank_noc_table(harvested_dram_banks: list[int], worker_cores: list[Core]) -> bytes:
+  num_dram_banks = Dram.BANK_COUNT - len(harvested_dram_banks)
+  num_l1_banks = len(worker_cores)
   NOCS, PORTS = 2, 3
   # per-bank NOC port selection: bank -> [noc0_port, noc1_port]
   BANK_PORT = [[2,1],[0,1],[0,1],[0,1],[2,1],[2,1],[2,1],[2,1]]

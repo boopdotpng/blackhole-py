@@ -10,11 +10,20 @@ from cq import _HOST_TIMESTAMP_SLOTS
 from dram import DramBuffer, Allocator, Shape, tilize, untilize, build_transfer_program
 from compiler import DEBUG
 
-class Device:
-  _PREFETCH_CORE: Core = (14, 2)
-  _DISPATCH_CORE: Core = (14, 3)
-  _CQ_CORES = {_PREFETCH_CORE, _DISPATCH_CORE}
+_BOARD_CONFIG = {
+  "p100": {
+    "tensix_x": (*range(1, 8), *range(10, 15)),
+    "prefetch": (14, 2),
+    "dispatch": (14, 3),
+  },
+  "p150": {
+    "tensix_x": (*range(1, 8), *range(10, 17)),
+    "prefetch": (16, 2),
+    "dispatch": (16, 3),
+  },
+}
 
+class Device:
   @functools.cached_property
   def cores(self) -> list[Core]:
     if self._use_fast_dispatch:
@@ -39,23 +48,16 @@ class Device:
       raise SystemExit(f"unsupported blackhole device {self.arch}")
     print(f"device {self.device}: {self.arch}")
 
-    self._tensix_x = TileGrid.TENSIX_X_P150 if self.board == "p150" else TileGrid.TENSIX_X_P100
+    cfg = _BOARD_CONFIG[self.board]
+    self._tensix_x = cfg["tensix_x"]
     self._all_worker_cores = _worker_cores(self._tensix_x)
-    if self.board == "p150":
-      self._PREFETCH_CORE = (16, 2)
-      self._DISPATCH_CORE = (16, 3)
-    else:
-      self._PREFETCH_CORE = (14, 2)
-      self._DISPATCH_CORE = (14, 3)
+    self._PREFETCH_CORE = cfg["prefetch"]
+    self._DISPATCH_CORE = cfg["dispatch"]
     self._CQ_CORES = {self._PREFETCH_CORE, self._DISPATCH_CORE}
-    if self.board == "p150":
-      self._num_dram_banks = 8
-      self._num_l1_banks = 130
-    else:
-      self._num_dram_banks = 7
-      self._num_l1_banks = 110
 
     self._init_dram_tiles()
+    self._num_dram_banks = Dram.BANK_COUNT - len(self.harvested_dram_banks)
+    self._num_l1_banks = len(self._all_worker_cores)
     self.dram = Allocator(self.fd, self.dram_tiles)
     self._dispatch_mode = DevMsgs.DISPATCH_MODE_HOST if USE_USB_DISPATCH else DevMsgs.DISPATCH_MODE_DEV
     self._use_fast_dispatch = not USE_USB_DISPATCH
@@ -109,7 +111,6 @@ class Device:
       gddr_enabled = Arc.DEFAULT_GDDR_ENABLED if off is None else arc.read32(data_base + off * 4)
     harvested = [bank for bank in range(Dram.BANK_COUNT) if ((gddr_enabled >> bank) & 1) == 0]
     self.harvested_dram_banks = harvested
-    self.harvested_dram = harvested[0] if harvested else None  # compat for profiler
     harvested_set = set(harvested)
     self.dram_tiles = [
       (bank, Dram.BANK_X[bank], y)
@@ -125,8 +126,9 @@ class Device:
     """Assert soft reset on the given cores to stop all RISCs."""
     mmio_base, _ = align_down(TensixMMIO.RISCV_DEBUG_REG_SOFT_RESET_0, TLBWindow.SIZE_2M)
     reset_off = TensixMMIO.RISCV_DEBUG_REG_SOFT_RESET_0 - mmio_base
-    for core in cores:
-      with TLBWindow(self.fd, start=core, addr=mmio_base) as win:
+    with TLBWindow(self.fd, start=cores[0], addr=mmio_base) as win:
+      for core in cores:
+        win.target(core, addr=mmio_base)
         win.write32(reset_off, TensixMMIO.SOFT_RESET_ALL)
 
   def _upload_firmware(self):
@@ -152,7 +154,7 @@ class Device:
     jal = ((brisc_base & 0xFF000) | ((brisc_base & 0x800) << 9) | ((brisc_base & 0x7FE) << 20) | 0x6F).to_bytes(4, "little")
     go_init = struct.pack("<BBBB", 0, 0, 0, DevMsgs.RUN_MSG_INIT)
     all_cores = list(self._all_worker_cores)
-    bank_table = build_bank_noc_table(self.harvested_dram_banks, all_cores, self._num_dram_banks, self._num_l1_banks)
+    bank_table = build_bank_noc_table(self.harvested_dram_banks, all_cores)
 
     rects = mcast_rects(all_cores)
     with TLBWindow(self.fd, start=all_cores[0]) as win:
@@ -315,7 +317,7 @@ class Device:
       ctrl_regs,
       layout={"flat_ids": self._profiler_flat_ids, "page_size": self._profiler_page_size,
               "core_count_per_dram": self._profiler_core_count_per_dram},
-      harvested_dram_bank=self.harvested_dram,
+      harvested_dram_bank=self.harvested_dram_banks[0] if self.harvested_dram_banks else None,
     )
     profiler.print_summary(batch)
     self._profile_accumulated.extend(batch.get("programs", []))
@@ -328,7 +330,7 @@ class Device:
       prog["index"] = i
     self.last_profile = {
       "dispatch_mode": "fast",
-      "harvested_dram_bank": self.harvested_dram,
+      "harvested_dram_bank": self.harvested_dram_banks[0] if self.harvested_dram_banks else None,
       "tensix_x": list(self._tensix_x),
       "dispatch_cores": [list(self._PREFETCH_CORE), list(self._DISPATCH_CORE)],
       "programs": self._profile_accumulated,

@@ -98,12 +98,6 @@ def _device_defines(
     defs.append("-DIS_NOT_POW2_NUM_L1_BANKS=1")
   return defs
 
-_DEVICE_DEFINES = _device_defines()  # default P100 values for firmware compilation
-_KERNEL_DEFINES = [
-  "-DTENSIX_FIRMWARE", "-DLOCAL_MEM_EN=0", "-DARCH_BLACKHOLE",
-  "-DDISPATCH_MESSAGE_ADDR=0xFFB70438", "-DKERNEL_BUILD", *_DEVICE_DEFINES,
-]
-
 _CQ_SRC_DIR = _REPO / "firmware" / "cq"
 _CQ_INC = [str(_CQ_SRC_DIR), str(_CQ_SRC_DIR / "includes")]
 

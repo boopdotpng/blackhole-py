@@ -39,7 +39,7 @@ Fast dispatch uses on-device command queues (prefetch + dispatch cores). Slow di
 
 ### Requirements
 
-- **Hardware**: Blackhole P100A or P150A (unharvested, pre-Jan 2025 units with 140 cores)
+- **Hardware**: Blackhole P100A or P150A (unharvested, pre-Jan 2026 units with 140 cores)
 - **Kernel driver**: tt-kmd >= 2.6.0
 - **Firmware**: < 19.5, or any firmware exposing all cores
 - **Python**: 3.10+, numpy
