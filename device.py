@@ -77,7 +77,6 @@ class Device:
     self._upload_firmware()
 
     self._dram_sysmem = Sysmem(self.fd) if self._use_fast_dispatch else None
-    self._sysmem_offset = 0
     self.cq = CommandQueue()
     self._cq_hw = None
     if self._use_fast_dispatch:
@@ -317,39 +316,37 @@ class Device:
     self.dram_write(buf, data)
     return buf
 
-  def _check_sysmem(self, size: int):
-    end = self._sysmem_offset + size
-    assert end <= self._dram_sysmem.size, \
-      f"sysmem overflow: need {end} bytes ({self._sysmem_offset} used + {size} new), have {self._dram_sysmem.size}"
-    return end
+  def _run_dram_transfer(self, buf: DramBuffer, direction: str):
+    """Run a single fill/drain DMA program synchronously."""
+    assert not self._programs, "queue must be empty for DRAM transfers"
+    prog, _ = build_transfer_program(buf, direction, len(self.cores), self._dram_sysmem.noc_addr)
+    self.queue(prog)
+    self.run()
 
   def dram_write(self, buf: DramBuffer, data: bytes):
     assert len(data) <= buf.size
-    if self._use_fast_dispatch and buf.shape is not None:
-      self._check_sysmem(len(data))
-      off = self._sysmem_offset
-      self._dram_sysmem.buf[off : off + len(data)] = data
-      prog, _ = build_transfer_program(buf, "tilize", len(self.cores), self._dram_sysmem.noc_addr, sysmem_offset=off)
-      self.queue(prog)
-      self._sysmem_offset += len(data)
-      return
     if buf.shape is not None:
       data = tilize(data, buf.dtype.bpe, buf.shape)
+    if self._use_fast_dispatch:
+      assert len(data) <= self._dram_sysmem.size
+      self._dram_sysmem.buf[:len(data)] = data
+      self._run_dram_transfer(buf, "fill")
+      return
     self.dram.write(buf, data)
 
   def dram_read(self, buf: DramBuffer) -> bytes:
-    if self._use_fast_dispatch and buf.shape is not None:
-      self._check_sysmem(buf.size)
-      off = self._sysmem_offset
-      prog, _ = build_transfer_program(buf, "untilize", len(self.cores), self._dram_sysmem.noc_addr, sysmem_offset=off)
-      self.queue(prog)
-      self._sysmem_offset += buf.size
-      self.run()
-      return bytes(self._dram_sysmem.buf[off : off + buf.size])
     if self._programs:
       self.run()
+    if self._use_fast_dispatch:
+      assert buf.size <= self._dram_sysmem.size
+      self._run_dram_transfer(buf, "drain")
+      result = bytes(self._dram_sysmem.buf[:buf.size])
+      if buf.shape is not None:
+        return untilize(result, buf.dtype.bpe, buf.shape)
+      return result
     result = self.dram.read(buf)
-    if buf.shape is not None: return untilize(result, buf.dtype.bpe, buf.shape)
+    if buf.shape is not None:
+      return untilize(result, buf.dtype.bpe, buf.shape)
     return result
 
   def queue(self, program: Program): self._programs.append(program)
@@ -399,7 +396,6 @@ class Device:
       else: return self._run_slow_dispatch()
     finally:
       self._programs.clear()
-      self._sysmem_offset = 0
       self._set_power(False)
 
   def _run_debug(self) -> list[dict] | None:
