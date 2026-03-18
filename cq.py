@@ -32,11 +32,15 @@ _HOST_TIMESTAMP_BASE   = _HOST_COMPLETION_BASE + _HOST_COMPLETION_SIZE
 _HOST_TIMESTAMP_STRIDE = 16                    # 8 bytes timestamp + 8 padding per slot
 _HOST_TIMESTAMP_SLOTS  = 4096
 _HOST_TIMESTAMP_SIZE   = align_up(_HOST_TIMESTAMP_SLOTS * _HOST_TIMESTAMP_STRIDE, PCIE_ALIGN)
-_HOST_SYSMEM_SIZE      = align_up(_HOST_TIMESTAMP_BASE + _HOST_TIMESTAMP_SIZE, PAGE_SIZE)
+_HOST_PROFILER_BASE    = _HOST_TIMESTAMP_BASE + _HOST_TIMESTAMP_SIZE
+_HOST_PROFILER_PER_RISC = TensixL1.PROFILER_HOST_BUFFER_BYTES_PER_RISC  # 64 KB
+_HOST_PROFILER_PER_CORE = _HOST_PROFILER_PER_RISC * 5                   # 320 KB
 _HOST_CQ_WR_OFF        = 2 * PCIE_ALIGN
 _HOST_CQ_RD_OFF        = 3 * PCIE_ALIGN
 
-assert _HOST_TIMESTAMP_BASE + _HOST_TIMESTAMP_SIZE <= _HOST_SYSMEM_SIZE
+def _host_sysmem_size(profiler_cores: int = 0) -> int:
+  profiler_size = align_up(profiler_cores * _HOST_PROFILER_PER_CORE, PCIE_ALIGN) if profiler_cores else 0
+  return align_up(_HOST_PROFILER_BASE + profiler_size, PAGE_SIZE)
 
 # CQ command type IDs
 _RELAY_INLINE       = 5
@@ -183,7 +187,7 @@ def lower_fast(
   go_word: int, cores: list[Core],
   timestamps: list[tuple[int, int]] | None = None,
   profiler_flat_ids: dict | None = None,
-  profiler_dram_addr: int = 0, profiler_core_count_per_dram: int = 0,
+  profiler_sysmem_noc_local: int = 0,
 ) -> list[CQCommand]:
   profiling = os.environ.get("PROFILE") == "1" and profiler_flat_ids is not None
   result: list[CQCommand] = []
@@ -194,10 +198,9 @@ def lower_fast(
     for core in prof_cores:
       x, y = core
       ctrl = [0] * 32
-      ctrl[12] = profiler_dram_addr
+      ctrl[12] = profiler_sysmem_noc_local  # sysmem NOC local offset (was DRAM addr)
       ctrl[14], ctrl[15] = x, y
       ctrl[16] = profiler_flat_ids[core]
-      ctrl[17] = profiler_core_count_per_dram
       blobs.append(struct.pack("<32I", *ctrl))
     result.append(CQWritePacked(prof_cores, TensixL1.PROFILER_CONTROL, blobs))
     result.append(CQWritePackedLarge(rects, TensixL1.PROFILER_CONTROL, b"\0" * (5 * 4)))
@@ -215,18 +218,20 @@ def lower_fast(
   return result
 
 class CQSysmem:
-  def __init__(self, fd: int, prefetch_win: TLBWindow, dispatch_win: TLBWindow):
+  def __init__(self, fd: int, prefetch_win: TLBWindow, dispatch_win: TLBWindow, profiler_cores: int = 0):
     self.fd = fd
     self._prefetch_win = prefetch_win
     self._dispatch_win = dispatch_win
+    self._profiler_cores = profiler_cores
+    self._size = _host_sysmem_size(profiler_cores)
     flags = mmap.MAP_SHARED | mmap.MAP_ANONYMOUS
     if hasattr(mmap, "MAP_POPULATE"):
       flags |= mmap.MAP_POPULATE
-    self.sysmem = mmap.mmap(-1, _HOST_SYSMEM_SIZE, flags=flags, prot=mmap.PROT_READ | mmap.PROT_WRITE)
+    self.sysmem = mmap.mmap(-1, self._size, flags=flags, prot=mmap.PROT_READ | mmap.PROT_WRITE)
     self._sysmem_addr = ctypes.addressof(ctypes.c_char.from_buffer(self.sysmem))
-    if (self._sysmem_addr % PAGE_SIZE) != 0 or (_HOST_SYSMEM_SIZE % PAGE_SIZE) != 0:
+    if (self._sysmem_addr % PAGE_SIZE) != 0 or (self._size % PAGE_SIZE) != 0:
       raise RuntimeError("CQ sysmem must be page-aligned and page-sized")
-    out = _ioctl_pin_pages(self.fd, flags=_PIN_NOC_DMA, virtual_address=self._sysmem_addr, size=_HOST_SYSMEM_SIZE)
+    out = _ioctl_pin_pages(self.fd, flags=_PIN_NOC_DMA, virtual_address=self._sysmem_addr, size=self._size)
     self.noc_addr = out.noc_address
     if (self.noc_addr & _PCIE_NOC_BASE) != _PCIE_NOC_BASE:
       raise RuntimeError(f"bad NOC sysmem address: 0x{self.noc_addr:x}")
@@ -317,8 +322,16 @@ class CQSysmem:
     hi = self._sysmem_read32(off + 4)
     return (hi << 32) | lo
 
+  @property
+  def profiler_noc_local(self) -> int:
+    return self.noc_local + _HOST_PROFILER_BASE
+
+  def read_profiler_data(self) -> bytes:
+    size = self._profiler_cores * _HOST_PROFILER_PER_CORE
+    return bytes(self.sysmem[_HOST_PROFILER_BASE : _HOST_PROFILER_BASE + size])
+
   def close(self):
     self._prefetch_win.close()
     self._dispatch_win.close()
-    _ioctl_unpin_pages(self.fd, virtual_address=self._sysmem_addr, size=_HOST_SYSMEM_SIZE)
+    _ioctl_unpin_pages(self.fd, virtual_address=self._sysmem_addr, size=self._size)
     self.sysmem.close()

@@ -210,14 +210,10 @@ def _resolve_zone_names(programs_info):
     names.setdefault(h, name)
   return names
 
-def init_layout(cores, bank_count):
+def init_layout(cores, bank_count=0):
   cores = sorted(cores, key=lambda xy: (xy[0], xy[1]))
-  core_count_per_dram = max(1, (len(cores) + bank_count - 1) // bank_count)
-  page_size = _HOST_BUF_BYTES_PER_RISC * 5 * core_count_per_dram
   return {
     "flat_ids": {core: i for i, core in enumerate(cores)},
-    "core_count_per_dram": core_count_per_dram,
-    "page_size": page_size,
   }
 
 def build_programs_info(programs, device_cores):
@@ -264,24 +260,21 @@ def collect(
   for info in programs_info:
     needed.update(info["cores"])
 
-  # Parse all RISC data from DRAM, keyed by (core, prog_id)
+  # Parse all RISC data from sysmem, keyed by (core, prog_id)
   # core_data[core][prog_id] = list of (risc_name, fw, kern, kern_start, kern_end, zones)
   core_data = {}
 
   flat_ids = layout["flat_ids"]
-  core_count_per_dram = layout["core_count_per_dram"]
-  page_size = layout["page_size"]
 
   for core in sorted(needed):
     flat_id = flat_ids[core]
     ctrl = _parse_ctrl(ctrl_regs[core])
-    page_id = flat_id // core_count_per_dram
-    slot = (flat_id % core_count_per_dram) * 5 * _HOST_BUF_BYTES_PER_RISC
 
     by_program = {}  # prog_id -> list of risc dicts
     for risc in range(5):
       host_end = min(ctrl[P.HOST_BUF_END + risc], _HOST_BUF_WORDS_PER_RISC)
-      base = page_id * page_size + slot + risc * _HOST_BUF_BYTES_PER_RISC
+      # Flat sysmem layout: core * (5 * per_risc) + risc * per_risc
+      base = flat_id * 5 * _HOST_BUF_BYTES_PER_RISC + risc * _HOST_BUF_BYTES_PER_RISC
       raw = raw_dram[base : base + host_end * 4]
       words = struct.unpack(f"<{len(raw) // 4}I", raw) if raw else ()
 

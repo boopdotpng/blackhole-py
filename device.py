@@ -81,10 +81,13 @@ class Device:
     self.cq = CommandQueue()
     self._cq_hw = None
     if self._use_fast_dispatch:
+      from compiler import PROFILER
+      profiler_cores = len(self._all_worker_cores) - len(self._CQ_CORES) if PROFILER else 0
       self._cq_hw = CQSysmem(
         self.fd,
         prefetch_win=TLBWindow(self.fd, start=self._PREFETCH_CORE),
         dispatch_win=TLBWindow(self.fd, start=self._DISPATCH_CORE),
+        profiler_cores=profiler_cores,
       )
       self._start_dispatch_cores()
 
@@ -95,10 +98,8 @@ class Device:
     from compiler import PROFILER
     self._profiler = PROFILER and self._use_fast_dispatch
     self._profiler_flat_ids = {}
-    self._profiler_core_count_per_dram = 0
-    self._profiler_dram_addr = 0
     if self._profiler:
-      self._init_profiler_dram()
+      self._init_profiler_layout()
 
   def _init_dram_tiles(self):
     with TLBWindow(self.fd, start=TileGrid.ARC, addr=Arc.NOC_BASE) as arc:
@@ -267,21 +268,14 @@ class Device:
     go.bits.dispatch_message_offset = 0
     return go.all
 
-  def _init_profiler_dram(self):
-    import profiler
-    layout = profiler.init_layout(self.cores, len(self.dram.bank_tiles))
-    self._profiler_flat_ids = layout["flat_ids"]
-    self._profiler_core_count_per_dram = layout["core_count_per_dram"]
-    self._profiler_page_size = layout["page_size"]
-    addr = self.dram.next
-    self.dram.next = align_up(addr + self._profiler_page_size, Dram.ALIGNMENT)
-    self._profiler_dram_addr = addr
+  def _init_profiler_layout(self):
+    cores = sorted(self.cores, key=lambda xy: (xy[0], xy[1]))
+    self._profiler_flat_ids = {core: i for i, core in enumerate(cores)}
 
   def _collect_profiler_data(self):
     import profiler
     programs_info = profiler.build_programs_info(self._programs, self.cores)
     if not programs_info: return
-    self.dram.barrier()
     needed = sorted({c for info in programs_info for c in info["cores"]})
     ctrl_regs = {}
     for core in needed:
@@ -289,10 +283,9 @@ class Device:
         ctrl_regs[core] = bytes(win.mm[TensixL1.PROFILER_CONTROL : TensixL1.PROFILER_CONTROL + 128])
     batch = profiler.collect(
       programs_info,
-      self.dram.read_raw_bank_pages(self._profiler_dram_addr, self._profiler_page_size),
+      self._cq_hw.read_profiler_data(),
       ctrl_regs,
-      layout={"flat_ids": self._profiler_flat_ids, "page_size": self._profiler_page_size,
-              "core_count_per_dram": self._profiler_core_count_per_dram},
+      layout={"flat_ids": self._profiler_flat_ids},
       harvested_dram_bank=self.harvested_dram_banks[0] if self.harvested_dram_banks else None,
     )
     profiler.print_summary(batch)
@@ -429,8 +422,7 @@ class Device:
       programs, self._go_word(), self.cores,
       timestamps=timestamps,
       profiler_flat_ids=self._profiler_flat_ids or None,
-      profiler_dram_addr=self._profiler_dram_addr,
-      profiler_core_count_per_dram=self._profiler_core_count_per_dram,
+      profiler_sysmem_noc_local=self._cq_hw.profiler_noc_local if self._profiler else 0,
     ))
     self._cq_hw._event_id += 1
     self.cq.append(CQHostEvent(self._cq_hw._event_id))
