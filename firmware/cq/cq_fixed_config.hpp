@@ -10,37 +10,12 @@
 // - dispatch subordinate NCRISC on (DISPATCH_NOC_X,DISPATCH_NOC_Y) with NOC_INDEX=1
 // Keep this file explicit and static so CQ behavior is easy to reason about.
 
-#ifndef DISPATCH_KERNEL
 #define DISPATCH_KERNEL 1
-#endif
-
-#ifndef FD_CORE_TYPE
 #define FD_CORE_TYPE 0
-#endif
-
-#ifndef IS_H_VARIANT
 #define IS_H_VARIANT 1
-#endif
-
-#ifndef IS_D_VARIANT
 #define IS_D_VARIANT 1
-#endif
 
-#ifndef PREFETCH_NOC_X
-#define PREFETCH_NOC_X 14
-#endif
-
-#ifndef PREFETCH_NOC_Y
-#define PREFETCH_NOC_Y 2
-#endif
-
-#ifndef DISPATCH_NOC_X
-#define DISPATCH_NOC_X 14
-#endif
-
-#ifndef DISPATCH_NOC_Y
-#define DISPATCH_NOC_Y 3
-#endif
+// PREFETCH_NOC_X/Y and DISPATCH_NOC_X/Y come from -D flags (board-specific)
 
 #if defined(COMPILE_FOR_BRISC) && (NOC_INDEX == 0)
 // cq_prefetch.cpp

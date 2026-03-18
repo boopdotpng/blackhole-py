@@ -200,8 +200,6 @@ class Sysmem:
 
 class TileGrid:
   ARC = (8, 0)
-  TENSIX_X_P100 = (*range(1, 8), *range(10, 15))
-  TENSIX_X_P150 = (*range(1, 8), *range(10, 17))
 
 def worker_cores(tensix_x: tuple[int, ...]) -> list[Core]:
   return [(x, y) for x in tensix_x for y in range(2, 12)]

@@ -2,7 +2,7 @@ import ctypes, struct, time
 from ctypes import c_uint8 as u8, c_uint16 as u16, c_uint32 as u32
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Callable, Literal
+from typing import Any, Callable, Literal, NamedTuple
 
 from hw import *
 
@@ -188,7 +188,10 @@ def build_cb_blob(program: Program) -> tuple[int, bytes]:
     struct.pack_into("<IIII", arr, cb.index * 16, cb_addr, size, cb.tiles, page_size)
   return mask, bytes(arr)
 
-Role = tuple[list[Core], object, object]  # (cores, reader_kernel, writer_kernel)
+class Role(NamedTuple):
+  cores: list[Core]
+  reader: Any  # CompiledKernel | None
+  writer: Any  # CompiledKernel | None
 
 def build_payload(
   program: Program, reader, writer, compute: tuple | None,

@@ -69,14 +69,11 @@ _CFLAGS = (
 )
 _LFLAGS = ("-Wl,-z,max-page-size=16", "-Wl,-z,common-page-size=16", "-nostartfiles")
 
-def _is_pow2(n: int) -> bool:
-  return n > 0 and (n & (n - 1)) == 0
-
 def _device_defines(
-  num_dram_banks: int = 7,
-  num_l1_banks: int = 110,
-  prefetch_core: tuple[int, int] = (14, 2),
-  dispatch_core: tuple[int, int] = (14, 3),
+  num_dram_banks: int,
+  num_l1_banks: int,
+  prefetch_core: tuple[int, int],
+  dispatch_core: tuple[int, int],
 ) -> list[str]:
   defs = [
     f"-DNUM_DRAM_BANKS={num_dram_banks}",
@@ -85,17 +82,14 @@ def _device_defines(
     f"-DPREFETCH_NOC_Y={prefetch_core[1]}",
     f"-DDISPATCH_NOC_X={dispatch_core[0]}",
     f"-DDISPATCH_NOC_Y={dispatch_core[1]}",
-    "-DPCIE_NOC_X=19",
-    "-DPCIE_NOC_Y=24",
+    "-DPCIE_NOC_X=19", "-DPCIE_NOC_Y=24",
+    "-DIS_NOT_POW2_NUM_L1_BANKS=1",  # true for both p100 (110) and p150 (140)
   ]
-  if _is_pow2(num_dram_banks):
-    defs.append(f"-DLOG_BASE_2_OF_NUM_DRAM_BANKS={(num_dram_banks.bit_length() - 1)}")
+  # p100: 7 banks (not pow2), p150: 8 banks (pow2)
+  if num_dram_banks == 8:
+    defs.append("-DLOG_BASE_2_OF_NUM_DRAM_BANKS=3")
   else:
     defs.append("-DIS_NOT_POW2_NUM_DRAM_BANKS=1")
-  if _is_pow2(num_l1_banks):
-    defs.append(f"-DLOG_BASE_2_OF_NUM_L1_BANKS={(num_l1_banks.bit_length() - 1)}")
-  else:
-    defs.append("-DIS_NOT_POW2_NUM_L1_BANKS=1")
   return defs
 
 _CQ_SRC_DIR = _REPO / "firmware" / "cq"
@@ -126,24 +120,24 @@ def _ckernel_headers(program: Program) -> dict[str, str]:
   for cb in program.cbs:
     formats[cb.index] = cb.dtype.value
   tile_sizes = [Dtype(f).tile_size for f in formats]
-  a = lambda vs: ", ".join(str(v) for v in vs)
-  a32 = lambda v: a([v] * 32)
-  b = lambda v: "true" if v else "false"
+  join = lambda vs: ", ".join(str(v) for v in vs)
+  repeat32 = lambda v: join([v] * 32)
+  cbool = lambda v: "true" if v else "false"
 
   def data_fmt(prefix, ctype):
     return (f"#pragma once\n#include <cstdint>\n"
-            f"constexpr {ctype} {prefix}_src_format[32] = {{{a(formats)}}};\n"
-            f"constexpr {ctype} {prefix}_dst_format[32] = {{{a(formats)}}};\n")
+            f"constexpr {ctype} {prefix}_src_format[32] = {{{join(formats)}}};\n"
+            f"constexpr {ctype} {prefix}_dst_format[32] = {{{join(formats)}}};\n")
 
   def tile_dims(prefix):
     return (f"#pragma once\n#include <cstdint>\n"
-            f"constexpr uint8_t {prefix}_tile_num_faces[32] = {{{a32(4)}}};\n"
-            f"constexpr uint8_t {prefix}_partial_face[32] = {{{a32(0)}}};\n"
-            f"constexpr uint8_t {prefix}_tile_face_r_dim[32] = {{{a32(16)}}};\n"
-            f"constexpr uint8_t {prefix}_narrow_tile[32] = {{{a32(0)}}};\n"
-            f"constexpr uint8_t {prefix}_tile_r_dim[32] = {{{a32(32)}}};\n"
-            f"constexpr uint8_t {prefix}_tile_c_dim[32] = {{{a32(32)}}};\n"
-            f"constexpr uint16_t {prefix}_tile_size[32] = {{{a(tile_sizes)}}};\n")
+            f"constexpr uint8_t {prefix}_tile_num_faces[32] = {{{repeat32(4)}}};\n"
+            f"constexpr uint8_t {prefix}_partial_face[32] = {{{repeat32(0)}}};\n"
+            f"constexpr uint8_t {prefix}_tile_face_r_dim[32] = {{{repeat32(16)}}};\n"
+            f"constexpr uint8_t {prefix}_narrow_tile[32] = {{{repeat32(0)}}};\n"
+            f"constexpr uint8_t {prefix}_tile_r_dim[32] = {{{repeat32(32)}}};\n"
+            f"constexpr uint8_t {prefix}_tile_c_dim[32] = {{{repeat32(32)}}};\n"
+            f"constexpr uint16_t {prefix}_tile_size[32] = {{{join(tile_sizes)}}};\n")
 
   dst_sync = "DstSync::SyncFull" if program.dst_full_sync else "DstSync::SyncHalf"
   return {
@@ -151,10 +145,10 @@ def _ckernel_headers(program: Program) -> dict[str, str]:
     "chlkc_pack_data_format.h": data_fmt("pack", "unsigned char"),
     "chlkc_unpack_tile_dims.h": tile_dims("unpack"),
     "chlkc_pack_tile_dims.h": tile_dims("pack"),
-    "chlkc_dst_accum_mode.h": f"#pragma once\nconstexpr bool DST_ACCUM_MODE = {b(program.dst_accum_mode)};\n",
+    "chlkc_dst_accum_mode.h": f"#pragma once\nconstexpr bool DST_ACCUM_MODE = {cbool(program.dst_accum_mode)};\n",
     "chlkc_dst_sync_mode.h": f"#pragma once\n#define DST_SYNC_MODE {dst_sync}\n",
     "chlkc_math_fidelity.h": f"#pragma once\n#include <cstdint>\nconstexpr std::int32_t MATH_FIDELITY = {program.math_fidelity.value};\n",
-    "chlkc_math_approx_mode.h": f"#pragma once\nconstexpr bool APPROX = {b(program.approx)};\n",
+    "chlkc_math_approx_mode.h": f"#pragma once\nconstexpr bool APPROX = {cbool(program.approx)};\n",
   }
 
 @dataclass(frozen=True)
@@ -332,10 +326,10 @@ def _compile_and_link(cc: Path, src: Path, compile_args: list[str], link_args: l
     shutil.rmtree(build, ignore_errors=True)
 
 def compile_firmware(
-  num_dram_banks: int = 7,
-  num_l1_banks: int = 110,
-  prefetch_core: tuple[int, int] = (14, 2),
-  dispatch_core: tuple[int, int] = (14, 3),
+  num_dram_banks: int,
+  num_l1_banks: int,
+  prefetch_core: tuple[int, int],
+  dispatch_core: tuple[int, int],
   profile: bool = PROFILER,
 ) -> dict[str, CompiledFirmware]:
   cc = _SFPI / "riscv-tt-elf-g++"
@@ -385,10 +379,10 @@ def compile_firmware(
 class Compiler:
   def __init__(
     self,
-    num_dram_banks: int = 7,
-    num_l1_banks: int = 110,
-    prefetch_core: tuple[int, int] = (14, 2),
-    dispatch_core: tuple[int, int] = (14, 3),
+    num_dram_banks: int,
+    num_l1_banks: int,
+    prefetch_core: tuple[int, int],
+    dispatch_core: tuple[int, int],
   ):
     self._cc = _SFPI / "riscv-tt-elf-g++"
     self._objcopy = _SFPI / "riscv-tt-elf-objcopy"
