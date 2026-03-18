@@ -55,6 +55,13 @@ class Device:
       self._num_dram_banks = 7
       self._num_l1_banks = 110
 
+    # CQ go-signal multicast covers the bounding box of all worker cores
+    _xs = [x for x, _ in self._all_worker_cores]
+    _ys = [y for _, y in self._all_worker_cores]
+    self._worker_mcast_grid = (noc_xy(min(_xs), min(_ys)) << 16) | noc_xy(max(_xs), max(_ys))
+    # dispatch firmware waits for ACKs from all non-CQ workers
+    self._num_dispatch_workers = len(self._all_worker_cores) - len(self._CQ_CORES)
+
     self._init_dram_tiles()
     self.dram = Allocator(self.fd, self.dram_tiles)
     self._dispatch_mode = DevMsgs.DISPATCH_MODE_HOST if USE_USB_DISPATCH else DevMsgs.DISPATCH_MODE_DEV
@@ -66,6 +73,8 @@ class Device:
       num_l1_banks=self._num_l1_banks,
       prefetch_core=self._PREFETCH_CORE,
       dispatch_core=self._DISPATCH_CORE,
+      num_worker_cores=self._num_dispatch_workers,
+      worker_mcast_grid=self._worker_mcast_grid,
     )
     self._upload_firmware()
 

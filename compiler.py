@@ -77,6 +77,8 @@ def _device_defines(
   num_l1_banks: int = 110,
   prefetch_core: tuple[int, int] = (14, 2),
   dispatch_core: tuple[int, int] = (14, 3),
+  num_worker_cores: int = 118,
+  worker_mcast_grid: int = 0x8102CE,
 ) -> list[str]:
   defs = [
     f"-DNUM_DRAM_BANKS={num_dram_banks}",
@@ -87,6 +89,9 @@ def _device_defines(
     f"-DDISPATCH_NOC_Y={dispatch_core[1]}",
     "-DPCIE_NOC_X=19",
     "-DPCIE_NOC_Y=24",
+    f"-DNUM_WORKER_CORES_TO_MCAST={num_worker_cores}",
+    f"-DPACKED_WRITE_MAX_UNICAST_SUB_CMDS={num_worker_cores}",
+    f"-DWORKER_MCAST_GRID=0x{worker_mcast_grid:x}",
   ]
   if _is_pow2(num_dram_banks):
     defs.append(f"-DLOG_BASE_2_OF_NUM_DRAM_BANKS={(num_dram_banks.bit_length() - 1)}")
@@ -99,10 +104,6 @@ def _device_defines(
   return defs
 
 _DEVICE_DEFINES = _device_defines()  # default P100 values for firmware compilation
-_KERNEL_DEFINES = [
-  "-DTENSIX_FIRMWARE", "-DLOCAL_MEM_EN=0", "-DARCH_BLACKHOLE",
-  "-DDISPATCH_MESSAGE_ADDR=0xFFB70438", "-DKERNEL_BUILD", *_DEVICE_DEFINES,
-]
 
 _CQ_SRC_DIR = _REPO / "firmware" / "cq"
 _CQ_INC = [str(_CQ_SRC_DIR), str(_CQ_SRC_DIR / "includes")]
@@ -395,12 +396,17 @@ class Compiler:
     num_l1_banks: int = 110,
     prefetch_core: tuple[int, int] = (14, 2),
     dispatch_core: tuple[int, int] = (14, 3),
+    num_worker_cores: int = 118,
+    worker_mcast_grid: int = 0x8102CE,
   ):
     self._cc = _SFPI / "riscv-tt-elf-g++"
     self._objcopy = _SFPI / "riscv-tt-elf-objcopy"
     self._includes = ["-I.", *_INCLUDES]
     assert self._cc.is_file(), f"missing compiler: {self._cc}\nDownload toolchain to {_DEPS / 'sfpi-toolchain'}"
-    self._device_defines = _device_defines(num_dram_banks, num_l1_banks, prefetch_core, dispatch_core)
+    self._device_defines = _device_defines(
+      num_dram_banks, num_l1_banks, prefetch_core, dispatch_core,
+      num_worker_cores, worker_mcast_grid,
+    )
     self._kernel_defines = [
       "-DTENSIX_FIRMWARE", "-DLOCAL_MEM_EN=0", "-DARCH_BLACKHOLE",
       "-DDISPATCH_MESSAGE_ADDR=0xFFB70438", "-DKERNEL_BUILD", *self._device_defines,
