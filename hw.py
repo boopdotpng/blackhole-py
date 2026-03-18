@@ -152,9 +152,10 @@ class TLBWindow:
     self.fd, self.size = fd, size
     out = _ioctl_alloc_tlb(fd, size=size)
     self._id = out.id
-    rw = mmap.PROT_READ | mmap.PROT_WRITE
-    self.uc = mmap.mmap(fd, size, flags=mmap.MAP_SHARED, prot=rw, offset=out.mmap_offset_uc)
-    self.wc = mmap.mmap(fd, size, flags=mmap.MAP_SHARED, prot=rw, offset=out.mmap_offset_wc)
+    # WC-only: mapping both UC and WC to the same physical window doesn't work --
+    # Linux PAT gives both mappings the memory type of whichever was mmap'd first.
+    self.mm = mmap.mmap(fd, size, flags=mmap.MAP_SHARED, prot=mmap.PROT_READ | mmap.PROT_WRITE,
+                        offset=out.mmap_offset_wc)
     self.target(start, end, addr=addr, mode=mode)
 
   def target(self, start: Core, end: Core | None = None, addr: int = 0, mode: NocOrdering = NocOrdering.STRICT):
@@ -164,18 +165,16 @@ class TLBWindow:
       mcast=int(end != start), ordering=mode.value))
 
   def read32(self, offset: int) -> int:
-    return int.from_bytes(self.uc[offset : offset + 4], "little")
+    return int.from_bytes(self.mm[offset : offset + 4], "little")
 
   def write32(self, offset: int, value: int):
-    self.uc[offset : offset + 4] = value.to_bytes(4, "little")
+    self.mm[offset : offset + 4] = value.to_bytes(4, "little")
 
-  def write(self, addr: int, data: bytes, wc: bool = False):
-    view = self.wc if wc else self.uc
-    view[addr : addr + len(data)] = data
+  def write(self, addr: int, data: bytes):
+    self.mm[addr : addr + len(data)] = data
 
   def close(self):
-    self.uc.close()
-    self.wc.close()
+    self.mm.close()
     _ioctl_free_tlb(self.fd, id=self._id)
 
   def __enter__(self): return self

@@ -299,10 +299,10 @@ def slow_dispatch(win, commands: list[IRCommand]):
         go_blob = struct.pack("<I", go.all)
         for x0, x1, y0, y1 in mcast_rects(cores):
           win.target((x0, y0), (x1, y1))
-          win.uc[TensixL1.GO_MSG:TensixL1.GO_MSG + 4] = go_blob
+          win.mm[TensixL1.GO_MSG:TensixL1.GO_MSG + 4] = go_blob
         for x, y in cores:
           win.target((x, y))
           deadline = time.perf_counter() + 10.0
-          while win.uc[TensixL1.GO_MSG + 3] != DevMsgs.RUN_MSG_DONE:
+          while win.mm[TensixL1.GO_MSG + 3] != DevMsgs.RUN_MSG_DONE:
             if time.perf_counter() > deadline:
               raise TimeoutError(f"timeout waiting for core ({x}, {y}) -- try tt-smi -r")
