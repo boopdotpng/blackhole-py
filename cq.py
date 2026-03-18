@@ -244,7 +244,7 @@ class CQSysmem:
     # init prefetch core L1 pointers and zero the prefetch queue
     self._prefetch_win.write32(CQ_PREFETCH_Q_RD_PTR, CQ_PREFETCH_Q_BASE + CQ_PREFETCH_Q_SIZE)
     self._prefetch_win.write32(CQ_PREFETCH_Q_PCIE_RD, (self.noc_local + _HOST_ISSUE_BASE) & 0xFFFFFFFF)
-    self._prefetch_win.uc[CQ_PREFETCH_Q_BASE : CQ_PREFETCH_Q_BASE + CQ_PREFETCH_Q_SIZE] = bytes(CQ_PREFETCH_Q_SIZE)
+    self._prefetch_win.mm[CQ_PREFETCH_Q_BASE : CQ_PREFETCH_Q_BASE + CQ_PREFETCH_Q_SIZE] = bytes(CQ_PREFETCH_Q_SIZE)
     # init host sysmem completion doorbells
     self._sysmem_write32(_HOST_CQ_WR_OFF, self._completion_base_16b)
     self._sysmem_write32(_HOST_CQ_RD_OFF, self._completion_base_16b)
@@ -258,7 +258,7 @@ class CQSysmem:
   def _wait_prefetch_slot_free(self, idx: int, timeout_s: float = 1.0):
     off = CQ_PREFETCH_Q_BASE + idx * CQ_PREFETCH_Q_ENTRY_SZ
     deadline = time.perf_counter() + timeout_s
-    while struct.unpack("<H", self._prefetch_win.uc[off : off + 2])[0] != 0:
+    while struct.unpack("<H", self._prefetch_win.mm[off : off + 2])[0] != 0:
       if time.perf_counter() > deadline:
         raise TimeoutError("timeout waiting for prefetch queue slot")
 
@@ -272,7 +272,7 @@ class CQSysmem:
     idx = self._prefetch_q_wr_idx
     self._wait_prefetch_slot_free(idx)
     off = CQ_PREFETCH_Q_BASE + idx * CQ_PREFETCH_Q_ENTRY_SZ
-    self._prefetch_win.uc[off : off + 2] = struct.pack("<H", len(record) >> 4)
+    self._prefetch_win.mm[off : off + 2] = struct.pack("<H", len(record) >> 4)
     self._prefetch_q_wr_idx = (idx + 1) % CQ_PREFETCH_Q_ENTRIES
 
   def flush(self, cq):
