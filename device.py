@@ -325,7 +325,10 @@ class Device:
 
   def dram_write(self, buf: DramBuffer, data: bytes):
     assert len(data) <= buf.size
-    if self._use_fast_dispatch and buf.shape is not None:
+    # Float32 tilize/untilize compute kernels (tilize_block, pack_untilize) don't
+    # work with FP32_DEST_ACC_EN. Fall back to host-side tilize for Float32.
+    use_device_tilize = self._use_fast_dispatch and buf.shape is not None and buf.dtype != Dtype.Float32
+    if use_device_tilize:
       self._check_sysmem(len(data))
       off = self._sysmem_offset
       self._dram_sysmem.buf[off : off + len(data)] = data
@@ -338,7 +341,9 @@ class Device:
     self.dram.write(buf, data)
 
   def dram_read(self, buf: DramBuffer) -> bytes:
-    if self._use_fast_dispatch and buf.shape is not None:
+    # Float32: fall back to host-side untilize (see dram_write comment).
+    use_device_untilize = self._use_fast_dispatch and buf.shape is not None and buf.dtype != Dtype.Float32
+    if use_device_untilize:
       self._check_sysmem(buf.size)
       off = self._sysmem_offset
       prog, _ = build_transfer_program(buf, "untilize", len(self.cores), self._dram_sysmem.noc_addr, sysmem_offset=off)
@@ -355,8 +360,8 @@ class Device:
   def queue(self, program: Program): self._programs.append(program)
 
   def _compile_ir(self, program: Program, dispatch_mode, host_assigned_id: int = 0) -> list:
-    writer = self.compiler.compile_dataflow(program.writer_kernel, "brisc") if program.writer_kernel else None
-    reader = self.compiler.compile_dataflow(program.reader_kernel, "ncrisc") if program.reader_kernel else None
+    writer = self.compiler.compile_dataflow(program.writer_kernel, "brisc", program=program) if program.writer_kernel else None
+    reader = self.compiler.compile_dataflow(program.reader_kernel, "ncrisc", program=program) if program.reader_kernel else None
     compute = self.compiler.compile_compute(program.compute_kernel, program) if program.compute_kernel else None
 
     if program.grid is not None:
@@ -369,8 +374,8 @@ class Device:
          resolve_args(program.compute_args, i, c, n))
         for i, c in enumerate(all_cores)
       ]
-      r_recv = self.compiler.compile_dataflow(program.reader_recv_kernel, "ncrisc") if program.reader_recv_kernel else reader
-      w_recv = self.compiler.compile_dataflow(program.writer_recv_kernel, "brisc") if program.writer_recv_kernel else writer
+      r_recv = self.compiler.compile_dataflow(program.reader_recv_kernel, "ncrisc", program=program) if program.reader_recv_kernel else reader
+      w_recv = self.compiler.compile_dataflow(program.writer_recv_kernel, "brisc", program=program) if program.writer_recv_kernel else writer
       top_left = [grid[0][0]]
       top_row = [grid[0][c] for c in range(1, len(cols))]
       left_col = [grid[r][0] for r in range(1, len(rows))]
