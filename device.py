@@ -465,6 +465,12 @@ class Device:
 
   def serve_profile(self, port: int = int(os.environ.get("PORT", 8000))):
     self._finalize_profile()
+    if os.environ.get("PROFILE_JSON"):
+      import json
+      path = os.environ["PROFILE_JSON"]
+      with open(path, "w") as f: json.dump(self.last_profile, f)
+      print(f"profiler data written to {path}")
+      return
     from profiler import ui as profiler_ui
     profiler_ui.serve(self.last_profile, port=port)
 

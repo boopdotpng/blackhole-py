@@ -318,16 +318,16 @@ def collect(
             }
           )
       riscs.sort(key=lambda r: RISC_NAMES.index(r["name"]))
-      # Compute total wall time across RISCs
+      # Compute total wall time across RISCs (only include RISCs that ran kernel code)
       starts = [
         r["kern_start"]
         for r in riscs
-        if r["kern_start"] is not None and r["kern_end"] is not None
+        if r["kern_start"] is not None and r["kern_end"] is not None and r["kern"] > 0
       ]
       ends = [
         r["kern_end"]
         for r in riscs
-        if r["kern_start"] is not None and r["kern_end"] is not None
+        if r["kern_start"] is not None and r["kern_end"] is not None and r["kern"] > 0
       ]
       total = max(0, max(ends) - min(starts)) if starts and ends else 0
       # Strip internal fields from output
