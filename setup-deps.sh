@@ -21,7 +21,7 @@ case "$OS-$ARCH" in
     exit 1
     ;;
   Linux-x86_64)
-    URL="https://github.com/boopdotpng/blackhole-py/releases/download/v0.5.0/tt-metal-deps.tar.gz"
+    URL="https://github.com/boopdotpng/blackhole-py/releases/download/v0.6.0/tt-metal-deps.tar.gz"
     ;;
   *)
     echo "Unsupported platform: $OS $ARCH" >&2
