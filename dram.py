@@ -131,10 +131,10 @@ def build_transfer_program(
 
   if direction == "fill":
     rk = _fill_reader(pcie_base, buf.addr, page_size)
-    name = "dram_fill"
+    name = f"dram_fill ({buf.name})" if buf.name else "dram_fill"
   else:
     rk = _drain_reader(pcie_base, buf.addr, page_size)
-    name = "dram_drain"
+    name = f"dram_drain ({buf.name})" if buf.name else "dram_drain"
 
   return Program(
     cores=n, name=name, reader_kernel=rk, compute_kernel="", writer_kernel="",

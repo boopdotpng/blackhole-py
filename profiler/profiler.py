@@ -220,10 +220,12 @@ def build_programs_info(programs, device_cores):
   result = []
   for i, prog in enumerate(programs):
     sources = {}
+    disassembly = getattr(prog, "_profile_disassembly", None)
     if prog.reader_kernel: sources["reader"] = prog.reader_kernel
     if prog.writer_kernel: sources["writer"] = prog.writer_kernel
     if prog.compute_kernel: sources["compute"] = prog.compute_kernel
     core_sources = None
+    core_disassembly = getattr(prog, "_profile_core_disassembly", None)
     if prog.grid is not None:
       rows, cols = prog.grid
       cores = sorted([(x, y) for x in cols for y in rows], key=lambda c: (c[0], c[1]))
@@ -242,7 +244,9 @@ def build_programs_info(programs, device_cores):
     else:
       cores = device_cores if prog.cores == "all" else device_cores[:prog.cores]
     info = {"index": i, "name": prog.name or None, "cores": cores, "sources": sources}
+    if disassembly: info["disassembly"] = disassembly
     if core_sources is not None: info["core_sources"] = core_sources
+    if core_disassembly is not None: info["core_disassembly"] = core_disassembly
     result.append(info)
   return result
 
@@ -344,6 +348,9 @@ def collect(
       entry = {"total": total, "riscs": out_riscs}
       if core_key in core_sources:
         entry["sources"] = core_sources[core_key]
+      core_disassembly = info.get("core_disassembly", {})
+      if core_key in core_disassembly:
+        entry["disassembly"] = core_disassembly[core_key]
       profiles[core_key] = entry
 
     programs.append(
@@ -352,6 +359,7 @@ def collect(
         "name": info.get("name"),
         "cores": [list(c) for c in info["cores"]],
         "sources": info.get("sources", {}),
+        "disassembly": info.get("disassembly", {}),
         "profiles": profiles,
       }
     )

@@ -18,8 +18,13 @@ body{background:#111;color:#ccc;font:14px/1.4 'SF Mono',Menlo,monospace;display:
 .prog-btn:hover{background:#222;color:#ccc}
 .prog-btn.active{background:#1a3a2a;border-color:#4a8;color:#8f8}
 #center{flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:0}
-#stats-bar{padding:6px 16px;background:#1a1a1a;border-bottom:1px solid #333;font-size:12px;color:#888;display:flex;gap:24px;flex-shrink:0}
+#stats-bar{padding:6px 16px;background:#1a1a1a;border-bottom:1px solid #333;font-size:12px;color:#888;display:flex;gap:16px;align-items:center;flex-shrink:0}
 #stats-bar b{color:#ccc}
+#stats-items{display:flex;gap:24px;min-width:0;flex-wrap:wrap}
+#panel-actions{display:flex;gap:8px;margin-left:auto;flex-shrink:0}
+.panel-toggle{border:1px solid #444;background:#222;color:#aaa;border-radius:3px;padding:3px 8px;cursor:pointer;font:10px/1.2 inherit;display:none}
+.panel-toggle:hover{background:#2d2d2d;color:#eee}
+.panel-toggle.active{background:#203447;border-color:#4af;color:#d7ecff}
 #grid-wrap{flex:1;padding:16px;overflow:auto;display:flex;align-items:start;justify-content:center}
 .cell rect{transition:stroke .1s,stroke-width .1s}
 .cell.active rect:hover{stroke:#fff;stroke-width:2}
@@ -45,8 +50,12 @@ table.prof tr:hover td{background:#222}
 #dock-warn{padding:6px 0 0;font-size:11px;color:#f88}
 #rpanel{width:0;overflow:hidden;background:#161616;border-left:1px solid #333;display:flex;flex-direction:column;position:relative}
 #rpanel.open{width:500px}
-#rpanel-head{display:flex;align-items:center;justify-content:space-between;padding:8px 12px;border-bottom:1px solid #333;flex-shrink:0}
-#rpanel-head span{color:#888;font-size:10px;text-transform:uppercase;letter-spacing:.5px}
+#rpanel-head{display:flex;align-items:center;justify-content:space-between;padding:8px 12px;border-bottom:1px solid #333;flex-shrink:0;gap:12px}
+#rpanel-title{color:#888;font-size:10px;text-transform:uppercase;letter-spacing:.5px;flex-shrink:0}
+#rpanel-tools{display:flex;align-items:center;gap:6px;margin-left:auto;min-width:0}
+.section-jump{border:1px solid #3a3a3a;background:#1f1f1f;color:#9aa0a6;border-radius:999px;padding:2px 8px;cursor:pointer;font:10px/1.2 inherit;display:none}
+.section-jump:hover{background:#292929;color:#e5e7eb}
+.section-jump.active{display:inline-block}
 .rpanel-close{border:1px solid #444;background:#222;color:#aaa;border-radius:3px;padding:1px 7px;cursor:pointer;font:12px/1.2 inherit}
 .rpanel-close:hover{background:#2d2d2d;color:#eee}
 #rpanel-drag{position:absolute;left:-3px;top:0;bottom:0;width:6px;cursor:col-resize;z-index:10}
@@ -55,19 +64,24 @@ table.prof tr:hover td{background:#222}
 #source-panel{display:none}
 #source-panel h4{color:#888;font-size:13px;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;margin-top:14px}
 #source-panel h4:first-child{margin-top:0}
-#code-toggle{position:absolute;top:8px;right:8px;border:1px solid #444;background:#222;color:#aaa;border-radius:3px;padding:3px 8px;cursor:pointer;font:10px/1.2 inherit;z-index:5;display:none}
-#code-toggle:hover{background:#2d2d2d;color:#eee}
+.panel-section-head{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.panel-section-head a{color:#7dd3fc;font-size:11px;text-decoration:none;text-transform:none;letter-spacing:0}
+.panel-section-head a:hover{text-decoration:underline}
 pre.src{background:#1e1e1e;padding:0;border-radius:3px;overflow-x:auto;margin-bottom:0;border:1px solid #222}
 pre.src code{font-size:12px;line-height:1.4;padding:10px!important;display:block}
 .src-line{display:block;margin:0 -10px;padding:0 10px;border-left:3px solid transparent}
 .zone-tag{font-size:10px;padding:2px 6px;border-radius:2px;margin-left:8px;font-family:'SF Mono',Menlo,monospace;vertical-align:middle}
+.asm-section{color:#7dd3fc}
+.asm-address{color:#fbbf24}
+.asm-bytes{color:#6b7280}
+.asm-mnemonic{color:#86efac}
+.asm-comment{color:#9ca3af}
 </style></head>
 <body>
 <div id="sidebar"><h3>Programs</h3><div id="prog-list"></div></div>
 <div id="center" style="position:relative">
-  <div id="stats-bar"></div>
+  <div id="stats-bar"><div id="stats-items"></div><div id="panel-actions"><button id="code-toggle" class="panel-toggle">code</button><button id="disasm-toggle" class="panel-toggle">disasm</button></div></div>
   <div id="grid-wrap"><svg id="grid-svg"></svg></div>
-  <button id="code-toggle">code</button>
   <div id="dock"><div id="dock-drag"></div><div id="dock-inner">
     <div id="dock-content"><div id="dock-tables"></div><div id="dock-warn"></div></div>
     <button class="dock-close" id="dock-close-btn">&times;</button>
@@ -75,7 +89,7 @@ pre.src code{font-size:12px;line-height:1.4;padding:10px!important;display:block
 </div>
 <div id="rpanel">
   <div id="rpanel-drag"></div>
-  <div id="rpanel-head"><span>Source</span><button class="rpanel-close" id="rpanel-close-btn">&times;</button></div>
+  <div id="rpanel-head"><span id="rpanel-title">Source</span><div id="rpanel-tools"><button class="section-jump" data-target="reader">reader</button><button class="section-jump" data-target="trisc0">tr0</button><button class="section-jump" data-target="trisc1">tr1</button><button class="section-jump" data-target="trisc2">tr2</button><button class="section-jump" data-target="writer">writer</button><button class="rpanel-close" id="rpanel-close-btn">&times;</button></div></div>
   <div id="rpanel-scroll">
     <div id="source-panel"></div>
   </div>
@@ -108,7 +122,9 @@ function initGrid(data) {
   ARC_TILE = '8,0';
 }
 
-let D, selProg=0, selCore=null, rpanelWidth=500, rpanelOpen=false, dockHeight=220;
+let D, selProg=0, selCore=null, rpanelWidth=500, rpanelOpen=false, dockHeight=220, panelMode='source';
+let panelRequest=0;
+const disasmCache = new Map();
 
 fetch('/api/data').then(r=>r.json()).then(d=>{ D=d; initGrid(d); init() });
 
@@ -116,7 +132,9 @@ function init(){
   buildSidebar();
   d3.select('#dock-close-btn').on('click', clearSelection);
   d3.select('#rpanel-close-btn').on('click', closePanel);
-  d3.select('#code-toggle').on('click', ()=>{ openPanel(); showSources(); });
+  d3.select('#code-toggle').on('click', ()=> showPanelMode('source'));
+  d3.select('#disasm-toggle').on('click', ()=> showPanelMode('disasm'));
+  d3.selectAll('.section-jump').on('click', function(){ scrollToSection(this.dataset.target); });
   initPanelDrag();
   initDockDrag();
   selectProgram(0);
@@ -284,6 +302,61 @@ function activeSources(key){
   return prog.sources;
 }
 
+function hasDisassembly(key){
+  const prog = D.programs[selProg];
+  if (key && prog.profiles && prog.profiles[key] && prog.profiles[key].has_disassembly)
+    return true;
+  return !!prog.has_disassembly;
+}
+
+async function activeDisassembly(key){
+  if (!hasDisassembly(key)) return {};
+  const prog = D.programs[selProg];
+  const useCore = !!(key && prog.profiles && prog.profiles[key] && prog.profiles[key].has_disassembly);
+  const cacheKey = `${prog.index}:${useCore ? key : '__program__'}`;
+  if (disasmCache.has(cacheKey)) return disasmCache.get(cacheKey);
+  const url = useCore ? `/api/disasm?program=${prog.index}&core=${encodeURIComponent(key)}` : `/api/disasm?program=${prog.index}`;
+  const data = await fetch(url).then(r => r.ok ? r.json() : {});
+  disasmCache.set(cacheKey, data);
+  return data;
+}
+
+function programDownloadName(){
+  const prog = D.programs[selProg];
+  const raw = (prog.name && prog.name.trim()) ? prog.name : `program-${prog.index}`;
+  return raw.toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || `program-${prog.index}`;
+}
+
+function sectionDownloadName(label){
+  const prog = programDownloadName();
+  if (label === 'reader' || label === 'writer') return `${label}-${prog}.s`;
+  if (/^trisc[0-2]$/.test(label)) return `compute-tr${label.slice(-1)}-${prog}.s`;
+  return `${label}-${prog}.s`;
+}
+
+function disasmSectionUrl(label){
+  const prog = D.programs[selProg];
+  const useCore = !!(selCore && prog.profiles && prog.profiles[selCore] && prog.profiles[selCore].has_disassembly);
+  const core = useCore ? `&core=${encodeURIComponent(selCore)}` : '';
+  const filename = encodeURIComponent(sectionDownloadName(label));
+  return `/api/disasm?program=${prog.index}${core}&section=${encodeURIComponent(label)}&filename=${filename}`;
+}
+
+function updateSectionJumps(disasm){
+  d3.selectAll('.section-jump').each(function(){
+    const target = (disasm || {})[this.dataset.target] ? this.dataset.target : null;
+    this.dataset.section = target || '';
+    d3.select(this).classed('active', !!target);
+  });
+}
+
+function scrollToSection(which){
+  const btn = document.querySelector(`.section-jump[data-target="${which}"]`);
+  const section = btn?.dataset.section;
+  if (!section) return;
+  document.getElementById(`section-${section}`)?.scrollIntoView({behavior:'smooth', block:'start'});
+}
+
 function sourceOrder(srcs){
   const ordered = ['reader','compute','writer'];
   const all = [...ordered.filter(k=>srcs&&srcs[k]), ...Object.keys(srcs||{}).filter(k=>!ordered.includes(k))];
@@ -377,15 +450,27 @@ function openPanel(){
   const rp = document.getElementById('rpanel');
   rp.style.width = rpanelWidth + 'px';
   rp.classList.add('open');
-  d3.select('#code-toggle').style('display','none');
 }
 
 function closePanel(){
+  panelRequest++;
   rpanelOpen = false;
   const rp = document.getElementById('rpanel');
   rp.classList.remove('open');
   rp.style.width = '0';
-  d3.select('#code-toggle').style('display','block');
+  setPanelButtons(!!Object.keys(activeSources(selCore) || {}).length, hasDisassembly(selCore));
+  updateSectionJumps({});
+}
+
+function setPanelButtons(hasSource, hasDisasm){
+  d3.select('#code-toggle').style('display', hasSource ? 'inline-block' : 'none').classed('active', panelMode === 'source' && rpanelOpen);
+  d3.select('#disasm-toggle').style('display', hasDisasm ? 'inline-block' : 'none').classed('active', panelMode === 'disasm' && rpanelOpen);
+}
+
+function showPanelMode(mode){
+  panelMode = mode;
+  openPanel();
+  showSources();
 }
 
 function initPanelDrag(){
@@ -459,30 +544,61 @@ function findZoneScopes(src){
   return scopes;
 }
 
-function showSources(){
+function formatDisassemblyHtml(src){
+  return src.split('\n').map(line => {
+    if (!line.trim()) return '<span class="src-line"></span>';
+    const section = line.match(/^([0-9a-f]+\s+<[^>]+>:)/);
+    if (section) return `<span class="src-line"><span class="asm-section">${esc(section[1])}</span></span>`;
+    const inst = line.match(/^(\s*)([0-9a-f]+:)(\s+)((?:[0-9a-f]{2}\s+)+)?([a-z.][a-z0-9._]*)(.*)$/i);
+    if (inst) {
+      const bytes = inst[4] ? `<span class="asm-bytes">${esc(inst[4])}</span>` : '';
+      const rest = inst[6].split(/(#.*)/).map(part => part.startsWith('#') ? `<span class="asm-comment">${esc(part)}</span>` : esc(part)).join('');
+      return `<span class="src-line">${esc(inst[1])}<span class="asm-address">${esc(inst[2])}</span>${esc(inst[3])}${bytes}<span class="asm-mnemonic">${esc(inst[5])}</span>${rest}</span>`;
+    }
+    return `<span class="src-line">${esc(line)}</span>`;
+  }).join('');
+}
+
+async function showSources(){
   const prog = D.programs[selProg];
   const srcs = activeSources(selCore);
   const el = d3.select('#source-panel');
-  if(!srcs || !Object.keys(srcs).length){
+  const hasSource = !!(srcs && Object.keys(srcs).length);
+  const hasDisasm = hasDisassembly(selCore);
+  if (!hasSource && !hasDisasm) {
     el.style('display','none');
     if (rpanelOpen) closePanel();
-    d3.select('#code-toggle').style('display','none');
+    setPanelButtons(false, false);
+    updateSectionJumps({});
     return;
   }
-  // Show toggle button when panel is closed
-  if (!rpanelOpen) d3.select('#code-toggle').style('display','block');
+  if (panelMode === 'source' && !hasSource) panelMode = hasDisasm ? 'disasm' : 'source';
+  if (panelMode === 'disasm' && !hasDisasm) panelMode = hasSource ? 'source' : 'disasm';
+  setPanelButtons(hasSource, hasDisasm);
+
+  const requestId = ++panelRequest;
+  let disasm = {};
+  if (panelMode === 'disasm') {
+    el.html('<pre class="src"><code class="language-plaintext">loading disassembly...</code></pre>').style('display','block');
+    d3.select('#rpanel-title').text('Disassembly');
+    updateSectionJumps({});
+    disasm = await activeDisassembly(selCore);
+    if (requestId !== panelRequest) return;
+  }
 
   const ordered = ['reader','compute','writer'];
-  const all = [...ordered.filter(k=>srcs[k]), ...Object.keys(srcs).filter(k=>!ordered.includes(k))];
+  const all = panelMode === 'source'
+    ? [...ordered.filter(k=>srcs[k]), ...Object.keys(srcs).filter(k=>!ordered.includes(k))]
+    : [...['reader','trisc0','trisc1','trisc2','writer'].filter(k=>disasm[k]), ...Object.keys(disasm).filter(k=>!['reader','trisc0','trisc1','trisc2','writer'].includes(k))];
   const colors = getZoneColors(srcs);
   const zoneByName = {};
-  if (selCore && prog.profiles && prog.profiles[selCore]) {
+  if (panelMode === 'source' && selCore && prog.profiles && prog.profiles[selCore]) {
     for (const z of getCoreZones(selCore)) {
       const cur = zoneByName[z.name];
       if (!cur) zoneByName[z.name] = {dur: z.total, riscs: [z.risc]};
       else { cur.dur += z.total; if (!cur.riscs.includes(z.risc)) cur.riscs.push(z.risc); }
     }
-  } else {
+  } else if (panelMode === 'source') {
     const sums = {}, counts = {};
     for (const p of Object.values(prog.profiles)) {
       for (const r of p.riscs) {
@@ -497,14 +613,28 @@ function showSources(){
   }
 
   let h = '';
-  for (const label of all)
-    h += `<h4>${label}</h4><pre class="src"><code class="language-cpp">${esc(srcs[label])}</code></pre>`;
+  if (panelMode === 'disasm' && !all.length)
+    h = '<pre class="src"><code class="language-plaintext">disassembly unavailable</code></pre>';
+  for (const label of all) {
+    const content = panelMode === 'source' ? esc(srcs[label]) : esc(disasm[label]);
+    const klass = panelMode === 'source' ? 'language-cpp' : 'language-plaintext';
+    const heading = panelMode === 'source'
+      ? `<h4>${label}</h4>`
+      : `<h4 class="panel-section-head" id="section-${label}"><span>${label}</span><a href="${disasmSectionUrl(label)}" download="${label}.S">download</a></h4>`;
+    h += `${heading}<pre class="src"><code class="${klass}">${content}</code></pre>`;
+  }
   el.html(h).style('display','block');
+  d3.select('#rpanel-title').text(panelMode === 'source' ? 'Source' : 'Disassembly');
+  updateSectionJumps(panelMode === 'disasm' ? disasm : {});
 
-  el.selectAll('code.language-cpp').each(function(){ hljs.highlightElement(this) });
+  if (panelMode === 'source') el.selectAll('code.language-cpp').each(function(){ hljs.highlightElement(this) });
 
   el.selectAll('pre.src').each(function(_, preIdx) {
     const pre = d3.select(this), code = pre.select('code');
+    if (panelMode !== 'source') {
+      code.html(formatDisassemblyHtml(disasm[all[preIdx]]));
+      return;
+    }
     const rawSrc = srcs[all[preIdx]];
     const scopes = findZoneScopes(rawSrc);
     const htmlLines = code.html().split('\n');
@@ -534,11 +664,11 @@ function updateStats(){
   const prog = D.programs[selProg];
   const vals = Object.values(prog.profiles).map(p=>p.total).filter(v=>v>0);
   const fmt = v=>(v/FREQ_MHZ).toFixed(2)+'us';
-  if (!vals.length) { d3.select('#stats-bar').html('<span style="color:#666">No profiler data</span>'); return }
+  if (!vals.length) { d3.select('#stats-items').html('<span style="color:#666">No profiler data</span>'); return }
   const mean = d3.mean(vals);
   const std = Math.sqrt(d3.mean(vals.map(v => { const d = v - mean; return d * d })));
   const label = prog.name && prog.name.trim() ? prog.name : `Program ${prog.index}`;
-  d3.select('#stats-bar').html(
+  d3.select('#stats-items').html(
     `<span>${label}</span>` +
     `<span>Max <b>${fmt(d3.max(vals))}</b></span>` +
     `<span>Min <b>${fmt(d3.min(vals))}</b></span>` +

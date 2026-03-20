@@ -274,6 +274,7 @@ def pack_xip_elf(elf: bytes, xip_relocate: bool = False) -> tuple[bytes, int]:
 class CompiledKernel:
   xip: bytes
   xip_text_bytes: int
+  disassembly: str = ""
   elf_bytes: bytes | None = None  # full ELF with debug info (when DEBUG=1)
 
 _INIT_SCRATCH_BASE = TensixL1.KERNEL_CONFIG_BASE
@@ -401,6 +402,13 @@ class Compiler:
       profile=PROFILER,
     )
 
+  def disassemble(self, kernel: CompiledKernel) -> str:
+    if kernel.disassembly:
+      return kernel.disassembly
+    if kernel.elf_bytes is None:
+      return ""
+    return self._disassemble_elf(kernel.elf_bytes)
+
   def compile_dataflow(self, src: str, processor: str, noc_index: int | None = None) -> CompiledKernel:
     if processor not in ("brisc", "ncrisc"):
       raise ValueError(f"processor must be 'brisc' or 'ncrisc', got: {processor}")
@@ -442,7 +450,7 @@ class Compiler:
       for d in sorted(extra_includes):
         for f in sorted(Path(d).rglob("*")):
           if f.is_file(): inc_content += f.read_bytes()
-    key = _cache_hash("kern", kern, target, tuple(defines), opt, trisc,
+    key = _cache_hash("kern-v2", kern, target, tuple(defines), opt, trisc,
                       xip_relocate, tuple(sorted(hdrs.items())), self._fw[target].elf_bytes, inc_content)
     if not DEBUG:
       cached = _cache_load(key)
@@ -478,7 +486,12 @@ class Compiler:
     elf = _compile_and_link(cc=self._cc, src=fw_src, compile_args=compile_args,
                             link_args=_kernel_link_args, tmp_prefix=f"tt-{target}-", prepare=_prepare)
     xip, xip_text_bytes = pack_xip_elf(elf, xip_relocate=xip_relocate)
-    result = CompiledKernel(xip=xip, xip_text_bytes=xip_text_bytes, elf_bytes=elf if DEBUG else None)
+    result = CompiledKernel(
+      xip=xip,
+      xip_text_bytes=xip_text_bytes,
+      disassembly=self._disassemble_elf(elf),
+      elf_bytes=elf if DEBUG else None,
+    )
     new_zones = {k: v for k, v in _zone_map.items() if k not in zones_before}
     if not DEBUG:
       _cache_store(key, {"result": result, "zones": new_zones})
@@ -490,6 +503,28 @@ class Compiler:
     _run(self._objcopy, ["--localize-symbol=_start", "--localize-symbol=main",
                          "--localize-symbol=exit", "--weaken", str(out)], build)
     return out
+
+  def _disassemble_elf(self, elf: bytes) -> str:
+    objdump = _SFPI / "riscv-tt-elf-objdump"
+    if not objdump.is_file():
+      return ""
+    build = Path(tempfile.mkdtemp(prefix="tt-disasm-"))
+    try:
+      elf_path = build / "out.elf"
+      elf_path.write_bytes(elf)
+      out = subprocess.run(
+        [str(objdump), "-d", str(elf_path)],
+        capture_output=True,
+        text=True,
+        timeout=30,
+      )
+      if out.returncode != 0:
+        return ""
+      return re.sub(r"(?m)^(\s*)0+([0-9a-f]+:)", r"\1\2", out.stdout)
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+      return ""
+    finally:
+      shutil.rmtree(build, ignore_errors=True)
 
   def compile_cq_kernels(self) -> dict[str, CompiledKernel]:
     cq = lambda src, proc, noc: self._compile_dataflow(

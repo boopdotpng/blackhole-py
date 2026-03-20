@@ -1,4 +1,4 @@
-import functools, os, struct, time
+import functools, os, shutil, struct, tempfile, time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -311,9 +311,30 @@ class Device:
 
   def _finalize_profile(self):
     if not self._profile_accumulated: return
+    if getattr(self, "_profile_disasm_dir", None):
+      shutil.rmtree(self._profile_disasm_dir, ignore_errors=True)
+      self._profile_disasm_dir = None
     # re-index programs sequentially
     for i, prog in enumerate(self._profile_accumulated):
       prog["index"] = i
+    self._profile_disasm_dir = tempfile.mkdtemp(prefix="bh-prof-disasm-")
+    for prog in self._profile_accumulated:
+      prog_dir = Path(self._profile_disasm_dir) / f"program-{prog['index']}"
+      disassembly = prog.pop("disassembly", None) or {}
+      prog["has_disassembly"] = bool(disassembly)
+      if disassembly:
+        out_dir = prog_dir / "global"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        for name, text in disassembly.items():
+          (out_dir / f"{name}.S").write_text(text)
+      for core_key, profile in prog["profiles"].items():
+        core_disassembly = profile.pop("disassembly", None) or {}
+        profile["has_disassembly"] = bool(core_disassembly)
+        if core_disassembly:
+          out_dir = prog_dir / "cores" / core_key.replace(",", "-")
+          out_dir.mkdir(parents=True, exist_ok=True)
+          for name, text in core_disassembly.items():
+            (out_dir / f"{name}.S").write_text(text)
     self.last_profile = {
       "dispatch_mode": "fast",
       "harvested_dram_bank": self.harvested_dram_banks[0] if self.harvested_dram_banks else None,
@@ -367,6 +388,16 @@ class Device:
     writer = self.compiler.compile_dataflow(program.writer_kernel, "brisc") if program.writer_kernel else None
     reader = self.compiler.compile_dataflow(program.reader_kernel, "ncrisc") if program.reader_kernel else None
     compute = self.compiler.compile_compute(program.compute_kernel, program) if program.compute_kernel else None
+    disassembly = {}
+    if self._profiler:
+      if reader is not None:
+        disassembly["reader"] = self.compiler.disassemble(reader)
+      if writer is not None:
+        disassembly["writer"] = self.compiler.disassemble(writer)
+      if compute is not None:
+        for i, kernel in enumerate(compute):
+          disassembly[f"trisc{i}"] = self.compiler.disassemble(kernel)
+      setattr(program, "_profile_disassembly", disassembly)
 
     if program.grid is not None:
       rows, cols = program.grid
@@ -380,6 +411,22 @@ class Device:
       ]
       r_recv = self.compiler.compile_dataflow(program.reader_recv_kernel, "ncrisc") if program.reader_recv_kernel else reader
       w_recv = self.compiler.compile_dataflow(program.writer_recv_kernel, "brisc") if program.writer_recv_kernel else writer
+      if self._profiler and (program.reader_recv_kernel or program.writer_recv_kernel):
+        core_disassembly = {}
+        col_index = {x: i for i, x in enumerate(cols)}
+        row_index = {y: i for i, y in enumerate(rows)}
+        r_recv_disassembly = self.compiler.disassemble(r_recv) if r_recv is not None else ""
+        w_recv_disassembly = self.compiler.disassemble(w_recv) if w_recv is not None else ""
+        for core in all_cores:
+          ds = dict(disassembly)
+          if col_index[core[0]] != 0 and r_recv_disassembly:
+            ds["reader"] = r_recv_disassembly
+          if row_index[core[1]] != 0 and w_recv_disassembly:
+            ds["writer"] = w_recv_disassembly
+          core_disassembly[f"{core[0]},{core[1]}"] = ds
+        setattr(program, "_profile_core_disassembly", core_disassembly)
+      elif self._profiler:
+        setattr(program, "_profile_core_disassembly", None)
       top_left = [grid[0][0]]
       top_row = [grid[0][c] for c in range(1, len(cols))]
       left_col = [grid[r][0] for r in range(1, len(rows))]
@@ -388,6 +435,8 @@ class Device:
         (top_left, reader, writer), (top_row, r_recv, writer), (left_col, reader, w_recv), (interior, r_recv, w_recv),
       ] if cs]
     else:
+      if self._profiler:
+        setattr(program, "_profile_core_disassembly", None)
       cores = self.cores if program.cores == "all" else self.cores[:program.cores]
       all_cores = cores
       n = len(cores)
@@ -476,9 +525,10 @@ class Device:
       cycles = t1 - t0
       name = self._programs[i].name
       timings.append({"cycles": cycles, "us": cycles / freq_mhz, "freq_mhz": freq_mhz, "name": name})
-    for i, t in enumerate(timings):
-      name = f" {t['name']}" if t["name"] else ""
-      print(f"  [{i}]{name} {t['us']:,.1f} us ({t['cycles']:,} cycles)")
+    if not self._profiler:
+      for i, t in enumerate(timings):
+        name = f" {t['name']}" if t["name"] else ""
+        print(f"  [{i}]{name} {t['us']:,.1f} us ({t['cycles']:,} cycles)")
     self.last_device_timing = timings
     return timings
 
@@ -491,10 +541,13 @@ class Device:
       print(f"profiler data written to {path}")
       return
     from profiler import ui as profiler_ui
-    profiler_ui.serve(self.last_profile, port=port)
+    profiler_ui.serve(self.last_profile, port=port, disasm_dir=self._profile_disasm_dir)
 
   def close(self):
     self._set_power(False)
+    if getattr(self, "_profile_disasm_dir", None):
+      shutil.rmtree(self._profile_disasm_dir, ignore_errors=True)
+      self._profile_disasm_dir = None
     # halt dispatch cores before tearing down sysmem — they read from
     # IOMMU-mapped host memory and will fault if it's unmapped first
     if self._cq_hw is not None:
