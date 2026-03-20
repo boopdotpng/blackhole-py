@@ -8,8 +8,8 @@ A minimal Python driver for the Tenstorrent Blackhole accelerator. Compiles and 
 
 ### Requirements
 
-- **Hardware**: P100A and all P150 cards. 
-- **Kernel driver**: tt-kmd >= 2.6.0
+- **Hardware**: Blackhole P100A and P150 (all variants). 
+- **Kernel driver**: tt-kmd >= 2.6.0 (for the set_power_state ioctl)
 - **Python**: 3.10+, numpy
 
 Does not support multi-chip / distributed yet.
