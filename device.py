@@ -123,7 +123,16 @@ class Device:
   def _select_core_layout(self, tensix_enabled: int) -> str:
     if self.board != "p150":
       return self.board
-    core_count = active_tensix_core_count(tensix_enabled)
+    override = os.getenv("TT_P150_CORE_COUNT_OVERRIDE")
+    if override is None:
+      core_count = active_tensix_core_count(tensix_enabled)
+    else:
+      try:
+        core_count = int(override, 0)
+      except ValueError:
+        os.close(self.fd)
+        raise SystemExit(f"invalid TT_P150_CORE_COUNT_OVERRIDE={override!r}")
+      print(f"  {self.arch}: overriding p150 core count to {core_count} via TT_P150_CORE_COUNT_OVERRIDE")
     if core_count == 120:
       print(f"  {self.arch}: using p100 worker layout for 120-core p150")
       return "p100"
