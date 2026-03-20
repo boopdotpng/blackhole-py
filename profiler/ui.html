@@ -50,8 +50,12 @@ table.prof tr:hover td{background:#222}
 #dock-warn{padding:6px 0 0;font-size:11px;color:#f88}
 #rpanel{width:0;overflow:hidden;background:#161616;border-left:1px solid #333;display:flex;flex-direction:column;position:relative}
 #rpanel.open{width:500px}
-#rpanel-head{display:flex;align-items:center;justify-content:space-between;padding:8px 12px;border-bottom:1px solid #333;flex-shrink:0}
-#rpanel-head span{color:#888;font-size:10px;text-transform:uppercase;letter-spacing:.5px}
+#rpanel-head{display:flex;align-items:center;justify-content:space-between;padding:8px 12px;border-bottom:1px solid #333;flex-shrink:0;gap:12px}
+#rpanel-title{color:#888;font-size:10px;text-transform:uppercase;letter-spacing:.5px;flex-shrink:0}
+#rpanel-tools{display:flex;align-items:center;gap:6px;margin-left:auto;min-width:0}
+.section-jump{border:1px solid #3a3a3a;background:#1f1f1f;color:#9aa0a6;border-radius:999px;padding:2px 8px;cursor:pointer;font:10px/1.2 inherit;display:none}
+.section-jump:hover{background:#292929;color:#e5e7eb}
+.section-jump.active{display:inline-block}
 .rpanel-close{border:1px solid #444;background:#222;color:#aaa;border-radius:3px;padding:1px 7px;cursor:pointer;font:12px/1.2 inherit}
 .rpanel-close:hover{background:#2d2d2d;color:#eee}
 #rpanel-drag{position:absolute;left:-3px;top:0;bottom:0;width:6px;cursor:col-resize;z-index:10}
@@ -60,6 +64,9 @@ table.prof tr:hover td{background:#222}
 #source-panel{display:none}
 #source-panel h4{color:#888;font-size:13px;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;margin-top:14px}
 #source-panel h4:first-child{margin-top:0}
+.panel-section-head{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.panel-section-head a{color:#7dd3fc;font-size:11px;text-decoration:none;text-transform:none;letter-spacing:0}
+.panel-section-head a:hover{text-decoration:underline}
 pre.src{background:#1e1e1e;padding:0;border-radius:3px;overflow-x:auto;margin-bottom:0;border:1px solid #222}
 pre.src code{font-size:12px;line-height:1.4;padding:10px!important;display:block}
 .src-line{display:block;margin:0 -10px;padding:0 10px;border-left:3px solid transparent}
@@ -82,7 +89,7 @@ pre.src code{font-size:12px;line-height:1.4;padding:10px!important;display:block
 </div>
 <div id="rpanel">
   <div id="rpanel-drag"></div>
-  <div id="rpanel-head"><span>Source</span><button class="rpanel-close" id="rpanel-close-btn">&times;</button></div>
+  <div id="rpanel-head"><span id="rpanel-title">Source</span><div id="rpanel-tools"><button class="section-jump" data-target="reader">reader</button><button class="section-jump" data-target="trisc0">tr0</button><button class="section-jump" data-target="trisc1">tr1</button><button class="section-jump" data-target="trisc2">tr2</button><button class="section-jump" data-target="writer">writer</button><button class="rpanel-close" id="rpanel-close-btn">&times;</button></div></div>
   <div id="rpanel-scroll">
     <div id="source-panel"></div>
   </div>
@@ -127,6 +134,7 @@ function init(){
   d3.select('#rpanel-close-btn').on('click', closePanel);
   d3.select('#code-toggle').on('click', ()=> showPanelMode('source'));
   d3.select('#disasm-toggle').on('click', ()=> showPanelMode('disasm'));
+  d3.selectAll('.section-jump').on('click', function(){ scrollToSection(this.dataset.target); });
   initPanelDrag();
   initDockDrag();
   selectProgram(0);
@@ -313,6 +321,42 @@ async function activeDisassembly(key){
   return data;
 }
 
+function programDownloadName(){
+  const prog = D.programs[selProg];
+  const raw = (prog.name && prog.name.trim()) ? prog.name : `program-${prog.index}`;
+  return raw.toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || `program-${prog.index}`;
+}
+
+function sectionDownloadName(label){
+  const prog = programDownloadName();
+  if (label === 'reader' || label === 'writer') return `${label}-${prog}.s`;
+  if (/^trisc[0-2]$/.test(label)) return `compute-tr${label.slice(-1)}-${prog}.s`;
+  return `${label}-${prog}.s`;
+}
+
+function disasmSectionUrl(label){
+  const prog = D.programs[selProg];
+  const useCore = !!(selCore && prog.profiles && prog.profiles[selCore] && prog.profiles[selCore].has_disassembly);
+  const core = useCore ? `&core=${encodeURIComponent(selCore)}` : '';
+  const filename = encodeURIComponent(sectionDownloadName(label));
+  return `/api/disasm?program=${prog.index}${core}&section=${encodeURIComponent(label)}&filename=${filename}`;
+}
+
+function updateSectionJumps(disasm){
+  d3.selectAll('.section-jump').each(function(){
+    const target = (disasm || {})[this.dataset.target] ? this.dataset.target : null;
+    this.dataset.section = target || '';
+    d3.select(this).classed('active', !!target);
+  });
+}
+
+function scrollToSection(which){
+  const btn = document.querySelector(`.section-jump[data-target="${which}"]`);
+  const section = btn?.dataset.section;
+  if (!section) return;
+  document.getElementById(`section-${section}`)?.scrollIntoView({behavior:'smooth', block:'start'});
+}
+
 function sourceOrder(srcs){
   const ordered = ['reader','compute','writer'];
   const all = [...ordered.filter(k=>srcs&&srcs[k]), ...Object.keys(srcs||{}).filter(k=>!ordered.includes(k))];
@@ -415,6 +459,7 @@ function closePanel(){
   rp.classList.remove('open');
   rp.style.width = '0';
   setPanelButtons(!!Object.keys(activeSources(selCore) || {}).length, hasDisassembly(selCore));
+  updateSectionJumps({});
 }
 
 function setPanelButtons(hasSource, hasDisasm){
@@ -524,6 +569,7 @@ async function showSources(){
     el.style('display','none');
     if (rpanelOpen) closePanel();
     setPanelButtons(false, false);
+    updateSectionJumps({});
     return;
   }
   if (panelMode === 'source' && !hasSource) panelMode = hasDisasm ? 'disasm' : 'source';
@@ -534,7 +580,8 @@ async function showSources(){
   let disasm = {};
   if (panelMode === 'disasm') {
     el.html('<pre class="src"><code class="language-plaintext">loading disassembly...</code></pre>').style('display','block');
-    d3.select('#rpanel-head span').text('Disassembly');
+    d3.select('#rpanel-title').text('Disassembly');
+    updateSectionJumps({});
     disasm = await activeDisassembly(selCore);
     if (requestId !== panelRequest) return;
   }
@@ -571,10 +618,14 @@ async function showSources(){
   for (const label of all) {
     const content = panelMode === 'source' ? esc(srcs[label]) : esc(disasm[label]);
     const klass = panelMode === 'source' ? 'language-cpp' : 'language-plaintext';
-    h += `<h4>${label}</h4><pre class="src"><code class="${klass}">${content}</code></pre>`;
+    const heading = panelMode === 'source'
+      ? `<h4>${label}</h4>`
+      : `<h4 class="panel-section-head" id="section-${label}"><span>${label}</span><a href="${disasmSectionUrl(label)}" download="${label}.S">download</a></h4>`;
+    h += `${heading}<pre class="src"><code class="${klass}">${content}</code></pre>`;
   }
   el.html(h).style('display','block');
-  d3.select('#rpanel-head span').text(panelMode === 'source' ? 'Source' : 'Disassembly');
+  d3.select('#rpanel-title').text(panelMode === 'source' ? 'Source' : 'Disassembly');
+  updateSectionJumps(panelMode === 'disasm' ? disasm : {});
 
   if (panelMode === 'source') el.selectAll('code.language-cpp').each(function(){ hljs.highlightElement(this) });
 

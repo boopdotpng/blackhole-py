@@ -26,6 +26,8 @@ class _Handler(BaseHTTPRequestHandler):
     qs = parse_qs(query)
     prog = qs.get("program", [None])[0]
     core = qs.get("core", [None])[0]
+    section = qs.get("section", [None])[0]
+    filename = qs.get("filename", [None])[0]
     if prog is None:
       self._json(400, '{"error":"missing program"}')
       return
@@ -36,6 +38,18 @@ class _Handler(BaseHTTPRequestHandler):
       base = base / "global"
     if not base.is_dir():
       self._json(404, '{"error":"disassembly unavailable"}')
+      return
+    if section is not None:
+      path = base / f"{section}.S"
+      if not path.is_file():
+        self._json(404, '{"error":"disassembly unavailable"}')
+        return
+      download_name = Path(filename).name if filename else path.name
+      self.send_response(200)
+      self.send_header("Content-Type", "text/plain; charset=utf-8")
+      self.send_header("Content-Disposition", f'attachment; filename="{download_name}"')
+      self.end_headers()
+      self.wfile.write(path.read_bytes())
       return
     payload = {p.stem: p.read_text() for p in sorted(base.glob("*.S"))}
     self._json(200, json.dumps(payload))

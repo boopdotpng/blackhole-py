@@ -525,9 +525,10 @@ class Device:
       cycles = t1 - t0
       name = self._programs[i].name
       timings.append({"cycles": cycles, "us": cycles / freq_mhz, "freq_mhz": freq_mhz, "name": name})
-    for i, t in enumerate(timings):
-      name = f" {t['name']}" if t["name"] else ""
-      print(f"  [{i}]{name} {t['us']:,.1f} us ({t['cycles']:,} cycles)")
+    if not self._profiler:
+      for i, t in enumerate(timings):
+        name = f" {t['name']}" if t["name"] else ""
+        print(f"  [{i}]{name} {t['us']:,.1f} us ({t['cycles']:,} cycles)")
     self.last_device_timing = timings
     return timings
 
