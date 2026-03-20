@@ -1,18 +1,44 @@
 import json
 from pathlib import Path
 from http.server import HTTPServer, BaseHTTPRequestHandler
+from urllib.parse import parse_qs, urlparse
 
 _data_json = ""
+_disasm_dir: Path | None = None
 _HTML = (Path(__file__).with_name("ui.html")).read_text()
 
 class _Handler(BaseHTTPRequestHandler):
   def do_GET(self):
-    if self.path == "/api/data":
+    parsed = urlparse(self.path)
+    if parsed.path == "/api/data":
       self._json(200, _data_json)
-    elif self.path == "/" or self.path == "/index.html":
+    elif parsed.path == "/api/disasm":
+      self._serve_disasm(parsed.query)
+    elif parsed.path == "/" or parsed.path == "/index.html":
       self._html(200, _HTML)
     else:
       self._json(404, '{"error":"not found"}')
+
+  def _serve_disasm(self, query: str):
+    if _disasm_dir is None:
+      self._json(404, '{"error":"disassembly unavailable"}')
+      return
+    qs = parse_qs(query)
+    prog = qs.get("program", [None])[0]
+    core = qs.get("core", [None])[0]
+    if prog is None:
+      self._json(400, '{"error":"missing program"}')
+      return
+    base = _disasm_dir / f"program-{prog}"
+    if core:
+      base = base / "cores" / core.replace(",", "-")
+    else:
+      base = base / "global"
+    if not base.is_dir():
+      self._json(404, '{"error":"disassembly unavailable"}')
+      return
+    payload = {p.stem: p.read_text() for p in sorted(base.glob("*.S"))}
+    self._json(200, json.dumps(payload))
 
   def _json(self, code, body):
     self.send_response(code)
@@ -29,9 +55,10 @@ class _Handler(BaseHTTPRequestHandler):
   def log_message(self, *_):
     pass
 
-def serve(data: dict, port: int = 8000):
-  global _data_json
+def serve(data: dict, port: int = 8000, disasm_dir: str | Path | None = None):
+  global _data_json, _disasm_dir
   _data_json = json.dumps(data)
+  _disasm_dir = Path(disasm_dir) if disasm_dir else None
   server = HTTPServer(("", port), _Handler)
   print(f"open profiler @ http://localhost:{port}")
   try:
