@@ -52,6 +52,8 @@ class Arc:
   NOC_BASE = 0x80000000
   RESET_UNIT_OFFSET = 0x30000
   SCRATCH_RAM_13 = RESET_UNIT_OFFSET + 0x434
+  TAG_TENSIX_ENABLED_COL = 34
+  DEFAULT_TENSIX_ENABLED = 0x3FFF
   TAG_GDDR_ENABLED = 36
   DEFAULT_GDDR_ENABLED = 0xFF
 
@@ -203,6 +205,9 @@ class TileGrid:
 def worker_cores(tensix_x: tuple[int, ...]) -> list[Core]:
   return [(x, y) for x in tensix_x for y in range(2, 12)]
 
+def active_tensix_core_count(enabled_col_mask: int) -> int:
+  return (enabled_col_mask & Arc.DEFAULT_TENSIX_ENABLED).bit_count() * 10
+
 USE_USB_DISPATCH = os.environ.get("TT_USB") == "1"
 
 def build_bank_noc_table(harvested_dram_banks: list[int], worker_cores: list[Core]) -> bytes:
@@ -252,4 +257,3 @@ def build_bank_noc_table(harvested_dram_banks: list[int], worker_cores: list[Cor
       l1.append(noc_xy(cols[i % len(cols)], 2 + (i // len(cols)) % 10))
 
   return struct.pack(f"<{len(dram)}H{len(l1)}H{num_dram_banks + num_l1_banks}i", *dram, *l1, *([0] * (num_dram_banks + num_l1_banks)))
-

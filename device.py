@@ -53,14 +53,16 @@ class Device:
       raise SystemExit(f"unsupported blackhole device {self.arch}")
     print(f"device {self.device}: {self.arch}")
 
-    board = _BOARDS[self.board]
+    gddr_enabled, tensix_enabled = self._read_arc_enabled_masks()
+    self._core_layout = self._select_core_layout(tensix_enabled)
+    board = _BOARDS[self._core_layout]
     self._tensix_x = board.tensix_x
     self._all_worker_cores = _worker_cores(self._tensix_x)
     self._PREFETCH_CORE = board.prefetch
     self._DISPATCH_CORE = board.dispatch
     self._CQ_CORES = {self._PREFETCH_CORE, self._DISPATCH_CORE}
 
-    self._init_dram_tiles()
+    self._init_dram_tiles(gddr_enabled)
     self._num_dram_banks = Dram.BANK_COUNT - len(self.harvested_dram_banks)
     self._num_l1_banks = len(self._all_worker_cores)
     self.dram = Allocator(self.fd, self.dram_tiles)
@@ -100,7 +102,7 @@ class Device:
     if self._profiler:
       self._init_profiler_layout()
 
-  def _init_dram_tiles(self):
+  def _read_arc_enabled_masks(self) -> tuple[int, int]:
     with TLBWindow(self.fd, start=TileGrid.ARC, addr=Arc.NOC_BASE) as arc:
       telem_ptr = arc.read32(Arc.SCRATCH_RAM_13)
       csm_base, csm_off = align_down(telem_ptr, TLBWindow.SIZE_2M)
@@ -112,8 +114,25 @@ class Device:
       for i in range(entry_count):
         tag_offset = arc.read32(tags_base + i * 4)
         tag_to_offset[tag_offset & 0xFFFF] = (tag_offset >> 16) & 0xFFFF
+      off = tag_to_offset.get(Arc.TAG_TENSIX_ENABLED_COL)
+      tensix_enabled = Arc.DEFAULT_TENSIX_ENABLED if off is None else arc.read32(data_base + off * 4)
       off = tag_to_offset.get(Arc.TAG_GDDR_ENABLED)
       gddr_enabled = Arc.DEFAULT_GDDR_ENABLED if off is None else arc.read32(data_base + off * 4)
+    return gddr_enabled, tensix_enabled
+
+  def _select_core_layout(self, tensix_enabled: int) -> str:
+    if self.board != "p150":
+      return self.board
+    core_count = active_tensix_core_count(tensix_enabled)
+    if core_count == 120:
+      print(f"  {self.arch}: using p100 worker layout for 120-core p150")
+      return "p100"
+    if core_count == 140:
+      return "p150"
+    os.close(self.fd)
+    raise SystemExit(f"unsupported p150 core count {core_count} (enabled_tensix_col=0x{tensix_enabled & Arc.DEFAULT_TENSIX_ENABLED:04x})")
+
+  def _init_dram_tiles(self, gddr_enabled: int):
     harvested = [bank for bank in range(Dram.BANK_COUNT) if ((gddr_enabled >> bank) & 1) == 0]
     self.harvested_dram_banks = harvested
     harvested_set = set(harvested)
