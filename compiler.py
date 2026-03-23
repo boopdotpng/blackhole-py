@@ -69,6 +69,15 @@ _CFLAGS = (
 )
 _LFLAGS = ("-Wl,-z,max-page-size=16", "-Wl,-z,common-page-size=16", "-nostartfiles")
 
+
+def _kernel_build_flags(opt: str) -> tuple[str, list[str], list[str]]:
+  if not DEBUG:
+    return opt, list(_CFLAGS), []
+
+  cflags = [f for f in _CFLAGS if f not in ("-flto=auto", "-ffast-math")]
+  debug_flags = ["-g", "-gdwarf-4"]
+  return "-O1", cflags, debug_flags
+
 def _device_defines(
   num_dram_banks: int,
   num_l1_banks: int,
@@ -463,8 +472,8 @@ class Compiler:
            ["-mcpu=tt-bh", "-mno-tt-tensix-optimize-replay", "-fno-tree-loop-distribute-patterns"]
     fw_src = _DEPS / "firmware-src" / ("trisck.cc" if trisc else f"{target}k.cc")
     includes = [*self._includes, *(f"-I{p}" for p in (extra_includes or []))]
-    debug_flags = ["-g", "-gdwarf-4"] if DEBUG else []
-    compile_args = [opt, *_CFLAGS, *debug_flags, "-MMD", *mcpu, *includes, *defines]
+    effective_opt, cflags, debug_flags = _kernel_build_flags(opt)
+    compile_args = [effective_opt, *cflags, *debug_flags, "-MMD", *mcpu, *includes, *defines]
 
     fw_link_elf: Path | None = None
     def _prepare(build: Path):
@@ -481,7 +490,7 @@ class Compiler:
     def _kernel_link_args(_: Path) -> list[str]:
       ld = _DEPS / "toolchain" / "blackhole" / f"kernel_{target}.ld"
       objs = ["out.o", *extra_objs, str(_DEPS / "lib/blackhole/substitutes.o")]
-      return [opt, *_CFLAGS, *_LFLAGS, *mcpu, f"-T{ld}", "-Wl,--emit-relocs", f"-Wl,--just-symbols={fw_link_elf}", *objs]
+      return [effective_opt, *cflags, *_LFLAGS, *mcpu, f"-T{ld}", "-Wl,--emit-relocs", f"-Wl,--just-symbols={fw_link_elf}", *objs]
 
     elf = _compile_and_link(cc=self._cc, src=fw_src, compile_args=compile_args,
                             link_args=_kernel_link_args, tmp_prefix=f"tt-{target}-", prepare=_prepare)

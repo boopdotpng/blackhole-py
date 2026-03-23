@@ -49,6 +49,7 @@ K_COMPUTE = r"""
 #include "compute_kernel_api/tile_move_copy.h"
 #include "compute_kernel_api/eltwise_unary/eltwise_unary.h"
 #include "compute_kernel_api/eltwise_unary/binop_with_scalar.h"
+#include "tools/profiler/kernel_profiler.hpp"
 
 namespace NAMESPACE {
 void MAIN {
@@ -62,13 +63,19 @@ void MAIN {
   for (uint32_t i = 0; i < n; ++i) {
     tile_regs_acquire();
     cb_wait_front(cb_in, 1);
+    { DeviceZoneScopedN("UNPACK");
     copy_tile(cb_in, 0, 0);
+    }
     cb_pop_front(cb_in, 1);
+    { DeviceZoneScopedN("SFPU_ADD");
     add_unary_tile(0, 0x3f800000);  // +1.0f
+    }
     tile_regs_commit();
     tile_regs_wait();
     cb_reserve_back(cb_out, 1);
+    { DeviceZoneScopedN("PACK");
     pack_tile(0, cb_out);
+    }
     cb_push_back(cb_out, 1);
     tile_regs_release();
   }
