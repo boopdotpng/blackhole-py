@@ -38,10 +38,13 @@ body{background:#111;color:#ccc;font:14px/1.4 'SF Mono',Menlo,monospace;display:
 #dock-content{flex:1;min-width:0}
 .dock-close{border:1px solid #444;background:#222;color:#aaa;border-radius:3px;padding:1px 7px;cursor:pointer;font:12px/1.2 inherit;flex-shrink:0;align-self:start}
 .dock-close:hover{background:#2d2d2d;color:#eee}
-#dock-tables{display:flex;gap:24px;flex:1;overflow-x:auto}
-#dock-tables table:first-child{width:38%}
-#dock-tables table:nth-child(2){width:62%}
-table.prof{border-collapse:collapse;margin:0}
+#dock-tables{display:flex;flex-direction:column;gap:12px;flex:1;min-width:0}
+.dock-row{display:grid;grid-template-columns:minmax(220px,320px) minmax(420px,1fr);gap:16px;align-items:start}
+.dock-row.single{grid-template-columns:minmax(220px,320px)}
+.dock-card{min-width:0;background:#171717;border:1px solid #2a2a2a;border-radius:6px;padding:10px 12px;overflow:auto}
+.dock-card-title{color:#888;font-size:10px;text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px}
+.dock-perf-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px;align-items:start}
+table.prof{border-collapse:collapse;margin:0;width:100%}
 table.prof th{text-align:left;color:#666;font-weight:normal;padding:3px 12px 4px 0;border-bottom:1px solid #2a2a2a;font-size:11px;text-transform:uppercase;letter-spacing:.5px}
 table.prof td{padding:3px 12px 3px 0;font-size:13px;white-space:nowrap}
 table.prof tr:hover td{background:#222}
@@ -417,26 +420,74 @@ function showDock(key){
   const roleTag = roleStr ? `<span style="color:#666;font-size:10px;margin-left:8px">${roleStr}</span>` : '';
   let h = `<div style="color:#aaa;font-size:11px;margin-bottom:4px">Core (${key}) wall time: <b style="color:#fff">${fmtUs(p.total)}</b> (${fmtCyc(p.total)} cycles)${roleTag}</div>`;
   h += `<div style="color:#666;font-size:10px;margin-bottom:6px">Per-RISC times are total runtimes (RISCs execute in parallel)</div>`;
-  h += `<table class="prof"><tr><th>RISC</th><th>FW</th><th>Kernel</th></tr>`;
+  let summaryTable = `<table class="prof"><tr><th>RISC</th><th>FW</th><th>Kernel</th></tr>`;
   for (const r of riscs) {
-    h += `<tr><td>${r.name}</td><td>${fmtUs(r.fw)}</td><td>${fmtUs(r.kern)}</td></tr>`;
+    summaryTable += `<tr><td>${r.name}</td><td>${fmtUs(r.fw)}</td><td>${fmtUs(r.kern)}</td></tr>`;
   }
-  h += '</table>';
+  summaryTable += '</table>';
 
   const zones = getCoreZones(key);
+  let zoneTable = '';
   if (zones.length) {
     const avgs = getZoneAvgs();
-    h += `<table class="prof"><tr><th>Zone</th><th>RISC</th><th>Time</th><th>Count</th><th>Min</th><th>Max</th></tr>`;
+    zoneTable = `<table class="prof"><tr><th>Zone</th><th>RISC</th><th>Time</th><th>Count</th><th>Min</th><th>Max</th></tr>`;
     for (const z of zones) {
       const zoneKey = `${z.name}|${z.risc}`;
       const avg = avgs[zoneKey];
       const avgHint = avg ? `<span class="zone-avg">avg ${fmtUs(avg)}</span>` : '';
-      h += `<tr><td><span class="zone-dot" style="background:${z.color}"></span>${esc(z.name)}</td>` +
+      zoneTable += `<tr><td><span class="zone-dot" style="background:${z.color}"></span>${esc(z.name)}</td>` +
            `<td>${z.risc}</td><td>${fmtUs(z.total)}${avgHint}</td>` +
            `<td>${z.count}</td><td>${fmtUs(z.min)}</td><td>${fmtUs(z.max)}</td></tr>`;
     }
-    h += '</table>';
+    zoneTable += '</table>';
   }
+  h += `<div class="dock-row${zones.length ? '' : ' single'}">`;
+  h += `<div class="dock-card"><div class="dock-card-title">RISC runtime</div>${summaryTable}</div>`;
+  if (zones.length) h += `<div class="dock-card"><div class="dock-card-title">Zones</div>${zoneTable}</div>`;
+  h += `</div>`;
+  // Perf counters (from TRISC1 hardware counters)
+  const pcounters = [];
+  for (const r of riscs) {
+    if (r.perf_counters && r.perf_counters.length) {
+      for (const pc of r.perf_counters) pcounters.push({...pc, risc: r.name});
+    }
+  }
+  if (pcounters.length) {
+    const groupOrder = ['FPU', 'UNPACK', 'PACK', 'L1_0', 'L1_1', 'INSTRN', 'UNKNOWN'];
+    const groupLabels = {
+      FPU: 'FPU',
+      UNPACK: 'UNPACK',
+      PACK: 'PACK',
+      L1_0: 'L1 bank 0',
+      L1_1: 'L1 bank 1',
+      INSTRN: 'Instruction',
+      UNKNOWN: 'Other',
+    };
+    const groups = Object.fromEntries(groupOrder.map(name => [name, []]));
+    for (const pc of pcounters) {
+      const g = pc.group || 'UNKNOWN';
+      if (!groups[g]) groups[g] = [];
+      groups[g].push(pc);
+    }
+    h += `<div class="dock-card"><div class="dock-card-title">HW Perf Counters</div><div class="dock-perf-grid">`;
+    for (const gname of groupOrder) {
+      const gcs = groups[gname] || [];
+      if (!gcs.length) continue;
+      gcs.sort((a, b) => (a.counter_type || 0) - (b.counter_type || 0));
+      h += `<div class="dock-card"><div class="dock-card-title" style="color:#7dd3fc;margin-bottom:6px">${groupLabels[gname] || gname}</div>`;
+      h += `<table class="prof"><tr><th>Counter</th><th>Util%</th><th style="color:#555">events/ref</th></tr>`;
+      for (const pc of gcs) {
+        const pct = pc.util_pct;
+        const color = pct > 80 ? '#86efac' : pct > 40 ? '#fbbf24' : pct > 10 ? '#f97316' : '#f87171';
+        h += `<tr><td>${esc(pc.name)}</td>`;
+        h += `<td style="color:${color};font-weight:600">${pct.toFixed(1)}%</td>`;
+        h += `<td style="color:#555">${pc.counter_value.toLocaleString()} / ${pc.ref_cnt.toLocaleString()}</td></tr>`;
+      }
+      h += '</table></div>';
+    }
+    h += '</div></div>';
+  }
+
   d3.select('#dock-tables').html(h);
   d3.select('#dock-warn').html('');
   const dock = document.getElementById('dock');

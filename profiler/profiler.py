@@ -4,6 +4,122 @@ from hw import *
 from compiler import hash16
 
 RISC_NAMES = ("BRISC", "NCRISC", "TRISC0", "TRISC1", "TRISC2")
+PERF_COUNTER_ID = 9090
+
+# Must match PerfCounterType enum in perf_counters.hpp
+_PERF_COUNTER_NAME_LIST = [
+  "UNDEF",
+  "FPU",
+  "SFPU",
+  "MATH",
+  "DATA_HAZARD_STALLS_MOVD2A",
+  "MATH_INSTRN_STARTED",
+  "MATH_INSTRN_AVAILABLE",
+  "SRCB_WRITE_AVAILABLE",
+  "SRCA_WRITE_AVAILABLE",
+  "UNPACK0_BUSY_THREAD0",
+  "UNPACK1_BUSY_THREAD0",
+  "UNPACK0_BUSY_THREAD1",
+  "UNPACK1_BUSY_THREAD1",
+  "SRCB_WRITE",
+  "SRCA_WRITE",
+  "PACKER_DEST_READ_AVAILABLE",
+  "PACKER_BUSY",
+  "AVAILABLE_MATH",
+  "CFG_INSTRN_AVAILABLE_0",
+  "CFG_INSTRN_AVAILABLE_1",
+  "CFG_INSTRN_AVAILABLE_2",
+  "SYNC_INSTRN_AVAILABLE_0",
+  "SYNC_INSTRN_AVAILABLE_1",
+  "SYNC_INSTRN_AVAILABLE_2",
+  "THCON_INSTRN_AVAILABLE_0",
+  "THCON_INSTRN_AVAILABLE_1",
+  "THCON_INSTRN_AVAILABLE_2",
+  "XSEARCH_INSTRN_AVAILABLE_0",
+  "XSEARCH_INSTRN_AVAILABLE_1",
+  "XSEARCH_INSTRN_AVAILABLE_2",
+  "MOVE_INSTRN_AVAILABLE_0",
+  "MOVE_INSTRN_AVAILABLE_1",
+  "MOVE_INSTRN_AVAILABLE_2",
+  "FPU_INSTRN_AVAILABLE_0",
+  "FPU_INSTRN_AVAILABLE_1",
+  "FPU_INSTRN_AVAILABLE_2",
+  "UNPACK_INSTRN_AVAILABLE_0",
+  "UNPACK_INSTRN_AVAILABLE_1",
+  "UNPACK_INSTRN_AVAILABLE_2",
+  "PACK_INSTRN_AVAILABLE_0",
+  "PACK_INSTRN_AVAILABLE_1",
+  "PACK_INSTRN_AVAILABLE_2",
+  "THREAD_STALLS_0",
+  "THREAD_STALLS_1",
+  "THREAD_STALLS_2",
+  "WAITING_FOR_SRCA_CLEAR",
+  "WAITING_FOR_SRCB_CLEAR",
+  "WAITING_FOR_SRCA_VALID",
+  "WAITING_FOR_SRCB_VALID",
+  "WAITING_FOR_THCON_IDLE_0",
+  "WAITING_FOR_THCON_IDLE_1",
+  "WAITING_FOR_THCON_IDLE_2",
+  "WAITING_FOR_UNPACK_IDLE_0",
+  "WAITING_FOR_UNPACK_IDLE_1",
+  "WAITING_FOR_UNPACK_IDLE_2",
+  "WAITING_FOR_PACK_IDLE_0",
+  "WAITING_FOR_PACK_IDLE_1",
+  "WAITING_FOR_PACK_IDLE_2",
+  "WAITING_FOR_MATH_IDLE_0",
+  "WAITING_FOR_MATH_IDLE_1",
+  "WAITING_FOR_MATH_IDLE_2",
+  "WAITING_FOR_NONZERO_SEM_0",
+  "WAITING_FOR_NONZERO_SEM_1",
+  "WAITING_FOR_NONZERO_SEM_2",
+  "WAITING_FOR_NONFULL_SEM_0",
+  "WAITING_FOR_NONFULL_SEM_1",
+  "WAITING_FOR_NONFULL_SEM_2",
+  "WAITING_FOR_MOVE_IDLE_0",
+  "WAITING_FOR_MOVE_IDLE_1",
+  "WAITING_FOR_MOVE_IDLE_2",
+  "WAITING_FOR_MMIO_IDLE_0",
+  "WAITING_FOR_MMIO_IDLE_1",
+  "WAITING_FOR_MMIO_IDLE_2",
+  "WAITING_FOR_SFPU_IDLE_0",
+  "WAITING_FOR_SFPU_IDLE_1",
+  "WAITING_FOR_SFPU_IDLE_2",
+  "THREAD_INSTRUCTIONS_0",
+  "THREAD_INSTRUCTIONS_1",
+  "THREAD_INSTRUCTIONS_2",
+  "NOC_RING0_INCOMING_1",
+  "NOC_RING0_INCOMING_0",
+  "NOC_RING0_OUTGOING_1",
+  "NOC_RING0_OUTGOING_0",
+  "L1_ARB_TDMA_BUNDLE_1",
+  "L1_ARB_TDMA_BUNDLE_0",
+  "L1_ARB_UNPACKER",
+  "L1_NO_ARB_UNPACKER",
+  "NOC_RING1_INCOMING_1",
+  "NOC_RING1_INCOMING_0",
+  "NOC_RING1_OUTGOING_1",
+  "NOC_RING1_OUTGOING_0",
+  "TDMA_BUNDLE_1_ARB",
+  "TDMA_BUNDLE_0_ARB",
+  "TDMA_EXT_UNPACK_9_10",
+  "TDMA_PACKER_2_WR",
+]
+PERF_COUNTER_NAMES = {i: name for i, name in enumerate(_PERF_COUNTER_NAME_LIST) if i != 0}
+
+def _perf_counter_group(counter_type):
+  if 1 <= counter_type <= 3:
+    return "FPU"
+  if 4 <= counter_type <= 14:
+    return "UNPACK"
+  if 15 <= counter_type <= 17:
+    return "PACK"
+  if 18 <= counter_type <= 78:
+    return "INSTRN"
+  if 79 <= counter_type <= 86:
+    return "L1_0"
+  if 87 <= counter_type <= 94:
+    return "L1_1"
+  return "UNKNOWN"
 
 class P:
   HOST_BUF_END = 0             # per RISC (indices 0-4)
@@ -77,8 +193,9 @@ def _parse_run(words, start, end, program_ids):
     else 0
   )
 
-  # Parse custom zone markers
+  # Parse custom zone markers and perf counter data
   custom = []  # list of (zone_hash, ptype, ts)
+  perf_counters = []  # list of {"name": str, "counter_value": int, "ref_cnt": int, "util_pct": float}
   i = start + P.CUSTOM_START
   while i + 1 < end:
     w0, w1 = words[i], words[i + 1]
@@ -93,13 +210,31 @@ def _parse_run(words, start, end, program_ids):
       ts = w1 if ptype == P.ZONE_TOTAL else ((w0 & 0xFFF) << 32) | w1
       custom.append((timer_id & 0xFFFF, ptype, ts))
     if ptype == P.TS_DATA:
+      zone_hash = timer_id & 0xFFFF
+      if zone_hash == (PERF_COUNTER_ID & 0xFFFF) and i + 3 < end:
+        # Decode PerfCounter: words[i+2] = high 32 bits, words[i+3] = low 32 bits
+        raw_hi = words[i + 2]
+        raw_lo = words[i + 3]
+        counter_value = raw_lo
+        ref_cnt = raw_hi & 0x00FFFFFF
+        counter_type = (raw_hi >> 24) & 0xFF
+        name = PERF_COUNTER_NAMES.get(counter_type, f"UNKNOWN_{counter_type}")
+        util_pct = (counter_value / ref_cnt * 100.0) if ref_cnt > 0 else 0.0
+        perf_counters.append({
+          "name": name,
+          "counter_type": counter_type,
+          "group": _perf_counter_group(counter_type),
+          "counter_value": counter_value,
+          "ref_cnt": ref_cnt,
+          "util_pct": round(util_pct, 2),
+        })
       i += 4
     elif ptype == P.TS_DATA_16B:
       i += 6
     else:
       i += 2
 
-  return prog_id, fw, kern, kern_start, kern_end, custom
+  return prog_id, fw, kern, kern_start, kern_end, custom, perf_counters
 
 def _find_runs(words, program_ids):
   n = len(words)
@@ -145,10 +280,10 @@ def _parse_risc(words, risc_id, program_ids):
     parsed = _parse_run(words, start, end, program_ids)
     if parsed is None:
       continue
-    prog_id, fw, kern, kern_start, kern_end, custom = parsed
+    prog_id, fw, kern, kern_start, kern_end, custom, perf_counters = parsed
     prev = out.get(prog_id)
     if prev is None or (prev[1] == 0 and kern > 0):
-      out[prog_id] = (fw, kern, kern_start, kern_end, custom)
+      out[prog_id] = (fw, kern, kern_start, kern_end, custom, perf_counters)
   return out
 
 def _aggregate_zones(custom, zone_names):
@@ -282,20 +417,21 @@ def collect(
       raw = raw_dram[base : base + host_end * 4]
       words = struct.unpack(f"<{len(raw) // 4}I", raw) if raw else ()
 
-      for prog_id, (fw, kern, kern_start, kern_end, custom) in _parse_risc(
+      for prog_id, (fw, kern, kern_start, kern_end, custom, perf_counters) in _parse_risc(
         words, risc, program_ids
       ).items():
         zones = _aggregate_zones(custom, zone_names)
-        by_program.setdefault(prog_id, []).append(
-          {
-            "name": RISC_NAMES[risc],
-            "fw": fw,
-            "kern": kern,
-            "kern_start": kern_start,
-            "kern_end": kern_end,
-            "zones": zones,
-          }
-        )
+        entry = {
+          "name": RISC_NAMES[risc],
+          "fw": fw,
+          "kern": kern,
+          "kern_start": kern_start,
+          "kern_end": kern_end,
+          "zones": zones,
+        }
+        if perf_counters:
+          entry["perf_counters"] = perf_counters
+        by_program.setdefault(prog_id, []).append(entry)
     core_data[core] = by_program
 
   # Build output programs
@@ -335,15 +471,17 @@ def collect(
       ]
       total = max(0, max(ends) - min(starts)) if starts and ends else 0
       # Strip internal fields from output
-      out_riscs = [
-        {
+      out_riscs = []
+      for r in riscs:
+        rd = {
           "name": r["name"],
           "fw": r["fw"],
           "kern": r["kern"],
           "zones": r["zones"],
         }
-        for r in riscs
-      ]
+        if r.get("perf_counters"):
+          rd["perf_counters"] = r["perf_counters"]
+        out_riscs.append(rd)
       core_key = f"{core[0]},{core[1]}"
       entry = {"total": total, "riscs": out_riscs}
       if core_key in core_sources:

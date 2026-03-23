@@ -9,6 +9,7 @@
 #include "hostdev/dev_msgs.h"
 
 #include "tools/profiler/kernel_profiler.hpp"
+#include "tools/profiler/perf_counters.hpp"
 
 #include "internal/debug/fw_debug.h"
 #include "api/debug/waypoint.h"
@@ -83,6 +84,90 @@ constexpr bool cb_init_write = false;
 
 using namespace ckernel;
 
+#if defined(PROFILE_PERF_COUNTERS) && COMPILE_FOR_TRISC == 1
+namespace {
+
+uint64_t perf_counter_samples[PERF_COUNTER_MAX_RECORDS] = {};
+
+inline void perf_counter_set_l1_mux(PerfCounterGroup group) {
+    volatile tt_reg_ptr uint32_t* mux_reg =
+        reinterpret_cast<volatile tt_reg_ptr uint32_t*>(RISCV_DEBUG_REG_PERF_CNT_MUX_CTRL);
+    constexpr uint32_t L1_MUX_SEL_BIT = (1u << 4);
+    uint32_t mux_val = *mux_reg;
+    if (group == L1_0) {
+        mux_val &= ~L1_MUX_SEL_BIT;
+    } else {
+        mux_val |= L1_MUX_SEL_BIT;
+    }
+    *mux_reg = mux_val;
+}
+
+inline void perf_counter_start() {
+    for (PerfCounterGroup group : PERF_COUNTER_GROUPS) {
+        if ((PROFILE_PERF_COUNTERS & perf_counter_group_flag(group)) == 0) {
+            continue;
+        }
+        if (group == L1_0 || group == L1_1) {
+            perf_counter_set_l1_mux(group);
+        }
+        volatile tt_reg_ptr uint32_t* cntl =
+            reinterpret_cast<volatile tt_reg_ptr uint32_t*>(perf_counter_cntl_reg(group));
+        cntl[0] = 0;
+        cntl[1] = PERF_CNT_CONTINUOUS_MODE;
+        cntl[2] = PERF_CNT_START_VALUE;
+        cntl[2] = 0;
+    }
+}
+
+inline uint32_t perf_counter_stop_and_capture() {
+    for (PerfCounterGroup group : PERF_COUNTER_GROUPS) {
+        if ((PROFILE_PERF_COUNTERS & perf_counter_group_flag(group)) == 0) {
+            continue;
+        }
+        volatile tt_reg_ptr uint32_t* cntl =
+            reinterpret_cast<volatile tt_reg_ptr uint32_t*>(perf_counter_cntl_reg(group));
+        cntl[2] = PERF_CNT_STOP_VALUE;
+        cntl[2] = 0;
+    }
+
+    uint32_t sample_count = 0;
+    for (PerfCounterGroup group : PERF_COUNTER_GROUPS) {
+        if ((PROFILE_PERF_COUNTERS & perf_counter_group_flag(group)) == 0) {
+            continue;
+        }
+        if (group == L1_0 || group == L1_1) {
+            perf_counter_set_l1_mux(group);
+        }
+        volatile tt_reg_ptr uint32_t* cntl =
+            reinterpret_cast<volatile tt_reg_ptr uint32_t*>(perf_counter_cntl_reg(group));
+        volatile tt_reg_ptr uint32_t* out =
+            reinterpret_cast<volatile tt_reg_ptr uint32_t*>(perf_counter_out_reg(group));
+        const PerfCounterDesc* descs = perf_counter_descs(group);
+        const size_t desc_count = perf_counter_desc_count(group);
+        for (size_t i = 0; i < desc_count; ++i) {
+            const uint32_t mode = (static_cast<uint32_t>(descs[i].bank_sel) << PERF_CNT_BANK_SELECT_SHIFT) |
+                                  PERF_CNT_CONTINUOUS_MODE;
+            cntl[1] = mode;
+            while (cntl[1] != mode) {
+            }
+            for (int wait_count = 0; wait_count < 100; ++wait_count) {
+                asm("nop");
+            }
+            perf_counter_samples[sample_count++] = PerfCounter(out[1], out[0], descs[i].type).raw_data;
+        }
+    }
+    return sample_count;
+}
+
+inline void perf_counter_emit(uint32_t sample_count) {
+    for (uint32_t i = 0; i < sample_count; ++i) {
+        kernel_profiler::timeStampedData<PERF_COUNTER_PROFILER_ID>(perf_counter_samples[i]);
+    }
+}
+
+}  // namespace
+#endif
+
 void init_sync_registers() {
     for (uint32_t operand = 0; operand < NUM_CIRCULAR_BUFFERS; operand++) {
         get_cb_tiles_received_ptr(operand)[0] = 0;
@@ -154,7 +239,13 @@ int main(int argc, char* argv[]) {
         int index =
             static_cast<std::underlying_type<TensixProcessorTypes>::type>(TensixProcessorTypes::MATH0) + thread_id;
         uint32_t kernel_lma = (kernel_config_base + launch_msg->kernel_config.kernel_text_offset[index]);
+#if defined(PROFILE_PERF_COUNTERS) && COMPILE_FOR_TRISC == 1
+        perf_counter_start();
+#endif
         auto stack_free = reinterpret_cast<uint32_t (*)()>(kernel_lma)();
+#if defined(PROFILE_PERF_COUNTERS) && COMPILE_FOR_TRISC == 1
+        perf_counter_emit(perf_counter_stop_and_capture());
+#endif
         record_stack_usage(stack_free);
         WAYPOINT("D");
 

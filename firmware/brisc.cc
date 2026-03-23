@@ -133,10 +133,10 @@ void enable_power_management() {
 }
 
 void set_deassert_addresses() {
-    WRITE_REG(RISCV_DEBUG_REG_NCRISC_RESET_PC, MEM_NCRISC_FIRMWARE_BASE);
-    WRITE_REG(RISCV_DEBUG_REG_TRISC0_RESET_PC, MEM_TRISC0_FIRMWARE_BASE);
-    WRITE_REG(RISCV_DEBUG_REG_TRISC1_RESET_PC, MEM_TRISC1_FIRMWARE_BASE);
-    WRITE_REG(RISCV_DEBUG_REG_TRISC2_RESET_PC, MEM_TRISC2_FIRMWARE_BASE);
+    // The host programs subordinate reset PCs from the linked ELF text bases
+    // before BRISC is released from reset. Do not clobber those values here,
+    // or linker-only experiments that move TRISC/NCRISC text will jump to the
+    // stale addresses compiled into tt-metal-deps' old memory map.
     WRITE_REG(RISCV_DEBUG_REG_TRISC_RESET_PC_OVERRIDE, 0b111);
     WRITE_REG(RISCV_DEBUG_REG_NCRISC_RESET_PC_OVERRIDE, 0x1);
 }

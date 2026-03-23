@@ -30,12 +30,12 @@ class TensixL1:
   LAUNCH = 0x000070                        # mailbox_base(0x60) + 0x10
   GO_MSG = 0x000370                        # mailbox_base + 0x310
   GO_MSG_INDEX = 0x0003A0                  # mailbox_base + 0x340
-  KERNEL_CONFIG_BASE = 0x0082B0
+  KERNEL_CONFIG_BASE = 0x0086B0
   BRISC_FIRMWARE_BASE = 0x003840
   DATA_BUFFER_SPACE_BASE = 0x037000
   PROFILER_CONTROL = 0x0009C0              # 32 x u32 = 128 bytes
   PROFILER_HOST_BUFFER_BYTES_PER_RISC = 65536
-  MEM_BANK_TO_NOC_SCRATCH = 0x0112B0
+  MEM_BANK_TO_NOC_SCRATCH = 0x0116B0
   DEBUG_PAUSE_FLAG = 0x003440               # first 4B of MEM_LLK_DEBUG (unused unless -DLLK_DEBUG)
 
 class TensixMMIO:

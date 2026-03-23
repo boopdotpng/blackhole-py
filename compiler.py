@@ -109,6 +109,9 @@ _PROFILE_DEFINES = [
   f"-DPROFILER_FULL_HOST_BUFFER_SIZE_PER_RISC={TensixL1.PROFILER_HOST_BUFFER_BYTES_PER_RISC}",
 ]
 
+# FPU=0x1, PACK=0x2, UNPACK=0x4, L1_0=0x8, L1_1=0x10, INSTRN=0x20
+_PERF_COUNTER_DEFINES = ["-DPROFILE_PERF_COUNTERS=0x3f"]
+
 _FW_TARGETS = [
   ("brisc.cc", "brisc", ["-DCOMPILE_FOR_BRISC", "-DPROCESSOR_INDEX=0", "-DNOC_INDEX=1", "-DNOC_MODE=0"],
    ["-mcpu=tt-bh", "-fno-tree-loop-distribute-patterns"], "-Os", ["noc.o"]),
@@ -349,7 +352,7 @@ def compile_firmware(
   fw_src_dir = _REPO / "firmware"
   unique_srcs = sorted(set(s for s, *_ in _FW_TARGETS))
   key = _cache_hash(
-    "fw",
+    "fw-v3",
     profile,
     num_dram_banks,
     num_l1_banks,
@@ -375,7 +378,8 @@ def compile_firmware(
   for src_name, target, target_defs, mcpu, opt, extra in _FW_TARGETS:
     ld = ld_dir / f"firmware_{target}.ld"
     src = fw_src_dir / src_name
-    compile_args = [opt, *_CFLAGS, *mcpu, "-mno-tt-tensix-optimize-replay", *common_defines, *target_defs, *_INCLUDES]
+    extra_defs = _PERF_COUNTER_DEFINES if (profile and target == "trisc1") else []
+    compile_args = [opt, *_CFLAGS, *mcpu, "-mno-tt-tensix-optimize-replay", *common_defines, *target_defs, *extra_defs, *_INCLUDES]
     link_objs = [str(lib / "tmu-crt0.o"), "out.o", *(str(lib / o) for o in extra), str(lib / "substitutes.o")]
     fw_link_args = [opt, *_CFLAGS, *_LFLAGS, *mcpu, "-mno-tt-tensix-optimize-replay", f"-T{ld}", *link_objs]
     elf = _compile_and_link(cc=cc, src=src, compile_args=compile_args, link_args=fw_link_args, tmp_prefix=f"tt-fw-{target}-")
@@ -459,7 +463,7 @@ class Compiler:
       for d in sorted(extra_includes):
         for f in sorted(Path(d).rglob("*")):
           if f.is_file(): inc_content += f.read_bytes()
-    key = _cache_hash("kern-v2", kern, target, tuple(defines), opt, trisc,
+    key = _cache_hash("kern-v3", kern, target, tuple(defines), opt, trisc,
                       xip_relocate, tuple(sorted(hdrs.items())), self._fw[target].elf_bytes, inc_content)
     if not DEBUG:
       cached = _cache_load(key)
