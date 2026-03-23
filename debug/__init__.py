@@ -1,11 +1,23 @@
-# debug/ - Blackhole P100A interactive RISC-V debugger
-#
-# Standalone debug infrastructure for blackhole-py. No runtime deps beyond
-# hw.TLBWindow (the same ioctl/mmap transport the main driver uses).
-#
-# Modules:
-#   regs    - hardware register addresses, bit fields, instruction encodings
-#   core    - low-level debug register protocol (halt/step/GPR/breakpoints)
-#   inspect - higher-level reads (Dest tiles, LRegs, L1 dump, CFG, debug bus)
-#   source  - addr2line / objdump integration for PC -> source mapping
-#   repl    - interactive command-line debugger
+"""Blackhole-only debugger rewrite package."""
+
+from debug.debug_bus import DebugBus
+from debug.risc import RiscDebug
+from debug.session import DebugSession
+from debug.symbols import (
+  Symbol,
+  default_entry_symbol,
+  default_entry_symbols,
+  resolve_entry_address,
+)
+from debug.transport import DRTransport
+
+__all__ = [
+  "DRTransport",
+  "DebugBus",
+  "DebugSession",
+  "RiscDebug",
+  "Symbol",
+  "default_entry_symbol",
+  "default_entry_symbols",
+  "resolve_entry_address",
+]

@@ -18,7 +18,8 @@ MATH_FIDELITY = _MATH_FIDELITY_MAP.get(MATH_FIDELITY_NAME)
 if MATH_FIDELITY is None:
   raise SystemExit(f"Invalid MATH_FIDELITY={MATH_FIDELITY_NAME!r}. Expected: {', '.join(_MATH_FIDELITY_MAP)}")
 
-NUM_ITERS = 3
+NUM_ITERS = int(os.environ.get("NUM_ITERS", "3"))
+INPUT_PATTERN = os.environ.get("INPUT_PATTERN", "random").lower()
 
 # --- matmul planner ---
 
@@ -368,6 +369,9 @@ void MAIN {{
   const bool last_out = (block == (num_blocks - 1));
   cb_wait_front(tt::CBIndex::c_0, in0_block_num_tiles);
   cb_wait_front(tt::CBIndex::c_1, in1_block_num_tiles);
+  // PAUSE 1: SrcA/SrcB populated by unpack, before matmul consumes them.
+  // From REPL: srca, srcb, then 'resume' to continue.
+  if (block == 0) DEBUG_PAUSE();
   int in0_index_subblock_offset = 0;
   for (uint32_t in0_sb = 0; in0_sb < in0_num_subblocks; in0_sb++) {{
     int in1_index_subblock_offset = 0;
@@ -388,6 +392,9 @@ void MAIN {{
       matmul_block(tt::CBIndex::c_0, tt::CBIndex::c_1,
       in0_tile_index, in1_tile_index, 0, transpose, out_subblock_w, out_subblock_h, in0_block_w);
     }}
+    // PAUSE 2: Dest has matmul result, before pack consumes it.
+    // From REPL: dst array, then 'resume' to continue.
+    if (block == 0 && in0_sb == 0 && in1_sb == 0) DEBUG_PAUSE();
     tile_regs_commit();
     if (last_out) {{
       cb_reserve_back(tt::CBIndex::c_16, out_subblock_num_tiles);
@@ -514,12 +521,31 @@ def _validate(a, b, c_bytes, M, N, Mp, Np):
   if not np.all(np.isfinite(got_flat)):
     bad = int(got_flat.size - np.count_nonzero(np.isfinite(got_flat)))
     raise SystemExit(f"Validation failed: {bad} non-finite values")
-  pcc = float(np.corrcoef(ref_flat, got_flat)[0, 1])
   rel_l2 = float(np.linalg.norm(got_flat - ref_flat) / (np.linalg.norm(ref_flat) + 1e-12))
   max_abs = float(np.max(np.abs(got_flat - ref_flat)))
+  ref_std = float(np.std(ref_flat))
+  if ref_std < 1e-12:
+    pcc = 1.0 if max_abs < 1e-6 else 0.0
+  else:
+    pcc = float(np.corrcoef(ref_flat, got_flat)[0, 1])
   print(f"Validation: PCC={pcc:.6f}, rel_l2={rel_l2:.6f}, max_abs={max_abs:.6f}")
   if pcc < 0.995 or rel_l2 > 0.08:
     raise SystemExit(f"Validation failed: PCC={pcc:.6f}, rel_l2={rel_l2:.6f}")
+
+
+def _make_inputs(M: int, K: int, N: int) -> tuple[np.ndarray, np.ndarray]:
+  if INPUT_PATTERN == "random":
+    rng_a, rng_b = np.random.default_rng(42), np.random.default_rng(123)
+    a_src = rng_a.uniform(-0.5, 0.5, size=(M, K)).astype(np.float16)
+    b_src = rng_b.uniform(-0.5, 0.5, size=(K, N)).astype(np.float16)
+    return a_src, b_src
+  if INPUT_PATTERN == "ones":
+    return np.ones((M, K), dtype=np.float16), np.ones((K, N), dtype=np.float16)
+  if INPUT_PATTERN == "ramp":
+    a_src = np.broadcast_to(np.arange(1, K + 1, dtype=np.float16), (M, K)).copy()
+    b_src = np.broadcast_to(np.arange(1, K + 1, dtype=np.float16).reshape(K, 1), (K, N)).copy()
+    return a_src, b_src
+  raise SystemExit(f"Invalid INPUT_PATTERN={INPUT_PATTERN!r}. Expected: random, ones, ramp")
 
 def main():
   if len(sys.argv) == 4:
@@ -531,7 +557,8 @@ def main():
 
   device = Device()
   try:
-    plan = plan_matmul(M, K, N, device.cores, io_dtype=IO_DTYPE, f32_acc=F32_ACC)
+    max_cores = int(os.environ.get("MAX_CORES", "0")) or len(device.cores)
+    plan = plan_matmul(M, K, N, device.cores[:max_cores], io_dtype=IO_DTYPE, f32_acc=F32_ACC)
     Mp, Kp, Np = plan.mt * 32, plan.kt * 32, plan.nt * 32
     padded = (M != Mp or K != Kp or N != Np)
 
@@ -545,10 +572,9 @@ def main():
           f"in0_block_w={plan.in0_block_w} num_blocks={plan.num_blocks}")
     print(f"  subblock: {plan.out_subblock_h}h x {plan.out_subblock_w}w = {plan.out_subblock_num_tiles} tiles")
     print(f"  cores: {plan.active_core_count} ({len(device.cores)} available)")
+    print(f"  input pattern: {INPUT_PATTERN}")
 
-    rng_a, rng_b = np.random.default_rng(42), np.random.default_rng(123)
-    a_src = rng_a.uniform(-0.5, 0.5, size=(M, K)).astype(np.float16)
-    b_src = rng_b.uniform(-0.5, 0.5, size=(K, N)).astype(np.float16)
+    a_src, b_src = _make_inputs(M, K, N)
 
     if padded:
       a_padded = np.zeros((Mp, Kp), dtype=np.float16); a_padded[:M, :K] = a_src
