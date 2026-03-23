@@ -75,7 +75,7 @@ def _kernel_build_flags(opt: str) -> tuple[str, list[str], list[str]]:
     return opt, list(_CFLAGS), []
 
   cflags = [f for f in _CFLAGS if f not in ("-flto=auto", "-ffast-math")]
-  debug_flags = ["-g", "-gdwarf-4"]
+  debug_flags = ["-g", "-gdwarf-4", "-DENABLE_DEBUG_PAUSE"]
   return "-O1", cflags, debug_flags
 
 def _device_defines(
