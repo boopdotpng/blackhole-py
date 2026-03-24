@@ -95,7 +95,9 @@ class Device:
     self._programs = []
     self._debug_program_counter = 0
     self.last_profile = None
+    self.last_trace = None
     self._profile_accumulated = []  # collect profiler data across multiple run() calls
+    self._trace_accumulated = []  # collect per-program trace data across multiple run() calls
 
     from compiler import PROFILER
     self._profiler = PROFILER and self._use_fast_dispatch
@@ -389,6 +391,17 @@ class Device:
     writer = self.compiler.compile_dataflow(program.writer_kernel, "brisc") if program.writer_kernel else None
     reader = self.compiler.compile_dataflow(program.reader_kernel, "ncrisc") if program.reader_kernel else None
     compute = self.compiler.compile_compute(program.compute_kernel, program) if program.compute_kernel else None
+    trace_elfs = {}
+    if writer is not None and writer.elf_bytes is not None:
+      trace_elfs["brisc"] = writer.elf_bytes
+    if reader is not None and reader.elf_bytes is not None:
+      trace_elfs["ncrisc"] = reader.elf_bytes
+    if compute is not None:
+      for i, kernel in enumerate(compute):
+        if kernel is not None and kernel.elf_bytes is not None:
+          trace_elfs[f"trisc{i}"] = kernel.elf_bytes
+    setattr(program, "_trace_elfs", trace_elfs)
+    setattr(program, "_trace_firmware_elfs", {name: fw.elf_bytes for name, fw in self.compiler._fw.items()})
     disassembly = {}
     if self._profiler:
       if reader is not None:
@@ -544,20 +557,69 @@ class Device:
     max_ts_slots = _HOST_TIMESTAMP_SLOTS
     timestamps = [self._cq_hw.timestamp_noc_addr(s) for s in range(min(2 * n, max_ts_slots))]
 
+    import profiler
+
+    trace_event_ids = None
+    trace_capture = None
+    trace_symbol_contexts = []
+    if n:
+      trace_event_ids = [self._cq_hw._event_id + i + 1 for i in range(n)]
+      trace_capture = profiler.build_trace_capture(self.fd, self._cq_hw, self.cores, trace_event_ids)
+      if trace_capture is not None:
+        trace_symbol_contexts = [
+          profiler.build_symbol_context(program, ir, trace_capture.core, trace_capture.config.target)
+          for program, (ir, _) in zip(self._programs, programs)
+        ]
+
     self.cq.extend(lower_fast(
       programs, self._go_word(), self.cores,
       timestamps=timestamps,
       profiler_flat_ids=self._profiler_flat_ids or None,
       profiler_sysmem_noc_local=self._cq_hw.profiler_noc_local if self._profiler else 0,
+      completion_event_ids=trace_event_ids if trace_capture is not None else None,
     ))
-    self._cq_hw._event_id += 1
-    self.cq.append(CQHostEvent(self._cq_hw._event_id))
-    self._cq_hw.flush(self.cq)
-    self._cq_hw.wait_completion(self._cq_hw._event_id)
+
+    if trace_capture is None:
+      self._cq_hw._event_id += 1
+      self.cq.append(CQHostEvent(self._cq_hw._event_id))
+    else:
+      self._cq_hw._event_id += n
+
+    if trace_capture is not None:
+      trace_capture.start()
+    trace_completed = False
+    try:
+      self._cq_hw.flush(self.cq)
+      if trace_capture is None:
+        self._cq_hw.wait_completion(self._cq_hw._event_id)
+      else:
+        for event_id in trace_event_ids:
+          self._cq_hw.wait_completion(event_id)
+          trace_capture.note_host_completion(event_id)
+        trace_completed = True
+    finally:
+      if trace_capture is not None:
+        trace_capture.stop(graceful=trace_completed)
 
     if self._profiler:
       self._collect_profiler_data()
-    return self._collect_timing_data(n)
+    timings = self._collect_timing_data(n)
+    if trace_capture is not None:
+      import profiler
+      self.last_trace = trace_capture.finalize([program.name for program in self._programs], timings)
+      base_index = len(self._trace_accumulated)
+      for local_index, trace_prog in enumerate(self.last_trace.get("programs", [])):
+        trace_slice = profiler.slice_program_trace(self.last_trace, trace_prog)
+        context = trace_symbol_contexts[local_index] if local_index < len(trace_symbol_contexts) else None
+        trace_slice = profiler.enrich_trace_with_symbols(trace_slice, context)
+        self._trace_accumulated.append({
+          "index": base_index + local_index,
+          "name": trace_prog.get("name"),
+          "trace": trace_slice,
+        })
+    else:
+      self.last_trace = None
+    return timings
 
   def _run_slow_dispatch(self) -> list[dict] | None:
     t0 = time.perf_counter()
@@ -596,14 +658,50 @@ class Device:
 
   def serve_profile(self, port: int = int(os.environ.get("PORT", 8000))):
     self._finalize_profile()
+    import profiler
+    data = self.last_profile
+    if self._trace_accumulated:
+      if data is None:
+        data = {
+          "dispatch_mode": "fast",
+          "harvested_dram_bank": self.harvested_dram_banks[0] if self.harvested_dram_banks else None,
+          "tensix_x": list(self._tensix_x),
+          "dispatch_cores": [list(self._PREFETCH_CORE), list(self._DISPATCH_CORE)],
+          "programs": [],
+        }
+      by_index = {prog.get("index"): prog for prog in data.get("programs", [])}
+      for trace_prog in self._trace_accumulated:
+        prog = by_index.get(trace_prog["index"])
+        if prog is None:
+          prog = {
+            "index": trace_prog["index"],
+            "name": trace_prog.get("name"),
+            "cores": [],
+            "profiles": {},
+            "sources": {},
+            "disassembly": {},
+            "has_disassembly": False,
+          }
+          data["programs"].append(prog)
+          by_index[trace_prog["index"]] = prog
+        prog["trace"] = trace_prog["trace"]
+      data["programs"].sort(key=lambda prog: prog.get("index", 0))
+    else:
+      data = profiler.attach_trace_to_profile(
+        self.last_profile,
+        self.last_trace,
+        tensix_x=list(self._tensix_x),
+        dispatch_cores=[list(self._PREFETCH_CORE), list(self._DISPATCH_CORE)],
+        harvested_dram_bank=self.harvested_dram_banks[0] if self.harvested_dram_banks else None,
+      )
     if os.environ.get("PROFILE_JSON"):
       import json
       path = os.environ["PROFILE_JSON"]
-      with open(path, "w") as f: json.dump(self.last_profile, f)
+      with open(path, "w") as f: json.dump(data, f)
       print(f"profiler data written to {path}")
       return
     from profiler import ui as profiler_ui
-    profiler_ui.serve(self.last_profile, port=port, disasm_dir=self._profile_disasm_dir)
+    profiler_ui.serve(data, port=port, disasm_dir=self._profile_disasm_dir)
 
   def close(self):
     self._set_power(False)

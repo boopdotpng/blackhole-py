@@ -6,7 +6,8 @@ from pathlib import Path
 from hw import *
 from dispatch import Dtype, MathFidelity, Program
 
-PROFILER = os.environ.get("PROFILE") == "1"
+TRACE = os.environ.get("TRACE", "").strip().lower() not in {"", "0", "false", "no", "off"}
+PROFILER = os.environ.get("PROFILE") == "1" or TRACE
 DEBUG = os.environ.get("DEBUG") == "1"
 
 _REPO = Path(__file__).resolve().parent
@@ -72,7 +73,8 @@ _LFLAGS = ("-Wl,-z,max-page-size=16", "-Wl,-z,common-page-size=16", "-nostartfil
 
 def _kernel_build_flags(opt: str) -> tuple[str, list[str], list[str]]:
   if not DEBUG:
-    return opt, list(_CFLAGS), []
+    debug_flags = ["-g", "-gdwarf-4"] if TRACE else []
+    return opt, list(_CFLAGS), debug_flags
 
   cflags = [f for f in _CFLAGS if f not in ("-flto=auto", "-ffast-math")]
   debug_flags = ["-g", "-gdwarf-4", "-DENABLE_DEBUG_PAUSE"]
@@ -465,7 +467,7 @@ class Compiler:
           if f.is_file(): inc_content += f.read_bytes()
     key = _cache_hash("kern-v3", kern, target, tuple(defines), opt, trisc,
                       xip_relocate, tuple(sorted(hdrs.items())), self._fw[target].elf_bytes, inc_content)
-    if not DEBUG:
+    if not (DEBUG or TRACE):
       cached = _cache_load(key)
       if cached is not None:
         _zone_map.update(cached["zones"])
@@ -503,10 +505,10 @@ class Compiler:
       xip=xip,
       xip_text_bytes=xip_text_bytes,
       disassembly=self._disassemble_elf(elf),
-      elf_bytes=elf if DEBUG else None,
+      elf_bytes=elf if (DEBUG or TRACE) else None,
     )
     new_zones = {k: v for k, v in _zone_map.items() if k not in zones_before}
-    if not DEBUG:
+    if not (DEBUG or TRACE):
       _cache_store(key, {"result": result, "zones": new_zones})
     return result
 

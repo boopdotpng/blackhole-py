@@ -188,6 +188,7 @@ def lower_fast(
   timestamps: list[tuple[int, int]] | None = None,
   profiler_flat_ids: dict | None = None,
   profiler_sysmem_noc_local: int = 0,
+  completion_event_ids: list[int] | None = None,
 ) -> list[CQCommand]:
   profiling = os.environ.get("PROFILE") == "1" and profiler_flat_ids is not None
   result: list[CQCommand] = []
@@ -215,6 +216,8 @@ def lower_fast(
     result.extend(_lower_ir(ir, go_word))
     if timestamps and ts + 1 < len(timestamps):
       result.append(CQTimestamp(*timestamps[ts + 1]))
+    if completion_event_ids and i < len(completion_event_ids):
+      result.append(CQHostEvent(completion_event_ids[i]))
   return result
 
 class CQSysmem:
@@ -259,6 +262,30 @@ class CQSysmem:
 
   def _sysmem_write32(self, off, val):
     self.sysmem[off : off + 4] = struct.pack("<I", val)
+
+  def peek_completion_write_pointer(self) -> tuple[int, int]:
+    wr_raw = self._sysmem_read32(_HOST_CQ_WR_OFF)
+    return wr_raw & 0x7FFF_FFFF, (wr_raw >> 31) & 1
+
+  def peek_completion_event(self, cursor_16b: int) -> int:
+    off = (cursor_16b << 4) - self.noc_local
+    return self._sysmem_read32(off + 16)
+
+  @property
+  def completion_cursor(self) -> tuple[int, int]:
+    return self._completion_rd_16b, self._completion_rd_toggle
+
+  @property
+  def completion_page_16b(self) -> int:
+    return self._completion_page_16b
+
+  @property
+  def completion_end_16b(self) -> int:
+    return self._completion_end_16b
+
+  @property
+  def completion_base_16b(self) -> int:
+    return self._completion_base_16b
 
   def _wait_prefetch_slot_free(self, idx: int, timeout_s: float = 1.0):
     off = CQ_PREFETCH_Q_BASE + idx * CQ_PREFETCH_Q_ENTRY_SZ

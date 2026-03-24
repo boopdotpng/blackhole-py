@@ -12,11 +12,15 @@ body{background:#111;color:#ccc;font:14px/1.4 'SF Mono',Menlo,monospace;display:
 #sidebar{width:auto;min-width:140px;max-width:320px;background:#1a1a1a;border-right:1px solid #333;padding:12px;overflow-y:auto;display:flex;flex-direction:column;gap:4px;flex-shrink:0}
 #sidebar h3{color:#888;font-size:11px;text-transform:uppercase;letter-spacing:1px;margin-bottom:2px}
 #prog-list{display:flex;flex-direction:column;gap:2px;overflow-y:auto;max-height:50vh;flex-shrink:1}
+.prog-group{display:flex;flex-direction:column;gap:2px}
 .dispatch-badge{display:inline-block;padding:2px 6px;border-radius:3px;font-size:10px;margin-bottom:4px}
 .dispatch-badge.fast{background:#2a2a4a;color:#88f}
 .prog-btn{width:100%;background:transparent;border:1px solid transparent;color:#999;padding:4px 8px;cursor:pointer;border-radius:3px;text-align:left;font:12px/1.3 inherit;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .prog-btn:hover{background:#222;color:#ccc}
 .prog-btn.active{background:#1a3a2a;border-color:#4a8;color:#8f8}
+.prog-child{margin-left:14px;width:calc(100% - 14px);font-size:11px;color:#7f8da3;border-left:1px solid #34404c;border-radius:0 3px 3px 0;padding-left:10px}
+.prog-child:hover{background:#1d2329;color:#cfe2ff}
+.prog-child.active{background:#203447;border-color:#4af;color:#d7ecff}
 #center{flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:0}
 #stats-bar{padding:6px 16px;background:#1a1a1a;border-bottom:1px solid #333;font-size:12px;color:#888;display:flex;gap:16px;align-items:center;flex-shrink:0}
 #stats-bar b{color:#ccc}
@@ -79,12 +83,34 @@ pre.src code{font-size:12px;line-height:1.4;padding:10px!important;display:block
 .asm-bytes{color:#6b7280}
 .asm-mnemonic{color:#86efac}
 .asm-comment{color:#9ca3af}
+#trace-view{display:none;width:100%;max-width:1240px;margin:0 auto}
+.trace-wrap{display:flex;flex-direction:column;gap:18px;width:100%}
+.trace-note{color:#9aa0a6;font-size:12px;line-height:1.5}
+.trace-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}
+.trace-card{background:#171717;border:1px solid #2a2a2a;border-radius:6px;padding:10px 12px;min-width:0}
+.trace-card-title{color:#888;font-size:10px;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px}
+.trace-card-value{color:#f3f4f6;font-size:18px;font-weight:600}
+.trace-card-sub{color:#7c8794;font-size:11px;margin-top:4px}
+.trace-chart-wrap{background:#171717;border:1px solid #2a2a2a;border-radius:6px;padding:12px}
+.trace-chart-title{color:#cfd6dd;font-size:13px;font-weight:600;margin-bottom:4px}
+.trace-chart-sub{color:#7c8794;font-size:11px;margin-bottom:10px}
+.trace-value-list{display:flex;flex-direction:column;gap:6px}
+.trace-value-row{display:grid;grid-template-columns:96px 1fr 72px;gap:10px;align-items:center;font-size:12px}
+.trace-value-bar{height:8px;background:#222;border-radius:999px;overflow:hidden}
+.trace-value-fill{height:100%;border-radius:999px}
+.trace-table{width:100%;border-collapse:collapse;font-size:12px}
+.trace-table th,.trace-table td{padding:6px 8px;border-bottom:1px solid #252525;text-align:left}
+.trace-table th{color:#8d98a4;font-size:10px;text-transform:uppercase;letter-spacing:.5px}
+.trace-table td{color:#e5e7eb}
+.trace-table td.trace-muted{color:#7c8794}
+.trace-section-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:12px}
+.trace-empty{color:#7c8794;font-size:13px;padding:24px 0}
 </style></head>
 <body>
 <div id="sidebar"><h3>Programs</h3><div id="prog-list"></div></div>
 <div id="center" style="position:relative">
   <div id="stats-bar"><div id="stats-items"></div><div id="panel-actions"><button id="code-toggle" class="panel-toggle">code</button><button id="disasm-toggle" class="panel-toggle">disasm</button></div></div>
-  <div id="grid-wrap"><svg id="grid-svg"></svg></div>
+  <div id="grid-wrap"><svg id="grid-svg"></svg><div id="trace-view"></div></div>
   <div id="dock"><div id="dock-drag"></div><div id="dock-inner">
     <div id="dock-content"><div id="dock-tables"></div><div id="dock-warn"></div></div>
     <button class="dock-close" id="dock-close-btn">&times;</button>
@@ -125,7 +151,7 @@ function initGrid(data) {
   ARC_TILE = '8,0';
 }
 
-let D, selProg=0, selCore=null, rpanelWidth=500, rpanelOpen=false, dockHeight=220, panelMode='source';
+let D, selProg=0, selCore=null, selView='profile', rpanelWidth=500, rpanelOpen=false, dockHeight=220, panelMode='source';
 let panelRequest=0;
 const disasmCache = new Map();
 
@@ -140,10 +166,11 @@ function init(){
   d3.selectAll('.section-jump').on('click', function(){ scrollToSection(this.dataset.target); });
   initPanelDrag();
   initDockDrag();
-  selectProgram(0);
+  if (D.programs.length) selectProgram(0, 'profile');
 }
 
 function esc(s){ return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') }
+function programLabel(prog){ return prog.name&&prog.name.trim() ? prog.name : `Program ${prog.index}` }
 function fmtUs(cycles){ return cycles!=null ? (cycles/FREQ_MHZ).toFixed(2)+'us' : '-' }
 function fmtCyc(v){ return v!=null ? v.toLocaleString() : '-' }
 function fmtCellTime(cycles){
@@ -154,33 +181,57 @@ function fmtCellTime(cycles){
   if (us >= 10) return us.toFixed(1) + 'us';
   return us.toFixed(2) + 'us';
 }
-
-// --- sidebar ---
-function buildSidebar(){
-  const btns = d3.select('#prog-list').selectAll('button').data(D.programs);
-  btns.enter().append('button').attr('class','prog-btn')
-    .on('click', (_,d)=> selectProgram(D.programs.indexOf(d)))
-    .merge(btns)
-    .text(p => p.name&&p.name.trim() ? p.name : `Program ${p.index}`)
-    .attr('title', p => {
-      const label = p.name&&p.name.trim() ? p.name : `Program ${p.index}`;
-      return `${label} (${p.cores.length} cores)`;
-    });
-}
-
-function selectProgram(idx){
-  selProg=idx; selCore=null;
-  d3.selectAll('.prog-btn').classed('active', (_,i)=> i===idx);
+function closeDock(){
   const dock = document.getElementById('dock');
   dock.classList.remove('open');
   dock.style.height = '0';
-  buildGrid();
+}
+function activeProgram(){ return D.programs[selProg] }
+function activeTrace(){ return activeProgram()?.trace || null }
+
+// --- sidebar ---
+function buildSidebar(){
+  const groups = d3.select('#prog-list').selectAll('div.prog-group').data(D.programs, p=>p.index);
+  const enter = groups.enter().append('div').attr('class','prog-group');
+  enter.append('button').attr('class','prog-btn prog-main');
+  enter.append('button').attr('class','prog-btn prog-child').style('display','none').text('trace');
+
+  const merged = enter.merge(groups);
+  merged.select('.prog-main')
+    .on('click', (_,d)=> selectProgram(D.programs.indexOf(d), 'profile'))
+    .text(p => programLabel(p))
+    .attr('title', p => `${programLabel(p)} (${p.cores.length} cores)`)
+    .classed('active', (_, i) => i === selProg && selView === 'profile');
+
+  merged.select('.prog-child')
+    .style('display', p => p.trace ? 'block' : 'none')
+    .on('click', (_,d)=> selectProgram(D.programs.indexOf(d), 'trace'))
+    .text(p => p.trace ? `trace · ${p.trace.config.target}` : 'trace')
+    .attr('title', p => p.trace ? `Trace view for ${programLabel(p)}` : null)
+    .classed('active', (_, i) => i === selProg && selView === 'trace');
+
+  groups.exit().remove();
+}
+
+function selectProgram(idx, view='profile'){
+  selProg=idx; selCore=null; selView=view;
+  buildSidebar();
+  closeDock();
+  if (selView === 'trace') closePanel();
+  buildMainView();
   updateStats();
   showSources();
 }
 
+function buildMainView(){
+  if (selView === 'trace') buildTraceView();
+  else buildGrid();
+}
+
 // --- grid (SVG + d3) ---
 function buildGrid(){
+  d3.select('#grid-svg').style('display','block');
+  d3.select('#trace-view').style('display','none').html('');
   const svg = d3.select('#grid-svg');
   const prog = D.programs[selProg];
   const coreSet = new Set(prog.cores.map(c=>`${c[0]},${c[1]}`));
@@ -270,6 +321,512 @@ function buildGrid(){
   svg.on('click', e=>{ if(e.target===svg.node()) clearSelection() });
 }
 
+function buildTraceView(){
+  d3.select('#grid-svg').style('display','none');
+  closeDock();
+  const host = d3.select('#trace-view');
+  host.style('display','block');
+  const prog = activeProgram();
+  const trace = activeTrace();
+  if (!trace) {
+    host.html('<div class="trace-empty">Trace data unavailable for this program.</div>');
+    return;
+  }
+
+  const traceKind = trace.signal ? 'Signal' : 'Group';
+  const traceCore = `(${(trace.config?.core || []).join(',')})`;
+  const cards = [
+    traceCard(traceKind, trace.config?.target || '-', trace.group?.summary?.risc ? `${trace.group.summary.risc} on core ${traceCore}` : `sampled on core ${traceCore}`),
+    traceCard('Core', traceCore, trace.group?.summary?.risc ? `${trace.group.summary.risc} worker` : 'worker core coordinates'),
+    traceCard('Samples', (trace.samples || 0).toLocaleString(), trace.sample_rate_hz ? `${(trace.sample_rate_hz / 1e3).toFixed(1)} kHz in-program` : 'insufficient timing span'),
+    traceCard('Duration', trace.device_us != null ? `${trace.device_us.toFixed(1)} us` : '-', trace.device_cycles != null ? `${fmtCyc(trace.device_cycles)} cycles` : 'device duration unavailable'),
+    traceCard('Boundary', trace.boundary_source || '-', trace.completion_timestamp_ns ? `host ts ${trace.completion_timestamp_ns}` : 'no completion timestamp'),
+  ].join('');
+
+  let body = `<div class="trace-wrap">`;
+  body += `<div class="trace-note">Each column is one host-side debug-bus sample taken while this program was running. The timeline shows which sampled value was observed at that instant; repeated hits mean the core spent more time there.</div>`;
+  body += `<div class="trace-grid">${cards}</div>`;
+  if (trace.signal && trace.signal.values && trace.signal.values.length) {
+    body += renderSignalTrace(trace, prog);
+  } else {
+    body += renderGroupTrace(trace, prog);
+  }
+  body += `</div>`;
+  host.html(body);
+  drawTraceCharts(trace, prog);
+}
+
+function traceCard(title, value, sub){
+  return `<div class="trace-card"><div class="trace-card-title">${esc(title)}</div><div class="trace-card-value">${esc(String(value))}</div><div class="trace-card-sub">${esc(String(sub || ''))}</div></div>`;
+}
+
+function renderSignalTrace(trace, prog){
+  return `
+    <div class="trace-chart-wrap">
+      <div class="trace-chart-title">${esc(programLabel(prog))} trace timeline</div>
+      <div class="trace-chart-sub">Rows are the hottest sampled PCs; an "other" row catches the rest.</div>
+      <svg id="trace-signal-svg" width="1120" height="360"></svg>
+    </div>
+    <div class="trace-chart-wrap">
+      <div class="trace-chart-title">Top sampled PCs</div>
+      <div class="trace-chart-sub">This is a statistical hotspot view, not every executed instruction.</div>
+      <div id="trace-top-values" class="trace-value-list"></div>
+    </div>`;
+}
+
+function renderGroupTrace(trace, prog){
+  const kind = trace.group?.summary?.kind;
+  if (kind === 'risc_group_a') {
+    const summary = trace.group.summary;
+    return `
+      <div class="trace-chart-wrap">
+        <div class="trace-chart-title">${esc(programLabel(prog))} ${esc(summary.risc)} group-a timeline</div>
+        <div class="trace-chart-sub">Decoded from ${esc(trace.group.name)} using tt-exalens bitfield metadata; commit PCs only appear when commit-valid is set.</div>
+        <svg id="trace-risc-group-a-svg" width="1120" height="320"></svg>
+      </div>
+      <div class="trace-section-grid">
+        <div class="trace-chart-wrap">
+          <div class="trace-chart-title">Event counts</div>
+          <table class="trace-table">
+            <tr><th>Metric</th><th>Value</th></tr>
+            <tr><td>Commit-valid samples</td><td>${(summary.commit_samples || 0).toLocaleString()}</td></tr>
+            <tr><td>Fetch-PC samples</td><td>${(summary.fetch_samples || 0).toLocaleString()}</td></tr>
+            <tr><td>Memory-read samples</td><td>${(summary.mem_reads || 0).toLocaleString()}</td></tr>
+            <tr><td>Memory-write samples</td><td>${(summary.mem_writes || 0).toLocaleString()}</td></tr>
+          </table>
+        </div>
+        <div class="trace-chart-wrap">
+          <div class="trace-chart-title">Top committed PCs</div>
+          <div id="trace-group-commit-list"></div>
+        </div>
+      </div>
+      <div class="trace-section-grid">
+        <div class="trace-chart-wrap">
+          <div class="trace-chart-title">Top fetch PCs</div>
+          <div id="trace-group-fetch-list"></div>
+        </div>
+        <div class="trace-chart-wrap">
+          <div class="trace-chart-title">Top memory addresses</div>
+          <div id="trace-group-mem-list"></div>
+        </div>
+      </div>`;
+  }
+  if (kind === 'tensix_frontend') {
+    const summary = trace.group.summary;
+    return `
+      <div class="trace-chart-wrap">
+        <div class="trace-chart-title">${esc(programLabel(prog))} frontend T${summary.thread} timeline</div>
+        <div class="trace-chart-sub">Boolean rows show when this Tensix frontend thread was issuing, stalled, or backpressured.</div>
+        <svg id="trace-frontend-svg" width="1120" height="360"></svg>
+      </div>
+      <div class="trace-section-grid">
+        <div class="trace-chart-wrap"><div class="trace-chart-title">Active instruction classes</div><div id="trace-frontend-active-list"></div></div>
+        <div class="trace-chart-wrap"><div class="trace-chart-title">Stall classes</div><div id="trace-frontend-stall-list"></div></div>
+      </div>
+      <div class="trace-section-grid">
+        <div class="trace-chart-wrap"><div class="trace-chart-title">Queue / busy state</div><div id="trace-frontend-queue-list"></div></div>
+        <div class="trace-chart-wrap"><div class="trace-chart-title">Top thread instruction encodings</div><div id="trace-frontend-inst-list"></div></div>
+      </div>`;
+  }
+  if (kind === 'tensix_frontend_risc_stall') {
+    const summary = trace.group.summary;
+    return `
+      <div class="trace-chart-wrap">
+        <div class="trace-chart-title">${esc(programLabel(prog))} frontend T${summary.thread} RISC-stall timeline</div>
+        <div class="trace-chart-sub">Rows show the narrow stall reasons exported by ${esc(trace.group.name)}.</div>
+        <svg id="trace-frontend-stall-svg" width="1120" height="260"></svg>
+      </div>
+      <div class="trace-chart-wrap"><div class="trace-chart-title">Stall occupancy</div><div id="trace-frontend-stall-only-list"></div></div>`;
+  }
+  if (kind === 'rwc_math_pipeline') {
+    return `
+      <div class="trace-section-grid">
+        <div class="trace-chart-wrap"><div class="trace-chart-title">Top math instruction encodings</div><div id="trace-rwc-math-inst-list"></div></div>
+        <div class="trace-chart-wrap"><div class="trace-chart-title">Winner thread / winner</div><div id="trace-rwc-math-winner-list"></div></div>
+      </div>
+      <div class="trace-section-grid">
+        <div class="trace-chart-wrap"><div class="trace-chart-title">Source and destination registers</div><div id="trace-rwc-math-reg-list"></div></div>
+        <div class="trace-chart-wrap"><div class="trace-chart-title">Math pipeline flags</div><div id="trace-rwc-math-flag-list"></div></div>
+      </div>`;
+  }
+  if (kind === 'rwc_pack_unpack') {
+    return `
+      <div class="trace-section-grid">
+        <div class="trace-chart-wrap"><div class="trace-chart-title">Pack / unpack / TDMA busy state</div><div id="trace-rwc-pack-busy-list"></div></div>
+        <div class="trace-chart-wrap"><div class="trace-chart-title">Top regif states</div><div id="trace-rwc-pack-state-list"></div></div>
+      </div>
+      <div class="trace-section-grid">
+        <div class="trace-chart-wrap"><div class="trace-chart-title">Top SrcB registers</div><div id="trace-rwc-pack-srcb-list"></div></div>
+      </div>`;
+  }
+  if (kind === 'rwc_tdma_core') {
+    return `
+      <div class="trace-section-grid">
+        <div class="trace-chart-wrap"><div class="trace-chart-title">TDMA write / ready flags</div><div id="trace-rwc-tdma-flag-list"></div></div>
+        <div class="trace-chart-wrap"><div class="trace-chart-title">Top addresses</div><div id="trace-rwc-tdma-addr-list"></div></div>
+      </div>
+      <div class="trace-section-grid">
+        <div class="trace-chart-wrap"><div class="trace-chart-title">Thread IDs</div><div id="trace-rwc-tdma-thread-list"></div></div>
+        <div class="trace-chart-wrap"><div class="trace-chart-title">State IDs</div><div id="trace-rwc-tdma-state-list"></div></div>
+      </div>`;
+  }
+  return `
+    <div class="trace-chart-wrap">
+      <div class="trace-chart-title">${esc(programLabel(prog))} raw group trace</div>
+      <div class="trace-chart-sub">These are the 32-bit words returned for each 128-bit group sample. Generic groups use tt-exalens masks for decode, but only ${esc('trisc1_group_a')} has a specialized visualizer right now.</div>
+      <svg id="trace-group-svg" width="1120" height="240"></svg>
+    </div>`;
+}
+
+function drawTraceCharts(trace, prog){
+  if (trace.signal && trace.signal.values && trace.signal.values.length) drawSignalTrace(trace, prog);
+  else if (trace.group?.summary?.kind === 'risc_group_a') drawRiscGroupATrace(trace, prog);
+  else if (trace.group?.summary?.kind === 'tensix_frontend') drawFrontendTrace(trace, prog);
+  else if (trace.group?.summary?.kind === 'tensix_frontend_risc_stall') drawFrontendStallTrace(trace, prog);
+  else if (trace.group?.summary?.kind === 'rwc_math_pipeline') drawRwcMathTrace(trace, prog);
+  else if (trace.group?.summary?.kind === 'rwc_pack_unpack') drawRwcPackTrace(trace, prog);
+  else if (trace.group?.summary?.kind === 'rwc_tdma_core') drawRwcTdmaTrace(trace, prog);
+  else drawGroupTrace(trace, prog);
+}
+
+function drawSignalTrace(trace, prog){
+  const values = trace.signal.values || [];
+  const timestamps = trace.timestamps_ns || [];
+  const top = (trace.signal.top_values || []).slice(0, 10);
+  const palette = d3.schemeTableau10.concat(d3.schemeSet3 || []);
+  const labels = top.map(v => v.hex);
+  if (!labels.includes('other')) labels.push('other');
+  const color = d3.scaleOrdinal().domain(labels).range(labels.map((_, i) => palette[i % palette.length]));
+  const valueToLabel = new Map(top.map(v => [v.value, v.hex]));
+  const samples = values.map((value, idx) => ({
+    idx,
+    value,
+    label: valueToLabel.get(value) || 'other',
+    timeUs: timestamps.length ? (timestamps[idx] - timestamps[0]) / 1e3 : idx,
+  }));
+
+  const svg = d3.select('#trace-signal-svg');
+  const width = 1120, height = 360;
+  const margin = {top: 16, right: 24, bottom: 36, left: 100};
+  const innerW = width - margin.left - margin.right;
+  const innerH = height - margin.top - margin.bottom;
+  svg.attr('viewBox', `0 0 ${width} ${height}`);
+  svg.selectAll('*').remove();
+  const g = svg.append('g').attr('transform', `translate(${margin.left},${margin.top})`);
+  const maxT = samples.length ? d3.max(samples, d => d.timeUs) : 1;
+  const x = d3.scaleLinear().domain([0, maxT || 1]).range([0, innerW]);
+  const y = d3.scaleBand().domain(labels).range([0, innerH]).paddingInner(0.18);
+  g.append('g').call(d3.axisLeft(y).tickSize(0)).selectAll('text').attr('fill', '#aeb8c4').style('font-size', '11px');
+  g.append('g').attr('transform', `translate(0,${innerH})`).call(d3.axisBottom(x).ticks(8).tickFormat(v => `${v.toFixed(0)} us`)).selectAll('text').attr('fill', '#aeb8c4').style('font-size', '11px');
+  g.selectAll('.domain,.tick line').attr('stroke', '#38424d');
+  g.selectAll('rect.sample').data(samples).enter().append('rect')
+    .attr('x', d => x(d.timeUs))
+    .attr('y', d => y(d.label))
+    .attr('width', Math.max(1, innerW / Math.max(1, samples.length)))
+    .attr('height', Math.max(2, y.bandwidth()))
+    .attr('fill', d => color(d.label))
+    .attr('opacity', d => d.label === 'other' ? 0.45 : 0.9)
+    .append('title')
+    .text(d => `${programLabel(prog)}\nSample ${d.idx}\nTime ${d.timeUs.toFixed(2)} us\nValue ${toHex(d.value)}`);
+
+  const topHost = d3.select('#trace-top-values');
+  const total = Math.max(1, values.length);
+  const rows = top.map((entry, idx) => {
+    const pct = entry.count * 100 / total;
+    const fill = color(entry.hex);
+    return `<div class="trace-value-row"><div style="color:${fill}">${esc(entry.hex)}</div><div class="trace-value-bar"><div class="trace-value-fill" style="width:${pct}%;background:${fill}"></div></div><div>${entry.count} (${pct.toFixed(1)}%)</div></div>`;
+  });
+  if (values.length > top.reduce((sum, entry) => sum + entry.count, 0)) {
+    const otherCount = values.length - top.reduce((sum, entry) => sum + entry.count, 0);
+    const pct = otherCount * 100 / total;
+    const fill = color('other');
+    rows.push(`<div class="trace-value-row"><div style="color:${fill}">other</div><div class="trace-value-bar"><div class="trace-value-fill" style="width:${pct}%;background:${fill}"></div></div><div>${otherCount} (${pct.toFixed(1)}%)</div></div>`);
+  }
+  topHost.html(rows.join(''));
+}
+
+function drawGroupTrace(trace, prog){
+  const timestamps = trace.timestamps_ns || [];
+  const wordsPerSample = trace.config?.words_per_sample || 4;
+  const lanes = Array.from({length: wordsPerSample}, (_, lane) => ({
+    label: `word${lane}`,
+    values: (trace.raw_words || []).filter((_, idx) => (idx % wordsPerSample) === lane),
+  }));
+  const samples = lanes[0]?.values.length || 0;
+  const svg = d3.select('#trace-group-svg');
+  const width = 1120, height = 240;
+  const margin = {top: 16, right: 24, bottom: 36, left: 80};
+  const innerW = width - margin.left - margin.right;
+  const innerH = height - margin.top - margin.bottom;
+  svg.attr('viewBox', `0 0 ${width} ${height}`);
+  svg.selectAll('*').remove();
+  const g = svg.append('g').attr('transform', `translate(${margin.left},${margin.top})`);
+  const maxT = timestamps.length > 1 ? (timestamps[timestamps.length - 1] - timestamps[0]) / 1e3 : Math.max(1, samples - 1);
+  const x = d3.scaleLinear().domain([0, maxT || 1]).range([0, innerW]);
+  const y = d3.scaleBand().domain(lanes.map(l => l.label)).range([0, innerH]).paddingInner(0.2);
+  g.append('g').call(d3.axisLeft(y).tickSize(0)).selectAll('text').attr('fill', '#aeb8c4').style('font-size', '11px');
+  g.append('g').attr('transform', `translate(0,${innerH})`).call(d3.axisBottom(x).ticks(8).tickFormat(v => `${v.toFixed(0)} us`)).selectAll('text').attr('fill', '#aeb8c4').style('font-size', '11px');
+  g.selectAll('.domain,.tick line').attr('stroke', '#38424d');
+  lanes.forEach((lane, laneIdx) => {
+    const extent = d3.extent(lane.values);
+    const color = d3.scaleSequential(d3.interpolateTurbo).domain(extent[0] === extent[1] ? [0, 1] : extent);
+    g.selectAll(`rect.lane-${laneIdx}`).data(lane.values.map((value, idx) => ({
+      value,
+      idx,
+      timeUs: timestamps.length ? (timestamps[idx] - timestamps[0]) / 1e3 : idx,
+      label: lane.label,
+    }))).enter().append('rect')
+      .attr('x', d => x(d.timeUs))
+      .attr('y', d => y(d.label))
+      .attr('width', Math.max(1, innerW / Math.max(1, samples)))
+      .attr('height', Math.max(4, y.bandwidth()))
+      .attr('fill', d => color(d.value))
+      .append('title')
+      .text(d => `${programLabel(prog)}\n${d.label} sample ${d.idx}\nValue ${toHex(d.value)}`);
+  });
+}
+
+function drawRiscGroupATrace(trace, prog){
+  const summary = trace.group.summary;
+  const decoded = trace.group.decoded_signals || {};
+  const timestamps = trace.timestamps_ns || [];
+  const signals = summary.signals || {};
+  const commitVals = decoded[signals.commit_pc] || [];
+  const commitValid = decoded[signals.commit_valid] || [];
+  const fetchVals = decoded[signals.fetch_pc] || [];
+  const memRead = decoded[signals.mem_rden] || [];
+  const memWrite = decoded[signals.mem_wren] || [];
+  const labels = ['commit_pc', 'fetch_pc', 'mem_read', 'mem_write'];
+  const svg = d3.select('#trace-risc-group-a-svg');
+  const width = 1120, height = 320;
+  const margin = {top: 16, right: 24, bottom: 36, left: 90};
+  const innerW = width - margin.left - margin.right;
+  const innerH = height - margin.top - margin.bottom;
+  svg.attr('viewBox', `0 0 ${width} ${height}`);
+  svg.selectAll('*').remove();
+  const g = svg.append('g').attr('transform', `translate(${margin.left},${margin.top})`);
+  const samples = Math.max(commitVals.length, fetchVals.length, memRead.length, memWrite.length);
+  const maxT = timestamps.length > 1 ? (timestamps[timestamps.length - 1] - timestamps[0]) / 1e3 : Math.max(1, samples - 1);
+  const x = d3.scaleLinear().domain([0, maxT || 1]).range([0, innerW]);
+  const y = d3.scaleBand().domain(labels).range([0, innerH]).paddingInner(0.22);
+  g.append('g').call(d3.axisLeft(y).tickSize(0).tickFormat(label => ({commit_pc:'commit pc', fetch_pc:'fetch pc', mem_read:'mem read', mem_write:'mem write'}[label] || label))).selectAll('text').attr('fill', '#aeb8c4').style('font-size', '11px');
+  g.append('g').attr('transform', `translate(0,${innerH})`).call(d3.axisBottom(x).ticks(8).tickFormat(v => `${v.toFixed(0)} us`)).selectAll('text').attr('fill', '#aeb8c4').style('font-size', '11px');
+  g.selectAll('.domain,.tick line').attr('stroke', '#38424d');
+
+  const commitTop = new Map((summary.top_commit_pcs || []).slice(0, 8).map(entry => [entry.value, entry.hex]));
+  const fetchTop = new Map((summary.top_fetch_pcs || []).slice(0, 8).map(entry => [entry.value, entry.hex]));
+  const commitColor = d3.scaleOrdinal().domain([...commitTop.values(), 'other']).range(d3.schemeTableau10.concat(['#6b7280']));
+  const fetchColor = d3.scaleOrdinal().domain([...fetchTop.values(), 'other']).range(d3.schemeSet2.concat(['#6b7280']));
+  const sampleWidth = Math.max(1, innerW / Math.max(1, samples));
+
+  const points = Array.from({length: samples}, (_, idx) => ({
+    idx,
+    timeUs: timestamps.length ? (timestamps[idx] - timestamps[0]) / 1e3 : idx,
+    commitValid: !!commitValid[idx],
+    commitPc: commitVals[idx] || 0,
+    fetchPc: fetchVals[idx] || 0,
+    memRead: !!memRead[idx],
+    memWrite: !!memWrite[idx],
+  }));
+
+  g.selectAll('rect.commit').data(points.filter(d => d.commitValid && d.commitPc)).enter().append('rect')
+    .attr('x', d => x(d.timeUs))
+    .attr('y', y('commit_pc'))
+    .attr('width', sampleWidth)
+    .attr('height', Math.max(4, y.bandwidth()))
+    .attr('fill', d => commitColor(commitTop.get(d.commitPc) || 'other'))
+    .append('title').text(d => `${programLabel(prog)}\ncommit pc ${toHex(d.commitPc)}\n${d.timeUs.toFixed(2)} us`);
+
+  g.selectAll('rect.fetch').data(points.filter(d => d.fetchPc)).enter().append('rect')
+    .attr('x', d => x(d.timeUs))
+    .attr('y', y('fetch_pc'))
+    .attr('width', sampleWidth)
+    .attr('height', Math.max(4, y.bandwidth()))
+    .attr('fill', d => fetchColor(fetchTop.get(d.fetchPc) || 'other'))
+    .attr('opacity', 0.75)
+    .append('title').text(d => `${programLabel(prog)}\nfetch pc ${toHex(d.fetchPc)}\n${d.timeUs.toFixed(2)} us`);
+
+  g.selectAll('rect.read').data(points.filter(d => d.memRead)).enter().append('rect')
+    .attr('x', d => x(d.timeUs))
+    .attr('y', y('mem_read'))
+    .attr('width', sampleWidth)
+    .attr('height', Math.max(4, y.bandwidth()))
+    .attr('fill', '#34d399')
+    .append('title').text(d => `${programLabel(prog)}\nmemory read\n${d.timeUs.toFixed(2)} us`);
+
+  g.selectAll('rect.write').data(points.filter(d => d.memWrite)).enter().append('rect')
+    .attr('x', d => x(d.timeUs))
+    .attr('y', y('mem_write'))
+    .attr('width', sampleWidth)
+    .attr('height', Math.max(4, y.bandwidth()))
+    .attr('fill', '#f59e0b')
+    .append('title').text(d => `${programLabel(prog)}\nmemory write\n${d.timeUs.toFixed(2)} us`);
+
+  d3.select('#trace-group-commit-list').html(renderTraceTable(summary.top_commit_pcs, 'pc'));
+  d3.select('#trace-group-fetch-list').html(renderTraceTable(summary.top_fetch_pcs, 'pc'));
+  d3.select('#trace-group-mem-list').html(renderTraceTable(summary.top_mem_addrs, 'addr'));
+}
+
+function drawFrontendTrace(trace, prog){
+  const summary = trace.group.summary;
+  const decoded = trace.group.decoded_signals || {};
+  const activeRows = (summary.active_counts || []).filter(entry => entry.count > 0).slice(0, 6).map(entry => ({name: entry.name, label: shortTraceName(entry.name), color: '#60a5fa'}));
+  const stallRows = (summary.stall_counts || []).filter(entry => entry.count > 0).slice(0, 4).map(entry => ({name: entry.name, label: shortTraceName(entry.name), color: '#f59e0b'}));
+  const queueRows = (summary.queue_counts || []).filter(entry => entry.count > 0).slice(0, 4).map(entry => ({name: entry.name, label: shortTraceName(entry.name), color: '#34d399'}));
+  drawBooleanMatrix('#trace-frontend-svg', trace, decoded, activeRows.concat(stallRows, queueRows));
+  d3.select('#trace-frontend-active-list').html(renderNamedCountTable(summary.active_counts, 'signal'));
+  d3.select('#trace-frontend-stall-list').html(renderNamedCountTable(summary.stall_counts, 'signal'));
+  d3.select('#trace-frontend-queue-list').html(renderNamedCountTable(summary.queue_counts, 'signal'));
+  d3.select('#trace-frontend-inst-list').html(renderTraceTable(summary.top_thread_inst, 'encoding'));
+}
+
+function drawFrontendStallTrace(trace, prog){
+  const summary = trace.group.summary;
+  const decoded = trace.group.decoded_signals || {};
+  const rows = (summary.stall_counts || []).filter(entry => entry.count > 0).map(entry => ({name: entry.name, label: shortTraceName(entry.name), color: '#f59e0b'}));
+  drawBooleanMatrix('#trace-frontend-stall-svg', trace, decoded, rows);
+  d3.select('#trace-frontend-stall-only-list').html(renderNamedCountTable(summary.stall_counts, 'signal'));
+}
+
+function drawRwcMathTrace(trace, prog){
+  const summary = trace.group.summary;
+  d3.select('#trace-rwc-math-inst-list').html(renderTraceTable(summary.top_math_instrn, 'instrn'));
+  d3.select('#trace-rwc-math-winner-list').html(renderMergedTables([
+    {title:'winner_thread', html: renderTraceTable(summary.top_winner_thread, 'thread')},
+    {title:'winner', html: renderTraceTable(summary.top_winner, 'winner')},
+  ]));
+  d3.select('#trace-rwc-math-reg-list').html(renderMergedTables([
+    {title:'srca', html: renderTraceTable(summary.top_srca, 'reg')},
+    {title:'srcb', html: renderTraceTable(summary.top_srcb, 'reg')},
+    {title:'dst', html: renderTraceTable(summary.top_dst, 'reg')},
+  ]));
+  d3.select('#trace-rwc-math-flag-list').html(renderNamedCountTable(summary.flag_counts, 'flag'));
+}
+
+function drawRwcPackTrace(trace, prog){
+  const summary = trace.group.summary;
+  d3.select('#trace-rwc-pack-busy-list').html(renderNamedCountTable(summary.busy_counts, 'signal'));
+  d3.select('#trace-rwc-pack-state-list').html(renderTraceTable(summary.top_state, 'state'));
+  d3.select('#trace-rwc-pack-srcb-list').html(renderMergedTables([
+    {title:'srcb', html: renderTraceTable(summary.top_srcb, 'reg')},
+    {title:'srcb_d', html: renderTraceTable(summary.top_srcb_d, 'reg')},
+  ]));
+}
+
+function drawRwcTdmaTrace(trace, prog){
+  const summary = trace.group.summary;
+  d3.select('#trace-rwc-tdma-flag-list').html(renderNamedCountTable(summary.flag_counts, 'flag'));
+  d3.select('#trace-rwc-tdma-addr-list').html(renderMergedTables([
+    {title:'srca_addr', html: renderTraceTable(summary.top_srca_addr, 'addr')},
+    {title:'srcb_addr', html: renderTraceTable(summary.top_srcb_addr, 'addr')},
+  ]));
+  d3.select('#trace-rwc-tdma-thread-list').html(renderMergedTables([
+    {title:'srca_thread', html: renderTraceTable(summary.top_srca_thread, 'thread')},
+    {title:'srcb_thread', html: renderTraceTable(summary.top_srcb_thread, 'thread')},
+    {title:'dst_thread', html: renderTraceTable(summary.top_dst_thread, 'thread')},
+  ]));
+  d3.select('#trace-rwc-tdma-state-list').html(renderMergedTables([
+    {title:'srca_state', html: renderTraceTable(summary.top_srca_state, 'state')},
+    {title:'srcb_state', html: renderTraceTable(summary.top_srcb_state, 'state')},
+  ]));
+}
+
+function drawBooleanMatrix(selector, trace, decoded, rows){
+  const activeRows = (rows || []).filter(row => (decoded[row.name] || []).some(Boolean));
+  const svg = d3.select(selector);
+  if (!activeRows.length) {
+    svg.selectAll('*').remove();
+    return;
+  }
+  const timestamps = trace.timestamps_ns || [];
+  const samples = d3.max(activeRows, row => (decoded[row.name] || []).length) || 0;
+  const width = Number(svg.attr('width')) || 1120;
+  const height = Number(svg.attr('height')) || 320;
+  const margin = {top:16, right:24, bottom:36, left:140};
+  const innerW = width - margin.left - margin.right;
+  const innerH = height - margin.top - margin.bottom;
+  svg.attr('viewBox', `0 0 ${width} ${height}`);
+  svg.selectAll('*').remove();
+  const g = svg.append('g').attr('transform', `translate(${margin.left},${margin.top})`);
+  const maxT = timestamps.length > 1 ? (timestamps[timestamps.length - 1] - timestamps[0]) / 1e3 : Math.max(1, samples - 1);
+  const x = d3.scaleLinear().domain([0, maxT || 1]).range([0, innerW]);
+  const y = d3.scaleBand().domain(activeRows.map(row => row.label)).range([0, innerH]).paddingInner(0.2);
+  g.append('g').call(d3.axisLeft(y).tickSize(0)).selectAll('text').attr('fill', '#aeb8c4').style('font-size', '11px');
+  g.append('g').attr('transform', `translate(0,${innerH})`).call(d3.axisBottom(x).ticks(8).tickFormat(v => `${v.toFixed(0)} us`)).selectAll('text').attr('fill', '#aeb8c4').style('font-size', '11px');
+  g.selectAll('.domain,.tick line').attr('stroke', '#38424d');
+  const sampleWidth = Math.max(1, innerW / Math.max(1, samples));
+  activeRows.forEach(row => {
+    const values = decoded[row.name] || [];
+    g.selectAll(`rect.${cssSafe(row.name)}`).data(values.map((value, idx) => ({
+      value,
+      idx,
+      timeUs: timestamps.length ? (timestamps[idx] - timestamps[0]) / 1e3 : idx,
+      label: row.label,
+    })).filter(d => d.value)).enter().append('rect')
+      .attr('x', d => x(d.timeUs))
+      .attr('y', y(row.label))
+      .attr('width', sampleWidth)
+      .attr('height', Math.max(4, y.bandwidth()))
+      .attr('fill', row.color || '#60a5fa')
+      .append('title').text(d => `${row.label}\nSample ${d.idx}\n${d.timeUs.toFixed(2)} us`);
+  });
+}
+
+function renderTraceTable(entries, label){
+  if (!entries || !entries.length) return '<div class="trace-empty">No sampled data.</div>';
+  const total = entries.reduce((sum, entry) => sum + (entry.count || 0), 0) || 1;
+  const hasSymbol = entries.some(entry => entry.symbol);
+  const rows = entries.slice(0, 12).map(entry => {
+    const pct = (entry.count || 0) * 100 / total;
+    const symbol = entry.symbol || {};
+    const location = symbol.file && symbol.file !== '??'
+      ? `${symbol.file}${symbol.line ? ':' + symbol.line : ''}`
+      : '-';
+    return `<tr>` +
+      `<td>${esc(entry.hex || toHex(entry.value || 0))}</td>` +
+      `<td>${(entry.count || 0).toLocaleString()}</td>` +
+      `<td class="trace-muted">${pct.toFixed(1)}%</td>` +
+      (hasSymbol ? `<td class="trace-muted">${esc(symbol.image || '-')}</td><td>${esc(symbol.function || '-')}</td><td class="trace-muted">${esc(location)}</td><td class="trace-muted">${esc(symbol.asm || '-')}</td>` : '') +
+      `</tr>`;
+  }).join('');
+  const extra = hasSymbol ? '<th>Image</th><th>Function</th><th>Location</th><th>Instruction</th>' : '';
+  return `<table class="trace-table"><tr><th>${esc(label)}</th><th>Samples</th><th>Share</th>${extra}</tr>${rows}</table>`;
+}
+
+function renderNamedCountTable(entries, label){
+  const filtered = (entries || []).filter(entry => (entry.count || 0) > 0);
+  if (!filtered.length) return '<div class="trace-empty">No sampled data.</div>';
+  const total = filtered.reduce((sum, entry) => sum + (entry.count || 0), 0) || 1;
+  const rows = filtered.slice(0, 14).map(entry => {
+    const pct = entry.pct != null ? entry.pct : ((entry.count || 0) * 100 / total);
+    return `<tr><td>${esc(shortTraceName(entry.name || '-'))}</td><td>${(entry.count || 0).toLocaleString()}</td><td class="trace-muted">${pct.toFixed(1)}%</td></tr>`;
+  }).join('');
+  return `<table class="trace-table"><tr><th>${esc(label)}</th><th>Samples</th><th>Share</th></tr>${rows}</table>`;
+}
+
+function renderMergedTables(sections){
+  return (sections || []).map(section => `
+    <div style="margin-bottom:14px">
+      <div class="trace-card-title">${esc(section.title || '')}</div>
+      ${section.html || '<div class="trace-empty">No sampled data.</div>'}
+    </div>`).join('');
+}
+
+function shortTraceName(name){
+  return String(name || '')
+    .replace(/^tensix_frontend_t\d+_/, '')
+    .replace(/^rwc_/, '')
+    .replace(/^trisc\d_/, '')
+    .replace(/^brisc_/, '')
+    .replace(/^ncrisc_/, '');
+}
+
+function cssSafe(name){
+  return String(name || '').replace(/[^a-zA-Z0-9_-]+/g, '-');
+}
+
+function toHex(value){ return `0x${Number(value >>> 0).toString(16)}` }
+
 function selectCore(key){
   selCore = key;
   d3.selectAll('.cell rect').classed('selected', false);
@@ -281,9 +838,7 @@ function selectCore(key){
 function clearSelection(){
   selCore = null;
   d3.selectAll('.cell rect').classed('selected', false);
-  const dock = document.getElementById('dock');
-  dock.classList.remove('open');
-  dock.style.height = '0';
+  closeDock();
   showSources();
 }
 
@@ -611,6 +1166,12 @@ function formatDisassemblyHtml(src){
 }
 
 async function showSources(){
+  if (selView === 'trace') {
+    d3.select('#source-panel').style('display','none').html('');
+    setPanelButtons(false, false);
+    if (rpanelOpen) closePanel();
+    return;
+  }
   const prog = D.programs[selProg];
   const srcs = activeSources(selCore);
   const el = d3.select('#source-panel');
@@ -713,6 +1274,22 @@ async function showSources(){
 
 function updateStats(){
   const prog = D.programs[selProg];
+   if (selView === 'trace') {
+    const trace = prog.trace;
+    if (!trace) {
+      d3.select('#stats-items').html('<span style="color:#666">No trace data</span>');
+      return;
+    }
+    const rate = trace.sample_rate_hz ? `${(trace.sample_rate_hz / 1e3).toFixed(1)} kHz` : '-';
+    d3.select('#stats-items').html(
+      `<span>${programLabel(prog)} · trace</span>` +
+      `<span>Target <b>${esc(trace.config.target || '-')}</b></span>` +
+      `<span>Samples <b>${(trace.samples || 0).toLocaleString()}</b></span>` +
+      `<span>Rate <b>${rate}</b></span>` +
+      `<span>Core <b>(${(trace.config.core || []).join(',')})</b></span>`
+    );
+    return;
+  }
   const vals = Object.values(prog.profiles).map(p=>p.total).filter(v=>v>0);
   const fmt = v=>(v/FREQ_MHZ).toFixed(2)+'us';
   if (!vals.length) { d3.select('#stats-items').html('<span style="color:#666">No profiler data</span>'); return }
