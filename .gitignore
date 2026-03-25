@@ -5,3 +5,4 @@ tt-metal-deps/
 .metal-cache/
 progress.md
 profiler_data.json
+.claude
