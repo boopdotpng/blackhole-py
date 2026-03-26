@@ -3,7 +3,7 @@
 This module provides:
 - Low-level instruction injection into Tensix thread FIFOs
 - Blackhole Tensix instruction encoders (SETRWC, SETDVALID, etc.)
-- SrcB reading via injection + debug array scan chain
+- Non-destructive SrcA/SrcB/LReg reading via injection + debug array + MMIO restore
 """
 
 from __future__ import annotations
@@ -13,7 +13,7 @@ import time
 from debug.regs import (
   ARRAY_ID_SRCA, ARRAY_ID_SRCB, ARRAY_ID_DEST,
   DBG_ARRAY_RD_CMD, DBG_ARRAY_RD_DATA, DBG_ARRAY_RD_EN,
-  DEBUG_TLB_BASE, DEST_CHUNKS_PER_ROW,
+  DEBUG_TLB_BASE, DEST_BASE, DEST_CHUNKS_PER_ROW, DEST_ROW_BYTES,
 )
 
 # -- Instruction buffer debug registers ------------------------------------ #
@@ -65,7 +65,11 @@ def TT_OP_MOVDBGA2D(dest_32b_lo: int, src: int, addr_mode: int, instr_mod: int, 
   return _tt_op(0x09, (dest_32b_lo << 23) | (src << 17) | (addr_mode << 14) | (instr_mod << 12) | dst)
 
 
-STALL_SFPU = 0x40   # tt-exalens uses 0x40 for stall_res in SrcA reads
+def TT_OP_MOVDBGB2D(dest_32b_lo: int, src: int, addr_mode: int, movb2d_instr_mod: int, dst: int) -> int:
+  return _tt_op(0x0C, (dest_32b_lo << 23) | (src << 17) | (addr_mode << 14) | (movb2d_instr_mod << 11) | dst)
+
+
+STALL_SFPU = 0x40
 WAIT_SFPU  = 0x4000
 
 
@@ -211,144 +215,100 @@ def is_thread_fifo_empty(win, core: tuple[int, int], thread_id: int) -> bool:
   return bool(status & (1 << (4 + thread_id)))
 
 
-# -- SrcB reading ---------------------------------------------------------- #
+# -- MMIO Dest read/write -------------------------------------------------- #
 #
-# SrcB cannot be read through the debug array scan chain without first
-# transferring bank ownership to the Matrix Unit via instruction injection.
-#
-# The scan chain for SrcB is wired through the Matrix Unit's read port.
-# When AllowedClient == Unpackers, the scan chain returns zeros.  To get
-# real data we must:
-#
-#   1. SETRWC — reset all Read/Write Counters so row addresses are absolute
-#   2. SETDVALID(0b10) — give the Unpacker's current SrcB bank to the
-#      Matrix Unit (and flip the Unpacker to the other bank)
-#   3. CLEARDVALID(0b10, 0) — give the MU's current bank back to Unpackers
-#      (and flip the MU to the other bank)
-#   4. SETDVALID(0b10) — give the Unpacker's (now-other) bank to the MU
-#   5. SHIFTXB(7, 0, row) — a lightweight Matrix Unit instruction that
-#      accesses SrcB[row], latching the row contents into the scan chain.
-#      This is a rotate-left-by-one-lane, so it IS destructive to SrcB.
-#   6. CLEARDVALID(0b10, 0) — return the bank to Unpackers
-#
-# Steps 2-4 cycle the bank state machine so that the MU ends up owning a
-# bank regardless of the initial ownership state.  Step 5 is the actual
-# "touch" that makes the row scannable.
-#
-# Destructiveness:  SHIFTXB rotates each row left by one lane (column).
-# To undo the rotation after reading, call restore_srcb_row() which
-# applies 15 more rotations (16 total = identity).
-#
-# This sequence follows the approach used in tt-exalens debug_tensix.py.
+# DEST_BASE (0xFFBD8000) is within the debug TLB window (0xFFB00000..0xFFD00000).
+# We can read/write Dest rows directly via the TLB mmap without DR halt.
+# This is the key to non-destructive register reads: save Dest via MMIO,
+# inject instructions that clobber Dest, read the result, then write it back.
 
-def _srcb_read_instructions(row: int) -> list[int]:
-  """Build the instruction sequence to make one SrcB row scannable."""
+def dest_read_row_mmio(win, core: tuple[int, int], row: int) -> list[int]:
+  """Read one Dest row (8 x 32-bit words) via direct MMIO to DEST_BASE."""
+  from hw import NocOrdering
+  win.target(core, addr=DEBUG_TLB_BASE, mode=NocOrdering.STRICT)
+  base_off = DEST_BASE - DEBUG_TLB_BASE
+  row_off = base_off + row * DEST_ROW_BYTES
+  return [win.read32(row_off + i * 4) for i in range(DEST_CHUNKS_PER_ROW)]
+
+
+def dest_write_row_mmio(win, core: tuple[int, int], row: int, chunks: list[int]):
+  """Write one Dest row (8 x 32-bit words) via direct MMIO to DEST_BASE.
+
+  This writes through the TLB window to the memory-mapped Dest register file.
+  The core should be in a kernel pause loop (not actively writing to Dest).
+  """
+  from hw import NocOrdering
+  win.target(core, addr=DEBUG_TLB_BASE, mode=NocOrdering.STRICT)
+  base_off = DEST_BASE - DEBUG_TLB_BASE
+  row_off = base_off + row * DEST_ROW_BYTES
+  for i, word in enumerate(chunks):
+    win.write32(row_off + i * 4, word & 0xFFFFFFFF)
+
+
+# -- Bank ownership helpers ------------------------------------------------ #
+#
+# SrcA and SrcB each have 2 banks.  At any time one bank is owned by the
+# Unpackers (for writing) and one by the Matrix Unit (for reading).
+#
+# SETDVALID(mask) gives the Unpacker's bank to the MU (flips ownership).
+#   bit 0 = SrcA, bit 1 = SrcB
+# CLEARDVALID(mask, reset) gives the MU's bank back to Unpackers.
+#
+# The 3-flip dance (SET, CLEAR, SET) ensures the MU ends up owning a bank
+# regardless of the initial ownership state.
+
+SRCA_BANK_BIT = 0b01
+SRCB_BANK_BIT = 0b10
+
+
+def _bank_acquire_instructions(bank_bit: int) -> list[int]:
+  """3-flip dance to ensure MU owns a bank of SrcA (bit 0) or SrcB (bit 1)."""
   return [
-    TT_OP_SETRWC(0, 0, 0, 0, 0, 0xF),   # reset RWCs
-    TT_OP_SETDVALID(0b10),                # give Unpacker's bank to MU
-    TT_OP_CLEARDVALID(0b10, 0),           # give MU's bank to Unpackers, MU flips
-    TT_OP_SETDVALID(0b10),                # give Unpacker's (other) bank to MU
-    TT_OP_SHIFTXB(7, 0, row),            # touch row (destructive rotate)
-    TT_OP_CLEARDVALID(0b10, 0),           # release bank
+    TT_OP_SETDVALID(bank_bit),       # give Unpacker's bank to MU
+    TT_OP_CLEARDVALID(bank_bit, 0),  # give MU's bank back, MU flips
+    TT_OP_SETDVALID(bank_bit),       # give Unpacker's (other) bank to MU
   ]
 
 
-def _srcb_restore_instructions(row: int) -> list[int]:
-  """Build 15 more SHIFTXB rotations to undo a single read's rotation."""
-  return [
-    TT_OP_SETRWC(0, 0, 0, 0, 0, 0xF),
-    TT_OP_SETDVALID(0b10),
-    TT_OP_CLEARDVALID(0b10, 0),
-    TT_OP_SETDVALID(0b10),
-    *[TT_OP_SHIFTXB(7, 0, row) for _ in range(15)],
-    TT_OP_CLEARDVALID(0b10, 0),
-  ]
-
-
-def read_srcb_row(win, core: tuple[int, int], injector: TensixInjector, row: int,
-                  thread_id: int = 1, bank: int = 0,
-                  drain_timeout: float = 2.0) -> list[int]:
-  """Read one SrcB row by injecting bank-ownership + SHIFTXB, then scanning.
-
-  Uses batch injection so this works even when the FIFO has pre-existing
-  instructions (e.g. from firmware init).  Our instructions queue behind
-  them and execute once the stall clears.
-
-  WARNING: SHIFTXB rotates the row left by one lane.  Call
-  restore_srcb_row() afterwards if you need to preserve SrcB contents.
-
-  Args:
-    win: TLBWindow
-    core: target core (x, y)
-    injector: TensixInjector for the target core
-    row: SrcB row to read (0..63)
-    thread_id: Tensix thread to inject into (must be halted; default 1 = math)
-    bank: SrcB bank (0 or 1)
-    drain_timeout: seconds to wait for FIFO drain (default 2s)
-  """
-  injector.inject_batch(_srcb_read_instructions(row), thread_id,
-                        drain_timeout=drain_timeout)
-  return dbg_array_read_row(win, core, row, ARRAY_ID_SRCB, bank=bank)
-
-
-def restore_srcb_row(injector: TensixInjector, row: int, thread_id: int = 1,
-                     drain_timeout: float = 2.0):
-  """Undo the SHIFTXB rotation by applying 15 more left-rotations.
-
-  SHIFTXB rotates a row left by one lane.  Doing this 16 times total is
-  the identity (16 columns per row), so 15 more rotations restore the
-  original data.
-  """
-  injector.inject_batch(_srcb_restore_instructions(row), thread_id,
-                        drain_timeout=drain_timeout)
-
-
-def read_srcb_row_direct(win, core: tuple[int, int], row: int, bank: int = 0) -> list[int]:
-  """Read one SrcB row via direct debug array access (no injection).
-
-  This returns zeros unless the Matrix Unit already owns the bank (rare).
-  Kept for diagnostic comparison against the injection-based path.
-  """
-  return dbg_array_read_row(win, core, row, ARRAY_ID_SRCB, bank=bank)
-
-
-def read_srcb_rows(win, core: tuple[int, int], injector: TensixInjector,
-                   num_rows: int = 64, thread_id: int = 1, bank: int = 0,
-                   restore: bool = False) -> list[list[int]]:
-  """Read multiple SrcB rows via injection + debug array.
-
-  Args:
-    restore: if True, apply 15 extra SHIFTXB rotations per row to undo
-             the destructive rotation.  Slow but preserves SrcB contents.
-  """
-  rows = []
-  for r in range(num_rows):
-    rows.append(read_srcb_row(win, core, injector, r, thread_id, bank))
-    if restore:
-      restore_srcb_row(injector, r, thread_id)
-  return rows
+def _bank_release_instructions(bank_bit: int) -> list[int]:
+  """Release bank back to Unpackers."""
+  return [TT_OP_CLEARDVALID(bank_bit, 0)]
 
 
 # -- SrcA reading ---------------------------------------------------------- #
 #
-# SrcA cannot be read through the debug array directly (array_id=0 returns
-# nothing useful).  Instead, we inject instructions to copy SrcA rows into
-# Dest via MOVDBGA2D, then read Dest via the debug array.
+# SrcA cannot be read through the debug array scan chain directly (array_id=0
+# returns nothing useful).  Instead we:
 #
-# This is the exact sequence proven working in tt-exalens on Blackhole.
-# tt-exalens uses thread_id=2 (pack thread) for this injection.
+#   1. Save Dest[0] via debug array read (pure read, no side effects)
+#   2. Acquire SrcA bank for MU via SETDVALID/CLEARDVALID dance
+#   3. Reset RWCs so MOVDBGA2D addressing is absolute
+#   4. MOVDBGA2D copies SrcA[row] -> Dest[0]
+#   5. Read Dest[0] via debug array -> this IS the SrcA data
+#   6. Release SrcA bank back to Unpackers
+#   7. Restore Dest[0] via MMIO write
 #
-# IMPORTANT: The target thread's FIFO must be EMPTY for injection to work.
-# Use a PAUSE spin-wait in the kernel to guarantee this.
+# Non-destructiveness:
+#   - MOVDBGA2D only reads from SrcA (SrcA is never modified)
+#   - Dest is saved/restored via debug array read + MMIO write
+#   - No LRegs are touched
+#   - Bank ownership is returned to original state
+#   - RWCs are reset (caller may need to account for this)
 #
-# Limitations:
-#   - MOVDBGA2D has a 4-bit src field: only row & 0xF (rows 0-15 per face)
-#   - You get the last 2 faces written (hardware limitation, no bank select)
-#   - Clobbers Dest rows 0 and 2 (best-effort restore via LReg3)
+# MOVDBGA2D src field is 6 bits in the encoding but only the low 4 bits
+# select the row within a face (0..15).  The face is determined by the
+# SrcA read counter (RWC_A).  We reset RWCs and use row & 0xF.
 
 def read_srca_row(win, core: tuple[int, int], injector: TensixInjector,
-                  row: int, thread_id: int = 2) -> list[int]:
-  """Read one SrcA row by injecting MOVDBGA2D into Dest, then reading Dest.
+                  row: int, thread_id: int = 2, dest_scratch_row: int = 0) -> list[int]:
+  """Read one SrcA row non-destructively.
+
+  Injects MOVDBGA2D to copy SrcA[row] into Dest, reads via debug array,
+  then restores Dest via MMIO write.  SrcA itself is never modified.
+
+  MOVDBGA2D is a debug-path instruction that bypasses normal bank ownership
+  checks.  No SETDVALID/CLEARDVALID dance is needed (unlike SrcB via SHIFTXB).
+  tt-exalens uses thread 2 (pack) for this injection.
 
   Args:
     win: TLBWindow
@@ -356,32 +316,183 @@ def read_srca_row(win, core: tuple[int, int], injector: TensixInjector,
     injector: TensixInjector for the target core
     row: SrcA row to read (0..63)
     thread_id: Tensix thread to inject into (default 2 = pack, matching tt-exalens)
+    dest_scratch_row: which Dest row to use as scratch (default 0)
 
   Returns:
     list of 8 x 32-bit chunks (256 bits) from the SrcA row
   """
-  # Phase 1: save LReg3 from Dest, then copy SrcA row into Dest row 0
-  injector.inject(TT_OP_SFPLOAD(3, 0, 0, 0), thread_id)   # save dest row 0 -> LReg3
-  injector.inject(TT_OP_SFPLOAD(3, 0, 0, 2), thread_id)   # save dest row 2 -> LReg3
-  injector.inject(TT_OP_STALLWAIT(STALL_SFPU, WAIT_SFPU), thread_id)
-  injector.inject(TT_OP_MOVDBGA2D(0, row & 0xF, 0, 0, 0), thread_id)  # SrcA row -> Dest row 0
+  # 1. Save the Dest row we're about to clobber
+  saved_dest = dbg_array_read_row(win, core, dest_scratch_row, ARRAY_ID_DEST, bank=0)
 
-  # Phase 2: read Dest row 0 via debug array
-  chunks = dbg_array_read_row(win, core, 0, ARRAY_ID_DEST, bank=0)
+  # 2. Inject: reset RWCs, copy SrcA -> Dest via debug move
+  #    No bank dance needed — MOVDBGA2D is a debug path that bypasses ownership.
+  insns = [
+    TT_OP_SETRWC(0, 0, 0, 0, 0, 0xF),    # reset all RWCs
+    TT_OP_MOVDBGA2D(0, row & 0xF, 0, 0, dest_scratch_row),
+  ]
+  injector.inject_batch(insns, thread_id)
 
-  # Phase 3: restore LReg3 back to Dest and reset counters periodically
-  injector.inject(TT_OP_SFPSTORE(3, 0, 0, 0), thread_id)  # restore dest row 0
-  injector.inject(TT_OP_SFPSTORE(3, 0, 0, 2), thread_id)  # restore dest row 2
-  if row % 16 == 15:
-    injector.inject(TT_OP_SETRWC(3, 0, 0, 0, 0, 0xF), thread_id)  # reset RWCs every face
+  # 3. Read the scratch Dest row — this is our SrcA data
+  srca_data = dbg_array_read_row(win, core, dest_scratch_row, ARRAY_ID_DEST, bank=0)
 
-  return chunks
+  # 4. Restore the original Dest row via MMIO write
+  dest_write_row_mmio(win, core, dest_scratch_row, saved_dest)
+
+  return srca_data
 
 
 def read_srca_rows(win, core: tuple[int, int], injector: TensixInjector,
-                   num_rows: int = 64, thread_id: int = 2) -> list[list[int]]:
-  """Read multiple SrcA rows via injection + debug array."""
+                   num_rows: int = 64, thread_id: int = 1,
+                   dest_scratch_row: int = 0) -> list[list[int]]:
+  """Read multiple SrcA rows non-destructively."""
   rows = []
   for r in range(num_rows):
-    rows.append(read_srca_row(win, core, injector, r, thread_id))
+    rows.append(read_srca_row(win, core, injector, r, thread_id, dest_scratch_row))
   return rows
+
+
+# -- SrcB reading ---------------------------------------------------------- #
+#
+# SrcB has two read strategies:
+#
+# Strategy A (scan chain + SHIFTXB):
+#   The debug array scan chain for SrcB (array_id=1) IS wired, but only
+#   returns data when the MU owns the bank.  SHIFTXB is a lightweight MU
+#   instruction that "touches" a row, latching it into the scan chain.
+#   Downside: SHIFTXB rotates the row left by one lane (destructive).
+#   Needs 15 more rotations to undo (16 = identity).
+#
+# Strategy B (MOVDBGB2D, same pattern as SrcA):
+#   MOVDBGB2D copies SrcB -> Dest, then read Dest via debug array.
+#   Non-destructive to SrcB.  Only clobbers Dest (restored via MMIO).
+#
+# We implement Strategy B as the default since it's non-destructive.
+# Strategy A is kept as _read_srcb_row_shiftxb for comparison.
+
+def read_srcb_row(win, core: tuple[int, int], injector: TensixInjector,
+                  row: int, thread_id: int = 1,
+                  dest_scratch_row: int = 0) -> list[int]:
+  """Read one SrcB row non-destructively via MOVDBGB2D.
+
+  Same approach as SrcA: copy to Dest, read, restore Dest via MMIO.
+  """
+  saved_dest = dbg_array_read_row(win, core, dest_scratch_row, ARRAY_ID_DEST, bank=0)
+
+  insns = [
+    TT_OP_SETRWC(0, 0, 0, 0, 0, 0xF),
+    *_bank_acquire_instructions(SRCB_BANK_BIT),
+    TT_OP_MOVDBGB2D(0, row & 0xF, 0, 0, dest_scratch_row),
+    *_bank_release_instructions(SRCB_BANK_BIT),
+  ]
+  injector.inject_batch(insns, thread_id)
+
+  srcb_data = dbg_array_read_row(win, core, dest_scratch_row, ARRAY_ID_DEST, bank=0)
+  dest_write_row_mmio(win, core, dest_scratch_row, saved_dest)
+  return srcb_data
+
+
+def read_srcb_rows(win, core: tuple[int, int], injector: TensixInjector,
+                   num_rows: int = 64, thread_id: int = 1,
+                   dest_scratch_row: int = 0) -> list[list[int]]:
+  """Read multiple SrcB rows non-destructively."""
+  rows = []
+  for r in range(num_rows):
+    rows.append(read_srcb_row(win, core, injector, r, thread_id, dest_scratch_row))
+  return rows
+
+
+# -- SrcB reading via scan chain (Strategy A, destructive) ----------------- #
+#
+# Kept for comparison / fallback if MOVDBGB2D doesn't work.
+
+def _srcb_shiftxb_read_instructions(row: int) -> list[int]:
+  """Build instruction sequence to make one SrcB row scannable via SHIFTXB."""
+  return [
+    TT_OP_SETRWC(0, 0, 0, 0, 0, 0xF),
+    *_bank_acquire_instructions(SRCB_BANK_BIT),
+    TT_OP_SHIFTXB(7, 0, row),            # touch row (destructive: rotates left by 1)
+    *_bank_release_instructions(SRCB_BANK_BIT),
+  ]
+
+
+def _srcb_shiftxb_restore_instructions(row: int) -> list[int]:
+  """Build 15 more SHIFTXB rotations to undo a single read's rotation."""
+  return [
+    TT_OP_SETRWC(0, 0, 0, 0, 0, 0xF),
+    *_bank_acquire_instructions(SRCB_BANK_BIT),
+    *[TT_OP_SHIFTXB(7, 0, row) for _ in range(15)],
+    *_bank_release_instructions(SRCB_BANK_BIT),
+  ]
+
+
+def read_srcb_row_shiftxb(win, core: tuple[int, int], injector: TensixInjector,
+                           row: int, thread_id: int = 1, bank: int = 0,
+                           restore: bool = True,
+                           drain_timeout: float = 2.0) -> list[int]:
+  """Read one SrcB row via SHIFTXB + scan chain (destructive, then restore).
+
+  SHIFTXB rotates the row left by one lane.  If restore=True, 15 more
+  rotations are applied to undo (16 total = identity).
+  """
+  injector.inject_batch(_srcb_shiftxb_read_instructions(row), thread_id,
+                        drain_timeout=drain_timeout)
+  data = dbg_array_read_row(win, core, row, ARRAY_ID_SRCB, bank=bank)
+  if restore:
+    injector.inject_batch(_srcb_shiftxb_restore_instructions(row), thread_id,
+                          drain_timeout=drain_timeout)
+  return data
+
+
+def read_srcb_row_direct(win, core: tuple[int, int], row: int, bank: int = 0) -> list[int]:
+  """Read one SrcB row via direct debug array access (no injection).
+
+  Returns zeros unless the MU already owns the bank.  Diagnostic only.
+  """
+  return dbg_array_read_row(win, core, row, ARRAY_ID_SRCB, bank=bank)
+
+
+# -- LReg reading ---------------------------------------------------------- #
+#
+# SFPU LRegs (lreg0..lreg15) are read by:
+#   1. Save Dest[scratch_row] via debug array
+#   2. SFPSTORE(lreg, 0, 0, scratch_row) -> writes LReg into Dest
+#   3. Read Dest[scratch_row] via debug array -> LReg data
+#   4. Restore Dest[scratch_row] via MMIO write
+#
+# This never modifies the LReg itself (SFPSTORE is a read from LReg).
+
+def read_lreg(win, core: tuple[int, int], injector: TensixInjector,
+              lreg: int, thread_id: int = 2,
+              dest_scratch_row: int = 0) -> list[int]:
+  """Read one SFPU LReg non-destructively.
+
+  Args:
+    lreg: LReg index (0..15)
+    thread_id: thread to inject into (default 2 = pack, has SFPU access)
+    dest_scratch_row: Dest row to use as scratch
+
+  Returns:
+    list of 8 x 32-bit chunks (256 bits)
+  """
+  if not 0 <= lreg <= 15:
+    raise ValueError(f"lreg must be 0..15, got {lreg}")
+
+  saved_dest = dbg_array_read_row(win, core, dest_scratch_row, ARRAY_ID_DEST, bank=0)
+
+  insns = [
+    TT_OP_SFPSTORE(lreg, 0, 0, dest_scratch_row),
+    TT_OP_STALLWAIT(STALL_SFPU, WAIT_SFPU),  # wait for SFPSTORE to complete
+  ]
+  injector.inject_batch(insns, thread_id)
+
+  lreg_data = dbg_array_read_row(win, core, dest_scratch_row, ARRAY_ID_DEST, bank=0)
+  dest_write_row_mmio(win, core, dest_scratch_row, saved_dest)
+  return lreg_data
+
+
+def read_lregs(win, core: tuple[int, int], injector: TensixInjector,
+               num_lregs: int = 16, thread_id: int = 2,
+               dest_scratch_row: int = 0) -> list[list[int]]:
+  """Read multiple SFPU LRegs non-destructively."""
+  return [read_lreg(win, core, injector, i, thread_id, dest_scratch_row)
+          for i in range(num_lregs)]

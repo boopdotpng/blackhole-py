@@ -425,7 +425,7 @@ function renderGroupTrace(trace, prog){
       </div>
       <div class="trace-section-grid">
         <div class="trace-chart-wrap"><div class="trace-chart-title">Queue / busy state</div><div id="trace-frontend-queue-list"></div></div>
-        <div class="trace-chart-wrap"><div class="trace-chart-title">Top thread instruction encodings</div><div id="trace-frontend-inst-list"></div></div>
+        <div class="trace-chart-wrap"><div class="trace-chart-title">Top Tensix instructions</div><div id="trace-frontend-inst-list"></div></div>
       </div>`;
   }
   if (kind === 'tensix_frontend_risc_stall') {
@@ -441,7 +441,7 @@ function renderGroupTrace(trace, prog){
   if (kind === 'rwc_math_pipeline') {
     return `
       <div class="trace-section-grid">
-        <div class="trace-chart-wrap"><div class="trace-chart-title">Top math instruction encodings</div><div id="trace-rwc-math-inst-list"></div></div>
+        <div class="trace-chart-wrap"><div class="trace-chart-title">Top math instructions</div><div id="trace-rwc-math-inst-list"></div></div>
         <div class="trace-chart-wrap"><div class="trace-chart-title">Winner thread / winner</div><div id="trace-rwc-math-winner-list"></div></div>
       </div>
       <div class="trace-section-grid">
@@ -776,6 +776,7 @@ function renderTraceTable(entries, label){
   if (!entries || !entries.length) return '<div class="trace-empty">No sampled data.</div>';
   const total = entries.reduce((sum, entry) => sum + (entry.count || 0), 0) || 1;
   const hasSymbol = entries.some(entry => entry.symbol);
+  const hasDecoded = entries.some(entry => entry.decoded);
   const rows = entries.slice(0, 12).map(entry => {
     const pct = (entry.count || 0) * 100 / total;
     const symbol = entry.symbol || {};
@@ -783,14 +784,15 @@ function renderTraceTable(entries, label){
       ? `${symbol.file}${symbol.line ? ':' + symbol.line : ''}`
       : '-';
     return `<tr>` +
-      `<td>${esc(entry.hex || toHex(entry.value || 0))}</td>` +
+      (hasDecoded ? `<td>${esc(entry.decoded || entry.hex || toHex(entry.value || 0))}</td><td class="trace-muted">${esc(entry.hex || toHex(entry.value || 0))}</td>` : `<td>${esc(entry.hex || toHex(entry.value || 0))}</td>`) +
       `<td>${(entry.count || 0).toLocaleString()}</td>` +
       `<td class="trace-muted">${pct.toFixed(1)}%</td>` +
       (hasSymbol ? `<td class="trace-muted">${esc(symbol.image || '-')}</td><td>${esc(symbol.function || '-')}</td><td class="trace-muted">${esc(location)}</td><td class="trace-muted">${esc(symbol.asm || '-')}</td>` : '') +
       `</tr>`;
   }).join('');
   const extra = hasSymbol ? '<th>Image</th><th>Function</th><th>Location</th><th>Instruction</th>' : '';
-  return `<table class="trace-table"><tr><th>${esc(label)}</th><th>Samples</th><th>Share</th>${extra}</tr>${rows}</table>`;
+  const decodedHdr = hasDecoded ? `<th>Decoded</th><th class="trace-muted">Raw</th>` : `<th>${esc(label)}</th>`;
+  return `<table class="trace-table"><tr>${decodedHdr}<th>Samples</th><th>Share</th>${extra}</tr>${rows}</table>`;
 }
 
 function renderNamedCountTable(entries, label){

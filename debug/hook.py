@@ -6,7 +6,6 @@ import os
 import time
 
 from compiler import iter_pt_load
-from debug.repl import DebugRepl
 from debug.risc import RiscDebug
 from debug.server import serve as serve_debug_api
 from debug.session import DebugSession
@@ -99,11 +98,8 @@ def _clear_pause_flags(win: TLBWindow, cores: list[tuple[int, int]]):
 
 
 def _launch_frontend(session: DebugSession):
-  if os.environ.get("DEBUG_SERVER") == "1":
-    port = int(os.environ.get("DEBUG_SERVER_PORT", "0"))
-    serve_debug_api(session, port=port)
-    return
-  DebugRepl(session).run()
+  port = int(os.environ.get("DEBUG_SERVER_PORT", "0"))
+  serve_debug_api(session, port=port)
 
 
 def debug_dispatch(device, ir_commands, program=None, writer=None, reader=None, compute=None):

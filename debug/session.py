@@ -25,7 +25,10 @@ from debug.regs import (
 )
 from debug.risc import RiscDebug
 from debug.symbols import resolve_assembly_line, resolve_source_location
-from debug.tensix import TensixInjector, is_thread_fifo_empty, read_srca_row
+from debug.tensix import (
+  TensixInjector, is_thread_fifo_empty,
+  read_srca_row, read_srcb_row, read_lreg,
+)
 from debug.tensix_state import TensixStateReader
 from hw import NocOrdering, TensixL1
 
@@ -290,7 +293,13 @@ class DebugSession:
 
   def _require_kernel_paused(self, operation: str):
     if self.debugger.is_halted():
-      raise RuntimeError(f"{operation} requires the kernel pause loop, not a DR-halted core")
+      if self._read_pause_flag() == 1:
+        # DR-halted inside the pause loop — continue so the coprocessor can drain injected instructions
+        self.debugger.cont()
+        import time; time.sleep(0.05)  # let RISC re-enter pause loop
+        self._event("control", f"auto-continued {self.target_risc} into DEBUG_PAUSE() loop for {operation}")
+      else:
+        raise RuntimeError(f"{operation} requires the kernel to be in DEBUG_PAUSE(), not DR-halted outside the pause loop")
     if self._read_pause_flag() != 1:
       raise RuntimeError(f"{operation} requires the kernel to be in DEBUG_PAUSE()")
 
@@ -521,35 +530,72 @@ class DebugSession:
       self._tensix_state_reader = TensixStateReader(self.win, self.debugger)
     return self._tensix_state_reader
 
-  def read_srca(self, start_row: int = 0, num_rows: int = 4) -> dict:
-    self._require_kernel_paused("read_srca")
+  def _read_register_rows(self, read_fn, start_row: int, num_rows: int,
+                          thread_id: int, label: str) -> dict:
+    """Generic helper: read register rows via injection, format as bf16 floats."""
+    self._require_kernel_paused(label)
     start_row = max(0, min(start_row, 63))
     num_rows = max(1, min(num_rows, 64 - start_row))
-    tid = 2
-    if not is_thread_fifo_empty(self.win, self.debugger.core, tid):
-      raise RuntimeError("thread 2 FIFO is not empty; wait longer in DEBUG_PAUSE() before reading SrcA")
+    if not is_thread_fifo_empty(self.win, self.debugger.core, thread_id):
+      raise RuntimeError(f"thread {thread_id} FIFO is not empty; wait longer in DEBUG_PAUSE()")
     injector = self._get_injector()
     rows = []
     for row in range(start_row, start_row + num_rows):
-      chunks = read_srca_row(self.win, self.debugger.core, injector, row, tid)
+      chunks = read_fn(self.win, self.debugger.core, injector, row, thread_id)
       values = []
       for word in chunks:
         hi16 = (word >> 16) & 0xFFFF
         lo16 = word & 0xFFFF
         values.append(self._dest_bf16_to_float(hi16))
         values.append(self._dest_bf16_to_float(lo16))
-      view = values[:16]
       rows.append({
         "row": row,
-        "values": view,
-        "formatted": " ".join(f"{value:8.4f}" for value in view),
+        "values": values[:16],
+        "formatted": " ".join(f"{value:8.4f}" for value in values[:16]),
       })
-    self._event("inspect", "read SrcA", {"start_row": start_row, "num_rows": num_rows})
-    return {
-      "thread_id": tid,
-      "rows": rows,
-      "note": "MOVDBGA2D reads the last two visible faces only",
-    }
+    self._event("inspect", f"read {label}", {"start_row": start_row, "num_rows": num_rows})
+    return {"thread_id": thread_id, "rows": rows}
+
+  def read_srca(self, start_row: int = 0, num_rows: int = 4) -> dict:
+    return self._read_register_rows(read_srca_row, start_row, num_rows,
+                                    thread_id=2, label="SrcA")
+
+  def read_srcb(self, start_row: int = 0, num_rows: int = 4) -> dict:
+    return self._read_register_rows(read_srcb_row, start_row, num_rows,
+                                    thread_id=1, label="SrcB")
+
+  def read_lregs_cmd(self, num_lregs: int = 16) -> dict:
+    self._require_kernel_paused("read_lregs")
+    tid = 2
+    if not is_thread_fifo_empty(self.win, self.debugger.core, tid):
+      raise RuntimeError(f"thread {tid} FIFO is not empty; wait longer in DEBUG_PAUSE()")
+    injector = self._get_injector()
+    rows = []
+    for i in range(max(1, min(num_lregs, 16))):
+      chunks = read_lreg(self.win, self.debugger.core, injector, i, tid)
+      values = []
+      for word in chunks:
+        hi16 = (word >> 16) & 0xFFFF
+        lo16 = word & 0xFFFF
+        values.append(self._dest_bf16_to_float(hi16))
+        values.append(self._dest_bf16_to_float(lo16))
+      rows.append({
+        "row": i,
+        "values": values[:16],
+        "formatted": " ".join(f"{value:8.4f}" for value in values[:16]),
+      })
+    self._event("inspect", "read LRegs", {"num_lregs": num_lregs})
+    return {"thread_id": tid, "rows": rows}
+
+  def test_inject(self, thread_id: int = 2) -> dict:
+    """Diagnostic: inject a single SETRWC (harmless) to verify injection works."""
+    self._require_kernel_paused("test_inject")
+    from debug.tensix import TT_OP_SETRWC
+    injector = self._get_injector()
+    fifo_before = self._fifo_status()
+    injector.inject(TT_OP_SETRWC(0, 0, 0, 0, 0, 0xF), thread_id)
+    fifo_after = self._fifo_status()
+    return {"ok": True, "thread_id": thread_id, "fifo_before": fifo_before, "fifo_after": fifo_after}
 
   def read_fifo_status(self) -> dict:
     return self._fifo_status()
@@ -601,6 +647,14 @@ class DebugSession:
         start_row=int(args.get("start_row", 0)),
         num_rows=int(args.get("num_rows", 4)),
       ),
+      "read_srcb": lambda: self.read_srcb(
+        start_row=int(args.get("start_row", 0)),
+        num_rows=int(args.get("num_rows", 4)),
+      ),
+      "read_lregs": lambda: self.read_lregs_cmd(
+        num_lregs=int(args.get("num_lregs", 16)),
+      ),
+      "test_inject": lambda: self.test_inject(int(args.get("thread_id", 2))),
       "read_fifo_status": self.read_fifo_status,
       "read_tensix_state": lambda: self.read_tensix_state(str(args.get("group", "all"))),
       "shutdown_session": lambda: self._shutdown(),
