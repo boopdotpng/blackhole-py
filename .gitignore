@@ -6,3 +6,4 @@ tt-metal-deps/
 progress.md
 profiler_data.json
 .claude
+*.so

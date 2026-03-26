@@ -30,6 +30,60 @@ from ttexalens.hardware.blackhole.functional_worker_debug_bus_signals import deb
 
 
 DEBUG_BUS_INIT = DebugBusSignalStore.create_initialization(group_map, debug_bus_signal_map)
+
+# --- Tensix instruction decoder ---
+# Built from tt-exalens tensix_ops.py: opcode is bits[31:24], params are bits[23:0].
+_TENSIX_OPCODES: dict[int, tuple[str, list[tuple[str, int, int]]]] = {}
+
+def _build_opcode_table():
+  import re
+  ops_path = _TT_EXALENS_REPO / "ttexalens" / "hardware" / "blackhole" / "tensix_ops.py"
+  if not ops_path.exists():
+    return
+  src = ops_path.read_text()
+  blocks = re.split(r'\ndef ', src)
+  for block in blocks:
+    m = re.match(r'(TT_OP_\w+)\(([^)]*)\)', block)
+    if not m or m.group(1) == 'TT_OP':
+      continue
+    name = m.group(1).replace('TT_OP_', '')
+    params = [p.strip() for p in m.group(2).split(',') if p.strip()]
+    om = re.search(r'TT_OP\(0x([0-9a-fA-F]+)', block)
+    if not om:
+      continue
+    opcode = int(om.group(1), 16)
+    fields = []
+    for p in params:
+      sm = re.search(rf'\({p}\)\s*<<\s*(\d+)', block)
+      shift = int(sm.group(1)) if sm else 0
+      fields.append((p, shift))
+    _TENSIX_OPCODES[opcode] = (name, fields)
+
+_build_opcode_table()
+
+def decode_tensix_instruction(raw: int) -> str:
+  if raw == 0:
+    return "(idle)"
+  opcode = (raw >> 24) & 0xFF
+  entry = _TENSIX_OPCODES.get(opcode)
+  if entry is None:
+    return f"0x{raw:08x}"
+  name, fields = entry
+  if not fields:
+    return name
+  params_bits = raw & 0xFFFFFF
+  # Compute each field's width from the sorted shift positions
+  shifts_asc = sorted({s for _, s in fields})
+  shift_to_width = {}
+  for i, s in enumerate(shifts_asc):
+    next_s = shifts_asc[i + 1] if i + 1 < len(shifts_asc) else 24
+    shift_to_width[s] = next_s - s
+  parts = []
+  for pname, shift in fields:
+    width = shift_to_width.get(shift, 8)
+    val = (params_bits >> shift) & ((1 << width) - 1)
+    parts.append(f"{pname}={val}")
+  return f"{name}({', '.join(parts)})"
 _TRACE_PRESETS = {
   "br": ("group", "brisc_group_a"),
   "nc": ("group", "ncrisc_group_a"),
@@ -78,11 +132,14 @@ def _decode_group_samples(group_name: str, raw_words: list[int], words_per_sampl
   return decoded
 
 
-def _top_values(values: list[int], limit: int = 12, *, include_zero: bool = False) -> list[dict[str, Any]]:
+def _top_values(values: list[int], limit: int = 12, *, include_zero: bool = False, decode_instrn: bool = False) -> list[dict[str, Any]]:
   filtered = values if include_zero else [value for value in values if value]
   out = []
   for value, count in Counter(filtered).most_common(limit):
-    out.append({"value": value, "hex": f"0x{value:x}", "count": count})
+    entry: dict[str, Any] = {"value": value, "hex": f"0x{value:x}", "count": count}
+    if decode_instrn and _TENSIX_OPCODES:
+      entry["decoded"] = decode_tensix_instruction(value)
+    out.append(entry)
   return out
 
 
@@ -212,7 +269,7 @@ def _summarize_tensix_frontend(group_name: str, decoded: dict[str, list[int]]) -
     "active_counts": _bit_counts(decoded, active_names),
     "stall_counts": _bit_counts(decoded, stall_names),
     "queue_counts": _bit_counts(decoded, queue_names),
-    "top_thread_inst": _top_values(decoded.get(f"{base}_thread_inst", []), include_zero=True),
+    "top_thread_inst": _top_values(decoded.get(f"{base}_thread_inst", []), include_zero=True, decode_instrn=True),
     "top_lsq_gen": _top_values(decoded.get(f"{base}_lsq_head_gen_no", []), include_zero=True),
     "top_rq_gen": _top_values(decoded.get(f"{base}_rq_head_gen_no", []), include_zero=True),
   }
@@ -237,7 +294,7 @@ def _summarize_rwc_math_pipeline(group_name: str, decoded: dict[str, list[int]])
       "flags": bool_names,
     },
     "flag_counts": _bit_counts(decoded, bool_names),
-    "top_math_instrn": _top_values(decoded.get("rwc_math_instrn", []), include_zero=True),
+    "top_math_instrn": _top_values(decoded.get("rwc_math_instrn", []), include_zero=True, decode_instrn=True),
     "top_winner": _top_values(decoded.get("rwc_math_winner", []), include_zero=True),
     "top_winner_thread": _top_values(decoded.get("rwc_math_winner_thread", []), include_zero=True),
     "top_srca": _top_values(decoded.get("rwc0_srca_reg_addr_d", []), include_zero=True),
@@ -640,37 +697,57 @@ class _TraceSampler(threading.Thread):
       self._advance_completion_cursor()
 
   def run(self):
-    self.capture_start_ns = time.perf_counter_ns()
+    import ctypes
+    from profiler.trace_sampler_ffi import CSampler
+    cs = CSampler()
+    stop_flag = ctypes.c_int(0)
     ctrl_off = DBG_BUS_CTRL - DEBUG_TLB_BASE
     data_off = DBG_BUS_RD_DATA - DEBUG_TLB_BASE
-    sample = 0
+
+    def _watch_stop():
+      self._stop_requested.wait()
+      stop_flag.value = 1
+    watcher = threading.Thread(target=_watch_stop, daemon=True)
+    watcher.start()
+
     with TLBWindow(self.fd, start=self.core, addr=DEBUG_TLB_BASE, mode=NocOrdering.STRICT) as win:
-      write32 = win.write32
-      read32 = win.read32
-      configs = self.config_words
-      words_per_sample = self.words_per_sample
-      timestamps = self.timestamps_ns
-      raw_words = self.raw_words
-      max_samples = self.config.max_samples
-      while True:
-        if sample < max_samples:
-          timestamps[sample] = time.perf_counter_ns()
-          base = sample * words_per_sample
-          for word_index, config_word in enumerate(configs):
-            write32(ctrl_off, config_word)
-            raw_words[base + word_index] = read32(data_off)
-          sample += 1
-          self.count = sample
-        elif not self.truncated:
-          self.truncated = True
-        self._poll_completion_events()
-        if len(self.boundaries) >= len(self.event_ids):
-          break
-        if self._stop_requested.is_set() and not self._graceful_stop:
-          break
-        if self.truncated:
-          time.sleep(0)
-    self.capture_end_ns = time.perf_counter_ns()
+      result, c_boundaries = cs.run(
+        tlb_mm=win.mm,
+        ctrl_off=ctrl_off,
+        data_off=data_off,
+        config_words=self.config_words,
+        max_samples=self.config.max_samples,
+        timestamps_ns=self.timestamps_ns,
+        raw_words=self.raw_words,
+        event_ids=self.event_ids,
+        cq_hw=self.cq_hw,
+        stop_flag=stop_flag,
+        fast=True,
+      )
+
+    self.count = result.sample_count
+    self.truncated = bool(result.truncated)
+    self.capture_start_ns = result.capture_start_ns
+    self.capture_end_ns = result.capture_end_ns
+    for b in c_boundaries:
+      eid = b.event_id
+      if eid in self.event_to_program and eid not in self._seen_event_ids:
+        self._seen_event_ids.add(eid)
+        self.boundaries.append(TraceBoundary(
+          program_index=self.event_to_program[eid],
+          event_id=eid,
+          sample_count=b.sample_count,
+          timestamp_ns=b.timestamp_ns,
+          source="trace",
+        ))
+    self.mmio_profile = {
+      "write_count": result.mmio_write_count,
+      "read_count": result.mmio_read_count,
+      "write_total_ns": result.mmio_write_ns,
+      "read_total_ns": result.mmio_read_ns,
+      "bytes_per_read": 4,
+      "bytes_per_write": 4,
+    }
 
   def finalize(self, program_names: list[str], timings: list[dict[str, Any]]) -> dict[str, Any]:
     boundaries_by_event = {boundary.event_id: boundary for boundary in self.boundaries}
@@ -704,6 +781,14 @@ class _TraceSampler(threading.Thread):
       prev_end = sample_end
 
     elapsed_ns = max(1, self.capture_end_ns - self.capture_start_ns)
+    mmio = getattr(self, "mmio_profile", None)
+    if mmio and mmio["read_count"] > 0:
+      mmio["read_avg_ns"] = mmio["read_total_ns"] / mmio["read_count"]
+      mmio["write_avg_ns"] = mmio["write_total_ns"] / mmio["write_count"]
+      mmio["total_ns"] = mmio["read_total_ns"] + mmio["write_total_ns"]
+      mmio["total_bytes_read"] = mmio["read_count"] * 4
+      mmio["total_bytes_written"] = mmio["write_count"] * 4
+      mmio["pct_of_capture"] = 100.0 * mmio["total_ns"] / elapsed_ns
     result = {
       "config": {
         "spec": self.config.spec,
@@ -721,6 +806,7 @@ class _TraceSampler(threading.Thread):
         "elapsed_ns": elapsed_ns,
         "sample_rate_hz": count * 1e9 / elapsed_ns,
         "truncated": self.truncated,
+        "mmio": mmio,
       },
       "programs": records,
       "samples": {
@@ -783,6 +869,24 @@ class TraceCapture:
       f"  trace: {config['target']} on core ({self.core[0]},{self.core[1]}) "
       f"captured {capture['sample_count']:,} samples at {rate_khz:,.1f} kHz"
     )
+    mmio = capture.get("mmio")
+    if mmio and mmio.get("read_count"):
+      read_avg_us = mmio["read_avg_ns"] / 1e3
+      write_avg_us = mmio["write_avg_ns"] / 1e3
+      total_ms = mmio["total_ns"] / 1e6
+      pct = mmio["pct_of_capture"]
+      print(
+        f"  trace: mmio profiling — {mmio['read_count']:,} reads, {mmio['write_count']:,} writes "
+        f"(4 bytes each)"
+      )
+      print(
+        f"  trace: read avg {read_avg_us:.2f} us, write avg {write_avg_us:.2f} us, "
+        f"total {total_ms:,.1f} ms ({pct:.1f}% of capture wall time)"
+      )
+      print(
+        f"  trace: total read {mmio['total_bytes_read']:,} bytes, "
+        f"total written {mmio['total_bytes_written']:,} bytes"
+      )
     if capture["truncated"]:
       print(f"  trace: sample buffer filled at TRACE_MAX_SAMPLES={config['max_samples']:,}")
     if self.config.mode == "signal" and self.config.summarize_top > 0:

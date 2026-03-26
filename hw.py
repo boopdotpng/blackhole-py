@@ -151,14 +151,18 @@ class TLBWindow:
   SIZE_4G = 1 << 32
 
   def __init__(self, fd: int, start: Core, end: Core | None = None, addr: int = 0,
-               mode: NocOrdering = NocOrdering.STRICT, size: int = SIZE_2M):
+               mode: NocOrdering = NocOrdering.STRICT, size: int = SIZE_2M, wc: bool = False):
     self.fd, self.size = fd, size
     out = _ioctl_alloc_tlb(fd, size=size)
     self._id = out.id
-    # WC-only: mapping both UC and WC to the same physical window doesn't work --
-    # Linux PAT gives both mappings the memory type of whichever was mmap'd first.
+    # UC (uncacheable) is the safe default — guarantees write-before-read
+    # ordering across different addresses.  WC (write-combining) is faster
+    # for bulk transfers (e.g. DRAM upload in slow dispatch) but silently
+    # breaks write-to-A-then-read-from-B patterns (e.g. debug bus regs).
+    # Only one mapping type can be active per TLB at a time.
+    offset = out.mmap_offset_wc if wc else out.mmap_offset_uc
     self.mm = mmap.mmap(fd, size, flags=mmap.MAP_SHARED, prot=mmap.PROT_READ | mmap.PROT_WRITE,
-                        offset=out.mmap_offset_wc)
+                        offset=offset)
     self.target(start, end, addr=addr, mode=mode)
 
   def target(self, start: Core, end: Core | None = None, addr: int = 0, mode: NocOrdering = NocOrdering.STRICT):

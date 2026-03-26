@@ -183,7 +183,7 @@ class Device:
     bank_table = build_bank_noc_table(self.harvested_dram_banks, all_cores)
 
     rects = mcast_rects(all_cores)
-    with TLBWindow(self.fd, start=all_cores[0]) as win:
+    with TLBWindow(self.fd, start=all_cores[0], wc=True) as win:
       # assert soft reset on all cores via multicast
       for x0, x1, y0, y1 in rects:
         win.target((x0, y0), (x1, y1), addr=mmio_base)
