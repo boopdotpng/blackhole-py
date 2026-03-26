@@ -8,7 +8,6 @@ from dispatch import Dtype, MathFidelity, Program
 
 TRACE = os.environ.get("TRACE", "").strip().lower() not in {"", "0", "false", "no", "off"}
 PROFILER = os.environ.get("PROFILE") == "1" or TRACE
-DEBUG = os.environ.get("DEBUG") == "1"
 
 _REPO = Path(__file__).resolve().parent
 _DEPS = _REPO / "tt-metal-deps"
@@ -72,13 +71,8 @@ _LFLAGS = ("-Wl,-z,max-page-size=16", "-Wl,-z,common-page-size=16", "-nostartfil
 
 
 def _kernel_build_flags(opt: str) -> tuple[str, list[str], list[str]]:
-  if not DEBUG:
-    debug_flags = ["-g", "-gdwarf-4"] if TRACE else []
-    return opt, list(_CFLAGS), debug_flags
-
-  cflags = [f for f in _CFLAGS if f not in ("-flto=auto", "-ffast-math")]
-  debug_flags = ["-g", "-gdwarf-4", "-DENABLE_DEBUG_PAUSE"]
-  return "-O1", cflags, debug_flags
+  debug_flags = ["-g", "-gdwarf-4"] if TRACE else []
+  return opt, list(_CFLAGS), debug_flags
 
 def _device_defines(
   num_dram_banks: int,
@@ -289,7 +283,7 @@ class CompiledKernel:
   xip: bytes
   xip_text_bytes: int
   disassembly: str = ""
-  elf_bytes: bytes | None = None  # full ELF with debug info (when DEBUG=1)
+  elf_bytes: bytes | None = None  # full ELF (when TRACE=1)
 
 _INIT_SCRATCH_BASE = TensixL1.KERNEL_CONFIG_BASE
 _INIT_SCRATCH = {
@@ -467,7 +461,7 @@ class Compiler:
           if f.is_file(): inc_content += f.read_bytes()
     key = _cache_hash("kern-v3", kern, target, tuple(defines), opt, trisc,
                       xip_relocate, tuple(sorted(hdrs.items())), self._fw[target].elf_bytes, inc_content)
-    if not (DEBUG or TRACE):
+    if not TRACE:
       cached = _cache_load(key)
       if cached is not None:
         _zone_map.update(cached["zones"])
@@ -505,10 +499,10 @@ class Compiler:
       xip=xip,
       xip_text_bytes=xip_text_bytes,
       disassembly=self._disassemble_elf(elf),
-      elf_bytes=elf if (DEBUG or TRACE) else None,
+      elf_bytes=elf if TRACE else None,
     )
     new_zones = {k: v for k, v in _zone_map.items() if k not in zones_before}
-    if not (DEBUG or TRACE):
+    if not TRACE:
       _cache_store(key, {"result": result, "zones": new_zones})
     return result
 

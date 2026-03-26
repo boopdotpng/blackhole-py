@@ -369,9 +369,6 @@ void MAIN {{
   const bool last_out = (block == (num_blocks - 1));
   cb_wait_front(tt::CBIndex::c_0, in0_block_num_tiles);
   cb_wait_front(tt::CBIndex::c_1, in1_block_num_tiles);
-  // PAUSE 1: SrcA/SrcB populated by unpack, before matmul consumes them.
-  // From REPL: srca, srcb, then 'resume' to continue.
-  if (block == 0) DEBUG_PAUSE();
   int in0_index_subblock_offset = 0;
   for (uint32_t in0_sb = 0; in0_sb < in0_num_subblocks; in0_sb++) {{
     int in1_index_subblock_offset = 0;
@@ -392,9 +389,6 @@ void MAIN {{
       matmul_block(tt::CBIndex::c_0, tt::CBIndex::c_1,
       in0_tile_index, in1_tile_index, 0, transpose, out_subblock_w, out_subblock_h, in0_block_w);
     }}
-    // PAUSE 2: Dest has matmul result, before pack consumes it.
-    // From REPL: dst array, then 'resume' to continue.
-    if (block == 0 && in0_sb == 0 && in1_sb == 0) DEBUG_PAUSE();
     tile_regs_commit();
     if (last_out) {{
       cb_reserve_back(tt::CBIndex::c_16, out_subblock_num_tiles);

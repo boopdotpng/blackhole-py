@@ -15,11 +15,18 @@ from typing import Any
 
 from cq import CQSysmem
 from compiler import iter_pt_load
-from debug.symbols import list_symbols, resolve_assembly_line, resolve_source_location
-from debug.regs import DBG_BUS_CTRL, DBG_BUS_RD_DATA, DEBUG_TLB_BASE, dbg_bus_cntl
+from profiler._symbols import list_symbols, resolve_assembly_line, resolve_source_location
 from dispatch import LaunchMsg, Write
 from hw import Core, NocOrdering, TLBWindow
 from hw import TensixL1
+
+# debug bus register addresses (inlined from deleted debug/regs.py)
+_DEBUG_REGS_BASE = 0xFFB12000
+DEBUG_TLB_BASE = _DEBUG_REGS_BASE & ~((1 << 21) - 1)  # 2M-aligned base
+DBG_BUS_CTRL = _DEBUG_REGS_BASE | 0x54
+DBG_BUS_RD_DATA = _DEBUG_REGS_BASE | 0x5C
+def dbg_bus_cntl(sig_sel: int, daisy_sel: int, rd_sel: int) -> int:
+  return (1 << 29) | (rd_sel << 25) | (daisy_sel << 16) | sig_sel
 
 _TT_EXALENS_REPO = Path(__file__).resolve().parents[2] / "tt-exalens"
 if _TT_EXALENS_REPO.exists() and str(_TT_EXALENS_REPO) not in sys.path:

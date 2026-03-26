@@ -36,7 +36,6 @@ class TensixL1:
   PROFILER_CONTROL = 0x0009C0              # 32 x u32 = 128 bytes
   PROFILER_HOST_BUFFER_BYTES_PER_RISC = 65536
   MEM_BANK_TO_NOC_SCRATCH = 0x0116B0
-  DEBUG_PAUSE_FLAG = 0x003440               # first 4B of MEM_LLK_DEBUG (unused unless -DLLK_DEBUG)
 
 class TensixMMIO:
   LOCAL_RAM_START = 0xFFB00000

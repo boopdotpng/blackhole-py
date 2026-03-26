@@ -8,7 +8,6 @@ from dispatch import *
 from cq import *
 from cq import _HOST_TIMESTAMP_SLOTS
 from dram import DramBuffer, Allocator, Shape, tilize, untilize, build_transfer_program
-from compiler import DEBUG
 
 @dataclass(frozen=True)
 class BoardConfig:
@@ -93,7 +92,6 @@ class Device:
       self._start_dispatch_cores()
 
     self._programs = []
-    self._debug_program_counter = 0
     self.last_profile = None
     self.last_trace = None
     self._profile_accumulated = []  # collect profiler data across multiple run() calls
@@ -466,84 +464,11 @@ class Device:
   def run(self) -> list[dict] | None:
     self._set_power(True)
     try:
-      if DEBUG:
-        if self._use_fast_dispatch:
-          raise RuntimeError("DEBUG=1 currently requires TT_USB=1 (slow dispatch); fast-dispatch debug is not supported yet")
-        return self._run_debug()
       if self._use_fast_dispatch: return self._run_fast_dispatch()
       else: return self._run_slow_dispatch()
     finally:
       self._programs.clear()
       self._set_power(False)
-
-  def _run_debug(self) -> list[dict] | None:
-    """DEBUG=1: debug one selected program, run others normally."""
-    from debug.hook import debug_dispatch
-    from debug.risc import RiscDebug
-    from hw import TensixL1
-
-    global_ids = [self._debug_program_counter + i for i in range(len(self._programs))]
-
-    def _choose_debug_indices(programs: list[Program], program_ids: list[int]) -> set[int]:
-      selector = os.environ.get("DEBUG_PROGRAM", "").strip()
-      if selector.lower() == "all":
-        return set(range(len(programs)))
-      if selector:
-        try:
-          idx = int(selector, 0)
-        except ValueError:
-          matches = {i for i, program in enumerate(programs) if selector in program.name}
-          if not matches:
-            print(f"  debug: DEBUG_PROGRAM={selector!r} matched no program in this run; running without debugger")
-          return matches
-        return {i for i, program_id in enumerate(program_ids) if program_id == idx}
-
-      return set(range(len(programs)))
-
-    debug_indices = _choose_debug_indices(self._programs, global_ids)
-    if debug_indices:
-      selected = ", ".join(f"[{global_ids[i]}] {self._programs[i].name or '<unnamed>'}" for i in sorted(debug_indices))
-      print(f"  debug: selected program(s): {selected}")
-    else:
-      print("  debug: no program selected for debugger in this run; using normal dispatch")
-
-    def _sanitize_debug_state(win: TLBWindow):
-      for core in self.cores:
-        win.target(core)
-        win.write32(TensixL1.DEBUG_PAUSE_FLAG, 0)
-        for risc_name in ("brisc", "trisc0", "trisc1", "trisc2"):
-          risc = RiscDebug(win, core, risc_name)
-          try:
-            risc.clear_all_breakpoints()
-          except Exception:
-            pass
-          try:
-            if risc.is_halted():
-              risc.cont()
-          except Exception:
-            pass
-
-    with TLBWindow(self.fd, start=self.cores[0]) as win:
-      for i, program in enumerate(self._programs):
-        program_id = global_ids[i]
-        program_name = program.name or "<unnamed>"
-        try:
-          if i not in debug_indices:
-            print(f"  debug: running non-debug program [{program_id}] \"{program_name}\"")
-            _sanitize_debug_state(win)
-            ir = self._compile_ir(program, self._dispatch_mode)
-            slow_dispatch(win, ir)
-            continue
-          print(f"  debug: debugging program [{program_id}] \"{program_name}\"")
-          writer = self.compiler.compile_dataflow(program.writer_kernel, "brisc") if program.writer_kernel else None
-          reader = self.compiler.compile_dataflow(program.reader_kernel, "ncrisc") if program.reader_kernel else None
-          compute = self.compiler.compile_compute(program.compute_kernel, program) if program.compute_kernel else None
-          ir = self._compile_ir(program, self._dispatch_mode)
-          debug_dispatch(self, ir, program=program, writer=writer, reader=reader, compute=compute)
-          _sanitize_debug_state(win)
-        finally:
-          self._debug_program_counter += 1
-    return None
 
   def _run_fast_dispatch(self) -> list[dict] | None:
     n = len(self._programs)
