@@ -188,7 +188,6 @@ def lower_fast(
   timestamps: list[tuple[int, int]] | None = None,
   profiler_flat_ids: dict | None = None,
   profiler_sysmem_noc_local: int = 0,
-  completion_event_ids: list[int] | None = None,
 ) -> list[CQCommand]:
   profiling = os.environ.get("PROFILE") == "1" and profiler_flat_ids is not None
   result: list[CQCommand] = []
@@ -216,8 +215,6 @@ def lower_fast(
     result.extend(_lower_ir(ir, go_word))
     if timestamps and ts + 1 < len(timestamps):
       result.append(CQTimestamp(*timestamps[ts + 1]))
-    if completion_event_ids and i < len(completion_event_ids):
-      result.append(CQHostEvent(completion_event_ids[i]))
   return result
 
 class CQSysmem:

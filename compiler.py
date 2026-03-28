@@ -6,8 +6,7 @@ from pathlib import Path
 from hw import *
 from dispatch import Dtype, MathFidelity, Program
 
-TRACE = os.environ.get("TRACE", "").strip().lower() not in {"", "0", "false", "no", "off"}
-PROFILER = os.environ.get("PROFILE") == "1" or TRACE
+PROFILER = os.environ.get("PROFILE") == "1"
 
 _REPO = Path(__file__).resolve().parent
 _DEPS = _REPO / "tt-metal-deps"
@@ -71,7 +70,7 @@ _LFLAGS = ("-Wl,-z,max-page-size=16", "-Wl,-z,common-page-size=16", "-nostartfil
 
 
 def _kernel_build_flags(opt: str) -> tuple[str, list[str], list[str]]:
-  debug_flags = ["-g", "-gdwarf-4"] if TRACE else []
+  debug_flags: list[str] = []
   return opt, list(_CFLAGS), debug_flags
 
 def _device_defines(
@@ -283,7 +282,7 @@ class CompiledKernel:
   xip: bytes
   xip_text_bytes: int
   disassembly: str = ""
-  elf_bytes: bytes | None = None  # full ELF (when TRACE=1)
+  elf_bytes: bytes | None = None
 
 _INIT_SCRATCH_BASE = TensixL1.KERNEL_CONFIG_BASE
 _INIT_SCRATCH = {
@@ -461,11 +460,10 @@ class Compiler:
           if f.is_file(): inc_content += f.read_bytes()
     key = _cache_hash("kern-v3", kern, target, tuple(defines), opt, trisc,
                       xip_relocate, tuple(sorted(hdrs.items())), self._fw[target].elf_bytes, inc_content)
-    if not TRACE:
-      cached = _cache_load(key)
-      if cached is not None:
-        _zone_map.update(cached["zones"])
-        return cached["result"]
+    cached = _cache_load(key)
+    if cached is not None:
+      _zone_map.update(cached["zones"])
+      return cached["result"]
 
     zones_before = dict(_zone_map)
     mcpu = ["-mcpu=tt-bh-tensix", "-mno-tt-tensix-optimize-replay"] if trisc else \
@@ -499,11 +497,10 @@ class Compiler:
       xip=xip,
       xip_text_bytes=xip_text_bytes,
       disassembly=self._disassemble_elf(elf),
-      elf_bytes=elf if TRACE else None,
+      elf_bytes=elf,
     )
     new_zones = {k: v for k, v in _zone_map.items() if k not in zones_before}
-    if not TRACE:
-      _cache_store(key, {"result": result, "zones": new_zones})
+    _cache_store(key, {"result": result, "zones": new_zones})
     return result
 
   def _weaken_fw_symbols(self, build: Path, fw: bytes) -> Path:
