@@ -181,43 +181,47 @@ class Device:
     bank_table = build_bank_noc_table(self.harvested_dram_banks, all_cores)
 
     rects = mcast_rects(all_cores)
-    with TLBWindow(self.fd, start=all_cores[0], wc=True) as win:
+    # UC for MMIO/polling; WC for bulk L1 writes.
+    with TLBWindow(self.fd, start=all_cores[0]) as uc, \
+         TLBWindow(self.fd, start=all_cores[0], wc=True) as wc:
       # assert soft reset on all cores via multicast
       for x0, x1, y0, y1 in rects:
-        win.target((x0, y0), (x1, y1), addr=mmio_base)
-        win.write32(reset_off, TensixMMIO.SOFT_RESET_ALL)
+        uc.target((x0, y0), (x1, y1), addr=mmio_base)
+        uc.write32(reset_off, TensixMMIO.SOFT_RESET_ALL)
 
       # upload firmware segments + bootstrap to all cores via multicast
       for x0, x1, y0, y1 in rects:
-        win.target((x0, y0), (x1, y1))
+        wc.target((x0, y0), (x1, y1))
         for spans in staged.values():
           for addr, data in spans:
-            win.write(addr, data)
-        win.write(0, jal)
-        win.write(TensixL1.GO_MSG, go_init)
-        win.write(TensixL1.MEM_BANK_TO_NOC_SCRATCH, bank_table)
+            wc.write(addr, data)
+        wc.write(0, jal)
+        wc.write(TensixL1.GO_MSG, go_init)
+        wc.write(TensixL1.MEM_BANK_TO_NOC_SCRATCH, bank_table)
+
+      # drain WC writes before dependent UC MMIO updates
+      wc.mm[0]
 
       # set subordinate reset PCs on all cores via multicast
       for x0, x1, y0, y1 in rects:
-        win.target((x0, y0), (x1, y1), addr=mmio_base)
+        uc.target((x0, y0), (x1, y1), addr=mmio_base)
         for reg, text_base in [
           (TensixMMIO.RISCV_DEBUG_REG_NCRISC_RESET_PC, fw["ncrisc"].text_base),
           (TensixMMIO.RISCV_DEBUG_REG_TRISC0_RESET_PC, fw["trisc0"].text_base),
           (TensixMMIO.RISCV_DEBUG_REG_TRISC1_RESET_PC, fw["trisc1"].text_base),
           (TensixMMIO.RISCV_DEBUG_REG_TRISC2_RESET_PC, fw["trisc2"].text_base),
         ]:
-          win.write32(reg - mmio_base, text_base)
+          uc.write32(reg - mmio_base, text_base)
 
       # release BRISC from reset on all cores via multicast
-      # all prior writes used STRICT ordering, so data has landed on every core
       for x0, x1, y0, y1 in rects:
-        win.target((x0, y0), (x1, y1), addr=mmio_base)
-        win.write32(reset_off, TensixMMIO.SOFT_RESET_BRISC_ONLY_RUN)
+        uc.target((x0, y0), (x1, y1), addr=mmio_base)
+        uc.write32(reset_off, TensixMMIO.SOFT_RESET_BRISC_ONLY_RUN)
 
       probe = (1, 2) if (1, 2) in all_cores else all_cores[0]
-      win.target(probe)
+      uc.target(probe)
       deadline = time.perf_counter() + 2.0
-      while win.mm[TensixL1.GO_MSG + 3] != DevMsgs.RUN_MSG_DONE:
+      while uc.mm[TensixL1.GO_MSG + 3] != DevMsgs.RUN_MSG_DONE:
         if time.perf_counter() > deadline:
           raise TimeoutError(f"firmware not ready on {probe} -- try tt-smi -r")
         time.sleep(0.001)
