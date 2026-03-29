@@ -309,7 +309,6 @@ class Device:
       layout={"flat_ids": self._profiler_flat_ids},
       harvested_dram_bank=self.harvested_dram_banks[0] if self.harvested_dram_banks else None,
     )
-    profiler.print_summary(batch)
     self._profile_accumulated.extend(batch.get("programs", []))
 
   def _finalize_profile(self):
