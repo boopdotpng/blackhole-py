@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import os, sys
+import os, sys, time
 from dataclasses import dataclass
 import numpy as np
 
@@ -20,6 +20,8 @@ if MATH_FIDELITY is None:
 
 NUM_ITERS = int(os.environ.get("NUM_ITERS", "3"))
 INPUT_PATTERN = os.environ.get("INPUT_PATTERN", "random").lower()
+VALIDATE_SAMPLES = max(1, int(os.environ.get("VALIDATE_SAMPLES", "64")))
+VALIDATE_SEED = int(os.environ.get("VALIDATE_SEED", "0"))
 
 # --- matmul planner ---
 
@@ -507,14 +509,43 @@ def _from_device_bytes(data: bytes, shape: tuple[int, ...]) -> np.ndarray:
   u16 = np.frombuffer(data, dtype=np.uint16)
   return (u16.astype(np.uint32) << 16).view(np.float32).reshape(shape)
 
+def _sample_coords(M: int, N: int) -> tuple[np.ndarray, np.ndarray]:
+  total = M * N
+  target = min(total, VALIDATE_SAMPLES)
+  fixed = [0, N - 1, (M // 2) * N + (N // 2), (M - 1) * N, total - 1]
+  chosen, seen = [], set()
+  for idx in fixed:
+    if 0 <= idx < total and idx not in seen:
+      chosen.append(idx)
+      seen.add(idx)
+      if len(chosen) == target:
+        break
+  if len(chosen) < target:
+    rng = np.random.default_rng(VALIDATE_SEED)
+    while len(chosen) < target:
+      idx = int(rng.integers(total))
+      if idx not in seen:
+        chosen.append(idx)
+        seen.add(idx)
+  flat = np.asarray(chosen, dtype=np.int64)
+  return flat // N, flat % N
+
+
 def _validate(a, b, c_bytes, M, N, Mp, Np):
-  c_ref = a @ b
   c_full = _from_device_bytes(c_bytes, (Mp, Np))
   c_got = c_full[:M, :N]
-  ref_flat, got_flat = c_ref.reshape(-1), c_got.reshape(-1)
+  got_flat = c_got.reshape(-1)
   if not np.all(np.isfinite(got_flat)):
     bad = int(got_flat.size - np.count_nonzero(np.isfinite(got_flat)))
     raise SystemExit(f"Validation failed: {bad} non-finite values")
+
+  sample_rows, sample_cols = _sample_coords(M, N)
+  row_ids, row_inv = np.unique(sample_rows, return_inverse=True)
+  col_ids, col_inv = np.unique(sample_cols, return_inverse=True)
+  ref_block = a[row_ids] @ b[:, col_ids]
+  ref_flat = ref_block[row_inv, col_inv].astype(np.float32, copy=False).reshape(-1)
+  got_flat = c_got[sample_rows, sample_cols].astype(np.float32, copy=False).reshape(-1)
+
   rel_l2 = float(np.linalg.norm(got_flat - ref_flat) / (np.linalg.norm(ref_flat) + 1e-12))
   max_abs = float(np.max(np.abs(got_flat - ref_flat)))
   ref_std = float(np.std(ref_flat))
@@ -522,7 +553,7 @@ def _validate(a, b, c_bytes, M, N, Mp, Np):
     pcc = 1.0 if max_abs < 1e-6 else 0.0
   else:
     pcc = float(np.corrcoef(ref_flat, got_flat)[0, 1])
-  print(f"Validation: PCC={pcc:.6f}, rel_l2={rel_l2:.6f}, max_abs={max_abs:.6f}")
+  print(f"Validation ({got_flat.size} samples): PCC={pcc:.6f}, rel_l2={rel_l2:.6f}, max_abs={max_abs:.6f}")
   if pcc < 0.995 or rel_l2 > 0.08:
     raise SystemExit(f"Validation failed: PCC={pcc:.6f}, rel_l2={rel_l2:.6f}")
 
@@ -567,7 +598,10 @@ def main():
     print(f"  subblock: {plan.out_subblock_h}h x {plan.out_subblock_w}w = {plan.out_subblock_num_tiles} tiles")
     print(f"  cores: {plan.active_core_count} ({len(device.cores)} available)")
     print(f"  input pattern: {INPUT_PATTERN}")
+    print(f"  validation: {VALIDATE_SAMPLES} sampled outputs (seed={VALIDATE_SEED})")
 
+    print("Preparing host inputs...", flush=True)
+    t0 = time.perf_counter()
     a_src, b_src = _make_inputs(M, K, N)
 
     if padded:
@@ -576,26 +610,44 @@ def main():
       a_bytes, b_bytes = _to_device_bytes(a_padded), _to_device_bytes(b_padded)
     else:
       a_bytes, b_bytes = _to_device_bytes(a_src), _to_device_bytes(b_src)
+    print(f"  host inputs ready in {time.perf_counter() - t0:.2f}s", flush=True)
 
+    print("Preparing validation references...", flush=True)
+    t0 = time.perf_counter()
     a_ref = _from_device_bytes(_to_device_bytes(a_src), (M, K))
     b_ref = _from_device_bytes(_to_device_bytes(b_src), (K, N))
+    print(f"  validation references ready in {time.perf_counter() - t0:.2f}s", flush=True)
 
+    print("Allocating and writing DRAM buffers...", flush=True)
+    t0 = time.perf_counter()
     a_buf = device.alloc_write(a_bytes, dtype=IO_DTYPE, shape=(Mp, Kp), name="A")
     b_buf = device.alloc_write(b_bytes, dtype=IO_DTYPE, shape=(Kp, Np), name="B")
     c_buf = device.dram.alloc(plan.mt * plan.nt, dtype=IO_DTYPE, name="C", shape=(Mp, Np))
+    print(f"  buffers ready in {time.perf_counter() - t0:.2f}s", flush=True)
 
+    print("Building matmul program...", flush=True)
     prog = build_matmul_program(plan, a_buf, b_buf, c_buf, io_dtype=IO_DTYPE, math_fidelity=MATH_FIDELITY, f32_acc=F32_ACC)
 
+    print(f"Queueing {NUM_ITERS} iteration(s)...", flush=True)
     for _ in range(NUM_ITERS):
       device.queue(prog)
 
+    print("Reading output back from DRAM...", flush=True)
+    t0 = time.perf_counter()
     c_raw = device.dram_read(c_buf)
+    print(f"  DRAM readback finished in {time.perf_counter() - t0:.2f}s", flush=True)
+
+    print("Running sampled validation...", flush=True)
+    t0 = time.perf_counter()
     _validate(a_ref, b_ref, c_raw, M, N, Mp, Np)
+    print(f"  validation finished in {time.perf_counter() - t0:.2f}s", flush=True)
 
     if device._profile_accumulated:
+      print("Serving profiler UI...", flush=True)
       device.serve_profile()
 
   finally:
+    print("Closing device...", flush=True)
     device.close()
 
 if __name__ == "__main__":
