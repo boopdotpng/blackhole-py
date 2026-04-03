@@ -28,11 +28,7 @@ _HOST_ISSUE_BASE       = 4 * PCIE_ALIGN
 _HOST_ISSUE_SIZE       = align_up(64 << 20, PCIE_ALIGN)
 _HOST_COMPLETION_BASE  = _HOST_ISSUE_BASE + _HOST_ISSUE_SIZE
 _HOST_COMPLETION_SIZE  = align_up(32 << 20, PCIE_ALIGN)
-_HOST_TIMESTAMP_BASE   = _HOST_COMPLETION_BASE + _HOST_COMPLETION_SIZE
-_HOST_TIMESTAMP_STRIDE = 16                    # 8 bytes timestamp + 8 padding per slot
-_HOST_TIMESTAMP_SLOTS  = 4096
-_HOST_TIMESTAMP_SIZE   = align_up(_HOST_TIMESTAMP_SLOTS * _HOST_TIMESTAMP_STRIDE, PCIE_ALIGN)
-_HOST_PROFILER_BASE    = _HOST_TIMESTAMP_BASE + _HOST_TIMESTAMP_SIZE
+_HOST_PROFILER_BASE    = _HOST_COMPLETION_BASE + _HOST_COMPLETION_SIZE
 _HOST_PROFILER_PER_RISC = TensixL1.PROFILER_HOST_BUFFER_BYTES_PER_RISC  # 64 KB
 _HOST_PROFILER_PER_CORE = _HOST_PROFILER_PER_RISC * 5                   # 320 KB
 _HOST_CQ_WR_OFF        = 2 * PCIE_ALIGN
@@ -50,7 +46,6 @@ _WRITE_LINEAR_HOST  = 3
 _WAIT               = 7
 _GO_SIGNAL          = 14
 _SET_GO_NOC_DATA    = 17
-_TIMESTAMP          = 18
 
 CQ_CMD_SIZE = 16
 DONE_STREAM = 48
@@ -133,15 +128,7 @@ class CQHostEvent:
     payload = struct.pack("<I", self.event_id & 0xFFFFFFFF).ljust(L1_ALIGN, b"\0")
     return [_cq_hdr("<BBHIQ", _WRITE_LINEAR_HOST, 1, 0, 0, CQ_CMD_SIZE + len(payload)) + payload]
 
-@dataclass
-class CQTimestamp:
-  noc_xy_addr: int
-  addr: int
-
-  def to_bytes(self) -> list[bytes]:
-    return [_cq_hdr("<BxHII", _TIMESTAMP, 0, self.noc_xy_addr, self.addr)]
-
-CQCommand = CQWritePackedLarge | CQWritePacked | CQSetGoSignalNocData | CQSendGoSignal | CQWaitStream | CQHostEvent | CQTimestamp
+CQCommand = CQWritePackedLarge | CQWritePacked | CQSetGoSignalNocData | CQSendGoSignal | CQWaitStream | CQHostEvent
 
 def _relay_inline(payload: bytes) -> bytes:
   stride = align_up(CQ_CMD_SIZE + len(payload), PCIE_ALIGN)
@@ -185,7 +172,6 @@ def _lower_ir(commands: list[IRCommand], go_word: int) -> list[CQCommand]:
 def lower_fast(
   programs: list[tuple[list[IRCommand], bool]],
   go_word: int, cores: list[Core],
-  timestamps: list[tuple[int, int]] | None = None,
   profiler_flat_ids: dict | None = None,
   profiler_sysmem_noc_local: int = 0,
 ) -> list[CQCommand]:
@@ -209,12 +195,7 @@ def lower_fast(
       base = TensixL1.PROFILER_CONTROL
       result.append(CQWritePackedLarge(rects, base + 5 * 4, b"\0" * (5 * 4)))
       result.append(CQWritePackedLarge(rects, base + 19 * 4, b"\0" * 4))
-    ts = 2 * i
-    if timestamps and ts + 1 < len(timestamps):
-      result.append(CQTimestamp(*timestamps[ts]))
     result.extend(_lower_ir(ir, go_word))
-    if timestamps and ts + 1 < len(timestamps):
-      result.append(CQTimestamp(*timestamps[ts + 1]))
   return result
 
 class CQSysmem:
@@ -332,18 +313,6 @@ class CQSysmem:
       if time.perf_counter() > deadline:
         raise TimeoutError(f"timeout waiting for completion event {event_id} -- try tt-smi -r")
       time.sleep(0.0002)
-
-  def timestamp_noc_addr(self, slot: int) -> tuple[int, int]:
-    off = _HOST_TIMESTAMP_BASE + slot * _HOST_TIMESTAMP_STRIDE
-    # bit 24 of noc_xy encodes PCIe bit 60 after get_noc_addr_helper's << 36 shift
-    pcie_noc_xy = Sysmem.PCIE_NOC_XY | (1 << 24)
-    return pcie_noc_xy, self.noc_local + off
-
-  def read_timestamp(self, slot: int) -> int:
-    off = _HOST_TIMESTAMP_BASE + slot * _HOST_TIMESTAMP_STRIDE
-    lo = self._sysmem_read32(off)
-    hi = self._sysmem_read32(off + 4)
-    return (hi << 32) | lo
 
   @property
   def profiler_noc_local(self) -> int:

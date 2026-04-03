@@ -282,17 +282,9 @@ def _device_snapshot(dev: PCIDevice) -> dict:
   tensix_enabled = _read_tag_value(dev, "ENABLED_TENSIX_COL")
   gddr_enabled = _read_tag_value(dev, "ENABLED_GDDR")
   core_count = None if tensix_enabled is None else active_tensix_core_count(tensix_enabled & Arc.DEFAULT_TENSIX_ENABLED)
-  if core_count is None:
-    board_name = _decode_board_name(board_id)
-  elif core_count <= 120:
-    board_name = "p100"
-  elif core_count <= 140:
-    board_name = "p150"
-  else:
-    board_name = _decode_board_name(board_id) or f"unknown ({core_count} cores)"
+  board_name = _decode_board_name(board_id)
   active_gddr_banks, harvested_gddr_banks = _decode_gddr_mask(gddr_enabled)
   heartbeat = _read_tag_value(dev, "TIMER_HEARTBEAT")
-  asic_location = _read_tag_value(dev, "ASIC_LOCATION")
 
   left_metrics = [
     "ASIC_TEMPERATURE",
@@ -337,7 +329,6 @@ def _device_snapshot(dev: PCIDevice) -> dict:
     "gddr": modules,
     "extra": [],
     "heartbeat": heartbeat,
-    "asic_location": asic_location,
   }
 
 
@@ -422,7 +413,6 @@ def _render_tui(stdscr, devices: list[tuple[int, PCIDevice]], interval_s: float)
   scroll = 0
   tick = 0
 
-  # heartbeat animation — single-width only
   HEART_FRAMES = ["♥·", "♥♥", "·♥", "♥♥"]
 
   def add_line(lines: list[tuple[str, int]], text: str = "", attr: int = value_attr):
@@ -505,13 +495,7 @@ def _render_tui(stdscr, devices: list[tuple[int, PCIDevice]], interval_s: float)
 
     heartbeat = snapshot["heartbeat"]
     heart = HEART_FRAMES[tick % len(HEART_FRAMES)] if heartbeat is not None else "??"
-    status_parts = []
-    if snapshot["asic_location"] is not None:
-      status_parts.append(f"asic {snapshot['asic_location']}")
-    if heartbeat is not None:
-      status_parts.append(f"#{heartbeat}")
-
-    title = f"  Device {index}  {dev.bdf}  {heart}  {' '.join(status_parts)}"
+    title = f"  Device {index}  {dev.bdf}  {heart}"
     add_line(lines, title[:content_w], curses.color_pair(C_CYAN) | curses.A_BOLD if curses.has_colors() else header_attr)
 
     col_w = content_w // 2

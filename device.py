@@ -1,4 +1,5 @@
 import functools, os, shutil, struct, tempfile, time
+from pathlib import Path
 from dataclasses import dataclass
 
 
@@ -7,7 +8,6 @@ from hw import worker_cores as _worker_cores
 from pcie import PCIDevice
 from dispatch import *
 from cq import *
-from cq import _HOST_TIMESTAMP_SLOTS
 from dram import DramBuffer, Allocator, Shape, tilize, untilize, build_transfer_program
 
 @dataclass(frozen=True)
@@ -107,7 +107,6 @@ class Device:
       self._init_profiler_layout()
 
   def _read_arc_enabled_masks(self) -> tuple[int, int]:
-    print(f"  arc: reading telemetry from ARC tile {TileGrid.ARC}")
     deadline = time.monotonic() + 0.5
     table_base = 0
     data_base = 0
@@ -120,7 +119,6 @@ class Device:
         break
       time.sleep(0.01)
 
-    print(f"  arc: telem_table=0x{table_base:x} telem_data=0x{data_base:x}")
     if not _is_range_within_arc_csm(table_base) or not _is_range_within_arc_csm(data_base):
       raise RuntimeError(
         f"invalid ARC telemetry pointers table=0x{table_base:x} data=0x{data_base:x}"
@@ -143,7 +141,6 @@ class Device:
       tensix_enabled = Arc.DEFAULT_TENSIX_ENABLED if off is None else arc.read32(data_csm_off + off * 4)
       off = tag_to_offset.get(Arc.TAG_GDDR_ENABLED)
       gddr_enabled = Arc.DEFAULT_GDDR_ENABLED if off is None else arc.read32(data_csm_off + off * 4)
-    print(f"  arc: tensix_enabled=0x{tensix_enabled:04x} gddr_enabled=0x{gddr_enabled:02x}")
     return gddr_enabled, tensix_enabled
 
   def _init_dram_tiles(self, gddr_enabled: int):
@@ -471,16 +468,16 @@ class Device:
 
     return build_ir(program, roles, compute, all_cores, per_core_args, dispatch_mode, host_assigned_id=host_assigned_id)
 
-  def run(self) -> list[dict] | None:
+  def run(self):
     self._set_power(True)
     try:
-      if self._use_fast_dispatch: return self._run_fast_dispatch()
-      else: return self._run_slow_dispatch()
+      if self._use_fast_dispatch: self._run_fast_dispatch()
+      else: self._run_slow_dispatch()
     finally:
       self._programs.clear()
       self._set_power(False)
 
-  def _run_fast_dispatch(self) -> list[dict] | None:
+  def _run_fast_dispatch(self):
     n = len(self._programs)
 
     programs = []
@@ -489,12 +486,8 @@ class Device:
       ir = self._compile_ir(program, self._dispatch_mode, host_assigned_id=prof_id)
       programs.append((ir, self._profiler))
 
-    max_ts_slots = _HOST_TIMESTAMP_SLOTS
-    timestamps = [self._cq_hw.timestamp_noc_addr(s) for s in range(min(2 * n, max_ts_slots))]
-
     self.cq.extend(lower_fast(
       programs, self._go_word(), self.cores,
-      timestamps=timestamps,
       profiler_flat_ids=self._profiler_flat_ids or None,
       profiler_sysmem_noc_local=self._cq_hw.profiler_noc_local if self._profiler else 0,
     ))
@@ -507,43 +500,16 @@ class Device:
 
     if self._profiler:
       self._collect_profiler_data()
-    timings = self._collect_timing_data(n)
-    return timings
 
-  def _run_slow_dispatch(self) -> list[dict] | None:
+  def _run_slow_dispatch(self):
     t0 = time.perf_counter()
     with TLBWindow(self.dev, start=self.cores[0]) as win:
       for program in self._programs:
         ir = self._compile_ir(program, self._dispatch_mode)
         slow_dispatch(win, ir)
     elapsed_us = (time.perf_counter() - t0) * 1e6
-    freq_mhz = 1350
-    timings = []
-    for i, program in enumerate(self._programs):
-      name = f" {program.name}" if program.name else ""
-      timings.append({"cycles": 0, "us": elapsed_us / len(self._programs), "freq_mhz": freq_mhz, "name": program.name})
     print(f"  slow dispatch: {elapsed_us:,.1f} us total (host wall-clock, {len(self._programs)} programs)")
-    self.last_device_timing = timings
-    return timings
 
-  def _collect_timing_data(self, n: int) -> list[dict]:
-    freq_mhz = 1350
-    timings = []
-    for i in range(n):
-      ts_slot = 2 * i
-      if ts_slot + 1 >= _HOST_TIMESTAMP_SLOTS:
-        break
-      t0 = self._cq_hw.read_timestamp(ts_slot)
-      t1 = self._cq_hw.read_timestamp(ts_slot + 1)
-      cycles = t1 - t0
-      name = self._programs[i].name
-      timings.append({"cycles": cycles, "us": cycles / freq_mhz, "freq_mhz": freq_mhz, "name": name})
-    if not self._profiler:
-      for i, t in enumerate(timings):
-        name = f" {t['name']}" if t["name"] else ""
-        print(f"  [{i}]{name} {t['us']:,.1f} us ({t['cycles']:,} cycles)")
-    self.last_device_timing = timings
-    return timings
 
   def serve_profile(self, port: int = int(os.environ.get("PORT", 8000))):
     self._finalize_profile()
