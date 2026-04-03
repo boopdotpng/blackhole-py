@@ -600,8 +600,6 @@ def main():
     print(f"  input pattern: {INPUT_PATTERN}")
     print(f"  validation: {VALIDATE_SAMPLES} sampled outputs (seed={VALIDATE_SEED})")
 
-    print("Preparing host inputs...", flush=True)
-    t0 = time.perf_counter()
     a_src, b_src = _make_inputs(M, K, N)
 
     if padded:
@@ -610,44 +608,26 @@ def main():
       a_bytes, b_bytes = _to_device_bytes(a_padded), _to_device_bytes(b_padded)
     else:
       a_bytes, b_bytes = _to_device_bytes(a_src), _to_device_bytes(b_src)
-    print(f"  host inputs ready in {time.perf_counter() - t0:.2f}s", flush=True)
 
-    print("Preparing validation references...", flush=True)
-    t0 = time.perf_counter()
     a_ref = _from_device_bytes(_to_device_bytes(a_src), (M, K))
     b_ref = _from_device_bytes(_to_device_bytes(b_src), (K, N))
-    print(f"  validation references ready in {time.perf_counter() - t0:.2f}s", flush=True)
 
-    print("Allocating and writing DRAM buffers...", flush=True)
-    t0 = time.perf_counter()
     a_buf = device.alloc_write(a_bytes, dtype=IO_DTYPE, shape=(Mp, Kp), name="A")
     b_buf = device.alloc_write(b_bytes, dtype=IO_DTYPE, shape=(Kp, Np), name="B")
     c_buf = device.dram.alloc(plan.mt * plan.nt, dtype=IO_DTYPE, name="C", shape=(Mp, Np))
-    print(f"  buffers ready in {time.perf_counter() - t0:.2f}s", flush=True)
 
-    print("Building matmul program...", flush=True)
     prog = build_matmul_program(plan, a_buf, b_buf, c_buf, io_dtype=IO_DTYPE, math_fidelity=MATH_FIDELITY, f32_acc=F32_ACC)
 
-    print(f"Queueing {NUM_ITERS} iteration(s)...", flush=True)
     for _ in range(NUM_ITERS):
       device.queue(prog)
 
-    print("Reading output back from DRAM...", flush=True)
-    t0 = time.perf_counter()
     c_raw = device.dram_read(c_buf)
-    print(f"  DRAM readback finished in {time.perf_counter() - t0:.2f}s", flush=True)
-
-    print("Running sampled validation...", flush=True)
-    t0 = time.perf_counter()
     _validate(a_ref, b_ref, c_raw, M, N, Mp, Np)
-    print(f"  validation finished in {time.perf_counter() - t0:.2f}s", flush=True)
 
     if device._profile_accumulated:
-      print("Serving profiler UI...", flush=True)
       device.serve_profile()
 
   finally:
-    print("Closing device...", flush=True)
     device.close()
 
 if __name__ == "__main__":
