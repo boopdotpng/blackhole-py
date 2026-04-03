@@ -1,6 +1,8 @@
 """Direct PCIe access to Tenstorrent Blackhole via VFIO."""
 import ctypes, ctypes.util, fcntl, glob, mmap, os, struct, time
 
+_USE_USB = os.environ.get("TT_USB") == "1"
+
 TT_VENDOR = 0x1E52
 BH_DEVICE = 0xB140
 PCI_COMMAND = 0x04
@@ -124,8 +126,10 @@ class PCIDevice:
       os.write(fd, struct.pack("<H", cmd | want))
     os.close(fd)
 
-    # Bind to vfio-pci
-    self._setup_vfio()
+    # Bind to vfio-pci (not needed for USB slow dispatch)
+    self._has_vfio = not _USE_USB
+    if self._has_vfio:
+      self._setup_vfio()
 
     # mmap BARs
     self._bar0_fd, self.bar0 = _mmap_bar(self.sysfs, "resource0", BAR0_SIZE)
@@ -454,7 +458,8 @@ class PCIDevice:
     os.close(self._bar0_fd); os.close(self._bar0_wc_fd)
     os.close(self._bar2_fd); os.close(self._bar4_fd)
     if self._bar4_wc_fd >= 0: os.close(self._bar4_wc_fd)
-    os.close(self._vfio_device); os.close(self._vfio_group); os.close(self._vfio_container)
+    if self._has_vfio:
+      os.close(self._vfio_device); os.close(self._vfio_group); os.close(self._vfio_container)
 
   def __enter__(self): return self
   def __exit__(self, *_): self.close()

@@ -8,11 +8,16 @@ A minimal Python driver for the Tenstorrent Blackhole accelerator. Compiles and 
 
 ### Requirements
 
+> You must unload tt-kmd (`modprobe -r tenstorrent`). You may need to prevent the module from auto-loading on reboot and then reboot the computer.
+
 - **Hardware**: Blackhole P100A and P150 (all variants). 
-- **Kernel**: VFIO (`modprobe vfio-pci`)
+- **Kernel**: VFIO (`modprobe vfio-pci`). This is only required for fast dispatch (i.e anywhere where pinning memory is required.)
 - **Python**: 3.10+, numpy
 
-Does not support multi-chip / distributed yet.
+#### vfio? 
+For fast dispatch to work.
+
+**Does not support multi-chip / distributed yet.**
 
 ### Setup
 
