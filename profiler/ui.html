@@ -147,7 +147,7 @@ function init(){
   if (D.programs.length) selectProgram(0);
 }
 
-function esc(s){ return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') }
+function esc(s){ return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') }
 function programLabel(prog){ return prog.name&&prog.name.trim() ? prog.name : `Program ${prog.index}` }
 function fmtUs(cycles){ return cycles!=null ? (cycles/FREQ_MHZ).toFixed(2)+'us' : '-' }
 function fmtCyc(v){ return v!=null ? v.toLocaleString() : '-' }
@@ -329,7 +329,17 @@ async function activeDisassembly(key){
   const cacheKey = `${prog.index}:${useCore ? key : '__program__'}`;
   if (disasmCache.has(cacheKey)) return disasmCache.get(cacheKey);
   const url = useCore ? `/api/disasm?program=${prog.index}&core=${encodeURIComponent(key)}` : `/api/disasm?program=${prog.index}`;
-  const data = await fetch(url).then(r => r.ok ? r.json() : {});
+  let data = {};
+  try {
+    const res = await fetch(url);
+    if (!res.ok) return {};
+    const body = await res.text();
+    data = body ? JSON.parse(body) : {};
+  } catch (err) {
+    console.error('failed to load disassembly', err);
+    disasmCache.delete(cacheKey);
+    return {};
+  }
   disasmCache.set(cacheKey, data);
   return data;
 }

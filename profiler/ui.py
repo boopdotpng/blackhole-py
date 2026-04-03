@@ -51,7 +51,7 @@ class _Handler(BaseHTTPRequestHandler):
       self.end_headers()
       self.wfile.write(path.read_bytes())
       return
-    payload = {p.stem: p.read_text() for p in sorted(base.glob("*.S"))}
+    payload = {p.stem: p.read_text(encoding="utf-8", errors="replace") for p in sorted(base.glob("*.S"))}
     self._json(200, json.dumps(payload))
 
   def _json(self, code, body):

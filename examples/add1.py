@@ -118,7 +118,7 @@ def main():
         raise SystemExit(f"FAIL at bf16[{i // 2}]: expected 0x{exp:04x}, got 0x{got:04x}")
     print(f"PASS  {n_tiles} tiles across {num_cores} cores")
 
-    if device._profile_accumulated:
+    if device._device_profiler and device._device_profiler._accumulated:
       device.serve_profile()
 
   finally:

@@ -1,5 +1,4 @@
-import functools, os, shutil, struct, tempfile, time
-from pathlib import Path
+import functools, os, struct, time
 from dataclasses import dataclass
 
 
@@ -97,14 +96,14 @@ class Device:
       self._start_dispatch_cores()
 
     self._programs = []
-    self.last_profile = None
-    self._profile_accumulated = []  # collect profiler data across multiple run() calls
 
     from compiler import PROFILER
     self._profiler = PROFILER and self._use_fast_dispatch
-    self._profiler_flat_ids = {}
     if self._profiler:
-      self._init_profiler_layout()
+      from profiler import DeviceProfiler
+      self._device_profiler = DeviceProfiler(self.cores)
+    else:
+      self._device_profiler = None
 
   def _read_arc_enabled_masks(self) -> tuple[int, int]:
     table_base = self.dev.read_arc_apb32(Arc.SCRATCH_RAM_13)
@@ -294,63 +293,6 @@ class Device:
     go.bits.dispatch_message_offset = 0
     return go.all
 
-  def _init_profiler_layout(self):
-    cores = sorted(self.cores, key=lambda xy: (xy[0], xy[1]))
-    self._profiler_flat_ids = {core: i for i, core in enumerate(cores)}
-
-  def _collect_profiler_data(self):
-    import profiler
-    programs_info = profiler.build_programs_info(self._programs, self.cores)
-    if not programs_info: return
-    needed = sorted({c for info in programs_info for c in info["cores"]})
-    ctrl_regs = {}
-    for core in needed:
-      with TLBWindow(self.dev, start=core) as win:
-        ctrl_regs[core] = bytes(win.mm[TensixL1.PROFILER_CONTROL : TensixL1.PROFILER_CONTROL + 128])
-    batch = profiler.collect(
-      programs_info,
-      self._cq_hw.read_profiler_data(),
-      ctrl_regs,
-      layout={"flat_ids": self._profiler_flat_ids},
-      harvested_dram_bank=self.harvested_dram_banks[0] if self.harvested_dram_banks else None,
-    )
-    self._profile_accumulated.extend(batch.get("programs", []))
-
-  def _finalize_profile(self):
-    if not self._profile_accumulated: return
-    if getattr(self, "_profile_disasm_dir", None):
-      shutil.rmtree(self._profile_disasm_dir, ignore_errors=True)
-      self._profile_disasm_dir = None
-    # re-index programs sequentially
-    for i, prog in enumerate(self._profile_accumulated):
-      prog["index"] = i
-    self._profile_disasm_dir = tempfile.mkdtemp(prefix="bh-prof-disasm-")
-    for prog in self._profile_accumulated:
-      prog_dir = Path(self._profile_disasm_dir) / f"program-{prog['index']}"
-      disassembly = prog.pop("disassembly", None) or {}
-      prog["has_disassembly"] = bool(disassembly)
-      if disassembly:
-        out_dir = prog_dir / "global"
-        out_dir.mkdir(parents=True, exist_ok=True)
-        for name, text in disassembly.items():
-          (out_dir / f"{name}.S").write_text(text)
-      for core_key, profile in prog["profiles"].items():
-        core_disassembly = profile.pop("disassembly", None) or {}
-        profile["has_disassembly"] = bool(core_disassembly)
-        if core_disassembly:
-          out_dir = prog_dir / "cores" / core_key.replace(",", "-")
-          out_dir.mkdir(parents=True, exist_ok=True)
-          for name, text in core_disassembly.items():
-            (out_dir / f"{name}.S").write_text(text)
-    self.last_profile = {
-      "dispatch_mode": "fast",
-      "harvested_dram_bank": self.harvested_dram_banks[0] if self.harvested_dram_banks else None,
-      "tensix_x": list(self._tensix_x),
-      "dispatch_cores": [list(self._PREFETCH_CORE), list(self._DISPATCH_CORE)],
-      "programs": self._profile_accumulated,
-    }
-    self._profile_accumulated = []
-
   def alloc_write(self, data: bytes, dtype: Dtype, shape: Shape, name: str = "") -> DramBuffer:
     buf = self.dram.alloc(len(data) // dtype.tile_size, dtype, name, shape)
     self.dram_write(buf, data)
@@ -476,7 +418,7 @@ class Device:
 
     self.cq.extend(lower_fast(
       programs, self._go_word(), self.cores,
-      profiler_flat_ids=self._profiler_flat_ids or None,
+      profiler_flat_ids=self._device_profiler.flat_ids if self._device_profiler else None,
       profiler_sysmem_noc_local=self._cq_hw.profiler_noc_local if self._profiler else 0,
     ))
 
@@ -487,7 +429,7 @@ class Device:
     self._cq_hw.wait_completion(self._cq_hw._event_id)
 
     if self._profiler:
-      self._collect_profiler_data()
+      self._device_profiler.collect_data(self._programs, self.cores, self._cq_hw, self.harvested_dram_banks)
 
   def _run_slow_dispatch(self):
     t0 = time.perf_counter()
@@ -500,22 +442,15 @@ class Device:
 
 
   def serve_profile(self, port: int = int(os.environ.get("PORT", 8000))):
-    self._finalize_profile()
-    data = self.last_profile
-    if os.environ.get("PROFILE_JSON"):
-      import json
-      path = os.environ["PROFILE_JSON"]
-      with open(path, "w") as f: json.dump(data, f)
-      print(f"profiler data written to {path}")
-      return
-    from profiler import ui as profiler_ui
-    profiler_ui.serve(data, port=port, disasm_dir=self._profile_disasm_dir)
+    p = self._device_profiler
+    p.finalize(self.harvested_dram_banks, self._tensix_x, self._PREFETCH_CORE, self._DISPATCH_CORE)
+    self.last_profile = p.last_profile
+    p.serve(port=port)
 
   def close(self):
     self._set_power(False)
-    if getattr(self, "_profile_disasm_dir", None):
-      shutil.rmtree(self._profile_disasm_dir, ignore_errors=True)
-      self._profile_disasm_dir = None
+    if self._device_profiler:
+      self._device_profiler.close()
     # halt dispatch cores before tearing down sysmem — they read from
     # IOMMU-mapped host memory and will fault if it's unmapped first
     if self._cq_hw is not None:

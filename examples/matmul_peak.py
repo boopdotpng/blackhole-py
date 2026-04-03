@@ -624,7 +624,7 @@ def main():
     c_raw = device.dram_read(c_buf)
     _validate(a_ref, b_ref, c_raw, M, N, Mp, Np)
 
-    if device._profile_accumulated:
+    if device._device_profiler and device._device_profiler._accumulated:
       device.serve_profile()
 
   finally:
