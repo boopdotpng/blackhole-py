@@ -1,6 +1,6 @@
-import ctypes, fcntl, functools, mmap, os, struct, time
-from ctypes import c_uint8 as u8, c_uint16 as u16, c_uint32 as u32, c_uint64 as u64
+import ctypes, mmap, os, struct, time
 from enum import Enum
+from pcie import PCIDevice, TLB_2M_SIZE, TLB_4G_SIZE
 
 Core = tuple[int, int]
 PAGE_SIZE = 4096
@@ -21,6 +21,7 @@ def noc_xy(x: int, y: int) -> int:
   return ((y << 6) | x) & 0xFFFF
 
 class S(ctypes.LittleEndianStructure):
+  """Still used by dispatch.py for launch message structs."""
   def __init__(self, **kw):
     super().__init__()
     for k, v in kw.items(): setattr(self, k, v)
@@ -51,6 +52,7 @@ class TensixMMIO:
 class Arc:
   NOC_BASE = 0x80000000
   RESET_UNIT_OFFSET = 0x30000
+  SCRATCH_RAM_12 = RESET_UNIT_OFFSET + 0x430
   SCRATCH_RAM_13 = RESET_UNIT_OFFSET + 0x434
   TAG_TENSIX_ENABLED_COL = 34
   DEFAULT_TENSIX_ENABLED = 0x3FFF
@@ -70,75 +72,24 @@ class Dram:
   }
   BANK_X = {b: 0 if b < 4 else 9 for b in range(8)}
 
-def _tt_ioctl(nr, in_t, out_t=None):
-  cmd = (0xFA << 8) | nr
-  @functools.wraps(_tt_ioctl)
-  def call(fd, **kwargs):
-    buf = bytearray(ctypes.sizeof(in_t) + (ctypes.sizeof(out_t) if out_t else 0))
-    inp = in_t.from_buffer(buf)
-    if out_t and hasattr(in_t, 'output_size_bytes'):
-      inp.output_size_bytes = ctypes.sizeof(out_t)
-    if hasattr(in_t, 'argsz'):
-      inp.argsz = ctypes.sizeof(in_t)
-    for k, v in kwargs.items():
-      setattr(inp, k, v)
-    fcntl.ioctl(fd, cmd, buf, True)
-    return out_t.from_buffer_copy(buf, ctypes.sizeof(in_t)) if out_t else None
-  return call
-
-class _AllocIn(S):
-  _pack_ = 1
-  _fields_ = [("size", u64), ("reserved", u64)]
-
-class _AllocOut(S):
-  _pack_ = 1
-  _fields_ = [("id", u32), ("reserved0", u32), ("mmap_offset_uc", u64), ("mmap_offset_wc", u64), ("reserved1", u64)]
-
-class _FreeIn(S):
-  _pack_ = 1
-  _fields_ = [("id", u32)]
-
-class _NocTlbConfig(S):
-  _pack_ = 1
-  _fields_ = [
-    ("addr", u64),
-    ("x_end", u16), ("y_end", u16), ("x_start", u16), ("y_start", u16),
-    ("noc", u8), ("mcast", u8), ("ordering", u8), ("linked", u8),
-    ("static_vc", u8), ("reserved0", u8 * 3),
-    ("reserved1", u32 * 2),
-  ]
-
-class _ConfigIn(S):
-  _pack_ = 1
-  _fields_ = [("id", u32), ("reserved", u32), ("config", _NocTlbConfig)]
-
-class _PinIn(S):
-  _pack_ = 1
-  _fields_ = [("output_size_bytes", u32), ("flags", u32), ("virtual_address", u64), ("size", u64)]
-
-class _PinOut(S):
-  _pack_ = 1
-  _fields_ = [("physical_address", u64), ("noc_address", u64)]
-
-class _UnpinIn(S):
-  _pack_ = 1
-  _fields_ = [("virtual_address", u64), ("size", u64), ("reserved", u64)]
-
-class _PowerStateIn(S):
-  _pack_ = 1
-  _fields_ = [
-    ("argsz", u32), ("flags", u32),
-    ("reserved0", u8), ("validity", u8),
-    ("power_flags", u16), ("power_settings", u16 * 14),
-  ]
-
-_ioctl_alloc_tlb = _tt_ioctl(11, _AllocIn, _AllocOut)
-_ioctl_config_tlb = _tt_ioctl(13, _ConfigIn)
-_ioctl_free_tlb = _tt_ioctl(12, _FreeIn)
-_ioctl_pin_pages = _tt_ioctl(7, _PinIn, _PinOut)
-_ioctl_unpin_pages = _tt_ioctl(10, _UnpinIn)
-_ioctl_set_power_state = _tt_ioctl(15, _PowerStateIn)
-_PIN_NOC_DMA = 2
+class _OffsetView:
+  """Wraps an mmap with a base offset so mm[i] and mm[a:b] address within a TLB window."""
+  __slots__ = ('_m', '_b', '_s')
+  def __init__(self, m, base, size):
+    self._m, self._b, self._s = m, base, size
+  def __getitem__(self, key):
+    if isinstance(key, slice):
+      start = (key.start or 0) + self._b
+      stop = (key.stop if key.stop is not None else self._s) + self._b
+      return self._m[start:stop:key.step]
+    return self._m[self._b + key]
+  def __setitem__(self, key, value):
+    if isinstance(key, slice):
+      start = (key.start or 0) + self._b
+      stop = (key.stop if key.stop is not None else self._s) + self._b
+      self._m[start:stop:key.step] = value
+    else:
+      self._m[self._b + key] = value
 
 class NocOrdering(Enum):
   RELAXED = 0
@@ -146,42 +97,37 @@ class NocOrdering(Enum):
   POSTED = 2
 
 class TLBWindow:
-  SIZE_2M = 1 << 21
-  SIZE_4G = 1 << 32
+  SIZE_2M = TLB_2M_SIZE
+  SIZE_4G = TLB_4G_SIZE
 
-  def __init__(self, fd: int, start: Core, end: Core | None = None, addr: int = 0,
+  def __init__(self, dev: PCIDevice, start: Core, end: Core | None = None, addr: int = 0,
                mode: NocOrdering = NocOrdering.STRICT, size: int = SIZE_2M, wc: bool = False):
-    self.fd, self.size = fd, size
-    out = _ioctl_alloc_tlb(fd, size=size)
-    self._id = out.id
-    # UC (uncacheable) is the safe default — guarantees write-before-read
-    # ordering across different addresses.  WC (write-combining) is faster
-    # for bulk transfers (e.g. DRAM upload in slow dispatch) but silently
-    # breaks write-to-A-then-read-from-B patterns (e.g. debug bus regs).
-    # Only one mapping type can be active per TLB at a time.
-    offset = out.mmap_offset_wc if wc else out.mmap_offset_uc
-    self.mm = mmap.mmap(fd, size, flags=mmap.MAP_SHARED, prot=mmap.PROT_READ | mmap.PROT_WRITE,
-                        offset=offset)
+    self.dev, self.size = dev, size
+    self._id = dev.alloc_tlb(size)
+    self._bar, self._base = dev.tlb_window(self._id, wc=wc)
+    self.mm = _OffsetView(self._bar, self._base, size)
     self.target(start, end, addr=addr, mode=mode)
 
   def target(self, start: Core, end: Core | None = None, addr: int = 0, mode: NocOrdering = NocOrdering.STRICT):
     end = end or start
-    _ioctl_config_tlb(self.fd, id=self._id, config=_NocTlbConfig(
-      addr=addr, x_start=start[0], y_start=start[1], x_end=end[0], y_end=end[1],
-      mcast=int(end != start), ordering=mode.value))
+    self.dev.configure_tlb(self._id, addr,
+      x_start=start[0], y_start=start[1], x_end=end[0], y_end=end[1],
+      mcast=int(end != start), ordering=mode.value)
 
   def read32(self, offset: int) -> int:
-    return int.from_bytes(self.mm[offset : offset + 4], "little")
+    o = self._base + offset
+    return int.from_bytes(self._bar[o : o + 4], "little")
 
   def write32(self, offset: int, value: int):
-    self.mm[offset : offset + 4] = value.to_bytes(4, "little")
+    o = self._base + offset
+    self._bar[o : o + 4] = value.to_bytes(4, "little")
 
   def write(self, addr: int, data: bytes):
-    self.mm[addr : addr + len(data)] = data
+    o = self._base + addr
+    self._bar[o : o + len(data)] = data
 
   def close(self):
-    self.mm.close()
-    _ioctl_free_tlb(self.fd, id=self._id)
+    self.dev.free_tlb(self._id)
 
   def __enter__(self): return self
   def __exit__(self, *_): self.close()
@@ -189,18 +135,16 @@ class TLBWindow:
 class Sysmem:
   PCIE_NOC_XY = (24 << 6) | 19
 
-  def __init__(self, fd: int, size: int = 1 << 30):
-    self.fd = fd
+  def __init__(self, dev: PCIDevice, size: int = 1 << 30):
+    self.dev = dev
     page_size = os.sysconf("SC_PAGE_SIZE")
     self.size = (size + page_size - 1) & ~(page_size - 1)
     self.buf = mmap.mmap(-1, self.size, flags=mmap.MAP_PRIVATE | mmap.MAP_ANONYMOUS,
                          prot=mmap.PROT_READ | mmap.PROT_WRITE)
-    self._va = ctypes.addressof(ctypes.c_char.from_buffer(self.buf))
-    out = _ioctl_pin_pages(self.fd, flags=_PIN_NOC_DMA, virtual_address=self._va, size=self.size)
-    self.noc_addr = out.noc_address
+    self.noc_addr = dev.pin_pages(self.buf)
 
   def close(self):
-    _ioctl_unpin_pages(self.fd, virtual_address=self._va, size=self.size)
+    self.dev.unpin_pages(self.buf, self.noc_addr)
     self.buf.close()
 
 class TileGrid:

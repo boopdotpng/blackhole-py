@@ -48,8 +48,6 @@ def _j(op, rd, imm):
   i = S(imm, 21)
   return RiscVInsn(op | R(rd)<<7 | bits(i,19,12)<<12 | bits(i,11)<<20
     | bits(i,10,1)<<21 | bits(i,20)<<31)
-def _amo(f5, aq, rl, rs2, rs1, f3, rd):
-  return RiscVInsn(0x2F | R(rd)<<7 | f3<<12 | R(rs1)<<15 | R(rs2)<<20 | U(rl,1)<<25 | U(aq,1)<<26 | f5<<27)
 
 # -- registers -----------------------------------------------------------------
 zero, ra, sp, gp, tp = 0, 1, 2, 3, 4
@@ -82,7 +80,7 @@ LUI   = partial(_u, 0x37); AUIPC = partial(_u, 0x17)
 JAL  = partial(_j, 0x6F); JALR = partial(_i, 0x67, 0)
 # rare: ECALL  = lambda: _i(0x73, 0, 0, 0, 0)
 # rare: EBREAK = lambda: _i(0x73, 0, 0, 0, 1)
-FENCE  = lambda pred=0xF, succ=0xF: _i(0x0F, 0, 0, 0, U(pred,4)<<4 | U(succ,4))
+FENCE  = lambda: _i(0x0F, 0, 0, 0, 0xFF)
 # Zicsr
 # rare: CSRRW  = lambda rd, rs1, csr: _i(0x73, 1, rd, rs1, U(csr,12))
 CSRRS  = lambda rd, rs1, csr: _i(0x73, 2, rd, rs1, U(csr,12))

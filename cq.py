@@ -2,7 +2,7 @@ import ctypes, mmap, os, struct, time
 from dataclasses import dataclass
 
 from hw import *
-from hw import _ioctl_pin_pages, _ioctl_unpin_pages, _PIN_NOC_DMA
+from pcie import PCIDevice
 from dispatch import Write, Launch, IRCommand, Rect, noc_mcast_xy, mcast_rects
 
 # CQ L1 address map
@@ -218,8 +218,8 @@ def lower_fast(
   return result
 
 class CQSysmem:
-  def __init__(self, fd: int, prefetch_win: TLBWindow, dispatch_win: TLBWindow, profiler_cores: int = 0):
-    self.fd = fd
+  def __init__(self, dev: PCIDevice, prefetch_win: TLBWindow, dispatch_win: TLBWindow, profiler_cores: int = 0):
+    self.dev = dev
     self._prefetch_win = prefetch_win
     self._dispatch_win = dispatch_win
     self._profiler_cores = profiler_cores
@@ -231,8 +231,7 @@ class CQSysmem:
     self._sysmem_addr = ctypes.addressof(ctypes.c_char.from_buffer(self.sysmem))
     if (self._sysmem_addr % PAGE_SIZE) != 0 or (self._size % PAGE_SIZE) != 0:
       raise RuntimeError("CQ sysmem must be page-aligned and page-sized")
-    out = _ioctl_pin_pages(self.fd, flags=_PIN_NOC_DMA, virtual_address=self._sysmem_addr, size=self._size)
-    self.noc_addr = out.noc_address
+    self.noc_addr = dev.pin_pages(self.sysmem)
     if (self.noc_addr & _PCIE_NOC_BASE) != _PCIE_NOC_BASE:
       raise RuntimeError(f"bad NOC sysmem address: 0x{self.noc_addr:x}")
     self.noc_local = self.noc_addr - _PCIE_NOC_BASE
@@ -357,5 +356,5 @@ class CQSysmem:
   def close(self):
     self._prefetch_win.close()
     self._dispatch_win.close()
-    _ioctl_unpin_pages(self.fd, virtual_address=self._sysmem_addr, size=self._size)
+    self.dev.unpin_pages(self.sysmem, self.noc_addr)
     self.sysmem.close()

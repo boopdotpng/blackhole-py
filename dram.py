@@ -143,9 +143,9 @@ def build_transfer_program(
   ), buf.size
 
 class Allocator:
-  def __init__(self, fd: int, bank_tiles: list):
+  def __init__(self, dev, bank_tiles: list):
     self.bank_tiles = bank_tiles[:: Dram.TILES_PER_BANK]
-    self.win = TLBWindow(fd, start=self.bank_tiles[0][1:], size=TLBWindow.SIZE_4G, wc=True)
+    self.win = TLBWindow(dev, start=self.bank_tiles[0][1:], size=TLBWindow.SIZE_4G, wc=True)
     self.next = Dram.WRITE_OFFSET
 
   def alloc(self, num_tiles: int, dtype: Dtype, name: str = "", shape: Shape | None = None) -> DramBuffer:

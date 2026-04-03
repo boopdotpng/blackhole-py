@@ -1,9 +1,10 @@
 import functools, os, shutil, struct, tempfile, time
 from dataclasses import dataclass
-from pathlib import Path
+
 
 from hw import *
-from hw import _ioctl_set_power_state, worker_cores as _worker_cores
+from hw import worker_cores as _worker_cores
+from pcie import PCIDevice
 from dispatch import *
 from cq import *
 from cq import _HOST_TIMESTAMP_SLOTS
@@ -26,6 +27,12 @@ P150 = BoardConfig(
   dispatch=(16, 3),
 )
 _BOARDS = {"p100": P100, "p150": P150}
+ARC_CSM_BASE = 0x10000000
+ARC_CSM_SIZE = 1 << 19
+
+
+def _is_range_within_arc_csm(addr: int, length: int = 1) -> bool:
+  return ARC_CSM_BASE <= addr <= (ARC_CSM_BASE + ARC_CSM_SIZE) - length
 
 class Device:
   @functools.cached_property
@@ -38,22 +45,20 @@ class Device:
     if device is None:
       device = int(os.getenv("DEV", "0"))
     self.device = device
-    self.path = f"/dev/tenstorrent/{device}"
-    self.fd = os.open(self.path, os.O_RDWR | os.O_CLOEXEC)
-
-    card_type = Path(f"/sys/class/tenstorrent/tenstorrent!{device}/tt_card_type")
-    self.arch = card_type.read_text().strip()
-    if self.arch.startswith("p100"):
-      self.board = "p100"
-    elif self.arch.startswith("p150"):
-      self.board = "p150"
-    else:
-      os.close(self.fd)
-      raise SystemExit(f"unsupported blackhole device {self.arch}")
-    print(f"device {self.device}: {self.arch}")
+    self.dev = PCIDevice(index=device)
 
     gddr_enabled, tensix_enabled = self._read_arc_enabled_masks()
-    self._core_layout = self._select_core_layout(tensix_enabled)
+    core_count = active_tensix_core_count(tensix_enabled)
+    if core_count <= 120:
+      self.board = "p100"
+    elif core_count <= 140:
+      self.board = "p150"
+    else:
+      self.dev.close()
+      raise SystemExit(f"unsupported tensix core count {core_count}")
+    self.arch = self.board
+    print(f"device {self.device}: {self.board} ({core_count} cores, bdf={self.dev.bdf})")
+    self._core_layout = self.board
     board = _BOARDS[self._core_layout]
     self._tensix_x = board.tensix_x
     self._all_worker_cores = _worker_cores(self._tensix_x)
@@ -64,7 +69,7 @@ class Device:
     self._init_dram_tiles(gddr_enabled)
     self._num_dram_banks = Dram.BANK_COUNT - len(self.harvested_dram_banks)
     self._num_l1_banks = len(self._all_worker_cores)
-    self.dram = Allocator(self.fd, self.dram_tiles)
+    self.dram = Allocator(self.dev, self.dram_tiles)
     self._dispatch_mode = DevMsgs.DISPATCH_MODE_HOST if USE_USB_DISPATCH else DevMsgs.DISPATCH_MODE_DEV
     self._use_fast_dispatch = not USE_USB_DISPATCH
 
@@ -77,16 +82,16 @@ class Device:
     )
     self._upload_firmware()
 
-    self._dram_sysmem = Sysmem(self.fd) if self._use_fast_dispatch else None
+    self._dram_sysmem = Sysmem(self.dev) if self._use_fast_dispatch else None
     self.cq = CommandQueue()
     self._cq_hw = None
     if self._use_fast_dispatch:
       from compiler import PROFILER
       profiler_cores = len(self._all_worker_cores) - len(self._CQ_CORES) if PROFILER else 0
       self._cq_hw = CQSysmem(
-        self.fd,
-        prefetch_win=TLBWindow(self.fd, start=self._PREFETCH_CORE),
-        dispatch_win=TLBWindow(self.fd, start=self._DISPATCH_CORE),
+        self.dev,
+        prefetch_win=TLBWindow(self.dev, start=self._PREFETCH_CORE),
+        dispatch_win=TLBWindow(self.dev, start=self._DISPATCH_CORE),
         profiler_cores=profiler_cores,
       )
       self._start_dispatch_cores()
@@ -102,34 +107,44 @@ class Device:
       self._init_profiler_layout()
 
   def _read_arc_enabled_masks(self) -> tuple[int, int]:
-    with TLBWindow(self.fd, start=TileGrid.ARC, addr=Arc.NOC_BASE) as arc:
-      telem_ptr = arc.read32(Arc.SCRATCH_RAM_13)
-      csm_base, csm_off = align_down(telem_ptr, TLBWindow.SIZE_2M)
+    print(f"  arc: reading telemetry from ARC tile {TileGrid.ARC}")
+    deadline = time.monotonic() + 0.5
+    table_base = 0
+    data_base = 0
+    while True:
+      table_base = self.dev.read_arc_apb32(Arc.SCRATCH_RAM_13)
+      data_base = self.dev.read_arc_apb32(Arc.SCRATCH_RAM_12)
+      if _is_range_within_arc_csm(table_base) and _is_range_within_arc_csm(data_base):
+        break
+      if time.monotonic() >= deadline:
+        break
+      time.sleep(0.01)
+
+    print(f"  arc: telem_table=0x{table_base:x} telem_data=0x{data_base:x}")
+    if not _is_range_within_arc_csm(table_base) or not _is_range_within_arc_csm(data_base):
+      raise RuntimeError(
+        f"invalid ARC telemetry pointers table=0x{table_base:x} data=0x{data_base:x}"
+      )
+
+    with TLBWindow(self.dev, start=TileGrid.ARC, addr=Arc.NOC_BASE) as arc:
+      csm_base, csm_off = align_down(table_base, TLBWindow.SIZE_2M)
       arc.target(TileGrid.ARC, addr=csm_base)
       entry_count = arc.read32(csm_off + 4)
+      if entry_count in (0, 0xFFFFFFFF) or entry_count > 4096:
+        raise RuntimeError(f"invalid ARC telemetry entry_count 0x{entry_count:x} at 0x{table_base:x}")
       tags_base = csm_off + 8
-      data_base = tags_base + entry_count * 4
       tag_to_offset = {}
       for i in range(entry_count):
         tag_offset = arc.read32(tags_base + i * 4)
         tag_to_offset[tag_offset & 0xFFFF] = (tag_offset >> 16) & 0xFFFF
+      data_csm_base, data_csm_off = align_down(data_base, TLBWindow.SIZE_2M)
+      arc.target(TileGrid.ARC, addr=data_csm_base)
       off = tag_to_offset.get(Arc.TAG_TENSIX_ENABLED_COL)
-      tensix_enabled = Arc.DEFAULT_TENSIX_ENABLED if off is None else arc.read32(data_base + off * 4)
+      tensix_enabled = Arc.DEFAULT_TENSIX_ENABLED if off is None else arc.read32(data_csm_off + off * 4)
       off = tag_to_offset.get(Arc.TAG_GDDR_ENABLED)
-      gddr_enabled = Arc.DEFAULT_GDDR_ENABLED if off is None else arc.read32(data_base + off * 4)
+      gddr_enabled = Arc.DEFAULT_GDDR_ENABLED if off is None else arc.read32(data_csm_off + off * 4)
+    print(f"  arc: tensix_enabled=0x{tensix_enabled:04x} gddr_enabled=0x{gddr_enabled:02x}")
     return gddr_enabled, tensix_enabled
-
-  def _select_core_layout(self, tensix_enabled: int) -> str:
-    if self.board != "p150":
-      return self.board
-    core_count = active_tensix_core_count(tensix_enabled)
-    if core_count == 120:
-      print(f"  {self.arch}: using p100 worker layout for 120-core p150")
-      return "p100"
-    if core_count == 140:
-      return "p150"
-    os.close(self.fd)
-    raise SystemExit(f"unsupported p150 core count {core_count} (enabled_tensix_col=0x{tensix_enabled & Arc.DEFAULT_TENSIX_ENABLED:04x})")
 
   def _init_dram_tiles(self, gddr_enabled: int):
     harvested = [bank for bank in range(Dram.BANK_COUNT) if ((gddr_enabled >> bank) & 1) == 0]
@@ -143,12 +158,12 @@ class Device:
     ]
 
   def _set_power(self, busy: bool):
-    _ioctl_set_power_state(self.fd, validity=1, power_flags=int(busy))
+    self.dev.set_power_state(busy)
 
   def _halt_cores(self, cores: list[Core]):
     mmio_base, _ = align_down(TensixMMIO.RISCV_DEBUG_REG_SOFT_RESET_0, TLBWindow.SIZE_2M)
     reset_off = TensixMMIO.RISCV_DEBUG_REG_SOFT_RESET_0 - mmio_base
-    with TLBWindow(self.fd, start=cores[0], addr=mmio_base) as win:
+    with TLBWindow(self.dev, start=cores[0], addr=mmio_base) as win:
       for core in cores:
         win.target(core, addr=mmio_base)
         win.write32(reset_off, TensixMMIO.SOFT_RESET_ALL)
@@ -180,8 +195,8 @@ class Device:
 
     rects = mcast_rects(all_cores)
     # UC for MMIO/polling; WC for bulk L1 writes.
-    with TLBWindow(self.fd, start=all_cores[0]) as uc, \
-         TLBWindow(self.fd, start=all_cores[0], wc=True) as wc:
+    with TLBWindow(self.dev, start=all_cores[0]) as uc, \
+         TLBWindow(self.dev, start=all_cores[0], wc=True) as wc:
       # assert soft reset on all cores via multicast
       for x0, x1, y0, y1 in rects:
         uc.target((x0, y0), (x1, y1), addr=mmio_base)
@@ -219,8 +234,13 @@ class Device:
       probe = (1, 2) if (1, 2) in all_cores else all_cores[0]
       uc.target(probe)
       deadline = time.perf_counter() + 2.0
+      polls = 0
       while uc.mm[TensixL1.GO_MSG + 3] != DevMsgs.RUN_MSG_DONE:
+        polls += 1
         if time.perf_counter() > deadline:
+          for off in [0, 4, TensixL1.GO_MSG, TensixL1.GO_MSG+4]:
+            v = uc.read32(off)
+            print(f"  fw: L1[0x{off:x}] = 0x{v:08x}")
           raise TimeoutError(f"firmware not ready on {probe} -- try tt-smi -r")
         time.sleep(0.001)
 
@@ -300,7 +320,7 @@ class Device:
     needed = sorted({c for info in programs_info for c in info["cores"]})
     ctrl_regs = {}
     for core in needed:
-      with TLBWindow(self.fd, start=core) as win:
+      with TLBWindow(self.dev, start=core) as win:
         ctrl_regs[core] = bytes(win.mm[TensixL1.PROFILER_CONTROL : TensixL1.PROFILER_CONTROL + 128])
     batch = profiler.collect(
       programs_info,
@@ -492,7 +512,7 @@ class Device:
 
   def _run_slow_dispatch(self) -> list[dict] | None:
     t0 = time.perf_counter()
-    with TLBWindow(self.fd, start=self.cores[0]) as win:
+    with TLBWindow(self.dev, start=self.cores[0]) as win:
       for program in self._programs:
         ir = self._compile_ir(program, self._dispatch_mode)
         slow_dispatch(win, ir)
@@ -551,4 +571,4 @@ class Device:
     if self._cq_hw is not None:
       self._cq_hw.close()
     self.dram.close()
-    os.close(self.fd)
+    self.dev.close()
