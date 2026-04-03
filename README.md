@@ -2,14 +2,14 @@
 
 A minimal Python driver for the Tenstorrent Blackhole accelerator. Compiles and dispatches RISC-V kernels directly from Python — no TT-Metal runtime required.
 
-> **~4k lines of code** — the entire driver, compiler, firmware, and dispatch stack. TT-Metal's `tt_metal/` directory alone is ~430k lines of C++.
+> **~7.5k lines of code** (2.5k Python + 5k C++ firmware) — the entire driver, compiler, firmware, and dispatch stack. TT-Metal's `tt_metal/` directory alone is ~430k lines of C++.
 
 <p align="center"><img src="docs/profiler.png" alt="profiler" width="100%"></p>
 
 ### Requirements
 
 - **Hardware**: Blackhole P100A and P150 (all variants). 
-- **Kernel driver**: tt-kmd >= 2.6.0 (for the set_power_state ioctl)
+- **Kernel**: VFIO (`modprobe vfio-pci`)
 - **Python**: 3.10+, numpy
 
 Does not support multi-chip / distributed yet.
@@ -17,7 +17,8 @@ Does not support multi-chip / distributed yet.
 ### Setup
 
 ```sh
-./setup-deps.sh   # downloads SFPI compiler toolchain + TT-Metal headers
+./setup-deps.sh          # downloads SFPI compiler toolchain + TT-Metal headers
+./setup_python_cap.sh    # grants Python the capabilities needed for VFIO access (prompts for sudo)
 ```
 
 ### Usage
