@@ -85,13 +85,125 @@ What each controls:
 
 ### Conditional (profiling, off by default)
 
-Set when `PROFILE=1` env var is present:
+Set when `PROFILE=1` env var is present. `compiler.py` line 9: `PROFILER = os.environ.get("PROFILE") == "1"`.
 
-| Define | Value | Scope |
-|--------|-------|-------|
-| `PROFILE_KERNEL` | 1 | All processors |
-| `PROFILER_FULL_HOST_BUFFER_SIZE_PER_RISC` | 65536 | All processors |
-| `PROFILE_PERF_COUNTERS` | `0x3f` (FPU\|PACK\|UNPACK\|L1_0\|L1_1\|INSTRN) | TRISC1 only |
+| Define | Value | Scope | Notes |
+|--------|-------|-------|-------|
+| `PROFILE_KERNEL` | 1 | All 5 firmware targets + user BRISC/NCRISC/TRISC kernels | Activates entire profiler infrastructure |
+| `PROFILER_FULL_HOST_BUFFER_SIZE_PER_RISC` | 65536 (64 KB) | Same as above | From `TensixL1.PROFILER_HOST_BUFFER_BYTES_PER_RISC` in `hw.py` |
+| `PROFILE_PERF_COUNTERS` | `0x3f` | **Firmware TRISC1 only** (not user kernels, not CQ kernels) | Hardware performance counter capture around kernel execution |
+
+CQ kernels (`compile_cq_kernels`) always pass `profiler=False` — they never get profiling defines.
+
+#### What `PROFILE_KERNEL=1` enables
+
+Activates `kernel_profiler.hpp`. Without it, all profiler macros (`DeviceZoneScopedN`, `DeviceProfilerInit`, etc.) are empty no-ops.
+
+With it active, each firmware file declares profiler state in L1:
+
+```cpp
+// brisc.cc, ncrisc.cc, trisc.cc:
+namespace kernel_profiler {
+    uint32_t wIndex;        // write cursor into L1 profiler buffer
+    uint32_t stackSize;     // tracks nested zone depth
+    uint32_t sums[SUM_COUNT];
+    uint32_t sumIDs[SUM_COUNT];
+    // brisc.cc also has: uint32_t traceCount
+}
+```
+
+**Key macros when active:**
+
+| Macro | What it does |
+|-------|-------------|
+| `DeviceProfilerInit()` | Clears L1 profiler buffer header, resets cursors |
+| `DeviceZoneScopedMainN("BRISC-FW")` | RAII scope writing guaranteed start/end timestamps at fixed buffer slots. Destructor calls `finish_profiler()` which NOC-DMAs the L1 buffer to host sysmem. |
+| `DeviceZoneScopedN("name")` | RAII scope writing timestamped start/end pairs into optional zone area (dropped if buffer full) |
+| `DeviceZoneSetCounter(id)` | Records host-assigned program ID |
+| `DeviceValidateProfiler(enables)` | Marks zone valid/invalid |
+
+**Timestamp format:** Each timestamp reads `RISCV_DEBUG_REG_WALL_CLOCK_L` (44-bit wall clock), packed as two uint32s: `0x80000000 | (timer_id << 12) | clock_hi12` and `clock_lo32`.
+
+**`finish_profiler()` flush path:** On `DeviceZoneScopedMainN` destructor, NOC-writes the entire L1 profiler buffer to the per-RISC slot in host sysmem at:
+```
+flat_offset = core_flat_id * 5 * 65536 + risc_id * 65536 + (host_written_words * 4)
+```
+Then increments `RUN_COUNTER` and sets `PROFILER_DONE=1` in the control buffer.
+
+#### What `PROFILE_PERF_COUNTERS=0x3f` enables
+
+Hardware performance counter capture, **only in firmware trisc1** (the MATH processor). The code lives in `trisc.cc` lines 87-169.
+
+**Bit flags:**
+
+| Bit | Mask | Group | Control register | Counters |
+|-----|------|-------|-----------------|----------|
+| 0 | `0x01` | FPU | `RISCV_DEBUG_REG_PERF_CNT_FPU0` | 3 |
+| 1 | `0x02` | PACK | `RISCV_DEBUG_REG_PERF_CNT_TDMA_PACK0` | 3 |
+| 2 | `0x04` | UNPACK | `RISCV_DEBUG_REG_PERF_CNT_TDMA_UNPACK0` | 11 |
+| 3 | `0x08` | L1_0 | `RISCV_DEBUG_REG_PERF_CNT_L1_0` | 8 |
+| 4 | `0x10` | L1_1 | Same as L1_0, MUX bit 4 = 1 | 8 |
+| 5 | `0x20` | INSTRN | `RISCV_DEBUG_REG_PERF_CNT_INSTRN_THREAD0` | 61 |
+
+Total: **94 counters** when all bits set (`0x3f`).
+
+L1_0 and L1_1 share the same hardware register block. `RISCV_DEBUG_REG_PERF_CNT_MUX_CTRL` bit 4 selects which channel: 0 = NOC ring 0 / L1 arbitration, 1 = NOC ring 1 / TDMA.
+
+**How it works in the firmware main loop** (`trisc.cc`):
+
+```cpp
+// Before kernel call:
+perf_counter_start();       // zeros control regs, writes PERF_CNT_CONTINUOUS_MODE, starts all enabled groups
+
+auto stack_free = reinterpret_cast<uint32_t (*)()>(kernel_lma)();  // run user kernel
+
+// After kernel returns:
+perf_counter_emit(perf_counter_stop_and_capture());
+// stop_and_capture: reads all 94 counter values into perf_counter_samples[]
+// Each sample packed as: counter_value | (ref_cnt << 32) | (counter_type << 56)
+// emit: writes each sample as TS_DATA packet with profiler ID 9090 into L1 profiler buffer
+```
+
+#### Profiler control buffer in L1
+
+32 x uint32 at `TensixL1.PROFILER_CONTROL = 0x0009C0` (128 bytes). Host reads this after execution to determine how much data each RISC wrote.
+
+| Index | Name | Purpose |
+|-------|------|---------|
+| 0-4 | `HOST_BUFFER_END_INDEX_{BR,NC,T0,T1,T2}` | Words already written to host sysmem per RISC |
+| 5-9 | `DEVICE_BUFFER_END_INDEX_{BR,NC,T0,T1,T2}` | Words written to L1 buffer this run |
+| 10-11 | `FW_RESET_H`, `FW_RESET_L` | Firmware reset timestamp |
+| 12 | `DRAM_PROFILER_ADDRESS_DEFAULT` | Sysmem NOC local offset (written by host before each run) |
+| 13 | `RUN_COUNTER` | Incremented by `finish_profiler()` each run |
+| 14-15 | `NOC_X`, `NOC_Y` | Core NOC coordinates (written by host) |
+| 16 | `FLAT_ID` | Core flat index (written by host) |
+| 18 | `DROPPED_ZONES` | Bitmask of which RISC buffers had drops |
+| 19 | `PROFILER_DONE` | Set to 1 by `finish_profiler()` |
+
+Host programs indices 12, 14, 15, 16 per-core via `CQWritePacked` before each program. Zeroes indices 0-4 and 19 at start.
+
+#### Host sysmem profiler layout
+
+```
+_HOST_PROFILER_BASE (after issue + completion rings):
+  per core (320 KB):
+    BRISC  : 64 KB (16384 uint32s)
+    NCRISC : 64 KB
+    TRISC0 : 64 KB
+    TRISC1 : 64 KB
+    TRISC2 : 64 KB
+```
+
+#### Full profiler data flow
+
+1. `PROFILE=1` → compiler adds defines to all firmware + kernel builds
+2. Before each program: host CQ writes profiler control block to each core's L1 at `0x9C0`
+3. Firmware runs:
+   - All RISCs: `DeviceZoneScopedMainN` captures guaranteed FW start/end timestamps
+   - TRISC1: `perf_counter_start()` → user kernel → `perf_counter_stop_and_capture()` → `perf_counter_emit()` writes 94 counter values as `TS_DATA` packets (ID 9090) into L1 buffer
+   - User kernels: `DeviceZoneScopedN` writes optional zone timestamps
+   - `finish_profiler()`: NOC-DMAs L1 buffer to per-RISC slot in host sysmem
+4. After completion: Python reads `ctrl_regs` from L1 `0x9C0`, reads sysmem profiler data, `profiler.py` parses into structured zones and perf counter records
 
 ### Per-program generated headers (Trisc compute kernels only)
 
