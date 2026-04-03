@@ -1,12 +1,53 @@
 #!/usr/bin/env python3
 import argparse
 import curses
+import struct
 import sys
 import time
 from typing import Callable
 
 from hw import Arc, Dram, active_tensix_core_count
-from pcie import PCIDevice
+from pcie import PCIDevice, TLB_2M_SIZE
+
+
+# ---- ARC telemetry ----
+
+def _read_arc_noc32(dev: PCIDevice, addr: int, tlb: int) -> int:
+  base = addr & ~(TLB_2M_SIZE - 1)
+  dev.configure_tlb(tlb, base, *dev.ARC_TILE, *dev.ARC_TILE, ordering=1)
+  bar, bar_off = dev.tlb_window(tlb)
+  return struct.unpack_from("<I", bar, bar_off + (addr - base))[0]
+
+def telemetry_layout(dev: PCIDevice) -> dict:
+  table_base = dev.read_arc_apb32(dev.SCRATCH_RAM_13)
+  data_base = dev.read_arc_apb32(dev.SCRATCH_RAM_12)
+  if table_base in (0, 0xFFFFFFFF) or data_base in (0, 0xFFFFFFFF):
+    raise RuntimeError(f"invalid ARC telemetry pointers table=0x{table_base:x} data=0x{data_base:x}")
+  tlb = dev.alloc_tlb(TLB_2M_SIZE)
+  try:
+    version = _read_arc_noc32(dev, table_base, tlb)
+    entry_count = _read_arc_noc32(dev, table_base + 4, tlb)
+    tag_to_offset = {}
+    for i in range(entry_count):
+      tag_offset = _read_arc_noc32(dev, table_base + 8 + i * 4, tlb)
+      tag_to_offset[tag_offset & 0xFFFF] = (tag_offset >> 16) & 0xFFFF
+  finally:
+    dev.free_tlb(tlb)
+  return {"version": version, "table_base": table_base, "data_base": data_base,
+          "entry_count": entry_count, "tag_to_offset": tag_to_offset}
+
+def telemetry_tags(layout: dict) -> list[int]:
+  return sorted(layout["tag_to_offset"])
+
+def has_telemetry_tag(layout: dict, tag: int) -> bool:
+  return tag in layout["tag_to_offset"]
+
+def read_telemetry_entry(dev: PCIDevice, layout: dict, tag: int) -> int:
+  tlb = dev.alloc_tlb(TLB_2M_SIZE)
+  try:
+    return _read_arc_noc32(dev, layout["data_base"] + 4 * layout["tag_to_offset"][tag], tlb)
+  finally:
+    dev.free_tlb(tlb)
 
 
 TAG_NAME_TO_ID = {
@@ -183,21 +224,21 @@ def _format_metric(metric: Metric, raw: int) -> str:
   return metric.format(raw)
 
 
-def _read_tag_value(dev: PCIDevice, tag_name: str) -> int | None:
+def _read_tag_value(dev: PCIDevice, layout: dict, tag_name: str) -> int | None:
   tag = TAG_NAME_TO_ID[tag_name]
-  if not dev.has_telemetry_tag(tag):
+  if not has_telemetry_tag(layout, tag):
     return None
-  return dev.read_telemetry_entry(tag)
+  return read_telemetry_entry(dev, layout, tag)
 
 
-def _read_metric_row(dev: PCIDevice, metric: Metric) -> tuple[str, str] | None:
-  if not dev.has_telemetry_tag(metric.tag):
+def _read_metric_row(dev: PCIDevice, layout: dict, metric: Metric) -> tuple[str, str] | None:
+  if not has_telemetry_tag(layout, metric.tag):
     return None
-  return (metric.label, _format_metric(metric, dev.read_telemetry_entry(metric.tag)))
+  return (metric.label, _format_metric(metric, read_telemetry_entry(dev, layout, metric.tag)))
 
 
-def _read_metric_row_by_name(dev: PCIDevice, tag_name: str) -> tuple[str, str] | None:
-  return _read_metric_row(dev, METRICS_BY_NAME[tag_name])
+def _read_metric_row_by_name(dev: PCIDevice, layout: dict, tag_name: str) -> tuple[str, str] | None:
+  return _read_metric_row(dev, layout, METRICS_BY_NAME[tag_name])
 
 
 def _combine_u64(high: int | None, low: int | None) -> int | None:
@@ -249,18 +290,18 @@ def _format_harvested_dram_bank(harvested_banks: list[int]) -> str:
   return _format_ranges(harvested_banks)
 
 
-def _decode_gddr_modules(dev: PCIDevice) -> list[dict]:
+def _decode_gddr_modules(dev: PCIDevice, layout: dict) -> list[dict]:
   gddr_temp_tags = [TAG_NAME_TO_ID[f"GDDR_{pair}_TEMP"] for pair in ("0_1", "2_3", "4_5", "6_7")]
   gddr_corr_tags = [TAG_NAME_TO_ID[f"GDDR_{pair}_CORR_ERRS"] for pair in ("0_1", "2_3", "4_5", "6_7")]
-  has_gddr = all(dev.has_telemetry_tag(tag) for tag in gddr_temp_tags + gddr_corr_tags + [TAG_NAME_TO_ID["GDDR_UNCORR_ERRS"]])
+  has_gddr = all(has_telemetry_tag(layout, tag) for tag in gddr_temp_tags + gddr_corr_tags + [TAG_NAME_TO_ID["GDDR_UNCORR_ERRS"]])
   if not has_gddr:
     return []
 
   modules = []
-  uncorr = dev.read_telemetry_entry(TAG_NAME_TO_ID["GDDR_UNCORR_ERRS"])
+  uncorr = read_telemetry_entry(dev, layout, TAG_NAME_TO_ID["GDDR_UNCORR_ERRS"])
   for pair_index in range(4):
-    temp_word = dev.read_telemetry_entry(gddr_temp_tags[pair_index])
-    corr_word = dev.read_telemetry_entry(gddr_corr_tags[pair_index])
+    temp_word = read_telemetry_entry(dev, layout, gddr_temp_tags[pair_index])
+    corr_word = read_telemetry_entry(dev, layout, gddr_corr_tags[pair_index])
     for lane in range(2):
       module = pair_index * 2 + lane
       shift = 16 if lane else 0
@@ -277,14 +318,14 @@ def _decode_gddr_modules(dev: PCIDevice) -> list[dict]:
 
 
 def _device_snapshot(dev: PCIDevice) -> dict:
-  layout = dev.telemetry_layout()
-  board_id = _combine_u64(_read_tag_value(dev, "BOARD_ID_HIGH"), _read_tag_value(dev, "BOARD_ID_LOW"))
-  tensix_enabled = _read_tag_value(dev, "ENABLED_TENSIX_COL")
-  gddr_enabled = _read_tag_value(dev, "ENABLED_GDDR")
+  layout = telemetry_layout(dev)
+  board_id = _combine_u64(_read_tag_value(dev, layout, "BOARD_ID_HIGH"), _read_tag_value(dev, layout, "BOARD_ID_LOW"))
+  tensix_enabled = _read_tag_value(dev, layout, "ENABLED_TENSIX_COL")
+  gddr_enabled = _read_tag_value(dev, layout, "ENABLED_GDDR")
   core_count = None if tensix_enabled is None else active_tensix_core_count(tensix_enabled & Arc.DEFAULT_TENSIX_ENABLED)
   board_name = _decode_board_name(board_id)
   active_gddr_banks, harvested_gddr_banks = _decode_gddr_mask(gddr_enabled)
-  heartbeat = _read_tag_value(dev, "TIMER_HEARTBEAT")
+  heartbeat = _read_tag_value(dev, layout, "TIMER_HEARTBEAT")
 
   left_metrics = [
     "ASIC_TEMPERATURE",
@@ -302,7 +343,7 @@ def _device_snapshot(dev: PCIDevice) -> dict:
 
   summary_left = []
   for name in left_metrics:
-    row = _read_metric_row_by_name(dev, name)
+    row = _read_metric_row_by_name(dev, layout, name)
     if row is not None:
       summary_left.append(row)
 
@@ -316,11 +357,11 @@ def _device_snapshot(dev: PCIDevice) -> dict:
   if harvested_gddr_banks:
     summary_right.append(("Harvested DRAM bank", _format_harvested_dram_bank(harvested_gddr_banks)))
   for name in right_metrics:
-    row = _read_metric_row_by_name(dev, name)
+    row = _read_metric_row_by_name(dev, layout, name)
     if row is not None:
       summary_right.append(row)
 
-  modules = _decode_gddr_modules(dev)
+  modules = _decode_gddr_modules(dev, layout)
 
   return {
     "layout": layout,
@@ -332,19 +373,19 @@ def _device_snapshot(dev: PCIDevice) -> dict:
   }
 
 
-def _print_metric_group(dev: PCIDevice, metrics: list[Metric]):
+def _print_metric_group(dev: PCIDevice, layout: dict, metrics: list[Metric]):
   for metric in metrics:
-    if not dev.has_telemetry_tag(metric.tag):
+    if not has_telemetry_tag(layout, metric.tag):
       continue
-    raw = dev.read_telemetry_entry(metric.tag)
+    raw = read_telemetry_entry(dev, layout, metric.tag)
     print(f"  {metric.label:<24} {_format_metric(metric, raw)}")
 
 
-def _print_raw_dump(dev: PCIDevice):
+def _print_raw_dump(dev: PCIDevice, layout: dict):
   print("  Raw telemetry")
-  for tag in dev.telemetry_tags():
+  for tag in telemetry_tags(layout):
     name = TAG_ID_TO_NAME.get(tag, f"TAG_{tag}")
-    raw = dev.read_telemetry_entry(tag)
+    raw = read_telemetry_entry(dev, layout, tag)
     print(f"    {tag:>2} {name:<24} 0x{raw:08x}")
 
 
@@ -371,7 +412,7 @@ def show_device(index: int):
         print(f"    {module['module']:>2}  {module['top']:>4}°  {module['bottom']:>4}°  {module['corr_rd']:>4}  {module['corr_wr']:>4}     {uncorr_rd}     {uncorr_wr}")
     for label, value in snapshot["extra"]:
       print(f"  {label:<26} {value}")
-    _print_raw_dump(dev)
+    _print_raw_dump(dev, layout)
 
 
 def reset_device(index: int):

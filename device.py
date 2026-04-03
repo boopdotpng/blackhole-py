@@ -107,40 +107,28 @@ class Device:
       self._init_profiler_layout()
 
   def _read_arc_enabled_masks(self) -> tuple[int, int]:
-    deadline = time.monotonic() + 0.5
-    table_base = 0
-    data_base = 0
-    while True:
-      table_base = self.dev.read_arc_apb32(Arc.SCRATCH_RAM_13)
-      data_base = self.dev.read_arc_apb32(Arc.SCRATCH_RAM_12)
-      if _is_range_within_arc_csm(table_base) and _is_range_within_arc_csm(data_base):
-        break
-      if time.monotonic() >= deadline:
-        break
-      time.sleep(0.01)
-
+    table_base = self.dev.read_arc_apb32(Arc.SCRATCH_RAM_13)
+    data_base = self.dev.read_arc_apb32(Arc.SCRATCH_RAM_12)
     if not _is_range_within_arc_csm(table_base) or not _is_range_within_arc_csm(data_base):
-      raise RuntimeError(
-        f"invalid ARC telemetry pointers table=0x{table_base:x} data=0x{data_base:x}"
-      )
+      raise RuntimeError(f"ARC not ready: telemetry pointers table=0x{table_base:x} data=0x{data_base:x}")
 
-    with TLBWindow(self.dev, start=TileGrid.ARC, addr=Arc.NOC_BASE) as arc:
-      csm_base, csm_off = align_down(table_base, TLBWindow.SIZE_2M)
-      arc.target(TileGrid.ARC, addr=csm_base)
-      entry_count = arc.read32(csm_off + 4)
+    tlb = self.dev.alloc_tlb(TLBWindow.SIZE_2M)
+    try:
+      def _rd(addr):
+        return self.dev._read_arc_noc32(addr, tlb=tlb)
+      entry_count = _rd(table_base + 4)
       if entry_count in (0, 0xFFFFFFFF) or entry_count > 4096:
         raise RuntimeError(f"invalid ARC telemetry entry_count 0x{entry_count:x} at 0x{table_base:x}")
-      tags_base = csm_off + 8
       tag_to_offset = {}
       for i in range(entry_count):
-        tag_offset = arc.read32(tags_base + i * 4)
+        tag_offset = _rd(table_base + 8 + i * 4)
         tag_to_offset[tag_offset & 0xFFFF] = (tag_offset >> 16) & 0xFFFF
-      data_csm_base, data_csm_off = align_down(data_base, TLBWindow.SIZE_2M)
-      arc.target(TileGrid.ARC, addr=data_csm_base)
       off = tag_to_offset.get(Arc.TAG_TENSIX_ENABLED_COL)
-      tensix_enabled = Arc.DEFAULT_TENSIX_ENABLED if off is None else arc.read32(data_csm_off + off * 4)
+      tensix_enabled = Arc.DEFAULT_TENSIX_ENABLED if off is None else _rd(data_base + off * 4)
       off = tag_to_offset.get(Arc.TAG_GDDR_ENABLED)
-      gddr_enabled = Arc.DEFAULT_GDDR_ENABLED if off is None else arc.read32(data_csm_off + off * 4)
+      gddr_enabled = Arc.DEFAULT_GDDR_ENABLED if off is None else _rd(data_base + off * 4)
+    finally:
+      self.dev.free_tlb(tlb)
     return gddr_enabled, tensix_enabled
 
   def _init_dram_tiles(self, gddr_enabled: int):

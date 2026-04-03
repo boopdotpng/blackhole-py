@@ -157,7 +157,6 @@ class PCIDevice:
     self._pinnings: dict[int, dict] = {}
     self._next_iova = 1 << 30
 
-    self._telemetry_layout = None
     self._bring_device_to_a0()
 
   @staticmethod
@@ -230,42 +229,6 @@ class PCIDevice:
     finally:
       if owns_tlb:
         self.free_tlb(tlb)
-
-  def telemetry_layout(self) -> dict:
-    if self._telemetry_layout is not None:
-      return self._telemetry_layout
-
-    table_base = self.read_arc_apb32(self.SCRATCH_RAM_13)
-    data_base = self.read_arc_apb32(self.SCRATCH_RAM_12)
-    if table_base in (0, 0xFFFFFFFF) or data_base in (0, 0xFFFFFFFF):
-      raise RuntimeError(f"invalid ARC telemetry pointers table=0x{table_base:x} data=0x{data_base:x}")
-
-    tlb = self.alloc_tlb(TLB_2M_SIZE)
-    try:
-      version = self._read_arc_noc32(table_base, tlb=tlb)
-      entry_count = self._read_arc_noc32(table_base + 4, tlb=tlb)
-      tag_to_offset = {}
-      for i in range(entry_count):
-        tag_offset = self._read_arc_noc32(table_base + 8 + i * 4, tlb=tlb)
-        tag_to_offset[tag_offset & 0xFFFF] = (tag_offset >> 16) & 0xFFFF
-    finally:
-      self.free_tlb(tlb)
-
-    self._telemetry_layout = {
-      "version": version, "table_base": table_base, "data_base": data_base,
-      "entry_count": entry_count, "tag_to_offset": tag_to_offset,
-    }
-    return self._telemetry_layout
-
-  def telemetry_tags(self) -> list[int]:
-    return sorted(self.telemetry_layout()["tag_to_offset"])
-
-  def has_telemetry_tag(self, tag: int) -> bool:
-    return tag in self.telemetry_layout()["tag_to_offset"]
-
-  def read_telemetry_entry(self, tag: int) -> int:
-    layout = self.telemetry_layout()
-    return self._read_arc_noc32(layout["data_base"] + 4 * layout["tag_to_offset"][tag])
 
   def write_arc_apb32(self, offset: int, value: int):
     tlb = self.alloc_tlb(TLB_2M_SIZE)
