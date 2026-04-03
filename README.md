@@ -15,7 +15,7 @@ A minimal Python driver for the Tenstorrent Blackhole accelerator. Compiles and 
 - **Python**: 3.10+, numpy
 
 #### vfio? 
-For fast dispatch to work.
+For fast dispatch to work, we need to pin and unpin pages so that the card can copy data back and forth. Without VFIO, you would mmap 1GB of memory, `mlock` it so it can't be swapped out, and then read procfs to get the pagemap. On most systems, this will result in 50000+ non-contiguous pages, which the tenstorrent card cannot use. This setup (without VFIO) works with tinygrad+AMD because there is hardware on AMD GPUs that stores a page-map and allows the GPU to see thousands of scattered pages as one range. Since tenstorrent has no such hardware, we have to rely on the IOMMU to maintain this mapping and present a contiguous IOVA range to the device. 
 
 **Does not support multi-chip / distributed yet.**
 
