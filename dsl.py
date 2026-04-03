@@ -49,14 +49,6 @@ def _j(op, rd, imm):
   return RiscVInsn(op | R(rd)<<7 | bits(i,19,12)<<12 | bits(i,11)<<20
     | bits(i,10,1)<<21 | bits(i,20)<<31)
 
-# -- registers -----------------------------------------------------------------
-zero, ra, sp, gp, tp = 0, 1, 2, 3, 4
-t0, t1, t2 = 5, 6, 7
-s0, fp, s1 = 8, 8, 9
-a0, a1, a2, a3, a4, a5, a6, a7 = range(10, 18)
-s2, s3, s4, s5, s6, s7, s8, s9, s10, s11 = range(18, 28)
-t3, t4, t5, t6 = 28, 29, 30, 31
-
 # -- RV32I base ----------------------------------------------------------------
 ADD  = partial(_r, 0x33, 0, 0x00); SUB  = partial(_r, 0x33, 0, 0x20)
 SLL  = partial(_r, 0x33, 1, 0x00); SLT  = partial(_r, 0x33, 2, 0x00)
@@ -580,15 +572,3 @@ TT_SFPLUTFP32  = lambda lreg_dest, instr_mod1: _tt(0x95, U(lreg_dest,4)<<4 | U(i
 # Approximate reciprocal (BH-new)
 TT_SFPARECIP   = lambda imm12_math, lreg_c, lreg_dest, instr_mod1: _tt(0x99, U(imm12_math,12)<<12 | U(lreg_c,4)<<8 | U(lreg_dest,4)<<4 | U(instr_mod1,4))
   # Approx 1/VC (7-bit accuracy), or approx e^Abs(VC) with sign copy
-
-# -- assembly helpers ----------------------------------------------------------
-def Program(*insns):
-  """Assemble a sequence of instructions into a flat bytes object.
-  TensixInsn objects are automatically wrapped in TTINSN encoding.
-  RiscVInsn objects are emitted directly. Raw bytes are passed through."""
-  out = bytearray()
-  for i in insns:
-    if isinstance(i, TensixInsn): out += TTINSN(i.word).word.to_bytes(4, 'little')
-    elif isinstance(i, Insn): out += i.word.to_bytes(4, 'little')
-    else: out += i
-  return bytes(out)

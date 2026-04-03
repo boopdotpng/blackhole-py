@@ -21,16 +21,19 @@ generated RISC-V.
 - No optimization passes.
 - No instruction scheduling.
 - No hidden control flow.
+- No auto-detection of used registers.
 
 ## Layering
 
 1. `dsl.py`
    Raw encoders only. Given concrete register numbers and immediates, emit one
-   encoded instruction word.
+   encoded instruction word. Owns register name bindings (`zero`, `ra`, `sp`,
+   `s0`, `a0`, `t0`, etc.).
 2. `rvir.py`
-   Structured assembler for RISC-V firmware.
+   Structured assembler for RISC-V firmware. Imports registers from `dsl.py`.
 3. `ttir.py`
-   Higher-level Tensix helpers that lower into RISC-V stores or raw TT words.
+   Higher-level Tensix helpers and firmware convenience routines (`wait_u8`,
+   `memzero`, `copy_words`, etc.) that lower into RISC-V stores or raw TT words.
 
 ## Core model
 
@@ -38,25 +41,23 @@ An `rvir` program is a set of functions plus an entry symbol.
 
 Each function contains a linear list of items:
 
-- concrete RISC-V instructions
-- labels
-- unresolved control-flow fixups
-- assembler-time helpers that lower into the above
+- concrete RISC-V instructions (via `dsl.py` encoders)
+- labels (assembler-time names for instruction addresses)
+- fixups (unresolved branch/jump targets)
 
-During assembly/lowering:
+During assembly:
 
-1. helpers are expanded into concrete items
+1. functions are laid out in declaration order (entry function first)
 2. label PCs are assigned
 3. fixups are resolved into branch and jump immediates
 4. final instructions are encoded through `dsl.py`
 
 ## Registers
 
-`rvir.py` owns ABI register names and register-role conventions.
-
-Example register names:
+Registers live in `dsl.py`. `rvir.py` re-exports them for convenience.
 
 ```python
+# from dsl.py
 zero, ra, sp, gp, tp
 t0, t1, t2, t3, t4, t5, t6
 s0, s1, s2, s3, s4, s5, s6, s7, s8, s9, s10, s11
@@ -64,168 +65,58 @@ a0, a1, a2, a3, a4, a5, a6, a7
 fp = s0
 ```
 
-Layer 1 only needs register numbers. Layer 2 adds names and policy.
-
 ## Calling convention
 
-`rvir` uses a normal RV32 ABI-style convention.
+Standard RV32 ABI-style:
 
 - `a0-a7`: args and return values, caller-saved
 - `t0-t6`: temporaries, caller-saved
 - `s0-s11`: callee-saved
-- `ra`: return address, saved by non-leaf functions that need it
+- `ra`: return address, saved by non-leaf functions
 - `sp`: stack pointer
 - `gp`: fixed global pointer
 
-`rvir` should not silently save `a*` or `t*` registers.
+`rvir` never silently saves or restores registers.
 
-## Frames
-
-Frames are explicit.
-
-```python
-Frame(save=[ra, s0, s1], local_size=32)
-```
-
-This means:
-
-- allocate `local_size` bytes on the stack
-- save the listed registers in the prologue
-- restore them in the epilogue
-
-If a function does not need a frame, it should be able to omit one.
-
-## Pinned base registers
-
-Firmware uses the same MMIO bases repeatedly. `rvir` should make this explicit.
-
-```python
-tile = f.pin(s0, MMIO.TILE)
-noc0 = f.pin(s1, MMIO.NOC0)
-t0q = f.pin(s2, MMIO.TENSIX_T0_PUSH)
-```
-
-Pinned bases are long-lived base registers used for repeated offset-based accesses.
-
-This is preferred for fixed MMIO regions such as:
-
-- tile debug/control registers
-- NOC0/NOC1 register blocks
-- Tensix instruction push ports
-- Tensix semaphore windows
-
-Pinned bases are not `.bss` globals. They are immediate constants loaded into a
-register once and then reused.
-
-## Labels and fixups
-
-Labels are assembler-time names for instruction addresses.
-
-The machine never jumps to a label directly. It jumps to a PC address encoded in a
-branch or jump immediate.
-
-`rvir` must support:
-
-- function labels
-- block labels
-- internal loop labels
-- user-defined semantic labels
-
-Example:
-
-```python
-f.label("wait_go")
-f.lbu_abs(a5, L1.GO_MSG)
-f.li(t0, 128)
-f.bne(a5, t0, "wait_go")
-```
-
-The `bne` cannot be fully encoded until label layout is known. `rvir` records a fixup,
-then resolves it during lowering.
-
-For the current firmware size, direct `jal` and branch fixups are enough. If a target is
-out of range, assembly should fail with a clear error.
-
-## Raw instruction escape hatch
-
-`rvir` must allow raw `dsl.py` instructions anywhere.
-
-```python
-f.raw(dsl.ADDI(int(a0), int(zero), 1))
-```
-
-This keeps layer 2 honest and prevents it from becoming a closed abstraction.
-
-## Program shape
-
-The expected program shape is:
-
-1. `_start`
-2. initialization helpers
-3. `main`
-4. small helper functions
-
-`_start` is a small bootstrap that typically:
-
-- initializes `gp`
-- initializes `sp`
-- performs any required CSR setup
-- calls `main`
-- halts or spins forever
-
-## Final product API
-
-This is the intended shape of the final user-facing DSL.
+## API shape
 
 ```python
 from rvir import *
-from ttir import *
-from bhdefs import *
+from dsl import *
 
-fw = Program(entry="_start", base=L1.BRISC_FIRMWARE_BASE)
+fw = Program(entry="_start")
 
 
 @fw.func("_start")
 def _start(f):
-    f.set_gp(0xFFB007F0)
-    f.set_sp(0xFFB01FF0)
+    f.li(gp, 0xFFB007F0)
+    f.li(sp, 0xFFB01FF0)
     f.call("init")
     f.call("main")
     f.halt()
 
 
-@fw.func("init", frame=Frame(save=[ra, s0, s1], local_size=0))
+@fw.func("init", save=[ra, s0, s1])
 def init(f):
-    tile = f.pin(s0, MMIO.TILE)
-    noc0 = f.pin(s1, MMIO.NOC0)
+    f.pin(s0, MMIO.TILE)
+    f.pin(s1, MMIO.NOC0)
 
     f.li(t1, 2)
     f.csrs(CSR.cfg0, t1)
-    f.li(t1, 1)
-    f.slli(t1, t1, 18)
-    f.fence()
-    f.csrs(CSR.cfg0, t1)
-    f.li(t1, 2)
-    f.csrc(CSR.cfg0, t1)
-    f.fence()
     f.fence()
 
-    f.sw(zero, tile, TILE.DEST_CG_CTRL - MMIO.TILE)
-    f.lw(a0, noc0, NOC.NODE_ID)
+    f.sw(zero, s0, TILE.DEST_CG_CTRL - MMIO.TILE)
+    f.lw(a0, s1, NOC.NODE_ID)
     f.ret()
 
 
-@fw.func("main", frame=Frame(save=[ra, s0, s1, s2], local_size=0))
+@fw.func("main", save=[ra, s0, s1, s2])
 def main(f):
-    tile = f.pin(s0, MMIO.TILE)
-    t0q = f.pin(s1, MMIO.TENSIX_T0_PUSH)
-    sem = f.pin(s2, MMIO.TENSIX_SEM)
-
-    f.wait_u8(L1.GO_MSG, 128)
+    f.pin(s0, MMIO.TILE)
+    f.pin(s1, MMIO.TENSIX_T0_PUSH)
+    f.pin(s2, MMIO.TENSIX_SEM)
 
     f.raw(dsl.ADDI(int(a0), int(zero), 1))
-
-    tt.push_t0(f, TT_NOP(), base=t0q)
 
     with f.loop("idle") as loop:
         f.fence()
@@ -233,177 +124,256 @@ def main(f):
 
 
 blob = fw.assemble()
-elf = fw.to_elf()
 ```
 
-## Required layer-2 objects
+## `Program`
 
-At minimum, `rvir.py` should define:
-
-- `Program`
-- `Function`
-- `Frame`
-- `Reg`
-- `PinnedBase`
-- `LabelRef`
-- `Fixup`
-
-## Required `Function` methods
-
-### Structural
-
-- `label(name)`
-- `raw(insn)`
-- `call(name)`
-- `ret()`
-- `halt()`
-
-### Register and frame helpers
-
-- `pin(reg, addr)`
-- `set_gp(value)`
-- `set_sp(value)`
-
-### Pseudo-ops
-
-- `li(rd, imm)`
-- `mv(rd, rs)`
-- `nop()`
-
-### Integer and memory ops
-
-- `add`, `addi`, `sub`
-- `and_`, `andi`, `or_`, `ori`, `xor`, `xori`
-- `sll`, `slli`, `srli`, `srai`
-- `lw`, `sw`, `lbu`, `sb`, `lhu`, `sh`
-- `lw_abs`, `sw_abs`, `lbu_abs`, `sb_abs`
-
-### Control flow
-
-- `beq`, `bne`, `blt`, `bge`, `bltu`, `bgeu`
-- `j(name)`
-- `jal(name)` or `call(name)`
-- `jalr(rd, rs, imm=0)`
-
-### CSR and misc
-
-- `csrs(csr, rs)`
-- `csrc(csr, rs)`
-- `fence()`
-
-### Common firmware helpers
-
-- `wait_u8(addr, value)`
-- `memzero(base, size)`
-- `copy_words(dst, src, nwords)`
-
-## Loop abstractions
-
-`rvir` should include thin loop helpers. These are assembler conveniences, not a high-level
-language runtime.
-
-### 1. Raw label loop
-
-Always supported.
+Plain constructor, not a context manager.
 
 ```python
-f.label("poll")
-f.lbu_abs(a5, L1.GO_MSG)
-f.li(t0, 128)
-f.bne(a5, t0, "poll")
+fw = Program(entry="_start")
 ```
 
-### 2. `loop()`
+- `entry`: name of the entry function (must be declared first)
+- Functions are laid out in declaration order
+- `fw.assemble()` resolves fixups and returns `bytes`
 
-Lowest-level structured loop helper.
+## `@fw.func(name, save=[...])`
+
+Decorator that defines a function. The decorated Python function receives a
+`Function` builder and is called immediately.
+
+```python
+@fw.func("init", save=[ra, s0, s1])
+def init(f):
+    ...
+```
+
+- `name`: function label
+- `save`: list of registers to save in prologue and restore in epilogue.
+  The user must explicitly list every callee-saved register they use.
+  If a function does not need a frame (e.g. `_start`), omit `save`.
+
+When `save` is provided, the decorator emits:
+
+- **prologue**: decrement `sp`, store each register in `save` to the stack
+- *(function body)*
+- **epilogue**: restore each register, increment `sp`, `ret`
+
+When `save` is omitted, no prologue/epilogue is emitted. The function body
+is responsible for its own return (e.g. `f.halt()` or `f.ret()`).
+
+## Instruction delegation
+
+`Function` uses `__getattr__` to delegate to `dsl.py` encoders:
+
+```python
+class Function:
+    def __getattr__(self, name):
+        encoder = getattr(dsl, name.upper(), None)
+        if encoder is None:
+            raise AttributeError(f"no instruction: {name}")
+        def emit(*args, **kwargs):
+            self.items.append(encoder(*args, **kwargs))
+        return emit
+```
+
+This means every instruction in `dsl.py` is automatically available as
+`f.<lowercase>(...)` with no wrapper code. `f.sw(...)` calls `dsl.SW(...)`,
+`f.fence()` calls `dsl.FENCE()`, etc.
+
+Methods defined explicitly on `Function` (like `li`, `pin`, `call`, `label`,
+`ret`, `halt`, loops) take priority over `__getattr__`.
+
+## Explicit `Function` methods
+
+### `f.li(rd, imm)`
+
+Load immediate. Handles the full 32-bit range:
+
+- If `imm` fits in 12 bits signed: emits `ADDI(rd, zero, imm)`
+- Otherwise: emits `LUI(rd, upper) + ADDI(rd, rd, lower)`
+
+Sign-extension of the lower 12 bits must be accounted for in the upper
+20 bits (add 1 to upper if bit 11 of imm is set).
+
+### `f.pin(reg, addr)`
+
+Shorthand for `f.li(reg, addr)`. Emits the LUI+ADDI sequence to load
+a 32-bit MMIO base address into `reg`. Returns `reg`.
+
+```python
+tile = f.pin(s0, MMIO.TILE)   # tile is just s0
+f.sw(zero, tile, offset)       # same as f.sw(zero, s0, offset)
+```
+
+No wrapper type. `pin()` records the register internally so that
+double-pinning the same register is an error.
+
+### `f.label(name)`
+
+Place a label at the current position.
+
+```python
+f.label("wait_go")
+f.lbu(a5, s0, GO_MSG_OFFSET)
+f.li(t0, 128)
+f.bne(a5, t0, "wait_go")
+```
+
+### `f.call(name)`
+
+Emit `JAL(ra, name)` with a fixup to be resolved at assembly time.
+
+### `f.j(name)`
+
+Emit `JAL(zero, name)` with a fixup.
+
+### `f.ret()`
+
+Emit `JALR(zero, ra, 0)`.
+
+### `f.halt()`
+
+Emit an infinite loop: `label(".halt"); j(".halt")`.
+
+### `f.raw(insn)`
+
+Append a pre-encoded instruction directly.
+
+```python
+f.raw(dsl.ADDI(int(a0), int(zero), 1))
+```
+
+### Absolute address loads and stores
+
+For loads, `rd` itself is used as scratch to hold the address:
+
+```python
+f.lw_abs(a5, 0xFFB00100)
+# lowers to: LUI(a5, hi), LW(a5, a5, lo)
+```
+
+For stores, a scratch register is required because `rs2` (the value) cannot
+be clobbered:
+
+```python
+f.sw_abs(a0, 0xFFB00100, scratch=t0)
+# lowers to: LUI(t0, hi), SW(a0, t0, lo)
+```
+
+## Branch and jump fixups
+
+When a branch or jump references a label name instead of a numeric offset,
+`Function` records a fixup:
+
+```python
+(item_index, target_label, fixup_kind)
+```
+
+Where `fixup_kind` is one of:
+
+- `B_TYPE` — 12-bit signed offset, encoded in B-type immediate fields
+- `JAL` — 20-bit signed offset, encoded in J-type immediate fields
+
+During `assemble()`:
+
+1. All functions are concatenated in declaration order
+2. Label PCs are computed (each instruction is 4 bytes)
+3. Each fixup is resolved: `offset = target_pc - fixup_pc`
+4. The instruction word is re-encoded with the resolved offset
+5. Out-of-range offsets are a hard error
+6. Undefined labels are a hard error
+
+Forward references within and across functions are supported.
+
+## Loops
+
+Context managers for structured loops. These are the only constructs that
+use `with`.
+
+### `f.loop(name)`
+
+Unconditional loop. Emits a top label and (at exit) an unconditional jump
+back.
 
 ```python
 with f.loop("idle") as loop:
     f.fence()
-    loop.continue_()
+    loop.continue_()      # jump to top
+    # or:
+    loop.break_()         # jump past end
+    loop.break_if_eq(rs1, rs2)
+    loop.break_if_ne(rs1, rs2)
 ```
 
-Expected lowering:
+Lowering:
 
-- a top label
-- the loop body
-- an unconditional jump back to the top label
-
-The loop object should support:
-
-- `continue_()`
-- `break_()`
-- `break_if_eq(rs1, rs2)`
-- `break_if_ne(rs1, rs2)`
-
-### 3. `while_*()`
-
-Best for polling loops.
-
-```python
-with f.while_ne(a5, 128, load=lambda: f.lbu_abs(a5, L1.GO_MSG), scratch=t0):
-    f.fence()
-```
-
-This should lower to:
-
-- loop label
-- execute `load`
-- compare
-- branch to exit if condition fails
+- `label("{name}")` at entry
 - body
-- jump back
+- `j("{name}")` at exit
+- `label("{name}_end")` after the jump
 
-Specialized convenience helpers like `wait_u8()` may exist on top of this.
+`break_()` emits `j("{name}_end")`.
+`break_if_eq(rs1, rs2)` emits `beq(rs1, rs2, "{name}_end")`.
+`continue_()` emits `j("{name}")`.
 
-### 4. `for_range()`
+### `f.for_range(reg, start, end, step=1)`
 
-Best for counted loops and table walks.
+Counted loop with an explicit induction register.
 
 ```python
-with f.for_range(t0, 0, 64, step=4) as i:
-    f.sw(zero, s0, i)
+with f.for_range(t0, 0, 64, step=4):
+    f.sw(zero, s0, t0)    # t0 is the induction variable
 ```
 
-Semantics:
+Lowering (for positive step):
 
-- initialize induction register to `start`
-- loop while `i < end` for positive steps
-- execute body
-- increment by `step`
-- jump back
+```
+li    reg, start
+label "{name}"
+body
+addi  reg, reg, step
+li    scratch, end         # or use blt with immediate if end fits
+blt   reg, scratch, "{name}"
+label "{name}_end"
+```
 
-The induction register should be explicit. The loop helper should not allocate hidden
-registers unless the API asks for a scratch register.
+The context manager does not yield anything. The induction variable is the
+register you passed in.
 
-## Range assumptions
+A scratch register is needed for the end-of-range comparison if `end` does
+not fit in a branch immediate. The API should accept an optional `scratch`
+parameter, or use a convention (e.g. the register after `reg`).
 
-Current firmware is small enough that plain branch and `jal` fixups are sufficient.
+## Required objects
 
-- branches: range check at assembly time
-- `jal`: range check at assembly time
+- `Program`
+- `Function`
+- `Loop`
 
-Out-of-range relaxation is not required for the initial implementation.
+That's it. No `Frame`, no `PinnedBase`, no `Reg` wrapper, no `LabelRef`.
 
-## Style rules for `rvir`
+## Error model
+
+Assembly fails hard with a clear message on:
+
+- undefined label reference
+- duplicate label definition
+- branch offset out of 12-bit range
+- JAL offset out of 20-bit range
+- double-pinning a register
+- `save` list contains duplicates
+
+## Output
+
+`fw.assemble()` returns `bytes`. This is directly compatible with writing
+firmware blobs to L1 via the existing PCIe/TLB layer.
+
+## Style rules
 
 - Prefer explicit registers.
-- Prefer explicit frame declarations.
+- Prefer explicit save lists.
 - Prefer thin helpers over opaque abstractions.
 - Keep raw `dsl.py` escape hatches available.
-- Generate semantic labels when possible so disassembly is readable.
-
-## Summary
-
-`rvir` is a structured assembler for small Blackhole firmware, not a full compiler.
-
-It should make this easy:
-
-- writing functions
-- managing frames
-- using pinned MMIO bases
-- expressing loops and polling patterns
-- resolving labels and fixups
-- dropping to raw `dsl.py` when needed
-
-while keeping the emitted code obviously RISC-V-shaped.
+- Generate semantic labels so disassembly is readable.
