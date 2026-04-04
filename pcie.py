@@ -176,8 +176,161 @@ class PCIDevice:
 
   @staticmethod
   def reset_bdf(bdf: str):
-    with open(f"/sys/bus/pci/devices/{bdf}/reset", "w") as f:
-      f.write("1\n")
+    """Full ASIC reset matching tt-kmd's blackhole ASIC_RESET + POST_RESET sequence.
+
+    1. Save PCI config space and PCIe Device Control (MPS)
+    2. Read PCIe NoC X from BAR0 (for post-reset DBI restore)
+    3. Set reset marker (PCI_COMMAND_PARITY)
+    4. Fire interface timer (extended config 0x930/0x934)
+    5. Poll for completion (parity bit clears)
+    6. Restore PCI config space
+    7. Restore MPS via NoC write to PCIe DBI
+    8. Send ARC A0 + watchdog messages
+
+    Falls back to PCIe FLR if extended config space is unavailable.
+    """
+    sysfs = f"/sys/bus/pci/devices/{bdf}"
+    config_path = f"{sysfs}/config"
+
+    # PCI config offsets / bits
+    _PCI_COMMAND         = 0x04
+    _PCI_COMMAND_MEMORY  = 0x02
+    _PCI_COMMAND_MASTER  = 0x04
+    _PCI_COMMAND_PARITY  = 0x40   # bit 6 — used as reset marker
+    _PCI_CAP_PTR         = 0x34
+    _PCI_CAP_ID_EXP      = 0x10
+    _PCI_EXP_DEVCTL      = 0x08   # offset within PCIe capability
+    # BH interface timer (PCIe extended config space)
+    _TIMER_CONTROL       = 0x930
+    _TIMER_TARGET        = 0x934
+    # BAR0 offsets for NOC ID detection
+    _NOC2AXI_CFG_START   = 0x1FD00000
+    _NOC_ID_OFFSET       = 0x4044
+    # PCIe DBI address (NoC space) and Device Control offset
+    _PCIE_DBI_ADDR       = 0xF800000000000000
+    _DBI_DEVCTL          = 0x78
+
+    def _find_pcie_cap(cfg: bytes) -> int | None:
+      ptr = cfg[_PCI_CAP_PTR] & 0xFC
+      while ptr:
+        if cfg[ptr] == _PCI_CAP_ID_EXP:
+          return ptr
+        ptr = cfg[ptr + 1] & 0xFC
+      return None
+
+    # --- Pre-reset: save state ---
+    fd = os.open(config_path, os.O_RDWR | os.O_SYNC)
+    try:
+      config_size = os.fstat(fd).st_size
+      if config_size <= _TIMER_TARGET + 4:
+        # Extended config space not reachable — fall back to sysfs FLR
+        os.close(fd); fd = -1
+        print(f"  extended config space unavailable, falling back to PCIe FLR")
+        with open(f"{sysfs}/reset", "w") as f:
+          f.write("1\n")
+        return
+
+      saved = os.pread(fd, 256, 0)
+      if len(saved) < 64:
+        raise RuntimeError(f"could not read PCI config for {bdf}")
+
+      # Find PCIe capability and save Device Control (contains MPS)
+      pcie_cap = _find_pcie_cap(saved)
+      saved_devctl = None
+      if pcie_cap is not None:
+        raw = os.pread(fd, 2, pcie_cap + _PCI_EXP_DEVCTL)
+        saved_devctl = struct.unpack("<H", raw)[0]
+
+      # Read PCIe NoC X from BAR0 for post-reset MPS restore via DBI
+      pcie_noc_x = None
+      try:
+        bar0_fd = os.open(f"{sysfs}/resource0", os.O_RDWR | os.O_SYNC)
+        bar0 = mmap.mmap(bar0_fd, BAR0_SIZE, flags=mmap.MAP_SHARED,
+                         prot=mmap.PROT_READ | mmap.PROT_WRITE)
+        noc_id_off = _NOC2AXI_CFG_START + _NOC_ID_OFFSET
+        x = struct.unpack_from("<I", bar0, noc_id_off)[0] & 0x3F
+        if x in (2, 11):
+          pcie_noc_x = x
+        bar0.close()
+        os.close(bar0_fd)
+      except Exception:
+        pass  # will skip DBI restore
+
+      # --- Step 1: Set reset marker ---
+      cmd = struct.unpack_from("<H", saved, _PCI_COMMAND)[0]
+      os.pwrite(fd, struct.pack("<H", cmd | _PCI_COMMAND_PARITY), _PCI_COMMAND)
+
+      # --- Step 2: Fire interface timer (in-place ASIC reset) ---
+      os.pwrite(fd, struct.pack("<I", 0x1), _TIMER_TARGET)    # target = 1
+      os.pwrite(fd, struct.pack("<I", 0x11), _TIMER_CONTROL)  # enable | force_pending
+
+      # --- Step 3: Poll for reset completion ---
+      deadline = time.monotonic() + 10.0
+      while time.monotonic() < deadline:
+        raw = os.pread(fd, 2, _PCI_COMMAND)
+        if not (struct.unpack("<H", raw)[0] & _PCI_COMMAND_PARITY):
+          break
+        time.sleep(0.01)
+      else:
+        raise RuntimeError(f"ASIC reset timeout for {bdf} — parity bit did not clear")
+
+      # --- Step 4: Restore PCI config space ---
+      os.pwrite(fd, saved[0x04:0x06], 0x04)  # command (skip status at 0x06, it's W1C)
+      os.pwrite(fd, saved[0x0C:0x0E], 0x0C)  # cache line size, latency timer
+      os.pwrite(fd, saved[0x10:0x28], 0x10)  # BAR0–BAR5
+      os.pwrite(fd, saved[0x3C:0x40], 0x3C)  # interrupt line/pin
+
+      # Restore PCIe Device Control (MPS, MRRS, etc.) from host config space side
+      if pcie_cap is not None and saved_devctl is not None:
+        os.pwrite(fd, struct.pack("<H", saved_devctl), pcie_cap + _PCI_EXP_DEVCTL)
+
+      # Ensure memory space + bus mastering enabled
+      cmd = struct.unpack("<H", os.pread(fd, 2, _PCI_COMMAND))[0]
+      want = _PCI_COMMAND_MEMORY | _PCI_COMMAND_MASTER
+      if (cmd & want) != want:
+        os.pwrite(fd, struct.pack("<H", cmd | want), _PCI_COMMAND)
+    finally:
+      if fd >= 0:
+        os.close(fd)
+
+    # --- Step 5: Restore MPS via NoC write to PCIe DBI register ---
+    if pcie_noc_x is not None and saved_devctl is not None:
+      try:
+        bar0_fd = os.open(f"{sysfs}/resource0", os.O_RDWR | os.O_SYNC)
+        bar0 = mmap.mmap(bar0_fd, BAR0_SIZE, flags=mmap.MAP_SHARED,
+                         prot=mmap.PROT_READ | mmap.PROT_WRITE)
+        # Use the last 2M TLB (index 201) to reach PCIE_DBI_ADDR + 0x78
+        dbi_addr = _PCIE_DBI_ADDR + _DBI_DEVCTL
+        tlb_idx = TLB_2M_COUNT - 1
+        local_offset = dbi_addr >> 21
+        y = 0
+        val = (local_offset
+               | (pcie_noc_x << 43) | (y << 49)
+               | (pcie_noc_x << 55) | (y << 61)
+               | (0 << 67)           # noc=0
+               | (0 << 69)           # mcast=0
+               | (1 << 70)           # ordering=strict
+               | (0 << 72)           # linked=0
+               | (0 << 73))          # static_vc=0
+        reg_off = TLB_REGS_START + tlb_idx * TLB_REG_SIZE
+        bar0[reg_off:reg_off+4]     = struct.pack("<I", val & 0xFFFFFFFF)
+        bar0[reg_off+4:reg_off+8]   = struct.pack("<I", (val >> 32) & 0xFFFFFFFF)
+        bar0[reg_off+8:reg_off+12]  = struct.pack("<I", (val >> 64) & 0xFFFFFFFF)
+
+        bar_off = tlb_idx * TLB_2M_SIZE + (int(dbi_addr) & (TLB_2M_SIZE - 1))
+        cur = struct.unpack_from("<I", bar0, bar_off)[0]
+        # Clear MPS field (bits 7:5) and restore saved value
+        mps_bits = (saved_devctl >> 5) & 0x7
+        cur = (cur & ~(0x7 << 5)) | (mps_bits << 5)
+        struct.pack_into("<I", bar0, bar_off, cur)
+
+        bar0.close()
+        os.close(bar0_fd)
+      except Exception as e:
+        print(f"  warning: could not restore MPS via DBI: {e}")
+
+    # ARC init (A0 + watchdog) happens in PCIDevice.__init__ → _bring_device_to_a0()
+    # on the next open, so nothing more to do here.
 
   def _setup_vfio(self):
     _bind_vfio_pci(self.sysfs)
@@ -203,6 +356,7 @@ class PCIDevice:
   def _bring_device_to_a0(self):
     """Bring ASIC from A3 to A0 if ARC is running."""
     deadline = time.monotonic() + 0.5
+    boot_status = 0
     while time.monotonic() < deadline:
       boot_status = self.read_arc_apb32(self.SCRATCH_RAM_2)
       if (boot_status & self.ARC_BOOT_STATUS_STARTED_MASK) == self.ARC_BOOT_STATUS_STARTED_VALUE:
@@ -211,6 +365,8 @@ class PCIDevice:
         except Exception: pass
         return
       time.sleep(0.00001)
+    raise RuntimeError(
+      f"ARC not ready after 0.5s (boot_status=0x{boot_status:x}) — device may be in A3, try tt-smi -r")
 
   def read_arc_apb32(self, offset: int) -> int:
     tlb = self.alloc_tlb(TLB_2M_SIZE)
@@ -310,18 +466,29 @@ class PCIDevice:
     """Pin a buffer and set up IOMMU + iATU for device DMA. Returns the NOC address."""
     va = ctypes.addressof(ctypes.c_char.from_buffer(buf))
     size = len(buf)
-    _mlock(va, size)
+    cleanup = []
+    try:
+      _mlock(va, size)
+      cleanup.append(lambda: _munlock(va, size))
 
-    iova = self._next_iova
-    self._next_iova += size
+      iova = self._next_iova
+      self._next_iova += size
 
-    dma_map = struct.pack("=IIQQQ", 32,
-      VFIO_DMA_MAP_FLAG_READ | VFIO_DMA_MAP_FLAG_WRITE, va, iova, size)
-    fcntl.ioctl(self._vfio_container, VFIO_IOMMU_MAP_DMA, dma_map)
+      dma_map = struct.pack("=IIQQQ", 32,
+        VFIO_DMA_MAP_FLAG_READ | VFIO_DMA_MAP_FLAG_WRITE, va, iova, size)
+      fcntl.ioctl(self._vfio_container, VFIO_IOMMU_MAP_DMA, dma_map)
+      cleanup.append(lambda: fcntl.ioctl(self._vfio_container, VFIO_IOMMU_UNMAP_DMA,
+        struct.pack("=IIQQ", 24, 0, iova, size)))
 
-    region = self._alloc_iatu_region()
-    noc_base = region * (1 << 30)
-    self._configure_iatu(region, noc_base, noc_base + size - 1, iova)
+      region = self._alloc_iatu_region()
+      cleanup.append(lambda: self._free_iatu_region(region))
+
+      noc_base = region * (1 << 30)
+      self._configure_iatu(region, noc_base, noc_base + size - 1, iova)
+    except:
+      for fn in reversed(cleanup):
+        fn()
+      raise
 
     noc_addr = NOC_PCIE_OFFSET | noc_base
     self._pinnings[noc_addr] = {"iova": iova, "size": size, "iatu_region": region}
@@ -329,12 +496,13 @@ class PCIDevice:
 
   def unpin_pages(self, buf: mmap.mmap, noc_addr: int):
     va = ctypes.addressof(ctypes.c_char.from_buffer(buf))
-    pin = self._pinnings.pop(noc_addr)
+    pin = self._pinnings[noc_addr]
     self._disable_iatu(pin["iatu_region"])
-    self._iatu_regions[pin["iatu_region"]] = False
+    self._free_iatu_region(pin["iatu_region"])
     dma_unmap = struct.pack("=IIQQ", 24, 0, pin["iova"], pin["size"])
     fcntl.ioctl(self._vfio_container, VFIO_IOMMU_UNMAP_DMA, dma_unmap)
     _munlock(va, pin["size"])
+    del self._pinnings[noc_addr]
 
   def _alloc_iatu_region(self) -> int:
     for i, used in enumerate(self._iatu_regions):
@@ -342,6 +510,9 @@ class PCIDevice:
         self._iatu_regions[i] = True
         return i
     raise RuntimeError("no free iATU regions")
+
+  def _free_iatu_region(self, region: int):
+    self._iatu_regions[region] = False
 
   def _iatu_reg(self, region: int, reg: int) -> int:
     return IATU_BASE + (2 * region) * (IATU_REGION_STRIDE // 2) + reg

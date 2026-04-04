@@ -448,16 +448,16 @@ class Device:
     p.serve(port=port)
 
   def close(self):
-    self._set_power(False)
-    if self._device_profiler:
-      self._device_profiler.close()
-    # halt dispatch cores before tearing down sysmem — they read from
-    # IOMMU-mapped host memory and will fault if it's unmapped first
-    if self._cq_hw is not None:
-      self._halt_cores([self._PREFETCH_CORE, self._DISPATCH_CORE])
-    if self._dram_sysmem is not None:
-      self._dram_sysmem.close()
-    if self._cq_hw is not None:
-      self._cq_hw.close()
-    self.dram.close()
+    # Run each teardown step; suppress errors so later steps always execute.
+    # Order matters: power down, halt CQ cores, unpin sysmem, close VFIO.
+    for step in [
+      lambda: self._set_power(False),
+      lambda: self._device_profiler.close() if self._device_profiler else None,
+      lambda: self._halt_cores([self._PREFETCH_CORE, self._DISPATCH_CORE]) if self._cq_hw is not None else None,
+      lambda: self._dram_sysmem.close() if self._dram_sysmem is not None else None,
+      lambda: self._cq_hw.close() if self._cq_hw is not None else None,
+      lambda: self.dram.close(),
+    ]:
+      try: step()
+      except Exception: pass
     self.dev.close()

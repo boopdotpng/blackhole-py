@@ -215,6 +215,9 @@ def reset_device(index: int):
   bdf = devices[index].split('/')[-1]
   print(f"Resetting device {index} ({bdf}) ...")
   PCIDevice.reset_index(index)
+  # Post-reset init: open device to send ARC A0 + watchdog (same as tt-kmd's init_hardware)
+  with PCIDevice(index=index) as dev:
+    print(f"  ARC ready, telemetry base 0x{dev.read_arc_apb32(dev.SCRATCH_RAM_12):08x}")
   print(f"Reset complete.")
 
 
