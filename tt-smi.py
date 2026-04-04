@@ -212,13 +212,16 @@ def reset_device(index: int):
   devices = PCIDevice.list_devices()
   if index >= len(devices):
     raise RuntimeError(f"Blackhole device {index} not found (found {len(devices)})")
+  bdf = devices[index].split('/')[-1]
+  print(f"Resetting device {index} ({bdf}) ...")
   PCIDevice.reset_index(index)
-  print(f"Reset device {index}: {devices[index].split('/')[-1]}")
+  print(f"Reset complete.")
 
 
 def parse_args() -> argparse.Namespace:
   parser = argparse.ArgumentParser(description="Standalone Blackhole telemetry and reset tool")
-  parser.add_argument("-r", "--reset", type=int, metavar="DEVICE", help="reset the selected Blackhole device")
+  parser.add_argument("-r", "--reset", type=int, metavar="DEVICE", nargs="?", const=0, default=None,
+                      help="reset a Blackhole device (default: device 0)")
   parser.add_argument("-d", "--device", type=int, metavar="DEVICE", help="show telemetry for one device only")
   parser.add_argument("--plain", action="store_true", help="disable the curses UI and print a one-shot snapshot")
   parser.add_argument("--interval", type=float, default=0.5, help="refresh interval in seconds for the TUI")

@@ -115,8 +115,8 @@ class PCIDevice:
 
     # Enable PCI device, memory space, bus mastering
     with open(f"{self.sysfs}/enable", "r+") as f:
-      if f.read().strip() != "1":
-        f.seek(0); f.write("1"); f.truncate()
+      if int(f.read().strip()) == 0:
+        f.seek(0); f.write("1")
     fd = os.open(f"{self.sysfs}/config", os.O_RDWR)
     os.lseek(fd, PCI_COMMAND, os.SEEK_SET)
     cmd = struct.unpack("<H", os.read(fd, 2))[0]
