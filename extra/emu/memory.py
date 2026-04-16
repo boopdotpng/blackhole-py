@@ -1,5 +1,3 @@
-"""Blackhole Tensix tile address map and memory routing."""
-
 # =============================================================================
 # L1 shared tile memory
 # =============================================================================
@@ -41,11 +39,11 @@ TRISC0_LDM_SCRATCH     = NCRISC_LDM_SCRATCH + 0x2000          # 0x0C6B0
 TRISC1_LDM_SCRATCH     = TRISC0_LDM_SCRATCH + 0x1000          # 0x0D6B0
 TRISC2_LDM_SCRATCH     = TRISC1_LDM_SCRATCH + 0x1000          # 0x0E6B0
 LDM_SCRATCH = {
-    'brisc':  BRISC_LDM_SCRATCH,
-    'ncrisc': NCRISC_LDM_SCRATCH,
-    'trisc0': TRISC0_LDM_SCRATCH,
-    'trisc1': TRISC1_LDM_SCRATCH,
-    'trisc2': TRISC2_LDM_SCRATCH,
+  'brisc':  BRISC_LDM_SCRATCH,
+  'ncrisc': NCRISC_LDM_SCRATCH,
+  'trisc0': TRISC0_LDM_SCRATCH,
+  'trisc1': TRISC1_LDM_SCRATCH,
+  'trisc2': TRISC2_LDM_SCRATCH,
 }
 
 # =============================================================================
@@ -175,6 +173,26 @@ STREAM_STRIDE          = 0x1000     # 64 streams × 4 KiB each
 STREAM_END             = 0xFFB7FFFF
 STREAM_TILES_ACKED     = 0x020      # per-stream offset: reg 8
 STREAM_TILES_RECEIVED  = 0x028      # per-stream offset: reg 10
+STREAM_SYNC_REG        = 0x07C      # per-stream offset: reg 31 (general sync pointer)
+STREAM_DISPATCH_REG    = 270 * 4    # per-stream offset: reg 270 (dispatch signal)
+
+# CB N lives at stream (CB_STREAM_ID_OFFSET + N).  tt-metal's public header
+# claims OPERAND_START_STREAM = 0, but every Blackhole firmware build we
+# disassembled (blackhole-py/disasms) and our own rvlib.init_sync_registers
+# iterate from stream 8 — so that's what we emulate.  Stream 0 is reserved
+# for get_sync_register_ptr(), streams 1..7 are unused, stream 48 is dispatch.
+CB_STREAM_ID_OFFSET    = 8
+STREAM_DISPATCH_ID     = 48         # go_msg dispatch completion stream
+DISPATCH_MESSAGE_ADDR  = STREAM_BASE + STREAM_DISPATCH_ID * STREAM_STRIDE + STREAM_DISPATCH_REG  # 0xFFB70438
+
+def cb_stream_id(cb: int) -> int:
+  return CB_STREAM_ID_OFFSET + cb
+
+def cb_tiles_received_addr(cb: int) -> int:
+  return STREAM_BASE + cb_stream_id(cb) * STREAM_STRIDE + STREAM_TILES_RECEIVED
+
+def cb_tiles_acked_addr(cb: int) -> int:
+  return STREAM_BASE + cb_stream_id(cb) * STREAM_STRIDE + STREAM_TILES_ACKED
 
 # =============================================================================
 # Circular buffer constants
@@ -245,137 +263,57 @@ TENSIX_CFG_END         = 0xFFEFFFFF
 # =============================================================================
 # Hardware semaphores — 8 per tile, 4-bit value + 4-bit max
 # =============================================================================
-class Semaphores:
-    """8 hardware semaphores per Tensix tile.
-
-    Accessed by TRISCs via the PCBuf semaphore window (0xFFE80020-0xFFE8003C).
-    Read returns value. Write with bit 0 clear = SEMPOST, bit 0 set = SEMGET.
-    """
-    def __init__(self):
-        self.value = [0] * 8
-        self.max = [0] * 8
-
-    def init(self, idx, value, max_value):
-        self.value[idx] = value & 0xF
-        self.max[idx] = max_value & 0xF
-
-    def post(self, idx):
-        if self.value[idx] < self.max[idx]:
-            self.value[idx] += 1
-
-    def get(self, idx):
-        if self.value[idx] > 0:
-            self.value[idx] -= 1
-
 # Precomputed semaphore window address range
 _SEM_WIN_LO = PCBUF_T0 + PCBUF_SEM_BASE        # 0xFFE80020
 _SEM_WIN_HI = _SEM_WIN_LO + 7 * 4              # 0xFFE8003C
+
+
+class Semaphores:
+  def __init__(self):
+    self.value = [0] * 8
+    self.max = [0] * 8
+
+  def init(self, idx, value, max_value):
+    self.value[idx] = value & 0xF
+    self.max[idx] = max_value & 0xF
+
+  def post(self, idx):
+    if self.value[idx] < self.max[idx]:
+      self.value[idx] += 1
+
+  def get(self, idx):
+    if self.value[idx] > 0:
+      self.value[idx] -= 1
+
+  # -- router handler API ----------------------------------------------------
+  # Reads return the semaphore value; writes are post (bit 0 clear) or get (set).
+
+  def read8(self, addr):  return self.read32(addr & ~3) >> ((addr & 3) * 8) & 0xFF
+  def read16(self, addr): return self.read32(addr & ~3) >> ((addr & 2) * 8) & 0xFFFF
+  def read32(self, addr): return self.value[(addr - _SEM_WIN_LO) >> 2]
+
+  def write8(self, addr, val):  self.write32(addr & ~3, val)
+  def write16(self, addr, val): self.write32(addr & ~3, val)
+  def write32(self, addr, val):
+    idx = (addr - _SEM_WIN_LO) >> 2
+    if val & 1 == 0: self.post(idx)
+    else:            self.get(idx)
 
 # =============================================================================
 # Sparse memory
 # =============================================================================
 class Memory:
-    """Sparse byte-addressable memory. Reads to unwritten addresses return 0."""
-    def __init__(self):
-        self._data: dict[int, int] = {}
-    def read8(self, addr):          return self._data.get(addr, 0)
-    def write8(self, addr, val):    self._data[addr] = val & 0xFF
-    def read16(self, addr):         return self.read8(addr) | (self.read8(addr + 1) << 8)
-    def write16(self, addr, val):   self.write8(addr, val & 0xFF); self.write8(addr + 1, (val >> 8) & 0xFF)
-    def read32(self, addr):
-        return (self.read8(addr) | (self.read8(addr+1) << 8)
-                | (self.read8(addr+2) << 16) | (self.read8(addr+3) << 24))
-    def write32(self, addr, val):
-        for i in range(4): self.write8(addr + i, (val >> (8*i)) & 0xFF)
-    def load(self, addr, data):
-        for i, b in enumerate(data): self._data[addr + i] = b
+  def __init__(self):
+    self._data: dict[int, int] = {}
+  def read8(self, addr):          return self._data.get(addr, 0)
+  def write8(self, addr, val):    self._data[addr] = val & 0xFF
+  def read16(self, addr):         return self.read8(addr) | (self.read8(addr + 1) << 8)
+  def write16(self, addr, val):   self.write8(addr, val & 0xFF); self.write8(addr + 1, (val >> 8) & 0xFF)
+  def read32(self, addr):
+    return (self.read8(addr) | (self.read8(addr+1) << 8)
+        | (self.read8(addr+2) << 16) | (self.read8(addr+3) << 24))
+  def write32(self, addr, val):
+    for i in range(4): self.write8(addr + i, (val >> (8*i)) & 0xFF)
+  def load(self, addr, data):
+    for i, b in enumerate(data): self._data[addr + i] = b
 
-# =============================================================================
-# Address map — routes core memory accesses to the correct backing store
-# =============================================================================
-class AddressMap:
-    """Routes a core's load/store to L1, LDM, NIU regs, or MMIO stubs.
-
-    Regions:
-      L1          0x00000000..0x0017FFFF  shared tile memory (accurate)
-      LDM         0xFFB00000+ldm_size     core-private SRAM (accurate)
-      NOC0 regs   0xFFB20000..0xFFB2FFFF  NIU register file (stub, noc.py later)
-      NOC1 regs   0xFFB30000..0xFFB3FFFF  NIU register file (stub, noc.py later)
-      Instrn FIFO 0xFFE40000..0xFFE6FFFF  → on_instrn_write callback (tensix later)
-      Tensix CFG  0xFFEF0000..0xFFEFFFFF  config register file
-      Everything else                      catch-all MMIO (reads=0, writes stored)
-    """
-    def __init__(self, l1, ldm, ldm_size):
-        self.l1 = l1               # Memory — shared tile L1
-        self.ldm = ldm             # Memory — core-private SRAM
-        self.ldm_size = ldm_size
-        self.noc = [Memory(), Memory()]  # NOC0, NOC1 register files
-        self.cfg = Memory()              # Tensix backend config registers
-        self.mmio = Memory()             # catch-all for other MMIO regions
-        self.slow_ldm = []               # [(Memory, size), ...] for 5 cross-core LDM slots
-        self.semaphores = None           # Semaphores — set by device
-        self.on_instrn_write = None      # callback(thread_id, word) — set by tensix later
-        self.on_noc_cmd = None           # callback(noc_id, buf_idx) — set by noc later
-
-    def _route(self, addr):
-        """Return (Memory, offset) for addr. Instruction FIFO and NOC CMD_CTRL
-        are handled specially in write32, not here."""
-        if addr <= L1_END:
-            return self.l1, addr
-        if self.ldm_size and LDM_BASE <= addr < LDM_BASE + self.ldm_size:
-            return self.ldm, addr - LDM_BASE
-        if self.slow_ldm and LDM_SLOW_BRISC <= addr < LDM_SLOW_BRISC + 5 * LDM_SLOW_STRIDE:
-            slot = (addr - LDM_SLOW_BRISC) >> 13
-            if slot < len(self.slow_ldm):
-                mem, size = self.slow_ldm[slot]
-                off = addr - (LDM_SLOW_BRISC + slot * LDM_SLOW_STRIDE)
-                if off < size:
-                    return mem, off
-            return self.mmio, addr
-        if NOC0_BASE <= addr < NOC0_BASE + NOC_SIZE:
-            return self.noc[0], addr - NOC0_BASE
-        if NOC1_BASE <= addr < NOC1_BASE + NOC_SIZE:
-            return self.noc[1], addr - NOC1_BASE
-        if TENSIX_CFG_BASE <= addr <= TENSIX_CFG_END:
-            return self.cfg, addr - TENSIX_CFG_BASE
-        return self.mmio, addr
-
-    def read8(self, addr):
-        mem, off = self._route(addr); return mem.read8(off)
-    def read16(self, addr):
-        mem, off = self._route(addr); return mem.read16(off)
-    def read32(self, addr):
-        if self.semaphores and _SEM_WIN_LO <= addr <= _SEM_WIN_HI:
-            return self.semaphores.value[(addr - _SEM_WIN_LO) >> 2]
-        mem, off = self._route(addr); return mem.read32(off)
-
-    def write8(self, addr, val):
-        mem, off = self._route(addr); mem.write8(off, val)
-    def write16(self, addr, val):
-        mem, off = self._route(addr); mem.write16(off, val)
-
-    def write32(self, addr, val):
-        # PCBuf semaphore window: bit 0 clear = SEMPOST, bit 0 set = SEMGET
-        if self.semaphores and _SEM_WIN_LO <= addr <= _SEM_WIN_HI:
-            idx = (addr - _SEM_WIN_LO) >> 2
-            if val & 1 == 0:
-                self.semaphores.post(idx)
-            else:
-                self.semaphores.get(idx)
-            return
-        # Instruction FIFO writes → tensix callback
-        if INSTRN_BUF_T0 <= addr <= INSTRN_BUF_END:
-            thread = (addr - INSTRN_BUF_T0) >> 16  # 0, 1, or 2
-            if self.on_instrn_write: self.on_instrn_write(thread, val)
-            return
-        # NOC CMD_CTRL writes → fire transaction callback
-        for noc_id, base in enumerate((NOC0_BASE, NOC1_BASE)):
-            if base <= addr < base + NOC_SIZE:
-                off = addr - base
-                buf_idx = off >> 11  # 0x800 stride → bits [12:11]
-                reg_off = off & 0x7FF
-                self.noc[noc_id].write32(off, val)
-                if reg_off == NIU_CMD_CTRL and val == 1 and self.on_noc_cmd:
-                    self.on_noc_cmd(noc_id, buf_idx)
-                return
-        mem, off = self._route(addr); mem.write32(off, val)

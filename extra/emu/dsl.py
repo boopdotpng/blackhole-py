@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from functools import partial
+import struct
 import sys
 
 # =============================================================================
@@ -39,7 +40,6 @@ def bits(v, hi, lo=None):
 # =============================================================================
 @dataclass(frozen=True)
 class F:
-  """A bitfield within a 24-bit Tensix parameter word."""
   name: str
   shift: int
   width: int
@@ -55,14 +55,24 @@ class TensixOp:
     TensixOp._all.append(self)
 
   def __call__(self, *args, **kwargs):
+    if len(args) > len(self.fields):
+      raise TypeError(f"{self.name or '?'}: expected at most {len(self.fields)} positional args, got {len(args)}")
+    field_names = {f.name for f in self.fields}
+    extra_kwargs = sorted(kwargs.keys() - field_names)
+    if extra_kwargs:
+      names = ", ".join(repr(k) for k in extra_kwargs)
+      raise TypeError(f"{self.name or '?'}: unexpected keyword arg(s): {names}")
     vals = {}
     for i, f in enumerate(self.fields):
-      if i < len(args): vals[f.name] = args[i]
+      if i < len(args):
+        if f.name in kwargs:
+          raise TypeError(f"{self.name or '?'}: got multiple values for arg '{f.name}'")
+        vals[f.name] = args[i]
       elif f.name in kwargs: vals[f.name] = kwargs[f.name]
       else: raise TypeError(f"{self.name or '?'}: missing arg '{f.name}'")
     p = 0
     for f in self.fields:
-      v = vals[f.name]
+      v = int(vals[f.name])
       if not 0 <= v < (1 << f.width):
         raise ValueError(f"{self.name}.{f.name}={v} doesn't fit in {f.width} bits")
       p |= v << f.shift
@@ -79,13 +89,37 @@ class TensixOp:
 
 TENSIX_ISA = TensixOp._all
 
+class TensixDecoded:
+  """Decoded Tensix instruction. Fields are accessible as attributes:
+    d = decode_tensix(word)
+    d.name        # e.g. 'ZEROACC', or 'UNKNOWN_0x03' for unknown opcodes
+    d.word        # raw 32-bit word
+    d.clear_mode  # op-specific field (KeyError-as-AttributeError otherwise)
+  """
+  def __init__(self, name, word, fields):
+    self.name = name
+    self.word = word & 0xFFFFFFFF
+    self._fields = fields
+
+  def __getattr__(self, k):
+    fields = object.__getattribute__(self, '_fields')
+    if k in fields: return fields[k]
+    raise AttributeError(f"{self.name!r} has no field {k!r}; fields: {list(fields)}")
+
+  def __int__(self): return self.word
+
+  def __repr__(self):
+    args = ', '.join(f'{k}=0x{v:X}' for k, v in self._fields.items())
+    return f'{self.name}({args})' if args else f'{self.name}()'
+
+_TENSIX_BY_OPCODE = {}  # rebuilt below after names are assigned
+
 def decode_tensix(word):
-  """Decode a raw 32-bit Tensix word into (name, {field: value})."""
   op = (word >> 24) & 0xFF
-  for insn in TENSIX_ISA:
-    if insn.opcode == op:
-      return (insn.name, insn.decode(word))
-  return (f"UNKNOWN_0x{op:02X}", {"raw_params": word & 0xFFFFFF})
+  insn = _TENSIX_BY_OPCODE.get(op)
+  if insn is None:
+    return TensixDecoded(f"UNKNOWN_0x{op:02X}", word, {"raw_params": word & 0xFFFFFF})
+  return TensixDecoded(insn.name, word, insn.decode(word))
 
 # =============================================================================
 # RISC-V encoding formats
@@ -114,12 +148,13 @@ def _j(op, rd, imm):
 ADD  = partial(_r, 0x33, 0, 0x00); SUB  = partial(_r, 0x33, 0, 0x20)
 SLL  = partial(_r, 0x33, 1, 0x00); SLT  = partial(_r, 0x33, 2, 0x00)
 SLTU = partial(_r, 0x33, 3, 0x00); XOR  = partial(_r, 0x33, 4, 0x00)
-SRL  = partial(_r, 0x33, 5, 0x00)
+SRL  = partial(_r, 0x33, 5, 0x00); SRA  = partial(_r, 0x33, 5, 0x20)
 OR   = partial(_r, 0x33, 6, 0x00); AND  = partial(_r, 0x33, 7, 0x00)
 ADDI  = partial(_i, 0x13, 0)
 SLTIU = partial(_i, 0x13, 3); XORI  = partial(_i, 0x13, 4)
 ORI   = partial(_i, 0x13, 6); ANDI  = partial(_i, 0x13, 7)
-SLLI  = partial(_i, 0x13, 1); SRLI  = partial(_i, 0x13, 5)
+SLLI  = lambda rd, rs1, shamt: _i(0x13, 1, rd, rs1, U(shamt,5))
+SRLI  = lambda rd, rs1, shamt: _i(0x13, 5, rd, rs1, U(shamt,5))
 SRAI  = lambda rd, rs1, shamt: _i(0x13, 5, rd, rs1, U(shamt,5) | 0x400)
 LW  = partial(_i, 0x03, 2); LBU = partial(_i, 0x03, 4); LHU = partial(_i, 0x03, 5)
 SB = partial(_s, 0x23, 0); SH = partial(_s, 0x23, 1); SW = partial(_s, 0x23, 2)
@@ -191,6 +226,155 @@ J      = lambda imm: JAL(zero, imm)
 JR     = lambda rs: JALR(zero, rs, 0)
 RET    = lambda: JALR(zero, ra, 0)
 ZEXT_B = lambda rd, rs: ANDI(rd, rs, 0xFF)
+
+# =============================================================================
+# RISC-V decoder — raw 32-bit word → RvDecoded(name, rd, rs1, ...)
+# Mirrors decode_tensix; covers the RV32IMZba/Zbb subset above.
+# =============================================================================
+@dataclass(frozen=True)
+class RvDecoded:
+  name: str     # e.g. 'ADD', 'ZEXT_H', 'CSRRS', or 'UNKNOWN'
+  word: int = 0
+  rd: int = 0
+  rs1: int = 0  # for CSRRWI/CSRRSI/CSRRCI this holds the 5-bit zimm
+  rs2: int = 0
+  imm: int = 0  # sign-extended where applicable; LUI/AUIPC keep upper 20 in place
+  shamt: int = 0
+  csr: int = 0
+  def __int__(self): return self.word
+
+def _sext(v, w): return v - (1 << w) if v & (1 << (w-1)) else v
+
+def _x_R(w):   return dict(rd=bits(w,11,7), rs1=bits(w,19,15), rs2=bits(w,24,20))
+def _x_I(w):   return dict(rd=bits(w,11,7), rs1=bits(w,19,15), imm=_sext(bits(w,31,20), 12))
+def _x_Ish(w): return dict(rd=bits(w,11,7), rs1=bits(w,19,15), shamt=bits(w,24,20))
+def _x_S(w):   return dict(rs1=bits(w,19,15), rs2=bits(w,24,20),
+                           imm=_sext(bits(w,11,7) | (bits(w,31,25)<<5), 12))
+def _x_B(w):   return dict(rs1=bits(w,19,15), rs2=bits(w,24,20),
+                           imm=_sext((bits(w,11,8)<<1) | (bits(w,30,25)<<5)
+                             | (bits(w,7)<<11) | (bits(w,31)<<12), 13))
+def _x_U(w):   return dict(rd=bits(w,11,7), imm=w & 0xFFFFF000)
+def _x_J(w):   return dict(rd=bits(w,11,7),
+                           imm=_sext((bits(w,30,21)<<1) | (bits(w,20)<<11)
+                             | (bits(w,19,12)<<12) | (bits(w,31)<<20), 21))
+def _x_CSR(w): return dict(rd=bits(w,11,7), rs1=bits(w,19,15), csr=bits(w,31,20))
+def _x_NONE(w): return {}
+
+_FMT = {'R':_x_R, 'I':_x_I, 'Ish':_x_Ish, 'S':_x_S, 'B':_x_B,
+        'U':_x_U, 'J':_x_J, 'CSR':_x_CSR, 'NONE':_x_NONE}
+
+# (mask, bits, name, fmt) — source of truth for every opcode the core emulates.
+_RV_DECODE = [
+    # RV32I R-type
+    (0xFE00707F, 0x00000033, 'ADD',    'R'),
+    (0xFE00707F, 0x40000033, 'SUB',    'R'),
+    (0xFE00707F, 0x00001033, 'SLL',    'R'),
+    (0xFE00707F, 0x00002033, 'SLT',    'R'),
+    (0xFE00707F, 0x00003033, 'SLTU',   'R'),
+    (0xFE00707F, 0x00004033, 'XOR',    'R'),
+    (0xFE00707F, 0x00005033, 'SRL',    'R'),
+    (0xFE00707F, 0x40005033, 'SRA',    'R'),
+    (0xFE00707F, 0x00006033, 'OR',     'R'),
+    (0xFE00707F, 0x00007033, 'AND',    'R'),
+    # M extension
+    (0xFE00707F, 0x02000033, 'MUL',    'R'),
+    (0xFE00707F, 0x02001033, 'MULH',   'R'),
+    (0xFE00707F, 0x02002033, 'MULHSU', 'R'),
+    (0xFE00707F, 0x02003033, 'MULHU',  'R'),
+    (0xFE00707F, 0x02004033, 'DIV',    'R'),
+    (0xFE00707F, 0x02005033, 'DIVU',   'R'),
+    (0xFE00707F, 0x02006033, 'REM',    'R'),
+    (0xFE00707F, 0x02007033, 'REMU',   'R'),
+    # Zba
+    (0xFE00707F, 0x20002033, 'SH1ADD', 'R'),
+    (0xFE00707F, 0x20004033, 'SH2ADD', 'R'),
+    (0xFE00707F, 0x20006033, 'SH3ADD', 'R'),
+    # Zbb R-type (ZEXT_H also mandates rs2=0 → wider mask)
+    (0xFFF0707F, 0x08004033, 'ZEXT_H', 'R'),
+    (0xFE00707F, 0x0A004033, 'MIN',    'R'),
+    (0xFE00707F, 0x0A005033, 'MINU',   'R'),
+    (0xFE00707F, 0x0A006033, 'MAX',    'R'),
+    (0xFE00707F, 0x0A007033, 'MAXU',   'R'),
+    (0xFE00707F, 0x40004033, 'XNOR',   'R'),
+    (0xFE00707F, 0x40006033, 'ORN',    'R'),
+    (0xFE00707F, 0x40007033, 'ANDN',   'R'),
+    (0xFE00707F, 0x60001033, 'ROL',    'R'),
+    (0xFE00707F, 0x60005033, 'ROR',    'R'),
+    # RV32I I-type ALU
+    (0x0000707F, 0x00000013, 'ADDI',   'I'),
+    (0x0000707F, 0x00002013, 'SLTI',   'I'),
+    (0x0000707F, 0x00003013, 'SLTIU',  'I'),
+    (0x0000707F, 0x00004013, 'XORI',   'I'),
+    (0x0000707F, 0x00006013, 'ORI',    'I'),
+    (0x0000707F, 0x00007013, 'ANDI',   'I'),
+    # Zbb I-type unary (funct12 fully fixed → mask before I-shift)
+    (0xFFF0707F, 0x60001013, 'CLZ',    'Ish'),
+    (0xFFF0707F, 0x60101013, 'CTZ',    'Ish'),
+    (0xFFF0707F, 0x60201013, 'CPOP',   'Ish'),
+    (0xFFF0707F, 0x60401013, 'SEXT_B', 'Ish'),
+    (0xFFF0707F, 0x60501013, 'SEXT_H', 'Ish'),
+    (0xFFF0707F, 0x28705013, 'ORC_B',  'Ish'),
+    (0xFFF0707F, 0x69805013, 'REV8',   'Ish'),
+    # I-type shifts
+    (0xFE00707F, 0x00001013, 'SLLI',   'Ish'),
+    (0xFE00707F, 0x00005013, 'SRLI',   'Ish'),
+    (0xFE00707F, 0x40005013, 'SRAI',   'Ish'),
+    (0xFE00707F, 0x60005013, 'RORI',   'Ish'),
+    # Loads
+    (0x0000707F, 0x00000003, 'LB',     'I'),
+    (0x0000707F, 0x00001003, 'LH',     'I'),
+    (0x0000707F, 0x00002003, 'LW',     'I'),
+    (0x0000707F, 0x00004003, 'LBU',    'I'),
+    (0x0000707F, 0x00005003, 'LHU',    'I'),
+    # Stores
+    (0x0000707F, 0x00000023, 'SB',     'S'),
+    (0x0000707F, 0x00001023, 'SH',     'S'),
+    (0x0000707F, 0x00002023, 'SW',     'S'),
+    # Branches
+    (0x0000707F, 0x00000063, 'BEQ',    'B'),
+    (0x0000707F, 0x00001063, 'BNE',    'B'),
+    (0x0000707F, 0x00004063, 'BLT',    'B'),
+    (0x0000707F, 0x00005063, 'BGE',    'B'),
+    (0x0000707F, 0x00006063, 'BLTU',   'B'),
+    (0x0000707F, 0x00007063, 'BGEU',   'B'),
+    # Upper-immediate
+    (0x0000007F, 0x00000037, 'LUI',    'U'),
+    (0x0000007F, 0x00000017, 'AUIPC',  'U'),
+    # Jumps
+    (0x0000007F, 0x0000006F, 'JAL',    'J'),
+    (0x0000707F, 0x00000067, 'JALR',   'I'),
+    # CSR (register form)
+    (0x0000707F, 0x00001073, 'CSRRW',  'CSR'),
+    (0x0000707F, 0x00002073, 'CSRRS',  'CSR'),
+    (0x0000707F, 0x00003073, 'CSRRC',  'CSR'),
+    # CSR (immediate form — zimm lives in the rs1 slot)
+    (0x0000707F, 0x00005073, 'CSRRWI', 'CSR'),
+    (0x0000707F, 0x00006073, 'CSRRSI', 'CSR'),
+    (0x0000707F, 0x00007073, 'CSRRCI', 'CSR'),
+    # FENCE (catch any opcode 0x0F — FENCE.I etc. are no-ops here)
+    (0x0000007F, 0x0000000F, 'FENCE',  'NONE'),
+]
+
+# Bucket by opcode (low 7 bits) for O(1) lookup per decode.
+_RV_BY_OPCODE = {}
+for _m, _b, _n, _f in _RV_DECODE:
+  _RV_BY_OPCODE.setdefault(_b & 0x7F, []).append((_m, _b, _n, _f))
+
+def decode_rv(word):
+  w = word & 0xFFFFFFFF
+  for mask, b, name, fmt in _RV_BY_OPCODE.get(w & 0x7F, ()):
+    if (w & mask) == b:
+      return RvDecoded(name=name, word=w, **_FMT[fmt](w))
+  return RvDecoded(name='UNKNOWN', word=w)
+
+def parse(data):
+  if isinstance(data, (bytes, bytearray, memoryview)):
+    if len(data) % 4: raise ValueError(f"byte length {len(data)} not a multiple of 4")
+    data = struct.unpack(f'<{len(data)//4}I', bytes(data))
+  return [decode_rv(int(w)) for w in data]
+
+def pack(insns):
+  return b''.join((int(i) & 0xFFFFFFFF).to_bytes(4, 'little') for i in insns)
 
 # =============================================================================
 # .ttinsn encoding: Tensix word → RISC-V custom instruction
@@ -554,10 +738,11 @@ TT_SFPMUL24 = TensixOp(0x98, "24-bit integer multiply (BH-new)", _MAD())
 TT_SFPARECIP = TensixOp(0x99, "Approximate reciprocal: ~1/VC (7-bit), or ~exp(|VC|) with sign copy", _SIMPLE())
 
 # =============================================================================
-# Post-init: set .name from module globals
+# Post-init: set .name from module globals (strip TT_ prefix) and bucket by opcode
 # =============================================================================
 _mod = sys.modules[__name__]
 for _n in list(vars(_mod)):
   _o = getattr(_mod, _n)
   if isinstance(_o, TensixOp):
-    _o.name = _n
+    _o.name = _n.removeprefix('TT_')
+    _TENSIX_BY_OPCODE[_o.opcode] = _o
