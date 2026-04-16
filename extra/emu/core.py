@@ -67,8 +67,26 @@ class Core:
                     case (7, 0x00): self._wr(rd, v1 & v2)                           # AND
                     # M extension
                     case (0, 0x01): self._wr(rd, v1 * v2)                           # MUL
+                    case (1, 0x01): self._wr(rd, (_sext(v1,32) * _sext(v2,32)) >> 32)  # MULH
+                    case (2, 0x01): self._wr(rd, (_sext(v1,32) * v2) >> 32)        # MULHSU
                     case (3, 0x01): self._wr(rd, (v1 * v2) >> 32)                  # MULHU
+                    case (4, 0x01):                                                 # DIV
+                        s1, s2 = _sext(v1, 32), _sext(v2, 32)
+                        if s2 == 0: self._wr(rd, M32)
+                        elif s1 == -0x80000000 and s2 == -1: self._wr(rd, s1)
+                        else:
+                            q = abs(s1) // abs(s2)
+                            if (s1 < 0) != (s2 < 0): q = -q
+                            self._wr(rd, q)
                     case (5, 0x01): self._wr(rd, v1 // v2 if v2 else M32)          # DIVU
+                    case (6, 0x01):                                                 # REM
+                        s1, s2 = _sext(v1, 32), _sext(v2, 32)
+                        if s2 == 0: self._wr(rd, v1)
+                        elif s1 == -0x80000000 and s2 == -1: self._wr(rd, 0)
+                        else:
+                            r = abs(s1) % abs(s2)
+                            if s1 < 0: r = -r
+                            self._wr(rd, r)
                     case (7, 0x01): self._wr(rd, v1 % v2 if v2 else v1)            # REMU
                     # Zba
                     case (2, 0x10): self._wr(rd, (v1 << 1) + v2)                   # SH1ADD
@@ -78,15 +96,28 @@ class Core:
                     case (4, 0x04): self._wr(rd, v1 & 0xFFFF)                      # ZEXT.H
                     case (4, 0x05): self._wr(rd, min(_sext(v1,32), _sext(v2,32)))  # MIN
                     case (5, 0x05): self._wr(rd, min(v1, v2))                      # MINU
+                    case (6, 0x05): self._wr(rd, max(_sext(v1,32), _sext(v2,32)))  # MAX
                     case (7, 0x05): self._wr(rd, max(v1, v2))                      # MAXU
+                    # Zbb bit manipulation
+                    case (4, 0x20): self._wr(rd, ~(v1 ^ v2))                       # XNOR
+                    case (6, 0x20): self._wr(rd, v1 | ~v2)                         # ORN
+                    case (7, 0x20): self._wr(rd, v1 & ~v2)                         # ANDN
+                    case (1, 0x30):                                                 # ROL
+                        sh = v2 & 0x1F
+                        self._wr(rd, (v1 << sh) | (v1 >> (32 - sh)))
+                    case (5, 0x30):                                                 # ROR
+                        sh = v2 & 0x1F
+                        self._wr(rd, (v1 >> sh) | (v1 << (32 - sh)))
             case 0x13:  # I-type ALU
                 shamt = (word >> 20) & 0x1F
                 match funct3:
                     case 0: self._wr(rd, v1 + imm_i)                               # ADDI
                     case 1:
                         match (funct7, shamt):
+                            case (0x30, 0): self._wr(rd, 32 - v1.bit_length())     # CLZ
                             case (0x30, 1):                                         # CTZ
                                 self._wr(rd, (v1 & -v1).bit_length() - 1 if v1 else 32)
+                            case (0x30, 2): self._wr(rd, bin(v1).count('1'))        # CPOP
                             case (0x30, 4): self._wr(rd, _sext(v1 & 0xFF, 8))      # SEXT.B
                             case (0x30, 5): self._wr(rd, _sext(v1 & 0xFFFF, 16))   # SEXT.H
                             case _: self._wr(rd, v1 << shamt)                       # SLLI
@@ -97,6 +128,14 @@ class Core:
                         match funct7:
                             case 0x00: self._wr(rd, v1 >> shamt)                    # SRLI
                             case 0x20: self._wr(rd, _sext(v1,32) >> shamt)          # SRAI
+                            case 0x30:                                               # RORI
+                                self._wr(rd, (v1 >> shamt) | (v1 << (32 - shamt)))
+                            case 0x14:                                               # ORC.B
+                                r = 0
+                                for j in range(4): r |= (0xFF if (v1 >> j*8) & 0xFF else 0) << j*8
+                                self._wr(rd, r)
+                            case 0x34:                                               # REV8
+                                self._wr(rd, ((v1&0xFF)<<24)|((v1>>8&0xFF)<<16)|((v1>>16&0xFF)<<8)|(v1>>24&0xFF))
                     case 6: self._wr(rd, v1 | (imm_i & M32))                       # ORI
                     case 7: self._wr(rd, v1 & (imm_i & M32))                       # ANDI
             case 0x03:  # loads

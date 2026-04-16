@@ -192,6 +192,190 @@ def test_maxu():
     ])
     assert core.regs[dsl.a2] == 20
 
+# -- M extension: MULH, MULHSU, DIV, REM -------------------------------------
+
+def test_mulh():
+    """Signed × signed → upper 32 bits."""
+    core = run([
+        dsl.ADDI(dsl.a0, dsl.zero, -1),       # 0xFFFFFFFF = -1
+        dsl.ADDI(dsl.a1, dsl.zero, -1),
+        dsl.MULH(dsl.a2, dsl.a0, dsl.a1),
+    ])
+    # (-1) * (-1) = 1 → upper 32 bits = 0
+    assert core.regs[dsl.a2] == 0
+
+def test_mulh_negative():
+    core = run([
+        dsl.ADDI(dsl.a0, dsl.zero, -1),       # -1
+        dsl.ADDI(dsl.a1, dsl.zero, 2),
+        dsl.MULH(dsl.a2, dsl.a0, dsl.a1),
+    ])
+    # (-1) * 2 = -2 → upper 32 bits = -1 = 0xFFFFFFFF
+    assert core.regs[dsl.a2] == 0xFFFFFFFF
+
+def test_mulhsu():
+    """Signed × unsigned → upper 32 bits."""
+    core = run([
+        dsl.ADDI(dsl.a0, dsl.zero, -1),       # signed -1
+        dsl.ADDI(dsl.a1, dsl.zero, 2),         # unsigned 2
+        dsl.MULHSU(dsl.a2, dsl.a0, dsl.a1),
+    ])
+    # (-1) * 2 = -2 → upper 32 bits = -1 = 0xFFFFFFFF
+    assert core.regs[dsl.a2] == 0xFFFFFFFF
+
+def test_mulhsu_positive():
+    core = run([
+        dsl.LUI(dsl.a0, 0x10000000), dsl.ADDI(dsl.a1, dsl.zero, 16),
+        dsl.MULHSU(dsl.a2, dsl.a0, dsl.a1),
+    ])
+    # 0x10000000 * 16 = 0x1_0000_0000 → upper 32 = 1
+    assert core.regs[dsl.a2] == 1
+
+def test_div():
+    core = run([
+        dsl.ADDI(dsl.a0, dsl.zero, -7),       # -7
+        dsl.ADDI(dsl.a1, dsl.zero, 2),
+        dsl.DIV(dsl.a2, dsl.a0, dsl.a1),
+    ])
+    # -7 / 2 = -3 (truncate toward zero)
+    assert core.regs[dsl.a2] == (-3) & 0xFFFFFFFF
+
+def test_div_by_zero():
+    """RISC-V spec: DIV by zero returns -1 (0xFFFFFFFF)."""
+    core = run([
+        dsl.ADDI(dsl.a0, dsl.zero, 42),
+        dsl.DIV(dsl.a1, dsl.a0, dsl.zero),
+    ])
+    assert core.regs[dsl.a1] == 0xFFFFFFFF
+
+def test_div_overflow():
+    """RISC-V spec: -2^31 / -1 returns -2^31 (overflow)."""
+    core = run([
+        dsl.LUI(dsl.a0, 0x80000000),          # -2^31
+        dsl.ADDI(dsl.a1, dsl.zero, -1),
+        dsl.DIV(dsl.a2, dsl.a0, dsl.a1),
+    ])
+    assert core.regs[dsl.a2] == 0x80000000
+
+def test_rem():
+    core = run([
+        dsl.ADDI(dsl.a0, dsl.zero, -7),       # -7
+        dsl.ADDI(dsl.a1, dsl.zero, 2),
+        dsl.REM(dsl.a2, dsl.a0, dsl.a1),
+    ])
+    # -7 % 2 = -1 (sign follows dividend)
+    assert core.regs[dsl.a2] == (-1) & 0xFFFFFFFF
+
+def test_rem_by_zero():
+    """RISC-V spec: REM by zero returns dividend."""
+    core = run([
+        dsl.ADDI(dsl.a0, dsl.zero, 42),
+        dsl.REM(dsl.a1, dsl.a0, dsl.zero),
+    ])
+    assert core.regs[dsl.a1] == 42
+
+def test_rem_overflow():
+    """RISC-V spec: -2^31 % -1 returns 0."""
+    core = run([
+        dsl.LUI(dsl.a0, 0x80000000),
+        dsl.ADDI(dsl.a1, dsl.zero, -1),
+        dsl.REM(dsl.a2, dsl.a0, dsl.a1),
+    ])
+    assert core.regs[dsl.a2] == 0
+
+# -- Zbb: MAX, CLZ, CPOP, ANDN, ORN, XNOR, ROL, ROR, RORI, REV8, ORC.B -----
+
+def test_max():
+    core = run([
+        dsl.ADDI(dsl.a0, dsl.zero, -1),       # -1 signed
+        dsl.ADDI(dsl.a1, dsl.zero, 1),
+        dsl.MAX(dsl.a2, dsl.a0, dsl.a1),
+    ])
+    assert core.regs[dsl.a2] == 1
+
+def test_clz():
+    core = run([dsl.ADDI(dsl.a0, dsl.zero, 1), dsl.CLZ(dsl.a1, dsl.a0)])
+    assert core.regs[dsl.a1] == 31
+
+def test_clz_zero():
+    core = run([dsl.CLZ(dsl.a0, dsl.zero)])
+    assert core.regs[dsl.a0] == 32
+
+def test_clz_high_bit():
+    core = run([dsl.LUI(dsl.a0, 0x80000000), dsl.CLZ(dsl.a1, dsl.a0)])
+    assert core.regs[dsl.a1] == 0
+
+def test_cpop():
+    core = run([dsl.ADDI(dsl.a0, dsl.zero, 0xFF), dsl.CPOP(dsl.a1, dsl.a0)])
+    assert core.regs[dsl.a1] == 8
+
+def test_cpop_zero():
+    core = run([dsl.CPOP(dsl.a0, dsl.zero)])
+    assert core.regs[dsl.a0] == 0
+
+def test_andn():
+    core = run([
+        dsl.ADDI(dsl.a0, dsl.zero, 0xFF),
+        dsl.ADDI(dsl.a1, dsl.zero, 0x0F),
+        dsl.ANDN(dsl.a2, dsl.a0, dsl.a1),
+    ])
+    assert core.regs[dsl.a2] == 0xF0
+
+def test_orn():
+    core = run([
+        dsl.ADDI(dsl.a1, dsl.zero, -1),       # ~(-1) = 0
+        dsl.ORN(dsl.a2, dsl.zero, dsl.a1),
+    ])
+    assert core.regs[dsl.a2] == 0              # 0 | ~0xFFFFFFFF = 0
+
+def test_xnor():
+    core = run([
+        dsl.ADDI(dsl.a0, dsl.zero, 0xFF),
+        dsl.ADDI(dsl.a1, dsl.zero, 0xFF),
+        dsl.XNOR(dsl.a2, dsl.a0, dsl.a1),
+    ])
+    assert core.regs[dsl.a2] == 0xFFFFFFFF     # ~(x ^ x) = all ones
+
+def test_rol():
+    core = run([
+        dsl.ADDI(dsl.a0, dsl.zero, 1),
+        dsl.ADDI(dsl.a1, dsl.zero, 4),
+        dsl.ROL(dsl.a2, dsl.a0, dsl.a1),
+    ])
+    assert core.regs[dsl.a2] == 16             # 1 rotated left 4 = 16
+
+def test_ror():
+    core = run([
+        dsl.ADDI(dsl.a0, dsl.zero, 1),
+        dsl.ADDI(dsl.a1, dsl.zero, 1),
+        dsl.ROR(dsl.a2, dsl.a0, dsl.a1),
+    ])
+    assert core.regs[dsl.a2] == 0x80000000     # bit 0 wraps to bit 31
+
+def test_rori():
+    core = run([
+        dsl.ADDI(dsl.a0, dsl.zero, 1),
+        dsl.RORI(dsl.a1, dsl.a0, 1),
+    ])
+    assert core.regs[dsl.a1] == 0x80000000
+
+def test_rev8():
+    core = run([
+        dsl.LUI(dsl.a0, 0x12345000),
+        dsl.ADDI(dsl.a0, dsl.a0, 0x678),       # a0 = 0x12345678
+        dsl.REV8(dsl.a1, dsl.a0),
+    ])
+    assert core.regs[dsl.a1] == 0x78563412
+
+def test_orc_b():
+    core = run([
+        dsl.LUI(dsl.a0, 0x00FF0000),
+        dsl.ADDI(dsl.a0, dsl.a0, 0x01),        # a0 = 0x00FF0001
+        dsl.ORC_B(dsl.a1, dsl.a0),
+    ])
+    # byte 0: 0x01 != 0 → 0xFF, byte 1: 0x00 → 0x00, byte 2: 0xFF → 0xFF, byte 3: 0x00 → 0x00
+    assert core.regs[dsl.a1] == 0x00FF00FF
+
 # -- integration: kernel snippet -----------------------------------------------
 
 def test_add1_brisc_zext_mulhu_sequence():

@@ -134,8 +134,12 @@ CSRRC  = lambda rd, rs1, csr: _i(0x73, 3, rd, rs1, U(csr,12))
 
 # -- M extension ---------------------------------------------------------------
 MUL    = partial(_r, 0x33, 0, 0x01)
+MULH   = partial(_r, 0x33, 1, 0x01)
+MULHSU = partial(_r, 0x33, 2, 0x01)
 MULHU  = partial(_r, 0x33, 3, 0x01)
+DIV    = partial(_r, 0x33, 4, 0x01)
 DIVU   = partial(_r, 0x33, 5, 0x01)
+REM    = partial(_r, 0x33, 6, 0x01)
 REMU   = partial(_r, 0x33, 7, 0x01)
 
 # -- Zba -----------------------------------------------------------------------
@@ -144,12 +148,23 @@ SH2ADD = partial(_r, 0x33, 4, 0x10)
 SH3ADD = partial(_r, 0x33, 6, 0x10)
 
 # -- Zbb + Zbkb ----------------------------------------------------------------
+MAX  = partial(_r, 0x33, 6, 0x05)
 MAXU = partial(_r, 0x33, 7, 0x05)
 MIN  = partial(_r, 0x33, 4, 0x05); MINU = partial(_r, 0x33, 5, 0x05)
+ANDN = partial(_r, 0x33, 7, 0x20)
+ORN  = partial(_r, 0x33, 6, 0x20)
+XNOR = partial(_r, 0x33, 4, 0x20)
+ROL  = partial(_r, 0x33, 1, 0x30)
+ROR  = partial(_r, 0x33, 5, 0x30)
+CLZ    = lambda rd, rs1: _i(0x13, 1, rd, rs1, 0x600)
 CTZ    = lambda rd, rs1: _i(0x13, 1, rd, rs1, 0x601)
+CPOP   = lambda rd, rs1: _i(0x13, 1, rd, rs1, 0x602)
 SEXT_B = lambda rd, rs1: _i(0x13, 1, rd, rs1, 0x604)
 SEXT_H = lambda rd, rs1: _i(0x13, 1, rd, rs1, 0x605)
 ZEXT_H = lambda rd, rs1: _r(0x33, 4, 0x04, rd, rs1, 0)
+RORI   = lambda rd, rs1, shamt: _i(0x13, 5, rd, rs1, U(shamt, 5) | 0x600)
+REV8   = lambda rd, rs1: _i(0x13, 5, rd, rs1, 0x698)
+ORC_B  = lambda rd, rs1: _i(0x13, 5, rd, rs1, 0x287)
 
 # -- registers -----------------------------------------------------------------
 zero, ra, sp, gp, tp, t0, t1, t2, s0, s1 = range(10)
