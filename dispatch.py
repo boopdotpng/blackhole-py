@@ -285,7 +285,96 @@ def build_ir(
   commands.append(Launch(all_cores))
   return commands
 
-def slow_dispatch(win, commands: list[IRCommand]):
+_RISC_NAMES = ["brisc", "ncrisc", "trisc0", "trisc1", "trisc2"]
+
+def _resolve_stuck_pcs(win, x, y, dev):
+  """Read PCs for the stuck core and resolve them against RVIR kernel disassembly."""
+  try:
+    import os
+    if os.environ.get("RVIR") != "1":
+      return ""
+    # read kernel_config_base[0] and kernel_text_offset[0..4] from the launch msg in L1
+    launch_off = TensixL1.LAUNCH
+    kcb = int.from_bytes(win.mm[launch_off:launch_off+4], "little")
+    kto = [int.from_bytes(win.mm[launch_off+44+i*4:launch_off+44+i*4+4], "little") for i in range(5)]
+
+    # read PCs for this core via a separate MMIO-addressed window
+    mmio_base, _ = align_down(TensixMMIO.DBG_BUS_CNTL, TLBWindow.SIZE_2M)
+    cntl_off = TensixMMIO.DBG_BUS_CNTL - mmio_base
+    data_off = TensixMMIO.DBG_BUS_RD_DATA - mmio_base
+    with TLBWindow(dev, start=(x, y), addr=mmio_base) as dbg:
+      pcs = {r: read_risc_pc(dbg, cntl_off, data_off, r) for r in _RISC_NAMES}
+
+    from examples.add1 import _build_rvir_kernels
+    tiles = int(os.environ.get("TILES", "4"))
+    reader, writer, (t0, t1, t2) = _build_rvir_kernels(tiles)
+    # writer_kernel=reader (brisc), reader_kernel=writer (ncrisc)
+    kern_progs = {"brisc": reader, "ncrisc": writer, "trisc0": t0, "trisc1": t1, "trisc2": t2}
+    kern_disasms = {}
+    for name, prog in kern_progs.items():
+      prog.assemble()
+      kern_disasms[name] = prog.disasm()
+
+    lines = ["\n  --- PC resolution (RVIR add1 kernels) ---"]
+    for idx, risc in enumerate(_RISC_NAMES):
+      pc = pcs[risc]
+      lma = kcb + kto[idx]
+      disasm = kern_disasms.get(risc, "")
+      if not disasm or kto[idx] == 0:
+        lines.append(f"  {risc}: PC=0x{pc:08x} (no kernel)")
+        continue
+      # check if PC is in firmware or kernel
+      if pc < lma:
+        lines.append(f"  {risc}: PC=0x{pc:08x} (in firmware, before kernel @ 0x{lma:x})")
+        continue
+      offset = pc - lma
+      # find function + context in disasm
+      dlines = disasm.split("\n")
+      # build index: list of (addr, line_idx) for instruction lines
+      insn_addrs = []
+      for i, dl in enumerate(dlines):
+        stripped = dl.strip()
+        if ":" in stripped and not stripped.startswith("<") and not stripped.endswith(">:"):
+          try:
+            addr = int(stripped.split(":")[0], 16)
+            insn_addrs.append((addr, i))
+          except ValueError:
+            pass
+      # find closest instruction
+      fn_name, fn_addr = "???", 0
+      for i, dl in enumerate(dlines):
+        if "<" in dl and ">:" in dl:
+          try:
+            parts = dl.strip().split()
+            a = int(parts[0], 16)
+            n = dl.split("<")[1].split(">")[0]
+            if a <= offset:
+              fn_name, fn_addr = n, a
+          except (ValueError, IndexError):
+            pass
+      fn_off = offset - fn_addr
+      # find the instruction line index closest to our offset
+      best_idx = None
+      for addr, lidx in insn_addrs:
+        if addr == offset:
+          best_idx = lidx
+          break
+        if addr <= offset:
+          best_idx = lidx
+      # show context: 3 lines above and below
+      ctx = ""
+      if best_idx is not None:
+        start = max(0, best_idx - 3)
+        end = min(len(dlines), best_idx + 4)
+        for j in range(start, end):
+          marker = " >>>" if j == best_idx else "    "
+          ctx += f"\n      {marker} {dlines[j].rstrip()}"
+      lines.append(f"  {risc}: PC=0x{pc:08x} -> {fn_name}+0x{fn_off:x}{ctx}")
+    return "\n".join(lines)
+  except Exception as e:
+    return f"\n  (PC resolution failed: {e})"
+
+def slow_dispatch(win, commands: list[IRCommand], dev=None, all_cores=None):
   for cmd in commands:
     match cmd:
       case Write(cores=cores, addr=addr, data=data) if isinstance(data, list):
@@ -306,6 +395,61 @@ def slow_dispatch(win, commands: list[IRCommand]):
         for x, y in cores:
           win.target((x, y))
           deadline = time.perf_counter() + 10.0
+          host_sync_initial = None
+          host_sync_last = None
+          host_sync_first_change = None
+          host_sync_change_count = 0
           while win.mm[TensixL1.GO_MSG + 3] != DevMsgs.RUN_MSG_DONE:
+            sync_sample = int.from_bytes(win.mm[0x68:0x6C], "little")
+            if host_sync_initial is None:
+              host_sync_initial = sync_sample
+              host_sync_last = sync_sample
+            elif sync_sample != host_sync_last:
+              host_sync_change_count += 1
+              if host_sync_first_change is None:
+                host_sync_first_change = sync_sample
+              host_sync_last = sync_sample
             if time.perf_counter() > deadline:
-              raise TimeoutError(f"timeout waiting for core ({x}, {y}) -- try tt-smi -r")
+              sentinel = int.from_bytes(win.mm[0x240:0x244], "little")
+              go_val = int.from_bytes(win.mm[TensixL1.GO_MSG:TensixL1.GO_MSG+4], "little")
+              sync_val = int.from_bytes(win.mm[0x68:0x6C], "little")
+              t0 = int.from_bytes(win.mm[0x244:0x248], "little")
+              t1 = int.from_bytes(win.mm[0x248:0x24C], "little")
+              t2 = int.from_bytes(win.mm[0x24C:0x250], "little")
+              msg = f"timeout core ({x},{y}) brisc=0x{sentinel:x} go=0x{go_val:08x} sync=0x{sync_val:08x} t0=0x{t0:x} t1=0x{t1:x} t2=0x{t2:x}"
+              # Read BRISC kernel debug sentinels from L1
+              brisc_tiles_recv = int.from_bytes(win.mm[0x250:0x254], "little")
+              brisc_done = int.from_bytes(win.mm[0x254:0x258], "little")
+              brisc_tile_idx = int.from_bytes(win.mm[0x258:0x25C], "little")
+              ncrisc_stage = int.from_bytes(win.mm[0x25C:0x260], "little")
+              ncrisc_aux = int.from_bytes(win.mm[0x260:0x264], "little")
+              trisc0_stage = int.from_bytes(win.mm[0x268:0x26C], "little")
+              trisc0_aux = int.from_bytes(win.mm[0x26C:0x270], "little")
+              trisc1_stage = int.from_bytes(win.mm[0x270:0x274], "little")
+              trisc1_aux = int.from_bytes(win.mm[0x274:0x278], "little")
+              trisc2_stage = int.from_bytes(win.mm[0x278:0x27C], "little")
+              trisc2_aux = int.from_bytes(win.mm[0x27C:0x280], "little")
+              brisc_wait_stage = int.from_bytes(win.mm[0x1E80:0x1E84], "little")
+              brisc_wait_initial = int.from_bytes(win.mm[0x1E84:0x1E88], "little")
+              brisc_wait_last = int.from_bytes(win.mm[0x1E88:0x1E8C], "little")
+              brisc_wait_first_change = int.from_bytes(win.mm[0x1E8C:0x1E90], "little")
+              brisc_wait_reads = int.from_bytes(win.mm[0x1E90:0x1E94], "little")
+              trisc0_done_sync = int.from_bytes(win.mm[0x800:0x804], "little")
+              trisc1_done_sync = int.from_bytes(win.mm[0x804:0x808], "little")
+              trisc2_done_sync = int.from_bytes(win.mm[0x808:0x80C], "little")
+              trisc0_done_byte = int.from_bytes(win.mm[0xF80:0xF84], "little")
+              trisc1_done_byte = int.from_bytes(win.mm[0xF84:0xF88], "little")
+              trisc2_done_byte = int.from_bytes(win.mm[0xF88:0xF8C], "little")
+              msg += f"\n  BRISC kernel: tiles_recv_readback={brisc_tiles_recv} done=0x{brisc_done:x} tile_idx={brisc_tile_idx}"
+              msg += f"\n  NCRISC fw: stage=0x{ncrisc_stage:x} aux=0x{ncrisc_aux:x}"
+              msg += f"\n  TRISC0 fw: stage=0x{trisc0_stage:x} aux=0x{trisc0_aux:x}"
+              msg += f"\n  TRISC1 fw: stage=0x{trisc1_stage:x} aux=0x{trisc1_aux:x}"
+              msg += f"\n  TRISC2 fw: stage=0x{trisc2_stage:x} aux=0x{trisc2_aux:x}"
+              msg += f"\n  Host sync trace: initial=0x{(host_sync_initial or 0):08x} last=0x{(host_sync_last or 0):08x} first_change=0x{(host_sync_first_change or 0):08x} changes={host_sync_change_count}"
+              msg += f"\n  BRISC wait-sync: stage=0x{brisc_wait_stage:x} initial=0x{brisc_wait_initial:08x} last=0x{brisc_wait_last:08x} first_change=0x{brisc_wait_first_change:08x} reads={brisc_wait_reads}"
+              msg += f"\n  TRISC done-sync snapshots: t0=0x{trisc0_done_sync:08x} t1=0x{trisc1_done_sync:08x} t2=0x{trisc2_done_sync:08x}"
+              msg += f"\n  TRISC done-byte readbacks: t0=0x{trisc0_done_byte:08x} t1=0x{trisc1_done_byte:08x} t2=0x{trisc2_done_byte:08x}"
+              if dev is not None and all_cores is not None:
+                msg += f"\n  --- RISC-V PCs (all cores) ---\n{dump_core_pcs(dev, all_cores)}"
+              msg += _resolve_stuck_pcs(win, x, y, dev)
+              raise TimeoutError(msg)

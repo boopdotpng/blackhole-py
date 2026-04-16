@@ -1,5 +1,5 @@
 
-/tmp/tt-disasm-3abjr5sg/out.elf:     file format elf32-littleriscv
+/tmp/tt-disasm-fw_trisc2-_t1l6v52/out.elf:     file format elf32-littleriscv
 
 
 Disassembly of section .text:
@@ -59,7 +59,7 @@ Disassembly of section .text:
     6b04:	01078793          	addi	a5,a5,16
     6b08:	fef776e3          	bgeu	a4,a5,6af4 <main+0x7c>
     6b0c:	ff878693          	addi	a3,a5,-8
-    6b10:	32d76663          	bltu	a4,a3,6e3c <.NO_CB319+0x174>
+    6b10:	32d76663          	bltu	a4,a3,6e3c <.NO_CB662+0x174>
     6b14:	fe07aa23          	sw	zero,-12(a5)
     6b18:	fe07a823          	sw	zero,-16(a5)
     6b1c:	ffc78693          	addi	a3,a5,-4
@@ -112,10 +112,10 @@ Disassembly of section .text:
     6bd8:	00e69463          	bne	a3,a4,6be0 <main+0x168>
     6bdc:	feb668e3          	bltu	a2,a1,6bcc <main+0x154>
     6be0:	00001937          	lui	s2,0x1
-    6be4:	9a094703          	lbu	a4,-1632(s2) # 9a0 <_start-0x60a0>
+    6be4:	9a094703          	lbu	a4,-1632(s2) # 9a0 <trisc.cc.60f3d0db+0x19b>
     6be8:	00090793          	mv	a5,s2
     6bec:	00002437          	lui	s0,0x2
-    6bf0:	7ff40413          	addi	s0,s0,2047 # 27ff <_start-0x4241>
+    6bf0:	7ff40413          	addi	s0,s0,2047 # 27ff <trisc.cc.60f3d0db+0x1ffa>
     6bf4:	fff90913          	addi	s2,s2,-1
     6bf8:	24140413          	addi	s0,s0,577
     6bfc:	84818993          	addi	s3,gp,-1976 # ffb00038 <cb_interface>
@@ -124,11 +124,11 @@ Disassembly of section .text:
     6c08:	08000c93          	li	s9,128
     6c0c:	ffb124b7          	lui	s1,0xffb12
     6c10:	82f18423          	sb	a5,-2008(gp) # ffb00018 <my_logical_y_>
-    6c14:	060005a3          	sb	zero,107(zero) # 6b <_start-0x69d5>
-    6c18:	06b04783          	lbu	a5,107(zero) # 6b <_start-0x69d5>
+    6c14:	060005a3          	sb	zero,107(zero) # 6b <trisc.cc.60f3d0db-0x79a>
+    6c18:	06b04783          	lbu	a5,107(zero) # 6b <trisc.cc.60f3d0db-0x79a>
     6c1c:	01978863          	beq	a5,s9,6c2c <main+0x1b4>
     6c20:	0ff0000f          	fence
-    6c24:	06b04783          	lbu	a5,107(zero) # 6b <_start-0x69d5>
+    6c24:	06b04783          	lbu	a5,107(zero) # 6b <trisc.cc.60f3d0db-0x79a>
     6c28:	ff979ce3          	bne	a5,s9,6c20 <main+0x1a8>
     6c2c:	218000ef          	jal	6e44 <_ZN15kernel_profiler13init_profilerEttt.constprop.0>
     6c30:	1f44a783          	lw	a5,500(s1) # ffb121f4 <__stack_top+0x111f4>
@@ -139,7 +139,7 @@ Disassembly of section .text:
     6c44:	00f42823          	sw	a5,16(s0)
     6c48:	1f04a783          	lw	a5,496(s1)
     6c4c:	00f42a23          	sw	a5,20(s0)
-    6c50:	06c02783          	lw	a5,108(zero) # 6c <_start-0x69d4>
+    6c50:	06c02783          	lw	a5,108(zero) # 6c <trisc.cc.60f3d0db-0x799>
     6c54:	20f7a7b3          	sh1add	a5,a5,a5
     6c58:	00579793          	slli	a5,a5,0x5
     6c5c:	07078e93          	addi	t4,a5,112
@@ -147,7 +147,7 @@ Disassembly of section .text:
     6c64:	012ed783          	lhu	a5,18(t4)
     6c68:	040ea703          	lw	a4,64(t4)
     6c6c:	01e787b3          	add	a5,a5,t5
-    6c70:	0640006f          	j	6cd4 <.NO_CB319+0xc>
+    6c70:	0640006f          	j	6cd4 <.NO_CB662+0xc>
     6c74:	0047a683          	lw	a3,4(a5)
     6c78:	0007a603          	lw	a2,0(a5)
     6c7c:	0087a803          	lw	a6,8(a5)
@@ -168,15 +168,15 @@ Disassembly of section .text:
     6cb8:	0115a423          	sw	a7,8(a1)
     6cbc:	02058593          	addi	a1,a1,32
     6cc0:	fa029ae3          	bnez	t0,6c74 <main+0x1fc>
-    6cc4:	00070e63          	beqz	a4,6ce0 <.NO_CB319+0x18>
+    6cc4:	00070e63          	beqz	a4,6ce0 <.NO_CB662+0x18>
 
-00006cc8 <.NO_CB319>:
+00006cc8 <.NO_CB662>:
     6cc8:	01078793          	addi	a5,a5,16
     6ccc:	02058593          	addi	a1,a1,32
     6cd0:	00175713          	srli	a4,a4,0x1
     6cd4:	00177293          	andi	t0,a4,1
     6cd8:	f8029ee3          	bnez	t0,6c74 <main+0x1fc>
-    6cdc:	fe0716e3          	bnez	a4,6cc8 <.NO_CB319>
+    6cdc:	fe0716e3          	bnez	a4,6cc8 <.NO_CB662>
     6ce0:	014ed503          	lhu	a0,20(t4)
     6ce4:	046ec783          	lbu	a5,70(t4)
     6ce8:	02000693          	li	a3,32
@@ -184,8 +184,8 @@ Disassembly of section .text:
     6cf0:	0ff7fd93          	zext.b	s11,a5
     6cf4:	c2818713          	addi	a4,gp,-984 # ffb00418 <cb_interface+0x3e0>
     6cf8:	01f00893          	li	a7,31
-    6cfc:	04d79a63          	bne	a5,a3,6d50 <.NO_CB319+0x88>
-    6d00:	0b80006f          	j	6db8 <.NO_CB319+0xf0>
+    6cfc:	04d79a63          	bne	a5,a3,6d50 <.NO_CB662+0x88>
+    6d00:	0b80006f          	j	6db8 <.NO_CB662+0xf0>
     6d04:	00d72023          	sw	a3,0(a4) # 80e98000 <__fw_export_text_end+0x80e91060>
     6d08:	00c72223          	sw	a2,4(a4)
     6d0c:	01072823          	sw	a6,16(a4)
@@ -196,14 +196,14 @@ Disassembly of section .text:
     6d20:	010606b3          	add	a3,a2,a6
     6d24:	02b87833          	remu	a6,a6,a1
     6d28:	410686b3          	sub	a3,a3,a6
-    6d2c:	00d7f463          	bgeu	a5,a3,6d34 <.NO_CB319+0x6c>
+    6d2c:	00d7f463          	bgeu	a5,a3,6d34 <.NO_CB662+0x6c>
     6d30:	00078613          	mv	a2,a5
     6d34:	00c72823          	sw	a2,16(a4)
     6d38:	00d72423          	sw	a3,8(a4)
     6d3c:	00b72623          	sw	a1,12(a4)
     6d40:	00850513          	addi	a0,a0,8
     6d44:	fe070713          	addi	a4,a4,-32
-    6d48:	071d8863          	beq	s11,a7,6db8 <.NO_CB319+0xf0>
+    6d48:	071d8863          	beq	s11,a7,6db8 <.NO_CB662+0xf0>
     6d4c:	fff88893          	addi	a7,a7,-1
     6d50:	00052683          	lw	a3,0(a0)
     6d54:	00452583          	lw	a1,4(a0)
@@ -221,7 +221,7 @@ Disassembly of section .text:
     6d84:	010e0393          	addi	t2,t3,16
     6d88:	405787b3          	sub	a5,a5,t0
     6d8c:	00c787b3          	add	a5,a5,a2
-    6d90:	f60f9ae3          	bnez	t6,6d04 <.NO_CB319+0x3c>
+    6d90:	f60f9ae3          	bnez	t6,6d04 <.NO_CB662+0x3c>
     6d94:	00032e03          	lw	t3,0(t1)
     6d98:	00432303          	lw	t1,4(t1)
     6d9c:	00d72023          	sw	a3,0(a4)
@@ -230,7 +230,7 @@ Disassembly of section .text:
     6da8:	00772e23          	sw	t2,28(a4)
     6dac:	01c72a23          	sw	t3,20(a4)
     6db0:	00672c23          	sw	t1,24(a4)
-    6db4:	f69ff06f          	j	6d1c <.NO_CB319+0x54>
+    6db4:	f69ff06f          	j	6d1c <.NO_CB662+0x54>
     6db8:	026ed583          	lhu	a1,38(t4)
     6dbc:	8291c683          	lbu	a3,-2007(gp) # ffb00019 <my_logical_x_>
     6dc0:	028ed603          	lhu	a2,40(t4)
@@ -255,7 +255,7 @@ Disassembly of section .text:
     6e0c:	0047a783          	lw	a5,4(a5)
     6e10:	90e98737          	lui	a4,0x90e98
     6e14:	00f12623          	sw	a5,12(sp)
-    6e18:	060005a3          	sb	zero,107(zero) # 6b <_start-0x69d5>
+    6e18:	060005a3          	sb	zero,107(zero) # 6b <trisc.cc.60f3d0db-0x79a>
     6e1c:	1f44a783          	lw	a5,500(s1)
     6e20:	0127f7b3          	and	a5,a5,s2
     6e24:	00e7e7b3          	or	a5,a5,a4
@@ -310,11 +310,11 @@ Disassembly of section .text:
     6ed8:	fcc6e4e3          	bltu	a3,a2,6ea0 <_ZN15kernel_profiler15finish_profilerEv+0x34>
     6edc:	00081863          	bnez	a6,6eec <_ZN15kernel_profiler15finish_profilerEv+0x80>
     6ee0:	000017b7          	lui	a5,0x1
-    6ee4:	9ee7a223          	sw	a4,-1564(a5) # 9e4 <_start-0x605c>
+    6ee4:	9ee7a223          	sw	a4,-1564(a5) # 9e4 <trisc.cc.60f3d0db+0x1df>
     6ee8:	00008067          	ret
     6eec:	84e1a223          	sw	a4,-1980(gp) # ffb00034 <_ZN15kernel_profiler6wIndexE>
     6ef0:	000017b7          	lui	a5,0x1
-    6ef4:	9ee7a223          	sw	a4,-1564(a5) # 9e4 <_start-0x605c>
+    6ef4:	9ee7a223          	sw	a4,-1564(a5) # 9e4 <trisc.cc.60f3d0db+0x1df>
     6ef8:	00008067          	ret
     6efc:	1ff00813          	li	a6,511
     6f00:	f8e862e3          	bltu	a6,a4,6e84 <_ZN15kernel_profiler15finish_profilerEv+0x18>

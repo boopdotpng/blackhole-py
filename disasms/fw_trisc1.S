@@ -1,5 +1,5 @@
 
-/tmp/tt-disasm-l7eugwh4/out.elf:     file format elf32-littleriscv
+/tmp/tt-disasm-fw_trisc1-asuv2tlj/out.elf:     file format elf32-littleriscv
 
 
 Disassembly of section .text:
@@ -108,20 +108,20 @@ Disassembly of section .text:
     61c8:	00e69463          	bne	a3,a4,61d0 <main+0x158>
     61cc:	feb668e3          	bltu	a2,a1,61bc <main+0x144>
     61d0:	000017b7          	lui	a5,0x1
-    61d4:	9a07c703          	lbu	a4,-1632(a5) # 9a0 <_start-0x56a0>
+    61d4:	9a07c703          	lbu	a4,-1632(a5) # 9a0 <trisc.cc.bf9af75a+0x6c6>
     61d8:	06078793          	addi	a5,a5,96
     61dc:	08000b13          	li	s6,128
     61e0:	ffe80bb7          	lui	s7,0xffe80
     61e4:	82e182a3          	sb	a4,-2011(gp) # ffb00015 <my_logical_x_>
     61e8:	9417c783          	lbu	a5,-1727(a5)
     61ec:	82f18223          	sb	a5,-2012(gp) # ffb00014 <my_logical_y_>
-    61f0:	06000523          	sb	zero,106(zero) # 6a <_start-0x5fd6>
-    61f4:	06a04783          	lbu	a5,106(zero) # 6a <_start-0x5fd6>
+    61f0:	06000523          	sb	zero,106(zero) # 6a <trisc.cc.bf9af75a-0x270>
+    61f4:	06a04783          	lbu	a5,106(zero) # 6a <trisc.cc.bf9af75a-0x270>
     61f8:	01678863          	beq	a5,s6,6208 <main+0x190>
     61fc:	0ff0000f          	fence
-    6200:	06a04783          	lbu	a5,106(zero) # 6a <_start-0x5fd6>
+    6200:	06a04783          	lbu	a5,106(zero) # 6a <trisc.cc.bf9af75a-0x270>
     6204:	ff679ce3          	bne	a5,s6,61fc <main+0x184>
-    6208:	06c02783          	lw	a5,108(zero) # 6c <_start-0x5fd4>
+    6208:	06c02783          	lw	a5,108(zero) # 6c <trisc.cc.bf9af75a-0x26e>
     620c:	8251c603          	lbu	a2,-2011(gp) # ffb00015 <my_logical_x_>
     6210:	8241c683          	lbu	a3,-2012(gp) # ffb00014 <my_logical_y_>
     6214:	20f7a7b3          	sh1add	a5,a5,a5
@@ -147,7 +147,7 @@ Disassembly of section .text:
     6264:	00fba223          	sw	a5,4(s7) # ffe80004 <__stack_top+0x37f004>
     6268:	004ba783          	lw	a5,4(s7)
     626c:	00f12623          	sw	a5,12(sp)
-    6270:	06000523          	sb	zero,106(zero) # 6a <_start-0x5fd6>
+    6270:	06000523          	sb	zero,106(zero) # 6a <trisc.cc.bf9af75a-0x270>
     6274:	f81ff06f          	j	61f4 <main+0x17c>
     6278:	00068793          	mv	a5,a3
     627c:	e91ff06f          	j	610c <main+0x94>

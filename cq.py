@@ -208,31 +208,38 @@ class CQSysmem:
     flags = mmap.MAP_SHARED | mmap.MAP_ANONYMOUS
     if hasattr(mmap, "MAP_POPULATE"):
       flags |= mmap.MAP_POPULATE
-    self.sysmem = mmap.mmap(-1, self._size, flags=flags, prot=mmap.PROT_READ | mmap.PROT_WRITE)
-    self._sysmem_addr = ctypes.addressof(ctypes.c_char.from_buffer(self.sysmem))
-    if (self._sysmem_addr % PAGE_SIZE) != 0 or (self._size % PAGE_SIZE) != 0:
-      raise RuntimeError("CQ sysmem must be page-aligned and page-sized")
-    self.noc_addr = dev.pin_pages(self.sysmem)
-    if (self.noc_addr & _PCIE_NOC_BASE) != _PCIE_NOC_BASE:
-      raise RuntimeError(f"bad NOC sysmem address: 0x{self.noc_addr:x}")
-    self.noc_local = self.noc_addr - _PCIE_NOC_BASE
-    if self.noc_local > 0xFFFF_FFFF:
-      raise RuntimeError(f"CQ sysmem NOC offset too large: 0x{self.noc_local:x}")
-    self._issue_wr = 0
-    self._prefetch_q_wr_idx = 0
-    self._event_id = 0
-    self._completion_base_16b = ((self.noc_local + _HOST_COMPLETION_BASE) >> 4) & 0x7FFF_FFFF
-    self._completion_page_16b = PAGE_SIZE >> 4
-    self._completion_end_16b = self._completion_base_16b + (_HOST_COMPLETION_SIZE >> 4)
-    self._completion_rd_16b = self._completion_base_16b
-    self._completion_rd_toggle = 0
-    # init prefetch core L1 pointers and zero the prefetch queue
-    self._prefetch_win.write32(CQ_PREFETCH_Q_RD_PTR, CQ_PREFETCH_Q_BASE + CQ_PREFETCH_Q_SIZE)
-    self._prefetch_win.write32(CQ_PREFETCH_Q_PCIE_RD, (self.noc_local + _HOST_ISSUE_BASE) & 0xFFFFFFFF)
-    self._prefetch_win.mm[CQ_PREFETCH_Q_BASE : CQ_PREFETCH_Q_BASE + CQ_PREFETCH_Q_SIZE] = bytes(CQ_PREFETCH_Q_SIZE)
-    # init host sysmem completion doorbells
-    self._sysmem_write32(_HOST_CQ_WR_OFF, self._completion_base_16b)
-    self._sysmem_write32(_HOST_CQ_RD_OFF, self._completion_base_16b)
+    self.sysmem = None
+    self.noc_addr = None
+    self.noc_local = 0
+    try:
+      self.sysmem = mmap.mmap(-1, self._size, flags=flags, prot=mmap.PROT_READ | mmap.PROT_WRITE)
+      self._sysmem_addr = ctypes.addressof(ctypes.c_char.from_buffer(self.sysmem))
+      if (self._sysmem_addr % PAGE_SIZE) != 0 or (self._size % PAGE_SIZE) != 0:
+        raise RuntimeError("CQ sysmem must be page-aligned and page-sized")
+      self.noc_addr = dev.pin_pages(self.sysmem)
+      if (self.noc_addr & _PCIE_NOC_BASE) != _PCIE_NOC_BASE:
+        raise RuntimeError(f"bad NOC sysmem address: 0x{self.noc_addr:x}")
+      self.noc_local = self.noc_addr - _PCIE_NOC_BASE
+      if self.noc_local > 0xFFFF_FFFF:
+        raise RuntimeError(f"CQ sysmem NOC offset too large: 0x{self.noc_local:x}")
+      self._issue_wr = 0
+      self._prefetch_q_wr_idx = 0
+      self._event_id = 0
+      self._completion_base_16b = ((self.noc_local + _HOST_COMPLETION_BASE) >> 4) & 0x7FFF_FFFF
+      self._completion_page_16b = PAGE_SIZE >> 4
+      self._completion_end_16b = self._completion_base_16b + (_HOST_COMPLETION_SIZE >> 4)
+      self._completion_rd_16b = self._completion_base_16b
+      self._completion_rd_toggle = 0
+      # init prefetch core L1 pointers and zero the prefetch queue
+      self._prefetch_win.write32(CQ_PREFETCH_Q_RD_PTR, CQ_PREFETCH_Q_BASE + CQ_PREFETCH_Q_SIZE)
+      self._prefetch_win.write32(CQ_PREFETCH_Q_PCIE_RD, (self.noc_local + _HOST_ISSUE_BASE) & 0xFFFFFFFF)
+      self._prefetch_win.mm[CQ_PREFETCH_Q_BASE : CQ_PREFETCH_Q_BASE + CQ_PREFETCH_Q_SIZE] = bytes(CQ_PREFETCH_Q_SIZE)
+      # init host sysmem completion doorbells
+      self._sysmem_write32(_HOST_CQ_WR_OFF, self._completion_base_16b)
+      self._sysmem_write32(_HOST_CQ_RD_OFF, self._completion_base_16b)
+    except Exception:
+      self.close()
+      raise
 
   def _sysmem_read32(self, off):
     return struct.unpack("<I", self.sysmem[off : off + 4])[0]
@@ -323,7 +330,16 @@ class CQSysmem:
     return bytes(self.sysmem[_HOST_PROFILER_BASE : _HOST_PROFILER_BASE + size])
 
   def close(self):
-    self._prefetch_win.close()
-    self._dispatch_win.close()
-    self.dev.unpin_pages(self.sysmem, self.noc_addr)
-    self.sysmem.close()
+    try: self._prefetch_win.close()
+    except Exception: pass
+    try: self._dispatch_win.close()
+    except Exception: pass
+    if self.sysmem is None:
+      return
+    try:
+      if self.noc_addr is not None:
+        self.dev.unpin_pages(self.sysmem, self.noc_addr)
+        self.noc_addr = None
+    finally:
+      self.sysmem.close()
+      self.sysmem = None

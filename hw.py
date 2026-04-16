@@ -48,6 +48,40 @@ class TensixMMIO:
   RISCV_DEBUG_REG_NCRISC_RESET_PC = 0xFFB12238
   SOFT_RESET_ALL = 0x47800                 # all 5 RISC-V cores
   SOFT_RESET_BRISC_ONLY_RUN = 0x47000      # keep TRISC/NCRISC in reset, release BRISC
+  DBG_BUS_CNTL = 0xFFB12054
+  DBG_BUS_RD_DATA = 0xFFB1205C
+
+# Debug bus signal descriptors for reading each RISC-V core's PC.
+# Format: (rd_sel, daisy_sel, sig_sel) — see tt-exalens functional_worker_debug_bus_signals.py
+_PC_SIGNALS = {
+  "brisc":  (1, 7, 2 * 5 + 1),
+  "trisc0": (1, 7, 2 * 6 + 1),
+  "trisc1": (1, 7, 2 * 7 + 1),
+  "trisc2": (1, 7, 2 * 8 + 1),
+  "ncrisc": (1, 7, 2 * 12 + 1),
+}
+_PC_MASK = 0x3FFFFFFF
+
+def read_risc_pc(win: 'TLBWindow', cntl_off: int, data_off: int, risc: str) -> int:
+  """Read current PC of a RISC-V core via debug bus. Non-invasive (does not halt the core)."""
+  rd_sel, daisy_sel, sig_sel = _PC_SIGNALS[risc]
+  config = (1 << 29) | (rd_sel << 25) | (daisy_sel << 16) | sig_sel
+  win.write32(cntl_off, config)
+  return win.read32(data_off) & _PC_MASK
+
+def dump_core_pcs(dev: 'PCIDevice', cores: list[Core]) -> str:
+  """Read and format PCs for all 5 RISCs on each core. Returns a multi-line string."""
+  mmio_base, _ = align_down(TensixMMIO.DBG_BUS_CNTL, TLBWindow.SIZE_2M)
+  cntl_off = TensixMMIO.DBG_BUS_CNTL - mmio_base
+  data_off = TensixMMIO.DBG_BUS_RD_DATA - mmio_base
+  lines = []
+  with TLBWindow(dev, start=cores[0], addr=mmio_base) as win:
+    for core in cores:
+      win.target(core, addr=mmio_base)
+      pcs = {r: read_risc_pc(win, cntl_off, data_off, r) for r in _PC_SIGNALS}
+      parts = " ".join(f"{r}=0x{pc:08x}" for r, pc in pcs.items())
+      lines.append(f"  ({core[0]:2d},{core[1]:2d}) {parts}")
+  return "\n".join(lines)
 
 class Arc:
   NOC_BASE = 0x80000000
@@ -104,9 +138,13 @@ class TLBWindow:
                mode: NocOrdering = NocOrdering.STRICT, size: int = SIZE_2M, wc: bool = False):
     self.dev, self.size = dev, size
     self._id = dev.alloc_tlb(size)
-    self._bar, self._base = dev.tlb_window(self._id, wc=wc)
-    self.mm = _OffsetView(self._bar, self._base, size)
-    self.target(start, end, addr=addr, mode=mode)
+    try:
+      self._bar, self._base = dev.tlb_window(self._id, wc=wc)
+      self.mm = _OffsetView(self._bar, self._base, size)
+      self.target(start, end, addr=addr, mode=mode)
+    except Exception:
+      self.dev.free_tlb(self._id)
+      raise
 
   def target(self, start: Core, end: Core | None = None, addr: int = 0, mode: NocOrdering = NocOrdering.STRICT):
     end = end or start
@@ -141,13 +179,28 @@ class Sysmem:
     self.dev = dev
     page_size = os.sysconf("SC_PAGE_SIZE")
     self.size = (size + page_size - 1) & ~(page_size - 1)
-    self.buf = mmap.mmap(-1, self.size, flags=mmap.MAP_PRIVATE | mmap.MAP_ANONYMOUS,
-                         prot=mmap.PROT_READ | mmap.PROT_WRITE)
-    self.noc_addr = dev.pin_pages(self.buf)
+    self.buf = None
+    self.noc_addr = None
+    try:
+      self.buf = mmap.mmap(-1, self.size, flags=mmap.MAP_PRIVATE | mmap.MAP_ANONYMOUS,
+                           prot=mmap.PROT_READ | mmap.PROT_WRITE)
+      self.noc_addr = dev.pin_pages(self.buf)
+    except Exception:
+      if self.buf is not None:
+        self.buf.close()
+        self.buf = None
+      raise
 
   def close(self):
-    self.dev.unpin_pages(self.buf, self.noc_addr)
-    self.buf.close()
+    if self.buf is None:
+      return
+    try:
+      if self.noc_addr is not None:
+        self.dev.unpin_pages(self.buf, self.noc_addr)
+        self.noc_addr = None
+    finally:
+      self.buf.close()
+      self.buf = None
 
 class TileGrid:
   ARC = (8, 0)

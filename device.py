@@ -44,66 +44,95 @@ class Device:
     if device is None:
       device = int(os.getenv("DEV", "0"))
     self.device = device
-    self.dev = PCIDevice(index=device)
-
-    gddr_enabled, tensix_enabled = self._read_arc_enabled_masks()
-    core_count = active_tensix_core_count(tensix_enabled)
-    if core_count <= 120:
-      self.board = "p100"
-    elif core_count <= 140:
-      self.board = "p150"
-    else:
-      self.dev.close()
-      raise SystemExit(f"unsupported tensix core count {core_count}")
-    self.arch = self.board
-    print(f"device {self.device}: {self.board} ({core_count} cores, bdf={self.dev.bdf})")
-    self._core_layout = self.board
-    board = _BOARDS[self._core_layout]
-    self._tensix_x = board.tensix_x
-    self._all_worker_cores = _worker_cores(self._tensix_x)
-    self._PREFETCH_CORE = board.prefetch
-    self._DISPATCH_CORE = board.dispatch
-    self._CQ_CORES = {self._PREFETCH_CORE, self._DISPATCH_CORE}
-
-    self._init_dram_tiles(gddr_enabled)
-    self._num_dram_banks = Dram.BANK_COUNT - len(self.harvested_dram_banks)
-    self._num_l1_banks = len(self._all_worker_cores)
-    self.dram = Allocator(self.dev, self.dram_tiles)
+    self.dev = None
+    self.board = None
+    self.arch = None
+    self._core_layout = None
+    self._tensix_x = ()
+    self._all_worker_cores = []
+    self._PREFETCH_CORE = None
+    self._DISPATCH_CORE = None
+    self._CQ_CORES = set()
+    self.harvested_dram_banks = []
+    self.dram_tiles = []
+    self._num_dram_banks = 0
+    self._num_l1_banks = 0
+    self.dram = None
+    self.compiler = None
     self._dispatch_mode = DevMsgs.DISPATCH_MODE_HOST if USE_USB_DISPATCH else DevMsgs.DISPATCH_MODE_DEV
     self._use_fast_dispatch = not USE_USB_DISPATCH
-
-    from compiler import Compiler
-    self.compiler = Compiler(
-      num_dram_banks=self._num_dram_banks,
-      num_l1_banks=self._num_l1_banks,
-      prefetch_core=self._PREFETCH_CORE,
-      dispatch_core=self._DISPATCH_CORE,
-    )
-    self._upload_firmware()
-
-    self._dram_sysmem = Sysmem(self.dev) if self._use_fast_dispatch else None
-    self.cq = CommandQueue()
+    self._dram_sysmem = None
+    self.cq = None
     self._cq_hw = None
-    if self._use_fast_dispatch:
-      from compiler import PROFILER
-      profiler_cores = len(self._all_worker_cores) - len(self._CQ_CORES) if PROFILER else 0
-      self._cq_hw = CQSysmem(
-        self.dev,
-        prefetch_win=TLBWindow(self.dev, start=self._PREFETCH_CORE),
-        dispatch_win=TLBWindow(self.dev, start=self._DISPATCH_CORE),
-        profiler_cores=profiler_cores,
-      )
-      self._start_dispatch_cores()
-
     self._programs = []
+    self._profiler = False
+    self._device_profiler = None
+    self._dispatch_failed = False
+    self._closed = False
 
-    from compiler import PROFILER
-    self._profiler = PROFILER and self._use_fast_dispatch
-    if self._profiler:
-      from profiler import DeviceProfiler
-      self._device_profiler = DeviceProfiler(self.cores)
-    else:
-      self._device_profiler = None
+    try:
+      self.dev = PCIDevice(index=device)
+
+      gddr_enabled, tensix_enabled = self._read_arc_enabled_masks()
+      core_count = active_tensix_core_count(tensix_enabled)
+      if core_count <= 120:
+        self.board = "p100"
+      elif core_count <= 140:
+        self.board = "p150"
+      else:
+        raise SystemExit(f"unsupported tensix core count {core_count}")
+      self.arch = self.board
+      print(f"device {self.device}: {self.board} ({core_count} cores, bdf={self.dev.bdf})")
+      self._core_layout = self.board
+      board = _BOARDS[self._core_layout]
+      self._tensix_x = board.tensix_x
+      self._all_worker_cores = _worker_cores(self._tensix_x)
+      self._PREFETCH_CORE = board.prefetch
+      self._DISPATCH_CORE = board.dispatch
+      self._CQ_CORES = {self._PREFETCH_CORE, self._DISPATCH_CORE}
+
+      self._init_dram_tiles(gddr_enabled)
+      self._num_dram_banks = Dram.BANK_COUNT - len(self.harvested_dram_banks)
+      self._num_l1_banks = len(self._all_worker_cores)
+      self.dram = Allocator(self.dev, self.dram_tiles)
+
+      from compiler import Compiler
+      self.compiler = Compiler(
+        num_dram_banks=self._num_dram_banks,
+        num_l1_banks=self._num_l1_banks,
+        prefetch_core=self._PREFETCH_CORE,
+        dispatch_core=self._DISPATCH_CORE,
+      )
+      self._upload_firmware()
+
+      self._dram_sysmem = Sysmem(self.dev) if self._use_fast_dispatch else None
+      self.cq = CommandQueue()
+      if self._use_fast_dispatch:
+        from compiler import PROFILER
+        profiler_cores = len(self._all_worker_cores) - len(self._CQ_CORES) if PROFILER else 0
+        prefetch_win = TLBWindow(self.dev, start=self._PREFETCH_CORE)
+        dispatch_win = TLBWindow(self.dev, start=self._DISPATCH_CORE)
+        try:
+          self._cq_hw = CQSysmem(
+            self.dev,
+            prefetch_win=prefetch_win,
+            dispatch_win=dispatch_win,
+            profiler_cores=profiler_cores,
+          )
+        except Exception:
+          prefetch_win.close()
+          dispatch_win.close()
+          raise
+        self._start_dispatch_cores()
+
+      from compiler import PROFILER
+      self._profiler = PROFILER and self._use_fast_dispatch
+      if self._profiler:
+        from profiler import DeviceProfiler
+        self._device_profiler = DeviceProfiler(self.cores)
+    except Exception:
+      self.close()
+      raise
 
   def _read_arc_enabled_masks(self) -> tuple[int, int]:
     table_base = self.dev.read_arc_apb32(Arc.SCRATCH_RAM_13)
@@ -152,8 +181,26 @@ class Device:
         win.target(core, addr=mmio_base)
         win.write32(reset_off, TensixMMIO.SOFT_RESET_ALL)
 
+  def _halt_dispatch_cores(self):
+    if self._cq_hw is None:
+      return
+    self._halt_cores([self._PREFETCH_CORE, self._DISPATCH_CORE])
+
+  def _abort_fast_dispatch(self):
+    if self._cq_hw is None or self._dispatch_failed:
+      return
+    self._dispatch_failed = True
+    try:
+      self._halt_dispatch_cores()
+    except Exception:
+      pass
+
+  def _check_fast_dispatch(self):
+    if self._use_fast_dispatch and self._dispatch_failed:
+      raise RuntimeError("fast dispatch halted after an earlier failure; close and recreate Device")
+
   def _upload_firmware(self):
-    fw = self.compiler._fw
+    fw = self.compiler._fw_upload
     mmio_base, mmio_off = align_down(TensixMMIO.RISCV_DEBUG_REG_SOFT_RESET_0, TLBWindow.SIZE_2M)
     reset_off = TensixMMIO.RISCV_DEBUG_REG_SOFT_RESET_0 - mmio_base
     staged = {}
@@ -222,7 +269,7 @@ class Device:
       while uc.mm[TensixL1.GO_MSG + 3] != DevMsgs.RUN_MSG_DONE:
         polls += 1
         if time.perf_counter() > deadline:
-          for off in [0, 4, TensixL1.GO_MSG, TensixL1.GO_MSG+4]:
+          for off in [0, 0x240, TensixL1.GO_MSG, TensixL1.GO_MSG+4]:
             v = uc.read32(off)
             print(f"  fw: L1[0x{off:x}] = 0x{v:08x}")
           raise TimeoutError(f"firmware not ready on {probe} -- try tt-smi -r")
@@ -239,6 +286,11 @@ class Device:
     ncrisc_off = align_up(kernel_off + len(cq_kernels["dispatch_brisc"].xip), L1_ALIGN)
     disp_launch = self._build_cq_launch(kernel_off, ncrisc_off, sem_off=L1_ALIGN)
 
+    # With rvir firmware, ensure cores finish init before sending CQ GO.
+    # The firmware's wzeromem clears go_msg during init, causing the handshake
+    # to complete before the firmware finishes. Wait for firmware to reach poll_go.
+    if os.environ.get("RVIR") == "1":
+      time.sleep(0.5)
     self._upload_cq_core(
       self._PREFETCH_CORE, pref_img, pref_launch,
       [(kernel_off, cq_kernels["prefetch_brisc"].xip)],
@@ -331,7 +383,9 @@ class Device:
       return untilize(result, buf.dtype.bpe, buf.shape)
     return result
 
-  def queue(self, program: Program): self._programs.append(program)
+  def queue(self, program: Program):
+    self._check_fast_dispatch()
+    self._programs.append(program)
 
   def _compile_ir(self, program: Program, dispatch_mode, host_assigned_id: int = 0) -> list:
     writer = self.compiler.compile_dataflow(program.writer_kernel, "brisc") if program.writer_kernel else None
@@ -399,12 +453,18 @@ class Device:
     return build_ir(program, roles, compute, all_cores, per_core_args, dispatch_mode, host_assigned_id=host_assigned_id)
 
   def run(self):
+    self._check_fast_dispatch()
     self._set_power(True)
     try:
       if self._use_fast_dispatch: self._run_fast_dispatch()
       else: self._run_slow_dispatch()
+    except Exception:
+      self._abort_fast_dispatch()
+      raise
     finally:
       self._programs.clear()
+      if self.cq is not None:
+        self.cq.clear()
       self._set_power(False)
 
   def _run_fast_dispatch(self):
@@ -426,7 +486,11 @@ class Device:
     self.cq.append(CQHostEvent(self._cq_hw._event_id))
 
     self._cq_hw.flush(self.cq)
-    self._cq_hw.wait_completion(self._cq_hw._event_id)
+    try:
+      self._cq_hw.wait_completion(self._cq_hw._event_id)
+    except TimeoutError as e:
+      pc_dump = dump_core_pcs(self.dev, self.cores)
+      raise TimeoutError(f"{e}\n  --- RISC-V PCs (all cores) ---\n{pc_dump}") from None
 
     if self._profiler:
       self._device_profiler.collect_data(self._programs, self.cores, self._cq_hw, self.harvested_dram_banks)
@@ -436,7 +500,7 @@ class Device:
     with TLBWindow(self.dev, start=self.cores[0]) as win:
       for program in self._programs:
         ir = self._compile_ir(program, self._dispatch_mode)
-        slow_dispatch(win, ir)
+        slow_dispatch(win, ir, dev=self.dev, all_cores=self.cores)
     elapsed_us = (time.perf_counter() - t0) * 1e6
     print(f"  slow dispatch: {elapsed_us:,.1f} us total (host wall-clock, {len(self._programs)} programs)")
 
@@ -448,16 +512,18 @@ class Device:
     p.serve(port=port)
 
   def close(self):
-    # Run each teardown step; suppress errors so later steps always execute.
-    # Order matters: power down, halt CQ cores, unpin sysmem, close VFIO.
+    if self._closed:
+      return
+    self._closed = True
+    # Halt CQ cores before unpinning any host sysmem they may still be touching.
     for step in [
-      lambda: self._set_power(False),
       lambda: self._device_profiler.close() if self._device_profiler else None,
-      lambda: self._halt_cores([self._PREFETCH_CORE, self._DISPATCH_CORE]) if self._cq_hw is not None else None,
+      lambda: self._abort_fast_dispatch(),
+      lambda: self._set_power(False) if self.dev is not None else None,
       lambda: self._dram_sysmem.close() if self._dram_sysmem is not None else None,
       lambda: self._cq_hw.close() if self._cq_hw is not None else None,
-      lambda: self.dram.close(),
+      lambda: self.dram.close() if self.dram is not None else None,
+      lambda: self.dev.close() if self.dev is not None else None,
     ]:
       try: step()
       except Exception: pass
-    self.dev.close()

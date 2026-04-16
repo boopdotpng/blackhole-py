@@ -3,6 +3,7 @@
 import os, struct, random
 import numpy as np
 
+from compiler import RVIR
 from device import Device, CBConfig, Dtype, Program
 
 K_READER = r"""
@@ -83,6 +84,57 @@ void MAIN {
 }  // namespace NAMESPACE
 """
 
+def _build_rvir_kernels(tiles_per_core):
+  """Build all 5 RVIR kernels for add1, using LDM addresses from the RVIR firmware."""
+  from firmware import brisc_rvir, ncrisc_rvir, trisc_rvir
+  from kernels import add1_brisc, add1_ncrisc, add1_trisc0, add1_trisc1, add1_trisc2
+
+  # BRISC LDM addresses
+  brisc_noc_reads_issued = brisc_rvir.NOC_NP_ATOMICS_ACKED_ADDR - 0x20 + 0x08
+  reader = add1_brisc.build(
+    rta_l1_base_addr=brisc_rvir.RTA_L1_BASE_ADDR,
+    cb_interface_addr=brisc_rvir.CB_INTERFACE_ADDR,
+    noc_reads_issued_addr=brisc_noc_reads_issued,
+    bank_offset_table_addr=brisc_rvir.CB_INTERFACE_ADDR + 1544,
+    bank_xy_table_addr=brisc_rvir.CB_INTERFACE_ADDR + 1036,
+  )
+
+  # NCRISC LDM addresses
+  writer = add1_ncrisc.build(
+    rta_l1_base_addr=ncrisc_rvir.RTA_L1_BASE_ADDR,
+    cb_interface_addr=ncrisc_rvir.CB_INTERFACE_ADDR,
+    noc_writes_issued_addr=ncrisc_rvir.NOC_NP_WRITES_ISSUED_ADDR,
+    noc_writes_acked_addr=ncrisc_rvir.NOC_NP_WRITES_ACKED_ADDR,
+    bank_offset_table_addr=ncrisc_rvir.CB_INTERFACE_ADDR + 1532,
+    bank_xy_table_addr=ncrisc_rvir.CB_INTERFACE_ADDR + 1024,
+  )
+
+  # TRISC LDM addresses
+  trisc0_ldm = trisc_rvir._ldm_layout(0)
+  trisc1_ldm = trisc_rvir._ldm_layout(1)
+  trisc2_ldm = trisc_rvir._ldm_layout(2)
+
+  trisc0 = add1_trisc0.build(
+    cfg_state_id_addr=trisc0_ldm["cfg_state_id"],
+    cb_interface_addr=trisc0_ldm["cb_interface"],
+    pc_buf_base=trisc_rvir.PC_BUF_BASES[0],
+    num_tiles=tiles_per_core,
+  )
+  trisc1 = add1_trisc1.build(
+    dest_offset_id_addr=trisc1_ldm["dest_offset_id"],
+    cfg_state_id_addr=trisc1_ldm["cfg_state_id"],
+    num_tiles=tiles_per_core,
+  )
+  trisc2 = add1_trisc2.build(
+    dest_offset_id_addr=trisc2_ldm["dest_offset_id"],
+    cfg_state_id_addr=trisc2_ldm["cfg_state_id"],
+    cb_interface_addr=trisc2_ldm["cb_interface"],
+    pc_buf_base=0xFFE80000,  # all TRISCs share same Tensix PC buffer base
+    num_tiles=tiles_per_core,
+  )
+
+  return reader, writer, (trisc0, trisc1, trisc2)
+
 def _bf16(x: float) -> int: return struct.unpack("<I", struct.pack("<f", x))[0] >> 16
 def _f32(x: int) -> float: return struct.unpack("<f", struct.pack("<I", (x & 0xFFFF) << 16))[0]
 
@@ -103,11 +155,22 @@ def main():
     def writer_args(i, _xy, _n): return [dst_buf.addr, i * tiles_per_core, tiles_per_core]
     def compute_args(i, _xy, _n): return [tiles_per_core]
 
-    prog = Program(
-      cores=num_cores, reader_kernel=K_READER, compute_kernel=K_COMPUTE, writer_kernel=K_WRITER,
-      cbs=[CBConfig(index=0, dtype=Dtype.Float16_b, tiles=2), CBConfig(index=16, dtype=Dtype.Float16_b, tiles=2)],
-      reader_args=reader_args, writer_args=writer_args, compute_args=compute_args, name="add1",
-    )
+    if RVIR:
+      rvir_reader, rvir_writer, rvir_compute = _build_rvir_kernels(tiles_per_core)
+      # The slow-dispatch payload builder places Program.writer_kernel on BRISC
+      # and Program.reader_kernel on NCRISC, so wire the RVIR kernels/args to
+      # the physical RISCs rather than the Program field names.
+      prog = Program(
+        cores=num_cores, reader_kernel=rvir_writer, compute_kernel=rvir_compute, writer_kernel=rvir_reader,
+        cbs=[CBConfig(index=0, dtype=Dtype.Float16_b, tiles=2), CBConfig(index=16, dtype=Dtype.Float16_b, tiles=2)],
+        reader_args=writer_args, writer_args=reader_args, compute_args=compute_args, name="add1",
+      )
+    else:
+      prog = Program(
+        cores=num_cores, reader_kernel=K_READER, compute_kernel=K_COMPUTE, writer_kernel=K_WRITER,
+        cbs=[CBConfig(index=0, dtype=Dtype.Float16_b, tiles=2), CBConfig(index=16, dtype=Dtype.Float16_b, tiles=2)],
+        reader_args=reader_args, writer_args=writer_args, compute_args=compute_args, name="add1",
+      )
     device.queue(prog)
     device.run()
     out = device.dram_read(dst_buf)

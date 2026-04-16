@@ -7,6 +7,7 @@ from hw import *
 from dispatch import Dtype, MathFidelity, Program
 
 PROFILER = os.environ.get("PROFILE") == "1"
+RVIR = os.environ.get("RVIR") == "1"
 
 _REPO = Path(__file__).resolve().parent
 _DEPS = _REPO / "tt-metal-deps"
@@ -66,6 +67,12 @@ _CFLAGS = (
   "-std=c++17", "-flto=auto", "-ffast-math", "-fno-exceptions",
   "-fno-use-cxa-atexit",
 )
+# -fno-inline disables ALL inlining (including always_inline), which breaks
+# compute kernels that use "i" asm constraints requiring constant propagation.
+# Split into two levels: dataflow/fw use -fno-inline, compute uses
+# -fno-inline-functions (preserves always_inline but blocks heuristic inlining).
+_NOINLINE_HARD = ("-fno-inline",)
+_NOINLINE_SOFT = ("-fno-inline-functions", "-fno-inline-small-functions")
 _LFLAGS = ("-Wl,-z,max-page-size=16", "-Wl,-z,common-page-size=16", "-nostartfiles")
 
 
@@ -87,7 +94,7 @@ def _device_defines(
     f"-DDISPATCH_NOC_X={dispatch_core[0]}",
     f"-DDISPATCH_NOC_Y={dispatch_core[1]}",
     "-DPCIE_NOC_X=19", "-DPCIE_NOC_Y=24",
-    "-DIS_NOT_POW2_NUM_L1_BANKS=1",  # true for both p100 (110) and p150 (140)
+    "-DIS_NOT_POW2_NUM_L1_BANKS=1",  # true for both p100 (120) and p150 (140)
   ]
   # p100: 7 banks (not pow2), p150: 8 banks (pow2)
   if num_dram_banks == 8:
@@ -295,7 +302,7 @@ _INIT_SCRATCH = {
 
 @dataclass(frozen=True)
 class CompiledFirmware:
-  elf_bytes: bytes
+  elf_bytes: bytes | None
   segments: list[PTLoad]
   scratch_base: int
 
@@ -374,15 +381,53 @@ def compile_firmware(
     ld = ld_dir / f"firmware_{target}.ld"
     src = fw_src_dir / src_name
     extra_defs = _PERF_COUNTER_DEFINES if (profile and target == "trisc1") else []
-    compile_args = [opt, *_CFLAGS, *mcpu, "-mno-tt-tensix-optimize-replay", *common_defines, *target_defs, *extra_defs, *_INCLUDES]
+    is_trisc = target.startswith("trisc")
+    noinline = _NOINLINE_SOFT if is_trisc else _NOINLINE_HARD
+    debug = ["-g"] if is_trisc else []
+    compile_args = [opt, *_CFLAGS, *noinline, *debug, *mcpu, "-mno-tt-tensix-optimize-replay", *common_defines, *target_defs, *extra_defs, *_INCLUDES]
     link_objs = [str(lib / "tmu-crt0.o"), "out.o", *(str(lib / o) for o in extra), str(lib / "substitutes.o")]
-    fw_link_args = [opt, *_CFLAGS, *_LFLAGS, *mcpu, "-mno-tt-tensix-optimize-replay", f"-T{ld}", *link_objs]
+    fw_link_args = [opt, *_CFLAGS, *noinline, *debug, *_LFLAGS, *mcpu, "-mno-tt-tensix-optimize-replay", f"-T{ld}", *link_objs]
     elf = _compile_and_link(cc=cc, src=src, compile_args=compile_args, link_args=fw_link_args, tmp_prefix=f"tt-fw-{target}-")
     segs = list(iter_pt_load(elf))
     result[target] = CompiledFirmware(elf_bytes=elf, segments=segs, scratch_base=_INIT_SCRATCH[target])
 
   new_zones = {k: v for k, v in _zone_map.items() if k not in zones_before}
   _cache_store(key, {"result": result, "zones": new_zones})
+  return result
+
+# LDM data/BSS segments that match the C firmware's ELF layout.
+# The firmware's do_crt1 copies this from L1 scratch into LOCAL_RAM (0xFFB00000).
+# brisc/ncrisc: first word = 0x68 (subordinate_sync pointer), rest is BSS zeros.
+# trisc: pure BSS zeros.
+_RVIR_LDM_SEGMENTS = {
+  # Bug 4 fix: BRISC/NCRISC memsz increased to match C firmware (was 1728/1712,
+  # missing 440 bytes for worker_logical_col_to_virtual_col/row tables)
+  "brisc":  (struct.pack("<I", 0x68), 2168),
+  "ncrisc": (struct.pack("<I", 0x68), 2152),
+  "trisc0": (b"", 1056),
+  "trisc1": (b"", 28),
+  "trisc2": (b"", 1056),
+}
+
+def compile_firmware_rvir(num_dram_banks: int, num_l1_banks: int) -> dict[str, CompiledFirmware]:
+  from firmware.brisc_rvir import build as build_brisc
+  from firmware.ncrisc_rvir import build as build_ncrisc
+  from firmware.trisc_rvir import build as build_trisc
+  builds = {
+    "brisc":  build_brisc(num_dram_banks=num_dram_banks, num_l1_banks=num_l1_banks),
+    "ncrisc": build_ncrisc(num_dram_banks=num_dram_banks, num_l1_banks=num_l1_banks),
+    "trisc0": build_trisc(0),
+    "trisc1": build_trisc(1),
+    "trisc2": build_trisc(2),
+  }
+  result = {}
+  for name, prog in builds.items():
+    sections = prog.assemble_sections()
+    segs = [PTLoad(paddr=s.addr, data=s.data, memsz=len(s.data)) for s in sections]
+    # add LDM data/BSS segment at LOCAL_RAM_START (gets remapped to scratch by upload)
+    init_data, memsz = _RVIR_LDM_SEGMENTS[name]
+    segs.append(PTLoad(paddr=TensixMMIO.LOCAL_RAM_START, data=init_data, memsz=memsz))
+    result[name] = CompiledFirmware(elf_bytes=None, segments=segs, scratch_base=_INIT_SCRATCH[name])
   return result
 
 class Compiler:
@@ -409,6 +454,12 @@ class Compiler:
       dispatch_core=dispatch_core,
       profile=PROFILER,
     )
+    if RVIR:
+      # use rvir-assembled firmware for upload, keep C ELFs for kernel linking
+      rvir_fw = compile_firmware_rvir(num_dram_banks=num_dram_banks, num_l1_banks=num_l1_banks)
+      self._fw_upload = rvir_fw
+    else:
+      self._fw_upload = self._fw
 
   def disassemble(self, kernel: CompiledKernel) -> str:
     if kernel.disassembly:
@@ -417,14 +468,24 @@ class Compiler:
       return ""
     return self._disassemble_elf(kernel.elf_bytes)
 
-  def compile_dataflow(self, src: str, processor: str, noc_index: int | None = None) -> CompiledKernel:
+  def compile_rvir_kernel(self, prog) -> CompiledKernel:
+    """Assemble an rvir.Program into a CompiledKernel."""
+    code = prog.assemble()
+    return CompiledKernel(xip=code, xip_text_bytes=len(code), disassembly=prog.disasm() if hasattr(prog, 'disasm') else "")
+
+  def compile_dataflow(self, src, processor: str, noc_index: int | None = None) -> CompiledKernel:
     if processor not in ("brisc", "ncrisc"):
       raise ValueError(f"processor must be 'brisc' or 'ncrisc', got: {processor}")
+    if not isinstance(src, str):
+      return self.compile_rvir_kernel(src)
     if noc_index is None:
       noc_index = 1 if processor == "brisc" else 0
     return self._compile_dataflow(src, processor, noc_index=noc_index)
 
-  def compile_compute(self, src: str, program: Program) -> tuple[CompiledKernel, CompiledKernel, CompiledKernel]:
+  def compile_compute(self, src, program: Program) -> tuple[CompiledKernel, CompiledKernel, CompiledKernel]:
+    if not isinstance(src, str):
+      # src is a tuple of 3 rvir.Programs (trisc0, trisc1, trisc2)
+      return tuple(self.compile_rvir_kernel(p) for p in src)
     return (self._compile_trisc(src, 0, program), self._compile_trisc(src, 1, program), self._compile_trisc(src, 2, program))
 
   def _compile_dataflow(self, src: str, target: str, noc_index: int, extra_defines: list[str] | None = None,
@@ -471,7 +532,9 @@ class Compiler:
     fw_src = _DEPS / "firmware-src" / ("trisck.cc" if trisc else f"{target}k.cc")
     includes = [*self._includes, *(f"-I{p}" for p in (extra_includes or []))]
     effective_opt, cflags, debug_flags = _kernel_build_flags(opt)
-    compile_args = [effective_opt, *cflags, *debug_flags, "-MMD", *mcpu, *includes, *defines]
+    noinline = _NOINLINE_SOFT if trisc else _NOINLINE_HARD
+    debug = ["-g"] if trisc else []
+    compile_args = [effective_opt, *cflags, *noinline, *debug, *debug_flags, "-MMD", *mcpu, *includes, *defines]
 
     fw_link_elf: Path | None = None
     def _prepare(build: Path):
@@ -510,7 +573,7 @@ class Compiler:
                          "--localize-symbol=exit", "--weaken", str(out)], build)
     return out
 
-  def _disassemble_elf(self, elf: bytes) -> str:
+  def _disassemble_elf(self, elf: bytes, source: bool = False) -> str:
     objdump = _SFPI / "riscv-tt-elf-objdump"
     if not objdump.is_file():
       return ""
@@ -518,8 +581,9 @@ class Compiler:
     try:
       elf_path = build / "out.elf"
       elf_path.write_bytes(elf)
+      flags = "-dS" if source else "-d"
       out = subprocess.run(
-        [str(objdump), "-d", str(elf_path)],
+        [str(objdump), flags, str(elf_path)],
         capture_output=True,
         text=True,
         timeout=30,

@@ -1,5 +1,5 @@
 
-/tmp/tt-disasm-x8jz48yg/out.elf:     file format elf32-littleriscv
+/tmp/tt-disasm-fw_trisc1-m4o0zi9h/out.elf:     file format elf32-littleriscv
 
 
 Disassembly of section .text:
@@ -113,10 +113,10 @@ Disassembly of section .text:
     61dc:	00c79463          	bne	a5,a2,61e4 <main+0x16c>
     61e0:	fed5e8e3          	bltu	a1,a3,61d0 <main+0x158>
     61e4:	00001b37          	lui	s6,0x1
-    61e8:	9a0b4583          	lbu	a1,-1632(s6) # 9a0 <_start-0x56a0>
+    61e8:	9a0b4583          	lbu	a1,-1632(s6) # 9a0 <trisc.cc.12975e43+0x92>
     61ec:	000029b7          	lui	s3,0x2
     61f0:	010004b7          	lui	s1,0x1000
-    61f4:	7ff98c13          	addi	s8,s3,2047 # 27ff <_start-0x3841>
+    61f4:	7ff98c13          	addi	s8,s3,2047 # 27ff <trisc.cc.12975e43+0x1ef1>
     61f8:	241c0c13          	addi	s8,s8,577
     61fc:	a0618a13          	addi	s4,gp,-1530 # ffb001f6 <_ZL19PERF_COUNTER_GROUPS+0x6>
     6200:	81018b93          	addi	s7,gp,-2032 # ffb00000 <CSWTCH.148>
@@ -125,12 +125,12 @@ Disassembly of section .text:
     620c:	9a1b4603          	lbu	a2,-1631(s6)
     6210:	fff48493          	addi	s1,s1,-1 # ffffff <__fw_export_text_end+0xff999f>
     6214:	a0c18e23          	sb	a2,-1508(gp) # ffb0020c <my_logical_y_>
-    6218:	06000523          	sb	zero,106(zero) # 6a <_start-0x5fd6>
-    621c:	06a04583          	lbu	a1,106(zero) # 6a <_start-0x5fd6>
+    6218:	06000523          	sb	zero,106(zero) # 6a <trisc.cc.12975e43-0x8a4>
+    621c:	06a04583          	lbu	a1,106(zero) # 6a <trisc.cc.12975e43-0x8a4>
     6220:	08000613          	li	a2,128
     6224:	00c58a63          	beq	a1,a2,6238 <main+0x1c0>
     6228:	0ff0000f          	fence
-    622c:	06a04583          	lbu	a1,106(zero) # 6a <_start-0x5fd6>
+    622c:	06a04583          	lbu	a1,106(zero) # 6a <trisc.cc.12975e43-0x8a4>
     6230:	08000613          	li	a2,128
     6234:	fec59ae3          	bne	a1,a2,6228 <main+0x1b0>
     6238:	2c0000ef          	jal	64f8 <_ZN15kernel_profiler13init_profilerEttt.constprop.0>
@@ -144,7 +144,7 @@ Disassembly of section .text:
     6258:	1f042503          	lw	a0,496(s0)
     625c:	00100a93          	li	s5,1
     6260:	80ac2a23          	sw	a0,-2028(s8)
-    6264:	06c02303          	lw	t1,108(zero) # 6c <_start-0x5fd4>
+    6264:	06c02303          	lw	t1,108(zero) # 6c <trisc.cc.12975e43-0x8a2>
     6268:	a1d1ce83          	lbu	t4,-1507(gp) # ffb0020d <my_logical_x_>
     626c:	a1c1ce03          	lbu	t3,-1508(gp) # ffb0020c <my_logical_y_>
     6270:	20632333          	sh1add	t1,t1,t1
@@ -291,7 +291,7 @@ Disassembly of section .text:
     64a4:	fffb0813          	addi	a6,s6,-1
     64a8:	90e98537          	lui	a0,0x90e98
     64ac:	00c12623          	sw	a2,12(sp)
-    64b0:	06000523          	sb	zero,106(zero) # 6a <_start-0x5fd6>
+    64b0:	06000523          	sb	zero,106(zero) # 6a <trisc.cc.12975e43-0x8a4>
     64b4:	1f45a603          	lw	a2,500(a1) # ffb121f4 <__stack_top+0x111f4>
     64b8:	01067633          	and	a2,a2,a6
     64bc:	00a66633          	or	a2,a2,a0
@@ -353,11 +353,11 @@ Disassembly of section .text:
     658c:	fcc6e4e3          	bltu	a3,a2,6554 <_ZN15kernel_profiler15finish_profilerEv+0x34>
     6590:	00081863          	bnez	a6,65a0 <_ZN15kernel_profiler15finish_profilerEv+0x80>
     6594:	000017b7          	lui	a5,0x1
-    6598:	9ee7a023          	sw	a4,-1568(a5) # 9e0 <_start-0x5660>
+    6598:	9ee7a023          	sw	a4,-1568(a5) # 9e0 <trisc.cc.12975e43+0xd2>
     659c:	00008067          	ret
     65a0:	a2e1ac23          	sw	a4,-1480(gp) # ffb00228 <_ZN15kernel_profiler6wIndexE>
     65a4:	000017b7          	lui	a5,0x1
-    65a8:	9ee7a023          	sw	a4,-1568(a5) # 9e0 <_start-0x5660>
+    65a8:	9ee7a023          	sw	a4,-1568(a5) # 9e0 <trisc.cc.12975e43+0xd2>
     65ac:	00008067          	ret
     65b0:	1ff00813          	li	a6,511
     65b4:	f8e862e3          	bltu	a6,a4,6538 <_ZN15kernel_profiler15finish_profilerEv+0x18>

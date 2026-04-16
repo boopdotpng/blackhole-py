@@ -112,56 +112,72 @@ class PCIDevice:
       raise RuntimeError(f"Blackhole device {index} not found (found {len(devices)})")
     self.sysfs = devices[index]
     self.bdf = os.path.basename(self.sysfs)
-
-    # Enable PCI device, memory space, bus mastering
-    with open(f"{self.sysfs}/enable", "r+") as f:
-      if int(f.read().strip()) == 0:
-        f.seek(0); f.write("1")
-    fd = os.open(f"{self.sysfs}/config", os.O_RDWR)
-    os.lseek(fd, PCI_COMMAND, os.SEEK_SET)
-    cmd = struct.unpack("<H", os.read(fd, 2))[0]
-    want = PCI_COMMAND_MEMORY | PCI_COMMAND_MASTER
-    if (cmd & want) != want:
-      os.lseek(fd, PCI_COMMAND, os.SEEK_SET)
-      os.write(fd, struct.pack("<H", cmd | want))
-    os.close(fd)
-
-    # Bind to vfio-pci (not needed for USB slow dispatch)
-    self._has_vfio = not _USE_USB
-    if self._has_vfio:
-      self._setup_vfio()
-
-    # mmap BARs
-    self._bar0_fd, self.bar0 = _mmap_bar(self.sysfs, "resource0", BAR0_SIZE)
-    self._bar0_wc_fd, self.bar0_wc = _mmap_bar(self.sysfs, "resource0_wc", BAR0_SIZE)
-    self._bar2_fd, self.bar2 = _mmap_bar(self.sysfs, "resource2", 1 << 20)
-
-    self._bar4_fd = os.open(f"{self.sysfs}/resource4", os.O_RDWR | os.O_SYNC)
-    bar4_size = os.fstat(self._bar4_fd).st_size
-    self._bar4_4g_count = min(TLB_4G_COUNT, bar4_size // TLB_4G_SIZE) if bar4_size else 0
-    if bar4_size:
-      self.bar4 = mmap.mmap(self._bar4_fd, bar4_size, flags=mmap.MAP_SHARED,
-                            prot=mmap.PROT_READ | mmap.PROT_WRITE)
-      self._bar4_wc_fd = os.open(f"{self.sysfs}/resource4_wc", os.O_RDWR | os.O_SYNC)
-      self.bar4_wc = mmap.mmap(self._bar4_wc_fd, bar4_size, flags=mmap.MAP_SHARED,
-                               prot=mmap.PROT_READ | mmap.PROT_WRITE)
-    else:
-      self.bar4 = self.bar4_wc = None
-      self._bar4_wc_fd = -1
-
-    # TLB allocation bitmaps
-    self._tlb_2m = [False] * TLB_2M_COUNT
-    self._tlb_2m[TLB_2M_COUNT - 1] = True  # reserve index 201
-    self._tlb_4g = [False] * self._bar4_4g_count
-
-    # iATU region allocation
+    self._closed = False
+    self._has_vfio = False
+    self._vfio_container = -1
+    self._vfio_group = -1
+    self._vfio_device = -1
+    self._bar0_fd = -1
+    self._bar0_wc_fd = -1
+    self._bar2_fd = -1
+    self._bar4_fd = -1
+    self._bar4_wc_fd = -1
+    self.bar0 = None
+    self.bar0_wc = None
+    self.bar2 = None
+    self.bar4 = None
+    self.bar4_wc = None
+    self._bar4_4g_count = 0
+    self._tlb_2m = []
+    self._tlb_4g = []
     self._iatu_regions = [False] * IATU_OUTBOUND_REGIONS
-
-    # DMA pinning state
     self._pinnings: dict[int, dict] = {}
     self._next_iova = 1 << 30
 
-    self._bring_device_to_a0()
+    try:
+      # Enable PCI device, memory space, bus mastering
+      with open(f"{self.sysfs}/enable", "r+") as f:
+        if int(f.read().strip()) == 0:
+          f.seek(0); f.write("1")
+      fd = os.open(f"{self.sysfs}/config", os.O_RDWR)
+      os.lseek(fd, PCI_COMMAND, os.SEEK_SET)
+      cmd = struct.unpack("<H", os.read(fd, 2))[0]
+      want = PCI_COMMAND_MEMORY | PCI_COMMAND_MASTER
+      if (cmd & want) != want:
+        os.lseek(fd, PCI_COMMAND, os.SEEK_SET)
+        os.write(fd, struct.pack("<H", cmd | want))
+      os.close(fd)
+
+      # Bind to vfio-pci.  USB slow dispatch doesn't need DMA pinning,
+      # but still needs the VFIO container open for BAR mmap access when
+      # the device is (or will be) bound to vfio-pci.
+      self._has_vfio = True
+      self._setup_vfio()
+
+      # mmap BARs
+      self._bar0_fd, self.bar0 = _mmap_bar(self.sysfs, "resource0", BAR0_SIZE)
+      self._bar0_wc_fd, self.bar0_wc = _mmap_bar(self.sysfs, "resource0_wc", BAR0_SIZE)
+      self._bar2_fd, self.bar2 = _mmap_bar(self.sysfs, "resource2", 1 << 20)
+
+      self._bar4_fd = os.open(f"{self.sysfs}/resource4", os.O_RDWR | os.O_SYNC)
+      bar4_size = os.fstat(self._bar4_fd).st_size
+      self._bar4_4g_count = min(TLB_4G_COUNT, bar4_size // TLB_4G_SIZE) if bar4_size else 0
+      if bar4_size:
+        self.bar4 = mmap.mmap(self._bar4_fd, bar4_size, flags=mmap.MAP_SHARED,
+                              prot=mmap.PROT_READ | mmap.PROT_WRITE)
+        self._bar4_wc_fd = os.open(f"{self.sysfs}/resource4_wc", os.O_RDWR | os.O_SYNC)
+        self.bar4_wc = mmap.mmap(self._bar4_wc_fd, bar4_size, flags=mmap.MAP_SHARED,
+                                 prot=mmap.PROT_READ | mmap.PROT_WRITE)
+
+      # TLB allocation bitmaps
+      self._tlb_2m = [False] * TLB_2M_COUNT
+      self._tlb_2m[TLB_2M_COUNT - 1] = True  # reserve index 201
+      self._tlb_4g = [False] * self._bar4_4g_count
+
+      self._bring_device_to_a0()
+    except Exception:
+      self.close()
+      raise
 
   @staticmethod
   def list_devices() -> list[str]:
@@ -491,17 +507,16 @@ class PCIDevice:
       raise
 
     noc_addr = NOC_PCIE_OFFSET | noc_base
-    self._pinnings[noc_addr] = {"iova": iova, "size": size, "iatu_region": region}
+    self._pinnings[noc_addr] = {"iova": iova, "size": size, "iatu_region": region, "va": va}
     return noc_addr
 
   def unpin_pages(self, buf: mmap.mmap, noc_addr: int):
-    va = ctypes.addressof(ctypes.c_char.from_buffer(buf))
     pin = self._pinnings[noc_addr]
     self._disable_iatu(pin["iatu_region"])
     self._free_iatu_region(pin["iatu_region"])
     dma_unmap = struct.pack("=IIQQ", 24, 0, pin["iova"], pin["size"])
     fcntl.ioctl(self._vfio_container, VFIO_IOMMU_UNMAP_DMA, dma_unmap)
-    _munlock(va, pin["size"])
+    _munlock(pin["va"], pin["size"])
     del self._pinnings[noc_addr]
 
   def _alloc_iatu_region(self) -> int:
@@ -623,14 +638,48 @@ class PCIDevice:
       except (TimeoutError, RuntimeError): pass
 
   def close(self):
-    self.bar0.close(); self.bar0_wc.close(); self.bar2.close()
-    if self.bar4: self.bar4.close()
-    if self.bar4_wc: self.bar4_wc.close()
-    os.close(self._bar0_fd); os.close(self._bar0_wc_fd)
-    os.close(self._bar2_fd); os.close(self._bar4_fd)
-    if self._bar4_wc_fd >= 0: os.close(self._bar4_wc_fd)
+    if self._closed:
+      return
+    self._closed = True
+
+    for noc_addr, pin in list(self._pinnings.items()):
+      try: self._disable_iatu(pin["iatu_region"])
+      except Exception: pass
+      try: self._free_iatu_region(pin["iatu_region"])
+      except Exception: pass
+      try:
+        dma_unmap = struct.pack("=IIQQ", 24, 0, pin["iova"], pin["size"])
+        fcntl.ioctl(self._vfio_container, VFIO_IOMMU_UNMAP_DMA, dma_unmap)
+      except Exception:
+        pass
+      try: _munlock(pin["va"], pin["size"])
+      except Exception: pass
+      self._pinnings.pop(noc_addr, None)
+
+    for bar_name in ["bar0", "bar0_wc", "bar2", "bar4", "bar4_wc"]:
+      bar = getattr(self, bar_name, None)
+      if bar is None:
+        continue
+      try: bar.close()
+      except Exception: pass
+      setattr(self, bar_name, None)
+
+    for fd_name in ["_bar0_fd", "_bar0_wc_fd", "_bar2_fd", "_bar4_fd", "_bar4_wc_fd"]:
+      fd = getattr(self, fd_name, -1)
+      if fd < 0:
+        continue
+      try: os.close(fd)
+      except Exception: pass
+      setattr(self, fd_name, -1)
+
     if self._has_vfio:
-      os.close(self._vfio_device); os.close(self._vfio_group); os.close(self._vfio_container)
+      for fd_name in ["_vfio_device", "_vfio_group", "_vfio_container"]:
+        fd = getattr(self, fd_name, -1)
+        if fd < 0:
+          continue
+        try: os.close(fd)
+        except Exception: pass
+        setattr(self, fd_name, -1)
 
   def __enter__(self): return self
   def __exit__(self, *_): self.close()

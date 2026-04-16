@@ -1,5 +1,5 @@
 
-/tmp/tt-disasm-4ev5htre/out.elf:     file format elf32-littleriscv
+/tmp/tt-disasm-fw_trisc0-udks1a8u/out.elf:     file format elf32-littleriscv
 
 
 Disassembly of section .text:
@@ -59,7 +59,7 @@ Disassembly of section .text:
     5b04:	01078793          	addi	a5,a5,16
     5b08:	fef776e3          	bgeu	a4,a5,5af4 <main+0x7c>
     5b0c:	ff878693          	addi	a3,a5,-8
-    5b10:	34d76a63          	bltu	a4,a3,5e64 <.NO_CB322+0x19c>
+    5b10:	34d76a63          	bltu	a4,a3,5e64 <.NO_CB682+0x19c>
     5b14:	fe07aa23          	sw	zero,-12(a5)
     5b18:	fe07a823          	sw	zero,-16(a5)
     5b1c:	ffc78693          	addi	a3,a5,-4
@@ -112,7 +112,7 @@ Disassembly of section .text:
     5bd8:	00e69463          	bne	a3,a4,5be0 <main+0x168>
     5bdc:	feb668e3          	bltu	a2,a1,5bcc <main+0x154>
     5be0:	00001bb7          	lui	s7,0x1
-    5be4:	9a0bc703          	lbu	a4,-1632(s7) # 9a0 <_start-0x50a0>
+    5be4:	9a0bc703          	lbu	a4,-1632(s7) # 9a0 <trisc.cc.5e4acb22+0x13f>
     5be8:	7ffb8413          	addi	s0,s7,2047
     5bec:	ffb68c37          	lui	s8,0xffb68
     5bf0:	24140413          	addi	s0,s0,577
@@ -123,14 +123,14 @@ Disassembly of section .text:
     5c04:	9a1bc783          	lbu	a5,-1631(s7)
     5c08:	ffb124b7          	lui	s1,0xffb12
     5c0c:	82f18423          	sb	a5,-2008(gp) # ffb00018 <my_logical_y_>
-    5c10:	060004a3          	sb	zero,105(zero) # 69 <_start-0x59d7>
-    5c14:	06904783          	lbu	a5,105(zero) # 69 <_start-0x59d7>
+    5c10:	060004a3          	sb	zero,105(zero) # 69 <trisc.cc.5e4acb22-0x7f8>
+    5c14:	06904783          	lbu	a5,105(zero) # 69 <trisc.cc.5e4acb22-0x7f8>
     5c18:	01978e63          	beq	a5,s9,5c34 <main+0x1bc>
-    5c1c:	06904703          	lbu	a4,105(zero) # 69 <_start-0x59d7>
+    5c1c:	06904703          	lbu	a4,105(zero) # 69 <trisc.cc.5e4acb22-0x7f8>
     5c20:	00300793          	li	a5,3
-    5c24:	18f70a63          	beq	a4,a5,5db8 <.NO_CB322+0xf0>
+    5c24:	18f70a63          	beq	a4,a5,5db8 <.NO_CB682+0xf0>
     5c28:	0ff0000f          	fence
-    5c2c:	06904783          	lbu	a5,105(zero) # 69 <_start-0x59d7>
+    5c2c:	06904783          	lbu	a5,105(zero) # 69 <trisc.cc.5e4acb22-0x7f8>
     5c30:	ff9796e3          	bne	a5,s9,5c1c <main+0x1a4>
     5c34:	238000ef          	jal	5e6c <_ZN15kernel_profiler13init_profilerEttt.constprop.0>
     5c38:	1f44a783          	lw	a5,500(s1) # ffb121f4 <__stack_top+0x111f4>
@@ -142,7 +142,7 @@ Disassembly of section .text:
     5c50:	00f42823          	sw	a5,16(s0)
     5c54:	1f04a783          	lw	a5,496(s1)
     5c58:	00f42a23          	sw	a5,20(s0)
-    5c5c:	06c02783          	lw	a5,108(zero) # 6c <_start-0x59d4>
+    5c5c:	06c02783          	lw	a5,108(zero) # 6c <trisc.cc.5e4acb22-0x7f5>
     5c60:	20f7a7b3          	sh1add	a5,a5,a5
     5c64:	00579793          	slli	a5,a5,0x5
     5c68:	07078e93          	addi	t4,a5,112
@@ -150,7 +150,7 @@ Disassembly of section .text:
     5c70:	012ed783          	lhu	a5,18(t4)
     5c74:	040ea583          	lw	a1,64(t4)
     5c78:	01e787b3          	add	a5,a5,t5
-    5c7c:	0580006f          	j	5cd4 <.NO_CB322+0xc>
+    5c7c:	0580006f          	j	5cd4 <.NO_CB682+0xc>
     5c80:	0047a683          	lw	a3,4(a5)
     5c84:	0007a603          	lw	a2,0(a5)
     5c88:	00c7a883          	lw	a7,12(a5)
@@ -168,15 +168,15 @@ Disassembly of section .text:
     5cb8:	01172423          	sw	a7,8(a4)
     5cbc:	02070713          	addi	a4,a4,32
     5cc0:	fc0290e3          	bnez	t0,5c80 <main+0x208>
-    5cc4:	00058e63          	beqz	a1,5ce0 <.NO_CB322+0x18>
+    5cc4:	00058e63          	beqz	a1,5ce0 <.NO_CB682+0x18>
 
-00005cc8 <.NO_CB322>:
+00005cc8 <.NO_CB682>:
     5cc8:	01078793          	addi	a5,a5,16
     5ccc:	02070713          	addi	a4,a4,32
     5cd0:	0015d593          	srli	a1,a1,0x1
     5cd4:	0015f293          	andi	t0,a1,1
     5cd8:	fa0294e3          	bnez	t0,5c80 <main+0x208>
-    5cdc:	fe0596e3          	bnez	a1,5cc8 <.NO_CB322>
+    5cdc:	fe0596e3          	bnez	a1,5cc8 <.NO_CB682>
     5ce0:	014ed503          	lhu	a0,20(t4)
     5ce4:	046ec783          	lbu	a5,70(t4)
     5ce8:	02000693          	li	a3,32
@@ -184,26 +184,26 @@ Disassembly of section .text:
     5cf0:	0ff7fd93          	zext.b	s11,a5
     5cf4:	c2818713          	addi	a4,gp,-984 # ffb00418 <cb_interface+0x3e0>
     5cf8:	01f00893          	li	a7,31
-    5cfc:	04d79a63          	bne	a5,a3,5d50 <.NO_CB322+0x88>
-    5d00:	0dc0006f          	j	5ddc <.NO_CB322+0x114>
+    5cfc:	04d79a63          	bne	a5,a3,5d50 <.NO_CB682+0x88>
+    5d00:	0dc0006f          	j	5ddc <.NO_CB682+0x114>
     5d04:	00d72023          	sw	a3,0(a4)
     5d08:	00c72223          	sw	a2,4(a4)
     5d0c:	01072823          	sw	a6,16(a4)
-    5d10:	00672a23          	sw	t1,20(a4)
-    5d14:	01c72c23          	sw	t3,24(a4)
+    5d10:	01c72a23          	sw	t3,20(a4)
+    5d14:	00672c23          	sw	t1,24(a4)
     5d18:	01a72e23          	sw	s10,28(a4)
     5d1c:	00c6a803          	lw	a6,12(a3) # 80e9800c <__fw_export_text_end+0x80e9204c>
     5d20:	010606b3          	add	a3,a2,a6
     5d24:	02b87833          	remu	a6,a6,a1
     5d28:	410686b3          	sub	a3,a3,a6
-    5d2c:	00d7f463          	bgeu	a5,a3,5d34 <.NO_CB322+0x6c>
+    5d2c:	00d7f463          	bgeu	a5,a3,5d34 <.NO_CB682+0x6c>
     5d30:	00078613          	mv	a2,a5
     5d34:	00c72823          	sw	a2,16(a4)
     5d38:	00d72423          	sw	a3,8(a4)
     5d3c:	00b72623          	sw	a1,12(a4)
     5d40:	00850513          	addi	a0,a0,8
     5d44:	fe070713          	addi	a4,a4,-32
-    5d48:	091d8a63          	beq	s11,a7,5ddc <.NO_CB322+0x114>
+    5d48:	091d8a63          	beq	s11,a7,5ddc <.NO_CB682+0x114>
     5d4c:	fff88893          	addi	a7,a7,-1
     5d50:	00052683          	lw	a3,0(a0)
     5d54:	00452583          	lw	a1,4(a0)
@@ -212,32 +212,32 @@ Disassembly of section .text:
     5d60:	0086a603          	lw	a2,8(a3)
     5d64:	00c6a783          	lw	a5,12(a3)
     5d68:	0106a803          	lw	a6,16(a3)
-    5d6c:	0146a303          	lw	t1,20(a3)
-    5d70:	0186ae03          	lw	t3,24(a3)
+    5d6c:	0146ae03          	lw	t3,20(a3)
+    5d70:	0186a303          	lw	t1,24(a3)
     5d74:	fff58793          	addi	a5,a1,-1
     5d78:	010787b3          	add	a5,a5,a6
     5d7c:	40c787b3          	sub	a5,a5,a2
     5d80:	02b7f2b3          	remu	t0,a5,a1
-    5d84:	010e0393          	addi	t2,t3,16
+    5d84:	01030393          	addi	t2,t1,16
     5d88:	405787b3          	sub	a5,a5,t0
     5d8c:	00c787b3          	add	a5,a5,a2
-    5d90:	f60f9ae3          	bnez	t6,5d04 <.NO_CB322+0x3c>
-    5d94:	00032e03          	lw	t3,0(t1)
-    5d98:	00432303          	lw	t1,4(t1)
+    5d90:	f60f9ae3          	bnez	t6,5d04 <.NO_CB682+0x3c>
+    5d94:	000e2303          	lw	t1,0(t3)
+    5d98:	004e2e03          	lw	t3,4(t3)
     5d9c:	00d72023          	sw	a3,0(a4)
     5da0:	00c72223          	sw	a2,4(a4)
     5da4:	01072823          	sw	a6,16(a4)
     5da8:	00772e23          	sw	t2,28(a4)
-    5dac:	01c72a23          	sw	t3,20(a4)
-    5db0:	00672c23          	sw	t1,24(a4)
-    5db4:	f69ff06f          	j	5d1c <.NO_CB322+0x54>
+    5dac:	00672a23          	sw	t1,20(a4)
+    5db0:	01c72c23          	sw	t3,24(a4)
+    5db4:	f69ff06f          	j	5d1c <.NO_CB682+0x54>
     5db8:	ffb487b7          	lui	a5,0xffb48
     5dbc:	02878793          	addi	a5,a5,40 # ffb48028 <__stack_top+0x47028>
     5dc0:	0007a023          	sw	zero,0(a5)
     5dc4:	fe07ac23          	sw	zero,-8(a5)
     5dc8:	017787b3          	add	a5,a5,s7
-    5dcc:	ff879ae3          	bne	a5,s8,5dc0 <.NO_CB322+0xf8>
-    5dd0:	060004a3          	sb	zero,105(zero) # 69 <_start-0x59d7>
+    5dcc:	ff879ae3          	bne	a5,s8,5dc0 <.NO_CB682+0xf8>
+    5dd0:	060004a3          	sb	zero,105(zero) # 69 <trisc.cc.5e4acb22-0x7f8>
     5dd4:	0ff0000f          	fence
     5dd8:	e55ff06f          	j	5c2c <main+0x1b4>
     5ddc:	01eed583          	lhu	a1,30(t4)
@@ -265,7 +265,7 @@ Disassembly of section .text:
     5e34:	fffb8693          	addi	a3,s7,-1
     5e38:	90e98737          	lui	a4,0x90e98
     5e3c:	00f12623          	sw	a5,12(sp)
-    5e40:	060004a3          	sb	zero,105(zero) # 69 <_start-0x59d7>
+    5e40:	060004a3          	sb	zero,105(zero) # 69 <trisc.cc.5e4acb22-0x7f8>
     5e44:	1f44a783          	lw	a5,500(s1)
     5e48:	00d7f7b3          	and	a5,a5,a3
     5e4c:	00e7e7b3          	or	a5,a5,a4
@@ -320,11 +320,11 @@ Disassembly of section .text:
     5f00:	fcc6e4e3          	bltu	a3,a2,5ec8 <_ZN15kernel_profiler15finish_profilerEv+0x34>
     5f04:	00081863          	bnez	a6,5f14 <_ZN15kernel_profiler15finish_profilerEv+0x80>
     5f08:	000017b7          	lui	a5,0x1
-    5f0c:	9ce7ae23          	sw	a4,-1572(a5) # 9dc <_start-0x5064>
+    5f0c:	9ce7ae23          	sw	a4,-1572(a5) # 9dc <trisc.cc.5e4acb22+0x17b>
     5f10:	00008067          	ret
     5f14:	84e1a223          	sw	a4,-1980(gp) # ffb00034 <_ZN15kernel_profiler6wIndexE>
     5f18:	000017b7          	lui	a5,0x1
-    5f1c:	9ce7ae23          	sw	a4,-1572(a5) # 9dc <_start-0x5064>
+    5f1c:	9ce7ae23          	sw	a4,-1572(a5) # 9dc <trisc.cc.5e4acb22+0x17b>
     5f20:	00008067          	ret
     5f24:	1ff00813          	li	a6,511
     5f28:	f8e862e3          	bltu	a6,a4,5eac <_ZN15kernel_profiler15finish_profilerEv+0x18>
@@ -335,7 +335,7 @@ Disassembly of section .text:
     5f3c:	00c61613          	slli	a2,a2,0xc
     5f40:	00b67633          	and	a2,a2,a1
     5f44:	a0000e37          	lui	t3,0xa0000
-    5f48:	a4088593          	addi	a1,a7,-1472 # a40 <_start-0x5000>
+    5f48:	a4088593          	addi	a1,a7,-1472 # a40 <trisc.cc.5e4acb22+0x1df>
     5f4c:	20b745b3          	sh2add	a1,a4,a1
     5f50:	01c66633          	or	a2,a2,t3
     5f54:	011585b3          	add	a1,a1,a7
@@ -351,7 +351,7 @@ Disassembly of section .text:
     5f7c:	00c79793          	slli	a5,a5,0xc
     5f80:	00d7f7b3          	and	a5,a5,a3
     5f84:	a00005b7          	lui	a1,0xa0000
-    5f88:	a4060693          	addi	a3,a2,-1472 # a40 <_start-0x5000>
+    5f88:	a4060693          	addi	a3,a2,-1472 # a40 <trisc.cc.5e4acb22+0x1df>
     5f8c:	20d746b3          	sh2add	a3,a4,a3
     5f90:	00b7e7b3          	or	a5,a5,a1
     5f94:	00c686b3          	add	a3,a3,a2
