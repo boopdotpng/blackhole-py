@@ -74,23 +74,23 @@ BOARD_UPI_TO_NAME = {
 # Metric definitions: (tag_name, label, unit, decode)
 # decode: "s16.16" = signed fixed-point, "hex" = hex display, None = raw integer
 METRICS = {
-  "ASIC_TEMPERATURE":    ("ASIC temperature",           " C",    "s16.16"),
-  "AICLK":               ("AICLK",                      " MHz",  None),
-  "AXICLK":              ("AXICLK",                     " MHz",  None),
-  "ARCCLK":              ("ARCCLK",                     " MHz",  None),
-  "AICLK_LIMIT_MAX":     ("AICLK max",                  " MHz",  None),
-  "GDDR_SPEED":          ("GDDR speed",                 " MT/s", None),
-  "FAN_SPEED":           ("Fan speed",                  " %",    None),
-  "FAN_RPM":             ("Fan RPM",                    " rpm",  None),
-  "TDP":                 ("TDP",                        " W",    None),
-  "TDP_LIMIT_MAX":       ("TDP max",                    " W",    None),
-  "TDC":                 ("TDC",                        " A",    None),
-  "TDC_LIMIT_MAX":       ("TDC max",                    " A",    None),
-  "VCORE":               ("VCORE",                      " mV",   None),
-  "BOARD_POWER_LIMIT":   ("Board power limit",          " W",    None),
-  "THM_LIMIT_THROTTLE":  ("Thermal throttle limit",     " C",    None),
-  "THM_LIMIT_SHUTDOWN":  ("Thermal shutdown limit",     " C",    None),
-  "MAX_GDDR_TEMP":       ("Max GDDR temperature",       " C",    None),
+  "ASIC_TEMPERATURE":    ("ASIC temp",          " C",    "s16.16"),
+  "AICLK":               ("AICLK",              " MHz",  None),
+  "AXICLK":              ("AXICLK",             " MHz",  None),
+  "ARCCLK":              ("ARCCLK",             " MHz",  None),
+  "AICLK_LIMIT_MAX":     ("AICLK max",          " MHz",  None),
+  "GDDR_SPEED":          ("GDDR speed",         " MT/s", None),
+  "FAN_SPEED":           ("Fan speed",          " %",    None),
+  "FAN_RPM":             ("Fan RPM",            " rpm",  None),
+  "TDP":                 ("TDP",                " W",    None),
+  "TDP_LIMIT_MAX":       ("TDP max",            " W",    None),
+  "TDC":                 ("TDC",                " A",    None),
+  "TDC_LIMIT_MAX":       ("TDC max",            " A",    None),
+  "VCORE":               ("VCORE",              " mV",   None),
+  "BOARD_POWER_LIMIT":   ("Power limit",        " W",    None),
+  "THM_LIMIT_THROTTLE":  ("Throttle limit",     " C",    None),
+  "THM_LIMIT_SHUTDOWN":  ("Shutdown limit",     " C",    None),
+  "MAX_GDDR_TEMP":       ("GDDR temp",          " C",    None),
 }
 
 
@@ -133,28 +133,6 @@ def _format_ranges(values: list[int]) -> str:
   return ",".join(ranges)
 
 
-def _decode_gddr_modules(dev: PCIDevice, layout: dict) -> list[dict]:
-  pairs = ("0_1", "2_3", "4_5", "6_7")
-  temp_tags = [TAG_NAME_TO_ID[f"GDDR_{p}_TEMP"] for p in pairs]
-  corr_tags = [TAG_NAME_TO_ID[f"GDDR_{p}_CORR_ERRS"] for p in pairs]
-  uncorr_tag = TAG_NAME_TO_ID["GDDR_UNCORR_ERRS"]
-  if not all(t in layout["tag_to_offset"] for t in temp_tags + corr_tags + [uncorr_tag]):
-    return []
-
-  uncorr = read_telemetry_entry(dev, layout, uncorr_tag)
-  modules = []
-  for pi in range(4):
-    tw = read_telemetry_entry(dev, layout, temp_tags[pi])
-    cw = read_telemetry_entry(dev, layout, corr_tags[pi])
-    for lane in range(2):
-      m, sh = pi * 2 + lane, 16 if lane else 0
-      modules.append({"module": m, "top": (tw >> (sh + 8)) & 0xFF, "bottom": (tw >> sh) & 0xFF,
-                       "corr_rd": (cw >> sh) & 0xFF, "corr_wr": (cw >> (sh + 8)) & 0xFF,
-                       "uncorr_rd": 1 if uncorr & (1 << (m * 2)) else 0,
-                       "uncorr_wr": 1 if uncorr & (1 << (m * 2 + 1)) else 0})
-  return modules
-
-
 def _device_snapshot(dev: PCIDevice) -> dict:
   layout = telemetry_layout(dev)
   bid_hi, bid_lo = _read_tag(dev, layout, "BOARD_ID_HIGH"), _read_tag(dev, layout, "BOARD_ID_LOW")
@@ -164,23 +142,57 @@ def _device_snapshot(dev: PCIDevice) -> dict:
   core_count = None if tensix_en is None else active_tensix_core_count(tensix_en & Arc.DEFAULT_TENSIX_ENABLED)
   board_name = BOARD_UPI_TO_NAME.get((board_id >> 36) & 0xFFFFF) if board_id is not None else None
 
-  active_banks = [b for b in range(Dram.BANK_COUNT) if gddr_en and (gddr_en >> b) & 1] if gddr_en else []
   harv_banks = [b for b in range(Dram.BANK_COUNT) if gddr_en and not (gddr_en >> b) & 1] if gddr_en else []
 
+  # Denominators for progress bars
+  shutdown = _read_tag(dev, layout, "THM_LIMIT_SHUTDOWN")
+  throttle = _read_tag(dev, layout, "THM_LIMIT_THROTTLE")
+  temp_ref = shutdown or throttle or 100
+  power_ref = _read_tag(dev, layout, "BOARD_POWER_LIMIT") or _read_tag(dev, layout, "TDP_LIMIT_MAX")
+  tdc_ref = _read_tag(dev, layout, "TDC_LIMIT_MAX")
+  aiclk_ref = _read_tag(dev, layout, "AICLK_LIMIT_MAX")
+
+  def asic_temp_value() -> float | None:
+    r = _read_tag(dev, layout, "ASIC_TEMPERATURE")
+    if r is None:
+      return None
+    r &= 0xFFFFFFFF
+    return (r - (1 << 32) if r & 0x80000000 else r) / 65536.0
+
+  def frac(value: float | int | None, ref: float | int | None) -> float | None:
+    if value is None or not ref:
+      return None
+    return float(value) / float(ref)
+
+  fracs = {
+    "ASIC_TEMPERATURE": frac(asic_temp_value(), temp_ref),
+    "MAX_GDDR_TEMP":    frac(_read_tag(dev, layout, "MAX_GDDR_TEMP"), temp_ref),
+    "FAN_SPEED":        frac(_read_tag(dev, layout, "FAN_SPEED"), 100),
+    "TDP":              frac(_read_tag(dev, layout, "TDP"), power_ref),
+    "TDC":              frac(_read_tag(dev, layout, "TDC"), tdc_ref),
+    "AICLK":            frac(_read_tag(dev, layout, "AICLK"), aiclk_ref),
+  }
+
   def rows(names):
-    return [r for name in names if (r := _read_metric_row(dev, layout, name)) is not None]
+    out = []
+    for name in names:
+      r = _read_metric_row(dev, layout, name)
+      if r is None:
+        continue
+      out.append((r[0], r[1], fracs.get(name)))
+    return out
 
   left = rows(["ASIC_TEMPERATURE", "MAX_GDDR_TEMP", "FAN_SPEED", "FAN_RPM", "TDP", "TDC", "VCORE", "BOARD_POWER_LIMIT"])
 
-  right = []
-  if board_name: right.append(("Board", board_name))
-  if core_count is not None: right.append(("Tensix cores", str(core_count)))
-  if gddr_en is not None: right.append(("Active GDDR banks", f"{_format_ranges(active_banks)} ({len(active_banks)}/{Dram.BANK_COUNT})"))
-  if harv_banks: right.append(("Harvested DRAM bank", _format_ranges(harv_banks)))
-  right += rows(["AICLK", "AXICLK", "ARCCLK", "AICLK_LIMIT_MAX", "GDDR_SPEED", "THM_LIMIT_THROTTLE", "THM_LIMIT_SHUTDOWN"])
+  right: list[tuple[str, str, float | None]] = []
+  if board_name: right.append(("Board", board_name, None))
+  if core_count is not None: right.append(("Tensix cores", str(core_count), None))
+  if harv_banks: right.append(("Harvested DRAM", _format_ranges(harv_banks), None))
+  right += rows(["AICLK", "AXICLK", "ARCCLK", "AICLK_LIMIT_MAX", "GDDR_SPEED"])
 
   return {"layout": layout, "summary_left": left, "summary_right": right,
-          "gddr": _decode_gddr_modules(dev, layout), "heartbeat": _read_tag(dev, layout, "TIMER_HEARTBEAT")}
+          "board_name": board_name,
+          "heartbeat": _read_tag(dev, layout, "TIMER_HEARTBEAT")}
 
 
 def show_device(index: int):
@@ -193,14 +205,8 @@ def show_device(index: int):
     print(f"  Telemetry entry count      {layout['entry_count']}")
     for section, rows in [("Thermals / Power", snap["summary_left"]), ("Clocks / Status", snap["summary_right"])]:
       print(f"  ─── {section} ───")
-      for label, value in rows:
-        print(f"  {label:<26} {value}")
-    if snap["gddr"]:
-      print(f"  ─── GDDR Modules ───")
-      print(f"  {'Bank':>4}  {'Top°':>5}  {'Bot°':>5}  {'CRd':>4}  {'CWr':>4}  {'URd':>4}  {'UWr':>4}")
-      for m in snap["gddr"]:
-        ur, uw = ("✗" if m['uncorr_rd'] else "·"), ("✗" if m['uncorr_wr'] else "·")
-        print(f"    {m['module']:>2}  {m['top']:>4}°  {m['bottom']:>4}°  {m['corr_rd']:>4}  {m['corr_wr']:>4}     {ur}     {uw}")
+      for label, value, _ in rows:
+        print(f"  {label:<20} {value}")
     # raw dump
     print("  Raw telemetry")
     for tag in sorted(layout["tag_to_offset"]):
@@ -233,6 +239,25 @@ def parse_args() -> argparse.Namespace:
 
 # ---- TUI ----
 
+# Row type: (label, value, frac_or_None). A line is a list of (text, attr) segments.
+Segment = tuple[str, int]
+Line = list[Segment]
+
+_BAR_BLOCKS = " ▏▎▍▌▋▊▉"  # empty + seven partial eighths; full block is handled separately
+
+def _bar(frac: float, width: int) -> str:
+  if width <= 0:
+    return ""
+  frac = max(0.0, min(1.0, frac))
+  eighths = int(round(frac * width * 8))
+  full, rem = divmod(eighths, 8)
+  out = "█" * min(full, width)
+  if full < width:
+    out += _BAR_BLOCKS[rem]
+    out = out.ljust(width)
+  return out[:width]
+
+
 def _render_tui(stdscr, devices: list[tuple[int, PCIDevice]], interval_s: float):
   curses.curs_set(0)
   curses.use_default_colors()
@@ -242,91 +267,151 @@ def _render_tui(stdscr, devices: list[tuple[int, PCIDevice]], interval_s: float)
   C_CYAN, C_GREEN, C_YELLOW, C_MAGENTA, C_RED = 1, 2, 3, 4, 5
   if curses.has_colors():
     curses.start_color()
-    for i, color in enumerate([curses.COLOR_CYAN, curses.COLOR_GREEN, curses.COLOR_YELLOW, curses.COLOR_MAGENTA, curses.COLOR_RED], 1):
+    for i, color in enumerate([curses.COLOR_CYAN, curses.COLOR_GREEN, curses.COLOR_YELLOW,
+                               curses.COLOR_MAGENTA, curses.COLOR_RED], 1):
       curses.init_pair(i, color, -1)
 
-  scroll, tick = 0, 0
-  HEART_FRAMES = ["♥·", "♥♥", "·♥", "♥♥"]
-
   def cpair(n): return curses.color_pair(n) if curses.has_colors() else 0
+  BORDER = curses.A_DIM
+  def bar_attr(frac: float) -> int:
+    return cpair(C_RED if frac >= 0.85 else C_YELLOW if frac >= 0.60 else C_GREEN)
 
-  def box_lines(width: int, title: str, body: list[str]) -> list[str]:
+  scroll, tick = 0, 0
+
+  def seg_len(segs: Line) -> int:
+    return sum(len(t) for t, _ in segs)
+
+  def pad_segs(segs: Line, width: int) -> Line:
+    n = seg_len(segs)
+    if n < width:
+      return [*segs, (" " * (width - n), 0)]
+    if n > width:
+      out: Line = []
+      remaining = width
+      for t, a in segs:
+        if remaining <= 0:
+          break
+        if len(t) <= remaining:
+          out.append((t, a)); remaining -= len(t)
+        else:
+          out.append((t[:remaining], a)); remaining = 0
+      return out
+    return list(segs)
+
+  def box_top(width: int, title: str) -> Line:
     inner = max(4, width - 2)
     label = f" {title} " if title else ""
-    lines = ["╭" + label + "─" * max(0, inner - len(label)) + "╮"]
-    for row in body:
-      lines.append("│" + f"{row[:inner]:<{inner}}" + "│")
-    lines.append("╰" + "─" * inner + "╯")
+    bar = "─" * max(0, inner - len(label))
+    return [("╭", BORDER), (label, curses.A_BOLD), (bar, BORDER), ("╮", BORDER)]
+
+  def box_bot(width: int) -> Line:
+    inner = max(4, width - 2)
+    return [("╰" + "─" * inner + "╯", BORDER)]
+
+  def box_row(width: int, segs: Line) -> Line:
+    inner = max(4, width - 2)
+    return [("│", BORDER), *pad_segs(segs, inner), ("│", BORDER)]
+
+  def kv_box(width: int, title: str, rows: list[tuple[str, str, float | None]],
+             min_rows: int = 0, show_bars: bool = False) -> list[Line]:
+    inner = max(4, width - 4)  # minus borders + one space each side
+    lw = max(8, min(18, max((len(l) for l, *_ in rows), default=8)))
+    vw = max(6, min(12, max((len(v) for _, v, *_ in rows), default=6)))
+    bw = max(0, inner - lw - vw - 3) if show_bars else 0
+    lines: list[Line] = [box_top(width, title)]
+    for label, value, frac in rows:
+      segs: Line = [
+        (" ", 0),
+        (f"{label[:lw]:<{lw}}", 0),
+        (" ", 0),
+        (f"{value[:vw]:>{vw}}", curses.A_BOLD),
+        (" ", 0),
+      ]
+      if show_bars and bw >= 3:
+        if frac is not None:
+          segs.append((_bar(frac, bw - 1), bar_attr(frac)))
+          segs.append((" ", 0))
+        else:
+          segs.append((" " * bw, 0))
+      lines.append(box_row(width, segs))
+    while len(lines) - 1 < min_rows:
+      lines.append(box_row(width, [(" ", 0)]))
+    lines.append(box_bot(width))
     return lines
 
-  def kv_box(width: int, title: str, rows: list[tuple[str, str]], min_rows: int = 0) -> list[str]:
-    inner = max(4, width - 4)
-    lw = max(8, min(inner // 2, max((len(l) for l, _ in rows), default=8)))
-    vw = max(6, inner - lw - 3)
-    body = [f" {l[:lw]:<{lw}} {v[:vw]:>{vw}} " for l, v in rows]
-    while len(body) < min_rows:
-      body.append(" " * inner)
-    return box_lines(width, title, body)
-
-  def gddr_box(width: int, modules: list[dict]) -> list[str]:
-    cols = [("Bank", 4), ("Top", 4), ("Bot", 4), ("CRd", 4), ("CWr", 4), ("URd", 4), ("UWr", 4)]
-    min_w = sum(w for _, w in cols) + len(cols) - 1
-    if width - 4 < min_w:
-      return box_lines(width, "GDDR", ["terminal too narrow"])
-    header = " ".join(f"{n:>{w}}" for n, w in cols)
-    body = [header, "─" * len(header)]
-    for m in modules:
-      ur, uw = ("x" if m['uncorr_rd'] else "."), ("x" if m['uncorr_wr'] else ".")
-      body.append(" ".join([f"{m['module']:>4}", f"{m['top']:>4}", f"{m['bottom']:>4}",
-                            f"{m['corr_rd']:>4}", f"{m['corr_wr']:>4}", f"   {ur}", f"   {uw}"]))
-    return box_lines(width, "GDDR", body)
-
-  def merge_cols(left: list[str], right: list[str], total_w: int) -> list[str]:
-    lw, rw = max(20, (total_w - 1) // 2), max(20, total_w - 1 - max(20, (total_w - 1) // 2))
+  def merge_cols(left: list[Line], right: list[Line], total_w: int) -> list[Line]:
+    lw = max(20, (total_w - 1) // 2)
+    rw = max(20, total_w - 1 - lw)
     h = max(len(left), len(right))
-    return [f"{(left[i] if i < len(left) else ''):<{lw}} {(right[i] if i < len(right) else ''):<{rw}}" for i in range(h)]
+    out: list[Line] = []
+    for i in range(h):
+      l = left[i] if i < len(left) else []
+      r = right[i] if i < len(right) else []
+      out.append(pad_segs(l, lw) + [(" ", 0)] + pad_segs(r, rw))
+    return out
 
-  def render_card(index: int, dev: PCIDevice, width: int) -> list[tuple[str, int]]:
+  def render_card(index: int, dev: PCIDevice, width: int) -> list[Line]:
     snap = _device_snapshot(dev)
     cw = max(40, width - 2)
-    heart = HEART_FRAMES[tick % len(HEART_FRAMES)] if snap["heartbeat"] is not None else "??"
-    lines = [(f"  Device {index}  {dev.bdf}  {heart}"[:cw], cpair(C_CYAN) | curses.A_BOLD)]
+    alive = snap["heartbeat"] is not None
+    dot_attr = cpair(C_GREEN if alive else C_RED) | curses.A_BOLD
+    # Subtle blink every 2 ticks so it's visible but not noisy
+    dot = "●" if (tick % 2 == 0 or not alive) else "○"
+    title_text = f"  Device {index}"
+    if snap.get("board_name"):
+      title_text += f"  {snap['board_name']}"
+    title_text += f"  {dev.bdf}  "
+    header: Line = [
+      (title_text[:cw - 2], cpair(C_CYAN) | curses.A_BOLD),
+      (dot, dot_attr),
+    ]
+    lines: list[Line] = [header]
     col_w = cw // 2
     pad = max(len(snap["summary_left"]), len(snap["summary_right"]))
-    for row in merge_cols(kv_box(col_w, "Thermals / Power", snap["summary_left"], pad),
-                          kv_box(cw - col_w, "Clocks / Status", snap["summary_right"], pad), cw):
-      lines.append((row, 0))
-    if snap["gddr"]:
-      for row in gddr_box(cw, snap["gddr"]):
-        lines.append((row, cpair(C_GREEN)))
+    left_box = kv_box(col_w, "Thermals / Power", snap["summary_left"], pad, show_bars=True)
+    right_box = kv_box(cw - col_w, "Clocks / Status", snap["summary_right"], pad)
+    lines.extend(merge_cols(left_box, right_box, cw))
     return lines
 
   while True:
-    lines = []
     tick += 1
-    lines.append((f" tt-smi  {time.strftime('%Y-%m-%d %H:%M:%S')}  q:quit  arrows:scroll", cpair(C_MAGENTA) | curses.A_BOLD))
-    lines.append(("", 0))
-
     height, width = stdscr.getmaxyx()
+
+    lines: list[Line] = []
+    header_line: Line = [
+      (" tt-smi  ", cpair(C_CYAN) | curses.A_BOLD),
+      (time.strftime("%Y-%m-%d %H:%M:%S"), 0),
+      ("    q:quit", curses.A_DIM),
+    ]
+    lines.append(header_line)
+    lines.append([("", 0)])
+
     card_w = max(40, width - 1)
     for index, dev in devices:
       try:
         lines.extend(render_card(index, dev, card_w))
       except Exception as exc:
-        lines.append((f"  Device {index}: {dev.bdf}", curses.A_BOLD))
-        lines.append((f"  error: {exc}", cpair(C_RED) | curses.A_BOLD))
-      lines.append(("", 0))
+        lines.append([(f"  Device {index}: {dev.bdf}", curses.A_BOLD)])
+        lines.append([(f"  error: {exc}", cpair(C_RED) | curses.A_BOLD)])
+      lines.append([("", 0)])
 
     visible = max(1, height - 1)
     max_scroll = max(0, len(lines) - visible)
     scroll = min(scroll, max_scroll)
 
     stdscr.erase()
-    for ri, (text, attr) in enumerate(lines[scroll:scroll + visible]):
-      try:
-        stdscr.addnstr(ri, 0, text, max(1, width - 1), attr)
-      except curses.error:
-        pass
+    for ri, segs in enumerate(lines[scroll:scroll + visible]):
+      x = 0
+      for text, attr in segs:
+        if x >= width - 1:
+          break
+        if not text:
+          continue
+        try:
+          stdscr.addnstr(ri, x, text, max(1, width - 1 - x), attr)
+        except curses.error:
+          pass
+        x += len(text)
     if max_scroll:
       footer = f" {scroll}/{max_scroll} "
       try:
