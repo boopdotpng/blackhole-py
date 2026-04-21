@@ -6,16 +6,13 @@ from pathlib import Path
 from hw import *
 from dispatch import Dtype, MathFidelity, Program
 
-PROFILER = os.environ.get("PROFILE") == "1"
 RVIR = os.environ.get("RVIR") == "1"
+READABLE_DISASM = True
 
 _REPO = Path(__file__).resolve().parent
 _DEPS = _REPO / "tt-metal-deps"
 _SFPI = _DEPS / "sfpi-toolchain" / "bin"
 _CACHE_DIR = Path.home() / "cache" / "tt-cache"
-
-# zone hash→name mapping captured from DeviceZoneScopedN #pragma messages
-_zone_map: dict[int, tuple[str, str, int]] = {}
 
 def _cache_hash(*parts) -> str:
   h = hashlib.sha256()
@@ -41,12 +38,6 @@ def _cache_store(key: str, data):
     pickle.dump(data, f, protocol=pickle.HIGHEST_PROTOCOL)
   tmp.rename(_CACHE_DIR / f"{key}.pkl")
 
-def hash16(s: str) -> int:
-  h = 0x811c9dc5
-  for c in s.encode():
-    h = ((h ^ c) * 0x01000193) & 0xFFFFFFFF
-  return (h >> 16) ^ (h & 0xFFFF)
-
 _INCLUDE_PATHS = [
   "tt_metal/hw/inc", "tt_metal/hostdevcommon/api", "tt_metal/api",
   "tt_metal/include", "tt_metal/hw/inc/internal/tt-1xx",
@@ -56,6 +47,7 @@ _INCLUDE_PATHS = [
   "tt_metal/hw/ckernels/blackhole/metal/common",
   "tt_metal/hw/ckernels/blackhole/metal/llk_api",
   "tt_metal/hw/ckernels/blackhole/metal/llk_api/llk_sfpu",
+  "tt_metal/third_party/tt_llk/common",
   "tt_metal/third_party/tt_llk/tt_llk_blackhole/common/inc",
   "tt_metal/third_party/tt_llk/tt_llk_blackhole/llk_lib",
   "runtime/sfpi/include",
@@ -77,8 +69,19 @@ _LFLAGS = ("-Wl,-z,max-page-size=16", "-Wl,-z,common-page-size=16", "-nostartfil
 
 
 def _kernel_build_flags(opt: str) -> tuple[str, list[str], list[str]]:
+  effective_opt = opt
   debug_flags: list[str] = []
-  return opt, list(_CFLAGS), debug_flags
+  if READABLE_DISASM:
+    effective_opt = "-Og" if opt == "-Os" else "-O1"
+    debug_flags.extend([
+      "-g3",
+      "-fno-ipa-cp",
+      "-fno-ipa-cp-clone",
+      "-fno-ipa-sra",
+      "-fno-partial-inlining",
+      "-fno-inline-functions-called-once",
+    ])
+  return effective_opt, list(_CFLAGS), debug_flags
 
 def _device_defines(
   num_dram_banks: int,
@@ -105,14 +108,6 @@ def _device_defines(
 
 _CQ_SRC_DIR = _REPO / "firmware" / "cq"
 _CQ_INC = [str(_CQ_SRC_DIR), str(_CQ_SRC_DIR / "includes")]
-
-_PROFILE_DEFINES = [
-  "-DPROFILE_KERNEL=1",
-  f"-DPROFILER_FULL_HOST_BUFFER_SIZE_PER_RISC={TensixL1.PROFILER_HOST_BUFFER_BYTES_PER_RISC}",
-]
-
-# FPU=0x1, PACK=0x2, UNPACK=0x4, L1_0=0x8, L1_1=0x10, INSTRN=0x20
-_PERF_COUNTER_DEFINES = ["-DPROFILE_PERF_COUNTERS=0x3f"]
 
 _FW_TARGETS = [
   ("brisc.cc", "brisc", ["-DCOMPILE_FOR_BRISC", "-DPROCESSOR_INDEX=0", "-DNOC_INDEX=1", "-DNOC_MODE=0"],
@@ -151,10 +146,42 @@ def _ckernel_headers(program: Program) -> dict[str, str]:
             f"constexpr uint8_t {prefix}_narrow_tile[32] = {{{repeat32(0)}}};\n"
             f"constexpr uint8_t {prefix}_tile_r_dim[32] = {{{repeat32(32)}}};\n"
             f"constexpr uint8_t {prefix}_tile_c_dim[32] = {{{repeat32(32)}}};\n"
-            f"constexpr uint16_t {prefix}_tile_size[32] = {{{join(tile_sizes)}}};\n")
+            f"constexpr uint16_t {prefix}_tile_size[32] = {{{join(tile_sizes)}}};\n"
+            f"constexpr uint8_t {prefix}_num_faces_r_dim[32] = {{{repeat32(2)}}};\n"
+            f"constexpr uint8_t {prefix}_num_faces_c_dim[32] = {{{repeat32(2)}}};\n")
 
   dst_sync = "DstSync::SyncFull" if program.dst_full_sync else "DstSync::SyncHalf"
+  descriptors = (
+    "#pragma once\n#include <cstdint>\n"
+    f"constexpr bool DST_ACCUM_MODE = {cbool(program.dst_accum_mode)};\n"
+    f"#define DST_SYNC_MODE {dst_sync}\n"
+    f"constexpr bool APPROX = {cbool(program.approx)};\n"
+    f"constexpr std::int32_t MATH_FIDELITY = {program.math_fidelity.value};\n"
+    f"constexpr unsigned char pack_src_format[32] = {{{join(formats)}}};\n"
+    f"constexpr unsigned char pack_dst_format[32] = {{{join(formats)}}};\n"
+    f"constexpr uint8_t pack_tile_num_faces[32] = {{{repeat32(4)}}};\n"
+    f"constexpr uint8_t pack_partial_face[32] = {{{repeat32(0)}}};\n"
+    f"constexpr uint8_t pack_tile_face_r_dim[32] = {{{repeat32(16)}}};\n"
+    f"constexpr uint8_t pack_narrow_tile[32] = {{{repeat32(0)}}};\n"
+    f"constexpr uint8_t pack_tile_r_dim[32] = {{{repeat32(32)}}};\n"
+    f"constexpr uint8_t pack_tile_c_dim[32] = {{{repeat32(32)}}};\n"
+    f"constexpr uint16_t pack_tile_size[32] = {{{join(tile_sizes)}}};\n"
+    f"constexpr uint8_t pack_num_faces_r_dim[32] = {{{repeat32(2)}}};\n"
+    f"constexpr uint8_t pack_num_faces_c_dim[32] = {{{repeat32(2)}}};\n"
+    f"constexpr std::int32_t unpack_src_format[32] = {{{join(formats)}}};\n"
+    f"constexpr std::int32_t unpack_dst_format[32] = {{{join(formats)}}};\n"
+    f"constexpr uint8_t unpack_tile_num_faces[32] = {{{repeat32(4)}}};\n"
+    f"constexpr uint8_t unpack_partial_face[32] = {{{repeat32(0)}}};\n"
+    f"constexpr uint8_t unpack_tile_face_r_dim[32] = {{{repeat32(16)}}};\n"
+    f"constexpr uint8_t unpack_narrow_tile[32] = {{{repeat32(0)}}};\n"
+    f"constexpr uint8_t unpack_tile_r_dim[32] = {{{repeat32(32)}}};\n"
+    f"constexpr uint8_t unpack_tile_c_dim[32] = {{{repeat32(32)}}};\n"
+    f"constexpr uint16_t unpack_tile_size[32] = {{{join(tile_sizes)}}};\n"
+    f"constexpr uint8_t unpack_num_faces_r_dim[32] = {{{repeat32(2)}}};\n"
+    f"constexpr uint8_t unpack_num_faces_c_dim[32] = {{{repeat32(2)}}};\n"
+  )
   return {
+    "chlkc_descriptors.h": descriptors,
     "chlkc_unpack_data_format.h": data_fmt("unpack", "std::int32_t"),
     "chlkc_pack_data_format.h": data_fmt("pack", "unsigned char"),
     "chlkc_unpack_tile_dims.h": tile_dims("unpack"),
@@ -313,20 +340,6 @@ def _run(exe: Path, args: list[str], cwd: Path):
   r = subprocess.run([str(exe), *args], cwd=cwd, capture_output=True)
   if r.returncode != 0:
     raise RuntimeError(f"{exe.name} failed:\n{r.stderr.decode()}")
-  if PROFILER:
-    pragma_re = re.compile(r"#pragma message:\s*['\"]?(.+?)['\"]?\s*$")
-    for line in r.stderr.decode(errors="replace").splitlines():
-      if "KERNEL_PROFILER" not in line or "#pragma message:" not in line: continue
-      m = pragma_re.search(line)
-      if not m: continue
-      msg = m.group(1).strip()
-      if not msg.endswith("KERNEL_PROFILER"): continue
-      parts = msg.rsplit(",", 3)
-      if len(parts) != 4: continue
-      name, fpath, lineno_s, tag = (p.strip() for p in parts)
-      if tag != "KERNEL_PROFILER": continue
-      try: _zone_map[hash16(msg)] = (name, fpath, int(lineno_s))
-      except ValueError: pass
 
 def _compile_and_link(cc: Path, src: Path, compile_args: list[str], link_args: list[str] | Callable[[Path], list[str]],
                       tmp_prefix: str, prepare: Callable[[Path], None] | None = None) -> bytes:
@@ -345,17 +358,16 @@ def compile_firmware(
   num_l1_banks: int,
   prefetch_core: tuple[int, int],
   dispatch_core: tuple[int, int],
-  profile: bool = PROFILER,
 ) -> dict[str, CompiledFirmware]:
   cc = _SFPI / "riscv-tt-elf-g++"
   assert cc.is_file(), f"missing compiler: {cc}"
 
   dev_defines = _device_defines(num_dram_banks, num_l1_banks, prefetch_core, dispatch_core)
-  fw_src_dir = _REPO / "firmware"
+  fw_src_dir = _DEPS / "firmware-src"
   unique_srcs = sorted(set(s for s, *_ in _FW_TARGETS))
   key = _cache_hash(
-    "fw-v3",
-    profile,
+    "fw-v4",
+    READABLE_DISASM,
     num_dram_banks,
     num_l1_banks,
     prefetch_core,
@@ -364,35 +376,37 @@ def compile_firmware(
   )
   cached = _cache_load(key)
   if cached is not None:
-    _zone_map.update(cached["zones"])
     return cached["result"]
 
-  zones_before = dict(_zone_map)
   common_defines = [
     "-DTENSIX_FIRMWARE", "-DFW_BUILD", "-DARCH_BLACKHOLE",
     "-DLOCAL_MEM_EN=0", "-DDISPATCH_MESSAGE_ADDR=0xFFB70438", *dev_defines,
   ]
-  if profile: common_defines += _PROFILE_DEFINES
   lib = _DEPS / "lib" / "blackhole"
   ld_dir = _DEPS / "toolchain" / "blackhole"
 
   result: dict[str, CompiledFirmware] = {}
   for src_name, target, target_defs, mcpu, opt, extra in _FW_TARGETS:
+    effective_opt, cflags, debug_flags = _kernel_build_flags(opt)
     ld = ld_dir / f"firmware_{target}.ld"
     src = fw_src_dir / src_name
-    extra_defs = _PERF_COUNTER_DEFINES if (profile and target == "trisc1") else []
     is_trisc = target.startswith("trisc")
     noinline = _NOINLINE_SOFT if is_trisc else _NOINLINE_HARD
     debug = ["-g"] if is_trisc else []
-    compile_args = [opt, *_CFLAGS, *noinline, *debug, *mcpu, "-mno-tt-tensix-optimize-replay", *common_defines, *target_defs, *extra_defs, *_INCLUDES]
+    compile_args = [
+      effective_opt, *cflags, *noinline, *debug, *debug_flags, *mcpu,
+      "-mno-tt-tensix-optimize-replay", *common_defines, *target_defs, *_INCLUDES,
+    ]
     link_objs = [str(lib / "tmu-crt0.o"), "out.o", *(str(lib / o) for o in extra), str(lib / "substitutes.o")]
-    fw_link_args = [opt, *_CFLAGS, *noinline, *debug, *_LFLAGS, *mcpu, "-mno-tt-tensix-optimize-replay", f"-T{ld}", *link_objs]
+    fw_link_args = [
+      effective_opt, *cflags, *noinline, *debug, *debug_flags, *_LFLAGS, *mcpu,
+      "-mno-tt-tensix-optimize-replay", f"-T{ld}", *link_objs,
+    ]
     elf = _compile_and_link(cc=cc, src=src, compile_args=compile_args, link_args=fw_link_args, tmp_prefix=f"tt-fw-{target}-")
     segs = list(iter_pt_load(elf))
     result[target] = CompiledFirmware(elf_bytes=elf, segments=segs, scratch_base=_INIT_SCRATCH[target])
 
-  new_zones = {k: v for k, v in _zone_map.items() if k not in zones_before}
-  _cache_store(key, {"result": result, "zones": new_zones})
+  _cache_store(key, {"result": result})
   return result
 
 # LDM data/BSS segments that match the C firmware's ELF layout.
@@ -452,7 +466,6 @@ class Compiler:
       num_l1_banks=num_l1_banks,
       prefetch_core=prefetch_core,
       dispatch_core=dispatch_core,
-      profile=PROFILER,
     )
     if RVIR:
       # use rvir-assembled firmware for upload, keep C ELFs for kernel linking
@@ -489,14 +502,12 @@ class Compiler:
     return (self._compile_trisc(src, 0, program), self._compile_trisc(src, 1, program), self._compile_trisc(src, 2, program))
 
   def _compile_dataflow(self, src: str, target: str, noc_index: int, extra_defines: list[str] | None = None,
-                        extra_includes: list[str] | None = None, xip_relocate: bool = False,
-                        profiler: bool = True) -> CompiledKernel:
+                        extra_includes: list[str] | None = None, xip_relocate: bool = False) -> CompiledKernel:
     defines = [
       *self._kernel_defines,
       f"-DCOMPILE_FOR_{target.upper()}", f"-DPROCESSOR_INDEX={0 if target == 'brisc' else 1}",
       f"-DNOC_INDEX={noc_index}", "-DNOC_MODE=0", *(extra_defines or []),
     ]
-    if PROFILER and profiler: defines += _PROFILE_DEFINES
     extra_objs = [str(_DEPS / "lib/blackhole/noc.o")] if target == "brisc" else []
     return self._build(src, target, defines, extra_objs, opt="-O2", trisc=False,
                        extra_includes=extra_includes, xip_relocate=xip_relocate)
@@ -507,7 +518,6 @@ class Compiler:
       *self._kernel_defines, f"-DCOMPILE_FOR_TRISC={trisc_id}", f"-DPROCESSOR_INDEX={trisc_id + 2}",
       f"-DUCK_CHLKC_{stage.upper()}", f"-DNAMESPACE=chlkc_{stage}",
     ]
-    if PROFILER: defines += _PROFILE_DEFINES
     return self._build(src, f"trisc{trisc_id}", defines, [], opt="-O3", trisc=True, program=program)
 
   def _build(self, kern: str, target: str, defines: list[str], extra_objs: list[str], opt: str, trisc: bool,
@@ -519,19 +529,18 @@ class Compiler:
       for d in sorted(extra_includes):
         for f in sorted(Path(d).rglob("*")):
           if f.is_file(): inc_content += f.read_bytes()
-    key = _cache_hash("kern-v3", kern, target, tuple(defines), opt, trisc,
-                      xip_relocate, tuple(sorted(hdrs.items())), self._fw[target].elf_bytes, inc_content)
+    effective_opt, cflags, debug_flags = _kernel_build_flags(opt)
+    key = _cache_hash("kern-v4", kern, target, tuple(defines), opt, trisc,
+                      xip_relocate, READABLE_DISASM, effective_opt, tuple(cflags), tuple(debug_flags),
+                      tuple(sorted(hdrs.items())), self._fw[target].elf_bytes, inc_content)
     cached = _cache_load(key)
     if cached is not None:
-      _zone_map.update(cached["zones"])
       return cached["result"]
 
-    zones_before = dict(_zone_map)
     mcpu = ["-mcpu=tt-bh-tensix", "-mno-tt-tensix-optimize-replay"] if trisc else \
            ["-mcpu=tt-bh", "-mno-tt-tensix-optimize-replay", "-fno-tree-loop-distribute-patterns"]
     fw_src = _DEPS / "firmware-src" / ("trisck.cc" if trisc else f"{target}k.cc")
     includes = [*self._includes, *(f"-I{p}" for p in (extra_includes or []))]
-    effective_opt, cflags, debug_flags = _kernel_build_flags(opt)
     noinline = _NOINLINE_SOFT if trisc else _NOINLINE_HARD
     debug = ["-g"] if trisc else []
     compile_args = [effective_opt, *cflags, *noinline, *debug, *debug_flags, "-MMD", *mcpu, *includes, *defines]
@@ -562,8 +571,7 @@ class Compiler:
       disassembly=self._disassemble_elf(elf),
       elf_bytes=elf,
     )
-    new_zones = {k: v for k, v in _zone_map.items() if k not in zones_before}
-    _cache_store(key, {"result": result, "zones": new_zones})
+    _cache_store(key, {"result": result})
     return result
 
   def _weaken_fw_symbols(self, build: Path, fw: bytes) -> Path:
@@ -598,7 +606,7 @@ class Compiler:
 
   def compile_cq_kernels(self) -> dict[str, CompiledKernel]:
     cq = lambda src, proc, noc: self._compile_dataflow(
-      (_CQ_SRC_DIR / src).read_text(), proc, noc_index=noc, extra_includes=_CQ_INC, xip_relocate=True, profiler=False)
+      (_CQ_SRC_DIR / src).read_text(), proc, noc_index=noc, extra_includes=_CQ_INC, xip_relocate=True)
     return {
       "prefetch_brisc": cq("cq_prefetch.cpp", "brisc", 0),
       "dispatch_brisc": cq("cq_dispatch.cpp", "brisc", 1),

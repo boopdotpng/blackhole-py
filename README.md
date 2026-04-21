@@ -4,8 +4,6 @@ A minimal Python driver for the Tenstorrent Blackhole accelerator. Compiles and 
 
 > **~7.5k lines of code** (2.5k Python + 5k C++ firmware) — the entire driver, compiler, firmware, and dispatch stack. TT-Metal's `tt_metal/` directory alone is ~430k lines of C++.
 
-<p align="center"><img src="docs/profiler.png" alt="profiler" width="100%"></p>
-
 ### Requirements
 
 > You must unload tt-kmd (`modprobe -r tenstorrent`). You may need to prevent the module from auto-loading on reboot and then reboot the computer.
@@ -39,12 +37,4 @@ Fast dispatch uses on-device command queues (prefetch + dispatch cores). Slow di
 ```sh
 PYTHONPATH=. uv run examples/matmul_peak.py              # fast dispatch (on-device CQ)
 PYTHONPATH=. TT_USB=1 uv run examples/matmul_peak.py     # slow dispatch (over UT3G USB adapter)
-```
-
-#### Profiler
-
-Set `PROFILE=1` to capture per-core, per-RISC cycle-level traces. After the run, the profiler serves a web UI at `localhost:8000` with a core heatmap grid, per-RISC timing breakdowns, zone analysis, and annotated kernel source.
-
-```sh
-PYTHONPATH=. PROFILE=1 uv run examples/matmul_peak.py
 ```

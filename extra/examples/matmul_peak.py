@@ -157,7 +157,6 @@ def _mcast_rect_args(x_list, y):
 def _reader_sender_src(data_format):
   return f"""\
 #include <cstdint>
-#include "tools/profiler/kernel_profiler.hpp"
 #define A(n) get_arg_val<uint32_t>(n)
 #define SEM(n) reinterpret_cast<volatile tt_l1_ptr uint32_t*>(get_semaphore(A(n)))
 
@@ -178,7 +177,6 @@ void kernel_main() {{
   uint32_t start_addr = l1_addr;
   uint32_t row = cur_block;
   uint32_t block_bytes = 0;
-  {{ DeviceZoneScopedN("DRAM_READ_IN0");
   for (uint32_t h = 0; h < block_h; h++) {{
     uint32_t tile_id = row;
     for (uint32_t w = 0; w < block_w; w++) {{
@@ -191,10 +189,8 @@ void kernel_main() {{
   }}
   cur_block += A(4);
   noc_async_read_barrier();
-  }}
   noc_semaphore_wait(sender_sem, w_nd + e_nd);
   noc_semaphore_set(sender_sem, 0);
-  {{ DeviceZoneScopedN("MCAST_IN0");
   if (w_nd > 0) {{
     uint64_t wa = get_noc_multicast_addr(A(9), A(10), A(11), A(12), start_addr);
     noc_async_write_multicast(start_addr, wa, block_bytes, w_nd);
@@ -207,14 +203,12 @@ void kernel_main() {{
     noc_async_writes_flushed();
     noc_semaphore_set_multicast(get_semaphore(A(22)), get_noc_multicast_addr(A(14), A(15), A(16), A(17), get_semaphore(A(22))), e_nd);
   }}
-  }}
   cb_push_back(tt::CBIndex::c_0, block_tiles);
   }}
 }}"""
 
 _READER_RECV_SRC = """\
 #include <cstdint>
-#include "tools/profiler/kernel_profiler.hpp"
 #define A(n) get_arg_val<uint32_t>(n)
 #define SEM(n) reinterpret_cast<volatile tt_l1_ptr uint32_t*>(get_semaphore(A(n)))
 
@@ -233,7 +227,6 @@ void kernel_main() {
 def _writer_sender_src(data_format):
   return f"""\
 #include <cstdint>
-#include "tools/profiler/kernel_profiler.hpp"
 #define A(n) get_arg_val<uint32_t>(n)
 #define SEM(n) reinterpret_cast<volatile tt_l1_ptr uint32_t*>(get_semaphore(A(n)))
 
@@ -261,7 +254,6 @@ void kernel_main() {{
   uint32_t start_addr = l1_addr;
   uint32_t row = cur_block;
   uint32_t block_bytes = 0;
-  {{ DeviceZoneScopedN("DRAM_READ_IN1");
   for (uint32_t h = 0; h < block_h; h++) {{
     uint32_t tile_id = row;
     for (uint32_t w = 0; w < block_w; w++) {{
@@ -274,28 +266,22 @@ void kernel_main() {{
   }}
   cur_block += A(4);
   noc_async_read_barrier();
-  }}
   noc_semaphore_wait(sender_sem, i1_nd);
   noc_semaphore_set(sender_sem, 0);
-  {{ DeviceZoneScopedN("MCAST_IN1");
   if (i1_nd > 0) {{
     uint64_t ma = get_noc_multicast_addr(A(9), A(10), A(11), A(12), start_addr);
     noc_async_write_multicast(start_addr, ma, block_bytes, i1_nd);
     noc_async_writes_flushed();
     noc_semaphore_set_multicast(get_semaphore(A(17)), get_noc_multicast_addr(A(9), A(10), A(11), A(12), get_semaphore(A(17))), i1_nd);
   }}
-  }}
   cb_push_back(tt::CBIndex::c_1, block_tiles);
   }}
-  {{ DeviceZoneScopedN("WRITE_OUT");
 {_OUTPUT_WRITE_LOOP}
-  }}
 }}"""
 
 def _writer_recv_src(data_format):
   return f"""\
 #include <cstdint>
-#include "tools/profiler/kernel_profiler.hpp"
 #define A(n) get_arg_val<uint32_t>(n)
 #define SEM(n) reinterpret_cast<volatile tt_l1_ptr uint32_t*>(get_semaphore(A(n)))
 
@@ -345,7 +331,6 @@ def _compute_src(plan: MatmulPlan, f32_acc: bool):
 {mode_defines}#define PACKER_L1_ACC 1
 #include "compute_kernel_api/matmul.h"
 {pack_include}#include "compute_kernel_api/tile_move_copy.h"
-#include "tools/profiler/kernel_profiler.hpp"
 
 namespace NAMESPACE {{
 void MAIN {{
@@ -364,7 +349,6 @@ void MAIN {{
   constexpr uint32_t transpose = 0;
   mm_block_init(tt::CBIndex::c_0, tt::CBIndex::c_1, tt::CBIndex::c_16,
   transpose, out_subblock_w, out_subblock_h, in0_block_w);
-  DeviceZoneScopedN("COMPUTE");
   bool enable_reload = false;
   uint32_t out_num_tiles_to_wait = out_subblock_num_tiles;
   for (uint32_t block = 0; block < num_blocks; block++) {{
@@ -623,9 +607,6 @@ def main():
 
     c_raw = device.dram_read(c_buf)
     _validate(a_ref, b_ref, c_raw, M, N, Mp, Np)
-
-    if device._device_profiler and device._device_profiler._accumulated:
-      device.serve_profile()
 
   finally:
     device.close()

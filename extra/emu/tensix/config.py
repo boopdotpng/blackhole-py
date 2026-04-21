@@ -1,6 +1,5 @@
 M32 = 0xFFFFFFFF
 
-
 class GPRFile:
   def __init__(self):
     # regs[thread][index] = 32-bit value
@@ -24,7 +23,6 @@ class GPRFile:
       self.regs[thread_id][reg] = (old & 0x0000FFFF) | ((value & 0xFFFF) << 16)
     else:
       self.regs[thread_id][reg] = (old & 0xFFFF0000) | (value & 0xFFFF)
-
 
 class ConfigUnit:
   NUM_STATES = 2        # Shared config: 2 state banks x 256 ADDR32 words
@@ -73,7 +71,6 @@ class ConfigUnit:
       byte_mask = d.Mask << shift
       byte_data = d.Data << shift
       self.cfg[0][d.CfgRegAddr] = (old & ~byte_mask) | (byte_data & byte_mask)
-
 
 class ScalarUnit:
   def __init__(self, gpr):

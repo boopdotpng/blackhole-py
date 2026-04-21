@@ -1,4 +1,4 @@
-import ctypes, mmap, os, struct, time
+import ctypes, mmap, struct, time
 from dataclasses import dataclass
 
 from hw import *
@@ -28,15 +28,11 @@ _HOST_ISSUE_BASE       = 4 * PCIE_ALIGN
 _HOST_ISSUE_SIZE       = align_up(64 << 20, PCIE_ALIGN)
 _HOST_COMPLETION_BASE  = _HOST_ISSUE_BASE + _HOST_ISSUE_SIZE
 _HOST_COMPLETION_SIZE  = align_up(32 << 20, PCIE_ALIGN)
-_HOST_PROFILER_BASE    = _HOST_COMPLETION_BASE + _HOST_COMPLETION_SIZE
-_HOST_PROFILER_PER_RISC = TensixL1.PROFILER_HOST_BUFFER_BYTES_PER_RISC  # 64 KB
-_HOST_PROFILER_PER_CORE = _HOST_PROFILER_PER_RISC * 5                   # 320 KB
 _HOST_CQ_WR_OFF        = 2 * PCIE_ALIGN
 _HOST_CQ_RD_OFF        = 3 * PCIE_ALIGN
 
-def _host_sysmem_size(profiler_cores: int = 0) -> int:
- profiler_size = align_up(profiler_cores * _HOST_PROFILER_PER_CORE, PCIE_ALIGN) if profiler_cores else 0
- return align_up(_HOST_PROFILER_BASE + profiler_size, PAGE_SIZE)
+def _host_sysmem_size() -> int:
+ return align_up(_HOST_COMPLETION_BASE + _HOST_COMPLETION_SIZE, PAGE_SIZE)
 
 # CQ command type IDs
 _RELAY_INLINE       = 5
@@ -170,41 +166,20 @@ def _lower_ir(commands: list[IRCommand], go_word: int) -> list[CQCommand]:
  return result
 
 def lower_fast(
- programs: list[tuple[list[IRCommand], bool]],
+ programs: list[list[IRCommand]],
  go_word: int, cores: list[Core],
- profiler_flat_ids: dict | None = None,
- profiler_sysmem_noc_local: int = 0,
 ) -> list[CQCommand]:
- profiling = os.environ.get("PROFILE") == "1" and profiler_flat_ids is not None
  result: list[CQCommand] = []
- if profiling:
-  rects = mcast_rects(cores)
-  prof_cores = sorted(profiler_flat_ids, key=lambda xy: (xy[0], xy[1]))
-  blobs = []
-  for core in prof_cores:
-   x, y = core
-   ctrl = [0] * 32
-   ctrl[12] = profiler_sysmem_noc_local  # sysmem NOC local offset (was DRAM addr)
-   ctrl[14], ctrl[15] = x, y
-   ctrl[16] = profiler_flat_ids[core]
-   blobs.append(struct.pack("<32I", *ctrl))
-  result.append(CQWritePacked(prof_cores, TensixL1.PROFILER_CONTROL, blobs))
-  result.append(CQWritePackedLarge(rects, TensixL1.PROFILER_CONTROL, b"\0" * (5 * 4)))
- for i, (ir, profiled) in enumerate(programs):
-  if profiling and profiled:
-   base = TensixL1.PROFILER_CONTROL
-   result.append(CQWritePackedLarge(rects, base + 5 * 4, b"\0" * (5 * 4)))
-   result.append(CQWritePackedLarge(rects, base + 19 * 4, b"\0" * 4))
+ for ir in programs:
   result.extend(_lower_ir(ir, go_word))
  return result
 
 class CQSysmem:
- def __init__(self, dev: PCIDevice, prefetch_win: TLBWindow, dispatch_win: TLBWindow, profiler_cores: int = 0):
+ def __init__(self, dev: PCIDevice, prefetch_win: TLBWindow, dispatch_win: TLBWindow):
   self.dev = dev
   self._prefetch_win = prefetch_win
   self._dispatch_win = dispatch_win
-  self._profiler_cores = profiler_cores
-  self._size = _host_sysmem_size(profiler_cores)
+  self._size = _host_sysmem_size()
   flags = mmap.MAP_SHARED | mmap.MAP_ANONYMOUS
   if hasattr(mmap, "MAP_POPULATE"):
    flags |= mmap.MAP_POPULATE
@@ -271,6 +246,7 @@ class CQSysmem:
  def completion_base_16b(self) -> int:
   return self._completion_base_16b
 
+
  def _wait_prefetch_slot_free(self, idx: int, timeout_s: float = 1.0):
   off = CQ_PREFETCH_Q_BASE + idx * CQ_PREFETCH_Q_ENTRY_SZ
   deadline = time.perf_counter() + timeout_s
@@ -320,14 +296,6 @@ class CQSysmem:
    if time.perf_counter() > deadline:
     raise TimeoutError(f"timeout waiting for completion event {event_id} -- try tt-smi -r")
    time.sleep(0.0002)
-
- @property
- def profiler_noc_local(self) -> int:
-  return self.noc_local + _HOST_PROFILER_BASE
-
- def read_profiler_data(self) -> bytes:
-  size = self._profiler_cores * _HOST_PROFILER_PER_CORE
-  return bytes(self.sysmem[_HOST_PROFILER_BASE : _HOST_PROFILER_BASE + size])
 
  def close(self):
   try: self._prefetch_win.close()

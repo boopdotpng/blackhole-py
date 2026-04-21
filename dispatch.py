@@ -196,7 +196,7 @@ class Role(NamedTuple):
 def build_payload(
   program: Program, reader, writer, compute: tuple | None,
   rta_sizes: tuple[int, int, int], dispatch_mode: int,
-  sem_off: int | None = None, host_assigned_id: int = 0,
+  sem_off: int | None = None,
 ) -> tuple[int, bytes, bytes]:
   rta_offsets = [0, rta_sizes[0], rta_sizes[0] + rta_sizes[1]]
   rta_total = align_up(rta_offsets[2] + rta_sizes[2], L1_ALIGN)
@@ -246,13 +246,12 @@ def build_payload(
     cfg.rta_offset[i].rta_offset, cfg.rta_offset[i].crta_offset = rta_offsets[2], local_cb_off
   for i, value in enumerate(kernel_text_off):
     cfg.kernel_text_offset[i] = value
-  cfg.host_assigned_id = host_assigned_id
   return shared_addr, bytes(shared), as_bytes(launch)
 
 def build_ir(
   program: Program, roles: list[Role], compute: tuple | None,
   all_cores: list[Core], per_core_args: list[CoreArgs],
-  dispatch_mode: int, host_assigned_id: int = 0,
+  dispatch_mode: int,
 ) -> list[IRCommand]:
   max_w = max((len(a[0]) for a in per_core_args), default=0) * 4
   max_r = max((len(a[1]) for a in per_core_args), default=0) * 4
@@ -277,7 +276,7 @@ def build_ir(
   for role_cores, reader, writer in roles:
     shared_addr, shared_blob, launch_blob = build_payload(
       program, reader, writer, compute, rta_sizes, dispatch_mode,
-      sem_off=sem_off, host_assigned_id=host_assigned_id,
+      sem_off=sem_off,
     )
     commands.append(Write(role_cores, TensixL1.LAUNCH, launch_blob))
     commands.append(Write(role_cores, shared_addr, shared_blob))

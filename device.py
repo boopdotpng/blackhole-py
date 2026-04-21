@@ -65,8 +65,6 @@ class Device:
   self.cq = None
   self._cq_hw = None
   self._programs = []
-  self._profiler = False
-  self._device_profiler = None
   self._dispatch_failed = False
   self._closed = False
 
@@ -108,8 +106,6 @@ class Device:
    self._dram_sysmem = Sysmem(self.dev) if self._use_fast_dispatch else None
    self.cq = CommandQueue()
    if self._use_fast_dispatch:
-    from compiler import PROFILER
-    profiler_cores = len(self._all_worker_cores) - len(self._CQ_CORES) if PROFILER else 0
     prefetch_win = TLBWindow(self.dev, start=self._PREFETCH_CORE)
     dispatch_win = TLBWindow(self.dev, start=self._DISPATCH_CORE)
     try:
@@ -117,19 +113,12 @@ class Device:
       self.dev,
       prefetch_win=prefetch_win,
       dispatch_win=dispatch_win,
-      profiler_cores=profiler_cores,
      )
     except Exception:
      prefetch_win.close()
      dispatch_win.close()
      raise
     self._start_dispatch_cores()
-
-   from compiler import PROFILER
-   self._profiler = PROFILER and self._use_fast_dispatch
-   if self._profiler:
-    from profiler import DeviceProfiler
-    self._device_profiler = DeviceProfiler(self.cores)
   except Exception:
    self.close()
    raise
@@ -387,20 +376,10 @@ class Device:
   self._check_fast_dispatch()
   self._programs.append(program)
 
- def _compile_ir(self, program: Program, dispatch_mode, host_assigned_id: int = 0) -> list:
+ def _compile_ir(self, program: Program, dispatch_mode) -> list:
   writer = self.compiler.compile_dataflow(program.writer_kernel, "brisc") if program.writer_kernel else None
   reader = self.compiler.compile_dataflow(program.reader_kernel, "ncrisc") if program.reader_kernel else None
   compute = self.compiler.compile_compute(program.compute_kernel, program) if program.compute_kernel else None
-  disassembly = {}
-  if self._profiler:
-   if reader is not None:
-    disassembly["reader"] = self.compiler.disassemble(reader)
-   if writer is not None:
-    disassembly["writer"] = self.compiler.disassemble(writer)
-   if compute is not None:
-    for i, kernel in enumerate(compute):
-     disassembly[f"trisc{i}"] = self.compiler.disassemble(kernel)
-   setattr(program, "_profile_disassembly", disassembly)
 
   if program.grid is not None:
    rows, cols = program.grid
@@ -414,22 +393,6 @@ class Device:
    ]
    r_recv = self.compiler.compile_dataflow(program.reader_recv_kernel, "ncrisc") if program.reader_recv_kernel else reader
    w_recv = self.compiler.compile_dataflow(program.writer_recv_kernel, "brisc") if program.writer_recv_kernel else writer
-   if self._profiler and (program.reader_recv_kernel or program.writer_recv_kernel):
-    core_disassembly = {}
-    col_index = {x: i for i, x in enumerate(cols)}
-    row_index = {y: i for i, y in enumerate(rows)}
-    r_recv_disassembly = self.compiler.disassemble(r_recv) if r_recv is not None else ""
-    w_recv_disassembly = self.compiler.disassemble(w_recv) if w_recv is not None else ""
-    for core in all_cores:
-     ds = dict(disassembly)
-     if col_index[core[0]] != 0 and r_recv_disassembly:
-      ds["reader"] = r_recv_disassembly
-     if row_index[core[1]] != 0 and w_recv_disassembly:
-      ds["writer"] = w_recv_disassembly
-     core_disassembly[f"{core[0]},{core[1]}"] = ds
-    setattr(program, "_profile_core_disassembly", core_disassembly)
-   elif self._profiler:
-    setattr(program, "_profile_core_disassembly", None)
    top_left = [grid[0][0]]
    top_row = [grid[0][c] for c in range(1, len(cols))]
    left_col = [grid[r][0] for r in range(1, len(rows))]
@@ -438,8 +401,6 @@ class Device:
     (top_left, reader, writer), (top_row, r_recv, writer), (left_col, reader, w_recv), (interior, r_recv, w_recv),
    ] if cs]
   else:
-   if self._profiler:
-    setattr(program, "_profile_core_disassembly", None)
    cores = self.cores if program.cores == "all" else self.cores[:program.cores]
    all_cores = cores
    n = len(cores)
@@ -450,7 +411,7 @@ class Device:
    ]
    roles = [Role(cores, reader, writer)]
 
-  return build_ir(program, roles, compute, all_cores, per_core_args, dispatch_mode, host_assigned_id=host_assigned_id)
+  return build_ir(program, roles, compute, all_cores, per_core_args, dispatch_mode)
 
  def run(self):
   self._check_fast_dispatch()
@@ -468,19 +429,9 @@ class Device:
    self._set_power(False)
 
  def _run_fast_dispatch(self):
-  n = len(self._programs)
+  programs = [self._compile_ir(program, self._dispatch_mode) for program in self._programs]
 
-  programs = []
-  for i, program in enumerate(self._programs):
-   prof_id = (i + 1) if self._profiler else 0
-   ir = self._compile_ir(program, self._dispatch_mode, host_assigned_id=prof_id)
-   programs.append((ir, self._profiler))
-
-  self.cq.extend(lower_fast(
-   programs, self._go_word(), self.cores,
-   profiler_flat_ids=self._device_profiler.flat_ids if self._device_profiler else None,
-   profiler_sysmem_noc_local=self._cq_hw.profiler_noc_local if self._profiler else 0,
-  ))
+  self.cq.extend(lower_fast(programs, self._go_word(), self.cores))
 
   self._cq_hw._event_id += 1
   self.cq.append(CQHostEvent(self._cq_hw._event_id))
@@ -492,9 +443,6 @@ class Device:
    pc_dump = dump_core_pcs(self.dev, self.cores)
    raise TimeoutError(f"{e}\n  --- RISC-V PCs (all cores) ---\n{pc_dump}") from None
 
-  if self._profiler:
-   self._device_profiler.collect_data(self._programs, self.cores, self._cq_hw, self.harvested_dram_banks)
-
  def _run_slow_dispatch(self):
   t0 = time.perf_counter()
   with TLBWindow(self.dev, start=self.cores[0]) as win:
@@ -504,20 +452,12 @@ class Device:
   elapsed_us = (time.perf_counter() - t0) * 1e6
   print(f"  slow dispatch: {elapsed_us:,.1f} us total (host wall-clock, {len(self._programs)} programs)")
 
-
- def serve_profile(self, port: int = int(os.environ.get("PORT", 8000))):
-  p = self._device_profiler
-  p.finalize(self.harvested_dram_banks, self._tensix_x, self._PREFETCH_CORE, self._DISPATCH_CORE)
-  self.last_profile = p.last_profile
-  p.serve(port=port)
-
  def close(self):
   if self._closed:
    return
   self._closed = True
   # Halt CQ cores before unpinning any host sysmem they may still be touching.
   for step in [
-   lambda: self._device_profiler.close() if self._device_profiler else None,
    lambda: self._abort_fast_dispatch(),
    lambda: self._set_power(False) if self.dev is not None else None,
    lambda: self._dram_sysmem.close() if self._dram_sysmem is not None else None,

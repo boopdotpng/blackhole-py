@@ -8,6 +8,17 @@ def run(k, n=1000, pc=0x100):
   core.run(n)
   return core
 
+def run_full(k, n=1000, pc=0x100):
+  """Load both text and .data (data goes at k._data_base)."""
+  core = BRISC(pc=pc)
+  text, data = k.assemble_full()
+  for i, w in enumerate(text):
+    core.mem.write32(pc + i*4, w)
+  for i in range(0, len(data), 4):
+    core.mem.write32(k._data_base + i, int.from_bytes(data[i:i+4], 'little'))
+  core.run(n)
+  return core
+
 # =============================================================================
 # li — 32-bit immediate loading
 # =============================================================================
@@ -580,3 +591,268 @@ def test_integration_nested_loops():
       k.addi(a0, a0, 1)
   core = run(k)
   assert core.regs[a0] == 12  # 3 * 4
+
+# =============================================================================
+# la — load absolute address of label (text or data)
+# =============================================================================
+def test_la_text_label():
+  k = Kernel(base=0x100)
+  k.la(a0, "target")
+  k.j("end")
+  k.label("target")
+  k.li(a1, 1)
+  k.label("end")
+  core = run(k)
+  # la=2 insns, j=1 insn, so "target" label is at 0x100 + 3*4 = 0x10C
+  assert core.regs[a0] == 0x10C
+
+def test_la_data_label():
+  k = Kernel(base=0x100)
+  k.la(a0, "mydata")
+  k.data_label("mydata")
+  k.data_word(0xDEADBEEF)
+  core = run(k, n=5)
+  assert core.regs[a0] == LDM_BASE
+
+def test_la_loads_data_value():
+  k = Kernel(base=0x100)
+  k.la(a0, "mydata")
+  k.lw(a1, a0, 0)
+  k.data_label("mydata")
+  k.data_word(0xCAFEBABE)
+  core = run_full(k)
+  assert core.regs[a1] == 0xCAFEBABE
+
+# =============================================================================
+# data section basics
+# =============================================================================
+def test_data_words_layout():
+  k = Kernel()
+  k.data_words(0x11111111, 0x22222222, 0x33333333)
+  data = k.data()
+  assert data == bytes.fromhex('11111111') + bytes.fromhex('22222222') + bytes.fromhex('33333333')
+
+def test_data_bytes_padding():
+  k = Kernel()
+  k.data_bytes(b'abc')
+  assert k.data() == b'abc\x00'
+
+def test_data_label_resolves_to_ldm_addr():
+  k = Kernel()
+  k.data_word(0)
+  k.data_label("here")
+  k.data_word(0)
+  labels = k._resolve_labels()
+  assert labels["here"] == LDM_BASE + 4
+
+def test_assemble_full_returns_both():
+  k = Kernel()
+  k.li(a0, 1)
+  k.data_word(0xAA)
+  text, data = k.assemble_full()
+  assert len(text) == 1
+  assert data == bytes.fromhex('AA000000')
+
+# =============================================================================
+# if_ / else_
+# =============================================================================
+def test_if_eqz_taken():
+  k = Kernel()
+  k.li(a0, 0)
+  k.li(a1, 0)
+  with k.if_('eqz', a0):
+    k.li(a1, 42)
+  core = run(k)
+  assert core.regs[a1] == 42
+
+def test_if_eqz_not_taken():
+  k = Kernel()
+  k.li(a0, 1)
+  k.li(a1, 0)
+  with k.if_('eqz', a0):
+    k.li(a1, 42)
+  core = run(k)
+  assert core.regs[a1] == 0
+
+def test_if_else_then_branch():
+  k = Kernel()
+  k.li(a0, 5)
+  k.li(a1, 0)
+  with k.if_('eq', a0, zero) as c:
+    k.li(a1, 1)
+    with c.else_():
+      k.li(a1, 2)
+  core = run(k)
+  assert core.regs[a1] == 2
+
+def test_if_else_else_branch():
+  k = Kernel()
+  k.li(a0, 0)
+  k.li(a1, 0)
+  with k.if_('eq', a0, zero) as c:
+    k.li(a1, 1)
+    with c.else_():
+      k.li(a1, 2)
+  core = run(k)
+  assert core.regs[a1] == 1
+
+def test_if_lt_vs_ge():
+  k = Kernel()
+  k.li(a0, 3)
+  k.li(a1, 10)
+  k.li(a2, 0)
+  with k.if_('lt', a0, a1) as c:
+    k.li(a2, 100)
+    with c.else_():
+      k.li(a2, 200)
+  core = run(k)
+  assert core.regs[a2] == 100
+
+def test_if_nez_skips_body():
+  k = Kernel()
+  k.li(a0, 0)
+  k.li(a1, 99)
+  with k.if_('nez', a0):
+    k.li(a1, 0)
+  core = run(k)
+  assert core.regs[a1] == 99
+
+def test_if_nested():
+  k = Kernel()
+  k.li(a0, 1)
+  k.li(a1, 1)
+  k.li(a2, 0)
+  with k.if_('nez', a0):
+    with k.if_('nez', a1):
+      k.li(a2, 42)
+  core = run(k)
+  assert core.regs[a2] == 42
+
+def test_if_double_else_raises():
+  k = Kernel()
+  k.li(a0, 0)
+  try:
+    with k.if_('eqz', a0) as c:
+      with c.else_():
+        pass
+      with c.else_():
+        pass
+    assert False, "should have raised"
+  except RuntimeError as e:
+    assert "else_" in str(e)
+
+def test_if_unknown_cond():
+  k = Kernel()
+  try:
+    with k.if_('bogus', a0):
+      pass
+    assert False
+  except ValueError:
+    pass
+
+# =============================================================================
+# jumptable
+# =============================================================================
+def test_jumptable_basic():
+  k = Kernel(base=0x100)
+  k.li(a0, 2)            # cmd
+  with k.jumptable(a0, n=3) as jt:
+    with jt.case(0):
+      k.li(a1, 100)
+      k.j("done")
+    with jt.case(1):
+      k.li(a1, 200)
+      k.j("done")
+    with jt.case(2):
+      k.li(a1, 300)
+      k.j("done")
+  k.label("done")
+  core = run_full(k)
+  assert core.regs[a1] == 300
+
+def test_jumptable_case_0():
+  k = Kernel(base=0x100)
+  k.li(a0, 0)
+  with k.jumptable(a0, n=3) as jt:
+    with jt.case(0):
+      k.li(a1, 111)
+      k.j("done")
+    with jt.case(1):
+      k.li(a1, 222)
+      k.j("done")
+    with jt.case(2):
+      k.li(a1, 333)
+      k.j("done")
+  k.label("done")
+  core = run_full(k)
+  assert core.regs[a1] == 111
+
+def test_jumptable_bias():
+  k = Kernel(base=0x100)
+  k.li(a0, 8)            # biased by 7 → idx 1
+  with k.jumptable(a0, n=3, bias=7) as jt:
+    with jt.case(0):
+      k.li(a1, 10)
+      k.j("done")
+    with jt.case(1):
+      k.li(a1, 20)
+      k.j("done")
+    with jt.case(2):
+      k.li(a1, 30)
+      k.j("done")
+  k.label("done")
+  core = run_full(k)
+  assert core.regs[a1] == 20
+
+def test_jumptable_default():
+  k = Kernel(base=0x100)
+  k.li(a0, 3)            # unfilled slot → default
+  with k.jumptable(a0, n=5, default="bad") as jt:
+    with jt.case(0):
+      k.li(a1, 1)
+      k.j("done")
+    with jt.case(2):
+      k.li(a1, 2)
+      k.j("done")
+  k.j("done")
+  k.label("bad")
+  k.li(a1, 999)
+  k.label("done")
+  core = run_full(k)
+  assert core.regs[a1] == 999
+
+def test_jumptable_multi_case():
+  k = Kernel(base=0x100)
+  k.li(a0, 2)
+  with k.jumptable(a0, n=4) as jt:
+    with jt.case(0, 1, 2):     # shared body
+      k.li(a1, 7)
+      k.j("done")
+    with jt.case(3):
+      k.li(a1, 8)
+      k.j("done")
+  k.label("done")
+  core = run_full(k)
+  assert core.regs[a1] == 7
+
+def test_jumptable_missing_slot_raises():
+  k = Kernel(base=0x100)
+  k.li(a0, 0)
+  try:
+    with k.jumptable(a0, n=3) as jt:
+      with jt.case(0):
+        k.j("done")
+    assert False, "should have raised"
+  except ValueError as e:
+    assert "not emitted" in str(e)
+
+def test_jumptable_duplicate_case():
+  k = Kernel(base=0x100)
+  k.li(a0, 0)
+  try:
+    with k.jumptable(a0, n=2) as jt:
+      with jt.case(0): k.nop()
+      with jt.case(0): k.nop()
+    assert False
+  except ValueError as e:
+    assert "duplicate" in str(e)
