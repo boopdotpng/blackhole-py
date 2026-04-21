@@ -135,18 +135,25 @@ class PCIDevice:
   self._next_iova = 1 << 30
 
   try:
-   # Enable PCI device, memory space, bus mastering
-   with open(f"{self.sysfs}/enable", "r+") as f:
-    if int(f.read().strip()) == 0:
-     f.seek(0); f.write("1")
-   fd = os.open(f"{self.sysfs}/config", os.O_RDWR)
-   os.lseek(fd, PCI_COMMAND, os.SEEK_SET)
-   cmd = struct.unpack("<H", os.read(fd, 2))[0]
-   want = PCI_COMMAND_MEMORY | PCI_COMMAND_MASTER
-   if (cmd & want) != want:
+   # Enable PCI device, memory space, bus mastering.  Skip if already bound
+   # to vfio-pci (e.g. left over from a prior process that didn't unbind) —
+   # the driver has already enabled the device and set bus-mastering, and
+   # the sysfs `enable`/`config` nodes will return EBUSY while it's bound.
+   driver_link = f"{self.sysfs}/driver"
+   already_vfio = (os.path.islink(driver_link)
+                   and os.path.basename(os.readlink(driver_link)) == "vfio-pci")
+   if not already_vfio:
+    with open(f"{self.sysfs}/enable", "r+") as f:
+     if int(f.read().strip()) == 0:
+      f.seek(0); f.write("1")
+    fd = os.open(f"{self.sysfs}/config", os.O_RDWR)
     os.lseek(fd, PCI_COMMAND, os.SEEK_SET)
-    os.write(fd, struct.pack("<H", cmd | want))
-   os.close(fd)
+    cmd = struct.unpack("<H", os.read(fd, 2))[0]
+    want = PCI_COMMAND_MEMORY | PCI_COMMAND_MASTER
+    if (cmd & want) != want:
+     os.lseek(fd, PCI_COMMAND, os.SEEK_SET)
+     os.write(fd, struct.pack("<H", cmd | want))
+    os.close(fd)
 
    # Bind to vfio-pci.  USB slow dispatch doesn't need DMA pinning,
    # but still needs the VFIO container open for BAR mmap access when
