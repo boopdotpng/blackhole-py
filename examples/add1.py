@@ -46,13 +46,12 @@ void kernel_main() {
 
 K_COMPUTE = r"""
 #include <cstdint>
-#include "compute_kernel_api/common.h"
-#include "compute_kernel_api/tile_move_copy.h"
-#include "compute_kernel_api/eltwise_unary/eltwise_unary.h"
-#include "compute_kernel_api/eltwise_unary/binop_with_scalar.h"
+#include "api/compute/common.h"
+#include "api/compute/tile_move_copy.h"
+#include "api/compute/eltwise_unary/eltwise_unary.h"
+#include "api/compute/eltwise_unary/binop_with_scalar.h"
 
-namespace NAMESPACE {
-void MAIN {
+void kernel_main() {
  uint32_t n = get_arg_val<uint32_t>(0);
  constexpr auto cb_in = tt::CBIndex::c_0;
  constexpr auto cb_out = tt::CBIndex::c_16;
@@ -74,7 +73,6 @@ void MAIN {
   tile_regs_release();
  }
 }
-}  // namespace NAMESPACE
 """
 
 def _build_rvir_kernels(tiles_per_core):

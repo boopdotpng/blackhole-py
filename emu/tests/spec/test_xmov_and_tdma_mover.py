@@ -32,7 +32,7 @@ import pytest
 from emu.tensix import TensixCoprocessor
 from emu.memory import Memory
 from emu import memory as M
-from emu.dsl import TT_PACR  # for opcode constant reference
+from dsl import TT_PACR  # for opcode constant reference
 from emu.core import BRISC
 
 from .conftest import spec

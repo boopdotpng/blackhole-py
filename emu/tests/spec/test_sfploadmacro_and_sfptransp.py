@@ -14,10 +14,10 @@ SFPTRANSP deviations:
 
 import pytest
 
-from emu.tensix.sfpu import SFPU, _to_float, _to_bits, POS_INF, NEG_INF, CONST_ONE
-from emu.tensix.regfile import DestRegFile
-from emu.dsl import decode_tensix
-from emu.tensix.rwc import RWCState
+from emu.tensix import SFPU, _to_float, _to_bits, POS_INF, NEG_INF, CONST_ONE
+from emu.tensix import DestRegFile
+from dsl import decode_tensix
+from emu.tensix import RWCState
 from emu.tensix import TensixCoprocessor
 
 from .conftest import spec

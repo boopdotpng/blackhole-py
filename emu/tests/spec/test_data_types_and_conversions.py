@@ -18,8 +18,8 @@ import struct
 
 import pytest
 
-from emu.tensix.fpu import _19bit_to_float, _float_to_19bit, _NEG_INF_19BIT
-from emu.tensix.sfpu import _bf16_to_fp32
+from emu.tensix import _19bit_to_float, _float_to_19bit, _NEG_INF_19BIT
+from emu.tensix import _bf16_to_fp32
 
 from .conftest import spec
 

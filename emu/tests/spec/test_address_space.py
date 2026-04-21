@@ -9,7 +9,7 @@ import pytest
 from emu.core import BRISC, NCRISC, TRISC0, TRISC1, TRISC2
 from emu.memory import Memory
 from emu import memory as M
-from emu import dsl
+import dsl
 
 from .conftest import spec
 
@@ -35,7 +35,7 @@ def _attach_slow_ldm(cores):
 def test_first_registered_range_shadows_later():
     """First registered range wins over a later overlapping one."""
     from emu.memory import Memory
-    from emu.router import Router
+    from emu.memory import Router
 
     first  = Memory()
     second = Memory()

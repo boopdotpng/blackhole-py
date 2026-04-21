@@ -8,7 +8,7 @@ import struct
 import pytest
 
 from emu.device import Device
-from emu.fw import (
+from emu.device import (
     DRAM_BANK_COUNT, DRAM_PORTS, _compute_bank_xy, _build_bank_noc_table,
 )
 from emu import memory as M
@@ -245,7 +245,7 @@ def test_noc_write_to_dram_bank(two_tile_network):
     # Pick bank 1's NOC0 port
     bank_id = list(dev.bank_xy.keys())[1]
     bx, by0 = dev.bank_xy[bank_id]
-    from emu.fw import DRAM_BANK_PORT
+    from emu.device import DRAM_BANK_PORT
     port_offset = DRAM_BANK_PORT[bank_id][0]
     noc_y = by0 + port_offset
 
@@ -272,7 +272,7 @@ def test_noc_read_from_dram_bank():
 
     bank_id = list(dev.bank_xy.keys())[0]
     bx, by0 = dev.bank_xy[bank_id]
-    from emu.fw import DRAM_BANK_PORT
+    from emu.device import DRAM_BANK_PORT
     port_offset = DRAM_BANK_PORT[bank_id][0]
     noc_y = by0 + port_offset
 

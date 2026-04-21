@@ -17,7 +17,7 @@ for p in (str(_BH), str(_RVIR_KERNELS)):
 
 import pytest
 
-from emu import fw
+from emu import device as fw
 from emu.device import Device, RUN_MSG_DONE
 from emu.memory import (
   GO_MESSAGES, SUBORDINATE_SYNC, LAUNCH_MSG_RD_PTR, LAUNCH_MSG_RING,

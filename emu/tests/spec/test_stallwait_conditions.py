@@ -10,16 +10,16 @@ evaluation, and SEMWAIT release semantics only.
 
 import pytest
 
-from emu.tensix.frontend import (
+from emu.tensix import (
     WaitGate, TensixThread,
     STALL_MATH, STALL_CFG, STALL_SYNC, STALL_SFPU,
     STALL_TDMA, STALL_UNPACK, STALL_THCON, STALL_THREAD,
     COND_SRCA_VLD, COND_SRCB_VLD, COND_SRCA_CLR, COND_SRCB_CLR,
 )
 from emu.tensix import TensixCoprocessor, HardwareState
-from emu.tensix.regfile import SrcRegFile
+from emu.tensix import SrcRegFile
 from emu.memory import Semaphores
-from emu.dsl import (
+from dsl import (
     TT_NOP, TT_STALLWAIT, TT_SEMWAIT, TT_SETC16, TT_MVMUL,
     TT_SEMPOST, TT_SEMINIT, decode_tensix,
 )
@@ -277,7 +277,7 @@ def test_nop_only_blocked_when_all_bits_set():
 @pytest.mark.parametrize("opcode", [0x01, 0x03, 0x04])  # MOP, MOP_CFG, REPLAY
 def test_frontend_opcodes_never_blocked(opcode):
     """MOP (0x01), MOP_CFG (0x03), REPLAY (0x04) have block_bits=0 — never blocked."""
-    from emu.tensix.frontend import _instruction_block_bits
+    from emu.tensix import _instruction_block_bits
     word = opcode << 24
     assert _instruction_block_bits(word) == 0
 

@@ -7,7 +7,7 @@ tile L1 sharing, NOC network registration, and DRAM harvesting.
 import pytest
 
 from emu.device import Device, P100A_TENSIX_X, P100A_Y_RANGE
-from emu.fw import _compute_bank_xy, DRAM_BANK_COUNT
+from emu.device import _compute_bank_xy, DRAM_BANK_COUNT
 from emu import memory as M
 from emu.noc import noc_key
 from emu.tests._helpers import mini_device
@@ -73,7 +73,7 @@ def test_dram_base_y_starts_at_12():
 def test_bank_port_selection_bank0_noc0():
     """Bank 0 NOC0 uses port offset +2 → y=14 (base 12 + 2)."""
     bank_xy = _compute_bank_xy([0])
-    from emu.fw import _build_bank_noc_table, DRAM_BANK_PORT
+    from emu.device import _build_bank_noc_table, DRAM_BANK_PORT
     import struct
     worker_xy = [(1, 2)]
     table = _build_bank_noc_table([0], worker_xy)

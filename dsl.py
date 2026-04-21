@@ -600,6 +600,30 @@ TT_MULDMAREG = TensixOp(0x5A, "DMA register multiply: Result = OpA * OpB", [
     F("OpBRegIndex",      6, 6),
     F("OpARegIndex",      0, 6),
 ])
+TT_BITWOPDMAREG = TensixOp(0x5B, "DMA register bitwise AND/OR/XOR (OpSel 0/1/2); OpB is reg or 6-bit imm", [
+    F("OpBisConst",      23, 1),
+    F("OpSel",           18, 3),
+    F("ResultRegIndex",  12, 6),
+    F("OpBRegIndex",      6, 6),  # GPR index or 6-bit constant
+    F("OpARegIndex",      0, 6),
+])
+TT_SHIFTDMAREG = TensixOp(0x5C, "DMA register shift (Mode 0=left, 1=right); OpB is reg or 5-bit imm", [
+    F("OpBisConst",      23, 1),
+    F("Mode",            18, 3),
+    F("ResultRegIndex",  12, 6),
+    F("OpBRegIndex",      6, 6),  # GPR index or 5-bit constant (low 5 bits used)
+    F("OpARegIndex",      0, 6),
+])
+TT_CMPDMAREG = TensixOp(0x5D, "DMA register unsigned compare (OpSel 0=GT, 1=LT, 2=EQ); result 0/1", [
+    F("OpBisConst",      23, 1),
+    F("OpSel",           18, 3),
+    F("ResultRegIndex",  12, 6),
+    F("OpBRegIndex",      6, 6),  # GPR index or 6-bit constant
+    F("OpARegIndex",      0, 6),
+])
+TT_FLUSHDMA = TensixOp(0x46, "Occupy Scalar Unit until selected conditions (C0-C3) clear; 0 defaults to 0xF", [
+    F("ConditionMask",    0, 4),
+])
 TT_DMANOP = TensixOp(0x60, "Scalar unit no-op; occupies one ThCon issue slot")
 
 # -- ADC (address counters) ---------------------------------------------------

@@ -8,7 +8,7 @@ import pytest
 
 from emu.core import BRISC, NCRISC, TRISC0, TRISC1, TRISC2
 from emu.memory import Memory
-from emu import dsl
+import dsl
 
 from .conftest import spec
 

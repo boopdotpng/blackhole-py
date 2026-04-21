@@ -7,12 +7,12 @@ Each test is pinned to one or more clauses from
 import pytest
 
 from emu.tensix import TensixCoprocessor
-from emu.tensix.frontend import TensixThread, InstructionFIFO, MOPExpander
+from emu.tensix import TensixThread, InstructionFIFO, MOPExpander
 from emu.memory import (
     INSTRN_BUF_T0, INSTRN_BUF_T1, INSTRN_BUF_T2,
     MOP_CFG_BASE,
 )
-from emu.dsl import (
+from dsl import (
     TT_NOP, TT_MOP, TT_SEMINIT, TT_SEMPOST, TT_SEMGET,
     TT_STALLWAIT, TT_SEMWAIT, TT_SETC16, TT_MVMUL, TT_SETDMAREG,
     decode_tensix,
@@ -75,7 +75,7 @@ def test_step_advances_all_three_threads():
 def test_step_does_not_block_other_threads_when_one_stalls():
     """One thread blocked does not prevent other threads from advancing."""
     t = _make_t()
-    from emu.tensix.frontend import STALL_MATH, COND_SRCA_VLD
+    from emu.tensix import STALL_MATH, COND_SRCA_VLD
     # Force T0's SrcA FPU bank to wrong owner so its STALLWAIT never releases
     t.srca.banks[t.srca.fpu_bank].allowed_client = "unpackers"
     # Install a stall in T0
@@ -162,7 +162,7 @@ def test_pipeline_order_mop_then_replay():
     sempost = int(TT_SEMPOST(sem_sel=0x01))
     t.threads[0].replay.buffer[0] = sempost
 
-    from emu.dsl import TT_REPLAY
+    from dsl import TT_REPLAY
     replay_insn = int(TT_REPLAY(start_idx=0, len=1,
                                 execute_while_loading=0, load_mode=0))
 
@@ -204,7 +204,7 @@ def test_nop_dispatched_without_side_effects():
 def test_stallwait_dispatch_installs_wait_gate():
     """STALLWAIT dispatched via coprocessor step installs the Wait Gate latch."""
     t = _make_t()
-    from emu.tensix.frontend import STALL_MATH, COND_SRCA_VLD
+    from emu.tensix import STALL_MATH, COND_SRCA_VLD
     word = int(TT_STALLWAIT(stall_res=STALL_MATH, wait_res=COND_SRCA_VLD))
     t.push_instruction(0, word)
     t.step()
@@ -217,7 +217,7 @@ def test_stallwait_dispatch_installs_wait_gate():
 def test_semwait_dispatch_installs_semwait_gate():
     """SEMWAIT dispatched via coprocessor step installs the SEMWAIT gate."""
     t = _make_t()
-    from emu.tensix.frontend import STALL_MATH
+    from emu.tensix import STALL_MATH
     word = int(TT_SEMWAIT(stall_res=STALL_MATH, sem_sel=0x02, wait_sem_cond=0x01))
     t.push_instruction(0, word)
     t.step()

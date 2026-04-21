@@ -51,7 +51,7 @@ def test_cfgshiftmask_or():
 @spec("CSI.CFGSHIFTMASK.ALU_ADD")
 def test_cfgshiftmask_add():
   """CFGSHIFTMASK AluMode=3 (ADD): instruction must be recognised by decode_tensix."""
-  from emu.dsl import decode_tensix
+  from dsl import decode_tensix
   word = _cfgshiftmask_word(mask_mode=0, alu_mode=3, mask_width=31,
                              rotate_amt=0, scratch_index=0, cfg_index=0)
   decoded = decode_tensix(word)
@@ -138,7 +138,7 @@ def _streamwait_word(stall_res, target_value, target_sel, wait_stream_sel):
 @spec("CSI.STREAMWAIT.CONDITION_PHASE")
 def test_streamwait_dispatches_without_error():
   """STREAMWAIT should be decoded as a known instruction."""
-  from emu.dsl import decode_tensix
+  from dsl import decode_tensix
   word = _streamwait_word(stall_res=0, target_value=0, target_sel=0, wait_stream_sel=0)
   decoded = decode_tensix(word)
   assert decoded.name == 'STREAMWAIT'
@@ -152,7 +152,7 @@ def test_streamwait_zero_block_mask_defaults_to_stall_math():
   t.push_instruction(0, word)
   t.step()
   # If implemented, the wait gate on thread 0 should have block_mask == STALL_MATH.
-  from emu.tensix.frontend import STALL_MATH
+  from emu.tensix import STALL_MATH
   assert t.threads[0].wait_gate.block_mask == STALL_MATH
 
 
@@ -168,7 +168,7 @@ def _streamwrcfg_word(stream_id_sel, stream_reg_addr, cfg_reg):
 @spec("CSI.STREAMWRCFG.COPIES_STREAM_TO_CONFIG")
 def test_streamwrcfg_dispatches_without_error():
   """STREAMWRCFG should be decoded as a known instruction."""
-  from emu.dsl import decode_tensix
+  from dsl import decode_tensix
   word = _streamwrcfg_word(stream_id_sel=0, stream_reg_addr=0, cfg_reg=0)
   decoded = decode_tensix(word)
   assert decoded.name == 'STREAMWRCFG'

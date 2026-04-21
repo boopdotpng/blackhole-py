@@ -14,9 +14,9 @@ Layout:
 """
 
 import pytest
-from emu.dsl import decode_tensix
+from dsl import decode_tensix
 from emu.tensix import TensixCoprocessor
-from emu.tensix.fpu import _float_to_19bit, _dest_to_float
+from emu.tensix import _float_to_19bit, _dest_to_float
 
 from .conftest import spec
 
@@ -191,7 +191,7 @@ def test_shiftxa_shifts_right():
   c.push_instruction(1, word)
   c.step()
   # After shift right: col 0 = 0, col 1 = old col 0 = 1.0, col 15 = old col 14
-  from emu.tensix.fpu import _19bit_to_float
+  from emu.tensix import _19bit_to_float
   assert bank.rows[0][0] == 0
   assert abs(_19bit_to_float(bank.rows[0][1]) - 1.0) < 0.5
 
@@ -207,7 +207,7 @@ def test_shiftxb_shift_with_zero():
   word = (0x18 << 24) | (1 << 10)
   c.push_instruction(1, word)
   c.step()
-  from emu.tensix.fpu import _19bit_to_float
+  from emu.tensix import _19bit_to_float
   # After left shift: col 0 = old col 1 = 2.0; col 15 = 0
   assert abs(_19bit_to_float(bank.rows[0][0]) - 2.0) < 0.5
   assert bank.rows[0][15] == 0

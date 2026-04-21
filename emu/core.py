@@ -1,6 +1,5 @@
-from .memory import Memory, L1_BASE, L1_END, LDM_BASE
-from .router import Router
-from .dsl import decode_rv
+from .memory import Memory, Router, L1_BASE, L1_END, LDM_BASE
+from dsl import decode_rv
 
 M32 = 0xFFFFFFFF
 def _sext(v, b): return v - (1 << b) if v & (1 << (b-1)) else v

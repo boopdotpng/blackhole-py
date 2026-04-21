@@ -15,7 +15,7 @@ from emu.memory import (
     NCRISC_RESET_PC, NCRISC_RESET_PC_OVR,
     GO_MESSAGES, WALL_CLOCK_L, BRISC_FW_BASE,
 )
-from emu.fw import SOFT_RESET_BRISC_ONLY, _make_jal
+from emu.device import SOFT_RESET_BRISC_ONLY, _make_jal
 from emu.core import BRISC
 from emu.tests._helpers import mini_device
 
@@ -211,7 +211,7 @@ def test_go_msg_boot_init_value():
     """fw.boot writes RUN_MSG_INIT (0x40) to the signal byte at GO_MESSAGES+3."""
     # We can test the fw.boot structure indirectly: after construction +
     # boot stub, the go_init blob contains 0x40 in byte 3
-    from emu.fw import RUN_MSG_INIT
+    from emu.device import RUN_MSG_INIT
     assert RUN_MSG_INIT == 0x40
 
 

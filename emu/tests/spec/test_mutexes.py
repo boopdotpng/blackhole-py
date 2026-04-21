@@ -13,7 +13,7 @@ are not tested here.
 import pytest
 
 from emu.tensix import TensixCoprocessor
-from emu.dsl import TT_ATGETM, TT_ATRELM
+from dsl import TT_ATGETM, TT_ATRELM
 
 from .conftest import spec
 

@@ -13,11 +13,11 @@ by the NOC tests since they use L1 reads/writes and NOC atomics.
 import pytest
 
 from emu.memory import Semaphores, _SEM_WIN_LO
-from emu.tensix.sync import SyncUnit
-from emu.tensix.frontend import WaitGate
+from emu.tensix import SyncUnit
+from emu.tensix import WaitGate
 from emu.tensix import TensixCoprocessor, HardwareState
-from emu.tensix.regfile import SrcRegFile
-from emu.dsl import (
+from emu.tensix import SrcRegFile
+from dsl import (
   decode_tensix,
   TT_SEMINIT, TT_SEMPOST, TT_SEMGET, TT_SEMWAIT, TT_MVMUL,
 )
@@ -224,7 +224,7 @@ def test_semwait_block_mask_only_affects_selected_types(sems):
   assert wg.is_blocking(mvmul, hw, 0)
 
   # SETC16 (Config instruction) is NOT blocked by STALL_MATH
-  from emu.dsl import TT_SETC16
+  from dsl import TT_SETC16
   setc16 = int(TT_SETC16(0, 0))
   assert not wg.is_blocking(setc16, hw, 0)
 

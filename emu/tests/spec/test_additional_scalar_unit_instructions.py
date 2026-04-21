@@ -17,13 +17,13 @@ from .conftest import spec
 @spec("ASUI.SHIFTDMAREG.LEFT")
 def test_shiftdmareg_left():
   """SHIFTDMAREG Mode=0: Result = (Left << Right) & 0xFFFFFFFF."""
-  from emu.tensix.config import GPRFile, ScalarUnit
+  from emu.tensix import GPRFile, ScalarUnit
   gpr = GPRFile()
   gpr.write32(0, 1, 0x00000001)
   gpr.write32(0, 2, 4)
   # encode: opcode=0x5C, Mode=0, result=3, opB=2, opA=1
   word = (0x5C << 24) | (0 << 18) | (3 << 12) | (2 << 6) | 1
-  from emu.dsl import decode_tensix
+  from dsl import decode_tensix
   from emu.tensix import TensixCoprocessor
   t = TensixCoprocessor()
   t.gpr.write32(0, 1, 0x00000001)
@@ -189,7 +189,7 @@ def test_cmpdmareg_eq():
 def test_flushdma_zero_mask_defaults_to_all():
   """FLUSHDMA with mask=0 defaults to 0xF; instruction must be recognised and dispatched."""
   from emu.tensix import TensixCoprocessor
-  from emu.dsl import decode_tensix
+  from dsl import decode_tensix
   t = TensixCoprocessor()
   # opcode=0x46, ConditionMask=0 (defaults to 0xF per spec)
   word = (0x46 << 24) | 0

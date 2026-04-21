@@ -8,7 +8,7 @@ import pytest
 
 from emu.core import BRISC, NCRISC, TRISC0, TRISC1, TRISC2
 from emu.memory import Memory
-from emu import dsl
+import dsl
 from emu import memory as M
 
 from .conftest import spec
@@ -150,7 +150,7 @@ def _csr_read(csr_addr):
     CSR number in bits [31:20] as an unsigned 12-bit field.
     rd=a0 (reg 10), rs1=zero (reg 0), funct3=2 (CSRRS), opcode=0x73.
     """
-    from emu import dsl as _dsl
+    import dsl as _dsl
     from emu.memory import Memory
     # Direct encoding: avoids dsl validation entirely.
     # opcode=0x73 | rd<<7 | funct3<<12 | rs1<<15 | csr<<20

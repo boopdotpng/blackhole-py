@@ -23,10 +23,10 @@ Layout:
 import struct
 import pytest
 
-from emu.tensix.sfpu import SFPU, _to_float, _to_bits, POS_INF, NEG_INF, CONST_ONE, CONST_0P8363
-from emu.tensix.regfile import DestRegFile
-from emu.dsl import decode_tensix
-from emu.tensix.rwc import RWCState
+from emu.tensix import SFPU, _to_float, _to_bits, POS_INF, NEG_INF, CONST_ONE, CONST_0P8363
+from emu.tensix import DestRegFile
+from dsl import decode_tensix
+from emu.tensix import RWCState
 
 from .conftest import spec
 

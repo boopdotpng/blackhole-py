@@ -21,7 +21,7 @@ import struct
 import pytest
 
 from emu.tensix import TensixCoprocessor
-from emu.dsl import TT_UNPACR, TT_UNPACR_NOP, TT_SETADCXY, TT_SETADCZW
+from dsl import TT_UNPACR, TT_UNPACR_NOP, TT_SETADCXY, TT_SETADCZW
 
 from .conftest import spec
 

@@ -12,9 +12,9 @@ Layout:
 """
 
 import pytest
-from emu.dsl import decode_tensix
+from dsl import decode_tensix
 from emu.tensix import TensixCoprocessor
-from emu.tensix.rwc import RWCState, AddrModState, ADCState
+from emu.tensix import RWCState, AddrModState, ADCState
 
 from .conftest import spec
 

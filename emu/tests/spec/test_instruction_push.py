@@ -6,10 +6,10 @@ Each test is pinned to one or more clauses from
 
 import pytest
 
-from emu.tensix.frontend import InstructionFIFO
+from emu.tensix import InstructionFIFO
 from emu.tensix import TensixCoprocessor
 from emu.memory import INSTRN_BUF_T0, INSTRN_BUF_T1, INSTRN_BUF_T2, MOP_CFG_BASE
-from emu.dsl import TT_NOP, TT_MOP
+from dsl import TT_NOP, TT_MOP
 
 from .conftest import spec
 

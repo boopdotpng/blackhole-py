@@ -20,11 +20,11 @@ import math
 import struct
 
 import pytest
-from emu.dsl import decode_tensix
+from dsl import decode_tensix
 from emu.tensix import TensixCoprocessor
-from emu.tensix.fpu import FPU, _19bit_to_float, _float_to_19bit, _float_to_dest, _dest_to_float
-from emu.tensix.regfile import SrcRegFile, DestRegFile
-from emu.tensix.rwc import RWCState
+from emu.tensix import FPU, _19bit_to_float, _float_to_19bit, _float_to_dest, _dest_to_float
+from emu.tensix import SrcRegFile, DestRegFile
+from emu.tensix import RWCState
 
 from .conftest import spec
 
@@ -83,7 +83,7 @@ def test_float_to_19bit_roundtrip():
 @spec("FPU.FMT.19BIT_NEG_INF")
 def test_19bit_neg_inf():
   """Negative-infinity in 19-bit: sign=1, mant=0, exp=0xFF."""
-  from emu.tensix.fpu import _NEG_INF_19BIT
+  from emu.tensix import _NEG_INF_19BIT
   assert (_NEG_INF_19BIT >> 18) & 1 == 1    # sign=1
   assert _NEG_INF_19BIT & 0xFF == 0xFF       # exp=0xFF
   assert (_NEG_INF_19BIT >> 8) & 0x3FF == 0 # mant=0

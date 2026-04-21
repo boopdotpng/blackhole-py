@@ -8,10 +8,10 @@ expected to pass — the emulator correctly replicates the bug.
 
 import pytest
 
-from emu.tensix.frontend import InstructionFIFO, MOPExpander, ReplayExpander
+from emu.tensix import InstructionFIFO, MOPExpander, ReplayExpander
 from emu.tensix import TensixCoprocessor
 from emu.memory import MOP_CFG_BASE
-from emu.dsl import TT_NOP, TT_MOP, TT_REPLAY, TT_SEMPOST, TT_SEMINIT
+from dsl import TT_NOP, TT_MOP, TT_REPLAY, TT_SEMPOST, TT_SEMINIT
 
 from .conftest import spec
 
@@ -563,7 +563,7 @@ def test_template1_hw_bug_dmanop_is_not_nop():
 ])
 def test_is_nop_only_opcode_02(word, should_be_nop):
     """_is_nop() returns True only for opcode 0x02."""
-    from emu.tensix.frontend import _is_nop
+    from emu.tensix import _is_nop
     assert _is_nop(word) == should_be_nop
 
 

@@ -13,9 +13,9 @@ Layout:
 """
 
 import pytest
-from emu.dsl import decode_tensix
+from dsl import decode_tensix
 from emu.tensix import TensixCoprocessor
-from emu.tensix.regfile import SrcRegFile, DestRegFile
+from emu.tensix import SrcRegFile, DestRegFile
 
 from .conftest import spec
 

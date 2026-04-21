@@ -173,7 +173,7 @@ def test_read_pcbuf_coproc_done_always_zero():
     """CoprocessorDoneCheck (offset 0x04) always returns 0 in emulator."""
     t = _make_t()
     # Even with instructions in the FIFO, read_pcbuf returns 0 immediately
-    from emu.dsl import TT_NOP
+    from dsl import TT_NOP
     t.push_instruction(0, int(TT_NOP()))
     assert t.read_pcbuf(0, PCBUF_COPROC_DONE) == 0
 

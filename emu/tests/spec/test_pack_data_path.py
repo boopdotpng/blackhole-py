@@ -32,7 +32,7 @@ PARTIALLY IMPLEMENTED (pass):
 import pytest
 
 from emu.tensix import TensixCoprocessor
-from emu.dsl import (
+from dsl import (
   TT_PACR, TT_UNPACR, TT_SETADCXX,
 )
 

@@ -18,9 +18,9 @@ Layout:
 
 import pytest
 
-from emu.tensix.config import GPRFile, ConfigUnit, ScalarUnit
+from emu.tensix import GPRFile, ConfigUnit, ScalarUnit
 from emu.tensix import TensixCoprocessor
-from emu.dsl import (
+from dsl import (
   decode_tensix,
   TT_SETDMAREG, TT_ADDDMAREG, TT_MULDMAREG,
   TT_WRCFG, TT_RDCFG, TT_SETC16,
