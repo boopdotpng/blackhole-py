@@ -176,12 +176,12 @@ STREAM_TILES_RECEIVED  = 0x028      # per-stream offset: reg 10
 STREAM_SYNC_REG        = 0x07C      # per-stream offset: reg 31 (general sync pointer)
 STREAM_DISPATCH_REG    = 270 * 4    # per-stream offset: reg 270 (dispatch signal)
 
-# CB N lives at stream (CB_STREAM_ID_OFFSET + N).  tt-metal's public header
-# claims OPERAND_START_STREAM = 0, but every Blackhole firmware build we
-# disassembled (blackhole-py/disasms) and our own rvlib.init_sync_registers
-# iterate from stream 8 — so that's what we emulate.  Stream 0 is reserved
-# for get_sync_register_ptr(), streams 1..7 are unused, stream 48 is dispatch.
-CB_STREAM_ID_OFFSET    = 8
+# CB N maps directly to stream N.  Confirmed by trisc.cc:init_sync_registers()
+# which iterates via get_operand_stream_id(operand) = OPERAND_START_STREAM +
+# operand = 0 + operand, and by stream_io_map.h: OPERAND_START_STREAM = 0.
+# Stream 0 reg 31 doubles as the general sync register; stream 48 reg 270 is
+# the dispatch signal — but those are orthogonal to the CB mapping.
+CB_STREAM_ID_OFFSET    = 0
 STREAM_DISPATCH_ID     = 48         # go_msg dispatch completion stream
 DISPATCH_MESSAGE_ADDR  = STREAM_BASE + STREAM_DISPATCH_ID * STREAM_STRIDE + STREAM_DISPATCH_REG  # 0xFFB70438
 

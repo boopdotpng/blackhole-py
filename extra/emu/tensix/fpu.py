@@ -6,21 +6,22 @@ M32 = 0xFFFFFFFF
 # ── Format conversion ────────────────────────────────────────────────────
 
 def _19bit_to_float(val):
+  # Layout: { sign[18], mantissa[17:8] (10 bits), exponent[7:0] (8 bits) }
   sign = (val >> 18) & 1
-  exp = (val >> 10) & 0xFF
-  mant = val & 0x3FF
+  mant = (val >> 8) & 0x3FF
+  exp  = val & 0xFF
   # Map to FP32: mantissa zero-padded from 10 to 23 bits
   fp32_bits = (sign << 31) | (exp << 23) | (mant << 13)
   return struct.unpack('f', struct.pack('I', fp32_bits))[0]
 
 def _float_to_19bit(f):
   if math.isnan(f):
-    return (0x7F << 10) | 0x200  # NaN marker
+    return (0x7F << 8) | 0x200  # NaN marker: exp=0x7F in bits[7:0], quiet-NaN mant bit in bits[17:8]
   bits = struct.unpack('I', struct.pack('f', float(f)))[0]
   sign = (bits >> 31) & 1
-  exp = (bits >> 23) & 0xFF
+  exp  = (bits >> 23) & 0xFF
   mant = (bits >> 13) & 0x3FF
-  return (sign << 18) | (exp << 10) | mant
+  return (sign << 18) | (mant << 8) | exp
 
 def _dest_to_float(val):
   return struct.unpack('f', struct.pack('I', val & M32))[0]
@@ -31,7 +32,8 @@ def _float_to_dest(f):
   return struct.unpack('I', struct.pack('f', float(f)))[0]
 
 # 19-bit -inf for ZEROSRC with write_mode=1 (SrcA negative-infinity fill)
-_NEG_INF_19BIT = (1 << 18) | (0xFF << 10)
+# Layout: sign=1, mant=0, exp=0xFF in bits[7:0]
+_NEG_INF_19BIT = (1 << 18) | 0xFF
 
 
 class FPU:

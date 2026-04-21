@@ -58,17 +58,16 @@ def noc_key(x, y):
 # that every RISC on the tile can see, and that remote tiles can hit with
 # NOC atomic increments.  Only these slots matter for kernel execution:
 #
-#   stream (8+N), reg 8  (+0x020) — tiles_acked   (cb_pop_front target)
-#   stream (8+N), reg 10 (+0x028) — tiles_received (cb_push_back target)
+#   stream N, reg 8  (+0x020) — tiles_acked   (cb_pop_front target)
+#   stream N, reg 10 (+0x028) — tiles_received (cb_push_back target)
 #       CB sync is just (received - acked) in uint16 modular arithmetic.
 #   stream 0, reg 31 (+0x07C)     — get_sync_register_ptr (BRISC/NCRISC)
 #   stream 48, reg 270 (@ 0xFFB70438) — DISPATCH_MESSAGE_ADDR; go_msg
 #       dispatch_message_offset picks stream (48+k)/reg 270.
 #
-# The disasms confirm this layout: fw_trisc0.S zeroes this block at boot
-# starting from stream 8 (`lui 0xffb48; addi 40`), matmul_trisc0.S polls
-# reg 10 via `lw a3, 40(a0)` with `a0 = 0xffb48000`, and fw_brisc.S pins
-# s11 to 0xffb70438 across the main loop.
+# CB N maps directly to stream N (OPERAND_START_STREAM = 0 in stream_io_map.h;
+# trisc.cc:init_sync_registers iterates from stream 0 via get_operand_stream_id).
+# fw_brisc.S pins s11 to 0xffb70438 across the main loop.
 #
 # A sparse Memory suffices as the backing store — reads of untouched regs
 # return 0, writes stick, atomic increments (via NOC) land the same as any
@@ -321,13 +320,20 @@ class NOC:
         pass
 
       case 0x1:  # INCR_GET
-        incr = (at_len_be >> 6) & 0xF or 1
-        target_mem.write32(targ_addr, (old_val + incr) & M32)
+        # ISA (BlackholeA0/NoC/Atomics.md): Incremented = OriginalValue + NOC_AT_DATA.
+        # NOC_AT_LEN_BE[9:6] is IntWidth (mask-width), not the increment amount;
+        # NOC_AT_INCR is commented out in noc_parameters.h.
+        int_width = (at_len_be >> 6) & 0xF
+        int_mask = (2 << int_width) - 1
+        incremented = old_val + at_data
+        target_mem.write32(targ_addr, ((incremented & int_mask) | (old_val & ~int_mask)) & M32)
 
       case 0x2:  # INCR_GET_PTR
-        incr = (at_len_be >> 6) & 0xF or 1
+        # Not documented in BlackholeA0/NoC/Atomics.md; semantics inferred from
+        # noc_parameters.h macros: NOC_AT_WRAP at [5:2], NOC_AT_INCR commented out.
+        # Increment operand is NOC_AT_DATA (same as INCR_GET).
         wrap = (at_len_be >> 2) & 0xF
-        new_val = old_val + incr
+        new_val = old_val + at_data
         if wrap > 0 and new_val >= wrap:
           new_val = 0
         target_mem.write32(targ_addr, new_val & M32)

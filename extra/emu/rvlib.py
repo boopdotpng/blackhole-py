@@ -80,7 +80,7 @@ STREAM_BASE           = M.STREAM_BASE         # 0xFFB40000
 STREAM_STRIDE         = M.STREAM_STRIDE       # 0x1000
 STREAM_TILES_ACKED    = M.STREAM_TILES_ACKED  # 0x020
 STREAM_TILES_RECEIVED = M.STREAM_TILES_RECEIVED  # 0x028
-NUM_CBS = 32  # firmware init_sync_registers zeroes streams 8..39
+NUM_CBS = 32  # firmware init_sync_registers zeroes streams 0..31
 
 # =============================================================================
 # Constants — launch_msg_t layout (matches dispatch.py _KernelConfigMsg)
@@ -303,8 +303,8 @@ def seed_prng(k, cycles=600, tmp=t0, count_reg=a0):
 
 
 def init_sync_registers(k, addr_reg=a0, end_reg=a1, stride_reg=a2):
-    k.li(addr_reg, STREAM_BASE + 8 * STREAM_STRIDE + STREAM_TILES_RECEIVED)
-    k.li(end_reg, STREAM_BASE + (8 + NUM_CBS) * STREAM_STRIDE + STREAM_TILES_RECEIVED)
+    k.li(addr_reg, STREAM_BASE + 0 * STREAM_STRIDE + STREAM_TILES_RECEIVED)
+    k.li(end_reg, STREAM_BASE + NUM_CBS * STREAM_STRIDE + STREAM_TILES_RECEIVED)
     k.li(stride_reg, STREAM_STRIDE)
     with k.while_true() as L:
         k.sw(addr_reg, zero, 0)
