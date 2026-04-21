@@ -112,6 +112,18 @@ def _read_tag(dev: PCIDevice, layout: dict, tag_name: str) -> int | None:
   return read_telemetry_entry(dev, layout, tag)
 
 
+# ---- Fan control ----
+# TT_SMC_MSG_FORCE_FAN_SPEED (see tt-zephyr-platforms/include/tenstorrent/smc_msg.h).
+# arg0 = fan percent (0..100), or 0xFFFFFFFF to revert to the automatic fan curve.
+MSG_FORCE_FAN_SPEED = 0xAC
+FAN_AUTO_SENTINEL = 0xFFFFFFFF
+
+def _set_fan(dev: PCIDevice, pct: int | None) -> None:
+  """pct=None → automatic fan curve; 0..100 → forced percent."""
+  arg = FAN_AUTO_SENTINEL if pct is None else max(0, min(100, int(pct)))
+  dev.arc_msg(MSG_FORCE_FAN_SPEED, arg0=arg)
+
+
 def _read_metric_row(dev: PCIDevice, layout: dict, tag_name: str) -> tuple[str, str] | None:
   raw = _read_tag(dev, layout, tag_name)
   if raw is None:
@@ -277,6 +289,20 @@ def _render_tui(stdscr, devices: list[tuple[int, PCIDevice]], interval_s: float)
     return cpair(C_RED if frac >= 0.85 else C_YELLOW if frac >= 0.60 else C_GREEN)
 
   scroll, tick = 0, 0
+  cur_dev = 0          # index into `devices` of the device currently on screen
+  fan_edit = False     # are we in fan-edit mode?
+  fan_edit_target = 50 # pending fan percent (preserved across edits)
+  # Per-device fan mode, populated only after *we* send a successful arc_msg.
+  # The SMC doesn't expose fan_speed_forced, so we can't know on startup — an
+  # entry is absent (=unknown) until the user sets it within this session.
+  fan_mode: dict[int, str] = {}  # cur_dev index -> "auto"
+  status_text = ""     # transient message shown on the bottom line
+  status_attr = 0
+  status_expire = 0    # tick after which status_text is cleared
+
+  def flash(msg: str, attr: int = 0, ticks: int = 8) -> None:
+    nonlocal status_text, status_attr, status_expire
+    status_text, status_attr, status_expire = msg, attr, tick + ticks
 
   def seg_len(segs: Line) -> int:
     return sum(len(t) for t, _ in segs)
@@ -350,17 +376,32 @@ def _render_tui(stdscr, devices: list[tuple[int, PCIDevice]], interval_s: float)
       out.append(pad_segs(l, lw) + [(" ", 0)] + pad_segs(r, rw))
     return out
 
-  def render_card(index: int, dev: PCIDevice, width: int) -> list[Line]:
+  def render_card(index: int, dev: PCIDevice, width: int, dev_slot: int = 0,
+                  editing: bool = False, target: int = 50) -> list[Line]:
     snap = _device_snapshot(dev)
     cw = max(40, width - 2)
     alive = snap["heartbeat"] is not None
     dot_attr = cpair(C_GREEN if alive else C_RED) | curses.A_BOLD
     # Subtle blink every 2 ticks so it's visible but not noisy
     dot = "●" if (tick % 2 == 0 or not alive) else "○"
+    # While editing, overwrite the Fan speed row so the user sees the pending target.
+    # Otherwise, if *we* last set this device to auto, annotate the row with "auto".
+    if editing:
+      snap["summary_left"] = [
+        (lbl, f"▶ {target}% ◀", target / 100.0) if lbl == "Fan speed" else (lbl, val, frac)
+        for (lbl, val, frac) in snap["summary_left"]
+      ]
+    elif fan_mode.get(dev_slot) == "auto":
+      snap["summary_left"] = [
+        (lbl, f"{val} auto", frac) if lbl == "Fan speed" else (lbl, val, frac)
+        for (lbl, val, frac) in snap["summary_left"]
+      ]
+    # "◀ 1/3 ▶" pagination indicator only shows when we actually have siblings.
+    pager = f"  ◀ {cur_dev + 1}/{len(devices)} ▶" if len(devices) > 1 else ""
     title_text = f"  Device {index}"
     if snap.get("board_name"):
       title_text += f"  {snap['board_name']}"
-    title_text += f"  {dev.bdf}  "
+    title_text += f"  {dev.bdf}{pager}  "
     header: Line = [
       (title_text[:cw - 2], cpair(C_CYAN) | curses.A_BOLD),
       (dot, dot_attr),
@@ -377,23 +418,29 @@ def _render_tui(stdscr, devices: list[tuple[int, PCIDevice]], interval_s: float)
     tick += 1
     height, width = stdscr.getmaxyx()
 
+    if status_expire and tick >= status_expire:
+      status_text, status_expire = "", 0
+
+    hints = "    q:quit  f:fan" + ("  ←/→:device" if len(devices) > 1 else "")
     lines: list[Line] = []
     header_line: Line = [
       (" tt-smi  ", cpair(C_CYAN) | curses.A_BOLD),
       (time.strftime("%Y-%m-%d %H:%M:%S"), 0),
-      ("    q:quit", curses.A_DIM),
+      (hints, curses.A_DIM),
     ]
     lines.append(header_line)
     lines.append([("", 0)])
 
+    # Single-device view: render only the currently-selected card.
     card_w = max(40, width - 1)
-    for index, dev in devices:
-      try:
-        lines.extend(render_card(index, dev, card_w))
-      except Exception as exc:
-        lines.append([(f"  Device {index}: {dev.bdf}", curses.A_BOLD)])
-        lines.append([(f"  error: {exc}", cpair(C_RED) | curses.A_BOLD)])
-      lines.append([("", 0)])
+    index, dev = devices[cur_dev]
+    try:
+      lines.extend(render_card(index, dev, card_w, dev_slot=cur_dev,
+                               editing=fan_edit, target=fan_edit_target))
+    except Exception as exc:
+      lines.append([(f"  Device {index}: {dev.bdf}", curses.A_BOLD)])
+      lines.append([(f"  error: {exc}", cpair(C_RED) | curses.A_BOLD)])
+    lines.append([("", 0)])
 
     visible = max(1, height - 1)
     max_scroll = max(0, len(lines) - visible)
@@ -412,7 +459,22 @@ def _render_tui(stdscr, devices: list[tuple[int, PCIDevice]], interval_s: float)
         except curses.error:
           pass
         x += len(text)
-    if max_scroll:
+    # Bottom line: fan-edit prompt > transient status > scroll indicator.
+    if fan_edit:
+      tgt_idx = devices[cur_dev][0]
+      footer = (f" FAN EDIT  dev {tgt_idx}  target: {fan_edit_target:>3}%   "
+                f"←/→ ±5   S-←/S-→ ±1   a:auto   Enter:apply   Esc:cancel ")
+      try:
+        stdscr.addnstr(height - 1, 0, footer[:width - 1], width - 1,
+                       cpair(C_CYAN) | curses.A_BOLD | curses.A_REVERSE)
+      except curses.error:
+        pass
+    elif status_text:
+      try:
+        stdscr.addnstr(height - 1, 1, status_text[:width - 2], width - 2, status_attr)
+      except curses.error:
+        pass
+    elif max_scroll:
       footer = f" {scroll}/{max_scroll} "
       try:
         stdscr.addnstr(height - 1, max(0, width - len(footer) - 1), footer, len(footer), curses.A_DIM)
@@ -422,7 +484,58 @@ def _render_tui(stdscr, devices: list[tuple[int, PCIDevice]], interval_s: float)
 
     key = stdscr.getch()
     if key == -1: continue
+
+    if fan_edit:
+      # In edit mode, arrow keys retarget to fan adjustment (no scrolling).
+      if key == 27:  # Esc
+        fan_edit = False
+        flash("fan edit cancelled", curses.A_DIM)
+      elif key in (10, 13, curses.KEY_ENTER):
+        _, tgt = devices[cur_dev]
+        try:
+          _set_fan(tgt, fan_edit_target)
+          fan_mode.pop(cur_dev, None)  # no longer auto; we don't label "forced"
+          flash(f"fan → {fan_edit_target}%  [dev {devices[cur_dev][0]}]",
+                cpair(C_GREEN) | curses.A_BOLD)
+        except Exception as exc:
+          flash(f"fan set failed: {exc}", cpair(C_RED) | curses.A_BOLD, ticks=16)
+        fan_edit = False
+      elif key in (ord("a"), ord("A")):
+        _, tgt = devices[cur_dev]
+        try:
+          _set_fan(tgt, None)
+          fan_mode[cur_dev] = "auto"
+          flash(f"fan → auto  [dev {devices[cur_dev][0]}]", cpair(C_GREEN) | curses.A_BOLD)
+        except Exception as exc:
+          flash(f"fan auto failed: {exc}", cpair(C_RED) | curses.A_BOLD, ticks=16)
+        fan_edit = False
+      elif key == curses.KEY_LEFT:  fan_edit_target = max(0,   fan_edit_target - 5)
+      elif key == curses.KEY_RIGHT: fan_edit_target = min(100, fan_edit_target + 5)
+      elif key == curses.KEY_SLEFT: fan_edit_target = max(0,   fan_edit_target - 1)
+      elif key == curses.KEY_SRIGHT:fan_edit_target = min(100, fan_edit_target + 1)
+      elif key in (ord("-"), ord("_")): fan_edit_target = max(0,   fan_edit_target - 1)
+      elif key in (ord("+"), ord("=")): fan_edit_target = min(100, fan_edit_target + 1)
+      continue
+
     if key in (ord("q"), ord("Q")): return
+    if key in (ord("f"), ord("F")):
+      # Seed the target from the current FAN_SPEED reading so ±5 is relative to "now".
+      try:
+        _, tgt = devices[cur_dev]
+        cur = _read_tag(tgt, telemetry_layout(tgt), "FAN_SPEED")
+        if cur is not None:
+          cur &= 0xFFFFFFFF
+          if 0 <= cur <= 100:
+            fan_edit_target = cur
+      except Exception:
+        pass
+      fan_edit = True
+      continue
+    # Left/Right flip between devices; when there's only one, they're no-ops.
+    if key == curses.KEY_LEFT and len(devices) > 1:
+      cur_dev = (cur_dev - 1) % len(devices); scroll = 0; continue
+    if key == curses.KEY_RIGHT and len(devices) > 1:
+      cur_dev = (cur_dev + 1) % len(devices); scroll = 0; continue
     scroll_map = {curses.KEY_UP: -1, curses.KEY_DOWN: 1,
                   curses.KEY_PPAGE: -visible, curses.KEY_NPAGE: visible}
     if key in scroll_map:
