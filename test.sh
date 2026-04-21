@@ -6,5 +6,5 @@
 #   ./test -k incr_get                          # tests matching a pattern
 #   ./test tests/spec/test_noc_atomics.py       # one file
 set -euo pipefail
-cd "$(dirname "$0")/extra/emu"
+cd "$(dirname "$0")/emu"
 exec uv run --with pytest python -m pytest tests/spec/ -q "$@"

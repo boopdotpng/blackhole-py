@@ -58,7 +58,8 @@ _libc = ctypes.CDLL(ctypes.util.find_library("c"), use_errno=True)
 
 def _mlock(addr: int, size: int):
  if _libc.mlock(ctypes.c_void_p(addr), ctypes.c_size_t(size)) != 0:
-  raise OSError(ctypes.get_errno(), "mlock failed — run setup_python_cap.sh to grant CAP_IPC_LOCK")
+  import sys
+  raise OSError(ctypes.get_errno(), f"mlock failed — run: extra/setup_python_cap.sh {sys.executable}")
 
 def _munlock(addr: int, size: int):
  _libc.munlock(ctypes.c_void_p(addr), ctypes.c_size_t(size))

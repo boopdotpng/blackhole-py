@@ -21,7 +21,7 @@ For fast dispatch to work, we need to pin and unpin pages so that the card can c
 
 ```sh
 ./setup-deps.sh          # downloads SFPI compiler toolchain + TT-Metal headers
-./setup_python_cap.sh    # grants Python the capabilities needed for VFIO access (prompts for sudo)
+./extra/setup_python_cap.sh   # grants Python the capabilities needed for VFIO access (prompts for sudo)
 ```
 
 ### Usage
