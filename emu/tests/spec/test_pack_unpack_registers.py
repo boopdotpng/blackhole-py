@@ -69,21 +69,79 @@ def test_dataformat_int8_is_fourteen():
 @spec("PUKREG.PACK_CFG.OUT_DATA_FORMAT")
 def test_pack_config_out_data_format():
   """Pack config out_data_format register affects packer output data type."""
-  # The spec requires that writing ADDR32=70 bits[7:4] changes the data format
-  # used by subsequent PACR instructions.  The emulator's ConfigUnit stores the
-  # value but the packer never reads it — so we cannot verify the behavioral
-  # effect.  Fail explicitly to mark this as unimplemented.
-  pytest.fail(
-    "PUKREG.PACK_CFG.OUT_DATA_FORMAT not implemented: "
-    "packer does not read out_data_format from config register ADDR32=70")
+  from emu.tensix import TensixCoprocessor
+  from emu.memory import Memory
+  from dsl import TT_PACR, TT_SETADCXX
+  import struct
+
+  l1 = Memory()
+  coproc = TensixCoprocessor(l1=l1)
+  # ADDR32 70 bits[7:4] = out_data_format; set to BF16 (5)
+  # ADDR32 70: in_data_format=BF16(5) [11:8], out_data_format=BF16(5) [7:4]
+  coproc.config_unit.cfg[0][70] = (5 << 8) | (5 << 4)
+  coproc.config_unit.cfg[0][69] = 0x1000  # L1 dest addr
+  coproc.config_unit.cfg[0][68] = 0
+  coproc.config_unit.cfg[0][20] = 0xFFFF  # edge mask
+  coproc.config_unit.cfg[0][24] = 0
+  coproc.config_unit.cfg[0][28] = 16 << 8
+  coproc.config_unit.cfg[0][180] = 0
+  coproc.config_unit.cfg[0][18] = 0
+  coproc.config_unit.cfg[0][2] = 0
+
+  coproc.dest.bits[0][0] = struct.unpack('I', struct.pack('f', 1.0))[0]
+  coproc.dest.valid[0] = True
+
+  coproc.push_instruction(2, int(TT_SETADCXX(CntSetMask=0b100, x_end2=0, x_start=0)))
+  coproc.step()
+  coproc.push_instruction(2, int(TT_PACR(
+    CfgContext=0, RowPadZero=0, DstAccessMode=0, AddrMode=0,
+    AddrCntContext=0, ZeroWrite=0, ReadIntfSel=0b0001,
+    OvrdThreadId=0, Concat=0, CtxtCtrl=0, Flush=0, Last=1,
+  )))
+  coproc.step()
+
+  # Verify out_data_format was read from ADDR32=70: BF16 output at L1
+  b0 = l1.read8(0x1000)
+  b1 = l1.read8(0x1001)
+  bf16 = b0 | (b1 << 8)
+  assert bf16 == 0x3F80, f"out_data_format=BF16 should produce BF16 1.0, got 0x{bf16:04X}"
 
 
 @spec("PUKREG.PACK_CFG.L1_DEST_ADDR")
 def test_pack_config_l1_dest_addr():
   """Pack config l1_dest_addr register at ADDR32 69 steers packer output to L1."""
-  # The spec requires that l1_dest_addr (ADDR32 69) is read by PACR to determine
-  # where packed data is written in L1.  The emulator's PACR is a structural no-op
-  # and does not consult config registers.  Fail explicitly.
-  pytest.fail(
-    "PUKREG.PACK_CFG.L1_DEST_ADDR not implemented: "
-    "PACR does not read l1_dest_addr from config register ADDR32=69")
+  from emu.tensix import TensixCoprocessor
+  from emu.memory import Memory
+  from dsl import TT_PACR, TT_SETADCXX
+  import struct
+
+  l1 = Memory()
+  coproc = TensixCoprocessor(l1=l1)
+  dest_addr = 0x2000
+  coproc.config_unit.cfg[0][70] = (5 << 8) | (5 << 4)
+  coproc.config_unit.cfg[0][69] = dest_addr  # L1 dest addr at ADDR32 69
+  coproc.config_unit.cfg[0][68] = 0
+  coproc.config_unit.cfg[0][20] = 0xFFFF
+  coproc.config_unit.cfg[0][24] = 0
+  coproc.config_unit.cfg[0][28] = 16 << 8
+  coproc.config_unit.cfg[0][180] = 0
+  coproc.config_unit.cfg[0][18] = 0
+  coproc.config_unit.cfg[0][2] = 0
+
+  coproc.dest.bits[0][0] = struct.unpack('I', struct.pack('f', 2.0))[0]
+  coproc.dest.valid[0] = True
+
+  coproc.push_instruction(2, int(TT_SETADCXX(CntSetMask=0b100, x_end2=0, x_start=0)))
+  coproc.step()
+  coproc.push_instruction(2, int(TT_PACR(
+    CfgContext=0, RowPadZero=0, DstAccessMode=0, AddrMode=0,
+    AddrCntContext=0, ZeroWrite=0, ReadIntfSel=0b0001,
+    OvrdThreadId=0, Concat=0, CtxtCtrl=0, Flush=0, Last=1,
+  )))
+  coproc.step()
+
+  # Data should be at the address set in ADDR32=69
+  b0 = l1.read8(dest_addr)
+  b1 = l1.read8(dest_addr + 1)
+  bf16 = b0 | (b1 << 8)
+  assert bf16 == 0x4000, f"l1_dest_addr=0x{dest_addr:X} should contain BF16 2.0=0x4000, got 0x{bf16:04X}"
