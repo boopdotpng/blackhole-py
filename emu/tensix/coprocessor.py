@@ -17,7 +17,7 @@ from .frontend import TensixThread
 from .thcon import ConfigUnit, ScalarUnit
 from .sync import SyncUnit, MutexSet
 from .math import FPU, SFPU
-from .unpack import Unpacker
+from .unpack import Unpacker, UnpackerState
 from .pack import Packer
 
 
@@ -25,7 +25,7 @@ _TRISC_THREAD = {'trisc0': 0, 'trisc1': 1, 'trisc2': 2}
 
 
 class TensixCoprocessor:
-  def __init__(self):
+  def __init__(self, l1: Memory = None):
     # Shared backend state. The 8 hardware semaphores live inside the
     # coprocessor (per emu-specs/semaphores.md); TRISC RISC-V cores reach
     # them through the PCBuf semaphore window, which the device wires to
@@ -40,15 +40,22 @@ class TensixCoprocessor:
     self.config_unit = ConfigUnit(self.gpr)
     self.scalar = ScalarUnit(self.gpr)
     self.mutexes = MutexSet()
+    # L1 tile memory (shared with device; callers may inject a pre-populated
+    # Memory for testing, or leave as None for non-unpack tests).
+    self.l1 = l1 if l1 is not None else Memory()
+    # Per-unpacker runtime state (SrcRow offsets, context counters)
+    self.unpackers = [UnpackerState(), UnpackerState()]
     # Per-pipeline backends
     self.unpack = Unpacker(self.srca, self.srcb)       # T0 pipeline
     self.fpu    = FPU(self.srca, self.srcb, self.dest) # T1 pipeline (math)
     self.sfpu   = SFPU(self.dest)                      # T1 pipeline (math)
-    self.pack   = Packer(self.dest)                    # T2 pipeline
-    # Per-thread address counters
+    # Per-thread address counters (must be created before wiring Packer)
     self.rwc = [RWCState() for _ in range(3)]
     self.addr_mod = AddrModState()
     self.adc = [ADCState() for _ in range(3)]
+    # T2 pipeline: Packer wired to Dest, ConfigUnit, ADC (thread list), and L1
+    self.packer = Packer(dest=self.dest, cfg=self.config_unit,
+                         adc=self.adc, l1=self.l1)
     # Per-thread frontend pipelines
     self.threads = [TensixThread(i) for i in range(3)]
     # Tensix backend config register file (0xFFEF0000..0xFFEFFFFF).
@@ -116,7 +123,7 @@ class TensixCoprocessor:
       case 'INCADCZW': adc.execute_incadczw(d)
       case 'SETADCXX': adc.execute_setadcxx(d)
       # ── T0 pipeline: unpack ─────────────────────────────────────────
-      case 'UNPACR':     self.unpack.handle_unpacr(d)
+      case 'UNPACR':     self.unpack.handle_unpacr(d, thread.id, self)
       case 'UNPACR_NOP': self.unpack.handle_unpacr_nop(d)
       # ── T1 pipeline: FPU / SFPU / RWC ───────────────────────────────
       case 'ZEROACC':     self.fpu.zeroacc(d)
@@ -173,7 +180,7 @@ class TensixCoprocessor:
       case 'SFPARECIP':   self.sfpu.sfparecip(d)
       case 'SFPNOP':      pass
       # ── T2 pipeline: pack ───────────────────────────────────────────
-      case 'PACR':        self.pack.handle_pacr(d)
+      case 'PACR':        self.packer.handle_pacr(d, thread.id)
       # Unknown opcodes: no-op (for functional emulation).
       case _: pass
 

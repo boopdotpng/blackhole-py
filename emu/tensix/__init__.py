@@ -29,7 +29,20 @@ from .math import (
   _bf16_to_fp32, _fp16_to_fp32,
   POS_INF, NEG_INF, CONST_0P8363, CONST_ONE,
 )
-from .unpack import Unpacker, _clear_src_bank
+from .unpack import (
+  Unpacker, UnpackerState, _clear_src_bank,
+  # Format conversion functions and register-layout helpers (used by tests)
+  _write_src_tf32, _write_src_bf16, _write_src_fp16,
+  _write_dst_bf16, _write_dst_fp32, _write_dst_fp16,
+  _bfp8_to_bf16, _bfp8a_to_fp16,
+  _format_conversion,
+  # DataFormat constants (re-exported for test convenience)
+  FMT_FP32, FMT_FP16, FMT_BF16, FMT_TF32,
+  FMT_BFP8, FMT_BFP8A, FMT_BFP4, FMT_BFP4A, FMT_BFP2, FMT_BFP2A,
+  FMT_FP8, FMT_INT8, FMT_INT16, FMT_INT32,
+  # Config address constants (used by test setup helpers)
+  _THCON_SEC_BASE, _UNP_ADDR_CTRL_XY, _UNP_ADDR_CTRL_ZW, _UNP_BASE_REG_1,
+)
 from .pack import Packer
 from .coprocessor import TensixCoprocessor, HardwareState
 from . import formats
