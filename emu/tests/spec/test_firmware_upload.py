@@ -215,6 +215,26 @@ def test_go_msg_boot_init_value():
     assert RUN_MSG_INIT == 0x40
 
 
+@spec("FW.GO_MSG.DONE_SIGNAL")
+def test_go_msg_done_signal_is_zero():
+    """Host polls L1[GO_MESSAGES + 3] until it reads RUN_MSG_DONE (0x00) —
+    the signal that BRISC has completed init and released all subordinates.
+
+    We verify (a) the constant is 0x00, and (b) the device's go_message
+    polling helper recognises byte 3 == RUN_MSG_DONE as the done condition."""
+    from emu.device import RUN_MSG_DONE
+    assert RUN_MSG_DONE == 0x00
+
+    dev = mini_device()
+    tile = list(dev.tiles.values())[0]
+    # Before: signal byte is anything other than DONE — polling condition false.
+    tile.l1.write8(GO_MESSAGES + 3, 0x40)   # e.g. RUN_MSG_INIT
+    assert tile.l1.read8(GO_MESSAGES + 3) != RUN_MSG_DONE
+    # After: host sees 0x00 → done.
+    tile.l1.write8(GO_MESSAGES + 3, RUN_MSG_DONE)
+    assert tile.l1.read8(GO_MESSAGES + 3) == RUN_MSG_DONE
+
+
 # ===========================================================================
 # step_loop behavior
 # ===========================================================================

@@ -33,6 +33,26 @@ def test_rwc_initial_state():
   assert rwc.cr == 0
 
 
+@spec("RWC.INIT.PER_THREAD")
+def test_rwc_is_per_thread_no_cross_thread_access():
+  """Each Tensix thread owns its own independent RWC. Writing thread 0's
+  RWC must not change thread 1 or thread 2."""
+  t = TensixCoprocessor()
+  # Three distinct RWC objects, one per thread.
+  assert len(t.rwc) == 3
+  assert t.rwc[0] is not t.rwc[1]
+  assert t.rwc[1] is not t.rwc[2]
+  assert t.rwc[0] is not t.rwc[2]
+  # SETRWC on thread 1 only: bitmask=0x0F sets a=3, b=5, d=7, cr=2.
+  setrwc = (0x37 << 24) | (0 << 22) | (2 << 18) | (7 << 14) | (5 << 10) | (3 << 6) | 0x0F
+  t.push_instruction(1, setrwc)
+  t.step()
+  # Thread 1 updated; threads 0 and 2 untouched.
+  assert (t.rwc[1].a, t.rwc[1].b, t.rwc[1].d, t.rwc[1].cr) == (3, 5, 7, 2)
+  assert (t.rwc[0].a, t.rwc[0].b, t.rwc[0].d, t.rwc[0].cr) == (0, 0, 0, 0)
+  assert (t.rwc[2].a, t.rwc[2].b, t.rwc[2].d, t.rwc[2].cr) == (0, 0, 0, 0)
+
+
 # ===========================================================================
 # SETRWC
 # ===========================================================================

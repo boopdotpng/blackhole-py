@@ -1,6 +1,6 @@
 # pcbufs
 
-**Source:** [`pcbufs.md`](../specs/pcbufs.md) · **Emulator:** `blackhole-py/emu/tensix/__init__.py`
+**Source:** [`pcbufs.md`](../specs/pcbufs.md)
 
 ## Address map
 

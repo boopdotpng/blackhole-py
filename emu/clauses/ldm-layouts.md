@@ -1,6 +1,6 @@
 # ldm-layouts
 
-**Source:** [`ldm-layouts.md`](../specs/ldm-layouts.md) · **Emulator:** `blackhole-py/emu/core.py`
+**Source:** [`ldm-layouts.md`](../specs/ldm-layouts.md)
 
 ## LDM isolation
 

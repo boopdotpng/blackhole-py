@@ -375,3 +375,86 @@ def test_mcast_src_include_loopback():
     assert src_l1.read32(0xB000) == 0x1111
     # Peer also receives
     assert peer_l1.read32(0xB000) == 0x1111
+
+
+@spec("NIU.MCAST.WR_ACK_PER_DEST")
+def test_mcast_wr_ack_increments_per_destination(three_tile_network):
+    """For a non-posted multicast, NIU_MST_WR_ACK_RECEIVED must bump by one
+    per destination tile that ACKs (here: 2 tiles in the rect), while
+    NIU_MST_NONPOSTED_WR_REQ_SENT bumps by 1 (one command issued).
+
+    CURRENTLY FAILS — the emulator's _inc_write_counters bumps WR_ACK by
+    a flat 1 regardless of multicast fan-out. This test documents the
+    per-destination spec and will pass once counter accounting is fixed."""
+    net = three_tile_network
+    net['src_l1'].write32(0x5000, 0xCAFEBABE)
+    # Rect covers dst (3,4) and dst2 (4,4) — two destination tiles.
+    sx, sy, ex, ey = 3, 4, 4, 4
+    xy = (sy << 18) | (sx << 12) | (ey << 6) | ex
+    base = 0 * M.NIU_CMD_BUF_STRIDE
+    noc = net['src_noc0']
+    noc.regs.write32(base + M.NIU_TARG_ADDR_LO, 0x5000)
+    noc.regs.write32(base + M.NIU_TARG_ADDR_MID, 0)
+    noc.regs.write32(base + M.NIU_RET_ADDR_LO, 0x6000)
+    noc.regs.write32(base + M.NIU_RET_ADDR_MID, 0)
+    noc.regs.write32(base + M.NIU_RET_ADDR_HI, xy)
+    noc.regs.write32(base + M.NIU_AT_LEN_BE, 4)
+    noc.regs.write32(base + M.NIU_CTRL,
+                     M.NOC_CTRL_WR | M.NOC_CTRL_BRCST | M.NOC_CTRL_RESP_MARKED)
+    noc.write32(M.NOC0_BASE + base + M.NIU_CMD_CTRL, 1)
+    # Spec: one command sent → NONPOSTED_WR_REQ_SENT = 1; two destinations
+    # ACKed → WR_ACK_RECEIVED = 2.
+    assert noc.regs.read32(M.NIU_MST_NONPOSTED_WR_REQ_SENT) == 1
+    assert noc.regs.read32(M.NIU_MST_WR_ACK_RECEIVED) == 2
+
+
+@spec("NIU.MCAST.BRCST_XY_ROUTING_AXIS")
+def test_mcast_brcst_xy_bit_does_not_change_delivery(three_tile_network):
+    """Bit 16 (BRCST_XY) of NOC_CTRL selects X-first vs Y-first routing.
+    It only affects packet-routing topology and congestion — not which
+    tiles receive the write. Firing the same multicast twice, once with
+    the bit clear and once set, must deliver identical data to the same
+    set of tiles."""
+    def _fire_mcast(net, brcst_xy_bit):
+        sx, sy, ex, ey = 3, 4, 4, 4
+        xy = (sy << 18) | (sx << 12) | (ey << 6) | ex
+        base = 0 * M.NIU_CMD_BUF_STRIDE
+        noc = net['src_noc0']
+        # Wipe destinations to a known sentinel
+        net['dst_l1'].write32(0x6000, 0xAAAAAAAA)
+        net['dst2_l1'].write32(0x6000, 0xAAAAAAAA)
+        net['src_l1'].write32(0x5000, 0xCAFEBABE)
+        noc.regs.write32(base + M.NIU_TARG_ADDR_LO, 0x5000)
+        noc.regs.write32(base + M.NIU_TARG_ADDR_MID, 0)
+        noc.regs.write32(base + M.NIU_RET_ADDR_LO, 0x6000)
+        noc.regs.write32(base + M.NIU_RET_ADDR_MID, 0)
+        noc.regs.write32(base + M.NIU_RET_ADDR_HI, xy)
+        noc.regs.write32(base + M.NIU_AT_LEN_BE, 4)
+        ctrl = M.NOC_CTRL_WR | M.NOC_CTRL_BRCST | M.NOC_CTRL_RESP_MARKED
+        if brcst_xy_bit:
+            ctrl |= (1 << 16)   # BRCST_XY: Y-first routing
+        noc.regs.write32(base + M.NIU_CTRL, ctrl)
+        noc.write32(M.NOC0_BASE + base + M.NIU_CMD_CTRL, 1)
+        return net['dst_l1'].read32(0x6000), net['dst2_l1'].read32(0x6000)
+
+    # X-first (bit clear)
+    net_a = three_tile_network
+    a1, a2 = _fire_mcast(net_a, brcst_xy_bit=False)
+
+    # Fresh network for Y-first (bit set)
+    net_b = {}
+    src_l1, src_noc0, src_noc1 = _make_network_tile(1, 2, net_b)
+    dst_l1, dst_noc0, dst_noc1 = _make_network_tile(3, 4, net_b)
+    dst2_l1, dst2_noc0, dst2_noc1 = _make_network_tile(4, 4, net_b)
+    net_b_wrapped = dict(
+        network=net_b,
+        src_l1=src_l1, src_noc0=src_noc0,
+        src_xy=(1, 2),
+        dst_l1=dst_l1, dst_xy=(3, 4),
+        dst2_l1=dst2_l1, dst2_xy=(4, 4),
+    )
+    b1, b2 = _fire_mcast(net_b_wrapped, brcst_xy_bit=True)
+
+    # Delivery must be identical regardless of routing axis.
+    assert a1 == b1 == 0xCAFEBABE
+    assert a2 == b2 == 0xCAFEBABE

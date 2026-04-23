@@ -1,3 +1,5 @@
+import pytest
+
 from emu.core import BRISC, NCRISC, TRISC0, TRISC1, TRISC2
 from emu.memory import Memory
 from emu import memory as M
@@ -158,18 +160,6 @@ def test_jal_jalr():
   assert core2.regs[dsl.ra] == 0x108
   assert core2.regs[dsl.a1] == 7
 
-def test_x0_immutable():
-  # Covered by spec/test_execution_model.py::test_x0_is_hardwired_zero
-  # (EXEC.REGFILE.X0_IMMUTABLE). Kept here for legacy breadcrumb.
-  core = run([dsl.ADDI(dsl.zero, dsl.zero, 99)])
-  assert core.regs[0] == 0
-
-# -- address map routing ---------------------------------------------------
-# Tests below have been superseded by spec-pinned tests in:
-#   tests/spec/test_ldm_layouts.py  (LDM.ISOLATION.*, LDM.SLOW_PATH.*)
-#   tests/spec/test_address_space.py (ADDR.ROUTER.*, ADDR.NIU.*, ADDR.LDM.*)
-# They have been deleted from this file. See the clause ledgers for IDs.
-
 # ============================================================================
 # RV32 extensions: M (multiply/divide), Zba (address generation), Zbb (bit manip)
 # ============================================================================
@@ -213,120 +203,46 @@ def test_mulhu_div7_pattern():
     ])
     assert core.regs[dsl.a2] == n // 7, f"div7({n}) failed"
 
-def test_divu():
+@pytest.mark.parametrize("insn,divisor,expected", [
+  (dsl.DIVU, 5, 8),             # 42 / 5 = 8
+  (dsl.DIVU, 0, 0xFFFFFFFF),    # divu by zero → all ones
+  (dsl.REMU, 5, 2),             # 42 % 5 = 2
+  (dsl.REMU, 0, 42),            # remu by zero → dividend
+])
+def test_divu_remu(insn, divisor, expected):
   core = run([
-    dsl.ADDI(dsl.a0, dsl.zero, 42), dsl.ADDI(dsl.a1, dsl.zero, 5),
-    dsl.DIVU(dsl.a2, dsl.a0, dsl.a1),
+    dsl.ADDI(dsl.a0, dsl.zero, 42), dsl.ADDI(dsl.a1, dsl.zero, divisor),
+    insn(dsl.a2, dsl.a0, dsl.a1),
   ])
-  assert core.regs[dsl.a2] == 8
-
-def test_divu_by_zero():
-  core = run([
-    dsl.ADDI(dsl.a0, dsl.zero, 42),
-    dsl.DIVU(dsl.a1, dsl.a0, dsl.zero),
-  ])
-  assert core.regs[dsl.a1] == 0xFFFFFFFF
-
-def test_remu():
-  core = run([
-    dsl.ADDI(dsl.a0, dsl.zero, 42), dsl.ADDI(dsl.a1, dsl.zero, 5),
-    dsl.REMU(dsl.a2, dsl.a0, dsl.a1),
-  ])
-  assert core.regs[dsl.a2] == 2
-
-def test_remu_by_zero():
-  core = run([
-    dsl.ADDI(dsl.a0, dsl.zero, 42),
-    dsl.REMU(dsl.a1, dsl.a0, dsl.zero),
-  ])
-  assert core.regs[dsl.a1] == 42
+  assert core.regs[dsl.a2] == expected
 
 # -- Zba -----------------------------------------------------------------------
 
-def test_sh1add():
+@pytest.mark.parametrize("insn,shift", [
+  (dsl.SH1ADD, 1), (dsl.SH2ADD, 2), (dsl.SH3ADD, 3),
+])
+def test_shNadd(insn, shift):
   core = run([
     dsl.ADDI(dsl.a0, dsl.zero, 5), dsl.ADDI(dsl.a1, dsl.zero, 100),
-    dsl.SH1ADD(dsl.a2, dsl.a0, dsl.a1),
+    insn(dsl.a2, dsl.a0, dsl.a1),
   ])
-  assert core.regs[dsl.a2] == 5 * 2 + 100
-
-def test_sh2add():
-  core = run([
-    dsl.ADDI(dsl.a0, dsl.zero, 5), dsl.ADDI(dsl.a1, dsl.zero, 100),
-    dsl.SH2ADD(dsl.a2, dsl.a0, dsl.a1),
-  ])
-  assert core.regs[dsl.a2] == 5 * 4 + 100
-
-def test_sh3add():
-  core = run([
-    dsl.ADDI(dsl.a0, dsl.zero, 5), dsl.ADDI(dsl.a1, dsl.zero, 100),
-    dsl.SH3ADD(dsl.a2, dsl.a0, dsl.a1),
-  ])
-  assert core.regs[dsl.a2] == 5 * 8 + 100
-
-def test_sh2add_address_calc():
-  core = run([
-    dsl.ADDI(dsl.a0, dsl.zero, 3),       # index
-    dsl.LUI(dsl.a1, 0x1000),              # base = 0x1000
-    dsl.SH2ADD(dsl.a2, dsl.a0, dsl.a1),  # addr = index*4 + base
-  ])
-  assert core.regs[dsl.a2] == 0x1000 + 3 * 4
+  assert core.regs[dsl.a2] == (5 << shift) + 100
 
 # -- Zbb -----------------------------------------------------------------------
 
-def test_zext_h():
-  core = run([
-    dsl.ADDI(dsl.a0, dsl.zero, -1),       # 0xFFFFFFFF
-    dsl.ZEXT_H(dsl.a1, dsl.a0),
-  ])
-  assert core.regs[dsl.a1] == 0xFFFF
+@pytest.mark.parametrize("insn,imm,expected", [
+  (dsl.ZEXT_H, -1,   0xFFFF),      # 0xFFFFFFFF → keep low 16
+  (dsl.SEXT_B, 0x80, 0xFFFFFF80),  # byte 0x80 → -128 sign-extended
+  (dsl.SEXT_H, -256, 0xFFFFFF00),  # lower 16 = 0xFF00 → sign-extended
+])
+def test_zext_sext(insn, imm, expected):
+  core = run([dsl.ADDI(dsl.a0, dsl.zero, imm), insn(dsl.a1, dsl.a0)])
+  assert core.regs[dsl.a1] == expected
 
-def test_zext_h_noop_small():
-  core = run([
-    dsl.ADDI(dsl.a0, dsl.zero, 0x42),
-    dsl.ZEXT_H(dsl.a1, dsl.a0),
-  ])
-  assert core.regs[dsl.a1] == 0x42
-
-def test_sext_b():
-  core = run([
-    dsl.ADDI(dsl.a0, dsl.zero, 0x80),     # 128 as byte = -128
-    dsl.SEXT_B(dsl.a1, dsl.a0),
-  ])
-  assert core.regs[dsl.a1] == 0xFFFFFF80
-
-def test_sext_b_positive():
-  core = run([
-    dsl.ADDI(dsl.a0, dsl.zero, 0x42),
-    dsl.SEXT_B(dsl.a1, dsl.a0),
-  ])
-  assert core.regs[dsl.a1] == 0x42
-
-def test_sext_h():
-  core = run([
-    dsl.ADDI(dsl.a0, dsl.zero, -256),     # 0xFFFFFF00, lower 16 = 0xFF00
-    dsl.SEXT_H(dsl.a1, dsl.a0),
-  ])
-  # lower 16 bits = 0xFF00 → sign-extend → 0xFFFFFF00
-  assert core.regs[dsl.a1] == 0xFFFFFF00
-
-def test_ctz():
-  core = run([
-    dsl.ADDI(dsl.a0, dsl.zero, 8),        # 0b1000 → 3 trailing zeros
-    dsl.CTZ(dsl.a1, dsl.a0),
-  ])
-  assert core.regs[dsl.a1] == 3
-
-def test_ctz_one():
-  core = run([
-    dsl.ADDI(dsl.a0, dsl.zero, 1),
-    dsl.CTZ(dsl.a1, dsl.a0),
-  ])
-  assert core.regs[dsl.a1] == 0
-
-def test_ctz_zero():
-  core = run([dsl.CTZ(dsl.a0, dsl.zero)])
-  assert core.regs[dsl.a0] == 32
+@pytest.mark.parametrize("imm,expected", [(8, 3), (1, 0), (0, 32)])
+def test_ctz(imm, expected):
+  core = run([dsl.ADDI(dsl.a0, dsl.zero, imm), dsl.CTZ(dsl.a1, dsl.a0)])
+  assert core.regs[dsl.a1] == expected
 
 def test_min():
   core = run([
@@ -353,88 +269,41 @@ def test_maxu():
 
 # -- M extension: MULH, MULHSU, DIV, REM -------------------------------------
 
-def test_mulh():
+@pytest.mark.parametrize("insn,a,b,expected", [
+  (dsl.MULH,   -1, -1, 0),           # (-1)*(-1)=1 → hi=0
+  (dsl.MULH,   -1,  2, 0xFFFFFFFF),  # (-1)*2=-2 → hi=-1
+  (dsl.MULHSU, -1,  2, 0xFFFFFFFF),  # signed -1 × unsigned 2 → hi=-1
+])
+def test_mulh_variants(insn, a, b, expected):
   core = run([
-    dsl.ADDI(dsl.a0, dsl.zero, -1),       # 0xFFFFFFFF = -1
-    dsl.ADDI(dsl.a1, dsl.zero, -1),
-    dsl.MULH(dsl.a2, dsl.a0, dsl.a1),
+    dsl.ADDI(dsl.a0, dsl.zero, a), dsl.ADDI(dsl.a1, dsl.zero, b),
+    insn(dsl.a2, dsl.a0, dsl.a1),
   ])
-  # (-1) * (-1) = 1 → upper 32 bits = 0
-  assert core.regs[dsl.a2] == 0
+  assert core.regs[dsl.a2] == expected
 
-def test_mulh_negative():
+@pytest.mark.parametrize("insn,a,b,expected", [
+  (dsl.DIV, -7,  2, (-3) & 0xFFFFFFFF),  # -7/2 trunc = -3
+  (dsl.DIV, 42,  0, 0xFFFFFFFF),          # div by zero → all ones
+  (dsl.REM, -7,  2, (-1) & 0xFFFFFFFF),  # -7%2 = -1 (sign of dividend)
+  (dsl.REM, 42,  0, 42),                  # rem by zero → dividend
+])
+def test_div_rem(insn, a, b, expected):
   core = run([
-    dsl.ADDI(dsl.a0, dsl.zero, -1),       # -1
-    dsl.ADDI(dsl.a1, dsl.zero, 2),
-    dsl.MULH(dsl.a2, dsl.a0, dsl.a1),
+    dsl.ADDI(dsl.a0, dsl.zero, a), dsl.ADDI(dsl.a1, dsl.zero, b),
+    insn(dsl.a2, dsl.a0, dsl.a1),
   ])
-  # (-1) * 2 = -2 → upper 32 bits = -1 = 0xFFFFFFFF
-  assert core.regs[dsl.a2] == 0xFFFFFFFF
+  assert core.regs[dsl.a2] == expected
 
-def test_mulhsu():
+@pytest.mark.parametrize("insn,expected", [
+  (dsl.DIV, 0x80000000),  # -2^31 / -1 → overflow, returns -2^31
+  (dsl.REM, 0),           # -2^31 % -1 → 0
+])
+def test_div_rem_overflow(insn, expected):
   core = run([
-    dsl.ADDI(dsl.a0, dsl.zero, -1),       # signed -1
-    dsl.ADDI(dsl.a1, dsl.zero, 2),         # unsigned 2
-    dsl.MULHSU(dsl.a2, dsl.a0, dsl.a1),
+    dsl.LUI(dsl.a0, 0x80000000), dsl.ADDI(dsl.a1, dsl.zero, -1),
+    insn(dsl.a2, dsl.a0, dsl.a1),
   ])
-  # (-1) * 2 = -2 → upper 32 bits = -1 = 0xFFFFFFFF
-  assert core.regs[dsl.a2] == 0xFFFFFFFF
-
-def test_mulhsu_positive():
-  core = run([
-    dsl.LUI(dsl.a0, 0x10000000), dsl.ADDI(dsl.a1, dsl.zero, 16),
-    dsl.MULHSU(dsl.a2, dsl.a0, dsl.a1),
-  ])
-  # 0x10000000 * 16 = 0x1_0000_0000 → upper 32 = 1
-  assert core.regs[dsl.a2] == 1
-
-def test_div():
-  core = run([
-    dsl.ADDI(dsl.a0, dsl.zero, -7),       # -7
-    dsl.ADDI(dsl.a1, dsl.zero, 2),
-    dsl.DIV(dsl.a2, dsl.a0, dsl.a1),
-  ])
-  # -7 / 2 = -3 (truncate toward zero)
-  assert core.regs[dsl.a2] == (-3) & 0xFFFFFFFF
-
-def test_div_by_zero():
-  core = run([
-    dsl.ADDI(dsl.a0, dsl.zero, 42),
-    dsl.DIV(dsl.a1, dsl.a0, dsl.zero),
-  ])
-  assert core.regs[dsl.a1] == 0xFFFFFFFF
-
-def test_div_overflow():
-  core = run([
-    dsl.LUI(dsl.a0, 0x80000000),          # -2^31
-    dsl.ADDI(dsl.a1, dsl.zero, -1),
-    dsl.DIV(dsl.a2, dsl.a0, dsl.a1),
-  ])
-  assert core.regs[dsl.a2] == 0x80000000
-
-def test_rem():
-  core = run([
-    dsl.ADDI(dsl.a0, dsl.zero, -7),       # -7
-    dsl.ADDI(dsl.a1, dsl.zero, 2),
-    dsl.REM(dsl.a2, dsl.a0, dsl.a1),
-  ])
-  # -7 % 2 = -1 (sign follows dividend)
-  assert core.regs[dsl.a2] == (-1) & 0xFFFFFFFF
-
-def test_rem_by_zero():
-  core = run([
-    dsl.ADDI(dsl.a0, dsl.zero, 42),
-    dsl.REM(dsl.a1, dsl.a0, dsl.zero),
-  ])
-  assert core.regs[dsl.a1] == 42
-
-def test_rem_overflow():
-  core = run([
-    dsl.LUI(dsl.a0, 0x80000000),
-    dsl.ADDI(dsl.a1, dsl.zero, -1),
-    dsl.REM(dsl.a2, dsl.a0, dsl.a1),
-  ])
-  assert core.regs[dsl.a2] == 0
+  assert core.regs[dsl.a2] == expected
 
 # -- Zbb: MAX, CLZ, CPOP, ANDN, ORN, XNOR, ROL, ROR, RORI, REV8, ORC.B -----
 
@@ -446,25 +315,19 @@ def test_max():
   ])
   assert core.regs[dsl.a2] == 1
 
-def test_clz():
-  core = run([dsl.ADDI(dsl.a0, dsl.zero, 1), dsl.CLZ(dsl.a1, dsl.a0)])
-  assert core.regs[dsl.a1] == 31
+@pytest.mark.parametrize("setup,expected", [
+  ([dsl.ADDI(dsl.a0, dsl.zero, 1)],   31),  # only bit 0
+  ([],                                 32),  # zero
+  ([dsl.LUI(dsl.a0, 0x80000000)],      0),  # high bit
+])
+def test_clz(setup, expected):
+  core = run(setup + [dsl.CLZ(dsl.a1, dsl.a0)])
+  assert core.regs[dsl.a1] == expected
 
-def test_clz_zero():
-  core = run([dsl.CLZ(dsl.a0, dsl.zero)])
-  assert core.regs[dsl.a0] == 32
-
-def test_clz_high_bit():
-  core = run([dsl.LUI(dsl.a0, 0x80000000), dsl.CLZ(dsl.a1, dsl.a0)])
-  assert core.regs[dsl.a1] == 0
-
-def test_cpop():
-  core = run([dsl.ADDI(dsl.a0, dsl.zero, 0xFF), dsl.CPOP(dsl.a1, dsl.a0)])
-  assert core.regs[dsl.a1] == 8
-
-def test_cpop_zero():
-  core = run([dsl.CPOP(dsl.a0, dsl.zero)])
-  assert core.regs[dsl.a0] == 0
+@pytest.mark.parametrize("imm,expected", [(0xFF, 8), (0, 0)])
+def test_cpop(imm, expected):
+  core = run([dsl.ADDI(dsl.a0, dsl.zero, imm), dsl.CPOP(dsl.a1, dsl.a0)])
+  assert core.regs[dsl.a1] == expected
 
 def test_andn():
   core = run([

@@ -187,3 +187,94 @@ def test_tt_cfg_bstatus_returns_zero():
     """tt_cfg_bstatus (CSR 0xBC1) returns 0 in the emulator (not busy)."""
     core = _step([_csr_read(0xBC1)])
     assert core.regs[dsl.a0] == 0
+
+
+# ===========================================================================
+# cfg0 bit-level semantics
+# ===========================================================================
+
+@spec("REG.CFG0.BIT_DISBP")
+def test_cfg0_bit_disbp_has_no_observable_effect():
+    """Setting bit 1 (DisBp) of cfg0 does not change execution: branches,
+    arithmetic, and subsequent instructions behave identically with or
+    without the bit set. The bit is stored but has no functional effect."""
+    # Program A: no DisBp set. Program B: DisBp set. Both do the same ADD+BEQ.
+    def _prog(set_disbp):
+        insns = []
+        if set_disbp:
+            insns += [
+                dsl.ADDI(dsl.t0, dsl.zero, 2),        # bit 1 = DisBp
+                dsl.CSRRS(dsl.zero, dsl.t0, 0x7C0),   # set DisBp
+            ]
+        insns += [
+            dsl.ADDI(dsl.a0, dsl.zero, 10),
+            dsl.ADDI(dsl.a1, dsl.zero, 10),
+            dsl.BEQ(dsl.a0, dsl.a1, 8),               # should jump +8
+            dsl.ADDI(dsl.a2, dsl.zero, 0x7AD),        # skipped
+            dsl.ADDI(dsl.a2, dsl.zero, 0x600),        # landing
+        ]
+        return _step(insns)
+    c_off = _prog(False)
+    c_on  = _prog(True)
+    assert c_off.regs[dsl.a2] == 0x600
+    assert c_on.regs[dsl.a2] == 0x600
+    # And the bit is actually stored when set.
+    assert c_on.csrs.get(0x7C0, 0) & 2 == 2
+    assert c_off.csrs.get(0x7C0, 0) & 2 == 0
+
+
+@spec("REG.CFG0.BIT_ENBB_FLOAT")
+def test_cfg0_bits_30_31_storable():
+    """cfg0 bits 30 (EnBFloat) and 31 (EnBFloatRTNE) round-trip through the
+    CSR. They are the only bits the spec promises may have observable
+    effects in the emulator; this test checks the storage layer they
+    depend on."""
+    # Bits 30 | 31 = 0xC0000000. Need to set via csrrs with a register that
+    # can hold that value.
+    core = _step([
+        dsl.LUI(dsl.t0, 0xC0000000),                 # t0 = 0xC0000000
+        dsl.CSRRS(dsl.zero, dsl.t0, 0x7C0),          # set bits 30+31
+        dsl.CSRRS(dsl.a0, dsl.zero, 0x7C0),          # read back
+    ])
+    assert core.regs[dsl.a0] & 0xC0000000 == 0xC0000000
+
+
+# ===========================================================================
+# WALL_CLOCK
+# ===========================================================================
+
+@spec("REG.WALL_CLOCK.MONOTONIC")
+def test_wall_clock_is_strictly_monotonic():
+    """Every step increments WALL_CLOCK_L; successive reads never go
+    backward, and after N steps the value has advanced by at least N."""
+    from emu.tests._helpers import mini_device
+    dev = mini_device()
+    tile = list(dev.tiles.values())[0]
+    samples = []
+    for _ in range(5):
+        dev._step_loop([tile], lambda: True, 1)
+        samples.append(tile.mmio.read32(M.WALL_CLOCK_L))
+    # Strictly increasing
+    for a, b in zip(samples, samples[1:]):
+        assert b > a, f"non-monotonic: {samples}"
+    # Advanced by at least 5 ticks from zero
+    assert samples[-1] >= 5
+
+
+@spec("REG.WALL_CLOCK.LATCH_HI")
+def test_wall_clock_hi_matches_lo_read():
+    """WALL_CLOCK_H (the latched-high register) stays consistent with the
+    low 32 bits for 64-bit reads. In the emulator the device writes both
+    halves each tick, so reading L then H yields a coherent 64-bit value."""
+    from emu.tests._helpers import mini_device
+    dev = mini_device()
+    tile = list(dev.tiles.values())[0]
+    dev._step_loop([tile], lambda: True, 3)
+    lo = tile.mmio.read32(M.WALL_CLOCK_L)
+    hi = tile.mmio.read32(M.WALL_CLOCK_H)
+    # Under 64-bit wrap the low half equals the 64-bit counter's low half,
+    # and the high half is the matching upper 32 bits — so a concatenation
+    # equals dev._clock.
+    assert (hi << 32) | lo == dev._clock
+    # For small counts the high word is zero; just make sure it's readable.
+    assert hi == 0

@@ -107,7 +107,8 @@ def test_incr_get_ptr_incr_field_decoding(two_tile_network, atomic,
   assert net['dst_l1'].read32(0x8000) == expected_step
 
 
-@spec("NOC-AT.INCR_GET_PTR.WRAP_FIELD",
+@spec("NOC-AT.OPCODE.INCR_GET_PTR",
+      "NOC-AT.INCR_GET_PTR.WRAP_FIELD",
       "NOC-AT.INCR_GET_PTR.WRAP_SEMANTIC")
 @pytest.mark.parametrize("start,incr,wrap,expected", [
   # (old, INCR, WRAP, expected_new)
@@ -154,7 +155,8 @@ def test_incr_get_ignores_wrap_field(two_tile_network, atomic):
 # CAS
 # ===========================================================================
 
-@spec("NOC-AT.CAS.COMPARE_FROM_AT_DATA",
+@spec("NOC-AT.OPCODE.CAS",
+      "NOC-AT.CAS.COMPARE_FROM_AT_DATA",
       "NOC-AT.CAS.SUCCESS_PATH")
 def test_cas_success(two_tile_network, atomic):
   """CAS matches → write (original high | set_val) to target."""
@@ -207,7 +209,20 @@ def test_swap_4b_returns_original(two_tile_network, atomic):
   assert net['src_l1'].read32(0x10) == 0xDEADBEEF
 
 
-@spec("NOC-AT.SWAP_4B.WRITE_32B")
+@spec("NOC-AT.SWAP.RETURN_ORIGINAL_32B")
+def test_swap_mask_returns_original_32b(two_tile_network, atomic):
+  """SWAP (mask variant) returns the pre-op 32-bit target word."""
+  net = two_tile_network
+  net['dst_l1'].write32(0x8000, 0xFACEF00D)
+  mask = 0b0000_0001   # overwrite only granule 0
+  at_len_be = (AT_SWAP << 12) | (mask << 4)
+  atomic(net, op=AT_SWAP, targ_addr=0x8000, ret_addr=0x30,
+         at_len_be=at_len_be, at_data=0x0000BEEF)
+  assert net['src_l1'].read32(0x30) == 0xFACEF00D
+
+
+@spec("NOC-AT.OPCODE.SWAP_4B",
+      "NOC-AT.SWAP_4B.WRITE_32B")
 def test_swap_4b_writes_new_value(two_tile_network, atomic):
   net = two_tile_network
   net['dst_l1'].write32(0x8000, 0xDEADBEEF)
@@ -215,7 +230,8 @@ def test_swap_4b_writes_new_value(two_tile_network, atomic):
   assert net['dst_l1'].read32(0x8000) == 0xCAFEBABE
 
 
-@spec("NOC-AT.SWAP.MASK_SELECTS_GRANULES")
+@spec("NOC-AT.OPCODE.SWAP_MASK",
+      "NOC-AT.SWAP.MASK_SELECTS_GRANULES")
 def test_swap_mask_selects_granules(two_tile_network, atomic):
   """SWAP mask bit i selects whether to overwrite granule at base+i*2."""
   net = two_tile_network
@@ -247,7 +263,8 @@ def test_swap_mask_selects_granules(two_tile_network, atomic):
 # STORE_IND
 # ===========================================================================
 
-@spec("NOC-AT.STORE_IND.INDIRECT_WRITE")
+@spec("NOC-AT.OPCODE.STORE_IND",
+      "NOC-AT.STORE_IND.INDIRECT_WRITE")
 def test_store_ind_writes_through_pointer(two_tile_network, atomic):
   """Read pointer at targ_addr; write at_data to *pointer; pointer unchanged."""
   net = two_tile_network
@@ -415,6 +432,62 @@ def test_acc_fp16_eight_lane_twoway_broadcast(two_tile_network, atomic):
     assert got == pytest.approx(expected, abs=1e-3), f"lane {i}: {got} vs {expected}"
 
 
+@spec("NOC-AT.ACC.FMT2.BF16_LANES")
+def test_acc_bf16_eight_lane_twoway_broadcast(two_tile_network, atomic):
+  """Fmt=2: L1 is 8× bf16; NOC_AT_DATA holds 2× bf16 broadcast 2-way over
+  the 8 lanes. Even lanes (0,2,4,6) get at_data[15:0]; odd lanes
+  (1,3,5,7) get at_data[31:16].
+
+  CURRENTLY FAILS — the emulator's _acc_compute is single-lane for bf16
+  (it only updates lane 0). This test documents the multi-lane spec and
+  will pass once lane fan-out is implemented."""
+  net = two_tile_network
+  base = 0x8000
+  # Pre-seed 8 bf16 lanes with values 1.0..8.0.
+  # bf16 = top 16 bits of fp32: float(n) for small integers has clean bf16 bits.
+  def _bf16(f):
+    return struct.unpack('<I', struct.pack('<f', float(f)))[0] >> 16
+  for i in range(8):
+    net['dst_l1'].write16(base + i * 2, _bf16(float(i + 1)))
+  # at_data: even lanes add 0.5, odd lanes add 0.25.
+  at_data = _bf16(0.5) | (_bf16(0.25) << 16)
+  atomic(net, op=AT_ACC, targ_addr=base,
+         at_data=at_data,
+         l1_acc_at_en=True,
+         l1_acc_instrn=(AT_ACC << 12) | ACC_FP16_B)
+  for i in range(8):
+    expected = (i + 1) + (0.5 if i % 2 == 0 else 0.25)
+    got_bf16 = net['dst_l1'].read16(base + i * 2)
+    got_f32 = struct.unpack('<f', struct.pack('<I', got_bf16 << 16))[0]
+    assert got_f32 == pytest.approx(expected, abs=1e-2), \
+           f"bf16 lane {i}: {got_f32} vs {expected}"
+
+
+@spec("NOC-AT.ACC.FMT4.INT32_LANES")
+def test_acc_int32_four_lane_broadcast(two_tile_network, atomic):
+  """Fmt=4: L1 is 4× u32 (wrapping two's complement); NOC_AT_DATA is 1× u32
+  broadcast to all 4 lanes. Wrapping (no saturation).
+
+  CURRENTLY FAILS — the emulator's INT32 ACC path updates only one 32-bit
+  word at targ_addr. This test documents the 4-lane spec and will pass
+  once lane fan-out is implemented."""
+  net = two_tile_network
+  base = 0x8000
+  # Pre-seed 4 u32 lanes: 10, 20, 30, UINT32_MAX (to exercise wrapping).
+  lanes_in = [10, 20, 30, 0xFFFFFFFF]
+  for i, v in enumerate(lanes_in):
+    net['dst_l1'].write32(base + i * 4, v)
+  add = 5
+  atomic(net, op=AT_ACC, targ_addr=base,
+         at_data=add,
+         l1_acc_at_en=True,
+         l1_acc_instrn=(AT_ACC << 12) | 4)   # fmt=4: wrapping int32
+  expected = [(v + add) & 0xFFFFFFFF for v in lanes_in]
+  for i, want in enumerate(expected):
+    got = net['dst_l1'].read32(base + i * 4)
+    assert got == want, f"int32 lane {i}: got {got:#x} want {want:#x}"
+
+
 @spec("NOC-AT.ACC.FMT7.INT8_SAT")
 def test_acc_int8_sixteen_lane_unsigned_saturating(two_tile_network, atomic):
   """Fmt=7: 16 u8 lanes, unsigned saturating at 255, 4-way broadcast."""
@@ -512,3 +585,60 @@ def test_multicast_atomic_hits_every_tile_in_rect():
   """Multicast atomic should execute at every tile in the rect."""
   import pytest as _pt
   _pt.fail("NOC-AT.MCAST.PER_TILE: no multicast-atomic path in emulator")
+
+
+# ===========================================================================
+# Target restrictions & atomicity invariant
+# ===========================================================================
+
+@spec("NOC-AT.TARGET.L1_ONLY")
+def test_atomic_target_is_tile_l1_not_mmio(two_tile_network, atomic):
+  """Atomic targ_addr is resolved against the target tile's L1 memory
+  (via the NOC routing table keyed on (x,y)), not MMIO/DRAM/PCIe. An
+  increment to dst L1 must not spill into the src tile's L1 or the src
+  tile's MMIO registers at the same numeric offset."""
+  net = two_tile_network
+  # Pre-seed both L1s at the same numeric offset with distinguishable
+  # sentinels, and pre-seed a stream register on the src tile's NIU.
+  net['src_l1'].write32(0x8000, 0xAAAA_AAAA)
+  net['dst_l1'].write32(0x8000, 42)
+  atomic(net, op=AT_INCR_GET, targ_addr=0x8000, at_data=1)
+  # Only the destination tile's L1 is mutated.
+  assert net['dst_l1'].read32(0x8000) == 43
+  assert net['src_l1'].read32(0x8000) == 0xAAAA_AAAA
+
+
+@spec("NOC-AT.ACC.RESPONSE_UNDEFINED")
+def test_acc_response_fire_and_forget_counter_still_ticks(two_tile_network, atomic):
+  """ACC is fire-and-forget: the returned payload is undefined, but the
+  atomic response counter still increments once the request completes."""
+  net = two_tile_network
+  net['dst_l1'].write32(0x8000, _f32_bits(1.0))
+  before = net['src_noc0'].regs.read32(M.NIU_MST_ATOMIC_RESP_RECEIVED)
+  atomic(net, op=AT_ACC, targ_addr=0x8000,
+         at_data=_f32_bits(2.5),
+         l1_acc_at_en=True,
+         l1_acc_instrn=(AT_ACC << 12) | ACC_FP32)
+  # The accumulate happened (side-effect to L1)…
+  assert _bits_f32(net['dst_l1'].read32(0x8000)) == 3.5
+  # …and a response came back, but we don't assert on its payload.
+  assert net['src_noc0'].regs.read32(M.NIU_MST_ATOMIC_RESP_RECEIVED) == before + 1
+
+
+@spec("NOC-AT.ATOMICITY")
+def test_atomics_are_serialized_and_deterministic(two_tile_network, atomic):
+  """Single-threaded synchronous emulator: a long sequence of atomics to
+  the same word produces a deterministic, serialized result (no torn
+  writes, no lost updates). This clause is satisfied by construction —
+  we prove it by driving 100 increments and confirming the exact total."""
+  net = two_tile_network
+  net['dst_l1'].write32(0x8000, 0)
+  # INCR_GET's int_width (NOC_AT_LEN_BE[9:6]) gates which bits get updated.
+  # Set int_width=15 → mask=0xFFFF so sums up to 64K land intact.
+  at_len_be = (AT_INCR_GET << 12) | (15 << 6)
+  for _ in range(100):
+    atomic(net, op=AT_INCR_GET, targ_addr=0x8000,
+           at_len_be=at_len_be, at_data=3)
+  assert net['dst_l1'].read32(0x8000) == 300
+  # Every one generated a response.
+  assert net['src_noc0'].regs.read32(M.NIU_MST_ATOMIC_RESP_RECEIVED) == 100

@@ -1,6 +1,6 @@
 # niu
 
-**Source:** [`niu.md`](../specs/niu.md) · **Emulator:** `blackhole-py/emu/noc.py`
+**Source:** [`niu.md`](../specs/niu.md)
 
 ## Address space
 
@@ -104,7 +104,7 @@ _§14 Multicast / BRCST_SRC_INCLUDE_
 
 > For non-posted multicast: NIU_MST_WR_ACK_RECEIVED increments by 1 per destination tile that ACKs; NIU_MST_NONPOSTED_WR_REQ_SENT increments by 1 (one command).
 
-### `NIU.MCAST.BRCST_XY_IGNORED`
-_§14 Multicast / BRCST_XY_
+### `NIU.MCAST.BRCST_XY_ROUTING_AXIS`
+_§14 Multicast / NOC_CMD_BRCST_XY_
 
-> BRCST_XY (bit 16 of NOC_CTRL) controls routing axis only, not delivery set. Emulator should ignore this bit.
+> BRCST_XY (bit 16 of NOC_CTRL) selects the major routing axis (X-first vs Y-first) for the multicast packet. It affects routing topology and congestion only — it does not change which tiles receive the write.

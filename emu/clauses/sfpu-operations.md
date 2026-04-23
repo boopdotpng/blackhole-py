@@ -1,6 +1,6 @@
 # sfpu-operations
 
-**Source:** [`sfpu-operations.md`](../specs/sfpu-operations.md) · **Emulator:** `blackhole-py/emu/tensix/sfpu.py`
+**Source:** [`sfpu-operations.md`](../specs/sfpu-operations.md)
 
 ## ============================================================== §1 LReg register file
 

@@ -185,6 +185,47 @@ def test_cmpdmareg_eq():
 # FLUSHDMA
 # ===========================================================================
 
+@spec("ASUI.SHIFTDMAREG.REG_5BIT_MASK")
+def test_shiftdmareg_left_reg_shift_is_masked_to_5_bits():
+  """OpBisConst=0: the GPR shift amount is masked to 5 bits (& 0x1F).
+  Putting 33 in the shift GPR must produce a shift of 1 (33 & 0x1F), not 33."""
+  from emu.tensix import TensixCoprocessor
+  t = TensixCoprocessor()
+  t.gpr.write32(0, 1, 0x1)
+  t.gpr.write32(0, 2, 33)    # 33 & 0x1F = 1
+  # OpBisConst=0, Mode=0 (left), result=3, opB=2, opA=1
+  word = (0x5C << 24) | (0 << 23) | (0 << 18) | (3 << 12) | (2 << 6) | 1
+  t.push_instruction(0, word)
+  t.step()
+  assert t.gpr.read32(0, 3) == 0x2   # 1 << 1, not 1 << 33
+
+
+@spec("ASUI.CMPDMAREG.IMMEDIATE_6BIT")
+def test_cmpdmareg_eq_immediate_6bit():
+  """CMPDMAREG OpBisConst=1: compare A against a 6-bit unsigned immediate."""
+  from emu.tensix import TensixCoprocessor
+  t = TensixCoprocessor()
+  t.gpr.write32(0, 1, 0x2A)   # 42
+  # OpSel=2 (EQ), OpBisConst=1, opB_imm=0x2A (42), result=3, opA=1
+  word = (0x5D << 24) | (1 << 23) | (2 << 18) | (3 << 12) | (0x2A << 6) | 1
+  t.push_instruction(0, word)
+  t.step()
+  assert t.gpr.read32(0, 3) == 1   # 42 == 42
+
+
+@spec("ASUI.FLUSHDMA.BLOCKS_ALL_THREADS")
+def test_flushdma_block_bits_gate_thcon_tdma_for_all_threads():
+  """FLUSHDMA's stall mask must cover both ThCon and TDMA so that when it
+  waits, every thread that wants to use the Scalar Unit or TDMA is blocked
+  — not just the issuing thread. The scheduler applies these block bits
+  tile-globally."""
+  from emu.tensix import _instruction_block_bits, STALL_THCON, STALL_TDMA
+  mask = _instruction_block_bits(0x46 << 24)
+  # Both THCON (scalar unit) and TDMA lanes gated → affects all threads.
+  assert mask & STALL_THCON
+  assert mask & STALL_TDMA
+
+
 @spec("ASUI.FLUSHDMA.CONDITION_MASK")
 def test_flushdma_zero_mask_defaults_to_all():
   """FLUSHDMA with mask=0 defaults to 0xF; instruction must be recognised and dispatched."""

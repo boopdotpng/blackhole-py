@@ -1,6 +1,6 @@
 # instruction-push
 
-**Source:** [`instruction-push.md`](../specs/instruction-push.md) · **Emulator:** `blackhole-py/emu/tensix/frontend.py`
+**Source:** [`instruction-push.md`](../specs/instruction-push.md)
 
 ## MMIO path
 

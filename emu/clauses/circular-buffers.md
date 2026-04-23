@@ -1,6 +1,6 @@
 # circular-buffers
 
-**Source:** [`circular-buffers.md`](../specs/circular-buffers.md) · **Emulator:** `blackhole-py/emu/device.py`
+**Source:** [`circular-buffers.md`](../specs/circular-buffers.md)
 
 ## CB count
 

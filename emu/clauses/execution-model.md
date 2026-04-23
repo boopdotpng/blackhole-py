@@ -1,6 +1,6 @@
 # execution-model
 
-**Source:** [`execution-model.md`](../specs/execution-model.md) · **Emulator:** `blackhole-py/emu/core.py`
+**Source:** [`execution-model.md`](../specs/execution-model.md)
 
 ## Core types
 

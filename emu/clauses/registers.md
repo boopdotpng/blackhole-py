@@ -1,6 +1,6 @@
 # registers
 
-**Source:** [`registers.md`](../specs/registers.md) · **Emulator:** `blackhole-py/emu/core.py`
+**Source:** [`registers.md`](../specs/registers.md)
 
 ## CSR cfg0 (0x7C0)
 
@@ -58,6 +58,11 @@ _§WALL_CLOCK / 0xFFB121F0 WALL_CLOCK_0_
 _§Write-Sink No-ops / DEST_CG_CTRL_
 
 > DEST_CG_CTRL (0xFFB12240), CG_CTRL_EN (0xFFB12244), and RISCV_TDMA_REG_CLK_GATE_EN (0xFFB11024) are written during device_setup() but control clock gating; the emulator should accept writes and discard them.
+
+### `REG.CSR.MCYCLE`
+§Standard RISC-V counters / mcycle 0xB00
+
+> mcycle (0xB00) and mcycleh (0xB80) are the RISC-V cycle counters. At minimum they must be readable without trapping; returning the wall clock value is acceptable.
 
 ### `REG.CSR.MINSTRET`
 §Return-Zero Stubs / Standard RISC-V counters

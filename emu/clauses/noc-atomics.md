@@ -1,6 +1,6 @@
 # noc-atomics
 
-**Source:** [`noc-atomics.md`](../specs/noc-atomics.md) · **Emulator:** `blackhole-py/emu/noc.py`
+**Source:** [`noc-atomics.md`](../specs/noc-atomics.md)
 
 ## Opcode table
 

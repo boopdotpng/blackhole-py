@@ -1,6 +1,6 @@
 # stallwait-conditions
 
-**Source:** [`stallwait-conditions.md`](../specs/stallwait-conditions.md) · **Emulator:** `blackhole-py/emu/tensix/frontend.py`
+**Source:** [`stallwait-conditions.md`](../specs/stallwait-conditions.md)
 
 ## Instruction encoding
 
@@ -93,6 +93,11 @@ _§The Wait Gate / can_instruction_pass_
 §The Wait Gate / Per-thread independence
 
 > Each of the three Tensix threads has its own independent Wait Gate. A STALLWAIT in T0 does not affect T1 or T2.
+
+### `SW.GATE.ONE_CYCLE_HOLD`
+§The Wait Gate / one-cycle release lag
+
+> The instruction immediately following STALLWAIT/SEMWAIT is held by the block mask for at least one cycle, even if the condition is already met. The release takes effect at the start of the next cycle — there is a one-cycle lag between the condition clearing and the block mask lifting.
 
 ### `SW.SEMWAIT.STALL_ON_ZERO`
 _§SEMWAIT — Condition Fields / wait_sem_cond_

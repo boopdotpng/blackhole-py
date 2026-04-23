@@ -571,6 +571,30 @@ def test_is_nop_only_opcode_02(word, should_be_nop):
 # Replay Expander — pass-through
 # ===========================================================================
 
+@spec("REPLAY.OPCODE")
+def test_replay_opcode_and_field_layout_recognised():
+    """REPLAY has opcode 0x04; bits[23:14]=start_idx (low 5 bits used),
+    bits[13:4]=len (low 6 bits; 0 means 64), bit[1]=exec_while_loading,
+    bit[0]=load_mode. Verify the decoder (a) recognises 0x04 as REPLAY —
+    playback emits the recorded buffer — and (b) honours the start_idx
+    / len fields by reading those specific slots."""
+    fifo = InstructionFIFO()
+    mop = MOPExpander()
+    replay = ReplayExpander()
+    # Pre-seed buffer with sentinel values at known slots.
+    for i in range(32):
+        replay.buffer[i] = 0xA0000000 | i
+    # REPLAY: start_idx=5, len=3, exec_while_loading=0, load_mode=0 (playback).
+    # Layout: opcode<<24 | start_idx<<14 | len<<4 | exec<<1 | load
+    start_idx, length = 5, 3
+    word = (0x04 << 24) | (start_idx << 14) | (length << 4) | 0
+    fifo.push(word)
+    # First three replay.next() calls must yield buffer[5], buffer[6], buffer[7].
+    got = [replay.next(mop, fifo) for _ in range(3)]
+    assert got == [0xA0000000 | 5, 0xA0000000 | 6, 0xA0000000 | 7], \
+           f"REPLAY opcode/fields not honoured: got {[hex(g) for g in got]}"
+
+
 @spec("REPLAY.PASSTHROUGH")
 @pytest.mark.parametrize("opcode", [0x00, 0x02, 0xA2, 0xFF])
 def test_replay_passthrough_non_replay_opcodes(opcode):

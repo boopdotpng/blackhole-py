@@ -1,6 +1,6 @@
 # unpack-data-path
 
-**Source:** [`unpack-data-path.md`](../specs/unpack-data-path.md) · **Emulator:** `blackhole-py/emu/tensix/trisc0.py`
+**Source:** [`unpack-data-path.md`](../specs/unpack-data-path.md)
 
 ## UNPACR encoding
 

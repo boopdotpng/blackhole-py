@@ -1,6 +1,6 @@
 # rwc-and-addressing
 
-**Source:** [`rwc-and-addressing.md`](../specs/rwc-and-addressing.md) · **Emulator:** `blackhole-py/emu/tensix/rwc.py`
+**Source:** [`rwc-and-addressing.md`](../specs/rwc-and-addressing.md)
 
 ## RWCState initial values
 

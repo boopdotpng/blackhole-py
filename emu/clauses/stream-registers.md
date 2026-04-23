@@ -1,6 +1,6 @@
 # stream-registers
 
-**Source:** [`stream-registers.md`](../specs/stream-registers.md) · **Emulator:** `blackhole-py/emu/memory.py`
+**Source:** [`stream-registers.md`](../specs/stream-registers.md)
 
 ## Address space
 

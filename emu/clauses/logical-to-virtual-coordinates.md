@@ -1,6 +1,6 @@
 # logical-to-virtual-coordinates
 
-**Source:** [`logical-to-virtual-coordinates.md`](../specs/logical-to-virtual-coordinates.md) · **Emulator:** `blackhole-py/emu/device.py`
+**Source:** [`logical-to-virtual-coordinates.md`](../specs/logical-to-virtual-coordinates.md)
 
 ## Coordinate systems
 

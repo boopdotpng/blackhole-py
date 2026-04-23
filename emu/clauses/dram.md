@@ -1,6 +1,6 @@
 # dram
 
-**Source:** [`dram.md`](../specs/dram.md) · **Emulator:** `blackhole-py/emu/device.py`
+**Source:** [`dram.md`](../specs/dram.md)
 
 ## Bank geometry
 

@@ -1,16 +1,14 @@
 # address-space
 
-**Source:** [`address-space.md`](../specs/address-space.md) · **Emulator:** `blackhole-py/emu/router.py`
+**Source:** [`address-space.md`](../specs/address-space.md)
 
 ## Router basics
 
 ### `ADDR.ROUTER.FIRST_MATCH_WINS`
-_router.py::Router._find_
 
 > The address router iterates registered ranges in insertion order; the first matching range wins. This is the "first-match" routing policy.
 
 ### `ADDR.ROUTER.DEFAULT_FALLBACK`
-_router.py::Router._find_
 
 > Addresses that do not match any registered range fall through to the default handler (router.default).
 

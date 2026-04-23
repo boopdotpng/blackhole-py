@@ -23,15 +23,12 @@ from emu.memory import (
   GO_MESSAGES, SUBORDINATE_SYNC, LAUNCH_MSG_RD_PTR, LAUNCH_MSG_RING,
   KERNEL_CONFIG_BASE, DATA_BUFFER_SPACE_BASE,
 )
+from ._helpers import mini_device
 
 
 # JALR x0, x1, 0  — `ret` (a minimal kernel: returns immediately)
 RET = struct.pack("<I", 0x00008067)
-
-
-def _mini_dev():
-  # 1-tile grid keeps boot fast (Tensix regfile alloc ~60ms/tile).
-  return Device(tensix_x=(1,), tensix_y=(2,))
+NOOP_KERNEL = dict(brisc=RET, ncrisc=RET, trisc=(RET, RET, RET))
 
 
 @pytest.fixture(scope="module")
@@ -40,58 +37,45 @@ def firmware_image():
   return build_all()
 
 
-def test_boot_reaches_done(firmware_image):
-  """fw.boot should drive BRISC through init and land at go_msg == DONE."""
-  dev = _mini_dev()
+@pytest.fixture
+def booted(firmware_image):
+  """Fresh 1-tile device, booted, ready to dispatch. Returns (dev, tile, l1)."""
+  dev = mini_device()
   fw.boot(dev, firmware_image)
   tile = next(iter(dev.tiles.values()))
-  assert tile.l1.read8(GO_MESSAGES + 3) == RUN_MSG_DONE
-  # All subordinates have signaled DONE (subordinate_sync.all == 0).
-  assert tile.l1.read32(SUBORDINATE_SYNC) == 0
-  # All cores released from reset.
+  return dev, tile, tile.l1
+
+
+def test_boot_reaches_done(booted):
+  """fw.boot should drive BRISC through init and land at go_msg == DONE."""
+  dev, tile, l1 = booted
+  assert l1.read8(GO_MESSAGES + 3) == RUN_MSG_DONE
+  assert l1.read32(SUBORDINATE_SYNC) == 0  # all subordinates signaled DONE
   for core in tile.cores:
     assert not core.in_reset
 
 
-def test_dispatch_noop(firmware_image):
-  """After boot, device.run() dispatches a no-op kernel and returns."""
-  dev = _mini_dev()
-  fw.boot(dev, firmware_image)
-  dev.run(
-    brisc=RET,
-    ncrisc=RET,
-    trisc=(RET, RET, RET),
-  )
-  tile = next(iter(dev.tiles.values()))
-  assert tile.l1.read8(GO_MESSAGES + 3) == RUN_MSG_DONE
-
-
-def test_dispatch_twice(firmware_image):
-  """Two back-to-back dispatches — ring must keep working."""
-  dev = _mini_dev()
-  fw.boot(dev, firmware_image)
+def test_dispatch_twice(booted):
+  """Two back-to-back dispatches — ring must keep working. Also covers no-op dispatch."""
+  dev, tile, l1 = booted
   for _ in range(2):
-    dev.run(brisc=RET, ncrisc=RET, trisc=(RET, RET, RET))
-    tile = next(iter(dev.tiles.values()))
-    assert tile.l1.read8(GO_MESSAGES + 3) == RUN_MSG_DONE
+    dev.run(**NOOP_KERNEL)
+    assert l1.read8(GO_MESSAGES + 3) == RUN_MSG_DONE
 
 
-def test_launch_msg_fields(firmware_image):
+def test_launch_msg_fields(booted):
   """device.run() populates launch_msg with the tt-metal layout fields."""
-  dev = _mini_dev()
-  fw.boot(dev, firmware_image)
+  dev, tile, l1 = booted
 
   cbs = [(0, 2048, 2), (16, 2048, 2)]
   dev.run(
-    brisc=RET, ncrisc=RET, trisc=(RET, RET, RET),
+    **NOOP_KERNEL,
     writer_args=[[0xAAAA1111, 0xAAAA2222, 7]],   # 3 args × 4 B = 12 B
     reader_args=[[0xBBBB3333, 4]],                # 2 args × 4 B = 8 B
     compute_args=[[9]],                           # 1 arg × 4 B = 4 B
     cbs=cbs,
     num_semaphores=2,
   )
-  tile = next(iter(dev.tiles.values()))
-  l1 = tile.l1
   lm = LAUNCH_MSG_RING  # slot 0
 
   # kernel_config_base[0..2]
@@ -128,51 +112,39 @@ def test_launch_msg_fields(firmware_image):
   assert l1.read32(lm + 76) == 0b11111
 
 
-def test_rtas_written_to_l1(firmware_image):
+def test_rtas_written_to_l1(booted):
   """device.run() writes per-processor RTAs at KERNEL_CONFIG_BASE + rta_offset."""
-  dev = _mini_dev()
-  fw.boot(dev, firmware_image)
+  dev, tile, l1 = booted
   dev.run(
-    brisc=RET, ncrisc=RET, trisc=(RET, RET, RET),
+    **NOOP_KERNEL,
     writer_args=[[0x11111111, 0x22222222]],
     reader_args=[[0x33333333]],
     compute_args=[[0x44444444, 0x55555555, 0x66666666]],
   )
-  tile = next(iter(dev.tiles.values()))
-  l1 = tile.l1
-  # writer RTAs at offset 0
-  assert l1.read32(KERNEL_CONFIG_BASE + 0) == 0x11111111
-  assert l1.read32(KERNEL_CONFIG_BASE + 4) == 0x22222222
-  # reader RTAs at offset max_w (= 8)
-  assert l1.read32(KERNEL_CONFIG_BASE + 8) == 0x33333333
-  # compute RTAs at offset max_w + max_r (= 12)
-  assert l1.read32(KERNEL_CONFIG_BASE + 12) == 0x44444444
-  assert l1.read32(KERNEL_CONFIG_BASE + 16) == 0x55555555
-  assert l1.read32(KERNEL_CONFIG_BASE + 20) == 0x66666666
+  # writer RTAs at offset 0; reader at max_w=8; compute at max_w+max_r=12
+  expected = [
+    (0,  0x11111111), (4,  0x22222222),
+    (8,  0x33333333),
+    (12, 0x44444444), (16, 0x55555555), (20, 0x66666666),
+  ]
+  for off, val in expected:
+    assert l1.read32(KERNEL_CONFIG_BASE + off) == val
 
 
-def test_cbs_written_to_l1(firmware_image):
+def test_cbs_written_to_l1(booted):
   """CB config blob at KERNEL_CONFIG_BASE + local_cb_off records (addr, size, tiles, page_size)."""
-  dev = _mini_dev()
-  fw.boot(dev, firmware_image)
-  dev.run(
-    brisc=RET, ncrisc=RET, trisc=(RET, RET, RET),
-    cbs=[(0, 1024, 4), (1, 512, 8)],
-  )
-  tile = next(iter(dev.tiles.values()))
-  l1 = tile.l1
+  dev, tile, l1 = booted
+  dev.run(**NOOP_KERNEL, cbs=[(0, 1024, 4), (1, 512, 8)])
   lm = LAUNCH_MSG_RING
-  local_cb_off = l1.read16(lm + 18)
-  cb_base = KERNEL_CONFIG_BASE + local_cb_off
+  cb_base = KERNEL_CONFIG_BASE + l1.read16(lm + 18)
 
-  # CB 0: addr=DATA_BUFFER_SPACE_BASE, size=4096, tiles=4, page_size=1024
-  assert l1.read32(cb_base + 0 + 0)  == DATA_BUFFER_SPACE_BASE
-  assert l1.read32(cb_base + 0 + 4)  == 1024 * 4
-  assert l1.read32(cb_base + 0 + 8)  == 4
-  assert l1.read32(cb_base + 0 + 12) == 1024
-
-  # CB 1: addr=DATA_BUFFER_SPACE_BASE + 4096, size=4096, tiles=8, page_size=512
-  assert l1.read32(cb_base + 16 + 0)  == DATA_BUFFER_SPACE_BASE + 4096
-  assert l1.read32(cb_base + 16 + 4)  == 512 * 8
-  assert l1.read32(cb_base + 16 + 8)  == 8
-  assert l1.read32(cb_base + 16 + 12) == 512
+  # Each CB slot: (addr, total_size, num_tiles, page_size) at 16-byte stride
+  cb_records = [
+    (0,  DATA_BUFFER_SPACE_BASE,        1024 * 4, 4, 1024),  # CB 0
+    (16, DATA_BUFFER_SPACE_BASE + 4096,  512 * 8, 8,  512),  # CB 1
+  ]
+  for slot, addr, size, tiles, page in cb_records:
+    assert l1.read32(cb_base + slot + 0)  == addr
+    assert l1.read32(cb_base + slot + 4)  == size
+    assert l1.read32(cb_base + slot + 8)  == tiles
+    assert l1.read32(cb_base + slot + 12) == page

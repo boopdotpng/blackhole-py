@@ -1,6 +1,6 @@
 # specialty-fpu-operations
 
-**Source:** [`specialty-fpu-operations.md`](../specs/specialty-fpu-operations.md) · **Emulator:** `blackhole-py/emu/tensix/fpu.py`
+**Source:** [`specialty-fpu-operations.md`](../specs/specialty-fpu-operations.md)
 
 ## Neutered instructions
 

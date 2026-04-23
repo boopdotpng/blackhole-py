@@ -1,6 +1,6 @@
 # pack-unpack-registers
 
-**Source:** [`pack-unpack-registers.md`](../specs/pack-unpack-registers.md) · **Emulator:** `blackhole-py/emu/tensix/`
+**Source:** [`pack-unpack-registers.md`](../specs/pack-unpack-registers.md)
 
 ## DataFormat enum
 

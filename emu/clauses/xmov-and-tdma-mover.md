@@ -1,6 +1,6 @@
 # xmov-and-tdma-mover
 
-**Source:** [`xmov-and-tdma-mover.md`](../specs/xmov-and-tdma-mover.md) · **Emulator:** `blackhole-py/emu/tensix/__init__.py`
+**Source:** [`xmov-and-tdma-mover.md`](../specs/xmov-and-tdma-mover.md)
 
 ## XMOV encoding
 

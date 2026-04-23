@@ -1,6 +1,6 @@
 # tensix-coprocessor-pipeline
 
-**Source:** [`tensix-coprocessor-pipeline.md`](../specs/tensix-coprocessor-pipeline.md) · **Emulator:** `blackhole-py/emu/tensix/__init__.py`
+**Source:** [`tensix-coprocessor-pipeline.md`](../specs/tensix-coprocessor-pipeline.md)
 
 ## Thread model
 

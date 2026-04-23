@@ -75,9 +75,9 @@ def test_dest_clear_range_16():
   assert dest.valid[26]   # just after range
 
 
-@spec("DEST.ZEROACC.CLEAR_HALF")
+@spec("DEST.ZEROACC.CLEAR_HALF", "DEST.DOUBLE_BUFFER.LOW_HIGH_HALF")
 def test_dest_clear_half_low():
-  """clear_half(0) clears rows 0-511."""
+  """clear_half(0) clears rows 0-511 (the low half of the double-buffer)."""
   dest = DestRegFile()
   for r in range(1024):
     dest.valid[r] = True
@@ -86,15 +86,24 @@ def test_dest_clear_half_low():
   assert all(dest.valid[512:])
 
 
-@spec("DEST.ZEROACC.CLEAR_HALF")
+@spec("DEST.ZEROACC.CLEAR_HALF", "DEST.DOUBLE_BUFFER.LOW_HIGH_HALF")
 def test_dest_clear_half_high():
-  """clear_half(1) clears rows 512-1023."""
+  """clear_half(1) clears rows 512-1023 (the high half of the double-buffer)."""
   dest = DestRegFile()
   for r in range(1024):
     dest.valid[r] = True
   dest.clear_half(1)
   assert all(dest.valid[:512])
   assert not any(dest.valid[512:])
+
+
+@spec("DEST.DOUBLE_BUFFER.LOW_HIGH_HALF")
+def test_dest_halves_are_512_rows_each():
+  """Explicitly pin the two-half split at row 512."""
+  dest = DestRegFile()
+  assert dest.ROWS == 1024
+  # 1024 = 2 × 512; halving splits at 512.
+  assert dest.ROWS // 2 == 512
 
 
 @spec("DEST.ZEROACC.CLEAR_ALL")
@@ -188,9 +197,9 @@ def test_flip_release_cycle():
 # UNPACR / UNPACR_NOP dispatcher via TRISC0
 # ===========================================================================
 
-@spec("SRC.UNPACR_NOP.BANK_FLIP")
+@spec("SRC.UNPACR_NOP.BANK_FLIP", "SRC.SRCA_VS_SRCB.UNPACKER")
 def test_unpacr_nop_bank_flip_srca():
-  """UNPACR_NOP with unpacker_sel=0 and set_dvalid=1 flips SrcA bank to matrix_unit."""
+  """UNPACR_NOP with unpacker_sel=0 (Unpacker 0 → SrcA) flips SrcA bank."""
   c = TensixCoprocessor()
   assert c.srca.banks[0].allowed_client == "unpackers"
   # UNPACR_NOP: unpacker_sel=0 (SrcA), set_dvalid=1
@@ -200,9 +209,9 @@ def test_unpacr_nop_bank_flip_srca():
   assert c.srca.banks[0].allowed_client == "matrix_unit"
 
 
-@spec("SRC.UNPACR_NOP.BANK_FLIP")
+@spec("SRC.UNPACR_NOP.BANK_FLIP", "SRC.SRCA_VS_SRCB.UNPACKER")
 def test_unpacr_nop_bank_flip_srcb():
-  """UNPACR_NOP with unpacker_sel=1 and set_dvalid=1 flips SrcB bank to matrix_unit."""
+  """UNPACR_NOP with unpacker_sel=1 (Unpacker 1 → SrcB) flips SrcB bank."""
   c = TensixCoprocessor()
   assert c.srcb.banks[0].allowed_client == "unpackers"
   # UNPACR_NOP: unpacker_sel=1 (SrcB), set_dvalid=1
@@ -268,3 +277,68 @@ def test_trnspsrcb_rows_0_15_unchanged():
   for r in range(16):
     for col in range(16):
       assert bank.rows[r][col] == sentinel
+
+
+# ===========================================================================
+# Dest half-buffer math/pack semaphore & SrcA-vs-SrcB MVMUL roles
+# ===========================================================================
+
+@spec("DEST.DOUBLE_BUFFER.MATH_PACK_SEM")
+def test_math_pack_semaphore_post_get_cycle():
+  """The MATH_PACK semaphore (index 1) coordinates half-Dest ownership: math
+  SEMPOSTs when a half is ready; pack SEMGETs when it consumes one. The
+  emulator's Semaphores backend implements the post/get pair."""
+  c = TensixCoprocessor()
+  # Configure sem 1 with max_value=2 (two half-buffers).
+  c.semaphores.init(1, value=0, max_value=2)
+  # Math thread fills half 0, then half 1 — two posts.
+  c.semaphores.post(1)
+  c.semaphores.post(1)
+  assert c.semaphores.value[1] == 2
+  # Pack consumes one half — one get.
+  c.semaphores.get(1)
+  assert c.semaphores.value[1] == 1
+  # Saturates at max_value; extra posts are dropped.
+  c.semaphores.post(1); c.semaphores.post(1); c.semaphores.post(1)
+  assert c.semaphores.value[1] == 2
+  # Draining to empty clamps at 0 (never negative).
+  for _ in range(5):
+    c.semaphores.get(1)
+  assert c.semaphores.value[1] == 0
+
+
+@spec("SRC.SRCA_VS_SRCB.MVMUL_ROLES")
+def test_mvmul_srca_is_rhs_16x16_srcb_is_lhs_8x16():
+  """MVMUL computes Dest[row,col] = sum_k SrcB[row,k] · SrcA[k,col], where
+  SrcB contributes 8 rows (LHS) and SrcA contributes 16 rows (RHS). A
+  feature-targeted choice of inputs pins the role assignment:
+
+    - SrcB[0, :] = [1, 0, …] (selects SrcA row 0)
+    - SrcB[1, :] = [0, 1, 0, …] (selects SrcA row 1)
+    - SrcA[0, col] = 10, SrcA[1, col] = 20
+
+  So Dest row 0 should be all 10s, Dest row 1 should be all 20s — the
+  left matrix (SrcB) picks which SrcA row dominates.
+  """
+  from emu.tensix import _float_to_19bit
+  c = TensixCoprocessor()
+  srca_bank = c.srca.banks[c.srca.fpu_bank]
+  srcb_bank = c.srcb.banks[c.srcb.fpu_bank]
+  # SrcA row 0 is all 10.0, row 1 is all 20.0, rest 0.
+  for col in range(16):
+    srca_bank.rows[0][col] = _float_to_19bit(10.0)
+    srca_bank.rows[1][col] = _float_to_19bit(20.0)
+  # SrcB row 0 = one-hot on k=0; row 1 = one-hot on k=1.
+  for k in range(16):
+    srcb_bank.rows[0][k] = _float_to_19bit(1.0 if k == 0 else 0.0)
+    srcb_bank.rows[1][k] = _float_to_19bit(1.0 if k == 1 else 0.0)
+  # MVMUL with dst=0, rwc offsets all zero.
+  word = (0x26 << 24)
+  c.push_instruction(1, word)
+  c.step()
+  # Dest row 0 col 0 should ≈ 10, row 1 col 0 should ≈ 20.
+  from emu.tensix import _dest_to_float
+  row0 = _dest_to_float(c.dest.bits[0][0])
+  row1 = _dest_to_float(c.dest.bits[1][0])
+  assert row0 == pytest.approx(10.0, abs=0.1)
+  assert row1 == pytest.approx(20.0, abs=0.1)

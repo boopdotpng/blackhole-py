@@ -261,43 +261,13 @@ TENSIX_CFG_BASE        = 0xFFEF0000
 TENSIX_CFG_END         = 0xFFEFFFFF
 
 # =============================================================================
-# Hardware semaphores — 8 per tile, 4-bit value + 4-bit max
+# Hardware semaphore MMIO window — 8 per tile, 4-bit value + 4-bit max.
+# The Semaphores class itself lives in emu.tensix.state (the semaphores are
+# Tensix-side state; RISC-V cores just reach them through this window).
 # =============================================================================
-# Precomputed semaphore window address range
 _SEM_WIN_LO = PCBUF_T0 + PCBUF_SEM_BASE        # 0xFFE80020
 _SEM_WIN_HI = _SEM_WIN_LO + 7 * 4              # 0xFFE8003C
 
-
-class Semaphores:
-  def __init__(self):
-    self.value = [0] * 8
-    self.max = [0] * 8
-
-  def init(self, idx, value, max_value):
-    self.value[idx] = value & 0xF
-    self.max[idx] = max_value & 0xF
-
-  def post(self, idx):
-    if self.value[idx] < self.max[idx]:
-      self.value[idx] += 1
-
-  def get(self, idx):
-    if self.value[idx] > 0:
-      self.value[idx] -= 1
-
-  # -- router handler API ----------------------------------------------------
-  # Reads return the semaphore value; writes are post (bit 0 clear) or get (set).
-
-  def read8(self, addr):  return self.read32(addr & ~3) >> ((addr & 3) * 8) & 0xFF
-  def read16(self, addr): return self.read32(addr & ~3) >> ((addr & 2) * 8) & 0xFFFF
-  def read32(self, addr): return self.value[(addr - _SEM_WIN_LO) >> 2]
-
-  def write8(self, addr, val):  self.write32(addr & ~3, val)
-  def write16(self, addr, val): self.write32(addr & ~3, val)
-  def write32(self, addr, val):
-    idx = (addr - _SEM_WIN_LO) >> 2
-    if val & 1 == 0: self.post(idx)
-    else:            self.get(idx)
 
 # =============================================================================
 # Sparse memory

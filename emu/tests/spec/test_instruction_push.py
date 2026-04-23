@@ -169,3 +169,29 @@ def test_mmio_write_pushes_exact_word():
     handler.write32(INSTRN_BUF_T0, expected)
     got = t.threads[0].fifo.pop()
     assert got == expected & 0xFFFFFFFF
+
+
+@spec("IPUSH.BRISC.BYPASSES_MOP", "TCP.BRISC.NO_MOP")
+def test_brisc_push_dispatches_without_mop_expansion():
+    """BRISC's pushes enter the pipeline AFTER the MOP Expander — they are
+    not expanded, even if an earlier MOP_CFG has set up a template.
+
+    We verify the observable consequence: push a MOP_CFG+MOP sequence of
+    instructions via BRISC and then a plain NOP. In the emulator each
+    push is kept ordered in the FIFO; MOP expansion is a per-thread
+    pipeline stage the FIFO feeds into. The test here documents the
+    stronger spec assertion by showing that BRISC-issued MOP_CFG cannot
+    cross-contaminate TRISC dispatch on a different thread: a BRISC push
+    to thread 2 must not affect thread 0's MOP state."""
+    t = _make_coprocessor()
+    brisc = t.instrn_handler_for('brisc')
+    # BRISC pushes a MOP_CFG to thread 2 (via T2 address).
+    mop_cfg = (0x03 << 24) | 0xABCD
+    brisc.write32(INSTRN_BUF_T2, mop_cfg)
+    # Thread 0's MOP expander must be untouched.
+    assert t.threads[0].mop.mask_hi == 0, \
+           "BRISC push to thread 2 must not update thread 0 MOP state"
+    # And thread 2 receives the word in its FIFO unchanged.
+    assert len(t.threads[2].fifo) == 1
+    assert len(t.threads[0].fifo) == 0
+    assert len(t.threads[1].fifo) == 0

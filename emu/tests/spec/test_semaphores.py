@@ -12,8 +12,8 @@ by the NOC tests since they use L1 reads/writes and NOC atomics.
 
 import pytest
 
-from emu.memory import Semaphores, _SEM_WIN_LO
-from emu.tensix import SyncUnit
+from emu.memory import _SEM_WIN_LO
+from emu.tensix import Semaphores, SyncUnit
 from emu.tensix import WaitGate
 from emu.tensix import TensixCoprocessor, HardwareState
 from emu.tensix import SrcRegFile
@@ -32,6 +32,31 @@ from .conftest import spec
 @pytest.fixture
 def sems():
   return Semaphores()
+
+
+# ===========================================================================
+# Software semaphores (plain L1 words)
+# ===========================================================================
+
+@spec("SEM.SW.L1_PLAIN_WORD")
+def test_software_semaphores_are_plain_l1_words():
+  """Software semaphores are plain uint32_t values in L1: no dedicated
+  hardware path, just L1 reads and writes. Incrementing and reading back
+  through Memory.read32/write32 works with zero special support."""
+  from emu.memory import Memory
+  l1 = Memory()
+  sem_addr = 0x4000           # arbitrary L1 offset
+  # Initial value is 0 (uninitialized L1).
+  assert l1.read32(sem_addr) == 0
+  # "Post" a software sem by writing its new value.
+  l1.write32(sem_addr, 1)
+  assert l1.read32(sem_addr) == 1
+  # Increment-style post (read-modify-write, as firmware would do).
+  l1.write32(sem_addr, l1.read32(sem_addr) + 1)
+  assert l1.read32(sem_addr) == 2
+  # A software sem is just a uint32_t — full 32-bit range is valid.
+  l1.write32(sem_addr, 0xDEADBEEF)
+  assert l1.read32(sem_addr) == 0xDEADBEEF
 
 
 @pytest.fixture

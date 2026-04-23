@@ -1,6 +1,6 @@
 # fpu-operations
 
-**Source:** [`fpu-operations.md`](../specs/fpu-operations.md) · **Emulator:** `blackhole-py/emu/tensix/fpu.py`
+**Source:** [`fpu-operations.md`](../specs/fpu-operations.md)
 
 ## 19-bit float format
 

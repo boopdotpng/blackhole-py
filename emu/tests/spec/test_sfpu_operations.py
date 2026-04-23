@@ -110,8 +110,7 @@ def test_tileid_init():
     assert sfpu.lregs[15][lane] == lane * 2, f"lane {lane}: expected {lane*2}, got {sfpu.lregs[15][lane]}"
 
 
-@spec("SFPU.LREG.PRED.LANE_FLAGS_INIT_FALSE",
-      "SFPU.PRED.LANE_FLAGS_INIT_FALSE")
+@spec("SFPU.PRED.LANE_FLAGS_INIT_FALSE")
 def test_lane_flags_init_false():
   sfpu, _ = _make()
   assert all(f is False for f in sfpu.lane_flags)
@@ -155,6 +154,28 @@ def test_writable_range():
     word = (0x71 << 24) | (reg << 20) | (4 << 16) | 0x1234
     sfpu.sfploadi(decode_tensix(word))
     assert sfpu.lregs[reg][0] == original, f"LReg[{reg}] should be read-only"
+
+
+@spec("SFPU.LREG.LREG16_MACRO_ONLY")
+def test_lreg16_not_writable_by_regular_sfpu_instructions():
+  """LReg[16] is macro-only: writable only by instructions scheduled via
+  SFPLOADMACRO, and readable only by SFPSTORE scheduled via SFPLOADMACRO.
+  A plain SFPLOADI targeting lreg_ind=16 must leave it untouched (still
+  the CONST_ONE init value)."""
+  sfpu, _ = _make()
+  # Initial value: CONST_ONE = 0x3F800000 (1.0f).
+  assert sfpu.lregs[16][0] == CONST_ONE
+  before = list(sfpu.lregs[16])
+  # Regular SFPLOADI on LReg[16]: should be silently rejected by _is_writable.
+  word = (0x71 << 24) | (16 << 20) | (4 << 16) | 0xDEAD
+  sfpu.sfploadi(decode_tensix(word))
+  assert sfpu.lregs[16] == before, "LReg[16] must not be written outside SFPLOADMACRO"
+  # And _is_writable itself must agree: 16 is outside both ranges.
+  assert not sfpu._is_writable(16)
+  # Neighbours 15 is read-only; 11..14 writable; 7 writable.
+  assert not sfpu._is_writable(15)
+  assert sfpu._is_writable(14)
+  assert sfpu._is_writable(7)
 
 
 @spec("SFPU.LREG.PROGCONST_RANGE")

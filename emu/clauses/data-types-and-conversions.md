@@ -1,6 +1,6 @@
 # data-types-and-conversions
 
-**Source:** [`data-types-and-conversions.md`](../specs/data-types-and-conversions.md) · **Emulator:** `blackhole-py/emu/tensix/fpu.py`
+**Source:** [`data-types-and-conversions.md`](../specs/data-types-and-conversions.md)
 
 ## 19-bit shuffled format
 

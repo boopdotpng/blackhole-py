@@ -203,3 +203,49 @@ def test_run_exits_early_on_self_loop():
     steps = core.run(100)
     # run() returns the step count at which it stopped
     assert steps == 1
+
+
+# ===========================================================================
+# Halted-core skipping
+# ===========================================================================
+
+@spec("EXEC.CORES.HALTED_SKIP")
+def test_halted_core_does_no_observable_work():
+    """A core that has reached a self-loop (its halt sentinel) performs no
+    observable state change on subsequent step() calls: step() returns
+    False, the PC stays pinned, and no registers are perturbed. This is
+    how a halted core is 'skipped' in the synchronous scheduler."""
+    core = BRISC(pc=0x100)
+    core.in_reset = False
+    # Pattern: one live insn, then a self-loop (halt sentinel).
+    core.load(0x100, [
+        dsl.ADDI(dsl.a0, dsl.zero, 42),
+        dsl.JAL(dsl.zero, 0),                        # self-loop at 0x104
+    ])
+    core.step()                                       # executes ADDI
+    assert core.regs[dsl.a0] == 42 and core.pc == 0x104
+    # Now we're on the self-loop — any number of subsequent steps is a no-op.
+    for _ in range(50):
+        assert core.step() is False
+        assert core.pc == 0x104
+        assert core.regs[dsl.a0] == 42
+
+
+# ===========================================================================
+# NOC immediate completion
+# ===========================================================================
+
+@spec("EXEC.NOC.IMMEDIATE_COMPLETION")
+def test_noc_atomic_completes_in_same_tick(two_tile_network, atomic):
+    """A NOC atomic fires, updates the remote L1, and bumps the response
+    counter — all in the same call into the NOC. No pending-queue or
+    deferred-completion machinery."""
+    from emu import memory as M
+    from emu.noc import AT_INCR_GET
+    net = two_tile_network
+    net['dst_l1'].write32(0x8000, 0)
+    before = net['src_noc0'].regs.read32(M.NIU_MST_ATOMIC_RESP_RECEIVED)
+    atomic(net, op=AT_INCR_GET, targ_addr=0x8000, at_data=1)
+    # By the time atomic() returns: target memory mutated AND counter ticked.
+    assert net['dst_l1'].read32(0x8000) == 1
+    assert net['src_noc0'].regs.read32(M.NIU_MST_ATOMIC_RESP_RECEIVED) == before + 1

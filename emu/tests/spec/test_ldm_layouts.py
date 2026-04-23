@@ -34,6 +34,32 @@ def _attach_slow_ldm(cores):
 # LDM isolation
 # ===========================================================================
 
+@spec("LDM.NOC_COUNTERS.PER_CORE_NOT_GLOBAL")
+def test_noc_counter_arrays_are_per_core_in_ldm():
+    """NOC counter arrays (e.g. noc_reads_num_issued) must live in per-core
+    LDM, not in a shared global. Modelled here as each core owning a
+    uint32_t at a fixed LDM offset: different cores see different values
+    at the same LDM address."""
+    shared = Memory()
+    brisc  = BRISC(l1=shared)
+    ncrisc = NCRISC(l1=shared)
+    trisc0 = TRISC0(l1=shared)
+    # Imagine a NOC counter stored at LDM offset 0x40 in each core.
+    NOC_COUNTER_OFFSET = 0x40
+    # Three cores issue different numbers of NOC transactions, tracked locally.
+    brisc.ldm.write32(NOC_COUNTER_OFFSET, 3)    # BRISC issued 3
+    ncrisc.ldm.write32(NOC_COUNTER_OFFSET, 7)   # NCRISC issued 7
+    trisc0.ldm.write32(NOC_COUNTER_OFFSET, 99)  # TRISC0 issued 99
+    # Each core reads back its OWN count — no aliasing.
+    assert brisc.ldm.read32(NOC_COUNTER_OFFSET)  == 3
+    assert ncrisc.ldm.read32(NOC_COUNTER_OFFSET) == 7
+    assert trisc0.ldm.read32(NOC_COUNTER_OFFSET) == 99
+    # And via each core's own router (LDM fast path).
+    assert brisc.mem.read32(M.LDM_BASE + NOC_COUNTER_OFFSET)  == 3
+    assert ncrisc.mem.read32(M.LDM_BASE + NOC_COUNTER_OFFSET) == 7
+    assert trisc0.mem.read32(M.LDM_BASE + NOC_COUNTER_OFFSET) == 99
+
+
 @spec("LDM.ISOLATION.PER_CORE")
 def test_brisc_and_trisc0_ldm_are_independent():
     """BRISC write to 0xFFB00000 must not affect TRISC0's LDM at 0xFFB00000."""

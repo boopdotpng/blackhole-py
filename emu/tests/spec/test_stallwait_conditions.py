@@ -17,8 +17,7 @@ from emu.tensix import (
     COND_SRCA_VLD, COND_SRCB_VLD, COND_SRCA_CLR, COND_SRCB_CLR,
 )
 from emu.tensix import TensixCoprocessor, HardwareState
-from emu.tensix import SrcRegFile
-from emu.memory import Semaphores
+from emu.tensix import SrcRegFile, Semaphores
 from dsl import (
     TT_NOP, TT_STALLWAIT, TT_SEMWAIT, TT_SETC16, TT_MVMUL,
     TT_SEMPOST, TT_SEMINIT, decode_tensix,

@@ -1,6 +1,6 @@
 # device-grid
 
-**Source:** [`device-grid.md`](../specs/device-grid.md) · **Emulator:** `blackhole-py/emu/device.py`
+**Source:** [`device-grid.md`](../specs/device-grid.md)
 
 ## Tensix layout
 

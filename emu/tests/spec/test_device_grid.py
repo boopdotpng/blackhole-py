@@ -39,6 +39,26 @@ def test_p100a_full_core_count():
     assert len(dev.tiles) == 120
 
 
+@spec("GRID.HARVEST.TENSIX_COLUMN")
+def test_harvested_tensix_column_not_registered():
+    """If a Tensix column is harvested (x excluded from tensix_x), none of its
+    10 cores register tiles, and the X coordinate is absent from the grid.
+    Harvesting x=3 should remove exactly 10 tiles from the 120-tile grid."""
+    full_x = list(P100A_TENSIX_X)
+    harvested_x = 3
+    assert harvested_x in full_x, "precondition: x=3 is a valid Tensix column"
+    remaining_x = [x for x in full_x if x != harvested_x]
+    dev = Device(tensix_x=remaining_x)
+    # No tile should exist at any (3, y).
+    for (x, y) in dev.tiles:
+        assert x != harvested_x, \
+               f"tile registered at harvested column: ({x}, {y})"
+    # Exactly 10 cores (one column × 10 rows) removed.
+    expected = len(remaining_x) * len(list(P100A_Y_RANGE))
+    assert len(dev.tiles) == expected
+    assert len(dev.tiles) == 120 - 10
+
+
 # ===========================================================================
 # DRAM column layout
 # ===========================================================================

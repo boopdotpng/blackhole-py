@@ -64,7 +64,7 @@ def test_sfploadmacro_executes_sfpload():
     assert c.sfpu.lregs[0][lane] == _f2b(float(lane * 10)), f"lane {lane}"
 
 
-@spec("SFPLM.SCHEDULE_IGNORED")
+@spec("SFPLM.SEQUENCE_DISPATCH")
 def test_sfploadmacro_schedules_subunit():
   """After SFPLOADMACRO, a sub-unit instruction should execute at delay=0."""
   # This test exercises the sub-unit scheduling path:

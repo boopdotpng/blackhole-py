@@ -1,6 +1,6 @@
 # pack-data-path
 
-**Source:** [`pack-data-path.md`](../specs/pack-data-path.md) · **Emulator:** `blackhole-py/emu/tensix/trisc2.py`
+**Source:** [`pack-data-path.md`](../specs/pack-data-path.md)
 
 ## PACR Encoding
 

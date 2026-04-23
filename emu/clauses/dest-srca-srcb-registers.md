@@ -1,6 +1,6 @@
 # dest-srca-srcb-registers
 
-**Source:** [`dest-srca-srcb-registers.md`](../specs/dest-srca-srcb-registers.md) · **Emulator:** `blackhole-py/emu/tensix/regfile.py`
+**Source:** [`dest-srca-srcb-registers.md`](../specs/dest-srca-srcb-registers.md)
 
 ## DestRegFile layout
 

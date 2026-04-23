@@ -400,6 +400,28 @@ def test_movb2d_1_row():
   assert abs(_dest_to_float(dest.bits[0][1]) - 99.0) < 0.5
 
 
+@spec("FPU.ZEROACC.CLR_HALF_NO_ADDRMOD")
+def test_zeroacc_clr_half_does_not_apply_addr_mod():
+  """CLR_HALF and CLR_ALL do not apply ADDR_MOD: RWC counters are not
+  advanced as a side-effect of the clear. (CLR_SPECIFIC / CLR_16 are the
+  only modes that update RWCs via ADDR_MOD.)"""
+  fpu, _, _, dest = _make_fpu()
+  rwc = RWCState()
+  # Seed RWC with recognizable values so any mutation is visible.
+  rwc.a = 5; rwc.b = 7; rwc.c = 11; rwc.d = 13
+  before = (rwc.a, rwc.b, rwc.c, rwc.d)
+  # CLR_HALF (mode=2)
+  word_half = (0x10 << 24) | (2 << 19) | 0
+  fpu.zeroacc(decode_tensix(word_half))
+  assert (rwc.a, rwc.b, rwc.c, rwc.d) == before, \
+         f"CLR_HALF leaked an ADDR_MOD update: {(rwc.a, rwc.b, rwc.c, rwc.d)} != {before}"
+  # CLR_ALL (mode=3)
+  word_all = (0x10 << 24) | (3 << 19)
+  fpu.zeroacc(decode_tensix(word_all))
+  assert (rwc.a, rwc.b, rwc.c, rwc.d) == before, \
+         f"CLR_ALL leaked an ADDR_MOD update: {(rwc.a, rwc.b, rwc.c, rwc.d)} != {before}"
+
+
 @spec("FPU.MOVB2D.MOV_4_ROWS")
 def test_movb2d_4_rows():
   """MOVB2D instr_mod=1: copies 4 SrcB rows to Dest."""
@@ -446,6 +468,29 @@ def test_movd2a_1_row():
   srca_bank = srca.banks[srca.fpu_bank]
   actual = _19bit_to_float(srca_bank.rows[0][0])
   assert abs(actual - 77.0) < 1.5   # some precision loss in 19-bit
+
+
+@spec("FPU.MOVD2A.MOV_4_ROWS")
+def test_movd2a_4_rows_when_instr_mod_nonzero():
+  """MOVD2A instr_mod!=0: copy 4 Dest rows to SrcA."""
+  fpu, srca, _, dest = _make_fpu()
+  rwc = RWCState()
+  for r in range(4):
+    dest.bits[r][0] = _float_to_dest(float(r + 20))
+    dest.valid[r] = True
+  # Pre-seed SrcA row 4 with sentinel so we can verify it is NOT written.
+  srca_bank = srca.banks[srca.fpu_bank]
+  srca_bank.rows[4][0] = 0xABCDE
+  # MOVD2A: src=0, dst=0, instr_mod=2 → 4 rows
+  word = (0x08 << 24) | (0 << 17) | (2 << 12) | 0
+  fpu.movd2a(decode_tensix(word), rwc)
+  # Rows 0-3 written; row 4 untouched
+  for r in range(4):
+    actual = _19bit_to_float(srca_bank.rows[r][0])
+    assert abs(actual - float(r + 20)) < 1.5, \
+           f"SrcA row {r}: {actual} != {r + 20}"
+  assert srca_bank.rows[4][0] == 0xABCDE, \
+         "MOVD2A with instr_mod=2 should have written exactly 4 rows"
 
 
 @spec("FPU.MOVD2A.READS_ZERO_WHEN_INVALID")

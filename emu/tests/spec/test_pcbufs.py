@@ -6,12 +6,11 @@ Each test is pinned to one or more clauses from
 
 import pytest
 
-from emu.tensix import TensixCoprocessor
+from emu.tensix import TensixCoprocessor, Semaphores
 from emu.memory import (
     PCBUF_T0, PCBUF_T1, PCBUF_T2, PCBUF_STRIDE,
     PCBUF_FIFO_POP, PCBUF_COPROC_DONE, PCBUF_MOP_DONE,
     PCBUF_SEM_BASE,
-    Semaphores,
     _SEM_WIN_LO,
 )
 
@@ -187,3 +186,61 @@ def test_sem_window_lo_matches_pcbuf_t0_plus_sem_base():
     """_SEM_WIN_LO == PCBUF_T0 + PCBUF_SEM_BASE."""
     assert _SEM_WIN_LO == PCBUF_T0 + PCBUF_SEM_BASE
     assert _SEM_WIN_LO == 0xFFE80020
+
+
+# ===========================================================================
+# Emulator debt: PCBuf FIFO and BRISC read barrier
+#
+# These tests FAIL today: the emulator does not implement a PCBuf FIFO or
+# the three-condition BRISC read barrier. They are here to track the spec
+# gap as real coverage (not xfail) so fixing the emulator flips them green.
+# ===========================================================================
+
+@spec("PCBUF.FIFO.CAPACITY_16")
+def test_pcbuf_fifo_has_16_entry_capacity():
+    """Each PCBuf has a 16-entry uint32 FIFO between BRISC and TRISC.
+
+    CURRENTLY FAILS — the emulator has no PCBuf FIFO object at all;
+    read_pcbuf() is a stub returning 0. Once a PCBuf FIFO is modelled,
+    it must accept up to 16 values and reject a 17th push."""
+    t = _make_t()
+    # Expect: each thread has a pcbuf FIFO with capacity 16.
+    # The attribute name is not yet defined by the emulator; the test
+    # documents the expected shape.
+    assert hasattr(t, 'pcbuf_fifo'), \
+           "PCBuf FIFO not modelled — expected TensixCoprocessor.pcbuf_fifo"
+    assert len(t.pcbuf_fifo) == 3, "one FIFO per TRISC thread"
+    fifo = t.pcbuf_fifo[0]
+    # 16 pushes succeed; the 17th is rejected.
+    for i in range(16):
+        assert fifo.push(i) is True, f"push {i} should succeed"
+    assert fifo.push(0xDEAD) is False, "17th push must be rejected (capacity=16)"
+
+
+@spec("PCBUF.BRISC_READ.THREE_CONDITION_BARRIER")
+def test_brisc_read_from_pcbuf_base_is_three_condition_barrier():
+    """A BRISC read from PC_BUF_BASE is a three-condition barrier: it
+    completes only when (1) the PCBuf FIFO is fully drained, (2) the
+    target TRISC is blocking on a PCBuf read, and (3) the coprocessor
+    thread is idle.
+
+    CURRENTLY FAILS — the emulator's read_pcbuf() unconditionally returns
+    0 immediately, with no FIFO state or coprocessor-idle check. Once
+    the barrier is modelled, a BRISC read with a pending instruction in
+    the thread's coprocessor FIFO must NOT return until the FIFO drains."""
+    from dsl import TT_NOP
+    t = _make_t()
+    # Queue a pending instruction in thread 0's coprocessor FIFO — the
+    # coprocessor is NOT idle yet (it has not been stepped).
+    t.push_instruction(0, int(TT_NOP()))
+    assert not t.threads[0].fifo.empty
+    # Expect: a BRISC read of PC_BUF_BASE (offset 0) must report that the
+    # barrier has not yet been satisfied.  The test expresses this by
+    # expecting a dedicated API that returns a (value, ready) pair or
+    # raises — the emulator currently just returns 0 unconditionally,
+    # so this test fails.
+    assert hasattr(t, 'brisc_read_pcbuf_base'), \
+           "three-condition barrier API not modelled on TensixCoprocessor"
+    ready, _ = t.brisc_read_pcbuf_base(thread_id=0)
+    assert ready is False, \
+           "BRISC read must block while the TRISC coprocessor FIFO is non-empty"

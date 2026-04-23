@@ -1,6 +1,6 @@
 # sfploadmacro-and-sfptransp
 
-**Source:** [`sfploadmacro-and-sfptransp.md`](../specs/sfploadmacro-and-sfptransp.md) · **Emulator:** `blackhole-py/emu/tensix/sfpu.py`
+**Source:** [`sfploadmacro-and-sfptransp.md`](../specs/sfploadmacro-and-sfptransp.md)
 
 ## ========================================================== SFPLOADMACRO
 
@@ -14,10 +14,10 @@
 
 > LReg[16] is writable only by instructions scheduled via SFPLOADMACRO.
 
-### `SFPLM.LOADMACROCONFIG_IGNORED`
-§SFPLOADMACRO / LoadMacroConfig State
+### `SFPLM.SEQUENCE_DISPATCH`
+§SFPLOADMACRO / Functional Model step 2
 
-> LoadMacroConfig state (programmed via SFPCONFIG VD=0..8) controls per-lane instruction templates, sequence bytes, and Misc fields used for scheduling.
+> After the load, SFPLOADMACRO schedules one instruction per sub-unit (Simple, MAD, Round, Store) at configurable delays, driven by LoadMacroConfig Sequence[] bytes. Scheduled instructions update LReg (including LReg[16]) as if executed by the regular SFPU pipeline.
 
 ### `SFPLM.SCHEDULING_CONSTRAINT_3_INSN`
 §SFPLOADMACRO / Scheduling Constraints §1

@@ -1,6 +1,6 @@
 # firmware-upload
 
-**Source:** [`firmware-upload.md`](../specs/firmware-upload.md) · **Emulator:** `blackhole-py/emu/fw.py`
+**Source:** [`firmware-upload.md`](../specs/firmware-upload.md)
 
 ## Reset state
 

@@ -56,6 +56,23 @@ def test_unmapped_address_goes_to_default():
     assert core.mem.default.read32(0xDEADBEE0) == 0xCAFEBABE
 
 
+@spec("ADDR.INSTRN_BUF.NCRISC_NO_PUSH")
+def test_ncrisc_has_no_instrn_push_capability():
+    """NCRISC must not be able to push into the Tensix instruction buffer.
+    The emulator enforces this by refusing to bind an _InstrnHandler for the
+    NCRISC role: its bus has no writer mapped into INSTRN_BUF_T0..END, so
+    stores there cannot land in any thread FIFO."""
+    from emu.tensix import TensixCoprocessor
+    t = TensixCoprocessor()
+    # BRISC and TRISCs do get a handler…
+    assert t.instrn_handler_for('brisc')  is not None
+    assert t.instrn_handler_for('trisc0') is not None
+    assert t.instrn_handler_for('trisc1') is not None
+    assert t.instrn_handler_for('trisc2') is not None
+    # …but NCRISC must not.
+    assert t.instrn_handler_for('ncrisc') is None
+
+
 # ===========================================================================
 # L1 address range
 # ===========================================================================

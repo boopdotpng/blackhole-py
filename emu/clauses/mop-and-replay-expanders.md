@@ -1,6 +1,6 @@
 # mop-and-replay-expanders
 
-**Source:** [`mop-and-replay-expanders.md`](../specs/mop-and-replay-expanders.md) · **Emulator:** `blackhole-py/emu/tensix/frontend.py`
+**Source:** [`mop-and-replay-expanders.md`](../specs/mop-and-replay-expanders.md)
 
 ## MOP: instruction encoding
 

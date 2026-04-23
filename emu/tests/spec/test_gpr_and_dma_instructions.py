@@ -278,6 +278,55 @@ def test_rdcfg_reads_current_state_bank(gpr, cu):
   assert gpr.read32(0, 0) == 0x12345678
 
 
+@spec("GPR.RDCFG.CANNOT_READ_THREADCFG")
+def test_rdcfg_cannot_read_threadcfg(gpr, cu):
+  """RDCFG reads Config (thread-agnostic), never ThreadConfig. Even if
+  ThreadConfig[addr] and Config[state][addr] hold different values at the
+  same word index, RDCFG returns the Config value."""
+  addr = 7
+  cu.cfg[0][addr] = 0xC0FFEE00
+  cu.thread_cfg[0][addr] = 0xBADBAD42   # distinguishable sentinel
+  r_word = int(TT_RDCFG(GprAddress=3, CfgReg=addr << 2))
+  cu.execute_rdcfg(decode_tensix(r_word), thread_id=0)
+  assert gpr.read32(0, 3) == 0xC0FFEE00   # Config, not ThreadConfig
+
+
+@spec("GPR.SETC16.ONLY_WRITER")
+def test_setc16_is_only_writer_of_threadcfg(gpr, cu):
+  """WRCFG writes Config, not ThreadConfig — even at the same word index.
+  Only SETC16 can mutate ThreadConfig."""
+  # WRCFG of GPR 7 to word 12: should land in Config, not ThreadConfig.
+  gpr.write32(0, 7, 0xDEADBEEF)
+  cu.thread_cfg[0][12] = 0x11111111
+  w_word = int(TT_WRCFG(GprAddress=7, wr128b=0, CfgReg=12 << 2))
+  cu.execute_wrcfg(decode_tensix(w_word), thread_id=0)
+  assert cu.cfg[0][12] == 0xDEADBEEF         # Config updated
+  assert cu.thread_cfg[0][12] == 0x11111111  # ThreadConfig untouched
+  # Now SETC16 updates ThreadConfig at the same index.
+  s_word = int(TT_SETC16(setc16_reg=12, setc16_value=0x4321))
+  cu.execute_setc16(decode_tensix(s_word), thread_id=0)
+  assert cu.thread_cfg[0][12] == 0x4321       # SETC16 is the writer
+  assert cu.cfg[0][12] == 0xDEADBEEF          # Config still untouched
+
+
+@spec("GPR.RMWCIB.BYTE2_RMW")
+def test_rmwcib2_mask_and_set(gpr, cu):
+  """RMWCIB2: modifies byte 2 (bits [23:16]) of the 32-bit config word."""
+  cu.cfg[0][10] = 0xFF00FF00
+  word = int(TT_RMWCIB0(Mask=0xFF, Data=0x42, CfgRegAddr=10))
+  cu.execute_rmwcib(decode_tensix(word), byte_index=2)
+  assert cu.cfg[0][10] == 0xFF42FF00
+
+
+@spec("GPR.RMWCIB.BYTE3_RMW")
+def test_rmwcib3_mask_and_set(gpr, cu):
+  """RMWCIB3: modifies byte 3 (bits [31:24]) of the 32-bit config word."""
+  cu.cfg[0][10] = 0x00FFFFFF
+  word = int(TT_RMWCIB0(Mask=0xFF, Data=0xAB, CfgRegAddr=10))
+  cu.execute_rmwcib(decode_tensix(word), byte_index=3)
+  assert cu.cfg[0][10] == 0xABFFFFFF
+
+
 # ===========================================================================
 # SETC16
 # ===========================================================================
