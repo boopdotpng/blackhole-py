@@ -44,6 +44,8 @@ from .unpack import (
   _THCON_SEC_BASE, _UNP_ADDR_CTRL_XY, _UNP_ADDR_CTRL_ZW, _UNP_BASE_REG_1,
 )
 from .pack import Packer
+from .mover import Mover
+from .tdma import TDMA
 from .coprocessor import TensixCoprocessor, HardwareState
 from . import formats
 from . import cfg_layout

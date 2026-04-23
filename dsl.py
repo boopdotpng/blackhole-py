@@ -539,6 +539,12 @@ TT_MOVD2B = TensixOp(0x0A, "Move Dest to SrcB (1 or 4 aligned rows, 3-cycle late
     F("dst",          0, 12),
 ])
 
+# -- mover (XMOV) -------------------------------------------------------------
+TT_XMOV = TensixOp(0x40, "Start Mover DMA transfer; src/dst/size/dir come from THCON_SEC0_REG6 config space", [
+    F("Mov_block_selection", 23, 1), # selects between two move blocks (no functional effect in sync emu)
+    F("Last",                 0, 1), # 1=flush accumulation buffers on completion
+])
+
 # -- packer / unpacker ---------------------------------------------------------
 TT_PACR = TensixOp(0x41, "Pack one tile face (16 rows) from Dest to L1 with format conversion", [
     F("CfgContext",     21, 3),

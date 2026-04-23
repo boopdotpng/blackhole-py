@@ -19,6 +19,7 @@ from .sync import SyncUnit, MutexSet
 from .math import FPU, SFPU
 from .unpack import Unpacker, UnpackerState
 from .pack import Packer
+from .mover import Mover
 
 
 _TRISC_THREAD = {'trisc0': 0, 'trisc1': 1, 'trisc2': 2}
@@ -60,6 +61,20 @@ class TensixCoprocessor:
     self.threads = [TensixThread(i) for i in range(3)]
     # Tensix backend config register file (0xFFEF0000..0xFFEFFFFF).
     self.cfg = Memory()
+    # Mover / XMOV — DMA engine shared with the TDMA-RISC register block.
+    # Operates on raw byte-addressed Memory: l1 is the tile L1 (shared with
+    # the packer/unpacker path), cfg is the ADDR8-relative config Memory
+    # (device.py mounts it at TENSIX_CFG_BASE so bus writes resolve to the
+    # same relative offsets the Mover writes).  config_unit.cfg (the WRCFG
+    # ADDR32 view) is a separate bank array, consulted by XMOV to read its
+    # transfer parameters.
+    self.mover = Mover(l1=self.l1, cfg=self.cfg)
+
+  def attach_l1(self, l1):
+    """Swap in a new L1 Memory.  Used by tests that want a fresh L1 between
+    transfers.  Production callers should pass l1 through the constructor."""
+    self.l1 = l1
+    self.mover.l1 = l1
 
   def instrn_handler_for(self, role):
     if role == 'brisc':       return _InstrnHandler(self, _brisc_thread_of_addr)
@@ -181,6 +196,25 @@ class TensixCoprocessor:
       case 'SFPNOP':      pass
       # ── T2 pipeline: pack ───────────────────────────────────────────
       case 'PACR':        self.packer.handle_pacr(d, thread.id)
+      # ── Mover (XMOV) ────────────────────────────────────────────────
+      # Parameters come from Tensix Backend Config, not the instruction
+      # encoding.  ADDR32 mapping (cfg_defines.h, Blackhole):
+      #   88: THCON_SEC0_REG6_Source_address
+      #   89: THCON_SEC0_REG6_Destination_address
+      #   90: THCON_SEC0_REG6_{Buffer_size[29:0], Transfer_direction[31:30]}
+      # Per spec, size field is only 16 low bits of ADDR32 90.  Last/
+      # Mov_block_selection (bits [23]/[0] in the instruction word) are
+      # decoded but have no observable functional effect.
+      case 'XMOV':
+        cfg = self.config_unit
+        sid = cfg._state_id(thread.id)
+        if sid < cfg.NUM_STATES:
+          src  = cfg.cfg[sid][88] << 4
+          dst  = cfg.cfg[sid][89] << 4
+          reg90 = cfg.cfg[sid][90]
+          size = (reg90 & 0xFFFF) << 4
+          direction = (reg90 >> 30) & 0x3
+          self.mover.transfer(dst, src, size, direction)
       # Unknown opcodes: no-op (for functional emulation).
       case _: pass
 

@@ -2,7 +2,7 @@ import struct
 from dataclasses import dataclass, field
 
 from .memory import (
-  Memory, Router, Semaphores, L1_SIZE, MAILBOX_BASE, SUBORDINATE_SYNC,
+  Memory, Router, L1_SIZE, MAILBOX_BASE, SUBORDINATE_SYNC,
   LAUNCH_MSG_RD_PTR, LAUNCH_MSG_RING, GO_MESSAGES, GO_MESSAGE_INDEX,
   ZEROS_BASE, BRISC_FW_BASE, NCRISC_FW_BASE, TRISC0_FW_BASE,
   TRISC1_FW_BASE, TRISC2_FW_BASE, KERNEL_CONFIG_BASE,
@@ -14,6 +14,7 @@ from .memory import (
   MOP_CFG_BASE, MOP_CFG_END,
   INSTRN_BUF_T0, INSTRN_BUF_END,
   TENSIX_CFG_BASE, TENSIX_CFG_END,
+  TDMA_BASE, TDMA_END,
   NUM_CBS, CB_CONFIG_BYTES, CB_L1_CONFIG_BASE,
   STREAM_BASE, STREAM_END, L1_BASE, L1_END,
   BOOT_JAL, SOFT_RESET_0,
@@ -23,15 +24,13 @@ from .memory import (
 )
 from .core import BRISC, NCRISC, TRISC0, TRISC1, TRISC2
 from .noc import NOC, StreamRegisters, noc_key
-from .tensix import TensixCoprocessor
+from .tensix import TensixCoprocessor, Semaphores, TDMA
 
 M32 = 0xFFFFFFFF
 L1_ALIGN = 16
 
-
 def _align_up(value: int, align: int) -> int:
   return (value + align - 1) & ~(align - 1)
-
 
 def _pack_rta(writer_args, reader_args, compute_args, num_sems, sem_off):
   pack = lambda xs: b"".join(int(x & M32).to_bytes(4, "little") for x in xs)
@@ -41,7 +40,6 @@ def _pack_rta(writer_args, reader_args, compute_args, num_sems, sem_off):
       rta = rta.ljust(sem_off, b"\0")
     rta += b"\0" * (num_sems * 16)
   return rta
-
 
 def _build_cb_blob(cbs):
   """cbs: list of (index, page_size, num_tiles). Returns (mask, blob)."""
@@ -59,7 +57,6 @@ def _build_cb_blob(cbs):
     addr += size
   return mask, bytes(arr)
 
-
 # -- P100A layout constants ---------------------------------------------------
 
 P100A_TENSIX_X = (*range(1, 8), *range(10, 15))  # 12 columns
@@ -73,7 +70,6 @@ DRAM_BANK_PORT = [[2,1],[0,1],[0,1],[0,1],[2,1],[2,1],[2,1],[2,1]]
 # Runtime dispatch protocol constants (RUN_MSG_INIT for boot is below).
 RUN_MSG_GO   = 0x80
 RUN_MSG_DONE = 0x00
-
 
 def _compute_bank_xy(harvested_banks: list[int]) -> dict[int, tuple[int, int]]:
   if len(harvested_banks) == 0:
@@ -99,7 +95,6 @@ def _compute_bank_xy(harvested_banks: list[int]) -> dict[int, tuple[int, int]]:
       bank_xy[b] = (17, 12 + i * DRAM_PORTS)
     return bank_xy
   raise ValueError(f"unsupported harvested DRAM bank count: {len(harvested_banks)}")
-
 
 @dataclass
 class Dram:
@@ -157,7 +152,6 @@ _SLOW_LDM_SLOTS = [
   (LDM_SLOW_BRISC + 4 * LDM_SLOW_STRIDE, 'trisc2'),
 ]
 
-
 # SOFT_RESET_0 values
 SOFT_RESET_ALL = 0x47800   # all 5 RISCs held in reset
 
@@ -172,7 +166,6 @@ _RESET_MAP = [
   (18, 'ncrisc', NCRISC_RESET_PC, NCRISC_RESET_PC_OVR, 0),
 ]
 
-
 def _make_reset_hook(tile):
   def hook(old, new):
     mmio = tile.mmio
@@ -186,7 +179,6 @@ def _make_reset_hook(tile):
         elif mmio.read32(ovr_reg) & (1 << ovr_bit):   core.pc = mmio.read32(pc_reg)
         else:                                         core.pc = 0
   return hook
-
 
 class Device:
   def __init__(self, harvested_banks: list[int] | None = None,
@@ -243,10 +235,11 @@ class Device:
     cores = [brisc, ncrisc, trisc0, trisc1, trisc2]
 
     # Tile-level state.
-    mmio = Memory()                          # fallback MMIO (wall clock, reset PCs, SOFT_RESET_0, TDMA, PIC, …)
+    mmio = Memory()                          # fallback MMIO (wall clock, reset PCs, SOFT_RESET_0, PIC, …)
     mmio.write32(SOFT_RESET_0, SOFT_RESET_ALL)  # power-on: all 5 RISCs held in reset
     stream_regs = StreamRegisters()          # 0xFFB40000..0xFFB7FFFF — CB tiles_acked/received, sync ptr, dispatch msg
-    tensix = TensixCoprocessor()
+    tensix = TensixCoprocessor(l1=l1)        # Mover reads/writes l1 directly
+    tdma = TDMA(mover=tensix.mover)          # 0xFFB11000 — XMOV MMIO front-end
 
     # Per-tile NIU controllers — one per physical NOC network.
     noc0 = NOC(0, l1, self.networks[0], x, y)
@@ -280,6 +273,7 @@ class Device:
       bus.register(NOC1_BASE,       NOC1_BASE + NOC_SIZE - 1, noc1)
       bus.register(STREAM_BASE,     STREAM_END, stream_regs)
       bus.register(TENSIX_CFG_BASE, TENSIX_CFG_END, tensix.cfg, offset=TENSIX_CFG_BASE)
+      bus.register(TDMA_BASE,       TDMA_END, tdma, offset=TDMA_BASE)
       bus.register(_SEM_WIN_LO,     _SEM_WIN_HI, tensix.semaphores)
       # Cross-core LDM: this core can reach every peer's slow-path slot.
       # TRISC upper 4 KiB padding naturally falls through to mmio.
@@ -294,8 +288,6 @@ class Device:
       bus.on_write32(SOFT_RESET_0, reset_hook)
 
     return tile
-
-  # -- circular buffer configuration ------------------------------------------
 
   def configure_cbs(self, cbs: dict[int, tuple[int, int]]):
     for idx in cbs:
@@ -347,8 +339,6 @@ class Device:
       f"emulated device did not complete within {max_steps} steps "
       f"(clock={self._clock})"
     )
-
-  # -- kernel dispatch (slow dispatch, all cores same program) ---------------
 
   def run(self, *,
       brisc: bytes = b'',
@@ -447,8 +437,6 @@ class Device:
 
     self._step_loop(tiles, all_done, max_steps)
 
-  # -- utility methods -------------------------------------------------------
-
   def read_l1(self, x: int, y: int, addr: int, length: int) -> bytes:
     l1 = self.tiles[(x, y)].l1
     return bytes(l1.read8(addr + i) for i in range(length))
@@ -466,17 +454,8 @@ class Device:
     for i, b in enumerate(data):
       mem.write8(addr + i, b)
 
-
-# =============================================================================
-# Firmware boot — fills L1 with PT_LOAD segments (LDM-range segments are
-# redirected to per-core L1 scratch; do_crt1 copies them into real LDM),
-# writes subordinate reset PCs, and releases BRISC. BRISC then releases
-# the subordinates via the reset-hook callback when it clears SOFT_RESET_0.
-# =============================================================================
-
 SOFT_RESET_BRISC_ONLY = 0x47000   # BRISC released, TRISCs + NCRISC held
 RUN_MSG_INIT          = 0x40      # BRISC in firmware init; host set before reset release
-
 
 def _build_bank_noc_table(harvested_banks: list[int], worker_cores: list) -> bytes:
   num_dram_banks = DRAM_BANK_COUNT - len(harvested_banks)
@@ -504,13 +483,11 @@ def _build_bank_noc_table(harvested_banks: list[int], worker_cores: list) -> byt
     *dram, *l1, *([0] * (num_dram_banks + num_l1_banks))
   )
 
-
 def _make_jal(target: int) -> bytes:
   return ((target & 0xFF000)
           | ((target & 0x800) << 9)
           | ((target & 0x7FE) << 20)
           | 0x6F).to_bytes(4, "little")
-
 
 def boot(device, firmware: dict, *, max_steps: int = 50_000_000):
   bank_table = _build_bank_noc_table(device.harvested_banks, device.worker_xy)
@@ -552,13 +529,6 @@ def boot(device, firmware: dict, *, max_steps: int = 50_000_000):
     # BRISC transitions held→running (PC=0), others stay held.
     tile.brisc.mem.write32(SOFT_RESET_0, SOFT_RESET_BRISC_ONLY)
 
-  # Step until firmware init completes.
-  # BRISC will:
-  #   - run do_crt1, noc_init, device_setup
-  #   - enable RESET_PC overrides for subordinates
-  #   - write SOFT_RESET_0 = 0 (releases subordinates via callback)
-  #   - wait for all subordinates to signal DONE
-  #   - write go_msg.signal = RUN_MSG_DONE
   tiles = list(device.tiles.values())
 
   def all_done():
