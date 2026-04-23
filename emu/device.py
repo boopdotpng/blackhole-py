@@ -239,7 +239,8 @@ class Device:
     mmio.write32(SOFT_RESET_0, SOFT_RESET_ALL)  # power-on: all 5 RISCs held in reset
     stream_regs = StreamRegisters()          # 0xFFB40000..0xFFB7FFFF — CB tiles_acked/received, sync ptr, dispatch msg
     tensix = TensixCoprocessor(l1=l1)        # Mover reads/writes l1 directly
-    tdma = TDMA(mover=tensix.mover)          # 0xFFB11000 — XMOV MMIO front-end
+    tdma = TDMA(mover=tensix.mover,          # 0xFFB11000 — XMOV MMIO front-end
+                packer=tensix.packer)        # + FIFO_PACKED_TILE_* sideband
 
     # Per-tile NIU controllers — one per physical NOC network.
     noc0 = NOC(0, l1, self.networks[0], x, y)

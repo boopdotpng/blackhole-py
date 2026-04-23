@@ -124,6 +124,11 @@ class _PackerOutputState:
     self.rsi_entries = []
     self.cur_row_count = 0
     self.tpg = TilePositionGenerator()
+    # Packed metadata sideband: accumulated bytes for the current tile, and
+    # a queue of completed tiles `(size_bytes, zero_mask)` waiting to be read
+    # through the TDMA-RISC FIFO_PACKED_TILE_SIZE / ZEROMASK registers.
+    self.tile_bytes = 0
+    self.packed_fifo = []
 
 
 # ---------------------------------------------------------------------------
@@ -146,6 +151,25 @@ class Packer:
     self._l1  = l1
     # Per-packer output state
     self._packer_state = [_PackerOutputState() for _ in range(4)]
+
+  # ---- Packed metadata sideband (TDMA-RISC FIFO_PACKED_TILE_* registers) ----
+
+  def peek_packed_tile_size(self, packer_idx):
+    """Return bytes packed in the oldest queued tile for packer N, or 0 if
+    the FIFO is empty.  Matches FIFO_PACKED_TILE_SIZE(N) read semantics: read
+    does not pop."""
+    fifo = self._packer_state[packer_idx].packed_fifo
+    return fifo[0][0] if fifo else 0
+
+  def pop_packed_tile_zeromask(self, packer_idx):
+    """Return the zero-mask of the oldest queued tile for packer N and pop the
+    FIFO entry.  Matches FIFO_PACKED_TILE_ZEROMASK(N) read semantics: read
+    pops one entry (both tile_size and zeromask are consumed)."""
+    fifo = self._packer_state[packer_idx].packed_fifo
+    if not fifo:
+      return 0
+    _, zeromask = fifo.pop(0)
+    return zeromask
 
   # -------------------------------------------------------------------------
   # Top-level PACR entry point
@@ -255,10 +279,11 @@ class Packer:
     # Edge mode flag: PCK_EDGE_MODE[0] at ADDR32 19
     edge_mode = self._cfgr_at(19) & 1
 
-    # Concat=0 → start fresh row
+    # Concat=0 → start fresh row / fresh tile (reset packed-size accumulator)
     if concat == 0:
       out_state.cur_row_count = 0
       out_state.rsi_entries   = []
+      out_state.tile_bytes    = 0
 
     # --- Collect datums from Dest ---
     datums_out = []
@@ -312,11 +337,21 @@ class Packer:
       self._write_l1(packer_idx, cfg, out_state, exp_bytes, data_bytes,
                      flush, last, thread_id)
 
+    # Count bytes packed for this tile — what FIFO_PACKED_TILE_SIZE reports.
+    # Includes both data and exponent sections; zero-write PACRs still count
+    # (they emit real bytes to L1 even though the values are zero).
+    out_state.tile_bytes += len(data_bytes) + len(exp_bytes)
+
     # --- Post-PACR: AddrMod counter updates ---
     self._apply_addr_mod(adc_unit, addr_mode)
 
-    # On flush or last: reset stream state for next tile
+    # On flush or last: reset stream state for next tile and push a completed
+    # tile entry to the packed-metadata FIFO.  The zero-mask is 0 because the
+    # packer does not implement zero compression (see Stage 8 TODO); real HW
+    # would pack 32 bits, one per all-zero face.
     if flush or last:
+      out_state.packed_fifo.append((out_state.tile_bytes, 0))
+      out_state.tile_bytes = 0
       out_state.data_stream.needs_new_address = True
       out_state.exp_stream.needs_new_address  = True
       out_state.rsi_stream.needs_new_address  = True

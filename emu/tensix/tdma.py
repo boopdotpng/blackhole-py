@@ -11,17 +11,18 @@
 #   0x0C XMOV_DIRECTION      CmdParams[3]  (xmov_direction_t)
 #   0x10 COMMAND_ADDR        Trigger — non-compact or compact command
 #   0x14 STATUS              Always 0x08 (FIFO_EMPTY) in sync emulation
-#   0x18..0x1C PACKED_SIZE   Packer-0 sideband — not implemented (PR2)
 #   0x24 CLK_GATE_EN         No-op (firmware writes 0x3F during device_setup)
 #   0x28 CLK_GATE_HYST       No-op
 #   0x2C XMOV_L1_BASE_ADDR   MovCmdBase (compact-command base, 16B units)
+#   0x30 FIFO_PACKED_TILE_SIZE(0)      Peek packer-0 FIFO tile size (no pop)
+#   0x34 FIFO_PACKED_TILE_ZEROMASK(0)  Pop packer-0 FIFO, return zero-mask
 #
 # Register-block bus protocol: offsets are relative to TDMA_BASE because the
 # Router registers us with offset=TDMA_BASE.
 #
-# Packer metadata sideband registers (0x18, 0x1C, 0x30, 0x34, 0x38) are
-# intentionally stubbed until a real Packer functional model exists — see
-# the `TDMA.PACKED_SIZE.*` clauses in the ledger.
+# Packer sideband 0x18 / 0x1C (PACKED_SIZE / ACC_PACKED_SIZE) and 0x38
+# (FIFO_PACKED_TILE_STATUS) still read 0 — tt-metal's tdma_xmov.c does not
+# exercise them, and none of the current kernels depend on the accumulator.
 # =============================================================================
 
 # Register offsets within the block.
@@ -45,8 +46,12 @@ _CMD_NOP   = 0x89
 
 
 class TDMA:
-  def __init__(self, mover):
+  def __init__(self, mover, packer=None):
     self.mover = mover
+    # Packer is optional — only needed to service the FIFO_PACKED_TILE_*
+    # sideband registers at 0x30 / 0x34.  Lets tests skip wiring a full packer
+    # when they only exercise the XMOV MMIO path.
+    self.packer = packer
     # CmdParams[0..3]: src, dst, size, direction (all in 16B units except dir).
     self.cmd_params = [0, 0, 0, 0]
     # MovCmdBase for compact commands (16B units).
@@ -61,6 +66,13 @@ class TDMA:
     match addr:
       case 0x14:            return _STATUS_IDLE    # STATUS
       case 0x2C:            return self.l1_base    # XMOV_L1_BASE_ADDR
+      case 0x30:
+        # FIFO_PACKED_TILE_SIZE(0) — peek packer-0's completed-tile FIFO.
+        # Reads do not pop; pop happens on the 0x34 read.
+        return self.packer.peek_packed_tile_size(0) if self.packer else 0
+      case 0x34:
+        # FIFO_PACKED_TILE_ZEROMASK(0) — pop one entry, return its zero-mask.
+        return self.packer.pop_packed_tile_zeromask(0) if self.packer else 0
       case _:               return 0
 
   def write32(self, addr, val):

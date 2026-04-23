@@ -15,6 +15,7 @@ from emu.tensix import TensixCoprocessor, TDMA
 from emu.memory import Memory
 from emu import memory as M
 from emu.core import BRISC
+from dsl import TT_PACR, TT_SETADCXX
 
 from .conftest import spec
 
@@ -24,20 +25,21 @@ from .conftest import spec
 @pytest.fixture
 def coproc():
   """TensixCoprocessor with L1 attached so XMOV transfers can hit memory."""
-  c = TensixCoprocessor()
-  c.attach_l1(Memory())
-  return c
+  return TensixCoprocessor(l1=Memory())
 
 
 @pytest.fixture
 def brisc_with_l1():
-  """BRISC with L1 + TDMA handler wired at 0xFFB11000, matching device.py."""
+  """BRISC with L1 + TDMA handler wired at 0xFFB11000, matching device.py.
+  TDMA is wired to the coprocessor's Packer too so the FIFO_PACKED_TILE_*
+  sideband reads reflect real pack activity.  The Tensix coprocessor is
+  attached to the core as `core.tensix` for tests that need to drive PACR."""
   l1 = Memory()
   core = BRISC(l1=l1)
-  cop = TensixCoprocessor()
-  cop.attach_l1(l1)
-  tdma = TDMA(mover=cop.mover)
+  cop = TensixCoprocessor(l1=l1)
+  tdma = TDMA(mover=cop.mover, packer=cop.packer)
   core.mem.register(M.TDMA_BASE, M.TDMA_END, tdma, offset=M.TDMA_BASE)
+  core.tensix = cop
   return core, l1
 
 
@@ -391,24 +393,80 @@ def test_tdma_wait_done_terminates_after_xmov(brisc_with_l1):
 
 
 # ===========================================================================
-# Packer metadata sideband registers — deferred to PR 2 (pack/unpack rewrite)
+# Packer metadata sideband registers — FIFO_PACKED_TILE_SIZE/ZEROMASK
 # ===========================================================================
 
+def _program_basic_bf16_packer(cop, l1_dest=0x10000):
+  """Minimal packer-0 config for a BF16-in / BF16-out single-row pack.
+  Matches the helper used by test_pack_data_path.py's _setup_basic_packer."""
+  c = cop.config_unit.cfg[0]
+  c[70] = (5 << 8) | (5 << 4)    # in_data_format=BF16, out_data_format=BF16
+  c[69] = l1_dest                # PCK_DEST_ADDR / L1 dest
+  c[68] = 0                      # exp/row-start section sizes = 0
+  c[20] = 0xFFFF                 # PCK_EDGE_OFFSET_SEC0: all columns pass
+  c[24] = 0                      # TILE_ROW_SET_MAPPING: all rows → 0
+  c[28] = 16 << 8                # pack_reads_per_xy_plane = 16
+  c[180] = 0                     # DEST_TARGET_REG_CFG_PACK_SEC0: offset 0
+  c[18] = 0                      # PCK_DEST_RD_CTRL: read_32b = 0
+  c[2]  = 0                      # STACC_RELU: off
+
+
+def _pack_one_tile(cop):
+  """Push SETADCXX + PACR(Last=1) to pack one row of 16 BF16 datums."""
+  for col in range(16):
+    cop.dest.bits[0][col] = 0x3F800000       # 1.0f in FP32 layout
+  cop.dest.valid[0] = True
+  cop.push_instruction(2, int(TT_SETADCXX(CntSetMask=0b100, x_end2=15, x_start=0)))
+  cop.push_instruction(2, int(TT_PACR(
+    CfgContext=0, RowPadZero=0, DstAccessMode=0, AddrMode=0,
+    AddrCntContext=0, ZeroWrite=0, ReadIntfSel=0b0001,
+    OvrdThreadId=0, Concat=0, CtxtCtrl=0, Flush=0, Last=1,
+  )))
+  for _ in range(3): cop.step()
+
+
 @spec("TDMA.PACKED_SIZE.FIFO_TILE_SIZE")
-@pytest.mark.xfail(strict=True, reason="Packer metadata sideband: depends on "
-                                       "real Packer functional model (PR 2)")
 def test_tdma_packed_tile_size_register(brisc_with_l1):
-  """FIFO_PACKED_TILE_SIZE (0xFFB11030) must return bytes packed in last tile."""
+  """FIFO_PACKED_TILE_SIZE (0xFFB11030) returns the bytes packed in the oldest
+  queued tile.  Reads must not pop the FIFO — repeated reads return the same
+  value until the companion ZEROMASK register is read."""
   core, _ = brisc_with_l1
-  val = core.mem.read32(M.TDMA_BASE + 0x30)
-  assert val != 0
+  cop = core.tensix
+  _program_basic_bf16_packer(cop, l1_dest=0x10000)
+  # FIFO starts empty → reads 0.
+  assert core.mem.read32(M.TDMA_BASE + 0x30) == 0
+  _pack_one_tile(cop)
+  # 16 BF16 datums × 2 bytes = 32 bytes packed; exp_section_size=0, so no
+  # exp bytes contribute.
+  assert core.mem.read32(M.TDMA_BASE + 0x30) == 32
+  # Peek semantics: re-read returns the same value.
+  assert core.mem.read32(M.TDMA_BASE + 0x30) == 32
 
 
 @spec("TDMA.PACKED_SIZE.FIFO_ZERO_MASK")
-@pytest.mark.xfail(strict=True, reason="Packer metadata sideband: depends on "
-                                       "real Packer functional model (PR 2)")
 def test_tdma_packed_tile_zero_mask_pops_fifo(brisc_with_l1):
-  """Read FIFO_PACKED_TILE_ZEROMASK (0xFFB11034): pop FIFO, return zero-mask."""
+  """Reading FIFO_PACKED_TILE_ZEROMASK (0xFFB11034) returns the zero-mask of
+  the oldest queued tile AND pops the FIFO entry.  Subsequent tile-size reads
+  see the next tile (or 0 if the FIFO is empty)."""
   core, _ = brisc_with_l1
-  val = core.mem.read32(M.TDMA_BASE + 0x34)
-  assert val != 0
+  cop = core.tensix
+  _program_basic_bf16_packer(cop, l1_dest=0x10000)
+
+  _pack_one_tile(cop)
+  # Pack a second tile at a different L1 dest so its FIFO entry is queued
+  # behind the first.
+  _program_basic_bf16_packer(cop, l1_dest=0x20000)
+  _pack_one_tile(cop)
+
+  # Two tiles queued, size-register peeks the oldest.
+  assert core.mem.read32(M.TDMA_BASE + 0x30) == 32
+  # Reading zeromask pops tile 1.  Our Packer does not implement zero
+  # compression, so the mask is 0 — the important invariant is that the read
+  # consumes an entry.
+  assert core.mem.read32(M.TDMA_BASE + 0x34) == 0
+  # Now the size register sees tile 2 (same size, but conceptually the next
+  # entry).
+  assert core.mem.read32(M.TDMA_BASE + 0x30) == 32
+  # Pop the second tile — FIFO is empty after this, size returns 0.
+  core.mem.read32(M.TDMA_BASE + 0x34)
+  assert core.mem.read32(M.TDMA_BASE + 0x30) == 0
