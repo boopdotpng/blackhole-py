@@ -26,7 +26,7 @@ if str(ROOT) not in sys.path:
   sys.path.insert(0, str(ROOT))
 
 import dsl
-from emu.device import Device, RUN_MSG_DONE, RUN_MSG_GO, _make_jal
+from emu.device import Device, DRAM_BANK_PORT, RUN_MSG_DONE, RUN_MSG_GO, _make_jal
 from emu.memory import (
   BOOT_JAL,
   BRISC_FW_BASE,
@@ -38,7 +38,27 @@ from emu.memory import (
   NCRISC_FW_BASE,
   NCRISC_RESET_PC,
   NCRISC_RESET_PC_OVR,
+  NIU_AT_LEN_BE,
+  NIU_CMD_BUF_STRIDE,
+  NIU_CMD_CTRL,
+  NIU_CTRL,
+  NIU_MST_RD_RESP_RECEIVED,
+  NIU_MST_WR_ACK_RECEIVED,
+  NIU_RET_ADDR_HI,
+  NIU_RET_ADDR_LO,
+  NIU_RET_ADDR_MID,
+  NIU_TARG_ADDR_HI,
+  NIU_TARG_ADDR_LO,
+  NIU_TARG_ADDR_MID,
+  NOC0_BASE,
+  NOC1_BASE,
+  NOC_CTRL_RESP_MARKED,
+  NOC_CTRL_WR,
   SOFT_RESET_0,
+  STREAM_BASE,
+  STREAM_STRIDE,
+  STREAM_TILES_ACKED,
+  STREAM_TILES_RECEIVED,
   SUBORDINATE_SYNC,
   TRISC0_FW_BASE,
   TRISC0_RESET_PC,
@@ -69,6 +89,30 @@ RAW_TRISC_KERNEL_BASES = {
 }
 RAW_TRISC2_FW_BASE = 0x00009500
 FMT_BF16 = 5
+
+# ------------------------------------------------------------------------
+# --raw-dm scaffolding: scratch-harness ports of add1_reader_brisc and
+# add1_writer_ncrisc, written as dsl.py instruction lists.  These are kept
+# here, not in firmware/disasms, because we deliberately strip the real
+# kernel's InterleavedAddrGenFast/format-dispatch/LDM-cb_interface plumbing.
+#
+# L1 layout we own:
+#   0x00009600  BRISC reader kernel entry
+#   0x00009700  NCRISC writer kernel entry
+#   0x0000A000  per-tile NOC address table for the SRC DRAM buffer
+#   0x0000A800  per-tile NOC address table for the DST DRAM buffer
+# ------------------------------------------------------------------------
+RAW_DM_BRISC_KERNEL_BASE  = 0x00009600
+RAW_DM_NCRISC_KERNEL_BASE = 0x00009700
+RAW_DM_SRC_TABLE_BASE     = 0x0000A000
+RAW_DM_DST_TABLE_BASE     = 0x0000A800
+NOC_TABLE_STRIDE = 8   # per tile: [targ_lo (DRAM byte offset), targ_hi (noc_xy)]
+CB0_NUM_PAGES  = 2
+CB16_NUM_PAGES = 2
+CB0_BASE_L1    = DATA_BUFFER_SPACE_BASE
+CB16_BASE_L1   = DATA_BUFFER_SPACE_BASE + TILE_BYTES * CB0_NUM_PAGES
+CB0_LIMIT_L1   = CB0_BASE_L1  + TILE_BYTES * CB0_NUM_PAGES
+CB16_LIMIT_L1  = CB16_BASE_L1 + TILE_BYTES * CB16_NUM_PAGES
 
 BRISC_RTA_BASE = KERNEL_CONFIG_BASE + 0x000
 NCRISC_RTA_BASE = KERNEL_CONFIG_BASE + 0x040
@@ -493,6 +537,14 @@ class Asm:
   def bnez_label(self, rs, label: str):
     pc = self.pc()
     self.items.append(lambda labels: dsl.BNE(rs, dsl.zero, labels[label] - pc))
+
+  def beq_label(self, rs1, rs2, label: str):
+    pc = self.pc()
+    self.items.append(lambda labels: dsl.BEQ(rs1, rs2, labels[label] - pc))
+
+  def bgeu_label(self, rs1, rs2, label: str):
+    pc = self.pc()
+    self.items.append(lambda labels: dsl.BGEU(rs1, rs2, labels[label] - pc))
 
   def j_label(self, label: str):
     pc = self.pc()
