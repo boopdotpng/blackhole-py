@@ -19,6 +19,7 @@ from .cfg_layout import (
   unpack_tile_descriptor as _unpack_tile_descriptor,
   unpack_config          as _unpack_config,
   unpack_l1_base         as _unpack_l1_base,
+  unpack_dest_addr       as _unpack_dest_addr,
   unpack_format_override as _unpack_format_override,
   unp_addr_ctrl          as _unp_addr_ctrl,
   alu_format_spec        as _alu_format_spec,
@@ -501,8 +502,19 @@ def _execute_unpacr(d, thread_id: int, coproc) -> None:
   else:
     is_uncompressed = bool(td.uncompressed)
 
-  # Tile dimensions (minimum 1)
-  x_dim = td.x_dim
+  dest_cfg = _unpack_dest_addr(cfg_unit, which_unp, cfg_state_id)
+
+  # Tile dimensions (minimum 1).  LLK sets SrcA descriptor x_dim to 0 and
+  # supplies the active per-context face size through REG5.
+  tile_x_dims = (
+    dest_cfg['tile_x_dim_cntx0'],
+    dest_cfg['tile_x_dim_cntx1'],
+    dest_cfg['tile_x_dim_cntx2'],
+    dest_cfg['tile_x_dim_cntx3'],
+  )
+  x_dim = tile_x_dims[which_ctx] if which_ctx < len(tile_x_dims) else 0
+  if x_dim == 0:
+    x_dim = td.x_dim
   y_dim = max(td.y_dim, 1)
   z_dim = max(td.z_dim, 1)
   w_dim = max(td.w_dim, 1)
@@ -615,12 +627,26 @@ def _execute_unpacr(d, thread_id: int, coproc) -> None:
   addr_ctrl = _unp_addr_ctrl(cfg_unit, cfg_state_id)
 
   if which_unp == 0:
-    out_base = addr_ctrl.unp0_base_reg_1
+    dest_addrs = (
+      dest_cfg['dest_cntx0_address'],
+      dest_cfg['dest_cntx1_address'],
+      dest_cfg['dest_cntx2_address'],
+      dest_cfg['dest_cntx3_address'],
+    )
+    out_base = dest_addrs[which_ctx] if which_ctx < len(dest_addrs) else 0
+    out_base *= int(_datum_size_bytes(out_fmt))
     y_stride = addr_ctrl.unp0_ch0_y_stride
     z_stride = addr_ctrl.unp0_ch0_z_stride
     w_stride = addr_ctrl.unp0_ch0_w_stride
   else:
-    out_base = addr_ctrl.unp1_base_reg_1
+    dest_addrs = (
+      dest_cfg['dest_cntx0_address'],
+      dest_cfg['dest_cntx1_address'],
+      dest_cfg['dest_cntx2_address'],
+      dest_cfg['dest_cntx3_address'],
+    )
+    out_base = dest_addrs[which_ctx] if which_ctx < len(dest_addrs) else 0
+    out_base *= int(_datum_size_bytes(out_fmt))
     y_stride = addr_ctrl.unp1_ch0_y_stride
     z_stride = addr_ctrl.unp1_ch0_z_stride
     w_stride = addr_ctrl.unp1_ch0_w_stride

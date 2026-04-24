@@ -69,7 +69,6 @@ RAW_TRISC_KERNEL_BASES = {
   "trisc2": 0x000083C8,
 }
 RAW_TRISC2_FW_BASE = 0x00009500
-FMT_BF16 = 5
 HARVESTED_DRAM_BANKS = [3]
 DEFAULT_TILES = 40
 MAX_RUN_STEPS = 100_000
@@ -237,12 +236,12 @@ def format_bf16_floats(data: bytes, count: int = 16) -> str:
   return " ".join(f"{f32_from_bf16(word):g}" for word in bf16_words(data, count))
 
 
-def print_success_banner(dev: Device, num_tiles: int, got: bytes):
+def print_success_banner(dev: Device, num_tiles: int, src: bytes, got: bytes):
   width = 68
   tile_bytes = num_tiles * TILE_BYTES
   harvested_text = ",".join(str(bank) for bank in HARVESTED_DRAM_BANKS) or "none"
-  first_values = format_bf16_floats(got, 8)
-  last_values = format_bf16_floats(got[-16:], 8)
+  src_values = format_bf16_floats(src, 8)
+  out_values = format_bf16_floats(got, 8)
 
   def border() -> str:
     return "+" + "-" * width + "+"
@@ -261,8 +260,8 @@ def print_success_banner(dev: Device, num_tiles: int, got: bytes):
     row("layout  : host tilize -> cb -> sfpu/fpu -> pack -> dram"),
     row("verify  : full bf16 tile payload matched expected add1"),
     border(),
-    row(f"bf16 first 8 : {first_values}"),
-    row(f"bf16 last  8 : {last_values}"),
+    row(f"bf16 input  first 8 : {src_values}"),
+    row(f"bf16 output first 8 : {out_values}"),
     border(),
   ]
   print("\n".join(lines), flush=True)
@@ -391,28 +390,6 @@ def patch_raw_compute_ldm(tile, num_tiles: int):
   )
 
 
-def seed_raw_compute_tensix_config(tile):
-  cfg = tile.tensix.config_unit.cfg[0]
-
-  # SrcA unpacker: BF16 input tile, four 16x16 faces.  The unpacker model
-  # applies the standard 16-byte tile-header skip, while our scratch CB stores
-  # raw datums, so point REG3 one 16-byte word before CB0.
-  cfg[64] = FMT_BF16 | (1 << 4) | (256 << 16)
-  cfg[65] = 1 | (4 << 16)
-  cfg[66] = 1
-  cfg[72] = FMT_BF16
-  cfg[76] = (DATA_BUFFER_SPACE_BASE >> 4) - 1
-  cfg[49] = 128
-
-  # Packer: BF16 Dest -> BF16 L1 output.  Raw TRISC2 writes the destination
-  # address dynamically, but this scratch path has to provide the data formats.
-  cfg[70] = (FMT_BF16 << 8) | (FMT_BF16 << 4)
-
-  # Full-tile pack path: all columns enabled, all rows use edge mask 0.
-  cfg[20] = 0xFFFF
-  cfg[24] = 0
-
-
 def raw_kernel_main_base(role: str) -> int:
   if role == "brisc":
     return RAW_DM_BRISC_KERNEL_BASE + (
@@ -493,7 +470,6 @@ def load_raw_dataflow_kernels(dev: Device, tile):
 def load_raw_compute_kernels(tile, num_tiles: int):
   for role in ("trisc0", "trisc1", "trisc2"):
     load_raw_kernel_segments(tile, role)
-  seed_raw_compute_tensix_config(tile)
   patch_raw_compute_ldm(tile, num_tiles)
 
 
@@ -716,7 +692,7 @@ def main():
     print(f"  got float:     {format_bf16_floats(got)}", file=sys.stderr)
     print(f"  expected float:{format_bf16_floats(exp)}", file=sys.stderr)
     return 1
-  print_success_banner(dev, num_tiles, got)
+  print_success_banner(dev, num_tiles, src_data, got)
   return 0
 
 

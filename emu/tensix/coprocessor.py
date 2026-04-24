@@ -50,23 +50,37 @@ class _PCBufFIFO:
 class _CfgMMIO:
   """Byte-addressed Tensix config MMIO view backed by ConfigUnit ADDR32 words."""
 
-  MIRRORED_ADDR32 = frozenset((76, 77, 124, 125))
+  STATE1_OFFSET = 0x380
 
   def __init__(self, config_unit):
     self.config_unit = config_unit
     self.mem = Memory()
 
-  def _cfg_word(self, addr):
-    addr32 = (addr & ~3) >> 2
+  def _decode_cfg_addr(self, addr):
+    addr = addr & ~3
+    if addr >= self.STATE1_OFFSET:
+      state_id = 1
+      addr32 = (addr - self.STATE1_OFFSET) >> 2
+    else:
+      state_id = 0
+      addr32 = addr >> 2
     if addr32 < self.config_unit.CFG_WORDS:
-      return self.config_unit.cfg[0][addr32]
+      return state_id, addr32
+    return None
+
+  def _cfg_word(self, addr):
+    decoded = self._decode_cfg_addr(addr)
+    if decoded is not None:
+      state_id, addr32 = decoded
+      return self.config_unit.cfg[state_id][addr32]
     return self.mem.read32(addr & ~3)
 
   def _write_word(self, addr, value):
-    addr32 = (addr & ~3) >> 2
     self.mem.write32(addr & ~3, value)
-    if addr32 in self.MIRRORED_ADDR32:
-      self.config_unit._write_cfg_word(0, addr32, value)
+    decoded = self._decode_cfg_addr(addr)
+    if decoded is not None:
+      state_id, addr32 = decoded
+      self.config_unit._write_cfg_word(state_id, addr32, value)
 
   def read8(self, addr):
     return (self._cfg_word(addr) >> (8 * (addr & 3))) & 0xFF

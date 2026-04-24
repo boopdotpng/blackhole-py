@@ -319,7 +319,7 @@ class Packer:
       row = (di // self.dest.COLS) % self.dest.ROWS
       col = di % self.dest.COLS
 
-      raw = self.dest.bits[row][col] if self.dest.valid[row] else 0
+      raw = self.dest.bits[row][col]
 
       # --- Stage 2: Early format conversion ---
       if zero_write:
@@ -461,27 +461,20 @@ class Packer:
   def _apply_edge_mask(self, val_f, tpg, packer_idx, col, edge_mode):
     """Apply edge mask based on TPG position and per-column mask bits.
 
-    NOTE: The current packer convention uses:
-      ADDR32 20-23 = PCK_EDGE_OFFSET_SEC[0..3]   (16-bit column enable mask)
-      ADDR32 24-27 = TILE_ROW_SET_MAPPING[0..3]
-    This is the OPPOSITE of what cfg_layout.py documents.  We use raw cfgr_at
-    reads here to match that convention, rather than the cfg_layout helpers
-    which have these two ranges swapped.
-    # TODO(spec-ambiguity): clarify ADDR32 20-23 vs 24-27 layout in hw register doc.
+    The LLK config path writes TILE_ROW_SET_MAPPING at ADDR32 20..23 and
+    PCK_EDGE_OFFSET_SEC at ADDR32 24..27, matching cfg_layout.py.
     """
     # PCK_EDGE_TILE_ROW_SET_SELECT (ADDR32 19): 2-bit entry per packer
     b_sel_word = self._cfgr_at(19)
     b = (b_sel_word >> (2 * packer_idx)) & 3
 
-    # TILE_ROW_SET_MAPPING[b]: 2-bit mapping per row-within-face
-    # (ADDR32 24+b per test convention)
-    row_map_word = self._cfgr_at(24 + b)
+    # TILE_ROW_SET_MAPPING[b]: 2-bit mapping per row-within-face.
+    row_map_word = self._cfgr_at(20 + b)
     y_idx = tpg.y & 7
     c = (row_map_word >> (2 * y_idx)) & 3
 
-    # PCK_EDGE_OFFSET_SEC[c]: 16-bit column enable mask
-    # (ADDR32 20+c per test convention)
-    edge_mask = self._cfgr_at(20 + c) & 0xFFFF
+    # PCK_EDGE_OFFSET_SEC[c]: 16-bit column enable mask.
+    edge_mask = self._cfgr_at(24 + c) & 0xFFFF
 
     if (edge_mask >> col) & 1:
       return val_f
@@ -703,8 +696,14 @@ class Packer:
     else:
       base_addr = l1_dest + (yzw_addr & ~0xF)
 
-    exp_section_size       = cfg['exp_section_size']       # in 16-byte words
-    row_start_section_size = cfg['row_start_section_size'] # in 16-byte words
+    # tt-metal's Blackhole LLK sets exp_section_size to the number of faces for
+    # most formats, but documents that it is only used by BFP/LF8/INT8 packing.
+    if cfg['out_data_format'] in _FMT_IS_BFP or cfg['out_data_format'] == _FMT_INT8:
+      exp_section_size = cfg['exp_section_size']       # in 16-byte words
+      row_start_section_size = cfg['row_start_section_size']
+    else:
+      exp_section_size = 0
+      row_start_section_size = 0
 
     # Initialise data stream address on first call
     if out_state.data_stream.needs_new_address:
