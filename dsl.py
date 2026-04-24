@@ -434,6 +434,12 @@ TT_SEMWAIT   = TensixOp(0xA6, "Block instruction types until semaphore condition
     F("sem_sel",         2, 8), # 8-bit bitmask selecting which semaphores to check
     F("wait_sem_cond",   0, 2), # C0=wait while Value==0, C1=wait while Value>=Max; 0 is UB
 ])
+TT_STREAMWAIT = TensixOp(0xA7, "Block instruction types until a selected stream condition is met", [
+    F("stall_res",       15, 9), # BlockMask (same as STALLWAIT); 0 defaults to B6
+    F("target_value",     4, 11), # low bits of target phase/message count
+    F("target_sel",       3, 1), # 0=phase, 1=num_msgs
+    F("wait_stream_sel",  0, 2), # select STREAM_ID_SYNC_SEC register
+])
 
 # -- config unit ---------------------------------------------------------------
 TT_WRCFG   = TensixOp(0xB0, "Write GPR(s) to shared config register (needs NOP after if next insn reads it)", [
@@ -459,6 +465,19 @@ TT_RMWCIB1 = TensixOp(0xB4, "Read-modify-write byte 1 of shared config register"
     F("Data",        8, 8),
     F("CfgRegAddr",  0, 8),
 ])
+TT_STREAMWRCFG = TensixOp(0xB7, "Copy one stream register into shared config", [
+    F("stream_id_sel",   21, 2),
+    F("StreamRegAddr",   11, 10),
+    F("CfgReg",           0, 11),
+])
+TT_CFGSHIFTMASK = TensixOp(0xB8, "Masked rotated ALU update of shared config using a scratch config register", [
+    F("mask_mode",     23, 1),
+    F("alu_mode",      20, 3),
+    F("mask_width",    15, 5),
+    F("rotate_amt",    10, 5),
+    F("scratch_index",  8, 2),
+    F("cfg_index",      0, 8),
+])
 
 # -- matrix unit / FPU ---------------------------------------------------------
 TT_ZEROACC = TensixOp(0x10, "Zero out Dest (accumulator) registers", [
@@ -482,11 +501,29 @@ TT_MOVB2D  = TensixOp(0x13, "Move data from SrcB to Dest", [
     F("dst",               0, 11), # Dest register address
 ])
 TT_TRNSPSRCB = TensixOp(0x16, "Transpose SrcB rows 16-31 in-place (16x16 matrix transpose)")
+TT_SHIFTXA = TensixOp(0x17, "Shift SrcA row data horizontally", [
+    F("raw", 0, 24),
+])
+TT_SHIFTXB = TensixOp(0x18, "Shift SrcB row data horizontally", [
+    F("raw", 0, 24),
+])
 TT_MVMUL  = TensixOp(0x26, "Matrix-vector multiply: Dest = SrcA * SrcB", [
     F("clear_dvalid", 22, 2), # clear data-valid flags after consuming sources
     F("instr_mod19",  19, 3), # math mode / format control
     F("addr_mode",    14, 2), # Dest addressing mode
     F("dst",           0, 10), # Dest register address
+])
+TT_DOTPV = TensixOp(0x29, "Dot-product vector op; functional emulation matches MVMUL", [
+    F("clear_dvalid", 22, 2),
+    F("instr_mod19",  19, 3),
+    F("addr_mode",    14, 2),
+    F("dst",           0, 10),
+])
+TT_GAPOOL = TensixOp(0x34, "Global average/pooling style half-height matrix op", [
+    F("clear_dvalid", 22, 2),
+    F("instr_mod19",  19, 3),
+    F("addr_mode",    14, 2),
+    F("dst",           0, 10),
 ])
 TT_ELWADD  = TensixOp(0x28, "Element-wise add: Dest = SrcA + SrcB", [
     F("clear_dvalid",  22, 2),
@@ -593,6 +630,11 @@ TT_SETDMAREG = TensixOp(0x45, "Load 16-bit immediate into DMA register or set si
     F("Payload_SigSel",      8, 14), # immediate value or signal selector
     F("SetSignalsMode",      7, 1), # 1=set signals mode
     F("RegIndex16b",         0, 7), # target DMA register (0-63 usable)
+])
+TT_REG2FLOP = TensixOp(0x48, "Move GPR(s) into THCON configuration", [
+    F("SizeSel",        22, 2), # 0=128b, nonzero=32b for config variant
+    F("ThConCfgIndex",   8, 7),
+    F("InputReg",        0, 6),
 ])
 TT_ADDDMAREG = TensixOp(0x58, "DMA register add: Result = OpA + OpB", [
     F("OpBisConst",      23, 1),  # 1=OpB is immediate constant
@@ -730,6 +772,9 @@ TT_SFPPOPC  = TensixOp(0x88, "Pop flag stack (restore previous predication state
 TT_SFPSETSGN = TensixOp(0x89, "Set/clear/copy sign bit: Abs(VC), -Abs(VC), or copy VD sign to VC", _SIMPLE())
 TT_SFPENCC  = TensixOp(0x8A, "Set UseLaneFlagsForLaneEnable and LaneFlags (controls SIMT predication)", _SIMPLE())
 TT_SFPCOMPC = TensixOp(0x8B, "Complement per-lane flags (implements 'else' in SIMT if/else)", _SIMPLE())
+TT_SFPTRANSP = TensixOp(0x8C, "Transpose 4x4 groups of SFPU LRegs", [
+    F("lreg_dest", 4, 4), F("instr_mod1", 0, 4),
+])
 
 # -- bitwise
 TT_SFPXOR   = TensixOp(0x8D, "Bitwise XOR: VD ^= VC (self-modifying, source is VD not VB)", _SIMPLE())

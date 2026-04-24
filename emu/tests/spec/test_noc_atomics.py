@@ -18,11 +18,14 @@ import struct
 import pytest
 
 from emu import memory as M
+from emu.core import BRISC
+from emu.memory import Memory
 from emu.noc import (
   AT_NOP, AT_INCR_GET, AT_INCR_GET_PTR, AT_SWAP, AT_CAS,
   AT_GET_TILE_MAP, AT_STORE_IND, AT_SWAP_4B, AT_ACC,
   ACC_FP32, ACC_FP16_A, ACC_FP16_B, ACC_INT32,
   ACC_INT32_SAT, ACC_INT32_UNS, ACC_INT8,
+  NOC, noc_key,
 )
 
 from .conftest import spec
@@ -583,8 +586,38 @@ def test_atomic_counter_accumulates_across_multiple_ops(two_tile_network, atomic
 @spec("NOC-AT.MCAST.PER_TILE")
 def test_multicast_atomic_hits_every_tile_in_rect():
   """Multicast atomic should execute at every tile in the rect."""
-  import pytest as _pt
-  _pt.fail("NOC-AT.MCAST.PER_TILE: no multicast-atomic path in emulator")
+  network = {}
+
+  def tile(x, y):
+    l1 = Memory()
+    core = BRISC(l1=l1)
+    network[noc_key(x, y)] = l1
+    noc = NOC(0, l1, network, x, y)
+    noc.pre_populate()
+    core.mem.default = Memory()
+    core.mem.register(M.NOC0_BASE, M.NOC0_BASE + M.NOC_SIZE - 1, noc)
+    return core, l1, noc
+
+  src_core, src_l1, src_noc = tile(1, 2)
+  _, dst0_l1, _ = tile(3, 4)
+  _, dst1_l1, _ = tile(4, 4)
+  dst0_l1.write32(0x8000, 10)
+  dst1_l1.write32(0x8000, 20)
+
+  rect = (4 << 18) | (3 << 12) | (4 << 6) | 4
+  base = 3 * M.NIU_CMD_BUF_STRIDE
+  src_noc.regs.write32(base + M.NIU_TARG_ADDR_LO, 0x8000)
+  src_noc.regs.write32(base + M.NIU_TARG_ADDR_HI, rect)
+  src_noc.regs.write32(base + M.NIU_RET_ADDR_LO, 0x4)
+  src_noc.regs.write32(base + M.NIU_AT_LEN_BE, AT_INCR_GET << 12)
+  src_noc.regs.write32(base + M.NIU_AT_DATA, 3)
+  src_noc.regs.write32(base + M.NIU_CTRL,
+                       M.NOC_CTRL_AT | M.NOC_CTRL_BRCST | M.NOC_CTRL_RESP_MARKED)
+  src_core.mem.write32(M.NOC0_BASE + base + M.NIU_CMD_CTRL, 1)
+
+  assert dst0_l1.read32(0x8000) == 13
+  assert dst1_l1.read32(0x8000) == 23
+  assert src_l1.read32(0x8000) == 0
 
 
 # ===========================================================================

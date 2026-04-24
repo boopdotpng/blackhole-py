@@ -15,8 +15,9 @@ Layout:
 
 import pytest
 from dsl import decode_tensix
-from emu.tensix import TensixCoprocessor
+from emu.tensix import TensixCoprocessor, STALL_MATH, COND_SRCA_VLD
 from emu.tensix import _float_to_19bit, _dest_to_float
+from emu.tensix.frontend import _instruction_block_bits
 
 from .conftest import spec
 
@@ -158,10 +159,19 @@ def test_gapool_4_row_output():
 
 @spec("SFPU.GATESRCRST.INVALIDATES_SRCB_CACHE")
 def test_gatesrcrst_dispatches():
-  """GATESRCRST (0x35): invalidates SrcB operand cache — not modeled in emulator."""
-  pytest.fail(
-    "SFPU.GATESRCRST.INVALIDATES_SRCB_CACHE not implemented: "
-    "emulator has no operand cache; GATESRCRST is silently ignored")
+  """GATESRCRST (0x35): no-op without a cache model, still Matrix-gated."""
+  c = _make_coproc()
+  c.dest.bits[0][0] = 0x1234
+  c.dest.valid[0] = True
+  c.srca.banks[c.srca.fpu_bank].allowed_client = "unpackers"
+  c.threads[1].wait_gate.install_stallwait(STALL_MATH, COND_SRCA_VLD)
+  word = (0x35 << 24) | 0x3
+  assert _instruction_block_bits(word) == STALL_MATH
+  c.push_instruction(1, word)
+  c.step()
+  c.step()
+  assert c.threads[1].wait_gate.opcode == "STALLWAIT"
+  assert c.dest.bits[0][0] == 0x1234
 
 
 # ===========================================================================
@@ -170,10 +180,19 @@ def test_gatesrcrst_dispatches():
 
 @spec("SFPU.CLREXPHIST.RESETS_HISTOGRAMS")
 def test_clrexphist_dispatches():
-  """CLREXPHIST (0x21): resets exponent histogram — not modeled in emulator."""
-  pytest.fail(
-    "SFPU.CLREXPHIST.RESETS_HISTOGRAMS not implemented: "
-    "emulator has no exponent histogram state; CLREXPHIST is silently ignored")
+  """CLREXPHIST (0x21): no-op without histograms, still Matrix-gated."""
+  c = _make_coproc()
+  c.dest.bits[0][0] = 0x5678
+  c.dest.valid[0] = True
+  c.srca.banks[c.srca.fpu_bank].allowed_client = "unpackers"
+  c.threads[1].wait_gate.install_stallwait(STALL_MATH, COND_SRCA_VLD)
+  word = 0x21 << 24
+  assert _instruction_block_bits(word) == STALL_MATH
+  c.push_instruction(1, word)
+  c.step()
+  c.step()
+  assert c.threads[1].wait_gate.opcode == "STALLWAIT"
+  assert c.dest.bits[0][0] == 0x5678
 
 
 # ===========================================================================

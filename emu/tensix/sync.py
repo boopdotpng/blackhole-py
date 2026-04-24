@@ -31,6 +31,17 @@ class SyncUnit:
   def execute_semwait(self, wait_gate, d):
     wait_gate.install_semwait(d.stall_res, d.sem_sel, d.wait_sem_cond)
 
+  def execute_streamwait(self, wait_gate, d, thread_cfg=None, thread_id=0):
+    target_hi = 0
+    if thread_cfg is not None:
+      # Blackhole cfg_defines.h places STREAMWAIT_PHASE_HI at ThreadConfig
+      # ADDR32 57 and STREAMWAIT_NUM_MSGS_HI at ADDR32 58.
+      hi_addr = 57 if d.target_sel == 0 else 58
+      if hi_addr < len(thread_cfg[thread_id]):
+        target_hi = thread_cfg[thread_id][hi_addr]
+    target = ((target_hi & 0xFFFFFFFF) << 10) | d.target_value
+    wait_gate.install_streamwait(d.stall_res, target, d.target_sel, d.wait_stream_sel)
+
 
 class MutexSet:
   """5 Tensix mutexes. owner = thread_id or None. Indexable like a list for

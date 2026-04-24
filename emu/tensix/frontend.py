@@ -219,16 +219,17 @@ COND_CFGEXU    = 0x1000  # C12: Config unit pipeline (any thread)
 _OPCODE_BLOCK_BITS = {}
 
 def _register_block_bits():
-  for op in (0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0xA6):  # Sync unit (B1)
+  for op in (0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0xA6, 0xA7):  # Sync unit (B1)
     _OPCODE_BLOCK_BITS[op] = STALL_SYNC
   for op in (0x42, 0x43):                                # Unpack (B3)
     _OPCODE_BLOCK_BITS[op] = STALL_UNPACK
-  for op in (0x08, 0x0A, 0x10, 0x11, 0x13, 0x16, 0x26, 0x27, 0x28, 0x30,
-             0x33, 0x36, 0x37, 0x38):                    # FPU / Matrix Unit (B6)
+  for op in (0x08, 0x0A, 0x10, 0x11, 0x13, 0x16, 0x17, 0x18, 0x21, 0x26,
+             0x27, 0x28, 0x29, 0x30, 0x33, 0x34, 0x35, 0x36, 0x37,
+             0x38):  # FPU / Matrix Unit (B6)
     _OPCODE_BLOCK_BITS[op] = STALL_MATH
-  for op in (0xB0, 0xB1, 0xB2, 0xB3, 0xB4):              # Config unit (B7)
+  for op in (0xB0, 0xB1, 0xB2, 0xB3, 0xB4, 0xB7, 0xB8):  # Config unit (B7)
     _OPCODE_BLOCK_BITS[op] = STALL_CFG
-  for op in (0x45, 0x58, 0x5A, 0x5B, 0x5C, 0x5D, 0x60):  # Scalar/ThCon (B5), also B0
+  for op in (0x45, 0x48, 0x58, 0x5A, 0x5B, 0x5C, 0x5D, 0x60):  # Scalar/ThCon (B5), also B0
     _OPCODE_BLOCK_BITS[op] = STALL_THCON | STALL_TDMA
   _OPCODE_BLOCK_BITS[0x46] = STALL_THCON | STALL_TDMA    # FLUSHDMA: blocks all ThCon use
   _OPCODE_BLOCK_BITS[0x41] = STALL_PACK | STALL_TDMA     # Packer (B2), also B0
@@ -274,6 +275,17 @@ class WaitGate:
     self.sem_cond = sem_cond
     self._one_cycle_hold = True
 
+  def install_streamwait(self, block_mask, target_value, target_sel, stream_sel):
+    if block_mask == 0: block_mask = STALL_MATH
+    self.opcode = "STREAMWAIT"
+    self.block_mask = block_mask
+    self.cond_mask = 1 << (target_sel & 1)
+    self.sem_mask = 0
+    self.sem_cond = 0
+    self.target_value = target_value & M32
+    self.stream_sel = stream_sel & 3
+    self._one_cycle_hold = True
+
   def is_blocking(self, word, hw, thread_id):
     if self.opcode is None: return False
     if self._one_cycle_hold:
@@ -283,11 +295,18 @@ class WaitGate:
       self.opcode = None  # condition cleared — release latch
       return False
     # Condition still active — only block if this insn's category is in block_mask.
-    return bool(_instruction_block_bits(word) & self.block_mask)
+    bits = _instruction_block_bits(word)
+    if bits == STALL_THREAD:
+      if self.block_mask == STALL_THREAD:
+        return True
+      unpack_clear = (1 << 5) | (1 << 6)
+      return self.block_mask == STALL_UNPACK and bool(self.cond_mask & unpack_clear)
+    return bool(bits & self.block_mask)
 
   def _evaluate(self, hw, thread_id):
     if self.opcode == "STALLWAIT": return self._eval_stallwait(hw, thread_id)
     if self.opcode == "SEMWAIT":   return self._eval_semwait(hw)
+    if self.opcode == "STREAMWAIT": return False
     return False
 
   def _eval_stallwait(self, hw, thread_id):

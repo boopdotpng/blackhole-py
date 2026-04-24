@@ -28,6 +28,8 @@ from .tensix import TensixCoprocessor, Semaphores, TDMA
 
 M32 = 0xFFFFFFFF
 L1_ALIGN = 16
+PCIE_NOC_XY = (19, 24)
+LOGICAL_TO_VIRTUAL_SCRATCH = BANK_TO_NOC_SCRATCH + 2048
 
 def _align_up(value: int, align: int) -> int:
   return (value + align - 1) & ~(align - 1)
@@ -198,12 +200,16 @@ class Device:
     # Two independent NOC networks — routing tables keyed by (y<<6)|x.
     # Each NOC NIU on a tile reads/writes through its own network.
     self.networks: list[dict[int, Memory]] = [{}, {}]
+    self.pcie = Memory()
+    for net in self.networks:
+      net[noc_key(*PCIE_NOC_XY)] = self.pcie
 
     # Create tiles.  Each tile's _create_tile registers its L1 on both
     # networks at its (x, y) coordinate and installs all router handlers.
     self.tiles: dict[tuple[int, int], Tile] = {}
     for x, y in self.worker_xy:
       self.tiles[(x, y)] = self._create_tile(x, y)
+    self._populate_logical_to_virtual_tables()
 
     # DRAM banks — each bank exposes DRAM_PORTS NOC coordinates; register
     # the bank Memory on both networks at every port coordinate.
@@ -239,6 +245,7 @@ class Device:
     mmio.write32(SOFT_RESET_0, SOFT_RESET_ALL)  # power-on: all 5 RISCs held in reset
     stream_regs = StreamRegisters()          # 0xFFB40000..0xFFB7FFFF — CB tiles_acked/received, sync ptr, dispatch msg
     tensix = TensixCoprocessor(l1=l1)        # Mover reads/writes l1 directly
+    tensix.stream_regs = stream_regs
     tdma = TDMA(mover=tensix.mover,          # 0xFFB11000 — XMOV MMIO front-end
                 packer=tensix.packer)        # + FIFO_PACKED_TILE_* sideband
 
@@ -289,6 +296,14 @@ class Device:
       bus.on_write32(SOFT_RESET_0, reset_hook)
 
     return tile
+
+  def _populate_logical_to_virtual_tables(self):
+    cols = list(dict.fromkeys(x for x, _ in self.worker_xy))
+    col_table = cols + [0] * max(0, 20 - len(cols))
+    row_table = list(P100A_Y_RANGE) + [0, 0]
+    data = bytes((col_table[:20] + row_table[:12]))
+    for tile in self.tiles.values():
+      tile.l1.load(LOGICAL_TO_VIRTUAL_SCRATCH, data)
 
   def configure_cbs(self, cbs: dict[int, tuple[int, int]]):
     for idx in cbs:

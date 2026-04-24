@@ -26,7 +26,7 @@ def _19bit_to_float(val):
 
 def _float_to_19bit(f):
   if math.isnan(f):
-    return (0x7F << 8) | 0x200  # NaN marker: exp=0x7F in bits[7:0], quiet-NaN mant bit in bits[17:8]
+    return (0x200 << 8) | 0xFF  # exp=all-ones, quiet-NaN mantissa bit set
   bits = struct.unpack('I', struct.pack('f', float(f)))[0]
   sign = (bits >> 31) & 1
   exp  = (bits >> 23) & 0xFF
@@ -72,12 +72,15 @@ class FPU:
           bank.rows[r][c] = 0
 
   def mvmul(self, d, rwc):
+    self._mvmul_rows(d, rwc, 8)
+
+  def _mvmul_rows(self, d, rwc, rows):
     dst_base = d.dst + rwc.d * 16
     srca_bank = self.srca.banks[self.srca.fpu_bank]
     srcb_bank = self.srcb.banks[self.srcb.fpu_bank]
     srca_base = rwc.a * 16
     srcb_base = rwc.b * 8
-    for row in range(8):
+    for row in range(rows):
       for col in range(16):
         acc = 0.0
         for k in range(16):
@@ -91,6 +94,12 @@ class FPU:
           acc += _dest_to_float(self.dest.bits[dest_row][col])
         self.dest.bits[dest_row][col] = _float_to_dest(acc)
         self.dest.valid[dest_row] = True
+
+  def dotpv(self, d, rwc):
+    self._mvmul_rows(d, rwc, 8)
+
+  def gapool(self, d, rwc):
+    self._mvmul_rows(d, rwc, 4)
 
   def elwadd(self, d, rwc):
     dst_base = d.dst + rwc.d * 16
@@ -162,6 +171,29 @@ class FPU:
       for c in range(16):
         bank.rows[16 + r][c] = block[c][r]
 
+  def shiftxa(self, d):
+    bank = self.srca.banks[self.srca.fpu_bank]
+    direction = d.raw & 0x3
+    for row in range(16):
+      old = list(bank.rows[row])
+      if direction == 2:  # right
+        bank.rows[row][0] = 0
+        for col in range(1, 16):
+          bank.rows[row][col] = old[col - 1]
+      else:
+        for col in range(15):
+          bank.rows[row][col] = old[col + 1]
+        bank.rows[row][15] = 0
+
+  def shiftxb(self, d):
+    bank = self.srcb.banks[self.srcb.fpu_bank]
+    src_row = d.raw & 0x3F
+    shift_in_zero = (d.raw >> 10) & 1
+    old = list(bank.rows[src_row])
+    for col in range(15):
+      bank.rows[src_row][col] = old[col + 1]
+    bank.rows[src_row][15] = 0 if shift_in_zero else old[0]
+
 
 # =============================================================================
 # SFPU — 32-lane SIMD Vector Unit. Reads/writes Dest via SFPLOAD/SFPSTORE.
@@ -176,6 +208,7 @@ def _is_neg(bits):   return bool(bits & 0x80000000)
 
 POS_INF      = 0x7F800000
 NEG_INF      = 0xFF800000
+CONST_0P8373 = 0x3F566189
 CONST_0P8363 = 0x3F560000
 CONST_ONE    = 0x3F800000
 
@@ -211,9 +244,9 @@ class SFPU:
     self.flag_stack = []                        # stack for nested predication
     self.use_lane_flags = False                 # master predication enable
     for lane in range(self.NUM_LANES):
-      self.lregs[8][lane] = POS_INF
-      self.lregs[9][lane] = NEG_INF
-      self.lregs[10][lane] = CONST_0P8363
+      self.lregs[8][lane] = CONST_0P8373
+      self.lregs[9][lane] = 0
+      self.lregs[10][lane] = CONST_ONE
       self.lregs[15][lane] = lane * 2  # TILEID
       self.lregs[16][lane] = CONST_ONE
 
@@ -387,9 +420,10 @@ class SFPU:
   def sfpmul24(self, d):
     if not self._is_writable(d.lreg_dest): return
     for lane in self._lanes():
-      a = self.lregs[d.lreg_src_a][lane] & 0xFFFFFF
-      b = self.lregs[d.lreg_src_b][lane] & 0xFFFFFF
-      self.lregs[d.lreg_dest][lane] = (a * b) & M32
+      a = self.lregs[d.lreg_src_a][lane] & 0x7FFFFF
+      b = self.lregs[d.lreg_src_b][lane] & 0x7FFFFF
+      product = a * b
+      self.lregs[d.lreg_dest][lane] = ((product >> 23) if d.instr_mod1 else product) & M32
 
   # ── Bit manipulation ─────────────────────────────────────────────────
 
@@ -472,10 +506,29 @@ class SFPU:
       if d.instr_mod1 == 1:   self.lane_flags = [True] * self.NUM_LANES
       elif d.instr_mod1 == 2: self.lane_flags = [False] * self.NUM_LANES
 
-  def sfppushc(self, d): self.flag_stack.append(list(self.lane_flags))
+  def sfppushc(self, d):
+    if len(self.flag_stack) >= 8:
+      raise RuntimeError("SFPU flag stack overflow")
+    self.flag_stack.append(list(self.lane_flags))
   def sfppopc(self, d):
     if self.flag_stack: self.lane_flags = self.flag_stack.pop()
   def sfpcompc(self, d): self.lane_flags = [not f for f in self.lane_flags]
+
+  def sfptransp(self, d):
+    base0 = d.lreg_dest & ~3
+    for base in (base0, base0 + 4):
+      if base + 3 >= 8:
+        continue
+      for col in range(8):
+        for i in range(4):
+          for j in range(i):
+            lane_ij = j * 8 + col
+            lane_ji = i * 8 + col
+            if not (self._lane_enabled(lane_ij) and self._lane_enabled(lane_ji)):
+              continue
+            a = self.lregs[base + i][lane_ij]
+            self.lregs[base + i][lane_ij] = self.lregs[base + j][lane_ji]
+            self.lregs[base + j][lane_ji] = a
 
   # ── Move ─────────────────────────────────────────────────────────────
 
@@ -491,12 +544,20 @@ class SFPU:
   def sfpstochrnd(self, d):
     if not self._is_writable(d.lreg_dest): return
     for lane in self._lanes():
-      self.lregs[d.lreg_dest][lane] = self.lregs[d.lreg_src_c][lane]
+      val = self.lregs[d.lreg_src_c][lane]
+      if d.instr_mod1 == 0:
+        val &= 0xFFFFE000
+      self.lregs[d.lreg_dest][lane] = val
 
   def sfpcast(self, d):
     if not self._is_writable(d.lreg_dest): return
     for lane in self._lanes():
-      self.lregs[d.lreg_dest][lane] = self.lregs[d.lreg_src_c][lane]
+      val = self.lregs[d.lreg_src_c][lane]
+      if d.instr_mod1 == 0:
+        sign = -1 if val & 0x80000000 else 1
+        mag = val & 0x7FFFFFFF
+        val = _to_bits(float(sign * mag))
+      self.lregs[d.lreg_dest][lane] = val
 
   # ── Configuration ────────────────────────────────────────────────────
 

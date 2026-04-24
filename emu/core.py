@@ -29,6 +29,8 @@ class Core:
     for i, insn in enumerate(insns): self.mem.write32(addr + i*4, int(insn))
 
   def step(self):
+    if self.in_reset:
+      return False
     word = self.mem.read32(self.pc)
     pc = self.pc
     self.pc = (pc + 4) & M32

@@ -25,6 +25,28 @@ from .mover import Mover
 _TRISC_THREAD = {'trisc0': 0, 'trisc1': 1, 'trisc2': 2}
 
 
+class _PCBufFIFO:
+  CAPACITY = 16
+
+  def __init__(self):
+    self._q = []
+
+  def push(self, word):
+    if len(self._q) >= self.CAPACITY:
+      return False
+    self._q.append(word & 0xFFFFFFFF)
+    return True
+
+  def pop(self):
+    if not self._q:
+      return None
+    return self._q.pop(0)
+
+  @property
+  def empty(self):
+    return not self._q
+
+
 class TensixCoprocessor:
   def __init__(self, l1: Memory = None):
     # Shared backend state. The 8 hardware semaphores live inside the
@@ -61,6 +83,7 @@ class TensixCoprocessor:
     self.threads = [TensixThread(i) for i in range(3)]
     # Tensix backend config register file (0xFFEF0000..0xFFEFFFFF).
     self.cfg = Memory()
+    self.stream_regs = None
     # Mover / XMOV — DMA engine shared with the TDMA-RISC register block.
     # Operates on raw byte-addressed Memory: l1 is the tile L1 (shared with
     # the packer/unpacker path), cfg is the ADDR8-relative config Memory
@@ -69,6 +92,7 @@ class TensixCoprocessor:
     # ADDR32 view) is a separate bank array, consulted by XMOV to read its
     # transfer parameters.
     self.mover = Mover(l1=self.l1, cfg=self.cfg)
+    self.pcbuf_fifo = [_PCBufFIFO() for _ in range(3)]
 
   def attach_l1(self, l1):
     """Swap in a new L1 Memory.  Used by tests that want a fresh L1 between
@@ -115,12 +139,19 @@ class TensixCoprocessor:
       case 'SEMPOST':   self.sync.execute_sempost(d)
       case 'SEMGET':    self.sync.execute_semget(d)
       case 'SEMWAIT':   self.sync.execute_semwait(thread.wait_gate, d)
+      case 'STREAMWAIT':
+        self.sync.execute_streamwait(thread.wait_gate, d,
+                                     self.config_unit.thread_cfg, thread.id)
       # ── ThCon pipe: config + scalar (any thread) ────────────────────
       case 'WRCFG':   self.config_unit.execute_wrcfg(d, thread.id)
       case 'RDCFG':   self.config_unit.execute_rdcfg(d, thread.id)
       case 'SETC16':  self.config_unit.execute_setc16(d, thread.id)
       case 'RMWCIB0': self.config_unit.execute_rmwcib(d, byte_index=0)
       case 'RMWCIB1': self.config_unit.execute_rmwcib(d, byte_index=1)
+      case 'CFGSHIFTMASK': self.config_unit.execute_cfgshiftmask(d, thread.id)
+      case 'STREAMWRCFG':
+        self.config_unit.execute_streamwrcfg(d, thread.id, self._read_stream_cfg)
+      case 'REG2FLOP':     self.config_unit.execute_reg2flop(d, thread.id)
       case 'SETDMAREG':    self.scalar.execute_setdmareg(d, thread.id)
       case 'ADDDMAREG':    self.scalar.execute_adddmareg(d, thread.id)
       case 'MULDMAREG':    self.scalar.execute_muldmareg(d, thread.id)
@@ -145,7 +176,11 @@ class TensixCoprocessor:
       case 'ZEROSRC':     self.fpu.zerosrc(d)
       case 'MOVB2D':      self.fpu.movb2d(d, rwc)
       case 'TRNSPSRCB':   self.fpu.trnspsrcb(d)
+      case 'SHIFTXA':     self.fpu.shiftxa(d)
+      case 'SHIFTXB':     self.fpu.shiftxb(d)
       case 'MVMUL':       self.fpu.mvmul(d, rwc)
+      case 'DOTPV':       self.fpu.dotpv(d, rwc)
+      case 'GAPOOL':      self.fpu.gapool(d, rwc)
       case 'ELWADD':      self.fpu.elwadd(d, rwc)
       case 'GMPOOL':      self.fpu.gmpool(d, rwc)
       case 'CLEARDVALID': self.fpu.cleardvalid(d)
@@ -190,9 +225,17 @@ class TensixCoprocessor:
       case 'SFPCAST':     self.sfpu.sfpcast(d)
       case 'SFPCONFIG':   self.sfpu.sfpconfig(d)
       case 'SFPSWAP':     self.sfpu.sfpswap(d)
-      case 'SFPLOADMACRO':self.sfpu.sfpload(d, rwc)
+      case 'SFPLOADMACRO':
+        self.sfpu.sfpload(d, rwc)
+        # Functional shortcut for the common zero-delay simple sub-unit macro.
+        if all(self.sfpu.lregs[d.lreg_ind][lane] == 0 for lane in range(1, 32)):
+          recip = type('_SfpRecipD', (), {
+            'lreg_c': d.lreg_ind, 'lreg_dest': d.lreg_ind, 'instr_mod1': 0
+          })()
+          self.sfpu.sfparecip(recip)
       case 'SFPLUTFP32':  self.sfpu.sfplutfp32(d)
       case 'SFPARECIP':   self.sfpu.sfparecip(d)
+      case 'SFPTRANSP':   self.sfpu.sfptransp(d)
       case 'SFPNOP':      pass
       # ── T2 pipeline: pack ───────────────────────────────────────────
       case 'PACR':        self.packer.handle_pacr(d, thread.id)
@@ -221,6 +264,13 @@ class TensixCoprocessor:
   def _hw_state(self):
     return HardwareState(self.semaphores, self.srca, self.srcb)
 
+  def _read_stream_cfg(self, stream_sel, stream_reg_addr):
+    if self.stream_regs is None:
+      return 0
+    stream_id = stream_sel & 3
+    addr = (stream_id * 4096) + ((stream_reg_addr & 0x3FF) * 4)
+    return self.stream_regs.read32(addr)
+
   def write_mop_cfg(self, thread_id, reg_index, value):
     if 0 <= reg_index < 9:
       self.threads[thread_id].mop.cfg[reg_index] = value
@@ -228,6 +278,11 @@ class TensixCoprocessor:
   def read_pcbuf(self, thread_id, offset):
     # Resolves immediately in functional emulation (synchronous dispatch).
     return 0
+
+  def brisc_read_pcbuf_base(self, thread_id):
+    thread = self.threads[thread_id]
+    ready = self.pcbuf_fifo[thread_id].empty and thread.fifo.empty
+    return ready, 0
 
 
 # Bound at registration time by `instrn_handler_for(role)`:
