@@ -33,11 +33,11 @@ DATA_BUFFER_SPACE_BASE = 0x037000
 # falls in 0xFFB00000–0xFFB01FFF into these per-core L1 slots.  do_crt1() then
 # copies the data image from the scratch area into real LDM and zeroes BSS.
 # =============================================================================
-BRISC_LDM_SCRATCH      = KERNEL_CONFIG_BASE                    # 0x086B0
-NCRISC_LDM_SCRATCH     = BRISC_LDM_SCRATCH  + 0x2000          # 0x0A6B0
-TRISC0_LDM_SCRATCH     = NCRISC_LDM_SCRATCH + 0x2000          # 0x0C6B0
-TRISC1_LDM_SCRATCH     = TRISC0_LDM_SCRATCH + 0x1000          # 0x0D6B0
-TRISC2_LDM_SCRATCH     = TRISC1_LDM_SCRATCH + 0x1000          # 0x0E6B0
+BRISC_LDM_SCRATCH      = 0x009E00
+NCRISC_LDM_SCRATCH     = 0x00BE00
+TRISC0_LDM_SCRATCH     = 0x00DE00
+TRISC1_LDM_SCRATCH     = 0x00EE00
+TRISC2_LDM_SCRATCH     = 0x00FE00
 LDM_SCRATCH = {
   'brisc':  BRISC_LDM_SCRATCH,
   'ncrisc': NCRISC_LDM_SCRATCH,
@@ -340,4 +340,3 @@ class Router:
     old = self.read32(addr) if cb else None
     h, off = self._find(addr); h.write32(addr - off, val)
     if cb: cb(old, val)
-

@@ -33,6 +33,8 @@
 import math
 
 from . import formats as _fmt
+
+M32 = 0xFFFFFFFF
 from . import cfg_layout as _cfg_layout
 
 
@@ -181,15 +183,32 @@ class Packer:
       return  # stub mode: no-op
 
     # Decode PackerMask from ReadIntfSel [11:8]
-    packer_mask = d.ReadIntfSel & 0xF
-    if packer_mask == 0:
-      packer_mask = 0b0001  # special: mask=0 → packer 0 only
-
     addr_mode  = d.AddrMode  & 3
     flush      = d.Flush     & 1
     last       = d.Last      & 1
     zero_write = d.ZeroWrite & 1
     concat     = d.Concat    & 7   # non-zero = continue current row
+
+    packer_mask = d.ReadIntfSel & 0xF
+    if packer_mask == 0:
+      # ALL_INTF_ACTIVE uses packer 0's config but reads four consecutive
+      # 16-datum rows before applying ADDR_MOD_PACK once.
+      adc_unit = self._adc[thread_id].packers
+      ch0 = adc_unit.channels[0]
+      ch1 = adc_unit.channels[1]
+      base_y0 = ch0.y.val
+      base_y1 = ch1.y.val
+      for i in range(4):
+        ch0.y.val = base_y0 + i
+        ch1.y.val = base_y1 + i
+        self._run_packer(0, thread_id, addr_mode, flush, last, zero_write,
+                         concat if i == 0 else 1,
+                         apply_addr_mod=False,
+                         force_stream_end=(i == 3))
+      ch0.y.val = base_y0
+      ch1.y.val = base_y1
+      self._apply_addr_mod(adc_unit, addr_mode, thread_id)
+      return
 
     for i in range(4):
       if not (packer_mask >> i) & 1:
@@ -202,7 +221,8 @@ class Packer:
   # -------------------------------------------------------------------------
 
   def _run_packer(self, packer_idx, thread_id, addr_mode,
-                  flush, last, zero_write, concat):
+                  flush, last, zero_write, concat, apply_addr_mod=True,
+                  force_stream_end=True):
     cfg_base  = _PACKER_CFG_BASE[packer_idx]
     cfg       = self._read_packer_cfg(cfg_base)
     out_state = self._packer_state[packer_idx]
@@ -334,8 +354,10 @@ class Packer:
 
     # --- Stage 9: L1 output ---
     if self._l1 is not None and (data_bytes or flush or last):
+      stream_flush = flush if force_stream_end else 0
+      stream_last = last if force_stream_end else 0
       self._write_l1(packer_idx, cfg, out_state, exp_bytes, data_bytes,
-                     flush, last, thread_id)
+                     stream_flush, stream_last, thread_id)
 
     # Count bytes packed for this tile — what FIFO_PACKED_TILE_SIZE reports.
     # Includes both data and exponent sections; zero-write PACRs still count
@@ -343,13 +365,14 @@ class Packer:
     out_state.tile_bytes += len(data_bytes) + len(exp_bytes)
 
     # --- Post-PACR: AddrMod counter updates ---
-    self._apply_addr_mod(adc_unit, addr_mode)
+    if apply_addr_mod:
+      self._apply_addr_mod(adc_unit, addr_mode, thread_id)
 
     # On flush or last: reset stream state for next tile and push a completed
     # tile entry to the packed-metadata FIFO.  The zero-mask is 0 because the
     # packer does not implement zero compression (see Stage 8 TODO); real HW
     # would pack 32 bits, one per all-zero face.
-    if flush or last:
+    if force_stream_end and (flush or last):
       out_state.packed_fifo.append((out_state.tile_bytes, 0))
       out_state.tile_bytes = 0
       out_state.data_stream.needs_new_address = True
@@ -651,8 +674,13 @@ class Packer:
                 + ch1.z.val * z1stride
                 + ch1.w.val * w1stride)
 
-    l1_dest   = cfg['l1_dest_addr']
-    base_addr = l1_dest + (yzw_addr & ~0xF)
+    l1_dest = cfg['l1_dest_addr']
+    if l1_dest & 0x80000000:
+      l1_dest_addr16 = l1_dest & 0x1FFFF
+      header_words = 0 if cfg['sub_l1_tile_header_size'] else 1
+      base_addr = (l1_dest_addr16 + header_words + yzw_addr) << 4
+    else:
+      base_addr = l1_dest + (yzw_addr & ~0xF)
 
     exp_section_size       = cfg['exp_section_size']       # in 16-byte words
     row_start_section_size = cfg['row_start_section_size'] # in 16-byte words
@@ -712,11 +740,26 @@ class Packer:
   # AddrMod post-PACR update
   # -------------------------------------------------------------------------
 
-  def _apply_addr_mod(self, adc_unit, addr_mode):
+  def _apply_addr_mod(self, adc_unit, addr_mode, thread_id):
     """Apply ADDR_MOD_PACK_SEC[addr_mode] to ADC channel 0 and 1."""
     if addr_mode > 3:
       return
-    am = _cfg_layout.addr_mod_pack(self._cfg, addr_mode, 0)
+    if hasattr(self._cfg, "thread_cfg"):
+      w = self._cfg.thread_cfg[thread_id][37 + addr_mode] & M32
+      am = _cfg_layout.AddrModPack(
+          y_src_incr  = w & 0xF,
+          y_src_cr    = (w >> 4) & 1,
+          y_src_clear = (w >> 5) & 1,
+          y_dst_incr  = (w >> 6) & 0xF,
+          y_dst_cr    = (w >> 10) & 1,
+          y_dst_clear = (w >> 11) & 1,
+          z_src_incr  = (w >> 12) & 1,
+          z_src_clear = (w >> 13) & 1,
+          z_dst_incr  = (w >> 14) & 1,
+          z_dst_clear = (w >> 15) & 1,
+      )
+    else:
+      am = _cfg_layout.addr_mod_pack(self._cfg, addr_mode, 0)
 
     ch0 = adc_unit.channels[0]
     ch1 = adc_unit.channels[1]
@@ -727,12 +770,12 @@ class Packer:
     elif am.y_src_cr:
       ch0.y.val, ch0.y.cr = ch0.y.cr, ch0.y.val
     else:
-      ch0.y.val += am.y_src_incr
+      ch0.y.val = (ch0.y.val + am.y_src_incr) & M32
 
     if am.z_src_clear:
       ch0.z.val = 0
     elif am.z_src_incr:
-      ch0.z.val += 1
+      ch0.z.val = (ch0.z.val + 1) & M32
 
     # Channel 1 (dst / L1)
     if am.y_dst_clear:
@@ -740,12 +783,12 @@ class Packer:
     elif am.y_dst_cr:
       ch1.y.val, ch1.y.cr = ch1.y.cr, ch1.y.val
     else:
-      ch1.y.val += am.y_dst_incr
+      ch1.y.val = (ch1.y.val + am.y_dst_incr) & M32
 
     if am.z_dst_clear:
       ch1.z.val = 0
     elif am.z_dst_incr:
-      ch1.z.val += 1
+      ch1.z.val = (ch1.z.val + 1) & M32
 
   # -------------------------------------------------------------------------
   # Config register helpers
@@ -780,6 +823,7 @@ class Packer:
         'out_data_format':        (w2 >> 4) & 0xF,
         'in_data_format':         (w2 >> 8) & 0xF,
         'dis_shared_exp_assembler': (w2 >> 12) & 1,
+        'sub_l1_tile_header_size': (w2 >> 15) & 1,
         'source_iface_sel':       (w2 >> 16) & 1,
         'l1_source_addr':         (w2 >> 24) & 0xFF,
         # Word 3 fields

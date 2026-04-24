@@ -24,6 +24,8 @@ from .cfg_layout import (
   alu_format_spec        as _alu_format_spec,
 )
 
+M32 = 0xFFFFFFFF
+
 
 # ---------------------------------------------------------------------------
 # DataFormat constants (matching formats.py naming and values)
@@ -563,7 +565,7 @@ def _execute_unpacr(d, thread_id: int, coproc) -> None:
   if is_uncompressed:
     x_pos  = adc_in.x.val
     y_pos  = adc_in.y.val
-    x_end  = adc_out.x.val + 1   # inclusive end
+    x_end  = max(adc_out.x.val, adc_out.x.cr) + 1  # inclusive end from SETADCXX
     first_datum      = ((adc_zw.w.val * z_dim + adc_zw.z.val) * y_dim + y_pos) * x_dim + x_pos
     input_num_datums = x_end - x_pos
   else:
@@ -757,7 +759,7 @@ def _execute_unpacr(d, thread_id: int, coproc) -> None:
         dest_row = row % coproc.dest.ROWS
         dest_col = col
         if out_fmt in (FMT_FP32, FMT_TF32, FMT_INT32):
-          coproc.dest.bits[dest_row][dest_col] = datum
+          coproc.dest.bits[dest_row][dest_col] = datum & M32
         else:
           coproc.dest.bits[dest_row][dest_col] = datum & 0xFFFF
         coproc.dest.valid[dest_row] = True
@@ -775,14 +777,14 @@ def _execute_unpacr(d, thread_id: int, coproc) -> None:
   # ADC Y and Z increments (applies to both thread ADC sets involved)
   for adc_thread in sorted({thread_id, which_adc}):
     adc_unit = coproc.adc[adc_thread].unpackers[which_unp]
-    adc_unit.channels[0].y.val += ch0y_inc
-    adc_unit.channels[0].z.val += ch0z_inc
-    adc_unit.channels[1].y.val += ch1y_inc
-    adc_unit.channels[1].z.val += ch1z_inc
+    adc_unit.channels[0].y.val = (adc_unit.channels[0].y.val + ch0y_inc) & M32
+    adc_unit.channels[0].z.val = (adc_unit.channels[0].z.val + ch0z_inc) & M32
+    adc_unit.channels[1].y.val = (adc_unit.channels[1].y.val + ch1y_inc) & M32
+    adc_unit.channels[1].z.val = (adc_unit.channels[1].z.val + ch1z_inc) & M32
 
   # Bank flip / SrcRow advance
   if flip_src:
     (coproc.srca if which_unp == 0 else coproc.srcb).flip_to_fpu()
     unp_state.src_row[thread_id] = src_row_base
   elif uc.unpack_src_reg_set_upd:
-    unp_state.src_row[thread_id] += 16 + src_row_base
+    unp_state.src_row[thread_id] = (unp_state.src_row[thread_id] + 16 + src_row_base) & M32

@@ -37,7 +37,7 @@ class ConfigUnit:
 
   def execute_setc16(self, d, thread_id):
     if d.setc16_reg < self.THREAD_CFG_WORDS:
-      self.thread_cfg[thread_id][d.setc16_reg] = d.setc16_value
+      self.thread_cfg[thread_id][d.setc16_reg] = d.setc16_value & M32
 
   def _state_id(self, thread_id):
     # Config state selection: ADDR32 42 bit 0 in thread_cfg
@@ -56,7 +56,7 @@ class ConfigUnit:
 
   def execute_wrcfg(self, d, thread_id):
     state_id = self._state_id(thread_id)
-    addr32 = (d.CfgReg >> 2) & 0x1FF
+    addr32 = d.CfgReg & 0x1FF
     if d.wr128b:
       # Write 4 consecutive 32-bit words from 4 consecutive GPRs
       for i in range(4):
@@ -69,7 +69,7 @@ class ConfigUnit:
 
   def execute_rdcfg(self, d, thread_id):
     state_id = self._state_id(thread_id)
-    addr32 = (d.CfgReg >> 2) & 0x1FF
+    addr32 = d.CfgReg & 0x1FF
     val = self.cfg[state_id][addr32] if state_id < self.NUM_STATES and addr32 < self.CFG_WORDS else 0
     self.gpr.write32(thread_id, d.GprAddress, val)
 

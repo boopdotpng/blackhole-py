@@ -227,6 +227,17 @@ JR     = lambda rs: JALR(zero, rs, 0)
 RET    = lambda: JALR(zero, ra, 0)
 ZEXT_B = lambda rd, rs: ANDI(rd, rs, 0xFF)
 
+def LI32(rd, imm):
+  """Load a 32-bit immediate with LUI/ADDI."""
+  imm_u = imm & 0xFFFFFFFF
+  imm_s = imm_u if imm_u < 0x80000000 else imm_u - 0x100000000
+  hi = (imm_s + 0x800) & 0xFFFFF000
+  hi_s = hi if hi < 0x80000000 else hi - 0x100000000
+  lo = imm_s - hi_s
+  if hi == 0:
+    return [ADDI(rd, zero, lo)]
+  return [LUI(rd, hi), ADDI(rd, rd, lo)]
+
 # =============================================================================
 # RISC-V decoder — raw 32-bit word → RvDecoded(name, rd, rs1, ...)
 # Mirrors decode_tensix; covers the RV32IMZba/Zbb subset above.
@@ -465,6 +476,16 @@ TT_RMWCIB1 = TensixOp(0xB4, "Read-modify-write byte 1 of shared config register"
     F("Data",        8, 8),
     F("CfgRegAddr",  0, 8),
 ])
+TT_RMWCIB2 = TensixOp(0xB5, "Read-modify-write byte 2 of shared config register", [
+    F("Mask",       16, 8),
+    F("Data",        8, 8),
+    F("CfgRegAddr",  0, 8),
+])
+TT_RMWCIB3 = TensixOp(0xB6, "Read-modify-write byte 3 of shared config register", [
+    F("Mask",       16, 8),
+    F("Data",        8, 8),
+    F("CfgRegAddr",  0, 8),
+])
 TT_STREAMWRCFG = TensixOp(0xB7, "Copy one stream register into shared config", [
     F("stream_id_sel",   21, 2),
     F("StreamRegAddr",   11, 10),
@@ -477,6 +498,10 @@ TT_CFGSHIFTMASK = TensixOp(0xB8, "Masked rotated ALU update of shared config usi
     F("rotate_amt",    10, 5),
     F("scratch_index",  8, 2),
     F("cfg_index",      0, 8),
+])
+TT_WRCFG32 = TensixOp(0xC0, "Write one GPR to shared config register using byte-addressed CfgReg field", [
+    F("GprAddress", 18, 6),
+    F("CfgReg",      0, 11),
 ])
 
 # -- matrix unit / FPU ---------------------------------------------------------
@@ -492,6 +517,13 @@ TT_ZEROSRC = TensixOp(0x11, "Zero out SrcA/SrcB register banks", [
     F("write_mode",  3,  1), # 0=zero, 1=write zero_val pattern
     F("bank_mask",   2,  1), # which bank
     F("src_mask",    0,  2), # 0=none, 1=SrcA, 2=SrcB, 3=both
+])
+TT_MOVA2D  = TensixOp(0x12, "Move data from SrcA to Dest", [
+    F("dest_32b_lo", 23, 1),
+    F("src",         17, 6),
+    F("addr_mode",   14, 3),
+    F("instr_mod",   12, 2),
+    F("dst",          0, 11),
 ])
 TT_MOVB2D  = TensixOp(0x13, "Move data from SrcB to Dest", [
     F("dest_32b_lo",      23, 1), # select low 32b of dest row
@@ -673,6 +705,10 @@ TT_FLUSHDMA = TensixOp(0x46, "Occupy Scalar Unit until selected conditions (C0-C
     F("ConditionMask",    0, 4),
 ])
 TT_DMANOP = TensixOp(0x60, "Scalar unit no-op; occupies one ThCon issue slot")
+TT_STOREREG = TensixOp(0x67, "Store GPR to local RISC register space", [
+    F("TdmaDataRegIndex", 18, 6),
+    F("RegAddr",          0, 18),
+])
 
 # -- ADC (address counters) ---------------------------------------------------
 TT_SETADC   = TensixOp(0x50, "Set a single ADC dimension to an absolute value", [

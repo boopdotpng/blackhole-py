@@ -6,7 +6,7 @@
 # enforces the WaitGate, and routes decoded instructions to the right unit.
 # =============================================================================
 
-from ..memory import Memory, INSTRN_BUF_T0, MOP_CFG_BASE
+from ..memory import Memory, INSTRN_BUF_T0, MOP_CFG_BASE, STREAM_BASE, STREAM_END
 from dsl import decode_tensix
 
 from .state import (
@@ -119,13 +119,18 @@ class TensixCoprocessor:
   def _step_thread(self, thread):
     insn = thread.next_instruction()
     if insn is None: return
-    if thread.wait_gate.is_blocking(insn, self._hw_state(), thread.id): return
+    if thread.wait_gate.is_blocking(insn, self._hw_state(), thread.id):
+      thread.replay_instruction(insn)
+      return
     self._dispatch(thread, insn)
 
   def _dispatch(self, thread, word):
     d = decode_tensix(word)
     rwc = self.rwc[thread.id]
     adc = self.adc[thread.id]
+    if not self._operands_ready(d):
+      thread.replay_instruction(word)
+      return
     match d.name:
       case 'NOP' | 'DMANOP': pass
       # ── Sync unit: mutexes, semaphores, stall/wait ──────────────────
@@ -144,10 +149,13 @@ class TensixCoprocessor:
                                      self.config_unit.thread_cfg, thread.id)
       # ── ThCon pipe: config + scalar (any thread) ────────────────────
       case 'WRCFG':   self.config_unit.execute_wrcfg(d, thread.id)
+      case 'WRCFG32': self.config_unit.execute_wrcfg(d, thread.id)
       case 'RDCFG':   self.config_unit.execute_rdcfg(d, thread.id)
       case 'SETC16':  self.config_unit.execute_setc16(d, thread.id)
       case 'RMWCIB0': self.config_unit.execute_rmwcib(d, byte_index=0)
       case 'RMWCIB1': self.config_unit.execute_rmwcib(d, byte_index=1)
+      case 'RMWCIB2': self.config_unit.execute_rmwcib(d, byte_index=2)
+      case 'RMWCIB3': self.config_unit.execute_rmwcib(d, byte_index=3)
       case 'CFGSHIFTMASK': self.config_unit.execute_cfgshiftmask(d, thread.id)
       case 'STREAMWRCFG':
         self.config_unit.execute_streamwrcfg(d, thread.id, self._read_stream_cfg)
@@ -158,6 +166,7 @@ class TensixCoprocessor:
       case 'BITWOPDMAREG': self.scalar.execute_bitwopdmareg(d, thread.id)
       case 'SHIFTDMAREG':  self.scalar.execute_shiftdmareg(d, thread.id)
       case 'CMPDMAREG':    self.scalar.execute_cmpdmareg(d, thread.id)
+      case 'STOREREG':     self._store_reg(thread.id, d)
       # FLUSHDMA: in synchronous emulation the pipeline conditions (C0-C3)
       # are always idle, so the wait is a no-op. Kept as a named dispatch so
       # decode_tensix resolves to 'FLUSHDMA' rather than UNKNOWN_0x46.
@@ -172,17 +181,35 @@ class TensixCoprocessor:
       case 'UNPACR':     self.unpack.handle_unpacr(d, thread.id, self)
       case 'UNPACR_NOP': self.unpack.handle_unpacr_nop(d)
       # ── T1 pipeline: FPU / SFPU / RWC ───────────────────────────────
-      case 'ZEROACC':     self.fpu.zeroacc(d)
+      case 'ZEROACC':
+        self.fpu.zeroacc(d)
+        if d.clear_mode in (0, 1):
+          self._apply_addr_mod(thread.id, d.addr_mode)
       case 'ZEROSRC':     self.fpu.zerosrc(d)
-      case 'MOVB2D':      self.fpu.movb2d(d, rwc)
+      case 'MOVA2D':
+        self.fpu.mova2d(d, rwc)
+        self._apply_addr_mod(thread.id, d.addr_mode)
+      case 'MOVB2D':
+        self.fpu.movb2d(d, rwc)
+        self._apply_addr_mod(thread.id, d.addr_mode)
       case 'TRNSPSRCB':   self.fpu.trnspsrcb(d)
       case 'SHIFTXA':     self.fpu.shiftxa(d)
       case 'SHIFTXB':     self.fpu.shiftxb(d)
-      case 'MVMUL':       self.fpu.mvmul(d, rwc)
-      case 'DOTPV':       self.fpu.dotpv(d, rwc)
-      case 'GAPOOL':      self.fpu.gapool(d, rwc)
-      case 'ELWADD':      self.fpu.elwadd(d, rwc)
-      case 'GMPOOL':      self.fpu.gmpool(d, rwc)
+      case 'MVMUL':
+        self.fpu.mvmul(d, rwc)
+        self._apply_addr_mod(thread.id, d.addr_mode)
+      case 'DOTPV':
+        self.fpu.dotpv(d, rwc)
+        self._apply_addr_mod(thread.id, d.addr_mode)
+      case 'GAPOOL':
+        self.fpu.gapool(d, rwc)
+        self._apply_addr_mod(thread.id, d.addr_mode)
+      case 'ELWADD':
+        self.fpu.elwadd(d, rwc)
+        self._apply_addr_mod(thread.id, d.addr_mode)
+      case 'GMPOOL':
+        self.fpu.gmpool(d, rwc)
+        self._apply_addr_mod(thread.id, d.pool_addr_mode & 3)
       case 'CLEARDVALID': self.fpu.cleardvalid(d)
       case 'MOVD2A':      self.fpu.movd2a(d, rwc)
       case 'MOVD2B':      self.fpu.movd2b(d, rwc)
@@ -191,9 +218,13 @@ class TensixCoprocessor:
         if clear_ab & 1: self.srca.release_from_fpu()
         if clear_ab & 2: self.srcb.release_from_fpu()
       case 'INCRWC':      rwc.execute_incrwc(d)
-      case 'SFPLOAD':     self.sfpu.sfpload(d, rwc)
+      case 'SFPLOAD':
+        self.sfpu.sfpload(d, rwc)
+        self._apply_addr_mod(thread.id, d.sfpu_addr_mode, update_fidelity=False)
       case 'SFPLOADI':    self.sfpu.sfploadi(d)
-      case 'SFPSTORE':    self.sfpu.sfpstore(d, rwc)
+      case 'SFPSTORE':
+        self.sfpu.sfpstore(d, rwc)
+        self._apply_addr_mod(thread.id, d.sfpu_addr_mode, update_fidelity=False)
       case 'SFPMULI':     self.sfpu.sfpmuli(d)
       case 'SFPADDI':     self.sfpu.sfpaddi(d)
       case 'SFPDIVP2':    self.sfpu.sfpdivp2(d)
@@ -261,6 +292,74 @@ class TensixCoprocessor:
       # Unknown opcodes: no-op (for functional emulation).
       case _: pass
 
+  def _operands_ready(self, d):
+    match d.name:
+      case 'MOVA2D' | 'MVMUL' | 'DOTPV' | 'GAPOOL' | 'ELWADD' | 'GMPOOL':
+        if self.srca.banks[self.srca.fpu_bank].allowed_client != "matrix_unit":
+          return False
+      case _:
+        pass
+    match d.name:
+      case 'MOVB2D' | 'MVMUL' | 'DOTPV' | 'ELWADD':
+        if self.srcb.banks[self.srcb.fpu_bank].allowed_client != "matrix_unit":
+          return False
+      case _:
+        pass
+    return True
+
+  def _apply_addr_mod(self, thread_id, addr_mode, update_fidelity=True):
+    # Per spec (emu/specs/rwc-and-addressing.md §3.3–3.4): each descriptor
+    # has CR-mode flags that make the increment target the _Cr checkpoint
+    # (which then becomes the live counter), or in the Dst case a C_TO_CR
+    # mode that adds to the live counter and then re-checkpoints.
+    rwc = self.rwc[thread_id]
+    idx = addr_mode & 0x7
+    cfg = self.config_unit.thread_cfg[thread_id]
+    ab = cfg[12 + idx] & 0xFFFF
+    dst = cfg[28 + idx] & 0xFFFF
+    bias = cfg[47 + idx] & 0xFFFF
+
+    srca_incr = ab & 0x3F
+    if ab & 0x80:                # SrcAClear
+      rwc.a = 0; rwc.a_cr = 0
+    elif ab & 0x40:              # SrcACR
+      rwc.a_cr = (rwc.a_cr + srca_incr) & 0x3F
+      rwc.a = rwc.a_cr
+    else:
+      rwc.a = (rwc.a + srca_incr) & 0x3F
+
+    srcb_incr = (ab >> 8) & 0x3F
+    if ab & 0x8000:              # SrcBClear
+      rwc.b = 0; rwc.b_cr = 0
+    elif ab & 0x4000:            # SrcBCR
+      rwc.b_cr = (rwc.b_cr + srcb_incr) & 0x3F
+      rwc.b = rwc.b_cr
+    else:
+      rwc.b = (rwc.b + srcb_incr) & 0x3F
+
+    dest_incr = dst & 0x3FF
+    if dest_incr & 0x200:
+      dest_incr -= 0x400
+    if dst & 0x0800:             # DestClear
+      rwc.d = 0; rwc.d_cr = 0
+    elif dst & 0x1000:           # DestCToCR: Dst += incr, then checkpoint
+      rwc.d = (rwc.d + dest_incr) & 0x3FF
+      rwc.d_cr = rwc.d
+    elif dst & 0x0400:           # DestCR: Dst_Cr += incr; Dst = Dst_Cr
+      rwc.d_cr = (rwc.d_cr + dest_incr) & 0x3FF
+      rwc.d = rwc.d_cr
+    else:
+      rwc.d = (rwc.d + dest_incr) & 0x3FF
+
+    if update_fidelity:
+      if dst & 0x8000:
+        rwc.cr = 0
+      else:
+        rwc.cr = (rwc.cr + ((dst >> 13) & 0x3)) & 0x7
+
+    if bias & 0x10:
+      pass
+
   def _hw_state(self):
     return HardwareState(self.semaphores, self.srca, self.srcb)
 
@@ -271,9 +370,15 @@ class TensixCoprocessor:
     addr = (stream_id * 4096) + ((stream_reg_addr & 0x3FF) * 4)
     return self.stream_regs.read32(addr)
 
+  def _store_reg(self, thread_id, d):
+    addr = 0xFFB00000 | ((d.RegAddr & 0x3FFFF) << 2)
+    value = self.gpr.read32(thread_id, d.TdmaDataRegIndex)
+    if self.stream_regs is not None and STREAM_BASE <= addr <= STREAM_END:
+      self.stream_regs.write32(addr - STREAM_BASE, value)
+
   def write_mop_cfg(self, thread_id, reg_index, value):
     if 0 <= reg_index < 9:
-      self.threads[thread_id].mop.cfg[reg_index] = value
+      self.threads[thread_id].mop.cfg[reg_index] = value & 0xFFFFFFFF
 
   def read_pcbuf(self, thread_id, offset):
     # Resolves immediately in functional emulation (synchronous dispatch).
@@ -304,7 +409,11 @@ class _InstrnHandler:
   def read32(self, addr): return 0
   def write8(self, addr, val):  pass
   def write16(self, addr, val): pass
-  def write32(self, addr, val): self.tensix.push_instruction(self._thread(addr), val)
+  def write32(self, addr, val):
+    if not self.tensix.push_instruction(self._thread(addr), val):
+      # FIFO full: propagate backpressure so the RV core can stall.
+      from ..core import FifoFull
+      raise FifoFull()
 
 
 class _MopCfgHandler:

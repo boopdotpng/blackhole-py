@@ -136,17 +136,23 @@ class FPU:
         self.dest.bits[dest_row][col] = _float_to_dest(val)
       self.dest.valid[dest_row] = True
 
-  def movb2d(self, d, rwc):
-    srcb_bank = self.srcb.banks[self.srcb.fpu_bank]
-    m = d.movb2d_instr_mod
+  def _movx2d(self, d, rwc, bank, instr_mod):
+    m = instr_mod
     nrows = 1 if m == 0 else (4 if m == 1 else 8)
+    src_base = d.src + (rwc.a if bank is self.srca.banks[self.srca.fpu_bank] else rwc.b)
     for row in range(nrows):
-      src_row = (d.src + row) % 64
-      dest_row = (d.dst + rwc.d * 16 + row) % self.dest.ROWS
+      src_row = (src_base + row) % 64
+      dest_row = (d.dst + rwc.d + row) % self.dest.ROWS
       for col in range(16):
-        val = _19bit_to_float(srcb_bank.rows[src_row][col])
+        val = _19bit_to_float(bank.rows[src_row][col])
         self.dest.bits[dest_row][col] = _float_to_dest(val)
         self.dest.valid[dest_row] = True
+
+  def mova2d(self, d, rwc):
+    self._movx2d(d, rwc, self.srca.banks[self.srca.fpu_bank], d.instr_mod)
+
+  def movb2d(self, d, rwc):
+    self._movx2d(d, rwc, self.srcb.banks[self.srcb.fpu_bank], d.movb2d_instr_mod)
 
   def _movd2x(self, d, rwc, bank):
     nrows = 1 if d.instr_mod == 0 else 4
@@ -265,10 +271,12 @@ class SFPU:
 
   def sfpload(self, d, rwc):
     if not self._is_writable(d.lreg_ind): return
-    base = (d.dest_reg_addr + rwc.d * 16) % self.dest.ROWS
+    addr = (d.dest_reg_addr + rwc.d) % self.dest.ROWS
+    base = addr & ~3
+    odd_col = (addr >> 1) & 1
     for lane in self._lanes():
-      row = (base + lane // 16) % self.dest.ROWS
-      col = lane % 16
+      row = (base + lane // 8) % self.dest.ROWS
+      col = ((lane & 7) * 2 + odd_col) & 0xF
       val = self.dest.bits[row][col] if self.dest.valid[row] else 0
       self.lregs[d.lreg_ind][lane] = val & M32
 
@@ -288,10 +296,12 @@ class SFPU:
       self.lregs[d.lreg_ind][lane] = val & M32
 
   def sfpstore(self, d, rwc):
-    base = (d.dest_reg_addr + rwc.d * 16) % self.dest.ROWS
+    addr = (d.dest_reg_addr + rwc.d) % self.dest.ROWS
+    base = addr & ~3
+    odd_col = (addr >> 1) & 1
     for lane in self._lanes():
-      row = (base + lane // 16) % self.dest.ROWS
-      col = lane % 16
+      row = (base + lane // 8) % self.dest.ROWS
+      col = ((lane & 7) * 2 + odd_col) & 0xF
       self.dest.bits[row][col] = self.lregs[d.lreg_ind][lane] & M32
       self.dest.valid[row] = True
 
@@ -307,7 +317,7 @@ class SFPU:
       c = _to_float(self.lregs[d.lreg_src_c][lane])
       if neg_b: b = -b
       if neg_c: c = -c
-      self.lregs[d.lreg_dest][lane] = _to_bits(a * b + c)
+      self.lregs[d.lreg_dest][lane] = _to_bits(a * b + c) & M32
 
   def sfpadd(self, d):
     if not self._is_writable(d.lreg_dest): return
@@ -318,7 +328,7 @@ class SFPU:
       c = _to_float(self.lregs[d.lreg_src_c][lane])
       if neg_b: b = -b
       if neg_c: c = -c
-      self.lregs[d.lreg_dest][lane] = _to_bits(b + c)
+      self.lregs[d.lreg_dest][lane] = _to_bits(b + c) & M32
 
   def sfpmul(self, d):
     if not self._is_writable(d.lreg_dest): return
@@ -327,7 +337,7 @@ class SFPU:
       a = _to_float(self.lregs[d.lreg_src_a][lane])
       b = _to_float(self.lregs[d.lreg_src_b][lane])
       if neg_b: b = -b
-      self.lregs[d.lreg_dest][lane] = _to_bits(a * b)
+      self.lregs[d.lreg_dest][lane] = _to_bits(a * b) & M32
 
   # ── FP32 immediate arithmetic ────────────────────────────────────────
 
@@ -336,14 +346,14 @@ class SFPU:
     imm = _to_float(_bf16_to_fp32(d.imm16_math))
     for lane in self._lanes():
       x = _to_float(self.lregs[d.lreg_dest][lane])
-      self.lregs[d.lreg_dest][lane] = _to_bits(x * imm)
+      self.lregs[d.lreg_dest][lane] = _to_bits(x * imm) & M32
 
   def sfpaddi(self, d):
     if not self._is_writable(d.lreg_dest): return
     imm = _to_float(_bf16_to_fp32(d.imm16_math))
     for lane in self._lanes():
       x = _to_float(self.lregs[d.lreg_dest][lane])
-      self.lregs[d.lreg_dest][lane] = _to_bits(x + imm)
+      self.lregs[d.lreg_dest][lane] = _to_bits(x + imm) & M32
 
   # ── FP utilities ─────────────────────────────────────────────────────
 
@@ -355,21 +365,21 @@ class SFPU:
         result = (exp - 127) & M32 if exp > 0 else 0
       else:
         result = exp
-      self.lregs[d.lreg_dest][lane] = result
+      self.lregs[d.lreg_dest][lane] = result & M32
 
   def sfpexman(self, d):
     if not self._is_writable(d.lreg_dest): return
     for lane in self._lanes():
       m = _mant(self.lregs[d.lreg_c][lane])
       if not (d.imm12_math & 2): m |= 0x800000  # add implicit 1
-      self.lregs[d.lreg_dest][lane] = m
+      self.lregs[d.lreg_dest][lane] = m & M32
 
   def sfpsetexp(self, d):
     if not self._is_writable(d.lreg_dest): return
     for lane in self._lanes():
       c = self.lregs[d.lreg_c][lane]
       new_exp = (d.imm12_math & 0xFF) if d.instr_mod1 & 1 else (self.lregs[d.lreg_dest][lane] & 0xFF)
-      self.lregs[d.lreg_dest][lane] = (_sign(c) << 31) | (new_exp << 23) | _mant(c)
+      self.lregs[d.lreg_dest][lane] = ((_sign(c) << 31) | (new_exp << 23) | _mant(c)) & M32
 
   def sfpdivp2(self, d):
     if not self._is_writable(d.lreg_dest): return
@@ -381,7 +391,7 @@ class SFPU:
         exp_add = d.imm12_math & 0xFF
         if d.imm12_math & 0x800: exp_add -= 256  # sign-extend
         new_exp = max(0, min(255, _exp(c) + exp_add))
-      self.lregs[d.lreg_dest][lane] = (_sign(c) << 31) | (new_exp << 23) | _mant(c)
+      self.lregs[d.lreg_dest][lane] = ((_sign(c) << 31) | (new_exp << 23) | _mant(c)) & M32
 
   def sfpabs(self, d):
     if not self._is_writable(d.lreg_dest): return
@@ -394,11 +404,11 @@ class SFPU:
       c = self.lregs[d.lreg_c][lane]
       match d.instr_mod1:
         case 0: self.lregs[d.lreg_dest][lane] = c & 0x7FFFFFFF
-        case 1: self.lregs[d.lreg_dest][lane] = c | 0x80000000
+        case 1: self.lregs[d.lreg_dest][lane] = (c | 0x80000000) & M32
         case 2:
           d_sign = self.lregs[d.lreg_dest][lane] & 0x80000000
-          self.lregs[d.lreg_dest][lane] = d_sign | (c & 0x7FFFFFFF)
-        case _: self.lregs[d.lreg_dest][lane] = c
+          self.lregs[d.lreg_dest][lane] = (d_sign | (c & 0x7FFFFFFF)) & M32
+        case _: self.lregs[d.lreg_dest][lane] = c & M32
 
   # ── Integer arithmetic ───────────────────────────────────────────────
 
@@ -430,12 +440,12 @@ class SFPU:
   def sfpand(self, d):
     if not self._is_writable(d.lreg_dest): return
     for lane in self._lanes():
-      self.lregs[d.lreg_dest][lane] &= self.lregs[d.lreg_c][lane]
+      self.lregs[d.lreg_dest][lane] = (self.lregs[d.lreg_dest][lane] & self.lregs[d.lreg_c][lane]) & M32
 
   def sfpor(self, d):
     if not self._is_writable(d.lreg_dest): return
     for lane in self._lanes():
-      self.lregs[d.lreg_dest][lane] |= self.lregs[d.lreg_c][lane]
+      self.lregs[d.lreg_dest][lane] = (self.lregs[d.lreg_dest][lane] | self.lregs[d.lreg_c][lane]) & M32
 
   def sfpnot(self, d):
     if not self._is_writable(d.lreg_dest): return
@@ -451,7 +461,7 @@ class SFPU:
     if not self._is_writable(d.lreg_dest): return
     for lane in self._lanes():
       val = self.lregs[d.lreg_c][lane]
-      self.lregs[d.lreg_dest][lane] = 32 if val == 0 else 31 - val.bit_length() + 1
+      self.lregs[d.lreg_dest][lane] = (32 if val == 0 else 31 - (val & M32).bit_length() + 1) & M32
 
   # ── Shifts ───────────────────────────────────────────────────────────
 
@@ -469,7 +479,7 @@ class SFPU:
           else:
             result = c >> shift
         case _: result = c
-      self.lregs[d.lreg_dest][lane] = result
+      self.lregs[d.lreg_dest][lane] = result & M32
 
   def sfpshft2(self, d):
     if not self._is_writable(d.lreg_dest): return
@@ -479,7 +489,7 @@ class SFPU:
       if d.instr_mod1 == 0:
         self.lregs[d.lreg_dest][lane] = (b << shift) & M32
       else:
-        self.lregs[d.lreg_dest][lane] = b >> shift
+        self.lregs[d.lreg_dest][lane] = (b & M32) >> shift
 
   # ── Comparison / predication ─────────────────────────────────────────
 
@@ -537,7 +547,7 @@ class SFPU:
     for lane in self._lanes():
       c = self.lregs[d.lreg_c][lane]
       if d.instr_mod1 == 1: c ^= 0x80000000  # flip sign
-      self.lregs[d.lreg_dest][lane] = c
+      self.lregs[d.lreg_dest][lane] = c & M32
 
   # ── Type conversion / rounding ───────────────────────────────────────
 
@@ -547,7 +557,7 @@ class SFPU:
       val = self.lregs[d.lreg_src_c][lane]
       if d.instr_mod1 == 0:
         val &= 0xFFFFE000
-      self.lregs[d.lreg_dest][lane] = val
+      self.lregs[d.lreg_dest][lane] = val & M32
 
   def sfpcast(self, d):
     if not self._is_writable(d.lreg_dest): return
@@ -557,7 +567,7 @@ class SFPU:
         sign = -1 if val & 0x80000000 else 1
         mag = val & 0x7FFFFFFF
         val = _to_bits(float(sign * mag))
-      self.lregs[d.lreg_dest][lane] = val
+      self.lregs[d.lreg_dest][lane] = val & M32
 
   # ── Configuration ────────────────────────────────────────────────────
 
@@ -565,7 +575,7 @@ class SFPU:
     if 11 <= d.config_dest <= 14:
       val = _bf16_to_fp32(d.imm16_math)
       for lane in range(self.NUM_LANES):
-        self.lregs[d.config_dest][lane] = val
+        self.lregs[d.config_dest][lane] = val & M32
 
   # ── Approximate reciprocal ──────────────────────────────────────────
 
@@ -575,11 +585,11 @@ class SFPU:
       c_bits = self.lregs[d.lreg_c][lane]
       c = _to_float(c_bits)
       if c == 0.0:
-        self.lregs[d.lreg_dest][lane] = POS_INF if not _is_neg(c_bits) else NEG_INF
+        self.lregs[d.lreg_dest][lane] = (POS_INF if not _is_neg(c_bits) else NEG_INF) & M32
       elif math.isinf(c):
         self.lregs[d.lreg_dest][lane] = 0x80000000 if _is_neg(c_bits) else 0
       else:
-        self.lregs[d.lreg_dest][lane] = _to_bits(1.0 / c)
+        self.lregs[d.lreg_dest][lane] = _to_bits(1.0 / c) & M32
 
   # ── LUT ──────────────────────────────────────────────────────────────
 
@@ -591,7 +601,7 @@ class SFPU:
       i = 0 if abs_x < 1.0 else (1 if abs_x < 2.0 else 2)
       slope = _to_float(self.lregs[i][lane])
       intercept = _to_float(self.lregs[4 + i][lane])
-      self.lregs[d.lreg_dest][lane] = _to_bits(slope * abs_x + intercept)
+      self.lregs[d.lreg_dest][lane] = _to_bits(slope * abs_x + intercept) & M32
 
   # ── Swap ─────────────────────────────────────────────────────────────
 
@@ -600,5 +610,5 @@ class SFPU:
     for lane in self._lanes():
       c = _to_float(self.lregs[d.lreg_c][lane])
       vd = _to_float(self.lregs[d.lreg_dest][lane])
-      self.lregs[d.lreg_dest][lane] = _to_bits(min(c, vd))
-      self.lregs[d.lreg_c][lane] = _to_bits(max(c, vd))
+      self.lregs[d.lreg_dest][lane] = _to_bits(min(c, vd)) & M32
+      self.lregs[d.lreg_c][lane] = _to_bits(max(c, vd)) & M32

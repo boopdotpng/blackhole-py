@@ -1,5 +1,6 @@
 import struct
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from .memory import (
   Memory, Router, L1_SIZE, MAILBOX_BASE, SUBORDINATE_SYNC,
@@ -25,11 +26,111 @@ from .memory import (
 from .core import BRISC, NCRISC, TRISC0, TRISC1, TRISC2
 from .noc import NOC, StreamRegisters, noc_key
 from .tensix import TensixCoprocessor, Semaphores, TDMA
+from .tensix.frontend import (
+  STALL_TDMA, STALL_SYNC, STALL_PACK, STALL_UNPACK, STALL_XMOV,
+  STALL_THCON, STALL_MATH, STALL_CFG, STALL_SFPU,
+  COND_THCON, COND_UNPACK0, COND_UNPACK1, COND_PACK0, COND_MATH,
+  COND_SRCA_CLR, COND_SRCB_CLR, COND_SRCA_VLD, COND_SRCB_VLD,
+  COND_XMOV, COND_TRISC_CFG, COND_SFPU, COND_CFGEXU,
+)
+from dsl import decode_rv, decode_tensix
 
 M32 = 0xFFFFFFFF
 L1_ALIGN = 16
 PCIE_NOC_XY = (19, 24)
 LOGICAL_TO_VIRTUAL_SCRATCH = BANK_TO_NOC_SCRATCH + 2048
+
+_DISASM_CACHE = None
+_DISASM_DIR = Path(__file__).resolve().parents[1] / "firmware" / "disasms"
+
+_STALL_BITS = (
+  (STALL_TDMA, "TDMA"), (STALL_SYNC, "SYNC"), (STALL_PACK, "PACK"),
+  (STALL_UNPACK, "UNPACK"), (STALL_XMOV, "XMOV"), (STALL_THCON, "THCON"),
+  (STALL_MATH, "MATH"), (STALL_CFG, "CFG"), (STALL_SFPU, "SFPU"),
+)
+_COND_BITS = (
+  (COND_THCON, "THCON"), (COND_UNPACK0, "UNPACK0"),
+  (COND_UNPACK1, "UNPACK1"), (COND_PACK0, "PACK0"),
+  (COND_MATH, "MATH"), (COND_SRCA_CLR, "SRCA_CLR"),
+  (COND_SRCB_CLR, "SRCB_CLR"), (COND_SRCA_VLD, "SRCA_VLD"),
+  (COND_SRCB_VLD, "SRCB_VLD"), (COND_XMOV, "XMOV"),
+  (COND_TRISC_CFG, "TRISC_CFG"), (COND_SFPU, "SFPU"),
+  (COND_CFGEXU, "CFGEXU"),
+)
+
+def _mask_names(mask: int, table) -> str:
+  names = [name for bit, name in table if mask & bit]
+  return "|".join(names) if names else "0"
+
+def _rv_desc(word: int) -> str:
+  if (word & 0x3) != 0x3:
+    return f"TT push {decode_tensix(((word >> 2) | (word << 30)) & M32)!r}"
+  d = decode_rv(word)
+  fields = []
+  for name in ("rd", "rs1", "rs2", "imm", "shamt", "csr"):
+    value = getattr(d, name)
+    if value:
+      if name in ("rd", "rs1", "rs2"):
+        fields.append(f"{name}=x{value}")
+      else:
+        fields.append(f"{name}=0x{value & M32:x}")
+  return "RV " + d.name + ((" " + " ".join(fields)) if fields else "")
+
+def _load_disasm_cache():
+  global _DISASM_CACHE
+  if _DISASM_CACHE is not None:
+    return _DISASM_CACHE
+  by_addr = {}
+  by_word = {}
+  if _DISASM_DIR.exists():
+    for path in _DISASM_DIR.glob("*.dis"):
+      for line in path.read_text(errors="replace").splitlines():
+        stripped = line.strip()
+        if ":" not in stripped:
+          continue
+        addr_s, _rest = stripped.split(":", 1)
+        try:
+          addr = int(addr_s, 16)
+        except ValueError:
+          continue
+        desc = f"{path.name}: {stripped}"
+        by_addr.setdefault(addr, []).append(desc)
+        parts = _rest.strip().split()
+        if parts:
+          try:
+            by_word.setdefault(int(parts[0], 16), []).append(desc)
+          except ValueError:
+            pass
+  _DISASM_CACHE = {"addr": by_addr, "word": by_word}
+  return _DISASM_CACHE
+
+def _prefer_disasm_hit(hits, core_name: str | None):
+  if core_name:
+    for hit in hits:
+      if hit.startswith(f"{core_name}.dis:"):
+        return hit
+    if core_name.startswith("trisc"):
+      for hit in hits:
+        if hit.startswith(f"{core_name}_") or f"_{core_name}." in hit:
+          return hit
+    for hit in hits:
+      if core_name in hit:
+        return hit
+  return hits[0]
+
+def _disasm_desc(pc: int, word: int, core_name: str | None = None) -> str:
+  cache = _load_disasm_cache()
+  hits = cache["addr"].get(pc & M32, [])
+  if hits:
+    hit = _prefer_disasm_hit(hits, core_name)
+    extra = "" if len(hits) == 1 else f" (+{len(hits) - 1} same-address matches)"
+    return f"{hit}{extra}"
+  hits = cache["word"].get(word & M32, [])
+  if hits:
+    hit = _prefer_disasm_hit(hits, core_name)
+    extra = "" if len(hits) == 1 else f" (+{len(hits) - 1} same-word matches)"
+    return f"relocated?/word-match: {hit}{extra}"
+  return "no checked-in disasm match"
 
 def _align_up(value: int, align: int) -> int:
   return (value + align - 1) & ~(align - 1)
@@ -351,10 +452,114 @@ class Device:
         tile.tensix.step()
       if done_check():
         return
+    diag = self._timeout_diagnostics(tiles)
     raise TimeoutError(
       f"emulated device did not complete within {max_steps} steps "
-      f"(clock={self._clock})"
+      f"(clock={self._clock})\n{diag}"
     )
+
+  def _timeout_diagnostics(self, tiles: list[Tile]) -> str:
+    lines = ["timeout diagnostics:"]
+    for tile in tiles:
+      l1 = tile.l1
+      sync = l1.read32(SUBORDINATE_SYNC)
+      sync_bytes = [(sync >> (8 * i)) & 0xFF for i in range(4)]
+      rd_ptr = l1.read32(LAUNCH_MSG_RD_PTR)
+      lm = LAUNCH_MSG_RING + (rd_ptr % 8) * 96
+      sem_offsets = [l1.read16(lm + 12 + j * 2) for j in range(3)]
+      local_cb_off = l1.read16(lm + 18)
+      remote_cb_off = l1.read16(lm + 20)
+      enables = l1.read32(lm + 76)
+      lines.append(
+        f"  tile ({tile.x},{tile.y}): "
+        f"go=0x{l1.read8(GO_MESSAGES + 3):02x} "
+        f"sync=0x{sync:08x} "
+        f"sync_bytes=[ncrisc=0x{sync_bytes[0]:02x}, "
+        f"trisc0=0x{sync_bytes[1]:02x}, trisc1=0x{sync_bytes[2]:02x}, "
+        f"trisc2=0x{sync_bytes[3]:02x}] "
+        f"rdptr={rd_ptr}"
+      )
+      lines.append(
+        f"    launch slot={rd_ptr % 8} @0x{lm:05x} "
+        f"sem_off={sem_offsets} local_cb_off=0x{local_cb_off:x} "
+        f"remote_cb_off=0x{remote_cb_off:x} enables=0x{enables:x}"
+      )
+      if sync:
+        names = ("ncrisc", "trisc0", "trisc1", "trisc2")
+        waiting = [
+          f"{names[i]}=0x{sync_bytes[i]:02x}"
+          for i in range(4) if sync_bytes[i] != 0
+        ]
+        lines.append(
+          "    likely wait: BRISC is waiting for subordinate_sync to clear; "
+          "still set: " + ", ".join(waiting)
+        )
+      for name in ("brisc", "ncrisc", "trisc0", "trisc1", "trisc2"):
+        core = getattr(tile, name)
+        word = core.mem.read32(core.pc)
+        lines.append(
+          f"    {name:<6} reset={int(core.in_reset)} "
+          f"pc=0x{core.pc:08x} word=0x{word:08x} "
+          f"ra=0x{core.regs[1]:08x} sp=0x{core.regs[2]:08x} "
+          f"{_rv_desc(word)}"
+        )
+        lines.append(f"      disasm: {_disasm_desc(core.pc, word, name)}")
+      sem = tile.semaphores
+      lines.append(
+        "    tensix semaphores: " +
+        " ".join(f"s{i}={sem.value[i]}/{sem.max[i]}" for i in range(8))
+      )
+      hw = tile.tensix._hw_state()
+      lines.append(
+        "    tensix banks: "
+        f"srca(unpack={hw.srca_unpack_bank_owner}, fpu={hw.srca_fpu_bank_owner}) "
+        f"srcb(unpack={hw.srcb_unpack_bank_owner}, fpu={hw.srcb_fpu_bank_owner})"
+      )
+      for thread in tile.tensix.threads:
+        wg = thread.wait_gate
+        fifo_len = len(thread.fifo)
+        replay_word = thread._replay_word
+        parts = [
+          f"fifo={fifo_len}",
+          f"mop_busy={int(thread.mop.busy)}",
+          f"replay_busy={int(thread.replay.busy)}",
+        ]
+        if replay_word is not None:
+          parts.append(f"replay_word=0x{replay_word:08x} {decode_tensix(replay_word)!r}")
+        if wg.opcode is None:
+          parts.append("wait=none")
+        elif wg.opcode == "STALLWAIT":
+          active = wg._eval_stallwait(hw, thread.id)
+          parts.append(
+            f"wait=STALLWAIT active={int(active)} "
+            f"block={_mask_names(wg.block_mask, _STALL_BITS)} "
+            f"cond={_mask_names(wg.cond_mask, _COND_BITS)} "
+            f"one_cycle={int(wg._one_cycle_hold)}"
+          )
+        elif wg.opcode == "SEMWAIT":
+          active = wg._eval_semwait(hw)
+          sem_names = [f"s{i}={sem.value[i]}/{sem.max[i]}"
+                       for i in range(8) if (wg.sem_mask >> i) & 1]
+          sem_desc = ",".join(sem_names) if sem_names else "none"
+          conds = []
+          if wg.sem_cond & 1: conds.append("STALL_ON_ZERO")
+          if wg.sem_cond & 2: conds.append("STALL_ON_MAX")
+          parts.append(
+            f"wait=SEMWAIT active={int(active)} "
+            f"block={_mask_names(wg.block_mask, _STALL_BITS)} "
+            f"cond={'+'.join(conds) if conds else '0'} sems={sem_desc} "
+            f"one_cycle={int(wg._one_cycle_hold)}"
+          )
+        else:
+          parts.append(
+            f"wait={wg.opcode} "
+            f"block={_mask_names(wg.block_mask, _STALL_BITS)} "
+            f"target=0x{getattr(wg, 'target_value', 0):x} "
+            f"stream_sel={getattr(wg, 'stream_sel', 0)} "
+            f"one_cycle={int(wg._one_cycle_hold)}"
+          )
+        lines.append(f"    tensix T{thread.id}: " + " ".join(parts))
+    return "\n".join(lines)
 
   def run(self, *,
       brisc: bytes = b'',

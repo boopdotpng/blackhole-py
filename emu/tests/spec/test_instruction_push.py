@@ -9,7 +9,8 @@ import pytest
 from emu.tensix import InstructionFIFO
 from emu.tensix import TensixCoprocessor
 from emu.memory import INSTRN_BUF_T0, INSTRN_BUF_T1, INSTRN_BUF_T2, MOP_CFG_BASE
-from dsl import TT_NOP, TT_MOP
+from emu.device import Device
+from dsl import TTINSN, TT_NOP, TT_MOP
 
 from .conftest import spec
 
@@ -154,6 +155,20 @@ def test_ttinsn_encoded_low_bits_never_11(tensix_word):
     """Valid Tensix opcodes < 0xC0000000 → encoded word low bits != 0b11."""
     encoded = ((tensix_word << 2) | (tensix_word >> 30)) & 0xFFFFFFFF
     assert (encoded & 3) != 3, f"encoded word 0x{encoded:08X} has low bits 0b11"
+
+
+@spec("IPUSH.TTINSN.ROT_LEFT_2")
+def test_core_executes_inline_ttinsn_by_rotating_right_2():
+    """A fetched .ttinsn word is rotated right by 2 and pushed to Tensix."""
+    dev = Device(tensix_x=(1,), tensix_y=(2,))
+    tile = next(iter(dev.tiles.values()))
+    encoded = int(TTINSN(int(TT_NOP())))
+    tile.trisc0.l1.write32(0, encoded)
+    tile.trisc0.in_reset = False
+
+    assert tile.trisc0.step()
+    assert tile.trisc0.pc == 4
+    assert tile.tensix.threads[0].fifo.pop() == int(TT_NOP())
 
 
 # ===========================================================================

@@ -1,8 +1,13 @@
-from .memory import Memory, Router, L1_BASE, L1_END, LDM_BASE
+from .memory import Memory, Router, L1_BASE, L1_END, LDM_BASE, INSTRN_BUF_T0
 from dsl import decode_rv
 
 M32 = 0xFFFFFFFF
 def _sext(v, b): return v - (1 << b) if v & (1 << (b-1)) else v
+
+
+class FifoFull(Exception):
+  """Backpressure from Tensix instruction FIFO. Caller should stall the RV
+  core this cycle (rewind PC) and retry next step."""
 
 class Core:
   ROLE = None          # 'brisc' | 'ncrisc' | 'trisc0' | 'trisc1' | 'trisc2'
@@ -34,6 +39,14 @@ class Core:
     word = self.mem.read32(self.pc)
     pc = self.pc
     self.pc = (pc + 4) & M32
+    if (word & 0x3) != 0x3:
+      tensix_word = ((word >> 2) | (word << 30)) & M32
+      try:
+        self.mem.write32(INSTRN_BUF_T0, tensix_word)
+      except FifoFull:
+        self.pc = pc  # stall: retry this cycle when the FIFO has room
+        return False
+      return True
     d = decode_rv(word)
     rd, rs1, imm, shamt = d.rd, d.rs1, d.imm, d.shamt
     v1, v2 = self.regs[d.rs1], self.regs[d.rs2]
@@ -123,7 +136,12 @@ class Core:
       # Stores
       case 'SB':     self.mem.write8((v1 + imm) & M32, v2)
       case 'SH':     self.mem.write16((v1 + imm) & M32, v2)
-      case 'SW':     self.mem.write32((v1 + imm) & M32, v2)
+      case 'SW':
+        try:
+          self.mem.write32((v1 + imm) & M32, v2)
+        except FifoFull:
+          self.pc = pc  # stall this cycle and retry when FIFO drains
+          return False
       # Branches
       case 'BEQ' | 'BNE' | 'BLT' | 'BGE' | 'BLTU' | 'BGEU':
         s1, s2 = _sext(v1, 32), _sext(v2, 32)

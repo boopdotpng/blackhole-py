@@ -35,8 +35,11 @@ class SrcRegFile:
     self.unpack_bank ^= 1
 
   def release_from_fpu(self):
+    if self.banks[self.fpu_bank].allowed_client != "matrix_unit":
+      return False
     self.banks[self.fpu_bank].allowed_client = "unpackers"
     self.fpu_bank ^= 1
+    return True
 
 
 class DestRegFile:
@@ -69,24 +72,63 @@ class DestRegFile:
 
 class RWCState:
   def __init__(self):
-    self.a = 0    # SrcA offset (4-bit)
-    self.b = 0    # SrcB offset (4-bit)
-    self.d = 0    # Dest offset (4-bit)
-    self.cr = 0   # CR / fidelity offset (3-bit)
+    self.a = 0       # SrcA row offset (6-bit)
+    self.b = 0       # SrcB row offset (6-bit)
+    self.d = 0       # Dest row offset (10-bit)
+    self.cr = 0      # FidelityPhase (2-bit in spec; stored 3-bit here)
+    self.a_cr = 0    # SrcA_Cr checkpoint
+    self.b_cr = 0    # SrcB_Cr checkpoint
+    self.d_cr = 0    # Dst_Cr   checkpoint
 
   def execute_setrwc(self, d):
-    bm = d.BitMask
-    if bm & 0x01: self.a = d.rwc_a
-    if bm & 0x02: self.b = d.rwc_b
-    if bm & 0x04: self.d = d.rwc_d
-    if bm & 0x08: self.cr = d.rwc_cr
+    # Per spec (emu/specs/rwc-and-addressing.md §2.3): BitMask selects which
+    # counters to update, and rwc_cr carries CR_A/CR_B/CR_D/C_TO_CR_MODE flags
+    # that turn the new value into an increment relative to the checkpoint
+    # (or current value for C_TO_CR_MODE on Dst). SET_* also updates the
+    # corresponding checkpoint (_Cr) to the resulting value.
+    bm  = d.BitMask
+    crm = d.rwc_cr  # CR_A=1, CR_B=2, CR_D=4, C_TO_CR_MODE=8
+    if bm & 0x01:
+      val = d.rwc_a & 0x3F
+      if crm & 0x01: val = (val + self.a_cr) & 0x3F
+      self.a = val
+      self.a_cr = val
+    if bm & 0x02:
+      val = d.rwc_b & 0x3F
+      if crm & 0x02: val = (val + self.b_cr) & 0x3F
+      self.b = val
+      self.b_cr = val
+    if bm & 0x04 or crm & 0x08:
+      val = d.rwc_d & 0x3FF
+      if crm & 0x08:   val = (val + self.d)    & 0x3FF  # C_TO_CR: base = current Dst
+      elif crm & 0x04: val = (val + self.d_cr) & 0x3FF  # CR_D:   base = checkpoint
+      self.d = val
+      self.d_cr = val
+    if bm & 0x08:
+      self.cr = 0  # SET_F clears FidelityPhase to 0
     return d.clear_ab_vld
 
   def execute_incrwc(self, d):
-    self.a  = (self.a  + d.rwc_a)  & 0xF
-    self.b  = (self.b  + d.rwc_b)  & 0xF
-    self.d  = (self.d  + d.rwc_d)  & 0xF
-    self.cr = (self.cr + d.rwc_cr) & 0x7
+    # Per spec §2.4: rwc_cr flags toggle "CR mode" per counter. In CR mode
+    # the checkpoint is incremented and the live counter is reset to match;
+    # otherwise the live counter is incremented and the checkpoint is left
+    # alone. FidelityPhase is not touched by INCRWC.
+    crm = d.rwc_cr
+    if crm & 0x01:
+      self.a_cr = (self.a_cr + d.rwc_a) & 0x3F
+      self.a    = self.a_cr
+    else:
+      self.a    = (self.a    + d.rwc_a) & 0x3F
+    if crm & 0x02:
+      self.b_cr = (self.b_cr + d.rwc_b) & 0x3F
+      self.b    = self.b_cr
+    else:
+      self.b    = (self.b    + d.rwc_b) & 0x3F
+    if crm & 0x04:
+      self.d_cr = (self.d_cr + d.rwc_d) & 0x3FF
+      self.d    = self.d_cr
+    else:
+      self.d    = (self.d    + d.rwc_d) & 0x3FF
 
 
 class AddrModDescriptor:
@@ -155,36 +197,36 @@ class ADCState:
 
   def execute_setadc(self, d):
     for unit in self._selected_units(d.CntSetMask):
-      unit.channels[d.ChannelIndex].dim(d.DimensionIndex).val = d.Value
+      unit.channels[d.ChannelIndex].dim(d.DimensionIndex).val = d.Value & M32
 
   def execute_setadcxy(self, d):
     bm = d.BitMask
     for unit in self._selected_units(d.CntSetMask):
-      if bm & 0x01: unit.channels[0].x.val = d.Ch0_X
-      if bm & 0x02: unit.channels[0].y.val = d.Ch0_Y
-      if bm & 0x04: unit.channels[1].x.val = d.Ch1_X
-      if bm & 0x08: unit.channels[1].y.val = d.Ch1_Y
+      if bm & 0x01: unit.channels[0].x.val = d.Ch0_X & M32
+      if bm & 0x02: unit.channels[0].y.val = d.Ch0_Y & M32
+      if bm & 0x04: unit.channels[1].x.val = d.Ch1_X & M32
+      if bm & 0x08: unit.channels[1].y.val = d.Ch1_Y & M32
 
   def execute_setadczw(self, d):
     bm = d.BitMask
     for unit in self._selected_units(d.CntSetMask):
-      if bm & 0x01: unit.channels[0].z.val = d.Ch0_Z
-      if bm & 0x02: unit.channels[0].w.val = d.Ch0_W
-      if bm & 0x04: unit.channels[1].z.val = d.Ch1_Z
-      if bm & 0x08: unit.channels[1].w.val = d.Ch1_W
+      if bm & 0x01: unit.channels[0].z.val = d.Ch0_Z & M32
+      if bm & 0x02: unit.channels[0].w.val = d.Ch0_W & M32
+      if bm & 0x04: unit.channels[1].z.val = d.Ch1_Z & M32
+      if bm & 0x08: unit.channels[1].w.val = d.Ch1_W & M32
 
   def execute_incadczw(self, d):
     for unit in self._selected_units(d.CntSetMask):
-      unit.channels[0].z.val += d.Ch0_Z
-      unit.channels[0].w.val += d.Ch0_W
-      unit.channels[1].z.val += d.Ch1_Z
-      unit.channels[1].w.val += d.Ch1_W
+      unit.channels[0].z.val = (unit.channels[0].z.val + d.Ch0_Z) & M32
+      unit.channels[0].w.val = (unit.channels[0].w.val + d.Ch0_W) & M32
+      unit.channels[1].z.val = (unit.channels[1].z.val + d.Ch1_Z) & M32
+      unit.channels[1].w.val = (unit.channels[1].w.val + d.Ch1_W) & M32
 
   def execute_setadcxx(self, d):
     for unit in self._selected_units(d.CntSetMask):
       for ch in unit.channels:
-        ch.x.val = d.x_start
-        ch.x.cr = d.x_end2  # store end value in carry register
+        ch.x.val = d.x_start & M32
+        ch.x.cr = d.x_end2 & M32  # store end value in carry register
 
 
 # =============================================================================
@@ -211,9 +253,9 @@ class GPRFile:
     reg = (reg_index_16b >> 1) & 63
     old = self.regs[thread_id][reg]
     if reg_index_16b & 1:
-      self.regs[thread_id][reg] = (old & 0x0000FFFF) | ((value & 0xFFFF) << 16)
+      self.regs[thread_id][reg] = ((old & 0x0000FFFF) | ((value & 0xFFFF) << 16)) & M32
     else:
-      self.regs[thread_id][reg] = (old & 0xFFFF0000) | (value & 0xFFFF)
+      self.regs[thread_id][reg] = ((old & 0xFFFF0000) | (value & 0xFFFF)) & M32
 
 
 # =============================================================================
