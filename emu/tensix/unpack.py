@@ -491,7 +491,7 @@ def _execute_unpacr(d, thread_id: int, coproc) -> None:
       which_ctx = ctx_number
     which_adc = ctx_adc
   else:
-    which_ctx = 0
+    which_ctx = coproc.config_unit.thread_cfg[thread_id][41] & 1
     which_adc = thread_id   # ADC set = current thread
 
   # IsUncompressed
@@ -517,11 +517,13 @@ def _execute_unpacr(d, thread_id: int, coproc) -> None:
   # ------------------------------------------------------------------
   # REG3 holds L1 base addresses for contexts 0 and 1
   ctx0_base, ctx1_base = _unpack_l1_base(cfg_unit, which_unp, cfg_state_id)
-  base_addr = ctx0_base   # use context 0 base
+  base_addr = ctx1_base if which_ctx == 1 else ctx0_base
 
   # REG7 offset address
   fmt_ovrd = _unpack_format_override(cfg_unit, which_unp, cfg_state_id)
-  offset_addr = fmt_ovrd['offset_address']
+  offset_addr = (
+    fmt_ovrd['offset_cntx1_address'] if which_ctx == 1
+    else fmt_ovrd['offset_address'])
 
   in_addr = base_addr + (offset_addr & 0xFFFF)
 

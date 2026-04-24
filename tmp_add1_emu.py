@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Scratch emulator-native dispatch harness.
 
-This intentionally avoids checked-in tt-metal firmware/kernel disasms.  The
-firmware below is tiny RV32 code built with dsl.py:
+This uses tiny scratch RV32 firmware built with dsl.py to launch the raw
+P100A add1 dataflow and compute kernels from firmware/disasms:
 
 * BRISC polls the emulator mailbox GO byte.
 * BRISC wakes NCRISC/TRISC0/TRISC1/TRISC2 through SUBORDINATE_SYNC.
@@ -10,12 +10,11 @@ firmware below is tiny RV32 code built with dsl.py:
 * Subordinates clear their sync byte when their kernel returns.
 * BRISC waits for all sync bytes to clear, then writes RUN_MSG_DONE.
 
-The first scratch kernels are no-ops.  This gives us a stable, version-free
-place to translate add1 objdump snippets into dsl.py instructions next.
+The tile count is controlled with TILES in the environment.
 """
 
-import argparse
 import json
+import os
 import struct
 import sys
 from dataclasses import dataclass
@@ -26,6 +25,7 @@ if str(ROOT) not in sys.path:
   sys.path.insert(0, str(ROOT))
 
 import dsl
+from dram import tilize
 from emu.device import Device, DRAM_BANK_PORT, RUN_MSG_DONE, RUN_MSG_GO, _make_jal
 from emu.memory import (
   BOOT_JAL,
@@ -38,27 +38,7 @@ from emu.memory import (
   NCRISC_FW_BASE,
   NCRISC_RESET_PC,
   NCRISC_RESET_PC_OVR,
-  NIU_AT_LEN_BE,
-  NIU_CMD_BUF_STRIDE,
-  NIU_CMD_CTRL,
-  NIU_CTRL,
-  NIU_MST_RD_RESP_RECEIVED,
-  NIU_MST_WR_ACK_RECEIVED,
-  NIU_RET_ADDR_HI,
-  NIU_RET_ADDR_LO,
-  NIU_RET_ADDR_MID,
-  NIU_TARG_ADDR_HI,
-  NIU_TARG_ADDR_LO,
-  NIU_TARG_ADDR_MID,
-  NOC0_BASE,
-  NOC1_BASE,
-  NOC_CTRL_RESP_MARKED,
-  NOC_CTRL_WR,
   SOFT_RESET_0,
-  STREAM_BASE,
-  STREAM_STRIDE,
-  STREAM_TILES_ACKED,
-  STREAM_TILES_RECEIVED,
   SUBORDINATE_SYNC,
   TRISC0_FW_BASE,
   TRISC0_RESET_PC,
@@ -73,6 +53,7 @@ from emu.memory import (
 
 SOFT_RESET_RELEASE_ALL = 0
 TILE_BYTES = 32 * 32 * 2
+RAW_DF_NOC_TILE_BYTES = 1088
 DRAM_WRITE_OFFSET = 0x40
 DRAM_ALIGNMENT = 64
 
@@ -89,30 +70,19 @@ RAW_TRISC_KERNEL_BASES = {
 }
 RAW_TRISC2_FW_BASE = 0x00009500
 FMT_BF16 = 5
+HARVESTED_DRAM_BANKS = [3]
+DEFAULT_TILES = 40
+MAX_RUN_STEPS = 100_000
+INPUT_PATTERN = "ordered"
 
-# ------------------------------------------------------------------------
-# --raw-dm scaffolding: scratch-harness ports of add1_reader_brisc and
-# add1_writer_ncrisc, written as dsl.py instruction lists.  These are kept
-# here, not in firmware/disasms, because we deliberately strip the real
-# kernel's InterleavedAddrGenFast/format-dispatch/LDM-cb_interface plumbing.
-#
-# L1 layout we own:
-#   0x00009600  BRISC reader kernel entry
-#   0x00009700  NCRISC writer kernel entry
-#   0x0000A000  per-tile NOC address table for the SRC DRAM buffer
-#   0x0000A800  per-tile NOC address table for the DST DRAM buffer
-# ------------------------------------------------------------------------
+# Relocated raw add1 dataflow kernels.  PT_LOAD segments stay in
+# firmware/disasms; the scratch harness only chooses their L1 load addresses.
 RAW_DM_BRISC_KERNEL_BASE  = 0x00009600
-RAW_DM_NCRISC_KERNEL_BASE = 0x00009700
-RAW_DM_SRC_TABLE_BASE     = 0x0000A000
-RAW_DM_DST_TABLE_BASE     = 0x0000A800
-NOC_TABLE_STRIDE = 8   # per tile: [targ_lo (DRAM byte offset), targ_hi (noc_xy)]
+RAW_DM_NCRISC_KERNEL_BASE = 0x00009C00
 CB0_NUM_PAGES  = 2
 CB16_NUM_PAGES = 2
 CB0_BASE_L1    = DATA_BUFFER_SPACE_BASE
 CB16_BASE_L1   = DATA_BUFFER_SPACE_BASE + TILE_BYTES * CB0_NUM_PAGES
-CB0_LIMIT_L1   = CB0_BASE_L1  + TILE_BYTES * CB0_NUM_PAGES
-CB16_LIMIT_L1  = CB16_BASE_L1 + TILE_BYTES * CB16_NUM_PAGES
 
 BRISC_RTA_BASE = KERNEL_CONFIG_BASE + 0x000
 NCRISC_RTA_BASE = KERNEL_CONFIG_BASE + 0x040
@@ -124,6 +94,16 @@ TRISC_STACK_TOP = LDM_BASE + 0x0FF0
 DM_STACK_TOP = LDM_BASE + 0x1FF0
 TRISC0_CB_INTERFACE = 0x20
 TRISC2_CB_INTERFACE = 0x20
+RAW_DF_BRISC_TEXT_VADDR = 0x5460
+RAW_DF_BRISC_KERNEL_MAIN = 0x5688
+RAW_DF_NCRISC_TEXT_VADDR = 0x6170
+RAW_DF_NCRISC_KERNEL_MAIN = 0x63CC
+RAW_DF_BRISC_CB_INTERFACE_LDM = 0x488
+RAW_DF_BRISC_DRAM_NOC_XY_LDM = 0x060
+RAW_DF_BRISC_DRAM_OFFSET_LDM = 0x25C
+RAW_DF_NCRISC_CB_INTERFACE_LDM = 0x46C
+RAW_DF_NCRISC_DRAM_NOC_XY_LDM = 0x044
+RAW_DF_NCRISC_DRAM_OFFSET_LDM = 0x240
 
 
 def align_up(value: int, align: int = DRAM_ALIGNMENT) -> int:
@@ -184,12 +164,6 @@ class ScratchDramAllocator:
       for tile_id in range(buf.num_tiles)
     )
 
-  def bank_addr(self, buf: ScratchDramBuffer, tile_id: int) -> tuple[int, int]:
-    bank = tile_id % self.dram.num_banks
-    slot = tile_id // self.dram.num_banks
-    return bank, buf.addr + slot * buf.page_size
-
-
 def pack_words(words: list[int]) -> bytes:
   return b"".join((word & 0xFFFFFFFF).to_bytes(4, "little") for word in words)
 
@@ -214,7 +188,7 @@ def write_cb_config(tile):
     tile.l1.write32(base + 12, page_size)
 
 
-def seed_src_tiles(num_tiles: int, pattern: str = "fractional") -> bytes:
+def seed_src_tensor(num_tiles: int, pattern: str = "fractional") -> bytes:
   words = []
   for i in range(num_tiles * 32 * 32):
     if pattern == "ordered":
@@ -235,6 +209,19 @@ def expected_add1(src: bytes) -> bytes:
   return bytes(out)
 
 
+def compare_tile_prefixes(got: bytes, exp: bytes, num_tiles: int,
+                          prefix_size: int) -> tuple[int, bytes, bytes] | None:
+  for tile_id in range(num_tiles):
+    base = tile_id * TILE_BYTES
+    for off in range(prefix_size):
+      idx = base + off
+      if got[idx] != exp[idx]:
+        start = max(base, idx - 16)
+        end = min(base + prefix_size, idx + 48)
+        return idx, got[start:end], exp[start:end]
+  return None
+
+
 def bf16_words(data: bytes, count: int = 16) -> list[int]:
   return [
     int.from_bytes(data[i:i + 2], "little")
@@ -250,10 +237,42 @@ def format_bf16_floats(data: bytes, count: int = 16) -> str:
   return " ".join(f"{f32_from_bf16(word):g}" for word in bf16_words(data, count))
 
 
+def print_success_banner(dev: Device, num_tiles: int, got: bytes):
+  width = 68
+  tile_bytes = num_tiles * TILE_BYTES
+  harvested_text = ",".join(str(bank) for bank in HARVESTED_DRAM_BANKS) or "none"
+  first_values = format_bf16_floats(got, 8)
+  last_values = format_bf16_floats(got[-16:], 8)
+
+  def border() -> str:
+    return "+" + "-" * width + "+"
+
+  def row(text: str = "") -> str:
+    return f"| {text:<{width - 2}} |"
+
+  lines = [
+    border(),
+    row("blackhole-py add1 raw-kernel emulation: pass"),
+    border(),
+    row("kernels : brisc + ncrisc + trisc0/1/2 raw disasms"),
+    row(f"noc     : dram roundtrip across {dev.dram.num_banks} active banks"),
+    row(f"harvest : dram bank(s) [{harvested_text}] excluded by bank table"),
+    row(f"tensors : {num_tiles} tiles, {tile_bytes} bytes checked"),
+    row("layout  : host tilize -> cb -> sfpu/fpu -> pack -> dram"),
+    row("verify  : full bf16 tile payload matched expected add1"),
+    border(),
+    row(f"bf16 first 8 : {first_values}"),
+    row(f"bf16 last  8 : {last_values}"),
+    border(),
+  ]
+  print("\n".join(lines), flush=True)
+
+
 def setup_add1_runtime(dev: Device, tile, num_tiles: int,
                        input_pattern: str = "fractional"):
   alloc = ScratchDramAllocator(dev)
-  src_data = seed_src_tiles(num_tiles, input_pattern)
+  src_rm = seed_src_tensor(num_tiles, input_pattern)
+  src_data = tilize(src_rm, 2, (num_tiles, 32, 32))
   src = alloc.alloc_write(src_data, name="src")
   dst = alloc.alloc(num_tiles, name="dst")
 
@@ -303,6 +322,13 @@ def verify_tile_runtime(tile, src: ScratchDramBuffer, dst: ScratchDramBuffer,
       if got != word:
         raise AssertionError(
           f"CB{idx} mismatch at 0x{base + i * 4:x}: expected 0x{word:x}, got 0x{got:x}")
+
+
+def dram_noc_xy(dev: Device, bank_idx: int, noc_id: int = 0) -> int:
+  active_banks = sorted(dev.bank_xy)
+  bank_id = active_banks[bank_idx]
+  x, y0 = dev.bank_xy[bank_id]
+  return ((y0 + DRAM_BANK_PORT[bank_id][noc_id]) << 6) | x
 
 
 def load_raw_kernel_segments(tile, role: str):
@@ -358,20 +384,11 @@ def patch_raw_compute_ldm(tile, num_tiles: int):
   cb_size = TILE_BYTES * 2
   write_trisc_cb_interface(
     tile.trisc0, 0, DATA_BUFFER_SPACE_BASE, cb_size, 2, TILE_BYTES,
-    tiles_received=num_tiles,
+    tiles_received=0,
   )
   write_trisc_cb_interface(
     tile.trisc2, 16, DATA_BUFFER_SPACE_BASE + cb_size, cb_size, 2, TILE_BYTES,
   )
-
-
-def seed_raw_compute_l1(tile, src_data: bytes, num_tiles: int):
-  pages = min(num_tiles, 2)
-  for i in range(pages):
-    start = i * TILE_BYTES
-    tile.l1.load(DATA_BUFFER_SPACE_BASE + start,
-                 src_data[start:start + TILE_BYTES])
-  tile.trisc0.mem.write32(cb_tiles_received_addr(0), num_tiles)
 
 
 def seed_raw_compute_tensix_config(tile):
@@ -396,16 +413,88 @@ def seed_raw_compute_tensix_config(tile):
   cfg[24] = 0
 
 
-def load_raw_compute_kernels(tile, num_tiles: int, src_data: bytes):
+def raw_kernel_main_base(role: str) -> int:
+  if role == "brisc":
+    return RAW_DM_BRISC_KERNEL_BASE + (
+      RAW_DF_BRISC_KERNEL_MAIN - RAW_DF_BRISC_TEXT_VADDR)
+  if role == "ncrisc":
+    return RAW_DM_NCRISC_KERNEL_BASE + (
+      RAW_DF_NCRISC_KERNEL_MAIN - RAW_DF_NCRISC_TEXT_VADDR)
+  raise ValueError(f"unsupported raw dataflow role {role!r}")
+
+
+def load_raw_dataflow_kernel_text(tile):
+  for role, stem, base in (
+      ("brisc", "add1_reader_brisc.kernel", RAW_DM_BRISC_KERNEL_BASE),
+      ("ncrisc", "add1_writer_ncrisc.kernel", RAW_DM_NCRISC_KERNEL_BASE),
+  ):
+    manifest = json.loads((DISASMS / f"{stem}.seg.json").read_text())
+    rx_segments = [seg for seg in manifest["segments"] if "X" in seg["perms"]]
+    if len(rx_segments) != 1:
+      raise AssertionError(f"{role}: expected one RX segment, got {rx_segments}")
+    seg = rx_segments[0]
+    data = (DISASMS / seg["bin"]).read_bytes()
+    memsz = int(seg["memsz"])
+    if len(data) < memsz:
+      data += b"\0" * (memsz - len(data))
+    tile.l1.load(base, data)
+
+
+def write_dm_cb_interface_to_ldm(core, base: int, cb: int, addr: int,
+                                 size: int, num_pages: int, page_size: int):
+  dst = base + cb * 32
+  # Dataflow kernels keep CB pointers in byte addresses.  This is distinct
+  # from the raw TRISC cb_interface scratch below, which uses 16-byte units.
+  fields = [
+    size,
+    addr + size,
+    page_size,
+    num_pages,
+    addr,
+    addr,
+    0,
+    0,
+  ]
+  for i, word in enumerate(fields):
+    core.ldm.write32(dst + i * 4, word)
+
+
+def seed_raw_dataflow_ldm(dev: Device, tile):
+  num_banks = dev.dram.num_banks
+  # BRISC reader globals from the disasm's LDM addresses.
+  tile.brisc.ldm.write32(0x10, BRISC_RTA_BASE)
+  write_dm_cb_interface_to_ldm(
+    tile.brisc, RAW_DF_BRISC_CB_INTERFACE_LDM, 0, CB0_BASE_L1,
+    TILE_BYTES * CB0_NUM_PAGES,
+    CB0_NUM_PAGES, TILE_BYTES)
+
+  # NCRISC writer globals from the disasm's LDM addresses.
+  tile.ncrisc.ldm.write32(0x34, NCRISC_RTA_BASE)
+  write_dm_cb_interface_to_ldm(
+    tile.ncrisc, RAW_DF_NCRISC_CB_INTERFACE_LDM, 16, CB16_BASE_L1,
+    TILE_BYTES * CB16_NUM_PAGES,
+    CB16_NUM_PAGES, TILE_BYTES)
+
+  for bank_idx in range(num_banks):
+    tile.brisc.ldm.write16(RAW_DF_BRISC_DRAM_NOC_XY_LDM + bank_idx * 2,
+                           dram_noc_xy(dev, bank_idx, noc_id=0))
+    tile.brisc.ldm.write32(RAW_DF_BRISC_DRAM_OFFSET_LDM + bank_idx * 4, 0)
+    tile.ncrisc.ldm.write16(
+      RAW_DF_NCRISC_DRAM_NOC_XY_LDM + (num_banks + bank_idx) * 2,
+      dram_noc_xy(dev, bank_idx, noc_id=1))
+    tile.ncrisc.ldm.write32(RAW_DF_NCRISC_DRAM_OFFSET_LDM + bank_idx * 4, 0)
+
+
+def load_raw_dataflow_kernels(dev: Device, tile):
+  load_raw_dataflow_kernel_text(tile)
+  seed_raw_dataflow_ldm(dev, tile)
+
+
+def load_raw_compute_kernels(tile, num_tiles: int):
   for role in ("trisc0", "trisc1", "trisc2"):
     load_raw_kernel_segments(tile, role)
   seed_raw_compute_tensix_config(tile)
   patch_raw_compute_ldm(tile, num_tiles)
-  seed_raw_compute_l1(tile, src_data, num_tiles)
-
-
-def read_l1(tile, addr: int, size: int) -> bytes:
-  return bytes(tile.l1.read8(addr + i) for i in range(size))
 
 
 def tensix_idle(tile) -> bool:
@@ -417,99 +506,6 @@ def tensix_idle(tile) -> bool:
     if thread._replay_word is not None:
       return False
   return True
-
-
-def _cfg_word(tile, state_id: int, addr32: int) -> str:
-  cfg = tile.tensix.config_unit.cfg
-  if 0 <= state_id < len(cfg) and 0 <= addr32 < len(cfg[state_id]):
-    return f"cfg{state_id}[{addr32}]=0x{cfg[state_id][addr32]:08x}"
-  return f"cfg{state_id}[{addr32}]=<oob>"
-
-
-def _t1_cfg_deps(tile, d, thread_id: int) -> str:
-  state_id = tile.tensix.config_unit.thread_cfg[thread_id][42] & 1
-  name = d.name
-  if name in {"WRCFG", "WRCFG32"}:
-    return f"writes {_cfg_word(tile, state_id, d.CfgReg & 0x1FF)} from gpr{d.GprAddress}"
-  if name == "RDCFG":
-    return f"reads {_cfg_word(tile, state_id, d.CfgReg & 0x1FF)} into gpr{d.GprAddress}"
-  if name == "SETC16":
-    return f"writes thread_cfg[{thread_id}][{d.setc16_reg}]=0x{d.setc16_value:04x}"
-  if name.startswith("RMWCIB"):
-    return f"updates {_cfg_word(tile, 0, d.CfgRegAddr)} mask=0x{d.Mask:02x} data=0x{d.Data:02x}"
-  if name == "CFGSHIFTMASK":
-    return f"updates {_cfg_word(tile, state_id, d.cfg_reg)}"
-  if name == "STREAMWAIT":
-    hi_addr = 57 if d.target_sel == 0 else 58
-    return f"reads thread_cfg[{thread_id}][{hi_addr}]=0x{tile.tensix.config_unit.thread_cfg[thread_id][hi_addr]:08x}"
-  if name == "MOP":
-    words = ", ".join(
-      f"{i}:0x{tile.tensix.threads[thread_id].mop.cfg[i]:08x}"
-      for i in range(len(tile.tensix.threads[thread_id].mop.cfg))
-      if tile.tensix.threads[thread_id].mop.cfg[i]
-    )
-    return f"reads mop_cfg[{thread_id}] {{{words or 'all zero'}}}"
-  if name in {
-      "MOVA2D", "MOVB2D", "MOVD2A", "MOVD2B", "SFPLOAD", "SFPSTORE",
-      "SFPLOADI", "SFPADD", "SFPMUL", "SFPMAD", "SFPMULI", "SFPADDI",
-      "SFPIADD", "SFPMOV", "SFPCAST", "SFPSHFT", "SFPSHFT2",
-      "SFPEXEXP", "SFPEXMAN", "SFPSETEXP", "SFPDIVP2", "SFPSETCC",
-      "SFPGT", "SFPABS", "SFPSETSGN", "SFPAND", "SFPOR", "SFPNOT",
-      "SFPXOR", "SFPLZ", "SFPPUSHC", "SFPPOPC", "SFPENCC",
-      "SFPCOMPC", "SFPTRANSP", "SFPNOP", "SFPCONFIG", "ZEROACC", "ZEROSRC", "SETRWC",
-      "INCRWC", "CLEARDVALID",
-  }:
-    return "cfg: none"
-  if name in {"STALLWAIT", "SEMWAIT", "SEMINIT", "SEMPOST", "SEMGET"}:
-    return "cfg: none"
-  return "cfg: unknown"
-
-
-def _t1_live_deps(tile, d, thread_id: int) -> str:
-  t = tile.tensix
-  rwc = t.rwc[thread_id]
-  if d.name in {"MOVA2D", "MOVB2D", "SFPLOAD", "SFPSTORE", "SETRWC", "INCRWC"}:
-    srca_owners = ",".join(bank.allowed_client for bank in t.srca.banks)
-    dest_valid0 = "".join("1" if t.dest.valid[i] else "0" for i in range(8))
-    return (
-      f"rwc=(a={rwc.a},b={rwc.b},d={rwc.d},cr={rwc.cr}) "
-      f"srca=(fpu={t.srca.fpu_bank},unp={t.srca.unpack_bank},owners={srca_owners}) "
-      f"dest_valid[0:8]={dest_valid0}"
-    )
-  if d.name == "STALLWAIT":
-    return f"stall_res=0x{d.stall_res:x} wait_res=0x{d.wait_res:x}"
-  if d.name == "SEMWAIT":
-    sems = ",".join(
-      f"{i}:{t.semaphores.value[i]}/{t.semaphores.max[i]}"
-      for i in range(8)
-      if d.sem_sel & (1 << i)
-    )
-    return f"stall_res=0x{d.stall_res:x} sem_sel=0x{d.sem_sel:x} sems={sems or 'none'}"
-  return ""
-
-
-def install_t1_push_trace(tile, limit: int | None, verbose: bool = False):
-  orig_push = tile.tensix.push_instruction
-  count = 0
-
-  def traced_push(thread_id, word):
-    nonlocal count
-    if thread_id == 1 and (limit is None or count < limit):
-      count += 1
-      d = dsl.decode_tensix(word)
-      if verbose:
-        cfg = _t1_cfg_deps(tile, d, thread_id)
-        live = _t1_live_deps(tile, d, thread_id)
-        suffix = f" | {live}" if live else ""
-        print(
-          f"T1_PUSH[{count:04d}] word=0x{word & 0xFFFFFFFF:08x} {d!r} | {cfg}{suffix}",
-          flush=True,
-        )
-      else:
-        print(f"T1_PUSH[{count:04d}] word=0x{word & 0xFFFFFFFF:08x} {d!r}", flush=True)
-    return orig_push(thread_id, word)
-
-  tile.tensix.push_instruction = traced_push
 
 
 class Asm:
@@ -546,6 +542,10 @@ class Asm:
     pc = self.pc()
     self.items.append(lambda labels: dsl.BGEU(rs1, rs2, labels[label] - pc))
 
+  def bltu_label(self, rs1, rs2, label: str):
+    pc = self.pc()
+    self.items.append(lambda labels: dsl.BLTU(rs1, rs2, labels[label] - pc))
+
   def j_label(self, label: str):
     pc = self.pc()
     self.items.append(lambda labels: dsl.J(labels[label] - pc))
@@ -560,8 +560,9 @@ class Asm:
     return dsl.pack(resolved)
 
 
-def build_brisc_fw() -> bytes:
+def build_brisc_fw(kernel_base: int = BRISC_KERNEL_BASE) -> bytes:
   a = Asm(BRISC_FW_BASE)
+  a.li32(dsl.sp, DM_STACK_TOP)
   a.label("loop")
   a.li32(dsl.t0, GO_MESSAGES + 3)
   a.label("wait_go")
@@ -572,8 +573,9 @@ def build_brisc_fw() -> bytes:
   a.li32(dsl.t0, SUBORDINATE_SYNC)
   a.li32(dsl.t1, 0x80808080)
   a.emit(dsl.SW(dsl.t0, dsl.t1, 0))
-  a.call_abs(BRISC_KERNEL_BASE)
+  a.call_abs(kernel_base)
 
+  a.li32(dsl.t0, SUBORDINATE_SYNC)
   a.label("wait_subordinates")
   a.emit(dsl.LW(dsl.t1, dsl.t0, 0))
   a.bnez_label(dsl.t1, "wait_subordinates")
@@ -594,6 +596,7 @@ def build_subordinate_fw(base: int, sync_offset: int, kernel_base: int,
   a.emit(dsl.LBU(dsl.t1, dsl.s0, 0))
   a.bne_label(dsl.t1, dsl.t2, "wait_go")
   a.call_abs(kernel_base)
+  a.li32(dsl.s0, SUBORDINATE_SYNC + sync_offset)
   a.emit(dsl.SB(dsl.s0, dsl.zero, 0))
   a.j_label("wait_go")
   return a.bytes()
@@ -621,7 +624,7 @@ def scratch_boot(dev: Device, kernel_bases: dict[str, int] | None = None,
   mmio = tile.mmio
 
   l1.load(BOOT_JAL, _make_jal(BRISC_FW_BASE))
-  l1.load(BRISC_FW_BASE, build_brisc_fw())
+  l1.load(BRISC_FW_BASE, build_brisc_fw(brisc_kernel))
   l1.load(NCRISC_FW_BASE, build_subordinate_fw(
     NCRISC_FW_BASE, 0, ncrisc_kernel, DM_STACK_TOP))
   l1.load(TRISC0_FW_BASE, build_subordinate_fw(
@@ -655,83 +658,32 @@ def scratch_boot(dev: Device, kernel_bases: dict[str, int] | None = None,
 
 
 def main():
-  ap = argparse.ArgumentParser()
-  ap.add_argument("--tiles", type=int, default=1)
-  ap.add_argument("--max-run-steps", type=int, default=20_000)
-  ap.add_argument(
-    "--raw-compute",
-    action="store_true",
-    help="call add1 TRISC compute kernels copied from the checked-in objdump",
-  )
-  ap.add_argument(
-    "--input-pattern",
-    choices=("fractional", "ordered"),
-    default="ordered",
-    help="source tile pattern; ordered (0,1,2,...) makes unpack/pack "
-         "ordering mismatches obvious — expected output is just i+1",
-  )
-  ap.add_argument(
-    "--trace-t1-pushes",
-    action="store_true",
-    help="print Tensix operations pushed to TRISC1's T1 FIFO",
-  )
-  ap.add_argument(
-    "--trace-t1-limit",
-    type=int,
-    default=80,
-    help="maximum T1 FIFO pushes to print; use 0 for unlimited",
-  )
-  ap.add_argument(
-    "--trace-t1-verbose",
-    action="store_true",
-    help="include config/register dependency state in --trace-t1-pushes output",
-  )
-  args = ap.parse_args()
+  num_tiles = int(os.environ.get("TILES", str(DEFAULT_TILES)))
+  dev = Device(harvested_banks=HARVESTED_DRAM_BANKS,
+               tensix_x=(1,), tensix_y=(2,))
 
-  dev = Device(tensix_x=(1,), tensix_y=(2,))
-  kernel_bases = RAW_TRISC_KERNEL_BASES if args.raw_compute else None
-  fw_bases = {"trisc2": RAW_TRISC2_FW_BASE} if args.raw_compute else None
+  kernel_bases = {
+    "brisc": raw_kernel_main_base("brisc"),
+    "ncrisc": raw_kernel_main_base("ncrisc"),
+    **RAW_TRISC_KERNEL_BASES,
+  }
+  fw_bases = {"trisc2": RAW_TRISC2_FW_BASE}
   tile = scratch_boot(dev, kernel_bases=kernel_bases, fw_bases=fw_bases)
   alloc, src, dst, src_data, exp_data = setup_add1_runtime(
-    dev, tile, args.tiles, args.input_pattern)
+    dev, tile, num_tiles, INPUT_PATTERN)
   verify_runtime_setup(alloc, src, src_data)
-  verify_tile_runtime(tile, src, dst, args.tiles)
-  if args.raw_compute:
-    load_raw_compute_kernels(tile, args.tiles, src_data)
-  if args.trace_t1_pushes:
-    install_t1_push_trace(
-      tile,
-      None if args.trace_t1_limit == 0 else args.trace_t1_limit,
-      verbose=args.trace_t1_verbose,
-    )
+  verify_tile_runtime(tile, src, dst, num_tiles)
+  load_raw_dataflow_kernels(dev, tile)
+  load_raw_compute_kernels(tile, num_tiles)
 
-  print("scratch firmware booted", flush=True)
-  print(
-    "runtime: "
-    f"src=0x{src.addr:x} dst=0x{dst.addr:x} tiles={args.tiles} "
-    f"banks={dev.dram.num_banks} "
-    f"rta=[brisc=0x{BRISC_RTA_BASE:x}, ncrisc=0x{NCRISC_RTA_BASE:x}, "
-    f"trisc=0x{TRISC_RTA_BASE:x}] cb=0x{CB_CONFIG_BASE:x}",
-    flush=True,
-  )
-  if args.raw_compute:
-    print(
-      "raw compute: "
-      f"trisc0=0x{RAW_TRISC_KERNEL_BASES['trisc0']:x} "
-      f"trisc1=0x{RAW_TRISC_KERNEL_BASES['trisc1']:x} "
-      f"trisc2=0x{RAW_TRISC_KERNEL_BASES['trisc2']:x}",
-      flush=True,
-    )
   tile.l1.write8(GO_MESSAGES + 3, RUN_MSG_GO)
-  print(f"running scratch dispatch (max {args.max_run_steps} steps)...",
-        flush=True)
   try:
     dev._step_loop([tile],
                    lambda: (
                      tile.l1.read8(GO_MESSAGES + 3) == RUN_MSG_DONE
                      and tensix_idle(tile)
                    ),
-                   args.max_run_steps)
+                   MAX_RUN_STEPS)
   except TimeoutError as e:
     print(f"RUN TIMEOUT: {e}", file=sys.stderr, flush=True)
     return 1
@@ -748,26 +700,23 @@ def main():
     print("FAIL: expected output size mismatch", file=sys.stderr)
     return 1
 
-  if args.raw_compute:
-    cb16_addr = DATA_BUFFER_SPACE_BASE + TILE_BYTES * 2
-    got = read_l1(tile, cb16_addr, min(TILE_BYTES, len(exp_data)))
-    exp = exp_data[:len(got)]
-    if got != exp:
-      print(
-        "RAW COMPUTE OUTPUT MISMATCH: "
-        f"cb16 first32={got[:32].hex()} expected first32={exp[:32].hex()}",
-        file=sys.stderr,
-        flush=True,
-      )
-      print(f"  got bf16:      {format_bf16_words(got)}", file=sys.stderr)
-      print(f"  expected bf16: {format_bf16_words(exp)}", file=sys.stderr)
-      print(f"  got float:     {format_bf16_floats(got)}", file=sys.stderr)
-      print(f"  expected float:{format_bf16_floats(exp)}", file=sys.stderr)
-      return 1
-    print("PASS raw compute", flush=True)
-    return 0
-
-  print("PASS scratch dispatch", flush=True)
+  got = alloc.read(dst)
+  exp = exp_data
+  mismatch = compare_tile_prefixes(got, exp, num_tiles, TILE_BYTES)
+  if mismatch is not None:
+    idx, got_window, exp_window = mismatch
+    print(
+      "RAW OUTPUT DRAM MISMATCH: "
+      f"byte={idx} got={got_window.hex()} expected={exp_window.hex()}",
+      file=sys.stderr,
+      flush=True,
+    )
+    print(f"  got bf16:      {format_bf16_words(got)}", file=sys.stderr)
+    print(f"  expected bf16: {format_bf16_words(exp)}", file=sys.stderr)
+    print(f"  got float:     {format_bf16_floats(got)}", file=sys.stderr)
+    print(f"  expected float:{format_bf16_floats(exp)}", file=sys.stderr)
+    return 1
+  print_success_banner(dev, num_tiles, got)
   return 0
 
 

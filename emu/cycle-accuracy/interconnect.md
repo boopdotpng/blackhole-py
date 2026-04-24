@@ -135,7 +135,7 @@ Atomic / non-posted: 1 request flit → execution → 1 response flit back (only
 
 ### Topology
 
-Source: `blackhole-py/emu/specs/dram.md:99` + `tt-metal/tt_metal/third_party/umd/.../blackhole_implementation.hpp:83-85`:
+Source: `tt-metal/tt_metal/third_party/umd/.../blackhole_implementation.hpp:83-85`:
 > "Blackhole P100A has 7 active DRAM banks (1 of 8 physical banks harvested). Each
 > bank is fronted by 3 DRAM tiles — three independent NoC ingress points (ports) that
 > all map to the same DDR controller."
@@ -315,8 +315,7 @@ Wait-Gate polls a stream reg every cycle (`SyncUnit.md:3-15`).
 ### Circular buffers (CBs)
 
 CBs are **not dedicated hardware** — they are implemented via stream-register
-read/write. From `blackhole-py/emu/specs/stream-registers.md:31-34`:
-
+read/write. 
 - `cb_push_back(cb, n)` → atomic add `n` to `tiles_received` (reg 10)
 - `cb_wait_front(cb, n)` → poll `tiles_received` until `received - acked >= n`
 - `cb_pop_front(cb, n)` → atomic add `n` to `tiles_acked` (reg 8)

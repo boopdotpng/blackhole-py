@@ -1,7 +1,7 @@
 """Pure-function format-conversion library for the Tensix packer/unpacker.
 
 All functions are stateless and take/return plain Python ints or floats.
-No emulator state, no I/O.  Fully unit-testable against numpy/struct references.
+No emulator state, no I/O.
 
 BFP block formats use the convention:
     pack_bfpN(floats)  -> (shared_exp: int, mantissas: list[int])
@@ -9,11 +9,6 @@ BFP block formats use the convention:
 
 where N ∈ {2, 4, 8} and the 'a' variants (BFP2a, BFP4a, BFP8a) use a 5-bit
 shared exponent (format A) rather than the 8-bit shared exponent of format B.
-
-Sources:
-  emu/specs/data-types-and-conversions.md
-  emu/specs/pack-data-path.md   §6 (late format conversion / BFP)
-  emu/specs/unpack-data-path.md §3 (format conversion details)
 """
 
 import math

@@ -81,11 +81,10 @@ class RWCState:
     self.d_cr = 0    # Dst_Cr   checkpoint
 
   def execute_setrwc(self, d):
-    # Per spec (emu/specs/rwc-and-addressing.md §2.3): BitMask selects which
-    # counters to update, and rwc_cr carries CR_A/CR_B/CR_D/C_TO_CR_MODE flags
-    # that turn the new value into an increment relative to the checkpoint
-    # (or current value for C_TO_CR_MODE on Dst). SET_* also updates the
-    # corresponding checkpoint (_Cr) to the resulting value.
+    # BitMask selects which counters to update, and rwc_cr carries
+    # CR_A/CR_B/CR_D/C_TO_CR_MODE flags that turn the new value into an
+    # increment relative to the checkpoint (or current value for C_TO_CR_MODE
+    # on Dst). SET_* also updates the corresponding checkpoint (_Cr).
     bm  = d.BitMask
     crm = d.rwc_cr  # CR_A=1, CR_B=2, CR_D=4, C_TO_CR_MODE=8
     if bm & 0x01:

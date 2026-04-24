@@ -36,6 +36,10 @@ from . import formats as _fmt
 
 M32 = 0xFFFFFFFF
 from . import cfg_layout as _cfg_layout
+from ..memory import (
+  CB_CONFIG_BYTES, CB_L1_CONFIG_BASE, NUM_CBS,
+  STREAM_BASE, STREAM_STRIDE, STREAM_TILES_RECEIVED,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -151,6 +155,7 @@ class Packer:
     self._cfg = cfg
     self._adc = adc           # list[ADCState]; packer thread is index 2
     self._l1  = l1
+    self.stream_regs = None
     # Per-packer output state
     self._packer_state = [_PackerOutputState() for _ in range(4)]
 
@@ -374,12 +379,28 @@ class Packer:
     # would pack 32 bits, one per all-zero face.
     if force_stream_end and (flush or last):
       out_state.packed_fifo.append((out_state.tile_bytes, 0))
+      self._publish_cb_tile(out_state)
       out_state.tile_bytes = 0
       out_state.data_stream.needs_new_address = True
       out_state.exp_stream.needs_new_address  = True
       out_state.rsi_stream.needs_new_address  = True
       out_state.data_buf = []
       out_state.exp_buf  = []
+
+  def _publish_cb_tile(self, out_state):
+    """Publish one completed pack tile to the matching CB stream counter."""
+    if self.stream_regs is None or self._l1 is None:
+      return
+    addr = out_state.data_stream.byte_address
+    for cb_base in (CB_L1_CONFIG_BASE, CB_L1_CONFIG_BASE + 0x100):
+      for cb in range(NUM_CBS):
+        base = cb_base + cb * CB_CONFIG_BYTES
+        cb_addr = self._l1.read32(base + 0)
+        cb_size = self._l1.read32(base + 4)
+        if cb_size and cb_addr <= addr < cb_addr + cb_size:
+          off = cb * STREAM_STRIDE + STREAM_TILES_RECEIVED
+          self.stream_regs.write32(off, (self.stream_regs.read32(off) + 1) & M32)
+          return
 
   # -------------------------------------------------------------------------
   # Stage 2: Early format conversion
@@ -440,11 +461,11 @@ class Packer:
   def _apply_edge_mask(self, val_f, tpg, packer_idx, col, edge_mode):
     """Apply edge mask based on TPG position and per-column mask bits.
 
-    NOTE: The packer test convention (from the branch spec tests) uses:
+    NOTE: The current packer convention uses:
       ADDR32 20-23 = PCK_EDGE_OFFSET_SEC[0..3]   (16-bit column enable mask)
       ADDR32 24-27 = TILE_ROW_SET_MAPPING[0..3]
     This is the OPPOSITE of what cfg_layout.py documents.  We use raw cfgr_at
-    reads here to match the test expectations, rather than the cfg_layout helpers
+    reads here to match that convention, rather than the cfg_layout helpers
     which have these two ranges swapped.
     # TODO(spec-ambiguity): clarify ADDR32 20-23 vs 24-27 layout in hw register doc.
     """

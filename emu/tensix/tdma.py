@@ -3,8 +3,6 @@
 # Mover DMA engine: any RISC-V core writes staging registers and a command
 # word here instead of issuing an XMOV Tensix instruction.
 #
-# Implements the command processor from emu/specs/xmov-and-tdma-mover.md §3:
-#
 #   0x00 XMOV_SRC_ADDR       CmdParams[0]  (source, 16B units)
 #   0x04 XMOV_DST_ADDR       CmdParams[1]  (destination, 16B units)
 #   0x08 XMOV_SIZE           CmdParams[2]  (size, 16B units)

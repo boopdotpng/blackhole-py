@@ -12,7 +12,7 @@ All cycle counts are in AICLK cycles (1.35 GHz) unless noted.
 ### L1 read bandwidth — three speeds
 
 Source: `WormholeB0/TensixTile/TensixCoprocessor/UNPACR_Regular.md:574-598`
-(mirrored in `blackhole-py/emu/specs/unpack-data-path.md:1313-1337`):
+(mirrored ):
 
 > "Each unpacker can be fetching from L1 at one of three possible speeds:
 > x1 speed: Up to 16 bytes per cycle from L1.
@@ -164,7 +164,7 @@ Same rule as FPU reads (see compute-units.md § Dst hazard):
 
 ### Bytes per datum from Dst
 
-From `In_data_format` bits [1:0] in `blackhole-py/emu/specs/pack-data-path.md § 3.2`:
+From `In_data_format` bits [1:0] :
 
 | Format | B/datum from Dst |
 |---|---|
@@ -240,7 +240,7 @@ Primary: `WormholeB0/TensixTile/Mover.md` and the per-instruction `.md` files in
 
 ### XMOV / Mover measured throughput
 
-`Mover.md:62-64` (verbatim in `specs/xmov-and-tdma-mover.md § 6`):
+`Mover.md:62-64`:
 > "Eight 128b reads and eight 128b writes every 11 cycles i.e. 93.1 bits copied per
 > cycle (memcpy, ideal).
 > One 128b read and one 128b write every four cycles i.e. 32 bits copied per cycle
@@ -280,7 +280,7 @@ registers reused for packer config (`TDMA-RISC.md:28-29`). The emulator
 > cycles otherwise."
 
 Same 3/4-cycle rule for SHIFTDMAREG / BITWOPDMAREG / CMPDMAREG
-(`specs/additional-scalar-unit-instructions.md:53`).
+.
 
 ### LOADIND / STOREIND / LOADREG / STOREREG
 

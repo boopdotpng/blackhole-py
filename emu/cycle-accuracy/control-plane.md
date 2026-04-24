@@ -32,13 +32,13 @@ clear), FPU / SFPU / Packer / Unpacker all return in-cycle.
 Comments that name cycle counts but don't enforce them (selected):
 
 - `math.py:308` — `# FP32 FMA arithmetic (MAD sub-unit, 2-cycle)`
-- `specs/mutexes.md:213` — "For a cycle-accurate emulator, `exec_atgetm` should be
+- "For a cycle-accurate emulator, `exec_atgetm` should be
   called each cycle while the thread's instruction pointer is parked."
-- `specs/additional-scalar-unit-instructions.md:53, 100` — "3 cycles / 4 cycles" for
+- "3 cycles / 4 cycles" for
   ADDDMAREG / MULDMAREG.
-- `specs/specialty-fpu-operations.md:81, 146, 288` — IPC/latency for GAPOOL, DOTPV,
+- IPC/latency for GAPOOL, DOTPV,
   SHIFTXB hazard.
-- `specs/config-sync-instructions.md:88-89, 158, 276` — WRCFG = 2 cyc, RDCFG ≥3,
+- WRCFG = 2 cyc, RDCFG ≥3,
   STREAMWRCFG ≥5.
 
 ### Hook points for inserting cycle models
@@ -186,14 +186,14 @@ Source: `PushTensixInstruction.md:15`:
 > via `.ttinsn` fusion. Once the FIFO contains more than 28 instructions, it needs to
 > drop back down to 28 instructions before it'll accept any more."
 
-Backpressure: hardware stalls the RV core transparently
-(`clauses/instruction-push.md § IPUSH.FIFO.FULL_REJECTS_PUSH`).
+Backpressure: hardware stalls the RV core transparently.
+
 
 Push rate: up to **4 pushes/cycle** via `.ttinsn` fusion; dequeue rate: **1/cycle/thread**.
 
 ### MOP expander
 
-Source: `specs/mop-and-replay-expanders.md` (MOP Performance table):
+MOP performance table:
 
 | Mode | Ingest | Emit |
 |---|---|---|
@@ -205,8 +205,8 @@ Max expansion: Template 0 up to 32,639 instructions; Template 1 OuterCount≤127
 255 via HW bug), InnerCount≤127 (or 254 with LoopOp1).
 
 Hardware bug to replicate: when `OuterCount==1 AND IsNop(StartOp) AND InnerCount==0 AND
-NOT IsNop(EndOp0)`, OuterCount += 128 → 129
-(`clauses/mop-and-replay-expanders.md § MOP.T1.HW_BUG_OUTER_COUNT`).
+NOT IsNop(EndOp0)`, OuterCount += 128 -> 129.
+
 
 ### Replay expander
 
@@ -248,7 +248,7 @@ Already modeled in `frontend.py:291-293` via `_one_cycle_hold`.
 | Sync (SEMINIT/POST/GET, STALLWAIT, SEMWAIT, STREAMWAIT, RV sem write) | 1/cycle shared | `SyncUnit.md:7-8` |
 | Config (SETC16 — ThreadConfig group) | 3/cycle (1/thread) | `ConfigurationUnit.md` |
 | Config (WRCFG/RDCFG/RMWCIB/CFGSHIFTMASK/STREAMWRCFG — Config group) | 1/cycle shared | `ConfigurationUnit.md:19` |
-| Matrix Unit (FPU) | 1/cycle regardless of thread | `specs/tensix-coprocessor-pipeline.md` |
+| Matrix Unit (FPU) | 1/cycle regardless of thread | hardware behavior |
 | Vector Unit (SFPU) | 1/cycle | `VectorUnit.md` |
 | Unpackers, Packers, Mover/TDMA, ThCon | not numerically specified | — |
 

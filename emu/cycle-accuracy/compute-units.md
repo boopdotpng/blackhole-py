@@ -53,16 +53,16 @@ blocks.**
 > Unit (FPU) instruction, then hardware will automatically stall the thread for one
 > cycle."
 
-**MOVD2B** (`specs/dest-srca-srcb-registers.md:570`): "After MOVD2B, the next 3 cycles
+**MOVD2B**: "After MOVD2B, the next 3 cycles
 only accept another MOVD2B."
 
-**MOVB2D** (`specs/dest-srca-srcb-registers.md:615`): "After MOVB2D, avoid reading the
+**MOVB2D**: "After MOVB2D, avoid reading the
 written Dest region for 3 cycles."
 
-**MOVB2A** (`specs/dest-srca-srcb-registers.md:632`): "After MOVB2A, the next cycle
+**MOVB2A**: "After MOVB2A, the next cycle
 only accepts MOVD2A or MOVB2A."
 
-**SHIFTXB** (`specs/specialty-fpu-operations.md § SHIFTXB`):
+**SHIFTXB**:
 > "After SHIFTXB, the Matrix Unit cannot accept any instruction on the next cycle.
 > Hardware automatically inserts a 1-cycle stall."
 
@@ -82,8 +82,7 @@ Effectively 1 cycle; no documented latency from issue to FPU seeing the bank fli
 ### Fidelity phases (format-dependent cost)
 
 IPC is always 1 regardless of format; format only changes the **number of fidelity
-phases** required. From `specs/fpu-operations.md § Fidelity Phases`:
-
+phases** required. 
 | Format | Phases for full precision |
 |---|---|
 | BF16 (7-bit mantissa) | LoFi=1, HiFi2=2, HiFi3=3, HiFi4=4 |
@@ -180,8 +179,8 @@ variants, all `SFPCAST` variants, `SFPLOADI`, `SFPLOAD`, `SFPSTORE`, `SFPAND`, `
 > (FPU) instruction which writes (or accumulates) to Dst and an SFPLOAD instruction
 > which wants to read that same region of Dst."
 
-Same 3-instruction rule applies to SFPLOADMACRO
-(`clauses/sfploadmacro-and-sfptransp.md § SFPLM.SCHEDULING_CONSTRAINT_3_INSN`).
+Same 3-instruction rule applies to SFPLOADMACRO.
+
 
 ### GCC scheduler classification (cross-check)
 
@@ -206,8 +205,7 @@ Consistent with the ISA table: "dynamic" = 2-cycle latency (1 NOP if dependent);
 
 Sub-units: **Load, Simple, MAD, Round, Store**. When SFPLOADMACRO fires, all four of
 Simple/MAD/Round/Store can retire in parallel with the Load. Auto-stalling is
-disabled during a macro sequence
-(`clauses/sfploadmacro-and-sfptransp.md § SFPLM.SCHEDULED_NO_AUTOSTALL`):
+disabled during a macro sequence; 
 > "None of the SFPU auto-stalling applies to instructions executed as part of an
 > SFPLOADMACRO sequence; programmer must ensure correct ordering via delays."
 

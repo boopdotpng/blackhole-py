@@ -347,6 +347,7 @@ class Device:
     stream_regs = StreamRegisters()          # 0xFFB40000..0xFFB7FFFF — CB tiles_acked/received, sync ptr, dispatch msg
     tensix = TensixCoprocessor(l1=l1)        # Mover reads/writes l1 directly
     tensix.stream_regs = stream_regs
+    tensix.packer.stream_regs = stream_regs
     tdma = TDMA(mover=tensix.mover,          # 0xFFB11000 — XMOV MMIO front-end
                 packer=tensix.packer)        # + FIFO_PACKED_TILE_* sideband
 
@@ -362,7 +363,7 @@ class Device:
     # same StreamRegisters the local RISCs poll on.
     tile_bus = Router()
     tile_bus.register(L1_BASE, L1_END, l1)
-    tile_bus.register(STREAM_BASE, STREAM_END, stream_regs)
+    tile_bus.register(STREAM_BASE, STREAM_END, stream_regs, offset=STREAM_BASE)
     key = noc_key(x, y)
     self.networks[0][key] = tile_bus
     self.networks[1][key] = tile_bus
@@ -380,7 +381,7 @@ class Device:
       bus.default = mmio                     # unmapped addrs → tile catch-all
       bus.register(NOC0_BASE,       NOC0_BASE + NOC_SIZE - 1, noc0)
       bus.register(NOC1_BASE,       NOC1_BASE + NOC_SIZE - 1, noc1)
-      bus.register(STREAM_BASE,     STREAM_END, stream_regs)
+      bus.register(STREAM_BASE,     STREAM_END, stream_regs, offset=STREAM_BASE)
       bus.register(TENSIX_CFG_BASE, TENSIX_CFG_END, tensix.cfg, offset=TENSIX_CFG_BASE)
       bus.register(TDMA_BASE,       TDMA_END, tdma, offset=TDMA_BASE)
       bus.register(_SEM_WIN_LO,     _SEM_WIN_HI, tensix.semaphores)

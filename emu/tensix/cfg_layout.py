@@ -1,12 +1,10 @@
 """Typed dataclass getters that decode bit fields from the Tensix ConfigUnit cfg array.
 
 All getters read live cfg state — no caching.  Callers re-read as needed.
-Every offset is cross-checked against emu/clauses/pack-unpack-registers.md;
+Offsets are derived from the source spec and hardware register map;
 discrepancies are noted with # TODO: spec ambiguity comments.
 
 Sources:
-  emu/specs/pack-unpack-registers.md  (authoritative)
-  emu/clauses/pack-unpack-registers.md (cross-check)
   tt-metal/…/blackhole/cfg_defines.h  (hardware register map)
 
 ADDR32 layout (state-relative):
@@ -335,7 +333,7 @@ class DestTargetRegCfgPack:
     Selects which portion of Dest to read from (double-buffering support).
 
     # TODO: spec ambiguity — field breakdown within ADDR32 180-183 not fully specified
-    # in clauses file.  Treating the full 32-bit word as raw; downstream agent should
+    # in the source spec. Treating the full 32-bit word as raw; downstream agent should
     # decode Offset and ZOffset fields when the ISA doc field layout is confirmed.
     """
     raw_word: int

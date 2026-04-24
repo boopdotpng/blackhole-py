@@ -51,6 +51,7 @@ class FPU:
     self.srca = srca
     self.srcb = srcb
     self.dest = dest
+    self.dest_offset_rows = 0
 
   def zeroacc(self, d):
     if d.clear_mode == 0:   self.dest.clear_valid(d.where)
@@ -89,7 +90,7 @@ class FPU:
           a = _19bit_to_float(srca_bank.rows[srca_row][col])
           b = _19bit_to_float(srcb_bank.rows[srcb_row][k])
           acc += a * b
-        dest_row = (dst_base + row) % self.dest.ROWS
+        dest_row = (self.dest_offset_rows + dst_base + row) % self.dest.ROWS
         if self.dest.valid[dest_row]:
           acc += _dest_to_float(self.dest.bits[dest_row][col])
         self.dest.bits[dest_row][col] = _float_to_dest(acc)
@@ -114,7 +115,7 @@ class FPU:
         a = _19bit_to_float(srca_bank.rows[srca_row][col])
         b = _19bit_to_float(srcb_bank.rows[srcb_row][col])
         result = a + b
-        dest_row = (dst_base + row) % self.dest.ROWS
+        dest_row = (self.dest_offset_rows + dst_base + row) % self.dest.ROWS
         if d.dest_accum_en and self.dest.valid[dest_row]:
           result += _dest_to_float(self.dest.bits[dest_row][col])
         self.dest.bits[dest_row][col] = _float_to_dest(result)
@@ -126,7 +127,7 @@ class FPU:
     srca_base = rwc.a * 16
     for row in range(16):
       srca_row = (srca_base + row) % 64
-      dest_row = (dst_base + row) % self.dest.ROWS
+      dest_row = (self.dest_offset_rows + dst_base + row) % self.dest.ROWS
       was_valid = self.dest.valid[dest_row]
       for col in range(16):
         val = _19bit_to_float(srca_bank.rows[srca_row][col])
@@ -142,7 +143,7 @@ class FPU:
     src_base = d.src + (rwc.a if bank is self.srca.banks[self.srca.fpu_bank] else rwc.b)
     for row in range(nrows):
       src_row = (src_base + row) % 64
-      dest_row = (d.dst + rwc.d + row) % self.dest.ROWS
+      dest_row = (self.dest_offset_rows + d.dst + rwc.d + row) % self.dest.ROWS
       for col in range(16):
         val = _19bit_to_float(bank.rows[src_row][col])
         self.dest.bits[dest_row][col] = _float_to_dest(val)
@@ -157,7 +158,7 @@ class FPU:
   def _movd2x(self, d, rwc, bank):
     nrows = 1 if d.instr_mod == 0 else 4
     for row in range(nrows):
-      dest_row = (d.dst + rwc.d * 16 + row) % self.dest.ROWS
+      dest_row = (self.dest_offset_rows + d.dst + rwc.d * 16 + row) % self.dest.ROWS
       dst_row = (d.src + row) % 64
       for col in range(16):
         val = _dest_to_float(self.dest.bits[dest_row][col]) if self.dest.valid[dest_row] else 0.0
@@ -244,6 +245,7 @@ class SFPU:
 
   def __init__(self, dest):
     self.dest = dest
+    self.dest_offset_rows = 0
     # LReg file: 17 registers x 32 lanes x 32 bits
     self.lregs = [[0] * self.NUM_LANES for _ in range(self.NUM_LREGS)]
     self.lane_flags = [False] * self.NUM_LANES  # per-lane condition flags
@@ -271,7 +273,7 @@ class SFPU:
 
   def sfpload(self, d, rwc):
     if not self._is_writable(d.lreg_ind): return
-    addr = (d.dest_reg_addr + rwc.d) % self.dest.ROWS
+    addr = (self.dest_offset_rows + d.dest_reg_addr + rwc.d) % self.dest.ROWS
     base = addr & ~3
     odd_col = (addr >> 1) & 1
     for lane in self._lanes():
@@ -296,7 +298,7 @@ class SFPU:
       self.lregs[d.lreg_ind][lane] = val & M32
 
   def sfpstore(self, d, rwc):
-    addr = (d.dest_reg_addr + rwc.d) % self.dest.ROWS
+    addr = (self.dest_offset_rows + d.dest_reg_addr + rwc.d) % self.dest.ROWS
     base = addr & ~3
     odd_col = (addr >> 1) & 1
     for lane in self._lanes():

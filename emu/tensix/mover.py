@@ -1,8 +1,7 @@
 # =============================================================================
 # Mover — the Tensix DMA engine shared by the XMOV instruction (issued from
 # the Tensix thread pipeline) and the TDMA-RISC register block (MMIO-driven
-# from any RISC-V core). Implements the four-direction functional model from
-# emu/specs/xmov-and-tdma-mover.md §2:
+# from any RISC-V core). Implements the four-direction functional model:
 #
 #   dir=0 (L0→L1): memset(0) into L1
 #   dir=1 (L1→L0): memcpy from L1 to CFG space (or NCRISC IRAM — discarded

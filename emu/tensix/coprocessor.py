@@ -47,12 +47,56 @@ class _PCBufFIFO:
     return not self._q
 
 
+class _CfgMMIO:
+  """Byte-addressed Tensix config MMIO view backed by ConfigUnit ADDR32 words."""
+
+  MIRRORED_ADDR32 = frozenset((76, 77, 124, 125))
+
+  def __init__(self, config_unit):
+    self.config_unit = config_unit
+    self.mem = Memory()
+
+  def _cfg_word(self, addr):
+    addr32 = (addr & ~3) >> 2
+    if addr32 < self.config_unit.CFG_WORDS:
+      return self.config_unit.cfg[0][addr32]
+    return self.mem.read32(addr & ~3)
+
+  def _write_word(self, addr, value):
+    addr32 = (addr & ~3) >> 2
+    self.mem.write32(addr & ~3, value)
+    if addr32 in self.MIRRORED_ADDR32:
+      self.config_unit._write_cfg_word(0, addr32, value)
+
+  def read8(self, addr):
+    return (self._cfg_word(addr) >> (8 * (addr & 3))) & 0xFF
+
+  def read16(self, addr):
+    return (self._cfg_word(addr) >> (8 * (addr & 2))) & 0xFFFF
+
+  def read32(self, addr):
+    return self._cfg_word(addr)
+
+  def write8(self, addr, val):
+    shift = 8 * (addr & 3)
+    word = (self._cfg_word(addr) & ~(0xFF << shift)) | ((val & 0xFF) << shift)
+    self._write_word(addr, word)
+
+  def write16(self, addr, val):
+    shift = 8 * (addr & 2)
+    word = (self._cfg_word(addr) & ~(0xFFFF << shift)) | (
+      (val & 0xFFFF) << shift)
+    self._write_word(addr, word)
+
+  def write32(self, addr, val):
+    self._write_word(addr, val)
+
+
 class TensixCoprocessor:
   def __init__(self, l1: Memory = None):
     # Shared backend state. The 8 hardware semaphores live inside the
-    # coprocessor (per emu-specs/semaphores.md); TRISC RISC-V cores reach
-    # them through the PCBuf semaphore window, which the device wires to
-    # this object.
+    # coprocessor; TRISC RISC-V cores reach them through the PCBuf semaphore
+    # window, which the device wires to this object.
     self.semaphores = Semaphores()
     self.gpr = GPRFile()
     self.srca = SrcRegFile("SrcA")
@@ -82,15 +126,11 @@ class TensixCoprocessor:
     # Per-thread frontend pipelines
     self.threads = [TensixThread(i) for i in range(3)]
     # Tensix backend config register file (0xFFEF0000..0xFFEFFFFF).
-    self.cfg = Memory()
+    self.cfg = _CfgMMIO(self.config_unit)
     self.stream_regs = None
     # Mover / XMOV — DMA engine shared with the TDMA-RISC register block.
     # Operates on raw byte-addressed Memory: l1 is the tile L1 (shared with
-    # the packer/unpacker path), cfg is the ADDR8-relative config Memory
-    # (device.py mounts it at TENSIX_CFG_BASE so bus writes resolve to the
-    # same relative offsets the Mover writes).  config_unit.cfg (the WRCFG
-    # ADDR32 view) is a separate bank array, consulted by XMOV to read its
-    # transfer parameters.
+    # the packer/unpacker path), cfg is the ADDR8-relative config MMIO view.
     self.mover = Mover(l1=self.l1, cfg=self.cfg)
     self.pcbuf_fifo = [_PCBufFIFO() for _ in range(3)]
 
@@ -128,6 +168,9 @@ class TensixCoprocessor:
     d = decode_tensix(word)
     rwc = self.rwc[thread.id]
     adc = self.adc[thread.id]
+    dest_offset_rows = self.config_unit.thread_cfg[thread.id][1] & 0x3FF
+    self.fpu.dest_offset_rows = dest_offset_rows
+    self.sfpu.dest_offset_rows = dest_offset_rows
     if not self._operands_ready(d):
       thread.replay_instruction(word)
       return
@@ -294,6 +337,19 @@ class TensixCoprocessor:
 
   def _operands_ready(self, d):
     match d.name:
+      case 'UNPACR':
+        if d.SetDatValid:
+          src = self.srca if d.Unpack_block_selection == 0 else self.srcb
+          if src.banks[src.unpack_bank].allowed_client != "unpackers":
+            return False
+      case 'UNPACR_NOP':
+        if d.Set_Dvalid & 1:
+          src = self.srca if d.Unpacker_Select == 0 else self.srcb
+          if src.banks[src.unpack_bank].allowed_client != "unpackers":
+            return False
+      case _:
+        pass
+    match d.name:
       case 'MOVA2D' | 'MVMUL' | 'DOTPV' | 'GAPOOL' | 'ELWADD' | 'GMPOOL':
         if self.srca.banks[self.srca.fpu_bank].allowed_client != "matrix_unit":
           return False
@@ -308,10 +364,9 @@ class TensixCoprocessor:
     return True
 
   def _apply_addr_mod(self, thread_id, addr_mode, update_fidelity=True):
-    # Per spec (emu/specs/rwc-and-addressing.md §3.3–3.4): each descriptor
-    # has CR-mode flags that make the increment target the _Cr checkpoint
-    # (which then becomes the live counter), or in the Dst case a C_TO_CR
-    # mode that adds to the live counter and then re-checkpoints.
+    # Each descriptor has CR-mode flags that make the increment target the _Cr
+    # checkpoint, which then becomes the live counter. In the Dst case,
+    # C_TO_CR mode adds to the live counter and then re-checkpoints.
     rwc = self.rwc[thread_id]
     idx = addr_mode & 0x7
     cfg = self.config_unit.thread_cfg[thread_id]
