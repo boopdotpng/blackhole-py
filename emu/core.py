@@ -1,8 +1,11 @@
+from functools import cache
+
 from .memory import Memory, Router, L1_BASE, L1_END, LDM_BASE, INSTRN_BUF_T0
 from dsl import decode_rv
 
 M32 = 0xFFFFFFFF
 def _sext(v, b): return v - (1 << b) if v & (1 << (b-1)) else v
+_decode_rv_cached = cache(decode_rv)
 
 
 class FifoFull(Exception):
@@ -47,7 +50,7 @@ class Core:
         self.pc = pc  # stall: retry this cycle when the FIFO has room
         return False
       return True
-    d = decode_rv(word)
+    d = _decode_rv_cached(word)
     rd, rs1, imm, shamt = d.rd, d.rs1, d.imm, d.shamt
     v1, v2 = self.regs[d.rs1], self.regs[d.rs2]
     match d.name:

@@ -6,6 +6,8 @@
 # enforces the WaitGate, and routes decoded instructions to the right unit.
 # =============================================================================
 
+from functools import cache
+
 from ..memory import Memory, INSTRN_BUF_T0, MOP_CFG_BASE, STREAM_BASE, STREAM_END
 from dsl import decode_tensix
 
@@ -23,6 +25,7 @@ from .mover import Mover
 
 
 _TRISC_THREAD = {'trisc0': 0, 'trisc1': 1, 'trisc2': 2}
+_decode_tensix_cached = cache(decode_tensix)
 
 
 class _PCBufFIFO:
@@ -179,7 +182,7 @@ class TensixCoprocessor:
     self._dispatch(thread, insn)
 
   def _dispatch(self, thread, word):
-    d = decode_tensix(word)
+    d = _decode_tensix_cached(word)
     rwc = self.rwc[thread.id]
     adc = self.adc[thread.id]
     dest_offset_rows = self.config_unit.thread_cfg[thread.id][1] & 0x3FF

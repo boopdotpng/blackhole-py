@@ -277,13 +277,23 @@ class Memory:
     self._data: dict[int, int] = {}
   def read8(self, addr):          return self._data.get(addr, 0)
   def write8(self, addr, val):    self._data[addr] = val & 0xFF
-  def read16(self, addr):         return self.read8(addr) | (self.read8(addr + 1) << 8)
-  def write16(self, addr, val):   self.write8(addr, val & 0xFF); self.write8(addr + 1, (val >> 8) & 0xFF)
+  def read16(self, addr):
+    data = self._data
+    return data.get(addr, 0) | (data.get(addr + 1, 0) << 8)
+  def write16(self, addr, val):
+    data = self._data
+    data[addr] = val & 0xFF
+    data[addr + 1] = (val >> 8) & 0xFF
   def read32(self, addr):
-    return (self.read8(addr) | (self.read8(addr+1) << 8)
-        | (self.read8(addr+2) << 16) | (self.read8(addr+3) << 24))
+    data = self._data
+    return (data.get(addr, 0) | (data.get(addr + 1, 0) << 8)
+        | (data.get(addr + 2, 0) << 16) | (data.get(addr + 3, 0) << 24))
   def write32(self, addr, val):
-    for i in range(4): self.write8(addr + i, (val >> (8*i)) & 0xFF)
+    data = self._data
+    data[addr] = val & 0xFF
+    data[addr + 1] = (val >> 8) & 0xFF
+    data[addr + 2] = (val >> 16) & 0xFF
+    data[addr + 3] = (val >> 24) & 0xFF
   def load(self, addr, data):
     for i, b in enumerate(data): self._data[addr + i] = b
 

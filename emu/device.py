@@ -211,7 +211,8 @@ class Dram:
     slot = tile_idx // self.num_banks
     addr = base_addr + slot * tile_bytes
     mem = self.banks[bank]
-    return bytes(mem.read8(addr + i) for i in range(tile_bytes))
+    data = mem._data
+    return bytes(data.get(addr + i, 0) for i in range(tile_bytes))
 
   def write_interleaved(self, base_addr: int, tile_idx: int,
              tile_bytes: int, data: bytes):
@@ -219,8 +220,7 @@ class Dram:
     slot = tile_idx // self.num_banks
     addr = base_addr + slot * tile_bytes
     mem = self.banks[bank]
-    for i, b in enumerate(data):
-      mem.write8(addr + i, b)
+    mem.load(addr, data)
 
 @dataclass
 class Tile:
