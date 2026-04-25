@@ -53,7 +53,6 @@ from emu.memory import (
 
 SOFT_RESET_RELEASE_ALL = 0
 TILE_BYTES = 32 * 32 * 2
-RAW_DF_NOC_TILE_BYTES = 1088
 DRAM_WRITE_OFFSET = 0x40
 DRAM_ALIGNMENT = 64
 
@@ -64,7 +63,7 @@ RAW_TRISC_KERNEL_BASES = {
 }
 RAW_TRISC2_FW_BASE = 0x00009500
 HARVESTED_DRAM_BANKS = [3]
-DEFAULT_TILES = 40
+DEFAULT_TILES = 480
 MAX_RUN_STEPS = 100_000
 INPUT_PATTERN = "ordered"
 
@@ -230,7 +229,9 @@ def format_bf16_floats(data: bytes, count: int = 16) -> str:
   return " ".join(f"{f32_from_bf16(word):g}" for word in bf16_words(data, count))
 
 
-def print_success_banner(dev: Device, num_tiles: int, src: bytes, got: bytes):
+def print_success_banner(dev: Device, num_tiles: int, worker_count: int,
+                         steps: int,
+                         src: bytes, got: bytes):
   width = 68
   tile_bytes = num_tiles * TILE_BYTES
   harvested_text = ",".join(str(bank) for bank in HARVESTED_DRAM_BANKS) or "none"
@@ -248,9 +249,11 @@ def print_success_banner(dev: Device, num_tiles: int, src: bytes, got: bytes):
     row("blackhole-py add1 raw-kernel emulation: pass"),
     border(),
     row("kernels : brisc + ncrisc + trisc0/1/2 raw disasms"),
+    row(f"workers : {worker_count} tensix cores"),
     row(f"noc     : dram roundtrip across {dev.dram.num_banks} active banks"),
     row(f"harvest : dram bank(s) [{harvested_text}] excluded by bank table"),
     row(f"tensors : {num_tiles} tiles, {tile_bytes} bytes checked"),
+    row(f"steps   : {steps} emulated device ticks"),
     row("layout  : host tilize -> cb -> sfpu/fpu -> pack -> dram"),
     row("verify  : full bf16 tile payload matched expected add1"),
     border(),
@@ -261,7 +264,7 @@ def print_success_banner(dev: Device, num_tiles: int, src: bytes, got: bytes):
   print("\n".join(lines), flush=True)
 
 
-def setup_add1_runtime(dev: Device, tile, num_tiles: int,
+def setup_add1_runtime(dev: Device, num_tiles: int,
                        input_pattern: str = "fractional"):
   alloc = ScratchDramAllocator(dev)
   src_rm = seed_src_tensor(num_tiles, input_pattern)
@@ -269,10 +272,19 @@ def setup_add1_runtime(dev: Device, tile, num_tiles: int,
   src = alloc.alloc_write(src_data, name="src")
   dst = alloc.alloc(num_tiles, name="dst")
 
-  write_rtas(tile, src, dst, tile_offset=0, num_tiles=num_tiles)
-  write_cb_config(tile)
-
   return alloc, src, dst, src_data, expected_add1(src_data)
+
+
+def split_tile_work(num_tiles: int, worker_count: int) -> list[tuple[int, int]]:
+  base = num_tiles // worker_count
+  extra = num_tiles % worker_count
+  out = []
+  offset = 0
+  for worker_idx in range(worker_count):
+    count = base + (1 if worker_idx < extra else 0)
+    out.append((offset, count))
+    offset += count
+  return out
 
 
 def verify_runtime_setup(alloc: ScratchDramAllocator, src: ScratchDramBuffer,
@@ -283,10 +295,10 @@ def verify_runtime_setup(alloc: ScratchDramAllocator, src: ScratchDramBuffer,
 
 
 def verify_tile_runtime(tile, src: ScratchDramBuffer, dst: ScratchDramBuffer,
-                        num_tiles: int):
+                        tile_offset: int, num_tiles: int):
   expected_rtas = {
-    BRISC_RTA_BASE: [src.addr, 0, num_tiles],
-    NCRISC_RTA_BASE: [dst.addr, 0, num_tiles],
+    BRISC_RTA_BASE: [src.addr, tile_offset, num_tiles],
+    NCRISC_RTA_BASE: [dst.addr, tile_offset, num_tiles],
     TRISC_RTA_BASE: [num_tiles],
   }
   for base, words in expected_rtas.items():
@@ -572,7 +584,7 @@ def build_subordinate_fw(base: int, sync_offset: int, kernel_base: int,
   return a.bytes()
 
 
-def scratch_boot(dev: Device, kernel_bases: dict[str, int],
+def scratch_boot(tile, kernel_bases: dict[str, int],
                  fw_bases: dict[str, int] | None = None):
   if fw_bases is None:
     fw_bases = {}
@@ -587,7 +599,6 @@ def scratch_boot(dev: Device, kernel_bases: dict[str, int],
   trisc2_kernel = kernel_bases["trisc2"]
   trisc2_fw = fw_bases.get("trisc2", TRISC2_FW_BASE)
 
-  tile = next(iter(dev.tiles.values()))
   l1 = tile.l1
   mmio = tile.mmio
 
@@ -618,8 +629,14 @@ def scratch_boot(dev: Device, kernel_bases: dict[str, int],
 
 def main():
   num_tiles = int(os.environ.get("TILES", str(DEFAULT_TILES)))
-  dev = Device(harvested_banks=HARVESTED_DRAM_BANKS,
-               tensix_x=(1,), tensix_y=(2,))
+  dev = Device(harvested_banks=HARVESTED_DRAM_BANKS)
+  tiles = list(dev.tiles.values())
+  if num_tiles < len(tiles):
+    print(
+      f"FAIL: TILES={num_tiles} is smaller than worker count {len(tiles)}",
+      file=sys.stderr,
+    )
+    return 1
 
   kernel_bases = {
     "brisc": raw_kernel_main_base("brisc"),
@@ -627,22 +644,27 @@ def main():
     **RAW_TRISC_KERNEL_BASES,
   }
   fw_bases = {"trisc2": RAW_TRISC2_FW_BASE}
-  tile = scratch_boot(dev, kernel_bases=kernel_bases, fw_bases=fw_bases)
   alloc, src, dst, src_data, exp_data = setup_add1_runtime(
-    dev, tile, num_tiles, INPUT_PATTERN)
+    dev, num_tiles, INPUT_PATTERN)
   verify_runtime_setup(alloc, src, src_data)
-  verify_tile_runtime(tile, src, dst, num_tiles)
-  load_raw_dataflow_kernels(dev, tile)
-  load_raw_compute_kernels(tile, num_tiles)
+  work = split_tile_work(num_tiles, len(tiles))
+  for tile, (tile_offset, tile_count) in zip(tiles, work, strict=True):
+    scratch_boot(tile, kernel_bases=kernel_bases, fw_bases=fw_bases)
+    write_rtas(tile, src, dst, tile_offset=tile_offset, num_tiles=tile_count)
+    write_cb_config(tile)
+    verify_tile_runtime(tile, src, dst, tile_offset, tile_count)
+    load_raw_dataflow_kernels(dev, tile)
+    load_raw_compute_kernels(tile, tile_count)
 
-  tile.l1.write8(GO_MESSAGES + 3, RUN_MSG_GO)
+  for tile in tiles:
+    tile.l1.write8(GO_MESSAGES + 3, RUN_MSG_GO)
   try:
-    dev._step_loop([tile],
-                   lambda: (
-                     tile.l1.read8(GO_MESSAGES + 3) == RUN_MSG_DONE
-                     and tensix_idle(tile)
-                   ),
-                   MAX_RUN_STEPS)
+    steps = dev._step_loop(tiles,
+                           lambda: all(
+                             tile.l1.read8(GO_MESSAGES + 3) == RUN_MSG_DONE
+                             and tensix_idle(tile)
+                             for tile in tiles),
+                           MAX_RUN_STEPS)
   except TimeoutError as e:
     print(f"RUN TIMEOUT: {e}", file=sys.stderr, flush=True)
     return 1
@@ -650,10 +672,14 @@ def main():
     print(f"RUN ERROR: {type(e).__name__}: {e}", file=sys.stderr, flush=True)
     return 1
 
-  sync = tile.l1.read32(SUBORDINATE_SYNC)
-  if sync != 0:
-    print(f"FAIL: subordinate sync is 0x{sync:08x}", file=sys.stderr)
-    return 1
+  for tile in tiles:
+    sync = tile.l1.read32(SUBORDINATE_SYNC)
+    if sync != 0:
+      print(
+        f"FAIL: tile ({tile.x},{tile.y}) subordinate sync is 0x{sync:08x}",
+        file=sys.stderr,
+      )
+      return 1
 
   if len(exp_data) != dst.size:
     print("FAIL: expected output size mismatch", file=sys.stderr)
@@ -675,7 +701,7 @@ def main():
     print(f"  got float:     {format_bf16_floats(got)}", file=sys.stderr)
     print(f"  expected float:{format_bf16_floats(exp)}", file=sys.stderr)
     return 1
-  print_success_banner(dev, num_tiles, src_data, got)
+  print_success_banner(dev, num_tiles, len(tiles), steps, src_data, got)
   return 0
 
 

@@ -440,6 +440,7 @@ class Device:
     return configs
 
   def _step_loop(self, tiles: list[Tile], done_check, max_steps: int):
+    start_clock = self._clock
     for _ in range(max_steps):
       self._clock += 1
       for tile in tiles:
@@ -452,7 +453,7 @@ class Device:
         # Step Tensix coprocessor (process one instruction per thread)
         tile.tensix.step()
       if done_check():
-        return
+        return self._clock - start_clock
     diag = self._timeout_diagnostics(tiles)
     raise TimeoutError(
       f"emulated device did not complete within {max_steps} steps "
