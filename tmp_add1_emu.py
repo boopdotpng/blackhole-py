@@ -57,12 +57,6 @@ RAW_DF_NOC_TILE_BYTES = 1088
 DRAM_WRITE_OFFSET = 0x40
 DRAM_ALIGNMENT = 64
 
-BRISC_KERNEL_BASE = 0x00009000
-NCRISC_KERNEL_BASE = 0x00009100
-TRISC0_KERNEL_BASE = 0x00009200
-TRISC1_KERNEL_BASE = 0x00009300
-TRISC2_KERNEL_BASE = 0x00009400
-
 RAW_TRISC_KERNEL_BASES = {
   "trisc0": 0x000070B0,
   "trisc1": 0x0000750C,
@@ -536,7 +530,7 @@ class Asm:
     return dsl.pack(resolved)
 
 
-def build_brisc_fw(kernel_base: int = BRISC_KERNEL_BASE) -> bytes:
+def build_brisc_fw(kernel_base: int) -> bytes:
   a = Asm(BRISC_FW_BASE)
   a.li32(dsl.sp, DM_STACK_TOP)
   a.label("loop")
@@ -578,21 +572,19 @@ def build_subordinate_fw(base: int, sync_offset: int, kernel_base: int,
   return a.bytes()
 
 
-def build_ret_kernel() -> bytes:
-  return dsl.pack([dsl.RET()])
-
-
-def scratch_boot(dev: Device, kernel_bases: dict[str, int] | None = None,
+def scratch_boot(dev: Device, kernel_bases: dict[str, int],
                  fw_bases: dict[str, int] | None = None):
-  if kernel_bases is None:
-    kernel_bases = {}
   if fw_bases is None:
     fw_bases = {}
-  brisc_kernel = kernel_bases.get("brisc", BRISC_KERNEL_BASE)
-  ncrisc_kernel = kernel_bases.get("ncrisc", NCRISC_KERNEL_BASE)
-  trisc0_kernel = kernel_bases.get("trisc0", TRISC0_KERNEL_BASE)
-  trisc1_kernel = kernel_bases.get("trisc1", TRISC1_KERNEL_BASE)
-  trisc2_kernel = kernel_bases.get("trisc2", TRISC2_KERNEL_BASE)
+  required = ("brisc", "ncrisc", "trisc0", "trisc1", "trisc2")
+  missing = [role for role in required if role not in kernel_bases]
+  if missing:
+    raise ValueError(f"missing raw kernel base(s): {', '.join(missing)}")
+  brisc_kernel = kernel_bases["brisc"]
+  ncrisc_kernel = kernel_bases["ncrisc"]
+  trisc0_kernel = kernel_bases["trisc0"]
+  trisc1_kernel = kernel_bases["trisc1"]
+  trisc2_kernel = kernel_bases["trisc2"]
   trisc2_fw = fw_bases.get("trisc2", TRISC2_FW_BASE)
 
   tile = next(iter(dev.tiles.values()))
@@ -609,15 +601,6 @@ def scratch_boot(dev: Device, kernel_bases: dict[str, int] | None = None,
     TRISC1_FW_BASE, 2, trisc1_kernel, TRISC_STACK_TOP))
   l1.load(trisc2_fw, build_subordinate_fw(
     trisc2_fw, 3, trisc2_kernel, TRISC_STACK_TOP))
-
-  for addr in (
-      BRISC_KERNEL_BASE,
-      NCRISC_KERNEL_BASE,
-      TRISC0_KERNEL_BASE,
-      TRISC1_KERNEL_BASE,
-      TRISC2_KERNEL_BASE,
-  ):
-    l1.load(addr, build_ret_kernel())
 
   l1.write8(GO_MESSAGES + 3, RUN_MSG_DONE)
   l1.write32(SUBORDINATE_SYNC, 0)
