@@ -521,11 +521,18 @@ class Device:
         wg = thread.wait_gate
         fifo_len = len(thread.fifo)
         replay_word = thread._replay_word
+        rwc = tile.tensix.rwc[thread.id]
         parts = [
           f"fifo={fifo_len}",
           f"mop_busy={int(thread.mop.busy)}",
           f"replay_busy={int(thread.replay.busy)}",
+          f"rwc=a{rwc.a}/b{rwc.b}/d{rwc.d}/f{rwc.cr}",
         ]
+        if thread.mop.busy or replay_word is not None:
+          cfg = ",".join(f"{word:08x}" for word in thread.mop.cfg)
+          parts.append(f"mop_cfg=[{cfg}]")
+          replay_buf = ",".join(f"{word:08x}" for word in thread.replay.buffer)
+          parts.append(f"replay_buf=[{replay_buf}]")
         if replay_word is not None:
           parts.append(f"replay_word=0x{replay_word:08x} {decode_tensix(replay_word)!r}")
         if wg.opcode is None:

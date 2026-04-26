@@ -34,12 +34,25 @@ class SrcRegFile:
     self.banks[self.unpack_bank].allowed_client = "matrix_unit"
     self.unpack_bank ^= 1
 
-  def release_from_fpu(self):
-    if self.banks[self.fpu_bank].allowed_client != "matrix_unit":
-      return False
-    self.banks[self.fpu_bank].allowed_client = "unpackers"
+  def release_from_fpu(self, release=True):
+    released = self.banks[self.fpu_bank].allowed_client == "matrix_unit"
+    if release:
+      self.banks[self.fpu_bank].allowed_client = "unpackers"
     self.fpu_bank ^= 1
-    return True
+    return released
+
+  def clear_fpu_bank(self, keep_reading_same=False):
+    released = self.banks[self.fpu_bank].allowed_client == "matrix_unit"
+    self.banks[self.fpu_bank].allowed_client = "unpackers"
+    if not keep_reading_same:
+      self.fpu_bank ^= 1
+    return released
+
+  def reset_sync(self):
+    self.fpu_bank = 0
+    self.unpack_bank = 0
+    self.banks[0].allowed_client = "unpackers"
+    self.banks[1].allowed_client = "unpackers"
 
 
 class DestRegFile:
@@ -272,7 +285,7 @@ class Semaphores:
     self.max[idx] = max_value & 0xF
 
   def post(self, idx):
-    if self.value[idx] < self.max[idx]:
+    if self.value[idx] < 0xF:
       self.value[idx] += 1
 
   def get(self, idx):

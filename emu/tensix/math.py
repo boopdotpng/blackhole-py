@@ -168,8 +168,13 @@ class FPU:
   def movd2b(self, d, rwc): self._movd2x(d, rwc, self.srcb.banks[self.srcb.fpu_bank])
 
   def cleardvalid(self, d):
-    if d.cleardvalid & 1: self.srca.release_from_fpu()
-    if d.cleardvalid & 2: self.srcb.release_from_fpu()
+    if d.reset & 1:
+      self.srca.reset_sync()
+      self.srcb.reset_sync()
+      return
+    keep_reading_same = bool(d.reset & 2)
+    if d.cleardvalid & 1: self.srca.clear_fpu_bank(keep_reading_same)
+    if d.cleardvalid & 2: self.srcb.clear_fpu_bank(keep_reading_same)
 
   def trnspsrcb(self, d):
     bank = self.srcb.banks[self.srcb.fpu_bank]

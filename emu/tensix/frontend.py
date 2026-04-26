@@ -200,6 +200,7 @@ STALL_MATH   = 0x040  # B6: Matrix Unit (FPU)
 STALL_CFG    = 0x080  # B7: Config unit
 STALL_SFPU   = 0x100  # B8: Vector Unit (SFPU)
 STALL_THREAD = 0x1FF  # all bits: block everything
+STALL_ANY    = -1     # pseudo-category: blocked by any active block bit
 
 # Condition mask bits for STALLWAIT (wait_res field, 13 bits)
 COND_THCON     = 0x001   # C0: ThCon outstanding
@@ -219,8 +220,13 @@ COND_CFGEXU    = 0x1000  # C12: Config unit pipeline (any thread)
 _OPCODE_BLOCK_BITS = {}
 
 def _register_block_bits():
-  for op in (0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0xA6, 0xA7):  # Sync unit (B1)
+  for op in (0xA0, 0xA1, 0xA3, 0xA4, 0xA5):  # Sync unit (B1)
     _OPCODE_BLOCK_BITS[op] = STALL_SYNC
+  # Wait instructions are Sync-unit instructions, but hardware holds them at
+  # the wait gate for any active block bit so they cannot overwrite a live
+  # wait latch while a previous STALLWAIT/SEMWAIT/STREAMWAIT is still active.
+  for op in (0xA2, 0xA6, 0xA7):
+    _OPCODE_BLOCK_BITS[op] = STALL_ANY
   for op in (0x42, 0x43):                                # Unpack (B3)
     _OPCODE_BLOCK_BITS[op] = STALL_UNPACK
   for op in (0x08, 0x0A, 0x10, 0x11, 0x12, 0x13, 0x16, 0x17, 0x18, 0x21, 0x26,
@@ -296,10 +302,12 @@ class WaitGate:
       return False
     # Condition still active — only block if this insn's category is in block_mask.
     bits = _instruction_block_bits(word)
+    if bits == STALL_ANY:
+      return self.block_mask != 0
     if bits == STALL_THREAD:
       if self.block_mask == STALL_THREAD:
         return True
-      unpack_clear = (1 << 5) | (1 << 6)
+      unpack_clear = COND_SRCA_CLR | COND_SRCB_CLR
       return self.block_mask == STALL_UNPACK and bool(self.cond_mask & unpack_clear)
     return bool(bits & self.block_mask)
 
@@ -310,13 +318,12 @@ class WaitGate:
     return False
 
   def _eval_stallwait(self, hw, thread_id):
-    # For functional (synchronous) emulation, pipeline occupancy signals
-    # (C0-C4, C9-C12) are always cleared — only bank ownership (C5-C8) matters.
     cond = self.cond_mask
-    if (cond >> 5) & 1 and hw.srca_unpack_bank_owner != "unpackers":   return True  # C5
-    if (cond >> 6) & 1 and hw.srcb_unpack_bank_owner != "unpackers":   return True  # C6
-    if (cond >> 7) & 1 and hw.srca_fpu_bank_owner    != "matrix_unit": return True  # C7
-    if (cond >> 8) & 1 and hw.srcb_fpu_bank_owner    != "matrix_unit": return True  # C8
+    if cond & COND_MATH and hw.math_busy[thread_id]:                         return True
+    if cond & COND_SRCA_CLR and hw.srca_unpack_bank_owner != "unpackers":   return True
+    if cond & COND_SRCB_CLR and hw.srcb_unpack_bank_owner != "unpackers":   return True
+    if cond & COND_SRCA_VLD and hw.srca_fpu_bank_owner    != "matrix_unit": return True
+    if cond & COND_SRCB_VLD and hw.srcb_fpu_bank_owner    != "matrix_unit": return True
     return False
 
   def _eval_semwait(self, hw):

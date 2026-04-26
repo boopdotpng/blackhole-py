@@ -110,6 +110,13 @@ class _CfgMMIO:
 
 
 class TensixCoprocessor:
+  _MATH_OPS = {
+    'ZEROACC', 'ZEROSRC', 'MOVA2D', 'MOVB2D', 'TRNSPSRCB', 'SHIFTXA', 'SHIFTXB',
+    'MVMUL', 'DOTPV', 'GAPOOL', 'ELWADD', 'GMPOOL', 'CLEARDVALID', 'MOVD2A',
+    'MOVD2B', 'SETRWC', 'INCRWC',
+  }
+  _MATH_BUSY_CYCLES = 4
+
   def __init__(self, l1: Memory = None):
     # Shared backend state. The 8 hardware semaphores live inside the
     # coprocessor; TRISC RISC-V cores reach them through the PCBuf semaphore
@@ -150,6 +157,7 @@ class TensixCoprocessor:
     # the packer/unpacker path), cfg is the ADDR8-relative config MMIO view.
     self.mover = Mover(l1=self.l1, cfg=self.cfg)
     self.pcbuf_fifo = [_PCBufFIFO() for _ in range(3)]
+    self.math_busy = [0] * 3
 
   def attach_l1(self, l1):
     """Swap in a new L1 Memory.  Used by tests that want a fresh L1 between
@@ -170,6 +178,9 @@ class TensixCoprocessor:
     return self.threads[thread_id].fifo.push(word)
 
   def step(self):
+    for i, busy in enumerate(self.math_busy):
+      if busy:
+        self.math_busy[i] = busy - 1
     for thread in self.threads:
       self._step_thread(thread)
 
@@ -188,9 +199,11 @@ class TensixCoprocessor:
     dest_offset_rows = self.config_unit.thread_cfg[thread.id][1] & 0x3FF
     self.fpu.dest_offset_rows = dest_offset_rows
     self.sfpu.dest_offset_rows = dest_offset_rows
-    if not self._operands_ready(d):
+    if not self._operands_ready(thread.id, d):
       thread.replay_instruction(word)
       return
+    if d.name in self._MATH_OPS:
+      self.math_busy[thread.id] = self._MATH_BUSY_CYCLES
     match d.name:
       case 'NOP' | 'DMANOP': pass
       # ── Sync unit: mutexes, semaphores, stall/wait ──────────────────
@@ -257,26 +270,31 @@ class TensixCoprocessor:
       case 'SHIFTXB':     self.fpu.shiftxb(d)
       case 'MVMUL':
         self.fpu.mvmul(d, rwc)
+        self._clear_dvalid(thread.id, d)
         self._apply_addr_mod(thread.id, d.addr_mode)
       case 'DOTPV':
         self.fpu.dotpv(d, rwc)
+        self._clear_dvalid(thread.id, d)
         self._apply_addr_mod(thread.id, d.addr_mode)
       case 'GAPOOL':
         self.fpu.gapool(d, rwc)
+        self._clear_dvalid(thread.id, d)
         self._apply_addr_mod(thread.id, d.addr_mode)
       case 'ELWADD':
         self.fpu.elwadd(d, rwc)
+        self._clear_dvalid(thread.id, d)
         self._apply_addr_mod(thread.id, d.addr_mode)
       case 'GMPOOL':
         self.fpu.gmpool(d, rwc)
+        self._clear_dvalid(thread.id, d)
         self._apply_addr_mod(thread.id, d.pool_addr_mode & 3)
       case 'CLEARDVALID': self.fpu.cleardvalid(d)
       case 'MOVD2A':      self.fpu.movd2a(d, rwc)
       case 'MOVD2B':      self.fpu.movd2b(d, rwc)
       case 'SETRWC':
         clear_ab = rwc.execute_setrwc(d)
-        if clear_ab & 1: self.srca.release_from_fpu()
-        if clear_ab & 2: self.srcb.release_from_fpu()
+        if clear_ab & 1: self.srca.release_from_fpu(self._dvalid_clear_enabled(thread.id, 0))
+        if clear_ab & 2: self.srcb.release_from_fpu(self._dvalid_clear_enabled(thread.id, 1))
       case 'INCRWC':      rwc.execute_incrwc(d)
       case 'SFPLOAD':
         self.sfpu.sfpload(d, rwc)
@@ -352,16 +370,13 @@ class TensixCoprocessor:
       # Unknown opcodes: no-op (for functional emulation).
       case _: pass
 
-  def _operands_ready(self, d):
+  def _operands_ready(self, thread_id, d):
+    if d.name in self._MATH_OPS and self.math_busy[thread_id] > 0:
+      return False
     match d.name:
       case 'UNPACR':
         if d.SetDatValid:
           src = self.srca if d.Unpack_block_selection == 0 else self.srcb
-          if src.banks[src.unpack_bank].allowed_client != "unpackers":
-            return False
-      case 'UNPACR_NOP':
-        if d.Set_Dvalid & 1:
-          src = self.srca if d.Unpacker_Select == 0 else self.srcb
           if src.banks[src.unpack_bank].allowed_client != "unpackers":
             return False
       case _:
@@ -379,6 +394,15 @@ class TensixCoprocessor:
       case _:
         pass
     return True
+
+  def _dvalid_clear_enabled(self, thread_id, src_idx):
+    # Blackhole ThreadConfig ADDR32 7 bits 0/1 disable SrcA/SrcB clear of the
+    # current matrix-owned bank. The MatrixUnit bank pointer still advances.
+    return (self.config_unit.thread_cfg[thread_id][7] & (1 << src_idx)) == 0
+
+  def _clear_dvalid(self, thread_id, d):
+    if d.clear_dvalid & 1: self.srca.release_from_fpu(self._dvalid_clear_enabled(thread_id, 0))
+    if d.clear_dvalid & 2: self.srcb.release_from_fpu(self._dvalid_clear_enabled(thread_id, 1))
 
   def _apply_addr_mod(self, thread_id, addr_mode, update_fidelity=True):
     # Each descriptor has CR-mode flags that make the increment target the _Cr
@@ -433,7 +457,7 @@ class TensixCoprocessor:
       pass
 
   def _hw_state(self):
-    return HardwareState(self.semaphores, self.srca, self.srcb)
+    return HardwareState(self.semaphores, self.srca, self.srcb, self.math_busy)
 
   def _read_stream_cfg(self, stream_sel, stream_reg_addr):
     if self.stream_regs is None:
@@ -506,14 +530,14 @@ class _MopCfgHandler:
 class HardwareState:
   __slots__ = ('semaphores', 'srca', 'srcb',
                'srca_unpack_bank_owner', 'srcb_unpack_bank_owner',
-               'srca_fpu_bank_owner', 'srcb_fpu_bank_owner')
+               'srca_fpu_bank_owner', 'srcb_fpu_bank_owner',
+               'math_busy')
 
-  def __init__(self, semaphores, srca, srcb):
+  def __init__(self, semaphores, srca, srcb, math_busy):
     self.semaphores = semaphores
     self.srca = srca
     self.srcb = srcb
-    # Functional emu: pipeline occupancy signals are idle (synchronous
-    # completion). Only bank ownership matters.
+    self.math_busy = math_busy
     self.srca_unpack_bank_owner = srca.banks[srca.unpack_bank].allowed_client
     self.srcb_unpack_bank_owner = srcb.banks[srcb.unpack_bank].allowed_client
     self.srca_fpu_bank_owner = srca.banks[srca.fpu_bank].allowed_client
