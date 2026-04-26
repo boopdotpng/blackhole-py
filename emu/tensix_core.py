@@ -168,6 +168,7 @@ class TensixThread:
   frontend_busy_until: int = 0
   mop_cfg: list[int] | None = None
   mop_mask_hi: int = 0
+  mop_expansion: object | None = None
   wait_gate: WaitGate | None = None
 
   def next_instruction(self) -> Instruction | None:
@@ -175,7 +176,103 @@ class TensixThread:
       insn = self.held
       self.held = None
       return insn
-    return self.fifo.pop()
+    while True:
+      if self.mop_expansion is not None:
+        try:
+          return decode_tensix_minimal(next(self.mop_expansion))
+        except StopIteration:
+          self.mop_expansion = None
+          return None
+
+      insn = self.fifo.pop()
+      if insn is None:
+        return None
+
+      opcode = (insn.word >> 24) & 0xFF
+      if opcode == 0x03:  # MOP_CFG
+        self.mop_mask_hi = insn.word & 0xFFFF
+        continue
+      if opcode == 0x01:  # MOP
+        self.mop_expansion = self._expand_mop(insn.word)
+        continue
+      return insn
+
+  @staticmethod
+  def _is_nop(word: int) -> bool:
+    return ((word >> 24) & 0xFF) == 0x02
+
+  def _expand_mop(self, word: int):
+    template = (word >> 23) & 1
+    if template == 0:
+      return self._expand_mop_template0(word)
+    return self._expand_mop_template1()
+
+  def _expand_mop_template0(self, word: int):
+    count1 = (word >> 16) & 0x7F
+    mask = (self.mop_mask_hi << 16) | (word & 0xFFFF)
+    flags = self.mop_cfg[1]
+    insn_b = self.mop_cfg[2]
+    insn_a0 = self.mop_cfg[3]
+    insn_a1 = self.mop_cfg[4]
+    insn_a2 = self.mop_cfg[5]
+    insn_a3 = self.mop_cfg[6]
+    skip_a0 = self.mop_cfg[7]
+    skip_b = self.mop_cfg[8]
+    has_b = flags & 1
+    has_a123 = flags & 2
+    for _ in range(count1 + 1):
+      if (mask & 1) == 0:
+        yield insn_a0
+        if has_a123:
+          yield insn_a1
+          yield insn_a2
+          yield insn_a3
+        if has_b:
+          yield insn_b
+      else:
+        yield skip_a0
+        if has_b:
+          yield skip_b
+      mask >>= 1
+
+  def _expand_mop_template1(self):
+    outer_count = self.mop_cfg[0] & 0x7F
+    inner_count = self.mop_cfg[1] & 0x7F
+    start_op = self.mop_cfg[2]
+    end_op0 = self.mop_cfg[3]
+    end_op1 = self.mop_cfg[4]
+    loop_op = self.mop_cfg[5]
+    loop_op1 = self.mop_cfg[6]
+    loop0_last = self.mop_cfg[7]
+    loop1_last = self.mop_cfg[8]
+
+    if self._is_nop(loop_op1):
+      loop_op_flip = 0
+    else:
+      loop_op_flip = loop_op ^ loop_op1
+      inner_count *= 2
+
+    # Preserve the hardware MOP template-1 quirk used by LLKs.
+    if (outer_count == 1 and self._is_nop(start_op)
+        and inner_count == 0 and not self._is_nop(end_op0)):
+      outer_count += 128
+
+    cur_loop_op = loop_op
+    for j in range(outer_count):
+      if not self._is_nop(start_op):
+        yield start_op
+      for i in range(inner_count):
+        if i != inner_count - 1:
+          yield cur_loop_op
+        elif j != outer_count - 1:
+          yield loop1_last
+        else:
+          yield loop0_last
+        cur_loop_op ^= loop_op_flip
+      if not self._is_nop(end_op0):
+        yield end_op0
+        if not self._is_nop(end_op1):
+          yield end_op1
 
   def replay(self, insn: Instruction) -> None:
     self.held = insn

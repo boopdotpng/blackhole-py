@@ -2,6 +2,7 @@ __pycache__
 .ruff-cache/
 .vscode/
 .claude
+state.txt
 *.so
 disasms
 firmware/
