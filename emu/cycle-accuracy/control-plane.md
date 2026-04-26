@@ -12,8 +12,8 @@ All cycle counts are in AICLK cycles (1.35 GHz) unless noted.
 
 **No cycle counts are enforced.** The only timing state in `blackhole-py/emu/`:
 
-- `Device._clock` (`device.py:292, 443`) — integer, advanced once per outer
-  `_step_loop` iteration. Mirrored to `WALL_CLOCK_L/H` MMIO at `device.py:445`.
+- `device cycle counters` (`device.py:292, 443`) — integer, advanced once per outer
+  `run_until` iteration. Mirrored to `WALL_CLOCK_L/H` MMIO at `device.py:445`.
 - `WaitGate._one_cycle_hold` (`tensix/frontend.py:256, 267, 276, 287, 291-293`) —
   bool, consumed on next `is_blocking()` call. This is the one latency hook that
   actually fires.
@@ -23,7 +23,7 @@ All cycle counts are in AICLK cycles (1.35 GHz) unless noted.
 Capacity constants that imply (but do not implement) timing:
 
 - `InstructionFIFO.CAPACITY = 32` (`frontend.py:14`)
-- `_PCBufFIFO.CAPACITY = 16` (`coprocessor.py:29`)
+- `_PCBufFIFO.CAPACITY = 16` (`tensix_core.py`)
 
 Every other unit completes in the same outer step as it is issued: NoC fires
 synchronously (`noc.py:159`), Mover transfers synchronously (`mover.py` sets C9
@@ -46,17 +46,17 @@ Comments that name cycle counts but don't enforce them (selected):
 | Subunit | Function | File:line |
 |---|---|---|
 | RV core step | `Core.step()` | `core.py:36` |
-| Tensix thread step | `TensixCoprocessor._step_thread(thread)` | `coprocessor.py:119` |
-| FPU / SFPU / all Tensix dispatch | `TensixCoprocessor._dispatch(thread, word)` | `coprocessor.py:127` |
+| Tensix thread step | `Tensix.tick()` | `tensix_core.py` |
+| FPU / SFPU / all Tensix dispatch | `Tensix._issue_datapath()` | `tensix_core.py` |
 | MOP transition penalty | `MOPExpander.next()` | `frontend.py:48-55` |
 | Wait-gate one-cycle hold | `WaitGate.is_blocking()` | `frontend.py:289-293` |
 | NoC fire | `NOC._fire(buf_idx)` | `noc.py:159` |
 | Mover | `Mover.transfer(...)` | `mover.py:35` |
-| FIFO push backpressure | `_InstrnHandler.write32()` | `coprocessor.py:412` |
+| FIFO push backpressure | `_InstrnHandler.write32()` | `tensix_core.py` |
 
 ### Timebase recommendation
 
-Keep the single global `Device._clock`. Give each backend unit a `busy_until: int`
+Keep the single global `device cycle counters`. Give each backend unit a `busy_until: int`
 threshold measured in `_clock` units; dispatch reads it to decide whether to stall the
 thread. This fits the existing serialized step loop and needs no rewrite.
 

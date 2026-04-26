@@ -7,8 +7,8 @@ model for the Blackhole emulator at `blackhole-py/emu/`.
 
 **No cycle info is modeled.** The only timing state in the code is:
 
-- `Device._clock` (`device.py:292, 443`) — a free-running integer advanced by one per
-  outer step loop iteration. It is mirrored to `WALL_CLOCK_L/H` MMIO (`device.py:445`) so
+- `device cycle counters` (`device.py:292, 443`) — a free-running integer advanced by one per
+  simulator cycle. It is mirrored to `WALL_CLOCK_L/H` MMIO (`device.py:445`) so
   firmware reading the wall clock sees a monotonic value.
 - `WaitGate._one_cycle_hold` (`tensix/frontend.py:256-293`) — a 1-bit "pseudo-timer"
   that enforces the ISA-mandated one-cycle post-`STALLWAIT` block.
@@ -21,8 +21,8 @@ they imply backpressure but carry no cycle cost.
 
 ## Timebase recommendation
 
-Keep the existing `Device._clock` as the single global tick counter (all units already
-serialize through `_step_loop`). Extend each backend unit with a `busy_until: int`
+Keep the existing `device cycle counters` as the single global tick counter (all units already
+serialize through `run_until`). Extend each backend unit with a `busy_until: int`
 threshold in that same timebase. The per-unit agent reports list the exact hook points.
 
 ## The five domain docs

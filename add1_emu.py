@@ -10,7 +10,10 @@ P100A add1 dataflow and compute kernels from firmware/disasms:
 * Subordinates clear their sync byte when their kernel returns.
 * BRISC waits for all sync bytes to clear, then writes RUN_MSG_DONE.
 
-The tile count is controlled with TILES in the environment.
+This intentionally bypasses the real firmware upload/init path: it loads raw
+PT_LOAD/bin segments directly into emulated L1/LDM, then jumps into the real
+kernel entry points.  CORES controls how many emulated Tensix cores to create;
+the scratch workload is fixed at 10 tensor tiles.
 """
 
 import json
@@ -26,7 +29,7 @@ if str(ROOT) not in sys.path:
 
 import dsl
 from dram import tilize
-from emu.device import Device, DRAM_BANK_PORT, RUN_MSG_DONE, RUN_MSG_GO, _make_jal
+from emu.device import Device
 from emu.memory import (
   BOOT_JAL,
   BRISC_FW_BASE,
@@ -63,9 +66,20 @@ RAW_TRISC_KERNEL_BASES = {
 }
 RAW_TRISC2_FW_BASE = 0x00009500
 HARVESTED_DRAM_BANKS = [3]
-DEFAULT_TILES = 480
+DEFAULT_TENSOR_TILES = 10
 MAX_RUN_STEPS = 100_000
 INPUT_PATTERN = "ordered"
+RUN_MSG_GO = 0x80
+RUN_MSG_DONE = 0x00
+DRAM_BANK_PORT = [[2, 1], [0, 1], [0, 1], [0, 1],
+                  [2, 1], [2, 1], [2, 1], [2, 1]]
+
+
+def _make_jal(target: int) -> bytes:
+  return ((target & 0xFF000)
+          | ((target & 0x800) << 9)
+          | ((target & 0x7FE) << 20)
+          | 0x6F).to_bytes(4, "little")
 
 # Relocated raw add1 dataflow kernels.  PT_LOAD segments stay in
 # firmware/disasms; the scratch harness only chooses their L1 load addresses.
@@ -229,7 +243,7 @@ def format_bf16_floats(data: bytes, count: int = 16) -> str:
   return " ".join(f"{f32_from_bf16(word):g}" for word in bf16_words(data, count))
 
 
-def print_success_banner(dev: Device, num_tiles: int, worker_count: int,
+def print_success_banner(dev: Device, num_tiles: int, core_count: int,
                          steps: int,
                          src: bytes, got: bytes):
   width = 68
@@ -249,7 +263,7 @@ def print_success_banner(dev: Device, num_tiles: int, worker_count: int,
     row("blackhole-py add1 raw-kernel emulation: pass"),
     border(),
     row("kernels : brisc + ncrisc + trisc0/1/2 raw disasms"),
-    row(f"workers : {worker_count} tensix cores"),
+    row(f"cores   : {core_count} tensix cores"),
     row(f"noc     : dram roundtrip across {dev.dram.num_banks} active banks"),
     row(f"harvest : dram bank(s) [{harvested_text}] excluded by bank table"),
     row(f"tensors : {num_tiles} tiles, {tile_bytes} bytes checked"),
@@ -275,13 +289,13 @@ def setup_add1_runtime(dev: Device, num_tiles: int,
   return alloc, src, dst, src_data, expected_add1(src_data)
 
 
-def split_tile_work(num_tiles: int, worker_count: int) -> list[tuple[int, int]]:
-  base = num_tiles // worker_count
-  extra = num_tiles % worker_count
+def split_tile_work(num_tiles: int, core_count: int) -> list[tuple[int, int]]:
+  base = num_tiles // core_count
+  extra = num_tiles % core_count
   out = []
   offset = 0
-  for worker_idx in range(worker_count):
-    count = base + (1 if worker_idx < extra else 0)
+  for core_idx in range(core_count):
+    count = base + (1 if core_idx < extra else 0)
     out.append((offset, count))
     offset += count
   return out
@@ -480,14 +494,54 @@ def load_raw_compute_kernels(tile, num_tiles: int):
 
 
 def tensix_idle(tile) -> bool:
-  for thread in tile.tensix.threads:
-    if len(thread.fifo):
+  for thread_id, thread in enumerate(tile.tensix.threads):
+    if len(thread.fifo) or thread.held is not None:
       return False
-    if thread.mop.busy or thread.replay.busy:
+    if thread.frontend_busy_until > tile.tensix.cycle:
       return False
-    if thread._replay_word is not None:
+    if not tile.tensix.thread_coprocessor_idle(thread_id):
       return False
   return True
+
+
+def step_loop(dev: Device, tiles: list, done_check, max_steps: int):
+  start = dev.elapsed_cycles
+  for _ in range(max_steps):
+    dev.run(1)
+    if done_check():
+      return dev.elapsed_cycles - start
+  raise TimeoutError(
+    f"emulated device did not complete within {max_steps} cycles "
+    f"(elapsed={dev.elapsed_cycles}, sim={dev.sim_cycle})\n"
+    + timeout_diagnostics(tiles)
+  )
+
+
+def timeout_diagnostics(tiles: list) -> str:
+  lines = ["timeout diagnostics:"]
+  for tile in tiles:
+    sync = tile.l1.read32(SUBORDINATE_SYNC)
+    go = tile.l1.read8(GO_MESSAGES + 3)
+    lines.append(
+      f"  tile ({tile.x},{tile.y}): go=0x{go:02x} sync=0x{sync:08x}")
+    for name in ("brisc", "ncrisc", "trisc0", "trisc1", "trisc2"):
+      core = getattr(tile, name)
+      try:
+        word = core.mem.read32(core.pc)
+      except Exception as e:
+        word = f"{type(e).__name__}:{e}"
+      lines.append(
+        f"    {name:<6} reset={int(core.in_reset)} "
+        f"cycles={core.cycles} blocked={core.blocked_cycles} "
+        f"pc=0x{core.pc:08x} word={word if isinstance(word, str) else f'0x{word:08x}'} "
+        f"ra=0x{core.regs[1]:08x} sp=0x{core.regs[2]:08x}")
+    for thread_id, thread in enumerate(tile.tensix.threads):
+      lines.append(
+        f"    tensix t{thread_id}: fifo={len(thread.fifo)} "
+        f"held={thread.held.name if thread.held else '-'} "
+        f"frontend_busy_until={thread.frontend_busy_until} "
+        f"inflight={tile.tensix._backend_inflight[thread_id]}")
+  return "\n".join(lines)
 
 
 class Asm:
@@ -628,12 +682,17 @@ def scratch_boot(tile, kernel_bases: dict[str, int],
 
 
 def main():
-  num_tiles = int(os.environ.get("TILES", str(DEFAULT_TILES)))
-  dev = Device(harvested_banks=HARVESTED_DRAM_BANKS)
+  core_count = int(os.environ.get("CORES", "1"))
+  num_tiles = DEFAULT_TENSOR_TILES
+  dev = Device(
+    harvested_banks=HARVESTED_DRAM_BANKS,
+    core_count=core_count,
+    boot_firmware=False,
+  )
   tiles = list(dev.tiles.values())
   if num_tiles < len(tiles):
     print(
-      f"FAIL: TILES={num_tiles} is smaller than worker count {len(tiles)}",
+      f"FAIL: fixed tensor tile count {num_tiles} is smaller than CORES={len(tiles)}",
       file=sys.stderr,
     )
     return 1
@@ -659,12 +718,15 @@ def main():
   for tile in tiles:
     tile.l1.write8(GO_MESSAGES + 3, RUN_MSG_GO)
   try:
-    steps = dev._step_loop(tiles,
-                           lambda: all(
-                             tile.l1.read8(GO_MESSAGES + 3) == RUN_MSG_DONE
-                             and tensix_idle(tile)
-                             for tile in tiles),
-                           MAX_RUN_STEPS)
+    steps = step_loop(
+      dev,
+      tiles,
+      lambda: all(
+        tile.l1.read8(GO_MESSAGES + 3) == RUN_MSG_DONE
+        and tensix_idle(tile)
+        for tile in tiles),
+      MAX_RUN_STEPS,
+    )
   except TimeoutError as e:
     print(f"RUN TIMEOUT: {e}", file=sys.stderr, flush=True)
     return 1

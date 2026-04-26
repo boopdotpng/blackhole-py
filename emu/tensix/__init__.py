@@ -1,7 +1,6 @@
 # =============================================================================
-# Public surface of the tensix package. The real entry point is
-# TensixCoprocessor in coprocessor.py; everything else is re-exported here
-# for tests that poke individual units / helpers directly.
+# Public surface for functional Tensix units and helpers.  The cycle-aware
+# frontend lives in emu.tensix_core.
 # =============================================================================
 
 from .state import (
@@ -46,6 +45,5 @@ from .unpack import (
 from .pack import Packer
 from .mover import Mover
 from .tdma import TDMA
-from .coprocessor import TensixCoprocessor, HardwareState
 from . import formats
 from . import cfg_layout

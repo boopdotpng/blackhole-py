@@ -1,187 +1,162 @@
+from __future__ import annotations
+
 import struct
 from dataclasses import dataclass, field
-from pathlib import Path
 
 from .memory import (
-  Memory, Router, L1_SIZE, MAILBOX_BASE, SUBORDINATE_SYNC,
-  LAUNCH_MSG_RD_PTR, LAUNCH_MSG_RING, GO_MESSAGES, GO_MESSAGE_INDEX,
-  ZEROS_BASE, BRISC_FW_BASE, NCRISC_FW_BASE, TRISC0_FW_BASE,
-  TRISC1_FW_BASE, TRISC2_FW_BASE, KERNEL_CONFIG_BASE,
-  BANK_TO_NOC_SCRATCH, DATA_BUFFER_SPACE_BASE,
-  LDM_SCRATCH, LDM_BASE, LDM_END_8K,
-  LDM_SLOW_BRISC, LDM_SLOW_STRIDE,
-  WALL_CLOCK_L, WALL_CLOCK_H,
-  NOC0_BASE, NOC1_BASE, NOC_SIZE,
-  MOP_CFG_BASE, MOP_CFG_END,
-  INSTRN_BUF_T0, INSTRN_BUF_END,
-  TENSIX_CFG_BASE, TENSIX_CFG_END,
-  TDMA_BASE, TDMA_END,
-  NUM_CBS, CB_CONFIG_BYTES, CB_L1_CONFIG_BASE,
-  STREAM_BASE, STREAM_END, L1_BASE, L1_END,
-  BOOT_JAL, SOFT_RESET_0,
-  TRISC0_RESET_PC, TRISC1_RESET_PC, TRISC2_RESET_PC, TRISC_RESET_PC_OVR,
-  NCRISC_RESET_PC, NCRISC_RESET_PC_OVR,
-  _SEM_WIN_LO, _SEM_WIN_HI,
+  BANK_TO_NOC_SCRATCH, CB_CONFIG_BYTES, CB_L1_CONFIG_BASE, DATA_BUFFER_SPACE_BASE,
+  KERNEL_CONFIG_BASE, LAUNCH_MSG_RD_PTR, LAUNCH_MSG_RING, LDM_BASE,
+  LDM_END_8K, LDM_SCRATCH, INSTRN_BUF_END, INSTRN_BUF_T0, L1_BASE, L1_END,
+  L1_SIZE, LDM_SLOW_BRISC, LDM_SLOW_STRIDE, MOP_CFG_BASE, MOP_CFG_END,
+  NOC0_BASE, NOC1_BASE, NOC_SIZE, SOFT_RESET_0, STREAM_BASE, STREAM_END,
+  TENSIX_CFG_BASE, TENSIX_CFG_END, TDMA_BASE, TDMA_END, TRISC0_RESET_PC,
+  TRISC1_RESET_PC, TRISC2_RESET_PC, TRISC_RESET_PC_OVR, NCRISC_RESET_PC,
+  NCRISC_RESET_PC_OVR, WALL_CLOCK_H, WALL_CLOCK_L, GPR_BASE, GPR_END,
+  BOOT_JAL, ZEROS_BASE, Memory, Router,
 )
-from .core import BRISC, NCRISC, TRISC0, TRISC1, TRISC2
-from .noc import NOC, StreamRegisters, noc_key
-from .tensix import TensixCoprocessor, Semaphores, TDMA
-from .tensix.frontend import (
-  STALL_TDMA, STALL_SYNC, STALL_PACK, STALL_UNPACK, STALL_XMOV,
-  STALL_THCON, STALL_MATH, STALL_CFG, STALL_SFPU,
-  COND_THCON, COND_UNPACK0, COND_UNPACK1, COND_PACK0, COND_MATH,
-  COND_SRCA_CLR, COND_SRCB_CLR, COND_SRCA_VLD, COND_SRCB_VLD,
-  COND_XMOV, COND_TRISC_CFG, COND_SFPU, COND_CFGEXU,
-)
-from dsl import decode_rv, decode_tensix
+from .resources import Scoreboard
+from .noc import TimedNOC, StreamRegisters, noc_key
+from .rv import BRISC, NCRISC, TRISC0, TRISC1, TRISC2, Core
+from .sim import Phase, SimContext, Simulator
+from .tensix_core import Tensix
 
-M32 = 0xFFFFFFFF
-L1_ALIGN = 16
+
 PCIE_NOC_XY = (19, 24)
-LOGICAL_TO_VIRTUAL_SCRATCH = BANK_TO_NOC_SCRATCH + 2048
-
-_DISASM_CACHE = None
-_DISASM_DIR = Path(__file__).resolve().parents[1] / "firmware" / "disasms"
-
-_STALL_BITS = (
-  (STALL_TDMA, "TDMA"), (STALL_SYNC, "SYNC"), (STALL_PACK, "PACK"),
-  (STALL_UNPACK, "UNPACK"), (STALL_XMOV, "XMOV"), (STALL_THCON, "THCON"),
-  (STALL_MATH, "MATH"), (STALL_CFG, "CFG"), (STALL_SFPU, "SFPU"),
-)
-_COND_BITS = (
-  (COND_THCON, "THCON"), (COND_UNPACK0, "UNPACK0"),
-  (COND_UNPACK1, "UNPACK1"), (COND_PACK0, "PACK0"),
-  (COND_MATH, "MATH"), (COND_SRCA_CLR, "SRCA_CLR"),
-  (COND_SRCB_CLR, "SRCB_CLR"), (COND_SRCA_VLD, "SRCA_VLD"),
-  (COND_SRCB_VLD, "SRCB_VLD"), (COND_XMOV, "XMOV"),
-  (COND_TRISC_CFG, "TRISC_CFG"), (COND_SFPU, "SFPU"),
-  (COND_CFGEXU, "CFGEXU"),
-)
-
-def _mask_names(mask: int, table) -> str:
-  names = [name for bit, name in table if mask & bit]
-  return "|".join(names) if names else "0"
-
-def _rv_desc(word: int) -> str:
-  if (word & 0x3) != 0x3:
-    return f"TT push {decode_tensix(((word >> 2) | (word << 30)) & M32)!r}"
-  d = decode_rv(word)
-  fields = []
-  for name in ("rd", "rs1", "rs2", "imm", "shamt", "csr"):
-    value = getattr(d, name)
-    if value:
-      if name in ("rd", "rs1", "rs2"):
-        fields.append(f"{name}=x{value}")
-      else:
-        fields.append(f"{name}=0x{value & M32:x}")
-  return "RV " + d.name + ((" " + " ".join(fields)) if fields else "")
-
-def _load_disasm_cache():
-  global _DISASM_CACHE
-  if _DISASM_CACHE is not None:
-    return _DISASM_CACHE
-  by_addr = {}
-  by_word = {}
-  if _DISASM_DIR.exists():
-    for path in _DISASM_DIR.glob("*.dis"):
-      for line in path.read_text(errors="replace").splitlines():
-        stripped = line.strip()
-        if ":" not in stripped:
-          continue
-        addr_s, _rest = stripped.split(":", 1)
-        try:
-          addr = int(addr_s, 16)
-        except ValueError:
-          continue
-        desc = f"{path.name}: {stripped}"
-        by_addr.setdefault(addr, []).append(desc)
-        parts = _rest.strip().split()
-        if parts:
-          try:
-            by_word.setdefault(int(parts[0], 16), []).append(desc)
-          except ValueError:
-            pass
-  _DISASM_CACHE = {"addr": by_addr, "word": by_word}
-  return _DISASM_CACHE
-
-def _prefer_disasm_hit(hits, core_name: str | None):
-  if core_name:
-    for hit in hits:
-      if hit.startswith(f"{core_name}.dis:"):
-        return hit
-    if core_name.startswith("trisc"):
-      for hit in hits:
-        if hit.startswith(f"{core_name}_") or f"_{core_name}." in hit:
-          return hit
-    for hit in hits:
-      if core_name in hit:
-        return hit
-  return hits[0]
-
-def _disasm_desc(pc: int, word: int, core_name: str | None = None) -> str:
-  cache = _load_disasm_cache()
-  hits = cache["addr"].get(pc & M32, [])
-  if hits:
-    hit = _prefer_disasm_hit(hits, core_name)
-    extra = "" if len(hits) == 1 else f" (+{len(hits) - 1} same-address matches)"
-    return f"{hit}{extra}"
-  hits = cache["word"].get(word & M32, [])
-  if hits:
-    hit = _prefer_disasm_hit(hits, core_name)
-    extra = "" if len(hits) == 1 else f" (+{len(hits) - 1} same-word matches)"
-    return f"relocated?/word-match: {hit}{extra}"
-  return "no checked-in disasm match"
-
-def _align_up(value: int, align: int) -> int:
-  return (value + align - 1) & ~(align - 1)
-
-def _pack_rta(writer_args, reader_args, compute_args, num_sems, sem_off):
-  pack = lambda xs: b"".join(int(x & M32).to_bytes(4, "little") for x in xs)
-  rta = pack(writer_args) + pack(reader_args) + pack(compute_args)
-  if num_sems > 0:
-    if sem_off > len(rta):
-      rta = rta.ljust(sem_off, b"\0")
-    rta += b"\0" * (num_sems * 16)
-  return rta
-
-def _build_cb_blob(cbs):
-  """cbs: list of (index, page_size, num_tiles). Returns (mask, blob)."""
-  if not cbs:
-    return 0, b""
-  mask = 0
-  for idx, _ps, _nt in cbs:
-    mask |= 1 << idx
-  end = mask.bit_length()
-  arr = bytearray(end * 16)
-  addr = DATA_BUFFER_SPACE_BASE
-  for idx, page_size, num_tiles in cbs:
-    size = page_size * num_tiles
-    struct.pack_into("<IIII", arr, idx * 16, addr, size, num_tiles, page_size)
-    addr += size
-  return mask, bytes(arr)
-
-# -- P100A layout constants ---------------------------------------------------
-
-P100A_TENSIX_X = (*range(1, 8), *range(10, 15))  # 12 columns
-P100A_Y_RANGE  = range(2, 12)                      # 10 rows
-
-# DRAM bank geometry (P100A: 8 banks, up to 1 harvested; each bank exposes 3 ports).
+P100A_TENSIX_X = (*range(1, 8), *range(10, 15))
+P100A_Y_RANGE = range(2, 12)
 DRAM_BANK_COUNT = 8
 DRAM_PORTS = 3
-DRAM_BANK_PORT = [[2,1],[0,1],[0,1],[0,1],[2,1],[2,1],[2,1],[2,1]]
-
-# Runtime dispatch protocol constants (RUN_MSG_INIT for boot is below).
-RUN_MSG_GO   = 0x80
+DRAM_BANK_PORT = [[2, 1], [0, 1], [0, 1], [0, 1],
+                  [2, 1], [2, 1], [2, 1], [2, 1]]
+SOFT_RESET_ALL = 0x47800
+SOFT_RESET_BRISC_ONLY = 0x47000
+RUN_MSG_INIT = 0x40
+RUN_MSG_GO = 0x80
 RUN_MSG_DONE = 0x00
+L1_ALIGN = 16
+FIRMWARE_GO_MESSAGES = 0x3F0
+FIRMWARE_GO_MESSAGE_INDEX = 0x420
+FIRMWARE_LAUNCH_STRIDE = 112
+
+
+@dataclass
+class Dram:
+  num_banks: int
+  banks: list[Memory]
+  bank_xy: dict[int, tuple[int, int]]
+
+  def read_interleaved(self, base_addr: int, tile_idx: int,
+                       tile_bytes: int) -> bytes:
+    bank = tile_idx % self.num_banks
+    slot = tile_idx // self.num_banks
+    addr = base_addr + slot * tile_bytes
+    data = self.banks[bank]._data
+    return bytes(data.get(addr + i, 0) for i in range(tile_bytes))
+
+  def write_interleaved(self, base_addr: int, tile_idx: int,
+                        tile_bytes: int, data: bytes):
+    bank = tile_idx % self.num_banks
+    slot = tile_idx // self.num_banks
+    addr = base_addr + slot * tile_bytes
+    self.banks[bank].load(addr, data)
+
+
+@dataclass
+class Tile:
+  x: int
+  y: int
+  l1: Memory
+  brisc: BRISC
+  ncrisc: NCRISC
+  trisc0: TRISC0
+  trisc1: TRISC1
+  trisc2: TRISC2
+  noc0: NOC
+  noc1: NOC
+  mmio: Memory = field(repr=False)
+  stream_regs: StreamRegisters = field(repr=False)
+  tensix: Tensix = field(repr=False)
+  tdma: Memory = field(repr=False)
+
+  @property
+  def cores(self) -> list[Core]:
+    return [self.brisc, self.ncrisc, self.trisc0, self.trisc1, self.trisc2]
+
+
+@dataclass(frozen=True)
+class CoreRange:
+  x0: int
+  y0: int
+  x1: int
+  y1: int
+
+  def cores(self) -> list[tuple[int, int]]:
+    return [
+      (x, y)
+      for y in range(self.y0, self.y1 + 1)
+      for x in range(self.x0, self.x1 + 1)
+    ]
+
+  @classmethod
+  def row(cls, start_x: int, y: int, count: int) -> "CoreRange":
+    if count <= 0:
+      raise ValueError("core count must be positive")
+    return cls(start_x, y, start_x + count - 1, y)
+
+
+class _TileClock:
+  def __init__(self, tiles: dict[tuple[int, int], Tile]):
+    self.tiles = tiles
+
+  def tick(self, ctx: SimContext, phase: Phase) -> None:
+    if phase is not Phase.COMMIT:
+      return
+    for tile in self.tiles.values():
+      tile.mmio.write32(WALL_CLOCK_L, ctx.cycle & 0xFFFFFFFF)
+      tile.mmio.write32(WALL_CLOCK_H, (ctx.cycle >> 32) & 0xFFFFFFFF)
+
+
+_RESET_MAP = [
+  (11, "brisc", None, None, None),
+  (12, "trisc0", TRISC0_RESET_PC, TRISC_RESET_PC_OVR, 0),
+  (13, "trisc1", TRISC1_RESET_PC, TRISC_RESET_PC_OVR, 1),
+  (14, "trisc2", TRISC2_RESET_PC, TRISC_RESET_PC_OVR, 2),
+  (18, "ncrisc", NCRISC_RESET_PC, NCRISC_RESET_PC_OVR, 0),
+]
+
+
+_SLOW_LDM_SLOTS = [
+  (LDM_SLOW_BRISC + 0 * LDM_SLOW_STRIDE, "brisc"),
+  (LDM_SLOW_BRISC + 1 * LDM_SLOW_STRIDE, "ncrisc"),
+  (LDM_SLOW_BRISC + 2 * LDM_SLOW_STRIDE, "trisc0"),
+  (LDM_SLOW_BRISC + 3 * LDM_SLOW_STRIDE, "trisc1"),
+  (LDM_SLOW_BRISC + 4 * LDM_SLOW_STRIDE, "trisc2"),
+]
+
+
+def _make_reset_hook(tile: Tile):
+  def hook(old, new):
+    mmio = tile.mmio
+    for bit, attr, pc_reg, ovr_reg, ovr_bit in _RESET_MAP:
+      was_held = bool(old & (1 << bit))
+      now_held = bool(new & (1 << bit))
+      core = getattr(tile, attr)
+      core.in_reset = now_held
+      if was_held and not now_held:
+        if pc_reg is None:
+          core.pc = 0
+        elif mmio.read32(ovr_reg) & (1 << ovr_bit):
+          core.pc = mmio.read32(pc_reg)
+        else:
+          core.pc = 0
+  return hook
+
 
 def _compute_bank_xy(harvested_banks: list[int]) -> dict[int, tuple[int, int]]:
-  if len(harvested_banks) == 0:
-    bank_xy = {}
-    for b in range(DRAM_BANK_COUNT):
-      x = 17 if b < 4 else 18
-      bank_xy[b] = (x, 12 + (b % 4) * DRAM_PORTS)
-    return bank_xy
-  elif len(harvested_banks) == 1:
+  if not harvested_banks:
+    return {b: (17 if b < 4 else 18, 12 + (b % 4) * DRAM_PORTS)
+            for b in range(DRAM_BANK_COUNT)}
+  if len(harvested_banks) == 1:
     h = harvested_banks[0]
     half = 4
     mirror = h + half - 1 if h < half else h - half
@@ -199,168 +174,184 @@ def _compute_bank_xy(harvested_banks: list[int]) -> dict[int, tuple[int, int]]:
     return bank_xy
   raise ValueError(f"unsupported harvested DRAM bank count: {len(harvested_banks)}")
 
-@dataclass
-class Dram:
-  num_banks: int
-  banks: list  # list[Memory], one per active bank
-  bank_xy: dict  # bank_id → (x, y0)
 
-  def read_interleaved(self, base_addr: int, tile_idx: int,
-            tile_bytes: int) -> bytes:
-    bank = tile_idx % self.num_banks
-    slot = tile_idx // self.num_banks
-    addr = base_addr + slot * tile_bytes
-    mem = self.banks[bank]
-    data = mem._data
-    return bytes(data.get(addr + i, 0) for i in range(tile_bytes))
-
-  def write_interleaved(self, base_addr: int, tile_idx: int,
-             tile_bytes: int, data: bytes):
-    bank = tile_idx % self.num_banks
-    slot = tile_idx // self.num_banks
-    addr = base_addr + slot * tile_bytes
-    mem = self.banks[bank]
-    mem.load(addr, data)
-
-@dataclass
-class Tile:
-  x: int
-  y: int
-  l1: Memory
-  brisc: BRISC
-  ncrisc: NCRISC
-  trisc0: TRISC0
-  trisc1: TRISC1
-  trisc2: TRISC2
-  noc0: NOC
-  noc1: NOC
-  semaphores: Semaphores = field(repr=False)
-  mmio: Memory = field(repr=False)                   # catch-all MMIO (wall clock, reset PCs, TDMA, PIC, …)
-  stream_regs: StreamRegisters = field(default=None, repr=False)   # 0xFFB40000..0xFFB7FFFF — CB sync, dispatch msg, sync ptr
-  tensix: TensixCoprocessor = field(default=None, repr=False)
-
-  @property
-  def cores(self) -> list:
-    return [self.brisc, self.ncrisc, self.trisc0, self.trisc1, self.trisc2]
+def _align_up(value: int, align: int = L1_ALIGN) -> int:
+  return (value + align - 1) & ~(align - 1)
 
 
-# Slow-path LDM slot layout: (base address, core attribute name).
-# A `Memory` (the peer core's LDM) is registered at each slot base with
-# offset=base so the handler sees a zero-based address — no adapter needed.
-_SLOW_LDM_SLOTS = [
-  (LDM_SLOW_BRISC + 0 * LDM_SLOW_STRIDE, 'brisc'),
-  (LDM_SLOW_BRISC + 1 * LDM_SLOW_STRIDE, 'ncrisc'),
-  (LDM_SLOW_BRISC + 2 * LDM_SLOW_STRIDE, 'trisc0'),
-  (LDM_SLOW_BRISC + 3 * LDM_SLOW_STRIDE, 'trisc1'),
-  (LDM_SLOW_BRISC + 4 * LDM_SLOW_STRIDE, 'trisc2'),
-]
+def _make_jal(target: int) -> bytes:
+  return ((target & 0xFF000)
+          | ((target & 0x800) << 9)
+          | ((target & 0x7FE) << 20)
+          | 0x6F).to_bytes(4, "little")
 
-# SOFT_RESET_0 values
-SOFT_RESET_ALL = 0x47800   # all 5 RISCs held in reset
 
-# SOFT_RESET_0 bit → (core_attr, pc_reg, ovr_reg, ovr_bit).  BRISC (bit 11)
-# always boots from PC 0 (the JAL stub at L1[0]); the other cores honour
-# their RESET_PC when the matching override bit is set.
-_RESET_MAP = [
-  (11, 'brisc',  None,            None,                None),
-  (12, 'trisc0', TRISC0_RESET_PC, TRISC_RESET_PC_OVR,  0),
-  (13, 'trisc1', TRISC1_RESET_PC, TRISC_RESET_PC_OVR,  1),
-  (14, 'trisc2', TRISC2_RESET_PC, TRISC_RESET_PC_OVR,  2),
-  (18, 'ncrisc', NCRISC_RESET_PC, NCRISC_RESET_PC_OVR, 0),
-]
+def _addi(rd: int, rs1: int, imm: int) -> int:
+  return ((imm & 0xFFF) << 20) | (rs1 << 15) | (rd << 7) | 0x13
 
-def _make_reset_hook(tile):
-  def hook(old, new):
-    mmio = tile.mmio
-    for bit, attr, pc_reg, ovr_reg, ovr_bit in _RESET_MAP:
-      was_held = bool(old & (1 << bit))
-      now_held = bool(new & (1 << bit))
-      core = getattr(tile, attr)
-      core.in_reset = now_held
-      if was_held and not now_held:
-        if   pc_reg is None:                          core.pc = 0
-        elif mmio.read32(ovr_reg) & (1 << ovr_bit):   core.pc = mmio.read32(pc_reg)
-        else:                                         core.pc = 0
-  return hook
+
+def _pack_words(words) -> bytes:
+  return b"".join(int(word & 0xFFFFFFFF).to_bytes(4, "little")
+                  for word in words)
+
+
+def _pack_rta(writer_args, reader_args, compute_args, num_sems, sem_off):
+  rta = _pack_words(writer_args) + _pack_words(reader_args) + _pack_words(compute_args)
+  if num_sems > 0:
+    if sem_off > len(rta):
+      rta = rta.ljust(sem_off, b"\0")
+    rta += b"\0" * (num_sems * 16)
+  return rta
+
+
+def _build_cb_blob(cbs):
+  if not cbs:
+    return 0, b""
+  mask = 0
+  for idx, _page_size, _num_pages in cbs:
+    mask |= 1 << idx
+  arr = bytearray(mask.bit_length() * 16)
+  addr = DATA_BUFFER_SPACE_BASE
+  for idx, page_size, num_pages in cbs:
+    size = page_size * num_pages
+    struct.pack_into("<IIII", arr, idx * 16, addr, size, num_pages, page_size)
+    addr += size
+  return mask, bytes(arr)
+
+
+def _build_bank_noc_table(harvested_banks: list[int],
+                          core_coords: list[tuple[int, int]]) -> bytes:
+  num_dram_banks = DRAM_BANK_COUNT - len(harvested_banks)
+  num_l1_banks = len(core_coords)
+  bank_xy = _compute_bank_xy(harvested_banks)
+
+  def noc_xy(x, y):
+    return ((y << 6) | x) & 0xFFFF
+
+  dram = []
+  for noc in range(2):
+    for b in range(num_dram_banks):
+      x, y0 = bank_xy[b]
+      dram.append(noc_xy(x, y0 + DRAM_BANK_PORT[b][noc]))
+
+  cols = sorted({x for x, _ in core_coords}) or [0]
+  l1 = []
+  for _noc in range(2):
+    for i in range(num_l1_banks):
+      l1.append(noc_xy(cols[i % len(cols)], 2 + (i // len(cols)) % 10))
+
+  return struct.pack(
+    f"<{len(dram)}H{len(l1)}H{num_dram_banks + num_l1_banks}i",
+    *dram, *l1, *([0] * (num_dram_banks + num_l1_banks)),
+  )
+
+
+def _patch_firmware_sync_addresses(l1: Memory) -> None:
+  """Patch checked-in firmware to use this emulator's mailbox sync layout.
+
+  The firmware binaries carry pointer globals in their LDM data images.  Those
+  images are version-sensitive, while the emulator has a deliberately small
+  fixed mailbox map.  For bring-up, materialize SUBORDINATE_SYNC (0x68)
+  directly at the handful of subordinate-sync pointer loads.
+  """
+  sync = 0x68
+  # BRISC subordinate_sync loads.
+  for addr, rd in (
+      (0x3CAC, 14), (0x3CD4, 15), (0x3D04, 15),
+      (0x3D1C, 15), (0x3D2C, 15), (0x4C6C, 15)):
+    l1.write32(addr, _addi(rd, 0, sync))
+  # NCRISC ncrisc_run loads.
+  for addr, rd in ((0x5EAC, 15), (0x6124, 8), (0x613C, 15)):
+    l1.write32(addr, _addi(rd, 0, sync))
+
 
 class Device:
-  def __init__(self, harvested_banks: list[int] | None = None,
-               tensix_x=None, tensix_y=None):
+  """Cycle-structured device shell with real tile/core memory wiring."""
+
+  def __init__(self, harvested_banks: list[int] | None = None, *,
+               cores: list[tuple[int, int]] | None = None,
+               core_range: CoreRange | None = None,
+               core_count: int | None = None,
+               boot_firmware: bool = True,
+               firmware_image: dict | None = None,
+               firmware_boot_max_cycles: int = 50_000_000):
     if harvested_banks is None:
       harvested_banks = [0]
+    if cores is not None and core_range is not None:
+      raise ValueError("pass either cores or core_range, not both")
+    if cores is not None and core_count is not None:
+      raise ValueError("pass either cores or core_count, not both")
+    if core_range is not None and core_count is not None:
+      raise ValueError("pass either core_range or core_count, not both")
+    if cores is None:
+      if core_range is not None:
+        cores = core_range.cores()
+      elif core_count is not None:
+        cores = CoreRange.row(1, 2, core_count).cores()
+      else:
+        cores = [(1, 2)]
+
     self.harvested_banks = harvested_banks
-    self._clock = 0
-
-    # Compute layout — optionally restrict the worker grid (tests use a
-    # 1-tile device to cut construction time; Tensix regfile alloc is ~60ms/tile).
-    if tensix_x is None: tensix_x = P100A_TENSIX_X
-    if tensix_y is None: tensix_y = P100A_Y_RANGE
-    self.worker_xy = [(x, y) for x in tensix_x for y in tensix_y]
-    num_dram_banks = DRAM_BANK_COUNT - len(harvested_banks)
-
-    # Two independent NOC networks — routing tables keyed by (y<<6)|x.
-    # Each NOC NIU on a tile reads/writes through its own network.
+    self.sim = Simulator()
+    self.core_xy = list(cores)
+    self.go_messages_addr = FIRMWARE_GO_MESSAGES
+    self.go_message_index_addr = FIRMWARE_GO_MESSAGE_INDEX
+    self.launch_stride = FIRMWARE_LAUNCH_STRIDE
+    self.firmware_boot_cycles = 0
     self.networks: list[dict[int, Memory]] = [{}, {}]
     self.pcie = Memory()
     for net in self.networks:
       net[noc_key(*PCIE_NOC_XY)] = self.pcie
 
-    # Create tiles.  Each tile's _create_tile registers its L1 on both
-    # networks at its (x, y) coordinate and installs all router handlers.
     self.tiles: dict[tuple[int, int], Tile] = {}
-    for x, y in self.worker_xy:
-      self.tiles[(x, y)] = self._create_tile(x, y)
+    self.cores: list[Core] = []
+    for x, y in self.core_xy:
+      tile = self._create_tile(x, y)
+      self.tiles[(x, y)] = tile
+      self.cores.extend(tile.cores)
+
     self._populate_logical_to_virtual_tables()
+    self._create_dram(harvested_banks)
+    self.sim.add(_TileClock(self.tiles))
 
-    # DRAM banks — each bank exposes DRAM_PORTS NOC coordinates; register
-    # the bank Memory on both networks at every port coordinate.
-    self.bank_xy = _compute_bank_xy(harvested_banks)
-    dram_banks: list[Memory] = []
-    for bank_id in sorted(self.bank_xy.keys()):
-      bank_mem = Memory()
-      dram_banks.append(bank_mem)
-      x, y0 = self.bank_xy[bank_id]
-      for port in range(DRAM_PORTS):
-        key = noc_key(x, y0 + port)
-        self.networks[0][key] = bank_mem
-        self.networks[1][key] = bank_mem
-    self.dram_banks = dram_banks
-    self.dram = Dram(num_banks=num_dram_banks, banks=dram_banks,
-            bank_xy=self.bank_xy)
+    first = self.tiles[self.core_xy[0]]
+    self.l1 = first.l1
+    self.tensix = first.tensix
+    self.brisc = first.brisc
+    self.ncrisc = first.ncrisc
+    self.trisc0 = first.trisc0
+    self.trisc1 = first.trisc1
+    self.trisc2 = first.trisc2
 
-  @property
-  def cores(self) -> list[tuple[int, int]]:
-    return list(self.worker_xy)
+    if boot_firmware:
+      if firmware_image is None:
+        import firmware
+        firmware_image = firmware.build_all()
+      self.firmware_boot_cycles = self.boot_firmware(
+        firmware_image,
+        max_cycles=firmware_boot_max_cycles,
+      )
 
   def _create_tile(self, x: int, y: int) -> Tile:
     l1 = Memory()
-    brisc  = BRISC(l1=l1)
-    ncrisc = NCRISC(l1=l1)
-    trisc0 = TRISC0(l1=l1)
-    trisc1 = TRISC1(l1=l1)
-    trisc2 = TRISC2(l1=l1)
+    tensix = Tensix(Scoreboard(), l1=l1)
+    brisc = BRISC(l1=l1, tensix=tensix)
+    ncrisc = NCRISC(l1=l1, tensix=tensix)
+    trisc0 = TRISC0(l1=l1, tensix=tensix)
+    trisc1 = TRISC1(l1=l1, tensix=tensix)
+    trisc2 = TRISC2(l1=l1, tensix=tensix)
     cores = [brisc, ncrisc, trisc0, trisc1, trisc2]
 
-    # Tile-level state.
-    mmio = Memory()                          # fallback MMIO (wall clock, reset PCs, SOFT_RESET_0, PIC, …)
-    mmio.write32(SOFT_RESET_0, SOFT_RESET_ALL)  # power-on: all 5 RISCs held in reset
-    stream_regs = StreamRegisters()          # 0xFFB40000..0xFFB7FFFF — CB tiles_acked/received, sync ptr, dispatch msg
-    tensix = TensixCoprocessor(l1=l1)        # Mover reads/writes l1 directly
+    mmio = Memory()
+    mmio.write32(SOFT_RESET_0, SOFT_RESET_ALL)
+    stream_regs = StreamRegisters()
     tensix.stream_regs = stream_regs
-    tensix.packer.stream_regs = stream_regs
-    tdma = TDMA(mover=tensix.mover,          # 0xFFB11000 — XMOV MMIO front-end
-                packer=tensix.packer)        # + FIFO_PACKED_TILE_* sideband
 
-    # Per-tile NIU controllers — one per physical NOC network.
-    noc0 = NOC(0, l1, self.networks[0], x, y)
-    noc1 = NOC(1, l1, self.networks[1], x, y)
+    noc0 = TimedNOC(0, l1, self.networks[0], x, y, self.sim)
+    noc1 = TimedNOC(1, l1, self.networks[1], x, y, self.sim)
     noc0.pre_populate()
     noc1.pre_populate()
 
-    # Register this tile on both networks at its (x, y) coordinate.  Remote
-    # cores reach L1 and stream regs through one tile-level bus, so NOC atomic
-    # increments targeting a CB's tiles_received / tiles_acked land in the
-    # same StreamRegisters the local RISCs poll on.
     tile_bus = Router()
     tile_bus.register(L1_BASE, L1_END, l1)
     tile_bus.register(STREAM_BASE, STREAM_END, stream_regs, offset=STREAM_BASE)
@@ -371,64 +362,94 @@ class Device:
     tile = Tile(
       x=x, y=y, l1=l1,
       brisc=brisc, ncrisc=ncrisc, trisc0=trisc0, trisc1=trisc1, trisc2=trisc2,
-      noc0=noc0, noc1=noc1,
-      semaphores=tensix.semaphores, mmio=mmio, stream_regs=stream_regs, tensix=tensix,
+      noc0=noc0, noc1=noc1, mmio=mmio, stream_regs=stream_regs,
+      tensix=tensix, tdma=tensix.tdma,
     )
 
     reset_hook = _make_reset_hook(tile)
     for core in cores:
       bus = core.mem
-      bus.default = mmio                     # unmapped addrs → tile catch-all
-      bus.register(NOC0_BASE,       NOC0_BASE + NOC_SIZE - 1, noc0)
-      bus.register(NOC1_BASE,       NOC1_BASE + NOC_SIZE - 1, noc1)
-      bus.register(STREAM_BASE,     STREAM_END, stream_regs, offset=STREAM_BASE)
+      bus.default = mmio
+      bus.register(NOC0_BASE, NOC0_BASE + NOC_SIZE - 1, noc0)
+      bus.register(NOC1_BASE, NOC1_BASE + NOC_SIZE - 1, noc1)
+      bus.register(STREAM_BASE, STREAM_END, stream_regs, offset=STREAM_BASE)
+      bus.register(GPR_BASE, GPR_END, tensix.gpr_mmio, offset=GPR_BASE)
       bus.register(TENSIX_CFG_BASE, TENSIX_CFG_END, tensix.cfg, offset=TENSIX_CFG_BASE)
-      bus.register(TDMA_BASE,       TDMA_END, tdma, offset=TDMA_BASE)
-      bus.register(_SEM_WIN_LO,     _SEM_WIN_HI, tensix.semaphores)
-      # Cross-core LDM: this core can reach every peer's slow-path slot.
-      # TRISC upper 4 KiB padding naturally falls through to mmio.
+      bus.register(TDMA_BASE, TDMA_END, tensix.tdma, offset=TDMA_BASE)
       for base, attr in _SLOW_LDM_SLOTS:
         peer = getattr(tile, attr)
         bus.register(base, base + peer.LDM_SIZE - 1, peer.ldm, offset=base)
-      # Per-role Tensix handlers (None if this core can't access the region).
-      ih = tensix.instrn_handler_for(core.ROLE)
-      if ih: bus.register(INSTRN_BUF_T0, INSTRN_BUF_END, ih)
-      mh = tensix.mop_handler_for(core.ROLE)
-      if mh: bus.register(MOP_CFG_BASE, MOP_CFG_END, mh)
       bus.on_write32(SOFT_RESET_0, reset_hook)
-
+      self.sim.add(core)
+    self.sim.add(tensix)
     return tile
 
+  def _create_dram(self, harvested_banks: list[int]) -> None:
+    self.bank_xy = _compute_bank_xy(harvested_banks)
+    dram_banks: list[Memory] = []
+    for bank_id in sorted(self.bank_xy):
+      bank_mem = Memory()
+      dram_banks.append(bank_mem)
+      x, y0 = self.bank_xy[bank_id]
+      for port in range(DRAM_PORTS):
+        key = noc_key(x, y0 + port)
+        self.networks[0][key] = bank_mem
+        self.networks[1][key] = bank_mem
+    self.dram_banks = dram_banks
+    self.dram = Dram(DRAM_BANK_COUNT - len(harvested_banks), dram_banks, self.bank_xy)
+
   def _populate_logical_to_virtual_tables(self):
-    cols = list(dict.fromkeys(x for x, _ in self.worker_xy))
+    cols = list(dict.fromkeys(x for x, _ in self.core_xy))
     col_table = cols + [0] * max(0, 20 - len(cols))
     row_table = list(P100A_Y_RANGE) + [0, 0]
     data = bytes((col_table[:20] + row_table[:12]))
     for tile in self.tiles.values():
-      tile.l1.load(LOGICAL_TO_VIRTUAL_SCRATCH, data)
+      tile.l1.load(BANK_TO_NOC_SCRATCH + 2048, data)
+
+  @property
+  def clock(self) -> int:
+    return self.elapsed_cycles
+
+  @property
+  def cycles(self) -> int:
+    return self.elapsed_cycles
+
+  @property
+  def sim_cycle(self) -> int:
+    return self.sim.cycle
+
+  @property
+  def core_cycles(self) -> dict[str, int]:
+    if len(self.tiles) == 1:
+      return {core.ROLE: core.cycles for core in self.cores}
+    return {
+      f"{tile.x},{tile.y}:{core.ROLE}": core.cycles
+      for tile in self.tiles.values() for core in tile.cores
+    }
+
+  @property
+  def core_blocked_cycles(self) -> dict[str, int]:
+    if len(self.tiles) == 1:
+      return {core.ROLE: core.blocked_cycles for core in self.cores}
+    return {
+      f"{tile.x},{tile.y}:{core.ROLE}": core.blocked_cycles
+      for tile in self.tiles.values() for core in tile.cores
+    }
+
+  @property
+  def elapsed_cycles(self) -> int:
+    return max(self.core_cycles.values(), default=0)
 
   def configure_cbs(self, cbs: dict[int, tuple[int, int]]):
-    for idx in cbs:
-      if not 0 <= idx < NUM_CBS:
-        raise ValueError(f"CB index {idx} out of range 0..{NUM_CBS - 1}")
-
-    # Allocate data buffers sequentially
-    available = L1_SIZE - DATA_BUFFER_SPACE_BASE
+    configs = {}
     buf_addr = DATA_BUFFER_SPACE_BASE
-    configs = {}  # idx -> (addr, total_size, num_pages, page_size)
-
     for idx in sorted(cbs):
       num_pages, page_size = cbs[idx]
       total_size = num_pages * page_size
       if buf_addr + total_size > L1_SIZE:
-        used = buf_addr - DATA_BUFFER_SPACE_BASE
-        raise ValueError(
-          f"CB {idx}: needs {total_size} bytes but only "
-          f"{available - used} of {available} bytes remain")
+        raise ValueError(f"CB {idx}: not enough L1 space")
       configs[idx] = (buf_addr, total_size, num_pages, page_size)
       buf_addr += total_size
-
-    # Write config to every tile's L1
     for tile in self.tiles.values():
       for idx, (addr, size, num_pages, page_size) in configs.items():
         base = CB_L1_CONFIG_BASE + idx * CB_CONFIG_BYTES
@@ -436,199 +457,154 @@ class Device:
         tile.l1.write32(base + 4, size)
         tile.l1.write32(base + 8, num_pages)
         tile.l1.write32(base + 12, page_size)
-
     return configs
 
-  def _step_loop(self, tiles: list[Tile], done_check, max_steps: int):
-    start_clock = self._clock
-    for _ in range(max_steps):
-      self._clock += 1
-      for tile in tiles:
-        tile.mmio.write32(WALL_CLOCK_L, self._clock & M32)
-        tile.mmio.write32(WALL_CLOCK_H, (self._clock >> 32) & M32)
-        # Step all RISC-V cores
-        for core in tile.cores:
-          if not core.in_reset:
-            core.step()
-        # Step Tensix coprocessor (process one instruction per thread)
-        tile.tensix.step()
+  def load_core(self, core: Core, addr: int, insns) -> Core:
+    core.load(addr, insns)
+    return core
+
+  def run(self, cycles: int) -> int:
+    self.sim.run(cycles)
+    return self.elapsed_cycles
+
+  def run_until(self, done_check, max_cycles: int,
+                *, tiles: list[Tile] | None = None) -> int:
+    start = self.elapsed_cycles
+    for _ in range(max_cycles):
+      self.run(1)
       if done_check():
-        return self._clock - start_clock
-    diag = self._timeout_diagnostics(tiles)
+        return self.elapsed_cycles - start
     raise TimeoutError(
-      f"emulated device did not complete within {max_steps} steps "
-      f"(clock={self._clock})\n{diag}"
+      f"emu device did not complete within {max_cycles} cycles "
+      f"(elapsed={self.elapsed_cycles}, sim={self.sim_cycle})\n"
+      + self.timeout_diagnostics(tiles)
     )
 
-  def _timeout_diagnostics(self, tiles: list[Tile]) -> str:
+  def timeout_diagnostics(self, tiles: list[Tile] | None = None) -> str:
+    if tiles is None:
+      tiles = list(self.tiles.values())
     lines = ["timeout diagnostics:"]
     for tile in tiles:
       l1 = tile.l1
-      sync = l1.read32(SUBORDINATE_SYNC)
-      sync_bytes = [(sync >> (8 * i)) & 0xFF for i in range(4)]
       rd_ptr = l1.read32(LAUNCH_MSG_RD_PTR)
       lm = LAUNCH_MSG_RING + (rd_ptr % 8) * 96
-      sem_offsets = [l1.read16(lm + 12 + j * 2) for j in range(3)]
-      local_cb_off = l1.read16(lm + 18)
-      remote_cb_off = l1.read16(lm + 20)
-      enables = l1.read32(lm + 76)
       lines.append(
         f"  tile ({tile.x},{tile.y}): "
-        f"go=0x{l1.read8(GO_MESSAGES + 3):02x} "
-        f"sync=0x{sync:08x} "
-        f"sync_bytes=[ncrisc=0x{sync_bytes[0]:02x}, "
-        f"trisc0=0x{sync_bytes[1]:02x}, trisc1=0x{sync_bytes[2]:02x}, "
-        f"trisc2=0x{sync_bytes[3]:02x}] "
-        f"rdptr={rd_ptr}"
+        f"go=0x{l1.read8(self.go_messages_addr + 3):02x} "
+        f"rdptr={rd_ptr} enables=0x{l1.read32(lm + 76):08x}"
       )
-      lines.append(
-        f"    launch slot={rd_ptr % 8} @0x{lm:05x} "
-        f"sem_off={sem_offsets} local_cb_off=0x{local_cb_off:x} "
-        f"remote_cb_off=0x{remote_cb_off:x} enables=0x{enables:x}"
-      )
-      if sync:
-        names = ("ncrisc", "trisc0", "trisc1", "trisc2")
-        waiting = [
-          f"{names[i]}=0x{sync_bytes[i]:02x}"
-          for i in range(4) if sync_bytes[i] != 0
-        ]
-        lines.append(
-          "    likely wait: BRISC is waiting for subordinate_sync to clear; "
-          "still set: " + ", ".join(waiting)
-        )
       for name in ("brisc", "ncrisc", "trisc0", "trisc1", "trisc2"):
         core = getattr(tile, name)
-        word = core.mem.read32(core.pc)
+        try:
+          word = core.mem.read32(core.pc)
+          word_desc = f"0x{word:08x}"
+        except Exception as e:
+          word_desc = f"{type(e).__name__}:{e}"
         lines.append(
           f"    {name:<6} reset={int(core.in_reset)} "
-          f"pc=0x{core.pc:08x} word=0x{word:08x} "
-          f"ra=0x{core.regs[1]:08x} sp=0x{core.regs[2]:08x} "
-          f"{_rv_desc(word)}"
+          f"cycles={core.cycles} blocked={core.blocked_cycles} "
+          f"pc=0x{core.pc:08x} word={word_desc} "
+          f"ra=0x{core.regs[1]:08x} sp=0x{core.regs[2]:08x}"
         )
-        lines.append(f"      disasm: {_disasm_desc(core.pc, word, name)}")
-      sem = tile.semaphores
-      lines.append(
-        "    tensix semaphores: " +
-        " ".join(f"s{i}={sem.value[i]}/{sem.max[i]}" for i in range(8))
-      )
-      hw = tile.tensix._hw_state()
-      lines.append(
-        "    tensix banks: "
-        f"srca(unpack={hw.srca_unpack_bank_owner}, fpu={hw.srca_fpu_bank_owner}) "
-        f"srcb(unpack={hw.srcb_unpack_bank_owner}, fpu={hw.srcb_fpu_bank_owner})"
-      )
-      for thread in tile.tensix.threads:
-        wg = thread.wait_gate
-        fifo_len = len(thread.fifo)
-        replay_word = thread._replay_word
-        rwc = tile.tensix.rwc[thread.id]
-        parts = [
-          f"fifo={fifo_len}",
-          f"mop_busy={int(thread.mop.busy)}",
-          f"replay_busy={int(thread.replay.busy)}",
-          f"rwc=a{rwc.a}/b{rwc.b}/d{rwc.d}/f{rwc.cr}",
-        ]
-        if thread.mop.busy or replay_word is not None:
-          cfg = ",".join(f"{word:08x}" for word in thread.mop.cfg)
-          parts.append(f"mop_cfg=[{cfg}]")
-          replay_buf = ",".join(f"{word:08x}" for word in thread.replay.buffer)
-          parts.append(f"replay_buf=[{replay_buf}]")
-        if replay_word is not None:
-          parts.append(f"replay_word=0x{replay_word:08x} {decode_tensix(replay_word)!r}")
-        if wg.opcode is None:
-          parts.append("wait=none")
-        elif wg.opcode == "STALLWAIT":
-          active = wg._eval_stallwait(hw, thread.id)
-          parts.append(
-            f"wait=STALLWAIT active={int(active)} "
-            f"block={_mask_names(wg.block_mask, _STALL_BITS)} "
-            f"cond={_mask_names(wg.cond_mask, _COND_BITS)} "
-            f"one_cycle={int(wg._one_cycle_hold)}"
-          )
-        elif wg.opcode == "SEMWAIT":
-          active = wg._eval_semwait(hw)
-          sem_names = [f"s{i}={sem.value[i]}/{sem.max[i]}"
-                       for i in range(8) if (wg.sem_mask >> i) & 1]
-          sem_desc = ",".join(sem_names) if sem_names else "none"
-          conds = []
-          if wg.sem_cond & 1: conds.append("STALL_ON_ZERO")
-          if wg.sem_cond & 2: conds.append("STALL_ON_MAX")
-          parts.append(
-            f"wait=SEMWAIT active={int(active)} "
-            f"block={_mask_names(wg.block_mask, _STALL_BITS)} "
-            f"cond={'+'.join(conds) if conds else '0'} sems={sem_desc} "
-            f"one_cycle={int(wg._one_cycle_hold)}"
-          )
-        else:
-          parts.append(
-            f"wait={wg.opcode} "
-            f"block={_mask_names(wg.block_mask, _STALL_BITS)} "
-            f"target=0x{getattr(wg, 'target_value', 0):x} "
-            f"stream_sel={getattr(wg, 'stream_sel', 0)} "
-            f"one_cycle={int(wg._one_cycle_hold)}"
-          )
-        lines.append(f"    tensix T{thread.id}: " + " ".join(parts))
+      for thread_id, thread in enumerate(tile.tensix.threads):
+        lines.append(
+          f"    tensix t{thread_id}: fifo={len(thread.fifo)} "
+          f"held={thread.held.name if thread.held else '-'} "
+          f"busy_until={thread.frontend_busy_until} "
+          f"inflight={tile.tensix._backend_inflight[thread_id]}"
+        )
     return "\n".join(lines)
 
-  def run(self, *,
-      brisc: bytes = b'',
-      ncrisc: bytes = b'',
-      trisc: tuple[bytes, bytes, bytes] = (b'', b'', b''),
-      writer_args=None,        # list[list[int]] or callable(i)->list[int]
-      reader_args=None,
-      compute_args=None,
-      cbs: list[tuple[int, int, int]] | None = None,   # (index, page_size, num_tiles)
-      num_semaphores: int = 0,
-      max_steps: int = 50_000_000):
-    """Dispatch a program to all tiles.
+  def boot_firmware(self, firmware: dict, *, max_cycles: int = 50_000_000,
+                    patch_sync_addresses: bool = True,
+                    go_messages_addr: int | None = None) -> int:
+    if go_messages_addr is None:
+      go_messages_addr = self.go_messages_addr
+    bank_table = _build_bank_noc_table(self.harvested_banks, self.core_xy)
+    go_init = struct.pack("<BBBB", 0, 0, 0, RUN_MSG_INIT)
+    jal = _make_jal(firmware["brisc"]["text_base"])
 
-    Mirrors the tt-metal slow-dispatch payload layout (see
-    blackhole-py/dispatch.py:build_payload) so real firmware/kernels see
-    the same launch_msg fields and KERNEL_CONFIG_BASE blob.
+    for tile in self.tiles.values():
+      l1 = tile.l1
+      mmio = tile.mmio
+      for name, fw in firmware.items():
+        for addr, data in fw["segments"]:
+          if LDM_BASE <= addr <= LDM_END_8K:
+            l1.load(LDM_SCRATCH[name] + (addr - LDM_BASE), data)
+          else:
+            l1.load(addr, data)
+      if patch_sync_addresses:
+        _patch_firmware_sync_addresses(l1)
 
-    Layout at KERNEL_CONFIG_BASE:
-      +0                RTAs: writer | reader | compute
-      +sem_off          semaphores (num_sems × 16)
-      +local_cb_off     CB config blob (16 B × mask.bit_length())
-      +remote_cb_off    remote CBs (unused)
-      +kernel_off       BRISC | NCRISC | TRISC0 | TRISC1 | TRISC2 text
-    """
+      l1.load(BOOT_JAL, jal)
+      l1.load(go_messages_addr, go_init)
+      l1.load(BANK_TO_NOC_SCRATCH, bank_table)
+      l1.load(ZEROS_BASE, b"\0" * 512)
+      mmio.write32(NCRISC_RESET_PC, firmware["ncrisc"]["text_base"])
+      mmio.write32(TRISC0_RESET_PC, firmware["trisc0"]["text_base"])
+      mmio.write32(TRISC1_RESET_PC, firmware["trisc1"]["text_base"])
+      mmio.write32(TRISC2_RESET_PC, firmware["trisc2"]["text_base"])
+      tile.brisc.mem.write32(SOFT_RESET_0, SOFT_RESET_BRISC_ONLY)
+
+    return self.run_until(
+      lambda: all(t.l1.read8(go_messages_addr + 3) == RUN_MSG_DONE
+                  for t in self.tiles.values()),
+      max_cycles,
+    )
+
+  def dispatch(self, *,
+               brisc: bytes = b"",
+               ncrisc: bytes = b"",
+               trisc: tuple[bytes, bytes, bytes] = (b"", b"", b""),
+               writer_args=None,
+               reader_args=None,
+               compute_args=None,
+               cbs: list[tuple[int, int, int]] | None = None,
+               num_semaphores: int = 0,
+               max_cycles: int = 50_000_000,
+               go_messages_addr: int | None = None,
+               go_message_index_addr: int | None = None,
+               launch_stride: int | None = None) -> int:
+    if go_messages_addr is None:
+      go_messages_addr = self.go_messages_addr
+    if go_message_index_addr is None:
+      go_message_index_addr = self.go_message_index_addr
+    if launch_stride is None:
+      launch_stride = self.launch_stride
     tiles = list(self.tiles.values())
     num_cores = len(tiles)
 
-    def _resolve(args):
-      if args is None: return [[] for _ in range(num_cores)]
-      if callable(args): return [args(i) for i in range(num_cores)]
+    def resolve(args):
+      if args is None:
+        return [[] for _ in range(num_cores)]
+      if callable(args):
+        return [args(i) for i in range(num_cores)]
       return args
 
-    writer_rta = _resolve(writer_args)
-    reader_rta = _resolve(reader_args)
-    compute_rta = _resolve(compute_args)
-
+    writer_rta = resolve(writer_args)
+    reader_rta = resolve(reader_args)
+    compute_rta = resolve(compute_args)
     max_w = max((len(a) for a in writer_rta), default=0) * 4
     max_r = max((len(a) for a in reader_rta), default=0) * 4
     max_c = max((len(a) for a in compute_rta), default=0) * 4
-    sem_off = _align_up(max_w + max_r + max_c, L1_ALIGN)
-
+    sem_off = _align_up(max_w + max_r + max_c)
     cb_mask, cb_blob = _build_cb_blob(cbs)
-    local_cb_off = _align_up(sem_off + num_semaphores * 16, L1_ALIGN)
+    local_cb_off = _align_up(sem_off + num_semaphores * 16)
     remote_cb_off = local_cb_off + len(cb_blob)
 
     kernels = [brisc, ncrisc, trisc[0], trisc[1], trisc[2]]
     text_offsets = [0] * 5
     enables = 0
-    off = _align_up(remote_cb_off, L1_ALIGN)
+    off = _align_up(remote_cb_off)
     for idx, code in enumerate(kernels):
       if code:
         text_offsets[idx] = off
-        off = _align_up(off + len(code), L1_ALIGN)
+        off = _align_up(off + len(code))
         enables |= 1 << idx
-
     rta_offs = [0, max_w, max_w + max_r, max_w + max_r, max_w + max_r]
 
     for i, tile in enumerate(tiles):
       l1 = tile.l1
-
       rta_blob = _pack_rta(writer_rta[i], reader_rta[i], compute_rta[i],
                            num_semaphores, sem_off)
       if rta_blob:
@@ -640,128 +616,44 @@ class Device:
           l1.load(KERNEL_CONFIG_BASE + text_offsets[idx], code)
 
       rd_ptr = l1.read32(LAUNCH_MSG_RD_PTR)
-      lm = LAUNCH_MSG_RING + (rd_ptr % 8) * 96
-      l1.load(lm, b'\0' * 96)
-
+      lm = LAUNCH_MSG_RING + (rd_ptr % 8) * launch_stride
+      l1.load(lm, b"\0" * launch_stride)
       for j in range(3):
-        l1.write32(lm + 0 + j * 4, KERNEL_CONFIG_BASE)     # kernel_config_base[0..2]
-        l1.write16(lm + 12 + j * 2, sem_off)                # sem_offset[0..2]
+        l1.write32(lm + j * 4, KERNEL_CONFIG_BASE)
+        l1.write16(lm + 12 + j * 2, sem_off)
       l1.write16(lm + 18, local_cb_off)
       l1.write16(lm + 20, remote_cb_off)
       for j in range(5):
-        l1.write16(lm + 22 + j * 4 + 0, rta_offs[j])
-        l1.write16(lm + 22 + j * 4 + 2, local_cb_off)       # crta shares CB region base
-      l1.write8(lm + 42, 1)                                 # mode = DISPATCH_MODE_HOST
-      for j in range(5):
-        l1.write32(lm + 44 + j * 4, text_offsets[j])
+        l1.write16(lm + 22 + j * 4, rta_offs[j])
+        l1.write16(lm + 22 + j * 4 + 2, local_cb_off)
+      l1.write8(lm + 42, 1)
+      for j, text_off in enumerate(text_offsets):
+        l1.write32(lm + 44 + j * 4, text_off)
       l1.write32(lm + 64, cb_mask)
-      l1.write8(lm + 68, 0)                                 # brisc_noc_id
-      l1.write8(lm + 69, 0)                                 # brisc_noc_mode
-      l1.write8(lm + 70, 32)                                # min_remote_cb_start_index
+      l1.write8(lm + 68, 0)
+      l1.write8(lm + 69, 0)
+      l1.write8(lm + 70, 32)
       l1.write32(lm + 76, enables)
+      l1.write32(go_message_index_addr, 0)
+      l1.write8(go_messages_addr + 3, RUN_MSG_GO)
 
-      l1.write8(GO_MESSAGES + 3, RUN_MSG_GO)
-
-    def all_done():
-      return all(t.l1.read8(GO_MESSAGES + 3) == RUN_MSG_DONE for t in tiles)
-
-    self._step_loop(tiles, all_done, max_steps)
+    return self.run_until(
+      lambda: all(t.l1.read8(go_messages_addr + 3) == RUN_MSG_DONE
+                  for t in tiles),
+      max_cycles,
+      tiles=tiles,
+    )
 
   def read_l1(self, x: int, y: int, addr: int, length: int) -> bytes:
-    l1 = self.tiles[(x, y)].l1
-    return bytes(l1.read8(addr + i) for i in range(length))
+    data = self.tiles[(x, y)].l1._data
+    return bytes(data.get(addr + i, 0) for i in range(length))
 
   def write_l1(self, x: int, y: int, addr: int, data: bytes):
-    l1 = self.tiles[(x, y)].l1
-    l1.load(addr, data)
+    self.tiles[(x, y)].l1.load(addr, data)
 
   def read_dram(self, bank: int, addr: int, length: int) -> bytes:
-    mem = self.dram_banks[bank]
-    return bytes(mem.read8(addr + i) for i in range(length))
+    data = self.dram_banks[bank]._data
+    return bytes(data.get(addr + i, 0) for i in range(length))
 
   def write_dram(self, bank: int, addr: int, data: bytes):
-    mem = self.dram_banks[bank]
-    for i, b in enumerate(data):
-      mem.write8(addr + i, b)
-
-SOFT_RESET_BRISC_ONLY = 0x47000   # BRISC released, TRISCs + NCRISC held
-RUN_MSG_INIT          = 0x40      # BRISC in firmware init; host set before reset release
-
-def _build_bank_noc_table(harvested_banks: list[int], worker_cores: list) -> bytes:
-  num_dram_banks = DRAM_BANK_COUNT - len(harvested_banks)
-  num_l1_banks = len(worker_cores)
-  NOCS = 2
-  bank_xy = _compute_bank_xy(harvested_banks)
-
-  def noc_xy(x, y):
-    return ((y << 6) | x) & 0xFFFF
-
-  dram = []
-  for noc in range(NOCS):
-    for b in range(num_dram_banks):
-      x, y0 = bank_xy[b]
-      dram.append(noc_xy(x, y0 + DRAM_BANK_PORT[b][noc]))
-
-  cols = sorted({x for x, _ in worker_cores})
-  l1 = []
-  for _ in range(NOCS):
-    for i in range(num_l1_banks):
-      l1.append(noc_xy(cols[i % len(cols)], 2 + (i // len(cols)) % 10))
-
-  return struct.pack(
-    f"<{len(dram)}H{len(l1)}H{num_dram_banks + num_l1_banks}i",
-    *dram, *l1, *([0] * (num_dram_banks + num_l1_banks))
-  )
-
-def _make_jal(target: int) -> bytes:
-  return ((target & 0xFF000)
-          | ((target & 0x800) << 9)
-          | ((target & 0x7FE) << 20)
-          | 0x6F).to_bytes(4, "little")
-
-def boot(device, firmware: dict, *, max_steps: int = 50_000_000):
-  bank_table = _build_bank_noc_table(device.harvested_banks, device.worker_xy)
-  go_init = struct.pack("<BBBB", 0, 0, 0, RUN_MSG_INIT)
-  jal = _make_jal(BRISC_FW_BASE)
-
-  for tile in device.tiles.values():
-    l1 = tile.l1
-    mmio = tile.mmio
-
-    # Upload firmware segments to L1.
-    # Segments whose paddr falls in LDM range (0xFFB00000-0xFFB01FFF)
-    # are redirected to per-core L1 scratch areas.  do_crt1() will
-    # later copy them from scratch into real LDM.
-    for name, fw in firmware.items():
-      for addr, data in fw['segments']:
-        if LDM_BASE <= addr <= LDM_END_8K:
-          scratch = LDM_SCRATCH[name] + (addr - LDM_BASE)
-          l1.load(scratch, data)
-        else:
-          l1.load(addr, data)
-
-    # Write boot data.
-    l1.load(BOOT_JAL, jal)                        # JAL x0, BRISC_FW_BASE
-    l1.load(GO_MESSAGES, go_init)                  # go_msg.signal = RUN_MSG_INIT
-    l1.load(BANK_TO_NOC_SCRATCH, bank_table)       # DRAM/L1 bank-to-NOC tables
-    l1.load(ZEROS_BASE, b'\x00' * 512)             # pre-zeroed region
-
-    # Write subordinate reset PCs to MMIO registers.
-    # BRISC's device_setup() later enables the override bits so the
-    # hardware uses these values when subordinates exit reset.
-    mmio.write32(NCRISC_RESET_PC, firmware['ncrisc']['text_base'])
-    mmio.write32(TRISC0_RESET_PC, firmware['trisc0']['text_base'])
-    mmio.write32(TRISC1_RESET_PC, firmware['trisc1']['text_base'])
-    mmio.write32(TRISC2_RESET_PC, firmware['trisc2']['text_base'])
-
-    # Release BRISC only.
-    # Routes through BRISC's bus so the reset callback fires:
-    # BRISC transitions held→running (PC=0), others stay held.
-    tile.brisc.mem.write32(SOFT_RESET_0, SOFT_RESET_BRISC_ONLY)
-
-  tiles = list(device.tiles.values())
-
-  def all_done():
-    return all(t.l1.read8(GO_MESSAGES + 3) == RUN_MSG_DONE for t in tiles)
-
-  device._step_loop(tiles, all_done, max_steps)
+    self.dram_banks[bank].load(addr, data)

@@ -115,13 +115,6 @@ MATMUL_PLAN = MatmulPlan(
   cb24_pages=64,
 )
 
-RUN_KERNEL_ADDRS = {
-  "trisc0": 0x7580,
-  "trisc1": 0x7BB4,
-  "trisc2": 0x867C,
-}
-
-
 @dataclass(frozen=True)
 class RoleKernels:
   brisc_stem: str
@@ -135,12 +128,15 @@ def bf16_words(data: bytes, count: int = 16) -> str:
   )
 
 
-def raw_symbol_addr(stem: str, symbol: str = "_Z11kernel_mainv") -> int:
+def raw_symbol_addr(stem: str,
+                    symbols: tuple[str, ...] = ("_Z11kernel_mainv",
+                                                "kernel_main()")) -> int:
   text = (DISASMS / f"{stem}.dis").read_text()
-  m = re.search(rf"^([0-9a-f]+) <{re.escape(symbol)}>:", text, re.MULTILINE)
-  if not m:
-    raise ValueError(f"{stem}: missing symbol {symbol}")
-  return int(m.group(1), 16)
+  for symbol in symbols:
+    m = re.search(rf"^([0-9a-f]+) <{re.escape(symbol)}>:", text, re.MULTILINE)
+    if m:
+      return int(m.group(1), 16)
+  raise ValueError(f"{stem}: missing symbols {', '.join(symbols)}")
 
 
 def load_rx_segment_relocated(tile, role: str, stem: str) -> tuple[int, int]:
@@ -182,7 +178,7 @@ def load_dataflow_kernel(tile, role: str, stem: str) -> int:
 def load_compute_kernel(tile, role: str, stem: str) -> int:
   text_base, text_vaddr = load_rx_segment_relocated(tile, role, stem)
   load_rw_segments_to_ldm(tile, role, stem)
-  return text_base + (RUN_KERNEL_ADDRS[role] - text_vaddr)
+  return text_base + (raw_symbol_addr(stem, ("run_kernel()",)) - text_vaddr)
 
 
 def cb_layout(plan: MatmulPlan) -> dict[int, tuple[int, int, int]]:
@@ -323,7 +319,8 @@ def validate_output(alloc: ScratchDramAllocator, c_buf: ScratchDramBuffer,
 
 def main():
   dev = Device(harvested_banks=HARVESTED_DRAM_BANKS,
-               tensix_x=TENSIX_X, tensix_y=TENSIX_Y)
+               cores=MATMUL_PLAN.active_cores(),
+               boot_firmware=False)
   plan = MATMUL_PLAN
   layout = cb_layout(plan)
   tiles = [dev.tiles[core] for core in plan.active_cores()]
@@ -362,12 +359,12 @@ def main():
     tile.l1.write8(GO_MESSAGES + 3, RUN_MSG_GO)
 
   try:
-    steps = dev._step_loop(
-      tiles,
+    steps = dev.run_until(
       lambda: all(
         tile.l1.read8(GO_MESSAGES + 3) == RUN_MSG_DONE and tensix_idle(tile)
         for tile in tiles),
-      MAX_STEPS)
+      MAX_STEPS,
+      tiles=tiles)
   except TimeoutError as e:
     print(f"RUN TIMEOUT: {e}", file=sys.stderr, flush=True)
     return 1

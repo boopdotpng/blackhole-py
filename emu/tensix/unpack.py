@@ -408,14 +408,14 @@ class Unpacker:
   def __init__(self, srca, srcb, l1: Memory = None, config_unit=None):
     self.srca = srca
     self.srcb = srcb
-    # L1 reference — injected by TensixCoprocessor; may be None for NOP-only use.
+    # L1 reference — injected by the Tensix frontend; may be None for NOP-only use.
     self._l1 = l1
     self._cfg = config_unit
 
   def handle_unpacr(self, d, thread_id: int = 0, coproc=None):
     """Execute UNPACR: read L1, convert format, write SrcA/SrcB or Dest.
 
-    When called from the coprocessor dispatch, `coproc` is always provided.
+    When called from the cycle frontend dispatch, `coproc` is always provided.
     The old signature (just `d`) is kept for backward compat in NOP-only callers.
     """
     if coproc is not None:
@@ -451,7 +451,7 @@ def _execute_unpacr(d, thread_id: int, coproc) -> None:
 
   d           — decoded UNPACR instruction
   thread_id   — calling thread (TRISC0 = thread 0 for unpackers)
-  coproc      — TensixCoprocessor instance (provides l1, config_unit, srca, srcb,
+  coproc      — Tensix frontend (provides l1, config_unit, srca, srcb,
                 dest, adc, unpackers)
   """
   which_unp = d.Unpack_block_selection  # 0=SrcA/Dst, 1=SrcB
