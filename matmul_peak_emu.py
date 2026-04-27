@@ -41,6 +41,7 @@ from add1_emu import (
   pack_words,
   scratch_boot,
   tensix_idle,
+  timeout_diagnostics,
   write_dm_cb_interface_to_ldm,
   write_trisc_cb_interface,
 )
@@ -48,7 +49,6 @@ from dram import tilize, untilize
 from dispatch import Dtype, MathFidelity
 from emu.device import Device, RUN_MSG_DONE, RUN_MSG_GO
 from emu.memory import (
-  CB_CONFIG_BYTES,
   DATA_BUFFER_SPACE_BASE,
   GO_MESSAGES,
   KERNEL_CONFIG_BASE,
@@ -56,6 +56,7 @@ from emu.memory import (
   LDM_END_8K,
   SUBORDINATE_SYNC,
 )
+from emu.runtime import RuntimeLayout
 from examples.matmul_peak import (
   MatmulPlan,
   _from_device_bytes,
@@ -67,16 +68,10 @@ from examples.matmul_peak import (
 
 
 TILE_BYTES = Dtype.Float16_b.tile_size
-M, K, N = 512, 256, 512
+M, K, N = 256, 128, 256
 TENSIX_X = (1, 2)
 TENSIX_Y = (2, 3)
 MAX_STEPS = int(os.environ.get("MAX_STEPS", str(MAX_RUN_STEPS * 20)))
-
-WRITER_RTA_BASE = KERNEL_CONFIG_BASE + 0x000
-READER_RTA_BASE = KERNEL_CONFIG_BASE + 0x100
-TRISC_RTA_BASE = KERNEL_CONFIG_BASE + 0x200
-SEM_BASE = KERNEL_CONFIG_BASE + 0x240
-CB_CONFIG_BASE = KERNEL_CONFIG_BASE + 0x400
 
 BRISC_SEM_L1_BASE_LDM = 0x478
 NCRISC_SEM_L1_BASE_LDM = 0x45C
@@ -92,33 +87,60 @@ TEXT_BASES = {
 MATMUL_PLAN = MatmulPlan(
   rows=(2, 3),
   cols=(1, 2),
-  mt=16,
-  kt=8,
-  nt=16,
-  per_core_m=8,
-  per_core_n=8,
+  mt=8,
+  kt=4,
+  nt=8,
+  per_core_m=4,
+  per_core_n=4,
   in0_block_w=4,
   out_subblock_h=2,
-  out_subblock_w=2,
-  out_subblock_num_tiles=4,
-  num_blocks=2,
-  in0_num_subblocks=4,
-  in1_num_subblocks=4,
-  in0_block_num_tiles=32,
+  out_subblock_w=4,
+  out_subblock_num_tiles=8,
+  num_blocks=1,
+  in0_num_subblocks=2,
+  in1_num_subblocks=1,
+  in0_block_num_tiles=16,
   in0_subblock_num_tiles=8,
-  in1_block_num_tiles=32,
-  in1_per_core_w=8,
-  out_block_num_tiles=64,
-  cb0_pages=64,
-  cb1_pages=64,
-  cb16_pages=64,
-  cb24_pages=64,
+  in1_block_num_tiles=16,
+  in1_per_core_w=4,
+  out_block_num_tiles=16,
+  cb0_pages=32,
+  cb1_pages=32,
+  cb16_pages=16,
+  cb24_pages=16,
 )
 
 @dataclass(frozen=True)
 class RoleKernels:
   brisc_stem: str
   ncrisc_stem: str
+
+
+@dataclass(frozen=True)
+class ScratchLayout(RuntimeLayout):
+  pass
+
+
+def align16(value: int) -> int:
+  return (value + 15) & ~15
+
+
+def build_scratch_layout(
+    args_by_core: dict[tuple[int, int], tuple[list[int], list[int]]],
+) -> ScratchLayout:
+  reader_bytes = max(len(args[0]) for args in args_by_core.values()) * 4
+  writer_bytes = max(len(args[1]) for args in args_by_core.values()) * 4
+  rta_total = reader_bytes + writer_bytes
+  sem_off = align16(rta_total)
+  cb_off = align16(sem_off + 4 * 16)
+  return ScratchLayout(
+    kernel_config_base=KERNEL_CONFIG_BASE,
+    reader_rta_base=KERNEL_CONFIG_BASE,
+    writer_rta_base=KERNEL_CONFIG_BASE + reader_bytes,
+    compute_rta_base=KERNEL_CONFIG_BASE + rta_total,
+    semaphore_base=KERNEL_CONFIG_BASE + sem_off,
+    cb_config_base=KERNEL_CONFIG_BASE + cb_off,
+  )
 
 
 def bf16_words(data: bytes, count: int = 16) -> str:
@@ -199,23 +221,26 @@ def cb_layout(plan: MatmulPlan) -> dict[int, tuple[int, int, int]]:
   return out
 
 
-def write_cb_config(tile, layout: dict[int, tuple[int, int, int]]):
-  for idx, (addr, size, pages) in layout.items():
-    base = CB_CONFIG_BASE + idx * CB_CONFIG_BYTES
+def write_cb_config(tile, layout: ScratchLayout,
+                    cb_map: dict[int, tuple[int, int, int]]):
+  for idx, (addr, size, pages) in cb_map.items():
+    base = layout.cb_config_addr(idx)
     tile.l1.write32(base + 0, addr)
     tile.l1.write32(base + 4, size)
     tile.l1.write32(base + 8, pages)
     tile.l1.write32(base + 12, TILE_BYTES)
 
 
-def seed_dataflow_ldm(dev: Device, tile, layout: dict[int, tuple[int, int, int]]):
-  tile.brisc.ldm.write32(0x10, READER_RTA_BASE)
-  tile.brisc.ldm.write32(BRISC_SEM_L1_BASE_LDM, SEM_BASE)
-  tile.ncrisc.ldm.write32(0x34, WRITER_RTA_BASE)
-  tile.ncrisc.ldm.write32(NCRISC_SEM_L1_BASE_LDM, SEM_BASE)
+def seed_dataflow_ldm(dev: Device, tile,
+                      cb_layout: dict[int, tuple[int, int, int]],
+                      layout: ScratchLayout):
+  tile.brisc.ldm.write32(0x10, layout.reader_rta_base)
+  tile.brisc.ldm.write32(BRISC_SEM_L1_BASE_LDM, layout.semaphore_base)
+  tile.ncrisc.ldm.write32(0x34, layout.writer_rta_base)
+  tile.ncrisc.ldm.write32(NCRISC_SEM_L1_BASE_LDM, layout.semaphore_base)
 
   for cb in (0, 1, 16, 24):
-    addr, size, pages = layout[cb]
+    addr, size, pages = cb_layout[cb]
     write_dm_cb_interface_to_ldm(
       tile.brisc, RAW_DF_BRISC_CB_INTERFACE_LDM, cb, addr, size, pages,
       TILE_BYTES)
@@ -234,27 +259,29 @@ def seed_dataflow_ldm(dev: Device, tile, layout: dict[int, tuple[int, int, int]]
     tile.ncrisc.ldm.write32(RAW_DF_NCRISC_DRAM_OFFSET_LDM + bank_idx * 4, 0)
 
 
-def patch_compute_ldm(tile, layout: dict[int, tuple[int, int, int]]):
+def patch_compute_ldm(tile, cb_layout: dict[int, tuple[int, int, int]],
+                      layout: ScratchLayout):
   for core in (tile.trisc0, tile.trisc2):
-    core.ldm.write32(0x08, CB_CONFIG_BASE)
+    core.ldm.write32(0x08, layout.cb_config_base)
     core.ldm.write32(0x10, KERNEL_CONFIG_BASE)
-    core.ldm.write32(0x14, TRISC_RTA_BASE)
+    core.ldm.write32(0x14, layout.trisc_rta_base)
     core.ldm.write32(0x1C, 0)
   tile.trisc1.ldm.write32(0x0C, KERNEL_CONFIG_BASE)
-  tile.trisc1.ldm.write32(0x10, TRISC_RTA_BASE)
+  tile.trisc1.ldm.write32(0x10, layout.trisc_rta_base)
   tile.trisc1.ldm.write32(0x18, 0)
 
   for core in (tile.trisc0, tile.trisc2):
     for cb in (0, 1, 16, 24):
-      addr, size, pages = layout[cb]
+      addr, size, pages = cb_layout[cb]
       write_trisc_cb_interface(core, cb, addr, size, pages, TILE_BYTES)
 
 
-def write_rtas(tile, reader_args: list[int], writer_args: list[int]):
-  tile.l1.load(READER_RTA_BASE, pack_words(reader_args))
-  tile.l1.load(WRITER_RTA_BASE, pack_words(writer_args))
-  tile.l1.load(TRISC_RTA_BASE, b"\0" * 16)
-  tile.l1.load(SEM_BASE, b"\0" * (4 * 16))
+def write_rtas(tile, reader_args: list[int], writer_args: list[int],
+               layout: ScratchLayout):
+  tile.l1.load(layout.reader_rta_base, pack_words(reader_args))
+  tile.l1.load(layout.writer_rta_base, pack_words(writer_args))
+  tile.l1.load(layout.trisc_rta_base, b"\0" * 16)
+  tile.l1.load(layout.semaphore_base, b"\0" * (4 * 16))
 
 
 def make_buffers(dev: Device, plan: MatmulPlan):
@@ -322,11 +349,13 @@ def main():
                cores=MATMUL_PLAN.active_cores(),
                boot_firmware=False)
   plan = MATMUL_PLAN
-  layout = cb_layout(plan)
+  cb_map = cb_layout(plan)
   tiles = [dev.tiles[core] for core in plan.active_cores()]
 
   alloc, a_buf, b_buf, c_buf, a_src, b_src = make_buffers(dev, plan)
   args_by_core = program_args(plan, a_buf, b_buf, c_buf)
+  scratch_layout = build_scratch_layout(args_by_core)
+  dev.set_runtime_layout(scratch_layout)
 
   for tile in tiles:
     core_xy = (tile.x, tile.y)
@@ -350,10 +379,10 @@ def main():
       },
     )
     reader_args, writer_args = args_by_core[core_xy]
-    write_rtas(tile, reader_args, writer_args)
-    write_cb_config(tile, layout)
-    seed_dataflow_ldm(dev, tile, layout)
-    patch_compute_ldm(tile, layout)
+    write_rtas(tile, reader_args, writer_args, scratch_layout)
+    write_cb_config(tile, scratch_layout, cb_map)
+    seed_dataflow_ldm(dev, tile, cb_map, scratch_layout)
+    patch_compute_ldm(tile, cb_map, scratch_layout)
 
   for tile in tiles:
     tile.l1.write8(GO_MESSAGES + 3, RUN_MSG_GO)
@@ -366,7 +395,8 @@ def main():
       MAX_STEPS,
       tiles=tiles)
   except TimeoutError as e:
-    print(f"RUN TIMEOUT: {e}", file=sys.stderr, flush=True)
+    print(f"RUN TIMEOUT: {e}\n{timeout_diagnostics(tiles)}",
+          file=sys.stderr, flush=True)
     return 1
   except Exception as e:
     print(f"RUN ERROR: {type(e).__name__}: {e}", file=sys.stderr, flush=True)

@@ -36,10 +36,6 @@ from . import formats as _fmt
 
 M32 = 0xFFFFFFFF
 from . import cfg_layout as _cfg_layout
-from ..memory import (
-  CB_CONFIG_BYTES, CB_L1_CONFIG_BASE, NUM_CBS,
-  STREAM_BASE, STREAM_STRIDE, STREAM_TILES_RECEIVED,
-)
 
 
 # ---------------------------------------------------------------------------
@@ -379,28 +375,12 @@ class Packer:
     # would pack 32 bits, one per all-zero face.
     if force_stream_end and (flush or last):
       out_state.packed_fifo.append((out_state.tile_bytes, 0))
-      self._publish_cb_tile(out_state)
       out_state.tile_bytes = 0
       out_state.data_stream.needs_new_address = True
       out_state.exp_stream.needs_new_address  = True
       out_state.rsi_stream.needs_new_address  = True
       out_state.data_buf = []
       out_state.exp_buf  = []
-
-  def _publish_cb_tile(self, out_state):
-    """Publish one completed pack tile to the matching CB stream counter."""
-    if self.stream_regs is None or self._l1 is None:
-      return
-    addr = out_state.data_stream.byte_address
-    for cb_base in (CB_L1_CONFIG_BASE, CB_L1_CONFIG_BASE + 0x100):
-      for cb in range(NUM_CBS):
-        base = cb_base + cb * CB_CONFIG_BYTES
-        cb_addr = self._l1.read32(base + 0)
-        cb_size = self._l1.read32(base + 4)
-        if cb_size and cb_addr <= addr < cb_addr + cb_size:
-          off = cb * STREAM_STRIDE + STREAM_TILES_RECEIVED
-          self.stream_regs.write32(off, (self.stream_regs.read32(off) + 1) & M32)
-          return
 
   # -------------------------------------------------------------------------
   # Stage 2: Early format conversion

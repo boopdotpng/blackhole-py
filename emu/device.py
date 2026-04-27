@@ -4,7 +4,7 @@ import struct
 from dataclasses import dataclass, field
 
 from .memory import (
-  BANK_TO_NOC_SCRATCH, CB_CONFIG_BYTES, CB_L1_CONFIG_BASE, DATA_BUFFER_SPACE_BASE,
+  BANK_TO_NOC_SCRATCH, DATA_BUFFER_SPACE_BASE,
   KERNEL_CONFIG_BASE, LAUNCH_MSG_RD_PTR, LAUNCH_MSG_RING, LDM_BASE,
   LDM_END_8K, LDM_SCRATCH, INSTRN_BUF_END, INSTRN_BUF_T0, L1_BASE, L1_END,
   L1_SIZE, LDM_SLOW_BRISC, LDM_SLOW_STRIDE, MOP_CFG_BASE, MOP_CFG_END,
@@ -17,6 +17,7 @@ from .memory import (
 from .resources import Scoreboard
 from .noc import TimedNOC, StreamRegisters, noc_key
 from .rv import BRISC, NCRISC, TRISC0, TRISC1, TRISC2, Core
+from .runtime import RuntimeLayout
 from .sim import Phase, SimContext, Simulator
 from .tensix_core import Tensix
 
@@ -272,6 +273,7 @@ class Device:
                cores: list[tuple[int, int]] | None = None,
                core_range: CoreRange | None = None,
                core_count: int | None = None,
+               runtime_layout: RuntimeLayout | None = None,
                boot_firmware: bool = True,
                firmware_image: dict | None = None,
                firmware_boot_max_cycles: int = 50_000_000):
@@ -292,6 +294,7 @@ class Device:
         cores = [(1, 2)]
 
     self.harvested_banks = harvested_banks
+    self.runtime_layout = runtime_layout or RuntimeLayout()
     self.sim = Simulator()
     self.core_xy = list(cores)
     self.go_messages_addr = FIRMWARE_GO_MESSAGES
@@ -312,6 +315,7 @@ class Device:
 
     self._populate_logical_to_virtual_tables()
     self._create_dram(harvested_banks)
+    self._upload_bank_noc_tables()
     self.sim.add(_TileClock(self.tiles))
 
     first = self.tiles[self.core_xy[0]]
@@ -398,6 +402,15 @@ class Device:
     self.dram_banks = dram_banks
     self.dram = Dram(DRAM_BANK_COUNT - len(harvested_banks), dram_banks, self.bank_xy)
 
+  def _upload_bank_noc_tables(self) -> None:
+    bank_table = _build_bank_noc_table(self.harvested_banks, self.core_xy)
+    for tile in self.tiles.values():
+      tile.l1.load(self.runtime_layout.bank_table_base, bank_table)
+
+  def set_runtime_layout(self, runtime_layout: RuntimeLayout) -> None:
+    self.runtime_layout = runtime_layout
+    self._upload_bank_noc_tables()
+
   def _populate_logical_to_virtual_tables(self):
     cols = list(dict.fromkeys(x for x, _ in self.core_xy))
     col_table = cols + [0] * max(0, 20 - len(cols))
@@ -452,7 +465,7 @@ class Device:
       buf_addr += total_size
     for tile in self.tiles.values():
       for idx, (addr, size, num_pages, page_size) in configs.items():
-        base = CB_L1_CONFIG_BASE + idx * CB_CONFIG_BYTES
+        base = self.runtime_layout.cb_config_addr(idx)
         tile.l1.write32(base + 0, addr)
         tile.l1.write32(base + 4, size)
         tile.l1.write32(base + 8, num_pages)
@@ -520,7 +533,6 @@ class Device:
                     go_messages_addr: int | None = None) -> int:
     if go_messages_addr is None:
       go_messages_addr = self.go_messages_addr
-    bank_table = _build_bank_noc_table(self.harvested_banks, self.core_xy)
     go_init = struct.pack("<BBBB", 0, 0, 0, RUN_MSG_INIT)
     jal = _make_jal(firmware["brisc"]["text_base"])
 
@@ -538,13 +550,14 @@ class Device:
 
       l1.load(BOOT_JAL, jal)
       l1.load(go_messages_addr, go_init)
-      l1.load(BANK_TO_NOC_SCRATCH, bank_table)
       l1.load(ZEROS_BASE, b"\0" * 512)
       mmio.write32(NCRISC_RESET_PC, firmware["ncrisc"]["text_base"])
       mmio.write32(TRISC0_RESET_PC, firmware["trisc0"]["text_base"])
       mmio.write32(TRISC1_RESET_PC, firmware["trisc1"]["text_base"])
       mmio.write32(TRISC2_RESET_PC, firmware["trisc2"]["text_base"])
       tile.brisc.mem.write32(SOFT_RESET_0, SOFT_RESET_BRISC_ONLY)
+
+    self._upload_bank_noc_tables()
 
     return self.run_until(
       lambda: all(t.l1.read8(go_messages_addr + 3) == RUN_MSG_DONE
@@ -556,6 +569,9 @@ class Device:
                brisc: bytes = b"",
                ncrisc: bytes = b"",
                trisc: tuple[bytes, bytes, bytes] = (b"", b"", b""),
+               brisc_recv: bytes = b"",
+               ncrisc_recv: bytes = b"",
+               grid: tuple[tuple[int, ...], tuple[int, ...]] | None = None,
                writer_args=None,
                reader_args=None,
                compute_args=None,
@@ -592,19 +608,36 @@ class Device:
     local_cb_off = _align_up(sem_off + num_semaphores * 16)
     remote_cb_off = local_cb_off + len(cb_blob)
 
-    kernels = [brisc, ncrisc, trisc[0], trisc[1], trisc[2]]
-    text_offsets = [0] * 5
-    enables = 0
-    off = _align_up(remote_cb_off)
-    for idx, code in enumerate(kernels):
-      if code:
-        text_offsets[idx] = off
-        off = _align_up(off + len(code))
-        enables |= 1 << idx
+    brisc_recv = brisc_recv or brisc
+    ncrisc_recv = ncrisc_recv or ncrisc
+    if grid is None:
+      kernel_roles = {core_xy: (brisc, ncrisc) for core_xy in self.core_xy}
+    else:
+      rows, cols = grid
+      grid_cores = [[(x, y) for x in cols] for y in rows]
+      kernel_roles = {}
+      for row_idx, row in enumerate(grid_cores):
+        for col_idx, core_xy in enumerate(row):
+          kernel_roles[core_xy] = (
+            brisc if col_idx == 0 else brisc_recv,
+            ncrisc if row_idx == 0 else ncrisc_recv,
+          )
+
+    trisc_kernels = (trisc[0], trisc[1], trisc[2])
     rta_offs = [0, max_w, max_w + max_r, max_w + max_r, max_w + max_r]
 
     for i, tile in enumerate(tiles):
       l1 = tile.l1
+      brisc_kernel, ncrisc_kernel = kernel_roles.get((tile.x, tile.y), (brisc, ncrisc))
+      kernels = [brisc_kernel, ncrisc_kernel, *trisc_kernels]
+      text_offsets = [0] * 5
+      enables = 0
+      off = _align_up(remote_cb_off)
+      for idx, code in enumerate(kernels):
+        if code:
+          text_offsets[idx] = off
+          off = _align_up(off + len(code))
+          enables |= 1 << idx
       rta_blob = _pack_rta(writer_rta[i], reader_rta[i], compute_rta[i],
                            num_semaphores, sem_off)
       if rta_blob:

@@ -30,9 +30,7 @@ if str(ROOT) not in sys.path:
 import dsl
 from dram import tilize
 from emu.device import Device
-from emu.device import _build_bank_noc_table
 from emu.memory import (
-  BANK_TO_NOC_SCRATCH,
   BOOT_JAL,
   BRISC_FW_BASE,
   CB_CONFIG_BYTES,
@@ -56,6 +54,7 @@ from emu.memory import (
   TRISC2_FW_BASE,
   TRISC2_RESET_PC,
   TRISC_RESET_PC_OVR,
+  BANK_TO_NOC_SCRATCH,
   cb_tiles_acked_addr,
   cb_tiles_received_addr,
 )
@@ -493,13 +492,6 @@ def seed_raw_dataflow_ldm(dev: Device, tile):
 def load_raw_dataflow_kernels(dev: Device, tile):
   load_raw_dataflow_kernel_text(tile)
   seed_raw_dataflow_ldm(dev, tile)
-
-
-def upload_bank_noc_table(dev: Device, tile):
-  tile.l1.load(
-    BANK_TO_NOC_SCRATCH,
-    _build_bank_noc_table(dev.harvested_banks, dev.core_xy),
-  )
 
 
 def load_raw_compute_kernels(tile, num_tiles: int):
@@ -975,7 +967,6 @@ def main():
   work = split_tile_work(num_tiles, len(tiles))
   for tile, (tile_offset, tile_count) in zip(tiles, work, strict=True):
     scratch_boot(tile, kernel_bases=kernel_bases, fw_bases=fw_bases)
-    upload_bank_noc_table(dev, tile)
     write_rtas(tile, src, dst, tile_offset=tile_offset, num_tiles=tile_count)
     write_cb_config(tile)
     verify_tile_runtime(tile, src, dst, tile_offset, tile_count)
