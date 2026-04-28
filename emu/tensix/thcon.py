@@ -40,8 +40,8 @@ class ConfigUnit:
       self.thread_cfg[thread_id][d.setc16_reg] = d.setc16_value & M32
 
   def _state_id(self, thread_id):
-    # Config state selection: ADDR32 42 bit 0 in thread_cfg
-    return self.thread_cfg[thread_id][42] & 1 if 42 < self.THREAD_CFG_WORDS else 0
+    # Blackhole ThreadConfig: CFG_STATE_ID_StateID is ADDR32 0 bit 0.
+    return self.thread_cfg[thread_id][0] & 1
 
   def _write_cfg_word(self, state_id, addr32, value):
     addr32 &= 0x1FF

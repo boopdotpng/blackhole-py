@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import os
 from functools import cache
 from dataclasses import dataclass
+from types import SimpleNamespace
 
 from dsl import decode_tensix
 from .memory import (
@@ -140,8 +142,24 @@ class GPRMMIO:
 
 def decode_tensix_minimal(word: int) -> Instruction:
   opcode = (word >> 24) & 0xFF
-  decoded = _decode_tensix_cached(word)
   unit = _UNIT_BY_OPCODE.get(opcode)
+  if opcode in (0x26, 0x98):
+    # Blackhole MVMUL uses a 3-bit ADDR_MOD field. Replay/MOP expansion emits
+    # opcode 0x26 words with the high bit in bit 16; some raw disassemblies also
+    # show opcode 0x98 ttmvmul encodings in the SFPU range.
+    addr_shift = 16 if opcode == 0x98 else 14
+    decoded = SimpleNamespace(
+      name="MVMUL",
+      word=word,
+      clear_dvalid=(word >> 22) & 0x3,
+      instr_mod19=(word >> 19) & 0x7,
+      addr_mode=(word >> addr_shift) & 0x7,
+      dst=word & 0x3FF,
+      broadcast_srcb=(word >> 19) & 0x1,
+    )
+    unit = Resource.TENSIX_MATH
+  else:
+    decoded = _decode_tensix_cached(word)
   if unit is None:
     if 0x70 <= opcode <= 0x99:
       unit = Resource.TENSIX_SFPU
@@ -169,6 +187,9 @@ class TensixThread:
   mop_cfg: list[int] | None = None
   mop_mask_hi: int = 0
   mop_expansion: object | None = None
+  replay_buffer: list[int] | None = None
+  replay_playback: object | None = None
+  replay_recording: dict | None = None
   wait_gate: WaitGate | None = None
 
   def next_instruction(self) -> Instruction | None:
@@ -176,10 +197,61 @@ class TensixThread:
       insn = self.held
       self.held = None
       return insn
+
+    if self.replay_playback is not None:
+      try:
+        return decode_tensix_minimal(next(self.replay_playback))
+      except StopIteration:
+        self.replay_playback = None
+        return None
+
+    if self.replay_recording is not None:
+      word = self._next_mop_word()
+      if word is None:
+        return None
+      rec = self.replay_recording
+      self.replay_buffer[(rec["start"] + rec["count"]) % 32] = word
+      rec["count"] += 1
+      if rec["count"] >= rec["total"]:
+        self.replay_recording = None
+      return decode_tensix_minimal(word) if rec["exec"] else None
+
+    while True:
+      word = self._next_mop_word()
+      if word is None:
+        return None
+
+      opcode = (word >> 24) & 0xFF
+      if opcode != 0x04:  # REPLAY
+        return decode_tensix_minimal(word)
+
+      start_idx = (word >> 14) & 0x1F
+      length = (word >> 4) & 0x3F
+      if length == 0:
+        length = 64
+      exec_while = bool((word >> 1) & 1)
+      load_mode = bool(word & 1)
+      if load_mode:
+        self.replay_recording = {
+          "start": start_idx,
+          "total": length,
+          "count": 0,
+          "exec": exec_while,
+        }
+        return None
+
+      self.replay_playback = self._play_replay(start_idx, length)
+      try:
+        return decode_tensix_minimal(next(self.replay_playback))
+      except StopIteration:
+        self.replay_playback = None
+        return None
+
+  def _next_mop_word(self) -> int | None:
     while True:
       if self.mop_expansion is not None:
         try:
-          return decode_tensix_minimal(next(self.mop_expansion))
+          return next(self.mop_expansion)
         except StopIteration:
           self.mop_expansion = None
           return None
@@ -195,7 +267,19 @@ class TensixThread:
       if opcode == 0x01:  # MOP
         self.mop_expansion = self._expand_mop(insn.word)
         continue
-      return insn
+      return insn.word
+
+  def _play_replay(self, start: int, count: int):
+    for i in range(count):
+      yield self.replay_buffer[(start + i) % 32]
+
+  @property
+  def frontend_active(self) -> bool:
+    return (
+      self.mop_expansion is not None
+      or self.replay_playback is not None
+      or self.replay_recording is not None
+    )
 
   @staticmethod
   def _is_nop(word: int) -> bool:
@@ -280,6 +364,8 @@ class TensixThread:
   def __post_init__(self):
     if self.mop_cfg is None:
       self.mop_cfg = [0] * 9
+    if self.replay_buffer is None:
+      self.replay_buffer = [0] * 32
     if self.wait_gate is None:
       self.wait_gate = WaitGate()
 
@@ -303,7 +389,7 @@ class Tensix:
     self.gpr_mmio = GPRMMIO(self.gpr)
     self.unpackers = [UnpackerState(), UnpackerState()]
     self.unpack = Unpacker(self.srca, self.srcb)
-    self.fpu = FPU(self.srca, self.srcb, self.dest)
+    self.fpu = FPU(self.srca, self.srcb, self.dest, cfg=self.config_unit)
     self.sfpu = SFPU(self.dest)
     self.packer = Packer(dest=self.dest, cfg=self.config_unit,
                          adc=self.adc, l1=self.l1)
@@ -360,6 +446,7 @@ class Tensix:
     return (
       len(thread.fifo) == 0
       and thread.held is None
+      and not thread.frontend_active
       and thread.frontend_busy_until <= cycle
     )
 
@@ -397,12 +484,31 @@ class Tensix:
   def _issue_backend(self, unit: TimedUnit, owner: str, thread_id: int,
                      insn: Instruction, ctx: SimContext, on_commit=None) -> bool:
     def commit(_ctx: SimContext) -> None:
+      if os.environ.get("EMU_TRACE_TENSIX_COMMIT") and insn.name in os.environ.get("EMU_TRACE_TENSIX_COMMIT", "").split(","):
+        print(
+            "EMU_TRACE_TENSIX_COMMIT",
+            f"core={getattr(self, 'debug_label', '?')}",
+            f"cycle={_ctx.cycle}",
+            f"thread={thread_id}",
+            f"name={insn.name}",
+            f"word=0x{insn.word:08x}",
+        )
       if on_commit is not None:
         on_commit(_ctx)
       self._backend_inflight[thread_id] -= 1
 
     issued = unit.issue(owner, insn, ctx, commit=commit)
     if issued:
+      if os.environ.get("EMU_TRACE_TENSIX_ISSUE") and insn.name in os.environ.get("EMU_TRACE_TENSIX_ISSUE", "").split(","):
+        print(
+            "EMU_TRACE_TENSIX_ISSUE",
+            f"core={getattr(self, 'debug_label', '?')}",
+            f"cycle={ctx.cycle}",
+            f"thread={thread_id}",
+            f"name={insn.name}",
+            f"word=0x{insn.word:08x}",
+            f"lat={insn.latency}",
+        )
       self._backend_inflight[thread_id] += 1
     return issued
 
@@ -472,7 +578,26 @@ class Tensix:
           self.fpu.zeroacc(d)
           if d.clear_mode in (0, 1):
             self._apply_addr_mod(thread_id, d.addr_mode)
-        case "ZEROSRC": self.fpu.zerosrc(d)
+        case "ZEROSRC":
+          if os.environ.get("EMU_TRACE_SRC_CLEAR"):
+            for name, src in (("SrcA", self.srca), ("SrcB", self.srcb)):
+              if not (d.src_mask & (1 if name == "SrcA" else 2)):
+                continue
+              bank = src.fpu_bank
+              nz_rows = [
+                  r for r in range(64)
+                  if any(src.banks[bank].rows[r][c] for c in range(16))
+              ]
+              print(
+                  "EMU_TRACE_SRC_CLEAR",
+                  f"core={getattr(self, 'debug_label', '?')}",
+                  f"src={name}",
+                  f"bank={bank}",
+                  f"rows={nz_rows}",
+                  f"word=0x{d.word:08x}",
+                  "via=ZEROSRC",
+              )
+          self.fpu.zerosrc(d)
         case "MOVA2D":
           self.fpu.mova2d(d, rwc)
           self._apply_addr_mod(thread_id, d.addr_mode)
@@ -608,10 +733,14 @@ class Tensix:
   def _operands_ready(self, thread_id, d):
     match d.name:
       case "UNPACR":
-        if d.SetDatValid:
-          src = self.srca if d.Unpack_block_selection == 0 else self.srcb
-          if src.banks[src.unpack_bank].allowed_client != "unpackers":
-            return False
+        # Regular UNPACR writes data into the current unpack bank whether or
+        # not this specific instruction also performs SETDVALID.  Hardware's
+        # wait gate blocks the write until that bank is owned by unpackers.
+        # The final UNPACR in an LLK pair usually has SetDatValid=1, but the
+        # earlier SetDatValid=0 UNPACR must obey the same ownership rule.
+        src = self.srca if d.Unpack_block_selection == 0 else self.srcb
+        if src.banks[src.unpack_bank].allowed_client != "unpackers":
+          return False
       case _:
         pass
     match d.name:
@@ -643,6 +772,9 @@ class Tensix:
     cfg = self.config_unit.thread_cfg[thread_id]
     ab = cfg[12 + idx] & 0xFFFF
     dst = cfg[28 + idx] & 0xFFFF
+    trace_addr_mod = os.environ.get("EMU_TRACE_ADDR_MOD")
+    if trace_addr_mod:
+      before = (rwc.a, rwc.b, rwc.d, rwc.cr, rwc.a_cr, rwc.b_cr, rwc.d_cr)
 
     srca_incr = ab & 0x3F
     if ab & 0x80:
@@ -681,6 +813,23 @@ class Tensix:
         rwc.cr = 0
       else:
         rwc.cr = (rwc.cr + ((dst >> 13) & 0x3)) & 0x7
+    if trace_addr_mod:
+      try:
+        modes = {int(x, 0) for x in trace_addr_mod.split(",") if x}
+      except ValueError:
+        modes = set()
+      if not modes or idx in modes:
+        print(
+            "EMU_TRACE_ADDR_MOD",
+            f"t={thread_id}",
+            f"addr={idx}",
+            f"ab=0x{ab:04x}",
+            f"dst=0x{dst:04x}",
+            f"before=a{before[0]}/b{before[1]}/d{before[2]}/cr{before[3]}",
+            f"before_cr=a{before[4]}/b{before[5]}/d{before[6]}",
+            f"after=a{rwc.a}/b{rwc.b}/d{rwc.d}/cr{rwc.cr}",
+            f"after_cr=a{rwc.a_cr}/b{rwc.b_cr}/d{rwc.d_cr}",
+        )
 
   def _issue_thcon(self, thread: TensixThread, insn: Instruction,
                    ctx: SimContext) -> bool:

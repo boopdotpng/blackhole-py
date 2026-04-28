@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 import math as _math
+import os
 
 from ..memory import Memory
 from . import formats as _fmt
@@ -437,6 +438,18 @@ class Unpacker:
 def _clear_src_bank(srcregfile):
   """Zero all rows in the current unpack bank."""
   bank = srcregfile.banks[srcregfile.unpack_bank]
+  if os.environ.get("EMU_TRACE_SRC_CLEAR"):
+    nz_rows = [
+        r for r in range(64)
+        if any(bank.rows[r][c] for c in range(16))
+    ]
+    print(
+        "EMU_TRACE_SRC_CLEAR",
+        f"src={getattr(srcregfile, 'name', '?')}",
+        f"bank={srcregfile.unpack_bank}",
+        f"rows={nz_rows}",
+        "via=UNPACR_NOP",
+    )
   for r in range(64):
     for c in range(16):
       bank.rows[r][c] = 0
@@ -474,8 +487,8 @@ def _execute_unpacr(d, thread_id: int, coproc) -> None:
   # ------------------------------------------------------------------
   # Phase 1: Config selection
   # ------------------------------------------------------------------
-  cfg_state_id = coproc.config_unit.thread_cfg[thread_id][42] & 1
   cfg_unit = coproc.config_unit
+  cfg_state_id = cfg_unit._state_id(thread_id)
   mem = coproc.l1
 
   # Decode tile descriptor and unpack config via cfg_layout
@@ -518,6 +531,8 @@ def _execute_unpacr(d, thread_id: int, coproc) -> None:
   y_dim = max(td.y_dim, 1)
   z_dim = max(td.z_dim, 1)
   w_dim = max(td.w_dim, 1)
+
+  debug_unpacr = os.environ.get("EMU_DEBUG_UNPACR")
 
   in_fmt  = td.in_data_format
   out_fmt = uc.out_data_format
@@ -579,7 +594,7 @@ def _execute_unpacr(d, thread_id: int, coproc) -> None:
   if is_uncompressed:
     x_pos  = adc_in.x.val
     y_pos  = adc_in.y.val
-    x_end  = max(adc_out.x.val, adc_out.x.cr) + 1  # inclusive end from SETADCXX
+    x_end  = adc_out.x.val + 1
     first_datum      = ((adc_zw.w.val * z_dim + adc_zw.z.val) * y_dim + y_pos) * x_dim + x_pos
     input_num_datums = x_end - x_pos
   else:
@@ -666,6 +681,40 @@ def _execute_unpacr(d, thread_id: int, coproc) -> None:
   # Detect unpack-to-dest path (unpacker 0, 32-bit output)
   unpack_to_dst = (which_unp == 0 and out_fmt in (FMT_FP32, FMT_TF32, FMT_INT32))
 
+  if debug_unpacr:
+    sec_base = _THCON_SEC_BASE[which_unp]
+    print(
+      "UNPACR",
+      f"core={getattr(coproc, 'debug_label', '?')}",
+      f"cycle={getattr(coproc, 'cycle', '?')}",
+      f"t={thread_id}",
+      f"unp={which_unp}",
+      f"word=0x{d.word:08x}",
+      f"addrmode=0x{addr_mode:02x}",
+      f"cfginc={d.CfgContextCntInc}",
+      f"cfgid={ctx_number}",
+      f"addrctx={ctx_adc}",
+      f"ovrd={d.OvrdThreadId}",
+      f"setdv={int(flip_src)}",
+      f"auto={d.AutoIncContextID}",
+      f"multi={int(multi_ctx)}",
+      f"ctx={which_ctx}",
+      f"adc={which_adc}",
+      f"state={cfg_state_id}",
+      f"base=0x{base_addr:x}",
+      f"off=0x{offset_addr & 0xffff:x}",
+      f"reg3=[0x{_cfg_read(cfg_unit, cfg_state_id, sec_base + 12):x},0x{_cfg_read(cfg_unit, cfg_state_id, sec_base + 13):x}]",
+      f"in=0x{in_addr_datums:x}",
+      f"first={first_datum}",
+      f"n={input_num_datums}",
+      f"x_dim={x_dim}",
+      f"out={out_addr}",
+      f"dest={dest_addrs}",
+      f"outfmt={out_fmt}",
+      f"dst={int(unpack_to_dst)}",
+      f"srca_set=0x{coproc.config_unit.thread_cfg[thread_id][5]:x}",
+    )
+
   # ColShift: TODO(spec-ambiguity) — exact register source for ColShift is not
   # specified in pack-unpack-registers.md. Treating as 0.
   col_shift = 0
@@ -683,8 +732,18 @@ def _execute_unpacr(d, thread_id: int, coproc) -> None:
   # Transpose flag (haloize_mode = XY transpose)
   do_transpose = bool(uc.haloize_mode)
 
-  # SrcRow base: TODO(spec-ambiguity) — SRCA_SET_Base / SRCB_SET_Base not found
-  # in spec register map; using 0.
+  # SrcA address override is programmed by the matmul LLK with
+  # TTI_SETC16(SRCA_SET_Base_ADDR32, 0x4).  On Blackhole that value is the
+  # SetOvrdWithAddr bit, not a 4-row base field.  When it is set, ch1's
+  # per-context destination address is an addressing aid; normalize it back
+  # to SrcA row zero instead of treating the leading rows as tile data.
+  srca_addr_override = bool(coproc.config_unit.thread_cfg[thread_id][5] & 0x4)
+  srca_row_rebase = 0
+  if which_unp == 0 and srca_addr_override:
+    srca_row_rebase = (dest_addrs[which_ctx] if which_ctx < len(dest_addrs) else 0) // 16
+
+  # SrcRow base: SRCA_SET_Base/SRCB_SET_Base are separate low bits.  Matmul
+  # leaves them at zero while using SetOvrdWithAddr above.
   src_row_base = 0
 
   # Unsigned mode from ALU_FORMAT_SPEC
@@ -764,14 +823,47 @@ def _execute_unpacr(d, thread_id: int, coproc) -> None:
       # SrcB path: no header-row skip; src_row offset applied directly
       eff_row = (row + unp_state.src_row[thread_id]) & 0x3F
       coproc.srcb.banks[bank].rows[eff_row][col] = datum & 0x7FFFF
+      trace_spec = os.environ.get("EMU_TRACE_SRCB_WRITE")
+      if trace_spec and (col in (0, 12) or (datum & 0x7FFFF) != 0):
+        try:
+          lo_s, hi_s = trace_spec.split(":", 1)
+          lo = int(lo_s, 0)
+          hi = int(hi_s, 0)
+        except ValueError:
+          lo = 0
+          hi = 64
+        if lo <= eff_row < hi:
+          print(
+              "EMU_TRACE_SRCB_WRITE",
+              f"core={getattr(coproc, 'debug_label', '?')}",
+              f"bank={bank}",
+              f"eff_row={eff_row}",
+              f"row={row}",
+              f"col={col}",
+              f"datum=0x{datum & 0x7ffff:x}",
+              f"zero_all={int(zero_all)}",
+              f"ctx={which_ctx}",
+              f"adc={which_adc}",
+              f"in=0x{in_addr_datums:x}",
+              f"byte=0x{byte_addr - int(dsz):x}",
+              f"first={first_datum}",
+              f"n={input_num_datums}",
+              f"base=0x{base_addr:x}",
+              f"off=0x{offset_addr & 0xffff:x}",
+              f"src_row={unp_state.src_row[thread_id]}",
+              f"flip={int(flip_src)}",
+              f"addrmode=0x{addr_mode:02x}",
+          )
 
     else:
       # SrcA or Dest path
       if not unpack_to_dst:
-        # SrcA path: skip 4 header rows, apply ColShift
-        if row < 4 or col < col_shift:
+        # SrcA path: apply the configured address override/rebase and ColShift.
+        # This is not skipping tile header rows; tile headers are handled on
+        # the L1 input side by the base+offset+1 computation above.
+        if row < srca_row_rebase or col < col_shift:
           continue
-        row -= 4
+        row -= srca_row_rebase
         col -= col_shift
         row += unp_state.src_row[thread_id]
         if do_transpose:
@@ -780,6 +872,37 @@ def _execute_unpacr(d, thread_id: int, coproc) -> None:
           row = (row & ~0xF) | row_low
         eff_row = row & 0x3F
         coproc.srca.banks[bank].rows[eff_row][col] = datum & 0x7FFFF
+        trace_spec = os.environ.get("EMU_TRACE_SRCA_WRITE")
+        if trace_spec and (col in (0, 12) or (datum & 0x7FFFF) != 0):
+          try:
+            lo_s, hi_s = trace_spec.split(":", 1)
+            lo = int(lo_s, 0)
+            hi = int(hi_s, 0)
+          except ValueError:
+            lo = 0
+            hi = 64
+          if lo <= eff_row < hi:
+            print(
+                "EMU_TRACE_SRCA_WRITE",
+                f"core={getattr(coproc, 'debug_label', '?')}",
+                f"bank={bank}",
+                f"eff_row={eff_row}",
+                f"row={row}",
+                f"col={col}",
+                f"datum=0x{datum & 0x7ffff:x}",
+                f"zero_all={int(zero_all)}",
+                f"ctx={which_ctx}",
+                f"adc={which_adc}",
+                f"in=0x{in_addr_datums:x}",
+                f"byte=0x{byte_addr - int(dsz):x}",
+                f"first={first_datum}",
+                f"n={input_num_datums}",
+                f"base=0x{base_addr:x}",
+                f"off=0x{offset_addr & 0xffff:x}",
+                f"src_row={unp_state.src_row[thread_id]}",
+                f"flip={int(flip_src)}",
+                f"addrmode=0x{addr_mode:02x}",
+            )
       else:
         # Unpack-to-Dest path
         row -= 4

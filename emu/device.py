@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import struct
+import os
+import json
 from dataclasses import dataclass, field
 
 from .memory import (
@@ -19,6 +21,7 @@ from .noc import TimedNOC, StreamRegisters, noc_key
 from .rv import BRISC, NCRISC, TRISC0, TRISC1, TRISC2, Core
 from .runtime import RuntimeLayout
 from .sim import Phase, SimContext, Simulator
+from .snapshots import SnapshotRecorder
 from .tensix_core import Tensix
 
 
@@ -274,6 +277,7 @@ class Device:
                core_range: CoreRange | None = None,
                core_count: int | None = None,
                runtime_layout: RuntimeLayout | None = None,
+               snapshot_path: str | os.PathLike[str] | None = None,
                boot_firmware: bool = True,
                firmware_image: dict | None = None,
                firmware_boot_max_cycles: int = 50_000_000):
@@ -295,12 +299,14 @@ class Device:
 
     self.harvested_banks = harvested_banks
     self.runtime_layout = runtime_layout or RuntimeLayout()
+    self.snapshots = SnapshotRecorder(snapshot_path)
     self.sim = Simulator()
     self.core_xy = list(cores)
     self.go_messages_addr = FIRMWARE_GO_MESSAGES
     self.go_message_index_addr = FIRMWARE_GO_MESSAGE_INDEX
     self.launch_stride = FIRMWARE_LAUNCH_STRIDE
     self.firmware_boot_cycles = 0
+    self._final_snapshots_recorded = False
     self.networks: list[dict[int, Memory]] = [{}, {}]
     self.pcie = Memory()
     for net in self.networks:
@@ -312,6 +318,7 @@ class Device:
       tile = self._create_tile(x, y)
       self.tiles[(x, y)] = tile
       self.cores.extend(tile.cores)
+    self._load_state_watchpoints_from_env()
 
     self._populate_logical_to_virtual_tables()
     self._create_dram(harvested_banks)
@@ -339,12 +346,17 @@ class Device:
   def _create_tile(self, x: int, y: int) -> Tile:
     l1 = Memory()
     tensix = Tensix(Scoreboard(), l1=l1)
+    core_label = f"{x},{y}"
+    tensix.debug_label = core_label
     brisc = BRISC(l1=l1, tensix=tensix)
     ncrisc = NCRISC(l1=l1, tensix=tensix)
     trisc0 = TRISC0(l1=l1, tensix=tensix)
     trisc1 = TRISC1(l1=l1, tensix=tensix)
     trisc2 = TRISC2(l1=l1, tensix=tensix)
     cores = [brisc, ncrisc, trisc0, trisc1, trisc2]
+    for core in cores:
+      core.snapshots = self.snapshots
+      core.snapshot_core = core_label
 
     mmio = Memory()
     mmio.write32(SOFT_RESET_0, SOFT_RESET_ALL)
@@ -410,6 +422,53 @@ class Device:
   def set_runtime_layout(self, runtime_layout: RuntimeLayout) -> None:
     self.runtime_layout = runtime_layout
     self._upload_bank_noc_tables()
+
+  def add_state_watchpoint(self, core_xy: tuple[int, int] | str,
+                           role: str, pc: int, *,
+                           label: str | None = None,
+                           once: bool = False,
+                           l1: list[dict] | None = None,
+                           ldm: list[dict] | None = None) -> None:
+    if isinstance(core_xy, str):
+      if core_xy == "all":
+        for xy in self.tiles:
+          self.add_state_watchpoint(
+            xy, role, pc, label=label, once=once, l1=l1, ldm=ldm)
+        return
+      x_s, y_s = core_xy.split(",", 1)
+      core_xy = (int(x_s), int(y_s))
+    getattr(self.tiles[core_xy], role).add_state_watchpoint(
+      pc, label=label, once=once, l1=l1, ldm=ldm)
+
+  def _load_state_watchpoints_from_env(self) -> None:
+    spec = os.environ.get("EMU_STATE_WATCHPOINTS")
+    if not spec:
+      return
+    try:
+      items = json.loads(spec)
+    except json.JSONDecodeError:
+      items = []
+      for raw in spec.split(";"):
+        raw = raw.strip()
+        if not raw:
+          continue
+        core, role, pc_s, *rest = raw.split(":")
+        items.append({
+          "core": core,
+          "role": role,
+          "pc": pc_s,
+          "label": rest[0] if rest else None,
+        })
+    for item in items:
+      self.add_state_watchpoint(
+        item.get("core", "all"),
+        item["role"],
+        int(str(item["pc"]), 0),
+        label=item.get("label"),
+        once=bool(item.get("once", False)),
+        l1=item.get("l1"),
+        ldm=item.get("ldm"),
+      )
 
   def _populate_logical_to_virtual_tables(self):
     cols = list(dict.fromkeys(x for x, _ in self.core_xy))
@@ -487,11 +546,43 @@ class Device:
       self.run(1)
       if done_check():
         return self.elapsed_cycles - start
+    self._record_final_snapshots()
     raise TimeoutError(
       f"emu device did not complete within {max_cycles} cycles "
       f"(elapsed={self.elapsed_cycles}, sim={self.sim_cycle})\n"
       + self.timeout_diagnostics(tiles)
     )
+
+  def write_snapshots(self, path: str | os.PathLike[str] | None = None) -> None:
+    self._record_final_snapshots()
+    self.snapshots.write(path)
+
+  def _record_final_snapshots(self) -> None:
+    if not self.snapshots.enabled or self._final_snapshots_recorded:
+      return
+    self._final_snapshots_recorded = True
+    for tile in self.tiles.values():
+      core_label = f"{tile.x},{tile.y}"
+      for name in ("brisc", "ncrisc", "trisc0", "trisc1", "trisc2"):
+        core = getattr(tile, name)
+        try:
+          word = core.mem.read32(core.pc)
+          word_desc = f"0x{word:08x}"
+        except Exception as e:
+          word_desc = f"{type(e).__name__}:{e}"
+        self.snapshots.record(
+          core_label,
+          "CORE_FINAL",
+          cycle=self.sim_cycle,
+          core_role=name,
+          pc=f"0x{core.pc:08x}",
+          word=word_desc,
+          reset=bool(core.in_reset),
+          cycles=core.cycles,
+          blocked_cycles=core.blocked_cycles,
+          ra=f"0x{core.regs[1]:08x}",
+          sp=f"0x{core.regs[2]:08x}",
+        )
 
   def timeout_diagnostics(self, tiles: list[Tile] | None = None) -> str:
     if tiles is None:

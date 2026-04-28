@@ -85,27 +85,27 @@ TEXT_BASES = {
 }
 
 MATMUL_PLAN = MatmulPlan(
-  rows=(2, 3),
-  cols=(1, 2),
+  rows=(2,),
+  cols=(1, 2, 3, 4, 5, 6, 7),
   mt=8,
   kt=4,
-  nt=8,
-  per_core_m=4,
-  per_core_n=4,
+  nt=14,
+  per_core_m=8,
+  per_core_n=2,
   in0_block_w=4,
-  out_subblock_h=2,
-  out_subblock_w=4,
+  out_subblock_h=4,
+  out_subblock_w=2,
   out_subblock_num_tiles=8,
   num_blocks=1,
   in0_num_subblocks=2,
   in1_num_subblocks=1,
-  in0_block_num_tiles=16,
-  in0_subblock_num_tiles=8,
-  in1_block_num_tiles=16,
-  in1_per_core_w=4,
+  in0_block_num_tiles=32,
+  in0_subblock_num_tiles=16,
+  in1_block_num_tiles=8,
+  in1_per_core_w=2,
   out_block_num_tiles=16,
-  cb0_pages=32,
-  cb1_pages=32,
+  cb0_pages=64,
+  cb1_pages=16,
   cb16_pages=16,
   cb24_pages=16,
 )
@@ -288,8 +288,18 @@ def make_buffers(dev: Device, plan: MatmulPlan):
   alloc = ScratchDramAllocator(dev)
   a_src, b_src = _make_inputs(M, K, N)
   Mp, Kp, Np = plan.mt * 32, plan.kt * 32, plan.nt * 32
-  a_bytes = _to_device_bytes(a_src)
-  b_bytes = _to_device_bytes(b_src)
+  if (M, K) != (Mp, Kp):
+    a_padded = np.zeros((Mp, Kp), dtype=np.float16)
+    a_padded[:M, :K] = a_src
+  else:
+    a_padded = a_src
+  if (K, N) != (Kp, Np):
+    b_padded = np.zeros((Kp, Np), dtype=np.float16)
+    b_padded[:K, :N] = b_src
+  else:
+    b_padded = b_src
+  a_bytes = _to_device_bytes(a_padded)
+  b_bytes = _to_device_bytes(b_padded)
   a_tiled = tilize(a_bytes, Dtype.Float16_b.bpe, (Mp, Kp))
   b_tiled = tilize(b_bytes, Dtype.Float16_b.bpe, (Kp, Np))
   a_buf = alloc.alloc_write(a_tiled, name="A")
@@ -395,10 +405,12 @@ def main():
       MAX_STEPS,
       tiles=tiles)
   except TimeoutError as e:
+    dev.write_snapshots()
     print(f"RUN TIMEOUT: {e}\n{timeout_diagnostics(tiles)}",
           file=sys.stderr, flush=True)
     return 1
   except Exception as e:
+    dev.write_snapshots()
     print(f"RUN ERROR: {type(e).__name__}: {e}", file=sys.stderr, flush=True)
     return 1
 
@@ -413,6 +425,7 @@ def main():
   try:
     c_raw = validate_output(alloc, c_buf, a_src, b_src, plan)
   except SystemExit as e:
+    dev.write_snapshots()
     print(f"VALIDATION ERROR: {e}", file=sys.stderr)
     got = alloc.read(c_buf)
     print(f"  output bf16 first 16: {bf16_words(got)}", file=sys.stderr)
@@ -427,6 +440,7 @@ def main():
     f"  steps: {steps} emulated device ticks, nominal {gflops:.2f} flop/tick\n"
     f"  output bf16 first 16: {bf16_words(tilize(c_raw, 2, (plan.mt * 32, plan.nt * 32)))}",
     flush=True)
+  dev.write_snapshots()
   return 0
 
 

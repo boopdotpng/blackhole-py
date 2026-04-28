@@ -5,6 +5,8 @@
 # or mutate these structures.
 # =============================================================================
 
+import os
+
 from ..memory import _SEM_WIN_LO
 
 M32 = 0xFFFFFFFF
@@ -29,30 +31,111 @@ class SrcRegFile:
     self.banks = [SrcBank(), SrcBank()]
     self.fpu_bank = 0       # which bank the Matrix Unit reads from
     self.unpack_bank = 0    # which bank the unpacker writes to
+    self._valid_queue = []  # banks handed to Matrix Unit, in SETDVALID order
+
+  def _trace(self, event, **fields):
+    if not os.environ.get("EMU_TRACE_SRCBANKS"):
+      return
+    parts = " ".join(f"{k}={v}" for k, v in fields.items())
+    print(f"EMU_TRACE_SRCBANKS src={self.name} event={event} {parts}")
 
   def flip_to_fpu(self):
-    self.banks[self.unpack_bank].allowed_client = "matrix_unit"
-    self.unpack_bank ^= 1
+    bank = self.unpack_bank
+    before = self.banks[bank].allowed_client
+    if before != "unpackers":
+      self._trace("violation_flip_to_fpu",
+                  unpack_bank=bank,
+                  fpu_bank=self.fpu_bank,
+                  owner=before)
+    self.banks[bank].allowed_client = "matrix_unit"
+    if bank not in self._valid_queue:
+      self._valid_queue.append(bank)
+    if self.banks[self.fpu_bank].allowed_client != "matrix_unit":
+      self.fpu_bank = self._valid_queue[0]
+    next_unpack = self._next_unpack_bank(bank)
+    self._trace("flip_to_fpu",
+                bank=bank,
+                next_unpack_bank=next_unpack,
+                fpu_bank=self.fpu_bank,
+                previous_owner=before,
+                valid_queue=",".join(map(str, self._valid_queue)))
+    self.unpack_bank = next_unpack
 
   def release_from_fpu(self, release=True):
-    released = self.banks[self.fpu_bank].allowed_client == "matrix_unit"
+    bank = self.fpu_bank
+    before = self.banks[bank].allowed_client
+    if before != "matrix_unit":
+      self._trace("violation_release_from_fpu",
+                  fpu_bank=bank,
+                  unpack_bank=self.unpack_bank,
+                  owner=before,
+                  release=int(release))
+    released = self.banks[bank].allowed_client == "matrix_unit"
+    if not release:
+      self._trace("release_from_fpu_ignored",
+                  bank=bank,
+                  fpu_bank=self.fpu_bank,
+                  unpack_bank=self.unpack_bank,
+                  previous_owner=before,
+                  valid_queue=",".join(map(str, self._valid_queue)))
+      return released
+    if bank in self._valid_queue:
+      self._valid_queue.remove(bank)
     if release:
-      self.banks[self.fpu_bank].allowed_client = "unpackers"
-    self.fpu_bank ^= 1
+      self.banks[bank].allowed_client = "unpackers"
+    next_fpu = self._valid_queue[0] if self._valid_queue else bank
+    self._trace("release_from_fpu",
+                bank=bank,
+                next_fpu_bank=next_fpu,
+                unpack_bank=self.unpack_bank,
+                previous_owner=before,
+                release=int(release),
+                valid_queue=",".join(map(str, self._valid_queue)))
+    self.fpu_bank = next_fpu
+    if self.banks[self.unpack_bank].allowed_client != "unpackers":
+      self.unpack_bank = bank
     return released
 
   def clear_fpu_bank(self, keep_reading_same=False):
-    released = self.banks[self.fpu_bank].allowed_client == "matrix_unit"
-    self.banks[self.fpu_bank].allowed_client = "unpackers"
-    if not keep_reading_same:
-      self.fpu_bank ^= 1
+    bank = self.fpu_bank
+    before = self.banks[bank].allowed_client
+    if before != "matrix_unit":
+      self._trace("violation_clear_fpu_bank",
+                  fpu_bank=bank,
+                  unpack_bank=self.unpack_bank,
+                  owner=before,
+                  keep=int(keep_reading_same))
+    released = self.banks[bank].allowed_client == "matrix_unit"
+    self.banks[bank].allowed_client = "unpackers"
+    if bank in self._valid_queue:
+      self._valid_queue.remove(bank)
+    next_fpu = bank if keep_reading_same or not self._valid_queue else self._valid_queue[0]
+    self._trace("clear_fpu_bank",
+                bank=bank,
+                next_fpu_bank=next_fpu,
+                unpack_bank=self.unpack_bank,
+                previous_owner=before,
+                keep=int(keep_reading_same),
+                valid_queue=",".join(map(str, self._valid_queue)))
+    self.fpu_bank = next_fpu
+    if self.banks[self.unpack_bank].allowed_client != "unpackers":
+      self.unpack_bank = bank
     return released
 
   def reset_sync(self):
     self.fpu_bank = 0
     self.unpack_bank = 0
+    self._valid_queue.clear()
     self.banks[0].allowed_client = "unpackers"
     self.banks[1].allowed_client = "unpackers"
+
+  def _next_unpack_bank(self, current):
+    other = current ^ 1
+    if self.banks[other].allowed_client == "unpackers":
+      return other
+    if self.banks[current].allowed_client == "unpackers":
+      return current
+    return other
 
 
 class DestRegFile:
@@ -209,23 +292,41 @@ class ADCState:
 
   def execute_setadc(self, d):
     for unit in self._selected_units(d.CntSetMask):
-      unit.channels[d.ChannelIndex].dim(d.DimensionIndex).val = d.Value & M32
+      counter = unit.channels[d.ChannelIndex].dim(d.DimensionIndex)
+      counter.val = d.Value & M32
+      counter.cr = d.Value & M32
 
   def execute_setadcxy(self, d):
     bm = d.BitMask
     for unit in self._selected_units(d.CntSetMask):
-      if bm & 0x01: unit.channels[0].x.val = d.Ch0_X & M32
-      if bm & 0x02: unit.channels[0].y.val = d.Ch0_Y & M32
-      if bm & 0x04: unit.channels[1].x.val = d.Ch1_X & M32
-      if bm & 0x08: unit.channels[1].y.val = d.Ch1_Y & M32
+      if bm & 0x01:
+        unit.channels[0].x.val = d.Ch0_X & M32
+        unit.channels[0].x.cr = d.Ch0_X & M32
+      if bm & 0x02:
+        unit.channels[0].y.val = d.Ch0_Y & M32
+        unit.channels[0].y.cr = d.Ch0_Y & M32
+      if bm & 0x04:
+        unit.channels[1].x.val = d.Ch1_X & M32
+        unit.channels[1].x.cr = d.Ch1_X & M32
+      if bm & 0x08:
+        unit.channels[1].y.val = d.Ch1_Y & M32
+        unit.channels[1].y.cr = d.Ch1_Y & M32
 
   def execute_setadczw(self, d):
     bm = d.BitMask
     for unit in self._selected_units(d.CntSetMask):
-      if bm & 0x01: unit.channels[0].z.val = d.Ch0_Z & M32
-      if bm & 0x02: unit.channels[0].w.val = d.Ch0_W & M32
-      if bm & 0x04: unit.channels[1].z.val = d.Ch1_Z & M32
-      if bm & 0x08: unit.channels[1].w.val = d.Ch1_W & M32
+      if bm & 0x01:
+        unit.channels[0].z.val = d.Ch0_Z & M32
+        unit.channels[0].z.cr = d.Ch0_Z & M32
+      if bm & 0x02:
+        unit.channels[0].w.val = d.Ch0_W & M32
+        unit.channels[0].w.cr = d.Ch0_W & M32
+      if bm & 0x04:
+        unit.channels[1].z.val = d.Ch1_Z & M32
+        unit.channels[1].z.cr = d.Ch1_Z & M32
+      if bm & 0x08:
+        unit.channels[1].w.val = d.Ch1_W & M32
+        unit.channels[1].w.cr = d.Ch1_W & M32
 
   def execute_incadczw(self, d):
     for unit in self._selected_units(d.CntSetMask):
@@ -236,9 +337,10 @@ class ADCState:
 
   def execute_setadcxx(self, d):
     for unit in self._selected_units(d.CntSetMask):
-      for ch in unit.channels:
-        ch.x.val = d.x_start & M32
-        ch.x.cr = d.x_end2 & M32  # store end value in carry register
+      unit.channels[0].x.val = d.x_start & M32
+      unit.channels[0].x.cr = d.x_start & M32
+      unit.channels[1].x.val = d.x_end2 & M32
+      unit.channels[1].x.cr = d.x_end2 & M32
 
 
 # =============================================================================

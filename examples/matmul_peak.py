@@ -546,13 +546,29 @@ def _make_inputs(M: int, K: int, N: int) -> tuple[np.ndarray, np.ndarray]:
     a_src = rng_a.uniform(-0.5, 0.5, size=(M, K)).astype(np.float16)
     b_src = rng_b.uniform(-0.5, 0.5, size=(K, N)).astype(np.float16)
     return a_src, b_src
+  if INPUT_PATTERN in ("selector", "selector_int"):
+    a_src = np.zeros((M, K), dtype=np.float16)
+    a_src[np.arange(M), np.arange(M) % K] = np.float16(1.0)
+    k_ids = np.arange(K, dtype=np.float32).reshape(K, 1)
+    n_ids = np.arange(N, dtype=np.float32).reshape(1, N)
+    b_src = (k_ids * 256.0 + n_ids).astype(np.float16)
+    return a_src, b_src
+  if INPUT_PATTERN in ("selector_decimal", "selector_float"):
+    a_src = np.zeros((M, K), dtype=np.float16)
+    a_src[np.arange(M), np.arange(M) % K] = np.float16(1.0)
+    k_ids = np.arange(K, dtype=np.float32).reshape(K, 1)
+    n_ids = np.arange(N, dtype=np.float32).reshape(1, N)
+    b_src = (k_ids + n_ids / 1024.0).astype(np.float16)
+    return a_src, b_src
   if INPUT_PATTERN == "ones":
     return np.ones((M, K), dtype=np.float16), np.ones((K, N), dtype=np.float16)
   if INPUT_PATTERN == "ramp":
     a_src = np.broadcast_to(np.arange(1, K + 1, dtype=np.float16), (M, K)).copy()
     b_src = np.broadcast_to(np.arange(1, K + 1, dtype=np.float16).reshape(K, 1), (K, N)).copy()
     return a_src, b_src
-  raise SystemExit(f"Invalid INPUT_PATTERN={INPUT_PATTERN!r}. Expected: random, ones, ramp")
+  raise SystemExit(
+    f"Invalid INPUT_PATTERN={INPUT_PATTERN!r}. "
+    "Expected: random, selector_int, selector_decimal, ones, ramp")
 
 def main():
   if len(sys.argv) == 4:

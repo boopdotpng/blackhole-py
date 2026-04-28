@@ -6,7 +6,11 @@
 # =============================================================================
 
 import math
+import os
 import struct
+
+from . import formats as _fmt
+from .cfg_layout import alu_format_spec as _alu_format_spec
 
 M32 = 0xFFFFFFFF
 
@@ -41,17 +45,93 @@ def _float_to_dest(f):
     return 0x7FC00000
   return struct.unpack('I', struct.pack('f', float(f)))[0]
 
+def _src_fidelity_float(val, phase, srca_path):
+  """Decode a shuffled Src cell after applying BH FPU fidelity masks.
+
+  Src cells hold TF32-like `{sign, mantissa[9:0], exponent[7:0]}`.  The
+  ISA defines fidelity phases by masking the corresponding FP32 value:
+  SrcA phase 0 keeps sign/exp plus the implicit bit and top four mantissa
+  bits, phase 1 contributes the remaining SrcA bits used by the multiplier;
+  SrcB phases do the same split with top six / remaining bits.
+  """
+  x = _19bit_to_float(val)
+  bits = struct.unpack('I', struct.pack('f', x))[0]
+  if srca_path:
+    mask = 0xFFF80000 if (phase & 1) == 0 else 0xFFF83FFF
+  else:
+    mask = 0xFFFE0000 if (phase & 2) == 0 else 0xFFFE1FFF
+  trunc = struct.unpack('f', struct.pack('I', bits & mask))[0]
+  return trunc if ((phase & (1 if srca_path else 2)) == 0) else x - trunc
+
+def _dst16_bf16_to_float(val):
+  val &= 0xFFFF
+  sign = val & 0x8000
+  mant = (val >> 8) & 0x7F
+  exp = val & 0xFF
+  return _fmt.bf16_to_fp32(sign | (exp << 7) | mant)
+
+def _float_to_dst16_bf16(f):
+  bf16 = _fmt.fp32_to_bf16(f)
+  sign = bf16 & 0x8000
+  exp = (bf16 >> 7) & 0xFF
+  mant = bf16 & 0x7F
+  return sign | (mant << 8) | exp
+
 # 19-bit -inf for ZEROSRC with write_mode=1 (SrcA negative-infinity fill)
 # Layout: sign=1, mant=0, exp=0xFF in bits[7:0]
 _NEG_INF_19BIT = (1 << 18) | 0xFF
 
 
 class FPU:
-  def __init__(self, srca, srcb, dest):
+  def __init__(self, srca, srcb, dest, cfg=None):
     self.srca = srca
     self.srcb = srcb
     self.dest = dest
+    self._cfg = cfg
     self.dest_offset_rows = 0
+
+  def _fp32_dest_enabled(self, thread_id=1):
+    if self._cfg is None:
+      return True
+    state_id = self._cfg._state_id(thread_id)
+    return bool(_alu_format_spec(self._cfg, state_id).fp32_enabled)
+
+  def _fidelity_phase(self, rwc, thread_id=1):
+    phase = rwc.cr
+    if self._cfg is not None:
+      phase += self._cfg.thread_cfg[thread_id][11] & 0x3
+    return phase & 0x3
+
+  def _read_dest_float(self, row, col, fp32_enabled):
+    raw = self.dest.bits[row][col]
+    if fp32_enabled:
+      return _dest_to_float(raw)
+    return _dst16_bf16_to_float(raw)
+
+  def _write_dest_float(self, row, col, value, fp32_enabled):
+    if fp32_enabled:
+      self.dest.bits[row][col] = _float_to_dest(value)
+    else:
+      self.dest.bits[row][col] = _float_to_dst16_bf16(value)
+    self.dest.valid[row] = True
+    trace_spec = os.environ.get("EMU_TRACE_DEST_WRITE")
+    if trace_spec and col == 0:
+      try:
+        lo_s, hi_s = trace_spec.split(":", 1)
+        lo = int(lo_s, 0)
+        hi = int(hi_s, 0)
+      except ValueError:
+        lo = 0
+        hi = self.dest.ROWS
+      if lo <= row < hi:
+        print(
+            "EMU_TRACE_DEST_WRITE",
+            f"row={row}",
+            f"col={col}",
+            f"value={value}",
+            f"fp32={fp32_enabled}",
+            f"offset_rows={self.dest_offset_rows}",
+        )
 
   def zeroacc(self, d):
     if d.clear_mode == 0:   self.dest.clear_valid(d.where)
@@ -73,28 +153,99 @@ class FPU:
           bank.rows[r][c] = 0
 
   def mvmul(self, d, rwc):
+    if os.environ.get("EMU_DEBUG_MVMUL"):
+      print(
+        "MVMUL",
+        f"word=0x{d.word:08x}",
+        f"addr={d.addr_mode}",
+        f"dst={d.dst}",
+        f"rwc=a{rwc.a}/b{rwc.b}/d{rwc.d}/cr{rwc.cr}",
+      )
     self._mvmul_rows(d, rwc, 8)
 
   def _mvmul_rows(self, d, rwc, rows):
-    dst_base = d.dst + rwc.d * 16
+    dst_base = d.dst + rwc.d
     srca_bank = self.srca.banks[self.srca.fpu_bank]
     srcb_bank = self.srcb.banks[self.srcb.fpu_bank]
-    srca_base = rwc.a * 16
-    srcb_base = rwc.b * 8
+    srca_base = rwc.a & 0x38
+    srcb_base = rwc.b & (0x3F if getattr(d, "broadcast_srcb", 0) else 0x38)
+    phase = self._fidelity_phase(rwc)
+    fp32_enabled = self._fp32_dest_enabled()
+    summary_spec = os.environ.get("EMU_TRACE_MVMUL_SUMMARY")
+    if summary_spec:
+      try:
+        lo_s, hi_s = summary_spec.split(":", 1)
+        lo = int(lo_s, 0)
+        hi = int(hi_s, 0)
+      except ValueError:
+        lo = 0
+        hi = self.dest.ROWS
+      first_dest_row = (self.dest_offset_rows + dst_base) % self.dest.ROWS
+      last_dest_row = (first_dest_row + rows - 1) % self.dest.ROWS
+      if lo <= first_dest_row < hi or lo <= last_dest_row < hi:
+        srca_counts = [
+            sum(1 for v in srca_bank.rows[(srca_base + r) & 0x3F] if v)
+            for r in range(16)
+        ]
+        srcb_counts = [
+            sum(1 for v in srcb_bank.rows[(srcb_base + r) & 0x3F] if v)
+            for r in range(rows)
+        ]
+        print(
+            "EMU_TRACE_MVMUL_SUMMARY",
+            f"dest_rows={first_dest_row}:{first_dest_row + rows}",
+            f"word=0x{d.word:08x}",
+            f"addr={d.addr_mode}",
+            f"rwc=a{rwc.a}/b{rwc.b}/d{rwc.d}/cr{rwc.cr}",
+            f"srca_base={srca_base}",
+            f"srcb_base={srcb_base}",
+            f"srca_bank={self.srca.fpu_bank}",
+            f"srcb_bank={self.srcb.fpu_bank}",
+            f"phase={phase}",
+            f"srca_nz={srca_counts}",
+            f"srcb_nz={srcb_counts}",
+        )
     for row in range(rows):
       for col in range(16):
         acc = 0.0
+        trace_products = []
         for k in range(16):
-          srca_row = (srca_base + k) % 64
-          srcb_row = (srcb_base + row) % 64
-          a = _19bit_to_float(srca_bank.rows[srca_row][col])
-          b = _19bit_to_float(srcb_bank.rows[srcb_row][k])
-          acc += a * b
+          srca_row = (srca_base + k) & 0x3F
+          srcb_row = (srcb_base + row) & 0x3F
+          a = _src_fidelity_float(srca_bank.rows[srca_row][col], phase, True)
+          b = _src_fidelity_float(srcb_bank.rows[srcb_row][k], phase, False)
+          acc += b * a
+          if k < 4 or a != 0.0 or b != 0.0:
+            trace_products.append((k, srca_row, srcb_row, a, b, b * a))
         dest_row = (self.dest_offset_rows + dst_base + row) % self.dest.ROWS
+        trace_spec = os.environ.get("EMU_TRACE_MVMUL_DEST")
+        if trace_spec and col == 0:
+          try:
+            lo_s, hi_s = trace_spec.split(":", 1)
+            lo = int(lo_s, 0)
+            hi = int(hi_s, 0)
+          except ValueError:
+            lo = 0
+            hi = self.dest.ROWS
+          if lo <= dest_row < hi:
+            print(
+                "EMU_TRACE_MVMUL_DEST",
+                f"dest_row={dest_row}",
+                f"local_row={row}",
+                f"dst_base={dst_base}",
+                f"rwc=a{rwc.a}/b{rwc.b}/d{rwc.d}/cr{rwc.cr}",
+                f"srca_base={srca_base}",
+                f"srcb_base={srcb_base}",
+                f"srca_bank={self.srca.fpu_bank}",
+                f"srcb_bank={self.srcb.fpu_bank}",
+                f"phase={phase}",
+                f"offset_rows={self.dest_offset_rows}",
+                f"acc={acc}",
+                f"products={trace_products}",
+            )
         if self.dest.valid[dest_row]:
-          acc += _dest_to_float(self.dest.bits[dest_row][col])
-        self.dest.bits[dest_row][col] = _float_to_dest(acc)
-        self.dest.valid[dest_row] = True
+          acc += self._read_dest_float(dest_row, col, fp32_enabled)
+        self._write_dest_float(dest_row, col, acc, fp32_enabled)
 
   def dotpv(self, d, rwc):
     self._mvmul_rows(d, rwc, 8)
@@ -103,11 +254,12 @@ class FPU:
     self._mvmul_rows(d, rwc, 4)
 
   def elwadd(self, d, rwc):
-    dst_base = d.dst + rwc.d * 16
+    dst_base = d.dst + rwc.d
     srca_bank = self.srca.banks[self.srca.fpu_bank]
     srcb_bank = self.srcb.banks[self.srcb.fpu_bank]
-    srca_base = rwc.a * 16
-    srcb_base = rwc.b * 16
+    srca_base = rwc.a
+    srcb_base = rwc.b
+    fp32_enabled = self._fp32_dest_enabled()
     for row in range(16):
       for col in range(16):
         srca_row = (srca_base + row) % 64
@@ -117,14 +269,14 @@ class FPU:
         result = a + b
         dest_row = (self.dest_offset_rows + dst_base + row) % self.dest.ROWS
         if d.dest_accum_en and self.dest.valid[dest_row]:
-          result += _dest_to_float(self.dest.bits[dest_row][col])
-        self.dest.bits[dest_row][col] = _float_to_dest(result)
-        self.dest.valid[dest_row] = True
+          result += self._read_dest_float(dest_row, col, fp32_enabled)
+        self._write_dest_float(dest_row, col, result, fp32_enabled)
 
   def gmpool(self, d, rwc):
-    dst_base = d.dst + rwc.d * 16
+    dst_base = d.dst + rwc.d
     srca_bank = self.srca.banks[self.srca.fpu_bank]
-    srca_base = rwc.a * 16
+    srca_base = rwc.a
+    fp32_enabled = self._fp32_dest_enabled()
     for row in range(16):
       srca_row = (srca_base + row) % 64
       dest_row = (self.dest_offset_rows + dst_base + row) % self.dest.ROWS
@@ -132,10 +284,9 @@ class FPU:
       for col in range(16):
         val = _19bit_to_float(srca_bank.rows[srca_row][col])
         if was_valid:
-          old = _dest_to_float(self.dest.bits[dest_row][col])
+          old = self._read_dest_float(dest_row, col, fp32_enabled)
           val = max(val, old)
-        self.dest.bits[dest_row][col] = _float_to_dest(val)
-      self.dest.valid[dest_row] = True
+        self._write_dest_float(dest_row, col, val, fp32_enabled)
 
   def _movx2d(self, d, rwc, bank, instr_mod):
     m = instr_mod
@@ -157,11 +308,12 @@ class FPU:
 
   def _movd2x(self, d, rwc, bank):
     nrows = 1 if d.instr_mod == 0 else 4
+    fp32_enabled = self._fp32_dest_enabled()
     for row in range(nrows):
-      dest_row = (self.dest_offset_rows + d.dst + rwc.d * 16 + row) % self.dest.ROWS
+      dest_row = (self.dest_offset_rows + d.dst + rwc.d + row) % self.dest.ROWS
       dst_row = (d.src + row) % 64
       for col in range(16):
-        val = _dest_to_float(self.dest.bits[dest_row][col]) if self.dest.valid[dest_row] else 0.0
+        val = self._read_dest_float(dest_row, col, fp32_enabled) if self.dest.valid[dest_row] else 0.0
         bank.rows[dst_row][col] = _float_to_19bit(val)
 
   def movd2a(self, d, rwc): self._movd2x(d, rwc, self.srca.banks[self.srca.fpu_bank])

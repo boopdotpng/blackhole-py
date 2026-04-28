@@ -31,6 +31,7 @@
 # =============================================================================
 
 import math
+import os
 
 from . import formats as _fmt
 
@@ -72,6 +73,18 @@ def _fmt_bytes(fmt):
   if bits01 == 0: return 4   # FP32, TF32, INT32
   if bits01 == 1: return 2   # FP16, BF16, INT16
   return 1                   # all 8-bit formats
+
+
+def _dst16_bf16_to_ieee(raw_bits):
+  """Dst16 BF16 layout `{sign, mantissa[6:0], exponent[7:0]}` to IEEE BF16."""
+  x = raw_bits & 0xFFFF
+  return (x & 0x8000) | ((x & 0x00FF) << 7) | ((x >> 8) & 0x007F)
+
+
+def _read_dst16_as_bf16(raw_bits):
+  if raw_bits & 0xFFFF0000:
+    return (raw_bits >> 16) & 0xFFFF
+  return _dst16_bf16_to_ieee(raw_bits)
 
 
 # ---------------------------------------------------------------------------
@@ -152,6 +165,7 @@ class Packer:
     self._adc = adc           # list[ADCState]; packer thread is index 2
     self._l1  = l1
     self.stream_regs = None
+    self._debug_last_pack = [None for _ in range(4)]
     # Per-packer output state
     self._packer_state = [_PackerOutputState() for _ in range(4)]
 
@@ -308,6 +322,8 @@ class Packer:
 
     # --- Collect datums from Dest ---
     datums_out = []
+    debug_trace = os.environ.get("EMU_TRACE_PACK")
+    debug_samples = [] if debug_trace else None
     tpg = out_state.tpg
 
     for j in range(input_num_datums):
@@ -338,6 +354,8 @@ class Packer:
         val_f = self._apply_exp_threshold(val_f, exp_threshold, in_fmt)
 
       datums_out.append(val_f)
+      if debug_samples is not None and j < 16:
+        debug_samples.append((j, di, row, col, raw, val_f))
       tpg.advance(reads_per_xy, yz_transposed)
 
     # --- Stage 6: Downsampling ---
@@ -355,6 +373,31 @@ class Packer:
 
     # --- Stage 9: L1 output ---
     if self._l1 is not None and (data_bytes or flush or last):
+      if debug_trace:
+        self._debug_last_pack[packer_idx] = {
+            "thread_id": thread_id,
+            "packer_idx": packer_idx,
+            "addr_mode": addr_mode,
+            "flush": flush,
+            "last": last,
+            "zero_write": zero_write,
+            "concat": concat,
+            "input_num_datums": input_num_datums,
+            "ch0": (ch0.x.val, ch0.y.val, ch0.z.val, ch0.w.val, ch0.x.cr),
+            "ch1": (ch1.x.val, ch1.y.val, ch1.z.val, ch1.w.val, ch1.x.cr),
+            "base0": base0,
+            "xstride": xstride,
+            "ystride": ystride,
+            "zstride": zstride,
+            "wstride": wstride,
+            "addr": addr,
+            "datum_index": datum_index,
+            "dest_target_word": dest_target_word,
+            "dest_offset": dest_offset,
+            "cfg": dict(cfg),
+            "samples": debug_samples,
+            "datums": datums_out[:16],
+        }
       stream_flush = flush if force_stream_end else 0
       stream_last = last if force_stream_end else 0
       self._write_l1(packer_idx, cfg, out_state, exp_bytes, data_bytes,
@@ -392,10 +435,11 @@ class Packer:
       # Bitcast / identity path
       if read_32b:
         return _fmt._bits_f32(raw_bits)
-      b16 = (raw_bits >> 16) & 0xFFFF
       if in_fmt == _FMT_BF16 or in_fmt in _FMT_IS_BFP_B:
+        b16 = _read_dst16_as_bf16(raw_bits)
         return _fmt.bf16_to_fp32(b16)
-      elif in_fmt == _FMT_FP16 or in_fmt in _FMT_IS_BFP_A:
+      b16 = (raw_bits >> 16) & 0xFFFF
+      if in_fmt == _FMT_FP16 or in_fmt in _FMT_IS_BFP_A:
         return _fmt.fp16_to_fp32(b16)
       elif in_fmt == _FMT_INT8:
         s = (raw_bits >> 7) & 1
@@ -419,15 +463,16 @@ class Packer:
           return float(iv)
       return f  # FP32 identity
     else:
-      b16 = (raw_bits >> 16) & 0xFFFF
       if in_fmt == _FMT_BF16 or in_fmt in _FMT_IS_BFP_B:
+        b16 = _read_dst16_as_bf16(raw_bits)
         # BF16: flush denormals
         e8 = (b16 >> 7) & 0xFF
         if e8 == 0:
           s = (b16 >> 15) & 1
           return -0.0 if s else 0.0
         return _fmt.bf16_to_fp32(b16)
-      elif in_fmt == _FMT_FP16 or in_fmt in _FMT_IS_BFP_A:
+      b16 = (raw_bits >> 16) & 0xFFFF
+      if in_fmt == _FMT_FP16 or in_fmt in _FMT_IS_BFP_A:
         return _fmt.fp16_to_fp32(b16)
       elif in_fmt == _FMT_INT8:
         byte = (raw_bits >> 16) & 0xFF
@@ -710,6 +755,29 @@ class Packer:
 
     # Buffer data bytes and flush in 16-byte aligned chunks
     out_state.data_buf += data_bytes
+    trace_spec = os.environ.get("EMU_TRACE_PACK")
+    if trace_spec:
+      start = out_state.data_stream.byte_address & ~15
+      end = start + len(out_state.data_buf)
+      try:
+        lo_s, hi_s = trace_spec.split(":", 1)
+        lo = int(lo_s, 0)
+        hi = int(hi_s, 0)
+      except ValueError:
+        lo = 0
+        hi = 1 << 64
+      if start < hi and end > lo:
+        dbg = self._debug_last_pack[packer_idx]
+        print(
+            "EMU_TRACE_PACK",
+            f"l1=[0x{start:x},0x{end:x})",
+            f"packer={packer_idx}",
+            f"flush={flush}",
+            f"last={last}",
+            f"data_len={len(data_bytes)}",
+            f"buf_len={len(out_state.data_buf)}",
+            f"dbg={dbg}",
+        )
     self._flush_data_buf(out_state, force=(flush or last))
 
   def _flush_data_buf(self, out_state, force=False):

@@ -35,7 +35,6 @@ from emu.memory import (
   BRISC_FW_BASE,
   CB_CONFIG_BYTES,
   DATA_BUFFER_SPACE_BASE,
-  GO_MESSAGE_INDEX,
   GO_MESSAGES,
   KERNEL_CONFIG_BASE,
   LDM_BASE,
@@ -43,9 +42,6 @@ from emu.memory import (
   NCRISC_RESET_PC,
   NCRISC_RESET_PC_OVR,
   SOFT_RESET_0,
-  STREAM_STRIDE,
-  STREAM_TILES_ACKED,
-  STREAM_TILES_RECEIVED,
   SUBORDINATE_SYNC,
   TRISC0_FW_BASE,
   TRISC0_RESET_PC,
@@ -54,9 +50,6 @@ from emu.memory import (
   TRISC2_FW_BASE,
   TRISC2_RESET_PC,
   TRISC_RESET_PC_OVR,
-  BANK_TO_NOC_SCRATCH,
-  cb_tiles_acked_addr,
-  cb_tiles_received_addr,
 )
 
 
@@ -75,7 +68,6 @@ HARVESTED_DRAM_BANKS = [3]
 DEFAULT_TENSOR_TILES = 10
 MAX_RUN_STEPS = 100_000
 INPUT_PATTERN = "ordered"
-STATE_DUMP_PATH = "state.txt"
 RUN_MSG_GO = 0x80
 RUN_MSG_DONE = 0x00
 DRAM_BANK_PORT = [[2, 1], [0, 1], [0, 1], [0, 1],
@@ -551,257 +543,6 @@ def timeout_diagnostics(tiles: list) -> str:
   return "\n".join(lines)
 
 
-RV_REG_NAMES = [
-  "zero", "ra", "sp", "gp", "tp", "t0", "t1", "t2",
-  "s0", "s1", "a0", "a1", "a2", "a3", "a4", "a5",
-  "a6", "a7", "s2", "s3", "s4", "s5", "s6", "s7",
-  "s8", "s9", "s10", "s11", "t3", "t4", "t5", "t6",
-]
-
-
-def _mem_bytes(mem, addr: int, size: int) -> bytes:
-  return bytes(mem.read8(addr + i) for i in range(size))
-
-
-def _hex_words(mem, addr: int, count: int) -> str:
-  return " ".join(f"{mem.read32(addr + i * 4):08x}" for i in range(count))
-
-
-def _coalesced_sparse_ranges(mem):
-  data = getattr(mem, "_data", {})
-  if not data:
-    return []
-  addrs = sorted(data)
-  ranges = []
-  start = prev = addrs[0]
-  for addr in addrs[1:]:
-    if addr == prev + 1:
-      prev = addr
-      continue
-    ranges.append((start, prev))
-    start = prev = addr
-  ranges.append((start, prev))
-  return ranges
-
-
-def _dump_sparse_memory(lines: list[str], name: str, mem, bytes_per_line: int = 32):
-  ranges = _coalesced_sparse_ranges(mem)
-  lines.append(f"{name}: sparse_ranges={len(ranges)}")
-  for start, end in ranges:
-    size = end - start + 1
-    lines.append(f"  range 0x{start:08x}..0x{end:08x} ({size} bytes)")
-    for addr in range(start, end + 1, bytes_per_line):
-      chunk_end = min(addr + bytes_per_line - 1, end)
-      chunk = _mem_bytes(mem, addr, chunk_end - addr + 1)
-      lines.append(f"    0x{addr:08x}: {chunk.hex()}")
-
-
-def _word_desc(core, pc: int) -> str:
-  try:
-    word = core.mem.read32(pc)
-  except Exception as e:
-    return f"{type(e).__name__}: {e}"
-  try:
-    decoded = dsl.decode_rv(word)
-    return f"0x{word:08x} {decoded.name}"
-  except Exception:
-    if (word & 0x3) != 0x3:
-      return f"0x{word:08x} TT_PUSH"
-    return f"0x{word:08x}"
-
-
-def _pc_region(name: str, pc: int) -> str:
-  fw_ranges = {
-    "brisc": (BRISC_FW_BASE, BRISC_FW_BASE + 0x600),
-    "ncrisc": (NCRISC_FW_BASE, NCRISC_FW_BASE + 0x600),
-    "trisc0": (TRISC0_FW_BASE, TRISC0_FW_BASE + 0x600),
-    "trisc1": (TRISC1_FW_BASE, TRISC1_FW_BASE + 0x600),
-    "trisc2": (RAW_TRISC2_FW_BASE, RAW_TRISC2_FW_BASE + 0x600),
-  }
-  kernel_ranges = {
-    "brisc": (RAW_DM_BRISC_KERNEL_BASE, RAW_DM_BRISC_KERNEL_BASE + 0x900),
-    "ncrisc": (RAW_DM_NCRISC_KERNEL_BASE, RAW_DM_NCRISC_KERNEL_BASE + 0x900),
-    "trisc0": (0x00006990, 0x00007200),
-    "trisc1": (0x00007210, 0x00007680),
-    "trisc2": (0x00007C30, 0x00008480),
-  }
-  lo, hi = fw_ranges.get(name, (0, 0))
-  if lo <= pc < hi:
-    return f"scratch_fw+0x{pc - lo:x}"
-  lo, hi = kernel_ranges.get(name, (0, 0))
-  if lo <= pc < hi:
-    return f"raw_kernel+0x{pc - lo:x}"
-  return "unknown"
-
-
-def _dump_core(lines: list[str], tile, name: str):
-  core = getattr(tile, name)
-  lines.append(
-    f"  {name}: reset={int(core.in_reset)} cycles={core.cycles} "
-    f"blocked={core.blocked_cycles} pc=0x{core.pc:08x} "
-    f"region={_pc_region(name, core.pc)} instr={_word_desc(core, core.pc)}"
-  )
-  pending = getattr(core, "_pending", None)
-  if pending is not None:
-    pname = pending.decoded.name if pending.decoded is not None else "TT_PUSH"
-    lines.append(
-      f"    pending pc=0x{pending.pc:08x} word=0x{pending.word:08x} "
-      f"name={pname} latency={pending.latency}"
-    )
-  lines.append(
-    "    regs "
-    + " ".join(f"{reg}=0x{core.regs[i]:08x}"
-               for i, reg in enumerate(RV_REG_NAMES))
-  )
-  if core.csrs:
-    lines.append(
-      "    csrs "
-      + " ".join(f"0x{k:x}=0x{v:08x}" for k, v in sorted(core.csrs.items()))
-    )
-  _dump_sparse_memory(lines, f"    {name}.ldm", core.ldm)
-
-
-def _dump_stream_counters(lines: list[str], tile):
-  lines.append("  stream counters:")
-  for cb in (0, 16):
-    stream = cb * STREAM_STRIDE
-    recv = tile.stream_regs.read32(stream + STREAM_TILES_RECEIVED)
-    ack = tile.stream_regs.read32(stream + STREAM_TILES_ACKED)
-    bus_recv = tile.brisc.mem.read32(cb_tiles_received_addr(cb))
-    bus_ack = tile.brisc.mem.read32(cb_tiles_acked_addr(cb))
-    lines.append(
-      f"    cb{cb}: stream_recv={recv} stream_ack={ack} "
-      f"bus_recv={bus_recv} bus_ack={bus_ack}"
-    )
-
-
-def _dump_tensix(lines: list[str], tile):
-  tensix = tile.tensix
-  lines.append("  tensix:")
-  lines.append(f"    cycle={tensix.cycle} backend_inflight={tensix._backend_inflight}")
-  for thread in tensix.threads:
-    fifo_words = [f"0x{insn.word:08x}:{insn.name}" for insn in list(thread.fifo._q)[:16]]
-    lines.append(
-      f"    thread{thread.thread_id}: fifo={len(thread.fifo)} "
-      f"held={thread.held.name if thread.held else '-'} "
-      f"frontend_busy_until={thread.frontend_busy_until} "
-      f"mop_mask_hi=0x{thread.mop_mask_hi:04x} fifo_head={fifo_words}"
-    )
-  for tid in range(3):
-    nonzero = [
-      f"r{i}=0x{tensix.gpr.read32(tid, i):08x}"
-      for i in range(64) if tensix.gpr.read32(tid, i)
-    ]
-    lines.append(f"    gpr t{tid}: {' '.join(nonzero) if nonzero else '-'}")
-  for state_id, cfg in enumerate(tensix.config_unit.cfg):
-    nonzero = [f"{i}=0x{v:08x}" for i, v in enumerate(cfg) if v]
-    lines.append(f"    cfg state{state_id}: {' '.join(nonzero) if nonzero else '-'}")
-  for tid, adc in enumerate(tensix.adc):
-    chans = []
-    for idx, ch in enumerate(adc.packers.channels):
-      chans.append(
-        f"ch{idx}(x={ch.x.val}/{ch.x.cr},y={ch.y.val}/{ch.y.cr},"
-        f"z={ch.z.val}/{ch.z.cr},w={ch.w.val}/{ch.w.cr})"
-      )
-    lines.append(f"    adc packers t{tid}: {' '.join(chans)}")
-    for unp_idx, unit in enumerate(adc.unpackers):
-      chans = []
-      for idx, ch in enumerate(unit.channels):
-        chans.append(
-          f"ch{idx}(x={ch.x.val}/{ch.x.cr},y={ch.y.val}/{ch.y.cr},"
-          f"z={ch.z.val}/{ch.z.cr},w={ch.w.val}/{ch.w.cr})"
-        )
-      lines.append(f"    adc unpacker{unp_idx} t{tid}: {' '.join(chans)}")
-  valid_rows = [i for i, valid in enumerate(tensix.dest.valid) if valid]
-  nonzero_dest_rows = [
-    i for i, row in enumerate(tensix.dest.bits) if any(row)
-  ]
-  lines.append(f"    dest valid_rows={valid_rows[:128]} count={len(valid_rows)}")
-  lines.append(
-    f"    dest nonzero_rows_head={nonzero_dest_rows[:128]} "
-    f"count={len(nonzero_dest_rows)}"
-  )
-  for row in nonzero_dest_rows[:32]:
-    lines.append(
-      f"      dest[{row:04d}]: "
-      + " ".join(f"{v:08x}" for v in tensix.dest.bits[row])
-    )
-  for src_name in ("srca", "srcb"):
-    src = getattr(tensix, src_name)
-    lines.append(
-      f"    {src_name}: fpu_bank={src.fpu_bank} unpack_bank={src.unpack_bank}"
-    )
-    for bank_id, bank in enumerate(src.banks):
-      rows = [i for i, row in enumerate(bank.rows) if any(row)]
-      lines.append(
-        f"      bank{bank_id}: allowed={bank.allowed_client} "
-        f"nonzero_rows={rows[:64]} count={len(rows)}"
-      )
-      for row in rows[:16]:
-        lines.append(
-          f"        row[{row:02d}]: "
-          + " ".join(f"{v:08x}" for v in bank.rows[row])
-        )
-
-
-def dump_emu_state(path: str, reason: str, dev: Device, tiles: list,
-                   *, alloc: ScratchDramAllocator | None = None,
-                   src: ScratchDramBuffer | None = None,
-                   dst: ScratchDramBuffer | None = None,
-                   got: bytes | None = None,
-                   exp: bytes | None = None):
-  lines = [
-    f"reason: {reason}",
-    f"elapsed_cycles: {dev.elapsed_cycles}",
-    f"sim_cycle: {dev.sim_cycle}",
-    f"core_xy: {dev.core_xy}",
-    f"harvested_banks: {dev.harvested_banks}",
-    "",
-    timeout_diagnostics(tiles),
-    "",
-  ]
-  if src is not None:
-    lines.append(f"src buffer: addr=0x{src.addr:x} tiles={src.num_tiles} size={src.size}")
-  if dst is not None:
-    lines.append(f"dst buffer: addr=0x{dst.addr:x} tiles={dst.num_tiles} size={dst.size}")
-  if got is not None:
-    lines.append(f"got first64: {got[:64].hex()}")
-    lines.append(f"got bf16 first32: {format_bf16_words(got, 32)}")
-  if exp is not None:
-    lines.append(f"expected first64: {exp[:64].hex()}")
-    lines.append(f"expected bf16 first32: {format_bf16_words(exp, 32)}")
-  lines.append("")
-  for tile in tiles:
-    lines.append(f"tile ({tile.x},{tile.y})")
-    lines.append(
-      f"  mailbox: go=0x{tile.l1.read8(GO_MESSAGES + 3):02x} "
-      f"go_index=0x{tile.l1.read32(GO_MESSAGE_INDEX):08x} "
-      f"sync=0x{tile.l1.read32(SUBORDINATE_SYNC):08x}"
-    )
-    lines.append(f"  rta words @0x{KERNEL_CONFIG_BASE:x}: {_hex_words(tile.l1, KERNEL_CONFIG_BASE, 36)}")
-    for cb in (0, 16):
-      base = CB_CONFIG_BASE + cb * CB_CONFIG_BYTES
-      lines.append(f"  cb{cb} config @0x{base:x}: {_hex_words(tile.l1, base, 4)}")
-    table_words = (dev.dram.num_banks * 2 + len(dev.core_xy) * 2 + 1) // 2
-    lines.append(
-      f"  bank_to_noc @0x{BANK_TO_NOC_SCRATCH:x}: "
-      f"{_hex_words(tile.l1, BANK_TO_NOC_SCRATCH, table_words)}"
-    )
-    _dump_stream_counters(lines, tile)
-    for name in ("brisc", "ncrisc", "trisc0", "trisc1", "trisc2"):
-      _dump_core(lines, tile, name)
-    _dump_tensix(lines, tile)
-    _dump_sparse_memory(lines, "  l1", tile.l1)
-    _dump_sparse_memory(lines, "  mmio", tile.mmio)
-    _dump_sparse_memory(lines, "  stream_regs", tile.stream_regs)
-    _dump_sparse_memory(lines, "  noc0.regs", tile.noc0.regs)
-    _dump_sparse_memory(lines, "  noc1.regs", tile.noc1.regs)
-    lines.append("")
-  for bank_id, bank in enumerate(dev.dram_banks):
-    _dump_sparse_memory(lines, f"dram_bank{bank_id}", bank)
-  Path(path).write_text("\n".join(lines) + "\n")
-
-
 class Asm:
   def __init__(self, base: int):
     self.base = base
@@ -885,8 +626,8 @@ def build_subordinate_fw(base: int, sync_offset: int, kernel_base: int,
   a = Asm(base)
   a.li32(dsl.sp, stack_top)
   a.li32(dsl.s0, SUBORDINATE_SYNC + sync_offset)
-  a.emit(dsl.ADDI(dsl.t2, dsl.zero, RUN_MSG_GO))
   a.label("wait_go")
+  a.emit(dsl.ADDI(dsl.t2, dsl.zero, RUN_MSG_GO))
   a.emit(dsl.LBU(dsl.t1, dsl.s0, 0))
   a.bne_label(dsl.t1, dsl.t2, "wait_go")
   a.call_abs(kernel_base)
@@ -986,32 +727,12 @@ def main():
       MAX_RUN_STEPS,
     )
   except TimeoutError as e:
-    state_path = os.environ.get("STATE_DUMP", STATE_DUMP_PATH)
-    dump_emu_state(
-      state_path,
-      f"timeout after {MAX_RUN_STEPS} max steps",
-      dev,
-      tiles,
-      alloc=alloc,
-      src=src,
-      dst=dst,
-    )
+    dev.write_snapshots()
     print(f"RUN TIMEOUT: {e}", file=sys.stderr, flush=True)
-    print(f"EMU STATE DUMPED: {state_path}", file=sys.stderr, flush=True)
     return 1
   except Exception as e:
-    state_path = os.environ.get("STATE_DUMP", STATE_DUMP_PATH)
-    dump_emu_state(
-      state_path,
-      f"run error {type(e).__name__}: {e}",
-      dev,
-      tiles,
-      alloc=alloc,
-      src=src,
-      dst=dst,
-    )
+    dev.write_snapshots()
     print(f"RUN ERROR: {type(e).__name__}: {e}", file=sys.stderr, flush=True)
-    print(f"EMU STATE DUMPED: {state_path}", file=sys.stderr, flush=True)
     return 1
 
   for tile in tiles:
@@ -1032,18 +753,7 @@ def main():
   mismatch = compare_tile_prefixes(got, exp, num_tiles, TILE_BYTES)
   if mismatch is not None:
     idx, got_window, exp_window = mismatch
-    state_path = os.environ.get("STATE_DUMP", STATE_DUMP_PATH)
-    dump_emu_state(
-      state_path,
-      f"output mismatch at byte {idx}",
-      dev,
-      tiles,
-      alloc=alloc,
-      src=src,
-      dst=dst,
-      got=got,
-      exp=exp,
-    )
+    dev.write_snapshots()
     print(
       "RAW OUTPUT DRAM MISMATCH: "
       f"byte={idx} got={got_window.hex()} expected={exp_window.hex()}",
@@ -1054,9 +764,9 @@ def main():
     print(f"  expected bf16: {format_bf16_words(exp)}", file=sys.stderr)
     print(f"  got float:     {format_bf16_floats(got)}", file=sys.stderr)
     print(f"  expected float:{format_bf16_floats(exp)}", file=sys.stderr)
-    print(f"EMU STATE DUMPED: {state_path}", file=sys.stderr, flush=True)
     return 1
   print_success_banner(dev, num_tiles, len(tiles), steps, src_data, got)
+  dev.write_snapshots()
   return 0
 
 
