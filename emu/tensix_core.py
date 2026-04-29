@@ -454,8 +454,9 @@ class Tensix:
 
   def tick(self, ctx: SimContext, phase: Phase) -> None:
     self.cycle = ctx.cycle
-    for unit in self.units.values():
-      unit.tick(ctx, phase)
+    if phase is Phase.COMMIT:
+      for unit in self.units.values():
+        unit.tick(ctx, phase)
     if phase is not Phase.ISSUE:
       return
     for thread in self.threads:

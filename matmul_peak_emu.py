@@ -434,6 +434,9 @@ def main():
     return 1
 
   gflops = 2 * M * K * N / max(steps, 1)
+  core_cycles = "\n".join(
+    f"  {name}: {cycles}" for name, cycles in dev.core_cycles.items()
+  )
   print(
     f"matmul_peak raw-kernel emulation: pass\n"
     f"  shape: C[{M},{N}] = A[{M},{K}] @ B[{K},{N}]\n"
@@ -441,7 +444,8 @@ def main():
     f"  kernels: raw PT_LOAD bins from firmware/disasms\n"
     f"  steps: {steps} emulated device ticks, nominal {gflops:.2f} flop/tick\n"
     f"  output bf16 first 16: {bf16_words(tilize(c_raw, 2, (plan.mt * 32, plan.nt * 32)))}\n"
-    f"  output values first 16: {bf16_values(c_raw, (plan.mt * 32, plan.nt * 32))}",
+    f"  output values first 16: {bf16_values(c_raw, (plan.mt * 32, plan.nt * 32))}\n"
+    f"core cycles:\n{core_cycles}",
     flush=True)
   return 0
 

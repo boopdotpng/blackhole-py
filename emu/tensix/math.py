@@ -7,6 +7,7 @@
 
 import math
 import struct
+from functools import cache
 
 from . import formats as _fmt
 
@@ -17,6 +18,11 @@ M32 = 0xFFFFFFFF
 # FPU — Matrix Unit. Reads SrcA/SrcB (19-bit), writes Dest (FP32 bits).
 # =============================================================================
 
+@cache
+def _bits_to_float(bits):
+  return struct.unpack('f', struct.pack('I', bits & M32))[0]
+
+@cache
 def _19bit_to_float(val):
   # Layout: { sign[18], mantissa[17:8] (10 bits), exponent[7:0] (8 bits) }
   sign = (val >> 18) & 1
@@ -24,7 +30,7 @@ def _19bit_to_float(val):
   exp  = val & 0xFF
   # Map to FP32: mantissa zero-padded from 10 to 23 bits
   fp32_bits = (sign << 31) | (exp << 23) | (mant << 13)
-  return struct.unpack('f', struct.pack('I', fp32_bits))[0]
+  return _bits_to_float(fp32_bits)
 
 def _float_to_19bit(f):
   if math.isnan(f):
@@ -36,13 +42,14 @@ def _float_to_19bit(f):
   return (sign << 18) | (mant << 8) | exp
 
 def _dest_to_float(val):
-  return struct.unpack('f', struct.pack('I', val & M32))[0]
+  return _bits_to_float(val)
 
 def _float_to_dest(f):
   if math.isnan(f):
     return 0x7FC00000
   return struct.unpack('I', struct.pack('f', float(f)))[0]
 
+@cache
 def _src_fidelity_float(val, phase, srca_path):
   """Decode a shuffled Src cell after applying BH FPU fidelity masks.
 
@@ -52,14 +59,16 @@ def _src_fidelity_float(val, phase, srca_path):
   bits, phase 1 contributes the remaining SrcA bits used by the multiplier;
   SrcB phases do the same split with top six / remaining bits.
   """
-  x = _19bit_to_float(val)
-  bits = struct.unpack('I', struct.pack('f', x))[0]
+  sign = (val >> 18) & 1
+  mant = (val >> 8) & 0x3FF
+  exp  = val & 0xFF
+  bits = (sign << 31) | (exp << 23) | (mant << 13)
   if srca_path:
     mask = 0xFFF80000 if (phase & 1) == 0 else 0xFFF83FFF
   else:
     mask = 0xFFFE0000 if (phase & 2) == 0 else 0xFFFE1FFF
-  trunc = struct.unpack('f', struct.pack('I', bits & mask))[0]
-  return trunc if ((phase & (1 if srca_path else 2)) == 0) else x - trunc
+  trunc = _bits_to_float(bits & mask)
+  return trunc if ((phase & (1 if srca_path else 2)) == 0) else _bits_to_float(bits) - trunc
 
 def _dst16_bf16_to_float(val):
   val &= 0xFFFF
@@ -144,20 +153,37 @@ class FPU:
     srca_base = rwc.a & 0x38
     srcb_base = rwc.b & (0x3F if getattr(d, "broadcast_srcb", 0) else 0x38)
     phase = self._fidelity_phase(rwc)
-    fp32_enabled = self._fp32_dest_enabled()
+    dest_bits = self.dest.bits
+    dest_valid = self.dest.valid
+    srca_vals = [
+      [_src_fidelity_float(srca_bank.rows[(srca_base + k) & 0x3F][col], phase, True)
+       for col in range(16)]
+      for k in range(16)
+    ]
+    srca_cols = list(zip(*srca_vals))
     for row in range(rows):
+      srcb_row = (srcb_base + row) & 0x3F
+      srcb_vals = [
+        _src_fidelity_float(srcb_bank.rows[srcb_row][k], phase, False)
+        for k in range(16)
+      ]
+      dest_row = (self.dest_offset_rows + dst_base + row) % self.dest.ROWS
+      dest_row_bits = dest_bits[dest_row]
+      was_valid = dest_valid[dest_row]
+      b0, b1, b2, b3, b4, b5, b6, b7 = srcb_vals[:8]
+      b8, b9, b10, b11, b12, b13, b14, b15 = srcb_vals[8:]
       for col in range(16):
-        acc = 0.0
-        for k in range(16):
-          srca_row = (srca_base + k) & 0x3F
-          srcb_row = (srcb_base + row) & 0x3F
-          a = _src_fidelity_float(srca_bank.rows[srca_row][col], phase, True)
-          b = _src_fidelity_float(srcb_bank.rows[srcb_row][k], phase, False)
-          acc += b * a
-        dest_row = (self.dest_offset_rows + dst_base + row) % self.dest.ROWS
-        if self.dest.valid[dest_row]:
-          acc += self._read_dest_float(dest_row, col, fp32_enabled)
-        self._write_dest_float(dest_row, col, acc, fp32_enabled)
+        a = srca_cols[col]
+        acc = (
+          b0 * a[0] + b1 * a[1] + b2 * a[2] + b3 * a[3] +
+          b4 * a[4] + b5 * a[5] + b6 * a[6] + b7 * a[7] +
+          b8 * a[8] + b9 * a[9] + b10 * a[10] + b11 * a[11] +
+          b12 * a[12] + b13 * a[13] + b14 * a[14] + b15 * a[15]
+        )
+        if was_valid:
+          acc += _bits_to_float(dest_row_bits[col])
+        dest_row_bits[col] = _float_to_dest(acc)
+      dest_valid[dest_row] = True
 
   def dotpv(self, d, rwc):
     self._mvmul_rows(d, rwc, 8)

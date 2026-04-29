@@ -138,6 +138,7 @@ class Core:
     self.minstret = 0
     self._pending: PendingInstruction | None = None
     self._waiting_for_commit = False
+    self._pending_ready_cycle = 0
     self._blocked = False
     self.tensix = None
     if tensix is not None:
@@ -174,6 +175,10 @@ class Core:
       self.mem.write32(addr + i * 4, int(insn))
 
   def tick(self, ctx: SimContext, phase: Phase) -> None:
+    if phase is Phase.COMPLETE and self._waiting_for_commit:
+      if self._pending_ready_cycle <= ctx.cycle:
+        self._commit_pending(ctx)
+      return
     if phase is Phase.LATCH and not self.in_reset:
       self.cycles += 1
       if self._blocked:
@@ -197,11 +202,7 @@ class Core:
 
     self._pending = pending
     self._waiting_for_commit = True
-
-    def commit(commit_ctx: SimContext) -> None:
-      self._commit_pending(commit_ctx)
-
-    ctx.schedule(pending.latency, commit, f"{self.ROLE or 'rv'}:{self._pending_name(pending)}")
+    self._pending_ready_cycle = ctx.cycle + pending.latency
     return True
 
   def _commit_pending(self, ctx: SimContext) -> None:
@@ -220,11 +221,7 @@ class Core:
       self._blocked = True
       self._pending = pending
       self._waiting_for_commit = True
-
-      def retry(retry_ctx: SimContext) -> None:
-        self._commit_pending(retry_ctx)
-
-      ctx.schedule(1, retry, f"{self.ROLE or 'rv'}:{self._pending_name(pending)}:retry")
+      self._pending_ready_cycle = ctx.cycle + 1
       return
     except FifoFull:
       self._blocked = True

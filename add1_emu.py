@@ -273,6 +273,8 @@ def print_success_banner(dev: Device, num_tiles: int, core_count: int,
     row(f"bf16 input  first 8 : {src_values}"),
     row(f"bf16 output first 8 : {out_values}"),
     border(),
+    "core cycles:",
+    *(f"  {name}: {cycles}" for name, cycles in dev.core_cycles.items()),
   ]
   print("\n".join(lines), flush=True)
 

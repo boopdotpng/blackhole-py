@@ -49,11 +49,13 @@ class Simulator:
   def __init__(self):
     self.cycle = 0
     self._objects: list[SimObject] = []
+    self._objects_snapshot: tuple[SimObject, ...] = ()
     self._events: list[tuple[int, int, ScheduledEvent]] = []
     self._seq = count()
 
   def add(self, obj: SimObject) -> None:
     self._objects.append(obj)
+    self._objects_snapshot = tuple(self._objects)
 
   def schedule(self, cycle: int, callback: Callable[[SimContext], None],
                label: str = "") -> None:
@@ -64,10 +66,11 @@ class Simulator:
 
   def tick(self) -> None:
     ctx = SimContext(self.cycle, self)
+    objects = self._objects_snapshot
     for phase in self.PHASES:
       if phase is Phase.COMPLETE:
         self._complete_due_events(ctx)
-      for obj in tuple(self._objects):
+      for obj in objects:
         obj.tick(ctx, phase)
     self.cycle += 1
 
