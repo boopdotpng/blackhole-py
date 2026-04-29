@@ -479,10 +479,13 @@ def build_matmul_program(
 
 # --- benchmark harness ---
 
+def _host_input_dtype():
+  return np.float16 if IO_MODE == "f16" else np.float32
+
 def _to_device_bytes(x: np.ndarray) -> bytes:
-  x16 = np.ascontiguousarray(x, dtype=np.float16)
-  if IO_MODE == "f16": return x16.tobytes()
-  u32 = x16.astype(np.float32).view(np.uint32)
+  if IO_MODE == "f16":
+    return np.ascontiguousarray(x, dtype=np.float16).tobytes()
+  u32 = np.ascontiguousarray(x, dtype=np.float32).view(np.uint32)
   return (u32 >> 16).astype(np.uint16).tobytes()
 
 def _from_device_bytes(data: bytes, shape: tuple[int, ...]) -> np.ndarray:
@@ -541,30 +544,31 @@ def _validate(a, b, c_bytes, M, N, Mp, Np):
 
 
 def _make_inputs(M: int, K: int, N: int) -> tuple[np.ndarray, np.ndarray]:
+  host_dtype = _host_input_dtype()
   if INPUT_PATTERN == "random":
     rng_a, rng_b = np.random.default_rng(42), np.random.default_rng(123)
-    a_src = rng_a.uniform(-0.5, 0.5, size=(M, K)).astype(np.float16)
-    b_src = rng_b.uniform(-0.5, 0.5, size=(K, N)).astype(np.float16)
+    a_src = rng_a.uniform(-0.5, 0.5, size=(M, K)).astype(host_dtype)
+    b_src = rng_b.uniform(-0.5, 0.5, size=(K, N)).astype(host_dtype)
     return a_src, b_src
   if INPUT_PATTERN in ("selector", "selector_int"):
-    a_src = np.zeros((M, K), dtype=np.float16)
-    a_src[np.arange(M), np.arange(M) % K] = np.float16(1.0)
+    a_src = np.zeros((M, K), dtype=host_dtype)
+    a_src[np.arange(M), np.arange(M) % K] = host_dtype(1.0)
     k_ids = np.arange(K, dtype=np.float32).reshape(K, 1)
     n_ids = np.arange(N, dtype=np.float32).reshape(1, N)
-    b_src = (k_ids * 256.0 + n_ids).astype(np.float16)
+    b_src = (k_ids * 256.0 + n_ids).astype(host_dtype)
     return a_src, b_src
   if INPUT_PATTERN in ("selector_decimal", "selector_float"):
-    a_src = np.zeros((M, K), dtype=np.float16)
-    a_src[np.arange(M), np.arange(M) % K] = np.float16(1.0)
+    a_src = np.zeros((M, K), dtype=host_dtype)
+    a_src[np.arange(M), np.arange(M) % K] = host_dtype(1.0)
     k_ids = np.arange(K, dtype=np.float32).reshape(K, 1)
     n_ids = np.arange(N, dtype=np.float32).reshape(1, N)
-    b_src = (k_ids + n_ids / 1024.0).astype(np.float16)
+    b_src = (k_ids + n_ids / 1024.0).astype(host_dtype)
     return a_src, b_src
   if INPUT_PATTERN == "ones":
-    return np.ones((M, K), dtype=np.float16), np.ones((K, N), dtype=np.float16)
+    return np.ones((M, K), dtype=host_dtype), np.ones((K, N), dtype=host_dtype)
   if INPUT_PATTERN == "ramp":
-    a_src = np.broadcast_to(np.arange(1, K + 1, dtype=np.float16), (M, K)).copy()
-    b_src = np.broadcast_to(np.arange(1, K + 1, dtype=np.float16).reshape(K, 1), (K, N)).copy()
+    a_src = np.broadcast_to(np.arange(1, K + 1, dtype=host_dtype), (M, K)).copy()
+    b_src = np.broadcast_to(np.arange(1, K + 1, dtype=host_dtype).reshape(K, 1), (K, N)).copy()
     return a_src, b_src
   raise SystemExit(
     f"Invalid INPUT_PATTERN={INPUT_PATTERN!r}. "
@@ -601,8 +605,8 @@ def main():
     a_src, b_src = _make_inputs(M, K, N)
 
     if padded:
-      a_padded = np.zeros((Mp, Kp), dtype=np.float16); a_padded[:M, :K] = a_src
-      b_padded = np.zeros((Kp, Np), dtype=np.float16); b_padded[:K, :N] = b_src
+      a_padded = np.zeros((Mp, Kp), dtype=_host_input_dtype()); a_padded[:M, :K] = a_src
+      b_padded = np.zeros((Kp, Np), dtype=_host_input_dtype()); b_padded[:K, :N] = b_src
       a_bytes, b_bytes = _to_device_bytes(a_padded), _to_device_bytes(b_padded)
     else:
       a_bytes, b_bytes = _to_device_bytes(a_src), _to_device_bytes(b_src)

@@ -60,6 +60,7 @@ from emu.runtime import RuntimeLayout
 from examples.matmul_peak import (
   MatmulPlan,
   _from_device_bytes,
+  _host_input_dtype,
   _make_inputs,
   _to_device_bytes,
   _validate,
@@ -293,12 +294,12 @@ def make_buffers(dev: Device, plan: MatmulPlan):
   a_src, b_src = _make_inputs(M, K, N)
   Mp, Kp, Np = plan.mt * 32, plan.kt * 32, plan.nt * 32
   if (M, K) != (Mp, Kp):
-    a_padded = np.zeros((Mp, Kp), dtype=np.float16)
+    a_padded = np.zeros((Mp, Kp), dtype=_host_input_dtype())
     a_padded[:M, :K] = a_src
   else:
     a_padded = a_src
   if (K, N) != (Kp, Np):
-    b_padded = np.zeros((Kp, Np), dtype=np.float16)
+    b_padded = np.zeros((Kp, Np), dtype=_host_input_dtype())
     b_padded[:K, :N] = b_src
   else:
     b_padded = b_src
