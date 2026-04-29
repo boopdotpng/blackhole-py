@@ -9,7 +9,6 @@ import math
 import struct
 
 from . import formats as _fmt
-from .cfg_layout import alu_format_spec as _alu_format_spec
 
 M32 = 0xFFFFFFFF
 
@@ -90,10 +89,12 @@ class FPU:
     self.dest_offset_rows = 0
 
   def _fp32_dest_enabled(self, thread_id=1):
-    if self._cfg is None:
-      return True
-    state_id = self._cfg._state_id(thread_id)
-    return bool(_alu_format_spec(self._cfg, state_id).fp32_enabled)
+    # The matrix unit accumulates into the Dest register file with FP32-shaped
+    # cells; output precision is selected later by the packer.  The ALU
+    # fp32_enabled bit is not a request to round Dest to BF16 after every
+    # MVMUL.  Doing that makes HiFi2 BF16 matmul substantially less precise
+    # than hardware.
+    return True
 
   def _fidelity_phase(self, rwc, thread_id=1):
     phase = rwc.cr

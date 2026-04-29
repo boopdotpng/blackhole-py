@@ -150,6 +150,10 @@ def bf16_words(data: bytes, count: int = 16) -> str:
   )
 
 
+def bf16_values(data: bytes, shape: tuple[int, int], count: int = 16) -> list[float]:
+  return _from_device_bytes(data, shape).astype(np.float32).reshape(-1)[:count].tolist()
+
+
 def raw_symbol_addr(stem: str,
                     symbols: tuple[str, ...] = ("_Z11kernel_mainv",
                                                 "kernel_main()")) -> int:
@@ -435,7 +439,8 @@ def main():
     f"  grid: {len(plan.rows)}x{len(plan.cols)} cores {plan.active_cores()}\n"
     f"  kernels: raw PT_LOAD bins from firmware/disasms\n"
     f"  steps: {steps} emulated device ticks, nominal {gflops:.2f} flop/tick\n"
-    f"  output bf16 first 16: {bf16_words(tilize(c_raw, 2, (plan.mt * 32, plan.nt * 32)))}",
+    f"  output bf16 first 16: {bf16_words(tilize(c_raw, 2, (plan.mt * 32, plan.nt * 32)))}\n"
+    f"  output values first 16: {bf16_values(c_raw, (plan.mt * 32, plan.nt * 32))}",
     flush=True)
   return 0
 

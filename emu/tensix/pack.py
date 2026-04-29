@@ -419,7 +419,7 @@ class Packer:
     if read_32b:
       f = _fmt._bits_f32(raw_bits)
       if in_fmt == _FMT_BF16 or in_fmt in _FMT_IS_BFP_B:
-        return _fmt.bf16_to_fp32(_fmt.fp32_to_bf16(f))
+        return _fmt.bf16_to_fp32(_fmt.fp32_to_bf16(f, rtne=True))
       elif in_fmt == _FMT_TF32 or round_10b:
         return _fmt.tf32_to_fp32(_fmt.fp32_to_tf32(f))
       elif in_fmt == _FMT_INT8:
@@ -433,8 +433,8 @@ class Packer:
       return f  # FP32 identity
     else:
       if in_fmt == _FMT_BF16 or in_fmt in _FMT_IS_BFP_B:
-        b16 = _read_dst16_as_bf16(raw_bits)
-        # BF16: flush denormals
+        b16 = _fmt.fp32_to_bf16(_fmt._bits_f32(raw_bits), rtne=True)
+        # BF16: flush denormals.
         e8 = (b16 >> 7) & 0xFF
         if e8 == 0:
           s = (b16 >> 15) & 1
@@ -564,7 +564,10 @@ class Packer:
 
     elif out_fmt == _FMT_BF16:
       for f in datums:
-        b = _fmt.fp32_to_bf16(f)
+        # Blackhole's packer rounds FP32 Dest values to BF16 on this path.
+        # Truncation is visible on large outputs: ramp matmul packs 707264 to
+        # 0x492d on hardware (nearest), not 0x492c (truncate).
+        b = _fmt.fp32_to_bf16(f, rtne=True)
         data_bytes += [b & 0xFF, (b >> 8) & 0xFF]
 
     elif out_fmt == _FMT_FP16:
