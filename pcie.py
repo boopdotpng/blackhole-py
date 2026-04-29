@@ -8,6 +8,14 @@ BH_DEVICE = 0xB140
 PCI_COMMAND = 0x04
 PCI_COMMAND_MEMORY = 0x02
 PCI_COMMAND_MASTER = 0x04
+PCI_VENDOR_ID = 0x00
+PCI_CAP_PTR = 0x34
+PCI_CAP_ID_EXP = 0x10
+PCI_EXP_DEVCTL = 0x08
+PCI_EXP_DEVCTL_READRQ = 0x7000
+PCI_EXP_DEVCTL_READRQ_4096 = 0x5000
+PCI_BRIDGE_CONTROL = 0x3E
+PCI_BRIDGE_CTL_BUS_RESET = 1 << 6
 
 # VFIO ioctl numbers
 VFIO_TYPE = ord(';')
@@ -121,6 +129,113 @@ def _mmap_bar(sysfs, resource, size):
   return fd, mm
 
 
+def _config_path(sysfs_path: str) -> str:
+  return f"{sysfs_path}/config"
+
+
+def _read_config(path: str, size: int, offset: int) -> bytes:
+  fd = os.open(path, os.O_RDONLY | os.O_SYNC)
+  try:
+    return os.pread(fd, size, offset)
+  finally:
+    os.close(fd)
+
+
+def _write_config(path: str, data: bytes, offset: int):
+  fd = os.open(path, os.O_RDWR | os.O_SYNC)
+  try:
+    os.pwrite(fd, data, offset)
+  finally:
+    os.close(fd)
+
+
+def _read_config_u16(path: str, offset: int) -> int:
+  return struct.unpack("<H", _read_config(path, 2, offset))[0]
+
+
+def _write_config_u16(path: str, offset: int, value: int):
+  _write_config(path, struct.pack("<H", value & 0xFFFF), offset)
+
+
+def _read_vendor_id(sysfs_path: str) -> int | None:
+  try:
+    return _read_config_u16(_config_path(sysfs_path), PCI_VENDOR_ID)
+  except OSError:
+    return None
+
+
+def _find_pcie_cap(cfg: bytes) -> int | None:
+  if len(cfg) <= PCI_CAP_PTR:
+    return None
+  ptr = cfg[PCI_CAP_PTR] & 0xFC
+  seen = set()
+  while ptr and ptr + 1 < len(cfg) and ptr not in seen:
+    seen.add(ptr)
+    if cfg[ptr] == PCI_CAP_ID_EXP:
+      return ptr
+    ptr = cfg[ptr + 1] & 0xFC
+  return None
+
+
+def _find_upstream_bridge_sysfs(sysfs_path: str) -> str | None:
+  cur = os.path.realpath(sysfs_path)
+  parent = os.path.dirname(cur)
+  while parent and parent != "/" and os.path.exists(os.path.join(parent, "config")):
+    class_path = os.path.join(parent, "class")
+    try:
+      dev_class = int(open(class_path).read().strip(), 16)
+      if (dev_class >> 8) == 0x0604:
+        return parent
+    except OSError:
+      pass
+    parent = os.path.dirname(parent)
+  return None
+
+
+def _wait_for_vendor_id(sysfs_path: str, timeout_s: float = 10.0) -> bool:
+  deadline = time.monotonic() + timeout_s
+  while time.monotonic() < deadline:
+    if _read_vendor_id(sysfs_path) == TT_VENDOR:
+      return True
+    time.sleep(0.1)
+  return False
+
+
+def _restore_endpoint_config(config_path: str, saved: bytes, pcie_cap: int | None, saved_devctl: int | None):
+  # Mirror the tt-kmd post-reset subset, avoiding PCI status because it is write-1-to-clear.
+  _write_config(config_path, saved[0x04:0x06], 0x04)
+  _write_config(config_path, saved[0x0C:0x0E], 0x0C)
+  _write_config(config_path, saved[0x10:0x28], 0x10)
+  _write_config(config_path, saved[0x3C:0x40], 0x3C)
+
+  if pcie_cap is not None and saved_devctl is not None:
+    devctl = (saved_devctl & ~PCI_EXP_DEVCTL_READRQ) | PCI_EXP_DEVCTL_READRQ_4096
+    _write_config(config_path, struct.pack("<H", devctl), pcie_cap + PCI_EXP_DEVCTL)
+
+  cmd = _read_config_u16(config_path, PCI_COMMAND)
+  want = PCI_COMMAND_MEMORY | PCI_COMMAND_MASTER
+  if (cmd & want) != want:
+    _write_config_u16(config_path, PCI_COMMAND, cmd | want)
+
+
+def _secondary_bus_reset(sysfs_path: str):
+  bridge_sysfs = _find_upstream_bridge_sysfs(sysfs_path)
+  if bridge_sysfs is None:
+    raise RuntimeError(f"could not find upstream PCIe bridge for {os.path.basename(sysfs_path)}")
+
+  bridge_bdf = os.path.basename(bridge_sysfs)
+  bridge_config = _config_path(bridge_sysfs)
+  ctrl = _read_config_u16(bridge_config, PCI_BRIDGE_CONTROL)
+  print(f"  resetting PCIe secondary bus via bridge {bridge_bdf}")
+  _write_config_u16(bridge_config, PCI_BRIDGE_CONTROL, ctrl | PCI_BRIDGE_CTL_BUS_RESET)
+  time.sleep(0.002)
+  _write_config_u16(bridge_config, PCI_BRIDGE_CONTROL, ctrl)
+  time.sleep(0.5)
+
+  if not _wait_for_vendor_id(sysfs_path, timeout_s=10.0):
+    raise RuntimeError(f"PCIe link did not come back for {os.path.basename(sysfs_path)}")
+
+
 class PCIDevice:
   def __init__(self, index: int = 0):
     devices = _find_bh_devices()
@@ -213,16 +328,18 @@ class PCIDevice:
 
   @staticmethod
   def reset_bdf(bdf: str):
-    """Full ASIC reset matching tt-kmd's blackhole ASIC_RESET + POST_RESET sequence.
+    """Blackhole reset matching tt-smi/UMD's non-Galaxy default as closely as possible.
 
-    1. Save PCI config space and PCIe Device Control (MPS)
-    2. Read PCIe NoC X from BAR0 (for post-reset DBI restore)
-    3. Set reset marker (PCI_COMMAND_PARITY)
-    4. Fire interface timer (extended config 0x930/0x934)
-    5. Poll for completion (parity bit clears)
-    6. Restore PCI config space
-    7. Restore MPS via NoC write to PCIe DBI
-    8. Send ARC A0 + watchdog messages
+    1. Save PCI config space and PCIe Device Control (MPS/MRRS)
+    2. Do a PCIe secondary bus reset through the upstream bridge
+    3. Restore endpoint PCI config and enable memory/bus-master
+    4. Read PCIe NoC X from BAR0 (for post-reset DBI restore)
+    5. Set reset marker (PCI_COMMAND_PARITY)
+    6. Fire interface timer (extended config 0x930/0x934)
+    7. Poll for completion (parity bit clears)
+    8. Wait for the device to settle/reappear
+    9. Restore PCI config, DBI MPS, and MRRS
+    10. Send ARC A0 + watchdog on the next open
 
     Falls back to PCIe FLR if extended config space is unavailable.
     """
@@ -234,9 +351,6 @@ class PCIDevice:
     _PCI_COMMAND_MEMORY  = 0x02
     _PCI_COMMAND_MASTER  = 0x04
     _PCI_COMMAND_PARITY  = 0x40   # bit 6 — used as reset marker
-    _PCI_CAP_PTR         = 0x34
-    _PCI_CAP_ID_EXP      = 0x10
-    _PCI_EXP_DEVCTL      = 0x08   # offset within PCIe capability
     # BH interface timer (PCIe extended config space)
     _TIMER_CONTROL       = 0x930
     _TIMER_TARGET        = 0x934
@@ -246,14 +360,6 @@ class PCIDevice:
     # PCIe DBI address (NoC space) and Device Control offset
     _PCIE_DBI_ADDR       = 0xF800000000000000
     _DBI_DEVCTL          = 0x78
-
-    def _find_pcie_cap(cfg: bytes) -> int | None:
-      ptr = cfg[_PCI_CAP_PTR] & 0xFC
-      while ptr:
-        if cfg[ptr] == _PCI_CAP_ID_EXP:
-          return ptr
-        ptr = cfg[ptr + 1] & 0xFC
-      return None
 
     # --- Pre-reset: save state ---
     fd = os.open(config_path, os.O_RDWR | os.O_SYNC)
@@ -275,24 +381,33 @@ class PCIDevice:
       pcie_cap = _find_pcie_cap(saved)
       saved_devctl = None
       if pcie_cap is not None:
-        raw = os.pread(fd, 2, pcie_cap + _PCI_EXP_DEVCTL)
+        raw = os.pread(fd, 2, pcie_cap + PCI_EXP_DEVCTL)
         saved_devctl = struct.unpack("<H", raw)[0]
+    finally:
+      if fd >= 0:
+        os.close(fd)
 
-      # Read PCIe NoC X from BAR0 for post-reset MPS restore via DBI
-      pcie_noc_x = None
-      try:
-        bar0_fd = os.open(f"{sysfs}/resource0", os.O_RDWR | os.O_SYNC)
-        bar0 = mmap.mmap(bar0_fd, BAR0_SIZE, flags=mmap.MAP_SHARED,
-                         prot=mmap.PROT_READ | mmap.PROT_WRITE)
-        noc_id_off = _NOC2AXI_CFG_START + _NOC_ID_OFFSET
-        x = struct.unpack_from("<I", bar0, noc_id_off)[0] & 0x3F
-        if x in (2, 11):
-          pcie_noc_x = x
-        bar0.close()
-        os.close(bar0_fd)
-      except Exception:
-        pass  # will skip DBI restore
+    # --- Match tt-smi/UMD default for non-Galaxy BH: reset/retrain PCIe link first. ---
+    _secondary_bus_reset(sysfs)
+    _restore_endpoint_config(config_path, saved, pcie_cap, saved_devctl)
 
+    # Read PCIe NoC X from BAR0 for post-reset MPS restore via DBI
+    pcie_noc_x = None
+    try:
+      bar0_fd = os.open(f"{sysfs}/resource0", os.O_RDWR | os.O_SYNC)
+      bar0 = mmap.mmap(bar0_fd, BAR0_SIZE, flags=mmap.MAP_SHARED,
+                       prot=mmap.PROT_READ | mmap.PROT_WRITE)
+      noc_id_off = _NOC2AXI_CFG_START + _NOC_ID_OFFSET
+      x = struct.unpack_from("<I", bar0, noc_id_off)[0] & 0x3F
+      if x in (2, 11):
+        pcie_noc_x = x
+      bar0.close()
+      os.close(bar0_fd)
+    except Exception:
+      pass  # will skip DBI restore
+
+    fd = os.open(config_path, os.O_RDWR | os.O_SYNC)
+    try:
       # --- Step 1: Set reset marker ---
       cmd = struct.unpack_from("<H", saved, _PCI_COMMAND)[0]
       os.pwrite(fd, struct.pack("<H", cmd | _PCI_COMMAND_PARITY), _PCI_COMMAND)
@@ -310,25 +425,17 @@ class PCIDevice:
         time.sleep(0.01)
       else:
         raise RuntimeError(f"ASIC reset timeout for {bdf} — parity bit did not clear")
-
-      # --- Step 4: Restore PCI config space ---
-      os.pwrite(fd, saved[0x04:0x06], 0x04)  # command (skip status at 0x06, it's W1C)
-      os.pwrite(fd, saved[0x0C:0x0E], 0x0C)  # cache line size, latency timer
-      os.pwrite(fd, saved[0x10:0x28], 0x10)  # BAR0–BAR5
-      os.pwrite(fd, saved[0x3C:0x40], 0x3C)  # interrupt line/pin
-
-      # Restore PCIe Device Control (MPS, MRRS, etc.) from host config space side
-      if pcie_cap is not None and saved_devctl is not None:
-        os.pwrite(fd, struct.pack("<H", saved_devctl), pcie_cap + _PCI_EXP_DEVCTL)
-
-      # Ensure memory space + bus mastering enabled
-      cmd = struct.unpack("<H", os.pread(fd, 2, _PCI_COMMAND))[0]
-      want = _PCI_COMMAND_MEMORY | _PCI_COMMAND_MASTER
-      if (cmd & want) != want:
-        os.pwrite(fd, struct.pack("<H", cmd | want), _PCI_COMMAND)
     finally:
       if fd >= 0:
         os.close(fd)
+
+    # UMD waits at least 2s after ASIC reset before POST_RESET.
+    time.sleep(2.0)
+    if not _wait_for_vendor_id(sysfs, timeout_s=10.0):
+      raise RuntimeError(f"device {bdf} did not respond after ASIC reset")
+
+    # --- Step 4: Restore PCI config space / MRRS ---
+    _restore_endpoint_config(config_path, saved, pcie_cap, saved_devctl)
 
     # --- Step 5: Restore MPS via NoC write to PCIe DBI register ---
     if pcie_noc_x is not None and saved_devctl is not None:
@@ -359,6 +466,7 @@ class PCIDevice:
         # Clear MPS field (bits 7:5) and restore saved value
         mps_bits = (saved_devctl >> 5) & 0x7
         cur = (cur & ~(0x7 << 5)) | (mps_bits << 5)
+        cur = (cur & ~PCI_EXP_DEVCTL_READRQ) | PCI_EXP_DEVCTL_READRQ_4096
         struct.pack_into("<I", bar0, bar_off, cur)
 
         bar0.close()
