@@ -30,7 +30,7 @@ class StreamRegisters(Memory):
 class TimedNOC:
   """Small timed NIU model.
 
-  Register programming is synchronous. Writing CMD_CTRL=1 snapshots the command and
+  Register programming is synchronous. Writing CMD_CTRL=1 captures the command and
   schedules the data movement/counter update for a later simulator cycle.
   """
 

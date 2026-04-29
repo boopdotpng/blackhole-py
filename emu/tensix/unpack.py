@@ -12,7 +12,6 @@
 
 from __future__ import annotations
 import math as _math
-import os
 
 from ..memory import Memory
 from . import formats as _fmt
@@ -438,18 +437,6 @@ class Unpacker:
 def _clear_src_bank(srcregfile):
   """Zero all rows in the current unpack bank."""
   bank = srcregfile.banks[srcregfile.unpack_bank]
-  if os.environ.get("EMU_TRACE_SRC_CLEAR"):
-    nz_rows = [
-        r for r in range(64)
-        if any(bank.rows[r][c] for c in range(16))
-    ]
-    print(
-        "EMU_TRACE_SRC_CLEAR",
-        f"src={getattr(srcregfile, 'name', '?')}",
-        f"bank={srcregfile.unpack_bank}",
-        f"rows={nz_rows}",
-        "via=UNPACR_NOP",
-    )
   for r in range(64):
     for c in range(16):
       bank.rows[r][c] = 0
@@ -531,8 +518,6 @@ def _execute_unpacr(d, thread_id: int, coproc) -> None:
   y_dim = max(td.y_dim, 1)
   z_dim = max(td.z_dim, 1)
   w_dim = max(td.w_dim, 1)
-
-  debug_unpacr = os.environ.get("EMU_DEBUG_UNPACR")
 
   in_fmt  = td.in_data_format
   out_fmt = uc.out_data_format
@@ -681,40 +666,6 @@ def _execute_unpacr(d, thread_id: int, coproc) -> None:
   # Detect unpack-to-dest path (unpacker 0, 32-bit output)
   unpack_to_dst = (which_unp == 0 and out_fmt in (FMT_FP32, FMT_TF32, FMT_INT32))
 
-  if debug_unpacr:
-    sec_base = _THCON_SEC_BASE[which_unp]
-    print(
-      "UNPACR",
-      f"core={getattr(coproc, 'debug_label', '?')}",
-      f"cycle={getattr(coproc, 'cycle', '?')}",
-      f"t={thread_id}",
-      f"unp={which_unp}",
-      f"word=0x{d.word:08x}",
-      f"addrmode=0x{addr_mode:02x}",
-      f"cfginc={d.CfgContextCntInc}",
-      f"cfgid={ctx_number}",
-      f"addrctx={ctx_adc}",
-      f"ovrd={d.OvrdThreadId}",
-      f"setdv={int(flip_src)}",
-      f"auto={d.AutoIncContextID}",
-      f"multi={int(multi_ctx)}",
-      f"ctx={which_ctx}",
-      f"adc={which_adc}",
-      f"state={cfg_state_id}",
-      f"base=0x{base_addr:x}",
-      f"off=0x{offset_addr & 0xffff:x}",
-      f"reg3=[0x{_cfg_read(cfg_unit, cfg_state_id, sec_base + 12):x},0x{_cfg_read(cfg_unit, cfg_state_id, sec_base + 13):x}]",
-      f"in=0x{in_addr_datums:x}",
-      f"first={first_datum}",
-      f"n={input_num_datums}",
-      f"x_dim={x_dim}",
-      f"out={out_addr}",
-      f"dest={dest_addrs}",
-      f"outfmt={out_fmt}",
-      f"dst={int(unpack_to_dst)}",
-      f"srca_set=0x{coproc.config_unit.thread_cfg[thread_id][5]:x}",
-    )
-
   # ColShift: TODO(spec-ambiguity) — exact register source for ColShift is not
   # specified in pack-unpack-registers.md. Treating as 0.
   col_shift = 0
@@ -823,37 +774,6 @@ def _execute_unpacr(d, thread_id: int, coproc) -> None:
       # SrcB path: no header-row skip; src_row offset applied directly
       eff_row = (row + unp_state.src_row[thread_id]) & 0x3F
       coproc.srcb.banks[bank].rows[eff_row][col] = datum & 0x7FFFF
-      trace_spec = os.environ.get("EMU_TRACE_SRCB_WRITE")
-      if trace_spec and (col in (0, 12) or (datum & 0x7FFFF) != 0):
-        try:
-          lo_s, hi_s = trace_spec.split(":", 1)
-          lo = int(lo_s, 0)
-          hi = int(hi_s, 0)
-        except ValueError:
-          lo = 0
-          hi = 64
-        if lo <= eff_row < hi:
-          print(
-              "EMU_TRACE_SRCB_WRITE",
-              f"core={getattr(coproc, 'debug_label', '?')}",
-              f"bank={bank}",
-              f"eff_row={eff_row}",
-              f"row={row}",
-              f"col={col}",
-              f"datum=0x{datum & 0x7ffff:x}",
-              f"zero_all={int(zero_all)}",
-              f"ctx={which_ctx}",
-              f"adc={which_adc}",
-              f"in=0x{in_addr_datums:x}",
-              f"byte=0x{byte_addr - int(dsz):x}",
-              f"first={first_datum}",
-              f"n={input_num_datums}",
-              f"base=0x{base_addr:x}",
-              f"off=0x{offset_addr & 0xffff:x}",
-              f"src_row={unp_state.src_row[thread_id]}",
-              f"flip={int(flip_src)}",
-              f"addrmode=0x{addr_mode:02x}",
-          )
 
     else:
       # SrcA or Dest path
@@ -872,37 +792,6 @@ def _execute_unpacr(d, thread_id: int, coproc) -> None:
           row = (row & ~0xF) | row_low
         eff_row = row & 0x3F
         coproc.srca.banks[bank].rows[eff_row][col] = datum & 0x7FFFF
-        trace_spec = os.environ.get("EMU_TRACE_SRCA_WRITE")
-        if trace_spec and (col in (0, 12) or (datum & 0x7FFFF) != 0):
-          try:
-            lo_s, hi_s = trace_spec.split(":", 1)
-            lo = int(lo_s, 0)
-            hi = int(hi_s, 0)
-          except ValueError:
-            lo = 0
-            hi = 64
-          if lo <= eff_row < hi:
-            print(
-                "EMU_TRACE_SRCA_WRITE",
-                f"core={getattr(coproc, 'debug_label', '?')}",
-                f"bank={bank}",
-                f"eff_row={eff_row}",
-                f"row={row}",
-                f"col={col}",
-                f"datum=0x{datum & 0x7ffff:x}",
-                f"zero_all={int(zero_all)}",
-                f"ctx={which_ctx}",
-                f"adc={which_adc}",
-                f"in=0x{in_addr_datums:x}",
-                f"byte=0x{byte_addr - int(dsz):x}",
-                f"first={first_datum}",
-                f"n={input_num_datums}",
-                f"base=0x{base_addr:x}",
-                f"off=0x{offset_addr & 0xffff:x}",
-                f"src_row={unp_state.src_row[thread_id]}",
-                f"flip={int(flip_src)}",
-                f"addrmode=0x{addr_mode:02x}",
-            )
       else:
         # Unpack-to-Dest path
         row -= 4

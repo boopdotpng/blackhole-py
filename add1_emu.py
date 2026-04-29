@@ -727,11 +727,9 @@ def main():
       MAX_RUN_STEPS,
     )
   except TimeoutError as e:
-    dev.write_snapshots()
     print(f"RUN TIMEOUT: {e}", file=sys.stderr, flush=True)
     return 1
   except Exception as e:
-    dev.write_snapshots()
     print(f"RUN ERROR: {type(e).__name__}: {e}", file=sys.stderr, flush=True)
     return 1
 
@@ -753,7 +751,6 @@ def main():
   mismatch = compare_tile_prefixes(got, exp, num_tiles, TILE_BYTES)
   if mismatch is not None:
     idx, got_window, exp_window = mismatch
-    dev.write_snapshots()
     print(
       "RAW OUTPUT DRAM MISMATCH: "
       f"byte={idx} got={got_window.hex()} expected={exp_window.hex()}",
@@ -766,7 +763,6 @@ def main():
     print(f"  expected float:{format_bf16_floats(exp)}", file=sys.stderr)
     return 1
   print_success_banner(dev, num_tiles, len(tiles), steps, src_data, got)
-  dev.write_snapshots()
   return 0
 
 

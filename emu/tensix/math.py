@@ -6,7 +6,6 @@
 # =============================================================================
 
 import math
-import os
 import struct
 
 from . import formats as _fmt
@@ -114,24 +113,6 @@ class FPU:
     else:
       self.dest.bits[row][col] = _float_to_dst16_bf16(value)
     self.dest.valid[row] = True
-    trace_spec = os.environ.get("EMU_TRACE_DEST_WRITE")
-    if trace_spec and col == 0:
-      try:
-        lo_s, hi_s = trace_spec.split(":", 1)
-        lo = int(lo_s, 0)
-        hi = int(hi_s, 0)
-      except ValueError:
-        lo = 0
-        hi = self.dest.ROWS
-      if lo <= row < hi:
-        print(
-            "EMU_TRACE_DEST_WRITE",
-            f"row={row}",
-            f"col={col}",
-            f"value={value}",
-            f"fp32={fp32_enabled}",
-            f"offset_rows={self.dest_offset_rows}",
-        )
 
   def zeroacc(self, d):
     if d.clear_mode == 0:   self.dest.clear_valid(d.where)
@@ -153,14 +134,6 @@ class FPU:
           bank.rows[r][c] = 0
 
   def mvmul(self, d, rwc):
-    if os.environ.get("EMU_DEBUG_MVMUL"):
-      print(
-        "MVMUL",
-        f"word=0x{d.word:08x}",
-        f"addr={d.addr_mode}",
-        f"dst={d.dst}",
-        f"rwc=a{rwc.a}/b{rwc.b}/d{rwc.d}/cr{rwc.cr}",
-      )
     self._mvmul_rows(d, rwc, 8)
 
   def _mvmul_rows(self, d, rwc, rows):
@@ -171,78 +144,16 @@ class FPU:
     srcb_base = rwc.b & (0x3F if getattr(d, "broadcast_srcb", 0) else 0x38)
     phase = self._fidelity_phase(rwc)
     fp32_enabled = self._fp32_dest_enabled()
-    summary_spec = os.environ.get("EMU_TRACE_MVMUL_SUMMARY")
-    if summary_spec:
-      try:
-        lo_s, hi_s = summary_spec.split(":", 1)
-        lo = int(lo_s, 0)
-        hi = int(hi_s, 0)
-      except ValueError:
-        lo = 0
-        hi = self.dest.ROWS
-      first_dest_row = (self.dest_offset_rows + dst_base) % self.dest.ROWS
-      last_dest_row = (first_dest_row + rows - 1) % self.dest.ROWS
-      if lo <= first_dest_row < hi or lo <= last_dest_row < hi:
-        srca_counts = [
-            sum(1 for v in srca_bank.rows[(srca_base + r) & 0x3F] if v)
-            for r in range(16)
-        ]
-        srcb_counts = [
-            sum(1 for v in srcb_bank.rows[(srcb_base + r) & 0x3F] if v)
-            for r in range(rows)
-        ]
-        print(
-            "EMU_TRACE_MVMUL_SUMMARY",
-            f"dest_rows={first_dest_row}:{first_dest_row + rows}",
-            f"word=0x{d.word:08x}",
-            f"addr={d.addr_mode}",
-            f"rwc=a{rwc.a}/b{rwc.b}/d{rwc.d}/cr{rwc.cr}",
-            f"srca_base={srca_base}",
-            f"srcb_base={srcb_base}",
-            f"srca_bank={self.srca.fpu_bank}",
-            f"srcb_bank={self.srcb.fpu_bank}",
-            f"phase={phase}",
-            f"srca_nz={srca_counts}",
-            f"srcb_nz={srcb_counts}",
-        )
     for row in range(rows):
       for col in range(16):
         acc = 0.0
-        trace_products = []
         for k in range(16):
           srca_row = (srca_base + k) & 0x3F
           srcb_row = (srcb_base + row) & 0x3F
           a = _src_fidelity_float(srca_bank.rows[srca_row][col], phase, True)
           b = _src_fidelity_float(srcb_bank.rows[srcb_row][k], phase, False)
           acc += b * a
-          if k < 4 or a != 0.0 or b != 0.0:
-            trace_products.append((k, srca_row, srcb_row, a, b, b * a))
         dest_row = (self.dest_offset_rows + dst_base + row) % self.dest.ROWS
-        trace_spec = os.environ.get("EMU_TRACE_MVMUL_DEST")
-        if trace_spec and col == 0:
-          try:
-            lo_s, hi_s = trace_spec.split(":", 1)
-            lo = int(lo_s, 0)
-            hi = int(hi_s, 0)
-          except ValueError:
-            lo = 0
-            hi = self.dest.ROWS
-          if lo <= dest_row < hi:
-            print(
-                "EMU_TRACE_MVMUL_DEST",
-                f"dest_row={dest_row}",
-                f"local_row={row}",
-                f"dst_base={dst_base}",
-                f"rwc=a{rwc.a}/b{rwc.b}/d{rwc.d}/cr{rwc.cr}",
-                f"srca_base={srca_base}",
-                f"srcb_base={srcb_base}",
-                f"srca_bank={self.srca.fpu_bank}",
-                f"srcb_bank={self.srcb.fpu_bank}",
-                f"phase={phase}",
-                f"offset_rows={self.dest_offset_rows}",
-                f"acc={acc}",
-                f"products={trace_products}",
-            )
         if self.dest.valid[dest_row]:
           acc += self._read_dest_float(dest_row, col, fp32_enabled)
         self._write_dest_float(dest_row, col, acc, fp32_enabled)

@@ -405,12 +405,10 @@ def main():
       MAX_STEPS,
       tiles=tiles)
   except TimeoutError as e:
-    dev.write_snapshots()
     print(f"RUN TIMEOUT: {e}\n{timeout_diagnostics(tiles)}",
           file=sys.stderr, flush=True)
     return 1
   except Exception as e:
-    dev.write_snapshots()
     print(f"RUN ERROR: {type(e).__name__}: {e}", file=sys.stderr, flush=True)
     return 1
 
@@ -425,7 +423,6 @@ def main():
   try:
     c_raw = validate_output(alloc, c_buf, a_src, b_src, plan)
   except SystemExit as e:
-    dev.write_snapshots()
     print(f"VALIDATION ERROR: {e}", file=sys.stderr)
     got = alloc.read(c_buf)
     print(f"  output bf16 first 16: {bf16_words(got)}", file=sys.stderr)
@@ -440,7 +437,6 @@ def main():
     f"  steps: {steps} emulated device ticks, nominal {gflops:.2f} flop/tick\n"
     f"  output bf16 first 16: {bf16_words(tilize(c_raw, 2, (plan.mt * 32, plan.nt * 32)))}",
     flush=True)
-  dev.write_snapshots()
   return 0
 
 

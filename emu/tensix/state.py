@@ -5,8 +5,6 @@
 # or mutate these structures.
 # =============================================================================
 
-import os
-
 from ..memory import _SEM_WIN_LO
 
 M32 = 0xFFFFFFFF
@@ -33,64 +31,25 @@ class SrcRegFile:
     self.unpack_bank = 0    # which bank the unpacker writes to
     self._valid_queue = []  # banks handed to Matrix Unit, in SETDVALID order
 
-  def _trace(self, event, **fields):
-    if not os.environ.get("EMU_TRACE_SRCBANKS"):
-      return
-    parts = " ".join(f"{k}={v}" for k, v in fields.items())
-    print(f"EMU_TRACE_SRCBANKS src={self.name} event={event} {parts}")
-
   def flip_to_fpu(self):
     bank = self.unpack_bank
-    before = self.banks[bank].allowed_client
-    if before != "unpackers":
-      self._trace("violation_flip_to_fpu",
-                  unpack_bank=bank,
-                  fpu_bank=self.fpu_bank,
-                  owner=before)
     self.banks[bank].allowed_client = "matrix_unit"
     if bank not in self._valid_queue:
       self._valid_queue.append(bank)
     if self.banks[self.fpu_bank].allowed_client != "matrix_unit":
       self.fpu_bank = self._valid_queue[0]
-    next_unpack = self._next_unpack_bank(bank)
-    self._trace("flip_to_fpu",
-                bank=bank,
-                next_unpack_bank=next_unpack,
-                fpu_bank=self.fpu_bank,
-                previous_owner=before,
-                valid_queue=",".join(map(str, self._valid_queue)))
-    self.unpack_bank = next_unpack
+    self.unpack_bank = self._next_unpack_bank(bank)
 
   def release_from_fpu(self, release=True):
     bank = self.fpu_bank
-    before = self.banks[bank].allowed_client
-    if before != "matrix_unit":
-      self._trace("violation_release_from_fpu",
-                  fpu_bank=bank,
-                  unpack_bank=self.unpack_bank,
-                  owner=before,
-                  release=int(release))
     released = self.banks[bank].allowed_client == "matrix_unit"
     if not release:
-      self._trace("release_from_fpu_ignored",
-                  bank=bank,
-                  fpu_bank=self.fpu_bank,
-                  unpack_bank=self.unpack_bank,
-                  previous_owner=before,
-                  valid_queue=",".join(map(str, self._valid_queue)))
       return released
     if bank in self._valid_queue:
       self._valid_queue.remove(bank)
     if release:
       self.banks[bank].allowed_client = "unpackers"
     next_fpu = self._valid_queue[0] if self._valid_queue else bank
-    self._trace("release_from_fpu",
-                bank=bank,
-                next_fpu_bank=next_fpu,
-                unpack_bank=self.unpack_bank,
-                previous_owner=before,
-                release=int(release),
-                valid_queue=",".join(map(str, self._valid_queue)))
     self.fpu_bank = next_fpu
     if self.banks[self.unpack_bank].allowed_client != "unpackers":
       self.unpack_bank = bank
@@ -98,25 +57,11 @@ class SrcRegFile:
 
   def clear_fpu_bank(self, keep_reading_same=False):
     bank = self.fpu_bank
-    before = self.banks[bank].allowed_client
-    if before != "matrix_unit":
-      self._trace("violation_clear_fpu_bank",
-                  fpu_bank=bank,
-                  unpack_bank=self.unpack_bank,
-                  owner=before,
-                  keep=int(keep_reading_same))
     released = self.banks[bank].allowed_client == "matrix_unit"
     self.banks[bank].allowed_client = "unpackers"
     if bank in self._valid_queue:
       self._valid_queue.remove(bank)
     next_fpu = bank if keep_reading_same or not self._valid_queue else self._valid_queue[0]
-    self._trace("clear_fpu_bank",
-                bank=bank,
-                next_fpu_bank=next_fpu,
-                unpack_bank=self.unpack_bank,
-                previous_owner=before,
-                keep=int(keep_reading_same),
-                valid_queue=",".join(map(str, self._valid_queue)))
     self.fpu_bank = next_fpu
     if self.banks[self.unpack_bank].allowed_client != "unpackers":
       self.unpack_bank = bank

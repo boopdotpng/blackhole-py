@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum, auto
 from heapq import heappop, heappush
 from itertools import count
@@ -30,16 +30,10 @@ class SimObject(Protocol):
 class SimContext:
   cycle: int
   simulator: "Simulator"
-  trace_enabled: bool = False
-  trace: list[str] = field(default_factory=list)
 
   def schedule(self, delay: int, callback: Callable[["SimContext"], None],
                label: str = "") -> None:
     self.simulator.schedule(self.cycle + delay, callback, label)
-
-  def log(self, msg: str) -> None:
-    if self.trace_enabled:
-      self.trace.append(f"{self.cycle:08d}: {msg}")
 
 
 class Simulator:
@@ -57,8 +51,6 @@ class Simulator:
     self._objects: list[SimObject] = []
     self._events: list[tuple[int, int, ScheduledEvent]] = []
     self._seq = count()
-    self.trace_enabled = False
-    self.trace: list[str] = []
 
   def add(self, obj: SimObject) -> None:
     self._objects.append(obj)
@@ -71,7 +63,7 @@ class Simulator:
     heappush(self._events, (cycle, next(self._seq), event))
 
   def tick(self) -> None:
-    ctx = SimContext(self.cycle, self, self.trace_enabled, self.trace)
+    ctx = SimContext(self.cycle, self)
     for phase in self.PHASES:
       if phase is Phase.COMPLETE:
         self._complete_due_events(ctx)
@@ -87,6 +79,4 @@ class Simulator:
   def _complete_due_events(self, ctx: SimContext) -> None:
     while self._events and self._events[0][0] <= self.cycle:
       _cycle, _seq, event = heappop(self._events)
-      if event.label:
-        ctx.log(f"complete {event.label}")
       event.callback(ctx)

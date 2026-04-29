@@ -31,7 +31,6 @@
 # =============================================================================
 
 import math
-import os
 
 from . import formats as _fmt
 
@@ -165,7 +164,6 @@ class Packer:
     self._adc = adc           # list[ADCState]; packer thread is index 2
     self._l1  = l1
     self.stream_regs = None
-    self._debug_last_pack = [None for _ in range(4)]
     # Per-packer output state
     self._packer_state = [_PackerOutputState() for _ in range(4)]
 
@@ -322,8 +320,6 @@ class Packer:
 
     # --- Collect datums from Dest ---
     datums_out = []
-    debug_trace = os.environ.get("EMU_TRACE_PACK")
-    debug_samples = [] if debug_trace else None
     tpg = out_state.tpg
 
     for j in range(input_num_datums):
@@ -354,8 +350,6 @@ class Packer:
         val_f = self._apply_exp_threshold(val_f, exp_threshold, in_fmt)
 
       datums_out.append(val_f)
-      if debug_samples is not None and j < 16:
-        debug_samples.append((j, di, row, col, raw, val_f))
       tpg.advance(reads_per_xy, yz_transposed)
 
     # --- Stage 6: Downsampling ---
@@ -373,31 +367,6 @@ class Packer:
 
     # --- Stage 9: L1 output ---
     if self._l1 is not None and (data_bytes or flush or last):
-      if debug_trace:
-        self._debug_last_pack[packer_idx] = {
-            "thread_id": thread_id,
-            "packer_idx": packer_idx,
-            "addr_mode": addr_mode,
-            "flush": flush,
-            "last": last,
-            "zero_write": zero_write,
-            "concat": concat,
-            "input_num_datums": input_num_datums,
-            "ch0": (ch0.x.val, ch0.y.val, ch0.z.val, ch0.w.val, ch0.x.cr),
-            "ch1": (ch1.x.val, ch1.y.val, ch1.z.val, ch1.w.val, ch1.x.cr),
-            "base0": base0,
-            "xstride": xstride,
-            "ystride": ystride,
-            "zstride": zstride,
-            "wstride": wstride,
-            "addr": addr,
-            "datum_index": datum_index,
-            "dest_target_word": dest_target_word,
-            "dest_offset": dest_offset,
-            "cfg": dict(cfg),
-            "samples": debug_samples,
-            "datums": datums_out[:16],
-        }
       stream_flush = flush if force_stream_end else 0
       stream_last = last if force_stream_end else 0
       self._write_l1(packer_idx, cfg, out_state, exp_bytes, data_bytes,
@@ -755,29 +724,6 @@ class Packer:
 
     # Buffer data bytes and flush in 16-byte aligned chunks
     out_state.data_buf += data_bytes
-    trace_spec = os.environ.get("EMU_TRACE_PACK")
-    if trace_spec:
-      start = out_state.data_stream.byte_address & ~15
-      end = start + len(out_state.data_buf)
-      try:
-        lo_s, hi_s = trace_spec.split(":", 1)
-        lo = int(lo_s, 0)
-        hi = int(hi_s, 0)
-      except ValueError:
-        lo = 0
-        hi = 1 << 64
-      if start < hi and end > lo:
-        dbg = self._debug_last_pack[packer_idx]
-        print(
-            "EMU_TRACE_PACK",
-            f"l1=[0x{start:x},0x{end:x})",
-            f"packer={packer_idx}",
-            f"flush={flush}",
-            f"last={last}",
-            f"data_len={len(data_bytes)}",
-            f"buf_len={len(out_state.data_buf)}",
-            f"dbg={dbg}",
-        )
     self._flush_data_buf(out_state, force=(flush or last))
 
   def _flush_data_buf(self, out_state, force=False):

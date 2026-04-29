@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 from functools import cache
 from dataclasses import dataclass
 from types import SimpleNamespace
@@ -484,31 +483,12 @@ class Tensix:
   def _issue_backend(self, unit: TimedUnit, owner: str, thread_id: int,
                      insn: Instruction, ctx: SimContext, on_commit=None) -> bool:
     def commit(_ctx: SimContext) -> None:
-      if os.environ.get("EMU_TRACE_TENSIX_COMMIT") and insn.name in os.environ.get("EMU_TRACE_TENSIX_COMMIT", "").split(","):
-        print(
-            "EMU_TRACE_TENSIX_COMMIT",
-            f"core={getattr(self, 'debug_label', '?')}",
-            f"cycle={_ctx.cycle}",
-            f"thread={thread_id}",
-            f"name={insn.name}",
-            f"word=0x{insn.word:08x}",
-        )
       if on_commit is not None:
         on_commit(_ctx)
       self._backend_inflight[thread_id] -= 1
 
     issued = unit.issue(owner, insn, ctx, commit=commit)
     if issued:
-      if os.environ.get("EMU_TRACE_TENSIX_ISSUE") and insn.name in os.environ.get("EMU_TRACE_TENSIX_ISSUE", "").split(","):
-        print(
-            "EMU_TRACE_TENSIX_ISSUE",
-            f"core={getattr(self, 'debug_label', '?')}",
-            f"cycle={ctx.cycle}",
-            f"thread={thread_id}",
-            f"name={insn.name}",
-            f"word=0x{insn.word:08x}",
-            f"lat={insn.latency}",
-        )
       self._backend_inflight[thread_id] += 1
     return issued
 
@@ -578,26 +558,7 @@ class Tensix:
           self.fpu.zeroacc(d)
           if d.clear_mode in (0, 1):
             self._apply_addr_mod(thread_id, d.addr_mode)
-        case "ZEROSRC":
-          if os.environ.get("EMU_TRACE_SRC_CLEAR"):
-            for name, src in (("SrcA", self.srca), ("SrcB", self.srcb)):
-              if not (d.src_mask & (1 if name == "SrcA" else 2)):
-                continue
-              bank = src.fpu_bank
-              nz_rows = [
-                  r for r in range(64)
-                  if any(src.banks[bank].rows[r][c] for c in range(16))
-              ]
-              print(
-                  "EMU_TRACE_SRC_CLEAR",
-                  f"core={getattr(self, 'debug_label', '?')}",
-                  f"src={name}",
-                  f"bank={bank}",
-                  f"rows={nz_rows}",
-                  f"word=0x{d.word:08x}",
-                  "via=ZEROSRC",
-              )
-          self.fpu.zerosrc(d)
+        case "ZEROSRC": self.fpu.zerosrc(d)
         case "MOVA2D":
           self.fpu.mova2d(d, rwc)
           self._apply_addr_mod(thread_id, d.addr_mode)
@@ -772,9 +733,6 @@ class Tensix:
     cfg = self.config_unit.thread_cfg[thread_id]
     ab = cfg[12 + idx] & 0xFFFF
     dst = cfg[28 + idx] & 0xFFFF
-    trace_addr_mod = os.environ.get("EMU_TRACE_ADDR_MOD")
-    if trace_addr_mod:
-      before = (rwc.a, rwc.b, rwc.d, rwc.cr, rwc.a_cr, rwc.b_cr, rwc.d_cr)
 
     srca_incr = ab & 0x3F
     if ab & 0x80:
@@ -813,23 +771,6 @@ class Tensix:
         rwc.cr = 0
       else:
         rwc.cr = (rwc.cr + ((dst >> 13) & 0x3)) & 0x7
-    if trace_addr_mod:
-      try:
-        modes = {int(x, 0) for x in trace_addr_mod.split(",") if x}
-      except ValueError:
-        modes = set()
-      if not modes or idx in modes:
-        print(
-            "EMU_TRACE_ADDR_MOD",
-            f"t={thread_id}",
-            f"addr={idx}",
-            f"ab=0x{ab:04x}",
-            f"dst=0x{dst:04x}",
-            f"before=a{before[0]}/b{before[1]}/d{before[2]}/cr{before[3]}",
-            f"before_cr=a{before[4]}/b{before[5]}/d{before[6]}",
-            f"after=a{rwc.a}/b{rwc.b}/d{rwc.d}/cr{rwc.cr}",
-            f"after_cr=a{rwc.a_cr}/b{rwc.b_cr}/d{rwc.d_cr}",
-        )
 
   def _issue_thcon(self, thread: TensixThread, insn: Instruction,
                    ctx: SimContext) -> bool:
@@ -913,19 +854,16 @@ class Tensix:
     owner = f"t{thread.thread_id}"
     if opcode == 0x03:  # MOP_CFG mask-hi instruction
       thread.mop_mask_hi = insn.word & 0xFFFF
-      ctx.log(f"{owner} set MOP mask_hi=0x{thread.mop_mask_hi:04x}")
       return True
     if opcode == 0x01:  # MOP
       cycles = max(1, _estimate_mop_cycles(thread, insn.word))
       thread.frontend_busy_until = ctx.cycle + cycles
-      ctx.log(f"{owner} collapsed MOP for {cycles} frontend cycles")
       return True
     if opcode == 0x04:  # REPLAY
       cycles = _estimate_replay_cycles(insn.word)
       if cycles is None:
         return False
       thread.frontend_busy_until = ctx.cycle + cycles
-      ctx.log(f"{owner} collapsed REPLAY playback for {cycles} frontend cycles")
       return True
     return False
 
