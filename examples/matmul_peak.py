@@ -310,7 +310,7 @@ void kernel_main() {{
 def _compute_src(plan: MatmulPlan, f32_acc: bool):
   if f32_acc:
     mode_defines = "#define FP32_DEST_ACC_EN 1\n"
-    pack_include = '#include "api/compute/pack.h"\n'
+    pack_include = '#include "compute_kernel_api/pack.h"\n'
     reload_init = "copy_tile_to_dst_init_short_with_dt(tt::CBIndex::c_1, tt::CBIndex::c_24);"
     mm_short = """mm_block_init_short_with_dt(
       tt::CBIndex::c_0, tt::CBIndex::c_1, tt::CBIndex::c_24,
@@ -329,10 +329,11 @@ def _compute_src(plan: MatmulPlan, f32_acc: bool):
   return f"""\
 #include <cstdint>
 {mode_defines}#define PACKER_L1_ACC 1
-#include "api/compute/matmul.h"
-{pack_include}#include "api/compute/tile_move_copy.h"
+#include "compute_kernel_api/matmul.h"
+{pack_include}#include "compute_kernel_api/tile_move_copy.h"
 
-void kernel_main() {{
+namespace NAMESPACE {{
+void MAIN {{
   constexpr uint32_t in0_block_w = {plan.in0_block_w};
   constexpr uint32_t in0_num_subblocks = {plan.in0_num_subblocks};
   constexpr uint32_t in0_block_num_tiles = {plan.in0_block_num_tiles};
@@ -410,7 +411,8 @@ void kernel_main() {{
   cb_pop_front(tt::CBIndex::c_0, in0_block_num_tiles);
   cb_pop_front(tt::CBIndex::c_1, in1_block_num_tiles);
   }}
-}}"""
+}}
+}} // namespace NAMESPACE"""
 
 # --- build matmul program ---
 

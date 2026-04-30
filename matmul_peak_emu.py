@@ -402,13 +402,18 @@ def main():
   for tile in tiles:
     tile.l1.write8(GO_MESSAGES + 3, RUN_MSG_GO)
 
+  done_cycles: dict[tuple[int, int], int] = {}
+
+  def all_workers_done() -> bool:
+    cycle = dev.elapsed_cycles
+    for tile in tiles:
+      core = (tile.x, tile.y)
+      if core not in done_cycles and tile.l1.read8(GO_MESSAGES + 3) == RUN_MSG_DONE:
+        done_cycles[core] = cycle
+    return len(done_cycles) == len(tiles)
+
   try:
-    steps = dev.run_until(
-      lambda: all(
-        tile.l1.read8(GO_MESSAGES + 3) == RUN_MSG_DONE and tensix_idle(tile)
-        for tile in tiles),
-      MAX_STEPS,
-      tiles=tiles)
+    steps = dev.run_until(all_workers_done, MAX_STEPS, tiles=tiles)
   except TimeoutError as e:
     print(f"RUN TIMEOUT: {e}\n{timeout_diagnostics(tiles)}",
           file=sys.stderr, flush=True)
@@ -434,8 +439,8 @@ def main():
     return 1
 
   gflops = 2 * M * K * N / max(steps, 1)
-  core_cycles = "\n".join(
-    f"  {name}: {cycles}" for name, cycles in dev.core_cycles.items()
+  worker_cycles = "\n".join(
+    f"  {core}: {done_cycles[core]}" for core in sorted(done_cycles)
   )
   print(
     f"matmul_peak raw-kernel emulation: pass\n"
@@ -445,7 +450,7 @@ def main():
     f"  steps: {steps} emulated device ticks, nominal {gflops:.2f} flop/tick\n"
     f"  output bf16 first 16: {bf16_words(tilize(c_raw, 2, (plan.mt * 32, plan.nt * 32)))}\n"
     f"  output values first 16: {bf16_values(c_raw, (plan.mt * 32, plan.nt * 32))}\n"
-    f"core cycles:\n{core_cycles}",
+    f"worker DONE cycles:\n{worker_cycles}",
     flush=True)
   return 0
 
