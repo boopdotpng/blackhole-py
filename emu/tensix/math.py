@@ -9,6 +9,7 @@ import math
 import struct
 from functools import cache
 
+from . import cfg_layout as _cfg_layout
 from . import formats as _fmt
 
 M32 = 0xFFFFFFFF
@@ -338,8 +339,9 @@ class SFPU:
   NUM_LREGS = 17
   NUM_LANES = 32
 
-  def __init__(self, dest):
+  def __init__(self, dest, cfg=None):
     self.dest = dest
+    self._cfg = cfg
     self.dest_offset_rows = 0
     # LReg file: 17 registers x 32 lanes x 32 bits
     self.lregs = [[0] * self.NUM_LANES for _ in range(self.NUM_LREGS)]
@@ -364,10 +366,38 @@ class SFPU:
       if self._lane_enabled(lane):
         yield lane
 
+  def _resolve_srcb_mod0(self, mod0, thread_id):
+    if mod0 != 0 or self._cfg is None:
+      return mod0
+    state_id = self._cfg._state_id(thread_id)
+    fmt = _cfg_layout.alu_format_spec(self._cfg, state_id)
+    if fmt.sfpu_fp32_enabled:
+      return 3  # FP32 / INT32 raw 32-bit Dst
+    if fmt.srcb_fmt in {
+        _fmt.FMT_FLOAT32, _fmt.FMT_TF32, _fmt.FMT_FLOAT16B,
+        _fmt.FMT_BFP8, _fmt.FMT_BFP4, _fmt.FMT_BFP2,
+        _fmt.FMT_INT32, _fmt.FMT_INT16,
+    }:
+      return 2  # BF16 Dst path
+    return 1    # FP16 Dst path
+
+  def _store_fp32_as_bf16_value(self, bits):
+    f = _to_float(bits)
+    bf16 = _fmt.fp32_to_bf16(f, rtne=False)
+    exp = (bf16 >> 7) & 0xFF
+    if exp == 0:
+      bf16 &= 0x8000
+    return _bf16_to_fp32(bf16)
+
+  def _store_fp32_as_fp16_value(self, bits):
+    fp16 = _fmt.fp32_to_fp16(_to_float(bits))
+    return _fmt._f32_bits(_fmt.fp16_to_fp32(fp16))
+
   # ── Data movement: Dest <-> LReg ─────────────────────────────────────
 
-  def sfpload(self, d, rwc):
+  def sfpload(self, d, rwc, thread_id=1):
     if not self._is_writable(d.lreg_ind): return
+    mod0 = self._resolve_srcb_mod0(d.instr_mod0, thread_id)
     addr = (self.dest_offset_rows + d.dest_reg_addr + rwc.d) % self.dest.ROWS
     base = addr & ~3
     odd_col = (addr >> 1) & 1
@@ -375,6 +405,10 @@ class SFPU:
       row = (base + lane // 8) % self.dest.ROWS
       col = ((lane & 7) * 2 + odd_col) & 0xF
       val = self.dest.bits[row][col] if self.dest.valid[row] else 0
+      if mod0 == 2:    # BF16 -> FP32
+        val = _bf16_to_fp32((val >> 16) & 0xFFFF)
+      elif mod0 == 1:  # FP16 -> FP32
+        val = _fp16_to_fp32((val >> 16) & 0xFFFF)
       self.lregs[d.lreg_ind][lane] = val & M32
 
   def sfploadi(self, d):
@@ -392,14 +426,20 @@ class SFPU:
         case _:  val = d.imm16
       self.lregs[d.lreg_ind][lane] = val & M32
 
-  def sfpstore(self, d, rwc):
+  def sfpstore(self, d, rwc, thread_id=1):
+    mod0 = self._resolve_srcb_mod0(d.instr_mod0, thread_id)
     addr = (self.dest_offset_rows + d.dest_reg_addr + rwc.d) % self.dest.ROWS
     base = addr & ~3
     odd_col = (addr >> 1) & 1
     for lane in self._lanes():
       row = (base + lane // 8) % self.dest.ROWS
       col = ((lane & 7) * 2 + odd_col) & 0xF
-      self.dest.bits[row][col] = self.lregs[d.lreg_ind][lane] & M32
+      val = self.lregs[d.lreg_ind][lane] & M32
+      if mod0 == 2:
+        val = self._store_fp32_as_bf16_value(val)
+      elif mod0 == 1:
+        val = self._store_fp32_as_fp16_value(val)
+      self.dest.bits[row][col] = val & M32
       self.dest.valid[row] = True
 
   # ── FP32 FMA arithmetic (MAD sub-unit, 2-cycle) ─────────────────────

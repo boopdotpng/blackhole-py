@@ -389,7 +389,7 @@ class Tensix:
     self.unpackers = [UnpackerState(), UnpackerState()]
     self.unpack = Unpacker(self.srca, self.srcb)
     self.fpu = FPU(self.srca, self.srcb, self.dest, cfg=self.config_unit)
-    self.sfpu = SFPU(self.dest)
+    self.sfpu = SFPU(self.dest, cfg=self.config_unit)
     self.packer = Packer(dest=self.dest, cfg=self.config_unit,
                          adc=self.adc, l1=self.l1)
     self.mover = Mover(l1=self.l1, cfg=self.cfg)
@@ -602,11 +602,11 @@ class Tensix:
 
         # SFPU
         case "SFPLOAD":
-          self.sfpu.sfpload(d, rwc)
+          self.sfpu.sfpload(d, rwc, thread_id)
           self._apply_addr_mod(thread_id, d.sfpu_addr_mode, update_fidelity=False)
         case "SFPLOADI": self.sfpu.sfploadi(d)
         case "SFPSTORE":
-          self.sfpu.sfpstore(d, rwc)
+          self.sfpu.sfpstore(d, rwc, thread_id)
           self._apply_addr_mod(thread_id, d.sfpu_addr_mode, update_fidelity=False)
         case "SFPMULI": self.sfpu.sfpmuli(d)
         case "SFPADDI": self.sfpu.sfpaddi(d)
