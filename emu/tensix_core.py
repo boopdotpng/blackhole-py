@@ -585,6 +585,14 @@ class Tensix:
           self.fpu.elwadd(d, rwc)
           self._clear_dvalid(thread_id, d)
           self._apply_addr_mod(thread_id, d.addr_mode)
+        case "ELWSUB":
+          self.fpu.elwsub(d, rwc)
+          self._clear_dvalid(thread_id, d)
+          self._apply_addr_mod(thread_id, d.addr_mode)
+        case "ELWMUL":
+          self.fpu.elwmul(d, rwc)
+          self._clear_dvalid(thread_id, d)
+          self._apply_addr_mod(thread_id, d.addr_mode)
         case "GMPOOL":
           self.fpu.gmpool(d, rwc)
           self._clear_dvalid(thread_id, d)
@@ -670,7 +678,8 @@ class Tensix:
       "SETADC", "SETADCXY", "SETADCZW", "INCADCZW", "SETADCXX",
       "UNPACR", "UNPACR_NOP",
       "ZEROACC", "ZEROSRC", "MOVA2D", "MOVB2D", "TRNSPSRCB", "SHIFTXA",
-      "SHIFTXB", "MVMUL", "DOTPV", "GAPOOL", "ELWADD", "GMPOOL",
+      "SHIFTXB", "MVMUL", "DOTPV", "GAPOOL", "ELWADD", "ELWSUB",
+      "ELWMUL", "GMPOOL",
       "CLEARDVALID", "MOVD2A", "MOVD2B", "SETRWC", "INCRWC",
       "SFPLOAD", "SFPLOADI", "SFPSTORE", "SFPMULI", "SFPADDI", "SFPDIVP2",
       "SFPEXEXP", "SFPEXMAN", "SFPSETEXP", "SFPIADD", "SFPMUL24",
@@ -706,13 +715,13 @@ class Tensix:
       case _:
         pass
     match d.name:
-      case "MOVA2D" | "MVMUL" | "DOTPV" | "GAPOOL" | "ELWADD" | "GMPOOL":
+      case "MOVA2D" | "MVMUL" | "DOTPV" | "GAPOOL" | "ELWADD" | "ELWSUB" | "ELWMUL" | "GMPOOL":
         if self.srca.banks[self.srca.fpu_bank].allowed_client != "matrix_unit":
           return False
       case _:
         pass
     match d.name:
-      case "MOVB2D" | "MVMUL" | "DOTPV" | "ELWADD":
+      case "MOVB2D" | "MVMUL" | "DOTPV" | "ELWADD" | "ELWSUB" | "ELWMUL":
         if self.srcb.banks[self.srcb.fpu_bank].allowed_client != "matrix_unit":
           return False
       case _:

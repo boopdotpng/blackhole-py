@@ -192,7 +192,7 @@ class FPU:
   def gapool(self, d, rwc):
     self._mvmul_rows(d, rwc, 4)
 
-  def elwadd(self, d, rwc):
+  def _elwise_binary(self, d, rwc, op):
     dst_base = d.dst + rwc.d
     srca_bank = self.srca.banks[self.srca.fpu_bank]
     srcb_bank = self.srcb.banks[self.srcb.fpu_bank]
@@ -205,11 +205,27 @@ class FPU:
         srcb_row = (srcb_base + row) % 64
         a = _19bit_to_float(srca_bank.rows[srca_row][col])
         b = _19bit_to_float(srcb_bank.rows[srcb_row][col])
-        result = a + b
+        if op == "add":
+          result = a + b
+        elif op == "sub":
+          result = a - b
+        elif op == "mul":
+          result = a * b
+        else:
+          raise ValueError(f"unsupported elementwise FPU op {op!r}")
         dest_row = (self.dest_offset_rows + dst_base + row) % self.dest.ROWS
         if d.dest_accum_en and self.dest.valid[dest_row]:
           result += self._read_dest_float(dest_row, col, fp32_enabled)
         self._write_dest_float(dest_row, col, result, fp32_enabled)
+
+  def elwadd(self, d, rwc):
+    self._elwise_binary(d, rwc, "add")
+
+  def elwsub(self, d, rwc):
+    self._elwise_binary(d, rwc, "sub")
+
+  def elwmul(self, d, rwc):
+    self._elwise_binary(d, rwc, "mul")
 
   def gmpool(self, d, rwc):
     dst_base = d.dst + rwc.d

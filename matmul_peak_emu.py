@@ -2,7 +2,8 @@
 """Scratch emulator-native dispatch harness for raw matmul_peak kernels.
 
 This loads the checked-in raw PT_LOAD segment bins from firmware/disasms and
-launches a 2x2 matmul grid directly in the emulator.  The chosen dimensions
+launches the default raw-kernel matmul grid directly in the emulator.  The
+chosen dimensions
 match the fixed matmul_compute.cpp that produced the raw TRISC binaries:
 
   C[512,512] = A[512,256] @ B[256,512]

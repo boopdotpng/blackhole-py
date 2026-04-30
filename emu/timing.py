@@ -83,6 +83,8 @@ TENSIX_TIMING = {
   "DOTPV": OpTiming(Resource.TENSIX_MATH, 5),
   "GAPOOL": OpTiming(Resource.TENSIX_MATH, 5),
   "ELWADD": OpTiming(Resource.TENSIX_MATH, 5),
+  "ELWSUB": OpTiming(Resource.TENSIX_MATH, 5),
+  "ELWMUL": OpTiming(Resource.TENSIX_MATH, 5),
   "GMPOOL": OpTiming(Resource.TENSIX_MATH, 5),
   "ZEROACC": OpTiming(Resource.TENSIX_MATH, 1),
   "ZEROSRC": OpTiming(Resource.TENSIX_MATH, 1),
