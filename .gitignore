@@ -6,3 +6,4 @@ state.txt
 *.so
 disasms
 firmware/
+tt-metal-deps/

@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from functools import partial
+import struct
 
 @dataclass(frozen=True)
 class Insn:
@@ -128,6 +129,13 @@ ZEXT_H = lambda rd, rs1: _r(0x33, 4, 0x04, rd, rs1, 0)
 # rare: BREV8  = lambda rd, rs1: _i(0x13, 5, rd, rs1, 0x687)
 # rare: GREVI  = lambda rd, rs1, shamt: _i(0x13, 5, rd, rs1, U(shamt,5) | 0x680)
 
+# -- registers -----------------------------------------------------------------
+zero, ra, sp, gp, tp, t0, t1, t2, s0, s1 = range(10)
+a0, a1, a2, a3, a4, a5, a6, a7 = range(10, 18)
+s2, s3, s4, s5, s6, s7, s8, s9, s10, s11 = range(18, 28)
+t3, t4, t5, t6 = range(28, 32)
+fp = s0
+
 # -- pseudo-instructions -------------------------------------------------------
 NOP    = lambda: ADDI(0, 0, 0)
 LI     = lambda rd, imm: ADDI(rd, zero, imm)
@@ -149,6 +157,147 @@ JR     = lambda rs: JALR(zero, rs, 0)
 RET    = lambda: JALR(zero, ra, 0)
 # rare: CALL   = lambda imm: JAL(ra, imm)
 ZEXT_B = lambda rd, rs: ANDI(rd, rs, 0xFF)
+
+def LI32(rd, imm):
+  imm &= 0xFFFFFFFF
+  imm_s = imm if imm < 0x80000000 else imm - 0x100000000
+  hi = (imm_s + 0x800) & 0xFFFFF000
+  hi_s = hi if hi < 0x80000000 else hi - 0x100000000
+  lo = imm_s - hi_s
+  if hi == 0:
+    return [ADDI(rd, zero, lo)]
+  return [LUI(rd, hi), ADDI(rd, rd, lo)]
+
+# -- RISC-V decoder ------------------------------------------------------------
+# Raw 32-bit word -> RvDecoded(name, rd, rs1, ...).  Covers the RV32IMZba/Zbb
+# subset implemented by the emulator in emu/rv.py.
+@dataclass(frozen=True)
+class RvDecoded:
+  name: str
+  word: int = 0
+  rd: int = 0
+  rs1: int = 0  # for CSRRWI/CSRRSI/CSRRCI this holds the 5-bit zimm
+  rs2: int = 0
+  imm: int = 0  # sign-extended where applicable; LUI/AUIPC keep upper 20 in place
+  shamt: int = 0
+  csr: int = 0
+  def __int__(self): return self.word
+
+def _sext(v, w): return v - (1 << w) if v & (1 << (w-1)) else v
+
+def _x_R(w):   return dict(rd=bits(w,11,7), rs1=bits(w,19,15), rs2=bits(w,24,20))
+def _x_I(w):   return dict(rd=bits(w,11,7), rs1=bits(w,19,15), imm=_sext(bits(w,31,20), 12))
+def _x_Ish(w): return dict(rd=bits(w,11,7), rs1=bits(w,19,15), shamt=bits(w,24,20))
+def _x_S(w):   return dict(rs1=bits(w,19,15), rs2=bits(w,24,20),
+                           imm=_sext(bits(w,11,7) | (bits(w,31,25)<<5), 12))
+def _x_B(w):   return dict(rs1=bits(w,19,15), rs2=bits(w,24,20),
+                           imm=_sext((bits(w,11,8)<<1) | (bits(w,30,25)<<5)
+                             | (bits(w,7)<<11) | (bits(w,31)<<12), 13))
+def _x_U(w):   return dict(rd=bits(w,11,7), imm=w & 0xFFFFF000)
+def _x_J(w):   return dict(rd=bits(w,11,7),
+                           imm=_sext((bits(w,30,21)<<1) | (bits(w,20)<<11)
+                             | (bits(w,19,12)<<12) | (bits(w,31)<<20), 21))
+def _x_CSR(w): return dict(rd=bits(w,11,7), rs1=bits(w,19,15), csr=bits(w,31,20))
+def _x_NONE(w): return {}
+
+_FMT = {'R':_x_R, 'I':_x_I, 'Ish':_x_Ish, 'S':_x_S, 'B':_x_B,
+        'U':_x_U, 'J':_x_J, 'CSR':_x_CSR, 'NONE':_x_NONE}
+
+_RV_DECODE = [
+  (0xFE00707F, 0x00000033, 'ADD',    'R'),
+  (0xFE00707F, 0x40000033, 'SUB',    'R'),
+  (0xFE00707F, 0x00001033, 'SLL',    'R'),
+  (0xFE00707F, 0x00002033, 'SLT',    'R'),
+  (0xFE00707F, 0x00003033, 'SLTU',   'R'),
+  (0xFE00707F, 0x00004033, 'XOR',    'R'),
+  (0xFE00707F, 0x00005033, 'SRL',    'R'),
+  (0xFE00707F, 0x40005033, 'SRA',    'R'),
+  (0xFE00707F, 0x00006033, 'OR',     'R'),
+  (0xFE00707F, 0x00007033, 'AND',    'R'),
+  (0xFE00707F, 0x02000033, 'MUL',    'R'),
+  (0xFE00707F, 0x02001033, 'MULH',   'R'),
+  (0xFE00707F, 0x02002033, 'MULHSU', 'R'),
+  (0xFE00707F, 0x02003033, 'MULHU',  'R'),
+  (0xFE00707F, 0x02004033, 'DIV',    'R'),
+  (0xFE00707F, 0x02005033, 'DIVU',   'R'),
+  (0xFE00707F, 0x02006033, 'REM',    'R'),
+  (0xFE00707F, 0x02007033, 'REMU',   'R'),
+  (0xFE00707F, 0x20002033, 'SH1ADD', 'R'),
+  (0xFE00707F, 0x20004033, 'SH2ADD', 'R'),
+  (0xFE00707F, 0x20006033, 'SH3ADD', 'R'),
+  (0xFFF0707F, 0x08004033, 'ZEXT_H', 'R'),
+  (0xFE00707F, 0x0A004033, 'MIN',    'R'),
+  (0xFE00707F, 0x0A005033, 'MINU',   'R'),
+  (0xFE00707F, 0x0A006033, 'MAX',    'R'),
+  (0xFE00707F, 0x0A007033, 'MAXU',   'R'),
+  (0xFE00707F, 0x40004033, 'XNOR',   'R'),
+  (0xFE00707F, 0x40006033, 'ORN',    'R'),
+  (0xFE00707F, 0x40007033, 'ANDN',   'R'),
+  (0xFE00707F, 0x60001033, 'ROL',    'R'),
+  (0xFE00707F, 0x60005033, 'ROR',    'R'),
+  (0x0000707F, 0x00000013, 'ADDI',   'I'),
+  (0x0000707F, 0x00002013, 'SLTI',   'I'),
+  (0x0000707F, 0x00003013, 'SLTIU',  'I'),
+  (0x0000707F, 0x00004013, 'XORI',   'I'),
+  (0x0000707F, 0x00006013, 'ORI',    'I'),
+  (0x0000707F, 0x00007013, 'ANDI',   'I'),
+  (0xFFF0707F, 0x60001013, 'CLZ',    'Ish'),
+  (0xFFF0707F, 0x60101013, 'CTZ',    'Ish'),
+  (0xFFF0707F, 0x60201013, 'CPOP',   'Ish'),
+  (0xFFF0707F, 0x60401013, 'SEXT_B', 'Ish'),
+  (0xFFF0707F, 0x60501013, 'SEXT_H', 'Ish'),
+  (0xFFF0707F, 0x28705013, 'ORC_B',  'Ish'),
+  (0xFFF0707F, 0x69805013, 'REV8',   'Ish'),
+  (0xFE00707F, 0x00001013, 'SLLI',   'Ish'),
+  (0xFE00707F, 0x00005013, 'SRLI',   'Ish'),
+  (0xFE00707F, 0x40005013, 'SRAI',   'Ish'),
+  (0xFE00707F, 0x60005013, 'RORI',   'Ish'),
+  (0x0000707F, 0x00000003, 'LB',     'I'),
+  (0x0000707F, 0x00001003, 'LH',     'I'),
+  (0x0000707F, 0x00002003, 'LW',     'I'),
+  (0x0000707F, 0x00004003, 'LBU',    'I'),
+  (0x0000707F, 0x00005003, 'LHU',    'I'),
+  (0x0000707F, 0x00000023, 'SB',     'S'),
+  (0x0000707F, 0x00001023, 'SH',     'S'),
+  (0x0000707F, 0x00002023, 'SW',     'S'),
+  (0x0000707F, 0x00000063, 'BEQ',    'B'),
+  (0x0000707F, 0x00001063, 'BNE',    'B'),
+  (0x0000707F, 0x00004063, 'BLT',    'B'),
+  (0x0000707F, 0x00005063, 'BGE',    'B'),
+  (0x0000707F, 0x00006063, 'BLTU',   'B'),
+  (0x0000707F, 0x00007063, 'BGEU',   'B'),
+  (0x0000007F, 0x00000037, 'LUI',    'U'),
+  (0x0000007F, 0x00000017, 'AUIPC',  'U'),
+  (0x0000007F, 0x0000006F, 'JAL',    'J'),
+  (0x0000707F, 0x00000067, 'JALR',   'I'),
+  (0x0000707F, 0x00001073, 'CSRRW',  'CSR'),
+  (0x0000707F, 0x00002073, 'CSRRS',  'CSR'),
+  (0x0000707F, 0x00003073, 'CSRRC',  'CSR'),
+  (0x0000707F, 0x00005073, 'CSRRWI', 'CSR'),
+  (0x0000707F, 0x00006073, 'CSRRSI', 'CSR'),
+  (0x0000707F, 0x00007073, 'CSRRCI', 'CSR'),
+  (0x0000007F, 0x0000000F, 'FENCE',  'NONE'),
+]
+
+_RV_BY_OPCODE = {}
+for _m, _b, _n, _f in _RV_DECODE:
+  _RV_BY_OPCODE.setdefault(_b & 0x7F, []).append((_m, _b, _n, _f))
+
+def decode_rv(word):
+  w = word & 0xFFFFFFFF
+  for mask, b, name, fmt in _RV_BY_OPCODE.get(w & 0x7F, ()):
+    if (w & mask) == b:
+      return RvDecoded(name=name, word=w, **_FMT[fmt](w))
+  return RvDecoded(name='UNKNOWN', word=w)
+
+def parse(data):
+  if isinstance(data, (bytes, bytearray, memoryview)):
+    if len(data) % 4: raise ValueError(f"byte length {len(data)} not a multiple of 4")
+    data = struct.unpack(f'<{len(data)//4}I', bytes(data))
+  return [decode_rv(int(w)) for w in data]
+
+def pack(insns):
+  return b''.join((int(i) & 0xFFFFFFFF).to_bytes(4, 'little') for i in insns)
 
 # -- .ttinsn encoding ----------------------------------------------------------
 # Encodes a 32-bit Tensix instruction into the .ttinsn custom RISC-V instruction.
@@ -572,3 +721,172 @@ TT_SFPLUTFP32  = lambda lreg_dest, instr_mod1: _tt(0x95, U(lreg_dest,4)<<4 | U(i
 # Approximate reciprocal (BH-new)
 TT_SFPARECIP   = lambda imm12_math, lreg_c, lreg_dest, instr_mod1: _tt(0x99, U(imm12_math,12)<<12 | U(lreg_c,4)<<8 | U(lreg_dest,4)<<4 | U(instr_mod1,4))
   # Approx 1/VC (7-bit accuracy), or approx e^Abs(VC) with sign copy
+
+
+# -- Tensix decoder ------------------------------------------------------------
+class TensixDecoded:
+  def __init__(self, name, word, fields):
+    self.name = name
+    self.word = word & 0xFFFFFFFF
+    self._fields = fields
+
+  def __getattr__(self, k):
+    fields = object.__getattribute__(self, "_fields")
+    if k in fields: return fields[k]
+    raise AttributeError(f"{self.name!r} has no field {k!r}; fields: {list(fields)}")
+
+  def __int__(self): return self.word
+
+  def __repr__(self):
+    args = ", ".join(f"{k}=0x{v:X}" for k, v in self._fields.items())
+    return f"{self.name}({args})" if args else f"{self.name}()"
+
+def _tf(name, shift, width):
+  return (name, shift, width)
+
+def _simple_fields(c_name="lreg_c"):
+  return [
+    _tf("imm12_math", 12, 12),
+    _tf(c_name, 8, 4),
+    _tf("lreg_dest", 4, 4),
+    _tf("instr_mod1", 0, 4),
+  ]
+
+def _mad_fields():
+  return [
+    _tf("lreg_src_a", 16, 4),
+    _tf("lreg_src_b", 12, 4),
+    _tf("lreg_src_c", 8, 4),
+    _tf("lreg_dest", 4, 4),
+    _tf("instr_mod1", 0, 4),
+  ]
+
+_TENSIX_DECODE = {
+  0x01: ("MOP", [_tf("mop_type", 23, 1), _tf("loop_count", 16, 7), _tf("zmask_lo16_or_loop_count", 0, 16)]),
+  0x02: ("NOP", []),
+  0x03: ("MOP_CFG", [_tf("zmask_hi16", 0, 16)]),
+  0x04: ("REPLAY", [_tf("start_idx", 14, 10), _tf("len", 4, 10), _tf("execute_while_loading", 1, 1), _tf("load_mode", 0, 1)]),
+  0x08: ("MOVD2A", [_tf("dest_32b_lo", 23, 1), _tf("src", 17, 6), _tf("addr_mode", 14, 3), _tf("instr_mod", 12, 2), _tf("dst", 0, 12)]),
+  0x0A: ("MOVD2B", [_tf("dest_32b_lo", 23, 1), _tf("src", 17, 6), _tf("addr_mode", 14, 3), _tf("instr_mod", 12, 2), _tf("dst", 0, 12)]),
+  0x10: ("ZEROACC", [_tf("clear_mode", 19, 5), _tf("use_32_bit_mode", 18, 1), _tf("clear_zero_flags", 17, 1), _tf("addr_mode", 14, 3), _tf("where", 0, 14)]),
+  0x11: ("ZEROSRC", [_tf("zero_val", 4, 20), _tf("write_mode", 3, 1), _tf("bank_mask", 2, 1), _tf("src_mask", 0, 2)]),
+  0x12: ("MOVA2D", [_tf("dest_32b_lo", 23, 1), _tf("src", 17, 6), _tf("addr_mode", 14, 3), _tf("instr_mod", 12, 2), _tf("dst", 0, 12)]),
+  0x13: ("MOVB2D", [_tf("dest_32b_lo", 23, 1), _tf("src", 17, 6), _tf("addr_mode", 14, 3), _tf("movb2d_instr_mod", 11, 3), _tf("dst", 0, 11)]),
+  0x14: ("TRNSPSRCA", []),
+  0x15: ("RAREB", []),
+  0x16: ("TRNSPSRCB", []),
+  0x17: ("SHIFTXA", [_tf("raw", 0, 24), _tf("shift_mode", 0, 2), _tf("log2_amount2", 2, 22)]),
+  0x18: ("SHIFTXB", [_tf("raw", 0, 24), _tf("shift_row", 0, 10), _tf("rot_shift", 10, 4), _tf("addr_mode", 14, 3)]),
+  0x21: ("CLREXPHIST", []),
+  0x22: ("CONV3S1", [_tf("clear_dvalid", 22, 2), _tf("rotate_weights", 17, 5), _tf("addr_mode", 14, 3), _tf("dst", 0, 14)]),
+  0x23: ("CONV3S2", [_tf("clear_dvalid", 22, 2), _tf("rotate_weights", 17, 5), _tf("addr_mode", 14, 3), _tf("dst", 0, 14)]),
+  0x24: ("MFCONV3S1", [_tf("clear_dvalid", 22, 2), _tf("rotate_weights", 17, 5), _tf("addr_mode", 14, 3), _tf("dst", 0, 14)]),
+  0x25: ("APOOL3S1", [_tf("clear_dvalid", 22, 2), _tf("pool_addr_mode", 15, 7), _tf("index_en", 14, 1), _tf("dst", 0, 14)]),
+  0x26: ("MVMUL", [_tf("clear_dvalid", 22, 2), _tf("instr_mod19", 19, 3), _tf("addr_mode", 14, 3), _tf("dst", 0, 10), _tf("broadcast_srcb", 19, 1)]),
+  0x27: ("ELWMUL", [_tf("clear_dvalid", 22, 2), _tf("dest_accum_en", 21, 1), _tf("instr_mod19", 19, 2), _tf("addr_mode", 14, 2), _tf("dst", 0, 14)]),
+  0x28: ("ELWADD", [_tf("clear_dvalid", 22, 2), _tf("dest_accum_en", 21, 1), _tf("instr_mod19", 19, 2), _tf("addr_mode", 14, 2), _tf("dst", 0, 14)]),
+  0x29: ("DOTPV", [_tf("clear_dvalid", 22, 2), _tf("dest_accum_en", 21, 1), _tf("instr_mod19", 19, 2), _tf("addr_mode", 14, 2), _tf("dst", 0, 14)]),
+  0x2A: ("MPOOL3S2", [_tf("clear_dvalid", 22, 2), _tf("pool_addr_mode", 15, 7), _tf("index_en", 14, 1), _tf("dst", 0, 14)]),
+  0x30: ("ELWSUB", [_tf("clear_dvalid", 22, 2), _tf("dest_accum_en", 21, 1), _tf("instr_mod19", 19, 2), _tf("addr_mode", 14, 2), _tf("dst", 0, 14)]),
+  0x31: ("MPOOL3S1", [_tf("clear_dvalid", 22, 2), _tf("pool_addr_mode", 15, 7), _tf("index_en", 14, 1), _tf("dst", 0, 14)]),
+  0x32: ("APOOL3S2", [_tf("clear_dvalid", 22, 2), _tf("pool_addr_mode", 15, 7), _tf("index_en", 14, 1), _tf("dst", 0, 14)]),
+  0x33: ("GMPOOL", [_tf("clear_dvalid", 22, 2), _tf("instr_mod19", 19, 3), _tf("pool_addr_mode", 15, 4), _tf("max_pool_index_en", 14, 1), _tf("dst", 0, 14)]),
+  0x34: ("GAPOOL", [_tf("clear_dvalid", 22, 2), _tf("instr_mod19", 19, 3), _tf("pool_addr_mode", 15, 4), _tf("max_pool_index_en", 14, 1), _tf("dst", 0, 14)]),
+  0x35: ("GATESRCRST", [_tf("reset_srcb_gate_control", 1, 1), _tf("reset_srca_gate_control", 0, 1)]),
+  0x36: ("CLEARDVALID", [_tf("cleardvalid", 22, 2), _tf("clear_dvalid", 22, 2), _tf("reset", 0, 22)]),
+  0x37: ("SETRWC", [_tf("clear_ab_vld", 22, 2), _tf("rwc_cr", 18, 4), _tf("rwc_d", 14, 4), _tf("rwc_b", 10, 4), _tf("rwc_a", 6, 4), _tf("BitMask", 0, 6)]),
+  0x38: ("INCRWC", [_tf("rwc_cr", 18, 3), _tf("rwc_d", 14, 4), _tf("rwc_b", 10, 4), _tf("rwc_a", 6, 4)]),
+  0x40: ("XMOV", [_tf("Mov_block_selection", 23, 1), _tf("Last", 0, 1)]),
+  0x41: ("PACR", [_tf("CfgContext", 21, 3), _tf("RowPadZero", 18, 3), _tf("DstAccessMode", 17, 1), _tf("AddrMode", 15, 2), _tf("AddrCntContext", 13, 2), _tf("ZeroWrite", 12, 1), _tf("ReadIntfSel", 8, 4), _tf("OvrdThreadId", 7, 1), _tf("Concat", 4, 3), _tf("CtxtCtrl", 2, 2), _tf("Flush", 1, 1), _tf("Last", 0, 1)]),
+  0x42: ("UNPACR", [_tf("Unpack_block_selection", 23, 1), _tf("AddrMode", 15, 8), _tf("CfgContextCntInc", 13, 2), _tf("CfgContextId", 10, 3), _tf("AddrCntContextId", 8, 2), _tf("OvrdThreadId", 7, 1), _tf("SetDatValid", 6, 1), _tf("srcb_bcast", 5, 1), _tf("ZeroWrite2", 4, 1), _tf("AutoIncContextID", 3, 1), _tf("RowSearch", 2, 1), _tf("SearchCacheFlush", 1, 1), _tf("Last", 0, 1)]),
+  0x43: ("UNPACR_NOP", [_tf("Unpacker_Select", 23, 1), _tf("Stream_Id", 16, 7), _tf("Msg_Clr_Cnt", 12, 4), _tf("Set_Dvalid", 8, 4), _tf("Clr_to1_fmt_Ctrl", 6, 2), _tf("Stall_Clr_Cntrl", 5, 1), _tf("Bank_Clr_Ctrl", 4, 1), _tf("Src_ClrVal_Ctrl", 2, 2), _tf("Unpack_Pop", 0, 2)]),
+  0x45: ("SETDMAREG", [_tf("Payload_SigSelSize", 22, 2), _tf("Payload_SigSel", 8, 14), _tf("SetSignalsMode", 7, 1), _tf("RegIndex16b", 0, 7)]),
+  0x46: ("FLUSHDMA", [_tf("ConditionMask", 0, 4)]),
+  0x48: ("REG2FLOP", [_tf("SizeSel", 22, 2), _tf("ThConCfgIndex", 8, 7), _tf("InputReg", 0, 6)]),
+  0x4B: ("TBUFCMD", []),
+  0x50: ("SETADC", [_tf("CntSetMask", 21, 3), _tf("ChannelIndex", 20, 1), _tf("DimensionIndex", 18, 2), _tf("Value", 0, 18)]),
+  0x51: ("SETADCXY", [_tf("CntSetMask", 21, 3), _tf("Ch1_Y", 15, 6), _tf("Ch1_X", 12, 3), _tf("Ch0_Y", 9, 3), _tf("Ch0_X", 6, 3), _tf("BitMask", 0, 6)]),
+  0x54: ("SETADCZW", [_tf("CntSetMask", 21, 3), _tf("Ch1_W", 15, 6), _tf("Ch1_Z", 12, 3), _tf("Ch0_W", 9, 3), _tf("Ch0_Z", 6, 3), _tf("BitMask", 0, 6)]),
+  0x55: ("INCADCZW", [_tf("CntSetMask", 21, 3), _tf("Ch1_W", 15, 6), _tf("Ch1_Z", 12, 3), _tf("Ch0_W", 9, 3), _tf("Ch0_Z", 6, 3)]),
+  0x58: ("ADDDMAREG", [_tf("OpBisConst", 23, 1), _tf("ResultRegIndex", 12, 11), _tf("OpBRegIndex", 6, 6), _tf("OpARegIndex", 0, 6)]),
+  0x5A: ("MULDMAREG", [_tf("OpBisConst", 23, 1), _tf("ResultRegIndex", 12, 11), _tf("OpBRegIndex", 6, 6), _tf("OpARegIndex", 0, 6)]),
+  0x5B: ("BITWOPDMAREG", [_tf("OpBisConst", 23, 1), _tf("OpSel", 18, 5), _tf("ResultRegIndex", 12, 6), _tf("OpBRegIndex", 6, 6), _tf("OpARegIndex", 0, 6)]),
+  0x5C: ("SHIFTDMAREG", [_tf("OpBisConst", 23, 1), _tf("Mode", 18, 5), _tf("OpSel", 18, 5), _tf("ResultRegIndex", 12, 6), _tf("OpBRegIndex", 6, 6), _tf("OpARegIndex", 0, 6)]),
+  0x5D: ("CMPDMAREG", [_tf("OpBisConst", 23, 1), _tf("OpSel", 18, 5), _tf("ResultRegIndex", 12, 6), _tf("OpBRegIndex", 6, 6), _tf("OpARegIndex", 0, 6)]),
+  0x5E: ("SETADCXX", [_tf("CntSetMask", 21, 3), _tf("x_end2", 10, 11), _tf("x_start", 0, 10)]),
+  0x60: ("DMANOP", []),
+  0x67: ("STOREREG", [_tf("TdmaDataRegIndex", 18, 6), _tf("RegAddr", 0, 18)]),
+  0x70: ("SFPLOAD", [_tf("lreg_ind", 20, 4), _tf("instr_mod0", 16, 4), _tf("sfpu_addr_mode", 13, 3), _tf("dest_reg_addr", 0, 13)]),
+  0x71: ("SFPLOADI", [_tf("lreg_ind", 20, 4), _tf("instr_mod0", 16, 4), _tf("imm16", 0, 16)]),
+  0x72: ("SFPSTORE", [_tf("lreg_ind", 20, 4), _tf("instr_mod0", 16, 4), _tf("sfpu_addr_mode", 13, 3), _tf("dest_reg_addr", 0, 13)]),
+  0x73: ("SFPLUT", [_tf("lreg_ind", 20, 4), _tf("instr_mod0", 16, 4), _tf("dest_reg_addr", 0, 16)]),
+  0x74: ("SFPMULI", [_tf("imm16_math", 8, 16), _tf("lreg_dest", 4, 4), _tf("instr_mod1", 0, 4)]),
+  0x75: ("SFPADDI", [_tf("imm16_math", 8, 16), _tf("lreg_dest", 4, 4), _tf("instr_mod1", 0, 4)]),
+  0x76: ("SFPDIVP2", _simple_fields()),
+  0x77: ("SFPEXEXP", _simple_fields()),
+  0x78: ("SFPEXMAN", _simple_fields()),
+  0x79: ("SFPIADD", _simple_fields()),
+  0x7A: ("SFPSHFT", _simple_fields()),
+  0x7B: ("SFPSETCC", _simple_fields()),
+  0x7C: ("SFPMOV", _simple_fields()),
+  0x7D: ("SFPABS", _simple_fields()),
+  0x7E: ("SFPAND", _simple_fields()),
+  0x7F: ("SFPOR", _simple_fields()),
+  0x80: ("SFPNOT", _simple_fields()),
+  0x81: ("SFPLZ", _simple_fields()),
+  0x82: ("SFPSETEXP", _simple_fields()),
+  0x83: ("SFPSETMAN", _simple_fields()),
+  0x84: ("SFPMAD", _mad_fields()),
+  0x85: ("SFPADD", _mad_fields()),
+  0x86: ("SFPMUL", _mad_fields()),
+  0x87: ("SFPPUSHC", _simple_fields()),
+  0x88: ("SFPPOPC", _simple_fields()),
+  0x89: ("SFPSETSGN", _simple_fields()),
+  0x8A: ("SFPENCC", _simple_fields()),
+  0x8B: ("SFPCOMPC", _simple_fields()),
+  0x8C: ("SFPTRANSP", [_tf("imm12_math", 12, 12), _tf("lreg_c", 8, 4), _tf("lreg_dest", 4, 4), _tf("instr_mod1", 0, 4)]),
+  0x8D: ("SFPXOR", _simple_fields()),
+  0x8E: ("SFPSTOCHRND", [_tf("rnd_mode", 21, 3), _tf("imm8_math", 16, 8), _tf("lreg_src_b", 12, 4), _tf("lreg_src_c", 8, 4), _tf("lreg_dest", 4, 4), _tf("instr_mod1", 0, 4)]),
+  0x8F: ("SFPNOP", []),
+  0x90: ("SFPCAST", [_tf("lreg_src_c", 8, 4), _tf("lreg_dest", 4, 4), _tf("instr_mod1", 0, 4)]),
+  0x91: ("SFPCONFIG", [_tf("imm16_math", 8, 16), _tf("config_dest", 4, 4), _tf("instr_mod1", 0, 4)]),
+  0x92: ("SFPSWAP", _simple_fields("lreg_src_c")),
+  0x93: ("SFPLOADMACRO", [_tf("lreg_ind", 20, 4), _tf("instr_mod0", 16, 4), _tf("sfpu_addr_mode", 13, 3), _tf("dest_reg_addr", 0, 13)]),
+  0x94: ("SFPSHFT2", _simple_fields("lreg_src_c")),
+  0x95: ("SFPLUTFP32", [_tf("lreg_dest", 4, 4), _tf("instr_mod1", 0, 4)]),
+  0x96: ("SFPLE", _simple_fields()),
+  0x97: ("SFPGT", _simple_fields()),
+  0x98: ("SFPMUL24", _mad_fields()),
+  0x99: ("SFPARECIP", _simple_fields()),
+  0xA0: ("ATGETM", [_tf("mutex_index", 0, 24)]),
+  0xA1: ("ATRELM", [_tf("mutex_index", 0, 24)]),
+  0xA2: ("STALLWAIT", [_tf("stall_res", 15, 9), _tf("wait_res", 0, 15)]),
+  0xA3: ("SEMINIT", [_tf("max_value", 20, 4), _tf("init_value", 16, 4), _tf("sem_sel", 2, 8)]),
+  0xA4: ("SEMPOST", [_tf("sem_sel", 2, 8)]),
+  0xA5: ("SEMGET", [_tf("sem_sel", 2, 8)]),
+  0xA6: ("SEMWAIT", [_tf("stall_res", 15, 9), _tf("sem_sel", 2, 8), _tf("wait_sem_cond", 0, 2)]),
+  0xA7: ("STREAMWAIT", [_tf("stall_res", 15, 9), _tf("target_value", 4, 10), _tf("target_sel", 3, 1), _tf("wait_stream_sel", 0, 2)]),
+  0xB0: ("WRCFG", [_tf("GprAddress", 16, 6), _tf("wr128b", 15, 1), _tf("CfgReg", 0, 11)]),
+  0xB1: ("RDCFG", [_tf("GprAddress", 16, 6), _tf("CfgReg", 0, 11)]),
+  0xB2: ("SETC16", [_tf("setc16_reg", 16, 8), _tf("setc16_value", 0, 16)]),
+  0xB3: ("RMWCIB0", [_tf("Mask", 16, 8), _tf("Data", 8, 8), _tf("CfgRegAddr", 0, 8)]),
+  0xB4: ("RMWCIB1", [_tf("Mask", 16, 8), _tf("Data", 8, 8), _tf("CfgRegAddr", 0, 8)]),
+  0xB5: ("RMWCIB2", [_tf("Mask", 16, 8), _tf("Data", 8, 8), _tf("CfgRegAddr", 0, 8)]),
+  0xB6: ("RMWCIB3", [_tf("Mask", 16, 8), _tf("Data", 8, 8), _tf("CfgRegAddr", 0, 8)]),
+  0xB7: ("STREAMWRCFG", [_tf("stream_id_sel", 21, 2), _tf("StreamRegAddr", 11, 10), _tf("CfgReg", 0, 11)]),
+  0xB8: ("CFGSHIFTMASK", [_tf("mask_mode", 23, 1), _tf("disable_mask_on_old_val", 23, 1), _tf("alu_mode", 20, 3), _tf("operation", 20, 3), _tf("mask_width", 15, 5), _tf("rotate_amt", 10, 5), _tf("right_cshift_amt", 10, 5), _tf("scratch_index", 8, 2), _tf("scratch_sel", 8, 2), _tf("cfg_index", 0, 8), _tf("CfgReg", 0, 8)]),
+  0xC0: ("WRCFG32", [_tf("GprAddress", 18, 6), _tf("CfgReg", 0, 11)]),
+}
+
+def decode_tensix(word):
+  w = word & 0xFFFFFFFF
+  op = (w >> 24) & 0xFF
+  spec = _TENSIX_DECODE.get(op)
+  if spec is None:
+    return TensixDecoded(f"UNKNOWN_0x{op:02X}", w, {"raw_params": w & 0xFFFFFF})
+  name, fields = spec
+  return TensixDecoded(
+    name,
+    w,
+    {name: (w >> shift) & ((1 << width) - 1) for name, shift, width in fields},
+  )
