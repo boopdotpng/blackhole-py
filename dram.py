@@ -8,8 +8,7 @@ from dispatch import Dtype, Program, CBConfig
 Shape = tuple[int, ...]
 TILE_R, TILE_C, FACE_R, FACE_C = 32, 32, 16, 16
 
-def _np_dtype(bpe: int) -> np.dtype:
-  return {2: np.dtype('uint16'), 4: np.dtype('uint32')}[bpe]
+def _np_dtype(bpe: int) -> np.dtype: return {2: np.dtype('uint16'), 4: np.dtype('uint32')}[bpe]
 
 def tilize(data: bytes, bpe: int, shape: Shape) -> bytes:
   rows, cols = shape[-2], shape[-1]
@@ -43,12 +42,10 @@ class DramBuffer:
   shape: Shape | None = None
 
   @property
-  def page_size(self) -> int:
-    return self.dtype.tile_size
+  def page_size(self) -> int: return self.dtype.tile_size
 
   @property
-  def size(self) -> int:
-    return self.num_tiles * self.page_size
+  def size(self) -> int: return self.num_tiles * self.page_size
 
 # DMA copy kernels: sysmem <-> interleaved DRAM (no tilize/untilize compute)
 _A = '#define A(n) get_arg_val<uint32_t>(n)\n'
@@ -156,8 +153,7 @@ class Allocator:
     return DramBuffer(name=name, addr=addr, num_tiles=num_tiles, dtype=dtype, shape=shape)
 
   def alloc_write(self, data: bytes, dtype: Dtype, shape: Shape, name: str = "") -> DramBuffer:
-    num_tiles = len(data) // dtype.tile_size
-    buf = self.alloc(num_tiles, dtype, name=name, shape=shape)
+    buf = self.alloc(len(data) // dtype.tile_size, dtype, name=name, shape=shape)
     self.write(buf, data)
     return buf
 

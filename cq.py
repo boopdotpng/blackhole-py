@@ -43,8 +43,7 @@ HOST_CORE_TIMING_STRIDE = _HOST_CORE_TIMING_STRIDE
 _HOST_CQ_WR_OFF        = 2 * PCIE_ALIGN
 _HOST_CQ_RD_OFF        = 3 * PCIE_ALIGN
 
-def _host_sysmem_size() -> int:
-  return align_up(_HOST_SYS_END_BASE, PAGE_SIZE)
+def _host_sysmem_size() -> int: return align_up(_HOST_SYS_END_BASE, PAGE_SIZE)
 
 # CQ command type IDs
 _RELAY_INLINE       = 5
@@ -168,8 +167,7 @@ class CommandQueue:
       self.sizes.append(len(record) >> 4)
 
   def extend(self, cmds: list[CQCommand]):
-    for cmd in cmds:
-      self.append(cmd)
+    for cmd in cmds: self.append(cmd)
 
 def _lower_ir(commands: list[IRCommand], go_word: int) -> list[CQCommand]:
   result: list[CQCommand] = []
@@ -223,8 +221,7 @@ class CQSysmem:
     self._dispatch_win = dispatch_win
     self._size = _host_sysmem_size()
     flags = mmap.MAP_SHARED | mmap.MAP_ANONYMOUS
-    if hasattr(mmap, "MAP_POPULATE"):
-      flags |= mmap.MAP_POPULATE
+    if hasattr(mmap, "MAP_POPULATE"): flags |= mmap.MAP_POPULATE
     self.sysmem = mmap.mmap(-1, self._size, flags=flags, prot=mmap.PROT_READ | mmap.PROT_WRITE)
     self._sysmem_addr = ctypes.addressof(ctypes.c_char.from_buffer(self.sysmem))
     if (self._sysmem_addr % PAGE_SIZE) != 0 or (self._size % PAGE_SIZE) != 0:
@@ -254,8 +251,7 @@ class CQSysmem:
   def _sysmem_read32(self, off):
     return struct.unpack("<I", self.sysmem[off : off + 4])[0]
 
-  def _sysmem_write32(self, off, val):
-    self.sysmem[off : off + 4] = struct.pack("<I", val)
+  def _sysmem_write32(self, off, val): self.sysmem[off : off + 4] = struct.pack("<I", val)
 
   def peek_completion_write_pointer(self) -> tuple[int, int]:
     wr_raw = self._sysmem_read32(_HOST_CQ_WR_OFF)
@@ -266,27 +262,22 @@ class CQSysmem:
     return self._sysmem_read32(off + 16)
 
   @property
-  def completion_cursor(self) -> tuple[int, int]:
-    return self._completion_rd_16b, self._completion_rd_toggle
+  def completion_cursor(self) -> tuple[int, int]: return self._completion_rd_16b, self._completion_rd_toggle
 
   @property
-  def completion_page_16b(self) -> int:
-    return self._completion_page_16b
+  def completion_page_16b(self) -> int: return self._completion_page_16b
 
   @property
-  def completion_end_16b(self) -> int:
-    return self._completion_end_16b
+  def completion_end_16b(self) -> int: return self._completion_end_16b
 
   @property
-  def completion_base_16b(self) -> int:
-    return self._completion_base_16b
+  def completion_base_16b(self) -> int: return self._completion_base_16b
 
   def _wait_prefetch_slot_free(self, idx: int, timeout_s: float = 1.0):
     off = CQ_PREFETCH_Q_BASE + idx * CQ_PREFETCH_Q_ENTRY_SZ
     deadline = time.perf_counter() + timeout_s
     while struct.unpack("<H", self._prefetch_win.mm[off : off + 2])[0] != 0:
-      if time.perf_counter() > deadline:
-        raise TimeoutError("timeout waiting for prefetch queue slot")
+      if time.perf_counter() > deadline: raise TimeoutError("timeout waiting for prefetch queue slot")
 
   def _issue_write(self, record: bytes):
     self._issue_wr = align_up(self._issue_wr, PCIE_ALIGN)

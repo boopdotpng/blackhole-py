@@ -7,18 +7,15 @@ PAGE_SIZE = 4096
 L1_ALIGN = 16
 PCIE_ALIGN = 64
 
-def align_up(value: int, align: int) -> int:
-  return (value + align - 1) // align * align
+def align_up(value: int, align: int) -> int: return (value + align - 1) // align * align
 
 def align_down(value: int, alignment: int) -> tuple[int, int]:
   base = value & ~(alignment - 1)
   return base, value - base
 
-def as_bytes(obj) -> bytes:
-  return ctypes.string_at(ctypes.addressof(obj), ctypes.sizeof(obj))
+def as_bytes(obj) -> bytes: return ctypes.string_at(ctypes.addressof(obj), ctypes.sizeof(obj))
 
-def noc_xy(x: int, y: int) -> int:
-  return ((y << 6) | x) & 0xFFFF
+def noc_xy(x: int, y: int) -> int: return ((y << 6) | x) & 0xFFFF
 
 class S(ctypes.LittleEndianStructure):
   """Still used by dispatch.py for launch message structs."""
@@ -157,11 +154,9 @@ class TLBWindow:
     self._bar.cast("I")[o // 4] = value & 0xFFFFFFFF
 
   def write(self, addr: int, data: bytes):
-    o = self._base + addr
-    struct.pack_into(f"<{len(data)}s", self._bar, o, data)
+    struct.pack_into(f"<{len(data)}s", self._bar, self._base + addr, data)
 
-  def close(self):
-    self.dev.free_tlb(self._id)
+  def close(self): self.dev.free_tlb(self._id)
 
   def __enter__(self): return self
   def __exit__(self, *_): self.close()
@@ -186,11 +181,9 @@ class Sysmem:
 class TileGrid:
   ARC = (8, 0)
 
-def worker_cores(tensix_x: tuple[int, ...]) -> list[Core]:
-  return [(x, y) for x in tensix_x for y in range(2, 12)]
+def worker_cores(tensix_x: tuple[int, ...]) -> list[Core]: return [(x, y) for x in tensix_x for y in range(2, 12)]
 
-def active_tensix_core_count(enabled_col_mask: int) -> int:
-  return (enabled_col_mask & Arc.DEFAULT_TENSIX_ENABLED).bit_count() * 10
+def active_tensix_core_count(enabled_col_mask: int) -> int: return (enabled_col_mask & Arc.DEFAULT_TENSIX_ENABLED).bit_count() * 10
 
 USE_USB_DISPATCH = os.environ.get("TT_USB") == "1"
 
@@ -203,10 +196,7 @@ def build_bank_noc_table(harvested_dram_banks: list[int], worker_cores: list[Cor
 
   if len(harvested_dram_banks) == 0:
     # P150-style: all 8 banks, straightforward layout
-    bank_xy = {}
-    for b in range(Dram.BANK_COUNT):
-      x = 17 if b < 4 else 18
-      bank_xy[b] = (x, 12 + (b % 4) * PORTS)
+    bank_xy = {b: (17 if b < 4 else 18, 12 + (b % 4) * PORTS) for b in range(Dram.BANK_COUNT)}
   elif len(harvested_dram_banks) == 1:
     # P100-style: 7 banks, harvested bank's mirror pushed to last slot
     h = harvested_dram_banks[0]
@@ -218,11 +208,8 @@ def build_bank_noc_table(harvested_dram_banks: list[int], worker_cores: list[Cor
     else:
       left = [b for b in range(half) if b != mirror] + [mirror]
       right = list(range(half, Dram.BANK_COUNT - 1))
-    bank_xy = {}
-    for i, b in enumerate(right):
-      bank_xy[b] = (18, 12 + i * PORTS)
-    for i, b in enumerate(left):
-      bank_xy[b] = (17, 12 + i * PORTS)
+    bank_xy = {b: (18, 12 + i * PORTS) for i, b in enumerate(right)}
+    bank_xy.update({b: (17, 12 + i * PORTS) for i, b in enumerate(left)})
   else:
     raise ValueError(f"unsupported harvested DRAM bank count: {len(harvested_dram_banks)}")
 

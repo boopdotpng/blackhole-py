@@ -1,7 +1,6 @@
 import functools, os, struct, time
 from dataclasses import dataclass
 
-
 from hw import *
 from hw import worker_cores as _worker_cores
 from pcie import PCIDevice
@@ -29,30 +28,21 @@ _BOARDS = {"p100": P100, "p150": P150}
 ARC_CSM_BASE = 0x10000000
 ARC_CSM_SIZE = 1 << 19
 
-
-def _is_range_within_arc_csm(addr: int, length: int = 1) -> bool:
-  return ARC_CSM_BASE <= addr <= (ARC_CSM_BASE + ARC_CSM_SIZE) - length
-
+def _is_range_within_arc_csm(addr: int, length: int = 1) -> bool: return ARC_CSM_BASE <= addr <= ARC_CSM_BASE + ARC_CSM_SIZE - length
 
 def _format_elapsed_us(elapsed_us: float) -> str:
-  if elapsed_us >= 100_000:
-    return f"{elapsed_us / 1e6:,.3f} s"
-  if elapsed_us >= 1_000:
-    return f"{elapsed_us / 1e3:,.1f} ms"
+  if elapsed_us >= 100_000: return f"{elapsed_us / 1e6:,.3f} s"
+  if elapsed_us >= 1_000: return f"{elapsed_us / 1e3:,.1f} ms"
   return f"{elapsed_us:,.1f} us"
 
 class Device:
   @functools.cached_property
   def cores(self) -> list[Core]:
-    if self._use_fast_dispatch:
-      return [c for c in self._all_worker_cores if c not in self._CQ_CORES]
-    return list(self._all_worker_cores)
+    return [c for c in self._all_worker_cores if c not in self._CQ_CORES] if self._use_fast_dispatch else list(self._all_worker_cores)
 
   def __init__(self, device: int | None = None):
-    if device is None:
-      device = int(os.getenv("DEV", "0"))
-    self.device = device
-    self.dev = PCIDevice(index=device)
+    self.device = int(os.getenv("DEV", "0")) if device is None else device
+    self.dev = PCIDevice(index=self.device)
 
     gddr_enabled, tensix_enabled = self._read_arc_enabled_masks()
     core_count = active_tensix_core_count(tensix_enabled)
@@ -113,8 +103,7 @@ class Device:
 
     tlb = self.dev.alloc_tlb(TLBWindow.SIZE_2M)
     try:
-      def _rd(addr):
-        return self.dev._read_arc_noc32(addr, tlb=tlb)
+      def _rd(addr): return self.dev._read_arc_noc32(addr, tlb=tlb)
       entry_count = _rd(table_base + 4)
       if entry_count in (0, 0xFFFFFFFF) or entry_count > 4096:
         raise RuntimeError(f"invalid ARC telemetry entry_count 0x{entry_count:x} at 0x{table_base:x}")

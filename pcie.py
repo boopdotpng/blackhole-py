@@ -71,19 +71,15 @@ def _mlock(addr: int, size: int):
   if _libc.mlock(ctypes.c_void_p(addr), ctypes.c_size_t(size)) != 0:
     raise OSError(ctypes.get_errno(), "mlock failed; run ./setup_python_cap.sh to grant CAP_IPC_LOCK")
 
-def _munlock(addr: int, size: int):
-  _libc.munlock(ctypes.c_void_p(addr), ctypes.c_size_t(size))
-
+def _munlock(addr: int, size: int): _libc.munlock(ctypes.c_void_p(addr), ctypes.c_size_t(size))
 
 def _find_bh_devices() -> list[str]:
   result = []
   for path in sorted(glob.glob("/sys/bus/pci/devices/*")):
     vendor = int(open(f"{path}/vendor").read(), 16)
     device = int(open(f"{path}/device").read(), 16)
-    if vendor == TT_VENDOR and device == BH_DEVICE:
-      result.append(path)
+    if vendor == TT_VENDOR and device == BH_DEVICE: result.append(path)
   return result
-
 
 def _bind_vfio_pci(sysfs_path: str):
   bdf = os.path.basename(sysfs_path)
@@ -91,8 +87,7 @@ def _bind_vfio_pci(sysfs_path: str):
 
   if os.path.islink(driver_link):
     current = os.path.basename(os.readlink(driver_link))
-    if current == "vfio-pci":
-      return
+    if current == "vfio-pci": return
     with open(f"{sysfs_path}/driver/unbind", "w") as f:
       f.write(bdf)
 
@@ -102,13 +97,11 @@ def _bind_vfio_pci(sysfs_path: str):
     f.write(bdf)
 
   for _ in range(50):
-    if os.path.islink(driver_link) and os.path.basename(os.readlink(driver_link)) == "vfio-pci":
-      return
+    if os.path.islink(driver_link) and os.path.basename(os.readlink(driver_link)) == "vfio-pci": return
     time.sleep(0.1)
 
   raise RuntimeError(
     f"failed to bind {bdf} to vfio-pci. Is the vfio-pci module loaded? Try: modprobe vfio-pci")
-
 
 def _unbind_vfio_pci(sysfs_path: str):
   bdf = os.path.basename(sysfs_path)
@@ -120,8 +113,7 @@ def _unbind_vfio_pci(sysfs_path: str):
   except OSError:
     pass
 
-  if (os.path.islink(driver_link)
-      and os.path.basename(os.readlink(driver_link)) == "vfio-pci"):
+  if os.path.islink(driver_link) and os.path.basename(os.readlink(driver_link)) == "vfio-pci":
     with open(f"{sysfs_path}/driver/unbind", "w") as f:
       f.write(bdf)
 
@@ -142,8 +134,7 @@ class _MappedBar:
     self.closed = False
 
   def close(self):
-    if self.closed:
-      return
+    if self.closed: return
     self.closed = True
     try:
       self.u32.release()
@@ -158,9 +149,7 @@ class _MappedBar:
   def __enter__(self): return self
   def __exit__(self, *_): self.close()
 
-
-def _config_path(sysfs_path: str) -> str:
-  return f"{sysfs_path}/config"
+def _config_path(sysfs_path: str) -> str: return f"{sysfs_path}/config"
 
 
 def _read_config(path: str, size: int, offset: int) -> bytes:
@@ -178,31 +167,24 @@ def _write_config(path: str, data: bytes, offset: int):
   finally:
     os.close(fd)
 
-
-def _read_config_u16(path: str, offset: int) -> int:
-  return struct.unpack("<H", _read_config(path, 2, offset))[0]
+def _read_config_u16(path: str, offset: int) -> int: return struct.unpack("<H", _read_config(path, 2, offset))[0]
 
 
-def _write_config_u16(path: str, offset: int, value: int):
-  _write_config(path, struct.pack("<H", value & 0xFFFF), offset)
+def _write_config_u16(path: str, offset: int, value: int): _write_config(path, struct.pack("<H", value & 0xFFFF), offset)
 
 
 def _read_vendor_id(sysfs_path: str) -> int | None:
   try:
     return _read_config_u16(_config_path(sysfs_path), PCI_VENDOR_ID)
-  except OSError:
-    return None
-
+  except OSError: return None
 
 def _find_pcie_cap(cfg: bytes) -> int | None:
-  if len(cfg) <= PCI_CAP_PTR:
-    return None
+  if len(cfg) <= PCI_CAP_PTR: return None
   ptr = cfg[PCI_CAP_PTR] & 0xFC
   seen = set()
   while ptr and ptr + 1 < len(cfg) and ptr not in seen:
     seen.add(ptr)
-    if cfg[ptr] == PCI_CAP_ID_EXP:
-      return ptr
+    if cfg[ptr] == PCI_CAP_ID_EXP: return ptr
     ptr = cfg[ptr + 1] & 0xFC
   return None
 
@@ -214,10 +196,8 @@ def _find_upstream_bridge_sysfs(sysfs_path: str) -> str | None:
     class_path = os.path.join(parent, "class")
     try:
       dev_class = int(open(class_path).read().strip(), 16)
-      if (dev_class >> 8) == 0x0604:
-        return parent
-    except OSError:
-      pass
+      if (dev_class >> 8) == 0x0604: return parent
+    except OSError: pass
     parent = os.path.dirname(parent)
   return None
 
@@ -225,8 +205,7 @@ def _find_upstream_bridge_sysfs(sysfs_path: str) -> str | None:
 def _wait_for_vendor_id(sysfs_path: str, timeout_s: float = 10.0) -> bool:
   deadline = time.monotonic() + timeout_s
   while time.monotonic() < deadline:
-    if _read_vendor_id(sysfs_path) == TT_VENDOR:
-      return True
+    if _read_vendor_id(sysfs_path) == TT_VENDOR: return True
     time.sleep(0.1)
   return False
 
@@ -353,8 +332,7 @@ class PCIDevice:
     self._bring_device_to_a0()
 
   @staticmethod
-  def list_devices() -> list[str]:
-    return _find_bh_devices()
+  def list_devices() -> list[str]: return _find_bh_devices()
 
   @classmethod
   def reset_index(cls, index: int = 0):
@@ -403,7 +381,7 @@ class PCIDevice:
     try:
       config_size = os.fstat(fd).st_size
       if config_size <= _TIMER_TARGET + 4:
-        # Extended config space not reachable — fall back to sysfs FLR
+        # Extended config space not reachable: fall back to sysfs FLR
         os.close(fd); fd = -1
         print(f"  extended config space unavailable, falling back to PCIe FLR")
         with open(f"{sysfs}/reset", "w") as f:
@@ -593,10 +571,8 @@ class PCIDevice:
     raise ValueError(f"invalid TLB size: {size}")
 
   def free_tlb(self, index: int):
-    if index < TLB_2M_COUNT:
-      self._tlb_2m[index] = False
-    else:
-      self._tlb_4g[index - TLB_2M_COUNT] = False
+    if index < TLB_2M_COUNT: self._tlb_2m[index] = False
+    else: self._tlb_4g[index - TLB_2M_COUNT] = False
 
   # ---- TLB configuration ----
 
@@ -630,11 +606,9 @@ class PCIDevice:
       self.bar0_u32[stride_off // 4] = 0
 
   def tlb_window(self, index: int, wc: bool = False) -> tuple[memoryview, int]:
-    if index < TLB_2M_COUNT:
-      return (self.bar0_wc if wc else self.bar0), index * TLB_2M_SIZE
+    if index < TLB_2M_COUNT: return (self.bar0_wc if wc else self.bar0), index * TLB_2M_SIZE
     bar = self.bar4_wc if wc else self.bar4
-    if bar is None:
-      raise RuntimeError("BAR4 not available")
+    if bar is None: raise RuntimeError("BAR4 not available")
     return bar, (index - TLB_2M_COUNT) * TLB_4G_SIZE
 
   # ---- DMA / page pinning via VFIO IOMMU ----
@@ -688,11 +662,9 @@ class PCIDevice:
         return i
     raise RuntimeError("no free iATU regions")
 
-  def _free_iatu_region(self, region: int):
-    self._iatu_regions[region] = False
+  def _free_iatu_region(self, region: int): self._iatu_regions[region] = False
 
-  def _iatu_reg(self, region: int, reg: int) -> int:
-    return IATU_BASE + (2 * region) * (IATU_REGION_STRIDE // 2) + reg
+  def _iatu_reg(self, region: int, reg: int) -> int: return IATU_BASE + (2 * region) * (IATU_REGION_STRIDE // 2) + reg
 
   def _configure_iatu(self, region: int, base: int, limit: int, target: int):
     def w32(reg, val):
@@ -793,15 +765,13 @@ class PCIDevice:
       self.free_tlb(tlb)
 
   def set_power_state(self, busy: bool):
-    if busy:
-      self.arc_msg(self.MSG_AICLK_GO_BUSY)
+    if busy: self.arc_msg(self.MSG_AICLK_GO_BUSY)
     else:
       try: self.arc_msg(self.MSG_AICLK_GO_LONG_IDLE)
       except (TimeoutError, RuntimeError): pass
 
   def close(self):
-    if self._closed:
-      return
+    if self._closed: return
     self._closed = True
     for bar_map in reversed(self._bar_mmaps):
       try: bar_map.close()
@@ -814,8 +784,7 @@ class PCIDevice:
     if self._has_vfio:
       for fd_name in ["_vfio_device", "_vfio_group", "_vfio_container"]:
         fd = getattr(self, fd_name, -1)
-        if fd < 0:
-          continue
+        if fd < 0: continue
         try: os.close(fd)
         except Exception: pass
         setattr(self, fd_name, -1)

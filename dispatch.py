@@ -123,8 +123,7 @@ def noc_mcast_xy(rect: Rect) -> tuple[int, int]:
   return (y1 << 18) | (x1 << 12) | (y0 << 6) | x0, (x1 - x0 + 1) * (y1 - y0 + 1)
 
 def mcast_rects(cores: list[Core]) -> list[Rect]:
-  if not cores:
-    return []
+  if not cores: return []
   remaining = set(cores)
   rects = []
   while remaining:
@@ -166,11 +165,9 @@ def pack_rta(writer_args: Args, reader_args: Args, compute_args: Args, num_sems:
   return rta
 
 def build_cb_blob(program: Program) -> tuple[int, bytes]:
-  if not program.cbs:
-    return 0, b""
+  if not program.cbs: return 0, b""
   mask = 0
-  for cb in program.cbs:
-    mask |= 1 << cb.index
+  for cb in program.cbs: mask |= 1 << cb.index
   end = mask.bit_length()
   arr = bytearray(end * 16)
   addr = TensixL1.DATA_BUFFER_SPACE_BASE
@@ -206,13 +203,10 @@ def build_payload(
   cb_mask, cb_blob = build_cb_blob(program)
   kernel_off = align_up(local_cb_off + len(cb_blob), L1_ALIGN)
   proc = []
-  if writer is not None:
-    proc.append(("brisc", writer, 0))
-  if reader is not None:
-    proc.append(("ncrisc", reader, 1))
+  if writer is not None: proc.append(("brisc", writer, 0))
+  if reader is not None: proc.append(("ncrisc", reader, 1))
   if compute is not None:
-    for i, kernel in enumerate(compute):
-      proc.append((f"trisc{i}", kernel, i + 2))
+    for i, kernel in enumerate(compute): proc.append((f"trisc{i}", kernel, i + 2))
   enables = 0
   kernel_text_off = [0] * 5
   off = kernel_off
@@ -229,9 +223,7 @@ def build_payload(
 
   launch = LaunchMsg()
   cfg = launch.kernel_config
-  for i in range(3):
-    cfg.kernel_config_base[i] = TensixL1.KERNEL_CONFIG_BASE
-    cfg.sem_offset[i] = sem_off
+  for i in range(3): cfg.kernel_config_base[i], cfg.sem_offset[i] = TensixL1.KERNEL_CONFIG_BASE, sem_off
   cfg.local_cb_offset = local_cb_off
   cfg.remote_cb_offset = local_cb_off + len(cb_blob)
   cfg.local_cb_mask = cb_mask
@@ -244,8 +236,7 @@ def build_payload(
   cfg.rta_offset[1].rta_offset, cfg.rta_offset[1].crta_offset = rta_offsets[1], local_cb_off
   for i in (2, 3, 4):
     cfg.rta_offset[i].rta_offset, cfg.rta_offset[i].crta_offset = rta_offsets[2], local_cb_off
-  for i, value in enumerate(kernel_text_off):
-    cfg.kernel_text_offset[i] = value
+  for i, value in enumerate(kernel_text_off): cfg.kernel_text_offset[i] = value
   cfg.host_assigned_id = host_assigned_id
   return shared_addr, bytes(shared), as_bytes(launch)
 
@@ -307,5 +298,4 @@ def slow_dispatch(win, commands: list[IRCommand]):
           win.target((x, y))
           deadline = time.perf_counter() + 10.0
           while win.mm[TensixL1.GO_MSG + 3] != DevMsgs.RUN_MSG_DONE:
-            if time.perf_counter() > deadline:
-              raise TimeoutError(f"timeout waiting for core ({x}, {y}) -- try tt-smi -r")
+            if time.perf_counter() > deadline: raise TimeoutError(f"timeout waiting for core ({x}, {y}) -- try tt-smi -r")

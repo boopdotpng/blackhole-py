@@ -14,10 +14,7 @@ _CACHE_DIR = Path.home() / "cache" / "tt-cache"
 def _cache_hash(*parts) -> str:
   h = hashlib.sha256()
   for p in parts:
-    if isinstance(p, bytes):
-      h.update(p)
-    else:
-      h.update(repr(p).encode())
+    h.update(p if isinstance(p, bytes) else repr(p).encode())
     h.update(b"\x00")
   return h.hexdigest()
 
@@ -25,8 +22,7 @@ def _cache_load(key: str):
   try:
     with open(_CACHE_DIR / f"{key}.pkl", "rb") as f:
       return pickle.load(f)
-  except (FileNotFoundError, pickle.UnpicklingError, EOFError, ValueError):
-    return None
+  except (FileNotFoundError, pickle.UnpicklingError, EOFError, ValueError): return None
 
 def _cache_store(key: str, data):
   _CACHE_DIR.mkdir(parents=True, exist_ok=True)
@@ -62,12 +58,7 @@ def _kernel_build_flags(opt: str) -> tuple[str, list[str], list[str]]:
   debug_flags: list[str] = []
   return opt, list(_CFLAGS), debug_flags
 
-def _device_defines(
-  num_dram_banks: int,
-  num_l1_banks: int,
-  prefetch_core: tuple[int, int],
-  dispatch_core: tuple[int, int],
-) -> list[str]:
+def _device_defines(num_dram_banks: int, num_l1_banks: int, prefetch_core: tuple[int, int], dispatch_core: tuple[int, int]) -> list[str]:
   defs = [
     f"-DNUM_DRAM_BANKS={num_dram_banks}",
     f"-DNUM_L1_BANKS={num_l1_banks}",
@@ -79,10 +70,7 @@ def _device_defines(
     "-DIS_NOT_POW2_NUM_L1_BANKS=1",  # true for both p100 (110) and p150 (140)
   ]
   # p100: 7 banks (not pow2), p150: 8 banks (pow2)
-  if num_dram_banks == 8:
-    defs.append("-DLOG_BASE_2_OF_NUM_DRAM_BANKS=3")
-  else:
-    defs.append("-DIS_NOT_POW2_NUM_DRAM_BANKS=1")
+  defs.append("-DLOG_BASE_2_OF_NUM_DRAM_BANKS=3" if num_dram_banks == 8 else "-DIS_NOT_POW2_NUM_DRAM_BANKS=1")
   return defs
 
 _CQ_SRC_DIR = _REPO / "firmware" / "cq"
@@ -293,12 +281,8 @@ def _compile_and_link(cc: Path, src: Path, compile_args: list[str], link_args: l
   finally:
     shutil.rmtree(build, ignore_errors=True)
 
-def compile_firmware(
-  num_dram_banks: int,
-  num_l1_banks: int,
-  prefetch_core: tuple[int, int],
-  dispatch_core: tuple[int, int],
-) -> dict[str, CompiledFirmware]:
+def compile_firmware(num_dram_banks: int, num_l1_banks: int, prefetch_core: tuple[int, int],
+                     dispatch_core: tuple[int, int]) -> dict[str, CompiledFirmware]:
   cc = _SFPI / "riscv-tt-elf-g++"
   assert cc.is_file(), f"missing compiler: {cc}"
 
@@ -315,8 +299,7 @@ def compile_firmware(
     tuple((n, (fw_src_dir / n).read_bytes()) for n in unique_srcs),
   )
   cached = _cache_load(key)
-  if cached is not None:
-    return cached
+  if cached is not None: return cached
 
   common_defines = [
     "-DTENSIX_FIRMWARE", "-DFW_BUILD", "-DARCH_BLACKHOLE",
@@ -341,13 +324,7 @@ def compile_firmware(
   return result
 
 class Compiler:
-  def __init__(
-    self,
-    num_dram_banks: int,
-    num_l1_banks: int,
-    prefetch_core: tuple[int, int],
-    dispatch_core: tuple[int, int],
-  ):
+  def __init__(self, num_dram_banks: int, num_l1_banks: int, prefetch_core: tuple[int, int], dispatch_core: tuple[int, int]):
     self._cc = _SFPI / "riscv-tt-elf-g++"
     self._objcopy = _SFPI / "riscv-tt-elf-objcopy"
     self._includes = ["-I.", *_INCLUDES]
@@ -365,17 +342,13 @@ class Compiler:
     )
 
   def disassemble(self, kernel: CompiledKernel) -> str:
-    if kernel.disassembly:
-      return kernel.disassembly
-    if kernel.elf_bytes is None:
-      return ""
+    if kernel.disassembly: return kernel.disassembly
+    if kernel.elf_bytes is None: return ""
     return self._disassemble_elf(kernel.elf_bytes)
 
   def compile_dataflow(self, src: str, processor: str, noc_index: int | None = None) -> CompiledKernel:
-    if processor not in ("brisc", "ncrisc"):
-      raise ValueError(f"processor must be 'brisc' or 'ncrisc', got: {processor}")
-    if noc_index is None:
-      noc_index = 1 if processor == "brisc" else 0
+    if processor not in ("brisc", "ncrisc"): raise ValueError(f"processor must be 'brisc' or 'ncrisc', got: {processor}")
+    if noc_index is None: noc_index = 1 if processor == "brisc" else 0
     return self._compile_dataflow(src, processor, noc_index=noc_index)
 
   def compile_compute(self, src: str, program: Program) -> tuple[CompiledKernel, CompiledKernel, CompiledKernel]:
@@ -412,8 +385,7 @@ class Compiler:
     key = _cache_hash("kern-v5", kern, target, tuple(defines), opt, trisc,
                       xip_relocate, tuple(sorted(hdrs.items())), self._fw[target].elf_bytes, inc_content)
     cached = _cache_load(key)
-    if cached is not None:
-      return cached
+    if cached is not None: return cached
 
     mcpu = ["-mcpu=tt-bh-tensix", "-mno-tt-tensix-optimize-replay"] if trisc else \
            ["-mcpu=tt-bh", "-mno-tt-tensix-optimize-replay", "-fno-tree-loop-distribute-patterns"]
@@ -460,8 +432,7 @@ class Compiler:
 
   def _disassemble_elf(self, elf: bytes) -> str:
     objdump = _SFPI / "riscv-tt-elf-objdump"
-    if not objdump.is_file():
-      return ""
+    if not objdump.is_file(): return ""
     build = Path(tempfile.mkdtemp(prefix="tt-disasm-"))
     try:
       elf_path = build / "out.elf"
@@ -472,8 +443,7 @@ class Compiler:
         text=True,
         timeout=30,
       )
-      if out.returncode != 0:
-        return ""
+      if out.returncode != 0: return ""
       return re.sub(r"(?m)^(\s*)0+([0-9a-f]+:)", r"\1\2", out.stdout)
     except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
       return ""
