@@ -36,6 +36,46 @@ FMT_BFP2A    = 11
 FMT_INT8     = 14
 FMT_BFP2     = 15
 
+# Short aliases used by pack/unpack datapaths.
+FMT_FP32 = FMT_FLOAT32
+FMT_FP16 = FMT_FLOAT16
+FMT_BF16 = FMT_FLOAT16B
+
+FMT_BFP_B = frozenset((FMT_BFP8, FMT_BFP4, FMT_BFP2))
+FMT_BFP_A = frozenset((FMT_BFP8A, FMT_BFP4A, FMT_BFP2A))
+FMT_BFP = FMT_BFP_B | FMT_BFP_A
+
+DATUM_SIZE_BYTES = {
+    FMT_FP32: 4.0,
+    FMT_INT32: 4.0,
+    FMT_TF32: 4.0,
+    FMT_FP16: 2.0,
+    FMT_BF16: 2.0,
+    FMT_INT16: 2.0,
+    FMT_FP8: 1.0,
+    FMT_INT8: 1.0,
+    FMT_BFP8: 1.0,
+    FMT_BFP8A: 1.0,
+    FMT_BFP4: 0.5,
+    FMT_BFP4A: 0.5,
+    FMT_BFP2: 0.25,
+    FMT_BFP2A: 0.25,
+}
+
+BFP_MANTISSA_BITS = {
+    FMT_BFP8: 7,
+    FMT_BFP4: 3,
+    FMT_BFP2: 1,
+    FMT_BFP8A: 7,
+    FMT_BFP4A: 3,
+    FMT_BFP2A: 1,
+}
+
+
+def datum_size_bytes(fmt: int) -> float:
+    """Return bytes per datum for a DataFormat; BFP4/BFP2 are fractional."""
+    return DATUM_SIZE_BYTES.get(fmt, 1.0)
+
 
 # ---------------------------------------------------------------------------
 # Internal bit-manipulation helpers
@@ -424,6 +464,30 @@ def _float_to_bf16_bits_flush(f: float) -> int:
     if exp8 == 0:
         return (bits >> 16) & 0x8000  # flush: keep only sign
     return (bits >> 16) & 0xFFFF
+
+
+def bfp_to_bf16(datum: int, exp: int) -> int:
+    """Expand one BFP-B datum byte plus 8-bit shared exponent to BF16 bits."""
+    sign = (datum >> 7) & 1
+    mag = ((datum & 0x7F) << 1) & 0xFF
+    if mag == 0:
+        return 0xFF80 if sign else 0
+    lz = _clz8(mag)
+    mag = (mag << lz) & 0xFF
+    exp = (exp - lz) & 0xFF
+    return (sign << 15) | (exp << 7) | (mag & 0x7E)
+
+
+def bfpa_to_fp16(datum: int, exp: int) -> int:
+    """Expand one BFP-A datum byte plus 5-bit shared exponent to FP16 bits."""
+    sign = (datum >> 7) & 1
+    mag = ((datum & 0x7F) << 1) & 0xFF
+    if mag == 0:
+        return 0xFC00 if sign else 0
+    lz = _clz8(mag)
+    mag = (mag << lz) & 0xFF
+    exp = (exp - lz) & 0x1F
+    return (sign << 15) | (exp << 10) | ((mag & 0x7E) << 3)
 
 
 def pack_bfp8(floats: list, stochastic: bool = False,

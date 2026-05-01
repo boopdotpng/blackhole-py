@@ -13,8 +13,6 @@ kernel, NCRISC runs the writer/mcast/output kernel, and TRISC0/1/2 run the
 raw matmul compute kernels.
 """
 
-import json
-import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -47,11 +45,9 @@ from emu.device import Device
 from emu.memory import (
   DATA_BUFFER_SPACE_BASE,
   KERNEL_CONFIG_BASE,
-  LDM_BASE,
-  LDM_END_8K,
 )
 from emu.runtime import RuntimeLayout
-from emu.kernel_runner import CbConfig, TileLaunch, run_kernel_launch
+from emu.kernel_runner import CbConfig, TileLaunch, load_kernel_stem, run_kernel_launch
 from examples.matmul_peak import (
   MatmulPlan,
   _from_device_bytes,
@@ -71,14 +67,6 @@ MAX_STEPS = MAX_RUN_STEPS * 20
 
 BRISC_SEM_L1_BASE_LDM = 0x478
 NCRISC_SEM_L1_BASE_LDM = 0x45C
-
-TEXT_BASES = {
-  "brisc": 0x00009600,
-  "ncrisc": 0x0000A600,
-  "trisc0": 0x0000B600,
-  "trisc1": 0x0000C600,
-  "trisc2": 0x0000D600,
-}
 
 MATMUL_PLAN = MatmulPlan(
   rows=(2,),
@@ -148,59 +136,6 @@ def bf16_words(data: bytes, count: int = 16) -> str:
 
 def bf16_values(data: bytes, shape: tuple[int, int], count: int = 16) -> list[float]:
   return _from_device_bytes(data, shape).astype(np.float32).reshape(-1)[:count].tolist()
-
-
-def raw_symbol_addr(stem: str,
-                    symbols: tuple[str, ...] = ("_Z11kernel_mainv",
-                                                "kernel_main()")) -> int:
-  text = (DISASMS / f"{stem}.dis").read_text()
-  for symbol in symbols:
-    m = re.search(rf"^([0-9a-f]+) <{re.escape(symbol)}>:", text, re.MULTILINE)
-    if m:
-      return int(m.group(1), 16)
-  raise ValueError(f"{stem}: missing symbols {', '.join(symbols)}")
-
-
-def load_rx_segment_relocated(tile, role: str, stem: str) -> tuple[int, int]:
-  manifest = json.loads((DISASMS / f"{stem}.seg.json").read_text())
-  rx = [seg for seg in manifest["segments"] if "X" in seg["perms"]]
-  if len(rx) != 1:
-    raise AssertionError(f"{stem}: expected one RX segment, got {rx}")
-  seg = rx[0]
-  data = (DISASMS / seg["bin"]).read_bytes()
-  memsz = int(seg["memsz"])
-  if len(data) < memsz:
-    data += b"\0" * (memsz - len(data))
-  base = TEXT_BASES[role]
-  tile.l1.load(base, data)
-  return base, int(seg["vaddr"], 16)
-
-
-def load_rw_segments_to_ldm(tile, role: str, stem: str):
-  manifest = json.loads((DISASMS / f"{stem}.seg.json").read_text())
-  core = getattr(tile, role)
-  for seg in manifest["segments"]:
-    if "X" in seg["perms"]:
-      continue
-    data = (DISASMS / seg["bin"]).read_bytes()
-    memsz = int(seg["memsz"])
-    if len(data) < memsz:
-      data += b"\0" * (memsz - len(data))
-    vaddr = int(seg["vaddr"], 16)
-    if LDM_BASE <= vaddr <= LDM_END_8K and memsz:
-      core.ldm.load(vaddr - LDM_BASE, data)
-
-
-def load_dataflow_kernel(tile, role: str, stem: str) -> int:
-  text_base, text_vaddr = load_rx_segment_relocated(tile, role, stem)
-  load_rw_segments_to_ldm(tile, role, stem)
-  return text_base + (raw_symbol_addr(stem) - text_vaddr)
-
-
-def load_compute_kernel(tile, role: str, stem: str) -> int:
-  text_base, text_vaddr = load_rx_segment_relocated(tile, role, stem)
-  load_rw_segments_to_ldm(tile, role, stem)
-  return text_base + (raw_symbol_addr(stem, ("run_kernel()",)) - text_vaddr)
 
 
 def cb_layout(plan: MatmulPlan) -> dict[int, tuple[int, int, int]]:
@@ -362,14 +297,11 @@ def run_matmul_peak():
   for tile in tiles:
     core_xy = (tile.x, tile.y)
     kernels = role_kernels(core_xy, plan)
-    brisc_main = load_dataflow_kernel(tile, "brisc", kernels.brisc_stem)
-    ncrisc_main = load_dataflow_kernel(tile, "ncrisc", kernels.ncrisc_stem)
-    trisc0_main = load_compute_kernel(
-      tile, "trisc0", "matmul_compute_trisc0.kernel")
-    trisc1_main = load_compute_kernel(
-      tile, "trisc1", "matmul_compute_trisc1.kernel")
-    trisc2_main = load_compute_kernel(
-      tile, "trisc2", "matmul_compute_trisc2.kernel")
+    brisc_main = load_kernel_stem(tile, "brisc", kernels.brisc_stem)
+    ncrisc_main = load_kernel_stem(tile, "ncrisc", kernels.ncrisc_stem)
+    trisc0_main = load_kernel_stem(tile, "trisc0", "matmul_compute_trisc0.kernel")
+    trisc1_main = load_kernel_stem(tile, "trisc1", "matmul_compute_trisc1.kernel")
+    trisc2_main = load_kernel_stem(tile, "trisc2", "matmul_compute_trisc2.kernel")
     reader_args, writer_args = args_by_core[core_xy]
     launches.append(
       TileLaunch(

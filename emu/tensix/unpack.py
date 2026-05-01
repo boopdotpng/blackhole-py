@@ -15,6 +15,11 @@ import math as _math
 
 from ..memory import Memory
 from . import formats as _fmt
+from .formats import (
+  FMT_BF16, FMT_BFP, FMT_BFP2, FMT_BFP2A, FMT_BFP4, FMT_BFP4A, FMT_BFP8,
+  FMT_BFP8A, FMT_FP16, FMT_FP32, FMT_FP8, FMT_INT16, FMT_INT32, FMT_INT8,
+  FMT_TF32,
+)
 from .cfg_layout import (
   unpack_tile_descriptor as _unpack_tile_descriptor,
   unpack_config          as _unpack_config,
@@ -27,27 +32,6 @@ from .cfg_layout import (
 
 M32 = 0xFFFFFFFF
 
-
-# ---------------------------------------------------------------------------
-# DataFormat constants (matching formats.py naming and values)
-# ---------------------------------------------------------------------------
-
-FMT_FP32   = _fmt.FMT_FLOAT32
-FMT_FP16   = _fmt.FMT_FLOAT16
-FMT_BF16   = _fmt.FMT_FLOAT16B
-FMT_TF32   = _fmt.FMT_TF32
-FMT_BFP8   = _fmt.FMT_BFP8
-FMT_BFP8A  = _fmt.FMT_BFP8A
-FMT_BFP4   = _fmt.FMT_BFP4
-FMT_BFP4A  = _fmt.FMT_BFP4A
-FMT_BFP2   = _fmt.FMT_BFP2
-FMT_BFP2A  = _fmt.FMT_BFP2A
-FMT_FP8    = _fmt.FMT_FP8
-FMT_INT8   = _fmt.FMT_INT8
-FMT_INT16  = _fmt.FMT_INT16
-FMT_INT32  = _fmt.FMT_INT32
-
-_IS_BFP = {FMT_BFP8, FMT_BFP4, FMT_BFP2, FMT_BFP8A, FMT_BFP4A, FMT_BFP2A}
 
 # Address register constants (from pack-unpack-registers.md §2.6)
 # Used by test helpers that set up config directly.
@@ -131,65 +115,6 @@ def _write_dst_fp32(x: int) -> int:
 
 
 # ---------------------------------------------------------------------------
-# BFP expansion helpers (inline, not in formats.py public surface as needed)
-# ---------------------------------------------------------------------------
-
-def _count_leading_zeros_8bit(v: int) -> int:
-  """Count leading zeros in an 8-bit value (0..8)."""
-  v &= 0xFF
-  if v == 0: return 8
-  n = 0
-  if not (v & 0xF0): n += 4; v <<= 4
-  if not (v & 0xC0): n += 2; v <<= 2
-  if not (v & 0x80): n += 1
-  return n
-
-
-def _bfp8_to_bf16(datum: int, exp: int) -> int:
-  """BFP8 (format B: 8-bit shared exp) mantissa + shared exp → BF16 16-bit.
-
-  Algorithm per spec §3.4 BFP8ToBF16:
-    Sign = datum >> 7
-    Mag  = (datum & 0x7f) << 1  → 8-bit with implicit leading bit
-    if Mag == 0: return ±0
-    LZ = clz8(Mag)
-    Mag = (Mag << LZ) & 0xFF
-    Exp -= LZ
-    result = (Sign<<15) | (Exp<<7) | (Mag & 0x7E)
-  """
-  sign = (datum >> 7) & 1
-  mag  = ((datum & 0x7F) << 1) & 0xFF
-  if mag == 0:
-    return 0xFF80 if sign else 0
-  lz = _count_leading_zeros_8bit(mag)
-  mag = (mag << lz) & 0xFF
-  exp = (exp - lz) & 0xFF
-  return (sign << 15) | (exp << 7) | (mag & 0x7E)
-
-
-def _bfp8a_to_fp16(datum: int, exp: int) -> int:
-  """BFP8a (format A: 5-bit shared exp) mantissa + shared exp → FP16 16-bit.
-
-  Algorithm per spec §3.4 BFP8aToFP16:
-    Sign = datum >> 7
-    Mag  = (datum & 0x7f) << 1
-    if Mag == 0: return ±0
-    LZ = clz8(Mag)
-    Mag = (Mag << LZ) & 0xFF
-    Exp = (Exp - LZ) & 0x1F   ← 5-bit exponent
-    result_fp16 = (Sign<<15) | (Exp<<10) | ((Mag & 0x7E) << 3)
-  """
-  sign = (datum >> 7) & 1
-  mag  = ((datum & 0x7F) << 1) & 0xFF
-  if mag == 0:
-    return 0xFC00 if sign else 0
-  lz = _count_leading_zeros_8bit(mag)
-  mag = (mag << lz) & 0xFF
-  exp = (exp - lz) & 0x1F   # 5-bit exponent
-  return (sign << 15) | (exp << 10) | ((mag & 0x7E) << 3)
-
-
-# ---------------------------------------------------------------------------
 # Format conversion — full datum transform per spec §3.2
 # ---------------------------------------------------------------------------
 
@@ -267,24 +192,24 @@ def _format_conversion(in_fmt: int, out_fmt: int, datum: int, exp: int,
 
   else:
     # ---- BFP expansion ----
-    if in_fmt in _IS_BFP:
+    if in_fmt in FMT_BFP:
       if in_fmt == FMT_BFP8:
-        datum = _bfp8_to_bf16(datum, exp)
+        datum = _fmt.bfp_to_bf16(datum, exp)
         in_fmt = FMT_BF16
       elif in_fmt == FMT_BFP4:
-        datum = _bfp8_to_bf16((datum << 4) & 0xFF, exp)
+        datum = _fmt.bfp_to_bf16((datum << 4) & 0xFF, exp)
         in_fmt = FMT_BF16
       elif in_fmt == FMT_BFP2:
-        datum = _bfp8_to_bf16((datum << 6) & 0xFF, exp)
+        datum = _fmt.bfp_to_bf16((datum << 6) & 0xFF, exp)
         in_fmt = FMT_BF16
       elif in_fmt == FMT_BFP8A:
-        datum = _bfp8a_to_fp16(datum, exp)
+        datum = _fmt.bfpa_to_fp16(datum, exp)
         in_fmt = FMT_FP16
       elif in_fmt == FMT_BFP4A:
-        datum = _bfp8a_to_fp16((datum << 4) & 0xFF, exp)
+        datum = _fmt.bfpa_to_fp16((datum << 4) & 0xFF, exp)
         in_fmt = FMT_FP16
       elif in_fmt == FMT_BFP2A:
-        datum = _bfp8a_to_fp16((datum << 6) & 0xFF, exp)
+        datum = _fmt.bfpa_to_fp16((datum << 6) & 0xFF, exp)
         in_fmt = FMT_FP16
     elif in_fmt == FMT_FP8:
       # FP8 E5M2: shift left 8 to align in FP16 position
@@ -368,21 +293,6 @@ class UnpackerState:
     self.src_row = [0, 0, 0]
     # Context counter per thread (used in MultiContextMode)
     self.context_counter = [0, 0, 0]
-
-
-# ---------------------------------------------------------------------------
-# Datum size helpers
-# ---------------------------------------------------------------------------
-
-def _datum_size_bytes(fmt: int) -> float:
-  """Return bytes per datum for the given DataFormat (may be fractional for BFP4/BFP2)."""
-  if fmt in (FMT_FP32, FMT_INT32, FMT_TF32): return 4.0
-  if fmt in (FMT_FP16, FMT_BF16, FMT_INT16): return 2.0
-  if fmt in (FMT_FP8, FMT_INT8):             return 1.0
-  if fmt in (FMT_BFP8, FMT_BFP8A):           return 1.0
-  if fmt in (FMT_BFP4, FMT_BFP4A):           return 0.5
-  if fmt in (FMT_BFP2, FMT_BFP2A):           return 0.25
-  return 1.0
 
 
 def _read_datum_from_l1(mem: Memory, addr: int, fmt: int) -> int:
@@ -522,7 +432,7 @@ def _execute_unpacr(d, thread_id: int, coproc) -> None:
   in_fmt  = td.in_data_format
   out_fmt = uc.out_data_format
 
-  dsz = _datum_size_bytes(in_fmt)
+  dsz = _fmt.datum_size_bytes(in_fmt)
 
   # ------------------------------------------------------------------
   # Phase 2: Input address computation
@@ -557,7 +467,7 @@ def _execute_unpacr(d, thread_id: int, coproc) -> None:
   # For BFP: exponent section
   in_addr_exp = None
   force_shared = bool(uc.force_shared_exp)
-  if in_fmt in _IS_BFP and not force_shared:
+  if in_fmt in FMT_BFP and not force_shared:
     in_addr_exp = in_addr
     # BFP8/BFP8A always have exp section; BFP4/BFP2 only if not NoBFPExpSection.
     # TODO(spec-ambiguity): NoBFPExpSection bit location not found in cfg_layout
@@ -634,7 +544,7 @@ def _execute_unpacr(d, thread_id: int, coproc) -> None:
       dest_cfg['dest_cntx3_address'],
     )
     out_base = dest_addrs[which_ctx] if which_ctx < len(dest_addrs) else 0
-    out_base *= int(_datum_size_bytes(out_fmt))
+    out_base *= int(_fmt.datum_size_bytes(out_fmt))
     y_stride = addr_ctrl.unp0_ch0_y_stride
     z_stride = addr_ctrl.unp0_ch0_z_stride
     w_stride = addr_ctrl.unp0_ch0_w_stride
@@ -646,7 +556,7 @@ def _execute_unpacr(d, thread_id: int, coproc) -> None:
       dest_cfg['dest_cntx3_address'],
     )
     out_base = dest_addrs[which_ctx] if which_ctx < len(dest_addrs) else 0
-    out_base *= int(_datum_size_bytes(out_fmt))
+    out_base *= int(_fmt.datum_size_bytes(out_fmt))
     y_stride = addr_ctrl.unp1_ch0_y_stride
     z_stride = addr_ctrl.unp1_ch0_z_stride
     w_stride = addr_ctrl.unp1_ch0_w_stride
@@ -749,7 +659,7 @@ def _execute_unpacr(d, thread_id: int, coproc) -> None:
 
     # Read BFP shared exponent
     exp_bits = 0
-    if in_fmt in _IS_BFP:
+    if in_fmt in FMT_BFP:
       if force_shared:
         exp_bits = _read_forced_shared_exp(cfg_unit, cfg_state_id, which_unp)
       elif exp_frac is not None:

@@ -38,29 +38,17 @@ M32 = 0xFFFFFFFF
 from . import cfg_layout as _cfg_layout
 
 
-# ---------------------------------------------------------------------------
-# DataFormat encoding constants (mirroring formats.py for local readability)
-# ---------------------------------------------------------------------------
-
-_FMT_FP32   = _fmt.FMT_FLOAT32    # 0
-_FMT_FP16   = _fmt.FMT_FLOAT16    # 1
-_FMT_BFP8A  = _fmt.FMT_BFP8A     # 2
-_FMT_BFP4A  = _fmt.FMT_BFP4A     # 3
-_FMT_TF32   = _fmt.FMT_TF32      # 4
-_FMT_BF16   = _fmt.FMT_FLOAT16B  # 5
-_FMT_BFP8   = _fmt.FMT_BFP8      # 6
-_FMT_BFP4   = _fmt.FMT_BFP4      # 7
-_FMT_INT32  = _fmt.FMT_INT32     # 8
-_FMT_INT16  = _fmt.FMT_INT16     # 9
-_FMT_FP8    = _fmt.FMT_FP8      # 10
-_FMT_BFP2A  = _fmt.FMT_BFP2A   # 11
-_FMT_INT8   = _fmt.FMT_INT8    # 14
-_FMT_BFP2   = _fmt.FMT_BFP2   # 15
-
-_FMT_IS_BFP_B = {_FMT_BFP8, _FMT_BFP4, _FMT_BFP2}
-_FMT_IS_BFP_A = {_FMT_BFP8A, _FMT_BFP4A, _FMT_BFP2A}
-_FMT_IS_BFP   = _FMT_IS_BFP_B | _FMT_IS_BFP_A
-_FMT_IS_INT   = {_FMT_INT32, _FMT_INT16, _FMT_INT8}
+(_FMT_FP32, _FMT_FP16, _FMT_BFP8A, _FMT_BFP4A, _FMT_TF32, _FMT_BF16,
+ _FMT_BFP8, _FMT_BFP4, _FMT_INT32, _FMT_INT16, _FMT_FP8, _FMT_BFP2A,
+ _FMT_INT8, _FMT_BFP2) = (
+  _fmt.FMT_FP32, _fmt.FMT_FP16, _fmt.FMT_BFP8A, _fmt.FMT_BFP4A,
+  _fmt.FMT_TF32, _fmt.FMT_BF16, _fmt.FMT_BFP8, _fmt.FMT_BFP4,
+  _fmt.FMT_INT32, _fmt.FMT_INT16, _fmt.FMT_FP8, _fmt.FMT_BFP2A,
+  _fmt.FMT_INT8, _fmt.FMT_BFP2,
+)
+_FMT_IS_BFP_B = _fmt.FMT_BFP_B
+_FMT_IS_BFP_A = _fmt.FMT_BFP_A
+_FMT_IS_BFP = _fmt.FMT_BFP
 
 # Per-packer ADDR32 base offsets for the 4 config words
 _PACKER_CFG_BASE = [68, 96, 116, 144]
@@ -597,10 +585,7 @@ class Packer:
     elif out_fmt in _FMT_IS_BFP:
       # BFP: process in groups of 16, route to formats.py block-pack functions
       is_a = out_fmt in _FMT_IS_BFP_A
-      mantissa_bits = {
-          _FMT_BFP8: 7, _FMT_BFP4: 3, _FMT_BFP2: 1,
-          _FMT_BFP8A: 7, _FMT_BFP4A: 3, _FMT_BFP2A: 1,
-      }[out_fmt]
+      mantissa_bits = _fmt.BFP_MANTISSA_BITS[out_fmt]
 
       for g_start in range(0, len(datums), 16):
         group = list(datums[g_start:g_start + 16])

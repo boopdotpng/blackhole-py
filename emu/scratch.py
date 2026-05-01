@@ -17,7 +17,6 @@ the scratch workload is fixed at 10 tensor tiles.
 """
 
 import json
-import struct
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -50,6 +49,8 @@ from emu.memory import (
   TRISC2_RESET_PC,
   TRISC_RESET_PC_OVR,
 )
+from emu.tensix.formats import bf16_to_fp32 as f32_from_bf16
+from emu.tensix.formats import fp32_to_bf16 as bf16
 
 
 SOFT_RESET_RELEASE_ALL = 0
@@ -112,14 +113,6 @@ RAW_DF_NCRISC_DRAM_OFFSET_LDM = 0x240
 
 def align_up(value: int, align: int = DRAM_ALIGNMENT) -> int:
   return (value + align - 1) // align * align
-
-
-def bf16(x: float) -> int:
-  return struct.unpack("<I", struct.pack("<f", x))[0] >> 16
-
-
-def f32_from_bf16(x: int) -> float:
-  return struct.unpack("<f", struct.pack("<I", (x & 0xFFFF) << 16))[0]
 
 
 @dataclass
@@ -567,4 +560,3 @@ def scratch_boot(tile, kernel_bases: dict[str, int],
 
   tile.brisc.mem.write32(SOFT_RESET_0, SOFT_RESET_RELEASE_ALL)
   return tile
-

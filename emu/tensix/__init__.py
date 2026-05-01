@@ -33,7 +33,6 @@ from .unpack import (
   # Format conversion functions and register-layout helpers (used by tests)
   _write_src_tf32, _write_src_bf16, _write_src_fp16,
   _write_dst_bf16, _write_dst_fp32, _write_dst_fp16,
-  _bfp8_to_bf16, _bfp8a_to_fp16,
   _format_conversion,
   # DataFormat constants (re-exported for test convenience)
   FMT_FP32, FMT_FP16, FMT_BF16, FMT_TF32,
@@ -42,6 +41,8 @@ from .unpack import (
   # Config address constants (used by test setup helpers)
   _THCON_SEC_BASE, _UNP_ADDR_CTRL_XY, _UNP_ADDR_CTRL_ZW, _UNP_BASE_REG_1,
 )
+from .formats import bfp_to_bf16 as _bfp8_to_bf16
+from .formats import bfpa_to_fp16 as _bfp8a_to_fp16
 from .pack import Packer
 from .mover import Mover
 from .tdma import TDMA
