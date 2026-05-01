@@ -108,15 +108,22 @@ class _OffsetView:
     if isinstance(key, slice):
       start = (key.start or 0) + self._b
       stop = (key.stop if key.stop is not None else self._s) + self._b
-      return self._m[start:stop:key.step]
-    return self._m[self._b + key]
+      n = max(0, stop - start)
+      data = struct.unpack_from(f"<{n}s", self._m, start)[0]
+      return data if key.step in (None, 1) else data[::key.step]
+    return struct.unpack_from("B", self._m, self._b + key)[0]
   def __setitem__(self, key, value):
     if isinstance(key, slice):
+      if key.step not in (None, 1):
+        raise ValueError("MMIO slice assignment does not support steps")
       start = (key.start or 0) + self._b
       stop = (key.stop if key.stop is not None else self._s) + self._b
-      self._m[start:stop:key.step] = value
+      data = bytes(value)
+      if stop - start != len(data):
+        raise IndexError("mmap slice assignment is wrong size")
+      struct.pack_into(f"<{len(data)}s", self._m, start, data)
     else:
-      self._m[self._b + key] = value
+      struct.pack_into("B", self._m, self._b + key, value)
 
 class NocOrdering(Enum):
   RELAXED = 0
@@ -143,15 +150,15 @@ class TLBWindow:
 
   def read32(self, offset: int) -> int:
     o = self._base + offset
-    return int.from_bytes(self._bar[o : o + 4], "little")
+    return self._bar.cast("I")[o // 4]
 
   def write32(self, offset: int, value: int):
     o = self._base + offset
-    self._bar[o : o + 4] = value.to_bytes(4, "little")
+    self._bar.cast("I")[o // 4] = value & 0xFFFFFFFF
 
   def write(self, addr: int, data: bytes):
     o = self._base + addr
-    self._bar[o : o + len(data)] = data
+    struct.pack_into(f"<{len(data)}s", self._bar, o, data)
 
   def close(self):
     self.dev.free_tlb(self._id)

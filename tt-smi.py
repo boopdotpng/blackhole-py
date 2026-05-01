@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 import argparse
 import curses
-import struct
 import sys
 import time
 
@@ -11,12 +10,6 @@ from pcie import PCIDevice, TLB_2M_SIZE
 
 # ---- ARC telemetry ----
 
-def _read_arc_noc32(dev: PCIDevice, addr: int, tlb: int) -> int:
-  base = addr & ~(TLB_2M_SIZE - 1)
-  dev.configure_tlb(tlb, base, *dev.ARC_TILE, *dev.ARC_TILE, ordering=1)
-  bar, bar_off = dev.tlb_window(tlb)
-  return struct.unpack_from("<I", bar, bar_off + (addr - base))[0]
-
 def telemetry_layout(dev: PCIDevice) -> dict:
   table_base = dev.read_arc_apb32(dev.SCRATCH_RAM_13)
   data_base = dev.read_arc_apb32(dev.SCRATCH_RAM_12)
@@ -24,11 +17,11 @@ def telemetry_layout(dev: PCIDevice) -> dict:
     raise RuntimeError(f"invalid ARC telemetry pointers table=0x{table_base:x} data=0x{data_base:x}")
   tlb = dev.alloc_tlb(TLB_2M_SIZE)
   try:
-    version = _read_arc_noc32(dev, table_base, tlb)
-    entry_count = _read_arc_noc32(dev, table_base + 4, tlb)
+    version = dev._read_arc_noc32(table_base, tlb)
+    entry_count = dev._read_arc_noc32(table_base + 4, tlb)
     tag_to_offset = {}
     for i in range(entry_count):
-      tag_offset = _read_arc_noc32(dev, table_base + 8 + i * 4, tlb)
+      tag_offset = dev._read_arc_noc32(table_base + 8 + i * 4, tlb)
       tag_to_offset[tag_offset & 0xFFFF] = (tag_offset >> 16) & 0xFFFF
   finally:
     dev.free_tlb(tlb)
@@ -36,11 +29,7 @@ def telemetry_layout(dev: PCIDevice) -> dict:
           "entry_count": entry_count, "tag_to_offset": tag_to_offset}
 
 def read_telemetry_entry(dev: PCIDevice, layout: dict, tag: int) -> int:
-  tlb = dev.alloc_tlb(TLB_2M_SIZE)
-  try:
-    return _read_arc_noc32(dev, layout["data_base"] + 4 * layout["tag_to_offset"][tag], tlb)
-  finally:
-    dev.free_tlb(tlb)
+  return dev._read_arc_noc32(layout["data_base"] + 4 * layout["tag_to_offset"][tag])
 
 
 TAG_NAME_TO_ID = {
@@ -66,9 +55,9 @@ TAG_NAME_TO_ID = {
 TAG_ID_TO_NAME = {tag: name for name, tag in TAG_NAME_TO_ID.items()}
 
 BOARD_UPI_TO_NAME = {
-  0x36: "p100", 0x43: "p100", 0x40: "p150", 0x41: "p150", 0x42: "p150",
-  0x44: "p300", 0x45: "p300", 0x46: "p300", 0x18: "n150", 0x14: "n300",
-  0x35: "ubb", 0x47: "ubb_blackhole",
+  0x36: "p100", 0x43: "p100a", 0x40: "p150a", 0x41: "p150b", 0x42: "p150c",
+  0x44: "p300b", 0x45: "p300a", 0x46: "p300c", 0x18: "n150", 0x14: "n300",
+  0x35: "galaxy-wormhole", 0x47: "galaxy-blackhole",
 }
 
 # Metric definitions: (tag_name, label, unit, decode)
@@ -97,12 +86,15 @@ METRICS = {
 def _fmt_metric(tag_name: str, raw: int) -> str:
   label, unit, decode = METRICS[tag_name]
   if decode == "s16.16":
-    raw &= 0xFFFFFFFF
-    val = (raw - (1 << 32) if raw & 0x80000000 else raw) / 65536.0
-    return f"{val:.2f}{unit}"
+    return f"{_s16_16(raw):.2f}{unit}"
   if decode == "hex":
     return f"0x{raw:08x}"
   return f"{raw & 0xFFFFFFFF}{unit}"
+
+
+def _s16_16(raw: int) -> float:
+  raw &= 0xFFFFFFFF
+  return (raw - (1 << 32) if raw & 0x80000000 else raw) / 65536.0
 
 
 def _read_tag(dev: PCIDevice, layout: dict, tag_name: str) -> int | None:
@@ -117,18 +109,12 @@ def _read_tag(dev: PCIDevice, layout: dict, tag_name: str) -> int | None:
 # arg0 = fan percent (0..100), or 0xFFFFFFFF to revert to the automatic fan curve.
 MSG_FORCE_FAN_SPEED = 0xAC
 FAN_AUTO_SENTINEL = 0xFFFFFFFF
+TUI_REFRESH_S = 0.5
 
 def _set_fan(dev: PCIDevice, pct: int | None) -> None:
   """pct=None → automatic fan curve; 0..100 → forced percent."""
   arg = FAN_AUTO_SENTINEL if pct is None else max(0, min(100, int(pct)))
   dev.arc_msg(MSG_FORCE_FAN_SPEED, arg0=arg)
-
-
-def _read_metric_row(dev: PCIDevice, layout: dict, tag_name: str) -> tuple[str, str] | None:
-  raw = _read_tag(dev, layout, tag_name)
-  if raw is None:
-    return None
-  return (METRICS[tag_name][0], _fmt_metric(tag_name, raw))
 
 
 def _format_ranges(values: list[int]) -> str:
@@ -145,31 +131,49 @@ def _format_ranges(values: list[int]) -> str:
   return ",".join(ranges)
 
 
+def _read_sysfs(path: str) -> str | None:
+  try:
+    with open(path) as f:
+      return f.read().strip()
+  except OSError:
+    return None
+
+
+def _pcie_link(dev: PCIDevice) -> str | None:
+  speed = _read_sysfs(f"{dev.sysfs}/current_link_speed")
+  width = _read_sysfs(f"{dev.sysfs}/current_link_width")
+  if not speed:
+    return None
+  return f"{speed} x{width}" if width else speed
+
+
 def _device_snapshot(dev: PCIDevice) -> dict:
   layout = telemetry_layout(dev)
-  bid_hi, bid_lo = _read_tag(dev, layout, "BOARD_ID_HIGH"), _read_tag(dev, layout, "BOARD_ID_LOW")
+  tag_cache: dict[str, int | None] = {}
+  def tag(name: str) -> int | None:
+    if name not in tag_cache:
+      tag_cache[name] = _read_tag(dev, layout, name)
+    return tag_cache[name]
+
+  bid_hi, bid_lo = tag("BOARD_ID_HIGH"), tag("BOARD_ID_LOW")
   board_id = ((bid_hi & 0xFFFFFFFF) << 32 | (bid_lo & 0xFFFFFFFF)) if bid_hi is not None and bid_lo is not None else None
-  tensix_en = _read_tag(dev, layout, "ENABLED_TENSIX_COL")
-  gddr_en = _read_tag(dev, layout, "ENABLED_GDDR")
+  tensix_en, gddr_en = tag("ENABLED_TENSIX_COL"), tag("ENABLED_GDDR")
   core_count = None if tensix_en is None else active_tensix_core_count(tensix_en & Arc.DEFAULT_TENSIX_ENABLED)
   board_name = BOARD_UPI_TO_NAME.get((board_id >> 36) & 0xFFFFF) if board_id is not None else None
 
   harv_banks = [b for b in range(Dram.BANK_COUNT) if gddr_en and not (gddr_en >> b) & 1] if gddr_en else []
 
   # Denominators for progress bars
-  shutdown = _read_tag(dev, layout, "THM_LIMIT_SHUTDOWN")
-  throttle = _read_tag(dev, layout, "THM_LIMIT_THROTTLE")
+  shutdown = tag("THM_LIMIT_SHUTDOWN")
+  throttle = tag("THM_LIMIT_THROTTLE")
   temp_ref = shutdown or throttle or 100
-  power_ref = _read_tag(dev, layout, "BOARD_POWER_LIMIT") or _read_tag(dev, layout, "TDP_LIMIT_MAX")
-  tdc_ref = _read_tag(dev, layout, "TDC_LIMIT_MAX")
-  aiclk_ref = _read_tag(dev, layout, "AICLK_LIMIT_MAX")
+  power_ref = tag("TDP_LIMIT_MAX")
+  tdc_ref = tag("TDC_LIMIT_MAX")
+  aiclk_ref = tag("AICLK_LIMIT_MAX")
 
   def asic_temp_value() -> float | None:
-    r = _read_tag(dev, layout, "ASIC_TEMPERATURE")
-    if r is None:
-      return None
-    r &= 0xFFFFFFFF
-    return (r - (1 << 32) if r & 0x80000000 else r) / 65536.0
+    raw = tag("ASIC_TEMPERATURE")
+    return None if raw is None else _s16_16(raw)
 
   def frac(value: float | int | None, ref: float | int | None) -> float | None:
     if value is None or not ref:
@@ -178,37 +182,33 @@ def _device_snapshot(dev: PCIDevice) -> dict:
 
   fracs = {
     "ASIC_TEMPERATURE": frac(asic_temp_value(), temp_ref),
-    "MAX_GDDR_TEMP":    frac(_read_tag(dev, layout, "MAX_GDDR_TEMP"), temp_ref),
-    "FAN_SPEED":        frac(_read_tag(dev, layout, "FAN_SPEED"), 100),
-    "TDP":              frac(_read_tag(dev, layout, "TDP"), power_ref),
-    "TDC":              frac(_read_tag(dev, layout, "TDC"), tdc_ref),
-    "AICLK":            frac(_read_tag(dev, layout, "AICLK"), aiclk_ref),
+    "MAX_GDDR_TEMP":    frac(tag("MAX_GDDR_TEMP"), temp_ref),
+    "FAN_SPEED":        frac(tag("FAN_SPEED"), 100),
+    "TDP":              frac(tag("TDP"), power_ref),
+    "TDC":              frac(tag("TDC"), tdc_ref),
+    "AICLK":            frac(tag("AICLK"), aiclk_ref),
   }
 
   def rows(names):
-    out = []
-    for name in names:
-      r = _read_metric_row(dev, layout, name)
-      if r is None:
-        continue
-      out.append((r[0], r[1], fracs.get(name)))
-    return out
+    return [(METRICS[n][0], _fmt_metric(n, raw), fracs.get(n))
+            for n in names if (raw := tag(n)) is not None]
 
   left = rows(["ASIC_TEMPERATURE", "MAX_GDDR_TEMP", "FAN_SPEED", "FAN_RPM", "TDP", "TDC", "VCORE", "BOARD_POWER_LIMIT"])
 
   right: list[tuple[str, str, float | None]] = []
   if board_name: right.append(("Board", board_name, None))
+  if link := _pcie_link(dev): right.append(("PCIe link", link, None))
   if core_count is not None: right.append(("Tensix cores", str(core_count), None))
   if harv_banks: right.append(("Harvested DRAM", _format_ranges(harv_banks), None))
-  right += rows(["AICLK", "AXICLK", "ARCCLK", "AICLK_LIMIT_MAX", "GDDR_SPEED"])
+  right += rows(["AICLK", "AXICLK", "ARCCLK", "AICLK_LIMIT_MAX"])
 
   return {"layout": layout, "summary_left": left, "summary_right": right,
           "board_name": board_name,
-          "heartbeat": _read_tag(dev, layout, "TIMER_HEARTBEAT")}
+          "heartbeat": tag("TIMER_HEARTBEAT")}
 
 
 def show_device(index: int):
-  with PCIDevice(index=index) as dev:
+  with PCIDevice(index=index, use_vfio=False) as dev:
     snap = _device_snapshot(dev)
     layout = snap["layout"]
     print(f"◆ Device {index}: {dev.bdf}")
@@ -234,7 +234,7 @@ def reset_device(index: int):
   print(f"Resetting device {index} ({bdf}) ...")
   PCIDevice.reset_index(index)
   # Post-reset init: open device to send ARC A0 + watchdog (same as tt-kmd's init_hardware)
-  with PCIDevice(index=index) as dev:
+  with PCIDevice(index=index, use_vfio=False) as dev:
     print(f"  ARC ready, telemetry base 0x{dev.read_arc_apb32(dev.SCRATCH_RAM_12):08x}")
   print(f"Reset complete.")
 
@@ -243,9 +243,8 @@ def parse_args() -> argparse.Namespace:
   parser = argparse.ArgumentParser(description="Standalone Blackhole telemetry and reset tool")
   parser.add_argument("-r", "--reset", type=int, metavar="DEVICE", nargs="?", const=0, default=None,
                       help="reset a Blackhole device (default: device 0)")
-  parser.add_argument("-d", "--device", type=int, metavar="DEVICE", help="show telemetry for one device only")
-  parser.add_argument("--plain", action="store_true", help="disable the curses UI and print a one-shot snapshot")
-  parser.add_argument("--interval", type=float, default=0.5, help="refresh interval in seconds for the TUI")
+  parser.add_argument("--snapshot", type=int, metavar="DEVICE", nargs="?", const=-1, default=None,
+                      help="print a one-shot snapshot, optionally for one device")
   return parser.parse_args()
 
 
@@ -255,26 +254,20 @@ def parse_args() -> argparse.Namespace:
 Segment = tuple[str, int]
 Line = list[Segment]
 
-_BAR_BLOCKS = " ▏▎▍▌▋▊▉"  # empty + seven partial eighths; full block is handled separately
-
 def _bar(frac: float, width: int) -> str:
   if width <= 0:
     return ""
   frac = max(0.0, min(1.0, frac))
-  eighths = int(round(frac * width * 8))
-  full, rem = divmod(eighths, 8)
-  out = "█" * min(full, width)
-  if full < width:
-    out += _BAR_BLOCKS[rem]
-    out = out.ljust(width)
-  return out[:width]
+  cells = max(1, (width + 1) // 2)
+  filled = round(frac * cells)
+  return " ".join("▮" if i < filled else "·" for i in range(cells))[:width].ljust(width)
 
 
-def _render_tui(stdscr, devices: list[tuple[int, PCIDevice]], interval_s: float):
+def _render_tui(stdscr, devices: list[tuple[int, PCIDevice]]):
   curses.curs_set(0)
   curses.use_default_colors()
   stdscr.nodelay(True)
-  stdscr.timeout(max(50, int(interval_s * 1000)))
+  stdscr.timeout(int(TUI_REFRESH_S * 1000))
 
   C_CYAN, C_GREEN, C_YELLOW, C_MAGENTA, C_RED = 1, 2, 3, 4, 5
   if curses.has_colors():
@@ -296,9 +289,16 @@ def _render_tui(stdscr, devices: list[tuple[int, PCIDevice]], interval_s: float)
   # The SMC doesn't expose fan_speed_forced, so we can't know on startup — an
   # entry is absent (=unknown) until the user sets it within this session.
   fan_mode: dict[int, str] = {}  # cur_dev index -> "auto"
+  top_text = ""        # transient message shown on the header line
+  top_attr = 0
+  top_expire = 0
   status_text = ""     # transient message shown on the bottom line
   status_attr = 0
   status_expire = 0    # tick after which status_text is cleared
+
+  def flash_top(msg: str, attr: int = 0, ticks: int = 6) -> None:
+    nonlocal top_text, top_attr, top_expire
+    top_text, top_attr, top_expire = msg, attr, tick + ticks
 
   def flash(msg: str, attr: int = 0, ticks: int = 8) -> None:
     nonlocal status_text, status_attr, status_expire
@@ -311,18 +311,13 @@ def _render_tui(stdscr, devices: list[tuple[int, PCIDevice]], interval_s: float)
     n = seg_len(segs)
     if n < width:
       return [*segs, (" " * (width - n), 0)]
-    if n > width:
-      out: Line = []
-      remaining = width
-      for t, a in segs:
-        if remaining <= 0:
-          break
-        if len(t) <= remaining:
-          out.append((t, a)); remaining -= len(t)
-        else:
-          out.append((t[:remaining], a)); remaining = 0
-      return out
-    return list(segs)
+    out: Line = []
+    for text, attr in segs:
+      if width <= 0:
+        break
+      out.append((text[:width], attr))
+      width -= len(text)
+    return out
 
   def box_top(width: int, title: str) -> Line:
     inner = max(4, width - 2)
@@ -365,16 +360,12 @@ def _render_tui(stdscr, devices: list[tuple[int, PCIDevice]], interval_s: float)
     lines.append(box_bot(width))
     return lines
 
-  def merge_cols(left: list[Line], right: list[Line], total_w: int) -> list[Line]:
-    lw = max(20, (total_w - 1) // 2)
-    rw = max(20, total_w - 1 - lw)
-    h = max(len(left), len(right))
-    out: list[Line] = []
-    for i in range(h):
-      l = left[i] if i < len(left) else []
-      r = right[i] if i < len(right) else []
-      out.append(pad_segs(l, lw) + [(" ", 0)] + pad_segs(r, rw))
-    return out
+  def merge_cols(left: list[Line], right: list[Line]) -> list[Line]:
+    lw = max((seg_len(line) for line in left), default=0)
+    rw = max((seg_len(line) for line in right), default=0)
+    return [pad_segs(left[i] if i < len(left) else [], lw) + [(" ", 0)] +
+            pad_segs(right[i] if i < len(right) else [], rw)
+            for i in range(max(len(left), len(right)))]
 
   def render_card(index: int, dev: PCIDevice, width: int, dev_slot: int = 0,
                   editing: bool = False, target: int = 50) -> list[Line]:
@@ -398,20 +389,17 @@ def _render_tui(stdscr, devices: list[tuple[int, PCIDevice]], interval_s: float)
       ]
     # "◀ 1/3 ▶" pagination indicator only shows when we actually have siblings.
     pager = f"  ◀ {cur_dev + 1}/{len(devices)} ▶" if len(devices) > 1 else ""
-    title_text = f"  Device {index}"
-    if snap.get("board_name"):
-      title_text += f"  {snap['board_name']}"
-    title_text += f"  {dev.bdf}{pager}  "
+    title_text = f"  Blackhole {index}  {snap['board_name'] or ''}  {dev.bdf}{pager}  "
     header: Line = [
       (title_text[:cw - 2], cpair(C_CYAN) | curses.A_BOLD),
       (dot, dot_attr),
     ]
     lines: list[Line] = [header]
-    col_w = cw // 2
+    col_w = (cw - 1) // 2
     pad = max(len(snap["summary_left"]), len(snap["summary_right"]))
     left_box = kv_box(col_w, "Thermals / Power", snap["summary_left"], pad, show_bars=True)
-    right_box = kv_box(cw - col_w, "Clocks / Status", snap["summary_right"], pad)
-    lines.extend(merge_cols(left_box, right_box, cw))
+    right_box = kv_box(cw - 1 - col_w, "Clocks / Status", snap["summary_right"], pad)
+    lines.extend(merge_cols(left_box, right_box))
     return lines
 
   while True:
@@ -420,14 +408,18 @@ def _render_tui(stdscr, devices: list[tuple[int, PCIDevice]], interval_s: float)
 
     if status_expire and tick >= status_expire:
       status_text, status_expire = "", 0
+    if top_expire and tick >= top_expire:
+      top_text, top_expire = "", 0
 
-    hints = "    q:quit  f:fan" + ("  ←/→:device" if len(devices) > 1 else "")
+    hints = "    q quit  ·  f fan" + ("  ·  ←/→ device" if len(devices) > 1 else "")
     lines: list[Line] = []
     header_line: Line = [
-      (" tt-smi  ", cpair(C_CYAN) | curses.A_BOLD),
+      (" tt-smi <3  ", cpair(C_MAGENTA) | curses.A_BOLD),
       (time.strftime("%Y-%m-%d %H:%M:%S"), 0),
       (hints, curses.A_DIM),
     ]
+    if top_text:
+      header_line += [("  ·  ", curses.A_DIM), (top_text, top_attr)]
     lines.append(header_line)
     lines.append([("", 0)])
 
@@ -438,8 +430,8 @@ def _render_tui(stdscr, devices: list[tuple[int, PCIDevice]], interval_s: float)
       lines.extend(render_card(index, dev, card_w, dev_slot=cur_dev,
                                editing=fan_edit, target=fan_edit_target))
     except Exception as exc:
-      lines.append([(f"  Device {index}: {dev.bdf}", curses.A_BOLD)])
-      lines.append([(f"  error: {exc}", cpair(C_RED) | curses.A_BOLD)])
+      lines.append([(f"  Blackhole {index}: {dev.bdf}", curses.A_BOLD)])
+      lines.append([(f"  could not read telemetry: {exc}", cpair(C_RED) | curses.A_BOLD)])
     lines.append([("", 0)])
 
     visible = max(1, height - 1)
@@ -462,8 +454,8 @@ def _render_tui(stdscr, devices: list[tuple[int, PCIDevice]], interval_s: float)
     # Bottom line: fan-edit prompt > transient status > scroll indicator.
     if fan_edit:
       tgt_idx = devices[cur_dev][0]
-      footer = (f" FAN EDIT  dev {tgt_idx}  target: {fan_edit_target:>3}%   "
-                f"←/→ ±5   S-←/S-→ ±1   a:auto   Enter:apply   Esc:cancel ")
+      footer = (f" fan nook  dev {tgt_idx}  target {fan_edit_target:>3}%   "
+                f"←/→ ±5   S-←/S-→ ±1   a auto   Enter apply   Esc cancel ")
       try:
         stdscr.addnstr(height - 1, 0, footer[:width - 1], width - 1,
                        cpair(C_CYAN) | curses.A_BOLD | curses.A_REVERSE)
@@ -489,13 +481,13 @@ def _render_tui(stdscr, devices: list[tuple[int, PCIDevice]], interval_s: float)
       # In edit mode, arrow keys retarget to fan adjustment (no scrolling).
       if key == 27:  # Esc
         fan_edit = False
-        flash("fan edit cancelled", curses.A_DIM)
+        flash("fan edit tucked away", curses.A_DIM)
       elif key in (10, 13, curses.KEY_ENTER):
         _, tgt = devices[cur_dev]
         try:
           _set_fan(tgt, fan_edit_target)
           fan_mode.pop(cur_dev, None)  # no longer auto; we don't label "forced"
-          flash(f"fan → {fan_edit_target}%  [dev {devices[cur_dev][0]}]",
+          flash(f"fan set to {fan_edit_target}%  [dev {devices[cur_dev][0]}]",
                 cpair(C_GREEN) | curses.A_BOLD)
         except Exception as exc:
           flash(f"fan set failed: {exc}", cpair(C_RED) | curses.A_BOLD, ticks=16)
@@ -505,7 +497,7 @@ def _render_tui(stdscr, devices: list[tuple[int, PCIDevice]], interval_s: float)
         try:
           _set_fan(tgt, None)
           fan_mode[cur_dev] = "auto"
-          flash(f"fan → auto  [dev {devices[cur_dev][0]}]", cpair(C_GREEN) | curses.A_BOLD)
+          flash(f"fan back on auto  [dev {devices[cur_dev][0]}]", cpair(C_GREEN) | curses.A_BOLD)
         except Exception as exc:
           flash(f"fan auto failed: {exc}", cpair(C_RED) | curses.A_BOLD, ticks=16)
         fan_edit = False
@@ -531,11 +523,16 @@ def _render_tui(stdscr, devices: list[tuple[int, PCIDevice]], interval_s: float)
         pass
       fan_edit = True
       continue
-    # Left/Right flip between devices; when there's only one, they're no-ops.
-    if key == curses.KEY_LEFT and len(devices) > 1:
-      cur_dev = (cur_dev - 1) % len(devices); scroll = 0; continue
-    if key == curses.KEY_RIGHT and len(devices) > 1:
-      cur_dev = (cur_dev + 1) % len(devices); scroll = 0; continue
+    if key in (curses.KEY_LEFT, curses.KEY_RIGHT):
+      if len(devices) <= 1:
+        flash_top("only one Tenstorrent device", cpair(C_YELLOW) | curses.A_BOLD)
+      elif key == curses.KEY_LEFT and cur_dev > 0:
+        cur_dev -= 1; scroll = 0
+      elif key == curses.KEY_RIGHT and cur_dev < len(devices) - 1:
+        cur_dev += 1; scroll = 0
+      else:
+        flash_top("end of device list", cpair(C_YELLOW) | curses.A_BOLD)
+      continue
     scroll_map = {curses.KEY_UP: -1, curses.KEY_DOWN: 1,
                   curses.KEY_PPAGE: -visible, curses.KEY_NPAGE: visible}
     if key in scroll_map:
@@ -544,13 +541,13 @@ def _render_tui(stdscr, devices: list[tuple[int, PCIDevice]], interval_s: float)
     elif key == curses.KEY_END: scroll = max_scroll
 
 
-def _run_tui(indices: list[int], interval_s: float):
+def _run_tui(indices: list[int]):
   devices = []
   try:
     for index in indices:
-      devices.append((index, PCIDevice(index=index)))
+      devices.append((index, PCIDevice(index=index, use_vfio=False)))
     try:
-      curses.wrapper(_render_tui, devices, interval_s)
+      curses.wrapper(_render_tui, devices)
     except KeyboardInterrupt:
       pass
   finally:
@@ -569,13 +566,13 @@ def main():
   if not devices:
     raise SystemExit("no Blackhole PCIe devices found")
 
-  indices = [args.device] if args.device is not None else list(range(len(devices)))
-  if args.plain or not sys.stdout.isatty() or not sys.stdin.isatty():
+  indices = [args.snapshot] if isinstance(args.snapshot, int) and args.snapshot >= 0 else list(range(len(devices)))
+  if args.snapshot is not None or not sys.stdout.isatty() or not sys.stdin.isatty():
     for i, index in enumerate(indices):
       if i: print()
       show_device(index)
   else:
-    _run_tui(indices, args.interval)
+    _run_tui(indices)
 
 
 if __name__ == "__main__":

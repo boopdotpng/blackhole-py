@@ -63,6 +63,9 @@ IATU_CTRL2_ENABLE      = 1 << 31
 NOC_PCIE_OFFSET = 4 << 58
 
 _libc = ctypes.CDLL(ctypes.util.find_library("c"), use_errno=True)
+_libc.mmap.restype = ctypes.c_void_p
+_libc.mmap.argtypes = [ctypes.c_void_p, ctypes.c_size_t, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_long]
+_libc.munmap.argtypes = [ctypes.c_void_p, ctypes.c_size_t]
 
 def _mlock(addr: int, size: int):
   if _libc.mlock(ctypes.c_void_p(addr), ctypes.c_size_t(size)) != 0:
@@ -123,10 +126,37 @@ def _unbind_vfio_pci(sysfs_path: str):
       f.write(bdf)
 
 
-def _mmap_bar(sysfs, resource, size):
-  fd = os.open(f"{sysfs}/{resource}", os.O_RDWR | os.O_SYNC)
-  mm = mmap.mmap(fd, size, flags=mmap.MAP_SHARED, prot=mmap.PROT_READ | mmap.PROT_WRITE)
-  return fd, mm
+class _MappedBar:
+  def __init__(self, sysfs: str, resource: str, size: int):
+    self.fd = os.open(f"{sysfs}/{resource}", os.O_RDWR | os.O_SYNC)
+    self.addr = _libc.mmap(None, ctypes.c_size_t(size), mmap.PROT_READ | mmap.PROT_WRITE,
+                           mmap.MAP_SHARED, self.fd, 0)
+    if self.addr == ctypes.c_void_p(-1).value:
+      err = ctypes.get_errno()
+      os.close(self.fd)
+      self.fd = -1
+      raise OSError(err, f"mmap {resource} failed")
+    self.size = size
+    self.view = memoryview((ctypes.c_ubyte * size).from_address(self.addr)).cast("B")
+    self.u32 = self.view.cast("I")
+    self.closed = False
+
+  def close(self):
+    if self.closed:
+      return
+    self.closed = True
+    try:
+      self.u32.release()
+      self.view.release()
+    finally:
+      if _libc.munmap(ctypes.c_void_p(self.addr), ctypes.c_size_t(self.size)) != 0:
+        raise OSError(ctypes.get_errno(), "munmap failed")
+      if self.fd >= 0:
+        os.close(self.fd)
+        self.fd = -1
+
+  def __enter__(self): return self
+  def __exit__(self, *_): self.close()
 
 
 def _config_path(sysfs_path: str) -> str:
@@ -237,7 +267,7 @@ def _secondary_bus_reset(sysfs_path: str):
 
 
 class PCIDevice:
-  def __init__(self, index: int = 0):
+  def __init__(self, index: int = 0, use_vfio: bool = True):
     devices = _find_bh_devices()
     if index >= len(devices):
       raise RuntimeError(f"Blackhole device {index} not found (found {len(devices)})")
@@ -254,11 +284,14 @@ class PCIDevice:
     self._bar2_fd = -1
     self._bar4_fd = -1
     self._bar4_wc_fd = -1
+    self._bar_mmaps: list[_MappedBar] = []
     self.bar0 = None
     self.bar0_wc = None
     self.bar2 = None
     self.bar4 = None
     self.bar4_wc = None
+    self.bar0_u32 = None
+    self.bar2_u32 = None
 
     # Enable PCI device, memory space, bus mastering
     driver_link = f"{self.sysfs}/driver"
@@ -278,27 +311,31 @@ class PCIDevice:
       os.close(fd)
 
     # Bind to vfio-pci only for fast dispatch DMA/sysmem pinning.
-    self._has_vfio = not _USE_USB
+    self._has_vfio = use_vfio and not _USE_USB
     if self._has_vfio:
       self._setup_vfio()
       self._unbind_vfio_on_close = True
 
     # mmap BARs
-    self._bar0_fd, self.bar0 = _mmap_bar(self.sysfs, "resource0", BAR0_SIZE)
-    self._bar0_wc_fd, self.bar0_wc = _mmap_bar(self.sysfs, "resource0_wc", BAR0_SIZE)
-    self._bar2_fd, self.bar2 = _mmap_bar(self.sysfs, "resource2", 1 << 20)
+    bar = _MappedBar(self.sysfs, "resource0", BAR0_SIZE)
+    self._bar_mmaps.append(bar); self._bar0_fd, self.bar0, self.bar0_u32 = bar.fd, bar.view, bar.u32
+    bar = _MappedBar(self.sysfs, "resource0_wc", BAR0_SIZE)
+    self._bar_mmaps.append(bar); self._bar0_wc_fd, self.bar0_wc = bar.fd, bar.view
+    bar = _MappedBar(self.sysfs, "resource2", 1 << 20)
+    self._bar_mmaps.append(bar); self._bar2_fd, self.bar2, self.bar2_u32 = bar.fd, bar.view, bar.u32
 
-    self._bar4_fd = os.open(f"{self.sysfs}/resource4", os.O_RDWR | os.O_SYNC)
-    bar4_size = os.fstat(self._bar4_fd).st_size
+    bar4_probe_fd = os.open(f"{self.sysfs}/resource4", os.O_RDWR | os.O_SYNC)
+    bar4_size = os.fstat(bar4_probe_fd).st_size
+    os.close(bar4_probe_fd)
     self._bar4_4g_count = min(TLB_4G_COUNT, bar4_size // TLB_4G_SIZE) if bar4_size else 0
     if bar4_size:
-      self.bar4 = mmap.mmap(self._bar4_fd, bar4_size, flags=mmap.MAP_SHARED,
-                            prot=mmap.PROT_READ | mmap.PROT_WRITE)
-      self._bar4_wc_fd = os.open(f"{self.sysfs}/resource4_wc", os.O_RDWR | os.O_SYNC)
-      self.bar4_wc = mmap.mmap(self._bar4_wc_fd, bar4_size, flags=mmap.MAP_SHARED,
-                               prot=mmap.PROT_READ | mmap.PROT_WRITE)
+      bar = _MappedBar(self.sysfs, "resource4", bar4_size)
+      self._bar_mmaps.append(bar); self._bar4_fd, self.bar4 = bar.fd, bar.view
+      bar = _MappedBar(self.sysfs, "resource4_wc", bar4_size)
+      self._bar_mmaps.append(bar); self._bar4_wc_fd, self.bar4_wc = bar.fd, bar.view
     else:
       self.bar4 = self.bar4_wc = None
+      self._bar4_fd = -1
       self._bar4_wc_fd = -1
 
     # TLB allocation bitmaps
@@ -394,15 +431,11 @@ class PCIDevice:
     # Read PCIe NoC X from BAR0 for post-reset MPS restore via DBI
     pcie_noc_x = None
     try:
-      bar0_fd = os.open(f"{sysfs}/resource0", os.O_RDWR | os.O_SYNC)
-      bar0 = mmap.mmap(bar0_fd, BAR0_SIZE, flags=mmap.MAP_SHARED,
-                       prot=mmap.PROT_READ | mmap.PROT_WRITE)
-      noc_id_off = _NOC2AXI_CFG_START + _NOC_ID_OFFSET
-      x = struct.unpack_from("<I", bar0, noc_id_off)[0] & 0x3F
-      if x in (2, 11):
-        pcie_noc_x = x
-      bar0.close()
-      os.close(bar0_fd)
+      with _MappedBar(sysfs, "resource0", BAR0_SIZE) as bar0:
+        noc_id_off = _NOC2AXI_CFG_START + _NOC_ID_OFFSET
+        x = struct.unpack_from("<I", bar0.view, noc_id_off)[0] & 0x3F
+        if x in (2, 11):
+          pcie_noc_x = x
     except Exception:
       pass  # will skip DBI restore
 
@@ -440,37 +473,35 @@ class PCIDevice:
     # --- Step 5: Restore MPS via NoC write to PCIe DBI register ---
     if pcie_noc_x is not None and saved_devctl is not None:
       try:
-        bar0_fd = os.open(f"{sysfs}/resource0", os.O_RDWR | os.O_SYNC)
-        bar0 = mmap.mmap(bar0_fd, BAR0_SIZE, flags=mmap.MAP_SHARED,
-                         prot=mmap.PROT_READ | mmap.PROT_WRITE)
-        # Use the last 2M TLB (index 201) to reach PCIE_DBI_ADDR + 0x78
-        dbi_addr = _PCIE_DBI_ADDR + _DBI_DEVCTL
-        tlb_idx = TLB_2M_COUNT - 1
-        local_offset = dbi_addr >> 21
-        y = 0
-        val = (local_offset
-               | (pcie_noc_x << 43) | (y << 49)
-               | (pcie_noc_x << 55) | (y << 61)
-               | (0 << 67)           # noc=0
-               | (0 << 69)           # mcast=0
-               | (1 << 70)           # ordering=strict
-               | (0 << 72)           # linked=0
-               | (0 << 73))          # static_vc=0
-        reg_off = TLB_REGS_START + tlb_idx * TLB_REG_SIZE
-        bar0[reg_off:reg_off+4]     = struct.pack("<I", val & 0xFFFFFFFF)
-        bar0[reg_off+4:reg_off+8]   = struct.pack("<I", (val >> 32) & 0xFFFFFFFF)
-        bar0[reg_off+8:reg_off+12]  = struct.pack("<I", (val >> 64) & 0xFFFFFFFF)
+        with _MappedBar(sysfs, "resource0", BAR0_SIZE) as bar0_map:
+          bar0 = bar0_map.view
+          # Use the last 2M TLB (index 201) to reach PCIE_DBI_ADDR + 0x78
+          dbi_addr = _PCIE_DBI_ADDR + _DBI_DEVCTL
+          tlb_idx = TLB_2M_COUNT - 1
+          local_offset = dbi_addr >> 21
+          y = 0
+          val = (local_offset
+                 | (pcie_noc_x << 43) | (y << 49)
+                 | (pcie_noc_x << 55) | (y << 61)
+                 | (0 << 67)           # noc=0
+                 | (0 << 69)           # mcast=0
+                 | (1 << 70)           # ordering=strict
+                 | (0 << 72)           # linked=0
+                 | (0 << 73))          # static_vc=0
+          reg_off = TLB_REGS_START + tlb_idx * TLB_REG_SIZE
+          bar0_u32 = bar0_map.u32
+          reg_word = reg_off // 4
+          bar0_u32[reg_word] = val & 0xFFFFFFFF
+          bar0_u32[reg_word + 1] = (val >> 32) & 0xFFFFFFFF
+          bar0_u32[reg_word + 2] = (val >> 64) & 0xFFFFFFFF
 
-        bar_off = tlb_idx * TLB_2M_SIZE + (int(dbi_addr) & (TLB_2M_SIZE - 1))
-        cur = struct.unpack_from("<I", bar0, bar_off)[0]
-        # Clear MPS field (bits 7:5) and restore saved value
-        mps_bits = (saved_devctl >> 5) & 0x7
-        cur = (cur & ~(0x7 << 5)) | (mps_bits << 5)
-        cur = (cur & ~PCI_EXP_DEVCTL_READRQ) | PCI_EXP_DEVCTL_READRQ_4096
-        struct.pack_into("<I", bar0, bar_off, cur)
-
-        bar0.close()
-        os.close(bar0_fd)
+          bar_off = tlb_idx * TLB_2M_SIZE + (int(dbi_addr) & (TLB_2M_SIZE - 1))
+          cur = struct.unpack_from("<I", bar0, bar_off)[0]
+          # Clear MPS field (bits 7:5) and restore saved value
+          mps_bits = (saved_devctl >> 5) & 0x7
+          cur = (cur & ~(0x7 << 5)) | (mps_bits << 5)
+          cur = (cur & ~PCI_EXP_DEVCTL_READRQ) | PCI_EXP_DEVCTL_READRQ_4096
+          bar0_u32[bar_off // 4] = cur
       except Exception as e:
         print(f"  warning: could not restore MPS via DBI: {e}")
 
@@ -589,15 +620,16 @@ class PCIDevice:
              | (noc      << 56) | (mcast    << 58)
              | (ordering << 59) | (linked   << 61) | (static_vc << 62))
 
-    self.bar0[reg_offset:reg_offset+4] = struct.pack("<I", val & 0xFFFFFFFF)
-    self.bar0[reg_offset+4:reg_offset+8] = struct.pack("<I", (val >> 32) & 0xFFFFFFFF)
-    self.bar0[reg_offset+8:reg_offset+12] = struct.pack("<I", (val >> 64) & 0xFFFFFFFF)
+    reg_word = reg_offset // 4
+    self.bar0_u32[reg_word] = val & 0xFFFFFFFF
+    self.bar0_u32[reg_word + 1] = (val >> 32) & 0xFFFFFFFF
+    self.bar0_u32[reg_word + 2] = (val >> 64) & 0xFFFFFFFF
 
     if index < 32:
       stride_off = TLB_REGS_START + TLB_STRIDE_OFFSET + index * 4
-      self.bar0[stride_off:stride_off+4] = b'\x00\x00\x00\x00'
+      self.bar0_u32[stride_off // 4] = 0
 
-  def tlb_window(self, index: int, wc: bool = False) -> tuple[mmap.mmap, int]:
+  def tlb_window(self, index: int, wc: bool = False) -> tuple[memoryview, int]:
     if index < TLB_2M_COUNT:
       return (self.bar0_wc if wc else self.bar0), index * TLB_2M_SIZE
     bar = self.bar4_wc if wc else self.bar4
@@ -665,7 +697,7 @@ class PCIDevice:
   def _configure_iatu(self, region: int, base: int, limit: int, target: int):
     def w32(reg, val):
       off = self._iatu_reg(region, reg)
-      self.bar2[off:off+4] = struct.pack("<I", val & 0xFFFFFFFF)
+      self.bar2_u32[off // 4] = val & 0xFFFFFFFF
     w32(IATU_LOWER_BASE,   base & 0xFFFFFFFF)
     w32(IATU_UPPER_BASE,   base >> 32)
     w32(IATU_LOWER_TARGET, target & 0xFFFFFFFF)
@@ -678,7 +710,7 @@ class PCIDevice:
 
   def _disable_iatu(self, region: int):
     off = self._iatu_reg(region, IATU_CTRL2)
-    self.bar2[off:off+4] = b'\x00\x00\x00\x00'
+    self.bar2_u32[off // 4] = 0
 
   # ---- ARC messaging ----
 
@@ -771,19 +803,13 @@ class PCIDevice:
     if self._closed:
       return
     self._closed = True
-    for bar_name in ["bar0", "bar0_wc", "bar2", "bar4", "bar4_wc"]:
-      bar = getattr(self, bar_name, None)
-      if bar is None:
-        continue
-      try: bar.close()
+    for bar_map in reversed(self._bar_mmaps):
+      try: bar_map.close()
       except Exception: pass
+    for bar_name in ["bar0", "bar0_wc", "bar2", "bar4", "bar4_wc", "bar0_u32", "bar2_u32"]:
       setattr(self, bar_name, None)
+    self._bar_mmaps.clear()
     for fd_name in ["_bar0_fd", "_bar0_wc_fd", "_bar2_fd", "_bar4_fd", "_bar4_wc_fd"]:
-      fd = getattr(self, fd_name, -1)
-      if fd < 0:
-        continue
-      try: os.close(fd)
-      except Exception: pass
       setattr(self, fd_name, -1)
     if self._has_vfio:
       for fd_name in ["_vfio_device", "_vfio_group", "_vfio_container"]:
