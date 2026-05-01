@@ -3,12 +3,8 @@ import argparse
 import curses
 import sys
 import time
-
 from hw import Arc, Dram, active_tensix_core_count
 from pcie import PCIDevice, TLB_2M_SIZE
-
-
-# ---- ARC telemetry ----
 
 def telemetry_layout(dev: PCIDevice) -> dict:
   table_base = dev.read_arc_apb32(dev.SCRATCH_RAM_13)
@@ -30,7 +26,6 @@ def telemetry_layout(dev: PCIDevice) -> dict:
 
 def read_telemetry_entry(dev: PCIDevice, layout: dict, tag: int) -> int:
   return dev._read_arc_noc32(layout["data_base"] + 4 * layout["tag_to_offset"][tag])
-
 
 TAG_NAME_TO_ID = {
   "BOARD_ID_HIGH": 1, "BOARD_ID_LOW": 2, "ASIC_ID": 3, "HARVESTING_STATE": 4,
@@ -82,7 +77,6 @@ METRICS = {
   "MAX_GDDR_TEMP":       ("GDDR temp",          " C",    None),
 }
 
-
 def _fmt_metric(tag_name: str, raw: int) -> str:
   label, unit, decode = METRICS[tag_name]
   if decode == "s16.16":
@@ -91,18 +85,15 @@ def _fmt_metric(tag_name: str, raw: int) -> str:
     return f"0x{raw:08x}"
   return f"{raw & 0xFFFFFFFF}{unit}"
 
-
 def _s16_16(raw: int) -> float:
   raw &= 0xFFFFFFFF
   return (raw - (1 << 32) if raw & 0x80000000 else raw) / 65536.0
-
 
 def _read_tag(dev: PCIDevice, layout: dict, tag_name: str) -> int | None:
   tag = TAG_NAME_TO_ID[tag_name]
   if tag not in layout["tag_to_offset"]:
     return None
   return read_telemetry_entry(dev, layout, tag)
-
 
 # ---- Fan control ----
 # TT_SMC_MSG_FORCE_FAN_SPEED (see tt-zephyr-platforms/include/tenstorrent/smc_msg.h).
@@ -115,7 +106,6 @@ def _set_fan(dev: PCIDevice, pct: int | None) -> None:
   """pct=None → automatic fan curve; 0..100 → forced percent."""
   arg = FAN_AUTO_SENTINEL if pct is None else max(0, min(100, int(pct)))
   dev.arc_msg(MSG_FORCE_FAN_SPEED, arg0=arg)
-
 
 def _format_ranges(values: list[int]) -> str:
   if not values:
@@ -130,7 +120,6 @@ def _format_ranges(values: list[int]) -> str:
   ranges.append(f"{start}-{prev}" if start != prev else str(start))
   return ",".join(ranges)
 
-
 def _read_sysfs(path: str) -> str | None:
   try:
     with open(path) as f:
@@ -138,14 +127,12 @@ def _read_sysfs(path: str) -> str | None:
   except OSError:
     return None
 
-
 def _pcie_link(dev: PCIDevice) -> str | None:
   speed = _read_sysfs(f"{dev.sysfs}/current_link_speed")
   width = _read_sysfs(f"{dev.sysfs}/current_link_width")
   if not speed:
     return None
   return f"{speed} x{width}" if width else speed
-
 
 def _device_snapshot(dev: PCIDevice) -> dict:
   layout = telemetry_layout(dev)
@@ -206,7 +193,6 @@ def _device_snapshot(dev: PCIDevice) -> dict:
           "board_name": board_name,
           "heartbeat": tag("TIMER_HEARTBEAT")}
 
-
 def show_device(index: int):
   with PCIDevice(index=index, use_vfio=False) as dev:
     snap = _device_snapshot(dev)
@@ -225,7 +211,6 @@ def show_device(index: int):
       name = TAG_ID_TO_NAME.get(tag, f"TAG_{tag}")
       print(f"    {tag:>2} {name:<24} 0x{read_telemetry_entry(dev, layout, tag):08x}")
 
-
 def reset_device(index: int):
   devices = PCIDevice.list_devices()
   if index >= len(devices):
@@ -238,7 +223,6 @@ def reset_device(index: int):
     print(f"  ARC ready, telemetry base 0x{dev.read_arc_apb32(dev.SCRATCH_RAM_12):08x}")
   print(f"Reset complete.")
 
-
 def parse_args() -> argparse.Namespace:
   parser = argparse.ArgumentParser(description="Standalone Blackhole telemetry and reset tool")
   parser.add_argument("-r", "--reset", type=int, metavar="DEVICE", nargs="?", const=0, default=None,
@@ -246,9 +230,6 @@ def parse_args() -> argparse.Namespace:
   parser.add_argument("--snapshot", type=int, metavar="DEVICE", nargs="?", const=-1, default=None,
                       help="print a one-shot snapshot, optionally for one device")
   return parser.parse_args()
-
-
-# ---- TUI ----
 
 # Row type: (label, value, frac_or_None). A line is a list of (text, attr) segments.
 Segment = tuple[str, int]
@@ -261,7 +242,6 @@ def _bar(frac: float, width: int) -> str:
   cells = max(1, (width + 1) // 2)
   filled = round(frac * cells)
   return " ".join("▮" if i < filled else "·" for i in range(cells))[:width].ljust(width)
-
 
 def _render_tui(stdscr, devices: list[tuple[int, PCIDevice]]):
   curses.curs_set(0)
@@ -540,7 +520,6 @@ def _render_tui(stdscr, devices: list[tuple[int, PCIDevice]]):
     elif key == curses.KEY_HOME: scroll = 0
     elif key == curses.KEY_END: scroll = max_scroll
 
-
 def _run_tui(indices: list[int]):
   devices = []
   try:
@@ -554,7 +533,6 @@ def _run_tui(indices: list[int]):
     for _, dev in devices:
       try: dev.close()
       except Exception: pass
-
 
 def main():
   args = parse_args()
@@ -573,7 +551,6 @@ def main():
       show_device(index)
   else:
     _run_tui(indices)
-
 
 if __name__ == "__main__":
   try:
