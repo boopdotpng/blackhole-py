@@ -14,7 +14,6 @@ raw matmul compute kernels.
 """
 
 import json
-import os
 import re
 import sys
 from dataclasses import dataclass
@@ -22,11 +21,11 @@ from pathlib import Path
 
 import numpy as np
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
   sys.path.insert(0, str(ROOT))
 
-from add1_emu import (
+from emu.scratch import (
   DISASMS,
   HARVESTED_DRAM_BANKS,
   MAX_RUN_STEPS,
@@ -39,25 +38,20 @@ from add1_emu import (
   ScratchDramAllocator,
   ScratchDramBuffer,
   dram_noc_xy,
-  pack_words,
-  scratch_boot,
-  tensix_idle,
-  timeout_diagnostics,
   write_dm_cb_interface_to_ldm,
   write_trisc_cb_interface,
 )
 from dram import tilize, untilize
 from dispatch import Dtype, MathFidelity
-from emu.device import Device, RUN_MSG_DONE, RUN_MSG_GO
+from emu.device import Device
 from emu.memory import (
   DATA_BUFFER_SPACE_BASE,
-  GO_MESSAGES,
   KERNEL_CONFIG_BASE,
   LDM_BASE,
   LDM_END_8K,
-  SUBORDINATE_SYNC,
 )
 from emu.runtime import RuntimeLayout
+from emu.kernel_runner import CbConfig, TileLaunch, run_kernel_launch
 from examples.matmul_peak import (
   MatmulPlan,
   _from_device_bytes,
@@ -73,7 +67,7 @@ TILE_BYTES = Dtype.Float16_b.tile_size
 M, K, N = 256, 128, 256
 TENSIX_X = (1, 2)
 TENSIX_Y = (2, 3)
-MAX_STEPS = int(os.environ.get("MAX_STEPS", str(MAX_RUN_STEPS * 20)))
+MAX_STEPS = MAX_RUN_STEPS * 20
 
 BRISC_SEM_L1_BASE_LDM = 0x478
 NCRISC_SEM_L1_BASE_LDM = 0x45C
@@ -227,16 +221,6 @@ def cb_layout(plan: MatmulPlan) -> dict[int, tuple[int, int, int]]:
   return out
 
 
-def write_cb_config(tile, layout: ScratchLayout,
-                    cb_map: dict[int, tuple[int, int, int]]):
-  for idx, (addr, size, pages) in cb_map.items():
-    base = layout.cb_config_addr(idx)
-    tile.l1.write32(base + 0, addr)
-    tile.l1.write32(base + 4, size)
-    tile.l1.write32(base + 8, pages)
-    tile.l1.write32(base + 12, TILE_BYTES)
-
-
 def seed_dataflow_ldm(dev: Device, tile,
                       cb_layout: dict[int, tuple[int, int, int]],
                       layout: ScratchLayout):
@@ -280,14 +264,6 @@ def patch_compute_ldm(tile, cb_layout: dict[int, tuple[int, int, int]],
     for cb in (0, 1, 16, 24):
       addr, size, pages = cb_layout[cb]
       write_trisc_cb_interface(core, cb, addr, size, pages, TILE_BYTES)
-
-
-def write_rtas(tile, reader_args: list[int], writer_args: list[int],
-               layout: ScratchLayout):
-  tile.l1.load(layout.reader_rta_base, pack_words(reader_args))
-  tile.l1.load(layout.writer_rta_base, pack_words(writer_args))
-  tile.l1.load(layout.trisc_rta_base, b"\0" * 16)
-  tile.l1.load(layout.semaphore_base, b"\0" * (4 * 16))
 
 
 def make_buffers(dev: Device, plan: MatmulPlan):
@@ -360,7 +336,7 @@ def validate_output(alloc: ScratchDramAllocator, c_buf: ScratchDramBuffer,
   return c_raw
 
 
-def main():
+def run_matmul_peak():
   dev = Device(harvested_banks=HARVESTED_DRAM_BANKS,
                cores=MATMUL_PLAN.active_cores(),
                boot_firmware=False)
@@ -373,6 +349,16 @@ def main():
   scratch_layout = build_scratch_layout(args_by_core)
   dev.set_runtime_layout(scratch_layout)
 
+  cb_configs = tuple(
+    CbConfig(cb=cb, addr=addr, size=size, pages=pages, page_size=TILE_BYTES)
+    for cb, (addr, size, pages) in cb_map.items()
+  )
+
+  def configure_matmul_tile(dev: Device, tile, spec: TileLaunch):
+    seed_dataflow_ldm(dev, tile, cb_map, scratch_layout)
+    patch_compute_ldm(tile, cb_map, scratch_layout)
+
+  launches = []
   for tile in tiles:
     core_xy = (tile.x, tile.y)
     kernels = role_kernels(core_xy, plan)
@@ -384,52 +370,36 @@ def main():
       tile, "trisc1", "matmul_compute_trisc1.kernel")
     trisc2_main = load_compute_kernel(
       tile, "trisc2", "matmul_compute_trisc2.kernel")
-    scratch_boot(
-      tile,
-      kernel_bases={
-        "brisc": brisc_main,
-        "ncrisc": ncrisc_main,
-        "trisc0": trisc0_main,
-        "trisc1": trisc1_main,
-        "trisc2": trisc2_main,
-      },
-    )
     reader_args, writer_args = args_by_core[core_xy]
-    write_rtas(tile, reader_args, writer_args, scratch_layout)
-    write_cb_config(tile, scratch_layout, cb_map)
-    seed_dataflow_ldm(dev, tile, cb_map, scratch_layout)
-    patch_compute_ldm(tile, cb_map, scratch_layout)
+    launches.append(
+      TileLaunch(
+        core=core_xy,
+        kernel_bases={
+          "brisc": brisc_main,
+          "ncrisc": ncrisc_main,
+          "trisc0": trisc0_main,
+          "trisc1": trisc1_main,
+          "trisc2": trisc2_main,
+        },
+        rtas={
+          scratch_layout.reader_rta_base: reader_args,
+          scratch_layout.writer_rta_base: writer_args,
+          scratch_layout.trisc_rta_base: b"\0" * 16,
+          scratch_layout.semaphore_base: b"\0" * (4 * 16),
+        },
+        cb_configs=cb_configs,
+        after_boot=configure_matmul_tile,
+      )
+    )
 
-  for tile in tiles:
-    tile.l1.write8(GO_MESSAGES + 3, RUN_MSG_GO)
-
-  done_cycles: dict[tuple[int, int], int] = {}
-
-  def all_workers_done() -> bool:
-    cycle = dev.elapsed_cycles
-    for tile in tiles:
-      core = (tile.x, tile.y)
-      if core not in done_cycles and tile.l1.read8(GO_MESSAGES + 3) == RUN_MSG_DONE:
-        done_cycles[core] = cycle
-    return len(done_cycles) == len(tiles)
-
-  try:
-    steps = dev.run_until(all_workers_done, MAX_STEPS, tiles=tiles)
-  except TimeoutError as e:
-    print(f"RUN TIMEOUT: {e}\n{timeout_diagnostics(tiles)}",
-          file=sys.stderr, flush=True)
-    return 1
-  except Exception as e:
-    print(f"RUN ERROR: {type(e).__name__}: {e}", file=sys.stderr, flush=True)
-    return 1
-
-  for tile in tiles:
-    sync = tile.l1.read32(SUBORDINATE_SYNC)
-    if sync != 0:
-      print(
-        f"FAIL: tile ({tile.x},{tile.y}) subordinate sync is 0x{sync:08x}",
-        file=sys.stderr)
-      return 1
+  launch_result = run_kernel_launch(
+    dev,
+    launches,
+    max_steps=MAX_STEPS,
+    cb_config_base=scratch_layout.cb_config_base,
+  )
+  steps = launch_result.steps
+  done_cycles = launch_result.done_cycles
 
   try:
     c_raw = validate_output(alloc, c_buf, a_src, b_src, plan)
@@ -454,7 +424,3 @@ def main():
     f"worker DONE cycles:\n{worker_cycles}",
     flush=True)
   return 0
-
-
-if __name__ == "__main__":
-  raise SystemExit(main())

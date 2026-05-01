@@ -27,8 +27,8 @@ For fast dispatch to work, we need to pin and unpin pages so the card can copy d
 
 ### Dispatch modes (hardware path, when restored)
 
-Fast dispatch uses on-device command queues (prefetch + dispatch cores). Slow dispatch (`TT_USB=1`) drives the chip over the UT3G USB-C adapter via host TLB writes. The setcap helper for VFIO lives in `extra/`:
+Fast dispatch uses on-device command queues (prefetch + dispatch cores). Slow dispatch (`TT_USB=1`) drives the chip over the UT3G USB-C adapter via host TLB writes. The setcap helper for VFIO lives at the repo root:
 
 ```sh
-./extra/setup_python_cap.sh   # grants Python the capabilities needed for VFIO
+./setup_python_cap.sh   # grants Python the capabilities needed for VFIO
 ```

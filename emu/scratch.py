@@ -17,13 +17,12 @@ the scratch workload is fixed at 10 tensor tiles.
 """
 
 import json
-import os
 import struct
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
   sys.path.insert(0, str(ROOT))
 
@@ -173,26 +172,6 @@ def pack_words(words: list[int]) -> bytes:
   return b"".join((word & 0xFFFFFFFF).to_bytes(4, "little") for word in words)
 
 
-def write_rtas(tile, src: ScratchDramBuffer, dst: ScratchDramBuffer,
-               tile_offset: int, num_tiles: int):
-  tile.l1.load(BRISC_RTA_BASE, pack_words([src.addr, tile_offset, num_tiles]))
-  tile.l1.load(NCRISC_RTA_BASE, pack_words([dst.addr, tile_offset, num_tiles]))
-  tile.l1.load(TRISC_RTA_BASE, pack_words([num_tiles]))
-
-
-def write_cb_config(tile):
-  records = {
-    0: (DATA_BUFFER_SPACE_BASE, TILE_BYTES * 2, 2, TILE_BYTES),
-    16: (DATA_BUFFER_SPACE_BASE + TILE_BYTES * 2, TILE_BYTES * 2, 2, TILE_BYTES),
-  }
-  for idx, (addr, size, num_pages, page_size) in records.items():
-    base = CB_CONFIG_BASE + idx * CB_CONFIG_BYTES
-    tile.l1.write32(base + 0, addr)
-    tile.l1.write32(base + 4, size)
-    tile.l1.write32(base + 8, num_pages)
-    tile.l1.write32(base + 12, page_size)
-
-
 def seed_src_tensor(num_tiles: int, pattern: str = "fractional") -> bytes:
   words = []
   for i in range(num_tiles * 32 * 32):
@@ -225,58 +204,6 @@ def compare_tile_prefixes(got: bytes, exp: bytes, num_tiles: int,
         end = min(base + prefix_size, idx + 48)
         return idx, got[start:end], exp[start:end]
   return None
-
-
-def bf16_words(data: bytes, count: int = 16) -> list[int]:
-  return [
-    int.from_bytes(data[i:i + 2], "little")
-    for i in range(0, min(len(data), count * 2), 2)
-  ]
-
-
-def format_bf16_words(data: bytes, count: int = 16) -> str:
-  return " ".join(f"{word:04x}" for word in bf16_words(data, count))
-
-
-def format_bf16_floats(data: bytes, count: int = 16) -> str:
-  return " ".join(f"{f32_from_bf16(word):g}" for word in bf16_words(data, count))
-
-
-def print_success_banner(dev: Device, num_tiles: int, core_count: int,
-                         steps: int,
-                         src: bytes, got: bytes):
-  width = 68
-  tile_bytes = num_tiles * TILE_BYTES
-  harvested_text = ",".join(str(bank) for bank in HARVESTED_DRAM_BANKS) or "none"
-  src_values = format_bf16_floats(src, 8)
-  out_values = format_bf16_floats(got, 8)
-
-  def border() -> str:
-    return "+" + "-" * width + "+"
-
-  def row(text: str = "") -> str:
-    return f"| {text:<{width - 2}} |"
-
-  lines = [
-    border(),
-    row("blackhole-py add1 raw-kernel emulation: pass"),
-    border(),
-    row("kernels : brisc + ncrisc + trisc0/1/2 raw disasms"),
-    row(f"cores   : {core_count} tensix cores"),
-    row(f"noc     : dram roundtrip across {dev.dram.num_banks} active banks"),
-    row(f"harvest : dram bank(s) [{harvested_text}] excluded by bank table"),
-    row(f"tensors : {num_tiles} tiles, {tile_bytes} bytes checked"),
-    row(f"steps   : {steps} emulated device ticks"),
-    row("layout  : host tilize -> cb -> sfpu/fpu -> pack -> dram"),
-    row("verify  : full bf16 tile payload matched expected add1"),
-    border(),
-    row(f"bf16 input  first 8 : {src_values}"),
-    row(f"bf16 output first 8 : {out_values}"),
-    border(),
-    "core cycles:",
-    *(f"  {name}: {cycles}" for name, cycles in dev.core_cycles.items()),
-  ]
-  print("\n".join(lines), flush=True)
 
 
 def setup_add1_runtime(dev: Device, num_tiles: int,
@@ -505,46 +432,6 @@ def tensix_idle(tile) -> bool:
   return True
 
 
-def step_loop(dev: Device, tiles: list, done_check, max_steps: int):
-  start = dev.elapsed_cycles
-  for _ in range(max_steps):
-    dev.run(1)
-    if done_check():
-      return dev.elapsed_cycles - start
-  raise TimeoutError(
-    f"emulated device did not complete within {max_steps} cycles "
-    f"(elapsed={dev.elapsed_cycles}, sim={dev.sim_cycle})\n"
-    + timeout_diagnostics(tiles)
-  )
-
-
-def timeout_diagnostics(tiles: list) -> str:
-  lines = ["timeout diagnostics:"]
-  for tile in tiles:
-    sync = tile.l1.read32(SUBORDINATE_SYNC)
-    go = tile.l1.read8(GO_MESSAGES + 3)
-    lines.append(
-      f"  tile ({tile.x},{tile.y}): go=0x{go:02x} sync=0x{sync:08x}")
-    for name in ("brisc", "ncrisc", "trisc0", "trisc1", "trisc2"):
-      core = getattr(tile, name)
-      try:
-        word = core.mem.read32(core.pc)
-      except Exception as e:
-        word = f"{type(e).__name__}:{e}"
-      lines.append(
-        f"    {name:<6} reset={int(core.in_reset)} "
-        f"cycles={core.cycles} blocked={core.blocked_cycles} "
-        f"pc=0x{core.pc:08x} word={word if isinstance(word, str) else f'0x{word:08x}'} "
-        f"ra=0x{core.regs[1]:08x} sp=0x{core.regs[2]:08x}")
-    for thread_id, thread in enumerate(tile.tensix.threads):
-      lines.append(
-        f"    tensix t{thread_id}: fifo={len(thread.fifo)} "
-        f"held={thread.held.name if thread.held else '-'} "
-        f"frontend_busy_until={thread.frontend_busy_until} "
-        f"inflight={tile.tensix._backend_inflight[thread_id]}")
-  return "\n".join(lines)
-
-
 class Asm:
   def __init__(self, base: int):
     self.base = base
@@ -681,92 +568,3 @@ def scratch_boot(tile, kernel_bases: dict[str, int],
   tile.brisc.mem.write32(SOFT_RESET_0, SOFT_RESET_RELEASE_ALL)
   return tile
 
-
-def main():
-  core_count = int(os.environ.get("CORES", "1"))
-  num_tiles = DEFAULT_TENSOR_TILES
-  dev = Device(
-    harvested_banks=HARVESTED_DRAM_BANKS,
-    core_count=core_count,
-    boot_firmware=False,
-  )
-  tiles = list(dev.tiles.values())
-  if num_tiles < len(tiles):
-    print(
-      f"FAIL: fixed tensor tile count {num_tiles} is smaller than CORES={len(tiles)}",
-      file=sys.stderr,
-    )
-    return 1
-
-  kernel_bases = {
-    "brisc": raw_kernel_main_base("brisc"),
-    "ncrisc": raw_kernel_main_base("ncrisc"),
-    **RAW_TRISC_KERNEL_BASES,
-  }
-  fw_bases = {"trisc2": RAW_TRISC2_FW_BASE}
-  alloc, src, dst, src_data, exp_data = setup_add1_runtime(
-    dev, num_tiles, INPUT_PATTERN)
-  verify_runtime_setup(alloc, src, src_data)
-  work = split_tile_work(num_tiles, len(tiles))
-  for tile, (tile_offset, tile_count) in zip(tiles, work, strict=True):
-    scratch_boot(tile, kernel_bases=kernel_bases, fw_bases=fw_bases)
-    write_rtas(tile, src, dst, tile_offset=tile_offset, num_tiles=tile_count)
-    write_cb_config(tile)
-    verify_tile_runtime(tile, src, dst, tile_offset, tile_count)
-    load_raw_dataflow_kernels(dev, tile)
-    load_raw_compute_kernels(tile, tile_count)
-
-  for tile in tiles:
-    tile.l1.write8(GO_MESSAGES + 3, RUN_MSG_GO)
-  try:
-    steps = step_loop(
-      dev,
-      tiles,
-      lambda: all(
-        tile.l1.read8(GO_MESSAGES + 3) == RUN_MSG_DONE
-        and tensix_idle(tile)
-        for tile in tiles),
-      MAX_RUN_STEPS,
-    )
-  except TimeoutError as e:
-    print(f"RUN TIMEOUT: {e}", file=sys.stderr, flush=True)
-    return 1
-  except Exception as e:
-    print(f"RUN ERROR: {type(e).__name__}: {e}", file=sys.stderr, flush=True)
-    return 1
-
-  for tile in tiles:
-    sync = tile.l1.read32(SUBORDINATE_SYNC)
-    if sync != 0:
-      print(
-        f"FAIL: tile ({tile.x},{tile.y}) subordinate sync is 0x{sync:08x}",
-        file=sys.stderr,
-      )
-      return 1
-
-  if len(exp_data) != dst.size:
-    print("FAIL: expected output size mismatch", file=sys.stderr)
-    return 1
-
-  got = alloc.read(dst)
-  exp = exp_data
-  mismatch = compare_tile_prefixes(got, exp, num_tiles, TILE_BYTES)
-  if mismatch is not None:
-    idx, got_window, exp_window = mismatch
-    print(
-      "RAW OUTPUT DRAM MISMATCH: "
-      f"byte={idx} got={got_window.hex()} expected={exp_window.hex()}",
-      file=sys.stderr,
-      flush=True,
-    )
-    print(f"  got bf16:      {format_bf16_words(got)}", file=sys.stderr)
-    print(f"  expected bf16: {format_bf16_words(exp)}", file=sys.stderr)
-    print(f"  got float:     {format_bf16_floats(got)}", file=sys.stderr)
-    print(f"  expected float:{format_bf16_floats(exp)}", file=sys.stderr)
-    return 1
-  print_success_banner(dev, num_tiles, len(tiles), steps, src_data, got)
-  return 0
-
-
-if __name__ == "__main__":
-  raise SystemExit(main())

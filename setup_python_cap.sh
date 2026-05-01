@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # cd to repo root so `uv run` resolves this project's interpreter
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")"
 
 CAPS='cap_dac_override,cap_sys_rawio,cap_sys_admin,cap_ipc_lock=ep'
 declare -a PYTHONS=()

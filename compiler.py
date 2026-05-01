@@ -4,7 +4,6 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from hw import *
-from mem_map import BLACKHOLE_L1
 from dispatch import Dtype, MathFidelity, Program
 
 _REPO = Path(__file__).resolve().parent
@@ -266,7 +265,7 @@ class CompiledKernel:
   disassembly: str = ""
   elf_bytes: bytes | None = None
 
-_INIT_SCRATCH = BLACKHOLE_L1.firmware_init_scratch()
+_INIT_SCRATCH = TensixL1.firmware_init_scratch()
 
 @dataclass(frozen=True)
 class CompiledFirmware:
@@ -312,7 +311,7 @@ def compile_firmware(
     num_l1_banks,
     prefetch_core,
     dispatch_core,
-    BLACKHOLE_L1.cache_key(),
+    TensixL1.cache_key(),
     tuple((n, (fw_src_dir / n).read_bytes()) for n in unique_srcs),
   )
   cached = _cache_load(key)

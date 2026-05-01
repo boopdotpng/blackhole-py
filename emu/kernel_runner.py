@@ -1,18 +1,14 @@
-"""Helpers for launching tiny raw-kernel test cases in the emulator.
 
-The firmware image is fixed.  A test case supplies per-core kernel sources,
-runtime args, CB layout implied by the input count, and input DRAM buffers.
-This module compiles and loads those kernels, boots one Tensix tile, and
-returns the output tile bytes for the test to check.
-"""
+"""Helpers for launching raw-kernel test cases in the emulator."""
 
 from __future__ import annotations
 
 import json
 import re
 from dataclasses import dataclass
+from typing import Callable, Iterable
 
-from add1_emu import (
+from emu.scratch import (
   CB_CONFIG_BASE,
   CB_CONFIG_BYTES,
   DISASMS,
@@ -25,16 +21,31 @@ from add1_emu import (
   RUN_MSG_GO,
   RAW_DF_BRISC_CB_INTERFACE_LDM,
   RAW_DF_NCRISC_CB_INTERFACE_LDM,
+  RAW_TRISC2_FW_BASE,
+  RAW_TRISC_KERNEL_BASES,
+  SUBORDINATE_SYNC,
+  CB0_BASE_L1,
+  CB0_NUM_PAGES,
+  CB16_BASE_L1,
+  CB16_NUM_PAGES,
+  DEFAULT_TENSOR_TILES,
+  INPUT_PATTERN,
+  TILE_BYTES,
   ScratchDramAllocator,
   ScratchDramBuffer,
+  compare_tile_prefixes,
+  load_raw_compute_kernels,
   load_raw_dataflow_kernels,
   pack_words,
   patch_raw_compute_ldm,
   raw_kernel_main_base,
   scratch_boot,
   seed_raw_dataflow_ldm,
-  step_loop,
+  setup_add1_runtime,
+  split_tile_work,
   tensix_idle,
+  verify_runtime_setup,
+  verify_tile_runtime,
   write_dm_cb_interface_to_ldm,
   write_trisc_cb_interface,
 )
@@ -52,6 +63,198 @@ TEXT_BASES = {
   "trisc1": 0x0000C600,
   "trisc2": 0x0000D600,
 }
+
+
+@dataclass(frozen=True)
+class CbConfig:
+  cb: int
+  addr: int
+  size: int
+  pages: int
+  page_size: int
+
+
+@dataclass(frozen=True)
+class DmCbInterface:
+  role: str
+  base: int
+  config: CbConfig
+
+
+@dataclass(frozen=True)
+class TriscCbInterface:
+  role: str
+  config: CbConfig
+  tiles_received: int = 0
+
+
+@dataclass(frozen=True)
+class TileLaunch:
+  core: tuple[int, int]
+  kernel_bases: dict[str, int]
+  rtas: dict[int, list[int] | bytes]
+  cb_configs: tuple[CbConfig, ...] = ()
+  dm_cb_interfaces: tuple[DmCbInterface, ...] = ()
+  trisc_cb_interfaces: tuple[TriscCbInterface, ...] = ()
+  fw_bases: dict[str, int] | None = None
+  boot_before_config: bool = True
+  before_boot: Callable | None = None
+  after_boot: Callable | None = None
+
+
+@dataclass(frozen=True)
+class KernelLaunchResult:
+  steps: int
+  done_cycles: dict[tuple[int, int], int]
+
+
+@dataclass(frozen=True)
+class Add1KernelResult:
+  output: bytes
+  expected: bytes
+  steps: int
+
+
+def write_cb_configs(tile, configs: Iterable[CbConfig], cb_config_base: int):
+  for config in configs:
+    base = cb_config_base + config.cb * CB_CONFIG_BYTES
+    tile.l1.write32(base + 0, config.addr)
+    tile.l1.write32(base + 4, config.size)
+    tile.l1.write32(base + 8, config.pages)
+    tile.l1.write32(base + 12, config.page_size)
+
+
+def write_tile_rtas(tile, rtas: dict[int, list[int] | bytes]):
+  for base, payload in rtas.items():
+    data = payload if isinstance(payload, bytes) else pack_words(payload)
+    tile.l1.load(base, data)
+
+
+def run_kernel_launch(
+    dev: Device,
+    specs: Iterable[TileLaunch],
+    *,
+    max_steps: int = MAX_RUN_STEPS,
+    cb_config_base: int = CB_CONFIG_BASE,
+) -> KernelLaunchResult:
+  specs = tuple(specs)
+  tiles = [dev.tiles[spec.core] for spec in specs]
+
+  for tile, spec in zip(tiles, specs, strict=True):
+    if spec.before_boot is not None:
+      spec.before_boot(dev, tile, spec)
+    if spec.boot_before_config:
+      scratch_boot(tile, spec.kernel_bases, fw_bases=spec.fw_bases)
+    write_tile_rtas(tile, spec.rtas)
+    write_cb_configs(tile, spec.cb_configs, cb_config_base)
+    for interface in spec.dm_cb_interfaces:
+      core = getattr(tile, interface.role)
+      config = interface.config
+      write_dm_cb_interface_to_ldm(
+        core, interface.base, config.cb, config.addr, config.size,
+        config.pages, config.page_size)
+    for interface in spec.trisc_cb_interfaces:
+      core = getattr(tile, interface.role)
+      config = interface.config
+      write_trisc_cb_interface(
+        core, config.cb, config.addr, config.size, config.pages,
+        config.page_size, tiles_received=interface.tiles_received)
+    if spec.after_boot is not None:
+      spec.after_boot(dev, tile, spec)
+    if not spec.boot_before_config:
+      scratch_boot(tile, spec.kernel_bases, fw_bases=spec.fw_bases)
+
+  for tile in tiles:
+    tile.l1.write8(GO_MESSAGES + 3, RUN_MSG_GO)
+
+  done_cycles: dict[tuple[int, int], int] = {}
+
+  def all_workers_done() -> bool:
+    cycle = dev.elapsed_cycles
+    for tile in tiles:
+      core = (tile.x, tile.y)
+      if (core not in done_cycles
+          and tile.l1.read8(GO_MESSAGES + 3) == RUN_MSG_DONE
+          and tensix_idle(tile)):
+        done_cycles[core] = cycle
+    return len(done_cycles) == len(tiles)
+
+  steps = dev.run_until(all_workers_done, max_steps, tiles=tiles)
+
+  for tile in tiles:
+    sync = tile.l1.read32(SUBORDINATE_SYNC)
+    if sync != 0:
+      raise AssertionError(
+        f"tile ({tile.x},{tile.y}) subordinate sync is 0x{sync:08x}")
+
+  return KernelLaunchResult(steps=steps, done_cycles=done_cycles)
+
+
+def run_add1_raw_kernel(*, core_count: int) -> Add1KernelResult:
+  num_tiles = DEFAULT_TENSOR_TILES
+  dev = Device(
+    harvested_banks=HARVESTED_DRAM_BANKS,
+    core_count=core_count,
+    boot_firmware=False,
+  )
+  tiles = list(dev.tiles.values())
+  if num_tiles < len(tiles):
+    raise ValueError(
+      f"fixed tensor tile count {num_tiles} is smaller than CORES={len(tiles)}")
+
+  kernel_bases = {
+    "brisc": raw_kernel_main_base("brisc"),
+    "ncrisc": raw_kernel_main_base("ncrisc"),
+    **RAW_TRISC_KERNEL_BASES,
+  }
+  alloc, src, dst, src_data, exp_data = setup_add1_runtime(
+    dev, num_tiles, INPUT_PATTERN)
+  verify_runtime_setup(alloc, src, src_data)
+
+  cb_configs = (
+    CbConfig(0, CB0_BASE_L1, TILE_BYTES * CB0_NUM_PAGES,
+             CB0_NUM_PAGES, TILE_BYTES),
+    CbConfig(16, CB16_BASE_L1, TILE_BYTES * CB16_NUM_PAGES,
+             CB16_NUM_PAGES, TILE_BYTES),
+  )
+
+  launches = []
+  for tile, (tile_offset, tile_count) in zip(
+      tiles, split_tile_work(num_tiles, len(tiles)), strict=True):
+    def prepare_add1_tile(dev: Device, tile, spec: TileLaunch,
+                          tile_count: int = tile_count):
+      load_raw_dataflow_kernels(dev, tile)
+      load_raw_compute_kernels(tile, tile_count)
+
+    def verify_add1_tile(dev: Device, tile, spec: TileLaunch,
+                         tile_offset: int = tile_offset,
+                         tile_count: int = tile_count):
+      verify_tile_runtime(tile, src, dst, tile_offset, tile_count)
+
+    launches.append(TileLaunch(
+      core=(tile.x, tile.y),
+      kernel_bases=kernel_bases,
+      rtas={
+        KERNEL_CONFIG_BASE + 0x000: [src.addr, tile_offset, tile_count],
+        KERNEL_CONFIG_BASE + 0x040: [dst.addr, tile_offset, tile_count],
+        TRISC_RTA_BASE: [tile_count],
+      },
+      cb_configs=cb_configs,
+      fw_bases={"trisc2": RAW_TRISC2_FW_BASE},
+      before_boot=prepare_add1_tile,
+      after_boot=verify_add1_tile,
+    ))
+
+  result = run_kernel_launch(dev, launches)
+  got = alloc.read(dst)
+  mismatch = compare_tile_prefixes(got, exp_data, num_tiles, TILE_BYTES)
+  if mismatch is not None:
+    idx, got_window, exp_window = mismatch
+    raise AssertionError(
+      "raw output DRAM mismatch: "
+      f"byte={idx} got={got_window.hex()} expected={exp_window.hex()}")
+
+  return Add1KernelResult(output=got, expected=exp_data, steps=result.steps)
 
 
 @dataclass(frozen=True)
@@ -136,16 +339,6 @@ def load_kernel_stem(tile, role: str, stem: str) -> int:
   return rx[0] + (entry - rx[1])
 
 
-def write_rtas(tile, src0: ScratchDramBuffer, src1: ScratchDramBuffer | None,
-               dst: ScratchDramBuffer, n: int):
-  if src1 is None:
-    tile.l1.load(KERNEL_CONFIG_BASE + 0x000, pack_words([src0.addr, 0, n]))
-  else:
-    tile.l1.load(KERNEL_CONFIG_BASE + 0x000, pack_words([src0.addr, src1.addr, 0, n]))
-  tile.l1.load(KERNEL_CONFIG_BASE + 0x040, pack_words([dst.addr, 0, n]))
-  tile.l1.load(TRISC_RTA_BASE, pack_words([n]))
-
-
 def cb_records(case: RawKernelCase) -> dict[int, tuple[int, int, int, int]]:
   if case.cb_pages < 1:
     raise ValueError(f"{case.name}: cb_pages must be >= 1")
@@ -162,13 +355,13 @@ def cb_records(case: RawKernelCase) -> dict[int, tuple[int, int, int, int]]:
   return records
 
 
-def write_cb_config(tile, case: RawKernelCase):
-  for idx, (addr, size, pages, psize) in cb_records(case).items():
-    base = CB_CONFIG_BASE + idx * CB_CONFIG_BYTES
-    tile.l1.write32(base + 0, addr)
-    tile.l1.write32(base + 4, size)
-    tile.l1.write32(base + 8, pages)
-    tile.l1.write32(base + 12, psize)
+def cb_configs_from_records(
+    records: dict[int, tuple[int, int, int, int]],
+) -> tuple[CbConfig, ...]:
+  return tuple(
+    CbConfig(cb=cb, addr=addr, size=size, pages=pages, page_size=page_size)
+    for cb, (addr, size, pages, page_size) in records.items()
+  )
 
 
 def _compile_case(case: RawKernelCase):
@@ -196,41 +389,73 @@ def run_raw_kernel_case(case: RawKernelCase, *, tiles: int = 1) -> RawKernelResu
   src1 = alloc.alloc_write(case.src1, name=f"{case.name}_src1") if case.src1 else None
   dst = alloc.alloc(num_tiles, name=f"{case.name}_dst")
 
-  write_rtas(tile, src0, src1, dst, num_tiles)
-  write_cb_config(tile, case)
-  load_raw_dataflow_kernels(dev, tile)
-  if reader_stem:
-    seed_raw_dataflow_ldm(dev, tile)
-    for cb, (addr, size, pages, psize) in cb_records(case).items():
-      write_dm_cb_interface_to_ldm(
-        tile.brisc, RAW_DF_BRISC_CB_INTERFACE_LDM, cb, addr, size, pages, psize)
-      write_dm_cb_interface_to_ldm(
-        tile.ncrisc, RAW_DF_NCRISC_CB_INTERFACE_LDM, cb, addr, size, pages, psize)
-  patch_raw_compute_ldm(tile, num_tiles)
   records = cb_records(case)
+  cb_configs = cb_configs_from_records(records)
+
+  def prepare_raw_tile(dev: Device, tile, spec: TileLaunch):
+    load_raw_dataflow_kernels(dev, tile)
+    if reader_stem:
+      seed_raw_dataflow_ldm(dev, tile)
+    patch_raw_compute_ldm(tile, num_tiles)
+
+  dm_interfaces = ()
+  if reader_stem:
+    dm_interfaces = tuple(
+      interface
+      for config in cb_configs
+      for interface in (
+        DmCbInterface("brisc", RAW_DF_BRISC_CB_INTERFACE_LDM, config),
+        DmCbInterface("ncrisc", RAW_DF_NCRISC_CB_INTERFACE_LDM, config),
+      )
+    )
+
+  trisc_interfaces = ()
   if case.binary:
-    for core in (tile.trisc0, tile.trisc2):
-      for cb, (addr, size, pages, psize) in records.items():
-        write_trisc_cb_interface(core, cb, addr, size, pages, psize)
+    trisc_interfaces = tuple(
+      TriscCbInterface(role, config)
+      for role in ("trisc0", "trisc2")
+      for config in cb_configs
+    )
   elif case.reader_src is not None or case.cb0 != 0 or case.cb_out != 16 or case.cb_pages != 2:
-    addr, size, pages, psize = records[case.cb0]
-    write_trisc_cb_interface(tile.trisc0, case.cb0, addr, size, pages, psize)
-    addr, size, pages, psize = records[case.cb_out]
-    write_trisc_cb_interface(tile.trisc2, case.cb_out, addr, size, pages, psize)
+    by_cb = {config.cb: config for config in cb_configs}
+    trisc_interfaces = (
+      TriscCbInterface("trisc0", by_cb[case.cb0]),
+      TriscCbInterface("trisc2", by_cb[case.cb_out]),
+    )
 
-  bases = {
-    "brisc": load_kernel_stem(tile, "brisc", reader_stem) if reader_stem else raw_kernel_main_base("brisc"),
-    "ncrisc": load_kernel_stem(tile, "ncrisc", writer_stem) if writer_stem else raw_kernel_main_base("ncrisc"),
-  }
-  for role in ("trisc0", "trisc1", "trisc2"):
-    bases[role] = load_kernel_stem(tile, role, f"{case.name}_{role}.kernel")
+  bases = {}
 
-  scratch_boot(tile, bases)
-  tile.l1.write8(GO_MESSAGES + 3, RUN_MSG_GO)
-  steps = step_loop(
+  def load_raw_tile_kernels(dev: Device, tile, spec: TileLaunch):
+    spec.kernel_bases.update({
+      "brisc": load_kernel_stem(tile, "brisc", reader_stem)
+        if reader_stem else raw_kernel_main_base("brisc"),
+      "ncrisc": load_kernel_stem(tile, "ncrisc", writer_stem)
+        if writer_stem else raw_kernel_main_base("ncrisc"),
+    })
+    for role in ("trisc0", "trisc1", "trisc2"):
+      spec.kernel_bases[role] = load_kernel_stem(
+        tile, role, f"{case.name}_{role}.kernel")
+
+  result = run_kernel_launch(
     dev,
-    [tile],
-    lambda: tile.l1.read8(GO_MESSAGES + 3) == RUN_MSG_DONE and tensix_idle(tile),
-    MAX_RUN_STEPS,
+    (
+      TileLaunch(
+        core=(tile.x, tile.y),
+        kernel_bases=bases,
+        rtas={
+          KERNEL_CONFIG_BASE + 0x000:
+            [src0.addr, src1.addr, 0, num_tiles] if src1
+            else [src0.addr, 0, num_tiles],
+          KERNEL_CONFIG_BASE + 0x040: [dst.addr, 0, num_tiles],
+          TRISC_RTA_BASE: [num_tiles],
+        },
+        cb_configs=cb_configs,
+        dm_cb_interfaces=dm_interfaces,
+        trisc_cb_interfaces=trisc_interfaces,
+        boot_before_config=False,
+        before_boot=prepare_raw_tile,
+        after_boot=load_raw_tile_kernels,
+      ),
+    ),
   )
-  return RawKernelResult(output=alloc.read(dst), steps=steps)
+  return RawKernelResult(output=alloc.read(dst), steps=result.steps)

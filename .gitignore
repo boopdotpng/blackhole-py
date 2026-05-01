@@ -1,9 +1,11 @@
 __pycache__
+.pytest_cache/
 .ruff-cache/
 .vscode/
 .claude
 state.txt
 *.so
+*_disasm.txt
 disasms
 firmware/
 tt-metal-deps/

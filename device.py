@@ -33,6 +33,14 @@ ARC_CSM_SIZE = 1 << 19
 def _is_range_within_arc_csm(addr: int, length: int = 1) -> bool:
   return ARC_CSM_BASE <= addr <= (ARC_CSM_BASE + ARC_CSM_SIZE) - length
 
+
+def _format_elapsed_us(elapsed_us: float) -> str:
+  if elapsed_us >= 100_000:
+    return f"{elapsed_us / 1e6:,.3f} s"
+  if elapsed_us >= 1_000:
+    return f"{elapsed_us / 1e3:,.1f} ms"
+  return f"{elapsed_us:,.1f} us"
+
 class Device:
   @functools.cached_property
   def cores(self) -> list[Core]:
@@ -93,6 +101,7 @@ class Device:
       self._start_dispatch_cores()
 
     self._programs = []
+    self._timing_print_index = 1
     self.last_core_timing = {}
     self.core_timing_history = []
 
@@ -403,7 +412,7 @@ class Device:
         ir = self._compile_ir(program, self._dispatch_mode)
         slow_dispatch(win, ir)
     elapsed_us = (time.perf_counter() - t0) * 1e6
-    print(f"  slow dispatch: {elapsed_us:,.1f} us total (host wall-clock, {len(self._programs)} programs)")
+    print(f"  slow dispatch: {_format_elapsed_us(elapsed_us)} total (host wall-clock, {len(self._programs)} programs)")
     freq_mhz = 1350
     timings = [
       {"cycles": 0, "us": elapsed_us / len(self._programs), "freq_mhz": freq_mhz, "name": program.name}
@@ -450,9 +459,10 @@ class Device:
       cycles = t1 - t0
       name = self._programs[i].name
       timings.append({"cycles": cycles, "us": cycles / freq_mhz, "freq_mhz": freq_mhz, "name": name})
-    for i, t in enumerate(timings):
+    for t in timings:
       name = f" {t['name']}" if t["name"] else ""
-      print(f"  [{i}]{name} {t['us']:,.1f} us ({t['cycles']:,} cycles)")
+      print(f"  [{self._timing_print_index}]{name} {t['us']:,.1f} us ({t['cycles']:,} cycles)")
+      self._timing_print_index += 1
     self.last_device_timing = timings
     return timings
 

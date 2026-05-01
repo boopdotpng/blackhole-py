@@ -1,9 +1,3 @@
-"""One-core raw-kernel emulator coverage tests.
-
-The real firmware stays fixed.  Each case compiles a small tt-metal kernel,
-extracts its PT_LOAD segments, jumps directly to kernel_main/run_kernel through
-the scratch launcher, then checks one tiny tile in DRAM.
-"""
 
 from __future__ import annotations
 
@@ -13,7 +7,7 @@ from dataclasses import dataclass
 from typing import Callable
 
 import pytest
-from add1_emu import bf16, f32_from_bf16
+from emu.scratch import bf16, f32_from_bf16
 from dispatch import Dtype
 from dram import tilize, untilize
 from emu.kernel_runner import RawKernelCase, run_raw_kernel_case

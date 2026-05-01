@@ -1,6 +1,5 @@
 import ctypes, mmap, os, struct, time
 from enum import Enum
-from mem_map import BLACKHOLE_L1
 from pcie import PCIDevice, TLB_2M_SIZE, TLB_4G_SIZE
 
 Core = tuple[int, int]
@@ -28,22 +27,43 @@ class S(ctypes.LittleEndianStructure):
     for k, v in kw.items(): setattr(self, k, v)
 
 class TensixL1:
-  SIZE = BLACKHOLE_L1.l1_size
-  LAUNCH = BLACKHOLE_L1.launch
-  GO_MSG = BLACKHOLE_L1.go_msg
-  GO_MSG_INDEX = BLACKHOLE_L1.go_msg_index
-  KERNEL_CONFIG_BASE = BLACKHOLE_L1.kernel_config_base
-  BRISC_FIRMWARE_BASE = BLACKHOLE_L1.brisc_firmware_base
-  DATA_BUFFER_SPACE_BASE = BLACKHOLE_L1.data_buffer_space_base
-  TIMING_CONTROL = BLACKHOLE_L1.timing_control
-  FW_INIT_SCRATCH_BASE = BLACKHOLE_L1.map_end
-  BRISC_INIT_LOCAL_L1_BASE_SCRATCH = BLACKHOLE_L1.brisc_init_local_l1_base_scratch
-  NCRISC_INIT_LOCAL_L1_BASE_SCRATCH = BLACKHOLE_L1.ncrisc_init_local_l1_base_scratch
-  TRISC0_INIT_LOCAL_L1_BASE_SCRATCH = BLACKHOLE_L1.trisc0_init_local_l1_base_scratch
-  TRISC1_INIT_LOCAL_L1_BASE_SCRATCH = BLACKHOLE_L1.trisc1_init_local_l1_base_scratch
-  TRISC2_INIT_LOCAL_L1_BASE_SCRATCH = BLACKHOLE_L1.trisc2_init_local_l1_base_scratch
-  NCRISC_INIT_IRAM_L1_BASE_SCRATCH = BLACKHOLE_L1.ncrisc_init_iram_l1_base_scratch
-  MEM_BANK_TO_NOC_SCRATCH = BLACKHOLE_L1.bank_to_noc_scratch
+  SIZE = 0x180000
+  LAUNCH = 0x70
+  GO_MSG = 0x370
+  GO_MSG_INDEX = 0x3A0
+  KERNEL_CONFIG_BASE = 0x86B0
+  BRISC_FIRMWARE_BASE = 0x3840
+  DATA_BUFFER_SPACE_BASE = 0x37000
+  TIMING_CONTROL = 0x9C0
+
+  FW_INIT_SCRATCH_BASE = 0x82B0
+  BRISC_INIT_LOCAL_L1_BASE_SCRATCH = 0x82B0
+  NCRISC_INIT_LOCAL_L1_BASE_SCRATCH = 0xA2B0
+  TRISC0_INIT_LOCAL_L1_BASE_SCRATCH = 0xC2B0
+  TRISC1_INIT_LOCAL_L1_BASE_SCRATCH = 0xD2B0
+  TRISC2_INIT_LOCAL_L1_BASE_SCRATCH = 0xE2B0
+  NCRISC_INIT_IRAM_L1_BASE_SCRATCH = 0xF2B0
+  MEM_BANK_TO_NOC_SCRATCH = 0x112B0
+  LOGICAL_TO_VIRTUAL_SCRATCH = 0x11AB0
+
+  @classmethod
+  def firmware_init_scratch(cls) -> dict[str, int]:
+    return {
+      "brisc": cls.BRISC_INIT_LOCAL_L1_BASE_SCRATCH,
+      "ncrisc": cls.NCRISC_INIT_LOCAL_L1_BASE_SCRATCH,
+      "trisc0": cls.TRISC0_INIT_LOCAL_L1_BASE_SCRATCH,
+      "trisc1": cls.TRISC1_INIT_LOCAL_L1_BASE_SCRATCH,
+      "trisc2": cls.TRISC2_INIT_LOCAL_L1_BASE_SCRATCH,
+    }
+
+  @classmethod
+  def cache_key(cls) -> tuple[tuple[str, int], ...]:
+    return tuple(sorted(cls.firmware_init_scratch().items())) + (
+      ("bank_to_noc_scratch", cls.MEM_BANK_TO_NOC_SCRATCH),
+      ("logical_to_virtual_scratch", cls.LOGICAL_TO_VIRTUAL_SCRATCH),
+      ("kernel_config_base", cls.KERNEL_CONFIG_BASE),
+      ("brisc_firmware_base", cls.BRISC_FIRMWARE_BASE),
+    )
 
 class TensixMMIO:
   LOCAL_RAM_START = 0xFFB00000
