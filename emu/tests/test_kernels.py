@@ -6,11 +6,19 @@ import struct
 from dataclasses import dataclass
 from typing import Callable
 
+import dsl
 import pytest
-from emu.scratch import bf16, f32_from_bf16
+from emu.device import Device, RUN_MSG_DONE
+from emu.kernel_runner import (
+  RawKernelCase,
+  run_add1_raw_kernel,
+  run_raw_kernel_case,
+)
+from emu.matmul_peak_runner import run_matmul_peak
+from emu.memory import LAUNCH_MSG_RD_PTR
+from emu.scratch import HARVESTED_DRAM_BANKS, bf16, f32_from_bf16
 from dispatch import Dtype
 from dram import tilize, untilize
-from emu.kernel_runner import RawKernelCase, run_raw_kernel_case
 
 
 TILE_HEIGHT = 32
@@ -294,6 +302,13 @@ class Case:
     )
 
 
+@dataclass(frozen=True)
+class FirmwareBootResult:
+  boot_cycles: int
+  dispatch_cycles: int
+  tile_state: tuple[tuple[tuple[int, int], int, int], ...]
+
+
 def build_cases() -> list[Case]:
   vals = [((i % 31) - 15) / 8.0 for i in range(TILE_ELEMS)]
   a = [((i % 17) - 8) / 4.0 for i in range(TILE_ELEMS)]
@@ -449,8 +464,35 @@ def run_and_check(case: Case):
       f"expected {case.expected[bad]!r}, atol={case.atol}")
 
 
+def boot_firmware_and_dispatch_return_kernel() -> FirmwareBootResult:
+  dev = Device(
+    harvested_banks=HARVESTED_DRAM_BANKS,
+    core_count=1,
+    firmware_boot_max_cycles=200000,
+  )
+  ret = dsl.pack([dsl.RET()])
+  dispatch_cycles = dev.dispatch(
+    brisc=ret,
+    ncrisc=ret,
+    trisc=(ret, ret, ret),
+    max_cycles=200000,
+  )
+  return FirmwareBootResult(
+    boot_cycles=dev.firmware_boot_cycles,
+    dispatch_cycles=dispatch_cycles,
+    tile_state=tuple(
+      (
+        (tile.x, tile.y),
+        tile.l1.read8(dev.go_messages_addr + 3),
+        tile.l1.read32(LAUNCH_MSG_RD_PTR),
+      )
+      for tile in dev.tiles.values()
+    ),
+  )
+
+
 @pytest.mark.parametrize("case", build_cases(), ids=lambda c: c.name)
-def test_kernel_case(case: Case):
+def test_single_tile_kernel_case(case: Case):
   run_and_check(case)
 
 
@@ -485,3 +527,22 @@ def test_unary_copy_weird_cb_indices(cb0: int, cb_out: int):
     cb0=cb0,
     cb_out=cb_out,
   ))
+
+
+@pytest.mark.parametrize("cores", [1, 4], ids=lambda cores: f"cores_{cores}")
+def test_add1_raw_kernel_smoke(cores: int):
+  result = run_add1_raw_kernel(core_count=cores)
+  assert result.output == result.expected
+  assert result.steps > 0
+
+
+def test_firmware_boot_dispatch_return_kernel():
+  result = boot_firmware_and_dispatch_return_kernel()
+  assert result.boot_cycles > 0
+  assert result.dispatch_cycles > 0
+  assert result.tile_state
+  assert all(go == RUN_MSG_DONE for _, go, _ in result.tile_state)
+
+
+def test_matmul_peak_default_grid_smoke():
+  assert run_matmul_peak() == 0

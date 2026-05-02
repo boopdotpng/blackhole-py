@@ -1,4 +1,3 @@
-"""Direct PCIe access to Tenstorrent Blackhole via VFIO."""
 import ctypes, ctypes.util, fcntl, glob, mmap, os, struct, time
 
 _USE_USB = os.environ.get("TT_USB") == "1"
