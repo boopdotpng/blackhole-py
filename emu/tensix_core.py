@@ -54,6 +54,10 @@ _MATH_OPCODES = {
 _decode_tensix_cached = cache(decode_tensix)
 
 
+def _tt_opcode(word: int) -> int:
+  return ((word & 0xFFFFFFFF) >> 24) & 0xFF
+
+
 class CfgMMIO:
   STATE1_OFFSET = 0x380
 
@@ -140,7 +144,8 @@ class GPRMMIO:
 
 
 def decode_tensix_minimal(word: int) -> Instruction:
-  opcode = (word >> 24) & 0xFF
+  decoded_word = word & 0xFFFFFFFF
+  opcode = (decoded_word >> 24) & 0xFF
   unit = _UNIT_BY_OPCODE.get(opcode)
   if opcode in (0x26, 0x98):
     # Blackhole MVMUL uses a 3-bit ADDR_MOD field. Replay/MOP expansion emits
@@ -150,11 +155,11 @@ def decode_tensix_minimal(word: int) -> Instruction:
     decoded = SimpleNamespace(
       name="MVMUL",
       word=word,
-      clear_dvalid=(word >> 22) & 0x3,
-      instr_mod19=(word >> 19) & 0x7,
-      addr_mode=(word >> addr_shift) & 0x7,
-      dst=word & 0x3FF,
-      broadcast_srcb=(word >> 19) & 0x1,
+      clear_dvalid=(decoded_word >> 22) & 0x3,
+      instr_mod19=(decoded_word >> 19) & 0x7,
+      addr_mode=(decoded_word >> addr_shift) & 0x7,
+      dst=decoded_word & 0x3FF,
+      broadcast_srcb=(decoded_word >> 19) & 0x1,
     )
     unit = Resource.TENSIX_MATH
   else:
@@ -220,16 +225,17 @@ class TensixThread:
       if word is None:
         return None
 
-      opcode = (word >> 24) & 0xFF
+      opcode = _tt_opcode(word)
       if opcode != 0x04:  # REPLAY
         return decode_tensix_minimal(word)
 
-      start_idx = (word >> 14) & 0x1F
-      length = (word >> 4) & 0x3F
+      decoded_word = word & 0xFFFFFFFF
+      start_idx = (decoded_word >> 14) & 0x1F
+      length = (decoded_word >> 4) & 0x3F
       if length == 0:
         length = 64
-      exec_while = bool((word >> 1) & 1)
-      load_mode = bool(word & 1)
+      exec_while = bool((decoded_word >> 1) & 1)
+      load_mode = bool(decoded_word & 1)
       if load_mode:
         self.replay_recording = {
           "start": start_idx,
@@ -259,7 +265,7 @@ class TensixThread:
       if insn is None:
         return None
 
-      opcode = (insn.word >> 24) & 0xFF
+      opcode = _tt_opcode(insn.word)
       if opcode == 0x03:  # MOP_CFG
         self.mop_mask_hi = insn.word & 0xFFFF
         continue
@@ -282,7 +288,7 @@ class TensixThread:
 
   @staticmethod
   def _is_nop(word: int) -> bool:
-    return ((word >> 24) & 0xFF) == 0x02
+    return _tt_opcode(word) == 0x02
 
   def _expand_mop(self, word: int):
     template = (word >> 23) & 1
@@ -860,17 +866,18 @@ class Tensix:
 
   def _issue_frontend_macro(self, thread: TensixThread, insn: Instruction,
                             ctx: SimContext) -> bool:
-    opcode = (insn.word >> 24) & 0xFF
+    word = insn.word
+    opcode = (word >> 24) & 0xFF
     owner = f"t{thread.thread_id}"
     if opcode == 0x03:  # MOP_CFG mask-hi instruction
-      thread.mop_mask_hi = insn.word & 0xFFFF
+      thread.mop_mask_hi = word & 0xFFFF
       return True
     if opcode == 0x01:  # MOP
-      cycles = max(1, _estimate_mop_cycles(thread, insn.word))
+      cycles = max(1, _estimate_mop_cycles(thread, word))
       thread.frontend_busy_until = ctx.cycle + cycles
       return True
     if opcode == 0x04:  # REPLAY
-      cycles = _estimate_replay_cycles(insn.word)
+      cycles = _estimate_replay_cycles(word)
       if cycles is None:
         return False
       thread.frontend_busy_until = ctx.cycle + cycles
@@ -879,7 +886,7 @@ class Tensix:
 
 
 def _is_nop(word: int) -> bool:
-  return ((word >> 24) & 0xFF) == 0x02
+  return _tt_opcode(word) == 0x02
 
 
 def _estimate_mop_cycles(thread: TensixThread, word: int) -> int:

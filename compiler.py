@@ -382,7 +382,7 @@ class Compiler:
       for d in sorted(extra_includes):
         for f in sorted(Path(d).rglob("*")):
           if f.is_file(): inc_content += f.read_bytes()
-    key = _cache_hash("kern-v5", kern, target, tuple(defines), opt, trisc,
+    key = _cache_hash("kern-v7", kern, target, tuple(defines), opt, trisc,
                       xip_relocate, tuple(sorted(hdrs.items())), self._fw[target].elf_bytes, inc_content)
     cached = _cache_load(key)
     if cached is not None: return cached
@@ -431,14 +431,19 @@ class Compiler:
     return out
 
   def _disassemble_elf(self, elf: bytes) -> str:
-    objdump = _SFPI / "riscv-tt-elf-objdump"
-    if not objdump.is_file(): return ""
+    objdump_candidates = (
+      _SFPI / "riscv-tt-elf-objdump",
+      Path.home() / "tenstorrent/tt-metal/runtime/sfpi/compiler/bin/riscv-tt-elf-objdump",
+      Path.home() / "tenstorrent/tt-metal/runtime/sfpi/compiler/riscv-tt-elf/bin/objdump",
+    )
+    objdump = next((p for p in objdump_candidates if p.is_file()), None)
+    args = [str(objdump), "-d"] if objdump is not None else ["llvm-objdump", "-d"]
     build = Path(tempfile.mkdtemp(prefix="tt-disasm-"))
     try:
       elf_path = build / "out.elf"
       elf_path.write_bytes(elf)
       out = subprocess.run(
-        [str(objdump), "-d", str(elf_path)],
+        [*args, str(elf_path)],
         capture_output=True,
         text=True,
         timeout=30,

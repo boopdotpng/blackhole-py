@@ -1,13 +1,10 @@
 from __future__ import annotations
-
 from collections import deque
 from dataclasses import dataclass
 from typing import Callable
-
 from .isa import Instruction
 from .resources import Resource, Scoreboard
 from .sim import Phase, SimContext
-
 
 @dataclass
 class Completion:
@@ -15,10 +12,8 @@ class Completion:
   owner: str
   commit: Callable[[SimContext], None] | None = None
 
-
 class TimedUnit:
   """A single-issue unit with explicit completion and commit phases."""
-
   def __init__(self, name: str, resource: Resource, scoreboard: Scoreboard):
     self.name = name
     self.resource = resource

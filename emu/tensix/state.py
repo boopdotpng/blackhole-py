@@ -325,7 +325,7 @@ class GPRFile:
 class Semaphores:
   def __init__(self):
     self.value = [0] * 8
-    self.max = [0] * 8
+    self.max = [1] * 8
 
   def init(self, idx, value, max_value):
     self.value[idx] = value & 0xF

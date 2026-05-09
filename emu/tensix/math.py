@@ -759,9 +759,10 @@ class SFPU:
   # ── Swap ─────────────────────────────────────────────────────────────
 
   def sfpswap(self, d):
-    if not (self._is_writable(d.lreg_dest) and self._is_writable(d.lreg_c)): return
+    lreg_c = getattr(d, "lreg_c", getattr(d, "lreg_src_c", 0))
+    if not (self._is_writable(d.lreg_dest) and self._is_writable(lreg_c)): return
     for lane in self._lanes():
-      c = _to_float(self.lregs[d.lreg_c][lane])
+      c = _to_float(self.lregs[lreg_c][lane])
       vd = _to_float(self.lregs[d.lreg_dest][lane])
       self.lregs[d.lreg_dest][lane] = _to_bits(min(c, vd)) & M32
-      self.lregs[d.lreg_c][lane] = _to_bits(max(c, vd)) & M32
+      self.lregs[lreg_c][lane] = _to_bits(max(c, vd)) & M32

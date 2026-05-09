@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Callable, Iterable
 
 from emu.scratch import (
@@ -303,7 +304,8 @@ def symbol_addr(stem: str, names: tuple[str, ...]) -> int:
 
 
 def ensure_kernel(name: str, target: str, src: str, noc_index: int | None = None) -> str:
-  stem = f"{name}_{target}.kernel"
+  out_name = name if not target.startswith("trisc") or name.endswith("_compute") else f"{name}_compute"
+  stem = f"{out_name}_{target}.kernel"
   elf = DISASMS / f"{stem}.elf"
   if not elf.exists():
     build_kernels.build_one(name, target, src, noc_index=noc_index)
@@ -362,6 +364,51 @@ def cb_configs_from_records(
     CbConfig(cb=cb, addr=addr, size=size, pages=pages, page_size=page_size)
     for cb, (addr, size, pages, page_size) in records.items()
   )
+
+
+def export_raw_kernel_cases(cases: Iterable[RawKernelCase], path: str | Path) -> Path:
+  """Compile raw-kernel cases and save source/CB metadata without execution."""
+  path = Path(path)
+  payload = []
+  for case in cases:
+    reader_stem, writer_stem = _compile_case(case)
+    records = cb_records(case)
+    kernels = {
+      "trisc0": case.compute_src,
+      "trisc1": case.compute_src,
+      "trisc2": case.compute_src,
+    }
+    if case.reader_src is not None:
+      kernels["brisc"] = case.reader_src
+    if case.writer_src is not None:
+      kernels["ncrisc"] = case.writer_src
+    payload.append({
+      "name": case.name,
+      "dtype": case.dtype.name,
+      "num_tiles": case.num_tiles,
+      "binary": case.binary,
+      "compiled_stems": {
+        "brisc": reader_stem,
+        "ncrisc": writer_stem,
+        "trisc0": f"{case.name}_compute_trisc0.kernel",
+        "trisc1": f"{case.name}_compute_trisc1.kernel",
+        "trisc2": f"{case.name}_compute_trisc2.kernel",
+      },
+      "cb_config": [
+        {
+          "cb": cb,
+          "addr": addr,
+          "size": size,
+          "pages": pages,
+          "page_size": page_size,
+        }
+        for cb, (addr, size, pages, page_size) in sorted(records.items())
+      ],
+      "kernels": kernels,
+    })
+  path.parent.mkdir(parents=True, exist_ok=True)
+  path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+  return path
 
 
 def _compile_case(case: RawKernelCase):
@@ -434,7 +481,7 @@ def run_raw_kernel_case(case: RawKernelCase, *, tiles: int = 1) -> RawKernelResu
     })
     for role in ("trisc0", "trisc1", "trisc2"):
       spec.kernel_bases[role] = load_kernel_stem(
-        tile, role, f"{case.name}_{role}.kernel")
+        tile, role, f"{case.name}_compute_{role}.kernel")
 
   result = run_kernel_launch(
     dev,

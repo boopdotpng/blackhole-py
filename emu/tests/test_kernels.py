@@ -11,11 +11,30 @@ import pytest
 from emu.device import Device, RUN_MSG_DONE
 from emu.kernel_runner import (
   RawKernelCase,
+  export_raw_kernel_cases,
   run_add1_raw_kernel,
   run_raw_kernel_case,
 )
 from emu.matmul_peak_runner import run_matmul_peak
-from emu.memory import LAUNCH_MSG_RD_PTR
+from emu.memory import (
+  LAUNCH_MSG_RD_PTR,
+  NIU_AT_DATA,
+  NIU_AT_LEN_BE,
+  NIU_CMD_BUF_STRIDE,
+  NIU_CMD_CTRL,
+  NIU_CTRL,
+  NIU_L1_ACC_AT_INSTRN,
+  NIU_MST_ATOMIC_RESP_RECEIVED,
+  NIU_RET_ADDR_HI,
+  NIU_RET_ADDR_LO,
+  NIU_TARG_ADDR_HI,
+  NIU_TARG_ADDR_LO,
+  NOC0_BASE,
+  NOC_CTRL_AT,
+  NOC_CTRL_L1_ACC_AT_EN,
+  NOC_CTRL_RESP_MARKED,
+)
+from emu.noc import noc_key
 from emu.scratch import HARVESTED_DRAM_BANKS, bf16, f32_from_bf16
 from dispatch import Dtype
 from dram import tilize, untilize
@@ -491,6 +510,31 @@ def boot_firmware_and_dispatch_return_kernel() -> FirmwareBootResult:
   )
 
 
+def _program_atomic(tile, *, target_xy: tuple[int, int], target_addr: int,
+                    ret_addr: int, length: int, data: int,
+                    l1_acc_instrn: int = 0):
+  buf = 3
+  base = NOC0_BASE + buf * NIU_CMD_BUF_STRIDE
+  ctrl = NOC_CTRL_AT | NOC_CTRL_RESP_MARKED
+  if l1_acc_instrn:
+    ctrl |= NOC_CTRL_L1_ACC_AT_EN
+  tile.noc0.write32(base + NIU_TARG_ADDR_LO, target_addr)
+  tile.noc0.write32(base + NIU_TARG_ADDR_HI, noc_key(*target_xy))
+  tile.noc0.write32(base + NIU_RET_ADDR_LO, ret_addr)
+  tile.noc0.write32(base + NIU_RET_ADDR_HI, noc_key(tile.x, tile.y))
+  tile.noc0.write32(base + NIU_AT_LEN_BE, length)
+  tile.noc0.write32(base + NIU_AT_DATA, data)
+  tile.noc0.write32(base + NIU_L1_ACC_AT_INSTRN, l1_acc_instrn)
+  tile.noc0.write32(base + NIU_CTRL, ctrl)
+  tile.noc0.write32(base + NIU_CMD_CTRL, 1)
+
+
+def _run_until_atomic_response(dev: Device, tile, expected: int = 1):
+  def done() -> bool:
+    return tile.noc0.read32(NOC0_BASE + NIU_MST_ATOMIC_RESP_RECEIVED) >= expected
+  dev.run_until(done, 1000, tiles=[])
+
+
 @pytest.mark.parametrize("case", build_cases(), ids=lambda c: c.name)
 def test_single_tile_kernel_case(case: Case):
   run_and_check(case)
@@ -546,3 +590,78 @@ def test_firmware_boot_dispatch_return_kernel():
 
 def test_matmul_peak_default_grid_smoke():
   assert run_matmul_peak() == 0
+
+
+@pytest.mark.parametrize(
+  ("opcode", "initial", "length", "data", "expected"),
+  [
+    (0x1, 41, 0x1 << 12, 1, 42),
+    (0x2, 3, (0x2 << 12) | (2 << 6) | (5 << 2), 0, 0),
+    (0x4, 0xCAFE1234, 0x4 << 12, 0xBEEF1234, 0xCAFEBEEF),
+    (0x6, 0x3000, 0x6 << 12, 0xA5A55A5A, 0x3000),
+    (0x7, 0x11223344, 0x7 << 12, 0x55667788, 0x55667788),
+  ],
+  ids=["incr_get", "incr_get_ptr_wrap", "cas_low16", "store_ind", "swap_4b"],
+)
+def test_noc_atomic_opcodes(opcode: int, initial: int, length: int,
+                            data: int, expected: int):
+  dev = Device(harvested_banks=HARVESTED_DRAM_BANKS, core_count=1, boot_firmware=False)
+  tile = next(iter(dev.tiles.values()))
+  target_addr = 0x2000
+  ret_addr = 0x2100
+  tile.l1.write32(target_addr, initial)
+  if opcode == 0x6:
+    tile.l1.write32(initial, 0)
+
+  _program_atomic(
+    tile,
+    target_xy=(tile.x, tile.y),
+    target_addr=target_addr,
+    ret_addr=ret_addr,
+    length=length,
+    data=data,
+  )
+  _run_until_atomic_response(dev, tile)
+
+  if opcode == 0x6:
+    assert tile.l1.read32(initial) == data
+    assert tile.l1.read32(target_addr) == initial
+  else:
+    assert tile.l1.read32(target_addr) == expected
+  assert tile.l1.read32(ret_addr) == initial
+
+
+def test_noc_l1_acc_atomic_instruction_selects_opcode():
+  dev = Device(harvested_banks=HARVESTED_DRAM_BANKS, core_count=1, boot_firmware=False)
+  tile = next(iter(dev.tiles.values()))
+  target_addr = 0x2200
+  ret_addr = 0x2300
+  tile.l1.write32(target_addr, 9)
+
+  _program_atomic(
+    tile,
+    target_xy=(tile.x, tile.y),
+    target_addr=target_addr,
+    ret_addr=ret_addr,
+    length=0,
+    data=5,
+    l1_acc_instrn=0x1 << 12,
+  )
+  _run_until_atomic_response(dev, tile)
+
+  assert tile.l1.read32(target_addr) == 14
+  assert tile.l1.read32(ret_addr) == 9
+
+
+def test_export_raw_kernel_case_sources_and_cb_config(tmp_path):
+  path = export_raw_kernel_cases(
+    [build_cases()[0].raw_kernel(), build_unary_copy_case(
+      "export_weird_cb", num_tiles=2, cb0=3, cb_out=19).raw_kernel()],
+    tmp_path / "raw_kernel_cases.json",
+  )
+  data = path.read_text()
+  assert "sfpu_add_scalar" in data
+  assert "export_weird_cb" in data
+  assert '"cb": 3' in data
+  assert '"trisc0"' in data
+

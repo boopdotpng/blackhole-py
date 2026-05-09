@@ -522,12 +522,43 @@ class Device:
           f"ra=0x{core.regs[1]:08x} sp=0x{core.regs[2]:08x}"
         )
       for thread_id, thread in enumerate(tile.tensix.threads):
+        gate = thread.wait_gate
+        gate_desc = "-"
+        if gate.opcode is not None:
+          gate_desc = (
+            f"{gate.opcode}"
+            f"(block=0x{gate.block_mask:x},cond=0x{gate.cond_mask:x},"
+            f"sem=0x{gate.sem_mask:x},sem_cond=0x{gate.sem_cond:x})"
+          )
+        held_desc = "-"
+        if thread.held is not None:
+          held_desc = thread.held.name
+          payload = thread.held.payload
+          fields = getattr(payload, "_fields", None)
+          if fields:
+            payload_desc = ",".join(
+              f"{k}={v}" for k, v in sorted(fields.items()))
+            held_desc += f"({payload_desc})"
         lines.append(
           f"    tensix t{thread_id}: fifo={len(thread.fifo)} "
-          f"held={thread.held.name if thread.held else '-'} "
+          f"held={held_desc} wait={gate_desc} "
           f"busy_until={thread.frontend_busy_until} "
           f"inflight={tile.tensix._backend_inflight[thread_id]}"
         )
+      sem = tile.tensix.semaphores
+      lines.append(
+        "    tensix sem: "
+        f"value={sem.value} max={sem.max}"
+      )
+      srca = tile.tensix.srca
+      srcb = tile.tensix.srcb
+      lines.append(
+        "    tensix src: "
+        f"A(unpack={srca.unpack_bank},fpu={srca.fpu_bank},"
+        f"owners={[b.allowed_client for b in srca.banks]}) "
+        f"B(unpack={srcb.unpack_bank},fpu={srcb.fpu_bank},"
+        f"owners={[b.allowed_client for b in srcb.banks]})"
+      )
     return "\n".join(lines)
 
   def boot_firmware(self, firmware: dict, *, max_cycles: int = 50_000_000,

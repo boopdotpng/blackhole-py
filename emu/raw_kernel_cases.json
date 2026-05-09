@@ -1,0 +1,771 @@
+[
+  {
+    "binary": false,
+    "cb_config": [
+      {
+        "addr": 65536,
+        "cb": 0,
+        "page_size": 2048,
+        "pages": 2,
+        "size": 4096
+      },
+      {
+        "addr": 69632,
+        "cb": 16,
+        "page_size": 2048,
+        "pages": 2,
+        "size": 4096
+      }
+    ],
+    "compiled_stems": {
+      "brisc": null,
+      "ncrisc": null,
+      "trisc0": "sfpu_add_scalar_compute_trisc0.kernel",
+      "trisc1": "sfpu_add_scalar_compute_trisc1.kernel",
+      "trisc2": "sfpu_add_scalar_compute_trisc2.kernel"
+    },
+    "dtype": "Float16_b",
+    "kernels": {
+      "trisc0": "\n#include <cstdint>\n#include \"api/compute/common.h\"\n#include \"api/compute/tile_move_copy.h\"\n#include \"api/compute/eltwise_unary/eltwise_unary.h\"\n#include \"api/compute/eltwise_unary/binop_with_scalar.h\"\n\n\nvoid kernel_main() {\n  uint32_t n = get_arg_val<uint32_t>(0);\n  constexpr auto cb_in = tt::CBIndex::c_0;\n  constexpr auto cb_out = tt::CBIndex::c_16;\n  unary_op_init_common(cb_in, cb_out);\n  copy_tile_init(cb_in);\n  binop_with_scalar_tile_init();\n  for (uint32_t i = 0; i < n; ++i) {\n    tile_regs_acquire();\n    cb_wait_front(cb_in, 1);\n    copy_tile(cb_in, 0, 0);\n    cb_pop_front(cb_in, 1);\n    add_unary_tile(0, 0x40000000);\n    tile_regs_commit();\n    tile_regs_wait();\n    cb_reserve_back(cb_out, 1);\n    pack_tile(0, cb_out);\n    cb_push_back(cb_out, 1);\n    tile_regs_release();\n  }\n}\n",
+      "trisc1": "\n#include <cstdint>\n#include \"api/compute/common.h\"\n#include \"api/compute/tile_move_copy.h\"\n#include \"api/compute/eltwise_unary/eltwise_unary.h\"\n#include \"api/compute/eltwise_unary/binop_with_scalar.h\"\n\n\nvoid kernel_main() {\n  uint32_t n = get_arg_val<uint32_t>(0);\n  constexpr auto cb_in = tt::CBIndex::c_0;\n  constexpr auto cb_out = tt::CBIndex::c_16;\n  unary_op_init_common(cb_in, cb_out);\n  copy_tile_init(cb_in);\n  binop_with_scalar_tile_init();\n  for (uint32_t i = 0; i < n; ++i) {\n    tile_regs_acquire();\n    cb_wait_front(cb_in, 1);\n    copy_tile(cb_in, 0, 0);\n    cb_pop_front(cb_in, 1);\n    add_unary_tile(0, 0x40000000);\n    tile_regs_commit();\n    tile_regs_wait();\n    cb_reserve_back(cb_out, 1);\n    pack_tile(0, cb_out);\n    cb_push_back(cb_out, 1);\n    tile_regs_release();\n  }\n}\n",
+      "trisc2": "\n#include <cstdint>\n#include \"api/compute/common.h\"\n#include \"api/compute/tile_move_copy.h\"\n#include \"api/compute/eltwise_unary/eltwise_unary.h\"\n#include \"api/compute/eltwise_unary/binop_with_scalar.h\"\n\n\nvoid kernel_main() {\n  uint32_t n = get_arg_val<uint32_t>(0);\n  constexpr auto cb_in = tt::CBIndex::c_0;\n  constexpr auto cb_out = tt::CBIndex::c_16;\n  unary_op_init_common(cb_in, cb_out);\n  copy_tile_init(cb_in);\n  binop_with_scalar_tile_init();\n  for (uint32_t i = 0; i < n; ++i) {\n    tile_regs_acquire();\n    cb_wait_front(cb_in, 1);\n    copy_tile(cb_in, 0, 0);\n    cb_pop_front(cb_in, 1);\n    add_unary_tile(0, 0x40000000);\n    tile_regs_commit();\n    tile_regs_wait();\n    cb_reserve_back(cb_out, 1);\n    pack_tile(0, cb_out);\n    cb_push_back(cb_out, 1);\n    tile_regs_release();\n  }\n}\n"
+    },
+    "name": "sfpu_add_scalar",
+    "num_tiles": 1
+  },
+  {
+    "binary": false,
+    "cb_config": [
+      {
+        "addr": 65536,
+        "cb": 0,
+        "page_size": 2048,
+        "pages": 2,
+        "size": 4096
+      },
+      {
+        "addr": 69632,
+        "cb": 16,
+        "page_size": 2048,
+        "pages": 2,
+        "size": 4096
+      }
+    ],
+    "compiled_stems": {
+      "brisc": null,
+      "ncrisc": null,
+      "trisc0": "sfpu_add_negative_compute_trisc0.kernel",
+      "trisc1": "sfpu_add_negative_compute_trisc1.kernel",
+      "trisc2": "sfpu_add_negative_compute_trisc2.kernel"
+    },
+    "dtype": "Float16_b",
+    "kernels": {
+      "trisc0": "\n#include <cstdint>\n#include \"api/compute/common.h\"\n#include \"api/compute/tile_move_copy.h\"\n#include \"api/compute/eltwise_unary/eltwise_unary.h\"\n#include \"api/compute/eltwise_unary/binop_with_scalar.h\"\n\n\nvoid kernel_main() {\n  uint32_t n = get_arg_val<uint32_t>(0);\n  constexpr auto cb_in = tt::CBIndex::c_0;\n  constexpr auto cb_out = tt::CBIndex::c_16;\n  unary_op_init_common(cb_in, cb_out);\n  copy_tile_init(cb_in);\n  binop_with_scalar_tile_init();\n  for (uint32_t i = 0; i < n; ++i) {\n    tile_regs_acquire();\n    cb_wait_front(cb_in, 1);\n    copy_tile(cb_in, 0, 0);\n    cb_pop_front(cb_in, 1);\n    add_unary_tile(0, 0xbf000000);\n    tile_regs_commit();\n    tile_regs_wait();\n    cb_reserve_back(cb_out, 1);\n    pack_tile(0, cb_out);\n    cb_push_back(cb_out, 1);\n    tile_regs_release();\n  }\n}\n",
+      "trisc1": "\n#include <cstdint>\n#include \"api/compute/common.h\"\n#include \"api/compute/tile_move_copy.h\"\n#include \"api/compute/eltwise_unary/eltwise_unary.h\"\n#include \"api/compute/eltwise_unary/binop_with_scalar.h\"\n\n\nvoid kernel_main() {\n  uint32_t n = get_arg_val<uint32_t>(0);\n  constexpr auto cb_in = tt::CBIndex::c_0;\n  constexpr auto cb_out = tt::CBIndex::c_16;\n  unary_op_init_common(cb_in, cb_out);\n  copy_tile_init(cb_in);\n  binop_with_scalar_tile_init();\n  for (uint32_t i = 0; i < n; ++i) {\n    tile_regs_acquire();\n    cb_wait_front(cb_in, 1);\n    copy_tile(cb_in, 0, 0);\n    cb_pop_front(cb_in, 1);\n    add_unary_tile(0, 0xbf000000);\n    tile_regs_commit();\n    tile_regs_wait();\n    cb_reserve_back(cb_out, 1);\n    pack_tile(0, cb_out);\n    cb_push_back(cb_out, 1);\n    tile_regs_release();\n  }\n}\n",
+      "trisc2": "\n#include <cstdint>\n#include \"api/compute/common.h\"\n#include \"api/compute/tile_move_copy.h\"\n#include \"api/compute/eltwise_unary/eltwise_unary.h\"\n#include \"api/compute/eltwise_unary/binop_with_scalar.h\"\n\n\nvoid kernel_main() {\n  uint32_t n = get_arg_val<uint32_t>(0);\n  constexpr auto cb_in = tt::CBIndex::c_0;\n  constexpr auto cb_out = tt::CBIndex::c_16;\n  unary_op_init_common(cb_in, cb_out);\n  copy_tile_init(cb_in);\n  binop_with_scalar_tile_init();\n  for (uint32_t i = 0; i < n; ++i) {\n    tile_regs_acquire();\n    cb_wait_front(cb_in, 1);\n    copy_tile(cb_in, 0, 0);\n    cb_pop_front(cb_in, 1);\n    add_unary_tile(0, 0xbf000000);\n    tile_regs_commit();\n    tile_regs_wait();\n    cb_reserve_back(cb_out, 1);\n    pack_tile(0, cb_out);\n    cb_push_back(cb_out, 1);\n    tile_regs_release();\n  }\n}\n"
+    },
+    "name": "sfpu_add_negative",
+    "num_tiles": 1
+  },
+  {
+    "binary": false,
+    "cb_config": [
+      {
+        "addr": 65536,
+        "cb": 0,
+        "page_size": 2048,
+        "pages": 2,
+        "size": 4096
+      },
+      {
+        "addr": 69632,
+        "cb": 16,
+        "page_size": 2048,
+        "pages": 2,
+        "size": 4096
+      }
+    ],
+    "compiled_stems": {
+      "brisc": null,
+      "ncrisc": null,
+      "trisc0": "sfpu_mul_scalar_compute_trisc0.kernel",
+      "trisc1": "sfpu_mul_scalar_compute_trisc1.kernel",
+      "trisc2": "sfpu_mul_scalar_compute_trisc2.kernel"
+    },
+    "dtype": "Float16_b",
+    "kernels": {
+      "trisc0": "\n#include <cstdint>\n#include \"api/compute/common.h\"\n#include \"api/compute/tile_move_copy.h\"\n#include \"api/compute/eltwise_unary/eltwise_unary.h\"\n#include \"api/compute/eltwise_unary/binop_with_scalar.h\"\n\n\nvoid kernel_main() {\n  uint32_t n = get_arg_val<uint32_t>(0);\n  constexpr auto cb_in = tt::CBIndex::c_0;\n  constexpr auto cb_out = tt::CBIndex::c_16;\n  unary_op_init_common(cb_in, cb_out);\n  copy_tile_init(cb_in);\n  binop_with_scalar_tile_init();\n  for (uint32_t i = 0; i < n; ++i) {\n    tile_regs_acquire();\n    cb_wait_front(cb_in, 1);\n    copy_tile(cb_in, 0, 0);\n    cb_pop_front(cb_in, 1);\n    mul_unary_tile(0, 0x40400000);\n    tile_regs_commit();\n    tile_regs_wait();\n    cb_reserve_back(cb_out, 1);\n    pack_tile(0, cb_out);\n    cb_push_back(cb_out, 1);\n    tile_regs_release();\n  }\n}\n",
+      "trisc1": "\n#include <cstdint>\n#include \"api/compute/common.h\"\n#include \"api/compute/tile_move_copy.h\"\n#include \"api/compute/eltwise_unary/eltwise_unary.h\"\n#include \"api/compute/eltwise_unary/binop_with_scalar.h\"\n\n\nvoid kernel_main() {\n  uint32_t n = get_arg_val<uint32_t>(0);\n  constexpr auto cb_in = tt::CBIndex::c_0;\n  constexpr auto cb_out = tt::CBIndex::c_16;\n  unary_op_init_common(cb_in, cb_out);\n  copy_tile_init(cb_in);\n  binop_with_scalar_tile_init();\n  for (uint32_t i = 0; i < n; ++i) {\n    tile_regs_acquire();\n    cb_wait_front(cb_in, 1);\n    copy_tile(cb_in, 0, 0);\n    cb_pop_front(cb_in, 1);\n    mul_unary_tile(0, 0x40400000);\n    tile_regs_commit();\n    tile_regs_wait();\n    cb_reserve_back(cb_out, 1);\n    pack_tile(0, cb_out);\n    cb_push_back(cb_out, 1);\n    tile_regs_release();\n  }\n}\n",
+      "trisc2": "\n#include <cstdint>\n#include \"api/compute/common.h\"\n#include \"api/compute/tile_move_copy.h\"\n#include \"api/compute/eltwise_unary/eltwise_unary.h\"\n#include \"api/compute/eltwise_unary/binop_with_scalar.h\"\n\n\nvoid kernel_main() {\n  uint32_t n = get_arg_val<uint32_t>(0);\n  constexpr auto cb_in = tt::CBIndex::c_0;\n  constexpr auto cb_out = tt::CBIndex::c_16;\n  unary_op_init_common(cb_in, cb_out);\n  copy_tile_init(cb_in);\n  binop_with_scalar_tile_init();\n  for (uint32_t i = 0; i < n; ++i) {\n    tile_regs_acquire();\n    cb_wait_front(cb_in, 1);\n    copy_tile(cb_in, 0, 0);\n    cb_pop_front(cb_in, 1);\n    mul_unary_tile(0, 0x40400000);\n    tile_regs_commit();\n    tile_regs_wait();\n    cb_reserve_back(cb_out, 1);\n    pack_tile(0, cb_out);\n    cb_push_back(cb_out, 1);\n    tile_regs_release();\n  }\n}\n"
+    },
+    "name": "sfpu_mul_scalar",
+    "num_tiles": 1
+  },
+  {
+    "binary": false,
+    "cb_config": [
+      {
+        "addr": 65536,
+        "cb": 0,
+        "page_size": 2048,
+        "pages": 2,
+        "size": 4096
+      },
+      {
+        "addr": 69632,
+        "cb": 16,
+        "page_size": 2048,
+        "pages": 2,
+        "size": 4096
+      }
+    ],
+    "compiled_stems": {
+      "brisc": null,
+      "ncrisc": null,
+      "trisc0": "sfpu_mul_half_compute_trisc0.kernel",
+      "trisc1": "sfpu_mul_half_compute_trisc1.kernel",
+      "trisc2": "sfpu_mul_half_compute_trisc2.kernel"
+    },
+    "dtype": "Float16_b",
+    "kernels": {
+      "trisc0": "\n#include <cstdint>\n#include \"api/compute/common.h\"\n#include \"api/compute/tile_move_copy.h\"\n#include \"api/compute/eltwise_unary/eltwise_unary.h\"\n#include \"api/compute/eltwise_unary/binop_with_scalar.h\"\n\n\nvoid kernel_main() {\n  uint32_t n = get_arg_val<uint32_t>(0);\n  constexpr auto cb_in = tt::CBIndex::c_0;\n  constexpr auto cb_out = tt::CBIndex::c_16;\n  unary_op_init_common(cb_in, cb_out);\n  copy_tile_init(cb_in);\n  binop_with_scalar_tile_init();\n  for (uint32_t i = 0; i < n; ++i) {\n    tile_regs_acquire();\n    cb_wait_front(cb_in, 1);\n    copy_tile(cb_in, 0, 0);\n    cb_pop_front(cb_in, 1);\n    mul_unary_tile(0, 0x3f000000);\n    tile_regs_commit();\n    tile_regs_wait();\n    cb_reserve_back(cb_out, 1);\n    pack_tile(0, cb_out);\n    cb_push_back(cb_out, 1);\n    tile_regs_release();\n  }\n}\n",
+      "trisc1": "\n#include <cstdint>\n#include \"api/compute/common.h\"\n#include \"api/compute/tile_move_copy.h\"\n#include \"api/compute/eltwise_unary/eltwise_unary.h\"\n#include \"api/compute/eltwise_unary/binop_with_scalar.h\"\n\n\nvoid kernel_main() {\n  uint32_t n = get_arg_val<uint32_t>(0);\n  constexpr auto cb_in = tt::CBIndex::c_0;\n  constexpr auto cb_out = tt::CBIndex::c_16;\n  unary_op_init_common(cb_in, cb_out);\n  copy_tile_init(cb_in);\n  binop_with_scalar_tile_init();\n  for (uint32_t i = 0; i < n; ++i) {\n    tile_regs_acquire();\n    cb_wait_front(cb_in, 1);\n    copy_tile(cb_in, 0, 0);\n    cb_pop_front(cb_in, 1);\n    mul_unary_tile(0, 0x3f000000);\n    tile_regs_commit();\n    tile_regs_wait();\n    cb_reserve_back(cb_out, 1);\n    pack_tile(0, cb_out);\n    cb_push_back(cb_out, 1);\n    tile_regs_release();\n  }\n}\n",
+      "trisc2": "\n#include <cstdint>\n#include \"api/compute/common.h\"\n#include \"api/compute/tile_move_copy.h\"\n#include \"api/compute/eltwise_unary/eltwise_unary.h\"\n#include \"api/compute/eltwise_unary/binop_with_scalar.h\"\n\n\nvoid kernel_main() {\n  uint32_t n = get_arg_val<uint32_t>(0);\n  constexpr auto cb_in = tt::CBIndex::c_0;\n  constexpr auto cb_out = tt::CBIndex::c_16;\n  unary_op_init_common(cb_in, cb_out);\n  copy_tile_init(cb_in);\n  binop_with_scalar_tile_init();\n  for (uint32_t i = 0; i < n; ++i) {\n    tile_regs_acquire();\n    cb_wait_front(cb_in, 1);\n    copy_tile(cb_in, 0, 0);\n    cb_pop_front(cb_in, 1);\n    mul_unary_tile(0, 0x3f000000);\n    tile_regs_commit();\n    tile_regs_wait();\n    cb_reserve_back(cb_out, 1);\n    pack_tile(0, cb_out);\n    cb_push_back(cb_out, 1);\n    tile_regs_release();\n  }\n}\n"
+    },
+    "name": "sfpu_mul_half",
+    "num_tiles": 1
+  },
+  {
+    "binary": false,
+    "cb_config": [
+      {
+        "addr": 65536,
+        "cb": 0,
+        "page_size": 2048,
+        "pages": 2,
+        "size": 4096
+      },
+      {
+        "addr": 69632,
+        "cb": 16,
+        "page_size": 2048,
+        "pages": 2,
+        "size": 4096
+      }
+    ],
+    "compiled_stems": {
+      "brisc": null,
+      "ncrisc": null,
+      "trisc0": "sfpu_mul_negative_compute_trisc0.kernel",
+      "trisc1": "sfpu_mul_negative_compute_trisc1.kernel",
+      "trisc2": "sfpu_mul_negative_compute_trisc2.kernel"
+    },
+    "dtype": "Float16_b",
+    "kernels": {
+      "trisc0": "\n#include <cstdint>\n#include \"api/compute/common.h\"\n#include \"api/compute/tile_move_copy.h\"\n#include \"api/compute/eltwise_unary/eltwise_unary.h\"\n#include \"api/compute/eltwise_unary/binop_with_scalar.h\"\n\n\nvoid kernel_main() {\n  uint32_t n = get_arg_val<uint32_t>(0);\n  constexpr auto cb_in = tt::CBIndex::c_0;\n  constexpr auto cb_out = tt::CBIndex::c_16;\n  unary_op_init_common(cb_in, cb_out);\n  copy_tile_init(cb_in);\n  binop_with_scalar_tile_init();\n  for (uint32_t i = 0; i < n; ++i) {\n    tile_regs_acquire();\n    cb_wait_front(cb_in, 1);\n    copy_tile(cb_in, 0, 0);\n    cb_pop_front(cb_in, 1);\n    mul_unary_tile(0, 0xbf800000);\n    tile_regs_commit();\n    tile_regs_wait();\n    cb_reserve_back(cb_out, 1);\n    pack_tile(0, cb_out);\n    cb_push_back(cb_out, 1);\n    tile_regs_release();\n  }\n}\n",
+      "trisc1": "\n#include <cstdint>\n#include \"api/compute/common.h\"\n#include \"api/compute/tile_move_copy.h\"\n#include \"api/compute/eltwise_unary/eltwise_unary.h\"\n#include \"api/compute/eltwise_unary/binop_with_scalar.h\"\n\n\nvoid kernel_main() {\n  uint32_t n = get_arg_val<uint32_t>(0);\n  constexpr auto cb_in = tt::CBIndex::c_0;\n  constexpr auto cb_out = tt::CBIndex::c_16;\n  unary_op_init_common(cb_in, cb_out);\n  copy_tile_init(cb_in);\n  binop_with_scalar_tile_init();\n  for (uint32_t i = 0; i < n; ++i) {\n    tile_regs_acquire();\n    cb_wait_front(cb_in, 1);\n    copy_tile(cb_in, 0, 0);\n    cb_pop_front(cb_in, 1);\n    mul_unary_tile(0, 0xbf800000);\n    tile_regs_commit();\n    tile_regs_wait();\n    cb_reserve_back(cb_out, 1);\n    pack_tile(0, cb_out);\n    cb_push_back(cb_out, 1);\n    tile_regs_release();\n  }\n}\n",
+      "trisc2": "\n#include <cstdint>\n#include \"api/compute/common.h\"\n#include \"api/compute/tile_move_copy.h\"\n#include \"api/compute/eltwise_unary/eltwise_unary.h\"\n#include \"api/compute/eltwise_unary/binop_with_scalar.h\"\n\n\nvoid kernel_main() {\n  uint32_t n = get_arg_val<uint32_t>(0);\n  constexpr auto cb_in = tt::CBIndex::c_0;\n  constexpr auto cb_out = tt::CBIndex::c_16;\n  unary_op_init_common(cb_in, cb_out);\n  copy_tile_init(cb_in);\n  binop_with_scalar_tile_init();\n  for (uint32_t i = 0; i < n; ++i) {\n    tile_regs_acquire();\n    cb_wait_front(cb_in, 1);\n    copy_tile(cb_in, 0, 0);\n    cb_pop_front(cb_in, 1);\n    mul_unary_tile(0, 0xbf800000);\n    tile_regs_commit();\n    tile_regs_wait();\n    cb_reserve_back(cb_out, 1);\n    pack_tile(0, cb_out);\n    cb_push_back(cb_out, 1);\n    tile_regs_release();\n  }\n}\n"
+    },
+    "name": "sfpu_mul_negative",
+    "num_tiles": 1
+  },
+  {
+    "binary": false,
+    "cb_config": [
+      {
+        "addr": 65536,
+        "cb": 0,
+        "page_size": 2048,
+        "pages": 2,
+        "size": 4096
+      },
+      {
+        "addr": 69632,
+        "cb": 16,
+        "page_size": 2048,
+        "pages": 2,
+        "size": 4096
+      }
+    ],
+    "compiled_stems": {
+      "brisc": null,
+      "ncrisc": null,
+      "trisc0": "sfpu_affine_compute_trisc0.kernel",
+      "trisc1": "sfpu_affine_compute_trisc1.kernel",
+      "trisc2": "sfpu_affine_compute_trisc2.kernel"
+    },
+    "dtype": "Float16_b",
+    "kernels": {
+      "trisc0": "\n#include <cstdint>\n#include \"api/compute/common.h\"\n#include \"api/compute/tile_move_copy.h\"\n#include \"api/compute/eltwise_unary/eltwise_unary.h\"\n#include \"api/compute/eltwise_unary/binop_with_scalar.h\"\n\n\nvoid kernel_main() {\n  uint32_t n = get_arg_val<uint32_t>(0);\n  constexpr auto cb_in = tt::CBIndex::c_0;\n  constexpr auto cb_out = tt::CBIndex::c_16;\n  unary_op_init_common(cb_in, cb_out);\n  copy_tile_init(cb_in);\n  binop_with_scalar_tile_init();\n  for (uint32_t i = 0; i < n; ++i) {\n    tile_regs_acquire();\n    cb_wait_front(cb_in, 1);\n    copy_tile(cb_in, 0, 0);\n    cb_pop_front(cb_in, 1);\n    add_unary_tile(0, 0x40000000); mul_unary_tile(0, 0x40400000);\n    tile_regs_commit();\n    tile_regs_wait();\n    cb_reserve_back(cb_out, 1);\n    pack_tile(0, cb_out);\n    cb_push_back(cb_out, 1);\n    tile_regs_release();\n  }\n}\n",
+      "trisc1": "\n#include <cstdint>\n#include \"api/compute/common.h\"\n#include \"api/compute/tile_move_copy.h\"\n#include \"api/compute/eltwise_unary/eltwise_unary.h\"\n#include \"api/compute/eltwise_unary/binop_with_scalar.h\"\n\n\nvoid kernel_main() {\n  uint32_t n = get_arg_val<uint32_t>(0);\n  constexpr auto cb_in = tt::CBIndex::c_0;\n  constexpr auto cb_out = tt::CBIndex::c_16;\n  unary_op_init_common(cb_in, cb_out);\n  copy_tile_init(cb_in);\n  binop_with_scalar_tile_init();\n  for (uint32_t i = 0; i < n; ++i) {\n    tile_regs_acquire();\n    cb_wait_front(cb_in, 1);\n    copy_tile(cb_in, 0, 0);\n    cb_pop_front(cb_in, 1);\n    add_unary_tile(0, 0x40000000); mul_unary_tile(0, 0x40400000);\n    tile_regs_commit();\n    tile_regs_wait();\n    cb_reserve_back(cb_out, 1);\n    pack_tile(0, cb_out);\n    cb_push_back(cb_out, 1);\n    tile_regs_release();\n  }\n}\n",
+      "trisc2": "\n#include <cstdint>\n#include \"api/compute/common.h\"\n#include \"api/compute/tile_move_copy.h\"\n#include \"api/compute/eltwise_unary/eltwise_unary.h\"\n#include \"api/compute/eltwise_unary/binop_with_scalar.h\"\n\n\nvoid kernel_main() {\n  uint32_t n = get_arg_val<uint32_t>(0);\n  constexpr auto cb_in = tt::CBIndex::c_0;\n  constexpr auto cb_out = tt::CBIndex::c_16;\n  unary_op_init_common(cb_in, cb_out);\n  copy_tile_init(cb_in);\n  binop_with_scalar_tile_init();\n  for (uint32_t i = 0; i < n; ++i) {\n    tile_regs_acquire();\n    cb_wait_front(cb_in, 1);\n    copy_tile(cb_in, 0, 0);\n    cb_pop_front(cb_in, 1);\n    add_unary_tile(0, 0x40000000); mul_unary_tile(0, 0x40400000);\n    tile_regs_commit();\n    tile_regs_wait();\n    cb_reserve_back(cb_out, 1);\n    pack_tile(0, cb_out);\n    cb_push_back(cb_out, 1);\n    tile_regs_release();\n  }\n}\n"
+    },
+    "name": "sfpu_affine",
+    "num_tiles": 1
+  },
+  {
+    "binary": false,
+    "cb_config": [
+      {
+        "addr": 65536,
+        "cb": 0,
+        "page_size": 2048,
+        "pages": 2,
+        "size": 4096
+      },
+      {
+        "addr": 69632,
+        "cb": 16,
+        "page_size": 2048,
+        "pages": 2,
+        "size": 4096
+      }
+    ],
+    "compiled_stems": {
+      "brisc": null,
+      "ncrisc": null,
+      "trisc0": "sfpu_scale_bias_compute_trisc0.kernel",
+      "trisc1": "sfpu_scale_bias_compute_trisc1.kernel",
+      "trisc2": "sfpu_scale_bias_compute_trisc2.kernel"
+    },
+    "dtype": "Float16_b",
+    "kernels": {
+      "trisc0": "\n#include <cstdint>\n#include \"api/compute/common.h\"\n#include \"api/compute/tile_move_copy.h\"\n#include \"api/compute/eltwise_unary/eltwise_unary.h\"\n#include \"api/compute/eltwise_unary/binop_with_scalar.h\"\n\n\nvoid kernel_main() {\n  uint32_t n = get_arg_val<uint32_t>(0);\n  constexpr auto cb_in = tt::CBIndex::c_0;\n  constexpr auto cb_out = tt::CBIndex::c_16;\n  unary_op_init_common(cb_in, cb_out);\n  copy_tile_init(cb_in);\n  binop_with_scalar_tile_init();\n  for (uint32_t i = 0; i < n; ++i) {\n    tile_regs_acquire();\n    cb_wait_front(cb_in, 1);\n    copy_tile(cb_in, 0, 0);\n    cb_pop_front(cb_in, 1);\n    mul_unary_tile(0, 0x3fc00000); add_unary_tile(0, 0x3f800000);\n    tile_regs_commit();\n    tile_regs_wait();\n    cb_reserve_back(cb_out, 1);\n    pack_tile(0, cb_out);\n    cb_push_back(cb_out, 1);\n    tile_regs_release();\n  }\n}\n",
+      "trisc1": "\n#include <cstdint>\n#include \"api/compute/common.h\"\n#include \"api/compute/tile_move_copy.h\"\n#include \"api/compute/eltwise_unary/eltwise_unary.h\"\n#include \"api/compute/eltwise_unary/binop_with_scalar.h\"\n\n\nvoid kernel_main() {\n  uint32_t n = get_arg_val<uint32_t>(0);\n  constexpr auto cb_in = tt::CBIndex::c_0;\n  constexpr auto cb_out = tt::CBIndex::c_16;\n  unary_op_init_common(cb_in, cb_out);\n  copy_tile_init(cb_in);\n  binop_with_scalar_tile_init();\n  for (uint32_t i = 0; i < n; ++i) {\n    tile_regs_acquire();\n    cb_wait_front(cb_in, 1);\n    copy_tile(cb_in, 0, 0);\n    cb_pop_front(cb_in, 1);\n    mul_unary_tile(0, 0x3fc00000); add_unary_tile(0, 0x3f800000);\n    tile_regs_commit();\n    tile_regs_wait();\n    cb_reserve_back(cb_out, 1);\n    pack_tile(0, cb_out);\n    cb_push_back(cb_out, 1);\n    tile_regs_release();\n  }\n}\n",
+      "trisc2": "\n#include <cstdint>\n#include \"api/compute/common.h\"\n#include \"api/compute/tile_move_copy.h\"\n#include \"api/compute/eltwise_unary/eltwise_unary.h\"\n#include \"api/compute/eltwise_unary/binop_with_scalar.h\"\n\n\nvoid kernel_main() {\n  uint32_t n = get_arg_val<uint32_t>(0);\n  constexpr auto cb_in = tt::CBIndex::c_0;\n  constexpr auto cb_out = tt::CBIndex::c_16;\n  unary_op_init_common(cb_in, cb_out);\n  copy_tile_init(cb_in);\n  binop_with_scalar_tile_init();\n  for (uint32_t i = 0; i < n; ++i) {\n    tile_regs_acquire();\n    cb_wait_front(cb_in, 1);\n    copy_tile(cb_in, 0, 0);\n    cb_pop_front(cb_in, 1);\n    mul_unary_tile(0, 0x3fc00000); add_unary_tile(0, 0x3f800000);\n    tile_regs_commit();\n    tile_regs_wait();\n    cb_reserve_back(cb_out, 1);\n    pack_tile(0, cb_out);\n    cb_push_back(cb_out, 1);\n    tile_regs_release();\n  }\n}\n"
+    },
+    "name": "sfpu_scale_bias",
+    "num_tiles": 1
+  },
+  {
+    "binary": false,
+    "cb_config": [
+      {
+        "addr": 65536,
+        "cb": 0,
+        "page_size": 2048,
+        "pages": 2,
+        "size": 4096
+      },
+      {
+        "addr": 69632,
+        "cb": 16,
+        "page_size": 2048,
+        "pages": 2,
+        "size": 4096
+      }
+    ],
+    "compiled_stems": {
+      "brisc": null,
+      "ncrisc": null,
+      "trisc0": "sfpu_add_zero_compute_trisc0.kernel",
+      "trisc1": "sfpu_add_zero_compute_trisc1.kernel",
+      "trisc2": "sfpu_add_zero_compute_trisc2.kernel"
+    },
+    "dtype": "Float16_b",
+    "kernels": {
+      "trisc0": "\n#include <cstdint>\n#include \"api/compute/common.h\"\n#include \"api/compute/tile_move_copy.h\"\n#include \"api/compute/eltwise_unary/eltwise_unary.h\"\n#include \"api/compute/eltwise_unary/binop_with_scalar.h\"\n\n\nvoid kernel_main() {\n  uint32_t n = get_arg_val<uint32_t>(0);\n  constexpr auto cb_in = tt::CBIndex::c_0;\n  constexpr auto cb_out = tt::CBIndex::c_16;\n  unary_op_init_common(cb_in, cb_out);\n  copy_tile_init(cb_in);\n  binop_with_scalar_tile_init();\n  for (uint32_t i = 0; i < n; ++i) {\n    tile_regs_acquire();\n    cb_wait_front(cb_in, 1);\n    copy_tile(cb_in, 0, 0);\n    cb_pop_front(cb_in, 1);\n    add_unary_tile(0, 0x00000000);\n    tile_regs_commit();\n    tile_regs_wait();\n    cb_reserve_back(cb_out, 1);\n    pack_tile(0, cb_out);\n    cb_push_back(cb_out, 1);\n    tile_regs_release();\n  }\n}\n",
+      "trisc1": "\n#include <cstdint>\n#include \"api/compute/common.h\"\n#include \"api/compute/tile_move_copy.h\"\n#include \"api/compute/eltwise_unary/eltwise_unary.h\"\n#include \"api/compute/eltwise_unary/binop_with_scalar.h\"\n\n\nvoid kernel_main() {\n  uint32_t n = get_arg_val<uint32_t>(0);\n  constexpr auto cb_in = tt::CBIndex::c_0;\n  constexpr auto cb_out = tt::CBIndex::c_16;\n  unary_op_init_common(cb_in, cb_out);\n  copy_tile_init(cb_in);\n  binop_with_scalar_tile_init();\n  for (uint32_t i = 0; i < n; ++i) {\n    tile_regs_acquire();\n    cb_wait_front(cb_in, 1);\n    copy_tile(cb_in, 0, 0);\n    cb_pop_front(cb_in, 1);\n    add_unary_tile(0, 0x00000000);\n    tile_regs_commit();\n    tile_regs_wait();\n    cb_reserve_back(cb_out, 1);\n    pack_tile(0, cb_out);\n    cb_push_back(cb_out, 1);\n    tile_regs_release();\n  }\n}\n",
+      "trisc2": "\n#include <cstdint>\n#include \"api/compute/common.h\"\n#include \"api/compute/tile_move_copy.h\"\n#include \"api/compute/eltwise_unary/eltwise_unary.h\"\n#include \"api/compute/eltwise_unary/binop_with_scalar.h\"\n\n\nvoid kernel_main() {\n  uint32_t n = get_arg_val<uint32_t>(0);\n  constexpr auto cb_in = tt::CBIndex::c_0;\n  constexpr auto cb_out = tt::CBIndex::c_16;\n  unary_op_init_common(cb_in, cb_out);\n  copy_tile_init(cb_in);\n  binop_with_scalar_tile_init();\n  for (uint32_t i = 0; i < n; ++i) {\n    tile_regs_acquire();\n    cb_wait_front(cb_in, 1);\n    copy_tile(cb_in, 0, 0);\n    cb_pop_front(cb_in, 1);\n    add_unary_tile(0, 0x00000000);\n    tile_regs_commit();\n    tile_regs_wait();\n    cb_reserve_back(cb_out, 1);\n    pack_tile(0, cb_out);\n    cb_push_back(cb_out, 1);\n    tile_regs_release();\n  }\n}\n"
+    },
+    "name": "sfpu_add_zero",
+    "num_tiles": 1
+  },
+  {
+    "binary": true,
+    "cb_config": [
+      {
+        "addr": 65536,
+        "cb": 0,
+        "page_size": 2048,
+        "pages": 2,
+        "size": 4096
+      },
+      {
+        "addr": 69632,
+        "cb": 1,
+        "page_size": 2048,
+        "pages": 2,
+        "size": 4096
+      },
+      {
+        "addr": 73728,
+        "cb": 16,
+        "page_size": 2048,
+        "pages": 2,
+        "size": 4096
+      }
+    ],
+    "compiled_stems": {
+      "brisc": "fpu_cb0_cb1_add_reader_brisc.kernel",
+      "ncrisc": "fpu_cb0_cb1_add_writer_ncrisc.kernel",
+      "trisc0": "fpu_cb0_cb1_add_compute_trisc0.kernel",
+      "trisc1": "fpu_cb0_cb1_add_compute_trisc1.kernel",
+      "trisc2": "fpu_cb0_cb1_add_compute_trisc2.kernel"
+    },
+    "dtype": "Float16_b",
+    "kernels": {
+      "brisc": "\n#include <cstdint>\nvoid kernel_main() {\n  uint32_t a_addr = get_arg_val<uint32_t>(0);\n  uint32_t b_addr = get_arg_val<uint32_t>(1);\n  uint32_t off = get_arg_val<uint32_t>(2);\n  uint32_t n = get_arg_val<uint32_t>(3);\n  constexpr uint32_t cb0 = tt::CBIndex::c_0;\n  constexpr uint32_t cb1 = tt::CBIndex::c_1;\n  const InterleavedAddrGenFast<true> a = {\n    .bank_base_address = a_addr, .page_size = get_tile_size(cb0), .data_format = DataFormat::Float16_b,\n  };\n  const InterleavedAddrGenFast<true> b = {\n    .bank_base_address = b_addr, .page_size = get_tile_size(cb1), .data_format = DataFormat::Float16_b,\n  };\n  for (uint32_t i = 0; i < n; ++i) {\n    cb_reserve_back(cb0, 1);\n    cb_reserve_back(cb1, 1);\n    noc_async_read_tile(off + i, a, get_write_ptr(cb0));\n    noc_async_read_tile(off + i, b, get_write_ptr(cb1));\n    noc_async_read_barrier();\n    cb_push_back(cb0, 1);\n    cb_push_back(cb1, 1);\n  }\n}\n",
+      "ncrisc": "\n#include <cstdint>\nvoid kernel_main() {\n  uint32_t addr = get_arg_val<uint32_t>(0);\n  uint32_t off  = get_arg_val<uint32_t>(1);\n  uint32_t n    = get_arg_val<uint32_t>(2);\n  constexpr uint32_t cb = tt::CBIndex::c_16;\n  const InterleavedAddrGenFast<true> s = {\n    .bank_base_address = addr, .page_size = get_tile_size(cb), .data_format = DataFormat::Float16_b,\n  };\n  for (uint32_t i = 0; i < n; ++i) {\n    cb_wait_front(cb, 1);\n    noc_async_write_tile(off + i, s, get_read_ptr(cb));\n    noc_async_write_barrier();\n    cb_pop_front(cb, 1);\n  }\n}\n",
+      "trisc0": "\n#include <cstdint>\n#include \"api/compute/common.h\"\n#include \"api/compute/eltwise_binary.h\"\n\nvoid kernel_main() {\n  uint32_t n = get_arg_val<uint32_t>(0);\n  constexpr auto cb0 = tt::CBIndex::c_0;\n  constexpr auto cb1 = tt::CBIndex::c_1;\n  constexpr auto cb_out = tt::CBIndex::c_16;\n  binary_op_init_common(cb0, cb1, cb_out);\n  add_tiles_init(cb0, cb1);\n  for (uint32_t i = 0; i < n; ++i) {\n    tile_regs_acquire();\n    cb_wait_front(cb0, 1);\n    cb_wait_front(cb1, 1);\n    add_tiles(cb0, cb1, 0, 0, 0);\n    cb_pop_front(cb0, 1);\n    cb_pop_front(cb1, 1);\n    tile_regs_commit();\n    tile_regs_wait();\n    cb_reserve_back(cb_out, 1);\n    pack_tile(0, cb_out);\n    cb_push_back(cb_out, 1);\n    tile_regs_release();\n  }\n}\n",
+      "trisc1": "\n#include <cstdint>\n#include \"api/compute/common.h\"\n#include \"api/compute/eltwise_binary.h\"\n\nvoid kernel_main() {\n  uint32_t n = get_arg_val<uint32_t>(0);\n  constexpr auto cb0 = tt::CBIndex::c_0;\n  constexpr auto cb1 = tt::CBIndex::c_1;\n  constexpr auto cb_out = tt::CBIndex::c_16;\n  binary_op_init_common(cb0, cb1, cb_out);\n  add_tiles_init(cb0, cb1);\n  for (uint32_t i = 0; i < n; ++i) {\n    tile_regs_acquire();\n    cb_wait_front(cb0, 1);\n    cb_wait_front(cb1, 1);\n    add_tiles(cb0, cb1, 0, 0, 0);\n    cb_pop_front(cb0, 1);\n    cb_pop_front(cb1, 1);\n    tile_regs_commit();\n    tile_regs_wait();\n    cb_reserve_back(cb_out, 1);\n    pack_tile(0, cb_out);\n    cb_push_back(cb_out, 1);\n    tile_regs_release();\n  }\n}\n",
+      "trisc2": "\n#include <cstdint>\n#include \"api/compute/common.h\"\n#include \"api/compute/eltwise_binary.h\"\n\nvoid kernel_main() {\n  uint32_t n = get_arg_val<uint32_t>(0);\n  constexpr auto cb0 = tt::CBIndex::c_0;\n  constexpr auto cb1 = tt::CBIndex::c_1;\n  constexpr auto cb_out = tt::CBIndex::c_16;\n  binary_op_init_common(cb0, cb1, cb_out);\n  add_tiles_init(cb0, cb1);\n  for (uint32_t i = 0; i < n; ++i) {\n    tile_regs_acquire();\n    cb_wait_front(cb0, 1);\n    cb_wait_front(cb1, 1);\n    add_tiles(cb0, cb1, 0, 0, 0);\n    cb_pop_front(cb0, 1);\n    cb_pop_front(cb1, 1);\n    tile_regs_commit();\n    tile_regs_wait();\n    cb_reserve_back(cb_out, 1);\n    pack_tile(0, cb_out);\n    cb_push_back(cb_out, 1);\n    tile_regs_release();\n  }\n}\n"
+    },
+    "name": "fpu_cb0_cb1_add",
+    "num_tiles": 1
+  },
+  {
+    "binary": true,
+    "cb_config": [
+      {
+        "addr": 65536,
+        "cb": 0,
+        "page_size": 2048,
+        "pages": 2,
+        "size": 4096
+      },
+      {
+        "addr": 69632,
+        "cb": 1,
+        "page_size": 2048,
+        "pages": 2,
+        "size": 4096
+      },
+      {
+        "addr": 73728,
+        "cb": 16,
+        "page_size": 2048,
+        "pages": 2,
+        "size": 4096
+      }
+    ],
+    "compiled_stems": {
+      "brisc": "fpu_cb0_cb1_sub_reader_brisc.kernel",
+      "ncrisc": "fpu_cb0_cb1_sub_writer_ncrisc.kernel",
+      "trisc0": "fpu_cb0_cb1_sub_compute_trisc0.kernel",
+      "trisc1": "fpu_cb0_cb1_sub_compute_trisc1.kernel",
+      "trisc2": "fpu_cb0_cb1_sub_compute_trisc2.kernel"
+    },
+    "dtype": "Float16_b",
+    "kernels": {
+      "brisc": "\n#include <cstdint>\nvoid kernel_main() {\n  uint32_t a_addr = get_arg_val<uint32_t>(0);\n  uint32_t b_addr = get_arg_val<uint32_t>(1);\n  uint32_t off = get_arg_val<uint32_t>(2);\n  uint32_t n = get_arg_val<uint32_t>(3);\n  constexpr uint32_t cb0 = tt::CBIndex::c_0;\n  constexpr uint32_t cb1 = tt::CBIndex::c_1;\n  const InterleavedAddrGenFast<true> a = {\n    .bank_base_address = a_addr, .page_size = get_tile_size(cb0), .data_format = DataFormat::Float16_b,\n  };\n  const InterleavedAddrGenFast<true> b = {\n    .bank_base_address = b_addr, .page_size = get_tile_size(cb1), .data_format = DataFormat::Float16_b,\n  };\n  for (uint32_t i = 0; i < n; ++i) {\n    cb_reserve_back(cb0, 1);\n    cb_reserve_back(cb1, 1);\n    noc_async_read_tile(off + i, a, get_write_ptr(cb0));\n    noc_async_read_tile(off + i, b, get_write_ptr(cb1));\n    noc_async_read_barrier();\n    cb_push_back(cb0, 1);\n    cb_push_back(cb1, 1);\n  }\n}\n",
+      "ncrisc": "\n#include <cstdint>\nvoid kernel_main() {\n  uint32_t addr = get_arg_val<uint32_t>(0);\n  uint32_t off  = get_arg_val<uint32_t>(1);\n  uint32_t n    = get_arg_val<uint32_t>(2);\n  constexpr uint32_t cb = tt::CBIndex::c_16;\n  const InterleavedAddrGenFast<true> s = {\n    .bank_base_address = addr, .page_size = get_tile_size(cb), .data_format = DataFormat::Float16_b,\n  };\n  for (uint32_t i = 0; i < n; ++i) {\n    cb_wait_front(cb, 1);\n    noc_async_write_tile(off + i, s, get_read_ptr(cb));\n    noc_async_write_barrier();\n    cb_pop_front(cb, 1);\n  }\n}\n",
+      "trisc0": "\n#include <cstdint>\n#include \"api/compute/common.h\"\n#include \"api/compute/eltwise_binary.h\"\n\nvoid kernel_main() {\n  uint32_t n = get_arg_val<uint32_t>(0);\n  constexpr auto cb0 = tt::CBIndex::c_0;\n  constexpr auto cb1 = tt::CBIndex::c_1;\n  constexpr auto cb_out = tt::CBIndex::c_16;\n  binary_op_init_common(cb0, cb1, cb_out);\n  sub_tiles_init(cb0, cb1);\n  for (uint32_t i = 0; i < n; ++i) {\n    tile_regs_acquire();\n    cb_wait_front(cb0, 1);\n    cb_wait_front(cb1, 1);\n    sub_tiles(cb0, cb1, 0, 0, 0);\n    cb_pop_front(cb0, 1);\n    cb_pop_front(cb1, 1);\n    tile_regs_commit();\n    tile_regs_wait();\n    cb_reserve_back(cb_out, 1);\n    pack_tile(0, cb_out);\n    cb_push_back(cb_out, 1);\n    tile_regs_release();\n  }\n}\n",
+      "trisc1": "\n#include <cstdint>\n#include \"api/compute/common.h\"\n#include \"api/compute/eltwise_binary.h\"\n\nvoid kernel_main() {\n  uint32_t n = get_arg_val<uint32_t>(0);\n  constexpr auto cb0 = tt::CBIndex::c_0;\n  constexpr auto cb1 = tt::CBIndex::c_1;\n  constexpr auto cb_out = tt::CBIndex::c_16;\n  binary_op_init_common(cb0, cb1, cb_out);\n  sub_tiles_init(cb0, cb1);\n  for (uint32_t i = 0; i < n; ++i) {\n    tile_regs_acquire();\n    cb_wait_front(cb0, 1);\n    cb_wait_front(cb1, 1);\n    sub_tiles(cb0, cb1, 0, 0, 0);\n    cb_pop_front(cb0, 1);\n    cb_pop_front(cb1, 1);\n    tile_regs_commit();\n    tile_regs_wait();\n    cb_reserve_back(cb_out, 1);\n    pack_tile(0, cb_out);\n    cb_push_back(cb_out, 1);\n    tile_regs_release();\n  }\n}\n",
+      "trisc2": "\n#include <cstdint>\n#include \"api/compute/common.h\"\n#include \"api/compute/eltwise_binary.h\"\n\nvoid kernel_main() {\n  uint32_t n = get_arg_val<uint32_t>(0);\n  constexpr auto cb0 = tt::CBIndex::c_0;\n  constexpr auto cb1 = tt::CBIndex::c_1;\n  constexpr auto cb_out = tt::CBIndex::c_16;\n  binary_op_init_common(cb0, cb1, cb_out);\n  sub_tiles_init(cb0, cb1);\n  for (uint32_t i = 0; i < n; ++i) {\n    tile_regs_acquire();\n    cb_wait_front(cb0, 1);\n    cb_wait_front(cb1, 1);\n    sub_tiles(cb0, cb1, 0, 0, 0);\n    cb_pop_front(cb0, 1);\n    cb_pop_front(cb1, 1);\n    tile_regs_commit();\n    tile_regs_wait();\n    cb_reserve_back(cb_out, 1);\n    pack_tile(0, cb_out);\n    cb_push_back(cb_out, 1);\n    tile_regs_release();\n  }\n}\n"
+    },
+    "name": "fpu_cb0_cb1_sub",
+    "num_tiles": 1
+  },
+  {
+    "binary": true,
+    "cb_config": [
+      {
+        "addr": 65536,
+        "cb": 0,
+        "page_size": 2048,
+        "pages": 2,
+        "size": 4096
+      },
+      {
+        "addr": 69632,
+        "cb": 1,
+        "page_size": 2048,
+        "pages": 2,
+        "size": 4096
+      },
+      {
+        "addr": 73728,
+        "cb": 16,
+        "page_size": 2048,
+        "pages": 2,
+        "size": 4096
+      }
+    ],
+    "compiled_stems": {
+      "brisc": "fpu_cb0_cb1_mul_reader_brisc.kernel",
+      "ncrisc": "fpu_cb0_cb1_mul_writer_ncrisc.kernel",
+      "trisc0": "fpu_cb0_cb1_mul_compute_trisc0.kernel",
+      "trisc1": "fpu_cb0_cb1_mul_compute_trisc1.kernel",
+      "trisc2": "fpu_cb0_cb1_mul_compute_trisc2.kernel"
+    },
+    "dtype": "Float16_b",
+    "kernels": {
+      "brisc": "\n#include <cstdint>\nvoid kernel_main() {\n  uint32_t a_addr = get_arg_val<uint32_t>(0);\n  uint32_t b_addr = get_arg_val<uint32_t>(1);\n  uint32_t off = get_arg_val<uint32_t>(2);\n  uint32_t n = get_arg_val<uint32_t>(3);\n  constexpr uint32_t cb0 = tt::CBIndex::c_0;\n  constexpr uint32_t cb1 = tt::CBIndex::c_1;\n  const InterleavedAddrGenFast<true> a = {\n    .bank_base_address = a_addr, .page_size = get_tile_size(cb0), .data_format = DataFormat::Float16_b,\n  };\n  const InterleavedAddrGenFast<true> b = {\n    .bank_base_address = b_addr, .page_size = get_tile_size(cb1), .data_format = DataFormat::Float16_b,\n  };\n  for (uint32_t i = 0; i < n; ++i) {\n    cb_reserve_back(cb0, 1);\n    cb_reserve_back(cb1, 1);\n    noc_async_read_tile(off + i, a, get_write_ptr(cb0));\n    noc_async_read_tile(off + i, b, get_write_ptr(cb1));\n    noc_async_read_barrier();\n    cb_push_back(cb0, 1);\n    cb_push_back(cb1, 1);\n  }\n}\n",
+      "ncrisc": "\n#include <cstdint>\nvoid kernel_main() {\n  uint32_t addr = get_arg_val<uint32_t>(0);\n  uint32_t off  = get_arg_val<uint32_t>(1);\n  uint32_t n    = get_arg_val<uint32_t>(2);\n  constexpr uint32_t cb = tt::CBIndex::c_16;\n  const InterleavedAddrGenFast<true> s = {\n    .bank_base_address = addr, .page_size = get_tile_size(cb), .data_format = DataFormat::Float16_b,\n  };\n  for (uint32_t i = 0; i < n; ++i) {\n    cb_wait_front(cb, 1);\n    noc_async_write_tile(off + i, s, get_read_ptr(cb));\n    noc_async_write_barrier();\n    cb_pop_front(cb, 1);\n  }\n}\n",
+      "trisc0": "\n#include <cstdint>\n#include \"api/compute/common.h\"\n#include \"api/compute/eltwise_binary.h\"\n\nvoid kernel_main() {\n  uint32_t n = get_arg_val<uint32_t>(0);\n  constexpr auto cb0 = tt::CBIndex::c_0;\n  constexpr auto cb1 = tt::CBIndex::c_1;\n  constexpr auto cb_out = tt::CBIndex::c_16;\n  binary_op_init_common(cb0, cb1, cb_out);\n  mul_tiles_init(cb0, cb1);\n  for (uint32_t i = 0; i < n; ++i) {\n    tile_regs_acquire();\n    cb_wait_front(cb0, 1);\n    cb_wait_front(cb1, 1);\n    mul_tiles(cb0, cb1, 0, 0, 0);\n    cb_pop_front(cb0, 1);\n    cb_pop_front(cb1, 1);\n    tile_regs_commit();\n    tile_regs_wait();\n    cb_reserve_back(cb_out, 1);\n    pack_tile(0, cb_out);\n    cb_push_back(cb_out, 1);\n    tile_regs_release();\n  }\n}\n",
+      "trisc1": "\n#include <cstdint>\n#include \"api/compute/common.h\"\n#include \"api/compute/eltwise_binary.h\"\n\nvoid kernel_main() {\n  uint32_t n = get_arg_val<uint32_t>(0);\n  constexpr auto cb0 = tt::CBIndex::c_0;\n  constexpr auto cb1 = tt::CBIndex::c_1;\n  constexpr auto cb_out = tt::CBIndex::c_16;\n  binary_op_init_common(cb0, cb1, cb_out);\n  mul_tiles_init(cb0, cb1);\n  for (uint32_t i = 0; i < n; ++i) {\n    tile_regs_acquire();\n    cb_wait_front(cb0, 1);\n    cb_wait_front(cb1, 1);\n    mul_tiles(cb0, cb1, 0, 0, 0);\n    cb_pop_front(cb0, 1);\n    cb_pop_front(cb1, 1);\n    tile_regs_commit();\n    tile_regs_wait();\n    cb_reserve_back(cb_out, 1);\n    pack_tile(0, cb_out);\n    cb_push_back(cb_out, 1);\n    tile_regs_release();\n  }\n}\n",
+      "trisc2": "\n#include <cstdint>\n#include \"api/compute/common.h\"\n#include \"api/compute/eltwise_binary.h\"\n\nvoid kernel_main() {\n  uint32_t n = get_arg_val<uint32_t>(0);\n  constexpr auto cb0 = tt::CBIndex::c_0;\n  constexpr auto cb1 = tt::CBIndex::c_1;\n  constexpr auto cb_out = tt::CBIndex::c_16;\n  binary_op_init_common(cb0, cb1, cb_out);\n  mul_tiles_init(cb0, cb1);\n  for (uint32_t i = 0; i < n; ++i) {\n    tile_regs_acquire();\n    cb_wait_front(cb0, 1);\n    cb_wait_front(cb1, 1);\n    mul_tiles(cb0, cb1, 0, 0, 0);\n    cb_pop_front(cb0, 1);\n    cb_pop_front(cb1, 1);\n    tile_regs_commit();\n    tile_regs_wait();\n    cb_reserve_back(cb_out, 1);\n    pack_tile(0, cb_out);\n    cb_push_back(cb_out, 1);\n    tile_regs_release();\n  }\n}\n"
+    },
+    "name": "fpu_cb0_cb1_mul",
+    "num_tiles": 1
+  },
+  {
+    "binary": false,
+    "cb_config": [
+      {
+        "addr": 65536,
+        "cb": 0,
+        "page_size": 2048,
+        "pages": 2,
+        "size": 4096
+      },
+      {
+        "addr": 69632,
+        "cb": 16,
+        "page_size": 2048,
+        "pages": 2,
+        "size": 4096
+      }
+    ],
+    "compiled_stems": {
+      "brisc": null,
+      "ncrisc": null,
+      "trisc0": "packer_unpacker_bf16_copy_compute_trisc0.kernel",
+      "trisc1": "packer_unpacker_bf16_copy_compute_trisc1.kernel",
+      "trisc2": "packer_unpacker_bf16_copy_compute_trisc2.kernel"
+    },
+    "dtype": "Float16_b",
+    "kernels": {
+      "trisc0": "\n#include <cstdint>\n#include \"api/compute/common.h\"\n#include \"api/compute/tile_move_copy.h\"\n#include \"api/compute/eltwise_unary/eltwise_unary.h\"\n#include \"api/compute/eltwise_unary/binop_with_scalar.h\"\n\n\nvoid kernel_main() {\n  uint32_t n = get_arg_val<uint32_t>(0);\n  constexpr auto cb_in = tt::CBIndex::c_0;\n  constexpr auto cb_out = tt::CBIndex::c_16;\n  unary_op_init_common(cb_in, cb_out);\n  copy_tile_init(cb_in);\n  \n  for (uint32_t i = 0; i < n; ++i) {\n    tile_regs_acquire();\n    cb_wait_front(cb_in, 1);\n    copy_tile(cb_in, 0, 0);\n    cb_pop_front(cb_in, 1);\n    \n    tile_regs_commit();\n    tile_regs_wait();\n    cb_reserve_back(cb_out, 1);\n    pack_tile(0, cb_out);\n    cb_push_back(cb_out, 1);\n    tile_regs_release();\n  }\n}\n",
+      "trisc1": "\n#include <cstdint>\n#include \"api/compute/common.h\"\n#include \"api/compute/tile_move_copy.h\"\n#include \"api/compute/eltwise_unary/eltwise_unary.h\"\n#include \"api/compute/eltwise_unary/binop_with_scalar.h\"\n\n\nvoid kernel_main() {\n  uint32_t n = get_arg_val<uint32_t>(0);\n  constexpr auto cb_in = tt::CBIndex::c_0;\n  constexpr auto cb_out = tt::CBIndex::c_16;\n  unary_op_init_common(cb_in, cb_out);\n  copy_tile_init(cb_in);\n  \n  for (uint32_t i = 0; i < n; ++i) {\n    tile_regs_acquire();\n    cb_wait_front(cb_in, 1);\n    copy_tile(cb_in, 0, 0);\n    cb_pop_front(cb_in, 1);\n    \n    tile_regs_commit();\n    tile_regs_wait();\n    cb_reserve_back(cb_out, 1);\n    pack_tile(0, cb_out);\n    cb_push_back(cb_out, 1);\n    tile_regs_release();\n  }\n}\n",
+      "trisc2": "\n#include <cstdint>\n#include \"api/compute/common.h\"\n#include \"api/compute/tile_move_copy.h\"\n#include \"api/compute/eltwise_unary/eltwise_unary.h\"\n#include \"api/compute/eltwise_unary/binop_with_scalar.h\"\n\n\nvoid kernel_main() {\n  uint32_t n = get_arg_val<uint32_t>(0);\n  constexpr auto cb_in = tt::CBIndex::c_0;\n  constexpr auto cb_out = tt::CBIndex::c_16;\n  unary_op_init_common(cb_in, cb_out);\n  copy_tile_init(cb_in);\n  \n  for (uint32_t i = 0; i < n; ++i) {\n    tile_regs_acquire();\n    cb_wait_front(cb_in, 1);\n    copy_tile(cb_in, 0, 0);\n    cb_pop_front(cb_in, 1);\n    \n    tile_regs_commit();\n    tile_regs_wait();\n    cb_reserve_back(cb_out, 1);\n    pack_tile(0, cb_out);\n    cb_push_back(cb_out, 1);\n    tile_regs_release();\n  }\n}\n"
+    },
+    "name": "packer_unpacker_bf16_copy",
+    "num_tiles": 1
+  },
+  {
+    "binary": false,
+    "cb_config": [
+      {
+        "addr": 65536,
+        "cb": 0,
+        "page_size": 2048,
+        "pages": 2,
+        "size": 4096
+      },
+      {
+        "addr": 69632,
+        "cb": 16,
+        "page_size": 2048,
+        "pages": 2,
+        "size": 4096
+      }
+    ],
+    "compiled_stems": {
+      "brisc": "packer_unpacker_fp16_copy_reader_brisc.kernel",
+      "ncrisc": "packer_unpacker_fp16_copy_writer_ncrisc.kernel",
+      "trisc0": "packer_unpacker_fp16_copy_compute_trisc0.kernel",
+      "trisc1": "packer_unpacker_fp16_copy_compute_trisc1.kernel",
+      "trisc2": "packer_unpacker_fp16_copy_compute_trisc2.kernel"
+    },
+    "dtype": "Float16",
+    "kernels": {
+      "brisc": "\n#include <cstdint>\nvoid kernel_main() {\n  uint32_t addr = get_arg_val<uint32_t>(0);\n  uint32_t off  = get_arg_val<uint32_t>(1);\n  uint32_t n    = get_arg_val<uint32_t>(2);\n  constexpr uint32_t cb = tt::CBIndex::c_0;\n  const InterleavedAddrGenFast<true> s = {\n    .bank_base_address = addr, .page_size = get_tile_size(cb), .data_format = DataFormat::Float16,\n  };\n  for (uint32_t i = 0; i < n; ++i) {\n    cb_reserve_back(cb, 1);\n    noc_async_read_tile(off + i, s, get_write_ptr(cb));\n    noc_async_read_barrier();\n    cb_push_back(cb, 1);\n  }\n}\n",
+      "ncrisc": "\n#include <cstdint>\nvoid kernel_main() {\n  uint32_t addr = get_arg_val<uint32_t>(0);\n  uint32_t off  = get_arg_val<uint32_t>(1);\n  uint32_t n    = get_arg_val<uint32_t>(2);\n  constexpr uint32_t cb = tt::CBIndex::c_16;\n  const InterleavedAddrGenFast<true> s = {\n    .bank_base_address = addr, .page_size = get_tile_size(cb), .data_format = DataFormat::Float16,\n  };\n  for (uint32_t i = 0; i < n; ++i) {\n    cb_wait_front(cb, 1);\n    noc_async_write_tile(off + i, s, get_read_ptr(cb));\n    noc_async_write_barrier();\n    cb_pop_front(cb, 1);\n  }\n}\n",
+      "trisc0": "\n#include <cstdint>\n#include \"api/compute/common.h\"\n#include \"api/compute/tile_move_copy.h\"\n#include \"api/compute/eltwise_unary/eltwise_unary.h\"\n#include \"api/compute/eltwise_unary/binop_with_scalar.h\"\n\n\nvoid kernel_main() {\n  uint32_t n = get_arg_val<uint32_t>(0);\n  constexpr auto cb_in = tt::CBIndex::c_0;\n  constexpr auto cb_out = tt::CBIndex::c_16;\n  unary_op_init_common(cb_in, cb_out);\n  copy_tile_init(cb_in);\n  \n  for (uint32_t i = 0; i < n; ++i) {\n    tile_regs_acquire();\n    cb_wait_front(cb_in, 1);\n    copy_tile(cb_in, 0, 0);\n    cb_pop_front(cb_in, 1);\n    \n    tile_regs_commit();\n    tile_regs_wait();\n    cb_reserve_back(cb_out, 1);\n    pack_tile(0, cb_out);\n    cb_push_back(cb_out, 1);\n    tile_regs_release();\n  }\n}\n",
+      "trisc1": "\n#include <cstdint>\n#include \"api/compute/common.h\"\n#include \"api/compute/tile_move_copy.h\"\n#include \"api/compute/eltwise_unary/eltwise_unary.h\"\n#include \"api/compute/eltwise_unary/binop_with_scalar.h\"\n\n\nvoid kernel_main() {\n  uint32_t n = get_arg_val<uint32_t>(0);\n  constexpr auto cb_in = tt::CBIndex::c_0;\n  constexpr auto cb_out = tt::CBIndex::c_16;\n  unary_op_init_common(cb_in, cb_out);\n  copy_tile_init(cb_in);\n  \n  for (uint32_t i = 0; i < n; ++i) {\n    tile_regs_acquire();\n    cb_wait_front(cb_in, 1);\n    copy_tile(cb_in, 0, 0);\n    cb_pop_front(cb_in, 1);\n    \n    tile_regs_commit();\n    tile_regs_wait();\n    cb_reserve_back(cb_out, 1);\n    pack_tile(0, cb_out);\n    cb_push_back(cb_out, 1);\n    tile_regs_release();\n  }\n}\n",
+      "trisc2": "\n#include <cstdint>\n#include \"api/compute/common.h\"\n#include \"api/compute/tile_move_copy.h\"\n#include \"api/compute/eltwise_unary/eltwise_unary.h\"\n#include \"api/compute/eltwise_unary/binop_with_scalar.h\"\n\n\nvoid kernel_main() {\n  uint32_t n = get_arg_val<uint32_t>(0);\n  constexpr auto cb_in = tt::CBIndex::c_0;\n  constexpr auto cb_out = tt::CBIndex::c_16;\n  unary_op_init_common(cb_in, cb_out);\n  copy_tile_init(cb_in);\n  \n  for (uint32_t i = 0; i < n; ++i) {\n    tile_regs_acquire();\n    cb_wait_front(cb_in, 1);\n    copy_tile(cb_in, 0, 0);\n    cb_pop_front(cb_in, 1);\n    \n    tile_regs_commit();\n    tile_regs_wait();\n    cb_reserve_back(cb_out, 1);\n    pack_tile(0, cb_out);\n    cb_push_back(cb_out, 1);\n    tile_regs_release();\n  }\n}\n"
+    },
+    "name": "packer_unpacker_fp16_copy",
+    "num_tiles": 1
+  },
+  {
+    "binary": false,
+    "cb_config": [
+      {
+        "addr": 65536,
+        "cb": 0,
+        "page_size": 2048,
+        "pages": 2,
+        "size": 4096
+      },
+      {
+        "addr": 69632,
+        "cb": 16,
+        "page_size": 2048,
+        "pages": 2,
+        "size": 4096
+      }
+    ],
+    "compiled_stems": {
+      "brisc": null,
+      "ncrisc": null,
+      "trisc0": "multi_tile_unary_add_n3_compute_trisc0.kernel",
+      "trisc1": "multi_tile_unary_add_n3_compute_trisc1.kernel",
+      "trisc2": "multi_tile_unary_add_n3_compute_trisc2.kernel"
+    },
+    "dtype": "Float16_b",
+    "kernels": {
+      "trisc0": "\n#include <cstdint>\n#include \"api/compute/common.h\"\n#include \"api/compute/tile_move_copy.h\"\n#include \"api/compute/eltwise_unary/eltwise_unary.h\"\n#include \"api/compute/eltwise_unary/binop_with_scalar.h\"\n\n\nvoid kernel_main() {\n  uint32_t n = get_arg_val<uint32_t>(0);\n  constexpr auto cb_in = tt::CBIndex::c_0;\n  constexpr auto cb_out = tt::CBIndex::c_16;\n  unary_op_init_common(cb_in, cb_out);\n  copy_tile_init(cb_in);\n  binop_with_scalar_tile_init();\n  for (uint32_t i = 0; i < n; ++i) {\n    tile_regs_acquire();\n    cb_wait_front(cb_in, 1);\n    copy_tile(cb_in, 0, 0);\n    cb_pop_front(cb_in, 1);\n    add_unary_tile(0, 0x40000000);\n    tile_regs_commit();\n    tile_regs_wait();\n    cb_reserve_back(cb_out, 1);\n    pack_tile(0, cb_out);\n    cb_push_back(cb_out, 1);\n    tile_regs_release();\n  }\n}\n",
+      "trisc1": "\n#include <cstdint>\n#include \"api/compute/common.h\"\n#include \"api/compute/tile_move_copy.h\"\n#include \"api/compute/eltwise_unary/eltwise_unary.h\"\n#include \"api/compute/eltwise_unary/binop_with_scalar.h\"\n\n\nvoid kernel_main() {\n  uint32_t n = get_arg_val<uint32_t>(0);\n  constexpr auto cb_in = tt::CBIndex::c_0;\n  constexpr auto cb_out = tt::CBIndex::c_16;\n  unary_op_init_common(cb_in, cb_out);\n  copy_tile_init(cb_in);\n  binop_with_scalar_tile_init();\n  for (uint32_t i = 0; i < n; ++i) {\n    tile_regs_acquire();\n    cb_wait_front(cb_in, 1);\n    copy_tile(cb_in, 0, 0);\n    cb_pop_front(cb_in, 1);\n    add_unary_tile(0, 0x40000000);\n    tile_regs_commit();\n    tile_regs_wait();\n    cb_reserve_back(cb_out, 1);\n    pack_tile(0, cb_out);\n    cb_push_back(cb_out, 1);\n    tile_regs_release();\n  }\n}\n",
+      "trisc2": "\n#include <cstdint>\n#include \"api/compute/common.h\"\n#include \"api/compute/tile_move_copy.h\"\n#include \"api/compute/eltwise_unary/eltwise_unary.h\"\n#include \"api/compute/eltwise_unary/binop_with_scalar.h\"\n\n\nvoid kernel_main() {\n  uint32_t n = get_arg_val<uint32_t>(0);\n  constexpr auto cb_in = tt::CBIndex::c_0;\n  constexpr auto cb_out = tt::CBIndex::c_16;\n  unary_op_init_common(cb_in, cb_out);\n  copy_tile_init(cb_in);\n  binop_with_scalar_tile_init();\n  for (uint32_t i = 0; i < n; ++i) {\n    tile_regs_acquire();\n    cb_wait_front(cb_in, 1);\n    copy_tile(cb_in, 0, 0);\n    cb_pop_front(cb_in, 1);\n    add_unary_tile(0, 0x40000000);\n    tile_regs_commit();\n    tile_regs_wait();\n    cb_reserve_back(cb_out, 1);\n    pack_tile(0, cb_out);\n    cb_push_back(cb_out, 1);\n    tile_regs_release();\n  }\n}\n"
+    },
+    "name": "multi_tile_unary_add_n3",
+    "num_tiles": 3
+  },
+  {
+    "binary": true,
+    "cb_config": [
+      {
+        "addr": 65536,
+        "cb": 0,
+        "page_size": 2048,
+        "pages": 2,
+        "size": 4096
+      },
+      {
+        "addr": 69632,
+        "cb": 1,
+        "page_size": 2048,
+        "pages": 2,
+        "size": 4096
+      },
+      {
+        "addr": 73728,
+        "cb": 16,
+        "page_size": 2048,
+        "pages": 2,
+        "size": 4096
+      }
+    ],
+    "compiled_stems": {
+      "brisc": "multi_tile_binary_add_n3_reader_brisc.kernel",
+      "ncrisc": "multi_tile_binary_add_n3_writer_ncrisc.kernel",
+      "trisc0": "multi_tile_binary_add_n3_compute_trisc0.kernel",
+      "trisc1": "multi_tile_binary_add_n3_compute_trisc1.kernel",
+      "trisc2": "multi_tile_binary_add_n3_compute_trisc2.kernel"
+    },
+    "dtype": "Float16_b",
+    "kernels": {
+      "brisc": "\n#include <cstdint>\nvoid kernel_main() {\n  uint32_t a_addr = get_arg_val<uint32_t>(0);\n  uint32_t b_addr = get_arg_val<uint32_t>(1);\n  uint32_t off = get_arg_val<uint32_t>(2);\n  uint32_t n = get_arg_val<uint32_t>(3);\n  constexpr uint32_t cb0 = tt::CBIndex::c_0;\n  constexpr uint32_t cb1 = tt::CBIndex::c_1;\n  const InterleavedAddrGenFast<true> a = {\n    .bank_base_address = a_addr, .page_size = get_tile_size(cb0), .data_format = DataFormat::Float16_b,\n  };\n  const InterleavedAddrGenFast<true> b = {\n    .bank_base_address = b_addr, .page_size = get_tile_size(cb1), .data_format = DataFormat::Float16_b,\n  };\n  for (uint32_t i = 0; i < n; ++i) {\n    cb_reserve_back(cb0, 1);\n    cb_reserve_back(cb1, 1);\n    noc_async_read_tile(off + i, a, get_write_ptr(cb0));\n    noc_async_read_tile(off + i, b, get_write_ptr(cb1));\n    noc_async_read_barrier();\n    cb_push_back(cb0, 1);\n    cb_push_back(cb1, 1);\n  }\n}\n",
+      "ncrisc": "\n#include <cstdint>\nvoid kernel_main() {\n  uint32_t addr = get_arg_val<uint32_t>(0);\n  uint32_t off  = get_arg_val<uint32_t>(1);\n  uint32_t n    = get_arg_val<uint32_t>(2);\n  constexpr uint32_t cb = tt::CBIndex::c_16;\n  const InterleavedAddrGenFast<true> s = {\n    .bank_base_address = addr, .page_size = get_tile_size(cb), .data_format = DataFormat::Float16_b,\n  };\n  for (uint32_t i = 0; i < n; ++i) {\n    cb_wait_front(cb, 1);\n    noc_async_write_tile(off + i, s, get_read_ptr(cb));\n    noc_async_write_barrier();\n    cb_pop_front(cb, 1);\n  }\n}\n",
+      "trisc0": "\n#include <cstdint>\n#include \"api/compute/common.h\"\n#include \"api/compute/eltwise_binary.h\"\n\nvoid kernel_main() {\n  uint32_t n = get_arg_val<uint32_t>(0);\n  constexpr auto cb0 = tt::CBIndex::c_0;\n  constexpr auto cb1 = tt::CBIndex::c_1;\n  constexpr auto cb_out = tt::CBIndex::c_16;\n  binary_op_init_common(cb0, cb1, cb_out);\n  add_tiles_init(cb0, cb1);\n  for (uint32_t i = 0; i < n; ++i) {\n    tile_regs_acquire();\n    cb_wait_front(cb0, 1);\n    cb_wait_front(cb1, 1);\n    add_tiles(cb0, cb1, 0, 0, 0);\n    cb_pop_front(cb0, 1);\n    cb_pop_front(cb1, 1);\n    tile_regs_commit();\n    tile_regs_wait();\n    cb_reserve_back(cb_out, 1);\n    pack_tile(0, cb_out);\n    cb_push_back(cb_out, 1);\n    tile_regs_release();\n  }\n}\n",
+      "trisc1": "\n#include <cstdint>\n#include \"api/compute/common.h\"\n#include \"api/compute/eltwise_binary.h\"\n\nvoid kernel_main() {\n  uint32_t n = get_arg_val<uint32_t>(0);\n  constexpr auto cb0 = tt::CBIndex::c_0;\n  constexpr auto cb1 = tt::CBIndex::c_1;\n  constexpr auto cb_out = tt::CBIndex::c_16;\n  binary_op_init_common(cb0, cb1, cb_out);\n  add_tiles_init(cb0, cb1);\n  for (uint32_t i = 0; i < n; ++i) {\n    tile_regs_acquire();\n    cb_wait_front(cb0, 1);\n    cb_wait_front(cb1, 1);\n    add_tiles(cb0, cb1, 0, 0, 0);\n    cb_pop_front(cb0, 1);\n    cb_pop_front(cb1, 1);\n    tile_regs_commit();\n    tile_regs_wait();\n    cb_reserve_back(cb_out, 1);\n    pack_tile(0, cb_out);\n    cb_push_back(cb_out, 1);\n    tile_regs_release();\n  }\n}\n",
+      "trisc2": "\n#include <cstdint>\n#include \"api/compute/common.h\"\n#include \"api/compute/eltwise_binary.h\"\n\nvoid kernel_main() {\n  uint32_t n = get_arg_val<uint32_t>(0);\n  constexpr auto cb0 = tt::CBIndex::c_0;\n  constexpr auto cb1 = tt::CBIndex::c_1;\n  constexpr auto cb_out = tt::CBIndex::c_16;\n  binary_op_init_common(cb0, cb1, cb_out);\n  add_tiles_init(cb0, cb1);\n  for (uint32_t i = 0; i < n; ++i) {\n    tile_regs_acquire();\n    cb_wait_front(cb0, 1);\n    cb_wait_front(cb1, 1);\n    add_tiles(cb0, cb1, 0, 0, 0);\n    cb_pop_front(cb0, 1);\n    cb_pop_front(cb1, 1);\n    tile_regs_commit();\n    tile_regs_wait();\n    cb_reserve_back(cb_out, 1);\n    pack_tile(0, cb_out);\n    cb_push_back(cb_out, 1);\n    tile_regs_release();\n  }\n}\n"
+    },
+    "name": "multi_tile_binary_add_n3",
+    "num_tiles": 3
+  },
+  {
+    "binary": false,
+    "cb_config": [
+      {
+        "addr": 65536,
+        "cb": 0,
+        "page_size": 2048,
+        "pages": 2,
+        "size": 4096
+      },
+      {
+        "addr": 69632,
+        "cb": 16,
+        "page_size": 2048,
+        "pages": 2,
+        "size": 4096
+      }
+    ],
+    "compiled_stems": {
+      "brisc": null,
+      "ncrisc": null,
+      "trisc0": "multi_tile_unary_add_n5_compute_trisc0.kernel",
+      "trisc1": "multi_tile_unary_add_n5_compute_trisc1.kernel",
+      "trisc2": "multi_tile_unary_add_n5_compute_trisc2.kernel"
+    },
+    "dtype": "Float16_b",
+    "kernels": {
+      "trisc0": "\n#include <cstdint>\n#include \"api/compute/common.h\"\n#include \"api/compute/tile_move_copy.h\"\n#include \"api/compute/eltwise_unary/eltwise_unary.h\"\n#include \"api/compute/eltwise_unary/binop_with_scalar.h\"\n\n\nvoid kernel_main() {\n  uint32_t n = get_arg_val<uint32_t>(0);\n  constexpr auto cb_in = tt::CBIndex::c_0;\n  constexpr auto cb_out = tt::CBIndex::c_16;\n  unary_op_init_common(cb_in, cb_out);\n  copy_tile_init(cb_in);\n  binop_with_scalar_tile_init();\n  for (uint32_t i = 0; i < n; ++i) {\n    tile_regs_acquire();\n    cb_wait_front(cb_in, 1);\n    copy_tile(cb_in, 0, 0);\n    cb_pop_front(cb_in, 1);\n    add_unary_tile(0, 0x40000000);\n    tile_regs_commit();\n    tile_regs_wait();\n    cb_reserve_back(cb_out, 1);\n    pack_tile(0, cb_out);\n    cb_push_back(cb_out, 1);\n    tile_regs_release();\n  }\n}\n",
+      "trisc1": "\n#include <cstdint>\n#include \"api/compute/common.h\"\n#include \"api/compute/tile_move_copy.h\"\n#include \"api/compute/eltwise_unary/eltwise_unary.h\"\n#include \"api/compute/eltwise_unary/binop_with_scalar.h\"\n\n\nvoid kernel_main() {\n  uint32_t n = get_arg_val<uint32_t>(0);\n  constexpr auto cb_in = tt::CBIndex::c_0;\n  constexpr auto cb_out = tt::CBIndex::c_16;\n  unary_op_init_common(cb_in, cb_out);\n  copy_tile_init(cb_in);\n  binop_with_scalar_tile_init();\n  for (uint32_t i = 0; i < n; ++i) {\n    tile_regs_acquire();\n    cb_wait_front(cb_in, 1);\n    copy_tile(cb_in, 0, 0);\n    cb_pop_front(cb_in, 1);\n    add_unary_tile(0, 0x40000000);\n    tile_regs_commit();\n    tile_regs_wait();\n    cb_reserve_back(cb_out, 1);\n    pack_tile(0, cb_out);\n    cb_push_back(cb_out, 1);\n    tile_regs_release();\n  }\n}\n",
+      "trisc2": "\n#include <cstdint>\n#include \"api/compute/common.h\"\n#include \"api/compute/tile_move_copy.h\"\n#include \"api/compute/eltwise_unary/eltwise_unary.h\"\n#include \"api/compute/eltwise_unary/binop_with_scalar.h\"\n\n\nvoid kernel_main() {\n  uint32_t n = get_arg_val<uint32_t>(0);\n  constexpr auto cb_in = tt::CBIndex::c_0;\n  constexpr auto cb_out = tt::CBIndex::c_16;\n  unary_op_init_common(cb_in, cb_out);\n  copy_tile_init(cb_in);\n  binop_with_scalar_tile_init();\n  for (uint32_t i = 0; i < n; ++i) {\n    tile_regs_acquire();\n    cb_wait_front(cb_in, 1);\n    copy_tile(cb_in, 0, 0);\n    cb_pop_front(cb_in, 1);\n    add_unary_tile(0, 0x40000000);\n    tile_regs_commit();\n    tile_regs_wait();\n    cb_reserve_back(cb_out, 1);\n    pack_tile(0, cb_out);\n    cb_push_back(cb_out, 1);\n    tile_regs_release();\n  }\n}\n"
+    },
+    "name": "multi_tile_unary_add_n5",
+    "num_tiles": 5
+  },
+  {
+    "binary": true,
+    "cb_config": [
+      {
+        "addr": 65536,
+        "cb": 0,
+        "page_size": 2048,
+        "pages": 2,
+        "size": 4096
+      },
+      {
+        "addr": 69632,
+        "cb": 1,
+        "page_size": 2048,
+        "pages": 2,
+        "size": 4096
+      },
+      {
+        "addr": 73728,
+        "cb": 16,
+        "page_size": 2048,
+        "pages": 2,
+        "size": 4096
+      }
+    ],
+    "compiled_stems": {
+      "brisc": "multi_tile_binary_add_n5_reader_brisc.kernel",
+      "ncrisc": "multi_tile_binary_add_n5_writer_ncrisc.kernel",
+      "trisc0": "multi_tile_binary_add_n5_compute_trisc0.kernel",
+      "trisc1": "multi_tile_binary_add_n5_compute_trisc1.kernel",
+      "trisc2": "multi_tile_binary_add_n5_compute_trisc2.kernel"
+    },
+    "dtype": "Float16_b",
+    "kernels": {
+      "brisc": "\n#include <cstdint>\nvoid kernel_main() {\n  uint32_t a_addr = get_arg_val<uint32_t>(0);\n  uint32_t b_addr = get_arg_val<uint32_t>(1);\n  uint32_t off = get_arg_val<uint32_t>(2);\n  uint32_t n = get_arg_val<uint32_t>(3);\n  constexpr uint32_t cb0 = tt::CBIndex::c_0;\n  constexpr uint32_t cb1 = tt::CBIndex::c_1;\n  const InterleavedAddrGenFast<true> a = {\n    .bank_base_address = a_addr, .page_size = get_tile_size(cb0), .data_format = DataFormat::Float16_b,\n  };\n  const InterleavedAddrGenFast<true> b = {\n    .bank_base_address = b_addr, .page_size = get_tile_size(cb1), .data_format = DataFormat::Float16_b,\n  };\n  for (uint32_t i = 0; i < n; ++i) {\n    cb_reserve_back(cb0, 1);\n    cb_reserve_back(cb1, 1);\n    noc_async_read_tile(off + i, a, get_write_ptr(cb0));\n    noc_async_read_tile(off + i, b, get_write_ptr(cb1));\n    noc_async_read_barrier();\n    cb_push_back(cb0, 1);\n    cb_push_back(cb1, 1);\n  }\n}\n",
+      "ncrisc": "\n#include <cstdint>\nvoid kernel_main() {\n  uint32_t addr = get_arg_val<uint32_t>(0);\n  uint32_t off  = get_arg_val<uint32_t>(1);\n  uint32_t n    = get_arg_val<uint32_t>(2);\n  constexpr uint32_t cb = tt::CBIndex::c_16;\n  const InterleavedAddrGenFast<true> s = {\n    .bank_base_address = addr, .page_size = get_tile_size(cb), .data_format = DataFormat::Float16_b,\n  };\n  for (uint32_t i = 0; i < n; ++i) {\n    cb_wait_front(cb, 1);\n    noc_async_write_tile(off + i, s, get_read_ptr(cb));\n    noc_async_write_barrier();\n    cb_pop_front(cb, 1);\n  }\n}\n",
+      "trisc0": "\n#include <cstdint>\n#include \"api/compute/common.h\"\n#include \"api/compute/eltwise_binary.h\"\n\nvoid kernel_main() {\n  uint32_t n = get_arg_val<uint32_t>(0);\n  constexpr auto cb0 = tt::CBIndex::c_0;\n  constexpr auto cb1 = tt::CBIndex::c_1;\n  constexpr auto cb_out = tt::CBIndex::c_16;\n  binary_op_init_common(cb0, cb1, cb_out);\n  add_tiles_init(cb0, cb1);\n  for (uint32_t i = 0; i < n; ++i) {\n    tile_regs_acquire();\n    cb_wait_front(cb0, 1);\n    cb_wait_front(cb1, 1);\n    add_tiles(cb0, cb1, 0, 0, 0);\n    cb_pop_front(cb0, 1);\n    cb_pop_front(cb1, 1);\n    tile_regs_commit();\n    tile_regs_wait();\n    cb_reserve_back(cb_out, 1);\n    pack_tile(0, cb_out);\n    cb_push_back(cb_out, 1);\n    tile_regs_release();\n  }\n}\n",
+      "trisc1": "\n#include <cstdint>\n#include \"api/compute/common.h\"\n#include \"api/compute/eltwise_binary.h\"\n\nvoid kernel_main() {\n  uint32_t n = get_arg_val<uint32_t>(0);\n  constexpr auto cb0 = tt::CBIndex::c_0;\n  constexpr auto cb1 = tt::CBIndex::c_1;\n  constexpr auto cb_out = tt::CBIndex::c_16;\n  binary_op_init_common(cb0, cb1, cb_out);\n  add_tiles_init(cb0, cb1);\n  for (uint32_t i = 0; i < n; ++i) {\n    tile_regs_acquire();\n    cb_wait_front(cb0, 1);\n    cb_wait_front(cb1, 1);\n    add_tiles(cb0, cb1, 0, 0, 0);\n    cb_pop_front(cb0, 1);\n    cb_pop_front(cb1, 1);\n    tile_regs_commit();\n    tile_regs_wait();\n    cb_reserve_back(cb_out, 1);\n    pack_tile(0, cb_out);\n    cb_push_back(cb_out, 1);\n    tile_regs_release();\n  }\n}\n",
+      "trisc2": "\n#include <cstdint>\n#include \"api/compute/common.h\"\n#include \"api/compute/eltwise_binary.h\"\n\nvoid kernel_main() {\n  uint32_t n = get_arg_val<uint32_t>(0);\n  constexpr auto cb0 = tt::CBIndex::c_0;\n  constexpr auto cb1 = tt::CBIndex::c_1;\n  constexpr auto cb_out = tt::CBIndex::c_16;\n  binary_op_init_common(cb0, cb1, cb_out);\n  add_tiles_init(cb0, cb1);\n  for (uint32_t i = 0; i < n; ++i) {\n    tile_regs_acquire();\n    cb_wait_front(cb0, 1);\n    cb_wait_front(cb1, 1);\n    add_tiles(cb0, cb1, 0, 0, 0);\n    cb_pop_front(cb0, 1);\n    cb_pop_front(cb1, 1);\n    tile_regs_commit();\n    tile_regs_wait();\n    cb_reserve_back(cb_out, 1);\n    pack_tile(0, cb_out);\n    cb_push_back(cb_out, 1);\n    tile_regs_release();\n  }\n}\n"
+    },
+    "name": "multi_tile_binary_add_n5",
+    "num_tiles": 5
+  },
+  {
+    "binary": false,
+    "cb_config": [
+      {
+        "addr": 65536,
+        "cb": 0,
+        "page_size": 2048,
+        "pages": 4,
+        "size": 8192
+      },
+      {
+        "addr": 73728,
+        "cb": 16,
+        "page_size": 2048,
+        "pages": 4,
+        "size": 8192
+      }
+    ],
+    "compiled_stems": {
+      "brisc": "unary_copy_cb_pages_4_reader_brisc.kernel",
+      "ncrisc": "unary_copy_cb_pages_4_writer_ncrisc.kernel",
+      "trisc0": "unary_copy_cb_pages_4_compute_trisc0.kernel",
+      "trisc1": "unary_copy_cb_pages_4_compute_trisc1.kernel",
+      "trisc2": "unary_copy_cb_pages_4_compute_trisc2.kernel"
+    },
+    "dtype": "Float16_b",
+    "kernels": {
+      "brisc": "\n#include <cstdint>\nvoid kernel_main() {\n  uint32_t addr = get_arg_val<uint32_t>(0);\n  uint32_t off  = get_arg_val<uint32_t>(1);\n  uint32_t n    = get_arg_val<uint32_t>(2);\n  constexpr uint32_t cb = tt::CBIndex::c_0;\n  const InterleavedAddrGenFast<true> s = {\n    .bank_base_address = addr, .page_size = get_tile_size(cb), .data_format = DataFormat::Float16_b,\n  };\n  for (uint32_t i = 0; i < n; ++i) {\n    cb_reserve_back(cb, 1);\n    noc_async_read_tile(off + i, s, get_write_ptr(cb));\n    noc_async_read_barrier();\n    cb_push_back(cb, 1);\n  }\n}\n",
+      "ncrisc": "\n#include <cstdint>\nvoid kernel_main() {\n  uint32_t addr = get_arg_val<uint32_t>(0);\n  uint32_t off  = get_arg_val<uint32_t>(1);\n  uint32_t n    = get_arg_val<uint32_t>(2);\n  constexpr uint32_t cb = tt::CBIndex::c_16;\n  const InterleavedAddrGenFast<true> s = {\n    .bank_base_address = addr, .page_size = get_tile_size(cb), .data_format = DataFormat::Float16_b,\n  };\n  for (uint32_t i = 0; i < n; ++i) {\n    cb_wait_front(cb, 1);\n    noc_async_write_tile(off + i, s, get_read_ptr(cb));\n    noc_async_write_barrier();\n    cb_pop_front(cb, 1);\n  }\n}\n",
+      "trisc0": "\n#include <cstdint>\n#include \"api/compute/common.h\"\n#include \"api/compute/tile_move_copy.h\"\n#include \"api/compute/eltwise_unary/eltwise_unary.h\"\n\nvoid kernel_main() {\n  uint32_t n = get_arg_val<uint32_t>(0);\n  constexpr auto cb_in = tt::CBIndex::c_0;\n  constexpr auto cb_out = tt::CBIndex::c_16;\n  unary_op_init_common(cb_in, cb_out);\n  copy_tile_init(cb_in);\n  for (uint32_t i = 0; i < n; ++i) {\n    tile_regs_acquire();\n    cb_wait_front(cb_in, 1);\n    copy_tile(cb_in, 0, 0);\n    cb_pop_front(cb_in, 1);\n    tile_regs_commit();\n    tile_regs_wait();\n    cb_reserve_back(cb_out, 1);\n    pack_tile(0, cb_out);\n    cb_push_back(cb_out, 1);\n    tile_regs_release();\n  }\n}\n",
+      "trisc1": "\n#include <cstdint>\n#include \"api/compute/common.h\"\n#include \"api/compute/tile_move_copy.h\"\n#include \"api/compute/eltwise_unary/eltwise_unary.h\"\n\nvoid kernel_main() {\n  uint32_t n = get_arg_val<uint32_t>(0);\n  constexpr auto cb_in = tt::CBIndex::c_0;\n  constexpr auto cb_out = tt::CBIndex::c_16;\n  unary_op_init_common(cb_in, cb_out);\n  copy_tile_init(cb_in);\n  for (uint32_t i = 0; i < n; ++i) {\n    tile_regs_acquire();\n    cb_wait_front(cb_in, 1);\n    copy_tile(cb_in, 0, 0);\n    cb_pop_front(cb_in, 1);\n    tile_regs_commit();\n    tile_regs_wait();\n    cb_reserve_back(cb_out, 1);\n    pack_tile(0, cb_out);\n    cb_push_back(cb_out, 1);\n    tile_regs_release();\n  }\n}\n",
+      "trisc2": "\n#include <cstdint>\n#include \"api/compute/common.h\"\n#include \"api/compute/tile_move_copy.h\"\n#include \"api/compute/eltwise_unary/eltwise_unary.h\"\n\nvoid kernel_main() {\n  uint32_t n = get_arg_val<uint32_t>(0);\n  constexpr auto cb_in = tt::CBIndex::c_0;\n  constexpr auto cb_out = tt::CBIndex::c_16;\n  unary_op_init_common(cb_in, cb_out);\n  copy_tile_init(cb_in);\n  for (uint32_t i = 0; i < n; ++i) {\n    tile_regs_acquire();\n    cb_wait_front(cb_in, 1);\n    copy_tile(cb_in, 0, 0);\n    cb_pop_front(cb_in, 1);\n    tile_regs_commit();\n    tile_regs_wait();\n    cb_reserve_back(cb_out, 1);\n    pack_tile(0, cb_out);\n    cb_push_back(cb_out, 1);\n    tile_regs_release();\n  }\n}\n"
+    },
+    "name": "unary_copy_cb_pages_4",
+    "num_tiles": 5
+  },
+  {
+    "binary": false,
+    "cb_config": [
+      {
+        "addr": 65536,
+        "cb": 0,
+        "page_size": 2048,
+        "pages": 8,
+        "size": 16384
+      },
+      {
+        "addr": 81920,
+        "cb": 16,
+        "page_size": 2048,
+        "pages": 8,
+        "size": 16384
+      }
+    ],
+    "compiled_stems": {
+      "brisc": "unary_copy_cb_pages_8_reader_brisc.kernel",
+      "ncrisc": "unary_copy_cb_pages_8_writer_ncrisc.kernel",
+      "trisc0": "unary_copy_cb_pages_8_compute_trisc0.kernel",
+      "trisc1": "unary_copy_cb_pages_8_compute_trisc1.kernel",
+      "trisc2": "unary_copy_cb_pages_8_compute_trisc2.kernel"
+    },
+    "dtype": "Float16_b",
+    "kernels": {
+      "brisc": "\n#include <cstdint>\nvoid kernel_main() {\n  uint32_t addr = get_arg_val<uint32_t>(0);\n  uint32_t off  = get_arg_val<uint32_t>(1);\n  uint32_t n    = get_arg_val<uint32_t>(2);\n  constexpr uint32_t cb = tt::CBIndex::c_0;\n  const InterleavedAddrGenFast<true> s = {\n    .bank_base_address = addr, .page_size = get_tile_size(cb), .data_format = DataFormat::Float16_b,\n  };\n  for (uint32_t i = 0; i < n; ++i) {\n    cb_reserve_back(cb, 1);\n    noc_async_read_tile(off + i, s, get_write_ptr(cb));\n    noc_async_read_barrier();\n    cb_push_back(cb, 1);\n  }\n}\n",
+      "ncrisc": "\n#include <cstdint>\nvoid kernel_main() {\n  uint32_t addr = get_arg_val<uint32_t>(0);\n  uint32_t off  = get_arg_val<uint32_t>(1);\n  uint32_t n    = get_arg_val<uint32_t>(2);\n  constexpr uint32_t cb = tt::CBIndex::c_16;\n  const InterleavedAddrGenFast<true> s = {\n    .bank_base_address = addr, .page_size = get_tile_size(cb), .data_format = DataFormat::Float16_b,\n  };\n  for (uint32_t i = 0; i < n; ++i) {\n    cb_wait_front(cb, 1);\n    noc_async_write_tile(off + i, s, get_read_ptr(cb));\n    noc_async_write_barrier();\n    cb_pop_front(cb, 1);\n  }\n}\n",
+      "trisc0": "\n#include <cstdint>\n#include \"api/compute/common.h\"\n#include \"api/compute/tile_move_copy.h\"\n#include \"api/compute/eltwise_unary/eltwise_unary.h\"\n\nvoid kernel_main() {\n  uint32_t n = get_arg_val<uint32_t>(0);\n  constexpr auto cb_in = tt::CBIndex::c_0;\n  constexpr auto cb_out = tt::CBIndex::c_16;\n  unary_op_init_common(cb_in, cb_out);\n  copy_tile_init(cb_in);\n  for (uint32_t i = 0; i < n; ++i) {\n    tile_regs_acquire();\n    cb_wait_front(cb_in, 1);\n    copy_tile(cb_in, 0, 0);\n    cb_pop_front(cb_in, 1);\n    tile_regs_commit();\n    tile_regs_wait();\n    cb_reserve_back(cb_out, 1);\n    pack_tile(0, cb_out);\n    cb_push_back(cb_out, 1);\n    tile_regs_release();\n  }\n}\n",
+      "trisc1": "\n#include <cstdint>\n#include \"api/compute/common.h\"\n#include \"api/compute/tile_move_copy.h\"\n#include \"api/compute/eltwise_unary/eltwise_unary.h\"\n\nvoid kernel_main() {\n  uint32_t n = get_arg_val<uint32_t>(0);\n  constexpr auto cb_in = tt::CBIndex::c_0;\n  constexpr auto cb_out = tt::CBIndex::c_16;\n  unary_op_init_common(cb_in, cb_out);\n  copy_tile_init(cb_in);\n  for (uint32_t i = 0; i < n; ++i) {\n    tile_regs_acquire();\n    cb_wait_front(cb_in, 1);\n    copy_tile(cb_in, 0, 0);\n    cb_pop_front(cb_in, 1);\n    tile_regs_commit();\n    tile_regs_wait();\n    cb_reserve_back(cb_out, 1);\n    pack_tile(0, cb_out);\n    cb_push_back(cb_out, 1);\n    tile_regs_release();\n  }\n}\n",
+      "trisc2": "\n#include <cstdint>\n#include \"api/compute/common.h\"\n#include \"api/compute/tile_move_copy.h\"\n#include \"api/compute/eltwise_unary/eltwise_unary.h\"\n\nvoid kernel_main() {\n  uint32_t n = get_arg_val<uint32_t>(0);\n  constexpr auto cb_in = tt::CBIndex::c_0;\n  constexpr auto cb_out = tt::CBIndex::c_16;\n  unary_op_init_common(cb_in, cb_out);\n  copy_tile_init(cb_in);\n  for (uint32_t i = 0; i < n; ++i) {\n    tile_regs_acquire();\n    cb_wait_front(cb_in, 1);\n    copy_tile(cb_in, 0, 0);\n    cb_pop_front(cb_in, 1);\n    tile_regs_commit();\n    tile_regs_wait();\n    cb_reserve_back(cb_out, 1);\n    pack_tile(0, cb_out);\n    cb_push_back(cb_out, 1);\n    tile_regs_release();\n  }\n}\n"
+    },
+    "name": "unary_copy_cb_pages_8",
+    "num_tiles": 5
+  },
+  {
+    "binary": false,
+    "cb_config": [
+      {
+        "addr": 65536,
+        "cb": 3,
+        "page_size": 2048,
+        "pages": 2,
+        "size": 4096
+      },
+      {
+        "addr": 69632,
+        "cb": 19,
+        "page_size": 2048,
+        "pages": 2,
+        "size": 4096
+      }
+    ],
+    "compiled_stems": {
+      "brisc": "unary_copy_cb3_to_cb19_reader_brisc.kernel",
+      "ncrisc": "unary_copy_cb3_to_cb19_writer_ncrisc.kernel",
+      "trisc0": "unary_copy_cb3_to_cb19_compute_trisc0.kernel",
+      "trisc1": "unary_copy_cb3_to_cb19_compute_trisc1.kernel",
+      "trisc2": "unary_copy_cb3_to_cb19_compute_trisc2.kernel"
+    },
+    "dtype": "Float16_b",
+    "kernels": {
+      "brisc": "\n#include <cstdint>\nvoid kernel_main() {\n  uint32_t addr = get_arg_val<uint32_t>(0);\n  uint32_t off  = get_arg_val<uint32_t>(1);\n  uint32_t n    = get_arg_val<uint32_t>(2);\n  constexpr uint32_t cb = tt::CBIndex::c_3;\n  const InterleavedAddrGenFast<true> s = {\n    .bank_base_address = addr, .page_size = get_tile_size(cb), .data_format = DataFormat::Float16_b,\n  };\n  for (uint32_t i = 0; i < n; ++i) {\n    cb_reserve_back(cb, 1);\n    noc_async_read_tile(off + i, s, get_write_ptr(cb));\n    noc_async_read_barrier();\n    cb_push_back(cb, 1);\n  }\n}\n",
+      "ncrisc": "\n#include <cstdint>\nvoid kernel_main() {\n  uint32_t addr = get_arg_val<uint32_t>(0);\n  uint32_t off  = get_arg_val<uint32_t>(1);\n  uint32_t n    = get_arg_val<uint32_t>(2);\n  constexpr uint32_t cb = tt::CBIndex::c_19;\n  const InterleavedAddrGenFast<true> s = {\n    .bank_base_address = addr, .page_size = get_tile_size(cb), .data_format = DataFormat::Float16_b,\n  };\n  for (uint32_t i = 0; i < n; ++i) {\n    cb_wait_front(cb, 1);\n    noc_async_write_tile(off + i, s, get_read_ptr(cb));\n    noc_async_write_barrier();\n    cb_pop_front(cb, 1);\n  }\n}\n",
+      "trisc0": "\n#include <cstdint>\n#include \"api/compute/common.h\"\n#include \"api/compute/tile_move_copy.h\"\n#include \"api/compute/eltwise_unary/eltwise_unary.h\"\n\nvoid kernel_main() {\n  uint32_t n = get_arg_val<uint32_t>(0);\n  constexpr auto cb_in = tt::CBIndex::c_3;\n  constexpr auto cb_out = tt::CBIndex::c_19;\n  unary_op_init_common(cb_in, cb_out);\n  copy_tile_init(cb_in);\n  for (uint32_t i = 0; i < n; ++i) {\n    tile_regs_acquire();\n    cb_wait_front(cb_in, 1);\n    copy_tile(cb_in, 0, 0);\n    cb_pop_front(cb_in, 1);\n    tile_regs_commit();\n    tile_regs_wait();\n    cb_reserve_back(cb_out, 1);\n    pack_tile(0, cb_out);\n    cb_push_back(cb_out, 1);\n    tile_regs_release();\n  }\n}\n",
+      "trisc1": "\n#include <cstdint>\n#include \"api/compute/common.h\"\n#include \"api/compute/tile_move_copy.h\"\n#include \"api/compute/eltwise_unary/eltwise_unary.h\"\n\nvoid kernel_main() {\n  uint32_t n = get_arg_val<uint32_t>(0);\n  constexpr auto cb_in = tt::CBIndex::c_3;\n  constexpr auto cb_out = tt::CBIndex::c_19;\n  unary_op_init_common(cb_in, cb_out);\n  copy_tile_init(cb_in);\n  for (uint32_t i = 0; i < n; ++i) {\n    tile_regs_acquire();\n    cb_wait_front(cb_in, 1);\n    copy_tile(cb_in, 0, 0);\n    cb_pop_front(cb_in, 1);\n    tile_regs_commit();\n    tile_regs_wait();\n    cb_reserve_back(cb_out, 1);\n    pack_tile(0, cb_out);\n    cb_push_back(cb_out, 1);\n    tile_regs_release();\n  }\n}\n",
+      "trisc2": "\n#include <cstdint>\n#include \"api/compute/common.h\"\n#include \"api/compute/tile_move_copy.h\"\n#include \"api/compute/eltwise_unary/eltwise_unary.h\"\n\nvoid kernel_main() {\n  uint32_t n = get_arg_val<uint32_t>(0);\n  constexpr auto cb_in = tt::CBIndex::c_3;\n  constexpr auto cb_out = tt::CBIndex::c_19;\n  unary_op_init_common(cb_in, cb_out);\n  copy_tile_init(cb_in);\n  for (uint32_t i = 0; i < n; ++i) {\n    tile_regs_acquire();\n    cb_wait_front(cb_in, 1);\n    copy_tile(cb_in, 0, 0);\n    cb_pop_front(cb_in, 1);\n    tile_regs_commit();\n    tile_regs_wait();\n    cb_reserve_back(cb_out, 1);\n    pack_tile(0, cb_out);\n    cb_push_back(cb_out, 1);\n    tile_regs_release();\n  }\n}\n"
+    },
+    "name": "unary_copy_cb3_to_cb19",
+    "num_tiles": 5
+  },
+  {
+    "binary": false,
+    "cb_config": [
+      {
+        "addr": 65536,
+        "cb": 7,
+        "page_size": 2048,
+        "pages": 2,
+        "size": 4096
+      },
+      {
+        "addr": 69632,
+        "cb": 31,
+        "page_size": 2048,
+        "pages": 2,
+        "size": 4096
+      }
+    ],
+    "compiled_stems": {
+      "brisc": "unary_copy_cb7_to_cb31_reader_brisc.kernel",
+      "ncrisc": "unary_copy_cb7_to_cb31_writer_ncrisc.kernel",
+      "trisc0": "unary_copy_cb7_to_cb31_compute_trisc0.kernel",
+      "trisc1": "unary_copy_cb7_to_cb31_compute_trisc1.kernel",
+      "trisc2": "unary_copy_cb7_to_cb31_compute_trisc2.kernel"
+    },
+    "dtype": "Float16_b",
+    "kernels": {
+      "brisc": "\n#include <cstdint>\nvoid kernel_main() {\n  uint32_t addr = get_arg_val<uint32_t>(0);\n  uint32_t off  = get_arg_val<uint32_t>(1);\n  uint32_t n    = get_arg_val<uint32_t>(2);\n  constexpr uint32_t cb = tt::CBIndex::c_7;\n  const InterleavedAddrGenFast<true> s = {\n    .bank_base_address = addr, .page_size = get_tile_size(cb), .data_format = DataFormat::Float16_b,\n  };\n  for (uint32_t i = 0; i < n; ++i) {\n    cb_reserve_back(cb, 1);\n    noc_async_read_tile(off + i, s, get_write_ptr(cb));\n    noc_async_read_barrier();\n    cb_push_back(cb, 1);\n  }\n}\n",
+      "ncrisc": "\n#include <cstdint>\nvoid kernel_main() {\n  uint32_t addr = get_arg_val<uint32_t>(0);\n  uint32_t off  = get_arg_val<uint32_t>(1);\n  uint32_t n    = get_arg_val<uint32_t>(2);\n  constexpr uint32_t cb = tt::CBIndex::c_31;\n  const InterleavedAddrGenFast<true> s = {\n    .bank_base_address = addr, .page_size = get_tile_size(cb), .data_format = DataFormat::Float16_b,\n  };\n  for (uint32_t i = 0; i < n; ++i) {\n    cb_wait_front(cb, 1);\n    noc_async_write_tile(off + i, s, get_read_ptr(cb));\n    noc_async_write_barrier();\n    cb_pop_front(cb, 1);\n  }\n}\n",
+      "trisc0": "\n#include <cstdint>\n#include \"api/compute/common.h\"\n#include \"api/compute/tile_move_copy.h\"\n#include \"api/compute/eltwise_unary/eltwise_unary.h\"\n\nvoid kernel_main() {\n  uint32_t n = get_arg_val<uint32_t>(0);\n  constexpr auto cb_in = tt::CBIndex::c_7;\n  constexpr auto cb_out = tt::CBIndex::c_31;\n  unary_op_init_common(cb_in, cb_out);\n  copy_tile_init(cb_in);\n  for (uint32_t i = 0; i < n; ++i) {\n    tile_regs_acquire();\n    cb_wait_front(cb_in, 1);\n    copy_tile(cb_in, 0, 0);\n    cb_pop_front(cb_in, 1);\n    tile_regs_commit();\n    tile_regs_wait();\n    cb_reserve_back(cb_out, 1);\n    pack_tile(0, cb_out);\n    cb_push_back(cb_out, 1);\n    tile_regs_release();\n  }\n}\n",
+      "trisc1": "\n#include <cstdint>\n#include \"api/compute/common.h\"\n#include \"api/compute/tile_move_copy.h\"\n#include \"api/compute/eltwise_unary/eltwise_unary.h\"\n\nvoid kernel_main() {\n  uint32_t n = get_arg_val<uint32_t>(0);\n  constexpr auto cb_in = tt::CBIndex::c_7;\n  constexpr auto cb_out = tt::CBIndex::c_31;\n  unary_op_init_common(cb_in, cb_out);\n  copy_tile_init(cb_in);\n  for (uint32_t i = 0; i < n; ++i) {\n    tile_regs_acquire();\n    cb_wait_front(cb_in, 1);\n    copy_tile(cb_in, 0, 0);\n    cb_pop_front(cb_in, 1);\n    tile_regs_commit();\n    tile_regs_wait();\n    cb_reserve_back(cb_out, 1);\n    pack_tile(0, cb_out);\n    cb_push_back(cb_out, 1);\n    tile_regs_release();\n  }\n}\n",
+      "trisc2": "\n#include <cstdint>\n#include \"api/compute/common.h\"\n#include \"api/compute/tile_move_copy.h\"\n#include \"api/compute/eltwise_unary/eltwise_unary.h\"\n\nvoid kernel_main() {\n  uint32_t n = get_arg_val<uint32_t>(0);\n  constexpr auto cb_in = tt::CBIndex::c_7;\n  constexpr auto cb_out = tt::CBIndex::c_31;\n  unary_op_init_common(cb_in, cb_out);\n  copy_tile_init(cb_in);\n  for (uint32_t i = 0; i < n; ++i) {\n    tile_regs_acquire();\n    cb_wait_front(cb_in, 1);\n    copy_tile(cb_in, 0, 0);\n    cb_pop_front(cb_in, 1);\n    tile_regs_commit();\n    tile_regs_wait();\n    cb_reserve_back(cb_out, 1);\n    pack_tile(0, cb_out);\n    cb_push_back(cb_out, 1);\n    tile_regs_release();\n  }\n}\n"
+    },
+    "name": "unary_copy_cb7_to_cb31",
+    "num_tiles": 5
+  }
+]
