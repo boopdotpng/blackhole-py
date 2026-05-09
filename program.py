@@ -11,17 +11,11 @@ ROLE_INDEX = {name: idx for idx, name in enumerate(ROLES)}
 def _words(xs) -> bytes:
   return b"".join(struct.pack("<I", int(x) & 0xFFFFFFFF) for x in xs)
 
-def _kernel_bytes(kernel) -> bytes:
+def _kernel_bytes(role: str, kernel) -> bytes:
   if kernel is None:
     return b""
   if isinstance(kernel, Kernel):
-    loads = kernel.pt_loads()
-    if len(loads) == 1:
-      return loads[0]["data"]
-    executable = [seg for seg in loads if "X" in seg.get("perms", "")]
-    if len(executable) == 1:
-      return executable[0]["data"]
-    raise ValueError("kernel has multiple load segments; pass the flat text bytes")
+    return kernel.image(role)
   if hasattr(kernel, "xip"):
     return bytes(kernel.xip)
   return bytes(kernel)
@@ -141,7 +135,7 @@ class Program:
     dispatch_mode=DevMsgs.DISPATCH_MODE_HOST, host_assigned_id=0,
   ) -> EncodedProgram:
     selected = self.kernels_for_core(core_xy)
-    kernels = {role: _kernel_bytes(kernel) for role, kernel in selected.items()}
+    kernels = {role: _kernel_bytes(role, kernel) for role, kernel in selected.items()}
     rtas = {role: _kernel_rtas(kernel, core_idx, core_xy, num_cores) for role, kernel in selected.items()}
     rta_offsets = {}
     rta = b""

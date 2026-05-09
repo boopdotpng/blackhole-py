@@ -1,6 +1,4 @@
-import json
 import struct
-from pathlib import Path
 
 def _bits(v, hi, lo=None):
   if lo is None: lo = hi
@@ -308,11 +306,40 @@ s2, s3, s4, s5, s6, s7, s8, s9, s10, s11 = range(18, 28)
 t3, t4, t5, t6 = range(28, 32)
 fp = s0
 
+def _u32(v):
+  return (v & 0xFFFFFFFF).to_bytes(4, "little")
+
+# Per-role local data images copied by the kernel/firmware entry shim into
+# RISC-V local memory at 0xffb... before the kernel body runs. These replace
+# the old compiler-produced RW PT_LOAD segments for assembled kernels.
+#
+# brisc: current kernels have no per-kernel local data.
+# ncrisc: five 2-word NOC transaction counters, zero-initialized.
+# trisc0: unpacker config context, zero-initialized.
+# trisc1: unpack descriptor tables. We always provide them; kernels that do
+# not use unpack APIs ignore them.
+#   unpack_tile_num_faces[32] = 4
+#   unpack_dst_format[32] = DataFormat::Float16_b (5)
+#   unpack_src_format[32] = DataFormat::Float16_b (5)
+# trisc2: pack descriptor tables. Current kernels always need these.
+#   pack_tile_face_r_dim[32] = 16
+#   pack_tile_num_faces[32] = 4
+#   pack_partial_face[32] = 0
+#   pack_src_format[32] = DataFormat::Float16_b (5)
+#   pack_dst_format[32] = DataFormat::Float16_b (5)
+_LOCAL_DATA = {
+  "brisc": b"",
+  "ncrisc": b"\0" * 40,
+  "trisc0": b"\0" * 4,
+  "trisc1": bytes([4]) * 32 + _u32(5) * 32 + _u32(5) * 32,
+  "trisc2": bytes([16]) * 32 + bytes([4]) * 32 + b"\0" * 32 + bytes([5]) * 32 + bytes([5]) * 32,
+}
+
 # Kernel is the assembler for one RISC-V core image. It owns instruction
-# encoding, local labels, packed bytes, and explicit PT_LOAD-style segments.
-# It intentionally does not own L1 placement policy. A future multi-core
-# Program should own five Kernels plus RTAs, CB config, semaphores, launch
-# messages, L1 allocation, and overlap/range validation.
+# encoding, local labels, packed bytes, RTAs, and the small local-data ABI image
+# needed by that core kind. It intentionally does not own PT_LOAD/ELF loading or
+# L1 placement policy. Program owns five Kernels plus CB config, semaphores,
+# launch messages, L1 allocation, and overlap/range validation.
 class Kernel:
   _RV_BY_NAME = _RV_BY_NAME
   _TENSIX = {
@@ -321,15 +348,16 @@ class Kernel:
   }
   _TENSIX_BY_NAME = {name: (op, fields) for op, (name, fields, _aliases) in _TENSIX.items()}
 
-  def __init__(self, base=None, upload_base=None, segments=None, rtas=None):
+  def __init__(self, base=None, upload_base=None, rtas=None, kind=None, local_data=None):
     if base is None:
       base = 0
     self.upload_base = base if upload_base is None else upload_base
     self.base = base
     self.items = []
     self.labels = {}
-    self.segments = list(segments or [])
     self.rtas = [] if rtas is None else rtas
+    self.kind = kind
+    self.local_data = local_data
 
   @classmethod
   def _riscv_word(cls, name, *values, **kw):
@@ -401,38 +429,14 @@ class Kernel:
   @staticmethod
   def decode(data=None, bin_file="", base=None, upload_base=None):
     if bin_file:
-      path = Path(bin_file)
-      if path.suffix == ".json":
-        manifest = json.loads(path.read_text())
-        k = Kernel(base=0 if base is None else base, upload_base=upload_base)
-        text_base = None
-        for seg in manifest["segments"]:
-          data = (path.parent / seg["bin"]).read_bytes()
-          memsz = int(seg.get("memsz", len(data)))
-          if len(data) < memsz:
-            data += b"\0" * (memsz - len(data))
-          paddr = int(seg["paddr"], 0)
-          if text_base is None and "X" in seg.get("perms", ""):
-            text_base = paddr
-          k.segment(
-            paddr, data,
-            vaddr=int(seg.get("vaddr", seg["paddr"]), 0),
-            memsz=memsz,
-            flags=int(seg.get("flags", 0)),
-            perms=seg.get("perms", ""),
-          )
-        if base is None and text_base is not None:
-          k.base = text_base
-          k.upload_base = text_base if upload_base is None else upload_base
-        return k
-      data = path.read_bytes()
+      with open(bin_file, "rb") as f:
+        data = f.read()
     if data is None:
       raise TypeError("decode() needs bytes-like data or bin_file")
     if len(data) % 4:
       raise ValueError(f"byte length {len(data)} not a multiple of 4")
     k = Kernel(base=base, upload_base=upload_base)
     k.emit(*struct.unpack(f"<{len(data)//4}I", bytes(data)))
-    k.segment(k.upload_base, bytes(data))
     return k
 
   @property
@@ -445,20 +449,6 @@ class Kernel:
 
   def rta(self, *values):
     self.rtas = list(values[0]) if len(values) == 1 and isinstance(values[0], (list, tuple)) else list(values)
-    return self
-
-  def segment(self, paddr, data, *, vaddr=None, memsz=None, flags=0, perms=""):
-    data = bytes(data)
-    if memsz is not None and memsz < len(data):
-      raise ValueError(f"segment at 0x{paddr:x} has memsz smaller than data")
-    self.segments.append({
-      "paddr": paddr,
-      "vaddr": paddr if vaddr is None else vaddr,
-      "data": data,
-      "memsz": len(data) if memsz is None else memsz,
-      "flags": flags,
-      "perms": perms,
-    })
     return self
 
   def label(self, name):
@@ -475,16 +465,16 @@ class Kernel:
         words.append(item)
     return b"".join((w & 0xFFFFFFFF).to_bytes(4, "little") for w in words)
 
-  def _flat_segment(self):
-    data = self.pack()
-    return {
-      "paddr": self.upload_base,
-      "vaddr": self.base,
-      "data": data,
-      "memsz": len(data),
-      "flags": 5,
-      "perms": "RX",
-    }
+  def local_data_image(self, kind=None):
+    if self.local_data is not None:
+      return bytes(self.local_data)
+    kind = self.kind if kind is None else kind
+    if kind is None:
+      return b""
+    try:
+      return _LOCAL_DATA[kind]
+    except KeyError as exc:
+      raise ValueError(f"unknown kernel kind {kind!r}") from exc
 
-  def pt_loads(self):
-    return self.segments or [self._flat_segment()]
+  def image(self, kind=None):
+    return self.pack() + self.local_data_image(kind)
