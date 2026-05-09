@@ -321,7 +321,7 @@ class Kernel:
   }
   _TENSIX_BY_NAME = {name: (op, fields) for op, (name, fields, _aliases) in _TENSIX.items()}
 
-  def __init__(self, base=None, upload_base=None, segments=None):
+  def __init__(self, base=None, upload_base=None, segments=None, rtas=None):
     if base is None:
       base = 0
     self.upload_base = base if upload_base is None else upload_base
@@ -329,6 +329,7 @@ class Kernel:
     self.items = []
     self.labels = {}
     self.segments = list(segments or [])
+    self.rtas = [] if rtas is None else rtas
 
   @classmethod
   def _riscv_word(cls, name, *values, **kw):
@@ -440,6 +441,10 @@ class Kernel:
 
   def emit(self, *insns):
     self.items.extend(insns)
+    return self
+
+  def rta(self, *values):
+    self.rtas = list(values[0]) if len(values) == 1 and isinstance(values[0], (list, tuple)) else list(values)
     return self
 
   def segment(self, paddr, data, *, vaddr=None, memsz=None, flags=0, perms=""):
