@@ -2,7 +2,7 @@ import json
 import struct
 from pathlib import Path
 
-def bits(v, hi, lo=None):
+def _bits(v, hi, lo=None):
   if lo is None: lo = hi
   return (v >> lo) & ((1 << (hi - lo + 1)) - 1)
 
@@ -124,13 +124,13 @@ def _enc_rv(base, mask, fmt, *values, **kw):
   match fmt:
     case "S":
       imm = _sfield(vals.pop("imm"), 12)
-      w |= bits(imm, 4, 0) << 7 | bits(imm, 11, 5) << 25
+      w |= _bits(imm, 4, 0) << 7 | _bits(imm, 11, 5) << 25
     case "B":
       imm = _sfield(vals.pop("imm"), 13)
-      w |= bits(imm, 11) << 7 | bits(imm, 4, 1) << 8 | bits(imm, 10, 5) << 25 | bits(imm, 12) << 31
+      w |= _bits(imm, 11) << 7 | _bits(imm, 4, 1) << 8 | _bits(imm, 10, 5) << 25 | _bits(imm, 12) << 31
     case "J":
       imm = _sfield(vals.pop("imm"), 21)
-      w |= bits(imm, 19, 12) << 12 | bits(imm, 11) << 20 | bits(imm, 10, 1) << 21 | bits(imm, 20) << 31
+      w |= _bits(imm, 19, 12) << 12 | _bits(imm, 11) << 20 | _bits(imm, 10, 1) << 21 | _bits(imm, 20) << 31
     case "U":
       imm = vals.pop("imm")
       assert imm == (imm & 0xFFFFF000), f"{imm} is not a U-format immediate"
@@ -142,23 +142,19 @@ def _enc_rv(base, mask, fmt, *values, **kw):
     w |= v << lo
   return w & 0xFFFFFFFF
 
-def _make_rv(base, mask, fmt):
-  def enc(*args, **kw):
-    return _enc_rv(base, mask, fmt, *args, **kw)
-  return enc
-
+_RV_BY_NAME = {}
 for _row in _RV:
   _mask, _base, _name, _fmt = _rv_spec(_row)
-  globals()[_name] = _make_rv(_base, _mask, _fmt)
+  _RV_BY_NAME[_name] = (_base, _mask, _fmt)
 
-def _x_R(w):   return dict(rd=bits(w,11,7), rs1=bits(w,19,15), rs2=bits(w,24,20))
-def _x_I(w):   return dict(rd=bits(w,11,7), rs1=bits(w,19,15), imm=_sext(bits(w,31,20), 12))
-def _x_Ish(w): return dict(rd=bits(w,11,7), rs1=bits(w,19,15), shamt=bits(w,24,20))
-def _x_S(w):   return dict(rs1=bits(w,19,15), rs2=bits(w,24,20), imm=_sext(bits(w,11,7) | (bits(w,31,25)<<5), 12))
-def _x_B(w):   return dict(rs1=bits(w,19,15), rs2=bits(w,24,20), imm=_sext((bits(w,11,8)<<1) | (bits(w,30,25)<<5) | (bits(w,7)<<11) | (bits(w,31)<<12), 13))
-def _x_U(w):   return dict(rd=bits(w,11,7), imm=w & 0xFFFFF000)
-def _x_J(w):   return dict(rd=bits(w,11,7), imm=_sext((bits(w,30,21)<<1) | (bits(w,20)<<11) | (bits(w,19,12)<<12) | (bits(w,31)<<20), 21))
-def _x_CSR(w): return dict(rd=bits(w,11,7), rs1=bits(w,19,15), csr=bits(w,31,20))
+def _x_R(w):   return dict(rd=_bits(w,11,7), rs1=_bits(w,19,15), rs2=_bits(w,24,20))
+def _x_I(w):   return dict(rd=_bits(w,11,7), rs1=_bits(w,19,15), imm=_sext(_bits(w,31,20), 12))
+def _x_Ish(w): return dict(rd=_bits(w,11,7), rs1=_bits(w,19,15), shamt=_bits(w,24,20))
+def _x_S(w):   return dict(rs1=_bits(w,19,15), rs2=_bits(w,24,20), imm=_sext(_bits(w,11,7) | (_bits(w,31,25)<<5), 12))
+def _x_B(w):   return dict(rs1=_bits(w,19,15), rs2=_bits(w,24,20), imm=_sext((_bits(w,11,8)<<1) | (_bits(w,30,25)<<5) | (_bits(w,7)<<11) | (_bits(w,31)<<12), 13))
+def _x_U(w):   return dict(rd=_bits(w,11,7), imm=w & 0xFFFFF000)
+def _x_J(w):   return dict(rd=_bits(w,11,7), imm=_sext((_bits(w,30,21)<<1) | (_bits(w,20)<<11) | (_bits(w,19,12)<<12) | (_bits(w,31)<<20), 21))
+def _x_CSR(w): return dict(rd=_bits(w,11,7), rs1=_bits(w,19,15), csr=_bits(w,31,20))
 def _x_NONE(w): return {}
 
 _RV_EXTRACT = {'R':_x_R, 'I':_x_I, 'Ish':_x_Ish, 'S':_x_S, 'B':_x_B, 'U':_x_U, 'J':_x_J, 'CSR':_x_CSR, 'NONE':_x_NONE}
@@ -167,16 +163,7 @@ for _row in _RV:
   _m, _b, _n, _f = _rv_spec(_row)
   _RV_BY_OPCODE.setdefault(_b & 0x7F, []).append((_m, _b, _n, _f))
 
-def decode_rv(word):
-  w = word & 0xFFFFFFFF
-  for mask, base, name, fmt in _RV_BY_OPCODE.get(w & 0x7F, ()):
-    if (w & mask) == (base & mask):
-      fields = _RV_EXTRACT[fmt](w)
-      fields["word"] = w
-      return name, fields
-  return "UNKNOWN", {"word": w}
-
-def TTINSN(imm32):
+def _ttinsn(imm32):
   assert imm32 < 0xC0000000, f".ttinsn requires imm32 < 0xC0000000, got 0x{imm32:08x}"
   return ((imm32 << 2) | (imm32 >> 30)) & 0xFFFFFFFF
 
@@ -315,127 +302,108 @@ _TENSIX_DECODE = {
   0xC0: ("wrcfg32", [("GprAddress", 18, 6), ("CfgReg", 0, 11)]),
 }
 
-def _tt_spec(spec):
-  name, fields, *aliases = spec
-  return name, tuple(fields), tuple(aliases[0]) if aliases else ()
-
-_TENSIX = {op: _tt_spec(spec) for op, spec in _TENSIX_DECODE.items()}
-
-def _enc_tensix(op, fields, *values, **kw):
-  vals = _bind(fields, values, kw)
-  w = op << 24
-  for fname, shift, width in fields:
-    w |= _field(vals[fname], width) << shift
-  return w & 0xFFFFFFFF
-
-def _make_tt(op, fields):
-  def enc(*args, **kw):
-    return _enc_tensix(op, fields, *args, **kw)
-  return enc
-
-for _op, (_name, _fields, _aliases) in _TENSIX.items():
-  globals()[f"tt_{_name}"] = _make_tt(_op, _fields)
-
-def decode_tensix(word):
-  w = word & 0xFFFFFFFF
-  op = (w >> 24) & 0xFF
-  spec = _TENSIX.get(op)
-  if spec is None:
-    return f"UNKNOWN_0x{op:02X}", {"word": w, "raw_params": w & 0xFFFFFF}
-  name, fields, aliases = spec
-  vals = {fname: (w >> shift) & ((1 << width) - 1) for fname, shift, width in fields + aliases}
-  vals["word"] = w
-  return name, vals
-
 zero, ra, sp, gp, tp, t0, t1, t2, s0, s1 = range(10)
 a0, a1, a2, a3, a4, a5, a6, a7 = range(10, 18)
 s2, s3, s4, s5, s6, s7, s8, s9, s10, s11 = range(18, 28)
 t3, t4, t5, t6 = range(28, 32)
 fp = s0
 
-nop    = lambda: addi(zero, zero, 0)
-li     = lambda rd, imm: addi(rd, zero, imm)
-mv     = lambda rd, rs: addi(rd, rs, 0)
-not_   = lambda rd, rs: xori(rd, rs, -1)
-neg    = lambda rd, rs: sub(rd, zero, rs)
-seqz   = lambda rd, rs: sltiu(rd, rs, 1)
-snez   = lambda rd, rs: sltu(rd, zero, rs)
-beqz   = lambda rs, imm: beq(rs, zero, imm)
-bnez   = lambda rs, imm: bne(rs, zero, imm)
-blez   = lambda rs, imm: bge(zero, rs, imm)
-bgez   = lambda rs, imm: bge(rs, zero, imm)
-bltz   = lambda rs, imm: blt(rs, zero, imm)
-bgtz   = lambda rs, imm: blt(zero, rs, imm)
-j      = lambda imm: jal(zero, imm)
-jr     = lambda rs: jalr(zero, rs, 0)
-ret    = lambda: jalr(zero, ra, 0)
-zext_b = lambda rd, rs: andi(rd, rs, 0xFF)
+# Kernel is the assembler for one RISC-V core image. It owns instruction
+# encoding, local labels, packed bytes, and explicit PT_LOAD-style segments.
+# It intentionally does not own L1 placement policy. A future multi-core
+# Program should own five Kernels plus RTAs, CB config, semaphores, launch
+# messages, L1 allocation, and overlap/range validation.
+class Kernel:
+  _RV_BY_NAME = _RV_BY_NAME
+  _TENSIX = {
+    op: (spec[0], tuple(spec[1]), tuple(spec[2]) if len(spec) > 2 else ())
+    for op, spec in _TENSIX_DECODE.items()
+  }
+  _TENSIX_BY_NAME = {name: (op, fields) for op, (name, fields, _aliases) in _TENSIX.items()}
 
-def li32(rd, imm):
-  imm &= 0xFFFFFFFF
-  imm_s = imm if imm < 0x80000000 else imm - 0x100000000
-  hi = (imm_s + 0x800) & 0xFFFFF000
-  hi_s = hi if hi < 0x80000000 else hi - 0x100000000
-  lo = imm_s - hi_s
-  if hi == 0:
-    return [addi(rd, zero, lo)]
-  return [lui(rd, hi), addi(rd, rd, lo)]
-
-L1_SIZE = 0x00180000
-BRISC_FW_BASE = 0x003840
-NCRISC_FW_BASE = 0x005440
-TRISC0_FW_BASE = 0x005A40
-TRISC1_FW_BASE = 0x006040
-TRISC2_FW_BASE = 0x006A40
-BRISC_PROGRAM_BASE = 0x005460
-NCRISC_PROGRAM_BASE = 0x006170
-TRISC0_PROGRAM_BASE = 0x006990
-TRISC1_PROGRAM_BASE = 0x007110
-TRISC2_PROGRAM_BASE = 0x007D60
-KERNEL_CONFIG_BASE = 0x0086B0
-LDM_BASE = 0xFFB00000
-
-PROGRAM_LAYOUTS = {
-  "firmware.brisc":  (BRISC_FW_BASE,  BRISC_FW_BASE,  BRISC_PROGRAM_BASE),
-  "firmware.ncrisc": (NCRISC_FW_BASE, NCRISC_FW_BASE, NCRISC_PROGRAM_BASE),
-  "firmware.trisc0": (TRISC0_FW_BASE, TRISC0_FW_BASE, TRISC0_PROGRAM_BASE),
-  "firmware.trisc1": (TRISC1_FW_BASE, TRISC1_FW_BASE, TRISC1_PROGRAM_BASE),
-  "firmware.trisc2": (TRISC2_FW_BASE, TRISC2_FW_BASE, TRISC2_PROGRAM_BASE),
-  "program.brisc":   (BRISC_PROGRAM_BASE,  BRISC_PROGRAM_BASE,  KERNEL_CONFIG_BASE),
-  "program.ncrisc":  (NCRISC_PROGRAM_BASE, NCRISC_PROGRAM_BASE, KERNEL_CONFIG_BASE),
-  "program.trisc0":  (TRISC0_PROGRAM_BASE, TRISC0_PROGRAM_BASE, KERNEL_CONFIG_BASE),
-  "program.trisc1":  (TRISC1_PROGRAM_BASE, TRISC1_PROGRAM_BASE, KERNEL_CONFIG_BASE),
-  "program.trisc2":  (TRISC2_PROGRAM_BASE, TRISC2_PROGRAM_BASE, KERNEL_CONFIG_BASE),
-}
-
-class Program:
-  def __init__(self, base=None, upload_base=None, upload_limit=None, kind=None, segments=None):
-    layout = PROGRAM_LAYOUTS.get(kind)
-    if layout:
-      layout_base, layout_upload, layout_limit = layout
-      if base is None: base = layout_base
-      if upload_base is None: upload_base = layout_upload
-      if upload_limit is None: upload_limit = layout_limit
-    elif kind is not None and "." in kind and base is None:
-      raise ValueError(f"unknown program layout {kind!r}")
-
+  def __init__(self, base=None, upload_base=None, segments=None):
     if base is None:
       base = 0
     self.upload_base = base if upload_base is None else upload_base
-    self.upload_limit = upload_limit
-    self.kind = kind
     self.base = base
     self.items = []
     self.labels = {}
     self.segments = list(segments or [])
 
+  @classmethod
+  def _riscv_word(cls, name, *values, **kw):
+    try:
+      base, mask, fmt = cls._RV_BY_NAME[name]
+    except KeyError as exc:
+      raise ValueError(f"unknown RISC-V instruction {name!r}") from exc
+    return _enc_rv(base, mask, fmt, *values, **kw)
+
+  @classmethod
+  def decode_rv(cls, word):
+    w = word & 0xFFFFFFFF
+    for mask, base, name, fmt in _RV_BY_OPCODE.get(w & 0x7F, ()):
+      if (w & mask) == (base & mask):
+        fields = _RV_EXTRACT[fmt](w)
+        fields["word"] = w
+        return name, fields
+    return "UNKNOWN", {"word": w}
+
+  @classmethod
+  def _tensix_word(cls, name, *values, **kw):
+    try:
+      op, fields = cls._TENSIX_BY_NAME[name]
+    except KeyError as exc:
+      raise ValueError(f"unknown Tensix instruction {name!r}") from exc
+    vals = _bind(fields, values, kw)
+    w = op << 24
+    for fname, shift, width in fields:
+      w |= _field(vals[fname], width) << shift
+    return w & 0xFFFFFFFF
+
+  @classmethod
+  def decode_tensix(cls, word):
+    w = word & 0xFFFFFFFF
+    op = (w >> 24) & 0xFF
+    spec = cls._TENSIX.get(op)
+    if spec is None:
+      return f"UNKNOWN_0x{op:02X}", {"word": w, "raw_params": w & 0xFFFFFF}
+    name, fields, aliases = spec
+    vals = {fname: (w >> shift) & ((1 << width) - 1) for fname, shift, width in fields + aliases}
+    vals["word"] = w
+    return name, vals
+
+  def ttinsn(self, imm32):
+    return self.emit(_ttinsn(imm32))
+
+  def _rv_emit(self, name, *args, **kw):
+    if kw:
+      return self.emit(self._riscv_word(name, *args, **kw))
+    if name in {"beq", "bne", "blt", "bge", "bltu", "bgeu", "jal"} and args and isinstance(args[-1], str):
+      label = args[-1]
+      operands = args[:-1]
+      self.items.append((self.pc, lambda labels, pc: self._riscv_word(name, *operands, labels[label] - pc)))
+      return self
+    return self.emit(self._riscv_word(name, *args))
+
+  def __getattr__(self, name):
+    if name.startswith("tt_"):
+      opname = name[3:]
+      if opname in self._TENSIX_BY_NAME:
+        return lambda *args, **kw: self.emit(self._tensix_word(opname, *args, **kw))
+    if name in {"and", "or"}:
+      raise AttributeError(name)
+    opname = {"and_": "and", "or_": "or"}.get(name, name)
+    if opname in self._RV_BY_NAME:
+      return lambda *args, **kw: self._rv_emit(opname, *args, **kw)
+    raise AttributeError(name)
+
   @staticmethod
-  def decode(data=None, bin_file="", base=None, upload_base=None, upload_limit=None, kind=None):
+  def decode(data=None, bin_file="", base=None, upload_base=None):
     if bin_file:
       path = Path(bin_file)
       if path.suffix == ".json":
         manifest = json.loads(path.read_text())
-        p = Program(base=0 if base is None else base, upload_base=upload_base, upload_limit=upload_limit, kind=kind)
+        k = Kernel(base=0 if base is None else base, upload_base=upload_base)
         text_base = None
         for seg in manifest["segments"]:
           data = (path.parent / seg["bin"]).read_bytes()
@@ -445,7 +413,7 @@ class Program:
           paddr = int(seg["paddr"], 0)
           if text_base is None and "X" in seg.get("perms", ""):
             text_base = paddr
-          p.segment(
+          k.segment(
             paddr, data,
             vaddr=int(seg.get("vaddr", seg["paddr"]), 0),
             memsz=memsz,
@@ -453,20 +421,18 @@ class Program:
             perms=seg.get("perms", ""),
           )
         if base is None and text_base is not None:
-          p.base = text_base
-          p.upload_base = text_base if upload_base is None else upload_base
-        p.validate()
-        return p
+          k.base = text_base
+          k.upload_base = text_base if upload_base is None else upload_base
+        return k
       data = path.read_bytes()
     if data is None:
       raise TypeError("decode() needs bytes-like data or bin_file")
     if len(data) % 4:
       raise ValueError(f"byte length {len(data)} not a multiple of 4")
-    p = Program(base=base, upload_base=upload_base, upload_limit=upload_limit, kind=kind)
-    p.emit(*struct.unpack(f"<{len(data)//4}I", bytes(data)))
-    p.segment(p.upload_base, bytes(data))
-    p.validate()
-    return p
+    k = Kernel(base=base, upload_base=upload_base)
+    k.emit(*struct.unpack(f"<{len(data)//4}I", bytes(data)))
+    k.segment(k.upload_base, bytes(data))
+    return k
 
   @property
   def pc(self):
@@ -476,14 +442,14 @@ class Program:
     self.items.extend(insns)
     return self
 
-  def word(self, value):
-    return self.emit(value)
-
   def segment(self, paddr, data, *, vaddr=None, memsz=None, flags=0, perms=""):
+    data = bytes(data)
+    if memsz is not None and memsz < len(data):
+      raise ValueError(f"segment at 0x{paddr:x} has memsz smaller than data")
     self.segments.append({
       "paddr": paddr,
       "vaddr": paddr if vaddr is None else vaddr,
-      "data": bytes(data),
+      "data": data,
       "memsz": len(data) if memsz is None else memsz,
       "flags": flags,
       "perms": perms,
@@ -494,55 +460,15 @@ class Program:
     self.labels[name] = self.pc
     return self
 
-  def fixup(self, fn):
-    self.items.append((self.pc, fn))
-    return self
-
-  def beq(self, rs1, rs2, label):
-    return self.fixup(lambda labels, pc: beq(rs1, rs2, labels[label] - pc))
-
-  def bne(self, rs1, rs2, label):
-    return self.fixup(lambda labels, pc: bne(rs1, rs2, labels[label] - pc))
-
-  def blt(self, rs1, rs2, label):
-    return self.fixup(lambda labels, pc: blt(rs1, rs2, labels[label] - pc))
-
-  def bge(self, rs1, rs2, label):
-    return self.fixup(lambda labels, pc: bge(rs1, rs2, labels[label] - pc))
-
-  def bltu(self, rs1, rs2, label):
-    return self.fixup(lambda labels, pc: bltu(rs1, rs2, labels[label] - pc))
-
-  def bgeu(self, rs1, rs2, label):
-    return self.fixup(lambda labels, pc: bgeu(rs1, rs2, labels[label] - pc))
-
-  def bnez(self, rs, label):
-    return self.bne(rs, zero, label)
-
-  def beqz(self, rs, label):
-    return self.beq(rs, zero, label)
-
-  def j(self, label):
-    return self.fixup(lambda labels, pc: j(labels[label] - pc))
-
-  def jal(self, rd, label):
-    return self.fixup(lambda labels, pc: jal(rd, labels[label] - pc))
-
-  def li(self, rd, imm):
-    return self.emit(*li32(rd, imm))
-
-  def resolve(self):
-    out = []
+  def pack(self):
+    words = []
     for item in self.items:
       if isinstance(item, tuple) and len(item) == 2 and callable(item[1]):
         pc, fn = item
-        out.append(fn(self.labels, pc))
+        words.append(fn(self.labels, pc))
       else:
-        out.append(item)
-    return out
-
-  def pack(self):
-    return b"".join((w & 0xFFFFFFFF).to_bytes(4, "little") for w in self.resolve())
+        words.append(item)
+    return b"".join((w & 0xFFFFFFFF).to_bytes(4, "little") for w in words)
 
   def _flat_segment(self):
     data = self.pack()
@@ -555,27 +481,5 @@ class Program:
       "perms": "RX",
     }
 
-  def validate(self):
-    for seg in self.segments or [self._flat_segment()]:
-      paddr = seg["paddr"]
-      size = seg.get("memsz", len(seg["data"]))
-      if size < len(seg["data"]):
-        raise ValueError(f"segment at 0x{paddr:x} has memsz smaller than data")
-      if self.upload_limit is None:
-        continue
-      if paddr >= LDM_BASE:
-        continue
-      start, end = paddr, paddr + size
-      if start < self.upload_base or end > self.upload_limit:
-        raise ValueError(
-          f"segment 0x{start:x}..0x{end:x} exceeds upload range "
-          f"0x{self.upload_base:x}..0x{self.upload_limit:x}"
-        )
-    return self
-
-  def uploads(self):
-    return [(seg["paddr"], seg["data"]) for seg in self.pt_loads()]
-
   def pt_loads(self):
-    self.validate()
     return self.segments or [self._flat_segment()]
