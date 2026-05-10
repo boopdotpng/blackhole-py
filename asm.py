@@ -2,12 +2,14 @@ import struct
 from collections.abc import Callable
 from dataclasses import dataclass
 
-CoreArgs = Callable[[tuple[int, int]], list[int]]
+CoreArgs = Callable[[int, int], list[int]]
 
 @dataclass(frozen=True)
 class Segment:
   addr: int
   data: bytes
+  mcast: bool = True
+  label: str = ""
 
 def _bits(v, hi, lo=None):
   if lo is None: lo = hi
@@ -92,8 +94,6 @@ def _rv_args(mask, fmt):
   for name, lo, width, signed in _RV_FIELDS[fmt]:
     if name == "imm" and fmt in _SPECIAL_IMM:
       continue
-    # Fully masked operand fields are fixed by the table row itself. This keeps
-    # encoders like clz/ctz/zext_h from exposing unused shamt/rs2 parameters.
     if (mask & (((1 << width) - 1) << lo)) != (((1 << width) - 1) << lo):
       args.append((name, lo, width, signed))
   return tuple(args)
@@ -286,24 +286,6 @@ fp = s0
 def _u32(v):
   return (v & 0xFFFFFFFF).to_bytes(4, "little")
 
-# Per-role local data images copied by the kernel/firmware entry shim into
-# RISC-V local memory at 0xffb... before the kernel body runs. These replace
-# the old compiler-produced RW PT_LOAD segments for assembled kernels.
-#
-# brisc: current kernels have no per-kernel local data.
-# ncrisc: five 2-word NOC transaction counters, zero-initialized.
-# trisc0: unpacker config context, zero-initialized.
-# trisc1: unpack descriptor tables. We always provide them; kernels that do
-# not use unpack APIs ignore them.
-#   unpack_tile_num_faces[32] = 4
-#   unpack_dst_format[32] = DataFormat::Float16_b (5)
-#   unpack_src_format[32] = DataFormat::Float16_b (5)
-# trisc2: pack descriptor tables. Current kernels always need these.
-#   pack_tile_face_r_dim[32] = 16
-#   pack_tile_num_faces[32] = 4
-#   pack_partial_face[32] = 0
-#   pack_src_format[32] = DataFormat::Float16_b (5)
-#   pack_dst_format[32] = DataFormat::Float16_b (5)
 _LOCAL_DATA = {
   "brisc": b"",
   "ncrisc": b"\0" * 40,
@@ -312,11 +294,6 @@ _LOCAL_DATA = {
   "trisc2": bytes([16]) * 32 + bytes([4]) * 32 + b"\0" * 32 + bytes([5]) * 32 + bytes([5]) * 32,
 }
 
-# Kernel is the assembler for one RISC-V core image. It owns instruction
-# encoding, local labels, packed bytes, RTAs, and the small local-data ABI image
-# needed by that core kind. It intentionally does not own PT_LOAD/ELF loading or
-# L1 placement policy. Program owns five Kernels plus CB config, semaphores,
-# launch messages, L1 allocation, and overlap/range validation.
 class Kernel:
   _RV_BY_NAME = _RV_BY_NAME
   _TENSIX = {
@@ -327,7 +304,7 @@ class Kernel:
 
   def __init__(
     self, *, kind, base=None, upload_base=None,
-    rtas: list[int] | CoreArgs | None = None, crtas: list[int] | None = None,
+    rtas: CoreArgs | None = None, crtas: list[int] | None = None,
     local_data=None,
   ):
     if kind not in _LOCAL_DATA:
@@ -338,7 +315,7 @@ class Kernel:
     self.base = base
     self.items = []
     self.labels = {}
-    self.rtas = [] if rtas is None else rtas
+    self.rtas = rtas
     self.crtas = [] if crtas is None else crtas
     self.kind = kind
     self.local_data = local_data
@@ -432,9 +409,9 @@ class Kernel:
     return self
 
   def rta(self, *values):
-    self.rtas = values[0] if len(values) == 1 and callable(values[0]) else (
-      list(values[0]) if len(values) == 1 and isinstance(values[0], (list, tuple)) else list(values)
-    )
+    if len(values) != 1 or not callable(values[0]):
+      raise TypeError("rta() expects one callable: f(core_x, core_y) -> list[int]")
+    self.rtas = values[0]
     return self
 
   def crta(self, *values):
@@ -465,7 +442,7 @@ class Kernel:
     local_data = self._local_data()
     segments = []
     if text:
-      segments.append(Segment(self.upload_base, text))
+      segments.append(Segment(self.upload_base, text, label="text"))
     if local_data:
-      segments.append(Segment(self.upload_base + len(text), local_data))
+      segments.append(Segment(self.upload_base + len(text), local_data, label="local_data"))
     return segments

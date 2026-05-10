@@ -1,5 +1,4 @@
 import struct
-from collections.abc import Callable
 from dataclasses import KW_ONLY, dataclass, field
 from asm import Kernel, Segment
 from dispatch import DevMsgs, FAST_CQ_NUM_CIRCULAR_BUFFERS, LaunchMsg
@@ -7,65 +6,19 @@ from hw import L1_ALIGN, TensixL1, align_up, as_bytes
 
 # rta and crta order
 CORE_ROLES = ("brisc", "ncrisc", "trisc0", "trisc1", "trisc2")
-# f(core_x, core_y) -> list[int]
-CoreArgs = Callable[[tuple[int, int]], list[int]]
 
-@dataclass(frozen=True)
-class ProgramLayout:
-  kernel_text_offsets: dict[str, int]
-  launch_msg: LaunchMsg
-  launch: bytes
-  payload_addr: int
-  payload: bytes
-  rta: bytes
-  crta: bytes
-  kernels: dict[str, bytes]
-  sem_offset: int
-  local_cb_offset: int
-  remote_cb_offset: int
-  cb_mask: int
-  enables: int
+def _args_blob(values) -> bytes:
+  return b"".join((int(x) & 0xFFFFFFFF).to_bytes(4, "little") for x in values)
 
-  def kernel_addr(self, role: str) -> int:
-    return TensixL1.KERNEL_CONFIG_BASE + self.kernel_text_offsets[role]
-
-def _words(xs) -> bytes:
-  return b"".join(struct.pack("<I", int(x) & 0xFFFFFFFF) for x in xs)
-
-def _flatten_segments(segments: list[Segment]) -> bytes:
-  if not segments:
-    return b""
-  base = min(seg.addr for seg in segments)
-  out = bytearray()
-  for seg in sorted(segments, key=lambda s: s.addr):
-    start = seg.addr - base
-    end = start + len(seg.data)
-    if len(out) < end:
-      out.extend(b"\0" * (end - len(out)))
-    out[start:end] = seg.data
-  return bytes(out)
-
-def _kernel_rtas(kernel: Kernel, core_xy: tuple[int, int] | None) -> list[int]:
-  rtas: list[int] | CoreArgs = kernel.rtas
-  if callable(rtas):
-    if core_xy is None:
-      raise ValueError("callable kernel RTAs need core_xy")
-    return list(rtas(core_xy))
-  return list(rtas)
-
-def _role_map(name: str, value, roles) -> dict[str, object]:
-  if value is None:
-    return {}
-  if isinstance(value, dict):
-    unknown = sorted(set(value) - set(roles))
-    if unknown:
-      raise ValueError(f"unknown {name} role(s): {', '.join(unknown)}")
-    return dict(value)
-  if isinstance(value, (list, tuple)):
-    if len(value) != len(roles):
-      raise ValueError(f"{name} sequence must have {len(roles)} entries")
-    return {role: item for role, item in zip(roles, value) if item is not None}
-  raise TypeError(f"{name} must be a dict or {len(roles)}-item sequence")
+def _layout_args(args_by_role: dict[str, list[int]], base: int = 0, align_each: bool = False) -> tuple[dict[str, int], bytes]:
+  offsets = {}
+  blob = b""
+  for role in CORE_ROLES:
+    offsets[role] = base + len(blob)
+    blob += _args_blob(args_by_role[role])
+    if align_each:
+      blob = blob.ljust(align_up(len(blob), L1_ALIGN), b"\0")
+  return offsets, blob
 
 def _cb_fields(cb) -> tuple[int, int, int]:
   if hasattr(cb, "index"):
@@ -111,61 +64,6 @@ class Program:
   def __post_init__(self):
     self.cbs = list(self.cbs)
 
-  @classmethod
-  def decode(
-    cls,
-    brisc: Kernel | None = None,
-    ncrisc: Kernel | None = None,
-    trisc0: Kernel | None = None,
-    trisc1: Kernel | None = None,
-    trisc2: Kernel | None = None,
-    bin_file=None,
-    rtas=None,
-    crtas=None,
-    **kw,
-  ):
-    kernels = {
-      "brisc": brisc,
-      "ncrisc": ncrisc,
-      "trisc0": trisc0,
-      "trisc1": trisc1,
-      "trisc2": trisc2,
-      "brisc_recv": kw.pop("brisc_recv", None),
-      "ncrisc_recv": kw.pop("ncrisc_recv", None),
-    }
-    kernel_fields = (*CORE_ROLES, "brisc_recv", "ncrisc_recv")
-    for role, path in _role_map("bin_file", bin_file, kernel_fields).items():
-      if kernels[role] is not None:
-        raise ValueError(f"cannot pass both {role} and bin_file[{role!r}]")
-      kernels[role] = Kernel.decode(bin_file=path, kind=role if role in CORE_ROLES else role.removesuffix("_recv"))
-    for role, values in _role_map("rtas", rtas, kernel_fields).items():
-      if kernels[role] is None:
-        raise ValueError(f"cannot set RTAs for missing {role} kernel")
-      kernels[role].rtas = values
-    for role, values in _role_map("crtas", crtas, kernel_fields).items():
-      if kernels[role] is None:
-        raise ValueError(f"cannot set CRTAs for missing {role} kernel")
-      kernels[role].crtas = list(values)
-    return cls(
-      kernels["brisc"], kernels["ncrisc"], kernels["trisc0"], kernels["trisc1"], kernels["trisc2"],
-      brisc_recv=kernels["brisc_recv"], ncrisc_recv=kernels["ncrisc_recv"], **kw,
-    )
-
-  @classmethod
-  def encode(
-    cls,
-    brisc: Kernel | None = None,
-    ncrisc: Kernel | None = None,
-    trisc0: Kernel | None = None,
-    trisc1: Kernel | None = None,
-    trisc2: Kernel | None = None,
-    bin_file=None,
-    rtas=None,
-    crtas=None,
-    **kw,
-  ):
-    return cls.decode(brisc, ncrisc, trisc0, trisc1, trisc2, bin_file=bin_file, rtas=rtas, crtas=crtas, **kw).layout()
-
   @property
   def kernel_map(self) -> dict[str, Kernel]:
     return {role: getattr(self, role) for role in CORE_ROLES}
@@ -190,31 +88,24 @@ class Program:
       out["ncrisc"] = self.ncrisc_recv if self.ncrisc_recv is not None else self.ncrisc
     return out
 
-  def layout_for_core(
+  def _layout_core(
     self, *, core_xy: tuple[int, int] | None = None,
     dispatch_mode=DevMsgs.DISPATCH_MODE_HOST, host_assigned_id=0,
-  ) -> ProgramLayout:
+  ) -> list[Segment]:
     selected = self.kernels_for_core(core_xy)
-    kernels = {role: _flatten_segments(kernel.compile()) for role, kernel in selected.items()}
-    rtas = {role: _kernel_rtas(kernel, core_xy) for role, kernel in selected.items()}
+    kernels = {role: kernel.compile() for role, kernel in selected.items()}
+    if core_xy is None and any(kernel.rtas is not None for kernel in selected.values()):
+      raise ValueError("kernel RTAs need core_xy")
+    xy = core_xy if core_xy is not None else (0, 0)
+    rtas = {role: list(kernel.rtas(*xy)) if kernel.rtas is not None else [] for role, kernel in selected.items()}
     crtas = {role: list(kernel.crtas) for role, kernel in selected.items()}
-    rta_offsets = {}
-    rta = b""
-    for role in CORE_ROLES:
-      rta_offsets[role] = len(rta)
-      rta += _words(rtas[role])
-    rta_total = align_up(len(rta), L1_ALIGN)
-    crta_offsets = {}
-    crta = b""
-    for role in CORE_ROLES:
-      crta_offsets[role] = rta_total + len(crta)
-      crta += _words(crtas[role])
-      crta = crta.ljust(align_up(len(crta), L1_ALIGN), b"\0")
+    rta_offsets, rta_blob = _layout_args(rtas)
+    rta_total = align_up(len(rta_blob), L1_ALIGN)
+    crta_offsets, crta = _layout_args(crtas, base=rta_total, align_each=True)
     crta_total = rta_total + len(crta)
     sem_off = crta_total
-    rta = rta.ljust(rta_total, b"\0") + crta
-    if self.semaphores:
-      rta += b"\0" * (self.semaphores * L1_ALIGN)
+    rta = rta_blob.ljust(rta_total, b"\0")
+    semaphores = b"\0" * (self.semaphores * L1_ALIGN)
 
     local_cb_off = align_up(sem_off + self.semaphores * L1_ALIGN, L1_ALIGN)
     cb_mask, cb_blob = _build_cb_blob(self.cbs)
@@ -222,23 +113,20 @@ class Program:
     off = align_up(remote_cb_off, L1_ALIGN)
 
     kernel_text_offsets = {role: 0 for role in CORE_ROLES}
+    kernel_bases = {}
     enables = 0
     for idx, role in enumerate(CORE_ROLES):
       if not kernels[role]:
         continue
+      seg_base = min(seg.addr for seg in kernels[role])
+      seg_end = max(seg.addr + len(seg.data) for seg in kernels[role])
       kernel_text_offsets[role] = off
-      off = align_up(off + len(kernels[role]), L1_ALIGN)
+      kernel_bases[role] = (off, seg_base)
+      off = align_up(off + seg_end - seg_base, L1_ALIGN)
       enables |= 1 << idx
 
     if TensixL1.KERNEL_CONFIG_BASE + off > TensixL1.DATA_BUFFER_SPACE_BASE:
       raise ValueError("program config and kernel text overlap data buffer space")
-
-    payload = bytearray(off - local_cb_off)
-    payload[:len(cb_blob)] = cb_blob
-    for role in CORE_ROLES:
-      if kernels[role]:
-        dst = kernel_text_offsets[role] - local_cb_off
-        payload[dst:dst + len(kernels[role])] = kernels[role]
 
     launch = LaunchMsg()
     cfg = launch.kernel_config
@@ -259,26 +147,30 @@ class Program:
       cfg.kernel_text_offset[idx] = kernel_text_offsets[role]
     cfg.host_assigned_id = host_assigned_id
 
-    return ProgramLayout(
-      kernel_text_offsets=kernel_text_offsets,
-      launch_msg=launch,
-      launch=as_bytes(launch),
-      payload_addr=TensixL1.KERNEL_CONFIG_BASE + local_cb_off,
-      payload=bytes(payload),
-      rta=rta,
-      crta=crta,
-      kernels=kernels,
-      sem_offset=sem_off,
-      local_cb_offset=local_cb_off,
-      remote_cb_offset=remote_cb_off,
-      cb_mask=cb_mask,
-      enables=enables,
-    )
+    segments = []
+    if rta:
+      segments.append(Segment(TensixL1.KERNEL_CONFIG_BASE, rta, mcast=False, label="rta"))
+    if crta:
+      segments.append(Segment(TensixL1.KERNEL_CONFIG_BASE + rta_total, crta, label="crta"))
+    if semaphores:
+      segments.append(Segment(TensixL1.KERNEL_CONFIG_BASE + sem_off, semaphores, label="semaphores"))
+    if cb_blob:
+      segments.append(Segment(TensixL1.KERNEL_CONFIG_BASE + local_cb_off, cb_blob, label="cb_config"))
+    for role in CORE_ROLES:
+      if role not in kernel_bases:
+        continue
+      kernel_base, seg_base = kernel_bases[role]
+      for seg in kernels[role]:
+        label = f"{role}.{seg.label or 'kernel'}"
+        segments.append(Segment(TensixL1.KERNEL_CONFIG_BASE + kernel_base + seg.addr - seg_base, seg.data, mcast=seg.mcast, label=label))
+    segments.append(Segment(TensixL1.LAUNCH, as_bytes(launch), label="launch"))
 
-  def layout(self, **kw) -> ProgramLayout:
-    return self.layout_for_core(**kw)
+    return segments
 
-  def layouts(self, cores: list[tuple[int, int]] | None = None, **kw) -> dict[tuple[int, int], ProgramLayout]:
+  def layout(self, **kw) -> list[Segment]:
+    return self._layout_core(**kw)
+
+  def layouts(self, cores: list[tuple[int, int]] | None = None, **kw) -> dict[tuple[int, int], list[Segment]]:
     if cores is None:
       cores = self.active_cores()
-    return {core: self.layout_for_core(core_xy=core, **kw) for core in cores}
+    return {core: self._layout_core(core_xy=core, **kw) for core in cores}
