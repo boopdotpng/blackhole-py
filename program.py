@@ -1,5 +1,7 @@
+from __future__ import annotations
+
 import struct
-from dataclasses import KW_ONLY, dataclass, field
+from dataclasses import dataclass, field
 from asm import Kernel, Segment
 from dispatch import DevMsgs, FAST_CQ_NUM_CIRCULAR_BUFFERS, LaunchMsg
 from hw import L1_ALIGN, TensixL1, align_up, as_bytes
@@ -48,13 +50,17 @@ def _build_cb_blob(cbs) -> tuple[int, bytes]:
   return mask, bytes(arr)
 
 @dataclass
+class Layout:
+  common: list[Segment]
+  per_core: dict[tuple[int, int], list[Segment]]
+
+@dataclass
 class Program:
   brisc: Kernel
   ncrisc: Kernel
   trisc0: Kernel
   trisc1: Kernel
   trisc2: Kernel
-  _: KW_ONLY
   brisc_recv: Kernel | None = None
   ncrisc_recv: Kernel | None = None
   cbs: list[object] = field(default_factory=list)
@@ -149,7 +155,7 @@ class Program:
 
     segments = []
     if rta:
-      segments.append(Segment(TensixL1.KERNEL_CONFIG_BASE, rta, mcast=False, label="rta"))
+      segments.append(Segment(TensixL1.KERNEL_CONFIG_BASE, rta, label="rta"))
     if crta:
       segments.append(Segment(TensixL1.KERNEL_CONFIG_BASE + rta_total, crta, label="crta"))
     if semaphores:
@@ -162,7 +168,7 @@ class Program:
       kernel_base, seg_base = kernel_bases[role]
       for seg in kernels[role]:
         label = f"{role}.{seg.label or 'kernel'}"
-        segments.append(Segment(TensixL1.KERNEL_CONFIG_BASE + kernel_base + seg.addr - seg_base, seg.data, mcast=seg.mcast, label=label))
+        segments.append(Segment(TensixL1.KERNEL_CONFIG_BASE + kernel_base + seg.addr - seg_base, seg.data, label=label))
     segments.append(Segment(TensixL1.LAUNCH, as_bytes(launch), label="launch"))
 
     return segments
@@ -170,7 +176,25 @@ class Program:
   def layout(self, **kw) -> list[Segment]:
     return self._layout_core(**kw)
 
-  def layouts(self, cores: list[tuple[int, int]] | None = None, **kw) -> dict[tuple[int, int], list[Segment]]:
+  def layouts(self, cores: list[tuple[int, int]] | None = None, **kw) -> Layout:
     if cores is None:
       cores = self.active_cores()
-    return {core: self._layout_core(core_xy=core, **kw) for core in cores}
+    per_core_segments = {core: self._layout_core(core_xy=core, **kw) for core in cores}
+    common: list[Segment] = []
+    per_core: dict[tuple[int, int], list[Segment]] = {core: [] for core in cores}
+    common_keys = set.intersection(
+      *({(seg.addr, seg.data, seg.label) for seg in segments if seg.label != "rta"} for segments in per_core_segments.values())
+    ) if per_core_segments else set()
+
+    seen_common = set()
+    for core in cores:
+      for seg in per_core_segments[core]:
+        key = (seg.addr, seg.data, seg.label)
+        if key in common_keys:
+          if key not in seen_common:
+            common.append(seg)
+            seen_common.add(key)
+        else:
+          per_core[core].append(seg)
+
+    return Layout(common, per_core)
