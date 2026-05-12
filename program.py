@@ -2,9 +2,15 @@ from __future__ import annotations
 
 import struct
 from dataclasses import dataclass, field
-from asm import Kernel, Segment
+from asm import Kernel
 from dispatch import DevMsgs, FAST_CQ_NUM_CIRCULAR_BUFFERS, LaunchMsg
 from hw import L1_ALIGN, TensixL1, align_up, as_bytes
+
+@dataclass(frozen=True)
+class Segment:
+  addr: int
+  data: bytes
+  label: str = ""
 
 # rta and crta order
 CORE_ROLES = ("brisc", "ncrisc", "trisc0", "trisc1", "trisc2")

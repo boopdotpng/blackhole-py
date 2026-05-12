@@ -1,24 +1,14 @@
 from __future__ import annotations
-
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
-
 import dsl
-from dsl import Reg
+from dsl import Reg, ra, zero
 
 CoreArgs = Callable[[int, int], list[int]]
 
-_ZERO = Reg(0)
-_RA = Reg(1)
-
-
-@dataclass(frozen=True)
-class Segment:
-  addr: int
-  data: bytes
-  label: str = ""
-
+_ZERO = zero
+_RA = ra
 
 @dataclass(frozen=True)
 class _Ref:
@@ -27,7 +17,6 @@ class _Ref:
   label: str
   pc: int
 
-
 @dataclass(frozen=True)
 class Cond:
   lhs: Reg
@@ -35,14 +24,17 @@ class Cond:
   rhs: Reg | int
   tmp: Reg | None = None
 
+@dataclass(frozen=True)
+class KernelBlob:
+  addr: int
+  data: bytes
+  label: str = ""
 
 def cond(lhs: Reg, op: str, rhs: Reg | int, *, tmp: Reg | None = None) -> Cond:
   return Cond(lhs, op, rhs, tmp)
 
-
 def _u32(v):
   return (v & 0xFFFFFFFF).to_bytes(4, "little")
-
 
 _LOCAL_DATA = {
   "brisc": b"",
@@ -51,7 +43,6 @@ _LOCAL_DATA = {
   "trisc1": bytes([4]) * 32 + _u32(5) * 32 + _u32(5) * 32,
   "trisc2": bytes([16]) * 32 + bytes([4]) * 32 + b"\0" * 32 + bytes([5]) * 32 + bytes([5]) * 32,
 }
-
 
 class Asm:
   def __init__(self, *, base: int = 0):
@@ -198,7 +189,6 @@ class Asm:
       words.append(inst.to_word() if hasattr(inst, "to_word") else int(inst))
     return b"".join((w & 0xFFFFFFFF).to_bytes(4, "little") for w in words)
 
-
 class Kernel(Asm):
   def __init__(
     self, *, kind: str, base: int | None = None, upload_base: int | None = None,
@@ -229,15 +219,12 @@ class Kernel(Asm):
       return bytes(self.local_data)
     return _LOCAL_DATA[self.kind]
 
-  def compile(self) -> list[Segment]:
+  def compile(self) -> list[KernelBlob]:
     text = self.to_bytes()
     local_data = self._local_data()
-    segments = []
+    blobs = []
     if text:
-      segments.append(Segment(self.upload_base, text, label="text"))
+      blobs.append(KernelBlob(self.upload_base, text, label="text"))
     if local_data:
-      segments.append(Segment(self.upload_base + len(text), local_data, label="local_data"))
-    return segments
-
-
-__all__ = ["Asm", "Cond", "Kernel", "Reg", "Segment", "cond"]
+      blobs.append(KernelBlob(self.upload_base + len(text), local_data, label="local_data"))
+    return blobs

@@ -14,13 +14,9 @@ class Reg:
     22: "s6", 23: "s7", 24: "s8", 25: "s9", 26: "s10", 27: "s11",
     28: "t3", 29: "t4", 30: "t5", 31: "t6",
   }
-  _BY_NAME = {v: k for k, v in _NAMES.items()}
-  _ALIASES = {"fp": 8}
 
-  def __init__(self, idx: int | str):
-    if isinstance(idx, str):
-      idx = self._ALIASES.get(idx, self._BY_NAME.get(idx, idx))
-    if not isinstance(idx, int) or not 0 <= idx < 32:
+  def __init__(self, idx: int):
+    if not 0 <= idx < 32:
       raise RuntimeError(f"unknown RISC-V register: {idx!r}")
     self.idx = idx
 
@@ -28,6 +24,14 @@ class Reg:
   def __index__(self): return self.idx
   def fmt(self, *, abi=True): return self._NAMES[self.idx] if abi else f"x{self.idx}"
   def __repr__(self): return self.fmt()
+
+zero, ra, sp, gp, tp = [Reg(i) for i in range(5)]
+t0, t1, t2 = [Reg(i) for i in range(5, 8)]
+s0, s1 = [Reg(i) for i in range(8, 10)]
+a0, a1, a2, a3, a4, a5, a6, a7 = [Reg(i) for i in range(10, 18)]
+s2, s3, s4, s5, s6, s7, s8, s9, s10, s11 = [Reg(i) for i in range(18, 28)]
+t3, t4, t5, t6 = [Reg(i) for i in range(28, 32)]
+fp = s0
 
 class BitField:
   def __init__(self, hi, lo=None, *, default=0, signed=False):
@@ -199,7 +203,7 @@ def _ctor(name, cls, **fixed):
 for name, f7, f3 in _R:
   globals()[name] = lambda rd, rs1, rs2, _n=name, _f7=f7, _f3=f3: RType(name=_n, opcode=0x33, funct3=_f3, funct7=_f7, rd=rd, rs1=rs1, rs2=rs2)
   _add_decode(name, RType, (0x33, f3, f7))
-zext_h = lambda rd, rs1: RType(name="zext_h", opcode=0x33, funct3=4, funct7=4, rd=rd, rs1=rs1, rs2=Reg(0))
+zext_h = lambda rd, rs1: RType(name="zext_h", opcode=0x33, funct3=4, funct7=4, rd=rd, rs1=rs1, rs2=zero)
 _add_decode("zext_h", RType, (0x33, 4, 4))
 for name, f3 in _I:
   globals()[name] = lambda rd, rs1, imm, _n=name, _f3=f3: IType(name=_n, opcode=0x13, funct3=_f3, rd=rd, rs1=rs1, imm=imm)
@@ -223,7 +227,7 @@ jal = lambda rd, imm: JType(name="jal", opcode=0x6F, rd=rd, imm=imm)
 jalr = lambda rd, rs1, imm=0: IType(name="jalr", opcode=0x67, funct3=0, rd=rd, rs1=rs1, imm=imm)
 csrrs = lambda rd, rs1, csr: IType(name="csrrs", opcode=0x73, funct3=2, rd=rd, rs1=rs1, imm=csr)
 csrrc = lambda rd, rs1, csr: IType(name="csrrc", opcode=0x73, funct3=3, rd=rd, rs1=rs1, imm=csr)
-fence = lambda: IType(name="fence", opcode=0x0F, funct3=0, rd=Reg(0), rs1=Reg(0), imm=0x0FF)
+fence = lambda: IType(name="fence", opcode=0x0F, funct3=0, rd=zero, rs1=zero, imm=0x0FF)
 for name, cls, key in (("lui", UType, (0x37, None, None)), ("auipc", UType, (0x17, None, None)),
                        ("jal", JType, (0x6F, None, None)), ("jalr", IType, (0x67, 0, None)),
                        ("csrrs", IType, (0x73, 2, None)), ("csrrc", IType, (0x73, 3, None)),
