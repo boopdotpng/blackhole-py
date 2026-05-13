@@ -16,14 +16,12 @@ class Reg:
   }
 
   def __init__(self, idx: int):
-    if not 0 <= idx < 32:
-      raise RuntimeError(f"unknown RISC-V register: {idx!r}")
+    if not 0 <= idx < 32: raise RuntimeError(f"unknown RISC-V register: {idx!r}")
     self.idx = idx
 
   def __int__(self): return self.idx
   def __index__(self): return self.idx
-  def fmt(self, *, abi=True): return self._NAMES[self.idx] if abi else f"x{self.idx}"
-  def __repr__(self): return self.fmt()
+  def __repr__(self): return self._NAMES[self.idx] 
 
 zero, ra, sp, gp, tp = [Reg(i) for i in range(5)]
 t0, t1, t2 = [Reg(i) for i in range(5, 8)]
@@ -105,6 +103,8 @@ class Inst:
   def to_word(self): return self._raw & 0xFFFFFFFF
   def to_bytes(self): return self.to_word().to_bytes(4, "little")
   def __int__(self): return self.to_word()
+  def __eq__(self, other): return isinstance(other, Inst) and self.to_word() == other.to_word()
+  def __hash__(self): return hash(self.to_word())
   def __repr__(self):
     args = ", ".join(f"{f.name}={getattr(self, f.name)!r}" for f in self._fields if not isinstance(f, FixedBitField))
     return f"{self.name or type(self).__name__}({args})"
@@ -132,6 +132,7 @@ class SType(Inst):
   imm4_0 = bits[11:7]
   opcode = bits[6:0]
 
+  # Named construction accepts imm and splits it; from_word() decodes directly from raw bits.
   def __init__(self, *, imm=0, **kw):
     super().__init__(imm11_5=_u(imm, 12) >> 5, imm4_0=_u(imm, 5), **kw)
   @property
@@ -174,70 +175,1407 @@ class JType(Inst):
   @property
   def imm(self): return _sext((self.imm20 << 20) | (self.imm19_12 << 12) | (self.imm11 << 11) | (self.imm10_1 << 1), 21)
 
-_R = [
-  ("add", 0x00, 0), ("sub", 0x20, 0), ("sll", 0x00, 1), ("slt", 0x00, 2),
-  ("sltu", 0x00, 3), ("xor", 0x00, 4), ("srl", 0x00, 5), ("sra", 0x20, 5),
-  ("or", 0x00, 6), ("and", 0x00, 7), ("mul", 0x01, 0), ("mulhu", 0x01, 3),
-  ("divu", 0x01, 5), ("remu", 0x01, 7), ("sh1add", 0x10, 2),
-  ("sh2add", 0x10, 4), ("sh3add", 0x10, 6), ("min", 0x05, 4),
-  ("minu", 0x05, 5), ("maxu", 0x05, 7),
-]
-_I = [("addi", 0), ("sltiu", 3), ("xori", 4), ("ori", 6), ("andi", 7)]
-_ISH = [("slli", 0x00, 1), ("srli", 0x00, 5), ("srai", 0x20, 5),
-        ("ctz", 0x30, 1), ("sext_b", 0x30, 1), ("sext_h", 0x30, 1)]
-_ISH_IMM = {"ctz": 0x601, "sext_b": 0x604, "sext_h": 0x605}
-_LOAD = [("lw", 2), ("lbu", 4), ("lhu", 5)]
-_STORE = [("sb", 0), ("sh", 1), ("sw", 2)]
-_BR = [("beq", 0), ("bne", 1), ("blt", 4), ("bge", 5), ("bltu", 6), ("bgeu", 7)]
+def add(rd, rs1, rs2): return RType(name="add", opcode=0x33, funct3=0, funct7=0x00, rd=rd, rs1=rs1, rs2=rs2)
+def sub(rd, rs1, rs2): return RType(name="sub", opcode=0x33, funct3=0, funct7=0x20, rd=rd, rs1=rs1, rs2=rs2)
+def sll(rd, rs1, rs2): return RType(name="sll", opcode=0x33, funct3=1, funct7=0x00, rd=rd, rs1=rs1, rs2=rs2)
+def slt(rd, rs1, rs2): return RType(name="slt", opcode=0x33, funct3=2, funct7=0x00, rd=rd, rs1=rs1, rs2=rs2)
+def sltu(rd, rs1, rs2): return RType(name="sltu", opcode=0x33, funct3=3, funct7=0x00, rd=rd, rs1=rs1, rs2=rs2)
+def xor(rd, rs1, rs2): return RType(name="xor", opcode=0x33, funct3=4, funct7=0x00, rd=rd, rs1=rs1, rs2=rs2)
+def srl(rd, rs1, rs2): return RType(name="srl", opcode=0x33, funct3=5, funct7=0x00, rd=rd, rs1=rs1, rs2=rs2)
+def sra(rd, rs1, rs2): return RType(name="sra", opcode=0x33, funct3=5, funct7=0x20, rd=rd, rs1=rs1, rs2=rs2)
+def or_(rd, rs1, rs2): return RType(name="or", opcode=0x33, funct3=6, funct7=0x00, rd=rd, rs1=rs1, rs2=rs2)
+def and_(rd, rs1, rs2): return RType(name="and", opcode=0x33, funct3=7, funct7=0x00, rd=rd, rs1=rs1, rs2=rs2)
+def mul(rd, rs1, rs2): return RType(name="mul", opcode=0x33, funct3=0, funct7=0x01, rd=rd, rs1=rs1, rs2=rs2)
+def mulhu(rd, rs1, rs2): return RType(name="mulhu", opcode=0x33, funct3=3, funct7=0x01, rd=rd, rs1=rs1, rs2=rs2)
+def divu(rd, rs1, rs2): return RType(name="divu", opcode=0x33, funct3=5, funct7=0x01, rd=rd, rs1=rs1, rs2=rs2)
+def remu(rd, rs1, rs2): return RType(name="remu", opcode=0x33, funct3=7, funct7=0x01, rd=rd, rs1=rs1, rs2=rs2)
+def sh1add(rd, rs1, rs2): return RType(name="sh1add", opcode=0x33, funct3=2, funct7=0x10, rd=rd, rs1=rs1, rs2=rs2)
+def sh2add(rd, rs1, rs2): return RType(name="sh2add", opcode=0x33, funct3=4, funct7=0x10, rd=rd, rs1=rs1, rs2=rs2)
+def sh3add(rd, rs1, rs2): return RType(name="sh3add", opcode=0x33, funct3=6, funct7=0x10, rd=rd, rs1=rs1, rs2=rs2)
+def min(rd, rs1, rs2): return RType(name="min", opcode=0x33, funct3=4, funct7=0x05, rd=rd, rs1=rs1, rs2=rs2)
+def minu(rd, rs1, rs2): return RType(name="minu", opcode=0x33, funct3=5, funct7=0x05, rd=rd, rs1=rs1, rs2=rs2)
+def maxu(rd, rs1, rs2): return RType(name="maxu", opcode=0x33, funct3=7, funct7=0x05, rd=rd, rs1=rs1, rs2=rs2)
+def zext_h(rd, rs1): return RType(name="zext_h", opcode=0x33, funct3=4, funct7=0x04, rd=rd, rs1=rs1, rs2=zero)
 
-_DECODE = {}
+def addi(rd, rs1, imm): return IType(name="addi", opcode=0x13, funct3=0, rd=rd, rs1=rs1, imm=imm)
+def sltiu(rd, rs1, imm): return IType(name="sltiu", opcode=0x13, funct3=3, rd=rd, rs1=rs1, imm=imm)
+def xori(rd, rs1, imm): return IType(name="xori", opcode=0x13, funct3=4, rd=rd, rs1=rs1, imm=imm)
+def ori(rd, rs1, imm): return IType(name="ori", opcode=0x13, funct3=6, rd=rd, rs1=rs1, imm=imm)
+def andi(rd, rs1, imm): return IType(name="andi", opcode=0x13, funct3=7, rd=rd, rs1=rs1, imm=imm)
+def slli(rd, rs1, shamt=0): return IType(name="slli", opcode=0x13, funct3=1, rd=rd, rs1=rs1, imm=shamt)
+def srli(rd, rs1, shamt=0): return IType(name="srli", opcode=0x13, funct3=5, rd=rd, rs1=rs1, imm=shamt)
+def srai(rd, rs1, shamt=0): return IType(name="srai", opcode=0x13, funct3=5, rd=rd, rs1=rs1, imm=0x400 | shamt)
+def ctz(rd, rs1): return IType(name="ctz", opcode=0x13, funct3=1, rd=rd, rs1=rs1, imm=0x601)
+def sext_b(rd, rs1): return IType(name="sext_b", opcode=0x13, funct3=1, rd=rd, rs1=rs1, imm=0x604)
+def sext_h(rd, rs1): return IType(name="sext_h", opcode=0x13, funct3=1, rd=rd, rs1=rs1, imm=0x605)
 
-def _add_decode(name, cls, key):
-  _DECODE[key] = (name, cls)
+def lw(rd, rs1, imm): return IType(name="lw", opcode=0x03, funct3=2, rd=rd, rs1=rs1, imm=imm)
+def lbu(rd, rs1, imm): return IType(name="lbu", opcode=0x03, funct3=4, rd=rd, rs1=rs1, imm=imm)
+def lhu(rd, rs1, imm): return IType(name="lhu", opcode=0x03, funct3=5, rd=rd, rs1=rs1, imm=imm)
+def sb(rs2, rs1, imm): return SType(name="sb", opcode=0x23, funct3=0, rs2=rs2, rs1=rs1, imm=imm)
+def sh(rs2, rs1, imm): return SType(name="sh", opcode=0x23, funct3=1, rs2=rs2, rs1=rs1, imm=imm)
+def sw(rs2, rs1, imm): return SType(name="sw", opcode=0x23, funct3=2, rs2=rs2, rs1=rs1, imm=imm)
 
-def _ctor(name, cls, **fixed):
-  def f(**kw): return cls(name=name, **fixed, **kw)
-  f.__name__ = name
-  return f
+def beq(rs1, rs2, imm): return BType(name="beq", opcode=0x63, funct3=0, rs1=rs1, rs2=rs2, imm=imm)
+def bne(rs1, rs2, imm): return BType(name="bne", opcode=0x63, funct3=1, rs1=rs1, rs2=rs2, imm=imm)
+def blt(rs1, rs2, imm): return BType(name="blt", opcode=0x63, funct3=4, rs1=rs1, rs2=rs2, imm=imm)
+def bge(rs1, rs2, imm): return BType(name="bge", opcode=0x63, funct3=5, rs1=rs1, rs2=rs2, imm=imm)
+def bltu(rs1, rs2, imm): return BType(name="bltu", opcode=0x63, funct3=6, rs1=rs1, rs2=rs2, imm=imm)
+def bgeu(rs1, rs2, imm): return BType(name="bgeu", opcode=0x63, funct3=7, rs1=rs1, rs2=rs2, imm=imm)
 
-for name, f7, f3 in _R:
-  globals()[name] = lambda rd, rs1, rs2, _n=name, _f7=f7, _f3=f3: RType(name=_n, opcode=0x33, funct3=_f3, funct7=_f7, rd=rd, rs1=rs1, rs2=rs2)
-  _add_decode(name, RType, (0x33, f3, f7))
-zext_h = lambda rd, rs1: RType(name="zext_h", opcode=0x33, funct3=4, funct7=4, rd=rd, rs1=rs1, rs2=zero)
-_add_decode("zext_h", RType, (0x33, 4, 4))
-for name, f3 in _I:
-  globals()[name] = lambda rd, rs1, imm, _n=name, _f3=f3: IType(name=_n, opcode=0x13, funct3=_f3, rd=rd, rs1=rs1, imm=imm)
-  _add_decode(name, IType, (0x13, f3, None))
-for name, f7, f3 in _ISH:
-  globals()[name] = lambda rd, rs1, shamt=0, _n=name, _f7=f7, _f3=f3: IType(name=_n, opcode=0x13, funct3=_f3, rd=rd, rs1=rs1, imm=_ISH_IMM.get(_n, (_f7 << 5) | shamt))
-  _add_decode(name, IType, (0x13, f3, _ISH_IMM.get(name, f7 << 5) >> 5))
-for name, f3 in _LOAD:
-  globals()[name] = lambda rd, rs1, imm, _n=name, _f3=f3: IType(name=_n, opcode=0x03, funct3=_f3, rd=rd, rs1=rs1, imm=imm)
-  _add_decode(name, IType, (0x03, f3, None))
-for name, f3 in _STORE:
-  globals()[name] = lambda rs2, rs1, imm, _n=name, _f3=f3: SType(name=_n, opcode=0x23, funct3=_f3, rs2=rs2, rs1=rs1, imm=imm)
-  _add_decode(name, SType, (0x23, f3, None))
-for name, f3 in _BR:
-  globals()[name] = lambda rs1, rs2, imm, _n=name, _f3=f3: BType(name=_n, opcode=0x63, funct3=_f3, rs1=rs1, rs2=rs2, imm=imm)
-  _add_decode(name, BType, (0x63, f3, None))
+def lui(rd, imm): return UType(name="lui", opcode=0x37, rd=rd, imm=imm >> 12)
+def auipc(rd, imm): return UType(name="auipc", opcode=0x17, rd=rd, imm=imm >> 12)
+def jal(rd, imm): return JType(name="jal", opcode=0x6F, rd=rd, imm=imm)
+def jalr(rd, rs1, imm=0): return IType(name="jalr", opcode=0x67, funct3=0, rd=rd, rs1=rs1, imm=imm)
+def csrrs(rd, rs1, csr): return IType(name="csrrs", opcode=0x73, funct3=2, rd=rd, rs1=rs1, imm=csr)
+def csrrc(rd, rs1, csr): return IType(name="csrrc", opcode=0x73, funct3=3, rd=rd, rs1=rs1, imm=csr)
+def fence(): return IType(name="fence", opcode=0x0F, funct3=0, rd=zero, rs1=zero, imm=0x0FF)
 
-lui = lambda rd, imm: UType(name="lui", opcode=0x37, rd=rd, imm=imm >> 12)
-auipc = lambda rd, imm: UType(name="auipc", opcode=0x17, rd=rd, imm=imm >> 12)
-jal = lambda rd, imm: JType(name="jal", opcode=0x6F, rd=rd, imm=imm)
-jalr = lambda rd, rs1, imm=0: IType(name="jalr", opcode=0x67, funct3=0, rd=rd, rs1=rs1, imm=imm)
-csrrs = lambda rd, rs1, csr: IType(name="csrrs", opcode=0x73, funct3=2, rd=rd, rs1=rs1, imm=csr)
-csrrc = lambda rd, rs1, csr: IType(name="csrrc", opcode=0x73, funct3=3, rd=rd, rs1=rs1, imm=csr)
-fence = lambda: IType(name="fence", opcode=0x0F, funct3=0, rd=zero, rs1=zero, imm=0x0FF)
-for name, cls, key in (("lui", UType, (0x37, None, None)), ("auipc", UType, (0x17, None, None)),
-                       ("jal", JType, (0x6F, None, None)), ("jalr", IType, (0x67, 0, None)),
-                       ("csrrs", IType, (0x73, 2, None)), ("csrrc", IType, (0x73, 3, None)),
-                       ("fence", IType, (0x0F, 0, None))):
-  _add_decode(name, cls, key)
+_DECODE = {
+  (0x33, 0, 0x00): ("add", RType), (0x33, 0, 0x20): ("sub", RType),
+  (0x33, 1, 0x00): ("sll", RType), (0x33, 2, 0x00): ("slt", RType),
+  (0x33, 3, 0x00): ("sltu", RType), (0x33, 4, 0x00): ("xor", RType),
+  (0x33, 5, 0x00): ("srl", RType), (0x33, 5, 0x20): ("sra", RType),
+  (0x33, 6, 0x00): ("or", RType), (0x33, 7, 0x00): ("and", RType),
+  (0x33, 0, 0x01): ("mul", RType), (0x33, 3, 0x01): ("mulhu", RType),
+  (0x33, 5, 0x01): ("divu", RType), (0x33, 7, 0x01): ("remu", RType),
+  (0x33, 2, 0x10): ("sh1add", RType), (0x33, 4, 0x10): ("sh2add", RType),
+  (0x33, 6, 0x10): ("sh3add", RType), (0x33, 4, 0x05): ("min", RType),
+  (0x33, 5, 0x05): ("minu", RType), (0x33, 7, 0x05): ("maxu", RType),
+  (0x33, 4, 0x04): ("zext_h", RType),
+  (0x13, 0, None): ("addi", IType), (0x13, 3, None): ("sltiu", IType),
+  (0x13, 4, None): ("xori", IType), (0x13, 6, None): ("ori", IType),
+  (0x13, 7, None): ("andi", IType), (0x13, 1, 0x00): ("slli", IType),
+  (0x13, 5, 0x00): ("srli", IType), (0x13, 5, 0x20): ("srai", IType),
+  (0x03, 2, None): ("lw", IType), (0x03, 4, None): ("lbu", IType),
+  (0x03, 5, None): ("lhu", IType),
+  (0x23, 0, None): ("sb", SType), (0x23, 1, None): ("sh", SType),
+  (0x23, 2, None): ("sw", SType),
+  (0x63, 0, None): ("beq", BType), (0x63, 1, None): ("bne", BType),
+  (0x63, 4, None): ("blt", BType), (0x63, 5, None): ("bge", BType),
+  (0x63, 6, None): ("bltu", BType), (0x63, 7, None): ("bgeu", BType),
+  (0x37, None, None): ("lui", UType), (0x17, None, None): ("auipc", UType),
+  (0x6F, None, None): ("jal", JType), (0x67, 0, None): ("jalr", IType),
+  (0x73, 2, None): ("csrrs", IType), (0x73, 3, None): ("csrrc", IType),
+  (0x0F, 0, None): ("fence", IType),
+}
+
+
+class TTInst:
+  _fields = ()
+  name = None
+  _ctor_name = None
+
+  def __init_subclass__(cls):
+    fields = []
+    for base in reversed(cls.__mro__):
+      for _, val in base.__dict__.items():
+        if isinstance(val, BitField) and not any(val is field for field in fields):
+          fields.append(val)
+    cls._fields = tuple(sorted(fields, key=lambda f: -f.hi))
+
+  @classmethod
+  def _arg_names(cls):
+    names = []
+    for field in cls._fields:
+      if not isinstance(field, FixedBitField) and field.name not in names:
+        names.append(field.name)
+    return names
+
+  def __init__(self, *args, **kw):
+    names = type(self)._arg_names()
+    if len(args) > len(names):
+      raise TypeError(f"{self._ctor_name or type(self).__name__} expected at most {len(names)} positional args, got {len(args)}")
+    vals = dict(zip(names, args))
+    for k, v in kw.items():
+      if k in vals:
+        raise TypeError(f"{self._ctor_name or type(self).__name__} got duplicate value for {k!r}")
+      vals[k] = v
+
+    self._raw = 0
+    self.name = vals.pop("name", self.name)
+    extra = set(vals) - set(names)
+    if extra: raise TypeError(f"unexpected fields: {', '.join(sorted(extra))}")
+    for field in self._fields:
+      if isinstance(field, FixedBitField):
+        setattr(self, field.name, field.value)
+      elif field.name in vals:
+        setattr(self, field.name, vals[field.name])
+
+  @classmethod
+  def from_raw_word(cls, word, *, name=None):
+    obj = object.__new__(cls)
+    obj._raw = word & 0xFFFFFFFF
+    obj.name = name or cls.name
+    return obj
+
+  @property
+  def opcode(self): return (self._raw >> 24) & 0xFF
+  @property
+  def payload(self): return self._raw & 0xFFFFFF
+  def raw_word(self): return self._raw & 0xFFFFFFFF
+  def to_word(self):
+    raw = self.raw_word()
+    if raw >= 0xC0000000:
+      raise ValueError(f"Tensix inline word would look like RISC-V: 0x{raw:08x}")
+    return rol2(raw)
+  def to_bytes(self): return self.to_word().to_bytes(4, "little")
+  def __int__(self): return self.to_word()
+  def __eq__(self, other): return isinstance(other, TTInst) and self.raw_word() == other.raw_word()
+  def __hash__(self): return hash(self.raw_word())
+  def __repr__(self):
+    args = ", ".join(f"{f.name}=0x{getattr(self, f.name):X}" for f in self._fields if not isinstance(f, FixedBitField))
+    return f"{self.name or type(self).__name__}({args})" if args else f"{self.name or type(self).__name__}()"
+
+def TTINSN(imm32):
+  if imm32 >= 0xC0000000:
+    raise ValueError(f".ttinsn requires imm32 < 0xC0000000, got 0x{imm32:08x}")
+  return TTInst.from_raw_word(imm32)
+
+class TTMOP(TTInst):
+  name = 'MOP'
+  _ctor_name = "TT_MOP"
+  opcode_ = FixedBitField(31, 24, 0x01)
+  mop_type = BitField(23, 23)
+  loop_count = BitField(22, 16)
+  zmask_lo16_or_loop_count = BitField(15, 0)
+
+class TTNOP(TTInst):
+  name = 'NOP'
+  _ctor_name = "TT_NOP"
+  opcode_ = FixedBitField(31, 24, 0x02)
+
+class TTMOP_CFG(TTInst):
+  name = 'MOP_CFG'
+  _ctor_name = "TT_MOP_CFG"
+  opcode_ = FixedBitField(31, 24, 0x03)
+  zmask_hi16 = BitField(15, 0)
+
+class TTREPLAY(TTInst):
+  name = 'REPLAY'
+  _ctor_name = "TT_REPLAY"
+  opcode_ = FixedBitField(31, 24, 0x04)
+  start_idx = BitField(23, 14)
+  len = BitField(13, 4)
+  execute_while_loading = BitField(1, 1)
+  load_mode = BitField(0, 0)
+
+class TTMOVD2A(TTInst):
+  name = 'MOVD2A'
+  _ctor_name = "TT_MOVD2A"
+  opcode_ = FixedBitField(31, 24, 0x08)
+  dest_32b_lo = BitField(23, 23)
+  src = BitField(22, 17)
+  addr_mode = BitField(16, 14)
+  instr_mod = BitField(13, 12)
+  dst = BitField(11, 0)
+
+class TTMOVD2B(TTInst):
+  name = 'MOVD2B'
+  _ctor_name = "TT_MOVD2B"
+  opcode_ = FixedBitField(31, 24, 0x0A)
+  dest_32b_lo = BitField(23, 23)
+  src = BitField(22, 17)
+  addr_mode = BitField(16, 14)
+  instr_mod = BitField(13, 12)
+  dst = BitField(11, 0)
+
+class TTZEROACC(TTInst):
+  name = 'ZEROACC'
+  _ctor_name = "TT_ZEROACC"
+  opcode_ = FixedBitField(31, 24, 0x10)
+  clear_mode = BitField(23, 19)
+  use_32_bit_mode = BitField(18, 18)
+  clear_zero_flags = BitField(17, 17)
+  addr_mode = BitField(16, 14)
+  where = BitField(13, 0)
+
+class TTZEROSRC(TTInst):
+  name = 'ZEROSRC'
+  _ctor_name = "TT_ZEROSRC"
+  opcode_ = FixedBitField(31, 24, 0x11)
+  zero_val = BitField(23, 4)
+  write_mode = BitField(3, 3)
+  bank_mask = BitField(2, 2)
+  src_mask = BitField(1, 0)
+
+class TTMOVA2D(TTInst):
+  name = 'MOVA2D'
+  _ctor_name = "TT_MOVA2D"
+  opcode_ = FixedBitField(31, 24, 0x12)
+  dest_32b_lo = BitField(23, 23)
+  src = BitField(22, 17)
+  addr_mode = BitField(16, 14)
+  instr_mod = BitField(13, 12)
+  dst = BitField(11, 0)
+
+class TTMOVB2D(TTInst):
+  name = 'MOVB2D'
+  _ctor_name = "TT_MOVB2D"
+  opcode_ = FixedBitField(31, 24, 0x13)
+  dest_32b_lo = BitField(23, 23)
+  src = BitField(22, 17)
+  addr_mode = BitField(16, 14)
+  movb2d_instr_mod = BitField(13, 11)
+  dst = BitField(10, 0)
+
+class TTTRNSPSRCA(TTInst):
+  name = 'TRNSPSRCA'
+  _ctor_name = "TT_TRNSPSRCA"
+  opcode_ = FixedBitField(31, 24, 0x14)
+
+class TTRAREB(TTInst):
+  name = 'RAREB'
+  _ctor_name = "TT_RAREB"
+  opcode_ = FixedBitField(31, 24, 0x15)
+
+class TTTRNSPSRCB(TTInst):
+  name = 'TRNSPSRCB'
+  _ctor_name = "TT_TRNSPSRCB"
+  opcode_ = FixedBitField(31, 24, 0x16)
+
+class TTSHIFTXA(TTInst):
+  name = 'SHIFTXA'
+  _ctor_name = "TT_SHIFTXA"
+  opcode_ = FixedBitField(31, 24, 0x17)
+  raw = BitField(23, 0)
+  shift_mode = BitField(1, 0)
+  log2_amount2 = BitField(23, 2)
+
+class TTSHIFTXB(TTInst):
+  name = 'SHIFTXB'
+  _ctor_name = "TT_SHIFTXB"
+  opcode_ = FixedBitField(31, 24, 0x18)
+  raw = BitField(23, 0)
+  shift_row = BitField(9, 0)
+  rot_shift = BitField(13, 10)
+  addr_mode = BitField(16, 14)
+
+class TTCLREXPHIST(TTInst):
+  name = 'CLREXPHIST'
+  _ctor_name = "TT_CLREXPHIST"
+  opcode_ = FixedBitField(31, 24, 0x21)
+
+class TTCONV3S1(TTInst):
+  name = 'CONV3S1'
+  _ctor_name = "TT_CONV3S1"
+  opcode_ = FixedBitField(31, 24, 0x22)
+  clear_dvalid = BitField(23, 22)
+  rotate_weights = BitField(21, 17)
+  addr_mode = BitField(16, 14)
+  dst = BitField(13, 0)
+
+class TTCONV3S2(TTInst):
+  name = 'CONV3S2'
+  _ctor_name = "TT_CONV3S2"
+  opcode_ = FixedBitField(31, 24, 0x23)
+  clear_dvalid = BitField(23, 22)
+  rotate_weights = BitField(21, 17)
+  addr_mode = BitField(16, 14)
+  dst = BitField(13, 0)
+
+class TTMFCONV3S1(TTInst):
+  name = 'MFCONV3S1'
+  _ctor_name = "TT_MFCONV3S1"
+  opcode_ = FixedBitField(31, 24, 0x24)
+  clear_dvalid = BitField(23, 22)
+  rotate_weights = BitField(21, 17)
+  addr_mode = BitField(16, 14)
+  dst = BitField(13, 0)
+
+class TTAPOOL3S1(TTInst):
+  name = 'APOOL3S1'
+  _ctor_name = "TT_APOOL3S1"
+  opcode_ = FixedBitField(31, 24, 0x25)
+  clear_dvalid = BitField(23, 22)
+  pool_addr_mode = BitField(21, 15)
+  index_en = BitField(14, 14)
+  dst = BitField(13, 0)
+
+class TTMVMUL(TTInst):
+  name = 'MVMUL'
+  _ctor_name = "TT_MVMUL"
+  opcode_ = FixedBitField(31, 24, 0x26)
+  clear_dvalid = BitField(23, 22)
+  instr_mod19 = BitField(21, 19)
+  addr_mode = BitField(16, 14)
+  dst = BitField(9, 0)
+  broadcast_srcb = BitField(19, 19)
+
+class TTELWMUL(TTInst):
+  name = 'ELWMUL'
+  _ctor_name = "TT_ELWMUL"
+  opcode_ = FixedBitField(31, 24, 0x27)
+  clear_dvalid = BitField(23, 22)
+  dest_accum_en = BitField(21, 21)
+  instr_mod19 = BitField(20, 19)
+  addr_mode = BitField(15, 14)
+  dst = BitField(13, 0)
+
+class TTELWADD(TTInst):
+  name = 'ELWADD'
+  _ctor_name = "TT_ELWADD"
+  opcode_ = FixedBitField(31, 24, 0x28)
+  clear_dvalid = BitField(23, 22)
+  dest_accum_en = BitField(21, 21)
+  instr_mod19 = BitField(20, 19)
+  addr_mode = BitField(15, 14)
+  dst = BitField(13, 0)
+
+class TTDOTPV(TTInst):
+  name = 'DOTPV'
+  _ctor_name = "TT_DOTPV"
+  opcode_ = FixedBitField(31, 24, 0x29)
+  clear_dvalid = BitField(23, 22)
+  dest_accum_en = BitField(21, 21)
+  instr_mod19 = BitField(20, 19)
+  addr_mode = BitField(15, 14)
+  dst = BitField(13, 0)
+
+class TTMPOOL3S2(TTInst):
+  name = 'MPOOL3S2'
+  _ctor_name = "TT_MPOOL3S2"
+  opcode_ = FixedBitField(31, 24, 0x2A)
+  clear_dvalid = BitField(23, 22)
+  pool_addr_mode = BitField(21, 15)
+  index_en = BitField(14, 14)
+  dst = BitField(13, 0)
+
+class TTELWSUB(TTInst):
+  name = 'ELWSUB'
+  _ctor_name = "TT_ELWSUB"
+  opcode_ = FixedBitField(31, 24, 0x30)
+  clear_dvalid = BitField(23, 22)
+  dest_accum_en = BitField(21, 21)
+  instr_mod19 = BitField(20, 19)
+  addr_mode = BitField(15, 14)
+  dst = BitField(13, 0)
+
+class TTMPOOL3S1(TTInst):
+  name = 'MPOOL3S1'
+  _ctor_name = "TT_MPOOL3S1"
+  opcode_ = FixedBitField(31, 24, 0x31)
+  clear_dvalid = BitField(23, 22)
+  pool_addr_mode = BitField(21, 15)
+  index_en = BitField(14, 14)
+  dst = BitField(13, 0)
+
+class TTAPOOL3S2(TTInst):
+  name = 'APOOL3S2'
+  _ctor_name = "TT_APOOL3S2"
+  opcode_ = FixedBitField(31, 24, 0x32)
+  clear_dvalid = BitField(23, 22)
+  pool_addr_mode = BitField(21, 15)
+  index_en = BitField(14, 14)
+  dst = BitField(13, 0)
+
+class TTGMPOOL(TTInst):
+  name = 'GMPOOL'
+  _ctor_name = "TT_GMPOOL"
+  opcode_ = FixedBitField(31, 24, 0x33)
+  clear_dvalid = BitField(23, 22)
+  instr_mod19 = BitField(21, 19)
+  pool_addr_mode = BitField(18, 15)
+  max_pool_index_en = BitField(14, 14)
+  dst = BitField(13, 0)
+
+class TTGAPOOL(TTInst):
+  name = 'GAPOOL'
+  _ctor_name = "TT_GAPOOL"
+  opcode_ = FixedBitField(31, 24, 0x34)
+  clear_dvalid = BitField(23, 22)
+  instr_mod19 = BitField(21, 19)
+  pool_addr_mode = BitField(18, 15)
+  max_pool_index_en = BitField(14, 14)
+  dst = BitField(13, 0)
+
+class TTGATESRCRST(TTInst):
+  name = 'GATESRCRST'
+  _ctor_name = "TT_GATESRCRST"
+  opcode_ = FixedBitField(31, 24, 0x35)
+  reset_srcb_gate_control = BitField(1, 1)
+  reset_srca_gate_control = BitField(0, 0)
+
+class TTCLEARDVALID(TTInst):
+  name = 'CLEARDVALID'
+  _ctor_name = "TT_CLEARDVALID"
+  opcode_ = FixedBitField(31, 24, 0x36)
+  cleardvalid = BitField(23, 22)
+  clear_dvalid = BitField(23, 22)
+  reset = BitField(21, 0)
+
+class TTSETRWC(TTInst):
+  name = 'SETRWC'
+  _ctor_name = "TT_SETRWC"
+  opcode_ = FixedBitField(31, 24, 0x37)
+  clear_ab_vld = BitField(23, 22)
+  rwc_cr = BitField(21, 18)
+  rwc_d = BitField(17, 14)
+  rwc_b = BitField(13, 10)
+  rwc_a = BitField(9, 6)
+  BitMask = BitField(5, 0)
+
+class TTINCRWC(TTInst):
+  name = 'INCRWC'
+  _ctor_name = "TT_INCRWC"
+  opcode_ = FixedBitField(31, 24, 0x38)
+  rwc_cr = BitField(20, 18)
+  rwc_d = BitField(17, 14)
+  rwc_b = BitField(13, 10)
+  rwc_a = BitField(9, 6)
+
+class TTXMOV(TTInst):
+  name = 'XMOV'
+  _ctor_name = "TT_XMOV"
+  opcode_ = FixedBitField(31, 24, 0x40)
+  Mov_block_selection = BitField(23, 23)
+  Last = BitField(0, 0)
+
+class TTPACR(TTInst):
+  name = 'PACR'
+  _ctor_name = "TT_PACR"
+  opcode_ = FixedBitField(31, 24, 0x41)
+  CfgContext = BitField(23, 21)
+  RowPadZero = BitField(20, 18)
+  DstAccessMode = BitField(17, 17)
+  AddrMode = BitField(16, 15)
+  AddrCntContext = BitField(14, 13)
+  ZeroWrite = BitField(12, 12)
+  ReadIntfSel = BitField(11, 8)
+  OvrdThreadId = BitField(7, 7)
+  Concat = BitField(6, 4)
+  CtxtCtrl = BitField(3, 2)
+  Flush = BitField(1, 1)
+  Last = BitField(0, 0)
+
+class TTUNPACR(TTInst):
+  name = 'UNPACR'
+  _ctor_name = "TT_UNPACR"
+  opcode_ = FixedBitField(31, 24, 0x42)
+  Unpack_block_selection = BitField(23, 23)
+  AddrMode = BitField(22, 15)
+  CfgContextCntInc = BitField(14, 13)
+  CfgContextId = BitField(12, 10)
+  AddrCntContextId = BitField(9, 8)
+  OvrdThreadId = BitField(7, 7)
+  SetDatValid = BitField(6, 6)
+  srcb_bcast = BitField(5, 5)
+  ZeroWrite2 = BitField(4, 4)
+  AutoIncContextID = BitField(3, 3)
+  RowSearch = BitField(2, 2)
+  SearchCacheFlush = BitField(1, 1)
+  Last = BitField(0, 0)
+
+class TTUNPACR_NOP(TTInst):
+  name = 'UNPACR_NOP'
+  _ctor_name = "TT_UNPACR_NOP"
+  opcode_ = FixedBitField(31, 24, 0x43)
+  Unpacker_Select = BitField(23, 23)
+  Stream_Id = BitField(22, 16)
+  Msg_Clr_Cnt = BitField(15, 12)
+  Set_Dvalid = BitField(11, 8)
+  Clr_to1_fmt_Ctrl = BitField(7, 6)
+  Stall_Clr_Cntrl = BitField(5, 5)
+  Bank_Clr_Ctrl = BitField(4, 4)
+  Src_ClrVal_Ctrl = BitField(3, 2)
+  Unpack_Pop = BitField(1, 0)
+
+class TTSETDMAREG(TTInst):
+  name = 'SETDMAREG'
+  _ctor_name = "TT_SETDMAREG"
+  opcode_ = FixedBitField(31, 24, 0x45)
+  Payload_SigSelSize = BitField(23, 22)
+  Payload_SigSel = BitField(21, 8)
+  SetSignalsMode = BitField(7, 7)
+  RegIndex16b = BitField(6, 0)
+
+class TTFLUSHDMA(TTInst):
+  name = 'FLUSHDMA'
+  _ctor_name = "TT_FLUSHDMA"
+  opcode_ = FixedBitField(31, 24, 0x46)
+  ConditionMask = BitField(3, 0)
+
+class TTREG2FLOP(TTInst):
+  name = 'REG2FLOP'
+  _ctor_name = "TT_REG2FLOP"
+  opcode_ = FixedBitField(31, 24, 0x48)
+  SizeSel = BitField(23, 22)
+  ThConCfgIndex = BitField(14, 8)
+  InputReg = BitField(5, 0)
+
+class TTTBUFCMD(TTInst):
+  name = 'TBUFCMD'
+  _ctor_name = "TT_TBUFCMD"
+  opcode_ = FixedBitField(31, 24, 0x4B)
+
+class TTSETADC(TTInst):
+  name = 'SETADC'
+  _ctor_name = "TT_SETADC"
+  opcode_ = FixedBitField(31, 24, 0x50)
+  CntSetMask = BitField(23, 21)
+  ChannelIndex = BitField(20, 20)
+  DimensionIndex = BitField(19, 18)
+  Value = BitField(17, 0)
+
+class TTSETADCXY(TTInst):
+  name = 'SETADCXY'
+  _ctor_name = "TT_SETADCXY"
+  opcode_ = FixedBitField(31, 24, 0x51)
+  CntSetMask = BitField(23, 21)
+  Ch1_Y = BitField(20, 15)
+  Ch1_X = BitField(14, 12)
+  Ch0_Y = BitField(11, 9)
+  Ch0_X = BitField(8, 6)
+  BitMask = BitField(5, 0)
+
+class TTSETADCZW(TTInst):
+  name = 'SETADCZW'
+  _ctor_name = "TT_SETADCZW"
+  opcode_ = FixedBitField(31, 24, 0x54)
+  CntSetMask = BitField(23, 21)
+  Ch1_W = BitField(20, 15)
+  Ch1_Z = BitField(14, 12)
+  Ch0_W = BitField(11, 9)
+  Ch0_Z = BitField(8, 6)
+  BitMask = BitField(5, 0)
+
+class TTINCADCZW(TTInst):
+  name = 'INCADCZW'
+  _ctor_name = "TT_INCADCZW"
+  opcode_ = FixedBitField(31, 24, 0x55)
+  CntSetMask = BitField(23, 21)
+  Ch1_W = BitField(20, 15)
+  Ch1_Z = BitField(14, 12)
+  Ch0_W = BitField(11, 9)
+  Ch0_Z = BitField(8, 6)
+
+class TTADDDMAREG(TTInst):
+  name = 'ADDDMAREG'
+  _ctor_name = "TT_ADDDMAREG"
+  opcode_ = FixedBitField(31, 24, 0x58)
+  OpBisConst = BitField(23, 23)
+  ResultRegIndex = BitField(22, 12)
+  OpBRegIndex = BitField(11, 6)
+  OpARegIndex = BitField(5, 0)
+
+class TTMULDMAREG(TTInst):
+  name = 'MULDMAREG'
+  _ctor_name = "TT_MULDMAREG"
+  opcode_ = FixedBitField(31, 24, 0x5A)
+  OpBisConst = BitField(23, 23)
+  ResultRegIndex = BitField(22, 12)
+  OpBRegIndex = BitField(11, 6)
+  OpARegIndex = BitField(5, 0)
+
+class TTBITWOPDMAREG(TTInst):
+  name = 'BITWOPDMAREG'
+  _ctor_name = "TT_BITWOPDMAREG"
+  opcode_ = FixedBitField(31, 24, 0x5B)
+  OpBisConst = BitField(23, 23)
+  OpSel = BitField(22, 18)
+  ResultRegIndex = BitField(17, 12)
+  OpBRegIndex = BitField(11, 6)
+  OpARegIndex = BitField(5, 0)
+
+class TTSHIFTDMAREG(TTInst):
+  name = 'SHIFTDMAREG'
+  _ctor_name = "TT_SHIFTDMAREG"
+  opcode_ = FixedBitField(31, 24, 0x5C)
+  OpBisConst = BitField(23, 23)
+  Mode = BitField(22, 18)
+  OpSel = BitField(22, 18)
+  ResultRegIndex = BitField(17, 12)
+  OpBRegIndex = BitField(11, 6)
+  OpARegIndex = BitField(5, 0)
+
+class TTCMPDMAREG(TTInst):
+  name = 'CMPDMAREG'
+  _ctor_name = "TT_CMPDMAREG"
+  opcode_ = FixedBitField(31, 24, 0x5D)
+  OpBisConst = BitField(23, 23)
+  OpSel = BitField(22, 18)
+  ResultRegIndex = BitField(17, 12)
+  OpBRegIndex = BitField(11, 6)
+  OpARegIndex = BitField(5, 0)
+
+class TTSETADCXX(TTInst):
+  name = 'SETADCXX'
+  _ctor_name = "TT_SETADCXX"
+  opcode_ = FixedBitField(31, 24, 0x5E)
+  CntSetMask = BitField(23, 21)
+  x_end2 = BitField(20, 10)
+  x_start = BitField(9, 0)
+
+class TTDMANOP(TTInst):
+  name = 'DMANOP'
+  _ctor_name = "TT_DMANOP"
+  opcode_ = FixedBitField(31, 24, 0x60)
+
+class TTSTOREREG(TTInst):
+  name = 'STOREREG'
+  _ctor_name = "TT_STOREREG"
+  opcode_ = FixedBitField(31, 24, 0x67)
+  TdmaDataRegIndex = BitField(23, 18)
+  RegAddr = BitField(17, 0)
+
+class TTSFPLOAD(TTInst):
+  name = 'SFPLOAD'
+  _ctor_name = "TT_SFPLOAD"
+  opcode_ = FixedBitField(31, 24, 0x70)
+  lreg_ind = BitField(23, 20)
+  instr_mod0 = BitField(19, 16)
+  sfpu_addr_mode = BitField(15, 13)
+  dest_reg_addr = BitField(12, 0)
+
+class TTSFPLOADI(TTInst):
+  name = 'SFPLOADI'
+  _ctor_name = "TT_SFPLOADI"
+  opcode_ = FixedBitField(31, 24, 0x71)
+  lreg_ind = BitField(23, 20)
+  instr_mod0 = BitField(19, 16)
+  imm16 = BitField(15, 0)
+
+class TTSFPSTORE(TTInst):
+  name = 'SFPSTORE'
+  _ctor_name = "TT_SFPSTORE"
+  opcode_ = FixedBitField(31, 24, 0x72)
+  lreg_ind = BitField(23, 20)
+  instr_mod0 = BitField(19, 16)
+  sfpu_addr_mode = BitField(15, 13)
+  dest_reg_addr = BitField(12, 0)
+
+class TTSFPLUT(TTInst):
+  name = 'SFPLUT'
+  _ctor_name = "TT_SFPLUT"
+  opcode_ = FixedBitField(31, 24, 0x73)
+  lreg_ind = BitField(23, 20)
+  instr_mod0 = BitField(19, 16)
+  dest_reg_addr = BitField(15, 0)
+
+class TTSFPMULI(TTInst):
+  name = 'SFPMULI'
+  _ctor_name = "TT_SFPMULI"
+  opcode_ = FixedBitField(31, 24, 0x74)
+  imm16_math = BitField(23, 8)
+  lreg_dest = BitField(7, 4)
+  instr_mod1 = BitField(3, 0)
+
+class TTSFPADDI(TTInst):
+  name = 'SFPADDI'
+  _ctor_name = "TT_SFPADDI"
+  opcode_ = FixedBitField(31, 24, 0x75)
+  imm16_math = BitField(23, 8)
+  lreg_dest = BitField(7, 4)
+  instr_mod1 = BitField(3, 0)
+
+class TTSFPDIVP2(TTInst):
+  name = 'SFPDIVP2'
+  _ctor_name = "TT_SFPDIVP2"
+  opcode_ = FixedBitField(31, 24, 0x76)
+  imm12_math = BitField(23, 12)
+  lreg_c = BitField(11, 8)
+  lreg_dest = BitField(7, 4)
+  instr_mod1 = BitField(3, 0)
+
+class TTSFPEXEXP(TTInst):
+  name = 'SFPEXEXP'
+  _ctor_name = "TT_SFPEXEXP"
+  opcode_ = FixedBitField(31, 24, 0x77)
+  imm12_math = BitField(23, 12)
+  lreg_c = BitField(11, 8)
+  lreg_dest = BitField(7, 4)
+  instr_mod1 = BitField(3, 0)
+
+class TTSFPEXMAN(TTInst):
+  name = 'SFPEXMAN'
+  _ctor_name = "TT_SFPEXMAN"
+  opcode_ = FixedBitField(31, 24, 0x78)
+  imm12_math = BitField(23, 12)
+  lreg_c = BitField(11, 8)
+  lreg_dest = BitField(7, 4)
+  instr_mod1 = BitField(3, 0)
+
+class TTSFPIADD(TTInst):
+  name = 'SFPIADD'
+  _ctor_name = "TT_SFPIADD"
+  opcode_ = FixedBitField(31, 24, 0x79)
+  imm12_math = BitField(23, 12)
+  lreg_c = BitField(11, 8)
+  lreg_dest = BitField(7, 4)
+  instr_mod1 = BitField(3, 0)
+
+class TTSFPSHFT(TTInst):
+  name = 'SFPSHFT'
+  _ctor_name = "TT_SFPSHFT"
+  opcode_ = FixedBitField(31, 24, 0x7A)
+  imm12_math = BitField(23, 12)
+  lreg_c = BitField(11, 8)
+  lreg_dest = BitField(7, 4)
+  instr_mod1 = BitField(3, 0)
+
+class TTSFPSETCC(TTInst):
+  name = 'SFPSETCC'
+  _ctor_name = "TT_SFPSETCC"
+  opcode_ = FixedBitField(31, 24, 0x7B)
+  imm12_math = BitField(23, 12)
+  lreg_c = BitField(11, 8)
+  lreg_dest = BitField(7, 4)
+  instr_mod1 = BitField(3, 0)
+
+class TTSFPMOV(TTInst):
+  name = 'SFPMOV'
+  _ctor_name = "TT_SFPMOV"
+  opcode_ = FixedBitField(31, 24, 0x7C)
+  imm12_math = BitField(23, 12)
+  lreg_c = BitField(11, 8)
+  lreg_dest = BitField(7, 4)
+  instr_mod1 = BitField(3, 0)
+
+class TTSFPABS(TTInst):
+  name = 'SFPABS'
+  _ctor_name = "TT_SFPABS"
+  opcode_ = FixedBitField(31, 24, 0x7D)
+  imm12_math = BitField(23, 12)
+  lreg_c = BitField(11, 8)
+  lreg_dest = BitField(7, 4)
+  instr_mod1 = BitField(3, 0)
+
+class TTSFPAND(TTInst):
+  name = 'SFPAND'
+  _ctor_name = "TT_SFPAND"
+  opcode_ = FixedBitField(31, 24, 0x7E)
+  imm12_math = BitField(23, 12)
+  lreg_c = BitField(11, 8)
+  lreg_dest = BitField(7, 4)
+  instr_mod1 = BitField(3, 0)
+
+class TTSFPOR(TTInst):
+  name = 'SFPOR'
+  _ctor_name = "TT_SFPOR"
+  opcode_ = FixedBitField(31, 24, 0x7F)
+  imm12_math = BitField(23, 12)
+  lreg_c = BitField(11, 8)
+  lreg_dest = BitField(7, 4)
+  instr_mod1 = BitField(3, 0)
+
+class TTSFPNOT(TTInst):
+  name = 'SFPNOT'
+  _ctor_name = "TT_SFPNOT"
+  opcode_ = FixedBitField(31, 24, 0x80)
+  imm12_math = BitField(23, 12)
+  lreg_c = BitField(11, 8)
+  lreg_dest = BitField(7, 4)
+  instr_mod1 = BitField(3, 0)
+
+class TTSFPLZ(TTInst):
+  name = 'SFPLZ'
+  _ctor_name = "TT_SFPLZ"
+  opcode_ = FixedBitField(31, 24, 0x81)
+  imm12_math = BitField(23, 12)
+  lreg_c = BitField(11, 8)
+  lreg_dest = BitField(7, 4)
+  instr_mod1 = BitField(3, 0)
+
+class TTSFPSETEXP(TTInst):
+  name = 'SFPSETEXP'
+  _ctor_name = "TT_SFPSETEXP"
+  opcode_ = FixedBitField(31, 24, 0x82)
+  imm12_math = BitField(23, 12)
+  lreg_c = BitField(11, 8)
+  lreg_dest = BitField(7, 4)
+  instr_mod1 = BitField(3, 0)
+
+class TTSFPSETMAN(TTInst):
+  name = 'SFPSETMAN'
+  _ctor_name = "TT_SFPSETMAN"
+  opcode_ = FixedBitField(31, 24, 0x83)
+  imm12_math = BitField(23, 12)
+  lreg_c = BitField(11, 8)
+  lreg_dest = BitField(7, 4)
+  instr_mod1 = BitField(3, 0)
+
+class TTSFPMAD(TTInst):
+  name = 'SFPMAD'
+  _ctor_name = "TT_SFPMAD"
+  opcode_ = FixedBitField(31, 24, 0x84)
+  lreg_src_a = BitField(19, 16)
+  lreg_src_b = BitField(15, 12)
+  lreg_src_c = BitField(11, 8)
+  lreg_dest = BitField(7, 4)
+  instr_mod1 = BitField(3, 0)
+
+class TTSFPADD(TTInst):
+  name = 'SFPADD'
+  _ctor_name = "TT_SFPADD"
+  opcode_ = FixedBitField(31, 24, 0x85)
+  lreg_src_a = BitField(19, 16)
+  lreg_src_b = BitField(15, 12)
+  lreg_src_c = BitField(11, 8)
+  lreg_dest = BitField(7, 4)
+  instr_mod1 = BitField(3, 0)
+
+class TTSFPMUL(TTInst):
+  name = 'SFPMUL'
+  _ctor_name = "TT_SFPMUL"
+  opcode_ = FixedBitField(31, 24, 0x86)
+  lreg_src_a = BitField(19, 16)
+  lreg_src_b = BitField(15, 12)
+  lreg_src_c = BitField(11, 8)
+  lreg_dest = BitField(7, 4)
+  instr_mod1 = BitField(3, 0)
+
+class TTSFPPUSHC(TTInst):
+  name = 'SFPPUSHC'
+  _ctor_name = "TT_SFPPUSHC"
+  opcode_ = FixedBitField(31, 24, 0x87)
+  imm12_math = BitField(23, 12)
+  lreg_c = BitField(11, 8)
+  lreg_dest = BitField(7, 4)
+  instr_mod1 = BitField(3, 0)
+
+class TTSFPPOPC(TTInst):
+  name = 'SFPPOPC'
+  _ctor_name = "TT_SFPPOPC"
+  opcode_ = FixedBitField(31, 24, 0x88)
+  imm12_math = BitField(23, 12)
+  lreg_c = BitField(11, 8)
+  lreg_dest = BitField(7, 4)
+  instr_mod1 = BitField(3, 0)
+
+class TTSFPSETSGN(TTInst):
+  name = 'SFPSETSGN'
+  _ctor_name = "TT_SFPSETSGN"
+  opcode_ = FixedBitField(31, 24, 0x89)
+  imm12_math = BitField(23, 12)
+  lreg_c = BitField(11, 8)
+  lreg_dest = BitField(7, 4)
+  instr_mod1 = BitField(3, 0)
+
+class TTSFPENCC(TTInst):
+  name = 'SFPENCC'
+  _ctor_name = "TT_SFPENCC"
+  opcode_ = FixedBitField(31, 24, 0x8A)
+  imm12_math = BitField(23, 12)
+  lreg_c = BitField(11, 8)
+  lreg_dest = BitField(7, 4)
+  instr_mod1 = BitField(3, 0)
+
+class TTSFPCOMPC(TTInst):
+  name = 'SFPCOMPC'
+  _ctor_name = "TT_SFPCOMPC"
+  opcode_ = FixedBitField(31, 24, 0x8B)
+  imm12_math = BitField(23, 12)
+  lreg_c = BitField(11, 8)
+  lreg_dest = BitField(7, 4)
+  instr_mod1 = BitField(3, 0)
+
+class TTSFPTRANSP(TTInst):
+  name = 'SFPTRANSP'
+  _ctor_name = "TT_SFPTRANSP"
+  opcode_ = FixedBitField(31, 24, 0x8C)
+  imm12_math = BitField(23, 12)
+  lreg_c = BitField(11, 8)
+  lreg_dest = BitField(7, 4)
+  instr_mod1 = BitField(3, 0)
+
+class TTSFPXOR(TTInst):
+  name = 'SFPXOR'
+  _ctor_name = "TT_SFPXOR"
+  opcode_ = FixedBitField(31, 24, 0x8D)
+  imm12_math = BitField(23, 12)
+  lreg_c = BitField(11, 8)
+  lreg_dest = BitField(7, 4)
+  instr_mod1 = BitField(3, 0)
+
+class TTSFPSTOCHRND(TTInst):
+  name = 'SFPSTOCHRND'
+  _ctor_name = "TT_SFPSTOCHRND"
+  opcode_ = FixedBitField(31, 24, 0x8E)
+  rnd_mode = BitField(23, 21)
+  imm8_math = BitField(23, 16)
+  lreg_src_b = BitField(15, 12)
+  lreg_src_c = BitField(11, 8)
+  lreg_dest = BitField(7, 4)
+  instr_mod1 = BitField(3, 0)
+
+class TTSFPNOP(TTInst):
+  name = 'SFPNOP'
+  _ctor_name = "TT_SFPNOP"
+  opcode_ = FixedBitField(31, 24, 0x8F)
+
+class TTSFPCAST(TTInst):
+  name = 'SFPCAST'
+  _ctor_name = "TT_SFPCAST"
+  opcode_ = FixedBitField(31, 24, 0x90)
+  lreg_src_c = BitField(11, 8)
+  lreg_dest = BitField(7, 4)
+  instr_mod1 = BitField(3, 0)
+
+class TTSFPCONFIG(TTInst):
+  name = 'SFPCONFIG'
+  _ctor_name = "TT_SFPCONFIG"
+  opcode_ = FixedBitField(31, 24, 0x91)
+  imm16_math = BitField(23, 8)
+  config_dest = BitField(7, 4)
+  instr_mod1 = BitField(3, 0)
+
+class TTSFPSWAP(TTInst):
+  name = 'SFPSWAP'
+  _ctor_name = "TT_SFPSWAP"
+  opcode_ = FixedBitField(31, 24, 0x92)
+  imm12_math = BitField(23, 12)
+  lreg_src_c = BitField(11, 8)
+  lreg_dest = BitField(7, 4)
+  instr_mod1 = BitField(3, 0)
+
+class TTSFPLOADMACRO(TTInst):
+  name = 'SFPLOADMACRO'
+  _ctor_name = "TT_SFPLOADMACRO"
+  opcode_ = FixedBitField(31, 24, 0x93)
+  lreg_ind = BitField(23, 20)
+  instr_mod0 = BitField(19, 16)
+  sfpu_addr_mode = BitField(15, 13)
+  dest_reg_addr = BitField(12, 0)
+
+class TTSFPSHFT2(TTInst):
+  name = 'SFPSHFT2'
+  _ctor_name = "TT_SFPSHFT2"
+  opcode_ = FixedBitField(31, 24, 0x94)
+  imm12_math = BitField(23, 12)
+  lreg_src_c = BitField(11, 8)
+  lreg_dest = BitField(7, 4)
+  instr_mod1 = BitField(3, 0)
+
+class TTSFPLUTFP32(TTInst):
+  name = 'SFPLUTFP32'
+  _ctor_name = "TT_SFPLUTFP32"
+  opcode_ = FixedBitField(31, 24, 0x95)
+  lreg_dest = BitField(7, 4)
+  instr_mod1 = BitField(3, 0)
+
+class TTSFPLE(TTInst):
+  name = 'SFPLE'
+  _ctor_name = "TT_SFPLE"
+  opcode_ = FixedBitField(31, 24, 0x96)
+  imm12_math = BitField(23, 12)
+  lreg_c = BitField(11, 8)
+  lreg_dest = BitField(7, 4)
+  instr_mod1 = BitField(3, 0)
+
+class TTSFPGT(TTInst):
+  name = 'SFPGT'
+  _ctor_name = "TT_SFPGT"
+  opcode_ = FixedBitField(31, 24, 0x97)
+  imm12_math = BitField(23, 12)
+  lreg_c = BitField(11, 8)
+  lreg_dest = BitField(7, 4)
+  instr_mod1 = BitField(3, 0)
+
+class TTSFPMUL24(TTInst):
+  name = 'SFPMUL24'
+  _ctor_name = "TT_SFPMUL24"
+  opcode_ = FixedBitField(31, 24, 0x98)
+  lreg_src_a = BitField(19, 16)
+  lreg_src_b = BitField(15, 12)
+  lreg_src_c = BitField(11, 8)
+  lreg_dest = BitField(7, 4)
+  instr_mod1 = BitField(3, 0)
+
+class TTSFPARECIP(TTInst):
+  name = 'SFPARECIP'
+  _ctor_name = "TT_SFPARECIP"
+  opcode_ = FixedBitField(31, 24, 0x99)
+  imm12_math = BitField(23, 12)
+  lreg_c = BitField(11, 8)
+  lreg_dest = BitField(7, 4)
+  instr_mod1 = BitField(3, 0)
+
+class TTATGETM(TTInst):
+  name = 'ATGETM'
+  _ctor_name = "TT_ATGETM"
+  opcode_ = FixedBitField(31, 24, 0xA0)
+  mutex_index = BitField(23, 0)
+
+class TTATRELM(TTInst):
+  name = 'ATRELM'
+  _ctor_name = "TT_ATRELM"
+  opcode_ = FixedBitField(31, 24, 0xA1)
+  mutex_index = BitField(23, 0)
+
+class TTSTALLWAIT(TTInst):
+  name = 'STALLWAIT'
+  _ctor_name = "TT_STALLWAIT"
+  opcode_ = FixedBitField(31, 24, 0xA2)
+  stall_res = BitField(23, 15)
+  wait_res = BitField(14, 0)
+
+class TTSEMINIT(TTInst):
+  name = 'SEMINIT'
+  _ctor_name = "TT_SEMINIT"
+  opcode_ = FixedBitField(31, 24, 0xA3)
+  max_value = BitField(23, 20)
+  init_value = BitField(19, 16)
+  sem_sel = BitField(9, 2)
+
+class TTSEMPOST(TTInst):
+  name = 'SEMPOST'
+  _ctor_name = "TT_SEMPOST"
+  opcode_ = FixedBitField(31, 24, 0xA4)
+  sem_sel = BitField(9, 2)
+
+class TTSEMGET(TTInst):
+  name = 'SEMGET'
+  _ctor_name = "TT_SEMGET"
+  opcode_ = FixedBitField(31, 24, 0xA5)
+  sem_sel = BitField(9, 2)
+
+class TTSEMWAIT(TTInst):
+  name = 'SEMWAIT'
+  _ctor_name = "TT_SEMWAIT"
+  opcode_ = FixedBitField(31, 24, 0xA6)
+  stall_res = BitField(23, 15)
+  sem_sel = BitField(9, 2)
+  wait_sem_cond = BitField(1, 0)
+
+class TTSTREAMWAIT(TTInst):
+  name = 'STREAMWAIT'
+  _ctor_name = "TT_STREAMWAIT"
+  opcode_ = FixedBitField(31, 24, 0xA7)
+  stall_res = BitField(23, 15)
+  target_value = BitField(13, 4)
+  target_sel = BitField(3, 3)
+  wait_stream_sel = BitField(1, 0)
+
+class TTWRCFG(TTInst):
+  name = 'WRCFG'
+  _ctor_name = "TT_WRCFG"
+  opcode_ = FixedBitField(31, 24, 0xB0)
+  GprAddress = BitField(21, 16)
+  wr128b = BitField(15, 15)
+  CfgReg = BitField(10, 0)
+
+class TTRDCFG(TTInst):
+  name = 'RDCFG'
+  _ctor_name = "TT_RDCFG"
+  opcode_ = FixedBitField(31, 24, 0xB1)
+  GprAddress = BitField(21, 16)
+  CfgReg = BitField(10, 0)
+
+class TTSETC16(TTInst):
+  name = 'SETC16'
+  _ctor_name = "TT_SETC16"
+  opcode_ = FixedBitField(31, 24, 0xB2)
+  setc16_reg = BitField(23, 16)
+  setc16_value = BitField(15, 0)
+
+class TTRMWCIB0(TTInst):
+  name = 'RMWCIB0'
+  _ctor_name = "TT_RMWCIB0"
+  opcode_ = FixedBitField(31, 24, 0xB3)
+  Mask = BitField(23, 16)
+  Data = BitField(15, 8)
+  CfgRegAddr = BitField(7, 0)
+
+class TTRMWCIB1(TTInst):
+  name = 'RMWCIB1'
+  _ctor_name = "TT_RMWCIB1"
+  opcode_ = FixedBitField(31, 24, 0xB4)
+  Mask = BitField(23, 16)
+  Data = BitField(15, 8)
+  CfgRegAddr = BitField(7, 0)
+
+class TTRMWCIB2(TTInst):
+  name = 'RMWCIB2'
+  _ctor_name = "TT_RMWCIB2"
+  opcode_ = FixedBitField(31, 24, 0xB5)
+  Mask = BitField(23, 16)
+  Data = BitField(15, 8)
+  CfgRegAddr = BitField(7, 0)
+
+class TTRMWCIB3(TTInst):
+  name = 'RMWCIB3'
+  _ctor_name = "TT_RMWCIB3"
+  opcode_ = FixedBitField(31, 24, 0xB6)
+  Mask = BitField(23, 16)
+  Data = BitField(15, 8)
+  CfgRegAddr = BitField(7, 0)
+
+class TTSTREAMWRCFG(TTInst):
+  name = 'STREAMWRCFG'
+  _ctor_name = "TT_STREAMWRCFG"
+  opcode_ = FixedBitField(31, 24, 0xB7)
+  stream_id_sel = BitField(22, 21)
+  StreamRegAddr = BitField(20, 11)
+  CfgReg = BitField(10, 0)
+
+class TTCFGSHIFTMASK(TTInst):
+  name = 'CFGSHIFTMASK'
+  _ctor_name = "TT_CFGSHIFTMASK"
+  opcode_ = FixedBitField(31, 24, 0xB8)
+  mask_mode = BitField(23, 23)
+  disable_mask_on_old_val = BitField(23, 23)
+  alu_mode = BitField(22, 20)
+  operation = BitField(22, 20)
+  mask_width = BitField(19, 15)
+  rotate_amt = BitField(14, 10)
+  right_cshift_amt = BitField(14, 10)
+  scratch_index = BitField(9, 8)
+  scratch_sel = BitField(9, 8)
+  cfg_index = BitField(7, 0)
+  CfgReg = BitField(7, 0)
+
+class TTWRCFG32(TTInst):
+  name = 'WRCFG32'
+  _ctor_name = "TT_WRCFG32"
+  opcode_ = FixedBitField(31, 24, 0xC0)
+  GprAddress = BitField(23, 18)
+  CfgReg = BitField(10, 0)
+
+TT_MOP = TTMOP
+TT_NOP = TTNOP
+TT_MOP_CFG = TTMOP_CFG
+TT_REPLAY = TTREPLAY
+TT_MOVD2A = TTMOVD2A
+TT_MOVD2B = TTMOVD2B
+TT_ZEROACC = TTZEROACC
+TT_ZEROSRC = TTZEROSRC
+TT_MOVA2D = TTMOVA2D
+TT_MOVB2D = TTMOVB2D
+TT_TRNSPSRCA = TTTRNSPSRCA
+TT_RAREB = TTRAREB
+TT_TRNSPSRCB = TTTRNSPSRCB
+TT_SHIFTXA = TTSHIFTXA
+TT_SHIFTXB = TTSHIFTXB
+TT_CLREXPHIST = TTCLREXPHIST
+TT_CONV3S1 = TTCONV3S1
+TT_CONV3S2 = TTCONV3S2
+TT_MFCONV3S1 = TTMFCONV3S1
+TT_APOOL3S1 = TTAPOOL3S1
+TT_MVMUL = TTMVMUL
+TT_ELWMUL = TTELWMUL
+TT_ELWADD = TTELWADD
+TT_DOTPV = TTDOTPV
+TT_MPOOL3S2 = TTMPOOL3S2
+TT_ELWSUB = TTELWSUB
+TT_MPOOL3S1 = TTMPOOL3S1
+TT_APOOL3S2 = TTAPOOL3S2
+TT_GMPOOL = TTGMPOOL
+TT_GAPOOL = TTGAPOOL
+TT_GATESRCRST = TTGATESRCRST
+TT_CLEARDVALID = TTCLEARDVALID
+TT_SETRWC = TTSETRWC
+TT_INCRWC = TTINCRWC
+TT_XMOV = TTXMOV
+TT_PACR = TTPACR
+TT_UNPACR = TTUNPACR
+TT_UNPACR_NOP = TTUNPACR_NOP
+TT_SETDMAREG = TTSETDMAREG
+TT_FLUSHDMA = TTFLUSHDMA
+TT_REG2FLOP = TTREG2FLOP
+TT_TBUFCMD = TTTBUFCMD
+TT_SETADC = TTSETADC
+TT_SETADCXY = TTSETADCXY
+TT_SETADCZW = TTSETADCZW
+TT_INCADCZW = TTINCADCZW
+TT_ADDDMAREG = TTADDDMAREG
+TT_MULDMAREG = TTMULDMAREG
+TT_BITWOPDMAREG = TTBITWOPDMAREG
+TT_SHIFTDMAREG = TTSHIFTDMAREG
+TT_CMPDMAREG = TTCMPDMAREG
+TT_SETADCXX = TTSETADCXX
+TT_DMANOP = TTDMANOP
+TT_STOREREG = TTSTOREREG
+TT_SFPLOAD = TTSFPLOAD
+TT_SFPLOADI = TTSFPLOADI
+TT_SFPSTORE = TTSFPSTORE
+TT_SFPLUT = TTSFPLUT
+TT_SFPMULI = TTSFPMULI
+TT_SFPADDI = TTSFPADDI
+TT_SFPDIVP2 = TTSFPDIVP2
+TT_SFPEXEXP = TTSFPEXEXP
+TT_SFPEXMAN = TTSFPEXMAN
+TT_SFPIADD = TTSFPIADD
+TT_SFPSHFT = TTSFPSHFT
+TT_SFPSETCC = TTSFPSETCC
+TT_SFPMOV = TTSFPMOV
+TT_SFPABS = TTSFPABS
+TT_SFPAND = TTSFPAND
+TT_SFPOR = TTSFPOR
+TT_SFPNOT = TTSFPNOT
+TT_SFPLZ = TTSFPLZ
+TT_SFPSETEXP = TTSFPSETEXP
+TT_SFPSETMAN = TTSFPSETMAN
+TT_SFPMAD = TTSFPMAD
+TT_SFPADD = TTSFPADD
+TT_SFPMUL = TTSFPMUL
+TT_SFPPUSHC = TTSFPPUSHC
+TT_SFPPOPC = TTSFPPOPC
+TT_SFPSETSGN = TTSFPSETSGN
+TT_SFPENCC = TTSFPENCC
+TT_SFPCOMPC = TTSFPCOMPC
+TT_SFPTRANSP = TTSFPTRANSP
+TT_SFPXOR = TTSFPXOR
+TT_SFPSTOCHRND = TTSFPSTOCHRND
+TT_SFPNOP = TTSFPNOP
+TT_SFPCAST = TTSFPCAST
+TT_SFPCONFIG = TTSFPCONFIG
+TT_SFPSWAP = TTSFPSWAP
+TT_SFPLOADMACRO = TTSFPLOADMACRO
+TT_SFPSHFT2 = TTSFPSHFT2
+TT_SFPLUTFP32 = TTSFPLUTFP32
+TT_SFPLE = TTSFPLE
+TT_SFPGT = TTSFPGT
+TT_SFPMUL24 = TTSFPMUL24
+TT_SFPARECIP = TTSFPARECIP
+TT_ATGETM = TTATGETM
+TT_ATRELM = TTATRELM
+TT_STALLWAIT = TTSTALLWAIT
+TT_SEMINIT = TTSEMINIT
+TT_SEMPOST = TTSEMPOST
+TT_SEMGET = TTSEMGET
+TT_SEMWAIT = TTSEMWAIT
+TT_STREAMWAIT = TTSTREAMWAIT
+TT_WRCFG = TTWRCFG
+TT_RDCFG = TTRDCFG
+TT_SETC16 = TTSETC16
+TT_RMWCIB0 = TTRMWCIB0
+TT_RMWCIB1 = TTRMWCIB1
+TT_RMWCIB2 = TTRMWCIB2
+TT_RMWCIB3 = TTRMWCIB3
+TT_STREAMWRCFG = TTSTREAMWRCFG
+TT_CFGSHIFTMASK = TTCFGSHIFTMASK
+TT_WRCFG32 = TTWRCFG32
+
+_TENSIX_BY_OPCODE = {
+  0x01: ('MOP', TTMOP),
+  0x02: ('NOP', TTNOP),
+  0x03: ('MOP_CFG', TTMOP_CFG),
+  0x04: ('REPLAY', TTREPLAY),
+  0x08: ('MOVD2A', TTMOVD2A),
+  0x0A: ('MOVD2B', TTMOVD2B),
+  0x10: ('ZEROACC', TTZEROACC),
+  0x11: ('ZEROSRC', TTZEROSRC),
+  0x12: ('MOVA2D', TTMOVA2D),
+  0x13: ('MOVB2D', TTMOVB2D),
+  0x14: ('TRNSPSRCA', TTTRNSPSRCA),
+  0x15: ('RAREB', TTRAREB),
+  0x16: ('TRNSPSRCB', TTTRNSPSRCB),
+  0x17: ('SHIFTXA', TTSHIFTXA),
+  0x18: ('SHIFTXB', TTSHIFTXB),
+  0x21: ('CLREXPHIST', TTCLREXPHIST),
+  0x22: ('CONV3S1', TTCONV3S1),
+  0x23: ('CONV3S2', TTCONV3S2),
+  0x24: ('MFCONV3S1', TTMFCONV3S1),
+  0x25: ('APOOL3S1', TTAPOOL3S1),
+  0x26: ('MVMUL', TTMVMUL),
+  0x27: ('ELWMUL', TTELWMUL),
+  0x28: ('ELWADD', TTELWADD),
+  0x29: ('DOTPV', TTDOTPV),
+  0x2A: ('MPOOL3S2', TTMPOOL3S2),
+  0x30: ('ELWSUB', TTELWSUB),
+  0x31: ('MPOOL3S1', TTMPOOL3S1),
+  0x32: ('APOOL3S2', TTAPOOL3S2),
+  0x33: ('GMPOOL', TTGMPOOL),
+  0x34: ('GAPOOL', TTGAPOOL),
+  0x35: ('GATESRCRST', TTGATESRCRST),
+  0x36: ('CLEARDVALID', TTCLEARDVALID),
+  0x37: ('SETRWC', TTSETRWC),
+  0x38: ('INCRWC', TTINCRWC),
+  0x40: ('XMOV', TTXMOV),
+  0x41: ('PACR', TTPACR),
+  0x42: ('UNPACR', TTUNPACR),
+  0x43: ('UNPACR_NOP', TTUNPACR_NOP),
+  0x45: ('SETDMAREG', TTSETDMAREG),
+  0x46: ('FLUSHDMA', TTFLUSHDMA),
+  0x48: ('REG2FLOP', TTREG2FLOP),
+  0x4B: ('TBUFCMD', TTTBUFCMD),
+  0x50: ('SETADC', TTSETADC),
+  0x51: ('SETADCXY', TTSETADCXY),
+  0x54: ('SETADCZW', TTSETADCZW),
+  0x55: ('INCADCZW', TTINCADCZW),
+  0x58: ('ADDDMAREG', TTADDDMAREG),
+  0x5A: ('MULDMAREG', TTMULDMAREG),
+  0x5B: ('BITWOPDMAREG', TTBITWOPDMAREG),
+  0x5C: ('SHIFTDMAREG', TTSHIFTDMAREG),
+  0x5D: ('CMPDMAREG', TTCMPDMAREG),
+  0x5E: ('SETADCXX', TTSETADCXX),
+  0x60: ('DMANOP', TTDMANOP),
+  0x67: ('STOREREG', TTSTOREREG),
+  0x70: ('SFPLOAD', TTSFPLOAD),
+  0x71: ('SFPLOADI', TTSFPLOADI),
+  0x72: ('SFPSTORE', TTSFPSTORE),
+  0x73: ('SFPLUT', TTSFPLUT),
+  0x74: ('SFPMULI', TTSFPMULI),
+  0x75: ('SFPADDI', TTSFPADDI),
+  0x76: ('SFPDIVP2', TTSFPDIVP2),
+  0x77: ('SFPEXEXP', TTSFPEXEXP),
+  0x78: ('SFPEXMAN', TTSFPEXMAN),
+  0x79: ('SFPIADD', TTSFPIADD),
+  0x7A: ('SFPSHFT', TTSFPSHFT),
+  0x7B: ('SFPSETCC', TTSFPSETCC),
+  0x7C: ('SFPMOV', TTSFPMOV),
+  0x7D: ('SFPABS', TTSFPABS),
+  0x7E: ('SFPAND', TTSFPAND),
+  0x7F: ('SFPOR', TTSFPOR),
+  0x80: ('SFPNOT', TTSFPNOT),
+  0x81: ('SFPLZ', TTSFPLZ),
+  0x82: ('SFPSETEXP', TTSFPSETEXP),
+  0x83: ('SFPSETMAN', TTSFPSETMAN),
+  0x84: ('SFPMAD', TTSFPMAD),
+  0x85: ('SFPADD', TTSFPADD),
+  0x86: ('SFPMUL', TTSFPMUL),
+  0x87: ('SFPPUSHC', TTSFPPUSHC),
+  0x88: ('SFPPOPC', TTSFPPOPC),
+  0x89: ('SFPSETSGN', TTSFPSETSGN),
+  0x8A: ('SFPENCC', TTSFPENCC),
+  0x8B: ('SFPCOMPC', TTSFPCOMPC),
+  0x8C: ('SFPTRANSP', TTSFPTRANSP),
+  0x8D: ('SFPXOR', TTSFPXOR),
+  0x8E: ('SFPSTOCHRND', TTSFPSTOCHRND),
+  0x8F: ('SFPNOP', TTSFPNOP),
+  0x90: ('SFPCAST', TTSFPCAST),
+  0x91: ('SFPCONFIG', TTSFPCONFIG),
+  0x92: ('SFPSWAP', TTSFPSWAP),
+  0x93: ('SFPLOADMACRO', TTSFPLOADMACRO),
+  0x94: ('SFPSHFT2', TTSFPSHFT2),
+  0x95: ('SFPLUTFP32', TTSFPLUTFP32),
+  0x96: ('SFPLE', TTSFPLE),
+  0x97: ('SFPGT', TTSFPGT),
+  0x98: ('SFPMUL24', TTSFPMUL24),
+  0x99: ('SFPARECIP', TTSFPARECIP),
+  0xA0: ('ATGETM', TTATGETM),
+  0xA1: ('ATRELM', TTATRELM),
+  0xA2: ('STALLWAIT', TTSTALLWAIT),
+  0xA3: ('SEMINIT', TTSEMINIT),
+  0xA4: ('SEMPOST', TTSEMPOST),
+  0xA5: ('SEMGET', TTSEMGET),
+  0xA6: ('SEMWAIT', TTSEMWAIT),
+  0xA7: ('STREAMWAIT', TTSTREAMWAIT),
+  0xB0: ('WRCFG', TTWRCFG),
+  0xB1: ('RDCFG', TTRDCFG),
+  0xB2: ('SETC16', TTSETC16),
+  0xB3: ('RMWCIB0', TTRMWCIB0),
+  0xB4: ('RMWCIB1', TTRMWCIB1),
+  0xB5: ('RMWCIB2', TTRMWCIB2),
+  0xB6: ('RMWCIB3', TTRMWCIB3),
+  0xB7: ('STREAMWRCFG', TTSTREAMWRCFG),
+  0xB8: ('CFGSHIFTMASK', TTCFGSHIFTMASK),
+  0xC0: ('WRCFG32', TTWRCFG32),
+}
+
+def decode_tensix(word):
+  w = word & 0xFFFFFFFF
+  op = (w >> 24) & 0xFF
+  name_cls = _TENSIX_BY_OPCODE.get(op)
+  if name_cls is None:
+    return TTInst.from_raw_word(w, name=f"UNKNOWN_0x{op:02X}")
+  name, cls = name_cls
+  return cls.from_raw_word(w, name=name)
 
 def decode(word):
   word &= 0xFFFFFFFF
   if (word & 3) != 3:
-    return TTInst.from_stream_word(word)
+    return decode_tensix(ror2(word))
   opcode, funct3, funct7 = word & 0x7F, (word >> 12) & 7, (word >> 25) & 0x7F
   if opcode == 0x13 and funct3 == 1 and (word >> 20) in {0x601, 0x604, 0x605}:
     return IType.from_word(word, name={0x601: "ctz", 0x604: "sext_b", 0x605: "sext_h"}[word >> 20])
@@ -248,29 +1586,11 @@ def decode(word):
   name, cls = name_cls
   return cls.from_word(word, name=name)
 
-class TTInst:
-  def __init__(self, opcode, payload=0):
-    if not 0 <= opcode < 256: raise ValueError("Tensix opcode must fit in 8 bits")
-    if not 0 <= payload < (1 << 24): raise ValueError("Tensix payload must fit in 24 bits")
-    self.opcode, self.payload = opcode, payload
-
-  @classmethod
-  def from_raw_word(cls, word):
-    return cls((word >> 24) & 0xFF, word & 0xFFFFFF)
-
-  @classmethod
-  def from_stream_word(cls, word):
-    return cls.from_raw_word(ror2(word))
-
-  def raw_word(self): return (self.opcode << 24) | self.payload
-  def to_word(self):
-    raw = self.raw_word()
-    if raw >= 0xC0000000:
-      raise ValueError(f"Tensix inline word would look like RISC-V: 0x{raw:08x}")
-    return rol2(raw)
-  def to_bytes(self): return self.to_word().to_bytes(4, "little")
-  def __int__(self): return self.to_word()
-  def __repr__(self): return f"tt(opcode=0x{self.opcode:02x}, payload=0x{self.payload:06x})"
-
-def tt_raw(word): return TTInst.from_raw_word(word)
-def tt(opcode, payload=0): return TTInst(opcode, payload)
+def disasm(binary: bytes, base: int = 0) -> list[str]:
+  """Decode a mixed RISC-V/Tensix instruction stream."""
+  if len(binary) % 4:
+    raise ValueError("disasm() input length must be a multiple of 4")
+  return [
+    f"{base + off:08x}: {decode(int.from_bytes(binary[off:off + 4], 'little'))}"
+    for off in range(0, len(binary), 4)
+  ]

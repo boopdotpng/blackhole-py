@@ -140,17 +140,23 @@ def mcast_rects(cores: list[Core]) -> list[Rect]:
     rects.append((x0, x1, y0, y1))
   return rects
 
-@dataclass
-class Write:
+@dataclass(frozen=True)
+class McastWrite:
+  rects: list[Rect]
+  addr: int
+  data: bytes
+
+@dataclass(frozen=True)
+class UnicastWrite:
   cores: list[Core]
   addr: int
-  data: bytes | list[bytes]
+  data: list[bytes]
 
-@dataclass
-class Launch:
+@dataclass(frozen=True)
+class Run:
   cores: list[Core]
 
-IRCommand = Write | Launch
+IRCommand = McastWrite | UnicastWrite | Run
 
 def resolve_args(args: RtArgs, core_idx: int, core_xy: Core, num_cores: int) -> Args:
   return args if isinstance(args, list) else args(core_idx, core_xy, num_cores)
@@ -254,15 +260,13 @@ def build_ir(
   reset_blob = struct.pack("<BBBB", 0, 0, 0, DevMsgs.RUN_MSG_RESET_READ_PTR_FROM_HOST)
 
   commands: list[IRCommand] = [
-    Write(all_cores, TensixL1.GO_MSG, reset_blob),
-    Write(all_cores, TensixL1.GO_MSG_INDEX, b"\0\0\0\0"),
+    McastWrite(mcast_rects(all_cores), TensixL1.GO_MSG, reset_blob),
+    McastWrite(mcast_rects(all_cores), TensixL1.GO_MSG_INDEX, b"\0\0\0\0"),
   ]
 
-  # RTAs: broadcast if uniform across cores, per-core unicast otherwise
-  if rta_blobs and all(b == rta_blobs[0] for b in rta_blobs):
-    commands.append(Write(all_cores, TensixL1.KERNEL_CONFIG_BASE, rta_blobs[0]))
-  elif rta_blobs:
-    commands.append(Write(all_cores, TensixL1.KERNEL_CONFIG_BASE, rta_blobs))
+  # RTAs are per-core. Keep them as explicit unicast writes even when currently uniform.
+  if rta_blobs:
+    commands.append(UnicastWrite(all_cores, TensixL1.KERNEL_CONFIG_BASE, rta_blobs))
 
   # Per-role: launch message + shared payload (CB config + kernel text)
   for role_cores, reader, writer in roles:
@@ -270,24 +274,25 @@ def build_ir(
       program, reader, writer, compute, rta_sizes, dispatch_mode,
       sem_off=sem_off, host_assigned_id=host_assigned_id,
     )
-    commands.append(Write(role_cores, TensixL1.LAUNCH, launch_blob))
-    commands.append(Write(role_cores, shared_addr, shared_blob))
+    rects = mcast_rects(role_cores)
+    commands.append(McastWrite(rects, TensixL1.LAUNCH, launch_blob))
+    commands.append(McastWrite(rects, shared_addr, shared_blob))
 
-  commands.append(Launch(all_cores))
+  commands.append(Run(all_cores))
   return commands
 
 def slow_dispatch(win, commands: list[IRCommand]):
   for cmd in commands:
     match cmd:
-      case Write(cores=cores, addr=addr, data=data) if isinstance(data, list):
+      case UnicastWrite(cores=cores, addr=addr, data=data):
         for core, d in zip(cores, data):
           win.target(core)
           win.write(addr, d)
-      case Write(cores=cores, addr=addr, data=data):
-        for x0, x1, y0, y1 in mcast_rects(cores):
+      case McastWrite(rects=rects, addr=addr, data=data):
+        for x0, x1, y0, y1 in rects:
           win.target((x0, y0), (x1, y1))
           win.write(addr, data)
-      case Launch(cores=cores):
+      case Run(cores=cores):
         go = GoMsg()
         go.bits.signal = DevMsgs.RUN_MSG_GO
         go_blob = struct.pack("<I", go.all)

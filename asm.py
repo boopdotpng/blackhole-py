@@ -30,13 +30,51 @@ class KernelBlob:
   data: bytes
   label: str = ""
 
+@dataclass(frozen=True)
+class LoadSegment:
+  addr: int
+  data: bytes
+  label: str = ""
+
 def cond(lhs: Reg, op: str, rhs: Reg | int, *, tmp: Reg | None = None) -> Cond:
+  if isinstance(rhs, int) and tmp is None:
+    raise ValueError("integer condition rhs needs tmp=Reg(...)")
   return Cond(lhs, op, rhs, tmp)
 
-def _u32(v):
+KERNEL_KINDS = ("brisc", "ncrisc", "trisc0", "trisc1", "trisc2")
+FIRMWARE_TEXT_BASE = {
+  "brisc": 0x38C0,
+  "ncrisc": 0x5AC0,
+  "trisc0": 0x64C0,
+  "trisc1": 0x6EC0,
+  "trisc2": 0x78C0,
+}
+FIRMWARE_SCRATCH_BASE = {
+  "brisc": 0x82B0,
+  "ncrisc": 0xA2B0,
+  "trisc0": 0xC2B0,
+  "trisc1": 0xD2B0,
+  "trisc2": 0xE2B0,
+}
+_FIRMWARE_LOCAL_MEM_SIZE = {
+  "brisc": 8 * 1024,
+  "ncrisc": 8 * 1024,
+  "trisc0": 4 * 1024,
+  "trisc1": 4 * 1024,
+  "trisc2": 4 * 1024,
+}
+_FIRMWARE_RESERVED_STACK = {
+  "brisc": 256,
+  "ncrisc": 256,
+  "trisc0": 192,
+  "trisc1": 192,
+  "trisc2": 256,
+}
+
+def _u32(v: int) -> bytes:
   return (v & 0xFFFFFFFF).to_bytes(4, "little")
 
-_LOCAL_DATA = {
+_FIRMWARE_LOCAL_DATA = {
   "brisc": b"",
   "ncrisc": b"\0" * 40,
   "trisc0": b"\0" * 4,
@@ -79,6 +117,7 @@ class Asm:
     return self.emit(getattr(dsl, name)(*args))
 
   def __getattr__(self, name: str):
+    # Python keywords cannot be method names, so use and_/or_ for those opcodes.
     opname = {"and_": "and", "or_": "or"}.get(name, name)
     if hasattr(dsl, opname) and callable(getattr(dsl, opname)):
       return lambda *args: self._rv_emit(opname, *args)
@@ -90,6 +129,7 @@ class Asm:
       return self.addi(rd, _ZERO, imm)
     imm32 = imm & 0xFFFFFFFF
     signed = imm32 - 0x100000000 if imm32 & 0x80000000 else imm32
+    # Round up when bit 11 is set because addi sign-extends the low 12 bits.
     hi = (signed + 0x800) >> 12
     lo = signed - (hi << 12)
     self.lui(rd, (hi & 0xFFFFF) << 12)
@@ -149,6 +189,26 @@ class Asm:
     self.j(start)
     self.label(end)
 
+  def break_(self, c: Cond | None = None):
+    if not hasattr(self, "_break_labels") or not self._break_labels:
+      raise RuntimeError("break_() used outside loop()")
+    end = self._break_labels[-1]
+    return self.j(end) if c is None else self.branch_if(c, end)
+
+  @contextmanager
+  def loop(self) -> Iterator[None]:
+    start, end = self._new_label("loop"), self._new_label("endloop")
+    if not hasattr(self, "_break_labels"):
+      self._break_labels = []
+    self._break_labels.append(end)
+    self.label(start)
+    try:
+      yield
+    finally:
+      self._break_labels.pop()
+    self.j(start)
+    self.label(end)
+
   @contextmanager
   def for_range(self, reg: Reg, start: int, stop: Reg | int, *, step: int = 1, tmp: Reg | None = None) -> Iterator[None]:
     limit = stop
@@ -192,17 +252,15 @@ class Asm:
 class Kernel(Asm):
   def __init__(
     self, *, kind: str, base: int | None = None, upload_base: int | None = None,
-    rtas: CoreArgs | None = None, crtas: list[int] | None = None,
-    local_data=None,
+    rtas: CoreArgs | None = None,
   ):
-    if kind not in _LOCAL_DATA:
+    if kind not in KERNEL_KINDS:
       raise ValueError(f"unknown kernel kind {kind!r}")
     super().__init__(base=0 if base is None else base)
     self.upload_base = self.base if upload_base is None else upload_base
     self.rtas = rtas
-    self.crtas = [] if crtas is None else crtas
     self.kind = kind
-    self.local_data = local_data
+    self.load_segments: list[LoadSegment] = []
 
   def rta(self, fn: CoreArgs):
     if not callable(fn):
@@ -210,21 +268,40 @@ class Kernel(Asm):
     self.rtas = fn
     return self
 
-  def crta(self, *values):
-    self.crtas = list(values[0]) if len(values) == 1 and isinstance(values[0], (list, tuple)) else list(values)
+  def segment(self, addr: int, data: bytes, *, label: str = "segment"):
+    self.load_segments.append(LoadSegment(addr, bytes(data), label))
     return self
-
-  def _local_data(self) -> bytes:
-    if self.local_data is not None:
-      return bytes(self.local_data)
-    return _LOCAL_DATA[self.kind]
 
   def compile(self) -> list[KernelBlob]:
     text = self.to_bytes()
-    local_data = self._local_data()
     blobs = []
     if text:
       blobs.append(KernelBlob(self.upload_base, text, label="text"))
-    if local_data:
-      blobs.append(KernelBlob(self.upload_base + len(text), local_data, label="local_data"))
+    for seg in self.load_segments:
+      if seg.data:
+        blobs.append(KernelBlob(seg.addr, seg.data, label=seg.label))
+    return blobs
+
+class Firmware(Kernel):
+  def __init__(self, kind: str):
+    if kind not in FIRMWARE_TEXT_BASE:
+      raise ValueError(f"unknown firmware kind {kind!r}")
+    super().__init__(kind=kind, base=FIRMWARE_TEXT_BASE[kind])
+
+  def compile(self) -> list[KernelBlob]:
+    blobs = [
+      KernelBlob(seg.addr, seg.data, label=f"{self.kind}.{seg.label or 'segment'}")
+      for seg in super().compile()
+    ]
+    local_data = _FIRMWARE_LOCAL_DATA[self.kind]
+    local_memsz = max(
+      len(local_data),
+      _FIRMWARE_LOCAL_MEM_SIZE[self.kind] - _FIRMWARE_RESERVED_STACK[self.kind],
+    )
+    if local_memsz:
+      blobs.append(KernelBlob(
+        FIRMWARE_SCRATCH_BASE[self.kind],
+        local_data.ljust(local_memsz, b"\0"),
+        label=f"{self.kind}.local_data",
+      ))
     return blobs
