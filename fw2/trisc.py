@@ -8,6 +8,7 @@ def build(trisc_id: int) -> Firmware:
   return Firmware(f"trisc{trisc_id}")
 
 def build_trisc0() -> Firmware:
+  f = Firmware()
   pass
 
 def build_trisc1() -> Firmware:

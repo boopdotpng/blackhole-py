@@ -4,6 +4,7 @@ def _sext(v, w): return v - (1 << w) if v & (1 << (w - 1)) else v
 def _u(v, w): return v & ((1 << w) - 1)
 def rol2(v): return ((v << 2) | (v >> 30)) & 0xFFFFFFFF
 def ror2(v): return ((v >> 2) | (v << 30)) & 0xFFFFFFFF
+def _fmt_arg(v): return f"0x{v:X}" if isinstance(v, int) and v >= 10 else repr(v)
 
 class Reg:
   _NAMES = {
@@ -106,6 +107,9 @@ class Inst:
   def __eq__(self, other): return isinstance(other, Inst) and self.to_word() == other.to_word()
   def __hash__(self): return hash(self.to_word())
   def __repr__(self):
+    rv_ops = globals().get("_RV_OPS_BY_NAME", {})
+    if self.name in rv_ops:
+      return f"{self.name}({rv_ops[self.name].repr_args(self)})"
     args = ", ".join(f"{f.name}={getattr(self, f.name)!r}" for f in self._fields if not isinstance(f, FixedBitField))
     return f"{self.name or type(self).__name__}({args})"
 
@@ -175,85 +179,140 @@ class JType(Inst):
   @property
   def imm(self): return _sext((self.imm20 << 20) | (self.imm19_12 << 12) | (self.imm11 << 11) | (self.imm10_1 << 1), 21)
 
-def add(rd, rs1, rs2): return RType(name="add", opcode=0x33, funct3=0, funct7=0x00, rd=rd, rs1=rs1, rs2=rs2)
-def sub(rd, rs1, rs2): return RType(name="sub", opcode=0x33, funct3=0, funct7=0x20, rd=rd, rs1=rs1, rs2=rs2)
-def sll(rd, rs1, rs2): return RType(name="sll", opcode=0x33, funct3=1, funct7=0x00, rd=rd, rs1=rs1, rs2=rs2)
-def slt(rd, rs1, rs2): return RType(name="slt", opcode=0x33, funct3=2, funct7=0x00, rd=rd, rs1=rs1, rs2=rs2)
-def sltu(rd, rs1, rs2): return RType(name="sltu", opcode=0x33, funct3=3, funct7=0x00, rd=rd, rs1=rs1, rs2=rs2)
-def xor(rd, rs1, rs2): return RType(name="xor", opcode=0x33, funct3=4, funct7=0x00, rd=rd, rs1=rs1, rs2=rs2)
-def srl(rd, rs1, rs2): return RType(name="srl", opcode=0x33, funct3=5, funct7=0x00, rd=rd, rs1=rs1, rs2=rs2)
-def sra(rd, rs1, rs2): return RType(name="sra", opcode=0x33, funct3=5, funct7=0x20, rd=rd, rs1=rs1, rs2=rs2)
-def or_(rd, rs1, rs2): return RType(name="or", opcode=0x33, funct3=6, funct7=0x00, rd=rd, rs1=rs1, rs2=rs2)
-def and_(rd, rs1, rs2): return RType(name="and", opcode=0x33, funct3=7, funct7=0x00, rd=rd, rs1=rs1, rs2=rs2)
-def mul(rd, rs1, rs2): return RType(name="mul", opcode=0x33, funct3=0, funct7=0x01, rd=rd, rs1=rs1, rs2=rs2)
-def mulhu(rd, rs1, rs2): return RType(name="mulhu", opcode=0x33, funct3=3, funct7=0x01, rd=rd, rs1=rs1, rs2=rs2)
-def divu(rd, rs1, rs2): return RType(name="divu", opcode=0x33, funct3=5, funct7=0x01, rd=rd, rs1=rs1, rs2=rs2)
-def remu(rd, rs1, rs2): return RType(name="remu", opcode=0x33, funct3=7, funct7=0x01, rd=rd, rs1=rs1, rs2=rs2)
-def sh1add(rd, rs1, rs2): return RType(name="sh1add", opcode=0x33, funct3=2, funct7=0x10, rd=rd, rs1=rs1, rs2=rs2)
-def sh2add(rd, rs1, rs2): return RType(name="sh2add", opcode=0x33, funct3=4, funct7=0x10, rd=rd, rs1=rs1, rs2=rs2)
-def sh3add(rd, rs1, rs2): return RType(name="sh3add", opcode=0x33, funct3=6, funct7=0x10, rd=rd, rs1=rs1, rs2=rs2)
-def min(rd, rs1, rs2): return RType(name="min", opcode=0x33, funct3=4, funct7=0x05, rd=rd, rs1=rs1, rs2=rs2)
-def minu(rd, rs1, rs2): return RType(name="minu", opcode=0x33, funct3=5, funct7=0x05, rd=rd, rs1=rs1, rs2=rs2)
-def maxu(rd, rs1, rs2): return RType(name="maxu", opcode=0x33, funct3=7, funct7=0x05, rd=rd, rs1=rs1, rs2=rs2)
-def zext_h(rd, rs1): return RType(name="zext_h", opcode=0x33, funct3=4, funct7=0x04, rd=rd, rs1=rs1, rs2=zero)
+class RVOp:
+  def __init__(self, name, cls, args=(), *, encode=None, display=None, **fields):
+    self.name, self.cls, self.args = name, cls, tuple(args)
+    self.fields, self.encode, self.display = fields, encode, display or {}
+    self.__name__ = name
 
-def addi(rd, rs1, imm): return IType(name="addi", opcode=0x13, funct3=0, rd=rd, rs1=rs1, imm=imm)
-def sltiu(rd, rs1, imm): return IType(name="sltiu", opcode=0x13, funct3=3, rd=rd, rs1=rs1, imm=imm)
-def xori(rd, rs1, imm): return IType(name="xori", opcode=0x13, funct3=4, rd=rd, rs1=rs1, imm=imm)
-def ori(rd, rs1, imm): return IType(name="ori", opcode=0x13, funct3=6, rd=rd, rs1=rs1, imm=imm)
-def andi(rd, rs1, imm): return IType(name="andi", opcode=0x13, funct3=7, rd=rd, rs1=rs1, imm=imm)
-def slli(rd, rs1, shamt=0): return IType(name="slli", opcode=0x13, funct3=1, rd=rd, rs1=rs1, imm=shamt)
-def srli(rd, rs1, shamt=0): return IType(name="srli", opcode=0x13, funct3=5, rd=rd, rs1=rs1, imm=shamt)
-def srai(rd, rs1, shamt=0): return IType(name="srai", opcode=0x13, funct3=5, rd=rd, rs1=rs1, imm=0x400 | shamt)
-def ctz(rd, rs1): return IType(name="ctz", opcode=0x13, funct3=1, rd=rd, rs1=rs1, imm=0x601)
-def sext_b(rd, rs1): return IType(name="sext_b", opcode=0x13, funct3=1, rd=rd, rs1=rs1, imm=0x604)
-def sext_h(rd, rs1): return IType(name="sext_h", opcode=0x13, funct3=1, rd=rd, rs1=rs1, imm=0x605)
+  def __call__(self, *args, **kw):
+    if len(args) > len(self.args):
+      raise TypeError(f"{self.name} expected at most {len(self.args)} positional args, got {len(args)}")
+    vals = {}
+    for spec, val in zip(self.args, args):
+      vals[spec[0] if isinstance(spec, tuple) else spec] = val
+    for key, val in kw.items():
+      if key in vals:
+        raise TypeError(f"{self.name} got duplicate value for {key!r}")
+      vals[key] = val
+    for spec in self.args[len(args):]:
+      if isinstance(spec, tuple) and spec[0] not in vals:
+        vals[spec[0]] = spec[1]
+    names = {spec[0] if isinstance(spec, tuple) else spec for spec in self.args}
+    extra = set(vals) - names
+    if extra: raise TypeError(f"unexpected fields: {', '.join(sorted(extra))}")
+    fields = {**self.fields, **vals}
+    if self.encode is not None:
+      fields = self.encode(fields)
+    return self.cls(name=self.name, **fields)
 
-def lw(rd, rs1, imm): return IType(name="lw", opcode=0x03, funct3=2, rd=rd, rs1=rs1, imm=imm)
-def lbu(rd, rs1, imm): return IType(name="lbu", opcode=0x03, funct3=4, rd=rd, rs1=rs1, imm=imm)
-def lhu(rd, rs1, imm): return IType(name="lhu", opcode=0x03, funct3=5, rd=rd, rs1=rs1, imm=imm)
-def sb(rs2, rs1, imm): return SType(name="sb", opcode=0x23, funct3=0, rs2=rs2, rs1=rs1, imm=imm)
-def sh(rs2, rs1, imm): return SType(name="sh", opcode=0x23, funct3=1, rs2=rs2, rs1=rs1, imm=imm)
-def sw(rs2, rs1, imm): return SType(name="sw", opcode=0x23, funct3=2, rs2=rs2, rs1=rs1, imm=imm)
+  def __repr__(self):
+    return f"<RVOp {self.name}>"
 
-def beq(rs1, rs2, imm): return BType(name="beq", opcode=0x63, funct3=0, rs1=rs1, rs2=rs2, imm=imm)
-def bne(rs1, rs2, imm): return BType(name="bne", opcode=0x63, funct3=1, rs1=rs1, rs2=rs2, imm=imm)
-def blt(rs1, rs2, imm): return BType(name="blt", opcode=0x63, funct3=4, rs1=rs1, rs2=rs2, imm=imm)
-def bge(rs1, rs2, imm): return BType(name="bge", opcode=0x63, funct3=5, rs1=rs1, rs2=rs2, imm=imm)
-def bltu(rs1, rs2, imm): return BType(name="bltu", opcode=0x63, funct3=6, rs1=rs1, rs2=rs2, imm=imm)
-def bgeu(rs1, rs2, imm): return BType(name="bgeu", opcode=0x63, funct3=7, rs1=rs1, rs2=rs2, imm=imm)
+  def repr_args(self, inst):
+    parts = []
+    for spec in self.args:
+      name = spec[0] if isinstance(spec, tuple) else spec
+      val = self.display[name](inst) if name in self.display else getattr(inst, name)
+      parts.append((_fmt_arg(val), isinstance(spec, tuple) and val == spec[1]))
+    while parts and parts[-1][1]:
+      parts.pop()
+    return ", ".join(part for part, _ in parts)
 
-def lui(rd, imm): return UType(name="lui", opcode=0x37, rd=rd, imm=imm >> 12)
-def auipc(rd, imm): return UType(name="auipc", opcode=0x17, rd=rd, imm=imm >> 12)
-def jal(rd, imm): return JType(name="jal", opcode=0x6F, rd=rd, imm=imm)
-def jalr(rd, rs1, imm=0): return IType(name="jalr", opcode=0x67, funct3=0, rd=rd, rs1=rs1, imm=imm)
-def csrrs(rd, rs1, csr): return IType(name="csrrs", opcode=0x73, funct3=2, rd=rd, rs1=rs1, imm=csr)
-def csrrc(rd, rs1, csr): return IType(name="csrrc", opcode=0x73, funct3=3, rd=rd, rs1=rs1, imm=csr)
-def fence(): return IType(name="fence", opcode=0x0F, funct3=0, rd=zero, rs1=zero, imm=0x0FF)
+def _u_imm(fields):
+  return {**fields, "imm": fields["imm"] >> 12}
+
+def _csr_imm(fields):
+  fields = dict(fields)
+  fields["imm"] = fields.pop("csr")
+  return fields
+
+def _shamt_imm(fields):
+  fields = dict(fields)
+  fields["imm"] = fields.pop("shamt")
+  return fields
+
+def _srai_imm(fields):
+  fields = dict(fields)
+  fields["imm"] = 0x400 | fields.pop("shamt")
+  return fields
+
+def _shamt_arg(inst): return inst.imm & 0x1F
+def _u_imm_arg(inst): return inst.imm << 12
+def _csr_arg(inst): return inst.imm
+
+_R_SPECS = (
+  ("add", 0, 0x00), ("sub", 0, 0x20), ("sll", 1, 0x00), ("slt", 2, 0x00),
+  ("sltu", 3, 0x00), ("xor", 4, 0x00), ("srl", 5, 0x00), ("sra", 5, 0x20),
+  ("or", 6, 0x00), ("and", 7, 0x00), ("mul", 0, 0x01), ("mulhu", 3, 0x01),
+  ("divu", 5, 0x01), ("remu", 7, 0x01), ("sh1add", 2, 0x10),
+  ("sh2add", 4, 0x10), ("sh3add", 6, 0x10), ("min", 4, 0x05),
+  ("minu", 5, 0x05), ("maxu", 7, 0x05),
+)
+_I_SPECS = (
+  ("addi", 0), ("sltiu", 3), ("xori", 4), ("ori", 6), ("andi", 7),
+)
+_LOAD_SPECS = (("lw", 2), ("lbu", 4), ("lhu", 5))
+_STORE_SPECS = (("sb", 0), ("sh", 1), ("sw", 2))
+_BRANCH_SPECS = (("beq", 0), ("bne", 1), ("blt", 4), ("bge", 5), ("bltu", 6), ("bgeu", 7))
+
+add, sub, sll, slt, sltu, xor, srl, sra, or_, and_, mul, mulhu, divu, remu, sh1add, sh2add, sh3add, min, minu, maxu = [
+  RVOp(name, RType, ("rd", "rs1", "rs2"), opcode=0x33, funct3=funct3, funct7=funct7)
+  for name, funct3, funct7 in _R_SPECS
+]
+or_.name = "or"
+and_.name = "and"
+zext_h = RVOp("zext_h", RType, ("rd", "rs1"), opcode=0x33, funct3=4, funct7=0x04, rs2=zero)
+
+addi, sltiu, xori, ori, andi = [
+  RVOp(name, IType, ("rd", "rs1", "imm"), opcode=0x13, funct3=funct3)
+  for name, funct3 in _I_SPECS
+]
+slli = RVOp("slli", IType, ("rd", "rs1", ("shamt", 0)), opcode=0x13, funct3=1, encode=_shamt_imm, display={"shamt": _shamt_arg})
+srli = RVOp("srli", IType, ("rd", "rs1", ("shamt", 0)), opcode=0x13, funct3=5, encode=_shamt_imm, display={"shamt": _shamt_arg})
+srai = RVOp("srai", IType, ("rd", "rs1", ("shamt", 0)), opcode=0x13, funct3=5, encode=_srai_imm, display={"shamt": _shamt_arg})
+ctz = RVOp("ctz", IType, ("rd", "rs1"), opcode=0x13, funct3=1, imm=0x601)
+sext_b = RVOp("sext_b", IType, ("rd", "rs1"), opcode=0x13, funct3=1, imm=0x604)
+sext_h = RVOp("sext_h", IType, ("rd", "rs1"), opcode=0x13, funct3=1, imm=0x605)
+
+lw, lbu, lhu = [
+  RVOp(name, IType, ("rd", "rs1", "imm"), opcode=0x03, funct3=funct3)
+  for name, funct3 in _LOAD_SPECS
+]
+sb, sh, sw = [
+  RVOp(name, SType, ("rs2", "rs1", "imm"), opcode=0x23, funct3=funct3)
+  for name, funct3 in _STORE_SPECS
+]
+beq, bne, blt, bge, bltu, bgeu = [
+  RVOp(name, BType, ("rs1", "rs2", "imm"), opcode=0x63, funct3=funct3)
+  for name, funct3 in _BRANCH_SPECS
+]
+
+lui = RVOp("lui", UType, ("rd", "imm"), opcode=0x37, encode=_u_imm, display={"imm": _u_imm_arg})
+auipc = RVOp("auipc", UType, ("rd", "imm"), opcode=0x17, encode=_u_imm, display={"imm": _u_imm_arg})
+jal = RVOp("jal", JType, ("rd", "imm"), opcode=0x6F)
+jalr = RVOp("jalr", IType, ("rd", "rs1", ("imm", 0)), opcode=0x67, funct3=0)
+csrrs = RVOp("csrrs", IType, ("rd", "rs1", "csr"), opcode=0x73, funct3=2, encode=_csr_imm, display={"csr": _csr_arg})
+csrrc = RVOp("csrrc", IType, ("rd", "rs1", "csr"), opcode=0x73, funct3=3, encode=_csr_imm, display={"csr": _csr_arg})
+fence = RVOp("fence", IType, (), opcode=0x0F, funct3=0, rd=zero, rs1=zero, imm=0x0FF)
+
+_RV_OPS = (
+  add, sub, sll, slt, sltu, xor, srl, sra, or_, and_, mul, mulhu, divu, remu,
+  sh1add, sh2add, sh3add, min, minu, maxu, zext_h, addi, sltiu, xori, ori,
+  andi, slli, srli, srai, ctz, sext_b, sext_h, lw, lbu, lhu, sb, sh, sw, beq,
+  bne, blt, bge, bltu, bgeu, lui, auipc, jal, jalr, csrrs, csrrc, fence,
+)
+_RV_OPS_BY_NAME = {op.name: op for op in _RV_OPS}
 
 _DECODE = {
-  (0x33, 0, 0x00): ("add", RType), (0x33, 0, 0x20): ("sub", RType),
-  (0x33, 1, 0x00): ("sll", RType), (0x33, 2, 0x00): ("slt", RType),
-  (0x33, 3, 0x00): ("sltu", RType), (0x33, 4, 0x00): ("xor", RType),
-  (0x33, 5, 0x00): ("srl", RType), (0x33, 5, 0x20): ("sra", RType),
-  (0x33, 6, 0x00): ("or", RType), (0x33, 7, 0x00): ("and", RType),
-  (0x33, 0, 0x01): ("mul", RType), (0x33, 3, 0x01): ("mulhu", RType),
-  (0x33, 5, 0x01): ("divu", RType), (0x33, 7, 0x01): ("remu", RType),
-  (0x33, 2, 0x10): ("sh1add", RType), (0x33, 4, 0x10): ("sh2add", RType),
-  (0x33, 6, 0x10): ("sh3add", RType), (0x33, 4, 0x05): ("min", RType),
-  (0x33, 5, 0x05): ("minu", RType), (0x33, 7, 0x05): ("maxu", RType),
+  **{(0x33, funct3, funct7): (name, RType) for name, funct3, funct7 in _R_SPECS},
   (0x33, 4, 0x04): ("zext_h", RType),
-  (0x13, 0, None): ("addi", IType), (0x13, 3, None): ("sltiu", IType),
-  (0x13, 4, None): ("xori", IType), (0x13, 6, None): ("ori", IType),
-  (0x13, 7, None): ("andi", IType), (0x13, 1, 0x00): ("slli", IType),
-  (0x13, 5, 0x00): ("srli", IType), (0x13, 5, 0x20): ("srai", IType),
-  (0x03, 2, None): ("lw", IType), (0x03, 4, None): ("lbu", IType),
-  (0x03, 5, None): ("lhu", IType),
-  (0x23, 0, None): ("sb", SType), (0x23, 1, None): ("sh", SType),
-  (0x23, 2, None): ("sw", SType),
-  (0x63, 0, None): ("beq", BType), (0x63, 1, None): ("bne", BType),
-  (0x63, 4, None): ("blt", BType), (0x63, 5, None): ("bge", BType),
-  (0x63, 6, None): ("bltu", BType), (0x63, 7, None): ("bgeu", BType),
+  **{(0x13, funct3, None): (name, IType) for name, funct3 in _I_SPECS},
+  (0x13, 1, 0x00): ("slli", IType), (0x13, 5, 0x00): ("srli", IType),
+  (0x13, 5, 0x20): ("srai", IType),
+  **{(0x03, funct3, None): (name, IType) for name, funct3 in _LOAD_SPECS},
+  **{(0x23, funct3, None): (name, SType) for name, funct3 in _STORE_SPECS},
+  **{(0x63, funct3, None): (name, BType) for name, funct3 in _BRANCH_SPECS},
   (0x37, None, None): ("lui", UType), (0x17, None, None): ("auipc", UType),
   (0x6F, None, None): ("jal", JType), (0x67, 0, None): ("jalr", IType),
   (0x73, 2, None): ("csrrs", IType), (0x73, 3, None): ("csrrc", IType),
@@ -324,8 +383,15 @@ class TTInst:
   def __eq__(self, other): return isinstance(other, TTInst) and self.raw_word() == other.raw_word()
   def __hash__(self): return hash(self.raw_word())
   def __repr__(self):
-    args = ", ".join(f"{f.name}=0x{getattr(self, f.name):X}" for f in self._fields if not isinstance(f, FixedBitField))
-    return f"{self.name or type(self).__name__}({args})" if args else f"{self.name or type(self).__name__}()"
+    fields = {field.name: field for field in self._fields if not isinstance(field, FixedBitField)}
+    parts = []
+    for name in type(self)._arg_names():
+      val = getattr(self, name)
+      default = fields[name].default
+      parts.append((_fmt_arg(val), val == default))
+    while parts and parts[-1][1]:
+      parts.pop()
+    return f"{self._ctor_name or self.name or type(self).__name__}({', '.join(part for part, _ in parts)})"
 
 def TTINSN(imm32):
   if imm32 >= 0xC0000000:
@@ -1446,121 +1512,16 @@ TT_STREAMWRCFG = TTSTREAMWRCFG
 TT_CFGSHIFTMASK = TTCFGSHIFTMASK
 TT_WRCFG32 = TTWRCFG32
 
+def _tt_fixed_field(cls, name):
+  for field in cls._fields:
+    if field.name == name and isinstance(field, FixedBitField):
+      return field.value
+  return None
+
 _TENSIX_BY_OPCODE = {
-  0x01: ('MOP', TTMOP),
-  0x02: ('NOP', TTNOP),
-  0x03: ('MOP_CFG', TTMOP_CFG),
-  0x04: ('REPLAY', TTREPLAY),
-  0x08: ('MOVD2A', TTMOVD2A),
-  0x0A: ('MOVD2B', TTMOVD2B),
-  0x10: ('ZEROACC', TTZEROACC),
-  0x11: ('ZEROSRC', TTZEROSRC),
-  0x12: ('MOVA2D', TTMOVA2D),
-  0x13: ('MOVB2D', TTMOVB2D),
-  0x14: ('TRNSPSRCA', TTTRNSPSRCA),
-  0x15: ('RAREB', TTRAREB),
-  0x16: ('TRNSPSRCB', TTTRNSPSRCB),
-  0x17: ('SHIFTXA', TTSHIFTXA),
-  0x18: ('SHIFTXB', TTSHIFTXB),
-  0x21: ('CLREXPHIST', TTCLREXPHIST),
-  0x22: ('CONV3S1', TTCONV3S1),
-  0x23: ('CONV3S2', TTCONV3S2),
-  0x24: ('MFCONV3S1', TTMFCONV3S1),
-  0x25: ('APOOL3S1', TTAPOOL3S1),
-  0x26: ('MVMUL', TTMVMUL),
-  0x27: ('ELWMUL', TTELWMUL),
-  0x28: ('ELWADD', TTELWADD),
-  0x29: ('DOTPV', TTDOTPV),
-  0x2A: ('MPOOL3S2', TTMPOOL3S2),
-  0x30: ('ELWSUB', TTELWSUB),
-  0x31: ('MPOOL3S1', TTMPOOL3S1),
-  0x32: ('APOOL3S2', TTAPOOL3S2),
-  0x33: ('GMPOOL', TTGMPOOL),
-  0x34: ('GAPOOL', TTGAPOOL),
-  0x35: ('GATESRCRST', TTGATESRCRST),
-  0x36: ('CLEARDVALID', TTCLEARDVALID),
-  0x37: ('SETRWC', TTSETRWC),
-  0x38: ('INCRWC', TTINCRWC),
-  0x40: ('XMOV', TTXMOV),
-  0x41: ('PACR', TTPACR),
-  0x42: ('UNPACR', TTUNPACR),
-  0x43: ('UNPACR_NOP', TTUNPACR_NOP),
-  0x45: ('SETDMAREG', TTSETDMAREG),
-  0x46: ('FLUSHDMA', TTFLUSHDMA),
-  0x48: ('REG2FLOP', TTREG2FLOP),
-  0x4B: ('TBUFCMD', TTTBUFCMD),
-  0x50: ('SETADC', TTSETADC),
-  0x51: ('SETADCXY', TTSETADCXY),
-  0x54: ('SETADCZW', TTSETADCZW),
-  0x55: ('INCADCZW', TTINCADCZW),
-  0x58: ('ADDDMAREG', TTADDDMAREG),
-  0x5A: ('MULDMAREG', TTMULDMAREG),
-  0x5B: ('BITWOPDMAREG', TTBITWOPDMAREG),
-  0x5C: ('SHIFTDMAREG', TTSHIFTDMAREG),
-  0x5D: ('CMPDMAREG', TTCMPDMAREG),
-  0x5E: ('SETADCXX', TTSETADCXX),
-  0x60: ('DMANOP', TTDMANOP),
-  0x67: ('STOREREG', TTSTOREREG),
-  0x70: ('SFPLOAD', TTSFPLOAD),
-  0x71: ('SFPLOADI', TTSFPLOADI),
-  0x72: ('SFPSTORE', TTSFPSTORE),
-  0x73: ('SFPLUT', TTSFPLUT),
-  0x74: ('SFPMULI', TTSFPMULI),
-  0x75: ('SFPADDI', TTSFPADDI),
-  0x76: ('SFPDIVP2', TTSFPDIVP2),
-  0x77: ('SFPEXEXP', TTSFPEXEXP),
-  0x78: ('SFPEXMAN', TTSFPEXMAN),
-  0x79: ('SFPIADD', TTSFPIADD),
-  0x7A: ('SFPSHFT', TTSFPSHFT),
-  0x7B: ('SFPSETCC', TTSFPSETCC),
-  0x7C: ('SFPMOV', TTSFPMOV),
-  0x7D: ('SFPABS', TTSFPABS),
-  0x7E: ('SFPAND', TTSFPAND),
-  0x7F: ('SFPOR', TTSFPOR),
-  0x80: ('SFPNOT', TTSFPNOT),
-  0x81: ('SFPLZ', TTSFPLZ),
-  0x82: ('SFPSETEXP', TTSFPSETEXP),
-  0x83: ('SFPSETMAN', TTSFPSETMAN),
-  0x84: ('SFPMAD', TTSFPMAD),
-  0x85: ('SFPADD', TTSFPADD),
-  0x86: ('SFPMUL', TTSFPMUL),
-  0x87: ('SFPPUSHC', TTSFPPUSHC),
-  0x88: ('SFPPOPC', TTSFPPOPC),
-  0x89: ('SFPSETSGN', TTSFPSETSGN),
-  0x8A: ('SFPENCC', TTSFPENCC),
-  0x8B: ('SFPCOMPC', TTSFPCOMPC),
-  0x8C: ('SFPTRANSP', TTSFPTRANSP),
-  0x8D: ('SFPXOR', TTSFPXOR),
-  0x8E: ('SFPSTOCHRND', TTSFPSTOCHRND),
-  0x8F: ('SFPNOP', TTSFPNOP),
-  0x90: ('SFPCAST', TTSFPCAST),
-  0x91: ('SFPCONFIG', TTSFPCONFIG),
-  0x92: ('SFPSWAP', TTSFPSWAP),
-  0x93: ('SFPLOADMACRO', TTSFPLOADMACRO),
-  0x94: ('SFPSHFT2', TTSFPSHFT2),
-  0x95: ('SFPLUTFP32', TTSFPLUTFP32),
-  0x96: ('SFPLE', TTSFPLE),
-  0x97: ('SFPGT', TTSFPGT),
-  0x98: ('SFPMUL24', TTSFPMUL24),
-  0x99: ('SFPARECIP', TTSFPARECIP),
-  0xA0: ('ATGETM', TTATGETM),
-  0xA1: ('ATRELM', TTATRELM),
-  0xA2: ('STALLWAIT', TTSTALLWAIT),
-  0xA3: ('SEMINIT', TTSEMINIT),
-  0xA4: ('SEMPOST', TTSEMPOST),
-  0xA5: ('SEMGET', TTSEMGET),
-  0xA6: ('SEMWAIT', TTSEMWAIT),
-  0xA7: ('STREAMWAIT', TTSTREAMWAIT),
-  0xB0: ('WRCFG', TTWRCFG),
-  0xB1: ('RDCFG', TTRDCFG),
-  0xB2: ('SETC16', TTSETC16),
-  0xB3: ('RMWCIB0', TTRMWCIB0),
-  0xB4: ('RMWCIB1', TTRMWCIB1),
-  0xB5: ('RMWCIB2', TTRMWCIB2),
-  0xB6: ('RMWCIB3', TTRMWCIB3),
-  0xB7: ('STREAMWRCFG', TTSTREAMWRCFG),
-  0xB8: ('CFGSHIFTMASK', TTCFGSHIFTMASK),
-  0xC0: ('WRCFG32', TTWRCFG32),
+  opcode: (cls.name, cls)
+  for cls in TTInst.__subclasses__()
+  if (opcode := _tt_fixed_field(cls, "opcode_")) is not None
 }
 
 def decode_tensix(word):
