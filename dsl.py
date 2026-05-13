@@ -319,11 +319,9 @@ _DECODE = {
   (0x0F, 0, None): ("fence", IType),
 }
 
-
 class TTInst:
   _fields = ()
   name = None
-  _ctor_name = None
 
   def __init_subclass__(cls):
     fields = []
@@ -344,11 +342,11 @@ class TTInst:
   def __init__(self, *args, **kw):
     names = type(self)._arg_names()
     if len(args) > len(names):
-      raise TypeError(f"{self._ctor_name or type(self).__name__} expected at most {len(names)} positional args, got {len(args)}")
+      raise TypeError(f"{type(self).__name__} expected at most {len(names)} positional args, got {len(args)}")
     vals = dict(zip(names, args))
     for k, v in kw.items():
       if k in vals:
-        raise TypeError(f"{self._ctor_name or type(self).__name__} got duplicate value for {k!r}")
+        raise TypeError(f"{type(self).__name__} got duplicate value for {k!r}")
       vals[k] = v
 
     self._raw = 0
@@ -391,7 +389,7 @@ class TTInst:
       parts.append((_fmt_arg(val), val == default))
     while parts and parts[-1][1]:
       parts.pop()
-    return f"{self._ctor_name or self.name or type(self).__name__}({', '.join(part for part, _ in parts)})"
+    return f"{type(self).__name__}({', '.join(part for part, _ in parts)})"
 
 def TTINSN(imm32):
   if imm32 >= 0xC0000000:
@@ -400,7 +398,6 @@ def TTINSN(imm32):
 
 class TTMOP(TTInst):
   name = 'MOP'
-  _ctor_name = "TT_MOP"
   opcode_ = FixedBitField(31, 24, 0x01)
   mop_type = BitField(23, 23)
   loop_count = BitField(22, 16)
@@ -408,18 +405,15 @@ class TTMOP(TTInst):
 
 class TTNOP(TTInst):
   name = 'NOP'
-  _ctor_name = "TT_NOP"
   opcode_ = FixedBitField(31, 24, 0x02)
 
 class TTMOP_CFG(TTInst):
   name = 'MOP_CFG'
-  _ctor_name = "TT_MOP_CFG"
   opcode_ = FixedBitField(31, 24, 0x03)
   zmask_hi16 = BitField(15, 0)
 
 class TTREPLAY(TTInst):
   name = 'REPLAY'
-  _ctor_name = "TT_REPLAY"
   opcode_ = FixedBitField(31, 24, 0x04)
   start_idx = BitField(23, 14)
   len = BitField(13, 4)
@@ -428,7 +422,6 @@ class TTREPLAY(TTInst):
 
 class TTMOVD2A(TTInst):
   name = 'MOVD2A'
-  _ctor_name = "TT_MOVD2A"
   opcode_ = FixedBitField(31, 24, 0x08)
   dest_32b_lo = BitField(23, 23)
   src = BitField(22, 17)
@@ -438,7 +431,6 @@ class TTMOVD2A(TTInst):
 
 class TTMOVD2B(TTInst):
   name = 'MOVD2B'
-  _ctor_name = "TT_MOVD2B"
   opcode_ = FixedBitField(31, 24, 0x0A)
   dest_32b_lo = BitField(23, 23)
   src = BitField(22, 17)
@@ -448,7 +440,6 @@ class TTMOVD2B(TTInst):
 
 class TTZEROACC(TTInst):
   name = 'ZEROACC'
-  _ctor_name = "TT_ZEROACC"
   opcode_ = FixedBitField(31, 24, 0x10)
   clear_mode = BitField(23, 19)
   use_32_bit_mode = BitField(18, 18)
@@ -458,7 +449,6 @@ class TTZEROACC(TTInst):
 
 class TTZEROSRC(TTInst):
   name = 'ZEROSRC'
-  _ctor_name = "TT_ZEROSRC"
   opcode_ = FixedBitField(31, 24, 0x11)
   zero_val = BitField(23, 4)
   write_mode = BitField(3, 3)
@@ -467,7 +457,6 @@ class TTZEROSRC(TTInst):
 
 class TTMOVA2D(TTInst):
   name = 'MOVA2D'
-  _ctor_name = "TT_MOVA2D"
   opcode_ = FixedBitField(31, 24, 0x12)
   dest_32b_lo = BitField(23, 23)
   src = BitField(22, 17)
@@ -477,7 +466,6 @@ class TTMOVA2D(TTInst):
 
 class TTMOVB2D(TTInst):
   name = 'MOVB2D'
-  _ctor_name = "TT_MOVB2D"
   opcode_ = FixedBitField(31, 24, 0x13)
   dest_32b_lo = BitField(23, 23)
   src = BitField(22, 17)
@@ -487,22 +475,18 @@ class TTMOVB2D(TTInst):
 
 class TTTRNSPSRCA(TTInst):
   name = 'TRNSPSRCA'
-  _ctor_name = "TT_TRNSPSRCA"
   opcode_ = FixedBitField(31, 24, 0x14)
 
 class TTRAREB(TTInst):
   name = 'RAREB'
-  _ctor_name = "TT_RAREB"
   opcode_ = FixedBitField(31, 24, 0x15)
 
 class TTTRNSPSRCB(TTInst):
   name = 'TRNSPSRCB'
-  _ctor_name = "TT_TRNSPSRCB"
   opcode_ = FixedBitField(31, 24, 0x16)
 
 class TTSHIFTXA(TTInst):
   name = 'SHIFTXA'
-  _ctor_name = "TT_SHIFTXA"
   opcode_ = FixedBitField(31, 24, 0x17)
   raw = BitField(23, 0)
   shift_mode = BitField(1, 0)
@@ -510,7 +494,6 @@ class TTSHIFTXA(TTInst):
 
 class TTSHIFTXB(TTInst):
   name = 'SHIFTXB'
-  _ctor_name = "TT_SHIFTXB"
   opcode_ = FixedBitField(31, 24, 0x18)
   raw = BitField(23, 0)
   shift_row = BitField(9, 0)
@@ -519,12 +502,10 @@ class TTSHIFTXB(TTInst):
 
 class TTCLREXPHIST(TTInst):
   name = 'CLREXPHIST'
-  _ctor_name = "TT_CLREXPHIST"
   opcode_ = FixedBitField(31, 24, 0x21)
 
 class TTCONV3S1(TTInst):
   name = 'CONV3S1'
-  _ctor_name = "TT_CONV3S1"
   opcode_ = FixedBitField(31, 24, 0x22)
   clear_dvalid = BitField(23, 22)
   rotate_weights = BitField(21, 17)
@@ -533,7 +514,6 @@ class TTCONV3S1(TTInst):
 
 class TTCONV3S2(TTInst):
   name = 'CONV3S2'
-  _ctor_name = "TT_CONV3S2"
   opcode_ = FixedBitField(31, 24, 0x23)
   clear_dvalid = BitField(23, 22)
   rotate_weights = BitField(21, 17)
@@ -542,7 +522,6 @@ class TTCONV3S2(TTInst):
 
 class TTMFCONV3S1(TTInst):
   name = 'MFCONV3S1'
-  _ctor_name = "TT_MFCONV3S1"
   opcode_ = FixedBitField(31, 24, 0x24)
   clear_dvalid = BitField(23, 22)
   rotate_weights = BitField(21, 17)
@@ -551,7 +530,6 @@ class TTMFCONV3S1(TTInst):
 
 class TTAPOOL3S1(TTInst):
   name = 'APOOL3S1'
-  _ctor_name = "TT_APOOL3S1"
   opcode_ = FixedBitField(31, 24, 0x25)
   clear_dvalid = BitField(23, 22)
   pool_addr_mode = BitField(21, 15)
@@ -560,7 +538,6 @@ class TTAPOOL3S1(TTInst):
 
 class TTMVMUL(TTInst):
   name = 'MVMUL'
-  _ctor_name = "TT_MVMUL"
   opcode_ = FixedBitField(31, 24, 0x26)
   clear_dvalid = BitField(23, 22)
   instr_mod19 = BitField(21, 19)
@@ -570,7 +547,6 @@ class TTMVMUL(TTInst):
 
 class TTELWMUL(TTInst):
   name = 'ELWMUL'
-  _ctor_name = "TT_ELWMUL"
   opcode_ = FixedBitField(31, 24, 0x27)
   clear_dvalid = BitField(23, 22)
   dest_accum_en = BitField(21, 21)
@@ -580,7 +556,6 @@ class TTELWMUL(TTInst):
 
 class TTELWADD(TTInst):
   name = 'ELWADD'
-  _ctor_name = "TT_ELWADD"
   opcode_ = FixedBitField(31, 24, 0x28)
   clear_dvalid = BitField(23, 22)
   dest_accum_en = BitField(21, 21)
@@ -590,7 +565,6 @@ class TTELWADD(TTInst):
 
 class TTDOTPV(TTInst):
   name = 'DOTPV'
-  _ctor_name = "TT_DOTPV"
   opcode_ = FixedBitField(31, 24, 0x29)
   clear_dvalid = BitField(23, 22)
   dest_accum_en = BitField(21, 21)
@@ -600,7 +574,6 @@ class TTDOTPV(TTInst):
 
 class TTMPOOL3S2(TTInst):
   name = 'MPOOL3S2'
-  _ctor_name = "TT_MPOOL3S2"
   opcode_ = FixedBitField(31, 24, 0x2A)
   clear_dvalid = BitField(23, 22)
   pool_addr_mode = BitField(21, 15)
@@ -609,7 +582,6 @@ class TTMPOOL3S2(TTInst):
 
 class TTELWSUB(TTInst):
   name = 'ELWSUB'
-  _ctor_name = "TT_ELWSUB"
   opcode_ = FixedBitField(31, 24, 0x30)
   clear_dvalid = BitField(23, 22)
   dest_accum_en = BitField(21, 21)
@@ -619,7 +591,6 @@ class TTELWSUB(TTInst):
 
 class TTMPOOL3S1(TTInst):
   name = 'MPOOL3S1'
-  _ctor_name = "TT_MPOOL3S1"
   opcode_ = FixedBitField(31, 24, 0x31)
   clear_dvalid = BitField(23, 22)
   pool_addr_mode = BitField(21, 15)
@@ -628,7 +599,6 @@ class TTMPOOL3S1(TTInst):
 
 class TTAPOOL3S2(TTInst):
   name = 'APOOL3S2'
-  _ctor_name = "TT_APOOL3S2"
   opcode_ = FixedBitField(31, 24, 0x32)
   clear_dvalid = BitField(23, 22)
   pool_addr_mode = BitField(21, 15)
@@ -637,7 +607,6 @@ class TTAPOOL3S2(TTInst):
 
 class TTGMPOOL(TTInst):
   name = 'GMPOOL'
-  _ctor_name = "TT_GMPOOL"
   opcode_ = FixedBitField(31, 24, 0x33)
   clear_dvalid = BitField(23, 22)
   instr_mod19 = BitField(21, 19)
@@ -647,7 +616,6 @@ class TTGMPOOL(TTInst):
 
 class TTGAPOOL(TTInst):
   name = 'GAPOOL'
-  _ctor_name = "TT_GAPOOL"
   opcode_ = FixedBitField(31, 24, 0x34)
   clear_dvalid = BitField(23, 22)
   instr_mod19 = BitField(21, 19)
@@ -657,14 +625,12 @@ class TTGAPOOL(TTInst):
 
 class TTGATESRCRST(TTInst):
   name = 'GATESRCRST'
-  _ctor_name = "TT_GATESRCRST"
   opcode_ = FixedBitField(31, 24, 0x35)
   reset_srcb_gate_control = BitField(1, 1)
   reset_srca_gate_control = BitField(0, 0)
 
 class TTCLEARDVALID(TTInst):
   name = 'CLEARDVALID'
-  _ctor_name = "TT_CLEARDVALID"
   opcode_ = FixedBitField(31, 24, 0x36)
   cleardvalid = BitField(23, 22)
   clear_dvalid = BitField(23, 22)
@@ -672,7 +638,6 @@ class TTCLEARDVALID(TTInst):
 
 class TTSETRWC(TTInst):
   name = 'SETRWC'
-  _ctor_name = "TT_SETRWC"
   opcode_ = FixedBitField(31, 24, 0x37)
   clear_ab_vld = BitField(23, 22)
   rwc_cr = BitField(21, 18)
@@ -683,7 +648,6 @@ class TTSETRWC(TTInst):
 
 class TTINCRWC(TTInst):
   name = 'INCRWC'
-  _ctor_name = "TT_INCRWC"
   opcode_ = FixedBitField(31, 24, 0x38)
   rwc_cr = BitField(20, 18)
   rwc_d = BitField(17, 14)
@@ -692,14 +656,12 @@ class TTINCRWC(TTInst):
 
 class TTXMOV(TTInst):
   name = 'XMOV'
-  _ctor_name = "TT_XMOV"
   opcode_ = FixedBitField(31, 24, 0x40)
   Mov_block_selection = BitField(23, 23)
   Last = BitField(0, 0)
 
 class TTPACR(TTInst):
   name = 'PACR'
-  _ctor_name = "TT_PACR"
   opcode_ = FixedBitField(31, 24, 0x41)
   CfgContext = BitField(23, 21)
   RowPadZero = BitField(20, 18)
@@ -716,7 +678,6 @@ class TTPACR(TTInst):
 
 class TTUNPACR(TTInst):
   name = 'UNPACR'
-  _ctor_name = "TT_UNPACR"
   opcode_ = FixedBitField(31, 24, 0x42)
   Unpack_block_selection = BitField(23, 23)
   AddrMode = BitField(22, 15)
@@ -734,7 +695,6 @@ class TTUNPACR(TTInst):
 
 class TTUNPACR_NOP(TTInst):
   name = 'UNPACR_NOP'
-  _ctor_name = "TT_UNPACR_NOP"
   opcode_ = FixedBitField(31, 24, 0x43)
   Unpacker_Select = BitField(23, 23)
   Stream_Id = BitField(22, 16)
@@ -748,7 +708,6 @@ class TTUNPACR_NOP(TTInst):
 
 class TTSETDMAREG(TTInst):
   name = 'SETDMAREG'
-  _ctor_name = "TT_SETDMAREG"
   opcode_ = FixedBitField(31, 24, 0x45)
   Payload_SigSelSize = BitField(23, 22)
   Payload_SigSel = BitField(21, 8)
@@ -757,13 +716,11 @@ class TTSETDMAREG(TTInst):
 
 class TTFLUSHDMA(TTInst):
   name = 'FLUSHDMA'
-  _ctor_name = "TT_FLUSHDMA"
   opcode_ = FixedBitField(31, 24, 0x46)
   ConditionMask = BitField(3, 0)
 
 class TTREG2FLOP(TTInst):
   name = 'REG2FLOP'
-  _ctor_name = "TT_REG2FLOP"
   opcode_ = FixedBitField(31, 24, 0x48)
   SizeSel = BitField(23, 22)
   ThConCfgIndex = BitField(14, 8)
@@ -771,12 +728,10 @@ class TTREG2FLOP(TTInst):
 
 class TTTBUFCMD(TTInst):
   name = 'TBUFCMD'
-  _ctor_name = "TT_TBUFCMD"
   opcode_ = FixedBitField(31, 24, 0x4B)
 
 class TTSETADC(TTInst):
   name = 'SETADC'
-  _ctor_name = "TT_SETADC"
   opcode_ = FixedBitField(31, 24, 0x50)
   CntSetMask = BitField(23, 21)
   ChannelIndex = BitField(20, 20)
@@ -785,7 +740,6 @@ class TTSETADC(TTInst):
 
 class TTSETADCXY(TTInst):
   name = 'SETADCXY'
-  _ctor_name = "TT_SETADCXY"
   opcode_ = FixedBitField(31, 24, 0x51)
   CntSetMask = BitField(23, 21)
   Ch1_Y = BitField(20, 15)
@@ -796,7 +750,6 @@ class TTSETADCXY(TTInst):
 
 class TTSETADCZW(TTInst):
   name = 'SETADCZW'
-  _ctor_name = "TT_SETADCZW"
   opcode_ = FixedBitField(31, 24, 0x54)
   CntSetMask = BitField(23, 21)
   Ch1_W = BitField(20, 15)
@@ -807,7 +760,6 @@ class TTSETADCZW(TTInst):
 
 class TTINCADCZW(TTInst):
   name = 'INCADCZW'
-  _ctor_name = "TT_INCADCZW"
   opcode_ = FixedBitField(31, 24, 0x55)
   CntSetMask = BitField(23, 21)
   Ch1_W = BitField(20, 15)
@@ -817,7 +769,6 @@ class TTINCADCZW(TTInst):
 
 class TTADDDMAREG(TTInst):
   name = 'ADDDMAREG'
-  _ctor_name = "TT_ADDDMAREG"
   opcode_ = FixedBitField(31, 24, 0x58)
   OpBisConst = BitField(23, 23)
   ResultRegIndex = BitField(22, 12)
@@ -826,7 +777,6 @@ class TTADDDMAREG(TTInst):
 
 class TTMULDMAREG(TTInst):
   name = 'MULDMAREG'
-  _ctor_name = "TT_MULDMAREG"
   opcode_ = FixedBitField(31, 24, 0x5A)
   OpBisConst = BitField(23, 23)
   ResultRegIndex = BitField(22, 12)
@@ -835,7 +785,6 @@ class TTMULDMAREG(TTInst):
 
 class TTBITWOPDMAREG(TTInst):
   name = 'BITWOPDMAREG'
-  _ctor_name = "TT_BITWOPDMAREG"
   opcode_ = FixedBitField(31, 24, 0x5B)
   OpBisConst = BitField(23, 23)
   OpSel = BitField(22, 18)
@@ -845,7 +794,6 @@ class TTBITWOPDMAREG(TTInst):
 
 class TTSHIFTDMAREG(TTInst):
   name = 'SHIFTDMAREG'
-  _ctor_name = "TT_SHIFTDMAREG"
   opcode_ = FixedBitField(31, 24, 0x5C)
   OpBisConst = BitField(23, 23)
   Mode = BitField(22, 18)
@@ -856,7 +804,6 @@ class TTSHIFTDMAREG(TTInst):
 
 class TTCMPDMAREG(TTInst):
   name = 'CMPDMAREG'
-  _ctor_name = "TT_CMPDMAREG"
   opcode_ = FixedBitField(31, 24, 0x5D)
   OpBisConst = BitField(23, 23)
   OpSel = BitField(22, 18)
@@ -866,7 +813,6 @@ class TTCMPDMAREG(TTInst):
 
 class TTSETADCXX(TTInst):
   name = 'SETADCXX'
-  _ctor_name = "TT_SETADCXX"
   opcode_ = FixedBitField(31, 24, 0x5E)
   CntSetMask = BitField(23, 21)
   x_end2 = BitField(20, 10)
@@ -874,19 +820,16 @@ class TTSETADCXX(TTInst):
 
 class TTDMANOP(TTInst):
   name = 'DMANOP'
-  _ctor_name = "TT_DMANOP"
   opcode_ = FixedBitField(31, 24, 0x60)
 
 class TTSTOREREG(TTInst):
   name = 'STOREREG'
-  _ctor_name = "TT_STOREREG"
   opcode_ = FixedBitField(31, 24, 0x67)
   TdmaDataRegIndex = BitField(23, 18)
   RegAddr = BitField(17, 0)
 
 class TTSFPLOAD(TTInst):
   name = 'SFPLOAD'
-  _ctor_name = "TT_SFPLOAD"
   opcode_ = FixedBitField(31, 24, 0x70)
   lreg_ind = BitField(23, 20)
   instr_mod0 = BitField(19, 16)
@@ -895,7 +838,6 @@ class TTSFPLOAD(TTInst):
 
 class TTSFPLOADI(TTInst):
   name = 'SFPLOADI'
-  _ctor_name = "TT_SFPLOADI"
   opcode_ = FixedBitField(31, 24, 0x71)
   lreg_ind = BitField(23, 20)
   instr_mod0 = BitField(19, 16)
@@ -903,7 +845,6 @@ class TTSFPLOADI(TTInst):
 
 class TTSFPSTORE(TTInst):
   name = 'SFPSTORE'
-  _ctor_name = "TT_SFPSTORE"
   opcode_ = FixedBitField(31, 24, 0x72)
   lreg_ind = BitField(23, 20)
   instr_mod0 = BitField(19, 16)
@@ -912,7 +853,6 @@ class TTSFPSTORE(TTInst):
 
 class TTSFPLUT(TTInst):
   name = 'SFPLUT'
-  _ctor_name = "TT_SFPLUT"
   opcode_ = FixedBitField(31, 24, 0x73)
   lreg_ind = BitField(23, 20)
   instr_mod0 = BitField(19, 16)
@@ -920,7 +860,6 @@ class TTSFPLUT(TTInst):
 
 class TTSFPMULI(TTInst):
   name = 'SFPMULI'
-  _ctor_name = "TT_SFPMULI"
   opcode_ = FixedBitField(31, 24, 0x74)
   imm16_math = BitField(23, 8)
   lreg_dest = BitField(7, 4)
@@ -928,7 +867,6 @@ class TTSFPMULI(TTInst):
 
 class TTSFPADDI(TTInst):
   name = 'SFPADDI'
-  _ctor_name = "TT_SFPADDI"
   opcode_ = FixedBitField(31, 24, 0x75)
   imm16_math = BitField(23, 8)
   lreg_dest = BitField(7, 4)
@@ -936,7 +874,6 @@ class TTSFPADDI(TTInst):
 
 class TTSFPDIVP2(TTInst):
   name = 'SFPDIVP2'
-  _ctor_name = "TT_SFPDIVP2"
   opcode_ = FixedBitField(31, 24, 0x76)
   imm12_math = BitField(23, 12)
   lreg_c = BitField(11, 8)
@@ -945,7 +882,6 @@ class TTSFPDIVP2(TTInst):
 
 class TTSFPEXEXP(TTInst):
   name = 'SFPEXEXP'
-  _ctor_name = "TT_SFPEXEXP"
   opcode_ = FixedBitField(31, 24, 0x77)
   imm12_math = BitField(23, 12)
   lreg_c = BitField(11, 8)
@@ -954,7 +890,6 @@ class TTSFPEXEXP(TTInst):
 
 class TTSFPEXMAN(TTInst):
   name = 'SFPEXMAN'
-  _ctor_name = "TT_SFPEXMAN"
   opcode_ = FixedBitField(31, 24, 0x78)
   imm12_math = BitField(23, 12)
   lreg_c = BitField(11, 8)
@@ -963,7 +898,6 @@ class TTSFPEXMAN(TTInst):
 
 class TTSFPIADD(TTInst):
   name = 'SFPIADD'
-  _ctor_name = "TT_SFPIADD"
   opcode_ = FixedBitField(31, 24, 0x79)
   imm12_math = BitField(23, 12)
   lreg_c = BitField(11, 8)
@@ -972,7 +906,6 @@ class TTSFPIADD(TTInst):
 
 class TTSFPSHFT(TTInst):
   name = 'SFPSHFT'
-  _ctor_name = "TT_SFPSHFT"
   opcode_ = FixedBitField(31, 24, 0x7A)
   imm12_math = BitField(23, 12)
   lreg_c = BitField(11, 8)
@@ -981,7 +914,6 @@ class TTSFPSHFT(TTInst):
 
 class TTSFPSETCC(TTInst):
   name = 'SFPSETCC'
-  _ctor_name = "TT_SFPSETCC"
   opcode_ = FixedBitField(31, 24, 0x7B)
   imm12_math = BitField(23, 12)
   lreg_c = BitField(11, 8)
@@ -990,7 +922,6 @@ class TTSFPSETCC(TTInst):
 
 class TTSFPMOV(TTInst):
   name = 'SFPMOV'
-  _ctor_name = "TT_SFPMOV"
   opcode_ = FixedBitField(31, 24, 0x7C)
   imm12_math = BitField(23, 12)
   lreg_c = BitField(11, 8)
@@ -999,7 +930,6 @@ class TTSFPMOV(TTInst):
 
 class TTSFPABS(TTInst):
   name = 'SFPABS'
-  _ctor_name = "TT_SFPABS"
   opcode_ = FixedBitField(31, 24, 0x7D)
   imm12_math = BitField(23, 12)
   lreg_c = BitField(11, 8)
@@ -1008,7 +938,6 @@ class TTSFPABS(TTInst):
 
 class TTSFPAND(TTInst):
   name = 'SFPAND'
-  _ctor_name = "TT_SFPAND"
   opcode_ = FixedBitField(31, 24, 0x7E)
   imm12_math = BitField(23, 12)
   lreg_c = BitField(11, 8)
@@ -1017,7 +946,6 @@ class TTSFPAND(TTInst):
 
 class TTSFPOR(TTInst):
   name = 'SFPOR'
-  _ctor_name = "TT_SFPOR"
   opcode_ = FixedBitField(31, 24, 0x7F)
   imm12_math = BitField(23, 12)
   lreg_c = BitField(11, 8)
@@ -1026,7 +954,6 @@ class TTSFPOR(TTInst):
 
 class TTSFPNOT(TTInst):
   name = 'SFPNOT'
-  _ctor_name = "TT_SFPNOT"
   opcode_ = FixedBitField(31, 24, 0x80)
   imm12_math = BitField(23, 12)
   lreg_c = BitField(11, 8)
@@ -1035,7 +962,6 @@ class TTSFPNOT(TTInst):
 
 class TTSFPLZ(TTInst):
   name = 'SFPLZ'
-  _ctor_name = "TT_SFPLZ"
   opcode_ = FixedBitField(31, 24, 0x81)
   imm12_math = BitField(23, 12)
   lreg_c = BitField(11, 8)
@@ -1044,7 +970,6 @@ class TTSFPLZ(TTInst):
 
 class TTSFPSETEXP(TTInst):
   name = 'SFPSETEXP'
-  _ctor_name = "TT_SFPSETEXP"
   opcode_ = FixedBitField(31, 24, 0x82)
   imm12_math = BitField(23, 12)
   lreg_c = BitField(11, 8)
@@ -1053,7 +978,6 @@ class TTSFPSETEXP(TTInst):
 
 class TTSFPSETMAN(TTInst):
   name = 'SFPSETMAN'
-  _ctor_name = "TT_SFPSETMAN"
   opcode_ = FixedBitField(31, 24, 0x83)
   imm12_math = BitField(23, 12)
   lreg_c = BitField(11, 8)
@@ -1062,7 +986,6 @@ class TTSFPSETMAN(TTInst):
 
 class TTSFPMAD(TTInst):
   name = 'SFPMAD'
-  _ctor_name = "TT_SFPMAD"
   opcode_ = FixedBitField(31, 24, 0x84)
   lreg_src_a = BitField(19, 16)
   lreg_src_b = BitField(15, 12)
@@ -1072,7 +995,6 @@ class TTSFPMAD(TTInst):
 
 class TTSFPADD(TTInst):
   name = 'SFPADD'
-  _ctor_name = "TT_SFPADD"
   opcode_ = FixedBitField(31, 24, 0x85)
   lreg_src_a = BitField(19, 16)
   lreg_src_b = BitField(15, 12)
@@ -1082,7 +1004,6 @@ class TTSFPADD(TTInst):
 
 class TTSFPMUL(TTInst):
   name = 'SFPMUL'
-  _ctor_name = "TT_SFPMUL"
   opcode_ = FixedBitField(31, 24, 0x86)
   lreg_src_a = BitField(19, 16)
   lreg_src_b = BitField(15, 12)
@@ -1092,7 +1013,6 @@ class TTSFPMUL(TTInst):
 
 class TTSFPPUSHC(TTInst):
   name = 'SFPPUSHC'
-  _ctor_name = "TT_SFPPUSHC"
   opcode_ = FixedBitField(31, 24, 0x87)
   imm12_math = BitField(23, 12)
   lreg_c = BitField(11, 8)
@@ -1101,7 +1021,6 @@ class TTSFPPUSHC(TTInst):
 
 class TTSFPPOPC(TTInst):
   name = 'SFPPOPC'
-  _ctor_name = "TT_SFPPOPC"
   opcode_ = FixedBitField(31, 24, 0x88)
   imm12_math = BitField(23, 12)
   lreg_c = BitField(11, 8)
@@ -1110,7 +1029,6 @@ class TTSFPPOPC(TTInst):
 
 class TTSFPSETSGN(TTInst):
   name = 'SFPSETSGN'
-  _ctor_name = "TT_SFPSETSGN"
   opcode_ = FixedBitField(31, 24, 0x89)
   imm12_math = BitField(23, 12)
   lreg_c = BitField(11, 8)
@@ -1119,7 +1037,6 @@ class TTSFPSETSGN(TTInst):
 
 class TTSFPENCC(TTInst):
   name = 'SFPENCC'
-  _ctor_name = "TT_SFPENCC"
   opcode_ = FixedBitField(31, 24, 0x8A)
   imm12_math = BitField(23, 12)
   lreg_c = BitField(11, 8)
@@ -1128,7 +1045,6 @@ class TTSFPENCC(TTInst):
 
 class TTSFPCOMPC(TTInst):
   name = 'SFPCOMPC'
-  _ctor_name = "TT_SFPCOMPC"
   opcode_ = FixedBitField(31, 24, 0x8B)
   imm12_math = BitField(23, 12)
   lreg_c = BitField(11, 8)
@@ -1137,7 +1053,6 @@ class TTSFPCOMPC(TTInst):
 
 class TTSFPTRANSP(TTInst):
   name = 'SFPTRANSP'
-  _ctor_name = "TT_SFPTRANSP"
   opcode_ = FixedBitField(31, 24, 0x8C)
   imm12_math = BitField(23, 12)
   lreg_c = BitField(11, 8)
@@ -1146,7 +1061,6 @@ class TTSFPTRANSP(TTInst):
 
 class TTSFPXOR(TTInst):
   name = 'SFPXOR'
-  _ctor_name = "TT_SFPXOR"
   opcode_ = FixedBitField(31, 24, 0x8D)
   imm12_math = BitField(23, 12)
   lreg_c = BitField(11, 8)
@@ -1155,7 +1069,6 @@ class TTSFPXOR(TTInst):
 
 class TTSFPSTOCHRND(TTInst):
   name = 'SFPSTOCHRND'
-  _ctor_name = "TT_SFPSTOCHRND"
   opcode_ = FixedBitField(31, 24, 0x8E)
   rnd_mode = BitField(23, 21)
   imm8_math = BitField(23, 16)
@@ -1166,12 +1079,10 @@ class TTSFPSTOCHRND(TTInst):
 
 class TTSFPNOP(TTInst):
   name = 'SFPNOP'
-  _ctor_name = "TT_SFPNOP"
   opcode_ = FixedBitField(31, 24, 0x8F)
 
 class TTSFPCAST(TTInst):
   name = 'SFPCAST'
-  _ctor_name = "TT_SFPCAST"
   opcode_ = FixedBitField(31, 24, 0x90)
   lreg_src_c = BitField(11, 8)
   lreg_dest = BitField(7, 4)
@@ -1179,7 +1090,6 @@ class TTSFPCAST(TTInst):
 
 class TTSFPCONFIG(TTInst):
   name = 'SFPCONFIG'
-  _ctor_name = "TT_SFPCONFIG"
   opcode_ = FixedBitField(31, 24, 0x91)
   imm16_math = BitField(23, 8)
   config_dest = BitField(7, 4)
@@ -1187,7 +1097,6 @@ class TTSFPCONFIG(TTInst):
 
 class TTSFPSWAP(TTInst):
   name = 'SFPSWAP'
-  _ctor_name = "TT_SFPSWAP"
   opcode_ = FixedBitField(31, 24, 0x92)
   imm12_math = BitField(23, 12)
   lreg_src_c = BitField(11, 8)
@@ -1196,7 +1105,6 @@ class TTSFPSWAP(TTInst):
 
 class TTSFPLOADMACRO(TTInst):
   name = 'SFPLOADMACRO'
-  _ctor_name = "TT_SFPLOADMACRO"
   opcode_ = FixedBitField(31, 24, 0x93)
   lreg_ind = BitField(23, 20)
   instr_mod0 = BitField(19, 16)
@@ -1205,7 +1113,6 @@ class TTSFPLOADMACRO(TTInst):
 
 class TTSFPSHFT2(TTInst):
   name = 'SFPSHFT2'
-  _ctor_name = "TT_SFPSHFT2"
   opcode_ = FixedBitField(31, 24, 0x94)
   imm12_math = BitField(23, 12)
   lreg_src_c = BitField(11, 8)
@@ -1214,14 +1121,12 @@ class TTSFPSHFT2(TTInst):
 
 class TTSFPLUTFP32(TTInst):
   name = 'SFPLUTFP32'
-  _ctor_name = "TT_SFPLUTFP32"
   opcode_ = FixedBitField(31, 24, 0x95)
   lreg_dest = BitField(7, 4)
   instr_mod1 = BitField(3, 0)
 
 class TTSFPLE(TTInst):
   name = 'SFPLE'
-  _ctor_name = "TT_SFPLE"
   opcode_ = FixedBitField(31, 24, 0x96)
   imm12_math = BitField(23, 12)
   lreg_c = BitField(11, 8)
@@ -1230,7 +1135,6 @@ class TTSFPLE(TTInst):
 
 class TTSFPGT(TTInst):
   name = 'SFPGT'
-  _ctor_name = "TT_SFPGT"
   opcode_ = FixedBitField(31, 24, 0x97)
   imm12_math = BitField(23, 12)
   lreg_c = BitField(11, 8)
@@ -1239,7 +1143,6 @@ class TTSFPGT(TTInst):
 
 class TTSFPMUL24(TTInst):
   name = 'SFPMUL24'
-  _ctor_name = "TT_SFPMUL24"
   opcode_ = FixedBitField(31, 24, 0x98)
   lreg_src_a = BitField(19, 16)
   lreg_src_b = BitField(15, 12)
@@ -1249,7 +1152,6 @@ class TTSFPMUL24(TTInst):
 
 class TTSFPARECIP(TTInst):
   name = 'SFPARECIP'
-  _ctor_name = "TT_SFPARECIP"
   opcode_ = FixedBitField(31, 24, 0x99)
   imm12_math = BitField(23, 12)
   lreg_c = BitField(11, 8)
@@ -1258,26 +1160,22 @@ class TTSFPARECIP(TTInst):
 
 class TTATGETM(TTInst):
   name = 'ATGETM'
-  _ctor_name = "TT_ATGETM"
   opcode_ = FixedBitField(31, 24, 0xA0)
   mutex_index = BitField(23, 0)
 
 class TTATRELM(TTInst):
   name = 'ATRELM'
-  _ctor_name = "TT_ATRELM"
   opcode_ = FixedBitField(31, 24, 0xA1)
   mutex_index = BitField(23, 0)
 
 class TTSTALLWAIT(TTInst):
   name = 'STALLWAIT'
-  _ctor_name = "TT_STALLWAIT"
   opcode_ = FixedBitField(31, 24, 0xA2)
   stall_res = BitField(23, 15)
   wait_res = BitField(14, 0)
 
 class TTSEMINIT(TTInst):
   name = 'SEMINIT'
-  _ctor_name = "TT_SEMINIT"
   opcode_ = FixedBitField(31, 24, 0xA3)
   max_value = BitField(23, 20)
   init_value = BitField(19, 16)
@@ -1285,19 +1183,16 @@ class TTSEMINIT(TTInst):
 
 class TTSEMPOST(TTInst):
   name = 'SEMPOST'
-  _ctor_name = "TT_SEMPOST"
   opcode_ = FixedBitField(31, 24, 0xA4)
   sem_sel = BitField(9, 2)
 
 class TTSEMGET(TTInst):
   name = 'SEMGET'
-  _ctor_name = "TT_SEMGET"
   opcode_ = FixedBitField(31, 24, 0xA5)
   sem_sel = BitField(9, 2)
 
 class TTSEMWAIT(TTInst):
   name = 'SEMWAIT'
-  _ctor_name = "TT_SEMWAIT"
   opcode_ = FixedBitField(31, 24, 0xA6)
   stall_res = BitField(23, 15)
   sem_sel = BitField(9, 2)
@@ -1305,7 +1200,6 @@ class TTSEMWAIT(TTInst):
 
 class TTSTREAMWAIT(TTInst):
   name = 'STREAMWAIT'
-  _ctor_name = "TT_STREAMWAIT"
   opcode_ = FixedBitField(31, 24, 0xA7)
   stall_res = BitField(23, 15)
   target_value = BitField(13, 4)
@@ -1314,7 +1208,6 @@ class TTSTREAMWAIT(TTInst):
 
 class TTWRCFG(TTInst):
   name = 'WRCFG'
-  _ctor_name = "TT_WRCFG"
   opcode_ = FixedBitField(31, 24, 0xB0)
   GprAddress = BitField(21, 16)
   wr128b = BitField(15, 15)
@@ -1322,21 +1215,18 @@ class TTWRCFG(TTInst):
 
 class TTRDCFG(TTInst):
   name = 'RDCFG'
-  _ctor_name = "TT_RDCFG"
   opcode_ = FixedBitField(31, 24, 0xB1)
   GprAddress = BitField(21, 16)
   CfgReg = BitField(10, 0)
 
 class TTSETC16(TTInst):
   name = 'SETC16'
-  _ctor_name = "TT_SETC16"
   opcode_ = FixedBitField(31, 24, 0xB2)
   setc16_reg = BitField(23, 16)
   setc16_value = BitField(15, 0)
 
 class TTRMWCIB0(TTInst):
   name = 'RMWCIB0'
-  _ctor_name = "TT_RMWCIB0"
   opcode_ = FixedBitField(31, 24, 0xB3)
   Mask = BitField(23, 16)
   Data = BitField(15, 8)
@@ -1344,7 +1234,6 @@ class TTRMWCIB0(TTInst):
 
 class TTRMWCIB1(TTInst):
   name = 'RMWCIB1'
-  _ctor_name = "TT_RMWCIB1"
   opcode_ = FixedBitField(31, 24, 0xB4)
   Mask = BitField(23, 16)
   Data = BitField(15, 8)
@@ -1352,7 +1241,6 @@ class TTRMWCIB1(TTInst):
 
 class TTRMWCIB2(TTInst):
   name = 'RMWCIB2'
-  _ctor_name = "TT_RMWCIB2"
   opcode_ = FixedBitField(31, 24, 0xB5)
   Mask = BitField(23, 16)
   Data = BitField(15, 8)
@@ -1360,7 +1248,6 @@ class TTRMWCIB2(TTInst):
 
 class TTRMWCIB3(TTInst):
   name = 'RMWCIB3'
-  _ctor_name = "TT_RMWCIB3"
   opcode_ = FixedBitField(31, 24, 0xB6)
   Mask = BitField(23, 16)
   Data = BitField(15, 8)
@@ -1368,7 +1255,6 @@ class TTRMWCIB3(TTInst):
 
 class TTSTREAMWRCFG(TTInst):
   name = 'STREAMWRCFG'
-  _ctor_name = "TT_STREAMWRCFG"
   opcode_ = FixedBitField(31, 24, 0xB7)
   stream_id_sel = BitField(22, 21)
   StreamRegAddr = BitField(20, 11)
@@ -1376,7 +1262,6 @@ class TTSTREAMWRCFG(TTInst):
 
 class TTCFGSHIFTMASK(TTInst):
   name = 'CFGSHIFTMASK'
-  _ctor_name = "TT_CFGSHIFTMASK"
   opcode_ = FixedBitField(31, 24, 0xB8)
   mask_mode = BitField(23, 23)
   disable_mask_on_old_val = BitField(23, 23)
@@ -1392,125 +1277,9 @@ class TTCFGSHIFTMASK(TTInst):
 
 class TTWRCFG32(TTInst):
   name = 'WRCFG32'
-  _ctor_name = "TT_WRCFG32"
   opcode_ = FixedBitField(31, 24, 0xC0)
   GprAddress = BitField(23, 18)
   CfgReg = BitField(10, 0)
-
-TT_MOP = TTMOP
-TT_NOP = TTNOP
-TT_MOP_CFG = TTMOP_CFG
-TT_REPLAY = TTREPLAY
-TT_MOVD2A = TTMOVD2A
-TT_MOVD2B = TTMOVD2B
-TT_ZEROACC = TTZEROACC
-TT_ZEROSRC = TTZEROSRC
-TT_MOVA2D = TTMOVA2D
-TT_MOVB2D = TTMOVB2D
-TT_TRNSPSRCA = TTTRNSPSRCA
-TT_RAREB = TTRAREB
-TT_TRNSPSRCB = TTTRNSPSRCB
-TT_SHIFTXA = TTSHIFTXA
-TT_SHIFTXB = TTSHIFTXB
-TT_CLREXPHIST = TTCLREXPHIST
-TT_CONV3S1 = TTCONV3S1
-TT_CONV3S2 = TTCONV3S2
-TT_MFCONV3S1 = TTMFCONV3S1
-TT_APOOL3S1 = TTAPOOL3S1
-TT_MVMUL = TTMVMUL
-TT_ELWMUL = TTELWMUL
-TT_ELWADD = TTELWADD
-TT_DOTPV = TTDOTPV
-TT_MPOOL3S2 = TTMPOOL3S2
-TT_ELWSUB = TTELWSUB
-TT_MPOOL3S1 = TTMPOOL3S1
-TT_APOOL3S2 = TTAPOOL3S2
-TT_GMPOOL = TTGMPOOL
-TT_GAPOOL = TTGAPOOL
-TT_GATESRCRST = TTGATESRCRST
-TT_CLEARDVALID = TTCLEARDVALID
-TT_SETRWC = TTSETRWC
-TT_INCRWC = TTINCRWC
-TT_XMOV = TTXMOV
-TT_PACR = TTPACR
-TT_UNPACR = TTUNPACR
-TT_UNPACR_NOP = TTUNPACR_NOP
-TT_SETDMAREG = TTSETDMAREG
-TT_FLUSHDMA = TTFLUSHDMA
-TT_REG2FLOP = TTREG2FLOP
-TT_TBUFCMD = TTTBUFCMD
-TT_SETADC = TTSETADC
-TT_SETADCXY = TTSETADCXY
-TT_SETADCZW = TTSETADCZW
-TT_INCADCZW = TTINCADCZW
-TT_ADDDMAREG = TTADDDMAREG
-TT_MULDMAREG = TTMULDMAREG
-TT_BITWOPDMAREG = TTBITWOPDMAREG
-TT_SHIFTDMAREG = TTSHIFTDMAREG
-TT_CMPDMAREG = TTCMPDMAREG
-TT_SETADCXX = TTSETADCXX
-TT_DMANOP = TTDMANOP
-TT_STOREREG = TTSTOREREG
-TT_SFPLOAD = TTSFPLOAD
-TT_SFPLOADI = TTSFPLOADI
-TT_SFPSTORE = TTSFPSTORE
-TT_SFPLUT = TTSFPLUT
-TT_SFPMULI = TTSFPMULI
-TT_SFPADDI = TTSFPADDI
-TT_SFPDIVP2 = TTSFPDIVP2
-TT_SFPEXEXP = TTSFPEXEXP
-TT_SFPEXMAN = TTSFPEXMAN
-TT_SFPIADD = TTSFPIADD
-TT_SFPSHFT = TTSFPSHFT
-TT_SFPSETCC = TTSFPSETCC
-TT_SFPMOV = TTSFPMOV
-TT_SFPABS = TTSFPABS
-TT_SFPAND = TTSFPAND
-TT_SFPOR = TTSFPOR
-TT_SFPNOT = TTSFPNOT
-TT_SFPLZ = TTSFPLZ
-TT_SFPSETEXP = TTSFPSETEXP
-TT_SFPSETMAN = TTSFPSETMAN
-TT_SFPMAD = TTSFPMAD
-TT_SFPADD = TTSFPADD
-TT_SFPMUL = TTSFPMUL
-TT_SFPPUSHC = TTSFPPUSHC
-TT_SFPPOPC = TTSFPPOPC
-TT_SFPSETSGN = TTSFPSETSGN
-TT_SFPENCC = TTSFPENCC
-TT_SFPCOMPC = TTSFPCOMPC
-TT_SFPTRANSP = TTSFPTRANSP
-TT_SFPXOR = TTSFPXOR
-TT_SFPSTOCHRND = TTSFPSTOCHRND
-TT_SFPNOP = TTSFPNOP
-TT_SFPCAST = TTSFPCAST
-TT_SFPCONFIG = TTSFPCONFIG
-TT_SFPSWAP = TTSFPSWAP
-TT_SFPLOADMACRO = TTSFPLOADMACRO
-TT_SFPSHFT2 = TTSFPSHFT2
-TT_SFPLUTFP32 = TTSFPLUTFP32
-TT_SFPLE = TTSFPLE
-TT_SFPGT = TTSFPGT
-TT_SFPMUL24 = TTSFPMUL24
-TT_SFPARECIP = TTSFPARECIP
-TT_ATGETM = TTATGETM
-TT_ATRELM = TTATRELM
-TT_STALLWAIT = TTSTALLWAIT
-TT_SEMINIT = TTSEMINIT
-TT_SEMPOST = TTSEMPOST
-TT_SEMGET = TTSEMGET
-TT_SEMWAIT = TTSEMWAIT
-TT_STREAMWAIT = TTSTREAMWAIT
-TT_WRCFG = TTWRCFG
-TT_RDCFG = TTRDCFG
-TT_SETC16 = TTSETC16
-TT_RMWCIB0 = TTRMWCIB0
-TT_RMWCIB1 = TTRMWCIB1
-TT_RMWCIB2 = TTRMWCIB2
-TT_RMWCIB3 = TTRMWCIB3
-TT_STREAMWRCFG = TTSTREAMWRCFG
-TT_CFGSHIFTMASK = TTCFGSHIFTMASK
-TT_WRCFG32 = TTWRCFG32
 
 def _tt_fixed_field(cls, name):
   for field in cls._fields:

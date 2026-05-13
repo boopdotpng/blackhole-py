@@ -101,6 +101,33 @@ class Asm:
     self.items.extend(insns)
     return self
 
+  def __repr__(self) -> str:
+    labels_by_pc: dict[int, list[str]] = {}
+    for name, pc in self.labels.items():
+      labels_by_pc.setdefault(pc, []).append(name)
+
+    lines = []
+    for idx, item in enumerate(self.items):
+      pc = self.base + 4 * idx
+      for label in sorted(labels_by_pc.get(pc, [])):
+        lines.append(f"{label}:")
+      lines.append(f"  {pc:08x}: {self._repr_item(item)}")
+    for label in sorted(labels_by_pc.get(self.pc, [])):
+      lines.append(f"{label}:")
+    return "\n".join(lines)
+
+  def _repr_item(self, item) -> str:
+    if not isinstance(item, _Ref):
+      return repr(item)
+    args = ", ".join(repr(arg) for arg in item.operands)
+    if args:
+      args += ", "
+    try:
+      resolved = self._resolve(item)
+      return f"{item.op}({args}{item.label})  # {resolved!r}"
+    except ValueError:
+      return f"{item.op}({args}{item.label})"
+
   def label(self, name: str):
     if name in self.labels:
       raise ValueError(f"duplicate label {name!r}")
