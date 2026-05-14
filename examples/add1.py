@@ -3,7 +3,8 @@
 import os, struct, random
 import numpy as np
 
-from device import Device, CBConfig, Dtype, Program
+from device import Device
+from program import Dtype, Program
 
 K_READER = r"""
 #include <cstdint>
@@ -136,7 +137,7 @@ def main():
 
     prog = Program(
       cores=num_cores, reader_kernel=K_READER, compute_kernel=K_COMPUTE, writer_kernel=K_WRITER,
-      cbs=[CBConfig(index=0, dtype=Dtype.Float16_b, tiles=2), CBConfig(index=16, dtype=Dtype.Float16_b, tiles=2)],
+      cbs=[(0, Dtype.Float16_b.tile_size, 2), (16, Dtype.Float16_b.tile_size, 2)],
       reader_args=reader_args, writer_args=writer_args, compute_args=compute_args, name="add1",
     )
     device.queue(prog)

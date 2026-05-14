@@ -1,16 +1,14 @@
 from __future__ import annotations
-
 import ctypes
 import struct
 from ctypes import c_uint8 as u8, c_uint16 as u16, c_uint32 as u32
 from dataclasses import dataclass, field
 from enum import Enum
-from asm import Kernel, Segment
-from l1 import L1_ALIGN, S, TensixL1, align_up, as_bytes
+from asm import FIRMWARE_TEXT_BASE, Kernel, Segment, boot_jal
+from l1 import L1_ALIGN, S, TensixL1, TensixMMIO, align_up, as_bytes, build_bank_noc_table
 
 Core = tuple[int, int]
 Rect = tuple[int, int, int, int]
-
 
 class DevMsgs:
   RUN_MSG_INIT = 0x40
@@ -22,11 +20,9 @@ class DevMsgs:
   ProgrammableCoreType_COUNT = 3
   MaxProcessorsPerCoreType = 5
 
-
 class _RtaOffset(S):
   _pack_ = 1
   _fields_ = [("rta_offset", u16), ("crta_offset", u16)]
-
 
 class _KernelConfigMsg(S):
   _pack_ = 1
@@ -54,11 +50,9 @@ class _KernelConfigMsg(S):
     ("preload", u8),
   ]
 
-
 class LaunchMsg(S):
   _pack_ = 1
   _fields_ = [("kernel_config", _KernelConfigMsg)]
-
 
 class _GoMsgBits(S):
   _pack_ = 1
@@ -69,14 +63,11 @@ class _GoMsgBits(S):
     ("signal", u8),
   ]
 
-
 class GoMsg(ctypes.Union):
   _pack_ = 1
   _fields_ = [("all", u32), ("bits", _GoMsgBits)]
 
-
 FAST_CQ_NUM_CIRCULAR_BUFFERS = 32
-
 
 class Dtype(Enum):
   Float32 = 0
@@ -96,15 +87,11 @@ class Dtype(Enum):
   def tile_size(self) -> int:
     return 32 * 32 * self.bpe
 
-
 class MathFidelity(Enum):
   LoFi = 0
   HiFi2 = 2
 
-
 def mcast_rects(cores: list[Core]) -> list[Rect]:
-  if not cores:
-    return []
   remaining = set(cores)
   rects = []
   while remaining:
@@ -121,13 +108,11 @@ def mcast_rects(cores: list[Core]) -> list[Rect]:
     rects.append((x0, x1, y0, y1))
   return rects
 
-
 @dataclass(frozen=True)
 class McastWrite:
   rects: list[Rect]
   addr: int
   data: bytes
-
 
 @dataclass(frozen=True)
 class UnicastWrite:
@@ -135,48 +120,65 @@ class UnicastWrite:
   addr: int
   data: list[bytes]
 
-
 @dataclass(frozen=True)
 class Run:
   cores: list[Core]
 
+@dataclass(frozen=True)
+class McastMmioWrite32:
+  rects: list[Rect]
+  addr: int
+  value: int
 
-IRCommand = McastWrite | UnicastWrite | Run
+@dataclass(frozen=True)
+class PollL1Byte:
+  core: Core
+  addr: int
+  value: int
+  timeout_s: float
+
+IRCommand = McastWrite | UnicastWrite | Run | McastMmioWrite32 | PollL1Byte
 
 # RTA order matches launch processor slots.
-CORE_ROLES = ("brisc", "ncrisc", "trisc0", "trisc1", "trisc2")
-ROLE_INDEX = {role: i for i, role in enumerate(CORE_ROLES)}
+ROLE_INDEX = {"brisc": 0, "ncrisc": 1, "trisc0": 2, "trisc1": 3, "trisc2": 4}
+
+def lower_firmware_boot(firmware: dict[str, Kernel], all_cores: list[Core], harvested_dram_bank: int | None) -> list[IRCommand]:
+  rects = mcast_rects(all_cores)
+  go_init = struct.pack("<BBBB", 0, 0, 0, DevMsgs.RUN_MSG_INIT)
+  bank_table = build_bank_noc_table(harvested_dram_bank, all_cores)
+
+  commands: list[IRCommand] = [
+    McastMmioWrite32(rects, TensixMMIO.RISCV_DEBUG_REG_SOFT_RESET_0, TensixMMIO.SOFT_RESET_ALL),
+  ]
+  for role in ROLE_INDEX:
+    for segment in firmware[role].compile(): commands.append(McastWrite(rects, segment.addr, segment.data))
+
+  commands.extend([
+    McastWrite(rects, 0, boot_jal(FIRMWARE_TEXT_BASE["brisc"])),
+    McastWrite(rects, TensixL1.GO_MSG, go_init),
+    McastWrite(rects, TensixL1.MEM_BANK_TO_NOC_SCRATCH, bank_table),
+    McastMmioWrite32(rects, TensixMMIO.RISCV_DEBUG_REG_NCRISC_RESET_PC, FIRMWARE_TEXT_BASE["ncrisc"]),
+    McastMmioWrite32(rects, TensixMMIO.RISCV_DEBUG_REG_TRISC0_RESET_PC, FIRMWARE_TEXT_BASE["trisc0"]),
+    McastMmioWrite32(rects, TensixMMIO.RISCV_DEBUG_REG_TRISC1_RESET_PC, FIRMWARE_TEXT_BASE["trisc1"]),
+    McastMmioWrite32(rects, TensixMMIO.RISCV_DEBUG_REG_TRISC2_RESET_PC, FIRMWARE_TEXT_BASE["trisc2"]),
+    McastMmioWrite32(rects, TensixMMIO.RISCV_DEBUG_REG_SOFT_RESET_0, TensixMMIO.SOFT_RESET_BRISC_ONLY_RUN),
+    PollL1Byte(all_cores[0], TensixL1.GO_MSG + 3, DevMsgs.RUN_MSG_DONE, 2.0),
+  ])
+  return commands
 
 def _args_blob(values) -> bytes:
   return b"".join((int(x) & 0xFFFFFFFF).to_bytes(4, "little") for x in values)
 
-def _layout_args(args_by_role: dict[str, list[int]], base: int = 0, align_each: bool = False) -> tuple[dict[str, int], bytes]:
-  offsets = {}
-  blob = b""
-  for role in CORE_ROLES:
-    offsets[role] = base + len(blob)
-    blob += _args_blob(args_by_role[role])
-    if align_each:
-      blob = blob.ljust(align_up(len(blob), L1_ALIGN), b"\0")
-  return offsets, blob
-
-def _cb_fields(cb) -> tuple[int, int, int]:
-  if hasattr(cb, "index"):
-    page_size = cb.dtype.tile_size if hasattr(cb, "dtype") else cb.page_size
-    return cb.index, page_size, cb.tiles
-  return cb
-
-def _build_cb_blob(cbs) -> tuple[int, bytes]:
+def _build_cb_blob(cbs: list[tuple[int, int, int]]) -> tuple[int, bytes]:
   if not cbs:
     return 0, b""
-  fields = [_cb_fields(cb) for cb in cbs]
   mask = 0
-  for index, _, _ in fields:
+  for index, _, _ in cbs:
     mask |= 1 << index
   arr = bytearray(mask.bit_length() * 16)
   addr = TensixL1.DATA_BUFFER_SPACE_BASE
   shared_addr: dict[int, int] = {}
-  for index, page_size, tiles in fields:
+  for index, page_size, tiles in cbs:
     share_with = {16: 24, 24: 16}.get(index)
     if share_with is not None and share_with in shared_addr:
       cb_addr = shared_addr[share_with]
@@ -187,48 +189,14 @@ def _build_cb_blob(cbs) -> tuple[int, bytes]:
     struct.pack_into("<IIII", arr, index * 16, cb_addr, page_size * tiles, tiles, page_size)
   return mask, bytes(arr)
 
-def _kernel_text_layout(compiled: dict[str, list], start: int) -> tuple[dict[str, tuple[int, int]], int, int]:
-  bases = {}
-  enables = 0
-  off = start
-  for role in CORE_ROLES:
-    blobs = compiled[role]
-    if not blobs:
-      continue
-    src_base = min(blob.addr for blob in blobs)
-    src_end = max(blob.addr + len(blob.data) for blob in blobs)
-    bases[role] = (off, src_base)
-    off = align_up(off + src_end - src_base, L1_ALIGN)
-    enables |= 1 << ROLE_INDEX[role]
-  return bases, off, enables
-
-def _common_segments(per_core_segments: dict[Core, list[Segment]]) -> tuple[list[Segment], dict[Core, list[Segment]]]:
-  per_core = {core: [] for core in per_core_segments}
-  if not per_core_segments:
-    return [], per_core
-
-  common_keys = set.intersection(*(
-    {(seg.addr, seg.data, seg.label) for seg in segments if seg.label != "rta"}
-    for segments in per_core_segments.values()
-  ))
-
-  common = []
-  seen = set()
+def _shared_segment_groups(per_core_segments: dict[Core, list[Segment]]) -> dict[tuple[int, bytes, str], list[Core]]:
+  groups: dict[tuple[int, bytes, str], list[Core]] = {}
   for core, segments in per_core_segments.items():
     for seg in segments:
-      key = (seg.addr, seg.data, seg.label)
-      if key in common_keys:
-        if key not in seen:
-          common.append(seg)
-          seen.add(key)
-      else:
-        per_core[core].append(seg)
-  return common, per_core
-
-@dataclass
-class Layout:
-  common: list[Segment]
-  per_core: dict[Core, list[Segment]]
+      if seg.label == "rta":
+        continue
+      groups.setdefault((seg.addr, seg.data, seg.label), []).append(core)
+  return groups
 
 @dataclass
 class Program:
@@ -239,20 +207,25 @@ class Program:
   trisc2: Kernel
   brisc_recv: Kernel | None = None
   ncrisc_recv: Kernel | None = None
-  cbs: list[object] = field(default_factory=list)
+  cbs: list[tuple[int, int, int]] = field(default_factory=list)  # (cb_index, page_size, tiles)
   semaphores: int = 0
+  num_cores: int | None = None
   grid: tuple[tuple[int, ...], tuple[int, ...]] | None = None
 
   def __post_init__(self):
     self.cbs = list(self.cbs)
+    if self.num_cores is not None and self.num_cores <= 0:
+      raise ValueError("Program.num_cores must be positive")
+    if self.num_cores is not None and self.grid is not None:
+      raise ValueError("Program cannot set both num_cores and grid")
 
   @property
   def kernel_map(self) -> dict[str, Kernel]:
-    return {role: getattr(self, role) for role in CORE_ROLES}
+    return {role: getattr(self, role) for role in ROLE_INDEX}
 
-  def active_cores(self) -> list[Core]:
+  def grid_cores(self) -> list[Core]:
     if self.grid is None:
-      raise ValueError("active_cores() needs Program.grid")
+      raise ValueError("grid_cores() needs Program.grid")
     rows, cols = self.grid
     return [(x, y) for y in rows for x in cols]
 
@@ -296,8 +269,7 @@ class Program:
     cfg.brisc_noc_mode = 0
     cfg.mode = dispatch_mode
     cfg.host_assigned_id = host_assigned_id
-    for role in CORE_ROLES:
-      idx = ROLE_INDEX[role]
+    for role, idx in ROLE_INDEX.items():
       cfg.rta_offset[idx].rta_offset = rta_offsets[role]
       cfg.kernel_text_offset[idx] = kernel_text_offsets[role]
     return launch
@@ -311,24 +283,42 @@ class Program:
     if core_xy is None and any(kernel.rtas is not None for kernel in selected.values()):
       raise ValueError("kernel RTAs need core_xy")
     xy = core_xy if core_xy is not None else (0, 0)
-    rtas = {role: list(kernel.rtas(*xy)) if kernel.rtas is not None else [] for role, kernel in selected.items()}
 
-    rta_offsets, rta_blob = _layout_args(rtas)
+    rta_offsets = {}
+    rta_blob = b""
+    for role in ROLE_INDEX:
+      rta_offsets[role] = len(rta_blob)
+      kernel = selected[role]
+      rta_blob += _args_blob(kernel.rtas(*xy) if kernel.rtas is not None else [])
     rta_total = align_up(len(rta_blob), L1_ALIGN)
     rta = rta_blob.ljust(rta_total, b"\0")
 
     sem_off = rta_total
     semaphores = b"\0" * (self.semaphores * L1_ALIGN)
-
     local_cb_off = align_up(sem_off + self.semaphores * L1_ALIGN, L1_ALIGN)
+
     cb_mask, cb_blob = _build_cb_blob(self.cbs)
     remote_cb_off = local_cb_off + len(cb_blob)
+    off = align_up(remote_cb_off, L1_ALIGN)
 
-    kernel_start = align_up(remote_cb_off, L1_ALIGN)
-    kernel_bases, end_off, enables = _kernel_text_layout(compiled, kernel_start)
-    kernel_text_offsets = {role: kernel_bases.get(role, (0, 0))[0] for role in CORE_ROLES}
+    enables = 0
+    kernel_text_offsets = {role: 0 for role in ROLE_INDEX}
+    kernel_segments = []
+    for role, idx in ROLE_INDEX.items():
+      blobs = compiled[role]
+      if not blobs:
+        continue
+      src_base = min(blob.addr for blob in blobs)
+      src_end = max(blob.addr + len(blob.data) for blob in blobs)
+      kernel_text_offsets[role] = off
+      enables |= 1 << idx
+      for blob in blobs:
+        addr = TensixL1.KERNEL_CONFIG_BASE + off + blob.addr - src_base
+        label = f"{role}.{blob.label or 'kernel'}"
+        kernel_segments.append(Segment(addr, blob.data, label=label))
+      off = align_up(off + src_end - src_base, L1_ALIGN)
 
-    if TensixL1.KERNEL_CONFIG_BASE + end_off > TensixL1.DATA_BUFFER_SPACE_BASE:
+    if TensixL1.KERNEL_CONFIG_BASE + off > TensixL1.DATA_BUFFER_SPACE_BASE:
       raise ValueError("program config and kernel text overlap data buffer space")
 
     launch = self._build_launch(
@@ -350,11 +340,7 @@ class Program:
       segments.append(Segment(TensixL1.KERNEL_CONFIG_BASE + sem_off, semaphores, label="semaphores"))
     if cb_blob:
       segments.append(Segment(TensixL1.KERNEL_CONFIG_BASE + local_cb_off, cb_blob, label="cb_config"))
-    for role, (kernel_base, src_base) in kernel_bases.items():
-      for blob in compiled[role]:
-        label = f"{role}.{blob.label or 'kernel'}"
-        addr = TensixL1.KERNEL_CONFIG_BASE + kernel_base + blob.addr - src_base
-        segments.append(Segment(addr, blob.data, label=label))
+    segments.extend(kernel_segments)
     segments.append(Segment(TensixL1.LAUNCH, as_bytes(launch), label="launch"))
 
     return segments
@@ -362,19 +348,17 @@ class Program:
   def layout(self, **kw) -> list[Segment]:
     return self._layout_core(**kw)
 
-  def layouts(self, cores: list[Core] | None = None, **kw) -> Layout:
-    if cores is None:
-      cores = self.active_cores()
-    per_core_segments = {core: self._layout_core(core_xy=core, **kw) for core in cores}
-    common, per_core = _common_segments(per_core_segments)
-    return Layout(common, per_core)
-
   def _target_cores(self, cores: list[Core] | None) -> list[Core]:
     if self.grid is not None:
-      return self.active_cores()
+      return self.grid_cores()
     if cores is None:
       raise ValueError("Program.lower() needs cores when Program.grid is unset")
-    return list(cores)
+    ordered = sorted(cores, key=lambda xy: (xy[1], xy[0]))
+    if self.num_cores is None:
+      return ordered
+    if self.num_cores > len(ordered):
+      raise ValueError(f"Program requested {self.num_cores} cores, only {len(ordered)} available")
+    return ordered[:self.num_cores]
 
   def lower(
     self, cores: list[Core] | None = None, *,
@@ -392,23 +376,14 @@ class Program:
       McastWrite(mcast_rects(target_cores), TensixL1.GO_MSG_INDEX, b"\0\0\0\0"),
     ]
 
-    rta_blobs = []
-    for core in target_cores:
-      rta = next((seg.data for seg in per_core_segments[core] if seg.label == "rta"), b"")
-      rta_blobs.append(rta)
+    rta_blobs = [
+      next((seg.data for seg in per_core_segments[core] if seg.label == "rta"), b"")
+      for core in target_cores
+    ]
     if any(rta_blobs):
-      rta_size = max(len(blob) for blob in rta_blobs)
-      rta_blobs = [blob.ljust(rta_size, b"\0") for blob in rta_blobs]
       commands.append(UnicastWrite(target_cores, TensixL1.KERNEL_CONFIG_BASE, rta_blobs))
 
-    shared_by_segment: dict[tuple[int, bytes, str], list[Core]] = {}
-    for core, segments in per_core_segments.items():
-      for seg in segments:
-        if seg.label == "rta":
-          continue
-        shared_by_segment.setdefault((seg.addr, seg.data, seg.label), []).append(core)
-
-    for (addr, data, _), segment_cores in shared_by_segment.items():
+    for (addr, data, _), segment_cores in _shared_segment_groups(per_core_segments).items():
       commands.append(McastWrite(mcast_rects(segment_cores), addr, data))
 
     commands.append(Run(target_cores))

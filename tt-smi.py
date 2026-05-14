@@ -124,7 +124,7 @@ def _device_snapshot(dev: PCIDevice) -> dict:
   board = dev.board_info(layout)
   core_count = board.core_count
   board_name = board.arch
-  harv_banks = board.harvested_dram_banks
+  harv_bank = board.harvested_dram_bank
 
   # Denominators for progress bars
   shutdown = tag("THM_LIMIT_SHUTDOWN")
@@ -162,7 +162,7 @@ def _device_snapshot(dev: PCIDevice) -> dict:
   if board_name: right.append(("Board", board_name, None))
   if link := _pcie_link(dev): right.append(("PCIe link", link, None))
   if core_count is not None: right.append(("Tensix cores", str(core_count), None))
-  if harv_banks: right.append(("Harvested DRAM", _format_ranges(harv_banks), None))
+  if harv_bank is not None: right.append(("Harvested DRAM", str(harv_bank), None))
   right += rows(["AICLK", "AXICLK", "ARCCLK", "AICLK_LIMIT_MAX"])
 
   return {"layout": layout, "summary_left": left, "summary_right": right,

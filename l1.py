@@ -119,16 +119,16 @@ def active_tensix_core_count(enabled_col_mask: int) -> int:
   return (enabled_col_mask & Arc.DEFAULT_TENSIX_ENABLED).bit_count() * 10
 
 
-def build_bank_noc_table(harvested_dram_banks: list[int], worker_cores: list[Core]) -> bytes:
-  num_dram_banks = Dram.BANK_COUNT - len(harvested_dram_banks)
+def build_bank_noc_table(harvested_dram_bank: int | None, worker_cores: list[Core]) -> bytes:
+  num_dram_banks = Dram.BANK_COUNT if harvested_dram_bank is None else Dram.BANK_COUNT - 1
   num_l1_banks = len(worker_cores)
   nocs, ports = 2, 3
   bank_port = [[2, 1], [0, 1], [0, 1], [0, 1], [2, 1], [2, 1], [2, 1], [2, 1]]
 
-  if len(harvested_dram_banks) == 0:
+  if harvested_dram_bank is None:
     bank_xy = {b: (17 if b < 4 else 18, 12 + (b % 4) * ports) for b in range(Dram.BANK_COUNT)}
-  elif len(harvested_dram_banks) == 1:
-    h = harvested_dram_banks[0]
+  else:
+    h = harvested_dram_bank
     half = 4
     mirror = h + half - 1 if h < half else h - half
     if h < half:
@@ -139,8 +139,6 @@ def build_bank_noc_table(harvested_dram_banks: list[int], worker_cores: list[Cor
       right = list(range(half, Dram.BANK_COUNT - 1))
     bank_xy = {b: (18, 12 + i * ports) for i, b in enumerate(right)}
     bank_xy.update({b: (17, 12 + i * ports) for i, b in enumerate(left)})
-  else:
-    raise ValueError(f"unsupported harvested DRAM bank count: {len(harvested_dram_banks)}")
 
   dram = []
   for noc in range(nocs):

@@ -49,17 +49,11 @@ class DramBuffer:
   def size(self) -> int: return self.num_tiles * self.page_size
 
 @dataclass(frozen=True)
-class CBConfig:
-  index: int
-  dtype: Dtype
-  tiles: int
-
-@dataclass(frozen=True)
 class CppTransferKernelSpec:
   name: str
   cores: int
   reader_kernel: str
-  cbs: list[CBConfig]
+  cbs: list[tuple[int, int, int]]
   reader_args: object
 
 # DMA copy kernels: sysmem <-> interleaved DRAM (no tilize/untilize compute)
@@ -150,7 +144,7 @@ def build_transfer_program(
 
   return CppTransferKernelSpec(
     cores=n, name=name, reader_kernel=rk,
-    cbs=[CBConfig(index=0, dtype=buf.dtype, tiles=2)],
+    cbs=[(0, buf.dtype.tile_size, 2)],
     reader_args=tile_args,
   ), buf.size
 

@@ -101,7 +101,7 @@ class BoardInfo:
   tensix_columns: tuple[int, ...]
   worker_cores: list[Core]
   enabled_gddr: int
-  harvested_dram_banks: list[int]
+  harvested_dram_bank: int | None
   prefetch_core: Core
   dispatch_core: Core
 
@@ -111,7 +111,7 @@ class BoardInfo:
 
   @property
   def num_dram_banks(self) -> int:
-    return 8 - len(self.harvested_dram_banks)
+    return 8 if self.harvested_dram_bank is None else 7
 
   @property
   def cq_cores(self) -> set[Core]:
@@ -519,7 +519,10 @@ class PCIDevice:
     if not columns:
       raise RuntimeError(f"no enabled Tensix columns in ARC telemetry mask 0x{enabled_tensix:x}")
     rightmost_x = columns[-1]
-    harvested_dram = [bank for bank in range(8) if ((enabled_gddr >> bank) & 1) == 0]
+    harvested_dram_banks = [bank for bank in range(8) if ((enabled_gddr >> bank) & 1) == 0]
+    if len(harvested_dram_banks) > 1:
+      raise RuntimeError(f"unsupported harvested DRAM banks: {harvested_dram_banks}")
+    harvested_dram_bank = harvested_dram_banks[0] if harvested_dram_banks else None
     return BoardInfo(
       board_id=board_id,
       arch=arch,
@@ -528,7 +531,7 @@ class PCIDevice:
       tensix_columns=columns,
       worker_cores=workers,
       enabled_gddr=enabled_gddr,
-      harvested_dram_banks=harvested_dram,
+      harvested_dram_bank=harvested_dram_bank,
       prefetch_core=(rightmost_x, 2),
       dispatch_core=(rightmost_x, 3),
     )
