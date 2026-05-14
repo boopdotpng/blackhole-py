@@ -1,6 +1,4 @@
 from __future__ import annotations
-
-import dsl
 from dsl import Reg, ra, t0, t1, t2, t3, t4, zero
 
 GO_MSG = 0x370
@@ -70,7 +68,7 @@ class FirmwareFlowMixin:
   def launch_kernel_enabled(self, role_index: int, *, enabled: Reg = t0, mask: Reg = t1):
     self.read32(enabled, LAUNCH + LAUNCH_ENABLES)
     self.li(mask, 1 << role_index)
-    return self.emit(dsl.and_(enabled, enabled, mask))
+    return self.and_(enabled, enabled, mask)
 
   def run_launch_kernel(self, role_index: int, *, launch: Reg = t0, config_base: Reg = t1,
                         offset: Reg = t2, entry: Reg = t3, enabled: Reg = t4):

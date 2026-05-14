@@ -139,10 +139,8 @@ class Asm(FirmwareLibMixin):
     return self.emit(getattr(dsl, name)(*args))
 
   def __getattr__(self, name: str):
-    # Python keywords cannot be method names, so use and_/or_ for those opcodes.
-    opname = {"and_": "and", "or_": "or"}.get(name, name)
-    if hasattr(dsl, opname) and callable(getattr(dsl, opname)):
-      return lambda *args: self._rv_emit(opname, *args)
+    if hasattr(dsl, name) and callable(getattr(dsl, name)):
+      return lambda *args: self._rv_emit(name, *args)
     raise AttributeError(name)
 
   # Pseudo-instructions.
