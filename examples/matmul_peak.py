@@ -3,8 +3,8 @@ import os, sys, time
 from dataclasses import dataclass
 import numpy as np
 
-from hw import *
-from dispatch import *
+from l1 import *
+from program import *
 from device import Device, DramBuffer, Dtype, MathFidelity
 
 IO_MODE = "f16" if os.environ.get("F16") == "1" else "bf16"

@@ -36,7 +36,7 @@ from emu.memory import (
 )
 from emu.noc import noc_key
 from emu.scratch import HARVESTED_DRAM_BANKS, bf16, f32_from_bf16
-from dispatch import Dtype
+from program import Dtype
 from dram import tilize, untilize
 
 
@@ -664,4 +664,3 @@ def test_export_raw_kernel_case_sources_and_cb_config(tmp_path):
   assert "export_weird_cb" in data
   assert '"cb": 3' in data
   assert '"trisc0"' in data
-

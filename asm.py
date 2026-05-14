@@ -4,11 +4,9 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 import dsl
 from dsl import Reg, ra, zero
+from mixins import FirmwareLibMixin
 
 CoreArgs = Callable[[int, int], list[int]]
-
-_ZERO = zero
-_RA = ra
 
 @dataclass(frozen=True)
 class _Ref:
@@ -25,13 +23,7 @@ class Cond:
   tmp: Reg | None = None
 
 @dataclass(frozen=True)
-class KernelBlob:
-  addr: int
-  data: bytes
-  label: str = ""
-
-@dataclass(frozen=True)
-class LoadSegment:
+class Segment:
   addr: int
   data: bytes
   label: str = ""
@@ -74,6 +66,9 @@ _FIRMWARE_RESERVED_STACK = {
 def _u32(v: int) -> bytes:
   return (v & 0xFFFFFFFF).to_bytes(4, "little")
 
+def boot_jal(target: int) -> bytes:
+  return dsl.jal(zero, target).to_bytes()
+
 _FIRMWARE_LOCAL_DATA = {
   "brisc": b"",
   "ncrisc": b"\0" * 40,
@@ -82,7 +77,7 @@ _FIRMWARE_LOCAL_DATA = {
   "trisc2": bytes([16]) * 32 + bytes([4]) * 32 + b"\0" * 32 + bytes([5]) * 32 + bytes([5]) * 32,
 }
 
-class Asm:
+class Asm(FirmwareLibMixin):
   def __init__(self, *, base: int = 0):
     self.base = base
     self.items = []
@@ -153,7 +148,7 @@ class Asm:
   # Pseudo-instructions.
   def li(self, rd: Reg, imm: int):
     if -2048 <= imm <= 2047:
-      return self.addi(rd, _ZERO, imm)
+      return self.addi(rd, zero, imm)
     imm32 = imm & 0xFFFFFFFF
     signed = imm32 - 0x100000000 if imm32 & 0x80000000 else imm32
     # Round up when bit 11 is set because addi sign-extends the low 12 bits.
@@ -165,10 +160,10 @@ class Asm:
     return self
 
   def mv(self, rd: Reg, rs: Reg): return self.addi(rd, rs, 0)
-  def nop(self): return self.addi(_ZERO, _ZERO, 0)
-  def j(self, label: str): return self._ref("jal", (_ZERO,), label)
-  def call(self, label: str): return self._ref("jal", (_RA,), label)
-  def ret(self): return self.jalr(_ZERO, _RA, 0)
+  def nop(self): return self.addi(zero, zero, 0)
+  def j(self, label: str): return self._ref("jal", (zero,), label)
+  def call(self, label: str): return self._ref("jal", (ra,), label)
+  def ret(self): return self.jalr(zero, ra, 0)
 
   def _cond_regs(self, c: Cond) -> tuple[Reg, Reg]:
     if isinstance(c.rhs, Reg):
@@ -279,15 +274,24 @@ class Asm:
 class Kernel(Asm):
   def __init__(
     self, *, kind: str, base: int | None = None, upload_base: int | None = None,
-    rtas: CoreArgs | None = None,
+    rtas: CoreArgs | None = None, _firmware: bool = False,
   ):
     if kind not in KERNEL_KINDS:
       raise ValueError(f"unknown kernel kind {kind!r}")
+    if _firmware:
+      base = FIRMWARE_TEXT_BASE[kind]
     super().__init__(base=0 if base is None else base)
     self.upload_base = self.base if upload_base is None else upload_base
     self.rtas = rtas
     self.kind = kind
-    self.load_segments: list[LoadSegment] = []
+    self.is_firmware = _firmware
+    self.load_segments: list[Segment] = []
+
+  @classmethod
+  def firmware(cls, kind: str) -> Kernel:
+    if kind not in FIRMWARE_TEXT_BASE:
+      raise ValueError(f"unknown firmware kind {kind!r}")
+    return cls(kind=kind, _firmware=True)
 
   def rta(self, fn: CoreArgs):
     if not callable(fn):
@@ -296,37 +300,34 @@ class Kernel(Asm):
     return self
 
   def segment(self, addr: int, data: bytes, *, label: str = "segment"):
-    self.load_segments.append(LoadSegment(addr, bytes(data), label))
+    self.load_segments.append(Segment(addr, bytes(data), label))
     return self
 
-  def compile(self) -> list[KernelBlob]:
+  def compile(self) -> list[Segment]:
     text = self.to_bytes()
     blobs = []
     if text:
-      blobs.append(KernelBlob(self.upload_base, text, label="text"))
+      blobs.append(Segment(self.upload_base, text, label="text"))
     for seg in self.load_segments:
       if seg.data:
-        blobs.append(KernelBlob(seg.addr, seg.data, label=seg.label))
-    return blobs
-
-class Firmware(Kernel):
-  def __init__(self, kind: str):
-    if kind not in FIRMWARE_TEXT_BASE:
-      raise ValueError(f"unknown firmware kind {kind!r}")
-    super().__init__(kind=kind, base=FIRMWARE_TEXT_BASE[kind])
-
-  def compile(self) -> list[KernelBlob]:
+        blobs.append(Segment(seg.addr, seg.data, label=seg.label))
+    if not self.is_firmware:
+      return blobs
     blobs = [
-      KernelBlob(seg.addr, seg.data, label=f"{self.kind}.{seg.label or 'segment'}")
-      for seg in super().compile()
+      Segment(seg.addr, seg.data, label=f"{self.kind}.{seg.label or 'segment'}")
+      for seg in blobs
     ]
     local_data = _FIRMWARE_LOCAL_DATA[self.kind]
     local_memsz = max(
       len(local_data),
       _FIRMWARE_LOCAL_MEM_SIZE[self.kind] - _FIRMWARE_RESERVED_STACK[self.kind],
     )
-    if local_memsz:
-      blobs.append(KernelBlob(
+    has_local_data = any(
+      seg.addr == FIRMWARE_SCRATCH_BASE[self.kind] and seg.label == "local_data"
+      for seg in self.load_segments
+    )
+    if local_memsz and not has_local_data:
+      blobs.append(Segment(
         FIRMWARE_SCRATCH_BASE[self.kind],
         local_data.ljust(local_memsz, b"\0"),
         label=f"{self.kind}.local_data",

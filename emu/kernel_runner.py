@@ -50,7 +50,7 @@ from emu.scratch import (
   write_dm_cb_interface_to_ldm,
   write_trisc_cb_interface,
 )
-from dispatch import Dtype
+from program import Dtype
 from emu.device import Device
 from firmware import build_kernels
 from firmware.extract_ptload import process as extract_ptload

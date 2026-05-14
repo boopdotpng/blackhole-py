@@ -3,26 +3,11 @@ import argparse
 import curses
 import sys
 import time
-from hw import Arc, Dram, active_tensix_core_count
+from l1 import Arc, Dram
 from pcie import PCIDevice, TLB_2M_SIZE
 
 def telemetry_layout(dev: PCIDevice) -> dict:
-  table_base = dev.read_arc_apb32(dev.SCRATCH_RAM_13)
-  data_base = dev.read_arc_apb32(dev.SCRATCH_RAM_12)
-  if table_base in (0, 0xFFFFFFFF) or data_base in (0, 0xFFFFFFFF):
-    raise RuntimeError(f"invalid ARC telemetry pointers table=0x{table_base:x} data=0x{data_base:x}")
-  tlb = dev.alloc_tlb(TLB_2M_SIZE)
-  try:
-    version = dev._read_arc_noc32(table_base, tlb)
-    entry_count = dev._read_arc_noc32(table_base + 4, tlb)
-    tag_to_offset = {}
-    for i in range(entry_count):
-      tag_offset = dev._read_arc_noc32(table_base + 8 + i * 4, tlb)
-      tag_to_offset[tag_offset & 0xFFFF] = (tag_offset >> 16) & 0xFFFF
-  finally:
-    dev.free_tlb(tlb)
-  return {"version": version, "table_base": table_base, "data_base": data_base,
-          "entry_count": entry_count, "tag_to_offset": tag_to_offset}
+  return dev.telemetry_layout()
 
 def read_telemetry_entry(dev: PCIDevice, layout: dict, tag: int) -> int:
   return dev._read_arc_noc32(layout["data_base"] + 4 * layout["tag_to_offset"][tag])
@@ -48,12 +33,6 @@ TAG_NAME_TO_ID = {
   "ASIC_ID_LOW": 62, "AICLK_LIMIT_MAX": 63, "TDP_LIMIT_MAX": 64,
 }
 TAG_ID_TO_NAME = {tag: name for name, tag in TAG_NAME_TO_ID.items()}
-
-BOARD_UPI_TO_NAME = {
-  0x36: "p100", 0x43: "p100a", 0x40: "p150a", 0x41: "p150b", 0x42: "p150c",
-  0x44: "p300b", 0x45: "p300a", 0x46: "p300c", 0x18: "n150", 0x14: "n300",
-  0x35: "galaxy-wormhole", 0x47: "galaxy-blackhole",
-}
 
 # Metric definitions: (tag_name, label, unit, decode)
 # decode: "s16.16" = signed fixed-point, "hex" = hex display, None = raw integer
@@ -142,13 +121,10 @@ def _device_snapshot(dev: PCIDevice) -> dict:
       tag_cache[name] = _read_tag(dev, layout, name)
     return tag_cache[name]
 
-  bid_hi, bid_lo = tag("BOARD_ID_HIGH"), tag("BOARD_ID_LOW")
-  board_id = ((bid_hi & 0xFFFFFFFF) << 32 | (bid_lo & 0xFFFFFFFF)) if bid_hi is not None and bid_lo is not None else None
-  tensix_en, gddr_en = tag("ENABLED_TENSIX_COL"), tag("ENABLED_GDDR")
-  core_count = None if tensix_en is None else active_tensix_core_count(tensix_en & Arc.DEFAULT_TENSIX_ENABLED)
-  board_name = BOARD_UPI_TO_NAME.get((board_id >> 36) & 0xFFFFF) if board_id is not None else None
-
-  harv_banks = [b for b in range(Dram.BANK_COUNT) if gddr_en and not (gddr_en >> b) & 1] if gddr_en else []
+  board = dev.board_info(layout)
+  core_count = board.core_count
+  board_name = board.arch
+  harv_banks = board.harvested_dram_banks
 
   # Denominators for progress bars
   shutdown = tag("THM_LIMIT_SHUTDOWN")

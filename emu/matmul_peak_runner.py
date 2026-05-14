@@ -40,7 +40,7 @@ from emu.scratch import (
   write_trisc_cb_interface,
 )
 from dram import tilize, untilize
-from dispatch import Dtype, MathFidelity
+from program import Dtype, MathFidelity
 from emu.device import Device
 from emu.memory import (
   DATA_BUFFER_SPACE_BASE,

@@ -1,21 +1,147 @@
 from __future__ import annotations
 
+import ctypes
 import struct
+from ctypes import c_uint8 as u8, c_uint16 as u16, c_uint32 as u32
 from dataclasses import dataclass, field
-from asm import Kernel
-from dispatch import (
-  DevMsgs, FAST_CQ_NUM_CIRCULAR_BUFFERS, IRCommand, LaunchMsg,
-  McastWrite, Run, UnicastWrite, mcast_rects,
-)
-from hw import L1_ALIGN, TensixL1, align_up, as_bytes
+from enum import Enum
+from asm import Kernel, Segment
+from l1 import L1_ALIGN, S, TensixL1, align_up, as_bytes
 
 Core = tuple[int, int]
+Rect = tuple[int, int, int, int]
+
+
+class DevMsgs:
+  RUN_MSG_INIT = 0x40
+  RUN_MSG_GO = 0x80
+  RUN_MSG_RESET_READ_PTR_FROM_HOST = 0xE0
+  RUN_MSG_DONE = 0x00
+  DISPATCH_MODE_DEV = 0
+  DISPATCH_MODE_HOST = 1
+  ProgrammableCoreType_COUNT = 3
+  MaxProcessorsPerCoreType = 5
+
+
+class _RtaOffset(S):
+  _pack_ = 1
+  _fields_ = [("rta_offset", u16), ("crta_offset", u16)]
+
+
+class _KernelConfigMsg(S):
+  _pack_ = 1
+  _fields_ = [
+    ("kernel_config_base", u32 * DevMsgs.ProgrammableCoreType_COUNT),
+    ("sem_offset", u16 * DevMsgs.ProgrammableCoreType_COUNT),
+    ("local_cb_offset", u16),
+    ("remote_cb_offset", u16),
+    ("rta_offset", _RtaOffset * DevMsgs.MaxProcessorsPerCoreType),
+    ("mode", u8),
+    ("pad2", u8),
+    ("kernel_text_offset", u32 * DevMsgs.MaxProcessorsPerCoreType),
+    ("local_cb_mask", u32),
+    ("brisc_noc_id", u8),
+    ("brisc_noc_mode", u8),
+    ("min_remote_cb_start_index", u8),
+    ("exit_erisc_kernel", u8),
+    ("host_assigned_id", u32),
+    ("enables", u32),
+    ("watcher_kernel_ids", u16 * DevMsgs.MaxProcessorsPerCoreType),
+    ("ncrisc_kernel_size16", u16),
+    ("sub_device_origin_x", u8),
+    ("sub_device_origin_y", u8),
+    ("pad3", u8 * 1),
+    ("preload", u8),
+  ]
+
+
+class LaunchMsg(S):
+  _pack_ = 1
+  _fields_ = [("kernel_config", _KernelConfigMsg)]
+
+
+class _GoMsgBits(S):
+  _pack_ = 1
+  _fields_ = [
+    ("dispatch_message_offset", u8),
+    ("master_x", u8),
+    ("master_y", u8),
+    ("signal", u8),
+  ]
+
+
+class GoMsg(ctypes.Union):
+  _pack_ = 1
+  _fields_ = [("all", u32), ("bits", _GoMsgBits)]
+
+
+FAST_CQ_NUM_CIRCULAR_BUFFERS = 32
+
+
+class Dtype(Enum):
+  Float32 = 0
+  Float16 = 1
+  Float16_b = 5
+  Int32 = 8
+  UInt16 = 9
+  Int8 = 14
+  UInt32 = 24
+  UInt8 = 30
+
+  @property
+  def bpe(self) -> int:
+    return {0: 4, 1: 2, 5: 2, 8: 4, 9: 2, 14: 1, 24: 4, 30: 1}[self.value]
+
+  @property
+  def tile_size(self) -> int:
+    return 32 * 32 * self.bpe
+
+
+class MathFidelity(Enum):
+  LoFi = 0
+  HiFi2 = 2
+
+
+def mcast_rects(cores: list[Core]) -> list[Rect]:
+  if not cores:
+    return []
+  remaining = set(cores)
+  rects = []
+  while remaining:
+    x0, y0 = min(remaining, key=lambda c: (c[1], c[0]))
+    x1 = x0
+    while (x1 + 1, y0) in remaining:
+      x1 += 1
+    y1 = y0
+    while all((x, y1 + 1) in remaining for x in range(x0, x1 + 1)):
+      y1 += 1
+    for x in range(x0, x1 + 1):
+      for y in range(y0, y1 + 1):
+        remaining.discard((x, y))
+    rects.append((x0, x1, y0, y1))
+  return rects
+
 
 @dataclass(frozen=True)
-class Segment:
+class McastWrite:
+  rects: list[Rect]
   addr: int
   data: bytes
-  label: str = ""
+
+
+@dataclass(frozen=True)
+class UnicastWrite:
+  cores: list[Core]
+  addr: int
+  data: list[bytes]
+
+
+@dataclass(frozen=True)
+class Run:
+  cores: list[Core]
+
+
+IRCommand = McastWrite | UnicastWrite | Run
 
 # RTA order matches launch processor slots.
 CORE_ROLES = ("brisc", "ncrisc", "trisc0", "trisc1", "trisc2")
