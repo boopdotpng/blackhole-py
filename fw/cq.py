@@ -178,6 +178,12 @@ def wait_noc_write_acks(fw: Kernel, noc: int, target: Reg, *, addr: Reg = t0, va
   return fw
 
 
+def noc_write_barrier(fw: Kernel, noc: int, target: Reg, *, addr: Reg = t0, val: Reg = t1):
+  wait_noc_write_acks(fw, noc, target, addr=addr, val=val)
+  fw.fence()
+  return fw
+
+
 def noc_write_reg(fw: Kernel, noc: int, buf: int, reg: int, value: int | Reg, *, addr: Reg = t0, tmp: Reg = t1):
   return write32(fw, noc_cmd_addr(noc, buf, reg), value, tmp_addr=addr, tmp_val=tmp)
 
@@ -397,7 +403,10 @@ def build_dispatch() -> Kernel:
   write32(fw, CQ_DEBUG + 16, t1, tmp_addr=t0, tmp_val=t2)
   fw.lbu(s7, s5, 10)     # num destinations
   write32(fw, CQ_DEBUG, 0xC1D10602)
+  # Blackhole can hang reserving a fresh multicast path while previous non-posted writes are in flight.
+  noc_write_barrier(fw, 1, s6, addr=t0, val=t2)
   noc_write(fw, 1, 0, t3, t5, 0, t4, t1, mcast=True, num_dests=s7, a=t0, v=t2)
+  fw.add(s6, s6, s7)
   write32(fw, CQ_DEBUG, 0xC1D10603)
   wait_cmd_ready(fw, 1, 0, addr=t0, val=t4)
   write32(fw, CQ_DEBUG, 0xC1D10604)
@@ -425,6 +434,7 @@ def build_dispatch() -> Kernel:
   fw.beq(t1, zero, "pw_done")
   fw.lw(t0, t4, 0)
   noc_write(fw, 1, 0, t5, t3, 0, t0, t2, a=s3, v=s4)
+  fw.addi(s6, s6, 1)
   wait_cmd_ready(fw, 1, 0, addr=s3, val=s4)
   fw.add(t5, t5, t2)
   round_up_reg(fw, t5, L1_ALIGN, tmp=t0)
@@ -438,7 +448,9 @@ def build_dispatch() -> Kernel:
   fw.label("cmd_wait")
   fw.lbu(t0, s0, 1)
   fw.andi(t1, t0, CQ_WAIT_BARRIER)
-  # Per-command cmd-buffer-ready waits above provide the barrier we need for add1.
+  fw.beq(t1, zero, "wait_no_barrier")
+  noc_write_barrier(fw, 1, s6, addr=t2, val=t3)
+  fw.label("wait_no_barrier")
   fw.andi(t1, t0, CQ_WAIT_WAIT_STREAM)
   fw.beq(t1, zero, "wait_clear")
   fw.lhu(t2, s0, 2)

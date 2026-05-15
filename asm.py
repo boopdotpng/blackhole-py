@@ -77,6 +77,14 @@ _FIRMWARE_LOCAL_DATA = {
   "trisc2": bytes([16]) * 32 + bytes([4]) * 32 + b"\0" * 32 + bytes([5]) * 32 + bytes([5]) * 32,
 }
 
+_FIRMWARE_LOCAL_UPLOAD_SIZE = {
+  "brisc": 0,
+  "ncrisc": 0,
+  "trisc0": 1056,
+  "trisc1": 28,
+  "trisc2": 1056,
+}
+
 class Asm(FirmwareLibMixin):
   def __init__(self, *, base: int = 0):
     self.base = base
@@ -316,10 +324,7 @@ class Kernel(Asm):
       for seg in blobs
     ]
     local_data = _FIRMWARE_LOCAL_DATA[self.kind]
-    local_memsz = max(
-      len(local_data),
-      _FIRMWARE_LOCAL_MEM_SIZE[self.kind] - _FIRMWARE_RESERVED_STACK[self.kind],
-    )
+    local_memsz = _FIRMWARE_LOCAL_UPLOAD_SIZE[self.kind]
     has_local_data = any(
       seg.addr == FIRMWARE_SCRATCH_BASE[self.kind] and seg.label == "local_data"
       for seg in self.load_segments
@@ -327,7 +332,7 @@ class Kernel(Asm):
     if local_memsz and not has_local_data:
       blobs.append(Segment(
         FIRMWARE_SCRATCH_BASE[self.kind],
-        local_data.ljust(local_memsz, b"\0"),
+        local_data[:local_memsz].ljust(local_memsz, b"\0"),
         label=f"{self.kind}.local_data",
       ))
     return blobs

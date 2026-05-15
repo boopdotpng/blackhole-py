@@ -674,10 +674,8 @@ def write_artifacts(out_dir: Path | str | None = None) -> Path:
   out.mkdir(parents=True, exist_ok=True)
   segments = build().compile()
   manifest = {"kind": "brisc", "segments": []}
-  # The generic firmware compile path pads local data out to the whole reserved
-  # local-memory region. This standalone BRISC does not use local globals, and
-  # uploading that synthetic zero segment would clobber old blackhole-py's
-  # launch/config L1 area. Keep the real text bytes only.
+  # This standalone BRISC does not use local globals. Keep the artifact to the
+  # real text bytes so older consumers never see a synthetic zero segment.
   artifact_segments = [seg for seg in segments if seg.label.endswith(".text")]
   for i, seg in enumerate(artifact_segments):
     name = f"brisc.seg{i}.bin"
