@@ -35,11 +35,11 @@ def cond(lhs: Reg, op: str, rhs: Reg | int, *, tmp: Reg | None = None) -> Cond:
 
 KERNEL_KINDS = ("brisc", "ncrisc", "trisc0", "trisc1", "trisc2")
 FIRMWARE_TEXT_BASE = {
-  "brisc": 0x38C0,
-  "ncrisc": 0x5AC0,
-  "trisc0": 0x64C0,
-  "trisc1": 0x6EC0,
-  "trisc2": 0x78C0,
+  "brisc": 0x3840,
+  "ncrisc": 0x5440,
+  "trisc0": 0x5A40,
+  "trisc1": 0x6040,
+  "trisc2": 0x6640,
 }
 FIRMWARE_SCRATCH_BASE = {
   "brisc": 0x82B0,
