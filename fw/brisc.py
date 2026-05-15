@@ -662,6 +662,7 @@ def build(*, text_base: dict[str, int] = FIRMWARE_TEXT_BASE) -> Kernel:
   run_launch_kernel(fw, 0)
   for role in (1, 2, 3, 4):
     wait_subordinate_done(fw, role)
+  signal_trisc0_init_sync_registers(fw)
   notify_dispatch_core_done(fw)
   signal_done(fw)
   fw.j("run_loop")
