@@ -36,12 +36,16 @@ SEM_MATH_DONE = 7
 
 # These addresses must match the old BRISC ELF that blackhole-py-old uses to
 # link BRISC kernels. They are not the newer firmware/disasm symbol layout.
+MY_Y = 0xFFB00004
+MY_X = 0xFFB00008
 CRTA_L1_BASE_PTR = 0xFFB00014
 RTA_L1_BASE_PTR = 0xFFB00018
 SEM_L1_BASE = 0xFFB0086C
 CB_INTERFACE = 0xFFB00048
 NOC_INDEX = 0xFFB00046
 BRISC_NOC_MODE = 0xFFB00013
+MY_LOGICAL_Y = 0xFFB00044
+MY_LOGICAL_X = 0xFFB00045
 MY_RELATIVE_X = 0xFFB00012
 MY_RELATIVE_Y = 0xFFB00011
 DRAM_BANK_TO_NOC_XY = 0xFFB00448
@@ -68,6 +72,8 @@ NOC_AT_LEN_BE = NOC_REGS_START_ADDR + 0x20
 NOC_AT_DATA = NOC_REGS_START_ADDR + 0x28
 NOC_CMD_CTRL = NOC_REGS_START_ADDR + 0x40
 NOC_CFG_BASE = NOC_REGS_START_ADDR + 0x100
+NIU_CFG_0 = 0x0
+ROUTER_CFG_0 = 0x1
 NOC_ID_LOGICAL = 0x12
 NOC_NODE_ID_MASK = 0x3F
 NOC_ADDR_NODE_ID_BITS = 6
@@ -106,9 +112,15 @@ NIU_MST_POSTED_WR_REQ_SENT = 0xB
 GO_SIGNAL = 0x373
 GO_MESSAGES = 0x370
 GO_MESSAGE_INDEX = 0x3A0
+NCRISC_HALT_RESUME_ADDR = 0x60
 LAUNCH_MSG_RD_PTR = 0x6C
 SUBORDINATE_SYNC = 0x68
+CORE_INFO_ABSOLUTE_LOGICAL_X = 0x940
+CORE_INFO_ABSOLUTE_LOGICAL_Y = 0x941
 RUN_MSG_GO = 0x80
+RUN_MSG_RESET_READ_PTR = 0xC0
+RUN_MSG_RESET_READ_PTR_FROM_HOST = 0xE0
+RUN_MSG_REPLAY_TRACE = 0xF0
 RUN_MSG_DONE = 0x00
 RUN_SYNC_MSG_GO = 0x80
 RUN_SYNC_MSG_LOAD = 0x01
@@ -209,9 +221,21 @@ def tensix_sem_init(fw: Kernel, sem: int, max_value: int, init_value: int):
   return push_tensix_word(fw, instrn)
 
 
+def enable_noc_clock_gating(fw: Kernel, *, addr: Reg = t0, value: Reg = t1):
+  for noc in range(2):
+    for reg in (NIU_CFG_0, ROUTER_CFG_0):
+      cfg = NOC_CFG_BASE + reg * 4 + (noc << NOC_INSTANCE_OFFSET_BIT)
+      fw.li(addr, cfg)
+      fw.lw(value, addr, 0)
+      fw.ori(value, value, 1)
+      fw.sw(value, addr, 0)
+  return fw
+
+
 def device_setup(fw: Kernel):
   write32(fw, RISCV_DEBUG_REG_DEST_CG_CTRL, 0)
   write32(fw, RISCV_TDMA_REG_CLK_GATE_EN, 0x3F)
+  enable_noc_clock_gating(fw)
   push_tensix_word(fw, INSTRN_ZEROACC | (3 << 19))
   push_tensix_word(fw, INSTRN_SFPENCC | (3 << 12) | 10)
   push_tensix_word(fw, INSTRN_NOP)
@@ -227,8 +251,32 @@ def signal8(fw: Kernel, addr: int, value: int):
   return write8(fw, addr, value)
 
 
-def wait_go(fw: Kernel):
-  return wait8(fw, GO_SIGNAL, RUN_MSG_GO)
+def wait_go(fw: Kernel, *, ptr: Reg = t0, signal: Reg = t1, expected: Reg = t2):
+  loop = fw._new_label("wait_go")
+  check_reset_host = fw._new_label("check_reset_host")
+  check_replay = fw._new_label("check_replay")
+  reset_ptr = fw._new_label("reset_launch_ptr")
+  done = fw._new_label("go_seen")
+  fw.li(ptr, GO_SIGNAL)
+  fw.label(loop)
+  fw.lbu(signal, ptr, 0)
+  fw.li(expected, RUN_MSG_GO)
+  fw.beq(signal, expected, done)
+  fw.li(expected, RUN_MSG_RESET_READ_PTR)
+  fw.beq(signal, expected, reset_ptr)
+  fw.label(check_reset_host)
+  fw.li(expected, RUN_MSG_RESET_READ_PTR_FROM_HOST)
+  fw.beq(signal, expected, reset_ptr)
+  fw.label(check_replay)
+  fw.li(expected, RUN_MSG_REPLAY_TRACE)
+  fw.beq(signal, expected, reset_ptr)
+  fw.j(loop)
+  fw.label(reset_ptr)
+  write32(fw, LAUNCH_MSG_RD_PTR, 0, tmp_addr=ptr, tmp_val=expected)
+  fw.li(ptr, GO_SIGNAL)
+  fw.j(loop)
+  fw.label(done)
+  return fw
 
 
 def signal_done(fw: Kernel):
@@ -267,6 +315,31 @@ def launch_kernel_enabled(fw: Kernel, role: int, *, enabled: Reg = t0, mask: Reg
   return fw.and_(enabled, enabled, mask)
 
 
+def init_risc_noc_coords(fw: Kernel, *, noc_id: Reg = t0, coord: Reg = t1, tmp: Reg = t2):
+  for noc in range(2):
+    read32(fw, noc_id, noc_cmd_buf_addr(noc, 0, NOC_CFG_BASE + NOC_ID_LOGICAL * 4), tmp_addr=tmp)
+    fw.andi(coord, noc_id, NOC_NODE_ID_MASK)
+    write8(fw, MY_X + noc, coord, tmp_addr=tmp)
+    fw.srli(coord, noc_id, NOC_ADDR_NODE_ID_BITS)
+    fw.andi(coord, coord, NOC_NODE_ID_MASK)
+    write8(fw, MY_Y + noc, coord, tmp_addr=tmp)
+  return fw
+
+
+def init_brisc_mailbox_globals(fw: Kernel, *, value: Reg = t0, tmp: Reg = t1):
+  write32(fw, LAUNCH_MSG_RD_PTR, 0, tmp_addr=tmp, tmp_val=value)
+  write8(fw, NOC_INDEX, 0, tmp_addr=tmp, tmp_val=value)
+  write8(fw, BRISC_NOC_MODE, 0, tmp_addr=tmp, tmp_val=value)
+  fw.li(tmp, CORE_INFO_ABSOLUTE_LOGICAL_X)
+  fw.lbu(value, tmp, 0)
+  write8(fw, MY_LOGICAL_X, value, tmp_addr=tmp)
+  fw.li(tmp, CORE_INFO_ABSOLUTE_LOGICAL_Y)
+  fw.lbu(value, tmp, 0)
+  write8(fw, MY_LOGICAL_Y, value, tmp_addr=tmp)
+  write32(fw, NCRISC_HALT_RESUME_ADDR, 0, tmp_addr=tmp, tmp_val=value)
+  return fw
+
+
 def init_brisc_kernel_config(fw: Kernel, *, launch: Reg = t0, config_base: Reg = t1,
                              off: Reg = t2, addr: Reg = t3, tmp: Reg = t4):
   fw.li(launch, LAUNCH)
@@ -287,16 +360,33 @@ def init_brisc_kernel_config(fw: Kernel, *, launch: Reg = t0, config_base: Reg =
   return fw
 
 
-def init_brisc_launch_globals(fw: Kernel, *, launch: Reg = t0, value: Reg = t1):
+def init_brisc_launch_globals(fw: Kernel, *, launch: Reg = t0, value: Reg = t1,
+                              tmp: Reg = t2, origin: Reg = t3):
+  keep = fw._new_label("keep_launch_noc")
   fw.li(launch, LAUNCH)
   fw.lbu(value, launch, LAUNCH_BRISC_NOC_ID)
-  write8(fw, NOC_INDEX, value)
+  fw.bne(value, zero, keep)
+  read32(fw, value, LAUNCH + LAUNCH_ENABLES, tmp_addr=tmp)
+  fw.andi(value, value, 1 << 1)
+  fw.beq(value, zero, keep)
+  fw.li(value, 1)
+  fw.label(keep)
+  fw.sb(value, launch, LAUNCH_BRISC_NOC_ID)
+  write8(fw, NOC_INDEX, value, tmp_addr=tmp)
   fw.lbu(value, launch, LAUNCH_BRISC_NOC_MODE)
-  write8(fw, BRISC_NOC_MODE, value)
-  # The one-core slow-dispatch bring-up uses origin (0, 0). Keep relative coords
-  # initialized so kernels reading these globals don't see stale local memory.
-  write8(fw, MY_RELATIVE_X, 0)
-  write8(fw, MY_RELATIVE_Y, 0)
+  write8(fw, BRISC_NOC_MODE, value, tmp_addr=tmp)
+  fw.li(tmp, CORE_INFO_ABSOLUTE_LOGICAL_X)
+  fw.lbu(value, tmp, 0)
+  write8(fw, MY_LOGICAL_X, value, tmp_addr=tmp)
+  fw.lbu(origin, launch, LAUNCH_SUB_DEVICE_ORIGIN_X)
+  fw.sub(value, value, origin)
+  write8(fw, MY_RELATIVE_X, value, tmp_addr=tmp)
+  fw.li(tmp, CORE_INFO_ABSOLUTE_LOGICAL_Y)
+  fw.lbu(value, tmp, 0)
+  write8(fw, MY_LOGICAL_Y, value, tmp_addr=tmp)
+  fw.lbu(origin, launch, LAUNCH_SUB_DEVICE_ORIGIN_Y)
+  fw.sub(value, value, origin)
+  write8(fw, MY_RELATIVE_Y, value, tmp_addr=tmp)
   return fw
 
 
@@ -332,11 +422,12 @@ def init_bank_tables(fw: Kernel):
   return fw
 
 
-def init_noc_local_state(fw: Kernel, *, launch: Reg = t0, noc: Reg = t1,
-                         status: Reg = t2, dest: Reg = t3, value: Reg = t4):
+def init_noc_local_state(fw: Kernel, *, launch: Reg = t0, noc_id: Reg = t1,
+                         noc_shift: Reg = t2, status: Reg = t3,
+                         dest: Reg = t4, value: Reg = t5):
   fw.li(launch, LAUNCH)
-  fw.lbu(noc, launch, LAUNCH_BRISC_NOC_ID)
-  fw.slli(noc, noc, 16)
+  fw.lbu(noc_id, launch, LAUNCH_BRISC_NOC_ID)
+  fw.slli(noc_shift, noc_id, 16)
 
   for counter, base in [
     (NIU_MST_RD_RESP_RECEIVED, NOC_READS_NUM_ISSUED),
@@ -346,11 +437,12 @@ def init_noc_local_state(fw: Kernel, *, launch: Reg = t0, noc: Reg = t1,
     (NIU_MST_POSTED_WR_REQ_SENT, NOC_POSTED_WRITES_NUM_ISSUED),
   ]:
     fw.li(status, NOC_STATUS_BASE + counter * 4)
-    fw.add(status, status, noc)
+    fw.add(status, status, noc_shift)
     fw.lw(value, status, 0)
-    # Store into index 1 for the old slow-dispatch add1 path. This matches the
-    # default BRISC NOC id used by blackhole-py-old's launch message.
-    write32(fw, base + 4, value, tmp_addr=dest)
+    fw.slli(status, noc_id, 2)
+    fw.li(dest, base)
+    fw.add(dest, dest, status)
+    write32(fw, dest, value)
   return fw
 
 
@@ -410,7 +502,10 @@ def notify_dispatch_core_done(fw: Kernel, *, launch: Reg = t0, mode: Reg = t1,
   write_noc_cmd_reg(fw, noc_shift, NOC_AT_DATA, DISPATCH_DONE_WORD, addr=go_addr, tmp_val=mode)
   write_noc_cmd_reg(fw, noc_shift, NOC_CTRL, NOC_INLINE_WRITE_POSTED_FIELD, addr=go_addr, tmp_val=mode)
   write_noc_cmd_reg(fw, noc_shift, NOC_TARG_ADDR_LO, dispatch_addr, addr=go_addr)
-  write_noc_cmd_reg(fw, noc_shift, NOC_TARG_ADDR_MID, NOC_PCIE_MASK & 0xF, addr=go_addr, tmp_val=mode)
+  # C++ firmware writes (dispatch_addr >> 32) & NOC_PCIE_MASK here. For the
+  # local dispatch stream register address used by this path, those mid bits
+  # are zero; setting the low nibble to 0xF targets the wrong NOC address.
+  write_noc_cmd_reg(fw, noc_shift, NOC_TARG_ADDR_MID, 0, addr=go_addr, tmp_val=mode)
   write_noc_cmd_reg(fw, noc_shift, NOC_TARG_ADDR_COORDINATE, coord, addr=go_addr)
   write_noc_cmd_reg(fw, noc_shift, NOC_AT_LEN_BE, 0xF, addr=go_addr, tmp_val=mode)
   write_noc_cmd_reg(fw, noc_shift, NOC_CMD_CTRL, NOC_CTRL_SEND_REQ, addr=go_addr, tmp_val=mode)
@@ -539,12 +634,14 @@ def build(*, text_base: dict[str, int] = FIRMWARE_TEXT_BASE) -> Kernel:
   setup_stack(fw)
   set_subordinate_reset_pcs(fw, text_base)
   device_setup(fw)
+  init_risc_noc_coords(fw)
   invalidate_all_risc_icaches(fw)
   deassert_all_riscs(fw)
   for role in (1, 2, 3, 4):
     wait_subordinate_done(fw, role)
   signal_done(fw)
   init_bank_tables(fw)
+  init_brisc_mailbox_globals(fw)
   noc_init(fw)
   init_noc_local_state(fw)
   signal_trisc0_init_sync_registers(fw)
