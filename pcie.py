@@ -2,8 +2,6 @@ import ctypes, ctypes.util, fcntl, glob, mmap, os, struct, time
 from dataclasses import dataclass
 from enum import Enum
 
-TT_USB = os.environ.get("TT_USB") == "1"
-
 TT_VENDOR = 0x1E52
 BH_DEVICE = 0xB140
 PCI_COMMAND = 0x04
@@ -100,6 +98,7 @@ class BoardInfo:
   enabled_tensix_col: int
   tensix_columns: tuple[int, ...]
   worker_cores: list[Core]
+  program_cores: list[Core]
   enabled_gddr: int
   harvested_dram_bank: int | None
   prefetch_core: Core
@@ -202,7 +201,7 @@ class _MappedBar:
         self.fd = -1
 
   def __enter__(self): return self
-  def __exit__(self, *_): self.close()
+  def __exit__(self, exc_type, exc, tb): self.close()
 
 
 class NocOrdering(Enum):
@@ -275,7 +274,7 @@ class TLBWindow:
     self.dev.free_tlb(self._id)
 
   def __enter__(self): return self
-  def __exit__(self, *_): self.close()
+  def __exit__(self, exc_type, exc, tb): self.close()
 
 def _config_path(sysfs_path: str) -> str: return f"{sysfs_path}/config"
 
@@ -418,12 +417,12 @@ class PCIDevice:
       os.close(fd)
 
     # Bind to vfio-pci only for fast dispatch DMA/sysmem pinning.
-    self._has_vfio = use_vfio and not TT_USB
+    self._has_vfio = use_vfio
     if self._has_vfio:
       self._setup_vfio()
       self._unbind_vfio_on_close = True
 
-    # mmap BARs
+    # mmap Linux BAR resources. TLBWindow chooses a UC or WC mapping at construction.
     bar = _MappedBar(self.sysfs, "resource0", BAR0_SIZE)
     self._bar_mmaps.append(bar); self._bar0_fd, self.bar0, self.bar0_u32 = bar.fd, bar.view, bar.u32
     bar = _MappedBar(self.sysfs, "resource0_wc", BAR0_SIZE)
@@ -494,7 +493,7 @@ class PCIDevice:
       return None
     return self._read_arc_noc32(layout["data_base"] + 4 * offset)
 
-  def board_info(self, layout: dict | None = None) -> BoardInfo:
+  def board_info(self, layout: dict | None = None, fast_dispatch: bool = False) -> BoardInfo:
     layout = layout or self.telemetry_layout()
     bid_hi = self.telemetry_tag(layout, "BOARD_ID_HIGH")
     bid_lo = self.telemetry_tag(layout, "BOARD_ID_LOW")
@@ -519,6 +518,10 @@ class PCIDevice:
     if not columns:
       raise RuntimeError(f"no enabled Tensix columns in ARC telemetry mask 0x{enabled_tensix:x}")
     rightmost_x = columns[-1]
+    prefetch_core = (rightmost_x, 2)
+    dispatch_core = (rightmost_x, 3)
+    cq_cores = {prefetch_core, dispatch_core}
+    program_cores = [core for core in workers if not fast_dispatch or core not in cq_cores]
     harvested_dram_banks = [bank for bank in range(8) if ((enabled_gddr >> bank) & 1) == 0]
     if len(harvested_dram_banks) > 1:
       raise RuntimeError(f"unsupported harvested DRAM banks: {harvested_dram_banks}")
@@ -530,10 +533,11 @@ class PCIDevice:
       enabled_tensix_col=enabled_tensix,
       tensix_columns=columns,
       worker_cores=workers,
+      program_cores=program_cores,
       enabled_gddr=enabled_gddr,
       harvested_dram_bank=harvested_dram_bank,
-      prefetch_core=(rightmost_x, 2),
-      dispatch_core=(rightmost_x, 3),
+      prefetch_core=prefetch_core,
+      dispatch_core=dispatch_core,
     )
 
   @classmethod
@@ -728,7 +732,8 @@ class PCIDevice:
   def read_arc_apb32(self, offset: int) -> int:
     tlb = self.alloc_tlb(TLB_2M_SIZE)
     try:
-      self.configure_tlb(tlb, self.ARC_NOC_BASE, *self.ARC_TILE, *self.ARC_TILE, ordering=1)
+      arc_x, arc_y = self.ARC_TILE
+      self.configure_tlb(tlb, self.ARC_NOC_BASE, arc_x, arc_y, arc_x, arc_y, ordering=1)
       bar, bar_off = self.tlb_window(tlb)
       return struct.unpack_from("<I", bar, bar_off + offset)[0]
     finally:
@@ -740,7 +745,8 @@ class PCIDevice:
       tlb = self.alloc_tlb(TLB_2M_SIZE)
     try:
       base = addr & ~(TLB_2M_SIZE - 1)
-      self.configure_tlb(tlb, base, *self.ARC_TILE, *self.ARC_TILE, ordering=1)
+      arc_x, arc_y = self.ARC_TILE
+      self.configure_tlb(tlb, base, arc_x, arc_y, arc_x, arc_y, ordering=1)
       bar, bar_off = self.tlb_window(tlb)
       return struct.unpack_from("<I", bar, bar_off + (addr - base))[0]
     finally:
@@ -750,7 +756,8 @@ class PCIDevice:
   def write_arc_apb32(self, offset: int, value: int):
     tlb = self.alloc_tlb(TLB_2M_SIZE)
     try:
-      self.configure_tlb(tlb, self.ARC_NOC_BASE, *self.ARC_TILE, *self.ARC_TILE, ordering=1)
+      arc_x, arc_y = self.ARC_TILE
+      self.configure_tlb(tlb, self.ARC_NOC_BASE, arc_x, arc_y, arc_x, arc_y, ordering=1)
       bar, bar_off = self.tlb_window(tlb)
       struct.pack_into("<I", bar, bar_off + offset, value & 0xFFFFFFFF)
     finally:
@@ -917,13 +924,15 @@ class PCIDevice:
     try:
       def _read32(noc_addr):
         base = noc_addr & ~(TLB_2M_SIZE - 1)
-        self.configure_tlb(tlb, base, *self.ARC_TILE, *self.ARC_TILE, ordering=1)
+        arc_x, arc_y = self.ARC_TILE
+        self.configure_tlb(tlb, base, arc_x, arc_y, arc_x, arc_y, ordering=1)
         bar, bar_off = self.tlb_window(tlb)
         return struct.unpack_from("<I", bar, bar_off + (noc_addr - base))[0]
 
       def _write32(noc_addr, val):
         base = noc_addr & ~(TLB_2M_SIZE - 1)
-        self.configure_tlb(tlb, base, *self.ARC_TILE, *self.ARC_TILE, ordering=1)
+        arc_x, arc_y = self.ARC_TILE
+        self.configure_tlb(tlb, base, arc_x, arc_y, arc_x, arc_y, ordering=1)
         bar, bar_off = self.tlb_window(tlb)
         struct.pack_into("<I", bar, bar_off + (noc_addr - base), val)
 
@@ -997,4 +1006,4 @@ class PCIDevice:
       self._unbind_vfio_on_close = False
 
   def __enter__(self): return self
-  def __exit__(self, *_): self.close()
+  def __exit__(self, exc_type, exc, tb): self.close()

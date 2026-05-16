@@ -5,7 +5,6 @@ import mmap
 import os
 import struct
 import time
-from dataclasses import dataclass
 
 from l1 import Core, L1_ALIGN, PCIE_ALIGN, TensixL1, align_up, noc_xy
 from pcie import PCIDevice, TLBWindow
@@ -62,119 +61,78 @@ def _host_sysmem_size() -> int:
   return align_up(_HOST_SYS_END_BASE, PAGE_SIZE)
 
 
-def _cq_hdr(fmt: str, *args: int) -> bytes:
-  return struct.pack(fmt, *args).ljust(CQ_CMD_SIZE, b"\0")
-
-
 def _noc_mcast_xy(rect: Rect) -> tuple[int, int]:
   x0, x1, y0, y1 = rect
   return (y1 << 18) | (x1 << 12) | (y0 << 6) | x0, (x1 - x0 + 1) * (y1 - y0 + 1)
 
 
-@dataclass(frozen=True)
-class CQWritePacked:
-  cores: list[Core]
-  addr: int
-  data: bytes | list[bytes]
-
-  def to_bytes(self) -> list[bytes]:
-    uniform = isinstance(self.data, bytes)
-    size = len(self.data) if uniform else len(self.data[0])
-    flags = 0x02 if uniform else 0
-    hdr = _cq_hdr("<BBHHHI", _WRITE_PACKED, flags, len(self.cores), 0, size, self.addr)
-    targets = b"".join(struct.pack("<I", noc_xy(x, y)) for x, y in self.cores)
-    targets = targets.ljust(align_up(len(targets), L1_ALIGN), b"\0")
-    if uniform:
-      body = bytes(self.data).ljust(align_up(size, L1_ALIGN), b"\0")
-    else:
-      stride = align_up(size, L1_ALIGN)
-      body = b"".join(bytes(d).ljust(stride, b"\0") for d in self.data)
-    return [hdr + targets + body]
+def _hdr(fmt: str, values: tuple) -> bytes:
+  return struct.pack(fmt, *values).ljust(CQ_CMD_SIZE, b"\0")
 
 
-@dataclass(frozen=True)
-class CQWritePackedLarge:
-  rects: list[Rect]
-  addr: int
-  data: bytes
-
-  def to_bytes(self) -> list[bytes]:
-    padded = bytes(self.data).ljust(align_up(len(self.data), L1_ALIGN), b"\0")
-    records: list[bytes] = []
-    for i in range(0, len(self.rects), 35):
-      batch = self.rects[i : i + 35]
-      hdr = _cq_hdr("<BBHHH", _WRITE_PACKED_LARGE, 2, len(batch), L1_ALIGN, 0)
-      subcmds = b"".join(
-        struct.pack("<IIHBB", xy, self.addr, len(self.data) - 1, count, 0x01)
-        for rect in batch
-        for xy, count in [_noc_mcast_xy(rect)]
-      )
-      subcmds = subcmds.ljust(align_up(len(subcmds), L1_ALIGN), b"\0")
-      records.append(hdr + subcmds + padded * len(batch))
-    return records
+def _write_packed(cores: list[Core], addr: int, data: bytes | list[bytes]) -> bytes:
+  uniform = isinstance(data, bytes)
+  size = len(data) if uniform else len(data[0])
+  flags = 0x02 if uniform else 0
+  hdr = _hdr("<BBHHHI", (_WRITE_PACKED, flags, len(cores), 0, size, addr))
+  targets = b"".join(struct.pack("<I", noc_xy(x, y)) for x, y in cores)
+  targets = targets.ljust(align_up(len(targets), L1_ALIGN), b"\0")
+  if uniform:
+    body = bytes(data).ljust(align_up(size, L1_ALIGN), b"\0")
+  else:
+    stride = align_up(size, L1_ALIGN)
+    body = b"".join(bytes(blob).ljust(stride, b"\0") for blob in data)
+  return hdr + targets + body
 
 
-@dataclass(frozen=True)
-class CQBarrier:
-  def to_bytes(self) -> list[bytes]:
-    return [_cq_hdr("<BBHII", _WAIT, 0x01, 0, 0, 0)]
+def _write_packed_large(rects: list[Rect], addr: int, data: bytes) -> list[bytes]:
+  padded = bytes(data).ljust(align_up(len(data), L1_ALIGN), b"\0")
+  records: list[bytes] = []
+  for i in range(0, len(rects), 35):
+    batch = rects[i : i + 35]
+    hdr = _hdr("<BBHHH", (_WRITE_PACKED_LARGE, 2, len(batch), L1_ALIGN, 0))
+    subcmds = b"".join(
+      struct.pack("<IIHBB", xy, addr, len(data) - 1, count, 0x01)
+      for rect in batch
+      for xy, count in [_noc_mcast_xy(rect)]
+    )
+    subcmds = subcmds.ljust(align_up(len(subcmds), L1_ALIGN), b"\0")
+    records.append(hdr + subcmds + padded * len(batch))
+  return records
 
 
-@dataclass(frozen=True)
-class CQSetGoSignalNocData:
-  cores: list[Core]
-
-  def to_bytes(self) -> list[bytes]:
-    hdr = _cq_hdr("<BBHI", _SET_GO_NOC_DATA, 0, 0, len(self.cores))
-    return [hdr + b"".join(struct.pack("<I", noc_xy(x, y)) for x, y in self.cores)]
+def _barrier() -> bytes:
+  return _hdr("<BBHII", (_WAIT, 0x01, 0, 0, 0))
 
 
-@dataclass(frozen=True)
-class CQSendGoSignal:
-  go_word: int
-  stream: int
-  count: int
-  num_unicast: int
-
-  def to_bytes(self) -> list[bytes]:
-    return [_cq_hdr("<BIBBBII", _GO_SIGNAL, self.go_word, 0xFF, self.num_unicast, 0, self.count, self.stream)]
+def _set_go_signal_noc_data(cores: list[Core]) -> bytes:
+  hdr = _hdr("<BBHI", (_SET_GO_NOC_DATA, 0, 0, len(cores)))
+  body = b"".join(struct.pack("<I", noc_xy(x, y)) for x, y in cores)
+  return hdr + body
 
 
-@dataclass(frozen=True)
-class CQWaitStream:
-  stream: int
-  count: int
-  clear: bool = True
-
-  def to_bytes(self) -> list[bytes]:
-    flags = 0x08 | (0x10 if self.clear else 0)
-    return [_cq_hdr("<BBHII", _WAIT, flags, self.stream, 0, self.count)]
+def _send_go_signal(go_word: int, stream: int, count: int, num_unicast: int) -> bytes:
+  return _hdr("<BIBBBII", (_GO_SIGNAL, go_word, 0xFF, num_unicast, 0, count, stream))
 
 
-@dataclass(frozen=True)
-class CQHostEvent:
-  event_id: int
-
-  def to_bytes(self) -> list[bytes]:
-    payload = struct.pack("<I", self.event_id & 0xFFFFFFFF).ljust(L1_ALIGN, b"\0")
-    return [_cq_hdr("<BBHIQ", _WRITE_LINEAR_HOST, 1, 0, 0, CQ_CMD_SIZE + len(payload)) + payload]
+def _wait_stream(stream: int, count: int, clear: bool = True) -> bytes:
+  flags = 0x08 | (0x10 if clear else 0)
+  return _hdr("<BBHII", (_WAIT, flags, stream, 0, count))
 
 
-@dataclass(frozen=True)
-class CQTimestamp:
-  noc_xy_addr: int
-  addr: int
-
-  def to_bytes(self) -> list[bytes]:
-    return [_cq_hdr("<BxHII", _TIMESTAMP, 0, self.noc_xy_addr, self.addr)]
+def _host_event(event_id: int) -> bytes:
+  payload = struct.pack("<I", event_id & 0xFFFFFFFF).ljust(L1_ALIGN, b"\0")
+  hdr = _hdr("<BBHIQ", (_WRITE_LINEAR_HOST, 1, 0, 0, CQ_CMD_SIZE + len(payload)))
+  return hdr + payload
 
 
-CQCommand = CQWritePacked | CQWritePackedLarge | CQBarrier | CQSetGoSignalNocData | CQSendGoSignal | CQWaitStream | CQHostEvent | CQTimestamp
+def _timestamp(noc_xy_addr: int, addr: int) -> bytes:
+  return _hdr("<BxHII", (_TIMESTAMP, 0, noc_xy_addr, addr))
 
 
 def _relay_inline(payload: bytes) -> bytes:
   stride = align_up(CQ_CMD_SIZE + len(payload), PCIE_ALIGN)
-  hdr = _cq_hdr("<BBHII", _RELAY_INLINE, 0, 0, len(payload), stride)
+  hdr = struct.pack("<BBHII", _RELAY_INLINE, 0, 0, len(payload), stride).ljust(CQ_CMD_SIZE, b"\0")
   return hdr + payload.ljust(stride - CQ_CMD_SIZE, b"\0")
 
 
@@ -192,15 +150,14 @@ class CommandQueue:
     self.stream.clear()
     self.sizes_16b.clear()
 
-  def append(self, cmd: CQCommand):
-    for payload in cmd.to_bytes():
-      record = _relay_inline(payload)
-      self.stream.extend(record)
-      self.sizes_16b.append(len(record) >> 4)
+  def append(self, payload: bytes):
+    record = _relay_inline(payload)
+    self.stream.extend(record)
+    self.sizes_16b.append(len(record) >> 4)
 
-  def extend(self, cmds: list[CQCommand]):
-    for cmd in cmds:
-      self.append(cmd)
+  def extend(self, payloads: list[bytes]):
+    for payload in payloads:
+      self.append(payload)
 
   @property
   def prefetch_win(self) -> TLBWindow:
@@ -220,18 +177,46 @@ class CommandQueue:
   def read_timestamp(self, slot: int) -> int:
     return self.sysmem.read_timestamp(slot)
 
-  def submit(self, commands: list[CQCommand]):
-    self.extend(commands)
+  def submit_commands(self, payloads: list[bytes]):
+    self.extend(payloads)
     event_id = self.sysmem.next_event_id()
-    self.append(CQHostEvent(event_id))
+    self.append(_host_event(event_id))
     self.sysmem.flush(self)
     self.sysmem.wait_completion(event_id)
+
+  def submit_ir(self, programs: list[list[IRCommand]], go_word: int, names: list[str] | None = None):
+    timestamps = None
+    if os.getenv("TT_CQ_TIMESTAMPS", "1") != "0":
+      timestamps = [self.timestamp_noc_addr(i) for i in range(min(2 * len(programs), HOST_TIMESTAMP_SLOTS))]
+    self.submit_commands(lower_programs(programs, go_word, timestamps=timestamps))
+    if timestamps is None:
+      return []
+    return self.read_timings(len(programs), names=names)
+
+  def read_timings(self, n: int, names: list[str] | None = None):
+    timings = []
+    freq_mhz = 1350
+    names = names or [""] * n
+    for i in range(n):
+      slot = 2 * i
+      if slot + 1 >= HOST_TIMESTAMP_SLOTS:
+        break
+      start = self.read_timestamp(slot)
+      end = self.read_timestamp(slot + 1)
+      cycles = end - start
+      timings.append({
+        "cycles": cycles,
+        "us": cycles / freq_mhz,
+        "freq_mhz": freq_mhz,
+        "name": names[i] if i < len(names) else "",
+      })
+    return timings
 
   def close(self):
     self.sysmem.close()
 
 
-def _append_unicast_write(out: list[CQCommand], cores: list[Core], addr: int, data: list[bytes]):
+def _append_unicast_write(out: list[bytes], cores: list[Core], addr: int, data: list[bytes]):
   if not data:
     return
   size = len(data[0])
@@ -240,19 +225,19 @@ def _append_unicast_write(out: list[CQCommand], cores: list[Core], addr: int, da
   max_payload = 4096 - 2 * CQ_CMD_SIZE - align_up(len(cores) * 4, L1_ALIGN)
   max_chunk = max(L1_ALIGN, (max_payload // len(cores)) & ~(L1_ALIGN - 1))
   for off in range(0, size, max_chunk):
-    out.append(CQWritePacked(cores, addr + off, [blob[off : off + max_chunk] for blob in data]))
+    out.append(_write_packed(cores, addr + off, [blob[off : off + max_chunk] for blob in data]))
 
 
-def _append_mcast_write(out: list[CQCommand], rects: list[Rect], addr: int, data: bytes):
+def _append_mcast_write(out: list[bytes], rects: list[Rect], addr: int, data: bytes):
   # Keep records comfortably below the prefetch scratch queue size.
   max_rects = min(len(rects), 35) or 1
   max_chunk = max(L1_ALIGN, ((48 * 1024) // max_rects) & ~(L1_ALIGN - 1))
   for off in range(0, len(data), max_chunk):
-    out.append(CQWritePackedLarge(rects, addr + off, data[off : off + max_chunk]))
+    out.extend(_write_packed_large(rects, addr + off, data[off : off + max_chunk]))
 
 
-def lower_ir(commands: list[IRCommand], go_word: int) -> list[CQCommand]:
-  out: list[CQCommand] = []
+def lower_ir(commands: list[IRCommand], go_word: int) -> list[bytes]:
+  out: list[bytes] = []
   for cmd in commands:
     match cmd:
       case UnicastWrite(cores=cores, addr=addr, data=data):
@@ -260,14 +245,14 @@ def lower_ir(commands: list[IRCommand], go_word: int) -> list[CQCommand]:
       case McastWrite(rects=rects, addr=addr, data=data):
         _append_mcast_write(out, rects, addr, data)
         if os.getenv("TT_CQ_WRITE_BARRIERS", "1") != "0":
-          out.append(CQBarrier())
+          out.append(_barrier())
       case Run(cores=cores):
         out.extend([
-          CQBarrier(),
-          CQSetGoSignalNocData(cores),
-          CQWaitStream(DONE_STREAM, 0),
-          CQSendGoSignal(go_word, DONE_STREAM, 0, len(cores)),
-          CQWaitStream(DONE_STREAM, len(cores)),
+          _barrier(),
+          _set_go_signal_noc_data(cores),
+          _wait_stream(DONE_STREAM, 0),
+          _send_go_signal(go_word, DONE_STREAM, 0, len(cores)),
+          _wait_stream(DONE_STREAM, len(cores)),
         ])
       case _:
         raise TypeError(f"{type(cmd).__name__} is not supported by fast dispatch CQ")
@@ -278,15 +263,15 @@ def lower_programs(
   programs: list[list[IRCommand]],
   go_word: int,
   timestamps: list[tuple[int, int]] | None = None,
-) -> list[CQCommand]:
-  out: list[CQCommand] = []
+) -> list[bytes]:
+  out: list[bytes] = []
   for i, commands in enumerate(programs):
     ts = 2 * i
     if timestamps and ts + 1 < len(timestamps):
-      out.append(CQTimestamp(*timestamps[ts]))
+      out.append(_timestamp(*timestamps[ts]))
     out.extend(lower_ir(commands, go_word))
     if timestamps and ts + 1 < len(timestamps):
-      out.append(CQTimestamp(*timestamps[ts + 1]))
+      out.append(_timestamp(*timestamps[ts + 1]))
   return out
 
 

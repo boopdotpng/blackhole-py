@@ -2,56 +2,43 @@ from __future__ import annotations
 import os
 import struct
 import time
-from asm import Kernel
 from cq import (
   CQ_COMPLETION_Q0_EVENT, CQ_COMPLETION_Q1_EVENT, CQ_COMPLETION_RD_PTR, CQ_COMPLETION_WR_PTR,
   CQ_DISPATCH_CB_PAGES, CQ_DISPATCH_SYNC_SEM, CommandQueue,
-  HOST_TIMESTAMP_SLOTS, lower_programs,
 )
 from dram import Allocator, DramBuffer, Shape, tilize, untilize
 import fw
 from l1 import Core, Dram, L1_ALIGN, TensixL1, TensixMMIO, align_down, align_up, as_bytes
-from pcie import BoardInfo, PCIDevice, TLBWindow, TT_USB
+from pcie import BoardInfo, PCIDevice, TLBWindow
 from program import (
   DevMsgs, Dtype, FAST_CQ_NUM_CIRCULAR_BUFFERS, GoMsg, IRCommand, LaunchMsg,
-  MathFidelity, McastMmioWrite32, McastWrite, PollL1Byte, Program, Run, UnicastWrite,
+  McastMmioWrite32, McastWrite, PollL1Byte, Program, Run, UnicastWrite,
   lower_firmware_boot, mcast_rects,
 )
 
 class Device:
   def __init__(self, index: int = 0):
-    self.index = index
-    self.dev = PCIDevice(index=index)
-    self.board_info: BoardInfo = self.dev.board_info()
-    self.all_cores = list(self.board_info.worker_cores)
-    self.cores = [
-      core for core in self.all_cores
-      if TT_USB or core not in self.board_info.cq_cores
-    ]
+    self.fast_dispatch = os.environ.get("TT_USB") != "1"
+    self.dev = PCIDevice(index=index, use_vfio=self.fast_dispatch)
+    self.board_info: BoardInfo = self.dev.board_info(fast_dispatch=self.fast_dispatch)
     self.programs: list[Program] = []
     self.dram = Allocator(self.dev, self._dram_tiles())
     self.cq: CommandQueue | None = None
-    self.last_device_timing = []
-    self._timing_print_index = 1
-    self.upload_firmware()
-    if not TT_USB:
+    self._upload_firmware()
+    if self.fast_dispatch:
       self._start_dispatch_cores()
 
+  @property
+  def cores(self) -> list[Core]:
+    return list(self.board_info.program_cores)
+
   def close(self):
-    for step in [
-      lambda: self.dev.set_power_state(False),
-      lambda: self._halt_cores(list(self.board_info.cq_cores)) if self.cq is not None else None,
-      lambda: self.cq.close() if self.cq is not None else None,
-      lambda: self.dram.close(),
-      lambda: self.dev.close(),
-    ]:
-      try:
-        if self.dev is not None:
-          step()
-      except Exception:
-        pass
-    self.cq = None
-    self.dev = None
+    self.dev.set_power_state(False)
+    if self.cq is not None:
+      self._halt_cores()
+      self.cq.close()
+    self.dram.close()
+    self.dev.close()
 
   def _dram_tiles(self) -> list[tuple[int, int, int]]:
     return [
@@ -61,19 +48,15 @@ class Device:
       for y in Dram.BANK_TILE_YS[bank]
     ]
 
-  def upload_firmware(self, firmware: dict[str, Kernel] | None = None):
+  def _upload_firmware(self):
     commands = lower_firmware_boot(
-      firmware or fw.build_all(),
-      self.all_cores,
+      fw.build_all(),
+      self.board_info.worker_cores,
       self.board_info.harvested_dram_bank,
     )
-    self._run_firmware_ir(commands)
-
-  def _run_firmware_ir(self, commands: list[IRCommand]):
-    start = self.all_cores[0]
-    with TLBWindow(self.dev, start=start) as uc, \
-         TLBWindow(self.dev, start=start, wc=True) as wc:
-      self._run_ir(commands, uc=uc, wc=wc)
+    start = self.board_info.worker_cores[0]
+    with TLBWindow(self.dev, start=start) as win:
+      self._run_slow_ir(commands, win)
 
   def queue(self, program: Program):
     self.programs.append(program)
@@ -86,37 +69,33 @@ class Device:
       return []
     self.dev.set_power_state(True)
     try:
-      if TT_USB:
+      if not self.fast_dispatch:
         return self._run_slow_dispatch()
       return self._run_fast_dispatch()
     finally:
       self.programs.clear()
       self.dev.set_power_state(False)
 
-  def _run_slow_ir(self, win: TLBWindow, commands: list[IRCommand]):
-    self._run_ir(commands, uc=win)
-
-  def _run_ir(self, commands: list[IRCommand], *, uc: TLBWindow, wc: TLBWindow | None = None):
-    wc = wc or uc
+  def _run_slow_ir(self, commands: list[IRCommand], win: TLBWindow):
     for cmd in commands:
       match cmd:
         case UnicastWrite(cores=cores, addr=addr, data=data):
           for core, blob in zip(cores, data):
-            wc.target(core)
-            wc.write(addr, blob)
+            win.target(core)
+            win.write(addr, blob)
         case McastWrite(rects=rects, addr=addr, data=data):
           for x0, x1, y0, y1 in rects:
-            wc.target((x0, y0), (x1, y1))
-            wc.write(addr, data)
+            win.target((x0, y0), (x1, y1))
+            win.write(addr, data)
         case McastMmioWrite32(rects=rects, addr=addr, value=value):
           mmio_base, _ = align_down(addr, TLBWindow.SIZE_2M)
           for x0, x1, y0, y1 in rects:
-            uc.target((x0, y0), (x1, y1), addr=mmio_base)
-            uc.write32(addr - mmio_base, value)
+            win.target((x0, y0), (x1, y1), addr=mmio_base)
+            win.write32(addr - mmio_base, value)
         case PollL1Byte(core=core, addr=addr, value=value, timeout_s=timeout_s):
-          uc.target(core)
+          win.target(core)
           deadline = time.perf_counter() + timeout_s
-          while uc.mm[addr] != value:
+          while win.mm[addr] != value:
             if time.perf_counter() > deadline:
               raise TimeoutError(f"timeout waiting for L1[0x{addr:x}] == 0x{value:02x} on core {core}")
             time.sleep(0.001)
@@ -125,22 +104,23 @@ class Device:
           go.bits.signal = DevMsgs.RUN_MSG_GO
           go_blob = struct.pack("<I", go.all)
           for x0, x1, y0, y1 in mcast_rects(cores):
-            wc.target((x0, y0), (x1, y1))
-            wc.write(TensixL1.GO_MSG, go_blob)
+            win.target((x0, y0), (x1, y1))
+            win.write(TensixL1.GO_MSG, go_blob)
           for core in cores:
-            uc.target(core)
+            win.target(core)
             deadline = time.perf_counter() + 10.0
-            while uc.mm[TensixL1.GO_MSG + 3] != DevMsgs.RUN_MSG_DONE:
+            while win.mm[TensixL1.GO_MSG + 3] != DevMsgs.RUN_MSG_DONE:
               if time.perf_counter() > deadline:
                 raise TimeoutError(f"timeout waiting for core {core}")
               time.sleep(0.001)
 
   def _run_slow_dispatch(self):
     timings = []
-    with TLBWindow(self.dev, start=self.cores[0]) as win:
+    cores = self.cores
+    with TLBWindow(self.dev, start=cores[0]) as win:
       for program in self.programs:
         t0 = time.perf_counter()
-        self._run_slow_ir(win, program.lower(self.cores, dispatch_mode=DevMsgs.DISPATCH_MODE_HOST))
+        self._run_slow_ir(program.lower(cores, dispatch_mode=DevMsgs.DISPATCH_MODE_HOST), win)
         elapsed_us = (time.perf_counter() - t0) * 1e6
         timings.append({
           "cycles": 0,
@@ -148,40 +128,17 @@ class Device:
           "freq_mhz": 1350,
           "name": getattr(program, "name", ""),
         })
-    self.last_device_timing = timings
     return timings
 
   def _run_fast_dispatch(self):
     if self.cq is None:
       raise RuntimeError("fast dispatch is not initialized")
+    cores = self.cores
     programs = [
-      program.lower(self.cores, dispatch_mode=DevMsgs.DISPATCH_MODE_DEV, host_assigned_id=i)
+      program.lower(cores, dispatch_mode=DevMsgs.DISPATCH_MODE_DEV, host_assigned_id=i)
       for i, program in enumerate(self.programs)
     ]
-    timestamps = None
-    if os.getenv("TT_CQ_TIMESTAMPS", "1") != "0":
-      timestamps = [self.cq.timestamp_noc_addr(i) for i in range(min(2 * len(programs), HOST_TIMESTAMP_SLOTS))]
-
-    self.cq.submit(lower_programs(programs, self._go_word(), timestamps=timestamps))
-    if timestamps is None:
-      self.last_device_timing = []
-      return []
-    return self._collect_timing_data(len(programs))
-
-  def _collect_timing_data(self, n: int):
-    timings = []
-    freq_mhz = 1350
-    for i in range(n):
-      slot = 2 * i
-      if slot + 1 >= HOST_TIMESTAMP_SLOTS:
-        break
-      start = self.cq.read_timestamp(slot)
-      end = self.cq.read_timestamp(slot + 1)
-      cycles = end - start
-      name = getattr(self.programs[i], "name", "")
-      timings.append({"cycles": cycles, "us": cycles / freq_mhz, "freq_mhz": freq_mhz, "name": name})
-    self.last_device_timing = timings
-    return timings
+    return self.cq.submit_ir(programs, self._go_word(), names=[getattr(p, "name", "") for p in self.programs])
 
   def _start_dispatch_cores(self):
     prefetch_core = self.board_info.prefetch_core
@@ -212,7 +169,8 @@ class Device:
     dispatch_win.write32(CQ_COMPLETION_Q1_EVENT, 0)
     dispatch_win.mm[CQ_DISPATCH_SYNC_SEM : CQ_DISPATCH_SYNC_SEM + 8 * L1_ALIGN] = b"\0" * (8 * L1_ALIGN)
 
-    ncrisc_off = align_up(kernel_off + self._segments_size(dispatch_segments), L1_ALIGN)
+    dispatch_size = max((segment.addr + len(segment.data) for segment in dispatch_segments), default=0)
+    ncrisc_off = align_up(kernel_off + dispatch_size, L1_ALIGN)
     dispatch_img = b"\0" * (3 * L1_ALIGN)
     self._upload_cq_core(
       dispatch_core,
@@ -220,10 +178,6 @@ class Device:
       self._build_cq_launch(kernel_off, ncrisc_off, sem_off=L1_ALIGN),
       [(kernel_off, dispatch_segments), (ncrisc_off, dispatch_sub_segments)],
     )
-
-  @staticmethod
-  def _segments_size(segments) -> int:
-    return max((segment.addr + len(segment.data) for segment in segments), default=0)
 
   def _upload_cq_core(self, core: Core, image: bytes, launch: LaunchMsg, kernels: list[tuple[int, list]]):
     assert self.cq is not None
@@ -261,14 +215,13 @@ class Device:
     go.bits.master_x, go.bits.master_y = self.board_info.dispatch_core
     return go.all
 
-  def _halt_cores(self, cores: list[Core]):
-    if not cores:
-      return
+  def _halt_cores(self):
+    cores = self.board_info.worker_cores
     mmio_base, _ = align_down(TensixMMIO.RISCV_DEBUG_REG_SOFT_RESET_0, TLBWindow.SIZE_2M)
     reset_off = TensixMMIO.RISCV_DEBUG_REG_SOFT_RESET_0 - mmio_base
     with TLBWindow(self.dev, start=cores[0], addr=mmio_base) as win:
-      for core in cores:
-        win.target(core, addr=mmio_base)
+      for x0, x1, y0, y1 in mcast_rects(cores):
+        win.target((x0, y0), (x1, y1), addr=mmio_base)
         win.write32(reset_off, TensixMMIO.SOFT_RESET_ALL)
 
   def alloc_write(self, data: bytes, dtype: Dtype, shape: Shape, name: str = "") -> DramBuffer:

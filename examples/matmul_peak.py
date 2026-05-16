@@ -5,7 +5,8 @@ import numpy as np
 
 from l1 import *
 from program import *
-from device import Device, DramBuffer, Dtype, MathFidelity
+from device import Device
+from dram import DramBuffer
 
 IO_MODE = "f16" if os.environ.get("F16") == "1" else "bf16"
 # Blackhole does not have a real f32 matmul path. F32_ACC only enables the
