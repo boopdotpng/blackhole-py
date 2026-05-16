@@ -27,6 +27,7 @@ NOC_RET_ADDR_MID = NOC_REGS_START_ADDR + 0x10
 NOC_RET_ADDR_COORDINATE = NOC_REGS_START_ADDR + 0x14
 NOC_CTRL = NOC_REGS_START_ADDR + 0x1C
 NOC_AT_LEN_BE = NOC_REGS_START_ADDR + 0x20
+NOC_AT_LEN_BE_1 = NOC_REGS_START_ADDR + 0x24
 NOC_AT_DATA = NOC_REGS_START_ADDR + 0x28
 NOC_CMD_CTRL = NOC_REGS_START_ADDR + 0x40
 NOC_STATUS_READY = 0
@@ -58,10 +59,14 @@ NOC_CMD_WR_MCAST_UNLINK_FIELD = (
 NOC_CMD_WR_MCAST_LINKED_FIELD = NOC_CMD_WR_MCAST_UNLINK_FIELD | NOC_CMD_VC_LINKED
 NOC_CMD_INLINE_FIELD = NOC_CMD_WR_FIELD | NOC_CMD_WR_INLINE
 NOC_CMD_AT_INC_FIELD = NOC_CMD_AT | NOC_CMD_RESP_MARKED | NOC_CMD_VC_STATIC | NOC_CMD_STATIC_VC_1
-NOC_AT_INCR_GET = 0x2
+NOC_AT_INS_INCR_GET = 0x1
+NOC_AT_INS_SHIFT = 12
+NOC_AT_WRAP_SHIFT = 2
+NOC_AT_INCR_GET = (NOC_AT_INS_INCR_GET << NOC_AT_INS_SHIFT) | (31 << NOC_AT_WRAP_SHIFT)
 NOC_MAX_BURST_SIZE = 16 * 1024
 
 NIU_MST_WR_ACK_RECEIVED = 0x04
+NIU_MST_ATOMIC_RESP_RECEIVED = 0x00
 NIU_MST_RD_RESP_RECEIVED = 0x08
 NIU_MST_NONPOSTED_WR_REQ_SENT = 0x28
 
@@ -78,11 +83,13 @@ PREFETCH_Q_BASE = 0x19840
 PREFETCH_Q_SIZE = 0xBFC
 PREFETCH_Q_END = PREFETCH_Q_BASE + PREFETCH_Q_SIZE
 HOST_ISSUE_BASE = 0x40000100
-CMDDAT_Q_BASE = 0x1A440
 DISPATCH_CB_BASE = 0x1A000
 DISPATCH_CB_PAGES = 128
 DISPATCH_CB_PAGE = 4096
 DISPATCH_CB_END = DISPATCH_CB_BASE + DISPATCH_CB_PAGES * DISPATCH_CB_PAGE
+CMDDAT_Q_BASE = DISPATCH_CB_END
+CMDDAT_Q_SIZE = 64 * 1024
+HOST_ISSUE_SIZE = 64 * 1024 * 1024
 DISPATCH_S_CB_BASE = 0x9A000
 DISPATCH_S_CB_PAGE = 256
 DISPATCH_S_CB_END = DISPATCH_S_CB_BASE + 32 * 1024
@@ -93,6 +100,10 @@ DISPATCH_NOC_XY = (3 << 6) | 14
 PCIE_NOC_XY = (1 << 24) | (24 << 6) | 19
 
 CQ_PREFETCH_CMD_RELAY_INLINE = 5
+CQ_PREFETCH_CMD_RELAY_INLINE_NOFLUSH = 6
+CQ_PREFETCH_CMD_EXEC_BUF_END = 8
+CQ_PREFETCH_CMD_STALL = 9
+CQ_PREFETCH_CMD_TERMINATE = 11
 CQ_DISPATCH_CMD_WRITE_LINEAR_H_HOST = 3
 CQ_DISPATCH_CMD_WRITE_PACKED = 5
 CQ_DISPATCH_CMD_WRITE_PACKED_LARGE = 6
@@ -112,12 +123,17 @@ COMPLETION_WR_PTR = 0x196D0
 COMPLETION_RD_PTR = 0x196E0
 COMPLETION_BASE = 0x44000100
 COMPLETION_SIZE = 32 * 1024 * 1024
-HOST_COMPLETION_WR_PTR_OFF = 128
+HOST_COMPLETION_WR_PTR_OFF = 0x40000000 + 128
 RISCV_DEBUG_REG_WALL_CLOCK_L = 0xFFB121F0
 RISCV_DEBUG_REG_WALL_CLOCK_H = 0xFFB121F8
 
 GO_SIGNAL_NOC_DATA = 0xB0000
 CQ_DEBUG = 0x19000
+DISPATCH_RELEASE_PENDING = CQ_DEBUG + 0x80
+DISPATCH_PAGE_CURSOR = CQ_DEBUG + 0x84
+DISPATCH_RELEASE_VALUE = CQ_DEBUG + 0x90
+PREFETCH_PCIE_BASE = CQ_DEBUG + 0xA0
+PREFETCH_PCIE_END = CQ_DEBUG + 0xA4
 
 
 def write32(fw: Kernel, addr: int | Reg, value: int | Reg, *, tmp_addr: Reg = t0, tmp_val: Reg = t1):
@@ -193,10 +209,13 @@ def noc_read(fw: Kernel, noc: int, buf: int, src_lo: Reg, src_mid: int | Reg, sr
   wait_cmd_ready(fw, noc, buf, addr=a, val=v)
   noc_write_reg(fw, noc, buf, NOC_CTRL, NOC_CMD_RD_FIELD, addr=a, tmp=v)
   noc_write_reg(fw, noc, buf, NOC_RET_ADDR_LO, dst, addr=a, tmp=v)
+  noc_write_reg(fw, noc, buf, NOC_RET_ADDR_MID, 0, addr=a, tmp=v)
+  noc_write_reg(fw, noc, buf, NOC_RET_ADDR_COORDINATE, PREFETCH_NOC_XY, addr=a, tmp=v)
   noc_write_reg(fw, noc, buf, NOC_TARG_ADDR_LO, src_lo, addr=a, tmp=v)
   noc_write_reg(fw, noc, buf, NOC_TARG_ADDR_MID, src_mid, addr=a, tmp=v)
   noc_write_reg(fw, noc, buf, NOC_TARG_ADDR_COORDINATE, src_coord, addr=a, tmp=v)
   noc_write_reg(fw, noc, buf, NOC_AT_LEN_BE, length, addr=a, tmp=v)
+  noc_write_reg(fw, noc, buf, NOC_AT_LEN_BE_1, 0, addr=a, tmp=v)
   noc_write_reg(fw, noc, buf, NOC_CMD_CTRL, NOC_CTRL_SEND_REQ, addr=a, tmp=v)
   return fw
 
@@ -217,6 +236,7 @@ def noc_write(fw: Kernel, noc: int, buf: int, src: Reg, dst_lo: Reg, dst_mid: in
   noc_write_reg(fw, noc, buf, NOC_RET_ADDR_MID, dst_mid, addr=a, tmp=v)
   noc_write_reg(fw, noc, buf, NOC_RET_ADDR_COORDINATE, dst_coord, addr=a, tmp=v)
   noc_write_reg(fw, noc, buf, NOC_AT_LEN_BE, length, addr=a, tmp=v)
+  noc_write_reg(fw, noc, buf, NOC_AT_LEN_BE_1, 0, addr=a, tmp=v)
   noc_write_reg(fw, noc, buf, NOC_CMD_CTRL, NOC_CTRL_SEND_REQ, addr=a, tmp=v)
   return fw
 
@@ -230,18 +250,32 @@ def noc_inline_write(fw: Kernel, noc: int, buf: int, value: Reg, dst_lo: Reg, ds
   noc_write_reg(fw, noc, buf, NOC_TARG_ADDR_MID, dst_mid, addr=a, tmp=v)
   noc_write_reg(fw, noc, buf, NOC_TARG_ADDR_COORDINATE, dst_coord, addr=a, tmp=v)
   noc_write_reg(fw, noc, buf, NOC_AT_LEN_BE, 0xF, addr=a, tmp=v)
+  noc_write_reg(fw, noc, buf, NOC_AT_LEN_BE_1, 0, addr=a, tmp=v)
   noc_write_reg(fw, noc, buf, NOC_CMD_CTRL, NOC_CTRL_SEND_REQ, addr=a, tmp=v)
   return fw
 
 
+def wait_noc_atomic_responses(fw: Kernel, noc: int, target: Reg, *, addr: Reg = t0, val: Reg = t1):
+  fw.li(addr, NOC_STATUS_BASE + NIU_MST_ATOMIC_RESP_RECEIVED + (noc << NOC_INSTANCE_OFFSET_BIT))
+  loop = fw._new_label("atomic_resp")
+  fw.label(loop)
+  fw.lw(val, addr, 0)
+  fw.bltu(val, target, loop)
+  return fw
+
+
 def noc_atomic_inc(fw: Kernel, noc: int, buf: int, dst_lo: Reg, dst_coord: int | Reg, incr: Reg | int,
-                   *, a: Reg = t0, v: Reg = t1):
+                   ret_coord: int, *, a: Reg = t0, v: Reg = t1):
   wait_cmd_ready(fw, noc, buf, addr=a, val=v)
+  noc_write_reg(fw, noc, buf, NOC_RET_ADDR_LO, 4, addr=a, tmp=v)
+  noc_write_reg(fw, noc, buf, NOC_RET_ADDR_MID, 0, addr=a, tmp=v)
+  noc_write_reg(fw, noc, buf, NOC_RET_ADDR_COORDINATE, ret_coord, addr=a, tmp=v)
   noc_write_reg(fw, noc, buf, NOC_TARG_ADDR_LO, dst_lo, addr=a, tmp=v)
   noc_write_reg(fw, noc, buf, NOC_TARG_ADDR_MID, 0, addr=a, tmp=v)
   noc_write_reg(fw, noc, buf, NOC_TARG_ADDR_COORDINATE, dst_coord, addr=a, tmp=v)
   noc_write_reg(fw, noc, buf, NOC_CTRL, NOC_CMD_AT_INC_FIELD, addr=a, tmp=v)
-  noc_write_reg(fw, noc, buf, NOC_AT_LEN_BE, NOC_AT_INCR_GET | (31 << 12), addr=a, tmp=v)
+  noc_write_reg(fw, noc, buf, NOC_AT_LEN_BE, NOC_AT_INCR_GET, addr=a, tmp=v)
+  noc_write_reg(fw, noc, buf, NOC_AT_LEN_BE_1, 0, addr=a, tmp=v)
   noc_write_reg(fw, noc, buf, NOC_AT_DATA, incr, addr=a, tmp=v)
   noc_write_reg(fw, noc, buf, NOC_CMD_CTRL, NOC_CTRL_SEND_REQ, addr=a, tmp=v)
   return fw
@@ -285,29 +319,60 @@ def build_prefetch() -> Kernel:
   fw = Kernel(kind="brisc")
   setup_stack(fw)
   write32(fw, CQ_DEBUG, 0xC1010001)
+  write32(fw, CQ_SEM_BASE, DISPATCH_CB_PAGES)
   fw.li(s0, PREFETCH_Q_BASE)     # queue read pointer
   read32(fw, s1, PREFETCH_Q_PCIE_RD)  # host PCIE read pointer
+  write32(fw, PREFETCH_PCIE_BASE, s1, tmp_addr=t0, tmp_val=t1)
+  fw.li(t0, HOST_ISSUE_SIZE)
+  fw.add(t0, s1, t0)
+  write32(fw, PREFETCH_PCIE_END, t0, tmp_addr=t1, tmp_val=t2)
   fw.li(s2, DISPATCH_CB_BASE)    # dispatch CB write pointer
   fw.li(s8, 0)                    # local page-credit adjustment
   read32(fw, s4, NOC_STATUS_BASE + NIU_MST_RD_RESP_RECEIVED)
   read32(fw, s5, NOC_STATUS_BASE + NIU_MST_WR_ACK_RECEIVED)
+  read32(fw, s7, NOC_STATUS_BASE + NIU_MST_ATOMIC_RESP_RECEIVED)
 
   fw.label("prefetch_loop")
   write32(fw, CQ_DEBUG, 0xC1010002)
   fw.lhu(t0, s0, 0)
   fw.beq(t0, zero, "prefetch_loop")
+  fw.li(t1, 0x7FFF)
+  fw.and_(t0, t0, t1)
+  fw.beq(t0, zero, "prefetch_loop")
   fw.slli(t0, t0, 4)             # byte count
   fw.li(t1, CMDDAT_Q_BASE)
   write32(fw, CQ_DEBUG + 4, t0, tmp_addr=t2, tmp_val=t3)
-  noc_read(fw, 0, 1, s1, NOC_PCIE_MID, PCIE_NOC_XY, t1, t0, a=t2, v=t3)
+  fw.mv(s9, s1)                  # host read cursor
+  fw.mv(s10, t1)                 # local cmddat write cursor
+  fw.mv(s11, t0)                 # bytes remaining
+  fw.label("prefetch_read_loop")
+  fw.beq(s11, zero, "prefetch_read_done")
+  fw.li(t4, NOC_MAX_BURST_SIZE)
+  fw.bltu(t4, s11, "prefetch_read_full_burst")
+  fw.mv(t5, s11)
+  fw.j("prefetch_read_issue")
+  fw.label("prefetch_read_full_burst")
+  fw.mv(t5, t4)
+  fw.label("prefetch_read_issue")
+  noc_read(fw, 0, 1, s9, NOC_PCIE_MID, PCIE_NOC_XY, s10, t5, a=t2, v=t3)
   fw.addi(s4, s4, 1)
+  fw.add(s9, s9, t5)
+  fw.add(s10, s10, t5)
+  fw.sub(s11, s11, t5)
+  fw.j("prefetch_read_loop")
+  fw.label("prefetch_read_done")
   fw.li(t2, NOC_STATUS_BASE + NIU_MST_RD_RESP_RECEIVED)
   fw.label("prefetch_read_barrier")
   fw.lw(t3, t2, 0)
   fw.bltu(t3, s4, "prefetch_read_barrier")
+  write32(fw, CQ_DEBUG, 0xC1010003, tmp_addr=t2, tmp_val=t3)
   fw.sh(zero, s0, 0)
   write32(fw, PREFETCH_Q_RD_PTR, s0, tmp_addr=t2, tmp_val=t3)
   fw.add(s1, s1, t0)
+  read32(fw, t2, PREFETCH_PCIE_END, tmp_addr=t3)
+  fw.bltu(s1, t2, "prefetch_no_pcie_wrap")
+  read32(fw, s1, PREFETCH_PCIE_BASE, tmp_addr=t3)
+  fw.label("prefetch_no_pcie_wrap")
   write32(fw, PREFETCH_Q_PCIE_RD, s1, tmp_addr=t2, tmp_val=t3)
   fw.addi(s0, s0, 2)
   fw.li(t2, PREFETCH_Q_END)
@@ -319,7 +384,17 @@ def build_prefetch() -> Kernel:
   fw.lbu(t2, t1, 0)
   write32(fw, CQ_DEBUG + 8, t2, tmp_addr=t3, tmp_val=t4)
   fw.li(t3, CQ_PREFETCH_CMD_RELAY_INLINE)
-  fw.bne(t2, t3, "prefetch_loop")
+  fw.beq(t2, t3, "prefetch_relay_inline")
+  fw.li(t3, CQ_PREFETCH_CMD_RELAY_INLINE_NOFLUSH)
+  fw.beq(t2, t3, "prefetch_relay_inline")
+  fw.li(t3, CQ_PREFETCH_CMD_EXEC_BUF_END)
+  fw.beq(t2, t3, "prefetch_relay_inline")
+  fw.li(t3, CQ_PREFETCH_CMD_STALL)
+  fw.beq(t2, t3, "prefetch_loop")
+  fw.li(t3, CQ_PREFETCH_CMD_TERMINATE)
+  fw.beq(t2, t3, "prefetch_done")
+  fw.j("prefetch_bad_cmd")
+  fw.label("prefetch_relay_inline")
   fw.lw(t0, t1, 4)               # payload length
   fw.mv(s6, t0)
   fw.addi(t1, t1, 16)            # payload source
@@ -327,20 +402,64 @@ def build_prefetch() -> Kernel:
   fw.add(t2, t0, t2)
   fw.srli(t2, t2, 12)            # pages
   fw.mv(s3, t2)
+  write32(fw, CQ_DEBUG + 12, s3, tmp_addr=t2, tmp_val=t3)
   acquire_local_pages(fw, CQ_SEM_BASE, s3, s8, ptr=t3, val=t0)
-  noc_write(fw, 0, 0, t1, s2, 0, DISPATCH_NOC_XY, s6, a=t2, v=t3)
+  write32(fw, CQ_DEBUG, 0xC1010004, tmp_addr=t2, tmp_val=t3)
+  write32(fw, CQ_DEBUG + 16, s2, tmp_addr=t2, tmp_val=t3)
+  write32(fw, CQ_DEBUG, 0xC1010005, tmp_addr=t2, tmp_val=t3)
+  fw.mv(s9, t1)                  # local cmddat read cursor
+  fw.mv(s10, s2)                 # dispatch cb write cursor
+  fw.mv(s11, s6)                 # bytes remaining
+  fw.label("prefetch_write_loop")
+  fw.beq(s11, zero, "prefetch_write_done")
+  fw.li(t4, NOC_MAX_BURST_SIZE)
+  fw.bltu(t4, s11, "prefetch_write_full_burst")
+  fw.mv(t0, s11)
+  fw.j("prefetch_write_size_ready")
+  fw.label("prefetch_write_full_burst")
+  fw.mv(t0, t4)
+  fw.label("prefetch_write_size_ready")
+  fw.li(t4, DISPATCH_CB_END)
+  fw.sub(t4, t4, s10)
+  fw.bltu(t4, t0, "prefetch_write_trim_to_end")
+  fw.j("prefetch_write_issue")
+  fw.label("prefetch_write_trim_to_end")
+  fw.mv(t0, t4)
+  fw.label("prefetch_write_issue")
+  noc_write(fw, 0, 0, s9, s10, 0, DISPATCH_NOC_XY, t0, a=t2, v=t3)
   fw.addi(s5, s5, 1)
   wait_noc_write_acks(fw, 0, s5, addr=t2, val=t3)
+  fw.add(s9, s9, t0)
+  fw.add(s10, s10, t0)
+  fw.sub(s11, s11, t0)
+  fw.li(t4, DISPATCH_CB_END)
+  fw.bne(s10, t4, "prefetch_write_no_wrap")
+  fw.li(s10, DISPATCH_CB_BASE)
+  fw.label("prefetch_write_no_wrap")
+  fw.j("prefetch_write_loop")
+  fw.label("prefetch_write_done")
+  write32(fw, CQ_DEBUG, 0xC1010006, tmp_addr=t2, tmp_val=t3)
   fw.mv(t0, s3)
   fw.slli(t0, t0, 12)
   fw.add(s2, s2, t0)
   fw.li(t1, DISPATCH_CB_END)
-  fw.bne(s2, t1, "prefetch_no_cb_wrap")
-  fw.li(s2, DISPATCH_CB_BASE)
+  fw.bltu(s2, t1, "prefetch_no_cb_wrap")
+  fw.li(t4, DISPATCH_CB_END - DISPATCH_CB_BASE)
+  fw.sub(s2, s2, t4)
   fw.label("prefetch_no_cb_wrap")
   fw.li(t1, CQ_SEM_BASE)
-  noc_atomic_inc(fw, 0, 3, t1, DISPATCH_NOC_XY, s3, a=t2, v=t3)
+  write32(fw, CQ_DEBUG, 0xC1010007, tmp_addr=t2, tmp_val=t3)
+  noc_atomic_inc(fw, 0, 3, t1, DISPATCH_NOC_XY, s3, PREFETCH_NOC_XY, a=t2, v=t3)
+  fw.addi(s7, s7, 1)
+  wait_noc_atomic_responses(fw, 0, s7, addr=t2, val=t3)
+  write32(fw, CQ_DEBUG, 0xC1010008, tmp_addr=t2, tmp_val=t3)
   fw.j("prefetch_loop")
+  fw.label("prefetch_bad_cmd")
+  write32(fw, CQ_DEBUG, 0xC10100EE, tmp_addr=t2, tmp_val=t3)
+  fw.j("prefetch_bad_cmd")
+  fw.label("prefetch_done")
+  write32(fw, CQ_DEBUG, 0xC10100FF, tmp_addr=t2, tmp_val=t3)
+  fw.j("prefetch_done")
   return fw
 
 
@@ -352,15 +471,22 @@ def build_dispatch() -> Kernel:
   read32(fw, s1, COMPLETION_WR_PTR)  # completion wr ptr in 16B units
   fw.li(s2, 0)  # completion toggle
   read32(fw, s6, NOC_STATUS_BASE + NIU_MST_WR_ACK_RECEIVED + (1 << NOC_INSTANCE_OFFSET_BIT))
+  write32(fw, DISPATCH_RELEASE_PENDING, 0)
+  write32(fw, DISPATCH_PAGE_CURSOR, 0)
+  write32(fw, DISPATCH_RELEASE_VALUE, DISPATCH_CB_PAGES)
 
   fw.label("dispatch_loop")
   write32(fw, CQ_DEBUG, 0xC1D10002)
   fw.li(t0, CQ_SEM_BASE)
   fw.label("dispatch_wait_page")
   fw.lw(t1, t0, 0)
-  fw.beq(t1, zero, "dispatch_wait_page")
-  fw.addi(t1, t1, -1)
-  fw.sw(t1, t0, 0)
+  write32(fw, CQ_DEBUG + 20, t1, tmp_addr=t2, tmp_val=t3)
+  read32(fw, t2, DISPATCH_PAGE_CURSOR, tmp_addr=t3)
+  fw.beq(t1, t2, "dispatch_wait_page")
+  fw.addi(t2, t2, 1)
+  write32(fw, DISPATCH_PAGE_CURSOR, t2, tmp_addr=t3, tmp_val=t4)
+  write32(fw, CQ_DEBUG + 24, s0, tmp_addr=t1, tmp_val=t2)
+  fw.mv(s9, s0)          # page-aligned start of the current dispatch record
   fw.lbu(t0, s0, 0)
   write32(fw, CQ_DEBUG + 4, t0, tmp_addr=t1, tmp_val=t2)
   fw.li(t1, CQ_DISPATCH_CMD_WRITE_PACKED_LARGE)
@@ -391,6 +517,7 @@ def build_dispatch() -> Kernel:
   fw.mul(t4, s3, t4)
   fw.add(t3, t3, t4)
   round_up_reg(fw, t3, L1_ALIGN, tmp=t4)  # data ptr
+  fw.li(s8, 1)           # must barrier before a fresh multicast path reservation
   fw.label("pl_loop")
   fw.beq(s3, zero, "pl_done")
   write32(fw, CQ_DEBUG, 0xC1D10601)
@@ -402,26 +529,80 @@ def build_dispatch() -> Kernel:
   fw.addi(t1, t1, 1)
   write32(fw, CQ_DEBUG + 16, t1, tmp_addr=t0, tmp_val=t2)
   fw.lbu(s7, s5, 10)     # num destinations
-  write32(fw, CQ_DEBUG, 0xC1D10602)
-  # Blackhole can hang reserving a fresh multicast path while previous non-posted writes are in flight.
+  fw.lbu(s11, s5, 11)    # flags
+  fw.andi(s11, s11, CQ_PACKED_LARGE_UNLINK)
+  write32(fw, CQ_DEBUG, 0xC1D10602, tmp_addr=t0, tmp_val=t2)
+  write32(fw, CQ_DEBUG, 0xC1D10620, tmp_addr=t0, tmp_val=t2)
+  write32(fw, CQ_DEBUG + 40, s11, tmp_addr=t0, tmp_val=t2)
+  write32(fw, CQ_DEBUG + 44, s8, tmp_addr=t0, tmp_val=t2)
+  fw.mv(s10, t1)         # bytes remaining for this subcommand
+  fw.label("pl_burst_loop")
+  write32(fw, CQ_DEBUG, 0xC1D10621, tmp_addr=t0, tmp_val=t2)
+  write32(fw, CQ_DEBUG + 32, s10, tmp_addr=t0, tmp_val=t2)
+  fw.beq(s10, zero, "pl_subcmd_done")
+  fw.li(t6, NOC_MAX_BURST_SIZE)
+  fw.bltu(t6, s10, "pl_full_burst")
+  fw.mv(t1, s10)
+  # Blackhole can hang when reserving multicast paths back-to-back. Keep the
+  # Python dispatcher conservative: each multicast is unlinked, and every
+  # multicast after the first waits for prior writes to finish path teardown.
+  fw.beq(s8, zero, "pl_single_path_ready")
   noc_write_barrier(fw, 1, s6, addr=t0, val=t2)
-  noc_write(fw, 1, 0, t3, t5, 0, t4, t1, mcast=True, num_dests=s7, a=t0, v=t2)
+  fw.label("pl_single_path_ready")
+  write32(fw, CQ_DEBUG, 0xC1D10622, tmp_addr=t0, tmp_val=t2)
+  noc_write(fw, 1, 0, t3, t5, 0, t4, t1, mcast=True, mcast_linked=False, num_dests=s7, a=t0, v=t2)
+  fw.j("pl_burst_sent")
+  fw.label("pl_full_burst")
+  write32(fw, CQ_DEBUG, 0xC1D10624, tmp_addr=t0, tmp_val=t2)
+  fw.beq(s8, zero, "pl_full_path_ready")
+  noc_write_barrier(fw, 1, s6, addr=t0, val=t2)
+  fw.label("pl_full_path_ready")
+  fw.mv(t1, t6)
+  noc_write(fw, 1, 0, t3, t5, 0, t4, t1, mcast=True, mcast_linked=False, num_dests=s7, a=t0, v=t2)
+  fw.label("pl_burst_sent")
+  fw.li(s8, 1)
   fw.add(s6, s6, s7)
-  write32(fw, CQ_DEBUG, 0xC1D10603)
-  wait_cmd_ready(fw, 1, 0, addr=t0, val=t4)
-  write32(fw, CQ_DEBUG, 0xC1D10604)
+  write32(fw, CQ_DEBUG + 36, t1, tmp_addr=t0, tmp_val=t2)
+  write32(fw, CQ_DEBUG + 48, s6, tmp_addr=t0, tmp_val=t2)
+  write32(fw, CQ_DEBUG, 0xC1D10603, tmp_addr=t0, tmp_val=t2)
+  wait_cmd_ready(fw, 1, 0, addr=t0, val=t2)
+  write32(fw, CQ_DEBUG, 0xC1D10604, tmp_addr=t0, tmp_val=t2)
   fw.add(t3, t3, t1)
+  fw.add(t5, t5, t1)
+  write32(fw, CQ_DEBUG, 0xC1D10625, tmp_addr=t0, tmp_val=t2)
+  write32(fw, CQ_DEBUG + 52, t3, tmp_addr=t0, tmp_val=t2)
+  write32(fw, CQ_DEBUG + 56, t5, tmp_addr=t0, tmp_val=t2)
+  fw.sub(s10, s10, t1)
+  write32(fw, CQ_DEBUG, 0xC1D10626, tmp_addr=t0, tmp_val=t2)
+  write32(fw, CQ_DEBUG + 32, s10, tmp_addr=t0, tmp_val=t2)
+  fw.j("pl_burst_loop")
+  fw.label("pl_subcmd_done")
+  write32(fw, CQ_DEBUG, 0xC1D10627, tmp_addr=t0, tmp_val=t2)
+  write32(fw, CQ_DEBUG + 40, s11, tmp_addr=t0, tmp_val=t2)
+  fw.beq(s11, zero, "pl_keep_linked")
+  fw.li(s8, 1)
+  write32(fw, CQ_DEBUG, 0xC1D10628, tmp_addr=t0, tmp_val=t2)
+  write32(fw, CQ_DEBUG + 44, s8, tmp_addr=t0, tmp_val=t2)
+  fw.j("pl_round_subcmd")
+  fw.label("pl_keep_linked")
+  fw.li(s8, 0)
+  write32(fw, CQ_DEBUG, 0xC1D10629, tmp_addr=t0, tmp_val=t2)
+  write32(fw, CQ_DEBUG + 44, s8, tmp_addr=t0, tmp_val=t2)
+  fw.label("pl_round_subcmd")
+  write32(fw, CQ_DEBUG, 0xC1D1062A, tmp_addr=t0, tmp_val=t2)
   # CQWritePackedLarge currently emits L1_ALIGN alignment.
   round_up_reg(fw, t3, L1_ALIGN, tmp=t4)
+  write32(fw, CQ_DEBUG + 52, t3, tmp_addr=t0, tmp_val=t2)
   fw.addi(s5, s5, 12)
   fw.addi(s3, s3, -1)
+  write32(fw, CQ_DEBUG + 60, s3, tmp_addr=t0, tmp_val=t2)
   fw.j("pl_loop")
   fw.label("pl_done")
   fw.mv(s0, t3)
   fw.j("release_and_continue")
 
   fw.label("cmd_packed")
-  fw.lbu(t0, s0, 1)      # flags
+  fw.lbu(s8, s0, 1)      # flags
   fw.lhu(t1, s0, 2)      # count
   fw.lhu(t2, s0, 6)      # size
   fw.lw(t3, s0, 8)       # dst addr
@@ -430,18 +611,29 @@ def build_dispatch() -> Kernel:
   fw.slli(t0, t1, 2)
   fw.add(t5, t5, t0)
   round_up_reg(fw, t5, L1_ALIGN, tmp=t0)  # data
+  fw.mv(s10, t5)        # first data byte; needed for NO_STRIDE command size
+  fw.mv(s11, t2)
+  round_up_reg(fw, s11, L1_ALIGN, tmp=t0)
   fw.label("pw_loop")
   fw.beq(t1, zero, "pw_done")
   fw.lw(t0, t4, 0)
   noc_write(fw, 1, 0, t5, t3, 0, t0, t2, a=s3, v=s4)
   fw.addi(s6, s6, 1)
   wait_cmd_ready(fw, 1, 0, addr=s3, val=s4)
+  fw.andi(t0, s8, CQ_PACKED_NO_STRIDE)
+  fw.bne(t0, zero, "pw_no_stride")
   fw.add(t5, t5, t2)
   round_up_reg(fw, t5, L1_ALIGN, tmp=t0)
+  fw.label("pw_no_stride")
   fw.addi(t4, t4, 4)
   fw.addi(t1, t1, -1)
   fw.j("pw_loop")
   fw.label("pw_done")
+  fw.andi(t0, s8, CQ_PACKED_NO_STRIDE)
+  fw.beq(t0, zero, "pw_done_ptr_ready")
+  fw.mv(t5, s10)
+  fw.add(t5, t5, s11)
+  fw.label("pw_done_ptr_ready")
   fw.mv(s0, t5)
   fw.j("release_and_continue")
 
@@ -455,12 +647,22 @@ def build_dispatch() -> Kernel:
   fw.beq(t1, zero, "wait_clear")
   fw.lhu(t2, s0, 2)
   fw.lw(t3, s0, 8)
+  write32(fw, CQ_DEBUG, 0xC1D10700, tmp_addr=t4, tmp_val=t5)
+  write32(fw, CQ_DEBUG + 40, t2, tmp_addr=t4, tmp_val=t5)
+  write32(fw, CQ_DEBUG + 44, t3, tmp_addr=t4, tmp_val=t5)
   fw.slli(t2, t2, 12)
   fw.li(t4, STREAM_BASE + STREAM_REMOTE_DEST_BUF_SPACE_AVAILABLE_REG_INDEX * 4)
   fw.add(t2, t2, t4)
   fw.label("wait_stream_loop")
   fw.lw(t4, t2, 0)
-  fw.bltu(t4, t3, "wait_stream_loop")
+  write32(fw, CQ_DEBUG + 48, t4, tmp_addr=t5, tmp_val=s3)
+  fw.srli(t5, t4, 17)
+  fw.bgeu(t5, t3, "wait_stream_done")
+  fw.sub(t4, t4, t3)
+  fw.slli(t4, t4, 15)
+  fw.blt(t4, zero, "wait_stream_loop")
+  fw.label("wait_stream_done")
+  write32(fw, CQ_DEBUG, 0xC1D10701, tmp_addr=t4, tmp_val=t5)
   fw.label("wait_clear")
   fw.andi(t1, t0, CQ_WAIT_CLEAR_STREAM)
   fw.beq(t1, zero, "wait_done")
@@ -501,14 +703,21 @@ def build_dispatch() -> Kernel:
   fw.or_(t0, t0, t3)
   fw.lbu(t1, s0, 6)     # num_unicast
   fw.lbu(t2, s0, 7)     # noc data index
+  write32(fw, CQ_DEBUG + 32, t0, tmp_addr=t3, tmp_val=t4)
+  write32(fw, CQ_DEBUG + 36, t1, tmp_addr=t3, tmp_val=t4)
   fw.li(t3, GO_SIGNAL_NOC_DATA)
   fw.slli(t2, t2, 2)
   fw.add(t3, t3, t2)
+  # Blackhole inline writes can hang; C++ CQ stores the go word at aligned
+  # cmd_ptr and sends it as a normal 4-byte NOC write.
+  fw.sw(t0, s0, 0)
   fw.label("go_loop")
   fw.beq(t1, zero, "go_done")
   fw.lw(t2, t3, 0)
   fw.li(t4, 0x370)
-  noc_inline_write(fw, 1, 1, t0, t4, 0, t2, a=t5, v=s3)
+  fw.li(s3, 4)
+  noc_write(fw, 1, 1, s0, t4, 0, t2, s3, a=t5, v=s4)
+  fw.addi(s6, s6, 1)
   wait_cmd_ready(fw, 1, 1, addr=t5, val=s3)
   fw.addi(t3, t3, 4)
   fw.addi(t1, t1, -1)
@@ -518,11 +727,19 @@ def build_dispatch() -> Kernel:
   fw.j("release_and_continue")
 
   fw.label("cmd_host")
+  write32(fw, CQ_DEBUG, 0xC1D10300, tmp_addr=t1, tmp_val=t2)
   fw.lw(t0, s0, 8)      # length
+  write32(fw, CQ_DEBUG + 8, t0, tmp_addr=t1, tmp_val=t2)
   fw.slli(t1, s1, 4)    # completion dst addr
+  write32(fw, CQ_DEBUG + 12, t1, tmp_addr=t4, tmp_val=t5)
+  write32(fw, CQ_DEBUG, 0xC1D10301, tmp_addr=t4, tmp_val=t5)
+  fw.li(t4, NOC_STATUS_BASE + NIU_MST_WR_ACK_RECEIVED)
+  fw.lw(s6, t4, 0)
   noc_write(fw, 1, 0, s0, t1, NOC_PCIE_MID, PCIE_NOC_XY, t0, a=t2, v=t3)
   fw.addi(s6, s6, 1)
+  write32(fw, CQ_DEBUG, 0xC1D10302, tmp_addr=t4, tmp_val=t5)
   wait_noc_write_acks(fw, 1, s6, addr=t2, val=t3)
+  write32(fw, CQ_DEBUG, 0xC1D10303, tmp_addr=t4, tmp_val=t5)
   fw.addi(s1, s1, 256)  # one 4K completion page in 16B units
   fw.li(t2, (COMPLETION_BASE + COMPLETION_SIZE) >> 4)
   fw.bltu(s1, t2, "host_no_wrap")
@@ -536,12 +753,17 @@ def build_dispatch() -> Kernel:
   fw.li(t1, COMPLETION_WR_PTR)
   fw.li(t2, HOST_COMPLETION_WR_PTR_OFF)
   fw.li(t3, 4)
+  write32(fw, CQ_DEBUG, 0xC1D10304, tmp_addr=t4, tmp_val=t5)
+  fw.li(t4, NOC_STATUS_BASE + NIU_MST_WR_ACK_RECEIVED)
+  fw.lw(s6, t4, 0)
   noc_write(fw, 1, 0, t1, t2, NOC_PCIE_MID, PCIE_NOC_XY, t3, a=t4, v=t5)
   fw.addi(s6, s6, 1)
+  write32(fw, CQ_DEBUG, 0xC1D10305, tmp_addr=t4, tmp_val=t5)
   wait_noc_write_acks(fw, 1, s6, addr=t4, val=t5)
+  write32(fw, CQ_DEBUG, 0xC1D10306, tmp_addr=t4, tmp_val=t5)
   fw.li(t1, 4096)
   fw.add(s0, s0, t1)
-  fw.j("release_and_continue")
+  fw.j("release_flush_and_continue")
 
   fw.label("cmd_timestamp")
   fw.lw(t0, s0, 4)
@@ -563,13 +785,47 @@ def build_dispatch() -> Kernel:
   fw.j("release_and_continue")
 
   fw.label("release_and_continue")
+  fw.li(t6, 8)
+  fw.j("release_common")
+
+  fw.label("release_flush_and_continue")
+  fw.li(t6, 1)
+
+  fw.label("release_common")
   round_up_reg(fw, s0, DISPATCH_CB_PAGE, tmp=t0)
+  fw.mv(t3, s0)
+  fw.sub(t3, t3, s9)
+  fw.srli(t3, t3, 12)    # pages consumed by this dispatch record
+  write32(fw, CQ_DEBUG + 28, t3, tmp_addr=t0, tmp_val=t4)
+  fw.addi(t4, t3, -1)
+  fw.beq(t4, zero, "dispatch_local_pages_done")
+  fw.li(t0, DISPATCH_PAGE_CURSOR)
+  fw.lw(t5, t0, 0)
+  fw.add(t5, t5, t4)
+  fw.sw(t5, t0, 0)
+  fw.label("dispatch_local_pages_done")
   fw.li(t0, DISPATCH_CB_END)
   fw.bne(s0, t0, "dispatch_no_wrap")
   fw.li(s0, DISPATCH_CB_BASE)
   fw.label("dispatch_no_wrap")
-  fw.li(t0, CQ_SEM_BASE)
-  noc_atomic_inc(fw, 1, 3, t0, PREFETCH_NOC_XY, 1, a=t1, v=t2)
+  fw.li(t0, DISPATCH_RELEASE_PENDING)
+  fw.lw(t4, t0, 0)
+  fw.add(t4, t4, t3)
+  fw.sw(t4, t0, 0)
+  fw.bltu(t4, t6, "release_skip_atomic")
+  fw.mv(t3, t4)
+  fw.sw(zero, t0, 0)
+  noc_write_barrier(fw, 1, s6, addr=t0, val=t4)
+  fw.li(t0, DISPATCH_RELEASE_VALUE)
+  fw.lw(t4, t0, 0)
+  fw.add(t4, t4, t3)
+  fw.sw(t4, t0, 0)
+  fw.li(t1, CQ_SEM_BASE)
+  fw.li(t3, 4)
+  write32(fw, CQ_DEBUG, 0xC1D1F010, tmp_addr=t5, tmp_val=s3)
+  noc_write(fw, 1, 2, t0, t1, 0, PREFETCH_NOC_XY, t3, a=t5, v=s3)
+  write32(fw, CQ_DEBUG, 0xC1D1F011, tmp_addr=t5, tmp_val=s3)
+  fw.label("release_skip_atomic")
   fw.j("dispatch_loop")
 
   fw.label("dispatch_done")

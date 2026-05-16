@@ -2,7 +2,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from l1 import Dram, Sysmem, align_up
+from l1 import Dram, align_up
 from pcie import NocOrdering, TLBWindow
 from program import Dtype
 
@@ -47,106 +47,6 @@ class DramBuffer:
 
   @property
   def size(self) -> int: return self.num_tiles * self.page_size
-
-@dataclass(frozen=True)
-class CppTransferKernelSpec:
-  name: str
-  cores: int
-  reader_kernel: str
-  cbs: list[tuple[int, int, int]]
-  reader_args: object
-
-# DMA copy kernels: sysmem <-> interleaved DRAM (no tilize/untilize compute)
-_A = '#define A(n) get_arg_val<uint32_t>(n)\n'
-
-def _fill_reader(pcie_base: int, dram_addr: int, page_size: int) -> str:
-  """NCRISC reader: copy tiles from sysmem (PCIe) to interleaved DRAM."""
-  return f"""\
-#define PCIE_BASE 0x{pcie_base:x}ULL
-#define DRAM_ADDR {dram_addr}
-#define PAGE_SIZE {page_size}
-{_A}
-#include <cstdint>
-
-void kernel_main() {{
-  constexpr uint32_t cb_id = tt::CBIndex::c_0;
-  const InterleavedAddrGenFast<true> dram = {{
-    .bank_base_address = DRAM_ADDR,
-    .page_size = PAGE_SIZE,
-    .data_format = get_dataformat(cb_id),
-  }};
-  for (uint32_t i = 0; i < A(1); ++i) {{
-    uint32_t tile_id = A(0) + i;
-    cb_reserve_back(cb_id, 1);
-    uint32_t l1 = get_write_ptr(cb_id);
-    noc_async_read(PCIE_BASE + (uint64_t)tile_id * PAGE_SIZE, l1, PAGE_SIZE);
-    noc_async_read_barrier();
-    noc_async_write_tile(tile_id, dram, l1);
-    noc_async_write_barrier();
-    cb_push_back(cb_id, 1);
-    cb_wait_front(cb_id, 1);
-    cb_pop_front(cb_id, 1);
-  }}
-}}
-"""
-
-def _drain_reader(pcie_base: int, dram_addr: int, page_size: int) -> str:
-  """NCRISC reader: copy tiles from interleaved DRAM to sysmem (PCIe)."""
-  return f"""\
-#define PCIE_BASE 0x{pcie_base:x}ULL
-#define DRAM_ADDR {dram_addr}
-#define PAGE_SIZE {page_size}
-{_A}
-#include <cstdint>
-
-void kernel_main() {{
-  constexpr uint32_t cb_id = tt::CBIndex::c_0;
-  const InterleavedAddrGenFast<true> dram = {{
-    .bank_base_address = DRAM_ADDR,
-    .page_size = PAGE_SIZE,
-    .data_format = get_dataformat(cb_id),
-  }};
-  for (uint32_t i = 0; i < A(1); ++i) {{
-    uint32_t tile_id = A(0) + i;
-    cb_reserve_back(cb_id, 1);
-    uint32_t l1 = get_write_ptr(cb_id);
-    noc_async_read_tile(tile_id, dram, l1);
-    noc_async_read_barrier();
-    noc_async_write(l1, PCIE_BASE + (uint64_t)tile_id * PAGE_SIZE, PAGE_SIZE);
-    noc_async_write_barrier();
-    cb_push_back(cb_id, 1);
-    cb_wait_front(cb_id, 1);
-    cb_pop_front(cb_id, 1);
-  }}
-}}
-"""
-
-def build_transfer_program(
-  buf: DramBuffer, direction: str, n_cores: int, sysmem_noc_addr: int,
-) -> tuple[CppTransferKernelSpec, int]:
-  total_tiles = buf.num_tiles
-  n = min(n_cores, total_tiles)
-  tpc = (total_tiles + n - 1) // n
-  page_size = buf.page_size
-
-  pcie_base = (Sysmem.PCIE_NOC_XY << 36) | (1 << 60) | (sysmem_noc_addr & ((1 << 36) - 1))
-
-  def tile_args(ci, _xy, _n):
-    start = ci * tpc
-    return [start, min(tpc, total_tiles - start) if start < total_tiles else 0]
-
-  if direction == "fill":
-    rk = _fill_reader(pcie_base, buf.addr, page_size)
-    name = f"dram_fill ({buf.name})" if buf.name else "dram_fill"
-  else:
-    rk = _drain_reader(pcie_base, buf.addr, page_size)
-    name = f"dram_drain ({buf.name})" if buf.name else "dram_drain"
-
-  return CppTransferKernelSpec(
-    cores=n, name=name, reader_kernel=rk,
-    cbs=[(0, buf.dtype.tile_size, 2)],
-    reader_args=tile_args,
-  ), buf.size
 
 class Allocator:
   def __init__(self, dev, bank_tiles: list):

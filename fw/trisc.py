@@ -256,6 +256,7 @@ def wait_trisc_message(fw: Kernel, trisc_id: int, *, ptr: Reg = t0, actual: Reg 
     write8(fw, ptr, RUN_SYNC_MSG_DONE, tmp_addr=actual, tmp_val=expected)
     fw.j(loop)
   fw.label(done)
+  fw.fence()
   return fw
 
 

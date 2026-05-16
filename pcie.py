@@ -711,7 +711,8 @@ class PCIDevice:
 
   def _bring_device_to_a0(self):
     """Bring ASIC from A3 to A0 if ARC is running."""
-    deadline = time.monotonic() + 0.5
+    arc_ready_timeout_s = 2.0
+    deadline = time.monotonic() + arc_ready_timeout_s
     boot_status = 0
     while time.monotonic() < deadline:
       boot_status = self.read_arc_apb32(self.SCRATCH_RAM_2)
@@ -722,7 +723,7 @@ class PCIDevice:
         return
       time.sleep(0.00001)
     raise RuntimeError(
-      f"ARC not ready after 0.5s (boot_status=0x{boot_status:x}) — device may be in A3, try tt-smi -r")
+      f"ARC not ready after {arc_ready_timeout_s:.1f}s (boot_status=0x{boot_status:x}) — device may be in A3, try tt-smi -r")
 
   def read_arc_apb32(self, offset: int) -> int:
     tlb = self.alloc_tlb(TLB_2M_SIZE)

@@ -148,6 +148,7 @@ def wait_subordinate_load_or_go(fw: Kernel, role: int, *, ptr: Reg = t0, actual:
   fw.fence()
   fw.j(loop)
   fw.label(done)
+  fw.fence()
   return fw
 
 
