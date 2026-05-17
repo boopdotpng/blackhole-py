@@ -1,31 +1,26 @@
 ## blackhole-py
 
-A minimal Python driver + emulator for the Tenstorrent Blackhole accelerator. Emits RISC-V
-(and Tensix) instructions directly from Python — no SFPI toolchain, no TT-Metal runtime,
+A minimal Python driver for the Tenstorrent Blackhole accelerator. Emits RISC-V
+(and Tensix) instructions directly from Python -- no SFPI toolchain, no TT-Metal runtime,
 no C++ firmware.
 
 > **Status: currently non-functional on hardware.** The old C++ firmware / SFPI compile
 > path has been torn out and the examples still reference the removed `compiler`,
-> `firmware`, and `kernels` modules. The emulator path is also under repair.
+> `firmware`, and `kernels` modules.
 
 ### Direction
 
 Instead of shipping a C++ toolchain to turn kernel source into RISC-V, we emit RISC-V
-straight from Python. `emu/dsl.py` is an instruction-level DSL for RV32I + M + the Tensix
+straight from Python. `dsl.py` is an instruction-level DSL for RV32I + M + the Tensix
 instruction push.
 
-The emulator (`emu/`) is intended to model the five RISC-V cores per Tensix tile
-(BRISC/NCRISC/TRISC0-2), the NOC, L1, DRAM, and the Tensix coprocessor pipeline.
-
-Reference notes and emulator specs live in [boopdotpng/tenstorrent-docs](https://github.com/boopdotpng/tenstorrent-docs).
+Reference notes live in [boopdotpng/tenstorrent-docs](https://github.com/boopdotpng/tenstorrent-docs).
 
 ### Requirements
 
 - **Python**: 3.10+, numpy
 - **Hardware**: Blackhole P100A and P150. tt-kmd must be unloaded (`modprobe -r tenstorrent`); you may need to blacklist it to survive a reboot.
 - **Kernel (eventually)**: VFIO (`modprobe vfio-pci`), required for fast dispatch so the device can DMA against a contiguous IOVA range.
-
-Neither is required to run the emulator.
 
 #### Why VFIO?
 For fast dispatch to work, we need to pin and unpin pages so the card can copy data back
