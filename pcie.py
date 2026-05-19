@@ -395,6 +395,21 @@ def _read_config_u16(path: str, offset: int) -> int: return struct.unpack("<H", 
 def _write_config_u16(path: str, offset: int, value: int): _write_config(path, struct.pack("<H", value & 0xFFFF), offset)
 
 
+def _ensure_endpoint_enabled(sysfs_path: str):
+  with open(f"{sysfs_path}/enable", "r+") as f:
+    if int(f.read().strip()) == 0:
+      f.seek(0)
+      f.write("1")
+  _ensure_memory_bus_master(_config_path(sysfs_path))
+
+
+def _ensure_memory_bus_master(config_path: str):
+  cmd = _read_config_u16(config_path, PCI_COMMAND)
+  want = PCI_COMMAND_MEMORY | PCI_COMMAND_MASTER
+  if (cmd & want) != want:
+    _write_config_u16(config_path, PCI_COMMAND, cmd | want)
+
+
 def _read_vendor_id(sysfs_path: str) -> int | None:
   try:
     return _read_config_u16(_config_path(sysfs_path), PCI_VENDOR_ID)
@@ -443,10 +458,7 @@ def _restore_endpoint_config(config_path: str, saved: bytes, pcie_cap: int | Non
     devctl = (saved_devctl & ~PCI_EXP_DEVCTL_READRQ) | PCI_EXP_DEVCTL_READRQ_4096
     _write_config(config_path, struct.pack("<H", devctl), pcie_cap + PCI_EXP_DEVCTL)
 
-  cmd = _read_config_u16(config_path, PCI_COMMAND)
-  want = PCI_COMMAND_MEMORY | PCI_COMMAND_MASTER
-  if (cmd & want) != want:
-    _write_config_u16(config_path, PCI_COMMAND, cmd | want)
+  _ensure_memory_bus_master(config_path)
 
 
 def _secondary_bus_reset(sysfs_path: str):
@@ -480,9 +492,6 @@ class PCIDevice:
     self._vfio_group = -1
     self._vfio_device = -1
     self._unbind_vfio_on_close = False
-    self._bar0_fd = -1
-    self._bar0_wc_fd = -1
-    self._bar2_fd = -1
     self._bar_mmaps: list[_MappedBar] = []
     self.bar0 = None
     self.bar0_wc = None
@@ -495,17 +504,7 @@ class PCIDevice:
     already_vfio = (os.path.islink(driver_link)
                     and os.path.basename(os.readlink(driver_link)) == "vfio-pci")
     if not already_vfio:
-      with open(f"{self.sysfs}/enable", "r+") as f:
-        if int(f.read().strip()) == 0:
-          f.seek(0); f.write("1")
-      fd = os.open(f"{self.sysfs}/config", os.O_RDWR)
-      os.lseek(fd, PCI_COMMAND, os.SEEK_SET)
-      cmd = struct.unpack("<H", os.read(fd, 2))[0]
-      want = PCI_COMMAND_MEMORY | PCI_COMMAND_MASTER
-      if (cmd & want) != want:
-        os.lseek(fd, PCI_COMMAND, os.SEEK_SET)
-        os.write(fd, struct.pack("<H", cmd | want))
-      os.close(fd)
+      _ensure_endpoint_enabled(self.sysfs)
 
     # Bind to vfio-pci only for fast dispatch DMA/sysmem pinning.
     self._has_vfio = use_vfio
@@ -513,18 +512,7 @@ class PCIDevice:
       self._setup_vfio()
       self._unbind_vfio_on_close = True
 
-    # mmap Linux BAR resources. TLBWindow chooses a UC or WC mapping at construction.
-    bar = _MappedBar(self.sysfs, "resource0", BAR0_SIZE)
-    self._bar_mmaps.append(bar); self._bar0_fd, self.bar0, self.bar0_u32 = bar.fd, bar.view, bar.u32
-    bar = _MappedBar(self.sysfs, "resource0_wc", BAR0_SIZE)
-    self._bar_mmaps.append(bar); self._bar0_wc_fd, self.bar0_wc = bar.fd, bar.view
-    bar = _MappedBar(self.sysfs, "resource2", 1 << 20)
-    self._bar_mmaps.append(bar); self._bar2_fd, self.bar2, self.bar2_u32 = bar.fd, bar.view, bar.u32
-
-    bar4_probe_fd = os.open(f"{self.sysfs}/resource4", os.O_RDWR | os.O_SYNC)
-    bar4_size = os.fstat(bar4_probe_fd).st_size
-    os.close(bar4_probe_fd)
-    self._bar4_4g_count = min(TLB_4G_COUNT, bar4_size // TLB_4G_SIZE) if bar4_size else 0
+    self._map_bars()
 
     # TLB allocation bitmaps
     self._tlb_2m = [False] * TLB_2M_COUNT
@@ -539,6 +527,25 @@ class PCIDevice:
     self._next_iova = 1 << 30
 
     self._bring_device_to_a0()
+
+  def _map_bar(self, resource: str, size: int) -> _MappedBar:
+    bar = _MappedBar(self.sysfs, resource, size)
+    self._bar_mmaps.append(bar)
+    return bar
+
+  def _map_bars(self):
+    # TLBWindow chooses between these UC/WC BAR0 mappings at construction.
+    bar0 = self._map_bar("resource0", BAR0_SIZE)
+    self.bar0, self.bar0_u32 = bar0.view, bar0.u32
+
+    bar0_wc = self._map_bar("resource0_wc", BAR0_SIZE)
+    self.bar0_wc = bar0_wc.view
+
+    bar2 = self._map_bar("resource2", 1 << 20)
+    self.bar2, self.bar2_u32 = bar2.view, bar2.u32
+
+    bar4_size = os.path.getsize(f"{self.sysfs}/resource4")
+    self._bar4_4g_count = min(TLB_4G_COUNT, bar4_size // TLB_4G_SIZE) if bar4_size else 0
 
   @staticmethod
   def list_devices() -> list[str]: return _find_bh_devices()
@@ -629,45 +636,23 @@ class PCIDevice:
 
   @staticmethod
   def reset_bdf(bdf: str):
-    """Blackhole reset matching tt-smi/UMD's non-Galaxy default as closely as possible.
-
-    1. Save PCI config space and PCIe Device Control (MPS/MRRS)
-    2. Do a PCIe secondary bus reset through the upstream bridge
-    3. Restore endpoint PCI config and enable memory/bus-master
-    4. Read PCIe NoC X from BAR0 (for post-reset DBI restore)
-    5. Set reset marker (PCI_COMMAND_PARITY)
-    6. Fire interface timer (extended config 0x930/0x934)
-    7. Poll for completion (parity bit clears)
-    8. Wait for the device to settle/reappear
-    9. Restore PCI config, DBI MPS, and MRRS
-    10. Send ARC A0 + watchdog on the next open
-
-    Falls back to PCIe FLR if extended config space is unavailable.
-    """
+    """Reset Blackhole like tt-smi/UMD's non-Galaxy path; fall back to PCIe FLR."""
     sysfs = f"/sys/bus/pci/devices/{bdf}"
     config_path = f"{sysfs}/config"
 
-    # PCI config offsets / bits
     _PCI_COMMAND         = 0x04
-    _PCI_COMMAND_MEMORY  = 0x02
-    _PCI_COMMAND_MASTER  = 0x04
-    _PCI_COMMAND_PARITY  = 0x40   # bit 6 — used as reset marker
-    # BH interface timer (PCIe extended config space)
+    _PCI_COMMAND_PARITY  = 0x40
     _TIMER_CONTROL       = 0x930
     _TIMER_TARGET        = 0x934
-    # BAR0 offsets for NOC ID detection
     _NOC2AXI_CFG_START   = 0x1FD00000
     _NOC_ID_OFFSET       = 0x4044
-    # PCIe DBI address (NoC space) and Device Control offset
     _PCIE_DBI_ADDR       = 0xF800000000000000
     _DBI_DEVCTL          = 0x78
 
-    # --- Pre-reset: save state ---
     fd = os.open(config_path, os.O_RDWR | os.O_SYNC)
     try:
       config_size = os.fstat(fd).st_size
       if config_size <= _TIMER_TARGET + 4:
-        # Extended config space not reachable: fall back to sysfs FLR
         os.close(fd); fd = -1
         print(f"  extended config space unavailable, falling back to PCIe FLR")
         with open(f"{sysfs}/reset", "w") as f:
@@ -678,7 +663,6 @@ class PCIDevice:
       if len(saved) < 64:
         raise RuntimeError(f"could not read PCI config for {bdf}")
 
-      # Find PCIe capability and save Device Control (contains MPS)
       pcie_cap = _find_pcie_cap(saved)
       saved_devctl = None
       if pcie_cap is not None:
@@ -688,11 +672,9 @@ class PCIDevice:
       if fd >= 0:
         os.close(fd)
 
-    # --- Match tt-smi/UMD default for non-Galaxy BH: reset/retrain PCIe link first. ---
     _secondary_bus_reset(sysfs)
     _restore_endpoint_config(config_path, saved, pcie_cap, saved_devctl)
 
-    # Read PCIe NoC X from BAR0 for post-reset MPS restore via DBI
     pcie_noc_x = None
     try:
       with _MappedBar(sysfs, "resource0", BAR0_SIZE) as bar0:
@@ -701,19 +683,16 @@ class PCIDevice:
         if x in (2, 11):
           pcie_noc_x = x
     except Exception:
-      pass  # will skip DBI restore
+      pass
 
     fd = os.open(config_path, os.O_RDWR | os.O_SYNC)
     try:
-      # --- Step 1: Set reset marker ---
       cmd = struct.unpack_from("<H", saved, _PCI_COMMAND)[0]
       os.pwrite(fd, struct.pack("<H", cmd | _PCI_COMMAND_PARITY), _PCI_COMMAND)
 
-      # --- Step 2: Fire interface timer (in-place ASIC reset) ---
-      os.pwrite(fd, struct.pack("<I", 0x1), _TIMER_TARGET)    # target = 1
-      os.pwrite(fd, struct.pack("<I", 0x11), _TIMER_CONTROL)  # enable | force_pending
+      os.pwrite(fd, struct.pack("<I", 0x1), _TIMER_TARGET)
+      os.pwrite(fd, struct.pack("<I", 0x11), _TIMER_CONTROL)
 
-      # --- Step 3: Poll for reset completion ---
       deadline = time.monotonic() + 10.0
       while time.monotonic() < deadline:
         raw = os.pread(fd, 2, _PCI_COMMAND)
@@ -726,20 +705,16 @@ class PCIDevice:
       if fd >= 0:
         os.close(fd)
 
-    # UMD waits at least 2s after ASIC reset before POST_RESET.
     time.sleep(2.0)
     if not _wait_for_vendor_id(sysfs, timeout_s=10.0):
       raise RuntimeError(f"device {bdf} did not respond after ASIC reset")
 
-    # --- Step 4: Restore PCI config space / MRRS ---
     _restore_endpoint_config(config_path, saved, pcie_cap, saved_devctl)
 
-    # --- Step 5: Restore MPS via NoC write to PCIe DBI register ---
     if pcie_noc_x is not None and saved_devctl is not None:
       try:
         with _MappedBar(sysfs, "resource0", BAR0_SIZE) as bar0_map:
           bar0 = bar0_map.view
-          # Use the last 2M TLB (index 201) to reach PCIE_DBI_ADDR + 0x78
           dbi_addr = _PCIE_DBI_ADDR + _DBI_DEVCTL
           tlb_idx = TLB_2M_COUNT - 1
           local_offset = dbi_addr >> 21
@@ -761,16 +736,12 @@ class PCIDevice:
 
           bar_off = tlb_idx * TLB_2M_SIZE + (int(dbi_addr) & (TLB_2M_SIZE - 1))
           cur = struct.unpack_from("<I", bar0, bar_off)[0]
-          # Clear MPS field (bits 7:5) and restore saved value
           mps_bits = (saved_devctl >> 5) & 0x7
           cur = (cur & ~(0x7 << 5)) | (mps_bits << 5)
           cur = (cur & ~PCI_EXP_DEVCTL_READRQ) | PCI_EXP_DEVCTL_READRQ_4096
           bar0_u32[bar_off // 4] = cur
       except Exception as e:
         print(f"  warning: could not restore MPS via DBI: {e}")
-
-    # ARC init (A0 + watchdog) happens in PCIDevice.__init__ → _bring_device_to_a0()
-    # on the next open, so nothing more to do here.
 
   def _setup_vfio(self):
     _bind_vfio_pci(self.sysfs)
@@ -1069,8 +1040,6 @@ class PCIDevice:
     for bar_name in ["bar0", "bar0_wc", "bar2", "bar0_u32", "bar2_u32"]:
       setattr(self, bar_name, None)
     self._bar_mmaps.clear()
-    for fd_name in ["_bar0_fd", "_bar0_wc_fd", "_bar2_fd"]:
-      setattr(self, fd_name, -1)
     if self._has_vfio:
       for fd_name in ["_vfio_device", "_vfio_group", "_vfio_container"]:
         fd = getattr(self, fd_name, -1)
