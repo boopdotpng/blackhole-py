@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 from asm import Kernel
@@ -146,14 +147,15 @@ def build(*, text_base: dict[str, int] = Firmware.TEXT_BASE) -> Kernel:
       fw.sw(t1, t0, 0)
   # invalidate_all_risc_icaches
   fw.write32(TensixRegs.RISCV_IC_INVALIDATE_INVALIDATE_ALL, TensixRegs.RISCV_IC_ALL_MASK)
-  buf = TensixRegs.INSTRN_BUF_BASE
-  fw.tensix_push_word(buf, TTZEROACC(clear_mode=3).raw_word())
-  fw.tensix_push_word(buf, TTSFPENCC(imm12_math=3, instr_mod1=10).raw_word())
-  fw.tensix_push_word(buf, TTNOP().raw_word())
-  fw.tensix_push_word(buf, TTSFPLOADI(imm16=0xBF80).raw_word())
-  fw.tensix_push_word(buf, TTSFPCONFIG(config_dest=11).raw_word())
-  for sem in (TensixSem.MATH_PACK, TensixSem.UNPACK_TO_DEST, TensixSem.MATH_DONE):
-    fw.tensix_push_word(buf, TTSEMINIT(sem_sel=1 << sem, init_value=0, max_value=1).raw_word())
+  if not os.environ.get("TT_DEBUG_SKIP_BRISC_TENSIX_INIT"):
+    buf = TensixRegs.INSTRN_BUF_BASE
+    fw.tensix_push_word(buf, TTZEROACC(clear_mode=3).raw_word())
+    fw.tensix_push_word(buf, TTSFPENCC(imm12_math=3, instr_mod1=10).raw_word())
+    fw.tensix_push_word(buf, TTNOP().raw_word())
+    fw.tensix_push_word(buf, TTSFPLOADI(imm16=0xBF80).raw_word())
+    fw.tensix_push_word(buf, TTSFPCONFIG(config_dest=11).raw_word())
+    for sem in (TensixSem.MATH_PACK, TensixSem.UNPACK_TO_DEST, TensixSem.MATH_DONE):
+      fw.tensix_push_word(buf, TTSEMINIT(sem_sel=1 << sem, init_value=0, max_value=1).raw_word())
 
   # init_risc_noc_coords
   for noc in range(2):

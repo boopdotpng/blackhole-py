@@ -1,4 +1,5 @@
 from __future__ import annotations
+import os
 import sys
 from pathlib import Path
 
@@ -156,10 +157,11 @@ def build(trisc_id: int) -> Kernel:
 
   fw.run_launch_kernel(2 + trisc_id)
 
-  # tensix_sync
-  fw.write32(TensixRegs.PC_BUF_SYNC, 0)
-  fw.read32(t0, TensixRegs.PC_BUF_SYNC)
-  fw.and_(zero, zero, t0)
+  if not os.environ.get("TT_DEBUG_SKIP_FINAL_TRISC_SYNC"):
+    # tensix_sync
+    fw.write32(TensixRegs.PC_BUF_SYNC, 0)
+    fw.read32(t0, TensixRegs.PC_BUF_SYNC)
+    fw.and_(zero, zero, t0)
 
   fw.signal_subordinate_done(role)
   fw.j("run_loop")
