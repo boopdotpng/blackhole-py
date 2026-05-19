@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import sys
 from pathlib import Path
 
@@ -8,7 +7,7 @@ if __package__ in (None, ""):
   sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from asm import Kernel
-from dsl import Reg, ra, sp, s0, s1, s2, s3, s4, s5, s6, s7, s8, s9, s10, s11, t0, t1, t2, t3, t4, t5, t6, zero
+from dsl import Reg, s0, s1, s2, s3, s4, s5, s6, s7, s8, s9, s10, s11, t0, t1, t2, t3, t4, t5, t6, zero
 
 
 L1_ALIGN = 16
@@ -138,166 +137,6 @@ PREFETCH_PCIE_END = CQ_DEBUG + 0xA4
 GO_SIGNAL_VALUE = CQ_DEBUG + 0x100
 
 
-def write32(fw: Kernel, addr: int | Reg, value: int | Reg, *, tmp_addr: Reg = t0, tmp_val: Reg = t1):
-  if isinstance(addr, int):
-    fw.li(tmp_addr, addr)
-    addr = tmp_addr
-  if isinstance(value, int):
-    fw.li(tmp_val, value)
-    value = tmp_val
-  return fw.sw(value, addr, 0)
-
-
-def read32(fw: Kernel, rd: Reg, addr: int | Reg, *, tmp_addr: Reg = t0):
-  if isinstance(addr, int):
-    fw.li(tmp_addr, addr)
-    addr = tmp_addr
-  return fw.lw(rd, addr, 0)
-
-
-def read16(fw: Kernel, rd: Reg, addr: int | Reg, *, tmp_addr: Reg = t0):
-  if isinstance(addr, int):
-    fw.li(tmp_addr, addr)
-    addr = tmp_addr
-  return fw.lhu(rd, addr, 0)
-
-
-def stream_reg(stream: int | Reg, reg: int, *, out: Reg = t0, tmp: Reg = t1):
-  if isinstance(stream, int):
-    return STREAM_BASE + stream * STREAM_STRIDE + reg * 4
-  # out = STREAM_BASE + stream * STREAM_STRIDE + reg*4
-  # STREAM_STRIDE is 1<<12.
-  return out
-
-
-def setup_stack(fw: Kernel):
-  return fw.li(sp, 0xFFB01FF0)
-
-
-def noc_cmd_addr(noc: int, buf: int, reg: int) -> int:
-  return reg + (buf << NOC_CMD_BUF_OFFSET_BIT) + (noc << NOC_INSTANCE_OFFSET_BIT)
-
-
-def wait_cmd_ready(fw: Kernel, noc: int, buf: int, *, addr: Reg = t0, val: Reg = t1):
-  fw.li(addr, noc_cmd_addr(noc, buf, NOC_CMD_CTRL))
-  loop = fw._new_label("noc_ready")
-  fw.label(loop)
-  fw.lw(val, addr, 0)
-  fw.bne(val, zero, loop)
-  return fw
-
-
-def wait_noc_write_acks(fw: Kernel, noc: int, target: Reg, *, addr: Reg = t0, val: Reg = t1):
-  fw.li(addr, NOC_STATUS_BASE + NIU_MST_WR_ACK_RECEIVED + (noc << NOC_INSTANCE_OFFSET_BIT))
-  loop = fw._new_label("wr_ack")
-  fw.label(loop)
-  fw.lw(val, addr, 0)
-  fw.bltu(val, target, loop)
-  return fw
-
-
-def noc_write_barrier(fw: Kernel, noc: int, target: Reg, *, addr: Reg = t0, val: Reg = t1):
-  wait_noc_write_acks(fw, noc, target, addr=addr, val=val)
-  fw.fence()
-  return fw
-
-
-def noc_write_reg(fw: Kernel, noc: int, buf: int, reg: int, value: int | Reg, *, addr: Reg = t0, tmp: Reg = t1):
-  return write32(fw, noc_cmd_addr(noc, buf, reg), value, tmp_addr=addr, tmp_val=tmp)
-
-
-def noc_read(fw: Kernel, noc: int, buf: int, src_lo: Reg, src_mid: int | Reg, src_coord: int | Reg,
-             dst: Reg, length: Reg, *, a: Reg = t0, v: Reg = t1):
-  wait_cmd_ready(fw, noc, buf, addr=a, val=v)
-  noc_write_reg(fw, noc, buf, NOC_CTRL, NOC_CMD_RD_FIELD, addr=a, tmp=v)
-  noc_write_reg(fw, noc, buf, NOC_RET_ADDR_LO, dst, addr=a, tmp=v)
-  noc_write_reg(fw, noc, buf, NOC_RET_ADDR_MID, 0, addr=a, tmp=v)
-  noc_write_reg(fw, noc, buf, NOC_RET_ADDR_COORDINATE, PREFETCH_NOC_XY, addr=a, tmp=v)
-  noc_write_reg(fw, noc, buf, NOC_TARG_ADDR_LO, src_lo, addr=a, tmp=v)
-  noc_write_reg(fw, noc, buf, NOC_TARG_ADDR_MID, src_mid, addr=a, tmp=v)
-  noc_write_reg(fw, noc, buf, NOC_TARG_ADDR_COORDINATE, src_coord, addr=a, tmp=v)
-  noc_write_reg(fw, noc, buf, NOC_AT_LEN_BE, length, addr=a, tmp=v)
-  noc_write_reg(fw, noc, buf, NOC_AT_LEN_BE_1, 0, addr=a, tmp=v)
-  noc_write_reg(fw, noc, buf, NOC_CMD_CTRL, NOC_CTRL_SEND_REQ, addr=a, tmp=v)
-  return fw
-
-
-def noc_write(fw: Kernel, noc: int, buf: int, src: Reg, dst_lo: Reg, dst_mid: int | Reg, dst_coord: Reg,
-              length: Reg, *, mcast: bool = False, mcast_linked: bool = False,
-              num_dests: Reg | None = None, posted: bool = False, a: Reg = t0, v: Reg = t1):
-  wait_cmd_ready(fw, noc, buf, addr=a, val=v)
-  if mcast:
-    noc_write_reg(
-      fw, noc, buf, NOC_CTRL,
-      NOC_CMD_WR_MCAST_LINKED_FIELD if mcast_linked else NOC_CMD_WR_MCAST_UNLINK_FIELD,
-      addr=a, tmp=v)
-  else:
-    noc_write_reg(fw, noc, buf, NOC_CTRL, NOC_CMD_WR_POSTED_FIELD if posted else NOC_CMD_WR_FIELD, addr=a, tmp=v)
-  noc_write_reg(fw, noc, buf, NOC_TARG_ADDR_LO, src, addr=a, tmp=v)
-  noc_write_reg(fw, noc, buf, NOC_RET_ADDR_LO, dst_lo, addr=a, tmp=v)
-  noc_write_reg(fw, noc, buf, NOC_RET_ADDR_MID, dst_mid, addr=a, tmp=v)
-  noc_write_reg(fw, noc, buf, NOC_RET_ADDR_COORDINATE, dst_coord, addr=a, tmp=v)
-  noc_write_reg(fw, noc, buf, NOC_AT_LEN_BE, length, addr=a, tmp=v)
-  noc_write_reg(fw, noc, buf, NOC_AT_LEN_BE_1, 0, addr=a, tmp=v)
-  noc_write_reg(fw, noc, buf, NOC_CMD_CTRL, NOC_CTRL_SEND_REQ, addr=a, tmp=v)
-  return fw
-
-
-def noc_inline_write(fw: Kernel, noc: int, buf: int, value: Reg, dst_lo: Reg, dst_mid: int | Reg, dst_coord: Reg,
-                     *, a: Reg = t0, v: Reg = t1):
-  wait_cmd_ready(fw, noc, buf, addr=a, val=v)
-  noc_write_reg(fw, noc, buf, NOC_AT_DATA, value, addr=a, tmp=v)
-  noc_write_reg(fw, noc, buf, NOC_CTRL, NOC_CMD_INLINE_FIELD, addr=a, tmp=v)
-  noc_write_reg(fw, noc, buf, NOC_TARG_ADDR_LO, dst_lo, addr=a, tmp=v)
-  noc_write_reg(fw, noc, buf, NOC_TARG_ADDR_MID, dst_mid, addr=a, tmp=v)
-  noc_write_reg(fw, noc, buf, NOC_TARG_ADDR_COORDINATE, dst_coord, addr=a, tmp=v)
-  noc_write_reg(fw, noc, buf, NOC_AT_LEN_BE, 0xF, addr=a, tmp=v)
-  noc_write_reg(fw, noc, buf, NOC_AT_LEN_BE_1, 0, addr=a, tmp=v)
-  noc_write_reg(fw, noc, buf, NOC_CMD_CTRL, NOC_CTRL_SEND_REQ, addr=a, tmp=v)
-  return fw
-
-
-def wait_noc_atomic_responses(fw: Kernel, noc: int, target: Reg, *, addr: Reg = t0, val: Reg = t1):
-  fw.li(addr, NOC_STATUS_BASE + NIU_MST_ATOMIC_RESP_RECEIVED + (noc << NOC_INSTANCE_OFFSET_BIT))
-  loop = fw._new_label("atomic_resp")
-  fw.label(loop)
-  fw.lw(val, addr, 0)
-  fw.bltu(val, target, loop)
-  return fw
-
-
-def noc_atomic_inc(fw: Kernel, noc: int, buf: int, dst_lo: Reg, dst_coord: int | Reg, incr: Reg | int,
-                   ret_coord: int, *, a: Reg = t0, v: Reg = t1):
-  wait_cmd_ready(fw, noc, buf, addr=a, val=v)
-  noc_write_reg(fw, noc, buf, NOC_RET_ADDR_LO, 4, addr=a, tmp=v)
-  noc_write_reg(fw, noc, buf, NOC_RET_ADDR_MID, 0, addr=a, tmp=v)
-  noc_write_reg(fw, noc, buf, NOC_RET_ADDR_COORDINATE, ret_coord, addr=a, tmp=v)
-  noc_write_reg(fw, noc, buf, NOC_TARG_ADDR_LO, dst_lo, addr=a, tmp=v)
-  noc_write_reg(fw, noc, buf, NOC_TARG_ADDR_MID, 0, addr=a, tmp=v)
-  noc_write_reg(fw, noc, buf, NOC_TARG_ADDR_COORDINATE, dst_coord, addr=a, tmp=v)
-  noc_write_reg(fw, noc, buf, NOC_CTRL, NOC_CMD_AT_INC_FIELD, addr=a, tmp=v)
-  noc_write_reg(fw, noc, buf, NOC_AT_LEN_BE, NOC_AT_INCR_GET, addr=a, tmp=v)
-  noc_write_reg(fw, noc, buf, NOC_AT_LEN_BE_1, 0, addr=a, tmp=v)
-  noc_write_reg(fw, noc, buf, NOC_AT_DATA, incr, addr=a, tmp=v)
-  noc_write_reg(fw, noc, buf, NOC_CMD_CTRL, NOC_CTRL_SEND_REQ, addr=a, tmp=v)
-  return fw
-
-
-def copy_words(fw: Kernel, dst: Reg, src: Reg, byte_count: Reg, *, word: Reg = t0):
-  loop = fw._new_label("copy")
-  done = fw._new_label("copy_done")
-  fw.label(loop)
-  fw.beq(byte_count, zero, done)
-  fw.lw(word, src, 0)
-  fw.sw(word, dst, 0)
-  fw.addi(src, src, 4)
-  fw.addi(dst, dst, 4)
-  fw.addi(byte_count, byte_count, -4)
-  fw.j(loop)
-  fw.label(done)
-  return fw
-
-
 def acquire_local_pages(fw: Kernel, sem_addr: int, pages: Reg, credit: Reg, *, ptr: Reg = t0, val: Reg = t1):
   fw.li(ptr, sem_addr)
   loop = fw._new_label("sem_wait")
@@ -319,23 +158,23 @@ def round_up_reg(fw: Kernel, reg: Reg, align: int, *, tmp: Reg = t0):
 
 def build_prefetch() -> Kernel:
   fw = Kernel(kind="brisc")
-  setup_stack(fw)
-  write32(fw, CQ_DEBUG, 0xC1010001)
-  write32(fw, CQ_SEM_BASE, DISPATCH_CB_PAGES)
+  fw.setup_stack(0xFFB01FF0)
+  fw.write32(CQ_DEBUG, 0xC1010001)
+  fw.write32(CQ_SEM_BASE, DISPATCH_CB_PAGES)
   fw.li(s0, PREFETCH_Q_BASE)     # queue read pointer
-  read32(fw, s1, PREFETCH_Q_PCIE_RD)  # host PCIE read pointer
-  write32(fw, PREFETCH_PCIE_BASE, s1, tmp_addr=t0, tmp_val=t1)
+  fw.read32(s1, PREFETCH_Q_PCIE_RD)  # host PCIE read pointer
+  fw.write32(PREFETCH_PCIE_BASE, s1, tmp_addr=t0, tmp_val=t1)
   fw.li(t0, HOST_ISSUE_SIZE)
   fw.add(t0, s1, t0)
-  write32(fw, PREFETCH_PCIE_END, t0, tmp_addr=t1, tmp_val=t2)
+  fw.write32(PREFETCH_PCIE_END, t0, tmp_addr=t1, tmp_val=t2)
   fw.li(s2, DISPATCH_CB_BASE)    # dispatch CB write pointer
   fw.li(s8, 0)                    # local page-credit adjustment
-  read32(fw, s4, NOC_STATUS_BASE + NIU_MST_RD_RESP_RECEIVED)
-  read32(fw, s5, NOC_STATUS_BASE + NIU_MST_WR_ACK_RECEIVED)
-  read32(fw, s7, NOC_STATUS_BASE + NIU_MST_ATOMIC_RESP_RECEIVED)
+  fw.read32(s4, NOC_STATUS_BASE + NIU_MST_RD_RESP_RECEIVED)
+  fw.read32(s5, NOC_STATUS_BASE + NIU_MST_WR_ACK_RECEIVED)
+  fw.read32(s7, NOC_STATUS_BASE + NIU_MST_ATOMIC_RESP_RECEIVED)
 
   fw.label("prefetch_loop")
-  write32(fw, CQ_DEBUG, 0xC1010002)
+  fw.write32(CQ_DEBUG, 0xC1010002)
   fw.lhu(t0, s0, 0)
   fw.beq(t0, zero, "prefetch_loop")
   fw.li(t1, 0x7FFF)
@@ -343,7 +182,7 @@ def build_prefetch() -> Kernel:
   fw.beq(t0, zero, "prefetch_loop")
   fw.slli(t0, t0, 4)             # byte count
   fw.li(t1, CMDDAT_Q_BASE)
-  write32(fw, CQ_DEBUG + 4, t0, tmp_addr=t2, tmp_val=t3)
+  fw.write32(CQ_DEBUG + 4, t0, tmp_addr=t2, tmp_val=t3)
   fw.mv(s9, s1)                  # host read cursor
   fw.mv(s10, t1)                 # local cmddat write cursor
   fw.mv(s11, t0)                 # bytes remaining
@@ -356,7 +195,7 @@ def build_prefetch() -> Kernel:
   fw.label("prefetch_read_full_burst")
   fw.mv(t5, t4)
   fw.label("prefetch_read_issue")
-  noc_read(fw, 0, 1, s9, NOC_PCIE_MID, PCIE_NOC_XY, s10, t5, a=t2, v=t3)
+  fw.noc_read(0, 1, s9, NOC_PCIE_MID, PCIE_NOC_XY, s10, t5, ret_coord=PREFETCH_NOC_XY, a=t2, v=t3)
   fw.addi(s4, s4, 1)
   fw.add(s9, s9, t5)
   fw.add(s10, s10, t5)
@@ -367,15 +206,15 @@ def build_prefetch() -> Kernel:
   fw.label("prefetch_read_barrier")
   fw.lw(t3, t2, 0)
   fw.bltu(t3, s4, "prefetch_read_barrier")
-  write32(fw, CQ_DEBUG, 0xC1010003, tmp_addr=t2, tmp_val=t3)
+  fw.write32(CQ_DEBUG, 0xC1010003, tmp_addr=t2, tmp_val=t3)
   fw.sh(zero, s0, 0)
-  write32(fw, PREFETCH_Q_RD_PTR, s0, tmp_addr=t2, tmp_val=t3)
+  fw.write32(PREFETCH_Q_RD_PTR, s0, tmp_addr=t2, tmp_val=t3)
   fw.add(s1, s1, t0)
-  read32(fw, t2, PREFETCH_PCIE_END, tmp_addr=t3)
+  fw.read32(t2, PREFETCH_PCIE_END, tmp_addr=t3)
   fw.bltu(s1, t2, "prefetch_no_pcie_wrap")
-  read32(fw, s1, PREFETCH_PCIE_BASE, tmp_addr=t3)
+  fw.read32(s1, PREFETCH_PCIE_BASE, tmp_addr=t3)
   fw.label("prefetch_no_pcie_wrap")
-  write32(fw, PREFETCH_Q_PCIE_RD, s1, tmp_addr=t2, tmp_val=t3)
+  fw.write32(PREFETCH_Q_PCIE_RD, s1, tmp_addr=t2, tmp_val=t3)
   fw.addi(s0, s0, 2)
   fw.li(t2, PREFETCH_Q_END)
   fw.bne(s0, t2, "prefetch_no_q_wrap")
@@ -384,7 +223,7 @@ def build_prefetch() -> Kernel:
 
   fw.li(t1, CMDDAT_Q_BASE)
   fw.lbu(t2, t1, 0)
-  write32(fw, CQ_DEBUG + 8, t2, tmp_addr=t3, tmp_val=t4)
+  fw.write32(CQ_DEBUG + 8, t2, tmp_addr=t3, tmp_val=t4)
   fw.li(t3, CQ_PREFETCH_CMD_RELAY_INLINE)
   fw.beq(t2, t3, "prefetch_relay_inline")
   fw.li(t3, CQ_PREFETCH_CMD_RELAY_INLINE_NOFLUSH)
@@ -404,11 +243,11 @@ def build_prefetch() -> Kernel:
   fw.add(t2, t0, t2)
   fw.srli(t2, t2, 12)            # pages
   fw.mv(s3, t2)
-  write32(fw, CQ_DEBUG + 12, s3, tmp_addr=t2, tmp_val=t3)
+  fw.write32(CQ_DEBUG + 12, s3, tmp_addr=t2, tmp_val=t3)
   acquire_local_pages(fw, CQ_SEM_BASE, s3, s8, ptr=t3, val=t0)
-  write32(fw, CQ_DEBUG, 0xC1010004, tmp_addr=t2, tmp_val=t3)
-  write32(fw, CQ_DEBUG + 16, s2, tmp_addr=t2, tmp_val=t3)
-  write32(fw, CQ_DEBUG, 0xC1010005, tmp_addr=t2, tmp_val=t3)
+  fw.write32(CQ_DEBUG, 0xC1010004, tmp_addr=t2, tmp_val=t3)
+  fw.write32(CQ_DEBUG + 16, s2, tmp_addr=t2, tmp_val=t3)
+  fw.write32(CQ_DEBUG, 0xC1010005, tmp_addr=t2, tmp_val=t3)
   fw.mv(s9, t1)                  # local cmddat read cursor
   fw.mv(s10, s2)                 # dispatch cb write cursor
   fw.mv(s11, s6)                 # bytes remaining
@@ -428,9 +267,9 @@ def build_prefetch() -> Kernel:
   fw.label("prefetch_write_trim_to_end")
   fw.mv(t0, t4)
   fw.label("prefetch_write_issue")
-  noc_write(fw, 0, 0, s9, s10, 0, DISPATCH_NOC_XY, t0, a=t2, v=t3)
+  fw.noc_write(0, 0, s9, s10, 0, DISPATCH_NOC_XY, t0, a=t2, v=t3)
   fw.addi(s5, s5, 1)
-  wait_noc_write_acks(fw, 0, s5, addr=t2, val=t3)
+  fw.noc_wait_write_acks(0, s5, addr=t2, val=t3)
   fw.add(s9, s9, t0)
   fw.add(s10, s10, t0)
   fw.sub(s11, s11, t0)
@@ -440,7 +279,7 @@ def build_prefetch() -> Kernel:
   fw.label("prefetch_write_no_wrap")
   fw.j("prefetch_write_loop")
   fw.label("prefetch_write_done")
-  write32(fw, CQ_DEBUG, 0xC1010006, tmp_addr=t2, tmp_val=t3)
+  fw.write32(CQ_DEBUG, 0xC1010006, tmp_addr=t2, tmp_val=t3)
   fw.mv(t0, s3)
   fw.slli(t0, t0, 12)
   fw.add(s2, s2, t0)
@@ -450,48 +289,48 @@ def build_prefetch() -> Kernel:
   fw.sub(s2, s2, t4)
   fw.label("prefetch_no_cb_wrap")
   fw.li(t1, CQ_SEM_BASE)
-  write32(fw, CQ_DEBUG, 0xC1010007, tmp_addr=t2, tmp_val=t3)
-  noc_atomic_inc(fw, 0, 3, t1, DISPATCH_NOC_XY, s3, PREFETCH_NOC_XY, a=t2, v=t3)
+  fw.write32(CQ_DEBUG, 0xC1010007, tmp_addr=t2, tmp_val=t3)
+  fw.noc_atomic_inc(0, 3, t1, DISPATCH_NOC_XY, s3, PREFETCH_NOC_XY, a=t2, v=t3)
   fw.addi(s7, s7, 1)
-  wait_noc_atomic_responses(fw, 0, s7, addr=t2, val=t3)
-  write32(fw, CQ_DEBUG, 0xC1010008, tmp_addr=t2, tmp_val=t3)
+  fw.noc_wait_atomic_responses(0, s7, addr=t2, val=t3)
+  fw.write32(CQ_DEBUG, 0xC1010008, tmp_addr=t2, tmp_val=t3)
   fw.j("prefetch_loop")
   fw.label("prefetch_bad_cmd")
-  write32(fw, CQ_DEBUG, 0xC10100EE, tmp_addr=t2, tmp_val=t3)
+  fw.write32(CQ_DEBUG, 0xC10100EE, tmp_addr=t2, tmp_val=t3)
   fw.j("prefetch_bad_cmd")
   fw.label("prefetch_done")
-  write32(fw, CQ_DEBUG, 0xC10100FF, tmp_addr=t2, tmp_val=t3)
+  fw.write32(CQ_DEBUG, 0xC10100FF, tmp_addr=t2, tmp_val=t3)
   fw.j("prefetch_done")
   return fw
 
 
 def build_dispatch() -> Kernel:
   fw = Kernel(kind="brisc")
-  setup_stack(fw)
-  write32(fw, CQ_DEBUG, 0xC1D10001)
+  fw.setup_stack(0xFFB01FF0)
+  fw.write32(CQ_DEBUG, 0xC1D10001)
   fw.li(s0, DISPATCH_CB_BASE)  # cmd ptr
-  read32(fw, s1, COMPLETION_WR_PTR)  # completion wr ptr in 16B units
+  fw.read32(s1, COMPLETION_WR_PTR)  # completion wr ptr in 16B units
   fw.li(s2, 0)  # completion toggle
-  read32(fw, s6, NOC_STATUS_BASE + NIU_MST_WR_ACK_RECEIVED + (1 << NOC_INSTANCE_OFFSET_BIT))
-  write32(fw, DISPATCH_RELEASE_PENDING, 0)
-  write32(fw, DISPATCH_PAGE_CURSOR, 0)
-  write32(fw, DISPATCH_RELEASE_VALUE, DISPATCH_CB_PAGES)
+  fw.read32(s6, NOC_STATUS_BASE + NIU_MST_WR_ACK_RECEIVED + (1 << NOC_INSTANCE_OFFSET_BIT))
+  fw.write32(DISPATCH_RELEASE_PENDING, 0)
+  fw.write32(DISPATCH_PAGE_CURSOR, 0)
+  fw.write32(DISPATCH_RELEASE_VALUE, DISPATCH_CB_PAGES)
 
   fw.label("dispatch_loop")
-  write32(fw, CQ_DEBUG, 0xC1D10002)
+  fw.write32(CQ_DEBUG, 0xC1D10002)
   fw.li(t0, CQ_SEM_BASE)
   fw.label("dispatch_wait_page")
   fw.fence()
   fw.lw(t1, t0, 0)
-  write32(fw, CQ_DEBUG + 20, t1, tmp_addr=t2, tmp_val=t3)
-  read32(fw, t2, DISPATCH_PAGE_CURSOR, tmp_addr=t3)
+  fw.write32(CQ_DEBUG + 20, t1, tmp_addr=t2, tmp_val=t3)
+  fw.read32(t2, DISPATCH_PAGE_CURSOR, tmp_addr=t3)
   fw.beq(t1, t2, "dispatch_wait_page")
   fw.addi(t2, t2, 1)
-  write32(fw, DISPATCH_PAGE_CURSOR, t2, tmp_addr=t3, tmp_val=t4)
-  write32(fw, CQ_DEBUG + 24, s0, tmp_addr=t1, tmp_val=t2)
+  fw.write32(DISPATCH_PAGE_CURSOR, t2, tmp_addr=t3, tmp_val=t4)
+  fw.write32(CQ_DEBUG + 24, s0, tmp_addr=t1, tmp_val=t2)
   fw.mv(s9, s0)          # page-aligned start of the current dispatch record
   fw.lbu(t0, s0, 0)
-  write32(fw, CQ_DEBUG + 4, t0, tmp_addr=t1, tmp_val=t2)
+  fw.write32(CQ_DEBUG + 4, t0, tmp_addr=t1, tmp_val=t2)
   fw.li(t1, CQ_DISPATCH_CMD_WRITE_PACKED_LARGE)
   fw.beq(t0, t1, "cmd_packed_large")
   fw.li(t1, CQ_DISPATCH_CMD_WRITE_PACKED)
@@ -511,7 +350,7 @@ def build_dispatch() -> Kernel:
   fw.j("advance_page")
 
   fw.label("cmd_packed_large")
-  write32(fw, CQ_DEBUG, 0xC1D10600)
+  fw.write32(CQ_DEBUG, 0xC1D10600)
   fw.lhu(s3, s0, 2)      # remaining subcmd count
   fw.lhu(s4, s0, 4)      # alignment
   fw.addi(s5, s0, 16)    # subcmd ptr
@@ -523,25 +362,25 @@ def build_dispatch() -> Kernel:
   fw.li(s8, 1)           # must barrier before a fresh multicast path reservation
   fw.label("pl_loop")
   fw.beq(s3, zero, "pl_done")
-  write32(fw, CQ_DEBUG, 0xC1D10601)
+  fw.write32(CQ_DEBUG, 0xC1D10601)
   fw.lw(t4, s5, 0)       # noc xy
-  write32(fw, CQ_DEBUG + 8, t4, tmp_addr=t0, tmp_val=t2)
+  fw.write32(CQ_DEBUG + 8, t4, tmp_addr=t0, tmp_val=t2)
   fw.lw(t5, s5, 4)       # addr
-  write32(fw, CQ_DEBUG + 12, t5, tmp_addr=t0, tmp_val=t2)
+  fw.write32(CQ_DEBUG + 12, t5, tmp_addr=t0, tmp_val=t2)
   fw.lhu(t1, s5, 8)      # len-1
   fw.addi(t1, t1, 1)
-  write32(fw, CQ_DEBUG + 16, t1, tmp_addr=t0, tmp_val=t2)
+  fw.write32(CQ_DEBUG + 16, t1, tmp_addr=t0, tmp_val=t2)
   fw.lbu(s7, s5, 10)     # num destinations
   fw.lbu(s11, s5, 11)    # flags
   fw.andi(s11, s11, CQ_PACKED_LARGE_UNLINK)
-  write32(fw, CQ_DEBUG, 0xC1D10602, tmp_addr=t0, tmp_val=t2)
-  write32(fw, CQ_DEBUG, 0xC1D10620, tmp_addr=t0, tmp_val=t2)
-  write32(fw, CQ_DEBUG + 40, s11, tmp_addr=t0, tmp_val=t2)
-  write32(fw, CQ_DEBUG + 44, s8, tmp_addr=t0, tmp_val=t2)
+  fw.write32(CQ_DEBUG, 0xC1D10602, tmp_addr=t0, tmp_val=t2)
+  fw.write32(CQ_DEBUG, 0xC1D10620, tmp_addr=t0, tmp_val=t2)
+  fw.write32(CQ_DEBUG + 40, s11, tmp_addr=t0, tmp_val=t2)
+  fw.write32(CQ_DEBUG + 44, s8, tmp_addr=t0, tmp_val=t2)
   fw.mv(s10, t1)         # bytes remaining for this subcommand
   fw.label("pl_burst_loop")
-  write32(fw, CQ_DEBUG, 0xC1D10621, tmp_addr=t0, tmp_val=t2)
-  write32(fw, CQ_DEBUG + 32, s10, tmp_addr=t0, tmp_val=t2)
+  fw.write32(CQ_DEBUG, 0xC1D10621, tmp_addr=t0, tmp_val=t2)
+  fw.write32(CQ_DEBUG + 32, s10, tmp_addr=t0, tmp_val=t2)
   fw.beq(s10, zero, "pl_subcmd_done")
   fw.li(t6, NOC_MAX_BURST_SIZE)
   fw.bltu(t6, s10, "pl_full_burst")
@@ -550,55 +389,55 @@ def build_dispatch() -> Kernel:
   # Python dispatcher conservative: each multicast is unlinked, and every
   # multicast after the first waits for prior writes to finish path teardown.
   fw.beq(s8, zero, "pl_single_path_ready")
-  noc_write_barrier(fw, 1, s6, addr=t0, val=t2)
+  fw.noc_write_barrier(1, s6, addr=t0, val=t2)
   fw.label("pl_single_path_ready")
-  write32(fw, CQ_DEBUG, 0xC1D10622, tmp_addr=t0, tmp_val=t2)
-  noc_write(fw, 1, 0, t3, t5, 0, t4, t1, mcast=True, mcast_linked=False, num_dests=s7, a=t0, v=t2)
+  fw.write32(CQ_DEBUG, 0xC1D10622, tmp_addr=t0, tmp_val=t2)
+  fw.noc_write(1, 0, t3, t5, 0, t4, t1, mcast=True, mcast_linked=False, num_dests=s7, a=t0, v=t2)
   fw.j("pl_burst_sent")
   fw.label("pl_full_burst")
-  write32(fw, CQ_DEBUG, 0xC1D10624, tmp_addr=t0, tmp_val=t2)
+  fw.write32(CQ_DEBUG, 0xC1D10624, tmp_addr=t0, tmp_val=t2)
   fw.beq(s8, zero, "pl_full_path_ready")
-  noc_write_barrier(fw, 1, s6, addr=t0, val=t2)
+  fw.noc_write_barrier(1, s6, addr=t0, val=t2)
   fw.label("pl_full_path_ready")
   fw.mv(t1, t6)
-  noc_write(fw, 1, 0, t3, t5, 0, t4, t1, mcast=True, mcast_linked=False, num_dests=s7, a=t0, v=t2)
+  fw.noc_write(1, 0, t3, t5, 0, t4, t1, mcast=True, mcast_linked=False, num_dests=s7, a=t0, v=t2)
   fw.label("pl_burst_sent")
   fw.li(s8, 1)
   fw.add(s6, s6, s7)
-  write32(fw, CQ_DEBUG + 36, t1, tmp_addr=t0, tmp_val=t2)
-  write32(fw, CQ_DEBUG + 48, s6, tmp_addr=t0, tmp_val=t2)
-  write32(fw, CQ_DEBUG, 0xC1D10603, tmp_addr=t0, tmp_val=t2)
-  wait_cmd_ready(fw, 1, 0, addr=t0, val=t2)
-  write32(fw, CQ_DEBUG, 0xC1D10604, tmp_addr=t0, tmp_val=t2)
+  fw.write32(CQ_DEBUG + 36, t1, tmp_addr=t0, tmp_val=t2)
+  fw.write32(CQ_DEBUG + 48, s6, tmp_addr=t0, tmp_val=t2)
+  fw.write32(CQ_DEBUG, 0xC1D10603, tmp_addr=t0, tmp_val=t2)
+  fw.noc_wait_cmd_ready(1, 0, addr=t0, val=t2)
+  fw.write32(CQ_DEBUG, 0xC1D10604, tmp_addr=t0, tmp_val=t2)
   fw.add(t3, t3, t1)
   fw.add(t5, t5, t1)
-  write32(fw, CQ_DEBUG, 0xC1D10625, tmp_addr=t0, tmp_val=t2)
-  write32(fw, CQ_DEBUG + 52, t3, tmp_addr=t0, tmp_val=t2)
-  write32(fw, CQ_DEBUG + 56, t5, tmp_addr=t0, tmp_val=t2)
+  fw.write32(CQ_DEBUG, 0xC1D10625, tmp_addr=t0, tmp_val=t2)
+  fw.write32(CQ_DEBUG + 52, t3, tmp_addr=t0, tmp_val=t2)
+  fw.write32(CQ_DEBUG + 56, t5, tmp_addr=t0, tmp_val=t2)
   fw.sub(s10, s10, t1)
-  write32(fw, CQ_DEBUG, 0xC1D10626, tmp_addr=t0, tmp_val=t2)
-  write32(fw, CQ_DEBUG + 32, s10, tmp_addr=t0, tmp_val=t2)
+  fw.write32(CQ_DEBUG, 0xC1D10626, tmp_addr=t0, tmp_val=t2)
+  fw.write32(CQ_DEBUG + 32, s10, tmp_addr=t0, tmp_val=t2)
   fw.j("pl_burst_loop")
   fw.label("pl_subcmd_done")
-  write32(fw, CQ_DEBUG, 0xC1D10627, tmp_addr=t0, tmp_val=t2)
-  write32(fw, CQ_DEBUG + 40, s11, tmp_addr=t0, tmp_val=t2)
+  fw.write32(CQ_DEBUG, 0xC1D10627, tmp_addr=t0, tmp_val=t2)
+  fw.write32(CQ_DEBUG + 40, s11, tmp_addr=t0, tmp_val=t2)
   fw.beq(s11, zero, "pl_keep_linked")
   fw.li(s8, 1)
-  write32(fw, CQ_DEBUG, 0xC1D10628, tmp_addr=t0, tmp_val=t2)
-  write32(fw, CQ_DEBUG + 44, s8, tmp_addr=t0, tmp_val=t2)
+  fw.write32(CQ_DEBUG, 0xC1D10628, tmp_addr=t0, tmp_val=t2)
+  fw.write32(CQ_DEBUG + 44, s8, tmp_addr=t0, tmp_val=t2)
   fw.j("pl_round_subcmd")
   fw.label("pl_keep_linked")
   fw.li(s8, 0)
-  write32(fw, CQ_DEBUG, 0xC1D10629, tmp_addr=t0, tmp_val=t2)
-  write32(fw, CQ_DEBUG + 44, s8, tmp_addr=t0, tmp_val=t2)
+  fw.write32(CQ_DEBUG, 0xC1D10629, tmp_addr=t0, tmp_val=t2)
+  fw.write32(CQ_DEBUG + 44, s8, tmp_addr=t0, tmp_val=t2)
   fw.label("pl_round_subcmd")
-  write32(fw, CQ_DEBUG, 0xC1D1062A, tmp_addr=t0, tmp_val=t2)
+  fw.write32(CQ_DEBUG, 0xC1D1062A, tmp_addr=t0, tmp_val=t2)
   # CQWritePackedLarge currently emits L1_ALIGN alignment.
   round_up_reg(fw, t3, L1_ALIGN, tmp=t4)
-  write32(fw, CQ_DEBUG + 52, t3, tmp_addr=t0, tmp_val=t2)
+  fw.write32(CQ_DEBUG + 52, t3, tmp_addr=t0, tmp_val=t2)
   fw.addi(s5, s5, 12)
   fw.addi(s3, s3, -1)
-  write32(fw, CQ_DEBUG + 60, s3, tmp_addr=t0, tmp_val=t2)
+  fw.write32(CQ_DEBUG + 60, s3, tmp_addr=t0, tmp_val=t2)
   fw.j("pl_loop")
   fw.label("pl_done")
   fw.mv(s0, t3)
@@ -620,9 +459,9 @@ def build_dispatch() -> Kernel:
   fw.label("pw_loop")
   fw.beq(t1, zero, "pw_done")
   fw.lw(t0, t4, 0)
-  noc_write(fw, 1, 0, t5, t3, 0, t0, t2, a=s3, v=s4)
+  fw.noc_write(1, 0, t5, t3, 0, t0, t2, a=s3, v=s4)
   fw.addi(s6, s6, 1)
-  wait_cmd_ready(fw, 1, 0, addr=s3, val=s4)
+  fw.noc_wait_cmd_ready(1, 0, addr=s3, val=s4)
   fw.andi(t0, s8, CQ_PACKED_NO_STRIDE)
   fw.bne(t0, zero, "pw_no_stride")
   fw.add(t5, t5, t2)
@@ -644,28 +483,28 @@ def build_dispatch() -> Kernel:
   fw.lbu(t0, s0, 1)
   fw.andi(t1, t0, CQ_WAIT_BARRIER)
   fw.beq(t1, zero, "wait_no_barrier")
-  noc_write_barrier(fw, 1, s6, addr=t2, val=t3)
+  fw.noc_write_barrier(1, s6, addr=t2, val=t3)
   fw.label("wait_no_barrier")
   fw.andi(t1, t0, CQ_WAIT_WAIT_STREAM)
   fw.beq(t1, zero, "wait_clear")
   fw.lhu(t2, s0, 2)
   fw.lw(t3, s0, 8)
-  write32(fw, CQ_DEBUG, 0xC1D10700, tmp_addr=t4, tmp_val=t5)
-  write32(fw, CQ_DEBUG + 40, t2, tmp_addr=t4, tmp_val=t5)
-  write32(fw, CQ_DEBUG + 44, t3, tmp_addr=t4, tmp_val=t5)
+  fw.write32(CQ_DEBUG, 0xC1D10700, tmp_addr=t4, tmp_val=t5)
+  fw.write32(CQ_DEBUG + 40, t2, tmp_addr=t4, tmp_val=t5)
+  fw.write32(CQ_DEBUG + 44, t3, tmp_addr=t4, tmp_val=t5)
   fw.slli(t2, t2, 12)
   fw.li(t4, STREAM_BASE + STREAM_REMOTE_DEST_BUF_SPACE_AVAILABLE_REG_INDEX * 4)
   fw.add(t2, t2, t4)
   fw.label("wait_stream_loop")
   fw.lw(t4, t2, 0)
-  write32(fw, CQ_DEBUG + 48, t4, tmp_addr=t5, tmp_val=s3)
+  fw.write32(CQ_DEBUG + 48, t4, tmp_addr=t5, tmp_val=s3)
   fw.li(t5, (1 << 17) - 1)
   fw.and_(t4, t4, t5)
   fw.sub(t4, t4, t3)
   fw.slli(t4, t4, 15)
   fw.blt(t4, zero, "wait_stream_loop")
   fw.label("wait_stream_done")
-  write32(fw, CQ_DEBUG, 0xC1D10701, tmp_addr=t4, tmp_val=t5)
+  fw.write32(CQ_DEBUG, 0xC1D10701, tmp_addr=t4, tmp_val=t5)
   fw.label("wait_clear")
   fw.andi(t1, t0, CQ_WAIT_CLEAR_STREAM)
   fw.beq(t1, zero, "wait_done")
@@ -695,7 +534,7 @@ def build_dispatch() -> Kernel:
   fw.addi(t1, s0, 16)
   fw.li(t2, GO_SIGNAL_NOC_DATA)
   fw.slli(t0, t0, 2)
-  copy_words(fw, t2, t1, t0, word=t3)
+  fw.copy_words(t2, t1, t0, word=t3)
   fw.mv(s0, t1)
   fw.add(s0, s0, t0)
   round_up_reg(fw, s0, L1_ALIGN, tmp=t0)
@@ -715,8 +554,8 @@ def build_dispatch() -> Kernel:
   fw.lbu(t1, s0, 6)     # num_unicast
   fw.lw(t2, s0, 8)      # wait_count
   fw.lw(t3, s0, 12)     # wait_stream
-  write32(fw, CQ_DEBUG + 32, t0, tmp_addr=t4, tmp_val=t5)
-  write32(fw, CQ_DEBUG + 36, t1, tmp_addr=t4, tmp_val=t5)
+  fw.write32(CQ_DEBUG + 32, t0, tmp_addr=t4, tmp_val=t5)
+  fw.write32(CQ_DEBUG + 36, t1, tmp_addr=t4, tmp_val=t5)
   fw.slli(t3, t3, 12)
   fw.li(t4, STREAM_BASE + STREAM_REMOTE_DEST_BUF_SPACE_AVAILABLE_REG_INDEX * 4)
   fw.add(t3, t3, t4)
@@ -740,8 +579,8 @@ def build_dispatch() -> Kernel:
   fw.lw(t2, t3, 0)
   fw.li(t4, 0x370)
   fw.li(s3, 4)
-  noc_write(fw, 1, 1, t6, t4, 0, t2, s3, posted=False, a=t5, v=s4)
-  wait_cmd_ready(fw, 1, 1, addr=t5, val=s3)
+  fw.noc_write(1, 1, t6, t4, 0, t2, s3, posted=False, a=t5, v=s4)
+  fw.noc_wait_cmd_ready(1, 1, addr=t5, val=s3)
   fw.addi(t3, t3, 4)
   fw.addi(t1, t1, -1)
   fw.j("go_loop")
@@ -750,19 +589,19 @@ def build_dispatch() -> Kernel:
   fw.j("release_and_continue")
 
   fw.label("cmd_host")
-  write32(fw, CQ_DEBUG, 0xC1D10300, tmp_addr=t1, tmp_val=t2)
+  fw.write32(CQ_DEBUG, 0xC1D10300, tmp_addr=t1, tmp_val=t2)
   fw.lw(t0, s0, 8)      # length
-  write32(fw, CQ_DEBUG + 8, t0, tmp_addr=t1, tmp_val=t2)
+  fw.write32(CQ_DEBUG + 8, t0, tmp_addr=t1, tmp_val=t2)
   fw.slli(t1, s1, 4)    # completion dst addr
-  write32(fw, CQ_DEBUG + 12, t1, tmp_addr=t4, tmp_val=t5)
-  write32(fw, CQ_DEBUG, 0xC1D10301, tmp_addr=t4, tmp_val=t5)
+  fw.write32(CQ_DEBUG + 12, t1, tmp_addr=t4, tmp_val=t5)
+  fw.write32(CQ_DEBUG, 0xC1D10301, tmp_addr=t4, tmp_val=t5)
   fw.li(t4, NOC_STATUS_BASE + NIU_MST_WR_ACK_RECEIVED)
   fw.lw(s6, t4, 0)
-  noc_write(fw, 1, 0, s0, t1, NOC_PCIE_MID, PCIE_NOC_XY, t0, a=t2, v=t3)
+  fw.noc_write(1, 0, s0, t1, NOC_PCIE_MID, PCIE_NOC_XY, t0, a=t2, v=t3)
   fw.addi(s6, s6, 1)
-  write32(fw, CQ_DEBUG, 0xC1D10302, tmp_addr=t4, tmp_val=t5)
-  wait_noc_write_acks(fw, 1, s6, addr=t2, val=t3)
-  write32(fw, CQ_DEBUG, 0xC1D10303, tmp_addr=t4, tmp_val=t5)
+  fw.write32(CQ_DEBUG, 0xC1D10302, tmp_addr=t4, tmp_val=t5)
+  fw.noc_wait_write_acks(1, s6, addr=t2, val=t3)
+  fw.write32(CQ_DEBUG, 0xC1D10303, tmp_addr=t4, tmp_val=t5)
   fw.addi(s1, s1, 256)  # one 4K completion page in 16B units
   fw.li(t2, (COMPLETION_BASE + COMPLETION_SIZE) >> 4)
   fw.bltu(s1, t2, "host_no_wrap")
@@ -772,18 +611,18 @@ def build_dispatch() -> Kernel:
   fw.mv(t0, s1)
   fw.slli(t1, s2, 31)
   fw.or_(t0, t0, t1)
-  write32(fw, COMPLETION_WR_PTR, t0, tmp_addr=t1, tmp_val=t2)
+  fw.write32(COMPLETION_WR_PTR, t0, tmp_addr=t1, tmp_val=t2)
   fw.li(t1, COMPLETION_WR_PTR)
   fw.li(t2, HOST_COMPLETION_WR_PTR_OFF)
   fw.li(t3, 4)
-  write32(fw, CQ_DEBUG, 0xC1D10304, tmp_addr=t4, tmp_val=t5)
+  fw.write32(CQ_DEBUG, 0xC1D10304, tmp_addr=t4, tmp_val=t5)
   fw.li(t4, NOC_STATUS_BASE + NIU_MST_WR_ACK_RECEIVED)
   fw.lw(s6, t4, 0)
-  noc_write(fw, 1, 0, t1, t2, NOC_PCIE_MID, PCIE_NOC_XY, t3, a=t4, v=t5)
+  fw.noc_write(1, 0, t1, t2, NOC_PCIE_MID, PCIE_NOC_XY, t3, a=t4, v=t5)
   fw.addi(s6, s6, 1)
-  write32(fw, CQ_DEBUG, 0xC1D10305, tmp_addr=t4, tmp_val=t5)
-  wait_noc_write_acks(fw, 1, s6, addr=t4, val=t5)
-  write32(fw, CQ_DEBUG, 0xC1D10306, tmp_addr=t4, tmp_val=t5)
+  fw.write32(CQ_DEBUG, 0xC1D10305, tmp_addr=t4, tmp_val=t5)
+  fw.noc_wait_write_acks(1, s6, addr=t4, val=t5)
+  fw.write32(CQ_DEBUG, 0xC1D10306, tmp_addr=t4, tmp_val=t5)
   fw.li(t1, 4096)
   fw.add(s0, s0, t1)
   fw.j("release_flush_and_continue")
@@ -791,14 +630,14 @@ def build_dispatch() -> Kernel:
   fw.label("cmd_timestamp")
   fw.lw(t0, s0, 4)
   fw.lw(t1, s0, 8)
-  read32(fw, t2, RISCV_DEBUG_REG_WALL_CLOCK_L, tmp_addr=t3)
-  read32(fw, t3, RISCV_DEBUG_REG_WALL_CLOCK_H, tmp_addr=t4)
+  fw.read32(t2, RISCV_DEBUG_REG_WALL_CLOCK_L, tmp_addr=t3)
+  fw.read32(t3, RISCV_DEBUG_REG_WALL_CLOCK_H, tmp_addr=t4)
   fw.sw(t2, s0, 0)
   fw.sw(t3, s0, 4)
   fw.li(t4, 8)
-  noc_write(fw, 1, 0, s0, t1, NOC_PCIE_MID, t0, t4, a=t5, v=s3)
+  fw.noc_write(1, 0, s0, t1, NOC_PCIE_MID, t0, t4, a=t5, v=s3)
   fw.addi(s6, s6, 1)
-  wait_noc_write_acks(fw, 1, s6, addr=t5, val=s3)
+  fw.noc_wait_write_acks(1, s6, addr=t5, val=s3)
   fw.addi(s0, s0, 16)
   fw.j("release_and_continue")
 
@@ -819,7 +658,7 @@ def build_dispatch() -> Kernel:
   fw.mv(t3, s0)
   fw.sub(t3, t3, s9)
   fw.srli(t3, t3, 12)    # pages consumed by this dispatch record
-  write32(fw, CQ_DEBUG + 28, t3, tmp_addr=t0, tmp_val=t4)
+  fw.write32(CQ_DEBUG + 28, t3, tmp_addr=t0, tmp_val=t4)
   fw.addi(t4, t3, -1)
   fw.beq(t4, zero, "dispatch_local_pages_done")
   fw.li(t0, DISPATCH_PAGE_CURSOR)
@@ -838,16 +677,16 @@ def build_dispatch() -> Kernel:
   fw.bltu(t4, t6, "release_skip_atomic")
   fw.mv(t3, t4)
   fw.sw(zero, t0, 0)
-  noc_write_barrier(fw, 1, s6, addr=t0, val=t4)
+  fw.noc_write_barrier(1, s6, addr=t0, val=t4)
   fw.li(t0, DISPATCH_RELEASE_VALUE)
   fw.lw(t4, t0, 0)
   fw.add(t4, t4, t3)
   fw.sw(t4, t0, 0)
   fw.li(t1, CQ_SEM_BASE)
   fw.li(t3, 4)
-  write32(fw, CQ_DEBUG, 0xC1D1F010, tmp_addr=t5, tmp_val=s3)
-  noc_write(fw, 1, 2, t0, t1, 0, PREFETCH_NOC_XY, t3, a=t5, v=s3)
-  write32(fw, CQ_DEBUG, 0xC1D1F011, tmp_addr=t5, tmp_val=s3)
+  fw.write32(CQ_DEBUG, 0xC1D1F010, tmp_addr=t5, tmp_val=s3)
+  fw.noc_write(1, 2, t0, t1, 0, PREFETCH_NOC_XY, t3, a=t5, v=s3)
+  fw.write32(CQ_DEBUG, 0xC1D1F011, tmp_addr=t5, tmp_val=s3)
   fw.label("release_skip_atomic")
   fw.j("dispatch_loop")
 
@@ -858,42 +697,8 @@ def build_dispatch() -> Kernel:
 
 def build_dispatch_subordinate() -> Kernel:
   fw = Kernel(kind="ncrisc")
-  setup_stack(fw)
+  fw.setup_stack(0xFFB01FF0)
   # This minimal fast-dispatch path handles go signals on dispatch BRISC.
   fw.label("idle")
   fw.j("idle")
   return fw
-
-
-def _write_manifest(out: Path, name: str, kernel: Kernel) -> Path:
-  segments = kernel.compile()
-  manifest = {"kind": kernel.kind, "segments": []}
-  for i, seg in enumerate(segments):
-    bin_name = f"{name}.seg{i}.bin"
-    (out / bin_name).write_bytes(seg.data)
-    manifest["segments"].append({
-      "label": seg.label or "text",
-      "addr": f"0x{seg.addr:x}",
-      "bin": bin_name,
-      "filesz": len(seg.data),
-      "memsz": len(seg.data),
-      "flags": 5 if (seg.label or "text").endswith("text") or seg.addr == 0 else 6,
-    })
-  path = out / f"{name}.json"
-  path.write_text(json.dumps(manifest, indent=2) + "\n")
-  return path
-
-
-def write_artifacts(out_dir: Path | str | None = None) -> list[Path]:
-  out = Path(__file__).resolve().parent / "build" if out_dir is None else Path(out_dir)
-  out.mkdir(parents=True, exist_ok=True)
-  return [
-    _write_manifest(out, "cq_prefetch_brisc", build_prefetch()),
-    _write_manifest(out, "cq_dispatch_brisc", build_dispatch()),
-    _write_manifest(out, "cq_dispatch_s_ncrisc", build_dispatch_subordinate()),
-  ]
-
-
-if __name__ == "__main__":
-  for path in write_artifacts():
-    print(path)

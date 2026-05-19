@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import sys
 from pathlib import Path
 
@@ -8,7 +7,7 @@ if __package__ in (None, ""):
   sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from asm import FIRMWARE_TEXT_BASE, Kernel
-from dsl import Reg, ra, sp, t0, t1, t2, t3, t4, t5, t6, zero
+from dsl import Reg, t0, t1, t2, t3, t4, t5, t6, zero
 
 BRISC_STACK_TOP = 0xFFB01FF0
 NCRISC_RESET_PC = 0xFFB12238
@@ -150,88 +149,22 @@ CB_SYNC_TILES_RECEIVED_BASE = 0xFFB48028
 CB_SYNC_STRIDE = 0x1000
 
 
-def write32(fw: Kernel, addr: int | Reg, value: int | Reg, *, tmp_addr: Reg = t0, tmp_val: Reg = t1):
-  if isinstance(addr, int):
-    fw.li(tmp_addr, addr)
-    addr = tmp_addr
-  if isinstance(value, int):
-    fw.li(tmp_val, value)
-    value = tmp_val
-  return fw.sw(value, addr, 0)
-
-
-def read32(fw: Kernel, rd: Reg, addr: int | Reg, *, tmp_addr: Reg = t0):
-  if isinstance(addr, int):
-    fw.li(tmp_addr, addr)
-    addr = tmp_addr
-  return fw.lw(rd, addr, 0)
-
-
-def read16(fw: Kernel, rd: Reg, addr: int | Reg, *, tmp_addr: Reg = t0):
-  if isinstance(addr, int):
-    fw.li(tmp_addr, addr)
-    addr = tmp_addr
-  return fw.lhu(rd, addr, 0)
-
-
-def write8(fw: Kernel, addr: int | Reg, value: int | Reg, *, tmp_addr: Reg = t0, tmp_val: Reg = t1):
-  if isinstance(addr, int):
-    fw.li(tmp_addr, addr)
-    addr = tmp_addr
-  if isinstance(value, int):
-    fw.li(tmp_val, value)
-    value = tmp_val
-  return fw.sb(value, addr, 0)
-
-
-def current_launch_ptr(fw: Kernel, launch: Reg = t0, tmp: Reg = t1):
-  return fw.li(launch, LAUNCH)
-
-
-def wait8(fw: Kernel, addr: int, value: int, *, ptr: Reg = t0, actual: Reg = t1, expected: Reg = t2):
-  fw.li(ptr, addr)
-  fw.li(expected, value)
-  start = fw._new_label("wait8")
-  done = fw._new_label("wait8_done")
-  fw.label(start)
-  fw.lbu(actual, ptr, 0)
-  fw.beq(actual, expected, done)
-  fw.fence()
-  fw.j(start)
-  fw.label(done)
-  fw.fence()
-  return fw
-
-
-def setup_stack(fw: Kernel):
-  return fw.li(sp, BRISC_STACK_TOP)
-
-
 def set_subordinate_reset_pcs(fw: Kernel, text_base: dict[str, int] = FIRMWARE_TEXT_BASE):
-  write32(fw, NCRISC_RESET_PC, text_base["ncrisc"])
-  write32(fw, TRISC0_RESET_PC, text_base["trisc0"])
-  write32(fw, TRISC1_RESET_PC, text_base["trisc1"])
-  write32(fw, TRISC2_RESET_PC, text_base["trisc2"])
-  write32(fw, TRISC_RESET_PC_OVERRIDE, 0b111)
-  write32(fw, NCRISC_RESET_PC_OVERRIDE, 1)
+  fw.write32(NCRISC_RESET_PC, text_base["ncrisc"])
+  fw.write32(TRISC0_RESET_PC, text_base["trisc0"])
+  fw.write32(TRISC1_RESET_PC, text_base["trisc1"])
+  fw.write32(TRISC2_RESET_PC, text_base["trisc2"])
+  fw.write32(TRISC_RESET_PC_OVERRIDE, 0b111)
+  fw.write32(NCRISC_RESET_PC_OVERRIDE, 1)
   return fw
 
 
 def deassert_all_riscs(fw: Kernel):
-  return write32(fw, SOFT_RESET_0, 0)
+  return fw.write32(SOFT_RESET_0, 0)
 
 
 def invalidate_all_risc_icaches(fw: Kernel):
-  return write32(fw, RISCV_IC_INVALIDATE_INVALIDATE_ALL, RISCV_IC_ALL_MASK)
-
-
-def push_tensix_word(fw: Kernel, word: int, *, tmp_addr: Reg = t0, tmp_val: Reg = t1):
-  return write32(fw, INSTRN_BUF_BASE, word, tmp_addr=tmp_addr, tmp_val=tmp_val)
-
-
-def tensix_sem_init(fw: Kernel, sem: int, max_value: int, init_value: int):
-  instrn = INSTRN_SEMINIT | (1 << (sem + 2)) | (init_value << 16) | (max_value << 20)
-  return push_tensix_word(fw, instrn)
+  return fw.write32(RISCV_IC_INVALIDATE_INVALIDATE_ALL, RISCV_IC_ALL_MASK)
 
 
 def enable_noc_clock_gating(fw: Kernel, *, addr: Reg = t0, value: Reg = t1):
@@ -246,22 +179,18 @@ def enable_noc_clock_gating(fw: Kernel, *, addr: Reg = t0, value: Reg = t1):
 
 
 def device_setup(fw: Kernel):
-  write32(fw, RISCV_DEBUG_REG_DEST_CG_CTRL, 0)
-  write32(fw, RISCV_TDMA_REG_CLK_GATE_EN, 0x3F)
+  fw.write32(RISCV_DEBUG_REG_DEST_CG_CTRL, 0)
+  fw.write32(RISCV_TDMA_REG_CLK_GATE_EN, 0x3F)
   enable_noc_clock_gating(fw)
-  push_tensix_word(fw, INSTRN_ZEROACC | (3 << 19))
-  push_tensix_word(fw, INSTRN_SFPENCC | (3 << 12) | 10)
-  push_tensix_word(fw, INSTRN_NOP)
-  push_tensix_word(fw, INSTRN_SFPLOADI | 0xBF80)
-  push_tensix_word(fw, INSTRN_SFPCONFIG | (11 << 4))
-  tensix_sem_init(fw, SEM_MATH_PACK, 1, 0)
-  tensix_sem_init(fw, SEM_UNPACK_TO_DEST, 1, 0)
-  tensix_sem_init(fw, SEM_MATH_DONE, 1, 0)
+  fw.tensix_push_word(INSTRN_BUF_BASE, INSTRN_ZEROACC | (3 << 19))
+  fw.tensix_push_word(INSTRN_BUF_BASE, INSTRN_SFPENCC | (3 << 12) | 10)
+  fw.tensix_push_word(INSTRN_BUF_BASE, INSTRN_NOP)
+  fw.tensix_push_word(INSTRN_BUF_BASE, INSTRN_SFPLOADI | 0xBF80)
+  fw.tensix_push_word(INSTRN_BUF_BASE, INSTRN_SFPCONFIG | (11 << 4))
+  fw.tensix_push_word(INSTRN_BUF_BASE, INSTRN_SEMINIT | (1 << (SEM_MATH_PACK + 2)) | (0 << 16) | (1 << 20))
+  fw.tensix_push_word(INSTRN_BUF_BASE, INSTRN_SEMINIT | (1 << (SEM_UNPACK_TO_DEST + 2)) | (0 << 16) | (1 << 20))
+  fw.tensix_push_word(INSTRN_BUF_BASE, INSTRN_SEMINIT | (1 << (SEM_MATH_DONE + 2)) | (0 << 16) | (1 << 20))
   return fw
-
-
-def signal8(fw: Kernel, addr: int, value: int):
-  return write8(fw, addr, value)
 
 
 def wait_go(fw: Kernel, *, ptr: Reg = t0, signal: Reg = t1, expected: Reg = t2):
@@ -287,14 +216,14 @@ def wait_go(fw: Kernel, *, ptr: Reg = t0, signal: Reg = t1, expected: Reg = t2):
   fw.fence()
   fw.j(loop)
   fw.label(reset_ptr_notify)
-  write32(fw, LAUNCH_MSG_RD_PTR, 0, tmp_addr=ptr, tmp_val=expected)
-  signal_done(fw)
+  fw.write32(LAUNCH_MSG_RD_PTR, 0, tmp_addr=ptr, tmp_val=expected)
+  fw.write8(GO_SIGNAL, RUN_MSG_DONE, tmp_addr=ptr, tmp_val=expected)
   notify_dispatch_core_done(fw)
   fw.li(ptr, GO_SIGNAL)
   fw.fence()
   fw.j(loop)
   fw.label(reset_ptr)
-  write32(fw, LAUNCH_MSG_RD_PTR, 0, tmp_addr=ptr, tmp_val=expected)
+  fw.write32(LAUNCH_MSG_RD_PTR, 0, tmp_addr=ptr, tmp_val=expected)
   fw.li(ptr, GO_SIGNAL)
   fw.fence()
   fw.j(loop)
@@ -303,92 +232,65 @@ def wait_go(fw: Kernel, *, ptr: Reg = t0, signal: Reg = t1, expected: Reg = t2):
   return fw
 
 
-def signal_done(fw: Kernel):
-  return signal8(fw, GO_SIGNAL, RUN_MSG_DONE)
-
-
-def signal_subordinate_go(fw: Kernel, role: int):
-  return signal8(fw, SUBORDINATE_SYNC + role - 1, RUN_SYNC_MSG_GO)
-
-
-def signal_subordinate_load(fw: Kernel, role: int):
-  return signal8(fw, SUBORDINATE_SYNC + role - 1, RUN_SYNC_MSG_LOAD)
-
-
 def signal_subordinate_if_enabled(fw: Kernel, role: int, value: int, *,
                                   enabled: Reg = t0, mask: Reg = t1):
   skip = fw._new_label("skip_subordinate_signal")
-  launch_kernel_enabled(fw, role, enabled=enabled, mask=mask)
+  fw.launch_kernel_enabled(role, enabled=enabled, mask=mask)
   fw.beq(enabled, zero, skip)
-  signal8(fw, SUBORDINATE_SYNC + role - 1, value)
+  fw.write8(SUBORDINATE_SYNC + role - 1, value)
   fw.label(skip)
   return fw
 
 
-def signal_trisc0_init_sync_registers(fw: Kernel):
-  return signal8(fw, SUBORDINATE_SYNC + 1, RUN_SYNC_MSG_INIT_SYNC_REGISTERS)
-
-
-def wait_subordinate_done(fw: Kernel, role: int):
-  return wait8(fw, SUBORDINATE_SYNC + role - 1, RUN_SYNC_MSG_DONE)
-
-
-def launch_kernel_enabled(fw: Kernel, role: int, *, enabled: Reg = t0, mask: Reg = t1):
-  current_launch_ptr(fw, launch=enabled, tmp=mask)
-  fw.lw(enabled, enabled, LAUNCH_ENABLES)
-  fw.li(mask, 1 << role)
-  return fw.and_(enabled, enabled, mask)
-
-
 def init_risc_noc_coords(fw: Kernel, *, noc_id: Reg = t0, coord: Reg = t1, tmp: Reg = t2):
   for noc in range(2):
-    read32(fw, noc_id, noc_cmd_buf_addr(noc, 0, NOC_CFG_BASE + NOC_ID_LOGICAL * 4), tmp_addr=tmp)
+    fw.read32(noc_id, fw.noc_cmd_addr(noc, 0, NOC_CFG_BASE + NOC_ID_LOGICAL * 4), tmp_addr=tmp)
     fw.andi(coord, noc_id, NOC_NODE_ID_MASK)
-    write8(fw, MY_X + noc, coord, tmp_addr=tmp)
+    fw.write8(MY_X + noc, coord, tmp_addr=tmp)
     fw.srli(coord, noc_id, NOC_ADDR_NODE_ID_BITS)
     fw.andi(coord, coord, NOC_NODE_ID_MASK)
-    write8(fw, MY_Y + noc, coord, tmp_addr=tmp)
+    fw.write8(MY_Y + noc, coord, tmp_addr=tmp)
   return fw
 
 
 def init_brisc_mailbox_globals(fw: Kernel, *, value: Reg = t0, tmp: Reg = t1):
-  write32(fw, LAUNCH_MSG_RD_PTR, 0, tmp_addr=tmp, tmp_val=value)
-  write8(fw, NOC_INDEX, 0, tmp_addr=tmp, tmp_val=value)
-  write8(fw, BRISC_NOC_MODE, 0, tmp_addr=tmp, tmp_val=value)
+  fw.write32(LAUNCH_MSG_RD_PTR, 0, tmp_addr=tmp, tmp_val=value)
+  fw.write8(NOC_INDEX, 0, tmp_addr=tmp, tmp_val=value)
+  fw.write8(BRISC_NOC_MODE, 0, tmp_addr=tmp, tmp_val=value)
   fw.li(tmp, CORE_INFO_ABSOLUTE_LOGICAL_X)
   fw.lbu(value, tmp, 0)
-  write8(fw, MY_LOGICAL_X, value, tmp_addr=tmp)
+  fw.write8(MY_LOGICAL_X, value, tmp_addr=tmp)
   fw.li(tmp, CORE_INFO_ABSOLUTE_LOGICAL_Y)
   fw.lbu(value, tmp, 0)
-  write8(fw, MY_LOGICAL_Y, value, tmp_addr=tmp)
-  write32(fw, NCRISC_HALT_RESUME_ADDR, 0, tmp_addr=tmp, tmp_val=value)
+  fw.write8(MY_LOGICAL_Y, value, tmp_addr=tmp)
+  fw.write32(NCRISC_HALT_RESUME_ADDR, 0, tmp_addr=tmp, tmp_val=value)
   return fw
 
 
 def init_brisc_kernel_config(fw: Kernel, *, launch: Reg = t0, config_base: Reg = t1,
                              off: Reg = t2, addr: Reg = t3, tmp: Reg = t4):
-  current_launch_ptr(fw, launch=launch, tmp=tmp)
+  fw.current_launch_ptr(launch=launch, tmp=tmp)
   fw.lw(config_base, launch, LAUNCH_KERNEL_CONFIG_BASE)
 
   for i in range(3):
     fw.lhu(off, launch, LAUNCH_SEM_OFFSET + 2 * i)
     fw.add(addr, config_base, off)
-    write32(fw, SEM_L1_BASE + 4 * i, addr, tmp_addr=tmp)
+    fw.write32(SEM_L1_BASE + 4 * i, addr, tmp_addr=tmp)
 
   fw.lhu(off, launch, LAUNCH_RTA_OFFSET)
   fw.add(addr, config_base, off)
-  write32(fw, RTA_L1_BASE_PTR, addr, tmp_addr=tmp)
+  fw.write32(RTA_L1_BASE_PTR, addr, tmp_addr=tmp)
 
   fw.lhu(off, launch, LAUNCH_RTA_OFFSET + 2)
   fw.add(addr, config_base, off)
-  write32(fw, CRTA_L1_BASE_PTR, addr, tmp_addr=tmp)
+  fw.write32(CRTA_L1_BASE_PTR, addr, tmp_addr=tmp)
   return fw
 
 
 def init_brisc_launch_globals(fw: Kernel, *, launch: Reg = t0, value: Reg = t1,
                               tmp: Reg = t2, origin: Reg = t3):
   keep = fw._new_label("keep_launch_noc")
-  current_launch_ptr(fw, launch=launch, tmp=tmp)
+  fw.current_launch_ptr(launch=launch, tmp=tmp)
   fw.lbu(value, launch, LAUNCH_BRISC_NOC_ID)
   fw.bne(value, zero, keep)
   fw.lw(value, launch, LAUNCH_ENABLES)
@@ -397,60 +299,40 @@ def init_brisc_launch_globals(fw: Kernel, *, launch: Reg = t0, value: Reg = t1,
   fw.li(value, 1)
   fw.label(keep)
   fw.sb(value, launch, LAUNCH_BRISC_NOC_ID)
-  write8(fw, NOC_INDEX, value, tmp_addr=tmp)
+  fw.write8(NOC_INDEX, value, tmp_addr=tmp)
   fw.lbu(value, launch, LAUNCH_BRISC_NOC_MODE)
-  write8(fw, BRISC_NOC_MODE, value, tmp_addr=tmp)
+  fw.write8(BRISC_NOC_MODE, value, tmp_addr=tmp)
   fw.li(tmp, CORE_INFO_ABSOLUTE_LOGICAL_X)
   fw.lbu(value, tmp, 0)
-  write8(fw, MY_LOGICAL_X, value, tmp_addr=tmp)
+  fw.write8(MY_LOGICAL_X, value, tmp_addr=tmp)
   fw.lbu(origin, launch, LAUNCH_SUB_DEVICE_ORIGIN_X)
   fw.sub(value, value, origin)
-  write8(fw, MY_RELATIVE_X, value, tmp_addr=tmp)
+  fw.write8(MY_RELATIVE_X, value, tmp_addr=tmp)
   fw.li(tmp, CORE_INFO_ABSOLUTE_LOGICAL_Y)
   fw.lbu(value, tmp, 0)
-  write8(fw, MY_LOGICAL_Y, value, tmp_addr=tmp)
+  fw.write8(MY_LOGICAL_Y, value, tmp_addr=tmp)
   fw.lbu(origin, launch, LAUNCH_SUB_DEVICE_ORIGIN_Y)
   fw.sub(value, value, origin)
-  write8(fw, MY_RELATIVE_Y, value, tmp_addr=tmp)
-  return fw
-
-
-def copy_words(fw: Kernel, dst: int, src: int, byte_count: int, *,
-               dst_reg: Reg = t0, src_reg: Reg = t1, value: Reg = t2,
-               count: Reg = t3):
-  fw.li(dst_reg, dst)
-  fw.li(src_reg, src)
-  fw.li(count, byte_count // 4)
-  loop = fw._new_label("copy_words")
-  done = fw._new_label("copy_done")
-  fw.label(loop)
-  fw.beq(count, zero, done)
-  fw.lw(value, src_reg, 0)
-  fw.sw(value, dst_reg, 0)
-  fw.addi(src_reg, src_reg, 4)
-  fw.addi(dst_reg, dst_reg, 4)
-  fw.addi(count, count, -1)
-  fw.j(loop)
-  fw.label(done)
+  fw.write8(MY_RELATIVE_Y, value, tmp_addr=tmp)
   return fw
 
 
 def init_bank_tables(fw: Kernel):
   src = MEM_BANK_TO_NOC_SCRATCH
-  copy_words(fw, DRAM_BANK_TO_NOC_XY, src, P100_DRAM_BANK_TO_NOC_SIZE)
+  fw.copy_words(DRAM_BANK_TO_NOC_XY, src, P100_DRAM_BANK_TO_NOC_SIZE)
   src += P100_DRAM_BANK_TO_NOC_SIZE
-  copy_words(fw, L1_BANK_TO_NOC_XY, src, P100_L1_BANK_TO_NOC_SIZE)
+  fw.copy_words(L1_BANK_TO_NOC_XY, src, P100_L1_BANK_TO_NOC_SIZE)
   src += P100_L1_BANK_TO_NOC_SIZE
-  copy_words(fw, BANK_TO_DRAM_OFFSET, src, P100_BANK_TO_DRAM_OFFSET_SIZE)
+  fw.copy_words(BANK_TO_DRAM_OFFSET, src, P100_BANK_TO_DRAM_OFFSET_SIZE)
   src += P100_BANK_TO_DRAM_OFFSET_SIZE
-  copy_words(fw, BANK_TO_L1_OFFSET, src, P100_BANK_TO_L1_OFFSET_SIZE)
+  fw.copy_words(BANK_TO_L1_OFFSET, src, P100_BANK_TO_L1_OFFSET_SIZE)
   return fw
 
 
 def init_noc_local_state(fw: Kernel, *, launch: Reg = t0, noc_id: Reg = t1,
                          noc_shift: Reg = t2, status: Reg = t3,
                          dest: Reg = t4, value: Reg = t5):
-  current_launch_ptr(fw, launch=launch, tmp=value)
+  fw.current_launch_ptr(launch=launch, tmp=value)
   fw.lbu(noc_id, launch, LAUNCH_BRISC_NOC_ID)
   fw.slli(noc_shift, noc_id, 16)
 
@@ -467,12 +349,8 @@ def init_noc_local_state(fw: Kernel, *, launch: Reg = t0, noc_id: Reg = t1,
     fw.slli(status, noc_id, 2)
     fw.li(dest, base)
     fw.add(dest, dest, status)
-    write32(fw, dest, value)
+    fw.write32(dest, value)
   return fw
-
-
-def noc_cmd_buf_addr(noc: int, cmd_buf: int, reg: int) -> int:
-  return reg + (cmd_buf << NOC_CMD_BUF_OFFSET_BIT) + (noc << NOC_INSTANCE_OFFSET_BIT)
 
 
 def wait_noc_cmd_buf_ready(fw: Kernel, noc: Reg, *, addr: Reg = t0, value: Reg = t1):
@@ -500,7 +378,7 @@ def notify_dispatch_core_done(fw: Kernel, *, launch: Reg = t0, mode: Reg = t1,
                               dispatch_addr: Reg = t4, coord: Reg = t5,
                               noc_shift: Reg = t6):
   skip = fw._new_label("skip_dispatch_notify")
-  current_launch_ptr(fw, launch=launch, tmp=mode)
+  fw.current_launch_ptr(launch=launch, tmp=mode)
   fw.lbu(mode, launch, LAUNCH_MODE)
   fw.li(coord, DISPATCH_MODE_DEV)
   fw.bne(mode, coord, skip)
@@ -542,52 +420,46 @@ def notify_dispatch_core_done(fw: Kernel, *, launch: Reg = t0, mode: Reg = t1,
 def noc_init(fw: Kernel, *, noc_id: Reg = t0, coord: Reg = t1,
              tmp_addr: Reg = t2, tmp_val: Reg = t3):
   for noc in range(2):
-    read32(fw, noc_id, noc_cmd_buf_addr(noc, 0, NOC_CFG_BASE + NOC_ID_LOGICAL * 4), tmp_addr=tmp_addr)
+    fw.read32(noc_id, fw.noc_cmd_addr(noc, 0, NOC_CFG_BASE + NOC_ID_LOGICAL * 4), tmp_addr=tmp_addr)
     fw.andi(coord, noc_id, NOC_NODE_ID_MASK)
     fw.srli(noc_id, noc_id, NOC_ADDR_NODE_ID_BITS)
     fw.andi(noc_id, noc_id, NOC_NODE_ID_MASK)
     fw.slli(noc_id, noc_id, NOC_ADDR_NODE_ID_BITS)
     fw.or_(coord, coord, noc_id)
 
-    write32(fw, noc_cmd_buf_addr(noc, NCRISC_WR_CMD_BUF, NOC_TARG_ADDR_MID), 0, tmp_addr=tmp_addr, tmp_val=tmp_val)
-    write32(
-      fw,
-      noc_cmd_buf_addr(noc, NCRISC_WR_CMD_BUF, NOC_TARG_ADDR_COORDINATE),
+    fw.write32(fw.noc_cmd_addr(noc, NCRISC_WR_CMD_BUF, NOC_TARG_ADDR_MID), 0, tmp_addr=tmp_addr, tmp_val=tmp_val)
+    fw.write32(
+      fw.noc_cmd_addr(noc, NCRISC_WR_CMD_BUF, NOC_TARG_ADDR_COORDINATE),
       coord,
       tmp_addr=tmp_addr,
     )
-    write32(fw, noc_cmd_buf_addr(noc, NCRISC_WR_REG_CMD_BUF, NOC_TARG_ADDR_MID), 0, tmp_addr=tmp_addr, tmp_val=tmp_val)
-    write32(
-      fw,
-      noc_cmd_buf_addr(noc, NCRISC_WR_REG_CMD_BUF, NOC_TARG_ADDR_COORDINATE),
+    fw.write32(fw.noc_cmd_addr(noc, NCRISC_WR_REG_CMD_BUF, NOC_TARG_ADDR_MID), 0, tmp_addr=tmp_addr, tmp_val=tmp_val)
+    fw.write32(
+      fw.noc_cmd_addr(noc, NCRISC_WR_REG_CMD_BUF, NOC_TARG_ADDR_COORDINATE),
       coord,
       tmp_addr=tmp_addr,
     )
-    write32(
-      fw,
-      noc_cmd_buf_addr(noc, NCRISC_AT_CMD_BUF, NOC_RET_ADDR_LO),
+    fw.write32(
+      fw.noc_cmd_addr(noc, NCRISC_AT_CMD_BUF, NOC_RET_ADDR_LO),
       MEM_NOC_ATOMIC_RET_VAL_ADDR,
       tmp_addr=tmp_addr,
       tmp_val=tmp_val,
     )
-    write32(fw, noc_cmd_buf_addr(noc, NCRISC_AT_CMD_BUF, NOC_RET_ADDR_MID), 0, tmp_addr=tmp_addr, tmp_val=tmp_val)
-    write32(
-      fw,
-      noc_cmd_buf_addr(noc, NCRISC_AT_CMD_BUF, NOC_RET_ADDR_COORDINATE),
+    fw.write32(fw.noc_cmd_addr(noc, NCRISC_AT_CMD_BUF, NOC_RET_ADDR_MID), 0, tmp_addr=tmp_addr, tmp_val=tmp_val)
+    fw.write32(
+      fw.noc_cmd_addr(noc, NCRISC_AT_CMD_BUF, NOC_RET_ADDR_COORDINATE),
       coord,
       tmp_addr=tmp_addr,
     )
-    write32(
-      fw,
-      noc_cmd_buf_addr(noc, NCRISC_RD_CMD_BUF, NOC_CTRL),
+    fw.write32(
+      fw.noc_cmd_addr(noc, NCRISC_RD_CMD_BUF, NOC_CTRL),
       NOC_RD_CMD_FIELD,
       tmp_addr=tmp_addr,
       tmp_val=tmp_val,
     )
-    write32(fw, noc_cmd_buf_addr(noc, NCRISC_RD_CMD_BUF, NOC_RET_ADDR_MID), 0, tmp_addr=tmp_addr, tmp_val=tmp_val)
-    write32(
-      fw,
-      noc_cmd_buf_addr(noc, NCRISC_RD_CMD_BUF, NOC_RET_ADDR_COORDINATE),
+    fw.write32(fw.noc_cmd_addr(noc, NCRISC_RD_CMD_BUF, NOC_RET_ADDR_MID), 0, tmp_addr=tmp_addr, tmp_val=tmp_val)
+    fw.write32(
+      fw.noc_cmd_addr(noc, NCRISC_RD_CMD_BUF, NOC_RET_ADDR_COORDINATE),
       coord,
       tmp_addr=tmp_addr,
     )
@@ -597,7 +469,7 @@ def noc_init(fw: Kernel, *, noc_id: Reg = t0, coord: Reg = t1,
 def setup_local_cbs(fw: Kernel, *, launch: Reg = t0, config_base: Reg = t1,
                     cb_config: Reg = t2, cb_if: Reg = t3, mask: Reg = t4,
                     size: Reg = t5, fifo: Reg = t6):
-  current_launch_ptr(fw, launch=launch, tmp=size)
+  fw.current_launch_ptr(launch=launch, tmp=size)
   fw.lw(config_base, launch, LAUNCH_KERNEL_CONFIG_BASE)
   fw.lhu(cb_config, launch, LAUNCH_LOCAL_CB_OFFSET)
   fw.add(cb_config, config_base, cb_config)
@@ -640,40 +512,27 @@ def setup_local_cbs(fw: Kernel, *, launch: Reg = t0, config_base: Reg = t1,
   return fw
 
 
-def run_launch_kernel(fw: Kernel, role: int, *, launch: Reg = t0, config_base: Reg = t1,
-                      offset: Reg = t2, entry: Reg = t3, enabled: Reg = t4):
-  skip = fw._new_label("skip_kernel")
-  launch_kernel_enabled(fw, role, enabled=enabled, mask=offset)
-  fw.beq(enabled, zero, skip)
-  current_launch_ptr(fw, launch=launch, tmp=enabled)
-  fw.lw(config_base, launch, LAUNCH_KERNEL_CONFIG_BASE)
-  fw.lw(offset, launch, LAUNCH_KERNEL_TEXT_OFFSET + 4 * role)
-  fw.add(entry, config_base, offset)
-  fw.jalr(ra, entry, 0)
-  fw.label(skip)
-  return fw
-
-
 def build(*, text_base: dict[str, int] = FIRMWARE_TEXT_BASE) -> Kernel:
   fw = Kernel.firmware("brisc")
-  setup_stack(fw)
+  fw.setup_stack(BRISC_STACK_TOP)
   set_subordinate_reset_pcs(fw, text_base)
   device_setup(fw)
   init_risc_noc_coords(fw)
   invalidate_all_risc_icaches(fw)
   deassert_all_riscs(fw)
   for role in (1, 2, 3, 4):
-    wait_subordinate_done(fw, role)
-  signal_done(fw)
+    fw.wait8(SUBORDINATE_SYNC + role - 1, RUN_SYNC_MSG_DONE)
+  fw.write8(GO_SIGNAL, RUN_MSG_DONE)
   init_bank_tables(fw)
   init_brisc_mailbox_globals(fw)
   noc_init(fw)
   init_noc_local_state(fw)
-  signal_trisc0_init_sync_registers(fw)
+  # Ask TRISC0 to clear CB sync registers before launching kernels.
+  fw.write8(SUBORDINATE_SYNC + 1, RUN_SYNC_MSG_INIT_SYNC_REGISTERS)
 
   fw.label("run_loop")
   wait_go(fw)
-  wait_subordinate_done(fw, 2)
+  fw.wait8(SUBORDINATE_SYNC + 1, RUN_SYNC_MSG_DONE)
   init_brisc_kernel_config(fw)
   init_brisc_launch_globals(fw)
   noc_init(fw)
@@ -684,43 +543,16 @@ def build(*, text_base: dict[str, int] = FIRMWARE_TEXT_BASE) -> Kernel:
     signal_subordinate_if_enabled(fw, role, RUN_SYNC_MSG_GO)
   setup_local_cbs(fw)
   signal_subordinate_if_enabled(fw, 1, RUN_SYNC_MSG_GO)
-  run_launch_kernel(fw, 0)
+  fw.run_launch_kernel(0)
   for role in (1, 2, 3, 4):
-    wait_subordinate_done(fw, role)
-  signal_trisc0_init_sync_registers(fw)
-  signal_done(fw)
+    fw.wait8(SUBORDINATE_SYNC + role - 1, RUN_SYNC_MSG_DONE)
+  # Ask TRISC0 to clear CB sync registers before accepting the next launch.
+  fw.write8(SUBORDINATE_SYNC + 1, RUN_SYNC_MSG_INIT_SYNC_REGISTERS)
+  fw.write8(GO_SIGNAL, RUN_MSG_DONE)
   notify_dispatch_core_done(fw)
-  read32(fw, t0, LAUNCH_MSG_RD_PTR, tmp_addr=t1)
+  fw.read32(t0, LAUNCH_MSG_RD_PTR, tmp_addr=t1)
   fw.addi(t0, t0, 1)
   fw.andi(t0, t0, 7)
-  write32(fw, LAUNCH_MSG_RD_PTR, t0, tmp_addr=t1)
+  fw.write32(LAUNCH_MSG_RD_PTR, t0, tmp_addr=t1)
   fw.j("run_loop")
   return fw
-
-
-def write_artifacts(out_dir: Path | str | None = None) -> Path:
-  out = Path(__file__).resolve().parent / "build" if out_dir is None else Path(out_dir)
-  out.mkdir(parents=True, exist_ok=True)
-  segments = build().compile()
-  manifest = {"kind": "brisc", "segments": []}
-  # This standalone BRISC does not use local globals. Keep the artifact to the
-  # real text bytes so older consumers never see a synthetic zero segment.
-  artifact_segments = [seg for seg in segments if seg.label.endswith(".text")]
-  for i, seg in enumerate(artifact_segments):
-    name = f"brisc.seg{i}.bin"
-    (out / name).write_bytes(seg.data)
-    manifest["segments"].append({
-      "label": seg.label,
-      "addr": f"0x{seg.addr:x}",
-      "bin": name,
-      "filesz": len(seg.data),
-      "memsz": len(seg.data),
-      "flags": 5 if seg.label.endswith(".text") else 6,
-    })
-  manifest_path = out / "brisc.json"
-  manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
-  return manifest_path
-
-
-if __name__ == "__main__":
-  print(write_artifacts())

@@ -1,5 +1,4 @@
 from __future__ import annotations
-import json
 import sys
 from pathlib import Path
 
@@ -7,7 +6,7 @@ if __package__ in (None, ""):
   sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from asm import FIRMWARE_SCRATCH_BASE, Kernel
-from dsl import Reg, gp, ra, sp, t0, t1, t2, t3, t4, t5, t6, zero
+from dsl import Reg, gp, t0, t1, t2, t3, t4, t5, t6, zero
 
 TRISC_GLOBAL_POINTER = 0xFFB007F0
 TRISC_STACK_TOP = 0xFFB00FF0
@@ -82,81 +81,8 @@ TRISC_LOCAL_DATA_SIZE = {
 }
 
 
-def write8(fw: Kernel, addr: int | Reg, value: int | Reg, *, tmp_addr: Reg = t0, tmp_val: Reg = t1):
-  if isinstance(addr, int):
-    fw.li(tmp_addr, addr)
-    addr = tmp_addr
-  if isinstance(value, int):
-    fw.li(tmp_val, value)
-    value = tmp_val
-  return fw.sb(value, addr, 0)
-
-
-def write32(fw: Kernel, addr: int | Reg, value: int | Reg, *, tmp_addr: Reg = t0, tmp_val: Reg = t1):
-  if isinstance(addr, int):
-    fw.li(tmp_addr, addr)
-    addr = tmp_addr
-  if isinstance(value, int):
-    fw.li(tmp_val, value)
-    value = tmp_val
-  return fw.sw(value, addr, 0)
-
-
-def read32(fw: Kernel, rd: Reg, addr: int | Reg, *, tmp_addr: Reg = t0):
-  if isinstance(addr, int):
-    fw.li(tmp_addr, addr)
-    addr = tmp_addr
-  return fw.lw(rd, addr, 0)
-
-
-def read8(fw: Kernel, rd: Reg, addr: int | Reg, *, tmp_addr: Reg = t0):
-  if isinstance(addr, int):
-    fw.li(tmp_addr, addr)
-    addr = tmp_addr
-  return fw.lbu(rd, addr, 0)
-
-
-def current_launch_ptr(fw: Kernel, launch: Reg = t0, tmp: Reg = t1):
-  return fw.li(launch, LAUNCH)
-
-
-def wait8(fw: Kernel, addr: int, value: int, *, ptr: Reg = t0, actual: Reg = t1, expected: Reg = t2):
-  fw.li(ptr, addr)
-  fw.li(expected, value)
-  start = fw._new_label("wait8")
-  done = fw._new_label("wait8_done")
-  fw.label(start)
-  fw.lbu(actual, ptr, 0)
-  fw.beq(actual, expected, done)
-  fw.fence()
-  fw.j(start)
-  fw.label(done)
-  fw.fence()
-  return fw
-
-
-def setup_stack(fw: Kernel):
-  return fw.li(sp, TRISC_STACK_TOP)
-
-
 def setup_gp(fw: Kernel):
   return fw.li(gp, TRISC_GLOBAL_POINTER)
-
-
-def configure_csr(fw: Kernel, *, value: Reg = t0):
-  fw.li(value, 2)
-  fw.csrrs(zero, value, 0x7C0)
-  fw.li(value, 1)
-  fw.slli(value, value, 18)
-  fw.fence()
-  fw.csrrs(zero, value, 0x7C0)
-  fw.li(value, 2)
-  fw.csrrc(zero, value, 0x7C0)
-  fw.fence()
-  fw.fence()
-  fw.li(value, 8)
-  fw.csrrs(zero, value, 0x7C0)
-  return fw
 
 
 def zero_regfile(fw: Kernel, *, ptr: Reg = t0, count: Reg = t1):
@@ -174,55 +100,8 @@ def zero_regfile(fw: Kernel, *, ptr: Reg = t0, count: Reg = t1):
   return fw
 
 
-def zero_words(fw: Kernel, start: int, end: int, *, ptr: Reg = t0, limit: Reg = t1):
-  fw.li(ptr, start)
-  fw.li(limit, end)
-  loop = fw._new_label("zero_words")
-  done = fw._new_label("zero_words_done")
-  fw.label(loop)
-  fw.bgeu(ptr, limit, done)
-  fw.sw(zero, ptr, 0)
-  fw.addi(ptr, ptr, 4)
-  fw.j(loop)
-  fw.label(done)
-  return fw
-
-
-def copy_words(fw: Kernel, dst: int, src: int, byte_count: int, *,
-               dst_reg: Reg = t0, src_reg: Reg = t1, value: Reg = t2,
-               count: Reg = t3):
-  fw.li(dst_reg, dst)
-  fw.li(src_reg, src)
-  fw.li(count, byte_count // 4)
-  loop = fw._new_label("copy_words")
-  done = fw._new_label("copy_done")
-  fw.label(loop)
-  fw.beq(count, zero, done)
-  fw.lw(value, src_reg, 0)
-  fw.sw(value, dst_reg, 0)
-  fw.addi(src_reg, src_reg, 4)
-  fw.addi(dst_reg, dst_reg, 4)
-  fw.addi(count, count, -1)
-  fw.j(loop)
-  fw.label(done)
-  return fw
-
-
-def wait_cycles(fw: Kernel, cycles: int, *, count: Reg = t0):
-  fw.li(count, cycles)
-  loop = fw._new_label("wait_cycles")
-  done = fw._new_label("wait_cycles_done")
-  fw.label(loop)
-  fw.beq(count, zero, done)
-  fw.addi(count, count, -1)
-  fw.j(loop)
-  fw.label(done)
-  return fw
-
-
 def init_local_data(fw: Kernel, trisc_id: int):
-  return copy_words(
-    fw,
+  return fw.copy_words(
     0xFFB00000,
     FIRMWARE_SCRATCH_BASE[f"trisc{trisc_id}"],
     TRISC_LOCAL_DATA_SIZE[trisc_id],
@@ -230,20 +109,16 @@ def init_local_data(fw: Kernel, trisc_id: int):
 
 
 def init_common_state(fw: Kernel, data: dict[str, int]):
-  write32(fw, data["dest_offset_id"], 0)
-  write32(fw, data["op_info_offset"], 0)
-  write32(fw, data["cfg_state_id"], 0)
-  write32(fw, TENSIX_CFG_BASE + PRNG_SEED_Seed_Val_ADDR32 * 4, 0)
-  wait_cycles(fw, 600)
-  read8(fw, t1, CORE_INFO_ABSOLUTE_LOGICAL_X, tmp_addr=t0)
-  write8(fw, data["my_logical_x"], t1, tmp_addr=t0)
-  read8(fw, t1, CORE_INFO_ABSOLUTE_LOGICAL_Y, tmp_addr=t0)
-  write8(fw, data["my_logical_y"], t1, tmp_addr=t0)
+  fw.write32(data["dest_offset_id"], 0)
+  fw.write32(data["op_info_offset"], 0)
+  fw.write32(data["cfg_state_id"], 0)
+  fw.write32(TENSIX_CFG_BASE + PRNG_SEED_Seed_Val_ADDR32 * 4, 0)
+  fw.delay_cycles(600)
+  fw.read8(t1, CORE_INFO_ABSOLUTE_LOGICAL_X, tmp_addr=t0)
+  fw.write8(data["my_logical_x"], t1, tmp_addr=t0)
+  fw.read8(t1, CORE_INFO_ABSOLUTE_LOGICAL_Y, tmp_addr=t0)
+  fw.write8(data["my_logical_y"], t1, tmp_addr=t0)
   return fw
-
-
-def signal_subordinate_done(fw: Kernel, role: int):
-  return write8(fw, SUBORDINATE_SYNC + role - 1, RUN_SYNC_MSG_DONE)
 
 
 def wait_trisc_message(fw: Kernel, trisc_id: int, *, ptr: Reg = t0, actual: Reg = t1, expected: Reg = t2):
@@ -264,21 +139,10 @@ def wait_trisc_message(fw: Kernel, trisc_id: int, *, ptr: Reg = t0, actual: Reg 
     fw.label(init_sync)
     init_sync_registers(fw)
     fw.li(ptr, SUBORDINATE_SYNC + trisc_id + 1)
-    write8(fw, ptr, RUN_SYNC_MSG_DONE, tmp_addr=actual, tmp_val=expected)
+    fw.write8(ptr, RUN_SYNC_MSG_DONE, tmp_addr=actual, tmp_val=expected)
     fw.j(loop)
   fw.label(done)
   fw.fence()
-  return fw
-
-
-def run_launch_kernel(fw: Kernel, trisc_id: int, *, launch: Reg = t0, config_base: Reg = t1,
-                      offset: Reg = t2, entry: Reg = t3):
-  role = 2 + trisc_id
-  current_launch_ptr(fw, launch=launch, tmp=entry)
-  fw.lw(config_base, launch, LAUNCH_KERNEL_CONFIG_BASE)
-  fw.lw(offset, launch, LAUNCH_KERNEL_TEXT_OFFSET + 4 * role)
-  fw.add(entry, config_base, offset)
-  fw.jalr(ra, entry, 0)
   return fw
 
 
@@ -340,7 +204,7 @@ def setup_local_cbs_from_mask(fw: Kernel, trisc_id: int, cb_config: Reg, cb_if: 
 
 def setup_local_cbs(fw: Kernel, trisc_id: int, data: dict[str, int], *, launch: Reg = t0, config_base: Reg = t1,
                     cb_config: Reg = t2, cb_if: Reg = t3, mask: Reg = t4):
-  current_launch_ptr(fw, launch=launch, tmp=mask)
+  fw.current_launch_ptr(launch=launch, tmp=mask)
   fw.lw(config_base, launch, LAUNCH_KERNEL_CONFIG_BASE)
   fw.lhu(cb_config, launch, LAUNCH_LOCAL_CB_OFFSET)
   fw.add(cb_config, config_base, cb_config)
@@ -353,33 +217,33 @@ def setup_local_cbs(fw: Kernel, trisc_id: int, data: dict[str, int], *, launch: 
 def init_trisc_kernel_config(fw: Kernel, trisc_id: int, data: dict[str, int], *,
                              launch: Reg = t0, config_base: Reg = t1, off: Reg = t2,
                              addr: Reg = t3, value: Reg = t4, origin: Reg = t5):
-  current_launch_ptr(fw, launch=launch, tmp=value)
+  fw.current_launch_ptr(launch=launch, tmp=value)
   fw.lw(config_base, launch, LAUNCH_KERNEL_CONFIG_BASE)
 
   rta_slot = 2 + trisc_id
   fw.lhu(off, launch, LAUNCH_RTA_OFFSET + 4 * rta_slot)
   fw.add(addr, config_base, off)
-  write32(fw, data["rta_l1_base"], addr, tmp_addr=value)
+  fw.write32(data["rta_l1_base"], addr, tmp_addr=value)
 
   fw.lhu(off, launch, LAUNCH_RTA_OFFSET + 4 * rta_slot + 2)
   fw.add(addr, config_base, off)
-  write32(fw, data["crta_l1_base"], addr, tmp_addr=value)
+  fw.write32(data["crta_l1_base"], addr, tmp_addr=value)
 
-  read8(fw, value, data["my_logical_x"], tmp_addr=addr)
+  fw.read8(value, data["my_logical_x"], tmp_addr=addr)
   fw.lbu(origin, launch, LAUNCH_SUB_DEVICE_ORIGIN_X)
   fw.sub(value, value, origin)
-  write8(fw, data["my_relative_x"], value, tmp_addr=addr)
+  fw.write8(data["my_relative_x"], value, tmp_addr=addr)
 
-  read8(fw, value, data["my_logical_y"], tmp_addr=addr)
+  fw.read8(value, data["my_logical_y"], tmp_addr=addr)
   fw.lbu(origin, launch, LAUNCH_SUB_DEVICE_ORIGIN_Y)
   fw.sub(value, value, origin)
-  write8(fw, data["my_relative_y"], value, tmp_addr=addr)
+  fw.write8(data["my_relative_y"], value, tmp_addr=addr)
   return fw
 
 
 def tensix_sync(fw: Kernel):
-  write32(fw, PC_BUF_SYNC, 0)
-  read32(fw, t0, PC_BUF_SYNC)
+  fw.write32(PC_BUF_SYNC, 0)
+  fw.read32(t0, PC_BUF_SYNC)
   fw.and_(zero, zero, t0)
   return fw
 
@@ -391,20 +255,20 @@ def build(trisc_id: int) -> Kernel:
   data = TRISC1_DATA if trisc_id == 1 else TRISC_DATA_COMMON
   fw = Kernel.firmware(f"trisc{trisc_id}")
   setup_gp(fw)
-  setup_stack(fw)
-  configure_csr(fw)
+  fw.setup_stack(TRISC_STACK_TOP)
+  fw.configure_csr()
   init_local_data(fw, trisc_id)
   zero_regfile(fw)
   init_common_state(fw, data)
-  signal_subordinate_done(fw, role)
+  fw.signal_subordinate_done(role)
   fw.label("run_loop")
   wait_trisc_message(fw, trisc_id)
   if trisc_id in (0, 2):
     setup_local_cbs(fw, trisc_id, data)
   init_trisc_kernel_config(fw, trisc_id, data)
-  run_launch_kernel(fw, trisc_id)
+  fw.run_launch_kernel(2 + trisc_id)
   tensix_sync(fw)
-  signal_subordinate_done(fw, role)
+  fw.signal_subordinate_done(role)
   fw.j("run_loop")
   return fw
 
@@ -416,33 +280,3 @@ def build_trisc1() -> Kernel:
 
 def build_trisc2() -> Kernel:
   return build(2)
-
-
-def write_artifacts(out_dir: Path | str | None = None) -> list[Path]:
-  out = Path(__file__).resolve().parent / "build" if out_dir is None else Path(out_dir)
-  out.mkdir(parents=True, exist_ok=True)
-  paths = []
-  for trisc_id in range(3):
-    kind = f"trisc{trisc_id}"
-    segments = build(trisc_id).compile()
-    manifest = {"kind": kind, "segments": []}
-    for i, seg in enumerate(segments):
-      name = f"{kind}.seg{i}.bin"
-      (out / name).write_bytes(seg.data)
-      manifest["segments"].append({
-        "label": seg.label,
-        "addr": f"0x{seg.addr:x}",
-        "bin": name,
-        "filesz": len(seg.data),
-        "memsz": len(seg.data),
-        "flags": 5 if seg.label.endswith(".text") else 6,
-      })
-    manifest_path = out / f"{kind}.json"
-    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
-    paths.append(manifest_path)
-  return paths
-
-
-if __name__ == "__main__":
-  for path in write_artifacts():
-    print(path)

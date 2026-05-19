@@ -37,6 +37,12 @@ class RvMixin:
       addr = tmp_addr
     return self.lbu(dst, addr, 0)
 
+  def read16(self, dst: Reg, addr: int | Reg, *, tmp_addr: Reg = t0):
+    if isinstance(addr, int):
+      self.li(tmp_addr, addr)
+      addr = tmp_addr
+    return self.lhu(dst, addr, 0)
+
   def zero_words(self, addr: int, words: int, *, ptr: Reg = t0, count: Reg = t1):
     from asm import cond
 
@@ -47,6 +53,48 @@ class RvMixin:
       self.sw(zero, ptr, 0)
       self.addi(ptr, ptr, 4)
       self.addi(count, count, -1)
+    return self
+
+  def zero_word_range(self, start: int, end: int, *, ptr: Reg = t0, limit: Reg = t1):
+    self.li(ptr, start)
+    self.li(limit, end)
+    loop = self._new_label("zero_words")
+    done = self._new_label("zero_words_done")
+    self.label(loop)
+    self.bgeu(ptr, limit, done)
+    self.sw(zero, ptr, 0)
+    self.addi(ptr, ptr, 4)
+    self.j(loop)
+    self.label(done)
+    return self
+
+  def copy_words(self, dst: int | Reg, src: int | Reg, byte_count: int | Reg, *,
+                 dst_reg: Reg = t0, src_reg: Reg = t1, value: Reg = t2,
+                 count: Reg = t3, word: Reg | None = None):
+    if word is not None:
+      value = word
+    if isinstance(dst, int):
+      self.li(dst_reg, dst)
+      dst = dst_reg
+    if isinstance(src, int):
+      self.li(src_reg, src)
+      src = src_reg
+    if isinstance(byte_count, int):
+      self.li(count, byte_count // 4)
+      byte_count = count
+    else:
+      self.srli(byte_count, byte_count, 2)
+    loop = self._new_label("copy_words")
+    done = self._new_label("copy_done")
+    self.label(loop)
+    self.beq(byte_count, zero, done)
+    self.lw(value, src, 0)
+    self.sw(value, dst, 0)
+    self.addi(src, src, 4)
+    self.addi(dst, dst, 4)
+    self.addi(byte_count, byte_count, -1)
+    self.j(loop)
+    self.label(done)
     return self
 
   def delay_cycles(self, cycles: int, *, count: Reg = t0):
@@ -63,10 +111,15 @@ class FlowMixin:
   def wait8(self, addr: int, value: int, *, ptr: Reg = t0, actual: Reg = t1, expected: Reg = t2):
     self.li(ptr, addr)
     self.li(expected, value)
-    loop = self._new_label("wait8")
-    self.label(loop)
+    start = self._new_label("wait8")
+    done = self._new_label("wait8_done")
+    self.label(start)
     self.lbu(actual, ptr, 0)
-    self.bne(actual, expected, loop)
+    self.beq(actual, expected, done)
+    self.fence()
+    self.j(start)
+    self.label(done)
+    self.fence()
     return self
 
   def wait32(self, addr: int, value: int, *, actual: Reg = t0, expected: Reg = t1):
@@ -85,6 +138,24 @@ class FlowMixin:
 
   def setup_stack(self, stack_top: int):
     return self.li(sp, stack_top)
+
+  def current_launch_ptr(self, launch: Reg = t0, tmp: Reg = t1):
+    return self.li(launch, LAUNCH.base)
+
+  def configure_csr(self, *, value: Reg = t0):
+    self.li(value, 2)
+    self.csrrs(zero, value, 0x7C0)
+    self.li(value, 1)
+    self.slli(value, value, 18)
+    self.fence()
+    self.csrrs(zero, value, 0x7C0)
+    self.li(value, 2)
+    self.csrrc(zero, value, 0x7C0)
+    self.fence()
+    self.fence()
+    self.li(value, 8)
+    self.csrrs(zero, value, 0x7C0)
+    return self
 
   def wait_go(self):
     return self.wait8(RUNTIME.go_signal, RUNTIME.run_msg_go)
@@ -105,7 +176,8 @@ class FlowMixin:
     return self.wait8(RUNTIME.subordinate_sync + role_index - 1, RUNTIME.run_msg_done)
 
   def launch_kernel_enabled(self, role_index: int, *, enabled: Reg = t0, mask: Reg = t1):
-    self.read32(enabled, LAUNCH.base + LAUNCH.enables)
+    self.current_launch_ptr(enabled)
+    self.lw(enabled, enabled, LAUNCH.enables)
     self.li(mask, 1 << role_index)
     return self.and_(enabled, enabled, mask)
 
@@ -114,7 +186,7 @@ class FlowMixin:
     skip = self._new_label("skip_kernel")
     self.launch_kernel_enabled(role_index, enabled=enabled, mask=offset)
     self.beq(enabled, zero, skip)
-    self.li(launch, LAUNCH.base)
+    self.current_launch_ptr(launch)
     self.lw(config_base, launch, LAUNCH.kernel_config_base)
     self.lw(offset, launch, LAUNCH.kernel_text_offset + 4 * role_index)
     self.add(entry, config_base, offset)
@@ -195,7 +267,7 @@ class NocMixin:
 
   def noc_write(self, noc: int, buf: int, src: Reg, dst_lo: Reg, dst_mid: int | Reg, dst_coord: Reg,
                 length: Reg, *, mcast: bool = False, mcast_linked: bool = False,
-                posted: bool = False, a: Reg = t0, v: Reg = t1):
+                num_dests: Reg | None = None, posted: bool = False, a: Reg = t0, v: Reg = t1):
     self.noc_wait_cmd_ready(noc, buf, addr=a, val=v)
     if mcast:
       ctrl = NOC.CMD_WR_MCAST_LINKED_FIELD if mcast_linked else NOC.CMD_WR_MCAST_UNLINK_FIELD
@@ -291,4 +363,3 @@ class CbMixin:
       self.addi(ptr, ptr, 4)
       self.addi(remaining, remaining, -1)
     return self
-
