@@ -76,14 +76,24 @@ BOARD_UPI_TO_NAME = {
   0x35: "galaxy-wormhole", 0x47: "galaxy-blackhole",
 }
 
-# ARC ENABLED_TENSIX_COL bit position -> physical NoC X coordinate.
-TENSIX_COL_NOC_X = (1, 16, 2, 15, 3, 14, 4, 13, 5, 12, 6, 11, 7, 10)
-DEFAULT_TENSIX_ENABLED = (1 << len(TENSIX_COL_NOC_X)) - 1
+# Blackhole harvesting layout matches UMD's HARVESTING_NOC_LOCATIONS.
+TENSIX_X_LOCATIONS = (1, 2, 3, 4, 5, 6, 7, 10, 11, 12, 13, 14, 15, 16)
+HARVESTING_NOC_LOCATIONS = (1, 16, 2, 15, 3, 14, 4, 13, 5, 12, 6, 11, 7, 10)
+DEFAULT_TENSIX_ENABLED = (1 << len(TENSIX_X_LOCATIONS)) - 1
 DEFAULT_GDDR_ENABLED = 0xFF
 
 
-def tensix_columns_from_mask(enabled_mask: int) -> tuple[int, ...]:
-  return tuple(sorted(TENSIX_COL_NOC_X[i] for i in range(len(TENSIX_COL_NOC_X)) if (enabled_mask >> i) & 1))
+def shuffle_tensix_harvesting_mask(physical_mask: int) -> int:
+  out = 0
+  for pos, noc_x in enumerate(HARVESTING_NOC_LOCATIONS):
+    if (physical_mask >> pos) & 1:
+      out |= 1 << TENSIX_X_LOCATIONS.index(noc_x)
+  return out
+
+
+def tensix_columns_from_enabled_mask(enabled_mask: int) -> tuple[int, ...]:
+  harvesting_mask = shuffle_tensix_harvesting_mask((~enabled_mask) & 0x3FFF)
+  return tuple(x for i, x in enumerate(TENSIX_X_LOCATIONS) if not ((harvesting_mask >> i) & 1))
 
 
 def worker_cores_from_columns(columns: tuple[int, ...]) -> list[Core]:
@@ -560,7 +570,7 @@ class PCIDevice:
     if enabled_gddr is None:
       enabled_gddr = DEFAULT_GDDR_ENABLED
 
-    columns = tensix_columns_from_mask(enabled_tensix)
+    columns = tensix_columns_from_enabled_mask(enabled_tensix)
     workers = worker_cores_from_columns(columns)
     if not columns:
       raise RuntimeError(f"no enabled Tensix columns in ARC telemetry mask 0x{enabled_tensix:x}")
