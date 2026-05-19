@@ -9,10 +9,8 @@ from asm import Kernel
 from dsl import Reg, gp, t0, t1, t2, t3, t4, t5, t6, zero
 from ttk.addrs import CircularBuffer as CB, Firmware, Launch, Mailbox, RunSync, Tensix, TensixMMIO, TriscMailbox as TM
 
-
 def setup_gp(fw: Kernel):
   return fw.li(gp, Firmware.TRISC_GLOBAL_POINTER)
-
 
 def zero_regfile(fw: Kernel, *, ptr: Reg = t0, count: Reg = t1):
   fw.li(ptr, Tensix.REGFILE_BASE)
@@ -28,14 +26,12 @@ def zero_regfile(fw: Kernel, *, ptr: Reg = t0, count: Reg = t1):
   fw.label(done)
   return fw
 
-
 def init_local_data(fw: Kernel, trisc_id: int):
   return fw.copy_words(
     TensixMMIO.LOCAL_RAM_START,
     Firmware.TRISC_LOCAL_DATA_BASE[trisc_id],
     Firmware.TRISC_LOCAL_DATA_SIZE[trisc_id],
   )
-
 
 def init_common_state(fw: Kernel, data: dict[str, int]):
   fw.write32(data["dest_offset_id"], 0)
@@ -48,7 +44,6 @@ def init_common_state(fw: Kernel, data: dict[str, int]):
   fw.read8(t1, Mailbox.CORE_INFO_ABSOLUTE_LOGICAL_Y, tmp_addr=t0)
   fw.write8(data["my_logical_y"], t1, tmp_addr=t0)
   return fw
-
 
 def wait_trisc_message(fw: Kernel, trisc_id: int, *, ptr: Reg = t0, actual: Reg = t1, expected: Reg = t2):
   loop = fw._new_label("wait_trisc")
@@ -80,7 +75,6 @@ def wait_trisc_message(fw: Kernel, trisc_id: int, *, ptr: Reg = t0, actual: Reg 
   fw.fence()
   return fw
 
-
 def init_sync_registers(fw: Kernel, *, recv: Reg = t0, ack: Reg = t1, count: Reg = t2, stride: Reg = t3):
   fw.li(recv, CB.SYNC_TILES_RECEIVED_BASE)
   fw.li(ack, CB.SYNC_TILES_ACKED_BASE)
@@ -98,7 +92,6 @@ def init_sync_registers(fw: Kernel, *, recv: Reg = t0, ack: Reg = t1, count: Reg
   fw.j(loop)
   fw.label(done)
   return fw
-
 
 def setup_local_cbs_from_mask(fw: Kernel, trisc_id: int, cb_config: Reg, cb_if: Reg, mask: Reg, *,
                               size: Reg = t5, fifo: Reg = t6, page: Reg = t0, tmp: Reg = t1):
@@ -136,7 +129,6 @@ def setup_local_cbs_from_mask(fw: Kernel, trisc_id: int, cb_config: Reg, cb_if: 
   fw.label(done)
   return fw
 
-
 def setup_local_cbs(fw: Kernel, trisc_id: int, data: dict[str, int], *, launch: Reg = t0, config_base: Reg = t1,
                     cb_config: Reg = t2, cb_if: Reg = t3, mask: Reg = t4):
   fw.current_launch_ptr(launch=launch, tmp=mask)
@@ -147,7 +139,6 @@ def setup_local_cbs(fw: Kernel, trisc_id: int, data: dict[str, int], *, launch: 
   fw.lw(mask, launch, Launch.LOCAL_CB_MASK)
   setup_local_cbs_from_mask(fw, trisc_id, cb_config, cb_if, mask)
   return fw
-
 
 def init_trisc_kernel_config(fw: Kernel, trisc_id: int, data: dict[str, int], *,
                              launch: Reg = t0, config_base: Reg = t1, off: Reg = t2,
@@ -175,13 +166,11 @@ def init_trisc_kernel_config(fw: Kernel, trisc_id: int, data: dict[str, int], *,
   fw.write8(data["my_relative_y"], value, tmp_addr=addr)
   return fw
 
-
 def tensix_sync(fw: Kernel):
   fw.write32(Tensix.PC_BUF_SYNC, 0)
   fw.read32(t0, Tensix.PC_BUF_SYNC)
   fw.and_(zero, zero, t0)
   return fw
-
 
 def build(trisc_id: int) -> Kernel:
   if trisc_id not in (0, 1, 2):

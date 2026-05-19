@@ -10,10 +10,8 @@ from asm import Kernel
 from device import Device
 from program import Program
 
-
 def ret_kernel() -> Kernel:
   return Kernel().ret()
-
 
 def main():
   device = Device()

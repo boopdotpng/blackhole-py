@@ -8,19 +8,15 @@ Core = tuple[int, int]
 L1_ALIGN = 16
 PCIE_ALIGN = 64
 
-
 def align_up(value: int, align: int) -> int:
   return (value + align - 1) // align * align
-
 
 def align_down(value: int, alignment: int) -> tuple[int, int]:
   base = value & ~(alignment - 1)
   return base, value - base
 
-
 def as_bytes(obj) -> bytes:
   return ctypes.string_at(ctypes.addressof(obj), ctypes.sizeof(obj))
-
 
 def noc_xy(x: int, y: int) -> int:
   return ((y << 6) | x) & 0xFFFF
@@ -360,14 +356,11 @@ class Sysmem:
     self.dev.unpin_pages(self.buf, self.noc_addr)
     self.buf.close()
 
-
 def worker_cores(tensix_x: tuple[int, ...]) -> list[Core]:
   return [(x, y) for x in tensix_x for y in range(2, 12)]
 
-
 def active_tensix_core_count(enabled_col_mask: int) -> int:
   return (enabled_col_mask & Arc.DEFAULT_TENSIX_ENABLED).bit_count() * 10
-
 
 def build_bank_noc_table(harvested_dram_bank: int | None, worker_cores: list[Core]) -> bytes:
   num_dram_banks = Dram.BANK_COUNT if harvested_dram_bank is None else Dram.BANK_COUNT - 1

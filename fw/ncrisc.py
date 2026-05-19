@@ -14,7 +14,6 @@ from ttk.addrs import (
 )
 from ttk.hw.noc import NOC
 
-
 def wait_subordinate_load_or_go(fw: Kernel, role: int, *, ptr: Reg = t0, actual: Reg = t1, expected: Reg = t2):
   loop = fw._new_label("wait_subordinate")
   done = fw._new_label("subordinate_ready")
@@ -31,7 +30,6 @@ def wait_subordinate_load_or_go(fw: Kernel, role: int, *, ptr: Reg = t0, actual:
   fw.fence()
   return fw
 
-
 def init_risc_noc_coords(fw: Kernel, *, noc_id: Reg = t0, coord: Reg = t1, tmp: Reg = t2):
   for noc in range(2):
     fw.read32(noc_id, fw.noc_cmd_addr(noc, 0, NOC.CFG_BASE + NocCfg.ID_LOGICAL * 4), tmp_addr=tmp)
@@ -42,7 +40,6 @@ def init_risc_noc_coords(fw: Kernel, *, noc_id: Reg = t0, coord: Reg = t1, tmp: 
     fw.write8(NM.MY_Y + noc, coord, tmp_addr=tmp)
   return fw
 
-
 def init_bank_tables(fw: Kernel):
   fw.copy_words(
     NM.DRAM_BANK_TO_NOC_XY,
@@ -52,14 +49,12 @@ def init_bank_tables(fw: Kernel):
   )
   return fw
 
-
 def init_ncrisc_mailbox_globals(fw: Kernel, *, value: Reg = t0, tmp: Reg = t1):
   fw.read8(value, Mailbox.CORE_INFO_ABSOLUTE_LOGICAL_X, tmp_addr=tmp)
   fw.write8(NM.MY_LOGICAL_X, value, tmp_addr=tmp)
   fw.read8(value, Mailbox.CORE_INFO_ABSOLUTE_LOGICAL_Y, tmp_addr=tmp)
   fw.write8(NM.MY_LOGICAL_Y, value, tmp_addr=tmp)
   return fw
-
 
 def init_ncrisc_kernel_config(fw: Kernel, *, launch: Reg = t0, config_base: Reg = t1,
                               off: Reg = t2, addr: Reg = t3, tmp: Reg = t4):
@@ -80,7 +75,6 @@ def init_ncrisc_kernel_config(fw: Kernel, *, launch: Reg = t0, config_base: Reg 
   fw.write32(NM.CRTA_L1_BASE_PTR, addr, tmp_addr=tmp)
   return fw
 
-
 def init_ncrisc_launch_globals(fw: Kernel, *, launch: Reg = t0, value: Reg = t1,
                                tmp: Reg = t2, origin: Reg = t3):
   fw.current_launch_ptr(launch=launch, tmp=tmp)
@@ -93,7 +87,6 @@ def init_ncrisc_launch_globals(fw: Kernel, *, launch: Reg = t0, value: Reg = t1,
   fw.sub(value, value, origin)
   fw.write8(NM.MY_RELATIVE_Y, value, tmp_addr=tmp)
   return fw
-
 
 def setup_local_cbs_from_mask(fw: Kernel, cb_config: Reg, cb_if: Reg, mask: Reg, *,
                               size: Reg = t5, fifo: Reg = t6, tmp: Reg = t0):
@@ -132,7 +125,6 @@ def setup_local_cbs_from_mask(fw: Kernel, cb_config: Reg, cb_if: Reg, mask: Reg,
   fw.label(done)
   return fw
 
-
 def setup_local_cbs(fw: Kernel, *, launch: Reg = t0, config_base: Reg = t1,
                     cb_config: Reg = t2, cb_if: Reg = t3, mask: Reg = t4):
   fw.current_launch_ptr(launch=launch, tmp=mask)
@@ -143,7 +135,6 @@ def setup_local_cbs(fw: Kernel, *, launch: Reg = t0, config_base: Reg = t1,
   fw.lw(mask, launch, Launch.LOCAL_CB_MASK)
   setup_local_cbs_from_mask(fw, cb_config, cb_if, mask)
   return fw
-
 
 def build() -> Kernel:
   fw = Kernel(base_addr=Firmware.TEXT_BASE["ncrisc"])

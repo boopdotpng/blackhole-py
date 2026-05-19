@@ -8,11 +8,9 @@ import struct
 from ttk.addrs import TensixL1, TensixMMIO
 from pcie import PCIDevice, TLBWindow
 
-
 def parse_core(value: str) -> tuple[int, int]:
   x, y = value.split(",", 1)
   return int(x, 0), int(y, 0)
-
 
 def main():
   parser = argparse.ArgumentParser()

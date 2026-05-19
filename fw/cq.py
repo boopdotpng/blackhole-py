@@ -136,7 +136,6 @@ PREFETCH_PCIE_BASE = CQ_DEBUG + 0xA0
 PREFETCH_PCIE_END = CQ_DEBUG + 0xA4
 GO_SIGNAL_VALUE = CQ_DEBUG + 0x100
 
-
 def acquire_local_pages(fw: Kernel, sem_addr: int, pages: Reg, credit: Reg, *, ptr: Reg = t0, val: Reg = t1):
   fw.li(ptr, sem_addr)
   loop = fw._new_label("sem_wait")
@@ -147,14 +146,12 @@ def acquire_local_pages(fw: Kernel, sem_addr: int, pages: Reg, credit: Reg, *, p
   fw.sub(credit, credit, pages)
   return fw
 
-
 def round_up_reg(fw: Kernel, reg: Reg, align: int, *, tmp: Reg = t0):
   fw.li(tmp, align - 1)
   fw.add(reg, reg, tmp)
   fw.li(tmp, ~(align - 1))
   fw.and_(reg, reg, tmp)
   return fw
-
 
 def build_prefetch() -> Kernel:
   fw = Kernel()
@@ -302,7 +299,6 @@ def build_prefetch() -> Kernel:
   fw.write32(CQ_DEBUG, 0xC10100FF, tmp_addr=t2, tmp_val=t3)
   fw.j("prefetch_done")
   return fw
-
 
 def build_dispatch() -> Kernel:
   fw = Kernel()
@@ -693,7 +689,6 @@ def build_dispatch() -> Kernel:
   fw.label("dispatch_done")
   fw.j("dispatch_done")
   return fw
-
 
 def build_dispatch_subordinate() -> Kernel:
   fw = Kernel()

@@ -11,7 +11,6 @@ from ttk.addrs import (
 )
 from ttk.hw.noc import NOC
 
-
 def set_subordinate_reset_pcs(fw: Kernel, text_base: dict[str, int] = Firmware.TEXT_BASE):
   fw.write32(TensixMMIO.RISCV_DEBUG_REG_NCRISC_RESET_PC, text_base["ncrisc"])
   breadcrumb(fw, 0xB015C101)
@@ -27,22 +26,17 @@ def set_subordinate_reset_pcs(fw: Kernel, text_base: dict[str, int] = Firmware.T
   breadcrumb(fw, 0xB015C106)
   return fw
 
-
 def deassert_all_riscs(fw: Kernel):
   return fw.write32(TensixMMIO.RISCV_DEBUG_REG_SOFT_RESET_0, 0)
-
 
 def init_subordinate_sync(fw: Kernel):
   return fw.write32(Mailbox.SUBORDINATE_SYNC, RunSync.ALL_INIT)
 
-
 def invalidate_all_risc_icaches(fw: Kernel):
   return fw.write32(Tensix.RISCV_IC_INVALIDATE_INVALIDATE_ALL, Tensix.RISCV_IC_ALL_MASK)
 
-
 def breadcrumb(fw: Kernel, value: int, offset: int = 0):
   return fw.write32(Firmware.FW_DEBUG + offset, value)
-
 
 def enable_noc_clock_gating(fw: Kernel, *, addr: Reg = t0, value: Reg = t1):
   for noc in range(2):
@@ -53,7 +47,6 @@ def enable_noc_clock_gating(fw: Kernel, *, addr: Reg = t0, value: Reg = t1):
       fw.ori(value, value, 1)
       fw.sw(value, addr, 0)
   return fw
-
 
 def device_setup(fw: Kernel):
   fw.write32(TensixMMIO.RISCV_DEBUG_REG_DEST_CG_CTRL, 0)
@@ -75,7 +68,6 @@ def device_setup(fw: Kernel):
   fw.tensix_push_word(Tensix.INSTRN_BUF_BASE, TensixInsn.SEMINIT | (1 << (TensixSem.MATH_DONE + 2)) | (0 << 16) | (1 << 20))
   breadcrumb(fw, 0xB015C206)
   return fw
-
 
 def wait_go(fw: Kernel, *, ptr: Reg = t0, signal: Reg = t1, expected: Reg = t2):
   loop = fw._new_label("wait_go")
@@ -115,7 +107,6 @@ def wait_go(fw: Kernel, *, ptr: Reg = t0, signal: Reg = t1, expected: Reg = t2):
   fw.fence()
   return fw
 
-
 def signal_subordinate_if_enabled(fw: Kernel, role: int, value: int, *,
                                   enabled: Reg = t0, mask: Reg = t1):
   skip = fw._new_label("skip_subordinate_signal")
@@ -124,7 +115,6 @@ def signal_subordinate_if_enabled(fw: Kernel, role: int, value: int, *,
   fw.write8(Mailbox.SUBORDINATE_SYNC + role - 1, value)
   fw.label(skip)
   return fw
-
 
 def init_risc_noc_coords(fw: Kernel, *, noc_id: Reg = t0, coord: Reg = t1, tmp: Reg = t2):
   for noc in range(2):
@@ -135,7 +125,6 @@ def init_risc_noc_coords(fw: Kernel, *, noc_id: Reg = t0, coord: Reg = t1, tmp: 
     fw.andi(coord, coord, NocCfg.NODE_ID_MASK)
     fw.write8(BM.MY_Y + noc, coord, tmp_addr=tmp)
   return fw
-
 
 def init_brisc_mailbox_globals(fw: Kernel, *, value: Reg = t0, tmp: Reg = t1):
   fw.write32(Mailbox.LAUNCH_MSG_RD_PTR, 0, tmp_addr=tmp, tmp_val=value)
@@ -149,7 +138,6 @@ def init_brisc_mailbox_globals(fw: Kernel, *, value: Reg = t0, tmp: Reg = t1):
   fw.write8(BM.MY_LOGICAL_Y, value, tmp_addr=tmp)
   fw.write32(TensixMMIO.NCRISC_HALT_RESUME_ADDR, 0, tmp_addr=tmp, tmp_val=value)
   return fw
-
 
 def init_brisc_kernel_config(fw: Kernel, *, launch: Reg = t0, config_base: Reg = t1,
                              off: Reg = t2, addr: Reg = t3, tmp: Reg = t4):
@@ -169,7 +157,6 @@ def init_brisc_kernel_config(fw: Kernel, *, launch: Reg = t0, config_base: Reg =
   fw.add(addr, config_base, off)
   fw.write32(BM.CRTA_L1_BASE_PTR, addr, tmp_addr=tmp)
   return fw
-
 
 def init_brisc_launch_globals(fw: Kernel, *, launch: Reg = t0, value: Reg = t1,
                               tmp: Reg = t2, origin: Reg = t3):
@@ -200,7 +187,6 @@ def init_brisc_launch_globals(fw: Kernel, *, launch: Reg = t0, value: Reg = t1,
   fw.write8(BM.MY_RELATIVE_Y, value, tmp_addr=tmp)
   return fw
 
-
 def init_bank_tables(fw: Kernel):
   fw.copy_words(
     BM.DRAM_BANK_TO_NOC_XY,
@@ -209,7 +195,6 @@ def init_bank_tables(fw: Kernel):
     P100BankTable.BANK_TO_DRAM_OFFSET_SIZE + P100BankTable.BANK_TO_L1_OFFSET_SIZE,
   )
   return fw
-
 
 def init_noc_local_state(fw: Kernel, *, launch: Reg = t0, noc_id: Reg = t1,
                          noc_shift: Reg = t2, status: Reg = t3,
@@ -226,7 +211,6 @@ def init_noc_local_state(fw: Kernel, *, launch: Reg = t0, noc_id: Reg = t1,
   ], status=status, dest=dest, value=value)
   return fw
 
-
 def wait_noc_cmd_buf_ready(fw: Kernel, noc: Reg, *, addr: Reg = t0, value: Reg = t1):
   fw.li(addr, NOC.CMD_CTRL + (NocCfg.NCRISC_AT_CMD_BUF << NOC.CMD_BUF_OFFSET_BIT))
   fw.add(addr, addr, noc)
@@ -236,7 +220,6 @@ def wait_noc_cmd_buf_ready(fw: Kernel, noc: Reg, *, addr: Reg = t0, value: Reg =
   fw.bne(value, zero, loop)
   return fw
 
-
 def write_noc_cmd_reg(fw: Kernel, noc: Reg, reg: int, value: int | Reg, *,
                       addr: Reg = t0, tmp_val: Reg = t1):
   fw.li(addr, reg + (NocCfg.NCRISC_AT_CMD_BUF << NOC.CMD_BUF_OFFSET_BIT))
@@ -245,7 +228,6 @@ def write_noc_cmd_reg(fw: Kernel, noc: Reg, reg: int, value: int | Reg, *,
     fw.li(tmp_val, value)
     value = tmp_val
   return fw.sw(value, addr, 0)
-
 
 def notify_dispatch_core_done(fw: Kernel, *, launch: Reg = t0, mode: Reg = t1,
                               go_index: Reg = t2, go_addr: Reg = t3,
@@ -290,7 +272,6 @@ def notify_dispatch_core_done(fw: Kernel, *, launch: Reg = t0, mode: Reg = t1,
   fw.label(skip)
   return fw
 
-
 def noc_init(fw: Kernel, *, noc_id: Reg = t0, coord: Reg = t1,
              tmp_addr: Reg = t2, tmp_val: Reg = t3):
   for noc in range(2):
@@ -314,7 +295,6 @@ def noc_init(fw: Kernel, *, noc_id: Reg = t0, coord: Reg = t1,
       tmp_val=tmp_val,
     )
   return fw
-
 
 def setup_local_cbs(fw: Kernel, *, launch: Reg = t0, config_base: Reg = t1,
                     cb_config: Reg = t2, cb_if: Reg = t3, mask: Reg = t4,
@@ -360,7 +340,6 @@ def setup_local_cbs(fw: Kernel, *, launch: Reg = t0, config_base: Reg = t1,
   fw.j(loop)
   fw.label(done)
   return fw
-
 
 def build(*, text_base: dict[str, int] = Firmware.TEXT_BASE) -> Kernel:
   fw = Kernel(base_addr=Firmware.TEXT_BASE["brisc"])

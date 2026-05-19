@@ -20,12 +20,10 @@ FIRMWARE_SCRATCH_BASE = {
   "trisc2": 0xE2B0,
 }
 
-
 def _parse_int(value):
   if isinstance(value, int):
     return value
   return int(value, 0)
-
 
 def build_all(disasms: Path = DISASMS) -> dict[str, Kernel]:
   """Load checked-in C++ resident firmware PT_LOADs as asm.Kernel objects."""
@@ -47,14 +45,12 @@ def build_all(disasms: Path = DISASMS) -> dict[str, Kernel]:
     result[target] = kernel
   return result
 
-
 def _with_old_path():
   old = Path(__file__).resolve().parent.parent / "blackhole-py-old"
   if not old.is_dir():
     raise FileNotFoundError(f"missing old compiler path: {old}")
   sys.path.insert(0, str(old))
   return old
-
 
 def _fw_to_kernel(target: str, compiled: Any) -> Kernel:
   kernel = Kernel()
@@ -70,7 +66,6 @@ def _fw_to_kernel(target: str, compiled: Any) -> Kernel:
     kernel.segment(addr, data, label=f"{target}.compiled")
   return kernel
 
-
 def build_from_old_compiler(
   num_dram_banks: int,
   num_l1_banks: int,
@@ -83,7 +78,6 @@ def build_from_old_compiler(
 
   compiled = compile_firmware(num_dram_banks, num_l1_banks, prefetch_core, dispatch_core)
   return {target: _fw_to_kernel(target, compiled[target]) for target in TARGETS}
-
 
 def build_ret_compute_kernels(
   num_dram_banks: int,

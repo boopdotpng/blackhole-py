@@ -81,10 +81,8 @@ P150_TENSIX_X = (*range(1, 8), *range(10, 17))
 DEFAULT_TENSIX_ENABLED = (1 << len(P150_TENSIX_X)) - 1
 DEFAULT_GDDR_ENABLED = 0xFF
 
-
 def active_tensix_core_count(enabled_col_mask: int) -> int:
   return (enabled_col_mask & DEFAULT_TENSIX_ENABLED).bit_count() * 10
-
 
 def board_from_tensix_count(enabled_mask: int) -> str:
   core_count = active_tensix_core_count(enabled_mask)
@@ -94,12 +92,10 @@ def board_from_tensix_count(enabled_mask: int) -> str:
     return "p150"
   raise RuntimeError(f"unsupported Tensix core count {core_count}")
 
-
 def normalize_board(board: str, enabled_mask: int) -> str:
   if board in {"p100", "p150"}:
     return board
   return board_from_tensix_count(enabled_mask)
-
 
 def tensix_columns_for_board(board: str) -> tuple[int, ...]:
   if board == "p100":
@@ -107,7 +103,6 @@ def tensix_columns_for_board(board: str) -> tuple[int, ...]:
   if board == "p150":
     return P150_TENSIX_X
   raise RuntimeError(f"unsupported board layout {board!r}")
-
 
 def dram_layout_for_board(board: str, enabled_gddr: int) -> tuple[int, int | None]:
   if board != "p100":
@@ -117,7 +112,6 @@ def dram_layout_for_board(board: str, enabled_gddr: int) -> tuple[int, int | Non
   if len(harvested) > 1:
     raise RuntimeError(f"unsupported harvested DRAM banks: {harvested}")
   return effective_gddr, harvested[0] if harvested else None
-
 
 def worker_cores_from_columns(columns: tuple[int, ...]) -> list[Core]:
   return [(x, y) for x in columns for y in range(2, 12)]
@@ -373,14 +367,12 @@ class TLBWindow:
 
 def _config_path(sysfs_path: str) -> str: return f"{sysfs_path}/config"
 
-
 def _read_config(path: str, size: int, offset: int) -> bytes:
   fd = os.open(path, os.O_RDONLY | os.O_SYNC)
   try:
     return os.pread(fd, size, offset)
   finally:
     os.close(fd)
-
 
 def _write_config(path: str, data: bytes, offset: int):
   fd = os.open(path, os.O_RDWR | os.O_SYNC)
@@ -391,9 +383,7 @@ def _write_config(path: str, data: bytes, offset: int):
 
 def _read_config_u16(path: str, offset: int) -> int: return struct.unpack("<H", _read_config(path, 2, offset))[0]
 
-
 def _write_config_u16(path: str, offset: int, value: int): _write_config(path, struct.pack("<H", value & 0xFFFF), offset)
-
 
 def _ensure_endpoint_enabled(sysfs_path: str):
   with open(f"{sysfs_path}/enable", "r+") as f:
@@ -402,13 +392,11 @@ def _ensure_endpoint_enabled(sysfs_path: str):
       f.write("1")
   _ensure_memory_bus_master(_config_path(sysfs_path))
 
-
 def _ensure_memory_bus_master(config_path: str):
   cmd = _read_config_u16(config_path, PCI_COMMAND)
   want = PCI_COMMAND_MEMORY | PCI_COMMAND_MASTER
   if (cmd & want) != want:
     _write_config_u16(config_path, PCI_COMMAND, cmd | want)
-
 
 def _read_vendor_id(sysfs_path: str) -> int | None:
   try:
@@ -425,7 +413,6 @@ def _find_pcie_cap(cfg: bytes) -> int | None:
     ptr = cfg[ptr + 1] & 0xFC
   return None
 
-
 def _find_upstream_bridge_sysfs(sysfs_path: str) -> str | None:
   cur = os.path.realpath(sysfs_path)
   parent = os.path.dirname(cur)
@@ -438,14 +425,12 @@ def _find_upstream_bridge_sysfs(sysfs_path: str) -> str | None:
     parent = os.path.dirname(parent)
   return None
 
-
 def _wait_for_vendor_id(sysfs_path: str, timeout_s: float = 10.0) -> bool:
   deadline = time.monotonic() + timeout_s
   while time.monotonic() < deadline:
     if _read_vendor_id(sysfs_path) == TT_VENDOR: return True
     time.sleep(0.1)
   return False
-
 
 def _restore_endpoint_config(config_path: str, saved: bytes, pcie_cap: int | None, saved_devctl: int | None):
   # Mirror the tt-kmd post-reset subset, avoiding PCI status because it is write-1-to-clear.
@@ -459,7 +444,6 @@ def _restore_endpoint_config(config_path: str, saved: bytes, pcie_cap: int | Non
     _write_config(config_path, struct.pack("<H", devctl), pcie_cap + PCI_EXP_DEVCTL)
 
   _ensure_memory_bus_master(config_path)
-
 
 def _secondary_bus_reset(sysfs_path: str):
   bridge_sysfs = _find_upstream_bridge_sysfs(sysfs_path)
