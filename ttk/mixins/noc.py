@@ -3,8 +3,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 
 from dsl import Reg, t0, t1, t2, t3, t4, t5, zero
-from ttk.hw.mmio import MMIO
-from ttk.hw.noc import NOC
+from ttk.addrs import NOC, TensixMMIO
 
 class NocMixin:
   def write_reg(self, addr: int | Reg, value: int | Reg, *, tmp_addr: Reg = t0, tmp_val: Reg = t1):
@@ -24,16 +23,16 @@ class NocMixin:
     return self
 
   def set_subordinate_reset_pcs(self, *, ncrisc: int, trisc0: int, trisc1: int, trisc2: int):
-    self.write_reg(MMIO.RISCV_DEBUG_REG_NCRISC_RESET_PC, ncrisc)
-    self.write_reg(MMIO.RISCV_DEBUG_REG_TRISC0_RESET_PC, trisc0)
-    self.write_reg(MMIO.RISCV_DEBUG_REG_TRISC1_RESET_PC, trisc1)
-    self.write_reg(MMIO.RISCV_DEBUG_REG_TRISC2_RESET_PC, trisc2)
-    self.write_reg(MMIO.RISCV_DEBUG_REG_TRISC_RESET_PC_OVERRIDE, 0b111)
-    self.write_reg(MMIO.RISCV_DEBUG_REG_NCRISC_RESET_PC_OVERRIDE, 1)
+    self.write_reg(TensixMMIO.RISCV_DEBUG_REG_NCRISC_RESET_PC, ncrisc)
+    self.write_reg(TensixMMIO.RISCV_DEBUG_REG_TRISC0_RESET_PC, trisc0)
+    self.write_reg(TensixMMIO.RISCV_DEBUG_REG_TRISC1_RESET_PC, trisc1)
+    self.write_reg(TensixMMIO.RISCV_DEBUG_REG_TRISC2_RESET_PC, trisc2)
+    self.write_reg(TensixMMIO.RISCV_DEBUG_REG_TRISC_RESET_PC_OVERRIDE, 0b111)
+    self.write_reg(TensixMMIO.RISCV_DEBUG_REG_NCRISC_RESET_PC_OVERRIDE, 1)
     return self
 
   def deassert_all_riscs(self):
-    return self.write_reg(MMIO.RISCV_DEBUG_REG_SOFT_RESET_0, MMIO.SOFT_RESET_NONE)
+    return self.write_reg(TensixMMIO.RISCV_DEBUG_REG_SOFT_RESET_0, TensixMMIO.SOFT_RESET_NONE)
 
   def noc_cmd_addr(self, noc: int, buf: int, reg: int) -> int:
     return reg + (buf << NOC.CMD_BUF_OFFSET_BIT) + (noc << NOC.INSTANCE_OFFSET_BIT)

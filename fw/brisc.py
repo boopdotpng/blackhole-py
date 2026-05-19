@@ -9,7 +9,7 @@ from ttk.addrs import (
   Mailbox, NocCfg, P100BankTable, RunMsg, RunSync, Tensix, TensixInsn,
   TensixL1, TensixMMIO, TensixSem,
 )
-from ttk.hw.noc import NOC
+from ttk.addrs import NOC
 
 def signal_subordinate_if_enabled(fw: Kernel, role: int, value: int, *,
                                   enabled: Reg = t0, mask: Reg = t1):

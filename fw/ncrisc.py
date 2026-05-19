@@ -12,7 +12,7 @@ from ttk.addrs import (
   CircularBuffer as CB, Firmware, Launch, Mailbox, NcriscMailbox as NM,
   NocCfg, P100BankTable, RunSync, TensixL1,
 )
-from ttk.hw.noc import NOC
+from ttk.addrs import NOC
 
 def build() -> Kernel:
   fw = Kernel(base_addr=Firmware.TEXT_BASE["ncrisc"])

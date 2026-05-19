@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-"""Smallest hardware launch smoke: Python resident firmware, ret kernels."""
 from __future__ import annotations
 
 import os
