@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-
 class L1:
   """Stable Blackhole L1 regions used by blackhole-py."""
 

@@ -9,159 +9,6 @@ from asm import Kernel
 from dsl import Reg, gp, t0, t1, t2, t3, t4, t5, t6, zero
 from ttk.addrs import CircularBuffer as CB, Firmware, Launch, Mailbox, RunSync, Tensix, TensixMMIO, TriscMailbox as TM
 
-def zero_regfile(fw: Kernel, *, ptr: Reg = t0, count: Reg = t1):
-  fw.li(ptr, Tensix.REGFILE_BASE)
-  fw.li(count, 64)
-  loop = fw._new_label("zero_regfile")
-  done = fw._new_label("zero_regfile_done")
-  fw.label(loop)
-  fw.beq(count, zero, done)
-  fw.sw(zero, ptr, 0)
-  fw.addi(ptr, ptr, 4)
-  fw.addi(count, count, -1)
-  fw.j(loop)
-  fw.label(done)
-  return fw
-
-def init_common_state(fw: Kernel, data: dict[str, int]):
-  fw.write32(data["dest_offset_id"], 0)
-  fw.write32(data["op_info_offset"], 0)
-  fw.write32(data["cfg_state_id"], 0)
-  fw.write32(Tensix.CFG_BASE + Tensix.PRNG_SEED_SEED_VAL_ADDR32 * 4, 0)
-  fw.delay_cycles(600)
-  fw.read8(t1, Mailbox.CORE_INFO_ABSOLUTE_LOGICAL_X, tmp_addr=t0)
-  fw.write8(data["my_logical_x"], t1, tmp_addr=t0)
-  fw.read8(t1, Mailbox.CORE_INFO_ABSOLUTE_LOGICAL_Y, tmp_addr=t0)
-  fw.write8(data["my_logical_y"], t1, tmp_addr=t0)
-  return fw
-
-def wait_trisc_message(fw: Kernel, trisc_id: int, *, ptr: Reg = t0, actual: Reg = t1, expected: Reg = t2):
-  loop = fw._new_label("wait_trisc")
-  done = fw._new_label("trisc_go")
-  init_sync = fw._new_label("trisc_init_sync")
-  fw.li(ptr, Mailbox.SUBORDINATE_SYNC + trisc_id + 1)
-  fw.label(loop)
-  fw.lbu(actual, ptr, 0)
-  if trisc_id == 0:
-    fw.write32(Firmware.FW_DEBUG + 4, actual, tmp_addr=expected)
-  fw.li(expected, RunSync.GO)
-  fw.beq(actual, expected, done)
-  if trisc_id == 0:
-    fw.li(expected, RunSync.INIT_SYNC_REGISTERS)
-    fw.beq(actual, expected, init_sync)
-  fw.fence()
-  fw.j(loop)
-  if trisc_id == 0:
-    fw.label(init_sync)
-    fw.write32(Firmware.FW_DEBUG + 8, 0x7015C003, tmp_addr=actual, tmp_val=expected)
-    init_sync_registers(fw)
-    fw.li(ptr, Mailbox.SUBORDINATE_SYNC + trisc_id + 1)
-    fw.write8(ptr, RunSync.DONE, tmp_addr=actual, tmp_val=expected)
-    fw.write32(Firmware.FW_DEBUG + 12, 0x7015C004, tmp_addr=actual, tmp_val=expected)
-    fw.j(loop)
-  fw.label(done)
-  if trisc_id == 0:
-    fw.write32(Firmware.FW_DEBUG + 16, 0x7015C080, tmp_addr=actual, tmp_val=expected)
-  fw.fence()
-  return fw
-
-def init_sync_registers(fw: Kernel, *, recv: Reg = t0, ack: Reg = t1, count: Reg = t2, stride: Reg = t3):
-  fw.li(recv, CB.SYNC_TILES_RECEIVED_BASE)
-  fw.li(ack, CB.SYNC_TILES_ACKED_BASE)
-  fw.li(count, CB.NUM_CIRCULAR_BUFFERS)
-  fw.li(stride, CB.SYNC_STRIDE)
-  loop = fw._new_label("init_cb_sync")
-  done = fw._new_label("init_cb_sync_done")
-  fw.label(loop)
-  fw.beq(count, zero, done)
-  fw.sw(zero, recv, 0)
-  fw.sw(zero, ack, 0)
-  fw.add(recv, recv, stride)
-  fw.add(ack, ack, stride)
-  fw.addi(count, count, -1)
-  fw.j(loop)
-  fw.label(done)
-  return fw
-
-def setup_local_cbs_from_mask(fw: Kernel, trisc_id: int, cb_config: Reg, cb_if: Reg, mask: Reg, *,
-                              size: Reg = t5, fifo: Reg = t6, page: Reg = t0, tmp: Reg = t1):
-  loop = fw._new_label("setup_cb")
-  skip = fw._new_label("skip_cb")
-  done = fw._new_label("done_cb")
-  fw.label(loop)
-  fw.beq(mask, zero, done)
-  fw.andi(tmp, mask, 1)
-  fw.beq(tmp, zero, skip)
-  fw.lw(size, cb_config, 4)
-  fw.lw(fifo, cb_config, 0)
-  fw.lw(page, cb_config, 12)
-  fw.srli(size, size, 4)
-  fw.srli(fifo, fifo, 4)
-  fw.srli(page, page, 4)
-  fw.sw(size, cb_if, 0)
-  fw.add(size, fifo, size)
-  fw.sw(size, cb_if, 4)
-  fw.sw(page, cb_if, 8)
-  if trisc_id == 0:
-    fw.sw(fifo, cb_if, 16)
-  else:
-    fw.lw(tmp, cb_config, 8)
-    fw.sw(tmp, cb_if, 12)
-    fw.sw(fifo, cb_if, 20)
-  fw.sw(zero, cb_if, 24)
-  if trisc_id == 2:
-    fw.sw(zero, cb_if, 28)
-  fw.label(skip)
-  fw.addi(cb_config, cb_config, CB.LOCAL_CONFIG_SIZE)
-  fw.addi(cb_if, cb_if, CB.LOCAL_INTERFACE_SIZE)
-  fw.srli(mask, mask, 1)
-  fw.j(loop)
-  fw.label(done)
-  return fw
-
-def setup_local_cbs(fw: Kernel, trisc_id: int, data: dict[str, int], *, launch: Reg = t0, config_base: Reg = t1,
-                    cb_config: Reg = t2, cb_if: Reg = t3, mask: Reg = t4):
-  fw.current_launch_ptr(launch=launch, tmp=mask)
-  fw.lw(config_base, launch, Launch.KERNEL_CONFIG_BASE)
-  fw.lhu(cb_config, launch, Launch.LOCAL_CB_OFFSET)
-  fw.add(cb_config, config_base, cb_config)
-  fw.li(cb_if, data["cb_interface"])
-  fw.lw(mask, launch, Launch.LOCAL_CB_MASK)
-  setup_local_cbs_from_mask(fw, trisc_id, cb_config, cb_if, mask)
-  return fw
-
-def init_trisc_kernel_config(fw: Kernel, trisc_id: int, data: dict[str, int], *,
-                             launch: Reg = t0, config_base: Reg = t1, off: Reg = t2,
-                             addr: Reg = t3, value: Reg = t4, origin: Reg = t5):
-  fw.current_launch_ptr(launch=launch, tmp=value)
-  fw.lw(config_base, launch, Launch.KERNEL_CONFIG_BASE)
-
-  rta_slot = 2 + trisc_id
-  fw.lhu(off, launch, Launch.RTA_OFFSET + 4 * rta_slot)
-  fw.add(addr, config_base, off)
-  fw.write32(data["rta_l1_base"], addr, tmp_addr=value)
-
-  fw.lhu(off, launch, Launch.RTA_OFFSET + 4 * rta_slot + 2)
-  fw.add(addr, config_base, off)
-  fw.write32(data["crta_l1_base"], addr, tmp_addr=value)
-
-  fw.read8(value, data["my_logical_x"], tmp_addr=addr)
-  fw.lbu(origin, launch, Launch.SUB_DEVICE_ORIGIN_X)
-  fw.sub(value, value, origin)
-  fw.write8(data["my_relative_x"], value, tmp_addr=addr)
-
-  fw.read8(value, data["my_logical_y"], tmp_addr=addr)
-  fw.lbu(origin, launch, Launch.SUB_DEVICE_ORIGIN_Y)
-  fw.sub(value, value, origin)
-  fw.write8(data["my_relative_y"], value, tmp_addr=addr)
-  return fw
-
-def tensix_sync(fw: Kernel):
-  fw.write32(Tensix.PC_BUF_SYNC, 0)
-  fw.read32(t0, Tensix.PC_BUF_SYNC)
-  fw.and_(zero, zero, t0)
-  return fw
-
 def build(trisc_id: int) -> Kernel:
   if trisc_id not in (0, 1, 2):
     raise ValueError(f"unknown TRISC id {trisc_id!r}")
@@ -179,16 +26,140 @@ def build(trisc_id: int) -> Kernel:
     Firmware.TRISC_LOCAL_DATA_BASE[trisc_id],
     Firmware.TRISC_LOCAL_DATA_SIZE[trisc_id],
   )
-  zero_regfile(fw)
-  init_common_state(fw, data)
+
+  # zero_regfile
+  fw.li(t0, Tensix.REGFILE_BASE)
+  fw.li(t1, 64)
+  zero_regfile_loop = fw._new_label("zero_regfile")
+  zero_regfile_done = fw._new_label("zero_regfile_done")
+  fw.label(zero_regfile_loop)
+  fw.beq(t1, zero, zero_regfile_done)
+  fw.sw(zero, t0, 0)
+  fw.addi(t0, t0, 4)
+  fw.addi(t1, t1, -1)
+  fw.j(zero_regfile_loop)
+  fw.label(zero_regfile_done)
+
+  # init_common_state
+  fw.write32(data["dest_offset_id"], 0)
+  fw.write32(data["op_info_offset"], 0)
+  fw.write32(data["cfg_state_id"], 0)
+  fw.write32(Tensix.CFG_BASE + Tensix.PRNG_SEED_SEED_VAL_ADDR32 * 4, 0)
+  fw.delay_cycles(600)
+  fw.read8(t1, Mailbox.CORE_INFO_ABSOLUTE_LOGICAL_X, tmp_addr=t0)
+  fw.write8(data["my_logical_x"], t1, tmp_addr=t0)
+  fw.read8(t1, Mailbox.CORE_INFO_ABSOLUTE_LOGICAL_Y, tmp_addr=t0)
+  fw.write8(data["my_logical_y"], t1, tmp_addr=t0)
+
   fw.signal_subordinate_done(role)
   fw.label("run_loop")
-  wait_trisc_message(fw, trisc_id)
+
+  # wait_trisc_message
+  wait_trisc_loop = fw._new_label("wait_trisc")
+  trisc_go = fw._new_label("trisc_go")
+  trisc_init_sync = fw._new_label("trisc_init_sync")
+  fw.li(t0, Mailbox.SUBORDINATE_SYNC + trisc_id + 1)
+  fw.label(wait_trisc_loop)
+  fw.lbu(t1, t0, 0)
+  fw.li(t2, RunSync.GO)
+  fw.beq(t1, t2, trisc_go)
+  if trisc_id == 0:
+    fw.li(t2, RunSync.INIT_SYNC_REGISTERS)
+    fw.beq(t1, t2, trisc_init_sync)
+  fw.fence()
+  fw.j(wait_trisc_loop)
+  if trisc_id == 0:
+    fw.label(trisc_init_sync)
+    # init_sync_registers
+    fw.li(t0, CB.SYNC_TILES_RECEIVED_BASE)
+    fw.li(t1, CB.SYNC_TILES_ACKED_BASE)
+    fw.li(t2, CB.NUM_CIRCULAR_BUFFERS)
+    fw.li(t3, CB.SYNC_STRIDE)
+    init_cb_sync_loop = fw._new_label("init_cb_sync")
+    init_cb_sync_done = fw._new_label("init_cb_sync_done")
+    fw.label(init_cb_sync_loop)
+    fw.beq(t2, zero, init_cb_sync_done)
+    fw.sw(zero, t0, 0)
+    fw.sw(zero, t1, 0)
+    fw.add(t0, t0, t3)
+    fw.add(t1, t1, t3)
+    fw.addi(t2, t2, -1)
+    fw.j(init_cb_sync_loop)
+    fw.label(init_cb_sync_done)
+    fw.li(t0, Mailbox.SUBORDINATE_SYNC + trisc_id + 1)
+    fw.write8(t0, RunSync.DONE, tmp_addr=t1, tmp_val=t2)
+    fw.j(wait_trisc_loop)
+  fw.label(trisc_go)
+  fw.fence()
+
   if trisc_id in (0, 2):
-    setup_local_cbs(fw, trisc_id, data)
-  init_trisc_kernel_config(fw, trisc_id, data)
+    # setup_local_cbs
+    fw.current_launch_ptr(launch=t0, tmp=t4)
+    fw.lw(t1, t0, Launch.KERNEL_CONFIG_BASE)
+    fw.lhu(t2, t0, Launch.LOCAL_CB_OFFSET)
+    fw.add(t2, t1, t2)
+    fw.li(t3, data["cb_interface"])
+    fw.lw(t4, t0, Launch.LOCAL_CB_MASK)
+    # setup_local_cbs_from_mask
+    setup_cb_loop = fw._new_label("setup_cb")
+    skip_cb = fw._new_label("skip_cb")
+    done_cb = fw._new_label("done_cb")
+    fw.label(setup_cb_loop)
+    fw.beq(t4, zero, done_cb)
+    fw.andi(t1, t4, 1)
+    fw.beq(t1, zero, skip_cb)
+    fw.lw(t5, t2, 4)
+    fw.lw(t6, t2, 0)
+    fw.lw(t0, t2, 12)
+    fw.srli(t5, t5, 4)
+    fw.srli(t6, t6, 4)
+    fw.srli(t0, t0, 4)
+    fw.sw(t5, t3, 0)
+    fw.add(t5, t6, t5)
+    fw.sw(t5, t3, 4)
+    fw.sw(t0, t3, 8)
+    if trisc_id == 0:
+      fw.sw(t6, t3, 16)
+    else:
+      fw.lw(t1, t2, 8)
+      fw.sw(t1, t3, 12)
+      fw.sw(t6, t3, 20)
+    fw.sw(zero, t3, 24)
+    if trisc_id == 2:
+      fw.sw(zero, t3, 28)
+    fw.label(skip_cb)
+    fw.addi(t2, t2, CB.LOCAL_CONFIG_SIZE)
+    fw.addi(t3, t3, CB.LOCAL_INTERFACE_SIZE)
+    fw.srli(t4, t4, 1)
+    fw.j(setup_cb_loop)
+    fw.label(done_cb)
+
+  # init_trisc_kernel_config
+  fw.current_launch_ptr(launch=t0, tmp=t4)
+  fw.lw(t1, t0, Launch.KERNEL_CONFIG_BASE)
+  rta_slot = 2 + trisc_id
+  fw.lhu(t2, t0, Launch.RTA_OFFSET + 4 * rta_slot)
+  fw.add(t3, t1, t2)
+  fw.write32(data["rta_l1_base"], t3, tmp_addr=t4)
+  fw.lhu(t2, t0, Launch.RTA_OFFSET + 4 * rta_slot + 2)
+  fw.add(t3, t1, t2)
+  fw.write32(data["crta_l1_base"], t3, tmp_addr=t4)
+  fw.read8(t4, data["my_logical_x"], tmp_addr=t3)
+  fw.lbu(t5, t0, Launch.SUB_DEVICE_ORIGIN_X)
+  fw.sub(t4, t4, t5)
+  fw.write8(data["my_relative_x"], t4, tmp_addr=t3)
+  fw.read8(t4, data["my_logical_y"], tmp_addr=t3)
+  fw.lbu(t5, t0, Launch.SUB_DEVICE_ORIGIN_Y)
+  fw.sub(t4, t4, t5)
+  fw.write8(data["my_relative_y"], t4, tmp_addr=t3)
+
   fw.run_launch_kernel(2 + trisc_id)
-  tensix_sync(fw)
+
+  # tensix_sync
+  fw.write32(Tensix.PC_BUF_SYNC, 0)
+  fw.read32(t0, Tensix.PC_BUF_SYNC)
+  fw.and_(zero, zero, t0)
+
   fw.signal_subordinate_done(role)
   fw.j("run_loop")
   return fw

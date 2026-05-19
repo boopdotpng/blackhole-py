@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-
 class NOC:
   REGS_START_ADDR = 0xFFB20000
   STATUS_BASE = 0xFFB20200

@@ -3,7 +3,6 @@ from __future__ import annotations
 from dsl import Reg, ra, sp, t0, t1, t2, t3, t4, zero
 from ttk.abi import LAUNCH, RUNTIME
 
-
 class FlowMixin:
   def wait8(self, addr: int, value: int, *, ptr: Reg = t0, actual: Reg = t1, expected: Reg = t2):
     self.li(ptr, addr)

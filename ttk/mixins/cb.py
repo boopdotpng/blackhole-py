@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dsl import Reg, t0, t1, zero
 
-
 class CbMixin:
   def clear_cb_sync_registers(self, tiles_received_base: int, tiles_acked_base: int, count: int = 64,
                               *, ptr: Reg = t0, remaining: Reg = t1):

@@ -9,7 +9,6 @@ if __package__ in (None, ""):
 from asm import Kernel
 from dsl import Reg, s0, s1, s2, s3, s4, s5, s6, s7, s8, s9, s10, s11, t0, t1, t2, t3, t4, t5, t6, zero
 
-
 L1_ALIGN = 16
 KERNEL_CONFIG_BASE = 0x86B0
 CQ_SEM_BASE = KERNEL_CONFIG_BASE + L1_ALIGN
@@ -136,16 +135,6 @@ PREFETCH_PCIE_BASE = CQ_DEBUG + 0xA0
 PREFETCH_PCIE_END = CQ_DEBUG + 0xA4
 GO_SIGNAL_VALUE = CQ_DEBUG + 0x100
 
-def acquire_local_pages(fw: Kernel, sem_addr: int, pages: Reg, credit: Reg, *, ptr: Reg = t0, val: Reg = t1):
-  fw.li(ptr, sem_addr)
-  loop = fw._new_label("sem_wait")
-  fw.label(loop)
-  fw.lw(val, ptr, 0)
-  fw.add(val, val, credit)
-  fw.bltu(val, pages, loop)
-  fw.sub(credit, credit, pages)
-  return fw
-
 def round_up_reg(fw: Kernel, reg: Reg, align: int, *, tmp: Reg = t0):
   fw.li(tmp, align - 1)
   fw.add(reg, reg, tmp)
@@ -241,7 +230,14 @@ def build_prefetch() -> Kernel:
   fw.srli(t2, t2, 12)            # pages
   fw.mv(s3, t2)
   fw.write32(CQ_DEBUG + 12, s3, tmp_addr=t2, tmp_val=t3)
-  acquire_local_pages(fw, CQ_SEM_BASE, s3, s8, ptr=t3, val=t0)
+  # acquire_local_pages
+  fw.li(t3, CQ_SEM_BASE)
+  sem_wait = fw._new_label("sem_wait")
+  fw.label(sem_wait)
+  fw.lw(t0, t3, 0)
+  fw.add(t0, t0, s8)
+  fw.bltu(t0, s3, sem_wait)
+  fw.sub(s8, s8, s3)
   fw.write32(CQ_DEBUG, 0xC1010004, tmp_addr=t2, tmp_val=t3)
   fw.write32(CQ_DEBUG + 16, s2, tmp_addr=t2, tmp_val=t3)
   fw.write32(CQ_DEBUG, 0xC1010005, tmp_addr=t2, tmp_val=t3)

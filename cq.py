@@ -121,7 +121,6 @@ def _relay_inline(payload: bytes) -> bytes:
   hdr = struct.pack("<BBHII", _RELAY_INLINE, 0, 0, len(payload), stride).ljust(CQ_CMD_SIZE, b"\0")
   return hdr + payload.ljust(stride - CQ_CMD_SIZE, b"\0")
 
-
 class CommandQueue:
   def __init__(self, dev: PCIDevice, prefetch_core: Core, dispatch_core: Core):
     self.sysmem = CQSysmem(
@@ -255,7 +254,6 @@ def lower_programs(
     if timestamps and ts + 1 < len(timestamps):
       out.append(_timestamp(*timestamps[ts + 1]))
   return out
-
 
 class CQSysmem:
   def __init__(self, dev: PCIDevice, prefetch_win: TLBWindow, dispatch_win: TLBWindow):

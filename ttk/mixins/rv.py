@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dsl import Reg, t0, t1, t2, t3, zero
 
-
 class RvMixin:
   def _addr_reg_offset(self, addr: int | Reg, tmp_addr: Reg, *, avoid: tuple[Reg, ...] = ()) -> tuple[Reg, int]:
     if not isinstance(addr, int):

@@ -116,7 +116,6 @@ def dram_layout_for_board(board: str, enabled_gddr: int) -> tuple[int, int | Non
 def worker_cores_from_columns(columns: tuple[int, ...]) -> list[Core]:
   return [(x, y) for x in columns for y in range(2, 12)]
 
-
 @dataclass(frozen=True)
 class BoardInfo:
   board_id: int | None
@@ -207,7 +206,6 @@ def _unbind_vfio_pci(sysfs_path: str):
     with open(f"{sysfs_path}/driver/unbind", "w") as f:
       f.write(bdf)
 
-
 class _MappedBar:
   def __init__(self, sysfs: str, resource: str, size: int, offset: int = 0):
     if offset & (mmap.PAGESIZE - 1):
@@ -241,7 +239,6 @@ class _MappedBar:
 
   def __enter__(self): return self
   def __exit__(self, exc_type, exc, tb): self.close()
-
 
 class LibCAnonMap:
   def __init__(self, size: int, flags: int | None = None):
@@ -280,12 +277,10 @@ class LibCAnonMap:
   def __enter__(self): return self
   def __exit__(self, exc_type, exc, tb): self.close()
 
-
 class NocOrdering(Enum):
   RELAXED = 0
   STRICT = 1
   POSTED = 2
-
 
 class _OffsetView:
   """Wraps a BAR memoryview with a base offset for a configured TLB window."""
@@ -315,7 +310,6 @@ class _OffsetView:
       struct.pack_into(f"<{len(data)}s", self._m, start, data)
     else:
       struct.pack_into("B", self._m, self._b + key, value)
-
 
 class TLBWindow:
   SIZE_2M = TLB_2M_SIZE
@@ -461,7 +455,6 @@ def _secondary_bus_reset(sysfs_path: str):
 
   if not _wait_for_vendor_id(sysfs_path, timeout_s=10.0):
     raise RuntimeError(f"PCIe link did not come back for {os.path.basename(sysfs_path)}")
-
 
 class PCIDevice:
   def __init__(self, index: int = 0, use_vfio: bool = True):

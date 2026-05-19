@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-
 class MMIO:
   """Stable Blackhole MMIO addresses.
 

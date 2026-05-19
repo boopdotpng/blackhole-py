@@ -59,7 +59,6 @@ class TuiState:
     if self.top_expire and self.tick >= self.top_expire:
       self.top_text, self.top_expire = "", 0
 
-
 METRICS = {
   "ASIC_TEMPERATURE":    ("ASIC temp",       " C",    "s16.16"),
   "AICLK":               ("AICLK",           " MHz",  None),

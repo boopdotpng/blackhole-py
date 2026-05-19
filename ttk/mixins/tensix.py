@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dsl import Reg, t0, t1
 
-
 class TensixMixin:
   def tensix_push_word(self, instrn_buf: int | Reg, word: int, *, tmp: Reg = t0, tmp_addr: Reg = t1):
     self.li(tmp, word)

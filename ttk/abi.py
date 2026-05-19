@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-
 @dataclass(frozen=True)
 class LaunchAbi:
   """Offsets in the blackhole-py launch message ABI.
@@ -24,7 +23,6 @@ class LaunchAbi:
   sub_device_origin_x: int = 92
   sub_device_origin_y: int = 93
 
-
 @dataclass(frozen=True)
 class RuntimeAbi:
   """Runtime mailbox values owned by blackhole-py firmware."""
@@ -35,7 +33,6 @@ class RuntimeAbi:
   run_msg_go: int = 0x80
   run_msg_done: int = 0x00
   run_msg_load: int = 0x40
-
 
 LAUNCH = LaunchAbi()
 RUNTIME = RuntimeAbi()

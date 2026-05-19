@@ -21,13 +21,11 @@ def as_bytes(obj) -> bytes:
 def noc_xy(x: int, y: int) -> int:
   return ((y << 6) | x) & 0xFFFF
 
-
 class S(ctypes.LittleEndianStructure):
   def __init__(self, **kw):
     super().__init__()
     for k, v in kw.items():
       setattr(self, k, v)
-
 
 class TensixL1:
   SIZE = 0x180000
@@ -49,7 +47,6 @@ class TensixL1:
   MEM_BANK_TO_NOC_SCRATCH = 0x112B0
   LOGICAL_TO_VIRTUAL_SCRATCH = 0x11AB0
 
-
 class TensixMMIO:
   LOCAL_RAM_START = 0xFFB00000
   LOCAL_RAM_END = 0xFFB01FFF
@@ -68,7 +65,6 @@ class TensixMMIO:
   SOFT_RESET_ALL = 0x47800
   SOFT_RESET_BRISC_ONLY_RUN = 0x47000
 
-
 class Arc:
   NOC_BASE = 0x80000000
   RESET_UNIT_OFFSET = 0x30000
@@ -78,7 +74,6 @@ class Arc:
   DEFAULT_TENSIX_ENABLED = 0x3FFF
   TAG_GDDR_ENABLED = 36
   DEFAULT_GDDR_ENABLED = 0xFF
-
 
 class Dram:
   BANK_COUNT = 8
@@ -92,7 +87,6 @@ class Dram:
     4: (0, 1, 11), 5: (2, 3, 10), 6: (4, 8, 9), 7: (5, 6, 7),
   }
   BANK_X = {b: 0 if b < 4 else 9 for b in range(8)}
-
 
 class Firmware:
   BRISC_STACK_TOP = 0xFFB01FF0
@@ -139,7 +133,6 @@ class Firmware:
 
   FW_DEBUG = 0x19000
 
-
 class Launch:
   BASE = 0x70
   MSG_SIZE = 96
@@ -160,14 +153,12 @@ class Launch:
   SUB_DEVICE_ORIGIN_Y = 93
   PRELOAD = 95
 
-
 class RunMsg:
   GO = 0x80
   RESET_READ_PTR = 0xC0
   RESET_READ_PTR_FROM_HOST = 0xE0
   REPLAY_TRACE = 0xF0
   DONE = 0x00
-
 
 class RunSync:
   GO = 0x80
@@ -176,7 +167,6 @@ class RunSync:
   ALL_INIT = 0x40404040
   INIT_SYNC_REGISTERS = 0x03
   DONE = 0x00
-
 
 class Mailbox:
   SUBORDINATE_SYNC = 0x68
@@ -187,7 +177,6 @@ class Mailbox:
   GO_MESSAGES = 0x370
   GO_MESSAGE_INDEX = 0x3A0
 
-
 class Tensix:
   INSTRN_BUF_BASE = 0xFFE40000
   REGFILE_BASE = 0xFFE00000
@@ -197,7 +186,6 @@ class Tensix:
   RISCV_IC_ALL_MASK = 0x1F
   PRNG_SEED_SEED_VAL_ADDR32 = 186
 
-
 class TensixInsn:
   NOP = 0x02000000
   ZEROACC = 0x10000000
@@ -206,12 +194,10 @@ class TensixInsn:
   SFPCONFIG = 0x91000000
   SEMINIT = 0xA3000000
 
-
 class TensixSem:
   MATH_PACK = 1
   UNPACK_TO_DEST = 2
   MATH_DONE = 7
-
 
 class CircularBuffer:
   LOCAL_INTERFACE_SIZE = 32
@@ -220,7 +206,6 @@ class CircularBuffer:
   SYNC_TILES_RECEIVED_BASE = 0xFFB48028
   SYNC_STRIDE = 0x1000
   NUM_CIRCULAR_BUFFERS = 32
-
 
 class P100BankTable:
   NUM_DRAM_BANKS = 7
@@ -233,7 +218,6 @@ class P100BankTable:
     DRAM_BANK_TO_NOC_SIZE + L1_BANK_TO_NOC_SIZE +
     BANK_TO_DRAM_OFFSET_SIZE + BANK_TO_L1_OFFSET_SIZE
   )
-
 
 class NocCfg:
   NIU_CFG_0 = 0x0
@@ -258,13 +242,11 @@ class NocCfg:
   NIU_MST_NONPOSTED_WR_REQ_SENT_WORD = 0xA
   NIU_MST_POSTED_WR_REQ_SENT_WORD = 0xB
 
-
 class Dispatch:
   MODE_DEV = 0
   MESSAGE_ADDR = 0xFFB70438
   REMOTE_DEST_BUF_WORDS_FREE_INC = 6
   DONE_WORD = 1 << REMOTE_DEST_BUF_WORDS_FREE_INC
-
 
 class BriscMailbox:
   MY_Y = 0xFFB00004
@@ -289,7 +271,6 @@ class BriscMailbox:
   NOC_NONPOSTED_WRITES_NUM_ISSUED = 0xFFB00034
   NOC_READS_NUM_ISSUED = 0xFFB0003C
 
-
 class NcriscMailbox:
   MY_Y = 0xFFB0002C
   MY_X = 0xFFB00030
@@ -305,7 +286,6 @@ class NcriscMailbox:
   BANK_TO_L1_OFFSET = 0xFFB00258
   SEM_L1_BASE = 0xFFB00458
   CB_INTERFACE = 0xFFB00464
-
 
 class TriscMailbox:
   DATA_COMMON = {
@@ -336,7 +316,6 @@ class TriscMailbox:
     1: 0xFFB0001C,
     2: 0xFFB00820,
   }
-
 
 class Sysmem:
   PCIE_NOC_XY = (24 << 6) | 19
