@@ -50,9 +50,15 @@ class DramBuffer:
 
 class Allocator:
   def __init__(self, dev, bank_tiles: list):
+    self.dev = dev
     self.bank_tiles = bank_tiles[:: Dram.TILES_PER_BANK]
-    self.win = TLBWindow(dev, start=self.bank_tiles[0][1:], size=TLBWindow.SIZE_4G, wc=True)
+    self.win: TLBWindow | None = None
     self.next = Dram.WRITE_OFFSET
+
+  def _win(self) -> TLBWindow:
+    if self.win is None:
+      self.win = TLBWindow(self.dev, start=self.bank_tiles[0][1:], size=TLBWindow.SIZE_4G, wc=True)
+    return self.win
 
   def alloc(self, num_tiles: int, dtype: Dtype, name: str = "", shape: Shape | None = None) -> DramBuffer:
     num_banks = len(self.bank_tiles)
@@ -67,44 +73,50 @@ class Allocator:
     return buf
 
   def barrier(self):
+    win = self._win()
     for flag in Dram.BARRIER_FLAGS:
       for _, x, y in self.bank_tiles:
-        self.win.target((x, y))
-        self.win.write32(Dram.BARRIER_BASE, flag)
-        while self.win.read32(Dram.BARRIER_BASE) != flag:
+        win.target((x, y))
+        win.write32(Dram.BARRIER_BASE, flag)
+        while win.read32(Dram.BARRIER_BASE) != flag:
           pass
 
   def write(self, buf: DramBuffer, data: bytes):
     assert len(data) <= buf.size
+    win = self._win()
     view, ps, nb = memoryview(data), buf.page_size, len(self.bank_tiles)
     n_pages = (len(data) + ps - 1) // ps
     for bi, (_, x, y) in enumerate(self.bank_tiles):
       bank_data = b''.join(bytes(view[p * ps : p * ps + ps]) for p in range(bi, n_pages, nb))
       if not bank_data: continue
-      self.win.target((x, y), mode=NocOrdering.POSTED)
-      self.win.mm[buf.addr : buf.addr + len(bank_data)] = bank_data
+      win.target((x, y), mode=NocOrdering.POSTED)
+      win.mm[buf.addr : buf.addr + len(bank_data)] = bank_data
     self.barrier()
 
   def read(self, buf: DramBuffer) -> bytes:
+    win = self._win()
     result, ps, nb = bytearray(buf.size), buf.page_size, len(self.bank_tiles)
     n_pages = (buf.size + ps - 1) // ps
     for bi, (_, x, y) in enumerate(self.bank_tiles):
       bank_pages = list(range(bi, n_pages, nb))
       if not bank_pages: continue
-      self.win.target((x, y), mode=NocOrdering.RELAXED)
-      bank_data = self.win.mm[buf.addr : buf.addr + len(bank_pages) * ps]
+      win.target((x, y), mode=NocOrdering.RELAXED)
+      bank_data = win.mm[buf.addr : buf.addr + len(bank_pages) * ps]
       for i, p in enumerate(bank_pages):
         n = min(ps, buf.size - p * ps)
         result[p * ps : p * ps + n] = bank_data[i * ps : i * ps + n]
     return bytes(result)
 
   def read_raw_bank_pages(self, addr: int, page_size: int) -> bytes:
+    win = self._win()
     result = bytearray(page_size * len(self.bank_tiles))
     for bank_idx, (_, x, y) in enumerate(self.bank_tiles):
-      self.win.target((x, y), mode=NocOrdering.RELAXED)
+      win.target((x, y), mode=NocOrdering.RELAXED)
       off = bank_idx * page_size
-      result[off : off + page_size] = self.win.mm[addr : addr + page_size]
+      result[off : off + page_size] = win.mm[addr : addr + page_size]
     return bytes(result)
 
   def close(self):
-    self.win.close()
+    if self.win is not None:
+      self.win.close()
+      self.win = None

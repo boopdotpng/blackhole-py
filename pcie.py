@@ -215,16 +215,19 @@ def _unbind_vfio_pci(sysfs_path: str):
 
 
 class _MappedBar:
-  def __init__(self, sysfs: str, resource: str, size: int):
+  def __init__(self, sysfs: str, resource: str, size: int, offset: int = 0):
+    if offset & (mmap.PAGESIZE - 1):
+      raise ValueError(f"mmap offset must be page-aligned, got 0x{offset:x}")
     self.fd = os.open(f"{sysfs}/{resource}", os.O_RDWR | os.O_SYNC)
     self.addr = _libc.mmap(None, ctypes.c_size_t(size), mmap.PROT_READ | mmap.PROT_WRITE,
-                           mmap.MAP_SHARED, self.fd, 0)
+                           mmap.MAP_SHARED, self.fd, offset)
     if self.addr == ctypes.c_void_p(-1).value:
       err = ctypes.get_errno()
       os.close(self.fd)
       self.fd = -1
       raise OSError(err, f"mmap {resource} failed")
     self.size = size
+    self.offset = offset
     self.view = memoryview((ctypes.c_ubyte * size).from_address(self.addr)).cast("B")
     self.u32 = self.view.cast("I")
     self.closed = False
@@ -328,7 +331,15 @@ class TLBWindow:
                mode: NocOrdering = NocOrdering.STRICT, size: int = SIZE_2M, wc: bool = False):
     self.dev, self.size = dev, size
     self._id = dev.alloc_tlb(size)
-    self._bar, self._base = dev.tlb_window(self._id, wc=wc)
+    self._map = None
+    if size == self.SIZE_4G:
+      if not wc:
+        raise RuntimeError("4G TLB windows require a WC BAR4 mapping")
+      window = self._id - TLB_2M_COUNT
+      self._map = _MappedBar(dev.sysfs, "resource4_wc", self.SIZE_4G, offset=window * self.SIZE_4G)
+      self._bar, self._base = self._map.view, 0
+    else:
+      self._bar, self._base = dev.tlb_window(self._id, wc=wc)
     self.mm = _OffsetView(self._bar, self._base, size)
     self.target(start, end, addr=addr, mode=mode)
 
@@ -351,7 +362,11 @@ class TLBWindow:
     struct.pack_into(f"<{len(data)}s", self._bar, self._base + addr, data)
 
   def close(self):
-    self.dev.free_tlb(self._id)
+    try:
+      if self._map is not None:
+        self._map.close()
+    finally:
+      self.dev.free_tlb(self._id)
 
   def __enter__(self): return self
   def __exit__(self, exc_type, exc, tb): self.close()
@@ -468,14 +483,10 @@ class PCIDevice:
     self._bar0_fd = -1
     self._bar0_wc_fd = -1
     self._bar2_fd = -1
-    self._bar4_fd = -1
-    self._bar4_wc_fd = -1
     self._bar_mmaps: list[_MappedBar] = []
     self.bar0 = None
     self.bar0_wc = None
     self.bar2 = None
-    self.bar4 = None
-    self.bar4_wc = None
     self.bar0_u32 = None
     self.bar2_u32 = None
 
@@ -514,15 +525,6 @@ class PCIDevice:
     bar4_size = os.fstat(bar4_probe_fd).st_size
     os.close(bar4_probe_fd)
     self._bar4_4g_count = min(TLB_4G_COUNT, bar4_size // TLB_4G_SIZE) if bar4_size else 0
-    if bar4_size:
-      bar = _MappedBar(self.sysfs, "resource4", bar4_size)
-      self._bar_mmaps.append(bar); self._bar4_fd, self.bar4 = bar.fd, bar.view
-      bar = _MappedBar(self.sysfs, "resource4_wc", bar4_size)
-      self._bar_mmaps.append(bar); self._bar4_wc_fd, self.bar4_wc = bar.fd, bar.view
-    else:
-      self.bar4 = self.bar4_wc = None
-      self._bar4_fd = -1
-      self._bar4_wc_fd = -1
 
     # TLB allocation bitmaps
     self._tlb_2m = [False] * TLB_2M_COUNT
@@ -895,9 +897,7 @@ class PCIDevice:
 
   def tlb_window(self, index: int, wc: bool = False) -> tuple[memoryview, int]:
     if index < TLB_2M_COUNT: return (self.bar0_wc if wc else self.bar0), index * TLB_2M_SIZE
-    bar = self.bar4_wc if wc else self.bar4
-    if bar is None: raise RuntimeError("BAR4 not available")
-    return bar, (index - TLB_2M_COUNT) * TLB_4G_SIZE
+    raise RuntimeError("4G TLB windows are owned by TLBWindow(size=TLBWindow.SIZE_4G, wc=True)")
 
   # ---- DMA / page pinning via VFIO IOMMU ----
 
@@ -1066,10 +1066,10 @@ class PCIDevice:
     for bar_map in reversed(self._bar_mmaps):
       try: bar_map.close()
       except Exception: pass
-    for bar_name in ["bar0", "bar0_wc", "bar2", "bar4", "bar4_wc", "bar0_u32", "bar2_u32"]:
+    for bar_name in ["bar0", "bar0_wc", "bar2", "bar0_u32", "bar2_u32"]:
       setattr(self, bar_name, None)
     self._bar_mmaps.clear()
-    for fd_name in ["_bar0_fd", "_bar0_wc_fd", "_bar2_fd", "_bar4_fd", "_bar4_wc_fd"]:
+    for fd_name in ["_bar0_fd", "_bar0_wc_fd", "_bar2_fd"]:
       setattr(self, fd_name, -1)
     if self._has_vfio:
       for fd_name in ["_vfio_device", "_vfio_group", "_vfio_container"]:
