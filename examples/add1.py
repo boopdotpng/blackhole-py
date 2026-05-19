@@ -135,6 +135,7 @@ def _debug_postmortem_existing_device(device: Device):
   if not addrs:
     return
   with TLBWindow(device.dev, core) as win:
+    Kernel.print_debug_legend(file=sys.stderr)
     print(f"debug postmortem core {core}", file=sys.stderr)
     for addr in addrs:
       data = bytes(win.mm[addr + i] for i in range(4))
@@ -343,7 +344,6 @@ def _write_tensix_instr_word(fw: Kernel, word: int | object, *, tmp_addr=t0, tmp
 
 
 def _snapshot_pcbuf_sems(fw: Kernel, addr: int, *, base=t0, word=t1, tmp=t2):
-  fw.note_debug_addr(addr)
   fw.li(base, PCBUF_SEM_BASE)
   fw.lw(word, base, 4)       # MATH_PACK, semaphore 1.
   fw.lw(tmp, base, 8)        # UNPACK_TO_DEST, semaphore 2.
@@ -355,17 +355,17 @@ def _snapshot_pcbuf_sems(fw: Kernel, addr: int, *, base=t0, word=t1, tmp=t2):
   fw.lw(tmp, base, 28)       # MATH_DONE, semaphore 7.
   fw.slli(tmp, tmp, 24)
   fw.or_(word, word, tmp)
-  fw.write32(addr, word, tmp_addr=base, tmp_val=tmp)
+  fw.debug_write(addr, word, name="pcbuf_sems", tmp_addr=base, tmp_val=tmp)
 
 
 def _snapshot_tensix_status(fw: Kernel, q_addr: int, b_addr: int, sync_addr: int):
   # dsl encodes CSR immediates as signed 12-bit values; these are 0xBC0/0xBC1.
   fw.csrrs(t1, zero, -0x440)
-  fw.write32(q_addr, t1, tmp_addr=t0, tmp_val=t2)
+  fw.debug_write(q_addr, t1, name="tensix_qstatus", tmp_addr=t0, tmp_val=t2)
   fw.csrrs(t1, zero, -0x43F)
-  fw.write32(b_addr, t1, tmp_addr=t0, tmp_val=t2)
+  fw.debug_write(b_addr, t1, name="tensix_bstatus", tmp_addr=t0, tmp_val=t2)
   fw.read32(t1, TENSIX_PC_UNPACK_SYNC, tmp_addr=t0)
-  fw.write32(sync_addr, t1, tmp_addr=t0, tmp_val=t2)
+  fw.debug_write(sync_addr, t1, name="unpack_sync", tmp_addr=t0, tmp_val=t2)
 
 
 def _pc_buf_addr(trisc_id: int, offset: int) -> int:
@@ -632,7 +632,7 @@ def _init_trisc2_pack(fw: Kernel):
 
 def add1_brisc_reader() -> Kernel:
   fw = Kernel()
-  fw.breadcrumb(DBG_BRISC, 0x3000)
+  fw.breadcrumb(DBG_BRISC, "brisc:0x3000")
   for addr in (
     SYNC_OUT_RESERVED, SYNC_READ, SYNC_DONE0, SYNC_DONE1, SYNC_DONE2,
     SYNC_TRISC_INIT, SYNC_TRISC_INIT + 4, SYNC_TRISC_INIT + 8,
@@ -642,16 +642,16 @@ def add1_brisc_reader() -> Kernel:
   _read_rta_from(fw, BM.RTA_L1_BASE_PTR, (s0, s2, s3, s4))
   fw.li(s5, 0)
   fw.label("brisc_loop")
-  fw.breadcrumb(DBG_BRISC, 0x3001)
+  fw.breadcrumb(DBG_BRISC, "brisc:0x3001")
   fw.beq(s5, s3, "brisc_done")
   _cb_reserve_back(fw, BM.CB_INTERFACE, 0)
-  fw.breadcrumb(DBG_BRISC, 0x3002)
+  fw.breadcrumb(DBG_BRISC, "brisc:0x3002")
   if os.environ.get("TT_DEBUG_L1_IO"):
     _cb_write_ptr(fw, BM.CB_INTERFACE, 0, out=t5)
-    fw.write32(DBG_SEMS0, t5, tmp_addr=t0, tmp_val=t1)
+    fw.debug_write(DBG_SEMS0, t5, name="brisc_cb_write_ptr", tmp_addr=t0, tmp_val=t1)
     _fill_l1_tile_words(fw, t5, 0)
     fw.fence()
-    fw.breadcrumb(DBG_BRISC, 0x3003)
+    fw.breadcrumb(DBG_BRISC, "brisc:0x3003")
   else:
     fw.add(a1, s2, s5)
     fw.mv(a0, s0)
@@ -670,13 +670,13 @@ def add1_brisc_reader() -> Kernel:
     fw.bltu(t1, t4, "brisc_read_wait")
     fw.fence()
   _cb_push_back(fw, BM.CB_INTERFACE, 0)
-  fw.breadcrumb(DBG_BRISC, 0x3004)
+  fw.breadcrumb(DBG_BRISC, "brisc:0x3004")
   fw.addi(t2, s5, 1)
   _signal_sync(fw, SYNC_READ, t2)
   fw.addi(s5, s5, 1)
   fw.j("brisc_loop")
   fw.label("brisc_done")
-  fw.breadcrumb(DBG_BRISC, 0x3005)
+  fw.breadcrumb(DBG_BRISC, "brisc:0x3005")
   fw.ret()
   return fw
 
@@ -718,7 +718,7 @@ def add1_trisc_compute(trisc_id: int) -> Kernel:
   _wait_sync_value(fw, SYNC_OUT_RESERVED, t1, actual=t2)
 
   if trisc_id == 0:
-    fw.breadcrumb(DBG_TRISC0, 0x1000)
+    fw.breadcrumb(DBG_TRISC0, "trisc0:0x1000")
     fw.write32(
       RISCV_DEBUG_REG_DBG_FEATURE_DISABLE,
       (1 << 11) if os.environ.get("TT_DEBUG_UNPACK_FEATURE_DISABLE_11") else 0,
@@ -726,26 +726,26 @@ def add1_trisc_compute(trisc_id: int) -> Kernel:
       tmp_val=t1,
     )
     _init_trisc0_unpack(fw)
-    fw.breadcrumb(DBG_TRISC0, 0x1001)
+    fw.breadcrumb(DBG_TRISC0, "trisc0:0x1001")
   elif trisc_id == 1:
-    fw.breadcrumb(DBG_TRISC1, 0x1100)
+    fw.breadcrumb(DBG_TRISC1, "trisc1:0x1100")
     _init_trisc1_math(fw)
-    fw.breadcrumb(DBG_TRISC1, 0x1101)
+    fw.breadcrumb(DBG_TRISC1, "trisc1:0x1101")
   else:
-    fw.breadcrumb(DBG_TRISC2, 0x1200)
+    fw.breadcrumb(DBG_TRISC2, "trisc2:0x1200")
     _init_trisc2_pack(fw)
-    fw.breadcrumb(DBG_TRISC2, 0x1201)
+    fw.breadcrumb(DBG_TRISC2, "trisc2:0x1201")
 
   fw.li(t0, SYNC_TRISC_INIT + trisc_id * 4)
   fw.li(t1, 1)
   fw.sw(t1, t0, 0)
   fw.fence()
   if trisc_id == 0:
-    fw.breadcrumb(DBG_TRISC0, 0x1002)
+    fw.breadcrumb(DBG_TRISC0, "trisc0:0x1002")
   elif trisc_id == 1:
-    fw.breadcrumb(DBG_TRISC1, 0x1102)
+    fw.breadcrumb(DBG_TRISC1, "trisc1:0x1102")
   else:
-    fw.breadcrumb(DBG_TRISC2, 0x1202)
+    fw.breadcrumb(DBG_TRISC2, "trisc2:0x1202")
   fw.li(t1, 1)
   for init_id in range(3):
     _wait_sync_value(fw, SYNC_TRISC_INIT + init_id * 4, t1, actual=t2)
@@ -755,16 +755,16 @@ def add1_trisc_compute(trisc_id: int) -> Kernel:
   fw.beq(s5, s3, "trisc_done")
   fw.addi(t2, s5, 1)
   if trisc_id == 0:
-    fw.breadcrumb(DBG_TRISC0, 0x2000)
+    fw.breadcrumb(DBG_TRISC0, "trisc0:0x2000")
     _cb_wait_front(fw, data["cb_interface"], 0)
-    fw.breadcrumb(DBG_TRISC0, 0x2001)
+    fw.breadcrumb(DBG_TRISC0, "trisc0:0x2001")
     _cb_read_ptr(fw, data["cb_interface"], 0, out=s0)
     if not os.environ.get("TT_DEBUG_UNPACK_NO_PREDEC"):
       fw.addi(s0, s0, -1)
-    fw.write32(DBG_SEMS0, s0, tmp_addr=t0, tmp_val=t1)
+    fw.debug_write(DBG_SEMS0, s0, name="trisc0_cb_read_ptr", tmp_addr=t0, tmp_val=t1)
     _cb_iface(fw, data["cb_interface"], 0, out=t6)
     fw.lw(t1, t6, 8)
-    fw.write32(DBG_SEMS1, t1, tmp_addr=t0, tmp_val=t2)
+    fw.debug_write(DBG_SEMS1, t1, name="trisc0_cb_read_limit", tmp_addr=t0, tmp_val=t2)
     _push_tensix(fw, TTSETADCZW(3, 0, 0, 0, 0, 15))
 
     wait_unp = fw._new_label("wait_unpack_ctx")
@@ -777,7 +777,7 @@ def add1_trisc_compute(trisc_id: int) -> Kernel:
     fw.fence()
     fw.j(wait_unp)
     fw.label(wait_unp_done)
-    fw.breadcrumb(DBG_TRISC0, 0x2002)
+    fw.breadcrumb(DBG_TRISC0, "trisc0:0x2002")
 
     fw.read32(t1, TRISC0_UNP_CFG_CONTEXT, tmp_addr=t0)
     fw.li(t2, TensixRegs.CFG_BASE + 76 * 4)
@@ -786,12 +786,12 @@ def add1_trisc_compute(trisc_id: int) -> Kernel:
     fw.label("trisc0_cfg_addr")
     fw.sw(s0, t2, 0)
     fw.lw(t1, t2, 0)
-    fw.write32(DBG_SEMS2, t1, tmp_addr=t0, tmp_val=t3)
+    fw.debug_write(DBG_SEMS2, t1, name="trisc0_unpack_cfg_ptr", tmp_addr=t0, tmp_val=t3)
     fw.write32(TENSIX_PC_UNPACK_SYNC, 0, tmp_addr=t0, tmp_val=t1)
     _push_tensix(fw, TTSTALLWAIT(8, 1024))
     if os.environ.get("TT_DEBUG_SYNC_AFTER_UNPACK_STALL"):
       _tensix_sync(fw, 0)
-      fw.breadcrumb(DBG_TRISC0, 0x2009)
+      fw.breadcrumb(DBG_TRISC0, "trisc0:0x2009")
     if os.environ.get("TT_DEBUG_UNPACK_STATUS"):
       _snapshot_tensix_status(fw, DBG_QSTATUS0, DBG_BSTATUS0, DBG_UNPACK_SYNC0)
     if os.environ.get("TT_DEBUG_DIRECT_UNPACK"):
@@ -809,17 +809,17 @@ def add1_trisc_compute(trisc_id: int) -> Kernel:
         _write_tensix_instr_word(fw, 0x43000101)
       _write_mop_cfg(fw, UNPACK_MOP_CFG, 0)
       _push_tensix(fw, TTMOP(1, 0, 0))
-    fw.breadcrumb(DBG_TRISC0, 0x2003)
+    fw.breadcrumb(DBG_TRISC0, "trisc0:0x2003")
     if os.environ.get("TT_DEBUG_FORCE_UNPACK_TO_DEST_POST"):
       _push_tensix(fw, TTSEMPOST(4))
-      fw.breadcrumb(DBG_TRISC0, 0x2010)
+      fw.breadcrumb(DBG_TRISC0, "trisc0:0x2010")
     if os.environ.get("TT_DEBUG_UNPACK_STATUS"):
       _snapshot_tensix_status(fw, DBG_QSTATUS1, DBG_BSTATUS1, DBG_UNPACK_SYNC1)
     if os.environ.get("TT_DEBUG_SYNC_AFTER_UNPACK_MOP"):
       _tensix_sync(fw, 0)
-      fw.breadcrumb(DBG_TRISC0, 0x2008)
+      fw.breadcrumb(DBG_TRISC0, "trisc0:0x2008")
     _push_tensix(fw, TTSEMGET(32))
-    fw.breadcrumb(DBG_TRISC0, 0x2005)
+    fw.breadcrumb(DBG_TRISC0, "trisc0:0x2005")
     fw.read32(t1, TRISC0_UNP_CFG_CONTEXT, tmp_addr=t0)
     fw.li(t2, 1)
     fw.sub(t2, t2, t1)
@@ -830,51 +830,51 @@ def add1_trisc_compute(trisc_id: int) -> Kernel:
     fw.label("trisc0_set_ctx1")
     _push_tensix(fw, TTSETC16(41, 257))
     fw.label("trisc0_ctx_set")
-    fw.breadcrumb(DBG_TRISC0, 0x2006)
+    fw.breadcrumb(DBG_TRISC0, "trisc0:0x2006")
     _cb_pop_front(fw, data["cb_interface"], 0, tensix_ack=True)
-    fw.breadcrumb(DBG_TRISC0, 0x2007)
+    fw.breadcrumb(DBG_TRISC0, "trisc0:0x2007")
     fw.addi(t2, s5, 1)
     _signal_sync(fw, SYNC_DONE0, t2)
-    fw.breadcrumb(DBG_TRISC0, 0x2004)
+    fw.breadcrumb(DBG_TRISC0, "trisc0:0x2004")
   elif trisc_id == 1:
     if os.environ.get("TT_DEBUG_UNPACK_ONLY"):
       fw.addi(t2, s5, 1)
       _signal_sync(fw, SYNC_DONE1, t2)
-      fw.breadcrumb(DBG_TRISC1, 0x2190)
+      fw.breadcrumb(DBG_TRISC1, "trisc1:0x2190")
       fw.addi(s5, s5, 1)
       fw.j("trisc_loop")
-    fw.breadcrumb(DBG_TRISC1, 0x2100)
-    fw.breadcrumb(DBG_TRISC1, 0x2101)
+    fw.breadcrumb(DBG_TRISC1, "trisc1:0x2100")
+    fw.breadcrumb(DBG_TRISC1, "trisc1:0x2101")
     if os.environ.get("TT_DEBUG_WAIT_TRISC0_DONE_BEFORE_MATH"):
       fw.addi(t2, s5, 1)
       _wait_sync_value(fw, SYNC_DONE0, t2)
-      fw.breadcrumb(DBG_TRISC1, 0x2106)
+      fw.breadcrumb(DBG_TRISC1, "trisc1:0x2106")
     if os.environ.get("TT_DEBUG_PCBUF_SEMS"):
       _snapshot_pcbuf_sems(fw, DBG_QSTATUS1)
     if os.environ.get("TT_DEBUG_NO_PACK"):
-      fw.breadcrumb(DBG_TRISC1, 0x2180)
+      fw.breadcrumb(DBG_TRISC1, "trisc1:0x2180")
     else:
       fw.emit(0x9A84002A)  # ttsemwait 322,2,2
-    fw.breadcrumb(DBG_TRISC1, 0x2102)
+    fw.breadcrumb(DBG_TRISC1, "trisc1:0x2102")
     if os.environ.get("TT_DEBUG_PCBUF_SEMS"):
       _tensix_sync(fw, 1)
       _snapshot_pcbuf_sems(fw, DBG_BSTATUS1)
     if os.environ.get("TT_DEBUG_SYNC_AFTER_SEMWAIT"):
       _tensix_sync(fw, 1)
-      fw.breadcrumb(DBG_TRISC1, 0x2105)
+      fw.breadcrumb(DBG_TRISC1, "trisc1:0x2105")
     fw.read32(t1, TM.DATA1["dest_offset_id"], tmp_addr=t0)
     fw.sltu(t1, zero, t1)
     fw.slli(t1, t1, 9)
     fw.li(t2, 0xB2010000)
     fw.add(t1, t1, t2)
-    fw.breadcrumb(DBG_TRISC1, 0x2110)
+    fw.breadcrumb(DBG_TRISC1, "trisc1:0x2110")
     fw.write32(TensixRegs.INSTRN_BUF_BASE, t1, tmp_addr=t0)
-    fw.breadcrumb(DBG_TRISC1, 0x2111)
+    fw.breadcrumb(DBG_TRISC1, "trisc1:0x2111")
     if os.environ.get("TT_DEBUG_SYNC_AFTER_DEST_SET"):
       _tensix_sync(fw, 1)
-      fw.breadcrumb(DBG_TRISC1, 0x2114)
+      fw.breadcrumb(DBG_TRISC1, "trisc1:0x2114")
     if os.environ.get("TT_DEBUG_SKIP_MATH_DATACOPY"):
-      fw.breadcrumb(DBG_TRISC1, 0x2116)
+      fw.breadcrumb(DBG_TRISC1, "trisc1:0x2116")
     elif os.environ.get("TT_DEBUG_DIRECT_MATH_DATACOPY"):
       mova2d = 0x0900A000 if os.environ.get("TT_DEBUG_MOVDBGA2D") else 0x1200A000
       for _ in range(4):
@@ -884,18 +884,18 @@ def add1_trisc_compute(trisc_id: int) -> Kernel:
     else:
       _write_mop_cfg(fw, MATH_DATACOPY_MOP_CFG, 1)
       fw.emit(0x06000000)  # ttmop 1,0,0
-    fw.breadcrumb(DBG_TRISC1, 0x2112)
+    fw.breadcrumb(DBG_TRISC1, "trisc1:0x2112")
     if os.environ.get("TT_DEBUG_PCBUF_SEMS"):
       _snapshot_pcbuf_sems(fw, DBG_UNPACK_SYNC1)
     if os.environ.get("TT_DEBUG_SYNC_AFTER_MATH_MOP"):
       _tensix_sync(fw, 1)
-      fw.breadcrumb(DBG_TRISC1, 0x2115)
+      fw.breadcrumb(DBG_TRISC1, "trisc1:0x2115")
     fw.emit(0xDC000010)  # ttsetrwc 0,0,0,0,0,4
-    fw.breadcrumb(DBG_TRISC1, 0x2113)
+    fw.breadcrumb(DBG_TRISC1, "trisc1:0x2113")
     if os.environ.get("TT_DEBUG_STOP_AFTER_MATH_DATACOPY"):
       fw.addi(t2, s5, 1)
       _signal_sync(fw, SYNC_DONE1, t2)
-      fw.breadcrumb(DBG_TRISC1, 0x2191)
+      fw.breadcrumb(DBG_TRISC1, "trisc1:0x2191")
       fw.addi(s5, s5, 1)
       fw.j("trisc_loop")
     fw.read32(t1, TM.DATA1["dest_offset_id"], tmp_addr=t0)
@@ -906,46 +906,46 @@ def add1_trisc_compute(trisc_id: int) -> Kernel:
     fw.write32(TensixRegs.INSTRN_BUF_BASE, t1, tmp_addr=t0)
     fw.emit(0x8A000042)  # ttstallwait 256,16
     if os.environ.get("TT_DEBUG_SFPU_STORE_CONST"):
-      fw.breadcrumb(DBG_TRISC1, 0x2140)
+      fw.breadcrumb(DBG_TRISC1, "trisc1:0x2140")
       _write_tensix_instr_word(fw, TTSFPLOADI(0, 10, 0))
       _write_tensix_instr_word(fw, TTSFPLOADI(0, 8, 0x3F80))
       store_mod0 = 2 if os.environ.get("TT_DEBUG_SFPU_STORE_BF16") else 0
       _push_tensix(fw, TTSFPSTORE(0, store_mod0, 7, 0))
-      fw.breadcrumb(DBG_TRISC1, 0x2141)
+      fw.breadcrumb(DBG_TRISC1, "trisc1:0x2141")
       if os.environ.get("TT_DEBUG_SYNC_AFTER_SFPU_MOP"):
         _tensix_sync(fw, 1)
-        fw.breadcrumb(DBG_TRISC1, 0x2142)
+        fw.breadcrumb(DBG_TRISC1, "trisc1:0x2142")
       _push_tensix(fw, TTINCRWC(0, 2, 0, 0))
       fw.j("trisc1_sfpu_done")
     if os.environ.get("TT_DEBUG_SFPU_REPLAY_MOP"):
       _write_mop_cfg(fw, _sfpu_add1_mop_cfg(), 1)
-      fw.breadcrumb(DBG_TRISC1, 0x2130)
+      fw.breadcrumb(DBG_TRISC1, "trisc1:0x2130")
       fw.emit(0x06000000)  # ttmop 1,0,0
     elif os.environ.get("TT_DEBUG_SFPU_DIRECT_REPLAY"):
-      fw.breadcrumb(DBG_TRISC1, 0x2130)
+      fw.breadcrumb(DBG_TRISC1, "trisc1:0x2130")
       fw.emit(0x10000140)  # ttreplay 0,5,0,0
     else:
-      fw.breadcrumb(DBG_TRISC1, 0x2130)
+      fw.breadcrumb(DBG_TRISC1, "trisc1:0x2130")
       _sfpu_add1_face_loop(fw)
-    fw.breadcrumb(DBG_TRISC1, 0x2131)
+    fw.breadcrumb(DBG_TRISC1, "trisc1:0x2131")
     if os.environ.get("TT_DEBUG_SYNC_AFTER_SFPU_MOP_EXPAND"):
       _mop_sync(fw, 1)
-      fw.breadcrumb(DBG_TRISC1, 0x2132)
+      fw.breadcrumb(DBG_TRISC1, "trisc1:0x2132")
     if os.environ.get("TT_DEBUG_SYNC_AFTER_SFPU_MOP"):
       _tensix_sync(fw, 1)
-      fw.breadcrumb(DBG_TRISC1, 0x2133)
+      fw.breadcrumb(DBG_TRISC1, "trisc1:0x2133")
     if os.environ.get("TT_DEBUG_STOP_AFTER_SFPU"):
       fw.addi(t2, s5, 1)
       _signal_sync(fw, SYNC_DONE1, t2)
-      fw.breadcrumb(DBG_TRISC1, 0x2192)
+      fw.breadcrumb(DBG_TRISC1, "trisc1:0x2192")
       fw.addi(s5, s5, 1)
       fw.j("trisc_loop")
     fw.label("trisc1_sfpu_done")
-    fw.breadcrumb(DBG_TRISC1, 0x2124)
+    fw.breadcrumb(DBG_TRISC1, "trisc1:0x2124")
     fw.emit(0xDC000010)  # ttsetrwc 0,0,0,0,0,4
     fw.emit(0x88042042)  # ttstallwait 2,2064
     fw.emit(0x90000022)  # ttsempost 2
-    fw.breadcrumb(DBG_TRISC1, 0x2103)
+    fw.breadcrumb(DBG_TRISC1, "trisc1:0x2103")
     fw.read32(t1, TM.DATA1["dest_offset_id"], tmp_addr=t0)
     fw.li(t2, 1)
     fw.sub(t2, t2, t1)
@@ -959,20 +959,20 @@ def add1_trisc_compute(trisc_id: int) -> Kernel:
     fw.write32(TensixRegs.INSTRN_BUF_BASE, t1, tmp_addr=t0)
     fw.addi(t2, s5, 1)
     _signal_sync(fw, SYNC_DONE1, t2)
-    fw.breadcrumb(DBG_TRISC1, 0x2104)
+    fw.breadcrumb(DBG_TRISC1, "trisc1:0x2104")
   elif trisc_id == 2:
     if os.environ.get("TT_DEBUG_UNPACK_ONLY"):
       fw.addi(t2, s5, 1)
       _signal_sync(fw, SYNC_DONE2, t2)
-      fw.breadcrumb(DBG_TRISC2, 0x2290)
+      fw.breadcrumb(DBG_TRISC2, "trisc2:0x2290")
       fw.addi(s5, s5, 1)
       fw.j("trisc_loop")
-    fw.breadcrumb(DBG_TRISC2, 0x2200)
-    fw.breadcrumb(DBG_TRISC2, 0x2201)
+    fw.breadcrumb(DBG_TRISC2, "trisc2:0x2200")
+    fw.breadcrumb(DBG_TRISC2, "trisc2:0x2201")
     _push_tensix(fw, TTSEMWAIT(1, 2, 1))
-    fw.breadcrumb(DBG_TRISC2, 0x2202)
+    fw.breadcrumb(DBG_TRISC2, "trisc2:0x2202")
     _cb_reserve_back(fw, data["cb_interface"], 16)
-    fw.breadcrumb(DBG_TRISC2, 0x2203)
+    fw.breadcrumb(DBG_TRISC2, "trisc2:0x2203")
     _cb_write_ptr(fw, data["cb_interface"], 16, out=s0)
     fw.addi(s0, s0, -1)
     _push_tensix(fw, TTSETADC(4, 0, 3, 0))
@@ -998,7 +998,7 @@ def add1_trisc_compute(trisc_id: int) -> Kernel:
     fw.write32(TensixRegs.INSTRN_BUF_BASE, t1, tmp_addr=t0)
     _push_tensix(fw, TTDMANOP())
     _push_tensix(fw, TTMOP(1, 0, 0))
-    fw.breadcrumb(DBG_TRISC2, 0x2204)
+    fw.breadcrumb(DBG_TRISC2, "trisc2:0x2204")
     _push_tensix(fw, TTSETADCZW(4, 0, 0, 0, 0, 5))
     _push_tensix(fw, TTSTALLWAIT(64, 8))
     fw.read32(t1, TM.DATA_COMMON["dest_offset_id"], tmp_addr=t0)
@@ -1023,10 +1023,10 @@ def add1_trisc_compute(trisc_id: int) -> Kernel:
     _push_tensix(fw, TTDMANOP())
     if os.environ.get("TT_DEBUG_SYNC_AFTER_PACK"):
       _tensix_sync(fw, 2)
-      fw.breadcrumb(DBG_TRISC2, 0x2208)
+      fw.breadcrumb(DBG_TRISC2, "trisc2:0x2208")
     _cb_push_back(fw, data["cb_interface"], 16)
-    fw.breadcrumb(DBG_TRISC2, 0x2205)
-    fw.breadcrumb(DBG_TRISC2, 0x2206)
+    fw.breadcrumb(DBG_TRISC2, "trisc2:0x2205")
+    fw.breadcrumb(DBG_TRISC2, "trisc2:0x2206")
   fw.addi(s5, s5, 1)
   fw.j("trisc_loop")
   fw.label("trisc_done")
