@@ -120,12 +120,21 @@ _libc = ctypes.CDLL(ctypes.util.find_library("c"), use_errno=True)
 _libc.mmap.restype = ctypes.c_void_p
 _libc.mmap.argtypes = [ctypes.c_void_p, ctypes.c_size_t, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_long]
 _libc.munmap.argtypes = [ctypes.c_void_p, ctypes.c_size_t]
+_libc.msync.argtypes = [ctypes.c_void_p, ctypes.c_size_t, ctypes.c_int]
+
+MS_SYNC = 4
 
 def _mlock(addr: int, size: int):
   if _libc.mlock(ctypes.c_void_p(addr), ctypes.c_size_t(size)) != 0:
     raise OSError(ctypes.get_errno(), "mlock failed; run ./setup_python_cap.sh to grant CAP_IPC_LOCK")
 
 def _munlock(addr: int, size: int): _libc.munlock(ctypes.c_void_p(addr), ctypes.c_size_t(size))
+
+def _buffer_addr(buf) -> int:
+  return buf.addr if hasattr(buf, "addr") else ctypes.addressof(ctypes.c_char.from_buffer(buf))
+
+def _buffer_size(buf) -> int:
+  return buf.size if hasattr(buf, "size") else len(buf)
 
 def _find_bh_devices() -> list[str]:
   result = []
@@ -199,6 +208,44 @@ class _MappedBar:
       if self.fd >= 0:
         os.close(self.fd)
         self.fd = -1
+
+  def __enter__(self): return self
+  def __exit__(self, exc_type, exc, tb): self.close()
+
+
+class LibCAnonMap:
+  def __init__(self, size: int, flags: int | None = None):
+    flags = flags if flags is not None else (mmap.MAP_SHARED | mmap.MAP_ANONYMOUS)
+    self.addr = _libc.mmap(None, ctypes.c_size_t(size), mmap.PROT_READ | mmap.PROT_WRITE,
+                           flags, -1, 0)
+    if self.addr == ctypes.c_void_p(-1).value:
+      raise OSError(ctypes.get_errno(), "anonymous mmap failed")
+    self.size = size
+    self.view = memoryview((ctypes.c_ubyte * size).from_address(self.addr)).cast("B")
+    self.closed = False
+
+  def __len__(self) -> int:
+    return self.size
+
+  def __getitem__(self, key):
+    return self.view[key]
+
+  def __setitem__(self, key, value):
+    self.view[key] = value
+
+  def flush(self, offset: int = 0, size: int | None = None):
+    size = self.size - offset if size is None else size
+    if _libc.msync(ctypes.c_void_p(self.addr + offset), ctypes.c_size_t(size), MS_SYNC) != 0:
+      raise OSError(ctypes.get_errno(), "msync failed")
+
+  def close(self):
+    if self.closed: return
+    self.closed = True
+    try:
+      self.view.release()
+    finally:
+      if _libc.munmap(ctypes.c_void_p(self.addr), ctypes.c_size_t(self.size)) != 0:
+        raise OSError(ctypes.get_errno(), "munmap failed")
 
   def __enter__(self): return self
   def __exit__(self, exc_type, exc, tb): self.close()
@@ -715,7 +762,7 @@ class PCIDevice:
 
   def _bring_device_to_a0(self):
     """Bring ASIC from A3 to A0 if ARC is running."""
-    arc_ready_timeout_s = 2.0
+    arc_ready_timeout_s = float(os.environ.get("TT_ARC_BOOT_TIMEOUT", "2.0"))
     deadline = time.monotonic() + arc_ready_timeout_s
     boot_status = 0
     while time.monotonic() < deadline:
@@ -823,10 +870,10 @@ class PCIDevice:
 
   # ---- DMA / page pinning via VFIO IOMMU ----
 
-  def pin_pages(self, buf: mmap.mmap) -> int:
+  def pin_pages(self, buf) -> int:
     """Pin a buffer and set up IOMMU + iATU for device DMA. Returns the NOC address."""
-    va = ctypes.addressof(ctypes.c_char.from_buffer(buf))
-    size = len(buf)
+    va = _buffer_addr(buf)
+    size = _buffer_size(buf)
     cleanup = []
     try:
       _mlock(va, size)
@@ -855,8 +902,8 @@ class PCIDevice:
     self._pinnings[noc_addr] = {"iova": iova, "size": size, "iatu_region": region}
     return noc_addr
 
-  def unpin_pages(self, buf: mmap.mmap, noc_addr: int):
-    va = ctypes.addressof(ctypes.c_char.from_buffer(buf))
+  def unpin_pages(self, buf, noc_addr: int):
+    va = _buffer_addr(buf)
     pin = self._pinnings[noc_addr]
     self._disable_iatu(pin["iatu_region"])
     self._free_iatu_region(pin["iatu_region"])

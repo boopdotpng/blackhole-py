@@ -128,6 +128,7 @@ RUN_SYNC_MSG_INIT_SYNC_REGISTERS = 0x03
 RUN_SYNC_MSG_DONE = 0x00
 
 LAUNCH = 0x70
+LAUNCH_MSG_SIZE = 96
 LAUNCH_KERNEL_CONFIG_BASE = 0
 LAUNCH_SEM_OFFSET = 12
 LAUNCH_LOCAL_CB_OFFSET = 18
@@ -144,6 +145,9 @@ LAUNCH_ENABLES = 76
 DISPATCH_MODE_DEV = 0
 LOCAL_CB_INTERFACE_SIZE = 32
 LOCAL_CB_CONFIG_SIZE = 16
+CB_SYNC_TILES_ACKED_BASE = 0xFFB48020
+CB_SYNC_TILES_RECEIVED_BASE = 0xFFB48028
+CB_SYNC_STRIDE = 0x1000
 
 
 def write32(fw: Kernel, addr: int | Reg, value: int | Reg, *, tmp_addr: Reg = t0, tmp_val: Reg = t1):
@@ -180,13 +184,22 @@ def write8(fw: Kernel, addr: int | Reg, value: int | Reg, *, tmp_addr: Reg = t0,
   return fw.sb(value, addr, 0)
 
 
+def current_launch_ptr(fw: Kernel, launch: Reg = t0, tmp: Reg = t1):
+  return fw.li(launch, LAUNCH)
+
+
 def wait8(fw: Kernel, addr: int, value: int, *, ptr: Reg = t0, actual: Reg = t1, expected: Reg = t2):
   fw.li(ptr, addr)
   fw.li(expected, value)
   start = fw._new_label("wait8")
+  done = fw._new_label("wait8_done")
   fw.label(start)
   fw.lbu(actual, ptr, 0)
-  fw.bne(actual, expected, start)
+  fw.beq(actual, expected, done)
+  fw.fence()
+  fw.j(start)
+  fw.label(done)
+  fw.fence()
   return fw
 
 
@@ -321,7 +334,8 @@ def wait_subordinate_done(fw: Kernel, role: int):
 
 
 def launch_kernel_enabled(fw: Kernel, role: int, *, enabled: Reg = t0, mask: Reg = t1):
-  read32(fw, enabled, LAUNCH + LAUNCH_ENABLES)
+  current_launch_ptr(fw, launch=enabled, tmp=mask)
+  fw.lw(enabled, enabled, LAUNCH_ENABLES)
   fw.li(mask, 1 << role)
   return fw.and_(enabled, enabled, mask)
 
@@ -353,7 +367,7 @@ def init_brisc_mailbox_globals(fw: Kernel, *, value: Reg = t0, tmp: Reg = t1):
 
 def init_brisc_kernel_config(fw: Kernel, *, launch: Reg = t0, config_base: Reg = t1,
                              off: Reg = t2, addr: Reg = t3, tmp: Reg = t4):
-  fw.li(launch, LAUNCH)
+  current_launch_ptr(fw, launch=launch, tmp=tmp)
   fw.lw(config_base, launch, LAUNCH_KERNEL_CONFIG_BASE)
 
   for i in range(3):
@@ -374,10 +388,10 @@ def init_brisc_kernel_config(fw: Kernel, *, launch: Reg = t0, config_base: Reg =
 def init_brisc_launch_globals(fw: Kernel, *, launch: Reg = t0, value: Reg = t1,
                               tmp: Reg = t2, origin: Reg = t3):
   keep = fw._new_label("keep_launch_noc")
-  fw.li(launch, LAUNCH)
+  current_launch_ptr(fw, launch=launch, tmp=tmp)
   fw.lbu(value, launch, LAUNCH_BRISC_NOC_ID)
   fw.bne(value, zero, keep)
-  read32(fw, value, LAUNCH + LAUNCH_ENABLES, tmp_addr=tmp)
+  fw.lw(value, launch, LAUNCH_ENABLES)
   fw.andi(value, value, 1 << 1)
   fw.beq(value, zero, keep)
   fw.li(value, 1)
@@ -436,7 +450,7 @@ def init_bank_tables(fw: Kernel):
 def init_noc_local_state(fw: Kernel, *, launch: Reg = t0, noc_id: Reg = t1,
                          noc_shift: Reg = t2, status: Reg = t3,
                          dest: Reg = t4, value: Reg = t5):
-  fw.li(launch, LAUNCH)
+  current_launch_ptr(fw, launch=launch, tmp=value)
   fw.lbu(noc_id, launch, LAUNCH_BRISC_NOC_ID)
   fw.slli(noc_shift, noc_id, 16)
 
@@ -486,15 +500,12 @@ def notify_dispatch_core_done(fw: Kernel, *, launch: Reg = t0, mode: Reg = t1,
                               dispatch_addr: Reg = t4, coord: Reg = t5,
                               noc_shift: Reg = t6):
   skip = fw._new_label("skip_dispatch_notify")
-  fw.li(launch, LAUNCH)
+  current_launch_ptr(fw, launch=launch, tmp=mode)
   fw.lbu(mode, launch, LAUNCH_MODE)
   fw.li(coord, DISPATCH_MODE_DEV)
   fw.bne(mode, coord, skip)
 
-  read32(fw, go_index, GO_MESSAGE_INDEX, tmp_addr=go_addr)
-  fw.slli(go_index, go_index, 2)
   fw.li(go_addr, GO_MESSAGES)
-  fw.add(go_addr, go_addr, go_index)
 
   fw.lbu(dispatch_addr, go_addr, 0)
   fw.slli(dispatch_addr, dispatch_addr, 12)
@@ -521,12 +532,8 @@ def notify_dispatch_core_done(fw: Kernel, *, launch: Reg = t0, mode: Reg = t1,
   write_noc_cmd_reg(fw, noc_shift, NOC_AT_LEN_BE, 0xF, addr=go_addr, tmp_val=mode)
   write_noc_cmd_reg(fw, noc_shift, NOC_CMD_CTRL, NOC_CTRL_SEND_REQ, addr=go_addr, tmp_val=mode)
 
-  write32(fw, LAUNCH + LAUNCH_ENABLES, 0, tmp_addr=go_addr, tmp_val=mode)
-  write8(fw, LAUNCH + LAUNCH_PRELOAD, 0, tmp_addr=go_addr, tmp_val=mode)
-  read32(fw, mode, LAUNCH_MSG_RD_PTR, tmp_addr=go_addr)
-  fw.addi(mode, mode, 1)
-  fw.andi(mode, mode, 7)
-  write32(fw, LAUNCH_MSG_RD_PTR, mode, tmp_addr=go_addr)
+  fw.sw(zero, launch, LAUNCH_ENABLES)
+  fw.sb(zero, launch, LAUNCH_PRELOAD)
 
   fw.label(skip)
   return fw
@@ -590,12 +597,14 @@ def noc_init(fw: Kernel, *, noc_id: Reg = t0, coord: Reg = t1,
 def setup_local_cbs(fw: Kernel, *, launch: Reg = t0, config_base: Reg = t1,
                     cb_config: Reg = t2, cb_if: Reg = t3, mask: Reg = t4,
                     size: Reg = t5, fifo: Reg = t6):
-  fw.li(launch, LAUNCH)
+  current_launch_ptr(fw, launch=launch, tmp=size)
   fw.lw(config_base, launch, LAUNCH_KERNEL_CONFIG_BASE)
   fw.lhu(cb_config, launch, LAUNCH_LOCAL_CB_OFFSET)
   fw.add(cb_config, config_base, cb_config)
   fw.li(cb_if, CB_INTERFACE)
   fw.lw(mask, launch, LAUNCH_LOCAL_CB_MASK)
+  fw.li(launch, CB_SYNC_TILES_ACKED_BASE)
+  fw.li(config_base, CB_SYNC_TILES_RECEIVED_BASE)
 
   loop = fw._new_label("setup_cb")
   skip = fw._new_label("skip_cb")
@@ -617,9 +626,14 @@ def setup_local_cbs(fw: Kernel, *, launch: Reg = t0, config_base: Reg = t1,
   fw.sw(fifo, cb_if, 20)
   fw.sw(zero, cb_if, 24)
   fw.sw(zero, cb_if, 28)
+  fw.sw(zero, launch, 0)
+  fw.sw(zero, config_base, 0)
   fw.label(skip)
   fw.addi(cb_config, cb_config, LOCAL_CB_CONFIG_SIZE)
   fw.addi(cb_if, cb_if, LOCAL_CB_INTERFACE_SIZE)
+  fw.li(size, CB_SYNC_STRIDE)
+  fw.add(launch, launch, size)
+  fw.add(config_base, config_base, size)
   fw.srli(mask, mask, 1)
   fw.j(loop)
   fw.label(done)
@@ -631,7 +645,7 @@ def run_launch_kernel(fw: Kernel, role: int, *, launch: Reg = t0, config_base: R
   skip = fw._new_label("skip_kernel")
   launch_kernel_enabled(fw, role, enabled=enabled, mask=offset)
   fw.beq(enabled, zero, skip)
-  fw.li(launch, LAUNCH)
+  current_launch_ptr(fw, launch=launch, tmp=enabled)
   fw.lw(config_base, launch, LAUNCH_KERNEL_CONFIG_BASE)
   fw.lw(offset, launch, LAUNCH_KERNEL_TEXT_OFFSET + 4 * role)
   fw.add(entry, config_base, offset)
@@ -676,6 +690,10 @@ def build(*, text_base: dict[str, int] = FIRMWARE_TEXT_BASE) -> Kernel:
   signal_trisc0_init_sync_registers(fw)
   signal_done(fw)
   notify_dispatch_core_done(fw)
+  read32(fw, t0, LAUNCH_MSG_RD_PTR, tmp_addr=t1)
+  fw.addi(t0, t0, 1)
+  fw.andi(t0, t0, 7)
+  write32(fw, LAUNCH_MSG_RD_PTR, t0, tmp_addr=t1)
   fw.j("run_loop")
   return fw
 

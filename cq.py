@@ -1,13 +1,11 @@
 from __future__ import annotations
 
-import ctypes
-import mmap
 import os
 import struct
 import time
 
 from l1 import Core, L1_ALIGN, PCIE_ALIGN, TensixL1, align_up, noc_xy
-from pcie import PCIDevice, TLBWindow
+from pcie import LibCAnonMap, PCIDevice, TLBWindow
 from program import IRCommand, McastWrite, Run, UnicastWrite
 
 Rect = tuple[int, int, int, int]
@@ -281,11 +279,8 @@ class CQSysmem:
     self.prefetch_win = prefetch_win
     self.dispatch_win = dispatch_win
     self.size = _host_sysmem_size()
-    flags = mmap.MAP_SHARED | mmap.MAP_ANONYMOUS
-    if hasattr(mmap, "MAP_POPULATE"):
-      flags |= mmap.MAP_POPULATE
-    self.sysmem = mmap.mmap(-1, self.size, flags=flags, prot=mmap.PROT_READ | mmap.PROT_WRITE)
-    self.sysmem_addr = ctypes.addressof(ctypes.c_char.from_buffer(self.sysmem))
+    self.sysmem = LibCAnonMap(self.size)
+    self.sysmem_addr = self.sysmem.addr
     if self.sysmem_addr % PAGE_SIZE or self.size % PAGE_SIZE:
       raise RuntimeError("CQ sysmem must be page-aligned and page-sized")
 

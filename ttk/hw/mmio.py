@@ -1,0 +1,24 @@
+from __future__ import annotations
+
+
+class MMIO:
+  """Stable Blackhole MMIO addresses.
+
+  Runtime layout values such as RTA offsets and kernel text offsets do not
+  belong here. Those are produced by program.py during final lowering.
+  """
+
+  LOCAL_RAM_START = 0xFFB00000
+  LOCAL_RAM_END = 0xFFB01FFF
+
+  RISCV_DEBUG_REG_SOFT_RESET_0 = 0xFFB121B0
+  RISCV_DEBUG_REG_TRISC0_RESET_PC = 0xFFB12228
+  RISCV_DEBUG_REG_TRISC1_RESET_PC = 0xFFB1222C
+  RISCV_DEBUG_REG_TRISC2_RESET_PC = 0xFFB12230
+  RISCV_DEBUG_REG_NCRISC_RESET_PC = 0xFFB12238
+  RISCV_DEBUG_REG_TRISC_RESET_PC_OVERRIDE = 0xFFB12234
+  RISCV_DEBUG_REG_NCRISC_RESET_PC_OVERRIDE = 0xFFB1223C
+
+  SOFT_RESET_ALL = 0x47800
+  SOFT_RESET_BRISC_ONLY_RUN = 0x47000
+  SOFT_RESET_NONE = 0

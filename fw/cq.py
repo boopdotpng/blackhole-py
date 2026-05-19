@@ -47,6 +47,7 @@ NOC_CMD_STATIC_VC_1 = 1 << 13
 NOC_CMD_STATIC_VC_5 = 5 << 13
 NOC_CMD_RD_FIELD = NOC_CMD_CPY | NOC_CMD_RESP_MARKED | NOC_CMD_VC_STATIC | NOC_CMD_STATIC_VC_1
 NOC_CMD_WR_FIELD = NOC_CMD_CPY | NOC_CMD_WR | NOC_CMD_RESP_MARKED | NOC_CMD_VC_STATIC | NOC_CMD_STATIC_VC_1
+NOC_CMD_WR_POSTED_FIELD = NOC_CMD_CPY | NOC_CMD_WR | NOC_CMD_VC_STATIC | NOC_CMD_STATIC_VC_1
 NOC_CMD_WR_MCAST_UNLINK_FIELD = (
   NOC_CMD_CPY
   | NOC_CMD_WR
@@ -134,6 +135,7 @@ DISPATCH_PAGE_CURSOR = CQ_DEBUG + 0x84
 DISPATCH_RELEASE_VALUE = CQ_DEBUG + 0x90
 PREFETCH_PCIE_BASE = CQ_DEBUG + 0xA0
 PREFETCH_PCIE_END = CQ_DEBUG + 0xA4
+GO_SIGNAL_VALUE = CQ_DEBUG + 0x100
 
 
 def write32(fw: Kernel, addr: int | Reg, value: int | Reg, *, tmp_addr: Reg = t0, tmp_val: Reg = t1):
@@ -222,7 +224,7 @@ def noc_read(fw: Kernel, noc: int, buf: int, src_lo: Reg, src_mid: int | Reg, sr
 
 def noc_write(fw: Kernel, noc: int, buf: int, src: Reg, dst_lo: Reg, dst_mid: int | Reg, dst_coord: Reg,
               length: Reg, *, mcast: bool = False, mcast_linked: bool = False,
-              num_dests: Reg | None = None, a: Reg = t0, v: Reg = t1):
+              num_dests: Reg | None = None, posted: bool = False, a: Reg = t0, v: Reg = t1):
   wait_cmd_ready(fw, noc, buf, addr=a, val=v)
   if mcast:
     noc_write_reg(
@@ -230,7 +232,7 @@ def noc_write(fw: Kernel, noc: int, buf: int, src: Reg, dst_lo: Reg, dst_mid: in
       NOC_CMD_WR_MCAST_LINKED_FIELD if mcast_linked else NOC_CMD_WR_MCAST_UNLINK_FIELD,
       addr=a, tmp=v)
   else:
-    noc_write_reg(fw, noc, buf, NOC_CTRL, NOC_CMD_WR_FIELD, addr=a, tmp=v)
+    noc_write_reg(fw, noc, buf, NOC_CTRL, NOC_CMD_WR_POSTED_FIELD if posted else NOC_CMD_WR_FIELD, addr=a, tmp=v)
   noc_write_reg(fw, noc, buf, NOC_TARG_ADDR_LO, src, addr=a, tmp=v)
   noc_write_reg(fw, noc, buf, NOC_RET_ADDR_LO, dst_lo, addr=a, tmp=v)
   noc_write_reg(fw, noc, buf, NOC_RET_ADDR_MID, dst_mid, addr=a, tmp=v)
@@ -479,6 +481,7 @@ def build_dispatch() -> Kernel:
   write32(fw, CQ_DEBUG, 0xC1D10002)
   fw.li(t0, CQ_SEM_BASE)
   fw.label("dispatch_wait_page")
+  fw.fence()
   fw.lw(t1, t0, 0)
   write32(fw, CQ_DEBUG + 20, t1, tmp_addr=t2, tmp_val=t3)
   read32(fw, t2, DISPATCH_PAGE_CURSOR, tmp_addr=t3)
@@ -656,8 +659,8 @@ def build_dispatch() -> Kernel:
   fw.label("wait_stream_loop")
   fw.lw(t4, t2, 0)
   write32(fw, CQ_DEBUG + 48, t4, tmp_addr=t5, tmp_val=s3)
-  fw.srli(t5, t4, 17)
-  fw.bgeu(t5, t3, "wait_stream_done")
+  fw.li(t5, (1 << 17) - 1)
+  fw.and_(t4, t4, t5)
   fw.sub(t4, t4, t3)
   fw.slli(t4, t4, 15)
   fw.blt(t4, zero, "wait_stream_loop")
@@ -676,6 +679,13 @@ def build_dispatch() -> Kernel:
   fw.li(t4, STREAM_BASE + STREAM_REMOTE_DEST_BUF_SPACE_AVAILABLE_UPDATE_REG_INDEX * 4)
   fw.add(t5, t2, t4)
   fw.sw(t3, t5, 0)
+  fw.li(t4, STREAM_BASE + STREAM_REMOTE_DEST_BUF_SPACE_AVAILABLE_REG_INDEX * 4)
+  fw.add(t5, t2, t4)
+  fw.label("wait_clear_drain")
+  fw.lw(t3, t5, 0)
+  fw.li(t4, (1 << 17) - 1)
+  fw.and_(t3, t3, t4)
+  fw.bne(t3, zero, "wait_clear_drain")
   fw.label("wait_done")
   fw.addi(s0, s0, 16)
   fw.j("release_and_continue")
@@ -688,6 +698,7 @@ def build_dispatch() -> Kernel:
   copy_words(fw, t2, t1, t0, word=t3)
   fw.mv(s0, t1)
   fw.add(s0, s0, t0)
+  round_up_reg(fw, s0, L1_ALIGN, tmp=t0)
   fw.j("release_and_continue")
 
   fw.label("cmd_go")
@@ -702,22 +713,34 @@ def build_dispatch() -> Kernel:
   fw.slli(t3, t3, 24)
   fw.or_(t0, t0, t3)
   fw.lbu(t1, s0, 6)     # num_unicast
+  fw.lw(t2, s0, 8)      # wait_count
+  fw.lw(t3, s0, 12)     # wait_stream
+  write32(fw, CQ_DEBUG + 32, t0, tmp_addr=t4, tmp_val=t5)
+  write32(fw, CQ_DEBUG + 36, t1, tmp_addr=t4, tmp_val=t5)
+  fw.slli(t3, t3, 12)
+  fw.li(t4, STREAM_BASE + STREAM_REMOTE_DEST_BUF_SPACE_AVAILABLE_REG_INDEX * 4)
+  fw.add(t3, t3, t4)
+  fw.label("go_wait_stream_loop")
+  fw.lw(t4, t3, 0)
+  fw.li(t5, (1 << 17) - 1)
+  fw.and_(t4, t4, t5)
+  fw.sub(t4, t4, t2)
+  fw.slli(t4, t4, 15)
+  fw.blt(t4, zero, "go_wait_stream_loop")
   fw.lbu(t2, s0, 7)     # noc data index
-  write32(fw, CQ_DEBUG + 32, t0, tmp_addr=t3, tmp_val=t4)
-  write32(fw, CQ_DEBUG + 36, t1, tmp_addr=t3, tmp_val=t4)
   fw.li(t3, GO_SIGNAL_NOC_DATA)
   fw.slli(t2, t2, 2)
   fw.add(t3, t3, t2)
-  # Blackhole inline writes can hang; C++ CQ stores the go word at aligned
-  # cmd_ptr and sends it as a normal 4-byte NOC write.
-  fw.sw(t0, s0, 0)
+  # Blackhole inline writes can hang. Keep the GO word in stable scratch so
+  # dispatch-CB page release cannot race the NOC engine's source read.
+  fw.li(t6, GO_SIGNAL_VALUE)
+  fw.sw(t0, t6, 0)
   fw.label("go_loop")
   fw.beq(t1, zero, "go_done")
   fw.lw(t2, t3, 0)
   fw.li(t4, 0x370)
   fw.li(s3, 4)
-  noc_write(fw, 1, 1, s0, t4, 0, t2, s3, a=t5, v=s4)
-  fw.addi(s6, s6, 1)
+  noc_write(fw, 1, 1, t6, t4, 0, t2, s3, posted=False, a=t5, v=s4)
   wait_cmd_ready(fw, 1, 1, addr=t5, val=s3)
   fw.addi(t3, t3, 4)
   fw.addi(t1, t1, -1)

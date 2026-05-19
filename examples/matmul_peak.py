@@ -7,6 +7,7 @@ from l1 import *
 from program import *
 from device import Device
 from dram import DramBuffer
+from examples.kernel_bins import kernel_from_ptloads
 
 IO_MODE = "f16" if os.environ.get("F16") == "1" else "bf16"
 # Blackhole does not have a real f32 matmul path. F32_ACC only enables the
@@ -18,6 +19,8 @@ MATH_FIDELITY_NAME = os.environ.get("MATH_FIDELITY", "hifi2").lower()
 MATH_FIDELITY = _MATH_FIDELITY_MAP.get(MATH_FIDELITY_NAME)
 if MATH_FIDELITY is None:
   raise SystemExit(f"Invalid MATH_FIDELITY={MATH_FIDELITY_NAME!r}. Expected: {', '.join(_MATH_FIDELITY_MAP)}")
+if IO_DTYPE != Dtype.Float16_b or F32_ACC or MATH_FIDELITY != MathFidelity.HiFi2:
+  raise SystemExit("Checked-in matmul PT_LOAD bins are fixed for bf16 IO, mixed accumulation, HiFi2")
 
 NUM_ITERS = int(os.environ.get("NUM_ITERS", "3"))
 INPUT_PATTERN = os.environ.get("INPUT_PATTERN", "random").lower()
@@ -28,6 +31,7 @@ VALIDATE_SEED = int(os.environ.get("VALIDATE_SEED", "0"))
 
 L1_DATA_BYTES = TensixL1.SIZE - TensixL1.DATA_BUFFER_SPACE_BASE
 NUM_SEMS = 4
+FIXED_M, FIXED_K, FIXED_N = 5120, 4096, 5632
 
 def _divisors(n):
   divs = []
@@ -67,6 +71,21 @@ class MatmulPlan:
     return [[(x, y) for x in self.cols] for y in self.rows]
   def active_cores(self) -> list[Core]:
     return [c for row in self.grid() for c in row]
+
+FIXED_PLAN = MatmulPlan(
+  rows=(2, 3, 4, 5, 6, 7, 8, 9, 10, 11),
+  cols=(1, 2, 3, 4, 5, 6, 7, 10, 11, 12, 13, 14, 15),
+  mt=160, kt=128, nt=182,
+  per_core_m=16, per_core_n=14,
+  in0_block_w=4,
+  out_subblock_h=4, out_subblock_w=2, out_subblock_num_tiles=8,
+  num_blocks=32,
+  in0_num_subblocks=4, in1_num_subblocks=7,
+  in0_block_num_tiles=64, in0_subblock_num_tiles=16,
+  in1_block_num_tiles=56, in1_per_core_w=14,
+  out_block_num_tiles=224,
+  cb0_pages=128, cb1_pages=112, cb16_pages=224, cb24_pages=224,
+)
 
 def plan_matmul(M: int, K: int, N: int, cores: list[Core], io_dtype: Dtype = Dtype.Float16_b, f32_acc: bool = False) -> MatmulPlan:
   mt_base, kt, nt_base = _ceil32(M) // 32, _ceil32(K) // 32, max(1, _ceil32(N) // 32)
@@ -431,7 +450,8 @@ def build_matmul_program(
   west_cols = [x for x in cols if x < 8]
   east_cols = [x for x in cols if x >= 10]
 
-  def reader_args(core_idx, core_xy, num_cores):
+  def reader_args(x, y):
+    core_xy = (x, y)
     ri, _ = core_to_rc[core_xy]
     w_rect = _mcast_rect_args([c for c in west_cols if c != cols[0]], core_xy[1])
     e_rect = _mcast_rect_args(list(east_cols), core_xy[1])
@@ -442,7 +462,8 @@ def build_matmul_program(
       *w_rect, *e_rect, sender_xy[0], sender_xy[1], 0, 1,
     ]
 
-  def writer_args(core_idx, core_xy, num_cores):
+  def writer_args(x, y):
+    core_xy = (x, y)
     ri, ci = core_to_rc[core_xy]
     recv_ys = rows[1:]
     mcast = (core_xy[0], max(recv_ys), core_xy[0], min(recv_ys), len(recv_ys)) if recv_ys else (0, 0, 0, 0, 0)
@@ -457,28 +478,25 @@ def build_matmul_program(
       plan.in1_num_subblocks, plan.in0_num_subblocks,
     ]
 
-  return Program(
-    cores="all",
-    reader_kernel=_reader_sender_src(df),
-    writer_kernel=_writer_sender_src(df),
-    compute_kernel=_compute_src(plan, f32_acc),
-    reader_recv_kernel=_READER_RECV_SRC,
-    writer_recv_kernel=_writer_recv_src(df),
+  prog = Program(
+    brisc=kernel_from_ptloads("brisc", "matmul_reader_sender_brisc.kernel", reader_args),
+    brisc_recv=kernel_from_ptloads("brisc", "matmul_reader_recv_brisc.kernel", reader_args),
+    ncrisc=kernel_from_ptloads("ncrisc", "matmul_writer_sender_ncrisc.kernel", writer_args),
+    ncrisc_recv=kernel_from_ptloads("ncrisc", "matmul_writer_recv_ncrisc.kernel", writer_args),
+    trisc0=kernel_from_ptloads("trisc0", "matmul_compute_trisc0.kernel"),
+    trisc1=kernel_from_ptloads("trisc1", "matmul_compute_trisc1.kernel"),
+    trisc2=kernel_from_ptloads("trisc2", "matmul_compute_trisc2.kernel"),
     grid=(rows, cols),
-    name=f"matmul_{M}x{K}x{N}",
     cbs=[
       (0, io_dtype.tile_size, plan.cb0_pages),
       (1, io_dtype.tile_size, plan.cb1_pages),
       (16, io_dtype.tile_size, plan.cb16_pages),
       (24, cb24_dtype.tile_size, plan.cb24_pages),
     ],
-    reader_args=reader_args,
-    writer_args=writer_args,
-    math_fidelity=math_fidelity,
-    dst_accum_mode=f32_acc,
-    dst_full_sync=f32_acc,
     semaphores=NUM_SEMS,
   )
+  prog.name = f"matmul_{M}x{K}x{N}"
+  return prog
 
 # --- benchmark harness ---
 
@@ -580,15 +598,19 @@ def _make_inputs(M: int, K: int, N: int) -> tuple[np.ndarray, np.ndarray]:
 def main():
   if len(sys.argv) == 4:
     M, K, N = int(sys.argv[1]), int(sys.argv[2]), int(sys.argv[3])
+    if (M, K, N) != (FIXED_M, FIXED_K, FIXED_N):
+      raise SystemExit(f"Checked-in matmul PT_LOAD bins are fixed for {FIXED_M} {FIXED_K} {FIXED_N}")
   elif len(sys.argv) == 1:
-    M, K, N = 5120, 4096, 5632
+    M, K, N = FIXED_M, FIXED_K, FIXED_N
   else:
     raise SystemExit("Usage: matmul_peak.py [M K N]")
 
   device = Device()
   try:
-    max_cores = int(os.environ.get("MAX_CORES", "0")) or len(device.cores)
-    plan = plan_matmul(M, K, N, device.cores[:max_cores], io_dtype=IO_DTYPE, f32_acc=F32_ACC)
+    plan = FIXED_PLAN
+    missing_cores = sorted(set(plan.active_cores()) - set(device.cores))
+    if missing_cores:
+      raise SystemExit(f"Device is missing cores required by checked-in matmul bins: {missing_cores[:8]}")
     Mp, Kp, Np = plan.mt * 32, plan.kt * 32, plan.nt * 32
     padded = (M != Mp or K != Kp or N != Np)
 

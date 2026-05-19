@@ -4,7 +4,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 import dsl
 from dsl import Reg, ra, zero
-from mixins import FirmwareLibMixin
+from ttk.mixins import CbMixin, FlowMixin, NocMixin, RvMixin, TensixMixin
 
 CoreArgs = Callable[[int, int], list[int]]
 
@@ -85,7 +85,7 @@ _FIRMWARE_LOCAL_UPLOAD_SIZE = {
   "trisc2": 1056,
 }
 
-class Asm(FirmwareLibMixin):
+class Asm(TensixMixin, NocMixin, CbMixin, FlowMixin, RvMixin):
   def __init__(self, *, base: int = 0):
     self.base = base
     self.items = []

@@ -18,6 +18,7 @@ from l1 import *
 from program import *
 from device import Device, Dtype
 from dram import tilize
+from examples.kernel_bins import kernel_from_ptloads
 
 # Matmul geometry (matches matmul_peak layout)
 #   output: 8m x 6n = 48 tiles per core
@@ -294,7 +295,7 @@ def from_raw(data: bytes, dtype: Dtype) -> np.ndarray:
   u16 = np.frombuffer(data, dtype=np.uint16)
   return (u16.astype(np.uint32) << 16).view(np.float32).flatten()
 
-def run_matmul(device, compute_kernel, io_dtype, label):
+def run_matmul(device, kernel_stem, io_dtype, label):
   num_cores = min(len(device.cores), NUM_CORES)
   out_tiles_per_core = 48
   out_tiles = num_cores * out_tiles_per_core
@@ -316,23 +317,28 @@ def run_matmul(device, compute_kernel, io_dtype, label):
   device.dram.write(a_buf, a_bytes)
   device.dram.write(b_buf, b_bytes)
 
+  target_cores = sorted(device.cores, key=lambda xy: (xy[1], xy[0]))[:num_cores]
+  core_index = {xy: i for i, xy in enumerate(target_cores)}
+
+  def reader_args(_x, _y): return [NUM_BLOCKS, a_buf.addr]
+  def writer_args(x, y): return [NUM_BLOCKS, b_buf.addr, c_buf.addr, core_index[(x, y)] * out_tiles_per_core]
+  def compute_args(_x, _y): return [NUM_BLOCKS]
+
   prog = Program(
-    cores=num_cores,
-    reader_kernel=READER,
-    compute_kernel=compute_kernel,
-    writer_kernel=WRITER,
+    num_cores=num_cores,
+    brisc=kernel_from_ptloads("brisc", f"{kernel_stem}_reader_brisc.kernel", reader_args),
+    ncrisc=kernel_from_ptloads("ncrisc", f"{kernel_stem}_writer_ncrisc.kernel", writer_args),
+    trisc0=kernel_from_ptloads("trisc0", f"{kernel_stem}_compute_trisc0.kernel", compute_args),
+    trisc1=kernel_from_ptloads("trisc1", f"{kernel_stem}_compute_trisc1.kernel", compute_args),
+    trisc2=kernel_from_ptloads("trisc2", f"{kernel_stem}_compute_trisc2.kernel", compute_args),
     cbs=[
       (0, io_dtype.tile_size, 2 * 8 * 4),
       (1, io_dtype.tile_size, 2 * 6 * 4),
       (16, io_dtype.tile_size, out_tiles_per_core),
       (24, io_dtype.tile_size, out_tiles_per_core),
     ],
-    reader_args=[NUM_BLOCKS, a_buf.addr],
-    writer_args=lambda ci, xy, n: [NUM_BLOCKS, b_buf.addr, c_buf.addr,
-                                    ci * out_tiles_per_core],
-    compute_args=[NUM_BLOCKS],
-    name=label,
   )
+  prog.name = label
 
   device.queue(prog)
   device.run()
@@ -363,9 +369,9 @@ def main():
     print(f"  {min(len(device.cores), NUM_CORES)} cores, {NUM_BLOCKS} K-blocks, "
           f"matmul 8m x 6n (subblock 8h x 1w, in0_block_w=4)\n")
 
-    run_matmul(device, COMPUTE_L1_ACC,  Dtype.Float16,   "Float16  + L1 acc")
-    run_matmul(device, COMPUTE_L1_ACC,  Dtype.Float16_b, "Float16_b + L1 acc")
-    run_matmul(device, COMPUTE_RELOAD,  Dtype.Float16,   "Float16  + reload")
+    run_matmul(device, "l1_acc_bug_l1acc_fp16", Dtype.Float16,   "Float16  + L1 acc")
+    run_matmul(device, "l1_acc_bug_l1acc_bf16", Dtype.Float16_b, "Float16_b + L1 acc")
+    run_matmul(device, "l1_acc_bug_reload_fp16", Dtype.Float16,   "Float16  + reload")
 
     print()
     print("Float16 + L1 acc triggers the bug. The other two are controls.")

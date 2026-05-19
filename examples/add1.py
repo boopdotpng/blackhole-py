@@ -5,77 +5,7 @@ import numpy as np
 
 from device import Device
 from program import Dtype, Program
-
-K_READER = r"""
-#include <cstdint>
-void kernel_main() {
-  uint32_t addr = get_arg_val<uint32_t>(0);
-  uint32_t off  = get_arg_val<uint32_t>(1);
-  uint32_t n    = get_arg_val<uint32_t>(2);
-  constexpr uint32_t cb = tt::CBIndex::c_0;
-  const InterleavedAddrGenFast<true> s = {
-    .bank_base_address = addr, .page_size = get_tile_size(cb), .data_format = DataFormat::Float16_b,
-  };
-  for (uint32_t i = 0; i < n; ++i) {
-    cb_reserve_back(cb, 1);
-    noc_async_read_tile(off + i, s, get_write_ptr(cb));
-    noc_async_read_barrier();
-    cb_push_back(cb, 1);
-  }
-}
-"""
-
-K_WRITER = r"""
-#include <cstdint>
-void kernel_main() {
-  uint32_t addr = get_arg_val<uint32_t>(0);
-  uint32_t off  = get_arg_val<uint32_t>(1);
-  uint32_t n    = get_arg_val<uint32_t>(2);
-  constexpr uint32_t cb = tt::CBIndex::c_16;
-  const InterleavedAddrGenFast<true> s = {
-    .bank_base_address = addr, .page_size = get_tile_size(cb), .data_format = DataFormat::Float16_b,
-  };
-  for (uint32_t i = 0; i < n; ++i) {
-    cb_wait_front(cb, 1);
-    noc_async_write_tile(off + i, s, get_read_ptr(cb));
-    noc_async_write_barrier();
-    cb_pop_front(cb, 1);
-  }
-}
-"""
-
-K_COMPUTE = r"""
-#include <cstdint>
-#include "compute_kernel_api/common.h"
-#include "compute_kernel_api/tile_move_copy.h"
-#include "compute_kernel_api/eltwise_unary/eltwise_unary.h"
-#include "compute_kernel_api/eltwise_unary/binop_with_scalar.h"
-
-namespace NAMESPACE {
-void MAIN {
-  uint32_t n = get_arg_val<uint32_t>(0);
-  constexpr auto cb_in = tt::CBIndex::c_0;
-  constexpr auto cb_out = tt::CBIndex::c_16;
-
-  unary_op_init_common(cb_in, cb_out);
-  copy_tile_init(cb_in);
-  binop_with_scalar_tile_init();
-  for (uint32_t i = 0; i < n; ++i) {
-    tile_regs_acquire();
-    cb_wait_front(cb_in, 1);
-    copy_tile(cb_in, 0, 0);
-    cb_pop_front(cb_in, 1);
-    add_unary_tile(0, 0x3f800000);  // +1.0f
-    tile_regs_commit();
-    tile_regs_wait();
-    cb_reserve_back(cb_out, 1);
-    pack_tile(0, cb_out);
-    cb_push_back(cb_out, 1);
-    tile_regs_release();
-  }
-}
-}  // namespace NAMESPACE
-"""
+from examples.kernel_bins import kernel_from_ptloads
 
 def _bf16(x: float) -> int: return struct.unpack("<I", struct.pack("<f", x))[0] >> 16
 def _f32(x: int) -> float: return struct.unpack("<f", struct.pack("<I", (x & 0xFFFF) << 16))[0]
@@ -131,15 +61,28 @@ def main():
     src_buf = device.alloc_write(src_rm, dtype=Dtype.Float16_b, shape=(n_tiles, 32, 32), name="src")
     dst_buf = device.dram.alloc(n_tiles, dtype=Dtype.Float16_b, shape=(n_tiles, 32, 32), name="dst")
 
-    def reader_args(i, _xy, _n): return [src_buf.addr, i * tiles_per_core, tiles_per_core]
-    def writer_args(i, _xy, _n): return [dst_buf.addr, i * tiles_per_core, tiles_per_core]
-    def compute_args(i, _xy, _n): return [tiles_per_core]
+    target_cores = sorted(device.cores, key=lambda xy: (xy[1], xy[0]))[:num_cores]
+    core_index = {xy: i for i, xy in enumerate(target_cores)}
+
+    def reader_args(x, y):
+      return [src_buf.addr, core_index[(x, y)] * tiles_per_core, tiles_per_core]
+
+    def writer_args(x, y):
+      return [dst_buf.addr, core_index[(x, y)] * tiles_per_core, tiles_per_core]
+
+    def compute_args(_x, _y):
+      return [tiles_per_core]
 
     prog = Program(
-      cores=num_cores, reader_kernel=K_READER, compute_kernel=K_COMPUTE, writer_kernel=K_WRITER,
+      num_cores=num_cores,
+      brisc=kernel_from_ptloads("brisc", "add1_reader_brisc.kernel", reader_args),
+      ncrisc=kernel_from_ptloads("ncrisc", "add1_writer_ncrisc.kernel", writer_args),
+      trisc0=kernel_from_ptloads("trisc0", "add1_compute_trisc0.kernel", compute_args),
+      trisc1=kernel_from_ptloads("trisc1", "add1_compute_trisc1.kernel", compute_args),
+      trisc2=kernel_from_ptloads("trisc2", "add1_compute_trisc2.kernel", compute_args),
       cbs=[(0, Dtype.Float16_b.tile_size, 2), (16, Dtype.Float16_b.tile_size, 2)],
-      reader_args=reader_args, writer_args=writer_args, compute_args=compute_args, name="add1",
     )
+    prog.name = "add1"
     device.queue(prog)
     device.run()
     out = device.dram_read(dst_buf)

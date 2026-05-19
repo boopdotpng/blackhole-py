@@ -95,15 +95,14 @@ class Sysmem:
   PCIE_NOC_XY = (24 << 6) | 19
 
   def __init__(self, dev, size: int = 1 << 30):
-    import mmap
+    from pcie import LibCAnonMap
 
     if size > 1 << 30:
       raise ValueError(f"Sysmem size {size} exceeds 1 GiB iATU aperture limit")
     self.dev = dev
     page_size = os.sysconf("SC_PAGE_SIZE")
     self.size = (size + page_size - 1) & ~(page_size - 1)
-    self.buf = mmap.mmap(-1, self.size, flags=mmap.MAP_PRIVATE | mmap.MAP_ANONYMOUS,
-                         prot=mmap.PROT_READ | mmap.PROT_WRITE)
+    self.buf = LibCAnonMap(self.size)
     self.noc_addr = dev.pin_pages(self.buf)
 
   def close(self):

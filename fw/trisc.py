@@ -12,11 +12,13 @@ from dsl import Reg, gp, ra, sp, t0, t1, t2, t3, t4, t5, t6, zero
 TRISC_GLOBAL_POINTER = 0xFFB007F0
 TRISC_STACK_TOP = 0xFFB00FF0
 SUBORDINATE_SYNC = 0x68
+LAUNCH_MSG_RD_PTR = 0x6C
 RUN_SYNC_MSG_GO = 0x80
 RUN_SYNC_MSG_INIT_SYNC_REGISTERS = 0x03
 RUN_SYNC_MSG_DONE = 0x00
 
 LAUNCH = 0x70
+LAUNCH_MSG_SIZE = 96
 LAUNCH_KERNEL_CONFIG_BASE = 0
 LAUNCH_SEM_OFFSET = 12
 LAUNCH_LOCAL_CB_OFFSET = 18
@@ -35,8 +37,8 @@ REGFILE_BASE = 0xFFE00000
 TENSIX_CFG_BASE = 0xFFEF0000
 PRNG_SEED_Seed_Val_ADDR32 = 186
 PC_BUF_SYNC = 0xFFE80004
-CB_SYNC_TILES_ACKED_BASE = 0xFFB40020
-CB_SYNC_TILES_RECEIVED_BASE = 0xFFB40028
+CB_SYNC_TILES_ACKED_BASE = 0xFFB48020
+CB_SYNC_TILES_RECEIVED_BASE = 0xFFB48028
 CB_SYNC_STRIDE = 0x1000
 NUM_CIRCULAR_BUFFERS = 64
 LOCAL_CB_INTERFACE_SIZE = 32
@@ -114,13 +116,22 @@ def read8(fw: Kernel, rd: Reg, addr: int | Reg, *, tmp_addr: Reg = t0):
   return fw.lbu(rd, addr, 0)
 
 
+def current_launch_ptr(fw: Kernel, launch: Reg = t0, tmp: Reg = t1):
+  return fw.li(launch, LAUNCH)
+
+
 def wait8(fw: Kernel, addr: int, value: int, *, ptr: Reg = t0, actual: Reg = t1, expected: Reg = t2):
   fw.li(ptr, addr)
   fw.li(expected, value)
   start = fw._new_label("wait8")
+  done = fw._new_label("wait8_done")
   fw.label(start)
   fw.lbu(actual, ptr, 0)
-  fw.bne(actual, expected, start)
+  fw.beq(actual, expected, done)
+  fw.fence()
+  fw.j(start)
+  fw.label(done)
+  fw.fence()
   return fw
 
 
@@ -263,7 +274,7 @@ def wait_trisc_message(fw: Kernel, trisc_id: int, *, ptr: Reg = t0, actual: Reg 
 def run_launch_kernel(fw: Kernel, trisc_id: int, *, launch: Reg = t0, config_base: Reg = t1,
                       offset: Reg = t2, entry: Reg = t3):
   role = 2 + trisc_id
-  fw.li(launch, LAUNCH)
+  current_launch_ptr(fw, launch=launch, tmp=entry)
   fw.lw(config_base, launch, LAUNCH_KERNEL_CONFIG_BASE)
   fw.lw(offset, launch, LAUNCH_KERNEL_TEXT_OFFSET + 4 * role)
   fw.add(entry, config_base, offset)
@@ -329,7 +340,7 @@ def setup_local_cbs_from_mask(fw: Kernel, trisc_id: int, cb_config: Reg, cb_if: 
 
 def setup_local_cbs(fw: Kernel, trisc_id: int, data: dict[str, int], *, launch: Reg = t0, config_base: Reg = t1,
                     cb_config: Reg = t2, cb_if: Reg = t3, mask: Reg = t4):
-  fw.li(launch, LAUNCH)
+  current_launch_ptr(fw, launch=launch, tmp=mask)
   fw.lw(config_base, launch, LAUNCH_KERNEL_CONFIG_BASE)
   fw.lhu(cb_config, launch, LAUNCH_LOCAL_CB_OFFSET)
   fw.add(cb_config, config_base, cb_config)
@@ -342,7 +353,7 @@ def setup_local_cbs(fw: Kernel, trisc_id: int, data: dict[str, int], *, launch: 
 def init_trisc_kernel_config(fw: Kernel, trisc_id: int, data: dict[str, int], *,
                              launch: Reg = t0, config_base: Reg = t1, off: Reg = t2,
                              addr: Reg = t3, value: Reg = t4, origin: Reg = t5):
-  fw.li(launch, LAUNCH)
+  current_launch_ptr(fw, launch=launch, tmp=value)
   fw.lw(config_base, launch, LAUNCH_KERNEL_CONFIG_BASE)
 
   rta_slot = 2 + trisc_id
