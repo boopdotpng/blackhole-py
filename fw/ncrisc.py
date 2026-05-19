@@ -40,15 +40,6 @@ def init_risc_noc_coords(fw: Kernel, *, noc_id: Reg = t0, coord: Reg = t1, tmp: 
     fw.write8(NM.MY_Y + noc, coord, tmp_addr=tmp)
   return fw
 
-def init_bank_tables(fw: Kernel):
-  fw.copy_words(
-    NM.DRAM_BANK_TO_NOC_XY,
-    TensixL1.MEM_BANK_TO_NOC_SCRATCH,
-    P100BankTable.DRAM_BANK_TO_NOC_SIZE + P100BankTable.L1_BANK_TO_NOC_SIZE +
-    P100BankTable.BANK_TO_DRAM_OFFSET_SIZE + P100BankTable.BANK_TO_L1_OFFSET_SIZE,
-  )
-  return fw
-
 def init_ncrisc_mailbox_globals(fw: Kernel, *, value: Reg = t0, tmp: Reg = t1):
   fw.read8(value, Mailbox.CORE_INFO_ABSOLUTE_LOGICAL_X, tmp_addr=tmp)
   fw.write8(NM.MY_LOGICAL_X, value, tmp_addr=tmp)
@@ -141,7 +132,13 @@ def build() -> Kernel:
   fw.segment(Firmware.LOCAL_DATA_BASE["ncrisc"], b"\x68".ljust(Firmware.LOCAL_DATA_SIZE["ncrisc"], b"\0"), label="local_data")
   fw.setup_stack(Firmware.NCRISC_STACK_TOP)
   fw.configure_csr()
-  init_bank_tables(fw)
+  # init_bank_tables
+  fw.copy_words(
+    NM.DRAM_BANK_TO_NOC_XY,
+    TensixL1.MEM_BANK_TO_NOC_SCRATCH,
+    P100BankTable.DRAM_BANK_TO_NOC_SIZE + P100BankTable.L1_BANK_TO_NOC_SIZE +
+    P100BankTable.BANK_TO_DRAM_OFFSET_SIZE + P100BankTable.BANK_TO_L1_OFFSET_SIZE,
+  )
   init_risc_noc_coords(fw)
   init_ncrisc_mailbox_globals(fw)
   fw.signal_subordinate_done(1)

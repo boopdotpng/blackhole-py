@@ -4,7 +4,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 import dsl
 from dsl import Reg, ra, zero
-from ttk.mixins import CbMixin, FlowMixin, NocMixin, RvMixin, TensixMixin
+from ttk.mixins import CbMixin, DebugMixin, FlowMixin, NocMixin, RvMixin, TensixMixin
 
 CoreArgs = Callable[[int, int], list[int]]
 
@@ -36,7 +36,7 @@ def cond(lhs: Reg, op: str, rhs: Reg | int, *, tmp: Reg | None = None) -> Cond:
 def boot_jal(target: int) -> bytes:
   return dsl.jal(zero, target).to_bytes()
 
-class Asm(TensixMixin, NocMixin, CbMixin, FlowMixin, RvMixin):
+class Asm(TensixMixin, NocMixin, CbMixin, FlowMixin, DebugMixin, RvMixin):
   def __init__(self, *, base: int = 0):
     self.base = base
     self.items = []

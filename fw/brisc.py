@@ -13,30 +13,18 @@ from ttk.hw.noc import NOC
 
 def set_subordinate_reset_pcs(fw: Kernel, text_base: dict[str, int] = Firmware.TEXT_BASE):
   fw.write32(TensixMMIO.RISCV_DEBUG_REG_NCRISC_RESET_PC, text_base["ncrisc"])
-  breadcrumb(fw, 0xB015C101)
+  fw.breadcrumb(0xB015C101)
   fw.write32(TensixMMIO.RISCV_DEBUG_REG_TRISC0_RESET_PC, text_base["trisc0"])
-  breadcrumb(fw, 0xB015C102)
+  fw.breadcrumb(0xB015C102)
   fw.write32(TensixMMIO.RISCV_DEBUG_REG_TRISC1_RESET_PC, text_base["trisc1"])
-  breadcrumb(fw, 0xB015C103)
+  fw.breadcrumb(0xB015C103)
   fw.write32(TensixMMIO.RISCV_DEBUG_REG_TRISC2_RESET_PC, text_base["trisc2"])
-  breadcrumb(fw, 0xB015C104)
+  fw.breadcrumb(0xB015C104)
   fw.write32(TensixMMIO.RISCV_DEBUG_REG_TRISC_RESET_PC_OVERRIDE, 0b111)
-  breadcrumb(fw, 0xB015C105)
+  fw.breadcrumb(0xB015C105)
   fw.write32(TensixMMIO.RISCV_DEBUG_REG_NCRISC_RESET_PC_OVERRIDE, 1)
-  breadcrumb(fw, 0xB015C106)
+  fw.breadcrumb(0xB015C106)
   return fw
-
-def deassert_all_riscs(fw: Kernel):
-  return fw.write32(TensixMMIO.RISCV_DEBUG_REG_SOFT_RESET_0, 0)
-
-def init_subordinate_sync(fw: Kernel):
-  return fw.write32(Mailbox.SUBORDINATE_SYNC, RunSync.ALL_INIT)
-
-def invalidate_all_risc_icaches(fw: Kernel):
-  return fw.write32(Tensix.RISCV_IC_INVALIDATE_INVALIDATE_ALL, Tensix.RISCV_IC_ALL_MASK)
-
-def breadcrumb(fw: Kernel, value: int, offset: int = 0):
-  return fw.write32(Firmware.FW_DEBUG + offset, value)
 
 def enable_noc_clock_gating(fw: Kernel, *, addr: Reg = t0, value: Reg = t1):
   for noc in range(2):
@@ -50,15 +38,16 @@ def enable_noc_clock_gating(fw: Kernel, *, addr: Reg = t0, value: Reg = t1):
 
 def device_setup(fw: Kernel):
   fw.write32(TensixMMIO.RISCV_DEBUG_REG_DEST_CG_CTRL, 0)
-  breadcrumb(fw, 0xB015C201)
+  fw.breadcrumb(0xB015C201)
   fw.write32(TensixMMIO.RISCV_TDMA_REG_CLK_GATE_EN, 0x3F)
-  breadcrumb(fw, 0xB015C202)
+  fw.breadcrumb(0xB015C202)
   enable_noc_clock_gating(fw)
-  breadcrumb(fw, 0xB015C203)
-  invalidate_all_risc_icaches(fw)
-  breadcrumb(fw, 0xB015C204)
+  fw.breadcrumb(0xB015C203)
+  # invalidate_all_risc_icaches
+  fw.write32(Tensix.RISCV_IC_INVALIDATE_INVALIDATE_ALL, Tensix.RISCV_IC_ALL_MASK)
+  fw.breadcrumb(0xB015C204)
   fw.tensix_push_word(Tensix.INSTRN_BUF_BASE, TensixInsn.ZEROACC | (3 << 19))
-  breadcrumb(fw, 0xB015C205)
+  fw.breadcrumb(0xB015C205)
   fw.tensix_push_word(Tensix.INSTRN_BUF_BASE, TensixInsn.SFPENCC | (3 << 12) | 10)
   fw.tensix_push_word(Tensix.INSTRN_BUF_BASE, TensixInsn.NOP)
   fw.tensix_push_word(Tensix.INSTRN_BUF_BASE, TensixInsn.SFPLOADI | 0xBF80)
@@ -66,7 +55,7 @@ def device_setup(fw: Kernel):
   fw.tensix_push_word(Tensix.INSTRN_BUF_BASE, TensixInsn.SEMINIT | (1 << (TensixSem.MATH_PACK + 2)) | (0 << 16) | (1 << 20))
   fw.tensix_push_word(Tensix.INSTRN_BUF_BASE, TensixInsn.SEMINIT | (1 << (TensixSem.UNPACK_TO_DEST + 2)) | (0 << 16) | (1 << 20))
   fw.tensix_push_word(Tensix.INSTRN_BUF_BASE, TensixInsn.SEMINIT | (1 << (TensixSem.MATH_DONE + 2)) | (0 << 16) | (1 << 20))
-  breadcrumb(fw, 0xB015C206)
+  fw.breadcrumb(0xB015C206)
   return fw
 
 def wait_go(fw: Kernel, *, ptr: Reg = t0, signal: Reg = t1, expected: Reg = t2):
@@ -185,15 +174,6 @@ def init_brisc_launch_globals(fw: Kernel, *, launch: Reg = t0, value: Reg = t1,
   fw.lbu(origin, launch, Launch.SUB_DEVICE_ORIGIN_Y)
   fw.sub(value, value, origin)
   fw.write8(BM.MY_RELATIVE_Y, value, tmp_addr=tmp)
-  return fw
-
-def init_bank_tables(fw: Kernel):
-  fw.copy_words(
-    BM.DRAM_BANK_TO_NOC_XY,
-    TensixL1.MEM_BANK_TO_NOC_SCRATCH,
-    P100BankTable.DRAM_BANK_TO_NOC_SIZE + P100BankTable.L1_BANK_TO_NOC_SIZE +
-    P100BankTable.BANK_TO_DRAM_OFFSET_SIZE + P100BankTable.BANK_TO_L1_OFFSET_SIZE,
-  )
   return fw
 
 def init_noc_local_state(fw: Kernel, *, launch: Reg = t0, noc_id: Reg = t1,
@@ -345,41 +325,51 @@ def build(*, text_base: dict[str, int] = Firmware.TEXT_BASE) -> Kernel:
   fw = Kernel(base_addr=Firmware.TEXT_BASE["brisc"])
   fw.segment(Firmware.LOCAL_DATA_BASE["brisc"], b"\x68".ljust(Firmware.LOCAL_DATA_SIZE["brisc"], b"\0"), label="local_data")
   fw.configure_csr()
-  breadcrumb(fw, 0xB015C001)
+  fw.breadcrumb(0xB015C001)
   fw.setup_stack(Firmware.BRISC_STACK_TOP)
-  breadcrumb(fw, 0xB015C100)
+  fw.breadcrumb(0xB015C100)
   set_subordinate_reset_pcs(fw, text_base)
   device_setup(fw)
-  breadcrumb(fw, 0xB015C002)
+  fw.breadcrumb(0xB015C002)
   init_risc_noc_coords(fw)
-  init_bank_tables(fw)
+  # init_bank_tables
+  fw.copy_words(
+    BM.DRAM_BANK_TO_NOC_XY,
+    TensixL1.MEM_BANK_TO_NOC_SCRATCH,
+    P100BankTable.DRAM_BANK_TO_NOC_SIZE + P100BankTable.L1_BANK_TO_NOC_SIZE +
+    P100BankTable.BANK_TO_DRAM_OFFSET_SIZE + P100BankTable.BANK_TO_L1_OFFSET_SIZE,
+  )
   init_brisc_mailbox_globals(fw)
   noc_init(fw)
   init_noc_local_state(fw)
-  breadcrumb(fw, 0xB015C005)
-  invalidate_all_risc_icaches(fw)
-  breadcrumb(fw, 0xB015C006)
-  init_subordinate_sync(fw)
-  breadcrumb(fw, 0xB015C007)
-  deassert_all_riscs(fw)
+  fw.breadcrumb(0xB015C005)
+  # invalidate_all_risc_icaches
+  fw.write32(Tensix.RISCV_IC_INVALIDATE_INVALIDATE_ALL, Tensix.RISCV_IC_ALL_MASK)
+  fw.breadcrumb(0xB015C006)
+  # init_subordinate_sync
+  fw.write32(Mailbox.SUBORDINATE_SYNC, RunSync.ALL_INIT)
+  fw.breadcrumb(0xB015C007)
+  # deassert_all_riscs
+  fw.write32(TensixMMIO.RISCV_DEBUG_REG_SOFT_RESET_0, 0)
   for role in (1, 2, 3, 4):
     fw.wait8(Mailbox.SUBORDINATE_SYNC + role - 1, RunSync.DONE)
-  breadcrumb(fw, 0xB015C008)
+  fw.breadcrumb(0xB015C008)
   fw.write8(Mailbox.GO_SIGNAL, RunMsg.DONE)
   # Ask TRISC0 to clear CB sync registers before launching kernels.
   fw.write8(Mailbox.SUBORDINATE_SYNC + 1, RunSync.INIT_SYNC_REGISTERS)
-  breadcrumb(fw, 0xB015C009)
+  fw.breadcrumb(0xB015C009)
 
   fw.label("run_loop")
   wait_go(fw)
-  breadcrumb(fw, 0xB015C010)
+  fw.breadcrumb(0xB015C010)
   fw.wait8(Mailbox.SUBORDINATE_SYNC + 1, RunSync.DONE)
-  breadcrumb(fw, 0xB015C011)
+  fw.breadcrumb(0xB015C011)
   init_brisc_kernel_config(fw)
   init_brisc_launch_globals(fw)
   noc_init(fw)
   init_noc_local_state(fw)
-  invalidate_all_risc_icaches(fw)
+  # invalidate_all_risc_icaches
+  fw.write32(Tensix.RISCV_IC_INVALIDATE_INVALIDATE_ALL, Tensix.RISCV_IC_ALL_MASK)
   signal_subordinate_if_enabled(fw, 1, RunSync.LOAD)
   for role in (2, 3, 4):
     signal_subordinate_if_enabled(fw, role, RunSync.GO)
@@ -388,10 +378,10 @@ def build(*, text_base: dict[str, int] = Firmware.TEXT_BASE) -> Kernel:
   fw.run_launch_kernel(0)
   for role in (1, 2, 3, 4):
     fw.wait8(Mailbox.SUBORDINATE_SYNC + role - 1, RunSync.DONE)
-  breadcrumb(fw, 0xB015C020)
+  fw.breadcrumb(0xB015C020)
   # Ask TRISC0 to clear CB sync registers before accepting the next launch.
   fw.write8(Mailbox.SUBORDINATE_SYNC + 1, RunSync.INIT_SYNC_REGISTERS)
-  breadcrumb(fw, 0xB015C021)
+  fw.breadcrumb(0xB015C021)
   fw.write8(Mailbox.GO_SIGNAL, RunMsg.DONE)
   notify_dispatch_core_done(fw)
   fw.read32(t0, Mailbox.LAUNCH_MSG_RD_PTR, tmp_addr=t1)

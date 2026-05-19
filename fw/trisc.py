@@ -9,9 +9,6 @@ from asm import Kernel
 from dsl import Reg, gp, t0, t1, t2, t3, t4, t5, t6, zero
 from ttk.addrs import CircularBuffer as CB, Firmware, Launch, Mailbox, RunSync, Tensix, TensixMMIO, TriscMailbox as TM
 
-def setup_gp(fw: Kernel):
-  return fw.li(gp, Firmware.TRISC_GLOBAL_POINTER)
-
 def zero_regfile(fw: Kernel, *, ptr: Reg = t0, count: Reg = t1):
   fw.li(ptr, Tensix.REGFILE_BASE)
   fw.li(count, 64)
@@ -25,13 +22,6 @@ def zero_regfile(fw: Kernel, *, ptr: Reg = t0, count: Reg = t1):
   fw.j(loop)
   fw.label(done)
   return fw
-
-def init_local_data(fw: Kernel, trisc_id: int):
-  return fw.copy_words(
-    TensixMMIO.LOCAL_RAM_START,
-    Firmware.TRISC_LOCAL_DATA_BASE[trisc_id],
-    Firmware.TRISC_LOCAL_DATA_SIZE[trisc_id],
-  )
 
 def init_common_state(fw: Kernel, data: dict[str, int]):
   fw.write32(data["dest_offset_id"], 0)
@@ -179,10 +169,16 @@ def build(trisc_id: int) -> Kernel:
   data = TM.DATA1 if trisc_id == 1 else TM.DATA_COMMON
   fw = Kernel(base_addr=Firmware.TRISC_TEXT_BASE[trisc_id])
   fw.segment(Firmware.TRISC_LOCAL_DATA_BASE[trisc_id], b"\0" * Firmware.TRISC_LOCAL_DATA_SIZE[trisc_id], label="local_data")
-  setup_gp(fw)
+  # setup_gp
+  fw.li(gp, Firmware.TRISC_GLOBAL_POINTER)
   fw.setup_stack(Firmware.TRISC_STACK_TOP)
   fw.configure_csr()
-  init_local_data(fw, trisc_id)
+  # init_local_data
+  fw.copy_words(
+    TensixMMIO.LOCAL_RAM_START,
+    Firmware.TRISC_LOCAL_DATA_BASE[trisc_id],
+    Firmware.TRISC_LOCAL_DATA_SIZE[trisc_id],
+  )
   zero_regfile(fw)
   init_common_state(fw, data)
   fw.signal_subordinate_done(role)
