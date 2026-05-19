@@ -326,11 +326,11 @@ def run_matmul(device, kernel_stem, io_dtype, label):
 
   prog = Program(
     num_cores=num_cores,
-    brisc=kernel_from_ptloads("brisc", f"{kernel_stem}_reader_brisc.kernel", reader_args),
-    ncrisc=kernel_from_ptloads("ncrisc", f"{kernel_stem}_writer_ncrisc.kernel", writer_args),
-    trisc0=kernel_from_ptloads("trisc0", f"{kernel_stem}_compute_trisc0.kernel", compute_args),
-    trisc1=kernel_from_ptloads("trisc1", f"{kernel_stem}_compute_trisc1.kernel", compute_args),
-    trisc2=kernel_from_ptloads("trisc2", f"{kernel_stem}_compute_trisc2.kernel", compute_args),
+    brisc=kernel_from_ptloads(f"{kernel_stem}_reader_brisc.kernel", reader_args),
+    ncrisc=kernel_from_ptloads(f"{kernel_stem}_writer_ncrisc.kernel", writer_args),
+    trisc0=kernel_from_ptloads(f"{kernel_stem}_compute_trisc0.kernel", compute_args),
+    trisc1=kernel_from_ptloads(f"{kernel_stem}_compute_trisc1.kernel", compute_args),
+    trisc2=kernel_from_ptloads(f"{kernel_stem}_compute_trisc2.kernel", compute_args),
     cbs=[
       (0, io_dtype.tile_size, 2 * 8 * 4),
       (1, io_dtype.tile_size, 2 * 6 * 4),

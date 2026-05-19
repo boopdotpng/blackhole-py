@@ -33,57 +33,8 @@ def cond(lhs: Reg, op: str, rhs: Reg | int, *, tmp: Reg | None = None) -> Cond:
     raise ValueError("integer condition rhs needs tmp=Reg(...)")
   return Cond(lhs, op, rhs, tmp)
 
-KERNEL_KINDS = ("brisc", "ncrisc", "trisc0", "trisc1", "trisc2")
-FIRMWARE_TEXT_BASE = {
-  "brisc": 0x3840,
-  "ncrisc": 0x5440,
-  "trisc0": 0x5A40,
-  "trisc1": 0x6040,
-  "trisc2": 0x6640,
-}
-FIRMWARE_SCRATCH_BASE = {
-  "brisc": 0x82B0,
-  "ncrisc": 0xA2B0,
-  "trisc0": 0xC2B0,
-  "trisc1": 0xD2B0,
-  "trisc2": 0xE2B0,
-}
-_FIRMWARE_LOCAL_MEM_SIZE = {
-  "brisc": 8 * 1024,
-  "ncrisc": 8 * 1024,
-  "trisc0": 4 * 1024,
-  "trisc1": 4 * 1024,
-  "trisc2": 4 * 1024,
-}
-_FIRMWARE_RESERVED_STACK = {
-  "brisc": 256,
-  "ncrisc": 256,
-  "trisc0": 192,
-  "trisc1": 192,
-  "trisc2": 256,
-}
-
-def _u32(v: int) -> bytes:
-  return (v & 0xFFFFFFFF).to_bytes(4, "little")
-
 def boot_jal(target: int) -> bytes:
   return dsl.jal(zero, target).to_bytes()
-
-_FIRMWARE_LOCAL_DATA = {
-  "brisc": b"",
-  "ncrisc": b"\0" * 40,
-  "trisc0": b"\0" * 4,
-  "trisc1": bytes([4]) * 32 + _u32(5) * 32 + _u32(5) * 32,
-  "trisc2": bytes([16]) * 32 + bytes([4]) * 32 + b"\0" * 32 + bytes([5]) * 32 + bytes([5]) * 32,
-}
-
-_FIRMWARE_LOCAL_UPLOAD_SIZE = {
-  "brisc": 0,
-  "ncrisc": 0,
-  "trisc0": 1056,
-  "trisc1": 28,
-  "trisc2": 1056,
-}
 
 class Asm(TensixMixin, NocMixin, CbMixin, FlowMixin, RvMixin):
   def __init__(self, *, base: int = 0):
@@ -279,25 +230,11 @@ class Asm(TensixMixin, NocMixin, CbMixin, FlowMixin, RvMixin):
 
 class Kernel(Asm):
   def __init__(
-    self, *, kind: str, base: int | None = None, upload_base: int | None = None,
-    rtas: CoreArgs | None = None, _firmware: bool = False,
+    self, *, base_addr: int = 0, rtas: CoreArgs | None = None,
   ):
-    if kind not in KERNEL_KINDS:
-      raise ValueError(f"unknown kernel kind {kind!r}")
-    if _firmware:
-      base = FIRMWARE_TEXT_BASE[kind]
-    super().__init__(base=0 if base is None else base)
-    self.upload_base = self.base if upload_base is None else upload_base
+    super().__init__(base=base_addr)
     self.rtas = rtas
-    self.kind = kind
-    self.is_firmware = _firmware
     self.load_segments: list[Segment] = []
-
-  @classmethod
-  def firmware(cls, kind: str) -> Kernel:
-    if kind not in FIRMWARE_TEXT_BASE:
-      raise ValueError(f"unknown firmware kind {kind!r}")
-    return cls(kind=kind, _firmware=True)
 
   def rta(self, fn: CoreArgs):
     if not callable(fn):
@@ -313,26 +250,8 @@ class Kernel(Asm):
     text = self.to_bytes()
     blobs = []
     if text:
-      blobs.append(Segment(self.upload_base, text, label="text"))
+      blobs.append(Segment(self.base, text, label="text"))
     for seg in self.load_segments:
       if seg.data:
         blobs.append(Segment(seg.addr, seg.data, label=seg.label))
-    if not self.is_firmware:
-      return blobs
-    blobs = [
-      Segment(seg.addr, seg.data, label=f"{self.kind}.{seg.label or 'segment'}")
-      for seg in blobs
-    ]
-    local_data = _FIRMWARE_LOCAL_DATA[self.kind]
-    local_memsz = _FIRMWARE_LOCAL_UPLOAD_SIZE[self.kind]
-    has_local_data = any(
-      seg.addr == FIRMWARE_SCRATCH_BASE[self.kind] and seg.label == "local_data"
-      for seg in self.load_segments
-    )
-    if local_memsz and not has_local_data:
-      blobs.append(Segment(
-        FIRMWARE_SCRATCH_BASE[self.kind],
-        local_data[:local_memsz].ljust(local_memsz, b"\0"),
-        label=f"{self.kind}.local_data",
-      ))
     return blobs

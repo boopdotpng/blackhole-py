@@ -1,15 +1,15 @@
 from __future__ import annotations
 
-from dsl import Reg, t0
+from dsl import Reg, t0, t1
 
 
 class TensixMixin:
-  def tensix_push_word(self, instrn_buf: int | Reg, word: int, *, tmp: Reg = t0):
+  def tensix_push_word(self, instrn_buf: int | Reg, word: int, *, tmp: Reg = t0, tmp_addr: Reg = t1):
     self.li(tmp, word)
-    return self.write32(instrn_buf, tmp)
+    return self.write32(instrn_buf, tmp, tmp_addr=tmp_addr)
 
-  def push_tensix_word(self, instrn_buf: int | Reg, word: int, *, tmp: Reg = t0):
-    return self.tensix_push_word(instrn_buf, word, tmp=tmp)
+  def push_tensix_word(self, instrn_buf: int | Reg, word: int, *, tmp: Reg = t0, tmp_addr: Reg = t1):
+    return self.tensix_push_word(instrn_buf, word, tmp=tmp, tmp_addr=tmp_addr)
 
   def tensix_set_cfg_reg(self, cfg_base: int, offset_words: int, value: int):
     return self.write32(cfg_base + offset_words * 4, value)

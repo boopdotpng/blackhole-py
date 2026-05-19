@@ -75,11 +75,11 @@ def main():
 
     prog = Program(
       num_cores=num_cores,
-      brisc=kernel_from_ptloads("brisc", "add1_reader_brisc.kernel", reader_args),
-      ncrisc=kernel_from_ptloads("ncrisc", "add1_writer_ncrisc.kernel", writer_args),
-      trisc0=kernel_from_ptloads("trisc0", "add1_compute_trisc0.kernel", compute_args),
-      trisc1=kernel_from_ptloads("trisc1", "add1_compute_trisc1.kernel", compute_args),
-      trisc2=kernel_from_ptloads("trisc2", "add1_compute_trisc2.kernel", compute_args),
+      brisc=kernel_from_ptloads("add1_reader_brisc.kernel", reader_args),
+      ncrisc=kernel_from_ptloads("add1_writer_ncrisc.kernel", writer_args),
+      trisc0=kernel_from_ptloads("add1_compute_trisc0.kernel", compute_args),
+      trisc1=kernel_from_ptloads("add1_compute_trisc1.kernel", compute_args),
+      trisc2=kernel_from_ptloads("add1_compute_trisc2.kernel", compute_args),
       cbs=[(0, Dtype.Float16_b.tile_size, 2), (16, Dtype.Float16_b.tile_size, 2)],
     )
     prog.name = "add1"

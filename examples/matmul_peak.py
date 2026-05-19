@@ -479,13 +479,13 @@ def build_matmul_program(
     ]
 
   prog = Program(
-    brisc=kernel_from_ptloads("brisc", "matmul_reader_sender_brisc.kernel", reader_args),
-    brisc_recv=kernel_from_ptloads("brisc", "matmul_reader_recv_brisc.kernel", reader_args),
-    ncrisc=kernel_from_ptloads("ncrisc", "matmul_writer_sender_ncrisc.kernel", writer_args),
-    ncrisc_recv=kernel_from_ptloads("ncrisc", "matmul_writer_recv_ncrisc.kernel", writer_args),
-    trisc0=kernel_from_ptloads("trisc0", "matmul_compute_trisc0.kernel"),
-    trisc1=kernel_from_ptloads("trisc1", "matmul_compute_trisc1.kernel"),
-    trisc2=kernel_from_ptloads("trisc2", "matmul_compute_trisc2.kernel"),
+    brisc=kernel_from_ptloads("matmul_reader_sender_brisc.kernel", reader_args),
+    brisc_recv=kernel_from_ptloads("matmul_reader_recv_brisc.kernel", reader_args),
+    ncrisc=kernel_from_ptloads("matmul_writer_sender_ncrisc.kernel", writer_args),
+    ncrisc_recv=kernel_from_ptloads("matmul_writer_recv_ncrisc.kernel", writer_args),
+    trisc0=kernel_from_ptloads("matmul_compute_trisc0.kernel"),
+    trisc1=kernel_from_ptloads("matmul_compute_trisc1.kernel"),
+    trisc2=kernel_from_ptloads("matmul_compute_trisc2.kernel"),
     grid=(rows, cols),
     cbs=[
       (0, io_dtype.tile_size, plan.cb0_pages),

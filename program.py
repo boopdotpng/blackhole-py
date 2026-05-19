@@ -4,7 +4,7 @@ import struct
 from ctypes import c_uint8 as u8, c_uint16 as u16, c_uint32 as u32
 from dataclasses import dataclass, field
 from enum import Enum
-from asm import FIRMWARE_TEXT_BASE, Kernel, Segment, boot_jal
+from asm import Kernel, Segment, boot_jal
 from l1 import L1_ALIGN, S, TensixL1, TensixMMIO, align_up, as_bytes, build_bank_noc_table
 
 Core = tuple[int, int]
@@ -142,10 +142,15 @@ IRCommand = McastWrite | UnicastWrite | Run | McastMmioWrite32 | PollL1Byte
 # RTA order matches launch processor slots.
 ROLE_INDEX = {"brisc": 0, "ncrisc": 1, "trisc0": 2, "trisc1": 3, "trisc2": 4}
 
+def _kernel_entry(kernel: Kernel) -> int:
+  segments = kernel.compile()
+  return min((seg.addr for seg in segments if seg.data), default=kernel.base)
+
 def lower_firmware_boot(firmware: dict[str, Kernel], all_cores: list[Core], harvested_dram_bank: int | None) -> list[IRCommand]:
   rects = mcast_rects(all_cores)
   go_init = struct.pack("<BBBB", 0, 0, 0, DevMsgs.RUN_MSG_INIT)
   bank_table = build_bank_noc_table(harvested_dram_bank, all_cores)
+  entry = {role: _kernel_entry(firmware[role]) for role in ROLE_INDEX}
 
   commands: list[IRCommand] = [
     McastMmioWrite32(rects, TensixMMIO.RISCV_DEBUG_REG_SOFT_RESET_0, TensixMMIO.SOFT_RESET_ALL),
@@ -154,13 +159,13 @@ def lower_firmware_boot(firmware: dict[str, Kernel], all_cores: list[Core], harv
     for segment in firmware[role].compile(): commands.append(McastWrite(rects, segment.addr, segment.data))
 
   commands.extend([
-    McastWrite(rects, 0, boot_jal(FIRMWARE_TEXT_BASE["brisc"])),
+    McastWrite(rects, 0, boot_jal(entry["brisc"])),
     McastWrite(rects, TensixL1.GO_MSG, go_init),
     McastWrite(rects, TensixL1.MEM_BANK_TO_NOC_SCRATCH, bank_table),
-    McastMmioWrite32(rects, TensixMMIO.RISCV_DEBUG_REG_NCRISC_RESET_PC, FIRMWARE_TEXT_BASE["ncrisc"]),
-    McastMmioWrite32(rects, TensixMMIO.RISCV_DEBUG_REG_TRISC0_RESET_PC, FIRMWARE_TEXT_BASE["trisc0"]),
-    McastMmioWrite32(rects, TensixMMIO.RISCV_DEBUG_REG_TRISC1_RESET_PC, FIRMWARE_TEXT_BASE["trisc1"]),
-    McastMmioWrite32(rects, TensixMMIO.RISCV_DEBUG_REG_TRISC2_RESET_PC, FIRMWARE_TEXT_BASE["trisc2"]),
+    McastMmioWrite32(rects, TensixMMIO.RISCV_DEBUG_REG_NCRISC_RESET_PC, entry["ncrisc"]),
+    McastMmioWrite32(rects, TensixMMIO.RISCV_DEBUG_REG_TRISC0_RESET_PC, entry["trisc0"]),
+    McastMmioWrite32(rects, TensixMMIO.RISCV_DEBUG_REG_TRISC1_RESET_PC, entry["trisc1"]),
+    McastMmioWrite32(rects, TensixMMIO.RISCV_DEBUG_REG_TRISC2_RESET_PC, entry["trisc2"]),
     McastMmioWrite32(rects, TensixMMIO.RISCV_DEBUG_REG_SOFT_RESET_0, TensixMMIO.SOFT_RESET_BRISC_ONLY_RUN),
     PollL1Byte(all_cores[0], TensixL1.GO_MSG + 3, DevMsgs.RUN_MSG_DONE, 2.0),
   ])
@@ -271,6 +276,7 @@ class Program:
     cfg.host_assigned_id = host_assigned_id
     for role, idx in ROLE_INDEX.items():
       cfg.rta_offset[idx].rta_offset = rta_offsets[role]
+      cfg.rta_offset[idx].crta_offset = local_cb_off
       cfg.kernel_text_offset[idx] = kernel_text_offsets[role]
     return launch
 
@@ -353,7 +359,7 @@ class Program:
       return self.grid_cores()
     if cores is None:
       raise ValueError("Program.lower() needs cores when Program.grid is unset")
-    ordered = sorted(cores, key=lambda xy: (xy[1], xy[0]))
+    ordered = list(cores)
     if self.num_cores is None:
       return ordered
     if self.num_cores > len(ordered):
@@ -383,7 +389,18 @@ class Program:
     if any(rta_blobs):
       commands.append(UnicastWrite(target_cores, TensixL1.KERNEL_CONFIG_BASE, rta_blobs))
 
-    for (addr, data, _), segment_cores in _shared_segment_groups(per_core_segments).items():
+    launch_blobs = [
+      next(seg.data for seg in per_core_segments[core] if seg.label == "launch")
+      for core in target_cores
+    ]
+    if all(blob == launch_blobs[0] for blob in launch_blobs):
+      commands.append(McastWrite(mcast_rects(target_cores), TensixL1.LAUNCH, launch_blobs[0]))
+    else:
+      commands.append(UnicastWrite(target_cores, TensixL1.LAUNCH, launch_blobs))
+
+    for (addr, data, label), segment_cores in _shared_segment_groups(per_core_segments).items():
+      if label == "launch":
+        continue
       commands.append(McastWrite(mcast_rects(segment_cores), addr, data))
 
     commands.append(Run(target_cores))

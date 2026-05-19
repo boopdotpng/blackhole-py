@@ -10,6 +10,9 @@ from asm import Kernel
 from dsl import Reg, t0, t1, t2, t3, t4, t5, t6, zero
 
 NCRISC_STACK_TOP = 0xFFB01FF0
+NCRISC_TEXT_BASE = 0x5440
+NCRISC_LOCAL_DATA_BASE = 0xA2B0
+NCRISC_LOCAL_DATA_SIZE = 0x864
 SUBORDINATE_SYNC = 0x68
 LAUNCH_MSG_RD_PTR = 0x6C
 CORE_INFO_ABSOLUTE_LOGICAL_X = 0x940
@@ -204,7 +207,8 @@ def setup_local_cbs(fw: Kernel, *, launch: Reg = t0, config_base: Reg = t1,
 
 
 def build() -> Kernel:
-  fw = Kernel.firmware("ncrisc")
+  fw = Kernel(base_addr=NCRISC_TEXT_BASE)
+  fw.segment(NCRISC_LOCAL_DATA_BASE, b"\x68".ljust(NCRISC_LOCAL_DATA_SIZE, b"\0"), label="local_data")
   fw.setup_stack(NCRISC_STACK_TOP)
   fw.configure_csr()
   init_bank_tables(fw)

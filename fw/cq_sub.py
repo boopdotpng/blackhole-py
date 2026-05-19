@@ -4,4 +4,4 @@ from asm import Kernel
 
 
 def build() -> Kernel:
-  return Kernel(kind="ncrisc")
+  return Kernel()

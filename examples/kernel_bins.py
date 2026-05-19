@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 DISASMS = ROOT / "firmware" / "disasms"
 
 
-def kernel_from_ptloads(kind: str, stem: str, rtas: CoreArgs | None = None) -> Kernel:
+def kernel_from_ptloads(stem: str, rtas: CoreArgs | None = None) -> Kernel:
   """Build an asm.Kernel from checked-in raw PT_LOAD segment bins.
 
   The old C++ compiler emitted ELF kernels linked at fixed per-processor L1
@@ -22,7 +22,7 @@ def kernel_from_ptloads(kind: str, stem: str, rtas: CoreArgs | None = None) -> K
   """
   manifest_path = DISASMS / f"{stem}.seg.json"
   manifest = json.loads(manifest_path.read_text())
-  kernel = Kernel(kind=kind, rtas=rtas)
+  kernel = Kernel(rtas=rtas)
   for seg in manifest["segments"]:
     data = (DISASMS / seg["bin"]).read_bytes()
     memsz = int(seg["memsz"])
@@ -34,5 +34,5 @@ def kernel_from_ptloads(kind: str, stem: str, rtas: CoreArgs | None = None) -> K
   return kernel
 
 
-def empty_kernel(kind: str) -> Kernel:
-  return Kernel(kind=kind)
+def empty_kernel() -> Kernel:
+  return Kernel()

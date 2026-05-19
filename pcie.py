@@ -76,24 +76,47 @@ BOARD_UPI_TO_NAME = {
   0x35: "galaxy-wormhole", 0x47: "galaxy-blackhole",
 }
 
-# Blackhole harvesting layout matches UMD's HARVESTING_NOC_LOCATIONS.
-TENSIX_X_LOCATIONS = (1, 2, 3, 4, 5, 6, 7, 10, 11, 12, 13, 14, 15, 16)
-HARVESTING_NOC_LOCATIONS = (1, 16, 2, 15, 3, 14, 4, 13, 5, 12, 6, 11, 7, 10)
-DEFAULT_TENSIX_ENABLED = (1 << len(TENSIX_X_LOCATIONS)) - 1
+P100_TENSIX_X = (*range(1, 8), *range(10, 15))
+P150_TENSIX_X = (*range(1, 8), *range(10, 17))
+DEFAULT_TENSIX_ENABLED = (1 << len(P150_TENSIX_X)) - 1
 DEFAULT_GDDR_ENABLED = 0xFF
 
 
-def shuffle_tensix_harvesting_mask(physical_mask: int) -> int:
-  out = 0
-  for pos, noc_x in enumerate(HARVESTING_NOC_LOCATIONS):
-    if (physical_mask >> pos) & 1:
-      out |= 1 << TENSIX_X_LOCATIONS.index(noc_x)
-  return out
+def active_tensix_core_count(enabled_col_mask: int) -> int:
+  return (enabled_col_mask & DEFAULT_TENSIX_ENABLED).bit_count() * 10
 
 
-def tensix_columns_from_enabled_mask(enabled_mask: int) -> tuple[int, ...]:
-  harvesting_mask = shuffle_tensix_harvesting_mask((~enabled_mask) & 0x3FFF)
-  return tuple(x for i, x in enumerate(TENSIX_X_LOCATIONS) if not ((harvesting_mask >> i) & 1))
+def board_from_tensix_count(enabled_mask: int) -> str:
+  core_count = active_tensix_core_count(enabled_mask)
+  if core_count <= len(P100_TENSIX_X) * 10:
+    return "p100"
+  if core_count <= len(P150_TENSIX_X) * 10:
+    return "p150"
+  raise RuntimeError(f"unsupported Tensix core count {core_count}")
+
+
+def normalize_board(board: str, enabled_mask: int) -> str:
+  if board in {"p100", "p150"}:
+    return board
+  return board_from_tensix_count(enabled_mask)
+
+
+def tensix_columns_for_board(board: str) -> tuple[int, ...]:
+  if board == "p100":
+    return P100_TENSIX_X
+  if board == "p150":
+    return P150_TENSIX_X
+  raise RuntimeError(f"unsupported board layout {board!r}")
+
+
+def dram_layout_for_board(board: str, enabled_gddr: int) -> tuple[int, int | None]:
+  if board != "p100":
+    return DEFAULT_GDDR_ENABLED, None
+  effective_gddr = enabled_gddr & DEFAULT_GDDR_ENABLED
+  harvested = [bank for bank in range(8) if ((effective_gddr >> bank) & 1) == 0]
+  if len(harvested) > 1:
+    raise RuntimeError(f"unsupported harvested DRAM banks: {harvested}")
+  return effective_gddr, harvested[0] if harvested else None
 
 
 def worker_cores_from_columns(columns: tuple[int, ...]) -> list[Core]:
@@ -557,20 +580,21 @@ class PCIDevice:
     board_id = ((bid_hi & 0xFFFFFFFF) << 32 | (bid_lo & 0xFFFFFFFF)) if bid_hi is not None and bid_lo is not None else None
     arch = BOARD_UPI_TO_NAME.get((board_id >> 36) & 0xFFFFF, "unknown") if board_id is not None else "unknown"
     if arch.startswith("p100"):
-      board = "p100"
+      raw_board = "p100"
     elif arch.startswith("p150"):
-      board = "p150"
+      raw_board = "p150"
     else:
-      board = arch
+      raw_board = arch
 
     enabled_tensix = self.telemetry_tag(layout, "ENABLED_TENSIX_COL")
     if enabled_tensix is None:
       enabled_tensix = DEFAULT_TENSIX_ENABLED
+    board = normalize_board(raw_board, enabled_tensix)
     enabled_gddr = self.telemetry_tag(layout, "ENABLED_GDDR")
     if enabled_gddr is None:
       enabled_gddr = DEFAULT_GDDR_ENABLED
 
-    columns = tensix_columns_from_enabled_mask(enabled_tensix)
+    columns = tensix_columns_for_board(board)
     workers = worker_cores_from_columns(columns)
     if not columns:
       raise RuntimeError(f"no enabled Tensix columns in ARC telemetry mask 0x{enabled_tensix:x}")
@@ -579,10 +603,7 @@ class PCIDevice:
     dispatch_core = (rightmost_x, 3)
     cq_cores = {prefetch_core, dispatch_core}
     program_cores = [core for core in workers if not fast_dispatch or core not in cq_cores]
-    harvested_dram_banks = [bank for bank in range(8) if ((enabled_gddr >> bank) & 1) == 0]
-    if len(harvested_dram_banks) > 1:
-      raise RuntimeError(f"unsupported harvested DRAM banks: {harvested_dram_banks}")
-    harvested_dram_bank = harvested_dram_banks[0] if harvested_dram_banks else None
+    effective_gddr, harvested_dram_bank = dram_layout_for_board(board, enabled_gddr)
     return BoardInfo(
       board_id=board_id,
       arch=arch,
@@ -591,7 +612,7 @@ class PCIDevice:
       tensix_columns=columns,
       worker_cores=workers,
       program_cores=program_cores,
-      enabled_gddr=enabled_gddr,
+      enabled_gddr=effective_gddr,
       harvested_dram_bank=harvested_dram_bank,
       prefetch_core=prefetch_core,
       dispatch_core=dispatch_core,

@@ -157,7 +157,7 @@ def round_up_reg(fw: Kernel, reg: Reg, align: int, *, tmp: Reg = t0):
 
 
 def build_prefetch() -> Kernel:
-  fw = Kernel(kind="brisc")
+  fw = Kernel()
   fw.setup_stack(0xFFB01FF0)
   fw.write32(CQ_DEBUG, 0xC1010001)
   fw.write32(CQ_SEM_BASE, DISPATCH_CB_PAGES)
@@ -305,7 +305,7 @@ def build_prefetch() -> Kernel:
 
 
 def build_dispatch() -> Kernel:
-  fw = Kernel(kind="brisc")
+  fw = Kernel()
   fw.setup_stack(0xFFB01FF0)
   fw.write32(CQ_DEBUG, 0xC1D10001)
   fw.li(s0, DISPATCH_CB_BASE)  # cmd ptr
@@ -696,7 +696,7 @@ def build_dispatch() -> Kernel:
 
 
 def build_dispatch_subordinate() -> Kernel:
-  fw = Kernel(kind="ncrisc")
+  fw = Kernel()
   fw.setup_stack(0xFFB01FF0)
   # This minimal fast-dispatch path handles go signals on dispatch BRISC.
   fw.label("idle")

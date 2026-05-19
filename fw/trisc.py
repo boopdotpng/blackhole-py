@@ -5,11 +5,21 @@ from pathlib import Path
 if __package__ in (None, ""):
   sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from asm import FIRMWARE_SCRATCH_BASE, Kernel
+from asm import Kernel
 from dsl import Reg, gp, t0, t1, t2, t3, t4, t5, t6, zero
 
 TRISC_GLOBAL_POINTER = 0xFFB007F0
 TRISC_STACK_TOP = 0xFFB00FF0
+TRISC_TEXT_BASE = {
+  0: 0x5A40,
+  1: 0x6040,
+  2: 0x6640,
+}
+TRISC_LOCAL_DATA_BASE = {
+  0: 0xC2B0,
+  1: 0xD2B0,
+  2: 0xE2B0,
+}
 SUBORDINATE_SYNC = 0x68
 LAUNCH_MSG_RD_PTR = 0x6C
 RUN_SYNC_MSG_GO = 0x80
@@ -42,6 +52,7 @@ CB_SYNC_STRIDE = 0x1000
 NUM_CIRCULAR_BUFFERS = 64
 LOCAL_CB_INTERFACE_SIZE = 32
 LOCAL_CB_CONFIG_SIZE = 16
+FW_DEBUG = 0x19000
 
 TRISC_DATA_COMMON = {
   "dest_offset_id": 0xFFB00000,
@@ -103,7 +114,7 @@ def zero_regfile(fw: Kernel, *, ptr: Reg = t0, count: Reg = t1):
 def init_local_data(fw: Kernel, trisc_id: int):
   return fw.copy_words(
     0xFFB00000,
-    FIRMWARE_SCRATCH_BASE[f"trisc{trisc_id}"],
+    TRISC_LOCAL_DATA_BASE[trisc_id],
     TRISC_LOCAL_DATA_SIZE[trisc_id],
   )
 
@@ -128,6 +139,8 @@ def wait_trisc_message(fw: Kernel, trisc_id: int, *, ptr: Reg = t0, actual: Reg 
   fw.li(ptr, SUBORDINATE_SYNC + trisc_id + 1)
   fw.label(loop)
   fw.lbu(actual, ptr, 0)
+  if trisc_id == 0:
+    fw.write32(FW_DEBUG + 4, actual, tmp_addr=expected)
   fw.li(expected, RUN_SYNC_MSG_GO)
   fw.beq(actual, expected, done)
   if trisc_id == 0:
@@ -137,11 +150,15 @@ def wait_trisc_message(fw: Kernel, trisc_id: int, *, ptr: Reg = t0, actual: Reg 
   fw.j(loop)
   if trisc_id == 0:
     fw.label(init_sync)
+    fw.write32(FW_DEBUG + 8, 0x7015C003, tmp_addr=actual, tmp_val=expected)
     init_sync_registers(fw)
     fw.li(ptr, SUBORDINATE_SYNC + trisc_id + 1)
     fw.write8(ptr, RUN_SYNC_MSG_DONE, tmp_addr=actual, tmp_val=expected)
+    fw.write32(FW_DEBUG + 12, 0x7015C004, tmp_addr=actual, tmp_val=expected)
     fw.j(loop)
   fw.label(done)
+  if trisc_id == 0:
+    fw.write32(FW_DEBUG + 16, 0x7015C080, tmp_addr=actual, tmp_val=expected)
   fw.fence()
   return fw
 
@@ -253,7 +270,8 @@ def build(trisc_id: int) -> Kernel:
     raise ValueError(f"unknown TRISC id {trisc_id!r}")
   role = 2 + trisc_id
   data = TRISC1_DATA if trisc_id == 1 else TRISC_DATA_COMMON
-  fw = Kernel.firmware(f"trisc{trisc_id}")
+  fw = Kernel(base_addr=TRISC_TEXT_BASE[trisc_id])
+  fw.segment(TRISC_LOCAL_DATA_BASE[trisc_id], b"\0" * TRISC_LOCAL_DATA_SIZE[trisc_id], label="local_data")
   setup_gp(fw)
   fw.setup_stack(TRISC_STACK_TOP)
   fw.configure_csr()

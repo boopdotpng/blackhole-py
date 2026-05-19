@@ -8,6 +8,7 @@ from cq import (
 )
 from dram import Allocator, DramBuffer, Shape, tilize, untilize
 import fw
+import cpp_firmware
 from l1 import Core, Dram, L1_ALIGN, TensixL1, TensixMMIO, align_down, align_up, as_bytes
 from pcie import BoardInfo, PCIDevice, TLBWindow
 from program import (
@@ -49,8 +50,18 @@ class Device:
     ]
 
   def _upload_firmware(self):
+    core_fw = (
+      cpp_firmware.build_from_old_compiler(
+        self.board_info.num_dram_banks,
+        len(self.board_info.worker_cores),
+        self.board_info.prefetch_core,
+        self.board_info.dispatch_core,
+      )
+      if os.getenv("TT_CORE_FW", "python").strip().lower() in {"c++", "cpp", "cxx", "stock"}
+      else fw.build_all()
+    )
     commands = lower_firmware_boot(
-      fw.build_all(),
+      core_fw,
       self.board_info.worker_cores,
       self.board_info.harvested_dram_bank,
     )

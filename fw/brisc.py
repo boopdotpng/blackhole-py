@@ -6,10 +6,17 @@ from pathlib import Path
 if __package__ in (None, ""):
   sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from asm import FIRMWARE_TEXT_BASE, Kernel
+from asm import Kernel
 from dsl import Reg, t0, t1, t2, t3, t4, t5, t6, zero
 
 BRISC_STACK_TOP = 0xFFB01FF0
+BRISC_TEXT_BASE = 0x3840
+NCRISC_TEXT_BASE = 0x5440
+TRISC0_TEXT_BASE = 0x5A40
+TRISC1_TEXT_BASE = 0x6040
+TRISC2_TEXT_BASE = 0x6640
+BRISC_LOCAL_DATA_BASE = 0x82B0
+BRISC_LOCAL_DATA_SIZE = 0x878
 NCRISC_RESET_PC = 0xFFB12238
 TRISC0_RESET_PC = 0xFFB12228
 TRISC1_RESET_PC = 0xFFB1222C
@@ -89,6 +96,7 @@ NOC_STREAM_REG_SPACE_SIZE = 0x1000
 DISPATCH_MESSAGE_ADDR = 0xFFB70438
 REMOTE_DEST_BUF_WORDS_FREE_INC = 6
 DISPATCH_DONE_WORD = 1 << REMOTE_DEST_BUF_WORDS_FREE_INC
+FW_DEBUG = 0x19000
 MEM_NOC_ATOMIC_RET_VAL_ADDR = 0x04
 MEM_BANK_TO_NOC_SCRATCH = 0x112B0
 P100_NUM_DRAM_BANKS = 7
@@ -123,6 +131,8 @@ RUN_MSG_REPLAY_TRACE = 0xF0
 RUN_MSG_DONE = 0x00
 RUN_SYNC_MSG_GO = 0x80
 RUN_SYNC_MSG_LOAD = 0x01
+RUN_SYNC_MSG_INIT = 0x40
+RUN_SYNC_MSG_ALL_INIT = 0x40404040
 RUN_SYNC_MSG_INIT_SYNC_REGISTERS = 0x03
 RUN_SYNC_MSG_DONE = 0x00
 
@@ -149,13 +159,28 @@ CB_SYNC_TILES_RECEIVED_BASE = 0xFFB48028
 CB_SYNC_STRIDE = 0x1000
 
 
+FIRMWARE_TEXT_BASE = {
+  "brisc": BRISC_TEXT_BASE,
+  "ncrisc": NCRISC_TEXT_BASE,
+  "trisc0": TRISC0_TEXT_BASE,
+  "trisc1": TRISC1_TEXT_BASE,
+  "trisc2": TRISC2_TEXT_BASE,
+}
+
+
 def set_subordinate_reset_pcs(fw: Kernel, text_base: dict[str, int] = FIRMWARE_TEXT_BASE):
   fw.write32(NCRISC_RESET_PC, text_base["ncrisc"])
+  breadcrumb(fw, 0xB015C101)
   fw.write32(TRISC0_RESET_PC, text_base["trisc0"])
+  breadcrumb(fw, 0xB015C102)
   fw.write32(TRISC1_RESET_PC, text_base["trisc1"])
+  breadcrumb(fw, 0xB015C103)
   fw.write32(TRISC2_RESET_PC, text_base["trisc2"])
+  breadcrumb(fw, 0xB015C104)
   fw.write32(TRISC_RESET_PC_OVERRIDE, 0b111)
+  breadcrumb(fw, 0xB015C105)
   fw.write32(NCRISC_RESET_PC_OVERRIDE, 1)
+  breadcrumb(fw, 0xB015C106)
   return fw
 
 
@@ -163,8 +188,16 @@ def deassert_all_riscs(fw: Kernel):
   return fw.write32(SOFT_RESET_0, 0)
 
 
+def init_subordinate_sync(fw: Kernel):
+  return fw.write32(SUBORDINATE_SYNC, RUN_SYNC_MSG_ALL_INIT)
+
+
 def invalidate_all_risc_icaches(fw: Kernel):
   return fw.write32(RISCV_IC_INVALIDATE_INVALIDATE_ALL, RISCV_IC_ALL_MASK)
+
+
+def breadcrumb(fw: Kernel, value: int, offset: int = 0):
+  return fw.write32(FW_DEBUG + offset, value)
 
 
 def enable_noc_clock_gating(fw: Kernel, *, addr: Reg = t0, value: Reg = t1):
@@ -180,9 +213,15 @@ def enable_noc_clock_gating(fw: Kernel, *, addr: Reg = t0, value: Reg = t1):
 
 def device_setup(fw: Kernel):
   fw.write32(RISCV_DEBUG_REG_DEST_CG_CTRL, 0)
+  breadcrumb(fw, 0xB015C201)
   fw.write32(RISCV_TDMA_REG_CLK_GATE_EN, 0x3F)
+  breadcrumb(fw, 0xB015C202)
   enable_noc_clock_gating(fw)
+  breadcrumb(fw, 0xB015C203)
+  invalidate_all_risc_icaches(fw)
+  breadcrumb(fw, 0xB015C204)
   fw.tensix_push_word(INSTRN_BUF_BASE, INSTRN_ZEROACC | (3 << 19))
+  breadcrumb(fw, 0xB015C205)
   fw.tensix_push_word(INSTRN_BUF_BASE, INSTRN_SFPENCC | (3 << 12) | 10)
   fw.tensix_push_word(INSTRN_BUF_BASE, INSTRN_NOP)
   fw.tensix_push_word(INSTRN_BUF_BASE, INSTRN_SFPLOADI | 0xBF80)
@@ -190,6 +229,7 @@ def device_setup(fw: Kernel):
   fw.tensix_push_word(INSTRN_BUF_BASE, INSTRN_SEMINIT | (1 << (SEM_MATH_PACK + 2)) | (0 << 16) | (1 << 20))
   fw.tensix_push_word(INSTRN_BUF_BASE, INSTRN_SEMINIT | (1 << (SEM_UNPACK_TO_DEST + 2)) | (0 << 16) | (1 << 20))
   fw.tensix_push_word(INSTRN_BUF_BASE, INSTRN_SEMINIT | (1 << (SEM_MATH_DONE + 2)) | (0 << 16) | (1 << 20))
+  breadcrumb(fw, 0xB015C206)
   return fw
 
 
@@ -513,26 +553,39 @@ def setup_local_cbs(fw: Kernel, *, launch: Reg = t0, config_base: Reg = t1,
 
 
 def build(*, text_base: dict[str, int] = FIRMWARE_TEXT_BASE) -> Kernel:
-  fw = Kernel.firmware("brisc")
+  fw = Kernel(base_addr=BRISC_TEXT_BASE)
+  fw.segment(BRISC_LOCAL_DATA_BASE, b"\x68".ljust(BRISC_LOCAL_DATA_SIZE, b"\0"), label="local_data")
+  fw.configure_csr()
+  breadcrumb(fw, 0xB015C001)
   fw.setup_stack(BRISC_STACK_TOP)
+  breadcrumb(fw, 0xB015C100)
   set_subordinate_reset_pcs(fw, text_base)
   device_setup(fw)
+  breadcrumb(fw, 0xB015C002)
   init_risc_noc_coords(fw)
-  invalidate_all_risc_icaches(fw)
-  deassert_all_riscs(fw)
-  for role in (1, 2, 3, 4):
-    fw.wait8(SUBORDINATE_SYNC + role - 1, RUN_SYNC_MSG_DONE)
-  fw.write8(GO_SIGNAL, RUN_MSG_DONE)
   init_bank_tables(fw)
   init_brisc_mailbox_globals(fw)
   noc_init(fw)
   init_noc_local_state(fw)
+  breadcrumb(fw, 0xB015C005)
+  invalidate_all_risc_icaches(fw)
+  breadcrumb(fw, 0xB015C006)
+  init_subordinate_sync(fw)
+  breadcrumb(fw, 0xB015C007)
+  deassert_all_riscs(fw)
+  for role in (1, 2, 3, 4):
+    fw.wait8(SUBORDINATE_SYNC + role - 1, RUN_SYNC_MSG_DONE)
+  breadcrumb(fw, 0xB015C008)
+  fw.write8(GO_SIGNAL, RUN_MSG_DONE)
   # Ask TRISC0 to clear CB sync registers before launching kernels.
   fw.write8(SUBORDINATE_SYNC + 1, RUN_SYNC_MSG_INIT_SYNC_REGISTERS)
+  breadcrumb(fw, 0xB015C009)
 
   fw.label("run_loop")
   wait_go(fw)
+  breadcrumb(fw, 0xB015C010)
   fw.wait8(SUBORDINATE_SYNC + 1, RUN_SYNC_MSG_DONE)
+  breadcrumb(fw, 0xB015C011)
   init_brisc_kernel_config(fw)
   init_brisc_launch_globals(fw)
   noc_init(fw)
@@ -546,8 +599,10 @@ def build(*, text_base: dict[str, int] = FIRMWARE_TEXT_BASE) -> Kernel:
   fw.run_launch_kernel(0)
   for role in (1, 2, 3, 4):
     fw.wait8(SUBORDINATE_SYNC + role - 1, RUN_SYNC_MSG_DONE)
+  breadcrumb(fw, 0xB015C020)
   # Ask TRISC0 to clear CB sync registers before accepting the next launch.
   fw.write8(SUBORDINATE_SYNC + 1, RUN_SYNC_MSG_INIT_SYNC_REGISTERS)
+  breadcrumb(fw, 0xB015C021)
   fw.write8(GO_SIGNAL, RUN_MSG_DONE)
   notify_dispatch_core_done(fw)
   fw.read32(t0, LAUNCH_MSG_RD_PTR, tmp_addr=t1)
