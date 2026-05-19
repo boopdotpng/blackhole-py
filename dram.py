@@ -2,7 +2,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from l1 import Dram, align_up
+from ttk.l1 import Dram, align_up
 from pcie import NocOrdering, TLBWindow
 from program import Dtype
 

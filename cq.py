@@ -4,7 +4,7 @@ import os
 import struct
 import time
 
-from l1 import Core, L1_ALIGN, PCIE_ALIGN, TensixL1, align_up, noc_xy
+from ttk.l1 import Core, L1_ALIGN, PCIE_ALIGN, TensixL1, align_up, noc_xy
 from pcie import LibCAnonMap, PCIDevice, TLBWindow
 from program import IRCommand, McastWrite, Run, UnicastWrite
 

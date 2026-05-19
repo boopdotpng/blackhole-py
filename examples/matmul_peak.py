@@ -3,7 +3,7 @@ import os, sys, time
 from dataclasses import dataclass
 import numpy as np
 
-from l1 import *
+from ttk.l1 import *
 from program import *
 from device import Device
 from dram import DramBuffer

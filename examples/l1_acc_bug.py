@@ -14,7 +14,7 @@ Usage:
 """
 import numpy as np
 
-from l1 import *
+from ttk.l1 import *
 from program import *
 from device import Device, Dtype
 from dram import tilize

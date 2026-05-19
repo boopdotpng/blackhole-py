@@ -3,7 +3,7 @@ import argparse
 import curses
 import sys
 import time
-from l1 import Arc, Dram
+from ttk.l1 import Arc, Dram
 from pcie import PCIDevice, TLB_2M_SIZE
 
 def telemetry_layout(dev: PCIDevice) -> dict:
