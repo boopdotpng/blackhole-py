@@ -2,7 +2,24 @@ from __future__ import annotations
 
 from dsl import Reg, t0, t1
 
-class TensixMixin:
+
+class TensixRegs:
+  INSTRN_BUF_BASE = 0xFFE40000
+  REGFILE_BASE = 0xFFE00000
+  PC_BUF_SYNC = 0xFFE80004
+  CFG_BASE = 0xFFEF0000
+  RISCV_IC_INVALIDATE_INVALIDATE_ALL = CFG_BASE + 185 * 4
+  RISCV_IC_ALL_MASK = 0x1F
+  PRNG_SEED_SEED_VAL_ADDR32 = 186
+
+
+class TensixSem:
+  MATH_PACK = 1
+  UNPACK_TO_DEST = 2
+  MATH_DONE = 7
+
+
+class Tensix:
   def tensix_push_word(self, instrn_buf: int | Reg, word: int, *, tmp: Reg = t0, tmp_addr: Reg = t1):
     self.li(tmp, word)
     return self.write32(instrn_buf, tmp, tmp_addr=tmp_addr)

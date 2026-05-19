@@ -7,7 +7,8 @@ if __package__ in (None, ""):
 
 from asm import Kernel
 from dsl import Reg, gp, t0, t1, t2, t3, t4, t5, t6, zero
-from ttk.addrs import CircularBuffer as CB, Firmware, Launch, Mailbox, RunSync, Tensix, TensixMMIO, TriscMailbox as TM
+from ttk.addrs import CircularBuffer as CB, Firmware, Launch, Mailbox, RunSync, TensixMMIO, TriscMailbox as TM
+from ttk.tensix import TensixRegs
 
 def build(trisc_id: int) -> Kernel:
   if trisc_id not in (0, 1, 2):
@@ -28,7 +29,7 @@ def build(trisc_id: int) -> Kernel:
   )
 
   # zero_regfile
-  fw.li(t0, Tensix.REGFILE_BASE)
+  fw.li(t0, TensixRegs.REGFILE_BASE)
   fw.li(t1, 64)
   zero_regfile_loop = fw._new_label("zero_regfile")
   zero_regfile_done = fw._new_label("zero_regfile_done")
@@ -44,7 +45,7 @@ def build(trisc_id: int) -> Kernel:
   fw.write32(data["dest_offset_id"], 0)
   fw.write32(data["op_info_offset"], 0)
   fw.write32(data["cfg_state_id"], 0)
-  fw.write32(Tensix.CFG_BASE + Tensix.PRNG_SEED_SEED_VAL_ADDR32 * 4, 0)
+  fw.write32(TensixRegs.CFG_BASE + TensixRegs.PRNG_SEED_SEED_VAL_ADDR32 * 4, 0)
   fw.delay_cycles(600)
   fw.read8(t1, Mailbox.CORE_INFO_ABSOLUTE_LOGICAL_X, tmp_addr=t0)
   fw.write8(data["my_logical_x"], t1, tmp_addr=t0)
@@ -156,8 +157,8 @@ def build(trisc_id: int) -> Kernel:
   fw.run_launch_kernel(2 + trisc_id)
 
   # tensix_sync
-  fw.write32(Tensix.PC_BUF_SYNC, 0)
-  fw.read32(t0, Tensix.PC_BUF_SYNC)
+  fw.write32(TensixRegs.PC_BUF_SYNC, 0)
+  fw.read32(t0, TensixRegs.PC_BUF_SYNC)
   fw.and_(zero, zero, t0)
 
   fw.signal_subordinate_done(role)

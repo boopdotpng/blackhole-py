@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import ctypes
-import os
 import struct
 
 Core = tuple[int, int]
@@ -236,28 +235,6 @@ class Mailbox:
   GO_MESSAGES = 0x370
   GO_MESSAGE_INDEX = 0x3A0
 
-class Tensix:
-  INSTRN_BUF_BASE = 0xFFE40000
-  REGFILE_BASE = 0xFFE00000
-  PC_BUF_SYNC = 0xFFE80004
-  CFG_BASE = 0xFFEF0000
-  RISCV_IC_INVALIDATE_INVALIDATE_ALL = CFG_BASE + 185 * 4
-  RISCV_IC_ALL_MASK = 0x1F
-  PRNG_SEED_SEED_VAL_ADDR32 = 186
-
-class TensixInsn:
-  NOP = 0x02000000
-  ZEROACC = 0x10000000
-  SFPLOADI = 0x71000000
-  SFPENCC = 0x8A000000
-  SFPCONFIG = 0x91000000
-  SEMINIT = 0xA3000000
-
-class TensixSem:
-  MATH_PACK = 1
-  UNPACK_TO_DEST = 2
-  MATH_DONE = 7
-
 class CircularBuffer:
   LOCAL_INTERFACE_SIZE = 32
   LOCAL_CONFIG_SIZE = 16
@@ -375,24 +352,6 @@ class TriscMailbox:
     1: 0xFFB0001C,
     2: 0xFFB00820,
   }
-
-class Sysmem:
-  PCIE_NOC_XY = (24 << 6) | 19
-
-  def __init__(self, dev, size: int = 1 << 30):
-    from pcie import LibCAnonMap
-
-    if size > 1 << 30:
-      raise ValueError(f"Sysmem size {size} exceeds 1 GiB iATU aperture limit")
-    self.dev = dev
-    page_size = os.sysconf("SC_PAGE_SIZE")
-    self.size = (size + page_size - 1) & ~(page_size - 1)
-    self.buf = LibCAnonMap(self.size)
-    self.noc_addr = dev.pin_pages(self.buf)
-
-  def close(self):
-    self.dev.unpin_pages(self.buf, self.noc_addr)
-    self.buf.close()
 
 def worker_cores(tensix_x: tuple[int, ...]) -> list[Core]:
   return [(x, y) for x in tensix_x for y in range(2, 12)]

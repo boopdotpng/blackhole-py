@@ -1,5 +1,9 @@
 from __future__ import annotations
 
-from ttk.mixins import CbMixin, DebugMixin, FlowMixin, NocMixin, RvMixin, TensixMixin
+from ttk.cb import Cb
+from ttk.debug import Debug
+from ttk.flow import Flow
+from ttk.noc import Noc
+from ttk.tensix import Tensix
 
-__all__ = ["CbMixin", "DebugMixin", "FlowMixin", "NocMixin", "RvMixin", "TensixMixin"]
+__all__ = ["Cb", "Debug", "Flow", "Noc", "Tensix"]

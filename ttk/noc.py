@@ -5,7 +5,7 @@ from collections.abc import Iterable
 from dsl import Reg, t0, t1, t2, t3, t4, t5, zero
 from ttk.addrs import NOC, TensixMMIO
 
-class NocMixin:
+class Noc:
   def write_reg(self, addr: int | Reg, value: int | Reg, *, tmp_addr: Reg = t0, tmp_val: Reg = t1):
     return self.write32(addr, value, tmp_addr=tmp_addr, tmp_val=tmp_val)
 

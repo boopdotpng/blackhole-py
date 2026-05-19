@@ -27,7 +27,7 @@ def print_debug_postmortem(core: tuple[int, int], addrs: set[int], *, file=None)
   finally:
     dev.close()
 
-class DebugMixin:
+class Debug:
   _debug_postmortem_registered = False
   _debug_addrs: set[int] = set()
 

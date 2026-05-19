@@ -60,6 +60,7 @@ IATU_CTRL1_INCREASE    = 1 << 13
 IATU_CTRL2_ENABLE      = 1 << 31
 
 NOC_PCIE_OFFSET = 4 << 58
+PCIE_NOC_XY = (24 << 6) | 19
 
 Core = tuple[int, int]
 
@@ -276,6 +277,22 @@ class LibCAnonMap:
 
   def __enter__(self): return self
   def __exit__(self, exc_type, exc, tb): self.close()
+
+class Sysmem:
+  PCIE_NOC_XY = PCIE_NOC_XY
+
+  def __init__(self, dev, size: int = 1 << 30):
+    if size > 1 << 30:
+      raise ValueError(f"Sysmem size {size} exceeds 1 GiB iATU aperture limit")
+    self.dev = dev
+    page_size = os.sysconf("SC_PAGE_SIZE")
+    self.size = (size + page_size - 1) & ~(page_size - 1)
+    self.buf = LibCAnonMap(self.size)
+    self.noc_addr = dev.pin_pages(self.buf)
+
+  def close(self):
+    self.dev.unpin_pages(self.buf, self.noc_addr)
+    self.buf.close()
 
 class NocOrdering(Enum):
   RELAXED = 0

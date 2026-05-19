@@ -6,10 +6,12 @@ from asm import Kernel
 from dsl import Reg, t0, t1, t2, t3, t4, t5, t6, zero
 from ttk.addrs import (
   BriscMailbox as BM, CircularBuffer as CB, Dispatch, Firmware, Launch,
-  Mailbox, NocCfg, P100BankTable, RunMsg, RunSync, Tensix, TensixInsn,
-  TensixL1, TensixMMIO, TensixSem,
+  Mailbox, NocCfg, P100BankTable, RunMsg, RunSync,
+  TensixL1, TensixMMIO,
 )
 from ttk.addrs import NOC
+from dsl import TTNOP, TTSEMINIT, TTSFPENCC, TTSFPCONFIG, TTSFPLOADI, TTZEROACC
+from ttk.tensix import TensixRegs, TensixSem
 
 def signal_subordinate_if_enabled(fw: Kernel, role: int, value: int, *,
                                   enabled: Reg = t0, mask: Reg = t1):
@@ -143,15 +145,15 @@ def build(*, text_base: dict[str, int] = Firmware.TEXT_BASE) -> Kernel:
       fw.ori(t1, t1, 1)
       fw.sw(t1, t0, 0)
   # invalidate_all_risc_icaches
-  fw.write32(Tensix.RISCV_IC_INVALIDATE_INVALIDATE_ALL, Tensix.RISCV_IC_ALL_MASK)
-  fw.tensix_push_word(Tensix.INSTRN_BUF_BASE, TensixInsn.ZEROACC | (3 << 19))
-  fw.tensix_push_word(Tensix.INSTRN_BUF_BASE, TensixInsn.SFPENCC | (3 << 12) | 10)
-  fw.tensix_push_word(Tensix.INSTRN_BUF_BASE, TensixInsn.NOP)
-  fw.tensix_push_word(Tensix.INSTRN_BUF_BASE, TensixInsn.SFPLOADI | 0xBF80)
-  fw.tensix_push_word(Tensix.INSTRN_BUF_BASE, TensixInsn.SFPCONFIG | (11 << 4))
-  fw.tensix_push_word(Tensix.INSTRN_BUF_BASE, TensixInsn.SEMINIT | (1 << (TensixSem.MATH_PACK + 2)) | (0 << 16) | (1 << 20))
-  fw.tensix_push_word(Tensix.INSTRN_BUF_BASE, TensixInsn.SEMINIT | (1 << (TensixSem.UNPACK_TO_DEST + 2)) | (0 << 16) | (1 << 20))
-  fw.tensix_push_word(Tensix.INSTRN_BUF_BASE, TensixInsn.SEMINIT | (1 << (TensixSem.MATH_DONE + 2)) | (0 << 16) | (1 << 20))
+  fw.write32(TensixRegs.RISCV_IC_INVALIDATE_INVALIDATE_ALL, TensixRegs.RISCV_IC_ALL_MASK)
+  buf = TensixRegs.INSTRN_BUF_BASE
+  fw.tensix_push_word(buf, TTZEROACC(clear_mode=3).raw_word())
+  fw.tensix_push_word(buf, TTSFPENCC(imm12_math=3, instr_mod1=10).raw_word())
+  fw.tensix_push_word(buf, TTNOP().raw_word())
+  fw.tensix_push_word(buf, TTSFPLOADI(imm16=0xBF80).raw_word())
+  fw.tensix_push_word(buf, TTSFPCONFIG(config_dest=11).raw_word())
+  for sem in (TensixSem.MATH_PACK, TensixSem.UNPACK_TO_DEST, TensixSem.MATH_DONE):
+    fw.tensix_push_word(buf, TTSEMINIT(sem_sel=1 << sem, init_value=0, max_value=1).raw_word())
 
   # init_risc_noc_coords
   for noc in range(2):
@@ -185,7 +187,7 @@ def build(*, text_base: dict[str, int] = Firmware.TEXT_BASE) -> Kernel:
   noc_init(fw)
   init_noc_local_state(fw)
   # invalidate_all_risc_icaches
-  fw.write32(Tensix.RISCV_IC_INVALIDATE_INVALIDATE_ALL, Tensix.RISCV_IC_ALL_MASK)
+  fw.write32(TensixRegs.RISCV_IC_INVALIDATE_INVALIDATE_ALL, TensixRegs.RISCV_IC_ALL_MASK)
   # init_subordinate_sync
   fw.write32(Mailbox.SUBORDINATE_SYNC, RunSync.ALL_INIT)
   # deassert_all_riscs
@@ -281,7 +283,7 @@ def build(*, text_base: dict[str, int] = Firmware.TEXT_BASE) -> Kernel:
   noc_init(fw)
   init_noc_local_state(fw)
   # invalidate_all_risc_icaches
-  fw.write32(Tensix.RISCV_IC_INVALIDATE_INVALIDATE_ALL, Tensix.RISCV_IC_ALL_MASK)
+  fw.write32(TensixRegs.RISCV_IC_INVALIDATE_INVALIDATE_ALL, TensixRegs.RISCV_IC_ALL_MASK)
   signal_subordinate_if_enabled(fw, 1, RunSync.LOAD)
   for role in (2, 3, 4):
     signal_subordinate_if_enabled(fw, role, RunSync.GO)
