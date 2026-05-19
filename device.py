@@ -8,7 +8,7 @@ from cq import (
 )
 from dram import Allocator, DramBuffer, Shape, tilize, untilize
 import fw
-from ttk.l1 import Core, Dram, L1_ALIGN, TensixL1, TensixMMIO, align_down, align_up, as_bytes
+from ttk.addrs import Core, Dram, L1_ALIGN, TensixL1, TensixMMIO, align_down, align_up, as_bytes
 from pcie import BoardInfo, PCIDevice, TLBWindow
 from program import (
   DevMsgs, Dtype, FAST_CQ_NUM_CIRCULAR_BUFFERS, GoMsg, IRCommand, LaunchMsg,

@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from asm import Kernel
-from ttk.l1 import TensixMMIO
+from ttk.addrs import TensixMMIO
 
 
 OLD_BLACKHOLE_PY = Path(__file__).resolve().parents[1] / "blackhole-py-old"

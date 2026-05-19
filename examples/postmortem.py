@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import struct
 
-from ttk.l1 import TensixL1, TensixMMIO
+from ttk.addrs import TensixL1, TensixMMIO
 from pcie import PCIDevice, TLBWindow
 
 

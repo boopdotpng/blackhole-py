@@ -5,7 +5,7 @@ from ctypes import c_uint8 as u8, c_uint16 as u16, c_uint32 as u32
 from dataclasses import dataclass, field
 from enum import Enum
 from asm import Kernel, Segment, boot_jal
-from ttk.l1 import L1_ALIGN, S, TensixL1, TensixMMIO, align_up, as_bytes, build_bank_noc_table
+from ttk.addrs import L1_ALIGN, S, TensixL1, TensixMMIO, align_up, as_bytes, build_bank_noc_table
 
 Core = tuple[int, int]
 Rect = tuple[int, int, int, int]

@@ -110,7 +110,7 @@ class ConstEvaluator(ast.NodeVisitor):
 def parse_symbols() -> tuple[list[Symbol], dict[int, list[Symbol]]]:
   env: dict[str, Any] = {}
   symbols: list[Symbol] = []
-  files = [ROOT / "asm.py", ROOT / "ttk" / "hw" / "l1.py", ROOT / "ttk" / "hw" / "mmio.py"]
+  files = [ROOT / "asm.py", ROOT / "ttk" / "addrs.py", ROOT / "ttk" / "hw" / "l1.py", ROOT / "ttk" / "hw" / "mmio.py"]
   files.extend(sorted(FW_DIR.glob("*.py")))
 
   for path in files:
