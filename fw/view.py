@@ -487,14 +487,24 @@ INDEX_HTML = r"""<!doctype html>
 
     .pc { color: var(--accent); width: 6.5rem; cursor: copy; }
     .pc:hover { text-decoration: underline; }
-    .word { color: var(--dim); width: 5.5rem; }
+    .arrow-cell { width: 1.6rem; padding-left: 0; padding-right: 0; }
     .arrow {
-      width: 1.4rem; color: var(--gold); text-align: center;
+      color: var(--gold); text-align: center;
       cursor: pointer; user-select: none;
     }
     .arrow:hover { color: var(--orange); }
-    .asm { color: var(--text); min-width: 22rem; white-space: pre; }
-    .comment { color: var(--mint); white-space: pre-wrap; min-width: 14rem; }
+    .asm {
+      color: var(--text);
+      white-space: pre;
+      width: 1%;          /* shrink-to-fit */
+      padding-right: 1.2rem;
+    }
+    .comment {
+      color: var(--mint);
+      white-space: pre-wrap;
+      padding-right: 1rem;
+      width: 100%;        /* take the rest */
+    }
     .comment.dim { color: var(--dim); }
 
     /* asm tokens */
@@ -816,7 +826,7 @@ INDEX_HTML = r"""<!doctype html>
       const parts = [
         '<table>',
         '<thead><tr>',
-        '<th>PC</th><th>Word</th><th></th><th>Asm</th><th>Notes</th>',
+        '<th>PC</th><th></th><th>Asm</th><th>Notes</th>',
         '</tr></thead><tbody>'
       ];
       let matches = 0;
@@ -827,7 +837,7 @@ INDEX_HTML = r"""<!doctype html>
 
         if (state.labels && row.labels.length) {
           parts.push(
-            `<tr class="label-row" id="pc-${row.pc}"><td colspan="5">` +
+            `<tr class="label-row" id="pc-${row.pc}"><td colspan="4">` +
             row.labels.map(l => `<span class="lbl">${esc(l)}</span>`).join(" ") +
             `</td></tr>`
           );
@@ -846,9 +856,8 @@ INDEX_HTML = r"""<!doctype html>
               : "");
 
         parts.push(
-          `<tr id="line-${row.pc}">` +
+          `<tr id="line-${row.pc}" title="word: 0x${row.wordHex}">` +
           `<td class="pc" data-copy="0x${row.pcHex}">${hi(row.pcHex)}</td>` +
-          `<td class="word">${hi(row.wordHex)}</td>` +
           `<td class="arrow-cell">${arrow}</td>` +
           `<td class="asm">${renderAsm(row)}</td>` +
           `<td class="comment">${commentHtml}</td>` +

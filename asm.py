@@ -9,7 +9,7 @@ from ttk.mixins import CbMixin, FlowMixin, NocMixin, RvMixin, TensixMixin
 CoreArgs = Callable[[int, int], list[int]]
 
 @dataclass(frozen=True)
-class _Ref:
+class Fixup:
   op: str
   operands: tuple
   label: str
@@ -71,7 +71,7 @@ class Asm(TensixMixin, NocMixin, CbMixin, FlowMixin, RvMixin):
     return "\n".join(lines)
 
   def _repr_item(self, item) -> str:
-    if not isinstance(item, _Ref):
+    if not isinstance(item, Fixup):
       return repr(item)
     args = ", ".join(repr(arg) for arg in item.operands)
     if args:
@@ -89,7 +89,7 @@ class Asm(TensixMixin, NocMixin, CbMixin, FlowMixin, RvMixin):
     return self
 
   def _ref(self, op: str, operands: tuple, label: str):
-    self.items.append(_Ref(op, operands, label, self.pc))
+    self.items.append(Fixup(op, operands, label, self.pc))
     return self
 
   def _rv_emit(self, name: str, *args):
@@ -206,7 +206,7 @@ class Asm(TensixMixin, NocMixin, CbMixin, FlowMixin, RvMixin):
     self.label(end_label)
 
   def _resolve(self, item):
-    if not isinstance(item, _Ref):
+    if not isinstance(item, Fixup):
       return item
     if item.label not in self.labels:
       raise ValueError(f"undefined label {item.label!r}")
