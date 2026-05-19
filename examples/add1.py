@@ -66,6 +66,7 @@ DBG_UNPACK_SYNC0 = DBG_BASE + 0x28
 DBG_QSTATUS1 = DBG_BASE + 0x30
 DBG_BSTATUS1 = DBG_BASE + 0x34
 DBG_UNPACK_SYNC1 = DBG_BASE + 0x38
+DBG_NCRISC = DBG_BASE + 0x3C
 PCBUF_SEM_BASE = 0xFFE80020
 UNPACK_MOP_CFG = [
   4, 1, 0x420080C1, 0x02000000, 0x02000000,
@@ -124,23 +125,6 @@ def _expected_add1(src: bytes) -> bytes:
 
 def _first_mismatch(got: bytes, exp: bytes) -> int | None:
   return next((i for i, (g, e) in enumerate(zip(got, exp)) if g != e), None)
-
-
-def _debug_postmortem_existing_device(device: Device):
-  if not os.environ.get("TT_DEBUG_POSTMORTEM_CORE"):
-    return
-  x, y = os.environ["TT_DEBUG_POSTMORTEM_CORE"].split(",", 1)
-  core = (int(x, 0), int(y, 0))
-  addrs = sorted(addr for addr in Kernel._debug_addrs if 0 <= addr < TensixL1.SIZE)
-  if not addrs:
-    return
-  with TLBWindow(device.dev, core) as win:
-    Kernel.print_debug_legend(file=sys.stderr)
-    print(f"debug postmortem core {core}", file=sys.stderr)
-    for addr in addrs:
-      data = bytes(win.mm[addr + i] for i in range(4))
-      word = struct.unpack("<I", data)[0]
-      print(f"0x{addr:x}: 0x{word:08x}", file=sys.stderr)
 
 
 def _local_noc0_coord(fw: Kernel, out=a5):
@@ -430,9 +414,14 @@ def _record_sfpu_add1_replay(fw: Kernel):
 
 
 def _sfpu_add1_face_loop(fw: Kernel):
-  # These are the RVTT custom instruction encodings from the old add1 TRISC1
-  # kernel, not INSTRN_BUF Tensix words. Emitting them directly avoids flooding
-  # the coprocessor instruction FIFO from RISC-V.
+  # Mirrors compiled C++ `add_unary_tile` (calculate_binop_with_scalar) structure:
+  # 4 outer iters (one per face) of:
+  #   - preload L1 with 0x3F800000 (+1.0) via two TTSFPLOADI MMIO writes to INSTRN_BUF
+  #   - 8 inner SFPU iters (sfpload/sfpadd/sfpnop/sfpstore/ttincrwc)
+  #   - two ttsetrwc 0,4,8,0,0,4 to advance to next face
+  # The L1 preload inside the outer loop is critical — the compiled kernel does
+  # it on every face entry. Without it, the SFPU pipeline stalls partway through.
+
   def one_face(iters: int):
     loop = fw._new_label("sfpu_add1")
     done = fw._new_label("sfpu_add1_done")
@@ -450,19 +439,27 @@ def _sfpu_add1_face_loop(fw: Kernel):
     fw.j(loop)
     fw.label(done)
 
+  def preload_l1_const():
+    # TTSFPLOADI L1, mod=10, imm=0x0000 (low half = 0)
+    # TTSFPLOADI L1, mod=8,  imm=0x3F80 (high half = 0x3F80)
+    # Combined: L1 := 0x3F800000 (= +1.0 as fp32)
+    _write_tensix_instr_word(fw, 0x711A0000, tmp_addr=t0, tmp_val=t1)
+    _write_tensix_instr_word(fw, 0x71183F80, tmp_addr=t0, tmp_val=t1)
+
   if "TT_DEBUG_SFPU_ITERS" in os.environ:
     one_face(int(os.environ["TT_DEBUG_SFPU_ITERS"], 0))
     return
 
-  for _ in range(4):
-    one_face(4)
-    fw.delay_cycles(64, count=t2)
-    one_face(4)
-    fw.delay_cycles(64, count=t2)
+  for k in range(4):
+    fw.breadcrumb(DBG_TRISC1, f"trisc1:face_loop_outer{k}_enter")
+    preload_l1_const()
+    one_face(8)
+    fw.breadcrumb(DBG_TRISC1, f"trisc1:face_loop_outer{k}_post_face")
     fw.emit(
       0xDC480010,  # ttsetrwc 0,4,8,0,0,4
       0xDC480010,  # ttsetrwc 0,4,8,0,0,4
     )
+    fw.breadcrumb(DBG_TRISC1, f"trisc1:face_loop_outer{k}_post_setrwc")
 
 
 def _wait_mmio_low_byte_zero(fw: Kernel, addr: int, *, ptr=t0, tmp=t1):
@@ -683,11 +680,14 @@ def add1_brisc_reader() -> Kernel:
 
 def add1_ncrisc_writer(num_banks: int) -> Kernel:
   fw = Kernel()
+  fw.breadcrumb(DBG_NCRISC, "ncrisc:0x4000")
   _read_rta_from(fw, NM.RTA_L1_BASE_PTR, (s0, s2, s3, s4))
   fw.li(s5, 0)
   fw.label("ncrisc_loop")
+  fw.breadcrumb(DBG_NCRISC, "ncrisc:0x4001")
   fw.beq(s5, s3, "ncrisc_done")
   _cb_wait_front(fw, NM.CB_INTERFACE, 16)
+  fw.breadcrumb(DBG_NCRISC, "ncrisc:0x4002")
   if not os.environ.get("TT_DEBUG_L1_IO"):
     fw.add(a1, s2, s5)
     fw.mv(a0, s0)
@@ -699,10 +699,13 @@ def add1_ncrisc_writer(num_banks: int) -> Kernel:
     fw.li(t6, TILE_BYTES)
     fw.noc_write(1, 0, t5, a0, 0, a2, t6, a=t0, v=t1)
     fw.noc_write_barrier(1, t4, addr=t0, val=t1)
+  fw.breadcrumb(DBG_NCRISC, "ncrisc:0x4003")
   _cb_pop_front(fw, NM.CB_INTERFACE, 16)
+  fw.breadcrumb(DBG_NCRISC, "ncrisc:0x4004")
   fw.addi(s5, s5, 1)
   fw.j("ncrisc_loop")
   fw.label("ncrisc_done")
+  fw.breadcrumb(DBG_NCRISC, "ncrisc:0x4005")
   fw.ret()
   return fw
 
@@ -1030,6 +1033,12 @@ def add1_trisc_compute(trisc_id: int) -> Kernel:
   fw.addi(s5, s5, 1)
   fw.j("trisc_loop")
   fw.label("trisc_done")
+  if trisc_id == 0:
+    fw.breadcrumb(DBG_TRISC0, "trisc0:0x20FF")
+  elif trisc_id == 1:
+    fw.breadcrumb(DBG_TRISC1, "trisc1:0x21FF")
+  else:
+    fw.breadcrumb(DBG_TRISC2, "trisc2:0x22FF")
   fw.lw(ra, sp, 12)
   fw.addi(sp, sp, 16)
   fw.ret()
@@ -1106,7 +1115,8 @@ def main():
     os.environ.setdefault("TT_DEBUG_KEEP_POWER", "1")
   for addr in (
     INPUT_L1, INPUT_L1 + 4, OUTPUT_L1, OUTPUT_L1 + 4,
-    DBG_BRISC,
+    DBG_BRISC, DBG_NCRISC,
+    SYNC_OUT_RESERVED, SYNC_READ, SYNC_DONE0, SYNC_DONE1, SYNC_DONE2,
     DBG_SEMS0, DBG_SEMS1, DBG_SEMS2,
     DBG_QSTATUS0, DBG_BSTATUS0, DBG_UNPACK_SYNC0,
     DBG_QSTATUS1, DBG_BSTATUS1, DBG_UNPACK_SYNC1,
@@ -1131,11 +1141,7 @@ def main():
       dst_buf = device.dram.alloc(n_tiles, dtype=Dtype.Float16_b, shape=(n_tiles, 32, 32), name="dst")
       num_banks = len(device.dram.bank_tiles)
       prog = build_program(src_buf.addr, dst_buf.addr, tiles_per_core, num_cores, num_banks)
-    try:
-      timings = device.run(prog)
-    except Exception:
-      _debug_postmortem_existing_device(device)
-      raise
+    timings = device.run(prog)
     if os.environ.get("TT_DEBUG_L1_IO"):
       with TLBWindow(device.dev, device.cores[0]) as win:
         out = bytes(win.mm[OUTPUT_L1 + i] for i in range(n_tiles * TILE_BYTES))

@@ -19,7 +19,13 @@ def parse_debug_core(value: str) -> tuple[int, int]:
   x, y = value.split(",", 1)
   return int(x, 0), int(y, 0)
 
-def print_debug_postmortem(core: tuple[int, int], addrs: set[int], *, file=None):
+def print_debug_postmortem(
+  core: tuple[int, int],
+  addrs: set[int],
+  events: list[DebugEvent] | None = None,
+  *,
+  file=None,
+):
   from pcie import PCIDevice, TLBWindow
 
   if not addrs:
@@ -29,13 +35,51 @@ def print_debug_postmortem(core: tuple[int, int], addrs: set[int], *, file=None)
   dev = PCIDevice(use_vfio=False)
   try:
     with TLBWindow(dev, core) as win:
-      print(f"debug postmortem core {core}", file=out)
+      words = {}
       for addr in sorted(addrs):
         data = bytes(win.mm[addr + i] for i in range(4))
-        word = struct.unpack("<I", data)[0]
-        print(f"0x{addr:x}: 0x{word:08x}", file=out)
+        words[addr] = struct.unpack("<I", data)[0]
+      print_debug_values(core, words, events or [], file=out)
   finally:
     dev.close()
+
+def print_debug_values(
+  core: tuple[int, int],
+  words: dict[int, int],
+  events: list[DebugEvent],
+  *,
+  file=None,
+):
+  if not words:
+    return
+
+  out = sys.stdout if file is None else file
+  print(f"debug core {core}", file=out)
+
+  breadcrumbs = [event for event in events if event.kind == "breadcrumb"]
+  if breadcrumbs:
+    print("breadcrumbs", file=out)
+    by_index = {event.index: event for event in breadcrumbs}
+    for addr in sorted({event.address for event in breadcrumbs}):
+      event = by_index.get(words.get(addr))
+      name = event.name if event is not None else "not reached"
+      print(f"  {name} @ 0x{addr:x}", file=out)
+
+  writes = [event for event in events if event.kind == "debug_write"]
+  if writes:
+    print("debug writes", file=out)
+    for event in writes:
+      word = words.get(event.address)
+      if word is None:
+        continue
+      print(f"  {event.name} = 0x{word:08x} @ 0x{event.address:x}", file=out)
+
+  known_addrs = {event.address for event in events}
+  other_addrs = sorted(set(words) - known_addrs)
+  if other_addrs:
+    print("debug addresses", file=out)
+    for addr in other_addrs:
+      print(f"  0x{addr:x} = 0x{words[addr]:08x}", file=out)
 
 class Debug:
   _debug_postmortem_registered = False
@@ -59,8 +103,7 @@ class Debug:
         return
       core = parse_debug_core(os.environ.get("TT_DEBUG_POSTMORTEM_CORE", "1,2"))
       try:
-        cls.print_debug_legend(file=sys.stderr)
-        print_debug_postmortem(core, cls._debug_addrs, file=sys.stderr)
+        print_debug_postmortem(core, cls._debug_addrs, cls._debug_events, file=sys.stderr)
       except Exception as exc:
         print(f"debug postmortem failed: {exc}", file=sys.stderr)
 
@@ -71,16 +114,17 @@ class Debug:
     if not cls._debug_events:
       return
     out = sys.stdout if file is None else file
-    print("debug trace legend", file=out)
-    for event in cls._debug_events:
-      suffix = "" if event.value is None else f" = {event.value}"
-      if event.kind == "breadcrumb":
-        print(f"{event.index}: breadcrumb {event.name}", file=out)
-      else:
-        print(
-          f"{event.index}: {event.kind} {event.name} @ 0x{event.address:x}{suffix}",
-          file=out,
-        )
+    breadcrumbs = [event for event in cls._debug_events if event.kind == "breadcrumb"]
+    writes = [event for event in cls._debug_events if event.kind == "debug_write"]
+    if breadcrumbs:
+      print("breadcrumbs", file=out)
+      for event in breadcrumbs:
+        print(f"  {event.index}: {event.name} @ 0x{event.address:x}", file=out)
+    if writes:
+      print("debug writes", file=out)
+      for event in writes:
+        value = "" if event.value is None else f" = {event.value}"
+        print(f"  {event.name}{value} @ 0x{event.address:x}", file=out)
 
   @staticmethod
   def next_debug_value() -> int:
@@ -104,7 +148,7 @@ class Debug:
     address: int,
     value: int | Reg,
     *,
-    name: str = "debug_write",
+    name: str,
     tmp_addr: Reg = t0,
     tmp_val: Reg = t1,
   ):

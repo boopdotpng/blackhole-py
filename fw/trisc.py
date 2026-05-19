@@ -156,6 +156,8 @@ def build(trisc_id: int) -> Kernel:
   fw.write8(data["my_relative_y"], t4, tmp_addr=t3)
 
   fw.run_launch_kernel(2 + trisc_id)
+  # FW-level breadcrumb after kernel return — addr depends on trisc_id
+  fw.breadcrumb(0x19000 + trisc_id * 4, f"trisc{trisc_id}_fw:kernel_ret")
 
   if not os.environ.get("TT_DEBUG_SKIP_FINAL_TRISC_SYNC"):
     # tensix_sync
@@ -163,7 +165,9 @@ def build(trisc_id: int) -> Kernel:
     fw.read32(t0, TensixRegs.PC_BUF_SYNC)
     fw.and_(zero, zero, t0)
 
+  fw.breadcrumb(0x19000 + trisc_id * 4, f"trisc{trisc_id}_fw:pre_signal")
   fw.signal_subordinate_done(role)
+  fw.breadcrumb(0x19000 + trisc_id * 4, f"trisc{trisc_id}_fw:post_signal")
   fw.j("run_loop")
   return fw
 

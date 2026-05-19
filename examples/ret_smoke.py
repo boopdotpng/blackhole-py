@@ -26,10 +26,8 @@ def main():
       trisc2=trisc2,
     )
     prog.name = "ret_smoke"
-    timings = device.run(prog)
+    device.run(prog)
     print(f"PASS ret_smoke: launched ret kernels on {num_cores} core(s)")
-    for i, timing in enumerate(timings):
-      print(f"  [{i}] {timing['name']} {timing['us']:,.1f} us")
   finally:
     device.close()
 
