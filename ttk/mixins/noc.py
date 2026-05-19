@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from dsl import Reg, t0, t1, zero
+from collections.abc import Iterable
+
+from dsl import Reg, t0, t1, t2, t3, t4, t5, zero
 from ttk.hw.mmio import MMIO
 from ttk.hw.noc import NOC
 
@@ -39,6 +41,36 @@ class NocMixin:
 
   def noc_cmd_reg(self, noc: int, buf: int, reg: int, value: int | Reg, *, addr: Reg = t0, tmp: Reg = t1):
     return self.write32(self.noc_cmd_addr(noc, buf, reg), value, tmp_addr=addr, tmp_val=tmp)
+
+  def noc_init_cmd_bufs(self, noc: int, coord: Reg, *, atomic_ret_addr: int,
+                        read_ctrl: int, wr_buf: int = 0, rd_buf: int = 1,
+                        wr_reg_buf: int = 2, at_buf: int = 3,
+                        tmp_addr: Reg = t0, tmp_val: Reg = t1):
+    self.noc_cmd_reg(noc, wr_buf, NOC.TARG_ADDR_MID, 0, addr=tmp_addr, tmp=tmp_val)
+    self.noc_cmd_reg(noc, wr_buf, NOC.TARG_ADDR_COORDINATE, coord, addr=tmp_addr, tmp=tmp_val)
+    self.noc_cmd_reg(noc, wr_reg_buf, NOC.TARG_ADDR_MID, 0, addr=tmp_addr, tmp=tmp_val)
+    self.noc_cmd_reg(noc, wr_reg_buf, NOC.TARG_ADDR_COORDINATE, coord, addr=tmp_addr, tmp=tmp_val)
+    self.noc_cmd_reg(noc, at_buf, NOC.RET_ADDR_LO, atomic_ret_addr, addr=tmp_addr, tmp=tmp_val)
+    self.noc_cmd_reg(noc, at_buf, NOC.RET_ADDR_MID, 0, addr=tmp_addr, tmp=tmp_val)
+    self.noc_cmd_reg(noc, at_buf, NOC.RET_ADDR_COORDINATE, coord, addr=tmp_addr, tmp=tmp_val)
+    self.noc_cmd_reg(noc, rd_buf, NOC.CTRL, read_ctrl, addr=tmp_addr, tmp=tmp_val)
+    self.noc_cmd_reg(noc, rd_buf, NOC.RET_ADDR_MID, 0, addr=tmp_addr, tmp=tmp_val)
+    self.noc_cmd_reg(noc, rd_buf, NOC.RET_ADDR_COORDINATE, coord, addr=tmp_addr, tmp=tmp_val)
+    return self
+
+  def noc_snapshot_status_counters(self, noc_id: Reg, noc_shift: Reg,
+                                   counters: Iterable[tuple[int, int]], *,
+                                   status: Reg = t2, dest: Reg = t3,
+                                   value: Reg = t4, offset: Reg = t5):
+    for counter, local_base in counters:
+      self.li(status, NOC.STATUS_BASE + counter * 4)
+      self.add(status, status, noc_shift)
+      self.lw(value, status, 0)
+      self.slli(offset, noc_id, 2)
+      self.li(dest, local_base)
+      self.add(dest, dest, offset)
+      self.write32(dest, value)
+    return self
 
   def noc_wait_cmd_ready(self, noc: int, buf: int, *, addr: Reg = t0, val: Reg = t1):
     self.li(addr, self.noc_cmd_addr(noc, buf, NOC.CMD_CTRL))

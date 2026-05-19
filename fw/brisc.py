@@ -358,14 +358,12 @@ def init_brisc_launch_globals(fw: Kernel, *, launch: Reg = t0, value: Reg = t1,
 
 
 def init_bank_tables(fw: Kernel):
-  src = MEM_BANK_TO_NOC_SCRATCH
-  fw.copy_words(DRAM_BANK_TO_NOC_XY, src, P100_DRAM_BANK_TO_NOC_SIZE)
-  src += P100_DRAM_BANK_TO_NOC_SIZE
-  fw.copy_words(L1_BANK_TO_NOC_XY, src, P100_L1_BANK_TO_NOC_SIZE)
-  src += P100_L1_BANK_TO_NOC_SIZE
-  fw.copy_words(BANK_TO_DRAM_OFFSET, src, P100_BANK_TO_DRAM_OFFSET_SIZE)
-  src += P100_BANK_TO_DRAM_OFFSET_SIZE
-  fw.copy_words(BANK_TO_L1_OFFSET, src, P100_BANK_TO_L1_OFFSET_SIZE)
+  fw.copy_words(
+    DRAM_BANK_TO_NOC_XY,
+    MEM_BANK_TO_NOC_SCRATCH,
+    P100_DRAM_BANK_TO_NOC_SIZE + P100_L1_BANK_TO_NOC_SIZE +
+    P100_BANK_TO_DRAM_OFFSET_SIZE + P100_BANK_TO_L1_OFFSET_SIZE,
+  )
   return fw
 
 
@@ -375,21 +373,13 @@ def init_noc_local_state(fw: Kernel, *, launch: Reg = t0, noc_id: Reg = t1,
   fw.current_launch_ptr(launch=launch, tmp=value)
   fw.lbu(noc_id, launch, LAUNCH_BRISC_NOC_ID)
   fw.slli(noc_shift, noc_id, 16)
-
-  for counter, base in [
+  fw.noc_snapshot_status_counters(noc_id, noc_shift, [
     (NIU_MST_RD_RESP_RECEIVED, NOC_READS_NUM_ISSUED),
     (NIU_MST_NONPOSTED_WR_REQ_SENT, NOC_NONPOSTED_WRITES_NUM_ISSUED),
     (NIU_MST_WR_ACK_RECEIVED, NOC_NONPOSTED_WRITES_ACKED),
     (NIU_MST_ATOMIC_RESP_RECEIVED, NOC_NONPOSTED_ATOMICS_ACKED),
     (NIU_MST_POSTED_WR_REQ_SENT, NOC_POSTED_WRITES_NUM_ISSUED),
-  ]:
-    fw.li(status, NOC_STATUS_BASE + counter * 4)
-    fw.add(status, status, noc_shift)
-    fw.lw(value, status, 0)
-    fw.slli(status, noc_id, 2)
-    fw.li(dest, base)
-    fw.add(dest, dest, status)
-    fw.write32(dest, value)
+  ], status=status, dest=dest, value=value)
   return fw
 
 
@@ -467,41 +457,17 @@ def noc_init(fw: Kernel, *, noc_id: Reg = t0, coord: Reg = t1,
     fw.slli(noc_id, noc_id, NOC_ADDR_NODE_ID_BITS)
     fw.or_(coord, coord, noc_id)
 
-    fw.write32(fw.noc_cmd_addr(noc, NCRISC_WR_CMD_BUF, NOC_TARG_ADDR_MID), 0, tmp_addr=tmp_addr, tmp_val=tmp_val)
-    fw.write32(
-      fw.noc_cmd_addr(noc, NCRISC_WR_CMD_BUF, NOC_TARG_ADDR_COORDINATE),
+    fw.noc_init_cmd_bufs(
+      noc,
       coord,
-      tmp_addr=tmp_addr,
-    )
-    fw.write32(fw.noc_cmd_addr(noc, NCRISC_WR_REG_CMD_BUF, NOC_TARG_ADDR_MID), 0, tmp_addr=tmp_addr, tmp_val=tmp_val)
-    fw.write32(
-      fw.noc_cmd_addr(noc, NCRISC_WR_REG_CMD_BUF, NOC_TARG_ADDR_COORDINATE),
-      coord,
-      tmp_addr=tmp_addr,
-    )
-    fw.write32(
-      fw.noc_cmd_addr(noc, NCRISC_AT_CMD_BUF, NOC_RET_ADDR_LO),
-      MEM_NOC_ATOMIC_RET_VAL_ADDR,
+      atomic_ret_addr=MEM_NOC_ATOMIC_RET_VAL_ADDR,
+      read_ctrl=NOC_RD_CMD_FIELD,
+      wr_buf=NCRISC_WR_CMD_BUF,
+      rd_buf=NCRISC_RD_CMD_BUF,
+      wr_reg_buf=NCRISC_WR_REG_CMD_BUF,
+      at_buf=NCRISC_AT_CMD_BUF,
       tmp_addr=tmp_addr,
       tmp_val=tmp_val,
-    )
-    fw.write32(fw.noc_cmd_addr(noc, NCRISC_AT_CMD_BUF, NOC_RET_ADDR_MID), 0, tmp_addr=tmp_addr, tmp_val=tmp_val)
-    fw.write32(
-      fw.noc_cmd_addr(noc, NCRISC_AT_CMD_BUF, NOC_RET_ADDR_COORDINATE),
-      coord,
-      tmp_addr=tmp_addr,
-    )
-    fw.write32(
-      fw.noc_cmd_addr(noc, NCRISC_RD_CMD_BUF, NOC_CTRL),
-      NOC_RD_CMD_FIELD,
-      tmp_addr=tmp_addr,
-      tmp_val=tmp_val,
-    )
-    fw.write32(fw.noc_cmd_addr(noc, NCRISC_RD_CMD_BUF, NOC_RET_ADDR_MID), 0, tmp_addr=tmp_addr, tmp_val=tmp_val)
-    fw.write32(
-      fw.noc_cmd_addr(noc, NCRISC_RD_CMD_BUF, NOC_RET_ADDR_COORDINATE),
-      coord,
-      tmp_addr=tmp_addr,
     )
   return fw
 

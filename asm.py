@@ -42,6 +42,7 @@ class Asm(TensixMixin, NocMixin, CbMixin, FlowMixin, RvMixin):
     self.items = []
     self.labels: dict[str, int] = {}
     self._label_id = 0
+    self._reg_consts: dict[int, int] = {}
 
   @property
   def pc(self) -> int:
@@ -52,8 +53,92 @@ class Asm(TensixMixin, NocMixin, CbMixin, FlowMixin, RvMixin):
     return f".L{prefix}_{self._label_id}"
 
   def emit(self, *insns):
-    self.items.extend(insns)
+    for insn in insns:
+      self.items.append(insn)
+      self._track_emit(insn)
     return self
+
+  def _clear_reg_consts(self):
+    self._reg_consts.clear()
+
+  def _set_reg_const(self, reg: Reg, value: int):
+    if int(reg) == int(zero):
+      return
+    self._reg_consts[int(reg)] = value & 0xFFFFFFFF
+
+  def _kill_reg_const(self, reg: Reg):
+    if int(reg) != int(zero):
+      self._reg_consts.pop(int(reg), None)
+
+  def _reg_const(self, reg: Reg) -> int | None:
+    return self._reg_consts.get(int(reg))
+
+  def _const_delta(self, target: int, base: int) -> int | None:
+    delta = (target - base) & 0xFFFFFFFF
+    if delta & 0x80000000:
+      delta -= 0x100000000
+    return delta if -2048 <= delta <= 2047 else None
+
+  def _track_emit(self, insn):
+    name = getattr(insn, "name", None)
+    if name is None:
+      self._clear_reg_consts()
+      return
+
+    if name == "lui":
+      self._set_reg_const(insn.rd, insn.imm << 12)
+      return
+
+    if name == "addi":
+      base = self._reg_const(insn.rs1)
+      if base is not None:
+        self._set_reg_const(insn.rd, base + insn.imm)
+      else:
+        self._kill_reg_const(insn.rd)
+      return
+
+    if name in {"ori", "andi", "xori", "slli", "srli"}:
+      base = self._reg_const(insn.rs1)
+      if base is not None:
+        match name:
+          case "ori":
+            self._set_reg_const(insn.rd, base | insn.imm)
+          case "andi":
+            self._set_reg_const(insn.rd, base & insn.imm)
+          case "xori":
+            self._set_reg_const(insn.rd, base ^ insn.imm)
+          case "slli":
+            self._set_reg_const(insn.rd, base << (insn.imm & 0x1F))
+          case "srli":
+            self._set_reg_const(insn.rd, (base & 0xFFFFFFFF) >> (insn.imm & 0x1F))
+      else:
+        self._kill_reg_const(insn.rd)
+      return
+
+    if name in {"add", "sub", "or", "and"}:
+      lhs, rhs = self._reg_const(insn.rs1), self._reg_const(insn.rs2)
+      if lhs is not None and rhs is not None:
+        match name:
+          case "add":
+            self._set_reg_const(insn.rd, lhs + rhs)
+          case "sub":
+            self._set_reg_const(insn.rd, lhs - rhs)
+          case "or":
+            self._set_reg_const(insn.rd, lhs | rhs)
+          case "and":
+            self._set_reg_const(insn.rd, lhs & rhs)
+      else:
+        self._kill_reg_const(insn.rd)
+      return
+
+    if name in {"lw", "lbu", "lhu", "jal", "jalr", "csrrs", "csrrc"}:
+      self._kill_reg_const(insn.rd)
+      if name in {"jal", "jalr"}:
+        self._clear_reg_consts()
+      return
+
+    if name in {"beq", "bne", "blt", "bge", "bltu", "bgeu"}:
+      return
 
   def __repr__(self) -> str:
     labels_by_pc: dict[int, list[str]] = {}
@@ -85,11 +170,14 @@ class Asm(TensixMixin, NocMixin, CbMixin, FlowMixin, RvMixin):
   def label(self, name: str):
     if name in self.labels:
       raise ValueError(f"duplicate label {name!r}")
+    self._clear_reg_consts()
     self.labels[name] = self.pc
     return self
 
   def _ref(self, op: str, operands: tuple, label: str):
     self.items.append(Fixup(op, operands, label, self.pc))
+    if op == "jal":
+      self._clear_reg_consts()
     return self
 
   def _rv_emit(self, name: str, *args):
@@ -104,9 +192,18 @@ class Asm(TensixMixin, NocMixin, CbMixin, FlowMixin, RvMixin):
 
   # Pseudo-instructions.
   def li(self, rd: Reg, imm: int):
+    imm32 = imm & 0xFFFFFFFF
+    if self._reg_const(rd) == imm32:
+      return self
+    for reg_idx in (int(rd), *self._reg_consts.keys()):
+      known = self._reg_consts.get(reg_idx)
+      if known is None:
+        continue
+      delta = self._const_delta(imm32, known)
+      if delta is not None:
+        return self.addi(rd, Reg(reg_idx), delta)
     if -2048 <= imm <= 2047:
       return self.addi(rd, zero, imm)
-    imm32 = imm & 0xFFFFFFFF
     signed = imm32 - 0x100000000 if imm32 & 0x80000000 else imm32
     # Round up when bit 11 is set because addi sign-extends the low 12 bits.
     hi = (signed + 0x800) >> 12

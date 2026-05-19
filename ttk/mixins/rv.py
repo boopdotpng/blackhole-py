@@ -4,41 +4,61 @@ from dsl import Reg, t0, t1, t2, t3, zero
 
 
 class RvMixin:
+  def _addr_reg_offset(self, addr: int | Reg, tmp_addr: Reg, *, avoid: tuple[Reg, ...] = ()) -> tuple[Reg, int]:
+    if not isinstance(addr, int):
+      return addr, 0
+    known = self._reg_const(tmp_addr)
+    if known is not None:
+      delta = addr - known
+      if -2048 <= delta <= 2047:
+        return tmp_addr, delta
+    avoid_regs = {int(reg) for reg in avoid}
+    for reg_idx, known in self._reg_consts.items():
+      if reg_idx in avoid_regs:
+        continue
+      delta = addr - known
+      if -2048 <= delta <= 2047:
+        return Reg(reg_idx), delta
+    self.li(tmp_addr, addr)
+    return tmp_addr, 0
+
+  def _value_reg(self, value: int | Reg, tmp_val: Reg) -> Reg:
+    if not isinstance(value, int):
+      return value
+    if value == 0:
+      return zero
+    value &= 0xFFFFFFFF
+    if self._reg_const(tmp_val) == value:
+      return tmp_val
+    for reg_idx, known in self._reg_consts.items():
+      if known == value:
+        return Reg(reg_idx)
+    self.li(tmp_val, value)
+    return tmp_val
+
   def write32(self, addr: int | Reg, value: int | Reg, *, tmp_addr: Reg = t0, tmp_val: Reg = t1):
-    if isinstance(addr, int):
-      self.li(tmp_addr, addr)
-      addr = tmp_addr
-    if isinstance(value, int):
-      self.li(tmp_val, value)
-      value = tmp_val
-    return self.sw(value, addr, 0)
+    avoid = (tmp_val,) if isinstance(value, int) else ()
+    addr, offset = self._addr_reg_offset(addr, tmp_addr, avoid=avoid)
+    value = self._value_reg(value, tmp_val)
+    return self.sw(value, addr, offset)
 
   def read32(self, dst: Reg, addr: int | Reg, *, tmp_addr: Reg = t0):
-    if isinstance(addr, int):
-      self.li(tmp_addr, addr)
-      addr = tmp_addr
-    return self.lw(dst, addr, 0)
+    addr, offset = self._addr_reg_offset(addr, tmp_addr)
+    return self.lw(dst, addr, offset)
 
   def write8(self, addr: int | Reg, value: int | Reg, *, tmp_addr: Reg = t0, tmp_val: Reg = t1):
-    if isinstance(addr, int):
-      self.li(tmp_addr, addr)
-      addr = tmp_addr
-    if isinstance(value, int):
-      self.li(tmp_val, value)
-      value = tmp_val
-    return self.sb(value, addr, 0)
+    avoid = (tmp_val,) if isinstance(value, int) else ()
+    addr, offset = self._addr_reg_offset(addr, tmp_addr, avoid=avoid)
+    value = self._value_reg(value, tmp_val)
+    return self.sb(value, addr, offset)
 
   def read8(self, dst: Reg, addr: int | Reg, *, tmp_addr: Reg = t0):
-    if isinstance(addr, int):
-      self.li(tmp_addr, addr)
-      addr = tmp_addr
-    return self.lbu(dst, addr, 0)
+    addr, offset = self._addr_reg_offset(addr, tmp_addr)
+    return self.lbu(dst, addr, offset)
 
   def read16(self, dst: Reg, addr: int | Reg, *, tmp_addr: Reg = t0):
-    if isinstance(addr, int):
-      self.li(tmp_addr, addr)
-      addr = tmp_addr
-    return self.lhu(dst, addr, 0)
+    addr, offset = self._addr_reg_offset(addr, tmp_addr)
+    return self.lhu(dst, addr, offset)
 
   def zero_words(self, addr: int, words: int, *, ptr: Reg = t0, count: Reg = t1):
     from asm import cond

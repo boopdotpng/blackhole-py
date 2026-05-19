@@ -103,14 +103,12 @@ def init_risc_noc_coords(fw: Kernel, *, noc_id: Reg = t0, coord: Reg = t1, tmp: 
 
 
 def init_bank_tables(fw: Kernel):
-  src = MEM_BANK_TO_NOC_SCRATCH
-  fw.copy_words(DRAM_BANK_TO_NOC_XY, src, P100_DRAM_BANK_TO_NOC_SIZE)
-  src += P100_DRAM_BANK_TO_NOC_SIZE
-  fw.copy_words(L1_BANK_TO_NOC_XY, src, P100_L1_BANK_TO_NOC_SIZE)
-  src += P100_L1_BANK_TO_NOC_SIZE
-  fw.copy_words(BANK_TO_DRAM_OFFSET, src, P100_BANK_TO_DRAM_OFFSET_SIZE)
-  src += P100_BANK_TO_DRAM_OFFSET_SIZE
-  fw.copy_words(BANK_TO_L1_OFFSET, src, P100_BANK_TO_L1_OFFSET_SIZE)
+  fw.copy_words(
+    DRAM_BANK_TO_NOC_XY,
+    MEM_BANK_TO_NOC_SCRATCH,
+    P100_DRAM_BANK_TO_NOC_SIZE + P100_L1_BANK_TO_NOC_SIZE +
+    P100_BANK_TO_DRAM_OFFSET_SIZE + P100_BANK_TO_L1_OFFSET_SIZE,
+  )
   return fw
 
 
