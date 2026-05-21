@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import csv
 import curses
 import sys
 import time
@@ -86,6 +87,13 @@ def _fmt_metric(tag_name: str, raw: int) -> str:
   if decode == "hex":
     return f"0x{raw:08x}"
   return f"{raw & 0xFFFFFFFF}{unit}"
+
+def _csv_metric_value(tag_name: str, raw: int) -> tuple[str, str]:
+  _, unit, decode = METRICS[tag_name]
+  unit = unit.strip()
+  if decode == "s16.16":
+    return f"{_s16_16(raw):.2f}", unit
+  return str(raw & 0xFFFFFFFF), unit
 
 def _s16_16(raw: int) -> float:
   raw &= 0xFFFFFFFF
@@ -185,6 +193,67 @@ def _device_snapshot(dev: PCIDevice) -> dict:
 
   return {"layout": layout, "left": left, "right": right, "board": board_name, "heartbeat": tag("TIMER_HEARTBEAT")}
 
+CSV_COLUMNS = [
+  "device_index",
+  "bdf",
+  "kind",
+  "name",
+  "label",
+  "value",
+  "unit",
+  "raw_hex",
+  "raw_uint",
+]
+
+def _device_csv_rows(index: int, dev: PCIDevice) -> list[dict[str, str]]:
+  layout = dev.telemetry_layout()
+  board = dev.board_info(layout)
+  rows: list[dict[str, str]] = []
+
+  def row(kind: str, name: str, label: str, value: object | None,
+          unit: str = "", raw: int | None = None) -> None:
+    raw_u32 = None if raw is None else raw & 0xFFFFFFFF
+    rows.append({
+      "device_index": str(index),
+      "bdf": dev.bdf,
+      "kind": kind,
+      "name": name,
+      "label": label,
+      "value": "" if value is None else str(value),
+      "unit": unit,
+      "raw_hex": "" if raw_u32 is None else f"0x{raw_u32:08x}",
+      "raw_uint": "" if raw_u32 is None else str(raw_u32),
+    })
+
+  row("metadata", "telemetry_table", "Telemetry table", f"0x{layout['table_base']:08x}")
+  row("metadata", "telemetry_data", "Telemetry data", f"0x{layout['data_base']:08x}")
+  row("metadata", "telemetry_entry_count", "Telemetry entry count", layout["entry_count"])
+  row("metadata", "board", "Board", board.arch)
+  row("metadata", "pcie_link", "PCIe link", _pcie_link(dev))
+  row("metadata", "tensix_cores", "Tensix cores", board.core_count)
+  row("metadata", "harvested_dram_bank", "Harvested DRAM Bank", board.harvested_dram_bank)
+
+  for tag in sorted(layout["tag_to_offset"]):
+    name = TAG_ID_TO_NAME.get(tag, f"TAG_{tag}")
+    raw = read_telemetry_entry(dev, layout, tag)
+    label = METRICS[name][0] if name in METRICS else name
+    if name in METRICS:
+      value, unit = _csv_metric_value(name, raw)
+    elif name == "FLASH_BUNDLE_VERSION":
+      value, unit = _fmt_fw_bundle(raw) or "", ""
+    else:
+      value, unit = str(raw & 0xFFFFFFFF), ""
+    row("telemetry", name, label, value, unit, raw)
+
+  return rows
+
+def write_csv(indices: list[int]) -> None:
+  writer = csv.DictWriter(sys.stdout, fieldnames=CSV_COLUMNS, lineterminator="\n")
+  writer.writeheader()
+  for index in indices:
+    with PCIDevice(index=index, use_vfio=False) as dev:
+      writer.writerows(_device_csv_rows(index, dev))
+
 def show_device(index: int):
   with PCIDevice(index=index, use_vfio=False) as dev:
     snap = _device_snapshot(dev)
@@ -219,8 +288,10 @@ def parse_args() -> argparse.Namespace:
   parser = argparse.ArgumentParser(description="Standalone Blackhole telemetry and reset tool")
   parser.add_argument("-r", "--reset", type=int, metavar="DEVICE", nargs="?", const=0, default=None,
                       help="reset a Blackhole device (default: device 0)")
-  parser.add_argument("--snapshot", type=int, metavar="DEVICE", nargs="?", const=-1, default=None,
-                      help="print a one-shot snapshot, optionally for one device")
+  parser.add_argument("--csv", type=int, metavar="DEVICE", nargs="?", const=-1, default=None,
+                      help="print a one-shot CSV report, optionally for one device")
+  parser.add_argument("--snapshot", dest="csv", type=int, metavar="DEVICE", nargs="?", const=-1,
+                      help=argparse.SUPPRESS)
   return parser.parse_args()
 
 # Row type: (label, value, frac_or_None). A line is a list of (text, attr) segments.
@@ -544,11 +615,9 @@ def main():
   if not devices:
     raise SystemExit("no Blackhole PCIe devices found")
 
-  indices = [args.snapshot] if isinstance(args.snapshot, int) and args.snapshot >= 0 else list(range(len(devices)))
-  if args.snapshot is not None or not sys.stdout.isatty() or not sys.stdin.isatty():
-    for i, index in enumerate(indices):
-      if i: print()
-      show_device(index)
+  indices = [args.csv] if isinstance(args.csv, int) and args.csv >= 0 else list(range(len(devices)))
+  if args.csv is not None or not sys.stdout.isatty() or not sys.stdin.isatty():
+    write_csv(indices)
   else:
     _run_tui(indices)
 
