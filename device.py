@@ -8,7 +8,7 @@ from cq import (
 )
 from dram import Allocator, DramBuffer, Shape, tilize, untilize
 import fw
-from ttk.addrs import Core, Dram, L1_ALIGN, TensixL1, TensixMMIO, align_down, align_up, as_bytes
+from ttk.addrs import Core, Dram, L1_ALIGN, TensixL1, TensixMMIO, align_down, as_bytes
 from pcie import BoardInfo, PCIDevice, TLBWindow
 from program import (
   DevMsgs, Dtype, FAST_CQ_NUM_CIRCULAR_BUFFERS, GoMsg, IRCommand, LaunchMsg,
@@ -143,7 +143,6 @@ class Device:
     prefetch_img = b"\0" * L1_ALIGN + struct.pack("<I", CQ_DISPATCH_CB_PAGES).ljust(L1_ALIGN, b"\0") + b"\0" * L1_ALIGN
     prefetch_segments = cq_fw.build_prefetch().compile()
     dispatch_segments = cq_fw.build_dispatch().compile()
-    dispatch_sub_segments = cq_fw.build_dispatch_subordinate().compile()
 
     self._upload_cq_core(
       prefetch_core,
@@ -161,14 +160,12 @@ class Device:
     dispatch_win.write32(CQ_COMPLETION_Q1_EVENT, 0)
     dispatch_win.mm[CQ_DISPATCH_SYNC_SEM : CQ_DISPATCH_SYNC_SEM + 8 * L1_ALIGN] = b"\0" * (8 * L1_ALIGN)
 
-    dispatch_size = max((segment.addr + len(segment.data) for segment in dispatch_segments), default=0)
-    ncrisc_off = align_up(kernel_off + dispatch_size, L1_ALIGN)
     dispatch_img = b"\0" * (3 * L1_ALIGN)
     self._upload_cq_core(
       dispatch_core,
       dispatch_img,
-      self._build_cq_launch(kernel_off, ncrisc_off, sem_off=L1_ALIGN),
-      [(kernel_off, dispatch_segments), (ncrisc_off, dispatch_sub_segments)],
+      self._build_cq_launch(kernel_off, sem_off=L1_ALIGN, brisc_noc_id=1),
+      [(kernel_off, dispatch_segments)],
     )
 
   def _upload_cq_core(self, core: Core, image: bytes, launch: LaunchMsg, kernels: list[tuple[int, list]]):
@@ -185,7 +182,7 @@ class Device:
     win.write(TensixL1.GO_MSG, struct.pack("<I", go.all))
 
   @staticmethod
-  def _build_cq_launch(brisc_text_off: int, ncrisc_text_off: int = 0, sem_off: int = 16) -> LaunchMsg:
+  def _build_cq_launch(brisc_text_off: int, sem_off: int = 16, brisc_noc_id: int = 0) -> LaunchMsg:
     launch = LaunchMsg()
     cfg = launch.kernel_config
     for i in range(DevMsgs.ProgrammableCoreType_COUNT):
@@ -194,9 +191,8 @@ class Device:
     cfg.rta_offset[0].rta_offset = 0
     cfg.rta_offset[0].crta_offset = L1_ALIGN
     cfg.kernel_text_offset[0] = brisc_text_off
-    cfg.kernel_text_offset[1] = ncrisc_text_off
-    cfg.enables = 1 | (2 if ncrisc_text_off else 0)
-    cfg.brisc_noc_id = 1 if ncrisc_text_off else 0
+    cfg.enables = 1
+    cfg.brisc_noc_id = brisc_noc_id
     cfg.mode = DevMsgs.DISPATCH_MODE_HOST
     cfg.min_remote_cb_start_index = FAST_CQ_NUM_CIRCULAR_BUFFERS
     return launch

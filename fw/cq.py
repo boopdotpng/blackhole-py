@@ -685,11 +685,3 @@ def build_dispatch() -> Kernel:
   fw.label("dispatch_done")
   fw.j("dispatch_done")
   return fw
-
-def build_dispatch_subordinate() -> Kernel:
-  fw = Kernel()
-  fw.setup_stack(0xFFB01FF0)
-  # This minimal fast-dispatch path handles go signals on dispatch BRISC.
-  fw.label("idle")
-  fw.j("idle")
-  return fw
