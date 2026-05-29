@@ -28,10 +28,9 @@ CB_DEPTH = 2
 TARGET_CORE = (1, 2)
 TILES_PER_CORE = 1
 OUT_CB = 16
-_RUN_EPOCH = 0
 SCRATCH_L1 = TensixL1.DATA_BUFFER_SPACE_BASE
 SYNC_L1 = SCRATCH_L1 + 0x10000
-SYNC_OUT_RESERVED = SYNC_L1
+SYNC_TRISC_START = SYNC_L1
 SYNC_READ = SYNC_L1 + 4
 SYNC_DONE0 = SYNC_L1 + 8
 SYNC_DONE1 = SYNC_L1 + 12
@@ -443,11 +442,9 @@ def _init_trisc0_unpack(fw: Kernel):
 
 
 def _init_trisc1_math(fw: Kernel):
-  # Old tt-metal TRISC1 reaches math init after CRT/kernel prologue and PC-buffer
-  # synchronization. This lean kernel can arrive immediately after launch, and
-  # fresh slow-dispatch reopens can wedge if math/MOP state is programmed too
-  # early. Keep a short deterministic settling delay before the math prologue.
-  fw.delay_cycles(50)
+  # Match the other TRISC prologues: make the initial context writes visible,
+  # then wait until the unpack side reports its context is idle.
+  _tensix_sync(fw, 1)
   _write_repeated_bytes(fw, TRISC1_UNPACK_TILE_NUM_FACES, 4, 8)
   fw.write32(TRISC1_UNPACK_DST_FORMAT, Dtype.Float16_b.value, tmp_addr=t0, tmp_val=t1)
   fw.write32(TRISC1_UNPACK_SRC_FORMAT, Dtype.Float16_b.value, tmp_addr=t0, tmp_val=t1)
@@ -455,6 +452,7 @@ def _init_trisc1_math(fw: Kernel):
   _push_tensix(fw, TTSETC16(29, 0))
   _push_tensix(fw, TTSETC16(48, 0))
   _push_tensix(fw, TTZEROACC(3, 0, 0, 1, 0))
+  _wait_mmio_low_byte_zero(fw, TENSIX_PC_UNPACK_SYNC)
   _math_direct_mova2d_init(fw)
   _write_mop_cfg(fw, MATH_MOP_CFG, 1)
   _tensix_sync(fw, 1)
@@ -569,15 +567,15 @@ def _init_trisc2_pack(fw: Kernel):
 
 def add1_brisc_reader() -> Kernel:
   fw = Kernel()
-  _read_rta_from(fw, BM.RTA_L1_BASE_PTR, (s0, s2, s3, s4, t6))
+  _read_rta_from(fw, BM.RTA_L1_BASE_PTR, (s0, s2, s3, s4))
   for addr in (
-    SYNC_OUT_RESERVED, SYNC_READ, SYNC_DONE0, SYNC_DONE1, SYNC_DONE2,
+    SYNC_TRISC_START, SYNC_READ, SYNC_DONE0, SYNC_DONE1, SYNC_DONE2,
     SYNC_TRISC_INIT, SYNC_TRISC_INIT + 4, SYNC_TRISC_INIT + 8,
     SYNC_CLOCK_START_LO, SYNC_CLOCK_START_HI, SYNC_CLOCK_END_LO, SYNC_CLOCK_END_HI,
   ):
     fw.write32(addr, 0, tmp_addr=t0, tmp_val=t1)
   fw.debug_write_wall_clock(SYNC_CLOCK_START_LO, SYNC_CLOCK_START_HI, name="add1_start")
-  fw.write32(SYNC_OUT_RESERVED, t6, tmp_addr=t0, tmp_val=t1)
+  fw.write32(SYNC_TRISC_START, 0x00010101, tmp_addr=t0, tmp_val=t1)
   fw.li(s5, 0)
   fw.label("brisc_loop")
   fw.beq(s5, s3, "brisc_done")
@@ -641,9 +639,8 @@ def add1_trisc_compute(trisc_id: int) -> Kernel:
   fw.sw(ra, sp, 12)
   fw.read32(t0, data["rta_l1_base"])
   fw.lw(s3, t0, 0)
-  fw.lw(t6, t0, 4)
-  fw.mv(t1, t6)
-  _wait_sync_value(fw, SYNC_OUT_RESERVED, t1, actual=t2)
+  fw.wait8(SYNC_TRISC_START + trisc_id, 1)
+  fw.write8(SYNC_TRISC_START + trisc_id, 0, tmp_addr=t0, tmp_val=t1)
 
   if trisc_id == 0:
     # Device open/firmware upload resets the RISC runtime, but old add1 did not
@@ -831,9 +828,6 @@ def add1_trisc_compute(trisc_id: int) -> Kernel:
 
 
 def build_program(src_addr: int, dst_addr: int, num_banks: int, cores: list[tuple[int, int]] | None = None) -> Program:
-  global _RUN_EPOCH
-  _RUN_EPOCH = (_RUN_EPOCH + 1) & 0xFFFFFFFF
-  run_epoch = _RUN_EPOCH
   tiles_per_core = TILES_PER_CORE
   if cores is None:
     cores = [TARGET_CORE]
@@ -845,13 +839,13 @@ def build_program(src_addr: int, dst_addr: int, num_banks: int, cores: list[tupl
     return core_index[(x, y)] * tiles_per_core
 
   def brisc_rtas(x: int, y: int) -> list[int]:
-    return [src_addr, tile_offset(x, y), tiles_per_core, num_banks, run_epoch]
+    return [src_addr, tile_offset(x, y), tiles_per_core, num_banks]
 
   def ncrisc_rtas(x: int, y: int) -> list[int]:
     return [dst_addr, tile_offset(x, y), tiles_per_core, num_banks]
 
   def trisc_rtas(_x: int, _y: int) -> list[int]:
-    return [tiles_per_core, run_epoch]
+    return [tiles_per_core]
 
   brisc = add1_brisc_reader()
   ncrisc = add1_ncrisc_writer(num_banks)
