@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import atexit
+import re
 import struct
 import sys
 from dataclasses import dataclass
 from dsl import Reg, t0, t1, t2, t3, t4, t5
-from ttk.addrs import Dram, NocCfg, noc_xy
+from ttk.addrs import Dram, NocCfg, TensixMMIO, noc_xy
 
 @dataclass(frozen=True)
 class DebugEvent:
@@ -24,6 +25,13 @@ class DebugRange:
   name: str
   bank: int | None = None
   tile: int = 0
+
+@dataclass(frozen=True)
+class L1Timer:
+  start: int
+  end: int
+  cycles: int
+  us: float
 
 def _read_bytes(win, addr: int, size: int) -> bytes:
   return bytes(win.mm[addr + i] for i in range(size))
@@ -91,6 +99,26 @@ def print_debug_values(
   out = sys.stdout if file is None else file
   print(f"debug core {core}", file=out)
 
+  wall_clocks = [event for event in events if event.kind == "wall_clock"]
+  if wall_clocks:
+    print("wall clocks", file=out)
+    previous: tuple[str, int] | None = None
+    for event in wall_clocks:
+      hi_match = re.fullmatch(r"hi=0x([0-9a-fA-F]+)", event.value or "")
+      hi_addr = int(hi_match.group(1), 16) if hi_match is not None else event.address + 4
+      lo = words.get(event.address)
+      hi = words.get(hi_addr)
+      if lo is None or hi is None:
+        continue
+      cycles = lo | (hi << 32)
+      device_us = cycles / Debug.DEBUG_CLOCK_MHZ
+      line = f"  {event.name}: cycles={cycles} device_us={device_us:.3f}"
+      if previous is not None:
+        delta = (cycles - previous[1]) & ((1 << 64) - 1)
+        line += f" delta_from_{previous[0]}={delta / Debug.DEBUG_CLOCK_MHZ:.3f} us"
+      print(line, file=out)
+      previous = (event.name, cycles)
+
   breadcrumbs = [event for event in events if event.kind == "breadcrumb"]
   if breadcrumbs:
     print("breadcrumbs", file=out)
@@ -135,11 +163,18 @@ def print_debug_values(
         print(line, file=out)
 
 class Debug:
+  DEBUG_CLOCK_MHZ = 1350.0
   _debug_postmortem_registered = False
   _debug_addrs: set[int] = set()
   _debug_counter = 0
   _debug_events: list[DebugEvent] = []
   _debug_ranges: list[DebugRange] = []
+
+  @classmethod
+  def clear_debug(cls):
+    cls._debug_addrs.clear()
+    cls._debug_events.clear()
+    cls._debug_ranges.clear()
 
   @classmethod
   def note_debug_addr(cls, addr: int):
@@ -153,7 +188,7 @@ class Debug:
     cls._debug_postmortem_registered = True
 
     def run_postmortem():
-      if not cls._debug_addrs:
+      if not cls._debug_addrs and not cls._debug_ranges:
         return
       core = (1, 2)
       try:
@@ -224,6 +259,46 @@ class Debug:
     )
     self.note_debug_addr(address)
     return self.write32(address, value, tmp_addr=tmp_addr, tmp_val=tmp_val)
+
+  def debug_write_wall_clock(
+    self,
+    lo_addr: int,
+    hi_addr: int,
+    *,
+    name: str = "wall_clock",
+    tmp_addr: Reg = t0,
+    tmp_val: Reg = t1,
+  ):
+    event = self.next_debug_value()
+    Debug._debug_events.append(
+      DebugEvent(event, "wall_clock", lo_addr, name, f"hi=0x{hi_addr:08x}")
+    )
+    self.note_debug_addr(lo_addr)
+    self.note_debug_addr(hi_addr)
+    self.read32(tmp_val, TensixMMIO.RISCV_DEBUG_REG_WALL_CLOCK_L, tmp_addr=tmp_addr)
+    self.write32(lo_addr, tmp_val, tmp_addr=tmp_addr)
+    self.read32(tmp_val, TensixMMIO.RISCV_DEBUG_REG_WALL_CLOCK_H, tmp_addr=tmp_addr)
+    self.write32(hi_addr, tmp_val, tmp_addr=tmp_addr)
+    return self
+
+  @staticmethod
+  def read_l1_u64(win, lo_addr: int, hi_addr: int) -> int:
+    return win.read32(lo_addr) | (win.read32(hi_addr) << 32)
+
+  @staticmethod
+  def read_l1_timer(
+    win,
+    start_lo_addr: int,
+    start_hi_addr: int,
+    end_lo_addr: int,
+    end_hi_addr: int,
+    *,
+    freq_mhz: float = 1350.0,
+  ) -> L1Timer:
+    start = Debug.read_l1_u64(win, start_lo_addr, start_hi_addr)
+    end = Debug.read_l1_u64(win, end_lo_addr, end_hi_addr)
+    cycles = (end - start) & ((1 << 64) - 1)
+    return L1Timer(start=start, end=end, cycles=cycles, us=cycles / freq_mhz)
 
   def debug_l1_range(self, address: int, size: int, *, name: str):
     event = self.next_debug_value()

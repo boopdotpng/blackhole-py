@@ -119,6 +119,17 @@ def init_noc_local_state(fw: Kernel, *, launch: Reg = t0, noc_id: Reg = t1,
   ], status=status, dest=dest, value=value)
   return fw
 
+def rmw_tensix_cfg(fw: Kernel, addr32: int, mask: int, value: int, *,
+                   shift: int = 0, addr: Reg = t0, old: Reg = t1, tmp: Reg = t2):
+  fw.li(addr, TensixRegs.CFG_BASE + addr32 * 4)
+  fw.lw(old, addr, 0)
+  fw.li(tmp, ~mask & 0xFFFFFFFF)
+  fw.and_(old, old, tmp)
+  fw.li(tmp, (value << shift) & mask)
+  fw.or_(old, old, tmp)
+  fw.sw(old, addr, 0)
+  return fw
+
 def build(*, text_base: dict[str, int] = Firmware.TEXT_BASE) -> Kernel:
   fw = Kernel(base_addr=Firmware.TEXT_BASE["brisc"])
   fw.segment(Firmware.LOCAL_DATA_BASE["brisc"], b"\x68".ljust(Firmware.LOCAL_DATA_SIZE["brisc"], b"\0"), label="local_data")
@@ -144,6 +155,7 @@ def build(*, text_base: dict[str, int] = Firmware.TEXT_BASE) -> Kernel:
       fw.lw(t1, t0, 0)
       fw.ori(t1, t1, 1)
       fw.sw(t1, t0, 0)
+  fw.zero_words(TensixL1.MEM_ZEROS_BASE, TensixL1.MEM_ZEROS_SIZE // 4)
   # invalidate_all_risc_icaches
   fw.write32(TensixRegs.RISCV_IC_INVALIDATE_INVALIDATE_ALL, TensixRegs.RISCV_IC_ALL_MASK)
   buf = TensixRegs.INSTRN_BUF_BASE
@@ -152,6 +164,12 @@ def build(*, text_base: dict[str, int] = Firmware.TEXT_BASE) -> Kernel:
   fw.tensix_push_word(buf, TTNOP().raw_word())
   fw.tensix_push_word(buf, TTSFPLOADI(imm16=0xBF80).raw_word())
   fw.tensix_push_word(buf, TTSFPCONFIG(config_dest=11).raw_word())
+  rmw_tensix_cfg(fw, TensixRegs.ECC_SCRUBBER_ADDR32, TensixRegs.ECC_SCRUBBER_ENABLE_MASK, 1)
+  rmw_tensix_cfg(fw, TensixRegs.ECC_SCRUBBER_ADDR32, TensixRegs.ECC_SCRUBBER_SCRUB_ON_ERROR_MASK, 1, shift=1)
+  rmw_tensix_cfg(
+    fw, TensixRegs.ECC_SCRUBBER_ADDR32, TensixRegs.ECC_SCRUBBER_DELAY_MASK, 0x100,
+    shift=TensixRegs.ECC_SCRUBBER_DELAY_SHAMT,
+  )
   for sem in (TensixSem.MATH_PACK, TensixSem.UNPACK_TO_DEST, TensixSem.MATH_DONE):
     fw.tensix_push_word(buf, TTSEMINIT(sem_sel=1 << sem, init_value=0, max_value=1).raw_word())
 
@@ -197,6 +215,7 @@ def build(*, text_base: dict[str, int] = Firmware.TEXT_BASE) -> Kernel:
   fw.write8(Mailbox.GO_SIGNAL, RunMsg.DONE)
   # Ask TRISC0 to clear CB sync registers before launching kernels.
   fw.write8(Mailbox.SUBORDINATE_SYNC + 1, RunSync.INIT_SYNC_REGISTERS)
+  fw.wait8(Mailbox.SUBORDINATE_SYNC + 1, RunSync.DONE)
 
   fw.label("run_loop")
 
@@ -340,6 +359,7 @@ def build(*, text_base: dict[str, int] = Firmware.TEXT_BASE) -> Kernel:
     fw.wait8(Mailbox.SUBORDINATE_SYNC + role - 1, RunSync.DONE)
   # Ask TRISC0 to clear CB sync registers before accepting the next launch.
   fw.write8(Mailbox.SUBORDINATE_SYNC + 1, RunSync.INIT_SYNC_REGISTERS)
+  fw.wait8(Mailbox.SUBORDINATE_SYNC + 1, RunSync.DONE)
   fw.write8(Mailbox.GO_SIGNAL, RunMsg.DONE)
   notify_dispatch_core_done(fw)
   fw.read32(t0, Mailbox.LAUNCH_MSG_RD_PTR, tmp_addr=t1)
