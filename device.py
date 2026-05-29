@@ -116,20 +116,11 @@ class Device:
               time.sleep(0.001)
 
   def _run_slow_dispatch(self):
-    timings = []
     cores = self.cores
     with TLBWindow(self.dev, start=cores[0]) as win:
       for program in self.programs:
-        t0 = time.perf_counter()
         self._run_slow_ir(program.lower(cores, dispatch_mode=DevMsgs.DISPATCH_MODE_HOST), win)
-        elapsed_us = (time.perf_counter() - t0) * 1e6
-        timings.append({
-          "cycles": 0,
-          "us": elapsed_us,
-          "freq_mhz": 1350,
-          "name": getattr(program, "name", ""),
-        })
-    return timings
+    return []
 
   def _run_fast_dispatch(self):
     if self.cq is None:

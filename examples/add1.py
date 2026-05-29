@@ -37,10 +37,6 @@ SYNC_DONE1 = SYNC_L1 + 12
 SYNC_DONE2 = SYNC_L1 + 16
 SYNC_TRISC_INIT = SYNC_L1 + 20
 SYNC_TENSIX_INIT_ONCE = SYNC_L1 + 32
-SYNC_CLOCK_START_LO = SYNC_L1 + 44
-SYNC_CLOCK_START_HI = SYNC_L1 + 48
-SYNC_CLOCK_END_LO = SYNC_L1 + 52
-SYNC_CLOCK_END_HI = SYNC_L1 + 56
 TRISC0_UNP_CFG_CONTEXT = 0xFFB00420
 TRISC1_UNPACK_TILE_NUM_FACES = 0xFFB00020
 TRISC1_UNPACK_DST_FORMAT = TRISC1_UNPACK_TILE_NUM_FACES + 32
@@ -571,10 +567,8 @@ def add1_brisc_reader() -> Kernel:
   for addr in (
     SYNC_TRISC_START, SYNC_READ, SYNC_DONE0, SYNC_DONE1, SYNC_DONE2,
     SYNC_TRISC_INIT, SYNC_TRISC_INIT + 4, SYNC_TRISC_INIT + 8,
-    SYNC_CLOCK_START_LO, SYNC_CLOCK_START_HI, SYNC_CLOCK_END_LO, SYNC_CLOCK_END_HI,
   ):
     fw.write32(addr, 0, tmp_addr=t0, tmp_val=t1)
-  fw.debug_write_wall_clock(SYNC_CLOCK_START_LO, SYNC_CLOCK_START_HI, name="add1_start")
   fw.write32(SYNC_TRISC_START, 0x00010101, tmp_addr=t0, tmp_val=t1)
   fw.li(s5, 0)
   fw.label("brisc_loop")
@@ -627,7 +621,6 @@ def add1_ncrisc_writer(num_banks: int) -> Kernel:
   fw.addi(s5, s5, 1)
   fw.j("ncrisc_loop")
   fw.label("ncrisc_done")
-  fw.debug_write_wall_clock(SYNC_CLOCK_END_LO, SYNC_CLOCK_END_HI, name="add1_end")
   fw.ret()
   return fw
 
@@ -887,8 +880,9 @@ def main():
       want = exp[mismatch:mismatch + 32].hex()
       raise AssertionError(f"mismatch byte={mismatch} got={got} exp={want}")
     print(f"PASS add1 {n_tiles} tile on core {TARGET_CORE}")
-    for i, timing in enumerate(timings):
-      print(f"  [{i}] {timing['name']} {timing['us']:,.1f} us")
+    for timing in timings:
+      name = f"{timing['name']}: " if timing["name"] else ""
+      print(f"  {name}{timing['us']:,.1f} us")
   finally:
     device.close()
 
