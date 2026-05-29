@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import atexit
-import os
 import struct
 import sys
 from dataclasses import dataclass
@@ -25,10 +24,6 @@ class DebugRange:
   name: str
   bank: int | None = None
   tile: int = 0
-
-def parse_debug_core(value: str) -> tuple[int, int]:
-  x, y = value.split(",", 1)
-  return int(x, 0), int(y, 0)
 
 def _read_bytes(win, addr: int, size: int) -> bytes:
   return bytes(win.mm[addr + i] for i in range(size))
@@ -160,7 +155,7 @@ class Debug:
     def run_postmortem():
       if not cls._debug_addrs:
         return
-      core = parse_debug_core(os.environ.get("TT_DEBUG_POSTMORTEM_CORE", "1,2"))
+      core = (1, 2)
       try:
         print_debug_postmortem(
           core,

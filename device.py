@@ -33,8 +33,7 @@ class Device:
     return list(self.board_info.program_cores)
 
   def close(self):
-    if not os.environ.get("TT_DEBUG_KEEP_POWER"):
-      self.dev.set_power_state(False)
+    self.dev.set_power_state(False)
     if self.cq is not None:
       self._halt_cores()
       self.cq.close()
@@ -76,24 +75,9 @@ class Device:
       return self._run_fast_dispatch()
     finally:
       self.programs.clear()
-      if not os.environ.get("TT_DEBUG_KEEP_POWER"):
-        self.dev.set_power_state(False)
+      self.dev.set_power_state(False)
 
   def _run_slow_ir(self, commands: list[IRCommand], win: TLBWindow):
-    def dump_timeout_core(core):
-      if not os.environ.get("TT_DEBUG_DUMP_ON_TIMEOUT"):
-        return
-      addrs = [
-        0x68, 0x19000, 0x19004, 0x19008, 0x1900c, 0x19010, 0x19014, 0x19018,
-        0x19020, 0x19024, 0x19028, 0x19030, 0x19034, 0x19038,
-        0x37000, 0x37004, 0x38000, 0x38004,
-      ]
-      win.target(core)
-      print(f"debug timeout core {core}")
-      for a in addrs:
-        data = bytes(win.mm[a + i] for i in range(4))
-        print(f"0x{a:x}: 0x{struct.unpack('<I', data)[0]:08x}")
-
     for cmd in commands:
       match cmd:
         case UnicastWrite(cores=cores, addr=addr, data=data):
@@ -114,7 +98,6 @@ class Device:
           deadline = time.perf_counter() + timeout_s
           while win.mm[addr] != value:
             if time.perf_counter() > deadline:
-              dump_timeout_core(core)
               raise TimeoutError(f"timeout waiting for L1[0x{addr:x}] == 0x{value:02x} on core {core}")
             time.sleep(0.001)
         case Run(cores=cores):
@@ -129,7 +112,6 @@ class Device:
             deadline = time.perf_counter() + 10.0
             while win.mm[TensixL1.GO_MSG + 3] != DevMsgs.RUN_MSG_DONE:
               if time.perf_counter() > deadline:
-                dump_timeout_core(core)
                 raise TimeoutError(f"timeout waiting for core {core}")
               time.sleep(0.001)
 

@@ -15,10 +15,9 @@ def ret_kernel() -> Kernel:
 def main():
   device = Device()
   try:
-    num_cores = int(os.environ.get("CORES", str(len(device.cores))))
     trisc0, trisc1, trisc2 = (ret_kernel(), ret_kernel(), ret_kernel())
     prog = Program(
-      num_cores=num_cores,
+      num_cores=len(device.cores),
       brisc=Kernel(),
       ncrisc=Kernel(),
       trisc0=trisc0,
@@ -27,7 +26,7 @@ def main():
     )
     prog.name = "ret_smoke"
     device.run(prog)
-    print(f"PASS ret_smoke: launched ret kernels on {num_cores} core(s)")
+    print(f"PASS ret_smoke: launched ret kernels on {len(device.cores)} core(s)")
   finally:
     device.close()
 

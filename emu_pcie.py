@@ -60,7 +60,7 @@ TLB_CFG_BASE = TLB_REGS_START  # 0x1FC00000
 
 # Clocks advanced per read. Larger = faster convergence of poll loops; overshoot
 # is harmless (idle/finished cores just keep stepping). tt-umd uses 10.
-DEFAULT_CLOCKS_PER_READ = int(os.environ.get("TTSIM_CLOCKS_PER_READ", "2000"))
+DEFAULT_CLOCKS_PER_READ = 2000
 
 # ctypes prototypes for the DMA-memory callbacks ttsim invokes (device -> host).
 _DMA_RD_CB = ctypes.CFUNCTYPE(None, ctypes.c_uint64, ctypes.c_void_p, ctypes.c_uint32)
@@ -68,15 +68,12 @@ _DMA_WR_CB = ctypes.CFUNCTYPE(None, ctypes.c_uint64, ctypes.c_void_p, ctypes.c_u
 
 
 def _default_lib_path() -> str:
-  override = os.environ.get("TTSIM_LIB")
-  if override:
-    return override
   here = os.path.dirname(os.path.abspath(__file__))
   path = os.path.join(here, "libttsim_bh.so")
   if not os.path.exists(path):
     raise FileNotFoundError(
       f"ttsim simulator not found at {path}. Copy a Blackhole libttsim.so there "
-      f"(e.g. from ttsim/src/_out/release_bh/libttsim.so) or set TTSIM_LIB.")
+      f"(e.g. from ttsim/src/_out/release_bh/libttsim.so).")
   return path
 
 

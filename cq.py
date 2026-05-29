@@ -170,12 +170,8 @@ class CommandQueue:
     self.sysmem.wait_completion(event_id)
 
   def submit_ir(self, programs: list[list[IRCommand]], go_word: int, names: list[str] | None = None):
-    timestamps = None
-    if os.getenv("TT_CQ_TIMESTAMPS", "1") != "0":
-      timestamps = [self.timestamp_noc_addr(i) for i in range(min(2 * len(programs), HOST_TIMESTAMP_SLOTS))]
+    timestamps = [self.timestamp_noc_addr(i) for i in range(min(2 * len(programs), HOST_TIMESTAMP_SLOTS))]
     self.submit_commands(lower_programs(programs, go_word, timestamps=timestamps))
-    if timestamps is None:
-      return []
     return self.read_timings(len(programs), names=names)
 
   def read_timings(self, n: int, names: list[str] | None = None):
@@ -226,8 +222,7 @@ def lower_ir(commands: list[IRCommand], go_word: int) -> list[bytes]:
         _append_unicast_write(out, cores, addr, data)
       case McastWrite(rects=rects, addr=addr, data=data):
         _append_mcast_write(out, rects, addr, data)
-        if os.getenv("TT_CQ_WRITE_BARRIERS", "1") != "0":
-          out.append(_barrier())
+        out.append(_barrier())
       case Run(cores=cores):
         out.extend([
           _barrier(),

@@ -773,7 +773,7 @@ class PCIDevice:
 
   def _bring_device_to_a0(self):
     """Bring ASIC from A3 to A0 if ARC is running."""
-    arc_ready_timeout_s = float(os.environ.get("TT_ARC_BOOT_TIMEOUT", "2.0"))
+    arc_ready_timeout_s = 2.0
     deadline = time.monotonic() + arc_ready_timeout_s
     boot_status = 0
     while time.monotonic() < deadline:
