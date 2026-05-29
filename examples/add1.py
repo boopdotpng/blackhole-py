@@ -443,6 +443,11 @@ def _init_trisc0_unpack(fw: Kernel):
 
 
 def _init_trisc1_math(fw: Kernel):
+  # Old tt-metal TRISC1 reaches math init after CRT/kernel prologue and PC-buffer
+  # synchronization. This lean kernel can arrive immediately after launch, and
+  # fresh slow-dispatch reopens can wedge if math/MOP state is programmed too
+  # early. Keep a short deterministic settling delay before the math prologue.
+  fw.delay_cycles(50)
   _write_repeated_bytes(fw, TRISC1_UNPACK_TILE_NUM_FACES, 4, 8)
   fw.write32(TRISC1_UNPACK_DST_FORMAT, Dtype.Float16_b.value, tmp_addr=t0, tmp_val=t1)
   fw.write32(TRISC1_UNPACK_SRC_FORMAT, Dtype.Float16_b.value, tmp_addr=t0, tmp_val=t1)
