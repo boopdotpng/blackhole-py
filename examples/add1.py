@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import struct
 import sys
+import os
 from pathlib import Path
 
 if __package__ in (None, ""):
@@ -27,6 +28,7 @@ TILE_BYTES = Dtype.Float16_b.tile_size
 CB_DEPTH = 2
 TARGET_CORE = (1, 2)
 TILES_PER_CORE = 1
+DEBUG_SKIP_PACK_MOP = os.environ.get("ADD1_DEBUG_SKIP_PACK_MOP") == "1"
 SCRATCH_L1 = TensixL1.DATA_BUFFER_SPACE_BASE
 SYNC_L1 = SCRATCH_L1 + 0x10000
 SYNC_OUT_RESERVED = SYNC_L1
@@ -73,6 +75,9 @@ TRACE_TRISC0 = DBG_BASE + 0x44
 TRACE_TRISC1 = DBG_BASE + 0x48
 TRACE_TRISC2 = DBG_BASE + 0x4C
 TRACE_NCRISC = DBG_BASE + 0x50
+DBG_TRISC2_PACK_PTR_16B = DBG_BASE + 0x60
+DBG_TRISC2_PACK_PTR_BYTES = DBG_BASE + 0x64
+DBG_TRISC2_PACK_ADDR_MINUS_ONE = DBG_BASE + 0x68
 PCBUF_SEM_BASE = 0xFFE80020
 PACK_MOP_CFG = [
   4, 4, 0x02000000, 0x02000000, 0x02000000,
@@ -159,10 +164,11 @@ def _dst_bf16(x: int) -> float:
 
 
 def _format_bf16_ints(data: bytes, count: int) -> str:
-  return " ".join(
-    str(int(_f32(int.from_bytes(data[i : i + 2], "little"))))
-    for i in range(0, min(len(data), count * 2), 2)
-  )
+  values = []
+  for i in range(0, min(len(data), count * 2), 2):
+    value = _f32(int.from_bytes(data[i : i + 2], "little"))
+    values.append("nan" if value != value else str(int(value)))
+  return " ".join(values)
 
 
 def _print_tile_faces(label: str, data: bytes, *, tile: int = 0, rows_per_face: int = 16, cols: int = 8):
@@ -203,12 +209,23 @@ def _print_dst_debug_rows(label: str, rows: list[list[int]]):
   print(label)
   for row, words in enumerate(rows):
     raw = " ".join(f"{word:08x}" for word in words)
+    bf16_le = []
+    bf16_be = []
     exalens_bf16 = []
     for word in words:
+      for shift in (0, 16):
+        value = _f32((word >> shift) & 0xFFFF)
+        bf16_le.append("nan" if value != value else str(int(value)))
+      for shift in (16, 0):
+        value = _f32((word >> shift) & 0xFFFF)
+        bf16_be.append("nan" if value != value else str(int(value)))
       raw_bytes = word.to_bytes(4, "big")
       for i in range(0, 4, 2):
-        exalens_bf16.append(str(int(_dst_bf16(int.from_bytes(raw_bytes[i : i + 2], "big")))))
+        value = _dst_bf16(int.from_bytes(raw_bytes[i : i + 2], "big"))
+        exalens_bf16.append("nan" if value != value else str(int(value)))
     print(f"  row{row:02d} raw: {raw}")
+    print(f"        bf16 le-halves: {' '.join(bf16_le)}")
+    print(f"        bf16 be-halves: {' '.join(bf16_be)}")
     print(f"        tt-exalens bf16: {' '.join(exalens_bf16)}")
 
 
@@ -242,6 +259,15 @@ def _print_l1_tile_probe(device: Device, core: tuple[int, int], addr: int, label
   _print_tile_faces(f"  {label} faces:", data)
 
 
+def _print_l1_words_probe(device: Device, core: tuple[int, int], addr: int, label: str, words: int = 32):
+  with TLBWindow(device.dev, core) as win:
+    values = [win.read32(addr + i * 4) for i in range(words)]
+  nonzero = sum(1 for value in values if value)
+  print(f"{label} @ 0x{addr:x}: nonzero_words={nonzero}/{words}")
+  for row in range(0, words, 8):
+    print("  " + " ".join(f"{value:08x}" for value in values[row : row + 8]))
+
+
 def _read_noc_u32(device: Device, core: tuple[int, int], addr: int) -> int:
   win_size = TLBWindow.SIZE_2M
   base = addr & ~(win_size - 1)
@@ -261,6 +287,27 @@ def _print_cb_sync_probes(device: Device, core: tuple[int, int], label: str):
     ack = CB.SYNC_TILES_ACKED_BASE + cb_index * CB.SYNC_STRIDE
     _print_noc_u32(device, core, rcv, f"{label} cb{cb_index} SYNC_TILES_RECEIVED")
     _print_noc_u32(device, core, ack, f"{label} cb{cb_index} SYNC_TILES_ACKED")
+
+
+def _print_trisc2_pack_debug(device: Device, core: tuple[int, int], label: str):
+  for addr, name in (
+    (DBG_TRISC2_PACK_PTR_16B, "trisc2_cb16_write_ptr_16b"),
+    (DBG_TRISC2_PACK_PTR_BYTES, "trisc2_cb16_write_ptr_bytes"),
+    (DBG_TRISC2_PACK_ADDR_MINUS_ONE, "trisc2_pack_addr_minus_one_16b"),
+    (TRACE_TRISC2, "trace_trisc2"),
+  ):
+    _print_noc_u32(device, core, addr, f"{label} {name}")
+
+
+def _print_cb_interface_probe(device: Device, core: tuple[int, int], interface_base: int, cb_index: int, label: str):
+  base = interface_base + cb_index * CB.LOCAL_INTERFACE_SIZE
+  for off, name in (
+    (8, "fifo_page_size"),
+    (16, "fifo_rd_ptr"),
+    (20, "fifo_wr_ptr"),
+    (24, "tiles_acked_received"),
+  ):
+    _print_noc_u32(device, core, base + off, f"{label} cb{cb_index} {name}")
 
 
 def _seed_src_tensor(num_tiles: int) -> bytes:
@@ -524,6 +571,12 @@ def _write_repeated_bytes(fw: Kernel, addr: int, value: int, count_words: int, *
     fw.sw(tmp, ptr, i * 4)
 
 
+def _write_repeated_words_at_reg(fw: Kernel, addr_reg, value: int, count_words: int, *, tmp=t1):
+  fw.li(tmp, value)
+  for i in range(count_words):
+    fw.sw(tmp, addr_reg, i * 4)
+
+
 def _math_direct_mova2d_init(fw: Kernel):
   _push_tensix(fw, TTSETC16(15, 0))
   _push_tensix(fw, TTSETC16(31, 0))
@@ -687,7 +740,10 @@ def _init_trisc2_pack(fw: Kernel):
   # OLD: `sw t1, 96(a5)` -> CFG word 24.
   fw.write32(TensixRegs.CFG_BASE + 24 * 4, 0x0000FFFF, tmp_addr=t0, tmp_val=t1)
   fw.write32(TensixRegs.CFG_BASE + 20 * 4, 0, tmp_addr=t0, tmp_val=t1)
-  fw.write32(TensixRegs.REGFILE_BASE + 64, TILE_BYTES, tmp_addr=t0, tmp_val=t1)
+  # Packer tile/page size comes from TRISC local CB state, already shifted to 16B units.
+  _cb_iface(fw, TM.DATA_COMMON["cb_interface"], 16, out=t6)
+  fw.lw(t1, t6, 8)
+  fw.write32(TensixRegs.REGFILE_BASE + 64, t1, tmp_addr=t0)
   fw.write32(TensixRegs.REGFILE_BASE + 68, 0, tmp_addr=t0, tmp_val=t1)
   fw.write32(TensixRegs.REGFILE_BASE + 72, 0, tmp_addr=t0, tmp_val=t1)
   fw.write32(TensixRegs.REGFILE_BASE + 76, 0, tmp_addr=t0, tmp_val=t1)
@@ -888,7 +944,12 @@ def add1_trisc_compute(trisc_id: int) -> Kernel:
     _cb_reserve_back(fw, data["cb_interface"], 16)
     fw.breadcrumb(DBG_TRISC2, "trisc2:0x2203")
     _cb_write_ptr(fw, data["cb_interface"], 16, out=s0)
+    fw.debug_write(DBG_TRISC2_PACK_PTR_16B, s0, name="trisc2_cb16_write_ptr_16b", tmp_addr=t0, tmp_val=t1)
+    fw.slli(t4, s0, 4)
+    fw.debug_write(DBG_TRISC2_PACK_PTR_BYTES, t4, name="trisc2_cb16_write_ptr_bytes", tmp_addr=t0, tmp_val=t1)
+    _write_repeated_words_at_reg(fw, t4, 0xA5C31610, 32, tmp=t1)
     fw.addi(s0, s0, -1)
+    fw.debug_write(DBG_TRISC2_PACK_ADDR_MINUS_ONE, s0, name="trisc2_pack_addr_minus_one_16b", tmp_addr=t0, tmp_val=t1)
     _push_tensix(fw, TTSETADC(4, 0, 3, 0))
     fw.slli(t1, s0, 8)
     fw.li(t2, 0x00FFFF00)
@@ -911,15 +972,23 @@ def add1_trisc_compute(trisc_id: int) -> Kernel:
     fw.add(t1, t1, t2)
     fw.write32(TensixRegs.INSTRN_BUF_BASE, t1, tmp_addr=t0)
     _push_tensix(fw, TTDMANOP())
-    _push_tensix(fw, TTMOP(1, 0, 0))
+    if not DEBUG_SKIP_PACK_MOP:
+      _push_tensix(fw, TTMOP(1, 0, 0))
     _trace_stage(fw, TRACE_TRISC2, "trisc2.pack_direct_done", 0x62)
     _push_tensix(fw, TTSETADCZW(4, 0, 0, 0, 0, 5))
+    _cb_push_back(fw, data["cb_interface"], 16)
     # OLD 6e7c..6e8c: push SYNC_TILES_RECEIVED[CB16] via Tensix.
-    # DMAREG[48] := received_count (=1 for the single-tile test), then
+    # DMAREG[48] := received_count from local CB16 state, then
     # TTSTOREREG(TdmaDataRegIndex=24, RegAddr=0x1600A) writes the 32-bit GPR
     # pair {DMAREG[48],DMAREG[49]} to L1 0xFFB58028 = SYNC_TILES_RECEIVED_BASE
-    # + 16 * SYNC_STRIDE. Hardcoded to 1 here because TILES_PER_CORE=1.
-    _push_tensix(fw, TTSETDMAREG(0, 1, 0, 48))
+    # + 16 * SYNC_STRIDE.
+    _cb_iface(fw, data["cb_interface"], 16, out=t6)
+    fw.lw(t1, t6, 24)
+    _cb_counter_high(fw, t1, t1)
+    fw.slli(t1, t1, 8)
+    fw.li(t2, TTSETDMAREG(0, 0, 0, 48).raw_word())
+    fw.add(t1, t1, t2)
+    fw.write32(TensixRegs.INSTRN_BUF_BASE, t1, tmp_addr=t0)
     _push_tensix(fw, TTSTALLWAIT(32, 8))
     _write_tensix_instr_word(fw, 0x6761600A)  # TTSTOREREG(24, 0x1600A)
     _push_tensix(fw, TTSTALLWAIT(64, 8))
@@ -943,7 +1012,6 @@ def add1_trisc_compute(trisc_id: int) -> Kernel:
     fw.write32(TensixRegs.INSTRN_BUF_BASE, t1, tmp_addr=t0)
     _push_tensix(fw, TTDMANOP())
     _push_tensix(fw, TTDMANOP())
-    _cb_push_back(fw, data["cb_interface"], 16)
     _trace_stage(fw, TRACE_TRISC2, "trisc2.cb16_ready", 0x63)
     fw.li(t2, 1)
     _signal_sync(fw, SYNC_DONE2, t2)
@@ -1081,8 +1149,13 @@ def main():
     except TimeoutError:
       _print_l1_mailbox(device, TARGET_CORE, "target core mailbox after timeout:")
       _print_cb_sync_probes(device, TARGET_CORE, "after timeout")
-      _print_l1_tile_probe(device, TARGET_CORE, SCRATCH_L1, "cb0 page0 after timeout")
-      _print_l1_tile_probe(device, TARGET_CORE, SCRATCH_L1 + TILE_BYTES * CB_DEPTH, "cb16 page0 after timeout")
+      _print_trisc2_pack_debug(device, TARGET_CORE, "after timeout")
+      _print_l1_words_probe(device, TARGET_CORE, SCRATCH_L1, "cb0 page0 first 128B after timeout")
+      _print_l1_words_probe(device, TARGET_CORE, SCRATCH_L1 + TILE_BYTES * CB_DEPTH, "cb16 page0 first 128B after timeout")
+      dst_rows = _read_dst_debug_array_words(device, TARGET_CORE, rows=16)
+      _print_dst_debug_rows("dst debug-array rows 0..15 after timeout:", dst_rows)
+      _print_cb_interface_probe(device, TARGET_CORE, TM.DATA_COMMON["cb_interface"], 16, "after timeout")
+      raise
       out = device.dram_read(dst_buf)
       exp = _expected_add1(src_rm)
       print("device.run timed out; dumping partial DRAM output before exit")

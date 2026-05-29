@@ -306,14 +306,16 @@ class _OffsetView:
   def __init__(self, m, base, size):
     self._m, self._b, self._s = m, base, size
 
+  # NB: BAR access goes through buffer slicing (not struct.pack_into) so that an
+  # emulated backend (see emu_pcie.py) can intercept every read/write. For a real
+  # mmap'd memoryview this is behaviorally identical.
   def __getitem__(self, key):
     if isinstance(key, slice):
       start = (key.start or 0) + self._b
       stop = (key.stop if key.stop is not None else self._s) + self._b
-      n = max(0, stop - start)
-      data = struct.unpack_from(f"<{n}s", self._m, start)[0]
+      data = bytes(self._m[start:max(start, stop)])
       return data if key.step in (None, 1) else data[::key.step]
-    return struct.unpack_from("B", self._m, self._b + key)[0]
+    return self._m[self._b + key]
 
   def __setitem__(self, key, value):
     if isinstance(key, slice):
@@ -324,9 +326,9 @@ class _OffsetView:
       data = bytes(value)
       if stop - start != len(data):
         raise IndexError("MMIO slice assignment is wrong size")
-      struct.pack_into(f"<{len(data)}s", self._m, start, data)
+      self._m[start:stop] = data
     else:
-      struct.pack_into("B", self._m, self._b + key, value)
+      self._m[self._b + key] = value
 
 class TLBWindow:
   SIZE_2M = TLB_2M_SIZE
@@ -341,7 +343,7 @@ class TLBWindow:
       if not wc:
         raise RuntimeError("4G TLB windows require a WC BAR4 mapping")
       window = self._id - TLB_2M_COUNT
-      self._map = _MappedBar(dev.sysfs, "resource4_wc", self.SIZE_4G, offset=window * self.SIZE_4G)
+      self._map = dev.map_bar4_window(window, self.SIZE_4G)
       self._bar, self._base = self._map.view, 0
     else:
       self._bar, self._base = dev.tlb_window(self._id, wc=wc)
@@ -358,13 +360,16 @@ class TLBWindow:
     )
 
   def read32(self, offset: int) -> int:
-    return struct.unpack_from("<I", self._bar, self._base + offset)[0]
+    b = self._base + offset
+    return int.from_bytes(bytes(self._bar[b:b + 4]), "little")
 
   def write32(self, offset: int, value: int):
-    struct.pack_into("<I", self._bar, self._base + offset, value & 0xFFFFFFFF)
+    b = self._base + offset
+    self._bar[b:b + 4] = (value & 0xFFFFFFFF).to_bytes(4, "little")
 
   def write(self, addr: int, data: bytes):
-    struct.pack_into(f"<{len(data)}s", self._bar, self._base + addr, data)
+    b = self._base + addr
+    self._bar[b:b + len(data)] = bytes(data)
 
   def close(self):
     try:
@@ -474,6 +479,14 @@ def _secondary_bus_reset(sysfs_path: str):
     raise RuntimeError(f"PCIe link did not come back for {os.path.basename(sysfs_path)}")
 
 class PCIDevice:
+  def __new__(cls, *args, **kwargs):
+    # EMU=1 transparently swaps the real PCIe device for the ttsim-backed emulator.
+    # Lazy import avoids a circular dependency (emu_pcie imports from pcie).
+    if cls is PCIDevice and os.environ.get("EMU") == "1":
+      from emu_pcie import EmuPCIDevice
+      return object.__new__(EmuPCIDevice)
+    return object.__new__(cls)
+
   def __init__(self, index: int = 0, use_vfio: bool = True):
     devices = _find_bh_devices()
     if index >= len(devices):
@@ -863,6 +876,10 @@ class PCIDevice:
   def tlb_window(self, index: int, wc: bool = False) -> tuple[memoryview, int]:
     if index < TLB_2M_COUNT: return (self.bar0_wc if wc else self.bar0), index * TLB_2M_SIZE
     raise RuntimeError("4G TLB windows are owned by TLBWindow(size=TLBWindow.SIZE_4G, wc=True)")
+
+  def map_bar4_window(self, window: int, size: int = TLB_4G_SIZE) -> _MappedBar:
+    """Map a single BAR4 4G aperture. Returns an object exposing `.view` and `.close()`."""
+    return _MappedBar(self.sysfs, "resource4_wc", size, offset=window * size)
 
   # ---- DMA / page pinning via VFIO IOMMU ----
 
