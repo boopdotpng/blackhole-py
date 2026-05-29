@@ -239,7 +239,9 @@ def build(*, text_base: dict[str, int] = Firmware.TEXT_BASE) -> Kernel:
   fw.label(go_seen)
   fw.fence()
 
-  fw.wait8(Mailbox.SUBORDINATE_SYNC + 1, RunSync.DONE)
+  # Match tt-metal: let NCRISC start loading its launch state before BRISC does
+  # the rest of per-launch firmware setup.
+  signal_subordinate_if_enabled(fw, 1, RunSync.LOAD)
 
   # init_brisc_kernel_config
   fw.current_launch_ptr(launch=t0, tmp=t4)
@@ -286,7 +288,10 @@ def build(*, text_base: dict[str, int] = Firmware.TEXT_BASE) -> Kernel:
   init_noc_local_state(fw)
   # invalidate_all_risc_icaches
   fw.write32(TensixRegs.RISCV_IC_INVALIDATE_INVALIDATE_ALL, TensixRegs.RISCV_IC_ALL_MASK)
-  signal_subordinate_if_enabled(fw, 1, RunSync.LOAD)
+
+  # Match tt-metal run_triscs(): TRISC0 owns CB sync-register init and BRISC
+  # waits here before sending GO to the TRISC trio.
+  fw.wait8(Mailbox.SUBORDINATE_SYNC + 1, RunSync.DONE)
   for role in (2, 3, 4):
     signal_subordinate_if_enabled(fw, role, RunSync.GO)
 

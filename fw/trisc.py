@@ -159,7 +159,7 @@ def build(trisc_id: int) -> Kernel:
   # FW-level breadcrumb after kernel return — addr depends on trisc_id
   fw.breadcrumb(0x19000 + trisc_id * 4, f"trisc{trisc_id}_fw:kernel_ret")
 
-  if not os.environ.get("TT_DEBUG_SKIP_FINAL_TRISC_SYNC"):
+  if os.environ.get("TT_ENABLE_FINAL_TRISC_SYNC"):
     # tensix_sync
     fw.write32(TensixRegs.PC_BUF_SYNC, 0)
     fw.read32(t0, TensixRegs.PC_BUF_SYNC)

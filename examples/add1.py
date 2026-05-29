@@ -29,6 +29,8 @@ CB_DEPTH = 2
 TARGET_CORE = (1, 2)
 TILES_PER_CORE = 1
 DEBUG_SKIP_PACK_MOP = os.environ.get("ADD1_DEBUG_SKIP_PACK_MOP") == "1"
+DEBUG_SKIP_DST_DEBUG_ARRAY = os.environ.get("EMU") == "1"
+_RUN_EPOCH = 0
 SCRATCH_L1 = TensixL1.DATA_BUFFER_SPACE_BASE
 SYNC_L1 = SCRATCH_L1 + 0x10000
 SYNC_OUT_RESERVED = SYNC_L1
@@ -37,6 +39,7 @@ SYNC_DONE0 = SYNC_L1 + 8
 SYNC_DONE1 = SYNC_L1 + 12
 SYNC_DONE2 = SYNC_L1 + 16
 SYNC_TRISC_INIT = SYNC_L1 + 20
+SYNC_TENSIX_INIT_ONCE = SYNC_L1 + 32
 TRISC0_UNP_CFG_CONTEXT = 0xFFB00420
 TRISC1_UNPACK_TILE_NUM_FACES = 0xFFB00020
 TRISC1_UNPACK_DST_FORMAT = TRISC1_UNPACK_TILE_NUM_FACES + 32
@@ -448,7 +451,7 @@ def _cb_push_back(fw: Kernel, interface_base: int, cb_index: int):
   fw.sw(counter, iface, 24)
   fw.srli(received, received, 16)
   fw.li(tmp, CB.SYNC_TILES_RECEIVED_BASE + cb_index * CB.SYNC_STRIDE)
-  fw.sh(received, tmp, 0)
+  fw.sw(received, tmp, 0)
   fw.fence()
 
 
@@ -483,7 +486,7 @@ def _cb_pop_front(fw: Kernel, interface_base: int, cb_index: int, *, tensix_ack:
   fw.or_(counter, received, acked)
   fw.sw(counter, iface, 24)
   fw.li(tmp, CB.SYNC_TILES_ACKED_BASE + cb_index * CB.SYNC_STRIDE)
-  fw.sh(acked, tmp, 0)
+  fw.sw(acked, tmp, 0)
   if tensix_ack:
     fw.slli(tmp, acked, 8)
     fw.li(ptr, TTSETDMAREG(0, 0, 0, 8).raw_word())
@@ -591,14 +594,18 @@ def _math_direct_mova2d_init(fw: Kernel):
   _push_tensix(fw, TTSETRWC(0, 0, 0, 0, 0, 15))
 
 
-def _sfpu_add1_one_iteration(fw: Kernel):
-  # Materialize bf16 1.0 in LReg1, then add it to one Dst/SFPU vector.
+def _sfpu_add1_vector(fw: Kernel, dest_reg_addr: int):
   _write_tensix_instr_word(fw, TTSFPLOADI(1, 0, 0x3F80))
   _write_tensix_instr_word(fw, TTSETRWC(0, 0, 0, 0, 0, 15))
-  _write_tensix_instr_word(fw, TTSFPLOAD(0, 0, 7, 0))
+  _write_tensix_instr_word(fw, TTSFPLOAD(0, 0, 7, dest_reg_addr))
   _write_tensix_instr_word(fw, TTSFPADD(10, 0, 1, 0, 0))
-  _write_tensix_instr_word(fw, TTSFPSTORE(0, 0, 7, 0))
-  _write_tensix_instr_word(fw, TTINCRWC(0, 2, 0, 0))
+  _write_tensix_instr_word(fw, TTSFPSTORE(0, 0, 7, dest_reg_addr))
+
+
+def _sfpu_add1_block(fw: Kernel, dest_base: int):
+  # The BH SFPU vector mapping covers even/odd columns separately, four rows at a time.
+  for dest_reg_addr in (dest_base, dest_base + 2, dest_base + 4, dest_base + 6):
+    _sfpu_add1_vector(fw, dest_reg_addr)
 
 
 def _wait_mmio_low_byte_zero(fw: Kernel, addr: int, *, ptr=t0, tmp=t1):
@@ -618,6 +625,7 @@ def _init_trisc0_unpack(fw: Kernel):
   # The old add1 unpacker path configured CB0 as 4 faces of Float16_b.
   _push_tensix(fw, TTZEROSRC(0, 0, 1, 3))
   fw.write32(TM.DATA_COMMON["cfg_state_id"], 0, tmp_addr=t0, tmp_val=t1)
+  _push_tensix(fw, TTSETC16(0, 0))
 
   wait_unp = fw._new_label("init_wait_unpack_ctx")
   wait_unp_done = fw._new_label("init_wait_unpack_ctx_done")
@@ -650,8 +658,7 @@ def _init_trisc0_unpack(fw: Kernel):
   fw.write32(TensixRegs.CFG_BASE + 73 * 4, 0x000F000F, tmp_addr=t0, tmp_val=t1)
   fw.write32(TensixRegs.CFG_BASE + 120 * 4, 0x00000025, tmp_addr=t0, tmp_val=t1)
   fw.write32(TensixRegs.CFG_BASE + 121 * 4, 0x000F000F, tmp_addr=t0, tmp_val=t1)
-  _write_tensix_instr_word(fw, 0x5E23FC00)
-  _write_tensix_instr_word(fw, 0x5E43FC00)
+  _write_tensix_instr_word(fw, TTSETADCXX(3, 1023, 0))
   fw.write32(TensixRegs.CFG_BASE + 84 * 4, 0x00400040, tmp_addr=t0, tmp_val=t1)
   fw.write32(TensixRegs.CFG_BASE + 86 * 4, 0x01000100, tmp_addr=t0, tmp_val=t1)
   fw.write32(TensixRegs.REGFILE_BASE + 160, 0x01000100, tmp_addr=t0, tmp_val=t1)
@@ -660,7 +667,6 @@ def _init_trisc0_unpack(fw: Kernel):
   fw.write32(TensixRegs.REGFILE_BASE + 172, 0x00200020, tmp_addr=t0, tmp_val=t1)
   fw.write32(TensixRegs.REGFILE_BASE + 176, 0x00100010, tmp_addr=t0, tmp_val=t1)
   _push_tensix(fw, TTSETC16(5, 4))
-  fw.write32(TensixRegs.CFG_BASE + 200 * 4, 0x00000100, tmp_addr=t0, tmp_val=t1)
   fw.write32(TRISC0_UNP_CFG_CONTEXT, 0, tmp_addr=t0, tmp_val=t1)
   _push_tensix(fw, TTSETC16(41, 0))
   page_size_16b = TILE_BYTES >> 4
@@ -670,9 +676,9 @@ def _init_trisc0_unpack(fw: Kernel):
     0xB4010048,
   ):
     _write_tensix_instr_word(fw, raw)
-  _push_tensix(fw, TTSETADCXX(1, 255, 0))
+  _push_tensix(fw, TTSETADCXX(1, 1023, 0))
   _write_tensix_instr_word(fw, 0xB4010048)
-  _push_tensix(fw, TTSETADCXX(1, 255, 0))
+  _push_tensix(fw, TTSETADCXX(1, 1023, 0))
   _tensix_sync(fw, 0)
 
 
@@ -779,8 +785,10 @@ def _init_trisc2_pack(fw: Kernel):
 
   # Output addr config setup (OLD 6d38..6d60).
   _push_tensix(fw, TTSTALLWAIT(33, 8))
-  _push_tensix(fw, TTSETDMAREG(0, 0, 0, 8))
-  _push_tensix(fw, TTSETDMAREG(0, 512, 0, 16))
+  _push_tensix(fw, TTSETDMAREG(0, 0, 0, 16))
+  _push_tensix(fw, TTSETDMAREG(0, 0, 0, 17))
+  _push_tensix(fw, TTSETDMAREG(0, 512, 0, 18))
+  _push_tensix(fw, TTSETDMAREG(0, 0, 0, 19))
   _push_tensix(fw, TTSTALLWAIT(128, 1))
   _push_tensix(fw, TTWRCFG(8, 1, 180))
   _push_tensix(fw, TTDMANOP())
@@ -794,13 +802,19 @@ def _init_trisc2_pack(fw: Kernel):
 def add1_brisc_reader() -> Kernel:
   fw = Kernel()
   fw.breadcrumb(DBG_BRISC, "brisc:0x3000")
+  _read_rta_from(fw, BM.RTA_L1_BASE_PTR, (s0, s2, s3, s4, t6))
   for addr in (
     SYNC_OUT_RESERVED, SYNC_READ, SYNC_DONE0, SYNC_DONE1, SYNC_DONE2,
     SYNC_TRISC_INIT, SYNC_TRISC_INIT + 4, SYNC_TRISC_INIT + 8,
   ):
     fw.write32(addr, 0, tmp_addr=t0, tmp_val=t1)
-  fw.write32(SYNC_OUT_RESERVED, 1, tmp_addr=t0, tmp_val=t1)
-  _read_rta_from(fw, BM.RTA_L1_BASE_PTR, (s0, s2, s3, s4))
+  keep_static_init = fw._new_label("keep_static_init_flags")
+  fw.li(t2, 1)
+  fw.bne(t6, t2, keep_static_init)
+  for addr in (SYNC_TENSIX_INIT_ONCE, SYNC_TENSIX_INIT_ONCE + 4, SYNC_TENSIX_INIT_ONCE + 8):
+    fw.write32(addr, 0, tmp_addr=t0, tmp_val=t1)
+  fw.label(keep_static_init)
+  fw.write32(SYNC_OUT_RESERVED, t6, tmp_addr=t0, tmp_val=t1)
   fw.li(s5, 0)
   fw.label("brisc_loop")
   fw.breadcrumb(DBG_BRISC, "brisc:0x3001")
@@ -880,13 +894,29 @@ def add1_trisc_compute(trisc_id: int) -> Kernel:
   fw.sw(ra, sp, 12)
   fw.read32(t0, data["rta_l1_base"])
   fw.lw(s3, t0, 0)
-  fw.li(t1, 1)
+  fw.lw(t6, t0, 4)
+  fw.mv(t1, t6)
   _wait_sync_value(fw, SYNC_OUT_RESERVED, t1, actual=t2)
 
   if trisc_id == 0:
     fw.breadcrumb(DBG_TRISC0, "trisc0:0x1000")
+    skip_init = fw._new_label("trisc0_skip_static_init")
+    init_done = fw._new_label("trisc0_static_init_done")
+    fw.write32(TM.DATA_COMMON["cfg_state_id"], 0, tmp_addr=t0, tmp_val=t1)
+    _push_tensix(fw, TTSETC16(0, 0))
+    fw.write32(TRISC0_UNP_CFG_CONTEXT, 0, tmp_addr=t0, tmp_val=t1)
+    _push_tensix(fw, TTSETC16(41, 0))
+    fw.read32(t1, SYNC_TENSIX_INIT_ONCE + trisc_id * 4, tmp_addr=t0)
+    fw.li(t2, 1)
+    fw.beq(t1, t2, skip_init)
     fw.write32(RISCV_DEBUG_REG_DBG_FEATURE_DISABLE, 0, tmp_addr=t0, tmp_val=t1)
     _init_trisc0_unpack(fw)
+    fw.li(t2, 1)
+    fw.write32(SYNC_TENSIX_INIT_ONCE + trisc_id * 4, t2, tmp_addr=t0, tmp_val=t1)
+    fw.j(init_done)
+    fw.label(skip_init)
+    fw.fence()
+    fw.label(init_done)
     fw.breadcrumb(DBG_TRISC0, "trisc0:0x1001")
   elif trisc_id == 1:
     fw.breadcrumb(DBG_TRISC1, "trisc1:0x1100")
@@ -918,14 +948,14 @@ def add1_trisc_compute(trisc_id: int) -> Kernel:
     fw.breadcrumb(DBG_TRISC1, "trisc1:0x2102")
     fw.write32(TensixRegs.INSTRN_BUF_BASE, 0xB2010000, tmp_addr=t0, tmp_val=t1)
     _trace_stage(fw, TRACE_TRISC1, "trisc1.direct_mova2d_srca_to_dst", 0x41)
-    _push_tensix(fw, TTSETRWC(0, 0, 0, 0, 0, 15))
-    _push_tensix(fw, TTSTALLWAIT(0x40, 0x80))
-    _write_tensix_instr_word(fw, TTMOVA2D(dest_32b_lo=0, src=0, addr_mode=2, instr_mod=2, dst=0))
-    _push_tensix(fw, TTSTALLWAIT(0x40, 0x10))
+    for dst_base in range(0, 64, 8):
+      _push_tensix(fw, TTSETRWC(0, 0, 0, 0, 0, 15))
+      _push_tensix(fw, TTSTALLWAIT(0x40, 0x80))
+      _write_tensix_instr_word(fw, TTMOVA2D(dest_32b_lo=0, src=dst_base, addr_mode=2, instr_mod=2, dst=dst_base))
+      _push_tensix(fw, TTSTALLWAIT(0x40, 0x10))
+      _sfpu_add1_block(fw, dst_base)
     _trace_stage(fw, TRACE_TRISC1, "trisc1.direct_mova2d_done", 0x42)
-    _trace_stage(fw, TRACE_TRISC1, "trisc1.sfpu_add1_one_iter", 0x43)
-    _sfpu_add1_one_iteration(fw)
-    _trace_stage(fw, TRACE_TRISC1, "trisc1.sfpu_add1_one_iter_done", 0x44)
+    _trace_stage(fw, TRACE_TRISC1, "trisc1.sfpu_add1_done", 0x44)
     _write_tensix_instr_word(fw, TTSETRWC(0, 0, 0, 0, 0, 4))
     _write_tensix_instr_word(fw, TTSTALLWAIT(2, 2064))
     _push_tensix(fw, TTSEMPOST(2))
@@ -974,6 +1004,7 @@ def add1_trisc_compute(trisc_id: int) -> Kernel:
     _push_tensix(fw, TTDMANOP())
     if not DEBUG_SKIP_PACK_MOP:
       _push_tensix(fw, TTMOP(1, 0, 0))
+      _tensix_sync(fw, 2, tmp=t1)
     _trace_stage(fw, TRACE_TRISC2, "trisc2.pack_direct_done", 0x62)
     _push_tensix(fw, TTSETADCZW(4, 0, 0, 0, 0, 5))
     _cb_push_back(fw, data["cb_interface"], 16)
@@ -1048,12 +1079,9 @@ def add1_trisc_compute(trisc_id: int) -> Kernel:
   fw.label(wait_unp_done)
   fw.breadcrumb(DBG_TRISC0, "trisc0:0x2002")
 
-  fw.read32(t1, TRISC0_UNP_CFG_CONTEXT, tmp_addr=t0)
   fw.li(t2, TensixRegs.CFG_BASE + 76 * 4)
-  fw.beq(t1, zero, "trisc0_cfg_addr")
-  fw.li(t2, TensixRegs.CFG_BASE + 0x380 + 77 * 4)
-  fw.label("trisc0_cfg_addr")
-  fw.sw(s0, t2, 0)
+  fw.addi(t3, s0, -1)
+  fw.sw(t3, t2, 0)
   fw.lw(t1, t2, 0)
   fw.debug_write(DBG_SEMS2, t1, name="trisc0_unpack_cfg_ptr", tmp_addr=t0, tmp_val=t3)
   fw.write32(TENSIX_PC_UNPACK_SYNC, 0, tmp_addr=t0, tmp_val=t1)
@@ -1098,16 +1126,21 @@ def add1_trisc_compute(trisc_id: int) -> Kernel:
 
 
 def build_program(src_addr: int, dst_addr: int, num_banks: int) -> Program:
+  global _RUN_EPOCH
+  _RUN_EPOCH = (_RUN_EPOCH + 1) & 0xFFFFFFFF
+  if _RUN_EPOCH == 0:
+    _RUN_EPOCH = 1
+  run_epoch = _RUN_EPOCH
   tiles_per_core = TILES_PER_CORE
 
   def brisc_rtas(_x: int, _y: int) -> list[int]:
-    return [src_addr, 0, tiles_per_core, num_banks]
+    return [src_addr, 0, tiles_per_core, num_banks, run_epoch]
 
   def ncrisc_rtas(_x: int, _y: int) -> list[int]:
     return [dst_addr, 0, tiles_per_core, num_banks]
 
   def trisc_rtas(_x: int, _y: int) -> list[int]:
-    return [tiles_per_core]
+    return [tiles_per_core, run_epoch]
 
   brisc = add1_brisc_reader()
   ncrisc = add1_ncrisc_writer(num_banks)
@@ -1152,8 +1185,9 @@ def main():
       _print_trisc2_pack_debug(device, TARGET_CORE, "after timeout")
       _print_l1_words_probe(device, TARGET_CORE, SCRATCH_L1, "cb0 page0 first 128B after timeout")
       _print_l1_words_probe(device, TARGET_CORE, SCRATCH_L1 + TILE_BYTES * CB_DEPTH, "cb16 page0 first 128B after timeout")
-      dst_rows = _read_dst_debug_array_words(device, TARGET_CORE, rows=16)
-      _print_dst_debug_rows("dst debug-array rows 0..15 after timeout:", dst_rows)
+      if not DEBUG_SKIP_DST_DEBUG_ARRAY:
+        dst_rows = _read_dst_debug_array_words(device, TARGET_CORE, rows=16)
+        _print_dst_debug_rows("dst debug-array rows 0..15 after timeout:", dst_rows)
       _print_cb_interface_probe(device, TARGET_CORE, TM.DATA_COMMON["cb_interface"], 16, "after timeout")
       raise
       out = device.dram_read(dst_buf)
@@ -1168,8 +1202,9 @@ def main():
       dst_rows = _read_dst_debug_array_words(device, TARGET_CORE, rows=64)
       _print_dst_debug_rows("dst debug-array rows 0..63:", dst_rows)
       raise
-    dst_rows = _read_dst_debug_array_words(device, TARGET_CORE, rows=64)
-    _print_dst_debug_rows("dst debug-array rows 0..63:", dst_rows)
+    if not DEBUG_SKIP_DST_DEBUG_ARRAY:
+      dst_rows = _read_dst_debug_array_words(device, TARGET_CORE, rows=64)
+      _print_dst_debug_rows("dst debug-array rows 0..63:", dst_rows)
     _print_l1_tile_probe(device, TARGET_CORE, SCRATCH_L1, "cb0 page0 after run")
     _print_l1_tile_probe(device, TARGET_CORE, SCRATCH_L1 + TILE_BYTES * CB_DEPTH, "cb16 page0 after run")
     out = device.dram_read(dst_buf)
