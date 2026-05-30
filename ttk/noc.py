@@ -2,10 +2,28 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
-from dsl import Reg, t0, t1, t2, t3, t4, t5, zero
-from ttk.addrs import NOC, TensixMMIO
+from dsl import Reg, a0, a1, a2, a5, t0, t1, t2, t3, t4, t5, zero
+from ttk.addrs import BriscMailbox as BM, NOC, TensixMMIO
 
 class Noc:
+  def local_noc0_coord(self, out: Reg = a5):
+    self.read8(t0, BM.MY_X, tmp_addr=t2)
+    self.read8(t1, BM.MY_Y, tmp_addr=t2)
+    self.slli(t1, t1, 6)
+    return self.or_(out, t0, t1)
+
+  def dram_tile_addr_from(self, table_base: int, noc_table_offset: int = 0):
+    self.mv(t0, a1)
+    self.remu(a1, t0, a2)
+    self.divu(t0, t0, a2)
+    self.slli(t0, t0, 11)
+    self.add(a0, a0, t0)
+    self.addi(t1, a1, noc_table_offset)
+    self.slli(t1, t1, 1)
+    self.li(t2, table_base)
+    self.add(t2, t2, t1)
+    return self.lhu(a2, t2, 0)
+
   def write_reg(self, addr: int | Reg, value: int | Reg, *, tmp_addr: Reg = t0, tmp_val: Reg = t1):
     return self.write32(addr, value, tmp_addr=tmp_addr, tmp_val=tmp_val)
 

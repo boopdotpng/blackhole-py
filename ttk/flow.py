@@ -4,6 +4,44 @@ from dsl import Reg, ra, sp, t0, t1, t2, t3, t4, zero
 from ttk.addrs import Launch, Mailbox, RunMsg
 
 class Flow:
+  def read_rta_from(self, rta_ptr_addr: int, regs):
+    self.read32(t0, rta_ptr_addr)
+    for i, reg in enumerate(regs):
+      self.lw(reg, t0, i * 4)
+    return self
+
+  def ret_kernel(self):
+    self.lw(ra, sp, 12)
+    self.addi(sp, sp, 16)
+    return self.ret()
+
+  def wait_sync_value(self, addr: int, value_reg: Reg, *, ptr: Reg = t0, actual: Reg = t1):
+    done = self._new_label("wait_sync_done")
+    loop = self._new_label("wait_sync")
+    self.li(ptr, addr)
+    self.label(loop)
+    self.lw(actual, ptr, 0)
+    self.beq(actual, value_reg, done)
+    self.fence()
+    self.j(loop)
+    self.label(done)
+    return self.fence()
+
+  def wait_sync_at_least(self, addr: int, value_reg: Reg, *, ptr: Reg = t0, actual: Reg = t1):
+    done = self._new_label("wait_sync_at_least_done")
+    loop = self._new_label("wait_sync_at_least")
+    self.li(ptr, addr)
+    self.label(loop)
+    self.lw(actual, ptr, 0)
+    self.bge(actual, value_reg, done)
+    self.fence()
+    self.j(loop)
+    self.label(done)
+    return self.fence()
+
+  def signal_sync(self, addr: int, value_reg: Reg):
+    return self.write32(addr, value_reg, tmp_addr=t0, tmp_val=t1)
+
   def wait8(self, addr: int, value: int, *, ptr: Reg = t0, actual: Reg = t1, expected: Reg = t2):
     self.li(ptr, addr)
     self.li(expected, value)
