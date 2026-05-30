@@ -3,13 +3,3 @@ __pycache__
 .ruff-cache/
 .vscode/
 .claude
-state.txt
-*.so
-*_disasm.txt
-disasms
-firmware/
-fw/build/
-tt-metal-deps/
-
-# Vendored ttsim simulator (EMU=1) - not committed
-libttsim_bh.so
