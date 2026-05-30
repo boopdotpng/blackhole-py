@@ -33,11 +33,12 @@ class Device:
     return list(self.board_info.program_cores)
 
   def close(self):
-    self.dev.set_power_state(False)
     if self.cq is not None:
       self._halt_cores()
       self.cq.close()
+      self.cq = None
     self.dram.close()
+    self.dev.set_power_state(False)
     self.dev.close()
 
   def _dram_tiles(self) -> list[tuple[int, int, int]]:

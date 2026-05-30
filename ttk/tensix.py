@@ -15,6 +15,9 @@ class TensixRegs:
   REGFILE_BASE = 0xFFE00000
   PC_BUF_SYNC = 0xFFE80004
   PC_BUF_MOP_SYNC = 0xFFE80008
+  PC_BUF_SEM_BASE = 0xFFE80020
+  PC_BUF_SEM_STRIDE = 4
+  PC_BUF_SEM_COUNT = 8
   PC_UNPACK_SYNC = 0xFFE80034
   MOP_CFG = 0xFFB80000
   CFG_BASE = 0xFFEF0000
@@ -27,11 +30,60 @@ class TensixRegs:
   ECC_SCRUBBER_DELAY_MASK = 0x3FF8
   ECC_SCRUBBER_DELAY_SHAMT = 3
 
+  @staticmethod
+  def pc_buf_sem(sem: int) -> int:
+    if not 0 <= sem < TensixRegs.PC_BUF_SEM_COUNT:
+      raise ValueError(f"Tensix semaphore index out of range: {sem}")
+    return TensixRegs.PC_BUF_SEM_BASE + sem * TensixRegs.PC_BUF_SEM_STRIDE
+
 
 class TensixSem:
+  FPU_SFPU = 0
   MATH_PACK = 1
   UNPACK_TO_DEST = 2
+  UNPACK_OPERAND_SYNC = 3
+  PACK_DONE = 4
+  UNPACK_SYNC = 5
+  UNPACK_MATH_DONE = 6
   MATH_DONE = 7
+
+  @staticmethod
+  def mask(sem: int) -> int:
+    return 1 << sem
+
+
+class TensixStall:
+  TDMA = 0x001
+  SYNC = 0x002
+  PACK = 0x004
+  UNPACK = 0x008
+  XMOV = 0x010
+  THCON = 0x020
+  MATH = 0x040
+  CFG = 0x080
+  SFPU = 0x100
+  THREAD = 0x1FF
+
+
+class TensixWait:
+  THCON = 0x001
+  UNPACK0 = 0x002
+  UNPACK1 = 0x004
+  PACK0 = 0x008
+  MATH = 0x010
+  SRCA_CLR = 0x020
+  SRCB_CLR = 0x040
+  SRCA_VLD = 0x080
+  SRCB_VLD = 0x100
+  XMOV = 0x200
+  TRISC_CFG = 0x400
+  SFPU = 0x800
+  CFGEXU = 0x1000
+
+
+class TensixSemWait:
+  STALL_ON_ZERO = 0x1
+  STALL_ON_MAX = 0x2
 
 
 # Tensix regfile GPR maps. The regfile (ttsim "tensix_regfile", 0xFFE00000) is

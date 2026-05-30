@@ -171,7 +171,7 @@ def build(*, text_base: dict[str, int] = Firmware.TEXT_BASE) -> Kernel:
     shift=TensixRegs.ECC_SCRUBBER_DELAY_SHAMT,
   )
   for sem in (TensixSem.MATH_PACK, TensixSem.UNPACK_TO_DEST, TensixSem.MATH_DONE):
-    fw.tensix_push_word(buf, TTSEMINIT(sem_sel=1 << sem, init_value=0, max_value=1).raw_word())
+    fw.tensix_push_word(buf, TTSEMINIT(sem_sel=TensixSem.mask(sem), init_value=0, max_value=1).raw_word())
 
   # init_risc_noc_coords
   for noc in range(2):

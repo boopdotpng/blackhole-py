@@ -7,7 +7,7 @@ if __package__ in (None, ""):
   sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from asm import Kernel
-from dsl import Reg, s0, s1, s2, s3, s4, s5, s6, s7, s8, s9, s10, s11, t0, t1, t2, t3, t4, t5, t6, zero
+from dsl import Reg, a0, a1, s0, s1, s2, s3, s4, s5, s6, s7, s8, s9, s10, s11, t0, t1, t2, t3, t4, t5, t6, zero
 
 L1_ALIGN = 16
 KERNEL_CONFIG_BASE = 0x86B0
@@ -343,14 +343,20 @@ def build_dispatch() -> Kernel:
 
   fw.label("cmd_packed_large")
   fw.write32(CQ_DEBUG, 0xC1D10600)
+  fw.lbu(s4, s0, 1)      # global flags
+  fw.andi(s4, s4, CQ_PACKED_NO_STRIDE)
   fw.lhu(s3, s0, 2)      # remaining subcmd count
-  fw.lhu(s4, s0, 4)      # alignment
   fw.addi(s5, s0, 16)    # subcmd ptr
   fw.mv(t3, s5)
   fw.li(t4, 12)
   fw.mul(t4, s3, t4)
   fw.add(t3, t3, t4)
   round_up_reg(fw, t3, L1_ALIGN, tmp=t4)  # data ptr
+  fw.mv(a0, t3)           # shared data ptr for NO_STRIDE records
+  fw.lhu(a1, s5, 8)
+  fw.addi(a1, a1, 1)
+  fw.add(a1, a1, a0)
+  round_up_reg(fw, a1, L1_ALIGN, tmp=t4)  # shared record end ptr
   fw.li(s8, 1)           # must barrier before a fresh multicast path reservation
   fw.label("pl_loop")
   fw.beq(s3, zero, "pl_done")
@@ -426,12 +432,18 @@ def build_dispatch() -> Kernel:
   fw.write32(CQ_DEBUG, 0xC1D1062A, tmp_addr=t0, tmp_val=t2)
   # CQWritePackedLarge currently emits L1_ALIGN alignment.
   round_up_reg(fw, t3, L1_ALIGN, tmp=t4)
+  fw.beq(s4, zero, "pl_data_ptr_ready")
+  fw.mv(t3, a0)
+  fw.label("pl_data_ptr_ready")
   fw.write32(CQ_DEBUG + 52, t3, tmp_addr=t0, tmp_val=t2)
   fw.addi(s5, s5, 12)
   fw.addi(s3, s3, -1)
   fw.write32(CQ_DEBUG + 60, s3, tmp_addr=t0, tmp_val=t2)
   fw.j("pl_loop")
   fw.label("pl_done")
+  fw.beq(s4, zero, "pl_done_ptr_ready")
+  fw.mv(t3, a1)
+  fw.label("pl_done_ptr_ready")
   fw.mv(s0, t3)
   fw.j("release_and_continue")
 

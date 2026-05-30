@@ -306,9 +306,9 @@ class _OffsetView:
   def __init__(self, m, base, size):
     self._m, self._b, self._s = m, base, size
 
-  # NB: BAR access goes through buffer slicing (not struct.pack_into) so that an
-  # emulated backend (see emu_pcie.py) can intercept every read/write. For a real
-  # mmap'd memoryview this is behaviorally identical.
+  # NB: BAR access goes through buffer slicing rather than struct.pack_into.
+  # For a real mmap'd memoryview this is behaviorally identical and keeps
+  # all MMIO access paths consistent.
   def __getitem__(self, key):
     if isinstance(key, slice):
       start = (key.start or 0) + self._b
@@ -479,14 +479,6 @@ def _secondary_bus_reset(sysfs_path: str):
     raise RuntimeError(f"PCIe link did not come back for {os.path.basename(sysfs_path)}")
 
 class PCIDevice:
-  def __new__(cls, *args, **kwargs):
-    # EMU=1 transparently swaps the real PCIe device for the ttsim-backed emulator.
-    # Lazy import avoids a circular dependency (emu_pcie imports from pcie).
-    if cls is PCIDevice and os.environ.get("EMU") == "1":
-      from emu_pcie import EmuPCIDevice
-      return object.__new__(EmuPCIDevice)
-    return object.__new__(cls)
-
   def __init__(self, index: int = 0, use_vfio: bool = True):
     devices = _find_bh_devices()
     if index >= len(devices):
