@@ -40,7 +40,7 @@ def build_fill() -> KernelBase:
     fw.cb_reserve_back(NM.CB_INTERFACE, 0)
     fw.cb_write_ptr(NM.CB_INTERFACE, 0, out=t5)
     fw.sysmem_addr(out_lo=a3, out_mid=a4, tmp=t0)
-    fw.local_noc0_coord(a5, x_addr=NM.MY_X, y_addr=NM.MY_Y)
+    fw.local_noc0_coord(a5, x_addr=NM.MY_X + 1, y_addr=NM.MY_Y + 1)
 
     fw.read32(s10, NOC.STATUS_BASE + NOC.NIU_MST_RD_RESP_RECEIVED + (1 << NOC.INSTANCE_OFFSET_BIT), tmp_addr=t0)
     fw.addi(s10, s10, 1)
@@ -67,7 +67,7 @@ def build_drain() -> KernelBase:
     fw.cb_reserve_back(NM.CB_INTERFACE, 0)
     fw.cb_write_ptr(NM.CB_INTERFACE, 0, out=t5)
     fw.dram_addr()
-    fw.local_noc0_coord(a5, x_addr=NM.MY_X, y_addr=NM.MY_Y)
+    fw.local_noc0_coord(a5, x_addr=NM.MY_X + 1, y_addr=NM.MY_Y + 1)
 
     fw.read32(s10, NOC.STATUS_BASE + NOC.NIU_MST_RD_RESP_RECEIVED + (1 << NOC.INSTANCE_OFFSET_BIT), tmp_addr=t0)
     fw.addi(s10, s10, 1)

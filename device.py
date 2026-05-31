@@ -272,7 +272,7 @@ class Device:
     kernel.rta(lambda x, y: [
       buf.addr, (1 << 24) | PCIE_NOC_XY, sysmem_lo, sysmem_mid,
       core_index[(x, y)] * tiles_per_core,
-      min(tiles_per_core, n_tiles - core_index[(x, y)] * tiles_per_core),
+      max(0, min(tiles_per_core, n_tiles - core_index[(x, y)] * tiles_per_core)),
       buf.page_size, bank_count,
     ])
 
