@@ -18,8 +18,8 @@ from program import (
 )
 
 class Device:
-  def __init__(self, index: int = 0):
-    self.fast_dispatch = os.environ.get("TT_USB") != "1"
+  def __init__(self, index: int = 0, fast_dispatch: bool | None = None):
+    self.fast_dispatch = os.environ.get("TT_USB") != "1" if fast_dispatch is None else fast_dispatch
     self.dev = PCIDevice(index=index, use_vfio=self.fast_dispatch)
     self.board_info: BoardInfo = self.dev.board_info(fast_dispatch=self.fast_dispatch)
     self.programs: list[Program] = []
@@ -98,12 +98,13 @@ class Device:
           go = GoMsg()
           go.bits.signal = DevMsgs.RUN_MSG_GO
           go_blob = struct.pack("<I", go.all)
+          timeout_s = float(os.environ.get("BLACKHOLE_RUN_TIMEOUT_S", "10.0"))
           for x0, x1, y0, y1 in mcast_rects(cores):
             win.target((x0, y0), (x1, y1))
             win.write(TensixL1.GO_MSG, go_blob)
           for core in cores:
             win.target(core)
-            deadline = time.perf_counter() + 10.0
+            deadline = time.perf_counter() + timeout_s
             while win.read(TensixL1.GO_MSG + 3, 1)[0] != DevMsgs.RUN_MSG_DONE:
               if time.perf_counter() > deadline:
                 raise TimeoutError(f"timeout waiting for core {core}")
