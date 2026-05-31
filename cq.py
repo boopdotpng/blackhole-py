@@ -6,7 +6,7 @@ import time
 
 from ttk.addrs import Core, L1_ALIGN, PCIE_ALIGN, align_up, noc_xy
 from ttk.tensix import TensixL1
-from pcie import LibCAnonMap, PCIDevice, TLBWindow
+from pcie import Mapping, PCIDevice, TLBWindow
 from program import IRCommand, McastWrite, Run, UnicastWrite
 
 Rect = tuple[int, int, int, int]
@@ -258,7 +258,7 @@ class CQSysmem:
     self.prefetch_win = prefetch_win
     self.dispatch_win = dispatch_win
     self.size = _host_sysmem_size()
-    self.sysmem = LibCAnonMap(self.size)
+    self.sysmem = Mapping(self.size)
     self.sysmem_addr = self.sysmem.addr
     if self.sysmem_addr % PAGE_SIZE or self.size % PAGE_SIZE:
       raise RuntimeError("CQ sysmem must be page-aligned and page-sized")
@@ -279,33 +279,33 @@ class CQSysmem:
     self.completion_rd_16b = self.completion_base_16b
     self.completion_rd_toggle = 0
 
-    self.prefetch_win.write32(CQ_PREFETCH_Q_RD_PTR, CQ_PREFETCH_Q_BASE + CQ_PREFETCH_Q_SIZE)
-    self.prefetch_win.write32(CQ_PREFETCH_Q_PCIE_RD, (self.noc_local + _HOST_ISSUE_BASE) & 0xFFFFFFFF)
-    self.prefetch_win.mm[CQ_PREFETCH_Q_BASE : CQ_PREFETCH_Q_BASE + CQ_PREFETCH_Q_SIZE] = bytes(CQ_PREFETCH_Q_SIZE)
+    self.prefetch_win.write(CQ_PREFETCH_Q_RD_PTR, struct.pack("<I", CQ_PREFETCH_Q_BASE + CQ_PREFETCH_Q_SIZE))
+    self.prefetch_win.write(CQ_PREFETCH_Q_PCIE_RD, struct.pack("<I", (self.noc_local + _HOST_ISSUE_BASE) & 0xFFFFFFFF))
+    self.prefetch_win.write(CQ_PREFETCH_Q_BASE, bytes(CQ_PREFETCH_Q_SIZE))
     self.write_sysmem32(_HOST_CQ_WR_OFF, self.completion_base_16b)
     self.write_sysmem32(_HOST_CQ_RD_OFF, self.completion_base_16b)
 
   def read_sysmem32(self, off: int) -> int:
-    return struct.unpack("<I", self.sysmem[off : off + 4])[0]
+    return struct.unpack("<I", self.sysmem.read(off, 4))[0]
 
   def write_sysmem32(self, off: int, value: int):
-    self.sysmem[off : off + 4] = struct.pack("<I", value & 0xFFFFFFFF)
+    self.sysmem.write(off, struct.pack("<I", value & 0xFFFFFFFF))
 
   def _wait_prefetch_slot_free(self, idx: int, timeout_s: float = 1.0):
     off = CQ_PREFETCH_Q_BASE + idx * CQ_PREFETCH_Q_ENTRY_SZ
     deadline = time.perf_counter() + timeout_s
-    while struct.unpack("<H", self.prefetch_win.mm[off : off + 2])[0] != 0:
+    while struct.unpack("<H", self.prefetch_win.read(off, 2))[0] != 0:
       if time.perf_counter() > deadline:
         base = max(0, idx - 4)
         end = min(CQ_PREFETCH_Q_ENTRIES, idx + 5)
         entries = []
         for i in range(base, end):
           entry_off = CQ_PREFETCH_Q_BASE + i * CQ_PREFETCH_Q_ENTRY_SZ
-          value = struct.unpack("<H", self.prefetch_win.mm[entry_off : entry_off + 2])[0]
+          value = struct.unpack("<H", self.prefetch_win.read(entry_off, 2))[0]
           entries.append(f"{i}:{value}")
-        rd_ptr = self.prefetch_win.read32(CQ_PREFETCH_Q_RD_PTR)
-        pcie_rd = self.prefetch_win.read32(CQ_PREFETCH_Q_PCIE_RD)
-        current = struct.unpack("<H", self.prefetch_win.mm[off : off + 2])[0]
+        rd_ptr = struct.unpack("<I", self.prefetch_win.read(CQ_PREFETCH_Q_RD_PTR, 4))[0]
+        pcie_rd = struct.unpack("<I", self.prefetch_win.read(CQ_PREFETCH_Q_PCIE_RD, 4))[0]
+        current = struct.unpack("<H", self.prefetch_win.read(off, 2))[0]
         raise TimeoutError(
           "timeout waiting for CQ prefetch queue slot "
           f"idx={idx} value={current} rd_ptr=0x{rd_ptr:x} "
@@ -318,7 +318,7 @@ class CQSysmem:
       self.issue_wr = 0
 
     base = _HOST_ISSUE_BASE + self.issue_wr
-    self.sysmem[base : base + len(record)] = record
+    self.sysmem.write(base, record)
     flush_base = base & ~(PAGE_SIZE - 1)
     flush_end = align_up(base + len(record), PAGE_SIZE)
     self.sysmem.flush(flush_base, flush_end - flush_base)
@@ -327,7 +327,7 @@ class CQSysmem:
     idx = self.prefetch_q_wr_idx
     self._wait_prefetch_slot_free(idx)
     off = CQ_PREFETCH_Q_BASE + idx * CQ_PREFETCH_Q_ENTRY_SZ
-    self.prefetch_win.mm[off : off + 2] = struct.pack("<H", len(record) >> 4)
+    self.prefetch_win.write(off, struct.pack("<H", len(record) >> 4))
     self.prefetch_q_wr_idx = (idx + 1) % CQ_PREFETCH_Q_ENTRIES
 
   def flush(self, queue: CommandQueue):
@@ -366,7 +366,7 @@ class CQSysmem:
           self.completion_rd_16b = self.completion_base_16b
           self.completion_rd_toggle ^= 1
         raw = (self.completion_rd_16b & 0x7FFFFFFF) | (self.completion_rd_toggle << 31)
-        self.dispatch_win.write32(CQ_COMPLETION_RD_PTR, raw)
+        self.dispatch_win.write(CQ_COMPLETION_RD_PTR, struct.pack("<I", raw))
         self.write_sysmem32(_HOST_CQ_RD_OFF, raw)
         if got != (event_id & 0xFFFFFFFF):
           raise RuntimeError(f"CQ completion event mismatch: got {got}, expected {event_id}")

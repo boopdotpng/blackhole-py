@@ -7,9 +7,6 @@ import time
 from dataclasses import dataclass, field
 from pcie import PCIDevice
 
-def read_telemetry_entry(dev: PCIDevice, layout: dict, tag: int) -> int:
-  return dev._read_arc_noc32(layout["data_base"] + 4 * layout["tag_to_offset"][tag])
-
 TAG_NAME_TO_ID = {
   "BOARD_ID_HIGH": 1, "BOARD_ID_LOW": 2, "ASIC_ID": 3, "HARVESTING_STATE": 4,
   "UPDATE_TELEM_SPEED": 5, "VCORE": 6, "TDP": 7, "TDC": 8, "VDD_LIMITS": 9,
@@ -106,10 +103,7 @@ def _fmt_fw_bundle(raw: int | None) -> str | None:
   return ".".join(str((raw >> shift) & 0xFF) for shift in (24, 16, 8, 0))
 
 def _read_tag(dev: PCIDevice, layout: dict, tag_name: str) -> int | None:
-  tag = TAG_NAME_TO_ID[tag_name]
-  if tag not in layout["tag_to_offset"]:
-    return None
-  return read_telemetry_entry(dev, layout, tag)
+  return dev.telemetry_tag(layout, TAG_NAME_TO_ID[tag_name])
 
 # ---- Fan control ----
 # TT_SMC_MSG_FORCE_FAN_SPEED (see tt-zephyr-platforms/include/tenstorrent/smc_msg.h).
@@ -147,7 +141,7 @@ def _device_snapshot(dev: PCIDevice) -> dict:
 
   board = dev.board_info(layout)
   core_count = board.core_count
-  board_name = board.arch
+  board_name = board.board
   harv_bank = board.harvested_dram_bank
 
   # Denominators for progress bars
@@ -228,14 +222,14 @@ def _device_csv_rows(index: int, dev: PCIDevice) -> list[dict[str, str]]:
   row("metadata", "telemetry_table", "Telemetry table", f"0x{layout['table_base']:08x}")
   row("metadata", "telemetry_data", "Telemetry data", f"0x{layout['data_base']:08x}")
   row("metadata", "telemetry_entry_count", "Telemetry entry count", layout["entry_count"])
-  row("metadata", "board", "Board", board.arch)
+  row("metadata", "board", "Board", board.board)
   row("metadata", "pcie_link", "PCIe link", _pcie_link(dev))
   row("metadata", "tensix_cores", "Tensix cores", board.core_count)
   row("metadata", "harvested_dram_bank", "Harvested DRAM Bank", board.harvested_dram_bank)
 
   for tag in sorted(layout["tag_to_offset"]):
     name = TAG_ID_TO_NAME.get(tag, f"TAG_{tag}")
-    raw = read_telemetry_entry(dev, layout, tag)
+    raw = dev.telemetry_tag(layout, tag)
     label = METRICS[name][0] if name in METRICS else name
     if name in METRICS:
       value, unit = _csv_metric_value(name, raw)
@@ -270,7 +264,7 @@ def show_device(index: int):
     print("  Raw telemetry")
     for tag in sorted(layout["tag_to_offset"]):
       name = TAG_ID_TO_NAME.get(tag, f"TAG_{tag}")
-      print(f"    {tag:>2} {name:<24} 0x{read_telemetry_entry(dev, layout, tag):08x}")
+      print(f"    {tag:>2} {name:<24} 0x{dev.telemetry_tag(layout, tag):08x}")
 
 def reset_device(index: int):
   devices = PCIDevice.list_devices()

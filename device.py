@@ -8,7 +8,7 @@ from cq import (
 )
 from dram import Allocator, DramBuffer, Shape, tilize, untilize
 import fw
-from ttk.addrs import Core, Dram, L1_ALIGN, align_down, as_bytes
+from ttk.addrs import Core, L1_ALIGN, align_down, as_bytes
 from ttk.tensix import TensixL1, TensixMMIO
 from pcie import BoardInfo, PCIDevice, TLBWindow
 from program import (
@@ -23,7 +23,7 @@ class Device:
     self.dev = PCIDevice(index=index, use_vfio=self.fast_dispatch)
     self.board_info: BoardInfo = self.dev.board_info(fast_dispatch=self.fast_dispatch)
     self.programs: list[Program] = []
-    self.dram = Allocator(self.dev, self._dram_tiles())
+    self.dram = Allocator(self.dev, self.board_info.dram_tiles)
     self.cq: CommandQueue | None = None
     self._upload_firmware()
     if self.fast_dispatch:
@@ -41,14 +41,6 @@ class Device:
     self.dram.close()
     self.dev.set_power_state(False)
     self.dev.close()
-
-  def _dram_tiles(self) -> list[tuple[int, int, int]]:
-    return [
-      (bank, Dram.BANK_X[bank], y)
-      for bank in range(Dram.BANK_COUNT)
-      if (self.board_info.enabled_gddr >> bank) & 1
-      for y in Dram.BANK_TILE_YS[bank]
-    ]
 
   def _upload_firmware(self):
     core_fw = fw.build_all()
@@ -94,11 +86,11 @@ class Device:
           mmio_base, _ = align_down(addr, TLBWindow.SIZE_2M)
           for x0, x1, y0, y1 in rects:
             win.target((x0, y0), (x1, y1), addr=mmio_base)
-            win.write32(addr - mmio_base, value)
+            win.write(addr - mmio_base, struct.pack("<I", value & 0xFFFFFFFF))
         case PollL1Byte(core=core, addr=addr, value=value, timeout_s=timeout_s):
           win.target(core)
           deadline = time.perf_counter() + timeout_s
-          while win.mm[addr] != value:
+          while win.read(addr, 1)[0] != value:
             if time.perf_counter() > deadline:
               raise TimeoutError(f"timeout waiting for L1[0x{addr:x}] == 0x{value:02x} on core {core}")
             time.sleep(0.001)
@@ -112,7 +104,7 @@ class Device:
           for core in cores:
             win.target(core)
             deadline = time.perf_counter() + 10.0
-            while win.mm[TensixL1.GO_MSG + 3] != DevMsgs.RUN_MSG_DONE:
+            while win.read(TensixL1.GO_MSG + 3, 1)[0] != DevMsgs.RUN_MSG_DONE:
               if time.perf_counter() > deadline:
                 raise TimeoutError(f"timeout waiting for core {core}")
               time.sleep(0.001)
@@ -156,11 +148,11 @@ class Device:
     dispatch_win = self.cq.dispatch_win
     dispatch_win.target(dispatch_core)
     base_16b = self.cq.completion_base_16b
-    dispatch_win.write32(CQ_COMPLETION_WR_PTR, base_16b)
-    dispatch_win.write32(CQ_COMPLETION_RD_PTR, base_16b)
-    dispatch_win.write32(CQ_COMPLETION_Q0_EVENT, 0)
-    dispatch_win.write32(CQ_COMPLETION_Q1_EVENT, 0)
-    dispatch_win.mm[CQ_DISPATCH_SYNC_SEM : CQ_DISPATCH_SYNC_SEM + 8 * L1_ALIGN] = b"\0" * (8 * L1_ALIGN)
+    dispatch_win.write(CQ_COMPLETION_WR_PTR, struct.pack("<I", base_16b))
+    dispatch_win.write(CQ_COMPLETION_RD_PTR, struct.pack("<I", base_16b))
+    dispatch_win.write(CQ_COMPLETION_Q0_EVENT, struct.pack("<I", 0))
+    dispatch_win.write(CQ_COMPLETION_Q1_EVENT, struct.pack("<I", 0))
+    dispatch_win.write(CQ_DISPATCH_SYNC_SEM, b"\0" * (8 * L1_ALIGN))
 
     dispatch_img = b"\0" * (3 * L1_ALIGN)
     self._upload_cq_core(
@@ -212,7 +204,7 @@ class Device:
     with TLBWindow(self.dev, start=cores[0], addr=mmio_base) as win:
       for x0, x1, y0, y1 in mcast_rects(cores):
         win.target((x0, y0), (x1, y1), addr=mmio_base)
-        win.write32(reset_off, TensixMMIO.SOFT_RESET_ALL)
+        win.write(reset_off, struct.pack("<I", TensixMMIO.SOFT_RESET_ALL))
 
   def alloc_write(self, data: bytes, dtype: Dtype, shape: Shape, name: str = "") -> DramBuffer:
     buf = self.dram.alloc(len(data) // dtype.tile_size, dtype, name, shape)

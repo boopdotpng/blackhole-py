@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 
 import numpy as np
+import struct
 
 from ttk.addrs import Dram, align_up
 from pcie import NocOrdering, TLBWindow
@@ -77,8 +78,8 @@ class Allocator:
     for flag in Dram.BARRIER_FLAGS:
       for _, x, y in self.bank_tiles:
         win.target((x, y))
-        win.write32(Dram.BARRIER_BASE, flag)
-        while win.read32(Dram.BARRIER_BASE) != flag:
+        win.write(Dram.BARRIER_BASE, struct.pack("<I", flag))
+        while struct.unpack("<I", win.read(Dram.BARRIER_BASE, 4))[0] != flag:
           pass
 
   def write(self, buf: DramBuffer, data: bytes):
@@ -90,7 +91,7 @@ class Allocator:
       bank_data = b''.join(bytes(view[p * ps : p * ps + ps]) for p in range(bi, n_pages, nb))
       if not bank_data: continue
       win.target((x, y), mode=NocOrdering.POSTED)
-      win.mm[buf.addr : buf.addr + len(bank_data)] = bank_data
+      win.write(buf.addr, bank_data)
     self.barrier()
 
   def read(self, buf: DramBuffer) -> bytes:
@@ -101,7 +102,7 @@ class Allocator:
       bank_pages = list(range(bi, n_pages, nb))
       if not bank_pages: continue
       win.target((x, y), mode=NocOrdering.RELAXED)
-      bank_data = win.mm[buf.addr : buf.addr + len(bank_pages) * ps]
+      bank_data = win.read(buf.addr, len(bank_pages) * ps)
       for i, p in enumerate(bank_pages):
         n = min(ps, buf.size - p * ps)
         result[p * ps : p * ps + n] = bank_data[i * ps : i * ps + n]
@@ -113,7 +114,7 @@ class Allocator:
     for bank_idx, (_, x, y) in enumerate(self.bank_tiles):
       win.target((x, y), mode=NocOrdering.RELAXED)
       off = bank_idx * page_size
-      result[off : off + page_size] = win.mm[addr : addr + page_size]
+      result[off : off + page_size] = win.read(addr, page_size)
     return bytes(result)
 
   def close(self):

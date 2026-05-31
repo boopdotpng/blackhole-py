@@ -3,13 +3,13 @@ from dataclasses import dataclass
 from enum import Enum
 
 TT_VENDOR = 0x1E52
-BH_DEVICE = 0xB140
+BH_DEVICE = 0xB140 # blackhole pcie id 
 PCI_COMMAND = 0x04
 PCI_COMMAND_MEMORY = 0x02
 PCI_COMMAND_MASTER = 0x04
 PCI_VENDOR_ID = 0x00
 PCI_CAP_PTR = 0x34
-PCI_CAP_ID_EXP = 0x10
+PCI_CAP_ID_EXP = 0x10 # "PCI Express" capability
 PCI_EXP_DEVCTL = 0x08
 PCI_EXP_DEVCTL_READRQ = 0x7000
 PCI_EXP_DEVCTL_READRQ_4096 = 0x5000
@@ -71,73 +71,26 @@ TELEMETRY_TAGS = {
   "ENABLED_GDDR": 36,
 }
 
-BOARD_UPI_TO_NAME = {
-  0x36: "p100", 0x43: "p100a", 0x40: "p150a", 0x41: "p150b", 0x42: "p150c",
-  0x44: "p300b", 0x45: "p300a", 0x46: "p300c", 0x18: "n150", 0x14: "n300",
-  0x35: "galaxy-wormhole", 0x47: "galaxy-blackhole",
-}
-
-P100_TENSIX_X = (*range(1, 8), *range(10, 15))
 P150_TENSIX_X = (*range(1, 8), *range(10, 17))
-DEFAULT_TENSIX_ENABLED = (1 << len(P150_TENSIX_X)) - 1
+P100_TENSIX_X = (*range(1, 8), *range(10, 15))
 DEFAULT_GDDR_ENABLED = 0xFF
-
-def active_tensix_core_count(enabled_col_mask: int) -> int:
-  return (enabled_col_mask & DEFAULT_TENSIX_ENABLED).bit_count() * 10
-
-def board_from_tensix_count(enabled_mask: int) -> str:
-  core_count = active_tensix_core_count(enabled_mask)
-  if core_count <= len(P100_TENSIX_X) * 10:
-    return "p100"
-  if core_count <= len(P150_TENSIX_X) * 10:
-    return "p150"
-  raise RuntimeError(f"unsupported Tensix core count {core_count}")
-
-def normalize_board(board: str, enabled_mask: int) -> str:
-  if board in {"p100", "p150"}:
-    return board
-  return board_from_tensix_count(enabled_mask)
-
-def tensix_columns_for_board(board: str) -> tuple[int, ...]:
-  if board == "p100":
-    return P100_TENSIX_X
-  if board == "p150":
-    return P150_TENSIX_X
-  raise RuntimeError(f"unsupported board layout {board!r}")
-
-def dram_layout_for_board(board: str, enabled_gddr: int) -> tuple[int, int | None]:
-  if board != "p100":
-    return DEFAULT_GDDR_ENABLED, None
-  effective_gddr = enabled_gddr & DEFAULT_GDDR_ENABLED
-  harvested = [bank for bank in range(8) if ((effective_gddr >> bank) & 1) == 0]
-  if len(harvested) > 1:
-    raise RuntimeError(f"unsupported harvested DRAM banks: {harvested}")
-  return effective_gddr, harvested[0] if harvested else None
-
-def worker_cores_from_columns(columns: tuple[int, ...]) -> list[Core]:
-  return [(x, y) for x in columns for y in range(2, 12)]
+BOARD_UPI_TO_NAME = {
+  0x43: "p100a", 0x40: "p150a", 0x41: "p150b",
+}
 
 @dataclass(frozen=True)
 class BoardInfo:
-  board_id: int | None
-  arch: str
   board: str
-  enabled_tensix_col: int
-  tensix_columns: tuple[int, ...]
   worker_cores: list[Core]
   program_cores: list[Core]
-  enabled_gddr: int
-  harvested_dram_bank: int | None
+  dram_tiles: list[tuple[int, int, int]]
   prefetch_core: Core
   dispatch_core: Core
+  harvested_dram_bank: int | None
 
   @property
   def core_count(self) -> int:
-    return len(self.worker_cores)
-
-  @property
-  def num_dram_banks(self) -> int:
-    return 8 if self.harvested_dram_bank is None else 7
+    return len(self.program_cores)
 
   @property
   def cq_cores(self) -> set[Core]:
@@ -157,6 +110,20 @@ def _mlock(addr: int, size: int):
 
 def _munlock(addr: int, size: int): _libc.munlock(ctypes.c_void_p(addr), ctypes.c_size_t(size))
 
+def _write_sysfs(path: str, text: str):
+  with open(path, "w") as f: f.write(text)
+
+def _current_driver(sysfs_path: str) -> str | None:
+  link = f"{sysfs_path}/driver"
+  return os.path.basename(os.readlink(link)) if os.path.islink(link) else None
+
+def _poll(check, timeout_s: float, interval_s: float = 0.1) -> bool:
+  deadline = time.monotonic() + timeout_s
+  while time.monotonic() < deadline:
+    if check(): return True
+    time.sleep(interval_s)
+  return False
+
 def _buffer_addr(buf) -> int:
   return buf.addr if hasattr(buf, "addr") else ctypes.addressof(ctypes.c_char.from_buffer(buf))
 
@@ -173,93 +140,71 @@ def _find_bh_devices() -> list[str]:
 
 def _bind_vfio_pci(sysfs_path: str):
   bdf = os.path.basename(sysfs_path)
-  driver_link = f"{sysfs_path}/driver"
-
-  if os.path.islink(driver_link):
-    current = os.path.basename(os.readlink(driver_link))
-    if current == "vfio-pci": return
-    with open(f"{sysfs_path}/driver/unbind", "w") as f:
-      f.write(bdf)
-
-  with open(f"{sysfs_path}/driver_override", "w") as f:
-    f.write("vfio-pci")
-  with open("/sys/bus/pci/drivers_probe", "w") as f:
-    f.write(bdf)
-
-  for _ in range(50):
-    if os.path.islink(driver_link) and os.path.basename(os.readlink(driver_link)) == "vfio-pci": return
-    time.sleep(0.1)
-
-  raise RuntimeError(
-    f"failed to bind {bdf} to vfio-pci. Is the vfio-pci module loaded? Try: modprobe vfio-pci")
+  if _current_driver(sysfs_path) == "vfio-pci": return
+  if _current_driver(sysfs_path) is not None:
+    _write_sysfs(f"{sysfs_path}/driver/unbind", bdf)
+  _write_sysfs(f"{sysfs_path}/driver_override", "vfio-pci")
+  _write_sysfs("/sys/bus/pci/drivers_probe", bdf)
+  # drivers_probe kicks off an async kernel bind; poll until it lands.
+  if not _poll(lambda: _current_driver(sysfs_path) == "vfio-pci", 5.0):
+    raise RuntimeError(
+      f"failed to bind {bdf} to vfio-pci. Is the vfio-pci module loaded? Try: modprobe vfio-pci")
 
 def _unbind_vfio_pci(sysfs_path: str):
-  bdf = os.path.basename(sysfs_path)
-  driver_link = f"{sysfs_path}/driver"
+  try: _write_sysfs(f"{sysfs_path}/driver_override", "\n")
+  except OSError: pass
+  if _current_driver(sysfs_path) == "vfio-pci":
+    _write_sysfs(f"{sysfs_path}/driver/unbind", os.path.basename(sysfs_path))
 
-  try:
-    with open(f"{sysfs_path}/driver_override", "w") as f:
-      f.write("\n")
-  except OSError:
-    pass
+class Mapping:
+  """One libc mmap region, or a bounded view into one."""
+  def __init__(self, size: int, path: str | None = None, offset: int = 0, flags: int | None = None,
+               *, _root: "Mapping | None" = None, _addr: int | None = None):
+    if _root is not None:
+      if _addr is None:
+        raise ValueError("sub-mapping requires an address")
+      if size < 0:
+        raise ValueError(f"mapping size must be non-negative, got {size}")
+      self.fd = -1
+      self.addr = _addr
+      self.size, self.offset = size, offset
+      self._root = _root
+      self._owns_mmap = False
+      self.view = memoryview((ctypes.c_ubyte * size).from_address(self.addr)).cast("B")
+      self.u32 = self.view.cast("I") if size % 4 == 0 else None
+      self.closed = False
+      return
 
-  if os.path.islink(driver_link) and os.path.basename(os.readlink(driver_link)) == "vfio-pci":
-    with open(f"{sysfs_path}/driver/unbind", "w") as f:
-      f.write(bdf)
-
-class _MappedBar:
-  def __init__(self, sysfs: str, resource: str, size: int, offset: int = 0):
     if offset & (mmap.PAGESIZE - 1):
       raise ValueError(f"mmap offset must be page-aligned, got 0x{offset:x}")
-    self.fd = os.open(f"{sysfs}/{resource}", os.O_RDWR | os.O_SYNC)
+    self.fd = os.open(path, os.O_RDWR | os.O_SYNC) if path is not None else -1
+    if flags is None:
+      flags = mmap.MAP_SHARED if path is not None else (mmap.MAP_SHARED | mmap.MAP_ANONYMOUS)
     self.addr = _libc.mmap(None, ctypes.c_size_t(size), mmap.PROT_READ | mmap.PROT_WRITE,
-                           mmap.MAP_SHARED, self.fd, offset)
+                           flags, self.fd, offset)
     if self.addr == ctypes.c_void_p(-1).value:
       err = ctypes.get_errno()
-      os.close(self.fd)
-      self.fd = -1
-      raise OSError(err, f"mmap {resource} failed")
-    self.size = size
-    self.offset = offset
+      if self.fd >= 0: os.close(self.fd); self.fd = -1
+      raise OSError(err, f"mmap {path or 'anon'} failed")
+    self.size, self.offset = size, offset
+    self._root = self
+    self._owns_mmap = True
     self.view = memoryview((ctypes.c_ubyte * size).from_address(self.addr)).cast("B")
-    self.u32 = self.view.cast("I")
+    self.u32 = self.view.cast("I") if size % 4 == 0 else None
     self.closed = False
 
-  def close(self):
-    if self.closed: return
-    self.closed = True
-    try:
-      self.u32.release()
-      self.view.release()
-    finally:
-      if _libc.munmap(ctypes.c_void_p(self.addr), ctypes.c_size_t(self.size)) != 0:
-        raise OSError(ctypes.get_errno(), "munmap failed")
-      if self.fd >= 0:
-        os.close(self.fd)
-        self.fd = -1
+  def __len__(self) -> int: return self.size
 
-  def __enter__(self): return self
-  def __exit__(self, exc_type, exc, tb): self.close()
+  def read(self, offset: int, size: int) -> bytes:
+    return bytes(self.view[offset:offset + size])
 
-class LibCAnonMap:
-  def __init__(self, size: int, flags: int | None = None):
-    flags = flags if flags is not None else (mmap.MAP_SHARED | mmap.MAP_ANONYMOUS)
-    self.addr = _libc.mmap(None, ctypes.c_size_t(size), mmap.PROT_READ | mmap.PROT_WRITE,
-                           flags, -1, 0)
-    if self.addr == ctypes.c_void_p(-1).value:
-      raise OSError(ctypes.get_errno(), "anonymous mmap failed")
-    self.size = size
-    self.view = memoryview((ctypes.c_ubyte * size).from_address(self.addr)).cast("B")
-    self.closed = False
+  def write(self, offset: int, data: bytes):
+    self.view[offset:offset + len(data)] = bytes(data)
 
-  def __len__(self) -> int:
-    return self.size
-
-  def __getitem__(self, key):
-    return self.view[key]
-
-  def __setitem__(self, key, value):
-    self.view[key] = value
+  def submap(self, offset: int, size: int) -> "Mapping":
+    if offset < 0 or size < 0 or offset + size > self.size:
+      raise ValueError(f"submap out of range: offset=0x{offset:x} size=0x{size:x} mapping_size=0x{self.size:x}")
+    return Mapping(size, offset=self.offset + offset, _root=self._root, _addr=self.addr + offset)
 
   def flush(self, offset: int = 0, size: int | None = None):
     size = self.size - offset if size is None else size
@@ -270,65 +215,20 @@ class LibCAnonMap:
     if self.closed: return
     self.closed = True
     try:
+      if self.u32 is not None: self.u32.release()
       self.view.release()
     finally:
-      if _libc.munmap(ctypes.c_void_p(self.addr), ctypes.c_size_t(self.size)) != 0:
-        raise OSError(ctypes.get_errno(), "munmap failed")
-
-  def __enter__(self): return self
-  def __exit__(self, exc_type, exc, tb): self.close()
-
-class Sysmem:
-  PCIE_NOC_XY = PCIE_NOC_XY
-
-  def __init__(self, dev, size: int = 1 << 30):
-    if size > 1 << 30:
-      raise ValueError(f"Sysmem size {size} exceeds 1 GiB iATU aperture limit")
-    self.dev = dev
-    page_size = os.sysconf("SC_PAGE_SIZE")
-    self.size = (size + page_size - 1) & ~(page_size - 1)
-    self.buf = LibCAnonMap(self.size)
-    self.noc_addr = dev.pin_pages(self.buf)
-
-  def close(self):
-    self.dev.unpin_pages(self.buf, self.noc_addr)
-    self.buf.close()
+      if self._owns_mmap:
+        if _libc.munmap(ctypes.c_void_p(self.addr), ctypes.c_size_t(self.size)) != 0:
+          raise OSError(ctypes.get_errno(), "munmap failed")
+        if self.fd >= 0:
+          os.close(self.fd)
+          self.fd = -1
 
 class NocOrdering(Enum):
   RELAXED = 0
   STRICT = 1
   POSTED = 2
-
-class _OffsetView:
-  """Wraps a BAR memoryview with a base offset for a configured TLB window."""
-  __slots__ = ("_m", "_b", "_s")
-
-  def __init__(self, m, base, size):
-    self._m, self._b, self._s = m, base, size
-
-  # NB: BAR access goes through buffer slicing rather than struct.pack_into.
-  # For a real mmap'd memoryview this is behaviorally identical and keeps
-  # all MMIO access paths consistent.
-  def __getitem__(self, key):
-    if isinstance(key, slice):
-      start = (key.start or 0) + self._b
-      stop = (key.stop if key.stop is not None else self._s) + self._b
-      data = bytes(self._m[start:max(start, stop)])
-      return data if key.step in (None, 1) else data[::key.step]
-    return self._m[self._b + key]
-
-  def __setitem__(self, key, value):
-    if isinstance(key, slice):
-      if key.step not in (None, 1):
-        raise ValueError("MMIO slice assignment does not support steps")
-      start = (key.start or 0) + self._b
-      stop = (key.stop if key.stop is not None else self._s) + self._b
-      data = bytes(value)
-      if stop - start != len(data):
-        raise IndexError("MMIO slice assignment is wrong size")
-      self._m[start:stop] = data
-    else:
-      self._m[self._b + key] = value
 
 class TLBWindow:
   SIZE_2M = TLB_2M_SIZE
@@ -344,10 +244,9 @@ class TLBWindow:
         raise RuntimeError("4G TLB windows require a WC BAR4 mapping")
       window = self._id - TLB_2M_COUNT
       self._map = dev.map_bar4_window(window, self.SIZE_4G)
-      self._bar, self._base = self._map.view, 0
+      self.mm = self._map
     else:
-      self._bar, self._base = dev.tlb_window(self._id, wc=wc)
-    self.mm = _OffsetView(self._bar, self._base, size)
+      self.mm = dev.tlb_window(self._id, wc=wc)
     self.target(start, end, addr=addr, mode=mode)
 
   def target(self, start: Core, end: Core | None = None, addr: int = 0,
@@ -359,20 +258,16 @@ class TLBWindow:
       mcast=int(end != start), ordering=mode.value,
     )
 
-  def read32(self, offset: int) -> int:
-    b = self._base + offset
-    return int.from_bytes(bytes(self._bar[b:b + 4]), "little")
+  def read(self, offset: int, size: int) -> bytes:
+    return self.mm.read(offset, size)
 
-  def write32(self, offset: int, value: int):
-    b = self._base + offset
-    self._bar[b:b + 4] = (value & 0xFFFFFFFF).to_bytes(4, "little")
-
-  def write(self, addr: int, data: bytes):
-    b = self._base + addr
-    self._bar[b:b + len(data)] = bytes(data)
+  def write(self, offset: int, data: bytes):
+    self.mm.write(offset, data)
 
   def close(self):
     try:
+      if self._map is None:
+        self.mm.close()
       if self._map is not None:
         self._map.close()
     finally:
@@ -383,13 +278,6 @@ class TLBWindow:
 
 def _config_path(sysfs_path: str) -> str: return f"{sysfs_path}/config"
 
-def _read_config(path: str, size: int, offset: int) -> bytes:
-  fd = os.open(path, os.O_RDONLY | os.O_SYNC)
-  try:
-    return os.pread(fd, size, offset)
-  finally:
-    os.close(fd)
-
 def _write_config(path: str, data: bytes, offset: int):
   fd = os.open(path, os.O_RDWR | os.O_SYNC)
   try:
@@ -397,7 +285,12 @@ def _write_config(path: str, data: bytes, offset: int):
   finally:
     os.close(fd)
 
-def _read_config_u16(path: str, offset: int) -> int: return struct.unpack("<H", _read_config(path, 2, offset))[0]
+def _read_config_u16(path: str, offset: int) -> int:
+  fd = os.open(path, os.O_RDONLY | os.O_SYNC)
+  try:
+    return struct.unpack("<H", os.pread(fd, 2, offset))[0]
+  finally:
+    os.close(fd)
 
 def _write_config_u16(path: str, offset: int, value: int): _write_config(path, struct.pack("<H", value & 0xFFFF), offset)
 
@@ -442,11 +335,7 @@ def _find_upstream_bridge_sysfs(sysfs_path: str) -> str | None:
   return None
 
 def _wait_for_vendor_id(sysfs_path: str, timeout_s: float = 10.0) -> bool:
-  deadline = time.monotonic() + timeout_s
-  while time.monotonic() < deadline:
-    if _read_vendor_id(sysfs_path) == TT_VENDOR: return True
-    time.sleep(0.1)
-  return False
+  return _poll(lambda: _read_vendor_id(sysfs_path) == TT_VENDOR, timeout_s)
 
 def _restore_endpoint_config(config_path: str, saved: bytes, pcie_cap: int | None, saved_devctl: int | None):
   # Mirror the tt-kmd post-reset subset, avoiding PCI status because it is write-1-to-clear.
@@ -481,6 +370,8 @@ def _secondary_bus_reset(sysfs_path: str):
 class PCIDevice:
   def __init__(self, index: int = 0, use_vfio: bool = True):
     devices = _find_bh_devices()
+    if not devices:
+      raise RuntimeError("no Blackhole device found")
     if index >= len(devices):
       raise RuntimeError(f"Blackhole device {index} not found (found {len(devices)})")
     self.sysfs = devices[index]
@@ -491,18 +382,15 @@ class PCIDevice:
     self._vfio_group = -1
     self._vfio_device = -1
     self._unbind_vfio_on_close = False
-    self._bar_mmaps: list[_MappedBar] = []
-    self.bar0 = None
-    self.bar0_wc = None
-    self.bar2 = None
+    self._bar_mmaps: list[Mapping] = []
+    self.bar0: Mapping | None = None
+    self.bar0_wc: Mapping | None = None
+    self.bar2: Mapping | None = None
     self.bar0_u32 = None
     self.bar2_u32 = None
 
     # Enable PCI device, memory space, bus mastering
-    driver_link = f"{self.sysfs}/driver"
-    already_vfio = (os.path.islink(driver_link)
-                    and os.path.basename(os.readlink(driver_link)) == "vfio-pci")
-    if not already_vfio:
+    if _current_driver(self.sysfs) != "vfio-pci":
       _ensure_endpoint_enabled(self.sysfs)
 
     # Bind to vfio-pci only for fast dispatch DMA/sysmem pinning.
@@ -527,21 +415,21 @@ class PCIDevice:
 
     self._bring_device_to_a0()
 
-  def _map_bar(self, resource: str, size: int) -> _MappedBar:
-    bar = _MappedBar(self.sysfs, resource, size)
+  def _map_bar(self, resource: str, size: int) -> Mapping:
+    bar = Mapping(size, path=f"{self.sysfs}/{resource}")
     self._bar_mmaps.append(bar)
     return bar
 
   def _map_bars(self):
     # TLBWindow chooses between these UC/WC BAR0 mappings at construction.
     bar0 = self._map_bar("resource0", BAR0_SIZE)
-    self.bar0, self.bar0_u32 = bar0.view, bar0.u32
+    self.bar0, self.bar0_u32 = bar0, bar0.u32
 
     bar0_wc = self._map_bar("resource0_wc", BAR0_SIZE)
-    self.bar0_wc = bar0_wc.view
+    self.bar0_wc = bar0_wc
 
     bar2 = self._map_bar("resource2", 1 << 20)
-    self.bar2, self.bar2_u32 = bar2.view, bar2.u32
+    self.bar2, self.bar2_u32 = bar2, bar2.u32
 
     bar4_size = os.path.getsize(f"{self.sysfs}/resource4")
     self._bar4_4g_count = min(TLB_4G_COUNT, bar4_size // TLB_4G_SIZE) if bar4_size else 0
@@ -585,50 +473,60 @@ class PCIDevice:
     layout = layout or self.telemetry_layout()
     bid_hi = self.telemetry_tag(layout, "BOARD_ID_HIGH")
     bid_lo = self.telemetry_tag(layout, "BOARD_ID_LOW")
-    board_id = ((bid_hi & 0xFFFFFFFF) << 32 | (bid_lo & 0xFFFFFFFF)) if bid_hi is not None and bid_lo is not None else None
-    arch = BOARD_UPI_TO_NAME.get((board_id >> 36) & 0xFFFFF, "unknown") if board_id is not None else "unknown"
-    if arch.startswith("p100"):
-      raw_board = "p100"
-    elif arch.startswith("p150"):
-      raw_board = "p150"
-    else:
-      raw_board = arch
+    if bid_hi is None or bid_lo is None:
+      raise RuntimeError("BOARD_ID telemetry is unavailable")
+    board_id = (bid_hi & 0xFFFFFFFF) << 32 | (bid_lo & 0xFFFFFFFF)
+    board_upi = (board_id >> 36) & 0xFFFFF
+    board = BOARD_UPI_TO_NAME.get(board_upi)
+    if board is None:
+      raise RuntimeError(
+        f"unsupported Blackhole board UPI 0x{board_upi:x}; supported boards are {', '.join(sorted(BOARD_UPI_TO_NAME.values()))}")
 
     enabled_tensix = self.telemetry_tag(layout, "ENABLED_TENSIX_COL")
     if enabled_tensix is None:
-      enabled_tensix = DEFAULT_TENSIX_ENABLED
-    board = normalize_board(raw_board, enabled_tensix)
+      raise RuntimeError("ENABLED_TENSIX_COL telemetry is unavailable")
     enabled_gddr = self.telemetry_tag(layout, "ENABLED_GDDR")
     if enabled_gddr is None:
-      enabled_gddr = DEFAULT_GDDR_ENABLED
+      raise RuntimeError("ENABLED_GDDR telemetry is unavailable")
 
-    columns = tensix_columns_for_board(board)
-    workers = worker_cores_from_columns(columns)
+    physical_columns = P100_TENSIX_X if board == "p100a" else P150_TENSIX_X
+    columns = [x for i, x in enumerate(physical_columns) if (enabled_tensix >> i) & 1]
     if not columns:
       raise RuntimeError(f"no enabled Tensix columns in ARC telemetry mask 0x{enabled_tensix:x}")
+    workers = [(x, y) for x in columns for y in range(2, 12)]
     rightmost_x = columns[-1]
     prefetch_core = (rightmost_x, 2)
     dispatch_core = (rightmost_x, 3)
     cq_cores = {prefetch_core, dispatch_core}
     program_cores = [core for core in workers if not fast_dispatch or core not in cq_cores]
-    effective_gddr, harvested_dram_bank = dram_layout_for_board(board, enabled_gddr)
+    effective_gddr = enabled_gddr & DEFAULT_GDDR_ENABLED
+    harvested = [bank for bank in range(8) if ((effective_gddr >> bank) & 1) == 0]
+    if len(harvested) > 1:
+      raise RuntimeError(f"unsupported harvested DRAM banks: {harvested}")
+    bank_ys = (
+      (0, 1, 11), (2, 3, 10), (4, 8, 9), (5, 6, 7),
+      (0, 1, 11), (2, 3, 10), (4, 8, 9), (5, 6, 7),
+    )
     return BoardInfo(
-      board_id=board_id,
-      arch=arch,
       board=board,
-      enabled_tensix_col=enabled_tensix,
-      tensix_columns=columns,
       worker_cores=workers,
       program_cores=program_cores,
-      enabled_gddr=effective_gddr,
-      harvested_dram_bank=harvested_dram_bank,
+      dram_tiles=[
+        (bank, 0 if bank < 4 else 9, y)
+        for bank in range(8)
+        if (effective_gddr >> bank) & 1
+        for y in bank_ys[bank]
+      ],
       prefetch_core=prefetch_core,
       dispatch_core=dispatch_core,
+      harvested_dram_bank=harvested[0] if harvested else None,
     )
 
   @classmethod
   def reset_index(cls, index: int = 0):
     devices = cls.list_devices()
+    if not devices:
+      raise RuntimeError("no Blackhole device found")
     if index >= len(devices):
       raise RuntimeError(f"Blackhole device {index} not found (found {len(devices)})")
     cls.reset_bdf(os.path.basename(devices[index]))
@@ -654,8 +552,7 @@ class PCIDevice:
       if config_size <= _TIMER_TARGET + 4:
         os.close(fd); fd = -1
         print(f"  extended config space unavailable, falling back to PCIe FLR")
-        with open(f"{sysfs}/reset", "w") as f:
-          f.write("1\n")
+        _write_sysfs(f"{sysfs}/reset", "1\n")
         return
 
       saved = os.pread(fd, 256, 0)
@@ -675,14 +572,18 @@ class PCIDevice:
     _restore_endpoint_config(config_path, saved, pcie_cap, saved_devctl)
 
     pcie_noc_x = None
+    bar0 = None
     try:
-      with _MappedBar(sysfs, "resource0", BAR0_SIZE) as bar0:
-        noc_id_off = _NOC2AXI_CFG_START + _NOC_ID_OFFSET
-        x = struct.unpack_from("<I", bar0.view, noc_id_off)[0] & 0x3F
-        if x in (2, 11):
-          pcie_noc_x = x
+      bar0 = Mapping(BAR0_SIZE, path=f"{sysfs}/resource0")
+      noc_id_off = _NOC2AXI_CFG_START + _NOC_ID_OFFSET
+      x = struct.unpack("<I", bar0.read(noc_id_off, 4))[0] & 0x3F
+      if x in (2, 11):
+        pcie_noc_x = x
     except Exception:
       pass
+    finally:
+      if bar0 is not None:
+        bar0.close()
 
     fd = os.open(config_path, os.O_RDWR | os.O_SYNC)
     try:
@@ -692,13 +593,8 @@ class PCIDevice:
       os.pwrite(fd, struct.pack("<I", 0x1), _TIMER_TARGET)
       os.pwrite(fd, struct.pack("<I", 0x11), _TIMER_CONTROL)
 
-      deadline = time.monotonic() + 10.0
-      while time.monotonic() < deadline:
-        raw = os.pread(fd, 2, _PCI_COMMAND)
-        if not (struct.unpack("<H", raw)[0] & _PCI_COMMAND_PARITY):
-          break
-        time.sleep(0.01)
-      else:
+      parity_clear = lambda: not (struct.unpack("<H", os.pread(fd, 2, _PCI_COMMAND))[0] & _PCI_COMMAND_PARITY)
+      if not _poll(parity_clear, 10.0, 0.01):
         raise RuntimeError(f"ASIC reset timeout for {bdf} — parity bit did not clear")
     finally:
       if fd >= 0:
@@ -711,36 +607,39 @@ class PCIDevice:
     _restore_endpoint_config(config_path, saved, pcie_cap, saved_devctl)
 
     if pcie_noc_x is not None and saved_devctl is not None:
+      bar0_map = None
       try:
-        with _MappedBar(sysfs, "resource0", BAR0_SIZE) as bar0_map:
-          bar0 = bar0_map.view
-          dbi_addr = _PCIE_DBI_ADDR + _DBI_DEVCTL
-          tlb_idx = TLB_2M_COUNT - 1
-          local_offset = dbi_addr >> 21
-          y = 0
-          val = (local_offset
-                 | (pcie_noc_x << 43) | (y << 49)
-                 | (pcie_noc_x << 55) | (y << 61)
-                 | (0 << 67)           # noc=0
-                 | (0 << 69)           # mcast=0
-                 | (1 << 70)           # ordering=strict
-                 | (0 << 72)           # linked=0
-                 | (0 << 73))          # static_vc=0
-          reg_off = TLB_REGS_START + tlb_idx * TLB_REG_SIZE
-          bar0_u32 = bar0_map.u32
-          reg_word = reg_off // 4
-          bar0_u32[reg_word] = val & 0xFFFFFFFF
-          bar0_u32[reg_word + 1] = (val >> 32) & 0xFFFFFFFF
-          bar0_u32[reg_word + 2] = (val >> 64) & 0xFFFFFFFF
+        bar0_map = Mapping(BAR0_SIZE, path=f"{sysfs}/resource0")
+        dbi_addr = _PCIE_DBI_ADDR + _DBI_DEVCTL
+        tlb_idx = TLB_2M_COUNT - 1
+        local_offset = dbi_addr >> 21
+        y = 0
+        val = (local_offset
+               | (pcie_noc_x << 43) | (y << 49)
+               | (pcie_noc_x << 55) | (y << 61)
+               | (0 << 67)           # noc=0
+               | (0 << 69)           # mcast=0
+               | (1 << 70)           # ordering=strict
+               | (0 << 72)           # linked=0
+               | (0 << 73))          # static_vc=0
+        reg_off = TLB_REGS_START + tlb_idx * TLB_REG_SIZE
+        bar0_u32 = bar0_map.u32
+        reg_word = reg_off // 4
+        bar0_u32[reg_word] = val & 0xFFFFFFFF
+        bar0_u32[reg_word + 1] = (val >> 32) & 0xFFFFFFFF
+        bar0_u32[reg_word + 2] = (val >> 64) & 0xFFFFFFFF
 
-          bar_off = tlb_idx * TLB_2M_SIZE + (int(dbi_addr) & (TLB_2M_SIZE - 1))
-          cur = struct.unpack_from("<I", bar0, bar_off)[0]
-          mps_bits = (saved_devctl >> 5) & 0x7
-          cur = (cur & ~(0x7 << 5)) | (mps_bits << 5)
-          cur = (cur & ~PCI_EXP_DEVCTL_READRQ) | PCI_EXP_DEVCTL_READRQ_4096
-          bar0_u32[bar_off // 4] = cur
+        bar_off = tlb_idx * TLB_2M_SIZE + (int(dbi_addr) & (TLB_2M_SIZE - 1))
+        cur = struct.unpack("<I", bar0_map.read(bar_off, 4))[0]
+        mps_bits = (saved_devctl >> 5) & 0x7
+        cur = (cur & ~(0x7 << 5)) | (mps_bits << 5)
+        cur = (cur & ~PCI_EXP_DEVCTL_READRQ) | PCI_EXP_DEVCTL_READRQ_4096
+        bar0_map.write(bar_off, struct.pack("<I", cur))
       except Exception as e:
         print(f"  warning: could not restore MPS via DBI: {e}")
+      finally:
+        if bar0_map is not None:
+          bar0_map.close()
 
   def _setup_vfio(self):
     _bind_vfio_pci(self.sysfs)
@@ -765,53 +664,34 @@ class PCIDevice:
 
   def _bring_device_to_a0(self):
     """Bring ASIC from A3 to A0 if ARC is running."""
-    arc_ready_timeout_s = 2.0
-    deadline = time.monotonic() + arc_ready_timeout_s
-    boot_status = 0
-    while time.monotonic() < deadline:
+    started = lambda: (self.read_arc_apb32(self.SCRATCH_RAM_2)
+                       & self.ARC_BOOT_STATUS_STARTED_MASK) == self.ARC_BOOT_STATUS_STARTED_VALUE
+    if not _poll(started, 2.0, 0.00001):
       boot_status = self.read_arc_apb32(self.SCRATCH_RAM_2)
-      if (boot_status & self.ARC_BOOT_STATUS_STARTED_MASK) == self.ARC_BOOT_STATUS_STARTED_VALUE:
-        self.arc_msg(0xA0, timeout_ms=200)
-        try: self.arc_msg(self.MSG_SET_WDT_TIMEOUT, arg0=60_000, timeout_ms=200)
-        except Exception: pass
-        return
-      time.sleep(0.00001)
-    raise RuntimeError(
-      f"ARC not ready after {arc_ready_timeout_s:.1f}s (boot_status=0x{boot_status:x}) — device may be in A3, try tt-smi -r")
+      raise RuntimeError(
+        f"ARC not ready after 2.0s (boot_status=0x{boot_status:x}) — device may be in A3, try tt-smi -r")
+    self.arc_msg(0xA0, timeout_ms=200)
+    try: self.arc_msg(self.MSG_SET_WDT_TIMEOUT, arg0=60_000, timeout_ms=200)
+    except Exception: pass
 
-  def read_arc_apb32(self, offset: int) -> int:
-    tlb = self.alloc_tlb(TLB_2M_SIZE)
-    try:
-      arc_x, arc_y = self.ARC_TILE
-      self.configure_tlb(tlb, self.ARC_NOC_BASE, arc_x, arc_y, arc_x, arc_y, ordering=1)
-      bar, bar_off = self.tlb_window(tlb)
-      return struct.unpack_from("<I", bar, bar_off + offset)[0]
-    finally:
-      self.free_tlb(tlb)
-
-  def _read_arc_noc32(self, addr: int, tlb: int | None = None) -> int:
+  def _arc_noc32(self, addr: int, value: int | None = None, tlb: int | None = None) -> int | None:
+    """Read (value is None) or write a u32 on the ARC tile via a 2M TLB window."""
     owns_tlb = tlb is None
-    if owns_tlb:
-      tlb = self.alloc_tlb(TLB_2M_SIZE)
+    tlb = self.alloc_tlb(TLB_2M_SIZE) if owns_tlb else tlb
     try:
       base = addr & ~(TLB_2M_SIZE - 1)
       arc_x, arc_y = self.ARC_TILE
       self.configure_tlb(tlb, base, arc_x, arc_y, arc_x, arc_y, ordering=1)
-      bar, bar_off = self.tlb_window(tlb)
-      return struct.unpack_from("<I", bar, bar_off + (addr - base))[0]
+      win = self.tlb_window(tlb)
+      off = addr - base
+      if value is None: return struct.unpack("<I", win.read(off, 4))[0]
+      win.write(off, struct.pack("<I", value & 0xFFFFFFFF))
     finally:
-      if owns_tlb:
-        self.free_tlb(tlb)
+      if owns_tlb: self.free_tlb(tlb)
 
-  def write_arc_apb32(self, offset: int, value: int):
-    tlb = self.alloc_tlb(TLB_2M_SIZE)
-    try:
-      arc_x, arc_y = self.ARC_TILE
-      self.configure_tlb(tlb, self.ARC_NOC_BASE, arc_x, arc_y, arc_x, arc_y, ordering=1)
-      bar, bar_off = self.tlb_window(tlb)
-      struct.pack_into("<I", bar, bar_off + offset, value & 0xFFFFFFFF)
-    finally:
-      self.free_tlb(tlb)
+  def read_arc_apb32(self, offset: int) -> int: return self._arc_noc32(self.ARC_NOC_BASE + offset)
+  def write_arc_apb32(self, offset: int, value: int): self._arc_noc32(self.ARC_NOC_BASE + offset, value)
+  def _read_arc_noc32(self, addr: int, tlb: int | None = None) -> int: return self._arc_noc32(addr, tlb=tlb)
 
   # ---- TLB allocation ----
 
@@ -865,13 +745,14 @@ class PCIDevice:
       stride_off = TLB_REGS_START + TLB_STRIDE_OFFSET + index * 4
       self.bar0_u32[stride_off // 4] = 0
 
-  def tlb_window(self, index: int, wc: bool = False) -> tuple[memoryview, int]:
-    if index < TLB_2M_COUNT: return (self.bar0_wc if wc else self.bar0), index * TLB_2M_SIZE
+  def tlb_window(self, index: int, wc: bool = False) -> Mapping:
+    if index < TLB_2M_COUNT:
+      bar = self.bar0_wc if wc else self.bar0
+      return bar.submap(index * TLB_2M_SIZE, TLB_2M_SIZE)
     raise RuntimeError("4G TLB windows are owned by TLBWindow(size=TLBWindow.SIZE_4G, wc=True)")
 
-  def map_bar4_window(self, window: int, size: int = TLB_4G_SIZE) -> _MappedBar:
-    """Map a single BAR4 4G aperture. Returns an object exposing `.view` and `.close()`."""
-    return _MappedBar(self.sysfs, "resource4_wc", size, offset=window * size)
+  def map_bar4_window(self, window: int, size: int = TLB_4G_SIZE) -> Mapping:
+    return Mapping(size, path=f"{self.sysfs}/resource4_wc", offset=window * size)
 
   # ---- DMA / page pinning via VFIO IOMMU ----
 
@@ -974,19 +855,8 @@ class PCIDevice:
 
     tlb = self.alloc_tlb(TLB_2M_SIZE)
     try:
-      def _read32(noc_addr):
-        base = noc_addr & ~(TLB_2M_SIZE - 1)
-        arc_x, arc_y = self.ARC_TILE
-        self.configure_tlb(tlb, base, arc_x, arc_y, arc_x, arc_y, ordering=1)
-        bar, bar_off = self.tlb_window(tlb)
-        return struct.unpack_from("<I", bar, bar_off + (noc_addr - base))[0]
-
-      def _write32(noc_addr, val):
-        base = noc_addr & ~(TLB_2M_SIZE - 1)
-        arc_x, arc_y = self.ARC_TILE
-        self.configure_tlb(tlb, base, arc_x, arc_y, arc_x, arc_y, ordering=1)
-        bar, bar_off = self.tlb_window(tlb)
-        struct.pack_into("<I", bar, bar_off + (noc_addr - base), val)
+      _read32 = lambda noc_addr: self._arc_noc32(noc_addr, tlb=tlb)
+      _write32 = lambda noc_addr, val: self._arc_noc32(noc_addr, val, tlb=tlb)
 
       boot_status = self.read_arc_apb32(self.SCRATCH_RAM_2)
       if boot_status in (0, 0xFFFFFFFF) or not (boot_status & self.ARC_BOOT_STATUS_READY_FOR_MSG):

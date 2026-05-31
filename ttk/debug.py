@@ -36,7 +36,7 @@ class L1Timer:
   us: float
 
 def _read_bytes(win, addr: int, size: int) -> bytes:
-  return bytes(win.mm[addr + i] for i in range(size))
+  return win.read(addr, size)
 
 def _format_words(data: bytes, base: int, *, max_words: int = 64) -> list[str]:
   lines = []
@@ -69,7 +69,7 @@ def print_debug_postmortem(
     with TLBWindow(dev, core) as win:
       words = {}
       for addr in sorted(addrs):
-        data = bytes(win.mm[addr + i] for i in range(4))
+        data = win.read(addr, 4)
         words[addr] = struct.unpack("<I", data)[0]
       l1_ranges = []
       dram_ranges = []
@@ -285,7 +285,7 @@ class Debug:
 
   @staticmethod
   def read_l1_u64(win, lo_addr: int, hi_addr: int) -> int:
-    return win.read32(lo_addr) | (win.read32(hi_addr) << 32)
+    return struct.unpack("<I", win.read(lo_addr, 4))[0] | (struct.unpack("<I", win.read(hi_addr, 4))[0] << 32)
 
   @staticmethod
   def read_l1_timer(
