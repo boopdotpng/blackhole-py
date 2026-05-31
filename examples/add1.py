@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 import argparse
-import struct
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
+import numpy as np
 from asm import KernelBase
 from device import Device
 from dsl import (
@@ -504,18 +504,13 @@ def select_cores(device: Device, mode: str, core: tuple[int, int]) -> tuple[list
   return list(device.board_info.worker_cores), False
 
 def make_input(n_tiles: int) -> bytes:
-  src_rm = bytearray()
-  for i in range(n_tiles * 32 * 32):
-    src_rm += (struct.unpack("<I", struct.pack("<f", float(i)))[0] >> 16).to_bytes(2, "little")
-  return bytes(src_rm)
+  values = np.arange(n_tiles * 32 * 32, dtype="<f4")
+  return (values.view("<u4") >> 16).astype("<u2").tobytes()
 
 def make_expected(src_rm: bytes) -> bytes:
-  exp = bytearray(len(src_rm))
-  for i in range(0, len(src_rm), 2):
-    x = int.from_bytes(src_rm[i : i + 2], "little")
-    y = struct.unpack("<I", struct.pack("<f", struct.unpack("<f", struct.pack("<I", x << 16))[0] + 1.0))[0] >> 16
-    exp[i : i + 2] = y.to_bytes(2, "little")
-  return bytes(exp)
+  src = np.frombuffer(src_rm, dtype="<u2").astype("<u4") << 16
+  out = (src.view("<f4") + np.float32(1.0)).view("<u4")
+  return (out >> 16).astype("<u2").tobytes()
 
 def main():
   args = make_argparser().parse_args()
@@ -540,8 +535,8 @@ def main():
     timings = device.run(prog)
     out = device.dram_read(dst_buf)
     exp = make_expected(src_rm)
-    mismatch = next((i for i, (g, e) in enumerate(zip(out, exp)) if g != e), None)
-    if mismatch is not None:
+    if out != exp:
+      mismatch = next(i for i, (g, e) in enumerate(zip(out, exp)) if g != e)
       got = out[mismatch:mismatch + 32].hex()
       want = exp[mismatch:mismatch + 32].hex()
       raise AssertionError(f"mismatch byte={mismatch} got={got} exp={want}")

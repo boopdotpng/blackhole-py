@@ -55,73 +55,6 @@ _TIMESTAMP = 18
 CQ_CMD_SIZE = 16
 DONE_STREAM = 48
 
-def _debug_enabled() -> bool:
-  return os.environ.get("TT_CQ_DEBUG", "") not in ("", "0", "false", "False")
-
-def _debug_hex_enabled() -> bool:
-  return os.environ.get("TT_CQ_DEBUG_HEX", "") not in ("", "0", "false", "False")
-
-def _hex_preview(data: bytes, limit: int = 64) -> str:
-  if _debug_hex_enabled():
-    return data.hex()
-  suffix = "" if len(data) <= limit else f"...(+{len(data) - limit}B)"
-  return data[:limit].hex() + suffix
-
-def _describe_ir(cmd: IRCommand) -> str:
-  match cmd:
-    case UnicastWrite(cores=cores, addr=addr, data=data):
-      size = len(data[0]) if data else 0
-      uniform = all(blob == data[0] for blob in data[1:]) if data else True
-      return f"UnicastWrite cores={len(cores)} addr=0x{addr:x} size={size} uniform={uniform} first={cores[0] if cores else None} last={cores[-1] if cores else None}"
-    case McastWrite(rects=rects, addr=addr, data=data):
-      return f"McastWrite rects={rects} addr=0x{addr:x} size={len(data)}"
-    case Run(cores=cores):
-      return f"Run cores={len(cores)} first={cores[0] if cores else None} last={cores[-1] if cores else None}"
-    case _:
-      return type(cmd).__name__
-
-def _describe_payload(payload: bytes) -> str:
-  if not payload:
-    return "empty"
-  cmd = payload[0]
-  if cmd == _WRITE_PACKED and len(payload) >= CQ_CMD_SIZE:
-    _, flags, count, _reserved, size, addr = struct.unpack_from("<BBHHHI", payload)
-    nocs_off = CQ_CMD_SIZE
-    data_off = align_up(nocs_off + count * 4, L1_ALIGN)
-    return (
-      f"WRITE_PACKED flags=0x{flags:02x} count={count} size={size} addr=0x{addr:x} "
-      f"payload={len(payload)} data_off={data_off} head={_hex_preview(payload)}"
-    )
-  if cmd == _WRITE_PACKED_LARGE and len(payload) >= CQ_CMD_SIZE:
-    _, flags, count, align, _reserved = struct.unpack_from("<BBHHH", payload)
-    sub_off = CQ_CMD_SIZE
-    data_off = align_up(sub_off + count * 12, L1_ALIGN)
-    subs = []
-    for i in range(min(count, 8)):
-      xy, addr, length_m1, ndests, sub_flags = struct.unpack_from("<IIHBB", payload, sub_off + i * 12)
-      subs.append(f"(xy=0x{xy:x} addr=0x{addr:x} len={length_m1 + 1} ndests={ndests} flags=0x{sub_flags:02x})")
-    more = "" if count <= 8 else f" ... +{count - 8} subcmds"
-    return (
-      f"WRITE_PACKED_LARGE flags=0x{flags:02x} subcmds={count} align={align} "
-      f"payload={len(payload)} data_off={data_off} subs=[{' '.join(subs)}{more}] head={_hex_preview(payload)}"
-    )
-  if cmd == _WAIT and len(payload) >= CQ_CMD_SIZE:
-    _, flags, stream, _reserved, count = struct.unpack_from("<BBHII", payload)
-    return f"WAIT flags=0x{flags:02x} stream={stream} count={count} payload={len(payload)} head={_hex_preview(payload)}"
-  if cmd == _GO_SIGNAL and len(payload) >= CQ_CMD_SIZE:
-    _, go_word, multicast, num_unicast, noc_idx, count, stream = struct.unpack_from("<BIBBBII", payload)
-    return f"GO_SIGNAL go=0x{go_word:x} multicast=0x{multicast:02x} unicast={num_unicast} noc_idx={noc_idx} stream={stream} count={count} payload={len(payload)} head={_hex_preview(payload)}"
-  if cmd == _SET_GO_NOC_DATA and len(payload) >= CQ_CMD_SIZE:
-    _, _flags, _reserved, count = struct.unpack_from("<BBHI", payload)
-    return f"SET_GO_NOC_DATA count={count} payload={len(payload)} head={_hex_preview(payload)}"
-  if cmd == _WRITE_LINEAR_HOST and len(payload) >= CQ_CMD_SIZE:
-    _, flags, _reserved, _addr, size = struct.unpack_from("<BBHIQ", payload)
-    return f"WRITE_LINEAR_HOST flags=0x{flags:02x} size={size} payload={len(payload)} head={_hex_preview(payload)}"
-  if cmd == _TIMESTAMP and len(payload) >= CQ_CMD_SIZE:
-    _, _reserved0, _reserved1, noc_xy_addr, addr = struct.unpack_from("<BxHII", payload)
-    return f"TIMESTAMP noc_xy=0x{noc_xy_addr:x} addr=0x{addr:x} payload={len(payload)} head={_hex_preview(payload)}"
-  return f"cmd={cmd} payload={len(payload)} head={_hex_preview(payload)}"
-
 def _host_sysmem_size() -> int:
   return align_up(_HOST_SYS_END_BASE, PAGE_SIZE)
 
@@ -240,17 +173,6 @@ class CommandQueue:
   def submit_ir(self, programs: list[list[IRCommand]], go_word: int, names: list[str] | None = None):
     timestamps = [self.timestamp_noc_addr(i) for i in range(min(2 * len(programs), HOST_TIMESTAMP_SLOTS))]
     payloads = lower_programs(programs, go_word, timestamps=timestamps)
-    if _debug_enabled():
-      print("CQ DEBUG IR")
-      for pi, program in enumerate(programs):
-        print(f"  program[{pi}] commands={len(program)}")
-        for ci, cmd in enumerate(program):
-          print(f"    ir[{ci:02d}] {_describe_ir(cmd)}")
-      print("CQ DEBUG payloads")
-      for i, payload in enumerate(payloads):
-        record_len = align_up(CQ_CMD_SIZE + len(payload), PCIE_ALIGN)
-        pages = (len(payload) + 4095) // 4096
-        print(f"  payload[{i:02d}] relay_record={record_len}B relay_size16={record_len >> 4} dispatch_pages={pages} {_describe_payload(payload)}")
     self.submit_commands(payloads)
     return self.read_timings(len(programs), names=names)
 

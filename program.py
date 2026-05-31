@@ -286,9 +286,16 @@ class Program:
   def _layout_core(
     self, *, core_xy: Core | None = None,
     dispatch_mode=DevMsgs.DISPATCH_MODE_HOST, host_assigned_id=0,
+    compiled_cache: dict[int, list[Segment]] | None = None,
   ) -> list[Segment]:
     selected = self.kernels_for_core(core_xy)
-    compiled = {role: kernel.compile() for role, kernel in selected.items()}
+    compiled_cache = compiled_cache if compiled_cache is not None else {}
+    compiled = {}
+    for role, kernel in selected.items():
+      key = id(kernel)
+      if key not in compiled_cache:
+        compiled_cache[key] = kernel.compile()
+      compiled[role] = compiled_cache[key]
     if core_xy is None and any(kernel.rtas is not None for kernel in selected.values()):
       raise ValueError("kernel RTAs need core_xy")
     xy = core_xy if core_xy is not None else (0, 0)
@@ -374,8 +381,14 @@ class Program:
     dispatch_mode=DevMsgs.DISPATCH_MODE_HOST, host_assigned_id=0,
   ) -> list[IRCommand]:
     target_cores = self._target_cores(cores)
+    compiled_cache: dict[int, list[Segment]] = {}
     per_core_segments = {
-      core: self._layout_core(core_xy=core, dispatch_mode=dispatch_mode, host_assigned_id=host_assigned_id)
+      core: self._layout_core(
+        core_xy=core,
+        dispatch_mode=dispatch_mode,
+        host_assigned_id=host_assigned_id,
+        compiled_cache=compiled_cache,
+      )
       for core in target_cores
     }
 
