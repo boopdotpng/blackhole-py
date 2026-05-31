@@ -1,4 +1,5 @@
 from __future__ import annotations
+import ctypes
 import os
 import struct
 import time
@@ -9,8 +10,9 @@ from cq import (
 from dram import Allocator, DramBuffer, Shape, tilize, untilize
 import fw
 from ttk.addrs import Core, L1_ALIGN, align_down, as_bytes
+from ttk.noc import NOC
 from ttk.tensix import TensixL1, TensixMMIO
-from pcie import BoardInfo, PCIDevice, TLBWindow
+from pcie import BoardInfo, Mapping, NOC_PCIE_OFFSET, PCIDevice, PCIE_NOC_XY, TLBWindow
 from program import (
   DevMsgs, Dtype, FAST_CQ_NUM_CIRCULAR_BUFFERS, GoMsg, IRCommand, LaunchMsg,
   McastMmioWrite32, McastWrite, PollL1Byte, Program, Run, UnicastWrite,
@@ -25,8 +27,12 @@ class Device:
     self.programs: list[Program] = []
     self.dram = Allocator(self.dev, self.board_info.dram_tiles)
     self.cq: CommandQueue | None = None
+    self._dram_sysmem: DramSysmem | None = None
+    self._dram_fill_kernel = None
+    self._dram_drain_kernel = None
     self._upload_firmware()
     if self.fast_dispatch:
+      self._dram_sysmem = DramSysmem(self.dev)
       self._start_dispatch_cores()
 
   @property
@@ -38,6 +44,9 @@ class Device:
       self._halt_cores()
       self.cq.close()
       self.cq = None
+    if self._dram_sysmem is not None:
+      self._dram_sysmem.close()
+      self._dram_sysmem = None
     self.dram.close()
     self.dev.set_power_state(False)
     self.dev.close()
@@ -212,15 +221,170 @@ class Device:
     self.dram_write(buf, data)
     return buf
 
-  def dram_write(self, buf: DramBuffer, data: bytes):
-    if buf.shape is not None:
-      data = tilize(data, buf.dtype.bpe, buf.shape)
-    self.dram.write(buf, data)
+  def _ensure_dram_sysmem(self) -> "DramSysmem":
+    if self._dram_sysmem is None:
+      self._dram_sysmem = DramSysmem(self.dev)
+    return self._dram_sysmem
 
-  def dram_read(self, buf: DramBuffer) -> bytes:
+  def _empty_kernel(self):
+    from asm import KernelBase
+
+    return KernelBase()
+
+  def _dram_fill(self):
+    if self._dram_fill_kernel is None:
+      from fw.dram import build_fill
+
+      self._dram_fill_kernel = build_fill()
+    return self._dram_fill_kernel
+
+  def _dram_drain(self):
+    if self._dram_drain_kernel is None:
+      from fw.dram import build_drain
+
+      self._dram_drain_kernel = build_drain()
+    return self._dram_drain_kernel
+
+  def _run_dram_transfer(self, buf: DramBuffer, kernel, n_tiles: int, *, name: str):
+    if n_tiles <= 0:
+      return
+    if not self.fast_dispatch:
+      raise RuntimeError("DRAM transfer kernels require fast dispatch")
+    if self.cq is None:
+      raise RuntimeError("fast dispatch is not initialized")
     if self.programs:
       self.run()
-    data = self.dram.read(buf)
+
+    sm = self._ensure_dram_sysmem()
+    noc_local = sm.noc_addr - NOC_PCIE_OFFSET
+    if noc_local < 0:
+      raise RuntimeError(f"bad DRAM sysmem NOC address: 0x{sm.noc_addr:x}")
+    if (noc_local & 0xFFFFFFFF) + n_tiles * buf.page_size > (1 << 32):
+      raise RuntimeError("DRAM sysmem transfer crossed a 4GB NOC window")
+
+    cores = self.cores[:min(len(self.cores), n_tiles)]
+    tiles_per_core = (n_tiles + len(cores) - 1) // len(cores)
+    core_index = {core: i for i, core in enumerate(cores)}
+    bank_count = len(self.dram.bank_tiles)
+    sysmem_lo = noc_local & 0xFFFFFFFF
+    sysmem_mid = NOC.PCIE_MID | ((noc_local >> 32) & 0xF)
+
+    kernel.rta(lambda x, y: [
+      buf.addr, (1 << 24) | PCIE_NOC_XY, sysmem_lo, sysmem_mid,
+      core_index[(x, y)] * tiles_per_core,
+      min(tiles_per_core, n_tiles - core_index[(x, y)] * tiles_per_core),
+      buf.page_size, bank_count,
+    ])
+
+    empty = self._empty_kernel()
+    program = Program(
+      brisc=empty,
+      ncrisc=kernel,
+      trisc0=empty,
+      trisc1=empty,
+      trisc2=empty,
+      cbs=[(0, buf.page_size, 2)],
+      num_cores=len(cores),
+    )
+    program.name = name
+
+    self.dev.set_power_state(True)
+    try:
+      ir = program.lower(self.cores, dispatch_mode=DevMsgs.DISPATCH_MODE_DEV)
+      self.cq.submit_ir([ir], self._go_word(), names=[name])
+    finally:
+      self.dev.set_power_state(False)
+
+  @staticmethod
+  def _buffer_nbytes(data) -> int:
+    return memoryview(data).nbytes
+
+  @staticmethod
+  def _copy_bytes_to(dst, data: bytes) -> int:
+    view = memoryview(dst)
+    if view.readonly:
+      raise ValueError("destination buffer must be writable")
+    if not view.c_contiguous:
+      raise ValueError("destination buffer must be C-contiguous")
+    if view.nbytes < len(data):
+      raise ValueError(f"destination buffer too small: need {len(data)} bytes, have {view.nbytes}")
+    dst_addr = ctypes.addressof(ctypes.c_char.from_buffer(view))
+    ctypes.memmove(ctypes.c_void_p(dst_addr), ctypes.c_char_p(data), ctypes.c_size_t(len(data)))
+    return len(data)
+
+  def _prepare_write_data(self, buf: DramBuffer, data, *, tiled: bool):
+    if buf.shape is not None and not tiled:
+      return tilize(data, buf.dtype.bpe, buf.shape)
+    return data
+
+  def dram_write(self, buf: DramBuffer, data: bytes):
+    return self.dram_write_from(buf, data)
+
+  def dram_write_from(self, buf: DramBuffer, data, *, tiled: bool = False):
+    data = self._prepare_write_data(buf, data, tiled=tiled)
+    data_size = self._buffer_nbytes(data)
+    assert data_size <= buf.size
+    if self.fast_dispatch:
+      sm = self._ensure_dram_sysmem()
+      if data_size > sm.size:
+        raise ValueError(f"DRAM write needs {data_size} bytes, sysmem buffer is {sm.size} bytes")
+      n_tiles = (data_size + buf.page_size - 1) // buf.page_size
+      transfer_size = n_tiles * buf.page_size
+      sm.mapping.copy_from(0, data, data_size)
+      if transfer_size > data_size:
+        sm.mapping.view_at(data_size, transfer_size - data_size)[:] = b"\0" * (transfer_size - data_size)
+      sm.mapping.flush(0, transfer_size)
+      self._run_dram_transfer(buf, self._dram_fill(), n_tiles, name=f"dram_fill:{buf.name}")
+      return
+    self.dram.write(buf, data)
+
+  def _drain_to_sysmem(self, buf: DramBuffer) -> "DramSysmem":
+    if self.programs:
+      self.run()
+    sm = self._ensure_dram_sysmem()
+    if buf.size > sm.size:
+      raise ValueError(f"DRAM read needs {buf.size} bytes, sysmem buffer is {sm.size} bytes")
+    self._run_dram_transfer(buf, self._dram_drain(), buf.num_tiles, name=f"dram_drain:{buf.name}")
+    return sm
+
+  def dram_read(self, buf: DramBuffer) -> bytes:
+    if self.fast_dispatch:
+      sm = self._drain_to_sysmem(buf)
+      data = sm.mapping.read(0, buf.size)
+    else:
+      if self.programs:
+        self.run()
+      data = self.dram.read(buf)
     if buf.shape is not None:
       return untilize(data, buf.dtype.bpe, buf.shape)
     return data
+
+  def dram_read_view(self, buf: DramBuffer, *, tiled: bool = False) -> memoryview:
+    if buf.shape is not None and not tiled:
+      raise ValueError("dram_read_view exposes raw tiled bytes; pass tiled=True or use dram_read()")
+    if not self.fast_dispatch:
+      raise RuntimeError("dram_read_view requires fast dispatch sysmem")
+    sm = self._drain_to_sysmem(buf)
+    return sm.mapping.view_at(0, buf.size)
+
+  def dram_read_into(self, buf: DramBuffer, dst, *, tiled: bool = False) -> int:
+    if self.fast_dispatch and (buf.shape is None or tiled):
+      sm = self._drain_to_sysmem(buf)
+      return sm.mapping.copy_to(0, dst, buf.size)
+
+    data = self.dram_read(buf)
+    return self._copy_bytes_to(dst, data)
+
+
+class DramSysmem:
+  def __init__(self, dev: PCIDevice, size: int = 1 << 30):
+    self.dev = dev
+    self.mapping = Mapping(size)
+    self.size = self.mapping.size
+    self.noc_addr = dev.pin_pages(self.mapping)
+
+  def close(self):
+    try:
+      self.dev.unpin_pages(self.mapping, self.noc_addr)
+    finally:
+      self.mapping.close()

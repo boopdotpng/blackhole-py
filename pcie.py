@@ -195,11 +195,50 @@ class Mapping:
 
   def __len__(self) -> int: return self.size
 
+  def _check_range(self, offset: int, size: int):
+    if offset < 0 or size < 0 or offset + size > self.size:
+      raise ValueError(f"mapping range out of bounds: offset=0x{offset:x} size=0x{size:x} mapping_size=0x{self.size:x}")
+
+  def view_at(self, offset: int = 0, size: int | None = None) -> memoryview:
+    size = self.size - offset if size is None else size
+    self._check_range(offset, size)
+    return self.view[offset:offset + size]
+
   def read(self, offset: int, size: int) -> bytes:
+    self._check_range(offset, size)
     return bytes(self.view[offset:offset + size])
 
-  def write(self, offset: int, data: bytes):
-    self.view[offset:offset + len(data)] = bytes(data)
+  def write(self, offset: int, data):
+    self.copy_from(offset, data)
+
+  def copy_from(self, offset: int, src, size: int | None = None) -> int:
+    view = memoryview(src)
+    size = view.nbytes if size is None else size
+    self._check_range(offset, size)
+    if size > view.nbytes:
+      raise ValueError(f"source buffer too small: need {size} bytes, have {view.nbytes}")
+    if not view.c_contiguous:
+      raise ValueError("source buffer must be C-contiguous")
+    if view.readonly:
+      self.view[offset:offset + size] = view.cast("B")[:size]
+    else:
+      src_addr = ctypes.addressof(ctypes.c_char.from_buffer(view))
+      ctypes.memmove(ctypes.c_void_p(self.addr + offset), ctypes.c_void_p(src_addr), ctypes.c_size_t(size))
+    return size
+
+  def copy_to(self, offset: int, dst, size: int | None = None) -> int:
+    view = memoryview(dst)
+    size = view.nbytes if size is None else size
+    self._check_range(offset, size)
+    if view.readonly:
+      raise ValueError("destination buffer must be writable")
+    if size > view.nbytes:
+      raise ValueError(f"destination buffer too small: need {size} bytes, have {view.nbytes}")
+    if not view.c_contiguous:
+      raise ValueError("destination buffer must be C-contiguous")
+    dst_addr = ctypes.addressof(ctypes.c_char.from_buffer(view))
+    ctypes.memmove(ctypes.c_void_p(dst_addr), ctypes.c_void_p(self.addr + offset), ctypes.c_size_t(size))
+    return size
 
   def submap(self, offset: int, size: int) -> "Mapping":
     if offset < 0 or size < 0 or offset + size > self.size:
