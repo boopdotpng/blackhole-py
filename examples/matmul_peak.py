@@ -1149,7 +1149,7 @@ def main() -> None:
     raise SystemExit("Usage: matmul_peak.py")
 
   a_ref, b_ref = make_inputs()
-  device = Device(fast_dispatch=False)
+  device = Device()
   try:
     a_buf = device.alloc_write(to_bf16_device_bytes(a_ref), dtype=Dtype.Float16_b, shape=(M, K), name="A")
     b_buf = device.alloc_write(to_bf16_device_bytes(b_ref), dtype=Dtype.Float16_b, shape=(K, N), name="B")

@@ -22,9 +22,9 @@ CQ_COMPLETION_Q0_EVENT = _CQ_L1 + 0x30
 CQ_COMPLETION_Q1_EVENT = _CQ_L1 + 0x40
 CQ_DISPATCH_SYNC_SEM = _CQ_L1 + 0x50
 CQ_PREFETCH_Q_BASE = _CQ_L1 + 0x180
-CQ_PREFETCH_Q_ENTRIES = 1534
-CQ_PREFETCH_Q_ENTRY_SZ = 2
-CQ_PREFETCH_Q_SIZE = CQ_PREFETCH_Q_ENTRIES * CQ_PREFETCH_Q_ENTRY_SZ
+CQ_PREFETCH_Q_SIZE = 0xBFC
+CQ_PREFETCH_Q_ENTRY_SZ = 4
+CQ_PREFETCH_Q_ENTRIES = CQ_PREFETCH_Q_SIZE // CQ_PREFETCH_Q_ENTRY_SZ
 CQ_DISPATCH_CB_PAGES = (512 * 1024) >> 12
 
 _PCIE_NOC_BASE = 1 << 60
@@ -294,18 +294,18 @@ class CQSysmem:
   def _wait_prefetch_slot_free(self, idx: int, timeout_s: float = 1.0):
     off = CQ_PREFETCH_Q_BASE + idx * CQ_PREFETCH_Q_ENTRY_SZ
     deadline = time.perf_counter() + timeout_s
-    while struct.unpack("<H", self.prefetch_win.read(off, 2))[0] != 0:
+    while struct.unpack("<I", self.prefetch_win.read(off, 4))[0] != 0:
       if time.perf_counter() > deadline:
         base = max(0, idx - 4)
         end = min(CQ_PREFETCH_Q_ENTRIES, idx + 5)
         entries = []
         for i in range(base, end):
           entry_off = CQ_PREFETCH_Q_BASE + i * CQ_PREFETCH_Q_ENTRY_SZ
-          value = struct.unpack("<H", self.prefetch_win.read(entry_off, 2))[0]
+          value = struct.unpack("<I", self.prefetch_win.read(entry_off, 4))[0]
           entries.append(f"{i}:{value}")
         rd_ptr = struct.unpack("<I", self.prefetch_win.read(CQ_PREFETCH_Q_RD_PTR, 4))[0]
         pcie_rd = struct.unpack("<I", self.prefetch_win.read(CQ_PREFETCH_Q_PCIE_RD, 4))[0]
-        current = struct.unpack("<H", self.prefetch_win.read(off, 2))[0]
+        current = struct.unpack("<I", self.prefetch_win.read(off, 4))[0]
         raise TimeoutError(
           "timeout waiting for CQ prefetch queue slot "
           f"idx={idx} value={current} rd_ptr=0x{rd_ptr:x} "
@@ -327,7 +327,7 @@ class CQSysmem:
     idx = self.prefetch_q_wr_idx
     self._wait_prefetch_slot_free(idx)
     off = CQ_PREFETCH_Q_BASE + idx * CQ_PREFETCH_Q_ENTRY_SZ
-    self.prefetch_win.write(off, struct.pack("<H", len(record) >> 4))
+    self.prefetch_win.write(off, struct.pack("<I", len(record) >> 4))
     self.prefetch_q_wr_idx = (idx + 1) % CQ_PREFETCH_Q_ENTRIES
 
   def flush(self, queue: CommandQueue):

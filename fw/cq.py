@@ -86,6 +86,7 @@ PREFETCH_Q_PCIE_RD = 0x196C4
 PREFETCH_Q_BASE = 0x19840
 PREFETCH_Q_SIZE = 0xBFC
 PREFETCH_Q_END = PREFETCH_Q_BASE + PREFETCH_Q_SIZE
+PREFETCH_Q_ENTRY_SIZE = 4
 HOST_ISSUE_BASE = 0x40000100
 DISPATCH_CB_BASE = 0x1A000
 DISPATCH_CB_PAGES = 128
@@ -166,7 +167,7 @@ def build_prefetch() -> CqKernel:
 
   fw.label("prefetch_loop")
   fw.write32(CQ_DEBUG, 0xC1010002)
-  fw.lhu(t0, s0, 0)
+  fw.lw(t0, s0, 0)
   fw.beq(t0, zero, "prefetch_loop")
   fw.li(t1, 0x7FFF)
   fw.and_(t0, t0, t1)
@@ -198,7 +199,7 @@ def build_prefetch() -> CqKernel:
   fw.lw(t3, t2, 0)
   fw.bltu(t3, s4, "prefetch_read_barrier")
   fw.write32(CQ_DEBUG, 0xC1010003, tmp_addr=t2, tmp_val=t3)
-  fw.sh(zero, s0, 0)
+  fw.sw(zero, s0, 0)
   fw.write32(PREFETCH_Q_RD_PTR, s0, tmp_addr=t2, tmp_val=t3)
   fw.add(s1, s1, t0)
   fw.read32(t2, PREFETCH_PCIE_END, tmp_addr=t3)
@@ -206,7 +207,7 @@ def build_prefetch() -> CqKernel:
   fw.read32(s1, PREFETCH_PCIE_BASE, tmp_addr=t3)
   fw.label("prefetch_no_pcie_wrap")
   fw.write32(PREFETCH_Q_PCIE_RD, s1, tmp_addr=t2, tmp_val=t3)
-  fw.addi(s0, s0, 2)
+  fw.addi(s0, s0, PREFETCH_Q_ENTRY_SIZE)
   fw.li(t2, PREFETCH_Q_END)
   fw.bne(s0, t2, "prefetch_no_q_wrap")
   fw.li(s0, PREFETCH_Q_BASE)
