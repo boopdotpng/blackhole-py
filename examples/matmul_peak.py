@@ -1547,15 +1547,21 @@ def validate(a_ref: np.ndarray, b_ref: np.ndarray, c_raw: bytes, M: int, N: int,
   return pcc, rel_l2
 
 
+def tflops(m: int, n: int, k: int, us: float) -> float:
+  return (2.0 * m * n * k) / (us * 1.0e6) if us > 0 else 0.0
+
+
 def main() -> None:
   if len(sys.argv) == 1:
     M = K = N = 384
   elif len(sys.argv) == 4:
-    M, K, N = (int(arg) for arg in sys.argv[1:])
+    M, N, K = (int(arg) for arg in sys.argv[1:])
   else:
-    raise SystemExit("Usage: matmul_peak.py [M K N]")
+    raise SystemExit("Usage: matmul_peak.py [M N K]")
+  if M <= 0 or N <= 0 or K <= 0:
+    raise SystemExit("M, N, and K must be positive")
 
-  device = Device(fast_dispatch=False)
+  device = Device()
   try:
     num_banks = len(device.dram.bank_tiles)
     chunks = plan_output_chunks(M, K, N, device.cores, num_banks)
@@ -1597,7 +1603,7 @@ def main() -> None:
     layout_base = dict(a_row_stride=Kp // TILE, b_row_stride=Np // TILE, c_row_stride=Np // TILE)
     timings = []
     for i, chunk in enumerate(chunks):
-      if i:
+      if i and not device.fast_dispatch:
         device._upload_firmware()
       layout = TensorLayout(
         m_tile_offset=chunk.m_tile_offset,
@@ -1605,15 +1611,19 @@ def main() -> None:
         **layout_base,
       )
       prog = build_program(chunk.plan, a_buf.addr, b_buf.addr, c_buf.addr, num_banks, layout)
-      prog.name = f"matmul_{M}x{K}x{N}" if len(chunks) == 1 else f"matmul_{M}x{K}x{N}_chunk{i}"
+      prog.name = f"matmul_M{M}_N{N}_K{K}" if len(chunks) == 1 else f"matmul_M{M}_N{N}_K{K}_chunk{i}"
       timings.extend(device.run(prog))
     c_raw = device.dram_read(c_buf)
     pcc, rel_l2 = validate(a_ref, b_ref, c_raw, M, N, Mp, Np)
 
-    print(f"PASS matmul_peak {M}x{K}x{N} PCC={pcc:.6f} rel_l2={rel_l2:.6f}")
-    for timing in timings:
-      name = f"{timing['name']}: " if timing["name"] else ""
-      print(f"  {name}{timing['us']:,.1f} us")
+    print(f"PASS matmul_peak M={M} N={N} K={K} PCC={pcc:.6f} rel_l2={rel_l2:.6f}")
+    if device.fast_dispatch and timings:
+      print("Timing:")
+      for timing in timings:
+        name = f"{timing['name']}: " if timing["name"] else ""
+        print(f"  {name}{timing['us']:,.1f} us")
+      total_us = sum(timing["us"] for timing in timings)
+      print(f"  aggregate: {total_us:,.1f} us, {tflops(Mp, Np, Kp, total_us):.2f} TFLOP/s")
   finally:
     device.close()
 

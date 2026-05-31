@@ -18,8 +18,8 @@ from program import (
 )
 
 class Device:
-  def __init__(self, index: int = 0, fast_dispatch: bool | None = None):
-    self.fast_dispatch = os.environ.get("TT_USB") != "1" if fast_dispatch is None else fast_dispatch
+  def __init__(self, index: int = 0):
+    self.fast_dispatch = os.environ.get("TT_USB") != "1"
     self.dev = PCIDevice(index=index, use_vfio=self.fast_dispatch)
     self.board_info: BoardInfo = self.dev.board_info(fast_dispatch=self.fast_dispatch)
     self.programs: list[Program] = []
