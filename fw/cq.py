@@ -6,8 +6,13 @@ from pathlib import Path
 if __package__ in (None, ""):
   sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from asm import Kernel
+from asm import KernelBase
 from dsl import Reg, a0, a1, s0, s1, s2, s3, s4, s5, s6, s7, s8, s9, s10, s11, t0, t1, t2, t3, t4, t5, t6, zero
+from ttk.noc import Noc
+
+
+class CqKernel(KernelBase, Noc):
+  pass
 
 L1_ALIGN = 16
 KERNEL_CONFIG_BASE = 0x86B0
@@ -135,15 +140,15 @@ PREFETCH_PCIE_BASE = CQ_DEBUG + 0xA0
 PREFETCH_PCIE_END = CQ_DEBUG + 0xA4
 GO_SIGNAL_VALUE = CQ_DEBUG + 0x100
 
-def round_up_reg(fw: Kernel, reg: Reg, align: int, *, tmp: Reg = t0):
+def round_up_reg(fw: CqKernel, reg: Reg, align: int, *, tmp: Reg = t0):
   fw.li(tmp, align - 1)
   fw.add(reg, reg, tmp)
   fw.li(tmp, ~(align - 1))
   fw.and_(reg, reg, tmp)
   return fw
 
-def build_prefetch() -> Kernel:
-  fw = Kernel()
+def build_prefetch() -> CqKernel:
+  fw = CqKernel()
   fw.setup_stack(0xFFB01FF0)
   fw.write32(CQ_DEBUG, 0xC1010001)
   fw.write32(CQ_SEM_BASE, DISPATCH_CB_PAGES)
@@ -296,8 +301,8 @@ def build_prefetch() -> Kernel:
   fw.j("prefetch_done")
   return fw
 
-def build_dispatch() -> Kernel:
-  fw = Kernel()
+def build_dispatch() -> CqKernel:
+  fw = CqKernel()
   fw.setup_stack(0xFFB01FF0)
   fw.write32(CQ_DEBUG, 0xC1D10001)
   fw.li(s0, DISPATCH_CB_BASE)  # cmd ptr

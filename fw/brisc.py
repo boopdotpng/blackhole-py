@@ -2,18 +2,17 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from asm import Kernel
+from asm import Kernel, KernelBase
 from dsl import Reg, t0, t1, t2, t3, t4, t5, t6, zero
-from ttk.addrs import (
-  BriscMailbox as BM, CircularBuffer as CB, Dispatch, Firmware, Launch,
-  Mailbox, NocCfg, P100BankTable, RunMsg, RunSync,
-  TensixL1, TensixMMIO,
-)
-from ttk.addrs import NOC
+from ttk import Cb, Debug, Noc, Tensix
+from ttk.addrs import P100BankTable
+from ttk.cb import CircularBuffer as CB
+from ttk.mailbox import BriscMailbox as BM, Dispatch, Firmware
+from ttk.noc import NOC, NocCfg
 from dsl import TTNOP, TTSEMINIT, TTSFPENCC, TTSFPCONFIG, TTSFPLOADI, TTZEROACC
-from ttk.tensix import TensixRegs, TensixSem
+from ttk.tensix import Launch, Mailbox, RunMsg, RunSync, TensixL1, TensixMMIO, TensixRegs, TensixSem
 
-def signal_subordinate_if_enabled(fw: Kernel, role: int, value: int, *,
+def signal_subordinate_if_enabled(fw: KernelBase, role: int, value: int, *,
                                   enabled: Reg = t0, mask: Reg = t1):
   skip = fw._new_label("skip_subordinate_signal")
   fw.launch_kernel_enabled(role, enabled=enabled, mask=mask)
@@ -22,7 +21,7 @@ def signal_subordinate_if_enabled(fw: Kernel, role: int, value: int, *,
   fw.label(skip)
   return fw
 
-def write_noc_cmd_reg(fw: Kernel, noc: Reg, reg: int, value: int | Reg, *,
+def write_noc_cmd_reg(fw: KernelBase, noc: Reg, reg: int, value: int | Reg, *,
                       addr: Reg = t0, tmp_val: Reg = t1):
   fw.li(addr, reg + (NocCfg.NCRISC_AT_CMD_BUF << NOC.CMD_BUF_OFFSET_BIT))
   fw.add(addr, addr, noc)
@@ -31,7 +30,7 @@ def write_noc_cmd_reg(fw: Kernel, noc: Reg, reg: int, value: int | Reg, *,
     value = tmp_val
   return fw.sw(value, addr, 0)
 
-def notify_dispatch_core_done(fw: Kernel, *, launch: Reg = t0, mode: Reg = t1,
+def notify_dispatch_core_done(fw: KernelBase, *, launch: Reg = t0, mode: Reg = t1,
                               go_index: Reg = t2, go_addr: Reg = t3,
                               dispatch_addr: Reg = t4, coord: Reg = t5,
                               noc_shift: Reg = t6):
@@ -80,7 +79,7 @@ def notify_dispatch_core_done(fw: Kernel, *, launch: Reg = t0, mode: Reg = t1,
   fw.label(skip)
   return fw
 
-def noc_init(fw: Kernel, *, noc_id: Reg = t0, coord: Reg = t1,
+def noc_init(fw: KernelBase, *, noc_id: Reg = t0, coord: Reg = t1,
              tmp_addr: Reg = t2, tmp_val: Reg = t3):
   for noc in range(2):
     fw.read32(noc_id, fw.noc_cmd_addr(noc, 0, NOC.CFG_BASE + NocCfg.ID_LOGICAL * 4), tmp_addr=tmp_addr)
@@ -104,7 +103,7 @@ def noc_init(fw: Kernel, *, noc_id: Reg = t0, coord: Reg = t1,
     )
   return fw
 
-def init_noc_local_state(fw: Kernel, *, launch: Reg = t0, noc_id: Reg = t1,
+def init_noc_local_state(fw: KernelBase, *, launch: Reg = t0, noc_id: Reg = t1,
                          noc_shift: Reg = t2, status: Reg = t3,
                          dest: Reg = t4, value: Reg = t5):
   fw.current_launch_ptr(launch=launch, tmp=value)
@@ -119,7 +118,7 @@ def init_noc_local_state(fw: Kernel, *, launch: Reg = t0, noc_id: Reg = t1,
   ], status=status, dest=dest, value=value)
   return fw
 
-def rmw_tensix_cfg(fw: Kernel, addr32: int, mask: int, value: int, *,
+def rmw_tensix_cfg(fw: KernelBase, addr32: int, mask: int, value: int, *,
                    shift: int = 0, addr: Reg = t0, old: Reg = t1, tmp: Reg = t2):
   fw.li(addr, TensixRegs.CFG_BASE + addr32 * 4)
   fw.lw(old, addr, 0)
@@ -130,8 +129,8 @@ def rmw_tensix_cfg(fw: Kernel, addr32: int, mask: int, value: int, *,
   fw.sw(old, addr, 0)
   return fw
 
-def build(*, text_base: dict[str, int] = Firmware.TEXT_BASE) -> Kernel:
-  fw = Kernel(base_addr=Firmware.TEXT_BASE["brisc"])
+def build(*, text_base: dict[str, int] = Firmware.TEXT_BASE) -> KernelBase:
+  fw = Kernel(Tensix, Noc, Cb, Debug, base_addr=Firmware.TEXT_BASE["brisc"])
   fw.segment(Firmware.LOCAL_DATA_BASE["brisc"], b"\x68".ljust(Firmware.LOCAL_DATA_SIZE["brisc"], b"\0"), label="local_data")
   fw.configure_csr()
   fw.setup_stack(Firmware.BRISC_STACK_TOP)

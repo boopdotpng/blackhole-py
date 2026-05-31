@@ -6,7 +6,9 @@ import struct
 import sys
 from dataclasses import dataclass
 from dsl import Reg, t0, t1, t2, t3, t4, t5
-from ttk.addrs import Dram, NocCfg, TensixMMIO, noc_xy
+from ttk.addrs import Dram, noc_xy
+from ttk.noc import NocCfg
+from ttk.tensix import TensixMMIO
 
 @dataclass(frozen=True)
 class DebugEvent:

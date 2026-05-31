@@ -6,16 +6,17 @@ from pathlib import Path
 if __package__ in (None, ""):
   sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from asm import Kernel
+from asm import Kernel, KernelBase
 from dsl import t0, t1, t2, t3, t4, t5, t6, zero
-from ttk.addrs import (
-  CircularBuffer as CB, Firmware, Launch, Mailbox, NcriscMailbox as NM,
-  NocCfg, P100BankTable, RunSync, TensixL1,
-)
-from ttk.addrs import NOC
+from ttk import Cb, Debug, Noc
+from ttk.addrs import P100BankTable
+from ttk.cb import CircularBuffer as CB
+from ttk.mailbox import Firmware, NcriscMailbox as NM
+from ttk.noc import NOC, NocCfg
+from ttk.tensix import Launch, Mailbox, RunSync, TensixL1
 
-def build() -> Kernel:
-  fw = Kernel(base_addr=Firmware.TEXT_BASE["ncrisc"])
+def build() -> KernelBase:
+  fw = Kernel(Noc, Cb, Debug, base_addr=Firmware.TEXT_BASE["ncrisc"])
   fw.segment(Firmware.LOCAL_DATA_BASE["ncrisc"], b"\x68".ljust(Firmware.LOCAL_DATA_SIZE["ncrisc"], b"\0"), label="local_data")
   fw.setup_stack(Firmware.NCRISC_STACK_TOP)
   fw.configure_csr()

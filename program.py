@@ -4,8 +4,9 @@ import struct
 from ctypes import c_uint8 as u8, c_uint16 as u16, c_uint32 as u32
 from dataclasses import dataclass, field
 from enum import Enum
-from asm import Kernel, Segment, boot_jal
-from ttk.addrs import L1_ALIGN, S, TensixL1, TensixMMIO, align_up, as_bytes, build_bank_noc_table
+from asm import KernelBase, Segment, boot_jal
+from ttk.addrs import L1_ALIGN, S, align_up, as_bytes, build_bank_noc_table
+from ttk.tensix import TensixL1, TensixMMIO
 
 Core = tuple[int, int]
 Rect = tuple[int, int, int, int]
@@ -141,6 +142,8 @@ IRCommand = McastWrite | UnicastWrite | Run | McastMmioWrite32 | PollL1Byte
 
 # RTA order matches launch processor slots.
 ROLE_INDEX = {"brisc": 0, "ncrisc": 1, "trisc0": 2, "trisc1": 3, "trisc2": 4}
+
+Kernel = KernelBase
 
 def _kernel_entry(kernel: Kernel) -> int:
   segments = kernel.compile()

@@ -2,8 +2,19 @@ from __future__ import annotations
 
 from dsl import Reg, t0, t1, t2, t3, t4, t5, t6, zero
 from dsl import TTSETDMAREG, TTSTALLWAIT, TTSTOREREG
-from ttk.addrs import CircularBuffer as CB
 from ttk.tensix import TensixRegs
+
+
+class CircularBuffer:
+  LOCAL_INTERFACE_SIZE = 32
+  LOCAL_CONFIG_SIZE = 16
+  SYNC_TILES_ACKED_BASE = 0xFFB48020
+  SYNC_TILES_RECEIVED_BASE = 0xFFB48028
+  SYNC_STRIDE = 0x1000
+  NUM_CIRCULAR_BUFFERS = 32
+
+
+CB = CircularBuffer
 
 class Cb:
   def cb_iface(self, interface_base: int, cb_index: int, *, out: Reg = t6):

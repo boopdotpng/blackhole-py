@@ -3,10 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import IntEnum
 
-from dsl import (
-  Reg, TTINCRWC, TTREPLAY, TTSETC16, TTSETRWC, TTSFPADDI, TTSFPLOAD, TTSFPNOP,
-  TTSFPSTORE, t0, t1, t2, t3, zero,
-)
+from dsl import Reg, TTSETC16, TTSETRWC, t0, t1, zero
 from ttk._cfg_regs import Cfg, ThreadCfg  # noqa: F401  (re-exported)
 
 
@@ -84,6 +81,97 @@ class TensixWait:
 class TensixSemWait:
   STALL_ON_ZERO = 0x1
   STALL_ON_MAX = 0x2
+
+
+class TensixL1:
+  SIZE = 0x180000
+  LAUNCH = 0x70
+  GO_MSG = 0x370
+  GO_MSG_INDEX = 0x3A0
+  KERNEL_CONFIG_BASE = 0x86B0
+  BRISC_FIRMWARE_BASE = 0x3840
+  MEM_ZEROS_BASE = 0x32E0
+  MEM_ZEROS_SIZE = 512
+  DATA_BUFFER_SPACE_BASE = 0x37000
+  TIMING_CONTROL = 0x9C0
+
+  FW_INIT_SCRATCH_BASE = 0x82B0
+  BRISC_INIT_LOCAL_L1_BASE_SCRATCH = 0x82B0
+  NCRISC_INIT_LOCAL_L1_BASE_SCRATCH = 0xA2B0
+  TRISC0_INIT_LOCAL_L1_BASE_SCRATCH = 0xC2B0
+  TRISC1_INIT_LOCAL_L1_BASE_SCRATCH = 0xD2B0
+  TRISC2_INIT_LOCAL_L1_BASE_SCRATCH = 0xE2B0
+  NCRISC_INIT_IRAM_L1_BASE_SCRATCH = 0xF2B0
+  MEM_BANK_TO_NOC_SCRATCH = 0x112B0
+  LOGICAL_TO_VIRTUAL_SCRATCH = 0x11AB0
+
+
+class TensixMMIO:
+  LOCAL_RAM_START = 0xFFB00000
+  LOCAL_RAM_END = 0xFFB01FFF
+  NCRISC_HALT_RESUME_ADDR = 0x60
+  RISCV_DEBUG_REG_SOFT_RESET_0 = 0xFFB121B0
+  RISCV_TDMA_REG_CLK_GATE_EN = 0xFFB11024
+  RISCV_DEBUG_REG_WALL_CLOCK_L = 0xFFB121F0
+  RISCV_DEBUG_REG_WALL_CLOCK_H = 0xFFB121F8
+  RISCV_DEBUG_REG_TRISC0_RESET_PC = 0xFFB12228
+  RISCV_DEBUG_REG_TRISC1_RESET_PC = 0xFFB1222C
+  RISCV_DEBUG_REG_TRISC2_RESET_PC = 0xFFB12230
+  RISCV_DEBUG_REG_TRISC_RESET_PC_OVERRIDE = 0xFFB12234
+  RISCV_DEBUG_REG_NCRISC_RESET_PC = 0xFFB12238
+  RISCV_DEBUG_REG_NCRISC_RESET_PC_OVERRIDE = 0xFFB1223C
+  RISCV_DEBUG_REG_DEST_CG_CTRL = 0xFFB12240
+  SOFT_RESET_ALL = 0x47800
+  SOFT_RESET_BRISC_ONLY_RUN = 0x47000
+  SOFT_RESET_NONE = 0
+
+
+class Launch:
+  BASE = 0x70
+  MSG_SIZE = 96
+  KERNEL_CONFIG_BASE = 0
+  SEM_OFFSET = 12
+  LOCAL_CB_OFFSET = 18
+  REMOTE_CB_OFFSET = 20
+  RTA_OFFSET = 22
+  MODE = 42
+  KERNEL_TEXT_OFFSET = 44
+  LOCAL_CB_MASK = 64
+  BRISC_NOC_ID = 68
+  BRISC_NOC_MODE = 69
+  NCRISC_MIN_REMOTE_CB_START_INDEX = 82
+  TRISC_MIN_REMOTE_CB_START_INDEX = 70
+  ENABLES = 76
+  SUB_DEVICE_ORIGIN_X = 92
+  SUB_DEVICE_ORIGIN_Y = 93
+  PRELOAD = 95
+
+
+class RunMsg:
+  GO = 0x80
+  RESET_READ_PTR = 0xC0
+  RESET_READ_PTR_FROM_HOST = 0xE0
+  REPLAY_TRACE = 0xF0
+  DONE = 0x00
+
+
+class RunSync:
+  GO = 0x80
+  LOAD = 0x01
+  INIT = 0x40
+  ALL_INIT = 0x40404040
+  INIT_SYNC_REGISTERS = 0x03
+  DONE = 0x00
+
+
+class Mailbox:
+  SUBORDINATE_SYNC = 0x68
+  LAUNCH_MSG_RD_PTR = 0x6C
+  CORE_INFO_ABSOLUTE_LOGICAL_X = 0x940
+  CORE_INFO_ABSOLUTE_LOGICAL_Y = 0x941
+  GO_SIGNAL = 0x373
+  GO_MESSAGES = 0x370
+  GO_MESSAGE_INDEX = 0x3A0
 
 
 # Tensix regfile GPR maps. The regfile (ttsim "tensix_regfile", 0xFFE00000) is
@@ -264,25 +352,6 @@ class Tensix:
     self.setc16(ThreadCfg.ADDR_MOD_BIAS_SEC2_Bias, 0)
     self.setc16(ThreadCfg.CLR_DVALID_Src, 0)
     return self.emit(TTSETRWC(0, 0, 0, 0, 0, 15))
-
-  def math_add1_replay_row(self):
-    self.emit(TTREPLAY(0, 5, 1, 1))
-    self.emit(TTSFPLOAD(0, 0, 7, 0))
-    self.emit(TTSFPADDI(0x3F80, 0, 0))
-    self.emit(TTSFPNOP())
-    self.emit(TTSFPSTORE(0, 0, 7, 0))
-    self.emit(TTINCRWC(0, 2, 0, 0))
-    for _ in range(7):
-      self.emit(TTREPLAY(0, 5, 0, 0))
-    self.emit(TTSETRWC(0, 4, 8, 0, 0, 4))
-    return self.emit(TTSETRWC(0, 4, 8, 0, 0, 4))
-
-  def write_trisc1_dest_offset_instr(self, offset_id: Reg = t1, instr: Reg = t2, base: Reg = t3):
-    self.sltu(instr, zero, offset_id)
-    self.slli(instr, instr, 9)
-    self.li(base, 0xB2010000)
-    self.add(instr, instr, base)
-    return self.write32(TensixRegs.INSTRN_BUF_BASE, instr, tmp_addr=t0)
 
   def tensix_push_word(self, instrn_buf: int | Reg, word: int, *, tmp: Reg = t0, tmp_addr: Reg = t1):
     self.li(tmp, word)

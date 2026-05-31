@@ -5,17 +5,19 @@ from pathlib import Path
 if __package__ in (None, ""):
   sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from asm import Kernel
+from asm import Kernel, KernelBase
 from dsl import Reg, gp, t0, t1, t2, t3, t4, t5, t6, zero
-from ttk.addrs import CircularBuffer as CB, Firmware, Launch, Mailbox, RunSync, TensixMMIO, TriscMailbox as TM
-from ttk.tensix import TensixRegs
+from ttk import Cb, Debug, Tensix
+from ttk.cb import CircularBuffer as CB
+from ttk.mailbox import Firmware, TriscMailbox as TM
+from ttk.tensix import Launch, Mailbox, RunSync, TensixMMIO, TensixRegs
 
-def build(trisc_id: int) -> Kernel:
+def build(trisc_id: int) -> KernelBase:
   if trisc_id not in (0, 1, 2):
     raise ValueError(f"unknown TRISC id {trisc_id!r}")
   role = 2 + trisc_id
   data = TM.DATA1 if trisc_id == 1 else TM.DATA_COMMON
-  fw = Kernel(base_addr=Firmware.TRISC_TEXT_BASE[trisc_id])
+  fw = Kernel(Tensix, Cb, Debug, base_addr=Firmware.TRISC_TEXT_BASE[trisc_id])
   fw.segment(Firmware.TRISC_LOCAL_DATA_BASE[trisc_id], b"\0" * Firmware.TRISC_LOCAL_DATA_SIZE[trisc_id], label="local_data")
   # setup_gp
   fw.li(gp, Firmware.TRISC_GLOBAL_POINTER)
@@ -160,11 +162,11 @@ def build(trisc_id: int) -> Kernel:
   fw.j("run_loop")
   return fw
 
-def build_trisc0() -> Kernel:
+def build_trisc0() -> KernelBase:
   return build(0)
 
-def build_trisc1() -> Kernel:
+def build_trisc1() -> KernelBase:
   return build(1)
 
-def build_trisc2() -> Kernel:
+def build_trisc2() -> KernelBase:
   return build(2)
