@@ -9,7 +9,6 @@ from pathlib import Path
 if __package__ in (None, ""):
   sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from asm import Kernel
 from device import Device
 from dsl import (
   TTATGETM, TTATRELM, TTDMANOP, TTMOP, TTMOVA2D, TTNOP, TTPACR,
@@ -18,13 +17,14 @@ from dsl import (
   TTSFPLOADI, TTSETADCXX, TTSETADCXY, TTSETADCZW,
   TTSETC16, TTSETDMAREG, TTSTALLWAIT, TTSTOREREG, TTUNPACR, TTUNPACR_NOP,
   TTWRCFG, TTZEROACC, TTZEROSRC,
-  a0, a1, a2, a5, ra, s0, s2, s3, s4, s5, sp, t0, t1, t2, t3, t4, t5, t6, zero,
+  a0, a1, a2, a5, s0, s2, s3, s4, s5, t0, t1, t2, t3, t4, t5, t6, zero,
 )
 from program import Dtype, Program
 from ttk.addrs import (
   BriscMailbox as BM, CircularBuffer as CB, NcriscMailbox as NM, NOC, TensixL1,
-  TriscLocalMem as TLM, TriscMailbox as TM,
+  TriscLocalMem as TLM,
 )
+from ttk.kernel import Brisc, Ncrisc, RiscSync, Trisc
 from ttk.tensix import (
   Cfg, GprPack, GprUnpack, MopCfg, TensixRegs, TensixSem, TensixSemWait,
   TensixStall, TensixWait, ThreadCfg,
@@ -43,6 +43,8 @@ SYNC_DONE0 = SYNC_L1 + 8
 SYNC_DONE1 = SYNC_L1 + 12
 SYNC_DONE2 = SYNC_L1 + 16
 SYNC_TRISC_INIT = SYNC_L1 + 20
+# Start/init handshake layout shared by BRISC (driver) and the three TRISCs.
+SYNC = RiscSync(start=SYNC_TRISC_START, trisc_init=SYNC_TRISC_INIT)
 STALL_MATH_PACK_ROOM = TensixStall.SYNC | TensixStall.MATH | TensixStall.SFPU
 STALL_MATH_PACK_DATA = TensixStall.TDMA
 WAIT_MATH_AND_SFPU = TensixWait.MATH | TensixWait.SFPU
@@ -86,24 +88,18 @@ MATH_MOP_CFG = MopCfg(
   ],
 )
 
-def trisc0() -> Kernel:
-  data = TM.DATA_COMMON
-  fw = Kernel()
-  fw.addi(sp, sp, -16)
-  fw.sw(ra, sp, 12)
-  fw.read32(t0, data["rta_l1_base"])
-  fw.lw(s3, t0, 0)
-  fw.wait8(SYNC_TRISC_START, 1)
-  fw.write8(SYNC_TRISC_START, 0)
+def trisc0() -> Trisc:
+  fw = Trisc(0, SYNC)
+  fw.prologue()
 
-  fw.write32(TM.DATA_COMMON["cfg_state_id"], 0)
+  fw.write32(fw.data["cfg_state_id"], 0)
   fw.setc16(ThreadCfg.CFG_STATE_ID_StateID, 0)
   fw.write32(TLM.TRISC0_UNPACK_CFG_CONTEXT, 0)
   fw.setc16(ThreadCfg.UNPACK_MISC_CFG_CfgContext, 0)
 
   # The old add1 unpacker path configured CB0 as 4 faces of Float16_b.
   fw.emit(TTZEROSRC(0, 0, 1, 3))
-  fw.write32(TM.DATA_COMMON["cfg_state_id"], 0)
+  fw.write32(fw.data["cfg_state_id"], 0)
   fw.setc16(ThreadCfg.CFG_STATE_ID_StateID, 0)
 
   wait_unp = fw._new_label("init_wait_unpack_ctx")
@@ -170,77 +166,59 @@ def trisc0() -> Kernel:
   fw.write_mop_cfg(UNPACK_MOP_CFG, 0)
   fw.tensix_sync(0)
 
-  fw.write32(SYNC_TRISC_INIT, 1)
-  fw.fence()
+  fw.init_barrier()
 
-  fw.li(t1, 1)
-  for init_id in range(3):
-    fw.wait_sync_value(SYNC_TRISC_INIT + init_id * 4, t1, actual=t2)
+  with fw.tile_loop():
+    fw.addi(t2, s5, 1)
+    fw.cb_wait_front(fw.data["cb_interface"], 0)
+    fw.cb_read_ptr(fw.data["cb_interface"], 0, out=s0)
+    fw.cb_iface(fw.data["cb_interface"], 0, out=t6)
+    fw.lw(t1, t6, 8)
+    fw.emit(TTSETADCZW(3, 0, 0, 0, 0, 15))
 
-  fw.li(s5, 0)
-  fw.label("trisc0_loop")
-  fw.beq(s5, s3, "trisc0_done")
-  fw.addi(t2, s5, 1)
-  fw.cb_wait_front(data["cb_interface"], 0)
-  fw.cb_read_ptr(data["cb_interface"], 0, out=s0)
-  fw.cb_iface(data["cb_interface"], 0, out=t6)
-  fw.lw(t1, t6, 8)
-  fw.emit(TTSETADCZW(3, 0, 0, 0, 0, 15))
+    wait_unp = fw._new_label("wait_unpack_ctx")
+    wait_unp_done = fw._new_label("wait_unpack_ctx_done")
+    fw.li(t0, TensixRegs.PC_UNPACK_SYNC)
+    fw.label(wait_unp)
+    fw.lw(t1, t0, 0)
+    fw.andi(t1, t1, 0xFE)
+    fw.beq(t1, zero, wait_unp_done)
+    fw.fence()
+    fw.j(wait_unp)
+    fw.label(wait_unp_done)
 
-  wait_unp = fw._new_label("wait_unpack_ctx")
-  wait_unp_done = fw._new_label("wait_unpack_ctx_done")
-  fw.li(t0, TensixRegs.PC_UNPACK_SYNC)
-  fw.label(wait_unp)
-  fw.lw(t1, t0, 0)
-  fw.andi(t1, t1, 0xFE)
-  fw.beq(t1, zero, wait_unp_done)
-  fw.fence()
-  fw.j(wait_unp)
-  fw.label(wait_unp_done)
+    fw.read32(t1, TLM.TRISC0_UNPACK_CFG_CONTEXT)
+    fw.li(t2, TensixRegs.CFG_BASE + 76 * 4)
+    cfg_addr_done = fw._new_label("trisc0_cfg_addr_done")
+    fw.beq(t1, zero, cfg_addr_done)
+    fw.addi(t2, t2, 4)
+    fw.label(cfg_addr_done)
+    fw.addi(t3, s0, -1)
+    fw.sw(t3, t2, 0)
+    fw.lw(t1, t2, 0)
+    fw.write32(TensixRegs.PC_UNPACK_SYNC, 0)
 
-  fw.read32(t1, TLM.TRISC0_UNPACK_CFG_CONTEXT)
-  fw.li(t2, TensixRegs.CFG_BASE + 76 * 4)
-  cfg_addr_done = fw._new_label("trisc0_cfg_addr_done")
-  fw.beq(t1, zero, cfg_addr_done)
-  fw.addi(t2, t2, 4)
-  fw.label(cfg_addr_done)
-  fw.addi(t3, s0, -1)
-  fw.sw(t3, t2, 0)
-  fw.lw(t1, t2, 0)
-  fw.write32(TensixRegs.PC_UNPACK_SYNC, 0)
-
-  fw.emit(TTSTALLWAIT(TensixStall.UNPACK, TensixWait.TRISC_CFG))
-  fw.emit(TTMOP(1, 0, 0))
-  fw.emit(TTSEMGET(TensixSem.mask(TensixSem.UNPACK_SYNC)))
-  fw.read32(t1, TLM.TRISC0_UNPACK_CFG_CONTEXT)
-  fw.li(t2, 1)
-  fw.sub(t2, t2, t1)
-  fw.write32(TLM.TRISC0_UNPACK_CFG_CONTEXT, t2)
-  fw.beq(t1, zero, "trisc0_set_ctx1")
-  fw.setc16(ThreadCfg.UNPACK_MISC_CFG_CfgContext, 0)
-  fw.j("trisc0_ctx_set")
-  fw.label("trisc0_set_ctx1")
-  fw.setc16(ThreadCfg.UNPACK_MISC_CFG_CfgContext, 257)
-  fw.label("trisc0_ctx_set")
-  fw.cb_pop_front(data["cb_interface"], 0, tensix_ack=True)
-  fw.addi(t2, s5, 1)
-  fw.signal_sync(SYNC_DONE0, t2)
-
-  fw.addi(s5, s5, 1)
-  fw.j("trisc0_loop")
-  fw.label("trisc0_done")
-  fw.ret_kernel()
+    fw.emit(TTSTALLWAIT(TensixStall.UNPACK, TensixWait.TRISC_CFG))
+    fw.emit(TTMOP(1, 0, 0))
+    fw.emit(TTSEMGET(TensixSem.mask(TensixSem.UNPACK_SYNC)))
+    fw.read32(t1, TLM.TRISC0_UNPACK_CFG_CONTEXT)
+    fw.li(t2, 1)
+    fw.sub(t2, t2, t1)
+    fw.write32(TLM.TRISC0_UNPACK_CFG_CONTEXT, t2)
+    fw.beq(t1, zero, "trisc0_set_ctx1")
+    fw.setc16(ThreadCfg.UNPACK_MISC_CFG_CfgContext, 0)
+    fw.j("trisc0_ctx_set")
+    fw.label("trisc0_set_ctx1")
+    fw.setc16(ThreadCfg.UNPACK_MISC_CFG_CfgContext, 257)
+    fw.label("trisc0_ctx_set")
+    fw.cb_pop_front(fw.data["cb_interface"], 0, tensix_ack=True)
+    fw.addi(t2, s5, 1)
+    fw.signal_sync(SYNC_DONE0, t2)
   return fw
 
-
-def trisc1() -> Kernel:
-  fw = Kernel()
-  fw.addi(sp, sp, -16)
-  fw.sw(ra, sp, 12)
-  fw.read32(t0, TM.DATA1["rta_l1_base"])
-  fw.lw(s3, t0, 0)
-  fw.wait8(SYNC_TRISC_START + 1, 1)
-  fw.write8(SYNC_TRISC_START + 1, 0)
+def trisc1() -> Trisc:
+  fw = Trisc(1, SYNC)
+  fw.prologue()
 
   # Match the other TRISC prologues: make the initial context writes visible,
   # then wait until the unpack side reports its context is idle.
@@ -260,7 +238,7 @@ def trisc1() -> Kernel:
   fw.emit(TTSEMINIT(sem_sel=TensixSem.mask(TensixSem.MATH_PACK), init_value=0, max_value=1))
   fw.push_tensix(TTSETC16(ThreadCfg.DEST_TARGET_REG_CFG_MATH_Offset, 0))
   fw.push_tensix(TTRMWCIB0(Mask=0x08, Data=0x08, CfgRegAddr=Cfg.DEST_ACCESS_CFG.addr32))
-  fw.write32(TM.DATA1["dest_offset_id"], 0)
+  fw.write32(fw.data["dest_offset_id"], 0)
   fw.emit(TTSTALLWAIT(TensixStall.CFG, TensixWait.MATH))
   fw.push_tensix(TTRMWCIB3(Mask=0x80, Data=0x00, CfgRegAddr=Cfg.ALU.addr32))
   fw.math_direct_mova2d_init()
@@ -273,57 +251,40 @@ def trisc1() -> Kernel:
   fw.setc16(ThreadCfg.ADDR_MOD_BIAS_SEC7_Bias, 0)
   fw.emit(TTSETRWC(0, 0, 0, 0, 0, 15))
 
-  fw.write32(SYNC_TRISC_INIT + 4, 1)
-  fw.fence()
+  fw.init_barrier()
 
-  fw.li(t1, 1)
-  for init_id in range(3):
-    fw.wait_sync_value(SYNC_TRISC_INIT + init_id * 4, t1, actual=t2)
-
-  fw.li(s5, 0)
-  fw.label("trisc1_loop")
-  fw.beq(s5, s3, "trisc1_done")
-  fw.emit(TTSEMWAIT(
-    STALL_MATH_PACK_ROOM,
-    TensixSem.mask(TensixSem.MATH_PACK),
-    TensixSemWait.STALL_ON_MAX,
-  ))
-  fw.read32(t1, TM.DATA1["dest_offset_id"])
-  fw.write_trisc1_dest_offset_instr(t1, t2, t3)
-  fw.emit(TTMOP(1, 0, 0))
-  fw.emit(TTSETRWC(0, 0, 0, 0, 0, 4))
-  fw.read32(t1, TM.DATA1["dest_offset_id"])
-  fw.write_trisc1_dest_offset_instr(t1, t2, t3)
-  fw.emit(TTSTALLWAIT(TensixStall.SFPU, TensixWait.MATH))
-  for _ in range(4):
-    fw.math_add1_replay_row()
-  fw.push_tensix(TTSETRWC(0, 0, 0, 0, 0, 4))
-  fw.push_tensix(TTSTALLWAIT(TensixStall.SYNC, WAIT_MATH_AND_SFPU))
-  fw.emit(TTSEMPOST(TensixSem.mask(TensixSem.MATH_PACK)))
-  fw.addi(t2, s5, 1)
-  fw.signal_sync(SYNC_DONE1, t2)
-  fw.read32(t1, TM.DATA1["dest_offset_id"])
-  fw.li(t2, 1)
-  fw.sub(t2, t2, t1)
-  fw.write32(TM.DATA1["dest_offset_id"], t2)
-  fw.emit(TTSTALLWAIT(TensixStall.CFG, WAIT_MATH_AND_SFPU))
-  fw.write_trisc1_dest_offset_instr(t2, t1, t3)
-  fw.addi(s5, s5, 1)
-  fw.j("trisc1_loop")
-  fw.label("trisc1_done")
-  fw.ret_kernel()
+  with fw.tile_loop():
+    fw.emit(TTSEMWAIT(
+      STALL_MATH_PACK_ROOM,
+      TensixSem.mask(TensixSem.MATH_PACK),
+      TensixSemWait.STALL_ON_MAX,
+    ))
+    fw.read32(t1, fw.data["dest_offset_id"])
+    fw.write_trisc1_dest_offset_instr(t1, t2, t3)
+    fw.emit(TTMOP(1, 0, 0))
+    fw.emit(TTSETRWC(0, 0, 0, 0, 0, 4))
+    fw.read32(t1, fw.data["dest_offset_id"])
+    fw.write_trisc1_dest_offset_instr(t1, t2, t3)
+    fw.emit(TTSTALLWAIT(TensixStall.SFPU, TensixWait.MATH))
+    for _ in range(4):
+      fw.math_add1_replay_row()
+    fw.push_tensix(TTSETRWC(0, 0, 0, 0, 0, 4))
+    fw.push_tensix(TTSTALLWAIT(TensixStall.SYNC, WAIT_MATH_AND_SFPU))
+    fw.emit(TTSEMPOST(TensixSem.mask(TensixSem.MATH_PACK)))
+    fw.addi(t2, s5, 1)
+    fw.signal_sync(SYNC_DONE1, t2)
+    fw.read32(t1, fw.data["dest_offset_id"])
+    fw.li(t2, 1)
+    fw.sub(t2, t2, t1)
+    fw.write32(fw.data["dest_offset_id"], t2)
+    fw.emit(TTSTALLWAIT(TensixStall.CFG, WAIT_MATH_AND_SFPU))
+    fw.write_trisc1_dest_offset_instr(t2, t1, t3)
   return fw
 
 
-def trisc2() -> Kernel:
-  data = TM.DATA_COMMON
-  fw = Kernel()
-  fw.addi(sp, sp, -16)
-  fw.sw(ra, sp, 12)
-  fw.read32(t0, data["rta_l1_base"])
-  fw.lw(s3, t0, 0)
-  fw.wait8(SYNC_TRISC_START + 2, 1)
-  fw.write8(SYNC_TRISC_START + 2, 0)
+def trisc2() -> Trisc:
+  fw = Trisc(2, SYNC)
+  fw.prologue()
 
   # Mirror add1_compute_trisc2.kernel.dis from blackhole-py-old (6a80..6d68).
   # blackhole-py-only state setup (TRISC2 mailbox regs not visible in OLD asm):
@@ -372,7 +333,7 @@ def trisc2() -> Kernel:
   fw.write32(Cfg.PCK_EDGE, 0x0000FFFF)
   fw.write32(Cfg.TILE_ROW_SET_MAPPING_0, 0)
   # Packer tile/page size comes from TRISC local CB state, already shifted to 16B units.
-  fw.cb_iface(TM.DATA_COMMON["cb_interface"], OUT_CB, out=t6)
+  fw.cb_iface(fw.data["cb_interface"], OUT_CB, out=t6)
   fw.lw(t1, t6, 8)
   fw.write32(GprPack.TILE_HEADER, t1)
   fw.write32(GprPack.TILE_HEADER_1, 0)
@@ -406,7 +367,7 @@ def trisc2() -> Kernel:
   fw.emit(TTSETADCXX(4, 15, 0))
 
   # dest_offset_id := 0 (OLD 6d1c..6d34).
-  fw.write32(TM.DATA_COMMON["dest_offset_id"], 0)
+  fw.write32(fw.data["dest_offset_id"], 0)
 
   # Output addr config setup (OLD 6d38..6d60).
   fw.emit(TTSTALLWAIT(TensixStall.TDMA | TensixStall.THCON, TensixWait.PACK0))
@@ -423,100 +384,89 @@ def trisc2() -> Kernel:
   fw.emit(TTSETADCXY(4, 0, 0, 0, 0, 0xB))
   fw.emit(TTSETADCZW(4, 0, 0, 0, 0, 0xF))
 
-  fw.write32(SYNC_TRISC_INIT + 8, 1)
-  fw.fence()
+  fw.init_barrier()
 
-  fw.li(t1, 1)
-  for init_id in range(3):
-    fw.wait_sync_value(SYNC_TRISC_INIT + init_id * 4, t1, actual=t2)
-
-  fw.li(s5, 0)
-  fw.label("trisc2_loop")
-  fw.beq(s5, s3, "trisc2_done")
-  fw.emit(TTSEMWAIT(
-    STALL_MATH_PACK_DATA,
-    TensixSem.mask(TensixSem.MATH_PACK),
-    TensixSemWait.STALL_ON_ZERO,
-  ))
-  fw.cb_reserve_back(data["cb_interface"], OUT_CB)
-  fw.cb_write_ptr(data["cb_interface"], OUT_CB, out=s0)
-  fw.slli(t4, s0, 4)
-  fw.addi(s0, s0, -1)
-  fw.emit(TTSETADC(4, 0, 3, 0))
-  fw.slli(t1, s0, 8)
-  fw.li(t2, 0x00FFFF00)
-  fw.and_(t1, t1, t2)
-  fw.li(t2, 0x45000018)
-  fw.add(t1, t1, t2)
-  fw.write32(TensixRegs.INSTRN_BUF_BASE, t1)
-  fw.srli(t1, s0, 16)
-  fw.slli(t1, t1, 8)
-  fw.li(t2, 0x00800000)
-  fw.or_(t1, t1, t2)
-  fw.li(t2, 0x45000019)
-  fw.add(t1, t1, t2)
-  fw.write32(TensixRegs.INSTRN_BUF_BASE, t1)
-  fw.emit(TTSTALLWAIT(TensixStall.CFG, WAIT_THCON_AND_PACK))
-  fw.emit(TTWRCFG(12, 0, 69))
-  fw.srli(t1, s0, 16)
-  fw.slli(t1, t1, 8)
-  fw.li(t2, 0x45000019)
-  fw.add(t1, t1, t2)
-  fw.write32(TensixRegs.INSTRN_BUF_BASE, t1)
-  fw.emit(TTDMANOP())
-  fw.read32(t1, TM.DATA_COMMON["dest_offset_id"])
-  fw.li(t2, 0)
-  pack_offset_ready = fw._new_label("pack_offset_ready")
-  fw.beq(t1, zero, pack_offset_ready)
-  fw.li(t2, 512)
-  fw.label(pack_offset_ready)
-  fw.write32(Cfg.DEST_TARGET_REG_CFG_PACK_SEC0, t2)
-  fw.write32(Cfg.DEST_TARGET_REG_CFG_PACK_SEC1, t2)
-  fw.write32(Cfg.DEST_TARGET_REG_CFG_PACK_SEC2, t2)
-  fw.write32(Cfg.DEST_TARGET_REG_CFG_PACK_SEC3, t2)
-  fw.emit(TTSTALLWAIT(TensixStall.CFG, TensixWait.THCON))
-  fw.emit(TTMOP(1, 0, 0))
-  fw.tensix_sync(2, tmp=t1)
-  fw.emit(TTSETADCZW(4, 0, 0, 0, 0, 5))
-  fw.cb_push_back(data["cb_interface"], OUT_CB)
-  # OLD 6e7c..6e8c: push SYNC_TILES_RECEIVED via Tensix.
-  # DMAREG[48] := received_count from local output CB state, then
-  # TTSTOREREG(TdmaDataRegIndex=24, RegAddr=0x1600A) writes the 32-bit GPR
-  # pair {DMAREG[48],DMAREG[49]} to SYNC_TILES_RECEIVED[OUT_CB].
-  fw.cb_iface(data["cb_interface"], OUT_CB, out=t6)
-  fw.lw(t1, t6, 24)
-  fw.cb_counter_high(t1, t1)
-  fw.slli(t1, t1, 8)
-  fw.li(t2, TTSETDMAREG(0, 0, 0, 48).raw_word())
-  fw.add(t1, t1, t2)
-  fw.write32(TensixRegs.INSTRN_BUF_BASE, t1)
-  fw.emit(TTSTALLWAIT(TensixStall.THCON, TensixWait.PACK0))
-  fw.push_tensix(
-    TTSTOREREG(24, ((CB.SYNC_TILES_RECEIVED_BASE + OUT_CB * CB.SYNC_STRIDE) >> 2) & 0x3FFFF),
-  )
-  fw.emit(TTSTALLWAIT(TensixStall.SYNC, TensixWait.PACK0))
-  fw.read32(t1, TM.DATA_COMMON["dest_offset_id"])
-  fw.andi(t2, t1, 1)
-  fw.li(t3, 0x10104000)
-  fw.add(t2, t2, t3)
-  fw.write32(TensixRegs.INSTRN_BUF_BASE, t2)
-  fw.emit(TTSEMGET(TensixSem.mask(TensixSem.MATH_PACK)))
-  fw.li(t2, 1)
-  fw.sub(t2, t2, t1)
-  fw.write32(TM.DATA_COMMON["dest_offset_id"], t2)
-  fw.emit(TTDMANOP())
-  fw.emit(TTDMANOP())
-  fw.addi(t2, s5, 1)
-  fw.signal_sync(SYNC_DONE2, t2)
-  fw.addi(s5, s5, 1)
-  fw.j("trisc2_loop")
-  fw.label("trisc2_done")
-  fw.ret_kernel()
+  with fw.tile_loop():
+    fw.emit(TTSEMWAIT(
+      STALL_MATH_PACK_DATA,
+      TensixSem.mask(TensixSem.MATH_PACK),
+      TensixSemWait.STALL_ON_ZERO,
+    ))
+    fw.cb_reserve_back(fw.data["cb_interface"], OUT_CB)
+    fw.cb_write_ptr(fw.data["cb_interface"], OUT_CB, out=s0)
+    fw.slli(t4, s0, 4)
+    fw.addi(s0, s0, -1)
+    fw.emit(TTSETADC(4, 0, 3, 0))
+    fw.slli(t1, s0, 8)
+    fw.li(t2, 0x00FFFF00)
+    fw.and_(t1, t1, t2)
+    fw.li(t2, 0x45000018)
+    fw.add(t1, t1, t2)
+    fw.write32(TensixRegs.INSTRN_BUF_BASE, t1)
+    fw.srli(t1, s0, 16)
+    fw.slli(t1, t1, 8)
+    fw.li(t2, 0x00800000)
+    fw.or_(t1, t1, t2)
+    fw.li(t2, 0x45000019)
+    fw.add(t1, t1, t2)
+    fw.write32(TensixRegs.INSTRN_BUF_BASE, t1)
+    fw.emit(TTSTALLWAIT(TensixStall.CFG, WAIT_THCON_AND_PACK))
+    fw.emit(TTWRCFG(12, 0, 69))
+    fw.srli(t1, s0, 16)
+    fw.slli(t1, t1, 8)
+    fw.li(t2, 0x45000019)
+    fw.add(t1, t1, t2)
+    fw.write32(TensixRegs.INSTRN_BUF_BASE, t1)
+    fw.emit(TTDMANOP())
+    fw.read32(t1, fw.data["dest_offset_id"])
+    fw.li(t2, 0)
+    pack_offset_ready = fw._new_label("pack_offset_ready")
+    fw.beq(t1, zero, pack_offset_ready)
+    fw.li(t2, 512)
+    fw.label(pack_offset_ready)
+    fw.write32(Cfg.DEST_TARGET_REG_CFG_PACK_SEC0, t2)
+    fw.write32(Cfg.DEST_TARGET_REG_CFG_PACK_SEC1, t2)
+    fw.write32(Cfg.DEST_TARGET_REG_CFG_PACK_SEC2, t2)
+    fw.write32(Cfg.DEST_TARGET_REG_CFG_PACK_SEC3, t2)
+    fw.emit(TTSTALLWAIT(TensixStall.CFG, TensixWait.THCON))
+    fw.emit(TTMOP(1, 0, 0))
+    fw.tensix_sync(2, tmp=t1)
+    fw.emit(TTSETADCZW(4, 0, 0, 0, 0, 5))
+    fw.cb_push_back(fw.data["cb_interface"], OUT_CB)
+    # OLD 6e7c..6e8c: push SYNC_TILES_RECEIVED via Tensix.
+    # DMAREG[48] := received_count from local output CB state, then
+    # TTSTOREREG(TdmaDataRegIndex=24, RegAddr=0x1600A) writes the 32-bit GPR
+    # pair {DMAREG[48],DMAREG[49]} to SYNC_TILES_RECEIVED[OUT_CB].
+    fw.cb_iface(fw.data["cb_interface"], OUT_CB, out=t6)
+    fw.lw(t1, t6, 24)
+    fw.cb_counter_high(t1, t1)
+    fw.slli(t1, t1, 8)
+    fw.li(t2, TTSETDMAREG(0, 0, 0, 48).raw_word())
+    fw.add(t1, t1, t2)
+    fw.write32(TensixRegs.INSTRN_BUF_BASE, t1)
+    fw.emit(TTSTALLWAIT(TensixStall.THCON, TensixWait.PACK0))
+    fw.push_tensix(
+      TTSTOREREG(24, ((CB.SYNC_TILES_RECEIVED_BASE + OUT_CB * CB.SYNC_STRIDE) >> 2) & 0x3FFFF),
+    )
+    fw.emit(TTSTALLWAIT(TensixStall.SYNC, TensixWait.PACK0))
+    fw.read32(t1, fw.data["dest_offset_id"])
+    fw.andi(t2, t1, 1)
+    fw.li(t3, 0x10104000)
+    fw.add(t2, t2, t3)
+    fw.write32(TensixRegs.INSTRN_BUF_BASE, t2)
+    fw.emit(TTSEMGET(TensixSem.mask(TensixSem.MATH_PACK)))
+    fw.li(t2, 1)
+    fw.sub(t2, t2, t1)
+    fw.write32(fw.data["dest_offset_id"], t2)
+    fw.emit(TTDMANOP())
+    fw.emit(TTDMANOP())
+    fw.addi(t2, s5, 1)
+    fw.signal_sync(SYNC_DONE2, t2)
   return fw
 
 
-def brisc() -> Kernel:
-  fw = Kernel()
+def brisc() -> Brisc:
+  fw = Brisc()
   fw.read_rta_from(BM.RTA_L1_BASE_PTR, (s0, s2, s3, s4))
   for addr in (
     SYNC_TRISC_START, SYNC_READ, SYNC_DONE0, SYNC_DONE1, SYNC_DONE2,
@@ -524,58 +474,46 @@ def brisc() -> Kernel:
   ):
     fw.write32(addr, 0)
   fw.write32(SYNC_TRISC_START, 0x00010101)
-  fw.li(s5, 0)
-  fw.label("brisc_loop")
-  fw.beq(s5, s3, "brisc_done")
-  fw.cb_reserve_back(BM.CB_INTERFACE, 0)
-  fw.add(a1, s2, s5)
-  fw.mv(a0, s0)
-  fw.mv(a2, s4)
-  fw.dram_tile_addr_from(BM.DRAM_BANK_TO_NOC_XY, 0)
-  fw.local_noc0_coord(a5)
-  fw.read32(t4, NOC.STATUS_BASE + NOC.NIU_MST_RD_RESP_RECEIVED)
-  fw.addi(t4, t4, 1)
-  fw.cb_write_ptr(BM.CB_INTERFACE, 0, out=t5)
-  fw.li(t6, TILE_BYTES)
-  fw.noc_read(0, 1, a0, 0, a2, t5, t6, ret_coord=a5, a=t0, v=t1)
-  fw.noc_wait_atomic_responses(0, zero, addr=t0, val=t1)
-  fw.li(t0, NOC.STATUS_BASE + NOC.NIU_MST_RD_RESP_RECEIVED)
-  fw.label("brisc_read_wait")
-  fw.lw(t1, t0, 0)
-  fw.bltu(t1, t4, "brisc_read_wait")
-  fw.fence()
-  fw.cb_push_back(BM.CB_INTERFACE, 0)
-  fw.addi(t2, s5, 1)
-  fw.signal_sync(SYNC_READ, t2)
-  fw.addi(s5, s5, 1)
-  fw.j("brisc_loop")
-  fw.label("brisc_done")
-  fw.ret()
+  with fw.tile_loop("brisc"):
+    fw.cb_reserve_back(BM.CB_INTERFACE, 0)
+    fw.add(a1, s2, s5)
+    fw.mv(a0, s0)
+    fw.mv(a2, s4)
+    fw.dram_tile_addr_from(BM.DRAM_BANK_TO_NOC_XY, 0)
+    fw.local_noc0_coord(a5)
+    fw.read32(t4, NOC.STATUS_BASE + NOC.NIU_MST_RD_RESP_RECEIVED)
+    fw.addi(t4, t4, 1)
+    fw.cb_write_ptr(BM.CB_INTERFACE, 0, out=t5)
+    fw.li(t6, TILE_BYTES)
+    fw.noc_read(0, 1, a0, 0, a2, t5, t6, ret_coord=a5, a=t0, v=t1)
+    fw.noc_wait_atomic_responses(0, zero, addr=t0, val=t1)
+    fw.li(t0, NOC.STATUS_BASE + NOC.NIU_MST_RD_RESP_RECEIVED)
+    fw.label("brisc_read_wait")
+    fw.lw(t1, t0, 0)
+    fw.bltu(t1, t4, "brisc_read_wait")
+    fw.fence()
+    fw.cb_push_back(BM.CB_INTERFACE, 0)
+    fw.addi(t2, s5, 1)
+    fw.signal_sync(SYNC_READ, t2)
   return fw
 
 
-def ncrisc(num_banks: int) -> Kernel:
-  fw = Kernel()
+def ncrisc(num_banks: int) -> Ncrisc:
+  fw = Ncrisc()
   fw.read_rta_from(NM.RTA_L1_BASE_PTR, (s0, s2, s3, s4))
-  fw.li(s5, 0)
-  fw.label("ncrisc_loop")
-  fw.beq(s5, s3, "ncrisc_done")
-  fw.cb_wait_front(NM.CB_INTERFACE, OUT_CB)
-  fw.add(a1, s2, s5)
-  fw.mv(a0, s0)
-  fw.mv(a2, s4)
-  fw.dram_tile_addr_from(NM.DRAM_BANK_TO_NOC_XY, num_banks)
-  fw.read32(t4, NOC.STATUS_BASE + NOC.NIU_MST_WR_ACK_RECEIVED + (1 << NOC.INSTANCE_OFFSET_BIT))
-  fw.addi(t4, t4, 1)
-  fw.cb_read_ptr(NM.CB_INTERFACE, OUT_CB, out=t5)
-  fw.li(t6, TILE_BYTES)
-  fw.noc_write(1, 0, t5, a0, 0, a2, t6, a=t0, v=t1)
-  fw.noc_write_barrier(1, t4, addr=t0, val=t1)
-  fw.cb_pop_front(NM.CB_INTERFACE, OUT_CB)
-  fw.addi(s5, s5, 1)
-  fw.j("ncrisc_loop")
-  fw.label("ncrisc_done")
-  fw.ret()
+  with fw.tile_loop("ncrisc"):
+    fw.cb_wait_front(NM.CB_INTERFACE, OUT_CB)
+    fw.add(a1, s2, s5)
+    fw.mv(a0, s0)
+    fw.mv(a2, s4)
+    fw.dram_tile_addr_from(NM.DRAM_BANK_TO_NOC_XY, num_banks)
+    fw.read32(t4, NOC.STATUS_BASE + NOC.NIU_MST_WR_ACK_RECEIVED + (1 << NOC.INSTANCE_OFFSET_BIT))
+    fw.addi(t4, t4, 1)
+    fw.cb_read_ptr(NM.CB_INTERFACE, OUT_CB, out=t5)
+    fw.li(t6, TILE_BYTES)
+    fw.noc_write(1, 0, t5, a0, 0, a2, t6, a=t0, v=t1)
+    fw.noc_write_barrier(1, t4, addr=t0, val=t1)
+    fw.cb_pop_front(NM.CB_INTERFACE, OUT_CB)
   return fw
 
 def build_program(
@@ -688,8 +626,6 @@ def main():
       want = exp[mismatch:mismatch + 32].hex()
       raise AssertionError(f"mismatch byte={mismatch} got={got} exp={want}")
     print(f"PASS add1 {len(cores)} cores x {args.tiles_per_core} tiles/core = {n_tiles} tiles")
-    if args.cores == "auto" and device.fast_dispatch and len(cores) != len(device.board_info.worker_cores):
-      print(f"  fast dispatch reserved {len(device.board_info.worker_cores) - len(cores)} CQ cores; use TT_USB=1 --cores worker for all {len(device.board_info.worker_cores)} workers")
     for timing in timings:
       name = f"{timing['name']}: " if timing["name"] else ""
       print(f"  {name}{timing['us']:,.1f} us")

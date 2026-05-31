@@ -36,7 +36,12 @@ def cond(lhs: Reg, op: str, rhs: Reg | int, *, tmp: Reg | None = None) -> Cond:
 def boot_jal(target: int) -> bytes:
   return dsl.jal(zero, target).to_bytes()
 
-class Asm(Tensix, Noc, Cb, Flow, Debug):
+class Asm:
+  """Pure RISC-V assembler core: instruction emission, register-constant
+  tracking, pseudo-ops and structured control flow. Carries no device-role
+  helpers — those live in the ttk mixins (Tensix, Noc, Cb, Flow, Debug), which
+  concrete kernel classes compose on top of this core."""
+
   def __init__(self, *, base: int = 0):
     self.base = base
     self.items = []
@@ -440,7 +445,11 @@ class Asm(Tensix, Noc, Cb, Flow, Debug):
       words.append(inst.to_word() if hasattr(inst, "to_word") else int(inst))
     return b"".join((w & 0xFFFFFFFF).to_bytes(4, "little") for w in words)
 
-class Kernel(Asm):
+class KernelBase(Asm):
+  """Asm core plus the Program-facing surface (run-time args, extra load
+  segments, compilation). Deliberately carries NO role mixins, so role-specific
+  kernel classes can compose only the helpers they actually use."""
+
   def __init__(
     self, *, base_addr: int = 0, rtas: CoreArgs | None = None,
   ):
@@ -467,3 +476,9 @@ class Kernel(Asm):
       if seg.data:
         blobs.append(Segment(seg.addr, seg.data, label=seg.label))
     return blobs
+
+class Kernel(KernelBase, Tensix, Noc, Cb, Flow, Debug):
+  """Everything-kernel: composes every ttk mixin. Used by the low-level
+  firmware in fw/* where a single kernel legitimately spans data movement,
+  Tensix config and flow control. Role-specific kernels (ttk.kernel.Trisc /
+  Brisc / Ncrisc) inherit only the mixins their thread needs."""
