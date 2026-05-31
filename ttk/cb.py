@@ -17,6 +17,11 @@ class CircularBuffer:
 CB = CircularBuffer
 
 class Cb:
+  def _load_count(self, count: int | Reg, out: Reg):
+    if isinstance(count, int):
+      return self.li(out, count)
+    return self.mv(out, count)
+
   def cb_iface(self, interface_base: int, cb_index: int, *, out: Reg = t6):
     return self.li(out, interface_base + cb_index * CB.LOCAL_INTERFACE_SIZE)
 
@@ -27,8 +32,8 @@ class Cb:
   def cb_counter_high(self, out: Reg, counter_reg: Reg):
     return self.srli(out, counter_reg, 16)
 
-  def cb_reserve_back(self, interface_base: int, cb_index: int):
-    iface, received, acked, free_pages, num_pages = t6, t5, t4, t3, t2
+  def cb_reserve_back(self, interface_base: int, cb_index: int, count: int | Reg = 1):
+    iface, received, acked, free_pages, num_pages, need = t6, t5, t4, t3, t2, t1
     self.cb_iface(interface_base, cb_index, out=iface)
     self.lw(received, iface, 24)
     self.cb_counter_high(received, received)
@@ -40,19 +45,24 @@ class Cb:
     self.sub(free_pages, received, acked)
     self.lw(num_pages, iface, 12)
     self.sub(free_pages, num_pages, free_pages)
-    self.li(num_pages, 1)
-    self.bge(free_pages, num_pages, done)
+    self._load_count(count, need)
+    self.bge(free_pages, need, done)
     self.fence()
     self.j(loop)
     self.label(done)
     return self.fence()
 
-  def cb_push_back(self, interface_base: int, cb_index: int):
+  def cb_push_back(self, interface_base: int, cb_index: int, count: int | Reg = 1, *, tensix_received: bool = False):
     iface, ptr, tmp, counter, acked, received = t6, t5, t4, t3, t2, t1
     self.cb_iface(interface_base, cb_index, out=iface)
     self.lw(ptr, iface, 20)
     self.lw(tmp, iface, 8)
-    self.add(ptr, ptr, tmp)
+    if isinstance(count, int) and count == 1:
+      self.add(ptr, ptr, tmp)
+    else:
+      self._load_count(count, counter)
+      self.mul(tmp, tmp, counter)
+      self.add(ptr, ptr, tmp)
     self.lw(tmp, iface, 4)
     no_wrap = self._new_label("cb_push_no_wrap")
     self.bltu(ptr, tmp, no_wrap)
@@ -64,40 +74,58 @@ class Cb:
     self.lw(counter, iface, 24)
     self.cb_counter_low(acked, counter)
     self.cb_counter_high(received, counter)
-    self.addi(received, received, 1)
+    if isinstance(count, int) and count == 1:
+      self.addi(received, received, 1)
+    else:
+      self._load_count(count, tmp)
+      self.add(received, received, tmp)
     self.slli(received, received, 16)
     self.or_(counter, received, acked)
     self.sw(counter, iface, 24)
     self.srli(received, received, 16)
     self.li(tmp, CB.SYNC_TILES_RECEIVED_BASE + cb_index * CB.SYNC_STRIDE)
     self.sw(received, tmp, 0)
+    if tensix_received:
+      self.slli(tmp, received, 8)
+      self.li(ptr, TTSETDMAREG(0, 0, 0, 48).raw_word())
+      self.add(tmp, tmp, ptr)
+      self.write32(TensixRegs.INSTRN_BUF_BASE, tmp, tmp_addr=ptr, tmp_val=t0)
+      self.emit(TTSTALLWAIT(32, 8))
+      self.push_tensix(
+        TTSTOREREG(24, ((CB.SYNC_TILES_RECEIVED_BASE + cb_index * CB.SYNC_STRIDE) >> 2) & 0x3FFFF),
+      )
     return self.fence()
 
-  def cb_wait_front(self, interface_base: int, cb_index: int):
+  def cb_wait_front(self, interface_base: int, cb_index: int, count: int | Reg = 1):
     iface, counter, acked, received, available, need = t6, t5, t4, t3, t2, t1
     self.cb_iface(interface_base, cb_index, out=iface)
     self.lw(counter, iface, 24)
     self.cb_counter_low(acked, counter)
+    self._load_count(count, need)
     loop = self._new_label("cb_wait_front")
     done = self._new_label("cb_wait_front_done")
     self.label(loop)
     self.li(received, CB.SYNC_TILES_RECEIVED_BASE + cb_index * CB.SYNC_STRIDE)
     self.lhu(received, received, 0)
     self.sub(available, received, acked)
-    self.li(need, 1)
+    self._load_count(count, need)
     self.bgeu(available, need, done)
     self.fence()
     self.j(loop)
     self.label(done)
     return self.fence()
 
-  def cb_pop_front(self, interface_base: int, cb_index: int, *, tensix_ack: bool = False):
+  def cb_pop_front(self, interface_base: int, cb_index: int, count: int | Reg = 1, *, tensix_ack: bool = False):
     iface, ptr, tmp, counter, acked, received = t6, t5, t4, t3, t2, t1
     self.cb_iface(interface_base, cb_index, out=iface)
     self.lw(counter, iface, 24)
     self.cb_counter_low(acked, counter)
     self.cb_counter_high(received, counter)
-    self.addi(acked, acked, 1)
+    if isinstance(count, int) and count == 1:
+      self.addi(acked, acked, 1)
+    else:
+      self._load_count(count, tmp)
+      self.add(acked, acked, tmp)
     self.cb_counter_low(acked, acked)
     self.slli(received, received, 16)
     self.or_(counter, received, acked)
@@ -116,7 +144,12 @@ class Cb:
 
     self.lw(ptr, iface, 16)
     self.lw(tmp, iface, 8)
-    self.add(ptr, ptr, tmp)
+    if isinstance(count, int) and count == 1:
+      self.add(ptr, ptr, tmp)
+    else:
+      self._load_count(count, counter)
+      self.mul(tmp, tmp, counter)
+      self.add(ptr, ptr, tmp)
     self.lw(tmp, iface, 4)
     no_wrap = self._new_label("cb_pop_no_wrap")
     self.bltu(ptr, tmp, no_wrap)

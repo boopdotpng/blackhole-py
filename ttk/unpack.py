@@ -101,6 +101,7 @@ class Unpack:
     k.push_tensix(TTSETADCXX(2, 255, 0))
     k.write32(Cfg.THCON_SEC0_REG5_Dest_cntx, _DEST_CNTX)
     k.write32(Cfg.THCON_SEC0_REG5_Tile_x_dim_cntx, _TILE_X_DIM)
+    k.write32(Cfg.UNP0, 0x00000100)
 
     for addr, value in _FACE_DIM_TABLE.items():
       k.write32(addr, value)

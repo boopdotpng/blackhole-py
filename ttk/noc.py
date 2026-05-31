@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
-from dsl import Reg, a0, a1, a2, a5, t0, t1, t2, t3, t4, t5, zero
+from dsl import Reg, a0, a1, a2, a5, t0, t1, t2, t3, t4, t5, t6, zero
+from ttk.addrs import L1_ALIGN, noc_xy
 from ttk.mailbox import BriscMailbox as BM
 from ttk.tensix import TensixMMIO
 
@@ -64,6 +65,7 @@ class NOC:
   NIU_MST_WR_ACK_RECEIVED = 0x04
   NIU_MST_RD_RESP_RECEIVED = 0x08
   NIU_MST_NONPOSTED_WR_REQ_SENT = 0x28
+  NIU_MST_POSTED_WR_REQ_SENT = 0x2C
 
 
 class NocCfg:
@@ -90,19 +92,81 @@ class NocCfg:
   NIU_MST_POSTED_WR_REQ_SENT_WORD = 0xB
 
 class Noc:
-  def local_noc0_coord(self, out: Reg = a5):
-    self.read8(t0, BM.MY_X, tmp_addr=t2)
-    self.read8(t1, BM.MY_Y, tmp_addr=t2)
+  def noc_coord(self, out: Reg, x: int | Reg, y: int | Reg, *, tmp: Reg = t0):
+    if isinstance(x, int) and isinstance(y, int):
+      return self.li(out, noc_xy(x, y))
+    if isinstance(y, int):
+      self.li(out, y)
+    else:
+      self.mv(out, y)
+    self.slli(out, out, 6)
+    if isinstance(x, int):
+      self.li(tmp, x)
+      return self.or_(out, out, tmp)
+    return self.or_(out, out, x)
+
+  def noc_mcast_coord(self, out: Reg, x_start: int | Reg, y_start: int | Reg,
+                      x_end: int | Reg, y_end: int | Reg, *, tmp: Reg = t0,
+                      reverse: bool = False):
+    if reverse:
+      x_start, x_end = x_end, x_start
+      y_start, y_end = y_end, y_start
+    self.noc_coord(out, x_end, y_end, tmp=tmp)
+    if isinstance(x_start, int) and isinstance(y_start, int):
+      self.li(tmp, noc_xy(x_start, y_start))
+    else:
+      self.noc_coord(tmp, x_start, y_start)
+    self.slli(tmp, tmp, 12)
+    return self.or_(out, out, tmp)
+
+  def sem_addr(self, sem_l1_base: int, sem_id: int | Reg, *, out: Reg = t6, tmp: Reg = t0):
+    if isinstance(sem_id, int):
+      self.read32(out, sem_l1_base, tmp_addr=tmp)
+      return self.addi(out, out, sem_id * L1_ALIGN)
+    off = tmp
+    if int(off) == int(sem_id):
+      off = t5 if int(sem_id) != int(t5) and int(out) != int(t5) else t4
+    self.slli(off, sem_id, 4)
+    self.read32(out, sem_l1_base, tmp_addr=out)
+    return self.add(out, out, off)
+
+  def noc_semaphore_set(self, sem_addr: Reg, value: int | Reg, *, tmp: Reg = t0):
+    if isinstance(value, int):
+      self.li(tmp, value)
+      value = tmp
+    self.sw(value, sem_addr, 0)
+    return self.fence()
+
+  def noc_semaphore_wait(self, sem_addr: Reg, value: int | Reg, *, actual: Reg = t0, expected: Reg = t1):
+    if isinstance(value, int):
+      self.li(expected, value)
+      value = expected
+    loop = self._new_label("noc_sem_wait")
+    done = self._new_label("noc_sem_done")
+    self.label(loop)
+    self.fence()
+    self.lw(actual, sem_addr, 0)
+    self.beq(actual, value, done)
+    self.j(loop)
+    self.label(done)
+    return self.fence()
+
+  def local_noc0_coord(self, out: Reg = a5, *, x_addr: int = BM.MY_X, y_addr: int = BM.MY_Y):
+    self.read8(t0, x_addr, tmp_addr=t2)
+    self.read8(t1, y_addr, tmp_addr=t2)
     self.slli(t1, t1, 6)
     return self.or_(out, t0, t1)
 
-  def dram_tile_addr_from(self, table_base: int, noc_table_offset: int = 0):
+  def dram_tile_addr_from(self, table_base: int, noc_table_offset: int | Reg = 0):
     self.mv(t0, a1)
     self.remu(a1, t0, a2)
     self.divu(t0, t0, a2)
     self.slli(t0, t0, 11)
     self.add(a0, a0, t0)
-    self.addi(t1, a1, noc_table_offset)
+    if isinstance(noc_table_offset, int):
+      self.addi(t1, a1, noc_table_offset)
+    else:
+      self.add(t1, a1, noc_table_offset)
     self.slli(t1, t1, 1)
     self.li(t2, table_base)
     self.add(t2, t2, t1)
@@ -192,6 +256,22 @@ class Noc:
     self.noc_wait_write_acks(noc, target, addr=addr, val=val)
     return self.fence()
 
+  def noc_reads_flushed(self, noc: int, target: Reg, *, addr: Reg = t0, val: Reg = t1):
+    self.li(addr, NOC.STATUS_BASE + NOC.NIU_MST_RD_RESP_RECEIVED + (noc << NOC.INSTANCE_OFFSET_BIT))
+    loop = self._new_label("rd_flush")
+    self.label(loop)
+    self.lw(val, addr, 0)
+    self.bltu(val, target, loop)
+    return self.fence()
+
+  def noc_nonposted_writes_flushed(self, noc: int, target: Reg, *, addr: Reg = t0, val: Reg = t1):
+    self.li(addr, NOC.STATUS_BASE + NOC.NIU_MST_NONPOSTED_WR_REQ_SENT + (noc << NOC.INSTANCE_OFFSET_BIT))
+    loop = self._new_label("np_wr_flush")
+    self.label(loop)
+    self.lw(val, addr, 0)
+    self.bltu(val, target, loop)
+    return self.fence()
+
   def noc_read(self, noc: int, buf: int, src_lo: Reg, src_mid: int | Reg, src_coord: int | Reg,
                dst: Reg, length: Reg, *, ret_coord: int | Reg = 0, a: Reg = t0, v: Reg = t1):
     self.noc_wait_cmd_ready(noc, buf, addr=a, val=v)
@@ -247,7 +327,7 @@ class Noc:
     return self
 
   def noc_atomic_inc(self, noc: int, buf: int, dst_lo: Reg, dst_coord: int | Reg,
-                     incr: Reg | int, ret_coord: int, *, a: Reg = t0, v: Reg = t1):
+                     incr: Reg | int, ret_coord: int | Reg, *, a: Reg = t0, v: Reg = t1):
     self.noc_wait_cmd_ready(noc, buf, addr=a, val=v)
     self.noc_cmd_reg(noc, buf, NOC.RET_ADDR_LO, 4, addr=a, tmp=v)
     self.noc_cmd_reg(noc, buf, NOC.RET_ADDR_MID, 0, addr=a, tmp=v)
@@ -260,4 +340,21 @@ class Noc:
     self.noc_cmd_reg(noc, buf, NOC.AT_LEN_BE_1, 0, addr=a, tmp=v)
     self.noc_cmd_reg(noc, buf, NOC.AT_DATA, incr, addr=a, tmp=v)
     self.noc_cmd_reg(noc, buf, NOC.CMD_CTRL, NOC.CTRL_SEND_REQ, addr=a, tmp=v)
+    return self
+
+  def noc_semaphore_inc(self, noc: int, buf: int, sem_addr: Reg, sem_coord: int | Reg,
+                        incr: int | Reg = 1, *, ret_coord: int | Reg = 0, a: Reg = t0, v: Reg = t1):
+    return self.noc_atomic_inc(noc, buf, sem_addr, sem_coord, incr, ret_coord, a=a, v=v)
+
+  def noc_semaphore_set_multicast(self, noc: int, buf: int, sem_addr: Reg, sem_coord: Reg,
+                                  value: int | Reg, num_dests: int | Reg, *,
+                                  a: Reg = t0, v: Reg = t1):
+    if not isinstance(value, int):
+      self.sw(value, sem_addr, 0)
+    else:
+      self.li(v, value)
+      self.sw(v, sem_addr, 0)
+    length = t5 if int(v) == int(t2) else t2
+    self.li(length, L1_ALIGN)
+    self.noc_write(noc, buf, sem_addr, sem_addr, 0, sem_coord, length, mcast=True, a=a, v=v)
     return self
