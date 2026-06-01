@@ -9,8 +9,10 @@ import numpy as np
 from asm import KernelBase
 from device import Device
 from dsl import (
-  TTDMANOP, TTINSN, TTMOP, TTREPLAY, TTSEMGET, TTSEMINIT, TTSEMPOST, TTSEMWAIT, TTSETRWC,
-  TTSETADC, TTSETADCXX, TTSETADCZW, TTSETDMAREG, TTSTALLWAIT, TTPACR, TTRMWCIB0, TTRMWCIB1, TTRMWCIB2, TTWRCFG,
+  TTADDDMAREG, TTDMANOP, TTMOP, TTMOVA2D, TTMVMUL, TTNOP, TTPACR, TTRDCFG, TTREPLAY,
+  TTRMWCIB0, TTRMWCIB1, TTRMWCIB2, TTSEMGET, TTSEMINIT, TTSEMPOST, TTSEMWAIT, TTSETADC,
+  TTSETADCXX, TTSETADCZW, TTSETC16, TTSETDMAREG, TTSETRWC, TTSTALLWAIT, TTUNPACR, TTUNPACR_NOP,
+  TTWRCFG, TTZEROACC,
   a0, a1, a2, a3, a4, a5, a6, a7,
   ra,
   s0, s1, s2, s3, s4, s5, s6, s7, s8, s9, s10, s11,
@@ -20,7 +22,7 @@ from program import Dtype, Program
 from ttk import Cb, Debug, Noc, Tensix
 from ttk.mailbox import BriscMailbox as BM, NcriscMailbox as NM, TriscLocalMem as TLM, TriscMailbox
 from ttk.noc import NOC
-from ttk.tensix import Cfg, TensixL1, TensixRegs, TensixSem, TensixSemWait, TensixStall, TensixWait, ThreadCfg
+from ttk.tensix import Cfg, MopCfg, TensixL1, TensixRegs, TensixSem, TensixSemWait, TensixStall, TensixWait, ThreadCfg
 
 
 TILE = 32
@@ -38,6 +40,9 @@ VALIDATE_SEED = 0
 SYNC_BYTES = 0x100
 SYNC_TRISC_START = TensixL1.SIZE - SYNC_BYTES
 SYNC_TRISC_INIT = SYNC_TRISC_START + 16
+# Byte-triplet BRISC writes to SYNC_TRISC_START to release the three TRISCs
+# (one 0x01 release byte per TRISC; each clears its own byte after starting).
+TRISC_START_RELEASE = 0x00010101
 
 
 Core = tuple[int, int]
@@ -53,109 +58,112 @@ SYNC = RiscSync(start=SYNC_TRISC_START, trisc_init=SYNC_TRISC_INIT)
 STALL_MATH_PACK_ROOM = TensixStall.SYNC | TensixStall.MATH | TensixStall.SFPU
 STALL_MATH_PACK_DATA = TensixStall.TDMA
 WAIT_THCON_AND_PACK = TensixWait.THCON | TensixWait.PACK0
-THCON_SEC0_REG3_BASE_ADDR32 = 76
-THCON_SEC1_REG3_BASE_ADDR32 = 124
+THCON_SEC0_REG3_BASE_ADDR32 = Cfg.THCON_SEC0_REG3_Base_address.addr32
+THCON_SEC1_REG3_BASE_ADDR32 = Cfg.THCON_SEC1_REG3_Base_address.addr32
 
+
+# MOP (macro-op) expander templates and replay-buffer payloads, written in the
+# add1 example's style: named instruction builders instead of raw hex words.
+# A MopCfg expands a 7-slot template under two loop counts; write_mop_cfg /
+# *.init accept the MopCfg directly (see ttk.tensix.MopCfg). Reusable slots:
+_UNPACK_NOP = TTUNPACR_NOP(Unpacker_Select=1, Set_Dvalid=1, Unpack_Pop=1)
+_MATH_MOVA2D = TTMOVA2D(addr_mode=2, instr_mod=2)
 
 # From llk_unpack_AB_matmul_init(ct_dim=2, rt_dim=2, kt_dim=6), no partial
 # faces. In reuse-A mode the explicit runtime UNPACR loads in0 into SrcB; the
-# MOP replays below load the two in1 tiles into SrcA.
-MATMUL_UNPACK_AB_MOP_CFG = [
-  0,
-  0,
-  0,
-  0x04000060,  # TTREPLAY(0, 6)
-  0,
-  0,
-  0,
-  0x04018060,  # TTREPLAY(6, 6)
-  0,
-]
+# two MOP replay slots below load the two in1 tiles into SrcA. The empty (zero)
+# slots are stepped over by the expander (both loop counts are 0).
+MATMUL_UNPACK_AB_MOP_CFG = MopCfg(
+  loop_outer=0, loop_inner=0,
+  template=[0, TTREPLAY(0, 6), 0, 0, 0, TTREPLAY(6, 6), 0],
+)
 
 # From matmul_compute_trisc2.kernel.dis around 0x819c: pack_tile MOP template.
-MATMUL_PACK_MOP_CFG = [
-  4, 4,
-  0x02000000,  # TTNOP
-  0x02000000,  # TTNOP
-  0x02000000,  # TTNOP
-  0x41000000,  # TTPACR()
-  0x02000000,  # TTNOP
-  0x41008001,  # TTPACR(AddrMode=1, Last=1)
-  0x41010000,  # TTPACR(AddrMode=2)
-]
+MATMUL_PACK_MOP_CFG = MopCfg(
+  loop_outer=4, loop_inner=4,
+  template=[
+    TTNOP(), TTNOP(), TTNOP(),
+    TTPACR(),
+    TTNOP(),
+    TTPACR(AddrMode=1, Last=1),
+    TTPACR(AddrMode=2),
+  ],
+)
 
-# Throttled HiFi2 matmul replay payload.  The MOP adds the ADDR_MOD_4 and
-# ADDR_MOD_5 final MVMULs; these 11 replay slots intentionally carry only the
-# three MVMULs from run_throttled_sequence<5>() plus delay NOPs.
-MATMUL_MATH_MOP_CFG = [
-  2, 2,
-  0x02000000,  # TTNOP
-  0x02000000,  # TTNOP
-  0x02000000,  # TTNOP
-  0x040400B0,  # nested replay/MOP status op emitted by llk_math_matmul
-  0x26008000,  # TTMVMUL addr-mode variant
-  0x26014000,  # TTMVMUL addr-mode variant
-  0x26010000,  # TTMVMUL addr-mode variant
-]
+# Throttled HiFi2 matmul MOP. The expander adds the ADDR_MOD_4/ADDR_MOD_5 final
+# MVMULs; these slots carry the nested replay trigger plus the three throttled
+# MVMULs from run_throttled_sequence<5>().
+MATMUL_MATH_MOP_CFG = MopCfg(
+  loop_outer=2, loop_inner=2,
+  template=[
+    TTNOP(), TTNOP(), TTNOP(),
+    TTREPLAY(16, 11),  # nested replay/MOP trigger emitted by llk_math_matmul
+    TTMVMUL(addr_mode=2),
+    TTMVMUL(addr_mode=5),
+    TTMVMUL(addr_mode=4),
+  ],
+)
 
 # From matmul_compute_trisc1.kernel.dis around 0x7864: copy_tile-to-dst MOP
 # used for reloading cb24 partials before the second K block accumulates.
-MATMUL_MATH_RELOAD_MOP_CFG = [
-  4, 2,
-  0x02000000,
-  0x37C00003,
-  0x02000000,
-  0x1200A000,
-  0x02000000,
-  0x1200A000,
-  0x1200A000,
-]
+MATMUL_MATH_RELOAD_MOP_CFG = MopCfg(
+  loop_outer=4, loop_inner=2,
+  template=[
+    TTNOP(),
+    TTSETRWC(clear_ab_vld=3, BitMask=3),
+    TTNOP(),
+    _MATH_MOVA2D,
+    TTNOP(),
+    _MATH_MOVA2D,
+    _MATH_MOVA2D,
+  ],
+)
 
+# Replay payload loaded into the math replay buffer: three throttled MVMULs
+# (addr-mode 0, 1, 0) interleaved with delay NOPs.
 MATMUL_MATH_REPLAY_LOAD = [
-  0x02000000,
-  0x02000000,
-  0x26000000,
-  0x02000000,
-  0x02000000,
-  0x26004000,
-  0x02000000,
-  0x02000000,
-  0x26000000,
-  0x02000000,
-  0x02000000,
+  TTNOP(), TTNOP(), TTMVMUL(),
+  TTNOP(), TTNOP(), TTMVMUL(addr_mode=1),
+  TTNOP(), TTNOP(), TTMVMUL(),
+  TTNOP(), TTNOP(),
 ]
 
+# Unpacker replay payloads for the two cfg contexts (THCON_SEC*_REG3 base addr32
+# 0x4C / 0x4D): read cfg -> add dma reg -> stall on CFG/THCON -> write cfg back.
 MATMUL_UNPACK_REPLAY0_LOAD = [
-  0x420000C1,
-  0xB10C004C,
-  0x5800C324,
-  0xA2400001,
-  0xB00C004C,
-  0x02000000,
+  TTUNPACR(OvrdThreadId=1, SetDatValid=1, Last=1),
+  TTRDCFG(0xC, 0x4C),
+  TTADDDMAREG(0, 0xC, 0xC, 0x24),
+  TTSTALLWAIT(TensixStall.CFG, TensixWait.THCON),
+  TTWRCFG(0xC, 0, 0x4C),
+  TTNOP(),
 ]
 
 MATMUL_UNPACK_REPLAY1_LOAD = [
-  0x420000C1,
-  0xB10C004D,
-  0x5800C324,
-  0xA2400001,
-  0xB00C004D,
-  0x02000000,
+  TTUNPACR(OvrdThreadId=1, SetDatValid=1, Last=1),
+  TTRDCFG(0xC, 0x4D),
+  TTADDDMAREG(0, 0xC, 0xC, 0x24),
+  TTSTALLWAIT(TensixStall.CFG, TensixWait.THCON),
+  TTWRCFG(0xC, 0, 0x4D),
+  TTNOP(),
 ]
 
-MATMUL_UNPACK_SRCB_LOAD = 0x428000C1
+# Runtime UNPACR that loads in0 into SrcB (block-selection bit set).
+MATMUL_UNPACK_SRCB_LOAD = TTUNPACR(
+  Unpack_block_selection=1, OvrdThreadId=1, SetDatValid=1, Last=1,
+)
 
-MATMUL_RELOAD_UNPACK_MOP_CFG = [
-  4,
-  1,
-  0x420080C1,  # TTUNPACR(AddrMode=1, OvrdThreadId=1, SetDatValid=1, Last=1)
-  0x02000000,
-  0x02000000,
-  0x43800101,  # TTUNPACR_NOP(Unpacker_Select=1, Set_Dvalid=1, Unpack_Pop=1)
-  0x02000000,
-  0x43800101,
-  0x43800101,
-]
+MATMUL_RELOAD_UNPACK_MOP_CFG = MopCfg(
+  loop_outer=4, loop_inner=1,
+  template=[
+    TTUNPACR(AddrMode=1, OvrdThreadId=1, SetDatValid=1, Last=1),
+    TTNOP(), TTNOP(),
+    _UNPACK_NOP,
+    TTNOP(),
+    _UNPACK_NOP,
+    _UNPACK_NOP,
+  ],
+)
 
 
 def _ceil_div(a: int, b: int) -> int:
@@ -346,7 +354,7 @@ class MatmulKernel(KernelBase, Noc, Cb):
       SYNC_TRISC_INIT + 8,
     ):
       self.write32(addr, 0)
-    return self.write32(SYNC_TRISC_START, 0x00010101)
+    return self.write32(SYNC_TRISC_START, TRISC_START_RELEASE)
 
 
 class MatmulTrisc(KernelBase, Tensix, Cb, Debug):
@@ -869,7 +877,7 @@ def emit_trisc0_unpack_row(fw: MatmulTrisc, in0_tile_index: int, in1_tile_index:
     fw.write32(TensixRegs.PC_UNPACK_SYNC, 0)
 
     fw.emit(TTSTALLWAIT(TensixStall.UNPACK, TensixWait.TRISC_CFG))
-    fw.emit(TTINSN(MATMUL_UNPACK_SRCB_LOAD))
+    fw.emit(MATMUL_UNPACK_SRCB_LOAD)
     ctx1 = fw._new_label("trisc0_mop_ctx1")
     ctx_done = fw._new_label("trisc0_mop_done")
     fw.bne(t2, zero, ctx1)
@@ -936,7 +944,7 @@ def emit_trisc0_unpack_row_reg(fw: MatmulTrisc, in0_tile_index, in1_tile_index) 
     fw.write32(TensixRegs.PC_UNPACK_SYNC, 0)
 
     fw.emit(TTSTALLWAIT(TensixStall.UNPACK, TensixWait.TRISC_CFG))
-    fw.emit(TTINSN(MATMUL_UNPACK_SRCB_LOAD))
+    fw.emit(MATMUL_UNPACK_SRCB_LOAD)
     ctx1 = fw._new_label("trisc0_mop_ctx1")
     ctx_done = fw._new_label("trisc0_mop_done")
     fw.bne(t2, zero, ctx1)
@@ -1047,7 +1055,7 @@ def matmul_math_init(fw: MatmulTrisc) -> MatmulTrisc:
   matmul_math_addrmod_init(fw)
   fw.emit(TTREPLAY(16, len(MATMUL_MATH_REPLAY_LOAD), 0, 1))
   for word in MATMUL_MATH_REPLAY_LOAD:
-    fw.emit(TTINSN(word))
+    fw.emit(word)
   fw.write_mop_cfg(MATMUL_MATH_MOP_CFG, 1)
   fw.tensix_sync(1)
   fw.wait_mmio_low_byte_zero(TensixRegs.pc_buf_sem(TensixSem.MATH_PACK))
@@ -1055,7 +1063,7 @@ def matmul_math_init(fw: MatmulTrisc) -> MatmulTrisc:
   matmul_math_addrmod_init(fw)
   fw.emit(TTREPLAY(16, len(MATMUL_MATH_REPLAY_LOAD), 0, 1))
   for word in MATMUL_MATH_REPLAY_LOAD:
-    fw.emit(TTINSN(word))
+    fw.emit(word)
   fw.write_mop_cfg(MATMUL_MATH_MOP_CFG, 1)
   return fw
 
@@ -1088,7 +1096,7 @@ def emit_math_dst_write_addr(fw: MatmulTrisc, tile_index: int) -> MatmulTrisc:
   fw.slli(t1, t1, 9)
   if tile_index:
     fw.addi(t1, t1, tile_index * 64)
-  fw.li(t2, 0xB2010000)
+  fw.li(t2, TTSETC16(ThreadCfg.DEST_TARGET_REG_CFG_MATH_Offset, 0).raw_word())  # base; addr bits added in
   fw.add(t1, t1, t2)
   return fw.write32(TensixRegs.INSTRN_BUF_BASE, t1)
 
@@ -1160,21 +1168,21 @@ def emit_pack_tile_to_cb(fw: MatmulTrisc, plan: MatmulPlan, out_cb: int) -> Matm
     fw.slli(t1, s0, 8)
     fw.li(t2, 0x00FFFF00)
     fw.and_(t1, t1, t2)
-    fw.li(t2, 0x45000018)
+    fw.li(t2, TTSETDMAREG(0, 0, 0, 24).raw_word())  # SETDMAREG[24] base; low addr bits added in
     fw.add(t1, t1, t2)
     fw.write32(TensixRegs.INSTRN_BUF_BASE, t1)
     fw.srli(t1, s0, 16)
     fw.slli(t1, t1, 8)
     fw.li(t2, 0x00800000)
     fw.or_(t1, t1, t2)
-    fw.li(t2, 0x45000019)
+    fw.li(t2, TTSETDMAREG(0, 0, 0, 25).raw_word())  # SETDMAREG[25] base; high addr bits added in
     fw.add(t1, t1, t2)
     fw.write32(TensixRegs.INSTRN_BUF_BASE, t1)
     fw.emit(TTSTALLWAIT(TensixStall.CFG, WAIT_THCON_AND_PACK))
-    fw.emit(TTWRCFG(12, 0, 69))
+    fw.emit(TTWRCFG(12, 0, Cfg.THCON_SEC0_REG1_L1_Dest_addr.addr32))
     fw.srli(t1, s0, 16)
     fw.slli(t1, t1, 8)
-    fw.li(t2, 0x45000019)
+    fw.li(t2, TTSETDMAREG(0, 0, 0, 25).raw_word())  # SETDMAREG[25] base; high addr bits added in
     fw.add(t1, t1, t2)
     fw.write32(TensixRegs.INSTRN_BUF_BASE, t1)
     fw.emit(TTDMANOP())
@@ -1197,7 +1205,7 @@ def emit_pack_tile_to_cb(fw: MatmulTrisc, plan: MatmulPlan, out_cb: int) -> Matm
   fw.emit(TTSTALLWAIT(TensixStall.THCON, TensixWait.PACK0))
   fw.read32(t1, fw.data["dest_offset_id"])
   fw.andi(t2, t1, 1)
-  fw.li(t3, 0x10104000)
+  fw.li(t3, TTZEROACC(2, 0, 0, 1).raw_word())  # ZEROACC base; dest-offset parity bit added in
   fw.add(t2, t2, t3)
   fw.write32(TensixRegs.INSTRN_BUF_BASE, t2)
   fw.emit(TTSEMGET(TensixSem.mask(TensixSem.MATH_PACK)))
@@ -1211,8 +1219,8 @@ def emit_pack_tile_to_cb(fw: MatmulTrisc, plan: MatmulPlan, out_cb: int) -> Matm
 def emit_pack_reconfig_l1_acc(fw: MatmulTrisc, enabled: bool) -> MatmulTrisc:
   data = 0x04 if enabled else 0x00
   fw.emit(TTSTALLWAIT(TensixStall.CFG, TensixWait.PACK0))
-  fw.push_tensix(TTRMWCIB0(Mask=0x04, Data=data, CfgRegAddr=70))
-  fw.push_tensix(TTRMWCIB2(Mask=0x08, Data=(0x08 if enabled else 0x00), CfgRegAddr=71))
+  fw.push_tensix(TTRMWCIB0(Mask=0x04, Data=data, CfgRegAddr=Cfg.THCON_SEC0_REG1_1.addr32))
+  fw.push_tensix(TTRMWCIB2(Mask=0x08, Data=(0x08 if enabled else 0x00), CfgRegAddr=Cfg.THCON_SEC0_REG1_2.addr32))
   return fw
 
 
@@ -1224,10 +1232,10 @@ def matmul_trisc0(plan: MatmulPlan) -> MatmulTrisc:
   fw.emit(TTSETADCXX(2, 1023, 0))
   fw.emit(TTREPLAY(0, len(MATMUL_UNPACK_REPLAY0_LOAD), 0, 1))
   for word in MATMUL_UNPACK_REPLAY0_LOAD:
-    fw.emit(TTINSN(word))
+    fw.emit(word)
   fw.emit(TTREPLAY(6, len(MATMUL_UNPACK_REPLAY1_LOAD), 0, 1))
   for word in MATMUL_UNPACK_REPLAY1_LOAD:
-    fw.emit(TTINSN(word))
+    fw.emit(word)
   fw.emit(TTSEMINIT(sem_sel=TensixSem.mask(TensixSem.UNPACK_SYNC), init_value=0, max_value=2))
   fw.init_barrier()
   fw.li(s6, 0)
