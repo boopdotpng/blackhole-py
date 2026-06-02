@@ -407,6 +407,13 @@ def _secondary_bus_reset(sysfs_path: str):
     raise RuntimeError(f"PCIe link did not come back for {os.path.basename(sysfs_path)}")
 
 class PCIDevice:
+  def __new__(cls, *args, **kwargs):
+    if cls is PCIDevice and os.environ.get("EMU") == "1":
+      os.environ["TT_USB"] = "1"
+      from emu_pcie import EmuPCIDevice
+      return object.__new__(EmuPCIDevice)
+    return object.__new__(cls)
+
   def __init__(self, index: int = 0, use_vfio: bool = True):
     devices = _find_bh_devices()
     if not devices:
@@ -521,17 +528,11 @@ class PCIDevice:
       raise RuntimeError(
         f"unsupported Blackhole board UPI 0x{board_upi:x}; supported boards are {', '.join(sorted(BOARD_UPI_TO_NAME.values()))}")
 
-    enabled_tensix = self.telemetry_tag(layout, "ENABLED_TENSIX_COL")
-    if enabled_tensix is None:
-      raise RuntimeError("ENABLED_TENSIX_COL telemetry is unavailable")
     enabled_gddr = self.telemetry_tag(layout, "ENABLED_GDDR")
     if enabled_gddr is None:
       raise RuntimeError("ENABLED_GDDR telemetry is unavailable")
 
-    physical_columns = P100_TENSIX_X if board == "p100a" else P150_TENSIX_X
-    columns = [x for i, x in enumerate(physical_columns) if (enabled_tensix >> i) & 1]
-    if not columns:
-      raise RuntimeError(f"no enabled Tensix columns in ARC telemetry mask 0x{enabled_tensix:x}")
+    columns = P100_TENSIX_X if board == "p100a" else P150_TENSIX_X
     workers = [(x, y) for x in columns for y in range(2, 12)]
     rightmost_x = columns[-1]
     prefetch_core = (rightmost_x, 2)

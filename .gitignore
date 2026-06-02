@@ -3,3 +3,5 @@ __pycache__
 .ruff-cache/
 .vscode/
 .claude
+ttsim/
+libttsim*.so
