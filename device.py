@@ -1,5 +1,6 @@
 from __future__ import annotations
 import ctypes
+import mmap
 import os
 import struct
 import time
@@ -9,7 +10,7 @@ from cq import (
 )
 from dram import Allocator, DramBuffer, Shape, tilize, untilize
 import fw
-from ttk.addrs import Core, L1_ALIGN, align_down, as_bytes
+from ttk.addrs import Core, L1_ALIGN, align_down, align_up, as_bytes
 from ttk.noc import NOC
 from ttk.tensix import TensixL1, TensixMMIO
 from pcie import BoardInfo, Mapping, NOC_PCIE_OFFSET, PCIDevice, PCIE_NOC_XY, TLBWindow
@@ -34,7 +35,6 @@ class Device:
     self._dram_drain_kernel = None
     self._upload_firmware()
     if self.fast_dispatch:
-      self._dram_sysmem = DramSysmem(self.dev)
       self._start_dispatch_cores()
 
   @property
@@ -118,6 +118,9 @@ class Device:
             deadline = time.perf_counter() + timeout_s
             while win.read(TensixL1.GO_MSG + 3, 1)[0] != DevMsgs.RUN_MSG_DONE:
               if time.perf_counter() > deadline:
+                dump = getattr(self.dev, "dump_t_state", None)
+                if dump is not None:
+                  dump()
                 raise TimeoutError(f"timeout waiting for core {core}")
               time.sleep(0.001)
 
@@ -223,9 +226,16 @@ class Device:
     self.dram_write(buf, data)
     return buf
 
-  def _ensure_dram_sysmem(self) -> "DramSysmem":
-    if self._dram_sysmem is None:
-      self._dram_sysmem = DramSysmem(self.dev)
+  def _ensure_dram_sysmem(self, required_size: int) -> "DramSysmem":
+    max_size = 1 << 30
+    if required_size > max_size:
+      raise ValueError(f"DRAM transfer needs {required_size} bytes, max sysmem buffer is {max_size} bytes")
+    size = align_up(required_size, mmap.PAGESIZE)
+    if self._dram_sysmem is not None and self._dram_sysmem.size >= size:
+      return self._dram_sysmem
+    if self._dram_sysmem is not None:
+      self._dram_sysmem.close()
+    self._dram_sysmem = DramSysmem(self.dev, size)
     return self._dram_sysmem
 
   def _empty_kernel(self):
@@ -257,7 +267,7 @@ class Device:
     if self.programs:
       self.run()
 
-    sm = self._ensure_dram_sysmem()
+    sm = self._ensure_dram_sysmem(n_tiles * buf.page_size)
     noc_local = sm.noc_addr - NOC_PCIE_OFFSET
     if noc_local < 0:
       raise RuntimeError(f"bad DRAM sysmem NOC address: 0x{sm.noc_addr:x}")
@@ -327,11 +337,9 @@ class Device:
     data_size = self._buffer_nbytes(data)
     assert data_size <= buf.size
     if self.fast_dispatch:
-      sm = self._ensure_dram_sysmem()
-      if data_size > sm.size:
-        raise ValueError(f"DRAM write needs {data_size} bytes, sysmem buffer is {sm.size} bytes")
       n_tiles = (data_size + buf.page_size - 1) // buf.page_size
       transfer_size = n_tiles * buf.page_size
+      sm = self._ensure_dram_sysmem(transfer_size)
       sm.mapping.copy_from(0, data, data_size)
       if transfer_size > data_size:
         sm.mapping.view_at(data_size, transfer_size - data_size)[:] = b"\0" * (transfer_size - data_size)
@@ -343,9 +351,7 @@ class Device:
   def _drain_to_sysmem(self, buf: DramBuffer) -> "DramSysmem":
     if self.programs:
       self.run()
-    sm = self._ensure_dram_sysmem()
-    if buf.size > sm.size:
-      raise ValueError(f"DRAM read needs {buf.size} bytes, sysmem buffer is {sm.size} bytes")
+    sm = self._ensure_dram_sysmem(buf.size)
     self._run_dram_transfer(buf, self._dram_drain(), buf.num_tiles, name=f"dram_drain:{buf.name}")
     return sm
 
@@ -383,7 +389,7 @@ class DramSysmem:
     self.dev = dev
     self.mapping = Mapping(size)
     self.size = self.mapping.size
-    self.noc_addr = dev.pin_pages(self.mapping)
+    self.noc_addr = dev.pin_pages(self.mapping, preferred_iatu_region=0)
 
   def close(self):
     try:

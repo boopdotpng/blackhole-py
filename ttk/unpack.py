@@ -45,7 +45,8 @@ class Unpack:
     self.k = kernel
 
   def _tile_descriptor(self, k, dtype: Dtype):
-    desc = dtype.value | _DESC_UNCOMPRESSED
+    compressed = dtype in (Dtype.Bfp4_b,)
+    desc = dtype.value if compressed else dtype.value | _DESC_UNCOMPRESSED
     k.write32(Cfg.THCON_SEC0_REG0_TileDescriptor, desc)
     k.write32(Cfg.THCON_SEC0_REG0_TileDescriptor_1, _DESC_DIMS)
     k.write32(Cfg.THCON_SEC1_REG0_TileDescriptor, desc | _DESC_SEC1_X)

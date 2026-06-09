@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from asm import KernelBase, Segment, boot_jal
 from ttk.addrs import L1_ALIGN, S, align_up, as_bytes, build_bank_noc_table
+from ttk.cb import CB as CBRegs
 from ttk.tensix import TensixL1, TensixMMIO
 
 Core = tuple[int, int]
@@ -74,6 +75,7 @@ class Dtype(Enum):
   Float32 = 0
   Float16 = 1
   Float16_b = 5
+  Bfp4_b = 7
   Int32 = 8
   UInt16 = 9
   Int8 = 14
@@ -86,6 +88,8 @@ class Dtype(Enum):
 
   @property
   def tile_size(self) -> int:
+    if self is Dtype.Bfp4_b:
+      return (128 * 4) + (16 * 4)
     return 32 * 32 * self.bpe
 
 class MathFidelity(Enum):
@@ -356,6 +360,10 @@ class Program:
       segments.append(Segment(TensixL1.KERNEL_CONFIG_BASE + sem_off, semaphores, label="semaphores"))
     if cb_blob:
       segments.append(Segment(TensixL1.KERNEL_CONFIG_BASE + local_cb_off, cb_blob, label="cb_config"))
+      for cb_index, _page_size, _tiles in self.cbs:
+        sync_off = cb_index * CBRegs.SYNC_STRIDE
+        segments.append(Segment(CBRegs.SYNC_TILES_RECEIVED_BASE + sync_off, b"\0\0\0\0", label=f"cb{cb_index}.received"))
+        segments.append(Segment(CBRegs.SYNC_TILES_ACKED_BASE + sync_off, b"\0\0\0\0", label=f"cb{cb_index}.acked"))
     segments.extend(kernel_segments)
     segments.append(Segment(TensixL1.LAUNCH, as_bytes(launch), label="launch"))
 

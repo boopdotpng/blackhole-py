@@ -123,7 +123,7 @@ class Ncrisc(_RoleKernel, Noc, Cb, Debug):
   """Writer-thread kernel: NOC + CB helpers, no Tensix config."""
 
 TILE_BYTES = Dtype.Float16_b.tile_size
-CB_DEPTH = 4
+CB_DEPTH = 16
 TARGET_CORE = (1, 2)
 DEFAULT_TILES_PER_CORE = 10
 OUT_CB = 16

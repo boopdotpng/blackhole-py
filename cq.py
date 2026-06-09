@@ -216,7 +216,11 @@ def _append_mcast_write(out: list[bytes], rects: list[Rect], addr: int, data: by
   for off in range(0, len(data), max_chunk):
     out.extend(_write_packed_large(rects, addr + off, data[off : off + max_chunk]))
 
-def lower_ir(commands: list[IRCommand], go_word: int) -> list[bytes]:
+def lower_ir(
+  commands: list[IRCommand],
+  go_word: int,
+  run_timestamps: tuple[tuple[int, int], tuple[int, int]] | None = None,
+) -> list[bytes]:
   out: list[bytes] = []
   for cmd in commands:
     match cmd:
@@ -230,9 +234,15 @@ def lower_ir(commands: list[IRCommand], go_word: int) -> list[bytes]:
           _barrier(),
           _set_go_signal_noc_data(cores),
           _wait_stream(DONE_STREAM, 0),
+        ])
+        if run_timestamps is not None:
+          out.append(_timestamp(*run_timestamps[0]))
+        out.extend([
           _send_go_signal(go_word, DONE_STREAM, 0, len(cores)),
           _wait_stream(DONE_STREAM, len(cores)),
         ])
+        if run_timestamps is not None:
+          out.append(_timestamp(*run_timestamps[1]))
       case _:
         raise TypeError(f"{type(cmd).__name__} is not supported by fast dispatch CQ")
   return out
@@ -245,11 +255,10 @@ def lower_programs(
   out: list[bytes] = []
   for i, commands in enumerate(programs):
     ts = 2 * i
+    run_timestamps = None
     if timestamps and ts + 1 < len(timestamps):
-      out.append(_timestamp(*timestamps[ts]))
-    out.extend(lower_ir(commands, go_word))
-    if timestamps and ts + 1 < len(timestamps):
-      out.append(_timestamp(*timestamps[ts + 1]))
+      run_timestamps = (timestamps[ts], timestamps[ts + 1])
+    out.extend(lower_ir(commands, go_word, run_timestamps=run_timestamps))
   return out
 
 class CQSysmem:
@@ -263,7 +272,7 @@ class CQSysmem:
     if self.sysmem_addr % PAGE_SIZE or self.size % PAGE_SIZE:
       raise RuntimeError("CQ sysmem must be page-aligned and page-sized")
 
-    self.noc_addr = dev.pin_pages(self.sysmem)
+    self.noc_addr = dev.pin_pages(self.sysmem, preferred_iatu_region=1)
     if (self.noc_addr & _PCIE_NOC_BASE) != _PCIE_NOC_BASE:
       raise RuntimeError(f"bad CQ sysmem NOC address: 0x{self.noc_addr:x}")
     self.noc_local = self.noc_addr - _PCIE_NOC_BASE

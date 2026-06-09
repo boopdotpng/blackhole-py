@@ -796,7 +796,7 @@ class PCIDevice:
 
   # ---- DMA / page pinning via VFIO IOMMU ----
 
-  def pin_pages(self, buf) -> int:
+  def pin_pages(self, buf, preferred_iatu_region: int | None = None) -> int:
     """Pin a buffer and set up IOMMU + iATU for device DMA. Returns the NOC address."""
     va = _buffer_addr(buf)
     size = _buffer_size(buf)
@@ -814,7 +814,7 @@ class PCIDevice:
       cleanup.append(lambda: fcntl.ioctl(self._vfio_container, VFIO_IOMMU_UNMAP_DMA,
         struct.pack("=IIQQ", 24, 0, iova, size)))
 
-      region = self._alloc_iatu_region()
+      region = self._alloc_iatu_region(preferred_iatu_region)
       cleanup.append(lambda: self._free_iatu_region(region))
 
       noc_base = region * (1 << 30)
@@ -838,7 +838,13 @@ class PCIDevice:
     _munlock(va, pin["size"])
     del self._pinnings[noc_addr]
 
-  def _alloc_iatu_region(self) -> int:
+  def _alloc_iatu_region(self, preferred: int | None = None) -> int:
+    if preferred is not None:
+      if preferred < 0 or preferred >= len(self._iatu_regions):
+        raise ValueError(f"invalid iATU region {preferred}")
+      if not self._iatu_regions[preferred]:
+        self._iatu_regions[preferred] = True
+        return preferred
     for i, used in enumerate(self._iatu_regions):
       if not used:
         self._iatu_regions[i] = True

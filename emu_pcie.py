@@ -89,6 +89,8 @@ def _load_lib():
     lib.libttsim_exit.argtypes = []
     lib.libttsim_clock.restype = None
     lib.libttsim_clock.argtypes = [ctypes.c_uint32]
+    lib.libttsim_dump_t_state.restype = None
+    lib.libttsim_dump_t_state.argtypes = []
     lib.libttsim_pci_mem_rd_bytes.restype = None
     lib.libttsim_pci_mem_rd_bytes.argtypes = [ctypes.c_uint64, ctypes.c_void_p, ctypes.c_uint32]
     lib.libttsim_pci_mem_wr_bytes.restype = None
@@ -308,6 +310,9 @@ class EmuPCIDevice(PCIDevice):
 
   def set_power_state(self, busy: bool):
     pass
+
+  def dump_t_state(self):
+    self.lib.libttsim_dump_t_state()
 
   def pin_pages(self, buf) -> int:
     raise NotImplementedError("EMU supports slow dispatch only; EMU=1 forces TT_USB=1.")
