@@ -158,8 +158,12 @@ class Cb:
     self.or_(counter, received, acked)
     self.sw(counter, iface, 24)
     self.srli(received, received, 16)
-    self.li(tmp, CB.SYNC_TILES_RECEIVED_BASE + cb_index * CB.SYNC_STRIDE)
-    self.sw(received, tmp, 0)
+    if not tensix_received:
+      # Mirror of the tensix_ack rule in cb_pop_front: with tensix_received
+      # the consumer must only see `received` advance via the deferred
+      # STOREREG (ordered behind the pack), never via an eager RISC store.
+      self.li(tmp, CB.SYNC_TILES_RECEIVED_BASE + cb_index * CB.SYNC_STRIDE)
+      self.sw(received, tmp, 0)
     if tensix_received:
       self.slli(tmp, received, 8)
       self.li(ptr, TTSETDMAREG(0, 0, 0, 48).raw_word())
@@ -205,8 +209,14 @@ class Cb:
     self.slli(received, received, 16)
     self.or_(counter, received, acked)
     self.sw(counter, iface, 24)
-    self.li(tmp, CB.SYNC_TILES_ACKED_BASE + cb_index * CB.SYNC_STRIDE)
-    self.sw(acked, tmp, 0)
+    if not tensix_ack:
+      # Publish the ack to the producer immediately. With tensix_ack the
+      # release MUST come only from the deferred STOREREG below (ordered
+      # behind the unpack in the Tensix FIFO); an eager RISC store here
+      # frees pages before the unpack consumed them — producer wraps and
+      # math-bound streams compute tile i+CB_DEPTH (microbenching/todo.md).
+      self.li(tmp, CB.SYNC_TILES_ACKED_BASE + cb_index * CB.SYNC_STRIDE)
+      self.sw(acked, tmp, 0)
     if tensix_ack:
       self.slli(tmp, acked, 8)
       self.li(ptr, TTSETDMAREG(0, 0, 0, 8).raw_word())

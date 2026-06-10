@@ -28,7 +28,7 @@ CQ_PREFETCH_Q_BASE = _CQ_L1 + 0x180
 CQ_PREFETCH_Q_SIZE = 0xBFC
 CQ_PREFETCH_Q_ENTRY_SZ = 4
 CQ_PREFETCH_Q_ENTRIES = CQ_PREFETCH_Q_SIZE // CQ_PREFETCH_Q_ENTRY_SZ
-CQ_DISPATCH_CB_PAGES = (512 * 1024) >> 12
+CQ_DISPATCH_CB_PAGES = (1280 * 1024) >> 12
 
 _PCIE_NOC_BASE = 1 << 60
 
@@ -305,6 +305,7 @@ class CQSysmem:
 
     self.issue_wr = 0
     self.prefetch_q_wr_idx = 0
+    self.dispatch_cb_page_pos = 0
     self.event_id = 0
     self.completion_base_16b = ((self.noc_local + _HOST_COMPLETION_BASE) >> 4) & 0x7FFFFFFF
     self.completion_page_16b = PAGE_SIZE >> 4
@@ -346,9 +347,32 @@ class CQSysmem:
         )
 
   def _issue_write(self, record: bytes):
+    # Dispatch FW parses records linearly and only wraps its cursor when it
+    # lands exactly on DISPATCH_CB_END, but prefetch splits writes across the
+    # wrap. A multi-page record straddling the 128-page ring boundary makes
+    # dispatch walk past CB end into stale L1 (spurious writes, then semaphore
+    # divergence -> wait_completion wedge). The host knows every record's page
+    # count, so pad to the ring boundary instead: an unknown-cmd record costs
+    # exactly one page via dispatch's advance_page fallback.
+    pages = max(1, (struct.unpack_from("<I", record, 4)[0] + 4095) >> 12)
+    if pages > CQ_DISPATCH_CB_PAGES:
+      raise ValueError(f"CQ record needs {pages} pages, dispatch CB has {CQ_DISPATCH_CB_PAGES}")
+
     self.issue_wr = align_up(self.issue_wr, PCIE_ALIGN)
     if self.issue_wr + len(record) > _HOST_ISSUE_SIZE:
+      # Prefetch FW wraps its PCIe cursor only when it reaches HOST_ISSUE_SIZE
+      # exactly; wrapping early here would desync it. Pad to the end with
+      # filler records (16B unknown-cmd payload, stride covers the gap; stride
+      # capped well under the 64K cmddat staging buffer).
+      while self.issue_wr < _HOST_ISSUE_SIZE:
+        stride = min(_HOST_ISSUE_SIZE - self.issue_wr, 32768)
+        hdr = struct.pack("<BBHII", _RELAY_INLINE, 0, 0, CQ_CMD_SIZE, stride).ljust(CQ_CMD_SIZE, b"\0")
+        self._issue_write(hdr.ljust(stride, b"\0"))
       self.issue_wr = 0
+
+    while self.dispatch_cb_page_pos and pages > CQ_DISPATCH_CB_PAGES - self.dispatch_cb_page_pos:
+      self._issue_write(_relay_inline(bytes(CQ_CMD_SIZE)))
+    self.dispatch_cb_page_pos = (self.dispatch_cb_page_pos + pages) % CQ_DISPATCH_CB_PAGES
 
     base = _HOST_ISSUE_BASE + self.issue_wr
     self.sysmem.write(base, record)

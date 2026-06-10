@@ -33,6 +33,7 @@ class Device:
     self._dram_sysmem: DramSysmem | None = None
     self._dram_fill_kernel = None
     self._dram_drain_kernel = None
+    self.dev.set_power_state(True)  # session-scoped; close() powers down
     self._upload_firmware()
     if self.fast_dispatch:
       self._start_dispatch_cores()
@@ -73,14 +74,12 @@ class Device:
       self.queue(program)
     if not self.programs:
       return []
-    self.dev.set_power_state(True)
     try:
       if not self.fast_dispatch:
         return self._run_slow_dispatch()
       return self._run_fast_dispatch()
     finally:
       self.programs.clear()
-      self.dev.set_power_state(False)
 
   def _run_slow_ir(self, commands: list[IRCommand], win: TLBWindow):
     for cmd in commands:
@@ -299,13 +298,8 @@ class Device:
       num_cores=len(cores),
     )
     program.name = name
-
-    self.dev.set_power_state(True)
-    try:
-      ir = program.lower(self.cores, dispatch_mode=DevMsgs.DISPATCH_MODE_DEV)
-      self.cq.submit_ir([ir], self._go_word(), names=[name])
-    finally:
-      self.dev.set_power_state(False)
+    ir = program.lower(self.cores, dispatch_mode=DevMsgs.DISPATCH_MODE_DEV)
+    self.cq.submit_ir([ir], self._go_word(), names=[name])
 
   @staticmethod
   def _buffer_nbytes(data) -> int:

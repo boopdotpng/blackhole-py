@@ -946,6 +946,10 @@ class PCIDevice:
       self.free_tlb(tlb)
 
   def set_power_state(self, busy: bool):
+    # Idempotent: power is session-scoped (up at Device init, down at close).
+    # Per-launch GO_BUSY/GO_IDLE spam costs ~ms each and can wedge ARC.
+    if getattr(self, "_power_busy", None) == busy: return
+    self._power_busy = busy
     if busy: self.arc_msg(self.MSG_AICLK_GO_BUSY)
     else:
       try: self.arc_msg(self.MSG_AICLK_GO_LONG_IDLE)

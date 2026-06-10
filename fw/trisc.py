@@ -12,6 +12,20 @@ from ttk.cb import CircularBuffer as CB
 from ttk.mailbox import Firmware, TriscMailbox as TM
 from ttk.tensix import Launch, Mailbox, RunSync, TensixMMIO, TensixRegs
 
+def zero_tensix_regfile(fw: KernelBase) -> KernelBase:
+  fw.li(t0, TensixRegs.REGFILE_BASE)
+  fw.li(t1, 64)
+  zero_regfile_loop = fw._new_label("zero_regfile")
+  zero_regfile_done = fw._new_label("zero_regfile_done")
+  fw.label(zero_regfile_loop)
+  fw.beq(t1, zero, zero_regfile_done)
+  fw.sw(zero, t0, 0)
+  fw.addi(t0, t0, 4)
+  fw.addi(t1, t1, -1)
+  fw.j(zero_regfile_loop)
+  fw.label(zero_regfile_done)
+  return fw
+
 def build(trisc_id: int) -> KernelBase:
   if trisc_id not in (0, 1, 2):
     raise ValueError(f"unknown TRISC id {trisc_id!r}")
@@ -30,18 +44,7 @@ def build(trisc_id: int) -> KernelBase:
     Firmware.TRISC_LOCAL_DATA_SIZE[trisc_id],
   )
 
-  # zero_regfile
-  fw.li(t0, TensixRegs.REGFILE_BASE)
-  fw.li(t1, 64)
-  zero_regfile_loop = fw._new_label("zero_regfile")
-  zero_regfile_done = fw._new_label("zero_regfile_done")
-  fw.label(zero_regfile_loop)
-  fw.beq(t1, zero, zero_regfile_done)
-  fw.sw(zero, t0, 0)
-  fw.addi(t0, t0, 4)
-  fw.addi(t1, t1, -1)
-  fw.j(zero_regfile_loop)
-  fw.label(zero_regfile_done)
+  zero_tensix_regfile(fw)
 
   # init_common_state
   fw.write32(data["dest_offset_id"], 0)
@@ -94,6 +97,7 @@ def build(trisc_id: int) -> KernelBase:
     fw.j(wait_trisc_loop)
   fw.label(trisc_go)
   fw.fence()
+  zero_tensix_regfile(fw)
 
   if trisc_id in (0, 2):
     # setup_local_cbs

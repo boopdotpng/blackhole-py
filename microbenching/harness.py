@@ -82,12 +82,15 @@ def device_window(device: Device, core: Core, **window_kwargs):
   Replaces the hand-rolled set_power_state(True)/try/finally/set_power_state(False)
   blocks. Extra keyword args (e.g. addr=...) are forwarded to TLBWindow.
   """
+  prev = getattr(device.dev, "_power_busy", None)
   device.dev.set_power_state(True)
   try:
     with TLBWindow(device.dev, start=core, **window_kwargs) as win:
       yield win
   finally:
-    device.dev.set_power_state(False)
+    # Power is session-scoped: only drop if the device wasn't already busy.
+    if prev is not True:
+      device.dev.set_power_state(False)
 
 
 def _check_not_all_ff(blob: bytes, error: str | None):

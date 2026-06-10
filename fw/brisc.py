@@ -127,6 +127,31 @@ def rmw_tensix_cfg(fw: KernelBase, addr32: int, mask: int, value: int, *,
   fw.sw(old, addr, 0)
   return fw
 
+TENSIX_CFG_RESET_WORDS = 256  # named CFG regs end at +0x378; zero 0x400 bytes
+
+def tensix_hw_reset(fw: KernelBase):
+  """Return Tensix to cold-boot state. Run at boot AND before every launch so
+  no kernel inherits CFG/DEST/semaphore state from a differing predecessor
+  (programs are only correct relative to reset state, never to leftovers)."""
+  # CFG space resets to zero at cold boot; differing programs leave plan-
+  # specific descriptors behind. Kernels program what they use from zero.
+  fw.zero_words(TensixRegs.CFG_BASE, TENSIX_CFG_RESET_WORDS)
+  buf = TensixRegs.INSTRN_BUF_BASE
+  fw.push_tensix_word(buf, TTZEROACC(clear_mode=3).raw_word())
+  fw.push_tensix_word(buf, TTSFPENCC(imm12_math=3, instr_mod1=10).raw_word())
+  fw.push_tensix_word(buf, TTNOP().raw_word())
+  fw.push_tensix_word(buf, TTSFPLOADI(imm16=0xBF80).raw_word())
+  fw.push_tensix_word(buf, TTSFPCONFIG(config_dest=11).raw_word())
+  rmw_tensix_cfg(fw, TensixRegs.ECC_SCRUBBER_ADDR32, TensixRegs.ECC_SCRUBBER_ENABLE_MASK, 1)
+  rmw_tensix_cfg(fw, TensixRegs.ECC_SCRUBBER_ADDR32, TensixRegs.ECC_SCRUBBER_SCRUB_ON_ERROR_MASK, 1, shift=1)
+  rmw_tensix_cfg(
+    fw, TensixRegs.ECC_SCRUBBER_ADDR32, TensixRegs.ECC_SCRUBBER_DELAY_MASK, 0x100,
+    shift=TensixRegs.ECC_SCRUBBER_DELAY_SHAMT,
+  )
+  for sem in (TensixSem.MATH_PACK, TensixSem.UNPACK_TO_DEST, TensixSem.MATH_DONE):
+    fw.push_tensix_word(buf, TTSEMINIT(sem_sel=TensixSem.mask(sem), init_value=0, max_value=1).raw_word())
+  return fw
+
 def build(*, text_base: dict[str, int] = Firmware.TEXT_BASE) -> KernelBase:
   fw = Kernel(Tensix, Noc, Cb, base_addr=Firmware.TEXT_BASE["brisc"])
   fw.segment(Firmware.LOCAL_DATA_BASE["brisc"], b"\x68".ljust(Firmware.LOCAL_DATA_SIZE["brisc"], b"\0"), label="local_data")
@@ -155,20 +180,7 @@ def build(*, text_base: dict[str, int] = Firmware.TEXT_BASE) -> KernelBase:
   fw.zero_words(TensixL1.MEM_ZEROS_BASE, TensixL1.MEM_ZEROS_SIZE // 4)
   # invalidate_all_risc_icaches
   fw.write32(TensixRegs.RISCV_IC_INVALIDATE_INVALIDATE_ALL, TensixRegs.RISCV_IC_ALL_MASK)
-  buf = TensixRegs.INSTRN_BUF_BASE
-  fw.push_tensix_word(buf, TTZEROACC(clear_mode=3).raw_word())
-  fw.push_tensix_word(buf, TTSFPENCC(imm12_math=3, instr_mod1=10).raw_word())
-  fw.push_tensix_word(buf, TTNOP().raw_word())
-  fw.push_tensix_word(buf, TTSFPLOADI(imm16=0xBF80).raw_word())
-  fw.push_tensix_word(buf, TTSFPCONFIG(config_dest=11).raw_word())
-  rmw_tensix_cfg(fw, TensixRegs.ECC_SCRUBBER_ADDR32, TensixRegs.ECC_SCRUBBER_ENABLE_MASK, 1)
-  rmw_tensix_cfg(fw, TensixRegs.ECC_SCRUBBER_ADDR32, TensixRegs.ECC_SCRUBBER_SCRUB_ON_ERROR_MASK, 1, shift=1)
-  rmw_tensix_cfg(
-    fw, TensixRegs.ECC_SCRUBBER_ADDR32, TensixRegs.ECC_SCRUBBER_DELAY_MASK, 0x100,
-    shift=TensixRegs.ECC_SCRUBBER_DELAY_SHAMT,
-  )
-  for sem in (TensixSem.MATH_PACK, TensixSem.UNPACK_TO_DEST, TensixSem.MATH_DONE):
-    fw.push_tensix_word(buf, TTSEMINIT(sem_sel=TensixSem.mask(sem), init_value=0, max_value=1).raw_word())
+  tensix_hw_reset(fw)
 
   # init_risc_noc_coords
   fw.init_risc_noc_coords(BM.MY_X, BM.MY_Y)
@@ -241,6 +253,11 @@ def build(*, text_base: dict[str, int] = Firmware.TEXT_BASE) -> KernelBase:
   fw.j(wait_go_loop)
   fw.label(go_seen)
   fw.fence()
+
+  # Per-launch Tensix reset: kernels must start from cold-boot state, not the
+  # previous program's CFG/DEST/semaphore residue (back-to-back differing CB
+  # layouts corrupted outputs deterministically before this).
+  tensix_hw_reset(fw)
 
   # Match tt-metal: let NCRISC start loading its launch state before BRISC does
   # the rest of per-launch firmware setup.

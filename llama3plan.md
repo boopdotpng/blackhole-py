@@ -60,7 +60,13 @@ Implications:
 
 ## 0b. Dtype strategy: fp16 storage, fp32 accumulate
 
-**Decision: port in fp16** to mirror the CUDA 1:1 (easiest correctness diff
+> **SUPERSEDED 2026-06-09: port in bf16 everywhere** (HF checkpoint is bf16,
+> identical decode speed, dodges the fp16 packer-L1-acc bug, exponent range
+> tolerates bf16 accumulation; fp32 DST-acc reserved for reductions). The fp16
+> path/notes below kept for the later dtype work only. All 2026-06 microbenches
+> are bf16.
+
+~~**Decision: port in fp16**~~ to mirror the CUDA 1:1 (easiest correctness diff
 against the reference). Storage = `Float16` for weights and activation tiles;
 **accumulation = fp32**, exactly like the CUDA.
 
@@ -182,12 +188,12 @@ Status legend: ✅ have a usable example · ⚠️ partial / wrong regime · ❌
 | # | Kernel | Primitive(s) | Status |
 |---|---|---|---|
 | 0 | embed | indexed DRAM gather (token → row) | ❌ |
-| 1/6/9 | rmsnorm_inv | sum-of-squares **reduction** + **rsqrt** | ❌ reduce, ❌ rsqrt |
-| 2 | qkv_gemv_norm | **GEMV** (M=1) + **broadcast mul** (norm_w·inv_rms) | ⚠️ square matmul only; ❌ bcast |
+| 1/6/9 | rmsnorm_inv | sum-of-squares **reduction** + **rsqrt** | ✅ reduce + rsqrt microbenches (2026-06-09) |
+| 2 | qkv_gemv_norm | **GEMV** (M=1) + **broadcast mul** (norm_w·inv_rms) | ⚠️ square matmul only; ✅ bcast mul |
 | 3 | rope_cache | **eltwise** mul/add on pairs (cos/sin) + indexed **KV-cache scatter** | ❌ eltwise, ❌ scatter |
-| 4 | attention | dot/matmul + **softmax** (max-reduce, **exp**, sum-reduce, recip) + weighted-sum | ❌ softmax, ❌ exp, ❌ reductions |
-| 5/8 | proj_residual | GEMV + **eltwise add** (residual) | ❌ eltwise add |
-| 7 | gate_up_swiglu | 2× GEMV + **silu** (sigmoid = exp/recip) + **eltwise mul** | ❌ silu, ❌ eltwise mul |
+| 4 | attention | dot/matmul + **softmax** (max-reduce, **exp**, sum-reduce, recip) + weighted-sum | ⚠️ exp+recip+reduce all benched; softmax composite missing |
+| 5/8 | proj_residual | GEMV + **eltwise add** (residual) | ✅ eltwise add (2026-06-09) |
+| 7 | gate_up_swiglu | 2× GEMV + **silu** (sigmoid = exp/recip) + **eltwise mul** | ✅ silu + eltwise mul microbenches |
 | 10 | logits_norm | large GEMV (vocab=128k) + broadcast | ⚠️ matmul only |
 | 11 | argmax | **max reduction with index** (int) | ❌ |
 
@@ -221,15 +227,27 @@ only the `.pyc` remains; recover it as the SFPU scaffold.
 
 These double as the reference implementations the kernel author copies from.
 
-1. **SFPU transcendentals** — throughput/tile for `exp`, `rsqrt`, `recip`,
-   `sigmoid`/`silu` (then `gelu`/`tanh`). Recover `ttk/sfpu.py` first. *Unblocks
-   rmsnorm + softmax + swiglu in one shot — the highest-leverage item.*
-2. **Reduction** — row/col/scalar `sum` and `max`.
-3. **Eltwise binary** — `add`/`mul`/`sub` tile-tile.
-4. **Broadcast eltwise** — row/col broadcast multiply.
-5. **Softmax** — composite (max-reduce → exp → sum-reduce → recip-mul).
-6. **Skinny GEMV / memory-bound matmul** — metric is % of peak DRAM bandwidth,
-   swept over bf16/bfp8/bfp4. *This predicts real tok/s.*
+1. ~~**SFPU transcendentals**~~ DONE 2026-06-09 (`microbench_sfpu_transcendental.py`,
+   exp 40 / recip 16 / rsqrt 58 / sigmoid 59 / silu 62 cyc per 32-lane group).
+2. ~~**Reduction**~~ DONE 2026-06-09 (`microbench_sfpu_reduce.py`: sum32 51 cyc,
+   max8x4 51 cyc, rowmax 293 cyc/tile; helper contracts pinned).
+3. ~~**Eltwise binary**~~ DONE 2026-06-09 (`microbench_eltwise_binary.py`,
+   add/sub/mul bf16, ~1234 cyc/tile single-core DRAM-bound; mul LoFi ~3% low).
+4. ~~**Broadcast eltwise**~~ DONE 2026-06-09 (`microbench_eltwise_bcast.py`,
+   row/col/scalar × add/mul all PASS; bcast cost ≈ free vs stream).
+5. ~~**Softmax**~~ DONE 2026-06-09 (`microbench_softmax.py`: per-row softmax of
+   a 32×32 tile, all-SFPU composite, 2738 cyc/tile = 85.6 cyc/row, math-bound,
+   ≈ sum of parts; exposed cb_pop_front eager-ack bug, FIXED same day in
+   ttk/cb.py — flow control now blocks correctly at no cost, details in
+   microbenching/todo.md).
+6. ~~**Skinny GEMV / memory-bound matmul**~~ DONE 2026-06-09 bf16
+   (`microbenching/matmul/microbench_skinny_gemv.py`, matmul_peak at M=1 on one
+   core row). All 5 llama shapes PASS (pcc ≥0.9999): wqkv_q 86.6 / wqkv_kv 76 /
+   ffn_gate 90 / ffn_down 96 / logits 94 GB/s ≈ **30% of 305 GB/s roof →
+   ~36 tok/s today**. Bottleneck = 11 column NCRISC readers (1 block in flight);
+   10-row grid is slower (82.6, padded-out writes). bfp8/bfp4 sweep still open
+   (no dtype). Gotcha: >6 differing programs per session wedges CQ — one
+   shape/job.
 7. **Embedding gather + KV-cache indexed write** — data movement, not compute.
 8. **On-device tilize/untilize.**
 9. **Transpose** (`TTTRNSPSRCA/B` / `TTSFPTRANSP`).

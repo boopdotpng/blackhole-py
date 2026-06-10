@@ -16,11 +16,16 @@ import harness  # noqa: E402  (does sys.path + TT_USB bootstrap on import)
 import numpy as np
 
 from device import Device
-from dsl import TTINCRWC, TTSFPLOAD, TTSFPNOP, TTSFPSTORE
+from dsl import (
+  TTINCRWC, TTSFPLOAD, TTSFPNOP, TTSFPSTORE, TTSTALLWAIT,
+  a2, a3, a4, a5, s8, zero,
+)
 from program import Dtype
-from ttk.sfpu import sfpu_exp, sfpu_reciprocal
+from ttk.tensix import TensixStall
+from ttk.sfpu import emit_rsqrt, emit_sigmoid, emit_silu, sfpu_exp, sfpu_reciprocal
 
 from examples import add1
+from examples.add1 import WAIT_MATH_AND_SFPU
 
 
 TILE = 32
@@ -62,33 +67,94 @@ def footprint_values(tile: np.ndarray) -> np.ndarray:
   return out
 
 
-def sfpu_exp_footprint(fw):
-  fw.emit(TTSFPLOAD(0, 0, 7, 0))
+def _op_exp(fw):
   sfpu_exp(fw, 0, 0, scratch=(1, 2, 3, 4, 5, 6, 7))
-  fw.emit(TTSFPSTORE(0, 0, 7, 0))
-  fw.emit(TTSFPNOP())
-  fw.emit(TTINCRWC(0, 2, 0, 0))
-  return fw
 
 
-def sfpu_recip_footprint(fw):
-  fw.emit(TTSFPLOAD(0, 0, 7, 0))
+def _op_recip(fw):
   sfpu_reciprocal(fw, 0, 0, scratch=(1, 2, 3, 4, 5, 6, 7), iterations=2)
-  fw.emit(TTSFPSTORE(0, 0, 7, 0))
-  fw.emit(TTSFPNOP())
-  fw.emit(TTINCRWC(0, 2, 0, 0))
-  return fw
 
 
-def run_body(device: Device, name: str, values: np.ndarray, body) -> tuple[np.ndarray, float]:
+def _op_rsqrt(fw):
+  emit_rsqrt(fw, 0, 0, scratch=(1, 2, 3, 4, 5, 6, 7), iterations=5)
+
+
+def _op_sigmoid(fw):
+  emit_sigmoid(fw, 0, 0, scratch=(1, 2, 3, 4, 5, 6, 7))
+
+
+def _op_silu(fw):
+  emit_silu(fw, 0, 0, scratch=(1, 2, 3, 4, 5, 6, 7))
+
+
+def make_footprint(op, repeat: int = 1):
+  """LOAD, then `repeat` op bodies LReg0->LReg0 (idempotence not required for
+  timing; correctness is asserted only at repeat=1), then STORE."""
+  def footprint(fw):
+    fw.emit(TTSFPLOAD(0, 0, 7, 0))
+    for _ in range(repeat):
+      op(fw)
+    fw.emit(TTSFPSTORE(0, 0, 7, 0))
+    fw.emit(TTSFPNOP())
+    fw.emit(TTINCRWC(0, 2, 0, 0))
+    return fw
+  return footprint
+
+
+OPS = {
+  "exp": _op_exp,
+  "recip": _op_recip,
+  "rsqrt": _op_rsqrt,
+  "sigmoid": _op_sigmoid,
+  "silu": _op_silu,
+}
+
+RESULT_ADDR = 0x12D000  # same scratch region the other tensix benches use
+
+
+def make_timed_footprint(op, iterations: int):
+  """RISC counter loop around one op body; wall-clock delta (cycles) -> L1.
+
+  Timing is issue-side: once the Tensix FIFO backpressures, RISC push rate
+  tracks SFPU throughput; the trailing STALLWAIT drains MATH|SFPU before the
+  end-of-window clock read. Use a single tile (body runs 4x/tile; the record
+  is rewritten with the same measurement each time).
+  """
+  def footprint(fw):
+    fw.emit(TTSFPLOAD(0, 0, 7, 0))
+    harness.read_wall_clock(fw, a2, a3)
+    loop = fw._new_label("sfpu_timed")
+    done = fw._new_label("sfpu_timed_done")
+    fw.li(s8, iterations)
+    fw.label(loop)
+    fw.beq(s8, zero, done)
+    op(fw)
+    fw.addi(s8, s8, -1)
+    fw.j(loop)
+    fw.label(done)
+    fw.push_tensix(TTSTALLWAIT(TensixStall.SYNC, WAIT_MATH_AND_SFPU))
+    harness.read_wall_clock(fw, a4, a5)
+    fw.sub(a4, a4, a2)
+    fw.li(a5, RESULT_ADDR)
+    fw.sw(a4, a5, 0)
+    fw.emit(TTSFPSTORE(0, 0, 7, 0))
+    fw.emit(TTSFPNOP())
+    fw.emit(TTINCRWC(0, 2, 0, 0))
+    return fw
+  return footprint
+
+
+def run_body(device: Device, name: str, values: np.ndarray, body,
+             n_tiles: int = 1) -> tuple[np.ndarray, float]:
   src_tile = footprint_tile(values)
+  src_rm = to_bf16_bytes(src_tile) * n_tiles
   src_buf = device.alloc_write(
-    to_bf16_bytes(src_tile),
+    src_rm,
     dtype=DTYPE,
-    shape=(TILE, TILE),
+    shape=(n_tiles, TILE, TILE),
     name=f"{name}_src",
   )
-  dst_buf = device.dram.alloc(1, dtype=DTYPE, shape=(TILE, TILE), name=f"{name}_dst")
+  dst_buf = device.dram.alloc(n_tiles, dtype=DTYPE, shape=(n_tiles, TILE, TILE), name=f"{name}_dst")
 
   old_body = add1.math_add1_replay_row
   add1.math_add1_replay_row = body
@@ -98,15 +164,15 @@ def run_body(device: Device, name: str, values: np.ndarray, body) -> tuple[np.nd
       dst_buf.addr,
       len(device.dram.bank_tiles),
       cores=device.cores[:1],
-      tiles_per_core=1,
+      tiles_per_core=n_tiles,
     )
     prog.name = f"microbench_sfpu_{name}"
     elapsed_us = sum(timing["us"] for timing in device.run(prog))
   finally:
     add1.math_add1_replay_row = old_body
 
-  got_tile = from_bf16_bytes(device.dram_read(dst_buf), (TILE, TILE))
-  return footprint_values(got_tile), elapsed_us
+  got = from_bf16_bytes(device.dram_read(dst_buf), (n_tiles, TILE, TILE))
+  return footprint_values(got[0]), elapsed_us
 
 
 def check(name: str, got: np.ndarray, ref: np.ndarray) -> tuple[bool, float, float]:
@@ -120,25 +186,57 @@ def check(name: str, got: np.ndarray, ref: np.ndarray) -> tuple[bool, float, flo
   return ok, max_abs, max_rel
 
 
+AICLK_MHZ = 800.0
+
+
 def main() -> int:
   import argparse
-  argparse.ArgumentParser(description="SFPU transcendental (exp, recip) microbench; needs device").parse_args()
+  parser = argparse.ArgumentParser(
+    description="SFPU transcendental (exp/recip/rsqrt/sigmoid/silu) microbench; needs device")
+  parser.add_argument("--iters", type=int, default=0,
+                      help="extra timed run per op: RISC loop of N op bodies on TRISC1, "
+                           "wall-clock cycles read back from L1")
+  args = parser.parse_args()
+
+  f32 = lambda a: a.astype(np.float32)
   exp_in = to_bf16(np.linspace(-10.0, 2.0, 32, dtype=np.float32))
   recip_in = to_bf16(np.geomspace(0.25, 64.0, 32, dtype=np.float32).astype(np.float32))
+  rsqrt_in = to_bf16(np.linspace(0.5, 2.0, 32, dtype=np.float32))  # near-unit Newton path
+  sigmoid_in = to_bf16(np.linspace(-4.0, 4.0, 32, dtype=np.float32))
+  cases = [
+    ("exp[-10,2]", "exp", exp_in, np.exp(f32(exp_in))),
+    ("recip[0.25,64]", "recip", recip_in, np.float32(1.0) / f32(recip_in)),
+    ("rsqrt[0.5,2]", "rsqrt", rsqrt_in, np.float32(1.0) / np.sqrt(f32(rsqrt_in))),
+    ("sigmoid[-4,4]", "sigmoid", sigmoid_in,
+     np.float32(1.0) / (np.float32(1.0) + np.exp(-f32(sigmoid_in)))),
+    ("silu[-4,4]", "silu", sigmoid_in,
+     f32(sigmoid_in) / (np.float32(1.0) + np.exp(-f32(sigmoid_in)))),
+  ]
 
+  results = []
   with harness.open_device() as device:
-    exp_got, exp_us = run_body(device, "exp", exp_in, sfpu_exp_footprint)
-    recip_got, recip_us = run_body(device, "recip", recip_in, sfpu_recip_footprint)
-
-  exp_ref = np.exp(exp_in.astype(np.float32))
-  recip_ref = np.float32(1.0) / recip_in.astype(np.float32)
+    core = device.cores[0]
+    for label, op_name, vals, ref in cases:
+      got, _ = run_body(device, op_name, vals, make_footprint(OPS[op_name], 1))
+      cycles = None
+      if args.iters > 0:
+        harness.clear_window(device, core, [(RESULT_ADDR, 4)])
+        run_body(device, f"{op_name}_t", vals, make_timed_footprint(OPS[op_name], args.iters))
+        raw = harness.read_window(device, core, RESULT_ADDR, 4)
+        cycles = int.from_bytes(raw, "little")
+      results.append((label, op_name, got, ref, cycles))
 
   print("SFPU transcendental microbench")
-  print(f"  dtype={DTYPE.name} lanes=32 tile=32x32")
-  print(f"  device_us: exp={exp_us:.1f} recip={recip_us:.1f}")
-  exp_ok, _, _ = check("exp[-10,2]", exp_got, exp_ref)
-  recip_ok, _, _ = check("recip[0.25,64]", recip_got, recip_ref)
-  ok = exp_ok and recip_ok
+  print(f"  dtype={DTYPE.name} lanes=32 tile=32x32 iters={args.iters}")
+  ok = True
+  for label, op_name, got, ref, cycles in results:
+    case_ok, _, _ = check(label, got, ref)
+    ok = ok and case_ok
+    if cycles is not None:
+      cyc = cycles / args.iters
+      print(f"    {op_name}: {cycles} cyc / {args.iters} iters"
+            f" -> {cyc:.1f} cyc/op (32 lanes) = {cyc / 32:.2f} cyc/elem"
+            f" = {cyc * 32:.0f} cyc/tile (32 groups)")
   print("PASS" if ok else "FAIL")
   return 0 if ok else 1
 
