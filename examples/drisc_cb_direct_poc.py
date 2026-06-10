@@ -31,6 +31,7 @@ from dsl import a0, a1, a2, a3, a4, a5, a6, s0, s1, s2, s6, s7, t0, t1, t2, t3, 
 from pcie import TLBWindow
 from program import Dtype, Program
 from ttk import Cb, Noc
+from ttk.drisc import pattern, read_drisc_words, start_drisc, wait_drisc
 from ttk.mailbox import BriscMailbox as BM
 from ttk.noc import NOC, noc_xy
 from ttk.tensix import TensixL1
@@ -55,10 +56,6 @@ class WorkerCbKernel(KernelBase, Cb):
 
 class DriscCbKernel(KernelBase, Noc):
   pass
-
-
-def pattern(size: int) -> bytes:
-  return bytes(((i * 31 + 0x4D) ^ (i >> 4)) & 0xFF for i in range(size))
 
 
 def emit_dma_read_to_stage(fw: KernelBase, *, gddr_addr: int, size: int, stream: int):
@@ -179,46 +176,6 @@ def build_worker(*, size: int, pages: int) -> WorkerCbKernel:
   return fw.ret()
 
 
-def start_drisc(core: tuple[int, int], code: bytes, dev):
-  with TLBWindow(dev, start=core, addr=DRISC_L1_NOC_ALIAS) as l1:
-    regs = RegWindow(dev, core)
-    try:
-      l1.write(RESULT_ADDR, b"\0" * (RESULT_WORDS * 4))
-      l1.write(DRISC_FW_BASE, code)
-      reset_state = regs.read32(SOFT_RESET_0)
-      regs.write32(SOFT_RESET_0, reset_state | SOFT_RESET_BRISC)
-      regs.write32(DRISC_RESET_PC, DRISC_FW_BASE)
-      time.sleep(0.01)
-      regs.write32(SOFT_RESET_0, reset_state & ~SOFT_RESET_BRISC)
-    finally:
-      regs.close()
-
-
-def wait_drisc(core: tuple[int, int], dev, timeout: float) -> tuple[int, ...]:
-  with TLBWindow(dev, start=core, addr=DRISC_L1_NOC_ALIAS) as l1:
-    regs = RegWindow(dev, core)
-    deadline = time.time() + timeout
-    words = (0,) * RESULT_WORDS
-    try:
-      while time.time() < deadline:
-        words = struct.unpack("<" + "I" * RESULT_WORDS, l1.read(RESULT_ADDR, RESULT_WORDS * 4))
-        if words[0] == POC_MAGIC and words[6] == STATUS_DONE:
-          break
-        time.sleep(0.001)
-      reset_state = regs.read32(SOFT_RESET_0)
-      regs.write32(SOFT_RESET_0, reset_state | SOFT_RESET_BRISC)
-      if words[0] != POC_MAGIC or words[6] != STATUS_DONE:
-        raise TimeoutError(f"DRISC direct-CB feeder did not finish; words={[hex(w) for w in words]}")
-      return words
-    finally:
-      regs.close()
-
-
-def read_drisc_words(core: tuple[int, int], dev) -> tuple[int, ...]:
-  with TLBWindow(dev, start=core, addr=DRISC_L1_NOC_ALIAS) as l1:
-    return struct.unpack("<" + "I" * RESULT_WORDS, l1.read(RESULT_ADDR, RESULT_WORDS * 4))
-
-
 def main():
   parser = argparse.ArgumentParser(description="POC: DRISC DMA writes directly into a worker CB; BRISC owns CB metadata.")
   parser.add_argument("--bank", type=int, default=0)
@@ -243,7 +200,7 @@ def main():
     worker_core = device.cores[args.worker_index]
     worker_coord = noc_xy(*worker_core)
     dram_core = select_dram_core(device.dev, args.bank, args.endpoint)
-    data = pattern(size)
+    data = pattern(size, 0x4D)
 
     device.dev.set_power_state(True)
     try:
@@ -292,7 +249,7 @@ def main():
 
     device.dev.set_power_state(True)
     try:
-      wait_drisc(dram_core, device.dev, args.timeout)
+      wait_drisc(dram_core, device.dev, args.timeout, magic=POC_MAGIC, label="DRISC direct-CB feeder")
       with TLBWindow(device.dev, start=worker_core) as worker_l1:
         dst = struct.unpack("<I", worker_l1.read(REQUEST_DST, 4))[0]
         worker_status = struct.unpack("<I", worker_l1.read(REQUEST_WORKER_STATUS, 4))[0]

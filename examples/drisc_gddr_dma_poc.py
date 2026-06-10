@@ -19,6 +19,7 @@ from drisc_hello import (
   SOFT_RESET_0, SOFT_RESET_BRISC, select_dram_core,
 )
 from pcie import PCIDevice, TLBWindow
+from ttk.drisc import launch_drisc, pattern
 
 
 RESULT_ADDR = 0x1F000
@@ -157,35 +158,6 @@ def build_dma_kernel(*, op: int, gddr_addr: int, size: int, iterations: int = 1,
   return fw.compile()[0].data
 
 
-def pattern(size: int, seed: int) -> bytes:
-  return bytes(((i * 37 + seed) ^ (i >> 3)) & 0xFF for i in range(size))
-
-
-def launch_drisc(dev: PCIDevice, core: tuple[int, int], l1: TLBWindow, regs: RegWindow, code: bytes, timeout: float):
-  l1.write(RESULT_ADDR, b"\0" * (RESULT_WORDS * 4))
-  l1.write(DRISC_FW_BASE, code)
-  reset_state = regs.read32(SOFT_RESET_0)
-  regs.write32(SOFT_RESET_0, reset_state | SOFT_RESET_BRISC)
-  regs.write32(DRISC_RESET_PC, DRISC_FW_BASE)
-  time.sleep(0.01)
-  regs.write32(SOFT_RESET_0, reset_state & ~SOFT_RESET_BRISC)
-
-  status = 0
-  deadline = time.time() + timeout
-  while time.time() < deadline:
-    words = struct.unpack("<" + "I" * RESULT_WORDS, l1.read(RESULT_ADDR, RESULT_WORDS * 4))
-    if words[0] == RESULT_MAGIC and words[6] in (STATUS_DONE, STATUS_TIMEOUT):
-      status = words[6]
-      break
-    time.sleep(0.001)
-
-  final_reset_state = regs.read32(SOFT_RESET_0)
-  regs.write32(SOFT_RESET_0, final_reset_state | SOFT_RESET_BRISC)
-  if status == 0:
-    raise TimeoutError(f"DRISC DMA kernel did not finish on {core}")
-  return struct.unpack("<" + "I" * RESULT_WORDS, l1.read(RESULT_ADDR, RESULT_WORDS * 4))
-
-
 def main():
   parser = argparse.ArgumentParser(description="Proof of concept for Blackhole DRISC GDDR DMA.")
   parser.add_argument("--bank", type=int, default=0)
@@ -219,18 +191,18 @@ def main():
       gddr.write(read_src, read_data)
       l1.write(STAGE_ADDR, b"\0" * args.size)
       words_read = launch_drisc(
-        dev, core, l1, regs,
+        core, l1, regs,
         build_dma_kernel(op=OP_READ, gddr_addr=read_src, size=args.size, iterations=args.iters),
-        args.timeout,
+        args.timeout, magic=RESULT_MAGIC, label="DRISC DMA kernel",
       )
       l1_after_read = l1.read(STAGE_ADDR, args.size)
 
       l1.write(STAGE_ADDR, write_data)
       gddr.write(write_dst, b"\0" * args.size)
       words_write = launch_drisc(
-        dev, core, l1, regs,
+        core, l1, regs,
         build_dma_kernel(op=OP_WRITE, gddr_addr=write_dst, size=args.size, iterations=args.iters),
-        args.timeout,
+        args.timeout, magic=RESULT_MAGIC, label="DRISC DMA kernel",
       )
       gddr_after_write = gddr.read(write_dst, args.size)
     finally:

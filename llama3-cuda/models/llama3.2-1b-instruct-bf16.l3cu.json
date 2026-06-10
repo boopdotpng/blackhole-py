@@ -1,0 +1,18 @@
+{
+  "model_id": "unsloth/Llama-3.2-1B-Instruct",
+  "dim": 2048,
+  "hidden_dim": 8192,
+  "n_layers": 16,
+  "n_heads": 32,
+  "n_kv_heads": 8,
+  "vocab_size": 128256,
+  "max_position_embeddings": 131072,
+  "rope_dim": 64,
+  "norm_eps": 1e-05,
+  "rope_theta": 10000.0,
+  "rope_factor": 32.0,
+  "rope_low_freq_factor": 1.0,
+  "rope_high_freq_factor": 4.0,
+  "rope_original_max_position_embeddings": 8192.0,
+  "tensor_bytes": 2471628800
+}

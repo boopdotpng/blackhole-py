@@ -425,7 +425,10 @@ class Program:
     for (addr, data, label), segment_cores in _shared_segment_groups(per_core_segments).items():
       if label == "launch":
         continue
-      commands.append(McastWrite(mcast_rects(segment_cores), addr, data))
+      if addr >= 0xFF000000 and len(data) == 4:
+        commands.append(McastMmioWrite32(mcast_rects(segment_cores), addr, struct.unpack("<I", data)[0]))
+      else:
+        commands.append(McastWrite(mcast_rects(segment_cores), addr, data))
 
     commands.append(Run(target_cores))
     return commands

@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
+import argparse
+import os
 import struct
 import sys
 import time
@@ -11,6 +13,9 @@ base.MATH_FIDELITY = "hifi2" if base.HIFI else "lofi"
 base.EXPERIMENTAL_THROTTLE0 = True
 base.SUPPORTED_OUT_SUBBLOCK_H = 8
 base.SUPPORTED_OUT_SUBBLOCK_W = 1
+base.K_GROUP = int(os.environ.get("K_GROUP", "1"))
+base.INPUT_BUFFER_FACTOR = int(os.environ.get("INPUT_BUFFER_FACTOR", "2"))
+base.STREAM_PARTIAL_CB24 = os.environ.get("STREAM_PARTIAL_CB24", "") == "1"
 
 from asm import KernelBase
 from device import Device
@@ -30,13 +35,21 @@ from dsl import a0, a1, a2, a3, a4, a5, a6, a7, s0, s1, s2, s3, s4, s5, s6, s7, 
 from pcie import TLBWindow
 from program import Dtype, Program
 from ttk import Noc
+from ttk.drisc import read_drisc_words, start_drisc, wait_drisc
 from ttk.mailbox import BriscMailbox as BM, NcriscMailbox as NM
 from ttk.noc import NOC, noc_xy
 from ttk.tensix import TensixL1, TensixMMIO
 
 
 POC_MAGIC = RESULT_MAGIC ^ 0x4D4D4452  # "RDMM"
-TILE_BYTES = base.TILE_BYTES
+
+# Runtime-selected input/output formats (see select_dtype, called from main()).
+# Defaults match the bf16 path; --dtype bfp4 switches to BFLOAT4_B inputs.
+INPUT_DTYPE = Dtype.Float16_b
+OUTPUT_DTYPE = Dtype.Float16_b
+INPUT_TILE_BYTES = INPUT_DTYPE.tile_size
+OUTPUT_TILE_BYTES = OUTPUT_DTYPE.tile_size
+TILE_BYTES = INPUT_TILE_BYTES
 REQUEST_A = 0x178000
 REQUEST_B = 0x179000
 DEBUG_BRISC = 0x17A000
@@ -59,11 +72,52 @@ FIXED_5000_N_CHUNKS = 1
 FIXED_5000_M_SPLIT_ALL_CORES = False
 ACCEPT_CORRUPT_FEEDER_HEADER = False
 POLL_FINAL_FEEDER_STATUS = True
+# Defaults match the bf16 path; select_dtype() overrides these for bfp4.
 ALLOW_FEEDER_TIMEOUT_AFTER_WORKERS_DONE = False
+SMALL_SHAPE_MAX_FEEDERS = 0
+DUMP_ALL_WORKER_BREADCRUMBS = False
+# Whether _debug_mark may emit breadcrumb writes (only the bfp4 path did).
+_EMIT_BREADCRUMBS = False
 PROFILE_BRISC = base.PROFILE_BASE + 3 * base.PROFILE_RECORD_BYTES
 PROFILE_NCRISC = base.PROFILE_BASE + 4 * base.PROFILE_RECORD_BYTES
 PROFILE_FEEDER_FIRST_READY_WORD = 8
 PROFILE_FEEDER_DONE_WORD = 10
+
+
+def select_dtype(dtype: str) -> None:
+  """Apply the runtime input/output format selected on the command line.
+
+  Must run before any kernel/program/tensor data is built so the encoded
+  behavior matches the original per-dtype scripts exactly.
+  """
+  global INPUT_DTYPE, OUTPUT_DTYPE, INPUT_TILE_BYTES, OUTPUT_TILE_BYTES, TILE_BYTES
+  global DRISC_CHUNK_BYTES, RUNS, ALLOW_FEEDER_TIMEOUT_AFTER_WORKERS_DONE
+  global SMALL_SHAPE_MAX_FEEDERS, _EMIT_BREADCRUMBS
+  if dtype == "bfp4":
+    INPUT_DTYPE = Dtype.Bfp4_b
+    OUTPUT_DTYPE = Dtype.Float16_b
+    RUNS = 1
+    ALLOW_FEEDER_TIMEOUT_AFTER_WORKERS_DONE = True
+    SMALL_SHAPE_MAX_FEEDERS = int(os.environ.get("SMALL_SHAPE_MAX_FEEDERS", "8"))
+    _EMIT_BREADCRUMBS = True
+    base.OUTPUT_NOC = int(os.environ.get("OUTPUT_NOC", "1"))
+  else:
+    INPUT_DTYPE = Dtype.Float16_b
+    OUTPUT_DTYPE = Dtype.Float16_b
+    RUNS = base.RUNS
+    # With one-block REQ prefetch the senders finish before the feeders'
+    # final-status poll; the feeders can get their headers clobbered while
+    # still in stream mode. Workers reaching final REQ_DONE is the real
+    # completion signal; validation still gates correctness.
+    ALLOW_FEEDER_TIMEOUT_AFTER_WORKERS_DONE = True
+    SMALL_SHAPE_MAX_FEEDERS = 0
+    _EMIT_BREADCRUMBS = False
+  INPUT_TILE_BYTES = INPUT_DTYPE.tile_size
+  OUTPUT_TILE_BYTES = OUTPUT_DTYPE.tile_size
+  TILE_BYTES = INPUT_TILE_BYTES
+  DRISC_CHUNK_BYTES = DRISC_CHUNK_TILES * TILE_BYTES
+  base.INPUT_DTYPE = INPUT_DTYPE
+  base.INPUT_TILE_BYTES = INPUT_TILE_BYTES
 
 
 class DriscMatmulFeeder(KernelBase, Noc):
@@ -71,23 +125,31 @@ class DriscMatmulFeeder(KernelBase, Noc):
 
 
 def _debug_mark(fw: base.MatmulKernel, base_addr: int, code: int, block_reg=s6):
+  if not _EMIT_BREADCRUMBS or not base.ENABLE_BREADCRUMBS:
+    return fw
+  fw.write32(base_addr + 0, code, tmp_addr=t0, tmp_val=t1)
+  fw.write32(base_addr + 4, block_reg, tmp_addr=t0, tmp_val=t1)
   return fw
 
 
 def _profile_stamp(fw: KernelBase, addr: int):
-  return fw
+  return base.emit_profile_stamp(fw, addr)
 
 
 def _profile_result_stamp(fw: KernelBase, word_index: int):
   return fw
 
 
-def _request_and_wait(fw: base.MatmulKernel, *, request_addr: int, dst, size: int, seq):
+def _request_issue(fw: base.MatmulKernel, *, request_addr: int, dst, size: int, seq):
   fw.write32(request_addr + REQ_STATUS, REQ_EMPTY, tmp_addr=t0, tmp_val=t1)
   fw.write32(request_addr + REQ_DST, dst, tmp_addr=t0, tmp_val=t1)
   fw.write32(request_addr + REQ_SIZE, size, tmp_addr=t0, tmp_val=t1)
   fw.write32(request_addr + REQ_SEQ, seq, tmp_addr=t0, tmp_val=t1)
   fw.write32(request_addr + REQ_STATUS, REQ_READY, tmp_addr=t0, tmp_val=t1)
+  return fw
+
+
+def _request_wait_done(fw: base.MatmulKernel, *, request_addr: int, seq):
   wait = fw._new_label("wait_drisc_feed")
   fw.label(wait)
   fw.read32(t0, request_addr + REQ_STATUS, tmp_addr=t1)
@@ -96,6 +158,11 @@ def _request_and_wait(fw: base.MatmulKernel, *, request_addr: int, dst, size: in
   fw.read32(t0, request_addr + REQ_SEQ, tmp_addr=t1)
   fw.bne(t0, seq, wait)
   return fw
+
+
+def _request_and_wait(fw: base.MatmulKernel, *, request_addr: int, dst, size: int, seq):
+  _request_issue(fw, request_addr=request_addr, dst=dst, size=size, seq=seq)
+  return _request_wait_done(fw, request_addr=request_addr, seq=seq)
 
 
 def matmul_reader_sender_drisc(plan: base.MatmulPlan) -> base.MatmulKernel:
@@ -116,16 +183,21 @@ def matmul_reader_sender_drisc(plan: base.MatmulPlan) -> base.MatmulKernel:
   fw.li(s6, 0)
   _profile_stamp(fw, PROFILE_BRISC)
   _debug_mark(fw, DEBUG_BRISC, 0xA000)
+  block_bytes = plan.in0_block_num_tiles * TILE_BYTES
+  # Prefetch block 0: reserve CB space and hand the feeder its first request
+  # before entering the loop, so the GDDR DMA overlaps the mcast handshake of
+  # the previous block on every later iteration.
+  fw.cb_reserve_back(BM.CB_INTERFACE, 0, s7)
+  fw.cb_write_ptr(BM.CB_INTERFACE, 0, out=s0)
+  _request_issue(fw, request_addr=REQUEST_A, dst=s0, size=block_bytes, seq=s6)
   fw.label("reader_sender_block_loop")
   fw.bne(s6, s8, "reader_sender_block_body")
   fw.j("reader_sender_done")
   fw.label("reader_sender_block_body")
   _debug_mark(fw, DEBUG_BRISC, 0xA001)
-  fw.cb_reserve_back(BM.CB_INTERFACE, 0, s7)
-  _debug_mark(fw, DEBUG_BRISC, 0xA002)
-  fw.cb_write_ptr(BM.CB_INTERFACE, 0, out=s9)
-  block_bytes = plan.in0_block_num_tiles * TILE_BYTES
-  _request_and_wait(fw, request_addr=REQUEST_A, dst=s9, size=block_bytes, seq=s6)
+  _request_wait_done(fw, request_addr=REQUEST_A, seq=s6)
+  fw.mv(s9, s0)
+  fw.cb_push_back(BM.CB_INTERFACE, 0, s7)
   _debug_mark(fw, DEBUG_BRISC, 0xA003)
 
   fw.arg(t0, 21)
@@ -181,9 +253,12 @@ def matmul_reader_sender_drisc(plan: base.MatmulPlan) -> base.MatmulKernel:
   fw.noc_semaphore_set_multicast(0, 0, a4, a5, 1, t0, a=t1, v=t2)
   fw.label("reader_sender_skip_east")
   _debug_mark(fw, DEBUG_BRISC, 0xA006)
-
-  fw.cb_push_back(BM.CB_INTERFACE, 0, s7)
-  _debug_mark(fw, DEBUG_BRISC, 0xA007)
+  fw.addi(s4, s6, 1)
+  fw.beq(s4, s8, "reader_sender_skip_prefetch")
+  fw.cb_reserve_back(BM.CB_INTERFACE, 0, s7)
+  fw.cb_write_ptr(BM.CB_INTERFACE, 0, out=s0)
+  _request_issue(fw, request_addr=REQUEST_A, dst=s0, size=block_bytes, seq=s4)
+  fw.label("reader_sender_skip_prefetch")
   fw.addi(s6, s6, 1)
   fw.j("reader_sender_block_loop")
   fw.label("reader_sender_done")
@@ -244,16 +319,18 @@ def matmul_writer_sender_drisc(plan: base.MatmulPlan) -> base.MatmulKernel:
   fw.li(s6, 0)
   _profile_stamp(fw, PROFILE_NCRISC)
   _debug_mark(fw, DEBUG_NCRISC, 0xB000)
+  block_bytes = plan.in1_block_num_tiles * TILE_BYTES
+  fw.cb_reserve_back(NM.CB_INTERFACE, 1, s7)
+  fw.cb_write_ptr(NM.CB_INTERFACE, 1, out=s0)
+  _request_issue(fw, request_addr=REQUEST_B, dst=s0, size=block_bytes, seq=s6)
   fw.label("writer_sender_block_loop")
   fw.bne(s6, s8, "writer_sender_block_body")
   fw.j("writer_sender_blocks_done")
   fw.label("writer_sender_block_body")
   _debug_mark(fw, DEBUG_NCRISC, 0xB001)
-  fw.cb_reserve_back(NM.CB_INTERFACE, 1, s7)
-  _debug_mark(fw, DEBUG_NCRISC, 0xB002)
-  fw.cb_write_ptr(NM.CB_INTERFACE, 1, out=s9)
-  block_bytes = plan.in1_block_num_tiles * TILE_BYTES
-  _request_and_wait(fw, request_addr=REQUEST_B, dst=s9, size=block_bytes, seq=s6)
+  _request_wait_done(fw, request_addr=REQUEST_B, seq=s6)
+  fw.mv(s9, s0)
+  fw.cb_push_back(NM.CB_INTERFACE, 1, s7)
   _debug_mark(fw, DEBUG_NCRISC, 0xB003)
 
   fw.arg(t0, 16)
@@ -285,9 +362,12 @@ def matmul_writer_sender_drisc(plan: base.MatmulPlan) -> base.MatmulKernel:
   fw.noc_semaphore_set_multicast(1, 0, a4, a5, 1, t0, a=t1, v=t2)
   fw.label("writer_sender_skip_mcast")
   _debug_mark(fw, DEBUG_NCRISC, 0xB005)
-
-  fw.cb_push_back(NM.CB_INTERFACE, 1, s7)
-  _debug_mark(fw, DEBUG_NCRISC, 0xB006)
+  fw.addi(s4, s6, 1)
+  fw.beq(s4, s8, "writer_sender_skip_prefetch")
+  fw.cb_reserve_back(NM.CB_INTERFACE, 1, s7)
+  fw.cb_write_ptr(NM.CB_INTERFACE, 1, out=s0)
+  _request_issue(fw, request_addr=REQUEST_B, dst=s0, size=block_bytes, seq=s4)
+  fw.label("writer_sender_skip_prefetch")
   fw.addi(s6, s6, 1)
   fw.j("writer_sender_block_loop")
   fw.label("writer_sender_blocks_done")
@@ -362,10 +442,10 @@ def build_program_drisc(plan: base.MatmulPlan, c_addr: int, num_banks: int, layo
     trisc1=trisc1,
     trisc2=trisc2,
     cbs=[
-      (0, TILE_BYTES, plan.cb0_pages),
-      (1, TILE_BYTES, plan.cb1_pages),
-      (16, TILE_BYTES, plan.cb16_pages),
-      (24, TILE_BYTES, plan.cb24_pages),
+      (0, INPUT_TILE_BYTES, plan.cb0_pages),
+      (1, INPUT_TILE_BYTES, plan.cb1_pages),
+      (16, OUTPUT_TILE_BYTES, plan.cb16_pages),
+      (24, OUTPUT_TILE_BYTES, plan.cb24_pages),
     ],
     semaphores=base.NUM_SEMAPHORES,
     grid=(plan.rows, plan.cols),
@@ -435,9 +515,9 @@ def plan_matmul_drisc(M: int, K: int, N: int, cores: list[base.Core], max_feeder
   l1_data_bytes = TensixL1.SIZE - TensixL1.DATA_BUFFER_SPACE_BASE - base.SYNC_BYTES
 
   def fits_l1(pcm: int, pcn: int, bw: int) -> bool:
-    cb0 = base.INPUT_BUFFER_FACTOR * pcm * bw * TILE_BYTES
-    cb1 = base.INPUT_BUFFER_FACTOR * pcn * bw * TILE_BYTES
-    cb_out = pcm * pcn * TILE_BYTES
+    cb0 = base.INPUT_BUFFER_FACTOR * pcm * bw * INPUT_TILE_BYTES
+    cb1 = base.INPUT_BUFFER_FACTOR * pcn * bw * INPUT_TILE_BYTES
+    cb_out = pcm * pcn * OUTPUT_TILE_BYTES
     return cb0 + cb1 + cb_out <= l1_data_bytes
 
   best: tuple | None = None
@@ -687,49 +767,104 @@ def build_drisc_stream_feeder(
   return fw.compile()[0].data
 
 
-def start_drisc(core: tuple[int, int], code: bytes, dev):
-  with TLBWindow(dev, start=core, addr=DRISC_L1_NOC_ALIAS) as l1:
-    regs = RegWindow(dev, core)
+def stop_drisc(core: tuple[int, int], dev) -> None:
+  regs = RegWindow(dev, core)
+  try:
+    reset_state = regs.read32(SOFT_RESET_0)
+    regs.write32(SOFT_RESET_0, reset_state | SOFT_RESET_BRISC)
+  finally:
+    regs.close()
+
+
+def stop_feeders(feeders, dev) -> None:
+  for dram_core, *_rest in feeders:
+    stop_drisc(dram_core, dev)
+
+
+def _read_l1_u32(l1: TLBWindow, addr: int) -> int:
+  return struct.unpack("<I", l1.read(addr, 4))[0]
+
+
+def _dump_worker_breadcrumbs(chunk_idx: int, plan: base.MatmulPlan, feeders, dev, *, all_workers: bool = False) -> None:
+  feeder_roles = {}
+  for _dram_core, role, worker_core, _size, _bank, request_addr in feeders:
+    feeder_roles.setdefault(worker_core, []).append((role, request_addr))
+
+  labels = (
+    ("brisc", DEBUG_BRISC, 2),
+    ("ncrisc", DEBUG_NCRISC, 2),
+    ("ncrisc_out", base.DEBUG_NCRISC_OUTPUT, 4),
+    ("trisc0", base.DEBUG_TRISC0, 4),
+    ("trisc1", base.DEBUG_TRISC1, 4),
+    ("trisc2", base.DEBUG_TRISC2, 4),
+    ("sync_start", base.SYNC_TRISC_START, 1),
+    ("sync_init", base.SYNC_TRISC_INIT, 3),
+  )
+  worker_set = set(plan.cores()) if all_workers or DUMP_ALL_WORKER_BREADCRUMBS else set()
+  worker_set |= set(feeder_roles)
+  for worker_core in sorted(worker_set):
     try:
-      l1.write(RESULT_ADDR, b"\0" * (RESULT_WORDS * 4))
-      l1.write(DRISC_FW_BASE, code)
-      reset_state = regs.read32(SOFT_RESET_0)
-      regs.write32(SOFT_RESET_0, reset_state | SOFT_RESET_BRISC)
-      regs.write32(DRISC_RESET_PC, DRISC_FW_BASE)
-      time.sleep(0.01)
-      regs.write32(SOFT_RESET_0, reset_state & ~SOFT_RESET_BRISC)
-    finally:
-      regs.close()
-
-
-def wait_drisc(core: tuple[int, int], dev, timeout: float) -> tuple[int, ...]:
-  with TLBWindow(dev, start=core, addr=DRISC_L1_NOC_ALIAS) as l1:
-    regs = RegWindow(dev, core)
-    deadline = time.time() + timeout
-    words = (0,) * RESULT_WORDS
-    try:
-      while time.time() < deadline:
-        words = struct.unpack("<" + "I" * RESULT_WORDS, l1.read(RESULT_ADDR, RESULT_WORDS * 4))
-        if words[6] == STATUS_DONE and (words[0] == POC_MAGIC or ACCEPT_CORRUPT_FEEDER_HEADER):
-          break
-        time.sleep(0.001)
-      reset_state = regs.read32(SOFT_RESET_0)
-      regs.write32(SOFT_RESET_0, reset_state | SOFT_RESET_BRISC)
-      if words[6] != STATUS_DONE or (words[0] != POC_MAGIC and not ACCEPT_CORRUPT_FEEDER_HEADER):
-        raise TimeoutError(f"DRISC matmul feeder did not finish on {core}; words={[hex(w) for w in words]}")
-      return words
-    finally:
-      regs.close()
-
-
-def read_drisc_words(core: tuple[int, int], dev) -> tuple[int, ...]:
-  with TLBWindow(dev, start=core, addr=DRISC_L1_NOC_ALIAS) as l1:
-    return struct.unpack("<" + "I" * RESULT_WORDS, l1.read(RESULT_ADDR, RESULT_WORDS * 4))
+      with TLBWindow(dev, start=worker_core) as worker_l1:
+        parts = []
+        for label, addr, count in labels:
+          words = [_read_l1_u32(worker_l1, addr + i * 4) for i in range(count)]
+          parts.append(f"{label}={[hex(w) for w in words]}")
+        for role, request_addr in feeder_roles.get(worker_core, ()):
+          req_words = [
+            _read_l1_u32(worker_l1, request_addr + REQ_STATUS),
+            _read_l1_u32(worker_l1, request_addr + REQ_DST),
+            _read_l1_u32(worker_l1, request_addr + REQ_SIZE),
+            _read_l1_u32(worker_l1, request_addr + REQ_SEQ),
+          ]
+          parts.append(f"req_{role}={[hex(w) for w in req_words]}")
+      print(f"breadcrumb chunk={chunk_idx} worker={worker_core} " + " ".join(parts), file=sys.stderr)
+    except Exception as exc:
+      print(f"breadcrumb chunk={chunk_idx} worker={worker_core} read_failed={exc}", file=sys.stderr)
 
 
 def _tile_stream(tiled: bytes, tile_indices: list[int]) -> bytes:
   view = memoryview(tiled)
-  return b"".join(bytes(view[i * TILE_BYTES:(i + 1) * TILE_BYTES]) for i in tile_indices)
+  return b"".join(bytes(view[i * INPUT_TILE_BYTES:(i + 1) * INPUT_TILE_BYTES]) for i in tile_indices)
+
+
+def _pack_bfp4_b_tiles(x: np.ndarray) -> bytes:
+  rows, cols = x.shape
+  if rows % base.TILE or cols % base.TILE:
+    raise ValueError("BFLOAT4_B packing requires tile-padded shape")
+  tiles_r, tiles_c = rows // base.TILE, cols // base.TILE
+  n_tiles = tiles_r * tiles_c
+  blocks = np.ascontiguousarray(x, dtype=np.float32).reshape(tiles_r, base.TILE, tiles_c, base.TILE)
+  blocks = blocks.transpose(0, 2, 1, 3).reshape(n_tiles, base.TILE, base.TILE)
+  face_rows = blocks.reshape(n_tiles, 2, 16, 2, 16).transpose(0, 1, 3, 2, 4).reshape(n_tiles, 64, 16)
+
+  u32 = face_rows.view(np.uint32)
+  exps = ((u32 & 0x7F800000) >> 23).astype(np.uint8)
+  shared = exps.max(axis=2).astype(np.uint8)
+
+  mantissa = (u32 & 0x007FFFFF).astype(np.uint32) | np.uint32(1 << 23)
+  exp = ((u32 & 0x7F800000) >> 23).astype(np.int32)
+  sign = ((u32 & 0x80000000) >> 31).astype(np.uint32)
+  zero_or_denormal = exp == 0
+  diff = shared[:, :, None].astype(np.int32) - exp
+  shift = np.clip(diff, 0, 31).astype(np.uint32)
+  mantissa = np.right_shift(mantissa, shift)
+  mantissa = np.where(diff > 31, 0, mantissa)
+
+  round_mask = np.uint32((1 << 21) - 1)
+  tie_value = np.uint32(1 << 20)
+  round_value = mantissa & round_mask
+  mantissa = mantissa >> np.uint32(21)
+  guard = mantissa & np.uint32(1)
+  round_up = (round_value > tie_value) | ((round_value == tie_value) & (guard == 1))
+  mantissa = np.minimum(mantissa + round_up.astype(np.uint32), np.uint32(7))
+  sign = np.where(mantissa == 0, 0, sign)
+  bfp = np.where(zero_or_denormal, 0, (sign << np.uint32(3)) | mantissa).astype(np.uint32)
+
+  shifts = (np.arange(8, dtype=np.uint32) * np.uint32(4)).reshape(1, 1, 1, 8)
+  packed_data = (bfp.reshape(n_tiles, 64, 2, 8) << shifts).sum(axis=3, dtype=np.uint32).reshape(n_tiles, 128)
+  exp_words = (shared.reshape(n_tiles, 16, 4).astype(np.uint32) << (np.arange(4, dtype=np.uint32) * 8)).sum(axis=2, dtype=np.uint32)
+  packed = np.concatenate([exp_words, packed_data], axis=1).astype("<u4", copy=False)
+  return packed.tobytes()
 
 
 def _a_sender_indices(plan: base.MatmulPlan, layout: base.TensorLayout, row_index: int) -> list[int]:
@@ -757,19 +892,28 @@ def _b_sender_indices(plan: base.MatmulPlan, layout: base.TensorLayout, col_inde
 
 
 def main() -> None:
-  if len(sys.argv) == 1:
+  parser = argparse.ArgumentParser(description="DRISC-fed matmul peak benchmark.")
+  parser.add_argument("--dtype", choices=("bf16", "bfp4"), default="bf16")
+  parser.add_argument("shape", nargs="*", type=int, help="M N K (defaults to 5000 5000 5000)")
+  args = parser.parse_args()
+  if not args.shape:
     M = N = K = 5000
-  elif len(sys.argv) == 4:
-    M, N, K = (int(arg) for arg in sys.argv[1:])
+  elif len(args.shape) == 3:
+    M, N, K = args.shape
   else:
-    raise SystemExit("Usage: matmul_peak_drisc.py [M N K]")
+    raise SystemExit("Usage: matmul_peak_drisc.py [--dtype {bf16,bfp4}] [M N K]")
+  select_dtype(args.dtype)
+  is_bfp4 = args.dtype == "bfp4"
   device = Device()
   try:
     num_banks = len(device.dram.bank_tiles)
     feeder_tiles = list(device.board_info.dram_tiles)
     if not USE_ALL_FEEDERS:
       feeder_tiles = [tile for tile in feeder_tiles if (tile[1], tile[2]) != (0, 0)]
-    chunks = plan_output_chunks_drisc(M, K, N, device.cores, num_banks, len(feeder_tiles))
+    max_plan_feeders = len(feeder_tiles)
+    if SMALL_SHAPE_MAX_FEEDERS and (M, K, N) != (5000, 5000, 5000):
+      max_plan_feeders = min(max_plan_feeders, SMALL_SHAPE_MAX_FEEDERS)
+    chunks = plan_output_chunks_drisc(M, K, N, device.cores, num_banks, max_plan_feeders)
     Mp, Kp, Np = base.global_padded_shape(M, K, N, chunks)
 
     a_ref, b_ref = base.make_inputs(M, K, N)
@@ -777,9 +921,13 @@ def main() -> None:
     b_padded = np.zeros((Kp, Np), dtype=np.float32)
     a_padded[:M, :K] = a_ref
     b_padded[:K, :N] = b_ref
-    a_tiled = tilize(base.to_bf16_device_bytes(a_padded), Dtype.Float16_b.bpe, (Mp, Kp))
-    b_tiled = tilize(base.to_bf16_device_bytes(b_padded), Dtype.Float16_b.bpe, (Kp, Np))
-    c_buf = device.dram.alloc((Mp // base.TILE) * (Np // base.TILE), dtype=Dtype.Float16_b, shape=(Mp, Np), name="C")
+    if is_bfp4:
+      a_tiled = _pack_bfp4_b_tiles(a_padded)
+      b_tiled = _pack_bfp4_b_tiles(b_padded)
+    else:
+      a_tiled = tilize(base.to_bf16_device_bytes(a_padded), Dtype.Float16_b.bpe, (Mp, Kp))
+      b_tiled = tilize(base.to_bf16_device_bytes(b_padded), Dtype.Float16_b.bpe, (Kp, Np))
+    c_buf = device.dram.alloc((Mp // base.TILE) * (Np // base.TILE), dtype=OUTPUT_DTYPE, shape=(Mp, Np), name="C")
 
     run_times_us = []
     for _run in range(RUNS):
@@ -798,8 +946,8 @@ def main() -> None:
         if len(chunk_feeder_tiles) < len(sender_cores):
           raise SystemExit(f"need {len(sender_cores)} DRAM feeder tiles, have {len(chunk_feeder_tiles)}")
 
-        block_a = plan.in0_block_num_tiles * TILE_BYTES
-        block_b = plan.in1_block_num_tiles * TILE_BYTES
+        block_a = plan.in0_block_num_tiles * INPUT_TILE_BYTES
+        block_b = plan.in1_block_num_tiles * INPUT_TILE_BYTES
         feeders = []
         gddr_cursor = FEEDER_GDDR_BASE
         for i, worker_core in enumerate(sender_cores):
@@ -836,12 +984,19 @@ def main() -> None:
         try:
           run_timings.extend(device.run(prog))
         except TimeoutError:
+          feeder_snapshots = []
           for idx, (dram_core, role, worker_core, size, bank, request_addr) in enumerate(feeders):
             words = read_drisc_words(dram_core, device.dev)
             with TLBWindow(device.dev, start=worker_core) as worker_l1:
               req_status = struct.unpack("<I", worker_l1.read(request_addr + REQ_STATUS, 4))[0]
               req_dst = struct.unpack("<I", worker_l1.read(request_addr + REQ_DST, 4))[0]
               req_seq = struct.unpack("<I", worker_l1.read(request_addr + REQ_SEQ, 4))[0]
+            feeder_snapshots.append((idx, dram_core, role, worker_core, size, bank, req_status, req_dst, req_seq, words))
+          if is_bfp4:
+            stop_feeders(feeders, device.dev)
+            if base.ENABLE_BREADCRUMBS:
+              _dump_worker_breadcrumbs(chunk_idx, plan, feeders, device.dev, all_workers=True)
+          for idx, dram_core, role, worker_core, size, bank, req_status, req_dst, req_seq, words in feeder_snapshots:
             print(
               f"feeder-timeout chunk={chunk_idx} idx={idx} role={role} bank={bank} dram_core={dram_core} worker={worker_core} "
               f"stream={size} req_status={req_status} req_seq={req_seq} req_dst=0x{req_dst:x} "
@@ -852,9 +1007,14 @@ def main() -> None:
 
         try:
           for dram_core, _role, _worker_core, _size, _bank, _request_addr in feeders:
-            wait_drisc(dram_core, device.dev, timeout=10.0)
+            wait_drisc(
+              dram_core, device.dev, timeout=10.0, magic=POC_MAGIC,
+              accept_corrupt=ACCEPT_CORRUPT_FEEDER_HEADER, label="DRISC matmul feeder",
+            )
         except TimeoutError as exc:
           print(f"feeder-wait-timeout chunk={chunk_idx}: {exc}", file=sys.stderr)
+          if is_bfp4 and base.ENABLE_BREADCRUMBS:
+            _dump_worker_breadcrumbs(chunk_idx, plan, feeders, device.dev)
           feeder_states = []
           for idx, (dram_core, role, worker_core, size, bank, request_addr) in enumerate(feeders):
             words = read_drisc_words(dram_core, device.dev)
@@ -871,7 +1031,9 @@ def main() -> None:
             )
           workers_done = all(req_status == REQ_DONE and req_seq == plan.num_blocks - 1 for _words, req_status, req_seq in feeder_states)
           if not ALLOW_FEEDER_TIMEOUT_AFTER_WORKERS_DONE or not workers_done:
+            stop_feeders(feeders, device.dev)
             raise
+          stop_feeders(feeders, device.dev)
           print(
             f"feeder-wait-timeout chunk={chunk_idx}: continuing because all worker requests reached final REQ_DONE",
             file=sys.stderr,
@@ -879,8 +1041,24 @@ def main() -> None:
       if run_timings:
         run_times_us.append(sum(timing["us"] for timing in run_timings))
 
-    c_raw = device.dram_read(c_buf)
-    base.validate(a_ref, b_ref, c_raw, M, N, Mp, Np)
+    if base.PROFILE_STAMPS:
+      sample = [plan.cores()[0], plan.cores()[len(plan.cores()) // 2], plan.cores()[-1]]
+      for core in sample:
+        with TLBWindow(device.dev, start=core) as l1:
+          parts = []
+          for name, rec in base.PROFILE_NAMES:
+            lo0 = _read_l1_u32(l1, rec + 0); hi0 = _read_l1_u32(l1, rec + 4)
+            lo1 = _read_l1_u32(l1, rec + 8); hi1 = _read_l1_u32(l1, rec + 12)
+            t0c = (hi0 << 32) | lo0
+            t1c = (hi1 << 32) | lo1
+            parts.append(f"{name}={(t1c - t0c) / 1350.0:.1f}us@{t0c % (1 << 32)}")
+          for cname, caddr in base.PROFILE_COUNTERS:
+            cycles = _read_l1_u32(l1, caddr)
+            parts.append(f"{cname}={cycles / 1350.0 / max(RUNS, 1):.1f}us")
+          print(f"profile core={core} " + " ".join(parts), file=sys.stderr)
+    if not is_bfp4:
+      c_raw = device.dram_read(c_buf)
+      base.validate(a_ref, b_ref, c_raw, M, N, Mp, Np)
     if not run_times_us:
       raise RuntimeError("DRISC matmul timing is unavailable without fast dispatch")
     avg_us = sum(run_times_us) / len(run_times_us)
@@ -890,6 +1068,8 @@ def main() -> None:
     print(f"  padded: {Mp}x{Kp}x{Np}")
     print(f"  kernel_avg: {avg_us:,.1f} us")
     print(f"  throughput: {base.tflops(Mp, Np, Kp, avg_us):.2f} TFLOP/s")
+    if is_bfp4:
+      print("  validation: skipped (BFLOAT4_B timing experiment)")
   finally:
     device.close()
 

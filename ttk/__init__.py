@@ -1,8 +1,7 @@
 from __future__ import annotations
 
 from ttk.cb import Cb
-from ttk.debug import Debug
 from ttk.noc import Noc
 from ttk.tensix import Tensix
 
-__all__ = ["Cb", "Debug", "Noc", "Tensix"]
+__all__ = ["Cb", "Noc", "Tensix"]

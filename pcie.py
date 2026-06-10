@@ -67,7 +67,6 @@ Core = tuple[int, int]
 TELEMETRY_TAGS = {
   "BOARD_ID_HIGH": 1,
   "BOARD_ID_LOW": 2,
-  "ENABLED_TENSIX_COL": 34,
   "ENABLED_GDDR": 36,
 }
 
@@ -95,6 +94,36 @@ class BoardInfo:
   @property
   def cq_cores(self) -> set[Core]:
     return {self.prefetch_core, self.dispatch_core}
+
+def _build_board_info(board: str, effective_gddr: int, fast_dispatch: bool) -> BoardInfo:
+  columns = P100_TENSIX_X if board == "p100a" else P150_TENSIX_X
+  workers = [(x, y) for x in columns for y in range(2, 12)]
+  rightmost_x = columns[-1]
+  prefetch_core = (rightmost_x, 2)
+  dispatch_core = (rightmost_x, 3)
+  cq_cores = {prefetch_core, dispatch_core}
+  program_cores = [core for core in workers if not fast_dispatch or core not in cq_cores]
+  harvested = [bank for bank in range(8) if ((effective_gddr >> bank) & 1) == 0]
+  if len(harvested) > 1:
+    raise RuntimeError(f"unsupported harvested DRAM banks: {harvested}")
+  bank_ys = (
+    (0, 1, 11), (2, 3, 10), (4, 8, 9), (5, 6, 7),
+    (0, 1, 11), (2, 3, 10), (4, 8, 9), (5, 6, 7),
+  )
+  return BoardInfo(
+    board=board,
+    worker_cores=workers,
+    program_cores=program_cores,
+    dram_tiles=[
+      (bank, 0 if bank < 4 else 9, y)
+      for bank in range(8)
+      if (effective_gddr >> bank) & 1
+      for y in bank_ys[bank]
+    ],
+    prefetch_core=prefetch_core,
+    dispatch_core=dispatch_core,
+    harvested_dram_bank=harvested[0] if harvested else None,
+  )
 
 _libc = ctypes.CDLL(ctypes.util.find_library("c"), use_errno=True)
 _libc.mmap.restype = ctypes.c_void_p
@@ -532,35 +561,7 @@ class PCIDevice:
     if enabled_gddr is None:
       raise RuntimeError("ENABLED_GDDR telemetry is unavailable")
 
-    columns = P100_TENSIX_X if board == "p100a" else P150_TENSIX_X
-    workers = [(x, y) for x in columns for y in range(2, 12)]
-    rightmost_x = columns[-1]
-    prefetch_core = (rightmost_x, 2)
-    dispatch_core = (rightmost_x, 3)
-    cq_cores = {prefetch_core, dispatch_core}
-    program_cores = [core for core in workers if not fast_dispatch or core not in cq_cores]
-    effective_gddr = enabled_gddr & DEFAULT_GDDR_ENABLED
-    harvested = [bank for bank in range(8) if ((effective_gddr >> bank) & 1) == 0]
-    if len(harvested) > 1:
-      raise RuntimeError(f"unsupported harvested DRAM banks: {harvested}")
-    bank_ys = (
-      (0, 1, 11), (2, 3, 10), (4, 8, 9), (5, 6, 7),
-      (0, 1, 11), (2, 3, 10), (4, 8, 9), (5, 6, 7),
-    )
-    return BoardInfo(
-      board=board,
-      worker_cores=workers,
-      program_cores=program_cores,
-      dram_tiles=[
-        (bank, 0 if bank < 4 else 9, y)
-        for bank in range(8)
-        if (effective_gddr >> bank) & 1
-        for y in bank_ys[bank]
-      ],
-      prefetch_core=prefetch_core,
-      dispatch_core=dispatch_core,
-      harvested_dram_bank=harvested[0] if harvested else None,
-    )
+    return _build_board_info(board, enabled_gddr & DEFAULT_GDDR_ENABLED, fast_dispatch)
 
   @classmethod
   def reset_index(cls, index: int = 0):

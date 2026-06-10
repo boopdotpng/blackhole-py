@@ -7,13 +7,16 @@ import time
 from ttk.addrs import Core, L1_ALIGN, PCIE_ALIGN, align_up, noc_xy
 from ttk.tensix import TensixL1
 from pcie import Mapping, PCIDevice, TLBWindow
-from program import IRCommand, McastWrite, Run, UnicastWrite
+from program import IRCommand, McastMmioWrite32, McastWrite, Run, UnicastWrite
 
 Rect = tuple[int, int, int, int]
 PAGE_SIZE = os.sysconf("SC_PAGE_SIZE")
 
-# CQ L1 address map. These addresses are consumed by fw/cq.py.
-_CQ_L1 = 0x196C0
+# CQ L1 address map. These addresses are the single source of truth for the CQ
+# ABI: fw/cq.py imports this module and aliases the names below so the host
+# encoder and the on-device prefetch/dispatch firmware can never drift apart.
+CQ_L1 = 0x196C0
+_CQ_L1 = CQ_L1  # backwards-compatible private alias for this module's body
 CQ_PREFETCH_Q_RD_PTR = _CQ_L1 + 0x00
 CQ_PREFETCH_Q_PCIE_RD = _CQ_L1 + 0x04
 CQ_COMPLETION_WR_PTR = _CQ_L1 + 0x10
@@ -42,15 +45,32 @@ _HOST_CQ_WR_OFF = 2 * PCIE_ALIGN
 _HOST_CQ_RD_OFF = 3 * PCIE_ALIGN
 _HOST_SYS_END_BASE = _HOST_TIMESTAMP_BASE + _HOST_TIMESTAMP_SIZE
 
-# Prefetch/dispatch command IDs.
-_RELAY_INLINE = 5
-_WRITE_LINEAR_HOST = 3
-_WRITE_PACKED = 5
-_WRITE_PACKED_LARGE = 6
-_WAIT = 7
-_GO_SIGNAL = 14
-_SET_GO_NOC_DATA = 17
-_TIMESTAMP = 18
+# Prefetch/dispatch command IDs. Public names are the shared CQ ABI consumed by
+# fw/cq.py; the leading-underscore aliases keep this module's encoder body terse.
+CMD_RELAY_INLINE = 5
+CMD_WRITE_LINEAR_HOST = 3
+CMD_WRITE_PACKED = 5
+CMD_WRITE_PACKED_LARGE = 6
+CMD_WAIT = 7
+CMD_GO_SIGNAL = 14
+CMD_SET_GO_NOC_DATA = 17
+CMD_TIMESTAMP = 18
+_RELAY_INLINE = CMD_RELAY_INLINE
+_WRITE_LINEAR_HOST = CMD_WRITE_LINEAR_HOST
+_WRITE_PACKED = CMD_WRITE_PACKED
+_WRITE_PACKED_LARGE = CMD_WRITE_PACKED_LARGE
+_WAIT = CMD_WAIT
+_GO_SIGNAL = CMD_GO_SIGNAL
+_SET_GO_NOC_DATA = CMD_SET_GO_NOC_DATA
+_TIMESTAMP = CMD_TIMESTAMP
+
+# Wait-command flags and packed-write flags (shared with fw/cq.py).
+CQ_WAIT_BARRIER = 0x01
+CQ_WAIT_WAIT_STREAM = 0x08
+CQ_WAIT_CLEAR_STREAM = 0x10
+CQ_PACKED_NO_STRIDE = 0x02
+CQ_PACKED_LARGE_UNLINK = 0x01
+GO_NO_MULTICAST = 0xFF
 
 CQ_CMD_SIZE = 16
 DONE_STREAM = 48
@@ -68,7 +88,7 @@ def _hdr(fmt: str, values: tuple) -> bytes:
 def _write_packed(cores: list[Core], addr: int, data: bytes | list[bytes]) -> bytes:
   uniform = isinstance(data, bytes)
   size = len(data) if uniform else len(data[0])
-  flags = 0x02 if uniform else 0
+  flags = CQ_PACKED_NO_STRIDE if uniform else 0
   hdr = _hdr("<BBHHHI", (_WRITE_PACKED, flags, len(cores), 0, size, addr))
   targets = b"".join(struct.pack("<I", noc_xy(x, y)) for x, y in cores)
   targets = targets.ljust(align_up(len(targets), L1_ALIGN), b"\0")
@@ -84,9 +104,9 @@ def _write_packed_large(rects: list[Rect], addr: int, data: bytes) -> list[bytes
   records: list[bytes] = []
   for i in range(0, len(rects), 35):
     batch = rects[i : i + 35]
-    hdr = _hdr("<BBHHH", (_WRITE_PACKED_LARGE, 2, len(batch), L1_ALIGN, 0))
+    hdr = _hdr("<BBHHH", (_WRITE_PACKED_LARGE, CQ_PACKED_NO_STRIDE, len(batch), L1_ALIGN, 0))
     subcmds = b"".join(
-      struct.pack("<IIHBB", xy, addr, len(data) - 1, count, 0x01)
+      struct.pack("<IIHBB", xy, addr, len(data) - 1, count, CQ_PACKED_LARGE_UNLINK)
       for rect in batch
       for xy, count in [_noc_mcast_xy(rect)]
     )
@@ -95,7 +115,7 @@ def _write_packed_large(rects: list[Rect], addr: int, data: bytes) -> list[bytes
   return records
 
 def _barrier() -> bytes:
-  return _hdr("<BBHII", (_WAIT, 0x01, 0, 0, 0))
+  return _hdr("<BBHII", (_WAIT, CQ_WAIT_BARRIER, 0, 0, 0))
 
 def _set_go_signal_noc_data(cores: list[Core]) -> bytes:
   hdr = _hdr("<BBHI", (_SET_GO_NOC_DATA, 0, 0, len(cores)))
@@ -103,10 +123,10 @@ def _set_go_signal_noc_data(cores: list[Core]) -> bytes:
   return hdr + body
 
 def _send_go_signal(go_word: int, stream: int, count: int, num_unicast: int) -> bytes:
-  return _hdr("<BIBBBII", (_GO_SIGNAL, go_word, 0xFF, num_unicast, 0, count, stream))
+  return _hdr("<BIBBBII", (_GO_SIGNAL, go_word, GO_NO_MULTICAST, num_unicast, 0, count, stream))
 
 def _wait_stream(stream: int, count: int, clear: bool = True) -> bytes:
-  flags = 0x08 | (0x10 if clear else 0)
+  flags = CQ_WAIT_WAIT_STREAM | (CQ_WAIT_CLEAR_STREAM if clear else 0)
   return _hdr("<BBHII", (_WAIT, flags, stream, 0, count))
 
 def _host_event(event_id: int) -> bytes:
@@ -228,6 +248,10 @@ def lower_ir(
         _append_unicast_write(out, cores, addr, data)
       case McastWrite(rects=rects, addr=addr, data=data):
         _append_mcast_write(out, rects, addr, data)
+        out.append(_barrier())
+      case McastMmioWrite32(rects=rects, addr=addr, value=value):
+        # MMIO regs are NoC-addressable; same encoding as a 4-byte mcast write.
+        _append_mcast_write(out, rects, addr, struct.pack("<I", value & 0xFFFFFFFF))
         out.append(_barrier())
       case Run(cores=cores):
         out.extend([

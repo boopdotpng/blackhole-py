@@ -81,8 +81,6 @@ def _fmt_metric(tag_name: str, raw: int) -> str:
   _, unit, decode = METRICS[tag_name]
   if decode == "s16.16":
     return f"{_s16_16(raw):.2f}{unit}"
-  if decode == "hex":
-    return f"0x{raw:08x}"
   return f"{raw & 0xFFFFFFFF}{unit}"
 
 def _csv_metric_value(tag_name: str, raw: int) -> tuple[str, str]:

@@ -16,9 +16,22 @@ from ttk.tensix import Cfg, GprPack, TensixStall, TensixWait, ThreadCfg
 # For Float16_b (5): 0x1 | 5<<4 | 5<<8 == 0x551.
 _PACK_DISABLE_ZERO_COMPRESS = 0x1
 
+# PCK_DEST_RD_CTRL (cfg word 18): Read_32b_data (bit0) makes PACK read full
+# 32-bit (fp32) data out of DST -- required when the math thread accumulates in
+# fp32 (Dst32). Round_10b_mant (bit3) rounds the fp32 mantissa to fp16's 10
+# bits on store; bf16's 7+1-bit mantissa truncates fine without it.
+_PCK_READ_32B = 0x1
+_PCK_ROUND_10B = 0x8
+
 
 def _pack_data_format(dtype: Dtype) -> int:
   return _PACK_DISABLE_ZERO_COMPRESS | (dtype.value << 4) | (dtype.value << 8)
+
+
+def pck_dest_rd_ctrl(dtype: Dtype, *, fp32_dest: bool) -> int:
+  if not fp32_dest:
+    return 0
+  return _PCK_READ_32B | (_PCK_ROUND_10B if dtype is Dtype.Float16 else 0)
 
 
 # Structural pack-config constants (not yet decoded to named fields).
@@ -73,10 +86,27 @@ class Pack:
       k.push_tensix(inst)
     k.emit(TTATRELM(0))
 
-  def _pack_cfg(self, k, dtype: Dtype, out_cb: int):
+  def set_format(self, dtype: Dtype, *, fp32_dest: bool = False):
+    """Runtime-reconfigure the packer's data format. The EFFECTIVE pack output
+    format comes from the TRISC2 TLM format mailbox (read by the pack pipeline),
+    not only the THCON cfg reg -- so rewrite both. Masked-RMW the THCON format
+    nibbles (Out=byte0[7:4], In=byte1[3:0]) so the L1-acc/zero-flag bits sharing
+    THCON_SEC0_REG1_1 are preserved. Use case: packing matmul partials to a
+    non-operand-format intermediate CB (the fp16 packer L1-acc HW bug dodge)."""
+    k = self.k
+    k.emit(TTSTALLWAIT(TensixStall.CFG, TensixWait.PACK0))
+    fmt = dtype.value & 0xF
+    k.write_repeated_bytes(TLM.TRISC2_PACK_SRC_FORMAT, fmt, 16)
+    k.write_repeated_bytes(TLM.TRISC2_PACK_DST_FORMAT, fmt, 16)
+    k.push_tensix(TTRMWCIB0(Mask=0xF0, Data=(fmt << 4) & 0xF0, CfgRegAddr=Cfg.THCON_SEC0_REG1_1.addr32))
+    k.push_tensix(TTRMWCIB1(Mask=0x0F, Data=fmt, CfgRegAddr=Cfg.THCON_SEC0_REG1_1.addr32))
+    k.write32(Cfg.PCK_DEST_RD_CTRL, pck_dest_rd_ctrl(dtype, fp32_dest=fp32_dest))
+    return k
+
+  def _pack_cfg(self, k, dtype: Dtype, out_cb: int, fp32_dest: bool = False):
     k.write32(Cfg.THCON_SEC0_REG1, _EXP_SECTION_SIZE)
     k.write32(Cfg.THCON_SEC0_REG1_1, _pack_data_format(dtype))
-    k.write32(Cfg.PCK_DEST_RD_CTRL, 0)
+    k.write32(Cfg.PCK_DEST_RD_CTRL, pck_dest_rd_ctrl(dtype, fp32_dest=fp32_dest))
     for off in range(4):
       k.write32(GprPack.DEST_OFFSET_LO + off * 4, 0)
       k.write32(GprPack.DEST_OFFSET_HI + off * 4, _DEST_OFFSET_HI)
@@ -94,16 +124,18 @@ class Pack:
     k.write32(GprPack.TILE_HEADER_2, 0)
     k.write32(GprPack.TILE_HEADER_3, 0)
 
-  def init(self, *, dtype: Dtype = Dtype.Float16_b, out_cb: int, mop_cfg):
+  def init(self, *, dtype: Dtype = Dtype.Float16_b, out_cb: int, mop_cfg, fp32_dest: bool = False):
     """Configure the packer: local format state, ALU-acc RMW, pack cfg regs and
     tile header for ``dtype``/``out_cb``, the pack MOP template, and the dest /
-    output address setup. Mirrors the TRISC2 init block of add1 exactly."""
+    output address setup. Mirrors the TRISC2 init block of add1 exactly.
+    ``fp32_dest=True`` makes PACK read fp32 out of DST -- pair it with
+    ``Unpack.init(fp32_dest=True)``."""
     k = self.k
 
     self._state_formats(k, dtype)
     self._dest_addr_dmaregs(k)
     self._alu_acc_rmw(k)
-    self._pack_cfg(k, dtype, out_cb)
+    self._pack_cfg(k, dtype, out_cb, fp32_dest=fp32_dest)
 
     k.emit(TTSETADCXX(4, 15, 0))
     k.setc16(ThreadCfg.ADDR_MOD_PACK_SEC0, _ADDR_MOD_PACK[0])

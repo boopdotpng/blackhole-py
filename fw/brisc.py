@@ -4,9 +4,7 @@ import sys
 from pathlib import Path
 from asm import Kernel, KernelBase
 from dsl import Reg, t0, t1, t2, t3, t4, t5, t6, zero
-from ttk import Cb, Debug, Noc, Tensix
-from ttk.addrs import P100BankTable
-from ttk.cb import CircularBuffer as CB
+from ttk import Cb, Noc, Tensix
 from ttk.mailbox import BriscMailbox as BM, Dispatch, Firmware
 from ttk.noc import NOC, NocCfg
 from dsl import TTNOP, TTSEMINIT, TTSFPENCC, TTSFPCONFIG, TTSFPLOADI, TTZEROACC
@@ -130,7 +128,7 @@ def rmw_tensix_cfg(fw: KernelBase, addr32: int, mask: int, value: int, *,
   return fw
 
 def build(*, text_base: dict[str, int] = Firmware.TEXT_BASE) -> KernelBase:
-  fw = Kernel(Tensix, Noc, Cb, Debug, base_addr=Firmware.TEXT_BASE["brisc"])
+  fw = Kernel(Tensix, Noc, Cb, base_addr=Firmware.TEXT_BASE["brisc"])
   fw.segment(Firmware.LOCAL_DATA_BASE["brisc"], b"\x68".ljust(Firmware.LOCAL_DATA_SIZE["brisc"], b"\0"), label="local_data")
   fw.configure_csr()
   fw.setup_stack(Firmware.BRISC_STACK_TOP)
@@ -158,11 +156,11 @@ def build(*, text_base: dict[str, int] = Firmware.TEXT_BASE) -> KernelBase:
   # invalidate_all_risc_icaches
   fw.write32(TensixRegs.RISCV_IC_INVALIDATE_INVALIDATE_ALL, TensixRegs.RISCV_IC_ALL_MASK)
   buf = TensixRegs.INSTRN_BUF_BASE
-  fw.tensix_push_word(buf, TTZEROACC(clear_mode=3).raw_word())
-  fw.tensix_push_word(buf, TTSFPENCC(imm12_math=3, instr_mod1=10).raw_word())
-  fw.tensix_push_word(buf, TTNOP().raw_word())
-  fw.tensix_push_word(buf, TTSFPLOADI(imm16=0xBF80).raw_word())
-  fw.tensix_push_word(buf, TTSFPCONFIG(config_dest=11).raw_word())
+  fw.push_tensix_word(buf, TTZEROACC(clear_mode=3).raw_word())
+  fw.push_tensix_word(buf, TTSFPENCC(imm12_math=3, instr_mod1=10).raw_word())
+  fw.push_tensix_word(buf, TTNOP().raw_word())
+  fw.push_tensix_word(buf, TTSFPLOADI(imm16=0xBF80).raw_word())
+  fw.push_tensix_word(buf, TTSFPCONFIG(config_dest=11).raw_word())
   rmw_tensix_cfg(fw, TensixRegs.ECC_SCRUBBER_ADDR32, TensixRegs.ECC_SCRUBBER_ENABLE_MASK, 1)
   rmw_tensix_cfg(fw, TensixRegs.ECC_SCRUBBER_ADDR32, TensixRegs.ECC_SCRUBBER_SCRUB_ON_ERROR_MASK, 1, shift=1)
   rmw_tensix_cfg(
@@ -170,24 +168,13 @@ def build(*, text_base: dict[str, int] = Firmware.TEXT_BASE) -> KernelBase:
     shift=TensixRegs.ECC_SCRUBBER_DELAY_SHAMT,
   )
   for sem in (TensixSem.MATH_PACK, TensixSem.UNPACK_TO_DEST, TensixSem.MATH_DONE):
-    fw.tensix_push_word(buf, TTSEMINIT(sem_sel=TensixSem.mask(sem), init_value=0, max_value=1).raw_word())
+    fw.push_tensix_word(buf, TTSEMINIT(sem_sel=TensixSem.mask(sem), init_value=0, max_value=1).raw_word())
 
   # init_risc_noc_coords
-  for noc in range(2):
-    fw.read32(t0, fw.noc_cmd_addr(noc, 0, NOC.CFG_BASE + NocCfg.ID_LOGICAL * 4), tmp_addr=t2)
-    fw.andi(t1, t0, NocCfg.NODE_ID_MASK)
-    fw.write8(BM.MY_X + noc, t1, tmp_addr=t2)
-    fw.srli(t1, t0, NocCfg.ADDR_NODE_ID_BITS)
-    fw.andi(t1, t1, NocCfg.NODE_ID_MASK)
-    fw.write8(BM.MY_Y + noc, t1, tmp_addr=t2)
+  fw.init_risc_noc_coords(BM.MY_X, BM.MY_Y)
 
   # init_bank_tables
-  fw.copy_words(
-    BM.DRAM_BANK_TO_NOC_XY,
-    TensixL1.MEM_BANK_TO_NOC_SCRATCH,
-    P100BankTable.DRAM_BANK_TO_NOC_SIZE + P100BankTable.L1_BANK_TO_NOC_SIZE +
-    P100BankTable.BANK_TO_DRAM_OFFSET_SIZE + P100BankTable.BANK_TO_L1_OFFSET_SIZE,
-  )
+  fw.init_bank_tables(BM.DRAM_BANK_TO_NOC_XY)
 
   # init_brisc_mailbox_globals
   fw.write32(Mailbox.LAUNCH_MSG_RD_PTR, 0, tmp_addr=t1, tmp_val=t0)
@@ -312,45 +299,7 @@ def build(*, text_base: dict[str, int] = Firmware.TEXT_BASE) -> KernelBase:
     signal_subordinate_if_enabled(fw, role, RunSync.GO)
 
   # setup_local_cbs
-  fw.current_launch_ptr(launch=t0, tmp=t5)
-  fw.lw(t1, t0, Launch.KERNEL_CONFIG_BASE)
-  fw.lhu(t2, t0, Launch.LOCAL_CB_OFFSET)
-  fw.add(t2, t1, t2)
-  fw.li(t3, BM.CB_INTERFACE)
-  fw.lw(t4, t0, Launch.LOCAL_CB_MASK)
-  fw.li(t0, CB.SYNC_TILES_ACKED_BASE)
-  fw.li(t1, CB.SYNC_TILES_RECEIVED_BASE)
-  setup_cb_loop = fw._new_label("setup_cb")
-  skip_cb = fw._new_label("skip_cb")
-  done_cb = fw._new_label("done_cb")
-  fw.label(setup_cb_loop)
-  fw.beq(t4, zero, done_cb)
-  fw.andi(t5, t4, 1)
-  fw.beq(t5, zero, skip_cb)
-  fw.lw(t5, t2, 4)
-  fw.lw(t6, t2, 0)
-  fw.sw(t5, t3, 0)
-  fw.add(t5, t6, t5)
-  fw.sw(t5, t3, 4)
-  fw.lw(t5, t2, 12)
-  fw.sw(t5, t3, 8)
-  fw.lw(t5, t2, 8)
-  fw.sw(t5, t3, 12)
-  fw.sw(t6, t3, 16)
-  fw.sw(t6, t3, 20)
-  fw.sw(zero, t3, 24)
-  fw.sw(zero, t3, 28)
-  fw.sw(zero, t0, 0)
-  fw.sw(zero, t1, 0)
-  fw.label(skip_cb)
-  fw.addi(t2, t2, CB.LOCAL_CONFIG_SIZE)
-  fw.addi(t3, t3, CB.LOCAL_INTERFACE_SIZE)
-  fw.li(t5, CB.SYNC_STRIDE)
-  fw.add(t0, t0, t5)
-  fw.add(t1, t1, t5)
-  fw.srli(t4, t4, 1)
-  fw.j(setup_cb_loop)
-  fw.label(done_cb)
+  fw.setup_local_cbs(BM.CB_INTERFACE)
 
   signal_subordinate_if_enabled(fw, 1, RunSync.GO)
   fw.run_launch_kernel(0)

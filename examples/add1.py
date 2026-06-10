@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 from collections.abc import Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass
 from pathlib import Path
 import numpy as np
 from asm import KernelBase
@@ -18,8 +17,9 @@ from dsl import (
   TTWRCFG, TTZEROACC, TTZEROSRC, Reg,
   a0, a1, a2, a5, ra, s0, s2, s3, s4, s5, sp, t0, t1, t2, t3, t4, t5, t6, zero,
 )
+from matmul_peak import RiscSync
 from program import Dtype, Program
-from ttk import Cb, Debug, Noc, Tensix
+from ttk import Cb, Noc, Tensix
 from ttk.cb import CircularBuffer as CB
 from ttk.mailbox import BriscMailbox as BM, NcriscMailbox as NM, TriscLocalMem as TLM, TriscMailbox
 from ttk.noc import NOC
@@ -27,20 +27,6 @@ from ttk.tensix import (
   Cfg, GprPack, GprUnpack, MopCfg, TensixL1, TensixRegs, TensixSem,
   TensixSemWait, TensixStall, TensixWait, ThreadCfg,
 )
-
-
-@dataclass(frozen=True)
-class RiscSync:
-  """L1 sync-word layout for the 5-RISC start/init handshake.
-
-  - ``start``: byte-triplet base. BRISC writes ``0x00010101`` here to release
-    the three TRISCs; TRISC ``i`` spins on byte ``start + i`` then clears it.
-  - ``trisc_init``: base of three words used as the post-init barrier. TRISC
-    ``i`` sets word ``i`` to 1, then waits for all three to be 1.
-  """
-
-  start: int
-  trisc_init: int
 
 
 class _RoleKernel(KernelBase):
@@ -66,7 +52,7 @@ class _RoleKernel(KernelBase):
     self._loop_epilogue()
 
 
-class Trisc(_RoleKernel, Tensix, Cb, Debug):
+class Trisc(_RoleKernel, Tensix, Cb):
   """Compute-thread kernel (unpack / math / pack). Composes the Tensix and CB
   helpers — no NOC, since TRISCs never drive the NOC directly. Provides the
   prologue / init-barrier / tile-loop scaffolding common to every TRISC so a
@@ -115,11 +101,11 @@ class Trisc(_RoleKernel, Tensix, Cb, Debug):
     return super().tile_loop(f"trisc{self.thread_id}", count=count, counter=counter)
 
 
-class Brisc(_RoleKernel, Noc, Cb, Debug):
+class Brisc(_RoleKernel, Noc, Cb):
   """Reader-thread kernel: NOC + CB helpers, no Tensix config."""
 
 
-class Ncrisc(_RoleKernel, Noc, Cb, Debug):
+class Ncrisc(_RoleKernel, Noc, Cb):
   """Writer-thread kernel: NOC + CB helpers, no Tensix config."""
 
 TILE_BYTES = Dtype.Float16_b.tile_size

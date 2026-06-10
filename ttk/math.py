@@ -37,6 +37,16 @@ class Math:
     k.emit(TTZEROACC(3, 0, 0, 1, 0))
     k.wait_mmio_low_byte_zero(TensixRegs.PC_UNPACK_SYNC)
 
+  def set_reload_format(self, dtype: Dtype):
+    """Runtime-switch the MATH thread's view of the unpack src/dst format (TLM
+    mailbox) so a copy_tile reload from an intermediate CB interprets that CB's
+    format correctly; switch back to the operand dtype afterwards. Companion to
+    ``Unpack.set_format``/``Pack.set_format`` for mixed-format pipelines."""
+    k = self.k
+    k.write32(TLM.TRISC1_UNPACK_DST_FORMAT, dtype.value & 0xF)
+    k.write32(TLM.TRISC1_UNPACK_SRC_FORMAT, dtype.value & 0xF)
+    return k
+
   def _sfpu_init(self, k):
     k.emit(TTSFPLOADI(0, 0, 10))
     k.emit(TTSFPLOADI(0, 0, 8))

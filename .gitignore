@@ -5,3 +5,7 @@ __pycache__
 .claude
 ttsim/
 libttsim*.so
+
+# llama3-cuda reference port: weights blobs + build artifacts
+llama3-cuda/models/*.l3cu
+llama3-cuda/build/

@@ -6,8 +6,8 @@ if __package__ in (None, ""):
   sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from asm import Kernel, KernelBase
-from dsl import Reg, gp, t0, t1, t2, t3, t4, t5, t6, zero
-from ttk import Cb, Debug, Tensix
+from dsl import Reg, gp, t0, t1, t2, t3, t4, t5, zero
+from ttk import Cb, Tensix
 from ttk.cb import CircularBuffer as CB
 from ttk.mailbox import Firmware, TriscMailbox as TM
 from ttk.tensix import Launch, Mailbox, RunSync, TensixMMIO, TensixRegs
@@ -17,7 +17,7 @@ def build(trisc_id: int) -> KernelBase:
     raise ValueError(f"unknown TRISC id {trisc_id!r}")
   role = 2 + trisc_id
   data = TM.DATA1 if trisc_id == 1 else TM.DATA_COMMON
-  fw = Kernel(Tensix, Cb, Debug, base_addr=Firmware.TRISC_TEXT_BASE[trisc_id])
+  fw = Kernel(Tensix, Cb, base_addr=Firmware.TRISC_TEXT_BASE[trisc_id])
   fw.segment(Firmware.TRISC_LOCAL_DATA_BASE[trisc_id], b"\0" * Firmware.TRISC_LOCAL_DATA_SIZE[trisc_id], label="local_data")
   # setup_gp
   fw.li(gp, Firmware.TRISC_GLOBAL_POINTER)
@@ -97,45 +97,7 @@ def build(trisc_id: int) -> KernelBase:
 
   if trisc_id in (0, 2):
     # setup_local_cbs
-    fw.current_launch_ptr(launch=t0, tmp=t4)
-    fw.lw(t1, t0, Launch.KERNEL_CONFIG_BASE)
-    fw.lhu(t2, t0, Launch.LOCAL_CB_OFFSET)
-    fw.add(t2, t1, t2)
-    fw.li(t3, data["cb_interface"])
-    fw.lw(t4, t0, Launch.LOCAL_CB_MASK)
-    # setup_local_cbs_from_mask
-    setup_cb_loop = fw._new_label("setup_cb")
-    skip_cb = fw._new_label("skip_cb")
-    done_cb = fw._new_label("done_cb")
-    fw.label(setup_cb_loop)
-    fw.beq(t4, zero, done_cb)
-    fw.andi(t1, t4, 1)
-    fw.beq(t1, zero, skip_cb)
-    fw.lw(t5, t2, 4)
-    fw.lw(t6, t2, 0)
-    fw.lw(t0, t2, 12)
-    fw.srli(t5, t5, 4)
-    fw.srli(t6, t6, 4)
-    fw.srli(t0, t0, 4)
-    fw.sw(t5, t3, 0)
-    fw.add(t5, t6, t5)
-    fw.sw(t5, t3, 4)
-    fw.sw(t0, t3, 8)
-    if trisc_id == 0:
-      fw.sw(t6, t3, 16)
-    else:
-      fw.lw(t1, t2, 8)
-      fw.sw(t1, t3, 12)
-      fw.sw(t6, t3, 20)
-    fw.sw(zero, t3, 24)
-    if trisc_id == 2:
-      fw.sw(zero, t3, 28)
-    fw.label(skip_cb)
-    fw.addi(t2, t2, CB.LOCAL_CONFIG_SIZE)
-    fw.addi(t3, t3, CB.LOCAL_INTERFACE_SIZE)
-    fw.srli(t4, t4, 1)
-    fw.j(setup_cb_loop)
-    fw.label(done_cb)
+    fw.setup_local_cbs(data["cb_interface"], trisc_id=trisc_id)
 
   # init_trisc_kernel_config
   fw.current_launch_ptr(launch=t0, tmp=t4)

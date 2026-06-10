@@ -7,35 +7,21 @@ if __package__ in (None, ""):
   sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from asm import Kernel, KernelBase
-from dsl import t0, t1, t2, t3, t4, t5, t6, zero
-from ttk import Cb, Debug, Noc
-from ttk.addrs import P100BankTable
-from ttk.cb import CircularBuffer as CB
+from dsl import t0, t1, t2, t3, t4
+from ttk import Cb, Noc
 from ttk.mailbox import Firmware, NcriscMailbox as NM
-from ttk.noc import NOC, NocCfg
-from ttk.tensix import Launch, Mailbox, RunSync, TensixL1
+from ttk.tensix import Launch, Mailbox, RunSync
 
 def build() -> KernelBase:
-  fw = Kernel(Noc, Cb, Debug, base_addr=Firmware.TEXT_BASE["ncrisc"])
+  fw = Kernel(Noc, Cb, base_addr=Firmware.TEXT_BASE["ncrisc"])
   fw.segment(Firmware.LOCAL_DATA_BASE["ncrisc"], b"\x68".ljust(Firmware.LOCAL_DATA_SIZE["ncrisc"], b"\0"), label="local_data")
   fw.setup_stack(Firmware.NCRISC_STACK_TOP)
   fw.configure_csr()
   # init_bank_tables
-  fw.copy_words(
-    NM.DRAM_BANK_TO_NOC_XY,
-    TensixL1.MEM_BANK_TO_NOC_SCRATCH,
-    P100BankTable.DRAM_BANK_TO_NOC_SIZE + P100BankTable.L1_BANK_TO_NOC_SIZE +
-    P100BankTable.BANK_TO_DRAM_OFFSET_SIZE + P100BankTable.BANK_TO_L1_OFFSET_SIZE,
-  )
+  fw.init_bank_tables(NM.DRAM_BANK_TO_NOC_XY)
 
   # init_risc_noc_coords
-  for noc in range(2):
-    fw.read32(t0, fw.noc_cmd_addr(noc, 0, NOC.CFG_BASE + NocCfg.ID_LOGICAL * 4), tmp_addr=t2)
-    fw.andi(t1, t0, NocCfg.NODE_ID_MASK)
-    fw.write8(NM.MY_X + noc, t1, tmp_addr=t2)
-    fw.srli(t1, t0, NocCfg.ADDR_NODE_ID_BITS)
-    fw.andi(t1, t1, NocCfg.NODE_ID_MASK)
-    fw.write8(NM.MY_Y + noc, t1, tmp_addr=t2)
+  fw.init_risc_noc_coords(NM.MY_X, NM.MY_Y)
 
   # init_ncrisc_mailbox_globals
   fw.read8(t0, Mailbox.CORE_INFO_ABSOLUTE_LOGICAL_X, tmp_addr=t1)
@@ -76,46 +62,7 @@ def build() -> KernelBase:
   fw.write32(NM.CRTA_L1_BASE_PTR, t3, tmp_addr=t4)
 
   # setup_local_cbs
-  fw.current_launch_ptr(launch=t0, tmp=t4)
-  fw.lw(t1, t0, Launch.KERNEL_CONFIG_BASE)
-  fw.lhu(t2, t0, Launch.LOCAL_CB_OFFSET)
-  fw.add(t2, t1, t2)
-  fw.li(t3, NM.CB_INTERFACE)
-  fw.lw(t4, t0, Launch.LOCAL_CB_MASK)
-  # setup_local_cbs_from_mask
-  fw.li(t0, CB.SYNC_TILES_ACKED_BASE)
-  fw.li(t1, CB.SYNC_TILES_RECEIVED_BASE)
-  setup_cb_loop = fw._new_label("setup_cb")
-  skip_cb = fw._new_label("skip_cb")
-  done_cb = fw._new_label("done_cb")
-  fw.label(setup_cb_loop)
-  fw.beq(t4, zero, done_cb)
-  fw.andi(t5, t4, 1)
-  fw.beq(t5, zero, skip_cb)
-  fw.lw(t5, t2, 4)
-  fw.lw(t6, t2, 0)
-  fw.sw(t5, t3, 0)
-  fw.add(t5, t6, t5)
-  fw.sw(t5, t3, 4)
-  fw.lw(t5, t2, 12)
-  fw.sw(t5, t3, 8)
-  fw.lw(t5, t2, 8)
-  fw.sw(t5, t3, 12)
-  fw.sw(t6, t3, 16)
-  fw.sw(t6, t3, 20)
-  fw.sw(zero, t3, 24)
-  fw.sw(zero, t3, 28)
-  fw.sw(zero, t0, 0)
-  fw.sw(zero, t1, 0)
-  fw.label(skip_cb)
-  fw.addi(t2, t2, CB.LOCAL_CONFIG_SIZE)
-  fw.addi(t3, t3, CB.LOCAL_INTERFACE_SIZE)
-  fw.li(t5, CB.SYNC_STRIDE)
-  fw.add(t0, t0, t5)
-  fw.add(t1, t1, t5)
-  fw.srli(t4, t4, 1)
-  fw.j(setup_cb_loop)
-  fw.label(done_cb)
+  fw.setup_local_cbs(NM.CB_INTERFACE)
 
   # init_ncrisc_launch_globals
   fw.current_launch_ptr(launch=t0, tmp=t2)

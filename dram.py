@@ -68,11 +68,6 @@ class Allocator:
     self.next = align_up(addr + pages_per_bank * dtype.tile_size, Dram.ALIGNMENT)
     return DramBuffer(name=name, addr=addr, num_tiles=num_tiles, dtype=dtype, shape=shape)
 
-  def alloc_write(self, data: bytes, dtype: Dtype, shape: Shape, name: str = "") -> DramBuffer:
-    buf = self.alloc(len(data) // dtype.tile_size, dtype, name=name, shape=shape)
-    self.write(buf, data)
-    return buf
-
   def barrier(self):
     win = self._win()
     for flag in Dram.BARRIER_FLAGS:
@@ -106,15 +101,6 @@ class Allocator:
       for i, p in enumerate(bank_pages):
         n = min(ps, buf.size - p * ps)
         result[p * ps : p * ps + n] = bank_data[i * ps : i * ps + n]
-    return bytes(result)
-
-  def read_raw_bank_pages(self, addr: int, page_size: int) -> bytes:
-    win = self._win()
-    result = bytearray(page_size * len(self.bank_tiles))
-    for bank_idx, (_, x, y) in enumerate(self.bank_tiles):
-      win.target((x, y), mode=NocOrdering.RELAXED)
-      off = bank_idx * page_size
-      result[off : off + page_size] = win.read(addr, page_size)
     return bytes(result)
 
   def close(self):

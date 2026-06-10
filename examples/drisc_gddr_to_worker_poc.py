@@ -26,6 +26,7 @@ from drisc_hello import (
 )
 from dsl import a0, a1, a2, a3, a4, a5, a6, a7, s0, s1, s2, s3, s4, s5, s6, s7, t0, t1, t2, t3, t4, t5, t6, zero
 from pcie import PCIDevice, TLBWindow
+from ttk.drisc import launch_drisc, pattern
 from ttk.noc import NOC, Noc, NocCfg, noc_xy
 from ttk.mailbox import Firmware
 from ttk.tensix import TensixL1, TensixMMIO
@@ -47,10 +48,6 @@ REMOTE_CB_STATUS_DONE = 2
 
 class DriscFeedKernel(KernelBase, Noc):
   pass
-
-
-def pattern(size: int, seed: int) -> bytes:
-  return bytes(((i * 29 + seed) ^ (i >> 5)) & 0xFF for i in range(size))
 
 
 def emit_header(fw: KernelBase, *, size: int, gddr_addr: int, worker_addr: int, worker_coord: int):
@@ -458,32 +455,6 @@ def halt_worker_brisc(regs: RegWindow):
   regs.write32(TensixMMIO.RISCV_DEBUG_REG_SOFT_RESET_0, TensixMMIO.SOFT_RESET_ALL)
 
 
-def launch_drisc(core: tuple[int, int], l1: TLBWindow, regs: RegWindow, code: bytes, timeout: float):
-  l1.write(RESULT_ADDR, b"\0" * (RESULT_WORDS * 4))
-  l1.write(DRISC_FW_BASE, code)
-  reset_state = regs.read32(SOFT_RESET_0)
-  regs.write32(SOFT_RESET_0, reset_state | SOFT_RESET_BRISC)
-  regs.write32(DRISC_RESET_PC, DRISC_FW_BASE)
-  time.sleep(0.01)
-  regs.write32(SOFT_RESET_0, reset_state & ~SOFT_RESET_BRISC)
-
-  status = 0
-  deadline = time.time() + timeout
-  while time.time() < deadline:
-    words = struct.unpack("<" + "I" * RESULT_WORDS, l1.read(RESULT_ADDR, RESULT_WORDS * 4))
-    if words[0] == POC_MAGIC and words[6] in (STATUS_DONE, STATUS_TIMEOUT):
-      status = words[6]
-      break
-    time.sleep(0.001)
-
-  final_reset_state = regs.read32(SOFT_RESET_0)
-  regs.write32(SOFT_RESET_0, final_reset_state | SOFT_RESET_BRISC)
-  if status == 0:
-    words = struct.unpack("<" + "I" * RESULT_WORDS, l1.read(RESULT_ADDR, RESULT_WORDS * 4))
-    raise TimeoutError(f"DRISC feed kernel did not finish on {core}; words={[hex(w) for w in words]}")
-  return struct.unpack("<" + "I" * RESULT_WORDS, l1.read(RESULT_ADDR, RESULT_WORDS * 4))
-
-
 def main():
   parser = argparse.ArgumentParser(description="POC: DRISC DMA from GDDR, then feed worker L1 or a one-receiver remote CB.")
   parser.add_argument("--bank", type=int, default=0)
@@ -542,7 +513,7 @@ def main():
             stream=args.stream,
             skip_dma=args.no_dma,
           ),
-          args.timeout,
+          args.timeout, magic=POC_MAGIC, label="DRISC feed kernel",
         )
         got = worker_l1.read(args.worker_addr, args.size)
         worker_status = 0
@@ -580,7 +551,7 @@ def main():
                 noc=args.noc,
                 stream=args.stream,
               ),
-              args.timeout,
+              args.timeout, magic=POC_MAGIC, label="DRISC feed kernel",
             )
           except TimeoutError:
             pages_sent = struct.unpack("<I", worker_l1.read(args.worker_addr + REMOTE_CB_PAGES_SENT_OFF, 4))[0]

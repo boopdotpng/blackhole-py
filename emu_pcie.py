@@ -12,8 +12,8 @@ import struct
 from collections.abc import Iterable
 
 from pcie import (
-  BoardInfo, PCIDevice,
-  DEFAULT_GDDR_ENABLED, P100_TENSIX_X,
+  BoardInfo, PCIDevice, _build_board_info,
+  DEFAULT_GDDR_ENABLED,
   TLB_2M_COUNT, TLB_2M_SIZE, TLB_4G_COUNT, TLB_4G_SIZE, TLB_REGS_START,
 )
 from ttk.addrs import Dram
@@ -278,32 +278,7 @@ class EmuPCIDevice(PCIDevice):
     return _EmuMapping(self, "bar4", window, size)
 
   def board_info(self, layout: dict | None = None, fast_dispatch: bool = False) -> BoardInfo:
-    columns = P100_TENSIX_X
-    workers = [(x, y) for x in columns for y in range(2, 12)]
-    rightmost_x = columns[-1]
-    prefetch_core = (rightmost_x, 2)
-    dispatch_core = (rightmost_x, 3)
-    cq_cores = {prefetch_core, dispatch_core}
-    effective_gddr = 0x7F & DEFAULT_GDDR_ENABLED
-    harvested = [bank for bank in range(8) if ((effective_gddr >> bank) & 1) == 0]
-    bank_ys = (
-      (0, 1, 11), (2, 3, 10), (4, 8, 9), (5, 6, 7),
-      (0, 1, 11), (2, 3, 10), (4, 8, 9), (5, 6, 7),
-    )
-    return BoardInfo(
-      board="p100a",
-      worker_cores=workers,
-      program_cores=[core for core in workers if not fast_dispatch or core not in cq_cores],
-      dram_tiles=[
-        (bank, 0 if bank < 4 else 9, y)
-        for bank in range(8)
-        if (effective_gddr >> bank) & 1
-        for y in bank_ys[bank]
-      ],
-      prefetch_core=prefetch_core,
-      dispatch_core=dispatch_core,
-      harvested_dram_bank=harvested[0] if harvested else None,
-    )
+    return _build_board_info("p100a", 0x7F & DEFAULT_GDDR_ENABLED, fast_dispatch)
 
   def telemetry_layout(self) -> dict:
     return {}

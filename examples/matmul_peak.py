@@ -22,7 +22,7 @@ from dsl import (
 )
 from program import Dtype, Program
 from pcie import TLBWindow
-from ttk import Cb, Debug, Noc, Tensix
+from ttk import Cb, Noc, Tensix
 from ttk.cb import CB as CBRegs
 from ttk.mailbox import BriscMailbox as BM, NcriscMailbox as NM, TriscLocalMem as TLM, TriscMailbox
 from ttk.noc import NOC
@@ -541,7 +541,7 @@ class MatmulKernel(KernelBase, Noc, Cb):
     return self.write32(SYNC_TRISC_START, TRISC_START_RELEASE)
 
 
-class MatmulTrisc(KernelBase, Tensix, Cb, Debug):
+class MatmulTrisc(KernelBase, Tensix, Cb):
   NUM_TRISC = 3
 
   def __init__(self, thread_id: int, sync: RiscSync = SYNC, *, base_addr: int = 0):
@@ -754,7 +754,19 @@ def _jump_if_ge(fw: KernelBase, lhs, rhs, done: str, prefix: str):
   return fw
 
 
+PROFILE_STAMPS = os.environ.get("MATMUL_PROFILE", "") == "1"
+
+
 def emit_profile_stamp(fw: KernelBase, addr: int):
+  if not PROFILE_STAMPS:
+    return fw
+  from ttk.tensix import TensixMMIO as _MMIO
+  fw.li(t1, _MMIO.RISCV_DEBUG_REG_WALL_CLOCK_L)
+  fw.lw(t2, t1, 0)
+  fw.li(t0, addr)
+  fw.sw(t2, t0, 0)
+  fw.lw(t2, t1, 8)
+  fw.sw(t2, t0, 4)
   return fw
 
 
@@ -794,10 +806,29 @@ def emit_output_launch_stagger(fw: KernelBase):
 
 
 def emit_profile_accum_start(fw: KernelBase, tmp_addr: int):
+  if not PROFILE_STAMPS:
+    return fw
+  from ttk.tensix import TensixMMIO as _MMIO
+  fw.li(t1, _MMIO.RISCV_DEBUG_REG_WALL_CLOCK_L)
+  fw.lw(t2, t1, 0)
+  fw.li(t0, tmp_addr)
+  fw.sw(t2, t0, 0)
   return fw
 
 
 def emit_profile_accum_end(fw: KernelBase, counter_addr: int, tmp_addr: int):
+  if not PROFILE_STAMPS:
+    return fw
+  from ttk.tensix import TensixMMIO as _MMIO
+  fw.li(t1, _MMIO.RISCV_DEBUG_REG_WALL_CLOCK_L)
+  fw.lw(t2, t1, 0)
+  fw.li(t0, tmp_addr)
+  fw.lw(t1, t0, 0)
+  fw.sub(t2, t2, t1)
+  fw.li(t0, counter_addr)
+  fw.lw(t1, t0, 0)
+  fw.add(t2, t2, t1)
+  fw.sw(t2, t0, 0)
   return fw
 
 

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dsl import Reg, t0, t1, t2, t3, t4, t5, t6, zero
 from dsl import TTSETDMAREG, TTSTALLWAIT, TTSTOREREG
-from ttk.tensix import TensixRegs
+from ttk.tensix import Launch, TensixRegs
 
 
 class CircularBuffer:
@@ -24,6 +24,81 @@ class Cb:
 
   def cb_iface(self, interface_base: int, cb_index: int, *, out: Reg = t6):
     return self.li(out, interface_base + cb_index * CB.LOCAL_INTERFACE_SIZE)
+
+  def setup_local_cbs(self, interface_base: int, *, trisc_id: int | None = None):
+    """Emit the per-launch local circular-buffer interface setup loop.
+
+    ``trisc_id is None`` produces the BRISC/NCRISC worker layout (byte units,
+    plus a SYNC_TILES received/acked reset per CB). ``trisc_id in (0, 2)``
+    produces the TRISC pack/unpack layout (16B units, no SYNC reset, with the
+    trisc-specific field offsets). ``interface_base`` is the CB interface base
+    for the calling RISC.
+    """
+    self.current_launch_ptr(launch=t0, tmp=t4)
+    self.lw(t1, t0, Launch.KERNEL_CONFIG_BASE)
+    self.lhu(t2, t0, Launch.LOCAL_CB_OFFSET)
+    self.add(t2, t1, t2)
+    self.li(t3, interface_base)
+    self.lw(t4, t0, Launch.LOCAL_CB_MASK)
+    if trisc_id is None:
+      self.li(t0, CB.SYNC_TILES_ACKED_BASE)
+      self.li(t1, CB.SYNC_TILES_RECEIVED_BASE)
+    setup_cb_loop = self._new_label("setup_cb")
+    skip_cb = self._new_label("skip_cb")
+    done_cb = self._new_label("done_cb")
+    self.label(setup_cb_loop)
+    self.beq(t4, zero, done_cb)
+    if trisc_id is None:
+      self.andi(t5, t4, 1)
+      self.beq(t5, zero, skip_cb)
+      self.lw(t5, t2, 4)
+      self.lw(t6, t2, 0)
+      self.sw(t5, t3, 0)
+      self.add(t5, t6, t5)
+      self.sw(t5, t3, 4)
+      self.lw(t5, t2, 12)
+      self.sw(t5, t3, 8)
+      self.lw(t5, t2, 8)
+      self.sw(t5, t3, 12)
+      self.sw(t6, t3, 16)
+      self.sw(t6, t3, 20)
+      self.sw(zero, t3, 24)
+      self.sw(zero, t3, 28)
+      self.sw(zero, t0, 0)
+      self.sw(zero, t1, 0)
+    else:
+      self.andi(t1, t4, 1)
+      self.beq(t1, zero, skip_cb)
+      self.lw(t5, t2, 4)
+      self.lw(t6, t2, 0)
+      self.lw(t0, t2, 12)
+      self.srli(t5, t5, 4)
+      self.srli(t6, t6, 4)
+      self.srli(t0, t0, 4)
+      self.sw(t5, t3, 0)
+      self.add(t5, t6, t5)
+      self.sw(t5, t3, 4)
+      self.sw(t0, t3, 8)
+      if trisc_id == 0:
+        self.sw(t6, t3, 16)
+      else:
+        self.lw(t1, t2, 8)
+        self.sw(t1, t3, 12)
+        self.sw(t6, t3, 20)
+      self.sw(zero, t3, 24)
+      if trisc_id == 2:
+        self.sw(zero, t3, 28)
+    self.label(skip_cb)
+    self.addi(t2, t2, CB.LOCAL_CONFIG_SIZE)
+    self.addi(t3, t3, CB.LOCAL_INTERFACE_SIZE)
+    if trisc_id is None:
+      self.li(t5, CB.SYNC_STRIDE)
+      self.add(t0, t0, t5)
+      self.add(t1, t1, t5)
+    self.srli(t4, t4, 1)
+    self.j(setup_cb_loop)
+    self.label(done_cb)
+    return self
 
   def cb_counter_low(self, out: Reg, counter_reg: Reg):
     self.slli(out, counter_reg, 16)

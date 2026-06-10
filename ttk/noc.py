@@ -3,9 +3,9 @@ from __future__ import annotations
 from collections.abc import Iterable
 
 from dsl import Reg, a0, a1, a2, a5, t0, t1, t2, t3, t4, t5, t6, zero
-from ttk.addrs import L1_ALIGN, noc_xy
+from ttk.addrs import L1_ALIGN, P100BankTable, noc_xy
 from ttk.mailbox import BriscMailbox as BM
-from ttk.tensix import TensixMMIO
+from ttk.tensix import TensixL1, TensixMMIO
 
 
 class NOC:
@@ -92,6 +92,26 @@ class NocCfg:
   NIU_MST_POSTED_WR_REQ_SENT_WORD = 0xB
 
 class Noc:
+  def init_risc_noc_coords(self, my_x_addr: int, my_y_addr: int, *,
+                           id_reg: Reg = t0, coord: Reg = t1, tmp_addr: Reg = t2):
+    # Read each NOC's logical node id and stash MY_X/MY_Y into the mailbox.
+    for noc in range(2):
+      self.read32(id_reg, self.noc_cmd_addr(noc, 0, NOC.CFG_BASE + NocCfg.ID_LOGICAL * 4), tmp_addr=tmp_addr)
+      self.andi(coord, id_reg, NocCfg.NODE_ID_MASK)
+      self.write8(my_x_addr + noc, coord, tmp_addr=tmp_addr)
+      self.srli(coord, id_reg, NocCfg.ADDR_NODE_ID_BITS)
+      self.andi(coord, coord, NocCfg.NODE_ID_MASK)
+      self.write8(my_y_addr + noc, coord, tmp_addr=tmp_addr)
+    return self
+
+  def init_bank_tables(self, dram_bank_to_noc_xy: int):
+    # Copy the DRAM/L1 bank->NOC translation tables from the fw scratch region.
+    return self.copy_words(
+      dram_bank_to_noc_xy,
+      TensixL1.MEM_BANK_TO_NOC_SCRATCH,
+      P100BankTable.TOTAL_SIZE,
+    )
+
   def noc_coord(self, out: Reg, x: int | Reg, y: int | Reg, *, tmp: Reg = t0):
     if isinstance(x, int) and isinstance(y, int):
       return self.li(out, noc_xy(x, y))

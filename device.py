@@ -367,14 +367,6 @@ class Device:
       return untilize(data, buf.dtype.bpe, buf.shape)
     return data
 
-  def dram_read_view(self, buf: DramBuffer, *, tiled: bool = False) -> memoryview:
-    if buf.shape is not None and not tiled:
-      raise ValueError("dram_read_view exposes raw tiled bytes; pass tiled=True or use dram_read()")
-    if not self.fast_dispatch:
-      raise RuntimeError("dram_read_view requires fast dispatch sysmem")
-    sm = self._drain_to_sysmem(buf)
-    return sm.mapping.view_at(0, buf.size)
-
   def dram_read_into(self, buf: DramBuffer, dst, *, tiled: bool = False) -> int:
     if self.fast_dispatch and (buf.shape is None or tiled):
       sm = self._drain_to_sysmem(buf)

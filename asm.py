@@ -500,18 +500,6 @@ class KernelBase(Asm):
     self.label(done)
     return self.fence()
 
-  def wait_sync_at_least(self, addr: int, value_reg: Reg, *, ptr: Reg = t0, actual: Reg = t1):
-    done = self._new_label("wait_sync_at_least_done")
-    loop = self._new_label("wait_sync_at_least")
-    self.li(ptr, addr)
-    self.label(loop)
-    self.lw(actual, ptr, 0)
-    self.bge(actual, value_reg, done)
-    self.fence()
-    self.j(loop)
-    self.label(done)
-    return self.fence()
-
   def signal_sync(self, addr: int, value_reg: Reg):
     return self.write32(addr, value_reg, tmp_addr=t0, tmp_val=t1)
 
@@ -529,19 +517,8 @@ class KernelBase(Asm):
     self.fence()
     return self
 
-  def wait32(self, addr: int, value: int, *, actual: Reg = t0, expected: Reg = t1):
-    self.li(expected, value)
-    loop = self._new_label("wait32")
-    self.label(loop)
-    self.read32(actual, addr)
-    self.bne(actual, expected, loop)
-    return self
-
   def signal8(self, addr: int, value: int):
     return self.write8(addr, value)
-
-  def invalidate_l1_cache(self):
-    return self.fence()
 
   def setup_stack(self, stack_top: int):
     return self.li(sp, stack_top)

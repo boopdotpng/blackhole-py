@@ -353,21 +353,6 @@ class Tensix:
     self.setc16(ThreadCfg.CLR_DVALID_Src, 0)
     return self.emit(TTSETRWC(0, 0, 0, 0, 0, 15))
 
-  def tensix_push_word(self, instrn_buf: int | Reg, word: int, *, tmp: Reg = t0, tmp_addr: Reg = t1):
+  def push_tensix_word(self, instrn_buf: int | Reg, word: int, *, tmp: Reg = t0, tmp_addr: Reg = t1):
     self.li(tmp, word)
     return self.write32(instrn_buf, tmp, tmp_addr=tmp_addr)
-
-  def push_tensix_word(self, instrn_buf: int | Reg, word: int, *, tmp: Reg = t0, tmp_addr: Reg = t1):
-    return self.tensix_push_word(instrn_buf, word, tmp=tmp, tmp_addr=tmp_addr)
-
-  def tensix_set_cfg_reg(self, cfg_base: int, offset_words: int, value: int):
-    return self.write32(cfg_base + offset_words * 4, value)
-
-  def set_cfg_reg(self, cfg_base: int, offset_words: int, value: int):
-    return self.tensix_set_cfg_reg(cfg_base, offset_words, value)
-
-  def tensix_reset_cfg_state_id(self, addr: int):
-    return self.write32(addr, 0)
-
-  def reset_cfg_state_id(self, addr: int):
-    return self.tensix_reset_cfg_state_id(addr)

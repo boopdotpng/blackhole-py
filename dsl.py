@@ -315,24 +315,6 @@ _RV_OPS = (
 )
 _RV_OPS_BY_NAME = {op.name: op for op in _RV_OPS}
 
-for _op in _RV_OPS:
-  globals()[_op.name.upper()] = _op
-OR = or_
-AND = and_
-SB = lambda rs1, rs2, imm: sb(rs2, rs1, imm)
-SH = lambda rs1, rs2, imm: sh(rs2, rs1, imm)
-SW = lambda rs1, rs2, imm: sw(rs2, rs1, imm)
-
-def LI32(rd, imm):
-  imm &= 0xFFFFFFFF
-  hi = (imm + 0x800) & 0xFFFFF000
-  lo = _sext(imm & 0xFFF, 12)
-  return [lui(rd, hi), addi(rd, rd, lo)]
-
-def J(imm): return jal(zero, imm)
-def RET(): return jalr(zero, ra, 0)
-def pack(insns): return b"".join(insn.to_bytes() for insn in insns)
-
 _DECODE = {
   **{(0x33, funct3, funct7): (name, RType) for name, funct3, funct7 in _R_SPECS},
   (0x33, 4, 0x04): ("zext_h", RType),
@@ -523,7 +505,6 @@ class TTRMWCIB2(TTInst, op=0xB5): Mask, Data, CfgRegAddr = b[23:16], b[15:8], b[
 class TTRMWCIB3(TTInst, op=0xB6): Mask, Data, CfgRegAddr = b[23:16], b[15:8], b[7:0]
 class TTSTREAMWRCFG(TTInst, op=0xB7): stream_id_sel, StreamRegAddr, CfgReg = b[23:21], b[20:11], b[10:0]
 class TTCFGSHIFTMASK(TTInst, op=0xB8): disable_mask_on_old_val, operation, mask_width, right_cshift_amt, scratch_sel, CfgReg = b[23], b[22:20], b[19:15], b[14:10], b[9:8], b[7:0]
-class TTWRCFG32(TTInst, op=0xC0): GprAddress, CfgReg = b[23:18], b[10:0]  # not in Blackhole assembly.yaml; kept from prior dsl
 
 _TENSIX_BY_OPCODE = {cls.opcode_.value: (cls.name, cls) for cls in TTInst.__subclasses__()}
 
@@ -549,18 +530,3 @@ def decode(word):
   if name_cls is None: raise ValueError(f"unknown RISC-V word 0x{word:08x}")
   name, cls = name_cls
   return cls.from_word(word, name=name)
-
-def decode_rv(word):
-  word &= 0xFFFFFFFF
-  if (word & 3) != 3:
-    raise ValueError(f"not a RISC-V word 0x{word:08x}")
-  return decode(word)
-
-def disasm(binary: bytes, base: int = 0) -> list[str]:
-  """Decode a mixed RISC-V/Tensix instruction stream."""
-  if len(binary) % 4:
-    raise ValueError("disasm() input length must be a multiple of 4")
-  return [
-    f"{base + off:08x}: {decode(int.from_bytes(binary[off:off + 4], 'little'))}"
-    for off in range(0, len(binary), 4)
-  ]
