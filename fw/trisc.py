@@ -9,7 +9,7 @@ from asm import Kernel, KernelBase
 from dsl import Reg, gp, t0, t1, t2, t3, t4, t5, zero
 from ttk import Cb, Tensix
 from ttk.cb import CircularBuffer as CB
-from ttk.mailbox import Firmware, TriscMailbox as TM
+from ttk.mailbox import Firmware, TriscLocalMem as TLM, TriscMailbox as TM
 from ttk.tensix import Launch, Mailbox, RunSync, TensixMMIO, TensixRegs
 
 def zero_tensix_regfile(fw: KernelBase) -> KernelBase:
@@ -24,6 +24,14 @@ def zero_tensix_regfile(fw: KernelBase) -> KernelBase:
   fw.addi(t1, t1, -1)
   fw.j(zero_regfile_loop)
   fw.label(zero_regfile_done)
+  return fw
+
+def init_common_trisc_state(fw: KernelBase, data: dict[str, int], trisc_id: int) -> KernelBase:
+  fw.write32(data["dest_offset_id"], 0)
+  fw.write32(data["op_info_offset"], 0)
+  fw.write32(data["cfg_state_id"], 0)
+  if trisc_id == 0:
+    fw.write32(TLM.TRISC0_UNPACK_CFG_CONTEXT, 0)
   return fw
 
 def build(trisc_id: int) -> KernelBase:
@@ -47,9 +55,7 @@ def build(trisc_id: int) -> KernelBase:
   zero_tensix_regfile(fw)
 
   # init_common_state
-  fw.write32(data["dest_offset_id"], 0)
-  fw.write32(data["op_info_offset"], 0)
-  fw.write32(data["cfg_state_id"], 0)
+  init_common_trisc_state(fw, data, trisc_id)
   fw.write32(TensixRegs.CFG_BASE + TensixRegs.PRNG_SEED_SEED_VAL_ADDR32 * 4, 0)
   fw.delay_cycles(600)
   fw.read8(t1, Mailbox.CORE_INFO_ABSOLUTE_LOGICAL_X, tmp_addr=t0)
@@ -98,6 +104,7 @@ def build(trisc_id: int) -> KernelBase:
   fw.label(trisc_go)
   fw.fence()
   zero_tensix_regfile(fw)
+  init_common_trisc_state(fw, data, trisc_id)
 
   if trisc_id in (0, 2):
     # setup_local_cbs

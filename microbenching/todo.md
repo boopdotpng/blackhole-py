@@ -57,11 +57,18 @@ Open measurements, blocked items, and re-enable plans. Status keywords:
   launches, ZERO hangs (was >6); 405-launch alternating soak PASS. Ring grown
   512K→1.25M (320 pages, end 0x15A000; CMDDAT above; GO_SIGNAL_NOC_DATA →
   CQ_DEBUG+0x200) — pages single-sourced from cq.CQ_DISPATCH_CB_PAGES.
-  Corruption is a SEPARATE bug, not CQ: deterministic (PCC=0.631127 exact
-  repeat), triggers on the FIRST relaunch after a differing-CB-layout program
-  (fresh ×40 identical relaunches clean) = the known back-to-back-CB-layout
-  bug; stale worker CB/sync counter state is the prime suspect. OPEN follow:
-  CB-layout relaunch corruption root-cause; bfp8/bfp4 sweep (dtype missing).
+  Corruption was a SEPARATE bug, not CQ: deterministic (PCC=0.631127 exact
+  repeat), triggered on the FIRST relaunch after a different K-block-count
+  program (384 → 512 → 384; fresh ×40 identical relaunches clean). ROOT-CAUSED
+  2026-06-10: TRISC firmware only initialized local launch state at boot, so
+  kernels had to remember to reset dest/cfg/unpack context themselves; a
+  3-block matmul left state that the following 2-block matmul inherited.
+  Firmware fix in fw/trisc.py: reset Tensix regfile + TRISC local
+  dest_offset/op_info/cfg_state and TRISC0 unpack context at every RunSync.GO,
+  before per-launch CB setup. Device A/B direct (queue was stale on `f524d097`):
+  384/512/384 repro PASS, then 60-launch validated 384/512/768 soak PASS, then
+  400 alternating 384/512 fast-dispatch launches PASS with periodic validation
+  (fails=0). OPEN follow: bfp8/bfp4 sweep (dtype missing).
 - [ ] **Pack isolation.** Pack ~5265–7425 cyc/subblock from perturbed failed-validation runs vs ~924 whole-kernel fit — 6–8× contradiction unresolved; pack is the #1 unexplained pipeline number. Standalone pack rows hang without unpack/math companion. GATED
 - [ ] **Resolve MVMUL 2× gap + 16-cyc claim.** Encoded slots 16/tile-K vs architectural 8/tile-K; issue 2.38 vs latency 11.25 cyc/arch-MVMUL vs claimed 16. Multi-body single-drain burst. OPEN
 - [ ] **XMOV movers** TTMOVA2D/D2A/D2B + debug moves. QUARANTINED (`ttmova2d` wedge); DMA-reg family done
