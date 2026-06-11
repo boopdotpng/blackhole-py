@@ -22,7 +22,7 @@ from program import (
 
 class Device:
   def __init__(self, index: int = 0):
-    if os.environ.get("EMU") == "1":
+    if os.environ.get("EMU") == "1" or os.environ.get("REMOTE"):
       os.environ["TT_USB"] = "1"
     self.fast_dispatch = os.environ.get("TT_USB") != "1"
     self.dev = PCIDevice(index=index, use_vfio=self.fast_dispatch)
@@ -61,6 +61,10 @@ class Device:
       self.board_info.worker_cores,
       self.board_info.harvested_dram_bank,
     )
+    run_ir = getattr(self.dev, "run_ir", None)
+    if run_ir is not None:
+      run_ir(commands)
+      return
     start = self.board_info.worker_cores[0]
     with TLBWindow(self.dev, start=start) as win:
       self._run_slow_ir(commands, win)
@@ -125,6 +129,11 @@ class Device:
 
   def _run_slow_dispatch(self):
     cores = self.cores
+    run_ir = getattr(self.dev, "run_ir", None)
+    if run_ir is not None:
+      for program in self.programs:
+        run_ir(program.lower(cores, dispatch_mode=DevMsgs.DISPATCH_MODE_HOST))
+      return []
     with TLBWindow(self.dev, start=cores[0]) as win:
       for program in self.programs:
         self._run_slow_ir(program.lower(cores, dispatch_mode=DevMsgs.DISPATCH_MODE_HOST), win)
@@ -140,10 +149,38 @@ class Device:
     ]
     return self.cq.submit_ir(programs, self._go_word(), names=[getattr(p, "name", "") for p in self.programs])
 
+  def recover_dispatch(self):
+    """Full CQ recovery after a wedged program: reset workers + CQ cores,
+    re-upload firmware, restart dispatch with the SAME pinned sysmem so
+    pre-encoded CQ records remain valid. DRAM contents are untouched."""
+    self._halt_cores()
+    self._upload_firmware()
+    sysm = self.cq.sysmem
+    sysm.issue_wr = 0
+    sysm.prefetch_q_wr_idx = 0
+    sysm.dispatch_cb_page_pos = 0
+    sysm.event_id = 0
+    sysm.completion_rd_16b = sysm.completion_base_16b
+    sysm.completion_rd_toggle = 0
+    import cq as cq_mod
+    sysm.prefetch_win.write(cq_mod.CQ_PREFETCH_Q_RD_PTR,
+                            struct.pack("<I", cq_mod.CQ_PREFETCH_Q_BASE + cq_mod.CQ_PREFETCH_Q_SIZE))
+    sysm.prefetch_win.write(cq_mod.CQ_PREFETCH_Q_PCIE_RD,
+                            struct.pack("<I", (sysm.noc_local + cq_mod._HOST_ISSUE_BASE) & 0xFFFFFFFF))
+    sysm.prefetch_win.write(cq_mod.CQ_PREFETCH_Q_BASE, bytes(cq_mod.CQ_PREFETCH_Q_SIZE))
+    sysm.write_sysmem32(cq_mod._HOST_CQ_WR_OFF, sysm.completion_base_16b)
+    sysm.write_sysmem32(cq_mod._HOST_CQ_RD_OFF, sysm.completion_base_16b)
+    self._boot_dispatch_cores()
+
   def _start_dispatch_cores(self):
     prefetch_core = self.board_info.prefetch_core
     dispatch_core = self.board_info.dispatch_core
     self.cq = CommandQueue(self.dev, prefetch_core, dispatch_core)
+    self._boot_dispatch_cores()
+
+  def _boot_dispatch_cores(self):
+    prefetch_core = self.board_info.prefetch_core
+    dispatch_core = self.board_info.dispatch_core
 
     from fw import cq as cq_fw
 

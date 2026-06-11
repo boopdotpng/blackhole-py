@@ -429,6 +429,10 @@ class TensorLayout:
   a_row_stride: int
   b_row_stride: int
   c_row_stride: int
+  a_m_tile_offset: int | None = None
+  b_n_tile_offset: int | None = None
+  c_m_tile_offset: int | None = None
+  c_n_tile_offset: int | None = None
 
 
 @dataclass(frozen=True)
@@ -592,6 +596,7 @@ def reader_args(plan: MatmulPlan, a_addr: int, core_xy: Core, num_banks: int, la
   layout = layout or TensorLayout(0, 0, plan.kt, plan.nt, plan.nt)
   core_to_rc = _core_to_rc(plan)
   ri, _ = core_to_rc[core_xy]
+  a_m_tile_offset = layout.a_m_tile_offset if layout.a_m_tile_offset is not None else layout.m_tile_offset
   west_cols = [x for x in plan.cols if x < 8]
   east_cols = [x for x in plan.cols if x >= 10]
   w_rect = _mcast_rect_args([c for c in west_cols if c != plan.cols[0]], core_xy[1])
@@ -599,7 +604,7 @@ def reader_args(plan: MatmulPlan, a_addr: int, core_xy: Core, num_banks: int, la
   sender_xy = plan.grid()[ri][0]
   return [
     a_addr,
-    (layout.m_tile_offset + ri * plan.per_core_m) * layout.a_row_stride,
+    (a_m_tile_offset + ri * plan.per_core_m) * layout.a_row_stride,
     1,
     layout.a_row_stride,
     plan.in0_block_w,
@@ -624,13 +629,16 @@ def writer_args(
   layout = layout or TensorLayout(0, 0, plan.kt, plan.nt, plan.nt)
   core_to_rc = _core_to_rc(plan)
   ri, ci = core_to_rc[core_xy]
+  b_n_tile_offset = layout.b_n_tile_offset if layout.b_n_tile_offset is not None else layout.n_tile_offset
+  c_m_tile_offset = layout.c_m_tile_offset if layout.c_m_tile_offset is not None else layout.m_tile_offset
+  c_n_tile_offset = layout.c_n_tile_offset if layout.c_n_tile_offset is not None else layout.n_tile_offset
   recv_ys = list(plan.rows[1:])
   mcast = (core_xy[0], max(recv_ys), core_xy[0], min(recv_ys), len(recv_ys)) if recv_ys else (0, 0, 0, 0, 0)
   sender_xy = plan.grid()[0][ci]
-  out_start = (layout.m_tile_offset + ri * plan.per_core_m) * layout.c_row_stride + layout.n_tile_offset + ci * plan.per_core_n
+  out_start = (c_m_tile_offset + ri * plan.per_core_m) * layout.c_row_stride + c_n_tile_offset + ci * plan.per_core_n
   return [
     b_addr,
-    layout.n_tile_offset + ci * plan.per_core_n,
+    b_n_tile_offset + ci * plan.per_core_n,
     1,
     layout.b_row_stride,
     plan.in0_block_w * layout.b_row_stride,
@@ -832,8 +840,10 @@ def emit_profile_accum_end(fw: KernelBase, counter_addr: int, tmp_addr: int):
   return fw
 
 
-def matmul_reader_sender(plan: MatmulPlan) -> MatmulKernel:
+def matmul_reader_sender(plan: MatmulPlan, preamble=None) -> MatmulKernel:
   fw = MatmulKernel()
+  if preamble is not None:
+    preamble(fw, plan)
   fw.release_triscs()
   emit_profile_stamp(fw, PROFILE_BRISC)
   fw.rta_ptr(BM.RTA_L1_BASE_PTR)
@@ -977,8 +987,10 @@ def matmul_reader_recv() -> MatmulKernel:
   return fw.ret()
 
 
-def matmul_writer_sender(plan: MatmulPlan) -> MatmulKernel:
+def matmul_writer_sender(plan: MatmulPlan, output_tile_hook=None, preamble=None) -> MatmulKernel:
   fw = MatmulKernel()
+  if preamble is not None:
+    preamble(fw, plan)
   emit_profile_stamp(fw, PROFILE_NCRISC)
   emit_profile_stamp(fw, PROFILE_NCRISC_INPUT)
   fw.rta_ptr(NM.RTA_L1_BASE_PTR)
@@ -1061,12 +1073,12 @@ def matmul_writer_sender(plan: MatmulPlan) -> MatmulKernel:
   fw.j("writer_sender_block_loop")
   fw.label("writer_sender_blocks_done")
   emit_profile_stamp(fw, PROFILE_NCRISC_INPUT + 8)
-  emit_output_writer(fw, plan)
+  emit_output_writer(fw, plan, output_tile_hook=output_tile_hook)
   emit_profile_stamp(fw, PROFILE_NCRISC + 8)
   return fw.ret()
 
 
-def matmul_writer_recv(plan: MatmulPlan) -> MatmulKernel:
+def matmul_writer_recv(plan: MatmulPlan, output_tile_hook=None) -> MatmulKernel:
   fw = MatmulKernel()
   emit_profile_stamp(fw, PROFILE_NCRISC)
   emit_profile_stamp(fw, PROFILE_NCRISC_INPUT)
@@ -1095,12 +1107,12 @@ def matmul_writer_recv(plan: MatmulPlan) -> MatmulKernel:
   fw.j("writer_recv_block_loop")
   fw.label("writer_recv_blocks_done")
   emit_profile_stamp(fw, PROFILE_NCRISC_INPUT + 8)
-  emit_output_writer(fw, plan)
+  emit_output_writer(fw, plan, output_tile_hook=output_tile_hook)
   emit_profile_stamp(fw, PROFILE_NCRISC + 8)
   return fw.ret()
 
 
-def emit_output_writer(fw: MatmulKernel, plan: MatmulPlan) -> MatmulKernel:
+def emit_output_writer(fw: MatmulKernel, plan: MatmulPlan, output_tile_hook=None) -> MatmulKernel:
   emit_profile_stamp(fw, PROFILE_NCRISC_OUTPUT)
   emit_progress_mark(fw, DEBUG_NCRISC_OUTPUT, 0xB100, block_reg=s10, i0_reg=s9, i1_reg=s1)
   emit_profile_accum_start(fw, PROFILE_TMP_NCRISC)
@@ -1165,6 +1177,8 @@ def emit_output_writer(fw: MatmulKernel, plan: MatmulPlan) -> MatmulKernel:
   fw.mv(a2, s11)
   fw.dram_tile_addr_from(NM.DRAM_BANK_TO_NOC_XY, 0)
   emit_output_write_stateful(fw, t5, a0, a2)
+  if output_tile_hook is not None:
+    output_tile_hook(fw, plan, tile_page=t4, l1_tile=t5)
   emit_progress_mark(fw, DEBUG_NCRISC_OUTPUT, 0xB133, block_reg=s10, i0_reg=a3, i1_reg=a4)
   fw.li(t6, TILE_BYTES)
   fw.add(t5, t5, t6)
@@ -2320,20 +2334,33 @@ def matmul_trisc2_grouped_k(plan: MatmulPlan) -> MatmulTrisc:
 
 def build_program(
   plan: MatmulPlan, a_addr: int, b_addr: int, c_addr: int, num_banks: int,
-  layout: TensorLayout | None = None,
+  layout: TensorLayout | None = None, output_tile_hook=None, writer_arg_extra=None,
+  reader_preamble=None, reader_arg_extra=None, writer_preamble=None,
 ) -> Program:
-  brisc_sender = matmul_reader_sender(plan)
+  brisc_sender = matmul_reader_sender(plan, preamble=reader_preamble)
   brisc_recv = matmul_reader_recv()
-  ncrisc_sender = matmul_writer_sender(plan)
-  ncrisc_recv = matmul_writer_recv(plan)
+  ncrisc_sender = matmul_writer_sender(plan, output_tile_hook=output_tile_hook, preamble=writer_preamble)
+  ncrisc_recv = matmul_writer_recv(plan, output_tile_hook=output_tile_hook)
   trisc0 = matmul_trisc0_grouped_k(plan) if K_GROUP > 1 else matmul_trisc0(plan)
   trisc1 = matmul_trisc1_grouped_k(plan) if K_GROUP > 1 else matmul_trisc1(plan)
   trisc2 = matmul_trisc2_grouped_k(plan) if K_GROUP > 1 else matmul_trisc2(plan)
 
-  brisc_sender.rta(lambda x, y: reader_args(plan, a_addr, (x, y), num_banks, layout))
+  def reader_sender_rta(x, y):
+    args = reader_args(plan, a_addr, (x, y), num_banks, layout)
+    if reader_arg_extra is not None:
+      args += list(reader_arg_extra(x, y))
+    return args
+
+  brisc_sender.rta(reader_sender_rta)
   brisc_recv.rta(lambda x, y: reader_args(plan, a_addr, (x, y), num_banks, layout))
-  ncrisc_sender.rta(lambda x, y: writer_args(plan, b_addr, c_addr, (x, y), num_banks, layout))
-  ncrisc_recv.rta(lambda x, y: writer_args(plan, b_addr, c_addr, (x, y), num_banks, layout))
+  def writer_rta(x, y):
+    args = writer_args(plan, b_addr, c_addr, (x, y), num_banks, layout)
+    if writer_arg_extra is not None:
+      args += list(writer_arg_extra(x, y))
+    return args
+
+  ncrisc_sender.rta(writer_rta)
+  ncrisc_recv.rta(writer_rta)
   trisc0.rta(lambda x, y: trisc_args(plan, (x, y)) if SKIP_PADDED_N else [])
   trisc1.rta(lambda x, y: trisc_args(plan, (x, y)) if SKIP_PADDED_N else [])
   trisc2.rta(lambda x, y: trisc_args(plan, (x, y)) if SKIP_PADDED_N else [])

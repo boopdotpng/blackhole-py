@@ -437,6 +437,11 @@ def _secondary_bus_reset(sysfs_path: str):
 
 class PCIDevice:
   def __new__(cls, *args, **kwargs):
+    if cls is PCIDevice and os.environ.get("REMOTE") and os.environ.get("BLACKHOLE_REMOTE_SERVER") != "1":
+      from remote.remote_pcie import RemotePCIDevice
+      obj = object.__new__(RemotePCIDevice)
+      RemotePCIDevice.__init__(obj, *args, **kwargs)
+      return obj
     if cls is PCIDevice and os.environ.get("EMU") == "1":
       os.environ["TT_USB"] = "1"
       from emu_pcie import EmuPCIDevice
@@ -510,7 +515,11 @@ class PCIDevice:
     self._bar4_4g_count = min(TLB_4G_COUNT, bar4_size // TLB_4G_SIZE) if bar4_size else 0
 
   @staticmethod
-  def list_devices() -> list[str]: return _find_bh_devices()
+  def list_devices() -> list[str]:
+    if os.environ.get("REMOTE") and os.environ.get("BLACKHOLE_REMOTE_SERVER") != "1":
+      from remote.remote_pcie import RemotePCIDevice
+      return RemotePCIDevice.list_devices()
+    return _find_bh_devices()
 
   def telemetry_layout(self) -> dict:
     table_base = self.read_arc_apb32(self.SCRATCH_RAM_13)
@@ -565,6 +574,9 @@ class PCIDevice:
 
   @classmethod
   def reset_index(cls, index: int = 0):
+    if cls is PCIDevice and os.environ.get("REMOTE") and os.environ.get("BLACKHOLE_REMOTE_SERVER") != "1":
+      from remote.remote_pcie import RemotePCIDevice
+      return RemotePCIDevice.reset_index(index)
     devices = cls.list_devices()
     if not devices:
       raise RuntimeError("no Blackhole device found")
@@ -575,6 +587,9 @@ class PCIDevice:
   @staticmethod
   def reset_bdf(bdf: str):
     """Reset Blackhole like tt-smi/UMD's non-Galaxy path; fall back to PCIe FLR."""
+    if os.environ.get("REMOTE") and os.environ.get("BLACKHOLE_REMOTE_SERVER") != "1":
+      from remote.remote_pcie import RemotePCIDevice
+      return RemotePCIDevice.reset_bdf(bdf)
     sysfs = f"/sys/bus/pci/devices/{bdf}"
     config_path = f"{sysfs}/config"
 

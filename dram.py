@@ -78,6 +78,10 @@ class Allocator:
           pass
 
   def write(self, buf: DramBuffer, data: bytes):
+    remote_write = getattr(self.dev, "dram_write", None)
+    if remote_write is not None:
+      remote_write(self.bank_tiles, buf, data)
+      return
     assert len(data) <= buf.size
     win = self._win()
     view, ps, nb = memoryview(data), buf.page_size, len(self.bank_tiles)
@@ -90,6 +94,9 @@ class Allocator:
     self.barrier()
 
   def read(self, buf: DramBuffer) -> bytes:
+    remote_read = getattr(self.dev, "dram_read", None)
+    if remote_read is not None:
+      return remote_read(self.bank_tiles, buf)
     win = self._win()
     result, ps, nb = bytearray(buf.size), buf.page_size, len(self.bank_tiles)
     n_pages = (buf.size + ps - 1) // ps

@@ -97,7 +97,7 @@ DISPATCH_CB_PAGE = 4096
 DISPATCH_CB_END = DISPATCH_CB_BASE + DISPATCH_CB_PAGES * DISPATCH_CB_PAGE
 CMDDAT_Q_BASE = DISPATCH_CB_END
 CMDDAT_Q_SIZE = 64 * 1024
-HOST_ISSUE_SIZE = 64 * 1024 * 1024
+HOST_ISSUE_SIZE = cq._HOST_ISSUE_SIZE
 DISPATCH_S_CB_BASE = CMDDAT_Q_BASE + CMDDAT_Q_SIZE  # unused; keep clear of the ring
 DISPATCH_S_CB_PAGE = 256
 DISPATCH_S_CB_END = DISPATCH_S_CB_BASE + 32 * 1024
@@ -132,9 +132,9 @@ GO_NO_MULTICAST = cq.GO_NO_MULTICAST
 
 COMPLETION_WR_PTR = cq.CQ_COMPLETION_WR_PTR
 COMPLETION_RD_PTR = cq.CQ_COMPLETION_RD_PTR
-COMPLETION_BASE = 0x44000100
-COMPLETION_SIZE = 32 * 1024 * 1024
-HOST_COMPLETION_WR_PTR_OFF = 0x40000000 + 128
+COMPLETION_BASE = 0x40000000 + cq._HOST_COMPLETION_BASE
+COMPLETION_SIZE = cq._HOST_COMPLETION_SIZE
+HOST_COMPLETION_WR_PTR_OFF = 0x40000000 + cq._HOST_CQ_WR_OFF
 RISCV_DEBUG_REG_WALL_CLOCK_L = 0xFFB121F0
 RISCV_DEBUG_REG_WALL_CLOCK_H = 0xFFB121F8
 
@@ -550,6 +550,10 @@ def build_dispatch() -> CqKernel:
   fw.label("cmd_host")
   fw.lw(t0, s0, 8)      # length
   fw.slli(t1, s1, 4)    # completion dst addr
+  # Drain ALL outstanding NOC1 writes first: waiting for snapshot+1 acks can
+  # be satisfied by an earlier in-flight write, letting the wr-ptr publish
+  # below race ahead of this payload write reaching host memory.
+  fw.noc_write_barrier(1, s6, addr=t2, val=t3)
   fw.li(t4, NOC_STATUS_BASE + NIU_MST_WR_ACK_RECEIVED)
   fw.lw(s6, t4, 0)
   fw.noc_write(1, 0, s0, t1, NOC_PCIE_MID, PCIE_NOC_XY, t0, a=t2, v=t3)

@@ -34,7 +34,7 @@ _PCIE_NOC_BASE = 1 << 60
 
 # Host sysmem layout.
 _HOST_ISSUE_BASE = 4 * PCIE_ALIGN
-_HOST_ISSUE_SIZE = align_up(64 << 20, PCIE_ALIGN)
+_HOST_ISSUE_SIZE = align_up(int(os.environ.get("CQ_ISSUE_MB", "64")) << 20, PCIE_ALIGN)
 _HOST_COMPLETION_BASE = _HOST_ISSUE_BASE + _HOST_ISSUE_SIZE
 _HOST_COMPLETION_SIZE = align_up(32 << 20, PCIE_ALIGN)
 _HOST_TIMESTAMP_BASE = _HOST_COMPLETION_BASE + _HOST_COMPLETION_SIZE
@@ -325,10 +325,12 @@ class CQSysmem:
   def write_sysmem32(self, off: int, value: int):
     self.sysmem.write(off, struct.pack("<I", value & 0xFFFFFFFF))
 
-  def _wait_prefetch_slot_free(self, idx: int, timeout_s: float = 1.0):
+  def _wait_prefetch_slot_free(self, idx: int, timeout_s: float = 5.0):
     off = CQ_PREFETCH_Q_BASE + idx * CQ_PREFETCH_Q_ENTRY_SZ
     deadline = time.perf_counter() + timeout_s
     while struct.unpack("<I", self.prefetch_win.read(off, 4))[0] != 0:
+      if struct.unpack("<I", self.prefetch_win.read(CQ_PREFETCH_Q_RD_PTR, 4))[0] == 0xFFFFFFFF:
+        raise RuntimeError("CQ prefetch core reads back 0xffffffff -- device off bus, needs reset")
       if time.perf_counter() > deadline:
         base = max(0, idx - 4)
         end = min(CQ_PREFETCH_Q_ENTRIES, idx + 5)
@@ -369,6 +371,13 @@ class CQSysmem:
         hdr = struct.pack("<BBHII", _RELAY_INLINE, 0, 0, CQ_CMD_SIZE, stride).ljust(CQ_CMD_SIZE, b"\0")
         self._issue_write(hdr.ljust(stride, b"\0"))
       self.issue_wr = 0
+      # Wrap fence: a free slot only proves the prefetcher *started* on the
+      # filler before it; its PCIe fetch of the ring tail can still be in
+      # flight when the host begins rewriting offset 0 (rare hard-hang race).
+      # Wait until every queued slot is consumed -- the prefetcher's PCIe
+      # cursor has then provably wrapped past the region we are reusing.
+      for i in range(CQ_PREFETCH_Q_ENTRIES):
+        self._wait_prefetch_slot_free(i)
 
     while self.dispatch_cb_page_pos and pages > CQ_DISPATCH_CB_PAGES - self.dispatch_cb_page_pos:
       self._issue_write(_relay_inline(bytes(CQ_CMD_SIZE)))
@@ -417,7 +426,17 @@ class CQSysmem:
       wr_16b, wr_toggle = wr_raw & 0x7FFFFFFF, (wr_raw >> 31) & 1
       if wr_16b != self.completion_rd_16b or wr_toggle != self.completion_rd_toggle:
         off = (self.completion_rd_16b << 4) - self.noc_local
+        # Dispatch can publish the wr pointer before the event payload write
+        # is observable (it waits for one ack, which an earlier in-flight
+        # write can satisfy). Poll briefly for the expected id.
         got = self.read_sysmem32(off + CQ_CMD_SIZE)
+        if got != (event_id & 0xFFFFFFFF):
+          # Stale page: a stale wr-ptr read (toggle alias one ring later) or
+          # payload still in flight. Do not consume; keep waiting.
+          if time.perf_counter() > deadline:
+            raise RuntimeError(f"CQ completion event mismatch: got {got}, expected {event_id}")
+          time.sleep(0.0002)
+          continue
         self.completion_rd_16b += self.completion_page_16b
         if self.completion_rd_16b >= self.completion_end_16b:
           self.completion_rd_16b = self.completion_base_16b
