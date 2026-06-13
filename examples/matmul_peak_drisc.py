@@ -34,6 +34,7 @@ from drisc_hello import DRISC_FW_BASE, DRISC_L1_NOC_ALIAS, DRISC_RESET_PC, RegWi
 from dsl import a0, a1, a2, a3, a4, a5, a6, a7, s0, s1, s2, s3, s4, s5, s6, s7, s8, s9, s10, s11, t0, t1, t2, t3, t4, t5, t6, zero
 from pcie import TLBWindow
 from program import Dtype, Program
+from ttk.addrs import p100_dram_bank_endpoint_coords
 from ttk import Noc
 from ttk.drisc import read_drisc_words, start_drisc, wait_drisc
 from ttk.mailbox import BriscMailbox as BM, NcriscMailbox as NM
@@ -369,7 +370,7 @@ def matmul_reader_recv_drisc() -> base.MatmulKernel:
   return fw.ret()
 
 
-def matmul_writer_sender_drisc(plan: base.MatmulPlan) -> base.MatmulKernel:
+def matmul_writer_sender_drisc(plan: base.MatmulPlan, *, output_coord_offset_words: int) -> base.MatmulKernel:
   fw = base.MatmulKernel()
   fw.rta_ptr(NM.RTA_L1_BASE_PTR)
   fw.arg(s7, 7)   # block_tiles
@@ -449,13 +450,13 @@ def matmul_writer_sender_drisc(plan: base.MatmulPlan) -> base.MatmulKernel:
   fw.j("writer_sender_block_loop")
   fw.label("writer_sender_blocks_done")
   _debug_mark(fw, DEBUG_NCRISC, 0xB0FE)
-  base.emit_output_writer(fw, plan)
+  base.emit_output_writer(fw, plan, coord_offset_words=output_coord_offset_words)
   _debug_mark(fw, DEBUG_NCRISC, 0xB0FF)
   _profile_stamp(fw, PROFILE_NCRISC + 8)
   return fw.ret()
 
 
-def matmul_writer_recv_drisc(plan: base.MatmulPlan) -> base.MatmulKernel:
+def matmul_writer_recv_drisc(plan: base.MatmulPlan, *, output_coord_offset_words: int) -> base.MatmulKernel:
   fw = base.MatmulKernel()
   fw.rta_ptr(NM.RTA_L1_BASE_PTR)
   fw.arg(s7, 7)
@@ -487,25 +488,37 @@ def matmul_writer_recv_drisc(plan: base.MatmulPlan) -> base.MatmulKernel:
   fw.j("writer_recv_block_loop")
   fw.label("writer_recv_blocks_done")
   _debug_mark(fw, DEBUG_NCRISC, 0xD0FE, block_reg=s0)
-  base.emit_output_writer(fw, plan)
+  base.emit_output_writer(fw, plan, coord_offset_words=output_coord_offset_words)
   _debug_mark(fw, DEBUG_NCRISC, 0xD0FF, block_reg=s0)
   _profile_stamp(fw, PROFILE_NCRISC + 8)
   return fw.ret()
 
 
-def build_program_drisc(plan: base.MatmulPlan, c_addr: int, num_banks: int, layout: base.TensorLayout | None = None) -> Program:
+def build_program_drisc(
+  plan: base.MatmulPlan, c_addr: int, num_banks: int,
+  layout: base.TensorLayout | None = None,
+  dram_bank_coords_noc0: list[int] | None = None,
+) -> Program:
+  if dram_bank_coords_noc0 is None:
+    dram_bank_coords_noc0 = p100_dram_bank_endpoint_coords(None, 0)[:num_banks]
   brisc_sender = matmul_reader_sender_drisc(plan)
-  ncrisc_sender = matmul_writer_sender_drisc(plan)
+  ncrisc_sender = matmul_writer_sender_drisc(
+    plan,
+    output_coord_offset_words=base.WRITER_DRAM_COORD_OFFSET,
+  )
   brisc_recv = matmul_reader_recv_drisc()
-  ncrisc_recv = matmul_writer_recv_drisc(plan)
+  ncrisc_recv = matmul_writer_recv_drisc(
+    plan,
+    output_coord_offset_words=base.WRITER_DRAM_COORD_OFFSET,
+  )
   trisc0 = base.matmul_trisc0_grouped_k(plan) if base.K_GROUP > 1 else base.matmul_trisc0(plan)
   trisc1 = base.matmul_trisc1_grouped_k(plan) if base.K_GROUP > 1 else base.matmul_trisc1(plan)
   trisc2 = base.matmul_trisc2_grouped_k(plan) if base.K_GROUP > 1 else base.matmul_trisc2(plan)
 
   brisc_sender.rta(lambda x, y: base.reader_args(plan, 0, (x, y), num_banks, layout))
   brisc_recv.rta(lambda x, y: base.reader_args(plan, 0, (x, y), num_banks, layout))
-  ncrisc_sender.rta(lambda x, y: base.writer_args(plan, 0, c_addr, (x, y), num_banks, layout))
-  ncrisc_recv.rta(lambda x, y: base.writer_args(plan, 0, c_addr, (x, y), num_banks, layout))
+  ncrisc_sender.rta(lambda x, y: base.writer_args(plan, 0, c_addr, (x, y), num_banks, layout) + list(dram_bank_coords_noc0))
+  ncrisc_recv.rta(lambda x, y: base.writer_args(plan, 0, c_addr, (x, y), num_banks, layout) + list(dram_bank_coords_noc0))
   trisc0.rta(lambda x, y: base.trisc_args(plan, (x, y)) if base.SKIP_PADDED_N else [])
   trisc1.rta(lambda x, y: base.trisc_args(plan, (x, y)) if base.SKIP_PADDED_N else [])
   trisc2.rta(lambda x, y: base.trisc_args(plan, (x, y)) if base.SKIP_PADDED_N else [])
@@ -984,6 +997,7 @@ def main() -> None:
   device = Device()
   try:
     num_banks = len(device.dram.bank_tiles)
+    dram_coords_noc0 = p100_dram_bank_endpoint_coords(device.board_info.harvested_dram_bank, 0)[:num_banks]
     feeder_tiles = list(device.board_info.dram_tiles)
     if not USE_ALL_FEEDERS:
       feeder_tiles = [tile for tile in feeder_tiles if (tile[1], tile[2]) != (0, 0)]
@@ -1056,7 +1070,13 @@ def main() -> None:
           start_drisc(dram_core, code, device.dev)
           feeders.append((dram_core, "A" if is_a else "B", worker_core, len(stream_data), bank, request_addr))
 
-        prog = build_program_drisc(plan, c_buf.addr, num_banks, layout)
+        prog = build_program_drisc(
+          plan,
+          c_buf.addr,
+          num_banks,
+          layout,
+          dram_bank_coords_noc0=dram_coords_noc0,
+        )
         prog.name = f"matmul_drisc_M{M}_N{N}_K{K}_chunk{chunk_idx}"
         try:
           run_timings.extend(device.run(prog))

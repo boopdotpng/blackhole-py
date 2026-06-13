@@ -10,7 +10,7 @@ from cq import (
 )
 from dram import Allocator, DramBuffer, Shape, tilize, untilize
 import fw
-from ttk.addrs import Core, L1_ALIGN, align_down, align_up, as_bytes
+from ttk.addrs import Core, L1_ALIGN, align_down, align_up, as_bytes, p100_dram_bank_endpoint_coords
 from ttk.noc import NOC
 from ttk.tensix import TensixL1, TensixMMIO
 from pcie import BoardInfo, Mapping, NOC_PCIE_OFFSET, PCIDevice, PCIE_NOC_XY, TLBWindow
@@ -314,12 +314,14 @@ class Device:
     bank_count = len(self.dram.bank_tiles)
     sysmem_lo = noc_local & 0xFFFFFFFF
     sysmem_mid = NOC.PCIE_MID | ((noc_local >> 32) & 0xF)
+    dram_coords_noc1 = p100_dram_bank_endpoint_coords(self.board_info.harvested_dram_bank, 1)[:bank_count]
 
     kernel.rta(lambda x, y: [
       buf.addr, (1 << 24) | PCIE_NOC_XY, sysmem_lo, sysmem_mid,
       core_index[(x, y)] * tiles_per_core,
       max(0, min(tiles_per_core, n_tiles - core_index[(x, y)] * tiles_per_core)),
       buf.page_size, bank_count,
+      *dram_coords_noc1,
     ])
 
     empty = self._empty_kernel()

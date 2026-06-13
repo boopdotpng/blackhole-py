@@ -1,0 +1,24 @@
+Status: PASS
+Job: 01e5e503
+Command: PYTHONPATH=.:examples python3 microbenching/noc/riscv_noc_arbitration_bench.py --layouts all --counts 4 --packet-bytes 4096,16384 --packets 64 --nocs 0,1
+
+Coverage:
+- Layouts: one-sided, two-sided, holes, diagonal, multi-row, start-skew
+- NoCs: 0,1
+- K: 4 senders
+- Packet sizes: 4096 and 16384 bytes
+- Packets per sender: 64
+
+Validation:
+- All rows reported bad counters = 0.
+- All rows reported target missing = 0.
+- Receiver visibility timestamp columns were populated for all rows.
+
+Result summary:
+- Unskewed aggregate target ingress stayed near 61-63 B/cyc across NoC0/1.
+- One-sided and holey rows kept the older position-biased split.
+- Two-sided/wrap layouts were close to even across senders on both NoCs.
+- NoC0 diagonal and multi-row layouts remained position-sensitive; NoC1 diagonal was close to even in this subset.
+- Start-skew rows showed receiver visibility offsets close to the programmed 0/10000/20000/30000 cycle sender delays.
+
+The full markdown table was appended to ../noc-arbitration.md in run 2026-06-13T17:35:34-04:00.

@@ -480,7 +480,7 @@ def main() -> None:
   parser = argparse.ArgumentParser(description="Harvest-aware safe L1 unicast NoC packet latency/hop sweep.")
   parser.add_argument("--nocs", type=hop_sweep.parse_nocs, default=(0, 1))
   parser.add_argument("--ops", type=parse_ops, default=parse_ops("read,write"))
-  parser.add_argument("--sizes", type=parse_sizes, default=parse_sizes("4,64,1024,4096,16384"))
+  parser.add_argument("--sizes", type=parse_sizes, default=parse_sizes("4,16,64,256,4096,16384"))
   parser.add_argument("--row", type=int, default=None, help="translated worker row for automatic source selection")
   parser.add_argument("--core", type=harness.parse_core, default=None, help="translated source worker X,Y")
   parser.add_argument("--pair", type=parse_pair, default=None, help="explicit translated worker pair X,Y:X,Y")

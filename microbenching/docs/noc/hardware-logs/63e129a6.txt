@@ -1,0 +1,17 @@
+| case | stream A | stream B | A alone B/cyc (ctr) | B alone B/cyc (ctr) | A mixed B/cyc (ctr) | B mixed B/cyc (ctr) | mixed aggregate B/cyc | mixed window cyc |
+|---|---|---|---:|---:|---:|---:|---:|---:|
+| same-l1-target | NoC0 `1,4->4,4` | NoC1 `10,4->4,4` | 56.327 (8) | 56.914 (8) | 55.026 (8) | 55.072 (8) | 109.960 | 2384 |
+| same-l1-source | NoC0 `4,4->7,4` | NoC1 `4,4->1,4` | 56.521 (8) | 56.497 (8) | 55.422 (8) | 56.351 (8) | 110.843 | 2365 |
+| disjoint-l1 | NoC0 `1,5->4,5` | NoC1 `13,6->10,6` | 56.717 (8) | 56.889 (8) | 55.823 (8) | 56.399 (8) | 111.408 | 2353 |
+
+appended /home/boop/.orchestra/runs/blackhole-py/fa44/microbenching/docs/noc/noc-cross-endpoint-interference.md
+| case | op pair | NoC0 streams | NoC1 streams | NoC0 alone B/cyc | NoC1 alone B/cyc | mixed NoC0 B/cyc | mixed NoC1 B/cyc | mixed aggregate B/cyc | bad counters |
+|---|---|---|---|---:|---:|---:|---:|---:|---:|
+| same-dram-bank | read/read | NoC0/read `1,4`->b0.e2 | NoC1/read `2,4`->b0.e1 | 40.181 | 40.293 | 22.141 | 22.383 | 44.281 | 0 |
+| same-dram-bank | read/write | NoC0/read `1,4`->b0.e2 | NoC1/write `2,4`->b0.e1 | 38.460 | 44.371 | 20.739 | 21.996 | 41.478 | 0 |
+| different-banks-same-dram-column | read/read | NoC0/read `1,4`->b0.e2 | NoC1/read `2,4`->b1.e1 | 40.157 | 40.022 | 40.157 | 40.095 | 80.093 | 0 |
+| different-banks-same-dram-column | read/write | NoC0/read `1,4`->b0.e2 | NoC1/write `2,4`->b1.e1 | 40.145 | 44.401 | 40.157 | 44.416 | 80.020 | 0 |
+| disjoint-route-links | read/read | NoC0/read `1,4`->b0.e2 | NoC1/read `13,7`->b4.e1 | 40.157 | 38.348 | 40.157 | 40.157 | 80.215 | 0 |
+| disjoint-route-links | read/write | NoC0/read `1,4`->b0.e2 | NoC1/write `13,7`->b4.e1 | 40.157 | 44.371 | 40.157 | 44.326 | 80.314 | 0 |
+
+appended /home/boop/.orchestra/runs/blackhole-py/fa44/microbenching/docs/noc/dram-noc-structural-matrix.md

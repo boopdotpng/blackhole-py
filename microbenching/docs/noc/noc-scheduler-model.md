@@ -250,6 +250,17 @@ Scheduler implication: the aggregate `l1_in:<target>` resource is enough for
 hotspot/cycle prediction, but completion-order prediction needs a deterministic
 position-priority model rather than equal fair sharing.
 
+Follow-up target-ingress layout run `01e5e503` expanded the same benchmark to
+one-sided, two-sided/wrap, holey, diagonal, multi-row, and 10k-cycle start-skew
+sender placements at K=4 on NoC0/1 with 4 KiB and 16 KiB packets. It does not
+move the aggregate L1 ingress constant: unskewed shared-ingress cases remain
+about 61-63 B/cyc. It does show that the deterministic split is placement
+dependent rather than a universal K-way priority ladder: two-sided/wrap layouts
+were nearly even on both NoCs, NoC1 diagonal was also nearly even, and row/holey
+layouts preserved the older position-biased split. Start-skew visibility
+timestamps tracked the programmed 10k-cycle offsets, so host/model analyses can
+use per-stream readiness instead of charging launch skew to fabric contention.
+
 ### Other Refreshed Runs
 
 | area | job | command shape | result |
@@ -269,6 +280,7 @@ position-priority model rather than equal fair sharing.
 | topology | `27b58305` | experiments C/D | PASS |
 | packet latency | `9bc25ff5` | read/write, NoC0/1, 4..16 KiB, 1D and 2D routes | PASS; blocking small-packet intercept about 175-186 cycles, slope about 4.8-5.3 cyc/hop |
 | same-target arbitration | `6e017354` | K=2..8, 16 KiB, NoC0/1 | PASS; aggregate about 63 B/cyc, deterministic position-biased split |
+| target-ingress arbitration | `01e5e503` | one-sided/two-sided/holes/diagonal/multi-row/start-skew, K=4, 4/16 KiB, NoC0/1 | PASS; aggregate constant unchanged, split depends on source layout |
 | DRAM endpoint matrix | `3e59ab0d` | banks 0..6, endpoints 0..2, read/write, NoC0/1, one core | PASS; single-source endpoint variation is small |
 | same-initiator active commands | `17d0478d`, `bbc60434` | one BRISC, same NoC, read slot 1 plus write slot 0 | PASS; read+write reaches about 120-122 B/cyc with separate targets and also completes with same remote target |
 
@@ -429,6 +441,69 @@ For static scheduling, the conservative assumption is:
 - `CMD_PATH_RESERVE` can be modeled by setting
   `calibration.mcast_path_reserve_cycles`; the default is zero until the reserve
   cost is pinned to a stable benchmark.
+
+### Multicast Arrival Order
+
+Focused receiver-visibility probe `f120f0b0` reran
+`riscv_noc_mcast_one_way_latency.py` as a Python harness with 16 KiB payloads,
+5 repeats, and 24 packets per repeat. Each receiver polled the final payload
+word/sentinel in L1; the tables below sort receivers by last-word visibility
+time relative to the sender's `NIU_MST_NONPOSTED_WR_REQ_SENT` timestamp. All
+sampled shapes had stable ordering across all 120 samples per row.
+
+Pure row and column multicast is deterministic and monotonic along the line,
+with NoC1 reversing the effective physical direction for these logical cores:
+
+| case | noc | major | first -> last | avg seen-after-sent cycles |
+|---|---:|---|---|---|
+| row | 0 | x/y | `2,2 -> 5,2 -> 14,2` | `25 -> 43 -> 152` |
+| row | 1 | x/y | `14,2 -> 5,2 -> 2,2` | `36 -> 126 -> 164` |
+| column | 0 | x/y | `1,3 -> 1,7 -> 1,11` | `26 -> 63 -> 99` |
+| column | 1 | x/y | `1,11 -> 1,7 -> 1,3` | `44 -> 80 -> 117` |
+
+For a 2D rectangle, the order is still deterministic but not naive row-major
+or column-major. On NoC0, the lower-left sampled corner arrives before the
+upper-right sampled corner, which implies an early branch feeding that side of
+the rectangle while the trunk continues toward far x:
+
+```text
+NoC0 rect, src S=(1,2), encoded rect 2,3 -> 14,11
+
+             x=2                    x=14
+y=2      S
+
+y=3      [ 2,3  +52  ] ----------- [ 14,3  +178 ]
+
+          |                         |
+
+y=11     [ 2,11 +136 ] ----------- [ 14,11 +262 ]
+
+arrival order: 2,3 -> 2,11 -> 14,3 -> 14,11
+```
+
+NoC1 mirrors the physical direction and produces the corresponding reversed
+tree order:
+
+```text
+NoC1 rect, src S=(1,2), encoded rect 14,11 -> 2,3
+
+             x=2                    x=14
+y=2      S
+
+y=3      [ 2,3  +264 ] ----------- [ 14,3  +138 ]
+
+          |                         |
+
+y=11     [ 2,11 +192 ] ----------- [ 14,11 +65  ]
+
+arrival order: 14,11 -> 14,3 -> 2,11 -> 2,3
+```
+
+The current scheduler should therefore avoid assuming that `mcast_major` alone
+defines receiver completion order. It is reasonable for bandwidth planning to
+model multicast as a union of directed links plus per-receiver L1 ingress, but
+completion-order prediction needs a deterministic hardware-tree approximation
+that captures early branch points.
 
 ## JSON Spec Shape
 

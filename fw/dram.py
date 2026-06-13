@@ -20,7 +20,15 @@ class DramTransferKernel(KernelBase, Noc, Cb):
     self.mv(a0, s0)
     self.mv(a1, tile_id)
     self.mv(a2, s7)
-    return self.dram_tile_addr_from(NM.DRAM_BANK_TO_NOC_XY, s7)
+    self.mv(t0, a1)
+    self.remu(a1, t0, a2)
+    self.divu(t0, t0, a2)
+    self.slli(t0, t0, 11)
+    self.add(a0, a0, t0)
+    self.slli(t1, a1, 2)
+    self.read32(t2, NM.RTA_L1_BASE_PTR)
+    self.add(t2, t2, t1)
+    return self.lw(a2, t2, 8 * 4)
 
 
 def _loop(fw: DramTransferKernel, body):

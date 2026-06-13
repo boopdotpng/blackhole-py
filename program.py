@@ -5,7 +5,7 @@ from ctypes import c_uint8 as u8, c_uint16 as u16, c_uint32 as u32
 from dataclasses import dataclass, field
 from enum import Enum
 from asm import KernelBase, Segment, boot_jal
-from ttk.addrs import L1_ALIGN, S, align_up, as_bytes, build_bank_noc_table
+from ttk.addrs import L1_ALIGN, S, align_up, as_bytes
 from ttk.cb import CB as CBRegs
 from ttk.tensix import TensixL1, TensixMMIO
 
@@ -156,7 +156,6 @@ def _kernel_entry(kernel: Kernel) -> int:
 def lower_firmware_boot(firmware: dict[str, Kernel], all_cores: list[Core], harvested_dram_bank: int | None) -> list[IRCommand]:
   rects = mcast_rects(all_cores)
   go_init = struct.pack("<BBBB", 0, 0, 0, DevMsgs.RUN_MSG_INIT)
-  bank_table = build_bank_noc_table(harvested_dram_bank, all_cores)
   entry = {role: _kernel_entry(firmware[role]) for role in ROLE_INDEX}
 
   commands: list[IRCommand] = [
@@ -168,7 +167,6 @@ def lower_firmware_boot(firmware: dict[str, Kernel], all_cores: list[Core], harv
   commands.extend([
     McastWrite(rects, 0, boot_jal(entry["brisc"])),
     McastWrite(rects, TensixL1.GO_MSG, go_init),
-    McastWrite(rects, TensixL1.MEM_BANK_TO_NOC_SCRATCH, bank_table),
     McastMmioWrite32(rects, TensixMMIO.RISCV_DEBUG_REG_NCRISC_RESET_PC, entry["ncrisc"]),
     McastMmioWrite32(rects, TensixMMIO.RISCV_DEBUG_REG_TRISC0_RESET_PC, entry["trisc0"]),
     McastMmioWrite32(rects, TensixMMIO.RISCV_DEBUG_REG_TRISC1_RESET_PC, entry["trisc1"]),

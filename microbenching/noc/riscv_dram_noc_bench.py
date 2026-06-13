@@ -31,6 +31,7 @@ STATUS_STARTED = 0x0D000001
 STATUS_DONE = 0x0D00D00D
 LOCAL_BASE = TensixL1.DATA_BUFFER_SPACE_BASE
 LOCAL_PAGES = 64
+START_GATE_BASE = RESULT_BASE - 0x40
 DEBUG_CLOCK_MHZ = 1350.0
 
 OP_READ = 1
@@ -101,6 +102,26 @@ def emit_counter_read(fw: KernelBase, noc: int, counter: int, out, *, addr=t3):
   return fw.lw(out, addr, 0)
 
 
+def emit_wait_gate(fw: KernelBase):
+  fw.li(t1, START_GATE_BASE)
+  fw.lw(t0, t1, 0)
+  fw.lw(t2, t1, 4)
+  fw.or_(t1, t0, t2)
+  no_gate = fw._new_label("start_gate_none")
+  wait = fw._new_label("start_gate_wait")
+  done = fw._new_label("start_gate_done")
+  fw.beq(t1, zero, no_gate)
+  fw.label(wait)
+  harness.read_wall_clock(fw, a2, a3)
+  fw.bltu(a3, t2, wait)
+  fw.bltu(t2, a3, done)
+  fw.bltu(a2, t0, wait)
+  fw.j(done)
+  fw.label(no_gate)
+  fw.label(done)
+  return fw
+
+
 def emit_local_seed(fw: KernelBase):
   fw.li(s8, LOCAL_PAGES)
   fw.mul(s8, s8, s2)
@@ -149,7 +170,7 @@ def emit_stateful_transfer(fw: DramNocKernel, *, op: int, noc: int):
   return fw.noc_cmd_reg(noc, buf, NOC.CMD_CTRL, NOC.CTRL_SEND_REQ, addr=t3, tmp=t4)
 
 
-def build_kernel(*, op: int, noc: int, stateful: bool) -> KernelBase:
+def build_kernel(*, op: int, noc: int, stateful: bool, use_start_gate: bool = False) -> KernelBase:
   if op not in OP_NAMES:
     raise ValueError(f"unknown op {op}")
   counter = NOC.NIU_MST_RD_RESP_RECEIVED if op == OP_READ else NOC.NIU_MST_WR_ACK_RECEIVED
@@ -164,6 +185,8 @@ def build_kernel(*, op: int, noc: int, stateful: bool) -> KernelBase:
   fw.mv(s6, s7)
   if stateful:
     emit_stateful_setup(fw, op=op, noc=noc)
+  if use_start_gate:
+    emit_wait_gate(fw)
 
   harness.read_wall_clock(fw, a2, a3)
   fw.li(s9, RESULT_BASE)
@@ -217,7 +240,7 @@ def build_kernel(*, op: int, noc: int, stateful: bool) -> KernelBase:
 
 def build_program(
   core_runs: list[CoreRun], *, op: int, noc: int, dram_base: int, bank_count: int,
-  packet_bytes: int, packet_count: int, stateful: bool,
+  packet_bytes: int, packet_count: int, stateful: bool, use_start_gate: bool = False,
 ) -> Program:
   empty = KernelBase()
   args_by_core = {
@@ -227,7 +250,7 @@ def build_program(
     ]
     for run in core_runs
   }
-  kernel = build_kernel(op=op, noc=noc, stateful=stateful)
+  kernel = build_kernel(op=op, noc=noc, stateful=stateful, use_start_gate=use_start_gate)
   kernel.rta(lambda x, y: args_by_core[(x, y)])
   program = Program(
     brisc=kernel,

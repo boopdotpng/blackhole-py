@@ -36,6 +36,7 @@ Start here:
 | `1c04b1f3` | PASS | row stream sweep, NoC0/1, <=8 hops, 1 MiB streams | `noc-stream-sweep.md` | `hardware-logs/1c04b1f3.txt` |
 | `9bc25ff5` | PASS | packet latency, read/write, NoC0/1, 4..16 KiB, 1D/2D routes | `noc-packet-latency.md` | `hardware-logs/9bc25ff5.txt` |
 | `6e017354` | PASS | same-target arbitration, K=2..8, 16 KiB | `noc-arbitration.md` | `hardware-logs/6e017354.txt` |
+| `01e5e503` | PASS | target-ingress arbitration layouts, K=4, NoC0/1, 4/16 KiB | `noc-arbitration.md` and scheduler summary | `hardware-logs/01e5e503.txt` |
 | `3e59ab0d` | PASS | DRAM bank/endpoint matrix, banks 0..6, endpoints 0..2 | `noc-dram-endpoint-matrix.md` | `hardware-logs/3e59ab0d.txt` |
 | `17d0478d` | PASS | same BRISC active read+write, NoC0/1, separate targets | `noc-same-initiator-active.md` | `hardware-logs/17d0478d.txt` |
 | `bbc60434` | PASS | same BRISC active read+write, same remote target smoke | `noc-same-initiator-active.md` | `hardware-logs/bbc60434.txt` |

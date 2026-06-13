@@ -17,9 +17,6 @@ def build() -> KernelBase:
   fw.segment(Firmware.LOCAL_DATA_BASE["ncrisc"], b"\x68".ljust(Firmware.LOCAL_DATA_SIZE["ncrisc"], b"\0"), label="local_data")
   fw.setup_stack(Firmware.NCRISC_STACK_TOP)
   fw.configure_csr()
-  # init_bank_tables
-  fw.init_bank_tables(NM.DRAM_BANK_TO_NOC_XY)
-
   # init_risc_noc_coords
   fw.init_risc_noc_coords(NM.MY_X, NM.MY_Y)
 

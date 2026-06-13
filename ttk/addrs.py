@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import ctypes
-import struct
 
 Core = tuple[int, int]
 L1_ALIGN = 16
@@ -66,31 +65,3 @@ class Dram:
     4: (0, 1, 11), 5: (2, 3, 10), 6: (4, 8, 9), 7: (5, 6, 7),
   }
   BANK_X = {b: 0 if b < 4 else 9 for b in range(8)}
-
-class P100BankTable:
-  NUM_DRAM_BANKS = 7
-  NUM_L1_BANKS = 120
-  DRAM_BANK_TO_NOC_SIZE = 2 * NUM_DRAM_BANKS * 2
-  L1_BANK_TO_NOC_SIZE = 2 * NUM_L1_BANKS * 2
-  BANK_TO_DRAM_OFFSET_SIZE = NUM_DRAM_BANKS * 4
-  BANK_TO_L1_OFFSET_SIZE = NUM_L1_BANKS * 4
-  TOTAL_SIZE = (
-    DRAM_BANK_TO_NOC_SIZE + L1_BANK_TO_NOC_SIZE +
-    BANK_TO_DRAM_OFFSET_SIZE + BANK_TO_L1_OFFSET_SIZE
-  )
-
-def build_bank_noc_table(harvested_dram_bank: int | None, worker_cores: list[Core]) -> bytes:
-  num_dram_banks = Dram.BANK_COUNT if harvested_dram_bank is None else Dram.BANK_COUNT - 1
-  num_l1_banks = len(worker_cores)
-
-  dram = []
-  for noc in range(2):
-    dram.extend(p100_dram_bank_endpoint_coords(harvested_dram_bank, noc))
-
-  cols = sorted({x for x, _ in worker_cores})
-  l1 = []
-  for _ in range(2):
-    for i in range(num_l1_banks):
-      l1.append(noc_xy(cols[i % len(cols)], 2 + (i // len(cols)) % 10))
-
-  return struct.pack(f"<{len(dram)}H{len(l1)}H{num_dram_banks + num_l1_banks}i", *dram, *l1, *([0] * (num_dram_banks + num_l1_banks)))

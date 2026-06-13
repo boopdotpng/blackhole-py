@@ -23,6 +23,7 @@ from dsl import (
 from program import Dtype, Program
 from pcie import TLBWindow
 from ttk import Cb, Noc, Tensix
+from ttk.addrs import p100_dram_bank_endpoint_coords
 from ttk.cb import CB as CBRegs
 from ttk.mailbox import BriscMailbox as BM, NcriscMailbox as NM, TriscLocalMem as TLM, TriscMailbox
 from ttk.noc import NOC
@@ -45,14 +46,17 @@ K_GROUP = 1
 OUTPUT_NOC = 1
 OUTPUT_STAGGER_ITERS = 0
 STREAM_PARTIAL_CB24 = False
-MATH_BACKEND = "mop"
 HIFI = os.environ.get("HIFI", "") == "1"
-MATH_FIDELITY = "hifi2"
+MATH_BACKEND = os.environ.get("MATH_BACKEND", "direct")
+MATH_FIDELITY = os.environ.get("MATH_FIDELITY", "hifi2" if HIFI else "lofi")
+MCAST_PATH_RESERVE = os.environ.get("MATMUL_MCAST_PATH_RESERVE", "1") != "0"
 SKIP_PADDED_N = False
 ENABLE_BREADCRUMBS = os.environ.get("BREADCRUMBS", "") == "1"
 SUPPORTED_IN0_BLOCK_WS = tuple(range(1, MAX_IN0_BLOCK_W + 1))
 SUPPORTED_OUT_SUBBLOCK_H = 2
 SUPPORTED_OUT_SUBBLOCK_W = 2
+READER_DRAM_COORD_OFFSET = 24
+WRITER_DRAM_COORD_OFFSET = 31
 
 PCC_THRESHOLD = 0.995
 REL_L2_THRESHOLD = 0.10
@@ -534,6 +538,20 @@ class MatmulKernel(KernelBase, Noc, Cb):
   def arg(self, dst, index: int, *, ptr=s11):
     return self.lw(dst, ptr, index * 4)
 
+  def dram_tile_addr_from_rta_coords(self, coord_offset_words: int, *, rta_ptr_addr: int | None = None):
+    self.mv(t0, a1)
+    self.remu(a1, t0, a2)
+    self.divu(t0, t0, a2)
+    self.slli(t0, t0, 11)
+    self.add(a0, a0, t0)
+    self.slli(t1, a1, 2)
+    if rta_ptr_addr is None:
+      self.add(t1, s11, t1)
+    else:
+      self.read32(t2, rta_ptr_addr)
+      self.add(t1, t2, t1)
+    return self.lw(a2, t1, coord_offset_words * 4)
+
   def release_triscs(self):
     for addr in (
       SYNC_TRISC_START,
@@ -714,7 +732,10 @@ def _emit_mcast_chunks(fw: MatmulKernel, noc_id: int, src_addr, coord, total_byt
   for chunk in range(chunks):
     size = min(NOC.MAX_BURST_SIZE, total_bytes - chunk * NOC.MAX_BURST_SIZE)
     fw.li(tmp, size)
-    fw.noc_write(noc_id, 0, src_addr, src_addr, 0, coord, tmp, mcast=True, a=t1, v=t2)
+    fw.noc_write(
+      noc_id, 0, src_addr, src_addr, 0, coord, tmp,
+      mcast=True, mcast_path_reserve=MCAST_PATH_RESERVE, a=t1, v=t2,
+    )
     if chunk != chunks - 1:
       fw.add(src_addr, src_addr, tmp)
   return chunks
@@ -840,7 +861,9 @@ def emit_profile_accum_end(fw: KernelBase, counter_addr: int, tmp_addr: int):
   return fw
 
 
-def matmul_reader_sender(plan: MatmulPlan, preamble=None) -> MatmulKernel:
+def matmul_reader_sender(
+  plan: MatmulPlan, preamble=None, *, dram_coord_offset_words: int = READER_DRAM_COORD_OFFSET,
+) -> MatmulKernel:
   fw = MatmulKernel()
   if preamble is not None:
     preamble(fw, plan)
@@ -884,7 +907,7 @@ def matmul_reader_sender(plan: MatmulPlan, preamble=None) -> MatmulKernel:
       fw.mv(a0, s0)
       _move_plus_imm(fw, a1, a6, col)
       fw.arg(a2, 23)
-      fw.dram_tile_addr_from(BM.DRAM_BANK_TO_NOC_XY, 0)
+      fw.dram_tile_addr_from_rta_coords(dram_coord_offset_words, rta_ptr_addr=BM.RTA_L1_BASE_PTR)
       fw.local_noc0_coord(a5)
       fw.li(t6, TILE_BYTES)
       fw.noc_read(0, 1, a0, 0, a2, a4, t6, ret_coord=a5, a=t3, v=t5)
@@ -919,7 +942,7 @@ def matmul_reader_sender(plan: MatmulPlan, preamble=None) -> MatmulKernel:
   fw.arg(t3, 11)
   fw.arg(t5, 12)
   fw.noc_mcast_coord(a5, t1, t2, t3, t5)
-  fw.noc_semaphore_set_multicast(0, 0, a4, a5, 1, t0, a=t1, v=t2)
+  fw.noc_semaphore_set_multicast(0, 0, a4, a5, 1, t0, mcast_path_reserve=MCAST_PATH_RESERVE, a=t1, v=t2)
   fw.label("reader_sender_skip_west")
 
   fw.arg(t0, 18)
@@ -942,7 +965,7 @@ def matmul_reader_sender(plan: MatmulPlan, preamble=None) -> MatmulKernel:
   fw.arg(t3, 16)
   fw.arg(t5, 17)
   fw.noc_mcast_coord(a5, t1, t2, t3, t5)
-  fw.noc_semaphore_set_multicast(0, 0, a4, a5, 1, t0, a=t1, v=t2)
+  fw.noc_semaphore_set_multicast(0, 0, a4, a5, 1, t0, mcast_path_reserve=MCAST_PATH_RESERVE, a=t1, v=t2)
   fw.label("reader_sender_skip_east")
 
   fw.cb_push_back(BM.CB_INTERFACE, 0, s7)
@@ -987,7 +1010,11 @@ def matmul_reader_recv() -> MatmulKernel:
   return fw.ret()
 
 
-def matmul_writer_sender(plan: MatmulPlan, output_tile_hook=None, preamble=None) -> MatmulKernel:
+def matmul_writer_sender(
+  plan: MatmulPlan, output_tile_hook=None, preamble=None, *,
+  input_coord_offset_words: int,
+  output_coord_offset_words: int,
+) -> MatmulKernel:
   fw = MatmulKernel()
   if preamble is not None:
     preamble(fw, plan)
@@ -1028,7 +1055,7 @@ def matmul_writer_sender(plan: MatmulPlan, output_tile_hook=None, preamble=None)
       fw.mv(a0, s0)
       _move_plus_imm(fw, a1, a6, col)
       fw.arg(a2, 29)
-      fw.dram_tile_addr_from(NM.DRAM_BANK_TO_NOC_XY, a2)
+      fw.dram_tile_addr_from_rta_coords(input_coord_offset_words, rta_ptr_addr=NM.RTA_L1_BASE_PTR)
       fw.local_noc0_coord(a5, x_addr=NM.MY_X, y_addr=NM.MY_Y)
       fw.li(t6, TILE_BYTES)
       fw.noc_read(1, 1, a0, 0, a2, a4, t6, ret_coord=a5, a=t3, v=t5)
@@ -1063,7 +1090,7 @@ def matmul_writer_sender(plan: MatmulPlan, output_tile_hook=None, preamble=None)
   fw.arg(t3, 11)
   fw.arg(t5, 12)
   fw.noc_mcast_coord(a5, t1, t2, t3, t5)
-  fw.noc_semaphore_set_multicast(1, 0, a4, a5, 1, t0, a=t1, v=t2)
+  fw.noc_semaphore_set_multicast(1, 0, a4, a5, 1, t0, mcast_path_reserve=MCAST_PATH_RESERVE, a=t1, v=t2)
   fw.label("writer_sender_skip_mcast")
 
   fw.cb_push_back(NM.CB_INTERFACE, 1, s7)
@@ -1073,12 +1100,14 @@ def matmul_writer_sender(plan: MatmulPlan, output_tile_hook=None, preamble=None)
   fw.j("writer_sender_block_loop")
   fw.label("writer_sender_blocks_done")
   emit_profile_stamp(fw, PROFILE_NCRISC_INPUT + 8)
-  emit_output_writer(fw, plan, output_tile_hook=output_tile_hook)
+  emit_output_writer(fw, plan, output_tile_hook=output_tile_hook, coord_offset_words=output_coord_offset_words)
   emit_profile_stamp(fw, PROFILE_NCRISC + 8)
   return fw.ret()
 
 
-def matmul_writer_recv(plan: MatmulPlan, output_tile_hook=None) -> MatmulKernel:
+def matmul_writer_recv(
+  plan: MatmulPlan, output_tile_hook=None, *, output_coord_offset_words: int,
+) -> MatmulKernel:
   fw = MatmulKernel()
   emit_profile_stamp(fw, PROFILE_NCRISC)
   emit_profile_stamp(fw, PROFILE_NCRISC_INPUT)
@@ -1107,12 +1136,14 @@ def matmul_writer_recv(plan: MatmulPlan, output_tile_hook=None) -> MatmulKernel:
   fw.j("writer_recv_block_loop")
   fw.label("writer_recv_blocks_done")
   emit_profile_stamp(fw, PROFILE_NCRISC_INPUT + 8)
-  emit_output_writer(fw, plan, output_tile_hook=output_tile_hook)
+  emit_output_writer(fw, plan, output_tile_hook=output_tile_hook, coord_offset_words=output_coord_offset_words)
   emit_profile_stamp(fw, PROFILE_NCRISC + 8)
   return fw.ret()
 
 
-def emit_output_writer(fw: MatmulKernel, plan: MatmulPlan, output_tile_hook=None) -> MatmulKernel:
+def emit_output_writer(
+  fw: MatmulKernel, plan: MatmulPlan, output_tile_hook=None, *, coord_offset_words: int,
+) -> MatmulKernel:
   emit_profile_stamp(fw, PROFILE_NCRISC_OUTPUT)
   emit_progress_mark(fw, DEBUG_NCRISC_OUTPUT, 0xB100, block_reg=s10, i0_reg=s9, i1_reg=s1)
   emit_profile_accum_start(fw, PROFILE_TMP_NCRISC)
@@ -1175,7 +1206,7 @@ def emit_output_writer(fw: MatmulKernel, plan: MatmulPlan, output_tile_hook=None
   fw.mv(a0, s0)
   fw.mv(a1, t4)
   fw.mv(a2, s11)
-  fw.dram_tile_addr_from(NM.DRAM_BANK_TO_NOC_XY, 0)
+  fw.dram_tile_addr_from_rta_coords(coord_offset_words, rta_ptr_addr=NM.RTA_L1_BASE_PTR)
   emit_output_write_stateful(fw, t5, a0, a2)
   if output_tile_hook is not None:
     output_tile_hook(fw, plan, tile_page=t4, l1_tile=t5)
@@ -2336,11 +2367,38 @@ def build_program(
   plan: MatmulPlan, a_addr: int, b_addr: int, c_addr: int, num_banks: int,
   layout: TensorLayout | None = None, output_tile_hook=None, writer_arg_extra=None,
   reader_preamble=None, reader_arg_extra=None, writer_preamble=None,
+  dram_bank_coords_noc0: list[int] | None = None,
+  dram_bank_coords_noc1: list[int] | None = None,
 ) -> Program:
-  brisc_sender = matmul_reader_sender(plan, preamble=reader_preamble)
+  if dram_bank_coords_noc0 is None:
+    dram_bank_coords_noc0 = p100_dram_bank_endpoint_coords(None, 0)[:num_banks]
+  if dram_bank_coords_noc1 is None:
+    dram_bank_coords_noc1 = p100_dram_bank_endpoint_coords(None, 1)[:num_banks]
+  sample_core = plan.cores()[0]
+  reader_extra_len = len(reader_arg_extra(*sample_core)) if reader_arg_extra is not None else 0
+  writer_extra_len = len(writer_arg_extra(*sample_core)) if writer_arg_extra is not None else 0
+  reader_coord_offset_words = READER_DRAM_COORD_OFFSET + reader_extra_len
+  writer_input_coord_offset_words = WRITER_DRAM_COORD_OFFSET + writer_extra_len
+  output_coord_offset_words = writer_input_coord_offset_words + num_banks
+
+  brisc_sender = matmul_reader_sender(
+    plan,
+    preamble=reader_preamble,
+    dram_coord_offset_words=reader_coord_offset_words,
+  )
   brisc_recv = matmul_reader_recv()
-  ncrisc_sender = matmul_writer_sender(plan, output_tile_hook=output_tile_hook, preamble=writer_preamble)
-  ncrisc_recv = matmul_writer_recv(plan, output_tile_hook=output_tile_hook)
+  ncrisc_sender = matmul_writer_sender(
+    plan,
+    output_tile_hook=output_tile_hook,
+    preamble=writer_preamble,
+    input_coord_offset_words=writer_input_coord_offset_words,
+    output_coord_offset_words=output_coord_offset_words,
+  )
+  ncrisc_recv = matmul_writer_recv(
+    plan,
+    output_tile_hook=output_tile_hook,
+    output_coord_offset_words=output_coord_offset_words,
+  )
   trisc0 = matmul_trisc0_grouped_k(plan) if K_GROUP > 1 else matmul_trisc0(plan)
   trisc1 = matmul_trisc1_grouped_k(plan) if K_GROUP > 1 else matmul_trisc1(plan)
   trisc2 = matmul_trisc2_grouped_k(plan) if K_GROUP > 1 else matmul_trisc2(plan)
@@ -2349,15 +2407,15 @@ def build_program(
     args = reader_args(plan, a_addr, (x, y), num_banks, layout)
     if reader_arg_extra is not None:
       args += list(reader_arg_extra(x, y))
-    return args
+    return args + list(dram_bank_coords_noc0)
 
   brisc_sender.rta(reader_sender_rta)
-  brisc_recv.rta(lambda x, y: reader_args(plan, a_addr, (x, y), num_banks, layout))
+  brisc_recv.rta(reader_sender_rta)
   def writer_rta(x, y):
     args = writer_args(plan, b_addr, c_addr, (x, y), num_banks, layout)
     if writer_arg_extra is not None:
       args += list(writer_arg_extra(x, y))
-    return args
+    return args + list(dram_bank_coords_noc1) + list(dram_bank_coords_noc0)
 
   ncrisc_sender.rta(writer_rta)
   ncrisc_recv.rta(writer_rta)
@@ -2541,6 +2599,8 @@ def main() -> None:
     c_buf = device.dram.alloc((Mp // TILE) * (Np // TILE), dtype=Dtype.Float16_b, shape=(Mp, Np), name="C")
 
     layout_base = dict(a_row_stride=Kp // TILE, b_row_stride=Np // TILE, c_row_stride=Np // TILE)
+    dram_coords_noc0 = p100_dram_bank_endpoint_coords(device.board_info.harvested_dram_bank, 0)[:num_banks]
+    dram_coords_noc1 = p100_dram_bank_endpoint_coords(device.board_info.harvested_dram_bank, 1)[:num_banks]
     run_times_us = []
     for _run in range(RUNS):
       run_timings = []
@@ -2552,7 +2612,16 @@ def main() -> None:
           n_tile_offset=chunk.n_tile_offset,
           **layout_base,
         )
-        prog = build_program(chunk.plan, a_buf.addr, b_buf.addr, c_buf.addr, num_banks, layout)
+        prog = build_program(
+          chunk.plan,
+          a_buf.addr,
+          b_buf.addr,
+          c_buf.addr,
+          num_banks,
+          layout,
+          dram_bank_coords_noc0=dram_coords_noc0,
+          dram_bank_coords_noc1=dram_coords_noc1,
+        )
         prog.name = f"matmul_M{M}_N{N}_K{K}" if len(chunks) == 1 else f"matmul_M{M}_N{N}_K{K}_chunk{i}"
         run_timings.extend(device.run(prog))
       if run_timings:

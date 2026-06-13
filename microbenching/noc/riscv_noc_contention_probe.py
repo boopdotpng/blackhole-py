@@ -17,7 +17,7 @@ from dsl import a2, a3, a4, a5, s0, s1, s2, s3, s4, s5, s6, s7, s8, s9, t0, t3, 
 from pcie import TLBWindow
 from program import DevMsgs, Program, Run, UnicastWrite
 from ttk.addrs import Core, align_down, noc_xy
-from ttk.mailbox import BriscMailbox as BM
+from ttk.mailbox import BriscMailbox as BM, NcriscMailbox as NM
 from ttk.noc import NOC, Noc
 from ttk.tensix import TensixL1, TensixMMIO
 
@@ -289,7 +289,10 @@ def emit_stream_loop(fw: ProbeKernel, *, noc: int, role: int, stream_bytes: int,
 
 
 def build_stream_kernel(*, noc: int, role: int, stream_bytes: int, repeats: int,
-                        result_base: int, ctrl: int | None = None) -> ProbeKernel:
+                        result_base: int, ctrl: int | None = None,
+                        rta_ptr: int = BM.RTA_L1_BASE_PTR,
+                        my_x_addr: int = BM.MY_X,
+                        my_y_addr: int = BM.MY_Y) -> ProbeKernel:
   chunks = stream_bytes // NOC.MAX_BURST_SIZE
   ctrl_word = ctrl if ctrl is not None else (NOC.CMD_RD_FIELD if role == ROLE_READER else NOC.CMD_WR_FIELD)
   fw = ProbeKernel()
@@ -298,8 +301,8 @@ def build_stream_kernel(*, noc: int, role: int, stream_bytes: int, repeats: int,
     ctrl=ctrl_word, bytes_or_iters=stream_bytes * repeats,
     chunks_or_repeats=chunks * repeats,
   )
-  fw.read_rta_from(BM.RTA_L1_BASE_PTR, (s9,))
-  fw.local_noc0_coord(s5, x_addr=BM.MY_X, y_addr=BM.MY_Y)
+  fw.read_rta_from(rta_ptr, (s9,))
+  fw.local_noc0_coord(s5, x_addr=my_x_addr, y_addr=my_y_addr)
   if role == ROLE_READER:
     emit_counter_read(fw, noc, NOC.NIU_MST_RD_RESP_RECEIVED, s7)
   elif role == ROLE_WRITER:
@@ -460,6 +463,7 @@ class SameCoreReadWriteProgram:
     reader = build_stream_kernel(
       noc=self.noc, role=ROLE_READER, stream_bytes=self.stream_bytes,
       repeats=self.repeats, result_base=RESULT_BASE + RESULT_STRIDE, ctrl=self.read_ctrl,
+      rta_ptr=NM.RTA_L1_BASE_PTR, my_x_addr=NM.MY_X, my_y_addr=NM.MY_Y,
     )
     writer.rta(lambda _x, _y: [noc_xy(*self.write_target)])
     reader.rta(lambda _x, _y: [noc_xy(*self.read_target)])

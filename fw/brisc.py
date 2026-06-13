@@ -185,9 +185,6 @@ def build(*, text_base: dict[str, int] = Firmware.TEXT_BASE) -> KernelBase:
   # init_risc_noc_coords
   fw.init_risc_noc_coords(BM.MY_X, BM.MY_Y)
 
-  # init_bank_tables
-  fw.init_bank_tables(BM.DRAM_BANK_TO_NOC_XY)
-
   # init_brisc_mailbox_globals
   fw.write32(Mailbox.LAUNCH_MSG_RD_PTR, 0, tmp_addr=t1, tmp_val=t0)
   fw.write8(BM.NOC_INDEX, 0, tmp_addr=t1, tmp_val=t0)

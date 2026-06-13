@@ -3,9 +3,9 @@ from __future__ import annotations
 from collections.abc import Iterable
 
 from dsl import Reg, a0, a1, a2, a5, t0, t1, t2, t3, t4, t5, t6, zero
-from ttk.addrs import L1_ALIGN, P100BankTable, noc_xy
+from ttk.addrs import L1_ALIGN, noc_xy
 from ttk.mailbox import BriscMailbox as BM
-from ttk.tensix import TensixL1, TensixMMIO
+from ttk.tensix import TensixMMIO
 
 
 class NOC:
@@ -103,14 +103,6 @@ class Noc:
       self.andi(coord, coord, NocCfg.NODE_ID_MASK)
       self.write8(my_y_addr + noc, coord, tmp_addr=tmp_addr)
     return self
-
-  def init_bank_tables(self, dram_bank_to_noc_xy: int):
-    # Copy the DRAM/L1 bank->NOC translation tables from the fw scratch region.
-    return self.copy_words(
-      dram_bank_to_noc_xy,
-      TensixL1.MEM_BANK_TO_NOC_SCRATCH,
-      P100BankTable.TOTAL_SIZE,
-    )
 
   def noc_coord(self, out: Reg, x: int | Reg, y: int | Reg, *, tmp: Reg = t0):
     if isinstance(x, int) and isinstance(y, int):
@@ -327,10 +319,13 @@ class Noc:
 
   def noc_write(self, noc: int, buf: int, src: Reg, dst_lo: Reg, dst_mid: int | Reg, dst_coord: Reg,
                 length: Reg, *, mcast: bool = False, mcast_linked: bool = False,
-                num_dests: Reg | None = None, posted: bool = False, a: Reg = t0, v: Reg = t1):
+                num_dests: Reg | None = None, posted: bool = False,
+                mcast_path_reserve: bool = True, a: Reg = t0, v: Reg = t1):
     self.noc_wait_cmd_ready(noc, buf, addr=a, val=v)
     if mcast:
       ctrl = NOC.CMD_WR_MCAST_LINKED_FIELD if mcast_linked else NOC.CMD_WR_MCAST_UNLINK_FIELD
+      if not mcast_path_reserve:
+        ctrl &= ~NOC.CMD_PATH_RESERVE
     else:
       ctrl = NOC.CMD_WR_POSTED_FIELD if posted else NOC.CMD_WR_FIELD
     self.noc_cmd_reg(noc, buf, NOC.CTRL, ctrl, addr=a, tmp=v)
@@ -386,7 +381,7 @@ class Noc:
 
   def noc_semaphore_set_multicast(self, noc: int, buf: int, sem_addr: Reg, sem_coord: Reg,
                                   value: int | Reg, num_dests: int | Reg, *,
-                                  a: Reg = t0, v: Reg = t1):
+                                  mcast_path_reserve: bool = True, a: Reg = t0, v: Reg = t1):
     if not isinstance(value, int):
       self.sw(value, sem_addr, 0)
     else:
@@ -394,5 +389,8 @@ class Noc:
       self.sw(v, sem_addr, 0)
     length = t5 if int(v) == int(t2) else t2
     self.li(length, L1_ALIGN)
-    self.noc_write(noc, buf, sem_addr, sem_addr, 0, sem_coord, length, mcast=True, a=a, v=v)
+    self.noc_write(
+      noc, buf, sem_addr, sem_addr, 0, sem_coord, length,
+      mcast=True, mcast_path_reserve=mcast_path_reserve, a=a, v=v,
+    )
     return self
