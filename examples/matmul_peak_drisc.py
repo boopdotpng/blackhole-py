@@ -66,6 +66,8 @@ DRISC_CHUNK_BYTES = DRISC_CHUNK_TILES * TILE_BYTES
 FEEDER_GDDR_BASE = 0x10000000
 RUNS = base.RUNS
 PAYLOAD_NOC_MODE = "split"
+DRISC_MCAST_PATH_RESERVE = os.environ.get("DRISC_MCAST_PATH_RESERVE", "1") != "0"
+DRISC_PREFETCH_FEEDS = os.environ.get("DRISC_PREFETCH_FEEDS", "0") != "0"
 USE_ALL_FEEDERS = True
 FIXED_5000_PLAN = True
 FIXED_5000_N_CHUNKS = 1
@@ -96,7 +98,7 @@ def select_dtype(dtype: str) -> None:
   if dtype == "bfp4":
     INPUT_DTYPE = Dtype.Bfp4_b
     OUTPUT_DTYPE = Dtype.Float16_b
-    RUNS = 1
+    RUNS = int(os.environ.get("DRISC_RUNS", "1"))
     ALLOW_FEEDER_TIMEOUT_AFTER_WORKERS_DONE = True
     SMALL_SHAPE_MAX_FEEDERS = int(os.environ.get("SMALL_SHAPE_MAX_FEEDERS", "8"))
     _EMIT_BREADCRUMBS = True
@@ -104,7 +106,7 @@ def select_dtype(dtype: str) -> None:
   else:
     INPUT_DTYPE = Dtype.Float16_b
     OUTPUT_DTYPE = Dtype.Float16_b
-    RUNS = base.RUNS
+    RUNS = int(os.environ.get("DRISC_RUNS", str(base.RUNS)))
     # With one-block REQ prefetch the senders finish before the feeders'
     # final-status poll; the feeders can get their headers clobbered while
     # still in stream mode. Workers reaching final REQ_DONE is the real
@@ -165,6 +167,57 @@ def _request_and_wait(fw: base.MatmulKernel, *, request_addr: int, dst, size: in
   return _request_wait_done(fw, request_addr=request_addr, seq=seq)
 
 
+def _drisc_mcast_ctrl() -> int:
+  ctrl = (
+    NOC.CMD_CPY | NOC.CMD_WR | NOC.CMD_RESP_MARKED | NOC.CMD_VC_STATIC |
+    NOC.CMD_STATIC_VC_5 | NOC.CMD_BRCST_PACKET
+  )
+  if DRISC_MCAST_PATH_RESERVE:
+    ctrl |= NOC.CMD_PATH_RESERVE
+  return ctrl
+
+
+def _drisc_mcast_write(fw: base.MatmulKernel, noc_id: int, src_addr, dst_addr, coord, length, *, a=t1, v=t2):
+  fw.noc_wait_cmd_ready(noc_id, 0, addr=a, val=v)
+  fw.noc_cmd_reg(noc_id, 0, NOC.CTRL, _drisc_mcast_ctrl(), addr=a, tmp=v)
+  fw.noc_cmd_reg(noc_id, 0, NOC.TARG_ADDR_LO, src_addr, addr=a, tmp=v)
+  fw.noc_cmd_reg(noc_id, 0, NOC.RET_ADDR_LO, dst_addr, addr=a, tmp=v)
+  fw.noc_cmd_reg(noc_id, 0, NOC.RET_ADDR_MID, 0, addr=a, tmp=v)
+  fw.noc_cmd_reg(noc_id, 0, NOC.RET_ADDR_COORDINATE, coord, addr=a, tmp=v)
+  fw.noc_cmd_reg(noc_id, 0, NOC.AT_LEN_BE, length, addr=a, tmp=v)
+  fw.noc_cmd_reg(noc_id, 0, NOC.AT_LEN_BE_1, 0, addr=a, tmp=v)
+  fw.noc_cmd_reg(noc_id, 0, NOC.CMD_CTRL, NOC.CTRL_SEND_REQ, addr=a, tmp=v)
+  return fw
+
+
+def _emit_drisc_mcast_chunks(fw: base.MatmulKernel, noc_id: int, src_addr, coord, total_bytes: int, *, tmp=t5):
+  if DRISC_MCAST_PATH_RESERVE:
+    return base._emit_mcast_chunks(fw, noc_id, src_addr, coord, total_bytes, tmp=tmp)
+  chunks = base._ceil_div(total_bytes, NOC.MAX_BURST_SIZE)
+  for chunk in range(chunks):
+    size = min(NOC.MAX_BURST_SIZE, total_bytes - chunk * NOC.MAX_BURST_SIZE)
+    fw.li(tmp, size)
+    _drisc_mcast_write(fw, noc_id, src_addr, src_addr, coord, tmp, a=t1, v=t2)
+    if chunk != chunks - 1:
+      fw.add(src_addr, src_addr, tmp)
+  return chunks
+
+
+def _drisc_semaphore_set_multicast(fw: base.MatmulKernel, noc_id: int, sem_addr, sem_coord,
+                                   value, num_dests, *, a=t1, v=t2):
+  if DRISC_MCAST_PATH_RESERVE:
+    return fw.noc_semaphore_set_multicast(noc_id, 0, sem_addr, sem_coord, value, num_dests, a=a, v=v)
+  if not isinstance(value, int):
+    fw.sw(value, sem_addr, 0)
+  else:
+    fw.li(v, value)
+    fw.sw(v, sem_addr, 0)
+  length = t5 if int(v) == int(t2) else t2
+  fw.li(length, base.L1_ALIGN if hasattr(base, "L1_ALIGN") else 16)
+  _drisc_mcast_write(fw, noc_id, sem_addr, sem_addr, sem_coord, length, a=a, v=v)
+  return fw
+
+
 def matmul_reader_sender_drisc(plan: base.MatmulPlan) -> base.MatmulKernel:
   fw = base.MatmulKernel()
   fw.release_triscs()
@@ -184,20 +237,28 @@ def matmul_reader_sender_drisc(plan: base.MatmulPlan) -> base.MatmulKernel:
   _profile_stamp(fw, PROFILE_BRISC)
   _debug_mark(fw, DEBUG_BRISC, 0xA000)
   block_bytes = plan.in0_block_num_tiles * TILE_BYTES
-  # Prefetch block 0: reserve CB space and hand the feeder its first request
-  # before entering the loop, so the GDDR DMA overlaps the mcast handshake of
-  # the previous block on every later iteration.
-  fw.cb_reserve_back(BM.CB_INTERFACE, 0, s7)
-  fw.cb_write_ptr(BM.CB_INTERFACE, 0, out=s0)
-  _request_issue(fw, request_addr=REQUEST_A, dst=s0, size=block_bytes, seq=s6)
+  if DRISC_PREFETCH_FEEDS:
+    # Prefetch block 0: reserve CB space and hand the feeder its first request
+    # before entering the loop, so the GDDR DMA overlaps the mcast handshake of
+    # the previous block on every later iteration.
+    fw.cb_reserve_back(BM.CB_INTERFACE, 0, s7)
+    fw.cb_write_ptr(BM.CB_INTERFACE, 0, out=s0)
+    _request_issue(fw, request_addr=REQUEST_A, dst=s0, size=block_bytes, seq=s6)
   fw.label("reader_sender_block_loop")
   fw.bne(s6, s8, "reader_sender_block_body")
   fw.j("reader_sender_done")
   fw.label("reader_sender_block_body")
   _debug_mark(fw, DEBUG_BRISC, 0xA001)
-  _request_wait_done(fw, request_addr=REQUEST_A, seq=s6)
-  fw.mv(s9, s0)
-  fw.cb_push_back(BM.CB_INTERFACE, 0, s7)
+  if DRISC_PREFETCH_FEEDS:
+    _request_wait_done(fw, request_addr=REQUEST_A, seq=s6)
+    fw.mv(s9, s0)
+  else:
+    fw.cb_reserve_back(BM.CB_INTERFACE, 0, s7)
+    _debug_mark(fw, DEBUG_BRISC, 0xA002)
+    fw.cb_write_ptr(BM.CB_INTERFACE, 0, out=s9)
+    _request_and_wait(fw, request_addr=REQUEST_A, dst=s9, size=block_bytes, seq=s6)
+  if DRISC_PREFETCH_FEEDS:
+    fw.cb_push_back(BM.CB_INTERFACE, 0, s7)
   _debug_mark(fw, DEBUG_BRISC, 0xA003)
 
   fw.arg(t0, 21)
@@ -217,7 +278,7 @@ def matmul_reader_sender_drisc(plan: base.MatmulPlan) -> base.MatmulKernel:
   fw.lw(a6, t0, 0)
   fw.addi(a6, a6, base._ceil_div(block_bytes, NOC.MAX_BURST_SIZE))
   fw.mv(a0, s9)
-  base._emit_mcast_chunks(fw, 0, a0, a5, block_bytes)
+  _emit_drisc_mcast_chunks(fw, 0, a0, a5, block_bytes)
   fw.noc_nonposted_writes_flushed(0, a6)
   fw.arg(t0, 22)
   fw.sem_addr(BM.SEM_L1_BASE, t0, out=a4)
@@ -226,7 +287,7 @@ def matmul_reader_sender_drisc(plan: base.MatmulPlan) -> base.MatmulKernel:
   fw.arg(t3, 11)
   fw.arg(t5, 12)
   fw.noc_mcast_coord(a5, t1, t2, t3, t5)
-  fw.noc_semaphore_set_multicast(0, 0, a4, a5, 1, t0, a=t1, v=t2)
+  _drisc_semaphore_set_multicast(fw, 0, a4, a5, 1, t0, a=t1, v=t2)
   fw.label("reader_sender_skip_west")
   _debug_mark(fw, DEBUG_BRISC, 0xA005)
 
@@ -241,7 +302,7 @@ def matmul_reader_sender_drisc(plan: base.MatmulPlan) -> base.MatmulKernel:
   fw.lw(a6, t0, 0)
   fw.addi(a6, a6, base._ceil_div(block_bytes, NOC.MAX_BURST_SIZE))
   fw.mv(a0, s9)
-  base._emit_mcast_chunks(fw, 0, a0, a5, block_bytes)
+  _emit_drisc_mcast_chunks(fw, 0, a0, a5, block_bytes)
   fw.noc_nonposted_writes_flushed(0, a6)
   fw.arg(t0, 22)
   fw.sem_addr(BM.SEM_L1_BASE, t0, out=a4)
@@ -250,15 +311,19 @@ def matmul_reader_sender_drisc(plan: base.MatmulPlan) -> base.MatmulKernel:
   fw.arg(t3, 16)
   fw.arg(t5, 17)
   fw.noc_mcast_coord(a5, t1, t2, t3, t5)
-  fw.noc_semaphore_set_multicast(0, 0, a4, a5, 1, t0, a=t1, v=t2)
+  _drisc_semaphore_set_multicast(fw, 0, a4, a5, 1, t0, a=t1, v=t2)
   fw.label("reader_sender_skip_east")
   _debug_mark(fw, DEBUG_BRISC, 0xA006)
-  fw.addi(s4, s6, 1)
-  fw.beq(s4, s8, "reader_sender_skip_prefetch")
-  fw.cb_reserve_back(BM.CB_INTERFACE, 0, s7)
-  fw.cb_write_ptr(BM.CB_INTERFACE, 0, out=s0)
-  _request_issue(fw, request_addr=REQUEST_A, dst=s0, size=block_bytes, seq=s4)
-  fw.label("reader_sender_skip_prefetch")
+  if DRISC_PREFETCH_FEEDS:
+    fw.addi(s4, s6, 1)
+    fw.beq(s4, s8, "reader_sender_skip_prefetch")
+    fw.cb_reserve_back(BM.CB_INTERFACE, 0, s7)
+    fw.cb_write_ptr(BM.CB_INTERFACE, 0, out=s0)
+    _request_issue(fw, request_addr=REQUEST_A, dst=s0, size=block_bytes, seq=s4)
+    fw.label("reader_sender_skip_prefetch")
+  else:
+    fw.cb_push_back(BM.CB_INTERFACE, 0, s7)
+    _debug_mark(fw, DEBUG_BRISC, 0xA007)
   fw.addi(s6, s6, 1)
   fw.j("reader_sender_block_loop")
   fw.label("reader_sender_done")
@@ -320,17 +385,25 @@ def matmul_writer_sender_drisc(plan: base.MatmulPlan) -> base.MatmulKernel:
   _profile_stamp(fw, PROFILE_NCRISC)
   _debug_mark(fw, DEBUG_NCRISC, 0xB000)
   block_bytes = plan.in1_block_num_tiles * TILE_BYTES
-  fw.cb_reserve_back(NM.CB_INTERFACE, 1, s7)
-  fw.cb_write_ptr(NM.CB_INTERFACE, 1, out=s0)
-  _request_issue(fw, request_addr=REQUEST_B, dst=s0, size=block_bytes, seq=s6)
+  if DRISC_PREFETCH_FEEDS:
+    fw.cb_reserve_back(NM.CB_INTERFACE, 1, s7)
+    fw.cb_write_ptr(NM.CB_INTERFACE, 1, out=s0)
+    _request_issue(fw, request_addr=REQUEST_B, dst=s0, size=block_bytes, seq=s6)
   fw.label("writer_sender_block_loop")
   fw.bne(s6, s8, "writer_sender_block_body")
   fw.j("writer_sender_blocks_done")
   fw.label("writer_sender_block_body")
   _debug_mark(fw, DEBUG_NCRISC, 0xB001)
-  _request_wait_done(fw, request_addr=REQUEST_B, seq=s6)
-  fw.mv(s9, s0)
-  fw.cb_push_back(NM.CB_INTERFACE, 1, s7)
+  if DRISC_PREFETCH_FEEDS:
+    _request_wait_done(fw, request_addr=REQUEST_B, seq=s6)
+    fw.mv(s9, s0)
+  else:
+    fw.cb_reserve_back(NM.CB_INTERFACE, 1, s7)
+    _debug_mark(fw, DEBUG_NCRISC, 0xB002)
+    fw.cb_write_ptr(NM.CB_INTERFACE, 1, out=s9)
+    _request_and_wait(fw, request_addr=REQUEST_B, dst=s9, size=block_bytes, seq=s6)
+  if DRISC_PREFETCH_FEEDS:
+    fw.cb_push_back(NM.CB_INTERFACE, 1, s7)
   _debug_mark(fw, DEBUG_NCRISC, 0xB003)
 
   fw.arg(t0, 16)
@@ -350,7 +423,7 @@ def matmul_writer_sender_drisc(plan: base.MatmulPlan) -> base.MatmulKernel:
   fw.lw(a6, t0, 0)
   fw.addi(a6, a6, base._ceil_div(block_bytes, NOC.MAX_BURST_SIZE))
   fw.mv(a0, s9)
-  base._emit_mcast_chunks(fw, 1, a0, a5, block_bytes)
+  _emit_drisc_mcast_chunks(fw, 1, a0, a5, block_bytes)
   fw.noc_nonposted_writes_flushed(1, a6)
   fw.arg(t0, 17)
   fw.sem_addr(NM.SEM_L1_BASE, t0, out=a4)
@@ -359,15 +432,19 @@ def matmul_writer_sender_drisc(plan: base.MatmulPlan) -> base.MatmulKernel:
   fw.arg(t3, 11)
   fw.arg(t5, 12)
   fw.noc_mcast_coord(a5, t1, t2, t3, t5)
-  fw.noc_semaphore_set_multicast(1, 0, a4, a5, 1, t0, a=t1, v=t2)
+  _drisc_semaphore_set_multicast(fw, 1, a4, a5, 1, t0, a=t1, v=t2)
   fw.label("writer_sender_skip_mcast")
   _debug_mark(fw, DEBUG_NCRISC, 0xB005)
-  fw.addi(s4, s6, 1)
-  fw.beq(s4, s8, "writer_sender_skip_prefetch")
-  fw.cb_reserve_back(NM.CB_INTERFACE, 1, s7)
-  fw.cb_write_ptr(NM.CB_INTERFACE, 1, out=s0)
-  _request_issue(fw, request_addr=REQUEST_B, dst=s0, size=block_bytes, seq=s4)
-  fw.label("writer_sender_skip_prefetch")
+  if DRISC_PREFETCH_FEEDS:
+    fw.addi(s4, s6, 1)
+    fw.beq(s4, s8, "writer_sender_skip_prefetch")
+    fw.cb_reserve_back(NM.CB_INTERFACE, 1, s7)
+    fw.cb_write_ptr(NM.CB_INTERFACE, 1, out=s0)
+    _request_issue(fw, request_addr=REQUEST_B, dst=s0, size=block_bytes, seq=s4)
+    fw.label("writer_sender_skip_prefetch")
+  else:
+    fw.cb_push_back(NM.CB_INTERFACE, 1, s7)
+    _debug_mark(fw, DEBUG_NCRISC, 0xB006)
   fw.addi(s6, s6, 1)
   fw.j("writer_sender_block_loop")
   fw.label("writer_sender_blocks_done")

@@ -4,7 +4,7 @@
   Cfg.X.addr32 word index            -> TTRMWCIB*/TTWRCFG/TTRDCFG CfgRegAddr/CfgReg
   ThreadCfg.X  word index            -> TTSETC16(X, value)
 
-Generated once from ttsim tensix_regs.json by gen_cfg_regs.py; hand-edited.
+Generated once from Blackhole register metadata by gen_cfg_regs.py; hand-edited.
 Each entry holds its absolute MMIO address, so unnamed/reserved slots are simply
 omitted (the gaps need no RESERVED_N placeholders).
 """
@@ -286,4 +286,3 @@ class ThreadCfg(IntEnum):
   STREAM_ID_TRISC_SEC2_BankSel = 65
   STREAM_ID_TRISC_SEC3_BankSel = 66
   TENSIX_CSR_CONFIG_RawBusyStatus = 67
-

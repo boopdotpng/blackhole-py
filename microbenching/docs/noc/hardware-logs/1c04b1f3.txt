@@ -1,0 +1,14 @@
+| noc | source | peer | logical dist | bytes/op | repeats | total MiB/op | read cyc | read B/cyc | write cyc | write B/cyc | read sink | write sink |
+|---:|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 0 | `1,2` | `2,2` | Route(raw0_source=(1, 2), raw0_peer=(2, 2), raw_source=(1, 2), raw_peer=(2, 2), hops=1, x_hops=1, y_hops=0, wraps=0) | 1048576 | 4 | 4.0 | 66764 | 62.823 | 64988 | 64.540 | 0xa5000000 | 0xa5000000 |
+| 0 | `1,2` | `3,2` | Route(raw0_source=(1, 2), raw0_peer=(3, 2), raw_source=(1, 2), raw_peer=(3, 2), hops=2, x_hops=2, y_hops=0, wraps=0) | 1048576 | 4 | 4.0 | 66539 | 63.035 | 65007 | 64.521 | 0xa5000000 | 0xa5000000 |
+| 0 | `1,2` | `4,2` | Route(raw0_source=(1, 2), raw0_peer=(4, 2), raw_source=(1, 2), raw_peer=(4, 2), hops=3, x_hops=3, y_hops=0, wraps=0) | 1048576 | 4 | 4.0 | 65778 | 63.765 | 64999 | 64.529 | 0xa5000000 | 0xa5000000 |
+| 0 | `1,2` | `5,2` | Route(raw0_source=(1, 2), raw0_peer=(5, 2), raw_source=(1, 2), raw_peer=(5, 2), hops=4, x_hops=4, y_hops=0, wraps=0) | 1048576 | 4 | 4.0 | 65771 | 63.771 | 65767 | 63.775 | 0xa5000000 | 0xa5000000 |
+| 0 | `1,2` | `6,2` | Route(raw0_source=(1, 2), raw0_peer=(7, 2), raw_source=(1, 2), raw_peer=(7, 2), hops=6, x_hops=6, y_hops=0, wraps=0) | 1048576 | 4 | 4.0 | 66796 | 62.793 | 65055 | 64.473 | 0xa5000000 | 0xa5000000 |
+| 1 | `14,2` | `13,2` | Route(raw0_source=(16, 2), raw0_peer=(14, 2), raw_source=(0, 9), raw_peer=(2, 9), hops=2, x_hops=2, y_hops=0, wraps=0) | 1048576 | 4 | 4.0 | 66140 | 63.416 | 65748 | 63.794 | 0xa5000000 | 0xa5000000 |
+| 1 | `14,2` | `12,2` | Route(raw0_source=(16, 2), raw0_peer=(13, 2), raw_source=(0, 9), raw_peer=(3, 9), hops=3, x_hops=3, y_hops=0, wraps=0) | 1048576 | 4 | 4.0 | 66538 | 63.036 | 65007 | 64.521 | 0xa5000000 | 0xa5000000 |
+| 1 | `14,2` | `11,2` | Route(raw0_source=(16, 2), raw0_peer=(12, 2), raw_source=(0, 9), raw_peer=(4, 9), hops=4, x_hops=4, y_hops=0, wraps=0) | 1048576 | 4 | 4.0 | 65771 | 63.771 | 64999 | 64.529 | 0xa5000000 | 0xa5000000 |
+| 1 | `14,2` | `10,2` | Route(raw0_source=(16, 2), raw0_peer=(11, 2), raw_source=(0, 9), raw_peer=(5, 9), hops=5, x_hops=5, y_hops=0, wraps=0) | 1048576 | 4 | 4.0 | 66531 | 63.043 | 65007 | 64.521 | 0xa5000000 | 0xa5000000 |
+| 1 | `14,2` | `7,2` | Route(raw0_source=(16, 2), raw0_peer=(10, 2), raw_source=(0, 9), raw_peer=(6, 9), hops=6, x_hops=6, y_hops=0, wraps=0) | 1048576 | 4 | 4.0 | 65771 | 63.771 | 65007 | 64.521 | 0xa5000000 | 0xa5000000 |
+
+appended /home/boop/tenstorrent/blackhole-py/microbenching/docs/noc/noc-stream-sweep.md

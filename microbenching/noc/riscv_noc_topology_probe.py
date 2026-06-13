@@ -630,7 +630,7 @@ def main():
   parser.add_argument("--gate-cycles", type=int, default=200_000_000, help="future wall-clock offset for sender start gate; 0 disables")
   parser.add_argument("--dry-run", action="store_true", help="build/lower programs without opening hardware")
   parser.add_argument("--no-report", action="store_true", help="do not append microbenching/docs/noc-topology.md")
-  parser.add_argument("--report", type=Path, default=Path("microbenching/docs/noc-topology.md"), help="markdown report path")
+  parser.add_argument("--report", type=Path, default=harness.doc_path("noc", "noc-topology.md"), help="markdown report path")
   args = parser.parse_args()
   validate_stream_bytes(args.bytes)
   if args.repeats <= 0:

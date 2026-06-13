@@ -732,7 +732,7 @@ def main() -> None:
   parser.add_argument("--only", nargs="+", default=None, help="optional subset of spec names")
   parser.add_argument("--build-only", action="store_true", help="compile/layout programs without opening the device")
   parser.add_argument("--no-report", action="store_true", help="do not append docs/math-mvmul.md")
-  parser.add_argument("--report", type=Path, default=Path("microbenching/docs/math-mvmul.md"), help="markdown report path")
+  parser.add_argument("--report", type=Path, default=harness.doc_path("tensix", "math-mvmul.md"), help="markdown report path")
   args = parser.parse_args()
   if args.iters <= 0:
     raise ValueError("--iters must be positive")

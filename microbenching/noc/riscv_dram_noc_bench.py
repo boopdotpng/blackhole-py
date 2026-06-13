@@ -18,7 +18,7 @@ from dsl import (
   t0, t1, t2, t3, t4, t5, t6, zero,
 )
 from program import DevMsgs, Dtype, Program
-from ttk.addrs import Core, Dram, noc_xy
+from ttk.addrs import Core, Dram, noc_xy, p100_dram_bank_base_coords, p100_dram_bank_endpoint_coords
 from ttk.mailbox import BriscMailbox as BM
 from ttk.noc import NOC, Noc
 from ttk.tensix import TensixL1
@@ -149,7 +149,7 @@ def emit_stateful_transfer(fw: DramNocKernel, *, op: int, noc: int):
   return fw.noc_cmd_reg(noc, buf, NOC.CMD_CTRL, NOC.CTRL_SEND_REQ, addr=t3, tmp=t4)
 
 
-def build_kernel(*, op: int, noc: int, direct_endpoint: bool, stateful: bool) -> KernelBase:
+def build_kernel(*, op: int, noc: int, stateful: bool) -> KernelBase:
   if op not in OP_NAMES:
     raise ValueError(f"unknown op {op}")
   counter = NOC.NIU_MST_RD_RESP_RECEIVED if op == OP_READ else NOC.NIU_MST_WR_ACK_RECEIVED
@@ -176,24 +176,12 @@ def build_kernel(*, op: int, noc: int, direct_endpoint: bool, stateful: bool) ->
   fw.beq(s8, s3, done)
 
   fw.add(a1, s5, s8)
-  if direct_endpoint:
-    # Direct endpoint mode: address stays within the selected DRAM bank and
-    # coord is the chosen one of that bank's three NoC endpoints.
-    fw.mul(t0, a1, s2)
-    fw.mv(a0, s0)
-    fw.add(a0, a0, t0)
-    fw.mv(a2, s11)
-  else:
-    # Preferred mode: use the firmware bank table, matching matmul/add1.
-    # logical_tile = (start_page + i) * bank_count + bank_id
-    fw.mul(a1, a1, s1)
-    fw.add(a1, a1, s4)
-    fw.mv(a0, s0)
-    fw.mv(a2, s1)
-    if noc == 0:
-      fw.dram_tile_addr_from(BM.DRAM_BANK_TO_NOC_XY, 0)
-    else:
-      fw.dram_tile_addr_from(BM.DRAM_BANK_TO_NOC_XY, s1)
+  # Explicit endpoint mode: address stays within the selected DRAM bank and
+  # coord is the selected routable DRAM endpoint coordinate.
+  fw.mul(t0, a1, s2)
+  fw.mv(a0, s0)
+  fw.add(a0, a0, t0)
+  fw.mv(a2, s11)
 
   fw.andi(t5, s8, LOCAL_PAGES - 1)
   fw.mul(t5, t5, s2)
@@ -229,7 +217,7 @@ def build_kernel(*, op: int, noc: int, direct_endpoint: bool, stateful: bool) ->
 
 def build_program(
   core_runs: list[CoreRun], *, op: int, noc: int, dram_base: int, bank_count: int,
-  packet_bytes: int, packet_count: int, direct_endpoint: bool, stateful: bool,
+  packet_bytes: int, packet_count: int, stateful: bool,
 ) -> Program:
   empty = KernelBase()
   args_by_core = {
@@ -239,7 +227,7 @@ def build_program(
     ]
     for run in core_runs
   }
-  kernel = build_kernel(op=op, noc=noc, direct_endpoint=direct_endpoint, stateful=stateful)
+  kernel = build_kernel(op=op, noc=noc, stateful=stateful)
   kernel.rta(lambda x, y: args_by_core[(x, y)])
   program = Program(
     brisc=kernel,
@@ -261,32 +249,10 @@ def parse_counts(text: str) -> list[int]:
   return counts
 
 
-def bank_virtual_coords(harvested_dram_bank: int | None) -> dict[int, Core]:
-  ports = Dram.TILES_PER_BANK
-  if harvested_dram_bank is None:
-    return {b: (17 if b < 4 else 18, 12 + (b % 4) * ports) for b in range(Dram.BANK_COUNT)}
-
-  h = harvested_dram_bank
-  half = 4
-  mirror = h + half - 1 if h < half else h - half
-  if h < half:
-    right = list(range(half - 1))
-    left = [b for b in range(half - 1, Dram.BANK_COUNT - 1) if b != mirror] + [mirror]
-  else:
-    left = [b for b in range(half) if b != mirror] + [mirror]
-    right = list(range(half, Dram.BANK_COUNT - 1))
-  out = {b: (18, 12 + i * ports) for i, b in enumerate(right)}
-  out.update({b: (17, 12 + i * ports) for i, b in enumerate(left)})
-  return out
-
-
-def endpoint_coord(bank_coords: dict[int, Core], bank: int, endpoint: int) -> int:
-  x, y0 = bank_coords[bank]
-  return noc_xy(x, y0 + endpoint)
-
-
-def choose_endpoint(*, endpoint_mode: str, idx: int, preferred_endpoint: int) -> int:
+def choose_endpoint(*, endpoint_mode: str, idx: int, preferred_endpoint: int | None) -> int:
   if endpoint_mode == "preferred":
+    if preferred_endpoint is None:
+      raise ValueError("preferred endpoint was not supplied")
     return preferred_endpoint
   if endpoint_mode == "split3":
     return idx % Dram.TILES_PER_BANK
@@ -295,7 +261,7 @@ def choose_endpoint(*, endpoint_mode: str, idx: int, preferred_endpoint: int) ->
 
 def assign_core_runs(
   cores: list[Core], *, count: int, bank_count: int, mode: str, bank: int, packet_count: int,
-  endpoint_mode: str, preferred_endpoint: int, bank_coords: dict[int, Core], direct_endpoint: bool,
+  endpoint_mode: str, preferred_coords: list[int], bank_coords: dict[int, Core],
 ) -> list[CoreRun]:
   selected = cores[:count]
   runs = []
@@ -306,8 +272,19 @@ def assign_core_runs(
     else:
       run_bank = idx % bank_count
       start_page = (idx // bank_count) * packet_count
+    preferred_endpoint = None
+    if endpoint_mode == "preferred":
+      base_x, base_y = bank_coords[run_bank]
+      preferred_coord = preferred_coords[run_bank]
+      preferred_endpoint = ((preferred_coord >> 6) & 0x3F) - base_y
+      if (preferred_coord & 0x3F) != base_x:
+        raise ValueError(f"preferred coord bank {run_bank} does not match bank base coord")
     endpoint = choose_endpoint(endpoint_mode=endpoint_mode, idx=idx, preferred_endpoint=preferred_endpoint)
-    coord = endpoint_coord(bank_coords, run_bank, endpoint) if direct_endpoint else None
+    if endpoint_mode == "preferred":
+      coord = preferred_coords[run_bank]
+    else:
+      x, y0 = bank_coords[run_bank]
+      coord = noc_xy(x, y0 + endpoint)
     runs.append(CoreRun(core=core, bank=run_bank, start_page=start_page, endpoint=endpoint, coord=coord))
   return runs
 
@@ -388,7 +365,7 @@ def main():
     help="preprogram fixed NoC command fields once, like TT-Metal one-packet stateful APIs",
   )
   parser.add_argument("--no-report", action="store_true")
-  parser.add_argument("--report", type=Path, default=Path("docs/dram-noc-bench.md"))
+  parser.add_argument("--report", type=Path, default=harness.doc_path("noc", "dram-noc-bench.md"))
   args = parser.parse_args()
 
   op_map = {name: op for op, name in OP_NAMES.items()}
@@ -405,7 +382,6 @@ def main():
   if args.bytes_per_core <= 0 or args.bytes_per_core % args.packet_bytes:
     raise ValueError("--bytes-per-core must be a positive multiple of --packet-bytes")
   packet_count = args.bytes_per_core // args.packet_bytes
-  direct_endpoint = args.stateful or args.endpoint != "preferred" or args.packet_bytes != Dtype.Float16_b.tile_size
 
   os.environ.pop("TT_USB", None)
   lines = [
@@ -414,7 +390,7 @@ def main():
   ]
   with harness.open_device() as device:
     bank_count = len(device.dram.bank_tiles)
-    bank_coords = bank_virtual_coords(device.board_info.harvested_dram_bank)
+    bank_coords = p100_dram_bank_base_coords(device.board_info.harvested_dram_bank)
     if args.bank < 0 or args.bank >= bank_count:
       raise ValueError(f"--bank must be in [0, {bank_count - 1}]")
     max_count = len(device.cores)
@@ -427,9 +403,7 @@ def main():
     buf = device.dram.alloc(bank_count * max_pages_per_bank, Dtype.Float16_b, name="dram_noc_bench")
     for op in ops:
       for noc in nocs:
-        # Matches build_bank_noc_table(): this is the current firmware-table
-        # choice for each bank on each NoC.
-        preferred_endpoint = 2 if noc == 0 else 1
+        preferred_coords = p100_dram_bank_endpoint_coords(device.board_info.harvested_dram_bank, noc)
         for count in args.counts:
           core_runs = assign_core_runs(
             device.cores,
@@ -439,9 +413,8 @@ def main():
             bank=args.bank,
             packet_count=packet_count,
             endpoint_mode=args.endpoint,
-            preferred_endpoint=preferred_endpoint,
+            preferred_coords=preferred_coords,
             bank_coords=bank_coords,
-            direct_endpoint=direct_endpoint,
           )
           clear_results(device, [run.core for run in core_runs])
           device.run(build_program(
@@ -452,7 +425,6 @@ def main():
             bank_count=bank_count,
             packet_bytes=args.packet_bytes,
             packet_count=packet_count,
-            direct_endpoint=direct_endpoint,
             stateful=args.stateful,
           ))
           results = [read_result(device, run.core) for run in core_runs]

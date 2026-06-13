@@ -11,6 +11,24 @@ import harness  # noqa: E402  (does sys.path + TT_USB bootstrap on import)
 import riscv_noc_bench as nocbench
 from device import Device
 from ttk.addrs import Core
+from ttk.blackhole_coords import (
+  GRID_H, GRID_W, TensixCoordinateMap, raw_coord_for_noc, tensix_coordinate_map,
+  translated_tensix_to_raw_noc0,
+)
+
+ENABLED_TENSIX_COL_TAG = 34
+
+
+@dataclass(frozen=True)
+class Route:
+  raw0_source: Core
+  raw0_peer: Core
+  raw_source: Core
+  raw_peer: Core
+  hops: int
+  x_hops: int
+  y_hops: int
+  wraps: int
 
 
 @dataclass(frozen=True)
@@ -18,7 +36,7 @@ class HopRun:
   noc: int
   source: Core
   peer: Core
-  logical_hops: int
+  route: Route
   records: list[nocbench.Record]
 
 
@@ -58,13 +76,42 @@ def choose_row(cores: list[Core], requested_row: int | None) -> tuple[int, list[
   return y, xs
 
 
+def route_for_pair(source: Core, peer: Core, *, noc: int, cmap: TensixCoordinateMap) -> Route:
+  raw0_source = translated_tensix_to_raw_noc0(source, cmap)
+  raw0_peer = translated_tensix_to_raw_noc0(peer, cmap)
+  raw_source = raw_coord_for_noc(raw0_source, noc)
+  raw_peer = raw_coord_for_noc(raw0_peer, noc)
+  x_hops = (raw_peer[0] - raw_source[0]) % GRID_W
+  y_hops = (raw_peer[1] - raw_source[1]) % GRID_H
+  wraps = int(raw_peer[0] < raw_source[0] and x_hops != 0) + int(raw_peer[1] < raw_source[1] and y_hops != 0)
+  return Route(
+    raw0_source=raw0_source,
+    raw0_peer=raw0_peer,
+    raw_source=raw_source,
+    raw_peer=raw_peer,
+    hops=x_hops + y_hops,
+    x_hops=x_hops,
+    y_hops=y_hops,
+    wraps=wraps,
+  )
+
+
+def read_tensix_coordinate_map(device: Device) -> TensixCoordinateMap:
+  layout = device.dev.telemetry_layout()
+  enabled = device.dev.telemetry_tag(layout, ENABLED_TENSIX_COL_TAG)
+  if enabled is None:
+    raise RuntimeError("ENABLED_TENSIX_COL telemetry is unavailable")
+  return tensix_coordinate_map(enabled)
+
+
 def build_pairs(
   cores: list[Core], *,
   noc: int,
   row: int | None,
   source: Core | None,
   max_hops: int | None,
-) -> list[tuple[Core, Core, int]]:
+  cmap: TensixCoordinateMap,
+) -> list[tuple[Core, Core, Route]]:
   if source is not None:
     if source not in set(cores):
       raise ValueError(f"--core {source[0]},{source[1]} is not a program core")
@@ -79,12 +126,12 @@ def build_pairs(
     peers = [(x, sy) for x in xs if x > sx]
   else:
     peers = [(x, sy) for x in reversed(xs) if x < sx]
-  pairs = [(source, peer, abs(peer[0] - sx)) for peer in peers]
+  pairs = [(source, peer, route_for_pair(source, peer, noc=noc, cmap=cmap)) for peer in peers]
   if max_hops is not None:
-    pairs = [pair for pair in pairs if pair[2] <= max_hops]
+    pairs = [pair for pair in pairs if pair[2].hops <= max_hops]
   if not pairs:
     direction = "right" if noc == 0 else "left"
-    raise ValueError(f"NoC{noc} sweep from {source} has no same-row peers to the {direction}")
+    raise ValueError(f"NoC{noc} sweep from {source} has no same-row peers to the {direction} within hop filter")
   return pairs
 
 
@@ -100,16 +147,20 @@ def adjusted_by_name(records: list[nocbench.Record]) -> dict[str, float]:
 
 def format_summary(runs: list[HopRun]) -> str:
   lines = [
-    "| noc | source | peer | logical dx | read4 cmd | read4 flush | read64 flush | read256 flush | read1024 flush | write4 cmd | write4 barrier | write64 barrier | write256 barrier | write1024 barrier |",
-    "|---:|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
+    "| noc | source | peer | raw noc0 route | raw noc route | hops | x | y | wraps | read4 cmd | read4 flush | read64 flush | read256 flush | read1024 flush | write4 cmd | write4 barrier | write64 barrier | write256 barrier | write1024 barrier |",
+    "|---:|---|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
   ]
   for run in runs:
     adj = adjusted_by_name(run.records)
     prefix = f"peer_noc{run.noc}"
     def v(suffix: str) -> str:
       return f"{adj[f'{prefix}_{suffix}']:.3f}"
+    route = run.route
     lines.append(
-      f"| {run.noc} | `{run.source[0]},{run.source[1]}` | `{run.peer[0]},{run.peer[1]}` | {run.logical_hops} | "
+      f"| {run.noc} | `{run.source[0]},{run.source[1]}` | `{run.peer[0]},{run.peer[1]}` | "
+      f"`{route.raw0_source[0]},{route.raw0_source[1]}->{route.raw0_peer[0]},{route.raw0_peer[1]}` | "
+      f"`{route.raw_source[0]},{route.raw_source[1]}->{route.raw_peer[0]},{route.raw_peer[1]}` | "
+      f"{route.hops} | {route.x_hops} | {route.y_hops} | {route.wraps} | "
       f"{v('read_4_cmd')} | {v('read_4_flush')} | {v('read_64_flush')} | {v('read_256_flush')} | {v('read_1024_flush')} | "
       f"{v('write_4_cmd')} | {v('write_4_barrier')} | {v('write_64_barrier')} | {v('write_256_barrier')} | {v('write_1024_barrier')} |"
     )
@@ -120,19 +171,20 @@ def append_report(path: Path, *, iterations: int, runs: list[HopRun]):
   harness.append_report(path, None, [
     f"Iterations per test: `{iterations}`",
     "Traffic: same-row peer-tile L1 unicast only; no DRAM writes and no multicast",
-    "Direction policy: NoC0 sweeps peers to the right of the source; NoC1 sweeps peers to the left",
+    "Direction policy: NoC0 sweeps translated peers to the right of the source; NoC1 sweeps translated peers to the left",
+    "Hop metadata: translated worker coordinates are decoded through the firmware harvesting map before raw NoC hops/wraps are computed",
   ], format_summary(runs))
 
 
 def main():
-  parser = argparse.ArgumentParser(description="Sweep same-row peer L1 NoC latency by logical hop distance.")
+  parser = argparse.ArgumentParser(description="Sweep same-row peer L1 NoC latency by decoded raw NoC hop distance.")
   parser.add_argument("--nocs", type=parse_nocs, default=(0, 1), help="comma-separated NoC ids to sweep, default: 0,1")
-  parser.add_argument("--row", type=int, default=None, help="logical row to sweep; default: row with most program cores")
+  parser.add_argument("--row", type=int, default=None, help="translated row to sweep; default: row with most program cores")
   parser.add_argument("--core", type=harness.parse_core, default=None, help="explicit source core X,Y")
-  parser.add_argument("--max-hops", type=int, default=None, help="maximum logical x distance to include")
+  parser.add_argument("--max-hops", type=int, default=None, help="maximum decoded raw NoC hop distance to include")
   parser.add_argument("--iters", type=int, default=100, help="iterations per timed loop")
   parser.add_argument("--no-report", action="store_true", help="do not append results to docs/noc-hop-sweep.md")
-  parser.add_argument("--report", type=Path, default=Path("docs/noc-hop-sweep.md"), help="markdown report path")
+  parser.add_argument("--report", type=Path, default=harness.doc_path("noc", "noc-hop-sweep.md"), help="markdown report path")
   args = parser.parse_args()
   if args.iters <= 0:
     raise ValueError("--iters must be positive")
@@ -141,19 +193,21 @@ def main():
 
   runs: list[HopRun] = []
   with harness.open_device() as device:
+    cmap = read_tensix_coordinate_map(device)
     for noc in args.nocs:
       specs = peer_specs_for_noc(noc)
-      for source, peer, logical_hops in build_pairs(
+      for source, peer, route in build_pairs(
         device.cores,
         noc=noc,
         row=args.row,
         source=args.core,
         max_hops=args.max_hops,
+        cmap=cmap,
       ):
         nocbench.clear_ranges(device, [source, peer], specs)
         device.run(nocbench.build_program(args.iters, specs, source_core=source, peer_core=peer))
         records = nocbench.parse_results(nocbench.read_results(device, source, specs), specs)
-        runs.append(HopRun(noc=noc, source=source, peer=peer, logical_hops=logical_hops, records=records))
+        runs.append(HopRun(noc=noc, source=source, peer=peer, route=route, records=records))
 
   print(format_summary(runs))
   if not args.no_report:

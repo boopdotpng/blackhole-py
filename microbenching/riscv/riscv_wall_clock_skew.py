@@ -174,7 +174,7 @@ def main():
   parser.add_argument("--core-b", type=harness.parse_core, default=None, help="second same-row core X,Y")
   parser.add_argument("--samples", type=int, default=4096, help="timestamp samples per core")
   parser.add_argument("--no-report", action="store_true", help="do not append docs/wall-clock-skew.md")
-  parser.add_argument("--report", type=Path, default=Path("docs/wall-clock-skew.md"), help="markdown report path")
+  parser.add_argument("--report", type=Path, default=harness.doc_path("riscv", "wall-clock-skew.md"), help="markdown report path")
   args = parser.parse_args()
   if args.samples <= 1:
     raise ValueError("--samples must be greater than 1")

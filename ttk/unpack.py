@@ -8,7 +8,7 @@ from program import Dtype
 from ttk.mailbox import TriscLocalMem as TLM
 from ttk.tensix import Cfg, GprUnpack, TensixRegs, TensixStall, TensixWait, ThreadCfg
 
-# --- Tile-descriptor encoding (ttsim data/bh/tensix_regs.json, cfg word 64) ---
+# --- Tile-descriptor encoding (Blackhole cfg word 64) ---
 # The low byte of THCON_SEC*_REG0_TileDescriptor packs the source data format:
 #   bits[3:0] = in_data_format (== Dtype.value), bit[4] = uncompressed.
 # So Float16_b (value 5) uncompressed -> 0x15. Everything above the low byte

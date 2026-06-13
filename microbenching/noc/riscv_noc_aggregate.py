@@ -117,6 +117,14 @@ def adjacent_pairs(cores: list[Core], *, noc: int) -> list[Pair]:
   return pairs
 
 
+def usable_program_cores(device: Device) -> list[Core]:
+  reserved = {
+    getattr(device.board_info, "dispatch_core", None),
+    getattr(device.board_info, "prefetch_core", None),
+  }
+  return sorted(set(device.cores) - {core for core in reserved if core is not None})
+
+
 def parse_counts(text: str) -> list[int]:
   counts = [int(item.strip()) for item in text.split(",") if item.strip()]
   if not counts or any(count <= 0 for count in counts):
@@ -175,7 +183,7 @@ def main():
   parser.add_argument("--bytes", type=int, default=1024 * 1024, help="payload bytes per sender; multiple of 16 KiB")
   parser.add_argument("--counts", type=parse_counts, default=parse_counts("1,2,4,8,16,32,60"), help="comma-separated pair counts")
   parser.add_argument("--no-report", action="store_true", help="do not append docs/noc-aggregate.md")
-  parser.add_argument("--report", type=Path, default=Path("docs/noc-aggregate.md"), help="markdown report path")
+  parser.add_argument("--report", type=Path, default=harness.doc_path("noc", "noc-aggregate.md"), help="markdown report path")
   args = parser.parse_args()
   if args.bytes <= 0 or args.bytes % NOC.MAX_BURST_SIZE:
     raise ValueError("--bytes must be a positive multiple of 16 KiB")
@@ -187,7 +195,7 @@ def main():
     "|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
   ]
   with harness.open_device() as device:
-    all_pairs = adjacent_pairs(device.cores, noc=args.noc)
+    all_pairs = adjacent_pairs(usable_program_cores(device), noc=args.noc)
     if not all_pairs:
       raise ValueError("no adjacent same-row pairs available")
     for count in args.counts:

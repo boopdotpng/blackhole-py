@@ -374,7 +374,7 @@ def main() -> None:
   parser.add_argument("--allow-standalone-pack", action="store_true", help="run experimental standalone pack rows; these may time out without a live math producer")
   parser.add_argument("--validate", action="store_true", help="validate standalone pack L1 output is finite and matches seeded ZEROACC zeros")
   parser.add_argument("--no-report", action="store_true", help="do not append results to docs/pack-backend-microbench.md")
-  parser.add_argument("--report", type=Path, default=Path("docs/pack-backend-microbench.md"), help="markdown report path")
+  parser.add_argument("--report", type=Path, default=harness.doc_path("tensix", "pack-backend-microbench.md"), help="markdown report path")
   args = parser.parse_args()
   if not (0 < args.iters <= MAX_SEM_TOKENS):
     raise ValueError(f"--iters must be in 1..{MAX_SEM_TOKENS}")

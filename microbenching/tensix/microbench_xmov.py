@@ -583,7 +583,7 @@ def run_isolated(device: Device, role: str, core: tuple[int, int], iterations: i
 
 
 def command_line(args) -> str:
-  parts = ["PYTHONPATH=.", "TT_USB=1", sys.executable, "microbenching/microbench_xmov.py"]
+  parts = ["PYTHONPATH=.", "TT_USB=1", sys.executable, "microbenching/tensix/microbench_xmov.py"]
   parts += ["--role", args.role, "--iters", str(args.iters), "--batch", str(args.batch)]
   if args.core is not None:
     parts += ["--core", f"{args.core[0]},{args.core[1]}"]
@@ -605,7 +605,7 @@ def main() -> None:
   parser.add_argument("--tests", type=lambda s: tuple(x for x in s.split(",") if x), default=None, help="comma-separated test names for smoke/bisect runs")
   parser.add_argument("--no-readback-probe", action="store_true", help="omit the provisional DEST_CG_CTRL/TTMOVDBGA2D probe row")
   parser.add_argument("--no-report", action="store_true", help="do not append microbenching/docs/xmov-microbench.md")
-  parser.add_argument("--report", type=Path, default=Path("microbenching/docs/xmov-microbench.md"), help="markdown report path")
+  parser.add_argument("--report", type=Path, default=harness.doc_path("tensix", "xmov-microbench.md"), help="markdown report path")
   args = parser.parse_args()
   if args.iters <= 0:
     raise ValueError("--iters must be positive")

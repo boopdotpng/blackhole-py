@@ -473,7 +473,7 @@ def run_isolated(device: Device, core: tuple[int, int], iterations: int, selecte
 
 
 def command_line(args) -> str:
-  parts = ["PYTHONPATH=.", "TT_USB=1", sys.executable, "microbenching/microbench_sfpu.py", "--iters", str(args.iters)]
+  parts = ["PYTHONPATH=.", "TT_USB=1", sys.executable, "microbenching/tensix/microbench_sfpu.py", "--iters", str(args.iters)]
   if args.core is not None:
     parts += ["--core", f"{args.core[0]},{args.core[1]}"]
   if args.ops:
@@ -507,7 +507,7 @@ def main() -> None:
   parser.add_argument("--tests", type=lambda s: tuple(x for x in s.split(",") if x), default=None, help="comma-separated test names for smoke/bisect runs")
   parser.add_argument("--build-only", action="store_true", help="build Program/assembly and exit without opening the device")
   parser.add_argument("--no-report", action="store_true", help="do not append docs/sfpu-microbench.md")
-  parser.add_argument("--report", type=Path, default=Path("microbenching/docs/sfpu-microbench.md"), help="markdown report path")
+  parser.add_argument("--report", type=Path, default=harness.doc_path("tensix", "sfpu-microbench.md"), help="markdown report path")
   args = parser.parse_args()
   if args.iters <= 0:
     raise ValueError("--iters must be positive")

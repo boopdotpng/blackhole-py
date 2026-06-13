@@ -288,6 +288,10 @@ NUMPY_OP = {"add": np.add, "sub": np.subtract, "mul": np.multiply}
 TOL = {"add": (2e-2, 2e-2), "sub": (2e-2, 2e-2), "mul": (5e-2, 5e-2)}
 
 
+def matches_face_roll(got, ref, *, atol: float, rtol: float) -> bool:
+  return bool(np.allclose(got, np.roll(ref, -16, axis=2), atol=atol, rtol=rtol))
+
+
 def run_op(device: Device, op: str, a, b, *, tiles: int, timed: bool = False,
            name: str | None = None, **build_kwargs):
   n = tiles
@@ -330,6 +334,8 @@ def main() -> int:
       print(f"  {op}: {'PASS' if op_ok else 'FAIL'} max_abs={max_abs:.6g}")
       if not op_ok:
         print(f"    got[0,:4]={got[0,0,:4].tolist()} ref[0,:4]={ref[0,0,:4].tolist()}")
+        if matches_face_roll(got, ref, atol=atol, rtol=rtol):
+          print("    diagnostic: output matches ref rolled left by 16 columns; row-major contract still FAIL")
       ok = ok and op_ok
 
     if args.iters > 0:
@@ -342,14 +348,17 @@ def main() -> int:
         ref = to_bf16(NUMPY_OP[op](an, bn))
         atol, rtol = TOL[op]
         s_ok = bool(np.allclose(got, ref, atol=atol, rtol=rtol))
+        face_roll_ok = matches_face_roll(got, ref, atol=atol, rtol=rtol)
         raw = harness.read_window(device, core, RESULT_ADDR, 4)
-        cycles[op] = (int.from_bytes(raw, "little"), s_ok)
+        cycles[op] = (int.from_bytes(raw, "little"), s_ok, face_roll_ok)
 
   print("eltwise binary microbench")
   print(f"  dtype={DTYPE.name} tile=32x32 iters={args.iters}")
-  for op, (total, s_ok) in cycles.items():
+  for op, (total, s_ok, face_roll_ok) in cycles.items():
     print(f"    {op}: {total} cyc / {args.iters} tiles -> {total / args.iters:.1f} cyc/tile"
           f" ({total / args.iters / 1024:.3f} cyc/elem) stream={'PASS' if s_ok else 'FAIL'}")
+    if (not s_ok) and face_roll_ok:
+      print("      diagnostic: stream output matches ref rolled left by 16 columns")
     ok = ok and s_ok
   print("PASS" if ok else "FAIL")
   return 0 if ok else 1

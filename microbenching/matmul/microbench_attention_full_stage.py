@@ -10,8 +10,8 @@ This composes the previously isolated bridges:
   probs @ V -> context head
 
 It is intentionally one head and one sequence tile. The point is proving the
-device-resident attention handoff chain before integrating multi-head/GQA into
-``examples/llama3.py``.
+device-resident attention handoff chain before wrapping multi-head/GQA around
+the same low-level pieces.
 """
 
 from __future__ import annotations

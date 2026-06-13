@@ -50,6 +50,7 @@ NOC_GRID_H = 25
 P100_WORKER_X = (*range(1, 8), *range(10, 15))
 P100_WORKER_Y = tuple(range(2, 12))
 DEFAULT_P100_CORES = [(x, y) for y in P100_WORKER_Y for x in P100_WORKER_X]
+P100_FAST_DISPATCH_RESERVED = {(14, 2), (14, 3)}
 
 
 @dataclass(frozen=True)
@@ -439,16 +440,17 @@ class MultiCoreProgram:
 
 
 class SameCoreReadWriteProgram:
-  def __init__(self, *, source: Core, target: Core, noc: int, stream_bytes: int,
+  def __init__(self, *, source: Core, read_target: Core, write_target: Core, noc: int, stream_bytes: int,
                repeats: int, read_ctrl: int | None, write_ctrl: int | None):
     self.source = source
-    self.target = target
+    self.read_target = read_target
+    self.write_target = write_target
     self.noc = noc
     self.stream_bytes = stream_bytes
     self.repeats = repeats
     self.read_ctrl = read_ctrl
     self.write_ctrl = write_ctrl
-    self.name = f"riscv_noc_contention_probe:e:noc{noc}:{source}->{target}"
+    self.name = f"riscv_noc_contention_probe:e:noc{noc}:{source}->r{read_target}:w{write_target}"
 
   def lower(self, cores: list[Core] | None = None, *, dispatch_mode=DevMsgs.DISPATCH_MODE_HOST, host_assigned_id=0):
     writer = build_stream_kernel(
@@ -459,18 +461,18 @@ class SameCoreReadWriteProgram:
       noc=self.noc, role=ROLE_READER, stream_bytes=self.stream_bytes,
       repeats=self.repeats, result_base=RESULT_BASE + RESULT_STRIDE, ctrl=self.read_ctrl,
     )
-    writer.rta(lambda _x, _y: [noc_xy(*self.target)])
-    reader.rta(lambda _x, _y: [noc_xy(*self.target)])
+    writer.rta(lambda _x, _y: [noc_xy(*self.write_target)])
+    reader.rta(lambda _x, _y: [noc_xy(*self.read_target)])
     source_segments = one_core_program(writer, ncrisc=reader).layout(
       core_xy=self.source, dispatch_mode=dispatch_mode, host_assigned_id=host_assigned_id,
     )
     target_cores = [self.source]
     per_core_segments = {self.source: source_segments}
-    if self.target != self.source:
-      per_core_segments[self.target] = one_core_program(KernelBase().ret()).layout(
-        core_xy=self.target, dispatch_mode=dispatch_mode, host_assigned_id=host_assigned_id,
+    for target in sorted({self.read_target, self.write_target} - {self.source}):
+      per_core_segments[target] = one_core_program(KernelBase().ret()).layout(
+        core_xy=target, dispatch_mode=dispatch_mode, host_assigned_id=host_assigned_id,
       )
-      target_cores.append(self.target)
+      target_cores.append(target)
     reset_blob = struct.pack("<BBBB", 0, 0, 0, DevMsgs.RUN_MSG_RESET_READ_PTR_FROM_HOST)
     commands = [
       UnicastWrite(target_cores, TensixL1.GO_MSG, [reset_blob] * len(target_cores)),
@@ -648,10 +650,20 @@ def b_pairs(cores: list[Core], *, noc: int, row: int | None) -> tuple[Core, Core
   return victim_src, victim_dst, injections
 
 
+def usable_cores(device: Device | None) -> list[Core]:
+  if device is None:
+    return [core for core in DEFAULT_P100_CORES if core not in P100_FAST_DISPATCH_RESERVED]
+  reserved = {
+    getattr(device.board_info, "dispatch_core", None),
+    getattr(device.board_info, "prefetch_core", None),
+  }
+  return sorted(set(device.cores) - {core for core in reserved if core is not None})
+
+
 def command_b(args):
   validate_bytes(args.bytes)
   device = None if args.dry_run else Device()
-  cores = DEFAULT_P100_CORES if args.dry_run else device.cores
+  cores = usable_cores(device)
   rows: list[tuple[str, Result | None, Result | None, Core | None, int | None]] = []
   try:
     victim_src, victim_dst, injections = b_pairs(cores, noc=args.noc, row=args.row)
@@ -709,49 +721,69 @@ def choose_same_row_pair(cores: list[Core], *, noc: int, row: int | None) -> tup
   return ((xs[0], y), (xs[-1], y)) if noc == 0 else ((xs[-1], y), (xs[0], y))
 
 
+def choose_same_core_rw_targets(cores: list[Core], *, row: int | None) -> tuple[Core, Core, Core]:
+  y, xs = choose_row(cores, row)
+  if len(xs) < 3:
+    raise ValueError(f"row {y} needs at least three program cores for same-core read/write")
+  source = (xs[len(xs) // 2], y)
+  read_target = (xs[0], y)
+  write_target = (xs[-1], y)
+  if source in (read_target, write_target) or read_target == write_target:
+    raise RuntimeError("internal placement error for same-core read/write targets")
+  return source, read_target, write_target
+
+
 def command_e(args):
   validate_bytes(args.bytes)
   device = None if args.dry_run else Device()
-  cores = DEFAULT_P100_CORES if args.dry_run else device.cores
+  cores = usable_cores(device)
   rows = []
   try:
-    source, target = choose_same_row_pair(cores, noc=args.noc, row=args.row)
+    source, read_target, write_target = choose_same_core_rw_targets(cores, row=args.row)
     vc_pairs = [(args.read_vc, args.write_vc)]
     if args.vc_sweep:
       vc_pairs = [(None, None), (1, 1), (1, 5), (5, 1), (5, 5)]
     for read_vc, write_vc in vc_pairs:
       read_ctrl = static_vc_ctrl(ROLE_READER, read_vc)
       write_ctrl = static_vc_ctrl(ROLE_WRITER, write_vc)
-      read_stream = ActiveStream("read_alone", source, target, ROLE_READER, RESULT_BASE, read_ctrl)
+      read_stream = ActiveStream("read_alone", source, read_target, ROLE_READER, RESULT_BASE, read_ctrl)
       if device is not None and not args.dry_run:
-        clear_cores(device, [source, target], stream_bytes=args.bytes, source_cores=set(), target_cores={target})
+        clear_cores(device, [source, read_target], stream_bytes=args.bytes, source_cores=set(), target_cores={read_target})
       read_prog = MultiCoreProgram([read_stream], noc=args.noc, stream_bytes=args.bytes, repeats=args.repeats)
-      maybe_run(device, read_prog, [source, target], dry_run=args.dry_run, gate_delay_cycles=args.gate_delay_cycles)
+      maybe_run(device, read_prog, [source, read_target], dry_run=args.dry_run, gate_delay_cycles=args.gate_delay_cycles)
       read_alone = None if args.dry_run else read_result(device, source, result_base=RESULT_BASE, name="read_alone")
 
       if device is not None and not args.dry_run:
-        clear_cores(device, [source, target], stream_bytes=args.bytes, source_cores={source}, target_cores={target})
+        clear_cores(
+          device, [source, read_target, write_target],
+          stream_bytes=args.bytes, source_cores={source},
+          target_cores={read_target, write_target},
+        )
       rw_prog = SameCoreReadWriteProgram(
-        source=source, target=target, noc=args.noc, stream_bytes=args.bytes,
+        source=source, read_target=read_target, write_target=write_target,
+        noc=args.noc, stream_bytes=args.bytes,
         repeats=args.repeats, read_ctrl=read_ctrl, write_ctrl=write_ctrl,
       )
-      maybe_run(device, rw_prog, [source, target], dry_run=args.dry_run, gate_delay_cycles=args.gate_delay_cycles)
+      maybe_run(device, rw_prog, [source, read_target, write_target], dry_run=args.dry_run, gate_delay_cycles=args.gate_delay_cycles)
       read_with = None if args.dry_run else read_result(device, source, result_base=RESULT_BASE + RESULT_STRIDE, name="read_with_write")
       write_res = None if args.dry_run else read_result(device, source, result_base=RESULT_BASE, name="write_saturator")
       rows.append((read_vc, write_vc, read_alone, read_with, write_res))
   finally:
     if device is not None:
       device.close()
-  table = format_e(args.noc, source, target, rows, dry=args.dry_run)
+  table = format_e(args.noc, source, read_target, write_target, rows, dry=args.dry_run)
   print(table)
   if not args.no_report and not args.dry_run:
     append_report(args.report, "E", table)
 
 
-def format_e(noc: int, source: Core, target: Core, rows, *, dry: bool) -> str:
+def format_e(noc: int, source: Core, read_target: Core, write_target: Core, rows, *, dry: bool) -> str:
   lines = [
-    f"NoC{noc} same-core read/write `{source[0]},{source[1]}` -> `{target[0]},{target[1]}` "
-    f"(true hops {noc_hops(source, target, noc)})",
+    f"NoC{noc} same-core read/write source `{source[0]},{source[1]}`, "
+    f"read target `{read_target[0]},{read_target[1]}` "
+    f"(hops {noc_hops(source, read_target, noc)}), "
+    f"write target `{write_target[0]},{write_target[1]}` "
+    f"(hops {noc_hops(source, write_target, noc)})",
     "",
     "| read VC | write VC | read-alone B/cyc | read+write B/cyc | read slowdown | write B/cyc | read ctr | write ctr |",
     "|---:|---:|---:|---:|---:|---:|---:|---:|",
@@ -790,7 +822,7 @@ def bisection_pairs(cores: list[Core], *, max_pairs: int | None) -> list[tuple[C
 def command_f(args):
   validate_bytes(args.bytes)
   device = None if args.dry_run else Device()
-  cores = DEFAULT_P100_CORES if args.dry_run else device.cores
+  cores = usable_cores(device)
   try:
     pairs = bisection_pairs(cores, max_pairs=args.max_pairs)
     single_stream = [ActiveStream("single", pairs[0][0], pairs[0][1], ROLE_WRITER, RESULT_BASE)]
@@ -864,7 +896,7 @@ def command_hop(args):
   if args.iters <= 0:
     raise ValueError("--iters must be positive")
   device = None if args.dry_run else Device()
-  cores = DEFAULT_P100_CORES if args.dry_run else device.cores
+  cores = usable_cores(device)
   rows = []
   try:
     for noc in args.nocs:
@@ -932,7 +964,7 @@ def append_report(path: Path, experiment: str, table: str):
 def add_common(p):
   p.add_argument("--dry-run", action="store_true", help="build programs and print planned rows without opening hardware")
   p.add_argument("--no-report", action="store_true", help="do not append microbenching/docs/noc-contention.md")
-  p.add_argument("--report", type=Path, default=Path("microbenching/docs/noc-contention.md"))
+  p.add_argument("--report", type=Path, default=harness.doc_path("noc", "noc-contention.md"))
   p.add_argument("--gate-delay-cycles", type=int, default=200_000_000,
                  help="future WALL_CLOCK start gate; set 0 to disable")
 

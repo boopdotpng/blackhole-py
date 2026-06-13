@@ -445,7 +445,7 @@ def main():
   parser.add_argument("--bytes", type=int, default=1024 * 1024, help="bytes transferred per repeat; must be a multiple of 16 KiB")
   parser.add_argument("--repeats", type=int, default=8, help="stream repeats per timed op")
   parser.add_argument("--no-report", action="store_true", help="do not append results to docs/noc-stream-sweep.md")
-  parser.add_argument("--report", type=Path, default=Path("docs/noc-stream-sweep.md"), help="markdown report path")
+  parser.add_argument("--report", type=Path, default=harness.doc_path("noc", "noc-stream-sweep.md"), help="markdown report path")
   args = parser.parse_args()
   if args.bytes <= 0 or args.bytes % NOC.MAX_BURST_SIZE:
     raise ValueError("--bytes must be a positive multiple of 16 KiB")
@@ -458,12 +458,14 @@ def main():
 
   runs: list[StreamRun] = []
   with harness.open_device() as device:
+    cmap = hops.read_tensix_coordinate_map(device)
     for noc in args.nocs:
       specs = specs_for_noc(noc)
       if args.mode == "row":
         pairs = hops.build_pairs(
           device.cores,
           noc=noc,
+          cmap=cmap,
           row=args.row,
           source=args.core,
           max_hops=args.max_hops,
@@ -471,6 +473,8 @@ def main():
       else:
         pairs = all_to_one_pairs(device.cores, target=args.target_core, max_sources=args.max_sources)
       for source, peer, logical_distance in pairs:
+        if hasattr(logical_distance, "hops"):
+          logical_distance = logical_distance.hops
         clear_ranges(device, [source, peer], specs, stream_bytes=args.bytes)
         program = (
           build_program(specs, stream_bytes=args.bytes, repeats=args.repeats, source=source, peer=peer)

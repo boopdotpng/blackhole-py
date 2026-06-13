@@ -686,7 +686,7 @@ def main() -> int:
   p.add_argument("--pos", type=int, default=17)
   p.add_argument("--runs", type=int, default=1)
   p.add_argument("--row-major-cache", action="store_true",
-                 help="stage from the raw row-major KV-cache layout used by examples/llama3.py")
+                 help="stage from the raw row-major KV-cache layout")
   p.add_argument("--fuse-kv-stage", action="store_true",
                  help="with --row-major-cache, stage K^T and V in one launch")
   p.add_argument("--score-scale-pow2-down", type=int, default=0,

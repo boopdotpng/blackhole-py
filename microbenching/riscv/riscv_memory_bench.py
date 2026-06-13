@@ -169,7 +169,7 @@ def main():
   parser.add_argument("--roles", nargs="+", choices=core.ROLE_NAMES, default=list(core.ROLE_NAMES), help="roles to benchmark")
   parser.add_argument("--iters", type=int, default=10_000, help="iterations per timed loop")
   parser.add_argument("--no-report", action="store_true", help="do not append results to docs/riscv-memory-microbench.md")
-  parser.add_argument("--report", type=Path, default=Path("docs/riscv-memory-microbench.md"), help="markdown report path")
+  parser.add_argument("--report", type=Path, default=harness.doc_path("riscv", "riscv-memory-microbench.md"), help="markdown report path")
   args = parser.parse_args()
   if args.iters <= 0:
     raise ValueError("--iters must be positive")

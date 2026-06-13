@@ -37,6 +37,7 @@ RESULT_MAGIC = 0x524E4141  # "RNAA"
 STATUS_STARTED = 0xA1000001
 STATUS_DONE = 0xA100D00D
 P100_PROGRAM_CORES = [(x, y) for y in noc_topology.P100_WORKER_Y for x in noc_topology.P100_WORKER_X]
+P100_FAST_DISPATCH_RESERVED = {(14, 2), (14, 3)}
 
 
 @dataclass(frozen=True)
@@ -114,6 +115,20 @@ class SenderResult:
 
 
 @dataclass(frozen=True)
+class TargetResult:
+  core: Core
+  words: tuple[int, ...]
+
+  @property
+  def missing(self) -> int:
+    return self.words[11]
+
+  @property
+  def poll_iters(self) -> int:
+    return self.words[16]
+
+
+@dataclass(frozen=True)
 class ArbitrationRun:
   noc: int
   k: int
@@ -122,6 +137,7 @@ class ArbitrationRun:
   target: Core
   senders: list[SenderSpec]
   results: list[SenderResult]
+  target_result: TargetResult
 
 
 class ArbitrationKernel(KernelBase, Noc):
@@ -193,12 +209,12 @@ def build_sender(spec: SenderSpec, *, noc: int, k: int, packet_bytes: int, packe
     dest_base=spec.dest_base,
   )
   fw.read_rta_from(BM.RTA_L1_BASE_PTR, (s9,))
-  fw.local_noc0_coord(s5, x_addr=BM.MY_X, y_addr=BM.MY_Y)
+  fw.local_noc_coord(noc, s5, x_addr=BM.MY_X, y_addr=BM.MY_Y)
+
+  emit_start_gate(fw)
   fw.li(s2, STREAM_BASE)
   fw.li(s3, spec.dest_base)
   fw.li(s4, packet_bytes)
-
-  emit_start_gate(fw)
   emit_counter_read(fw, noc, NOC.NIU_MST_WR_ACK_RECEIVED, s7)
   emit_counter_read(fw, noc, NOC.NIU_MST_NONPOSTED_WR_REQ_SENT, s8)
   emit_counter_read(fw, noc, NOC.NIU_MST_RD_RESP_RECEIVED, s11)
@@ -230,17 +246,58 @@ def build_sender(spec: SenderSpec, *, noc: int, k: int, packet_bytes: int, packe
   emit_counter_read(fw, noc, NOC.NIU_MST_RD_RESP_RECEIVED, t0)
   fw.sw(t0, s2, 21 * 4)
 
-  fw.li(t3, packet_bytes - 4)
-  fw.add(s3, s3, t3)
-  fw.addi(t0, t0, 1)
-  fw.li(s4, 4)
-  fw.noc_read(noc, 1, s3, 0, s9, READBACK_BASE, s4, ret_coord=s5, a=t3, v=t4)
-  fw.noc_reads_flushed(noc, t0, addr=t3, val=t4)
-  fw.li(s2, READBACK_BASE)
-  fw.lw(t0, s2, 0)
   fw.li(s2, RESULT_BASE)
-  fw.sw(t0, s2, 22 * 4)
+  fw.sw(zero, s2, 22 * 4)
 
+  fw.li(t0, STATUS_DONE)
+  fw.sw(t0, s2, 2 * 4)
+  return fw.ret()
+
+
+def build_target_receiver(*, k: int, packet_bytes: int, max_polls: int) -> KernelBase:
+  fw = ArbitrationKernel()
+  emit_record_header(
+    fw,
+    status=STATUS_STARTED,
+    noc=2,
+    sender_index=0,
+    k=k,
+    packet_bytes=packet_bytes,
+    packets=0,
+    target=(0, 0),
+    dest_base=DEST_BASE,
+  )
+  emit_start_gate(fw)
+  fw.li(s0, max_polls)
+  fw.mv(s10, zero)
+  harness.read_wall_clock(fw, a2, a3)
+  poll = fw._new_label("arb_recv_poll")
+  found = [fw._new_label(f"arb_recv_found_{i}") for i in range(k)]
+  done = fw._new_label("arb_recv_done")
+  timeout = fw._new_label("arb_recv_timeout")
+  expected = expected_sentinel(packet_bytes)
+  fw.label(poll)
+  fw.beq(s0, zero, timeout)
+  fw.mv(s6, zero)
+  for i in range(k):
+    fw.li(s2, DEST_BASE + i * DEST_STRIDE + packet_bytes - 4)
+    fw.lw(t0, s2, 0)
+    fw.li(t4, expected)
+    fw.beq(t0, t4, found[i])
+    fw.addi(s6, s6, 1)
+    fw.label(found[i])
+  fw.beq(s6, zero, done)
+  fw.addi(s10, s10, 1)
+  fw.addi(s0, s0, -1)
+  fw.j(poll)
+  fw.label(timeout)
+  fw.label(done)
+  harness.read_wall_clock(fw, a4, a5)
+  fw.li(s2, RESULT_BASE)
+  for off, reg in enumerate((a2, a3, a4, a5), start=12):
+    fw.sw(reg, s2, off * 4)
+  fw.sw(s10, s2, 16 * 4)
+  fw.sw(s6, s2, 11 * 4)
   fw.li(t0, STATUS_DONE)
   fw.sw(t0, s2, 2 * 4)
   return fw.ret()
@@ -289,7 +346,7 @@ class ArbitrationProgram:
 
     per_core_segments[target] = _one_core_segments(
       target,
-      KernelBase().ret(),
+      build_target_receiver(k=len(self.senders), packet_bytes=self.packet_bytes, max_polls=100_000_000),
       dispatch_mode=dispatch_mode,
       host_assigned_id=host_assigned_id,
     )
@@ -349,6 +406,10 @@ def build_sender_set(cores: list[Core], *, noc: int, k: int, row: int | None) ->
   return target, senders
 
 
+def exclude_reserved_cores(cores: list[Core], reserved: set[Core]) -> list[Core]:
+  return [core for core in cores if core not in reserved]
+
+
 def parse_counts(text: str) -> tuple[int, ...]:
   counts = tuple(int(item.strip()) for item in text.split(",") if item.strip())
   if not counts or any(count <= 0 for count in counts):
@@ -399,6 +460,7 @@ def clear_seed_and_gate(device: Device, senders: list[SenderSpec], *, packet_byt
       win.write(START_GATE_BASE, struct.pack("<Q", gate_value))
       win.write(STREAM_BASE, seed)
     win.target(target)
+    win.write(START_GATE_BASE, struct.pack("<Q", gate_value))
     for spec in senders:
       win.write(spec.dest_base, b"\0" * packet_bytes)
 
@@ -415,6 +477,18 @@ def read_sender_result(device: Device, spec: SenderSpec) -> SenderResult:
   return SenderResult(spec.source, words)
 
 
+def read_target_result(device: Device, target: Core) -> TargetResult:
+  with harness.device_window(device, target) as win:
+    win.target(target)
+    blob = win.read(RESULT_BASE, result_size())
+    words = struct.unpack_from("<" + "I" * RECORD_WORDS, blob, 0)
+  if words[0] != RESULT_MAGIC:
+    raise RuntimeError(f"{target}: bad target result magic 0x{words[0]:08x}")
+  if words[2] != STATUS_DONE:
+    raise RuntimeError(f"{target}: target receiver did not finish, status=0x{words[2]:08x}")
+  return TargetResult(target, words)
+
+
 def run_once(
   device: Device,
   senders: list[SenderSpec],
@@ -423,12 +497,12 @@ def run_once(
   packet_bytes: int,
   packets: int,
   gate_cycles: int,
-) -> list[SenderResult]:
+) -> tuple[list[SenderResult], TargetResult]:
   now = max(read_wall_clock_host(device, spec.source) for spec in senders)
   gate_value = now + gate_cycles
   clear_seed_and_gate(device, senders, packet_bytes=packet_bytes, gate_value=gate_value)
   device.run(ArbitrationProgram(senders, noc=noc, packet_bytes=packet_bytes, packets=packets))
-  return [read_sender_result(device, spec) for spec in senders]
+  return [read_sender_result(device, spec) for spec in senders], read_target_result(device, senders[0].target)
 
 
 def classify_distribution(results: list[SenderResult]) -> str:
@@ -452,27 +526,30 @@ def validation_counts(run: ArbitrationRun) -> tuple[int, int]:
     result.ack_delta != run.packets or result.nonposted_req_delta != run.packets
     for result in run.results
   )
-  bad_sentinels = sum(result.sentinel != expected_sentinel(run.packet_bytes) for result in run.results)
-  return bad_counters, bad_sentinels
+  return bad_counters, run.target_result.missing
 
 
 def format_summary(runs: list[ArbitrationRun]) -> str:
   lines = [
-    "| noc | K | packet B | packets | target | sender order | per-stream B/cyc | readback sentinels | spread | interpretation | bad counters | bad sentinels |",
-    "|---:|---:|---:|---:|---|---|---|---|---:|---|---:|---:|",
+    "| noc | K | packet B | packets | target | sender order | aggregate B/cyc | aggregate req/cyc | per-stream B/cyc | spread | interpretation | bad counters | target missing | target polls |",
+    "|---:|---:|---:|---:|---|---|---:|---:|---|---:|---|---:|---:|---:|",
   ]
   for run in runs:
     rates = [result.bytes_per_cycle for result in run.results]
     avg = statistics.fmean(rates) if rates else 0.0
     spread = (max(rates) - min(rates)) / avg if avg else 0.0
+    aggregate_window = max(result.end for result in run.results) - min(result.start for result in run.results)
+    aggregate_bytes = sum(result.bytes_total for result in run.results)
+    aggregate_bpc = aggregate_bytes / aggregate_window if aggregate_window > 0 else 0.0
+    aggregate_rpc = aggregate_bpc / run.packet_bytes if run.packet_bytes > 0 else 0.0
     bad_counters, bad_sentinels = validation_counts(run)
     sender_order = " ".join(f"`{spec.source[0]},{spec.source[1]}`" for spec in run.senders)
     rate_text = " ".join(f"{result.bytes_per_cycle:.3f}" for result in run.results)
-    sentinel_text = " ".join(f"0x{result.sentinel:08x}" for result in run.results)
     lines.append(
       f"| {run.noc} | {run.k} | {run.packet_bytes} | {run.packets} | `{run.target[0]},{run.target[1]}` | "
-      f"{sender_order} | {rate_text} | {sentinel_text} | {spread:.3f} | {classify_distribution(run.results)} | "
-      f"{bad_counters} | {bad_sentinels} |"
+      f"{sender_order} | {aggregate_bpc:.3f} | {aggregate_rpc:.5f} | {rate_text} | "
+      f"{spread:.3f} | {classify_distribution(run.results)} | "
+      f"{bad_counters} | {bad_sentinels} | {run.target_result.poll_iters} |"
     )
   return "\n".join(lines)
 
@@ -481,11 +558,10 @@ def assert_valid_run(run: ArbitrationRun):
   bad_counters, bad_sentinels = validation_counts(run)
   if bad_counters or bad_sentinels:
     expected = expected_sentinel(run.packet_bytes)
-    actual = " ".join(f"0x{result.sentinel:08x}" for result in run.results)
     raise RuntimeError(
       f"invalid arbitration run noc{run.noc} K={run.k} packet={run.packet_bytes}: "
-      f"bad_counters={bad_counters} bad_sentinels={bad_sentinels} "
-      f"expected_sentinel=0x{expected:08x} actual_sentinels={actual}. "
+      f"bad_counters={bad_counters} target_missing={bad_sentinels} "
+      f"expected_sentinel=0x{expected:08x}. "
       "Full matrix is blocked until sentinel validation is understood; pass "
       "--allow-invalid only for a deliberate debug run."
     )
@@ -502,9 +578,10 @@ def append_report(path: Path, *, gate_cycles: int, runs: list[ArbitrationRun]):
 
 def dry_run(args):
   runs = []
+  cores = exclude_reserved_cores(P100_PROGRAM_CORES, P100_FAST_DISPATCH_RESERVED)
   for noc in args.nocs:
     for k in args.counts:
-      target, senders = build_sender_set(P100_PROGRAM_CORES, noc=noc, k=k, row=args.row)
+      target, senders = build_sender_set(cores, noc=noc, k=k, row=args.row)
       for packet_bytes in args.packet_bytes:
         program = ArbitrationProgram(senders, noc=noc, packet_bytes=packet_bytes, packets=args.packets)
         program.lower(dispatch_mode=DevMsgs.DISPATCH_MODE_HOST, host_assigned_id=0)
@@ -525,9 +602,9 @@ def main():
   parser.add_argument("--row", type=int, default=None, help="physical row to use; default: row with most program cores")
   parser.add_argument("--gate-cycles", type=int, default=100_000_000, help="future WALL_CLOCK start-gate lead")
   parser.add_argument("--dry-run", action="store_true", help="lower programs without opening the device")
-  parser.add_argument("--allow-invalid", action="store_true", help="do not abort/report-block on bad counters or sentinel readback")
+  parser.add_argument("--allow-invalid", action="store_true", help="do not abort/report-block on bad counters or target receiver misses")
   parser.add_argument("--no-report", action="store_true", help="do not append docs/noc-arbitration.md")
-  parser.add_argument("--report", type=Path, default=Path("microbenching/docs/noc-arbitration.md"), help="markdown report path")
+  parser.add_argument("--report", type=Path, default=harness.doc_path("noc", "noc-arbitration.md"), help="markdown report path")
   args = parser.parse_args()
   if args.packets <= 0:
     raise ValueError("--packets must be positive")
@@ -542,14 +619,19 @@ def main():
 
   runs: list[ArbitrationRun] = []
   with harness.open_device() as device:
-    core_set = set(device.cores)
+    reserved = {
+      getattr(device.board_info, "dispatch_core", None),
+      getattr(device.board_info, "prefetch_core", None),
+    }
+    core_set = set(device.cores) - {core for core in reserved if core is not None}
+    usable_cores = sorted(core_set)
     for noc in args.nocs:
       for k in args.counts:
-        target, senders = build_sender_set(device.cores, noc=noc, k=k, row=args.row)
+        target, senders = build_sender_set(usable_cores, noc=noc, k=k, row=args.row)
         if target not in core_set or any(spec.source not in core_set for spec in senders):
           raise ValueError("selected sender/target is not a program core")
         for packet_bytes in args.packet_bytes:
-          results = run_once(
+          results, target_result = run_once(
             device,
             senders,
             noc=noc,
@@ -565,6 +647,7 @@ def main():
             target=target,
             senders=senders,
             results=results,
+            target_result=target_result,
           ))
           if not args.allow_invalid:
             try:

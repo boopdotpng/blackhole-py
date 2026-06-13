@@ -7,17 +7,19 @@ _bs_sys.path.insert(0, str(_bs_Path(__file__).resolve().parents[1]))
 import _bench_path  # noqa: F401
 from collections.abc import Iterable
 
+from ttk.blackhole_coords import GRID_H, GRID_W, T6_X_LOCATIONS, TENSIX_Y
+
 Core = tuple[int, int]
 Stream = tuple[Core, Core]
 Link = tuple[Core, Core]
 
-P100_WORKER_X = (*range(1, 8), *range(10, 15))
-P100_WORKER_Y = tuple(range(2, 12))
+P100_WORKER_X = T6_X_LOCATIONS
+P100_WORKER_Y = TENSIX_Y
 
-# Blackhole P100a physical NoC coordinates observed in this tree include
-# Tensix workers at x=1..7,10..14, DRAM at x=17,18, and PCIe at (19,24).
-ROUTER_X = tuple(range(20))
-ROUTER_Y = tuple(range(25))
+# Physical Blackhole router coordinates. Harvested worker columns are a property
+# of a specific chip and must be filtered through ttk.blackhole_coords.
+ROUTER_X = tuple(range(GRID_W))
+ROUTER_Y = tuple(range(GRID_H))
 ROUTER_WIDTH = len(ROUTER_X)
 ROUTER_HEIGHT = len(ROUTER_Y)
 
@@ -25,7 +27,9 @@ ROUTER_HEIGHT = len(ROUTER_Y)
 def _validate_xy(xy: Core) -> Core:
   x, y = xy
   if x not in ROUTER_X or y not in ROUTER_Y:
-    raise ValueError(f"router coordinate {xy} outside model grid x=0..19 y=0..24")
+    raise ValueError(
+      f"router coordinate {xy} outside model grid x=0..{ROUTER_WIDTH - 1} y=0..{ROUTER_HEIGHT - 1}"
+    )
   return x, y
 
 
@@ -94,12 +98,12 @@ def _self_test():
   assert noc_hops((7, 2), (10, 2), 0) == 3
 
   wrap0 = noc_path((14, 2), (1, 2), 0)
-  assert wrap0 == [(14, 2), (15, 2), (16, 2), (17, 2), (18, 2), (19, 2), (0, 2), (1, 2)]
-  assert noc_hops((14, 2), (1, 2), 0) == 7
+  assert wrap0 == [(14, 2), (15, 2), (16, 2), (0, 2), (1, 2)]
+  assert noc_hops((14, 2), (1, 2), 0) == 4
 
   wrap1 = noc_path((1, 2), (14, 2), 1)
-  assert wrap1 == [(1, 2), (0, 2), (19, 2), (18, 2), (17, 2), (16, 2), (15, 2), (14, 2)]
-  assert noc_hops((1, 2), (14, 2), 1) == 7
+  assert wrap1 == [(1, 2), (0, 2), (16, 2), (15, 2), (14, 2)]
+  assert noc_hops((1, 2), (14, 2), 1) == 4
 
   assert shared_link(((1, 2), (4, 2)), ((2, 2), (4, 2)), 0)
   assert not shared_link(((1, 2), (2, 2)), ((3, 2), (4, 2)), 0)

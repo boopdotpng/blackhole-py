@@ -276,7 +276,7 @@ def main():
   parser.add_argument("--bytes-per-noc", type=int, default=512 * 1024)
   parser.add_argument("--counts", type=agg.parse_counts, default=agg.parse_counts("1,2,4,8,16,32,60"))
   parser.add_argument("--no-report", action="store_true")
-  parser.add_argument("--report", type=Path, default=Path("docs/noc-dual-dm-aggregate.md"))
+  parser.add_argument("--report", type=Path, default=harness.doc_path("noc", "noc-dual-dm-aggregate.md"))
   args = parser.parse_args()
   if args.bytes_per_noc <= 0 or args.bytes_per_noc % NOC.MAX_BURST_SIZE:
     raise ValueError("--bytes-per-noc must be a positive multiple of 16 KiB")
@@ -288,7 +288,7 @@ def main():
     "|---|---:|---:|---:|---:|---:|---:|---:|---:|",
   ]
   with harness.open_device() as device:
-    all_pairs = agg.adjacent_pairs(device.cores, noc=0)
+    all_pairs = agg.adjacent_pairs(agg.usable_program_cores(device), noc=0)
     for count in args.counts:
       if count > len(all_pairs):
         raise ValueError(f"requested {count} pairs but only {len(all_pairs)} available")

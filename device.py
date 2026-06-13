@@ -22,8 +22,6 @@ from program import (
 
 class Device:
   def __init__(self, index: int = 0):
-    if os.environ.get("EMU") == "1" or os.environ.get("REMOTE"):
-      os.environ["TT_USB"] = "1"
     self.fast_dispatch = os.environ.get("TT_USB") != "1"
     self.dev = PCIDevice(index=index, use_vfio=self.fast_dispatch)
     self.board_info: BoardInfo = self.dev.board_info(fast_dispatch=self.fast_dispatch)

@@ -1,0 +1,22 @@
+Traceback (most recent call last):
+  File "/home/boop/tenstorrent/blackhole-py/microbenching/noc/riscv_noc_contention_probe.py", line 1002, in <module>
+    main()
+    ~~~~^^
+  File "/home/boop/tenstorrent/blackhole-py/microbenching/noc/riscv_noc_contention_probe.py", line 998, in main
+    args.func(args)
+    ~~~~~~~~~^^^^^^
+  File "/home/boop/tenstorrent/blackhole-py/microbenching/noc/riscv_noc_contention_probe.py", line 749, in command_e
+    maybe_run(device, rw_prog, [source, target], dry_run=args.dry_run, gate_delay_cycles=args.gate_delay_cycles)
+    ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/boop/tenstorrent/blackhole-py/microbenching/noc/riscv_noc_contention_probe.py", line 607, in maybe_run
+    device.run(program)
+    ~~~~~~~~~~^^^^^^^^^
+  File "/home/boop/tenstorrent/blackhole-py/device.py", line 81, in run
+    return self._run_slow_dispatch()
+           ~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "/home/boop/tenstorrent/blackhole-py/device.py", line 137, in _run_slow_dispatch
+    self._run_slow_ir(program.lower(cores, dispatch_mode=DevMsgs.DISPATCH_MODE_HOST), win)
+    ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/boop/tenstorrent/blackhole-py/device.py", line 125, in _run_slow_ir
+    raise TimeoutError(f"timeout waiting for core {core}")
+TimeoutError: timeout waiting for core (1, 4)

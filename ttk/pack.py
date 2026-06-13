@@ -9,7 +9,7 @@ from program import Dtype
 from ttk.mailbox import TriscLocalMem as TLM
 from ttk.tensix import Cfg, GprPack, TensixStall, TensixWait, ThreadCfg
 
-# --- Packer data-format word (ttsim data/bh/tensix_regs.json, cfg word 70) ---
+# --- Packer data-format word (Blackhole cfg word 70) ---
 # THCON_SEC0_REG1_1 packs the pack in/out formats:
 #   bit0 = Disable_zero_compress, bits[7:4] = Out_data_format,
 #   bits[11:8] = In_data_format (both == Dtype.value).

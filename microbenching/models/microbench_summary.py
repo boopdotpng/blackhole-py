@@ -5,10 +5,10 @@ Extracts all 'Run ...' sections from common RISC bench docs and computes
 min/median/max adj-cyc/op across roles (or role+group for contention).
 
 Usage:
-    PYTHONPATH=. python3 microbenching/microbench_summary.py
-    PYTHONPATH=. python3 microbenching/microbench_summary.py --latest
-    PYTHONPATH=. python3 microbenching/microbench_summary.py --outliers
-    PYTHONPATH=. python3 microbenching/microbench_summary.py --files microbenching/docs/riscv-core-microbench.md
+    PYTHONPATH=. python3 microbenching/models/microbench_summary.py
+    PYTHONPATH=. python3 microbenching/models/microbench_summary.py --latest
+    PYTHONPATH=. python3 microbenching/models/microbench_summary.py --outliers
+    PYTHONPATH=. python3 microbenching/models/microbench_summary.py --files microbenching/docs/riscv/riscv-core-microbench.md
 """
 
 import sys as _bs_sys
@@ -22,13 +22,13 @@ import sys
 from collections import defaultdict
 from pathlib import Path
 
-DOCS = Path(__file__).parent / "docs"
+DOCS = Path(__file__).resolve().parents[1] / "docs"
 
 DEFAULT_FILES = [
-    DOCS / "riscv-core-microbench.md",
-    DOCS / "riscv-memory-microbench.md",
-    DOCS / "riscv-special-instr-microbench.md",
-    DOCS / "riscv-contention-microbench.md",
+    DOCS / "riscv" / "riscv-core-microbench.md",
+    DOCS / "riscv" / "riscv-memory-microbench.md",
+    DOCS / "riscv" / "riscv-special-instr-microbench.md",
+    DOCS / "riscv" / "riscv-contention-microbench.md",
 ]
 
 

@@ -7,11 +7,9 @@ flowchart TD
     E{"backend?"}
     E -- "fast dispatch" --> V["open PCIe device<br/>(VFIO/IOMMU)"]
     E -- "TT_USB=1: slow dispatch" --> U["open PCIe device<br/>(BAR MMIO only)"]
-    E -- "EMU=1: slow dispatch" --> EM["EmuPCIDevice<br/>(software-emulated BARs)"]
 
     V --> T
-    U --> T
-    EM --> T["set up TLB windows: write x/y/addr<br/>into TLB config regs in the BAR, mmap window"]
+    U --> T["set up TLB windows: write x/y/addr<br/>into TLB config regs in the BAR, mmap window"]
 
     T --> FW["upload base firmware via TLB windows<br/>all 120 worker cores"]
 
@@ -28,7 +26,7 @@ flowchart TD
     F4 --> Z
 ```
 
-slow dispatch is the host doing everything itself through MMIO TLB windows. fast dispatch still uploads base FW to every worker, then launches CQ kernels on two reserved tensix cores (prefetch + dispatch) fed by a host sysmem buffer DMA'd over PCIe — `TT_USB=1` skips VFIO/IOMMU entirely so only BAR MMIO is needed. `EMU=1` swaps in `EmuPCIDevice` (forcing `TT_USB=1`), so kernels run against an emulated device through the exact same slow dispatch path — everything from FW upload onward is identical.
+slow dispatch is the host doing everything itself through MMIO TLB windows. fast dispatch still uploads base FW to every worker, then launches CQ kernels on two reserved tensix cores (prefetch + dispatch) fed by a host sysmem buffer DMA'd over PCIe. `TT_USB=1` skips VFIO/IOMMU entirely so only BAR MMIO is needed.
 
 ## pcie / dram
 

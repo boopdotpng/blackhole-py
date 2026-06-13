@@ -20,6 +20,34 @@ def as_bytes(obj) -> bytes:
 def noc_xy(x: int, y: int) -> int:
   return ((y << 6) | x) & 0xFFFF
 
+def p100_dram_bank_base_coords(harvested_dram_bank: int | None) -> dict[int, Core]:
+  ports = Dram.TILES_PER_BANK
+  if harvested_dram_bank is None:
+    return {b: (17 if b < 4 else 18, 12 + (b % 4) * ports) for b in range(Dram.BANK_COUNT)}
+
+  h = harvested_dram_bank
+  half = 4
+  mirror = h + half - 1 if h < half else h - half
+  if h < half:
+    right = list(range(half - 1))
+    left = [b for b in range(half - 1, Dram.BANK_COUNT - 1) if b != mirror] + [mirror]
+  else:
+    left = [b for b in range(half) if b != mirror] + [mirror]
+    right = list(range(half, Dram.BANK_COUNT - 1))
+  out = {b: (18, 12 + i * ports) for i, b in enumerate(right)}
+  out.update({b: (17, 12 + i * ports) for i, b in enumerate(left)})
+  return out
+
+def p100_dram_bank_endpoint_coords(harvested_dram_bank: int | None, noc: int) -> list[int]:
+  bank_count = Dram.BANK_COUNT if harvested_dram_bank is None else Dram.BANK_COUNT - 1
+  bank_base = p100_dram_bank_base_coords(harvested_dram_bank)
+  bank_port = [[2, 1], [0, 1], [0, 1], [0, 1], [2, 1], [2, 1], [2, 1], [2, 1]]
+  return [noc_xy(bank_base[b][0], bank_base[b][1] + bank_port[b][noc]) for b in range(bank_count)]
+
+def p100_dram_endpoint_coord(harvested_dram_bank: int | None, bank: int, endpoint: int) -> int:
+  x, y0 = p100_dram_bank_base_coords(harvested_dram_bank)[bank]
+  return noc_xy(x, y0 + endpoint)
+
 class S(ctypes.LittleEndianStructure):
   def __init__(self, **kw):
     super().__init__()
@@ -54,33 +82,14 @@ class P100BankTable:
 def build_bank_noc_table(harvested_dram_bank: int | None, worker_cores: list[Core]) -> bytes:
   num_dram_banks = Dram.BANK_COUNT if harvested_dram_bank is None else Dram.BANK_COUNT - 1
   num_l1_banks = len(worker_cores)
-  nocs, ports = 2, 3
-  bank_port = [[2, 1], [0, 1], [0, 1], [0, 1], [2, 1], [2, 1], [2, 1], [2, 1]]
-
-  if harvested_dram_bank is None:
-    bank_xy = {b: (17 if b < 4 else 18, 12 + (b % 4) * ports) for b in range(Dram.BANK_COUNT)}
-  else:
-    h = harvested_dram_bank
-    half = 4
-    mirror = h + half - 1 if h < half else h - half
-    if h < half:
-      right = list(range(half - 1))
-      left = [b for b in range(half - 1, Dram.BANK_COUNT - 1) if b != mirror] + [mirror]
-    else:
-      left = [b for b in range(half) if b != mirror] + [mirror]
-      right = list(range(half, Dram.BANK_COUNT - 1))
-    bank_xy = {b: (18, 12 + i * ports) for i, b in enumerate(right)}
-    bank_xy.update({b: (17, 12 + i * ports) for i, b in enumerate(left)})
 
   dram = []
-  for noc in range(nocs):
-    for b in range(num_dram_banks):
-      x, y0 = bank_xy[b]
-      dram.append(noc_xy(x, y0 + bank_port[b][noc]))
+  for noc in range(2):
+    dram.extend(p100_dram_bank_endpoint_coords(harvested_dram_bank, noc))
 
   cols = sorted({x for x, _ in worker_cores})
   l1 = []
-  for _ in range(nocs):
+  for _ in range(2):
     for i in range(num_l1_banks):
       l1.append(noc_xy(cols[i % len(cols)], 2 + (i // len(cols)) % 10))
 

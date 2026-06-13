@@ -16,8 +16,12 @@ if __package__ in (None, ""):
 
 import matmul_peak as base
 
-from program_timing_model import AICLK_MHZ, OUTPUT_TAIL_US, TRISC_CYCLES_PER_SUBBLOCK
 from ttk.tensix import TensixL1
+
+
+AICLK_MHZ = 1350.0
+TRISC_CYCLES_PER_SUBBLOCK = 924.0
+OUTPUT_TAIL_US = 60.0
 
 
 @dataclass(frozen=True)

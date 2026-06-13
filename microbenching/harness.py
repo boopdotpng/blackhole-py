@@ -42,6 +42,12 @@ from ttk.tensix import TensixMMIO  # noqa: E402
 Core = tuple[int, int]
 
 ALL_FF_ERROR = "L1 readback returned all 0xff; device is not responding cleanly and likely needs a host reboot"
+MICROBENCH_ROOT = _Path(__file__).resolve().parent
+DOCS_ROOT = MICROBENCH_ROOT / "docs"
+
+
+def doc_path(*parts: str) -> _Path:
+  return DOCS_ROOT.joinpath(*parts)
 
 
 def parse_core(s: str) -> Core:

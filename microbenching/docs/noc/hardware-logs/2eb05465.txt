@@ -1,0 +1,23 @@
+Traceback (most recent call last):
+  File "/home/boop/tenstorrent/blackhole-py/microbenching/noc/riscv_noc_mcast_throughput.py", line 140, in <module>
+    main()
+    ~~~~^^
+  File "/home/boop/tenstorrent/blackhole-py/microbenching/noc/riscv_noc_mcast_throughput.py", line 109, in main
+    device.run(linked.LinkedMcastProgram(
+    ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^
+      noc=noc,
+      ^^^^^^^^
+    ...<9 lines>...
+      inter_delay=0,
+      ^^^^^^^^^^^^^^
+    ))
+    ^^
+  File "/home/boop/tenstorrent/blackhole-py/device.py", line 81, in run
+    return self._run_slow_dispatch()
+           ~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "/home/boop/tenstorrent/blackhole-py/device.py", line 137, in _run_slow_dispatch
+    self._run_slow_ir(program.lower(cores, dispatch_mode=DevMsgs.DISPATCH_MODE_HOST), win)
+    ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/boop/tenstorrent/blackhole-py/device.py", line 125, in _run_slow_ir
+    raise TimeoutError(f"timeout waiting for core {core}")
+TimeoutError: timeout waiting for core (10, 4)

@@ -450,7 +450,7 @@ def main():
   parser.add_argument("--target", choices=("local", "peer", "both"), default="local", help="NoC L1 target set to benchmark")
   parser.add_argument("--iters", type=int, default=1000, help="iterations per timed loop")
   parser.add_argument("--no-report", action="store_true", help="do not append results to docs/noc-microbench.md")
-  parser.add_argument("--report", type=Path, default=Path("docs/noc-microbench.md"), help="markdown report path")
+  parser.add_argument("--report", type=Path, default=harness.doc_path("noc", "noc-microbench.md"), help="markdown report path")
   args = parser.parse_args()
   if args.iters <= 0:
     raise ValueError("--iters must be positive")

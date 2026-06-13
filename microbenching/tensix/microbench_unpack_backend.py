@@ -640,7 +640,7 @@ def main() -> None:
   parser.add_argument("--no-trisc1-clear", action="store_true", help="disable the companion TRISC1 clear-valid loop")
   parser.add_argument("--only", default="matmul_2x2_bw4", help="comma-separated test names to run; empty is always included")
   parser.add_argument("--no-report", action="store_true", help="do not write the markdown report")
-  parser.add_argument("--report", type=Path, default=Path("docs/unpack-backend-microbench.md"), help="markdown report path")
+  parser.add_argument("--report", type=Path, default=harness.doc_path("tensix", "unpack-backend-microbench.md"), help="markdown report path")
   args = parser.parse_args()
   if args.iters <= 0:
     raise ValueError("--iters must be positive")

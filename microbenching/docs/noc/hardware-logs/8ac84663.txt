@@ -1,0 +1,14 @@
+Traceback (most recent call last):
+  File "/home/boop/tenstorrent/blackhole-py/microbenching/noc/riscv_noc_mcast_rect_sweep.py", line 287, in <module>
+    main()
+    ~~~~^^
+  File "/home/boop/tenstorrent/blackhole-py/microbenching/noc/riscv_noc_mcast_rect_sweep.py", line 259, in main
+    case = make_case(x0, y0, args.width, args.height, noc=noc, cmap=cmap, coord_mode=args.coord_mode)
+  File "/home/boop/tenstorrent/blackhole-py/microbenching/noc/riscv_noc_mcast_rect_sweep.py", line 192, in make_case
+    physical = mcast.physical_rect_for_noc(receivers, noc=noc, cmap=cmap)
+  File "/home/boop/tenstorrent/blackhole-py/microbenching/noc/riscv_noc_mcast_one_way_latency.py", line 380, in physical_rect_for_noc
+    raw_coord_for_noc(translated_tensix_to_raw_noc0(receiver, cmap), noc)
+                      ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^
+  File "/home/boop/tenstorrent/blackhole-py/ttk/blackhole_coords.py", line 97, in translated_tensix_to_raw_noc0
+    raise ValueError(f"translated Tensix x is not mapped on this device: {coord}")
+ValueError: translated Tensix x is not mapped on this device: (8, 2)

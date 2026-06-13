@@ -575,7 +575,7 @@ def shell_command(args: argparse.Namespace) -> str:
     "PYTHONPATH=.",
     "TT_USB=1",
     sys.executable,
-    "examples/microbench_sem_cb.py",
+    "microbenching/tensix/microbench_sem_cb.py",
     "--iters", str(args.iters),
     "--release-delay", str(args.release_delay),
   ]
@@ -585,7 +585,7 @@ def shell_command(args: argparse.Namespace) -> str:
     parts.append("--skip-noc")
   if args.no_report:
     parts.append("--no-report")
-  if args.report != Path("docs/sem-cb-microbench.md"):
+  if args.report != harness.doc_path("tensix", "sem-cb-microbench.md"):
     parts += ["--report", str(args.report)]
   return " ".join(parts)
 
@@ -597,7 +597,7 @@ def main():
   parser.add_argument("--release-delay", type=int, default=64, help="NCRISC delay-loop iterations before releasing blocking rows")
   parser.add_argument("--skip-noc", action="store_true", help="skip RISC NOC semaphore rows")
   parser.add_argument("--no-report", action="store_true", help="do not append markdown report")
-  parser.add_argument("--report", type=Path, default=Path("docs/sem-cb-microbench.md"), help="markdown report path")
+  parser.add_argument("--report", type=Path, default=harness.doc_path("tensix", "sem-cb-microbench.md"), help="markdown report path")
   args = parser.parse_args()
   if args.iters <= 0:
     raise ValueError("--iters must be positive")

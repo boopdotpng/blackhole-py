@@ -174,10 +174,10 @@ class Mailbox:
   GO_MESSAGE_INDEX = 0x3A0
 
 
-# Tensix regfile GPR maps. The regfile (ttsim "tensix_regfile", 0xFFE00000) is
+# Tensix regfile GPR maps. The regfile at 0xFFE00000 is
 # memory-mapped: each GPR is a 4-byte MMIO word, so these resolve to absolute
-# addresses usable directly with write32(), exactly like Cfg.*. ttsim names the
-# space but not the slots; slot names + word indices mirror the ckernel p_gpr_*
+# addresses usable directly with write32(), exactly like Cfg.*. Slot names and
+# word indices mirror the ckernel p_gpr_*
 # maps (tt_llk_blackhole/common/inc/ckernel_gpr_map.h). The word index (address
 # - REGFILE_BASE >> 2) is also the gpr_address operand of TTSETDMAREG/TTWRCFG/
 # TTSTOREREG.

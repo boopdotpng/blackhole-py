@@ -15,10 +15,12 @@ from dsl import (
   TTINCRWC, TTREPLAY, TTSFPADDI, TTSFPLOAD, TTSFPNOP, TTSFPSTORE,
   TTSETC16, TTSETDMAREG, TTSTALLWAIT, TTSTOREREG, TTUNPACR, TTUNPACR_NOP,
   TTWRCFG, TTZEROACC, TTZEROSRC, Reg,
-  a0, a1, a2, a5, ra, s0, s2, s3, s4, s5, sp, t0, t1, t2, t3, t4, t5, t6, zero,
+  a0, a1, a2, a5, ra, s0, s2, s3, s4, s5, s6, s7, s8, sp, t0, t1, t2, t3, t4, t5, t6, zero,
 )
 from matmul_peak import RiscSync
 from program import Dtype, Program
+from ttk.addrs import Dram, noc_xy, p100_dram_bank_base_coords, p100_dram_bank_endpoint_coords
+from ttk.blackhole_coords import directional_torus_hops, raw_coord_for_noc, tensix_coordinate_map, translated_tensix_to_raw_noc0
 from ttk import Cb, Noc, Tensix
 from ttk.cb import CircularBuffer as CB
 from ttk.mailbox import BriscMailbox as BM, NcriscMailbox as NM, TriscLocalMem as TLM, TriscMailbox
@@ -371,9 +373,42 @@ def trisc2() -> Trisc:
   return fw
 
 
-def brisc() -> Brisc:
+def dram_tile_addr_static_endpoint(fw: Brisc | Ncrisc, endpoint_coords: list[list[int]]):
+  fw.mv(t0, a1)
+  fw.remu(a1, t0, a2)
+  fw.divu(t0, t0, a2)
+  fw.slli(t0, t0, 11)
+  fw.add(a0, a0, t0)
+  fw.li(a2, endpoint_coords[0][0])
+  for bank, coords in enumerate(endpoint_coords):
+    for endpoint, coord in enumerate(coords):
+      next_coord = fw._new_label("dram_endpoint_coord")
+      fw.li(t1, bank)
+      fw.bne(a1, t1, next_coord)
+      fw.li(t1, endpoint)
+      fw.bne(s7, t1, next_coord)
+      fw.li(a2, coord)
+      fw.label(next_coord)
+  return fw
+
+
+def dram_tile_addr_rta_coords(fw: Brisc | Ncrisc, *, coord_offset_words: int):
+  fw.mv(t0, a1)
+  fw.remu(a1, t0, a2)
+  fw.divu(t0, t0, a2)
+  fw.slli(t0, t0, 11)
+  fw.add(a0, a0, t0)
+  fw.slli(t1, a1, 2)
+  fw.add(t1, s8, t1)
+  return fw.lw(a2, t1, coord_offset_words * 4)
+
+
+def brisc(dram_bank_coords: list[int], dram_bank_endpoint_coords: list[list[int]] | None = None,
+          *, rta_coord_table: bool = False) -> Brisc:
   fw = Brisc()
-  fw.read_rta_from(BM.RTA_L1_BASE_PTR, (s0, s2, s3, s4))
+  fw.read_rta_from(BM.RTA_L1_BASE_PTR, (s0, s2, s3, s4, s6, s7))
+  if rta_coord_table:
+    fw.read32(s8, BM.RTA_L1_BASE_PTR)
   for addr in (
     SYNC_TRISC_START, SYNC_READ, SYNC_DONE0, SYNC_DONE1, SYNC_DONE2,
     SYNC_TRISC_INIT, SYNC_TRISC_INIT + 4, SYNC_TRISC_INIT + 8,
@@ -382,10 +417,16 @@ def brisc() -> Brisc:
   fw.write32(SYNC_TRISC_START, 0x00010101)
   with fw.tile_loop("brisc"):
     fw.cb_reserve_back(BM.CB_INTERFACE, 0)
-    fw.add(a1, s2, s5)
+    fw.mul(a1, s5, s6)
+    fw.add(a1, s2, a1)
     fw.mv(a0, s0)
     fw.mv(a2, s4)
-    fw.dram_tile_addr_from(BM.DRAM_BANK_TO_NOC_XY, 0)
+    if rta_coord_table:
+      dram_tile_addr_rta_coords(fw, coord_offset_words=6)
+    elif dram_bank_endpoint_coords is None:
+      fw.dram_tile_addr_static(dram_bank_coords)
+    else:
+      dram_tile_addr_static_endpoint(fw, dram_bank_endpoint_coords)
     fw.local_noc0_coord(a5)
     fw.read32(t4, NOC.STATUS_BASE + NOC.NIU_MST_RD_RESP_RECEIVED)
     fw.addi(t4, t4, 1)
@@ -404,15 +445,24 @@ def brisc() -> Brisc:
   return fw
 
 
-def ncrisc(num_banks: int) -> Ncrisc:
+def ncrisc(dram_bank_coords: list[int], dram_bank_endpoint_coords: list[list[int]] | None = None,
+           *, rta_coord_table: bool = False) -> Ncrisc:
   fw = Ncrisc()
-  fw.read_rta_from(NM.RTA_L1_BASE_PTR, (s0, s2, s3, s4))
+  fw.read_rta_from(NM.RTA_L1_BASE_PTR, (s0, s2, s3, s4, s6, s7))
+  if rta_coord_table:
+    fw.read32(s8, NM.RTA_L1_BASE_PTR)
   with fw.tile_loop("ncrisc"):
     fw.cb_wait_front(NM.CB_INTERFACE, OUT_CB)
-    fw.add(a1, s2, s5)
+    fw.mul(a1, s5, s6)
+    fw.add(a1, s2, a1)
     fw.mv(a0, s0)
     fw.mv(a2, s4)
-    fw.dram_tile_addr_from(NM.DRAM_BANK_TO_NOC_XY, num_banks)
+    if rta_coord_table:
+      dram_tile_addr_rta_coords(fw, coord_offset_words=6)
+    elif dram_bank_endpoint_coords is None:
+      fw.dram_tile_addr_static(dram_bank_coords)
+    else:
+      dram_tile_addr_static_endpoint(fw, dram_bank_endpoint_coords)
     fw.read32(t4, NOC.STATUS_BASE + NOC.NIU_MST_WR_ACK_RECEIVED + (1 << NOC.INSTANCE_OFFSET_BIT))
     fw.addi(t4, t4, 1)
     fw.cb_read_ptr(NM.CB_INTERFACE, OUT_CB, out=t5)
@@ -430,19 +480,82 @@ def build_program(
   cores: list[tuple[int, int]] | None = None,
   tiles_per_core: int = DEFAULT_TILES_PER_CORE,
   base_tile_offset: int = 0,
+  dram_bank_coords_noc0: list[int] | None = None,
+  dram_bank_coords_noc1: list[int] | None = None,
+  dram_bank_endpoint_coords_noc0: list[list[int]] | None = None,
+  dram_bank_endpoint_coords_noc1: list[list[int]] | None = None,
+  read_endpoint_mode: str = "preferred",
+  write_endpoint_mode: str = "preferred",
+  nearest_read_coords: dict[tuple[int, int], list[int]] | None = None,
+  nearest_write_coords: dict[tuple[int, int], list[int]] | None = None,
+  bank_mode: str = "spread",
   use_grid: bool = True,
 ) -> Program:
   if cores is None:
     cores = [TARGET_CORE]
+  if dram_bank_coords_noc0 is None:
+    dram_bank_coords_noc0 = p100_dram_bank_endpoint_coords(None, 0)[:num_banks]
+  if dram_bank_coords_noc1 is None:
+    dram_bank_coords_noc1 = p100_dram_bank_endpoint_coords(None, 1)[:num_banks]
+  if dram_bank_endpoint_coords_noc0 is None:
+    dram_bank_endpoint_coords_noc0 = p100_dram_bank_endpoint_coord_table(None, num_banks)
+  if dram_bank_endpoint_coords_noc1 is None:
+    dram_bank_endpoint_coords_noc1 = p100_dram_bank_endpoint_coord_table(None, num_banks)
   core_index = {core: i for i, core in enumerate(cores)}
+  if bank_mode not in ("spread", "local"):
+    raise ValueError("bank_mode must be 'spread' or 'local'")
+  if read_endpoint_mode not in ("preferred", "split3", "nearest"):
+    raise ValueError("read_endpoint_mode must be 'preferred', 'split3', or 'nearest'")
+  if write_endpoint_mode not in ("preferred", "split3", "nearest"):
+    raise ValueError("write_endpoint_mode must be 'preferred', 'split3', or 'nearest'")
+  if read_endpoint_mode == "nearest" and nearest_read_coords is None:
+    raise ValueError("read_endpoint_mode='nearest' needs nearest_read_coords")
+  if write_endpoint_mode == "nearest" and nearest_write_coords is None:
+    raise ValueError("write_endpoint_mode='nearest' needs nearest_write_coords")
 
-  brisc_fw = brisc()
-  ncrisc_fw = ncrisc(num_banks)
+  def tile_base_and_stride(core: tuple[int, int]) -> tuple[int, int]:
+    idx = core_index[core]
+    if bank_mode == "spread":
+      return base_tile_offset + idx * tiles_per_core, 1
+    bank = idx % num_banks
+    page = (idx // num_banks) * tiles_per_core
+    return base_tile_offset + bank + page * num_banks, num_banks
+
+  brisc_fw = brisc(
+    dram_bank_coords_noc0,
+    dram_bank_endpoint_coords_noc0 if read_endpoint_mode == "split3" else None,
+    rta_coord_table=read_endpoint_mode == "nearest",
+  )
+  ncrisc_fw = ncrisc(
+    dram_bank_coords_noc1,
+    dram_bank_endpoint_coords_noc1 if write_endpoint_mode == "split3" else None,
+    rta_coord_table=write_endpoint_mode == "nearest",
+  )
   trisc0_fw = trisc0()
   trisc1_fw = trisc1()
   trisc2_fw = trisc2()
-  brisc_fw.rta(lambda x, y: [src_addr, base_tile_offset + core_index[(x, y)] * tiles_per_core, tiles_per_core, num_banks])
-  ncrisc_fw.rta(lambda x, y: [dst_addr, base_tile_offset + core_index[(x, y)] * tiles_per_core, tiles_per_core, num_banks])
+  def brisc_args(x, y):
+    core = (x, y)
+    args = [
+      src_addr, tile_base_and_stride(core)[0], tiles_per_core, num_banks,
+      tile_base_and_stride(core)[1], core_index[core] % 3,
+    ]
+    if read_endpoint_mode == "nearest":
+      args.extend(nearest_read_coords[core])
+    return args
+
+  def ncrisc_args(x, y):
+    core = (x, y)
+    args = [
+      dst_addr, tile_base_and_stride(core)[0], tiles_per_core, num_banks,
+      tile_base_and_stride(core)[1], core_index[core] % 3,
+    ]
+    if write_endpoint_mode == "nearest":
+      args.extend(nearest_write_coords[core])
+    return args
+
+  brisc_fw.rta(brisc_args)
+  ncrisc_fw.rta(ncrisc_args)
   trisc0_fw.rta(lambda _x, _y: [tiles_per_core])
   trisc1_fw.rta(lambda _x, _y: [tiles_per_core])
   trisc2_fw.rta(lambda _x, _y: [tiles_per_core])
@@ -458,6 +571,8 @@ def build_program(
     rows = tuple(sorted({y for _, y in cores}))
     cols = tuple(sorted({x for x, _ in cores}))
     prog.grid = (rows, cols)
+  else:
+    prog.num_cores = len(cores)
   prog.name = "add1"
   return prog
 
@@ -474,6 +589,16 @@ def make_argparser() -> argparse.ArgumentParser:
                       help=f"tiles processed by each core (default: {DEFAULT_TILES_PER_CORE})")
   parser.add_argument("--cores", choices=("auto", "program", "worker", "one"), default="auto",
                       help="auto/program use safe dispatchable cores; worker includes CQ cores and needs TT_USB=1")
+  parser.add_argument("--core-count", type=int, default=None,
+                      help="limit selected cores to the first N cores")
+  parser.add_argument("--bank-mode", choices=("spread", "local"), default="spread",
+                      help="spread round-robins each core across DRAM banks; local pins each core to one bank")
+  parser.add_argument("--read-endpoint-mode", choices=("preferred", "split3", "nearest"), default="preferred",
+                      help="DRAM endpoint selection for BRISC reads")
+  parser.add_argument("--write-endpoint-mode", choices=("preferred", "split3", "nearest"), default="preferred",
+                      help="DRAM endpoint selection for NCRISC writes")
+  parser.add_argument("--no-verify", action="store_true",
+                      help="skip host readback/compare of the output buffer")
   parser.add_argument("--core", type=parse_core, default=TARGET_CORE,
                       help=f"core for --cores one, as X,Y (default: {TARGET_CORE[0]},{TARGET_CORE[1]})")
   return parser
@@ -498,6 +623,64 @@ def make_expected(src_rm: bytes) -> bytes:
   out = (src.view("<f4") + np.float32(1.0)).view("<u4")
   return (out >> 16).astype("<u2").tobytes()
 
+def p100_dram_bank_endpoint_coord_table(harvested_dram_bank: int | None, num_banks: int) -> list[list[int]]:
+  bank_base = p100_dram_bank_base_coords(harvested_dram_bank)
+  return [[noc_xy(bank_base[bank][0], bank_base[bank][1] + endpoint) for endpoint in range(3)] for bank in range(num_banks)]
+
+def nearest_dram_endpoint_coords_for_cores(
+  cores: list[tuple[int, int]], *, harvested_dram_bank: int | None, enabled_tensix_col: int,
+  num_banks: int, noc: int,
+) -> dict[tuple[int, int], list[int]]:
+  cmap = tensix_coordinate_map(enabled_tensix_col)
+  endpoint_table = p100_dram_bank_endpoint_coord_table(harvested_dram_bank, num_banks)
+  out: dict[tuple[int, int], list[int]] = {}
+  for core in cores:
+    raw_core_noc0 = translated_tensix_to_raw_noc0(core, cmap)
+    raw_core = raw_coord_for_noc(raw_core_noc0, noc)
+    coords = []
+    for bank in range(num_banks):
+      candidates = []
+      for endpoint, virtual_coord in enumerate(endpoint_table[bank]):
+        raw_dram_noc0 = (Dram.BANK_X[bank], Dram.BANK_TILE_YS[bank][endpoint])
+        raw_dram = raw_coord_for_noc(raw_dram_noc0, noc)
+        total_hops, x_hops, y_hops = directional_torus_hops(raw_core, raw_dram, noc)
+        candidates.append((total_hops, y_hops, x_hops, endpoint, virtual_coord))
+      coords.append(min(candidates)[4])
+    out[core] = coords
+  return out
+
+def logical_tile_ids(core_count: int, tiles_per_core: int, num_banks: int, bank_mode: str) -> list[int]:
+  ids = []
+  for idx in range(core_count):
+    if bank_mode == "spread":
+      base = idx * tiles_per_core
+      stride = 1
+    else:
+      bank = idx % num_banks
+      page = (idx // num_banks) * tiles_per_core
+      base = bank + page * num_banks
+      stride = num_banks
+    ids.extend(base + tile * stride for tile in range(tiles_per_core))
+  return ids
+
+def allocation_tiles_for(core_count: int, tiles_per_core: int, num_banks: int, bank_mode: str) -> int:
+  return max(logical_tile_ids(core_count, tiles_per_core, num_banks, bank_mode), default=-1) + 1
+
+def verify_output_tiles(out: bytes, src_rm: bytes, *, core_count: int, tiles_per_core: int, num_banks: int, bank_mode: str):
+  exp = make_expected(src_rm)
+  tile_ids = logical_tile_ids(core_count, tiles_per_core, num_banks, bank_mode)
+  for src_tile, dst_tile in enumerate(tile_ids):
+    src_off = src_tile * TILE_BYTES
+    dst_off = dst_tile * TILE_BYTES
+    got = out[dst_off:dst_off + TILE_BYTES]
+    want = exp[src_off:src_off + TILE_BYTES]
+    if got != want:
+      mismatch = next(i for i, (g, e) in enumerate(zip(got, want)) if g != e)
+      abs_mismatch = dst_off + mismatch
+      got_bytes = got[mismatch:mismatch + 32].hex()
+      want_bytes = want[mismatch:mismatch + 32].hex()
+      raise AssertionError(f"mismatch byte={abs_mismatch} got={got_bytes} exp={want_bytes}")
+
 def main():
   args = make_argparser().parse_args()
   if args.tiles_per_core <= 0:
@@ -506,30 +689,71 @@ def main():
   device = Device()
   try:
     cores, use_grid = select_cores(device, args.cores, args.core)
+    if args.core_count is not None:
+      if args.core_count <= 0:
+        raise ValueError("--core-count must be positive")
+      cores = cores[:args.core_count]
+    num_banks = len(device.dram.bank_tiles)
+    layout = device.dev.telemetry_layout()
+    enabled_tensix_col = device.dev.telemetry_tag(layout, 34)
+    if enabled_tensix_col is None and (args.read_endpoint_mode == "nearest" or args.write_endpoint_mode == "nearest"):
+      raise RuntimeError("nearest endpoint mode needs ENABLED_TENSIX_COL telemetry")
+    nearest_read = None
+    nearest_write = None
+    if args.read_endpoint_mode == "nearest":
+      nearest_read = nearest_dram_endpoint_coords_for_cores(
+        cores, harvested_dram_bank=device.board_info.harvested_dram_bank,
+        enabled_tensix_col=enabled_tensix_col, num_banks=num_banks, noc=0,
+      )
+    if args.write_endpoint_mode == "nearest":
+      nearest_write = nearest_dram_endpoint_coords_for_cores(
+        cores, harvested_dram_bank=device.board_info.harvested_dram_bank,
+        enabled_tensix_col=enabled_tensix_col, num_banks=num_banks, noc=1,
+      )
     n_tiles = len(cores) * args.tiles_per_core
+    alloc_tiles = allocation_tiles_for(len(cores), args.tiles_per_core, num_banks, args.bank_mode)
     src_rm = make_input(n_tiles)
-    src_buf = device.alloc_write(src_rm, dtype=Dtype.Float16_b, shape=(n_tiles, 32, 32), name="src")
-    dst_buf = device.dram.alloc(n_tiles, dtype=Dtype.Float16_b, shape=(n_tiles, 32, 32), name="dst")
+    src_buf = device.dram.alloc(alloc_tiles, dtype=Dtype.Float16_b, shape=(alloc_tiles, 32, 32), name="src")
+    src_payload = bytearray(src_buf.size)
+    for src_tile, dst_tile in enumerate(logical_tile_ids(len(cores), args.tiles_per_core, num_banks, args.bank_mode)):
+      src_payload[dst_tile * TILE_BYTES:(dst_tile + 1) * TILE_BYTES] = src_rm[src_tile * TILE_BYTES:(src_tile + 1) * TILE_BYTES]
+    device.dram_write(src_buf, bytes(src_payload))
+    dst_buf = device.dram.alloc(alloc_tiles, dtype=Dtype.Float16_b, shape=(alloc_tiles, 32, 32), name="dst")
     prog = build_program(
       src_buf.addr,
       dst_buf.addr,
-      len(device.dram.bank_tiles),
+      num_banks,
       cores=cores,
       tiles_per_core=args.tiles_per_core,
+      dram_bank_coords_noc0=p100_dram_bank_endpoint_coords(device.board_info.harvested_dram_bank, 0),
+      dram_bank_coords_noc1=p100_dram_bank_endpoint_coords(device.board_info.harvested_dram_bank, 1),
+      dram_bank_endpoint_coords_noc0=p100_dram_bank_endpoint_coord_table(device.board_info.harvested_dram_bank, num_banks),
+      dram_bank_endpoint_coords_noc1=p100_dram_bank_endpoint_coord_table(device.board_info.harvested_dram_bank, num_banks),
+      read_endpoint_mode=args.read_endpoint_mode,
+      write_endpoint_mode=args.write_endpoint_mode,
+      nearest_read_coords=nearest_read,
+      nearest_write_coords=nearest_write,
+      bank_mode=args.bank_mode,
       use_grid=use_grid,
     )
     timings = device.run(prog)
-    out = device.dram_read(dst_buf)
-    exp = make_expected(src_rm)
-    if out != exp:
-      mismatch = next(i for i, (g, e) in enumerate(zip(out, exp)) if g != e)
-      got = out[mismatch:mismatch + 32].hex()
-      want = exp[mismatch:mismatch + 32].hex()
-      raise AssertionError(f"mismatch byte={mismatch} got={got} exp={want}")
-    print(f"PASS add1 {len(cores)} cores x {args.tiles_per_core} tiles/core = {n_tiles} tiles")
+    if not args.no_verify:
+      out = device.dram_read(dst_buf)
+      verify_output_tiles(
+        out, src_rm,
+        core_count=len(cores), tiles_per_core=args.tiles_per_core,
+        num_banks=num_banks, bank_mode=args.bank_mode,
+      )
+    total_bytes = n_tiles * TILE_BYTES
+    print(
+      f"PASS add1 bank_mode={args.bank_mode} read_endpoint={args.read_endpoint_mode} "
+      f"write_endpoint={args.write_endpoint_mode} {len(cores)} cores x {args.tiles_per_core} tiles/core = {n_tiles} tiles"
+    )
     for timing in timings:
       name = f"{timing['name']}: " if timing["name"] else ""
-      print(f"  {name}{timing['us']:,.1f} us")
+      us = timing["us"]
+      gbps = (total_bytes * 3) / (us * 1e-6) / 1e9 if us > 0 else 0.0
+      print(f"  {name}{us:,.1f} us, {gbps:.1f} GB/s effective add1 traffic")
   finally:
     device.close()
 

@@ -1,202 +1,54 @@
-# Blackhole NoC Arbitration
 
-Goal: infer the router arbitration policy when multiple injected streams share
-one physical NoC link. This extends the aggregate write benchmarks by measuring
-each stream independently rather than only the aggregate window.
+## Run 2026-06-13T16:45:47-04:00
 
-The harness lives in `microbenching/noc/riscv_noc_arbitration_bench.py`. The
-offline topology helper lives in `microbenching/noc/noc_topology.py`.
+- Start gate lead: `100000000` cycles
+- Traffic: BRISC nonposted peer-L1 writes, one far-end receiver tile, one destination slice per sender
+- Placement: one row; NoC0 sends right into the row's right edge, NoC1 sends left into the row's left edge
+- Sender order: farthest from target to nearest target; favored nearest implies through-traffic priority, favored farthest implies injection priority
 
-## Physical Path Model
+| noc | K | packet B | packets | target | sender order | aggregate B/cyc | aggregate req/cyc | per-stream B/cyc | spread | interpretation | bad counters | target missing | target polls |
+|---:|---:|---:|---:|---|---|---:|---:|---|---:|---|---:|---:|---:|
+| 0 | 2 | 4096 | 128 | `14,4` | `12,4` `13,4` | 61.134 | 0.01493 | 30.567 30.669 | 0.003 | roughly equal | 0 | 0 | 6 |
+| 0 | 2 | 16384 | 128 | `14,4` | `12,4` `13,4` | 62.783 | 0.00383 | 31.392 31.508 | 0.004 | roughly equal | 0 | 0 | 18 |
+| 0 | 3 | 4096 | 128 | `14,4` | `11,4` `12,4` `13,4` | 61.454 | 0.01500 | 20.545 20.488 30.685 | 0.427 | near target favored | 0 | 0 | 7 |
+| 0 | 3 | 16384 | 128 | `14,4` | `11,4` `12,4` `13,4` | 62.860 | 0.00384 | 20.955 21.006 31.505 | 0.431 | near target favored | 0 | 0 | 24 |
+| 0 | 4 | 4096 | 128 | `14,4` | `10,4` `11,4` `12,4` `13,4` | 61.652 | 0.01505 | 15.413 15.436 20.539 30.685 | 0.744 | near target favored | 0 | 0 | 10 |
+| 0 | 4 | 16384 | 128 | `14,4` | `10,4` `11,4` `12,4` `13,4` | 63.062 | 0.00385 | 15.766 15.795 21.020 31.611 | 0.753 | near target favored | 0 | 0 | 27 |
+| 0 | 6 | 4096 | 128 | `14,4` | `6,4` `7,4` `10,4` `11,4` `12,4` `13,4` | 61.828 | 0.01509 | 10.306 10.314 12.347 15.447 20.545 30.685 | 1.227 | near target favored | 0 | 0 | 19 |
+| 0 | 6 | 16384 | 128 | `14,4` | `6,4` `7,4` `10,4` `11,4` `12,4` `13,4` | 63.170 | 0.00386 | 10.529 10.541 12.655 15.817 21.093 31.611 | 1.237 | near target favored | 0 | 0 | 97 |
+| 0 | 8 | 4096 | 128 | `14,4` | `4,4` `5,4` `6,4` `7,4` `10,4` `11,4` `12,4` `13,4` | 61.909 | 0.01511 | 7.739 7.747 8.848 10.315 12.368 15.439 20.546 30.683 | 1.615 | near target favored | 0 | 0 | 75 |
+| 0 | 8 | 16384 | 128 | `14,4` | `4,4` `5,4` `6,4` `7,4` `10,4` `11,4` `12,4` `13,4` | 63.098 | 0.00385 | 7.887 7.895 9.024 10.521 12.623 15.766 21.006 31.505 | 1.626 | near target favored | 0 | 0 | 295 |
+| 1 | 2 | 4096 | 128 | `1,4` | `2,4` `3,4` | 61.045 | 0.01490 | 30.612 30.526 | 0.003 | roughly equal | 0 | 0 | 5 |
+| 1 | 2 | 16384 | 128 | `1,4` | `2,4` `3,4` | 62.811 | 0.00383 | 31.520 31.407 | 0.004 | roughly equal | 0 | 0 | 17 |
+| 1 | 3 | 4096 | 128 | `1,4` | `2,4` `3,4` `4,4` | 61.385 | 0.01499 | 30.628 20.514 20.462 | 0.426 | far source favored | 0 | 0 | 6 |
+| 1 | 3 | 16384 | 128 | `1,4` | `2,4` `3,4` `4,4` | 62.901 | 0.00384 | 31.516 21.021 20.967 | 0.431 | far source favored | 0 | 0 | 23 |
+| 1 | 4 | 4096 | 128 | `1,4` | `2,4` `3,4` `4,4` `5,4` | 61.639 | 0.01505 | 30.657 20.545 15.436 15.414 | 0.743 | far source favored | 0 | 0 | 9 |
+| 1 | 4 | 16384 | 128 | `1,4` | `2,4` `3,4` `4,4` `5,4` | 63.013 | 0.00385 | 31.520 21.051 15.784 15.754 | 0.750 | far source favored | 0 | 0 | 35 |
+| 1 | 6 | 4096 | 128 | `1,4` | `2,4` `3,4` `4,4` `5,4` `6,4` `7,4` | 61.840 | 0.01510 | 30.642 20.539 15.432 12.363 10.315 10.308 | 1.225 | far source favored | 0 | 0 | 24 |
+| 1 | 6 | 16384 | 128 | `1,4` | `2,4` `3,4` `4,4` `5,4` `6,4` `7,4` | 63.169 | 0.00386 | 31.611 21.088 15.806 12.654 10.541 10.528 | 1.237 | far source favored | 0 | 0 | 96 |
+| 1 | 8 | 4096 | 128 | `1,4` | `2,4` `3,4` `4,4` `5,4` `6,4` `7,4` `10,4` `11,4` | 61.884 | 0.01511 | 30.628 20.526 15.425 12.359 10.311 8.839 7.744 7.736 | 1.613 | far source favored | 0 | 0 | 56 |
+| 1 | 8 | 16384 | 128 | `1,4` | `2,4` `3,4` `4,4` `5,4` `6,4` `7,4` `10,4` `11,4` | 63.182 | 0.00386 | 31.558 21.080 15.799 12.643 10.536 9.035 7.906 7.898 | 1.625 | far source favored | 0 | 0 | 295 |
 
-`microbenching/noc/noc_topology.py` models the P100a physical router grid as coordinates
-`x=0..19`, `y=0..24`. Worker tiles occupy columns `1..7,10..14` and rows
-`2..11`; the worker-column gap at `x=8,9` remains visible in hop counts because
-paths use physical router coordinates rather than compacted worker indices.
+## Run 2026-06-13T16:55:15-04:00
 
-The model starts with the bench-plan assumptions:
+- Start gate lead: `100000000` cycles
+- Traffic: BRISC nonposted peer-L1 writes, one far-end receiver tile, one destination slice per sender
+- Placement: one row; NoC0 sends right into the row's right edge, NoC1 sends left into the row's left edge
+- Sender order: farthest from target to nearest target; favored nearest implies through-traffic priority, favored farthest implies injection priority
 
-- dimension-ordered routing, X leg first and then Y leg
-- NoC0 moves in ascending x/y direction
-- NoC1 moves in descending x/y direction
-- torus wrap links exist
-
-It provides `noc_path(src_xy, dst_xy, noc)`, `noc_hops(...)`, and
-`shared_link(stream_a, stream_b, noc)`.
-
-Offline check:
-
-```sh
-PYTHONPATH=. python3 microbenching/noc/noc_topology.py
-```
-
-## Experiment A
-
-For each run, K sender BRISCs sit in one physical worker row and write toward a
-single far-end receiver tile. NoC0 uses the right edge of the row as the target;
-NoC1 uses the left edge. Every sender targets a separate L1 destination slice on
-that receiver, so all streams contend on the same final directed link without
-overwriting each other's sentinel word.
-
-Each sender records:
-
-- its own start and end `WALL_CLOCK`
-- `NIU_MST_WR_ACK_RECEIVED` before and after
-- `NIU_MST_NONPOSTED_WR_REQ_SENT` before and after
-- `NIU_MST_RD_RESP_RECEIVED` before and after
-
-Before the timed loop, the host writes a future 64-bit `WALL_CLOCK` threshold
-into each sender's L1. Senders spin until their local clock reaches that
-threshold, then snapshot counters and issue the first write. This removes most
-host launch skew while keeping per-stream timing local to each core.
-
-Default matrix:
-
-- `K = 2,3,4,6,8`
-- NoC `0,1`
-- packet bytes `4096,16384`
-- nonposted peer-L1 writes
-- `256` packets per sender
-
-Interpretation:
-
-- roughly equal per-stream B/cyc: fair round-robin sharing
-- nearest-to-target sender favored: through traffic tends to win over injection
-- farthest-from-target sender favored: injection tends to win over through traffic
-
-## How To Run
-
-Device access must go through the serialized `tt-device-queue` MCP. From this
-Codex environment, submit the command with `queue`/`queue_python`; do not run
-the device-opening command directly in a shell:
-
-```sh
-PYTHONPATH=. TT_USB=1 python3 microbenching/noc/riscv_noc_arbitration_bench.py
-```
-
-For static validation without opening the device:
-
-```sh
-PYTHONPATH=. python3 microbenching/noc/riscv_noc_arbitration_bench.py --dry-run
-```
-
-Useful smoke-run options:
-
-```sh
-PYTHONPATH=. TT_USB=1 python3 microbenching/noc/riscv_noc_arbitration_bench.py \
-  --counts 2 --nocs 0 --packet-bytes 4096 --packets 16 --no-report
-```
-
-Current guardrail: the benchmark aborts by default if any sender has a bad NIU
-counter delta or a bad sender-side sentinel readback. `--allow-invalid` exists
-only for deliberate debug runs that need to print invalid raw data. The full
-Experiment A matrix is blocked until the tiny smoke reports `bad sentinels = 0`.
-
-## L1 Layout
-
-| Range | Address | Purpose |
-|---|---:|---|
-| sender result record | `0x150000` | one 24-word record per sender core |
-| sender readback scratch | `0x150800` | untimed remote sentinel readback |
-| sender start gate | `0x151000` | host-written 64-bit future `WALL_CLOCK` |
-| sender packet source | `0x037000` | seeded packet payload |
-| receiver destination slices | `0x037000 + sender_index * 0x8000` | per-stream target packet |
-
-## Results
-
-### Smoke Run 2026-06-09
-
-- Queue job: `60aca0b8`
-- Command: `PYTHONPATH=. TT_USB=1 BLACKHOLE_RUN_TIMEOUT_S=20 python3 microbenching/noc/riscv_noc_arbitration_bench.py --counts 2 --nocs 0 --packet-bytes 4096 --packets 16 --no-report`
-- Scope: launch/counter/timing smoke only, not the full Experiment A matrix
-- Note: this run used host-side target sentinel readback. The harness now also
-  records an untimed sender-side NoC readback after the measured window.
-
-| noc | K | packet B | packets | target | sender order | per-stream B/cyc | spread | interpretation | bad counters | bad sentinels |
-|---:|---:|---:|---:|---|---|---|---:|---|---:|---:|
-| 0 | 2 | 4096 | 16 | `14,2` | `12,2` `13,2` | 27.995 28.681 | 0.024 | roughly equal | 0 | 2 |
-
-Interpretation: the sender-side timing and NIU counters were healthy for this
-small case, and the two streams were within 2.4% of each other. Because the
-validation sentinels failed in the original host readback path, this smoke
-should not be treated as a final arbitration result.
-
-After that smoke, a follow-up device open and an MCP reset both failed with
-`ARC not ready after 2.0s (boot_status=0xffffffff)`, so the full matrix was not
-run in this session.
-
-### Resume Attempt 2026-06-09
-
-- Import-only queue jobs `a4f87f3e`/`dbdece92` failed before opening the device
-  because `microbenching/noc/riscv_noc_arbitration_bench.py` was being imported as a package while
-  it still depended on script-style sibling imports. The benchmark now has
-  package-import fallbacks and a local `parse_nocs`, so queued helper scripts can
-  import it directly.
-- First hardware-opening validation job after that fix: `93b45543`.
-- Log: `/home/boop/tenstorrent/tt-device-queue/logs/93b45543/output`.
-- Result: failed during `Device()` construction with
-  `ARC not ready after 2.0s (boot_status=0xffffffff)`.
-
-Per the run rule for this shared card, no further hardware jobs were submitted
-after job `93b45543`. The sender-side readback fix and the full Experiment A
-matrix still need a healthy queue/device window to be measured.
-
-### Validation Attempt 2026-06-09
-
-- Queue job: `2ce998c5`
-- Command shape: queued Python wrapper running
-  `microbenching/noc/riscv_noc_arbitration_bench.py --counts 2 --nocs 0 --packet-bytes 4096 --packets 1 --no-report`
-- Intended scope: smallest sender-side readback validation, K=2/NoC0/4 KiB/one
-  packet per sender.
-- Result: failed before benchmark launch during `Device()` construction with
-  `ARC not ready after 2.0s (boot_status=0xffffffff)`.
-- Log: `/home/boop/tenstorrent/tt-device-queue/logs/2ce998c5/output`.
-- Follow-up MCP `tt_smi_status` also failed in `PCIDevice()` with the same ARC
-  `0xffffffff` state.
-
-No Experiment A data was collected in this attempt. The failure happened before
-program construction or kernel execution, so it does not validate or invalidate
-the sender-side readback path.
-
-### Tiny Smoke 2026-06-09
-
-- Pre-check: queue idle/empty; MCP `tt_smi_status` healthy with p100a, 120
-  Tensix cores, AICLK `800 MHz`.
-- Queue job: `88924c39`
-- Command shape: queued Python wrapper running
-  `microbenching/noc/riscv_noc_arbitration_bench.py --counts 2 --nocs 0 --packet-bytes 4096 --packets 1 --no-report`
-- Scope: one cautious sender-side readback smoke only; no full Experiment A
-  matrix.
-- Post-check: queue idle/empty; MCP `tt_smi_status` still healthy with AICLK
-  `800 MHz`.
-
-| noc | K | packet B | packets | target | sender order | per-stream B/cyc | spread | interpretation | bad counters | bad sentinels |
-|---:|---:|---:|---:|---|---|---|---:|---|---:|---:|
-| 0 | 2 | 4096 | 1 | `14,2` | `12,2` `13,2` | 11.670 13.518 | 0.147 | near target favored | 0 | 2 |
-
-The smoke completed without ARC-not-ready or core timeout, and NIU counters
-matched the issued packet count. Sender-side sentinel readback still failed for
-both senders (`bad sentinels = 2`), so the readback validation is not yet fixed
-and the full matrix remains intentionally unrun.
-
-### Static Debug Notes 2026-06-09
-
-No hardware was run for this pass.
-
-The unresolved observation is specific: sender-side timing and write counters
-completed, but the validation word read from the target tile did not match
-`0xA5000000 | (packet_bytes - 4)`. The previous output only reported the count
-of bad sentinels, so it did not reveal whether the readback word was zero,
-stale, or another unexpected value.
-
-Static guardrails added:
-
-- Future summaries include the raw per-sender readback sentinel words.
-- The CLI now aborts by default on the first bad counter or sentinel validation,
-  before a full matrix can continue or be appended as a normal result.
-- `--allow-invalid` is available only for intentional debug collection.
-
-Blocked status: the full Experiment A matrix should remain unrun as a
-result-producing sweep until a one-packet K=2 smoke has `bad counters = 0` and
-`bad sentinels = 0`. A safe next debug, when hardware is explicitly allowed
-again, is one tiny smoke with raw sentinels enabled by the new summary output.
+| noc | K | packet B | packets | target | sender order | aggregate B/cyc | aggregate req/cyc | per-stream B/cyc | spread | interpretation | bad counters | target missing | target polls |
+|---:|---:|---:|---:|---|---|---:|---:|---|---:|---|---:|---:|---:|
+| 0 | 2 | 16384 | 256 | `14,4` | `12,4` `13,4` | 62.921 | 0.00384 | 31.461 31.519 | 0.002 | roughly equal | 0 | 0 | 18 |
+| 0 | 3 | 16384 | 256 | `14,4` | `11,4` `12,4` `13,4` | 63.064 | 0.00385 | 21.022 21.047 31.599 | 0.431 | near target favored | 0 | 0 | 24 |
+| 0 | 4 | 16384 | 256 | `14,4` | `10,4` `11,4` `12,4` `13,4` | 63.070 | 0.00385 | 15.768 15.782 21.053 31.550 | 0.750 | near target favored | 0 | 0 | 36 |
+| 0 | 5 | 16384 | 256 | `14,4` | `7,4` `10,4` `11,4` `12,4` `13,4` | 63.059 | 0.00385 | 12.622 12.612 15.781 21.040 31.510 | 1.010 | near target favored | 0 | 0 | 58 |
+| 0 | 6 | 16384 | 256 | `14,4` | `6,4` `7,4` `10,4` `11,4` `12,4` `13,4` | 63.208 | 0.00386 | 10.542 10.535 12.659 15.810 21.098 31.645 | 1.238 | near target favored | 0 | 0 | 97 |
+| 0 | 7 | 16384 | 256 | `14,4` | `5,4` `6,4` `7,4` `10,4` `11,4` `12,4` `13,4` | 63.172 | 0.00386 | 9.025 9.030 10.538 12.644 15.796 21.080 31.634 | 1.442 | near target favored | 0 | 0 | 168 |
+| 0 | 8 | 16384 | 256 | `14,4` | `4,4` `5,4` `6,4` `7,4` `10,4` `11,4` `12,4` `13,4` | 63.220 | 0.00386 | 7.907 7.903 9.040 10.544 12.653 15.803 21.044 31.611 | 1.628 | near target favored | 0 | 0 | 291 |
+| 1 | 2 | 16384 | 256 | `1,4` | `2,4` `3,4` | 62.913 | 0.00384 | 31.517 31.457 | 0.002 | roughly equal | 0 | 0 | 17 |
+| 1 | 3 | 16384 | 256 | `1,4` | `2,4` `3,4` `4,4` | 62.957 | 0.00384 | 31.518 21.011 20.986 | 0.430 | far source favored | 0 | 0 | 23 |
+| 1 | 4 | 16384 | 256 | `1,4` | `2,4` `3,4` `4,4` `5,4` | 63.132 | 0.00385 | 31.616 21.079 15.798 15.783 | 0.752 | far source favored | 0 | 0 | 35 |
+| 1 | 5 | 16384 | 256 | `1,4` | `2,4` `3,4` `4,4` `5,4` `6,4` | 63.141 | 0.00385 | 31.605 21.074 15.806 12.637 12.628 | 1.012 | far source favored | 0 | 0 | 57 |
+| 1 | 6 | 16384 | 256 | `1,4` | `2,4` `3,4` `4,4` `5,4` `6,4` `7,4` | 63.235 | 0.00386 | 31.620 21.095 15.816 12.662 10.545 10.539 | 1.237 | far source favored | 0 | 0 | 96 |
+| 1 | 7 | 16384 | 256 | `1,4` | `2,4` `3,4` `4,4` `5,4` `6,4` `7,4` `10,4` | 63.115 | 0.00385 | 31.521 21.044 15.781 12.637 10.527 9.021 9.016 | 1.438 | far source favored | 0 | 0 | 168 |
+| 1 | 8 | 16384 | 256 | `1,4` | `2,4` `3,4` `4,4` `5,4` `6,4` `7,4` `10,4` `11,4` | 63.156 | 0.00385 | 31.582 21.061 15.801 12.644 10.535 9.027 7.898 7.895 | 1.627 | far source favored | 0 | 0 | 295 |

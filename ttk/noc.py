@@ -177,6 +177,9 @@ class Noc:
     self.slli(t1, t1, 6)
     return self.or_(out, t0, t1)
 
+  def local_noc_coord(self, noc: int, out: Reg = a5, *, x_addr: int = BM.MY_X, y_addr: int = BM.MY_Y):
+    return self.local_noc0_coord(out, x_addr=x_addr + noc, y_addr=y_addr + noc)
+
   def dram_tile_addr_from(self, table_base: int, noc_table_offset: int | Reg = 0):
     self.mv(t0, a1)
     self.remu(a1, t0, a2)
@@ -191,6 +194,21 @@ class Noc:
     self.li(t2, table_base)
     self.add(t2, t2, t1)
     return self.lhu(a2, t2, 0)
+
+  def dram_tile_addr_static(self, bank_coords: list[int]):
+    self.mv(t0, a1)
+    self.remu(a1, t0, a2)
+    self.divu(t0, t0, a2)
+    self.slli(t0, t0, 11)
+    self.add(a0, a0, t0)
+    self.li(a2, bank_coords[0])
+    for bank, coord in enumerate(bank_coords[1:], start=1):
+      next_bank = self._new_label("dram_static_bank")
+      self.li(t1, bank)
+      self.bne(a1, t1, next_bank)
+      self.li(a2, coord)
+      self.label(next_bank)
+    return self
 
   def write_reg(self, addr: int | Reg, value: int | Reg, *, tmp_addr: Reg = t0, tmp_val: Reg = t1):
     return self.write32(addr, value, tmp_addr=tmp_addr, tmp_val=tmp_val)

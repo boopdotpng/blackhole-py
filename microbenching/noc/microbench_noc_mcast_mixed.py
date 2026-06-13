@@ -680,7 +680,7 @@ def main():
   parser.add_argument("--iters", type=int, default=4, help="iterations per timed loop; keep small for multicast safety")
   parser.add_argument("--skip-mixed", action="store_true", help="skip mixed read+write+mcast tests")
   parser.add_argument("--no-report", action="store_true", help="do not append docs/noc-mcast-mixed-microbench.md")
-  parser.add_argument("--report", type=Path, default=Path("docs/noc-mcast-mixed-microbench.md"))
+  parser.add_argument("--report", type=Path, default=harness.doc_path("noc", "noc-mcast-mixed-microbench.md"))
   args = parser.parse_args()
   if args.dests <= 0:
     raise ValueError("--dests must be positive")

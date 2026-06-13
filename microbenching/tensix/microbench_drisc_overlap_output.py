@@ -361,9 +361,9 @@ def run_drisc_case(args: argparse.Namespace, mode: int) -> BenchRow:
         worker_l1.write(args.worker_addr, b"\0" * worker_span)
       if mode == MODE_DMA:
         words = launch_dma_poc(
-          dev, dram_core, drisc_l1, regs,
+          dram_core, drisc_l1, regs,
           build_dma_kernel(op=OP_READ, gddr_addr=args.gddr_addr, size=args.page_size, iterations=args.pages),
-          args.timeout,
+          args.timeout, magic=RESULT_MAGIC, label="DRISC DMA overlap kernel",
         )
         ok = words[6] == STATUS_DONE and drisc_l1.read(STAGE_ADDR, args.page_size) == pattern(args.page_size, 0x34)
       elif mode == MODE_STAGE:
@@ -378,7 +378,7 @@ def run_drisc_case(args: argparse.Namespace, mode: int) -> BenchRow:
             stream=0,
             skip_dma=True,
           ),
-          args.timeout,
+          args.timeout, magic=RESULT_MAGIC, label="DRISC stage overlap kernel",
         )
         ok = words[6] == STATUS_DONE and worker_l1.read(args.worker_addr, min(args.page_size, 64)) != (b"\0" * min(args.page_size, 64))
       else:
