@@ -34,6 +34,14 @@ def pck_dest_rd_ctrl(dtype: Dtype, *, fp32_dest: bool) -> int:
   return _PCK_READ_32B | (_PCK_ROUND_10B if dtype is Dtype.Float16 else 0)
 
 
+def _packer_stride_words(dtype: Dtype) -> tuple[int, int]:
+  x_stride = 4 if dtype in (Dtype.Float32, Dtype.Int32, Dtype.UInt32) else 2 if dtype is Dtype.Float16 else 1
+  y_stride = 16 * x_stride
+  z_stride = 16 * y_stride
+  w_stride = 4 * 16 * 16 * x_stride
+  return y_stride << 16, z_stride | (w_stride << 16)
+
+
 # Structural pack-config constants (not yet decoded to named fields).
 _EXP_SECTION_SIZE = 0x00040000  # REG1 Exp_section_size = 4 (word 68); also GprPack EXP0
 _THCON_SEC0_REG1_1_RESERVED = 0x00000000
@@ -75,6 +83,12 @@ class Pack:
     k.emit(TTNOP())
     k.emit(TTNOP())
 
+  def _set_strides(self, k, dtype: Dtype, *, fp32_dest: bool = False):
+    src_dtype = Dtype.Float32 if fp32_dest else dtype
+    xy0, zw0 = _packer_stride_words(src_dtype)
+    k.write32(Cfg.PCK0_ADDR_CTRL_XY_REG_0, xy0)
+    k.write32(Cfg.PCK0_ADDR_CTRL_ZW_REG_0, zw0)
+
   def _alu_acc_rmw(self, k):
     k.emit(TTATGETM(0))
     for inst in (
@@ -86,7 +100,7 @@ class Pack:
       k.push_tensix(inst)
     k.emit(TTATRELM(0))
 
-  def set_format(self, dtype: Dtype, *, fp32_dest: bool = False):
+  def set_format(self, dtype: Dtype, *, fp32_dest: bool = False, out_cb: int | None = None):
     """Runtime-reconfigure the packer's data format. The EFFECTIVE pack output
     format comes from the TRISC2 TLM format mailbox (read by the pack pipeline),
     not only the THCON cfg reg -- so rewrite both. Masked-RMW the THCON format
@@ -98,9 +112,20 @@ class Pack:
     fmt = dtype.value & 0xF
     k.write_repeated_bytes(TLM.TRISC2_PACK_SRC_FORMAT, fmt, 16)
     k.write_repeated_bytes(TLM.TRISC2_PACK_DST_FORMAT, fmt, 16)
-    k.push_tensix(TTRMWCIB0(Mask=0xF0, Data=(fmt << 4) & 0xF0, CfgRegAddr=Cfg.THCON_SEC0_REG1_1.addr32))
-    k.push_tensix(TTRMWCIB1(Mask=0x0F, Data=fmt, CfgRegAddr=Cfg.THCON_SEC0_REG1_1.addr32))
+    for reg in (
+      Cfg.THCON_SEC0_REG1_1,
+      Cfg.THCON_SEC0_REG8_1,
+      Cfg.THCON_SEC1_REG1_1,
+      Cfg.THCON_SEC1_REG8_1,
+    ):
+      k.push_tensix(TTRMWCIB0(Mask=0xF0, Data=(fmt << 4) & 0xF0, CfgRegAddr=reg.addr32))
+      k.push_tensix(TTRMWCIB1(Mask=0x0F, Data=fmt, CfgRegAddr=reg.addr32))
+    if out_cb is not None:
+      k.cb_iface(k.data["cb_interface"], out_cb, out=t6)
+      k.lw(t1, t6, 8)
+      k.write32(GprPack.TILE_HEADER, t1)
     k.write32(Cfg.PCK_DEST_RD_CTRL, pck_dest_rd_ctrl(dtype, fp32_dest=fp32_dest))
+    self._set_strides(k, dtype, fp32_dest=fp32_dest)
     return k
 
   def _pack_cfg(self, k, dtype: Dtype, out_cb: int, fp32_dest: bool = False):
@@ -123,6 +148,7 @@ class Pack:
     k.write32(GprPack.TILE_HEADER_1, 0)
     k.write32(GprPack.TILE_HEADER_2, 0)
     k.write32(GprPack.TILE_HEADER_3, 0)
+    self._set_strides(k, dtype, fp32_dest=fp32_dest)
 
   def init(self, *, dtype: Dtype = Dtype.Float16_b, out_cb: int, mop_cfg, fp32_dest: bool = False):
     """Configure the packer: local format state, ALU-acc RMW, pack cfg regs and

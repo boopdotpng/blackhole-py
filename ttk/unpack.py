@@ -86,7 +86,7 @@ class Unpack:
       TTRMWCIB1(Mask=0x80, Data=0x00, CfgRegAddr=Cfg.ALU.addr32),
       TTRMWCIB2(Mask=0x01, Data=0x00, CfgRegAddr=Cfg.ALU.addr32),
       TTRMWCIB3(Mask=0x60, Data=fp32_bits, CfgRegAddr=Cfg.ALU.addr32),
-      TTRMWCIB0(Mask=0x01, Data=0x01, CfgRegAddr=Cfg.ALU_ACC_CTRL_Zero_Flag_disabled_src.addr32),
+      TTRMWCIB0(Mask=0x03, Data=0x01, CfgRegAddr=Cfg.ALU_ACC_CTRL_Zero_Flag_disabled_src.addr32),
     ):
       k.push_tensix(inst)
     k.emit(TTATRELM(0))
@@ -103,6 +103,9 @@ class Unpack:
     k.write32(Cfg.THCON_SEC1_REG0_TileDescriptor, desc | _DESC_SEC1_X)
     k.write32(Cfg.THCON_SEC0_REG2, reg2)
     k.write32(Cfg.THCON_SEC1_REG2, reg2)
+    page_size_16b = dtype.tile_size >> 4
+    k.push_tensix(0x45000048 + (page_size_16b << 8))
+    k.push_tensix(0x4500004A + (page_size_16b << 8))
     return k
 
   def init(self, *, dtype: Dtype = Dtype.Float16_b, tile_bytes: int, mop_cfg, fp32_dest: bool = False):

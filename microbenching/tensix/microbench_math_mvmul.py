@@ -16,8 +16,8 @@ import matmul_peak as matmul
 from asm import KernelBase
 from device import Device
 from dsl import (
-  TTMOP, TTREPLAY, TTSEMGET, TTSEMINIT, TTSEMPOST, TTSETRWC, TTSEMWAIT,
-  TTSETADCXX, TTSETADCZW, TTSTALLWAIT,
+  TTMOP, TTMVMUL, TTNOP, TTREPLAY, TTSEMGET, TTSEMINIT, TTSEMPOST, TTSETRWC,
+  TTSEMWAIT, TTSETADCXX, TTSETADCZW, TTSTALLWAIT,
   a0, a1, a2, a3, a4, a5, a6, a7,
   s0, s1, s2, s3, s4, s5, s6, s7, s8, s9, s10, s11,
   t0, t1, t2, t3, t4, t5, t6, zero,
@@ -26,7 +26,7 @@ from program import Dtype, Program
 from ttk.debug import DebugRange
 from ttk.cb import CB
 from ttk.mailbox import TriscLocalMem as TLM
-from ttk.tensix import Cfg, TensixL1, TensixRegs, TensixSem, TensixSemWait, TensixStall, TensixWait, ThreadCfg
+from ttk.tensix import Cfg, MopCfg, TensixL1, TensixRegs, TensixSem, TensixSemWait, TensixStall, TensixWait, ThreadCfg
 
 
 AICLK_MHZ = 800.0
@@ -47,7 +47,6 @@ RESULT_MAGIC = 0x4D564D48  # "HMVM"
 RECORD_MAGIC = 0x4D564D52  # "RMVM"
 STATUS_STARTED = 0x4D560001
 STATUS_DONE = 0x4D56D00D
-TILE_BYTES = Dtype.Float16_b.tile_size
 OUT_CB = 0
 OUT_CB_BASE = TensixL1.DATA_BUFFER_SPACE_BASE
 SCRATCH_A = TensixL1.DATA_BUFFER_SPACE_BASE + 0x90000
@@ -81,6 +80,8 @@ class BenchSpec:
   out_h: int
   out_w: int
   variant: int = VARIANT_THROTTLE0
+  dtype: Dtype = Dtype.Float16_b
+  instr_mod19: int = 0
 
   @property
   def output_tiles(self) -> int:
@@ -96,6 +97,10 @@ class BenchSpec:
       return 0
     per_tile = 16 if self.variant == VARIANT_THROTTLE0 else 6
     return self.output_tiles * per_tile
+
+  @property
+  def tile_bytes(self) -> int:
+    return self.dtype.tile_size
 
 
 SPECS = (
@@ -119,6 +124,8 @@ class Record:
   iterations: int
   output_tiles: int
   mvmuls_per_iter: int
+  dtype: Dtype
+  instr_mod19: int
   start: int
   end: int
   cycles: int
@@ -153,6 +160,53 @@ def tiny_plan(out_h: int, out_w: int, *, cb16_pages: int) -> matmul.MatmulPlan:
     in1_block_num_tiles=max(1, out_w), in1_per_core_w=max(1, out_w),
     out_subblock_num_tiles=tiles, out_block_num_tiles=tiles,
     cb0_pages=tiles, cb1_pages=tiles, cb16_pages=cb16_pages, cb24_pages=tiles,
+  )
+
+
+def mvmul_instr(*, addr_mode: int = 0, instr_mod19: int = 0):
+  return TTMVMUL(instr_mod19=instr_mod19, addr_mode=addr_mode)
+
+
+def math_replay_load(spec: BenchSpec) -> list:
+  if spec.variant == VARIANT_THROTTLE0:
+    return [
+      mvmul_instr(instr_mod19=spec.instr_mod19),
+      mvmul_instr(addr_mode=1, instr_mod19=spec.instr_mod19),
+      mvmul_instr(instr_mod19=spec.instr_mod19),
+      mvmul_instr(addr_mode=2, instr_mod19=spec.instr_mod19),
+      mvmul_instr(instr_mod19=spec.instr_mod19),
+      mvmul_instr(addr_mode=1, instr_mod19=spec.instr_mod19),
+      mvmul_instr(instr_mod19=spec.instr_mod19),
+      mvmul_instr(addr_mode=4, instr_mod19=spec.instr_mod19),
+      mvmul_instr(instr_mod19=spec.instr_mod19),
+      mvmul_instr(addr_mode=1, instr_mod19=spec.instr_mod19),
+      mvmul_instr(instr_mod19=spec.instr_mod19),
+      mvmul_instr(addr_mode=2, instr_mod19=spec.instr_mod19),
+      mvmul_instr(instr_mod19=spec.instr_mod19),
+      mvmul_instr(addr_mode=1, instr_mod19=spec.instr_mod19),
+      mvmul_instr(instr_mod19=spec.instr_mod19),
+      mvmul_instr(addr_mode=5, instr_mod19=spec.instr_mod19),
+    ]
+  return [
+    TTNOP(), TTNOP(), mvmul_instr(instr_mod19=spec.instr_mod19),
+    TTNOP(), TTNOP(), mvmul_instr(addr_mode=1, instr_mod19=spec.instr_mod19),
+    TTNOP(), TTNOP(), mvmul_instr(instr_mod19=spec.instr_mod19),
+    TTNOP(), TTNOP(),
+  ]
+
+
+def math_mop_cfg(spec: BenchSpec) -> MopCfg:
+  if spec.variant == VARIANT_THROTTLE0:
+    return matmul.MATMUL_MATH_MOP_CFG_THROTTLE0
+  return MopCfg(
+    loop_outer=2, loop_inner=2,
+    template=[
+      TTNOP(), TTNOP(), TTNOP(),
+      TTREPLAY(16, 11),
+      mvmul_instr(addr_mode=2, instr_mod19=spec.instr_mod19),
+      mvmul_instr(addr_mode=5, instr_mod19=spec.instr_mod19),
+      mvmul_instr(addr_mode=4, instr_mod19=spec.instr_mod19),
+    ],
   )
 
 
@@ -205,8 +259,10 @@ def emit_record(
   fw.sw(t0, s2, 14 * 4)
   fw.li(t0, 0x4D560000 | test_id)
   fw.sw(t0, s2, 15 * 4)
-  fw.sw(zero, s2, 16 * 4)
-  fw.sw(zero, s2, 17 * 4)
+  fw.li(t0, spec.dtype.value)
+  fw.sw(t0, s2, 16 * 4)
+  fw.li(t0, spec.instr_mod19)
+  fw.sw(t0, s2, 17 * 4)
   fw.sw(zero, s2, 18 * 4)
   fw.sw(zero, s2, 19 * 4)
   return fw
@@ -253,8 +309,8 @@ def emit_mark(fw: KernelBase, addr: int, code: int):
   return fw.fence()
 
 
-def emit_unpack_setup(fw: matmul.MatmulTrisc, plan: matmul.MatmulPlan):
-  fw.unpack.init(dtype=Dtype.Float16_b, tile_bytes=TILE_BYTES, mop_cfg=matmul.MATMUL_UNPACK_AB_MOP_CFG)
+def emit_unpack_setup(fw: matmul.MatmulTrisc, plan: matmul.MatmulPlan, spec: BenchSpec):
+  fw.unpack.init(dtype=spec.dtype, tile_bytes=spec.tile_bytes, mop_cfg=matmul.MATMUL_UNPACK_AB_MOP_CFG)
   fw.emit(TTSETADCXX(1, 1023, 0))
   fw.emit(TTSETADCXX(2, 1023, 0))
   matmul._emit_trisc0_unpack_replay_init(fw, plan)
@@ -264,8 +320,8 @@ def emit_unpack_setup(fw: matmul.MatmulTrisc, plan: matmul.MatmulPlan):
   fw.setc16(ThreadCfg.UNPACK_MISC_CFG_CfgContext, 0)
   fw.li(s0, SCRATCH_A)
   fw.li(s1, SCRATCH_B)
-  fw.li(a4, TILE_BYTES)
-  fw.li(a5, TILE_BYTES)
+  fw.li(a4, spec.tile_bytes)
+  fw.li(a5, spec.tile_bytes)
   fw.li(s7, TensixRegs.PC_UNPACK_SYNC)
   fw.li(s11, TLM.TRISC0_UNPACK_CFG_CONTEXT)
   fw.li(s4, THCON_SEC0_REG3)
@@ -354,10 +410,10 @@ def emit_unpack_subblock(fw: matmul.MatmulTrisc, spec: BenchSpec):
 
 def emit_math_init(fw: matmul.MatmulTrisc, spec: BenchSpec):
   emit_mark(fw, DEBUG_TRISC1, 0xF010)
-  fw.math._local_state(fw, Dtype.Float16_b)
+  fw.math._local_state(fw, spec.dtype)
   emit_mark(fw, DEBUG_TRISC1, 0xF011)
-  replay_load = matmul.MATMUL_MATH_REPLAY_LOAD_THROTTLE0 if spec.variant == VARIANT_THROTTLE0 else matmul.MATMUL_MATH_REPLAY_LOAD
-  mop_cfg = matmul.MATMUL_MATH_MOP_CFG_THROTTLE0 if spec.variant == VARIANT_THROTTLE0 else matmul.MATMUL_MATH_MOP_CFG
+  replay_load = math_replay_load(spec)
+  mop_cfg = math_mop_cfg(spec)
   matmul.matmul_math_addrmod_init(fw)
   fw.emit(TTREPLAY(16, len(replay_load), 0, 1))
   for word in replay_load:
@@ -418,7 +474,7 @@ def build_trisc0(spec: BenchSpec, iterations: int, plan: matmul.MatmulPlan) -> K
   fw = matmul.MatmulTrisc(0)
   fw.prologue()
   emit_mark(fw, DEBUG_TRISC0, 0xE000)
-  emit_unpack_setup(fw, plan)
+  emit_unpack_setup(fw, plan, spec)
   emit_mark(fw, DEBUG_TRISC0, 0xE010)
   fw.init_barrier()
   emit_mark(fw, DEBUG_TRISC0, 0xE020)
@@ -511,13 +567,13 @@ def build_trisc1(spec: BenchSpec, test_id: int, iterations: int) -> KernelBase:
   return fw.ret_kernel()
 
 
-def emit_runtime_cb_setup(fw: matmul.MatmulTrisc, cb_index: int, *, pages: int):
+def emit_runtime_cb_setup(fw: matmul.MatmulTrisc, cb_index: int, *, pages: int, tile_bytes: int):
   iface = fw.data["cb_interface"] + cb_index * CB.LOCAL_INTERFACE_SIZE
-  limit = OUT_CB_BASE + TILE_BYTES * pages
+  limit = OUT_CB_BASE + tile_bytes * pages
   for off, value in enumerate((
     OUT_CB_BASE,
     limit,
-    TILE_BYTES,
+    tile_bytes,
     pages,
     OUT_CB_BASE,
     OUT_CB_BASE,
@@ -537,9 +593,9 @@ def build_trisc2(spec: BenchSpec, iterations: int, plan: matmul.MatmulPlan) -> K
   fw = matmul.MatmulTrisc(2)
   fw.prologue()
   emit_mark(fw, DEBUG_TRISC2, 0xD000)
-  emit_runtime_cb_setup(fw, OUT_CB, pages=plan.cb16_pages)
+  emit_runtime_cb_setup(fw, OUT_CB, pages=plan.cb16_pages, tile_bytes=spec.tile_bytes)
   emit_mark(fw, DEBUG_TRISC2, 0xD010)
-  fw.pack.init(dtype=Dtype.Float16_b, out_cb=OUT_CB, mop_cfg=matmul.MATMUL_PACK_MOP_CFG)
+  fw.pack.init(dtype=spec.dtype, out_cb=OUT_CB, mop_cfg=matmul.MATMUL_PACK_MOP_CFG)
   emit_mark(fw, DEBUG_TRISC2, 0xD011)
   fw.init_barrier()
   emit_mark(fw, DEBUG_TRISC2, 0xD020)
@@ -655,6 +711,8 @@ def parse_result(blob: bytes, spec: BenchSpec) -> Record:
     iterations=words[4],
     output_tiles=words[7],
     mvmuls_per_iter=words[8],
+    dtype=Dtype(words[16]),
+    instr_mod19=words[17],
     start=start,
     end=end,
     cycles=(end - start) & ((1 << 64) - 1),
@@ -671,15 +729,16 @@ def adjusted(records: list[Record], record: Record) -> float:
 
 def format_table(records: list[Record]) -> str:
   lines = [
-    "| test | method | shape | variant | iters | cyc/iter | adj cyc/iter | cyc/tile | cyc/MVMUL | produced | packed |",
-    "|---|---|---|---|---:|---:|---:|---:|---:|---:|---:|",
+    "| test | dtype | im19 | method | shape | variant | iters | cyc/iter | adj cyc/iter | cyc/tile | cyc/MVMUL | produced | packed |",
+    "|---|---|---:|---|---|---|---:|---:|---:|---:|---:|---:|---:|",
   ]
   for record in records:
     adj = adjusted(records, record)
     tile = adj / record.output_tiles if record.output_tiles else 0.0
     mvmul = adj / record.mvmuls_per_iter if record.mvmuls_per_iter else 0.0
     lines.append(
-      f"| {record.name} | {METHOD_NAMES.get(record.method, str(record.method))} | {record.shape} | "
+      f"| {record.name} | {record.dtype.name} | {record.instr_mod19} | "
+      f"{METHOD_NAMES.get(record.method, str(record.method))} | {record.shape} | "
       f"{VARIANT_NAMES.get(record.variant, str(record.variant))} | {record.iterations} | "
       f"{record.cycles_per_iter:.2f} | {adj:.2f} | {tile:.2f} | {mvmul:.2f} | "
       f"{record.produced} | {record.packed} |"
@@ -695,7 +754,7 @@ def append_report(path: Path, *, core: tuple[int, int], command: str, records: l
     f.write(f"- Command: `{command}`\n")
     f.write(f"- Core: logical `{core[0]},{core[1]}`\n")
     f.write("- Scaffold: TRISC0 unpack from L1 scratch, TRISC1 math, TRISC2 pack to CB16\n")
-    f.write("- Math body: `matmul_peak` addr-mod/replay setup with throttle0 MVMUL payload\n")
+    f.write("- Math body: `matmul_peak` addr-mod/replay setup with sweepable `TTMVMUL.instr_mod19`\n")
     f.write("- Baseline subtraction: adjusted rows subtract the `empty` loop cycles per iteration\n\n")
     f.write(format_table(records))
     f.write("\n")
@@ -725,11 +784,42 @@ def build_only(specs: list[BenchSpec], requested_iters: int) -> None:
     print(f"built {spec.name}")
 
 
+def dtype_from_name(text: str) -> Dtype:
+  try:
+    return Dtype[text]
+  except KeyError as exc:
+    choices = ", ".join(dtype.name for dtype in Dtype)
+    raise argparse.ArgumentTypeError(f"unknown dtype {text!r}; choices: {choices}") from exc
+
+
+def parse_int_list(text: str) -> tuple[int, ...]:
+  values = tuple(int(part.strip(), 0) for part in text.split(",") if part.strip())
+  if not values:
+    raise argparse.ArgumentTypeError("expected at least one integer")
+  return values
+
+
+def with_modes(specs: list[BenchSpec], *, dtype: Dtype, instr_mods: tuple[int, ...]) -> list[BenchSpec]:
+  out: list[BenchSpec] = []
+  for spec in specs:
+    if spec.method == METHOD_BASELINE:
+      out.append(BenchSpec(spec.name, spec.method, spec.out_h, spec.out_w, spec.variant, dtype, 0))
+      continue
+    for instr_mod in instr_mods:
+      if not 0 <= instr_mod <= 7:
+        raise ValueError(f"instr_mod19 must fit 3 bits, got {instr_mod}")
+      name = spec.name if len(instr_mods) == 1 else f"{spec.name}_im{instr_mod}"
+      out.append(BenchSpec(name, spec.method, spec.out_h, spec.out_w, spec.variant, dtype, instr_mod))
+  return out
+
+
 def main() -> None:
   parser = argparse.ArgumentParser(description="Microbenchmark Tensix MVMUL/math in a minimal unpack->math->pack scaffold.")
   parser.add_argument("--core", type=harness.parse_core, default=None, help="logical Tensix core X,Y; default: first program core")
   parser.add_argument("--iters", type=int, default=4, help="iterations for issue/throughput rows; latency rows force 1")
   parser.add_argument("--only", nargs="+", default=None, help="optional subset of spec names")
+  parser.add_argument("--dtype", type=dtype_from_name, default=Dtype.Float16_b, help="unpack/math/pack dtype for SrcA/SrcB/DST")
+  parser.add_argument("--instr-mods", type=parse_int_list, default=(0,), help="comma-separated TTMVMUL instr_mod19 values to sweep (0..7)")
   parser.add_argument("--build-only", action="store_true", help="compile/layout programs without opening the device")
   parser.add_argument("--no-report", action="store_true", help="do not append docs/math-mvmul.md")
   parser.add_argument("--report", type=Path, default=harness.doc_path("tensix", "math-mvmul.md"), help="markdown report path")
@@ -746,6 +836,7 @@ def main() -> None:
     selected = [by_name[name] for name in args.only]
     if "empty" not in args.only:
       selected.insert(0, by_name["empty"])
+  selected = with_modes(selected, dtype=args.dtype, instr_mods=args.instr_mods)
 
   if args.build_only:
     build_only(selected, args.iters)

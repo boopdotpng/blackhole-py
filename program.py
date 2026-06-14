@@ -188,14 +188,19 @@ def _build_cb_blob(cbs: list[tuple[int, int, int]]) -> tuple[int, bytes]:
   arr = bytearray(mask.bit_length() * 16)
   addr = TensixL1.DATA_BUFFER_SPACE_BASE
   shared_addr: dict[int, int] = {}
+  shared_extent: dict[int, int] = {}
   for index, page_size, tiles in cbs:
     share_with = {16: 24, 24: 16}.get(index)
     if share_with is not None and share_with in shared_addr:
       cb_addr = shared_addr[share_with]
+      needed = max(shared_extent[share_with], page_size * tiles)
+      addr += needed - shared_extent[share_with]
+      shared_extent[share_with] = needed
     else:
       cb_addr = addr
       addr += page_size * tiles
     shared_addr[index] = cb_addr
+    shared_extent[index] = page_size * tiles if share_with is None else shared_extent.get(share_with, page_size * tiles)
     struct.pack_into("<IIII", arr, index * 16, cb_addr, page_size * tiles, tiles, page_size)
   return mask, bytes(arr)
 

@@ -50,6 +50,8 @@ TX_READ_DST = 0x38
 TX_TRANSFER_ATTRIBUTES = 0x50
 
 DMA_CTRL_ATTRS_BURST_255 = 0x0003FF01
+DMA_READ_ATTR_BASE = 0x83000000
+DMA_WRITE_ATTR_BASE = 0x10000000
 DMA_READ_STATUS_MASK = 0x0000FF10
 DMA_WRITE_STATUS_MASK = 0xF00F0009
 DEBUG_CLOCK_MHZ = 1350.0
@@ -105,23 +107,31 @@ def emit_poll_status(fw: KernelBase, *, stream: int, mask: int, timeout_iters: i
   fw.label(done)
 
 
-def emit_dma_once(fw: KernelBase, *, op: int, gddr_addr, size: int, stream: int):
+def emit_dma_once(
+  fw: KernelBase, *, op: int, gddr_addr, size: int, stream: int,
+  read_attr_base: int = DMA_READ_ATTR_BASE, write_attr_base: int = DMA_WRITE_ATTR_BASE,
+):
   size_words = size >> 4
   if op == OP_READ:
     fw.write32(stream_reg(stream, TX_READ_SRC_LO), gddr_addr & 0xFFFFFFFF, tmp_addr=t0, tmp_val=t1)
     fw.write32(stream_reg(stream, TX_READ_SRC_HI), (gddr_addr >> 32) & 0xFFFFFFFF, tmp_addr=t0, tmp_val=t1)
     fw.write32(stream_reg(stream, TX_READ_DST), STAGE_ADDR, tmp_addr=t0, tmp_val=t1)
-    fw.write32(stream_reg(stream, TX_TRANSFER_ATTRIBUTES), 0x83000000 | size_words, tmp_addr=t0, tmp_val=t1)
+    fw.write32(stream_reg(stream, TX_TRANSFER_ATTRIBUTES), read_attr_base | size_words, tmp_addr=t0, tmp_val=t1)
     emit_poll_status(fw, stream=stream, mask=DMA_READ_STATUS_MASK, timeout_iters=20_000_000)
   else:
     fw.write32(stream_reg(stream, TX_WRITE_SRC), STAGE_ADDR, tmp_addr=t0, tmp_val=t1)
     fw.write32(stream_reg(stream, TX_WRITE_DST_LO), gddr_addr & 0xFFFFFFFF, tmp_addr=t0, tmp_val=t1)
     fw.write32(stream_reg(stream, TX_WRITE_DST_HI), (gddr_addr >> 32) & 0xFFFFFFFF, tmp_addr=t0, tmp_val=t1)
-    fw.write32(stream_reg(stream, TX_TRANSFER_ATTRIBUTES), 0x10000000 | size_words, tmp_addr=t0, tmp_val=t1)
+    fw.write32(stream_reg(stream, TX_TRANSFER_ATTRIBUTES), write_attr_base | size_words, tmp_addr=t0, tmp_val=t1)
     emit_poll_status(fw, stream=stream, mask=DMA_WRITE_STATUS_MASK, timeout_iters=20_000_000)
 
 
-def build_dma_kernel(*, op: int, gddr_addr: int, size: int, iterations: int = 1, stream: int = 0) -> bytes:
+def build_dma_kernel(
+  *, op: int, gddr_addr: int, size: int, iterations: int = 1, stream: int = 0,
+  ctrl_attrs: int = DMA_CTRL_ATTRS_BURST_255,
+  read_attr_base: int = DMA_READ_ATTR_BASE,
+  write_attr_base: int = DMA_WRITE_ATTR_BASE,
+) -> bytes:
   if op not in (OP_READ, OP_WRITE):
     raise ValueError(f"bad op {op}")
   if size <= 0 or size % 16:
@@ -133,7 +143,7 @@ def build_dma_kernel(*, op: int, gddr_addr: int, size: int, iterations: int = 1,
 
   fw = KernelBase(base_addr=DRISC_FW_BASE)
   emit_result_header(fw, op=op, size=size, gddr_addr=gddr_addr, status=STATUS_STARTED, iterations=iterations)
-  fw.write32(TX_CTRL_TRANSFER_ATTRIBUTES, DMA_CTRL_ATTRS_BURST_255, tmp_addr=t0, tmp_val=t1)
+  fw.write32(TX_CTRL_TRANSFER_ATTRIBUTES, ctrl_attrs, tmp_addr=t0, tmp_val=t1)
 
   emit_read_wall_clock(fw, a2, a3)
   fw.li(s0, iterations)
@@ -141,7 +151,10 @@ def build_dma_kernel(*, op: int, gddr_addr: int, size: int, iterations: int = 1,
   done = fw._new_label("dma_loop_done")
   fw.label(loop)
   fw.beq(s0, zero, done)
-  emit_dma_once(fw, op=op, gddr_addr=gddr_addr, size=size, stream=stream)
+  emit_dma_once(
+    fw, op=op, gddr_addr=gddr_addr, size=size, stream=stream,
+    read_attr_base=read_attr_base, write_attr_base=write_attr_base,
+  )
   fw.addi(s0, s0, -1)
   fw.j(loop)
   fw.label(done)
@@ -165,6 +178,10 @@ def main():
   parser.add_argument("--gddr-addr", type=lambda s: int(s, 0), default=0x100000)
   parser.add_argument("--size", type=int, default=MAX_STAGE_BYTES & ~0xF)
   parser.add_argument("--iters", type=int, default=1024)
+  parser.add_argument("--stream", type=int, default=0)
+  parser.add_argument("--ctrl-attrs", type=lambda s: int(s, 0), default=DMA_CTRL_ATTRS_BURST_255)
+  parser.add_argument("--read-attr-base", type=lambda s: int(s, 0), default=DMA_READ_ATTR_BASE)
+  parser.add_argument("--write-attr-base", type=lambda s: int(s, 0), default=DMA_WRITE_ATTR_BASE)
   parser.add_argument("--timeout", type=float, default=2.0)
   args = parser.parse_args()
   if args.size <= 0 or args.size % 16:
@@ -173,6 +190,8 @@ def main():
     raise ValueError(f"--size must fit the DRISC staging region, max {MAX_STAGE_BYTES}")
   if args.iters <= 0:
     raise ValueError("--iters must be positive")
+  if args.stream not in (0, 1):
+    raise ValueError("--stream must be 0 or 1")
 
   os.environ.pop("TT_USB", None)
   dev = PCIDevice(use_vfio=True)
@@ -192,7 +211,11 @@ def main():
       l1.write(STAGE_ADDR, b"\0" * args.size)
       words_read = launch_drisc(
         core, l1, regs,
-        build_dma_kernel(op=OP_READ, gddr_addr=read_src, size=args.size, iterations=args.iters),
+        build_dma_kernel(
+          op=OP_READ, gddr_addr=read_src, size=args.size, iterations=args.iters,
+          stream=args.stream, ctrl_attrs=args.ctrl_attrs, read_attr_base=args.read_attr_base,
+          write_attr_base=args.write_attr_base,
+        ),
         args.timeout, magic=RESULT_MAGIC, label="DRISC DMA kernel",
       )
       l1_after_read = l1.read(STAGE_ADDR, args.size)
@@ -201,7 +224,11 @@ def main():
       gddr.write(write_dst, b"\0" * args.size)
       words_write = launch_drisc(
         core, l1, regs,
-        build_dma_kernel(op=OP_WRITE, gddr_addr=write_dst, size=args.size, iterations=args.iters),
+        build_dma_kernel(
+          op=OP_WRITE, gddr_addr=write_dst, size=args.size, iterations=args.iters,
+          stream=args.stream, ctrl_attrs=args.ctrl_attrs, read_attr_base=args.read_attr_base,
+          write_attr_base=args.write_attr_base,
+        ),
         args.timeout, magic=RESULT_MAGIC, label="DRISC DMA kernel",
       )
       gddr_after_write = gddr.read(write_dst, args.size)
@@ -223,10 +250,12 @@ def main():
   read_gbps = (total_bytes / read_cycles) * DEBUG_CLOCK_MHZ / 1000.0 if read_cycles else 0.0
   write_gbps = (total_bytes / write_cycles) * DEBUG_CLOCK_MHZ / 1000.0 if write_cycles else 0.0
   print(
-    f"dram_core={core} size={args.size} iters={args.iters} total_bytes={total_bytes} read_status={words_read[6]} "
+    f"dram_core={core} size={args.size} iters={args.iters} stream={args.stream} total_bytes={total_bytes} read_status={words_read[6]} "
     f"write_status={words_write[6]} read_ok={read_ok} write_ok={write_ok} "
     f"read_cycles={read_cycles} write_cycles={write_cycles} "
     f"read_gbps={read_gbps:.1f} write_gbps={write_gbps:.1f} "
+    f"ctrl_attrs=0x{args.ctrl_attrs:08x} read_attr_base=0x{args.read_attr_base:08x} "
+    f"write_attr_base=0x{args.write_attr_base:08x} "
     f"read_dma_status=0x{words_read[8]:08x} write_dma_status=0x{words_write[8]:08x}"
   )
   if not (read_ok and write_ok and words_read[6] == STATUS_DONE and words_write[6] == STATUS_DONE):
