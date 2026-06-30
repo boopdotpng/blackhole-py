@@ -68,22 +68,32 @@ def cb_data_bytes(plan: base.MatmulPlan) -> int:
 
 
 def emit_embed_gather_to_a_preamble(
-    fw: base.MatmulKernel, *, dim_tiles: int, pages_per_row: int, scratch_l1: int):
+    fw: base.MatmulKernel, *, dim_tiles: int, pages_per_row: int, scratch_l1: int,
+    read_sync: str = "global"):
   """Append BRISC code that materializes A row 0 in the tilized GEMV input."""
+  if read_sync not in ("global", "trid"):
+    raise ValueError(f"unknown read_sync {read_sync!r}")
   row_l1 = scratch_l1
   idx_l1 = row_l1 + pages_per_row * PAGE
+  if read_sync == "trid":
+    fw.reset_noc_trid_barrier_counter(GATHER_NOC, 1 << 2, addr=t0, val=t1)
+    fw.noc_async_read_set_trid(GATHER_NOC, 2, addr=t0, val=t1)
 
   def read_page(base_reg, page_reg, l1_dst_reg):
     fw.mv(a0, base_reg)
     fw.mv(a1, page_reg)
     fw.mv(a2, s4)
     fw.dram_tile_addr_from(BM.DRAM_BANK_TO_NOC_XY, 0)
-    fw.read32(s10, RD_STATUS, tmp_addr=t0)
-    fw.addi(s10, s10, 1)
+    if read_sync == "global":
+      fw.read32(s10, RD_STATUS, tmp_addr=t0)
+      fw.addi(s10, s10, 1)
     fw.local_noc0_coord(a5, x_addr=BM.MY_X + GATHER_NOC, y_addr=BM.MY_Y + GATHER_NOC)
     fw.li(t6, PAGE)
     fw.noc_read(GATHER_NOC, 1, a0, 0, a2, l1_dst_reg, t6, ret_coord=a5, a=t0, v=t1)
-    fw.noc_reads_flushed(GATHER_NOC, s10, addr=t0, val=t1)
+    if read_sync == "trid":
+      fw.noc_async_read_barrier_with_trid(GATHER_NOC, 2, addr=t0, val=t1)
+    else:
+      fw.noc_reads_flushed(GATHER_NOC, s10, addr=t0, val=t1)
 
   def write_chunk(out_page_reg, out_off: int, l1_src_reg):
     fw.mv(a0, s0)
@@ -132,14 +142,17 @@ def emit_embed_gather_to_a_preamble(
   return fw
 
 
-def matmul_reader_sender_with_embed(plan: base.MatmulPlan, *, dim_tiles: int, pages_per_row: int) -> base.MatmulKernel:
+def matmul_reader_sender_with_embed(plan: base.MatmulPlan, *, dim_tiles: int, pages_per_row: int,
+                                    read_sync: str = "global") -> base.MatmulKernel:
+  if read_sync not in ("global", "trid"):
+    raise ValueError(f"unknown read_sync {read_sync!r}")
   fw = base.MatmulKernel()
   scratch_l1 = TensixL1.DATA_BUFFER_SPACE_BASE + cb_data_bytes(plan) + 0x2000
   scratch_end = scratch_l1 + pages_per_row * PAGE + PAGE
   if scratch_end > TensixL1.SIZE - base.SYNC_BYTES:
     raise ValueError(f"embed gather scratch exceeds L1: end=0x{scratch_end:x}")
   emit_embed_gather_to_a_preamble(
-    fw, dim_tiles=dim_tiles, pages_per_row=pages_per_row, scratch_l1=scratch_l1)
+    fw, dim_tiles=dim_tiles, pages_per_row=pages_per_row, scratch_l1=scratch_l1, read_sync=read_sync)
   fw.release_triscs()
   base.emit_profile_stamp(fw, base.PROFILE_BRISC)
   fw.rta_ptr(BM.RTA_L1_BASE_PTR)
@@ -161,6 +174,9 @@ def matmul_reader_sender_with_embed(plan: base.MatmulPlan, *, dim_tiles: int, pa
   fw.noc_semaphore_set(t6, 1)
 
   fw.li(s6, 0)
+  if read_sync == "trid":
+    fw.reset_noc_trid_barrier_counter(0, 1 << 2, addr=t3, val=t5)
+    fw.noc_async_read_set_trid(0, 2, addr=t3, val=t5)
   fw.label("reader_sender_block_loop")
   fw.bne(s6, s8, "reader_sender_block_body")
   fw.j("reader_sender_done")
@@ -171,8 +187,9 @@ def matmul_reader_sender_with_embed(plan: base.MatmulPlan, *, dim_tiles: int, pa
   fw.mv(a4, s9)
   fw.li(t5, 0)
   fw.mv(a6, s1)
-  fw.li(t0, NOC.STATUS_BASE + NOC.NIU_MST_RD_RESP_RECEIVED)
-  fw.lw(a7, t0, 0)
+  if read_sync == "global":
+    fw.li(t0, NOC.STATUS_BASE + NOC.NIU_MST_RD_RESP_RECEIVED)
+    fw.lw(a7, t0, 0)
 
   fw.mv(a6, s1)
   for row in range(plan.per_core_m):
@@ -187,8 +204,11 @@ def matmul_reader_sender_with_embed(plan: base.MatmulPlan, *, dim_tiles: int, pa
       fw.add(a4, a4, t6)
     fw.add(a6, a6, s3)
 
-  fw.add(a7, a7, s7)
-  fw.noc_reads_flushed(0, a7)
+  if read_sync == "trid":
+    fw.noc_async_read_barrier_with_trid(0, 2, addr=t3, val=t5)
+  else:
+    fw.add(a7, a7, s7)
+    fw.noc_reads_flushed(0, a7)
   fw.arg(t0, 21)
   fw.sem_addr(BM.SEM_L1_BASE, t0, out=a3)
   fw.noc_semaphore_wait(a3, s10)
@@ -263,12 +283,20 @@ def pad_text_to(kernel: KernelBase, target_len: int) -> KernelBase:
 def build_fused_program(plan: base.MatmulPlan, a_addr: int, b_addr: int, c_addr: int,
                         table_addr: int, idx_addr: int, num_banks: int,
                         dim_tiles: int, pages_per_row: int,
-                        layout: base.TensorLayout | None = None) -> Program:
-  brisc_sender = matmul_reader_sender_with_embed(plan, dim_tiles=dim_tiles, pages_per_row=pages_per_row)
+                        layout: base.TensorLayout | None = None,
+                        read_sync: str = "global") -> Program:
+  brisc_sender = matmul_reader_sender_with_embed(
+    plan, dim_tiles=dim_tiles, pages_per_row=pages_per_row, read_sync=read_sync)
   brisc_recv = base.matmul_reader_recv()
   pad_text_to(brisc_recv, len(brisc_sender.to_bytes()))
-  ncrisc_sender = base.matmul_writer_sender(plan)
-  ncrisc_recv = base.matmul_writer_recv(plan)
+  writer_input_coord_offset_words = base.WRITER_DRAM_COORD_OFFSET
+  output_coord_offset_words = writer_input_coord_offset_words + num_banks
+  ncrisc_sender = base.matmul_writer_sender(
+    plan,
+    input_coord_offset_words=writer_input_coord_offset_words,
+    output_coord_offset_words=output_coord_offset_words,
+  )
+  ncrisc_recv = base.matmul_writer_recv(plan, output_coord_offset_words=output_coord_offset_words)
   trisc0 = base.matmul_trisc0_grouped_k(plan) if base.K_GROUP > 1 else base.matmul_trisc0(plan)
   trisc1 = base.matmul_trisc1_grouped_k(plan) if base.K_GROUP > 1 else base.matmul_trisc1(plan)
   trisc2 = base.matmul_trisc2_grouped_k(plan) if base.K_GROUP > 1 else base.matmul_trisc2(plan)
@@ -309,6 +337,8 @@ def main() -> int:
   p.add_argument("--n", type=int, default=512)
   p.add_argument("--runs", type=int, default=1, help="repeat the same fused launch N times before validation")
   p.add_argument("--pattern", action="store_true", help="use integer bf16-bit pattern table for gather debugging")
+  p.add_argument("--read-sync", choices=("global", "trid"), default="global",
+                 help="read completion primitive for gather and A-reader reads")
   args = p.parse_args()
   if args.k % 1024 != 0:
     raise ValueError("K must be a multiple of 1024 for row-page aligned embedding rows")
@@ -363,7 +393,7 @@ def main() -> int:
     )
     prog = build_fused_program(chunk.plan, a_buf.addr, b_buf.addr, c_buf.addr,
                                table_buf.addr, idx_buf.addr, num_banks,
-                               dim_tiles, pages_per_row, layout)
+                               dim_tiles, pages_per_row, layout, read_sync=args.read_sync)
     timings = []
     for _ in range(args.runs):
       timings.extend(device.run(prog))
@@ -385,7 +415,7 @@ def main() -> int:
   ok = a_ok and pcc >= base.PCC_THRESHOLD and rel_l2 <= base.REL_L2_THRESHOLD
 
   print("embed gather + GEMV fused launch")
-  print(f"  rows={args.rows} K={args.k} N={args.n} token={int(token[0])}")
+  print(f"  rows={args.rows} K={args.k} N={args.n} token={int(token[0])} read_sync={args.read_sync}")
   if timings:
     print(f"  launches={len(timings)} avg={sum(t['us'] for t in timings) / len(timings):.1f} us")
   print(f"  gathered A: {'exact' if a_ok else 'MISMATCH'}")

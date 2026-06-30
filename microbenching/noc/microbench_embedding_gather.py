@@ -44,22 +44,31 @@ class EmbedGatherKernel(KernelBase, Noc, Cb):
   pass
 
 
-def build_gather(pages_per_row: int) -> EmbedGatherKernel:
+def build_gather(pages_per_row: int, *, read_sync: str = "global") -> EmbedGatherKernel:
   """RTAs: s0=table_addr s1=idx_addr s2=out_addr s3=n_tokens s4=num_banks s5=idx_pages."""
+  if read_sync not in ("global", "trid"):
+    raise ValueError(f"unknown read_sync {read_sync!r}")
   fw = EmbedGatherKernel(base_addr=Firmware.TEXT_BASE["ncrisc"])
   fw.read_rta_from(NM.RTA_L1_BASE_PTR, (s0, s1, s2, s3, s4, s5))
   fw.local_noc0_coord(s7, x_addr=NM.MY_X + 1, y_addr=NM.MY_Y + 1)
+  if read_sync == "trid":
+    fw.reset_noc_trid_barrier_counter(1, 1 << 2, addr=t0, val=t1)
+    fw.noc_async_read_set_trid(1, 2, addr=t0, val=t1)
 
   def read_page(base_reg, page_reg, l1_dst_reg):
     fw.mv(a0, base_reg)
     fw.mv(a1, page_reg)
     fw.mv(a2, s4)
     fw.dram_tile_addr_from(NM.DRAM_BANK_TO_NOC_XY, s4)
-    fw.read32(s10, RD_STATUS, tmp_addr=t0)
-    fw.addi(s10, s10, 1)
+    if read_sync == "global":
+      fw.read32(s10, RD_STATUS, tmp_addr=t0)
+      fw.addi(s10, s10, 1)
     fw.li(t6, PAGE)
     fw.noc_read(1, 1, a0, 0, a2, l1_dst_reg, t6, ret_coord=s7, a=t0, v=t1)
-    fw.noc_reads_flushed(1, s10, addr=t0, val=t1)
+    if read_sync == "trid":
+      fw.noc_async_read_barrier_with_trid(1, 2, addr=t0, val=t1)
+    else:
+      fw.noc_reads_flushed(1, s10, addr=t0, val=t1)
 
   def write_page(base_reg, page_reg, l1_src_reg):
     fw.mv(a0, base_reg)
@@ -105,8 +114,8 @@ def build_gather(pages_per_row: int) -> EmbedGatherKernel:
 
 
 def build_program(table_addr, idx_addr, out_addr, n_tokens, num_banks, idx_pages,
-                  pages_per_row, *, core) -> Program:
-  gather = build_gather(pages_per_row)
+                  pages_per_row, *, core, read_sync: str = "global") -> Program:
+  gather = build_gather(pages_per_row, read_sync=read_sync)
   gather.rta(lambda x, y: [table_addr, idx_addr, out_addr, n_tokens, num_banks, idx_pages])
   empty = lambda: KernelBase()  # noqa: E731
   prog = Program(brisc=empty(), ncrisc=gather, trisc0=empty(), trisc1=empty(), trisc2=empty(),
@@ -122,6 +131,8 @@ def main() -> int:
   p.add_argument("--rows", type=int, default=1024, help="vocab rows in table")
   p.add_argument("--dim", type=int, default=2048, help="row width (elements, bf16)")
   p.add_argument("--tokens", type=int, default=64)
+  p.add_argument("--read-sync", choices=("global", "trid"), default="global",
+                 help="read completion primitive for page reads")
   args = p.parse_args()
   assert (args.dim * 2) % PAGE == 0
   pages_per_row = args.dim * 2 // PAGE
@@ -145,15 +156,17 @@ def main() -> int:
     out_buf = device.dram.alloc(args.tokens * pages_per_row, dtype=DTYPE,
                                 shape=(args.tokens * pages_per_row, 32, 32), name="embed_out")
     prog = build_program(table_buf.addr, idx_buf.addr, out_buf.addr,
-                         args.tokens, nb, idx_pages, pages_per_row, core=core)
-    device.run(prog)
+                         args.tokens, nb, idx_pages, pages_per_row, core=core, read_sync=args.read_sync)
+    timings = device.run(prog)
     got = np.frombuffer(device.dram_read(out_buf), dtype=np.uint16).reshape(args.tokens, args.dim)
 
   ref = table[ids]
   ok = bool(np.array_equal(got, ref))
   bad = int(np.count_nonzero((got != ref).any(axis=1)))
   print("embedding gather microbench")
-  print(f"  rows={args.rows} dim={args.dim} tokens={args.tokens} pages/row={pages_per_row}")
+  print(f"  rows={args.rows} dim={args.dim} tokens={args.tokens} pages/row={pages_per_row} read_sync={args.read_sync}")
+  if timings:
+    print(f"  launch={sum(t['us'] for t in timings):.1f} us")
   print(f"  exact-match rows: {args.tokens - bad}/{args.tokens}")
   if not ok:
     i = int(np.argmax((got != ref).any(axis=1)))
