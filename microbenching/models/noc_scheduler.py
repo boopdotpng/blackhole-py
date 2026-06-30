@@ -87,11 +87,11 @@ class Calibration:
   dram_read_noc1_bpc: float = 164.7
   dram_write_noc0_bpc: float = 119.8
   dram_write_noc1_bpc: float = 253.6
-  mcast_path_reserve_cycles: float = 0.0
+  mcast_path_reserve_cycles: float = 18.0  # local-dir 1-receiver mcast vs unicast delta (job 091ae992)
   read_request_bytes: int = 64
   atomic_request_bytes: int = 64
   atomic_response_bytes: int = 64
-  atomic_target_cycles: float = 24.0
+  atomic_target_cycles: float = 12.0  # K=8 saturated same-target ~0.08 ops/cyc (atomic-calibration)
   niu_cmd_bufs: int = 1
   niu_total_cmd_bufs: int = 4
   cmd_buf_hold_cycles: float = 45.0

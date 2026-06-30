@@ -42,6 +42,9 @@ ROLE_TARGET = 2
 OP_ATOMIC = 1
 OP_SEM = 2
 OP_MIXED = 3
+OP_SEM_NORET = 4
+ISSUE_PIPELINED = 1
+ISSUE_BLOCKING = 2
 P100_PROGRAM_CORES = [(x, y) for y in noc_topology.P100_WORKER_Y for x in noc_topology.P100_WORKER_X]
 P100_FAST_DISPATCH_RESERVED = {(14, 2), (14, 3)}
 
@@ -69,6 +72,7 @@ class CasePlan:
   name: str
   pattern: str
   op: int
+  issue_mode: int
   noc: int
   count: int
   senders: tuple[SenderSpec, ...]
@@ -128,6 +132,18 @@ class CoreResult:
   def missing_writes(self) -> int:
     return self.words[27]
 
+  @property
+  def issue_mode(self) -> int:
+    return self.words[28]
+
+  @property
+  def issue_end(self) -> int:
+    return self.words[30] | (self.words[31] << 32)
+
+  @property
+  def issue_cycles(self) -> int:
+    return (self.issue_end - self.start) & ((1 << 64) - 1)
+
 
 @dataclass(frozen=True)
 class BenchRun:
@@ -141,7 +157,15 @@ class AtomicKernel(KernelBase, Noc):
 
 
 def op_name(op: int) -> str:
-  return {OP_ATOMIC: "atomic", OP_SEM: "sem", OP_MIXED: "mixed"}[op]
+  return {OP_ATOMIC: "atomic", OP_SEM: "sem", OP_MIXED: "mixed", OP_SEM_NORET: "sem-noret"}[op]
+
+
+def issue_mode_name(issue_mode: int) -> str:
+  return {ISSUE_PIPELINED: "pipelined", ISSUE_BLOCKING: "blocking"}[issue_mode]
+
+
+def op_has_source_response(op: int) -> bool:
+  return op != OP_SEM_NORET
 
 
 def mixed_sentinel(sender_index: int) -> int:
@@ -208,7 +232,7 @@ def emit_start_gate(fw: AtomicKernel):
   return fw
 
 
-def build_sender(spec: SenderSpec, *, noc: int, count: int, op: int, iters: int) -> KernelBase:
+def build_sender(spec: SenderSpec, *, noc: int, count: int, op: int, issue_mode: int, iters: int) -> KernelBase:
   fw = AtomicKernel()
   emit_record_header(
     fw,
@@ -228,12 +252,15 @@ def build_sender(spec: SenderSpec, *, noc: int, count: int, op: int, iters: int)
   emit_counter_read(fw, noc, NOC.NIU_MST_ATOMIC_RESP_RECEIVED, s7)
   emit_counter_read(fw, noc, NOC.NIU_MST_WR_ACK_RECEIVED, s8)
   fw.mv(s6, s7)
-  fw.li(t0, iters * len(spec.targets))
-  fw.add(s6, s6, t0)
+  if op_has_source_response(op):
+    fw.li(t0, iters * len(spec.targets))
+    fw.add(s6, s6, t0)
   fw.mv(s11, s8)
   if op == OP_MIXED:
     fw.li(t0, iters * len(spec.targets))
     fw.add(s11, s11, t0)
+  fw.mv(s1, s7)
+  fw.mv(s10, s8)
 
   harness.read_wall_clock(fw, a2, a3)
   fw.li(s0, iters)
@@ -246,19 +273,29 @@ def build_sender(spec: SenderSpec, *, noc: int, count: int, op: int, iters: int)
     fw.li(s9, noc_xy(*target))
     if op == OP_SEM:
       fw.noc_semaphore_inc(noc, 3, s3, s9, 1, ret_coord=s5, a=t3, v=t4)
+    elif op == OP_SEM_NORET:
+      fw.noc_semaphore_inc(noc, 3, s3, s9, 1, ret_coord=0, a=t3, v=t4)
     else:
       fw.noc_atomic_inc(noc, 3, s3, s9, 1, ret_coord=s5, a=t3, v=t4)
+    if issue_mode == ISSUE_BLOCKING and op_has_source_response(op):
+      fw.addi(s1, s1, 1)
+      fw.noc_wait_atomic_responses(noc, s1, addr=t3, val=t4)
     if op == OP_MIXED:
       fw.li(s2, STREAM_BASE)
       fw.li(s3, MIXED_WRITE_BASE + spec.index * MIXED_WRITE_STRIDE)
       fw.li(s4, MIXED_WRITE_BYTES)
       fw.noc_write(noc, 0, s2, s3, 0, s9, s4, posted=False, a=t3, v=t4)
+      if issue_mode == ISSUE_BLOCKING:
+        fw.addi(s10, s10, 1)
+        fw.noc_write_barrier(noc, s10, addr=t3, val=t4)
   fw.addi(s0, s0, -1)
   fw.j(loop)
   fw.label(done)
+  harness.read_wall_clock(fw, s0, s1)
 
-  fw.noc_wait_atomic_responses(noc, s6, addr=t3, val=t4)
-  if op == OP_MIXED:
+  if issue_mode == ISSUE_PIPELINED and op_has_source_response(op):
+    fw.noc_wait_atomic_responses(noc, s6, addr=t3, val=t4)
+  if issue_mode == ISSUE_PIPELINED and op == OP_MIXED:
     fw.noc_write_barrier(noc, s11, addr=t3, val=t4)
   harness.read_wall_clock(fw, a4, a5)
   fw.li(s2, RESULT_BASE)
@@ -269,8 +306,12 @@ def build_sender(spec: SenderSpec, *, noc: int, count: int, op: int, iters: int)
   fw.sw(s8, s2, 19 * 4)
   emit_counter_read(fw, noc, NOC.NIU_MST_WR_ACK_RECEIVED, t0)
   fw.sw(t0, s2, 20 * 4)
+  fw.li(t0, issue_mode)
+  fw.sw(t0, s2, 28 * 4)
   fw.li(t0, mixed_sentinel(spec.index))
   fw.sw(t0, s2, 29 * 4)
+  fw.sw(s0, s2, 30 * 4)
+  fw.sw(s1, s2, 31 * 4)
   emit_status_done(fw)
   return fw.ret()
 
@@ -378,7 +419,14 @@ class AtomicProgram:
     per_core_segments = {}
     active_cores = []
     for spec in self.plan.senders:
-      kernel = build_sender(spec, noc=self.plan.noc, count=self.plan.count, op=self.plan.op, iters=self.iters)
+      kernel = build_sender(
+        spec,
+        noc=self.plan.noc,
+        count=self.plan.count,
+        op=self.plan.op,
+        issue_mode=self.plan.issue_mode,
+        iters=self.iters,
+      )
       per_core_segments[spec.source] = _one_core_segments(
         spec.source,
         kernel,
@@ -487,7 +535,17 @@ def _target_specs(senders: tuple[SenderSpec, ...], *, iters: int, mixed: bool) -
   )
 
 
-def build_same_target(cores: list[Core], *, noc: int, count: int, pattern: str, op: int, row: int | None, col: int | None, iters: int) -> CasePlan:
+def build_same_target(
+  cores: list[Core], *,
+  noc: int,
+  count: int,
+  pattern: str,
+  op: int,
+  issue_mode: int,
+  row: int | None,
+  col: int | None,
+  iters: int,
+) -> CasePlan:
   needed = count + 1
   if pattern == "row":
     y, xs = choose_row(cores, row, needed)
@@ -516,10 +574,20 @@ def build_same_target(cores: list[Core], *, noc: int, count: int, pattern: str, 
   else:
     raise ValueError(pattern)
   senders = tuple(SenderSpec(i, source, (target,)) for i, source in enumerate(sources))
-  return CasePlan(f"same-{pattern}-{op_name(op)}", f"same-{pattern}", op, noc, count, senders, _target_specs(senders, iters=iters, mixed=op == OP_MIXED))
+  mode_suffix = "" if issue_mode == ISSUE_PIPELINED else "-blocking"
+  return CasePlan(
+    f"same-{pattern}-{op_name(op)}{mode_suffix}",
+    f"same-{pattern}",
+    op,
+    issue_mode,
+    noc,
+    count,
+    senders,
+    _target_specs(senders, iters=iters, mixed=op == OP_MIXED),
+  )
 
 
-def build_separate_targets(cores: list[Core], *, noc: int, count: int, pattern: str, op: int, row: int | None, col: int | None, iters: int) -> CasePlan:
+def build_separate_targets(cores: list[Core], *, noc: int, count: int, pattern: str, op: int, issue_mode: int, row: int | None, col: int | None, iters: int) -> CasePlan:
   needed = count * 2
   if pattern == "row":
     y, xs = choose_row(cores, row, needed)
@@ -548,10 +616,20 @@ def build_separate_targets(cores: list[Core], *, noc: int, count: int, pattern: 
   else:
     raise ValueError(pattern)
   senders = tuple(SenderSpec(i, source, (target,)) for i, (source, target) in enumerate(zip(sources, targets)))
-  return CasePlan(f"separate-{pattern}-{op_name(op)}", f"separate-{pattern}", op, noc, count, senders, _target_specs(senders, iters=iters, mixed=op == OP_MIXED))
+  mode_suffix = "" if issue_mode == ISSUE_PIPELINED else "-blocking"
+  return CasePlan(
+    f"separate-{pattern}-{op_name(op)}{mode_suffix}",
+    f"separate-{pattern}",
+    op,
+    issue_mode,
+    noc,
+    count,
+    senders,
+    _target_specs(senders, iters=iters, mixed=op == OP_MIXED),
+  )
 
 
-def build_one_to_many(cores: list[Core], *, noc: int, count: int, pattern: str, op: int, row: int | None, col: int | None, iters: int) -> CasePlan:
+def build_one_to_many(cores: list[Core], *, noc: int, count: int, pattern: str, op: int, issue_mode: int, row: int | None, col: int | None, iters: int) -> CasePlan:
   needed = count + 1
   if pattern == "row":
     y, xs = choose_row(cores, row, needed)
@@ -580,7 +658,63 @@ def build_one_to_many(cores: list[Core], *, noc: int, count: int, pattern: str, 
   else:
     raise ValueError(pattern)
   senders = (SenderSpec(0, source, targets),)
-  return CasePlan(f"one-many-{pattern}-{op_name(op)}", f"one-many-{pattern}", op, noc, count, senders, _target_specs(senders, iters=iters, mixed=op == OP_MIXED))
+  mode_suffix = "" if issue_mode == ISSUE_PIPELINED else "-blocking"
+  return CasePlan(
+    f"one-many-{pattern}-{op_name(op)}{mode_suffix}",
+    f"one-many-{pattern}",
+    op,
+    issue_mode,
+    noc,
+    count,
+    senders,
+    _target_specs(senders, iters=iters, mixed=op == OP_MIXED),
+  )
+
+
+def build_hop_sweep(
+  cores: list[Core], *,
+  noc: int,
+  count: int,
+  pattern: str,
+  op: int,
+  issue_mode: int,
+  row: int | None,
+  col: int | None,
+  iters: int,
+) -> tuple[CasePlan, ...]:
+  plans: list[CasePlan] = []
+  if pattern == "row":
+    y, xs = choose_row(cores, row, count + 1)
+    if noc == 0:
+      source = (xs[0], y)
+      targets = [(x, y) for x in xs[1:1 + count]]
+    else:
+      source = (xs[-1], y)
+      targets = [(x, y) for x in reversed(xs[-1 - count:-1])]
+  elif pattern == "col":
+    x, ys = choose_col(cores, col, count + 1)
+    if noc == 0:
+      source = (x, ys[0])
+      targets = [(x, y) for y in ys[1:1 + count]]
+    else:
+      source = (x, ys[-1])
+      targets = [(x, y) for y in reversed(ys[-1 - count:-1])]
+  else:
+    raise ValueError(f"hop sweep supports row/col, got {pattern}")
+  for target in targets:
+    hop = noc_topology.noc_hops(source, target, noc)
+    senders = (SenderSpec(0, source, (target,)),)
+    plans.append(CasePlan(
+      f"hop-{pattern}-h{hop}-{op_name(op)}-{issue_mode_name(issue_mode)}",
+      f"hop-{pattern}",
+      op,
+      issue_mode,
+      noc,
+      1,
+      senders,
+      _target_specs(senders, iters=iters, mixed=False),
+    ))
+  return tuple(plans)
 
 
 def parse_counts(text: str) -> tuple[int, ...]:
@@ -613,6 +747,13 @@ REPRESENTATIVE_CASES = (
   "one-many-row-atomic",
   "mixed-row",
 )
+CALIBRATION_CASES = (
+  "hop-row-atomic-blocking",
+  "hop-col-atomic-blocking",
+  "same-row-atomic",
+  "same-row-sem",
+  "same-row-sem-noret",
+)
 FULL_CASES = (
   "same-row-atomic",
   "same-col-atomic",
@@ -620,6 +761,7 @@ FULL_CASES = (
   "same-row-sem",
   "same-col-sem",
   "same-diag-sem",
+  "same-row-sem-noret",
   "separate-row-atomic",
   "separate-col-atomic",
   "separate-diag-atomic",
@@ -632,31 +774,55 @@ FULL_CASES = (
 )
 
 
-def expand_case_name(name: str) -> tuple[str, str, int]:
-  if name.startswith("same-"):
-    _, pattern, op_text = name.split("-", 2)
-    op = OP_SEM if op_text == "sem" else OP_ATOMIC
-    return "same", pattern, op
-  if name.startswith("separate-"):
-    _, pattern, _op_text = name.split("-", 2)
-    return "separate", pattern, OP_ATOMIC
-  if name.startswith("one-many-"):
-    _, _, pattern, _op_text = name.split("-", 3)
-    return "one-many", pattern, OP_ATOMIC
-  if name.startswith("mixed-"):
-    _, pattern = name.split("-", 1)
-    return "same", pattern, OP_MIXED
+def expand_case_name(name: str) -> tuple[str, str, int, int]:
+  issue_mode = ISSUE_PIPELINED
+  base = name
+  if name.endswith("-blocking"):
+    issue_mode = ISSUE_BLOCKING
+    base = name.removesuffix("-blocking")
+  elif name.endswith("-pipelined"):
+    issue_mode = ISSUE_PIPELINED
+    base = name.removesuffix("-pipelined")
+  if base.startswith("hop-"):
+    _, pattern, op_text = base.split("-", 2)
+    op = OP_SEM_NORET if op_text == "sem-noret" else (OP_SEM if op_text == "sem" else OP_ATOMIC)
+    return "hop", pattern, op, issue_mode
+  if base.startswith("same-"):
+    _, pattern, op_text = base.split("-", 2)
+    op = OP_SEM_NORET if op_text == "sem-noret" else (OP_SEM if op_text == "sem" else OP_ATOMIC)
+    return "same", pattern, op, issue_mode
+  if base.startswith("separate-"):
+    _, pattern, _op_text = base.split("-", 2)
+    return "separate", pattern, OP_ATOMIC, issue_mode
+  if base.startswith("one-many-"):
+    _, _, pattern, _op_text = base.split("-", 3)
+    return "one-many", pattern, OP_ATOMIC, issue_mode
+  if base.startswith("mixed-"):
+    _, pattern = base.split("-", 1)
+    return "same", pattern, OP_MIXED, issue_mode
   raise argparse.ArgumentTypeError(f"unknown case {name!r}")
 
 
-def build_plan(name: str, cores: list[Core], *, noc: int, count: int, row: int | None, col: int | None, iters: int) -> CasePlan:
-  kind, pattern, op = expand_case_name(name)
+def build_plans(name: str, cores: list[Core], *, noc: int, count: int, row: int | None, col: int | None, iters: int) -> tuple[CasePlan, ...]:
+  kind, pattern, op, issue_mode = expand_case_name(name)
+  if kind == "hop":
+    return build_hop_sweep(
+      cores,
+      noc=noc,
+      count=count,
+      pattern=pattern,
+      op=op,
+      issue_mode=issue_mode,
+      row=row,
+      col=col,
+      iters=iters,
+    )
   if kind == "same":
-    return build_same_target(cores, noc=noc, count=count, pattern=pattern, op=op, row=row, col=col, iters=iters)
+    return (build_same_target(cores, noc=noc, count=count, pattern=pattern, op=op, issue_mode=issue_mode, row=row, col=col, iters=iters),)
   if kind == "separate":
-    return build_separate_targets(cores, noc=noc, count=count, pattern=pattern, op=op, row=row, col=col, iters=iters)
+    return (build_separate_targets(cores, noc=noc, count=count, pattern=pattern, op=op, issue_mode=issue_mode, row=row, col=col, iters=iters),)
   if kind == "one-many":
-    return build_one_to_many(cores, noc=noc, count=count, pattern=pattern, op=op, row=row, col=col, iters=iters)
+    return (build_one_to_many(cores, noc=noc, count=count, pattern=pattern, op=op, issue_mode=issue_mode, row=row, col=col, iters=iters),)
   raise ValueError(kind)
 
 
@@ -722,7 +888,10 @@ def run_once(device: Device, plan: CasePlan, *, iters: int, gate_cycles: int, ma
 
 def validate_run(run: BenchRun, *, iters: int):
   plan = run.plan
-  expected_sender = {spec.source: iters * len(spec.targets) for spec in plan.senders}
+  expected_sender = {
+    spec.source: (iters * len(spec.targets)) if op_has_source_response(plan.op) else 0
+    for spec in plan.senders
+  }
   bad_atomic = [
     (result.core, result.atomic_delta, expected_sender[result.core])
     for result in run.sender_results
@@ -765,14 +934,16 @@ def format_core_list(cores: tuple[Core, ...] | list[Core]) -> str:
 
 def format_summary(runs: list[BenchRun], *, iters: int) -> str:
   lines = [
-    "| case | noc | K | op | initiators | targets | hops | atomic ops | sender cyc | sender op/cyc | target observed cyc | observed op/cyc | observed-minus-sender cyc | sender spreads | bad | target polls |",
-    "|---|---:|---:|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
+    "| case | mode | noc | K | op | initiators | targets | hops | atomic ops | issue cyc | issue op/cyc | sender cyc | sender op/cyc | target observed cyc | observed op/cyc | observed-minus-sender cyc | sender spreads | bad | target polls |",
+    "|---|---|---:|---:|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
   ]
   for run in runs:
     plan = run.plan
     start = min(result.start for result in run.sender_results)
+    issue_end = max(result.issue_end for result in run.sender_results)
     sender_end = max(result.end for result in run.sender_results)
     observed_end = max(result.writes_observed if plan.op == OP_MIXED else result.value_observed for result in run.target_results)
+    issue_cycles = issue_end - start
     sender_cycles = sender_end - start
     observed_cycles = observed_end - start
     ops = sum(iters * len(spec.targets) for spec in plan.senders)
@@ -780,14 +951,16 @@ def format_summary(runs: list[BenchRun], *, iters: int) -> str:
     spread = (max(rates) - min(rates)) / statistics.fmean(rates) if len(rates) > 1 and statistics.fmean(rates) else 0.0
     bad = 0
     for result, spec in zip(run.sender_results, plan.senders):
-      bad += int(result.atomic_delta != iters * len(spec.targets))
+      expected_atomic = (iters * len(spec.targets)) if op_has_source_response(plan.op) else 0
+      bad += int(result.atomic_delta != expected_atomic)
       bad += int(result.write_ack_delta != ((iters * len(spec.targets)) if plan.op == OP_MIXED else 0))
     target_expected = {spec.core: spec.expected_value for spec in plan.targets}
     bad += sum(result.observed_value != target_expected[result.core] or result.missing_writes for result in run.target_results)
     lines.append(
-      f"| {plan.name} | {plan.noc} | {plan.count} | {op_name(plan.op)} | "
+      f"| {plan.name} | {issue_mode_name(plan.issue_mode)} | {plan.noc} | {plan.count} | {op_name(plan.op)} | "
       f"{format_core_list([spec.source for spec in plan.senders])} | "
       f"{format_core_list([spec.core for spec in plan.targets])} | {plan_hops(plan)} | {ops} | "
+      f"{issue_cycles} | {ops / issue_cycles if issue_cycles > 0 else 0.0:.5f} | "
       f"{sender_cycles} | {ops / sender_cycles if sender_cycles > 0 else 0.0:.5f} | "
       f"{observed_cycles} | {ops / observed_cycles if observed_cycles > 0 else 0.0:.5f} | "
       f"{observed_end - sender_end} | {spread:.3f} | {bad} | "
@@ -822,6 +995,8 @@ def append_report(path: Path, *, gate_cycles: int, iters: int, runs: list[BenchR
 def selected_cases(args) -> tuple[str, ...]:
   if args.cases:
     return args.cases
+  if args.suite == "calibration":
+    return CALIBRATION_CASES
   if args.suite == "full":
     return FULL_CASES
   return REPRESENTATIVE_CASES
@@ -832,23 +1007,23 @@ def dry_run(args):
   for noc in args.nocs:
     for count in args.counts:
       for case_name in selected_cases(args):
-        plan = build_plan(case_name, cores, noc=noc, count=count, row=args.row, col=args.col, iters=args.iters)
-        AtomicProgram(plan, iters=args.iters, max_polls=args.max_polls).lower(
-          dispatch_mode=DevMsgs.DISPATCH_MODE_HOST,
-          host_assigned_id=0,
-        )
-        print(
-          f"dry-run {plan.name} noc{noc} K={count} op={op_name(plan.op)} "
-          f"senders={[spec.source for spec in plan.senders]} targets={[spec.core for spec in plan.targets]} "
-          f"hops={plan_hops(plan)}"
-        )
+        for plan in build_plans(case_name, cores, noc=noc, count=count, row=args.row, col=args.col, iters=args.iters):
+          AtomicProgram(plan, iters=args.iters, max_polls=args.max_polls).lower(
+            dispatch_mode=DevMsgs.DISPATCH_MODE_HOST,
+            host_assigned_id=0,
+          )
+          print(
+            f"dry-run {plan.name} noc{noc} K={count} op={op_name(plan.op)} mode={issue_mode_name(plan.issue_mode)} "
+            f"senders={[spec.source for spec in plan.senders]} targets={[spec.core for spec in plan.targets]} "
+            f"hops={plan_hops(plan)}"
+          )
 
 
 def main():
   parser = argparse.ArgumentParser(description="Blackhole NoC atomic/semaphore arbitration and target-visibility microbench.")
   parser.add_argument("--nocs", type=parse_nocs, default=(0, 1), help="comma-separated NoC ids, default: 0,1")
   parser.add_argument("--counts", type=parse_counts, default=parse_counts("2,4"), help="comma-separated initiator/target fanout counts")
-  parser.add_argument("--suite", choices=("representative", "full"), default="representative")
+  parser.add_argument("--suite", choices=("representative", "full", "calibration"), default="representative")
   parser.add_argument("--cases", type=parse_cases, default=None, help="override suite with comma-separated case names")
   parser.add_argument("--iters", type=int, default=128, help="atomic increments per sender-target edge")
   parser.add_argument("--row", type=int, default=None, help="physical row override for row cases")
@@ -885,18 +1060,18 @@ def main():
     for noc in args.nocs:
       for count in args.counts:
         for case_name in selected_cases(args):
-          plan = build_plan(case_name, usable_cores, noc=noc, count=count, row=args.row, col=args.col, iters=args.iters)
-          needed_cores = {spec.source for spec in plan.senders} | {spec.core for spec in plan.targets}
-          if not needed_cores <= core_set:
-            raise ValueError(f"{plan.name} selected unavailable cores: {sorted(needed_cores - core_set)}")
-          run = run_once(device, plan, iters=args.iters, gate_cycles=args.gate_cycles, max_polls=args.max_polls)
-          runs.append(run)
-          if not args.allow_invalid:
-            try:
-              validate_run(run, iters=args.iters)
-            except RuntimeError:
-              print(format_summary(runs[-1:], iters=args.iters))
-              raise
+          for plan in build_plans(case_name, usable_cores, noc=noc, count=count, row=args.row, col=args.col, iters=args.iters):
+            needed_cores = {spec.source for spec in plan.senders} | {spec.core for spec in plan.targets}
+            if not needed_cores <= core_set:
+              raise ValueError(f"{plan.name} selected unavailable cores: {sorted(needed_cores - core_set)}")
+            run = run_once(device, plan, iters=args.iters, gate_cycles=args.gate_cycles, max_polls=args.max_polls)
+            runs.append(run)
+            if not args.allow_invalid:
+              try:
+                validate_run(run, iters=args.iters)
+              except RuntimeError:
+                print(format_summary(runs[-1:], iters=args.iters))
+                raise
 
   print(format_summary(runs, iters=args.iters))
   if not args.no_report:

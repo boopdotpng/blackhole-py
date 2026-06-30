@@ -12,7 +12,7 @@ import harness  # noqa: E402
 import riscv_noc_hop_sweep as hop_sweep  # noqa: E402
 from asm import KernelBase
 from device import Device
-from dsl import a2, a3, a4, a5, s0, s1, s2, s3, s4, s5, s6, s7, s8, s9, t0, t3, t4, zero
+from dsl import a2, a3, a4, a5, s0, s1, s2, s3, s4, s5, s6, s7, s8, s9, s10, s11, t0, t3, t4, zero
 from program import DevMsgs, Program, Run, UnicastWrite
 from ttk.addrs import Core, noc_xy
 from ttk.blackhole_coords import (
@@ -25,7 +25,7 @@ from ttk.tensix import TensixL1
 
 
 RESULT_BASE = 0x150000
-RESULT_WORDS = 16
+RESULT_WORDS = 20
 RESULT_SIZE = RESULT_WORDS * 4
 RESULT_MAGIC = 0x52504C54  # "RPLT"
 STATUS_STARTED = 0x71000001
@@ -40,6 +40,15 @@ OP_WRITE = 2
 OP_NAMES = {
   OP_READ: "read",
   OP_WRITE: "write",
+}
+
+MODE_BLOCKING = 1
+MODE_PIPELINED = 2
+MODE_TRID = 3
+MODE_NAMES = {
+  MODE_BLOCKING: "blocking",
+  MODE_PIPELINED: "pipelined",
+  MODE_TRID: "trid",
 }
 
 
@@ -60,7 +69,10 @@ class Result:
   wraps: int
   packet_bytes: int
   iters: int
+  mode: int
   cycles: int
+  completion_cycles: int
+  issue_counter_delta: int
   counter_delta: int
   sink: int
 
@@ -71,6 +83,14 @@ class Result:
   @property
   def bytes_per_cycle(self) -> float:
     return self.packet_bytes / self.cycles_per_iter if self.cycles_per_iter > 0 else 0.0
+
+  @property
+  def completion_cycles_per_iter(self) -> float:
+    return self.completion_cycles / self.iters if self.iters else 0.0
+
+  @property
+  def completion_tail_cycles(self) -> int:
+    return self.completion_cycles - self.cycles
 
 
 class PacketLatencyKernel(KernelBase, Noc):
@@ -97,7 +117,7 @@ def emit_counter_read(fw: KernelBase, noc: int, counter: int, out, *, addr=t3):
   return fw.lw(out, addr, 0)
 
 
-def emit_header(fw: KernelBase, *, noc: int, op: int, packet_bytes: int, iters: int, status: int):
+def emit_header(fw: KernelBase, *, noc: int, op: int, mode: int, packet_bytes: int, iters: int, status: int):
   fw.li(s2, RESULT_BASE)
   for off, value in enumerate((
     RESULT_MAGIC, status, noc, op, packet_bytes, iters, SRC_BASE, DST_BASE,
@@ -106,14 +126,18 @@ def emit_header(fw: KernelBase, *, noc: int, op: int, packet_bytes: int, iters: 
     fw.sw(t0, s2, off * 4)
   for off in range(8, RESULT_WORDS):
     fw.sw(zero, s2, off * 4)
+  fw.li(t0, mode)
+  fw.sw(t0, s2, 15 * 4)
   return fw
 
 
-def build_kernel(*, noc: int, op: int, packet_bytes: int, iters: int) -> KernelBase:
+def build_kernel(*, noc: int, op: int, mode: int, packet_bytes: int, iters: int) -> KernelBase:
   if op not in OP_NAMES:
     raise ValueError(f"unknown op {op}")
+  if mode not in MODE_NAMES:
+    raise ValueError(f"unknown mode {mode}")
   fw = PacketLatencyKernel()
-  emit_header(fw, noc=noc, op=op, packet_bytes=packet_bytes, iters=iters, status=STATUS_STARTED)
+  emit_header(fw, noc=noc, op=op, mode=mode, packet_bytes=packet_bytes, iters=iters, status=STATUS_STARTED)
   fw.read_rta_from(BM.RTA_L1_BASE_PTR, (s9,))
   fw.local_noc_coord(noc, s5, x_addr=BM.MY_X, y_addr=BM.MY_Y)
   fw.li(s2, SRC_BASE)
@@ -122,6 +146,11 @@ def build_kernel(*, noc: int, op: int, packet_bytes: int, iters: int) -> KernelB
   if op == OP_WRITE:
     fw.noc_cmd_reg(noc, 0, NOC.TARG_ADDR_COORDINATE, s5, addr=t3, tmp=t4)
   counter = NOC.NIU_MST_RD_RESP_RECEIVED if op == OP_READ else NOC.NIU_MST_WR_ACK_RECEIVED
+  if mode == MODE_TRID and op != OP_READ:
+    raise ValueError("TRID mode is only supported for reads")
+  if mode == MODE_TRID:
+    fw.reset_noc_trid_barrier_counter(noc, 1 << 1, addr=t3, val=t4)
+    fw.noc_async_read_set_trid(noc, 1, addr=t3, val=t4)
   emit_counter_read(fw, noc, counter, s7)
   fw.mv(s6, s7)
 
@@ -134,16 +163,32 @@ def build_kernel(*, noc: int, op: int, packet_bytes: int, iters: int) -> KernelB
   if op == OP_READ:
     fw.noc_read(noc, 1, s2, 0, s9, s3, s4, ret_coord=s5, a=t3, v=t4)
     fw.addi(s6, s6, 1)
-    fw.noc_reads_flushed(noc, s6, addr=t3, val=t4)
+    if mode == MODE_BLOCKING:
+      fw.noc_reads_flushed(noc, s6, addr=t3, val=t4)
+    elif mode == MODE_TRID:
+      fw.noc_async_read_barrier_with_trid(noc, 1, addr=t3, val=t4)
   else:
     fw.noc_write(noc, 0, s2, s3, 0, s9, s4, posted=False, a=t3, v=t4)
     fw.addi(s6, s6, 1)
-    fw.noc_write_barrier(noc, s6, addr=t3, val=t4)
+    if mode == MODE_BLOCKING:
+      fw.noc_write_barrier(noc, s6, addr=t3, val=t4)
   fw.addi(s0, s0, -1)
   fw.j(loop)
   fw.label(done)
   harness.read_wall_clock(fw, a4, a5)
   emit_counter_read(fw, noc, counter, s8)
+
+  if mode == MODE_PIPELINED:
+    if op == OP_READ:
+      fw.noc_reads_flushed(noc, s6, addr=t3, val=t4)
+    else:
+      fw.noc_write_barrier(noc, s6, addr=t3, val=t4)
+    harness.read_wall_clock(fw, s10, s11)
+    emit_counter_read(fw, noc, counter, s0)
+  else:
+    fw.mv(s10, a4)
+    fw.mv(s11, a5)
+    fw.mv(s0, s8)
 
   if op == OP_WRITE:
     emit_counter_read(fw, noc, NOC.NIU_MST_RD_RESP_RECEIVED, t0, addr=t3)
@@ -153,26 +198,30 @@ def build_kernel(*, noc: int, op: int, packet_bytes: int, iters: int) -> KernelB
   fw.lw(s1, s3, 0)
 
   fw.li(s2, RESULT_BASE)
-  for off, reg in enumerate((a2, a3, a4, a5, s7, s8, s1), start=8):
+  for off, reg in enumerate((a2, a3, a4, a5, s7, s0, s1), start=8):
     fw.sw(reg, s2, off * 4)
+  fw.sw(s10, s2, 16 * 4)
+  fw.sw(s11, s2, 17 * 4)
+  fw.sw(s8, s2, 18 * 4)
   fw.li(t0, STATUS_DONE)
   fw.sw(t0, s2, 1 * 4)
   return fw.ret()
 
 
 class PairProgram:
-  def __init__(self, *, noc: int, op: int, packet_bytes: int, iters: int, source: Core, target: Core):
+  def __init__(self, *, noc: int, op: int, mode: int, packet_bytes: int, iters: int, source: Core, target: Core):
     self.noc = noc
     self.op = op
+    self.mode = mode
     self.packet_bytes = packet_bytes
     self.iters = iters
     self.source = source
     self.target = target
-    self.name = f"riscv_noc_packet_latency:{OP_NAMES[op]}:noc{noc}:{source}->{target}"
+    self.name = f"riscv_noc_packet_latency:{OP_NAMES[op]}:{MODE_NAMES[mode]}:noc{noc}:{source}->{target}"
 
   def lower(self, cores: list[Core] | None = None, *, dispatch_mode=DevMsgs.DISPATCH_MODE_HOST, host_assigned_id=0):
     empty = KernelBase()
-    bench = build_kernel(noc=self.noc, op=self.op, packet_bytes=self.packet_bytes, iters=self.iters)
+    bench = build_kernel(noc=self.noc, op=self.op, mode=self.mode, packet_bytes=self.packet_bytes, iters=self.iters)
     bench.rta(lambda _x, _y: [noc_xy(*self.target)])
     sender = Program(
       brisc=bench,
@@ -205,8 +254,8 @@ class PairProgram:
     return commands
 
 
-def build_program(*, noc: int, op: int, packet_bytes: int, iters: int, source: Core, target: Core) -> PairProgram:
-  return PairProgram(noc=noc, op=op, packet_bytes=packet_bytes, iters=iters, source=source, target=target)
+def build_program(*, noc: int, op: int, mode: int, packet_bytes: int, iters: int, source: Core, target: Core) -> PairProgram:
+  return PairProgram(noc=noc, op=op, mode=mode, packet_bytes=packet_bytes, iters=iters, source=source, target=target)
 
 
 def parse_sizes(text: str) -> tuple[int, ...]:
@@ -225,6 +274,17 @@ def parse_ops(text: str) -> tuple[int, ...]:
   if not ops:
     raise argparse.ArgumentTypeError("expected comma-separated ops from read,write")
   return ops
+
+
+def parse_modes(text: str) -> tuple[int, ...]:
+  by_name = {name: mode for mode, name in MODE_NAMES.items()}
+  try:
+    modes = tuple(by_name[item.strip()] for item in text.split(",") if item.strip())
+  except KeyError as exc:
+    raise argparse.ArgumentTypeError("expected comma-separated modes from blocking,pipelined,trid") from exc
+  if not modes:
+    raise argparse.ArgumentTypeError("expected comma-separated modes from blocking,pipelined,trid")
+  return modes
 
 
 def parse_pair(text: str) -> tuple[Core, Core]:
@@ -371,6 +431,7 @@ def read_result(
   *,
   noc: int,
   op: int,
+  mode: int,
   target: Core,
   route: Route,
   packet_bytes: int,
@@ -382,11 +443,12 @@ def read_result(
     raise RuntimeError(f"{source}: bad result magic 0x{words[0]:08x}")
   if words[1] != STATUS_DONE:
     raise RuntimeError(f"{source}: benchmark did not finish, status=0x{words[1]:08x}")
-  if words[2] != noc or words[3] != op or words[4] != packet_bytes:
-    raise RuntimeError(f"{source}: result header mismatch {words[:5]}")
+  if words[2] != noc or words[3] != op or words[4] != packet_bytes or words[15] != mode:
+    raise RuntimeError(f"{source}: result header mismatch {words[:6]} mode={words[15]}")
   start = words[8] | (words[9] << 32)
-  end = words[10] | (words[11] << 32)
-  before, after = words[12], words[13]
+  issue_end = words[10] | (words[11] << 32)
+  completion_end = words[16] | (words[17] << 32)
+  before, after_complete, after_issue = words[12], words[13], words[18]
   return Result(
     noc=noc,
     op=op,
@@ -403,8 +465,11 @@ def read_result(
     wraps=route.wraps,
     packet_bytes=packet_bytes,
     iters=words[5],
-    cycles=(end - start) & ((1 << 64) - 1),
-    counter_delta=(after - before) & 0xFFFFFFFF,
+    mode=mode,
+    cycles=(issue_end - start) & ((1 << 64) - 1),
+    completion_cycles=(completion_end - start) & ((1 << 64) - 1),
+    issue_counter_delta=(after_issue - before) & 0xFFFFFFFF,
+    counter_delta=(after_complete - before) & 0xFFFFFFFF,
     sink=words[14],
   )
 
@@ -427,27 +492,80 @@ def fit_line(points: list[tuple[float, float]]) -> tuple[float, float]:
 
 def format_results(results: list[Result]) -> str:
   lines = [
-    "| case | noc | op | translated src | translated dst | raw noc0 route | raw noc route | hops | x | y | wraps | bytes | iters | cyc/iter | B/cyc | counter | sink |",
-    "|---|---:|---|---|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
+    "| case | mode | noc | op | translated src | translated dst | raw noc0 route | raw noc route | hops | x | y | wraps | bytes | iters | issue cyc/iter | complete cyc/iter | tail cyc | B/cyc issue | issue ctr | complete ctr | sink |",
+    "|---|---|---:|---|---|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
   ]
   for r in results:
     lines.append(
-      f"| {r.case} | {r.noc} | {OP_NAMES[r.op]} | `{r.source[0]},{r.source[1]}` | `{r.target[0]},{r.target[1]}` | "
+      f"| {r.case} | {MODE_NAMES[r.mode]} | {r.noc} | {OP_NAMES[r.op]} | `{r.source[0]},{r.source[1]}` | `{r.target[0]},{r.target[1]}` | "
       f"`{r.raw0_source[0]},{r.raw0_source[1]}->{r.raw0_target[0]},{r.raw0_target[1]}` | "
       f"`{r.raw_source[0]},{r.raw_source[1]}->{r.raw_target[0]},{r.raw_target[1]}` | "
       f"{r.hops} | {r.x_hops} | {r.y_hops} | {r.wraps} | {r.packet_bytes} | {r.iters} | {r.cycles_per_iter:.3f} | "
-      f"{r.bytes_per_cycle:.3f} | {r.counter_delta} | 0x{r.sink:08x} |"
+      f"{r.completion_cycles_per_iter:.3f} | {r.completion_tail_cycles} | {r.bytes_per_cycle:.3f} | "
+      f"{r.issue_counter_delta} | {r.counter_delta} | 0x{r.sink:08x} |"
     )
   lines.append("")
-  lines.append("| noc | op | bytes | slope cyc/hop | intercept cyc |")
-  lines.append("|---:|---|---:|---:|---:|")
-  grouped: dict[tuple[int, int, int], list[tuple[float, float]]] = {}
+  lines.append("| mode | noc | op | bytes | issue slope cyc/hop | issue intercept cyc | complete slope cyc/hop | complete intercept cyc |")
+  lines.append("|---|---:|---|---:|---:|---:|---:|---:|")
+  grouped: dict[tuple[int, int, int, int], list[Result]] = {}
   for r in results:
-    grouped.setdefault((r.noc, r.op, r.packet_bytes), []).append((r.hops, r.cycles_per_iter))
-  for (noc, op, packet_bytes), points in sorted(grouped.items()):
-    slope, intercept = fit_line(points)
-    lines.append(f"| {noc} | {OP_NAMES[op]} | {packet_bytes} | {slope:.3f} | {intercept:.3f} |")
+    grouped.setdefault((r.mode, r.noc, r.op, r.packet_bytes), []).append(r)
+  for (mode, noc, op, packet_bytes), rows in sorted(grouped.items()):
+    issue_slope, issue_intercept = fit_line([(r.hops, r.cycles_per_iter) for r in rows])
+    complete_slope, complete_intercept = fit_line([(r.hops, r.completion_cycles_per_iter) for r in rows])
+    lines.append(
+      f"| {MODE_NAMES[mode]} | {noc} | {OP_NAMES[op]} | {packet_bytes} | "
+      f"{issue_slope:.3f} | {issue_intercept:.3f} | {complete_slope:.3f} | {complete_intercept:.3f} |"
+    )
+  lines.extend(format_decomposition(results))
   return "\n".join(lines)
+
+
+def format_decomposition(results: list[Result]) -> list[str]:
+  by_key = {
+    (r.mode, r.noc, r.op, r.packet_bytes, r.case): r
+    for r in results
+  }
+  rows: list[str] = [
+    "",
+    "| case | noc | op | bytes | blocking cyc/iter | pipelined issue cyc/iter | pipelined complete cyc/iter | pipelined tail cyc | blocking-minus-issue cyc |",
+    "|---|---:|---|---:|---:|---:|---:|---:|---:|",
+  ]
+  any_row = False
+  for key, blocking in sorted(by_key.items()):
+    mode, noc, op, packet_bytes, case = key
+    if mode != MODE_BLOCKING:
+      continue
+    pipelined = by_key.get((MODE_PIPELINED, noc, op, packet_bytes, case))
+    if pipelined is None:
+      continue
+    any_row = True
+    rows.append(
+      f"| {case} | {noc} | {OP_NAMES[op]} | {packet_bytes} | "
+      f"{blocking.cycles_per_iter:.3f} | {pipelined.cycles_per_iter:.3f} | "
+      f"{pipelined.completion_cycles_per_iter:.3f} | {pipelined.completion_tail_cycles} | "
+      f"{blocking.cycles_per_iter - pipelined.cycles_per_iter:.3f} |"
+    )
+  if not any_row:
+    return []
+
+  rw_rows = [
+    "",
+    "| case | mode | noc | bytes | read-minus-write issue cyc | read-minus-write complete cyc |",
+    "|---|---|---:|---:|---:|---:|",
+  ]
+  for r in sorted(results, key=lambda item: (item.case, item.mode, item.noc, item.packet_bytes, item.op)):
+    if r.op != OP_READ:
+      continue
+    write = by_key.get((r.mode, r.noc, OP_WRITE, r.packet_bytes, r.case))
+    if write is None:
+      continue
+    rw_rows.append(
+      f"| {r.case} | {MODE_NAMES[r.mode]} | {r.noc} | {r.packet_bytes} | "
+      f"{r.cycles_per_iter - write.cycles_per_iter:.3f} | "
+      f"{r.completion_cycles_per_iter - write.completion_cycles_per_iter:.3f} |"
+    )
+  return rows + rw_rows
 
 
 def format_coordinate_map(cmap: TensixCoordinateMap) -> str:
@@ -468,10 +586,13 @@ def append_report(path: Path, *, args, cmap: TensixCoordinateMap, results: list[
   harness.append_report(path, "NoC packet latency", [
     f"NoCs: `{','.join(str(noc) for noc in args.nocs)}`",
     f"Ops: `{','.join(OP_NAMES[op] for op in args.ops)}`",
+    f"Modes: `{','.join(MODE_NAMES[mode] for mode in args.modes)}`",
     f"Sizes: `{','.join(str(size) for size in args.sizes)}` bytes",
     f"Iters: `{args.iters}`",
-    "Traffic: one source issues one blocking packet per iteration and waits for read response or write ack each iteration.",
-    "Purpose: small-packet read/write intercept, hop slope, and one-way unicast latency calibration.",
+    "Blocking traffic: one source issues one packet per iteration and waits for read response or write ack each iteration.",
+    "Pipelined traffic: one source issues all packets back-to-back, records issue time, then drains read responses or write acks.",
+    "TRID traffic: read-only blocking traffic that waits for per-transaction-ID outstanding count to reach zero instead of polling the aggregate read-response counter.",
+    "Purpose: split small-packet issue cost from completion, turnaround, poll, and fabric latency.",
     format_coordinate_map(cmap),
   ], format_results(results))
 
@@ -480,6 +601,7 @@ def main() -> None:
   parser = argparse.ArgumentParser(description="Harvest-aware safe L1 unicast NoC packet latency/hop sweep.")
   parser.add_argument("--nocs", type=hop_sweep.parse_nocs, default=(0, 1))
   parser.add_argument("--ops", type=parse_ops, default=parse_ops("read,write"))
+  parser.add_argument("--mode", "--modes", dest="modes", type=parse_modes, default=parse_modes("blocking"), help="comma-separated modes: blocking,pipelined,trid")
   parser.add_argument("--sizes", type=parse_sizes, default=parse_sizes("4,16,64,256,4096,16384"))
   parser.add_argument("--row", type=int, default=None, help="translated worker row for automatic source selection")
   parser.add_argument("--core", type=harness.parse_core, default=None, help="translated source worker X,Y")
@@ -504,24 +626,29 @@ def main() -> None:
       for route in routes_from_args(args, device.cores, noc, cmap):
         for op in args.ops:
           for packet_bytes in args.sizes:
-            seed(device, route.source, route.target)
-            device.run(build_program(
-              noc=noc,
-              op=op,
-              packet_bytes=packet_bytes,
-              iters=args.iters,
-              source=route.source,
-              target=route.target,
-            ))
-            results.append(read_result(
-              device,
-              route.source,
-              noc=noc,
-              op=op,
-              target=route.target,
-              route=route,
-              packet_bytes=packet_bytes,
-            ))
+            for mode in args.modes:
+              if mode == MODE_TRID and op != OP_READ:
+                continue
+              seed(device, route.source, route.target)
+              device.run(build_program(
+                noc=noc,
+                op=op,
+                mode=mode,
+                packet_bytes=packet_bytes,
+                iters=args.iters,
+                source=route.source,
+                target=route.target,
+              ))
+              results.append(read_result(
+                device,
+                route.source,
+                noc=noc,
+                op=op,
+                mode=mode,
+                target=route.target,
+                route=route,
+                packet_bytes=packet_bytes,
+              ))
 
   print(format_coordinate_map(cmap))
   print()
