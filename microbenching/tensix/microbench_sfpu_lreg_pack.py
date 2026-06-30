@@ -46,6 +46,7 @@ from dsl import (  # noqa: E402
   TTSEMPOST,
   TTSEMWAIT,
   TTWRCFG,
+  TTZEROACC,
   s0,
   s2,
   t0,
@@ -83,6 +84,8 @@ HEADER_SIZE = HEADER_WORDS * 4
 SYNC_BASE = RESULT_BASE + 0x80
 SYNC_MATH_READY = SYNC_BASE + 0x00
 SYNC_PACK_READY = SYNC_BASE + 0x04
+SYNC_MATH_STAGE = SYNC_BASE + 0x10
+SYNC_PACK_STAGE = SYNC_BASE + 0x14
 
 OUT_CB = 16
 OUT_CB_BASE = TensixL1.DATA_BUFFER_SPACE_BASE
@@ -100,6 +103,7 @@ RAWBITS_VALUES = (
   0xCAFEBABE,
 )
 DEFAULT_RAW_LOAD_GAP = 1
+DEFAULT_RAW_LOAD_ORDER = "upper-lower"
 
 SFPU_STORE_MODES = {
   "fp32": 3,
@@ -167,6 +171,9 @@ def emit_enable_dst32(fw: KernelBase):
   fw.emit(TTATGETM(0))
   fw.push_tensix(TTRMWCIB3(Mask=0x60, Data=0x60, CfgRegAddr=Cfg.ALU.addr32))
   fw.emit(TTATRELM(0))
+  fw.emit(TTSTALLWAIT(TensixStall.CFG, TensixWait.MATH))
+  fw.emit(TTZEROACC(3, 0, 0, 1, 0))
+  fw.emit(TTSTALLWAIT(TensixStall.MATH, TensixWait.MATH))
   return fw
 
 
@@ -176,7 +183,7 @@ def emit_sfpu_nops(fw: KernelBase, count: int):
   return fw
 
 
-def emit_seed_lregs(fw: KernelBase, setup: str, *, raw_load_gap: int):
+def emit_seed_lregs(fw: KernelBase, setup: str, *, raw_load_gap: int, raw_load_order: str):
   if setup == "constants":
     for lreg in range(LREGS):
       sfpu_load_fp32_const(fw, lreg, float(lreg))
@@ -187,9 +194,16 @@ def emit_seed_lregs(fw: KernelBase, setup: str, *, raw_load_gap: int):
     return fw
   if setup == "rawbits":
     for lreg, value in enumerate(RAWBITS_VALUES):
-      fw.emit(TTSFPLOADI(lreg, 10, value & 0xFFFF))
-      emit_sfpu_nops(fw, raw_load_gap)
-      fw.emit(TTSFPLOADI(lreg, 8, value >> 16))
+      if raw_load_order == "upper-lower":
+        fw.emit(TTSFPLOADI(lreg, 8, value >> 16))
+        emit_sfpu_nops(fw, raw_load_gap)
+        fw.emit(TTSFPLOADI(lreg, 10, value & 0xFFFF))
+      elif raw_load_order == "lower-upper":
+        fw.emit(TTSFPLOADI(lreg, 10, value & 0xFFFF))
+        emit_sfpu_nops(fw, raw_load_gap)
+        fw.emit(TTSFPLOADI(lreg, 8, value >> 16))
+      else:
+        raise ValueError(raw_load_order)
       emit_sfpu_nops(fw, raw_load_gap)
     return fw
   raise ValueError(setup)
@@ -205,37 +219,48 @@ def emit_store_lregs_to_dest(fw: KernelBase, *, sfpu_store: str):
   return fw.tensix_sync(1, tmp=t1)
 
 
-def build_trisc1(*, setup: str, sfpu_store: str, pack_dtype: Dtype, raw_load_gap: int) -> KernelBase:
+def build_trisc1(
+  *, setup: str, sfpu_store: str, pack_dtype: Dtype, raw_load_gap: int, raw_load_order: str
+) -> KernelBase:
   fw = MathKernel()
   fw.math = Math(fw)
   fw.data = TriscMailbox.DATA1
   emit_header(fw, status=STATUS_STARTED, tile_bytes=pack_dtype.tile_size, sfpu_store=sfpu_store, pack_dtype=pack_dtype)
   fw.write32(SYNC_MATH_READY, 0)
   fw.write32(SYNC_PACK_READY, 0)
+  fw.write32(SYNC_MATH_STAGE, 0x1100)
   fw.write32(fw.data["dest_offset_id"], 0)
 
   fw.math.init(dtype=Dtype.Float16_b, mop_cfg=NOOP_MOP_CFG)
+  fw.write32(SYNC_MATH_STAGE, 0x1110)
   emit_enable_dst32(fw)
   fw.write32(SYNC_MATH_READY, 1)
-  fw.li(t0, 1)
-  fw.wait_sync_value(SYNC_PACK_READY, t0, actual=t1)
+  fw.li(t2, 1)
+  fw.wait_sync_value(SYNC_PACK_READY, t2, actual=t1)
+  fw.write32(SYNC_MATH_STAGE, 0x1120)
 
-  emit_seed_lregs(fw, setup, raw_load_gap=raw_load_gap)
+  emit_seed_lregs(fw, setup, raw_load_gap=raw_load_gap, raw_load_order=raw_load_order)
+  fw.write32(SYNC_MATH_STAGE, 0x1130)
   emit_store_lregs_to_dest(fw, sfpu_store=sfpu_store)
+  fw.write32(SYNC_MATH_STAGE, 0x1140)
   fw.emit(TTSEMPOST(TensixSem.mask(TensixSem.MATH_PACK)))
   fw.tensix_sync(1, tmp=t1)
+  fw.write32(SYNC_MATH_STAGE, 0x1150)
   return fw.ret()
 
 
 def emit_pack_one_tile(fw: PackKernel):
+  fw.write32(SYNC_PACK_STAGE, 0x1230)
   fw.emit(TTSEMWAIT(
     TensixStall.TDMA,
     TensixSem.mask(TensixSem.MATH_PACK),
     TensixSemWait.STALL_ON_ZERO,
   ))
+  fw.write32(SYNC_PACK_STAGE, 0x1240)
   fw.cb_reserve_back(fw.data["cb_interface"], OUT_CB)
   fw.cb_write_ptr(fw.data["cb_interface"], OUT_CB, out=s0)
   fw.addi(s0, s0, -1)
+  fw.write32(SYNC_PACK_STAGE, 0x1250)
 
   fw.emit(TTSETADC(4, 0, 3, 0))
   fw.slli(t1, s0, 8)
@@ -268,9 +293,11 @@ def emit_pack_one_tile(fw: PackKernel):
 
   fw.emit(TTMOP(1, 0, 0))
   fw.tensix_sync(2, tmp=t1)
+  fw.write32(SYNC_PACK_STAGE, 0x1260)
   fw.emit(TTSETADCZW(4, 0, 0, 0, 0, 5))
   fw.cb_push_back(fw.data["cb_interface"], OUT_CB, tensix_received=True)
   fw.emit(TTSTALLWAIT(TensixStall.SYNC | TensixStall.THCON, TensixWait.PACK0))
+  fw.write32(SYNC_PACK_STAGE, 0x1270)
   fw.emit(TTSEMGET(TensixSem.mask(TensixSem.MATH_PACK)))
   fw.emit(TTDMANOP())
   fw.emit(TTDMANOP())
@@ -281,22 +308,33 @@ def build_trisc2(*, sfpu_store: str, pack_dtype: Dtype) -> KernelBase:
   fw = PackKernel()
   fw.pack = Pack(fw)
   fw.data = TriscMailbox.DATA_COMMON
+  fw.write32(SYNC_PACK_STAGE, 0x1200)
   fw.pack.init(dtype=pack_dtype, out_cb=OUT_CB, mop_cfg=PACK_MOP_CFG, fp32_dest=True)
+  fw.write32(SYNC_PACK_STAGE, 0x1210)
   fw.write32(SYNC_PACK_READY, 1)
-  fw.li(t0, 1)
-  fw.wait_sync_value(SYNC_MATH_READY, t0, actual=t1)
+  fw.li(t2, 1)
+  fw.wait_sync_value(SYNC_MATH_READY, t2, actual=t1)
+  fw.write32(SYNC_PACK_STAGE, 0x1220)
   emit_pack_one_tile(fw)
   emit_header(fw, status=STATUS_PACK_DONE, tile_bytes=pack_dtype.tile_size, sfpu_store=sfpu_store, pack_dtype=pack_dtype)
   return fw.ret()
 
 
-def build_program(*, setup: str, sfpu_store: str, pack_dtype: Dtype, raw_load_gap: int) -> Program:
+def build_program(
+  *, setup: str, sfpu_store: str, pack_dtype: Dtype, raw_load_gap: int, raw_load_order: str
+) -> Program:
   empty = KernelBase().ret()
   prog = Program(
     brisc=empty,
     ncrisc=empty,
     trisc0=empty,
-    trisc1=build_trisc1(setup=setup, sfpu_store=sfpu_store, pack_dtype=pack_dtype, raw_load_gap=raw_load_gap),
+    trisc1=build_trisc1(
+      setup=setup,
+      sfpu_store=sfpu_store,
+      pack_dtype=pack_dtype,
+      raw_load_gap=raw_load_gap,
+      raw_load_order=raw_load_order,
+    ),
     trisc2=build_trisc2(sfpu_store=sfpu_store, pack_dtype=pack_dtype),
     cbs=[(OUT_CB, pack_dtype.tile_size, 2)],
     semaphores=2,
@@ -334,11 +372,30 @@ def run_pack_dump(
   sfpu_store: str,
   pack_dtype: Dtype,
   raw_load_gap: int,
+  raw_load_order: str,
   core: tuple[int, int],
   timeout_s: float,
 ) -> bytes:
   clear_results(device, core, tile_bytes=pack_dtype.tile_size)
-  device.run(build_program(setup=setup, sfpu_store=sfpu_store, pack_dtype=pack_dtype, raw_load_gap=raw_load_gap))
+  try:
+    device.run(build_program(
+      setup=setup,
+      sfpu_store=sfpu_store,
+      pack_dtype=pack_dtype,
+      raw_load_gap=raw_load_gap,
+      raw_load_order=raw_load_order,
+    ))
+  except TimeoutError:
+    diag = harness.read_window(device, core, RESULT_BASE, 0xA0)
+    words = struct.unpack("<" + "I" * (len(diag) // 4), diag)
+    print(
+      "timeout_diag "
+      f"magic=0x{words[0]:08x} status=0x{words[2]:08x} "
+      f"math_ready=0x{words[0x80 // 4]:08x} pack_ready=0x{words[0x84 // 4]:08x} "
+      f"math_stage=0x{words[0x90 // 4]:08x} pack_stage=0x{words[0x94 // 4]:08x}",
+      file=sys.stderr,
+    )
+    raise
   _, tile = wait_and_read(device, core, tile_bytes=pack_dtype.tile_size, timeout_s=timeout_s)
   return tile
 
@@ -372,13 +429,20 @@ def print_pack_dump(tile: bytes, *, setup: str, sfpu_store: str, pack_dtype: Dty
     print(f"row {row:02d}: {row_text}{suffix}")
 
 
-def build_only(setup: str, sfpu_store: str, pack_dtype: Dtype, raw_load_gap: int):
-  prog = build_program(setup=setup, sfpu_store=sfpu_store, pack_dtype=pack_dtype, raw_load_gap=raw_load_gap)
+def build_only(setup: str, sfpu_store: str, pack_dtype: Dtype, raw_load_gap: int, raw_load_order: str):
+  prog = build_program(
+    setup=setup,
+    sfpu_store=sfpu_store,
+    pack_dtype=pack_dtype,
+    raw_load_gap=raw_load_gap,
+    raw_load_order=raw_load_order,
+  )
   trisc1_bytes = sum(len(seg.data) for seg in prog.trisc1.compile())
   trisc2_bytes = sum(len(seg.data) for seg in prog.trisc2.compile())
   print(
     f"build ok: setup={setup} sfpu_store={sfpu_store} pack_dtype={pack_dtype.name} "
-    f"raw_load_gap={raw_load_gap} trisc1_bytes={trisc1_bytes} trisc2_bytes={trisc2_bytes} "
+    f"raw_load_gap={raw_load_gap} raw_load_order={raw_load_order} "
+    f"trisc1_bytes={trisc1_bytes} trisc2_bytes={trisc2_bytes} "
     f"tile_bytes={pack_dtype.tile_size}"
   )
 
@@ -389,6 +453,7 @@ def main() -> int:
   parser.add_argument("--sfpu-store", choices=tuple(SFPU_STORE_MODES), default="raw32")
   parser.add_argument("--pack-dtype", choices=tuple(PACK_DTYPES), default="int32")
   parser.add_argument("--raw-load-gap", type=int, default=DEFAULT_RAW_LOAD_GAP)
+  parser.add_argument("--raw-load-order", choices=("upper-lower", "lower-upper"), default=DEFAULT_RAW_LOAD_ORDER)
   parser.add_argument("--core", type=harness.parse_core, default=None)
   parser.add_argument("--timeout", type=float, default=2.0)
   parser.add_argument("--full", action="store_true", help="print all 32 rows and columns")
@@ -397,7 +462,7 @@ def main() -> int:
 
   pack_dtype = PACK_DTYPES[args.pack_dtype]
   if args.build_only:
-    build_only(args.setup, args.sfpu_store, pack_dtype, args.raw_load_gap)
+    build_only(args.setup, args.sfpu_store, pack_dtype, args.raw_load_gap, args.raw_load_order)
     return 0
 
   with harness.open_device() as device:
@@ -408,6 +473,7 @@ def main() -> int:
       sfpu_store=args.sfpu_store,
       pack_dtype=pack_dtype,
       raw_load_gap=args.raw_load_gap,
+      raw_load_order=args.raw_load_order,
       core=core,
       timeout_s=args.timeout,
     )
