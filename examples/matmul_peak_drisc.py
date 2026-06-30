@@ -66,12 +66,19 @@ DRISC_CHUNK_TILES = 6
 DRISC_CHUNK_BYTES = DRISC_CHUNK_TILES * TILE_BYTES
 FEEDER_GDDR_BASE = 0x10000000
 RUNS = base.RUNS
-PAYLOAD_NOC_MODE = "split"
+PAYLOAD_NOC_MODE = os.environ.get("DRISC_PAYLOAD_NOC_MODE", "split")
 DRISC_MCAST_PATH_RESERVE = os.environ.get("DRISC_MCAST_PATH_RESERVE", "1") != "0"
 DRISC_PREFETCH_FEEDS = os.environ.get("DRISC_PREFETCH_FEEDS", "0") != "0"
+DRISC_FEED_DATA_READ_BARRIER = os.environ.get(
+  "DRISC_FEED_DATA_READ_BARRIER",
+  "0",
+) != "0"
 USE_ALL_FEEDERS = True
 FIXED_5000_PLAN = True
-FIXED_5000_N_CHUNKS = 1
+FIXED_5000_N_CHUNKS = int(os.environ.get(
+  "FIXED_5000_N_CHUNKS",
+  "1",
+))
 FIXED_5000_M_SPLIT_ALL_CORES = False
 ACCEPT_CORRUPT_FEEDER_HEADER = False
 POLL_FINAL_FEEDER_STATUS = True
@@ -114,7 +121,7 @@ def select_dtype(dtype: str) -> None:
     # completion signal; validation still gates correctness.
     ALLOW_FEEDER_TIMEOUT_AFTER_WORKERS_DONE = True
     SMALL_SHAPE_MAX_FEEDERS = 0
-    _EMIT_BREADCRUMBS = False
+    _EMIT_BREADCRUMBS = base.ENABLE_BREADCRUMBS
   INPUT_TILE_BYTES = INPUT_DTYPE.tile_size
   OUTPUT_TILE_BYTES = OUTPUT_DTYPE.tile_size
   TILE_BYTES = INPUT_TILE_BYTES
@@ -168,19 +175,21 @@ def _request_and_wait(fw: base.MatmulKernel, *, request_addr: int, dst, size: in
   return _request_wait_done(fw, request_addr=request_addr, seq=seq)
 
 
-def _drisc_mcast_ctrl() -> int:
+def _drisc_mcast_ctrl(linked: bool = False) -> int:
   ctrl = (
     NOC.CMD_CPY | NOC.CMD_WR | NOC.CMD_RESP_MARKED | NOC.CMD_VC_STATIC |
     NOC.CMD_STATIC_VC_5 | NOC.CMD_BRCST_PACKET
   )
+  if linked:
+    ctrl |= NOC.CMD_VC_LINKED
   if DRISC_MCAST_PATH_RESERVE:
     ctrl |= NOC.CMD_PATH_RESERVE
   return ctrl
 
 
-def _drisc_mcast_write(fw: base.MatmulKernel, noc_id: int, src_addr, dst_addr, coord, length, *, a=t1, v=t2):
+def _drisc_mcast_write(fw: base.MatmulKernel, noc_id: int, src_addr, dst_addr, coord, length, *, linked: bool = False, a=t1, v=t2):
   fw.noc_wait_cmd_ready(noc_id, 0, addr=a, val=v)
-  fw.noc_cmd_reg(noc_id, 0, NOC.CTRL, _drisc_mcast_ctrl(), addr=a, tmp=v)
+  fw.noc_cmd_reg(noc_id, 0, NOC.CTRL, _drisc_mcast_ctrl(linked), addr=a, tmp=v)
   fw.noc_cmd_reg(noc_id, 0, NOC.TARG_ADDR_LO, src_addr, addr=a, tmp=v)
   fw.noc_cmd_reg(noc_id, 0, NOC.RET_ADDR_LO, dst_addr, addr=a, tmp=v)
   fw.noc_cmd_reg(noc_id, 0, NOC.RET_ADDR_MID, 0, addr=a, tmp=v)
@@ -198,7 +207,9 @@ def _emit_drisc_mcast_chunks(fw: base.MatmulKernel, noc_id: int, src_addr, coord
   for chunk in range(chunks):
     size = min(NOC.MAX_BURST_SIZE, total_bytes - chunk * NOC.MAX_BURST_SIZE)
     fw.li(tmp, size)
-    _drisc_mcast_write(fw, noc_id, src_addr, src_addr, coord, tmp, a=t1, v=t2)
+    # Chain chunks on the VC-5 path; last chunk left unlinked to release it.
+    linked = base.MCAST_LINKED and (chunk + 1) < chunks
+    _drisc_mcast_write(fw, noc_id, src_addr, src_addr, coord, tmp, linked=linked, a=t1, v=t2)
     if chunk != chunks - 1:
       fw.add(src_addr, src_addr, tmp)
   return chunks
@@ -268,52 +279,125 @@ def matmul_reader_sender_drisc(plan: base.MatmulPlan) -> base.MatmulKernel:
   fw.noc_semaphore_set(a3, 0)
   _debug_mark(fw, DEBUG_BRISC, 0xA004)
 
-  fw.arg(t0, 13)
-  fw.beq(t0, zero, "reader_sender_skip_west")
-  fw.arg(t1, 9)
-  fw.arg(t2, 10)
-  fw.arg(t3, 11)
-  fw.arg(t5, 12)
-  fw.noc_mcast_coord(a5, t1, t2, t3, t5)
-  fw.li(t0, NOC.STATUS_BASE + NOC.NIU_MST_NONPOSTED_WR_REQ_SENT)
-  fw.lw(a6, t0, 0)
-  fw.addi(a6, a6, base._ceil_div(block_bytes, NOC.MAX_BURST_SIZE))
-  fw.mv(a0, s9)
-  _emit_drisc_mcast_chunks(fw, 0, a0, a5, block_bytes)
-  fw.noc_nonposted_writes_flushed(0, a6)
-  fw.arg(t0, 22)
-  fw.sem_addr(BM.SEM_L1_BASE, t0, out=a4)
-  fw.arg(t1, 9)
-  fw.arg(t2, 10)
-  fw.arg(t3, 11)
-  fw.arg(t5, 12)
-  fw.noc_mcast_coord(a5, t1, t2, t3, t5)
-  _drisc_semaphore_set_multicast(fw, 0, a4, a5, 1, t0, a=t1, v=t2)
-  fw.label("reader_sender_skip_west")
-  _debug_mark(fw, DEBUG_BRISC, 0xA005)
+  if base.OVERLAY_MCAST_A:
+    fw.arg(t0, 13)
+    fw.beq(t0, zero, "reader_sender_overlay_skip_west_data")
+    fw.arg(t1, 9)
+    fw.arg(t2, 10)
+    fw.arg(t3, 11)
+    fw.arg(t5, 12)
+    fw.mv(a0, s9)
+    _debug_mark(fw, DEBUG_BRISC, 0xA051)
+    base._emit_overlay_mcast_write(
+      fw, noc_id=0, stream_id=base.OVERLAY_STREAM_BRISC_MCAST, src_addr=a0,
+      x_start=t1, y_start=t2, x_end=t3, y_end=t5, total_bytes=block_bytes,
+    )
+    if base.OVERLAY_READ_BARRIER:
+      fw.arg(t1, 11)
+      fw.arg(t2, 12)
+      fw.noc_coord(a5, t1, t2)
+      base._emit_overlay_remote_read_barrier(
+        fw, noc_id=0, remote_addr=s9, remote_coord=a5, total_bytes=block_bytes,
+      )
+    _debug_mark(fw, DEBUG_BRISC, 0xA052)
+    fw.label("reader_sender_overlay_skip_west_data")
 
-  fw.arg(t0, 18)
-  fw.beq(t0, zero, "reader_sender_skip_east")
-  fw.arg(t1, 14)
-  fw.arg(t2, 15)
-  fw.arg(t3, 16)
-  fw.arg(t5, 17)
-  fw.noc_mcast_coord(a5, t1, t2, t3, t5)
-  fw.li(t0, NOC.STATUS_BASE + NOC.NIU_MST_NONPOSTED_WR_REQ_SENT)
-  fw.lw(a6, t0, 0)
-  fw.addi(a6, a6, base._ceil_div(block_bytes, NOC.MAX_BURST_SIZE))
-  fw.mv(a0, s9)
-  _emit_drisc_mcast_chunks(fw, 0, a0, a5, block_bytes)
-  fw.noc_nonposted_writes_flushed(0, a6)
-  fw.arg(t0, 22)
-  fw.sem_addr(BM.SEM_L1_BASE, t0, out=a4)
-  fw.arg(t1, 14)
-  fw.arg(t2, 15)
-  fw.arg(t3, 16)
-  fw.arg(t5, 17)
-  fw.noc_mcast_coord(a5, t1, t2, t3, t5)
-  _drisc_semaphore_set_multicast(fw, 0, a4, a5, 1, t0, a=t1, v=t2)
-  fw.label("reader_sender_skip_east")
+    fw.arg(t0, 18)
+    fw.beq(t0, zero, "reader_sender_overlay_skip_east_data")
+    fw.arg(t1, 14)
+    fw.arg(t2, 15)
+    fw.arg(t3, 16)
+    fw.arg(t5, 17)
+    fw.mv(a0, s9)
+    _debug_mark(fw, DEBUG_BRISC, 0xA053)
+    base._emit_overlay_mcast_write(
+      fw, noc_id=0, stream_id=base.OVERLAY_STREAM_BRISC_MCAST, src_addr=a0,
+      x_start=t1, y_start=t2, x_end=t3, y_end=t5, total_bytes=block_bytes,
+    )
+    if base.OVERLAY_READ_BARRIER:
+      fw.arg(t1, 16)
+      fw.arg(t2, 17)
+      fw.noc_coord(a5, t1, t2)
+      base._emit_overlay_remote_read_barrier(
+        fw, noc_id=0, remote_addr=s9, remote_coord=a5, total_bytes=block_bytes,
+      )
+    _debug_mark(fw, DEBUG_BRISC, 0xA054)
+    fw.label("reader_sender_overlay_skip_east_data")
+
+    fw.arg(t0, 13)
+    fw.beq(t0, zero, "reader_sender_overlay_skip_west_sem")
+    fw.arg(t0, 22)
+    fw.sem_addr(BM.SEM_L1_BASE, t0, out=a4)
+    fw.arg(t1, 9)
+    fw.arg(t2, 10)
+    fw.arg(t3, 11)
+    fw.arg(t5, 12)
+    fw.noc_mcast_coord(a5, t1, t2, t3, t5)
+    _debug_mark(fw, DEBUG_BRISC, 0xA055)
+    base._emit_data_ready_mcast(fw, noc_id=0, sem_addr=a4, coord=a5, flush=True)
+    _debug_mark(fw, DEBUG_BRISC, 0xA056)
+    fw.label("reader_sender_overlay_skip_west_sem")
+
+    fw.arg(t0, 18)
+    fw.beq(t0, zero, "reader_sender_overlay_skip_east_sem")
+    fw.arg(t0, 22)
+    fw.sem_addr(BM.SEM_L1_BASE, t0, out=a4)
+    fw.arg(t1, 14)
+    fw.arg(t2, 15)
+    fw.arg(t3, 16)
+    fw.arg(t5, 17)
+    fw.noc_mcast_coord(a5, t1, t2, t3, t5)
+    _debug_mark(fw, DEBUG_BRISC, 0xA057)
+    base._emit_data_ready_mcast(fw, noc_id=0, sem_addr=a4, coord=a5, flush=True)
+    _debug_mark(fw, DEBUG_BRISC, 0xA058)
+    fw.label("reader_sender_overlay_skip_east_sem")
+  else:
+    fw.arg(t0, 13)
+    fw.beq(t0, zero, "reader_sender_skip_west")
+    fw.arg(t1, 9)
+    fw.arg(t2, 10)
+    fw.arg(t3, 11)
+    fw.arg(t5, 12)
+    fw.mv(a0, s9)
+    fw.noc_mcast_coord(a5, t1, t2, t3, t5)
+    fw.li(t0, NOC.STATUS_BASE + NOC.NIU_MST_NONPOSTED_WR_REQ_SENT)
+    fw.lw(a6, t0, 0)
+    fw.addi(a6, a6, base._ceil_div(block_bytes, NOC.MAX_BURST_SIZE))
+    _emit_drisc_mcast_chunks(fw, 0, a0, a5, block_bytes)
+    fw.noc_nonposted_writes_flushed(0, a6)
+    fw.arg(t0, 22)
+    fw.sem_addr(BM.SEM_L1_BASE, t0, out=a4)
+    fw.arg(t1, 9)
+    fw.arg(t2, 10)
+    fw.arg(t3, 11)
+    fw.arg(t5, 12)
+    fw.noc_mcast_coord(a5, t1, t2, t3, t5)
+    _drisc_semaphore_set_multicast(fw, 0, a4, a5, 1, t0, a=t1, v=t2)
+    fw.label("reader_sender_skip_west")
+    _debug_mark(fw, DEBUG_BRISC, 0xA005)
+
+    fw.arg(t0, 18)
+    fw.beq(t0, zero, "reader_sender_skip_east")
+    fw.arg(t1, 14)
+    fw.arg(t2, 15)
+    fw.arg(t3, 16)
+    fw.arg(t5, 17)
+    fw.mv(a0, s9)
+    fw.noc_mcast_coord(a5, t1, t2, t3, t5)
+    fw.li(t0, NOC.STATUS_BASE + NOC.NIU_MST_NONPOSTED_WR_REQ_SENT)
+    fw.lw(a6, t0, 0)
+    fw.addi(a6, a6, base._ceil_div(block_bytes, NOC.MAX_BURST_SIZE))
+    _emit_drisc_mcast_chunks(fw, 0, a0, a5, block_bytes)
+    fw.noc_nonposted_writes_flushed(0, a6)
+    fw.arg(t0, 22)
+    fw.sem_addr(BM.SEM_L1_BASE, t0, out=a4)
+    fw.arg(t1, 14)
+    fw.arg(t2, 15)
+    fw.arg(t3, 16)
+    fw.arg(t5, 17)
+    fw.noc_mcast_coord(a5, t1, t2, t3, t5)
+    _drisc_semaphore_set_multicast(fw, 0, a4, a5, 1, t0, a=t1, v=t2)
+    fw.label("reader_sender_skip_east")
   _debug_mark(fw, DEBUG_BRISC, 0xA006)
   if DRISC_PREFETCH_FEEDS:
     fw.addi(s4, s6, 1)
@@ -419,13 +503,29 @@ def matmul_writer_sender_drisc(plan: base.MatmulPlan, *, output_coord_offset_wor
   fw.arg(t2, 10)
   fw.arg(t3, 11)
   fw.arg(t5, 12)
-  fw.noc_mcast_coord(a5, t1, t2, t3, t5)
-  fw.li(t0, NOC.STATUS_BASE + NOC.NIU_MST_NONPOSTED_WR_REQ_SENT + (1 << NOC.INSTANCE_OFFSET_BIT))
-  fw.lw(a6, t0, 0)
-  fw.addi(a6, a6, base._ceil_div(block_bytes, NOC.MAX_BURST_SIZE))
   fw.mv(a0, s9)
-  _emit_drisc_mcast_chunks(fw, 1, a0, a5, block_bytes)
-  fw.noc_nonposted_writes_flushed(1, a6)
+  if base.OVERLAY_MCAST_B:
+    _debug_mark(fw, DEBUG_NCRISC, 0xB051)
+    base._emit_overlay_mcast_write(
+      fw, noc_id=1, stream_id=base.OVERLAY_STREAM_NCRISC_MCAST, src_addr=a0,
+      x_start=t1, y_start=t2, x_end=t3, y_end=t5, total_bytes=block_bytes,
+      xy_mcast=True,
+    )
+    if base.OVERLAY_READ_BARRIER:
+      fw.arg(t1, 11)
+      fw.arg(t2, 12)
+      fw.noc_coord(a5, t1, t2)
+      base._emit_overlay_remote_read_barrier(
+        fw, noc_id=1, remote_addr=s9, remote_coord=a5, total_bytes=block_bytes,
+      )
+    _debug_mark(fw, DEBUG_NCRISC, 0xB052)
+  else:
+    fw.noc_mcast_coord(a5, t1, t2, t3, t5)
+    fw.li(t0, NOC.STATUS_BASE + NOC.NIU_MST_NONPOSTED_WR_REQ_SENT + (1 << NOC.INSTANCE_OFFSET_BIT))
+    fw.lw(a6, t0, 0)
+    fw.addi(a6, a6, base._ceil_div(block_bytes, NOC.MAX_BURST_SIZE))
+    _emit_drisc_mcast_chunks(fw, 1, a0, a5, block_bytes)
+    fw.noc_nonposted_writes_flushed(1, a6)
   fw.arg(t0, 17)
   fw.sem_addr(NM.SEM_L1_BASE, t0, out=a4)
   fw.arg(t1, 9)
@@ -433,7 +533,12 @@ def matmul_writer_sender_drisc(plan: base.MatmulPlan, *, output_coord_offset_wor
   fw.arg(t3, 11)
   fw.arg(t5, 12)
   fw.noc_mcast_coord(a5, t1, t2, t3, t5)
-  _drisc_semaphore_set_multicast(fw, 1, a4, a5, 1, t0, a=t1, v=t2)
+  if base.OVERLAY_MCAST_B:
+    _debug_mark(fw, DEBUG_NCRISC, 0xB053)
+    base._emit_data_ready_mcast(fw, noc_id=1, sem_addr=a4, coord=a5, flush=True)
+    _debug_mark(fw, DEBUG_NCRISC, 0xB054)
+  else:
+    _drisc_semaphore_set_multicast(fw, 1, a4, a5, 1, t0, a=t1, v=t2)
   fw.label("writer_sender_skip_mcast")
   _debug_mark(fw, DEBUG_NCRISC, 0xB005)
   if DRISC_PREFETCH_FEEDS:
@@ -603,6 +708,7 @@ def plan_matmul_drisc(M: int, K: int, N: int, cores: list[base.Core], max_feeder
   xs = tuple(sorted({x for x, _ in ordered}))
   ys = tuple(sorted({y for _, y in ordered}))
   l1_data_bytes = TensixL1.SIZE - TensixL1.DATA_BUFFER_SPACE_BASE - base.SYNC_BYTES
+  max_per_core_n = base._effective_max_per_core_n()
 
   def fits_l1(pcm: int, pcn: int, bw: int) -> bool:
     cb0 = base.INPUT_BUFFER_FACTOR * pcm * bw * INPUT_TILE_BYTES
@@ -632,7 +738,7 @@ def plan_matmul_drisc(M: int, K: int, N: int, cores: list[base.Core], max_feeder
           pcn = base._align_up(base._ceil_div(nt_base, nc), sbw)
           if base.MAX_PER_CORE_M and pcm > base.MAX_PER_CORE_M:
             continue
-          if base.MAX_PER_CORE_N and pcn > base.MAX_PER_CORE_N:
+          if max_per_core_n and pcn > max_per_core_n:
             continue
           mt = nr * pcm
           nt = nc * pcn
@@ -716,10 +822,11 @@ def plan_output_chunks_drisc(
     if split_m == 0 and split_n == 0:
       raise ValueError(f"No tiled DRISC matmul plan for M={m} K={K} N={n} feeders={max_feeders}")
 
+    prefer_n_for_cap = base.SPLIT_AXIS == "auto" and base._effective_max_per_core_n() and split_n != 0
     split_m_first = (
       split_n == 0
       or base.SPLIT_AXIS == "m"
-      or (base.SPLIT_AXIS == "auto" and split_m != 0 and m >= n)
+      or (base.SPLIT_AXIS == "auto" and not prefer_n_for_cap and split_m != 0 and m >= n)
     )
     if split_m_first:
       visit(m0, split_m, n0, n)
@@ -743,7 +850,23 @@ def _emit_remote_read_word(fw: DriscMatmulFeeder, *, noc: int, worker_coord: int
   return fw.read32(out, ACK_SCRATCH_ADDR, tmp_addr=t0)
 
 
+def _emit_remote_data_read_barrier(
+  fw: DriscMatmulFeeder, *, noc: int, worker_coord: int, dst_reg, byte_count: int, ret_coord,
+):
+  fw.read32(s7, NOC.STATUS_BASE + NOC.NIU_MST_RD_RESP_RECEIVED + (noc << NOC.INSTANCE_OFFSET_BIT), tmp_addr=t0)
+  fw.addi(s7, s7, 1)
+  fw.li(t0, byte_count - 16)
+  fw.add(a0, dst_reg, t0)
+  fw.li(a1, worker_coord)
+  fw.li(a2, 16)
+  fw.noc_read(noc, 1, a0, 0, a1, ACK_SCRATCH_ADDR, a2, ret_coord=ret_coord, a=t0, v=t1)
+  return fw.noc_reads_flushed(noc, s7, addr=t0, val=t1)
+
+
 def _emit_stage_write(fw: DriscMatmulFeeder, *, noc: int, chunk_bytes: int, worker_coord: int, dst_reg):
+  # This feeder currently writes each DRAM-L1 staging chunk to one sender
+  # worker. Streaming DRAM-L1 directly as a mcast would need the worker request
+  # ABI to carry the destination rectangle and the completion/semaphore policy.
   from drisc_gddr_dma_poc import STAGE_ADDR
   chunks = base._ceil_div(chunk_bytes, MAX_NOC_CHUNK_BYTES)
   fw.read32(t6, NOC.STATUS_BASE + NOC.NIU_MST_POSTED_WR_REQ_SENT + (noc << NOC.INSTANCE_OFFSET_BIT), tmp_addr=t0)
@@ -832,6 +955,10 @@ def build_drisc_stream_feeder(
     else:
       fw.mv(s5, s2)
     _emit_stage_write(fw, noc=noc, chunk_bytes=chunk_bytes, worker_coord=worker_coord, dst_reg=s5)
+    if DRISC_FEED_DATA_READ_BARRIER:
+      _emit_remote_data_read_barrier(
+        fw, noc=ctrl_noc, worker_coord=worker_coord, dst_reg=s5, byte_count=chunk_bytes, ret_coord=s6,
+      )
     fw.li(t0, chunk_bytes)
     fw.add(s3, s3, t0)
   _emit_status_done(fw, noc=ctrl_noc, worker_coord=worker_coord, request_addr=request_addr, seq=s0)
@@ -869,6 +996,22 @@ def stop_drisc(core: tuple[int, int], dev) -> None:
 def stop_feeders(feeders, dev) -> None:
   for dram_core, *_rest in feeders:
     stop_drisc(dram_core, dev)
+
+
+def _read_feeder_states(feeders, dev):
+  states = []
+  for idx, (dram_core, role, worker_core, size, bank, request_addr) in enumerate(feeders):
+    words = read_drisc_words(dram_core, dev)
+    with TLBWindow(dev, start=worker_core) as worker_l1:
+      req_status = struct.unpack("<I", worker_l1.read(request_addr + REQ_STATUS, 4))[0]
+      req_dst = struct.unpack("<I", worker_l1.read(request_addr + REQ_DST, 4))[0]
+      req_seq = struct.unpack("<I", worker_l1.read(request_addr + REQ_SEQ, 4))[0]
+    states.append((idx, dram_core, role, worker_core, size, bank, request_addr, words, req_status, req_dst, req_seq))
+  return states
+
+
+def _workers_reached_final_done(states, plan: base.MatmulPlan) -> bool:
+  return all(req_status == REQ_DONE and req_seq == plan.num_blocks - 1 for *_prefix, req_status, _req_dst, req_seq in states)
 
 
 def _read_l1_u32(l1: TLBWindow, addr: int) -> int:
@@ -1007,7 +1150,11 @@ def main() -> None:
     chunks = plan_output_chunks_drisc(M, K, N, device.cores, num_banks, max_plan_feeders)
     Mp, Kp, Np = base.global_padded_shape(M, K, N, chunks)
 
-    a_ref, b_ref = base.make_inputs(M, K, N)
+    # Reference inputs are plain bf16-quantized floats for both paths; the bfp4
+    # path then repacks a_padded/b_padded to BFLOAT4_B via _pack_bfp4_b_tiles.
+    # (make_inputs' default dtype is INPUT_DTYPE, which is Bfp4_b here and has no
+    # to_device_bytes encoding, so pin it to Float16_b explicitly.)
+    a_ref, b_ref = base.make_inputs(M, K, N, dtype=Dtype.Float16_b)
     a_padded = np.zeros((Mp, Kp), dtype=np.float32)
     b_padded = np.zeros((Kp, Np), dtype=np.float32)
     a_padded[:M, :K] = a_ref
@@ -1021,6 +1168,7 @@ def main() -> None:
     c_buf = device.dram.alloc((Mp // base.TILE) * (Np // base.TILE), dtype=OUTPUT_DTYPE, shape=(Mp, Np), name="C")
 
     run_times_us = []
+    feeders_to_stop = []
     for _run in range(RUNS):
       run_timings = []
       for chunk_idx, chunk in enumerate(chunks):
@@ -1056,7 +1204,12 @@ def main() -> None:
           with TLBWindow(device.dev, start=dram_core, addr=0, size=TLBWindow.SIZE_4G, wc=True) as gddr:
             gddr.write(gddr_addr, stream_data)
           request_addr = REQUEST_A if is_a else REQUEST_B
-          payload_noc = 0 if PAYLOAD_NOC_MODE == "balanced" or is_a else 1
+          if PAYLOAD_NOC_MODE == "flipped":
+            payload_noc = 1 if is_a else 0
+          elif PAYLOAD_NOC_MODE == "balanced":
+            payload_noc = 0
+          else:
+            payload_noc = 0 if is_a else 1
           code = build_drisc_stream_feeder(
             gddr_addr=gddr_addr,
             block_bytes=block_a if is_a else block_b,
@@ -1069,6 +1222,7 @@ def main() -> None:
           )
           start_drisc(dram_core, code, device.dev)
           feeders.append((dram_core, "A" if is_a else "B", worker_core, len(stream_data), bank, request_addr))
+        feeders_to_stop.extend(feeders)
 
         prog = build_program_drisc(
           plan,
@@ -1081,19 +1235,13 @@ def main() -> None:
         try:
           run_timings.extend(device.run(prog))
         except TimeoutError:
-          feeder_snapshots = []
-          for idx, (dram_core, role, worker_core, size, bank, request_addr) in enumerate(feeders):
-            words = read_drisc_words(dram_core, device.dev)
-            with TLBWindow(device.dev, start=worker_core) as worker_l1:
-              req_status = struct.unpack("<I", worker_l1.read(request_addr + REQ_STATUS, 4))[0]
-              req_dst = struct.unpack("<I", worker_l1.read(request_addr + REQ_DST, 4))[0]
-              req_seq = struct.unpack("<I", worker_l1.read(request_addr + REQ_SEQ, 4))[0]
-            feeder_snapshots.append((idx, dram_core, role, worker_core, size, bank, req_status, req_dst, req_seq, words))
+          feeder_snapshots = _read_feeder_states(feeders, device.dev)
           if is_bfp4:
             stop_feeders(feeders, device.dev)
-            if base.ENABLE_BREADCRUMBS:
-              _dump_worker_breadcrumbs(chunk_idx, plan, feeders, device.dev, all_workers=True)
-          for idx, dram_core, role, worker_core, size, bank, req_status, req_dst, req_seq, words in feeder_snapshots:
+          base.dump_overlay_debug(device, plan)
+          if base.ENABLE_BREADCRUMBS:
+            _dump_worker_breadcrumbs(chunk_idx, plan, feeders, device.dev, all_workers=True)
+          for idx, dram_core, role, worker_core, size, bank, _request_addr, words, req_status, req_dst, req_seq in feeder_snapshots:
             print(
               f"feeder-timeout chunk={chunk_idx} idx={idx} role={role} bank={bank} dram_core={dram_core} worker={worker_core} "
               f"stream={size} req_status={req_status} req_seq={req_seq} req_dst=0x{req_dst:x} "
@@ -1102,39 +1250,35 @@ def main() -> None:
             )
           raise
 
-        try:
-          for dram_core, _role, _worker_core, _size, _bank, _request_addr in feeders:
-            wait_drisc(
-              dram_core, device.dev, timeout=10.0, magic=POC_MAGIC,
-              accept_corrupt=ACCEPT_CORRUPT_FEEDER_HEADER, label="DRISC matmul feeder",
-            )
-        except TimeoutError as exc:
-          print(f"feeder-wait-timeout chunk={chunk_idx}: {exc}", file=sys.stderr)
-          if is_bfp4 and base.ENABLE_BREADCRUMBS:
-            _dump_worker_breadcrumbs(chunk_idx, plan, feeders, device.dev)
-          feeder_states = []
-          for idx, (dram_core, role, worker_core, size, bank, request_addr) in enumerate(feeders):
-            words = read_drisc_words(dram_core, device.dev)
-            with TLBWindow(device.dev, start=worker_core) as worker_l1:
-              req_status = struct.unpack("<I", worker_l1.read(request_addr + REQ_STATUS, 4))[0]
-              req_dst = struct.unpack("<I", worker_l1.read(request_addr + REQ_DST, 4))[0]
-              req_seq = struct.unpack("<I", worker_l1.read(request_addr + REQ_SEQ, 4))[0]
-            feeder_states.append((words, req_status, req_seq))
+        feeder_states = _read_feeder_states(feeders, device.dev)
+        if ALLOW_FEEDER_TIMEOUT_AFTER_WORKERS_DONE and _workers_reached_final_done(feeder_states, plan):
+          pass
+        else:
+          try:
+            for dram_core, _role, _worker_core, _size, _bank, _request_addr in feeders:
+              wait_drisc(
+                dram_core, device.dev, timeout=10.0, magic=POC_MAGIC,
+                accept_corrupt=ACCEPT_CORRUPT_FEEDER_HEADER, label="DRISC matmul feeder",
+              )
+          except TimeoutError as exc:
+            print(f"feeder-wait-timeout chunk={chunk_idx}: {exc}", file=sys.stderr)
+            if base.ENABLE_BREADCRUMBS:
+              _dump_worker_breadcrumbs(chunk_idx, plan, feeders, device.dev)
+            feeder_states = _read_feeder_states(feeders, device.dev)
+            for idx, dram_core, role, worker_core, size, bank, _request_addr, words, req_status, req_dst, req_seq in feeder_states:
+              print(
+                f"feeder-wait-debug chunk={chunk_idx} idx={idx} role={role} bank={bank} dram_core={dram_core} worker={worker_core} "
+                f"stream={size} req_status={req_status} req_seq={req_seq} req_dst=0x{req_dst:x} "
+                f"drisc_words={[hex(w) for w in words]}",
+                file=sys.stderr,
+              )
+            if not ALLOW_FEEDER_TIMEOUT_AFTER_WORKERS_DONE or not _workers_reached_final_done(feeder_states, plan):
+              stop_feeders(feeders, device.dev)
+              raise
             print(
-              f"feeder-wait-debug chunk={chunk_idx} idx={idx} role={role} bank={bank} dram_core={dram_core} worker={worker_core} "
-              f"stream={size} req_status={req_status} req_seq={req_seq} req_dst=0x{req_dst:x} "
-              f"drisc_words={[hex(w) for w in words]}",
+              f"feeder-wait-timeout chunk={chunk_idx}: continuing because all worker requests reached final REQ_DONE",
               file=sys.stderr,
             )
-          workers_done = all(req_status == REQ_DONE and req_seq == plan.num_blocks - 1 for _words, req_status, req_seq in feeder_states)
-          if not ALLOW_FEEDER_TIMEOUT_AFTER_WORKERS_DONE or not workers_done:
-            stop_feeders(feeders, device.dev)
-            raise
-          stop_feeders(feeders, device.dev)
-          print(
-            f"feeder-wait-timeout chunk={chunk_idx}: continuing because all worker requests reached final REQ_DONE",
-            file=sys.stderr,
-          )
       if run_timings:
         run_times_us.append(sum(timing["us"] for timing in run_timings))
 
@@ -1153,11 +1297,25 @@ def main() -> None:
             cycles = _read_l1_u32(l1, caddr)
             parts.append(f"{cname}={cycles / 1350.0 / max(RUNS, 1):.1f}us")
           print(f"profile core={core} " + " ".join(parts), file=sys.stderr)
-    if not is_bfp4:
-      c_raw = device.dram_read(c_buf)
-      base.validate(a_ref, b_ref, c_raw, M, N, Mp, Np)
+    validation_complete = False
+    try:
+      if not is_bfp4:
+        c_raw = device.dram_read(c_buf)
+        base.validate(a_ref, b_ref, c_raw, M, N, Mp, Np)
+      validation_complete = True
+    finally:
+      if validation_complete and feeders_to_stop:
+        stop_feeders(feeders_to_stop, device.dev)
     if not run_times_us:
-      raise RuntimeError("DRISC matmul timing is unavailable without fast dispatch")
+      print("matmul_peak_drisc:")
+      print(f"  runs: 0")
+      print(f"  shape: {M}x{K}x{N}")
+      print(f"  padded: {Mp}x{Kp}x{Np}")
+      print("  kernel_avg: unavailable without fast dispatch")
+      print("  throughput: unavailable without fast dispatch")
+      if is_bfp4:
+        print("  validation: skipped (BFLOAT4_B timing experiment)")
+      return
     avg_us = sum(run_times_us) / len(run_times_us)
     print("matmul_peak_drisc:")
     print(f"  runs: {len(run_times_us)}")

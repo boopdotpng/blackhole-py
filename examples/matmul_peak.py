@@ -47,7 +47,8 @@ MAX_IN0_BLOCK_W = 6
 INPUT_BUFFER_FACTOR = 2
 MAX_PER_CORE_M = 0
 MAX_PER_CORE_N = 0
-SPLIT_AXIS = "auto"
+SPLIT_AXIS = os.environ.get("MATMUL_SPLIT_AXIS", "auto")
+RAGGED_CORES = os.environ.get("MATMUL_RAGGED_CORES", "1") != "0"
 K_GROUP = 1
 OUTPUT_NOC = 1
 OUTPUT_STAGGER_ITERS = 0
@@ -56,6 +57,30 @@ HIFI = os.environ.get("HIFI", "") == "1"
 MATH_BACKEND = os.environ.get("MATH_BACKEND", "direct")
 MATH_FIDELITY = os.environ.get("MATH_FIDELITY", "hifi2" if HIFI else "lofi")
 MCAST_PATH_RESERVE = os.environ.get("MATMUL_MCAST_PATH_RESERVE", "1") != "0"
+# Chain the per-block mcast chunks onto one reserved VC path (CMD_VC_LINKED).
+# All chunks of a block target the same receiver rectangle, so linking lets
+# them reuse one path reservation instead of re-arbitrating per 16 KiB burst
+# (~1.5-1.6x source bandwidth at depth 4 in noc-mcast-scheduler-calibration).
+# Only the first chunk reserves the path; the final chunk is left unlinked so
+# the reservation is released (an all-linked chain never frees the path).
+MCAST_LINKED = os.environ.get("MATMUL_MCAST_LINKED", "1") != "0"
+NOC_READ_SYNC = os.environ.get("MATMUL_NOC_READ_SYNC", "global")
+if NOC_READ_SYNC not in ("global", "trid"):
+  raise ValueError(f"MATMUL_NOC_READ_SYNC must be global or trid, got {NOC_READ_SYNC!r}")
+# Stream-overlay paths are opt-in until matmul_peak's baseline slow-dispatch
+# timeout is sorted out. Input mcast replaces raw command-buffer mcasts; output
+# writes use one source-endpoint unicast stream transaction per output tile.
+OVERLAY_MCAST_INPUTS = os.environ.get("MATMUL_OVERLAY_MCAST", "0") == "1"
+OVERLAY_MCAST_A = OVERLAY_MCAST_INPUTS or os.environ.get("MATMUL_OVERLAY_MCAST_A", "0") == "1"
+OVERLAY_MCAST_B = OVERLAY_MCAST_INPUTS or os.environ.get("MATMUL_OVERLAY_MCAST_B", "0") == "1"
+OVERLAY_OUTPUT_WRITES = os.environ.get("MATMUL_OVERLAY_OUTPUT", "0") == "1"
+OVERLAY_DEBUG = os.environ.get("MATMUL_OVERLAY_DEBUG", "0") == "1"
+OVERLAY_READ_BARRIER = os.environ.get("MATMUL_OVERLAY_READ_BARRIER", "0") == "1"
+OVERLAY_ENABLED = OVERLAY_MCAST_INPUTS or OVERLAY_MCAST_A or OVERLAY_MCAST_B or OVERLAY_OUTPUT_WRITES
+OVERLAY_MAX_PER_CORE_N = int(os.environ.get(
+  "MATMUL_OVERLAY_MAX_PER_CORE_N",
+  "2" if (OVERLAY_MCAST_INPUTS or OVERLAY_MCAST_A) else "0",
+))
 SKIP_PADDED_N = False
 ENABLE_BREADCRUMBS = os.environ.get("BREADCRUMBS", "") == "1"
 SUPPORTED_IN0_BLOCK_WS = tuple(range(1, MAX_IN0_BLOCK_W + 1))
@@ -86,6 +111,11 @@ class RiscSync:
 
 
 SYNC = RiscSync(start=SYNC_TRISC_START, trisc_init=SYNC_TRISC_INIT)
+OVERLAY_SCRATCH_BYTES = 0x100 if OVERLAY_ENABLED else 0
+OVERLAY_MSG_INFO_BASE = int(os.environ.get(
+  "MATMUL_OVERLAY_MSG_INFO_BASE",
+  "0x160000",
+), 0)
 STALL_MATH_PACK_ROOM = TensixStall.SYNC | TensixStall.MATH | TensixStall.SFPU
 STALL_MATH_PACK_DATA = TensixStall.TDMA
 WAIT_THCON_AND_PACK = TensixWait.THCON | TensixWait.PACK0
@@ -146,6 +176,7 @@ DEBUG_TRISC0 = 0x17A200
 DEBUG_TRISC1 = 0x17A240
 DEBUG_TRISC2 = 0x17A280
 DEBUG_NCRISC_OUTPUT = 0x17A180
+DEBUG_OVERLAY = 0x17A300
 MEM_L1_ARC_FW_SCRATCH = 16
 MATH_THROTTLED_MOP_STATUS = 0xFFB00020
 
@@ -408,6 +439,11 @@ def _ceil_div(a: int, b: int) -> int:
   return (a + b - 1) // b
 
 
+def _effective_max_per_core_n() -> int:
+  caps = [cap for cap in (MAX_PER_CORE_N, OVERLAY_MAX_PER_CORE_N) if cap > 0]
+  return min(caps) if caps else 0
+
+
 def _ceil32(x: int) -> int:
   return (x + TILE - 1) & ~(TILE - 1)
 
@@ -443,11 +479,14 @@ class MatmulPlan:
   cb24_pages: int
   logical_mt: int = 0
   logical_nt: int = 0
+  active_cores: tuple[Core, ...] | None = None
 
   def grid(self) -> list[list[Core]]:
     return [[(x, y) for x in self.cols] for y in self.rows]
 
   def cores(self) -> list[Core]:
+    if self.active_cores is not None:
+      return list(self.active_cores)
     return [core for row in self.grid() for core in row]
 
   @property
@@ -460,7 +499,7 @@ class MatmulPlan:
 
   @property
   def active_core_count(self) -> int:
-    return self.num_rows * self.num_cols
+    return len(self.cores())
 
   def in0_offsets(self) -> tuple[int, ...]:
     return tuple(sb * self.in0_subblock_num_tiles for sb in range(self.in0_num_subblocks))
@@ -513,7 +552,7 @@ class MatmulChunk:
     return self.n0 // TILE
 
 
-def plan_matmul(M: int, K: int, N: int, cores: list[Core]) -> MatmulPlan:
+def plan_matmul(M: int, K: int, N: int, cores: list[Core], *, allow_ragged: bool = RAGGED_CORES) -> MatmulPlan:
   mt_base = _ceil32(M) // TILE
   kt_base = _ceil32(K) // TILE
   nt_base = _ceil32(N) // TILE
@@ -525,7 +564,9 @@ def plan_matmul(M: int, K: int, N: int, cores: list[Core]) -> MatmulPlan:
   core_set = frozenset(ordered)
   xs = tuple(sorted({x for x, _ in ordered}))
   ys = tuple(sorted({y for _, y in ordered}))
-  l1_data_bytes = TensixL1.SIZE - TensixL1.DATA_BUFFER_SPACE_BASE - SYNC_BYTES
+  l1_limit = min(TensixL1.SIZE - SYNC_BYTES, OVERLAY_MSG_INFO_BASE) if OVERLAY_ENABLED else TensixL1.SIZE - SYNC_BYTES
+  l1_data_bytes = l1_limit - TensixL1.DATA_BUFFER_SPACE_BASE
+  max_per_core_n = _effective_max_per_core_n()
 
   def fits_l1(pcm: int, pcn: int, bw: int) -> bool:
     cb0 = INPUT_BUFFER_FACTOR * pcm * bw * INPUT_TILE_BYTES
@@ -556,7 +597,7 @@ def plan_matmul(M: int, K: int, N: int, cores: list[Core]) -> MatmulPlan:
           pcn = _align_up(_ceil_div(nt_base, nc), sbw)
           if MAX_PER_CORE_M and pcm > MAX_PER_CORE_M:
             continue
-          if MAX_PER_CORE_N and pcn > MAX_PER_CORE_N:
+          if max_per_core_n and pcn > max_per_core_n:
             continue
           mt = nr * pcm
           nt = nc * pcn
@@ -571,6 +612,31 @@ def plan_matmul(M: int, K: int, N: int, cores: list[Core]) -> MatmulPlan:
   if best is None:
     raise ValueError(f"No valid matmul plan for Mt={mt_base} Kt={kt_base} Nt={nt_base}")
   rows, cols, mt, kt, nt, pcm, pcn, bw = best
+  active_cores = None
+  ragged_cols = tuple(x for x in xs if any((x, y) in core_set for y in rows))
+  ragged_cores = tuple((x, y) for y in rows for x in ragged_cols if (x, y) in core_set)
+  if allow_ragged and len(ragged_cores) > len(rows) * len(cols):
+    ragged_pcn_min = _align_up(_ceil_div(nt_base, len(ragged_cols)), sbw)
+    ragged_col_index = {x: i for i, x in enumerate(ragged_cols)}
+    missing_logical = [
+      (ragged_col_index[x], rows.index(y))
+      for y in rows
+      for x in ragged_cols
+      if (x, y) not in core_set
+    ]
+    no_fill_pcn = ragged_pcn_min
+    for ci, ri in missing_logical:
+      if ci > 0 and ri * pcm < mt_base:
+        no_fill_pcn = max(no_fill_pcn, _align_up(_ceil_div(nt_base, ci), sbw))
+    ragged_pcn = no_fill_pcn if (not max_per_core_n or no_fill_pcn <= max_per_core_n) and fits_l1(pcm, no_fill_pcn, bw) else ragged_pcn_min
+    ragged_mt = len(rows) * pcm
+    ragged_nt = len(ragged_cols) * ragged_pcn
+    if (not max_per_core_n or ragged_pcn <= max_per_core_n) and fits_l1(pcm, ragged_pcn, bw):
+      cols = ragged_cols
+      pcn = ragged_pcn
+      mt = ragged_mt
+      nt = ragged_nt
+      active_cores = ragged_cores
   out_tiles = pcm * pcn
   return MatmulPlan(
     rows=tuple(rows), cols=tuple(cols), mt=mt, kt=kt, nt=nt,
@@ -583,6 +649,7 @@ def plan_matmul(M: int, K: int, N: int, cores: list[Core]) -> MatmulPlan:
     cb0_pages=INPUT_BUFFER_FACTOR * pcm * bw, cb1_pages=INPUT_BUFFER_FACTOR * pcn * bw,
     cb16_pages=out_tiles, cb24_pages=out_tiles,
     logical_mt=mt_base, logical_nt=nt_base,
+    active_cores=active_cores,
   )
 
 
@@ -663,8 +730,31 @@ def _mcast_rect_args(x_list: list[int], y: int) -> tuple[int, int, int, int, int
 
 
 def _core_to_rc(plan: MatmulPlan) -> dict[Core, tuple[int, int]]:
-  grid = plan.grid()
-  return {grid[r][c]: (r, c) for r in range(len(plan.rows)) for c in range(len(plan.cols))}
+  row_index = {y: i for i, y in enumerate(plan.rows)}
+  col_index = {x: i for i, x in enumerate(plan.cols)}
+  return {core: (row_index[core[1]], col_index[core[0]]) for core in plan.cores()}
+
+
+def _row_cores(plan: MatmulPlan, y: int) -> list[Core]:
+  return sorted((core for core in plan.cores() if core[1] == y), key=lambda xy: xy[0])
+
+
+def _col_cores(plan: MatmulPlan, x: int) -> list[Core]:
+  return sorted((core for core in plan.cores() if core[0] == x), key=lambda xy: xy[1])
+
+
+def _row_sender(plan: MatmulPlan, y: int) -> Core:
+  cores = _row_cores(plan, y)
+  if not cores:
+    raise ValueError(f"no active cores in row {y}")
+  return cores[0]
+
+
+def _col_sender(plan: MatmulPlan, x: int) -> Core:
+  cores = _col_cores(plan, x)
+  if not cores:
+    raise ValueError(f"no active cores in col {x}")
+  return cores[0]
 
 
 def reader_args(plan: MatmulPlan, a_addr: int, core_xy: Core, num_banks: int, layout: TensorLayout | None = None) -> list[int]:
@@ -672,11 +762,12 @@ def reader_args(plan: MatmulPlan, a_addr: int, core_xy: Core, num_banks: int, la
   core_to_rc = _core_to_rc(plan)
   ri, _ = core_to_rc[core_xy]
   a_m_tile_offset = layout.a_m_tile_offset if layout.a_m_tile_offset is not None else layout.m_tile_offset
-  west_cols = [x for x in plan.cols if x < 8]
-  east_cols = [x for x in plan.cols if x >= 10]
-  w_rect = _mcast_rect_args([c for c in west_cols if c != plan.cols[0]], core_xy[1])
-  e_rect = _mcast_rect_args(list(east_cols), core_xy[1])
-  sender_xy = plan.grid()[ri][0]
+  row_live_cols = [x for x, _ in _row_cores(plan, core_xy[1])]
+  sender_xy = _row_sender(plan, core_xy[1])
+  west_cols = [x for x in row_live_cols if x < 8]
+  east_cols = [x for x in row_live_cols if x >= 10]
+  w_rect = _mcast_rect_args([c for c in west_cols if c != sender_xy[0]], core_xy[1])
+  e_rect = _mcast_rect_args([c for c in east_cols if c != sender_xy[0]], core_xy[1])
   return [
     a_addr,
     (a_m_tile_offset + ri * plan.per_core_m) * layout.a_row_stride,
@@ -707,9 +798,9 @@ def writer_args(
   b_n_tile_offset = layout.b_n_tile_offset if layout.b_n_tile_offset is not None else layout.n_tile_offset
   c_m_tile_offset = layout.c_m_tile_offset if layout.c_m_tile_offset is not None else layout.m_tile_offset
   c_n_tile_offset = layout.c_n_tile_offset if layout.c_n_tile_offset is not None else layout.n_tile_offset
-  recv_ys = list(plan.rows[1:])
+  sender_xy = _col_sender(plan, core_xy[0])
+  recv_ys = [y for _x, y in _col_cores(plan, core_xy[0]) if y != sender_xy[1]]
   mcast = (core_xy[0], max(recv_ys), core_xy[0], min(recv_ys), len(recv_ys)) if recv_ys else (0, 0, 0, 0, 0)
-  sender_xy = plan.grid()[0][ci]
   out_start = (c_m_tile_offset + ri * plan.per_core_m) * layout.c_row_stride + c_n_tile_offset + ci * plan.per_core_n
   return [
     b_addr,
@@ -784,18 +875,302 @@ def _emit_trisc2_pad_cb24_to_full_block(fw: MatmulTrisc, plan: MatmulPlan) -> Ma
   return fw
 
 
+NOC_OVERLAY_START_ADDR = 0xFFB40000
+NOC_STREAM_REG_SPACE_SIZE = 0x1000
+OVERLAY_STREAM_BRISC_MCAST = int(os.environ.get("MATMUL_OVERLAY_STREAM_BRISC_MCAST", "0"))
+OVERLAY_STREAM_NCRISC_MCAST = int(os.environ.get("MATMUL_OVERLAY_STREAM_NCRISC_MCAST", "1"))
+# CB sync state occupies overlay stream slots 8..39 (CB0..CB31). Output overlay
+# is unicast, so keep it on a high non-CB stream by default.
+OVERLAY_STREAM_NCRISC_OUTPUT = int(os.environ.get("MATMUL_OVERLAY_STREAM_NCRISC_OUTPUT", "40"))
+OVERLAY_MCAST_ROW_STAGGER = int(os.environ.get("MATMUL_OVERLAY_MCAST_ROW_STAGGER", "0"))
+OVERLAY_MEM_WORD_WIDTH = 16
+OVERLAY_MEM_WORD_ADDR_WIDTH = 17
+
+STREAM_SOURCE_ENDPOINT_NEW_MSG_INFO_REG_INDEX = 0
+STREAM_ONETIME_MISC_CFG_REG_INDEX = 2
+STREAM_MISC_CFG_REG_INDEX = 3
+STREAM_REMOTE_DEST_REG_INDEX = 7
+STREAM_REMOTE_DEST_BUF_START_REG_INDEX = 8
+STREAM_REMOTE_DEST_BUF_START_HI_REG_INDEX = 9
+STREAM_REMOTE_DEST_BUF_SIZE_REG_INDEX = 10
+STREAM_REMOTE_DEST_TRAFFIC_REG_INDEX = 16
+STREAM_BUF_START_REG_INDEX = 17
+STREAM_BUF_SIZE_REG_INDEX = 18
+STREAM_MSG_INFO_PTR_REG_INDEX = 22
+STREAM_MSG_INFO_WR_PTR_REG_INDEX = 23
+STREAM_MCAST_DEST_REG_INDEX = 24
+STREAM_MCAST_DEST_NUM_REG_INDEX = 25
+STREAM_GATHER_REG_INDEX = 26
+STREAM_MSG_SRC_IN_ORDER_FWD_NUM_MSGS_REG_INDEX = 27
+STREAM_PHASE_AUTO_CFG_HEADER_REG_INDEX = 34
+STREAM_WAIT_STATUS_REG_INDEX = 257
+STREAM_PHASE_ADVANCE_REG_INDEX = 267
+STREAM_DEST_PHASE_READY_UPDATE_REG_INDEX = 268
+STREAM_RESET_REG_INDEX = 271
+STREAM_DEBUG_STATUS_REG_INDEX = 501
+
+OUTGOING_DATA_NOC = 1
+REMOTE_SRC_UPDATE_NOC = 2
+SOURCE_ENDPOINT = 4
+REMOTE_RECEIVER = 8
+NEXT_PHASE_SRC_CHANGE = 11
+NEXT_PHASE_DEST_CHANGE = 12
+DEST_DATA_BUF_NO_FLOW_CTRL = 14
+PHASE_AUTO_ADVANCE = 1
+REG_UPDATE_VC_REG = 2
+SOURCE_ENDPOINT_NEW_MSG_ADDR = 0
+SOURCE_ENDPOINT_NEW_MSG_SIZE = 17
+CURR_PHASE_NUM_MSGS = 12
+UNICAST_VC_REG = 4
+STREAM_MCAST_END_X = 0
+STREAM_MCAST_END_Y = 6
+STREAM_MCAST_EN = 12
+STREAM_MCAST_VC = 14
+STREAM_MCAST_NO_PATH_RES = 15
+STREAM_MCAST_XY = 16
+WAIT_SW_PHASE_ADVANCE_SIGNAL = 0
+PHASE_READY_MCAST = 26
+PHASE_READY_TWO_WAY_RESP = 27
+SRC_READY_WAIT_ALL_DESTS = 4
+
+
+def _stream_reg(stream_id: int, reg_index: int) -> int:
+  return NOC_OVERLAY_START_ADDR + stream_id * NOC_STREAM_REG_SPACE_SIZE + reg_index * 4
+
+
+def _emit_posted_writes_flushed(fw: MatmulKernel, noc_id: int, target, *, addr=t3, val=t4) -> MatmulKernel:
+  fw.li(addr, NOC.STATUS_BASE + NOC.NIU_MST_POSTED_WR_REQ_SENT + (noc_id << NOC.INSTANCE_OFFSET_BIT))
+  loop = fw._new_label("overlay_posted_wr_flush")
+  done = fw._new_label("overlay_posted_wr_flush_done")
+  fw.label(loop)
+  fw.lw(val, addr, 0)
+  fw.bgeu(val, target, done)
+  fw.j(loop)
+  fw.label(done)
+  return fw
+
+
+def _emit_overlay_debug_mark(
+  fw: MatmulKernel, code: int, *, stream_id: int, noc_id: int, aux=zero,
+  addr=t3, val=t4,
+) -> MatmulKernel:
+  if not OVERLAY_DEBUG:
+    return fw
+  fw.li(addr, DEBUG_OVERLAY + stream_id * 0x20)
+  fw.li(val, code)
+  fw.sw(val, addr, 0)
+  fw.li(val, stream_id)
+  fw.sw(val, addr, 4)
+  fw.li(val, noc_id)
+  fw.sw(val, addr, 8)
+  fw.sw(aux, addr, 12)
+  return fw
+
+
+def _emit_overlay_wait_src_ready(fw: MatmulKernel, stream_id: int) -> MatmulKernel:
+  loop = fw._new_label("overlay_src_ready")
+  done = fw._new_label("overlay_src_ready_done")
+  fw.label(loop)
+  fw.read32(t0, _stream_reg(stream_id, STREAM_DEBUG_STATUS_REG_INDEX + 8), tmp_addr=t3)
+  fw.srli(t0, t0, 4)
+  fw.andi(t0, t0, 0x7)
+  fw.li(t1, SRC_READY_WAIT_ALL_DESTS)
+  fw.beq(t0, t1, done)
+  fw.j(loop)
+  fw.label(done)
+  return fw
+
+
+def _emit_overlay_wait_done(fw: MatmulKernel, stream_id: int) -> MatmulKernel:
+  loop = fw._new_label("overlay_stream_done")
+  done = fw._new_label("overlay_stream_done_ok")
+  fw.label(loop)
+  fw.read32(t0, _stream_reg(stream_id, STREAM_WAIT_STATUS_REG_INDEX), tmp_addr=t3)
+  fw.andi(t0, t0, 1 << WAIT_SW_PHASE_ADVANCE_SIGNAL)
+  fw.beq(t0, zero, loop)
+  fw.read32(t1, _stream_reg(stream_id, STREAM_DEBUG_STATUS_REG_INDEX + 9), tmp_addr=t3)
+  fw.srli(t1, t1, OVERLAY_MEM_WORD_ADDR_WIDTH)
+  fw.bne(t1, zero, loop)
+  fw.label(done)
+  return fw
+
+
+def _emit_overlay_common_stream_cfg(
+  fw: MatmulKernel, *, noc_id: int, stream_id: int, src_addr, dst_addr, dst_coord,
+  total_bytes: int, vc: int, mcast_dest=None,
+) -> MatmulKernel:
+  word_count = total_bytes // OVERLAY_MEM_WORD_WIDTH
+  msg_info_word_addr = OVERLAY_MSG_INFO_BASE // OVERLAY_MEM_WORD_WIDTH
+  if mcast_dest is not None:
+    fw.read32(t6, NOC.STATUS_BASE + NOC.NIU_MST_POSTED_WR_REQ_SENT + (noc_id << NOC.INSTANCE_OFFSET_BIT), tmp_addr=t3)
+    fw.addi(t6, t6, _ceil_div(total_bytes, NOC.MAX_BURST_SIZE))
+  misc_cfg = (
+    (noc_id << OUTGOING_DATA_NOC)
+    | ((1 - noc_id) << REMOTE_SRC_UPDATE_NOC)
+    | (1 << SOURCE_ENDPOINT)
+    | (1 << REMOTE_RECEIVER)
+    | (1 << NEXT_PHASE_SRC_CHANGE)
+    | (1 << NEXT_PHASE_DEST_CHANGE)
+    | (1 << DEST_DATA_BUF_NO_FLOW_CTRL)
+  )
+  onetime_cfg = (1 << PHASE_AUTO_ADVANCE) | (3 << REG_UPDATE_VC_REG)
+
+  fw.write32(_stream_reg(stream_id, STREAM_RESET_REG_INDEX), 1)
+  if mcast_dest is None:
+    fw.write32(_stream_reg(stream_id, STREAM_MCAST_DEST_REG_INDEX), 0)
+    fw.write32(_stream_reg(stream_id, STREAM_MCAST_DEST_NUM_REG_INDEX), 1)
+  else:
+    fw.write32(_stream_reg(stream_id, STREAM_MCAST_DEST_REG_INDEX), mcast_dest, tmp_addr=t3)
+    # The NoC rectangle controls worker fanout. For this source-endpoint path,
+    # hardware wants a single tracked overlay mcast destination slot here.
+    fw.write32(_stream_reg(stream_id, STREAM_MCAST_DEST_NUM_REG_INDEX), 1)
+  fw.write32(_stream_reg(stream_id, STREAM_GATHER_REG_INDEX), 0)
+  fw.write32(_stream_reg(stream_id, STREAM_MSG_SRC_IN_ORDER_FWD_NUM_MSGS_REG_INDEX), 0)
+  fw.write32(_stream_reg(stream_id, STREAM_PHASE_AUTO_CFG_HEADER_REG_INDEX), 1 << CURR_PHASE_NUM_MSGS)
+  fw.write32(_stream_reg(stream_id, STREAM_REMOTE_DEST_REG_INDEX), dst_coord, tmp_addr=t3)
+  fw.srli(t0, dst_addr, OVERLAY_MEM_WORD_ADDR_WIDTH + 4)
+  fw.write32(_stream_reg(stream_id, STREAM_REMOTE_DEST_BUF_START_HI_REG_INDEX), t0, tmp_addr=t3)
+  fw.srli(t0, dst_addr, 4)
+  fw.write32(_stream_reg(stream_id, STREAM_REMOTE_DEST_BUF_START_REG_INDEX), t0, tmp_addr=t3)
+  fw.write32(_stream_reg(stream_id, STREAM_REMOTE_DEST_BUF_SIZE_REG_INDEX), word_count)
+  fw.srli(t1, src_addr, 4)
+  fw.write32(_stream_reg(stream_id, STREAM_BUF_START_REG_INDEX), t1, tmp_addr=t3)
+  fw.write32(_stream_reg(stream_id, STREAM_BUF_SIZE_REG_INDEX), word_count)
+  fw.write32(_stream_reg(stream_id, STREAM_MSG_INFO_PTR_REG_INDEX), msg_info_word_addr)
+  fw.write32(_stream_reg(stream_id, STREAM_MSG_INFO_WR_PTR_REG_INDEX), msg_info_word_addr)
+  fw.write32(_stream_reg(stream_id, STREAM_REMOTE_DEST_TRAFFIC_REG_INDEX), vc << UNICAST_VC_REG)
+  fw.write32(_stream_reg(stream_id, STREAM_MISC_CFG_REG_INDEX), misc_cfg)
+  fw.write32(_stream_reg(stream_id, STREAM_ONETIME_MISC_CFG_REG_INDEX), onetime_cfg)
+  fw.write32(_stream_reg(stream_id, STREAM_PHASE_ADVANCE_REG_INDEX), 1)
+  _emit_overlay_debug_mark(fw, 0x6001, stream_id=stream_id, noc_id=noc_id, aux=dst_coord)
+  _emit_overlay_wait_src_ready(fw, stream_id)
+  _emit_overlay_debug_mark(fw, 0x6002, stream_id=stream_id, noc_id=noc_id, aux=dst_coord)
+  ready = 1 << PHASE_READY_TWO_WAY_RESP
+  if mcast_dest is not None:
+    ready |= 1 << PHASE_READY_MCAST
+  fw.write32(_stream_reg(stream_id, STREAM_DEST_PHASE_READY_UPDATE_REG_INDEX), ready)
+  fw.srli(t1, src_addr, 4)
+  fw.li(t2, (1 << SOURCE_ENDPOINT_NEW_MSG_SIZE) - 1)
+  fw.and_(t1, t1, t2)
+  fw.li(t2, word_count << SOURCE_ENDPOINT_NEW_MSG_SIZE)
+  fw.or_(t1, t1, t2)
+  _emit_overlay_debug_mark(fw, 0x6003, stream_id=stream_id, noc_id=noc_id, aux=t1)
+  fw.write32(_stream_reg(stream_id, STREAM_SOURCE_ENDPOINT_NEW_MSG_INFO_REG_INDEX), t1, tmp_addr=t3)
+  _emit_overlay_wait_done(fw, stream_id)
+  _emit_overlay_debug_mark(fw, 0x6004, stream_id=stream_id, noc_id=noc_id, aux=t1)
+  if mcast_dest is not None:
+    _emit_posted_writes_flushed(fw, noc_id, t6)
+    _emit_overlay_debug_mark(fw, 0x6005, stream_id=stream_id, noc_id=noc_id, aux=t6)
+    fw.write32(_stream_reg(stream_id, STREAM_RESET_REG_INDEX), 1)
+  return fw
+
+
+def _emit_overlay_mcast_write(
+  fw: MatmulKernel, *, noc_id: int, stream_id: int, src_addr, x_start, y_start, x_end, y_end,
+  total_bytes: int, xy_mcast: bool = False,
+) -> MatmulKernel:
+  fw.mv(a1, src_addr)
+  fw.noc_coord(a5, x_start, y_start, tmp=a0)
+  fw.mv(t4, y_end)
+  fw.slli(t4, t4, STREAM_MCAST_END_Y)
+  fw.or_(t4, t4, x_end)
+  fw.li(a0, (
+    (1 << STREAM_MCAST_EN)
+    | (1 << STREAM_MCAST_VC)
+    | ((1 << STREAM_MCAST_XY) if xy_mcast else 0)
+    | (0 if MCAST_PATH_RESERVE else (1 << STREAM_MCAST_NO_PATH_RES))
+  ))
+  fw.or_(t4, t4, a0)
+  return _emit_overlay_common_stream_cfg(
+    fw,
+    noc_id=noc_id,
+    stream_id=stream_id,
+    src_addr=a1,
+    dst_addr=a1,
+    dst_coord=a5,
+    total_bytes=total_bytes,
+    vc=5,
+    mcast_dest=t4,
+  )
+
+
+def _emit_overlay_unicast_write(
+  fw: MatmulKernel, *, noc_id: int, stream_id: int, src_addr, dst_addr, dst_coord, total_bytes: int,
+) -> MatmulKernel:
+  return _emit_overlay_common_stream_cfg(
+    fw,
+    noc_id=noc_id,
+    stream_id=stream_id,
+    src_addr=src_addr,
+    dst_addr=dst_addr,
+    dst_coord=dst_coord,
+    total_bytes=total_bytes,
+    vc=1,
+  )
+
+
 def _emit_mcast_chunks(fw: MatmulKernel, noc_id: int, src_addr, coord, total_bytes: int, *, tmp=t5):
   chunks = _ceil_div(total_bytes, NOC.MAX_BURST_SIZE)
   for chunk in range(chunks):
     size = min(NOC.MAX_BURST_SIZE, total_bytes - chunk * NOC.MAX_BURST_SIZE)
     fw.li(tmp, size)
+    # Link every chunk except the last so they share one VC-5 path reservation;
+    # the trailing unlinked write terminates the chain and frees the path. When
+    # linking, only the first chunk reserves; unlinked mode keeps per-chunk
+    # reservation (prior behavior) so MATMUL_MCAST_LINKED=0 is a clean A/B.
+    linked = MCAST_LINKED and (chunk + 1) < chunks
+    path_reserve = MCAST_PATH_RESERVE and (chunk == 0 or not MCAST_LINKED)
     fw.noc_write(
       noc_id, 0, src_addr, src_addr, 0, coord, tmp,
-      mcast=True, mcast_path_reserve=MCAST_PATH_RESERVE, a=t1, v=t2,
+      mcast=True, mcast_linked=linked, mcast_path_reserve=path_reserve, a=t1, v=t2,
     )
     if chunk != chunks - 1:
       fw.add(src_addr, src_addr, tmp)
   return chunks
+
+
+def _emit_data_ready_mcast(
+  fw: MatmulKernel, *, noc_id: int, sem_addr, coord, flush: bool,
+) -> MatmulKernel:
+  if flush:
+    fw.read32(a6, NOC.STATUS_BASE + NOC.NIU_MST_NONPOSTED_WR_REQ_SENT + (noc_id << NOC.INSTANCE_OFFSET_BIT), tmp_addr=t3)
+    fw.addi(a6, a6, 1)
+  fw.noc_semaphore_set_multicast(
+    noc_id, 0, sem_addr, coord, 1, t0,
+    mcast_path_reserve=MCAST_PATH_RESERVE, a=t1, v=t2,
+  )
+  if flush:
+    fw.noc_nonposted_writes_flushed(noc_id, a6, addr=t1, val=t2)
+  return fw
+
+
+def _emit_overlay_remote_read_barrier(
+  fw: MatmulKernel, *, noc_id: int, remote_addr, remote_coord, total_bytes: int,
+) -> MatmulKernel:
+  fw.read32(a6, NOC.STATUS_BASE + NOC.NIU_MST_RD_RESP_RECEIVED + (noc_id << NOC.INSTANCE_OFFSET_BIT), tmp_addr=t3)
+  fw.addi(a6, a6, 1)
+  fw.li(t0, total_bytes - 4)
+  fw.add(a0, remote_addr, t0)
+  fw.li(a4, OVERLAY_MSG_INFO_BASE + 0x80)
+  fw.local_noc0_coord(a2)
+  fw.li(t6, 4)
+  fw.noc_read(noc_id, 1, a0, 0, remote_coord, a4, t6, ret_coord=a2, a=t3, v=t5)
+  return fw.noc_reads_flushed(noc_id, a6, addr=t3, val=t5)
+
+
+def _emit_overlay_row_stagger(fw: MatmulKernel, y_reg) -> MatmulKernel:
+  if OVERLAY_MCAST_ROW_STAGGER <= 0:
+    return fw
+  fw.li(t0, OVERLAY_MCAST_ROW_STAGGER)
+  fw.mul(t0, t0, y_reg)
+  loop = fw._new_label("overlay_row_stagger")
+  done = fw._new_label("overlay_row_stagger_done")
+  fw.label(loop)
+  fw.beq(t0, zero, done)
+  fw.addi(t0, t0, -1)
+  fw.j(loop)
+  fw.label(done)
+  return fw
 
 
 def emit_output_write_state_setup(fw: MatmulKernel) -> MatmulKernel:
@@ -945,6 +1320,9 @@ def matmul_reader_sender(
   fw.noc_semaphore_set(t6, 1)
 
   fw.li(s6, 0)
+  if NOC_READ_SYNC == "trid":
+    fw.reset_noc_trid_barrier_counter(0, 1 << 2, addr=t3, val=t5)
+    fw.noc_async_read_set_trid(0, 2, addr=t3, val=t5)
   fw.label("reader_sender_block_loop")
   fw.bne(s6, s8, "reader_sender_block_body")
   fw.j("reader_sender_done")
@@ -955,8 +1333,9 @@ def matmul_reader_sender(
   fw.mv(a4, s9)
   fw.li(t5, 0)
   fw.mv(a6, s1)
-  fw.li(t0, NOC.STATUS_BASE + NOC.NIU_MST_RD_RESP_RECEIVED)
-  fw.lw(a7, t0, 0)
+  if NOC_READ_SYNC == "global":
+    fw.li(t0, NOC.STATUS_BASE + NOC.NIU_MST_RD_RESP_RECEIVED)
+    fw.lw(a7, t0, 0)
 
   fw.mv(a6, s1)
   for row in range(plan.per_core_m):
@@ -971,59 +1350,129 @@ def matmul_reader_sender(
       fw.add(a4, a4, t6)
     fw.add(a6, a6, s3)
 
-  fw.add(a7, a7, s7)
-  fw.noc_reads_flushed(0, a7)
+  if NOC_READ_SYNC == "trid":
+    fw.noc_async_read_barrier_with_trid(0, 2, addr=t3, val=t5)
+  else:
+    fw.add(a7, a7, s7)
+    fw.noc_reads_flushed(0, a7)
   fw.arg(t0, 21)
   fw.sem_addr(BM.SEM_L1_BASE, t0, out=a3)
   fw.noc_semaphore_wait(a3, s10)
   fw.noc_semaphore_set(a3, 0)
 
-  fw.arg(t0, 13)
-  fw.beq(t0, zero, "reader_sender_skip_west")
-  fw.arg(t1, 9)
-  fw.arg(t2, 10)
-  fw.arg(t3, 11)
-  fw.arg(t5, 12)
-  fw.noc_mcast_coord(a5, t1, t2, t3, t5)
-  fw.li(t0, NOC.STATUS_BASE + NOC.NIU_MST_NONPOSTED_WR_REQ_SENT)
-  fw.lw(a6, t0, 0)
   block_bytes = plan.in0_block_num_tiles * INPUT_TILE_BYTES
-  fw.addi(a6, a6, _ceil_div(block_bytes, NOC.MAX_BURST_SIZE))
-  fw.mv(a0, s9)
-  _emit_mcast_chunks(fw, 0, a0, a5, block_bytes)
-  fw.noc_nonposted_writes_flushed(0, a6)
-  fw.arg(t0, 22)
-  fw.sem_addr(BM.SEM_L1_BASE, t0, out=a4)
-  fw.arg(t1, 9)
-  fw.arg(t2, 10)
-  fw.arg(t3, 11)
-  fw.arg(t5, 12)
-  fw.noc_mcast_coord(a5, t1, t2, t3, t5)
-  fw.noc_semaphore_set_multicast(0, 0, a4, a5, 1, t0, mcast_path_reserve=MCAST_PATH_RESERVE, a=t1, v=t2)
-  fw.label("reader_sender_skip_west")
+  if OVERLAY_MCAST_A:
+    fw.arg(t0, 20)
+    _emit_overlay_row_stagger(fw, t0)
+    fw.arg(t0, 13)
+    fw.beq(t0, zero, "reader_sender_overlay_skip_west_data")
+    fw.arg(t1, 9)
+    fw.arg(t2, 10)
+    fw.arg(t3, 11)
+    fw.arg(t5, 12)
+    fw.mv(a0, s9)
+    _emit_overlay_mcast_write(
+      fw, noc_id=0, stream_id=OVERLAY_STREAM_BRISC_MCAST, src_addr=a0,
+      x_start=t1, y_start=t2, x_end=t3, y_end=t5, total_bytes=block_bytes,
+    )
+    if OVERLAY_READ_BARRIER:
+      fw.arg(t1, 11)
+      fw.arg(t2, 12)
+      fw.noc_coord(a5, t1, t2)
+      _emit_overlay_remote_read_barrier(fw, noc_id=0, remote_addr=a1, remote_coord=a5, total_bytes=block_bytes)
+    fw.label("reader_sender_overlay_skip_west_data")
 
-  fw.arg(t0, 18)
-  fw.beq(t0, zero, "reader_sender_skip_east")
-  fw.arg(t1, 14)
-  fw.arg(t2, 15)
-  fw.arg(t3, 16)
-  fw.arg(t5, 17)
-  fw.noc_mcast_coord(a5, t1, t2, t3, t5)
-  fw.li(t0, NOC.STATUS_BASE + NOC.NIU_MST_NONPOSTED_WR_REQ_SENT)
-  fw.lw(a6, t0, 0)
-  fw.addi(a6, a6, _ceil_div(block_bytes, NOC.MAX_BURST_SIZE))
-  fw.mv(a0, s9)
-  _emit_mcast_chunks(fw, 0, a0, a5, block_bytes)
-  fw.noc_nonposted_writes_flushed(0, a6)
-  fw.arg(t0, 22)
-  fw.sem_addr(BM.SEM_L1_BASE, t0, out=a4)
-  fw.arg(t1, 14)
-  fw.arg(t2, 15)
-  fw.arg(t3, 16)
-  fw.arg(t5, 17)
-  fw.noc_mcast_coord(a5, t1, t2, t3, t5)
-  fw.noc_semaphore_set_multicast(0, 0, a4, a5, 1, t0, mcast_path_reserve=MCAST_PATH_RESERVE, a=t1, v=t2)
-  fw.label("reader_sender_skip_east")
+    fw.arg(t0, 18)
+    fw.beq(t0, zero, "reader_sender_overlay_skip_east_data")
+    fw.arg(t1, 14)
+    fw.arg(t2, 15)
+    fw.arg(t3, 16)
+    fw.arg(t5, 17)
+    fw.mv(a0, s9)
+    _emit_overlay_mcast_write(
+      fw, noc_id=0, stream_id=OVERLAY_STREAM_BRISC_MCAST, src_addr=a0,
+      x_start=t1, y_start=t2, x_end=t3, y_end=t5, total_bytes=block_bytes,
+    )
+    if OVERLAY_READ_BARRIER:
+      fw.arg(t1, 16)
+      fw.arg(t2, 17)
+      fw.noc_coord(a5, t1, t2)
+      _emit_overlay_remote_read_barrier(fw, noc_id=0, remote_addr=a1, remote_coord=a5, total_bytes=block_bytes)
+    fw.label("reader_sender_overlay_skip_east_data")
+
+    fw.arg(t0, 13)
+    fw.beq(t0, zero, "reader_sender_overlay_skip_west_sem")
+    fw.arg(t0, 22)
+    fw.sem_addr(BM.SEM_L1_BASE, t0, out=a4)
+    fw.arg(t1, 9)
+    fw.arg(t2, 10)
+    fw.arg(t3, 11)
+    fw.arg(t5, 12)
+    fw.noc_mcast_coord(a5, t1, t2, t3, t5)
+    _emit_overlay_debug_mark(fw, 0x6101, stream_id=OVERLAY_STREAM_BRISC_MCAST, noc_id=0, aux=s6)
+    _emit_data_ready_mcast(fw, noc_id=0, sem_addr=a4, coord=a5, flush=True)
+    _emit_overlay_debug_mark(fw, 0x6102, stream_id=OVERLAY_STREAM_BRISC_MCAST, noc_id=0, aux=s6)
+    fw.label("reader_sender_overlay_skip_west_sem")
+
+    fw.arg(t0, 18)
+    fw.beq(t0, zero, "reader_sender_overlay_skip_east_sem")
+    fw.arg(t0, 22)
+    fw.sem_addr(BM.SEM_L1_BASE, t0, out=a4)
+    fw.arg(t1, 14)
+    fw.arg(t2, 15)
+    fw.arg(t3, 16)
+    fw.arg(t5, 17)
+    fw.noc_mcast_coord(a5, t1, t2, t3, t5)
+    _emit_overlay_debug_mark(fw, 0x6103, stream_id=OVERLAY_STREAM_BRISC_MCAST, noc_id=0, aux=s6)
+    _emit_data_ready_mcast(fw, noc_id=0, sem_addr=a4, coord=a5, flush=True)
+    _emit_overlay_debug_mark(fw, 0x6104, stream_id=OVERLAY_STREAM_BRISC_MCAST, noc_id=0, aux=s6)
+    fw.label("reader_sender_overlay_skip_east_sem")
+  else:
+    fw.arg(t0, 13)
+    fw.beq(t0, zero, "reader_sender_skip_west")
+    fw.arg(t1, 9)
+    fw.arg(t2, 10)
+    fw.arg(t3, 11)
+    fw.arg(t5, 12)
+    fw.mv(a0, s9)
+    fw.noc_mcast_coord(a5, t1, t2, t3, t5)
+    fw.li(t0, NOC.STATUS_BASE + NOC.NIU_MST_NONPOSTED_WR_REQ_SENT)
+    fw.lw(a6, t0, 0)
+    fw.addi(a6, a6, _ceil_div(block_bytes, NOC.MAX_BURST_SIZE))
+    _emit_mcast_chunks(fw, 0, a0, a5, block_bytes)
+    fw.noc_nonposted_writes_flushed(0, a6)
+    fw.arg(t0, 22)
+    fw.sem_addr(BM.SEM_L1_BASE, t0, out=a4)
+    fw.arg(t1, 9)
+    fw.arg(t2, 10)
+    fw.arg(t3, 11)
+    fw.arg(t5, 12)
+    fw.noc_mcast_coord(a5, t1, t2, t3, t5)
+    _emit_data_ready_mcast(fw, noc_id=0, sem_addr=a4, coord=a5, flush=False)
+    fw.label("reader_sender_skip_west")
+
+    fw.arg(t0, 18)
+    fw.beq(t0, zero, "reader_sender_skip_east")
+    fw.arg(t1, 14)
+    fw.arg(t2, 15)
+    fw.arg(t3, 16)
+    fw.arg(t5, 17)
+    fw.mv(a0, s9)
+    fw.noc_mcast_coord(a5, t1, t2, t3, t5)
+    fw.li(t0, NOC.STATUS_BASE + NOC.NIU_MST_NONPOSTED_WR_REQ_SENT)
+    fw.lw(a6, t0, 0)
+    fw.addi(a6, a6, _ceil_div(block_bytes, NOC.MAX_BURST_SIZE))
+    _emit_mcast_chunks(fw, 0, a0, a5, block_bytes)
+    fw.noc_nonposted_writes_flushed(0, a6)
+    fw.arg(t0, 22)
+    fw.sem_addr(BM.SEM_L1_BASE, t0, out=a4)
+    fw.arg(t1, 14)
+    fw.arg(t2, 15)
+    fw.arg(t3, 16)
+    fw.arg(t5, 17)
+    fw.noc_mcast_coord(a5, t1, t2, t3, t5)
+    _emit_data_ready_mcast(fw, noc_id=0, sem_addr=a4, coord=a5, flush=False)
+    fw.label("reader_sender_skip_east")
 
   fw.cb_push_back(BM.CB_INTERFACE, 0, s7)
   emit_profile_accum_end(fw, PROFILE_COUNTERS[0][1], PROFILE_TMP_BRISC)
@@ -1047,6 +1496,7 @@ def matmul_reader_recv() -> MatmulKernel:
   fw.beq(s0, s8, "reader_recv_done")
   emit_profile_accum_start(fw, PROFILE_TMP_BRISC)
   fw.cb_reserve_back(BM.CB_INTERFACE, 0, s7)
+  _emit_overlay_debug_mark(fw, 0xA001, stream_id=OVERLAY_STREAM_BRISC_MCAST, noc_id=0, aux=s0)
   fw.arg(t0, 22)
   fw.sem_addr(BM.SEM_L1_BASE, t0, out=s1)
   fw.noc_semaphore_set(s1, 0)
@@ -1057,8 +1507,11 @@ def matmul_reader_recv() -> MatmulKernel:
   fw.noc_coord(a5, t1, t2)
   fw.local_noc0_coord(a6)
   fw.noc_semaphore_inc(0, 3, s2, a5, 1, ret_coord=a6, a=t3, v=t4)
+  _emit_overlay_debug_mark(fw, 0xA002, stream_id=OVERLAY_STREAM_BRISC_MCAST, noc_id=0, aux=s0)
   fw.noc_semaphore_wait(s1, 1)
+  _emit_overlay_debug_mark(fw, 0xA003, stream_id=OVERLAY_STREAM_BRISC_MCAST, noc_id=0, aux=s0)
   fw.cb_push_back(BM.CB_INTERFACE, 0, s7)
+  _emit_overlay_debug_mark(fw, 0xA004, stream_id=OVERLAY_STREAM_BRISC_MCAST, noc_id=0, aux=s0)
   emit_profile_accum_end(fw, PROFILE_COUNTERS[0][1], PROFILE_TMP_BRISC)
   fw.addi(s0, s0, 1)
   fw.j("reader_recv_block_loop")
@@ -1094,6 +1547,9 @@ def matmul_writer_sender(
   fw.noc_semaphore_set(t6, 1)
 
   fw.li(s6, 0)
+  if NOC_READ_SYNC == "trid":
+    fw.reset_noc_trid_barrier_counter(1, 1 << 2, addr=t3, val=t5)
+    fw.noc_async_read_set_trid(1, 2, addr=t3, val=t5)
   fw.label("writer_sender_block_loop")
   fw.bne(s6, s8, "writer_sender_block_body")
   fw.j("writer_sender_blocks_done")
@@ -1103,8 +1559,9 @@ def matmul_writer_sender(
   fw.cb_write_ptr(NM.CB_INTERFACE, 1, out=s9)
   fw.mv(a4, s9)
   fw.mv(a6, s1)
-  fw.li(t0, NOC.STATUS_BASE + NOC.NIU_MST_RD_RESP_RECEIVED + (1 << NOC.INSTANCE_OFFSET_BIT))
-  fw.lw(a7, t0, 0)
+  if NOC_READ_SYNC == "global":
+    fw.li(t0, NOC.STATUS_BASE + NOC.NIU_MST_RD_RESP_RECEIVED + (1 << NOC.INSTANCE_OFFSET_BIT))
+    fw.lw(a7, t0, 0)
 
   fw.mv(a6, s1)
   for row in range(plan.in0_block_w):
@@ -1119,8 +1576,11 @@ def matmul_writer_sender(
       fw.add(a4, a4, t6)
     fw.add(a6, a6, s3)
 
-  fw.add(a7, a7, s7)
-  fw.noc_reads_flushed(1, a7)
+  if NOC_READ_SYNC == "trid":
+    fw.noc_async_read_barrier_with_trid(1, 2, addr=t3, val=t5)
+  else:
+    fw.add(a7, a7, s7)
+    fw.noc_reads_flushed(1, a7)
   fw.arg(t0, 16)
   fw.sem_addr(NM.SEM_L1_BASE, t0, out=a3)
   fw.noc_semaphore_wait(a3, s10)
@@ -1132,14 +1592,21 @@ def matmul_writer_sender(
   fw.arg(t2, 10)
   fw.arg(t3, 11)
   fw.arg(t5, 12)
-  fw.noc_mcast_coord(a5, t1, t2, t3, t5)
-  fw.li(t0, NOC.STATUS_BASE + NOC.NIU_MST_NONPOSTED_WR_REQ_SENT + (1 << NOC.INSTANCE_OFFSET_BIT))
-  fw.lw(a6, t0, 0)
   block_bytes = plan.in1_block_num_tiles * INPUT_TILE_BYTES
-  fw.addi(a6, a6, _ceil_div(block_bytes, NOC.MAX_BURST_SIZE))
   fw.mv(a0, s9)
-  _emit_mcast_chunks(fw, 1, a0, a5, block_bytes)
-  fw.noc_nonposted_writes_flushed(1, a6)
+  if OVERLAY_MCAST_B:
+    _emit_overlay_mcast_write(
+      fw, noc_id=1, stream_id=OVERLAY_STREAM_NCRISC_MCAST, src_addr=a0,
+      x_start=t1, y_start=t2, x_end=t3, y_end=t5, total_bytes=block_bytes,
+      xy_mcast=True,
+    )
+  else:
+    fw.noc_mcast_coord(a5, t1, t2, t3, t5)
+    fw.li(t0, NOC.STATUS_BASE + NOC.NIU_MST_NONPOSTED_WR_REQ_SENT + (1 << NOC.INSTANCE_OFFSET_BIT))
+    fw.lw(a6, t0, 0)
+    fw.addi(a6, a6, _ceil_div(block_bytes, NOC.MAX_BURST_SIZE))
+    _emit_mcast_chunks(fw, 1, a0, a5, block_bytes)
+    fw.noc_nonposted_writes_flushed(1, a6)
   fw.arg(t0, 17)
   fw.sem_addr(NM.SEM_L1_BASE, t0, out=a4)
   fw.arg(t1, 9)
@@ -1147,7 +1614,7 @@ def matmul_writer_sender(
   fw.arg(t3, 11)
   fw.arg(t5, 12)
   fw.noc_mcast_coord(a5, t1, t2, t3, t5)
-  fw.noc_semaphore_set_multicast(1, 0, a4, a5, 1, t0, mcast_path_reserve=MCAST_PATH_RESERVE, a=t1, v=t2)
+  _emit_data_ready_mcast(fw, noc_id=1, sem_addr=a4, coord=a5, flush=OVERLAY_MCAST_B)
   fw.label("writer_sender_skip_mcast")
 
   fw.cb_push_back(NM.CB_INTERFACE, 1, s7)
@@ -1176,6 +1643,7 @@ def matmul_writer_recv(
   fw.beq(s0, s8, "writer_recv_blocks_done")
   emit_profile_accum_start(fw, PROFILE_TMP_NCRISC)
   fw.cb_reserve_back(NM.CB_INTERFACE, 1, s7)
+  _emit_overlay_debug_mark(fw, 0xB001, stream_id=OVERLAY_STREAM_NCRISC_MCAST, noc_id=1, aux=s0)
   fw.arg(t0, 17)
   fw.sem_addr(NM.SEM_L1_BASE, t0, out=s1)
   fw.noc_semaphore_set(s1, 0)
@@ -1186,8 +1654,11 @@ def matmul_writer_recv(
   fw.noc_coord(a5, t1, t2)
   fw.local_noc0_coord(a6, x_addr=NM.MY_X, y_addr=NM.MY_Y)
   fw.noc_semaphore_inc(1, 3, s2, a5, 1, ret_coord=a6, a=t3, v=t4)
+  _emit_overlay_debug_mark(fw, 0xB002, stream_id=OVERLAY_STREAM_NCRISC_MCAST, noc_id=1, aux=s0)
   fw.noc_semaphore_wait(s1, 1)
+  _emit_overlay_debug_mark(fw, 0xB003, stream_id=OVERLAY_STREAM_NCRISC_MCAST, noc_id=1, aux=s0)
   fw.cb_push_back(NM.CB_INTERFACE, 1, s7)
+  _emit_overlay_debug_mark(fw, 0xB004, stream_id=OVERLAY_STREAM_NCRISC_MCAST, noc_id=1, aux=s0)
   emit_profile_accum_end(fw, PROFILE_COUNTERS[1][1], PROFILE_TMP_NCRISC)
   fw.addi(s0, s0, 1)
   fw.j("writer_recv_block_loop")
@@ -1246,9 +1717,10 @@ def emit_output_writer(
   emit_profile_accum_end(fw, PROFILE_COUNTERS[9][1], PROFILE_TMP_NCRISC_PHASE)
   emit_profile_accum_start(fw, PROFILE_TMP_NCRISC_PHASE)
   fw.cb_read_ptr(NM.CB_INTERFACE, 16, out=t5)
-  fw.li(t3, NOC.STATUS_BASE + NOC.NIU_MST_WR_ACK_RECEIVED + (OUTPUT_NOC << NOC.INSTANCE_OFFSET_BIT))
-  fw.lw(s8, t3, 0)
-  fw.addi(s8, s8, plan.out_subblock_num_tiles)
+  if not OVERLAY_OUTPUT_WRITES:
+    fw.li(t3, NOC.STATUS_BASE + NOC.NIU_MST_WR_ACK_RECEIVED + (OUTPUT_NOC << NOC.INSTANCE_OFFSET_BIT))
+    fw.lw(s8, t3, 0)
+    fw.addi(s8, s8, plan.out_subblock_num_tiles)
   fw.mv(a7, a6)  # current output row start
   fw.mv(a3, s7)
 
@@ -1264,7 +1736,18 @@ def emit_output_writer(
   fw.mv(a1, t4)
   fw.mv(a2, s11)
   fw.dram_tile_addr_from_rta_coords(coord_offset_words, rta_ptr_addr=NM.RTA_L1_BASE_PTR)
-  emit_output_write_stateful(fw, t5, a0, a2)
+  if OVERLAY_OUTPUT_WRITES:
+    _emit_overlay_unicast_write(
+      fw,
+      noc_id=OUTPUT_NOC,
+      stream_id=OVERLAY_STREAM_NCRISC_OUTPUT,
+      src_addr=t5,
+      dst_addr=a0,
+      dst_coord=a2,
+      total_bytes=OUTPUT_TILE_BYTES,
+    )
+  else:
+    emit_output_write_stateful(fw, t5, a0, a2)
   if output_tile_hook is not None:
     output_tile_hook(fw, plan, tile_page=t4, l1_tile=t5)
   emit_progress_mark(fw, DEBUG_NCRISC_OUTPUT, 0xB133, block_reg=s10, i0_reg=a3, i1_reg=a4)
@@ -1283,7 +1766,8 @@ def emit_output_writer(
   emit_profile_accum_end(fw, PROFILE_COUNTERS[10][1], PROFILE_TMP_NCRISC_PHASE)
 
   emit_profile_accum_start(fw, PROFILE_TMP_NCRISC_PHASE)
-  fw.noc_write_barrier(OUTPUT_NOC, s8)
+  if not OVERLAY_OUTPUT_WRITES:
+    fw.noc_write_barrier(OUTPUT_NOC, s8)
   emit_progress_mark(fw, DEBUG_NCRISC_OUTPUT, 0xB140, block_reg=s10, i0_reg=s9, i1_reg=a6)
   fw.cb_pop_front(NM.CB_INTERFACE, 16, plan.out_subblock_num_tiles)
   emit_cb_debug_snapshot(fw, DEBUG_NCRISC_OUTPUT + 0x40, 16, 0xB151)
@@ -2745,6 +3229,9 @@ def build_program(
     ],
     semaphores=NUM_SEMAPHORES,
     grid=(plan.rows, plan.cols),
+    core_order=tuple(plan.cores()),
+    brisc_sender_cores=tuple(_row_sender(plan, y) for y in plan.rows),
+    ncrisc_sender_cores=tuple(_col_sender(plan, x) for x in plan.cols),
   )
   prog.name = f"matmul_{plan.mt * TILE}x{plan.kt * TILE}x{plan.nt * TILE}"
   return prog
@@ -2760,10 +3247,50 @@ def _split_length(x: int) -> int:
   return split
 
 
-def _buildable_plan(M: int, K: int, N: int, cores: list[Core], num_banks: int) -> MatmulPlan:
-  plan = plan_matmul(M, K, N, cores)
+def _buildable_plan(
+  M: int, K: int, N: int, cores: list[Core], num_banks: int, *, allow_ragged: bool = RAGGED_CORES,
+) -> MatmulPlan:
+  plan = plan_matmul(M, K, N, cores, allow_ragged=allow_ragged)
   build_program(plan, 0, 0, 0, num_banks).layout(core_xy=plan.cores()[0])
   return plan
+
+
+def _hole_fill_cores(cores: list[Core]) -> list[Core]:
+  by_col: dict[int, list[Core]] = {}
+  for core in sorted(set(cores), key=lambda xy: (xy[0], xy[1])):
+    by_col.setdefault(core[0], []).append(core)
+  _x, col_cores = max(by_col.items(), key=lambda item: (len(item[1]), -item[0]))
+  return col_cores
+
+
+def _ragged_hole_chunks(chunk: MatmulChunk, K: int, cores: list[Core], num_banks: int) -> list[MatmulChunk]:
+  plan = chunk.plan
+  if plan.active_cores is None:
+    return []
+  active = set(plan.active_cores)
+  fill_cores = _hole_fill_cores(cores)
+  out: list[MatmulChunk] = []
+  for ri, y in enumerate(plan.rows):
+    local_m0 = ri * plan.per_core_m * TILE
+    if local_m0 >= chunk.m:
+      continue
+    m = min(plan.per_core_m * TILE, chunk.m - local_m0)
+    for ci, x in enumerate(plan.cols):
+      if (x, y) in active:
+        continue
+      local_n0 = ci * plan.per_core_n * TILE
+      if local_n0 >= chunk.n:
+        continue
+      n = min(plan.per_core_n * TILE, chunk.n - local_n0)
+      fill_plan = _buildable_plan(m, K, n, fill_cores, num_banks, allow_ragged=False)
+      out.append(MatmulChunk(
+        m0=chunk.m0 + local_m0,
+        n0=chunk.n0 + local_n0,
+        m=m,
+        n=n,
+        plan=fill_plan,
+      ))
+  return out
 
 
 def plan_output_chunks(M: int, K: int, N: int, cores: list[Core], num_banks: int) -> list[MatmulChunk]:
@@ -2781,10 +3308,11 @@ def plan_output_chunks(M: int, K: int, N: int, cores: list[Core], num_banks: int
     if split_m == 0 and split_n == 0:
       raise ValueError(f"No tiled matmul plan for M={m} K={K} N={n}")
 
+    prefer_n_for_cap = SPLIT_AXIS == "auto" and _effective_max_per_core_n() and split_n != 0
     split_m_first = (
       split_n == 0
       or SPLIT_AXIS == "m"
-      or (SPLIT_AXIS == "auto" and split_m != 0 and m >= n)
+      or (SPLIT_AXIS == "auto" and not prefer_n_for_cap and split_m != 0 and m >= n)
     )
     if split_m_first:
       visit(m0, split_m, n0, n)
@@ -2794,6 +3322,8 @@ def plan_output_chunks(M: int, K: int, N: int, cores: list[Core], num_banks: int
       visit(m0, m, n0 + split_n, n - split_n)
 
   visit(0, M, 0, N)
+  for chunk in tuple(chunks):
+    chunks.extend(_ragged_hole_chunks(chunk, K, cores, num_banks))
   return chunks
 
 
@@ -2907,6 +3437,35 @@ def tflops(m: int, n: int, k: int, us: float) -> float:
   return (2.0 * m * n * k) / (us * 1.0e6) if us > 0 else 0.0
 
 
+def dump_overlay_debug(device: Device, plan: MatmulPlan) -> None:
+  if not OVERLAY_DEBUG:
+    return
+  cores = plan.cores()
+  debug_streams = sorted({
+    OVERLAY_STREAM_BRISC_MCAST,
+    OVERLAY_STREAM_NCRISC_MCAST,
+    OVERLAY_STREAM_NCRISC_OUTPUT,
+  })
+  print("overlay_debug:")
+  print("  core stream code noc aux trisc0 ncrisc_out")
+  try:
+    with TLBWindow(device.dev, start=cores[0]) as win:
+      for core in cores:
+        win.target(core)
+        trisc0 = struct.unpack("<I", win.read(DEBUG_TRISC0, 4))[0]
+        ncrisc_out = struct.unpack("<I", win.read(DEBUG_NCRISC_OUTPUT, 4))[0]
+        for stream_id in debug_streams:
+          blob = win.read(DEBUG_OVERLAY + stream_id * 0x20, 16)
+          code, stream, noc, aux = struct.unpack("<IIII", blob)
+          if code or trisc0 or ncrisc_out:
+            print(
+              f"  {core[0]},{core[1]} {stream_id} "
+              f"0x{code:04x} {noc} 0x{aux:08x} 0x{trisc0:08x} 0x{ncrisc_out:08x}"
+            )
+  except Exception as e:
+    print(f"  <debug dump failed: {e}>")
+
+
 def run_matmul(
   M: int,
   N: int,
@@ -2962,7 +3521,11 @@ def run_matmul(
           dram_bank_coords_noc1=dram_coords_noc1,
         )
         prog.name = f"matmul_M{M}_N{N}_K{K}" if len(chunks) == 1 else f"matmul_M{M}_N{N}_K{K}_chunk{i}"
-        run_timings.extend(device.run(prog))
+        try:
+          run_timings.extend(device.run(prog))
+        except Exception:
+          dump_overlay_debug(device, chunk.plan)
+          raise
       if run_timings:
         run_times_us.append(sum(timing["us"] for timing in run_timings))
 
@@ -2980,6 +3543,7 @@ def run_matmul(
       "avg_us": avg_us,
       "pcc": pcc,
       "rel_l2": rel_l2,
+      "validation_skipped": False,
       "c_raw": c_raw,
       "a_ref": a_ref,
       "b_ref": b_ref,
@@ -3009,6 +3573,7 @@ def main() -> None:
   print(f"  runs: {len(run_times_us)}")
   print(f"  shape: {M}x{K}x{N}")
   print(f"  padded: {result['Mp']}x{result['Kp']}x{result['Np']}")
+  print(f"  read_sync: {NOC_READ_SYNC}")
   print(f"  kernel_avg: {avg_us:,.1f} us")
   print(f"  throughput: {tflops(result['Mp'], result['Np'], result['Kp'], avg_us):.2f} TFLOP/s")
 
