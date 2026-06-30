@@ -38,6 +38,7 @@ START_GATE_BASE = RESULT_BASE - 0x40
 ROLE_WRITER = 1
 ROLE_READER = 2
 ROLE_POINTER = 3
+MAX_BH_STATIC_VC = 5
 ROLE_NAMES = {
   ROLE_WRITER: "write",
   ROLE_READER: "read",
@@ -189,8 +190,10 @@ def choose_row(cores: list[Core], row: int | None) -> tuple[int, list[int]]:
 def static_vc_ctrl(role: int, vc: int | None) -> int | None:
   if vc is None:
     return None
-  if not 0 <= vc <= 7:
-    raise ValueError("static VC must be in [0, 7]")
+  # The command field is 3 bits wide, but Blackhole tt-metal documents VCs 0..5.
+  # Encodings 6/7 are rejected here because they can wedge the command stream.
+  if not 0 <= vc <= MAX_BH_STATIC_VC:
+    raise ValueError(f"static VC must be in [0, {MAX_BH_STATIC_VC}]")
   vc_bits = NOC.CMD_VC_STATIC | (vc << 13)
   if role == ROLE_READER or role == ROLE_POINTER:
     return NOC.CMD_CPY | NOC.CMD_RESP_MARKED | vc_bits
@@ -745,6 +748,8 @@ def command_e(args):
   try:
     source, read_target, write_target = choose_same_core_rw_targets(cores, row=args.row)
     vc_pairs = [(args.read_vc, args.write_vc)]
+    if args.vc_grid:
+      vc_pairs = [(None, None)] + [(read_vc, write_vc) for read_vc in range(MAX_BH_STATIC_VC + 1) for write_vc in range(MAX_BH_STATIC_VC + 1)]
     if args.vc_sweep:
       vc_pairs = [(None, None), (1, 1), (1, 5), (5, 1), (5, 5)]
     for read_vc, write_vc in vc_pairs:
@@ -991,9 +996,10 @@ def main():
   pe.add_argument("--row", type=int, default=None)
   pe.add_argument("--bytes", type=int, default=256 * 1024, help="bytes per stream repeat; multiple of 16 KiB")
   pe.add_argument("--repeats", type=int, default=2)
-  pe.add_argument("--read-vc", type=int, default=None, help="force read CMD static VC")
-  pe.add_argument("--write-vc", type=int, default=None, help="force write CMD static VC")
+  pe.add_argument("--read-vc", type=int, default=None, help="force read CMD static VC (0..5 on Blackhole)")
+  pe.add_argument("--write-vc", type=int, default=None, help="force write CMD static VC (0..5 on Blackhole)")
   pe.add_argument("--vc-sweep", action="store_true", help="run default plus VC 1/5 combinations")
+  pe.add_argument("--vc-grid", action="store_true", help="run default plus all read/write VC pairs over 0..5")
   pe.set_defaults(func=command_e)
 
   pf = sub.add_parser("f", aliases=["F", "bisection"], help="Experiment F: vertical bisection bandwidth")
@@ -1012,7 +1018,7 @@ def main():
   ph.add_argument("--max-hops", type=int, default=None)
   ph.add_argument("--iters", type=int, default=64)
   ph.add_argument("--chain-len", type=int, default=256)
-  ph.add_argument("--read-vc", type=int, default=None, help="force read CMD static VC")
+  ph.add_argument("--read-vc", type=int, default=None, help="force read CMD static VC (0..5 on Blackhole)")
   ph.set_defaults(func=command_hop)
 
   args = parser.parse_args()

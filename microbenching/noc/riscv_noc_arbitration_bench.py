@@ -473,14 +473,25 @@ def _make_senders(target: Core, sources: Sequence[Core], *, skew_step: int = 0) 
   ]
 
 
-def build_sender_set(cores: list[Core], *, noc: int, k: int, row: int | None, skew_step: int = 0) -> tuple[Core, list[SenderSpec]]:
+def build_sender_set(
+  cores: list[Core], *,
+  noc: int,
+  k: int,
+  row: int | None,
+  skew_step: int = 0,
+  near_to_far: bool = False,
+) -> tuple[Core, list[SenderSpec]]:
   y, xs = choose_row(cores, row)
   if noc == 0:
     target = (xs[-1], y)
     source_xs = xs[-1 - k:-1]
+    if near_to_far:
+      source_xs = list(reversed(source_xs))
   else:
     target = (xs[0], y)
     source_xs = xs[1:1 + k]
+    if not near_to_far:
+      source_xs = list(source_xs)
   if len(source_xs) != k:
     raise ValueError(f"row {y} does not have {k} usable sender cores for NoC{noc}")
 
@@ -540,6 +551,41 @@ def build_two_sided_layout(cores: list[Core], *, k: int, row: int | None) -> Lay
   return LayoutSpec("two-sided", target, _make_senders(target, [(x, y) for x in source_xs]))
 
 
+def build_two_sided_asym_layout(
+  cores: list[Core], *,
+  k: int,
+  row: int | None,
+  left_count: int,
+  right_count: int,
+) -> LayoutSpec:
+  if left_count <= 0 or right_count <= 0:
+    raise ValueError("--asym-left and --asym-right must both be positive")
+  if k != left_count + right_count:
+    raise ValueError(
+      f"two-sided-asym needs --counts {left_count + right_count} for "
+      f"{left_count} left + {right_count} right senders, got K={k}"
+    )
+  y, xs = _choose_middle_row(cores, row, min_width=k + 1)
+  candidates = []
+  for target_x in xs:
+    left = sorted((x for x in xs if x < target_x), reverse=True)
+    right = sorted(x for x in xs if x > target_x)
+    if len(left) >= left_count and len(right) >= right_count:
+      candidates.append((abs(target_x - xs[len(xs) // 2]), target_x, left, right))
+  if not candidates:
+    raise ValueError(
+      f"no row has a target with {left_count} left and {right_count} right sender cores"
+    )
+  _, target_x, left, right = min(candidates)
+  source_xs = left[:left_count] + right[:right_count]
+  target = (target_x, y)
+  return LayoutSpec(
+    f"two-sided-asym-{left_count}l{right_count}r",
+    target,
+    _make_senders(target, [(x, y) for x in source_xs]),
+  )
+
+
 def _choose_interior_target(cores: list[Core], *, noc: int, row: int | None) -> Core:
   rows = rows_by_y(cores)
   if row is not None:
@@ -574,6 +620,44 @@ def build_diagonal_layout(cores: list[Core], *, noc: int, k: int, row: int | Non
   return LayoutSpec("diagonal", target, _make_senders(target, candidates[:k]))
 
 
+def _axis_predecessors(values: Sequence[int], target: int, noc: int) -> list[int]:
+  if noc == 0:
+    return sorted((value for value in values if value < target), reverse=True)
+  return sorted(value for value in values if value > target)
+
+
+def build_diagonal_xleg_layout(cores: list[Core], *, noc: int, k: int, row: int | None) -> LayoutSpec:
+  target = _choose_interior_target(cores, noc=noc, row=row)
+  rows = rows_by_y(cores)
+  tx, ty = target
+  source_y = ty - 1 if noc == 0 else ty + 1
+  source_xs = _axis_predecessors(rows.get(source_y, ()), tx, noc)
+  if len(source_xs) < k:
+    raise ValueError(
+      f"not enough same-row diagonal X-leg sender cores for NoC{noc}: need {k}, found {len(source_xs)}"
+    )
+  sources = [(x, source_y) for x in source_xs[:k]]
+  return LayoutSpec("diagonal-xleg", target, _make_senders(target, sources))
+
+
+def build_diagonal_yleg_layout(cores: list[Core], *, noc: int, k: int, row: int | None) -> LayoutSpec:
+  target = _choose_interior_target(cores, noc=noc, row=row)
+  rows = rows_by_y(cores)
+  tx, ty = target
+  target_row_xs = rows[ty]
+  source_xs = _axis_predecessors(target_row_xs, tx, noc)
+  if not source_xs:
+    raise ValueError(f"no live predecessor X column for target {target} on NoC{noc}")
+  source_x = source_xs[0]
+  source_ys = _axis_predecessors(sorted(rows), ty, noc)
+  sources = [(source_x, y) for y in source_ys if source_x in rows[y]]
+  if len(sources) < k:
+    raise ValueError(
+      f"not enough diagonal Y-leg sender cores for NoC{noc}: need {k}, found {len(sources)}"
+    )
+  return LayoutSpec("diagonal-yleg", target, _make_senders(target, sources[:k]))
+
+
 def build_multi_row_layout(cores: list[Core], *, noc: int, k: int, row: int | None) -> LayoutSpec:
   target = _choose_interior_target(cores, noc=noc, row=row)
   tx, ty = target
@@ -594,18 +678,35 @@ def build_layouts(
   k: int,
   row: int | None,
   skew_step: int,
+  asym_left: int,
+  asym_right: int,
 ) -> list[LayoutSpec]:
   out: list[LayoutSpec] = []
   for layout in layouts:
     if layout == "one-sided":
       target, senders = build_sender_set(cores, noc=noc, k=k, row=row)
       out.append(LayoutSpec("one-sided", target, senders))
+    elif layout == "rank-line":
+      target, senders = build_sender_set(cores, noc=noc, k=k, row=row, near_to_far=True)
+      out.append(LayoutSpec("rank-line", target, senders))
     elif layout == "holes":
       out.append(build_holey_layout(cores, noc=noc, k=k, row=row))
     elif layout == "two-sided":
       out.append(build_two_sided_layout(cores, k=k, row=row))
+    elif layout == "two-sided-asym":
+      out.append(build_two_sided_asym_layout(
+        cores,
+        k=k,
+        row=row,
+        left_count=asym_left,
+        right_count=asym_right,
+      ))
     elif layout == "diagonal":
       out.append(build_diagonal_layout(cores, noc=noc, k=k, row=row))
+    elif layout == "diagonal-xleg":
+      out.append(build_diagonal_xleg_layout(cores, noc=noc, k=k, row=row))
+    elif layout == "diagonal-yleg":
+      out.append(build_diagonal_yleg_layout(cores, noc=noc, k=k, row=row))
     elif layout == "multi-row":
       out.append(build_multi_row_layout(cores, noc=noc, k=k, row=row))
     elif layout == "start-skew":
@@ -634,7 +735,18 @@ def parse_nocs(text: str) -> tuple[int, ...]:
   return nocs
 
 
-LAYOUTS = ("one-sided", "two-sided", "holes", "diagonal", "multi-row", "start-skew")
+LAYOUTS = (
+  "one-sided",
+  "rank-line",
+  "two-sided",
+  "two-sided-asym",
+  "holes",
+  "diagonal",
+  "diagonal-xleg",
+  "diagonal-yleg",
+  "multi-row",
+  "start-skew",
+)
 
 
 def parse_layouts(text: str) -> tuple[str, ...]:
@@ -782,7 +894,8 @@ def run_once(
   return [read_sender_result(device, spec) for spec in senders], read_target_result(device, senders[0].target)
 
 
-def classify_distribution(results: list[SenderResult]) -> str:
+def classify_distribution(run: ArbitrationRun) -> str:
+  results = run.results
   rates = [result.bytes_per_cycle for result in results]
   if len(rates) < 2:
     return "single stream"
@@ -790,10 +903,12 @@ def classify_distribution(results: list[SenderResult]) -> str:
   spread = (max(rates) - min(rates)) / avg if avg else 0.0
   if spread <= 0.10:
     return "roughly equal"
-  best = max(results, key=lambda result: result.bytes_per_cycle)
-  if best.sender_index == len(results) - 1:
+  best_index = max(range(len(results)), key=lambda i: results[i].bytes_per_cycle)
+  ranked = rank_order_indices(run)
+  best_rank = ranked.index(best_index)
+  if best_rank == 0:
     return "near target favored"
-  if best.sender_index == 0:
+  if best_rank == len(results) - 1:
     return "far source favored"
   return "middle source favored"
 
@@ -817,26 +932,69 @@ def visibility_text(run: ArbitrationRun) -> str:
   return " ".join(parts)
 
 
+def aggregate_bpc(run: ArbitrationRun) -> float:
+  aggregate_window = max(result.end for result in run.results) - min(result.start for result in run.results)
+  aggregate_bytes = sum(result.bytes_total for result in run.results)
+  return aggregate_bytes / aggregate_window if aggregate_window > 0 else 0.0
+
+
+def rank_order_indices(run: ArbitrationRun) -> list[int]:
+  keyed = []
+  for i, spec in enumerate(run.senders):
+    path = noc_topology.noc_path(spec.source, spec.target, run.noc)
+    keyed.append((len(path), path, spec.source, i))
+  return [i for *_prefix, i in sorted(keyed)]
+
+
+def ladder_expected_rates(run: ArbitrationRun) -> list[float]:
+  total = aggregate_bpc(run)
+  return [total / min(rank + 2, run.k) for rank in range(run.k)]
+
+
+def ladder_text(run: ArbitrationRun) -> tuple[str, str, str]:
+  if run.k < 2 or run.layout not in {
+    "one-sided",
+    "rank-line",
+    "holes",
+    "diagonal-xleg",
+    "diagonal-yleg",
+    "multi-row",
+  }:
+    return "-", "-", "-"
+  order = rank_order_indices(run)
+  observed = [run.results[i].bytes_per_cycle for i in order]
+  expected = ladder_expected_rates(run)
+  rel_errors = [
+    abs(obs - exp) / exp
+    for obs, exp in zip(observed, expected)
+    if exp > 0
+  ]
+  observed_text = " ".join(f"{rate:.3f}" for rate in observed)
+  expected_text = " ".join(f"{rate:.3f}" for rate in expected)
+  max_error = max(rel_errors) if rel_errors else 0.0
+  return observed_text, expected_text, f"{max_error:.3f}"
+
+
 def format_summary(runs: list[ArbitrationRun]) -> str:
   lines = [
-    "| layout | noc | K | packet B | packets | target | sender order (+skew cyc) | aggregate B/cyc | aggregate req/cyc | per-stream B/cyc | spread | interpretation | receiver visibility cycles | bad counters | target missing | target polls |",
-    "|---|---:|---:|---:|---:|---|---|---:|---:|---|---:|---|---|---:|---:|---:|",
+    "| layout | noc | K | packet B | packets | target | sender order (+skew cyc) | aggregate B/cyc | aggregate req/cyc | per-stream B/cyc | near-rank B/cyc | ladder B/cyc | max ladder err | spread | interpretation | receiver visibility cycles | bad counters | target missing | target polls |",
+    "|---|---:|---:|---:|---:|---|---|---:|---:|---|---|---|---:|---:|---|---|---:|---:|---:|",
   ]
   for run in runs:
     rates = [result.bytes_per_cycle for result in run.results]
     avg = statistics.fmean(rates) if rates else 0.0
     spread = (max(rates) - min(rates)) / avg if avg else 0.0
-    aggregate_window = max(result.end for result in run.results) - min(result.start for result in run.results)
-    aggregate_bytes = sum(result.bytes_total for result in run.results)
-    aggregate_bpc = aggregate_bytes / aggregate_window if aggregate_window > 0 else 0.0
-    aggregate_rpc = aggregate_bpc / run.packet_bytes if run.packet_bytes > 0 else 0.0
+    aggregate = aggregate_bpc(run)
+    aggregate_rpc = aggregate / run.packet_bytes if run.packet_bytes > 0 else 0.0
     bad_counters, bad_sentinels = validation_counts(run)
     sender_order = sender_signature(run.senders)
     rate_text = " ".join(f"{result.bytes_per_cycle:.3f}" for result in run.results)
+    rank_rates, ladder_rates, ladder_err = ladder_text(run)
     lines.append(
       f"| {run.layout} | {run.noc} | {run.k} | {run.packet_bytes} | {run.packets} | `{run.target[0]},{run.target[1]}` | "
-      f"{sender_order} | {aggregate_bpc:.3f} | {aggregate_rpc:.5f} | {rate_text} | "
-      f"{spread:.3f} | {classify_distribution(run.results)} | "
+      f"{sender_order} | {aggregate:.3f} | {aggregate_rpc:.5f} | {rate_text} | "
+      f"{rank_rates} | {ladder_rates} | {ladder_err} | "
+      f"{spread:.3f} | {classify_distribution(run)} | "
       f"{visibility_text(run)} | "
       f"{bad_counters} | {bad_sentinels} | {run.target_result.poll_iters} |"
     )
@@ -860,9 +1018,12 @@ def append_report(path: Path, *, gate_cycles: int, runs: list[ArbitrationRun], a
   harness.append_report(path, None, [
     f"Start gate lead: `{gate_cycles}` cycles",
     f"Command: `{' '.join(argv)}`",
-    "Full matrix recipe: run through `tt-device-queue` with `PYTHONPATH=.:examples python3 microbenching/noc/riscv_noc_arbitration_bench.py --layouts all --counts 2,3,4,6,8 --packet-bytes 4096,16384 --packets 256 --nocs 0,1`",
+    "Rank-priority recipe: run through `tt-device-queue` with `PYTHONPATH=.:examples python3 microbenching/noc/riscv_noc_arbitration_bench.py --layouts rank-line --counts 2,3,4,5,6,7,8,9,10,11 --packet-bytes 16384 --packets 256 --nocs 0,1`; add K=12 on devices with at least 13 live workers in one row",
+    "Asymmetry recipe: `PYTHONPATH=.:examples python3 microbenching/noc/riscv_noc_arbitration_bench.py --layouts two-sided-asym --counts 4 --asym-left 3 --asym-right 1 --packet-bytes 16384 --packets 256 --nocs 0,1`",
+    "Diagonal recipe: `PYTHONPATH=.:examples python3 microbenching/noc/riscv_noc_arbitration_bench.py --layouts diagonal-xleg,diagonal-yleg --counts 4 --packet-bytes 16384 --packets 256 --nocs 0,1`",
     "Traffic: BRISC nonposted peer-L1 writes, one far-end receiver tile, one destination slice per sender",
-    "Placement: target-ingress layouts include one-sided row, two-sided row/wrap, holey row, diagonal, multi-row, and start-skew variants",
+    "Placement: target-ingress layouts include one-sided row, near-to-far rank-line, two-sided row/wrap, asymmetric two-sided, holey row, diagonal, diagonal X-leg/Y-leg, multi-row, and start-skew variants",
+    "Ladder columns sort senders near-to-far by modeled routed path and compare against aggregate/min(rank+2,K), which gives the farthest two senders the same tail share",
     "Receiver visibility cycles are target-side first-observed sentinel timestamps relative to the receiver's gated start",
   ], format_summary(runs))
 
@@ -891,7 +1052,16 @@ def selected_layouts(cores: list[Core], args, *, noc: int, k: int) -> list[Layou
   explicit = explicit_layout(args)
   if explicit is not None:
     return [explicit]
-  return build_layouts(cores, layouts=args.layouts, noc=noc, k=k, row=args.row, skew_step=args.skew_step)
+  return build_layouts(
+    cores,
+    layouts=args.layouts,
+    noc=noc,
+    k=k,
+    row=args.row,
+    skew_step=args.skew_step,
+    asym_left=args.asym_left,
+    asym_right=args.asym_right,
+  )
 
 
 def dry_run(args):
@@ -931,6 +1101,8 @@ def main():
   parser.add_argument("--sources", type=parse_core_list, default=None, help="explicit semicolon-separated sender cores X,Y;X,Y")
   parser.add_argument("--sender-skews", type=parse_skews, default=None, help="explicit per-sender start skews for --sources")
   parser.add_argument("--skew-step", type=int, default=10_000, help="cycles between senders for --layouts start-skew")
+  parser.add_argument("--asym-left", type=int, default=3, help="left-side sender count for --layouts two-sided-asym")
+  parser.add_argument("--asym-right", type=int, default=1, help="right-side sender count for --layouts two-sided-asym")
   parser.add_argument("--gate-cycles", type=int, default=100_000_000, help="future WALL_CLOCK start-gate lead")
   parser.add_argument("--dry-run", action="store_true", help="lower programs without opening the device")
   parser.add_argument("--allow-nonshared-ingress", action="store_true", help="allow layouts whose streams do not share one final target-ingress link")

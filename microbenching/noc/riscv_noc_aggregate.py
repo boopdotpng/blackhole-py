@@ -51,10 +51,15 @@ class CoreResult:
 
 
 class AggregateProgram:
-  def __init__(self, pairs: list[Pair], *, noc: int, stream_bytes: int):
+  def __init__(self, pairs: list[Pair], *, noc: int, stream_bytes: int,
+               vcs: list[int | None] | None = None, posted: bool = False):
     self.pairs = list(pairs)
     self.noc = noc
     self.stream_bytes = stream_bytes
+    self.posted = posted
+    self.vcs = list(vcs) if vcs is not None else [None] * len(self.pairs)
+    if len(self.vcs) != len(self.pairs):
+      raise ValueError("vcs length must match pairs length")
     self.name = f"riscv_noc_aggregate:noc{noc}:pairs{len(pairs)}"
 
   def _one_core_segments(self, core: Core, kernel: KernelBase, *, dispatch_mode: int, host_assigned_id: int):
@@ -71,8 +76,9 @@ class AggregateProgram:
   def lower(self, cores: list[Core] | None = None, *, dispatch_mode=DevMsgs.DISPATCH_MODE_HOST, host_assigned_id=0):
     per_core_segments = {}
     target_cores = []
-    for pair in self.pairs:
-      sender = observe.build_sender(self.noc, self.stream_bytes)
+    for pair, vc in zip(self.pairs, self.vcs):
+      write_ctrl = None if vc is None else observe.write_ctrl_for_vc(vc, posted=self.posted)
+      sender = observe.build_sender(self.noc, self.stream_bytes, write_ctrl=write_ctrl, posted=self.posted)
       sender.rta(lambda _x, _y, target=pair.target: [noc_xy(*target)])
       receiver = observe.build_receiver(self.noc, self.stream_bytes)
       per_core_segments[pair.source] = self._one_core_segments(
@@ -151,9 +157,11 @@ def read_core_result(device: Device, core: Core) -> CoreResult:
   return CoreResult(core, observe.read_result(device, core))
 
 
-def run_once(device: Device, pairs: list[Pair], *, noc: int, stream_bytes: int) -> tuple[list[CoreResult], list[CoreResult]]:
+def run_once(device: Device, pairs: list[Pair], *, noc: int, stream_bytes: int,
+             vcs: list[int | None] | None = None,
+             posted: bool = False) -> tuple[list[CoreResult], list[CoreResult]]:
   clear_and_seed(device, pairs, stream_bytes)
-  device.run(AggregateProgram(pairs, noc=noc, stream_bytes=stream_bytes))
+  device.run(AggregateProgram(pairs, noc=noc, stream_bytes=stream_bytes, vcs=vcs, posted=posted))
   senders = [read_core_result(device, pair.source) for pair in pairs]
   receivers = [read_core_result(device, pair.target) for pair in pairs]
   return senders, receivers

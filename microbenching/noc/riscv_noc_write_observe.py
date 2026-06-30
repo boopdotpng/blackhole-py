@@ -29,7 +29,25 @@ STATUS_DONE = 0x0B00D00D
 
 
 class ObserveKernel(KernelBase, Noc):
-  pass
+  def noc_write_with_ctrl(self, noc: int, buf: int, src, dst_lo, dst_mid, dst_coord,
+                          length, ctrl: int, *, a=t3, v=t4):
+    self.noc_wait_cmd_ready(noc, buf, addr=a, val=v)
+    self.noc_cmd_reg(noc, buf, NOC.CTRL, ctrl, addr=a, tmp=v)
+    self.noc_cmd_reg(noc, buf, NOC.TARG_ADDR_LO, src, addr=a, tmp=v)
+    self.noc_cmd_reg(noc, buf, NOC.RET_ADDR_LO, dst_lo, addr=a, tmp=v)
+    self.noc_cmd_reg(noc, buf, NOC.RET_ADDR_MID, dst_mid, addr=a, tmp=v)
+    self.noc_cmd_reg(noc, buf, NOC.RET_ADDR_COORDINATE, dst_coord, addr=a, tmp=v)
+    self.noc_cmd_reg(noc, buf, NOC.AT_LEN_BE, length, addr=a, tmp=v)
+    self.noc_cmd_reg(noc, buf, NOC.AT_LEN_BE_1, 0, addr=a, tmp=v)
+    self.noc_cmd_reg(noc, buf, NOC.CMD_CTRL, NOC.CTRL_SEND_REQ, addr=a, tmp=v)
+    return self
+
+
+def write_ctrl_for_vc(vc: int, *, posted: bool = False) -> int:
+  if not 0 <= vc <= 5:
+    raise ValueError("static VC must be in [0, 5] on Blackhole")
+  resp = 0 if posted else NOC.CMD_RESP_MARKED
+  return NOC.CMD_CPY | NOC.CMD_WR | resp | NOC.CMD_VC_STATIC | (vc << 13)
 
 
 def result_size() -> int:
@@ -65,7 +83,7 @@ def emit_counter_read(fw: KernelBase, noc: int, counter: int, out, *, addr=t3):
   return fw.lw(out, addr, 0)
 
 
-def build_sender(noc: int, stream_bytes: int) -> KernelBase:
+def build_sender(noc: int, stream_bytes: int, write_ctrl: int | None = None, *, posted: bool = False) -> KernelBase:
   chunks = stream_bytes // NOC.MAX_BURST_SIZE
   fw = ObserveKernel()
   emit_header(fw, role=ROLE_SENDER, status=STATUS_STARTED, noc=noc, stream_bytes=stream_bytes)
@@ -84,14 +102,20 @@ def build_sender(noc: int, stream_bytes: int) -> KernelBase:
   done = fw._new_label("sender_write_done")
   fw.label(loop)
   fw.beq(s0, zero, done)
-  fw.noc_write(noc, 0, s2, s3, 0, s9, s4, posted=False, a=t3, v=t4)
+  if write_ctrl is None:
+    fw.noc_write(noc, 0, s2, s3, 0, s9, s4, posted=posted, a=t3, v=t4)
+  else:
+    fw.noc_write_with_ctrl(noc, 0, s2, s3, 0, s9, s4, write_ctrl, a=t3, v=t4)
   fw.addi(s6, s6, 1)
   fw.add(s2, s2, s8)
   fw.add(s3, s3, s8)
   fw.addi(s0, s0, -1)
   fw.j(loop)
   fw.label(done)
-  fw.noc_write_barrier(noc, s6, addr=t3, val=t4)
+  if posted:
+    fw.noc_wait_cmd_ready(noc, 0, addr=t3, val=t4).fence()
+  else:
+    fw.noc_write_barrier(noc, s6, addr=t3, val=t4)
   harness.read_wall_clock(fw, a4, a5)
   emit_counter_read(fw, noc, NOC.NIU_MST_WR_ACK_RECEIVED, s8)
 
