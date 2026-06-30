@@ -226,6 +226,9 @@ class Program:
   semaphores: int = 0
   num_cores: int | None = None
   grid: tuple[tuple[int, ...], tuple[int, ...]] | None = None
+  core_order: tuple[Core, ...] | None = None
+  brisc_sender_cores: tuple[Core, ...] | None = None
+  ncrisc_sender_cores: tuple[Core, ...] | None = None
 
   def __post_init__(self):
     self.cbs = list(self.cbs)
@@ -233,12 +236,16 @@ class Program:
       raise ValueError("Program.num_cores must be positive")
     if self.num_cores is not None and self.grid is not None:
       raise ValueError("Program cannot set both num_cores and grid")
+    if self.num_cores is not None and self.core_order is not None:
+      raise ValueError("Program cannot set both num_cores and core_order")
 
   @property
   def kernel_map(self) -> dict[str, Kernel]:
     return {role: getattr(self, role) for role in ROLE_INDEX}
 
   def grid_cores(self) -> list[Core]:
+    if self.core_order is not None:
+      return list(self.core_order)
     if self.grid is None:
       raise ValueError("grid_cores() needs Program.grid")
     rows, cols = self.grid
@@ -252,9 +259,17 @@ class Program:
     x, y = core_xy
     if x not in cols or y not in rows:
       return kernels
-    if x != cols[0]:
+    if self.brisc_sender_cores is not None:
+      brisc_sender = core_xy in set(self.brisc_sender_cores)
+    else:
+      brisc_sender = x == cols[0]
+    if self.ncrisc_sender_cores is not None:
+      ncrisc_sender = core_xy in set(self.ncrisc_sender_cores)
+    else:
+      ncrisc_sender = y == rows[0]
+    if not brisc_sender:
       kernels["brisc"] = self.brisc_recv or self.brisc
-    if y != rows[0]:
+    if not ncrisc_sender:
       kernels["ncrisc"] = self.ncrisc_recv or self.ncrisc
     return kernels
 
@@ -376,6 +391,8 @@ class Program:
     return self._layout_core(**kw)
 
   def _target_cores(self, cores: list[Core] | None) -> list[Core]:
+    if self.core_order is not None:
+      return list(self.core_order)
     if self.grid is not None:
       return self.grid_cores()
     if cores is None:

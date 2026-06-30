@@ -21,15 +21,32 @@ class NOC:
   RET_ADDR_LO = REGS_START_ADDR + 0x0C
   RET_ADDR_MID = REGS_START_ADDR + 0x10
   RET_ADDR_COORDINATE = REGS_START_ADDR + 0x14
+  PACKET_TAG = REGS_START_ADDR + 0x18
   CTRL = REGS_START_ADDR + 0x1C
   AT_LEN_BE = REGS_START_ADDR + 0x20
   AT_LEN_BE_1 = REGS_START_ADDR + 0x24
   AT_DATA = REGS_START_ADDR + 0x28
+  BRCST_EXCLUDE = REGS_START_ADDR + 0x2C
+  L1_ACC_AT_INSTRN = REGS_START_ADDR + 0x30
+  SEC_CTRL = REGS_START_ADDR + 0x34
   CMD_CTRL = REGS_START_ADDR + 0x40
+  NODE_ID = REGS_START_ADDR + 0x44
+  ENDPOINT_ID = REGS_START_ADDR + 0x48
+  CLEAR_OUTSTANDING_REQ_CNT = REGS_START_ADDR + 0x60
+  CMD_BUF_AVAIL = REGS_START_ADDR + 0x64
+  CMD_BUF_OVFL = REGS_START_ADDR + 0x68
+
+  CFG_DEBUG_COUNTER_RESET = CFG_BASE + 0x1D * 4
+  ROUTER_OUTGOING_FLIT_COUNTER_BIT = 0
+  CMD_BUFFER_FIFO_OVFL_CLEAR_BIT = 4
 
   CTRL_SEND_REQ = 1
   PCIE_MID = 0x10000000
   COORD_MASK = 0xFFFFFF
+  MAX_TRANSACTION_ID = 0xF
+  MAX_TRANSACTION_ID_COUNT = 255
+  CLEAR_OUTSTANDING_REQ_MASK = (1 << (MAX_TRANSACTION_ID + 1)) - 1
+  PACKET_TAG_TRANSACTION_ID_SHIFT = 10
 
   CMD_CPY = 0
   CMD_AT = 1
@@ -42,6 +59,8 @@ class NOC:
   CMD_PATH_RESERVE = 1 << 8
   CMD_STATIC_VC_1 = 1 << 13
   CMD_STATIC_VC_5 = 5 << 13
+  CMD_BRCST_XY = 1 << 16
+  CMD_BRCST_SRC_INCLUDE = 1 << 17
 
   CMD_RD_FIELD = CMD_CPY | CMD_RESP_MARKED | CMD_VC_STATIC | CMD_STATIC_VC_1
   CMD_WR_FIELD = CMD_CPY | CMD_WR | CMD_RESP_MARKED | CMD_VC_STATIC | CMD_STATIC_VC_1
@@ -61,11 +80,85 @@ class NOC:
 
   MAX_BURST_SIZE = 16 * 1024
 
+  @staticmethod
+  def mcast_exclude_quad(x: int, y: int, *, dir_x: int = 0, dir_y: int = 0,
+                         stride_x: int = 1, stride_y: int = 1, enable: bool = True) -> int:
+    return (
+      (stride_x & 0xF) |
+      ((stride_y & 0xF) << 4) |
+      ((x & 0x3F) << 8) |
+      ((y & 0x3F) << 14) |
+      ((dir_x & 1) << 20) |
+      ((dir_y & 1) << 21) |
+      ((1 if enable else 0) << 22)
+    )
+
   NIU_MST_ATOMIC_RESP_RECEIVED = 0x00
   NIU_MST_WR_ACK_RECEIVED = 0x04
   NIU_MST_RD_RESP_RECEIVED = 0x08
+  NIU_MST_RD_DATA_WORD_RECEIVED = 0x0C
+  NIU_MST_CMD_ACCEPTED = 0x10
+  NIU_MST_RD_REQ_SENT = 0x14
+  NIU_MST_NONPOSTED_ATOMIC_SENT = 0x18
+  NIU_MST_POSTED_ATOMIC_SENT = 0x1C
+  NIU_MST_NONPOSTED_WR_DATA_WORD_SENT = 0x20
+  NIU_MST_POSTED_WR_DATA_WORD_SENT = 0x24
   NIU_MST_NONPOSTED_WR_REQ_SENT = 0x28
   NIU_MST_POSTED_WR_REQ_SENT = 0x2C
+  NIU_MST_NONPOSTED_WR_REQ_STARTED = 0x30
+  NIU_MST_POSTED_WR_REQ_STARTED = 0x34
+  NIU_MST_RD_REQ_STARTED = 0x38
+  NIU_MST_NONPOSTED_ATOMIC_STARTED = 0x3C
+  NIU_MST_REQS_OUTSTANDING_ID_BASE = 0x40
+  NIU_MST_WRITE_REQS_OUTGOING_ID_BASE = 0x80
+  NIU_SLV_ATOMIC_RESP_SENT = 0xC0
+  NIU_SLV_WR_ACK_SENT = 0xC4
+  NIU_SLV_RD_RESP_SENT = 0xC8
+  NIU_SLV_RD_DATA_WORD_SENT = 0xCC
+  NIU_SLV_REQ_ACCEPTED = 0xD0
+  NIU_SLV_RD_REQ_RECEIVED = 0xD4
+  NIU_SLV_NONPOSTED_ATOMIC_RECEIVED = 0xD8
+  NIU_SLV_POSTED_ATOMIC_RECEIVED = 0xDC
+  NIU_SLV_NONPOSTED_WR_DATA_WORD_RECEIVED = 0xE0
+  NIU_SLV_POSTED_WR_DATA_WORD_RECEIVED = 0xE4
+  NIU_SLV_NONPOSTED_WR_REQ_RECEIVED = 0xE8
+  NIU_SLV_POSTED_WR_REQ_RECEIVED = 0xEC
+  NIU_SLV_NONPOSTED_WR_REQ_STARTED = 0xF0
+  NIU_SLV_POSTED_WR_REQ_STARTED = 0xF4
+
+  @staticmethod
+  def packet_tag_transaction_id(trid: int) -> int:
+    if not 0 <= trid <= NOC.MAX_TRANSACTION_ID:
+      raise ValueError(f"NoC transaction id must be in [0, {NOC.MAX_TRANSACTION_ID}], got {trid}")
+    return trid << NOC.PACKET_TAG_TRANSACTION_ID_SHIFT
+
+  @staticmethod
+  def niu_mst_reqs_outstanding_id(trid: int) -> int:
+    if not 0 <= trid <= NOC.MAX_TRANSACTION_ID:
+      raise ValueError(f"NoC transaction id must be in [0, {NOC.MAX_TRANSACTION_ID}], got {trid}")
+    return NOC.NIU_MST_REQS_OUTSTANDING_ID_BASE + trid * 4
+
+  @staticmethod
+  def niu_mst_write_reqs_outgoing_id(trid: int) -> int:
+    if not 0 <= trid <= NOC.MAX_TRANSACTION_ID:
+      raise ValueError(f"NoC transaction id must be in [0, {NOC.MAX_TRANSACTION_ID}], got {trid}")
+    return NOC.NIU_MST_WRITE_REQS_OUTGOING_ID_BASE + trid * 4
+
+  @staticmethod
+  def port1_flit_counter_lower(vc: int) -> int:
+    return NOC.REGS_START_ADDR + 0x500 + vc * 8
+
+  @staticmethod
+  def port1_flit_counter_upper(vc: int) -> int:
+    return NOC.REGS_START_ADDR + 0x504 + vc * 8
+
+  @staticmethod
+  def port2_flit_counter_lower(vc: int) -> int:
+    return NOC.REGS_START_ADDR + 0x580 + vc * 8
+
+  @staticmethod
+  def port2_flit_counter_upper(vc: int) -> int:
+    return NOC.REGS_START_ADDR + 0x584 + vc * 8
 
 
 class NocCfg:
@@ -236,6 +329,57 @@ class Noc:
   def noc_cmd_reg(self, noc: int, buf: int, reg: int, value: int | Reg, *, addr: Reg = t0, tmp: Reg = t1):
     return self.write32(self.noc_cmd_addr(noc, buf, reg), value, tmp_addr=addr, tmp_val=tmp)
 
+  def noc_set_transaction_id(self, noc: int, buf: int, trid: int | Reg, *, addr: Reg = t0, val: Reg = t1):
+    self.noc_wait_cmd_ready(noc, buf, addr=addr, val=val)
+    if isinstance(trid, int):
+      tag = NOC.packet_tag_transaction_id(trid)
+    else:
+      self.slli(val, trid, NOC.PACKET_TAG_TRANSACTION_ID_SHIFT)
+      tag = val
+    return self.noc_cmd_reg(noc, buf, NOC.PACKET_TAG, tag, addr=addr, tmp=val)
+
+  def noc_async_read_set_trid(self, noc: int, trid: int | Reg, *,
+                              buf: int = NocCfg.NCRISC_RD_CMD_BUF,
+                              addr: Reg = t0, val: Reg = t1):
+    return self.noc_set_transaction_id(noc, buf, trid, addr=addr, val=val)
+
+  def reset_noc_trid_barrier_counter(self, noc: int, id_mask: int | Reg = NOC.CLEAR_OUTSTANDING_REQ_MASK, *,
+                                     addr: Reg = t0, val: Reg = t1):
+    return self.write32(
+      NOC.CLEAR_OUTSTANDING_REQ_CNT + (noc << NOC.INSTANCE_OFFSET_BIT),
+      id_mask,
+      tmp_addr=addr,
+      tmp_val=val,
+    )
+
+  def noc_wait_trid_issue_safe(self, noc: int, trid: int | Reg, *,
+                               addr: Reg = t0, val: Reg = t1, limit: Reg = t2):
+    if isinstance(trid, int):
+      self.li(addr, NOC.STATUS_BASE + NOC.niu_mst_reqs_outstanding_id(trid) + (noc << NOC.INSTANCE_OFFSET_BIT))
+    else:
+      self.li(addr, NOC.STATUS_BASE + NOC.NIU_MST_REQS_OUTSTANDING_ID_BASE + (noc << NOC.INSTANCE_OFFSET_BIT))
+      self.slli(val, trid, 2)
+      self.add(addr, addr, val)
+    self.li(limit, (NOC.MAX_TRANSACTION_ID_COUNT + 1) // 2 + 1)
+    loop = self._new_label("trid_issue_safe")
+    self.label(loop)
+    self.lw(val, addr, 0)
+    self.bgeu(val, limit, loop)
+    return self
+
+  def noc_async_read_barrier_with_trid(self, noc: int, trid: int | Reg, *, addr: Reg = t0, val: Reg = t1):
+    if isinstance(trid, int):
+      self.li(addr, NOC.STATUS_BASE + NOC.niu_mst_reqs_outstanding_id(trid) + (noc << NOC.INSTANCE_OFFSET_BIT))
+    else:
+      self.li(addr, NOC.STATUS_BASE + NOC.NIU_MST_REQS_OUTSTANDING_ID_BASE + (noc << NOC.INSTANCE_OFFSET_BIT))
+      self.slli(val, trid, 2)
+      self.add(addr, addr, val)
+    loop = self._new_label("trid_rd_flush")
+    self.label(loop)
+    self.lw(val, addr, 0)
+    self.bne(val, zero, loop)
+    return self.fence()
+
   def noc_init_cmd_bufs(self, noc: int, coord: Reg, *, atomic_ret_addr: int,
                         read_ctrl: int, wr_buf: int = 0, rd_buf: int = 1,
                         wr_reg_buf: int = 2, at_buf: int = 3,
@@ -320,12 +464,15 @@ class Noc:
   def noc_write(self, noc: int, buf: int, src: Reg, dst_lo: Reg, dst_mid: int | Reg, dst_coord: Reg,
                 length: Reg, *, mcast: bool = False, mcast_linked: bool = False,
                 num_dests: Reg | None = None, posted: bool = False,
-                mcast_path_reserve: bool = True, a: Reg = t0, v: Reg = t1):
+                mcast_path_reserve: bool = True, mcast_exclude: int | Reg = 0,
+                mcast_y: bool = False, a: Reg = t0, v: Reg = t1):
     self.noc_wait_cmd_ready(noc, buf, addr=a, val=v)
     if mcast:
       ctrl = NOC.CMD_WR_MCAST_LINKED_FIELD if mcast_linked else NOC.CMD_WR_MCAST_UNLINK_FIELD
       if not mcast_path_reserve:
         ctrl &= ~NOC.CMD_PATH_RESERVE
+      if mcast_y:
+        ctrl |= NOC.CMD_BRCST_XY
     else:
       ctrl = NOC.CMD_WR_POSTED_FIELD if posted else NOC.CMD_WR_FIELD
     self.noc_cmd_reg(noc, buf, NOC.CTRL, ctrl, addr=a, tmp=v)
@@ -333,6 +480,8 @@ class Noc:
     self.noc_cmd_reg(noc, buf, NOC.RET_ADDR_LO, dst_lo, addr=a, tmp=v)
     self.noc_cmd_reg(noc, buf, NOC.RET_ADDR_MID, dst_mid, addr=a, tmp=v)
     self.noc_cmd_reg(noc, buf, NOC.RET_ADDR_COORDINATE, dst_coord, addr=a, tmp=v)
+    if mcast:
+      self.noc_cmd_reg(noc, buf, NOC.BRCST_EXCLUDE, mcast_exclude, addr=a, tmp=v)
     self.noc_cmd_reg(noc, buf, NOC.AT_LEN_BE, length, addr=a, tmp=v)
     self.noc_cmd_reg(noc, buf, NOC.AT_LEN_BE_1, 0, addr=a, tmp=v)
     self.noc_cmd_reg(noc, buf, NOC.CMD_CTRL, NOC.CTRL_SEND_REQ, addr=a, tmp=v)
