@@ -157,6 +157,8 @@ PROFILE_TMP_TRISC0 = PROFILE_BASE + 0x108
 PROFILE_TMP_TRISC1 = PROFILE_BASE + 0x10C
 PROFILE_TMP_TRISC2 = PROFILE_BASE + 0x110
 PROFILE_TMP_NCRISC_PHASE = PROFILE_BASE + 0x114
+PROFILE_TMP_BRISC_PHASE = PROFILE_BASE + 0x118
+PROFILE_TMP_NCRISC_INPUT_PHASE = PROFILE_BASE + 0x11C
 PROFILE_COUNTER_BASE = PROFILE_BASE + 0x120
 PROFILE_COUNTERS = (
   ("brisc_input", PROFILE_COUNTER_BASE + 0x00),
@@ -171,7 +173,35 @@ PROFILE_COUNTERS = (
   ("ncrisc_output_wait", PROFILE_COUNTER_BASE + 0x24),
   ("ncrisc_output_issue", PROFILE_COUNTER_BASE + 0x28),
   ("ncrisc_output_barrier_pop", PROFILE_COUNTER_BASE + 0x2C),
+  ("brisc_cb_reserve", PROFILE_COUNTER_BASE + 0x30),
+  ("brisc_read_issue", PROFILE_COUNTER_BASE + 0x34),
+  ("brisc_read_flush", PROFILE_COUNTER_BASE + 0x38),
+  ("brisc_receiver_wait", PROFILE_COUNTER_BASE + 0x3C),
+  ("brisc_mcast_west_issue", PROFILE_COUNTER_BASE + 0x40),
+  ("brisc_mcast_west_flush", PROFILE_COUNTER_BASE + 0x44),
+  ("brisc_mcast_east_issue", PROFILE_COUNTER_BASE + 0x48),
+  ("brisc_mcast_east_flush", PROFILE_COUNTER_BASE + 0x4C),
+  ("brisc_data_ready_mcast", PROFILE_COUNTER_BASE + 0x50),
+  ("brisc_cb_push", PROFILE_COUNTER_BASE + 0x54),
+  ("ncrisc_cb_reserve", PROFILE_COUNTER_BASE + 0x58),
+  ("ncrisc_read_issue", PROFILE_COUNTER_BASE + 0x5C),
+  ("ncrisc_read_flush", PROFILE_COUNTER_BASE + 0x60),
+  ("ncrisc_receiver_wait", PROFILE_COUNTER_BASE + 0x64),
+  ("ncrisc_mcast_issue", PROFILE_COUNTER_BASE + 0x68),
+  ("ncrisc_mcast_flush", PROFILE_COUNTER_BASE + 0x6C),
+  ("ncrisc_data_ready_mcast", PROFILE_COUNTER_BASE + 0x70),
+  ("ncrisc_cb_push", PROFILE_COUNTER_BASE + 0x74),
+  ("brisc_recv_cb_reserve", PROFILE_COUNTER_BASE + 0x78),
+  ("brisc_recv_sender_notify", PROFILE_COUNTER_BASE + 0x7C),
+  ("brisc_recv_data_wait", PROFILE_COUNTER_BASE + 0x80),
+  ("brisc_recv_cb_push", PROFILE_COUNTER_BASE + 0x84),
+  ("ncrisc_recv_cb_reserve", PROFILE_COUNTER_BASE + 0x88),
+  ("ncrisc_recv_sender_notify", PROFILE_COUNTER_BASE + 0x8C),
+  ("ncrisc_recv_data_wait", PROFILE_COUNTER_BASE + 0x90),
+  ("ncrisc_recv_cb_push", PROFILE_COUNTER_BASE + 0x94),
 )
+PROFILE_COUNTER_ADDR = dict(PROFILE_COUNTERS)
+PROFILE_REGION_BYTES = 0x200
 DEBUG_TRISC0 = 0x17A200
 DEBUG_TRISC1 = 0x17A240
 DEBUG_TRISC2 = 0x17A280
@@ -678,14 +708,20 @@ class MatmulKernel(KernelBase, Noc, Cb):
 
   def dram_tile_stream_load_rta_coord(
     self, coord_offset_words: int, *, bank=a1, coord=a2, tmp=t0, table=t5,
+    rta_ptr_addr: int | None = None,
   ):
     self.slli(tmp, bank, 2)
-    self.add(table, s11, tmp)
+    if rta_ptr_addr is None:
+      self.add(table, s11, tmp)
+    else:
+      self.read32(table, rta_ptr_addr, tmp_addr=table)
+      self.add(table, table, tmp)
     return self.lw(coord, table, coord_offset_words * 4)
 
   def dram_tile_stream_setup_from_rta_coords(
     self, coord_offset_words: int, *, base=s0, tile=s1, bank_count=s5,
     addr=a0, bank=a1, coord=a2, tmp=t0, table=t5,
+    rta_ptr_addr: int | None = None,
   ):
     self.mv(tmp, tile)
     self.remu(bank, tmp, bank_count)
@@ -694,13 +730,16 @@ class MatmulKernel(KernelBase, Noc, Cb):
     self.add(addr, base, tmp)
     return self.dram_tile_stream_load_rta_coord(
       coord_offset_words, bank=bank, coord=coord, tmp=tmp, table=table,
+      rta_ptr_addr=rta_ptr_addr,
     )
 
   def dram_tile_stream_row_delta(
-    self, stride, block_w: int, *, bank_count=s5, bank_delta=t1, addr_delta=t2, tmp=t0,
+    self, stride, block_w: int, *, advanced_last: bool = False,
+    bank_count=s5, bank_delta=t1, addr_delta=t2, tmp=t0,
   ):
-    if block_w > 1:
-      self.addi(tmp, stride, -(block_w - 1))
+    subtract = block_w if advanced_last else block_w - 1
+    if subtract:
+      self.addi(tmp, stride, -subtract)
     else:
       self.mv(tmp, stride)
     self.remu(bank_delta, tmp, bank_count)
@@ -710,6 +749,7 @@ class MatmulKernel(KernelBase, Noc, Cb):
   def dram_tile_stream_advance_one(
     self, coord_offset_words: int, *, addr=a0, bank=a1, bank_count=s5,
     coord=a2, byte_delta=t6, tmp=t0, table=t5,
+    rta_ptr_addr: int | None = None,
   ):
     done = self._new_label("dram_stream_bank")
     self.addi(bank, bank, 1)
@@ -719,17 +759,52 @@ class MatmulKernel(KernelBase, Noc, Cb):
     self.label(done)
     return self.dram_tile_stream_load_rta_coord(
       coord_offset_words, bank=bank, coord=coord, tmp=tmp, table=table,
+      rta_ptr_addr=rta_ptr_addr,
     )
 
   def dram_tile_stream_advance_row(
     self, coord_offset_words: int, *, addr=a0, bank=a1, bank_count=s5,
     bank_delta=t1, addr_delta=t2, coord=a2, byte_delta=t6, tmp=t0, table=t5,
+    rta_ptr_addr: int | None = None,
   ):
     done = self._new_label("dram_stream_row_bank")
     self.add(bank, bank, bank_delta)
     self.add(addr, addr, addr_delta)
     self.bltu(bank, bank_count, done)
     self.sub(bank, bank, bank_count)
+    self.add(addr, addr, byte_delta)
+    self.label(done)
+    return self.dram_tile_stream_load_rta_coord(
+      coord_offset_words, bank=bank, coord=coord, tmp=tmp, table=table,
+      rta_ptr_addr=rta_ptr_addr,
+    )
+
+  def dram_tile_stream_advance_one_static_banks(
+    self, coord_offset_words: int, num_banks: int, *, addr=a0, bank=a1,
+    coord=a2, byte_delta=t6, tmp=t0, table=t3,
+  ):
+    done = self._new_label("dram_stream_static_bank")
+    self.addi(bank, bank, 1)
+    self.sltiu(tmp, bank, num_banks)
+    self.bne(tmp, zero, done)
+    self.addi(bank, bank, -num_banks)
+    self.add(addr, addr, byte_delta)
+    self.label(done)
+    return self.dram_tile_stream_load_rta_coord(
+      coord_offset_words, bank=bank, coord=coord, tmp=tmp, table=table,
+    )
+
+  def dram_tile_stream_advance_row_static_banks(
+    self, coord_offset_words: int, num_banks: int, bank_delta: int, *, addr=a0,
+    bank=a1, addr_delta=t2, coord=a2, byte_delta=t6, tmp=t0, table=t3,
+  ):
+    done = self._new_label("dram_stream_static_row_bank")
+    if bank_delta:
+      self.addi(bank, bank, bank_delta)
+    self.add(addr, addr, addr_delta)
+    self.sltiu(tmp, bank, num_banks)
+    self.bne(tmp, zero, done)
+    self.addi(bank, bank, -num_banks)
     self.add(addr, addr, byte_delta)
     self.label(done)
     return self.dram_tile_stream_load_rta_coord(
@@ -1400,34 +1475,44 @@ def matmul_reader_sender(
   fw.j("reader_sender_done")
   fw.label("reader_sender_block_body")
   emit_profile_accum_start(fw, PROFILE_TMP_BRISC)
+  emit_profile_accum_start(fw, PROFILE_TMP_BRISC_PHASE)
   fw.cb_reserve_back(BM.CB_INTERFACE, 0, s7)
   fw.cb_write_ptr(BM.CB_INTERFACE, 0, out=s9)
+  emit_profile_accum_end(fw, PROFILE_COUNTER_ADDR["brisc_cb_reserve"], PROFILE_TMP_BRISC_PHASE)
   fw.mv(a4, s9)
   fw.li(t6, INPUT_TILE_BYTES)
+  emit_profile_accum_start(fw, PROFILE_TMP_BRISC_PHASE)
   if NOC_READ_SYNC == "global":
     fw.li(t0, NOC.STATUS_BASE + NOC.NIU_MST_RD_RESP_RECEIVED)
     fw.lw(a7, t0, 0)
 
   fw.dram_tile_stream_setup_from_rta_coords(dram_coord_offset_words)
   fw.dram_tile_stream_row_delta(s3, plan.in0_block_w)
+  fw.li(a3, fw.noc_cmd_base_addr(0, 1))
+  fw.li(a6, NOC.CTRL_SEND_REQ)
   for row in range(plan.per_core_m):
     for col in range(plan.in0_block_w):
-      fw.noc_read_stateful(0, 1, a0, a2, a4, a=t3, v=t5)
+      fw.noc_read_stateful_at(a3, a6, a0, a2, a4, v=t5)
       fw.add(a4, a4, t6)
       if col + 1 < plan.in0_block_w:
         fw.dram_tile_stream_advance_one(dram_coord_offset_words)
       elif row + 1 < plan.per_core_m:
         fw.dram_tile_stream_advance_row(dram_coord_offset_words)
+  emit_profile_accum_end(fw, PROFILE_COUNTER_ADDR["brisc_read_issue"], PROFILE_TMP_BRISC_PHASE)
 
+  emit_profile_accum_start(fw, PROFILE_TMP_BRISC_PHASE)
   if NOC_READ_SYNC == "trid":
     fw.noc_async_read_barrier_with_trid(0, 2, addr=t3, val=t5)
   else:
     fw.add(a7, a7, s7)
     fw.noc_reads_flushed(0, a7)
+  emit_profile_accum_end(fw, PROFILE_COUNTER_ADDR["brisc_read_flush"], PROFILE_TMP_BRISC_PHASE)
+  emit_profile_accum_start(fw, PROFILE_TMP_BRISC_PHASE)
   fw.arg(t0, 21)
   fw.sem_addr(BM.SEM_L1_BASE, t0, out=a3)
   fw.noc_semaphore_wait(a3, s10)
   fw.noc_semaphore_set(a3, 0)
+  emit_profile_accum_end(fw, PROFILE_COUNTER_ADDR["brisc_receiver_wait"], PROFILE_TMP_BRISC_PHASE)
 
   block_bytes = plan.in0_block_num_tiles * INPUT_TILE_BYTES
   if OVERLAY_MCAST_A:
@@ -1499,6 +1584,7 @@ def matmul_reader_sender(
   else:
     fw.arg(t0, 13)
     fw.beq(t0, zero, "reader_sender_skip_west")
+    emit_profile_accum_start(fw, PROFILE_TMP_BRISC_PHASE)
     fw.arg(t1, 9)
     fw.arg(t2, 10)
     fw.arg(t3, 11)
@@ -1509,7 +1595,11 @@ def matmul_reader_sender(
     fw.lw(a6, t0, 0)
     fw.addi(a6, a6, _ceil_div(block_bytes, NOC.MAX_BURST_SIZE))
     _emit_mcast_chunks(fw, 0, a0, a5, block_bytes)
+    emit_profile_accum_end(fw, PROFILE_COUNTER_ADDR["brisc_mcast_west_issue"], PROFILE_TMP_BRISC_PHASE)
+    emit_profile_accum_start(fw, PROFILE_TMP_BRISC_PHASE)
     fw.noc_nonposted_writes_flushed(0, a6)
+    emit_profile_accum_end(fw, PROFILE_COUNTER_ADDR["brisc_mcast_west_flush"], PROFILE_TMP_BRISC_PHASE)
+    emit_profile_accum_start(fw, PROFILE_TMP_BRISC_PHASE)
     fw.arg(t0, 22)
     fw.sem_addr(BM.SEM_L1_BASE, t0, out=a4)
     fw.arg(t1, 9)
@@ -1518,10 +1608,12 @@ def matmul_reader_sender(
     fw.arg(t5, 12)
     fw.noc_mcast_coord(a5, t1, t2, t3, t5)
     _emit_data_ready_mcast(fw, noc_id=0, sem_addr=a4, coord=a5, flush=False)
+    emit_profile_accum_end(fw, PROFILE_COUNTER_ADDR["brisc_data_ready_mcast"], PROFILE_TMP_BRISC_PHASE)
     fw.label("reader_sender_skip_west")
 
     fw.arg(t0, 18)
     fw.beq(t0, zero, "reader_sender_skip_east")
+    emit_profile_accum_start(fw, PROFILE_TMP_BRISC_PHASE)
     fw.arg(t1, 14)
     fw.arg(t2, 15)
     fw.arg(t3, 16)
@@ -1532,7 +1624,11 @@ def matmul_reader_sender(
     fw.lw(a6, t0, 0)
     fw.addi(a6, a6, _ceil_div(block_bytes, NOC.MAX_BURST_SIZE))
     _emit_mcast_chunks(fw, 0, a0, a5, block_bytes)
+    emit_profile_accum_end(fw, PROFILE_COUNTER_ADDR["brisc_mcast_east_issue"], PROFILE_TMP_BRISC_PHASE)
+    emit_profile_accum_start(fw, PROFILE_TMP_BRISC_PHASE)
     fw.noc_nonposted_writes_flushed(0, a6)
+    emit_profile_accum_end(fw, PROFILE_COUNTER_ADDR["brisc_mcast_east_flush"], PROFILE_TMP_BRISC_PHASE)
+    emit_profile_accum_start(fw, PROFILE_TMP_BRISC_PHASE)
     fw.arg(t0, 22)
     fw.sem_addr(BM.SEM_L1_BASE, t0, out=a4)
     fw.arg(t1, 14)
@@ -1541,9 +1637,12 @@ def matmul_reader_sender(
     fw.arg(t5, 17)
     fw.noc_mcast_coord(a5, t1, t2, t3, t5)
     _emit_data_ready_mcast(fw, noc_id=0, sem_addr=a4, coord=a5, flush=False)
+    emit_profile_accum_end(fw, PROFILE_COUNTER_ADDR["brisc_data_ready_mcast"], PROFILE_TMP_BRISC_PHASE)
     fw.label("reader_sender_skip_east")
 
+  emit_profile_accum_start(fw, PROFILE_TMP_BRISC_PHASE)
   fw.cb_push_back(BM.CB_INTERFACE, 0, s7)
+  emit_profile_accum_end(fw, PROFILE_COUNTER_ADDR["brisc_cb_push"], PROFILE_TMP_BRISC_PHASE)
   emit_profile_accum_end(fw, PROFILE_COUNTERS[0][1], PROFILE_TMP_BRISC)
   fw.add(s1, s1, s4)
   fw.addi(s6, s6, 1)
@@ -1564,11 +1663,14 @@ def matmul_reader_recv() -> MatmulKernel:
   fw.label("reader_recv_block_loop")
   fw.beq(s0, s8, "reader_recv_done")
   emit_profile_accum_start(fw, PROFILE_TMP_BRISC)
+  emit_profile_accum_start(fw, PROFILE_TMP_BRISC_PHASE)
   fw.cb_reserve_back(BM.CB_INTERFACE, 0, s7)
+  emit_profile_accum_end(fw, PROFILE_COUNTER_ADDR["brisc_recv_cb_reserve"], PROFILE_TMP_BRISC_PHASE)
   _emit_overlay_debug_mark(fw, 0xA001, stream_id=OVERLAY_STREAM_BRISC_MCAST, noc_id=0, aux=s0)
   fw.arg(t0, 22)
   fw.sem_addr(BM.SEM_L1_BASE, t0, out=s1)
   fw.noc_semaphore_set(s1, 0)
+  emit_profile_accum_start(fw, PROFILE_TMP_BRISC_PHASE)
   fw.arg(t0, 21)
   fw.sem_addr(BM.SEM_L1_BASE, t0, out=s2)
   fw.arg(t1, 19)
@@ -1576,10 +1678,15 @@ def matmul_reader_recv() -> MatmulKernel:
   fw.noc_coord(a5, t1, t2)
   fw.local_noc0_coord(a6)
   fw.noc_semaphore_inc(0, 3, s2, a5, 1, ret_coord=a6, a=t3, v=t4)
+  emit_profile_accum_end(fw, PROFILE_COUNTER_ADDR["brisc_recv_sender_notify"], PROFILE_TMP_BRISC_PHASE)
   _emit_overlay_debug_mark(fw, 0xA002, stream_id=OVERLAY_STREAM_BRISC_MCAST, noc_id=0, aux=s0)
+  emit_profile_accum_start(fw, PROFILE_TMP_BRISC_PHASE)
   fw.noc_semaphore_wait(s1, 1)
+  emit_profile_accum_end(fw, PROFILE_COUNTER_ADDR["brisc_recv_data_wait"], PROFILE_TMP_BRISC_PHASE)
   _emit_overlay_debug_mark(fw, 0xA003, stream_id=OVERLAY_STREAM_BRISC_MCAST, noc_id=0, aux=s0)
+  emit_profile_accum_start(fw, PROFILE_TMP_BRISC_PHASE)
   fw.cb_push_back(BM.CB_INTERFACE, 0, s7)
+  emit_profile_accum_end(fw, PROFILE_COUNTER_ADDR["brisc_recv_cb_push"], PROFILE_TMP_BRISC_PHASE)
   _emit_overlay_debug_mark(fw, 0xA004, stream_id=OVERLAY_STREAM_BRISC_MCAST, noc_id=0, aux=s0)
   emit_profile_accum_end(fw, PROFILE_COUNTERS[0][1], PROFILE_TMP_BRISC)
   fw.addi(s0, s0, 1)
@@ -1593,6 +1700,8 @@ def matmul_writer_sender(
   plan: MatmulPlan, output_tile_hook=None, preamble=None, *,
   input_coord_offset_words: int,
   output_coord_offset_words: int,
+  output_row_delta: tuple[int, int] | None = None,
+  output_num_banks: int | None = None,
 ) -> MatmulKernel:
   fw = MatmulKernel()
   if preamble is not None:
@@ -1628,37 +1737,48 @@ def matmul_writer_sender(
   fw.j("writer_sender_blocks_done")
   fw.label("writer_sender_block_body")
   emit_profile_accum_start(fw, PROFILE_TMP_NCRISC)
+  emit_profile_accum_start(fw, PROFILE_TMP_NCRISC_INPUT_PHASE)
   fw.cb_reserve_back(NM.CB_INTERFACE, 1, s7)
   fw.cb_write_ptr(NM.CB_INTERFACE, 1, out=s9)
+  emit_profile_accum_end(fw, PROFILE_COUNTER_ADDR["ncrisc_cb_reserve"], PROFILE_TMP_NCRISC_INPUT_PHASE)
   fw.mv(a4, s9)
   fw.li(t6, INPUT_TILE_BYTES)
+  emit_profile_accum_start(fw, PROFILE_TMP_NCRISC_INPUT_PHASE)
   if NOC_READ_SYNC == "global":
     fw.li(t0, NOC.STATUS_BASE + NOC.NIU_MST_RD_RESP_RECEIVED + (1 << NOC.INSTANCE_OFFSET_BIT))
     fw.lw(a7, t0, 0)
 
   fw.dram_tile_stream_setup_from_rta_coords(input_coord_offset_words)
   fw.dram_tile_stream_row_delta(s3, plan.per_core_n)
+  fw.li(a3, fw.noc_cmd_base_addr(1, 1))
+  fw.li(a6, NOC.CTRL_SEND_REQ)
   for row in range(plan.in0_block_w):
     for col in range(plan.per_core_n):
-      fw.noc_read_stateful(1, 1, a0, a2, a4, a=t3, v=t5)
+      fw.noc_read_stateful_at(a3, a6, a0, a2, a4, v=t5)
       fw.add(a4, a4, t6)
       if col + 1 < plan.per_core_n:
         fw.dram_tile_stream_advance_one(input_coord_offset_words)
       elif row + 1 < plan.in0_block_w:
         fw.dram_tile_stream_advance_row(input_coord_offset_words)
+  emit_profile_accum_end(fw, PROFILE_COUNTER_ADDR["ncrisc_read_issue"], PROFILE_TMP_NCRISC_INPUT_PHASE)
 
+  emit_profile_accum_start(fw, PROFILE_TMP_NCRISC_INPUT_PHASE)
   if NOC_READ_SYNC == "trid":
     fw.noc_async_read_barrier_with_trid(1, 2, addr=t3, val=t5)
   else:
     fw.add(a7, a7, s7)
     fw.noc_reads_flushed(1, a7)
+  emit_profile_accum_end(fw, PROFILE_COUNTER_ADDR["ncrisc_read_flush"], PROFILE_TMP_NCRISC_INPUT_PHASE)
+  emit_profile_accum_start(fw, PROFILE_TMP_NCRISC_INPUT_PHASE)
   fw.arg(t0, 16)
   fw.sem_addr(NM.SEM_L1_BASE, t0, out=a3)
   fw.noc_semaphore_wait(a3, s10)
   fw.noc_semaphore_set(a3, 0)
+  emit_profile_accum_end(fw, PROFILE_COUNTER_ADDR["ncrisc_receiver_wait"], PROFILE_TMP_NCRISC_INPUT_PHASE)
 
   fw.arg(t0, 13)
   fw.beq(t0, zero, "writer_sender_skip_mcast")
+  emit_profile_accum_start(fw, PROFILE_TMP_NCRISC_INPUT_PHASE)
   fw.arg(t1, 9)
   fw.arg(t2, 10)
   fw.arg(t3, 11)
@@ -1677,7 +1797,13 @@ def matmul_writer_sender(
     fw.lw(a6, t0, 0)
     fw.addi(a6, a6, _ceil_div(block_bytes, NOC.MAX_BURST_SIZE))
     _emit_mcast_chunks(fw, 1, a0, a5, block_bytes)
+    emit_profile_accum_end(fw, PROFILE_COUNTER_ADDR["ncrisc_mcast_issue"], PROFILE_TMP_NCRISC_INPUT_PHASE)
+    emit_profile_accum_start(fw, PROFILE_TMP_NCRISC_INPUT_PHASE)
     fw.noc_nonposted_writes_flushed(1, a6)
+    emit_profile_accum_end(fw, PROFILE_COUNTER_ADDR["ncrisc_mcast_flush"], PROFILE_TMP_NCRISC_INPUT_PHASE)
+  if OVERLAY_MCAST_B:
+    emit_profile_accum_end(fw, PROFILE_COUNTER_ADDR["ncrisc_mcast_issue"], PROFILE_TMP_NCRISC_INPUT_PHASE)
+  emit_profile_accum_start(fw, PROFILE_TMP_NCRISC_INPUT_PHASE)
   fw.arg(t0, 17)
   fw.sem_addr(NM.SEM_L1_BASE, t0, out=a4)
   fw.arg(t1, 9)
@@ -1686,22 +1812,30 @@ def matmul_writer_sender(
   fw.arg(t5, 12)
   fw.noc_mcast_coord(a5, t1, t2, t3, t5)
   _emit_data_ready_mcast(fw, noc_id=1, sem_addr=a4, coord=a5, flush=OVERLAY_MCAST_B)
+  emit_profile_accum_end(fw, PROFILE_COUNTER_ADDR["ncrisc_data_ready_mcast"], PROFILE_TMP_NCRISC_INPUT_PHASE)
   fw.label("writer_sender_skip_mcast")
 
+  emit_profile_accum_start(fw, PROFILE_TMP_NCRISC_INPUT_PHASE)
   fw.cb_push_back(NM.CB_INTERFACE, 1, s7)
+  emit_profile_accum_end(fw, PROFILE_COUNTER_ADDR["ncrisc_cb_push"], PROFILE_TMP_NCRISC_INPUT_PHASE)
   emit_profile_accum_end(fw, PROFILE_COUNTERS[1][1], PROFILE_TMP_NCRISC)
   fw.add(s1, s1, s4)
   fw.addi(s6, s6, 1)
   fw.j("writer_sender_block_loop")
   fw.label("writer_sender_blocks_done")
   emit_profile_stamp(fw, PROFILE_NCRISC_INPUT + 8)
-  emit_output_writer(fw, plan, output_tile_hook=output_tile_hook, coord_offset_words=output_coord_offset_words)
+  emit_output_writer(
+    fw, plan, output_tile_hook=output_tile_hook, coord_offset_words=output_coord_offset_words,
+    output_row_delta=output_row_delta, output_num_banks=output_num_banks,
+  )
   emit_profile_stamp(fw, PROFILE_NCRISC + 8)
   return fw.ret()
 
 
 def matmul_writer_recv(
   plan: MatmulPlan, output_tile_hook=None, *, output_coord_offset_words: int,
+  output_row_delta: tuple[int, int] | None = None,
+  output_num_banks: int | None = None,
 ) -> MatmulKernel:
   fw = MatmulKernel()
   emit_profile_stamp(fw, PROFILE_NCRISC)
@@ -1713,11 +1847,14 @@ def matmul_writer_recv(
   fw.label("writer_recv_block_loop")
   fw.beq(s0, s8, "writer_recv_blocks_done")
   emit_profile_accum_start(fw, PROFILE_TMP_NCRISC)
+  emit_profile_accum_start(fw, PROFILE_TMP_NCRISC_INPUT_PHASE)
   fw.cb_reserve_back(NM.CB_INTERFACE, 1, s7)
+  emit_profile_accum_end(fw, PROFILE_COUNTER_ADDR["ncrisc_recv_cb_reserve"], PROFILE_TMP_NCRISC_INPUT_PHASE)
   _emit_overlay_debug_mark(fw, 0xB001, stream_id=OVERLAY_STREAM_NCRISC_MCAST, noc_id=1, aux=s0)
   fw.arg(t0, 17)
   fw.sem_addr(NM.SEM_L1_BASE, t0, out=s1)
   fw.noc_semaphore_set(s1, 0)
+  emit_profile_accum_start(fw, PROFILE_TMP_NCRISC_INPUT_PHASE)
   fw.arg(t0, 16)
   fw.sem_addr(NM.SEM_L1_BASE, t0, out=s2)
   fw.arg(t1, 14)
@@ -1725,24 +1862,37 @@ def matmul_writer_recv(
   fw.noc_coord(a5, t1, t2)
   fw.local_noc0_coord(a6, x_addr=NM.MY_X, y_addr=NM.MY_Y)
   fw.noc_semaphore_inc(1, 3, s2, a5, 1, ret_coord=a6, a=t3, v=t4)
+  emit_profile_accum_end(fw, PROFILE_COUNTER_ADDR["ncrisc_recv_sender_notify"], PROFILE_TMP_NCRISC_INPUT_PHASE)
   _emit_overlay_debug_mark(fw, 0xB002, stream_id=OVERLAY_STREAM_NCRISC_MCAST, noc_id=1, aux=s0)
+  emit_profile_accum_start(fw, PROFILE_TMP_NCRISC_INPUT_PHASE)
   fw.noc_semaphore_wait(s1, 1)
+  emit_profile_accum_end(fw, PROFILE_COUNTER_ADDR["ncrisc_recv_data_wait"], PROFILE_TMP_NCRISC_INPUT_PHASE)
   _emit_overlay_debug_mark(fw, 0xB003, stream_id=OVERLAY_STREAM_NCRISC_MCAST, noc_id=1, aux=s0)
+  emit_profile_accum_start(fw, PROFILE_TMP_NCRISC_INPUT_PHASE)
   fw.cb_push_back(NM.CB_INTERFACE, 1, s7)
+  emit_profile_accum_end(fw, PROFILE_COUNTER_ADDR["ncrisc_recv_cb_push"], PROFILE_TMP_NCRISC_INPUT_PHASE)
   _emit_overlay_debug_mark(fw, 0xB004, stream_id=OVERLAY_STREAM_NCRISC_MCAST, noc_id=1, aux=s0)
   emit_profile_accum_end(fw, PROFILE_COUNTERS[1][1], PROFILE_TMP_NCRISC)
   fw.addi(s0, s0, 1)
   fw.j("writer_recv_block_loop")
   fw.label("writer_recv_blocks_done")
   emit_profile_stamp(fw, PROFILE_NCRISC_INPUT + 8)
-  emit_output_writer(fw, plan, output_tile_hook=output_tile_hook, coord_offset_words=output_coord_offset_words)
+  emit_output_writer(
+    fw, plan, output_tile_hook=output_tile_hook, coord_offset_words=output_coord_offset_words,
+    output_row_delta=output_row_delta, output_num_banks=output_num_banks,
+  )
   emit_profile_stamp(fw, PROFILE_NCRISC + 8)
   return fw.ret()
 
 
 def emit_output_writer(
   fw: MatmulKernel, plan: MatmulPlan, output_tile_hook=None, *, coord_offset_words: int,
+  output_row_delta: tuple[int, int] | None = None, output_num_banks: int | None = None,
 ) -> MatmulKernel:
+  stream_output_addr = (
+    output_row_delta is not None and output_num_banks is not None and output_tile_hook is None
+    and not OVERLAY_OUTPUT_WRITES and not ENABLE_BREADCRUMBS
+  )
   emit_profile_stamp(fw, PROFILE_NCRISC_OUTPUT)
   emit_progress_mark(fw, DEBUG_NCRISC_OUTPUT, 0xB100, block_reg=s10, i0_reg=s9, i1_reg=s1)
   emit_profile_accum_start(fw, PROFILE_TMP_NCRISC)
@@ -1756,7 +1906,8 @@ def emit_output_writer(
   fw.arg(s6, 24)   # subblock W
   fw.arg(s7, 25)   # subblock H
   fw.arg(s10, 28)  # subblock rows remaining
-  fw.arg(s11, 29)  # DRAM bank count
+  if not stream_output_addr:
+    fw.arg(s11, 29)  # DRAM bank count
   emit_output_launch_stagger(fw)
 
   sbh_loop = fw._new_label("output_sbh_loop")
@@ -1794,6 +1945,15 @@ def emit_output_writer(
     fw.addi(s8, s8, plan.out_subblock_num_tiles)
   fw.mv(a7, a6)  # current output row start
   fw.mv(a3, s7)
+  if stream_output_addr:
+    fw.li(t6, OUTPUT_TILE_BYTES)
+    fw.li(t3, output_num_banks)
+    fw.dram_tile_stream_setup_from_rta_coords(
+      coord_offset_words,
+      base=s0, tile=a6, bank_count=t3,
+      addr=a0, bank=a1, coord=a2, tmp=t0, table=t3,
+    )
+    fw.li(t2, output_row_delta[1])
 
   fw.label(h_loop)
   fw.beq(a3, zero, h_done)
@@ -1803,10 +1963,11 @@ def emit_output_writer(
   fw.label(w_loop)
   fw.beq(a4, zero, w_done)
   emit_progress_mark(fw, DEBUG_NCRISC_OUTPUT, 0xB132, block_reg=s10, i0_reg=a3, i1_reg=a4)
-  fw.mv(a0, s0)
-  fw.mv(a1, t4)
-  fw.mv(a2, s11)
-  fw.dram_tile_addr_from_rta_coords(coord_offset_words, rta_ptr_addr=NM.RTA_L1_BASE_PTR)
+  if not stream_output_addr:
+    fw.mv(a0, s0)
+    fw.mv(a1, t4)
+    fw.mv(a2, s11)
+    fw.dram_tile_addr_from_rta_coords(coord_offset_words, rta_ptr_addr=NM.RTA_L1_BASE_PTR)
   if OVERLAY_OUTPUT_WRITES:
     _emit_overlay_unicast_write(
       fw,
@@ -1822,14 +1983,24 @@ def emit_output_writer(
   if output_tile_hook is not None:
     output_tile_hook(fw, plan, tile_page=t4, l1_tile=t5)
   emit_progress_mark(fw, DEBUG_NCRISC_OUTPUT, 0xB133, block_reg=s10, i0_reg=a3, i1_reg=a4)
-  fw.li(t6, OUTPUT_TILE_BYTES)
+  if not stream_output_addr:
+    fw.li(t6, OUTPUT_TILE_BYTES)
   fw.add(t5, t5, t6)
   fw.add(t4, t4, s2)
+  if stream_output_addr:
+    fw.dram_tile_stream_advance_one_static_banks(
+      coord_offset_words, output_num_banks, table=t3, byte_delta=t6,
+    )
   fw.addi(a4, a4, -1)
   fw.j(w_loop)
   fw.label(w_done)
 
   fw.add(a7, a7, s3)
+  if stream_output_addr:
+    fw.dram_tile_stream_advance_row_static_banks(
+      coord_offset_words, output_num_banks, output_row_delta[0],
+      addr_delta=t2, table=t3, byte_delta=t6,
+    )
   fw.addi(a3, a3, -1)
   fw.j(h_loop)
   fw.label(h_done)
@@ -2578,24 +2749,19 @@ def emit_pack_tile_to_cb(fw: MatmulTrisc, plan: MatmulPlan, out_cb: int) -> Matm
       fw.add(s0, s0, s4)
     fw.emit(TTSETADC(4, 0, 3, tile_index))
     fw.slli(t1, s0, 8)
-    fw.li(t2, 0x00FFFF00)
-    fw.and_(t1, t1, t2)
-    fw.li(t2, TTSETDMAREG(0, 0, 0, 24).raw_word())  # SETDMAREG[24] base; low addr bits added in
-    fw.add(t1, t1, t2)
+    fw.and_(t1, t1, a0)
+    fw.add(t1, t1, a1)
     fw.write32(TensixRegs.INSTRN_BUF_BASE, t1)
     fw.srli(t1, s0, 16)
     fw.slli(t1, t1, 8)
-    fw.li(t2, 0x00800000)
-    fw.or_(t1, t1, t2)
-    fw.li(t2, TTSETDMAREG(0, 0, 0, 25).raw_word())  # SETDMAREG[25] base; high addr bits added in
-    fw.add(t1, t1, t2)
+    fw.or_(t1, t1, a2)
+    fw.add(t1, t1, a3)
     fw.write32(TensixRegs.INSTRN_BUF_BASE, t1)
     fw.emit(TTSTALLWAIT(TensixStall.CFG, WAIT_THCON_AND_PACK))
     fw.emit(TTWRCFG(12, 0, Cfg.THCON_SEC0_REG1_L1_Dest_addr.addr32))
     fw.srli(t1, s0, 16)
     fw.slli(t1, t1, 8)
-    fw.li(t2, TTSETDMAREG(0, 0, 0, 25).raw_word())  # SETDMAREG[25] base; high addr bits added in
-    fw.add(t1, t1, t2)
+    fw.add(t1, t1, a3)
     fw.write32(TensixRegs.INSTRN_BUF_BASE, t1)
     fw.emit(TTDMANOP())
 
@@ -2617,6 +2783,14 @@ def emit_pack_tile_to_cb(fw: MatmulTrisc, plan: MatmulPlan, out_cb: int) -> Matm
   fw.emit(TTDMANOP())
   fw.emit(TTDMANOP())
   emit_profile_accum_end(fw, PROFILE_COUNTERS[8][1], PROFILE_TMP_TRISC2)
+  return fw
+
+
+def emit_pack_dma_const_regs(fw: MatmulTrisc) -> MatmulTrisc:
+  fw.li(a0, 0x00FFFF00)
+  fw.li(a1, TTSETDMAREG(0, 0, 0, 24).raw_word())
+  fw.li(a2, 0x00800000)
+  fw.li(a3, TTSETDMAREG(0, 0, 0, 25).raw_word())
   return fw
 
 
@@ -2828,6 +3002,7 @@ def matmul_trisc2(plan: MatmulPlan) -> MatmulTrisc:
   emit_profile_stamp(fw, PROFILE_TRISC2)
   emit_progress_mark(fw, DEBUG_TRISC2, 0xD000)
   num_subblocks = plan.in0_num_subblocks * plan.in1_num_subblocks
+  emit_pack_dma_const_regs(fw)
   if plan.num_blocks > 1:
     if INTERMEDIATE_DTYPE is not OUTPUT_DTYPE:
       fw.pack.set_format(INTERMEDIATE_DTYPE, fp32_dest=FP32_DEST_ACC, out_cb=24)
@@ -3160,6 +3335,7 @@ def matmul_trisc2_grouped_k(plan: MatmulPlan) -> MatmulTrisc:
   emit_profile_stamp(fw, PROFILE_TRISC2)
   emit_progress_mark(fw, DEBUG_TRISC2, 0xD000)
   num_subblocks = plan.in0_num_subblocks * plan.in1_num_subblocks
+  emit_pack_dma_const_regs(fw)
   if INTERMEDIATE_DTYPE is not OUTPUT_DTYPE:
     fw.pack.set_format(INTERMEDIATE_DTYPE, fp32_dest=FP32_DEST_ACC, out_cb=24)
 
@@ -3235,6 +3411,12 @@ def build_program(
     dram_bank_coords_noc0 = p100_dram_bank_endpoint_coords(None, 0)[:num_banks]
   if dram_bank_coords_noc1 is None:
     dram_bank_coords_noc1 = p100_dram_bank_endpoint_coords(None, 1)[:num_banks]
+  layout_for_deltas = layout or TensorLayout(0, 0, plan.kt, plan.nt, plan.nt)
+  output_row_gap_tiles = layout_for_deltas.c_row_stride - plan.out_subblock_w
+  output_row_delta = (
+    output_row_gap_tiles % num_banks,
+    (output_row_gap_tiles // num_banks) * OUTPUT_TILE_BYTES,
+  )
   sample_core = plan.cores()[0]
   reader_extra_len = len(reader_arg_extra(*sample_core)) if reader_arg_extra is not None else 0
   writer_extra_len = len(writer_arg_extra(*sample_core)) if writer_arg_extra is not None else 0
@@ -3254,11 +3436,15 @@ def build_program(
     preamble=writer_preamble,
     input_coord_offset_words=writer_input_coord_offset_words,
     output_coord_offset_words=output_coord_offset_words,
+    output_row_delta=output_row_delta,
+    output_num_banks=num_banks,
   )
   ncrisc_recv = matmul_writer_recv(
     plan,
     output_tile_hook=output_tile_hook,
     output_coord_offset_words=output_coord_offset_words,
+    output_row_delta=output_row_delta,
+    output_num_banks=num_banks,
   )
   trisc0 = matmul_trisc0_grouped_k(plan) if K_GROUP > 1 else matmul_trisc0(plan)
   trisc1 = matmul_trisc1_grouped_k(plan) if K_GROUP > 1 else matmul_trisc1(plan)
@@ -3508,6 +3694,95 @@ def tflops(m: int, n: int, k: int, us: float) -> float:
   return (2.0 * m * n * k) / (us * 1.0e6) if us > 0 else 0.0
 
 
+def _read_u32(blob: bytes, offset: int) -> int:
+  return struct.unpack_from("<I", blob, offset)[0]
+
+
+def _read_u64_pair(blob: bytes, offset: int) -> int:
+  lo = _read_u32(blob, offset)
+  hi = _read_u32(blob, offset + 4)
+  return lo | (hi << 32)
+
+
+def clear_profile_region(device: Device, cores: list[Core]) -> None:
+  if not PROFILE_STAMPS:
+    return
+  zero_blob = b"\0" * PROFILE_REGION_BYTES
+  with TLBWindow(device.dev, start=cores[0]) as win:
+    for core in cores:
+      win.target(core)
+      win.write(PROFILE_BASE, zero_blob)
+
+
+def read_profile_snapshot(device: Device, cores: list[Core], kernel_us: float) -> dict:
+  ranges: dict[str, list[int]] = {name: [] for name, _addr in PROFILE_NAMES}
+  counters: dict[str, list[int]] = {name: [] for name, _addr in PROFILE_COUNTERS}
+  with TLBWindow(device.dev, start=cores[0]) as win:
+    for core in cores:
+      win.target(core)
+      for name, addr in PROFILE_NAMES:
+        blob = win.read(addr, 16)
+        start = _read_u64_pair(blob, 0)
+        end = _read_u64_pair(blob, 8)
+        ranges[name].append((end - start) & 0xFFFFFFFFFFFFFFFF if end or start else 0)
+      for name, addr in PROFILE_COUNTERS:
+        counters[name].append(struct.unpack("<I", win.read(addr, 4))[0])
+  max_thread_cycles = max((max(values) for values in ranges.values() if values), default=0)
+  cycles_per_us = (max_thread_cycles / kernel_us) if kernel_us and max_thread_cycles else 0.0
+  return {
+    "kernel_us": kernel_us,
+    "cycles_per_us": cycles_per_us,
+    "ranges": ranges,
+    "counters": counters,
+  }
+
+
+def _avg(values: list[float]) -> float:
+  return sum(values) / len(values) if values else 0.0
+
+
+def _profile_row(values: list[int], cycles_per_us: float, kernel_us: float) -> tuple[float, float, float]:
+  if not values or not cycles_per_us:
+    return 0.0, 0.0, 0.0
+  avg_us = _avg([value / cycles_per_us for value in values])
+  max_us = max(values) / cycles_per_us
+  pct = (max_us / kernel_us * 100.0) if kernel_us else 0.0
+  return avg_us, max_us, pct
+
+
+def print_profile_summary(snapshots: list[dict]) -> None:
+  if not snapshots:
+    return
+
+  def emit_section(title: str, names: tuple[tuple[str, int], ...], key: str):
+    print(f"  {title}:")
+    for name, _addr in names:
+      avg_samples = []
+      max_samples = []
+      pct_samples = []
+      for snapshot in snapshots:
+        avg_us, max_us, pct = _profile_row(
+          snapshot[key][name],
+          snapshot["cycles_per_us"],
+          snapshot["kernel_us"],
+        )
+        avg_samples.append(avg_us)
+        max_samples.append(max_us)
+        pct_samples.append(pct)
+      print(
+        f"    {name}: "
+        f"avg_core={_avg(avg_samples):,.1f} us "
+        f"max_core={_avg(max_samples):,.1f} us "
+        f"max_pct={_avg(pct_samples):.1f}%"
+      )
+
+  print("profile:")
+  print(f"  snapshots: {len(snapshots)}")
+  print(f"  cycles_per_us: {_avg([s['cycles_per_us'] for s in snapshots]):,.1f}")
+  emit_section("thread_ranges", PROFILE_NAMES, "ranges")
+  emit_section("accumulated_phases", PROFILE_COUNTERS, "counters")
+
+
 def dump_overlay_debug(device: Device, plan: MatmulPlan) -> None:
   if not OVERLAY_DEBUG:
     return
@@ -3571,6 +3846,7 @@ def run_matmul(
     dram_coords_noc0 = p100_dram_bank_endpoint_coords(device.board_info.harvested_dram_bank, 0)[:num_banks]
     dram_coords_noc1 = p100_dram_bank_endpoint_coords(device.board_info.harvested_dram_bank, 1)[:num_banks]
     run_times_us = []
+    profile_snapshots = []
     for _run in range(runs):
       run_timings = []
       for i, chunk in enumerate(chunks):
@@ -3593,7 +3869,13 @@ def run_matmul(
         )
         prog.name = f"matmul_M{M}_N{N}_K{K}" if len(chunks) == 1 else f"matmul_M{M}_N{N}_K{K}_chunk{i}"
         try:
-          run_timings.extend(device.run(prog))
+          if PROFILE_STAMPS:
+            clear_profile_region(device, chunk.plan.cores())
+          chunk_timings = device.run(prog)
+          run_timings.extend(chunk_timings)
+          if PROFILE_STAMPS and chunk_timings:
+            kernel_us = sum(timing["us"] for timing in chunk_timings)
+            profile_snapshots.append(read_profile_snapshot(device, chunk.plan.cores(), kernel_us))
         except Exception:
           dump_overlay_debug(device, chunk.plan)
           raise
@@ -3619,6 +3901,7 @@ def run_matmul(
       "a_ref": a_ref,
       "b_ref": b_ref,
       "output_dtype": OUTPUT_DTYPE,
+      "profile_snapshots": profile_snapshots,
     }
   finally:
     if own_device:
@@ -3647,6 +3930,7 @@ def main() -> None:
   print(f"  read_sync: {NOC_READ_SYNC}")
   print(f"  kernel_avg: {avg_us:,.1f} us")
   print(f"  throughput: {tflops(result['Mp'], result['Np'], result['Kp'], avg_us):.2f} TFLOP/s")
+  print_profile_summary(result.get("profile_snapshots", []))
 
 
 if __name__ == "__main__":

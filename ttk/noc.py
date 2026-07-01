@@ -326,6 +326,9 @@ class Noc:
   def noc_cmd_addr(self, noc: int, buf: int, reg: int) -> int:
     return reg + (buf << NOC.CMD_BUF_OFFSET_BIT) + (noc << NOC.INSTANCE_OFFSET_BIT)
 
+  def noc_cmd_base_addr(self, noc: int, buf: int) -> int:
+    return NOC.REGS_START_ADDR + (buf << NOC.CMD_BUF_OFFSET_BIT) + (noc << NOC.INSTANCE_OFFSET_BIT)
+
   def noc_cmd_reg(self, noc: int, buf: int, reg: int, value: int | Reg, *, addr: Reg = t0, tmp: Reg = t1):
     return self.write32(self.noc_cmd_addr(noc, buf, reg), value, tmp_addr=addr, tmp_val=tmp)
 
@@ -480,6 +483,21 @@ class Noc:
     self.noc_cmd_reg(noc, buf, NOC.TARG_ADDR_LO, src_lo, addr=a, tmp=v)
     self.noc_cmd_reg(noc, buf, NOC.TARG_ADDR_COORDINATE, src_coord, addr=a, tmp=v)
     self.noc_cmd_reg(noc, buf, NOC.CMD_CTRL, NOC.CTRL_SEND_REQ, addr=a, tmp=v)
+    return self
+
+  def noc_read_stateful_at(self, cmd_base: Reg, send_req: Reg, src_lo: Reg,
+                           src_coord: int | Reg, dst: Reg, *, v: Reg = t1):
+    loop = self._new_label("noc_ready")
+    self.label(loop)
+    self.lw(v, cmd_base, NOC.CMD_CTRL - NOC.REGS_START_ADDR)
+    self.bne(v, zero, loop)
+    self.sw(dst, cmd_base, NOC.RET_ADDR_LO - NOC.REGS_START_ADDR)
+    self.sw(src_lo, cmd_base, NOC.TARG_ADDR_LO - NOC.REGS_START_ADDR)
+    if isinstance(src_coord, int):
+      self.li(v, src_coord)
+      src_coord = v
+    self.sw(src_coord, cmd_base, NOC.TARG_ADDR_COORDINATE - NOC.REGS_START_ADDR)
+    self.sw(send_req, cmd_base, NOC.CMD_CTRL - NOC.REGS_START_ADDR)
     return self
 
   def noc_write(self, noc: int, buf: int, src: Reg, dst_lo: Reg, dst_mid: int | Reg, dst_coord: Reg,

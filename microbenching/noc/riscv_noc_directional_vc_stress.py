@@ -14,7 +14,7 @@ from ttk.addrs import Core  # noqa: E402
 from ttk.noc import NOC  # noqa: E402
 
 
-VC_CHOICES = ("default", "vc0", "vc1", "vc2", "vc3", "vc4", "vc5", "rr", "split14", "split15")
+VC_CHOICES = ("default", "vc0", "vc1", "vc2", "vc3", "vc4", "vc5", "rr", "rrev", "split14", "split15")
 
 
 @dataclass(frozen=True)
@@ -94,6 +94,8 @@ def vcs_for_case(name: str, count: int) -> list[int | None]:
     return [int(name[2:])] * count
   if name == "rr":
     return [i % 6 for i in range(count)]
+  if name == "rrev":
+    return [(count - 1 - i) % 6 for i in range(count)]
   if name == "split14":
     return [1 if i % 2 == 0 else 4 for i in range(count)]
   if name == "split15":
@@ -149,6 +151,7 @@ def main():
   parser.add_argument("--bytes", type=int, default=256 * 1024, help="payload bytes per sender; multiple of 16 KiB")
   parser.add_argument("--cases", type=parse_cases, default=parse_cases("default,vc0,vc1,vc2,vc3,vc4,vc5,rr,split14,split15"))
   parser.add_argument("--posted", action="store_true", help="use posted writes and receiver-observed timing")
+  parser.add_argument("--per-stream", action="store_true", help="print per-pair B/cyc with assigned VC (position vs VC attribution)")
   parser.add_argument("--dry-run", action="store_true")
   parser.add_argument("--no-report", action="store_true")
   parser.add_argument("--report", type=Path, default=harness.doc_path("noc", "noc-directional-vc-stress.md"))
@@ -201,6 +204,12 @@ def main():
           summarize(case_name, vcs, directional, noc=args.noc, stream_bytes=args.bytes,
                     senders=senders, receivers=receivers, posted=args.posted)
         )
+        if args.per_stream:
+          for pair, vc, sender in zip(directional.pairs, vcs, senders):
+            bpc = args.bytes / (sender.end - sender.start) if sender.end > sender.start else 0.0
+            vc_label = "d" if vc is None else str(vc)
+            print(f"# per-stream {case_name} count={len(directional.pairs)} "
+                  f"pair={_fmt_pair(pair)} vc={vc_label} B/cyc={bpc:.3f}")
 
   table = "\n".join(table_lines)
   print(table)
