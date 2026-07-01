@@ -461,6 +461,27 @@ class Noc:
     self.noc_cmd_reg(noc, buf, NOC.CMD_CTRL, NOC.CTRL_SEND_REQ, addr=a, tmp=v)
     return self
 
+  def noc_read_state_setup(self, noc: int, buf: int, src_mid: int | Reg,
+                           ret_coord: int | Reg, length: Reg,
+                           *, a: Reg = t0, v: Reg = t1):
+    self.noc_wait_cmd_ready(noc, buf, addr=a, val=v)
+    self.noc_cmd_reg(noc, buf, NOC.CTRL, NOC.CMD_RD_FIELD, addr=a, tmp=v)
+    self.noc_cmd_reg(noc, buf, NOC.RET_ADDR_MID, 0, addr=a, tmp=v)
+    self.noc_cmd_reg(noc, buf, NOC.RET_ADDR_COORDINATE, ret_coord, addr=a, tmp=v)
+    self.noc_cmd_reg(noc, buf, NOC.TARG_ADDR_MID, src_mid, addr=a, tmp=v)
+    self.noc_cmd_reg(noc, buf, NOC.AT_LEN_BE, length, addr=a, tmp=v)
+    self.noc_cmd_reg(noc, buf, NOC.AT_LEN_BE_1, 0, addr=a, tmp=v)
+    return self
+
+  def noc_read_stateful(self, noc: int, buf: int, src_lo: Reg, src_coord: int | Reg,
+                        dst: Reg, *, a: Reg = t0, v: Reg = t1):
+    self.noc_wait_cmd_ready(noc, buf, addr=a, val=v)
+    self.noc_cmd_reg(noc, buf, NOC.RET_ADDR_LO, dst, addr=a, tmp=v)
+    self.noc_cmd_reg(noc, buf, NOC.TARG_ADDR_LO, src_lo, addr=a, tmp=v)
+    self.noc_cmd_reg(noc, buf, NOC.TARG_ADDR_COORDINATE, src_coord, addr=a, tmp=v)
+    self.noc_cmd_reg(noc, buf, NOC.CMD_CTRL, NOC.CTRL_SEND_REQ, addr=a, tmp=v)
+    return self
+
   def noc_write(self, noc: int, buf: int, src: Reg, dst_lo: Reg, dst_mid: int | Reg, dst_coord: Reg,
                 length: Reg, *, mcast: bool = False, mcast_linked: bool = False,
                 num_dests: Reg | None = None, posted: bool = False,

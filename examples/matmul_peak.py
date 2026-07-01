@@ -676,6 +676,66 @@ class MatmulKernel(KernelBase, Noc, Cb):
       self.add(t1, t2, t1)
     return self.lw(a2, t1, coord_offset_words * 4)
 
+  def dram_tile_stream_load_rta_coord(
+    self, coord_offset_words: int, *, bank=a1, coord=a2, tmp=t0, table=t5,
+  ):
+    self.slli(tmp, bank, 2)
+    self.add(table, s11, tmp)
+    return self.lw(coord, table, coord_offset_words * 4)
+
+  def dram_tile_stream_setup_from_rta_coords(
+    self, coord_offset_words: int, *, base=s0, tile=s1, bank_count=s5,
+    addr=a0, bank=a1, coord=a2, tmp=t0, table=t5,
+  ):
+    self.mv(tmp, tile)
+    self.remu(bank, tmp, bank_count)
+    self.divu(tmp, tmp, bank_count)
+    self.slli(tmp, tmp, 11)
+    self.add(addr, base, tmp)
+    return self.dram_tile_stream_load_rta_coord(
+      coord_offset_words, bank=bank, coord=coord, tmp=tmp, table=table,
+    )
+
+  def dram_tile_stream_row_delta(
+    self, stride, block_w: int, *, bank_count=s5, bank_delta=t1, addr_delta=t2, tmp=t0,
+  ):
+    if block_w > 1:
+      self.addi(tmp, stride, -(block_w - 1))
+    else:
+      self.mv(tmp, stride)
+    self.remu(bank_delta, tmp, bank_count)
+    self.divu(addr_delta, tmp, bank_count)
+    return self.slli(addr_delta, addr_delta, 11)
+
+  def dram_tile_stream_advance_one(
+    self, coord_offset_words: int, *, addr=a0, bank=a1, bank_count=s5,
+    coord=a2, byte_delta=t6, tmp=t0, table=t5,
+  ):
+    done = self._new_label("dram_stream_bank")
+    self.addi(bank, bank, 1)
+    self.bltu(bank, bank_count, done)
+    self.sub(bank, bank, bank_count)
+    self.add(addr, addr, byte_delta)
+    self.label(done)
+    return self.dram_tile_stream_load_rta_coord(
+      coord_offset_words, bank=bank, coord=coord, tmp=tmp, table=table,
+    )
+
+  def dram_tile_stream_advance_row(
+    self, coord_offset_words: int, *, addr=a0, bank=a1, bank_count=s5,
+    bank_delta=t1, addr_delta=t2, coord=a2, byte_delta=t6, tmp=t0, table=t5,
+  ):
+    done = self._new_label("dram_stream_row_bank")
+    self.add(bank, bank, bank_delta)
+    self.add(addr, addr, addr_delta)
+    self.bltu(bank, bank_count, done)
+    self.sub(bank, bank, bank_count)
+    self.add(addr, addr, byte_delta)
+    self.label(done)
+    return self.dram_tile_stream_load_rta_coord(
+      coord_offset_words, bank=bank, coord=coord, tmp=tmp, table=table,
+    )
+
   def release_triscs(self):
     for addr in (
       SYNC_TRISC_START,
@@ -1111,19 +1171,35 @@ def _emit_overlay_unicast_write(
 
 def _emit_mcast_chunks(fw: MatmulKernel, noc_id: int, src_addr, coord, total_bytes: int, *, tmp=t5):
   chunks = _ceil_div(total_bytes, NOC.MAX_BURST_SIZE)
+  prev_ctrl = None
+  prev_size = None
   for chunk in range(chunks):
     size = min(NOC.MAX_BURST_SIZE, total_bytes - chunk * NOC.MAX_BURST_SIZE)
-    fw.li(tmp, size)
     # Link every chunk except the last so they share one VC-5 path reservation;
     # the trailing unlinked write terminates the chain and frees the path. When
     # linking, only the first chunk reserves; unlinked mode keeps per-chunk
     # reservation (prior behavior) so MATMUL_MCAST_LINKED=0 is a clean A/B.
     linked = MCAST_LINKED and (chunk + 1) < chunks
     path_reserve = MCAST_PATH_RESERVE and (chunk == 0 or not MCAST_LINKED)
-    fw.noc_write(
-      noc_id, 0, src_addr, src_addr, 0, coord, tmp,
-      mcast=True, mcast_linked=linked, mcast_path_reserve=path_reserve, a=t1, v=t2,
-    )
+    ctrl = NOC.CMD_WR_MCAST_LINKED_FIELD if linked else NOC.CMD_WR_MCAST_UNLINK_FIELD
+    if not path_reserve:
+      ctrl &= ~NOC.CMD_PATH_RESERVE
+    fw.noc_wait_cmd_ready(noc_id, 0, addr=t1, val=t2)
+    if ctrl != prev_ctrl:
+      fw.noc_cmd_reg(noc_id, 0, NOC.CTRL, ctrl, addr=t1, tmp=t2)
+      prev_ctrl = ctrl
+    if chunk == 0:
+      fw.noc_cmd_reg(noc_id, 0, NOC.RET_ADDR_MID, 0, addr=t1, tmp=t2)
+      fw.noc_cmd_reg(noc_id, 0, NOC.RET_ADDR_COORDINATE, coord, addr=t1, tmp=t2)
+      fw.noc_cmd_reg(noc_id, 0, NOC.BRCST_EXCLUDE, 0, addr=t1, tmp=t2)
+      fw.noc_cmd_reg(noc_id, 0, NOC.AT_LEN_BE_1, 0, addr=t1, tmp=t2)
+    if size != prev_size:
+      fw.li(tmp, size)
+      fw.noc_cmd_reg(noc_id, 0, NOC.AT_LEN_BE, tmp, addr=t1, tmp=t2)
+      prev_size = size
+    fw.noc_cmd_reg(noc_id, 0, NOC.TARG_ADDR_LO, src_addr, addr=t1, tmp=t2)
+    fw.noc_cmd_reg(noc_id, 0, NOC.RET_ADDR_LO, src_addr, addr=t1, tmp=t2)
+    fw.noc_cmd_reg(noc_id, 0, NOC.CMD_CTRL, NOC.CTRL_SEND_REQ, addr=t1, tmp=t2)
     if chunk != chunks - 1:
       fw.add(src_addr, src_addr, tmp)
   return chunks
@@ -1200,19 +1276,11 @@ def _move_plus_imm(fw: KernelBase, dst, src, imm: int, *, tmp=t4):
 
 
 def _jump_if_equal(fw: KernelBase, lhs, rhs, done: str, prefix: str):
-  cont = fw._new_label(prefix)
-  fw.bne(lhs, rhs, cont)
-  fw.j(done)
-  fw.label(cont)
-  return fw
+  return fw.beq(lhs, rhs, done)
 
 
 def _jump_if_ge(fw: KernelBase, lhs, rhs, done: str, prefix: str):
-  cont = fw._new_label(prefix)
-  fw.blt(lhs, rhs, cont)
-  fw.j(done)
-  fw.label(cont)
-  return fw
+  return fw.bge(lhs, rhs, done)
 
 
 PROFILE_STAMPS = os.environ.get("MATMUL_PROFILE", "") == "1"
@@ -1314,11 +1382,15 @@ def matmul_reader_sender(
   fw.arg(s10, 9)  # west receiver count, patched below after rect args
   fw.arg(s10, 13)
   fw.add(s10, s10, s9)
+  fw.arg(s5, 23)  # DRAM bank count
 
   fw.arg(t0, 22)
   fw.sem_addr(BM.SEM_L1_BASE, t0, out=t6)
   fw.noc_semaphore_set(t6, 1)
 
+  fw.local_noc0_coord(a5)
+  fw.li(t6, INPUT_TILE_BYTES)
+  fw.noc_read_state_setup(0, 1, 0, a5, t6, a=t3, v=t5)
   fw.li(s6, 0)
   if NOC_READ_SYNC == "trid":
     fw.reset_noc_trid_barrier_counter(0, 1 << 2, addr=t3, val=t5)
@@ -1331,24 +1403,21 @@ def matmul_reader_sender(
   fw.cb_reserve_back(BM.CB_INTERFACE, 0, s7)
   fw.cb_write_ptr(BM.CB_INTERFACE, 0, out=s9)
   fw.mv(a4, s9)
-  fw.li(t5, 0)
-  fw.mv(a6, s1)
+  fw.li(t6, INPUT_TILE_BYTES)
   if NOC_READ_SYNC == "global":
     fw.li(t0, NOC.STATUS_BASE + NOC.NIU_MST_RD_RESP_RECEIVED)
     fw.lw(a7, t0, 0)
 
-  fw.mv(a6, s1)
+  fw.dram_tile_stream_setup_from_rta_coords(dram_coord_offset_words)
+  fw.dram_tile_stream_row_delta(s3, plan.in0_block_w)
   for row in range(plan.per_core_m):
     for col in range(plan.in0_block_w):
-      fw.mv(a0, s0)
-      _move_plus_imm(fw, a1, a6, col)
-      fw.arg(a2, 23)
-      fw.dram_tile_addr_from_rta_coords(dram_coord_offset_words, rta_ptr_addr=BM.RTA_L1_BASE_PTR)
-      fw.local_noc0_coord(a5)
-      fw.li(t6, INPUT_TILE_BYTES)
-      fw.noc_read(0, 1, a0, 0, a2, a4, t6, ret_coord=a5, a=t3, v=t5)
+      fw.noc_read_stateful(0, 1, a0, a2, a4, a=t3, v=t5)
       fw.add(a4, a4, t6)
-    fw.add(a6, a6, s3)
+      if col + 1 < plan.in0_block_w:
+        fw.dram_tile_stream_advance_one(dram_coord_offset_words)
+      elif row + 1 < plan.per_core_m:
+        fw.dram_tile_stream_advance_row(dram_coord_offset_words)
 
   if NOC_READ_SYNC == "trid":
     fw.noc_async_read_barrier_with_trid(0, 2, addr=t3, val=t5)
@@ -1541,11 +1610,15 @@ def matmul_writer_sender(
   fw.arg(s7, 7)   # block_tiles
   fw.arg(s8, 8)   # nblocks
   fw.arg(s10, 13) # receiver count
+  fw.arg(s5, 29)  # DRAM bank count
 
   fw.arg(t0, 17)
   fw.sem_addr(NM.SEM_L1_BASE, t0, out=t6)
   fw.noc_semaphore_set(t6, 1)
 
+  fw.local_noc0_coord(a5, x_addr=NM.MY_X, y_addr=NM.MY_Y)
+  fw.li(t6, INPUT_TILE_BYTES)
+  fw.noc_read_state_setup(1, 1, 0, a5, t6, a=t3, v=t5)
   fw.li(s6, 0)
   if NOC_READ_SYNC == "trid":
     fw.reset_noc_trid_barrier_counter(1, 1 << 2, addr=t3, val=t5)
@@ -1558,23 +1631,21 @@ def matmul_writer_sender(
   fw.cb_reserve_back(NM.CB_INTERFACE, 1, s7)
   fw.cb_write_ptr(NM.CB_INTERFACE, 1, out=s9)
   fw.mv(a4, s9)
-  fw.mv(a6, s1)
+  fw.li(t6, INPUT_TILE_BYTES)
   if NOC_READ_SYNC == "global":
     fw.li(t0, NOC.STATUS_BASE + NOC.NIU_MST_RD_RESP_RECEIVED + (1 << NOC.INSTANCE_OFFSET_BIT))
     fw.lw(a7, t0, 0)
 
-  fw.mv(a6, s1)
+  fw.dram_tile_stream_setup_from_rta_coords(input_coord_offset_words)
+  fw.dram_tile_stream_row_delta(s3, plan.per_core_n)
   for row in range(plan.in0_block_w):
     for col in range(plan.per_core_n):
-      fw.mv(a0, s0)
-      _move_plus_imm(fw, a1, a6, col)
-      fw.arg(a2, 29)
-      fw.dram_tile_addr_from_rta_coords(input_coord_offset_words, rta_ptr_addr=NM.RTA_L1_BASE_PTR)
-      fw.local_noc0_coord(a5, x_addr=NM.MY_X, y_addr=NM.MY_Y)
-      fw.li(t6, INPUT_TILE_BYTES)
-      fw.noc_read(1, 1, a0, 0, a2, a4, t6, ret_coord=a5, a=t3, v=t5)
+      fw.noc_read_stateful(1, 1, a0, a2, a4, a=t3, v=t5)
       fw.add(a4, a4, t6)
-    fw.add(a6, a6, s3)
+      if col + 1 < plan.per_core_n:
+        fw.dram_tile_stream_advance_one(input_coord_offset_words)
+      elif row + 1 < plan.in0_block_w:
+        fw.dram_tile_stream_advance_row(input_coord_offset_words)
 
   if NOC_READ_SYNC == "trid":
     fw.noc_async_read_barrier_with_trid(1, 2, addr=t3, val=t5)

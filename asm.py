@@ -36,6 +36,17 @@ def cond(lhs: Reg, op: str, rhs: Reg | int, *, tmp: Reg | None = None) -> Cond:
 def boot_jal(target: int) -> bytes:
   return dsl.jal(zero, target).to_bytes()
 
+_BRANCH_OPS = {"beq", "bne", "blt", "bge", "bltu", "bgeu"}
+_INVERT_BRANCH = {
+  "beq": "bne",
+  "bne": "beq",
+  "blt": "bge",
+  "bge": "blt",
+  "bltu": "bgeu",
+  "bgeu": "bltu",
+}
+
+
 class Asm:
   """Pure RISC-V assembler core: instruction emission, register-constant
   tracking, pseudo-ops and structured control flow. Carries no device-role
@@ -436,8 +447,74 @@ class Asm:
         raise ValueError(f"branch target {item.label!r} out of range: {imm}")
     return getattr(dsl, item.op)(*item.operands, imm)
 
+  def _relaxed_layout(self) -> tuple[list, dict[int, int]]:
+    long_branches: set[int] = set()
+    label_index = {name: (pc - self.base) // 4 for name, pc in self.labels.items()}
+
+    while True:
+      expanded_before = [0] * (len(self.items) + 1)
+      extra = 0
+      for idx, item in enumerate(self.items):
+        expanded_before[idx] = extra
+        if idx in long_branches:
+          extra += 1
+      expanded_before[len(self.items)] = extra
+
+      def pc_for_index(idx: int) -> int:
+        return self.base + 4 * (idx + expanded_before[idx])
+
+      label_pc = {name: pc_for_index(idx) for name, idx in label_index.items()}
+      changed = False
+      for idx, item in enumerate(self.items):
+        if not isinstance(item, Fixup) or item.op not in _BRANCH_OPS or idx in long_branches:
+          continue
+        if item.label not in label_pc:
+          raise ValueError(f"undefined label {item.label!r}")
+        imm = label_pc[item.label] - pc_for_index(idx)
+        if imm & 1:
+          raise ValueError(f"branch target {item.label!r} is misaligned: {imm}")
+        if not -(1 << 12) <= imm < (1 << 12):
+          long_branches.add(idx)
+          changed = True
+      if not changed:
+        return [idx in long_branches for idx in range(len(self.items))], label_pc
+
   def instructions(self) -> list:
-    return [self._resolve(item) for item in self.items]
+    long_branch, label_pc = self._relaxed_layout()
+    out = []
+    pc = self.base
+    for idx, item in enumerate(self.items):
+      if not isinstance(item, Fixup):
+        out.append(item)
+        pc += 4
+        continue
+      if item.label not in label_pc:
+        raise ValueError(f"undefined label {item.label!r}")
+      imm = label_pc[item.label] - pc
+      if item.op == "jal":
+        if imm & 1 or not -(1 << 20) <= imm < (1 << 20):
+          raise ValueError(f"jal target {item.label!r} out of range: {imm}")
+        out.append(dsl.jal(*item.operands, imm))
+        pc += 4
+        continue
+      if item.op in _BRANCH_OPS and long_branch[idx]:
+        inv = _INVERT_BRANCH[item.op]
+        out.append(getattr(dsl, inv)(*item.operands, 8))
+        jal_imm = label_pc[item.label] - (pc + 4)
+        if jal_imm & 1 or not -(1 << 20) <= jal_imm < (1 << 20):
+          raise ValueError(f"relaxed branch jal target {item.label!r} out of range: {jal_imm}")
+        out.append(dsl.jal(zero, jal_imm))
+        pc += 8
+        continue
+      if item.op in _BRANCH_OPS:
+        if imm & 1 or not -(1 << 12) <= imm < (1 << 12):
+          raise ValueError(f"branch target {item.label!r} out of range: {imm}")
+        out.append(getattr(dsl, item.op)(*item.operands, imm))
+        pc += 4
+        continue
+      out.append(self._resolve(item))
+      pc += 4
+    return out
 
   def to_bytes(self) -> bytes:
     words = []
