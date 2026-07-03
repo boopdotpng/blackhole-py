@@ -49,10 +49,12 @@ MAX_PER_CORE_M = 0
 MAX_PER_CORE_N = 0
 SPLIT_AXIS = os.environ.get("MATMUL_SPLIT_AXIS", "auto")
 RAGGED_CORES = os.environ.get("MATMUL_RAGGED_CORES", "1") != "0"
-K_GROUP = 1
+K_GROUP = int(os.environ.get("MATMUL_K_GROUP", "1"))
+if K_GROUP <= 0:
+  raise ValueError(f"MATMUL_K_GROUP must be positive, got {K_GROUP}")
 OUTPUT_NOC = 1
 OUTPUT_STAGGER_ITERS = 0
-STREAM_PARTIAL_CB24 = False
+STREAM_PARTIAL_CB24 = os.environ.get("MATMUL_STREAM_PARTIAL_CB24", "0") == "1"
 HIFI = os.environ.get("HIFI", "") == "1"
 MATH_BACKEND = os.environ.get("MATH_BACKEND", "direct")
 MATH_FIDELITY = os.environ.get("MATH_FIDELITY", "hifi2" if HIFI else "lofi")
