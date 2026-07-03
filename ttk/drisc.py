@@ -1,14 +1,4 @@
-"""Host-side DRISC launch/poll helpers shared by the examples.
-
-These functions were copied near-verbatim across several DRISC example POCs
-(``drisc_cb_direct_poc``, ``drisc_gddr_dma_poc``, ``drisc_gddr_to_worker_poc``,
-``matmul_peak_drisc``).  The per-file copies differed only in the result magic
-they polled for and whether they accepted a corrupt result header, so those are
-exposed as parameters here.
-
-The hardware addresses (``DRISC_FW_BASE`` etc.) and ``RegWindow`` are canonical
-here; ``examples/drisc_hello.py`` re-exports them for the older POCs.
-"""
+"""Host-side DRISC launch/poll helpers shared by DRISC examples."""
 from __future__ import annotations
 
 import struct
@@ -23,7 +13,7 @@ SOFT_RESET_0 = 0xFFB121B0
 DRISC_RESET_PC = 0xFFB14000
 SOFT_RESET_BRISC = 0x800
 
-# Mirror of the result-region layout in examples/drisc_gddr_dma_poc.py.
+# Shared result-region layout for simple DRISC probes.
 RESULT_ADDR = 0x1F000
 RESULT_WORDS = 16
 STATUS_DONE = 2

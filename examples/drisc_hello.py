@@ -14,7 +14,7 @@ if __package__ in (None, ""):
 from asm import KernelBase
 from dsl import t0, t1
 from pcie import PCIDevice, TLBWindow
-from ttk.drisc import (  # noqa: F401  (re-exported for the other DRISC POCs)
+from ttk.drisc import (
   DRISC_FW_BASE, DRISC_L1_NOC_ALIAS, DRISC_RESET_PC, REG_TLB,
   SOFT_RESET_0, SOFT_RESET_BRISC, RegWindow,
 )
