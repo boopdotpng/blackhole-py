@@ -229,7 +229,6 @@ def configure_numeric_path(
   packer_l1_acc: bool = True,
   fp32_dest_acc: bool = False,
 ) -> None:
-  """Select operand/output/partial-CB formats for generated matmul kernels."""
   if intermediate_dtype is None:
     intermediate_dtype = Dtype.Float32 if fp32_dest_acc else output_dtype
   if input_dtype.tile_size != TILE_BYTES or output_dtype.tile_size != TILE_BYTES:
@@ -686,8 +685,6 @@ def plan_matmul(M: int, K: int, N: int, cores: list[Core], *, allow_ragged: bool
 
 
 class MatmulKernel(KernelBase, Noc, Cb):
-  """Shared base for matmul's hand-written dataflow kernels."""
-
   def rta_ptr(self, mailbox_addr: int, *, out=s11):
     return self.read32(out, mailbox_addr)
 

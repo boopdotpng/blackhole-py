@@ -460,7 +460,6 @@ class PCIDevice:
     self.bar0_u32 = None
     self.bar2_u32 = None
 
-    # Enable PCI device, memory space, bus mastering
     if _current_driver(self.sysfs) != "vfio-pci":
       _ensure_endpoint_enabled(self.sysfs)
 
@@ -472,15 +471,12 @@ class PCIDevice:
 
     self._map_bars()
 
-    # TLB allocation bitmaps
     self._tlb_2m = [False] * TLB_2M_COUNT
     self._tlb_2m[TLB_2M_COUNT - 1] = True  # reserve index 201
     self._tlb_4g = [False] * self._bar4_4g_count
 
-    # iATU region allocation
     self._iatu_regions = [False] * IATU_OUTBOUND_REGIONS
 
-    # DMA pinning state
     self._pinnings: dict[int, dict] = {}
     self._next_iova = 1 << 30
 
@@ -919,11 +915,9 @@ class PCIDevice:
         _write32(req + i * 4, w)
       _write32(q + REQUEST_WPTR_OFF, (wptr + 1) % msg_queue_pointer_wrap)
 
-      # trigger ARC IRQ0
       misc = self.read_arc_apb32(self.ARC_MISC_CNTL)
       self.write_arc_apb32(self.ARC_MISC_CNTL, misc | self.IRQ0_TRIG)
 
-      # poll for response
       rptr = _read32(q + RESPONSE_RPTR_OFF)
       deadline = time.monotonic() + timeout_ms / 1000
       while time.monotonic() < deadline:

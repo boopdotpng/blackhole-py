@@ -53,7 +53,6 @@ def notify_dispatch_core_done(fw: KernelBase, *, launch: Reg = t0, mode: Reg = t
   fw.li(noc_shift, 0)
   fw.lbu(noc_shift, launch, Launch.BRISC_NOC_ID)
   fw.slli(noc_shift, noc_shift, NOC.INSTANCE_OFFSET_BIT)
-  # wait_noc_cmd_buf_ready
   fw.li(go_addr, NOC.CMD_CTRL + (NocCfg.NCRISC_AT_CMD_BUF << NOC.CMD_BUF_OFFSET_BIT))
   fw.add(go_addr, go_addr, noc_shift)
   wait_noc_cmd_buf = fw._new_label("wait_noc_cmd_buf")
@@ -158,7 +157,6 @@ def build(*, text_base: dict[str, int] = Firmware.TEXT_BASE) -> KernelBase:
   fw.configure_csr()
   fw.setup_stack(Firmware.BRISC_STACK_TOP)
 
-  # set_subordinate_reset_pcs
   fw.write32(TensixMMIO.RISCV_DEBUG_REG_NCRISC_RESET_PC, text_base["ncrisc"])
   fw.write32(TensixMMIO.RISCV_DEBUG_REG_TRISC0_RESET_PC, text_base["trisc0"])
   fw.write32(TensixMMIO.RISCV_DEBUG_REG_TRISC1_RESET_PC, text_base["trisc1"])
@@ -166,10 +164,8 @@ def build(*, text_base: dict[str, int] = Firmware.TEXT_BASE) -> KernelBase:
   fw.write32(TensixMMIO.RISCV_DEBUG_REG_TRISC_RESET_PC_OVERRIDE, 0b111)
   fw.write32(TensixMMIO.RISCV_DEBUG_REG_NCRISC_RESET_PC_OVERRIDE, 1)
 
-  # device_setup
   fw.write32(TensixMMIO.RISCV_DEBUG_REG_DEST_CG_CTRL, 0)
   fw.write32(TensixMMIO.RISCV_TDMA_REG_CLK_GATE_EN, 0x3F)
-  # enable_noc_clock_gating
   for noc in range(2):
     for reg in (NocCfg.NIU_CFG_0, NocCfg.ROUTER_CFG_0):
       cfg = NOC.CFG_BASE + reg * 4 + (noc << NOC.INSTANCE_OFFSET_BIT)
@@ -178,14 +174,11 @@ def build(*, text_base: dict[str, int] = Firmware.TEXT_BASE) -> KernelBase:
       fw.ori(t1, t1, 1)
       fw.sw(t1, t0, 0)
   fw.zero_words(TensixL1.MEM_ZEROS_BASE, TensixL1.MEM_ZEROS_SIZE // 4)
-  # invalidate_all_risc_icaches
   fw.write32(TensixRegs.RISCV_IC_INVALIDATE_INVALIDATE_ALL, TensixRegs.RISCV_IC_ALL_MASK)
   tensix_hw_reset(fw)
 
-  # init_risc_noc_coords
   fw.init_risc_noc_coords(BM.MY_X, BM.MY_Y)
 
-  # init_brisc_mailbox_globals
   fw.write32(Mailbox.LAUNCH_MSG_RD_PTR, 0, tmp_addr=t1, tmp_val=t0)
   fw.write8(BM.NOC_INDEX, 0, tmp_addr=t1, tmp_val=t0)
   fw.write8(BM.BRISC_NOC_MODE, 0, tmp_addr=t1, tmp_val=t0)
@@ -199,11 +192,8 @@ def build(*, text_base: dict[str, int] = Firmware.TEXT_BASE) -> KernelBase:
 
   noc_init(fw)
   init_noc_local_state(fw)
-  # invalidate_all_risc_icaches
   fw.write32(TensixRegs.RISCV_IC_INVALIDATE_INVALIDATE_ALL, TensixRegs.RISCV_IC_ALL_MASK)
-  # init_subordinate_sync
   fw.write32(Mailbox.SUBORDINATE_SYNC, RunSync.ALL_INIT)
-  # deassert_all_riscs
   fw.write32(TensixMMIO.RISCV_DEBUG_REG_SOFT_RESET_0, 0)
   for role in (1, 2, 3, 4):
     fw.wait8(Mailbox.SUBORDINATE_SYNC + role - 1, RunSync.DONE)
@@ -214,7 +204,6 @@ def build(*, text_base: dict[str, int] = Firmware.TEXT_BASE) -> KernelBase:
 
   fw.label("run_loop")
 
-  # wait_go
   wait_go_loop = fw._new_label("wait_go")
   check_reset_host = fw._new_label("check_reset_host")
   check_replay = fw._new_label("check_replay")
@@ -260,7 +249,6 @@ def build(*, text_base: dict[str, int] = Firmware.TEXT_BASE) -> KernelBase:
   # the rest of per-launch firmware setup.
   signal_subordinate_if_enabled(fw, 1, RunSync.LOAD)
 
-  # init_brisc_kernel_config
   fw.current_launch_ptr(launch=t0, tmp=t4)
   fw.lw(t1, t0, Launch.KERNEL_CONFIG_BASE)
   for i in range(3):
@@ -274,7 +262,6 @@ def build(*, text_base: dict[str, int] = Firmware.TEXT_BASE) -> KernelBase:
   fw.add(t3, t1, t2)
   fw.write32(BM.CRTA_L1_BASE_PTR, t3, tmp_addr=t4)
 
-  # init_brisc_launch_globals
   keep_launch_noc = fw._new_label("keep_launch_noc")
   fw.current_launch_ptr(launch=t0, tmp=t2)
   fw.lbu(t1, t0, Launch.BRISC_NOC_ID)
@@ -303,7 +290,6 @@ def build(*, text_base: dict[str, int] = Firmware.TEXT_BASE) -> KernelBase:
 
   noc_init(fw)
   init_noc_local_state(fw)
-  # invalidate_all_risc_icaches
   fw.write32(TensixRegs.RISCV_IC_INVALIDATE_INVALIDATE_ALL, TensixRegs.RISCV_IC_ALL_MASK)
 
   # Match tt-metal run_triscs(): TRISC0 owns CB sync-register init and BRISC
@@ -312,7 +298,6 @@ def build(*, text_base: dict[str, int] = Firmware.TEXT_BASE) -> KernelBase:
   for role in (2, 3, 4):
     signal_subordinate_if_enabled(fw, role, RunSync.GO)
 
-  # setup_local_cbs
   fw.setup_local_cbs(BM.CB_INTERFACE)
 
   signal_subordinate_if_enabled(fw, 1, RunSync.GO)

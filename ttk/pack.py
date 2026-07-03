@@ -175,7 +175,6 @@ class Pack:
     k.emit(TTSETADCXX(4, 15, 0))
     k.write32(k.data["dest_offset_id"], 0)
 
-    # Output addr config setup.
     k.emit(TTSTALLWAIT(TensixStall.TDMA | TensixStall.THCON, TensixWait.PACK0))
     k.emit(TTSETDMAREG(0, 0, 0, 16))
     k.emit(TTSETDMAREG(0, 0, 0, 17))

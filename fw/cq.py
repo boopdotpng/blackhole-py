@@ -236,7 +236,6 @@ def build_prefetch() -> CqKernel:
   fw.add(t2, t0, t2)
   fw.srli(t2, t2, 12)            # pages
   fw.mv(s3, t2)
-  # acquire_local_pages
   fw.li(t3, CQ_SEM_BASE)
   sem_wait = fw._new_label("sem_wait")
   fw.label(sem_wait)

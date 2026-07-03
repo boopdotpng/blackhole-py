@@ -1,4 +1,3 @@
-"""Host-side DRISC launch/poll helpers shared by DRISC examples."""
 from __future__ import annotations
 
 import struct

@@ -17,10 +17,8 @@ def build() -> KernelBase:
   fw.segment(Firmware.LOCAL_DATA_BASE["ncrisc"], b"\x68".ljust(Firmware.LOCAL_DATA_SIZE["ncrisc"], b"\0"), label="local_data")
   fw.setup_stack(Firmware.NCRISC_STACK_TOP)
   fw.configure_csr()
-  # init_risc_noc_coords
   fw.init_risc_noc_coords(NM.MY_X, NM.MY_Y)
 
-  # init_ncrisc_mailbox_globals
   fw.read8(t0, Mailbox.CORE_INFO_ABSOLUTE_LOGICAL_X, tmp_addr=t1)
   fw.write8(NM.MY_LOGICAL_X, t0, tmp_addr=t1)
   fw.read8(t0, Mailbox.CORE_INFO_ABSOLUTE_LOGICAL_Y, tmp_addr=t1)
@@ -29,7 +27,6 @@ def build() -> KernelBase:
   fw.signal_subordinate_done(1)
   fw.label("run_loop")
 
-  # wait_subordinate_load_or_go
   wait_sub_loop = fw._new_label("wait_subordinate")
   subordinate_ready = fw._new_label("subordinate_ready")
   fw.li(t0, Mailbox.SUBORDINATE_SYNC)
@@ -44,7 +41,6 @@ def build() -> KernelBase:
   fw.label(subordinate_ready)
   fw.fence()
 
-  # init_ncrisc_kernel_config
   fw.current_launch_ptr(launch=t0, tmp=t4)
   fw.lw(t1, t0, Launch.KERNEL_CONFIG_BASE)
   for i in range(3):
@@ -58,10 +54,8 @@ def build() -> KernelBase:
   fw.add(t3, t1, t2)
   fw.write32(NM.CRTA_L1_BASE_PTR, t3, tmp_addr=t4)
 
-  # setup_local_cbs
   fw.setup_local_cbs(NM.CB_INTERFACE)
 
-  # init_ncrisc_launch_globals
   fw.current_launch_ptr(launch=t0, tmp=t2)
   fw.read8(t1, NM.MY_LOGICAL_X, tmp_addr=t2)
   fw.lbu(t3, t0, Launch.SUB_DEVICE_ORIGIN_X)

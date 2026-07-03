@@ -142,7 +142,6 @@ def _device_snapshot(dev: PCIDevice) -> dict:
   board_name = board.board
   harv_bank = board.harvested_dram_bank
 
-  # Denominators for progress bars
   shutdown = tag("THM_LIMIT_SHUTDOWN")
   throttle = tag("THM_LIMIT_THROTTLE")
   temp_ref = shutdown or throttle or 100
@@ -258,7 +257,6 @@ def show_device(index: int):
       print(f"  ─── {section} ───")
       for label, value, _ in rows:
         print(f"  {label:<20} {value}")
-    # raw dump
     print("  Raw telemetry")
     for tag in sorted(layout["tag_to_offset"]):
       name = TAG_ID_TO_NAME.get(tag, f"TAG_{tag}")
@@ -462,7 +460,6 @@ def _render_tui(stdscr, devices: list[tuple[int, PCIDevice]]):
     lines.append(header_line)
     lines.append([("", 0)])
 
-    # Single-device view: render only the currently-selected card.
     card_w = max(40, width - 1)
     index, dev = devices[state.cur_dev]
     try:

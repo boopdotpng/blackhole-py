@@ -41,11 +41,9 @@ def build(trisc_id: int) -> KernelBase:
   data = TM.DATA1 if trisc_id == 1 else TM.DATA_COMMON
   fw = Kernel(Tensix, Cb, base_addr=Firmware.TRISC_TEXT_BASE[trisc_id])
   fw.segment(Firmware.TRISC_LOCAL_DATA_BASE[trisc_id], b"\0" * Firmware.TRISC_LOCAL_DATA_SIZE[trisc_id], label="local_data")
-  # setup_gp
   fw.li(gp, Firmware.TRISC_GLOBAL_POINTER)
   fw.setup_stack(Firmware.TRISC_STACK_TOP)
   fw.configure_csr()
-  # init_local_data
   fw.copy_words(
     TensixMMIO.LOCAL_RAM_START,
     Firmware.TRISC_LOCAL_DATA_BASE[trisc_id],
@@ -54,7 +52,6 @@ def build(trisc_id: int) -> KernelBase:
 
   zero_tensix_regfile(fw)
 
-  # init_common_state
   init_common_trisc_state(fw, data, trisc_id)
   fw.write32(TensixRegs.CFG_BASE + TensixRegs.PRNG_SEED_SEED_VAL_ADDR32 * 4, 0)
   fw.delay_cycles(600)
@@ -66,7 +63,6 @@ def build(trisc_id: int) -> KernelBase:
   fw.signal_subordinate_done(role)
   fw.label("run_loop")
 
-  # wait_trisc_message
   wait_trisc_loop = fw._new_label("wait_trisc")
   trisc_go = fw._new_label("trisc_go")
   trisc_init_sync = fw._new_label("trisc_init_sync")
@@ -82,7 +78,6 @@ def build(trisc_id: int) -> KernelBase:
   fw.j(wait_trisc_loop)
   if trisc_id == 0:
     fw.label(trisc_init_sync)
-    # init_sync_registers
     fw.li(t0, CB.SYNC_TILES_RECEIVED_BASE)
     fw.li(t1, CB.SYNC_TILES_ACKED_BASE)
     fw.li(t2, CB.NUM_CIRCULAR_BUFFERS)
@@ -107,10 +102,8 @@ def build(trisc_id: int) -> KernelBase:
   init_common_trisc_state(fw, data, trisc_id)
 
   if trisc_id in (0, 2):
-    # setup_local_cbs
     fw.setup_local_cbs(data["cb_interface"], trisc_id=trisc_id)
 
-  # init_trisc_kernel_config
   fw.current_launch_ptr(launch=t0, tmp=t4)
   fw.lw(t1, t0, Launch.KERNEL_CONFIG_BASE)
   rta_slot = 2 + trisc_id
