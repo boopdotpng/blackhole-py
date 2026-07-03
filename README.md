@@ -13,10 +13,11 @@ Written entirely in Python, without any tenstorrent software. Kernels under `exa
 Try a matmul:
 
 ```sh
-PYTHONPATH=. python3 examples/matmul_peak.py 1024 1024 1024
+PYTHONPATH=. python3 examples/matmul_peak.py 5000 5000 5000
+
 ```
 
 ## caveats
 - Unbind tt-kmd and make sure vfio is available
-- Blackhole p100a and p150a/b only. p150 support is experimental; I don't have one to test on, but the kernels are equivalent, so it should run. PRs appreciated! 
+- p150 support tentative
 - No distributed / multi-card support yet. 
