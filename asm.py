@@ -1,9 +1,10 @@
 from __future__ import annotations
+import functools
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 import dsl
-from dsl import Reg, ra, sp, t0, t1, t2, t3, t4, zero
+from dsl import Reg, ra, sp, t0, t1, t2, t3, t4, t5, t6, zero
 
 
 class _Launch:
@@ -77,6 +78,24 @@ class Asm:
     self.labels: dict[str, int] = {}
     self._label_id = 0
     self._reg_consts: dict[int, int] = {}
+    self.regs = RegAlloc()
+
+  def tmp(self, n: int = 1):
+    """Allocate n scratch GPRs into the current @with_scope/`with self.scope()`
+    scope; freed when it exits. See RegAlloc."""
+    return self.regs.tmp(n)
+
+  def scope(self):
+    """`with self.scope():` — manual scratch scope (see @with_scope)."""
+    return self.regs.scope()
+
+  def scratch(self, n: int = 1):
+    """`with self.scratch(n) as regs:` — scope that frees regs early on exit."""
+    return self.regs.scratch(n)
+
+  def reserve_regs(self, *regs):
+    """Remove regs from the scratch pool for this kernel's lifetime."""
+    return self.regs.reserve(*regs)
 
   @property
   def pc(self) -> int:
@@ -687,3 +706,125 @@ def Kernel(*mixins, **kwargs) -> KernelBase:
 
   ``kwargs`` are forwarded to ``KernelBase.__init__`` (e.g. ``base_addr``)."""
   return type("Kernel", (KernelBase, *mixins), {})(**kwargs)
+
+
+# --- Scratch-GPR allocator ----------------------------------------------------
+#
+# Makes register clobbering impossible by construction. The old ttk pattern
+# hardcodes physical temporaries::
+#
+#     iface, received, acked = t6, t5, t4
+#
+# so two snippets that get concatenated (or fused) can grab the same register
+# and clobber a value the other still needs. On a GPU you can't do this; on
+# RISC-V you silently corrupt state.
+#
+# Fix: helpers *request* scratch registers instead of naming them. You do NOT
+# wrap every block in ``with`` — you declare scratch use **once per helper** and
+# write a flat body::
+#
+#     @with_scope
+#     def cb_reserve_back(self, ...):
+#         iface, received, acked = self.tmp(3)    # reads like `= t6, t5, t4`
+#         self.lw(received, iface, 24)
+#         ...                                      # flat; regs freed on return
+#
+# Under the hood there is a scope stack. ``@with_scope`` (or ``with self.scope():``)
+# pushes a scope; ``self.tmp(n)`` allocates into the current scope; the scope
+# frees everything when it pops. Because scopes nest along the call stack, when a
+# scoped helper calls another scoped helper the callee only ever sees the
+# still-free registers — so composition cannot clobber, with no ``with`` at the
+# call site.
+#
+# Reach for ``with self.scratch(n) as regs:`` ONLY when you want to release
+# registers *early*, before the enclosing helper returns (the uncommon case).
+#
+# Allocation is deterministic (lowest-ranked free register first), so the same
+# source always emits the same bytes.
+class RegAlloc:
+  """A pool of physical scratch GPRs handed out through a stack of scopes."""
+
+  # caller-saved temporaries, in canonical allocation order
+  DEFAULT = (t0, t1, t2, t3, t4, t5, t6)
+
+  def __init__(self, pool=DEFAULT):
+    self._rank = {int(r): i for i, r in enumerate(pool)}
+    self._free = list(pool)
+    self._scopes: list[list[Reg]] = []   # stack; each entry = regs to free on pop
+
+  def reserve(self, *regs: Reg):
+    """Remove regs from the allocatable pool (e.g. fixed calling-convention
+    registers a kernel receives arguments in). Returns self for chaining."""
+    self._free = [f for f in self._free if all(int(f) != int(r) for r in regs)]
+    return self
+
+  # --- scopes -------------------------------------------------------------
+  def push(self):
+    self._scopes.append([])
+
+  def pop(self):
+    self._give_back(self._scopes.pop())
+
+  def scope(self):
+    """`with self.scope():` — a manual scope boundary (what @with_scope adds)."""
+    return _Scope(self)
+
+  def tmp(self, n: int = 1):
+    """Allocate n disjoint scratch regs into the current scope (freed when it
+    pops). Returns a single Reg when n==1, else a tuple. Needs an open scope."""
+    if not self._scopes:
+      raise RuntimeError(
+        "tmp() needs an open scope: decorate the method with @with_scope "
+        "or wrap the body in `with self.scope():`")
+    regs = self._take(n)
+    self._scopes[-1].extend(regs)
+    return regs[0] if n == 1 else tuple(regs)
+
+  def scratch(self, n: int = 1):
+    """`with self.scratch(n) as regs:` — a self-contained scope that allocates n
+    up front and frees them on block exit. For releasing regs early."""
+    return _Lease(self, n)
+
+  # --- pool mechanics -----------------------------------------------------
+  def _take(self, n: int) -> list[Reg]:
+    if len(self._free) < n:
+      live = [r for s in self._scopes for r in s]
+      raise RuntimeError(
+        f"out of scratch GPRs: need {n}, free={len(self._free)} "
+        f"({[repr(r) for r in self._free]}), live={[repr(r) for r in live]}")
+    regs, self._free = self._free[:n], self._free[n:]
+    return regs
+
+  def _give_back(self, regs: list[Reg]):
+    self._free = sorted(self._free + regs, key=lambda r: self._rank[int(r)])
+
+
+class _Scope:
+  def __init__(self, alloc: RegAlloc): self._alloc = alloc
+  def __enter__(self): self._alloc.push(); return self._alloc
+  def __exit__(self, *exc): self._alloc.pop(); return False
+
+
+class _Lease:
+  def __init__(self, alloc: RegAlloc, n: int):
+    self._alloc, self._n, self._regs = alloc, n, []
+  def __enter__(self):
+    self._alloc.push()
+    self._regs = self._alloc._take(self._n)
+    self._alloc._scopes[-1].extend(self._regs)
+    return self._regs[0] if self._n == 1 else tuple(self._regs)
+  def __exit__(self, *exc):
+    self._alloc.pop(); self._regs = []; return False
+
+
+def with_scope(fn):
+  """Decorator: open a scratch scope for the whole method so its body can call
+  ``self.tmp(...)`` flatly; every register is freed when the method returns."""
+  @functools.wraps(fn)
+  def wrap(self, *a, **k):
+    self.regs.push()
+    try:
+      return fn(self, *a, **k)
+    finally:
+      self.regs.pop()
+  return wrap

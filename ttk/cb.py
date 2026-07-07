@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dsl import Reg, t0, t1, t2, t3, t4, t5, t6, zero
 from dsl import TTSETDMAREG, TTSTALLWAIT, TTSTOREREG
+from asm import with_scope
 from ttk.tensix import Launch, TensixRegs
 
 
@@ -107,8 +108,9 @@ class Cb:
   def cb_counter_high(self, out: Reg, counter_reg: Reg):
     return self.srli(out, counter_reg, 16)
 
+  @with_scope
   def cb_reserve_back(self, interface_base: int, cb_index: int, count: int | Reg = 1):
-    iface, received, acked, free_pages, num_pages, need = t6, t5, t4, t3, t2, t1
+    iface, received, acked, free_pages, num_pages, need = self.tmp(6)
     self.cb_iface(interface_base, cb_index, out=iface)
     self.lw(received, iface, 24)
     self.cb_counter_high(received, received)
