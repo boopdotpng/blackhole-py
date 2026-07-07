@@ -85,6 +85,7 @@ class Unpack:
       TTRMWCIB0(Mask=0x07, Data=0x00, CfgRegAddr=Cfg.ALU.addr32),
       TTRMWCIB1(Mask=0x80, Data=0x00, CfgRegAddr=Cfg.ALU.addr32),
       TTRMWCIB2(Mask=0x01, Data=0x00, CfgRegAddr=Cfg.ALU.addr32),
+      TTRMWCIB3(Mask=0x1E, Data=0x00 if fp32_dest else 0x0A, CfgRegAddr=Cfg.ALU.addr32),
       TTRMWCIB3(Mask=0x60, Data=fp32_bits, CfgRegAddr=Cfg.ALU.addr32),
       TTRMWCIB0(Mask=0x03, Data=0x01, CfgRegAddr=Cfg.ALU_ACC_CTRL_Zero_Flag_disabled_src.addr32),
     ):

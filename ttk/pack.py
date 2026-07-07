@@ -89,10 +89,11 @@ class Pack:
     k.write32(Cfg.PCK0_ADDR_CTRL_XY_REG_0, xy0)
     k.write32(Cfg.PCK0_ADDR_CTRL_ZW_REG_0, zw0)
 
-  def _alu_acc_rmw(self, k):
+  def _alu_acc_rmw(self, k, *, fp32_dest: bool = False):
+    dstacc = 0x00 if fp32_dest else 0x0A
     k.emit(TTATGETM(0))
     for inst in (
-      TTRMWCIB3(Mask=0x1E, Data=0x0A, CfgRegAddr=Cfg.ALU.addr32),
+      TTRMWCIB3(Mask=0x1E, Data=dstacc, CfgRegAddr=Cfg.ALU.addr32),
       TTRMWCIB0(Mask=0xFC, Data=0x00, CfgRegAddr=Cfg.ALU_ACC_CTRL_Zero_Flag_disabled_src.addr32),
       TTRMWCIB1(Mask=0xFF, Data=0x00, CfgRegAddr=Cfg.ALU_ACC_CTRL_Zero_Flag_disabled_src.addr32),
       TTRMWCIB2(Mask=0x3F, Data=0x00, CfgRegAddr=Cfg.ALU_ACC_CTRL_Zero_Flag_disabled_src.addr32),
@@ -160,7 +161,7 @@ class Pack:
 
     self._state_formats(k, dtype)
     self._dest_addr_dmaregs(k)
-    self._alu_acc_rmw(k)
+    self._alu_acc_rmw(k, fp32_dest=fp32_dest)
     self._pack_cfg(k, dtype, out_cb, fp32_dest=fp32_dest)
 
     k.emit(TTSETADCXX(4, 15, 0))

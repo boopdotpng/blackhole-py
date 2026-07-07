@@ -9,6 +9,8 @@ from ttk.noc import NOC
 
 class DramTransferKernel(KernelBase, Noc, Cb):
   def load_args(self):
+    # s6 is the runtime page size from DramBuffer.dtype.tile_size. Do not
+    # assume bf16's 2048B pages here; f32 tiles are 4096B.
     return self.read_rta_from(NM.RTA_L1_BASE_PTR, (s0, s1, s2, s3, s4, s5, s6, s7))
 
   def sysmem_addr(self, tile_id=s9, out_lo=a3, out_mid=a4, tmp=t0):
@@ -23,7 +25,7 @@ class DramTransferKernel(KernelBase, Noc, Cb):
     self.mv(t0, a1)
     self.remu(a1, t0, a2)
     self.divu(t0, t0, a2)
-    self.slli(t0, t0, 11)
+    self.mul(t0, t0, s6)
     self.add(a0, a0, t0)
     self.slli(t1, a1, 2)
     self.read32(t2, NM.RTA_L1_BASE_PTR)
