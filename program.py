@@ -7,7 +7,7 @@ from enum import Enum
 from asm import KernelBase, Segment, boot_jal
 from ttk.addrs import L1_ALIGN, S, align_up, as_bytes
 from ttk.cb import CB as CBRegs
-from ttk.tensix import TensixL1, TensixMMIO
+from ttk.tensix import Launch, TensixL1, TensixMMIO
 
 Core = tuple[int, int]
 Rect = tuple[int, int, int, int]
@@ -420,11 +420,13 @@ class Program:
       for core in target_cores
     }
 
-    reset_blob = struct.pack("<BBBB", 0, 0, 0, DevMsgs.RUN_MSG_RESET_READ_PTR_FROM_HOST)
-    commands: list[IRCommand] = [
-      McastWrite(mcast_rects(target_cores), TensixL1.GO_MSG, reset_blob),
-      McastWrite(mcast_rects(target_cores), TensixL1.GO_MSG_INDEX, b"\0\0\0\0"),
-    ]
+    commands: list[IRCommand] = []
+    if dispatch_mode != DevMsgs.DISPATCH_MODE_DEV:
+      reset_blob = struct.pack("<BBBB", 0, 0, 0, DevMsgs.RUN_MSG_RESET_READ_PTR_FROM_HOST)
+      commands.extend([
+        McastWrite(mcast_rects(target_cores), TensixL1.GO_MSG, reset_blob),
+        McastWrite(mcast_rects(target_cores), TensixL1.GO_MSG_INDEX, b"\0\0\0\0"),
+      ])
 
     rta_blobs = [
       next((seg.data for seg in per_core_segments[core] if seg.label == "rta"), b"")
@@ -437,10 +439,11 @@ class Program:
       next(seg.data for seg in per_core_segments[core] if seg.label == "launch")
       for core in target_cores
     ]
+    launch_addr = TensixL1.LAUNCH + (host_assigned_id & 7) * Launch.MSG_SIZE
     if all(blob == launch_blobs[0] for blob in launch_blobs):
-      commands.append(McastWrite(mcast_rects(target_cores), TensixL1.LAUNCH, launch_blobs[0]))
+      commands.append(McastWrite(mcast_rects(target_cores), launch_addr, launch_blobs[0]))
     else:
-      commands.append(UnicastWrite(target_cores, TensixL1.LAUNCH, launch_blobs))
+      commands.append(UnicastWrite(target_cores, launch_addr, launch_blobs))
 
     for (addr, data, label), segment_cores in _shared_segment_groups(per_core_segments).items():
       if label == "launch":

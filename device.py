@@ -12,7 +12,7 @@ from dram import Allocator, DramBuffer, Shape, tilize, untilize
 import fw
 from ttk.addrs import Core, L1_ALIGN, align_down, align_up, as_bytes, p100_dram_bank_endpoint_coords
 from ttk.noc import NOC
-from ttk.tensix import TensixL1, TensixMMIO
+from ttk.tensix import Mailbox, TensixL1, TensixMMIO
 from pcie import BoardInfo, Mapping, NOC_PCIE_OFFSET, PCIDevice, PCIE_NOC_XY, TLBWindow
 from program import (
   DevMsgs, Dtype, FAST_CQ_NUM_CIRCULAR_BUFFERS, GoMsg, IRCommand, LaunchMsg,
@@ -28,6 +28,7 @@ class Device:
     self.programs: list[Program] = []
     self.dram = Allocator(self.dev, self.board_info.dram_tiles)
     self.cq: CommandQueue | None = None
+    self._fast_launch_slot = 0
     self._dram_sysmem: DramSysmem | None = None
     self._dram_fill_kernel = None
     self._dram_drain_kernel = None
@@ -141,10 +142,11 @@ class Device:
     if self.cq is None:
       raise RuntimeError("fast dispatch is not initialized")
     cores = self.cores
-    programs = [
-      program.lower(cores, dispatch_mode=DevMsgs.DISPATCH_MODE_DEV, host_assigned_id=i)
-      for i, program in enumerate(self.programs)
-    ]
+    programs = []
+    for program in self.programs:
+      slot = self._fast_launch_slot
+      programs.append(program.lower(cores, dispatch_mode=DevMsgs.DISPATCH_MODE_DEV, host_assigned_id=slot))
+      self._fast_launch_slot = (slot + 1) & 7
     return self.cq.submit_ir(programs, self._go_word(), names=[getattr(p, "name", "") for p in self.programs])
 
   def recover_dispatch(self):
@@ -158,6 +160,7 @@ class Device:
     sysm.prefetch_q_wr_idx = 0
     sysm.dispatch_cb_page_pos = 0
     sysm.event_id = 0
+    self._fast_launch_slot = 0
     sysm.completion_rd_16b = sysm.completion_base_16b
     sysm.completion_rd_toggle = 0
     import cq as cq_mod
@@ -219,6 +222,7 @@ class Device:
     for base, segments in kernels:
       for segment in segments:
         win.write(TensixL1.KERNEL_CONFIG_BASE + base + segment.addr, segment.data)
+    win.write(Mailbox.LAUNCH_MSG_RD_PTR, b"\0\0\0\0")
     win.write(TensixL1.LAUNCH, as_bytes(launch))
     go = GoMsg()
     go.bits.signal = DevMsgs.RUN_MSG_GO

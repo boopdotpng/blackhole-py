@@ -4,7 +4,25 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 import dsl
 from dsl import Reg, ra, sp, t0, t1, t2, t3, t4, zero
-from ttk.tensix import Launch, Mailbox, RunMsg
+
+
+class _Launch:
+  BASE = 0x70
+  MSG_SIZE = 96
+  KERNEL_CONFIG_BASE = 0
+  KERNEL_TEXT_OFFSET = 44
+  ENABLES = 76
+
+
+class _Mailbox:
+  SUBORDINATE_SYNC = 0x68
+  LAUNCH_MSG_RD_PTR = 0x6C
+  GO_SIGNAL = 0x373
+
+
+class _RunMsg:
+  GO = 0x80
+  DONE = 0x00
 
 CoreArgs = Callable[[int, int], list[int]]
 
@@ -601,7 +619,12 @@ class KernelBase(Asm):
     return self.li(sp, stack_top)
 
   def current_launch_ptr(self, launch: Reg = t0, tmp: Reg = t1):
-    return self.li(launch, Launch.BASE)
+    self.read32(tmp, _Mailbox.LAUNCH_MSG_RD_PTR, tmp_addr=launch)
+    self.andi(tmp, tmp, 7)
+    self.li(launch, _Launch.MSG_SIZE)
+    self.mul(tmp, tmp, launch)
+    self.li(launch, _Launch.BASE)
+    return self.add(launch, launch, tmp)
 
   def configure_csr(self, *, value: Reg = t0):
     self.li(value, 2)
@@ -619,26 +642,26 @@ class KernelBase(Asm):
     return self
 
   def wait_go(self):
-    return self.wait8(Mailbox.GO_SIGNAL, RunMsg.GO)
+    return self.wait8(_Mailbox.GO_SIGNAL, _RunMsg.GO)
 
   def signal_done(self):
-    return self.signal8(Mailbox.GO_SIGNAL, RunMsg.DONE)
+    return self.signal8(_Mailbox.GO_SIGNAL, _RunMsg.DONE)
 
   def signal_subordinate_go(self, role_index: int):
-    return self.signal8(Mailbox.SUBORDINATE_SYNC + role_index - 1, RunMsg.GO)
+    return self.signal8(_Mailbox.SUBORDINATE_SYNC + role_index - 1, _RunMsg.GO)
 
   def signal_subordinate_done(self, role_index: int):
-    return self.signal8(Mailbox.SUBORDINATE_SYNC + role_index - 1, RunMsg.DONE)
+    return self.signal8(_Mailbox.SUBORDINATE_SYNC + role_index - 1, _RunMsg.DONE)
 
   def wait_subordinate_go(self, role_index: int):
-    return self.wait8(Mailbox.SUBORDINATE_SYNC + role_index - 1, RunMsg.GO)
+    return self.wait8(_Mailbox.SUBORDINATE_SYNC + role_index - 1, _RunMsg.GO)
 
   def wait_subordinate_done(self, role_index: int):
-    return self.wait8(Mailbox.SUBORDINATE_SYNC + role_index - 1, RunMsg.DONE)
+    return self.wait8(_Mailbox.SUBORDINATE_SYNC + role_index - 1, _RunMsg.DONE)
 
   def launch_kernel_enabled(self, role_index: int, *, enabled: Reg = t0, mask: Reg = t1):
     self.current_launch_ptr(enabled)
-    self.lw(enabled, enabled, Launch.ENABLES)
+    self.lw(enabled, enabled, _Launch.ENABLES)
     self.li(mask, 1 << role_index)
     return self.and_(enabled, enabled, mask)
 
@@ -648,8 +671,8 @@ class KernelBase(Asm):
     self.launch_kernel_enabled(role_index, enabled=enabled, mask=offset)
     self.beq(enabled, zero, skip)
     self.current_launch_ptr(launch)
-    self.lw(config_base, launch, Launch.KERNEL_CONFIG_BASE)
-    self.lw(offset, launch, Launch.KERNEL_TEXT_OFFSET + 4 * role_index)
+    self.lw(config_base, launch, _Launch.KERNEL_CONFIG_BASE)
+    self.lw(offset, launch, _Launch.KERNEL_TEXT_OFFSET + 4 * role_index)
     self.add(entry, config_base, offset)
     self.jalr(ra, entry, 0)
     self.label(skip)
