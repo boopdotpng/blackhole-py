@@ -437,6 +437,10 @@ def _secondary_bus_reset(sysfs_path: str):
 
 class PCIDevice:
   def __new__(cls, *args, **kwargs):
+    if cls is PCIDevice and os.environ.get("EMU") == "1":
+      os.environ["TT_USB"] = "1"
+      from emu_pcie import EmuPCIDevice
+      return object.__new__(EmuPCIDevice)
     return object.__new__(cls)
 
   def __init__(self, index: int = 0, use_vfio: bool = True):
@@ -503,6 +507,8 @@ class PCIDevice:
 
   @staticmethod
   def list_devices() -> list[str]:
+    if os.environ.get("EMU") == "1":
+      return ["emu:0000:00.0"]
     return _find_bh_devices()
 
   def telemetry_layout(self) -> dict:
@@ -567,7 +573,9 @@ class PCIDevice:
 
   @staticmethod
   def reset_bdf(bdf: str):
-    """Reset Blackhole like tt-smi/UMD's non-Galaxy path; fall back to PCIe FLR."""
+    """Reset Blackhole like UMD's non-Galaxy path; fall back to PCIe FLR."""
+    if os.environ.get("EMU") == "1":
+      return
     sysfs = f"/sys/bus/pci/devices/{bdf}"
     config_path = f"{sysfs}/config"
 
@@ -703,7 +711,7 @@ class PCIDevice:
     if not _poll(started, 2.0, 0.00001):
       boot_status = self.read_arc_apb32(self.SCRATCH_RAM_2)
       raise RuntimeError(
-        f"ARC not ready after 2.0s (boot_status=0x{boot_status:x}) — device may be in A3, try tt-smi -r")
+        f"ARC not ready after 2.0s (boot_status=0x{boot_status:x}) — device may be in A3; reset the device")
     self.arc_msg(0xA0, timeout_ms=200)
     try: self.arc_msg(self.MSG_SET_WDT_TIMEOUT, arg0=60_000, timeout_ms=200)
     except Exception: pass
@@ -932,7 +940,7 @@ class PCIDevice:
             raise RuntimeError(f"ARC fw did not recognize message 0x{msg:x}")
           raise RuntimeError(f"ARC fw error 0x{status:x} for message 0x{msg:x}")
         time.sleep(0.001)
-      raise TimeoutError(f"arc_msg timeout ({timeout_ms} ms) -- try tt-smi -r")
+      raise TimeoutError(f"arc_msg timeout ({timeout_ms} ms) -- reset the device")
     finally:
       self.free_tlb(tlb)
 
