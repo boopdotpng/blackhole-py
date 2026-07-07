@@ -4,7 +4,6 @@ A partial replacement of:
 - tt-metal
 - tt-umd
 - tt-llk 
-- tt-smi
 - tt-kmd
 - sfpi (c++ compiler) 
 

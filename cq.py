@@ -448,7 +448,7 @@ class CQSysmem:
           raise RuntimeError(f"CQ completion event mismatch: got {got}, expected {event_id}")
         return
       if time.perf_counter() > deadline:
-        raise TimeoutError(f"timeout waiting for CQ completion event {event_id} -- try tt-smi -r")
+        raise TimeoutError(f"timeout waiting for CQ completion event {event_id} -- reset the device")
       time.sleep(0.0002)
 
   def close(self):
