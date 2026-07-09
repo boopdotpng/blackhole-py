@@ -7,7 +7,6 @@ from pcie import PCIDevice, TLBWindow, TLB_2M_SIZE
 
 DRISC_L1_NOC_ALIAS = 0x2000000000
 DRISC_FW_BASE = 0x3260
-REG_TLB = 191
 SOFT_RESET_0 = 0xFFB121B0
 DRISC_RESET_PC = 0xFFB14000
 SOFT_RESET_BRISC = 0x800
@@ -27,26 +26,22 @@ class RegWindow:
   def __init__(self, dev: PCIDevice, core: tuple[int, int]):
     self.dev = dev
     self.core = core
-    self.mm = dev.tlb_window(REG_TLB)
+    self.win = TLBWindow(dev, start=core, addr=DRISC_L1_NOC_ALIAS)
 
   def _configure(self, addr: int) -> int:
     base = addr & ~(TLB_2M_SIZE - 1)
     x, y = self.core
-    self.dev.configure_tlb(
-      REG_TLB, addr,
-      x_start=x, y_start=y, x_end=x, y_end=y,
-      ordering=1,
-    )
+    self.win.target((x, y), addr=base)
     return addr - base
 
   def read32(self, addr: int) -> int:
-    return struct.unpack("<I", self.mm.read(self._configure(addr), 4))[0]
+    return struct.unpack("<I", self.win.read(self._configure(addr), 4))[0]
 
   def write32(self, addr: int, value: int):
-    self.mm.write(self._configure(addr), struct.pack("<I", value & 0xFFFFFFFF))
+    self.win.write(self._configure(addr), struct.pack("<I", value & 0xFFFFFFFF))
 
   def close(self):
-    self.mm.close()
+    self.win.close()
 
 
 def start_drisc(core, code: bytes, dev, *, result_addr: int = RESULT_ADDR, result_words: int = RESULT_WORDS):

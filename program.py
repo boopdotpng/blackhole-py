@@ -7,7 +7,7 @@ from enum import Enum
 from asm import KernelBase, Segment, boot_jal
 from ttk.addrs import L1_ALIGN, S, align_up, as_bytes
 from ttk.cb import CB as CBRegs
-from ttk.tensix import Launch, TensixL1, TensixMMIO
+from ttk.tensix import Launch, Mailbox, TensixL1, TensixMMIO
 
 Core = tuple[int, int]
 Rect = tuple[int, int, int, int]
@@ -427,6 +427,8 @@ class Program:
         McastWrite(mcast_rects(target_cores), TensixL1.GO_MSG, reset_blob),
         McastWrite(mcast_rects(target_cores), TensixL1.GO_MSG_INDEX, b"\0\0\0\0"),
       ])
+    else:
+      commands.append(McastWrite(mcast_rects(target_cores), Mailbox.LAUNCH_MSG_RD_PTR, struct.pack("<I", host_assigned_id & 7)))
 
     rta_blobs = [
       next((seg.data for seg in per_core_segments[core] if seg.label == "rta"), b"")

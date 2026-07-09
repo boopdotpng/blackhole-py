@@ -132,9 +132,9 @@ GO_NO_MULTICAST = cq.GO_NO_MULTICAST
 
 COMPLETION_WR_PTR = cq.CQ_COMPLETION_WR_PTR
 COMPLETION_RD_PTR = cq.CQ_COMPLETION_RD_PTR
-COMPLETION_BASE = 0x40000000 + cq._HOST_COMPLETION_BASE
-COMPLETION_SIZE = cq._HOST_COMPLETION_SIZE
-HOST_COMPLETION_WR_PTR_OFF = 0x40000000 + cq._HOST_CQ_WR_OFF
+COMPLETION_BASE_PTR = cq.CQ_COMPLETION_BASE_PTR
+COMPLETION_END_PTR = cq.CQ_COMPLETION_END_PTR
+COMPLETION_HOST_WR_OFF = cq.CQ_COMPLETION_HOST_WR_OFF
 RISCV_DEBUG_REG_WALL_CLOCK_L = 0xFFB121F0
 RISCV_DEBUG_REG_WALL_CLOCK_H = 0xFFB121F8
 
@@ -559,9 +559,9 @@ def build_dispatch() -> CqKernel:
   fw.addi(s6, s6, 1)
   fw.noc_wait_write_acks(1, s6, addr=t2, val=t3)
   fw.addi(s1, s1, 256)  # one 4K completion page in 16B units
-  fw.li(t2, (COMPLETION_BASE + COMPLETION_SIZE) >> 4)
+  fw.read32(t2, COMPLETION_END_PTR, tmp_addr=t3)
   fw.bltu(s1, t2, "host_no_wrap")
-  fw.li(s1, COMPLETION_BASE >> 4)
+  fw.read32(s1, COMPLETION_BASE_PTR, tmp_addr=t3)
   fw.xori(s2, s2, 1)
   fw.label("host_no_wrap")
   fw.mv(t0, s1)
@@ -569,7 +569,7 @@ def build_dispatch() -> CqKernel:
   fw.or_(t0, t0, t1)
   fw.write32(COMPLETION_WR_PTR, t0, tmp_addr=t1, tmp_val=t2)
   fw.li(t1, COMPLETION_WR_PTR)
-  fw.li(t2, HOST_COMPLETION_WR_PTR_OFF)
+  fw.read32(t2, COMPLETION_HOST_WR_OFF, tmp_addr=t3)
   fw.li(t3, 4)
   fw.li(t4, NOC_STATUS_BASE + NIU_MST_WR_ACK_RECEIVED)
   fw.lw(s6, t4, 0)
@@ -581,16 +581,11 @@ def build_dispatch() -> CqKernel:
   fw.j("release_flush_and_continue")
 
   fw.label("cmd_timestamp")
-  fw.lw(t0, s0, 4)
-  fw.lw(t1, s0, 8)
+  fw.lw(t0, s0, 4)      # dispatch L1 destination
   fw.read32(t2, RISCV_DEBUG_REG_WALL_CLOCK_L, tmp_addr=t3)
   fw.read32(t3, RISCV_DEBUG_REG_WALL_CLOCK_H, tmp_addr=t4)
-  fw.sw(t2, s0, 0)
-  fw.sw(t3, s0, 4)
-  fw.li(t4, 8)
-  fw.noc_write(1, 0, s0, t1, NOC_PCIE_MID, t0, t4, a=t5, v=s3)
-  fw.addi(s6, s6, 1)
-  fw.noc_wait_write_acks(1, s6, addr=t5, val=s3)
+  fw.sw(t2, t0, 0)
+  fw.sw(t3, t0, 4)
   fw.addi(s0, s0, 16)
   fw.j("release_and_continue")
 

@@ -5,8 +5,9 @@ import os
 import struct
 import time
 from cq import (
+  CQ_COMPLETION_BASE_PTR, CQ_COMPLETION_END_PTR, CQ_COMPLETION_HOST_WR_OFF,
   CQ_COMPLETION_Q0_EVENT, CQ_COMPLETION_Q1_EVENT, CQ_COMPLETION_RD_PTR, CQ_COMPLETION_WR_PTR,
-  CQ_DISPATCH_CB_PAGES, CQ_DISPATCH_SYNC_SEM, CommandQueue,
+  CQ_DISPATCH_CB_PAGES, CQ_DISPATCH_SYNC_SEM, CommandQueue, _HOST_CQ_WR_OFF,
 )
 from dram import Allocator, DramBuffer, Shape, tilize, untilize
 import fw
@@ -25,12 +26,11 @@ class Device:
     if os.environ.get("EMU") == "1":
       os.environ["TT_USB"] = "1"
     self.fast_dispatch = os.environ.get("TT_USB") != "1"
-    self.dev = PCIDevice(index=index, use_vfio=self.fast_dispatch)
+    self.dev = PCIDevice(index=index)
     self.board_info: BoardInfo = self.dev.board_info(fast_dispatch=self.fast_dispatch)
     self.programs: list[Program] = []
     self.dram = Allocator(self.dev, self.board_info.dram_tiles)
     self.cq: CommandQueue | None = None
-    self._fast_launch_slot = 0
     self._dram_sysmem: DramSysmem | None = None
     self._dram_fill_kernel = None
     self._dram_drain_kernel = None
@@ -146,9 +146,7 @@ class Device:
     cores = self.cores
     programs = []
     for program in self.programs:
-      slot = self._fast_launch_slot
-      programs.append(program.lower(cores, dispatch_mode=DevMsgs.DISPATCH_MODE_DEV, host_assigned_id=slot))
-      self._fast_launch_slot = (slot + 1) & 7
+      programs.append(program.lower(cores, dispatch_mode=DevMsgs.DISPATCH_MODE_DEV, host_assigned_id=0))
     return self.cq.submit_ir(programs, self._go_word(), names=[getattr(p, "name", "") for p in self.programs])
 
   def recover_dispatch(self):
@@ -162,7 +160,6 @@ class Device:
     sysm.prefetch_q_wr_idx = 0
     sysm.dispatch_cb_page_pos = 0
     sysm.event_id = 0
-    self._fast_launch_slot = 0
     sysm.completion_rd_16b = sysm.completion_base_16b
     sysm.completion_rd_toggle = 0
     import cq as cq_mod
@@ -207,6 +204,9 @@ class Device:
     dispatch_win.write(CQ_COMPLETION_Q0_EVENT, struct.pack("<I", 0))
     dispatch_win.write(CQ_COMPLETION_Q1_EVENT, struct.pack("<I", 0))
     dispatch_win.write(CQ_DISPATCH_SYNC_SEM, b"\0" * (8 * L1_ALIGN))
+    dispatch_win.write(CQ_COMPLETION_BASE_PTR, struct.pack("<I", base_16b))
+    dispatch_win.write(CQ_COMPLETION_END_PTR, struct.pack("<I", self.cq.sysmem.completion_end_16b))
+    dispatch_win.write(CQ_COMPLETION_HOST_WR_OFF, struct.pack("<I", self.cq.sysmem.noc_local + _HOST_CQ_WR_OFF))
 
     dispatch_img = b"\0" * (3 * L1_ALIGN)
     self._upload_cq_core(

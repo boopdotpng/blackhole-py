@@ -24,6 +24,9 @@ CQ_COMPLETION_RD_PTR = _CQ_L1 + 0x20
 CQ_COMPLETION_Q0_EVENT = _CQ_L1 + 0x30
 CQ_COMPLETION_Q1_EVENT = _CQ_L1 + 0x40
 CQ_DISPATCH_SYNC_SEM = _CQ_L1 + 0x50
+CQ_COMPLETION_BASE_PTR = _CQ_L1 + 0xD0
+CQ_COMPLETION_END_PTR = _CQ_L1 + 0xD4
+CQ_COMPLETION_HOST_WR_OFF = _CQ_L1 + 0xD8
 CQ_PREFETCH_Q_BASE = _CQ_L1 + 0x180
 CQ_PREFETCH_Q_SIZE = 0xBFC
 CQ_PREFETCH_Q_ENTRY_SZ = 4
@@ -37,13 +40,9 @@ _HOST_ISSUE_BASE = 4 * PCIE_ALIGN
 _HOST_ISSUE_SIZE = align_up(int(os.environ.get("CQ_ISSUE_MB", "64")) << 20, PCIE_ALIGN)
 _HOST_COMPLETION_BASE = _HOST_ISSUE_BASE + _HOST_ISSUE_SIZE
 _HOST_COMPLETION_SIZE = align_up(32 << 20, PCIE_ALIGN)
-_HOST_TIMESTAMP_BASE = _HOST_COMPLETION_BASE + _HOST_COMPLETION_SIZE
-_HOST_TIMESTAMP_STRIDE = 16
-HOST_TIMESTAMP_SLOTS = 4096
-_HOST_TIMESTAMP_SIZE = align_up(HOST_TIMESTAMP_SLOTS * _HOST_TIMESTAMP_STRIDE, PCIE_ALIGN)
 _HOST_CQ_WR_OFF = 2 * PCIE_ALIGN
 _HOST_CQ_RD_OFF = 3 * PCIE_ALIGN
-_HOST_SYS_END_BASE = _HOST_TIMESTAMP_BASE + _HOST_TIMESTAMP_SIZE
+_HOST_SYS_END_BASE = _HOST_COMPLETION_BASE + _HOST_COMPLETION_SIZE
 
 # Prefetch/dispatch command IDs. Public names are the shared CQ ABI consumed by
 # fw/cq.py; the leading-underscore aliases keep this module's encoder body terse.
@@ -74,6 +73,9 @@ GO_NO_MULTICAST = 0xFF
 
 CQ_CMD_SIZE = 16
 DONE_STREAM = 48
+CQ_TIMESTAMP_BASE = _CQ_L1 + 0x180  # dispatch-core scratch; prefetch queue uses this only on prefetch core
+CQ_TIMESTAMP_STRIDE = 16
+CQ_TIMESTAMP_SLOTS = 64
 
 def _host_sysmem_size() -> int:
   return align_up(_HOST_SYS_END_BASE, PAGE_SIZE)
@@ -134,8 +136,8 @@ def _host_event(event_id: int) -> bytes:
   hdr = _hdr("<BBHIQ", (_WRITE_LINEAR_HOST, 1, 0, 0, CQ_CMD_SIZE + len(payload)))
   return hdr + payload
 
-def _timestamp(noc_xy_addr: int, addr: int) -> bytes:
-  return _hdr("<BxHII", (_TIMESTAMP, 0, noc_xy_addr, addr))
+def _timestamp(addr: int) -> bytes:
+  return _hdr("<BxxxI", (_TIMESTAMP, addr))
 
 def _relay_inline(payload: bytes) -> bytes:
   stride = align_up(CQ_CMD_SIZE + len(payload), PCIE_ALIGN)
@@ -177,9 +179,6 @@ class CommandQueue:
   def completion_base_16b(self) -> int:
     return self.sysmem.completion_base_16b
 
-  def timestamp_noc_addr(self, slot: int) -> tuple[int, int]:
-    return self.sysmem.timestamp_noc_addr(slot)
-
   def read_timestamp(self, slot: int) -> int:
     return self.sysmem.read_timestamp(slot)
 
@@ -191,7 +190,8 @@ class CommandQueue:
     self.sysmem.wait_completion(event_id)
 
   def submit_ir(self, programs: list[list[IRCommand]], go_word: int, names: list[str] | None = None):
-    timestamps = [self.timestamp_noc_addr(i) for i in range(min(2 * len(programs), HOST_TIMESTAMP_SLOTS))]
+    timestamps = [CQ_TIMESTAMP_BASE + i * CQ_TIMESTAMP_STRIDE for i in range(min(2 * len(programs), CQ_TIMESTAMP_SLOTS))]
+    self.sysmem.clear_timestamps(len(timestamps))
     payloads = lower_programs(programs, go_word, timestamps=timestamps)
     self.submit_commands(payloads)
     return self.read_timings(len(programs), names=names)
@@ -202,7 +202,7 @@ class CommandQueue:
     names = names or [""] * n
     for i in range(n):
       slot = 2 * i
-      if slot + 1 >= HOST_TIMESTAMP_SLOTS:
+      if slot + 1 >= CQ_TIMESTAMP_SLOTS:
         break
       start = self.read_timestamp(slot)
       end = self.read_timestamp(slot + 1)
@@ -239,7 +239,7 @@ def _append_mcast_write(out: list[bytes], rects: list[Rect], addr: int, data: by
 def lower_ir(
   commands: list[IRCommand],
   go_word: int,
-  run_timestamps: tuple[tuple[int, int], tuple[int, int]] | None = None,
+  run_timestamps: tuple[int, int] | None = None,
 ) -> list[bytes]:
   out: list[bytes] = []
   for cmd in commands:
@@ -260,13 +260,13 @@ def lower_ir(
           _wait_stream(DONE_STREAM, 0),
         ])
         if run_timestamps is not None:
-          out.append(_timestamp(*run_timestamps[0]))
+          out.append(_timestamp(run_timestamps[0]))
         out.extend([
           _send_go_signal(go_word, DONE_STREAM, 0, len(cores)),
           _wait_stream(DONE_STREAM, len(cores)),
         ])
         if run_timestamps is not None:
-          out.append(_timestamp(*run_timestamps[1]))
+          out.append(_timestamp(run_timestamps[1]))
       case _:
         raise TypeError(f"{type(cmd).__name__} is not supported by fast dispatch CQ")
   return out
@@ -274,7 +274,7 @@ def lower_ir(
 def lower_programs(
   programs: list[list[IRCommand]],
   go_word: int,
-  timestamps: list[tuple[int, int]] | None = None,
+  timestamps: list[int] | None = None,
 ) -> list[bytes]:
   out: list[bytes] = []
   for i, commands in enumerate(programs):
@@ -408,16 +408,14 @@ class CQSysmem:
     self.event_id += 1
     return self.event_id
 
-  def timestamp_noc_addr(self, slot: int) -> tuple[int, int]:
-    off = _HOST_TIMESTAMP_BASE + slot * _HOST_TIMESTAMP_STRIDE
-    pcie_noc_xy = (1 << 24) | ((24 << 6) | 19)
-    return pcie_noc_xy, self.noc_local + off
-
   def read_timestamp(self, slot: int) -> int:
-    off = _HOST_TIMESTAMP_BASE + slot * _HOST_TIMESTAMP_STRIDE
-    lo = self.read_sysmem32(off)
-    hi = self.read_sysmem32(off + 4)
+    off = CQ_TIMESTAMP_BASE + slot * CQ_TIMESTAMP_STRIDE
+    lo, hi = struct.unpack("<II", self.dispatch_win.read(off, 8))
     return (hi << 32) | lo
+
+  def clear_timestamps(self, slots: int):
+    if slots:
+      self.dispatch_win.write(CQ_TIMESTAMP_BASE, bytes(slots * CQ_TIMESTAMP_STRIDE))
 
   def wait_completion(self, event_id: int, timeout_s: float = 10.0):
     deadline = time.perf_counter() + timeout_s

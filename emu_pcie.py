@@ -1,8 +1,8 @@
-"""EMU=1 PCIe backend backed by ttsim's Blackhole simulator.
+"""EMU=1 tt-kmd-shaped backend backed by ttsim's Blackhole simulator.
 
 `EMU=1` makes `pcie.PCIDevice(...)` return an `EmuPCIDevice` instead of opening
-sysfs/VFIO resources. The adapter forwards BAR reads/writes into ttsim and
-keeps blackhole-py's existing slow-dispatch TLBWindow/DRAM code unchanged.
+/dev/tenstorrent/N. The adapter exposes the same TLB lifecycle that tt-kmd
+provides, while internally forwarding the mapped-window reads/writes into ttsim.
 """
 from __future__ import annotations
 
@@ -13,10 +13,10 @@ from collections.abc import Iterable
 
 from pcie import (
   BoardInfo, PCIDevice,
-  DEFAULT_GDDR_ENABLED, P100_TENSIX_X,
+  DEFAULT_GDDR_ENABLED, _build_board_info,
   TLB_2M_COUNT, TLB_2M_SIZE, TLB_4G_COUNT, TLB_4G_SIZE, TLB_REGS_START,
 )
-from ttk.addrs import Dram
+from ttk.addrs import Dram, p100_dram_bank_base_coords
 
 BAR0_BASE = 0x100000000
 BAR4_BASE = 0x800000000
@@ -24,9 +24,26 @@ TLB_CFG_BASE = TLB_REGS_START
 DEFAULT_CLOCKS_PER_READ = int(os.environ.get("TTSIM_CLOCKS_PER_READ", "2000"))
 P100_ENABLED_TENSIX_COL = 0x3FF5
 P100_BOARD_ID = 0x43 << 36
+P100_EMU_ENABLED_GDDR = 0x7F
+P100_EMU_HARVESTED_DRAM_BANK = 7
 
 _DMA_RD_CB = ctypes.CFUNCTYPE(None, ctypes.c_uint64, ctypes.c_void_p, ctypes.c_uint32)
 _DMA_WR_CB = ctypes.CFUNCTYPE(None, ctypes.c_uint64, ctypes.c_void_p, ctypes.c_uint32)
+
+
+def _p100_emu_dram_coords() -> dict[tuple[int, int], tuple[int, int]]:
+  bank_base = p100_dram_bank_base_coords(P100_EMU_HARVESTED_DRAM_BANK)
+  out = {}
+  for bank in range(Dram.BANK_COUNT):
+    if not ((P100_EMU_ENABLED_GDDR >> bank) & 1):
+      continue
+    vx, vy = bank_base[bank]
+    for port, py in enumerate(Dram.BANK_TILE_YS[bank]):
+      out[(Dram.BANK_X[bank], py)] = (vx, vy + port)
+  return out
+
+
+P100_EMU_DRAM_COORDS = _p100_emu_dram_coords()
 
 
 def _existing(paths: Iterable[str]) -> str | None:
@@ -151,22 +168,16 @@ class EmuPCIDevice(PCIDevice):
     EmuPCIDevice._running = True
 
     self._closed = False
+    self.index = index
+    self.path = "emu:0000:00.0"
     self.sysfs = None
     self.bdf = "emu:0000:00.0"
-    self.bar0 = self.bar0_wc = self.bar2 = None
-    self.bar0_u32 = self.bar2_u32 = None
-    self._has_vfio = False
-    self._unbind_vfio_on_close = False
 
-    self._tlb_cfg: dict[int, dict] = {}
+    self._tlbs: dict[int, int] = {}
     self._tlb_2m = [False] * TLB_2M_COUNT
     self._tlb_2m[TLB_2M_COUNT - 1] = True
-    self._bar4_4g_count = TLB_4G_COUNT
-    self._tlb_4g = [False] * self._bar4_4g_count
-    self._iatu_regions = [False] * 16
-    self._pinnings: dict[int, dict] = {}
-    self._next_iova = 1 << 30
-    self._dram_xlate = self._build_dram_xlate()
+    self._tlb_4g = [False] * TLB_4G_COUNT
+    self._pinnings: dict[int, tuple[int, int]] = {}
 
   def _wr(self, paddr: int, data: bytes):
     buf = (ctypes.c_char * len(data)).from_buffer_copy(data)
@@ -185,84 +196,22 @@ class EmuPCIDevice(PCIDevice):
     for i in range(3):
       self._wr32(off + i * 4, (val >> (32 * i)) & 0xFFFFFFFF)
 
-  def _program_unicast_2m(self, lt_index: int, page: int, x: int, y: int):
-    self._write_tlb_cfg(lt_index, (page & ((1 << 43) - 1)) | (x << 43) | (y << 49))
-
-  def _program_unicast_4g(self, lt_index: int, page: int, x: int, y: int):
-    self._write_tlb_cfg(lt_index, (page & 0xFFFFFFFF) | (x << 32) | (y << 38))
-
   @staticmethod
-  def _targets(cfg: dict):
-    if cfg["mcast"]:
-      return [(x, y) for x in range(cfg["xs"], cfg["xe"] + 1)
-              for y in range(cfg["ys"], cfg["ye"] + 1)]
-    return [(cfg["xe"], cfg["ye"])]
-
-  @staticmethod
-  def _dram_bank_virtual_coords(harvested: int | None, ports: int = 3):
-    if harvested is None:
-      return {b: (17 if b < 4 else 18, 12 + (b % 4) * ports) for b in range(Dram.BANK_COUNT)}
-    h, half = harvested, 4
-    mirror = h + half - 1 if h < half else h - half
-    if h < half:
-      right = list(range(half - 1))
-      left = [b for b in range(half - 1, Dram.BANK_COUNT - 1) if b != mirror] + [mirror]
-    else:
-      left = [b for b in range(half) if b != mirror] + [mirror]
-      right = list(range(half, Dram.BANK_COUNT - 1))
-    bank_xy = {b: (18, 12 + i * ports) for i, b in enumerate(right)}
-    bank_xy.update({b: (17, 12 + i * ports) for i, b in enumerate(left)})
-    return bank_xy
-
-  def _build_dram_xlate(self):
-    enabled_gddr, harvested = 0x7F, 7
-    enabled_banks = [b for b in range(Dram.BANK_COUNT) if (enabled_gddr >> b) & 1]
-    bank_xy = self._dram_bank_virtual_coords(harvested)
-    bank_port = [[2, 1], [0, 1], [0, 1], [0, 1], [2, 1], [2, 1], [2, 1], [2, 1]]
-    xlate = {}
-    for pos, bank in enumerate(enabled_banks):
-      host = (Dram.BANK_X[bank], Dram.BANK_TILE_YS[bank][0])
-      vx, vy = bank_xy[pos]
-      ports = tuple((vx, vy + port) for port in range(Dram.TILES_PER_BANK))
-      read_port = (vx, vy + bank_port[pos][1])
-      xlate[host] = {"read": read_port, "write": ports}
-    return xlate
-
-  def _xlate_dram(self, x: int, y: int) -> dict:
-    v = self._dram_xlate.get((x, y))
-    if v is None:
-      raise RuntimeError(f"EMU: no DRAM virtual-coord mapping for physical NOC ({x},{y})")
-    return v
+  def _ttsim_coord(x: int, y: int) -> tuple[int, int]:
+    return P100_EMU_DRAM_COORDS.get((x, y), (x, y))
 
   def _bar0_write(self, abs_off: int, data: bytes):
-    window = abs_off // TLB_2M_SIZE
-    cfg = self._tlb_cfg[window]
-    for x, y in self._targets(cfg):
-      self._program_unicast_2m(window, cfg["addr"] >> 21, x, y)
-      self._wr(BAR0_BASE + abs_off, data)
+    self._wr(BAR0_BASE + abs_off, data)
 
   def _bar0_read(self, abs_off: int, n: int) -> bytes:
-    window = abs_off // TLB_2M_SIZE
-    cfg = self._tlb_cfg[window]
-    self._program_unicast_2m(window, cfg["addr"] >> 21, cfg["xe"], cfg["ye"])
     data = self._rd(BAR0_BASE + abs_off, n)
     self.lib.libttsim_clock(self._clocks_per_read)
     return data
 
   def _bar4_write(self, window: int, inner: int, data: bytes):
-    lt = TLB_2M_COUNT + window
-    cfg = self._tlb_cfg[lt]
-    base = BAR4_BASE + window * TLB_4G_SIZE + inner
-    for x, y in self._targets(cfg):
-      for vx, vy in self._xlate_dram(x, y)["write"]:
-        self._program_unicast_4g(lt, cfg["addr"] >> 32, vx, vy)
-        self._wr(base, data)
+    self._wr(BAR4_BASE + window * TLB_4G_SIZE + inner, data)
 
   def _bar4_read(self, window: int, inner: int, n: int) -> bytes:
-    lt = TLB_2M_COUNT + window
-    cfg = self._tlb_cfg[lt]
-    vx, vy = self._xlate_dram(cfg["xe"], cfg["ye"])["read"]
-    self._program_unicast_4g(lt, cfg["addr"] >> 32, vx, vy)
     data = self._rd(BAR4_BASE + window * TLB_4G_SIZE + inner, n)
     self.lib.libttsim_clock(self._clocks_per_read)
     return data
@@ -270,46 +219,73 @@ class EmuPCIDevice(PCIDevice):
   def configure_tlb(self, index: int, addr: int, x_start: int, y_start: int,
                     x_end: int, y_end: int, noc: int = 0, mcast: int = 0,
                     ordering: int = 1, linked: int = 0, static_vc: int = 0):
-    self._tlb_cfg[index] = {
-      "addr": addr, "xs": x_start, "ys": y_start, "xe": x_end, "ye": y_end,
-      "mcast": mcast,
-    }
+    if index not in self._tlbs:
+      raise RuntimeError(f"TLB {index} is not allocated by this EMU device")
+    if noc or linked or static_vc:
+      raise NotImplementedError("EMU/ttsim TLB configs support noc=0, linked=0, static_vc=0 only")
+    x_end, y_end = self._ttsim_coord(x_end, y_end)
+    x_start, y_start = self._ttsim_coord(x_start, y_start)
+    if index < TLB_2M_COUNT:
+      cfg_x_start = x_start if mcast else 0
+      cfg_y_start = y_start if mcast else 0
+      val = (
+        ((addr >> 21) & ((1 << 43) - 1)) |
+        ((x_end & 0x3F) << 43) | ((y_end & 0x3F) << 49) |
+        ((cfg_x_start & 0x3F) << 55) | ((cfg_y_start & 0x3F) << 61) |
+        ((mcast & 1) << 69) | ((ordering & 0x3) << 70)
+      )
+    else:
+      if mcast:
+        raise NotImplementedError("EMU/ttsim BAR4 TLB configs do not support multicast")
+      val = (
+        ((addr >> 32) & 0xFFFFFFFF) |
+        ((x_end & 0x3F) << 32) | ((y_end & 0x3F) << 38) |
+        ((ordering & 0x3) << 59)
+      )
+    self._write_tlb_cfg(index, val)
+
+  def alloc_tlb(self, size: int) -> int:
+    if size == TLB_2M_SIZE:
+      for i, used in enumerate(self._tlb_2m):
+        if not used:
+          self._tlb_2m[i] = True
+          self._tlbs[i] = size
+          return i
+      raise RuntimeError("EMU: no free 2M TLB slots")
+    if size == TLB_4G_SIZE:
+      for i, used in enumerate(self._tlb_4g):
+        if not used:
+          self._tlb_4g[i] = True
+          index = TLB_2M_COUNT + i
+          self._tlbs[index] = size
+          return index
+      raise RuntimeError("EMU: no free 4G TLB slots")
+    raise ValueError(f"EMU: invalid TLB size: {size}")
+
+  def free_tlb(self, index: int):
+    size = self._tlbs.pop(index, None)
+    if size is None:
+      return
+    if index < TLB_2M_COUNT:
+      self._tlb_2m[index] = False
+      return
+    window = index - TLB_2M_COUNT
+    if 0 <= window < len(self._tlb_4g):
+      self._tlb_4g[window] = False
 
   def tlb_window(self, index: int, wc: bool = False) -> _EmuMapping:
+    if index not in self._tlbs:
+      raise RuntimeError(f"TLB {index} is not allocated by this EMU device")
     if index >= TLB_2M_COUNT:
-      raise RuntimeError("4G TLB windows are owned by TLBWindow(size=TLBWindow.SIZE_4G, wc=True)")
+      return _EmuMapping(self, "bar4", index - TLB_2M_COUNT, TLB_4G_SIZE)
     return _EmuMapping(self, "bar0", index * TLB_2M_SIZE, TLB_2M_SIZE)
 
   def map_bar4_window(self, window: int, size: int = TLB_4G_SIZE) -> _EmuMapping:
     return _EmuMapping(self, "bar4", window, size)
 
   def board_info(self, layout: dict | None = None, fast_dispatch: bool = False) -> BoardInfo:
-    columns = P100_TENSIX_X
-    workers = [(x, y) for x in columns for y in range(2, 12)]
-    rightmost_x = columns[-1]
-    prefetch_core = (rightmost_x, 2)
-    dispatch_core = (rightmost_x, 3)
-    cq_cores = {prefetch_core, dispatch_core}
-    effective_gddr = 0x7F & DEFAULT_GDDR_ENABLED
-    harvested = [bank for bank in range(8) if ((effective_gddr >> bank) & 1) == 0]
-    bank_ys = (
-      (0, 1, 11), (2, 3, 10), (4, 8, 9), (5, 6, 7),
-      (0, 1, 11), (2, 3, 10), (4, 8, 9), (5, 6, 7),
-    )
-    return BoardInfo(
-      board="p100a",
-      worker_cores=workers,
-      program_cores=[core for core in workers if not fast_dispatch or core not in cq_cores],
-      dram_tiles=[
-        (bank, 0 if bank < 4 else 9, y)
-        for bank in range(8)
-        if (effective_gddr >> bank) & 1
-        for y in bank_ys[bank]
-      ],
-      prefetch_core=prefetch_core,
-      dispatch_core=dispatch_core,
-      harvested_dram_bank=harvested[0] if harvested else None,
-    )
+    effective_gddr = P100_EMU_ENABLED_GDDR & DEFAULT_GDDR_ENABLED
+    return _build_board_info("p100a", effective_gddr, fast_dispatch)
 
   def telemetry_layout(self) -> dict:
     return {}
@@ -323,7 +299,7 @@ class EmuPCIDevice(PCIDevice):
     if tag_id == 34:
       return P100_ENABLED_TENSIX_COL
     if tag_id == 36:
-      return 0x7F
+      return P100_EMU_ENABLED_GDDR
     return None
 
   def set_power_state(self, busy: bool):
@@ -333,7 +309,7 @@ class EmuPCIDevice(PCIDevice):
     if hasattr(self.lib, "libttsim_dump_t_state"):
       self.lib.libttsim_dump_t_state()
 
-  def pin_pages(self, buf) -> int:
+  def pin_pages(self, buf, preferred_iatu_region: int | None = None) -> int:
     raise NotImplementedError("EMU supports slow dispatch only; EMU=1 forces TT_USB=1.")
 
   def unpin_pages(self, buf, noc_addr: int):
@@ -355,6 +331,8 @@ class EmuPCIDevice(PCIDevice):
       return
     self._closed = True
     try:
+      for tlb in list(self._tlbs):
+        self.free_tlb(tlb)
       self.lib.libttsim_exit()
     finally:
       EmuPCIDevice._running = False
