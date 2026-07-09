@@ -7,8 +7,8 @@ from enum import IntEnum
 from dsl import (
   TTINCRWC, TTSETRWC,
   TTSFPADD, TTSFPADDI, TTSFPARECIP, TTSFPCAST, TTSFPCONFIG, TTSFPEXEXP,
-  TTSFPEXMAN, TTSFPLUT, TTSFPLOAD, TTSFPLOADI, TTSFPMAD, TTSFPMOV, TTSFPMUL,
-  TTSFPNOP, TTSFPSETEXP, TTSFPSHFT, TTSFPSTORE, TTSFPSWAP,
+  TTSFPEXMAN, TTSFPIADD, TTSFPLUT, TTSFPLOAD, TTSFPLOADI, TTSFPMAD, TTSFPMOV,
+  TTSFPMUL, TTSFPNOP, TTSFPSETEXP, TTSFPSHFT, TTSFPSTORE, TTSFPSWAP,
 )
 
 
@@ -305,6 +305,13 @@ def sfpu_load_fp32_const(fw, lreg: int, value: float):
   return fw.emit(TTSFPLOADI(lreg, int(SfpuLoadIMod.UPPER), bits >> 16))
 
 
+def sfpu_load_u32_const(fw, lreg: int, value: int):
+  """Load an exact 32-bit bit pattern into every lane of an SFPU LReg."""
+  value &= 0xFFFFFFFF
+  fw.emit(TTSFPLOADI(lreg, int(SfpuLoadIMod.LOWER), value & 0xFFFF))
+  return fw.emit(TTSFPLOADI(lreg, int(SfpuLoadIMod.UPPER), value >> 16))
+
+
 def _sfpu_scratch_regs(scratch, avoid: set[int], count: int) -> list[int]:
   regs: list[int] = []
   for reg in scratch:
@@ -386,6 +393,66 @@ def sfpu_reciprocal(fw, src_lreg: int, dst_lreg: int, *, scratch=(1, 2, 3, 4, 5,
   return fw
 
 
+def sfpu_rsqrt_positive(fw, src_lreg: int, dst_lreg: int, *, scratch=(1, 2, 3, 4, 5, 6, 7)):
+  """Blackhole accurate rsqrt core for positive FP32 inputs.
+
+  Mirrors tt-llk's non-legacy ``_calculate_sqrt_body_`` with
+  ``RECIPROCAL=true`` and omits the zero/inf/negative special-case branches.
+  RMSNorm feeds this with ``mean(x*x)+eps``, so the input is strictly positive
+  and finite in the intended path.
+  """
+  regs = _sfpu_scratch_regs(scratch, {src_lreg, dst_lreg}, 5)
+  y, tmp, c1, c2, half = regs
+
+  if src_lreg == dst_lreg:
+    x = _sfpu_scratch_regs(scratch, {src_lreg, dst_lreg, y, tmp, c1, c2, half}, 1)[0]
+    fw.emit(TTSFPMOV(0, src_lreg, x, 0))
+    fw.emit(TTSFPNOP())
+  else:
+    x = src_lreg
+
+  # y = reinterpret_float(0x5f1110a0 - (reinterpret_uint(x) >> 1))
+  fw.emit(TTSFPMOV(0, x, y, 0))
+  fw.emit(TTSFPNOP())
+  fw.emit(TTSFPSHFT(0xFFF, 0, y, 1))  # logical right shift by 1
+  fw.emit(TTSFPNOP())
+  sfpu_load_u32_const(fw, tmp, 0x5F1110A0)
+  fw.emit(TTSFPIADD(0, tmp, y, 6))  # y = magic - y, leave lane flags alone
+  fw.emit(TTSFPNOP())
+
+  # Accurate Blackhole refinement:
+  #   xy = x*y
+  #   c = -y*xy
+  #   y = y * (C1 + c * (C2 + c))
+  #   xy = x*y
+  #   one_minus_xyy = 1 - y*xy
+  #   y = one_minus_xyy * (0.5*y) + y
+  fw.emit(TTSFPMUL(x, y, int(LReg.CONST_0), tmp, 0))       # tmp = xy
+  fw.emit(TTSFPNOP())
+  fw.emit(TTSFPMUL(y, tmp, int(LReg.CONST_0), tmp, 1))     # tmp = c = -y*xy
+  fw.emit(TTSFPNOP())
+  sfpu_load_fp32_const(fw, c1, 2.2825186)
+  sfpu_load_fp32_const(fw, c2, 2.2533049)
+  fw.emit(TTSFPADD(int(LReg.CONST_1), c2, tmp, c2, 0))     # c2 = C2 + c
+  fw.emit(TTSFPNOP())
+  fw.emit(TTSFPMAD(tmp, c2, c1, tmp, 0))                   # tmp = C1 + c*(C2+c)
+  fw.emit(TTSFPNOP())
+  fw.emit(TTSFPMUL(y, tmp, int(LReg.CONST_0), y, 0))       # y refined
+  fw.emit(TTSFPNOP())
+
+  fw.emit(TTSFPMUL(x, y, int(LReg.CONST_0), tmp, 0))       # tmp = xy
+  fw.emit(TTSFPNOP())
+  fw.emit(TTSFPMUL(y, tmp, int(LReg.CONST_0), tmp, 1))     # tmp = -y*xy
+  fw.emit(TTSFPNOP())
+  fw.emit(TTSFPADD(int(LReg.CONST_1), int(LReg.CONST_1), tmp, tmp, 0))  # tmp = 1 - y*xy
+  fw.emit(TTSFPNOP())
+  sfpu_load_fp32_const(fw, half, 0.5)
+  fw.emit(TTSFPMUL(y, half, int(LReg.CONST_0), half, 0))   # half = 0.5*y
+  fw.emit(TTSFPNOP())
+  fw.emit(TTSFPMAD(tmp, half, y, dst_lreg, 0))             # dst = tmp*half + y
+  return fw.emit(TTSFPNOP())
+
+
 def emit_sigmoid(fw, src_lreg: int, dst_lreg: int, *, scratch=(1, 2, 3, 4, 5, 6, 7)):
   """sigmoid(x) = 1 / (1 + exp(-x))."""
   regs = [reg for reg in scratch if reg not in {src_lreg, dst_lreg}]
@@ -430,6 +497,7 @@ def emit_silu_tile(fw, *, faces: int = 4, groups_per_face: int = 8, addr_mod: in
 __all__ = [
   "FRAC_1_PI", "LReg", "Sfpu", "SfpuConfigDest", "SfpuLoadIMod",
   "blackhole_cosine_reference", "blackhole_sine_reference", "f32", "f32_bits",
-  "bf16_imm", "sfpu_load_fp32_const", "sfpu_exp", "sfpu_reciprocal",
-  "emit_sigmoid", "emit_silu", "emit_silu_tile",
+  "bf16_imm", "sfpu_load_fp32_const", "sfpu_load_u32_const", "sfpu_exp",
+  "sfpu_reciprocal", "sfpu_rsqrt_positive", "emit_sigmoid", "emit_silu",
+  "emit_silu_tile",
 ]

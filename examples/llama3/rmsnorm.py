@@ -110,6 +110,15 @@ PACK_MOP_CFG = MopCfg(
 )
 UNPACK_SRC_B = TTUNPACR(1, 1, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 1)
 UNPACK_SRCA_DUMMY_DVALID = TTUNPACR_NOP(Unpacker_Select=0, Set_Dvalid=1, Unpack_Pop=1)
+UNPACK_WEIGHT_ROW_BCAST_MOP_CFG = MopCfg(
+  loop_outer=2,
+  loop_inner=2,
+  template=[
+    TTNOP(), TTSETADCZW(2, 0, 0, 0, 0, 1), TTNOP(),
+    UNPACK_SRC_B, UNPACK_SRCA_DUMMY_DVALID,
+    UNPACK_SRCA_DUMMY_DVALID, UNPACK_SRCA_DUMMY_DVALID,
+  ],
+)
 BCAST_ROW = 2
 ELW_ADDR_MOD_ROW = 0
 ELW_ADDR_MOD_FIDELITY = 2
@@ -346,14 +355,9 @@ def _trisc0_unpack_weight_to_srcb(fw: Trisc, cb_id: int) -> None:
   fw.write32(TensixRegs.PC_UNPACK_SYNC, 0)
 
   fw.emit(TTSTALLWAIT(TensixStall.UNPACK, TensixWait.TRISC_CFG))
-  # Mirrors TT-LLK's acc_to_dest + DEST_TO_SRCA unpack path. SrcA is supplied
-  # later by MOVD2A from Dst, but the math-side move waits on a dummy SrcA
-  # dvalid token. The real weight tile is unpacked to SrcB face-by-face.
-  for _ in range(4):
-    fw.emit(UNPACK_SRC_B)
-    fw.emit(UNPACK_SRCA_DUMMY_DVALID)
-    fw.emit(TTSTALLWAIT(TensixStall.UNPACK, TensixWait.UNPACK0 | TensixWait.UNPACK1))
-  fw.emit(TTSETADCZW(2, 0, 0, 0, 0, 1))
+  fw.write_mop_cfg(UNPACK_WEIGHT_ROW_BCAST_MOP_CFG, 0)
+  fw.emit(TTMOP(1, 0, 0))
+  fw.emit(TTSTALLWAIT(TensixStall.UNPACK, TensixWait.THCON | TensixWait.UNPACK0 | TensixWait.UNPACK1))
   fw.emit(TTSEMGET(TensixSem.mask(TensixSem.UNPACK_SYNC)))
   fw.cb_pop_front(fw.data["cb_interface"], cb_id, tensix_ack=True)
 
@@ -635,8 +639,8 @@ def _move_dst_face_to_srca(fw: Trisc) -> Trisc:
   # TT-LLK move_d2a_fixed_face(ADDR_MOD_1). Dst RWC selects which 16-row face
   # is copied; the HiFi2 MOP advances it to the next face after each run.
   fw.emit(TTSTALLWAIT(TensixStall.MATH, TensixWait.SRCA_VLD))
-  for row in (0, 4, 8, 12):
-    fw.emit(TTMOVD2A(0, row, 1, 2, row))
+  for row in range(16):
+    fw.emit(TTMOVD2A(0, row, 1, 0, row))
   return fw
 
 

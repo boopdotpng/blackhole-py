@@ -51,6 +51,19 @@ class Math:
     k.emit(TTSFPLOADI(0, 0, 10))
     k.emit(TTSFPLOADI(0, 0, 8))
     k.emit(TTSFPCONFIG(0, 15, 1))
+    # Math/SFPU instructions address Dst/Src through one RWC set per Tensix
+    # thread:
+    #   {Dst, Dst_Cr, SrcA, SrcA_Cr, SrcB, SrcB_Cr, FidelityPhase,
+    #    ExtraAddrModBit}
+    # SFPLOAD/SFPSTORE use RWC.Dst in their address calculation:
+    #   addr = imm + DEST_TARGET offset + RWC.Dst + dest base
+    # Then their addrmod field selects one ADDR_MOD_*_SEC recipe to mutate the
+    # same RWC set after the instruction. SEC6 is our "+2 Dst" recipe for
+    # walking 4x8 SFPU slices; SEC7 is the no-op recipe when the kernel advances
+    # with explicit immediates or TTINCRWC/TTSETRWC.
+    k.setc16(ThreadCfg.ADDR_MOD_AB_SEC6_Src, 0)
+    k.setc16(ThreadCfg.ADDR_MOD_DST_SEC6, 2)
+    k.setc16(ThreadCfg.ADDR_MOD_BIAS_SEC6_Bias, 0)
     k.setc16(ThreadCfg.ADDR_MOD_AB_SEC7_Src, 0)
     k.setc16(ThreadCfg.ADDR_MOD_DST_SEC7, 0)
     k.setc16(ThreadCfg.ADDR_MOD_BIAS_SEC7_Bias, 0)
