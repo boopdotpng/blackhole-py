@@ -1,22 +1,37 @@
-# TTIR — the tile-native kernel IR
+# TTIR — Tenstorrent tile IR for blackhole-py
 
-TTIR is the IR you write kernels in and lower to RISC-V that runs on Tensix
-cores. tinygrad lowers to it; humans can author it directly. It replaces the
-"semantic layer" kir was reaching for (see §11 for the kir migration map).
+**Status:** written spec / design prototype. Implementation lands later.
+No tt-metal, no tt-lang, no C++. tinygrad frontend → TTIR → RISC-V on cores.
+blackhole-py already launches/runs hand kernels with zero TT software.
 
-Design axioms, in one breath: **the atom is a 32×32 tile; every op is
-tile→tile; all dataflow sync is tile-counting; there is exactly one lowering per
-op, so the "compiler" is a table, not a search.**
+Design axioms: **the atom is a 32×32 tile; every author op is tile→tile;
+CBs are tile queues (`Stream`s); non-queue sync is `Wait`; codegen is a
+state machine over composable op templates; maximize fusion into one Program
+(where the chip shines); one deterministic lowering per op (no search).**
 
 ```
 tinygrad Tensor graph
-   │  intercept PRE-RANGEIFY uops (intent intact: REDUCE(axis), matmul, softmax)
+   │  intercept pre-schedule UOp DAG (intent intact: REDUCE, matmul, softmax)
    ▼
-TTIR  (this doc)  — tile-native, SSA over tiles
-   │  linearize: schedule → engine-assign → sync-insert → emit  (§8)
+TTIR  — tile-native SSA over tiles + streams
+   │  schedule → engine-assign → sync-insert → emit
    ▼
-5 straight-line RISC-V programs (brisc/ncrisc/trisc0/1/2) → Tensix words → device
+5 coordinated RISC-V programs (brisc/ncrisc/trisc0/1/2) → Tensix words → CQ → device
 ```
+
+---
+
+## 0. Scope
+
+| in scope | out of scope (for now) |
+|---|---|
+| Single-device Blackhole, core-local SPMD | Multi-card / distributed (tinygrad later) |
+| Tile SSA + Stream queues + deterministic lowering | BEAM / autotune / search |
+| Max fusion into one Program (DST + L1 CBs) | Multi-tenant scheduling |
+| PatternMatcher intercept into tinygrad | Tensor-API subclassing / fork |
+
+Spec first. Runtime stack (`program`, `cq`, `device`, `ttk`, hand kernels under
+`examples/`) already exists. This doc is the compiler IR they lower toward.
 
 ---
 
@@ -24,13 +39,15 @@ TTIR  (this doc)  — tile-native, SSA over tiles
 
 - **`Tile`** — one 32×32 tile; an **SSA value** with a `dtype`. Single-assignment,
   immutable. The author never says *where* it lives; whether a `Tile` is a CB
-  slot, SrcA, SrcB, or a DST register is decided by lowering. This is the whole
-  "write only the ops" payoff.
-- **`Tensor`** — a named DRAM/L1 buffer = a **grid of tiles** with metadata
-  (§2). This is *storage*; you stream it or index it into `Tile`s.
-- **`Stream`** — an ordered sequence of tiles, the loop-carried form; what maps
-  onto a CB. `stream(tensor)` reads tiles out; `out << tile` pushes tiles in.
-  Streams are **sugar** over indexed-tile loops (§5).
+  slot, SrcA, SrcB, or a DST register is decided by lowering.
+- **`Tensor`** — a named DRAM/L1 buffer = a **grid of tiles** with metadata (§2).
+  Storage only; you stream it or index it into `Tile`s.
+- **`Stream`** — an ordered **queue of tiles**. Maps onto a hardware circular
+  buffer (CB). `stream(tensor)` dequeues tiles out; `out << tile` enqueues.
+  Streams are **sugar** over indexed-tile loops (§5). **FIFO tile dataflow is
+  expressed entirely as produce/consume on Streams — never as `Wait`.**
+
+---
 
 ## 2. Tensor metadata
 
@@ -38,7 +55,7 @@ TTIR  (this doc)  — tile-native, SSA over tiles
 @dataclass(frozen=True)
 class DType:
     name: str          # "bf16" | "fp32" | "fp16" | "bfp8" ...
-    tile_bytes: int    # per 32x32 tile: bf16/fp16=2048, fp32=4096, bfp8~1088
+    tile_bytes: int    # bf16/fp16=2048, fp32=4096, bfp8~1088
 
 @dataclass(frozen=True)
 class Layout:
@@ -48,459 +65,555 @@ class Layout:
 class Tensor:
     name: str
     dtype: DType
-    shape: tuple[int, ...]     # LOGICAL/original dims — kept for untilize + pad masks
-    layout: Layout             # declarative TYPE; coercion nodes inserted at mismatched edges (§4)
+    shape: tuple[int, ...]     # LOGICAL dims — kept for untilize + pad masks
+    layout: Layout             # declarative TYPE; coercion at mismatched edges (§4)
     where: str = "dram"        # "dram" | "l1"
-    addr: int | None = None    # base address (allocator-filled) -> reader/writer addressing
+    addr: int | None = None    # base (allocator-filled)
     banks: int = 8             # dram bank interleave
-    shard: "Shard | None" = None   # tile distribution across the core grid (§7)
-    # derived: padded_shape (last two dims up to 32), tile_grid, num_tiles,
-    #          page_bytes = dtype.tile_bytes (one tile per CB page)
+    # later: shard  — core distribution; out of scope until multi-core collectives
+    # derived: padded_shape, tile_grid, num_tiles, page_bytes = dtype.tile_bytes
 ```
 
 | field | drives |
 |---|---|
 | `dtype.tile_bytes` | CB page size, DST capacity, unpack/pack format |
-| `shape` (original) | untilize crop + padding masks — unrecoverable from padded storage |
+| `shape` (original) | untilize crop + padding masks |
 | `layout.kind` | whether an edge needs `tilize`/`untilize` (§4) |
-| `addr`/`banks` | brisc/ncrisc NOC addressing — static plumbing, generated not written |
-| `shard` | HARD fusion boundary: a reduce/gather across the shard axis crosses cores |
+| `addr`/`banks` | brisc/ncrisc NOC addressing — generated plumbing |
 
-## 3. Node taxonomy — three categories
+CB depth = N tiles; page = 1 tile = `dtype.tile_bytes`.
 
-**a) Compute (tile → tile) — you author these:**
+---
+
+## 3. Node taxonomy
+
+### a) Compute (tile → tile) — authors write these
+
 ```
-mul add sub max  exp2 log2 recip sqrt gelu ...      # SFPU/FPU, Tile... -> Tile
-matmul(a, b, *, out_dtype) -> Tile                   # tile·tile MAC, K-reduction into DST
-reduce_across(op, stream, *, out_dtype) -> Tile      # fold tiles (DST accumulate)
-reduce_intile(op, tile, axis, *, out_dtype) -> Tile  # 32x32 within-tile reduce (reduce-LLK)
-mask(tile, lane_pred) / masked reduce                # the sub-tile escape hatch (§10)
+mul add sub max  exp2 log2 recip sqrt gelu silu ...   # SFPU/FPU
+matmul(a, b, *, out_dtype) -> Tile                    # tile·tile MAC into DST
+reduce_across(op, stream, *, out_dtype) -> Tile       # fold tiles (DST acc)
+reduce_intile(op, tile, axis, *, out_dtype) -> Tile   # within-tile reduce-LLK
+mask(tile, lane_pred) / masked reduce                 # sub-tile escape (§10)
 ```
 
-`out_dtype` on a reduce/matmul is the **accumulation dtype** — there is no
-separate accumulator concept. tinygrad expresses this identically: a matmul is
-`REDUCE(ADD, dtype=float, MUL(EXPAND, EXPAND))` — the REDUCE node's output dtype
-*is* the accumulation dtype; `MUL(bf16,bf16)→bf16`, then `REDUCE(...,float)→float`.
-`out_dtype=fp32` ⇒ fp32_dest_acc (halves DST, subblock ≤4/half, cb24 reload
-ping, ZEROACC flag, packer 32b read); `out_dtype=bf16` ⇒ all of that off. The
-full chain is an op `effect` in the codegen state machine (§9), not a knob the
-author manages — making the knob-consistency checker redundant by construction.
+`out_dtype` on reduce/matmul is the **accumulation dtype**. There is no separate
+accumulator concept — same as tinygrad: matmul is
+`REDUCE(ADD, dtype=float, MUL(EXPAND, EXPAND))`; the REDUCE node's dtype *is*
+the accumulation dtype.
 
-**b) Movement (tiles change location) — mined templates, not hand-derived:**
-```
-load(tensor) -> Stream        # brisc / NOC0  — template keyed by (layout, banks, out_dtype)
-store(stream, tensor)          # ncrisc / NOC1 — same
-gather / broadcast / all_reduce  across cores  # NOC, tier-2 sync (§7)
-```
-Reader/writer bodies are **mined from working kernels** (§9), parameterized by
-`Tensor` metadata (`layout`, `banks`, `addr`) and `out_dtype`. The mcast
-rectangle, sender/receiver role, linked-VC, path-reservation, and overlay-vs-
-command-buffer choices are **production defaults baked into the template**, not
-IR-level knobs — they were env-gated during iteration (matmul_peak) but the
-default path is what ships.
+| `out_dtype` | effect (atomic ConfigEnv chain, §9) |
+|---|---|
+| `fp32` | fp32_dest_acc on; DST half ≤4 tiles; cb24 reload path; ZEROACC; packer 32b |
+| `bf16` / narrower | all of that off; DST half ≤8 tiles |
 
-**c) Coercion (tiles change type) — inserted at type-mismatch edges (§4):**
+Authors never flip knobs; the effect is derived from `out_dtype`.
+
+### b) Movement (tiles change location)
+
 ```
-cast(tile, dtype) -> Tile      # dtype conversion (SFPU cast or format-converting un/pack)
-tilize(tile) / untilize(tile)  # layout conversion (tilize-LLK or format-converting un/pack)
+load(tensor) -> Stream          # brisc / NOC0
+store(stream, tensor)           # ncrisc / NOC1
+# later: gather / broadcast / all_reduce  across cores
 ```
+
+Bodies are **parameterized templates** keyed by `(layout, banks, out_dtype)`,
+sourced from known-good hand kernels (`examples/matmul_peak.py`, `add1.py`,
+`llama3/*`). Defaults for mcast rect, linked-VC, path-reserve, overlay vs
+command-buffer are **baked into templates**, not IR knobs.
+
+### c) Coercion (tiles change type) — inserted by type pass (§4)
+
+```
+cast(tile, dtype) -> Tile
+tilize(tile) / untilize(tile)
+```
+
+### d) Non-queue sync — inserted by sync-insert, never authored as compute
+
+See §6. `Wait` and `Cap` only — **not** CB tile flow.
+
+---
 
 ## 4. Coercions are a type system
 
-`Tensor` carries the **declarative type** (`dtype` + `layout`). Coercion nodes
-are **inserted by a pass** wherever an edge connects mismatched types — dtype
-differs → `cast`; layout differs → `tilize`/`untilize` — exactly like sync is
-inserted at dataflow edges. The author never hand-writes them, but they are
-**visible IR nodes** (the pretty-printer and checkers see them; they are not
-hidden `Tensor` mutations).
+`Tensor` carries the declarative type (`dtype` + `layout`). A pass inserts
+coercion nodes where edges mismatch: dtype → `cast`; layout → `tilize`/`untilize`.
+Visible IR nodes (pretty-printer sees them), not hidden mutations.
 
-They are not free (unlike a GPU register cast): `cast` lowers to an SFPU cast or
-a format-converting pack/unpack; `tilize`/`untilize` to the tilize-LLK or a
-format-converting unpack. **Lowering may fold a coercion into the adjacent
-unpack/pack** (the datapath converts format on the fly), so a coercion node
-often emits zero extra instructions — it just sets the neighbor's format config.
-Represent them explicitly first (correct + legible); fold as an optimization.
+Not free: SFPU cast, format-converting pack/unpack, or tilize-LLK. Lowering may
+fold a coercion into the neighbor unpack/pack (format on the fly) → often zero
+extra instructions. Represent first; fold as optimization.
+
+---
 
 ## 5. Streams vs indexed tiles
 
-Not an either/or — `Stream` is sugar over an indexed-tile loop, and the core is
-indexed tiles + explicit loops:
+`Stream` is sugar over an indexed-tile loop; the core is indexed tiles + loops.
 
-- **Streams** fit the 1D pointwise march: `out <<= stream(a) * stream(b)`. CB is
-  a FIFO, the loop is "for each tile," no addressing. Elementwise / activations.
-- **Indexed tiles** are unavoidable for matmul/attention:
-  `C[i,j] = Σ_k A[i,k]·B[k,j]` is 2D tile addressing with a k-accumulation loop.
-  matmul_peak makes this explicit as `in0_block` / `out_subblock` tiling — and
-  **that tiling is chosen to fit DST** (§6). You cannot express it as one `zip`.
+- **Streams** — 1D pointwise: `out <<= stream(a) * stream(b)`. CB = FIFO; loop is
+  “for each tile”; no addressing.
+- **Indexed tiles** — matmul/attention: `C[i,j] = Σ_k A[i,k]·B[k,j]` needs 2D
+  tile indices + k-accumulation. Subblock tiling is chosen to **fit DST**.
 
-Rule: streams for pointwise; indices for anything with a reduction or 2D
-structure. **DST allocation lives in the indexed layer** (the subblock loop =
-the DST-half tiling); streams hide it for the single-pass case.
+Rule: streams for pointwise; indices for reductions / 2D structure.
+**DST allocation lives in the indexed layer** (subblock loop = DST-half tiling).
 
-**Subblock size is derived, not chosen.** The subblock (group of tiles filled
-into one DST half before a pack) is `min(output_tiles, dst_half_capacity)` where
-`dst_half_capacity(out_dtype=fp32) = 4` and `dst_half_capacity(out_dtype=bf16) =
-8`. The author never specifies it; the lowerer computes it from the
-reduce/matmul node's `out_dtype` and uses it as a loop count in the MOP template.
+**Subblock size is derived, not chosen:**
 
-## 6. Two sync layers (confirmed against matmul_peak)
+```
+subblock = min(output_tiles, dst_half_capacity)
+dst_half_capacity(fp32) = 4
+dst_half_capacity(bf16) = 8
+```
 
-**Layer A — dataflow sync, fully tile-counted. This lives in TTIR.**
-- CB handshakes count **tiles**, in **blocks/subblocks**: `cb_wait_front(cb, N_tiles)`,
-  `cb_pop_front(cb, N_tiles)`. Never fractional.
-- Semaphores are **bounded counters** (`max_value=2` → double-buffer): UNPACK_SYNC,
-  MATH_PACK, MATH_DONE, UNPACK_TO_DEST. Each tick = one tile/subblock event.
-- TTIR models this as ONE node: `Wait(edge, count, scope)`. Every concrete
-  handshake (cb credit, MATH_PACK sem, NOC credit) is this primitive at a
-  different scope; lowering picks the mechanism.
-- **Counting unit is a subblock** (a group of tiles sized to fit DST-half), not a
-  single tile. `Wait` counts allow N tiles; the subblock size *is* the
-  DST-capacity tiling, derived from `out_dtype` (§5).
-- **CB ack ordering is per-engine, not an IR contract.** Deferred
-  `TTSTOREREG` ack (mandatory when the consumer is trisc0 — the unpacker hasn't
-  consumed the tile yet) vs eager RISC store (brisc/ncrisc) is fixed by which
-  engine owns the pop. It rides inside the movement template (§3b, §9), not in
-  the `Wait` node.
+Lowerer computes this from the reduce/matmul `out_dtype` and uses it as MOP loop
+counts. Author never specifies it.
 
-**Layer B — pipeline-hazard stalls, NOT tile-counted. This lives in TEMPLATES, not TTIR.**
-- `TTSTALLWAIT` on engine-busy flags (THCON config-before-use, MATH|SFPU pipe
-  drain before pack reads DST, PACK0 done) and `tensix_sync` pipe flushes. No
-  count; pure intra-op ordering, firing *within* processing a tile/subblock.
-- Mechanical and fixed per op-type (every MOP-config write → `STALLWAIT(THCON)`;
-  every math group → `STALLWAIT(MATH|SFPU)`). The author never reasons about
-  them — they ride inside each op's lowering template (§9). This is why the tile
-  model stays clean: Layer B never surfaces above codegen.
+Streams, at the hardware level:
 
-## 7. 118 cores = SPMD + collectives
+```
+produce:  cb_reserve_back(cb, N) → fill → cb_push_back(cb, N)
+consume:  cb_wait_front(cb, N)  → use  → cb_pop_front(cb, N)
+```
 
-A program is **one per-core tile-program, replicated**, each core owning a shard
-of the TileGrids (`Tensor.shard`). An edge whose producer and consumer are on
-different cores becomes a NOC collective (`all_reduce`, `gather`, `broadcast`)
-with tier-2 sync, and marks a **HARD** fusion boundary. "Core-local or not" is
-read straight off the shard — no analysis pass. This is what makes rmsnorm 5
-launches (cross-core mean) vs 1 (redundant-local): the `all_reduce` is a hard
-edge; nothing is special-cased.
+N is always a tile count (1, subblock, or K-block) — never fractional.
+Which engine owns which half, and whether pop uses deferred Tensix ack
+(`TTSTOREREG`, trisc0) vs eager RISC store (brisc/ncrisc), is **role assignment
+in emission**, not an author-visible node.
 
-## 8. Lowering = our own linearizer → five straight lines
+---
 
-tinygrad's linearizer flattens the DAG into one scalar-indexed stream (GPU
-math). Ours produces the tile-native shape via four passes:
+## 6. Sync model (CBs are queues; Wait is everything else)
 
-1. **Schedule** — tile-DAG → topological order of tile-ops, constrained by DST
-   residency. *This is where the fusion / DST-capacity decision happens.*
-2. **Engine-assign** — each op's substeps route to fixed engines: loads→brisc,
-   stores→ncrisc, unpack→trisc0, math→trisc1, pack→trisc2.
-3. **Sync-insert** — Layer-A tile-count handshakes on every edge (Layer B rides
-   in templates).
-4. **Emit** — each engine's ordered ops → straight-line RISC-V (loops allowed).
+### Two layers
 
-Output: **5 coordinated straight-line programs**, not one.
+**Layer A — dataflow / occupancy. TTIR inserts it; authors don’t write it.**
 
-### 8.1 Fusion tiers — what fuses, how much, when it stops
+| mechanism | TTIR form | units | role |
+|---|---|---|---|
+| Circular buffer | **`Stream` produce/consume** (§1, §5) | tiles | ordered tile FIFO in L1 |
+| Tensix semaphore | **`Cap` acquire/release** | events (usually 1 per subblock) | engine occupancy (double-buffer) |
+| NOC readiness | **`Wait`** (and template-private arming) | free slots / receiver count / ready | multi-core handshakes inside a Program |
 
-On a GPU, fusion = "one kernel launch, data stays in registers/shared memory."
-The limit is register pressure (255 regs) and shared memory (48–96 KiB/SM).
-Two matmuls cannot fuse (different grid configs, different launch dimensions).
+**Layer B — pipeline hazards. Templates only. Never TTIR nodes.**
 
-On Tenstorrent, fusion = "one Program launch, data stays in DST and/or L1 CBs."
-The pipeline is fixed per core:
+`TTSTALLWAIT` on CFG/THCON/MATH/SFPU/PACK0, `tensix_sync`, `PC_UNPACK_SYNC`
+spins, fences. Fixed per op body; fires within processing one tile/subblock.
+
+### Why CBs are not `Wait`
+
+A CB is an **ordered queue of tiles**. Produce/consume *is* the protocol.
+Modeling it as generic `Wait(edge, n)` loses reserve/push · wait/pop pairing and
+blithely mixes it with non-FIFO credits. **Stream ops are the CB IR.**
+
+### Caps (Tensix semaphores)
+
+Bounded engine credits, confirmed against `matmul_peak` / `add1` / `rmsnorm`:
+
+```
+UNPACK_SYNC     max=2
+MATH_PACK       max=2   # room side → math; data side → pack
+UNPACK_TO_DEST  (as needed)
+```
+
+```
+Cap(name, max)
+  Acquire(cap, n=1)   # SEMWAIT-style, room or data end
+  Release(cap, n=1)   # SEMPOST / SEMGET as emission chooses
+```
+
+`MATH_PACK` is **DST-stage occupancy**, not a tile payload. Cap is the right
+abstraction: bounded capacity shared across trisc1 and trisc2.
+
+### `Wait` — non-queue synchronizers only
+
+```
+Wait(kind, count, ...)
+  kind ∈ { noc_free, noc_data_ready, init_barrier, ... }
+```
+
+Examples from multi-core matmul (same Program):
+
+- receivers reserve CB and notify sender → sender **`Wait(noc_free, n_receivers)`**
+- sender mcasts tiles then signals → receivers **`Wait(noc_data_ready, 1)`**
+
+`count` may be **receiver heads**, not tiles. Tile payload still moves through
+Streams/CBs on each core; the NOC protocol only ships readiness.
+
+Init/`RiscSync` barriers between BRISC and TRISCs may lower to a trivial
+`Wait(init_barrier)` or stay as fixed template prologue — either is fine as long
+as author compute never sees it.
+
+### What sync-insert does
+
+Given tile dataflow edges after schedule + engine-assign:
+
+1. Every Stream producer/consumer edge → CB allocate (depth) + insert
+   reserve/push on producer role, wait_front/pop on consumer role.
+2. DST double-buffer between math and pack → Cap(`MATH_PACK`) acquire/release
+   around those stages.
+3. Multi-core movement templates *may* emit `Wait` nodes for NOC readiness
+   (or fold them entirely into the load/store mcast template bodies — v0 can
+   keep them template-private).
+
+Layer-A deadlock classes (unbalanced CB or Cap) are **prevented by construction**:
+sync-insert only emits balanced pairs. Optional post-lowering assertion later.
+
+---
+
+## 7. Cores and programs (single-device, SPMD)
+
+A **Program** is one per-core tile program, replicated across a set of live
+Tensix cores. Each core may run different RTAs (sender vs receiver roles,
+inequality of local tile offsets) under the same template.
+
+**Inter-core collectives** (all-gather / reduce-scatter / broadcast as first-class
+TTIR ops) and **shard metadata as HARD fusion boundaries** are intentional later
+work. Until then:
+
+- Multi-core *inside* one matmul Program (row/col mcast of A/B tiles) lives in
+  the matmul/load/store **templates**, not as author-level collective ops.
+- Max fusion is pursued core-locally: keep work on-core via DST + L1 Streams.
+
+Multi-card stays entirely outside this stack (tinygrad).
+
+---
+
+## 8. Lowering → five straight lines
+
+Four passes:
+
+1. **Schedule** — tile-DAG → order of tile-ops, constrained by DST residency.
+   Fusion decisions live here.
+2. **Engine-assign** — fixed routing: load→brisc, store→ncrisc, unpack→trisc0,
+   math/SFPU→trisc1, pack→trisc2.
+3. **Sync-insert** — Stream/Cap (and Wait if not template-folded). Layer B stays
+   inside templates.
+4. **Emit** — each engine’s ordered ops → straight-line RISC-V (loops allowed).
+
+Output: **five coordinated programs**, one Device launch.
+
+Fixed pipeline:
 
 ```
 brisc (reader) → trisc0 (unpack) → trisc1 (math/SFPU) → trisc2 (pack) → ncrisc (writer)
 ```
 
-A Program can cycle through this pipeline **multiple times** via on-device
-loops — each cycle is one "DST residency window." So multiple matmuls CAN be in
-one Program, connected by CBs in L1, with SFPU epilogues/prologues riding free
-on the DST values between matmuls. This is structurally different from a GPU.
+A Program can cycle this pipeline many times (on-device loops) = multiple DST
+residency windows inside one launch.
 
-**Three fusion tiers, in increasing cost order:**
+### 8.1 Fusion tiers — maximize one Program
+
+On a GPU, fusion ≈ one kernel, limited by register pressure. On Tensix, fusion =
+**one Program**, data lives in **DST (~8 KiB) and/or L1 CB queues (~1.28 MiB)**.
+Multiple matmuls *can* share a Program via L1 Streams; SFPU epilogues ride free
+on DST between them. **That is the point of this IR.**
 
 **Tier 1 — DST-resident (free, unlimited op count).**
-SFPU epilogue/prologue on a value currently in DST. The SFPU reads/writes the
-**same DST tiles** — no L1 round-trip, no CB, no sync node. This is where
-`acc * inv_rms`, `silu(gate) * up`, `x * cos + rotated * sin`, residual add,
-scale-by-scalar, cast, recip, exp2 all live. **No limit on op count** — chain
-as many SFPU ops as you want while the value stays in DST. The only boundary is
-"the value must leave DST" (pack to CB) to make room for the next matmul's
-accumulator. This is the fusion the codegen state machine (§9) enables
-trivially: each SFPU op is a `(requires, body, effect)` that reads/writes DST
-with no config transition beyond SFPU mode.
+SFPU on a value currently in DST. No L1 round-trip, no Stream, no Cap.
+`silu(gate)*up`, `x*cos + rot*sin`, residual add, cast, recip, scale, … Chain
+while the value stays in DST. Boundary only when DST must free for the next
+matmul (pack → Stream).
 
-**Tier 2 — L1-resident (cheap, bounded by L1 capacity).**
-Multiple matmuls chained through CBs in L1. The first matmul packs its result
-to a CB; the second matmul unpacks from that CB. Each matmul is a new DST
-residency window, but the data never leaves L1. Bounded by:
+**Tier 2 — L1-resident (cheap, L1-bounded).**
+Matmul packs to Stream; next matmul consumes it. New DST window, data never
+leaves L1:
+
 ```
-sum(all CB sizes for fused stages) ≤ ~1.28 MiB L1 budget
+sum(CB bytes for fused stages) ≤ ~1.28 MiB L1 data budget
 ```
-For decode BS=1, intermediates are tiny (a 2048-wide bf16 vector = 4 KiB per
-CB). You can chain many matmuls + SFPU stages in one Program. This is what
-enables "5 programs/layer" — each Program is a matmul + SFPU epilogue, connected
-by L1 CBs, and only the weight stream hits DRAM.
 
-**Tier 3 — DRAM / cross-core boundary (expensive, always a Program boundary).**
-The value must go to DRAM. Happens when:
-- L1 is full (large intermediates — prefill with S>1, or a fused stage's CB
-  set exceeds 1.28 MiB).
-- The value crosses cores (shard boundary — the producer's output is sharded
-  across N cores, the consumer needs the full vector). This is the **hard**
-  boundary (§7): it requires a NOC collective (all-gather, broadcast,
-  reduce-scatter) with tier-2 sync, and marks a `HARD` fusion boundary.
+Decode BS=1 intermediates are tiny (~4 KiB for a 2048 bf16 vector) → many
+stages in one Program is normal.
 
-**The simplification before fusion:** the pattern-matched TTIR graph has long
-elementwise chains (`CAST → MUL → ADD → CAST → MUL`). These are not separate
-ops to fuse individually — they collapse into a single "SFPU epilogue with N
-steps" description attached to the nearest matmul or reduce. The fusion pass
-does not reason about individual elementwise ops; it reasons about "matmul +
-epilogue(node list)." The codegen state machine (§9) handles each elementwise
-step as a `(requires, body, effect)` within the matmul op's body, not as a
-separate IR node.
+**Tier 3 — DRAM (or future cross-core collective).**
+Must leave the core’s L1. L1 budget blow-up, or (later) a real shard collective.
+**Hard Program boundary.**
 
-**The fusion boundary ruleset** (elaborates §9.1):
+Elementwise chains from the intercept collapse before fusion reasoning:
+`CAST→MUL→ADD→…` → one **epilogue list** on the nearest matmul/reduce. Fusion
+thinks in “matmul + epilogue”, not individual elw ops. Codegen walks each
+epilogue step as `(requires, body, effect)` (§9).
 
-| rule | tier | action |
+| rule | action |
+|---|---|
+| L1 budget exceeded | new Program |
+| next op needs DST; live value has no residual epilogue | pack → Stream; stay in Program |
+| `StaticEnv` incompatible (CB table, role topology, storage, NoC topology) | new Program |
+| `ConfigEnv` transition only | `ConfigEnv.update()`; stay in Program |
+| SFPU / elw on DST | fuse free |
+| future: cross-core collective edge | HARD new Program |
+
+| | GPU | Tensix |
 |---|---|---|
-| cross-core shard boundary (all-gather / reduce-scatter needed) | 3 | **HARD stop** — new Program |
-| `StaticEnv` incompatible (CB layout, role topology, storage layout, NoC topology) | 3 | **HARD stop** — new Program |
-| L1 budget exceeded (sum of fused CBs > 1.28 MiB) | 2→3 | **stop** — new Program |
-| DST residency conflict (next op needs DST, current value must pack out, no epilogue left) | 1→2 | pack to CB, continue in same Program |
-| `ConfigEnv` transition needed (e.g. fp32→bf16 dest, format switch) | — | `ConfigEnv.update()`, continue in same Program |
-| SFPU epilogue on DST-resident value | 1 | **fuse** — free, no boundary |
-| elementwise chain on DST-resident value | 1 | **fuse** — collapse to epilogue |
+| fusion unit | one kernel launch | one Program (5 RISC-V roles) |
+| resides in | regs + smem | DST + L1 Streams |
+| two matmuls same unit | no | yes (loop + Stream) |
+| elw epilogue | register pressure | free if in DST |
+| limit | continuous reg pressure | L1 capacity (+ later collectives) |
 
-The first two rules are hard boundaries (always a new Program). The third is a
-capacity limit. Everything else fuses within a Program via the codegen state
-machine.
-
-**What's genuinely different from a GPU:**
-
-| | GPU | Tenstorrent |
-|---|---|---|
-| fusion unit | one kernel launch | one Program (5 coordinated RISC-V kernels) |
-| data stays in | registers + shared memory | DST (8 KiB) + L1 CBs (1.28 MiB) |
-| two matmuls in one unit | no (different grid/launch) | yes (on-device loop, CB in L1) |
-| elementwise epilogue | fuses if register pressure allows | fuses free if value in DST |
-| fusion limit | register pressure (small, scalar) | cross-core shard boundary (binary) + L1 capacity |
-| cross-SM boundary | global memory (cheap) | NOC + L1 mailbox (expensive, needs sync) |
-
-The key insight: **on a GPU, the fusion limit is register pressure (small and
-continuous). On Tenstorrent, the fusion limit is cross-core communication
-(binary — either you're on the same core or you're not) plus L1 capacity
-(generous for BS=1).** For decode BS=1 where the input vector is broadcast to
-all cores, every core can do its own RMSNorm/rope/SiLU locally (per-core-
-redundant, no cross-core traffic), so fusion is maximized. For prefill S>1 or
-any cross-core reduction, fusion breaks at the shard boundary.
-
-**Llama decode — the 5-programs-per-layer boundary:**
-
-The 5-programs-per-layer target (LLAMA_PORT_PLAN.md §4) is driven by exactly
-one rule: each GEMV shards its N output across cores; the next stage needs the
-full vector as a broadcast in0 → shard→broadcast (all-gather) = Program
-boundary. The intermediates are 4 KiB (fit in L1 trivially), DST residency is
-fine (M=1, tiny output), SFPU epilogues are free (Tier 1). The ONLY thing
-breaking fusion is the cross-core shard boundary (Tier 3).
+---
 
 ## 9. Codegen is a STATE MACHINE, not template concatenation
 
-Tensix is a **stateful datapath**: config registers (unpack format + tile
-descriptor, math ADDR_MODs + dest format, pack format + dest offset, loaded MOP
-templates, SFPU state) must hold specific values before each op. A GPU ISA hides
-this — arbitrary ops concatenate and it just works. Tensix does not: chaining op
-A → op B without re-establishing B's required config silently corrupts data or
-hangs. **So fusion cannot be template concatenation — you must emit the config
-transition between ops** (this is what "reconfigure the pipeline after mean"
-is: mean leaves one config, the next op needs another, and something must emit
-the delta). A frozen template bakes in the state its neighbors happened to leave,
-so templates alone do not compose.
+Tensix is a **stateful datapath**. Unpack format, math ADDR_MODs, dest format,
+pack format, loaded MOPs, SFPU state must hold specific values before each op.
+Concatenating frozen templates silently corrupts or hangs. Fusion must emit
+**config transitions**.
 
-Codegen tracks **three resource-states** and emits a transition whenever
-composition changes one:
+Each op-template is a triple over `ConfigEnv`:
 
-1. **Datapath config** — a `ConfigEnv` of the slots that matter. Each op declares
-   `requires` (preconditions) and `effect` (postconditions). Before an op, diff
-   `current_env` vs `op.requires`, emit the minimal reconfig, then
-   `current_env = op.effect(current_env)`. This auto-inserts the reconfig after
-   mean/reduce. An op's `out_dtype` drives its `effect`: `out_dtype=fp32` on a
-   reduce/matmul flips `fp32_dest_acc` (ALU enable bits + dstacc nibble + ZEROACC
-   flag + packer 32b read + subblock clamp to 4 + cb24 reload ping) as a single
-   atomic effect — so the knob-consistency checker (KERNEL_GUIDE §8.3) is
-   redundant: the chain is established by construction, not checked after.
-2. **Tile registers** (DST / SrcA / SrcB) — the DST-residency allocator (§5/§6).
-3. **Scalar GPRs** — virtual registers + liveness allocation, replacing ttk's
-   hardcoded `t0`/`t1`. Clobbering becomes impossible by construction (ttk is
-   fickle precisely because composed snippets collide on fixed registers).
+```
+(requires, body, effect)
+```
+
+- `body` — parameterized instruction core (incl. Layer-B stalls).
+- `requires` — ConfigEnv pretences that must hold before `body`.
+- `effect` — ConfigEnv postconditions after `body`.
+
+Before emit: diff `current` vs `requires`, emit reconfig (or full restore in v0),
+run `body`, `current = effect(current)`.
+
+Three tracked states:
+
+1. **`ConfigEnv`** — persistent datapath interpretation (per role).
+2. **Tile registers** — DST / SrcA / SrcB residency / liveness.
+3. **Scalar GPRs** — virtual regs + liveness (no hardcoded `t0` collisions).
 
 ### 9.1 StaticEnv vs ConfigEnv vs resource state
 
-Do not put every piece of kernel state into `ConfigEnv`; split it by lifetime.
+**`StaticEnv`** — fixed for the whole Program; incompatible values = hard fusion
+boundary:
 
-**`StaticEnv`** is fixed for the whole emitted Program. It is configured before
-the fused kernel's main loop starts and is a hard fusion boundary if two TTIR
-regions need incompatible values:
+- CB table (page size, depth, L1 base, interface offsets)
+- Program layout (RTA, sem offsets, L1 scratch, enable mask)
+- Tensor/storage layout (dtype, tile bytes, shape, banks)
+- NoC defaults (coords_cb assignment, VC/path policy, bank tables)
 
-- CB table: page size, depth, L1 base, local/remote interface offsets.
-- Program layout: RTA locations, semaphore offsets, L1 scratch allocations,
-  kernel-config base, role enable mask.
-- Tensor/storage layout: dtype, tile bytes, logical shape, tile grid, shard,
-  DRAM bank/interleave policy.
-- NoC defaults that are not intended to change in the kernel: local coordinates,
-  command-buffer assignment, default VC/path policy, bank-coordinate tables.
+**`ConfigEnv`** — survives across ops; per-role; `config.update(want)` emits the
+instructions to establish `want`:
 
-**`ConfigEnv`** is persistent hardware interpretation state. It survives past one
-TTIR op and affects how the next op is decoded/executed. Each role has its own
-`ConfigEnv`; `config.update(want)` mutates the compiler's known environment and
-emits the RISC-V/Tensix instructions needed at that point in that role program.
-In v0 it may conservatively restore a canonical state and then establish `want`;
-in v1 it diffs `current` against `want` and emits only the delta.
+- Untpack: tile descriptor, input/output format, contexts, SRCA/B set, z-stride, …
+- Math: ADDR_MODs, fidelity, ALU / fp32-dest, ZEROACC, MOP + replay payload, …
+- Pack: in/out dtype, PCK_DEST_RD_CTRL, strides, L1-acc, out CB, pack MOP, …
+- SFPU: PRGM consts, SFPU_CTRL, predicate mode, DEST_FMT, LReg convention, …
+- Thread/RWC/ADC if a following template assumes them (v0: reset at op
+  boundaries so they stay non-preconditions)
+- TLM/mailbox format shadows templates consult
 
-The fields we currently know belong in `ConfigEnv`:
+**Resource state** (scheduler/emitter, not ConfigEnv): DST liveness, SrcA/B
+validity, GPR liveness, CB queue counters, Cap balances, NOC outstanding IDs,
+loop IVs, temp mailboxes.
 
-- **Unpack state:** tile descriptor/input dtype, unpack output format,
-  compressed/uncompressed bit, tile dims, base/dest contexts, unpack address
-  controls, `UNPACK_MISC_CFG_CfgContext`, `SRCA_SET`/`SRCB_SET`, z-stride.
-- **Math/FPU state:** `ADDR_MOD_AB*`, `ADDR_MOD_DST*`, bias addrmods, fidelity,
-  ALU format/accumulation bits, fp32-dest enable, zero-flag behavior,
-  `DEST_ACCESS_CFG`, current matmul/copy/reduce MOP and replay payload.
-- **Pack state:** pack input/output dtype, `PCK_DEST_RD_CTRL` read width,
-  pack strides, pack counters/edge/mapping/concat config, zero-compress bits,
-  L1-acc bits, current output CB/tile header, pack MOP.
-- **SFPU state:** program constants (`PRGM0..2`), `SFPU_CTRL`, condition-code /
-  predicate mode, `SFPU_DEST_FMT`, and any assumed LReg convention for a composed
-  SFPU snippet.
-- **Thread-cfg / counter state used across templates:** `CFG_STATE_ID`,
-  RWC/ADC state if a following template assumes it. v0 should reset RWC/ADC at
-  op boundaries so they do not become semantic preconditions; if a mined
-  template relies on inherited RWC/ADC position, promote that field into
-  `ConfigEnv`.
-- **TLM/mailbox shadow state that templates consult:** unpack/pack src/dst
-  format bytes, face dims, num faces, `dest_offset_id`, local cfg-context state.
+### Staging
 
-**Resource state** is tracked by the scheduler/emitter, not by `ConfigEnv`:
-DST allocation/liveness, SrcA/SrcB validity, GPR allocation/liveness, CB runtime
-counters, semaphore balances, NoC outstanding transaction IDs/barriers, loop
-induction variables, and temporary mailbox values. These are still critical
-correctness state, but they are part of sync/resource allocation rather than
-persistent datapath configuration.
+- **v0** — every op restores canonical ConfigEnv + DST + GPRs on exit → any two
+  ops concatenate safely; redundant reconfig; fuse-on-demand works.
+- **v1** — diff and elide; expensive forced reconfigs feed soft fusion costs.
 
-Fusion rules at the tinygrad/TTIR boundary:
+Emitter refuses to emit `body` until `requires` is established.
 
-- Stop at hard shard/core collective boundaries.
-- Stop when `StaticEnv` requirements differ (CB layout, role topology, storage
-  layout, or NoC topology).
-- Stop when DST residency cannot hold the live tile set or fp32-dest halves make
-  the required subblock illegal.
-- Stop when the value must be packed/unpacked anyway and no useful epilogue or
-  prologue remains on-chip.
-- Otherwise fuse, and let `ConfigEnv.update()` insert the mid-kernel reconfig
-  transitions.
+### Template ground truth
 
-`examples/matmul_peak.py` is the first rewrite target and the best specimen for
-mining this model. Its static role init maps to `StaticEnv` plus canonical
-startup config:
+`examples/matmul_peak.py` is the primary specimen. Static inits map to
+StaticEnv + startup ConfigEnv; mid-kernel reconfigs (cb24 fp32 reload, pack
+L1-acc toggle, format switches) are explicit `ConfigEnv.update()` sites.
 
-- `trisc0`: `unpack.init(dtype=INPUT_DTYPE, ..., mop_cfg=MATMUL_UNPACK_AB_MOP_CFG)`.
-- `trisc1`: `matmul_math_init()` and the matmul addrmods/replay payload.
-- `trisc2`: `pack.init(dtype=OUTPUT_DTYPE, out_cb=16, mop_cfg=MATMUL_PACK_MOP_CFG)`.
+Op bodies are **hand-specified in the implementation from that kernel** (and
+`add1`, `llama3/*`). Automated instruction mining is optional RE sugar, not a
+spec dependency: tile/Stream author programs are correct by construction once
+templates and sync-insert exist; templates themselves are the RE product.
 
-The mid-kernel reconfig sites become explicit `ConfigEnv.update()` calls:
+Sketch of mid-kernel reconfig (conceptual):
 
 ```python
 env.trisc0.update(UnpackMode(dtype=intermediate, mop=reload_to_dest, z_stride=fp32))
 emit_reload_body()
 env.trisc0.update(UnpackMode(dtype=input, mop=matmul_ab, z_stride=fp16))
 
-env.trisc1.update(MathMode(kind="reload"))
-emit_reload_math()
+env.trisc1.update(MathMode(kind="reload")); emit_reload_math()
 env.trisc1.update(MathMode(kind="matmul", addrmods=matmul_hifi2, mop=matmul_mop))
 
-env.trisc2.update(PackMode(dtype=intermediate, out_cb=24, l1_acc=True))
-emit_partial_pack()
-env.trisc2.update(PackMode(dtype=output, out_cb=16, l1_acc=False))
-emit_final_pack()
+env.trisc2.update(PackMode(dtype=intermediate, out_cb=24, l1_acc=True)); emit_partial_pack()
+env.trisc2.update(PackMode(dtype=output, out_cb=16, l1_acc=False)); emit_final_pack()
 ```
 
-Those correspond to the existing hand-coded switch points: unpack format/MOP
-switch for cb24 reload, math copy-to-DST reload then matmul restore, pack format
-switch from intermediate cb24 partials to final cb16 output, and pack L1-acc /
-zero-flag toggling for partial blocks. Mining should factor each of these into
-`(requires, body, effect)` rather than stamping the whole `matmul_peak` kernel.
-
-**Mining, revised.** Don't stamp whole templates. `kir.lift()` a working kernel
-and factor each op into a signature `(requires, body, effect)` over `ConfigEnv`,
-with its GPRs renamed to virtual. `body` is the parameterized instruction core;
-`requires`/`effect` are the config deltas around it. Ground truth still comes
-from real kernels (incl. the Layer-B stall dance, §6), but it now composes.
-
-**Staging — correct first, fast later:**
-- **v0, canonical resting state.** Every op restores config + DST + GPRs to a
-  canonical state on exit; any two ops then concatenate safely. Always correct;
-  redundant reconfig overhead. This alone delivers fuse-on-demand.
-- **v1, state diffing.** Track `ConfigEnv`, elide already-satisfied reconfig; the
-  cost of a mandatory transition feeds the fusion cost model (expensive forced
-  reconfig ⇒ argument for a kernel boundary — a soft boundary, §6/§7).
-
-The guarantee: the emitter refuses to emit an op whose preconditions aren't met
-— it establishes them first — so you cannot chain two ops into a corrupt state.
-That is the "you can't crash a GPU" property, rebuilt by construction.
+---
 
 ## 10. Sub-tiles — the one place below a tile
 
-Two distinct cases, often conflated:
+- **`reduce_intile`** — tile-aligned axis reduce (e.g. row-sum 32×32 → 1×32).
+  Reduce-LLK; no predicate. RMSNorm mean over width-aligned tiles is pure this.
+- **`SubTileMask`** — true partial-tile slice when SHRINK bounds are **not**
+  multiples of 32. Lowering: SFPU `SETCC` over lane index + selective accumulate.
+  Trigger: non-aligned slice from tinygrad. Isolate the leak here; nothing else
+  goes sub-tile.
 
-- **`reduce_intile` (§3) — tile-aligned intra-tile reduction.** Reducing a
-  32×32 tile along one axis (e.g. sum each row → 1×32, or column-max → 32×1).
-  This is the normal reduce-LLK path: no predicate, no sub-tile mask. A
-  width-2048 RMSNorm mean (64 tiles, each reduced along its 32-wide axis) is
-  pure `reduce_intile` — no `SubTileMask` involved.
-- **`SubTileMask` — true partial-tile slice.** Needed only when a
-  `SHRINK`/slice has bounds **NOT multiples of 32**, e.g. `x[45:55].sum()`
-  over a 1024-lane tile. Lowering: SFPU predicate (`SETCC` over lane index) + a
-  loop summing only selected lanes into DST. **Trigger from tinygrad:** a slice
-  whose bounds are not tile-aligned → emit a `SubTileMask` op carrying the lane
-  predicate. Tile-aligned slices stay pure tile ops.
+---
 
-Isolate the partial-slice leak in `SubTileMask` alone; `reduce_intile` is a
-first-class tile op with no sub-tile machinery.
+## 11. tinygrad intercept
 
-## 11. Migration from kir
+### Why not the renderer / post-rangeify path
 
-| kir today | fate under TTIR |
+Post-`run_rangeify`, kernels are flat `STORE(INDEX(PARAM, RANGE))` — GPU address
+math, no matmul, no axis-reduce, no softmax. A renderer→TT lowerer cannot recover
+tile intent. Intercept **before** `transform_to_call` / rangeify, on the finished
+lazy UOp DAG (`x.uop` at realize/schedule time).
+
+Recoverable at that altitude:
+
+- matmul: `REDUCE(ADD, axis) ← MUL(EXPAND, EXPAND)` + `out_dtype = reduce.dtype`
+- softmax: `REDUCE(MAX) → SUB → EXP2 → REDUCE(ADD) → RECIP → MUL`
+- RMSNorm: square → mean → eps → rsqrt → scale → weight
+
+tinygrad’s UOp path churns across versions — accepted; match **structurally
+stable** subgraphs (`REDUCE(ADD)←MUL(EXPAND,EXPAND)` is how matmul is defined).
+
+### tinygrad pipeline (reference)
+
+```
+Tensor API (lazy UOp DAG)
+   │  *** INTERCEPT HERE: finished DAG ***
+   ▼
+1. transform_to_call
+2. create_schedule
+3. run_rangeify          ← tile intent dies after this
+4. full_rewrite_to_sink  (incl. BEAM — unused by us)
+5. to_program
+6. run_linear
+```
+
+tinygrad has two optimization mechanisms: **`PatternMatcher` graph rewrites**
+(we use this) and **BEAM** (per-kernel loop search — irrelevant; TT is
+non-tunable).
+
+### TT PatternMatcher
+
+A `PatternMatcher` on the pre-schedule DAG, registered as a `graph_rewrite`
+before `transform_to_call`. Uses tinygrad’s own `UPat`/`graph_rewrite` APIs —
+upstream-clean, no fork.
+
+Decode 2-layer UOp scale (historical dump): ~1983 nodes, only ~39 REDUCEs; rest
+movement + elw. Target after match: ~80–100 TTIR nodes.
+
+```python
+# 1. MATMUL — ~15-20 nodes → 1 TTIR matmul(out_dtype=reduce.dtype)
+# 2. RMSNORM — full chain → 1 rmsnorm (or reduce_intile + epilogue list)
+# 3. SOFTMAX — max/exp2/sum chain → 1 softmax
+# 4. SiLU — mul(x, sigmoid(x)) → 1 silu (or pure elw epilogue)
+# 5. Movement collapse — reshape chains cleaned before patterns 1-4
+# 6. RoPE — cos/sin/rotate → 1 rope
+```
+
+Remaining elw fuses as prologues/epilogues in the **schedule** pass (§8), not the
+matcher. How many Programs/layer is a **fusion** decision, not a pattern count.
+
+**Do not:**
+
+- Subclass `Tensor` / override methods (would never upstream).
+- Run BEAM on TT kernels.
+- Fork tinygrad.
+
+Upstreaming = one PatternMatcher + hook before `transform_to_call`, plus a Device
+that consumes TTIR Programs.
+
+### Reference dumps (restore when implementing)
+
+```
+tools/tg_dumps/DECODE_A_preschedule.txt   # UOp DAG at intercept
+tools/tg_dumps/DECODE_annotated.txt       # histogram + REDUCE listing
+tools/tg_decode_dump.py                   # harness
+```
+
+---
+
+## 12. Relation to existing codebase
+
+What already runs:
+
+| layer | files |
 |---|---|
-| `kir/ir.py` `Node`/`KernelIR`/`lift()` (instruction nodes, CFG) | **KEEP** — it's the template-mining tool (§9) and the substrate for the clobber checker. |
-| `kir/sem.py`, `kir/synccheck.py` (semaphore-balance checker) | **SUBSUME** — TTIR *constructs* balanced Layer-A sync, so the deadlock class is prevented by construction, not checked after. Keep as an optional post-lowering assertion. |
-| `kir/regcheck.py` (register-clobber checker) | **PREVENT, don't check** — the GPR virtual-register allocator (§9) makes clobbering impossible in generated code. Keep the checker only for ingested / hand-written code. |
-| deleted `kir/IR_DESIGN.md` (imperative `prog.unpack/pack` sketch) | **SUPERSEDED** by this doc; keep only as historical context in git history. |
-| Task #4 knob-consistency checker | **REDUNDANT** — `out_dtype` on reduce/matmul drives the fp32_dest effect chain in the codegen state machine (§9); subblock is derived from `out_dtype` (§5). The checker has nothing to verify that isn't already enforced by `ConfigEnv` effect declarations. |
+| Launch / CQ / Program | `program.py`, `cq.py`, `device.py`, `pcie.py` |
+| Assembler / Tensix ISA | `asm.py`, `dsl.py` |
+| Role helpers | `ttk/` (cb, noc, pack, unpack, math, sfpu, tensix, …) |
+| Firmware stubs | `fw/` |
+| Working hand kernels | `examples/matmul_peak.py`, `add1.py`, `llama3/*` |
+| Sim | `ttsim/` |
 
-Net: TTIR replaces what kir's *checkers* were guarding against by making those
-states unrepresentable. **Register clobbering** and the **ttk hand-built-RISC-V
-fragility** are both resolved by the codegen state machine (§9): the GPR
-allocator prevents clobbers, and the `ConfigEnv` `(requires, body, effect)` model
-lets ops compose without hardcoded state — so fusion is safe by construction.
+What this graph / this IR replaces at the *semantic* level (not necessarily as
+packages today): hand-built kernels as the sole programming model; ad-hoc
+knob-consistency reasoning; fixed-GPR composition that collides under fusion.
 
-## 12. Worked examples
+Checkers (sem balance, reg clobber) become mostly **prevention-by-construction**
+once Stream/Cap sync-insert and virtual GPRs exist; keep post-hoc checks only for
+hand-ingested asm if needed.
 
-Elementwise multiply (streams, the whole kernel):
+---
+
+## 13. Worked examples
+
+### Elementwise multiply (streams)
+
 ```python
-def elwmul(a, b, out):           # a, b, out: Tensor (tiled, bf16)
+def elwmul(a, b, out):           # Tensor tiled bf16
     out <<= stream(a) * stream(b)
-    # lowering: brisc loads a,b -> CB0,CB1; trisc0 unpack -> SrcA,SrcB;
-    #           trisc1 FPU mul -> DST; trisc2 pack -> CB16; ncrisc store -> out.
-    #           Layer-A tile-count sync on every edge; Layer-B in templates.
+    # Streams → CBs. Cap(MATH_PACK) between math and pack.
+    # brisc load a,b → CB0,CB1; trisc0 unpack; trisc1 FPU mul → DST;
+    # trisc2 pack → CB16; ncrisc store. Layer-B stalls inside templates.
 ```
 
-Matmul block (indexed tiles, DST accumulation, subblock = DST tiling):
+### Matmul block (indexed, DST acc, subblock = DST tiling)
+
 ```python
-def matmul_block(A, B, C, Kt):           # A[Mt,Kt] bf16, B[Kt,Nt] bf16, C[Mt,Nt] fp32
-    for i in range(A.tile_grid_M):        # subblock sized to DST-half (4 tiles, fp32 acc)
+def matmul_block(A, B, C, Kt):   # A,B bf16; C fp32
+    for i in range(A.tile_grid_M):
         for j in range(B.tile_grid_N):
-            acc = matmul(A[i, 0], B[0, j], out_dtype=fp32)  # zero-init + first MAC
-            for k in range(1, Kt):        # K-accumulation, stays in DST
-                acc = matmul(A[i, k], B[k, j], acc=acc)
-            C[i, j] = acc                 # pack once, when the chain leaves DST
+            acc = matmul(A[i, 0], B[0, j], out_dtype=fp32)
+            for k in range(1, Kt):
+                acc = matmul(A[i, k], B[k, j], acc=acc)  # stays in DST
+            C[i, j] = acc                                  # pack = leave DST
 ```
-The subblock (4 tiles/half here) is derived from `out_dtype=fp32`, not chosen.
-The fusion rule is visible: `acc` lives in DST across the whole k-loop; a
-pointwise epilogue on `acc` fuses (still in DST); the pack is the boundary
-where the value must leave DST.
+
+Subblock (4 tiles/half for fp32) is derived. Epilogue on `acc` before pack fuses
+free (Tier 1). Pack is DST boundary, not necessarily a Program boundary (Tier 2
+can unpack again from L1 Stream).
+
+### Author surface vs inserted sync
+
+Authors write Tiles, Streams, compute, load/store.
+Lowerer inserts Stream enqueue/dequeue on edges, Caps for stage occupancy,
+and (if not folded) Waits for NOC readiness. Authors never write `Wait` or Cap.
+
+---
+
+## 14. Design decisions locked
+
+1. **Atom = 32×32 tile.** No scalar programming model.
+2. **CBs = Streams = queues of tiles.** Produce/consume, not Wait.
+3. **`Wait` = non-queue sync** (NOC ready, tensix Caps publicly, init). Caps may
+   be written as Cap ops distinct from Wait — either spelling benefits from the
+   “not a tile queue” rule.
+4. **Layer B never in TTIR** — templates only.
+5. **One deterministic lowering** per author op; no BEAM.
+6. **Codegen = ConfigEnv state machine** with `(requires, body, effect)`.
+7. **Subblock from `out_dtype`.** No author subblock knobs.
+8. **Maximize fusion** (Tier 1+2 default). Program split on L1 overflow /
+   StaticEnv clash / (later) collective edges only.
+9. **Intercept pre-schedule UOps**; PatternMatcher; no Tensor fork.
+10. **Single device** for this revision; multi-card is tinygrad’s problem later.
+11. **Spec-first** — this document is the contract; code follows.
+
+---
+
+## 15. Implementation order (when coding starts)
+
+Not part of the semantic contract; planning only:
+
+1. Stream + Cap types; trivial elw Program (load → compute → store) with v0
+   canonical ConfigEnv reset between roles — prove CB = queue model.
+2. Matmul template factored from `matmul_peak` as `(requires, body, effect)`.
+3. Intercept: one matmul PatternMatcher rule on a checked-in UOp dump.
+4. Fusion: attach elw epilogue list to matmul; Tier-1 SFPU while in DST.
+5. Multi-matmul via L1 Streams in one Program (Tier 2).
+6. Collectives / shard HARD boundaries when multi-core author ops are needed.
