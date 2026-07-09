@@ -18,10 +18,10 @@ if str(EXAMPLES) not in sys.path:
 from asm import KernelBase  # noqa: E402
 from device import Device  # noqa: E402
 from dsl import (  # noqa: E402
-  TTDMANOP, TTMOP, TTMOVA2D, TTNOP, TTPACR, TTRMWCIB0,
+  TTDMANOP, TTELWMUL, TTMOP, TTMOVA2D, TTMOVD2A, TTNOP, TTPACR, TTRMWCIB0,
   TTSEMGET, TTSEMPOST, TTSETRWC, TTSEMWAIT, TTSETADC, TTSETADCZW, TTSETDMAREG,
   TTSTALLWAIT, TTSTOREREG, TTSFPLOAD, TTSFPMUL, TTSFPSTORE, TTSFPADD,
-  TTSFPMOV, TTSFPSHFT2, TTUNPACR, TTWRCFG,
+  TTSFPMOV, TTSFPSHFT2, TTUNPACR, TTUNPACR_NOP, TTWRCFG, TTZEROACC,
   Reg, ra, s0, s1, s2, s3, s4, s5, s6, s7, sp, t0, t1, t2, t3, t4, t5,
   t6, a0, a1, a2, a5, zero,
 )
@@ -46,6 +46,7 @@ MEAN_SCALE = 1.0 / EMB_DIM
 NORM_EPS = 1e-5
 
 X_CB = 0
+WEIGHT_CB = 1
 OUT_CB = 16
 CB_DEPTH = 8
 
@@ -107,6 +108,30 @@ PACK_MOP_CFG = MopCfg(
     TTPACR(AddrMode=2),
   ],
 )
+UNPACK_SRC_B = TTUNPACR(1, 1, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 1)
+UNPACK_SRCA_DUMMY_DVALID = TTUNPACR_NOP(Unpacker_Select=0, Set_Dvalid=1, Unpack_Pop=1)
+BCAST_ROW = 2
+ELW_ADDR_MOD_ROW = 0
+ELW_ADDR_MOD_FIDELITY = 2
+ELW_ADDR_MOD_FACE = 3
+ELWMUL_ROW_HIFI2_MOP_CFG = MopCfg(
+  # HiFi2 ELWMUL performs two fidelity phases over one 16x16 face. For ROW
+  # broadcast, SrcB's row is held fixed while SrcA/Dst walk the two 8-row FPU
+  # chunks in that face. Runtime calls this MOP once per face.
+  loop_outer=2,
+  loop_inner=2,
+  template=[
+    TTNOP(), TTNOP(), TTNOP(),
+    TTELWMUL(0, 0, BCAST_ROW, ELW_ADDR_MOD_ROW, 0),
+    TTNOP(),
+    # MopCfg slots 5/6 are ckernel_template's last_outer/last_inner
+    # instructions. Last outer clears SrcA/SrcB valid and advances to the next
+    # face; last inner only advances the fidelity phase and carry register.
+    TTELWMUL(3, 0, BCAST_ROW, ELW_ADDR_MOD_FACE, 0),
+    TTELWMUL(0, 0, BCAST_ROW, ELW_ADDR_MOD_FIDELITY, 0),
+  ],
+)
+STALL_MATH_PACK_ROOM = TensixStall.SYNC | TensixStall.MATH | TensixStall.SFPU
 STALL_MATH_PACK_DATA = TensixStall.TDMA
 WAIT_MATH_AND_SFPU = TensixWait.MATH | TensixWait.SFPU
 WAIT_THCON_AND_PACK = TensixWait.THCON | TensixWait.PACK0
@@ -297,6 +322,42 @@ def _trisc0_unpack_cb_to_dst(fw: Trisc, cb_id: int) -> None:
   fw.cb_pop_front(fw.data["cb_interface"], cb_id, tensix_ack=True)
 
 
+def _trisc0_unpack_weight_to_srcb(fw: Trisc, cb_id: int) -> None:
+  fw.cb_wait_front(fw.data["cb_interface"], cb_id)
+  fw.cb_read_ptr(fw.data["cb_interface"], cb_id, out=s1)
+  fw.emit(TTSETADCZW(3, 0, 0, 0, 0, 15))
+
+  wait_unp = fw._new_label("wait_weight_unpack_ctx")
+  wait_unp_done = fw._new_label("wait_weight_unpack_ctx_done")
+  fw.li(t0, TensixRegs.PC_UNPACK_SYNC)
+  fw.label(wait_unp)
+  fw.lw(t1, t0, 0)
+  fw.andi(t1, t1, 0xFE)
+  fw.beq(t1, zero, wait_unp_done)
+  fw.fence()
+  fw.j(wait_unp)
+  fw.label(wait_unp_done)
+
+  fw.write32(TLM.TRISC0_UNPACK_CFG_CONTEXT, 0)
+  fw.setc16(ThreadCfg.UNPACK_MISC_CFG_CfgContext, 0)
+  fw.li(t2, TensixRegs.CFG_BASE + Cfg.THCON_SEC1_REG3_Base_address.addr32 * 4)
+  fw.addi(t3, s1, -1)
+  fw.sw(t3, t2, 0)
+  fw.write32(TensixRegs.PC_UNPACK_SYNC, 0)
+
+  fw.emit(TTSTALLWAIT(TensixStall.UNPACK, TensixWait.TRISC_CFG))
+  # Mirrors TT-LLK's acc_to_dest + DEST_TO_SRCA unpack path. SrcA is supplied
+  # later by MOVD2A from Dst, but the math-side move waits on a dummy SrcA
+  # dvalid token. The real weight tile is unpacked to SrcB face-by-face.
+  for _ in range(4):
+    fw.emit(UNPACK_SRC_B)
+    fw.emit(UNPACK_SRCA_DUMMY_DVALID)
+    fw.emit(TTSTALLWAIT(TensixStall.UNPACK, TensixWait.UNPACK0 | TensixWait.UNPACK1))
+  fw.emit(TTSETADCZW(2, 0, 0, 0, 0, 1))
+  fw.emit(TTSEMGET(TensixSem.mask(TensixSem.UNPACK_SYNC)))
+  fw.cb_pop_front(fw.data["cb_interface"], cb_id, tensix_ack=True)
+
+
 def trisc0_reduce_pass() -> Trisc:
   fw = Trisc(0, SYNC)
   fw.prologue()
@@ -316,6 +377,7 @@ def trisc0_reduce_pass() -> Trisc:
   fw.label("trisc0_final_loop")
   fw.beq(s5, s3, "trisc0_final_done")
   _trisc0_unpack_cb_to_dst(fw, X_CB)
+  _trisc0_unpack_weight_to_srcb(fw, WEIGHT_CB)
   fw.addi(s5, s5, 1)
   fw.j("trisc0_final_loop")
   fw.label("trisc0_final_done")
@@ -551,6 +613,44 @@ def _sfpu_mul_x_scale_tile(
   return fw
 
 
+def _configure_elwmul_row_hifi2(fw: Trisc) -> Trisc:
+  fw.write_mop_cfg(ELWMUL_ROW_HIFI2_MOP_CFG, 1)
+  # TT-LLK eltwise_binary_configure_addrmod<ELWMUL, ROW, HiFi2>:
+  #   sec0: SrcA += 8, SrcB += 0, Dst += 8
+  #   sec2: clear SrcA/SrcB, carry Dst, fidelity += 1
+  #   sec3: clear SrcA/SrcB, Dst += 8, copy carry to current, fidelity = 0
+  fw.setc16(ThreadCfg.ADDR_MOD_AB_SEC0_Src, 0x0008)
+  fw.setc16(ThreadCfg.ADDR_MOD_DST_SEC0, 0x0008)
+  fw.setc16(ThreadCfg.ADDR_MOD_BIAS_SEC0_Bias, 0)
+  fw.setc16(ThreadCfg.ADDR_MOD_AB_SEC2_Src, 0x8080)
+  fw.setc16(ThreadCfg.ADDR_MOD_DST_SEC2, 0x2400)
+  fw.setc16(ThreadCfg.ADDR_MOD_BIAS_SEC2_Bias, 0)
+  fw.setc16(ThreadCfg.ADDR_MOD_AB_SEC3_Src, 0x8080)
+  fw.setc16(ThreadCfg.ADDR_MOD_DST_SEC3, 0x9008)
+  fw.setc16(ThreadCfg.ADDR_MOD_BIAS_SEC3_Bias, 0)
+  return fw
+
+
+def _move_dst_face_to_srca(fw: Trisc) -> Trisc:
+  # TT-LLK move_d2a_fixed_face(ADDR_MOD_1). Dst RWC selects which 16-row face
+  # is copied; the HiFi2 MOP advances it to the next face after each run.
+  fw.emit(TTSTALLWAIT(TensixStall.MATH, TensixWait.SRCA_VLD))
+  for row in (0, 4, 8, 12):
+    fw.emit(TTMOVD2A(0, row, 1, 2, row))
+  return fw
+
+
+def _elwmul_weight_from_dst_reuse(fw: Trisc) -> Trisc:
+  """Final RMSNorm multiply: Dst(tmp bf16) * SrcB(weight row) -> Dst(out bf16)."""
+  fw.emit(TTSETRWC(0, 0, 0, 0, 0, 15))
+  fw.emit(TTSTALLWAIT(TensixStall.MATH, TensixWait.SRCB_VLD))
+  for face in range(4):
+    _move_dst_face_to_srca(fw)
+    fw.emit(TTZEROACC(1, 0, 0, 1, face))
+    fw.emit(TTMOP(1, 0, 0))
+  return fw
+
+
 def trisc1_rsqrt_pass() -> Trisc:
   """TRISC1 phase: reduction, rsqrt, then first RMSNorm multiply.
 
@@ -563,6 +663,7 @@ def trisc1_rsqrt_pass() -> Trisc:
   fw = Trisc(1, SYNC)
   fw.prologue()
   fw.math.init(dtype=DTYPE, mop_cfg=MATH_MOP_CFG)
+  _configure_elwmul_row_hifi2(fw)
   fw.init_barrier()
 
   with fw.tile_loop(epilogue=False):
@@ -605,7 +706,9 @@ def trisc1_rsqrt_pass() -> Trisc:
   fw.emit(TTSETRWC(0, 0, 0, 0, 0, 4))
   fw.emit(TTSTALLWAIT(TensixStall.SFPU, TensixWait.MATH))
   _sfpu_mul_x_scale_tile(fw)
-  fw.push_tensix(TTSETRWC(0, 0, 0, 0, 0, 4))
+  fw.emit(TTSTALLWAIT(TensixStall.SYNC, WAIT_MATH_AND_SFPU))
+  _elwmul_weight_from_dst_reuse(fw)
+  fw.push_tensix(TTSETRWC(0, 0, 0, 0, 0, 15))
   fw.push_tensix(TTSTALLWAIT(TensixStall.SYNC, WAIT_MATH_AND_SFPU))
   fw.emit(TTSEMPOST(TensixSem.mask(TensixSem.MATH_PACK)))
   fw.addi(s5, s5, 1)
@@ -740,12 +843,14 @@ def brisc(dram_bank_coords: list[int]) -> Brisc:
   Runtime args:
     0 x_addr
     1 x_base_tile
-    2 col_tiles
-    3 num_banks
-    4 stride_tiles
+    2 weight_addr
+    3 weight_base_tile
+    4 col_tiles
+    5 num_banks
+    6 stride_tiles
   """
   fw = Brisc()
-  fw.read_rta_from(BM.RTA_L1_BASE_PTR, (s0, s1, s4, s6, s7))
+  fw.read_rta_from(BM.RTA_L1_BASE_PTR, (s0, s1, s2, s3, s4, s6, s7))
   for addr in (SYNC_TRISC_START, SYNC_TRISC_INIT, SYNC_TRISC_INIT + 4, SYNC_TRISC_INIT + 8):
     fw.write32(addr, 0)
   fw.write32(SYNC_TRISC_START, 0x00010101)
@@ -768,6 +873,16 @@ def brisc(dram_bank_coords: list[int]) -> Brisc:
       dram_bank_coords,
       addr=s0,
       base=s1,
+      tile=s5,
+      num_banks=s6,
+      stride=s7,
+    )
+    _read_dram_tile_to_cb(
+      fw,
+      WEIGHT_CB,
+      dram_bank_coords,
+      addr=s2,
+      base=s3,
       tile=s5,
       num_banks=s6,
       stride=s7,
@@ -808,11 +923,13 @@ def ncrisc(dram_bank_coords: list[int]) -> Ncrisc:
 
 def build_program(
   x_addr: int,
+  weight_addr: int,
   out_addr: int,
   num_banks: int,
   *,
   core: tuple[int, int] = (1, 2),
   x_base_tile: int = 0,
+  weight_base_tile: int = 0,
   out_base_tile: int = 0,
   stride_tiles: int = 1,
   out_stride_tiles: int = 1,
@@ -831,7 +948,7 @@ def build_program(
   trisc1_fw = trisc1_rsqrt_pass()
   trisc2_fw = trisc2_pack_accumulator()
 
-  brisc_fw.rta(lambda _x, _y: [x_addr, x_base_tile, col_tiles, num_banks, stride_tiles])
+  brisc_fw.rta(lambda _x, _y: [x_addr, x_base_tile, weight_addr, weight_base_tile, col_tiles, num_banks, stride_tiles])
   ncrisc_fw.rta(lambda _x, _y: [out_addr, out_base_tile, col_tiles, num_banks, out_stride_tiles])
   trisc0_fw.rta(lambda _x, _y: [col_tiles])
   trisc1_fw.rta(lambda _x, _y: [col_tiles])
@@ -843,10 +960,10 @@ def build_program(
     trisc0=trisc0_fw,
     trisc1=trisc1_fw,
     trisc2=trisc2_fw,
-    cbs=[(X_CB, TILE_BYTES, CB_DEPTH), (OUT_CB, TILE_BYTES, 2)],
+    cbs=[(X_CB, TILE_BYTES, CB_DEPTH), (WEIGHT_CB, TILE_BYTES, CB_DEPTH), (OUT_CB, TILE_BYTES, 2)],
     core_order=(core,),
   )
-  prog.name = "llama3_rmsnorm_mul_scale"
+  prog.name = "llama3_rmsnorm"
   return prog
 
 
@@ -863,32 +980,45 @@ def _bf16_to_f32(x: np.ndarray) -> np.ndarray:
 def run() -> None:
   rng = np.random.default_rng(0)
   x = rng.normal(0.0, 0.25, size=(ROWS, EMB_DIM)).astype(np.float32)
+  weight_vec = rng.normal(1.0, 0.1, size=(EMB_DIM,)).astype(np.float32)
+  weight_tiles = np.zeros((ROWS, EMB_DIM), dtype=np.float32)
+  # ROW broadcast is per 16x16 face, so each vertical face group needs the
+  # weight row in its local row 0. For a 32-row tile that means rows 0 and 16.
+  weight_tiles[0:ROWS:16, :] = weight_vec
   x_bf16 = _bf16_to_f32(np.frombuffer(_to_bf16_bytes(x), dtype="<u2")).reshape(ROWS, EMB_DIM)
+  weight_bf16 = _bf16_to_f32(np.frombuffer(_to_bf16_bytes(weight_vec), dtype="<u2"))
   scale = np.sum(x_bf16 * x_bf16, axis=1, dtype=np.float32)
   scale *= np.float32(MEAN_SCALE)
   scale += np.float32(NORM_EPS)
   scale = np.reciprocal(np.sqrt(scale, dtype=np.float32), dtype=np.float32)
-  expected = _bf16_to_f32(np.frombuffer(_to_bf16_bytes(x_bf16 * scale[:, None]), dtype="<u2")).reshape(ROWS, EMB_DIM)
+  tmp_expected = _bf16_to_f32(np.frombuffer(_to_bf16_bytes(x_bf16 * scale[:, None]), dtype="<u2")).reshape(ROWS, EMB_DIM)
+  expected = _bf16_to_f32(np.frombuffer(_to_bf16_bytes(tmp_expected * weight_bf16[None, :]), dtype="<u2")).reshape(ROWS, EMB_DIM)
 
   device = Device()
   try:
     num_banks = len(device.dram.bank_tiles)
     x_buf = device.dram.alloc(COL_TILES, DTYPE, shape=(ROWS, EMB_DIM), name="rmsnorm_x")
-    out_buf = device.dram.alloc(COL_TILES, DTYPE, shape=(ROWS, EMB_DIM), name="rmsnorm_mul_scale")
+    weight_buf = device.dram.alloc(COL_TILES, DTYPE, shape=(ROWS, EMB_DIM), name="rmsnorm_weight_row")
+    out_buf = device.dram.alloc(COL_TILES, DTYPE, shape=(ROWS, EMB_DIM), name="rmsnorm_out")
     device.dram_write(x_buf, _to_bf16_bytes(x))
+    device.dram_write(weight_buf, _to_bf16_bytes(weight_tiles))
 
+    dram_bank_coords_noc0 = p100_dram_bank_endpoint_coords(device.board_info.harvested_dram_bank, 0)
+    dram_bank_coords_noc1 = p100_dram_bank_endpoint_coords(device.board_info.harvested_dram_bank, 1)
     prog = build_program(
       x_buf.addr,
+      weight_buf.addr,
       out_buf.addr,
       num_banks,
-      dram_bank_coords_noc0=p100_dram_bank_endpoint_coords(device.board_info.harvested_dram_bank, 0),
-      dram_bank_coords_noc1=p100_dram_bank_endpoint_coords(device.board_info.harvested_dram_bank, 1),
+      dram_bank_coords_noc0=dram_bank_coords_noc0,
+      dram_bank_coords_noc1=dram_bank_coords_noc1,
     )
     timings = device.run(prog)
     got = _bf16_to_f32(np.frombuffer(device.dram_read(out_buf), dtype="<u2")).reshape(ROWS, EMB_DIM)
     abs_err = np.abs(got - expected)
     max_abs = float(np.max(abs_err))
     mean_abs = float(np.mean(abs_err))
+    rel_l2 = float(np.linalg.norm(got - expected) / max(np.linalg.norm(expected), 1e-12))
     worst_flat = int(np.argmax(abs_err))
     worst_row, worst_col = np.unravel_index(worst_flat, abs_err.shape)
     tolerance = 0.05
@@ -899,13 +1029,13 @@ def run() -> None:
           f"expected={expected[i, 0]:.8f} err={abs_err[i, 0]:.8f}"
         )
       raise AssertionError(
-        f"rmsnorm mul_scale mismatch max_abs={max_abs:.6g} mean_abs={mean_abs:.6g} "
+        f"rmsnorm mismatch max_abs={max_abs:.6g} mean_abs={mean_abs:.6g} rel_l2={rel_l2:.6g} "
         f"worst=({worst_row},{worst_col}) got={got[worst_row, worst_col]:.8f} "
         f"expected={expected[worst_row, worst_col]:.8f}"
       )
     print(
-      f"PASS rmsnorm mul_scale: max_abs={max_abs:.6g} "
-      f"mean_abs={mean_abs:.6g} worst=({worst_row},{worst_col})"
+      f"PASS rmsnorm hifi2: max_abs={max_abs:.6g} "
+      f"mean_abs={mean_abs:.6g} rel_l2={rel_l2:.6g} worst=({worst_row},{worst_col})"
     )
     for timing in timings:
       name = f"{timing['name']}: " if timing["name"] else ""
