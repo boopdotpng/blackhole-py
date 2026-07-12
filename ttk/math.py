@@ -1,94 +1,67 @@
-from __future__ import annotations
+"""Intent-level TRISC1 math configuration."""
+from dataclasses import dataclass
 
-from dsl import (
-  TTRMWCIB0, TTRMWCIB3, TTSEMINIT, TTSETC16, TTSETRWC, TTSFPCONFIG, TTSFPLOADI,
-  TTSTALLWAIT, TTZEROACC,
-)
-from program import Dtype
-from ttk.mailbox import TriscLocalMem as TLM
-from ttk.tensix import (
-  Cfg, TensixRegs, TensixSem, TensixStall, TensixWait, ThreadCfg,
-)
+from ttk.tensix import Cfg, MopCfg, Tensix, TensixState
 
-_TILE_NUM_FACES = 4
+
+@dataclass
+class MathState:
+  src_a_format: int = 5
+  src_b_format: int = 5
+  dst_format: int = 5
+  fp32_dest: bool = False
+  mop_cfg: MopCfg | None = None
 
 
 class Math:
-  """Math-thread (TRISC1) configuration helpers, bound to a kernel builder.
+  pipe = 1
 
-  Tier-2 intent over Tier-1 ops, same shape as ``Unpack``/``Pack``. ``dtype``
-  drives the src/dst format writes; the addr-mode and SFPU setup are the generic
-  FPU/SFPU init that every math kernel shares. The op-specific compute body
-  (e.g. the add1 SFP loop) stays in the kernel, not here."""
-
-  def __init__(self, kernel):
+  def __init__(self, kernel=None, *, state: TensixState | None = None):
     self.k = kernel
+    self.tensix = Tensix(kernel, self.pipe, state) if kernel is not None else None
+    self.state = MathState()
 
-  def _local_state(self, k, dtype: Dtype):
-    # Make initial context writes visible, publish operand formats, then wait
-    # until the unpack side reports its context is idle.
-    k.tensix_sync(1)
-    k.write_repeated_bytes(TLM.TRISC1_UNPACK_TILE_NUM_FACES, _TILE_NUM_FACES, 8)
-    k.write32(TLM.TRISC1_UNPACK_DST_FORMAT, dtype.value)
-    k.write32(TLM.TRISC1_UNPACK_SRC_FORMAT, dtype.value)
-    k.setc16(ThreadCfg.ADDR_MOD_AB_SEC1_Src, 0)
-    k.setc16(ThreadCfg.ADDR_MOD_DST_SEC1, 0)
-    k.setc16(ThreadCfg.ADDR_MOD_BIAS_SEC1_Bias, 0)
-    k.emit(TTZEROACC(3, 0, 0, 1, 0))
-    k.wait_mmio_low_byte_zero(TensixRegs.PC_UNPACK_SYNC)
+  @property
+  def mop(self):
+    if self.tensix is None: raise RuntimeError("math is not attached to a kernel")
+    return self.tensix.mop
 
-  def set_reload_format(self, dtype: Dtype):
-    """Runtime-switch the MATH thread's view of the unpack src/dst format (TLM
-    mailbox) so a copy_tile reload from an intermediate CB interprets that CB's
-    format correctly; switch back to the operand dtype afterwards. Companion to
-    ``Unpack.set_format``/``Pack.set_format`` for mixed-format pipelines."""
-    k = self.k
-    k.write32(TLM.TRISC1_UNPACK_DST_FORMAT, dtype.value & 0xF)
-    k.write32(TLM.TRISC1_UNPACK_SRC_FORMAT, dtype.value & 0xF)
-    return k
+  def configure_operands(self, *, src_a=5, src_b=5, destination=5, fp32_dest=False):
+    self.state = MathState(
+      int(src_a), int(src_b), int(destination), bool(fp32_dest), self.state.mop_cfg,
+    )
+    if self.tensix is not None:
+      # ALU format fields are shared CFG state; these values are the Blackhole
+      # format nibbles used by ALU_FORMAT_SPEC_REG.
+      self.tensix.write_cfg(Cfg.ALU_FORMAT_SPEC_REG,
+        (int(src_a) & 0xF) | ((int(src_b) & 0xF) << 8) | ((int(destination) & 0xF) << 16))
+      self.tensix.write_cfg(Cfg.ALU_ACC_CTRL, 0x60 if fp32_dest else 0)
+    return self
 
-  def _sfpu_init(self, k):
-    k.emit(TTSFPLOADI(0, 0, 10))
-    k.emit(TTSFPLOADI(0, 0, 8))
-    k.emit(TTSFPCONFIG(0, 15, 1))
-    # Math/SFPU instructions address Dst/Src through one RWC set per Tensix
-    # thread:
-    #   {Dst, Dst_Cr, SrcA, SrcA_Cr, SrcB, SrcB_Cr, FidelityPhase,
-    #    ExtraAddrModBit}
-    # SFPLOAD/SFPSTORE use RWC.Dst in their address calculation:
-    #   addr = imm + DEST_TARGET offset + RWC.Dst + dest base
-    # Then their addrmod field selects one ADDR_MOD_*_SEC recipe to mutate the
-    # same RWC set after the instruction. SEC6 is our "+2 Dst" recipe for
-    # walking 4x8 SFPU slices; SEC7 is the no-op recipe when the kernel advances
-    # with explicit immediates or TTINCRWC/TTSETRWC.
-    k.setc16(ThreadCfg.ADDR_MOD_AB_SEC6_Src, 0)
-    k.setc16(ThreadCfg.ADDR_MOD_DST_SEC6, 2)
-    k.setc16(ThreadCfg.ADDR_MOD_BIAS_SEC6_Bias, 0)
-    k.setc16(ThreadCfg.ADDR_MOD_AB_SEC7_Src, 0)
-    k.setc16(ThreadCfg.ADDR_MOD_DST_SEC7, 0)
-    k.setc16(ThreadCfg.ADDR_MOD_BIAS_SEC7_Bias, 0)
-    k.emit(TTSETRWC(0, 0, 0, 0, 0, 15))
+  def configure(self, *, src_a=5, src_b=5, destination=5, fp32_dest=False):
+    return self.configure_operands(src_a=src_a, src_b=src_b, destination=destination, fp32_dest=fp32_dest)
 
-  def init(self, *, dtype: Dtype = Dtype.Float16_b, mop_cfg):
-    """Configure the math thread: operand formats, mova2d addr modes, the math
-    MOP template, the MATH_PACK semaphore, dest-access config and SFPU setup.
-    Mirrors the TRISC1 init block of add1 exactly."""
-    k = self.k
+  def set_reload_format(self, format):
+    return self.configure_operands(src_a=format, src_b=format,
+      destination=self.state.dst_format, fp32_dest=self.state.fp32_dest)
 
-    self._local_state(k, dtype)
-    k.math_direct_mova2d_init()
-    k.write_mop_cfg(mop_cfg, 1)
-    k.tensix_sync(1)
+  def set_fp32_dest(self, enabled: bool):
+    return self.configure_operands(src_a=self.state.src_a_format, src_b=self.state.src_b_format,
+      destination=self.state.dst_format, fp32_dest=enabled)
 
-    k.wait_mmio_low_byte_zero(TensixRegs.pc_buf_sem(TensixSem.MATH_PACK))
-    k.emit(TTSEMINIT(sem_sel=TensixSem.mask(TensixSem.MATH_PACK), init_value=0, max_value=1))
-    k.push_tensix(TTSETC16(ThreadCfg.DEST_TARGET_REG_CFG_MATH_Offset, 0))
-    k.push_tensix(TTRMWCIB0(Mask=0x08, Data=0x08, CfgRegAddr=Cfg.DEST_ACCESS_CFG.addr32))
-    k.write32(k.data["dest_offset_id"], 0)
-    k.emit(TTSTALLWAIT(TensixStall.CFG, TensixWait.MATH))
-    k.push_tensix(TTRMWCIB3(Mask=0x80, Data=0x00, CfgRegAddr=Cfg.ALU.addr32))
+  def configure_mop(self, cfg: MopCfg):
+    if self.tensix is None: raise RuntimeError("Math is not attached to a kernel")
+    if not isinstance(cfg, MopCfg):
+      raise TypeError("math MOP configuration must be a MopCfg")
+    self.state.mop_cfg = cfg
+    self.tensix.mop.configure(cfg)
+    return self
 
-    k.math_direct_mova2d_init()
-    k.write_mop_cfg(mop_cfg, 1)
-    self._sfpu_init(k)
-    return k
+  def run_mop(self, *, cfg: MopCfg | None = None, repeat: int = 1):
+    """Configure and execute a named math MOP program."""
+    if self.tensix is None: raise RuntimeError("Math is not attached to a kernel")
+    if repeat < 1: raise ValueError("repeat must be positive")
+    if cfg is not None: self.configure_mop(cfg)
+    elif self.state.mop_cfg is None:
+      raise RuntimeError("math MOP is not configured")
+    return self.tensix.mop.run(repeat=repeat)

@@ -1,584 +1,449 @@
-from __future__ import annotations
+from contextlib import AbstractContextManager, contextmanager
 
-from collections.abc import Iterable
+from asm import Cond
+from isa import R
 
-from dsl import Reg, a0, a1, a2, a5, t0, t1, t2, t3, t4, t5, t6, zero
-from ttk.addrs import L1_ALIGN, noc_xy
-from ttk.mailbox import BriscMailbox as BM
-from ttk.tensix import TensixMMIO
+NOC_REGS_START_ADDR = 0xFFB20000
+NOC_CFG_BASE = NOC_REGS_START_ADDR + 0x100
+NOC_STATUS_BASE = 0xFFB20200
+NOC_CMD_BUF_OFFSET_BIT = 11
+NOC_INSTANCE_OFFSET_BIT = 16
 
+NOC_TARG_ADDR_LO = 0x00
+NOC_TARG_ADDR_MID = 0x04
+NOC_TARG_ADDR_COORDINATE = 0x08
+NOC_RET_ADDR_LO = 0x0C
+NOC_RET_ADDR_MID = 0x10
+NOC_RET_ADDR_COORDINATE = 0x14
+NOC_PACKET_TAG = 0x18
+NOC_CTRL = 0x1C
+NOC_AT_LEN_BE = 0x20
+NOC_AT_LEN_BE_1 = 0x24
+NOC_AT_DATA = 0x28
+NOC_BRCST_EXCLUDE = 0x2C
+NOC_CMD_CTRL = 0x40
+NOC_MAX_BURST_SIZE = 16 * 1024
 
-class NOC:
-  REGS_START_ADDR = 0xFFB20000
-  STATUS_BASE = 0xFFB20200
-  CMD_BUF_OFFSET_BIT = 11
-  INSTANCE_OFFSET_BIT = 16
-  CFG_BASE = REGS_START_ADDR + 0x100
+NOC_ID_LOGICAL = 0x12
 
-  TARG_ADDR_LO = REGS_START_ADDR + 0x00
-  TARG_ADDR_MID = REGS_START_ADDR + 0x04
-  TARG_ADDR_COORDINATE = REGS_START_ADDR + 0x08
-  RET_ADDR_LO = REGS_START_ADDR + 0x0C
-  RET_ADDR_MID = REGS_START_ADDR + 0x10
-  RET_ADDR_COORDINATE = REGS_START_ADDR + 0x14
-  PACKET_TAG = REGS_START_ADDR + 0x18
-  CTRL = REGS_START_ADDR + 0x1C
-  AT_LEN_BE = REGS_START_ADDR + 0x20
-  AT_LEN_BE_1 = REGS_START_ADDR + 0x24
-  AT_DATA = REGS_START_ADDR + 0x28
-  BRCST_EXCLUDE = REGS_START_ADDR + 0x2C
-  L1_ACC_AT_INSTRN = REGS_START_ADDR + 0x30
-  SEC_CTRL = REGS_START_ADDR + 0x34
-  CMD_CTRL = REGS_START_ADDR + 0x40
-  NODE_ID = REGS_START_ADDR + 0x44
-  ENDPOINT_ID = REGS_START_ADDR + 0x48
-  CLEAR_OUTSTANDING_REQ_CNT = REGS_START_ADDR + 0x60
-  CMD_BUF_AVAIL = REGS_START_ADDR + 0x64
-  CMD_BUF_OVFL = REGS_START_ADDR + 0x68
-
-  CFG_DEBUG_COUNTER_RESET = CFG_BASE + 0x1D * 4
-  ROUTER_OUTGOING_FLIT_COUNTER_BIT = 0
-  CMD_BUFFER_FIFO_OVFL_CLEAR_BIT = 4
-
-  CTRL_SEND_REQ = 1
-  PCIE_MID = 0x10000000
-  COORD_MASK = 0xFFFFFF
-  MAX_TRANSACTION_ID = 0xF
-  MAX_TRANSACTION_ID_COUNT = 255
-  CLEAR_OUTSTANDING_REQ_MASK = (1 << (MAX_TRANSACTION_ID + 1)) - 1
-  PACKET_TAG_TRANSACTION_ID_SHIFT = 10
-
-  CMD_CPY = 0
-  CMD_AT = 1
-  CMD_WR = 1 << 1
-  CMD_WR_INLINE = 1 << 3
-  CMD_RESP_MARKED = 1 << 4
-  CMD_BRCST_PACKET = 1 << 5
-  CMD_VC_LINKED = 1 << 6
-  CMD_VC_STATIC = 1 << 7
-  CMD_PATH_RESERVE = 1 << 8
-  CMD_STATIC_VC_1 = 1 << 13
-  CMD_STATIC_VC_5 = 5 << 13
-  CMD_BRCST_XY = 1 << 16
-  CMD_BRCST_SRC_INCLUDE = 1 << 17
-
-  CMD_RD_FIELD = CMD_CPY | CMD_RESP_MARKED | CMD_VC_STATIC | CMD_STATIC_VC_1
-  CMD_WR_FIELD = CMD_CPY | CMD_WR | CMD_RESP_MARKED | CMD_VC_STATIC | CMD_STATIC_VC_1
-  CMD_WR_POSTED_FIELD = CMD_CPY | CMD_WR | CMD_VC_STATIC | CMD_STATIC_VC_1
-  CMD_WR_MCAST_UNLINK_FIELD = (
-    CMD_CPY | CMD_WR | CMD_RESP_MARKED | CMD_VC_STATIC |
-    CMD_STATIC_VC_5 | CMD_BRCST_PACKET | CMD_PATH_RESERVE
-  )
-  CMD_WR_MCAST_LINKED_FIELD = CMD_WR_MCAST_UNLINK_FIELD | CMD_VC_LINKED
-  CMD_INLINE_FIELD = CMD_WR_FIELD | CMD_WR_INLINE
-  CMD_AT_INC_FIELD = CMD_AT | CMD_RESP_MARKED | CMD_VC_STATIC | CMD_STATIC_VC_1
-
-  AT_INS_INCR_GET = 0x1
-  AT_INS_SHIFT = 12
-  AT_WRAP_SHIFT = 2
-  AT_INCR_GET = (AT_INS_INCR_GET << AT_INS_SHIFT) | (31 << AT_WRAP_SHIFT)
-
-  MAX_BURST_SIZE = 16 * 1024
-
-  @staticmethod
-  def mcast_exclude_quad(x: int, y: int, *, dir_x: int = 0, dir_y: int = 0,
-                         stride_x: int = 1, stride_y: int = 1, enable: bool = True) -> int:
-    return (
-      (stride_x & 0xF) |
-      ((stride_y & 0xF) << 4) |
-      ((x & 0x3F) << 8) |
-      ((y & 0x3F) << 14) |
-      ((dir_x & 1) << 20) |
-      ((dir_y & 1) << 21) |
-      ((1 if enable else 0) << 22)
-    )
-
-  NIU_MST_ATOMIC_RESP_RECEIVED = 0x00
-  NIU_MST_WR_ACK_RECEIVED = 0x04
-  NIU_MST_RD_RESP_RECEIVED = 0x08
-  NIU_MST_RD_DATA_WORD_RECEIVED = 0x0C
-  NIU_MST_CMD_ACCEPTED = 0x10
-  NIU_MST_RD_REQ_SENT = 0x14
-  NIU_MST_NONPOSTED_ATOMIC_SENT = 0x18
-  NIU_MST_POSTED_ATOMIC_SENT = 0x1C
-  NIU_MST_NONPOSTED_WR_DATA_WORD_SENT = 0x20
-  NIU_MST_POSTED_WR_DATA_WORD_SENT = 0x24
-  NIU_MST_NONPOSTED_WR_REQ_SENT = 0x28
-  NIU_MST_POSTED_WR_REQ_SENT = 0x2C
-  NIU_MST_NONPOSTED_WR_REQ_STARTED = 0x30
-  NIU_MST_POSTED_WR_REQ_STARTED = 0x34
-  NIU_MST_RD_REQ_STARTED = 0x38
-  NIU_MST_NONPOSTED_ATOMIC_STARTED = 0x3C
-  NIU_MST_REQS_OUTSTANDING_ID_BASE = 0x40
-  NIU_MST_WRITE_REQS_OUTGOING_ID_BASE = 0x80
-  NIU_SLV_ATOMIC_RESP_SENT = 0xC0
-  NIU_SLV_WR_ACK_SENT = 0xC4
-  NIU_SLV_RD_RESP_SENT = 0xC8
-  NIU_SLV_RD_DATA_WORD_SENT = 0xCC
-  NIU_SLV_REQ_ACCEPTED = 0xD0
-  NIU_SLV_RD_REQ_RECEIVED = 0xD4
-  NIU_SLV_NONPOSTED_ATOMIC_RECEIVED = 0xD8
-  NIU_SLV_POSTED_ATOMIC_RECEIVED = 0xDC
-  NIU_SLV_NONPOSTED_WR_DATA_WORD_RECEIVED = 0xE0
-  NIU_SLV_POSTED_WR_DATA_WORD_RECEIVED = 0xE4
-  NIU_SLV_NONPOSTED_WR_REQ_RECEIVED = 0xE8
-  NIU_SLV_POSTED_WR_REQ_RECEIVED = 0xEC
-  NIU_SLV_NONPOSTED_WR_REQ_STARTED = 0xF0
-  NIU_SLV_POSTED_WR_REQ_STARTED = 0xF4
-
-  @staticmethod
-  def packet_tag_transaction_id(trid: int) -> int:
-    if not 0 <= trid <= NOC.MAX_TRANSACTION_ID:
-      raise ValueError(f"NoC transaction id must be in [0, {NOC.MAX_TRANSACTION_ID}], got {trid}")
-    return trid << NOC.PACKET_TAG_TRANSACTION_ID_SHIFT
-
-  @staticmethod
-  def niu_mst_reqs_outstanding_id(trid: int) -> int:
-    if not 0 <= trid <= NOC.MAX_TRANSACTION_ID:
-      raise ValueError(f"NoC transaction id must be in [0, {NOC.MAX_TRANSACTION_ID}], got {trid}")
-    return NOC.NIU_MST_REQS_OUTSTANDING_ID_BASE + trid * 4
-
-  @staticmethod
-  def niu_mst_write_reqs_outgoing_id(trid: int) -> int:
-    if not 0 <= trid <= NOC.MAX_TRANSACTION_ID:
-      raise ValueError(f"NoC transaction id must be in [0, {NOC.MAX_TRANSACTION_ID}], got {trid}")
-    return NOC.NIU_MST_WRITE_REQS_OUTGOING_ID_BASE + trid * 4
-
-  @staticmethod
-  def port1_flit_counter_lower(vc: int) -> int:
-    return NOC.REGS_START_ADDR + 0x500 + vc * 8
-
-  @staticmethod
-  def port1_flit_counter_upper(vc: int) -> int:
-    return NOC.REGS_START_ADDR + 0x504 + vc * 8
-
-  @staticmethod
-  def port2_flit_counter_lower(vc: int) -> int:
-    return NOC.REGS_START_ADDR + 0x580 + vc * 8
-
-  @staticmethod
-  def port2_flit_counter_upper(vc: int) -> int:
-    return NOC.REGS_START_ADDR + 0x584 + vc * 8
+NIU_MST_ATOMIC_RESP_RECEIVED = 0x00
+NIU_MST_WR_ACK_RECEIVED = 0x04
+NIU_MST_RD_RESP_RECEIVED = 0x08
+NIU_MST_POSTED_WR_REQ_SENT = 0x2C
 
 
 class NocCfg:
-  NIU_CFG_0 = 0x0
-  ROUTER_CFG_0 = 0x1
-  ID_LOGICAL = 0x12
+  """NoC configuration values shared by resident firmware and kernels."""
+  NIU_CFG_0 = 0
+  ROUTER_CFG_0 = 1
   NODE_ID_MASK = 0x3F
   ADDR_NODE_ID_BITS = 6
-  ADDR_COORD_SHIFT = 36
-  COORDINATE_MASK = 0xFFFFFF
-  PCIE_MASK = 0x1000000F
-  INLINE_WRITE_POSTED_FIELD = (1 << 7) | (1 << 13) | (1 << 1) | (1 << 3)
-  STREAM_REG_SPACE_SIZE = 0x1000
   MEM_NOC_ATOMIC_RET_VAL_ADDR = 0x04
   NCRISC_WR_CMD_BUF = 0
   NCRISC_RD_CMD_BUF = 1
   NCRISC_WR_REG_CMD_BUF = 2
   NCRISC_AT_CMD_BUF = 3
   RD_CMD_FIELD = (1 << 4) | (1 << 7) | (1 << 13)
-  NIU_MST_ATOMIC_RESP_RECEIVED_WORD = 0x0
-  NIU_MST_WR_ACK_RECEIVED_WORD = 0x1
-  NIU_MST_RD_RESP_RECEIVED_WORD = 0x2
-  NIU_MST_NONPOSTED_WR_REQ_SENT_WORD = 0xA
-  NIU_MST_POSTED_WR_REQ_SENT_WORD = 0xB
 
-class Noc:
-  def init_risc_noc_coords(self, my_x_addr: int, my_y_addr: int, *,
-                           id_reg: Reg = t0, coord: Reg = t1, tmp_addr: Reg = t2):
-    # Read each NOC's logical node id and stash MY_X/MY_Y into the mailbox.
-    for noc in range(2):
-      self.read32(id_reg, self.noc_cmd_addr(noc, 0, NOC.CFG_BASE + NocCfg.ID_LOGICAL * 4), tmp_addr=tmp_addr)
-      self.andi(coord, id_reg, NocCfg.NODE_ID_MASK)
-      self.write8(my_x_addr + noc, coord, tmp_addr=tmp_addr)
-      self.srli(coord, id_reg, NocCfg.ADDR_NODE_ID_BITS)
-      self.andi(coord, coord, NocCfg.NODE_ID_MASK)
-      self.write8(my_y_addr + noc, coord, tmp_addr=tmp_addr)
+NOC_CTRL_SEND_REQ = 1
+NOC_CMD_AT = 1
+NOC_CMD_WR = 1 << 1
+NOC_CMD_RESP_MARKED = 1 << 4
+NOC_CMD_BRCST_PACKET = 1 << 5
+NOC_CMD_VC_LINKED = 1 << 6
+NOC_CMD_VC_STATIC = 1 << 7
+NOC_CMD_PATH_RESERVE = 1 << 8
+NOC_CMD_STATIC_VC_1 = 1 << 13
+NOC_CMD_STATIC_VC_5 = 5 << 13
+NOC_CMD_BRCST_XY = 1 << 16
+
+NOC_CMD_RD_FIELD = NOC_CMD_RESP_MARKED | NOC_CMD_VC_STATIC | NOC_CMD_STATIC_VC_1
+NOC_CMD_WR_FIELD = NOC_CMD_WR | NOC_CMD_VC_STATIC | NOC_CMD_STATIC_VC_1
+NOC_CMD_WR_MCAST_FIELD = (NOC_CMD_WR | NOC_CMD_VC_STATIC |
+                          NOC_CMD_STATIC_VC_5 | NOC_CMD_BRCST_PACKET | NOC_CMD_PATH_RESERVE)
+NOC_CMD_AT_INC_FIELD = NOC_CMD_AT | NOC_CMD_RESP_MARKED | NOC_CMD_VC_STATIC | NOC_CMD_STATIC_VC_1
+NOC_AT_INCR_GET = 1 << 12 | 31 << 2
+
+Value = int | R
+_WRITE_BUFFER, _READ_BUFFER, _ATOMIC_BUFFER = 0, 1, 3
+
+class _CounterTicket:
+  def __init__(self, noc, start: R, status: int, buffer: int):
+    self.noc, self.asm, self.start, self.status, self.buffer = noc, noc.asm, start, status, buffer
+
+  def wait(self, count: Value):
+    if type(count) is int and not 0 <= count < 1 << 31: raise ValueError("batch count must satisfy 0 <= count < 2^31")
+    with self.asm.scope():
+      addr, current, delta = self.asm.reg(3)
+      expected = count if isinstance(count, R) else self.asm.reg()
+      if not isinstance(count, R): self.asm.li(expected, count)
+      self.asm.li(addr, self.noc._base(self.buffer))
+      with self.asm.loop():
+        self.asm.lw(current, addr, NOC_CMD_CTRL)
+        self.asm.break_(Cond(current, "==", 0))
+      self.asm.li(addr, NOC_STATUS_BASE + (self.noc.index << NOC_INSTANCE_OFFSET_BIT) + self.status)
+      with self.asm.loop():
+        self.asm.lw(current, addr)
+        self.asm.sub(delta, current, self.start)
+        self.asm.break_(Cond(delta, ">=u", expected))
+    self.asm.fence()
+    return self.noc
+
+class _CompletionBatch:
+  def __init__(self, noc, status: int, buffer: int, count: Value | None = None, owner=None):
+    self.noc, self.status, self.buffer, self.count, self.owner = noc, status, buffer, count, owner
+    self.ticket, self.issued, self.active = None, 0, False
+
+  def __enter__(self):
+    if self.ticket is not None: raise RuntimeError("NoC batch cannot be entered more than once")
+    if self.buffer in self.noc._batches: raise RuntimeError("NoC command buffer already has an active batch")
+    if self.owner is None and self.buffer in self.noc._streams:
+      raise RuntimeError("NoC command buffer is owned by an active stream")
+    if self.owner is not None and self.owner._batch is not None:
+      raise RuntimeError("NoC stream already has an active batch")
+    self.ticket = self.noc._ticket(self.status, self.buffer)
+    self.noc._batches[self.buffer] = self
+    if self.owner is not None: self.owner._batch = self
+    self.active = True
     return self
 
-  def noc_coord(self, out: Reg, x: int | Reg, y: int | Reg, *, tmp: Reg = t0):
-    if isinstance(x, int) and isinstance(y, int):
-      return self.li(out, noc_xy(x, y))
-    if isinstance(y, int):
-      self.li(out, y)
-    else:
-      self.mv(out, y)
-    self.slli(out, out, 6)
-    if isinstance(x, int):
-      self.li(tmp, x)
-      return self.or_(out, out, tmp)
-    return self.or_(out, out, x)
+  def __exit__(self, exc_type, exc, tb):
+    if self.owner is not None: self.owner._batch = None
+    del self.noc._batches[self.buffer]
+    self.active = False
+    if exc_type is None: self.ticket.wait(self.issued if self.count is None else self.count)
 
-  def noc_mcast_coord(self, out: Reg, x_start: int | Reg, y_start: int | Reg,
-                      x_end: int | Reg, y_end: int | Reg, *, tmp: Reg = t0,
-                      reverse: bool = False):
-    if reverse:
-      x_start, x_end = x_end, x_start
-      y_start, y_end = y_end, y_start
-    self.noc_coord(out, x_end, y_end, tmp=tmp)
-    if isinstance(x_start, int) and isinstance(y_start, int):
-      self.li(tmp, noc_xy(x_start, y_start))
-    else:
-      self.noc_coord(tmp, x_start, y_start)
-    self.slli(tmp, tmp, 12)
-    return self.or_(out, out, tmp)
+  def _record(self, count: int = 1):
+    if not self.active: raise RuntimeError("NoC batch operation requires an active context")
+    self.issued += count
 
-  def sem_addr(self, sem_l1_base: int, sem_id: int | Reg, *, out: Reg = t6, tmp: Reg = t0):
-    if isinstance(sem_id, int):
-      self.read32(out, sem_l1_base, tmp_addr=tmp)
-      return self.addi(out, out, sem_id * L1_ALIGN)
-    off = tmp
-    if int(off) == int(sem_id):
-      off = t5 if int(sem_id) != int(t5) and int(out) != int(t5) else t4
-    self.slli(off, sem_id, 4)
-    self.read32(out, sem_l1_base, tmp_addr=out)
-    return self.add(out, out, off)
+  def _require_active(self):
+    if not self.active: raise RuntimeError("NoC batch operation requires an active context")
 
-  def noc_semaphore_set(self, sem_addr: Reg, value: int | Reg, *, tmp: Reg = t0):
-    if isinstance(value, int):
-      self.li(tmp, value)
-      value = tmp
-    self.sw(value, sem_addr, 0)
-    return self.fence()
+class _Stream:
+  def __init__(self, noc, base: R, scratch: R, send: R):
+    self.noc, self.asm, self.base, self.scratch, self.send = noc, noc.asm, base, scratch, send
+    self._batch = None
 
-  def noc_semaphore_wait(self, sem_addr: Reg, value: int | Reg, *, actual: Reg = t0, expected: Reg = t1):
-    if isinstance(value, int):
-      self.li(expected, value)
-      value = expected
-    loop = self._new_label("noc_sem_wait")
-    done = self._new_label("noc_sem_done")
-    self.label(loop)
-    self.fence()
-    self.lw(actual, sem_addr, 0)
-    self.beq(actual, value, done)
-    self.j(loop)
-    self.label(done)
-    return self.fence()
+  def _ready(self):
+    with self.asm.loop():
+      self.asm.lw(self.scratch, self.base, NOC_CMD_CTRL)
+      self.asm.break_(Cond(self.scratch, "==", 0))
 
-  def local_noc0_coord(self, out: Reg = a5, *, x_addr: int = BM.MY_X, y_addr: int = BM.MY_Y):
-    self.read8(t0, x_addr, tmp_addr=t2)
-    self.read8(t1, y_addr, tmp_addr=t2)
-    self.slli(t1, t1, 6)
-    return self.or_(out, t0, t1)
+  def _write(self, register: int, value: Value):
+    if not isinstance(value, R): self.asm.li(self.scratch, value); value = self.scratch
+    self.asm.sw(value, self.base, register)
 
-  def local_noc_coord(self, noc: int, out: Reg = a5, *, x_addr: int = BM.MY_X, y_addr: int = BM.MY_Y):
-    return self.local_noc0_coord(out, x_addr=x_addr + noc, y_addr=y_addr + noc)
+  def _send(self): self.asm.sw(self.send, self.base, NOC_CMD_CTRL)
 
-  def dram_tile_addr_from(self, table_base: int, noc_table_offset: int | Reg = 0):
-    self.mv(t0, a1)
-    self.remu(a1, t0, a2)
-    self.divu(t0, t0, a2)
-    self.slli(t0, t0, 11)
-    self.add(a0, a0, t0)
-    if isinstance(noc_table_offset, int):
-      self.addi(t1, a1, noc_table_offset)
-    else:
-      self.add(t1, a1, noc_table_offset)
-    self.slli(t1, t1, 1)
-    self.li(t2, table_base)
-    self.add(t2, t2, t1)
-    return self.lhu(a2, t2, 0)
+  def _record(self):
+    if self._batch is not None: self._batch._record()
 
-  def dram_tile_addr_static(self, bank_coords: list[int]):
-    self.mv(t0, a1)
-    self.remu(a1, t0, a2)
-    self.divu(t0, t0, a2)
-    self.slli(t0, t0, 11)
-    self.add(a0, a0, t0)
-    self.li(a2, bank_coords[0])
-    for bank, coord in enumerate(bank_coords[1:], start=1):
-      next_bank = self._new_label("dram_static_bank")
-      self.li(t1, bank)
-      self.bne(a1, t1, next_bank)
-      self.li(a2, coord)
-      self.label(next_bank)
+class ReadStream(_Stream):
+
+  def issue(self, src: Value, src_coord: Value, dst: Value):
+    """Issue one fixed-size read using this stream's invariant setup."""
+    self._ready()
+    self._write(NOC_TARG_ADDR_LO, src)
+    self._write(NOC_TARG_ADDR_COORDINATE, src_coord)
+    self._write(NOC_RET_ADDR_LO, dst)
+    self._send()
+    self._record()
+
+  def batch(self, count: Value | None = None):
+    """Wait for this stream's issued reads when the context exits."""
+    return _CompletionBatch(self.noc, NIU_MST_RD_RESP_RECEIVED, _READ_BUFFER, count, self)
+
+class WriteStream(_Stream):
+
+  def issue(self, src: Value, dst: Value, dst_coord: Value):
+    """Issue one fixed-size write using this stream's invariant setup."""
+    self._ready()
+    self._write(NOC_TARG_ADDR_LO, src)
+    self._write(NOC_RET_ADDR_LO, dst)
+    self._write(NOC_RET_ADDR_COORDINATE, dst_coord)
+    self._send()
+    self._record()
+
+  def batch(self, count: Value | None = None):
+    """Wait for this stream's issued writes when the context exits."""
+    return _CompletionBatch(self.noc, NIU_MST_POSTED_WR_REQ_SENT, _WRITE_BUFFER, count, self)
+
+class ReadBatch(_CompletionBatch):
+
+  def issue(self, src: Value, src_coord: Value, dst: Value, size: Value, *,
+            src_mid: Value = 0, return_coord: Value | None = None):
+    """Issue a read tracked by this completion batch."""
+    self._require_active()
+    self.noc.read(src, src_coord, dst, size, src_mid=src_mid, return_coord=return_coord)
+
+class WriteBatch(_CompletionBatch):
+
+  def __init__(self, noc, status=NIU_MST_POSTED_WR_REQ_SENT, buffer=_WRITE_BUFFER,
+               count=None, owner=None, *, posted=True):
+    super().__init__(noc, status, buffer, count, owner)
+    self.posted = posted
+
+  def issue(self, src: Value, dst: Value, dst_coord: Value, size: Value, *, dst_mid: Value = 0):
+    """Issue a write tracked by this completion batch."""
+    self._require_active()
+    self.noc.write(src, dst, dst_coord, size, dst_mid=dst_mid, posted=self.posted)
+
+  def multicast(self, src: Value, dst: Value, dst_coord: Value, size: int, *, exclude: Value = 0, along_y=False):
+    """Issue multicast packets tracked by this completion batch."""
+    self._require_active()
+    packets = self.noc.multicast(src, dst, dst_coord, size, exclude=exclude, along_y=along_y)
+    return packets
+
+  def multicast_packet(self, src: Value, dst: Value, dst_coord: Value, size: Value, *,
+                       exclude: Value = 0, along_y=False):
+    """Issue one unlinked runtime-sized multicast packet."""
+    self._require_active()
+    self.noc._multicast(src, dst, dst_coord, size, linked=False, reserve_path=True,
+                        exclude=exclude, along_y=along_y, posted=self.posted)
+    self._record()
     return self
 
-  def write_reg(self, addr: int | Reg, value: int | Reg, *, tmp_addr: Reg = t0, tmp_val: Reg = t1):
-    return self.write32(addr, value, tmp_addr=tmp_addr, tmp_val=tmp_val)
+class AtomicBatch(_CompletionBatch):
 
-  def read_reg(self, dst: Reg, addr: int | Reg, *, tmp_addr: Reg = t0):
-    return self.read32(dst, addr, tmp_addr=tmp_addr)
+  def issue(self, dst: Value, dst_coord: Value, value: Value = 1, *, return_coord: Value | None = None):
+    """Issue an atomic increment tracked by this completion batch."""
+    self._require_active()
+    self.noc.atomic_inc(dst, dst_coord, value, return_coord=return_coord)
 
-  def noc_write_reg(self, addr: int | Reg, value: int | Reg, *, tmp_addr: Reg = t0, tmp_val: Reg = t1):
-    return self.write_reg(addr, value, tmp_addr=tmp_addr, tmp_val=tmp_val)
+class NoC:
 
-  def noc_read_reg(self, dst: Reg, addr: int | Reg, *, tmp_addr: Reg = t0):
-    return self.read_reg(dst, addr, tmp_addr=tmp_addr)
+  def __init__(self, asm, index: int):
+    if type(index) is not int or index not in (0, 1): raise ValueError("NoC index must be 0 or 1")
+    if getattr(asm, "role", None) not in ("brisc", "ncrisc"):
+      raise ValueError("NoC requires a BRISC or NCRISC kernel builder")
+    self.asm, self.index = asm, index
+    self.local_coord, self.atomic_return = None, 4
+    self._streams, self._batches = set(), {}
 
-  def noc_set_active_instance(self, noc: int):
-    self.active_noc = noc
+  @staticmethod
+  def static_coord(x: int, y: int):
+    """Pack Python X and Y coordinates into a unicast NoC coordinate."""
+    if type(x) is not int or type(y) is not int: raise TypeError("static coordinates require Python integers")
+    return x | y << 6
+
+  def _base(self, buffer: int):
+    return NOC_REGS_START_ADDR + (self.index << NOC_INSTANCE_OFFSET_BIT) + (buffer << NOC_CMD_BUF_OFFSET_BIT)
+
+  def _cfg_addr(self, register: int):
+    return NOC_CFG_BASE + (self.index << NOC_INSTANCE_OFFSET_BIT) + register * 4
+
+  def _stores(self, base: R, value: R, registers: dict[int, Value]):
+    for reg, val in registers.items():
+      if isinstance(val, R): self.asm.sw(val, base, reg)
+    literals = {}
+    for reg, val in registers.items():
+      if type(val) is int: literals.setdefault(val, []).append(reg)
+    last = None
+    for val, registers in literals.items():
+      self.asm.li(value, val)
+      for reg in registers: self.asm.sw(value, base, reg)
+      last = val
+    return last
+
+  def _issue(self, buffer: int, registers: dict[int, Value]):
+    if buffer in self._streams: raise RuntimeError("NoC command buffer is owned by an active stream")
+    with self.asm.scope():
+      base, value = self.asm.reg(2)
+      self.asm.li(base, self._base(buffer))
+      with self.asm.loop():
+        self.asm.lw(value, base, NOC_CMD_CTRL)
+        self.asm.break_(Cond(value, "==", 0))
+      if self._stores(base, value, registers) != NOC_CTRL_SEND_REQ: self.asm.li(value, NOC_CTRL_SEND_REQ)
+      self.asm.sw(value, base, NOC_CMD_CTRL)
+    if batch := self._batches.get(buffer): batch._record()
     return self
 
-  def set_subordinate_reset_pcs(self, *, ncrisc: int, trisc0: int, trisc1: int, trisc2: int):
-    self.write_reg(TensixMMIO.RISCV_DEBUG_REG_NCRISC_RESET_PC, ncrisc)
-    self.write_reg(TensixMMIO.RISCV_DEBUG_REG_TRISC0_RESET_PC, trisc0)
-    self.write_reg(TensixMMIO.RISCV_DEBUG_REG_TRISC1_RESET_PC, trisc1)
-    self.write_reg(TensixMMIO.RISCV_DEBUG_REG_TRISC2_RESET_PC, trisc2)
-    self.write_reg(TensixMMIO.RISCV_DEBUG_REG_TRISC_RESET_PC_OVERRIDE, 0b111)
-    self.write_reg(TensixMMIO.RISCV_DEBUG_REG_NCRISC_RESET_PC_OVERRIDE, 1)
+  @contextmanager
+  def _stream(self, buffer: int, registers: dict[int, Value], cls):
+    if buffer in self._streams: raise RuntimeError("NoC command buffer already has an active stream")
+    if buffer in self._batches: raise RuntimeError("NoC command buffer is owned by an active batch")
+    self._streams.add(buffer)
+    try:
+      with self.asm.scope():
+        base, scratch, send = self.asm.reg(3)
+        self.asm.li(base, self._base(buffer))
+        with self.asm.loop():
+          self.asm.lw(scratch, base, NOC_CMD_CTRL)
+          self.asm.break_(Cond(scratch, "==", 0))
+        self._stores(base, scratch, registers)
+        self.asm.li(send, NOC_CTRL_SEND_REQ)
+        yield cls(self, base, scratch, send)
+    finally: self._streams.remove(buffer)
+
+  def initialize(self, local_coord: Value, atomic_return: Value = 4):
+    """Record the initiating coordinate and local atomic-return address."""
+    self.local_coord, self.atomic_return = local_coord, atomic_return
     return self
 
-  def deassert_all_riscs(self):
-    return self.write_reg(TensixMMIO.RISCV_DEBUG_REG_SOFT_RESET_0, TensixMMIO.SOFT_RESET_NONE)
+  def init_firmware_command_buffers(self, coord: Value, *,
+                                    atomic_return: Value = NocCfg.MEM_NOC_ATOMIC_RET_VAL_ADDR,
+                                    read_ctrl: int = NocCfg.RD_CMD_FIELD,
+                                    write_buffer: int = NocCfg.NCRISC_WR_CMD_BUF,
+                                    read_buffer: int = NocCfg.NCRISC_RD_CMD_BUF,
+                                    write_reg_buffer: int = NocCfg.NCRISC_WR_REG_CMD_BUF,
+                                    atomic_buffer: int = NocCfg.NCRISC_AT_CMD_BUF):
+    """Seed the command-buffer fields used by resident BRISC/NCRISC code.
 
-  def noc_cmd_addr(self, noc: int, buf: int, reg: int) -> int:
-    return reg + (buf << NOC.CMD_BUF_OFFSET_BIT) + (noc << NOC.INSTANCE_OFFSET_BIT)
-
-  def noc_cmd_base_addr(self, noc: int, buf: int) -> int:
-    return NOC.REGS_START_ADDR + (buf << NOC.CMD_BUF_OFFSET_BIT) + (noc << NOC.INSTANCE_OFFSET_BIT)
-
-  def noc_cmd_reg(self, noc: int, buf: int, reg: int, value: int | Reg, *, addr: Reg = t0, tmp: Reg = t1):
-    return self.write32(self.noc_cmd_addr(noc, buf, reg), value, tmp_addr=addr, tmp_val=tmp)
-
-  def noc_set_transaction_id(self, noc: int, buf: int, trid: int | Reg, *, addr: Reg = t0, val: Reg = t1):
-    self.noc_wait_cmd_ready(noc, buf, addr=addr, val=val)
-    if isinstance(trid, int):
-      tag = NOC.packet_tag_transaction_id(trid)
-    else:
-      self.slli(val, trid, NOC.PACKET_TAG_TRANSACTION_ID_SHIFT)
-      tag = val
-    return self.noc_cmd_reg(noc, buf, NOC.PACKET_TAG, tag, addr=addr, tmp=val)
-
-  def noc_async_read_set_trid(self, noc: int, trid: int | Reg, *,
-                              buf: int = NocCfg.NCRISC_RD_CMD_BUF,
-                              addr: Reg = t0, val: Reg = t1):
-    return self.noc_set_transaction_id(noc, buf, trid, addr=addr, val=val)
-
-  def reset_noc_trid_barrier_counter(self, noc: int, id_mask: int | Reg = NOC.CLEAR_OUTSTANDING_REQ_MASK, *,
-                                     addr: Reg = t0, val: Reg = t1):
-    return self.write32(
-      NOC.CLEAR_OUTSTANDING_REQ_CNT + (noc << NOC.INSTANCE_OFFSET_BIT),
-      id_mask,
-      tmp_addr=addr,
-      tmp_val=val,
-    )
-
-  def noc_wait_trid_issue_safe(self, noc: int, trid: int | Reg, *,
-                               addr: Reg = t0, val: Reg = t1, limit: Reg = t2):
-    if isinstance(trid, int):
-      self.li(addr, NOC.STATUS_BASE + NOC.niu_mst_reqs_outstanding_id(trid) + (noc << NOC.INSTANCE_OFFSET_BIT))
-    else:
-      self.li(addr, NOC.STATUS_BASE + NOC.NIU_MST_REQS_OUTSTANDING_ID_BASE + (noc << NOC.INSTANCE_OFFSET_BIT))
-      self.slli(val, trid, 2)
-      self.add(addr, addr, val)
-    self.li(limit, (NOC.MAX_TRANSACTION_ID_COUNT + 1) // 2 + 1)
-    loop = self._new_label("trid_issue_safe")
-    self.label(loop)
-    self.lw(val, addr, 0)
-    self.bgeu(val, limit, loop)
+    This is initialization, not a data transfer: it writes invariant NoC
+    fields once so later firmware operations only fill in addresses/lengths.
+    The launch/dispatch policy remains in ``fw/brisc.py``.
+    """
+    self.initialize(coord, atomic_return)
+    for buf, registers in (
+      (write_buffer, {NOC_TARG_ADDR_MID: 0, NOC_TARG_ADDR_COORDINATE: coord}),
+      (write_reg_buffer, {NOC_TARG_ADDR_MID: 0, NOC_TARG_ADDR_COORDINATE: coord}),
+      (atomic_buffer, {NOC_RET_ADDR_LO: atomic_return, NOC_RET_ADDR_MID: 0,
+                       NOC_RET_ADDR_COORDINATE: coord}),
+      (read_buffer, {NOC_CTRL: read_ctrl, NOC_RET_ADDR_MID: 0,
+                     NOC_RET_ADDR_COORDINATE: coord}),
+    ):
+      for register, value in registers.items():
+        self.asm.write32(self._base(buf) + register, value)
     return self
 
-  def noc_async_read_barrier_with_trid(self, noc: int, trid: int | Reg, *, addr: Reg = t0, val: Reg = t1):
-    if isinstance(trid, int):
-      self.li(addr, NOC.STATUS_BASE + NOC.niu_mst_reqs_outstanding_id(trid) + (noc << NOC.INSTANCE_OFFSET_BIT))
-    else:
-      self.li(addr, NOC.STATUS_BASE + NOC.NIU_MST_REQS_OUTSTANDING_ID_BASE + (noc << NOC.INSTANCE_OFFSET_BIT))
-      self.slli(val, trid, 2)
-      self.add(addr, addr, val)
-    loop = self._new_label("trid_rd_flush")
-    self.label(loop)
-    self.lw(val, addr, 0)
-    self.bne(val, zero, loop)
-    return self.fence()
-
-  def noc_init_cmd_bufs(self, noc: int, coord: Reg, *, atomic_ret_addr: int,
-                        read_ctrl: int, wr_buf: int = 0, rd_buf: int = 1,
-                        wr_reg_buf: int = 2, at_buf: int = 3,
-                        tmp_addr: Reg = t0, tmp_val: Reg = t1):
-    self.noc_cmd_reg(noc, wr_buf, NOC.TARG_ADDR_MID, 0, addr=tmp_addr, tmp=tmp_val)
-    self.noc_cmd_reg(noc, wr_buf, NOC.TARG_ADDR_COORDINATE, coord, addr=tmp_addr, tmp=tmp_val)
-    self.noc_cmd_reg(noc, wr_reg_buf, NOC.TARG_ADDR_MID, 0, addr=tmp_addr, tmp=tmp_val)
-    self.noc_cmd_reg(noc, wr_reg_buf, NOC.TARG_ADDR_COORDINATE, coord, addr=tmp_addr, tmp=tmp_val)
-    self.noc_cmd_reg(noc, at_buf, NOC.RET_ADDR_LO, atomic_ret_addr, addr=tmp_addr, tmp=tmp_val)
-    self.noc_cmd_reg(noc, at_buf, NOC.RET_ADDR_MID, 0, addr=tmp_addr, tmp=tmp_val)
-    self.noc_cmd_reg(noc, at_buf, NOC.RET_ADDR_COORDINATE, coord, addr=tmp_addr, tmp=tmp_val)
-    self.noc_cmd_reg(noc, rd_buf, NOC.CTRL, read_ctrl, addr=tmp_addr, tmp=tmp_val)
-    self.noc_cmd_reg(noc, rd_buf, NOC.RET_ADDR_MID, 0, addr=tmp_addr, tmp=tmp_val)
-    self.noc_cmd_reg(noc, rd_buf, NOC.RET_ADDR_COORDINATE, coord, addr=tmp_addr, tmp=tmp_val)
+  def store_risc_coordinates(self, x_addr: int, y_addr: int):
+    """Read this NoC's hardware ID and store its X/Y coordinates."""
+    with self.asm.scope():
+      id_reg, coord = self.asm.reg(2)
+      self.asm.read32(id_reg, self._cfg_addr(NOC_ID_LOGICAL))
+      self.asm.andi(coord, id_reg, NocCfg.NODE_ID_MASK)
+      self.asm.write8(x_addr + self.index, coord)
+      self.asm.srli(id_reg, id_reg, NocCfg.ADDR_NODE_ID_BITS)
+      self.asm.andi(id_reg, id_reg, NocCfg.NODE_ID_MASK)
+      self.asm.write8(y_addr + self.index, id_reg)
     return self
 
-  def noc_snapshot_status_counters(self, noc_id: Reg, noc_shift: Reg,
-                                   counters: Iterable[tuple[int, int]], *,
-                                   status: Reg = t2, dest: Reg = t3,
-                                   value: Reg = t4, offset: Reg = t5):
-    for counter, local_base in counters:
-      self.li(status, NOC.STATUS_BASE + counter * 4)
-      self.add(status, status, noc_shift)
-      self.lw(value, status, 0)
-      self.slli(offset, noc_id, 2)
-      self.li(dest, local_base)
-      self.add(dest, dest, offset)
-      self.write32(dest, value)
+  def init_resident(self):
+    """Initialize one resident BRISC's fixed NoC command-buffer state.
+
+    Logical coordinates come from hardware because one firmware image is
+    multicast to every worker.  This deliberately does not update the saved
+    X/Y bytes: the old firmware stored those once at boot but reinitialized
+    command buffers before every launch.
+    """
+    with self.asm.scope():
+      id_reg, coord = self.asm.reg(2)
+      self.asm.read32(id_reg, self._cfg_addr(NOC_ID_LOGICAL))
+      self.asm.andi(coord, id_reg, NocCfg.NODE_ID_MASK)
+      self.asm.srli(id_reg, id_reg, NocCfg.ADDR_NODE_ID_BITS)
+      self.asm.andi(id_reg, id_reg, NocCfg.NODE_ID_MASK)
+      self.asm.slli(id_reg, id_reg, NocCfg.ADDR_NODE_ID_BITS)
+      self.asm.or_(coord, coord, id_reg)
+      self.init_firmware_command_buffers(coord)
     return self
 
-  def noc_wait_cmd_ready(self, noc: int, buf: int, *, addr: Reg = t0, val: Reg = t1):
-    self.li(addr, self.noc_cmd_addr(noc, buf, NOC.CMD_CTRL))
-    loop = self._new_label("noc_ready")
-    self.label(loop)
-    self.lw(val, addr, 0)
-    self.bne(val, zero, loop)
-    return self
+  def _local(self, coord: Value | None):
+    coord = self.local_coord if coord is None else coord
+    if coord is None: raise RuntimeError("NoC.initialize() requires the local coordinate")
+    return coord
 
-  def noc_wait_write_acks(self, noc: int, target: Reg, *, addr: Reg = t0, val: Reg = t1):
-    self.li(addr, NOC.STATUS_BASE + NOC.NIU_MST_WR_ACK_RECEIVED + (noc << NOC.INSTANCE_OFFSET_BIT))
-    loop = self._new_label("wr_ack")
-    self.label(loop)
-    self.lw(val, addr, 0)
-    self.bltu(val, target, loop)
-    return self
+  @staticmethod
+  def _size(size: int):
+    if isinstance(size, R): return size
+    if type(size) is not int or not 0 < size <= NOC_MAX_BURST_SIZE:
+      raise ValueError(f"NoC transfer must be between 1 and {NOC_MAX_BURST_SIZE} bytes")
+    return size
 
-  def noc_write_barrier(self, noc: int, target: Reg, *, addr: Reg = t0, val: Reg = t1):
-    self.noc_wait_write_acks(noc, target, addr=addr, val=val)
-    return self.fence()
+  def read(self, src: Value, src_coord: Value, dst: Value, size: Value, *,
+           src_mid: Value = 0, return_coord: Value | None = None):
+    """Issue a remote read into local L1 without waiting for completion."""
+    self._size(size)
+    registers = {NOC_CTRL: NOC_CMD_RD_FIELD,
+                 NOC_RET_ADDR_LO: dst, NOC_RET_ADDR_MID: 0, NOC_RET_ADDR_COORDINATE: self._local(return_coord),
+                 NOC_TARG_ADDR_LO: src, NOC_TARG_ADDR_MID: src_mid, NOC_TARG_ADDR_COORDINATE: src_coord,
+                 NOC_AT_LEN_BE: size, NOC_AT_LEN_BE_1: 0}
+    return self._issue(_READ_BUFFER, registers)
 
-  def noc_reads_flushed(self, noc: int, target: Reg, *, addr: Reg = t0, val: Reg = t1):
-    self.li(addr, NOC.STATUS_BASE + NOC.NIU_MST_RD_RESP_RECEIVED + (noc << NOC.INSTANCE_OFFSET_BIT))
-    loop = self._new_label("rd_flush")
-    self.label(loop)
-    self.lw(val, addr, 0)
-    self.bltu(val, target, loop)
-    return self.fence()
+  def read_stream(self, size: int, *, return_coord: Value | None = None) -> AbstractContextManager[ReadStream]:
+    """Create a context that reuses fixed read command fields."""
+    self._size(size)
+    return self._stream(_READ_BUFFER, {NOC_CTRL: NOC_CMD_RD_FIELD, NOC_PACKET_TAG: 0,
+      NOC_TARG_ADDR_MID: 0, NOC_RET_ADDR_MID: 0, NOC_RET_ADDR_COORDINATE: self._local(return_coord),
+      NOC_AT_LEN_BE: size, NOC_AT_LEN_BE_1: 0}, ReadStream)
 
-  def noc_nonposted_writes_flushed(self, noc: int, target: Reg, *, addr: Reg = t0, val: Reg = t1):
-    self.li(addr, NOC.STATUS_BASE + NOC.NIU_MST_NONPOSTED_WR_REQ_SENT + (noc << NOC.INSTANCE_OFFSET_BIT))
-    loop = self._new_label("np_wr_flush")
-    self.label(loop)
-    self.lw(val, addr, 0)
-    self.bltu(val, target, loop)
-    return self.fence()
+  def read_batch(self, count: Value | None = None) -> AbstractContextManager[ReadBatch]:
+    """Create a read batch that waits for completion on context exit."""
+    return ReadBatch(self, NIU_MST_RD_RESP_RECEIVED, _READ_BUFFER, count)
 
-  def noc_read(self, noc: int, buf: int, src_lo: Reg, src_mid: int | Reg, src_coord: int | Reg,
-               dst: Reg, length: Reg, *, ret_coord: int | Reg = 0, a: Reg = t0, v: Reg = t1):
-    self.noc_wait_cmd_ready(noc, buf, addr=a, val=v)
-    self.noc_cmd_reg(noc, buf, NOC.CTRL, NOC.CMD_RD_FIELD, addr=a, tmp=v)
-    self.noc_cmd_reg(noc, buf, NOC.RET_ADDR_LO, dst, addr=a, tmp=v)
-    self.noc_cmd_reg(noc, buf, NOC.RET_ADDR_MID, 0, addr=a, tmp=v)
-    self.noc_cmd_reg(noc, buf, NOC.RET_ADDR_COORDINATE, ret_coord, addr=a, tmp=v)
-    self.noc_cmd_reg(noc, buf, NOC.TARG_ADDR_LO, src_lo, addr=a, tmp=v)
-    self.noc_cmd_reg(noc, buf, NOC.TARG_ADDR_MID, src_mid, addr=a, tmp=v)
-    self.noc_cmd_reg(noc, buf, NOC.TARG_ADDR_COORDINATE, src_coord, addr=a, tmp=v)
-    self.noc_cmd_reg(noc, buf, NOC.AT_LEN_BE, length, addr=a, tmp=v)
-    self.noc_cmd_reg(noc, buf, NOC.AT_LEN_BE_1, 0, addr=a, tmp=v)
-    self.noc_cmd_reg(noc, buf, NOC.CMD_CTRL, NOC.CTRL_SEND_REQ, addr=a, tmp=v)
-    return self
+  def write(self, src: Value, dst: Value, dst_coord: Value, size: Value, *,
+            dst_mid: Value = 0, posted=True):
+    """Issue a posted local-L1-to-remote write without waiting."""
+    self._size(size)
+    ctrl = NOC_CMD_WR_FIELD if posted else NOC_CMD_WR_FIELD | NOC_CMD_RESP_MARKED
+    return self._issue(_WRITE_BUFFER, {NOC_CTRL: ctrl, NOC_PACKET_TAG: 0,
+      NOC_TARG_ADDR_LO: src, NOC_TARG_ADDR_MID: 0, NOC_TARG_ADDR_COORDINATE: self._local(None),
+      NOC_RET_ADDR_LO: dst, NOC_RET_ADDR_MID: dst_mid,
+      NOC_RET_ADDR_COORDINATE: dst_coord, NOC_AT_LEN_BE: size, NOC_AT_LEN_BE_1: 0})
 
-  def noc_read_state_setup(self, noc: int, buf: int, src_mid: int | Reg,
-                           ret_coord: int | Reg, length: Reg,
-                           *, a: Reg = t0, v: Reg = t1):
-    self.noc_wait_cmd_ready(noc, buf, addr=a, val=v)
-    self.noc_cmd_reg(noc, buf, NOC.CTRL, NOC.CMD_RD_FIELD, addr=a, tmp=v)
-    self.noc_cmd_reg(noc, buf, NOC.RET_ADDR_MID, 0, addr=a, tmp=v)
-    self.noc_cmd_reg(noc, buf, NOC.RET_ADDR_COORDINATE, ret_coord, addr=a, tmp=v)
-    self.noc_cmd_reg(noc, buf, NOC.TARG_ADDR_MID, src_mid, addr=a, tmp=v)
-    self.noc_cmd_reg(noc, buf, NOC.AT_LEN_BE, length, addr=a, tmp=v)
-    self.noc_cmd_reg(noc, buf, NOC.AT_LEN_BE_1, 0, addr=a, tmp=v)
-    return self
+  def write_stream(self, size: int) -> AbstractContextManager[WriteStream]:
+    """Create a context that reuses fixed write command fields."""
+    self._size(size)
+    return self._stream(_WRITE_BUFFER, {NOC_CTRL: NOC_CMD_WR_FIELD, NOC_PACKET_TAG: 0,
+      NOC_TARG_ADDR_MID: 0, NOC_TARG_ADDR_COORDINATE: self._local(None), NOC_RET_ADDR_MID: 0,
+      NOC_AT_LEN_BE: size, NOC_AT_LEN_BE_1: 0}, WriteStream)
 
-  def noc_read_stateful(self, noc: int, buf: int, src_lo: Reg, src_coord: int | Reg,
-                        dst: Reg, *, a: Reg = t0, v: Reg = t1):
-    self.noc_wait_cmd_ready(noc, buf, addr=a, val=v)
-    self.noc_cmd_reg(noc, buf, NOC.RET_ADDR_LO, dst, addr=a, tmp=v)
-    self.noc_cmd_reg(noc, buf, NOC.TARG_ADDR_LO, src_lo, addr=a, tmp=v)
-    self.noc_cmd_reg(noc, buf, NOC.TARG_ADDR_COORDINATE, src_coord, addr=a, tmp=v)
-    self.noc_cmd_reg(noc, buf, NOC.CMD_CTRL, NOC.CTRL_SEND_REQ, addr=a, tmp=v)
-    return self
+  def write_batch(self, count: Value | None = None) -> AbstractContextManager[WriteBatch]:
+    """Create a write batch that waits for issue completion on exit."""
+    return WriteBatch(self, NIU_MST_POSTED_WR_REQ_SENT, _WRITE_BUFFER, count)
 
-  def noc_read_stateful_at(self, cmd_base: Reg, send_req: Reg, src_lo: Reg,
-                           src_coord: int | Reg, dst: Reg, *, v: Reg = t1):
-    loop = self._new_label("noc_ready")
-    self.label(loop)
-    self.lw(v, cmd_base, NOC.CMD_CTRL - NOC.REGS_START_ADDR)
-    self.bne(v, zero, loop)
-    self.sw(dst, cmd_base, NOC.RET_ADDR_LO - NOC.REGS_START_ADDR)
-    self.sw(src_lo, cmd_base, NOC.TARG_ADDR_LO - NOC.REGS_START_ADDR)
-    if isinstance(src_coord, int):
-      self.li(v, src_coord)
-      src_coord = v
-    self.sw(src_coord, cmd_base, NOC.TARG_ADDR_COORDINATE - NOC.REGS_START_ADDR)
-    self.sw(send_req, cmd_base, NOC.CMD_CTRL - NOC.REGS_START_ADDR)
-    return self
+  def write_ack_batch(self, count: Value | None = None) -> AbstractContextManager[WriteBatch]:
+    """Create a nonposted write batch that waits for destination acknowledgements."""
+    return WriteBatch(self, NIU_MST_WR_ACK_RECEIVED, _WRITE_BUFFER, count, posted=False)
 
-  def noc_write(self, noc: int, buf: int, src: Reg, dst_lo: Reg, dst_mid: int | Reg, dst_coord: Reg,
-                length: Reg, *, mcast: bool = False, mcast_linked: bool = False,
-                num_dests: Reg | None = None, posted: bool = False,
-                mcast_path_reserve: bool = True, mcast_exclude: int | Reg = 0,
-                mcast_y: bool = False, a: Reg = t0, v: Reg = t1):
-    self.noc_wait_cmd_ready(noc, buf, addr=a, val=v)
-    if mcast:
-      ctrl = NOC.CMD_WR_MCAST_LINKED_FIELD if mcast_linked else NOC.CMD_WR_MCAST_UNLINK_FIELD
-      if not mcast_path_reserve:
-        ctrl &= ~NOC.CMD_PATH_RESERVE
-      if mcast_y:
-        ctrl |= NOC.CMD_BRCST_XY
-    else:
-      ctrl = NOC.CMD_WR_POSTED_FIELD if posted else NOC.CMD_WR_FIELD
-    self.noc_cmd_reg(noc, buf, NOC.CTRL, ctrl, addr=a, tmp=v)
-    self.noc_cmd_reg(noc, buf, NOC.TARG_ADDR_LO, src, addr=a, tmp=v)
-    self.noc_cmd_reg(noc, buf, NOC.RET_ADDR_LO, dst_lo, addr=a, tmp=v)
-    self.noc_cmd_reg(noc, buf, NOC.RET_ADDR_MID, dst_mid, addr=a, tmp=v)
-    self.noc_cmd_reg(noc, buf, NOC.RET_ADDR_COORDINATE, dst_coord, addr=a, tmp=v)
-    if mcast:
-      self.noc_cmd_reg(noc, buf, NOC.BRCST_EXCLUDE, mcast_exclude, addr=a, tmp=v)
-    self.noc_cmd_reg(noc, buf, NOC.AT_LEN_BE, length, addr=a, tmp=v)
-    self.noc_cmd_reg(noc, buf, NOC.AT_LEN_BE_1, 0, addr=a, tmp=v)
-    self.noc_cmd_reg(noc, buf, NOC.CMD_CTRL, NOC.CTRL_SEND_REQ, addr=a, tmp=v)
-    return self
+  def _multicast(self, src: Value, dst: Value, dst_coord: Value, size: Value, *, linked: bool,
+                 reserve_path: bool, exclude: Value, along_y: bool, dst_mid: Value = 0,
+                 posted=True):
+    ctrl = NOC_CMD_WR_MCAST_FIELD | (NOC_CMD_VC_LINKED if linked else 0) | (NOC_CMD_BRCST_XY if along_y else 0)
+    if not posted: ctrl |= NOC_CMD_RESP_MARKED
+    if not reserve_path: ctrl &= ~NOC_CMD_PATH_RESERVE
+    return self._issue(_WRITE_BUFFER, {NOC_CTRL: ctrl, NOC_PACKET_TAG: 0,
+      NOC_TARG_ADDR_LO: src, NOC_TARG_ADDR_MID: 0, NOC_TARG_ADDR_COORDINATE: self._local(None),
+      NOC_RET_ADDR_LO: dst, NOC_RET_ADDR_MID: dst_mid, NOC_RET_ADDR_COORDINATE: dst_coord,
+      NOC_BRCST_EXCLUDE: exclude, NOC_AT_LEN_BE: size, NOC_AT_LEN_BE_1: 0})
 
-  def noc_inline_write(self, noc: int, buf: int, value: Reg, dst_lo: Reg,
-                       dst_mid: int | Reg, dst_coord: Reg, *, a: Reg = t0, v: Reg = t1):
-    self.noc_wait_cmd_ready(noc, buf, addr=a, val=v)
-    self.noc_cmd_reg(noc, buf, NOC.AT_DATA, value, addr=a, tmp=v)
-    self.noc_cmd_reg(noc, buf, NOC.CTRL, NOC.CMD_INLINE_FIELD, addr=a, tmp=v)
-    self.noc_cmd_reg(noc, buf, NOC.TARG_ADDR_LO, dst_lo, addr=a, tmp=v)
-    self.noc_cmd_reg(noc, buf, NOC.TARG_ADDR_MID, dst_mid, addr=a, tmp=v)
-    self.noc_cmd_reg(noc, buf, NOC.TARG_ADDR_COORDINATE, dst_coord, addr=a, tmp=v)
-    self.noc_cmd_reg(noc, buf, NOC.AT_LEN_BE, 0xF, addr=a, tmp=v)
-    self.noc_cmd_reg(noc, buf, NOC.AT_LEN_BE_1, 0, addr=a, tmp=v)
-    self.noc_cmd_reg(noc, buf, NOC.CMD_CTRL, NOC.CTRL_SEND_REQ, addr=a, tmp=v)
-    return self
+  def multicast(self, src: Value, dst: Value, dst_coord: Value, size: int, *, exclude: Value = 0, along_y=False):
+    """Issue a possibly chunked multicast write and return its packet count."""
+    if type(size) is not int or size <= 0: raise ValueError("multicast size must be a positive Python integer")
+    chunks = (size + NOC_MAX_BURST_SIZE - 1) // NOC_MAX_BURST_SIZE
+    with self.asm.scope():
+      src_at, dst_at = src, dst
+      moving = []
+      if isinstance(src, R): self.asm.mv(src_at := self.asm.reg(), src); moving.append(src_at)
+      if isinstance(dst, R): self.asm.mv(dst_at := self.asm.reg(), dst); moving.append(dst_at)
+      step = self.asm.reg() if moving and chunks > 1 else None
+      if step is not None: self.asm.li(step, NOC_MAX_BURST_SIZE)
+      for i in range(chunks):
+        chunk = min(NOC_MAX_BURST_SIZE, size - i * NOC_MAX_BURST_SIZE)
+        self._multicast(src_at, dst_at, dst_coord, chunk, linked=i + 1 < chunks,
+                        reserve_path=i == 0, exclude=exclude, along_y=along_y)
+        if i + 1 < chunks:
+          if isinstance(src_at, R): self.asm.add(src_at, src_at, step)
+          else: src_at += chunk
+          if isinstance(dst_at, R): self.asm.add(dst_at, dst_at, step)
+          else: dst_at += chunk
+    return chunks
 
-  def noc_wait_atomic_responses(self, noc: int, target: Reg, *, addr: Reg = t0, val: Reg = t1):
-    self.li(addr, NOC.STATUS_BASE + NOC.NIU_MST_ATOMIC_RESP_RECEIVED + (noc << NOC.INSTANCE_OFFSET_BIT))
-    loop = self._new_label("atomic_resp")
-    self.label(loop)
-    self.lw(val, addr, 0)
-    self.bltu(val, target, loop)
-    return self
+  def atomic_inc(self, dst: Value, dst_coord: Value, value: Value = 1, *, return_coord: Value | None = None):
+    """Issue a remote atomic increment that returns the previous value."""
+    registers = {NOC_TARG_ADDR_LO: dst, NOC_TARG_ADDR_MID: 0, NOC_TARG_ADDR_COORDINATE: dst_coord,
+                 NOC_RET_ADDR_LO: self.atomic_return, NOC_RET_ADDR_MID: 0,
+                 NOC_RET_ADDR_COORDINATE: self._local(return_coord), NOC_PACKET_TAG: 0,
+                 NOC_CTRL: NOC_CMD_AT_INC_FIELD, NOC_AT_LEN_BE: NOC_AT_INCR_GET,
+                 NOC_AT_LEN_BE_1: 0, NOC_AT_DATA: value}
+    return self._issue(_ATOMIC_BUFFER, registers)
 
-  def noc_atomic_inc(self, noc: int, buf: int, dst_lo: Reg, dst_coord: int | Reg,
-                     incr: Reg | int, ret_coord: int | Reg, *, a: Reg = t0, v: Reg = t1):
-    self.noc_wait_cmd_ready(noc, buf, addr=a, val=v)
-    self.noc_cmd_reg(noc, buf, NOC.RET_ADDR_LO, 4, addr=a, tmp=v)
-    self.noc_cmd_reg(noc, buf, NOC.RET_ADDR_MID, 0, addr=a, tmp=v)
-    self.noc_cmd_reg(noc, buf, NOC.RET_ADDR_COORDINATE, ret_coord, addr=a, tmp=v)
-    self.noc_cmd_reg(noc, buf, NOC.TARG_ADDR_LO, dst_lo, addr=a, tmp=v)
-    self.noc_cmd_reg(noc, buf, NOC.TARG_ADDR_MID, 0, addr=a, tmp=v)
-    self.noc_cmd_reg(noc, buf, NOC.TARG_ADDR_COORDINATE, dst_coord, addr=a, tmp=v)
-    self.noc_cmd_reg(noc, buf, NOC.CTRL, NOC.CMD_AT_INC_FIELD, addr=a, tmp=v)
-    self.noc_cmd_reg(noc, buf, NOC.AT_LEN_BE, NOC.AT_INCR_GET, addr=a, tmp=v)
-    self.noc_cmd_reg(noc, buf, NOC.AT_LEN_BE_1, 0, addr=a, tmp=v)
-    self.noc_cmd_reg(noc, buf, NOC.AT_DATA, incr, addr=a, tmp=v)
-    self.noc_cmd_reg(noc, buf, NOC.CMD_CTRL, NOC.CTRL_SEND_REQ, addr=a, tmp=v)
-    return self
+  def atomic_batch(self, count: Value | None = None) -> AbstractContextManager[AtomicBatch]:
+    """Create an atomic batch that waits for responses on context exit."""
+    return AtomicBatch(self, NIU_MST_ATOMIC_RESP_RECEIVED, _ATOMIC_BUFFER, count)
 
-  def noc_semaphore_inc(self, noc: int, buf: int, sem_addr: Reg, sem_coord: int | Reg,
-                        incr: int | Reg = 1, *, ret_coord: int | Reg = 0, a: Reg = t0, v: Reg = t1):
-    return self.noc_atomic_inc(noc, buf, sem_addr, sem_coord, incr, ret_coord, a=a, v=v)
-
-  def noc_semaphore_set_multicast(self, noc: int, buf: int, sem_addr: Reg, sem_coord: Reg,
-                                  value: int | Reg, num_dests: int | Reg, *,
-                                  mcast_path_reserve: bool = True, a: Reg = t0, v: Reg = t1):
-    if not isinstance(value, int):
-      self.sw(value, sem_addr, 0)
-    else:
-      self.li(v, value)
-      self.sw(v, sem_addr, 0)
-    length = t5 if int(v) == int(t2) else t2
-    self.li(length, L1_ALIGN)
-    self.noc_write(
-      noc, buf, sem_addr, sem_addr, 0, sem_coord, length,
-      mcast=True, mcast_path_reserve=mcast_path_reserve, a=a, v=v,
-    )
-    return self
+  def _ticket(self, status: int, buffer: int):
+    start = self.asm.reg()
+    self.asm.load(start, NOC_STATUS_BASE + (self.index << NOC_INSTANCE_OFFSET_BIT) + status)
+    self.asm.fence()
+    return _CounterTicket(self, start, status, buffer)

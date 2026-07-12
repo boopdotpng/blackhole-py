@@ -1,460 +1,332 @@
-from __future__ import annotations
+"""Host/CQ-firmware command contract.
 
-import os
-import struct
+Python performs all grouping, coordinate packing, and multicast rectangle
+selection. Prefetch forwards these records and dispatch executes them directly.
+"""
+
+from dataclasses import dataclass
+from enum import IntEnum
+from struct import Struct
+from typing import Tuple
 import time
 
-from ttk.addrs import Core, L1_ALIGN, PCIE_ALIGN, align_up, noc_xy
-from ttk.tensix import TensixL1
-from pcie import Mapping, PCIDevice, TLBWindow
-from program import IRCommand, McastMmioWrite32, McastWrite, Run, UnicastWrite
+Core = Tuple[int, int]  # (x, y)
+Rect = Tuple[Core, Core]  # inclusive (start, end)
 
-Rect = tuple[int, int, int, int]
-PAGE_SIZE = os.sysconf("SC_PAGE_SIZE")
+ALIGN = 64  # PCIe NoC reads require every issue record to start on a cache line.
+MAX_WRITE_SIZE = 16 * 1024
+MAX_RECORD_SIZE = 64 * 1024
+PAGE_SIZE = 4096
 
-# CQ L1 address map. These addresses are the single source of truth for the CQ
-# ABI: fw/cq.py imports this module and aliases the names below so the host
-# encoder and the on-device prefetch/dispatch firmware can never drift apart.
-CQ_L1 = 0x196C0
-_CQ_L1 = CQ_L1  # backwards-compatible private alias for this module's body
-CQ_PREFETCH_Q_RD_PTR = _CQ_L1 + 0x00
-CQ_PREFETCH_Q_PCIE_RD = _CQ_L1 + 0x04
-CQ_COMPLETION_WR_PTR = _CQ_L1 + 0x10
-CQ_COMPLETION_RD_PTR = _CQ_L1 + 0x20
-CQ_COMPLETION_Q0_EVENT = _CQ_L1 + 0x30
-CQ_COMPLETION_Q1_EVENT = _CQ_L1 + 0x40
-CQ_DISPATCH_SYNC_SEM = _CQ_L1 + 0x50
-CQ_COMPLETION_BASE_PTR = _CQ_L1 + 0xD0
-CQ_COMPLETION_END_PTR = _CQ_L1 + 0xD4
-CQ_COMPLETION_HOST_WR_OFF = _CQ_L1 + 0xD8
-CQ_PREFETCH_Q_BASE = _CQ_L1 + 0x180
-CQ_PREFETCH_Q_SIZE = 0xBFC
-CQ_PREFETCH_Q_ENTRY_SZ = 4
-CQ_PREFETCH_Q_ENTRIES = CQ_PREFETCH_Q_SIZE // CQ_PREFETCH_Q_ENTRY_SZ
-CQ_DISPATCH_CB_PAGES = (1280 * 1024) >> 12
+# Shared host/prefetch/dispatch transport map. The two CQ cores have separate
+# L1s, so state addresses may intentionally coincide.
+CQ_STATE = 0x1000
+PREFETCH_QUEUE = CQ_STATE + 0x100
+PREFETCH_QUEUE_ENTRIES = 256
+PREFETCH_PCIE_READ = CQ_STATE + 0x00
+PREFETCH_PCIE_BASE = CQ_STATE + 0x04
+PREFETCH_PCIE_END = CQ_STATE + 0x08
+PREFETCH_CREDITS = CQ_STATE + 0x0C
+PREFETCH_STAGING = 0x2000
+DISPATCH_PUBLISHED = CQ_STATE + 0x00
+DISPATCH_COMPLETION_WRITE = CQ_STATE + 0x04
+DISPATCH_COMPLETION_BASE = CQ_STATE + 0x08
+DISPATCH_COMPLETION_END = CQ_STATE + 0x0C
+DISPATCH_COMPLETION_HOST_PTR = CQ_STATE + 0x10
+DISPATCH_RING_BASE = 0x20000
+DISPATCH_RING_PAGES = 320
+DISPATCH_RING_END = DISPATCH_RING_BASE + DISPATCH_RING_PAGES * PAGE_SIZE
+DISPATCH_SCRATCH = DISPATCH_RING_END
+DISPATCH_GO = DISPATCH_SCRATCH + 0x40
+DISPATCH_DONE_COUNT = DISPATCH_SCRATCH + 0x50
+DISPATCH_COMPLETION_PUBLISH = DISPATCH_SCRATCH + 0x60
+DISPATCH_CREDIT_RETURN = DISPATCH_SCRATCH + 0x70
 
-_PCIE_NOC_BASE = 1 << 60
+HOST_ISSUE_SIZE = 64 << 20
+HOST_COMPLETION_SIZE = 1 << 20
 
-# Host sysmem layout.
-_HOST_ISSUE_BASE = 4 * PCIE_ALIGN
-_HOST_ISSUE_SIZE = align_up(int(os.environ.get("CQ_ISSUE_MB", "64")) << 20, PCIE_ALIGN)
-_HOST_COMPLETION_BASE = _HOST_ISSUE_BASE + _HOST_ISSUE_SIZE
-_HOST_COMPLETION_SIZE = align_up(32 << 20, PCIE_ALIGN)
-_HOST_CQ_WR_OFF = 2 * PCIE_ALIGN
-_HOST_CQ_RD_OFF = 3 * PCIE_ALIGN
-_HOST_SYS_END_BASE = _HOST_COMPLETION_BASE + _HOST_COMPLETION_SIZE
+class Op(IntEnum):
+  PAD = 0
+  UNICAST_WRITE = 1
+  MCAST_WRITE = 2
+  RUN = 3
+  FENCE = 4
 
-# Prefetch/dispatch command IDs. Public names are the shared CQ ABI consumed by
-# fw/cq.py; the leading-underscore aliases keep this module's encoder body terse.
-CMD_RELAY_INLINE = 5
-CMD_WRITE_LINEAR_HOST = 3
-CMD_WRITE_PACKED = 5
-CMD_WRITE_PACKED_LARGE = 6
-CMD_WAIT = 7
-CMD_GO_SIGNAL = 14
-CMD_SET_GO_NOC_DATA = 17
-CMD_TIMESTAMP = 18
-_RELAY_INLINE = CMD_RELAY_INLINE
-_WRITE_LINEAR_HOST = CMD_WRITE_LINEAR_HOST
-_WRITE_PACKED = CMD_WRITE_PACKED
-_WRITE_PACKED_LARGE = CMD_WRITE_PACKED_LARGE
-_WAIT = CMD_WAIT
-_GO_SIGNAL = CMD_GO_SIGNAL
-_SET_GO_NOC_DATA = CMD_SET_GO_NOC_DATA
-_TIMESTAMP = CMD_TIMESTAMP
+class Packet:
+  """Fixed command header followed by targets and optional payload data."""
 
-# Wait-command flags and packed-write flags (shared with fw/cq.py).
-CQ_WAIT_BARRIER = 0x01
-CQ_WAIT_WAIT_STREAM = 0x08
-CQ_WAIT_CLEAR_STREAM = 0x10
-CQ_PACKED_NO_STRIDE = 0x02
-CQ_PACKED_LARGE_UNLINK = 0x01
-GO_NO_MULTICAST = 0xFF
+  # op, padding, target_count, total_size, destination/event, payload_size.
+  HEADER = Struct("<BxHIII")
+  RESULT_ADDRESS = Struct("<Q")       # follows a Run header
+  UNICAST_TARGET = Struct("<I")       # packed unicast NoC coordinate
+  MCAST_TARGET = Struct("<II")        # packed rectangle, destination count
 
-CQ_CMD_SIZE = 16
-DONE_STREAM = 48
-CQ_TIMESTAMP_BASE = _CQ_L1 + 0x180  # dispatch-core scratch; prefetch queue uses this only on prefetch core
-CQ_TIMESTAMP_STRIDE = 16
-CQ_TIMESTAMP_SLOTS = 64
+  OP = 0
+  TARGET_COUNT = 2
+  TOTAL_SIZE = 4
+  ADDRESS = 8
+  RUN_EVENT = ADDRESS
+  DATA_SIZE = 12
+  WRITE_TARGETS = HEADER.size
+  RUN_RESULT_ADDRESS = HEADER.size
+  RUN_TARGETS = HEADER.size + RESULT_ADDRESS.size
 
-def _host_sysmem_size() -> int:
-  return align_up(_HOST_SYS_END_BASE, PAGE_SIZE)
+class RunResult:
+  """Host-visible timestamps; dispatch publishes the event word last."""
 
-def _noc_mcast_xy(rect: Rect) -> tuple[int, int]:
-  x0, x1, y0, y1 = rect
-  return (y1 << 18) | (x1 << 12) | (y0 << 6) | x0, (x1 - x0 + 1) * (y1 - y0 + 1)
+  STRUCT = Struct("<QQI4x")
+  START = 0
+  END = 8
+  EVENT = 16
 
-def _hdr(fmt: str, values: tuple) -> bytes:
-  return struct.pack(fmt, *values).ljust(CQ_CMD_SIZE, b"\0")
+def _align(value: int): return (value + ALIGN - 1) & -ALIGN
 
-def _write_packed(cores: list[Core], addr: int, data: bytes | list[bytes]) -> bytes:
-  uniform = isinstance(data, bytes)
-  size = len(data) if uniform else len(data[0])
-  flags = CQ_PACKED_NO_STRIDE if uniform else 0
-  hdr = _hdr("<BBHHHI", (_WRITE_PACKED, flags, len(cores), 0, size, addr))
-  targets = b"".join(struct.pack("<I", noc_xy(x, y)) for x, y in cores)
-  targets = targets.ljust(align_up(len(targets), L1_ALIGN), b"\0")
-  if uniform:
-    body = bytes(data).ljust(align_up(size, L1_ALIGN), b"\0")
-  else:
-    stride = align_up(size, L1_ALIGN)
-    body = b"".join(bytes(blob).ljust(stride, b"\0") for blob in data)
-  return hdr + targets + body
+def _check_u32(name: str, value: int):
+  if type(value) is not int or not 0 <= value <= 0xFFFFFFFF:
+    raise ValueError(f"{name} must fit in an unsigned 32-bit integer")
+  return value
 
-def _write_packed_large(rects: list[Rect], addr: int, data: bytes) -> list[bytes]:
-  padded = bytes(data).ljust(align_up(len(data), L1_ALIGN), b"\0")
-  records: list[bytes] = []
-  for i in range(0, len(rects), 35):
-    batch = rects[i : i + 35]
-    hdr = _hdr("<BBHHH", (_WRITE_PACKED_LARGE, CQ_PACKED_NO_STRIDE, len(batch), L1_ALIGN, 0))
-    subcmds = b"".join(
-      struct.pack("<IIHBB", xy, addr, len(data) - 1, count, CQ_PACKED_LARGE_UNLINK)
-      for rect in batch
-      for xy, count in [_noc_mcast_xy(rect)]
-    )
-    subcmds = subcmds.ljust(align_up(len(subcmds), L1_ALIGN), b"\0")
-    records.append(hdr + subcmds + padded)
-  return records
+def _check_u64(name: str, value: int):
+  if type(value) is not int or not 0 <= value <= 0xFFFFFFFFFFFFFFFF:
+    raise ValueError(f"{name} must fit in an unsigned 64-bit integer")
+  return value
 
-def _barrier() -> bytes:
-  return _hdr("<BBHII", (_WAIT, CQ_WAIT_BARRIER, 0, 0, 0))
+def _core(core: Core):
+  if (not isinstance(core, tuple) or len(core) != 2 or
+      any(type(coordinate) is not int for coordinate in core)):
+    raise TypeError("core must be an (x, y) tuple of Python integers")
+  x, y = core
+  if not 0 <= x < 64 or not 0 <= y < 64:
+    raise ValueError("NoC coordinates must satisfy 0 <= x,y < 64")
+  return x, y
 
-def _set_go_signal_noc_data(cores: list[Core]) -> bytes:
-  hdr = _hdr("<BBHI", (_SET_GO_NOC_DATA, 0, 0, len(cores)))
-  body = b"".join(struct.pack("<I", noc_xy(x, y)) for x, y in cores)
-  return hdr + body
+def noc_coord(core: Core):
+  """Pack an ``(x, y)`` core into a unicast NoC coordinate."""
+  x, y = _core(core)
+  return x | y << 6
 
-def _send_go_signal(go_word: int, stream: int, count: int, num_unicast: int) -> bytes:
-  return _hdr("<BIBBBII", (_GO_SIGNAL, go_word, GO_NO_MULTICAST, num_unicast, 0, count, stream))
+def mcast_coord(rect: Rect):
+  """Pack an inclusive rectangle and return its destination count."""
+  if not isinstance(rect, tuple) or len(rect) != 2:
+    raise TypeError("rectangle must be ((start_x, start_y), (end_x, end_y))")
+  (start_x, start_y), (end_x, end_y) = _core(rect[0]), _core(rect[1])
+  if start_x > end_x or start_y > end_y:
+    raise ValueError("multicast rectangle start must not exceed its end")
+  packed = start_x | start_y << 6 | end_x << 12 | end_y << 18
+  count = (end_x - start_x + 1) * (end_y - start_y + 1)
+  return packed, count
 
-def _wait_stream(stream: int, count: int, clear: bool = True) -> bytes:
-  flags = CQ_WAIT_WAIT_STREAM | (CQ_WAIT_CLEAR_STREAM if clear else 0)
-  return _hdr("<BBHII", (_WAIT, flags, stream, 0, count))
+def _payload(data: bytes):
+  if not isinstance(data, bytes): raise TypeError("write payloads must be bytes")
+  if not 0 < len(data) <= MAX_WRITE_SIZE:
+    raise ValueError(f"write payload size must be in [1, {MAX_WRITE_SIZE}]")
+  return data
 
-def _host_event(event_id: int) -> bytes:
-  payload = struct.pack("<I", event_id & 0xFFFFFFFF).ljust(L1_ALIGN, b"\0")
-  hdr = _hdr("<BBHIQ", (_WRITE_LINEAR_HOST, 1, 0, 0, CQ_CMD_SIZE + len(payload)))
-  return hdr + payload
+def _write_record(op: Op, targets: bytes, target_count: int, address: int,
+                  data_size: int, payload: bytes):
+  if not 0 < target_count <= 0xFFFF: raise ValueError("target count must be in [1, 65535]")
+  target_end = Packet.HEADER.size + len(targets)
+  payload_start = _align(target_end)
+  total_size = _align(payload_start + len(payload))
+  if total_size > MAX_RECORD_SIZE: raise ValueError("CQ record exceeds the 64 KiB staging buffer")
+  _check_u32("command size", total_size)
+  header = Packet.HEADER.pack(op, target_count, total_size, address, data_size)
+  return header + targets + bytes(payload_start - target_end) + payload + bytes(total_size - payload_start - len(payload))
 
-def _timestamp(addr: int) -> bytes:
-  return _hdr("<BxxxI", (_TIMESTAMP, addr))
+@dataclass(frozen=True)
+class UnicastWrite:
+  """Write one equally-sized payload per explicit core."""
 
-def _relay_inline(payload: bytes) -> bytes:
-  stride = align_up(CQ_CMD_SIZE + len(payload), PCIE_ALIGN)
-  hdr = struct.pack("<BBHII", _RELAY_INLINE, 0, 0, len(payload), stride).ljust(CQ_CMD_SIZE, b"\0")
-  return hdr + payload.ljust(stride - CQ_CMD_SIZE, b"\0")
+  cores: tuple[Core, ...]
+  addr: int
+  data: tuple[bytes, ...]
+
+  def lower(self) -> bytes:
+    """Encode this write as one prefetch record."""
+    cores = tuple(self.cores)
+    if not cores: raise ValueError("unicast write requires at least one core")
+    _check_u32("write address", self.addr)
+    targets = b"".join(Packet.UNICAST_TARGET.pack(noc_coord(core)) for core in cores)
+    blobs = tuple(self.data)
+    if len(blobs) != len(cores): raise ValueError("per-core write needs one payload per core")
+    blobs = tuple(_payload(blob) for blob in blobs)
+    size = len(blobs[0])
+    if any(len(blob) != size for blob in blobs): raise ValueError("per-core payload sizes must match")
+    stride = _align(size)
+    payload = b"".join(blob.ljust(stride, b"\0") for blob in blobs)
+    return _write_record(Op.UNICAST_WRITE, targets, len(cores), self.addr, size, payload)
+
+@dataclass(frozen=True)
+class McastWrite:
+  """Write shared bytes to precomputed inclusive multicast rectangles."""
+
+  rects: tuple[Rect, ...]
+  addr: int
+  data: bytes
+  counts: tuple[int, ...] | None = None
+
+  def lower(self) -> bytes:
+    """Encode this multicast write as one prefetch record."""
+    rects = tuple(self.rects)
+    if not rects: raise ValueError("multicast write requires at least one rectangle")
+    _check_u32("write address", self.addr)
+    data = _payload(self.data)
+    encoded = tuple(mcast_coord(rect) for rect in rects)
+    if self.counts is not None:
+      counts = tuple(self.counts)
+      if len(counts) != len(rects) or any(type(count) is not int or count <= 0 for count in counts):
+        raise ValueError("multicast counts must contain one positive integer per rectangle")
+      encoded = tuple((coordinate, count) for (coordinate, _), count in zip(encoded, counts))
+    targets = b"".join(Packet.MCAST_TARGET.pack(*target) for target in encoded)
+    return _write_record(Op.MCAST_WRITE, targets, len(rects), self.addr, len(data), data)
+
+@dataclass(frozen=True)
+class Run:
+  """Run explicit worker cores and publish timing/completion to ``result_addr``."""
+
+  cores: tuple[Core, ...]
+  result_addr: int
+  event: int = 0
+
+  def lower(self) -> bytes:
+    """Encode this run as one prefetch record."""
+    cores = tuple(self.cores)
+    if not cores: raise ValueError("run requires at least one core")
+    _check_u64("result address", self.result_addr)
+    if self.result_addr == 0: raise ValueError("result address must be nonzero")
+    _check_u32("event", self.event)
+    if self.event == 0: raise ValueError("event must be nonzero")
+    targets = b"".join(Packet.UNICAST_TARGET.pack(noc_coord(core)) for core in cores)
+    total_size = _align(Packet.RUN_TARGETS + len(targets))
+    header = Packet.HEADER.pack(Op.RUN, len(cores), total_size, self.event, 0)
+    result = Packet.RESULT_ADDRESS.pack(self.result_addr)
+    return (header + result + targets).ljust(total_size, b"\0")
+
+
+@dataclass(frozen=True)
+class Fence:
+  result_addr: int
+  event: int
+
+  def lower(self):
+    _check_u64("result address", self.result_addr); _check_u32("event", self.event)
+    if not self.result_addr or not self.event: raise ValueError("fence result address and event must be nonzero")
+    total = _align(Packet.HEADER.size + Packet.RESULT_ADDRESS.size)
+    header = Packet.HEADER.pack(Op.FENCE, 0, total, self.event, 0)
+    return (header + Packet.RESULT_ADDRESS.pack(self.result_addr)).ljust(total, b"\0")
+
+
+Command = UnicastWrite | McastWrite | Run | Fence
+
+def lower(commands: list[Command] | tuple[Command, ...]) -> bytes:
+  """Lower commands into the raw, self-framing byte stream read by prefetch."""
+  return b"".join(command.lower() for command in commands)
+
 
 class CommandQueue:
-  def __init__(self, dev: PCIDevice, prefetch_core: Core, dispatch_core: Core):
-    self.sysmem = CQSysmem(
-      dev,
-      prefetch_win=TLBWindow(dev, start=prefetch_core),
-      dispatch_win=TLBWindow(dev, start=dispatch_core),
-    )
-    self.stream = bytearray()
-    self.sizes_16b: list[int] = []
+  """Host side of the stable prefetch/dispatch transport."""
 
-  def clear(self):
-    self.stream.clear()
-    self.sizes_16b.clear()
+  def __init__(self, pcie):
+    from pcie import TLBWindow
+    self.pcie = pcie
+    self.issue = pcie.sysmem.alloc(HOST_ISSUE_SIZE, PAGE_SIZE)
+    self.completion = pcie.sysmem.alloc(HOST_COMPLETION_SIZE, PAGE_SIZE)
+    self.completion_base = self.completion + PAGE_SIZE
+    self.completion_end = self.completion + HOST_COMPLETION_SIZE
+    dram_base = _align(pcie.sysmem.allocator.next)
+    self.dram_size = pcie.sysmem.allocator.end - dram_base
+    if self.dram_size < PAGE_SIZE: raise MemoryError("sysmem has no DRAM staging region")
+    self.dram = pcie.sysmem.alloc(self.dram_size, ALIGN)
+    self.issue_write = self.queue_index = self.dispatch_page = self.event = 0
+    self.completion_read = 0
+    self.completion_toggle = 0
+    pcie.sysmem.write(self.issue, bytes(HOST_ISSUE_SIZE))
+    pcie.sysmem.write(self.completion, bytes(HOST_COMPLETION_SIZE))
+    pcie.sysmem.write(self.completion, self.completion_read.to_bytes(4, "little"))
+    pcie.sysmem.flush()
+    self.prefetch = TLBWindow(pcie.fd, pcie.prefetch_core)
+    self.dispatch = TLBWindow(pcie.fd, pcie.dispatch_core)
+    self.prefetch.target(0, pcie.prefetch_core)
+    self.dispatch.target(0, pcie.dispatch_core)
+    self.noc = pcie.sysmem.noc_addr & 0xFFFFFFFF
+    self.prefetch.write(PREFETCH_PCIE_READ, self.noc + self.issue)
+    self.prefetch.write(PREFETCH_PCIE_BASE, self.noc + self.issue)
+    self.prefetch.write(PREFETCH_PCIE_END, self.noc + self.issue + HOST_ISSUE_SIZE)
+    self.prefetch.write(PREFETCH_QUEUE, bytes(PREFETCH_QUEUE_ENTRIES * 4))
+    self.dispatch.write(DISPATCH_PUBLISHED, 0)
+    self.completion_read = (self.noc + self.completion_base) >> 4
+    self.dispatch.write(DISPATCH_COMPLETION_WRITE, self.completion_read)
+    self.dispatch.write(DISPATCH_COMPLETION_BASE, self.completion_read)
+    self.dispatch.write(DISPATCH_COMPLETION_END, (self.noc + self.completion_end) >> 4)
+    self.dispatch.write(DISPATCH_COMPLETION_HOST_PTR, self.noc + self.completion)
+    pcie.sysmem.write(self.completion, self.completion_read.to_bytes(4, "little"))
+    pcie.sysmem.flush()
 
-  def append(self, payload: bytes):
-    record = _relay_inline(payload)
-    self.stream.extend(record)
-    self.sizes_16b.append(len(record) >> 4)
+  def _slot_free(self, index, timeout=5.0):
+    deadline = time.monotonic() + timeout
+    addr = PREFETCH_QUEUE + index * 4
+    while int.from_bytes(self.prefetch.read(addr, 4), "little"):
+      if time.monotonic() >= deadline: raise TimeoutError(f"CQ prefetch slot {index} did not drain")
 
-  def extend(self, payloads: list[bytes]):
-    for payload in payloads:
-      self.append(payload)
+  @staticmethod
+  def _padding(size=ALIGN):
+    size = _align(size)
+    return Packet.HEADER.pack(Op.PAD, 0, size, 0, 0).ljust(size, b"\0")
 
-  @property
-  def prefetch_win(self) -> TLBWindow:
-    return self.sysmem.prefetch_win
+  def _write_record(self, record: bytes):
+    if len(record) > MAX_RECORD_SIZE or len(record) % ALIGN:
+      raise ValueError("CQ issue records must be aligned and at most 64 KiB")
+    if self.issue_write + len(record) > HOST_ISSUE_SIZE:
+      while self.issue_write < HOST_ISSUE_SIZE:
+        self._publish(self._padding(min(MAX_RECORD_SIZE, HOST_ISSUE_SIZE - self.issue_write)), pad_ring=False)
+      # A free slot proves prefetch completed the corresponding PCIe read.
+      for index in range(PREFETCH_QUEUE_ENTRIES): self._slot_free(index)
+      self.issue_write = 0
+    addr = self.issue + self.issue_write
+    self.pcie.sysmem.write(addr, record)
+    self.pcie.sysmem.flush()
+    index = self.queue_index
+    self._slot_free(index)
+    self.prefetch.write(PREFETCH_QUEUE + index * 4, len(record) >> 4)
+    self.queue_index = (index + 1) % PREFETCH_QUEUE_ENTRIES
+    self.issue_write += len(record)
 
-  @property
-  def dispatch_win(self) -> TLBWindow:
-    return self.sysmem.dispatch_win
+  def _publish(self, record: bytes, *, pad_ring=True):
+    pages = (len(record) + PAGE_SIZE - 1) // PAGE_SIZE
+    if pages > DISPATCH_RING_PAGES: raise ValueError("record exceeds dispatch ring")
+    if pad_ring:
+      while self.dispatch_page and pages > DISPATCH_RING_PAGES - self.dispatch_page:
+        self._publish(self._padding(), pad_ring=False)
+    self._write_record(record)
+    self.dispatch_page = (self.dispatch_page + pages) % DISPATCH_RING_PAGES
 
-  @property
-  def completion_base_16b(self) -> int:
-    return self.sysmem.completion_base_16b
+  def submit(self, commands, *, timeout=10.0):
+    self.event += 1
+    commands = tuple(commands)
+    if not commands: raise ValueError("CQ submission cannot be empty")
+    if isinstance(commands[-1], Run):
+      run = commands[-1]
+      commands = (*commands[:-1], Run(run.cores, 1, self.event))
+    elif not isinstance(commands[-1], Fence):
+      commands = (*commands, Fence(1, self.event))
+    for command in commands: self._publish(command.lower())
+    return self.wait(self.event, timeout=timeout)
 
-  def read_timestamp(self, slot: int) -> int:
-    return self.sysmem.read_timestamp(slot)
-
-  def submit_commands(self, payloads: list[bytes]):
-    self.extend(payloads)
-    event_id = self.sysmem.next_event_id()
-    self.append(_host_event(event_id))
-    self.sysmem.flush(self)
-    self.sysmem.wait_completion(event_id)
-
-  def submit_ir(self, programs: list[list[IRCommand]], go_word: int, names: list[str] | None = None):
-    timestamps = [CQ_TIMESTAMP_BASE + i * CQ_TIMESTAMP_STRIDE for i in range(min(2 * len(programs), CQ_TIMESTAMP_SLOTS))]
-    self.sysmem.clear_timestamps(len(timestamps))
-    payloads = lower_programs(programs, go_word, timestamps=timestamps)
-    self.submit_commands(payloads)
-    return self.read_timings(len(programs), names=names)
-
-  def read_timings(self, n: int, names: list[str] | None = None):
-    timings = []
-    freq_mhz = 1350
-    names = names or [""] * n
-    for i in range(n):
-      slot = 2 * i
-      if slot + 1 >= CQ_TIMESTAMP_SLOTS:
-        break
-      start = self.read_timestamp(slot)
-      end = self.read_timestamp(slot + 1)
-      cycles = end - start
-      timings.append({
-        "cycles": cycles,
-        "us": cycles / freq_mhz,
-        "freq_mhz": freq_mhz,
-        "name": names[i] if i < len(names) else "",
-      })
-    return timings
-
-  def close(self):
-    self.sysmem.close()
-
-def _append_unicast_write(out: list[bytes], cores: list[Core], addr: int, data: list[bytes]):
-  if not data:
-    return
-  size = len(data[0])
-  if any(len(blob) != size for blob in data):
-    raise ValueError("per-core CQ writes require uniform payload sizes")
-  max_payload = 4096 - 2 * CQ_CMD_SIZE - align_up(len(cores) * 4, L1_ALIGN)
-  max_chunk = max(L1_ALIGN, (max_payload // len(cores)) & ~(L1_ALIGN - 1))
-  for off in range(0, size, max_chunk):
-    out.append(_write_packed(cores, addr + off, [blob[off : off + max_chunk] for blob in data]))
-
-def _append_mcast_write(out: list[bytes], rects: list[Rect], addr: int, data: bytes):
-  # Keep records comfortably below the prefetch scratch queue size.
-  max_rects = min(len(rects), 35) or 1
-  max_chunk = max(L1_ALIGN, ((48 * 1024) // max_rects) & ~(L1_ALIGN - 1))
-  for off in range(0, len(data), max_chunk):
-    out.extend(_write_packed_large(rects, addr + off, data[off : off + max_chunk]))
-
-def lower_ir(
-  commands: list[IRCommand],
-  go_word: int,
-  run_timestamps: tuple[int, int] | None = None,
-) -> list[bytes]:
-  out: list[bytes] = []
-  for cmd in commands:
-    match cmd:
-      case UnicastWrite(cores=cores, addr=addr, data=data):
-        _append_unicast_write(out, cores, addr, data)
-      case McastWrite(rects=rects, addr=addr, data=data):
-        _append_mcast_write(out, rects, addr, data)
-        out.append(_barrier())
-      case McastMmioWrite32(rects=rects, addr=addr, value=value):
-        # MMIO regs are NoC-addressable; same encoding as a 4-byte mcast write.
-        _append_mcast_write(out, rects, addr, struct.pack("<I", value & 0xFFFFFFFF))
-        out.append(_barrier())
-      case Run(cores=cores):
-        out.extend([
-          _barrier(),
-          _set_go_signal_noc_data(cores),
-          _wait_stream(DONE_STREAM, 0),
-        ])
-        if run_timestamps is not None:
-          out.append(_timestamp(run_timestamps[0]))
-        out.extend([
-          _send_go_signal(go_word, DONE_STREAM, 0, len(cores)),
-          _wait_stream(DONE_STREAM, len(cores)),
-        ])
-        if run_timestamps is not None:
-          out.append(_timestamp(run_timestamps[1]))
-      case _:
-        raise TypeError(f"{type(cmd).__name__} is not supported by fast dispatch CQ")
-  return out
-
-def lower_programs(
-  programs: list[list[IRCommand]],
-  go_word: int,
-  timestamps: list[int] | None = None,
-) -> list[bytes]:
-  out: list[bytes] = []
-  for i, commands in enumerate(programs):
-    ts = 2 * i
-    run_timestamps = None
-    if timestamps and ts + 1 < len(timestamps):
-      run_timestamps = (timestamps[ts], timestamps[ts + 1])
-    out.extend(lower_ir(commands, go_word, run_timestamps=run_timestamps))
-  return out
-
-class CQSysmem:
-  def __init__(self, dev: PCIDevice, prefetch_win: TLBWindow, dispatch_win: TLBWindow):
-    self.dev = dev
-    self.prefetch_win = prefetch_win
-    self.dispatch_win = dispatch_win
-    self.size = _host_sysmem_size()
-    self.sysmem = Mapping(self.size)
-    self.sysmem_addr = self.sysmem.addr
-    if self.sysmem_addr % PAGE_SIZE or self.size % PAGE_SIZE:
-      raise RuntimeError("CQ sysmem must be page-aligned and page-sized")
-
-    self.noc_addr = dev.pin_pages(self.sysmem, preferred_iatu_region=1)
-    if (self.noc_addr & _PCIE_NOC_BASE) != _PCIE_NOC_BASE:
-      raise RuntimeError(f"bad CQ sysmem NOC address: 0x{self.noc_addr:x}")
-    self.noc_local = self.noc_addr - _PCIE_NOC_BASE
-    if self.noc_local > 0xFFFFFFFF:
-      raise RuntimeError(f"CQ sysmem NOC offset too large: 0x{self.noc_local:x}")
-
-    self.issue_wr = 0
-    self.prefetch_q_wr_idx = 0
-    self.dispatch_cb_page_pos = 0
-    self.event_id = 0
-    self.completion_base_16b = ((self.noc_local + _HOST_COMPLETION_BASE) >> 4) & 0x7FFFFFFF
-    self.completion_page_16b = PAGE_SIZE >> 4
-    self.completion_end_16b = self.completion_base_16b + (_HOST_COMPLETION_SIZE >> 4)
-    self.completion_rd_16b = self.completion_base_16b
-    self.completion_rd_toggle = 0
-
-    self.prefetch_win.write(CQ_PREFETCH_Q_RD_PTR, struct.pack("<I", CQ_PREFETCH_Q_BASE + CQ_PREFETCH_Q_SIZE))
-    self.prefetch_win.write(CQ_PREFETCH_Q_PCIE_RD, struct.pack("<I", (self.noc_local + _HOST_ISSUE_BASE) & 0xFFFFFFFF))
-    self.prefetch_win.write(CQ_PREFETCH_Q_BASE, bytes(CQ_PREFETCH_Q_SIZE))
-    self.write_sysmem32(_HOST_CQ_WR_OFF, self.completion_base_16b)
-    self.write_sysmem32(_HOST_CQ_RD_OFF, self.completion_base_16b)
-
-  def read_sysmem32(self, off: int) -> int:
-    return struct.unpack("<I", self.sysmem.read(off, 4))[0]
-
-  def write_sysmem32(self, off: int, value: int):
-    self.sysmem.write(off, struct.pack("<I", value & 0xFFFFFFFF))
-
-  def _wait_prefetch_slot_free(self, idx: int, timeout_s: float = 5.0):
-    off = CQ_PREFETCH_Q_BASE + idx * CQ_PREFETCH_Q_ENTRY_SZ
-    deadline = time.perf_counter() + timeout_s
-    while struct.unpack("<I", self.prefetch_win.read(off, 4))[0] != 0:
-      if struct.unpack("<I", self.prefetch_win.read(CQ_PREFETCH_Q_RD_PTR, 4))[0] == 0xFFFFFFFF:
-        raise RuntimeError("CQ prefetch core reads back 0xffffffff -- device off bus, needs reset")
-      if time.perf_counter() > deadline:
-        base = max(0, idx - 4)
-        end = min(CQ_PREFETCH_Q_ENTRIES, idx + 5)
-        entries = []
-        for i in range(base, end):
-          entry_off = CQ_PREFETCH_Q_BASE + i * CQ_PREFETCH_Q_ENTRY_SZ
-          value = struct.unpack("<I", self.prefetch_win.read(entry_off, 4))[0]
-          entries.append(f"{i}:{value}")
-        rd_ptr = struct.unpack("<I", self.prefetch_win.read(CQ_PREFETCH_Q_RD_PTR, 4))[0]
-        pcie_rd = struct.unpack("<I", self.prefetch_win.read(CQ_PREFETCH_Q_PCIE_RD, 4))[0]
-        current = struct.unpack("<I", self.prefetch_win.read(off, 4))[0]
-        raise TimeoutError(
-          "timeout waiting for CQ prefetch queue slot "
-          f"idx={idx} value={current} rd_ptr=0x{rd_ptr:x} "
-          f"pcie_rd=0x{pcie_rd:x} nearby=[{', '.join(entries)}]"
-        )
-
-  def _issue_write(self, record: bytes):
-    # Dispatch FW parses records linearly and only wraps its cursor when it
-    # lands exactly on DISPATCH_CB_END, but prefetch splits writes across the
-    # wrap. A multi-page record straddling the 128-page ring boundary makes
-    # dispatch walk past CB end into stale L1 (spurious writes, then semaphore
-    # divergence -> wait_completion wedge). The host knows every record's page
-    # count, so pad to the ring boundary instead: an unknown-cmd record costs
-    # exactly one page via dispatch's advance_page fallback.
-    pages = max(1, (struct.unpack_from("<I", record, 4)[0] + 4095) >> 12)
-    if pages > CQ_DISPATCH_CB_PAGES:
-      raise ValueError(f"CQ record needs {pages} pages, dispatch CB has {CQ_DISPATCH_CB_PAGES}")
-
-    self.issue_wr = align_up(self.issue_wr, PCIE_ALIGN)
-    if self.issue_wr + len(record) > _HOST_ISSUE_SIZE:
-      # Prefetch FW wraps its PCIe cursor only when it reaches HOST_ISSUE_SIZE
-      # exactly; wrapping early here would desync it. Pad to the end with
-      # filler records (16B unknown-cmd payload, stride covers the gap; stride
-      # capped well under the 64K cmddat staging buffer).
-      while self.issue_wr < _HOST_ISSUE_SIZE:
-        stride = min(_HOST_ISSUE_SIZE - self.issue_wr, 32768)
-        hdr = struct.pack("<BBHII", _RELAY_INLINE, 0, 0, CQ_CMD_SIZE, stride).ljust(CQ_CMD_SIZE, b"\0")
-        self._issue_write(hdr.ljust(stride, b"\0"))
-      self.issue_wr = 0
-      # Wrap fence: a free slot only proves the prefetcher *started* on the
-      # filler before it; its PCIe fetch of the ring tail can still be in
-      # flight when the host begins rewriting offset 0 (rare hard-hang race).
-      # Wait until every queued slot is consumed -- the prefetcher's PCIe
-      # cursor has then provably wrapped past the region we are reusing.
-      for i in range(CQ_PREFETCH_Q_ENTRIES):
-        self._wait_prefetch_slot_free(i)
-
-    while self.dispatch_cb_page_pos and pages > CQ_DISPATCH_CB_PAGES - self.dispatch_cb_page_pos:
-      self._issue_write(_relay_inline(bytes(CQ_CMD_SIZE)))
-    self.dispatch_cb_page_pos = (self.dispatch_cb_page_pos + pages) % CQ_DISPATCH_CB_PAGES
-
-    base = _HOST_ISSUE_BASE + self.issue_wr
-    self.sysmem.write(base, record)
-    flush_base = base & ~(PAGE_SIZE - 1)
-    flush_end = align_up(base + len(record), PAGE_SIZE)
-    self.sysmem.flush(flush_base, flush_end - flush_base)
-    self.issue_wr += len(record)
-
-    idx = self.prefetch_q_wr_idx
-    self._wait_prefetch_slot_free(idx)
-    off = CQ_PREFETCH_Q_BASE + idx * CQ_PREFETCH_Q_ENTRY_SZ
-    self.prefetch_win.write(off, struct.pack("<I", len(record) >> 4))
-    self.prefetch_q_wr_idx = (idx + 1) % CQ_PREFETCH_Q_ENTRIES
-
-  def flush(self, queue: CommandQueue):
-    offset = 0
-    for size_16b in queue.sizes_16b:
-      size = size_16b << 4
-      self._issue_write(queue.stream[offset : offset + size])
-      offset += size
-    queue.clear()
-
-  def next_event_id(self) -> int:
-    self.event_id += 1
-    return self.event_id
-
-  def read_timestamp(self, slot: int) -> int:
-    off = CQ_TIMESTAMP_BASE + slot * CQ_TIMESTAMP_STRIDE
-    lo, hi = struct.unpack("<II", self.dispatch_win.read(off, 8))
-    return (hi << 32) | lo
-
-  def clear_timestamps(self, slots: int):
-    if slots:
-      self.dispatch_win.write(CQ_TIMESTAMP_BASE, bytes(slots * CQ_TIMESTAMP_STRIDE))
-
-  def wait_completion(self, event_id: int, timeout_s: float = 10.0):
-    deadline = time.perf_counter() + timeout_s
+  def wait(self, event, *, timeout=10.0):
+    deadline = time.monotonic() + timeout
+    expected = event & 0xFFFFFFFF
     while True:
-      wr_raw = self.read_sysmem32(_HOST_CQ_WR_OFF)
-      wr_16b, wr_toggle = wr_raw & 0x7FFFFFFF, (wr_raw >> 31) & 1
-      if wr_16b != self.completion_rd_16b or wr_toggle != self.completion_rd_toggle:
-        off = (self.completion_rd_16b << 4) - self.noc_local
-        # Dispatch can publish the wr pointer before the event payload write
-        # is observable (it waits for one ack, which an earlier in-flight
-        # write can satisfy). Poll briefly for the expected id.
-        got = self.read_sysmem32(off + CQ_CMD_SIZE)
-        if got != (event_id & 0xFFFFFFFF):
-          # Stale page: a stale wr-ptr read (toggle alias one ring later) or
-          # payload still in flight. Do not consume; keep waiting.
-          if time.perf_counter() > deadline:
-            raise RuntimeError(f"CQ completion event mismatch: got {got}, expected {event_id}")
-          time.sleep(0.0002)
-          continue
-        self.completion_rd_16b += self.completion_page_16b
-        if self.completion_rd_16b >= self.completion_end_16b:
-          self.completion_rd_16b = self.completion_base_16b
-          self.completion_rd_toggle ^= 1
-        raw = (self.completion_rd_16b & 0x7FFFFFFF) | (self.completion_rd_toggle << 31)
-        self.dispatch_win.write(CQ_COMPLETION_RD_PTR, struct.pack("<I", raw))
-        self.write_sysmem32(_HOST_CQ_RD_OFF, raw)
-        if got != (event_id & 0xFFFFFFFF):
-          raise RuntimeError(f"CQ completion event mismatch: got {got}, expected {event_id}")
-        return
-      if time.perf_counter() > deadline:
-        raise TimeoutError(f"timeout waiting for CQ completion event {event_id} -- reset the device")
+      raw = int.from_bytes(self.pcie.sysmem.read(self.completion, 4), "little")
+      if raw != (self.completion_read | self.completion_toggle << 31):
+        offset = (self.completion_read << 4) - self.noc
+        result = RunResult.STRUCT.unpack(self.pcie.sysmem.read(offset, RunResult.STRUCT.size))
+        if result[2] == expected:
+          self.completion_read = raw & 0x7FFFFFFF
+          self.completion_toggle = raw >> 31
+          return result
+      if time.monotonic() >= deadline: raise TimeoutError(f"CQ completion {event} timed out")
       time.sleep(0.0002)
 
   def close(self):
-    try:
-      self.prefetch_win.close()
-    finally:
-      try:
-        self.dispatch_win.close()
-      finally:
-        self.dev.unpin_pages(self.sysmem, self.noc_addr)
-        self.sysmem.close()
+    self.prefetch.close()
+    self.dispatch.close()

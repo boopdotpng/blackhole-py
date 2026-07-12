@@ -1,7 +1,0 @@
-__pycache__
-.pytest_cache/
-.ruff-cache/
-.vscode/
-.claude
-ttsim/
-libttsim*.so

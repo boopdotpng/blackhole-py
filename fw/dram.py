@@ -1,97 +1,82 @@
-from __future__ import annotations
+"""Small worker kernels that copy between staged sysmem and interleaved DRAM."""
 
-from asm import KernelBase, cond
-from dsl import a0, a1, a2, a3, a4, a5, s0, s1, s2, s3, s4, s5, s6, s7, s8, s9, s10, t0, t1, t2, t3, t4, t5, t6
-from ttk import Cb, Noc
-from ttk.mailbox import Firmware, NcriscMailbox as NM
-from ttk.noc import NOC
+from asm import KERNEL_ROLES, KernelBuilder
+from cq import MAX_WRITE_SIZE
+from fw.consts import CQ, NcriscLocalState, TensixL1
+from isa import R
+from program import Program
 
-
-class DramTransferKernel(KernelBase, Noc, Cb):
-  def load_args(self):
-    # s6 is the runtime page size from DramBuffer.dtype.tile_size. Do not
-    # assume bf16's 2048B pages here; f32 tiles are 4096B.
-    return self.read_rta_from(NM.RTA_L1_BASE_PTR, (s0, s1, s2, s3, s4, s5, s6, s7))
-
-  def sysmem_addr(self, tile_id=s9, out_lo=a3, out_mid=a4, tmp=t0):
-    self.mul(tmp, tile_id, s6)
-    self.add(out_lo, s2, tmp)
-    return self.mv(out_mid, s3)
-
-  def dram_addr(self, tile_id=s9):
-    self.mv(a0, s0)
-    self.mv(a1, tile_id)
-    self.mv(a2, s7)
-    self.mv(t0, a1)
-    self.remu(a1, t0, a2)
-    self.divu(t0, t0, a2)
-    self.mul(t0, t0, s6)
-    self.add(a0, a0, t0)
-    self.slli(t1, a1, 2)
-    self.read32(t2, NM.RTA_L1_BASE_PTR)
-    self.add(t2, t2, t1)
-    return self.lw(a2, t2, 8 * 4)
+ARGS_BASE = TensixL1.PARAM_BASE
+ARGS_WORDS = 6
+SCRATCH = TensixL1.DATA_BUFFER_SPACE_BASE
 
 
-def _loop(fw: DramTransferKernel, body):
-  fw.load_args()
-  fw.li(s8, 0)
-  with fw.while_(cond(s8, "<u", s5)):
-    fw.add(s9, s4, s8)
-    body()
-    fw.addi(s8, s8, 1)
-  return fw.ret()
+def _kernel(write: bool, core, dram_coords):
+  if len(dram_coords) != 7: raise ValueError("DRAM transfer needs seven bank coordinates")
+  fw = KernelBuilder("ncrisc", core)
+  with fw.scope():
+    base, sysmem, mid, tile, tiles, size, bank, address, coord, seven, local, tmp = fw.reg(12)
+    for reg, offset in zip((base, sysmem, mid, tile, tiles, size), range(0, ARGS_WORDS * 4, 4)):
+      fw.load(reg, ARGS_BASE + offset)
+
+    # Resident NCRISC records both hardware NoC coordinates at boot. NoC 1 is
+    # the transfer path used by the original fill/drain kernels.
+    fw.load(local, NcriscLocalState.MY_X + 1, bytes=1)
+    fw.load(tmp, NcriscLocalState.MY_Y + 1, bytes=1)
+    fw.slli(tmp, tmp, 6); fw.or_(local, local, tmp)
+    noc = fw.noc(1).initialize(local)
+    fw.li(seven, 7)
+
+    fw.label("dram_loop")
+    fw.beq(tiles, R.ZERO, "dram_done")
+    fw.remu(bank, tile, seven)
+    fw.divu(address, tile, seven)
+    fw.mul(address, address, size); fw.add(address, address, base)
+    fw.switch(bank, {index: f"dram_bank_{index}" for index in range(7)}, "dram_bad_bank")
+    for index, bank_coord in enumerate(dram_coords):
+      fw.label(f"dram_bank_{index}")
+      fw.li(coord, bank_coord)
+      fw.j("dram_bank_selected")
+    fw.label("dram_bad_bank"); fw.j("dram_bad_bank")
+    fw.label("dram_bank_selected")
+
+    if write:
+      with fw.scope():
+        with noc.read_batch(count=1) as reads:
+          reads.issue(sysmem, CQ.PCIE_COORD, SCRATCH, size,
+                      src_mid=mid, return_coord=local)
+      with fw.scope():
+        with noc.write_ack_batch(count=1) as writes:
+          writes.issue(SCRATCH, address, coord, size)
+    else:
+      with fw.scope():
+        with noc.read_batch(count=1) as reads:
+          reads.issue(address, coord, SCRATCH, size, return_coord=local)
+      with fw.scope():
+        with noc.write_ack_batch(count=1) as writes:
+          writes.issue(SCRATCH, sysmem, CQ.PCIE_COORD, size, dst_mid=mid)
+
+    fw.add(sysmem, sysmem, size)
+    fw.addi(tile, tile, 1); fw.addi(tiles, tiles, -1)
+    fw.j("dram_loop")
+    fw.label("dram_done")
+  return fw.lower()
 
 
-def build_fill() -> KernelBase:
-  fw = DramTransferKernel(base_addr=Firmware.TEXT_BASE["ncrisc"])
-
-  def body():
-    fw.cb_reserve_back(NM.CB_INTERFACE, 0)
-    fw.cb_write_ptr(NM.CB_INTERFACE, 0, out=t5)
-    fw.sysmem_addr(out_lo=a3, out_mid=a4, tmp=t0)
-    fw.local_noc0_coord(a5, x_addr=NM.MY_X + 1, y_addr=NM.MY_Y + 1)
-
-    fw.read32(s10, NOC.STATUS_BASE + NOC.NIU_MST_RD_RESP_RECEIVED + (1 << NOC.INSTANCE_OFFSET_BIT), tmp_addr=t0)
-    fw.addi(s10, s10, 1)
-    fw.noc_read(1, 1, a3, a4, s1, t5, s6, ret_coord=a5, a=t0, v=t1)
-    fw.noc_reads_flushed(1, s10, addr=t0, val=t1)
-
-    fw.dram_addr()
-    fw.read32(s10, NOC.STATUS_BASE + NOC.NIU_MST_WR_ACK_RECEIVED + (1 << NOC.INSTANCE_OFFSET_BIT), tmp_addr=t0)
-    fw.addi(s10, s10, 1)
-    fw.noc_write(1, 0, t5, a0, 0, a2, s6, a=t0, v=t1)
-    fw.noc_write_barrier(1, s10, addr=t0, val=t1)
-
-    fw.cb_push_back(NM.CB_INTERFACE, 0)
-    fw.cb_wait_front(NM.CB_INTERFACE, 0)
-    fw.cb_pop_front(NM.CB_INTERFACE, 0)
-
-  return _loop(fw, body)
+def _program(cores, dram_coords, *, write):
+  cores = tuple(cores)
+  if not cores: raise ValueError("DRAM transfer needs at least one worker core")
+  if MAX_WRITE_SIZE < 16 * 1024: raise RuntimeError("CQ cannot upload the DRAM kernel")
+  images = {role: KernelBuilder(role, cores[0]).lower() for role in KERNEL_ROLES}
+  images["ncrisc"] = _kernel(write, cores[0], tuple(dram_coords))
+  return Program({core: dict(images) for core in cores}, (), ())
 
 
-def build_drain() -> KernelBase:
-  fw = DramTransferKernel(base_addr=Firmware.TEXT_BASE["ncrisc"])
+def dram_write(cores, dram_coords):
+  """Build the sysmem-to-DRAM worker program."""
+  return _program(cores, dram_coords, write=True)
 
-  def body():
-    fw.cb_reserve_back(NM.CB_INTERFACE, 0)
-    fw.cb_write_ptr(NM.CB_INTERFACE, 0, out=t5)
-    fw.dram_addr()
-    fw.local_noc0_coord(a5, x_addr=NM.MY_X + 1, y_addr=NM.MY_Y + 1)
 
-    fw.read32(s10, NOC.STATUS_BASE + NOC.NIU_MST_RD_RESP_RECEIVED + (1 << NOC.INSTANCE_OFFSET_BIT), tmp_addr=t0)
-    fw.addi(s10, s10, 1)
-    fw.noc_read(1, 1, a0, 0, a2, t5, s6, ret_coord=a5, a=t0, v=t1)
-    fw.noc_reads_flushed(1, s10, addr=t0, val=t1)
-
-    fw.sysmem_addr(out_lo=a3, out_mid=a4, tmp=t0)
-    fw.read32(s10, NOC.STATUS_BASE + NOC.NIU_MST_WR_ACK_RECEIVED + (1 << NOC.INSTANCE_OFFSET_BIT), tmp_addr=t0)
-    fw.addi(s10, s10, 1)
-    fw.noc_write(1, 0, t5, a3, a4, s1, s6, a=t0, v=t1)
-    fw.noc_write_barrier(1, s10, addr=t0, val=t1)
-
-    fw.cb_push_back(NM.CB_INTERFACE, 0)
-    fw.cb_wait_front(NM.CB_INTERFACE, 0)
-    fw.cb_pop_front(NM.CB_INTERFACE, 0)
-
-  return _loop(fw, body)
+def dram_read(cores, dram_coords):
+  """Build the DRAM-to-sysmem worker program."""
+  return _program(cores, dram_coords, write=False)

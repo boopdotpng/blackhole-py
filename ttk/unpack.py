@@ -1,167 +1,323 @@
-from __future__ import annotations
+"""Typed TRISC0 unpack configuration and lowering."""
+from dataclasses import dataclass
+from enum import Enum, IntEnum
 
-from dsl import (
-  TTATGETM, TTATRELM, TTRMWCIB0, TTRMWCIB1, TTRMWCIB2, TTRMWCIB3,
-  TTSETADCXX, TTSETADCXY, TTSETADCZW, TTSTALLWAIT, TTZEROSRC,
+from ttk.tensix import (
+  Cfg, MopCfg, Tensix, TensixState, UnpackState, TensixStall, TensixWait,
 )
-from program import Dtype
-from ttk.mailbox import TriscLocalMem as TLM
-from ttk.tensix import Cfg, GprUnpack, TensixRegs, TensixStall, TensixWait, ThreadCfg
 
-# --- Tile-descriptor encoding (Blackhole cfg word 64) ---
-# The low byte of THCON_SEC*_REG0_TileDescriptor packs the source data format:
-#   bits[3:0] = in_data_format (== Dtype.value), bit[4] = uncompressed.
-# So Float16_b (value 5) uncompressed -> 0x15. Everything above the low byte
-# (x/y/z dims) is still opaque here and kept as named layout constants until we
-# decode the full descriptor struct.
-_DESC_UNCOMPRESSED = 0x10
-_DESC_SEC1_X = 0x01000000      # SEC1 carries the tile x-origin in the high byte
-_DESC_DIMS = 0x00040001        # REG0_1: blobs/dims (z_dim=4, y_dim=1)
-_DESC_REG2 = 0x00000025        # REG2: secondary format/stride descriptor (low nibble = out format)
-# ALU_ACC_CTRL bits in cfg word 1 (Cfg.ALU), byte 3: Fp32_enabled (bit29 -> 0x20),
-# SFPU_Fp32_enabled (bit30 -> 0x40). Together they make the DST register file
-# accumulate in fp32 (Dst32 mode); fp32-dest is a pair of boolean enables, NOT a
-# Float32 data format. Validated on p100a (pcc 0.99996+ vs fp32 reference); see
-# llama3plan.md "Findings". Caveat: fp32 dest halves DST tile capacity (8 -> 4).
-ALU_FP32_DEST_BITS = 0x60
-_DESC_REG2_1 = 0x000F000F      # REG2_1: x/y counts (15,15)
-_DEST_CNTX = 0x00400040        # REG5: dest context base/stride
-_TILE_X_DIM = 0x01000100       # REG5: tile x dim (256 | 256<<16)
 
-# p_gpr_unpack face-dimension table: face NxM size packed as (N*M)|(N*M)<<16,
-# halving 16x16=256 down to 1x16=16. Independent of dtype.
-_FACE_DIM_TABLE = {
-  GprUnpack.FACE_DIM_16x16: 0x01000100,
-  GprUnpack.FACE_DIM_8x16: 0x00800080,
-  GprUnpack.FACE_DIM_4x16: 0x00400040,
-  GprUnpack.FACE_DIM_2x16: 0x00200020,
-  GprUnpack.FACE_DIM_1x16: 0x00100010,
-}
+# Named MOPs used by the old matmul/RMSNorm kernels.  The replay slots in the
+# matmul template are populated by the caller; the ordinary template is the
+# same shape as the firmware's unpack_AB setup.
+UNPACK_MOP_CFG = MopCfg.unpack_ab()
+
+UNPACK_SRC_A_MOP_CFG = MopCfg.unpack_one(block=0)
+
+UNPACK_SRC_B_MOP_CFG = MopCfg.unpack_one(block=1)
+
+UNPACK_TO_DST_MOP_CFG = MopCfg.direct_to_dst()
+
+# Matmul's intermediate-Dst reload has the same four-face direct-Dst shape as
+# RMSNorm, while the SrcA reload uses one ordinary address-mode-1 face.
+UNPACK_RELOAD_MOP_CFG = MopCfg.unpack_faces(addr_mode=1)
+
+UNPACK_RELOAD_TO_DST_MOP_CFG = UNPACK_TO_DST_MOP_CFG
+
+UNPACK_ROW_BROADCAST_MOP_CFG = MopCfg.row_broadcast()
+
+
+class UnpackFormat(IntEnum):
+  F32 = 0
+  F16 = 1
+  BF16 = 5
+  BFP4 = 7
+  INT32 = 8
+  UINT16 = 9
+  INT8 = 14
+  UINT32 = 24
+  UINT8 = 30
+
+
+class UnpackTarget(Enum):
+  SRCA = "srcA"
+  SRCB = "srcB"
+  DST = "dst"
+
+
+_UNCOMPRESSED = 0x10
+_DESC_DIMS = 0x00040001
+_SEC1_X = 0x01000000
+_FACE_DIMS = (0x01000100, 0x00800080, 0x00400040, 0x00200020, 0x00100010)
+_TILEIZE_BIT = 1 << 9
+_HALOIZE_BIT = 1 << 8
+_UNPACK_TO_DST_BIT = 1 << 11
+_DISABLE_ZERO_COMPRESS_BIT = 1
+
+
+@dataclass(frozen=True)
+class UnpackContext:
+  source_addr: int
+  input_format: int
+  output_format: int
+  target: UnpackTarget
+  unpacker: int
+  tileize: bool = False
+  haloize: bool = False
+  zero_compression: bool = False
+  destination_addr: int = 0
+
+
+def output_format(fmt: int) -> int:
+  """Return the SrcA/SrcB format implied by an unpacked tile."""
+  return fmt if fmt in (UnpackFormat.F32, UnpackFormat.F16) else UnpackFormat.BF16
+
+
+def tile_descriptor(fmt: int) -> int:
+  """Encode the Blackhole tile descriptor's format/validity byte."""
+  return int(fmt) if fmt == UnpackFormat.BFP4 else int(fmt) | _UNCOMPRESSED
 
 
 class Unpack:
-  """Unpack-thread (TRISC0) configuration helpers, bound to a kernel builder.
+  """Stateful TRISC0 configuration object.
 
-  Operates *on* a kernel (``self.k``) rather than being mixed into it, so the
-  dependency on the asm/Tensix surface is explicit and there is no MRO. Tier-2
-  intent ("configure the unpacker for this dtype") composed from Tier-1 ops
-  (setc16, push_tensix, write_mop_cfg) and raw asm (write32, emit)."""
+  ``configure`` is pure with respect to the builder: it returns the register
+  image and updates the object only after validation. This makes accidental
+  cross-kernel state sharing visible and gives the lowering layer a stable
+  diff boundary.
+  """
+  pipe = 0
 
-  def __init__(self, kernel):
+  def __init__(self, kernel=None, *, state: TensixState | None = None):
     self.k = kernel
+    self.tensix = Tensix(kernel, self.pipe, state) if kernel is not None else None
+    self.state = UnpackState()
+    self.contexts: dict[int, UnpackContext] = {}
+    self.initialized = False
+    self._mop_cfg: MopCfg | None = None
+
+  @property
+  def mop(self):
+    if self.tensix is None: raise RuntimeError("unpack is not attached to a kernel")
+    return self.tensix.mop
+
+  def configure(self, fmt: int = UnpackFormat.BF16, *, fp32_dest: bool = False):
+    fmt = int(fmt)
+    if fmt not in {int(x) for x in UnpackFormat}:
+      raise ValueError(f"unsupported Blackhole unpack format: {fmt}")
+    next_state = UnpackState(
+      src_format=fmt, dst_format=output_format(fmt), fp32_dest=bool(fp32_dest),
+      cfg_context=0, srca_set=4, tile_descriptor=tile_descriptor(fmt),
+      tile_descriptor_1=_DESC_DIMS,
+      sec0_reg2=0x20 | output_format(fmt), sec1_reg2=0x20 | output_format(fmt),
+    )
+    self.state = next_state
+    if self.tensix is not None:
+      for register, value in self.register_image().items():
+        self.tensix.write_cfg(register, value)
+    return self
+
+  def configure_input(self, *, format=UnpackFormat.BF16, tile_bytes: int | None = None,
+                      zero_compression: bool | None = None, fp32_dest: bool = False):
+    """Configure the unpack input path using intent-level arguments."""
+    if tile_bytes is not None and (type(tile_bytes) is not int or tile_bytes <= 0 or tile_bytes % 16):
+      raise ValueError("unpack tile_bytes must be a positive multiple of 16")
+    return self.configure(format, fp32_dest=fp32_dest)
+
+  def init(self, *, tile_bytes: int, format=UnpackFormat.BF16, mop_cfg=None,
+           fp32_dest: bool = False):
+    """Initialize invariant unpacker state before CB moves."""
+    self.configure_input(format=format, tile_bytes=tile_bytes, fp32_dest=fp32_dest)
+    if self.tensix is not None:
+      self.tensix.set_thread_cfg(5, 4)
+      self._mop_cfg = UNPACK_MOP_CFG if mop_cfg is None else mop_cfg
+      self.tensix.mop.configure(self._mop_cfg)
+    else:
+      self._mop_cfg = UNPACK_MOP_CFG if mop_cfg is None else mop_cfg
+    self.initialized = True
+    return self
 
   @staticmethod
-  def _out_format(dtype: Dtype) -> int:
-    # Unpacker out-data-format (THCON REG2 low nibble). The FPU infers the
-    # SrcA/SrcB format from this field, so it must track the operand dtype for
-    # the uncompressed float formats -- pinning it to bf16 made fp16 operands
-    # decode as garbage (root cause of the historic fp16 NaNs). Block-float
-    # inputs (Bfp4_b) decompress into bf16 SrcA/SrcB, so they keep the bf16
-    # nibble, as do the int formats (unchanged legacy behaviour).
-    if dtype in (Dtype.Float32, Dtype.Float16):
-      return dtype.value
-    return Dtype.Float16_b.value
+  def _cb_info(cb):
+    try:
+      addr, dtype = cb.addr, cb.dtype
+    except AttributeError as exc:
+      raise TypeError("source CB must expose addr and dtype") from exc
+    return int(addr), int(dtype)
 
-  def _tile_descriptor(self, k, dtype: Dtype):
-    compressed = dtype in (Dtype.Bfp4_b,)
-    desc = dtype.value if compressed else dtype.value | _DESC_UNCOMPRESSED
-    reg2 = (_DESC_REG2 & ~0xF) | self._out_format(dtype)
-    k.write32(Cfg.THCON_SEC0_REG0_TileDescriptor, desc)
-    k.write32(Cfg.THCON_SEC0_REG0_TileDescriptor_1, _DESC_DIMS)
-    k.write32(Cfg.THCON_SEC1_REG0_TileDescriptor, desc | _DESC_SEC1_X)
-    k.write32(Cfg.THCON_SEC1_REG0_TileDescriptor_1, _DESC_DIMS)
-    k.write32(Cfg.THCON_SEC0_REG2, reg2)
-    k.write32(Cfg.THCON_SEC0_REG2_1, _DESC_REG2_1)
-    k.write32(Cfg.THCON_SEC1_REG2, reg2)
-    k.write32(Cfg.THCON_SEC1_REG2_1, _DESC_REG2_1)
+  def configure_context(self, context: int, *, source_cb, target: UnpackTarget,
+                        unpacker: int = 0, output_format=None, tileize: bool = False,
+                        haloize: bool = False, zero_compression: bool = False,
+                        destination_addr: int = 0):
+    """Describe one CB-to-register/Dst unpack context."""
+    if context not in (0, 1): raise ValueError("unpack context must be 0 or 1")
+    if unpacker not in (0, 1): raise ValueError("unpacker must be 0 or 1")
+    target = target if isinstance(target, UnpackTarget) else UnpackTarget(target)
+    if target is UnpackTarget.DST and unpacker != 0:
+      raise ValueError("only unpacker 0 can target Dst")
+    if tileize and unpacker != 0:
+      raise ValueError("TTSIM does not support tileize on unpacker 1")
+    if haloize and target is UnpackTarget.DST:
+      raise ValueError("unpack-to-Dst cannot use haloize")
+    source_addr, input_format = self._cb_info(source_cb)
+    output_format = input_format if output_format is None else int(output_format)
+    if input_format not in {int(x) for x in UnpackFormat} or output_format not in {int(x) for x in UnpackFormat}:
+      raise ValueError("unsupported unpack format")
+    spec = UnpackContext(source_addr, input_format, output_format, target, unpacker,
+      tileize, haloize, zero_compression, int(destination_addr))
+    self.contexts[context] = spec
+    if self.tensix is not None:
+      self._lower_context(context, spec)
+    return self
 
-  def _alu_format_rmw(self, k, *, fp32_dest: bool = False):
-    # Masked byte RMW of the ALU config regs under the ATGETM/ATRELM mutex.
-    fp32_bits = ALU_FP32_DEST_BITS if fp32_dest else 0x00
-    k.emit(TTATGETM(0))
-    for inst in (
-      TTRMWCIB0(Mask=0xFF, Data=0x00, CfgRegAddr=Cfg.ALU_FORMAT_SPEC_REG.addr32),
-      TTRMWCIB1(Mask=0x7F, Data=0x00, CfgRegAddr=Cfg.ALU_FORMAT_SPEC_REG.addr32),
-      TTRMWCIB0(Mask=0x07, Data=0x00, CfgRegAddr=Cfg.ALU.addr32),
-      TTRMWCIB1(Mask=0x80, Data=0x00, CfgRegAddr=Cfg.ALU.addr32),
-      TTRMWCIB2(Mask=0x01, Data=0x00, CfgRegAddr=Cfg.ALU.addr32),
-      TTRMWCIB3(Mask=0x1E, Data=0x00 if fp32_dest else 0x0A, CfgRegAddr=Cfg.ALU.addr32),
-      TTRMWCIB3(Mask=0x60, Data=fp32_bits, CfgRegAddr=Cfg.ALU.addr32),
-      TTRMWCIB0(Mask=0x03, Data=0x01, CfgRegAddr=Cfg.ALU_ACC_CTRL_Zero_Flag_disabled_src.addr32),
-    ):
-      k.push_tensix(inst)
-    k.emit(TTATRELM(0))
+  def _lower_context(self, context: int, spec: UnpackContext):
+    # CFG contexts are physical shared state, but the semantic interpretation
+    # of the loaded tile remains in this UnpackContext.  Track the selected raw
+    # context so diffing does not accidentally compare ctx0 and ctx1 together.
+    self.tensix.state.set_context(self.pipe, context)
+    base = Cfg.THCON_SEC0_REG3_Base_address if spec.unpacker == 0 else Cfg.THCON_SEC1_REG3_Base_address
+    base_ctx = Cfg.THCON_SEC0_REG3_Base_cntx1_address if spec.unpacker == 0 else Cfg.THCON_SEC1_REG3_Base_cntx1_address
+    offset = Cfg.THCON_SEC0_REG7_Offset_address if spec.unpacker == 0 else Cfg.THCON_SEC1_REG7_Offset_address
+    offset_ctx = Cfg.THCON_SEC0_REG7_Offset_cntx1_address if spec.unpacker == 0 else Cfg.THCON_SEC1_REG7_Offset_cntx1_address
+    reg2 = (self.state.sec0_reg2 if spec.unpacker == 0 else self.state.sec1_reg2)
+    reg2 = (reg2 & ~(_TILEIZE_BIT | _HALOIZE_BIT | _UNPACK_TO_DST_BIT))
+    reg2 |= _TILEIZE_BIT if spec.tileize else 0
+    reg2 |= _HALOIZE_BIT if spec.haloize else 0
+    reg2 |= _UNPACK_TO_DST_BIT if spec.target is UnpackTarget.DST else 0
+    if spec.zero_compression: reg2 |= _DISABLE_ZERO_COMPRESS_BIT
+    self.tensix.write_cfg(base if context == 0 else base_ctx, spec.source_addr)
+    self.tensix.write_cfg(offset if context == 0 else offset_ctx, 0)
+    self.tensix.write_cfg(Cfg.THCON_SEC0_REG2 if spec.unpacker == 0 else Cfg.THCON_SEC1_REG2, reg2)
+    if spec.unpacker == 0:
+      self.tensix.write_cfg(Cfg.THCON_SEC0_REG5_Dest_cntx if context == 0 else Cfg.THCON_SEC0_REG5_Dest_cntx1,
+        spec.destination_addr)
 
-  def set_format(self, dtype: Dtype):
-    """Runtime-reconfigure the unpacker tile-descriptor in/out format (e.g. to
-    read a non-operand-format intermediate CB back during a reload, then restore
-    the operand format). Stalls until both unpackers drain first."""
-    k = self.k
-    k.emit(TTSTALLWAIT(TensixStall.UNPACK, TensixWait.UNPACK0))
-    desc = dtype.value | _DESC_UNCOMPRESSED
-    reg2 = (_DESC_REG2 & ~0xF) | self._out_format(dtype)
-    k.write32(Cfg.THCON_SEC0_REG0_TileDescriptor, desc)
-    k.write32(Cfg.THCON_SEC1_REG0_TileDescriptor, desc | _DESC_SEC1_X)
-    k.write32(Cfg.THCON_SEC0_REG2, reg2)
-    k.write32(Cfg.THCON_SEC1_REG2, reg2)
-    page_size_16b = dtype.tile_size >> 4
-    k.push_tensix(0x45000048 + (page_size_16b << 8))
-    k.push_tensix(0x4500004A + (page_size_16b << 8))
-    return k
+  def select_context(self, context: int):
+    if context not in self.contexts: raise ValueError(f"unpack context {context} is not configured")
+    if self.tensix is not None:
+      # The low/high byte selects the override context for unpacker 0/1.
+      spec = self.contexts[context]
+      value = context if spec.unpacker == 0 else context << 8
+      self.tensix.set_thread_cfg(41, value)
+    return self
 
-  def init(self, *, dtype: Dtype = Dtype.Float16_b, tile_bytes: int, mop_cfg, fp32_dest: bool = False):
-    """Configure the unpacker: reset cfg context, program the tile descriptor
-    and face-dim table for ``dtype``, then load the unpack MOP template.
+  def move(self, source_cb, *, target: UnpackTarget, context: int = 0,
+           unpacker: int | None = None, output_format=None,
+           addr_mode: int = 1, srcb_bcast: bool = False,
+           use_mop: bool = False, mop_cfg: MopCfg | None = None,
+           repeat: int = 1, serialize_dst: bool | None = None):
+    """Move one configured CB tile to SrcA, SrcB, or Dst."""
+    if not self.initialized: raise RuntimeError("unpack.init() is required before move()")
+    if context not in self.contexts: raise ValueError(f"unpack context {context} is not configured")
+    spec = self.contexts[context]
+    target = target if isinstance(target, UnpackTarget) else UnpackTarget(target)
+    if spec.target is not target: raise ValueError("move target differs from configured context")
+    if unpacker is not None and unpacker != spec.unpacker: raise ValueError("move unpacker differs from configured context")
+    if output_format is not None and int(output_format) != spec.output_format:
+      raise ValueError("move output format differs from configured context")
+    if not 0 <= addr_mode <= 0xFF or type(repeat) is not int or repeat < 1:
+      raise ValueError("invalid unpack address mode or repeat count")
+    if srcb_bcast and target is not UnpackTarget.SRCB:
+      raise ValueError("srcb_bcast is only valid for SrcB")
+    if serialize_dst is None:
+      serialize_dst = target is UnpackTarget.DST
+    self.select_context(context)
+    if self.tensix is not None:
+      block = 1 if spec.target is UnpackTarget.SRCB else 0
+      set_valid = 0 if spec.target is UnpackTarget.DST else 1
+      if use_mop:
+        cfg = mop_cfg or self._mop_cfg
+        if cfg is None: raise RuntimeError("unpack MOP is not configured")
+        self.tensix.mop.configure(cfg)
+        self.tensix.mop.run(repeat=repeat, mop_type=1)
+      else:
+        for _ in range(4 if spec.target is UnpackTarget.DST else repeat):
+          self.tensix.push(self.k.tensix_word(
+            "TTUNPACR", block, addr_mode, 0, 0, 0, 1, set_valid,
+            int(srcb_bcast), 0, 0, 0, 0, 1,
+          ))
+          # TTSIM and the working RMSNorm kernel both require a scoreboard
+          # drain between direct-to-Dst faces; without it only the final face
+          # is observable.  It is not needed for SrcA/SrcB.
+          if serialize_dst and spec.target is UnpackTarget.DST:
+            self.tensix.push(self.k.tensix_word(
+              "TTSTALLWAIT", int(TensixStall.UNPACK), int(TensixWait.UNPACK0)))
+    return self
 
-    Mirrors the TRISC0 init block of add1 exactly; ``dtype`` drives the tile
-    descriptor's data-format field. ``fp32_dest=True`` enables fp32 DST
-    accumulation (Dst32) -- pair it with ``Pack.init(fp32_dest=True)`` so the
-    packer reads 32-bit data back out of DST."""
-    k = self.k
+  def to_src_a(self, source_cb, *, context: int = 0, **kwargs):
+    return self.move(source_cb, target=UnpackTarget.SRCA, context=context, **kwargs)
 
-    k.write32(k.data["cfg_state_id"], 0)
-    k.setc16(ThreadCfg.CFG_STATE_ID_StateID, 0)
-    k.write32(TLM.TRISC0_UNPACK_CFG_CONTEXT, 0)
-    k.setc16(ThreadCfg.UNPACK_MISC_CFG_CfgContext, 0)
+  def to_src_b(self, source_cb, *, context: int = 0, **kwargs):
+    return self.move(source_cb, target=UnpackTarget.SRCB, context=context, **kwargs)
 
-    k.emit(TTZEROSRC(0, 0, 1, 3))
-    k.write32(k.data["cfg_state_id"], 0)
-    k.setc16(ThreadCfg.CFG_STATE_ID_StateID, 0)
+  def to_dst(self, source_cb, *, context: int = 0, **kwargs):
+    return self.move(source_cb, target=UnpackTarget.DST, context=context, **kwargs)
 
-    k.wait_mmio_low_byte_zero(TensixRegs.PC_UNPACK_SYNC)
+  def wait(self):
+    if self.tensix is not None:
+      self.tensix.push(self.k.tensix_word("TTSTALLWAIT", 0x008, 0x002))
+    return self
 
-    k.emit(TTSETADCXY(3, 0, 0, 0, 0, 0xB))
-    k.emit(TTSETADCZW(3, 0, 0, 0, 0, 0xF))
-    k.write32(Cfg.UNP0_ADDR_CTRL_ZW_REG_1, 0x00000200)
-    k.write32(Cfg.UNP1_ADDR_CTRL_ZW_REG_1, 0x00000200)
+  def configure_address_counters(self, *, unpacker: int = 0,
+                                 x_start: int = 0, x_end: int = 255,
+                                 z_start: int = 0, z_end: int = 0,
+                                 z_stride: int | None = None):
+    """Configure the ADC ranges used by subsequent unpack instructions."""
+    if unpacker not in (0, 1): raise ValueError("unpacker must be 0 or 1")
+    if not 0 <= x_start <= x_end <= 1023 or not 0 <= z_start <= z_end <= 7:
+      raise ValueError("invalid unpack address-counter range")
+    if self.tensix is None: return self
+    mask = 1 if unpacker == 0 else 2
+    self.tensix.push(self.k.tensix_word("TTSETADCXX", mask, x_end, x_start))
+    self.tensix.push(self.k.tensix_word("TTSETADCZW", 3, z_end, z_end, z_start, z_start, 0xF))
+    if z_stride is not None:
+      if type(z_stride) is not int or z_stride < 0: raise ValueError("z_stride must be non-negative")
+      reg = Cfg.UNP0_ADDR_CTRL_ZW_REG_1 if unpacker == 0 else Cfg.UNP1_ADDR_CTRL_ZW_REG_1
+      self.tensix.write_cfg(reg, z_stride)
+    return self
 
-    self._alu_format_rmw(k, fp32_dest=fp32_dest)
-    self._tile_descriptor(k, dtype)
+  def load_replay(self, words):
+    if self.tensix is not None: self.tensix.mop.load_replay(words)
+    return self
 
-    k.push_tensix(TTSETADCXX(1, 255, 0))
-    k.push_tensix(TTSETADCXX(2, 255, 0))
-    k.write32(Cfg.THCON_SEC0_REG5_Dest_cntx, _DEST_CNTX)
-    k.write32(Cfg.THCON_SEC0_REG5_Tile_x_dim_cntx, _TILE_X_DIM)
-    k.write32(Cfg.UNP0, 0x00000100)
+  def run(self, *, repeat: int = 1, mop_cfg: MopCfg | None = None):
+    if repeat < 1: raise ValueError("repeat must be positive")
+    if self.tensix is not None:
+      cfg = mop_cfg or self._mop_cfg
+      if cfg is None: raise RuntimeError("unpack MOP is not configured")
+      self.tensix.mop.configure(cfg)
+      self.tensix.mop.run(repeat=repeat)
+    return self
 
-    for addr, value in _FACE_DIM_TABLE.items():
-      k.write32(addr, value)
+  def set_format(self, format):
+    return self.configure(format, fp32_dest=self.state.fp32_dest)
 
-    k.setc16(ThreadCfg.SRCA_SET, 4)
-    k.write32(TLM.TRISC0_UNPACK_CFG_CONTEXT, 0)
-    k.setc16(ThreadCfg.UNPACK_MISC_CFG_CfgContext, 0)
+  def set_conversion_format(self, src_format, dst_format):
+    src_format, dst_format = int(src_format), int(dst_format)
+    if src_format not in {int(x) for x in UnpackFormat} or dst_format not in {int(x) for x in UnpackFormat}:
+      raise ValueError("unsupported unpack conversion format")
+    self.state = UnpackState(
+      src_format=src_format, dst_format=output_format(dst_format), fp32_dest=self.state.fp32_dest,
+      cfg_context=self.state.cfg_context, srca_set=self.state.srca_set,
+      tile_descriptor=tile_descriptor(src_format), tile_descriptor_1=_DESC_DIMS,
+      sec0_reg2=0x20 | output_format(dst_format), sec1_reg2=0x20 | output_format(dst_format),
+    )
+    if self.tensix is not None:
+      for register, value in self.register_image().items(): self.tensix.write_cfg(register, value)
+    return self
 
-    page_size_16b = tile_bytes >> 4
-    for raw in (
-      0x45000048 + (page_size_16b << 8),
-      0x4500004A + (page_size_16b << 8),
-      TTRMWCIB1(Mask=0x01, Data=0x00, CfgRegAddr=Cfg.THCON_SEC0_REG2.addr32),
-    ):
-      k.push_tensix(raw)
-    k.emit(TTSETADCXX(1, 255, 0))
-    k.push_tensix(TTRMWCIB1(Mask=0x01, Data=0x00, CfgRegAddr=Cfg.THCON_SEC0_REG2.addr32))
-    k.emit(TTSETADCXX(1, 255, 0))
+  def register_image(self):
+    """Return the MMIO words needed for the stable tile-format state."""
+    s = self.state
+    return {
+      Cfg.THCON_SEC0_REG0_TileDescriptor: s.tile_descriptor,
+      Cfg.THCON_SEC0_REG0_TileDescriptor_1: s.tile_descriptor_1,
+      Cfg.THCON_SEC1_REG0_TileDescriptor: s.tile_descriptor | _SEC1_X,
+      Cfg.THCON_SEC1_REG0_TileDescriptor_1: s.tile_descriptor_1,
+      Cfg.THCON_SEC0_REG2: s.sec0_reg2,
+      Cfg.THCON_SEC1_REG2: s.sec1_reg2,
+    }
 
-    k.write_mop_cfg(mop_cfg, 0)
-    k.tensix_sync(0)
-    return k
+  @staticmethod
+  def face_dimension_words():
+    return _FACE_DIMS
