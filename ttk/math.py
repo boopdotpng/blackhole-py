@@ -1,67 +1,47 @@
-"""Intent-level TRISC1 math configuration."""
-from dataclasses import dataclass
-
-from ttk.tensix import Cfg, MopCfg, Tensix, TensixState
+from ttk.sfpu import Sfpu
+from ttk.tensix import Cfg, MopCfg, Tensix, TensixSem, TensixStall, TensixState, TensixWait, ThreadCfg, tt_word
 
 
-@dataclass
-class MathState:
-  src_a_format: int = 5
-  src_b_format: int = 5
-  dst_format: int = 5
-  fp32_dest: bool = False
-  mop_cfg: MopCfg | None = None
+MATH_COPY_SRC_A_MOP = MopCfg.copy_src_a_to_dst()
 
 
 class Math:
   pipe = 1
 
-  def __init__(self, kernel=None, *, state: TensixState | None = None):
-    self.k = kernel
-    self.tensix = Tensix(kernel, self.pipe, state) if kernel is not None else None
-    self.state = MathState()
+  def __init__(self, kernel, *, state: TensixState | None = None):
+    self.tensix = Tensix(kernel, self.pipe, state); self.sfpu = Sfpu(self.tensix)
+    self.mop_cfg, self.initialized = None, False
 
-  @property
-  def mop(self):
-    if self.tensix is None: raise RuntimeError("math is not attached to a kernel")
-    return self.tensix.mop
+  def _set_dst_mode(self, fp32=False, int8=False):
+    self.tensix.rmw_cfg_byte(Cfg.ALU, 3, 0xE0, (0x60 if fp32 else 0) | (0x80 if int8 else 0)); return self
 
-  def configure_operands(self, *, src_a=5, src_b=5, destination=5, fp32_dest=False):
-    self.state = MathState(
-      int(src_a), int(src_b), int(destination), bool(fp32_dest), self.state.mop_cfg,
-    )
-    if self.tensix is not None:
-      # ALU format fields are shared CFG state; these values are the Blackhole
-      # format nibbles used by ALU_FORMAT_SPEC_REG.
-      self.tensix.write_cfg(Cfg.ALU_FORMAT_SPEC_REG,
-        (int(src_a) & 0xF) | ((int(src_b) & 0xF) << 8) | ((int(destination) & 0xF) << 16))
-      self.tensix.write_cfg(Cfg.ALU_ACC_CTRL, 0x60 if fp32_dest else 0)
-    return self
+  def set_fp32_dest(self, enabled):
+    self.tensix.stall(TensixStall.CFG, TensixWait.MATH | TensixWait.SFPU)
+    return self._set_dst_mode(fp32=enabled)
 
-  def configure(self, *, src_a=5, src_b=5, destination=5, fp32_dest=False):
-    return self.configure_operands(src_a=src_a, src_b=src_b, destination=destination, fp32_dest=fp32_dest)
+  def _configure_copy_addressing(self):
+    t = self.tensix
+    for reg, value in ((ThreadCfg.ADDR_MOD_AB_SEC3, 0), (ThreadCfg.ADDR_MOD_DST_SEC3, 0),
+      (ThreadCfg.ADDR_MOD_BIAS_SEC3, 0), (ThreadCfg.ADDR_MOD_AB_SEC0, 1),
+      (ThreadCfg.ADDR_MOD_DST_SEC0, 1), (ThreadCfg.ADDR_MOD_BIAS_SEC0, 0),
+      (ThreadCfg.ADDR_MOD_AB_SEC2, 8), (ThreadCfg.ADDR_MOD_DST_SEC2, 8),
+      (ThreadCfg.ADDR_MOD_BIAS_SEC2, 0), (ThreadCfg.CLR_DVALID, 0)): t.set_thread_cfg(reg, value)
+    t.issue(tt_word("TTSETRWC", 0, 0, 0, 0, 0, 0xF))
 
-  def set_reload_format(self, format):
-    return self.configure_operands(src_a=format, src_b=format,
-      destination=self.state.dst_format, fp32_dest=self.state.fp32_dest)
+  def initialize(self, *, fp32_dest=False, int8_math=False, mop_cfg=MATH_COPY_SRC_A_MOP):
+    t = self.tensix; t.set_thread_cfg(ThreadCfg.CFG_STATE_ID, 0); self._set_dst_mode(fp32_dest, int8_math)
+    for reg, value in ((ThreadCfg.DISABLE_IMPLIED_SRCA_FMT, 0), (ThreadCfg.DISABLE_IMPLIED_SRCB_FMT, 0),
+      (ThreadCfg.DEST_TARGET_REG_CFG_MATH, 0), (ThreadCfg.ADDR_MOD_AB_SEC1, 0),
+      (ThreadCfg.ADDR_MOD_DST_SEC1, 0), (ThreadCfg.ADDR_MOD_BIAS_SEC1, 0)): t.set_thread_cfg(reg, value)
+    t.issue(tt_word("TTZEROACC", 3, 0, 0, 1, 0))
+    t.write_cfg(Cfg.DEST_ACCESS_CFG, t.state.cfg(1, Cfg.DEST_ACCESS_CFG) & ~8)
+    self._configure_copy_addressing(); self.sfpu.initialize(); t.configure_mop(mop_cfg); t.stall(TensixStall.CFG, TensixWait.MATH)
+    self.mop_cfg, self.initialized = mop_cfg, True; return self
 
-  def set_fp32_dest(self, enabled: bool):
-    return self.configure_operands(src_a=self.state.src_a_format, src_b=self.state.src_b_format,
-      destination=self.state.dst_format, fp32_dest=enabled)
+  def copy_src_a_to_dst(self, destination_offset=0):
+    if not self.initialized: raise RuntimeError("math is not initialized")
+    self.tensix.set_thread_cfg(ThreadCfg.DEST_TARGET_REG_CFG_MATH, destination_offset)
+    if self.mop_cfg != MATH_COPY_SRC_A_MOP: self.tensix.configure_mop(MATH_COPY_SRC_A_MOP); self.mop_cfg = MATH_COPY_SRC_A_MOP
+    self.tensix.run_mop(); return self
 
-  def configure_mop(self, cfg: MopCfg):
-    if self.tensix is None: raise RuntimeError("Math is not attached to a kernel")
-    if not isinstance(cfg, MopCfg):
-      raise TypeError("math MOP configuration must be a MopCfg")
-    self.state.mop_cfg = cfg
-    self.tensix.mop.configure(cfg)
-    return self
-
-  def run_mop(self, *, cfg: MopCfg | None = None, repeat: int = 1):
-    """Configure and execute a named math MOP program."""
-    if self.tensix is None: raise RuntimeError("Math is not attached to a kernel")
-    if repeat < 1: raise ValueError("repeat must be positive")
-    if cfg is not None: self.configure_mop(cfg)
-    elif self.state.mop_cfg is None:
-      raise RuntimeError("math MOP is not configured")
-    return self.tensix.mop.run(repeat=repeat)
+  def publish_dst(self): self.tensix.semaphore_post(TensixSem.MATH_PACK); return self

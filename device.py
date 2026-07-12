@@ -1,6 +1,5 @@
 import time
 from struct import Struct
-
 from pcie import PCIDevice, TLBWindow
 from program import DramAllocator, Program
 from asm import KernelBuilder

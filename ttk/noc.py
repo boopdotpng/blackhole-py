@@ -281,6 +281,25 @@ class NoC:
     self.local_coord, self.atomic_return = local_coord, atomic_return
     return self
 
+  def initialize_from_firmware(self, atomic_return: Value = 4):
+    """Use the issuing RISC's NoC-specific coordinate saved at firmware boot."""
+    from fw.consts import BriscLocalState, NcriscLocalState
+
+    addresses = {
+      "brisc": (BriscLocalState.MY_X, BriscLocalState.MY_Y),
+      "ncrisc": (NcriscLocalState.MY_X, NcriscLocalState.MY_Y),
+    }
+    try:
+      x_addr, y_addr = addresses[self.asm.role]
+    except KeyError as exc:
+      raise RuntimeError("firmware NoC coordinates require BRISC or NCRISC") from exc
+    coord, scratch = self.asm.reg(2)
+    self.asm.load(coord, x_addr + self.index, bytes=1)
+    self.asm.load(scratch, y_addr + self.index, bytes=1)
+    self.asm.slli(scratch, scratch, 6)
+    self.asm.or_(coord, coord, scratch)
+    return self.initialize(coord, atomic_return)
+
   def init_firmware_command_buffers(self, coord: Value, *,
                                     atomic_return: Value = NocCfg.MEM_NOC_ATOMIC_RET_VAL_ADDR,
                                     read_ctrl: int = NocCfg.RD_CMD_FIELD,

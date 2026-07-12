@@ -90,6 +90,7 @@ class CBConfig:
   dtype: DType
   pages: int
   addr: int
+  flag_addr: int | None = None
 
   @property
   def page_size(self): return 1024 * self.dtype.itemsize
@@ -101,12 +102,22 @@ class CBConfig:
   def end(self): return self.addr + self.size
 
 @dataclass(frozen=True)
+class BarrierConfig:
+  parties: int
+  addr: int
+  @property
+  def size(self): return self.parties * 4
+  @property
+  def end(self): return self.addr + self.size
+
+@dataclass(frozen=True)
 class Program:
   """Per-core kernel bytes, DRAM buffer parameters, and CB configuration."""
 
   kernels: dict[Core, dict[KernelRole, bytes]]
   params: tuple[Param, ...]
   cbs: tuple[CBConfig, ...]
+  barriers: tuple[BarrierConfig, ...] = ()
 
   def kernel(self, core: Core, role: KernelRole):
     """Return one core and role's assembled kernel bytes."""
@@ -159,10 +170,12 @@ class Program:
     return tuple(commands)
 
   def commands(self, *, bind_initial_params: bool = True):
-    """Lower one complete fixed-layout program into CQ write commands."""
     commands = list(self.kernel_commands())
-    if bind_initial_params:
-      commands.extend(self.bind(param) for param in self.params)
+    if bind_initial_params and self.params:
+      table = b"".join(int(x.initial.addr).to_bytes(4, "little") for x in self.params)
+      commands.append(UnicastWrite(self.cores, PARAM_BASE, (table,) * len(self.cores)))
+    resets = [(x.flag_addr, 4) for x in self.cbs if x.flag_addr is not None] + [(x.addr, x.size) for x in self.barriers]
+    commands += [UnicastWrite(self.cores, addr, (bytes(size),) * len(self.cores)) for addr, size in resets]
     return tuple(commands)
 
   @property
@@ -201,7 +214,6 @@ def _rectangles(cores):
 
 class KernelBundle:
   """Compile five kernel functions for every core with declared parameters."""
-
   def __init__(
     self, cores: tuple[Core, ...] | list[Core], params: tuple[Param, ...] | list[Param] = (), *,
     brisc: KernelFn | None = None, ncrisc: KernelFn | None = None,
@@ -215,17 +227,21 @@ class KernelBundle:
     if len({param.name for param in self.params}) != len(self.params): raise ValueError("parameter names must be unique")
     if len(self.params) > TensixL1.PARAM_SLOTS: raise ValueError("kernel bundle parameter table is full")
     self._kernels = {"brisc": brisc, "ncrisc": ncrisc, "trisc0": trisc0, "trisc1": trisc1, "trisc2": trisc2}
-    self._cbs: list[CBConfig] = []
-    self._lowered = False
+    self._cbs: list[CBConfig] = []; self._barriers: list[BarrierConfig] = []; self._lowered = False
 
-  def cb(self, dtype: DType, pages: int, addr: int):
+  def cb(self, dtype: DType, pages: int, addr: int, *, flag_addr: int | None = None):
     if self._lowered: raise RuntimeError("kernel bundle has already been lowered")
     if pages <= 0: raise ValueError("CB pages must be positive")
-    cb = CBConfig(dtype, pages, addr)
+    cb = CBConfig(dtype, pages, addr, flag_addr)
     if cb.addr < TensixL1.DATA_BUFFER_SPACE_BASE or cb.end > TensixL1.SIZE:
       raise ValueError("CB must fit in the L1 data-buffer region")
     self._cbs.append(cb)
     return cb
+
+  def barrier(self, parties: int, addr: int):
+    if self._lowered: raise RuntimeError("kernel bundle has already been lowered")
+    barrier = BarrierConfig(parties, addr)
+    self._barriers.append(barrier); return barrier
 
   def lower(self):
     """Assemble every core and role pair with a common parameter-slot layout."""
@@ -241,4 +257,4 @@ class KernelBundle:
         kernels[core][role] = builder.lower()
 
     self._lowered = True
-    return Program(kernels, self.params, tuple(self._cbs))
+    return Program(kernels, self.params, tuple(self._cbs), tuple(self._barriers))

@@ -101,15 +101,14 @@ class PowerState(ctypes.Structure):
     ("_power_settings", ctypes.c_uint16 * 14),
   ]
 
-PIN_PAGES_NOC_DMA = 2
 PinPages = _TT_IOCTL(
   7, PinPagesPayload, "out", _output_size_bytes=ctypes.sizeof(PinPagesOut),
-  _flags=PIN_PAGES_NOC_DMA,
+  _flags=2, # PIN_PAGES_NOC_DMA
 )
 UnpinPages = _TT_IOCTL(10, UnpinPagesPayload)
 AllocateTlb = _TT_IOCTL(11, AllocateTlbPayload, "out", _size=1 << 21)
-FreeTlb = _TT_IOCTL(12, FreeTlbPayload)
 ConfigureTlb = _TT_IOCTL(13, ConfigureTlbPayload)
+FreeTlb = _TT_IOCTL(12, FreeTlbPayload)
 SetPowerState = _TT_IOCTL(15, PowerState, _argsz=ctypes.sizeof(PowerState), _validity=4)
 
 class BumpAllocator:

@@ -286,9 +286,11 @@ TensixState
 The engine modules remain separated:
 
 - `ttk/unpack.py` owns unpack-specific transitions.
-- `ttk/math.py` owns math and SFPU-specific transitions.
+- `ttk/math.py` owns FPU/math-specific transitions.
+- `ttk/sfpu.py` owns SFPU-specific state and imperative vector programs.
 - `ttk/pack.py` owns pack-specific transitions.
-- `ttk/tensix.py` owns shared state, pipe plumbing, and raw lowering.
+- `ttk/tensix.py` owns shared state, per-pipe plumbing, and raw lowering used
+  by both `Math` and `Sfpu`.
 
 If an operation changes a physically shared register, the engine calls a
 named engine-local operation, for example:
