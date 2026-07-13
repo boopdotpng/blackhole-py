@@ -1,4 +1,5 @@
 from struct import Struct
+import numpy as np
 from pcie import PCIDevice, TLBWindow
 from program import Dram, Program
 from fw.consts import Firmware, FirmwareControl, RunMsg, TensixL1, TensixMMIO
@@ -83,17 +84,33 @@ class Device:
     args_write = UnicastWrite(program.cores, ARGS_BASE, tuple(args))
     return self.cq.submit((*program.commands(), args_write, Run(program.cores, 1)), timeout=timeout)
 
+  @staticmethod
+  def _tile_data(buffer, data, *, inverse=False):
+    shape = buffer.padded_shape
+    if len(shape) < 2 or shape[-2] % 32 or shape[-1] % 32:
+      raise ValueError("buffer padding must be a multiple of 32 in its final two dimensions")
+    prefix, height, width = shape[:-2], shape[-2], shape[-1]
+    rank = len(prefix)
+    values = np.frombuffer(data, dtype=np.dtype(f"V{buffer.dtype.itemsize}"))
+    if inverse:
+      values = values.reshape(*prefix, height // 32, width // 32, 2, 2, 16, 16)
+      axes = (*range(rank), rank, rank + 2, rank + 4, rank + 1, rank + 3, rank + 5)
+    else:
+      values = values.reshape(*prefix, height // 32, 2, 16, width // 32, 2, 16)
+      axes = (*range(rank), rank, rank + 3, rank + 1, rank + 4, rank + 2, rank + 5)
+    return values.transpose(axes).reshape(-1).tobytes()
+
   def dram_write(self, buffer, data: bytes, *, timeout=10.0):
     if len(data) != buffer.size:
       raise ValueError(f"buffer write requires exactly {buffer.size} bytes")
     if self.cq is None: raise RuntimeError("init_device() must be called before tensor transfer")
-    self.pcie.sysmem.write(self.cq.dram, data)
+    self.pcie.sysmem.write(self.cq.dram, self._tile_data(buffer, data))
     self.pcie.sysmem.flush()
     return self._dram_transfer(buffer, write=True, timeout=timeout)
 
   def dram_read(self, buffer, *, timeout=10.0):
     self._dram_transfer(buffer, write=False, timeout=timeout)
-    return self.pcie.sysmem.read(self.cq.dram, buffer.size)
+    return self._tile_data(buffer, self.pcie.sysmem.read(self.cq.dram, buffer.size), inverse=True)
 
   write = dram_write
   read = dram_read

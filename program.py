@@ -24,24 +24,18 @@ class Buffer:
   dtype: DType
   shape: tuple[int, ...]
   padded_shape: tuple[int, ...]
-  layout: Literal["row_major", "tile"] = "row_major"
 
   @property
-  def tiles(self): return prod(self.padded_shape) // 1024
+  def size(self): return prod(self.padded_shape) * self.dtype.itemsize
 
   @property
-  def tile_size(self): return 1024 * self.dtype.itemsize
-
-  @property
-  def page_size(self):
-    return self.tile_size if self.layout == "tile" else self.padded_shape[-1] * self.dtype.itemsize
+  def page_size(self): return 1024 * self.dtype.itemsize
 
   @property
   def pages(self):
-    return self.tiles if self.layout == "tile" else prod(self.padded_shape[:-1])
-
-  @property
-  def size(self): return self.pages * self.page_size
+    elements = prod(self.padded_shape)
+    if elements % 1024: raise ValueError("buffer padding must contain a whole number of 1024-element pages")
+    return elements // 1024
 
 @dataclass(frozen=True, eq=False)
 class Param:
@@ -58,19 +52,19 @@ class Dram:
     self.allocator = Allocator(self.START, self.END, self.ALIGNMENT)
 
   def buffer(self, name: str, dtype: DType, shape: tuple[int, ...],
-             padded_shape: tuple[int, ...], *, layout="row_major"):
-    buffer = Buffer(name, 0, "device", dtype, shape, padded_shape, layout)
+             padded_shape: tuple[int, ...]):
+    buffer = Buffer(name, 0, "device", dtype, shape, padded_shape)
     if buffer.page_size % self.ALIGNMENT: raise ValueError("DRAM pages must be 64-byte aligned")
     pages_per_bank = (buffer.pages + self.BANKS - 1) // self.BANKS
     addr = self.allocator.alloc(pages_per_bank * buffer.page_size, name=name)
-    return Buffer(name, addr, "device", dtype, shape, padded_shape, layout)
+    return Buffer(name, addr, "device", dtype, shape, padded_shape)
 
 @dataclass(frozen=True)
 class CBConfig:
+  index: int
   dtype: DType
   pages: int
   addr: int
-  flag_addr: int | None = None
 
   @property
   def page_size(self): return 1024 * self.dtype.itemsize
@@ -133,7 +127,7 @@ class Program:
     if bind_initial_params and self.params:
       table = b"".join(int(x.initial.addr).to_bytes(4, "little") for x in self.params.values())
       commands.append(UnicastWrite(self.cores, PARAM_BASE, (table,) * len(self.cores)))
-    resets = [(x.flag_addr, 4) for x in self.cbs if x.flag_addr is not None] + [(x.addr, x.size) for x in self.barriers]
+    resets = [(x.addr, x.size) for x in self.barriers]
     commands += [UnicastWrite(self.cores, addr, (bytes(size),) * len(self.cores)) for addr, size in resets]
     return tuple(commands)
 
@@ -180,9 +174,10 @@ class KernelBundle:
     self._kernels = {"brisc": brisc, "ncrisc": ncrisc, "trisc0": trisc0, "trisc1": trisc1, "trisc2": trisc2}
     self._cbs: list[CBConfig] = []; self._barriers: list[BarrierConfig] = []
 
-  def cb(self, dtype: DType, pages: int, addr: int, *, flag_addr: int | None = None):
+  def cb(self, dtype: DType, pages: int, addr: int):
     if pages <= 0: raise ValueError("CB pages must be positive")
-    cb = CBConfig(dtype, pages, addr, flag_addr)
+    if len(self._cbs) >= 32: raise ValueError("at most 32 circular buffers are supported")
+    cb = CBConfig(len(self._cbs), dtype, pages, addr)
     if cb.addr < TensixL1.DATA_BUFFER_SPACE_BASE or cb.addr + cb.pages * cb.page_size > TensixL1.SIZE:
       raise ValueError("CB must fit in the L1 data-buffer region")
     self._cbs.append(cb)

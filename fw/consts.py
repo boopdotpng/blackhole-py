@@ -4,7 +4,7 @@ class TensixL1:
   SIZE = 0x180000
 
   BOOT = 0; BOOT_SIZE = 4; MEM_ZEROS_BASE = 0x32E0; MEM_ZEROS_SIZE = 0x200
-  PARAM_BASE = 0x4200; PARAM_SIZE = 0xF00; PARAM_SLOTS = PARAM_SIZE // 4
+  PARAM_BASE = 0x4240; PARAM_SIZE = 0xEC0; PARAM_SLOTS = PARAM_SIZE // 4
 
   WORKER_TEXT_BASE = {
     "brisc": 0x05100,
@@ -21,20 +21,20 @@ class Firmware:
 
   TEXT_BASE = {
     "brisc": 0x3840,
-    "ncrisc": 0x3EB0,
-    "trisc0": 0x3F88,
-    "trisc1": 0x4050,
-    "trisc2": 0x4118,
+    "ncrisc": 0x3EF0,
+    "trisc0": 0x3FC8,
+    "trisc1": 0x4090,
+    "trisc2": 0x4158,
   }
 
   TEXT_SIZE = {
-    "brisc": 0x0670,
+    "brisc": 0x06B0,
     "ncrisc": 0x00D8,
     "trisc0": 0x00C8,
     "trisc1": 0x00C8,
     "trisc2": 0x00C8,
   }
-  TEXT_END = 0x41E0
+  TEXT_END = 0x4220
 
 class BriscLocalState:
   MY_Y = 0xFFB00004; MY_X = 0xFFB00008

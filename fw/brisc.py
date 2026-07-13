@@ -4,6 +4,7 @@ from cq import DISPATCH_DONE_COUNT
 from fw.consts import BriscLocalState, CQ, Firmware, FirmwareControl, RunMsg, RunSync, TensixL1, TensixMMIO
 from ttk.noc import NOC_CFG_BASE, NOC_INSTANCE_OFFSET_BIT, NocCfg
 from ttk.tensix import Tensix
+from ttk.cb import CB
 
 def _enable_clock_gating(fw):
   for noc in range(2):
@@ -69,6 +70,7 @@ def build_brisc():
 
   fw.label("reset_tensix")
   Tensix.reset_hardware(fw)
+  CB.setup_local_cbs(fw)
   fw.jalr(R.ZERO, R.RA)
 
   fw.label("init_nocs")
