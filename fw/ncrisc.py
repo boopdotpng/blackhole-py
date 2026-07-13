@@ -1,7 +1,5 @@
-"""Resident NCRISC firmware for the fixed-layout rewrite."""
 from asm import KernelBuilder
 from fw.consts import Firmware, FirmwareControl, NcriscLocalState, RunSync, TensixL1
-
 
 def build():
   fw = KernelBuilder.standalone("ncrisc")

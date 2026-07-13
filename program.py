@@ -6,7 +6,7 @@ from typing import Callable, Literal
 from asm import Core, KERNEL_ROLES, KernelBuilder, KernelRole
 from cq import MAX_WRITE_SIZE, McastWrite, UnicastWrite
 from fw.consts import TensixL1
-from pcie import BumpAllocator
+from pcie import Allocator
 from ttk.common import PARAM_BASE
 
 class DType(IntEnum):
@@ -45,35 +45,20 @@ class Buffer:
 
 @dataclass(frozen=True, eq=False)
 class Param:
-  """A replaceable, fixed-shape DRAM buffer used by compiled kernels."""
-
   name: str
   initial: Buffer
 
-  def __post_init__(self):
-    if not self.name: raise ValueError("parameter name cannot be empty")
-    if self.initial.loc != "device": raise ValueError("parameter buffer must be in DRAM")
-
-  def validate(self, buffer: Buffer):
-    """Require a replacement buffer with the captured storage contract."""
-    if buffer.loc != "device": raise ValueError("bound parameter buffer must be in DRAM")
-    if buffer.dtype != self.initial.dtype: raise ValueError(f"parameter {self.name!r} dtype changed")
-    if buffer.shape != self.initial.shape: raise ValueError(f"parameter {self.name!r} shape changed")
-    if buffer.padded_shape != self.initial.padded_shape: raise ValueError(f"parameter {self.name!r} layout changed")
-    if buffer.layout != self.initial.layout: raise ValueError(f"parameter {self.name!r} memory layout changed")
-    return buffer
-
-class DramAllocator:
+class Dram:
   BANKS = 7
   START = 0x40
   END = 1 << 32
   ALIGNMENT = 64
 
   def __init__(self):
-    self.allocator = BumpAllocator(self.END - self.START, self.START)
+    self.allocator = Allocator(self.START, self.END, self.ALIGNMENT)
 
-  def alloc(self, name: str, dtype: DType, shape: tuple[int, ...],
-            padded_shape: tuple[int, ...], *, layout="row_major"):
+  def buffer(self, name: str, dtype: DType, shape: tuple[int, ...],
+             padded_shape: tuple[int, ...], *, layout="row_major"):
     if layout not in ("row_major", "tile"): raise ValueError("unknown buffer layout")
     if not shape or len(shape) != len(padded_shape): raise ValueError("shape rank mismatch")
     if any(dim <= 0 for dim in (*shape, *padded_shape)): raise ValueError("buffer dimensions must be positive")
@@ -82,7 +67,7 @@ class DramAllocator:
     buffer = Buffer(name, 0, "device", dtype, shape, padded_shape, layout)
     if buffer.page_size % self.ALIGNMENT: raise ValueError("DRAM pages must be 64-byte aligned")
     pages_per_bank = (buffer.pages + self.BANKS - 1) // self.BANKS
-    addr = self.allocator.alloc(pages_per_bank * buffer.page_size, self.ALIGNMENT)
+    addr = self.allocator.alloc(pages_per_bank * buffer.page_size, name=name)
     return Buffer(name, addr, "device", dtype, shape, padded_shape, layout)
 
 @dataclass(frozen=True)
@@ -95,54 +80,33 @@ class CBConfig:
   @property
   def page_size(self): return 1024 * self.dtype.itemsize
 
-  @property
-  def size(self): return self.pages * self.page_size
-
-  @property
-  def end(self): return self.addr + self.size
-
 @dataclass(frozen=True)
 class BarrierConfig:
   parties: int
   addr: int
   @property
   def size(self): return self.parties * 4
-  @property
-  def end(self): return self.addr + self.size
 
 @dataclass(frozen=True)
 class Program:
-  """Per-core kernel bytes, DRAM buffer parameters, and CB configuration."""
-
   kernels: dict[Core, dict[KernelRole, bytes]]
-  params: tuple[Param, ...]
+  params: dict[str, Param]
   cbs: tuple[CBConfig, ...]
   barriers: tuple[BarrierConfig, ...] = ()
 
   def kernel(self, core: Core, role: KernelRole):
-    """Return one core and role's assembled kernel bytes."""
     return self.kernels[core][role]
 
   def param_addr(self, param: Param):
-    """Return the fixed per-core L1 word containing this parameter's DRAM address."""
-    try: slot = self.params.index(param)
-    except ValueError: raise ValueError(f"parameter {param.name!r} does not belong to this program") from None
+    slot = tuple(self.params).index(param.name)
     return PARAM_BASE + slot * 4
 
-  def param(self, name: str):
-    """Return a declared parameter by name."""
-    matches = [param for param in self.params if param.name == name]
-    if not matches: raise KeyError(name)
-    return matches[0]
-
   def bind(self, param: Param, buffer: Buffer | None = None):
-    """Create the CQ write that binds a DRAM buffer to its fixed parameter word."""
-    buffer = param.initial if buffer is None else param.validate(buffer)
+    buffer = param.initial if buffer is None else buffer
     addr = int(buffer.addr).to_bytes(4, "little")
     return UnicastWrite(self.cores, self.param_addr(param), (addr,) * len(self.cores))
 
   def kernel_commands(self):
-    """Return CQ writes that place worker kernels at their fixed L1 addresses."""
     commands = []
     for role in KERNEL_ROLES:
       groups = {}
@@ -172,7 +136,7 @@ class Program:
   def commands(self, *, bind_initial_params: bool = True):
     commands = list(self.kernel_commands())
     if bind_initial_params and self.params:
-      table = b"".join(int(x.initial.addr).to_bytes(4, "little") for x in self.params)
+      table = b"".join(int(x.initial.addr).to_bytes(4, "little") for x in self.params.values())
       commands.append(UnicastWrite(self.cores, PARAM_BASE, (table,) * len(self.cores)))
     resets = [(x.flag_addr, 4) for x in self.cbs if x.flag_addr is not None] + [(x.addr, x.size) for x in self.barriers]
     commands += [UnicastWrite(self.cores, addr, (bytes(size),) * len(self.cores)) for addr, size in resets]
@@ -180,14 +144,11 @@ class Program:
 
   @property
   def cores(self):
-    """Return cores in their stable lowering order."""
     return tuple(self.kernels)
 
 KernelFn = Callable[[KernelBuilder], None]
 
-
 def _rectangles(cores):
-  """Form rectangles while allowing NoC multicast to cross absent columns."""
   rows = {}
   for x, y in cores: rows.setdefault(y, []).append(x)
   columns = sorted({x for xs in rows.values() for x in xs})
@@ -213,7 +174,6 @@ def _rectangles(cores):
   return tuple(rectangles)
 
 class KernelBundle:
-  """Compile five kernel functions for every core with declared parameters."""
   def __init__(
     self, cores: tuple[Core, ...] | list[Core], params: tuple[Param, ...] | list[Param] = (), *,
     brisc: KernelFn | None = None, ncrisc: KernelFn | None = None,
@@ -222,30 +182,23 @@ class KernelBundle:
     self.cores = tuple(cores)
     self.params = tuple(params)
     if not self.cores: raise ValueError("kernel bundle requires at least one core")
-    if len(set(self.cores)) != len(self.cores): raise ValueError("kernel bundle cores must be unique")
-    if len(set(self.params)) != len(self.params): raise ValueError("kernel bundle parameters must be unique")
-    if len({param.name for param in self.params}) != len(self.params): raise ValueError("parameter names must be unique")
     if len(self.params) > TensixL1.PARAM_SLOTS: raise ValueError("kernel bundle parameter table is full")
     self._kernels = {"brisc": brisc, "ncrisc": ncrisc, "trisc0": trisc0, "trisc1": trisc1, "trisc2": trisc2}
-    self._cbs: list[CBConfig] = []; self._barriers: list[BarrierConfig] = []; self._lowered = False
+    self._cbs: list[CBConfig] = []; self._barriers: list[BarrierConfig] = []
 
   def cb(self, dtype: DType, pages: int, addr: int, *, flag_addr: int | None = None):
-    if self._lowered: raise RuntimeError("kernel bundle has already been lowered")
     if pages <= 0: raise ValueError("CB pages must be positive")
     cb = CBConfig(dtype, pages, addr, flag_addr)
-    if cb.addr < TensixL1.DATA_BUFFER_SPACE_BASE or cb.end > TensixL1.SIZE:
+    if cb.addr < TensixL1.DATA_BUFFER_SPACE_BASE or cb.addr + cb.pages * cb.page_size > TensixL1.SIZE:
       raise ValueError("CB must fit in the L1 data-buffer region")
     self._cbs.append(cb)
     return cb
 
   def barrier(self, parties: int, addr: int):
-    if self._lowered: raise RuntimeError("kernel bundle has already been lowered")
     barrier = BarrierConfig(parties, addr)
     self._barriers.append(barrier); return barrier
 
   def lower(self):
-    """Assemble every core and role pair with a common parameter-slot layout."""
-    if self._lowered: raise RuntimeError("kernel bundle has already been lowered")
     kernels = {}
     param_slots = {param: slot for slot, param in enumerate(self.params)}
     for core in self.cores:
@@ -256,5 +209,4 @@ class KernelBundle:
           with builder.scope(): fn(builder)
         kernels[core][role] = builder.lower()
 
-    self._lowered = True
-    return Program(kernels, self.params, tuple(self._cbs), tuple(self._barriers))
+    return Program(kernels, {param.name: param for param in self.params}, tuple(self._cbs), tuple(self._barriers))

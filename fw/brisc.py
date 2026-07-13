@@ -1,4 +1,3 @@
-"""Minimal fixed-layout BRISC resident firmware."""
 from asm import KernelBuilder
 from isa import R
 from cq import DISPATCH_DONE_COUNT
@@ -6,18 +5,14 @@ from fw.consts import BriscLocalState, CQ, Firmware, FirmwareControl, RunMsg, Ru
 from ttk.noc import NOC_CFG_BASE, NOC_INSTANCE_OFFSET_BIT, NocCfg
 from ttk.tensix import Tensix
 
-
 def _enable_clock_gating(fw):
-  """Reproduce Blackhole device_setup's read-modify-write sequence."""
   for noc in range(2):
     for register in (NocCfg.NIU_CFG_0, NocCfg.ROUTER_CFG_0):
       addr = NOC_CFG_BASE + (noc << NOC_INSTANCE_OFFSET_BIT) + register * 4
       fw.update32(addr, set_bits=1)
   return fw
 
-
 def _notify_dispatch(fw):
-  """Publish one stable completion token after every RISC has returned."""
   with fw.scope():
     local, tmp = fw.reg(2)
     fw.load(local, BriscLocalState.MY_X + 1, bytes=1)
@@ -29,14 +24,11 @@ def _notify_dispatch(fw):
         atomics.issue(DISPATCH_DONE_COUNT, CQ.DISPATCH_COORD)
   return fw
 
-
 def build():
   fw = KernelBuilder.standalone("brisc")
   fw.configure_csr()
   fw.setup_stack(Firmware.BRISC_STACK_TOP)
 
-  # The host must install subordinate reset vectors before it releases BRISC.
-  # Resident firmware owns hardware initialization after that handoff.
   fw.write32(TensixMMIO.RISCV_DEBUG_REG_DEST_CG_CTRL, 0)
   fw.write32(TensixMMIO.RISCV_TDMA_REG_CLK_GATE_EN, 0x3F)
   _enable_clock_gating(fw)
@@ -51,7 +43,6 @@ def build():
   fw.jal(R.RA, "init_nocs")
   fw.invalidate_risc_caches()
 
-  # Establish known synchronization values before releasing the workers.
   fw.write32(FirmwareControl.SUBORDINATE_SYNC, RunSync.ALL_INIT)
   fw.write32(TensixMMIO.RISCV_DEBUG_REG_SOFT_RESET_0, 0)
   for role in range(1, 5):
@@ -62,7 +53,7 @@ def build():
   fw.wait8(FirmwareControl.GO_SIGNAL, RunMsg.GO)
   fw.jal(R.RA, "reset_tensix")
   fw.jal(R.RA, "init_nocs")
-  # Program upload can replace worker text between launches.
+
   fw.invalidate_risc_caches()
   fw.signal_range(FirmwareControl.SUBORDINATE_SYNC, range(4), RunSync.GO)
   fw.call_fixed_kernel(TensixL1.WORKER_TEXT_BASE["brisc"])

@@ -1,9 +1,7 @@
 from ttk.sfpu import Sfpu
 from ttk.tensix import Cfg, MopCfg, Tensix, TensixSem, TensixStall, TensixState, TensixWait, ThreadCfg, tt_word
 
-
 MATH_COPY_SRC_A_MOP = MopCfg.copy_src_a_to_dst()
-
 
 class Math:
   pipe = 1

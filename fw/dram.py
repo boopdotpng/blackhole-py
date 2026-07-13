@@ -1,5 +1,3 @@
-"""Small worker kernels that copy between staged sysmem and interleaved DRAM."""
-
 from asm import KERNEL_ROLES, KernelBuilder
 from cq import MAX_WRITE_SIZE
 from fw.consts import CQ, NcriscLocalState, TensixL1
@@ -10,7 +8,6 @@ ARGS_BASE = TensixL1.PARAM_BASE
 ARGS_WORDS = 6
 SCRATCH = TensixL1.DATA_BUFFER_SPACE_BASE
 
-
 def _kernel(write: bool, core, dram_coords):
   if len(dram_coords) != 7: raise ValueError("DRAM transfer needs seven bank coordinates")
   fw = KernelBuilder("ncrisc", core)
@@ -19,8 +16,6 @@ def _kernel(write: bool, core, dram_coords):
     for reg, offset in zip((base, sysmem, mid, tile, tiles, size), range(0, ARGS_WORDS * 4, 4)):
       fw.load(reg, ARGS_BASE + offset)
 
-    # Resident NCRISC records both hardware NoC coordinates at boot. NoC 1 is
-    # the transfer path used by the original fill/drain kernels.
     fw.load(local, NcriscLocalState.MY_X + 1, bytes=1)
     fw.load(tmp, NcriscLocalState.MY_Y + 1, bytes=1)
     fw.slli(tmp, tmp, 6); fw.or_(local, local, tmp)
@@ -62,21 +57,16 @@ def _kernel(write: bool, core, dram_coords):
     fw.label("dram_done")
   return fw.lower()
 
-
 def _program(cores, dram_coords, *, write):
   cores = tuple(cores)
   if not cores: raise ValueError("DRAM transfer needs at least one worker core")
   if MAX_WRITE_SIZE < 16 * 1024: raise RuntimeError("CQ cannot upload the DRAM kernel")
   images = {role: KernelBuilder(role, cores[0]).lower() for role in KERNEL_ROLES}
   images["ncrisc"] = _kernel(write, cores[0], tuple(dram_coords))
-  return Program({core: dict(images) for core in cores}, (), ())
-
+  return Program({core: dict(images) for core in cores}, {}, ())
 
 def dram_write(cores, dram_coords):
-  """Build the sysmem-to-DRAM worker program."""
   return _program(cores, dram_coords, write=True)
 
-
 def dram_read(cores, dram_coords):
-  """Build the DRAM-to-sysmem worker program."""
   return _program(cores, dram_coords, write=False)

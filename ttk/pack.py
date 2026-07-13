@@ -1,8 +1,6 @@
 from ttk.tensix import Cfg, MopCfg, Tensix, TensixRegs, TensixSem, TensixSemWait, TensixStall, TensixState, TensixWait, ThreadCfg
 
-
 PACK_MOP = MopCfg.pack_tile()
-
 
 class Pack:
   def __init__(self, kernel, *, state: TensixState | None = None): self.k, self.tensix = kernel, Tensix(kernel, 2, state)

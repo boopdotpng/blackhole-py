@@ -1,12 +1,9 @@
-"""Standalone Blackhole dispatch firmware."""
-
 from cq import (
   ALIGN, DISPATCH_COMPLETION_BASE, DISPATCH_COMPLETION_END,
   DISPATCH_COMPLETION_HOST_PTR, DISPATCH_COMPLETION_PUBLISH, DISPATCH_COMPLETION_WRITE,
   DISPATCH_CREDIT_RETURN, DISPATCH_DONE_COUNT, DISPATCH_GO, DISPATCH_PUBLISHED,
   DISPATCH_RING_BASE, DISPATCH_RING_END, DISPATCH_SCRATCH,
-  PAGE_SIZE, PREFETCH_CREDITS,
-  Op, Packet, RunResult,
+  PAGE_SIZE, PREFETCH_CREDITS, Op, Packet, Timestamp,
 )
 from fw.consts import CQ, FirmwareControl, RunMsg, TensixMMIO
 from isa import R
@@ -17,13 +14,11 @@ def build_dispatch(core=CQ.DISPATCH_CORE):
   with fw.scope(): _emit_dispatch(fw, fw.reg(12))
   return fw
 
-
 def _emit_dispatch(fw, state):
-  """Emit the dispatch-ring consumer for PAD, unicast, multicast, and RUN."""
   s0, s1, s2, s3, s4, s5, s6, s7, s8, s9, s10, s11 = state
   noc = fw.noc(1).initialize(CQ.DISPATCH_COORD)
   fw.li(s0, DISPATCH_RING_BASE)
-  fw.li(s1, 0)  # monotonically consumed published pages
+  fw.li(s1, 0)
   fw.write32(DISPATCH_CREDIT_RETURN, (DISPATCH_RING_END - DISPATCH_RING_BASE) // PAGE_SIZE)
 
   fw.label("dispatch_loop")
@@ -71,8 +66,7 @@ def _emit_dispatch(fw, state):
   fw.label("multicast_loop")
   fw.beq(s3, R.ZERO, "multicast_done")
   fw.lw(s8, s6, 0); fw.lw(s9, s6, 4)
-  # One unlinked packet and a full destination-count wait per rectangle keeps
-  # Blackhole multicast path reservation/teardown serialized.
+
   with fw.scope():
     with noc.write_ack_batch(count=s9) as writes:
       writes.multicast_packet(s7, s4, s8, s5)
@@ -84,20 +78,20 @@ def _emit_dispatch(fw, state):
   fw.label("fence")
   fw.read32(s8, TensixMMIO.RISCV_DEBUG_REG_WALL_CLOCK_L)
   fw.read32(s9, TensixMMIO.RISCV_DEBUG_REG_WALL_CLOCK_H)
-  fw.write32(DISPATCH_SCRATCH + RunResult.START, s8)
-  fw.write32(DISPATCH_SCRATCH + RunResult.START + 4, s9)
-  fw.write32(DISPATCH_SCRATCH + RunResult.END, s8)
-  fw.write32(DISPATCH_SCRATCH + RunResult.END + 4, s9)
+  fw.write32(DISPATCH_SCRATCH + Timestamp.START, s8)
+  fw.write32(DISPATCH_SCRATCH + Timestamp.START + 4, s9)
+  fw.write32(DISPATCH_SCRATCH + Timestamp.END, s8)
+  fw.write32(DISPATCH_SCRATCH + Timestamp.END + 4, s9)
   fw.lw(s8, s0, Packet.RUN_EVENT)
-  fw.write32(DISPATCH_SCRATCH + RunResult.EVENT, s8)
+  fw.write32(DISPATCH_SCRATCH + Timestamp.EVENT, s8)
   _publish_completion(fw, noc)
   fw.j("command_done")
 
   fw.label("run")
   fw.read32(s8, TensixMMIO.RISCV_DEBUG_REG_WALL_CLOCK_L)
   fw.read32(s9, TensixMMIO.RISCV_DEBUG_REG_WALL_CLOCK_H)
-  fw.write32(DISPATCH_SCRATCH + RunResult.START, s8)
-  fw.write32(DISPATCH_SCRATCH + RunResult.START + 4, s9)
+  fw.write32(DISPATCH_SCRATCH + Timestamp.START, s8)
+  fw.write32(DISPATCH_SCRATCH + Timestamp.START + 4, s9)
   fw.lhu(s3, s0, Packet.TARGET_COUNT)
   fw.write32(DISPATCH_DONE_COUNT, 0)
   fw.fence()
@@ -118,10 +112,10 @@ def _emit_dispatch(fw, state):
   fw.fence()
   fw.read32(s8, TensixMMIO.RISCV_DEBUG_REG_WALL_CLOCK_L)
   fw.read32(s9, TensixMMIO.RISCV_DEBUG_REG_WALL_CLOCK_H)
-  fw.write32(DISPATCH_SCRATCH + RunResult.END, s8)
-  fw.write32(DISPATCH_SCRATCH + RunResult.END + 4, s9)
+  fw.write32(DISPATCH_SCRATCH + Timestamp.END, s8)
+  fw.write32(DISPATCH_SCRATCH + Timestamp.END + 4, s9)
   fw.lw(s8, s0, Packet.RUN_EVENT)
-  fw.write32(DISPATCH_SCRATCH + RunResult.EVENT, s8)
+  fw.write32(DISPATCH_SCRATCH + Timestamp.EVENT, s8)
   _publish_completion(fw, noc)
   fw.j("command_done")
 
@@ -130,8 +124,7 @@ def _emit_dispatch(fw, state):
   fw.li(s4, PAGE_SIZE - 1); fw.add(s3, s3, s4); fw.srli(s3, s3, 12)
   fw.read32(s4, DISPATCH_CREDIT_RETURN); fw.add(s4, s4, s3)
   fw.write32(DISPATCH_CREDIT_RETURN, s4)
-  # Prefetch cannot reuse a page until it observes this value.  A posted write
-  # is therefore self-fencing, and the next command-buffer use waits for send.
+
   noc.write(DISPATCH_CREDIT_RETURN, PREFETCH_CREDITS, CQ.PREFETCH_COORD, 4)
   fw.add(s1, s1, s3)
   fw.slli(s4, s3, 12); fw.add(s0, s0, s4)
@@ -140,11 +133,8 @@ def _emit_dispatch(fw, state):
   fw.label("bad_command"); fw.j("bad_command")
   return fw
 
-
 def _publish_completion(fw, noc):
-  """Write payload first, then publish the host completion pointer."""
   with fw.scope(): return _emit_completion(fw, noc, fw.reg(4))
-
 
 def _emit_completion(fw, noc, state):
   s10, s11, s3, s4 = state
@@ -153,7 +143,7 @@ def _emit_completion(fw, noc, state):
   fw.li(s11, 0x7FFFFFFF); fw.and_(s11, s10, s11); fw.slli(s11, s11, 4)
   with fw.scope():
     with noc.write_ack_batch(count=1) as writes:
-      writes.issue(DISPATCH_SCRATCH, s11, CQ.PCIE_COORD, RunResult.STRUCT.size, dst_mid=CQ.PCIE_MID)
+      writes.issue(DISPATCH_SCRATCH, s11, CQ.PCIE_COORD, Timestamp.STRUCT.size, dst_mid=CQ.PCIE_MID)
   fw.addi(s11, s10, PAGE_SIZE // 16)
   fw.read32(s3, DISPATCH_COMPLETION_END)
   fw.li(s4, 0x7FFFFFFF); fw.and_(s4, s11, s4)

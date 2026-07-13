@@ -1,5 +1,3 @@
-"""Standalone Blackhole prefetch firmware."""
-
 from asm import KernelBuilder
 from cq import (
   CQ_STATE, DISPATCH_PUBLISHED, DISPATCH_RING_BASE, DISPATCH_RING_END, PAGE_SIZE,
@@ -10,12 +8,10 @@ from fw.consts import CQ
 from isa import R
 from ttk.noc import NOC_MAX_BURST_SIZE
 
-
 def build_prefetch(core=CQ.PREFETCH_CORE):
   fw = KernelBuilder("brisc", core)
   with fw.scope(): _emit_prefetch(fw, fw.reg(11))
   return fw
-
 
 def _emit_prefetch(fw, state):
   queue, queue_end, ring, used, size, cursor, src, dst, left, chunk, pages = state

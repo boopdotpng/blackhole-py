@@ -1,16 +1,13 @@
 from enum import IntEnum
 
-from ttk.tensix import Cfg, MopCfg, Tensix, TensixStall, TensixState, TensixWait, ThreadCfg
-
+from ttk.tensix import Cfg, MopCfg, Tensix, TensixSem, TensixStall, TensixState, TensixWait, ThreadCfg
 
 class UnpackFormat(IntEnum):
   F32, F16 = 0, 1
   BF16, BFP4 = 5, 7
   INT32, UINT16, INT8, UINT32, UINT8 = 8, 9, 14, 24, 30
 
-
 UNPACK_SRC_A_MOP = MopCfg.unpack_src_a_tile()
-
 
 class Unpack:
   def __init__(self, kernel, *, state: TensixState | None = None): self.k, self.tensix = kernel, Tensix(kernel, 0, state)
@@ -47,4 +44,7 @@ class Unpack:
     t.issue(self.k.tensix_word("TTSETADCXX", 1, 255, 0)); t.issue(self.k.tensix_word("TTSETADCZW", 3, 0, 0, 0, 0, 0xF))
     t.stall(TensixStall.UNPACK, TensixWait.TRISC_CFG); t.run_mop(mop_type=1); return self
 
-  def wait(self): self.tensix.stall(TensixStall.UNPACK, TensixWait.UNPACK0); self.tensix.sync(); return self
+  def wait(self):
+    self.tensix.stall(TensixStall.UNPACK, TensixWait.UNPACK0)
+    self.tensix.semaphore_get(TensixSem.UNPACK_SYNC).sync()
+    return self

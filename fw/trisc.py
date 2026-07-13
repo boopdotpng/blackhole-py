@@ -30,7 +30,6 @@ def build(trisc_id: int):
   fw.jalr(R.ZERO, R.RA)
   return fw
 
-
 def build_trisc0(): return build(0)
 def build_trisc1(): return build(1)
 def build_trisc2(): return build(2)

@@ -1,16 +1,8 @@
-"""Blackhole Tensix constants and typed configuration state.
-
-The state model keeps TRISC configuration independent from firmware policy.
-Addresses are byte addresses; ``addr32`` is the operand used by TTWRCFG and
-TTRMWCIB instructions.
-"""
 from dataclasses import dataclass, field
 from enum import IntEnum
 from isa import R, Tensix as TensixISA
 
-
 CFG_BASE = 0xFFEF0000
-
 
 class Cfg(IntEnum):
   ALU_FORMAT_SPEC_REG = CFG_BASE; ALU = CFG_BASE + 4; ALU_ACC_CTRL = CFG_BASE + 8; ECC_SCRUBBER = CFG_BASE + 0xC
@@ -41,7 +33,6 @@ class Cfg(IntEnum):
   def addr32(self):
     return (int(self) - CFG_BASE) >> 2
 
-
 class ThreadCfg(IntEnum):
   CFG_STATE_ID, DEST_TARGET_REG_CFG_MATH, DISABLE_IMPLIED_SRCA_FMT, DISABLE_IMPLIED_SRCB_FMT = range(4)
   SFPU_DEST_FMT, SRCA_SET, SRCB_SET, CLR_DVALID = range(4, 8)
@@ -52,19 +43,15 @@ class ThreadCfg(IntEnum):
   SFPU_STACK, ADDR_MOD_PACK_SEC0, ADDR_MOD_PACK_SEC1, ADDR_MOD_PACK_SEC2, ADDR_MOD_PACK_SEC3, UNPACK_MISC_CFG = range(36, 42)
   ADDR_MOD_BIAS_SEC0, ADDR_MOD_BIAS_SEC1, ADDR_MOD_BIAS_SEC2, ADDR_MOD_BIAS_SEC3, ADDR_MOD_BIAS_SEC4, ADDR_MOD_BIAS_SEC5, ADDR_MOD_BIAS_SEC6, ADDR_MOD_BIAS_SEC7 = range(47, 55)
 
-
 class TensixStall(IntEnum):
   TDMA, SYNC, PACK, UNPACK, XMOV, THCON, MATH, CFG, SFPU = (1 << x for x in range(9))
   THREAD = 0x1FF
 
-
 class TensixWait(IntEnum):
   THCON, UNPACK0, UNPACK1, PACK0, MATH, SRCA_CLR, SRCB_CLR, SRCA_VLD, SRCB_VLD, XMOV, TRISC_CFG, SFPU, CFGEXU = (1 << x for x in range(13))
 
-
 class TensixSemWait(IntEnum):
   STALL_ON_ZERO, STALL_ON_MAX = 1, 2
-
 
 class TensixRegs:
   INSTRN_BUF_BASE = 0xFFE40000; REGFILE_BASE = 0xFFE00000; MOP_CFG = 0xFFB80000
@@ -83,17 +70,8 @@ class TensixSem:
       raise ValueError(f"Tensix semaphore index out of range: {index}")
     return 1 << index
 
-
 @dataclass
 class MopCfg:
-  """The nine words consumed by one Tensix MOP engine.
-
-  A MOP is a tiny two-level loop around seven instruction slots: the first two
-  words are the outer/inner loop counts and the remaining seven words are
-  Tensix instructions.  It is not a second instruction buffer and it does not
-  own data; it only repeats the slot program against the current address
-  counters and engine state.
-  """
   loop_outer: int
   loop_inner: int
   template: list[int | object] = field(default_factory=list)
@@ -106,7 +84,6 @@ class MopCfg:
 
   @classmethod
   def pack_tile(cls):
-    """The standard four-face pack tile program."""
     return cls.slots(
       outer=4, inner=4, fill=nop_word(),
       slot3=pack_word(), slot5=pack_word(addr_mode=1, last=True),
@@ -124,7 +101,6 @@ class MopCfg:
 
   @classmethod
   def copy_src_a_to_dst(cls):
-    """Move one ordinary four-face SrcA tile into Dst in eight-row chunks."""
     move = tt_word("TTMOVA2D", 0, 0, 2, 2, 0)
     return cls.slots(
       outer=4, inner=2, fill=nop_word(),
@@ -132,28 +108,22 @@ class MopCfg:
       slot3=move, slot5=move, slot6=move,
     )
 
-
   def words(self):
     slots = list(self.template) + [nop_word()] * (7 - len(self.template))
     return [self.loop_outer, self.loop_inner, *(_raw_word(word) for word in slots)]
 
-
 def tt_word(opcode: str, *args, **kwargs) -> int:
-  """Build a raw Tensix instruction for reusable MOP descriptions."""
   encoded = getattr(TensixISA(), opcode)(*args, **kwargs)
   return ((encoded >> 2) | (encoded << 30)) & 0xFFFFFFFF
 
-
 def nop_word() -> int:
   return tt_word("TTNOP")
-
 
 def pack_word(*, addr_mode=0, last=False, read_intf=0, flush=False) -> int:
   return tt_word(
     "TTPACR", 0, 0, 0, addr_mode, 0, 0, read_intf,
     0, 0, 0, int(flush), int(last),
   )
-
 
 def _raw_word(word) -> int:
   if hasattr(word, "raw_word"):
@@ -162,10 +132,8 @@ def _raw_word(word) -> int:
     raise TypeError("Tensix words must be 32-bit integers or expose raw_word()")
   return word
 
-
 @dataclass
 class MopState:
-  """MOP/replay shadow for one TRISC instruction pipe."""
   config: tuple[int, ...] = (0,) * 9
   replay: "ReplayBuffer" = field(default_factory=lambda: ReplayBuffer())
 
@@ -178,13 +146,6 @@ class MopState:
 
 @dataclass
 class ReplayBuffer:
-  """The 32-entry instruction replay RAM for one Tensix pipe.
-
-  Replay RAM stores Tensix words, not MOP configuration.  A MOP slot can issue
-  ``TTREPLAY(start, length)`` to execute a window from this RAM.  Loading it is
-  itself a runtime TTREPLAY operation, which is why replay and MOP state are
-  related but separate.
-  """
   words: list[int] = field(default_factory=lambda: [0] * 32)
   allocations: list[tuple[int, int]] = field(default_factory=list)
 
@@ -202,7 +163,7 @@ class ReplayBuffer:
 
   def allocate(self, length: int, *, start: int | None = None,
                lower: int = 0, upper: int = 32) -> int:
-    """Reserve a non-overlapping replay window and return its start index."""
+
     if type(length) is not int or length <= 0:
       raise ValueError("replay allocation length must be positive")
     if not 0 <= lower <= upper <= 32 or length > upper - lower:
@@ -220,7 +181,6 @@ class ReplayBuffer:
 
 @dataclass
 class TensixState:
-  """Software shadow of the state relevant to TTK lowering."""
   contexts: list[dict[int, int]] = field(default_factory=lambda: [{}, {}])
   selected_context: list[int] = field(default_factory=lambda: [0, 0, 0])
   thread_cfg: list[dict[int, int]] = field(default_factory=lambda: [{}, {}, {}])
@@ -245,17 +205,12 @@ class TensixState:
   def set_thread_cfg(self, pipe: int, register: int, value: int):
     shadow = self.thread_cfg[pipe]
     value &= 0xFFFF
-    # Thread configuration is not cleared by BRISC's CFG-MMIO reset.  The
-    # first assignment in every specialized kernel must therefore be emitted,
-    # including an assignment of zero after a prior kernel selected context 1.
+
     previous = shadow.get(int(register))
     shadow[int(register)] = value
     return previous != value
 
-
 class Tensix:
-  """Pipe-aware lowering primitives shared by unpack, math, and pack."""
-
   def __init__(self, kernel, pipe: int, state: TensixState | None = None):
     if pipe not in (0, 1, 2):
       raise ValueError("Tensix pipe must be 0, 1, or 2")
@@ -263,12 +218,6 @@ class Tensix:
     self.state = state if state is not None else TensixState()
 
   def issue(self, word):
-    """Embed one compile-time Tensix word directly in the RISC instruction stream.
-
-    ``push`` remains the path for runtime-constructed words.  Static SFPU,
-    replay, and synchronization instructions are one instruction when issued
-    inline instead of a RISC immediate plus an MMIO store.
-    """
     raw = _raw_word(word)
     encoded = ((raw << 2) | (raw >> 30)) & 0xFFFFFFFF
     self.k._emit(encoded)
@@ -276,18 +225,11 @@ class Tensix:
 
   @staticmethod
   def init(kernel):
-    """Clear the issuing Tensix thread's architectural register file."""
     kernel.zero_words(TensixRegs.REGFILE_BASE, 64)
     return kernel
 
   @staticmethod
   def reset_hardware(kernel):
-    """Emit the Blackhole Tensix cold-state reset sequence.
-
-    This is intentionally a hardware helper rather than BRISC policy:
-    firmware decides when to call it, while this method owns the exact CFG,
-    SFPU, ECC, and semaphore initialization sequence.
-    """
     kernel.zero_words(CFG_BASE, TensixRegs.CFG_RESET_WORDS)
     push = kernel.push_tensix_word
     word = kernel.tensix_word
@@ -296,8 +238,7 @@ class Tensix:
     push(word("TTNOP"))
     push(word("TTSFPLOADI", 0, 0, 0xBF80))
     push(word("TTSFPCONFIG", 0, 11, 0))
-    # Equivalent to the three legacy RMW operations after CFG was cleared:
-    # enable scrubber, scrub on error, delay=0x100.
+
     kernel.write32(Cfg.ECC_SCRUBBER, (
       TensixRegs.ECC_SCRUBBER_ENABLE_MASK |
       TensixRegs.ECC_SCRUBBER_SCRUB_ON_ERROR_MASK |
@@ -314,12 +255,6 @@ class Tensix:
     return self
 
   def rmw_cfg_byte(self, register: Cfg, byte: int, mask: int, data: int):
-    """Update named bits in one CFG byte with an in-pipe atomic RMW.
-
-    Main CFG is shared by all three TRISCs.  Engine modules must use this for
-    fields in a word that another engine also owns instead of compiling a
-    stale full-word image in each independent worker.
-    """
     if not isinstance(register, Cfg):
       raise TypeError("CFG RMW register must be a Cfg value")
     if type(byte) is not int or not 0 <= byte < 4:
@@ -380,7 +315,6 @@ class Tensix:
   def mop_sync(self): return self._sync(TensixRegs.PC_BUF_MOP_SYNC)
 
   def wait_unpack_config_idle(self):
-    """Wait until the unpack configuration latch can accept a new context."""
     if self.pipe != 0:
       raise RuntimeError("unpack configuration synchronization belongs to pipe 0")
     with self.k.scope():
@@ -398,7 +332,6 @@ class Tensix:
     return self
 
   def commit_unpack_config(self, register: Cfg):
-    """Make preceding unpack CFG writes visible to the unpack pipeline."""
     if self.pipe != 0:
       raise RuntimeError("unpack configuration synchronization belongs to pipe 0")
     with self.k.scope():
@@ -412,12 +345,6 @@ class Tensix:
     return self
 
   def set_dma_reg16(self, half_register: int, value: int):
-    """Write one 16-bit half of a Tensix data register.
-
-    TTSETDMAREG splits the value's high two bits into Payload_SigSelSize and
-    its low fourteen bits into Payload_SigSel.  Keeping that packing here
-    avoids runtime instruction construction in engine and kernel code.
-    """
     self.issue(self.k.tensix_word("TTSETDMAREG", value >> 14, value & 0x3FFF, 0, half_register))
     return self
 
@@ -437,4 +364,8 @@ class Tensix:
 
   def semaphore_post(self, semaphore: int):
     self.issue(self.k.tensix_word("TTSEMPOST", TensixSem.mask(semaphore)))
+    return self
+
+  def semaphore_get(self, semaphore: int):
+    self.issue(self.k.tensix_word("TTSEMGET", TensixSem.mask(semaphore)))
     return self

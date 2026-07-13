@@ -1,12 +1,10 @@
-#!/usr/bin/env python3
-"""One BF16 tile of add1 through the real unpack/FPU/SFPU/pack pipeline."""
 import argparse, struct, sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from asm import KernelBuilder
-from program import Buffer, DType, DramAllocator, KernelBundle, Param, Program
+from program import Buffer, DType, Dram, KernelBundle, Param, Program
 from ttk.cb import TileBuffer
 from ttk.math import Math
 from ttk.pack import Pack
@@ -15,12 +13,10 @@ from ttk.sync import Barrier
 from ttk.tile import tilize, untilize
 from ttk.unpack import Unpack
 
-
 CORE, TILE_BYTES = (1, 2), 2048
 INPUT_CB_ADDR, INPUT_CB_FLAG = 0x37000, 0x36F00
 OUTPUT_CB_ADDR, OUTPUT_CB_FLAG = INPUT_CB_ADDR + TILE_BYTES, INPUT_CB_FLAG + 4
 INIT_BARRIER_ADDR = INPUT_CB_FLAG + 0x10
-
 
 def lower_add1(src: Buffer, dst: Buffer, *, core=CORE, read_coord=0, write_coord=0) -> Program:
   if src.layout != "tile" or dst.layout != "tile": raise ValueError("add1 requires tile-layout buffers")
@@ -74,10 +70,8 @@ def lower_add1(src: Buffer, dst: Buffer, *, core=CORE, read_coord=0, write_coord
   init_barrier = bundle.barrier(3, INIT_BARRIER_ADDR)
   return bundle.lower()
 
-
 def _bf16(value): return struct.unpack("<I", struct.pack("<f", float(value)))[0] >> 16
 def _fp32(value): return struct.unpack("<f", struct.pack("<I", value << 16))[0]
-
 
 def input_and_reference():
   source_words = tuple(_bf16((x % 257 - 128) / 8) for x in range(1024))
@@ -85,13 +79,11 @@ def input_and_reference():
   encode = lambda words: struct.pack(f"<{len(words)}H", *words)
   return encode(source_words), encode(result_words)
 
-
 def show(program: Program):
   print(f"cores: {program.cores}"); print(f"CBs:   {program.cbs}")
-  print(f"params: {[(param.name, hex(program.param_addr(param)), hex(param.initial.addr)) for param in program.params]}")
+  print(f"params: {[(param.name, hex(program.param_addr(param)), hex(param.initial.addr)) for param in program.params.values()]}")
   for core in program.cores:
     for role, image in program.kernels[core].items(): print(f"{core} {role:7s}: {len(image):4d} bytes")
-
 
 def run_hardware():
   from device import Device
@@ -100,8 +92,8 @@ def run_hardware():
   device = Device()
   try:
     device.upload_fw()
-    src = device.dram.alloc("src", DType.BF16, (32, 32), (32, 32), layout="tile")
-    dst = device.dram.alloc("dst", DType.BF16, (32, 32), (32, 32), layout="tile")
+    src = device.dram.buffer("src", DType.BF16, (32, 32), (32, 32), layout="tile")
+    dst = device.dram.buffer("dst", DType.BF16, (32, 32), (32, 32), layout="tile")
     read_coord, write_coord = (endpoint_coords(device.pcie.harvested_dram_bank, x)[0] for x in range(2))
     program = lower_add1(src, dst, read_coord=read_coord, write_coord=write_coord)
     source, expected = input_and_reference()
@@ -114,13 +106,11 @@ def run_hardware():
     print("PASS add1: one 32x32 BF16 tile"); show(program)
   finally: device.close()
 
-
 def main():
   parser = argparse.ArgumentParser(); parser.add_argument("--run", action="store_true")
   if parser.parse_args().run: return run_hardware()
-  dram = DramAllocator()
-  src = dram.alloc("src", DType.BF16, (32, 32), (32, 32), layout="tile")
-  dst = dram.alloc("dst", DType.BF16, (32, 32), (32, 32), layout="tile"); show(lower_add1(src, dst))
-
+  dram = Dram()
+  src = dram.buffer("src", DType.BF16, (32, 32), (32, 32), layout="tile")
+  dst = dram.buffer("dst", DType.BF16, (32, 32), (32, 32), layout="tile"); show(lower_add1(src, dst))
 
 if __name__ == "__main__": main()

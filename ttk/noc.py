@@ -31,9 +31,7 @@ NIU_MST_WR_ACK_RECEIVED = 0x04
 NIU_MST_RD_RESP_RECEIVED = 0x08
 NIU_MST_POSTED_WR_REQ_SENT = 0x2C
 
-
 class NocCfg:
-  """NoC configuration values shared by resident firmware and kernels."""
   NIU_CFG_0 = 0
   ROUTER_CFG_0 = 1
   NODE_ID_MASK = 0x3F
@@ -140,9 +138,7 @@ class _Stream:
     if self._batch is not None: self._batch._record()
 
 class ReadStream(_Stream):
-
   def issue(self, src: Value, src_coord: Value, dst: Value):
-    """Issue one fixed-size read using this stream's invariant setup."""
     self._ready()
     self._write(NOC_TARG_ADDR_LO, src)
     self._write(NOC_TARG_ADDR_COORDINATE, src_coord)
@@ -151,13 +147,10 @@ class ReadStream(_Stream):
     self._record()
 
   def batch(self, count: Value | None = None):
-    """Wait for this stream's issued reads when the context exits."""
     return _CompletionBatch(self.noc, NIU_MST_RD_RESP_RECEIVED, _READ_BUFFER, count, self)
 
 class WriteStream(_Stream):
-
   def issue(self, src: Value, dst: Value, dst_coord: Value):
-    """Issue one fixed-size write using this stream's invariant setup."""
     self._ready()
     self._write(NOC_TARG_ADDR_LO, src)
     self._write(NOC_RET_ADDR_LO, dst)
@@ -166,38 +159,33 @@ class WriteStream(_Stream):
     self._record()
 
   def batch(self, count: Value | None = None):
-    """Wait for this stream's issued writes when the context exits."""
     return _CompletionBatch(self.noc, NIU_MST_POSTED_WR_REQ_SENT, _WRITE_BUFFER, count, self)
 
 class ReadBatch(_CompletionBatch):
-
   def issue(self, src: Value, src_coord: Value, dst: Value, size: Value, *,
             src_mid: Value = 0, return_coord: Value | None = None):
-    """Issue a read tracked by this completion batch."""
+
     self._require_active()
     self.noc.read(src, src_coord, dst, size, src_mid=src_mid, return_coord=return_coord)
 
 class WriteBatch(_CompletionBatch):
-
   def __init__(self, noc, status=NIU_MST_POSTED_WR_REQ_SENT, buffer=_WRITE_BUFFER,
                count=None, owner=None, *, posted=True):
     super().__init__(noc, status, buffer, count, owner)
     self.posted = posted
 
   def issue(self, src: Value, dst: Value, dst_coord: Value, size: Value, *, dst_mid: Value = 0):
-    """Issue a write tracked by this completion batch."""
     self._require_active()
     self.noc.write(src, dst, dst_coord, size, dst_mid=dst_mid, posted=self.posted)
 
   def multicast(self, src: Value, dst: Value, dst_coord: Value, size: int, *, exclude: Value = 0, along_y=False):
-    """Issue multicast packets tracked by this completion batch."""
     self._require_active()
     packets = self.noc.multicast(src, dst, dst_coord, size, exclude=exclude, along_y=along_y)
     return packets
 
   def multicast_packet(self, src: Value, dst: Value, dst_coord: Value, size: Value, *,
                        exclude: Value = 0, along_y=False):
-    """Issue one unlinked runtime-sized multicast packet."""
+
     self._require_active()
     self.noc._multicast(src, dst, dst_coord, size, linked=False, reserve_path=True,
                         exclude=exclude, along_y=along_y, posted=self.posted)
@@ -205,14 +193,11 @@ class WriteBatch(_CompletionBatch):
     return self
 
 class AtomicBatch(_CompletionBatch):
-
   def issue(self, dst: Value, dst_coord: Value, value: Value = 1, *, return_coord: Value | None = None):
-    """Issue an atomic increment tracked by this completion batch."""
     self._require_active()
     self.noc.atomic_inc(dst, dst_coord, value, return_coord=return_coord)
 
 class NoC:
-
   def __init__(self, asm, index: int):
     if type(index) is not int or index not in (0, 1): raise ValueError("NoC index must be 0 or 1")
     if getattr(asm, "role", None) not in ("brisc", "ncrisc"):
@@ -223,7 +208,6 @@ class NoC:
 
   @staticmethod
   def static_coord(x: int, y: int):
-    """Pack Python X and Y coordinates into a unicast NoC coordinate."""
     if type(x) is not int or type(y) is not int: raise TypeError("static coordinates require Python integers")
     return x | y << 6
 
@@ -277,12 +261,10 @@ class NoC:
     finally: self._streams.remove(buffer)
 
   def initialize(self, local_coord: Value, atomic_return: Value = 4):
-    """Record the initiating coordinate and local atomic-return address."""
     self.local_coord, self.atomic_return = local_coord, atomic_return
     return self
 
   def initialize_from_firmware(self, atomic_return: Value = 4):
-    """Use the issuing RISC's NoC-specific coordinate saved at firmware boot."""
     from fw.consts import BriscLocalState, NcriscLocalState
 
     addresses = {
@@ -307,12 +289,7 @@ class NoC:
                                     read_buffer: int = NocCfg.NCRISC_RD_CMD_BUF,
                                     write_reg_buffer: int = NocCfg.NCRISC_WR_REG_CMD_BUF,
                                     atomic_buffer: int = NocCfg.NCRISC_AT_CMD_BUF):
-    """Seed the command-buffer fields used by resident BRISC/NCRISC code.
 
-    This is initialization, not a data transfer: it writes invariant NoC
-    fields once so later firmware operations only fill in addresses/lengths.
-    The launch/dispatch policy remains in ``fw/brisc.py``.
-    """
     self.initialize(coord, atomic_return)
     for buf, registers in (
       (write_buffer, {NOC_TARG_ADDR_MID: 0, NOC_TARG_ADDR_COORDINATE: coord}),
@@ -327,7 +304,6 @@ class NoC:
     return self
 
   def store_risc_coordinates(self, x_addr: int, y_addr: int):
-    """Read this NoC's hardware ID and store its X/Y coordinates."""
     with self.asm.scope():
       id_reg, coord = self.asm.reg(2)
       self.asm.read32(id_reg, self._cfg_addr(NOC_ID_LOGICAL))
@@ -339,13 +315,6 @@ class NoC:
     return self
 
   def init_resident(self):
-    """Initialize one resident BRISC's fixed NoC command-buffer state.
-
-    Logical coordinates come from hardware because one firmware image is
-    multicast to every worker.  This deliberately does not update the saved
-    X/Y bytes: the old firmware stored those once at boot but reinitialized
-    command buffers before every launch.
-    """
     with self.asm.scope():
       id_reg, coord = self.asm.reg(2)
       self.asm.read32(id_reg, self._cfg_addr(NOC_ID_LOGICAL))
@@ -371,7 +340,7 @@ class NoC:
 
   def read(self, src: Value, src_coord: Value, dst: Value, size: Value, *,
            src_mid: Value = 0, return_coord: Value | None = None):
-    """Issue a remote read into local L1 without waiting for completion."""
+
     self._size(size)
     registers = {NOC_CTRL: NOC_CMD_RD_FIELD,
                  NOC_RET_ADDR_LO: dst, NOC_RET_ADDR_MID: 0, NOC_RET_ADDR_COORDINATE: self._local(return_coord),
@@ -380,19 +349,17 @@ class NoC:
     return self._issue(_READ_BUFFER, registers)
 
   def read_stream(self, size: int, *, return_coord: Value | None = None) -> AbstractContextManager[ReadStream]:
-    """Create a context that reuses fixed read command fields."""
     self._size(size)
     return self._stream(_READ_BUFFER, {NOC_CTRL: NOC_CMD_RD_FIELD, NOC_PACKET_TAG: 0,
       NOC_TARG_ADDR_MID: 0, NOC_RET_ADDR_MID: 0, NOC_RET_ADDR_COORDINATE: self._local(return_coord),
       NOC_AT_LEN_BE: size, NOC_AT_LEN_BE_1: 0}, ReadStream)
 
   def read_batch(self, count: Value | None = None) -> AbstractContextManager[ReadBatch]:
-    """Create a read batch that waits for completion on context exit."""
     return ReadBatch(self, NIU_MST_RD_RESP_RECEIVED, _READ_BUFFER, count)
 
   def write(self, src: Value, dst: Value, dst_coord: Value, size: Value, *,
             dst_mid: Value = 0, posted=True):
-    """Issue a posted local-L1-to-remote write without waiting."""
+
     self._size(size)
     ctrl = NOC_CMD_WR_FIELD if posted else NOC_CMD_WR_FIELD | NOC_CMD_RESP_MARKED
     return self._issue(_WRITE_BUFFER, {NOC_CTRL: ctrl, NOC_PACKET_TAG: 0,
@@ -401,18 +368,15 @@ class NoC:
       NOC_RET_ADDR_COORDINATE: dst_coord, NOC_AT_LEN_BE: size, NOC_AT_LEN_BE_1: 0})
 
   def write_stream(self, size: int) -> AbstractContextManager[WriteStream]:
-    """Create a context that reuses fixed write command fields."""
     self._size(size)
     return self._stream(_WRITE_BUFFER, {NOC_CTRL: NOC_CMD_WR_FIELD, NOC_PACKET_TAG: 0,
       NOC_TARG_ADDR_MID: 0, NOC_TARG_ADDR_COORDINATE: self._local(None), NOC_RET_ADDR_MID: 0,
       NOC_AT_LEN_BE: size, NOC_AT_LEN_BE_1: 0}, WriteStream)
 
   def write_batch(self, count: Value | None = None) -> AbstractContextManager[WriteBatch]:
-    """Create a write batch that waits for issue completion on exit."""
     return WriteBatch(self, NIU_MST_POSTED_WR_REQ_SENT, _WRITE_BUFFER, count)
 
   def write_ack_batch(self, count: Value | None = None) -> AbstractContextManager[WriteBatch]:
-    """Create a nonposted write batch that waits for destination acknowledgements."""
     return WriteBatch(self, NIU_MST_WR_ACK_RECEIVED, _WRITE_BUFFER, count, posted=False)
 
   def _multicast(self, src: Value, dst: Value, dst_coord: Value, size: Value, *, linked: bool,
@@ -427,7 +391,6 @@ class NoC:
       NOC_BRCST_EXCLUDE: exclude, NOC_AT_LEN_BE: size, NOC_AT_LEN_BE_1: 0})
 
   def multicast(self, src: Value, dst: Value, dst_coord: Value, size: int, *, exclude: Value = 0, along_y=False):
-    """Issue a possibly chunked multicast write and return its packet count."""
     if type(size) is not int or size <= 0: raise ValueError("multicast size must be a positive Python integer")
     chunks = (size + NOC_MAX_BURST_SIZE - 1) // NOC_MAX_BURST_SIZE
     with self.asm.scope():
@@ -449,7 +412,6 @@ class NoC:
     return chunks
 
   def atomic_inc(self, dst: Value, dst_coord: Value, value: Value = 1, *, return_coord: Value | None = None):
-    """Issue a remote atomic increment that returns the previous value."""
     registers = {NOC_TARG_ADDR_LO: dst, NOC_TARG_ADDR_MID: 0, NOC_TARG_ADDR_COORDINATE: dst_coord,
                  NOC_RET_ADDR_LO: self.atomic_return, NOC_RET_ADDR_MID: 0,
                  NOC_RET_ADDR_COORDINATE: self._local(return_coord), NOC_PACKET_TAG: 0,
@@ -458,7 +420,6 @@ class NoC:
     return self._issue(_ATOMIC_BUFFER, registers)
 
   def atomic_batch(self, count: Value | None = None) -> AbstractContextManager[AtomicBatch]:
-    """Create an atomic batch that waits for responses on context exit."""
     return AtomicBatch(self, NIU_MST_ATOMIC_RESP_RECEIVED, _ATOMIC_BUFFER, count)
 
   def _ticket(self, status: int, buffer: int):

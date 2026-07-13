@@ -4,14 +4,12 @@ import struct
 
 from ttk.tensix import Tensix, TensixStall, TensixWait, ThreadCfg, tt_word
 
-
 class SfpuFormat(IntEnum):
   SRCB = DEFAULT = 0
   FP16, BF16, FP32, INT32 = range(1, 5)
   INT8, UINT16, HI16, INT16, LO16 = range(5, 10)
   INT32_ALL, ZERO, INT32_SIGN_MAGNITUDE = range(10, 13)
   INT8_COMPAT, LO16_ONLY, HI16_ONLY = range(13, 16)
-
 
 @dataclass(frozen=True)
 class LaneConfig:
@@ -35,18 +33,11 @@ class LaneConfig:
              self.destination_read_column_exchange, self.destination_write_column_exchange, self.exchange_srcb_srcc)
     return sum(int(flag) << bit for bit, flag in enumerate(flags)) | self.block_destination_move << 9 | self.row_mask << 12
 
-
 @dataclass(frozen=True)
 class DstRef:
   offset: int = 0
   format: SfpuFormat = SfpuFormat.SRCB
   addr_mod: int = 7
-
-  def __post_init__(self):
-    if not 0 <= self.offset < 1024: raise ValueError("SFPU Dst offset must fit in ten bits")
-    if not 0 <= self.addr_mod < 8: raise ValueError("SFPU address modifier must be in range 0..7")
-    object.__setattr__(self, "format", SfpuFormat(self.format))
-
 
 @dataclass(frozen=True)
 class LRegRef:
@@ -56,11 +47,9 @@ class LRegRef:
 
   def __repr__(self): return self.name or f"L{self.index}"
 
-
 @dataclass(frozen=True)
 class SfpuProgram:
   words: tuple[int, ...]
-
 
 @dataclass(frozen=True)
 class InstalledSfpuProgram:
@@ -68,13 +57,8 @@ class InstalledSfpuProgram:
   start: int
   owner: int
 
-  @property
-  def length(self): return len(self.program.words)
-
-
 def _bf16(value): return struct.unpack("<I", struct.pack("<f", float(value)))[0] >> 16
 def _nop(): return tt_word("TTSFPNOP")
-
 
 class SfpuProgramBuilder:
   def __init__(self):
@@ -126,7 +110,6 @@ class SfpuProgramBuilder:
 
   def finish(self): self._open(); self.finished = True; return SfpuProgram(tuple(self.words))
 
-
 class Sfpu:
   def __init__(self, tensix: Tensix):
     if tensix.pipe != 1: raise ValueError("SFPU belongs to the math pipe")
@@ -167,7 +150,7 @@ class Sfpu:
     self.tensix.issue(tt_word("TTSETRWC", 0, 0, 0, 0, 0, 4))
     self.tensix.stall(TensixStall.SFPU, TensixWait.MATH)
     for _ in range(4):
-      for _ in range(8): self.tensix.replay(program.start, program.length)
+      for _ in range(8): self.tensix.replay(program.start, len(program.program.words))
       for _ in range(2): self.tensix.issue(tt_word("TTSETRWC", 0, 4, 8, 0, 0, 4))
     self.tensix.issue(tt_word("TTSETRWC", 0, 0, 0, 0, 0, 4))
     self.tensix.stall(TensixStall.SYNC, TensixWait.MATH | TensixWait.SFPU)

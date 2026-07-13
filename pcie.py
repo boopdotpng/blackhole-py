@@ -103,7 +103,7 @@ class PowerState(ctypes.Structure):
 
 PinPages = _TT_IOCTL(
   7, PinPagesPayload, "out", _output_size_bytes=ctypes.sizeof(PinPagesOut),
-  _flags=2, # PIN_PAGES_NOC_DMA
+  _flags=2,
 )
 UnpinPages = _TT_IOCTL(10, UnpinPagesPayload)
 AllocateTlb = _TT_IOCTL(11, AllocateTlbPayload, "out", _size=1 << 21)
@@ -111,15 +111,17 @@ ConfigureTlb = _TT_IOCTL(13, ConfigureTlbPayload)
 FreeTlb = _TT_IOCTL(12, FreeTlbPayload)
 SetPowerState = _TT_IOCTL(15, PowerState, _argsz=ctypes.sizeof(PowerState), _validity=4)
 
-class BumpAllocator:
-  def __init__(self, size: int, start: int = 0):
-    self.next, self.end = start, start + size
+class Allocator:
+  def __init__(self, start: int, end: int, alignment: int = 1):
+    self.next, self.end, self.alignment = start, end, alignment
+    self.allocations = {}
 
-  def alloc(self, size: int, alignment: int = 1):
+  def alloc(self, size: int, alignment: int | None = None, name=None):
+    alignment = self.alignment if alignment is None else alignment
     offset = (self.next + alignment - 1) & -alignment
-    if offset + size > self.end:
-      raise MemoryError("allocator is out of memory")
+    if size < 0 or offset + size > self.end: raise MemoryError("allocator is out of memory")
     self.next = offset + size
+    if name is not None: self.allocations[name] = (offset, size)
     return offset
 
 class Sysmem:
@@ -128,7 +130,7 @@ class Sysmem:
   def __init__(self, fd: int, size: int = 1 << 30):
     self.fd = fd
     self.size = (size + self.PAGE_SIZE - 1) & -self.PAGE_SIZE
-    self.allocator = BumpAllocator(self.size)
+    self.allocator = Allocator(0, self.size, self.PAGE_SIZE)
     self.addr = libc.mmap(None, self.size, 3, 0x21, -1, 0)
     if self.addr == ctypes.c_void_p(-1).value:
       raise OSError(ctypes.get_errno(), "mmap sysmem failed")
@@ -139,7 +141,7 @@ class Sysmem:
       self.addr = None
       raise
 
-  def alloc(self, size: int, alignment: int = PAGE_SIZE): return self.allocator.alloc(size, alignment)
+  def alloc(self, size: int, alignment: int | None = None, name=None): return self.allocator.alloc(size, alignment, name)
 
   def read(self, offset: int, size: int) -> bytes: return ctypes.string_at(self.addr + offset, size)
 
@@ -159,7 +161,7 @@ class Sysmem:
 
 class TLBWindow:
   SIZE = 1 << 21
-  USER_ID_LIMIT = 201  # 0..200; the kernel reserves 2M window 201
+  USER_ID_LIMIT = 201
 
   def __init__(self, fd: int, core: Tuple[int, int]):
     tlb = AllocateTlb(fd)

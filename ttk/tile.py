@@ -1,6 +1,3 @@
-"""Host-side conversion between row-major 32x32 tiles and four 16x16 faces."""
-
-
 def tilize(tile: bytes, itemsize: int) -> bytes:
   if type(itemsize) is not int or itemsize <= 0:
     raise ValueError("tile item size must be positive")
@@ -17,7 +14,6 @@ def tilize(tile: bytes, itemsize: int) -> bytes:
         output[write:write + face_row_bytes] = tile[read:read + face_row_bytes]
         write += face_row_bytes
   return bytes(output)
-
 
 def untilize(tile: bytes, itemsize: int) -> bytes:
   if type(itemsize) is not int or itemsize <= 0:
