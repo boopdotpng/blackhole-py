@@ -107,7 +107,7 @@ usable destination capacity, so it must be coordinated across both engines.
 - Thread end-PC and RISC controls.
 - Clock-gating and related global controls.
 
-Some of these are resident-firmware concerns rather than ordinary kernel
+Some of these are firmware concerns rather than ordinary kernel
 configuration, but they still belong to the same architectural CFG aperture.
 
 ## CFG contexts

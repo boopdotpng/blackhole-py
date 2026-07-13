@@ -3,57 +3,26 @@ from contextlib import AbstractContextManager, contextmanager
 from asm import Cond
 from isa import R
 
-NOC_REGS_START_ADDR = 0xFFB20000
-NOC_CFG_BASE = NOC_REGS_START_ADDR + 0x100
-NOC_STATUS_BASE = 0xFFB20200
-NOC_CMD_BUF_OFFSET_BIT = 11
-NOC_INSTANCE_OFFSET_BIT = 16
+NOC_REGS_START_ADDR = 0xFFB20000; NOC_CFG_BASE = NOC_REGS_START_ADDR + 0x100; NOC_STATUS_BASE = 0xFFB20200
+NOC_CMD_BUF_OFFSET_BIT = 11; NOC_INSTANCE_OFFSET_BIT = 16; NOC_MAX_BURST_SIZE = 16 * 1024
 
-NOC_TARG_ADDR_LO = 0x00
-NOC_TARG_ADDR_MID = 0x04
-NOC_TARG_ADDR_COORDINATE = 0x08
-NOC_RET_ADDR_LO = 0x0C
-NOC_RET_ADDR_MID = 0x10
-NOC_RET_ADDR_COORDINATE = 0x14
-NOC_PACKET_TAG = 0x18
-NOC_CTRL = 0x1C
-NOC_AT_LEN_BE = 0x20
-NOC_AT_LEN_BE_1 = 0x24
-NOC_AT_DATA = 0x28
-NOC_BRCST_EXCLUDE = 0x2C
-NOC_CMD_CTRL = 0x40
-NOC_MAX_BURST_SIZE = 16 * 1024
+NOC_TARG_ADDR_LO = 0x00; NOC_TARG_ADDR_MID = 0x04; NOC_TARG_ADDR_COORDINATE = 0x08
+NOC_RET_ADDR_LO = 0x0C; NOC_RET_ADDR_MID = 0x10; NOC_RET_ADDR_COORDINATE = 0x14
+NOC_PACKET_TAG = 0x18; NOC_CTRL = 0x1C; NOC_AT_LEN_BE = 0x20; NOC_AT_LEN_BE_1 = 0x24
+NOC_AT_DATA = 0x28; NOC_BRCST_EXCLUDE = 0x2C; NOC_CMD_CTRL = 0x40; NOC_ID_LOGICAL = 0x12
 
-NOC_ID_LOGICAL = 0x12
-
-NIU_MST_ATOMIC_RESP_RECEIVED = 0x00
-NIU_MST_WR_ACK_RECEIVED = 0x04
-NIU_MST_RD_RESP_RECEIVED = 0x08
-NIU_MST_POSTED_WR_REQ_SENT = 0x2C
+NIU_MST_ATOMIC_RESP_RECEIVED = 0x00; NIU_MST_WR_ACK_RECEIVED = 0x04
+NIU_MST_RD_RESP_RECEIVED = 0x08; NIU_MST_POSTED_WR_REQ_SENT = 0x2C
 
 class NocCfg:
-  NIU_CFG_0 = 0
-  ROUTER_CFG_0 = 1
-  NODE_ID_MASK = 0x3F
-  ADDR_NODE_ID_BITS = 6
+  NIU_CFG_0 = 0; ROUTER_CFG_0 = 1; NODE_ID_MASK = 0x3F; ADDR_NODE_ID_BITS = 6
   MEM_NOC_ATOMIC_RET_VAL_ADDR = 0x04
-  NCRISC_WR_CMD_BUF = 0
-  NCRISC_RD_CMD_BUF = 1
-  NCRISC_WR_REG_CMD_BUF = 2
-  NCRISC_AT_CMD_BUF = 3
+  NCRISC_WR_CMD_BUF = 0; NCRISC_RD_CMD_BUF = 1; NCRISC_WR_REG_CMD_BUF = 2; NCRISC_AT_CMD_BUF = 3
   RD_CMD_FIELD = (1 << 4) | (1 << 7) | (1 << 13)
 
-NOC_CTRL_SEND_REQ = 1
-NOC_CMD_AT = 1
-NOC_CMD_WR = 1 << 1
-NOC_CMD_RESP_MARKED = 1 << 4
-NOC_CMD_BRCST_PACKET = 1 << 5
-NOC_CMD_VC_LINKED = 1 << 6
-NOC_CMD_VC_STATIC = 1 << 7
-NOC_CMD_PATH_RESERVE = 1 << 8
-NOC_CMD_STATIC_VC_1 = 1 << 13
-NOC_CMD_STATIC_VC_5 = 5 << 13
-NOC_CMD_BRCST_XY = 1 << 16
+NOC_CTRL_SEND_REQ = 1; NOC_CMD_AT = 1; NOC_CMD_WR = 1 << 1; NOC_CMD_RESP_MARKED = 1 << 4
+NOC_CMD_BRCST_PACKET = 1 << 5; NOC_CMD_VC_LINKED = 1 << 6; NOC_CMD_VC_STATIC = 1 << 7
+NOC_CMD_PATH_RESERVE = 1 << 8; NOC_CMD_STATIC_VC_1 = 1 << 13; NOC_CMD_STATIC_VC_5 = 5 << 13; NOC_CMD_BRCST_XY = 1 << 16
 
 NOC_CMD_RD_FIELD = NOC_CMD_RESP_MARKED | NOC_CMD_VC_STATIC | NOC_CMD_STATIC_VC_1
 NOC_CMD_WR_FIELD = NOC_CMD_WR | NOC_CMD_VC_STATIC | NOC_CMD_STATIC_VC_1
@@ -106,6 +75,11 @@ class _CompletionBatch:
   def _record(self, count: int = 1):
     self.issued += count
 
+@contextmanager
+def _batch_context(batch):
+  with batch.noc.asm.scope():
+    with batch: yield batch
+
 class _Stream:
   def __init__(self, noc, base: R, scratch: R, send: R):
     self.noc, self.asm, self.base, self.scratch, self.send = noc, noc.asm, base, scratch, send
@@ -135,7 +109,7 @@ class ReadStream(_Stream):
     self._record()
 
   def batch(self, count: Value | None = None):
-    return _CompletionBatch(self.noc, NIU_MST_RD_RESP_RECEIVED, _READ_BUFFER, count, self)
+    return _batch_context(_CompletionBatch(self.noc, NIU_MST_RD_RESP_RECEIVED, _READ_BUFFER, count, self))
 
 class WriteStream(_Stream):
   def issue(self, src: Value, dst: Value, dst_coord: Value):
@@ -147,7 +121,7 @@ class WriteStream(_Stream):
     self._record()
 
   def batch(self, count: Value | None = None):
-    return _CompletionBatch(self.noc, NIU_MST_POSTED_WR_REQ_SENT, _WRITE_BUFFER, count, self)
+    return _batch_context(_CompletionBatch(self.noc, NIU_MST_POSTED_WR_REQ_SENT, _WRITE_BUFFER, count, self))
 
 class ReadBatch(_CompletionBatch):
   def issue(self, src: Value, src_coord: Value, dst: Value, size: Value, *,
@@ -283,7 +257,7 @@ class NoC:
       self.asm.write8(y_addr + self.index, id_reg)
     return self
 
-  def init_resident(self):
+  def init_firmware(self):
     with self.asm.scope():
       id_reg, coord = self.asm.reg(2)
       self.asm.read32(id_reg, self._cfg_addr(NOC_ID_LOGICAL))
@@ -324,7 +298,7 @@ class NoC:
       NOC_AT_LEN_BE: size, NOC_AT_LEN_BE_1: 0}, ReadStream)
 
   def read_batch(self, count: Value | None = None) -> AbstractContextManager[ReadBatch]:
-    return ReadBatch(self, NIU_MST_RD_RESP_RECEIVED, _READ_BUFFER, count)
+    return _batch_context(ReadBatch(self, NIU_MST_RD_RESP_RECEIVED, _READ_BUFFER, count))
 
   def write(self, src: Value, dst: Value, dst_coord: Value, size: Value, *,
             dst_mid: Value = 0, posted=True):
@@ -343,10 +317,10 @@ class NoC:
       NOC_AT_LEN_BE: size, NOC_AT_LEN_BE_1: 0}, WriteStream)
 
   def write_batch(self, count: Value | None = None) -> AbstractContextManager[WriteBatch]:
-    return WriteBatch(self, NIU_MST_POSTED_WR_REQ_SENT, _WRITE_BUFFER, count)
+    return _batch_context(WriteBatch(self, NIU_MST_POSTED_WR_REQ_SENT, _WRITE_BUFFER, count))
 
   def write_ack_batch(self, count: Value | None = None) -> AbstractContextManager[WriteBatch]:
-    return WriteBatch(self, NIU_MST_WR_ACK_RECEIVED, _WRITE_BUFFER, count, posted=False)
+    return _batch_context(WriteBatch(self, NIU_MST_WR_ACK_RECEIVED, _WRITE_BUFFER, count, posted=False))
 
   def _multicast(self, src: Value, dst: Value, dst_coord: Value, size: Value, *, linked: bool,
                  reserve_path: bool, exclude: Value, along_y: bool, dst_mid: Value = 0,
@@ -389,7 +363,7 @@ class NoC:
     return self._issue(_ATOMIC_BUFFER, registers)
 
   def atomic_batch(self, count: Value | None = None) -> AbstractContextManager[AtomicBatch]:
-    return AtomicBatch(self, NIU_MST_ATOMIC_RESP_RECEIVED, _ATOMIC_BUFFER, count)
+    return _batch_context(AtomicBatch(self, NIU_MST_ATOMIC_RESP_RECEIVED, _ATOMIC_BUFFER, count))
 
   def _ticket(self, status: int, buffer: int):
     start = self.asm.reg()

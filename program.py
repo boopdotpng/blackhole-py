@@ -120,7 +120,7 @@ class Program:
               tuple(cores), TensixL1.WORKER_TEXT_BASE[role] + offset, (data,),
             ))
           else:
-            rects = _rectangles(cores)
+            rects = rectangles(cores)
             commands.append(McastWrite(
               rects, TensixL1.WORKER_TEXT_BASE[role] + offset, data,
               tuple(sum(x0 <= x <= x1 and y0 <= y <= y1 for x, y in cores)
@@ -143,7 +143,7 @@ class Program:
 
 KernelFn = Callable[[KernelBuilder], None]
 
-def _rectangles(cores):
+def rectangles(cores):
   rows = {}
   for x, y in cores: rows.setdefault(y, []).append(x)
   columns = sorted({x for xs in rows.values() for x in xs})

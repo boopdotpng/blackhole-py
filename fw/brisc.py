@@ -19,9 +19,8 @@ def _notify_dispatch(fw):
     fw.load(tmp, BriscLocalState.MY_Y + 1, bytes=1)
     fw.slli(tmp, tmp, 6); fw.or_(local, local, tmp)
     noc = fw.noc(1).initialize(local)
-    with fw.scope():
-      with noc.atomic_batch(count=1) as atomics:
-        atomics.issue(DISPATCH_DONE_COUNT, CQ.DISPATCH_COORD)
+    with noc.atomic_batch(count=1) as atomics:
+      atomics.issue(DISPATCH_DONE_COUNT, CQ.DISPATCH_COORD)
   return fw
 
 def build_brisc():
@@ -29,6 +28,12 @@ def build_brisc():
   fw.configure_csr()
   fw.setup_stack(Firmware.BRISC_STACK_TOP)
 
+  fw.write32(TensixMMIO.RISCV_DEBUG_REG_NCRISC_RESET_PC, Firmware.TEXT_BASE["ncrisc"])
+  fw.write32(TensixMMIO.RISCV_DEBUG_REG_TRISC0_RESET_PC, Firmware.TEXT_BASE["trisc0"])
+  fw.write32(TensixMMIO.RISCV_DEBUG_REG_TRISC1_RESET_PC, Firmware.TEXT_BASE["trisc1"])
+  fw.write32(TensixMMIO.RISCV_DEBUG_REG_TRISC2_RESET_PC, Firmware.TEXT_BASE["trisc2"])
+  fw.write32(TensixMMIO.RISCV_DEBUG_REG_TRISC_RESET_PC_OVERRIDE, 0b111)
+  fw.write32(TensixMMIO.RISCV_DEBUG_REG_NCRISC_RESET_PC_OVERRIDE, 1)
   fw.write32(TensixMMIO.RISCV_DEBUG_REG_DEST_CG_CTRL, 0)
   fw.write32(TensixMMIO.RISCV_TDMA_REG_CLK_GATE_EN, 0x3F)
   _enable_clock_gating(fw)
@@ -48,7 +53,6 @@ def build_brisc():
   for role in range(1, 5):
     fw.wait8(FirmwareControl.SUBORDINATE_SYNC + role - 1, RunSync.BOOT_READY)
 
-  fw.signal8(FirmwareControl.GO_SIGNAL, RunMsg.DONE)
   fw.label("run_loop")
   fw.wait8(FirmwareControl.GO_SIGNAL, RunMsg.GO)
   fw.jal(R.RA, "reset_tensix")
@@ -69,6 +73,6 @@ def build_brisc():
 
   fw.label("init_nocs")
   for index in (0, 1):
-    fw.noc(index).init_resident()
+    fw.noc(index).init_firmware()
   fw.jalr(R.ZERO, R.RA)
   return fw

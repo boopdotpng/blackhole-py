@@ -305,7 +305,7 @@ across a 32-bit counter wrap as long as fewer than `2^31` completions are
 expected. A batch wait is not emitted if Python exits its body with an
 exception.
 
-Batches use global per-NIU counters, so resident firmware and a kernel must not
+Batches use global per-NIU counters, so core firmware and a kernel must not
 share an NIU during the same batch. The API writes packet tag zero and does not
 use hardware transaction IDs.
 

@@ -7,9 +7,9 @@ them with the transfer path in this repository. It is based on tt-metal commit
 ## Decision
 
 The current fill/drain programs are a valid transfer mechanism. The problem is
-not that a RISC kernel moves the bytes: tt-metal also moves them with resident
+not that a RISC kernel moves the bytes: tt-metal also moves them with long-running
 prefetch and dispatch firmware. The important difference is that tt-metal's
-transfer engine is always resident and its bounded sysmem regions are recycling
+transfer engine is always active and its bounded sysmem regions are recycling
 streams, while this repository launches ordinary worker programs and treats a
 large host allocation as if it must hold the whole tensor.
 
@@ -20,8 +20,8 @@ current parallelism across worker cores.
 
 If eliminating per-transfer worker launches is a hard requirement, the
 smallest CQ-native step is one synchronous, staged `DRAM_COPY` command handled
-by the resident dispatch firmware. It can reuse the same chunk loop and the
-existing Fence completion. It does **not** need tt-metal's completion-stream
+by the dispatch firmware. It can reuse the same chunk loop and the
+existing completion ring. It does **not** need tt-metal's completion-stream
 protocol, but a naive implementation uses one dispatch core and must be
 benchmarked before the worker programs are removed.
 
@@ -33,9 +33,9 @@ the host staging window becomes important.
 
 ## Three designs at a glance
 
-| Property | Current worker programs | Minimal resident `DRAM_COPY` | tt-metal-style streaming |
+| Property | Current worker programs | Minimal firmware `DRAM_COPY` | tt-metal-style streaming |
 |---|---|---|---|
-| Transfer code runs on | Up to all worker NCRISCs | Resident dispatch RISC | Resident prefetch/dispatch RISCs |
+| Transfer code runs on | Up to all worker NCRISCs | Dispatch firmware | Prefetch/dispatch firmware |
 | H2D bytes travel through | `cq.dram` host window | `cq.dram` host window | Inline issue-ring records, or pinned source |
 | D2H bytes travel through | `cq.dram` host window | `cq.dram` host window | Completion ring, or pinned destination |
 | Tensor must fit a host window | Currently yes; not fundamentally | No, when chunked | No |
@@ -360,11 +360,11 @@ This supports a tensor larger than the host window and even a total logical
 transfer larger than one 4 GiB host-address window, because every chunk reuses
 the same addressable host range. Device-buffer address limits still apply.
 
-### Choice B: one synchronous resident `DRAM_COPY` command
+### Choice B: one synchronous firmware `DRAM_COPY` command
 
 This is the lowest-complexity way to stop launching transfer programs without
 changing issue-ring transport or completion mechanics. It does add a CQ
-command opcode and record ABI. It moves the existing page loop into resident
+command opcode and record ABI. It moves the existing page loop into dispatch
 dispatch; it is not the full tt-metal streaming design.
 
 One possible 64-byte record keeps the existing 16-byte `Packet.HEADER` and
@@ -386,7 +386,7 @@ extension <IIIII>:
 ```
 
 Compile the seven harvested-device NoC 1 DRAM endpoints into dispatch when
-`upload_fw()` builds it. They then do not need to appear in every record.
+`init_device()` builds it. They then do not need to appear in every record.
 
 The current dispatch ring ends at `0x160000` and Blackhole Tensix L1 ends at
 `0x180000`, leaving 128 KiB after the ring. Existing completion scratch/control
@@ -396,29 +396,24 @@ mapping and copy sequence as `fw/dram.py`, waits for each read response and
 destination acknowledgement before scratch reuse, then returns the record's
 dispatch credits normally.
 
-`CommandQueue.submit()` will append its ordinary Fence. Because the transfer
-handler finishes all acknowledged writes before completing and submission is
-currently synchronous, the Fence is also the staging ownership boundary:
+`DRAM_COPY` must publish a completion after finishing all acknowledged writes.
+Because submission is currently synchronous, that completion is also the
+staging ownership boundary:
 
 - H2D may overwrite the stage only after `submit()` returns.
 - D2H may read the stage only after `submit()` returns.
 - Large tensors use the exact chunk loop from Choice A.
 
-This wait inside `DRAM_COPY` is a hard correctness requirement: the Fence
-handler itself performs no NoC barrier and only publishes a result. Today's
-worker path completes through Run; this proposed path would complete through
-the following Fence. The notification is safe only if `DRAM_COPY` has already
-waited for every source read and destination acknowledgement before returning
-to the dispatch loop.
+This wait inside `DRAM_COPY` is a hard correctness requirement. The completion
+is safe only after every source read and destination acknowledgement finishes.
 
 No completion data or new completion pointer is required. Deleting
 `fw/dram.py` and the transfer-program construction may offset much of the new
-handler's line count. One semantic difference is that the auto-added Fence
-records identical start/end timestamps; unlike today's Run result, it does not
-measure device-side transfer duration.
+handler's line count. The command can record its own start/end timestamps using
+the same completion format as Run.
 
 The tradeoff is performance. The current path distributes ranges across many
-workers; the simple resident command serializes them on one dispatch RISC. It
+workers; the simple firmware command serializes them on one dispatch RISC. It
 may remove launch overhead yet lose bandwidth. Keep both paths until a
 benchmark measures H2D and D2H bandwidth across small and large tensors.
 
@@ -459,10 +454,10 @@ A faithful D2H implementation must add all of the following:
 4. Payload-before-write-pointer publication ordering.
 5. A host drain loop that copies available bytes and returns read credits while
    the device command is still running.
-6. Framing sufficient to distinguish tensor data from the final Fence result.
+6. Framing sufficient to distinguish tensor data from the final completion.
 
 A background thread is optional while reads remain blocking, but concurrent
-progress is not. Enqueueing a read and waiting for its final Fence before
+progress is not. Enqueueing a read and waiting for its final completion before
 draining will deadlock whenever the payload is larger than the completion
 ring: dispatch waits for space, while the host waits for dispatch.
 
@@ -492,8 +487,8 @@ a deliberately slow host consumer.
 | Topic | Primary source |
 |---|---|
 | Rewrite host CQ and rings | [`cq.py`](../cq.py) |
-| Rewrite resident prefetch | [`fw/cq_prefetch.py`](../fw/cq_prefetch.py) |
-| Rewrite resident dispatch | [`fw/cq_dispatch.py`](../fw/cq_dispatch.py) |
+| Rewrite prefetch firmware | [`fw/cq_prefetch.py`](../fw/cq_prefetch.py) |
+| Rewrite dispatch firmware | [`fw/cq_dispatch.py`](../fw/cq_dispatch.py) |
 | Rewrite transfer API | [`device.py`](../device.py) |
 | Rewrite worker transfer loop | [`fw/dram.py`](../fw/dram.py) |
 | Rewrite DRAM endpoint mapping | [`ttk/dram.py`](../ttk/dram.py) |

@@ -25,7 +25,6 @@ class Op(IntEnum):
   UNICAST_WRITE = 1
   MCAST_WRITE = 2
   RUN = 3
-  FENCE = 4
 
 class PacketLayout:
   HEADER = Struct("<BxHIII")

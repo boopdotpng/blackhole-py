@@ -162,6 +162,7 @@ class Sysmem:
 class TLBWindow:
   SIZE = 1 << 21
   USER_ID_LIMIT = 201
+  WORKER_START = (1, 2); WORKER_END = (14, 11)
 
   def __init__(self, fd: int, core: Tuple[int, int]):
     tlb = AllocateTlb(fd)
@@ -184,6 +185,11 @@ class TLBWindow:
   def write(self, offset: int, value, bytes=4):
     data = value.to_bytes(bytes, "little") if isinstance(value, int) else value
     ctypes.memmove(self.addr + offset, data, len(data))
+
+  def mcast(self, addr: int, value, bytes=4):
+    base = addr & -self.SIZE
+    self.target(base, self.WORKER_START, self.WORKER_END)
+    self.write(addr - base, value, bytes)
 
   def close(self):
     if self.addr is not None:

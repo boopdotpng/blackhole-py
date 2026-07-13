@@ -88,7 +88,7 @@ def run_hardware():
 
   device = Device()
   try:
-    device.upload_fw()
+    device.init_device()
     src = device.dram.buffer("src", DType.BF16, (32, 32), (32, 32), layout="tile")
     dst = device.dram.buffer("dst", DType.BF16, (32, 32), (32, 32), layout="tile")
     read_coord, write_coord = (endpoint_coords(device.pcie.harvested_dram_bank, x)[0] for x in range(2))

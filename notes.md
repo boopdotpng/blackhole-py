@@ -1,19 +1,18 @@
 # Porting notes
 
-## Resident firmware policy
+## Core firmware policy
 
 The rewrite ports hardware behavior, not TT-Metal's dynamic launch layout.
 Firmware images, worker images, parameters, and circular-buffer interfaces all
-have fixed host-owned addresses.  Resident firmware therefore does not copy or
+have fixed host-owned addresses. Core firmware therefore does not copy or
 walk a launch structure, relocate RTA/CRTA tables, or convert CB descriptors.
 See `docs/l1.md` for the complete worker-L1 layout and `fw/consts.py` for its
 checked executable definition.
 
 The retained boot responsibilities are the ones required by hardware:
 
-- The host uploads all five images, installs subordinate reset PCs, and only
-  then releases BRISC.
-- BRISC configures clock gating, clears the architectural zero region,
+- The host uploads all five images, clears the go signal, and releases BRISC.
+- BRISC installs the subordinate reset PCs, configures clock gating, clears the architectural zero region,
   invalidates every RISC instruction cache, resets Tensix, and initializes both
   of its NoC instances.
 - NCRISC initializes both of its NoC instances from the hardware logical IDs.
@@ -25,12 +24,12 @@ The retained boot responsibilities are the ones required by hardware:
   caches before each run.
 
 Both BRISC and NCRISC NoC setup reads the per-core logical ID at runtime because
-the same resident image is multicast to all workers.  The generated command
+the same firmware image is multicast to all workers. The generated command
 buffer addresses and local-state destinations are otherwise compile-time
 constants.  Completion batches snapshot live NIU counters when they begin, so
 the legacy per-launch counter copies are deliberately absent.
 
-### Parity with `blackhole-py` resident firmware
+### Parity with `blackhole-py` core firmware
 
 The retained sequences match the old firmware in this order:
 
@@ -52,7 +51,7 @@ optimized away, even when selecting context zero.
 
 ## NoC clock gating
 
-Clock gating is one-time resident BRISC initialization, not program or kernel
+Clock gating is one-time BRISC firmware initialization, not program or kernel
 configuration. At boot, for both NoC 0 and NoC 1:
 
 1. Read `NIU_CFG_0` and write it back with bit 0 set.

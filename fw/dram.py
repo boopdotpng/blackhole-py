@@ -34,20 +34,16 @@ def _kernel(write: bool, core, dram_coords):
     fw.label("dram_bank_selected")
 
     if write:
-      with fw.scope():
-        with noc.read_batch(count=1) as reads:
-          reads.issue(sysmem, CQ.PCIE_COORD, SCRATCH, size,
-                      src_mid=mid, return_coord=local)
-      with fw.scope():
-        with noc.write_ack_batch(count=1) as writes:
-          writes.issue(SCRATCH, address, coord, size)
+      with noc.read_batch(count=1) as reads:
+        reads.issue(sysmem, CQ.PCIE_COORD, SCRATCH, size,
+                    src_mid=mid, return_coord=local)
+      with noc.write_ack_batch(count=1) as writes:
+        writes.issue(SCRATCH, address, coord, size)
     else:
-      with fw.scope():
-        with noc.read_batch(count=1) as reads:
-          reads.issue(address, coord, SCRATCH, size, return_coord=local)
-      with fw.scope():
-        with noc.write_ack_batch(count=1) as writes:
-          writes.issue(SCRATCH, sysmem, CQ.PCIE_COORD, size, dst_mid=mid)
+      with noc.read_batch(count=1) as reads:
+        reads.issue(address, coord, SCRATCH, size, return_coord=local)
+      with noc.write_ack_batch(count=1) as writes:
+        writes.issue(SCRATCH, sysmem, CQ.PCIE_COORD, size, dst_mid=mid)
 
     fw.add(sysmem, sysmem, size)
     fw.addi(tile, tile, 1); fw.addi(tiles, tiles, -1)

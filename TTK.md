@@ -201,7 +201,7 @@ the same without repeating its invariant command setup.
 
 `noc.logical_coord(reg)` reads the NIU's runtime logical coordinate rather
 than pretending it is compile-time state. One-time NoC hardware setup belongs
-to resident BRISC firmware, not the per-kernel NoC object.
+to BRISC firmware, not the per-kernel NoC object.
 
 ## Concurrent ownership
 
@@ -239,7 +239,7 @@ by waits and phase barriers.
 1. Record the TTSIM reset snapshot and define typed state dataclasses.
 2. Implement the raw configuration shadow and diff emitter.
 3. Port NoC, CB, unpack, FPU, SFPU, and pack helpers onto that state model.
-4. Port resident BRISC, NCRISC, and TRISC firmware using the new TTK.
+4. Port BRISC, NCRISC, and TRISC firmware using the new TTK.
 5. Port simple kernels and verify final engine states against TTSIM.
 6. Add the optional compute-expression layer after the direct engine APIs are
    correct.

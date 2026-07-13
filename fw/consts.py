@@ -21,20 +21,20 @@ class Firmware:
 
   TEXT_BASE = {
     "brisc": 0x3840,
-    "ncrisc": 0x3E40,
-    "trisc0": 0x3F18,
-    "trisc1": 0x3FE0,
-    "trisc2": 0x40A8,
+    "ncrisc": 0x3EB0,
+    "trisc0": 0x3F88,
+    "trisc1": 0x4050,
+    "trisc2": 0x4118,
   }
 
   TEXT_SIZE = {
-    "brisc": 0x0600,
+    "brisc": 0x0670,
     "ncrisc": 0x00D8,
     "trisc0": 0x00C8,
     "trisc1": 0x00C8,
     "trisc2": 0x00C8,
   }
-  TEXT_END = 0x4170
+  TEXT_END = 0x41E0
 
 class BriscLocalState:
   MY_Y = 0xFFB00004; MY_X = 0xFFB00008

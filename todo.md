@@ -48,7 +48,7 @@ compute, and NCRISC writes:
 - Tensix received/acknowledged integration
 
 Port the working behavior from `../blackhole-py/ttk/cb.py` into the rewrite's
-typed builder and fixed resident-firmware ABI. Do not restore the old launch
+typed builder and fixed firmware ABI. Do not restore the old launch
 message or dynamic CB descriptor layout.
 
 Add a two-slot pipeline test proving that the reader can fill tile N+1 while

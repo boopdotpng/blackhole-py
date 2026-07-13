@@ -33,10 +33,9 @@ def _emit_prefetch(fw, state):
   fw.bltu(chunk, left, "pcie_read_size")
   fw.mv(chunk, left)
   fw.label("pcie_read_size")
-  with fw.scope():
-    with noc.read_batch(count=1) as reads:
-      reads.issue(src, CQ.PCIE_COORD, dst, chunk, src_mid=CQ.PCIE_MID,
-                  return_coord=CQ.PREFETCH_COORD)
+  with noc.read_batch(count=1) as reads:
+    reads.issue(src, CQ.PCIE_COORD, dst, chunk, src_mid=CQ.PCIE_MID,
+                return_coord=CQ.PREFETCH_COORD)
   fw.add(src, src, chunk); fw.add(dst, dst, chunk); fw.sub(left, left, chunk)
   fw.j("pcie_read_loop")
   fw.label("pcie_read_done")
@@ -60,15 +59,13 @@ def _emit_prefetch(fw, state):
   fw.bltu(chunk, left, "dispatch_copy_size")
   fw.mv(chunk, left)
   fw.label("dispatch_copy_size")
-  with fw.scope():
-    with noc.write_ack_batch(count=1) as writes: writes.issue(src, dst, CQ.DISPATCH_COORD, chunk)
+  with noc.write_ack_batch(count=1) as writes: writes.issue(src, dst, CQ.DISPATCH_COORD, chunk)
   fw.add(src, src, chunk); fw.add(dst, dst, chunk); fw.sub(left, left, chunk)
   fw.j("dispatch_copy_loop")
   fw.label("dispatch_copy_done")
   fw.write32(CQ_STATE + 0x20, used)
-  with fw.scope():
-    with noc.write_ack_batch(count=1) as writes:
-      writes.issue(CQ_STATE + 0x20, DISPATCH_PUBLISHED, CQ.DISPATCH_COORD, 4)
+  with noc.write_ack_batch(count=1) as writes:
+    writes.issue(CQ_STATE + 0x20, DISPATCH_PUBLISHED, CQ.DISPATCH_COORD, 4)
   fw.slli(left, pages, 12); fw.add(ring, ring, left)
   fw.li(left, DISPATCH_RING_END); fw.bne(ring, left, "dispatch_no_wrap")
   fw.li(ring, DISPATCH_RING_BASE)

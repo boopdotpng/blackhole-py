@@ -33,7 +33,6 @@ def _emit_dispatch(fw, state):
     int(Op.UNICAST_WRITE): "unicast",
     int(Op.MCAST_WRITE): "multicast",
     int(Op.RUN): "run",
-    int(Op.FENCE): "fence",
   }, "bad_command")
 
   fw.label("unicast")
@@ -45,15 +44,14 @@ def _emit_dispatch(fw, state):
   fw.align_up(s7, ALIGN, scratch=s8)
   fw.mv(s8, s5); fw.align_up(s8, ALIGN, scratch=s9)
   fw.mv(s9, s3)
-  with fw.scope():
-    with noc.write_ack_batch(count=s3) as writes:
-      fw.label("unicast_loop")
-      fw.beq(s9, R.ZERO, "unicast_done")
-      fw.lw(s10, s6, 0)
-      writes.issue(s7, s4, s10, s5)
-      fw.addi(s6, s6, 4); fw.add(s7, s7, s8)
-      fw.addi(s9, s9, -1); fw.j("unicast_loop")
-      fw.label("unicast_done")
+  with noc.write_ack_batch(count=s3) as writes:
+    fw.label("unicast_loop")
+    fw.beq(s9, R.ZERO, "unicast_done")
+    fw.lw(s10, s6, 0)
+    writes.issue(s7, s4, s10, s5)
+    fw.addi(s6, s6, 4); fw.add(s7, s7, s8)
+    fw.addi(s9, s9, -1); fw.j("unicast_loop")
+    fw.label("unicast_done")
   fw.j("command_done")
 
   fw.label("multicast")
@@ -67,24 +65,11 @@ def _emit_dispatch(fw, state):
   fw.beq(s3, R.ZERO, "multicast_done")
   fw.lw(s8, s6, 0); fw.lw(s9, s6, 4)
 
-  with fw.scope():
-    with noc.write_ack_batch(count=s9) as writes:
-      writes.multicast_packet(s7, s4, s8, s5)
+  with noc.write_ack_batch(count=s9) as writes:
+    writes.multicast_packet(s7, s4, s8, s5)
   fw.addi(s6, s6, 8); fw.addi(s3, s3, -1)
   fw.j("multicast_loop")
   fw.label("multicast_done")
-  fw.j("command_done")
-
-  fw.label("fence")
-  fw.read32(s8, TensixMMIO.RISCV_DEBUG_REG_WALL_CLOCK_L)
-  fw.read32(s9, TensixMMIO.RISCV_DEBUG_REG_WALL_CLOCK_H)
-  fw.write32(DISPATCH_SCRATCH + Timestamp.START, s8)
-  fw.write32(DISPATCH_SCRATCH + Timestamp.START + 4, s9)
-  fw.write32(DISPATCH_SCRATCH + Timestamp.END, s8)
-  fw.write32(DISPATCH_SCRATCH + Timestamp.END + 4, s9)
-  fw.lw(s8, s0, PacketLayout.RUN_EVENT)
-  fw.write32(DISPATCH_SCRATCH + Timestamp.EVENT, s8)
-  _publish_completion(fw, noc)
   fw.j("command_done")
 
   fw.label("run")
@@ -98,14 +83,13 @@ def _emit_dispatch(fw, state):
   fw.addi(s6, s0, PacketLayout.RUN_TARGETS)
   fw.write32(DISPATCH_GO, int(RunMsg.GO) << 24)
   fw.mv(s7, s3)
-  with fw.scope():
-    with noc.write_ack_batch(count=s3) as writes:
-      fw.label("go_loop")
-      fw.beq(s7, R.ZERO, "go_done")
-      fw.lw(s8, s6, 0)
-      writes.issue(DISPATCH_GO, FirmwareControl.GO_SIGNAL & -4, s8, 4)
-      fw.addi(s6, s6, 4); fw.addi(s7, s7, -1); fw.j("go_loop")
-      fw.label("go_done")
+  with noc.write_ack_batch(count=s3) as writes:
+    fw.label("go_loop")
+    fw.beq(s7, R.ZERO, "go_done")
+    fw.lw(s8, s6, 0)
+    writes.issue(DISPATCH_GO, FirmwareControl.GO_SIGNAL & -4, s8, 4)
+    fw.addi(s6, s6, 4); fw.addi(s7, s7, -1); fw.j("go_loop")
+    fw.label("go_done")
   fw.label("wait_workers")
   fw.read32(s8, DISPATCH_DONE_COUNT)
   fw.bne(s8, s3, "wait_workers")
@@ -141,9 +125,8 @@ def _emit_completion(fw, noc, state):
   no_wrap = fw._new_label("completion_no_wrap")
   fw.read32(s10, DISPATCH_COMPLETION_WRITE)
   fw.li(s11, 0x7FFFFFFF); fw.and_(s11, s10, s11); fw.slli(s11, s11, 4)
-  with fw.scope():
-    with noc.write_ack_batch(count=1) as writes:
-      writes.issue(DISPATCH_SCRATCH, s11, CQ.PCIE_COORD, Timestamp.STRUCT.size, dst_mid=CQ.PCIE_MID)
+  with noc.write_ack_batch(count=1) as writes:
+    writes.issue(DISPATCH_SCRATCH, s11, CQ.PCIE_COORD, Timestamp.STRUCT.size, dst_mid=CQ.PCIE_MID)
   fw.addi(s11, s10, PAGE_SIZE // 16)
   fw.read32(s3, DISPATCH_COMPLETION_END)
   fw.li(s4, 0x7FFFFFFF); fw.and_(s4, s11, s4)
@@ -154,6 +137,5 @@ def _emit_completion(fw, noc, state):
   fw.write32(DISPATCH_COMPLETION_WRITE, s11)
   fw.write32(DISPATCH_COMPLETION_PUBLISH, s11)
   fw.read32(s3, DISPATCH_COMPLETION_HOST_PTR)
-  with fw.scope():
-    with noc.write_ack_batch(count=1) as writes:
-      writes.issue(DISPATCH_COMPLETION_PUBLISH, s3, CQ.PCIE_COORD, 4, dst_mid=CQ.PCIE_MID)
+  with noc.write_ack_batch(count=1) as writes:
+    writes.issue(DISPATCH_COMPLETION_PUBLISH, s3, CQ.PCIE_COORD, 4, dst_mid=CQ.PCIE_MID)

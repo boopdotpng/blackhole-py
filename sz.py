@@ -45,28 +45,8 @@ def signed_integer(value): return str(value) if isinstance(value, str) else f"{v
 def decimal(value): return str(value) if isinstance(value, str) else f"{value:.1f}"
 def signed_decimal(value): return str(value) if isinstance(value, str) else f"{value:+.1f}"
 
-def firmware_stats():
-  from functools import partial
-  from fw.brisc import build_brisc
-  from fw.consts import Firmware
-  from fw.ncrisc import build_ncrisc
-  from fw.trisc import build_trisc
-  builds = {
-    "brisc": build_brisc, "ncrisc": build_ncrisc,
-    **{f"trisc{i}": partial(build_trisc, i) for i in range(3)},
-  }
-  rows = []
-  for role, build in builds.items():
-    size = len(build().lower())
-    limit = Firmware.TEXT_SIZE[role]
-    rows.append((role, size, limit, limit - size, 100 * size / limit))
-  return rows
-
 if __name__ == "__main__":
-  if sys.argv[1:] == ["--firmware"]:
-    print(render(("Role", "Bytes", "Limit", "Free", "Used %"), firmware_stats(),
-                 (text, integer, integer, integer, decimal)))
-  elif len(sys.argv) == 3:
+  if len(sys.argv) == 3:
     rows = sorted(gen_diff(gen_stats(sys.argv[1]), gen_stats(sys.argv[2])), key=lambda row: (-row[1], row[0]))
     if rows:
       print("### Changes")
