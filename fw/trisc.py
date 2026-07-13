@@ -3,12 +3,10 @@ from isa import R
 from fw.consts import Firmware, FirmwareControl, RunSync, TensixL1
 from ttk.tensix import Tensix, TensixRegs
 
-def build(trisc_id: int):
-  if trisc_id not in (0, 1, 2):
-    raise ValueError("TRISC id must be 0, 1, or 2")
+def build_trisc(trisc_id: int):
   role = f"trisc{trisc_id}"
   sync = FirmwareControl.SUBORDINATE_SYNC + trisc_id + 1
-  fw = KernelBuilder.standalone(role)
+  fw = KernelBuilder.firmware(role)
   fw.li(R.GP, Firmware.TRISC_GLOBAL_POINTER)
   fw.setup_stack(Firmware.TRISC_STACK_TOP)
   fw.configure_csr()
@@ -29,7 +27,3 @@ def build(trisc_id: int):
   Tensix.init(fw)
   fw.jalr(R.ZERO, R.RA)
   return fw
-
-def build_trisc0(): return build(0)
-def build_trisc1(): return build(1)
-def build_trisc2(): return build(2)

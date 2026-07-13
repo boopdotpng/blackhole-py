@@ -188,8 +188,6 @@ class TensixState:
   sfpu_lane_config: int | None = None
 
   def set_context(self, pipe: int, context: int):
-    if pipe not in (0, 1, 2) or context not in (0, 1):
-      raise ValueError("Tensix pipe/context out of range")
     self.selected_context[pipe] = context
 
   def cfg(self, pipe: int, register: Cfg):
@@ -212,8 +210,6 @@ class TensixState:
 
 class Tensix:
   def __init__(self, kernel, pipe: int, state: TensixState | None = None):
-    if pipe not in (0, 1, 2):
-      raise ValueError("Tensix pipe must be 0, 1, or 2")
     self.k, self.pipe = kernel, pipe
     self.state = state if state is not None else TensixState()
 
@@ -315,8 +311,6 @@ class Tensix:
   def mop_sync(self): return self._sync(TensixRegs.PC_BUF_MOP_SYNC)
 
   def wait_unpack_config_idle(self):
-    if self.pipe != 0:
-      raise RuntimeError("unpack configuration synchronization belongs to pipe 0")
     with self.k.scope():
       pointer, value = self.k.reg(2)
       self.k.li(pointer, TensixRegs.PC_UNPACK_SYNC)
@@ -332,8 +326,6 @@ class Tensix:
     return self
 
   def commit_unpack_config(self, register: Cfg):
-    if self.pipe != 0:
-      raise RuntimeError("unpack configuration synchronization belongs to pipe 0")
     with self.k.scope():
       observed = self.k.reg()
       self.k.read32(observed, int(register))

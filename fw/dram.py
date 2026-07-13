@@ -1,5 +1,4 @@
 from asm import KERNEL_ROLES, KernelBuilder
-from cq import MAX_WRITE_SIZE
 from fw.consts import CQ, NcriscLocalState, TensixL1
 from isa import R
 from program import Program
@@ -9,7 +8,6 @@ ARGS_WORDS = 6
 SCRATCH = TensixL1.DATA_BUFFER_SPACE_BASE
 
 def _kernel(write: bool, core, dram_coords):
-  if len(dram_coords) != 7: raise ValueError("DRAM transfer needs seven bank coordinates")
   fw = KernelBuilder("ncrisc", core)
   with fw.scope():
     base, sysmem, mid, tile, tiles, size, bank, address, coord, seven, local, tmp = fw.reg(12)
@@ -59,8 +57,6 @@ def _kernel(write: bool, core, dram_coords):
 
 def _program(cores, dram_coords, *, write):
   cores = tuple(cores)
-  if not cores: raise ValueError("DRAM transfer needs at least one worker core")
-  if MAX_WRITE_SIZE < 16 * 1024: raise RuntimeError("CQ cannot upload the DRAM kernel")
   images = {role: KernelBuilder(role, cores[0]).lower() for role in KERNEL_ROLES}
   images["ncrisc"] = _kernel(write, cores[0], tuple(dram_coords))
   return Program({core: dict(images) for core in cores}, {}, ())

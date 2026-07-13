@@ -1,8 +1,8 @@
 from asm import KernelBuilder
 from fw.consts import Firmware, FirmwareControl, NcriscLocalState, RunSync, TensixL1
 
-def build():
-  fw = KernelBuilder.standalone("ncrisc")
+def build_ncrisc():
+  fw = KernelBuilder.firmware("ncrisc")
   fw.setup_stack(Firmware.NCRISC_STACK_TOP)
   fw.configure_csr()
 

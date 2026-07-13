@@ -24,8 +24,8 @@ def _notify_dispatch(fw):
         atomics.issue(DISPATCH_DONE_COUNT, CQ.DISPATCH_COORD)
   return fw
 
-def build():
-  fw = KernelBuilder.standalone("brisc")
+def build_brisc():
+  fw = KernelBuilder.firmware("brisc")
   fw.configure_csr()
   fw.setup_stack(Firmware.BRISC_STACK_TOP)
 

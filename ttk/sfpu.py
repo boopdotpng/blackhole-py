@@ -112,7 +112,6 @@ class SfpuProgramBuilder:
 
 class Sfpu:
   def __init__(self, tensix: Tensix):
-    if tensix.pipe != 1: raise ValueError("SFPU belongs to the math pipe")
     self.tensix, self.owner, self.installed = tensix, id(self), {}
 
   def initialize(self, lane_config=LaneConfig()):
@@ -124,7 +123,6 @@ class Sfpu:
     self.tensix.issue(tt_word("TTSETRWC", 0, 0, 0, 0, 0, 0xF)); return self
 
   def configure_lane(self, config):
-    if not isinstance(config, LaneConfig): raise TypeError("lane configuration must be LaneConfig")
     word, old = config.word(), self.tensix.state.sfpu_lane_config
     if old == word: return self
     self.tensix.issue(tt_word("TTSFPCONFIG", word, 15, 1))
@@ -145,8 +143,6 @@ class Sfpu:
     return installed
 
   def run_tile(self, program):
-    if not isinstance(program, InstalledSfpuProgram) or program.owner != self.owner:
-      raise ValueError("SFPU program belongs to another engine")
     self.tensix.issue(tt_word("TTSETRWC", 0, 0, 0, 0, 0, 4))
     self.tensix.stall(TensixStall.SFPU, TensixWait.MATH)
     for _ in range(4):

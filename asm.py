@@ -206,20 +206,20 @@ class Asm(RV32, Tensix):
 class KernelBuilder(Asm, Common):
   def __init__(self, role: KernelRole, core: Core | None,
                param_slots: dict[object, int] | None = None, *,
-               standalone: bool = False):
+               firmware: bool = False):
     super().__init__(role)
     self.core: Core | None = core
     self.param_slots = {} if param_slots is None else param_slots
-    self.is_standalone = bool(standalone)
+    self.is_firmware = bool(firmware)
     self._lowered = False
     self._return_addr = None
-    if not self.is_standalone:
+    if not self.is_firmware:
       self._return_addr = self.local.alloc(4, name="kernel_return_addr")
       self.store(self._return_addr, R.RA)
 
   @classmethod
-  def standalone(cls, role: KernelRole):
-    return cls(role, None, standalone=True)
+  def firmware(cls, role: KernelRole):
+    return cls(role, None, firmware=True)
 
   def noc(self, index: int):
     if self.role not in ("brisc", "ncrisc"):
@@ -229,7 +229,7 @@ class KernelBuilder(Asm, Common):
 
   def lower(self):
     if self._lowered: raise RuntimeError("kernel has already been lowered")
-    if not self.is_standalone:
+    if not self.is_firmware:
       with self.scope():
         return_addr = self.reg()
         self.load(return_addr, self._return_addr)

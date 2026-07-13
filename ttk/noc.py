@@ -90,33 +90,21 @@ class _CounterTicket:
 class _CompletionBatch:
   def __init__(self, noc, status: int, buffer: int, count: Value | None = None, owner=None):
     self.noc, self.status, self.buffer, self.count, self.owner = noc, status, buffer, count, owner
-    self.ticket, self.issued, self.active = None, 0, False
+    self.ticket, self.issued = None, 0
 
   def __enter__(self):
-    if self.ticket is not None: raise RuntimeError("NoC batch cannot be entered more than once")
-    if self.buffer in self.noc._batches: raise RuntimeError("NoC command buffer already has an active batch")
-    if self.owner is None and self.buffer in self.noc._streams:
-      raise RuntimeError("NoC command buffer is owned by an active stream")
-    if self.owner is not None and self.owner._batch is not None:
-      raise RuntimeError("NoC stream already has an active batch")
     self.ticket = self.noc._ticket(self.status, self.buffer)
     self.noc._batches[self.buffer] = self
     if self.owner is not None: self.owner._batch = self
-    self.active = True
     return self
 
   def __exit__(self, exc_type, exc, tb):
     if self.owner is not None: self.owner._batch = None
     del self.noc._batches[self.buffer]
-    self.active = False
     if exc_type is None: self.ticket.wait(self.issued if self.count is None else self.count)
 
   def _record(self, count: int = 1):
-    if not self.active: raise RuntimeError("NoC batch operation requires an active context")
     self.issued += count
-
-  def _require_active(self):
-    if not self.active: raise RuntimeError("NoC batch operation requires an active context")
 
 class _Stream:
   def __init__(self, noc, base: R, scratch: R, send: R):
@@ -165,7 +153,6 @@ class ReadBatch(_CompletionBatch):
   def issue(self, src: Value, src_coord: Value, dst: Value, size: Value, *,
             src_mid: Value = 0, return_coord: Value | None = None):
 
-    self._require_active()
     self.noc.read(src, src_coord, dst, size, src_mid=src_mid, return_coord=return_coord)
 
 class WriteBatch(_CompletionBatch):
@@ -175,18 +162,14 @@ class WriteBatch(_CompletionBatch):
     self.posted = posted
 
   def issue(self, src: Value, dst: Value, dst_coord: Value, size: Value, *, dst_mid: Value = 0):
-    self._require_active()
     self.noc.write(src, dst, dst_coord, size, dst_mid=dst_mid, posted=self.posted)
 
   def multicast(self, src: Value, dst: Value, dst_coord: Value, size: int, *, exclude: Value = 0, along_y=False):
-    self._require_active()
     packets = self.noc.multicast(src, dst, dst_coord, size, exclude=exclude, along_y=along_y)
     return packets
 
   def multicast_packet(self, src: Value, dst: Value, dst_coord: Value, size: Value, *,
                        exclude: Value = 0, along_y=False):
-
-    self._require_active()
     self.noc._multicast(src, dst, dst_coord, size, linked=False, reserve_path=True,
                         exclude=exclude, along_y=along_y, posted=self.posted)
     self._record()
@@ -194,21 +177,16 @@ class WriteBatch(_CompletionBatch):
 
 class AtomicBatch(_CompletionBatch):
   def issue(self, dst: Value, dst_coord: Value, value: Value = 1, *, return_coord: Value | None = None):
-    self._require_active()
     self.noc.atomic_inc(dst, dst_coord, value, return_coord=return_coord)
 
 class NoC:
   def __init__(self, asm, index: int):
-    if type(index) is not int or index not in (0, 1): raise ValueError("NoC index must be 0 or 1")
-    if getattr(asm, "role", None) not in ("brisc", "ncrisc"):
-      raise ValueError("NoC requires a BRISC or NCRISC kernel builder")
     self.asm, self.index = asm, index
     self.local_coord, self.atomic_return = None, 4
-    self._streams, self._batches = set(), {}
+    self._batches = {}
 
   @staticmethod
   def static_coord(x: int, y: int):
-    if type(x) is not int or type(y) is not int: raise TypeError("static coordinates require Python integers")
     return x | y << 6
 
   def _base(self, buffer: int):
@@ -231,7 +209,6 @@ class NoC:
     return last
 
   def _issue(self, buffer: int, registers: dict[int, Value]):
-    if buffer in self._streams: raise RuntimeError("NoC command buffer is owned by an active stream")
     with self.asm.scope():
       base, value = self.asm.reg(2)
       self.asm.li(base, self._base(buffer))
@@ -245,20 +222,15 @@ class NoC:
 
   @contextmanager
   def _stream(self, buffer: int, registers: dict[int, Value], cls):
-    if buffer in self._streams: raise RuntimeError("NoC command buffer already has an active stream")
-    if buffer in self._batches: raise RuntimeError("NoC command buffer is owned by an active batch")
-    self._streams.add(buffer)
-    try:
-      with self.asm.scope():
-        base, scratch, send = self.asm.reg(3)
-        self.asm.li(base, self._base(buffer))
-        with self.asm.loop():
-          self.asm.lw(scratch, base, NOC_CMD_CTRL)
-          self.asm.break_(Cond(scratch, "==", 0))
-        self._stores(base, scratch, registers)
-        self.asm.li(send, NOC_CTRL_SEND_REQ)
-        yield cls(self, base, scratch, send)
-    finally: self._streams.remove(buffer)
+    with self.asm.scope():
+      base, scratch, send = self.asm.reg(3)
+      self.asm.li(base, self._base(buffer))
+      with self.asm.loop():
+        self.asm.lw(scratch, base, NOC_CMD_CTRL)
+        self.asm.break_(Cond(scratch, "==", 0))
+      self._stores(base, scratch, registers)
+      self.asm.li(send, NOC_CTRL_SEND_REQ)
+      yield cls(self, base, scratch, send)
 
   def initialize(self, local_coord: Value, atomic_return: Value = 4):
     self.local_coord, self.atomic_return = local_coord, atomic_return
@@ -271,10 +243,7 @@ class NoC:
       "brisc": (BriscLocalState.MY_X, BriscLocalState.MY_Y),
       "ncrisc": (NcriscLocalState.MY_X, NcriscLocalState.MY_Y),
     }
-    try:
-      x_addr, y_addr = addresses[self.asm.role]
-    except KeyError as exc:
-      raise RuntimeError("firmware NoC coordinates require BRISC or NCRISC") from exc
+    x_addr, y_addr = addresses[self.asm.role]
     coord, scratch = self.asm.reg(2)
     self.asm.load(coord, x_addr + self.index, bytes=1)
     self.asm.load(scratch, y_addr + self.index, bytes=1)

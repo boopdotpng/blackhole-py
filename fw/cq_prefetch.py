@@ -2,7 +2,7 @@ from asm import KernelBuilder
 from cq import (
   CQ_STATE, DISPATCH_PUBLISHED, DISPATCH_RING_BASE, DISPATCH_RING_END, PAGE_SIZE,
   PREFETCH_CREDITS, PREFETCH_PCIE_BASE, PREFETCH_PCIE_END, PREFETCH_PCIE_READ,
-  PREFETCH_QUEUE, PREFETCH_QUEUE_ENTRIES, PREFETCH_STAGING, Packet,
+  PREFETCH_QUEUE, PREFETCH_QUEUE_ENTRIES, PREFETCH_STAGING, PacketLayout,
 )
 from fw.consts import CQ
 from isa import R
@@ -47,7 +47,7 @@ def _emit_prefetch(fw, state):
   fw.read32(cursor, PREFETCH_PCIE_BASE)
   fw.label("pcie_no_wrap")
   fw.li(src, PREFETCH_STAGING)
-  fw.lw(size, src, Packet.TOTAL_SIZE)
+  fw.lw(size, src, PacketLayout.TOTAL_SIZE)
   fw.li(pages, PAGE_SIZE - 1); fw.add(pages, size, pages); fw.srli(pages, pages, 12)
   fw.label("wait_dispatch_credit")
   fw.read32(left, PREFETCH_CREDITS); fw.sub(left, left, used)

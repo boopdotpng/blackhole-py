@@ -19,9 +19,6 @@ OUTPUT_CB_ADDR, OUTPUT_CB_FLAG = INPUT_CB_ADDR + TILE_BYTES, INPUT_CB_FLAG + 4
 INIT_BARRIER_ADDR = INPUT_CB_FLAG + 0x10
 
 def lower_add1(src: Buffer, dst: Buffer, *, core=CORE, read_coord=0, write_coord=0) -> Program:
-  if src.layout != "tile" or dst.layout != "tile": raise ValueError("add1 requires tile-layout buffers")
-  if src.dtype != DType.BF16 or dst.dtype != DType.BF16: raise ValueError("add1 requires BF16")
-  if src.tiles != 1 or dst.tiles != 1: raise ValueError("add1 currently handles one tile")
   src_param, dst_param = Param("src", src), Param("dst", dst)
 
   def build_reader(k: KernelBuilder):
@@ -98,7 +95,7 @@ def run_hardware():
     program = lower_add1(src, dst, read_coord=read_coord, write_coord=write_coord)
     source, expected = input_and_reference()
     device.write(src, tilize(source, DType.BF16.itemsize))
-    device.queue(program); device.run()
+    device.run(program)
     actual = untilize(device.read(dst), DType.BF16.itemsize)
     if actual != expected:
       mismatch = next(i for i, pair in enumerate(zip(actual, expected)) if pair[0] != pair[1])

@@ -59,11 +59,6 @@ class Dram:
 
   def buffer(self, name: str, dtype: DType, shape: tuple[int, ...],
              padded_shape: tuple[int, ...], *, layout="row_major"):
-    if layout not in ("row_major", "tile"): raise ValueError("unknown buffer layout")
-    if not shape or len(shape) != len(padded_shape): raise ValueError("shape rank mismatch")
-    if any(dim <= 0 for dim in (*shape, *padded_shape)): raise ValueError("buffer dimensions must be positive")
-    if any(actual > padded for actual, padded in zip(shape, padded_shape)):
-      raise ValueError("padded shape cannot be smaller than shape")
     buffer = Buffer(name, 0, "device", dtype, shape, padded_shape, layout)
     if buffer.page_size % self.ALIGNMENT: raise ValueError("DRAM pages must be 64-byte aligned")
     pages_per_bank = (buffer.pages + self.BANKS - 1) // self.BANKS
@@ -181,7 +176,6 @@ class KernelBundle:
   ):
     self.cores = tuple(cores)
     self.params = tuple(params)
-    if not self.cores: raise ValueError("kernel bundle requires at least one core")
     if len(self.params) > TensixL1.PARAM_SLOTS: raise ValueError("kernel bundle parameter table is full")
     self._kernels = {"brisc": brisc, "ncrisc": ncrisc, "trisc0": trisc0, "trisc1": trisc1, "trisc2": trisc2}
     self._cbs: list[CBConfig] = []; self._barriers: list[BarrierConfig] = []

@@ -27,7 +27,7 @@ class Op(IntEnum):
   RUN = 3
   FENCE = 4
 
-class Packet:
+class PacketLayout:
   HEADER = Struct("<BxHIII")
   RESULT_ADDRESS = Struct("<Q")
   UNICAST_TARGET = Struct("<I")
@@ -66,54 +66,28 @@ class Timestamp:
 
 def _align(value: int): return (value + ALIGN - 1) & -ALIGN
 
-def _check_u32(name: str, value: int):
-  if type(value) is not int or not 0 <= value <= 0xFFFFFFFF:
-    raise ValueError(f"{name} must fit in an unsigned 32-bit integer")
-  return value
-
-def _check_u64(name: str, value: int):
-  if type(value) is not int or not 0 <= value <= 0xFFFFFFFFFFFFFFFF:
-    raise ValueError(f"{name} must fit in an unsigned 64-bit integer")
-  return value
-
-def _core(core: Core):
-  if (not isinstance(core, tuple) or len(core) != 2 or
-      any(type(coordinate) is not int for coordinate in core)):
-    raise TypeError("core must be an (x, y) tuple of Python integers")
-  x, y = core
-  if not 0 <= x < 64 or not 0 <= y < 64:
-    raise ValueError("NoC coordinates must satisfy 0 <= x,y < 64")
-  return x, y
-
 def noc_coord(core: Core):
-  x, y = _core(core)
+  x, y = core
   return x | y << 6
 
 def mcast_coord(rect: Rect):
-  if not isinstance(rect, tuple) or len(rect) != 2:
-    raise TypeError("rectangle must be ((start_x, start_y), (end_x, end_y))")
-  (start_x, start_y), (end_x, end_y) = _core(rect[0]), _core(rect[1])
-  if start_x > end_x or start_y > end_y:
-    raise ValueError("multicast rectangle start must not exceed its end")
+  (start_x, start_y), (end_x, end_y) = rect
   packed = start_x | start_y << 6 | end_x << 12 | end_y << 18
   count = (end_x - start_x + 1) * (end_y - start_y + 1)
   return packed, count
 
 def _payload(data: bytes):
-  if not isinstance(data, bytes): raise TypeError("write payloads must be bytes")
   if not 0 < len(data) <= MAX_WRITE_SIZE:
     raise ValueError(f"write payload size must be in [1, {MAX_WRITE_SIZE}]")
   return data
 
 def _write_record(op: Op, targets: bytes, target_count: int, address: int,
                   data_size: int, payload: bytes):
-  if not 0 < target_count <= 0xFFFF: raise ValueError("target count must be in [1, 65535]")
-  target_end = Packet.HEADER.size + len(targets)
+  target_end = PacketLayout.HEADER.size + len(targets)
   payload_start = _align(target_end)
   total_size = _align(payload_start + len(payload))
   if total_size > MAX_RECORD_SIZE: raise ValueError("CQ record exceeds the 64 KiB staging buffer")
-  _check_u32("command size", total_size)
-  header = Packet.HEADER.pack(op, target_count, total_size, address, data_size)
+  header = PacketLayout.HEADER.pack(op, target_count, total_size, address, data_size)
   return header + targets + bytes(payload_start - target_end) + payload + bytes(total_size - payload_start - len(payload))
 
 @dataclass(frozen=True)
@@ -124,9 +98,7 @@ class UnicastWrite:
 
   def lower(self) -> bytes:
     cores = tuple(self.cores)
-    if not cores: raise ValueError("unicast write requires at least one core")
-    _check_u32("write address", self.addr)
-    targets = b"".join(Packet.UNICAST_TARGET.pack(noc_coord(core)) for core in cores)
+    targets = b"".join(PacketLayout.UNICAST_TARGET.pack(noc_coord(core)) for core in cores)
     blobs = tuple(self.data)
     if len(blobs) != len(cores): raise ValueError("per-core write needs one payload per core")
     blobs = tuple(_payload(blob) for blob in blobs)
@@ -145,8 +117,6 @@ class McastWrite:
 
   def lower(self) -> bytes:
     rects = tuple(self.rects)
-    if not rects: raise ValueError("multicast write requires at least one rectangle")
-    _check_u32("write address", self.addr)
     data = _payload(self.data)
     encoded = tuple(mcast_coord(rect) for rect in rects)
     if self.counts is not None:
@@ -154,7 +124,7 @@ class McastWrite:
       if len(counts) != len(rects) or any(type(count) is not int or count <= 0 for count in counts):
         raise ValueError("multicast counts must contain one positive integer per rectangle")
       encoded = tuple((coordinate, count) for (coordinate, _), count in zip(encoded, counts))
-    targets = b"".join(Packet.MCAST_TARGET.pack(*target) for target in encoded)
+    targets = b"".join(PacketLayout.MCAST_TARGET.pack(*target) for target in encoded)
     return _write_record(Op.MCAST_WRITE, targets, len(rects), self.addr, len(data), data)
 
 @dataclass(frozen=True)
@@ -165,15 +135,10 @@ class Run:
 
   def lower(self) -> bytes:
     cores = tuple(self.cores)
-    if not cores: raise ValueError("run requires at least one core")
-    _check_u64("result address", self.result_addr)
-    if self.result_addr == 0: raise ValueError("result address must be nonzero")
-    _check_u32("event", self.event)
-    if self.event == 0: raise ValueError("event must be nonzero")
-    targets = b"".join(Packet.UNICAST_TARGET.pack(noc_coord(core)) for core in cores)
-    total_size = _align(Packet.RUN_TARGETS + len(targets))
-    header = Packet.HEADER.pack(Op.RUN, len(cores), total_size, self.event, 0)
-    result = Packet.RESULT_ADDRESS.pack(self.result_addr)
+    targets = b"".join(PacketLayout.UNICAST_TARGET.pack(noc_coord(core)) for core in cores)
+    total_size = _align(PacketLayout.RUN_TARGETS + len(targets))
+    header = PacketLayout.HEADER.pack(Op.RUN, len(cores), total_size, self.event, 0)
+    result = PacketLayout.RESULT_ADDRESS.pack(self.result_addr)
     return (header + result + targets).ljust(total_size, b"\0")
 
 Command = UnicastWrite | McastWrite | Run
@@ -227,7 +192,7 @@ class CommandQueue:
   @staticmethod
   def _padding(size=ALIGN):
     size = _align(size)
-    return Packet.HEADER.pack(Op.PAD, 0, size, 0, 0).ljust(size, b"\0")
+    return PacketLayout.HEADER.pack(Op.PAD, 0, size, 0, 0).ljust(size, b"\0")
 
   def _write_record(self, record: bytes):
     if len(record) > MAX_RECORD_SIZE or len(record) % ALIGN:
@@ -259,9 +224,7 @@ class CommandQueue:
   def submit(self, commands, *, timeout=10.0):
     self.event += 1
     commands = tuple(commands)
-    if not commands: raise ValueError("CQ submission cannot be empty")
     run = commands[-1]
-    if not isinstance(run, Run): raise ValueError("CQ submission must end with Run")
     commands = (*commands[:-1], Run(run.cores, 1, self.event))
     for command in commands: self._publish(command.lower())
     return self.wait(self.event, timeout=timeout)

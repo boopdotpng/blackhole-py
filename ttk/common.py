@@ -20,17 +20,13 @@ class Common:
     return self
 
   def setup_stack(self, stack_top: int):
-    if type(stack_top) is not int: raise TypeError("stack_top must be an integer")
     return self.li(R.SP, stack_top)
 
   def call_fixed_kernel(self, entry: int, *, target: R = R.T0):
-    if type(entry) is not int or entry < 0:
-      raise ValueError("kernel entry must be a non-negative integer")
     self.li(target, entry)
     return self.jalr(R.RA, target, 0)
 
   def delay_cycles(self, cycles: int):
-    if type(cycles) is not int or cycles < 0: raise ValueError("cycles must be non-negative")
     if cycles == 0: return self
     with self.scope():
       counter = self.reg()
@@ -42,9 +38,6 @@ class Common:
     return self
 
   def zero_words(self, addr: int, count: int):
-    if type(addr) is not int or type(count) is not int:
-      raise TypeError("zero_words requires Python integer arguments")
-    if count < 0: raise ValueError("zero_words count cannot be negative")
     if count == 0: return self
     with self.scope():
       ptr, remaining = self.reg(2)
@@ -66,9 +59,6 @@ class Common:
 
   def update32(self, addr: int, *, set_bits: int = 0, clear_bits: int = 0,
                value: R = R.T0):
-
-    if any(type(item) is not int for item in (addr, set_bits, clear_bits)):
-      raise TypeError("update32 arguments must be Python integers")
     self.read32(value, addr)
     if clear_bits:
       with self.scope():
@@ -110,9 +100,6 @@ class Common:
 
   def wait8(self, addr: int, value: int, *, ptr: R = R.T0,
             actual: R = R.T1, expected: R = R.T2):
-
-    if type(addr) is not int or not isinstance(value, int) or not 0 <= int(value) <= 0xFF:
-      raise ValueError("wait8 address/value are invalid")
     value = int(value)
     self.li(ptr, addr)
     self.li(expected, value)
@@ -128,9 +115,6 @@ class Common:
 
   def wait32(self, addr: int, value: int, *, ptr: R = R.T0,
              actual: R = R.T1, expected: R = R.T2):
-
-    if type(addr) is not int or type(value) is not int:
-      raise TypeError("wait32 address/value must be integers")
     self.li(ptr, addr)
     self.li(expected, value)
     loop = self._new_label("wait32")
@@ -180,7 +164,6 @@ class Common:
       return op(src, base)
 
   def param(self, param):
-    if param not in self.param_slots: raise ValueError(f"undeclared parameter {getattr(param, 'name', param)!r}")
     reg = self.reg()
     self.load(reg, PARAM_BASE + self.param_slots[param] * 4)
     return reg

@@ -46,13 +46,14 @@ def decimal(value): return str(value) if isinstance(value, str) else f"{value:.1
 def signed_decimal(value): return str(value) if isinstance(value, str) else f"{value:+.1f}"
 
 def firmware_stats():
-  from fw.brisc import build as build_brisc
+  from functools import partial
+  from fw.brisc import build_brisc
   from fw.consts import Firmware
-  from fw.ncrisc import build as build_ncrisc
-  from fw.trisc import build_trisc0, build_trisc1, build_trisc2
+  from fw.ncrisc import build_ncrisc
+  from fw.trisc import build_trisc
   builds = {
     "brisc": build_brisc, "ncrisc": build_ncrisc,
-    "trisc0": build_trisc0, "trisc1": build_trisc1, "trisc2": build_trisc2,
+    **{f"trisc{i}": partial(build_trisc, i) for i in range(3)},
   }
   rows = []
   for role, build in builds.items():

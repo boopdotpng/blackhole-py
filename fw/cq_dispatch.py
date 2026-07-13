@@ -3,7 +3,7 @@ from cq import (
   DISPATCH_COMPLETION_HOST_PTR, DISPATCH_COMPLETION_PUBLISH, DISPATCH_COMPLETION_WRITE,
   DISPATCH_CREDIT_RETURN, DISPATCH_DONE_COUNT, DISPATCH_GO, DISPATCH_PUBLISHED,
   DISPATCH_RING_BASE, DISPATCH_RING_END, DISPATCH_SCRATCH,
-  PAGE_SIZE, PREFETCH_CREDITS, Op, Packet, Timestamp,
+  PAGE_SIZE, PREFETCH_CREDITS, Op, PacketLayout, Timestamp,
 )
 from fw.consts import CQ, FirmwareControl, RunMsg, TensixMMIO
 from isa import R
@@ -27,7 +27,7 @@ def _emit_dispatch(fw, state):
   fw.bne(s2, s1, "published")
   fw.fence(); fw.j("wait_published")
   fw.label("published")
-  fw.lbu(s3, s0, Packet.OP)
+  fw.lbu(s3, s0, PacketLayout.OP)
   fw.switch(s3, {
     int(Op.PAD): "command_done",
     int(Op.UNICAST_WRITE): "unicast",
@@ -37,10 +37,10 @@ def _emit_dispatch(fw, state):
   }, "bad_command")
 
   fw.label("unicast")
-  fw.lhu(s3, s0, Packet.TARGET_COUNT)
-  fw.lw(s4, s0, Packet.ADDRESS)
-  fw.lw(s5, s0, Packet.DATA_SIZE)
-  fw.addi(s6, s0, Packet.WRITE_TARGETS)
+  fw.lhu(s3, s0, PacketLayout.TARGET_COUNT)
+  fw.lw(s4, s0, PacketLayout.ADDRESS)
+  fw.lw(s5, s0, PacketLayout.DATA_SIZE)
+  fw.addi(s6, s0, PacketLayout.WRITE_TARGETS)
   fw.slli(s7, s3, 2); fw.add(s7, s7, s6)
   fw.align_up(s7, ALIGN, scratch=s8)
   fw.mv(s8, s5); fw.align_up(s8, ALIGN, scratch=s9)
@@ -57,10 +57,10 @@ def _emit_dispatch(fw, state):
   fw.j("command_done")
 
   fw.label("multicast")
-  fw.lhu(s3, s0, Packet.TARGET_COUNT)
-  fw.lw(s4, s0, Packet.ADDRESS)
-  fw.lw(s5, s0, Packet.DATA_SIZE)
-  fw.addi(s6, s0, Packet.WRITE_TARGETS)
+  fw.lhu(s3, s0, PacketLayout.TARGET_COUNT)
+  fw.lw(s4, s0, PacketLayout.ADDRESS)
+  fw.lw(s5, s0, PacketLayout.DATA_SIZE)
+  fw.addi(s6, s0, PacketLayout.WRITE_TARGETS)
   fw.li(s7, 8); fw.mul(s7, s3, s7); fw.add(s7, s7, s6)
   fw.align_up(s7, ALIGN, scratch=s8)
   fw.label("multicast_loop")
@@ -82,7 +82,7 @@ def _emit_dispatch(fw, state):
   fw.write32(DISPATCH_SCRATCH + Timestamp.START + 4, s9)
   fw.write32(DISPATCH_SCRATCH + Timestamp.END, s8)
   fw.write32(DISPATCH_SCRATCH + Timestamp.END + 4, s9)
-  fw.lw(s8, s0, Packet.RUN_EVENT)
+  fw.lw(s8, s0, PacketLayout.RUN_EVENT)
   fw.write32(DISPATCH_SCRATCH + Timestamp.EVENT, s8)
   _publish_completion(fw, noc)
   fw.j("command_done")
@@ -92,10 +92,10 @@ def _emit_dispatch(fw, state):
   fw.read32(s9, TensixMMIO.RISCV_DEBUG_REG_WALL_CLOCK_H)
   fw.write32(DISPATCH_SCRATCH + Timestamp.START, s8)
   fw.write32(DISPATCH_SCRATCH + Timestamp.START + 4, s9)
-  fw.lhu(s3, s0, Packet.TARGET_COUNT)
+  fw.lhu(s3, s0, PacketLayout.TARGET_COUNT)
   fw.write32(DISPATCH_DONE_COUNT, 0)
   fw.fence()
-  fw.addi(s6, s0, Packet.RUN_TARGETS)
+  fw.addi(s6, s0, PacketLayout.RUN_TARGETS)
   fw.write32(DISPATCH_GO, int(RunMsg.GO) << 24)
   fw.mv(s7, s3)
   with fw.scope():
@@ -114,13 +114,13 @@ def _emit_dispatch(fw, state):
   fw.read32(s9, TensixMMIO.RISCV_DEBUG_REG_WALL_CLOCK_H)
   fw.write32(DISPATCH_SCRATCH + Timestamp.END, s8)
   fw.write32(DISPATCH_SCRATCH + Timestamp.END + 4, s9)
-  fw.lw(s8, s0, Packet.RUN_EVENT)
+  fw.lw(s8, s0, PacketLayout.RUN_EVENT)
   fw.write32(DISPATCH_SCRATCH + Timestamp.EVENT, s8)
   _publish_completion(fw, noc)
   fw.j("command_done")
 
   fw.label("command_done")
-  fw.lw(s3, s0, Packet.TOTAL_SIZE)
+  fw.lw(s3, s0, PacketLayout.TOTAL_SIZE)
   fw.li(s4, PAGE_SIZE - 1); fw.add(s3, s3, s4); fw.srli(s3, s3, 12)
   fw.read32(s4, DISPATCH_CREDIT_RETURN); fw.add(s4, s4, s3)
   fw.write32(DISPATCH_CREDIT_RETURN, s4)

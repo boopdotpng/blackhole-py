@@ -25,12 +25,12 @@ class Device:
         win.write(TensixMMIO.RISCV_DEBUG_REG_SOFT_RESET_0 - base, TensixMMIO.SOFT_RESET_ALL)
 
   def upload_fw(self):
-    from fw.brisc import build as build_brisc
-    from fw.ncrisc import build as build_ncrisc
-    from fw.trisc import build_trisc0, build_trisc1, build_trisc2
+    from fw.brisc import build_brisc
+    from fw.ncrisc import build_ncrisc
+    from fw.trisc import build_trisc
     images = {
       "brisc": build_brisc().lower(), "ncrisc": build_ncrisc().lower(),
-      "trisc0": build_trisc0().lower(), "trisc1": build_trisc1().lower(), "trisc2": build_trisc2().lower(),
+      **{f"trisc{i}": build_trisc(i).lower() for i in range(3)},
     }
     cores = [*self.pcie.cores, self.pcie.prefetch_core, self.pcie.dispatch_core]
     with TLBWindow(self.pcie.fd, cores[0]) as win:
@@ -120,7 +120,7 @@ class Device:
     return self.cq.submit((*program.commands(), args_write, Run(program.cores, 1)), timeout=timeout)
 
   def dram_write(self, buffer, data: bytes, *, timeout=10.0):
-    if not isinstance(data, bytes) or len(data) != buffer.size:
+    if len(data) != buffer.size:
       raise ValueError(f"buffer write requires exactly {buffer.size} bytes")
     if self.cq is None: raise RuntimeError("upload_fw() must be called before tensor transfer")
     self.pcie.sysmem.write(self.cq.dram, data)
@@ -134,9 +134,15 @@ class Device:
   write = dram_write
   read = dram_read
 
-  def run(self):
+  def run(self, programs: Program | list[Program] | None = None):
     if self.cq is None: raise RuntimeError("upload_fw() must be called before run()")
-    results = [self.cq.submit((*program.commands(), Run(program.cores, 1))) for program in self.program_queue]
+    if programs is None:
+      programs = self.program_queue
+    elif isinstance(programs, Program):
+      programs = (*self.program_queue, programs)
+    else:
+      programs = (*self.program_queue, *programs)
+    results = [self.cq.submit((*program.commands(), Run(program.cores, 1))) for program in programs]
     self.program_queue.clear()
     return results
 
