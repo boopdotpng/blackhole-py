@@ -122,9 +122,10 @@ Typed engine state is the public model; exact 32-bit register words are an
 internal shadow used to produce correct diffs.
 
 State belongs to a fresh per-core, per-role kernel builder. `KernelBundle`
-assembles all five roles for every core; lowering freezes them into a `Program`
-containing only bytes, DRAM buffer parameters, and CB configuration. State from
-one builder must never leak into another.
+assembles all five roles for every core; lowering freezes them into a `Program`.
+A program may omit unused roles; launch materializes each missing role as an
+empty return kernel so an older worker image cannot run accidentally. State
+from one builder must never leak into another.
 
 Runtime-dependent configuration writes must merge to a symbolic or unknown
 state unless every path produces the same value. Ordinary data, engine progress,

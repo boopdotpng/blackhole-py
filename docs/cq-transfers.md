@@ -83,14 +83,20 @@ large `cq.dram` allocation.
 
 ### Fill and drain programs
 
-`Device.dram_write()` copies the whole input into `cq.dram`, then
-`_dram_transfer()` builds or retrieves a worker program. `Device.dram_read()`
-runs the reverse program and copies the whole output from that region. See
-[`device.py`](../device.py), lines 123-174.
+`Device.write()` copies each input into a distinct pending slice of `cq.dram`
+and queues an ordinary worker `Program`. `Device.run()` submits these programs
+in queue order before any compute program passed to that call. `Device.read()`
+constructs the reverse program, calls the same `run()` path once, and copies the
+output from the beginning of the staging region.
+
+Transfer programs declare only an NCRISC image. `Program` fills each of their
+four missing roles with an empty return kernel at launch, preventing a previous
+compute image from running alongside the transfer. Per-core transfer arguments
+are ordinary launch writes owned by the program.
 
 The host partitions all logical pages into contiguous ranges, assigns one
 range per worker, writes six arguments to each worker, uploads the program,
-and runs it synchronously. Each NCRISC then performs:
+and runs it through the regular queue path. Each NCRISC then performs:
 
 ```text
 global_page -> bank = global_page % 7
@@ -103,27 +109,25 @@ selected DRAM endpoint. D2H performs the reverse. Every source read and
 destination write is completed before that worker reuses its scratch. The
 implementation is in [`fw/dram.py`](../fw/dram.py), lines 14-63.
 
-This is correctness-sound under its current blocking API. The Run completion
-is observed only after all workers have reported done, and each worker reports
-done only after its final acknowledged transfer.
+Each individual program submission is synchronous. Its Run completion is
+observed only after all workers have reported done, and each worker reports
+done only after its final acknowledged transfer. Consequently a following
+compute program cannot observe a partially uploaded buffer.
 
 ### Current constraints and hazards
 
 - A page must be 16-byte aligned and no larger than 16 KiB. The allocator is
   stricter for normal buffers and requires 64-byte-aligned DRAM pages.
-- `buffer.size` must currently be no larger than `cq.dram_size`.
+- All writes pending in one queue must collectively fit in `cq.dram`; the
+  staging cursor is reclaimed when `run()` drains the queue.
 - The referenced portion of sysmem must not cross the current 4 GiB NoC
   low-address window.
 - CQ discards the pinned mapping's upper address bits and uses a fixed
   `CQ.PCIE_MID`; correctness also assumes that fixed MID matches the mapping.
-- A transfer drains queued programs first, is blocking, consumes worker cores,
-  and uploads the transfer program's worker images on every execution even
-  though the Python `Program` object is cached.
-- The transfer replaces worker text and arguments. This is logically safe
-  because later programs upload their own state, but it makes a tensor copy a
-  program boundary rather than an ordinary CQ operation.
-- Work is not divided evenly in every case: ceiling division can launch cores
-  with zero pages while earlier cores receive two or more.
+- A transfer consumes worker cores and uploads its worker images on every
+  execution. It is an ordinary program boundary in the queue.
+- The transfer replaces worker text and arguments. Missing roles are replaced
+  by return kernels, and later programs upload their own state.
 - Every CQ record and H2D staging copy calls `Sysmem.flush()`, which currently
   `msync`s the entire pinned mapping rather than the written range. This cost
   should be measured separately from transfer-kernel launch overhead.
@@ -131,14 +135,8 @@ done only after its final acknowledged transfer.
   Chunking the pinned window removes the device-visible capacity limit, not
   that separate host-object memory requirement.
 
-There is also an ordering bug in the current size check: `dram_write()` calls
-the unchecked `ctypes.memmove` in `Sysmem.write()` **before**
-`_dram_transfer()` rejects a tensor larger than `cq.dram_size`. An oversized
-H2D input can therefore write past the mapped staging range instead of raising
-cleanly. See [`device.py`](../device.py), lines 134-167, and
-[`pcie.py`](../pcie.py), lines 143-150. Do not exercise oversized H2D until an
-implementation moves the capacity check before the copy or introduces the
-chunk loop.
+The queue-capacity and 4 GiB-window checks happen before `Sysmem.write()`, so an
+oversized pending upload raises without writing past the staging mapping.
 
 ## How tt-metal fast-dispatch transfers work
 

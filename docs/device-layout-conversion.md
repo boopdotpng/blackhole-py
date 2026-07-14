@@ -10,10 +10,12 @@ The device compute path continues to use the native four-face tile layout. A
 top-left, top-right, bottom-left, bottom-right
 ```
 
-`Device.write()` converts each row-major tile to that layout before staging the
-DRAM transfer. `Device.read()` applies the inverse conversion after completing
-the transfer. The conversion is a NumPy reshape, transpose, and byte copy; it
-does not interpret or numerically convert the elements.
+`Device.write()` converts each row-major tile to that layout, stages it in its
+own pending slice, and queues the DRAM transfer program. A later `Device.run()`
+runs that program immediately before subsequently queued compute. `Device.read()`
+runs an ordinary DRAM-read program and applies the inverse conversion afterward.
+The conversion is a NumPy reshape, transpose, and byte copy; it does not
+interpret or numerically convert the elements.
 
 For tensors larger than one tile, the last two dimensions are divided into
 `32 x 32` tiles. Leading dimensions are preserved. Each physical DRAM page is
