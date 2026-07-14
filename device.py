@@ -1,3 +1,4 @@
+from dataclasses import replace
 from struct import Struct
 import numpy as np
 from pcie import PCIDevice, TLBWindow
@@ -13,7 +14,7 @@ class Device:
     self.dram = Dram()
     self.program_queue = []
     self.cq = None
-    self._transfer_programs = {}
+    self._staging_write = 0
 
   def reset_cores(self):
     with TLBWindow(self.pcie.fd, self.pcie.cores[0]) as win:
@@ -44,32 +45,22 @@ class Device:
         win.target(0, core)
         win.write(FirmwareControl.GO_SIGNAL, int(RunMsg.GO), bytes=1)
 
-  def queue(self, program: Program): self.program_queue.append(program)
+  def queue(self, program: Program): self.program_queue.append(program); return program
 
-  def _transfer_program(self, write, core_count):
-    key = write, core_count
-    if key not in self._transfer_programs:
-      from fw.dram import dram_read, dram_write
-      from ttk.dram import endpoint_coords
-      build = dram_write if write else dram_read
-      self._transfer_programs[key] = build(
-        self.pcie.cores[:core_count], endpoint_coords(self.pcie.harvested_dram_bank, 1),
-      )
-    return self._transfer_programs[key]
-
-  def _dram_transfer(self, buffer, *, write, timeout=10.0):
-    from fw.dram import ARGS_BASE
+  def _dram_program(self, buffer, *, write, offset=0):
+    from fw.dram import ARGS_BASE, dram_read, dram_write
+    from ttk.dram import endpoint_coords
     if self.cq is None: raise RuntimeError("init_device() must be called before tensor transfer")
     if not 0 < buffer.page_size <= 16 * 1024 or buffer.page_size % 16:
       raise ValueError("DRAM transfer pages must be 16-byte aligned and at most 16 KiB")
-    if buffer.size > self.cq.dram_size:
-      raise MemoryError(f"tensor needs {buffer.size} bytes; sysmem DRAM region has {self.cq.dram_size}")
-    if self.program_queue: self.run()
+    if offset + buffer.size > self.cq.dram_size:
+      raise MemoryError(f"queued tensors need {offset + buffer.size} bytes; sysmem DRAM region has {self.cq.dram_size}")
 
     tiles = buffer.pages
-    program = self._transfer_program(write, min(tiles, len(self.pcie.cores)))
+    build = dram_write if write else dram_read
+    program = build(self.pcie.cores[:tiles], endpoint_coords(self.pcie.harvested_dram_bank, 1))
     tiles_per_core = (tiles + len(program.cores) - 1) // len(program.cores)
-    sysmem_base = self.cq.noc + self.cq.dram
+    sysmem_base = self.cq.noc + self.cq.dram + offset
     if sysmem_base + buffer.size > 1 << 32:
       raise ValueError("sysmem DRAM transfer crosses a 4 GiB NoC address window")
     args = []
@@ -82,7 +73,7 @@ class Device:
         start, count, buffer.page_size,
       ))
     args_write = UnicastWrite(program.cores, ARGS_BASE, tuple(args))
-    return self.cq.submit((*program.commands(), args_write, Run(program.cores, 1)), timeout=timeout)
+    return replace(program, launch=(args_write,))
 
   @staticmethod
   def _tile_data(buffer, data, *, inverse=False):
@@ -100,22 +91,25 @@ class Device:
       axes = (*range(rank), rank, rank + 3, rank + 1, rank + 4, rank + 2, rank + 5)
     return values.transpose(axes).reshape(-1).tobytes()
 
-  def dram_write(self, buffer, data: bytes, *, timeout=10.0):
+  def dram_write(self, buffer, data: bytes):
     if len(data) != buffer.size:
       raise ValueError(f"buffer write requires exactly {buffer.size} bytes")
     if self.cq is None: raise RuntimeError("init_device() must be called before tensor transfer")
-    self.pcie.sysmem.write(self.cq.dram, self._tile_data(buffer, data))
+    offset = self._staging_write
+    program = self._dram_program(buffer, write=True, offset=offset)
+    self.pcie.sysmem.write(self.cq.dram + offset, self._tile_data(buffer, data))
     self.pcie.sysmem.flush()
-    return self._dram_transfer(buffer, write=True, timeout=timeout)
+    self._staging_write += buffer.size
+    return self.queue(program)
 
   def dram_read(self, buffer, *, timeout=10.0):
-    self._dram_transfer(buffer, write=False, timeout=timeout)
+    self.run(self._dram_program(buffer, write=False), timeout=timeout)
     return self._tile_data(buffer, self.pcie.sysmem.read(self.cq.dram, buffer.size), inverse=True)
 
   write = dram_write
   read = dram_read
 
-  def run(self, programs: Program | list[Program] | None = None):
+  def run(self, programs: Program | list[Program] | None = None, *, timeout=10.0):
     if self.cq is None: raise RuntimeError("init_device() must be called before run()")
     if programs is None:
       programs = self.program_queue
@@ -123,8 +117,9 @@ class Device:
       programs = (*self.program_queue, programs)
     else:
       programs = (*self.program_queue, *programs)
-    results = [self.cq.submit((*program.commands(), Run(program.cores, 1))) for program in programs]
+    results = [self.cq.submit((*program.commands(), Run(program.cores, 1)), timeout=timeout) for program in programs]
     self.program_queue.clear()
+    self._staging_write = 0
     return results
 
   def close(self):
