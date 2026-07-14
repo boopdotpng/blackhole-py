@@ -1,4 +1,4 @@
-from asm import KERNEL_ROLES, KernelBuilder
+from asm import KernelBuilder
 from fw.consts import CQ, NcriscLocalState, TensixL1
 from isa import R
 from program import Program
@@ -53,9 +53,8 @@ def _kernel(write: bool, core, dram_coords):
 
 def _program(cores, dram_coords, *, write):
   cores = tuple(cores)
-  images = {role: KernelBuilder(role, cores[0]).lower() for role in KERNEL_ROLES}
-  images["ncrisc"] = _kernel(write, cores[0], tuple(dram_coords))
-  return Program({core: dict(images) for core in cores}, {}, ())
+  image = _kernel(write, cores[0], tuple(dram_coords))
+  return Program({core: {"ncrisc": image} for core in cores}, {}, ())
 
 def dram_write(cores, dram_coords):
   return _program(cores, dram_coords, write=True)

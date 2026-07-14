@@ -4,10 +4,13 @@ from math import prod
 from typing import Callable, Literal
 
 from asm import Core, KERNEL_ROLES, KernelBuilder, KernelRole
-from cq import MAX_WRITE_SIZE, McastWrite, UnicastWrite
+from cq import Command, MAX_WRITE_SIZE, McastWrite, UnicastWrite
 from fw.consts import TensixL1
+from isa import R, RV32
 from pcie import Allocator
 from ttk.common import PARAM_BASE
+
+RETURN_KERNEL = RV32().jalr(R.ZERO, R.RA).to_bytes(4, "little")
 
 class DType(IntEnum):
   F32 = 0
@@ -82,9 +85,11 @@ class Program:
   params: dict[str, Param]
   cbs: tuple[CBConfig, ...]
   barriers: tuple[BarrierConfig, ...] = ()
+  launch: tuple[Command, ...] = ()
 
   def kernel(self, core: Core, role: KernelRole):
-    return self.kernels[core][role]
+    image = self.kernels[core].get(role)
+    return RETURN_KERNEL if image is None else image
 
   def param_addr(self, param: Param):
     slot = tuple(self.params).index(param.name)
@@ -100,7 +105,7 @@ class Program:
     for role in KERNEL_ROLES:
       groups = {}
       for core in self.cores:
-        image = self.kernels[core][role]
+        image = self.kernel(core, role)
         if image:
           if len(image) > TensixL1.WORKER_TEXT_SIZE:
             raise ValueError(f"{role} kernel exceeds its fixed text partition")
@@ -129,6 +134,7 @@ class Program:
       commands.append(UnicastWrite(self.cores, PARAM_BASE, (table,) * len(self.cores)))
     resets = [(x.addr, x.size) for x in self.barriers]
     commands += [UnicastWrite(self.cores, addr, (bytes(size),) * len(self.cores)) for addr, size in resets]
+    commands += self.launch
     return tuple(commands)
 
   @property
