@@ -211,13 +211,9 @@ class NoC:
     return self
 
   def initialize_from_firmware(self, atomic_return: Value = 4):
-    from fw.consts import BriscLocalState, NcriscLocalState
+    from fw.consts import Firmware
 
-    addresses = {
-      "brisc": (BriscLocalState.MY_X, BriscLocalState.MY_Y),
-      "ncrisc": (NcriscLocalState.MY_X, NcriscLocalState.MY_Y),
-    }
-    x_addr, y_addr = addresses[self.asm.role]
+    x_addr, y_addr = Firmware.NOC_COORDINATE_BASE[self.asm.role]
     coord, scratch = self.asm.reg(2)
     self.asm.load(coord, x_addr + self.index, bytes=1)
     self.asm.load(scratch, y_addr + self.index, bytes=1)

@@ -1,6 +1,6 @@
 from asm import KernelBuilder
 from isa import R
-from fw.consts import Firmware, FirmwareControl, RunSync, TensixL1
+from fw.consts import Firmware, FirmwareControl, RunState, TensixL1
 from ttk.tensix import Tensix, TensixRegs
 
 def build_trisc(trisc_id: int):
@@ -14,13 +14,13 @@ def build_trisc(trisc_id: int):
   fw.write32(TensixRegs.PRNG_SEED_SEED_VAL, 0)
   fw.delay_cycles(600)
 
-  fw.signal8(sync, RunSync.BOOT_READY)
+  fw.signal8(sync, RunState.BOOT_READY)
 
   fw.label("run_loop")
-  fw.wait8(sync, RunSync.GO)
+  fw.wait8(sync, RunState.GO)
   fw.jal(R.RA, "init_tensix")
   fw.call_fixed_kernel(TensixL1.WORKER_TEXT_BASE[role])
-  fw.signal8(sync, RunSync.DONE)
+  fw.signal8(sync, RunState.DONE)
   fw.j("run_loop")
 
   fw.label("init_tensix")

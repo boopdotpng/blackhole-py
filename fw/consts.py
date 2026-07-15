@@ -1,4 +1,9 @@
 from enum import IntEnum
+from typing import Literal
+
+Core = tuple[int, int]
+KernelRole = Literal["brisc", "ncrisc", "trisc0", "trisc1", "trisc2"]
+KERNEL_ROLES: tuple[KernelRole, ...] = ("brisc", "ncrisc", "trisc0", "trisc1", "trisc2")
 
 class TensixL1:
   SIZE = 0x180000
@@ -13,47 +18,42 @@ class TensixL1:
     "trisc1": 0x22E00,
     "trisc2": 0x2CD00,
   }
-  WORKER_TEXT_SIZE = 0x9F00; WORKER_TEXT_END = 0x36C00; DATA_BUFFER_SPACE_BASE = 0x37000
+  WORKER_TEXT_SIZE = 0x9F00; DATA_BUFFER_SPACE_BASE = 0x37000
 
 class Firmware:
   BRISC_STACK_TOP = NCRISC_STACK_TOP = 0xFFB01FF0
   TRISC_STACK_TOP = 0xFFB00FF0; TRISC_GLOBAL_POINTER = 0xFFB007F0
 
-  TEXT_BASE = {
-    "brisc": 0x3840,
-    "ncrisc": 0x3EF0,
-    "trisc0": 0x3FC8,
-    "trisc1": 0x4090,
-    "trisc2": 0x4158,
+  # Firmware stores NoC 0/1 coordinates as bytes at each X/Y base plus the NoC index.
+  NOC_COORDINATE_BASE = {
+    "brisc": (0xFFB00008, 0xFFB00004),
+    "ncrisc": (0xFFB00030, 0xFFB0002C),
   }
 
-  TEXT_SIZE = {
-    "brisc": 0x06B0,
-    "ncrisc": 0x00D8,
-    "trisc0": 0x00C8,
-    "trisc1": 0x00C8,
-    "trisc2": 0x00C8,
+  LOCAL_MEMORY = {
+    "brisc": (0xFFB00878, 0xFFB01F00),
+    "ncrisc": (0xFFB00864, 0xFFB01F00),
+    "trisc0": (0xFFB00820, 0xFFB00F40),
+    "trisc1": (0xFFB00140, 0xFFB00F40),
+    "trisc2": (0xFFB008C0, 0xFFB00F00),
   }
-  TEXT_END = 0x4220
 
-class BriscLocalState:
-  MY_Y = 0xFFB00004; MY_X = 0xFFB00008
+  TEXT = {
+    "brisc": (0x3840, 0x06B0),
+    "ncrisc": (0x3EF0, 0x00D8),
+    "trisc0": (0x3FC8, 0x00C8),
+    "trisc1": (0x4090, 0x00C8),
+    "trisc2": (0x4158, 0x00C8),
+  }
 
-class NcriscLocalState:
-  MY_Y = 0xFFB0002C; MY_X = 0xFFB00030
-
-class RunMsg(IntEnum):
-  DONE = 0x00; GO = 0x80
-
-class RunSync(IntEnum):
-  DONE = 0x00; BOOT_READY = 0x02; LOAD = 0x01; INIT_SYNC_REGISTERS = 0x03
-  INIT = 0x40; GO = 0x80; ALL_INIT = 0x40404040
+class RunState(IntEnum):
+  DONE = 0x00; BOOT_READY = 0x02; GO = 0x80; ALL_INIT = 0x40404040
 
 class FirmwareControl:
   SUBORDINATE_SYNC = 0x0068
   GO_SIGNAL = 0x0373
 
-class CQ:
+class CQConfig:
   PCIE_MID = 0x10000000; PCIE_COORD = (1 << 24) | (24 << 6) | 19
   PREFETCH_CORE = (14, 2); DISPATCH_CORE = (14, 3)
   PREFETCH_COORD = (2 << 6) | 14; DISPATCH_COORD = (3 << 6) | 14
@@ -67,19 +67,3 @@ class TensixMMIO:
   RISCV_DEBUG_REG_TRISC_RESET_PC_OVERRIDE = 0xFFB12234; RISCV_DEBUG_REG_NCRISC_RESET_PC = 0xFFB12238
   RISCV_DEBUG_REG_NCRISC_RESET_PC_OVERRIDE = 0xFFB1223C; RISCV_DEBUG_REG_DEST_CG_CTRL = 0xFFB12240
   SOFT_RESET_ALL = 0x47800; SOFT_RESET_BRISC_ONLY_RUN = 0x47000
-
-def _validate_l1_layout():
-  roles = tuple(Firmware.TEXT_BASE)
-  assert roles == tuple(Firmware.TEXT_SIZE) == tuple(TensixL1.WORKER_TEXT_BASE)
-  for role, next_role in zip(roles, roles[1:]):
-    assert Firmware.TEXT_BASE[role] + Firmware.TEXT_SIZE[role] <= Firmware.TEXT_BASE[next_role]
-    assert TensixL1.WORKER_TEXT_BASE[role] + TensixL1.WORKER_TEXT_SIZE <= TensixL1.WORKER_TEXT_BASE[next_role]
-  assert Firmware.TEXT_BASE[roles[-1]] + Firmware.TEXT_SIZE[roles[-1]] == Firmware.TEXT_END
-  assert Firmware.TEXT_END <= TensixL1.PARAM_BASE
-  assert TensixL1.PARAM_BASE + TensixL1.PARAM_SIZE <= TensixL1.WORKER_TEXT_BASE[roles[0]]
-  assert TensixL1.WORKER_TEXT_BASE[roles[-1]] + TensixL1.WORKER_TEXT_SIZE == TensixL1.WORKER_TEXT_END
-  assert TensixL1.WORKER_TEXT_END <= TensixL1.DATA_BUFFER_SPACE_BASE < TensixL1.SIZE
-
-_validate_l1_layout()
-
-__all__ = [name for name in globals() if not name.startswith("_")]

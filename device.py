@@ -3,10 +3,10 @@ from struct import Struct
 import numpy as np
 from pcie import PCIDevice, TLBWindow
 from program import Dram, Program
-from fw.consts import Firmware, FirmwareControl, RunMsg, TensixL1, TensixMMIO
+from fw.consts import Firmware, FirmwareControl, RunState, TensixL1, TensixMMIO
 from isa import R, RV32
 from cq import CommandQueue, Run, UnicastWrite
-from fw.consts import CQ
+from fw.consts import CQConfig
 
 class Device:
   def __init__(self, index: int = 0, sysmem_size: int = 1 << 30):
@@ -27,15 +27,16 @@ class Device:
     from fw.ncrisc import build_ncrisc
     from fw.trisc import build_trisc
     images = (build_brisc(), build_ncrisc(), *(build_trisc(i) for i in range(3)))
-    firmware = b"".join(image.lower().ljust(Firmware.TEXT_SIZE[role], b"\0")
-                        for role, image in zip(Firmware.TEXT_SIZE, images))
+    firmware = b"".join(image.lower().ljust(size, b"\0")
+                        for (_, size), image in zip(Firmware.TEXT.values(), images))
+    firmware_base = Firmware.TEXT["brisc"][0]
     prefetch, dispatch = build_prefetch().lower(), build_dispatch().lower()
     with TLBWindow(self.pcie.fd, self.pcie.cores[0]) as win:
       win.mcast(TensixMMIO.RISCV_DEBUG_REG_SOFT_RESET_0, TensixMMIO.SOFT_RESET_ALL)
-      win.mcast(Firmware.TEXT_BASE["brisc"], firmware)
-      boot = RV32().jal(R.ZERO, Firmware.TEXT_BASE["brisc"]).to_bytes(4, "little")
+      win.mcast(firmware_base, firmware)
+      boot = RV32().jal(R.ZERO, firmware_base).to_bytes(4, "little")
       win.mcast(TensixL1.BOOT, boot)
-      win.mcast(FirmwareControl.GO_SIGNAL, int(RunMsg.DONE), bytes=1)
+      win.mcast(FirmwareControl.GO_SIGNAL, int(RunState.DONE), bytes=1)
       win.mcast(TensixMMIO.RISCV_DEBUG_REG_SOFT_RESET_0, TensixMMIO.SOFT_RESET_BRISC_ONLY_RUN)
       for core, image in ((self.pcie.prefetch_core, prefetch), (self.pcie.dispatch_core, dispatch)):
         win.target(0, core)
@@ -43,7 +44,7 @@ class Device:
       self.cq = CommandQueue(self.pcie)
       for core in (self.pcie.prefetch_core, self.pcie.dispatch_core):
         win.target(0, core)
-        win.write(FirmwareControl.GO_SIGNAL, int(RunMsg.GO), bytes=1)
+        win.write(FirmwareControl.GO_SIGNAL, int(RunState.GO), bytes=1)
 
   def queue(self, program: Program): self.program_queue.append(program); return program
 
@@ -69,7 +70,7 @@ class Device:
       start = index * tiles_per_core
       count = max(0, min(tiles_per_core, tiles - start))
       args.append(pack(
-        buffer.addr, sysmem_base + start * buffer.page_size, CQ.PCIE_MID,
+        buffer.addr, sysmem_base + start * buffer.page_size, CQConfig.PCIE_MID,
         start, count, buffer.page_size,
       ))
     args_write = UnicastWrite(program.cores, ARGS_BASE, tuple(args))

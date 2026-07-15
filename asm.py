@@ -1,23 +1,12 @@
 from contextlib import contextmanager
 from dataclasses import dataclass
-from functools import wraps
-from typing import ClassVar, Literal, Tuple
-
-from isa import R, RV32, Tensix
+from typing import ClassVar
+from fw.consts import Core, Firmware, KernelRole
+from isa import R, RV32
 from pcie import Allocator
 from ttk.common import Common
 
-_encode = RV32()
-
-KernelRole = Literal["brisc", "ncrisc", "trisc0", "trisc1", "trisc2"]
-KERNEL_ROLES: tuple[KernelRole, ...] = ("brisc", "ncrisc", "trisc0", "trisc1", "trisc2")
-Core = Tuple[int, int]
-
-LOCAL_MEMORY = {
-  "brisc": (0xFFB00878, 0xFFB01F00), "ncrisc": (0xFFB00864, 0xFFB01F00),
-  "trisc0": (0xFFB00820, 0xFFB00F40), "trisc1": (0xFFB00140, 0xFFB00F40),
-  "trisc2": (0xFFB008C0, 0xFFB00F00),
-}
+_rv32 = RV32()
 
 @dataclass(frozen=True)
 class Fixup:
@@ -46,18 +35,7 @@ class Cond:
   def inverse(cls, op):
     return {"beq": "bne", "bne": "beq", "blt": "bge", "bge": "blt", "bltu": "bgeu", "bgeu": "bltu"}[op]
 
-def _scoped(fn):
-  @wraps(fn)
-  def wrapped(self, *args, **kwargs):
-    with self.scope(): return fn(self, *args, **kwargs)
-  return wrapped
-
-class Asm(RV32, Tensix):
-  def __init_subclass__(cls):
-    super().__init_subclass__()
-    for name, fn in tuple(vars(cls).items()):
-      if not name.startswith("_") and hasattr(fn, "__code__"): setattr(cls, name, _scoped(fn))
-
+class Asm(RV32):
   def __init__(self, role: str | None = None):
     self.items, self.labels = [], {}
 
@@ -65,9 +43,16 @@ class Asm(RV32, Tensix):
     self._free, self._scopes = [reg for reg in R if reg not in reserved], []
     self._label_id, self._breaks = 0, []
     self.role = role
-    self.local = Allocator(*LOCAL_MEMORY.get(role, (0, 0)), 4)
+    self.local = Allocator(*Firmware.LOCAL_MEMORY.get(role, (0, 0)), 4)
 
   def _emit(self, word: int):
+    if word & 3 != 3:
+      if self.role == "brisc":
+        raw = ((word >> 2) | (word << 30)) & 0xFFFFFFFF
+        return self.push_tensix_word(raw)
+      if self.role == "ncrisc": raise RuntimeError("ncrisc cannot emit Tensix instructions")
+      if self.role not in ("trisc0", "trisc1", "trisc2"):
+        raise RuntimeError(f"{self.role} cannot emit Tensix instructions")
     self.items.append(word)
     return self
 
@@ -99,7 +84,7 @@ class Asm(RV32, Tensix):
 
   def _fixup(self, op: str, args: tuple, target: str | int):
     if isinstance(target, str): self.items.append(Fixup(op, args, target))
-    else: self._emit(getattr(_encode, op)(*args, target))
+    else: self._emit(getattr(_rv32, op)(*args, target))
     return self
 
   def beq(self, a: R, b: R, target: str | int): return self._fixup("beq", (a, b), target)
@@ -191,14 +176,14 @@ class Asm(RV32, Tensix):
       offset = targets[item.label] - pc
       if offset & 1: raise ValueError(f"misaligned target {item.label!r}")
       if i in long:
-        out.append(getattr(_encode, Cond.inverse(item.op))(*item.args, 8))
+        out.append(getattr(_rv32, Cond.inverse(item.op))(*item.args, 8))
         offset = targets[item.label] - (pc + 4)
         if not -(1 << 20) <= offset < 1 << 20: raise ValueError(f"target {item.label!r} is out of range")
-        out.append(_encode.jal(R.ZERO, offset)); pc += 8
+        out.append(_rv32.jal(R.ZERO, offset)); pc += 8
       else:
         limit = 1 << (20 if item.op == "jal" else 12)
         if not -limit <= offset < limit: raise ValueError(f"target {item.label!r} is out of range")
-        out.append(getattr(_encode, item.op)(*item.args, offset)); pc += 4
+        out.append(getattr(_rv32, item.op)(*item.args, offset)); pc += 4
     return out
 
   def assemble(self): return b"".join(word.to_bytes(4, "little") for word in self.instructions())

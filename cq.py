@@ -1,11 +1,11 @@
 from dataclasses import dataclass
 from enum import IntEnum
 from struct import Struct
-from typing import ClassVar, Tuple
+from typing import ClassVar
 import time
+from fw.consts import Core
 
-Core = Tuple[int, int]
-Rect = Tuple[Core, Core]
+Rect = tuple[Core, Core]
 
 ALIGN = 64; MAX_WRITE_SIZE = 16 * 1024; MAX_RECORD_SIZE = 64 * 1024; PAGE_SIZE = 4096
 

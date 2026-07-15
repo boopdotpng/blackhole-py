@@ -1,5 +1,5 @@
 from asm import KernelBuilder
-from fw.consts import Firmware, FirmwareControl, NcriscLocalState, RunSync, TensixL1
+from fw.consts import Firmware, FirmwareControl, RunState, TensixL1
 
 def build_ncrisc():
   fw = KernelBuilder.firmware("ncrisc")
@@ -7,15 +7,13 @@ def build_ncrisc():
   fw.configure_csr()
 
   for index in (0, 1):
-    fw.noc(index).store_risc_coordinates(
-      NcriscLocalState.MY_X, NcriscLocalState.MY_Y,
-    )
+    fw.noc(index).store_risc_coordinates(*Firmware.NOC_COORDINATE_BASE["ncrisc"])
 
-  fw.signal8(FirmwareControl.SUBORDINATE_SYNC, RunSync.BOOT_READY)
+  fw.signal8(FirmwareControl.SUBORDINATE_SYNC, RunState.BOOT_READY)
 
   fw.label("run_loop")
-  fw.wait8(FirmwareControl.SUBORDINATE_SYNC, RunSync.GO)
+  fw.wait8(FirmwareControl.SUBORDINATE_SYNC, RunState.GO)
   fw.call_fixed_kernel(TensixL1.WORKER_TEXT_BASE["ncrisc"])
-  fw.signal8(FirmwareControl.SUBORDINATE_SYNC, RunSync.DONE)
+  fw.signal8(FirmwareControl.SUBORDINATE_SYNC, RunState.DONE)
   fw.j("run_loop")
   return fw

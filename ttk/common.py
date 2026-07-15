@@ -128,6 +128,8 @@ class Common:
     return self.fence()
 
   def push_tensix_word(self, word: int | object, *, addr: int = 0xFFE40000):
+    if self.role not in ("brisc", "trisc0", "trisc1", "trisc2"):
+      raise RuntimeError(f"{self.role} cannot push Tensix instructions")
     if hasattr(word, "raw_word"):
       word = word.raw_word()
     if type(word) is not int:

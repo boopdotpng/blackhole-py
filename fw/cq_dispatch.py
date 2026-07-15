@@ -5,18 +5,18 @@ from cq import (
   DISPATCH_RING_BASE, DISPATCH_RING_END, DISPATCH_SCRATCH,
   PAGE_SIZE, PREFETCH_CREDITS, Op, PacketLayout, Timestamp,
 )
-from fw.consts import CQ, FirmwareControl, RunMsg, TensixMMIO
+from fw.consts import CQConfig, FirmwareControl, RunState, TensixMMIO
 from isa import R
 from asm import KernelBuilder
 
-def build_dispatch(core=CQ.DISPATCH_CORE):
+def build_dispatch(core=CQConfig.DISPATCH_CORE):
   fw = KernelBuilder("brisc", core)
   with fw.scope(): _emit_dispatch(fw, fw.reg(12))
   return fw
 
 def _emit_dispatch(fw, state):
   s0, s1, s2, s3, s4, s5, s6, s7, s8, s9, s10, s11 = state
-  noc = fw.noc(1).initialize(CQ.DISPATCH_COORD)
+  noc = fw.noc(1).initialize(CQConfig.DISPATCH_COORD)
   fw.li(s0, DISPATCH_RING_BASE)
   fw.li(s1, 0)
   fw.write32(DISPATCH_CREDIT_RETURN, (DISPATCH_RING_END - DISPATCH_RING_BASE) // PAGE_SIZE)
@@ -81,7 +81,7 @@ def _emit_dispatch(fw, state):
   fw.write32(DISPATCH_DONE_COUNT, 0)
   fw.fence()
   fw.addi(s6, s0, PacketLayout.RUN_TARGETS)
-  fw.write32(DISPATCH_GO, int(RunMsg.GO) << 24)
+  fw.write32(DISPATCH_GO, int(RunState.GO) << 24)
   fw.mv(s7, s3)
   with noc.write_ack_batch(count=s3) as writes:
     fw.label("go_loop")
@@ -109,7 +109,7 @@ def _emit_dispatch(fw, state):
   fw.read32(s4, DISPATCH_CREDIT_RETURN); fw.add(s4, s4, s3)
   fw.write32(DISPATCH_CREDIT_RETURN, s4)
 
-  noc.write(DISPATCH_CREDIT_RETURN, PREFETCH_CREDITS, CQ.PREFETCH_COORD, 4)
+  noc.write(DISPATCH_CREDIT_RETURN, PREFETCH_CREDITS, CQConfig.PREFETCH_COORD, 4)
   fw.add(s1, s1, s3)
   fw.slli(s4, s3, 12); fw.add(s0, s0, s4)
   fw.li(s4, DISPATCH_RING_END); fw.bne(s0, s4, "dispatch_loop")
@@ -126,7 +126,7 @@ def _emit_completion(fw, noc, state):
   fw.read32(s10, DISPATCH_COMPLETION_WRITE)
   fw.li(s11, 0x7FFFFFFF); fw.and_(s11, s10, s11); fw.slli(s11, s11, 4)
   with noc.write_ack_batch(count=1) as writes:
-    writes.issue(DISPATCH_SCRATCH, s11, CQ.PCIE_COORD, Timestamp.STRUCT.size, dst_mid=CQ.PCIE_MID)
+    writes.issue(DISPATCH_SCRATCH, s11, CQConfig.PCIE_COORD, Timestamp.STRUCT.size, dst_mid=CQConfig.PCIE_MID)
   fw.addi(s11, s10, PAGE_SIZE // 16)
   fw.read32(s3, DISPATCH_COMPLETION_END)
   fw.li(s4, 0x7FFFFFFF); fw.and_(s4, s11, s4)
@@ -138,4 +138,4 @@ def _emit_completion(fw, noc, state):
   fw.write32(DISPATCH_COMPLETION_PUBLISH, s11)
   fw.read32(s3, DISPATCH_COMPLETION_HOST_PTR)
   with noc.write_ack_batch(count=1) as writes:
-    writes.issue(DISPATCH_COMPLETION_PUBLISH, s3, CQ.PCIE_COORD, 4, dst_mid=CQ.PCIE_MID)
+    writes.issue(DISPATCH_COMPLETION_PUBLISH, s3, CQConfig.PCIE_COORD, 4, dst_mid=CQConfig.PCIE_MID)

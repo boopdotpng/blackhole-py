@@ -3,9 +3,9 @@ from enum import IntEnum
 from math import prod
 from typing import Callable, Literal
 
-from asm import Core, KERNEL_ROLES, KernelBuilder, KernelRole
+from asm import KernelBuilder
 from cq import Command, MAX_WRITE_SIZE, McastWrite, UnicastWrite
-from fw.consts import TensixL1
+from fw.consts import Core, KERNEL_ROLES, KernelRole, TensixL1
 from isa import R, RV32
 from pcie import Allocator
 from ttk.common import PARAM_BASE
