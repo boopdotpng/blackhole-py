@@ -53,7 +53,7 @@ class CB:
       k.load(limit, self.interface + 4)
       no_wrap = k._new_label("cb_no_wrap")
       k.bltu(pointer, limit, no_wrap)
-      k.load(base, self.interface); k.sub(pointer, pointer, base)
+      k.load(base, self.interface); k.sub(limit, limit, base); k.sub(pointer, pointer, limit)
       k.label(no_wrap); k.store(self.interface + pointer_offset, pointer)
 
   def reserve_back(self, count=1):
@@ -64,7 +64,8 @@ class CB:
       loop, done = k._new_label("cb_reserve"), k._new_label("cb_reserved")
       k.label(loop)
       k.load(acked, self._sync(self.SYNC_TILES_ACKED_BASE), bytes=2)
-      k.sub(used, received, acked); k.load(capacity, self.interface + 12)
+      k.sub(used, received, acked); k.slli(used, used, 16); k.srli(used, used, 16)
+      k.load(capacity, self.interface + 12)
       k.sub(capacity, capacity, used); k.li(need, count)
       k.bgeu(capacity, need, done); k.fence(); k.j(loop); k.label(done); k.fence()
     return self
@@ -90,7 +91,7 @@ class CB:
       loop, done = k._new_label("cb_wait"), k._new_label("cb_ready")
       k.label(loop)
       k.load(received, self._sync(self.SYNC_TILES_RECEIVED_BASE), bytes=2)
-      k.sub(available, received, acked)
+      k.sub(available, received, acked); k.slli(available, available, 16); k.srli(available, available, 16)
       k.bgeu(available, need, done); k.fence(); k.j(loop); k.label(done); k.fence()
     return self
 
