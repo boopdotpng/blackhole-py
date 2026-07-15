@@ -340,6 +340,16 @@ class Tensix:
     self.issue(self.k.tensix_word("TTSETDMAREG", value >> 14, value & 0x3FFF, 0, half_register))
     return self
 
+  def set_dma_reg16_from_reg(self, half_register: int, value: R):
+    with self.k.scope():
+      instruction, mask, base = self.k.reg(3, exclude=value)
+      self.k.slli(instruction, value, 8)
+      self.k.li(mask, 0x00FFFF00); self.k.and_(instruction, instruction, mask)
+      self.k.li(base, self.k.tensix_word("TTSETDMAREG", 0, 0, 0, half_register))
+      self.k.or_(instruction, instruction, base)
+      self.k.write32(TensixRegs.INSTRN_BUF_BASE, instruction)
+    return self
+
   def write_cfg_from_gpr(self, gpr_word: int, register: Cfg, *, wide=False):
     self.issue(self.k.tensix_word("TTWRCFG", gpr_word, int(bool(wide)), register.addr32))
     return self

@@ -129,6 +129,14 @@ class ReadBatch(_CompletionBatch):
 
     self.noc.read(src, src_coord, dst, size, src_mid=src_mid, return_coord=return_coord)
 
+  def issue_dram(self, buffer, page: Value, cb, *, return_coord: Value | None = None):
+    if cb.k is not self.noc.asm: raise ValueError("DRAM read CB must belong to the issuing RISC")
+    if cb.page_size != buffer.page_size: raise ValueError("DRAM buffer and CB page sizes must match")
+    src, src_coord = self.noc.dram_page(buffer, page)
+    dst = self.noc.asm.reg(); cb.write_ptr(dst)
+    self.issue(src, src_coord, dst, buffer.page_size, return_coord=return_coord)
+    return self
+
 class WriteBatch(_CompletionBatch):
   def __init__(self, noc, status=NIU_MST_POSTED_WR_REQ_SENT, buffer=_WRITE_BUFFER,
                count=None, owner=None, *, posted=True):
@@ -137,6 +145,14 @@ class WriteBatch(_CompletionBatch):
 
   def issue(self, src: Value, dst: Value, dst_coord: Value, size: Value, *, dst_mid: Value = 0):
     self.noc.write(src, dst, dst_coord, size, dst_mid=dst_mid, posted=self.posted)
+
+  def issue_dram(self, buffer, page: Value, cb):
+    if cb.k is not self.noc.asm: raise ValueError("DRAM write CB must belong to the issuing RISC")
+    if cb.page_size != buffer.page_size: raise ValueError("DRAM buffer and CB page sizes must match")
+    dst, dst_coord = self.noc.dram_page(buffer, page)
+    src = self.noc.asm.reg(); cb.read_ptr(src)
+    self.issue(src, dst, dst_coord, buffer.page_size)
+    return self
 
   def multicast(self, src: Value, dst: Value, dst_coord: Value, size: int, *, exclude: Value = 0, along_y=False):
     packets = self.noc.multicast(src, dst, dst_coord, size, exclude=exclude, along_y=along_y)
@@ -168,6 +184,42 @@ class NoC:
 
   def _cfg_addr(self, register: int):
     return NOC_CFG_BASE + (self.index << NOC_INSTANCE_OFFSET_BIT) + register * 4
+
+  def dram_page(self, buffer, page: Value):
+    if buffer.loc != "device" or buffer.dram_coords is None:
+      raise ValueError("DRAM page access requires a device buffer with endpoint coordinates")
+    if not 0 <= self.index < len(buffer.dram_coords):
+      raise ValueError(f"buffer has no DRAM endpoint table for NoC {self.index}")
+    coords = buffer.dram_coords[self.index]
+    if len(coords) != 7: raise ValueError("DRAM endpoint table must contain seven banks")
+
+    asm = self.asm
+    base = asm.param(buffer)
+    address, coord = asm.reg(2)
+    if type(page) is int:
+      if not 0 <= page < buffer.pages: raise ValueError("DRAM page index is outside the buffer")
+      offset = page // len(coords) * buffer.page_size
+      if offset:
+        delta = asm.reg(); asm.li(delta, offset); asm.add(address, base, delta)
+      else: asm.mv(address, base)
+      asm.li(coord, coords[page % len(coords)])
+      return address, coord
+    if not isinstance(page, R): raise TypeError("DRAM page index must be an integer or register")
+
+    bank, banks, scale = asm.reg(3, exclude=(page, base, address, coord))
+    asm.li(banks, len(coords))
+    asm.remu(bank, page, banks); asm.divu(address, page, banks)
+    asm.li(scale, buffer.page_size); asm.mul(address, address, scale); asm.add(address, address, base)
+
+    selected = asm._new_label("dram_bank_selected")
+    invalid = asm._new_label("dram_bank_invalid")
+    labels = {index: asm._new_label(f"dram_bank_{index}") for index in range(len(coords))}
+    asm.switch(bank, labels, invalid)
+    for index, label in labels.items():
+      asm.label(label); asm.li(coord, coords[index]); asm.j(selected)
+    asm.label(invalid); asm.j(invalid)
+    asm.label(selected)
+    return address, coord
 
   def _stores(self, base: R, value: R, registers: dict[int, Value]):
     for reg, val in registers.items():

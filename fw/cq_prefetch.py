@@ -1,4 +1,4 @@
-from asm import RoleBuilder
+from asm import Asm
 from cq import (
   CQ_STATE, DISPATCH_PUBLISHED, DISPATCH_RING_BASE, DISPATCH_RING_END, PAGE_SIZE,
   PREFETCH_CREDITS, PREFETCH_PCIE_BASE, PREFETCH_PCIE_END, PREFETCH_PCIE_READ,
@@ -9,7 +9,7 @@ from isa import R
 from ttk.noc import NOC_MAX_BURST_SIZE
 
 def build_prefetch(core=CQConfig.PREFETCH_CORE):
-  fw = RoleBuilder("brisc", core)
+  fw = Asm("brisc", core)
   with fw.scope(): _emit_prefetch(fw, fw.reg(11))
   return fw
 

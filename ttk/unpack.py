@@ -34,10 +34,22 @@ class Unpack:
     t.write_cfg(Cfg.THCON_SEC0_REG5_Dest_cntx01, 0x00400040); t.write_cfg(Cfg.THCON_SEC0_REG5_Tile_x_dim_cntx01, 0x01000100)
     t.write_cfg(Cfg.UNP0, 0x100); t.set_thread_cfg(ThreadCfg.SRCA_SET, 4)
     for half in (72, 74): t.issue(self.k.tensix_word("TTSETDMAREG", 0, tile_bytes >> 4, 0, half))
-    t.configure_mop(mop_cfg); t.sync(); t.wait_unpack_config_idle()
-    t.write_cfg(Cfg.THCON_SEC0_REG3_Base_address, (addr >> 4) - 1); t.write_cfg(Cfg.THCON_SEC0_REG7_Offset_address, 0)
-    t.commit_unpack_config(Cfg.THCON_SEC0_REG3_Base_address)
+    t.configure_mop(mop_cfg); t.sync()
+    t.write_cfg(Cfg.THCON_SEC0_REG7_Offset_address, 0)
     self.mop_cfg = mop_cfg; return self
+
+  def wait_config_idle(self): self.tensix.wait_unpack_config_idle(); return self
+
+  def configure_source(self, source_cb):
+    if int(source_cb.dtype) not in set(UnpackFormat): raise ValueError(f"unsupported unpack format {source_cb.dtype}")
+    with self.k.scope():
+      address = self.k.reg(); source_cb.read_ptr(address)
+      self.k.srli(address, address, 4); self.k.addi(address, address, -1)
+      self.k.write32(Cfg.THCON_SEC0_REG3_Base_address, address)
+    return self
+
+  def commit_config(self):
+    self.tensix.commit_unpack_config(Cfg.THCON_SEC0_REG3_Base_address); return self
 
   def to_src_a(self):
     t = self.tensix

@@ -31,13 +31,21 @@ class Pack:
     t.configure_mop(mop_cfg); t.sync(); self.output_cb = output_cb; return self
 
   def _program_destination(self):
-    addr, _, _ = self._cb(self.output_cb); transformed, t = (addr >> 4) - 1, self.tensix
-    t.issue(self.k.tensix_word("TTSETADC", 4, 0, 3, 0)); t.set_dma_reg16(24, transformed & 0xFFFF)
-    t.set_dma_reg16(25, ((1 << 31) | transformed) >> 16); t.stall(TensixStall.CFG, TensixWait.THCON | TensixWait.PACK0)
-    t.write_cfg_from_gpr(12, Cfg.THCON_SEC0_REG1_L1_Dest_addr); t.set_dma_reg16(25, transformed >> 16); t.dma_nop()
+    t = self.tensix
+    with self.k.scope():
+      transformed, high, high_valid = self.k.reg(3)
+      self.output_cb.write_ptr(transformed)
+      self.k.srli(transformed, transformed, 4); self.k.addi(transformed, transformed, -1)
+      t.issue(self.k.tensix_word("TTSETADC", 4, 0, 3, 0)); t.set_dma_reg16_from_reg(24, transformed)
+      self.k.srli(high, transformed, 16); self.k.li(high_valid, 0x8000); self.k.or_(high_valid, high_valid, high)
+      t.set_dma_reg16_from_reg(25, high_valid); t.stall(TensixStall.CFG, TensixWait.THCON | TensixWait.PACK0)
+      t.write_cfg_from_gpr(12, Cfg.THCON_SEC0_REG1_L1_Dest_addr)
+      t.set_dma_reg16_from_reg(25, high); t.dma_nop()
 
   def acquire_dst(self):
     self.tensix.semaphore_wait(TensixSem.MATH_PACK, TensixSemWait.STALL_ON_ZERO, stall=TensixStall.TDMA); return self
+
+  def release_dst(self): self.tensix.semaphore_get(TensixSem.MATH_PACK); return self
 
   def to_cb(self):
     t = self.tensix; self._program_destination()

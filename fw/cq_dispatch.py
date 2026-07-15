@@ -7,10 +7,10 @@ from cq import (
 )
 from fw.consts import CQConfig, FirmwareControl, RunState, TensixMMIO
 from isa import R
-from asm import RoleBuilder
+from asm import Asm
 
 def build_dispatch(core=CQConfig.DISPATCH_CORE):
-  fw = RoleBuilder("brisc", core)
+  fw = Asm("brisc", core)
   with fw.scope(): _emit_dispatch(fw, fw.reg(12))
   return fw
 

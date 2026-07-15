@@ -1,4 +1,3 @@
-from dataclasses import replace
 from struct import Struct
 import numpy as np
 from pcie import PCIDevice, TLBWindow
@@ -11,7 +10,7 @@ from fw.consts import CQConfig
 class Device:
   def __init__(self, index: int = 0, sysmem_size: int = 1 << 30):
     self.pcie = PCIDevice(index, sysmem_size)
-    self.dram = Dram()
+    self.dram = Dram(self.pcie.harvested_dram_bank)
     self.program_queue = []
     self.cq = None
     self._staging_write = 0
@@ -50,7 +49,6 @@ class Device:
 
   def _dram_program(self, buffer, *, write, offset=0):
     from fw.dram import ARGS_BASE, dram_read, dram_write
-    from ttk.dram import endpoint_coords
     if self.cq is None: raise RuntimeError("init_device() must be called before tensor transfer")
     if not 0 < buffer.page_size <= 16 * 1024 or buffer.page_size % 16:
       raise ValueError("DRAM transfer pages must be 16-byte aligned and at most 16 KiB")
@@ -59,7 +57,7 @@ class Device:
 
     tiles = buffer.pages
     build = dram_write if write else dram_read
-    program = build(self.pcie.cores[:tiles], endpoint_coords(self.pcie.harvested_dram_bank, 1))
+    program = build(self.pcie.cores[:tiles], buffer.dram_coords[1])
     tiles_per_core = (tiles + len(program.cores) - 1) // len(program.cores)
     sysmem_base = self.cq.noc + self.cq.dram + offset
     if sysmem_base + buffer.size > 1 << 32:
@@ -74,7 +72,8 @@ class Device:
         start, count, buffer.page_size,
       ))
     args_write = UnicastWrite(program.cores, ARGS_BASE, tuple(args))
-    return replace(program, launch=(args_write,))
+    program.launch = (args_write,)
+    return program
 
   @staticmethod
   def _tile_data(buffer, data, *, inverse=False):

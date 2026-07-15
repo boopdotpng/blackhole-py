@@ -1,4 +1,4 @@
-from asm import RoleBuilder
+from asm import Asm
 from isa import R
 from cq import DISPATCH_DONE_COUNT
 from fw.consts import CQConfig, Firmware, FirmwareControl, RunState, TensixL1, TensixMMIO
@@ -26,7 +26,7 @@ def _notify_dispatch(fw):
   return fw
 
 def build_brisc():
-  fw = RoleBuilder.firmware("brisc")
+  fw = Asm.firmware("brisc")
   fw.configure_csr()
   fw.setup_stack(Firmware.BRISC_STACK_TOP)
 

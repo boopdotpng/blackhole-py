@@ -1,4 +1,4 @@
-from asm import RoleBuilder
+from asm import Asm
 from fw.consts import CQConfig, Firmware, TensixL1
 from isa import R
 from program import Program
@@ -8,7 +8,7 @@ ARGS_WORDS = 6
 SCRATCH = TensixL1.DATA_BUFFER_SPACE_BASE
 
 def _kernel(write: bool, core, dram_coords):
-  fw = RoleBuilder("ncrisc", core)
+  fw = Asm("ncrisc", core)
   with fw.scope():
     x_addr, y_addr = Firmware.NOC_COORDINATE_BASE["ncrisc"]
     base, sysmem, mid, tile, tiles, size, bank, address, coord, seven, local, tmp = fw.reg(12)
@@ -55,7 +55,7 @@ def _kernel(write: bool, core, dram_coords):
 def _program(cores, dram_coords, *, write):
   cores = tuple(cores)
   image = _kernel(write, cores[0], tuple(dram_coords))
-  return Program({core: {"ncrisc": image} for core in cores}, {}, ())
+  return Program.from_kernels({core: {"ncrisc": image} for core in cores})
 
 def dram_write(cores, dram_coords):
   return _program(cores, dram_coords, write=True)

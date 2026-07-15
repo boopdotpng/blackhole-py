@@ -1,5 +1,5 @@
 from ttk.sfpu import Sfpu
-from ttk.tensix import Cfg, MopCfg, Tensix, TensixSem, TensixStall, TensixState, TensixWait, ThreadCfg, tt_word
+from ttk.tensix import Cfg, MopCfg, Tensix, TensixSem, TensixSemWait, TensixStall, TensixState, TensixWait, ThreadCfg, tt_word
 
 MATH_COPY_SRC_A_MOP = MopCfg.copy_src_a_to_dst()
 
@@ -40,5 +40,12 @@ class Math:
     self.tensix.set_thread_cfg(ThreadCfg.DEST_TARGET_REG_CFG_MATH, destination_offset)
     if self.mop_cfg != MATH_COPY_SRC_A_MOP: self.tensix.configure_mop(MATH_COPY_SRC_A_MOP); self.mop_cfg = MATH_COPY_SRC_A_MOP
     self.tensix.run_mop(); return self
+
+  def acquire_dst(self):
+    self.tensix.semaphore_wait(
+      TensixSem.MATH_PACK, TensixSemWait.STALL_ON_MAX,
+      stall=TensixStall.SYNC | TensixStall.MATH | TensixStall.SFPU,
+    )
+    return self
 
   def publish_dst(self): self.tensix.semaphore_post(TensixSem.MATH_PACK); return self
