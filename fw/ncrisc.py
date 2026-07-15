@@ -1,8 +1,8 @@
-from asm import KernelBuilder
+from asm import RoleBuilder
 from fw.consts import Firmware, FirmwareControl, RunState, TensixL1
 
 def build_ncrisc():
-  fw = KernelBuilder.firmware("ncrisc")
+  fw = RoleBuilder.firmware("ncrisc")
   fw.setup_stack(Firmware.NCRISC_STACK_TOP)
   fw.configure_csr()
 

@@ -1,4 +1,4 @@
-from asm import KernelBuilder
+from asm import RoleBuilder
 from fw.consts import CQConfig, Firmware, TensixL1
 from isa import R
 from program import Program
@@ -8,7 +8,7 @@ ARGS_WORDS = 6
 SCRATCH = TensixL1.DATA_BUFFER_SPACE_BASE
 
 def _kernel(write: bool, core, dram_coords):
-  fw = KernelBuilder("ncrisc", core)
+  fw = RoleBuilder("ncrisc", core)
   with fw.scope():
     x_addr, y_addr = Firmware.NOC_COORDINATE_BASE["ncrisc"]
     base, sysmem, mid, tile, tiles, size, bank, address, coord, seven, local, tmp = fw.reg(12)

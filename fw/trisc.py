@@ -1,4 +1,4 @@
-from asm import KernelBuilder
+from asm import RoleBuilder
 from isa import R
 from fw.consts import Firmware, FirmwareControl, RunState, TensixL1
 from ttk.tensix import Tensix, TensixRegs
@@ -6,7 +6,7 @@ from ttk.tensix import Tensix, TensixRegs
 def build_trisc(trisc_id: int):
   role = f"trisc{trisc_id}"
   sync = FirmwareControl.SUBORDINATE_SYNC + trisc_id + 1
-  fw = KernelBuilder.firmware(role)
+  fw = RoleBuilder.firmware(role)
   fw.li(R.GP, Firmware.TRISC_GLOBAL_POINTER)
   fw.setup_stack(Firmware.TRISC_STACK_TOP)
   fw.configure_csr()

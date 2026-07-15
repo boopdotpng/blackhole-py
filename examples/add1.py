@@ -6,11 +6,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from asm import KernelBuilder
 from program import Buffer, DType, Dram, KernelBundle, Param, Program
 from ttk.cb import CB
-from ttk.math import Math
-from ttk.pack import Pack
 from ttk.sfpu import SfpuFormat
 from ttk.sync import Barrier
-from ttk.unpack import Unpack
 
 CORE, TILE_BYTES = (1, 2), 2048
 INPUT_CB_ADDR = 0x37000
@@ -20,55 +17,50 @@ INIT_BARRIER_ADDR = 0x36F10
 def lower_add1(src: Buffer, dst: Buffer, *, core=CORE, read_coord=0, write_coord=0) -> Program:
   src_param, dst_param = Param("src", src), Param("dst", dst)
 
-  def build_reader(k: KernelBuilder):
-    input_cb = CB(k, input_cb_config); input_cb.reserve_back()
-    noc = k.noc(0).initialize_from_firmware()
-    write_ptr = k.reg(); input_cb.write_ptr(write_ptr)
+  def build(k: KernelBuilder):
+    input_reader_cb, input_unpack_cb = CB(k.brisc, input_cb_config), CB(k.trisc0, input_cb_config)
+    output_pack_cb, output_writer_cb = CB(k.trisc2, output_cb_config), CB(k.ncrisc, output_cb_config)
+    k.unpack.init(input_unpack_cb)
+    k.math.initialize()
+    add_one = k.math.sfpu.install(k.math.sfpu.add_immediate_program(1, format=SfpuFormat.BF16))
+    k.pack.init(output_pack_cb)
+    Barrier(k.trisc0, init_barrier, 0).wait()
+    Barrier(k.trisc1, init_barrier, 1).wait()
+    Barrier(k.trisc2, init_barrier, 2).wait()
+
+    input_reader_cb.reserve_back()
+    noc = k.brisc.noc(0).initialize_from_firmware()
+    write_ptr = k.brisc.reg(); input_reader_cb.write_ptr(write_ptr)
     with noc.read_batch() as reads:
-      reads.issue(k.param(src_param), read_coord, write_ptr, TILE_BYTES)
-    input_cb.push_back()
+      reads.issue(k.brisc.param(src_param), read_coord, write_ptr, TILE_BYTES)
+    input_reader_cb.push_back()
 
-  def build_unpack(k: KernelBuilder):
-    input_cb = CB(k, input_cb_config)
-    unpack = Unpack(k).init(input_cb)
-    Barrier(k, init_barrier, 0).wait()
-    input_cb.wait_front()
-    unpack.to_src_a()
-    unpack.wait()
-    input_cb.pop_front()
+    input_unpack_cb.wait_front()
+    k.unpack.to_src_a()
+    k.unpack.wait()
+    input_unpack_cb.pop_front()
 
-  def build_math(k: KernelBuilder):
-    math = Math(k).initialize()
-    add_one = math.sfpu.install(math.sfpu.add_immediate_program(1, format=SfpuFormat.BF16))
-    Barrier(k, init_barrier, 1).wait()
-    math.copy_src_a_to_dst()
-    math.sfpu.run_tile(add_one)
-    math.publish_dst()
+    k.math.copy_src_a_to_dst()
+    k.math.sfpu.run_tile(add_one)
+    k.math.publish_dst()
 
-  def build_pack(k: KernelBuilder):
-    output_cb = CB(k, output_cb_config)
-    pack = Pack(k).init(output_cb)
-    Barrier(k, init_barrier, 2).wait()
-    pack.acquire_dst()
-    output_cb.reserve_back()
-    pack.to_cb()
-    output_cb.push_back()
+    k.pack.acquire_dst()
+    output_pack_cb.reserve_back()
+    k.pack.to_cb()
+    output_pack_cb.push_back()
 
-  def build_writer(k: KernelBuilder):
-    output_cb = CB(k, output_cb_config); output_cb.wait_front()
-    noc = k.noc(1).initialize_from_firmware()
-    read_ptr = k.reg(); output_cb.read_ptr(read_ptr)
+    output_writer_cb.wait_front()
+    noc = k.ncrisc.noc(1).initialize_from_firmware()
+    read_ptr = k.ncrisc.reg(); output_writer_cb.read_ptr(read_ptr)
     with noc.write_ack_batch() as writes:
-      writes.issue(read_ptr, k.param(dst_param), write_coord, TILE_BYTES)
-    output_cb.pop_front()
+      writes.issue(read_ptr, k.ncrisc.param(dst_param), write_coord, TILE_BYTES)
+    output_writer_cb.pop_front()
 
-  bundle = KernelBundle((core,), params=(src_param, dst_param),
-    brisc=build_reader, trisc0=build_unpack, trisc1=build_math,
-    trisc2=build_pack, ncrisc=build_writer)
+  bundle = KernelBundle((core,), params=(src_param, dst_param))
   input_cb_config = bundle.cb(DType.BF16, 1, INPUT_CB_ADDR)
   output_cb_config = bundle.cb(DType.BF16, 1, OUTPUT_CB_ADDR)
   init_barrier = bundle.barrier(3, INIT_BARRIER_ADDR)
-  return bundle.lower()
+  return bundle.lower(build)
 
 def _bf16(value): return struct.unpack("<I", struct.pack("<f", float(value)))[0] >> 16
 def _fp32(value): return struct.unpack("<f", struct.pack("<I", value << 16))[0]

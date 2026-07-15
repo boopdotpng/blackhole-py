@@ -169,15 +169,10 @@ def rectangles(cores):
   return tuple(rectangles)
 
 class KernelBundle:
-  def __init__(
-    self, cores: tuple[Core, ...] | list[Core], params: tuple[Param, ...] | list[Param] = (), *,
-    brisc: KernelFn | None = None, ncrisc: KernelFn | None = None,
-    trisc0: KernelFn | None = None, trisc1: KernelFn | None = None, trisc2: KernelFn | None = None,
-  ):
+  def __init__(self, cores: tuple[Core, ...] | list[Core], params: tuple[Param, ...] | list[Param] = ()):
     self.cores = tuple(cores)
     self.params = tuple(params)
     if len(self.params) > TensixL1.PARAM_SLOTS: raise ValueError("kernel bundle parameter table is full")
-    self._kernels = {"brisc": brisc, "ncrisc": ncrisc, "trisc0": trisc0, "trisc1": trisc1, "trisc2": trisc2}
     self._cbs: list[CBConfig] = []; self._barriers: list[BarrierConfig] = []
 
   def cb(self, dtype: DType, pages: int, addr: int):
@@ -193,15 +188,12 @@ class KernelBundle:
     barrier = BarrierConfig(parties, addr)
     self._barriers.append(barrier); return barrier
 
-  def lower(self):
+  def lower(self, build: KernelFn):
     kernels = {}
     param_slots = {param: slot for slot, param in enumerate(self.params)}
     for core in self.cores:
-      kernels[core] = {}
-      for role in KERNEL_ROLES:
-        builder = KernelBuilder(role, core, param_slots)
-        if (fn := self._kernels[role]) is not None:
-          with builder.scope(): fn(builder)
-        kernels[core][role] = builder.lower()
+      builder = KernelBuilder(core, param_slots)
+      with builder.scope(): build(builder)
+      kernels[core] = builder.lower_roles()
 
     return Program(kernels, {param.name: param for param in self.params}, tuple(self._cbs), tuple(self._barriers))

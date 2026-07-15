@@ -1,7 +1,7 @@
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
 from typing import ClassVar
-from fw.consts import Core, Firmware, KernelRole
+from fw.consts import Core, Firmware, KERNEL_ROLES, KernelRole
 from isa import R, RV32
 from pcie import Allocator
 from ttk.common import Common
@@ -188,7 +188,7 @@ class Asm(RV32):
 
   def assemble(self): return b"".join(word.to_bytes(4, "little") for word in self.instructions())
 
-class KernelBuilder(Asm, Common):
+class RoleBuilder(Asm, Common):
   def __init__(self, role: KernelRole, core: Core | None,
                param_slots: dict[object, int] | None = None, *,
                firmware: bool = False):
@@ -222,3 +222,21 @@ class KernelBuilder(Asm, Common):
     self._lowered = True
     image = self.assemble()
     return image
+
+class KernelBuilder:
+  def __init__(self, core: Core, param_slots: dict[object, int] | None = None):
+    self.core = core
+    self.roles = {role: RoleBuilder(role, core, param_slots) for role in KERNEL_ROLES}
+    for role, builder in self.roles.items(): setattr(self, role, builder)
+    from ttk.math import Math
+    from ttk.pack import Pack
+    from ttk.unpack import Unpack
+    self.unpack, self.math, self.pack = Unpack(self.trisc0), Math(self.trisc1), Pack(self.trisc2)
+
+  @contextmanager
+  def scope(self):
+    with ExitStack() as stack:
+      for builder in self.roles.values(): stack.enter_context(builder.scope())
+      yield self
+
+  def lower_roles(self): return {role: builder.lower() for role, builder in self.roles.items()}
