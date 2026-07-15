@@ -238,23 +238,20 @@ class Program:
 def rectangles(cores):
   rows = {}
   for x, y in cores: rows.setdefault(y, []).append(x)
-  columns = sorted({x for xs in rows.values() for x in xs})
-  rank = {x: i for i, x in enumerate(columns)}
   active, rectangles = {}, []
   previous_y = None
   for y in sorted(rows):
     runs = []
     for x in sorted(rows[y]):
-      column = rank[x]
-      if runs and column == runs[-1][1] + 1: runs[-1] = (runs[-1][0], column)
-      else: runs.append((column, column))
+      if runs and x == runs[-1][1] + 1: runs[-1] = (runs[-1][0], x)
+      else: runs.append((x, x))
     if previous_y is None or y != previous_y + 1:
       rectangles.extend(active.values()); active = {}
     next_active = {}
     for run in runs:
       if run in active:
-        start, _ = active[run]; next_active[run] = (start, (columns[run[1]], y))
-      else: next_active[run] = ((columns[run[0]], y), (columns[run[1]], y))
+        start, _ = active[run]; next_active[run] = (start, (run[1], y))
+      else: next_active[run] = ((run[0], y), (run[1], y))
     rectangles.extend(rect for run, rect in active.items() if run not in next_active)
     active, previous_y = next_active, y
   rectangles.extend(active.values())

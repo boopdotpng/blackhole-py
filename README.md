@@ -34,6 +34,14 @@ python3 examples/rmsnorm.py
 python3 examples/rmsnorm.py --run --repeats 20
 ```
 
+Build and inspect the 118-core FP32-accumulating mean kernel, or benchmark it
+on hardware:
+
+```sh
+python3 examples/mean.py
+python3 examples/mean.py --run --tiles 118 --repeats 10
+```
+
 ## Caveats
 
 - Unbind tt-kmd and make sure VFIO is available.

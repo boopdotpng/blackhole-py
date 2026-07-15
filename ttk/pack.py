@@ -30,6 +30,15 @@ class Pack:
     t.issue(self.k.tensix_word("TTSETADCXY", 4, 0, 0, 0, 0, 0xB)); t.issue(self.k.tensix_word("TTSETADCZW", 4, 0, 0, 0, 0, 0xF))
     t.configure_mop(mop_cfg); t.sync(); self.output_cb = output_cb; return self
 
+  def init_scalar_reduce(self, output_cb, *, fp32_dest=False):
+    self.init(output_cb, fp32_dest=fp32_dest)
+    t = self.tensix
+    t.stall(TensixStall.CFG, TensixWait.PACK0)
+    t.write_cfg(Cfg.PCK_EDGE, 1 << 17)
+    t.write_cfg(Cfg.PCK_EDGE_SEC1, 1)
+    t.write_cfg(Cfg.TILE_ROW_SET_MAPPING_1, 1)
+    return self
+
   def _program_destination(self):
     t = self.tensix
     with self.k.scope():

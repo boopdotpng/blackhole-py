@@ -14,7 +14,7 @@ class Math:
 
   def __init__(self, kernel, *, state: TensixState | None = None):
     self.tensix = Tensix(kernel, self.pipe, state); self.sfpu = Sfpu(self.tensix)
-    self.mop_cfg = None
+    self.mop_cfg = None; self.fp32_dest = False
 
   def _set_dst_mode(self, fp32=False, int8=False):
     self.tensix.rmw_cfg_byte(Cfg.ALU, 3, 0xE0, (0x60 if fp32 else 0) | (0x80 if int8 else 0)); return self
@@ -33,14 +33,50 @@ class Math:
     t.issue(tt_word("TTSETRWC", 0, 0, 0, 0, 0, 0xF))
 
   def initialize(self, *, fp32_dest=False, int8_math=False, mop_cfg=MATH_COPY_SRC_A_MOP):
-    t = self.tensix; t.set_thread_cfg(ThreadCfg.CFG_STATE_ID, 0); self._set_dst_mode(fp32_dest, int8_math)
+    t = self.tensix; self.fp32_dest = fp32_dest
+    t.set_thread_cfg(ThreadCfg.CFG_STATE_ID, 0); self._set_dst_mode(fp32_dest, int8_math)
     for reg, value in ((ThreadCfg.DISABLE_IMPLIED_SRCA_FMT, 0), (ThreadCfg.DISABLE_IMPLIED_SRCB_FMT, 0),
       (ThreadCfg.DEST_TARGET_REG_CFG_MATH, 0), (ThreadCfg.ADDR_MOD_AB_SEC1, 0),
       (ThreadCfg.ADDR_MOD_DST_SEC1, 0), (ThreadCfg.ADDR_MOD_BIAS_SEC1, 0)): t.set_thread_cfg(reg, value)
-    t.issue(tt_word("TTZEROACC", 3, 0, 0, 1, 0))
+    t.issue(tt_word("TTZEROACC", 3, int(fp32_dest), 0, 1, 0))
     t.write_cfg(Cfg.DEST_ACCESS_CFG, t.state.cfg(1, Cfg.DEST_ACCESS_CFG) & ~8)
     self._configure_copy_addressing(); self.sfpu.initialize(); t.configure_mop(mop_cfg); t.stall(TensixStall.CFG, TensixWait.MATH)
     self.mop_cfg = mop_cfg; return self
+
+  def initialize_scalar_reduce(self, *, fp32_dest=False):
+    self.initialize(fp32_dest=fp32_dest)
+    t = self.tensix
+    for reg, value in (
+      (ThreadCfg.ADDR_MOD_AB_SEC0, 0), (ThreadCfg.ADDR_MOD_DST_SEC0, 0x8000),
+      (ThreadCfg.ADDR_MOD_BIAS_SEC0, 0),
+      (ThreadCfg.ADDR_MOD_AB_SEC1, 0), (ThreadCfg.ADDR_MOD_DST_SEC1, 0x2000),
+      (ThreadCfg.ADDR_MOD_BIAS_SEC1, 0),
+      (ThreadCfg.ADDR_MOD_AB_SEC2, 0x0800), (ThreadCfg.ADDR_MOD_DST_SEC2, 8),
+      (ThreadCfg.ADDR_MOD_BIAS_SEC2, 0), (ThreadCfg.CLR_DVALID, 0),
+    ): t.set_thread_cfg(reg, value)
+    t.issue(tt_word("TTSETRWC", 0, 0, 0, 0, 0, 0xF))
+    return self
+
+  def clear_dst(self):
+    self.tensix.issue(tt_word("TTZEROACC", 3, int(self.fp32_dest), 0, 0, 0)); return self
+
+  def scalar_reduce(self, destination_offset=0):
+    t = self.tensix
+    t.issue(tt_word("TTSETC16", int(ThreadCfg.DEST_TARGET_REG_CFG_MATH), destination_offset))
+    for face in range(4):
+      for _ in range(3): t.issue(tt_word("TTGAPOOL", 0, 1, 1, 0, 4))
+      t.issue(tt_word("TTGAPOOL", 3 if face != 3 else 0, 1, 0, 0, 4))
+    t.issue(tt_word("TTSETRWC", 0, 4, 0, 0, 0, 3))
+    t.issue(tt_word("TTMOVD2B", 0, 16, 0, 0, 4))
+    t.issue(tt_word("TTGATESRCRST", 1, 1))
+    t.issue(tt_word("TTTRNSPSRCB"))
+    t.issue(tt_word("TTGATESRCRST", 1, 1))
+    for offset in (0, 4, 8, 12): t.issue(tt_word("TTMOVB2A", offset, 0, 2, 16 + offset))
+    t.issue(tt_word("TTGATESRCRST", 1, 1))
+    t.issue(tt_word("TTZEROACC", 0, 0, 0, 0, 4))
+    for _ in range(3): t.issue(tt_word("TTGAPOOL", 0, 1, 1, 0, 0))
+    t.issue(tt_word("TTGAPOOL", 3, 1, 0, 0, 0))
+    return self
 
   def copy_src_a_to_dst(self, destination_offset=0):
     self.set_destination_offset(destination_offset)

@@ -1,6 +1,7 @@
 from enum import IntEnum
 
 from ttk.tensix import Cfg, MopCfg, Tensix, TensixRegs, TensixSem, TensixSemWait, TensixStall, TensixState, TensixWait, ThreadCfg, nop_word, tt_word
+from ttk.reduce import SCALAR_REDUCE_MOP
 
 class UnpackFormat(IntEnum):
   F32, F16 = 0, 1
@@ -59,6 +60,20 @@ class Unpack:
     self.weight_cb = weight_cb
     return self
 
+  def init_scalar_reduce(self, source_cb, scaler_cb):
+    if source_cb.dtype != scaler_cb.dtype:
+      raise ValueError("scalar reduce source and scaler must have the same dtype")
+    self.init(source_cb, mop_cfg=SCALAR_REDUCE_MOP)
+    self.tensix.load_replay((
+      tt_word("TTUNPACR", 0, 1, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 1),
+      tt_word("TTUNPACR", 1, 1, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 1),
+    ))
+    self.tensix.rmw_cfg_byte(Cfg.THCON_SEC0_REG2, 3, 1, 0)
+    self.tensix.issue(self.k.tensix_word("TTSETADCXX", 1, 255, 0))
+    self.tensix.issue(self.k.tensix_word("TTSETADCXX", 2, 15, 0))
+    self.scaler_cb = scaler_cb
+    return self
+
   def wait_config_idle(self): self.tensix.wait_unpack_config_idle(); return self
 
   def wait_source_clear(self):
@@ -85,6 +100,17 @@ class Unpack:
       self.k.write32(Cfg.THCON_SEC1_REG3_Base_address, weight)
     return self
 
+  def configure_scalar_reduce(self, source_cb, scaler_cb=None):
+    scaler_cb = self.scaler_cb if scaler_cb is None else scaler_cb
+    with self.k.scope():
+      source, scaler = self.k.reg(2)
+      source_cb.read_ptr(source); scaler_cb.read_ptr(scaler)
+      self.k.srli(source, source, 4); self.k.addi(source, source, -1)
+      self.k.srli(scaler, scaler, 4); self.k.addi(scaler, scaler, -1)
+      self.k.write32(Cfg.THCON_SEC0_REG3_Base_address, source)
+      self.k.write32(Cfg.THCON_SEC1_REG3_Base_address, scaler)
+    return self
+
   def commit_config(self):
     self.tensix.commit_unpack_config(Cfg.THCON_SEC0_REG3_Base_address); return self
 
@@ -102,6 +128,13 @@ class Unpack:
   def wait_both(self):
     self.tensix.stall(TensixStall.UNPACK, TensixWait.UNPACK0 | TensixWait.UNPACK1)
     self.tensix.semaphore_get(TensixSem.UNPACK_SYNC).sync()
+    return self
+
+  def scalar_reduce(self):
+    t = self.tensix
+    t.issue(self.k.tensix_word("TTSETADCZW", 3, 0, 0, 0, 0, 0xF))
+    t.stall(TensixStall.UNPACK, TensixWait.TRISC_CFG)
+    t.run_mop(mop_type=1)
     return self
 
   def wait(self):
