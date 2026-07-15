@@ -12,12 +12,43 @@ through separate register banks and status counters.
 
 | NoC index | NIU base | Available from |
 |---:|---:|---|
-| 0 | `0xFFB2_0000` | BRISC or NCRISC `KernelBuilder` |
-| 1 | `0xFFB3_0000` | BRISC or NCRISC `KernelBuilder` |
+| 0 | `0xFFB2_0000` | BRISC or NCRISC program stream |
+| 1 | `0xFFB3_0000` | BRISC or NCRISC program stream |
 
 BRISC and NCRISC explicitly select an instance with `k.noc(0)` or `k.noc(1)`.
 TRISC kernels cannot access either NoC. NoC 0 normally routes X then Y and NoC
 1 routes Y then X. A program may choose different instances to overlap traffic.
+
+### Striped DRAM pages
+
+Device buffers carry seven harvested DRAM endpoint coordinates for each NoC.
+`NoC.dram_page(buffer, page)` maps a logical tiled page to:
+
+```text
+bank       = page % 7
+bank_page  = page // 7
+address    = buffer_base + bank_page * buffer.page_size
+coordinate = buffer.dram_coords[noc][bank]
+```
+
+The page may be a compile-time integer or a runtime RISC register. Completion
+batches can issue directly between a device buffer page and a role-local CB:
+
+```python
+input_cb.reserve_back()
+with noc.read_batch() as reads:
+  reads.issue_dram(src, page, input_cb)
+input_cb.push_back()
+
+output_cb.wait_front()
+with noc.write_ack_batch() as writes:
+  writes.issue_dram(dst, page, output_cb)
+output_cb.pop_front()
+```
+
+The issue helper selects the DRAM address and current CB pointer. It does not
+reserve, publish, wait for CB data, or release CB space; those synchronization
+operations remain explicit.
 
 Each NIU has four request initiators, also called command buffers. The API
 assigns each operation a fixed buffer:

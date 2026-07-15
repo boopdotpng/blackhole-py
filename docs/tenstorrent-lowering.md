@@ -26,7 +26,7 @@ Tensor methods
   -> transform_to_call                         reuse
        buffers, STORE/AFTER, assignment semantics, PARAM slots
   -> TT pattern matching and partitioning      backend-specific boundary
-  -> KernelBuilder / KernelBundle              direct emission through TTK
+  -> Program                                   direct five-stream emission through TTK
   -> existing PROGRAM + CALL + AFTER UOps      no new Ops
   -> create_schedule / LINEAR / JIT / runtime  reuse
 ```
@@ -47,7 +47,7 @@ diagnostic. A later generic dispatcher can partition roots by backend, lower eac
 partition, then merge their ordinary call graphs before `create_schedule`.
 
 The TT lowerer should pattern-match shaped UOps and immediately call existing
-TTK/`KernelBuilder` helpers. It may keep short-lived Python records or maps for
+TTK/`Program` helpers. It may keep short-lived Python records or maps for
 logical shape, padded shape, tile access, core spans, and live CB slots. Those
 are compiler analysis state, not a second graph IR.
 
@@ -321,7 +321,7 @@ The remaining normal stages are:
    x86 instruction selection, etc.). These renderer families are alternatives,
    not sequential passes.
 
-TT bypasses this scalar pipeline because `KernelBuilder` has already produced
+TT bypasses this scalar pipeline because `Program` has already produced
 the five role images.
 
 Type/specification matchers such as `spec_tensor`, `spec_program`, and
@@ -385,13 +385,13 @@ PROGRAM(
   SINK(original shaped UOps used for identity/debug, arg=KernelInfo(...)),
   LINEAR(debug/topological summary),
   SOURCE(human-readable TTK lowering summary),
-  BINARY(serialized compiled KernelBundle),
+  BINARY(serialized compiled Program),
   arg=ProgramInfo(...),
 )
 ```
 
 Build one explicit ABI table and derive the call's non-`BIND` argument order,
-`ProgramInfo.globals`, `ins`, `outs`, and the bundle's `Param` slots from it.
+`ProgramInfo.globals`, `ins`, `outs`, and the program's buffer slots from it.
 `globals` selects and orders call arguments for the runtime. `ins` and `outs`
 describe read/write call-argument slots for JIT mutation tracking, profiling,
 and graph dependencies; an in-place tensor belongs to both sets. Keep buffer
@@ -422,7 +422,7 @@ tinygrad/codegen/tt/
   lower.py       shaped-SINK partitioning and direct PROGRAM construction
   patterns.py    ordered UPat recognizers
   layout.py      ephemeral shape/access analysis
-  emit.py        UOp pattern -> TTK/KernelBuilder calls
+  emit.py        UOp pattern -> TTK/Program calls
 
 tinygrad/runtime/ops_tt.py
 tinygrad/runtime/support/tt/
@@ -748,7 +748,7 @@ replaces its intermediate programming model with direct UOp-to-TTK emission.
   historical scalar renderer; add only the inert renderer shim current device
   plumbing requires.
 - Construct a complete `PROGRAM` manually in a test, serialize one
-  `KernelBundle`, bind buffers, and execute a single aligned tile.
+  `Program`, bind buffers, and execute a single aligned tile.
 - Test cache identity, JIT capture, copyin/copyout, repeated binding, and errors.
 - Test dense ABI slot derivation, reordered/sparse-slot rejection, and an in-place
   tensor marked as both input and output.
@@ -788,7 +788,7 @@ replaces its intermediate programming model with direct UOp-to-TTK emission.
 ### Phase 6: matmul and LLM motifs
 
 - Match matmul structurally on the shaped `REDUCE(ADD, MUL(...))` graph.
-- Use a dedicated KernelBuilder matmul path; do not route it through the generic
+- Use a dedicated Program/TTK matmul path; do not route it through the generic
   elementwise walker or tinygrad WMMA.
 - Add `[1,K] @ [K,N]` decode distribution first, then general prefill GEMM.
 - Fuse supported epilogues, then add softmax, attention pieces, KV-cache

@@ -8,75 +8,44 @@ NoC instances, generic MOP/replay support, and basic unpack-to-Dst support.
 
 ## P0: correctness and pipeline foundations
 
-### Fix pack tile selection
+### Stress circular-buffer hardware-counter wrap
 
-`Pack.move(tile_index=N)` currently runs the entire pack MOP `N + 1` times:
+Pointer and occupancy arithmetic now wraps correctly, and add1 is validated
+through 33 tiles with 16-page CBs. A long-running kernel still needs to exercise
+the hardware received/acked counters across `0xffff -> 0`.
 
-```py
-self.tensix.mop.run(repeat=tile_index + 1, mop_type=1)
-```
+### Add Tensix-ordered CB publication and release
 
-This does not match the Blackhole LLK pack path. Tile selection should program
-the packer W address counter to `tile_index`, then execute the tile MOP once.
+Immediate RISC stores are safe only after a full engine drain. Port explicit
+deferred forms from `../blackhole-py/ttk/cb.py` so kernels can choose:
 
-- Add the equivalent of `set_dst_write_addr(tile_index)` using `TTSETADC` with
-  the packer channel and W dimension.
-- Run the pack MOP exactly once per tile.
-- Add tests for nonzero tile indices, especially the last BF16 and FP32 Dst
-  slots.
-- Verify both produced bytes and Tensix instruction count.
-
-References:
-
-- `ttk/pack.py`, `Pack.move`
-- `../tt-llk/tt_llk_blackhole/llk_lib/llk_pack_common.h`,
-  `set_dst_write_addr`
-- `../tt-llk/tt_llk_blackhole/llk_lib/llk_pack.h`, `_llk_pack_`
-
-### Implement circular-buffer synchronization
-
-The rewrite records `CBConfig`, but it has no runtime circular-buffer API.
-Implement the producer/consumer protocol needed to overlap BRISC reads, Tensix
-compute, and NCRISC writes:
-
-- `reserve_back`
-- `push_back`
-- `wait_front`
-- `pop_front`
-- read/write pointer access
-- wrap-safe occupancy counters
-- Tensix received/acknowledged integration
-
-Port the working behavior from `../blackhole-py/ttk/cb.py` into the rewrite's
-typed builder and fixed firmware ABI. Do not restore the old launch
-message or dynamic CB descriptor layout.
+- eager publication after an explicit pack drain;
+- Tensix-FIFO publication after pack retirement;
+- eager release after an explicit unpack drain;
+- Tensix-FIFO release after unpack retirement.
 
 Add a two-slot pipeline test proving that the reader can fill tile N+1 while
 math consumes tile N and the writer drains tile N-1.
 
-### Replace ad hoc L1 flags with explicit pipeline primitives
+### Complete destination-tile flow control
 
-`examples/add1.py` synchronizes roles with ordinary L1 polling flags. Retain
-simple flags for bring-up tests, but production kernel examples should use CB
-occupancy and Tensix semaphores so data movement and compute can overlap without
-whole-stage serialization.
+Repeated tiles now balance the `MATH_PACK` producer/consumer protocol while
+serially reusing destination slot zero. Implement explicit nonzero destination
+selection for bounded math/pack overlap. Verify BF16 and FP32 destination slots
+and execute the pack MOP exactly once per selected tile.
 
 ## P1: NoC and DRAM data movement
 
-### Add a real DRAM/tensor address generator
+### Optimize and generalize DRAM/tensor addressing
 
-`DramAllocator` allocates per-bank address space, but kernels have no accessor
-that maps a logical page or tile to its DRAM bank, endpoint coordinate, and
-bank-local byte address.
+`NoC.dram_page()` now maps compile-time or runtime logical tile pages across
+all seven banks using each buffer's harvested NoC endpoint tables. Read and
+write batches can issue directly between those pages and current CB pointers.
+Extend that baseline with:
 
-Implement specialized address generators for:
-
-- sequential interleaved tiled pages
+- an incrementing sequential cursor that avoids `divu`/`remu` per page
 - row-major pages/sticks
 - power-of-two page sizes without division
-- compile-time constant page sizes and bank counts
-- runtime page indices
-- harvested DRAM endpoint maps
 - sharded L1 and DRAM layouts
 
 Avoid emitting `divu`/`remu` per page when a mask/shift or incrementing cursor

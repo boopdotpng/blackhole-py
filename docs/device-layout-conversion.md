@@ -1,5 +1,11 @@
 # Host layout conversion
 
+`Buffer.from_numpy()` converts arbitrary NumPy input dtypes through FP32 to the
+declared BF16 or F32 row-major host representation and pads to `padded_shape`.
+`Buffer.to_numpy()` decodes device-read bytes and crops back to the logical
+shape. `Device.write()` and `Device.read()` remain responsible for the
+row-major-to-tiled and tiled-to-row-major transformations described below.
+
 All buffers exposed through `Device.write()` and `Device.read()` contain
 row-major bytes. There is no public layout flag.
 

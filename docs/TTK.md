@@ -1,246 +1,109 @@
 # TTK design
 
-TTK is the stateful hardware layer between the assembler and a five-kernel
-program:
+TTK is the explicit hardware layer between raw instruction encoding and a
+five-role worker program:
 
 ```text
-isa.py       raw instruction encodings
-asm.py       registers, labels, loops, fixups, and kernel lowering
-ttk/         stateful Blackhole engines
-program.py   kernel bundles, CB configuration, and lowered program artifacts
-cq.py        upload and run transport
+isa.py       raw RISC-V and Tensix encodings
+asm.py       one private instruction stream: registers, labels, loops, fixups
+ttk/         CB, NoC, Tensix, unpack, math, SFPU, and pack operations
+program.py   public five-stream Program, resources, lowering, CQ commands
+cq.py        upload and launch transport
 ```
 
-## Engine modules
+## Program construction
 
-Map each hardware engine directly:
+`Program` is the only public authoring object. It owns five independent
+instruction streams and exposes them as `brisc`, `ncrisc`, `trisc0`, `trisc1`,
+and `trisc2`. Each stream still has independent registers, labels, local RAM,
+and a firmware return path, but there is no public role-builder or bundle
+layer.
 
-```text
-ttk/noc.py
-ttk/unpack.py
-ttk/fpu.py
-ttk/sfpu.py
-ttk/pack.py
-ttk/cb.py
-ttk/tensix.py
+```python
+p = Program(cores, buffers=(src, dst))
+
+input_cb = p.cb(src.dtype, pages=2, name="input")
+output_cb = p.cb(dst.dtype, pages=2, name="output")
+
+input_reader = p.brisc.init_cb(input_cb)
+input_unpack = p.trisc0.init_cb(input_cb)
+output_pack = p.trisc2.init_cb(output_cb)
+output_writer = p.ncrisc.init_cb(output_cb)
+
+p.unpack.init(input_unpack)
+p.math.initialize()
+p.pack.init(output_pack)
+
+# Emit the five concurrent streams through p.brisc, p.trisc0, ...
 ```
 
-An assembled kernel receives the engines appropriate to its role. BRISC and
-NCRISC use NoC, TRISC0 uses unpack, TRISC1 uses FPU/SFPU, and TRISC2 uses
-pack. Raw ISA methods remain available for unusual sequences.
+CB declarations allocate non-overlapping storage from the worker L1 data
+region. `init_cb()` remains explicit for each participating role because each
+RISC owns a separate local CB cursor and counter shadow.
 
-## Kernel construction
+Buffers passed to `Program` occupy fixed parameter words. A role loads a
+buffer's current DRAM address with `p.brisc.param(src)`. `Program.bind(src,
+replacement)` creates a CQ write for rebinding without rebuilding text.
+`buffer.from_numpy(array)` converts any NumPy input dtype through FP32 into the
+buffer's BF16 or F32 host representation, including zero padding;
+`buffer.to_numpy(data)` performs the inverse logical-shape conversion. Device
+transfer remains explicit.
 
-Kernel functions receive a `KernelBuilder` for one `(x, y)` core.
-`KernelBundle` assembles each function separately for every core and freezes
-the results into an immutable `Program`:
+Calling `Program.lower()`, inspecting `Program.kernels`, or submitting the
+program finalizes all five streams. The same role images are uploaded to every
+target core. Per-core runtime arguments are still needed before kernels can
+assign different tile ranges while sharing text.
 
-```py
-src = Param("src", src_buffer)
+## Firmware construction
 
-def brisc(k):
-  src_addr = k.param(src)
-  noc = k.noc(0)
-  noc.initialize(NoC.static_coord(*k.core))
-  # Emit the reader kernel.
+Firmware and transport helper images use `Asm` directly because they are one
+instruction stream rather than a five-role user program. `Asm.firmware(role)`
+omits the generated user-kernel return path. This is an internal assembler
+facility, not a second kernel-authoring API.
 
-def trisc1(k):
-  # Emit the math kernel.
-  pass
+## Synchronization
 
-bundle = KernelBundle(cores, params=(src,), brisc=brisc, trisc1=trisc1)
-program = bundle.lower()
+Synchronization stays with the hardware subsystem whose fact is being waited
+on:
+
+- CB owns reserve, publication, availability, and release counters.
+- NoC owns command readiness and each distinct completion counter.
+- Tensix owns drains, resource stalls, configuration handshakes, and hardware
+  semaphores.
+- Firmware owns reset, GO, DONE, and launch completion.
+- Ordinary L1 signal/wait operations are added only for a demonstrated
+  same-worker RISC dependency.
+
+There is no generic barrier object or synchronization lowering pass. Python
+emission order between role streams never creates a runtime edge.
+
+The add1 program needs no software L1 rendezvous. Firmware resets
+Tensix, hardware semaphores, CB hardware counters, NoC command buffers, and
+TRISC register files before launch. Unpack, math, and pack then perform their
+operation-specific setup before issuing their own ordered work.
+
+Add1 emits one runtime tile loop per role with ordinary Python authoring syntax:
+
+```python
+for tile in p.brisc.range(src.pages):
+  input_cb.reserve_back()
+  with noc.read_batch() as reads:
+    reads.issue_dram(src, tile, input_cb)
+  input_cb.push_back()
 ```
 
-Inside a kernel function, `k.core` is a `Core = Tuple[int, int]` containing its
-compile-time `(x, y)` coordinate. Ordinary Python control flow can therefore
-specialize the emitted kernel for that core. Scalar geometry, core indices,
-strides, and fixed buffer addresses are therefore compile-time immediates.
-Only replaceable DRAM buffers are declared as `Param` objects. Each parameter
-owns a fixed word beginning at `0x4100`; `k.param()` loads the buffer address
-stored in that word. `program.bind(param, buffer)` creates the CQ write that
-updates it while enforcing the captured dtype, shape, and layout. The builder
-saves the firmware return address in role-local RAM before the kernel body and
-restores it in the default epilogue. Kernel-specific initialization and
-synchronization remain explicit in each function.
+Device buffers are striped by logical tile across seven DRAM banks. Add1 is
+hardware-validated for 1, 2, 7, 8, 17, 33, and 1,000 tiles on one core. The
+1,000-tile run repeatedly crosses both the seven-bank stripe and 16-page CB
+ring while keeping role image sizes constant.
 
-Images entered directly by hardware use `KernelBuilder.standalone(role)`. A
-standalone builder has no compile-time core, return-address save, local return
-slot, or generated epilogue. Firmware placement and capacity belong solely to
-the L1 map, not the assembler.
+## Current next steps
 
-Local allocations begin after firmware-local state and fixed TTK tables.
-The return address is allocated first; user allocations therefore start four
-bytes later. The upper bound excludes the linker-reserved stack:
+1. Add Tensix-ordered CB publication and release forms to remove current full
+   engine drains.
+2. Add per-core tile start/count arguments while retaining shared role images.
+3. Validate one disjoint tile range per program core, then multiple tiles per
+   core and uneven tails.
 
-| Role | Return address | First user allocation | Allocation limit |
-|---|---:|---:|---:|
-| BRISC | `0xFFB0_0878` | `0xFFB0_087C` | `0xFFB0_1F00` |
-| NCRISC | `0xFFB0_0864` | `0xFFB0_0868` | `0xFFB0_1F00` |
-| TRISC0 | `0xFFB0_0820` | `0xFFB0_0824` | `0xFFB0_0F40` |
-| TRISC1 | `0xFFB0_0140` | `0xFFB0_0144` | `0xFFB0_0F40` |
-| TRISC2 | `0xFFB0_08C0` | `0xFFB0_08C4` | `0xFFB0_0F00` |
-
-See `examples/add1.py` for a complete construction and lowering example.
-
-## Exact configuration state
-
-Use TTSIM to establish the reset value of every engine configuration register.
-Each kernel starts from that verified snapshot. Every configuration mutation
-must go through its engine object, which:
-
-1. Creates the requested new typed state.
-2. Compares it with the current state.
-3. Emits the minimum hardware instructions needed for the change.
-4. Updates both the human-readable state and exact raw-register shadows.
-
-For example:
-
-```py
-k.fpu.configure(
-  fidelity=HiFi2,
-  broadcast=Broadcast.ROW,
-  accumulate=False,
-)
-```
-
-The state remains inspectable:
-
-```py
-FPUState(
-  fidelity=HiFi2,
-  broadcast=Broadcast.ROW,
-  accumulate=False,
-  srca_format=BF16,
-  srcb_format=BF16,
-  dst_format=BF16,
-)
-```
-
-Do not expose every packed configuration register as a public Python object.
-Typed engine state is the public model; exact 32-bit register words are an
-internal shadow used to produce correct diffs.
-
-State belongs to a fresh per-core, per-role kernel builder. `KernelBundle`
-assembles all five roles for every core; lowering freezes them into a `Program`.
-A program may omit unused roles; launch materializes each missing role as an
-empty return kernel so an older worker image cannot run accidentally. State
-from one builder must never leak into another.
-
-Runtime-dependent configuration writes must merge to a symbolic or unknown
-state unless every path produces the same value. Ordinary data, engine progress,
-and address counters may also be symbolic even when configuration is exact.
-
-## Architectural operands
-
-SrcA, SrcB, Dst, and SFPU local registers can be lightweight Python objects.
-They represent architectural storage, not host values.
-
-FPU expressions map naturally to instructions with implied operands:
-
-```py
-k.fpu.dst[0] = k.fpu.srcA * k.fpu.srcB.row_broadcast()
-```
-
-The assignment can lower to the required format and address-modifier changes,
-`TTELWMUL`, and an appropriate MOP. Unsupported operand combinations fail while
-constructing the kernel.
-
-SFPU is even more naturally value-like because its local registers are explicit
-and allocatable:
-
-```py
-x = k.sfpu.load(Dst.bf16(offset))
-y = k.sfpu.load(Dst.bf16(offset + 2))
-x = x * x + y * y
-k.sfpu.store(Dst.f32(acc_offset), x)
-```
-
-The compute expression layer can be added after the stateful engines work. It
-must stay small and only express operations that map clearly to hardware.
-
-## Keep synchronization explicit
-
-Expressions must not hide movement, occupancy, or cross-engine ordering:
-
-```py
-unpack = Unpack(k)
-unpack.wait(A)
-unpack.tile(A, fpu.srcA)
-
-fpu.wait_inputs()
-fpu.dst[0] = fpu.srcA * fpu.srcB
-
-pack = Pack(k)
-pack.wait_dst()
-pack.tile(fpu.dst[0], OUT)
-```
-
-CB reserve/wait/push/pop, engine stalls, semaphores, and phase barriers remain
-explicit operations.
-
-## NoC
-
-BRISC and NCRISC may explicitly select either NIU with `k.noc(0)` or
-`k.noc(1)`. TRISC builders reject NoC access. Both NIUs use the same
-implementation and have separate MMIO register banks. Lowering chooses
-the endpoint and its address before emitting data movement:
-
-```py
-noc = k.noc(index)
-noc.read(src, dram_coord, dst, size)
-noc.write(src, dst, dram_coord, size)
-```
-
-The hardware command-buffer selection is private: `read()`, `write()`, and
-`atomic_inc()` select the appropriate slot and control word. Ordinary issues
-emit a complete required register image, making them safe across runtime
-branches. Explicit read/write stream contexts program invariant state once for
-hot loops. `read_batch()`, `write_batch()`, and `atomic_batch()` hide completion
-counter snapshots and emit modulo-safe waits. A stream's nested `batch()` does
-the same without repeating its invariant command setup.
-
-`noc.logical_coord(reg)` reads the NIU's runtime logical coordinate rather
-than pretending it is compile-time state. One-time NoC hardware setup belongs
-to BRISC firmware, not the per-kernel NoC object.
-
-## Concurrent ownership
-
-The five RISC-V kernels run concurrently, so compile-time state tracking needs
-clear ownership:
-
-```text
-TRISC0 owns unpack configuration.
-TRISC1 owns FPU and SFPU configuration.
-TRISC2 owns pack configuration.
-BRISC and NCRISC own their respective NoC state.
-```
-
-Changes to shared/global Tensix configuration require an explicit phase barrier.
-If two roles can concurrently write the same register, there is no single final
-state and the API must reject it or model the synchronization that orders it.
-
-## RMSNorm example
-
-RMSNorm demonstrates both useful expression styles:
-
-- Its reduction is SFPU work: load Dst chunks into L0-L7, square them, reduce
-  lanes, accumulate row sums, scale, add epsilon, and apply reciprocal square
-  root. SFPU register expressions can make this readable.
-- Its final gamma stage unpacks normalized activations into SrcA, row-broadcasts
-  gamma through SrcB, runs HiFi2 `ELWMUL`, and produces Dst. This maps directly
-  to an FPU expression.
-
-It also demonstrates why synchronization stays explicit: unpack writes Dst,
-SFPU transforms it, pack consumes it, and configuration changes are separated
-by waits and phase barriers.
-
-## Porting order
-
-1. Record the TTSIM reset snapshot and define typed state dataclasses.
-2. Implement the raw configuration shadow and diff emitter.
-3. Port NoC, CB, unpack, FPU, SFPU, and pack helpers onto that state model.
-4. Port BRISC, NCRISC, and TRISC firmware using the new TTK.
-5. Port simple kernels and verify final engine states against TTSIM.
-6. Add the optional compute-expression layer after the direct engine APIs are
-   correct.
+See `examples/add1.py` for the executable API and `sync.md` for the complete
+synchronization inventory.

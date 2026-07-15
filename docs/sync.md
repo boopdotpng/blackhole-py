@@ -24,10 +24,9 @@ pages becoming available, NoC payloads leaving the source, NoC reads reaching
 L1, remote cores publishing a semaphore, Tensix engines retiring work, and so
 on. Those facts are not interchangeable.
 
-This supersedes the generic-barrier recommendation in
-[`docs/barriers.md`](barriers.md). That document remains useful as a broader
-repository inventory, but the owning subsystem should expose each operation
-directly rather than route it through a universal barrier facade.
+The earlier generic-barrier proposal was removed. The owning subsystem exposes
+each operation directly rather than routing unrelated facts through a universal
+barrier facade.
 
 ## Kernel dataflow
 
@@ -204,6 +203,13 @@ The explicit facts are:
 
 No generic barrier is required. A narrow `risc_rendezvous` operation may
 represent this exact protocol.
+
+The rewrite's add1 port deliberately omits this legacy rendezvous. Firmware
+already performs the per-launch reset and release handshake, and add1 passed
+hardware validation without the extra L1 flags. Do not port this rendezvous to
+new kernels unless a concrete same-worker RISC dependency requires it. If such
+an edge is demonstrated, express its signal and waits directly rather than
+adding a generic synchronization object.
 
 ### R3. RISC `fence`
 
@@ -715,7 +721,8 @@ cross-role handoff remains visible in that function.
 - [ ] Keep firmware LOAD/GO/DONE and CB-reset handshakes explicit.
 - [ ] Keep worker instruction-cache invalidation explicit after program text replacement.
 - [ ] Model BRISC-to-TRISC start as a consumable RISC event.
-- [ ] Model TRISC initialization as a same-core three-party rendezvous.
+- [ ] Determine whether matmul has a concrete startup dependency beyond its
+      CB and Tensix dataflow before porting its legacy TRISC rendezvous.
 - [ ] Port CB0/CB1/CB24/CB16 reserve, publish, wait, and release calls.
 - [ ] Preserve Tensix-deferred CB24/CB16 publication and CB0/CB1/CB24 release.
 - [ ] Preserve global and TRID read-completion modes as different calls.
