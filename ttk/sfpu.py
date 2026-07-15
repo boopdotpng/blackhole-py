@@ -290,6 +290,20 @@ class Sfpu:
     installed = InstalledSfpuProgram(program, start, self.owner); self.installed[program] = installed
     return installed
 
+  def run(self, program, *, wait=True):
+    """Issue an arbitrary-length SFPU program from the kernel text.
+
+    ``install`` is ideal for small programs that fit in the 32-word replay
+    buffer.  Reduction and normalization programs are often larger, so this
+    path emits their words inline while preserving the same program object.
+    """
+    if not isinstance(program, SfpuProgram): raise TypeError("expected an SfpuProgram")
+    self.tensix.issue(tt_word("TTSETRWC", 0, 0, 0, 0, 0, 4))
+    self.tensix.stall(TensixStall.SFPU, TensixWait.MATH)
+    for word in program.words: self.tensix.issue(word)
+    if wait: self.tensix.stall(TensixStall.SYNC, TensixWait.MATH | TensixWait.SFPU)
+    return self
+
   def run_tile(self, program):
     self.tensix.issue(tt_word("TTSETRWC", 0, 0, 0, 0, 0, 4))
     self.tensix.stall(TensixStall.SFPU, TensixWait.MATH)

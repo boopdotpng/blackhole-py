@@ -27,6 +27,13 @@ Run add1 on hardware:
 python3 examples/add1.py --run
 ```
 
+Build or run the 32x2048 Llama 3.2 RMSNorm example:
+
+```sh
+python3 examples/rmsnorm.py
+python3 examples/rmsnorm.py --run --repeats 20
+```
+
 ## Caveats
 
 - Unbind tt-kmd and make sure VFIO is available.

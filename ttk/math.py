@@ -1,7 +1,13 @@
 from ttk.sfpu import Sfpu
-from ttk.tensix import Cfg, MopCfg, Tensix, TensixSem, TensixSemWait, TensixStall, TensixState, TensixWait, ThreadCfg, tt_word
+from ttk.tensix import Cfg, MopCfg, Tensix, TensixSem, TensixSemWait, TensixStall, TensixState, TensixWait, ThreadCfg, nop_word, tt_word
 
 MATH_COPY_SRC_A_MOP = MopCfg.copy_src_a_to_dst()
+MATH_ROW_BROADCAST_MUL_HIFI2_MOP = MopCfg.slots(
+  outer=2, inner=2, fill=nop_word(),
+  slot3=tt_word("TTELWMUL", 0, 0, 2, 0, 0),
+  slot5=tt_word("TTELWMUL", 3, 0, 2, 3, 0),
+  slot6=tt_word("TTELWMUL", 0, 0, 2, 2, 0),
+)
 
 class Math:
   pipe = 1
@@ -37,9 +43,38 @@ class Math:
     self.mop_cfg = mop_cfg; return self
 
   def copy_src_a_to_dst(self, destination_offset=0):
-    self.tensix.set_thread_cfg(ThreadCfg.DEST_TARGET_REG_CFG_MATH, destination_offset)
+    self.set_destination_offset(destination_offset)
     if self.mop_cfg != MATH_COPY_SRC_A_MOP: self.tensix.configure_mop(MATH_COPY_SRC_A_MOP); self.mop_cfg = MATH_COPY_SRC_A_MOP
+    self.tensix.stall(TensixStall.MATH, TensixWait.SRCA_VLD)
     self.tensix.run_mop(); return self
+
+  def set_destination_offset(self, offset):
+    if type(offset) is not int or not 0 <= offset < 1 << 12:
+      raise ValueError("math destination offset must fit in 12 bits")
+    self.tensix.set_thread_cfg(ThreadCfg.DEST_TARGET_REG_CFG_MATH, offset)
+    return self
+
+  def configure_row_broadcast_mul_hifi2(self):
+    t = self.tensix
+    t.configure_mop(MATH_ROW_BROADCAST_MUL_HIFI2_MOP); self.mop_cfg = MATH_ROW_BROADCAST_MUL_HIFI2_MOP
+    for reg, value in (
+      (ThreadCfg.ADDR_MOD_AB_SEC0, 0x0008), (ThreadCfg.ADDR_MOD_DST_SEC0, 0x0008),
+      (ThreadCfg.ADDR_MOD_BIAS_SEC0, 0), (ThreadCfg.ADDR_MOD_AB_SEC2, 0x8080),
+      (ThreadCfg.ADDR_MOD_DST_SEC2, 0x2400), (ThreadCfg.ADDR_MOD_BIAS_SEC2, 0),
+      (ThreadCfg.ADDR_MOD_AB_SEC3, 0x8080), (ThreadCfg.ADDR_MOD_DST_SEC3, 0x9008),
+      (ThreadCfg.ADDR_MOD_BIAS_SEC3, 0),
+    ): t.set_thread_cfg(reg, value)
+    return self
+
+  def row_broadcast_mul_hifi2(self):
+    t = self.tensix; self.set_destination_offset(0)
+    t.issue(tt_word("TTSETRWC", 0, 0, 0, 0, 0, 0xF))
+    t.issue(tt_word("TTZEROACC", 3, 0, 0, 1, 0))
+    t.stall(TensixStall.MATH, TensixWait.SRCA_VLD | TensixWait.SRCB_VLD)
+    for _ in range(4): t.run_mop()
+    t.issue(tt_word("TTSETRWC", 0, 0, 0, 0, 0, 0xF))
+    t.stall(TensixStall.SYNC, TensixWait.MATH | TensixWait.SFPU)
+    return self
 
   def acquire_dst(self):
     self.tensix.semaphore_wait(

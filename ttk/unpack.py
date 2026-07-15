@@ -1,6 +1,6 @@
 from enum import IntEnum
 
-from ttk.tensix import Cfg, MopCfg, Tensix, TensixRegs, TensixSem, TensixSemWait, TensixStall, TensixState, TensixWait, ThreadCfg, tt_word
+from ttk.tensix import Cfg, MopCfg, Tensix, TensixRegs, TensixSem, TensixSemWait, TensixStall, TensixState, TensixWait, ThreadCfg, nop_word, tt_word
 
 class UnpackFormat(IntEnum):
   F32, F16 = 0, 1
@@ -8,6 +8,16 @@ class UnpackFormat(IntEnum):
   INT32, UINT16, INT8, UINT32, UINT8 = 8, 9, 14, 24, 30
 
 UNPACK_SRC_A_MOP = MopCfg.unpack_src_a_tile()
+# ROW broadcast unpacks SrcB once per face row and rewinds its Z counter while
+# SrcA advances through both faces.
+UNPACK_ROW_BROADCAST_MOP = MopCfg.slots(
+  outer=2, inner=2, fill=nop_word(),
+  slot1=tt_word("TTSETADCZW", 2, 0, 0, 0, 0, 1),
+  slot3=tt_word("TTUNPACR", 1, 1, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 1),
+  slot4=tt_word("TTUNPACR", 0, 1, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 1),
+  slot5=tt_word("TTUNPACR", 0, 1, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 1),
+  slot6=tt_word("TTUNPACR", 0, 1, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 1),
+)
 
 class Unpack:
   def __init__(self, kernel, *, state: TensixState | None = None): self.k, self.tensix = kernel, Tensix(kernel, 0, state)
@@ -42,7 +52,19 @@ class Unpack:
     t.write_cfg(Cfg.THCON_SEC0_REG7_Offset_address, 0)
     self.mop_cfg = mop_cfg; return self
 
+  def init_row_broadcast(self, source_cb, weight_cb):
+    if source_cb.dtype != weight_cb.dtype:
+      raise ValueError("ROW-broadcast operands must have the same dtype")
+    self.init(source_cb, mop_cfg=UNPACK_ROW_BROADCAST_MOP)
+    self.weight_cb = weight_cb
+    return self
+
   def wait_config_idle(self): self.tensix.wait_unpack_config_idle(); return self
+
+  def wait_source_clear(self):
+    """Wait until math has consumed SrcA before changing its unpack config."""
+    self.tensix.stall(TensixStall.UNPACK, TensixWait.SRCA_CLR)
+    return self
 
   def configure_source(self, source_cb):
     if int(source_cb.dtype) not in set(UnpackFormat): raise ValueError(f"unsupported unpack format {source_cb.dtype}")
@@ -52,6 +74,17 @@ class Unpack:
       self.k.write32(Cfg.THCON_SEC0_REG3_Base_address, address)
     return self
 
+  def configure_row_broadcast(self, source_cb, weight_cb=None):
+    weight_cb = self.weight_cb if weight_cb is None else weight_cb
+    with self.k.scope():
+      source, weight = self.k.reg(2)
+      source_cb.read_ptr(source); weight_cb.read_ptr(weight)
+      self.k.srli(source, source, 4); self.k.addi(source, source, -1)
+      self.k.srli(weight, weight, 4); self.k.addi(weight, weight, -1)
+      self.k.write32(Cfg.THCON_SEC0_REG3_Base_address, source)
+      self.k.write32(Cfg.THCON_SEC1_REG3_Base_address, weight)
+    return self
+
   def commit_config(self):
     self.tensix.commit_unpack_config(Cfg.THCON_SEC0_REG3_Base_address); return self
 
@@ -59,6 +92,17 @@ class Unpack:
     t = self.tensix
     t.issue(self.k.tensix_word("TTSETADCXX", 1, 255, 0)); t.issue(self.k.tensix_word("TTSETADCZW", 3, 0, 0, 0, 0, 0xF))
     t.stall(TensixStall.UNPACK, TensixWait.TRISC_CFG); t.run_mop(mop_type=1); return self
+
+  def row_broadcast(self):
+    t = self.tensix
+    t.issue(self.k.tensix_word("TTSETADCZW", 3, 0, 0, 0, 0, 0xF))
+    t.stall(TensixStall.UNPACK, TensixWait.TRISC_CFG); t.run_mop(mop_type=1)
+    return self
+
+  def wait_both(self):
+    self.tensix.stall(TensixStall.UNPACK, TensixWait.UNPACK0 | TensixWait.UNPACK1)
+    self.tensix.semaphore_get(TensixSem.UNPACK_SYNC).sync()
+    return self
 
   def wait(self):
     self.tensix.stall(TensixStall.UNPACK, TensixWait.UNPACK0)

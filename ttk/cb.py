@@ -110,4 +110,21 @@ class CB:
 
   def read_ptr(self, out: R): self.k.load(out, self.interface + 16); return self
 
-  def write_ptr(self, out: R): self.k.load(out, self.interface + 20); return self
+  def write_ptr(self, out: R, page_offset: int | R = 0):
+    if type(page_offset) is int and not 0 <= page_offset < self.config.pages:
+      raise ValueError("CB write pointer page offset must be within capacity")
+    if not isinstance(page_offset, (int, R)):
+      raise TypeError("CB write pointer page offset must be an integer or register")
+    k = self.k; k.load(out, self.interface + 20)
+    if page_offset == 0: return self
+    with k.scope():
+      delta, limit = k.reg(2, exclude=(out, page_offset) if isinstance(page_offset, R) else out)
+      if isinstance(page_offset, R):
+        k.li(delta, self.page_size); k.mul(delta, page_offset, delta)
+      else: k.li(delta, page_offset * self.page_size)
+      k.add(out, out, delta); k.load(limit, self.interface + 4)
+      in_range = k._new_label("cb_write_offset_in_range")
+      k.bltu(out, limit, in_range)
+      k.li(delta, self.config.pages * self.page_size); k.sub(out, out, delta)
+      k.label(in_range)
+    return self

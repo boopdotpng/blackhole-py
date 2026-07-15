@@ -141,11 +141,17 @@ class Program:
     self._cbs.append(cb)
     return cb
 
+  def l1(self, size: int, *, alignment=4, name: str | None = None):
+    """Reserve shared worker L1 storage for kernel-side coordination."""
+    if self._kernels is not None: raise RuntimeError("program has already been lowered")
+    if type(size) is not int or size <= 0: raise ValueError("L1 allocation size must be positive")
+    if type(alignment) is not int or alignment <= 0 or alignment & (alignment - 1):
+      raise ValueError("L1 alignment must be a positive power of two")
+    return self._l1.alloc(size, alignment, name=name)
+
   def scratch(self, size: int, *, alignment: int = 4, name: str | None = None):
     """Allocate program-private storage shared by all five kernels on a core."""
-    if self._kernels is not None: raise RuntimeError("program has already been lowered")
-    if type(size) is not int or size <= 0: raise ValueError("scratch size must be positive")
-    return self._l1.alloc(size, alignment, name=name)
+    return self.l1(size, alignment=alignment, name=name)
 
   def initialize_scratch(self, addr: int, value=0, *, bytes: int = 4):
     """Initialize a program-private L1 scalar before launch, optionally per core."""
