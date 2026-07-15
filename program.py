@@ -141,6 +141,29 @@ class Program:
     self._cbs.append(cb)
     return cb
 
+  def scratch(self, size: int, *, alignment: int = 4, name: str | None = None):
+    """Allocate program-private storage shared by all five kernels on a core."""
+    if self._kernels is not None: raise RuntimeError("program has already been lowered")
+    if type(size) is not int or size <= 0: raise ValueError("scratch size must be positive")
+    return self._l1.alloc(size, alignment, name=name)
+
+  def initialize_scratch(self, addr: int, value=0, *, bytes: int = 4):
+    """Initialize a program-private L1 scalar before launch, optionally per core."""
+    if self._kernels is not None: raise RuntimeError("program has already been lowered")
+    if bytes not in (1, 2, 4): raise ValueError("scratch initialization supports 1, 2, or 4 bytes")
+    values = (value,) * len(self.cores) if isinstance(value, int) else tuple(value)
+    if len(values) != len(self.cores): raise ValueError("scratch initialization needs one value per core")
+    data = tuple(int(item).to_bytes(bytes, "little") for item in values)
+    self.launch += (UnicastWrite(self.cores, addr, data),)
+    return self
+
+  def initialize_scratch_bytes(self, addr: int, data: bytes):
+    """Initialize one shared-L1 byte range identically on every program core."""
+    data = bytes(data)
+    if not data: raise ValueError("scratch initialization data cannot be empty")
+    self.launch += (UnicastWrite(self.cores, addr, (data,) * len(self.cores)),)
+    return self
+
   @property
   def cbs(self): return tuple(self._cbs)
 

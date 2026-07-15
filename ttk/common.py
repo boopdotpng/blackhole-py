@@ -4,6 +4,20 @@ from fw.consts import TensixL1
 PARAM_BASE = TensixL1.PARAM_BASE
 
 class Common:
+  def risc_barrier(self, addr: int, participants: int, index: int, *, value: int = 1):
+    """Join a small software barrier backed by one shared L1 word per RISC."""
+    if participants <= 0 or not 0 <= index < participants:
+      raise ValueError("barrier index must identify one participant")
+    with self.scope():
+      ptr, actual, expected = self.reg(3)
+      self.write32(addr + index * 4, value); self.fence()
+      for participant in range(participants):
+        self.wait32(
+          addr + participant * 4, value,
+          ptr=ptr, actual=actual, expected=expected,
+        )
+    return self
+
   def configure_csr(self, *, value: R = R.T0):
     self.li(value, 2)
     self.csrrs(R.ZERO, value, 0x7C0)

@@ -49,3 +49,16 @@ class Math:
     return self
 
   def publish_dst(self): self.tensix.semaphore_post(TensixSem.MATH_PACK); return self
+
+  def wait_for_direct_unpack(self):
+    """Request and acquire a tile produced by TRISC0's direct-to-Dst path."""
+    self.tensix.semaphore_wait(
+      TensixSem.MATH_DONE, TensixSemWait.STALL_ON_MAX, stall=TensixStall.SYNC,
+    )
+    self.tensix.semaphore_post(TensixSem.MATH_DONE)
+    self.tensix.semaphore_wait(
+      TensixSem.UNPACK_TO_DEST, TensixSemWait.STALL_ON_ZERO, stall=TensixStall.SYNC,
+    )
+    self.tensix.semaphore_get(TensixSem.UNPACK_TO_DEST)
+    self.tensix.stall(TensixStall.SYNC, TensixWait.MATH | TensixWait.SFPU)
+    return self

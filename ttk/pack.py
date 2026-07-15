@@ -47,10 +47,12 @@ class Pack:
 
   def release_dst(self): self.tensix.semaphore_get(TensixSem.MATH_PACK); return self
 
-  def to_cb(self):
+  def to_cb(self, *, synchronize=True):
     t = self.tensix; self._program_destination()
     t.issue(self.k.tensix_word("TTSETADCXX", 4, 15, 0)); t.issue(self.k.tensix_word("TTSETADCZW", 4, 0, 0, 0, 0, 0xF))
     for reg in (Cfg.DEST_TARGET_REG_CFG_PACK_SEC0, Cfg.DEST_TARGET_REG_CFG_PACK_SEC1,
                 Cfg.DEST_TARGET_REG_CFG_PACK_SEC2, Cfg.DEST_TARGET_REG_CFG_PACK_SEC3): t.write_cfg(reg, 0)
     t.stall(TensixStall.CFG, TensixWait.PACK0); t.run_mop(mop_type=1)
-    t.stall(TensixStall.SYNC, TensixWait.PACK0); t.sync(); return self
+    t.stall(TensixStall.SYNC, TensixWait.PACK0)
+    if synchronize: t.sync()
+    return self

@@ -154,6 +154,40 @@ class WriteBatch(_CompletionBatch):
     self.issue(src, dst, dst_coord, buffer.page_size)
     return self
 
+  def issue_dram_tile_rows(self, buffer, page: Value, cb, first_row: Value, rows: int):
+    """Write a contiguous row band from both horizontal faces of a tiled page."""
+    if cb.k is not self.noc.asm: raise ValueError("DRAM write CB must belong to the issuing RISC")
+    if cb.page_size != buffer.page_size: raise ValueError("DRAM buffer and CB page sizes must match")
+    if type(rows) is not int or not 0 < rows <= 16: raise ValueError("tile row write must contain 1..16 rows")
+    if type(first_row) is int and (not 0 <= first_row < 32 or first_row % 16 + rows > 16):
+      raise ValueError("tile row write cannot cross a vertical face boundary")
+    if not isinstance(first_row, R) and type(first_row) is not int:
+      raise TypeError("first tile row must be an integer or register")
+
+    asm, itemsize = self.noc.asm, buffer.dtype.itemsize
+    face_bytes, band_bytes = 16 * 16 * itemsize, rows * 16 * itemsize
+    with asm.scope():
+      dst, dst_coord = self.noc.dram_page(buffer, page)
+      src, offset = asm.reg(2)
+      cb.read_ptr(src)
+      if type(first_row) is int:
+        offset_value = first_row % 16 * 16 * itemsize + first_row // 16 * 2 * face_bytes
+        asm.li(offset, offset_value)
+      else:
+        within, bottom, scale = asm.reg(3, exclude=(first_row, src, offset, dst, dst_coord))
+        asm.andi(within, first_row, 15)
+        asm.srli(bottom, first_row, 4)
+        asm.li(scale, 16 * itemsize); asm.mul(within, within, scale)
+        asm.li(scale, 2 * face_bytes); asm.mul(bottom, bottom, scale)
+        asm.add(offset, within, bottom)
+      asm.add(src, src, offset); asm.add(dst, dst, offset)
+      step = asm.reg(exclude=(src, dst, dst_coord))
+      asm.li(step, face_bytes)
+      self.issue(src, dst, dst_coord, band_bytes)
+      asm.add(src, src, step); asm.add(dst, dst, step)
+      self.issue(src, dst, dst_coord, band_bytes)
+    return self
+
   def multicast(self, src: Value, dst: Value, dst_coord: Value, size: int, *, exclude: Value = 0, along_y=False):
     packets = self.noc.multicast(src, dst, dst_coord, size, exclude=exclude, along_y=along_y)
     return packets
