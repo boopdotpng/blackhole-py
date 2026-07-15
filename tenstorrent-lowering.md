@@ -2,6 +2,13 @@
 
 Status: design and migration plan, not an implemented backend.
 
+Update: [`docs/unified-kernel-builder.md`](docs/unified-kernel-builder.md) records
+the newer kernel-authoring API and revised tinygrad direction. In particular,
+the TT backend now plans to intercept the callified shaped graph, run a TT-owned
+linearizer, and feed its ordered output to a TT renderer rather than lower by
+matching complete kernels directly from the DAG. Where the two documents
+conflict, the unified-kernel-builder document is the current direction.
+
 Code-reading snapshot:
 
 - tinygrad: `149fd91e2` (2026-07-02)
