@@ -105,6 +105,7 @@ class Program:
     self._param_slots = {buffer: slot for slot, buffer in enumerate(buffers)}
     self._cbs: list[CBConfig] = []
     self._l1 = Allocator(TensixL1.DATA_BUFFER_SPACE_BASE, TensixL1.SIZE, 16)
+    self._runtime_args: tuple[tuple[int, ...], ...] | None = None
     self.launch: tuple[Command, ...] = ()
     self._kernels = None
 
@@ -123,6 +124,7 @@ class Program:
     program = cls.__new__(cls)
     program._cores = tuple(kernels)
     program.params, program._param_slots = {}, {}
+    program._runtime_args = None
     program._cbs, program.launch = list(cbs), tuple(launch)
     program._l1 = None
     program._kernels = kernels
@@ -168,6 +170,28 @@ class Program:
     data = bytes(data)
     if not data: raise ValueError("scratch initialization data cannot be empty")
     self.launch += (UnicastWrite(self.cores, addr, (data,) * len(self.cores)),)
+    return self
+
+  def set_runtime_args(self, args_by_core):
+    """Set the per-core u32 argument rows loaded with ``Asm.arg(index)``."""
+    if isinstance(args_by_core, dict):
+      missing = set(self.cores) - set(args_by_core)
+      extra = set(args_by_core) - set(self.cores)
+      if missing or extra:
+        raise ValueError(f"runtime argument cores differ (missing={sorted(missing)}, extra={sorted(extra)})")
+      rows = tuple(tuple(args_by_core[core]) for core in self.cores)
+    else:
+      rows = tuple(tuple(row) for row in args_by_core)
+      if len(rows) != len(self.cores):
+        raise ValueError("runtime arguments require one row per program core")
+    widths = {len(row) for row in rows}
+    if len(widths) != 1: raise ValueError("runtime argument rows must have equal length")
+    width = widths.pop() if widths else 0
+    if len(self.params) + width > TensixL1.PARAM_SLOTS:
+      raise ValueError("program parameter and runtime argument table is full")
+    if any(type(value) is not int or not 0 <= value <= 0xFFFFFFFF for row in rows for value in row):
+      raise ValueError("runtime arguments must be u32 integers")
+    self._runtime_args = rows
     return self
 
   @property
@@ -225,9 +249,20 @@ class Program:
 
   def commands(self, *, bind_initial_params: bool = True):
     commands = list(self.kernel_commands())
-    if bind_initial_params and self.params:
-      table = b"".join(int(buffer.addr).to_bytes(4, "little") for buffer in self.params.values())
-      commands.append(UnicastWrite(self.cores, PARAM_BASE, (table,) * len(self.cores)))
+    params = (b"".join(int(buffer.addr).to_bytes(4, "little") for buffer in self.params.values())
+              if bind_initial_params else b"")
+    arg_rows = self._runtime_args
+    if arg_rows is not None and arg_rows and arg_rows[0]:
+      args = tuple(b"".join(value.to_bytes(4, "little") for value in row) for row in arg_rows)
+      if params:
+        commands.append(UnicastWrite(self.cores, PARAM_BASE,
+                                     tuple(params + row for row in args)))
+      else:
+        commands.append(UnicastWrite(
+          self.cores, PARAM_BASE + len(self.params) * 4, args,
+        ))
+    elif params:
+      commands.append(UnicastWrite(self.cores, PARAM_BASE, (params,) * len(self.cores)))
     commands += self.launch
     return tuple(commands)
 

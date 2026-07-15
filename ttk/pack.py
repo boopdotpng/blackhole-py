@@ -18,6 +18,11 @@ class Pack:
     if addr & 15 or page_size & 15: raise ValueError("pack CB must be 16-byte aligned")
     t.set_thread_cfg(ThreadCfg.CFG_STATE_ID, 0)
     t.rmw_cfg_byte(Cfg.ALU, 3, 0x1E, 0 if fp32_dest else dst << 1)
+    # Pack L1 accumulation shares these zero-flag controls with the normal
+    # pack path. Firmware reset does not establish the LLK defaults for them.
+    t.rmw_cfg_byte(Cfg.ALU_ACC_CTRL, 0, 0xFC, 0)
+    t.rmw_cfg_byte(Cfg.ALU_ACC_CTRL, 1, 0xFF, 0)
+    t.rmw_cfg_byte(Cfg.ALU_ACC_CTRL, 2, 0x3F, 0)
     xy, zw = self._strides(src)
     for reg, value in ((Cfg.THCON_SEC0_REG1, 0x00040000), (Cfg.THCON_SEC0_REG1_1, 1 | dst << 4 | src << 8),
       (Cfg.PCK_DEST_RD_CTRL, int(fp32_dest)), (Cfg.PCK0_ADDR_CTRL_XY_REG_0, xy), (Cfg.PCK0_ADDR_CTRL_ZW_REG_0, zw),

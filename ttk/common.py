@@ -183,3 +183,11 @@ class Common:
     reg = self.reg()
     self.load(reg, PARAM_BASE + self.param_slots[param] * 4)
     return reg
+
+  def arg(self, index: int):
+    """Load one per-core runtime argument from the Program argument table."""
+    if type(index) is not int or index < 0:
+      raise ValueError("runtime argument index must be a nonnegative integer")
+    reg = self.reg()
+    self.load(reg, PARAM_BASE + (len(self.param_slots) + index) * 4)
+    return reg

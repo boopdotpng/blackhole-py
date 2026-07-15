@@ -188,13 +188,16 @@ class WriteBatch(_CompletionBatch):
       self.issue(src, dst, dst_coord, band_bytes)
     return self
 
-  def multicast(self, src: Value, dst: Value, dst_coord: Value, size: int, *, exclude: Value = 0, along_y=False):
-    packets = self.noc.multicast(src, dst, dst_coord, size, exclude=exclude, along_y=along_y)
+  def multicast(self, src: Value, dst: Value, dst_coord: Value, size: int, *, exclude: Value = 0,
+                along_y=False, max_burst=NOC_MAX_BURST_SIZE, link=True):
+    packets = self.noc.multicast(src, dst, dst_coord, size, exclude=exclude,
+                                 along_y=along_y, max_burst=max_burst, link=link,
+                                 posted=self.posted)
     return packets
 
   def multicast_packet(self, src: Value, dst: Value, dst_coord: Value, size: Value, *,
-                       exclude: Value = 0, along_y=False):
-    self.noc._multicast(src, dst, dst_coord, size, linked=False, reserve_path=True,
+                       exclude: Value = 0, along_y=False, linked=False, reserve_path=True):
+    self.noc._multicast(src, dst, dst_coord, size, linked=linked, reserve_path=reserve_path,
                         exclude=exclude, along_y=along_y, posted=self.posted)
     self._record()
     return self
@@ -212,6 +215,17 @@ class NoC:
   @staticmethod
   def static_coord(x: int, y: int):
     return x | y << 6
+
+  @staticmethod
+  def rectangle(start: tuple[int, int], end: tuple[int, int]):
+    """Encode an inclusive NoC multicast rectangle."""
+    x0, y0 = start; x1, y1 = end
+    if not all(type(value) is int and 0 <= value < 64 for value in (x0, y0, x1, y1)):
+      raise ValueError("NoC rectangle coordinates must be integers in range 0..63")
+    # Worker command buffers place the route end in the low coordinate and
+    # the route start in the upper coordinate (the CQ multicast record uses
+    # the opposite packing, so keep this helper local to NoC commands).
+    return x1 | y1 << 6 | x0 << 12 | y0 << 18
 
   def _base(self, buffer: int):
     return NOC_REGS_START_ADDR + (self.index << NOC_INSTANCE_OFFSET_BIT) + (buffer << NOC_CMD_BUF_OFFSET_BIT)
@@ -415,20 +429,25 @@ class NoC:
       NOC_RET_ADDR_LO: dst, NOC_RET_ADDR_MID: dst_mid, NOC_RET_ADDR_COORDINATE: dst_coord,
       NOC_BRCST_EXCLUDE: exclude, NOC_AT_LEN_BE: size, NOC_AT_LEN_BE_1: 0})
 
-  def multicast(self, src: Value, dst: Value, dst_coord: Value, size: int, *, exclude: Value = 0, along_y=False):
+  def multicast(self, src: Value, dst: Value, dst_coord: Value, size: int, *, exclude: Value = 0,
+                along_y=False, max_burst=NOC_MAX_BURST_SIZE, link=True, posted=True):
     if type(size) is not int or size <= 0: raise ValueError("multicast size must be a positive Python integer")
-    chunks = (size + NOC_MAX_BURST_SIZE - 1) // NOC_MAX_BURST_SIZE
+    if type(max_burst) is not int or not 0 < max_burst <= NOC_MAX_BURST_SIZE:
+      raise ValueError(f"multicast burst must be in range 1..{NOC_MAX_BURST_SIZE}")
+    chunks = (size + max_burst - 1) // max_burst
     with self.asm.scope():
       src_at, dst_at = src, dst
       moving = []
       if isinstance(src, R): self.asm.mv(src_at := self.asm.reg(), src); moving.append(src_at)
       if isinstance(dst, R): self.asm.mv(dst_at := self.asm.reg(), dst); moving.append(dst_at)
       step = self.asm.reg() if moving and chunks > 1 else None
-      if step is not None: self.asm.li(step, NOC_MAX_BURST_SIZE)
+      if step is not None: self.asm.li(step, max_burst)
       for i in range(chunks):
-        chunk = min(NOC_MAX_BURST_SIZE, size - i * NOC_MAX_BURST_SIZE)
-        self._multicast(src_at, dst_at, dst_coord, chunk, linked=i + 1 < chunks,
-                        reserve_path=i == 0, exclude=exclude, along_y=along_y)
+        chunk = min(max_burst, size - i * max_burst)
+        self._multicast(src_at, dst_at, dst_coord, chunk,
+                        linked=link and i + 1 < chunks,
+                        reserve_path=i == 0 if link else True,
+                        exclude=exclude, along_y=along_y, posted=posted)
         if i + 1 < chunks:
           if isinstance(src_at, R): self.asm.add(src_at, src_at, step)
           else: src_at += chunk
