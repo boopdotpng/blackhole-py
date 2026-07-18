@@ -335,27 +335,8 @@ class NoC:
                 (1 << 12) | (31 << 2), value),
       )
 
-  def read(self, source_address, source_coordinate, target_address, packet_bytes, **options):
-    return self.transaction().read(
-      source_address, source_coordinate, target_address, packet_bytes, **options,
-    ).wait()
-
-  def write(self, source_address, target_address, target_coordinate, packet_bytes, **options):
-    return self.transaction().write(
-      source_address, target_address, target_coordinate, packet_bytes, **options,
-    ).wait()
-
-  def multicast_write(self, source_address, target_address, targets, packet_bytes, **options):
-    return self.transaction().multicast_write(
-      source_address, target_address, targets, packet_bytes, **options,
-    ).wait()
-
-  def inline_write(self, value, target_address, target_coordinate, **options):
-    return self.transaction().inline_write(
-      value, target_address, target_coordinate, **options,
-    ).wait()
-
-  def atomic_inc(self, target_address, target_coordinate, value=1, **options):
-    return self.transaction().atomic_inc(
-      target_address, target_coordinate, value, **options,
-    ).wait()
+  def read(self, *args, **options): return self.transaction().read(*args, **options).wait()
+  def write(self, *args, **options): return self.transaction().write(*args, **options).wait()
+  def multicast_write(self, *args, **options): return self.transaction().multicast_write(*args, **options).wait()
+  def inline_write(self, *args, **options): return self.transaction().inline_write(*args, **options).wait()
+  def atomic_inc(self, *args, **options): return self.transaction().atomic_inc(*args, **options).wait()
