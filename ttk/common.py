@@ -1,4 +1,4 @@
-from isa import R, Tensix as TensixISA
+from isa import R, tt_word
 from fw.consts import TensixL1
 
 PARAM_BASE = TensixL1.PARAM_BASE
@@ -141,24 +141,18 @@ class Common:
     self.label(done)
     return self.fence()
 
-  def push_tensix_word(self, word: int | object, *, addr: int = 0xFFE40000):
+  def push_tensix_word(self, word: int, *, addr: int = 0xFFE40000):
     if self.role not in ("brisc", "trisc0", "trisc1", "trisc2"):
       raise RuntimeError(f"{self.role} cannot push Tensix instructions")
-    if hasattr(word, "raw_word"):
-      word = word.raw_word()
-    if type(word) is not int:
-      raise TypeError("Tensix instruction must be an int or expose raw_word()")
+    if not isinstance(word, int):
+      raise TypeError("Tensix instruction must be an int")
     if not 0 <= word <= 0xFFFFFFFF:
       raise ValueError("Tensix instruction must fit in 32 bits")
     return self.write32(addr, word)
 
   @staticmethod
   def tensix_word(opcode: str, *args, **kwargs) -> int:
-    builder = TensixISA()
-    method = getattr(builder, opcode)
-
-    encoded = method(*args, **kwargs)
-    return ((encoded >> 2) | (encoded << 30)) & 0xFFFFFFFF
+    return tt_word(opcode, *args, **kwargs)
 
   def load(self, rd: R, addr: int | R, bytes=4):
     op = {1: self.lbu, 2: self.lhu, 4: self.lw}[bytes]

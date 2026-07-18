@@ -1,16 +1,16 @@
 import struct
 
 from program import DType
-from ttk.tensix import MopCfg, nop_word, tt_word
+from ttk.mop import LoopTemplate
+from ttk.tensix import tt_word
 
 
 def scalar_reduce_mop():
   clear_src_a = tt_word("TTUNPACR_NOP", 0, 0, 0, 0, 0, 0, 0, 0, 1)
   replay_ab = tt_word("TTREPLAY", 0, 2, 0, 0)
-  return MopCfg.slots(
-    outer=1, inner=4, fill=nop_word(),
-    slot3=clear_src_a, slot4=replay_ab,
-    slot5=replay_ab, slot6=replay_ab,
+  return LoopTemplate(
+    outer=1, inner=4, loop=clear_src_a, alternate=replay_ab,
+    last=replay_ab, outer_last=replay_ab,
   )
 
 

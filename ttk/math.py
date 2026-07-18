@@ -1,12 +1,18 @@
 from ttk.sfpu import Sfpu
-from ttk.tensix import Cfg, MopCfg, Tensix, TensixSem, TensixSemWait, TensixStall, TensixState, TensixWait, ThreadCfg, nop_word, tt_word
+from ttk.mop import LoopTemplate
+from ttk.tensix import Cfg, Tensix, TensixSem, TensixSemWait, TensixStall, TensixState, TensixWait, ThreadCfg, tt_word
 
-MATH_COPY_SRC_A_MOP = MopCfg.copy_src_a_to_dst()
-MATH_ROW_BROADCAST_MUL_HIFI2_MOP = MopCfg.slots(
-  outer=2, inner=2, fill=nop_word(),
-  slot3=tt_word("TTELWMUL", 0, 0, 2, 0, 0),
-  slot5=tt_word("TTELWMUL", 3, 0, 2, 3, 0),
-  slot6=tt_word("TTELWMUL", 0, 0, 2, 2, 0),
+_MATH_MOVE = tt_word("TTMOVA2D", 0, 0, 2, 2, 0)
+MATH_COPY_SRC_A_MOP = LoopTemplate(
+  outer=4, inner=2, loop=_MATH_MOVE,
+  end0=tt_word("TTSETRWC", 3, 0, 0, 0, 0, 3),
+  last=_MATH_MOVE, outer_last=_MATH_MOVE,
+)
+MATH_ROW_BROADCAST_MUL_HIFI2_MOP = LoopTemplate(
+  outer=2, inner=2,
+  loop=tt_word("TTELWMUL", 0, 0, 2, 0, 0),
+  last=tt_word("TTELWMUL", 3, 0, 2, 3, 0),
+  outer_last=tt_word("TTELWMUL", 0, 0, 2, 2, 0),
 )
 
 class Math:
@@ -119,7 +125,10 @@ class Math:
     )
     return self
 
-  def publish_dst(self): self.tensix.semaphore_post(TensixSem.MATH_PACK); return self
+  def publish_dst(self):
+    self.tensix.stall(TensixStall.SYNC, TensixWait.MATH | TensixWait.SFPU)
+    self.tensix.semaphore_post(TensixSem.MATH_PACK)
+    return self
 
   def wait_for_direct_unpack(self):
     """Request and acquire a tile produced by TRISC0's direct-to-Dst path."""

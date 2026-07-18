@@ -1,6 +1,9 @@
 from dataclasses import dataclass, field
 from enum import IntEnum
-from isa import R, Tensix as TensixISA
+from isa import R, tt_word
+from ttk.mop import (
+  Mop, MopState, Replay,
+)
 
 CFG_BASE = 0xFFEF0000
 
@@ -72,115 +75,6 @@ class TensixSem:
     return 1 << index
 
 @dataclass
-class MopCfg:
-  loop_outer: int
-  loop_inner: int
-  template: list[int | object] = field(default_factory=list)
-
-  @classmethod
-  def slots(cls, *, outer: int, inner: int, fill=0, **slots):
-    template = [fill] * 7
-    for name, word in slots.items(): template[int(name[4:])] = word
-    return cls(outer, inner, template)
-
-  @classmethod
-  def pack_tile(cls):
-    return cls.slots(
-      outer=4, inner=4, fill=nop_word(),
-      slot3=pack_word(), slot5=pack_word(addr_mode=1, last=True),
-      slot6=pack_word(addr_mode=2),
-    )
-
-  @classmethod
-  def unpack_src_a_tile(cls):
-    clear = tt_word("TTUNPACR_NOP", 1, 0, 0, 1, 0, 0, 0, 0, 1)
-    return cls.slots(
-      outer=4, inner=1, fill=nop_word(),
-      slot0=tt_word("TTUNPACR", 0, 1, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 1),
-      slot3=clear, slot5=clear, slot6=clear,
-    )
-
-  @classmethod
-  def copy_src_a_to_dst(cls):
-    move = tt_word("TTMOVA2D", 0, 0, 2, 2, 0)
-    return cls.slots(
-      outer=4, inner=2, fill=nop_word(),
-      slot1=tt_word("TTSETRWC", 3, 0, 0, 0, 0, 3),
-      slot3=move, slot5=move, slot6=move,
-    )
-
-  def words(self):
-    slots = list(self.template) + [nop_word()] * (7 - len(self.template))
-    return [self.loop_outer, self.loop_inner, *(_raw_word(word) for word in slots)]
-
-def tt_word(opcode: str, *args, **kwargs) -> int:
-  encoded = getattr(TensixISA(), opcode)(*args, **kwargs)
-  return ((encoded >> 2) | (encoded << 30)) & 0xFFFFFFFF
-
-def nop_word() -> int:
-  return tt_word("TTNOP")
-
-def pack_word(*, addr_mode=0, last=False, read_intf=0, flush=False) -> int:
-  return tt_word(
-    "TTPACR", 0, 0, 0, addr_mode, 0, 0, read_intf,
-    0, 0, 0, int(flush), int(last),
-  )
-
-def _raw_word(word) -> int:
-  if hasattr(word, "raw_word"):
-    word = word.raw_word()
-  if type(word) is not int or not 0 <= word <= 0xFFFFFFFF:
-    raise TypeError("Tensix words must be 32-bit integers or expose raw_word()")
-  return word
-
-@dataclass
-class MopState:
-  config: tuple[int, ...] = (0,) * 9
-  replay: "ReplayBuffer" = field(default_factory=lambda: ReplayBuffer())
-
-  def configure(self, cfg: MopCfg | list[int] | tuple[int, ...]):
-    words = cfg.words() if isinstance(cfg, MopCfg) else list(cfg)
-    if len(words) != 9:
-      raise ValueError("MOP configuration must contain exactly nine words")
-    self.config = tuple(_raw_word(word) for word in words)
-    return self
-
-@dataclass
-class ReplayBuffer:
-  words: list[int] = field(default_factory=lambda: [0] * 32)
-  allocations: list[tuple[int, int]] = field(default_factory=list)
-
-  def write(self, start: int, words):
-    values = [_raw_word(word) for word in words]
-    if not 0 <= start < 32 or not values or start + len(values) > 32:
-      raise ValueError("replay write must fit within the 32-entry replay buffer")
-    self.words[start:start + len(values)] = values
-    return self
-
-  def window(self, start: int, length: int) -> tuple[int, ...]:
-    if not 0 <= start < 32 or not 1 <= length <= 32 or start + length > 32:
-      raise ValueError("replay window must fit within the 32-entry replay buffer")
-    return tuple(self.words[start:start + length])
-
-  def allocate(self, length: int, *, start: int | None = None,
-               lower: int = 0, upper: int = 32) -> int:
-
-    if type(length) is not int or length <= 0:
-      raise ValueError("replay allocation length must be positive")
-    if not 0 <= lower <= upper <= 32 or length > upper - lower:
-      raise ValueError("invalid replay allocation range")
-    starts = range(lower, upper - length + 1) if start is None else (start,)
-    for candidate in starts:
-      if not lower <= candidate or candidate + length > upper:
-        continue
-      if all(candidate + length <= used or candidate >= used + size
-             for used, size in self.allocations):
-        self.allocations.append((candidate, length))
-        self.allocations.sort()
-        return candidate
-    raise MemoryError("Tensix replay buffer has no free window")
-
-@dataclass
 class TensixState:
   contexts: list[dict[int, int]] = field(default_factory=lambda: [{}, {}])
   selected_context: list[int] = field(default_factory=lambda: [0, 0, 0])
@@ -213,11 +107,10 @@ class Tensix:
   def __init__(self, kernel, pipe: int, state: TensixState | None = None):
     self.k, self.pipe = kernel, pipe
     self.state = state if state is not None else TensixState()
+    self.mop = Mop(self)
 
   def issue(self, word):
-    raw = _raw_word(word)
-    encoded = ((raw << 2) | (raw >> 30)) & 0xFFFFFFFF
-    self.k._emit(encoded)
+    self.k._emit(word)
     return self
 
   @staticmethod
@@ -246,7 +139,6 @@ class Tensix:
     return kernel
 
   def write_cfg(self, register: Cfg, value: int):
-    value = _raw_word(value)
     if self.state.set_cfg(self.pipe, register, value):
       self.k.write32(int(register), value)
     return self
@@ -275,22 +167,12 @@ class Tensix:
       self.issue(self.k.tensix_word("TTSETC16", int(register), value))
     return self
 
-  def configure_mop(self, cfg: MopCfg | list[int] | tuple[int, ...]):
-    mop = self.state.mop[self.pipe]
-    previous = mop.config
-    mop.configure(cfg)
-    if mop.config == previous:
-      return self
-    self.mop_sync()
-    for index, word in enumerate(self.state.mop[self.pipe].config):
-      self.k.write32(TensixRegs.MOP_CFG + index * 4, word)
+  def configure_mop(self, template):
+    self.mop.configure(template)
     return self
 
   def load_replay(self, words, start=0):
-    words = tuple(_raw_word(word) for word in words)
-    self.state.mop[self.pipe].replay.write(start, words)
-    self.issue(self.k.tensix_word("TTREPLAY", start, len(words), 0, 1))
-    for word in words: self.issue(word)
+    self.mop.load(Replay(start, words))
     return self
 
   def run_mop(self, *, loop_count: int = 0, zmask: int = 0, mop_type: int = 1):
@@ -298,8 +180,7 @@ class Tensix:
     return self
 
   def replay(self, start: int, length: int):
-    self.state.mop[self.pipe].replay.window(start, length)
-    self.issue(self.k.tensix_word("TTREPLAY", start, length, 0, 0))
+    self.mop._replay(start, length)
     return self
 
   def _sync(self, addr):

@@ -1,6 +1,14 @@
-from ttk.tensix import Cfg, MopCfg, Tensix, TensixRegs, TensixSem, TensixSemWait, TensixStall, TensixState, TensixWait, ThreadCfg
+from ttk.mop import LoopTemplate
+from ttk.tensix import Cfg, Tensix, TensixRegs, TensixSem, TensixSemWait, TensixStall, TensixState, TensixWait, ThreadCfg, tt_word
 
-PACK_MOP = MopCfg.pack_tile()
+def pack_word(addr_mode=0, last=False):
+  return tt_word("TTPACR", 0, 0, 0, addr_mode, 0, 0, 0, 0, 0, 0, 0, int(last))
+
+PACK_MOP = LoopTemplate(
+  outer=4, inner=4, loop=pack_word(),
+  last=pack_word(addr_mode=1, last=True),
+  outer_last=pack_word(addr_mode=2),
+)
 
 class Pack:
   def __init__(self, kernel, *, state: TensixState | None = None): self.k, self.tensix = kernel, Tensix(kernel, 2, state)
@@ -29,7 +37,9 @@ class Pack:
       (Cfg.PACK_COUNTERS_SEC0, 0x1000), (Cfg.PACK_COUNTERS_SEC1, 0x1000),
       (Cfg.PACK_COUNTERS_SEC2, 0x1000), (Cfg.PACK_COUNTERS_SEC3, 0x1000),
       (Cfg.PCK_EDGE, 0xFFFF), (Cfg.TILE_ROW_SET_MAPPING_0, 0)): t.write_cfg(reg, value)
-    for index in range(4): self.k.write32(TensixRegs.REGFILE_BASE + (8 + index) * 4, 512)
+    for index in range(4):
+      self.k.write32(TensixRegs.REGFILE_BASE + (4 + index) * 4, 0)
+      self.k.write32(TensixRegs.REGFILE_BASE + (8 + index) * 4, 512)
     self.k.write32(TensixRegs.REGFILE_BASE + 16 * 4, page_size >> 4); self.k.write32(TensixRegs.REGFILE_BASE + 52 * 4, 0x40000)
     for section, value in enumerate((0x0104, 0x2820, 0x1120)): t.set_thread_cfg(ThreadCfg.ADDR_MOD_PACK_SEC0 + section, value)
     t.issue(self.k.tensix_word("TTSETADCXY", 4, 0, 0, 0, 0, 0xB)); t.issue(self.k.tensix_word("TTSETADCZW", 4, 0, 0, 0, 0, 0xF))

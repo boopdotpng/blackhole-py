@@ -2,7 +2,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import ClassVar
 from fw.consts import Core, Firmware, KernelRole
-from isa import R, RV32
+from isa import R, RV32, TensixWord
 from pcie import Allocator
 from ttk.common import Common
 
@@ -69,10 +69,9 @@ class Asm(RV32, Common):
 
   def _emit(self, word: int):
     if self._lowered: raise RuntimeError("kernel has already been lowered")
-    if word & 3 != 3:
+    if isinstance(word, TensixWord):
       if self.role == "brisc":
-        raw = ((word >> 2) | (word << 30)) & 0xFFFFFFFF
-        return self.push_tensix_word(raw)
+        return self.push_tensix_word(word)
       if self.role == "ncrisc": raise RuntimeError("ncrisc cannot emit Tensix instructions")
       if self.role not in ("trisc0", "trisc1", "trisc2"):
         raise RuntimeError(f"{self.role} cannot emit Tensix instructions")
@@ -205,7 +204,9 @@ class Asm(RV32, Common):
     long, targets = self._layout()
     out, pc = [], 0
     for i, item in enumerate(self.items):
-      if not isinstance(item, Fixup): out.append(item); pc += 4; continue
+      if not isinstance(item, Fixup):
+        word = ((item << 2) | (item >> 30)) & 0xFFFFFFFF if isinstance(item, TensixWord) else item
+        out.append(word); pc += 4; continue
       if item.label not in targets: raise ValueError(f"undefined label {item.label!r}")
       offset = targets[item.label] - pc
       if offset & 1: raise ValueError(f"misaligned target {item.label!r}")

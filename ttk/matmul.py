@@ -4,10 +4,11 @@ from dataclasses import dataclass
 
 from isa import R
 from program import DType
+from ttk.mop import LoopTemplate, MaskTemplate, NOP, Replay
 from ttk.noc import NoC
 from ttk.tensix import (
-  Cfg, MopCfg, TensixRegs, TensixSem, TensixStall, TensixWait, ThreadCfg,
-  nop_word, tt_word,
+  Cfg, TensixRegs, TensixSem, TensixStall, TensixWait, ThreadCfg,
+  tt_word,
 )
 
 
@@ -159,13 +160,6 @@ def plan_output_chunks(m: int, k: int, n: int, cores) -> tuple[MatmulChunk, ...]
   return tuple(sorted(chunks, key=lambda chunk: (chunk.m0, chunk.n0)))
 
 
-UNPACK_AB_MOP = MopCfg(
-  0, 0,
-  [0, tt_word("TTREPLAY", 0, 6, 0, 0), 0, 0, 0,
-   tt_word("TTREPLAY", 6, 6, 0, 0), 0],
-)
-
-
 def _unpack_replay(context: int):
   base = (Cfg.THCON_SEC0_REG3_Base_address,
           Cfg.THCON_SEC0_REG3_Base_cntx1_address)[context]
@@ -175,8 +169,15 @@ def _unpack_replay(context: int):
     tt_word("TTADDDMAREG", 0, 12, 12, 36),
     tt_word("TTSTALLWAIT", TensixStall.CFG, TensixWait.THCON),
     tt_word("TTWRCFG", 12, 0, base.addr32),
-    nop_word(),
+    NOP,
   )
+
+UNPACK_CONTEXT0 = Replay(0, _unpack_replay(0))
+UNPACK_CONTEXT1 = Replay(6, _unpack_replay(1))
+UNPACK_AB_MOP = MaskTemplate(
+  a0=UNPACK_CONTEXT0,
+  skip_a0=UNPACK_CONTEXT1,
+)
 
 
 MATH_REPLAY = tuple(
@@ -184,8 +185,18 @@ MATH_REPLAY = tuple(
   for mode in (0, 1, 0, 2, 0, 1, 0, 4, 0, 1, 0, 2, 0, 1, 0, 5)
 )
 
-RELOAD_UNPACK_MOP = MopCfg.unpack_src_a_tile()
-RELOAD_MATH_MOP = MopCfg.copy_src_a_to_dst()
+_UNPACK_CLEAR = tt_word("TTUNPACR_NOP", 1, 0, 0, 1, 0, 0, 0, 0, 1)
+RELOAD_UNPACK_MOP = LoopTemplate(
+  outer=4, inner=1,
+  start=tt_word("TTUNPACR", 0, 1, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 1),
+  loop=_UNPACK_CLEAR, last=_UNPACK_CLEAR, outer_last=_UNPACK_CLEAR,
+)
+_MATH_MOVE = tt_word("TTMOVA2D", 0, 0, 2, 2, 0)
+RELOAD_MATH_MOP = LoopTemplate(
+  outer=4, inner=2, loop=_MATH_MOVE,
+  end0=tt_word("TTSETRWC", 3, 0, 0, 0, 0, 3),
+  last=_MATH_MOVE, outer_last=_MATH_MOVE,
+)
 
 
 class Matmul:
@@ -531,8 +542,6 @@ class Matmul:
     self.p.unpack.init(self.a_unpack, mop_cfg=UNPACK_AB_MOP)
     t.issue(tt_word("TTSETADCXX", 1, 1023, 0))
     t.issue(tt_word("TTSETADCXX", 2, 1023, 0))
-    t.load_replay(_unpack_replay(0), start=0)
-    t.load_replay(_unpack_replay(1), start=6)
     t.issue(tt_word("TTSEMINIT", 2, 0, TensixSem.mask(TensixSem.UNPACK_SYNC)))
     self.p.trisc0.write32(self.unpack_context, 0)
     for block in self.p.trisc0.range(plan.num_blocks):

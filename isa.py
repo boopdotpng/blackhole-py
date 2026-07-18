@@ -72,6 +72,8 @@ class RV32:
   def csrrc(self, rd: R, rs1: R, csr: int): return self._emit(_iu(0x73, 3, rd, rs1, csr))
   def fence(self): return self._emit(_i(0x0F, 0, R.ZERO, R.ZERO, 0x0FF))
 
+class TensixWord(int): pass
+
 class Tensix:
   def _emit(self, word: int): return word
 
@@ -82,7 +84,7 @@ class Tensix:
       if not 0 <= int(value) < 1 << width: raise ValueError(f"{value} does not fit in bits {hi}:{lo}")
       word |= int(value) << lo
     if word >= 0xC0000000: raise ValueError(f"Tensix instruction looks like RISC-V: 0x{word:08x}")
-    return self._emit(((word << 2) | (word >> 30)) & 0xFFFFFFFF)
+    return self._emit(TensixWord(word))
 
   def TTADDDMAREG(self, OpBisConst: int = 0, ResultRegIndex: int = 0, OpBRegIndex: int = 0, OpARegIndex: int = 0):
     return self._tt(0x58, (OpBisConst, 23, 23), (ResultRegIndex, 22, 12), (OpBRegIndex, 11, 6), (OpARegIndex, 5, 0))
@@ -327,3 +329,6 @@ class Tensix:
   def TTTRNSPSRCB(self): return self._tt(0x16)
   def TTXMOV(self, Mov_block_selection: int = 0, Last: int = 0):
     return self._tt(0x40, (Mov_block_selection, 23, 23), (Last, 22, 0))
+
+def tt_word(opcode, *args, **kwargs):
+  return getattr(Tensix(), opcode)(*args, **kwargs)
