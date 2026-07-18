@@ -6,9 +6,6 @@ def build_ncrisc():
   fw.setup_stack(Firmware.NCRISC_STACK_TOP)
   fw.configure_csr()
 
-  for index in (0, 1):
-    fw.noc(index).store_risc_coordinates(*Firmware.NOC_COORDINATE_BASE["ncrisc"])
-
   fw.signal8(FirmwareControl.SUBORDINATE_SYNC, RunState.BOOT_READY)
 
   fw.label("run_loop")

@@ -90,8 +90,7 @@ def _read_scores(p, scores, input_cb):
   for _ in range(2):
     for tile in p.brisc.range(scores.pages):
       reader.reserve_back()
-      with noc.read_batch() as reads:
-        reads.issue_dram(scores, tile, reader)
+      noc.read_dram_page(scores, tile, reader)
       reader.push_back()
 
 
@@ -103,10 +102,9 @@ def _write_probabilities(p, probabilities, output_cb, group_addr):
   noc = p.ncrisc.noc(1).initialize_from_firmware()
   for tile in p.ncrisc.range(probabilities.pages):
     writer.wait_front()
-    with noc.write_ack_batch() as writes:
-      writes.issue_dram_tile_rows(
-        probabilities, tile, writer, first_row, ROWS_PER_CORE,
-      )
+    noc.write_dram_tile_rows(
+      probabilities, tile, writer, first_row, ROWS_PER_CORE,
+    )
     writer.pop_front()
 
 

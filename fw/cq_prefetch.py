@@ -6,7 +6,7 @@ from cq import (
 )
 from fw.consts import CQConfig
 from isa import R
-from ttk.noc import NOC_MAX_BURST_SIZE
+from ttk.noc import NiuCommand
 
 def build_prefetch(core=CQConfig.PREFETCH_CORE):
   fw = Asm("brisc", core)
@@ -15,7 +15,7 @@ def build_prefetch(core=CQConfig.PREFETCH_CORE):
 
 def _emit_prefetch(fw, state):
   queue, queue_end, ring, used, size, cursor, src, dst, left, chunk, pages = state
-  noc = fw.noc(0).initialize(CQConfig.PREFETCH_COORD)
+  noc = fw.noc(0)
   fw.write32(PREFETCH_CREDITS, (DISPATCH_RING_END - DISPATCH_RING_BASE) // PAGE_SIZE)
   fw.li(queue, PREFETCH_QUEUE)
   fw.li(queue_end, PREFETCH_QUEUE + PREFETCH_QUEUE_ENTRIES * 4)
@@ -29,13 +29,14 @@ def _emit_prefetch(fw, state):
   fw.mv(src, cursor); fw.li(dst, PREFETCH_STAGING); fw.mv(left, size)
   fw.label("pcie_read_loop")
   fw.beq(left, R.ZERO, "pcie_read_done")
-  fw.li(chunk, NOC_MAX_BURST_SIZE)
+  fw.li(chunk, NiuCommand.MAX_PACKET_BYTES)
   fw.bltu(chunk, left, "pcie_read_size")
   fw.mv(chunk, left)
   fw.label("pcie_read_size")
-  with noc.read_batch(count=1) as reads:
-    reads.issue(src, CQConfig.PCIE_COORD, dst, chunk, src_mid=CQConfig.PCIE_MID,
-                return_coord=CQConfig.PREFETCH_COORD)
+  noc.read(
+    src, CQConfig.PCIE_COORD, dst, chunk,
+    source_middle_address=CQConfig.PCIE_MID,
+  )
   fw.add(src, src, chunk); fw.add(dst, dst, chunk); fw.sub(left, left, chunk)
   fw.j("pcie_read_loop")
   fw.label("pcie_read_done")
@@ -55,17 +56,19 @@ def _emit_prefetch(fw, state):
   fw.mv(dst, ring); fw.mv(left, size)
   fw.label("dispatch_copy_loop")
   fw.beq(left, R.ZERO, "dispatch_copy_done")
-  fw.li(chunk, NOC_MAX_BURST_SIZE)
+  fw.li(chunk, NiuCommand.MAX_PACKET_BYTES)
   fw.bltu(chunk, left, "dispatch_copy_size")
   fw.mv(chunk, left)
   fw.label("dispatch_copy_size")
-  with noc.write_ack_batch(count=1) as writes: writes.issue(src, dst, CQConfig.DISPATCH_COORD, chunk)
+  noc.write(src, dst, CQConfig.DISPATCH_COORD, chunk, posted=False)
   fw.add(src, src, chunk); fw.add(dst, dst, chunk); fw.sub(left, left, chunk)
   fw.j("dispatch_copy_loop")
   fw.label("dispatch_copy_done")
   fw.write32(CQ_STATE + 0x20, used)
-  with noc.write_ack_batch(count=1) as writes:
-    writes.issue(CQ_STATE + 0x20, DISPATCH_PUBLISHED, CQConfig.DISPATCH_COORD, 4)
+  noc.write(
+    CQ_STATE + 0x20, DISPATCH_PUBLISHED, CQConfig.DISPATCH_COORD, 4,
+    posted=False,
+  )
   fw.slli(left, pages, 12); fw.add(ring, ring, left)
   fw.li(left, DISPATCH_RING_END); fw.bne(ring, left, "dispatch_no_wrap")
   fw.li(ring, DISPATCH_RING_BASE)

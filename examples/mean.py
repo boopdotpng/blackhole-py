@@ -135,7 +135,7 @@ def cross_core_mean(src: Buffer, dst: Buffer, workspace: Buffer, cores, *, root=
       input_reader.reserve_back()
       with p.brisc.scope():
         page = p.brisc.reg(); p.brisc.add(page, start, tile)
-        with noc.read_batch() as reads: reads.issue_dram(src, page, input_reader)
+        noc.read_dram_page(src, page, input_reader)
       input_reader.push_back()
 
   with p.trisc0.scope():
@@ -229,10 +229,10 @@ def cross_core_mean(src: Buffer, dst: Buffer, workspace: Buffer, cores, *, root=
           p.ncrisc.andi(offset, local_index, GATHER_FAN_IN - 1); p.ncrisc.slli(offset, offset, 4)
           p.ncrisc.srli(chunk, local_index, 3); p.ncrisc.slli(chunk, chunk, 11); p.ncrisc.add(offset, offset, chunk)
           p.ncrisc.li(base, gather_cb.addr); p.ncrisc.add(target, offset, base)
-          with noc.write_batch(count=1) as writes: writes.issue(source, target, group_root_coord, PARTIAL_BYTES)
+          noc.write(source, target, group_root_coord, PARTIAL_BYTES)
           p.ncrisc.slli(offset, local_index, 4); p.ncrisc.li(base, ready_addr); p.ncrisc.add(target, offset, base)
           p.ncrisc.li(ready, 1); p.ncrisc.sw(ready, source, 4); p.ncrisc.fence()
-          with noc.write_ack_batch(count=1) as writes: writes.issue(source, target, group_root_coord, PARTIAL_BYTES)
+          noc.write(source, target, group_root_coord, PARTIAL_BYTES)
     partial_reader.pop_front()
     with p.ncrisc.if_(Cond(is_group_root, "!=", 0)):
       with p.ncrisc.scope():
@@ -252,12 +252,10 @@ def cross_core_mean(src: Buffer, dst: Buffer, workspace: Buffer, cores, *, root=
         p.ncrisc.load(group_index, ARGS_BASE + ARG_REGION_GROUP_INDEX); p.ncrisc.slli(group_index, group_index, 4)
         p.ncrisc.load(group_root_coord, ARGS_BASE + ARG_REGION_ROOT_COORD)
         p.ncrisc.li(target, region_gather_cb.addr); p.ncrisc.add(target, target, group_index)
-        with noc.write_batch(count=1) as writes:
-          writes.issue(source, target, group_root_coord, PARTIAL_BYTES)
+        noc.write(source, target, group_root_coord, PARTIAL_BYTES)
         p.ncrisc.li(ready, 1); p.ncrisc.sw(ready, source, 4); p.ncrisc.fence()
         p.ncrisc.li(target, region_ready_addr); p.ncrisc.add(target, target, group_index)
-        with noc.write_ack_batch(count=1) as writes:
-          writes.issue(source, target, group_root_coord, PARTIAL_BYTES)
+        noc.write(source, target, group_root_coord, PARTIAL_BYTES)
       partial_reader.pop_front()
     p.ncrisc.load(local_index, ARGS_BASE + ARG_IS_REGION_ROOT)
     with p.ncrisc.if_(Cond(local_index, "!=", 0)):
@@ -279,8 +277,7 @@ def cross_core_mean(src: Buffer, dst: Buffer, workspace: Buffer, cores, *, root=
         p.ncrisc.li(ready, 1); p.ncrisc.sw(ready, source, 4); p.ncrisc.fence()
         p.ncrisc.load(target, ARGS_BASE + ARG_WORKSPACE_ADDR)
         p.ncrisc.load(group_index, ARGS_BASE + ARG_WORKSPACE_COORD)
-        with noc.write_ack_batch(count=1) as writes:
-          writes.issue(source, target, group_index, PARTIAL_BYTES)
+        noc.write(source, target, group_index, PARTIAL_BYTES)
       partial_reader.pop_front()
     p.ncrisc.load(group_count, ARGS_BASE + ARG_REGION_COUNT)
     with p.ncrisc.if_(Cond(is_root, "!=", 0)):
@@ -291,15 +288,14 @@ def cross_core_mean(src: Buffer, dst: Buffer, workspace: Buffer, cores, *, root=
         for _ in p.ncrisc.range(group_count):
           with p.ncrisc.loop():
             p.ncrisc.lw(local_index, group_index); p.ncrisc.lw(group_size, group_index, 4)
-            with pull_noc.read_batch(count=1) as reads:
-              reads.issue(local_index, group_size, target, PARTIAL_BYTES)
+            pull_noc.read(local_index, group_size, target, PARTIAL_BYTES)
             p.ncrisc.lw(ready, target, 4)
             p.ncrisc.break_(Cond(ready, "!=", 0))
           p.ncrisc.li(ready, 0); p.ncrisc.sw(ready, target, 4)
           p.ncrisc.addi(group_index, group_index, 8); p.ncrisc.addi(target, target, PARTIAL_BYTES)
       final_gather_writer.push_back()
       partial_reader.wait_front()
-      with noc.write_ack_batch(count=1) as writes: writes.issue_dram(dst, 0, partial_reader)
+      noc.write_dram_page(dst, 0, partial_reader)
       partial_reader.pop_front()
 
   tiles_per_core, extra = divmod(src.pages, len(input_cores))

@@ -10,7 +10,7 @@ from fw.consts import CQConfig
 class Device:
   def __init__(self, index: int = 0, sysmem_size: int = 1 << 30):
     self.pcie = PCIDevice(index, sysmem_size)
-    self.dram = Dram(self.pcie.harvested_dram_bank)
+    self.dram = Dram(coords=self.pcie.dram_coords)
     self.program_queue = []
     self.cq = None
     self._staging_write = 0

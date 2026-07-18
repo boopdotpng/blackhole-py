@@ -67,13 +67,17 @@ def _align(value: int): return (value + ALIGN - 1) & -ALIGN
 
 def noc_coord(core: Core):
   x, y = core
+  if any(type(value) is not int or not 0 <= value < 64 for value in core):
+    raise ValueError("NoC coordinate components must be integers in [0, 63]")
   return x | y << 6
 
-def mcast_coord(rect: Rect):
-  (start_x, start_y), (end_x, end_y) = rect
-  packed = start_x | start_y << 6 | end_x << 12 | end_y << 18
-  count = (end_x - start_x + 1) * (end_y - start_y + 1)
-  return packed, count
+def mcast_coords(rect: Rect):
+  start, end = rect
+  if start[0] in (8, 9) or end[0] in (8, 9):
+    raise ValueError("multicast endpoints cannot use columns 8 or 9")
+  if start[0] > end[0] or start[1] > end[1]:
+    raise ValueError("multicast start must precede end")
+  return noc_coord(start), noc_coord(end)
 
 def _payload(data: bytes):
   if not 0 < len(data) <= MAX_WRITE_SIZE:
@@ -112,18 +116,11 @@ class McastWrite:
   rects: tuple[Rect, ...]
   addr: int
   data: bytes
-  counts: tuple[int, ...] | None = None
 
   def lower(self) -> bytes:
     rects = tuple(self.rects)
     data = _payload(self.data)
-    encoded = tuple(mcast_coord(rect) for rect in rects)
-    if self.counts is not None:
-      counts = tuple(self.counts)
-      if len(counts) != len(rects) or any(type(count) is not int or count <= 0 for count in counts):
-        raise ValueError("multicast counts must contain one positive integer per rectangle")
-      encoded = tuple((coordinate, count) for (coordinate, _), count in zip(encoded, counts))
-    targets = b"".join(PacketLayout.MCAST_TARGET.pack(*target) for target in encoded)
+    targets = b"".join(PacketLayout.MCAST_TARGET.pack(*mcast_coords(rect)) for rect in rects)
     return _write_record(Op.MCAST_WRITE, targets, len(rects), self.addr, len(data), data)
 
 @dataclass(frozen=True)

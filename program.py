@@ -65,21 +65,25 @@ class Buffer:
     return values[tuple(slice(0, size) for size in self.shape)].copy()
 
 class Dram:
-  BANKS = 7
   START = 0x40
   END = 1 << 32
   ALIGNMENT = 64
 
-  def __init__(self, harvested_dram_bank: int = 0):
-    from ttk.dram import endpoint_coords
+  def __init__(self, harvested_dram_bank: int = 0, *, coords=None):
+    if coords is None:
+      from pcie import p100_dram_endpoint_coordinates
+      coords = tuple(
+        p100_dram_endpoint_coordinates(harvested_dram_bank, noc) for noc in range(2)
+      )
     self.allocator = Allocator(self.START, self.END, self.ALIGNMENT)
-    self.coords = tuple(endpoint_coords(harvested_dram_bank, noc) for noc in range(2))
+    self.coords = tuple(tuple(noc) for noc in coords)
+    self.banks = len(self.coords[0])
 
   def buffer(self, name: str, dtype: DType, shape: tuple[int, ...],
              padded_shape: tuple[int, ...]):
     buffer = Buffer(name, 0, "device", dtype, shape, padded_shape, self.coords)
     if buffer.page_size % self.ALIGNMENT: raise ValueError("DRAM pages must be 64-byte aligned")
-    pages_per_bank = (buffer.pages + self.BANKS - 1) // self.BANKS
+    pages_per_bank = (buffer.pages + self.banks - 1) // self.banks
     addr = self.allocator.alloc(pages_per_bank * buffer.page_size, name=name)
     return Buffer(name, addr, "device", dtype, shape, padded_shape, self.coords)
 
@@ -242,8 +246,6 @@ class Program:
             rects = rectangles(cores)
             commands.append(McastWrite(
               rects, TensixL1.WORKER_TEXT_BASE[role] + offset, data,
-              tuple(sum(x0 <= x <= x1 and y0 <= y <= y1 for x, y in cores)
-                    for (x0, y0), (x1, y1) in rects),
             ))
     return tuple(commands)
 

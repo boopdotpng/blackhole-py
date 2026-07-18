@@ -13,6 +13,33 @@ libc.msync.restype = ctypes.c_int
 
 IOCTL_MAGIC = 0xFA
 
+P100_DRAM_BANK_YS = (
+  (0, 1, 11), (2, 3, 10), (4, 8, 9), (5, 6, 7),
+  (0, 1, 11), (2, 3, 10), (4, 8, 9), (5, 6, 7),
+)
+
+def p100_dram_tiles(enabled_gddr):
+  return tuple(
+    (bank, 0 if bank < 4 else 9, ys[0])
+    for bank, ys in enumerate(P100_DRAM_BANK_YS) if enabled_gddr >> bank & 1
+  )
+
+def p100_dram_endpoint_coordinates(harvested, noc):
+  half = 4
+  mirror = harvested + half - 1 if harvested < half else harvested - half
+  if harvested < half:
+    right = list(range(half - 1))
+    left = [bank for bank in range(half - 1, 7) if bank != mirror] + [mirror]
+  else:
+    left = [bank for bank in range(half) if bank != mirror] + [mirror]
+    right = list(range(half, 7))
+  bases = {bank: (18, 12 + index * 3) for index, bank in enumerate(right)}
+  bases.update({bank: (17, 12 + index * 3) for index, bank in enumerate(left)})
+  ports = ((2, 1), (0, 1), (0, 1), (0, 1), (2, 1), (2, 1), (2, 1))
+  return tuple(
+    bases[bank][0] | (bases[bank][1] + ports[bank][noc]) << 6 for bank in range(7)
+  )
+
 def _TT_IOCTL(nr, payload_type, result=None, **defaults):
   def call(fd, **kwargs):
     payload = payload_type(**(defaults | kwargs))
@@ -225,6 +252,10 @@ class PCIDevice:
     if len(harvested) != 1:
       raise RuntimeError(f"P100A requires exactly one harvested DRAM bank, got {harvested}")
     self.harvested_dram_bank = harvested[0]
+    self.dram_tiles = p100_dram_tiles(enabled_gddr)
+    self.dram_coords = tuple(
+      p100_dram_endpoint_coordinates(self.harvested_dram_bank, noc) for noc in range(2)
+    )
     cq_cores = {self.prefetch_core, self.dispatch_core}
     self.cores = [(x, y) for x in self.P100A_X for y in range(2, 12) if (x, y) not in cq_cores]
     self.sysmem = Sysmem(self.fd, sysmem_size)

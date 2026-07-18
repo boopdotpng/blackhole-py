@@ -1,5 +1,5 @@
 from asm import Asm
-from fw.consts import CQConfig, Firmware, TensixL1
+from fw.consts import CQConfig, TensixL1
 from isa import R
 from program import Program
 
@@ -10,23 +10,19 @@ SCRATCH = TensixL1.DATA_BUFFER_SPACE_BASE
 def _kernel(write: bool, core, dram_coords):
   fw = Asm("ncrisc", core)
   with fw.scope():
-    x_addr, y_addr = Firmware.NOC_COORDINATE_BASE["ncrisc"]
-    base, sysmem, mid, tile, tiles, size, bank, address, coord, seven, local, tmp = fw.reg(12)
+    base, sysmem, mid, tile, tiles, size, bank, address, coord, banks = fw.reg(10)
     for reg, offset in zip((base, sysmem, mid, tile, tiles, size), range(0, ARGS_WORDS * 4, 4)):
       fw.load(reg, ARGS_BASE + offset)
 
-    fw.load(local, x_addr + 1, bytes=1)
-    fw.load(tmp, y_addr + 1, bytes=1)
-    fw.slli(tmp, tmp, 6); fw.or_(local, local, tmp)
-    noc = fw.noc(1).initialize(local)
-    fw.li(seven, 7)
+    noc = fw.noc(1)
+    fw.li(banks, len(dram_coords))
 
     fw.label("dram_loop")
     fw.beq(tiles, R.ZERO, "dram_done")
-    fw.remu(bank, tile, seven)
-    fw.divu(address, tile, seven)
+    fw.remu(bank, tile, banks)
+    fw.divu(address, tile, banks)
     fw.mul(address, address, size); fw.add(address, address, base)
-    fw.switch(bank, {index: f"dram_bank_{index}" for index in range(7)}, "dram_bad_bank")
+    fw.switch(bank, {index: f"dram_bank_{index}" for index in range(len(dram_coords))}, "dram_bad_bank")
     for index, bank_coord in enumerate(dram_coords):
       fw.label(f"dram_bank_{index}")
       fw.li(coord, bank_coord)
@@ -35,16 +31,17 @@ def _kernel(write: bool, core, dram_coords):
     fw.label("dram_bank_selected")
 
     if write:
-      with noc.read_batch(count=1) as reads:
-        reads.issue(sysmem, CQConfig.PCIE_COORD, SCRATCH, size,
-                    src_mid=mid, return_coord=local)
-      with noc.write_ack_batch(count=1) as writes:
-        writes.issue(SCRATCH, address, coord, size)
+      noc.read(
+        sysmem, CQConfig.PCIE_COORD, SCRATCH, size,
+        source_middle_address=mid,
+      )
+      noc.write(SCRATCH, address, coord, size, posted=False)
     else:
-      with noc.read_batch(count=1) as reads:
-        reads.issue(address, coord, SCRATCH, size, return_coord=local)
-      with noc.write_ack_batch(count=1) as writes:
-        writes.issue(SCRATCH, sysmem, CQConfig.PCIE_COORD, size, dst_mid=mid)
+      noc.read(address, coord, SCRATCH, size)
+      noc.write(
+        SCRATCH, sysmem, CQConfig.PCIE_COORD, size,
+        target_middle_address=mid, posted=False,
+      )
 
     fw.add(sysmem, sysmem, size)
     fw.addi(tile, tile, 1); fw.addi(tiles, tiles, -1)

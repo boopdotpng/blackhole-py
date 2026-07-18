@@ -270,15 +270,13 @@ class Matmul:
     with k.scope():
       source, destination = k.reg(2); coord = k.arg(coord_arg)
       cb.write_ptr(source); k.mv(destination, source)
-      with noc.write_batch() as writes:
-        writes.multicast(source, destination, coord, size)
+      noc.multicast_write(source, destination, coord, size)
 
   @staticmethod
   def _send_signal(noc, address, coord_arg):
     with noc.asm.scope():
       coord = noc.asm.arg(coord_arg)
-      with noc.write_batch() as writes:
-        writes.multicast(address, address, coord, 4)
+      noc.multicast_write(address, address, coord, 4)
 
   def read_a(self):
     """Emit the double-buffered BRISC A reader."""
@@ -289,18 +287,17 @@ class Matmul:
       with k.scope():
         base_page, destination = k.arg(self.A_PAGE), k.reg()
         self.a_reader.write_ptr(destination)
-        with noc.read_batch(count=plan.a_tiles) as reads:
-          for index in k.range(plan.a_tiles):
-            with k.scope():
-              row, inner, page, dst, offset = k.reg(5, exclude=(block, index))
-              k.li(offset, plan.block_w)
-              k.divu(row, index, offset); k.remu(inner, index, offset)
-              k.li(offset, self.a.padded_shape[1] // TILE); k.mul(page, row, offset)
-              k.li(offset, plan.block_w); k.mul(offset, block, offset)
-              k.add(page, page, offset); k.add(page, page, inner); k.add(page, page, base_page)
-              src, coord = noc.dram_page(self.a, page)
-              k.slli(offset, index, 11); k.add(dst, destination, offset)
-              reads.issue(src, coord, dst, TILE_BYTES)
+        for index in k.range(plan.a_tiles):
+          with k.scope():
+            row, inner, page, dst, offset = k.reg(5, exclude=(block, index))
+            k.li(offset, plan.block_w)
+            k.divu(row, index, offset); k.remu(inner, index, offset)
+            k.li(offset, self.a.padded_shape[1] // TILE); k.mul(page, row, offset)
+            k.li(offset, plan.block_w); k.mul(offset, block, offset)
+            k.add(page, page, offset); k.add(page, page, inner); k.add(page, page, base_page)
+            src, coord = noc.dram_page(self.a, page)
+            k.slli(offset, index, 11); k.add(dst, destination, offset)
+            noc.read(src, coord, dst, TILE_BYTES)
       self.a_reader.push_back(plan.a_block_pages)
     return self
 
@@ -316,18 +313,17 @@ class Matmul:
       with k.scope():
         base_page, destination = k.arg(self.A_PAGE), k.reg()
         self.a_reader.write_ptr(destination)
-        with noc.read_batch(count=plan.a_tiles) as reads:
-          for index in k.range(plan.a_tiles):
-            with k.scope():
-              row, inner, page, dst, offset = k.reg(5, exclude=(block, index))
-              k.li(offset, plan.block_w)
-              k.divu(row, index, offset); k.remu(inner, index, offset)
-              k.li(offset, self.a.padded_shape[1] // TILE); k.mul(page, row, offset)
-              k.li(offset, plan.block_w); k.mul(offset, block, offset)
-              k.add(page, page, offset); k.add(page, page, inner); k.add(page, page, base_page)
-              src, coord = noc.dram_page(self.a, page)
-              k.slli(offset, index, 11); k.add(dst, destination, offset)
-              reads.issue(src, coord, dst, TILE_BYTES)
+        for index in k.range(plan.a_tiles):
+          with k.scope():
+            row, inner, page, dst, offset = k.reg(5, exclude=(block, index))
+            k.li(offset, plan.block_w)
+            k.divu(row, index, offset); k.remu(inner, index, offset)
+            k.li(offset, self.a.padded_shape[1] // TILE); k.mul(page, row, offset)
+            k.li(offset, plan.block_w); k.mul(offset, block, offset)
+            k.add(page, page, offset); k.add(page, page, inner); k.add(page, page, base_page)
+            src, coord = noc.dram_page(self.a, page)
+            k.slli(offset, index, 11); k.add(dst, destination, offset)
+            noc.read(src, coord, dst, TILE_BYTES)
       with k.scope():
         actual, expected, scale = k.reg(3, exclude=block)
         k.addi(expected, block, 1); k.li(scale, len(plan.cols) - 1)
@@ -345,8 +341,7 @@ class Matmul:
     k.label(receiver)
     for block in k.range(plan.num_blocks):
       self.a_reader.reserve_back(plan.a_block_pages)
-      with noc.atomic_batch(count=1) as atomics:
-        atomics.issue(self.a_ready, k.arg(self.A_SENDER_COORD))
+      noc.atomic_increment(self.a_ready, k.arg(self.A_SENDER_COORD))
       with k.scope():
         actual, expected = k.reg(2, exclude=block); k.addi(expected, block, 1)
         wait = k._new_label("a_wait_signal")
@@ -366,18 +361,17 @@ class Matmul:
       with k.scope():
         base_page, destination = k.arg(self.B_PAGE), k.reg()
         self.b_reader.write_ptr(destination)
-        with noc.read_batch(count=plan.b_tiles) as reads:
-          for index in k.range(plan.b_tiles):
-            with k.scope():
-              row, col, page, dst, offset = k.reg(5, exclude=(block, index))
-              k.li(offset, plan.per_core_n)
-              k.divu(row, index, offset); k.remu(col, index, offset)
-              k.li(offset, plan.block_w); k.mul(offset, block, offset); k.add(row, row, offset)
-              k.li(offset, self.b.padded_shape[1] // TILE); k.mul(page, row, offset)
-              k.add(page, page, col); k.add(page, page, base_page)
-              src, coord = noc.dram_page(self.b, page)
-              k.slli(offset, index, 11); k.add(dst, destination, offset)
-              reads.issue(src, coord, dst, TILE_BYTES)
+        for index in k.range(plan.b_tiles):
+          with k.scope():
+            row, col, page, dst, offset = k.reg(5, exclude=(block, index))
+            k.li(offset, plan.per_core_n)
+            k.divu(row, index, offset); k.remu(col, index, offset)
+            k.li(offset, plan.block_w); k.mul(offset, block, offset); k.add(row, row, offset)
+            k.li(offset, self.b.padded_shape[1] // TILE); k.mul(page, row, offset)
+            k.add(page, page, col); k.add(page, page, base_page)
+            src, coord = noc.dram_page(self.b, page)
+            k.slli(offset, index, 11); k.add(dst, destination, offset)
+            noc.read(src, coord, dst, TILE_BYTES)
       self.b_reader.push_back(plan.b_block_pages)
 
     return self._write_output(noc)
@@ -394,18 +388,17 @@ class Matmul:
       with k.scope():
         base_page, destination = k.arg(self.B_PAGE), k.reg()
         self.b_reader.write_ptr(destination)
-        with noc.read_batch(count=plan.b_tiles) as reads:
-          for index in k.range(plan.b_tiles):
-            with k.scope():
-              row, col, page, dst, offset = k.reg(5, exclude=(block, index))
-              k.li(offset, plan.per_core_n)
-              k.divu(row, index, offset); k.remu(col, index, offset)
-              k.li(offset, plan.block_w); k.mul(offset, block, offset); k.add(row, row, offset)
-              k.li(offset, self.b.padded_shape[1] // TILE); k.mul(page, row, offset)
-              k.add(page, page, col); k.add(page, page, base_page)
-              src, coord = noc.dram_page(self.b, page)
-              k.slli(offset, index, 11); k.add(dst, destination, offset)
-              reads.issue(src, coord, dst, TILE_BYTES)
+        for index in k.range(plan.b_tiles):
+          with k.scope():
+            row, col, page, dst, offset = k.reg(5, exclude=(block, index))
+            k.li(offset, plan.per_core_n)
+            k.divu(row, index, offset); k.remu(col, index, offset)
+            k.li(offset, plan.block_w); k.mul(offset, block, offset); k.add(row, row, offset)
+            k.li(offset, self.b.padded_shape[1] // TILE); k.mul(page, row, offset)
+            k.add(page, page, col); k.add(page, page, base_page)
+            src, coord = noc.dram_page(self.b, page)
+            k.slli(offset, index, 11); k.add(dst, destination, offset)
+            noc.read(src, coord, dst, TILE_BYTES)
       with k.scope():
         actual, expected, scale = k.reg(3, exclude=block)
         k.addi(expected, block, 1); k.li(scale, len(plan.rows) - 1)
@@ -423,8 +416,7 @@ class Matmul:
     k.label(receiver)
     for block in k.range(plan.num_blocks):
       self.b_reader.reserve_back(plan.b_block_pages)
-      with noc.atomic_batch(count=1) as atomics:
-        atomics.issue(self.b_ready, k.arg(self.b_sender_coord))
+      noc.atomic_increment(self.b_ready, k.arg(self.b_sender_coord))
       with k.scope():
         actual, expected = k.reg(2, exclude=block); k.addi(expected, block, 1)
         wait = k._new_label("b_wait_signal")
@@ -441,21 +433,20 @@ class Matmul:
     with k.scope():
       output_base = k.arg(self.C_PAGE); source_base, sequential = k.reg(2)
       self.output_writer.read_ptr(source_base); k.li(sequential, 0)
-      with noc.write_batch(count=plan.output_tiles) as writes:
-        for block_m in k.range(plan.m_subblocks):
-          for block_n in k.range(plan.n_subblocks):
-            for tile_m in range(plan.subblock_h):
-              for tile_n in range(plan.subblock_w):
-                with k.scope():
-                  page, source, delta, logical = k.reg(4, exclude=(block_m, block_n, sequential))
-                  k.li(delta, plan.subblock_h); k.mul(logical, block_m, delta)
-                  _add_constant(k, logical, tile_m); k.li(delta, plan.nt); k.mul(page, logical, delta)
-                  k.li(delta, plan.subblock_w); k.mul(logical, block_n, delta)
-                  k.add(page, page, logical); _add_constant(k, page, tile_n); k.add(page, page, output_base)
-                  dst, coord = noc.dram_page(self.output, page)
-                  k.slli(delta, sequential, 11); k.add(source, source_base, delta)
-                  writes.issue(source, dst, coord, TILE_BYTES)
-                k.addi(sequential, sequential, 1)
+      for block_m in k.range(plan.m_subblocks):
+        for block_n in k.range(plan.n_subblocks):
+          for tile_m in range(plan.subblock_h):
+            for tile_n in range(plan.subblock_w):
+              with k.scope():
+                page, source, delta, logical = k.reg(4, exclude=(block_m, block_n, sequential))
+                k.li(delta, plan.subblock_h); k.mul(logical, block_m, delta)
+                _add_constant(k, logical, tile_m); k.li(delta, plan.nt); k.mul(page, logical, delta)
+                k.li(delta, plan.subblock_w); k.mul(logical, block_n, delta)
+                k.add(page, page, logical); _add_constant(k, page, tile_n); k.add(page, page, output_base)
+                dst, coord = noc.dram_page(self.output, page)
+                k.slli(delta, sequential, 11); k.add(source, source_base, delta)
+                noc.write(source, dst, coord, TILE_BYTES)
+              k.addi(sequential, sequential, 1)
     self.output_writer.pop_front(plan.output_tiles)
     k.delay_cycles(10000)
     return self
