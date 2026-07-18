@@ -1,359 +1,313 @@
-# Blackhole NoC
+# noc documentation, as blackhole-py uses it
 
-This document describes the interface implemented by [`ttk/noc.py`](../ttk/noc.py).
-It covers the generated RISC-V code and the Blackhole NIU registers that code
-uses.
+There are 5 basic NoC operations: 
+- unicast read 
+- unicast write 
+- multicast write
+- inline write
+- atomic increment,
 
-## Instances and command buffers
+an overlay stream (niu state machines in hardware) that you can use to transfer large amounts of data around the chip without holding up the risc-v processor on the chip, 
 
-Every Tensix tile has two Network Interface Units (NIUs). NIU 0 connects to
-NoC 0 and NIU 1 connects to NoC 1. They expose the same programming interface
-through separate register banks and status counters.
+and completion / status counters so you can figure out if your request was fulfilled. 
 
-| NoC index | NIU base | Available from |
-|---:|---:|---|
-| 0 | `0xFFB2_0000` | BRISC or NCRISC program stream |
-| 1 | `0xFFB3_0000` | BRISC or NCRISC program stream |
+## hardware per tile
+Every tile has access to two NoCs (through two NIUs), going in opposite directions: 
+- noc 0 starts at 0,0 (top left) and can only transfer packets down and right. 
+- noc 1 starts at the bottom-most tile (this differs on p100a vs p150a) and can only transfer left and up
 
-BRISC and NCRISC explicitly select an instance with `k.noc(0)` or `k.noc(1)`.
-TRISC kernels cannot access either NoC. NoC 0 normally routes X then Y and NoC
-1 routes Y then X. A program may choose different instances to overlap traffic.
+In addition to the two NIUs, each tile has 64 overlay streams (shared by both NIUs) that can be configured for long-running transfers. 
 
-### Striped DRAM pages
+### NiU
+I'm not sure how tenstorrent defines this (this is purely my speculation based on microbenches), but on every NIU there is a router with 5 ports: north, south, east, west, and a port connecting to the tile's L1. When a packet goes through a tile, it passes through the router, which decides what direction to forward the packet in or to write it into the tile's L1. 
 
-Device buffers carry seven harvested DRAM endpoint coordinates for each NoC.
-`NoC.dram_page(buffer, page)` maps a logical tiled page to:
+This is where the concept of VCs, static VCs, path reserve, priority, etc come into play, but from my microbenches, this is completely unnecessary overhead that almost never makes a real difference to throughput or contention. 
 
-```text
-bank       = page % 7
-bank_page  = page // 7
-address    = buffer_base + bank_page * buffer.page_size
-coordinate = buffer.dram_coords[noc][bank]
-```
+## an average noc request 
+For the five basic NoC operations, the flow is generally: 
+- make sure there is no existing command (poll `noc_cmd_ctrl = 0`)
+- snapshot completion counter
+- write all your config to the mmio registers for the NoC you want to use 
+- poke the niu_cmd_ctrl register, which triggers the transaction
+- read back the control register (orders the risc-v store before the counter read)
+- poll on a completion counter or wait for the returned ack (if nonposted, more info later)
+- fence
 
-The page may be a compile-time integer or a runtime RISC register. Completion
-batches can issue directly between a device buffer page and a role-local CB:
+### Configuration registers
 
-```python
-input_cb.reserve_back()
-with noc.read_batch() as reads:
-  reads.issue_dram(src, page, input_cb)
-input_cb.push_back()
+Each NIU has four identical request initiators, which we call **command
+buffers**. A command buffer is an MMIO register block containing one complete
+NoC request. Because operations wait until submission has consumed the command
+image, `noc.py` uses buffer 0 for every request type; the other three remain
+available for a future concurrent submitter.
 
-output_cb.wait_front()
-with noc.write_ack_batch() as writes:
-  writes.issue_dram(dst, page, output_cb)
-output_cb.pop_front()
-```
+#### Command-buffer layout
 
-The issue helper selects the DRAM address and current CB pointer. It does not
-reserve, publish, wait for CB data, or release CB space; those synchronization
-operations remain explicit.
+The names below are the semantic names used by `noc.py`. The hardware calls the
+source group `NOC_TARG_ADDR` and the target group `NOC_RET_ADDR`; those names
+are awkward because their roles change with the request type.
 
-Each NIU has four request initiators, also called command buffers. The API
-assigns each operation a fixed buffer:
-
-| Buffer | Offset | API use |
-|---:|---:|---|
-| 0 | `0x0000` | posted writes and multicast writes |
-| 1 | `0x0800` | reads |
-| 2 | `0x1000` | unused |
-| 3 | `0x1800` | atomic increments |
-
-For NoC index `n` and command buffer `b`:
-
-```text
-base = 0xFFB2_0000 + (n << 16) + (b << 11)
-```
-
-The buffer choice is private. Callers select an operation with `read()`,
-`write()`, `multicast()`, or `atomic_inc()`.
-
-## Initialization and coordinates
-
-Obtain the role-owned `NoC` from the builder passed to a kernel function, then
-record the initiating tile's logical coordinate:
-
-```py
-def brisc(k):
-  noc = k.noc(0)
-  noc.initialize(NoC.static_coord(*k.core), atomic_return=4)
-```
-
-`initialize()` only records values in the Python object; it emits no
-instructions. Because every core is lowered independently, `k.core` can be
-packed into an immediate at compile time. The local coordinate is used as the
-return coordinate for reads and atomics and as the source coordinate for
-writes. `atomic_return` is the local L1 address where an atomic response stores
-the old value. The defaults after construction are no local coordinate and
-atomic return address `4`.
-
-An explicit `return_coord=` lets a read or atomic override the recorded local
-coordinate. A write always needs `initialize()`. Omitting both the recorded and
-explicit coordinate raises `RuntimeError` while generating the kernel.
-
-`logical_coord(out)` emits a load of the current NIU's `NOC_ID_LOGICAL`
-configuration register at `NIU_BASE + 0x148`, stores it in `out`, and returns
-`out`.
-
-Unicast coordinates use six bits per axis:
-
-```text
-coord = x | (y << 6)
-```
-
-Multicast rectangles place the inclusive end coordinate in the low 12 bits and
-the inclusive start coordinate in the next 12 bits:
-
-```text
-rectangle = end_x | (end_y << 6) | (start_x << 12) | (start_y << 18)
-```
-
-The coordinate helpers are:
-
-| Method | Inputs | Result |
-|---|---|---|
-| `NoC.static_coord(x, y)` | Python `int` values | packed Python `int` |
-| `NoC.static_multicast_coord(start, end)` | two `(x, y)` tuples of Python `int` values | packed Python `int` |
-| `pack_coord(out, x, y)` | RISC-V registers | emits `out = x \| (y << 6)` and returns `out` |
-| `pack_multicast_coord(out, start, end)` | packed coordinate registers | emits `out = end \| (start << 12)` and returns `out` |
-
-The helpers do not range-check or mask axes. Callers must supply coordinates
-valid for the NIU's current translation configuration.
-
-## Command registers
-
-All offsets are relative to a command-buffer base.
-
-| Offset | Register | API use |
+| Offset | `noc.py` name | Contents |
 |---:|---|---|
-| `0x00` | `NOC_TARG_ADDR_LO` | target address bits 0–31 |
-| `0x04` | `NOC_TARG_ADDR_MID` | target upper address and routing bits; currently `0` |
-| `0x08` | `NOC_TARG_ADDR_COORDINATE` | target/source coordinate |
-| `0x0C` | `NOC_RET_ADDR_LO` | return address bits 0–31 |
-| `0x10` | `NOC_RET_ADDR_MID` | return upper address and routing bits; currently `0` |
-| `0x14` | `NOC_RET_ADDR_COORDINATE` | return/destination coordinate or multicast rectangle |
-| `0x18` | `NOC_PACKET_TAG` | transaction tag; the API writes `0` |
-| `0x1C` | `NOC_CTRL` | request, response, VC, and multicast flags |
-| `0x20` | `NOC_AT_LEN_BE` | byte count or atomic instruction |
-| `0x24` | `NOC_AT_LEN_BE_1` | upper length/byte-enable word; the API writes `0` |
-| `0x28` | `NOC_AT_DATA` | atomic increment value |
-| `0x2C` | `NOC_BRCST_EXCLUDE` | multicast exclusions |
-| `0x40` | `NOC_CMD_CTRL` | write `1` to issue |
+| `0x00` | `SOURCE_ENDPOINT + 0` | Low 32 bits of the source address |
+| `0x04` | `SOURCE_ENDPOINT + 4` | High 32 bits of the source address |
+| `0x08` | `SOURCE_ENDPOINT + 8` | Source coordinate |
+| `0x0c` | `TARGET_ENDPOINT + 0` | Low 32 bits of the target address |
+| `0x10` | `TARGET_ENDPOINT + 4` | High 32 bits of the target address |
+| `0x14` | `TARGET_ENDPOINT + 8` | Target coordinate or multicast rectangle |
+| `0x18` | `PACKET_TAG` | Four-bit transaction ID in bits `10..13` |
+| `0x1c` | `PACKET_OPTIONS` | Operation, completion, multicast, routing, and VC flags |
+| `0x20` | `PACKET_BYTES` | Byte count, byte enables, or atomic encoding |
+| `0x24` | `PACKET_BYTES + 4` | Upper 32 bits; currently written as `0` |
+| `0x28` | `IMMEDIATE_DATA` | Inline-write value or atomic operand |
+| `0x2c` | `MULTICAST_EXCLUSIONS` | Optional multicast recipient filtering |
+| `0x40` | `SEND_REQUEST` | Write `1` to submit the configured request |
 
-Before changing a buffer, generated code polls `NOC_CMD_CTRL` until it is
-zero. It then writes the complete required register image and writes
-`NOC_CMD_CTRL = 1` last. A zero means the NIU accepted the request, not that
-the data transfer completed.
+There are two special cases:
 
-The target and return names follow packet flow:
+- An inline write puts its remote destination in the source endpoint group;
+  the target group is unused.
+- An atomic puts the remote operand address in the source group and the
+  optional response address in the target group.
 
-| Operation | `TARG` fields | `RET` fields |
+#### `PACKET_BYTES`
+
+For ordinary transfers this is the exact number of bytes moved:
+
+| Request | Meaning of `PACKET_BYTES` |
+|---|---|
+| Read | Bytes read from the remote source into local L1 |
+| Write | Bytes copied from local L1 to the remote target |
+| Multicast write | Bytes copied to **each** recipient |
+| Inline write | `0xF`, representing four enabled bytes |
+| Atomic increment | Atomic-operation encoding, not a byte count |
+
+The atomic increment encoding used here is
+`(1 << 12) | (31 << 2) == 0x107c`, meaning increment-and-get on a 32-bit word.
+An ordinary Blackhole NIU request can move at most 16 KiB. Larger logical
+transfers must be split into multiple requests or use the overlay engine.
+
+#### `PACKET_OPTIONS`
+
+`NoC._packet_options()` builds this register from the requested operation and
+the policy fields on `NoC`:
+
+| Bits | Hardware field | Behavior in `noc.py` |
+|---:|---|---|
+| `0..1` | Request type | `0` read, `1` atomic, or `2` write |
+| `3` | Inline write | Set only by `inline_write()` |
+| `4` | Response marked | Set for reads and for non-posted writes/atomics |
+| `5` | Multicast | Set only by `multicast_write()` |
+| `6` | VC linked | Set when `linked=True` |
+| `7` | Static VC | Always set |
+| `8` | Multicast path reservation | Controlled by `reserve_multicast_path`; default `True` |
+| `13..15` | Static VC number | `unicast_vc=1` or `multicast_vc=4` by default |
+| `16` | Y-major multicast | Controlled by `multicast_along_y`; default `False` |
+| `17` | Include sender | Controlled by `multicast_include_sender`; default `False` |
+| `27..30` | Arbitration priority | Controlled by `arbitration_priority`; default `0` |
+
+All omitted and reserved bits are written as zero.
+
+For writes and atomics, `posted` controls bit 4 and what completion means:
+
+```text
+posted=True:   wait until the local NIU has sent the request
+posted=False:  wait for an acknowledgement/response from the destination
+```
+
+A posted write completing does not, by itself, prove that the destination has
+already committed the data.
+
+`linked=True` says that another request will continue the same transaction and
+retain its VC/path. The final request in the sequence must use `linked=False`,
+and every request in the sequence must use a compatible destination and VC.
+Incorrectly using this flag can stall the NoC.
+
+#### `MULTICAST_EXCLUSIONS`
+
+A multicast normally sends to every eligible tile in the target rectangle.
+`MULTICAST_EXCLUSIONS` is an additional hardware-encoded filter that can turn
+that rectangle into a non-rectangular recipient set:
+
+```text
+target rectangle − excluded region/filter = actual recipients
+```
+
+It is not a simple one-bit-per-core bitmap. The current `multicast_write()` API
+does not expose the encoding and writes `0`, meaning no additional filtering.
+The initiating tile may still be excluded independently because
+`multicast_include_sender` defaults to `False`.
+
+For a non-posted multicast, `destinations` must equal the actual number of
+recipients. A value that is too high can wait forever for acknowledgements that
+will never arrive; a value that is too low can return before every recipient
+has acknowledged the write.
+
+### a note about packets 
+The max packet size on blackhole is 16kb; a packet generally looks like 
+```text
+64-byte packet header........up to 256 flits containing data 
+```
+
+Inline writes are very fast because they put the data inside the 64-byte packet header (not all of it is actually used). 
+
+The packet header contains information about how to route the packet through the NoC, so that every router knows what to do with the packet. If you submit a transfer exceeding 16kb, the hardware will automatically split your transfer up into multiple packets. You don't need to loop in risc-v to submit large transfers. 
+
+### completion counters 
+There are two buckets of completion counters, one transaction-id based, and a general set of completion counters for all 4 command buffers and the overlay stream on the NIU. The NIU actually has 64 lifecycle counters (to track various noc related things, some of these are debug), but only a few are actually useful as completion conditions: 
+
+ ```text
+   Indices  0–15   master cumulative event counters (32-bit wrapping)
+   Indices 16–31   REQS_OUTSTANDING_ID(0–15)
+   Indices 32–47   WRITE_REQS_OUTGOING_ID(0–15)
+   Indices 48–61   slave cumulative event counters
+ ```
+
+#### 1. Master-side cumulative counters
+
+These counters describe traffic initiated by this NIU. They are cumulative
+32-bit event totals rather than live outstanding counts, so software normally
+snapshots them or compares them against its own number of issued requests.
+They are shared by all four command buffers and all transaction IDs on the
+NIU.
+
+| Index | Counter | Meaning |
+|---:|---|---|
+| 0 | `NIU_MST_ATOMIC_RESP_RECEIVED` | Atomic response received and written to the return address |
+| 1 | `NIU_MST_WR_ACK_RECEIVED` | Non-posted write acknowledgement received |
+| 2 | `NIU_MST_RD_RESP_RECEIVED` | Read response received and written to the return address |
+| 3 | `NIU_MST_RD_DATA_WORD_RECEIVED` | Read-response data flits received |
+| 4 | `NIU_MST_CMD_ACCEPTED` | Request obtained its first-hop VC; this is acceptance, not completion |
+| 5 | `NIU_MST_RD_REQ_SENT` | Read-request packets sent |
+| 6 | `NIU_MST_NONPOSTED_ATOMIC_SENT` | Response-marked atomic packets sent |
+| 7 | `NIU_MST_POSTED_ATOMIC_SENT` | Posted atomic packets sent |
+| 8 | `NIU_MST_NONPOSTED_WR_DATA_WORD_SENT` | Non-posted write data flits sent |
+| 9 | `NIU_MST_POSTED_WR_DATA_WORD_SENT` | Posted write data flits sent |
+| 10 | `NIU_MST_NONPOSTED_WR_REQ_SENT` | Non-posted write packets sent |
+| 11 | `NIU_MST_POSTED_WR_REQ_SENT` | Posted write packets sent |
+| 12 | `NIU_MST_NONPOSTED_WR_REQ_STARTED` | Non-posted write packets started |
+| 13 | `NIU_MST_POSTED_WR_REQ_STARTED` | Posted write packets started |
+| 14 | `NIU_MST_RD_REQ_STARTED` | Read-request packets started |
+| 15 | `NIU_MST_NONPOSTED_ATOMIC_STARTED` | Non-posted atomic requests started |
+
+Here, a data "word" means one 512-bit / 64-byte NoC data flit. The most
+useful cumulative completion events are:
+
+```text
+RD_RESP_RECEIVED      read response has landed at the return NIU
+WR_ACK_RECEIVED       remote non-posted write has been acknowledged
+ATOMIC_RESP_RECEIVED  non-posted atomic response has landed
+```
+
+These counters work well when one software owner knows exactly how many
+operations the whole NIU has issued. The transaction-ID counters below are
+usually easier when several independent groups are in flight.
+
+#### 2. Transaction-ID-specific counters
+
+`PACKET_TAG` contains a four-bit software-selected transaction ID (`0..15`).
+The ID is an accounting tag, not a hardware-allocated handle: requests that
+reuse an active ID are deliberately merged into the same counter bucket. The
+buckets are per NIU, so NoC 0 / TID 5 and NoC 1 / TID 5 are independent.
+
+##### `NIU_MST_REQS_OUTSTANDING_ID(tid)`
+
+This is an eight-bit live count of response-bearing packets that have not yet
+returned their expected response:
+
+| Operation | Increment | Decrement |
+|---|---:|---|
+| Read | One per resulting packet | When each read response is stored at the return NIU |
+| Non-posted write | One per resulting packet | When each write acknowledgement arrives |
+| Non-posted atomic | One | When its response is stored at the return NIU |
+| Posted write or atomic | None | None |
+| Non-posted inline write | One | When its acknowledgement arrives |
+| Posted inline write | None | None |
+
+Consequently,
+
+```text
+REQS_OUTSTANDING_ID(tid) == 0
+```
+
+proves that all currently tracked response-bearing requests with that ID have
+completed at the return NIU. For a read, the returned data has been written to
+its local destination. For a non-posted write, the remote write has been
+acknowledged. Posted operations never enter this counter, so zero says nothing
+about their remote completion.
+
+This is the only counter array that supports return-to-zero notification via
+`NIU_TRANS_COUNT_RTZ_SOURCE` and the NIU interrupt machinery.
+
+##### `NIU_MST_WRITE_REQS_OUTGOING_ID(tid)`
+
+This is an eight-bit live count of non-inline write packets whose payload has
+not yet been completely read from the initiating tile's source memory:
+
+| Operation | Uses this counter? |
+|---|---:|
+| Posted non-inline write | Yes |
+| Non-posted non-inline write | Yes |
+| Byte-enable non-inline write | Yes, as one request |
+| Inline write | No |
+| Read or atomic | No |
+
+Therefore,
+
+```text
+WRITE_REQS_OUTGOING_ID(tid) == 0
+```
+
+means the NIU no longer needs the source L1 data for those writes. The source
+buffer can be reused, but this does not prove that a posted write has reached
+its destination. This counter does not have a return-to-zero interrupt.
+
+Automatic splitting contributes one count per generated packet. For example,
+a 40 KiB transfer tagged with TID 5 contributes three counts: 16 KiB, 16 KiB,
+and 8 KiB. Because both TID counter arrays are only eight bits wide, software
+must avoid having enough same-ID packet counts in flight to overflow them.
+
+#### 3. What zero proves
+
+| Operation | `WRITE_REQS_OUTGOING_ID(tid) == 0` | `REQS_OUTSTANDING_ID(tid) == 0` |
 |---|---|---|
-| Read | remote source | local response destination |
-| Write/multicast | local source | remote destination(s) |
-| Atomic increment | remote operand | local old-value destination |
+| Read | Not applicable | Return data has landed at the return NIU |
+| Posted write | Source L1 is reusable | Always zero; no remote-completion guarantee |
+| Non-posted write | Source L1 is reusable | Remote write has been acknowledged |
+| Posted atomic | Not applicable | Always zero; no remote-completion guarantee |
+| Non-posted atomic | Not applicable | Atomic response has been received |
+| Posted inline write | Not applicable | Always zero |
+| Non-posted inline write | Not applicable | Remote write has been acknowledged |
 
-Every ordinary issue returns the same `NoC` object, allowing chaining.
+For a non-posted write, the two useful completion points are:
 
-## Reads
-
-```py
-noc.read(src, src_coord, dst, size, return_coord=local_coord)
+```text
+submit
+   │
+   ├── WRITE_REQS_OUTGOING_ID(tid) becomes zero
+   │       source L1 can be reused
+   │
+   └── REQS_OUTSTANDING_ID(tid) becomes zero
+           destination has acknowledged the write
 ```
 
-`read()` uses command buffer 1. `size` must be a Python `int` from 1 through
-16 KiB. Its complete command image is:
+For a posted write there is no acknowledgement, so the outgoing counter can
+only prove source-side completion. If software needs proof of remote arrival,
+it must follow the posted writes with an appropriately ordered non-posted
+request and wait for that response.
 
-| Register | Value |
-|---|---|
-| `NOC_CTRL` | `0x2090`: response-marked read on static VC 1 |
-| `NOC_PACKET_TAG` | `0` |
-| `NOC_TARG_ADDR_LO/MID/COORDINATE` | `src`, `0`, `src_coord` |
-| `NOC_RET_ADDR_LO/MID/COORDINATE` | `dst`, `0`, local or explicit return coordinate |
-| `NOC_AT_LEN_BE`, `NOC_AT_LEN_BE_1` | `size`, `0` |
-| `NOC_CMD_CTRL` | `1`, written last |
+## overlay streams 
 
-The response carries the requested data. Use `read_batch()` to wait until a
-group of reads is committed to its local destinations.
+A stream is a hardware configurable state machine containing: 
+- source and destination configuration
+- phase state
+- l1 ring buffer pointers
+- message counts
+- destination space credits
+- source-read completion tracking
+- remote tile coordinates and stream id
+- selected NoC
 
-## Posted writes
+A tensix tile has 64 streams, a dram tile has 16. 
 
-```py
-noc.write(src, dst, dst_coord, size)
-```
-
-`write()` uses command buffer 0. `size` must be a Python `int` from 1 through
-16 KiB. Its complete command image is:
-
-| Register | Value |
-|---|---|
-| `NOC_CTRL` | `0x2082`: posted write on static VC 1 |
-| `NOC_PACKET_TAG` | `0` |
-| `NOC_TARG_ADDR_LO/MID/COORDINATE` | `src`, `0`, initialized local coordinate |
-| `NOC_RET_ADDR_LO/MID/COORDINATE` | `dst`, `0`, `dst_coord` |
-| `NOC_AT_LEN_BE`, `NOC_AT_LEN_BE_1` | `size`, `0` |
-| `NOC_CMD_CTRL` | `1`, written last |
-
-Writes are posted and generate no destination acknowledgement. Exiting a
-`write_batch()` proves that the NIU consumed and injected the source payloads.
-It does not prove that the destinations stored them.
-
-## Repeated read and write streams
-
-Streams program invariant fields once and keep the command-buffer base,
-scratch value, and send value in RISC-V registers. They are intended for hot
-loops with at least two same-sized transfers:
-
-```py
-with noc.read_stream(tile_bytes, return_coord=local_coord) as reads:
-  with reads.batch():
-    reads.issue(src, src_coord, dst)
-    reads.issue(next_src, next_coord, next_dst)
-
-with noc.write_stream(tile_bytes) as writes:
-  with writes.batch():
-    writes.issue(src, dst, dst_coord)
-    writes.issue(next_src, next_dst, next_coord)
-```
-
-`read_stream()` and `write_stream()` apply the same 1–16 KiB validation as
-their ordinary operations. Entering a read stream writes the read control,
-tag, both MID fields, return coordinate, and size fields. Each `issue()` waits
-for readiness and updates `TARG_LO`, `TARG_COORDINATE`, and `RET_LO`.
-
-Entering a write stream writes the write control, tag, both MID fields, local
-source coordinate, and size fields. Each `issue()` updates `TARG_LO`,
-`RET_LO`, and `RET_COORDINATE`.
-
-A stream exclusively owns its operation's command buffer until context exit.
-An ordinary operation using that buffer or a second stream of the same kind
-raises `RuntimeError` during generation. Skipping an `issue()` in a runtime
-branch is safe because the next issue updates every dynamic field.
-
-Stream `issue()` methods return `None`. A nested `batch()` infers the number of
-statically generated issues and waits when its context exits. Pass
-`batch(count=runtime_count)` when a runtime loop or branch determines how many
-issues execute.
-
-## Multicast writes
-
-```py
-packets = noc.multicast(src, dst, rectangle, size,
-                        exclude=0, along_y=False)
-```
-
-`multicast()` uses write buffer 0 and requires a positive Python integer size.
-Unlike `write()`, it accepts more than 16 KiB and emits
-`ceil(size / 16 KiB)` packets at generation time. It returns that packet count;
-`WriteBatch.multicast()` includes all of those packets in its inferred count.
-
-Each packet writes the ordinary posted-write image plus
-`NOC_BRCST_EXCLUDE = exclude`. The base control value is `0xA1A2`: posted
-broadcast, static VC 5, with path reservation. `along_y=True` adds
-`NOC_CMD_BRCST_XY`.
-
-For a multi-packet transfer:
-
-1. The first packet reserves the path.
-2. Every non-final packet sets `NOC_CMD_VC_LINKED`.
-3. Packets after the first omit path reservation.
-4. The final packet is unlinked, releasing the path.
-5. Source and destination addresses advance by 16 KiB per packet.
-
-If either address is a RISC-V register, `multicast()` copies it to a temporary
-before advancing it, so the caller's register is not modified. The final
-packet carries the remaining byte count.
-
-## Atomic increment
-
-```py
-noc.atomic_inc(dst, dst_coord, value=1, return_coord=local_coord)
-```
-
-`atomic_inc()` uses command buffer 3 and emits:
-
-| Register | Value |
-|---|---|
-| `NOC_CTRL` | `0x2091`: response-marked atomic on static VC 1 |
-| `NOC_PACKET_TAG` | `0` |
-| `NOC_TARG_ADDR_LO/MID/COORDINATE` | `dst`, `0`, `dst_coord` |
-| `NOC_RET_ADDR_LO/MID/COORDINATE` | initialized atomic return address, `0`, local or explicit return coordinate |
-| `NOC_AT_LEN_BE`, `NOC_AT_LEN_BE_1` | `0x107C` (increment/get with 32-bit wrap), `0` |
-| `NOC_AT_DATA` | `value` |
-| `NOC_CMD_CTRL` | `1`, written last |
-
-NoC atomics operate on Tensix or Ethernet L1, not DRAM, MMIO, or PCIe memory.
-The response writes the old value to `atomic_return`. Use `atomic_batch()` when
-responses must be complete before proceeding.
-
-## Completion batches
-
-The public API groups asynchronous operations in context managers:
-
-```py
-with noc.read_batch() as reads:
-  reads.issue(src, src_coord, dst, size)
-  reads.issue(next_src, next_coord, next_dst, size)
-
-with noc.write_batch() as writes:
-  writes.issue(src, dst, dst_coord, size)
-  writes.multicast(src, dst, rectangle, larger_size)
-
-with noc.atomic_batch() as atomics:
-  atomics.issue(semaphore, remote_coord)
-```
-
-The batch infers a count from its `issue()` calls and from the number of packets
-generated by `multicast()`. Source-level counting is not sufficient when one
-generated issue sits inside a runtime loop or conditional. Supply a Python
-integer or RISC-V register in that case:
-
-```py
-with noc.read_batch(count=runtime_count) as reads:
-  # Generated runtime loop issuing reads.
-  reads.issue(src, src_coord, dst, size)
-```
-
-Internally, entering a batch snapshots and fences the corresponding global
-status counter. Exiting successfully then:
-
-1. Polls the matching buffer's `NOC_CMD_CTRL` until the final request is
-   accepted.
-2. Polls the status counter until `(current - start) >=u count`.
-3. Emits a fence.
-
-Status counters begin at `0xFFB2_0200 + (index << 16)`:
-
-| Batch | Buffer | Counter offset | Completion represented |
-|---|---:|---:|---|
-| `read_batch()` | 1 | `0x08` | read responses received and committed |
-| `write_batch()` | 0 | `0x2C` | posted write payloads consumed/injected |
-| `atomic_batch()` | 3 | `0x00` | atomic responses received |
-
-Python counts must be in `[0, 2^31)`. Unsigned subtraction makes the wait safe
-across a 32-bit counter wrap as long as fewer than `2^31` completions are
-expected. A batch wait is not emitted if Python exits its body with an
-exception.
-
-Batches use global per-NIU counters, so core firmware and a kernel must not
-share an NIU during the same batch. The API writes packet tag zero and does not
-use hardware transaction IDs.
-
-## Current limits
-
-- Addresses are endpoint-local 32-bit values; every MID field is zero.
-- Ordinary reads and writes do not split transfers larger than 16 KiB.
-- Multicast size splitting is unrolled while generating the kernel, so its
-  total size must be a Python integer.
-- There is no inline-write API or public command-buffer API.
-- NoC initialization and concurrent NIU ownership remain firmware/program
-  responsibilities.
-
-## Sources
-
-- [`ttk/noc.py`](../ttk/noc.py), the implementation described here
-- [Blackhole NoC memory map](../../tt-isa-documentation/BlackholeA0/NoC/MemoryMap.md)
-- [Blackhole NoC counters](../../tt-isa-documentation/BlackholeA0/NoC/Counters.md)
-- [Blackhole NoC atomics](../../tt-isa-documentation/BlackholeA0/NoC/Atomics.md)
-- [TT-Metal Blackhole NoC parameters](../../tt-metal/tt_metal/hw/inc/internal/tt-1xx/blackhole/noc/noc_parameters.h)
+To transfer between two tiles, you configure one transmitting stream on the source tile and one receiving stream on the destination tile. Payloads remain in l1i see
