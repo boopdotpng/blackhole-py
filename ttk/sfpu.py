@@ -190,6 +190,21 @@ class Sfpu:
       self.add_into(value, scratch)
     return self
 
+  def sum_32(self, source=LReg.L0, destination=LReg.L0):
+    """Reduce all 32 lanes of one LReg, using L0..L3 as scratch."""
+    if int(source) != int(LReg.L0): self.move(source, LReg.L0)
+    self.move(LReg.L0, LReg.L1)
+    for _ in range(7):
+      self._issue("TTSFPSHFT2", 0, int(LReg.L0), int(LReg.L2), 3)._issue("TTSFPNOP")
+      self.add(LReg.L1, LReg.L2, LReg.L1)._issue("TTSFPNOP")
+      self.move(LReg.L2, LReg.L0)
+    self.move(LReg.L1, LReg.L0)
+    for register in (LReg.L1, LReg.L2, LReg.L3): self._issue("TTSFPLOADI", int(register), 2, 0)
+    self._issue("TTSFPTRANSP", 0, 0, 0, 0)._issue("TTSFPNOP")
+    for register in (LReg.L1, LReg.L2, LReg.L3): self.add(LReg.L0, register, LReg.L0)._issue("TTSFPNOP")
+    if int(destination) != int(LReg.L0): self.move(LReg.L0, destination)
+    return self
+
   @staticmethod
   def _float_bits(value): return struct.unpack("<I", struct.pack("<f", float(value)))[0]
 
@@ -197,6 +212,20 @@ class Sfpu:
     bits = self._float_bits(value)
     self._issue("TTSFPLOADI", int(destination), 10, bits & 0xFFFF)
     return self._issue("TTSFPLOADI", int(destination), 8, bits >> 16)
+
+  def load_float_from_l1(self, destination, address: int):
+    """Broadcast an FP32 value loaded by the issuing RISC into an SFPU LReg."""
+    k = self.tensix.k
+    with k.scope():
+      bits, immediate, instruction = k.reg(3)
+      k.load(bits, address)
+      for mode, upper in ((10, False), (8, True)):
+        if upper: k.srli(immediate, bits, 16)
+        else: k.slli(immediate, bits, 16); k.srli(immediate, immediate, 16)
+        k.li(instruction, tt_word("TTSFPLOADI", int(destination), mode, 0))
+        k.or_(instruction, instruction, immediate)
+        k.write32(TensixRegs.INSTRN_BUF_BASE, instruction)
+    return self
 
   @staticmethod
   def _scratch(scratch, avoid, count):
@@ -247,6 +276,28 @@ class Sfpu:
     for _ in range(iterations):
       self._issue("TTSFPMAD", x, destination, two, temporary, 2)._issue("TTSFPNOP")
       self.multiply(temporary, destination, destination, negate=True)._issue("TTSFPNOP")
+    return self
+
+  def rsqrt_positive(self, source, destination, *, scratch=(0, 1, 2, 3, 4, 5, 6, 7)):
+    """Accurate reciprocal square root for a finite positive FP32 LReg."""
+    source, destination = int(source), int(destination)
+    x, y, temporary, c1, c2, half = self._scratch(scratch, {source, destination}, 6)
+    self.move(source, x)._issue("TTSFPNOP").move(x, y)._issue("TTSFPNOP")
+    self._issue("TTSFPSHFT", 0xFFF, 0, y, 1)._issue("TTSFPNOP")
+    bits = 0x5F1110A0
+    self._issue("TTSFPLOADI", temporary, 10, bits & 0xFFFF)._issue("TTSFPLOADI", temporary, 8, bits >> 16)
+    self._issue("TTSFPIADD", 0, temporary, y, 6)._issue("TTSFPNOP")
+    self.multiply(x, y, temporary)._issue("TTSFPNOP")
+    self.multiply(y, temporary, temporary, negate=True)._issue("TTSFPNOP")
+    self.load_float(c1, 2.2825186); self.load_float(c2, 2.2533049)
+    self.add(c2, temporary, c2)._issue("TTSFPNOP")
+    self._issue("TTSFPMAD", temporary, c2, c1, temporary, 0)._issue("TTSFPNOP")
+    self.multiply(y, temporary, y)._issue("TTSFPNOP")
+    self.multiply(x, y, temporary)._issue("TTSFPNOP")
+    self.multiply(y, temporary, temporary, negate=True)._issue("TTSFPNOP")
+    self.add(LReg.CONST_1, temporary, temporary)._issue("TTSFPNOP")
+    self.load_float(half, 0.5); self.multiply(y, half, half)._issue("TTSFPNOP")
+    self._issue("TTSFPMAD", temporary, half, y, destination, 0)._issue("TTSFPNOP")
     return self
 
   def reciprocal_positive(self, source, destination, *, maximum, scratch=(0, 1, 2, 3, 4, 5, 6, 7), iterations=18):

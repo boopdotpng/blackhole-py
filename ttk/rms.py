@@ -2,7 +2,7 @@
 
 import struct
 
-from ttk.sfpu import SfpuFormat, SfpuProgram
+from ttk.sfpu import LReg, SfpuFormat, SfpuProgram
 from ttk.tensix import tt_word
 
 
@@ -122,3 +122,30 @@ def apply_rms(*, input_base=0, accumulator_base=768, output_base=0):
         _mul(p, 0, 1, 0)
         p.emit("TTSFPSTORE", 0, BF16, 7, output_base + offset)
   return p.finish()
+
+
+def token_square_accumulate():
+  """Accumulate one complete BF16 tile's squares lane-wise into L7."""
+  return SfpuProgram((
+    tt_word("TTSFPLOAD", int(LReg.L0), BF16, 7, 0), tt_word("TTSFPNOP"),
+    tt_word("TTSFPMUL", int(LReg.L0), int(LReg.L0), CONST_0, int(LReg.L0), 0),
+    tt_word("TTSFPNOP"),
+    tt_word("TTSFPADD", CONST_1, int(LReg.L7), int(LReg.L0), int(LReg.L7), 0),
+    tt_word("TTSFPNOP"), tt_word("TTINCRWC", 0, 2, 0, 0),
+  ))
+
+
+def token_apply_rms_weight(*, input_base=0, weight_base=64, output_base=0,
+                           scale=LReg.L0):
+  """Apply a live SFPU scalar and an elementwise weight tile to one BF16 tile."""
+  nop = tt_word("TTSFPNOP")
+  return SfpuProgram((
+    tt_word("TTSFPLOAD", int(LReg.L1), BF16, 7, input_base),
+    tt_word("TTSFPLOAD", int(LReg.L2), BF16, 7, weight_base), nop, nop,
+    tt_word("TTSFPMUL", int(LReg.L1), int(scale), CONST_0, int(LReg.L1), 0),
+    nop, nop, nop,
+    tt_word("TTSFPMUL", int(LReg.L1), int(LReg.L2), CONST_0, int(LReg.L1), 0),
+    nop, nop, nop,
+    tt_word("TTSFPSTORE", int(LReg.L1), BF16, 7, output_base),
+    nop, tt_word("TTINCRWC", 0, 2, 0, 0),
+  ))
