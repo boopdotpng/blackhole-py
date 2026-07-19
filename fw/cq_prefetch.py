@@ -8,8 +8,8 @@ from fw.consts import CQConfig
 from isa import R
 from ttk.noc import NiuCommand
 
-def build_prefetch(core=CQConfig.PREFETCH_CORE):
-  fw = Asm("brisc", core)
+def build_prefetch():
+  fw = Asm("brisc")
   with fw.scope(): _emit_prefetch(fw, fw.reg(11))
   return fw
 

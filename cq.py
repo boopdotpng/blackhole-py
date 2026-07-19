@@ -28,7 +28,6 @@ class Op(IntEnum):
 
 class PacketLayout:
   HEADER = Struct("<BxHIII")
-  RESULT_ADDRESS = Struct("<Q")
   UNICAST_TARGET = Struct("<I")
   MCAST_TARGET = Struct("<II")
 
@@ -39,7 +38,7 @@ class PacketLayout:
   RUN_EVENT = ADDRESS
   DATA_SIZE = 12
   WRITE_TARGETS = HEADER.size
-  RUN_TARGETS = HEADER.size + RESULT_ADDRESS.size
+  RUN_TARGETS = HEADER.size
 
 @dataclass(frozen=True)
 class Timestamp:
@@ -71,12 +70,13 @@ def noc_coord(core: Core):
     raise ValueError("NoC coordinate components must be integers in [0, 63]")
   return x | y << 6
 
+def _check_mcast_endpoint(core: Core):
+  if core[0] in (8, 9): raise ValueError("multicast start/end cannot use NoC columns 8 or 9")
+
 def mcast_coords(rect: Rect):
   start, end = rect
-  if start[0] in (8, 9) or end[0] in (8, 9):
-    raise ValueError("multicast endpoints cannot use columns 8 or 9")
-  if start[0] > end[0] or start[1] > end[1]:
-    raise ValueError("multicast start must precede end")
+  _check_mcast_endpoint(start); _check_mcast_endpoint(end)
+  if start[0] > end[0] or start[1] > end[1]: raise ValueError("multicast start must precede end")
   return noc_coord(start), noc_coord(end)
 
 def _payload(data: bytes):
@@ -102,11 +102,8 @@ class UnicastWrite:
   def lower(self) -> bytes:
     cores = tuple(self.cores)
     targets = b"".join(PacketLayout.UNICAST_TARGET.pack(noc_coord(core)) for core in cores)
-    blobs = tuple(self.data)
-    if len(blobs) != len(cores): raise ValueError("per-core write needs one payload per core")
-    blobs = tuple(_payload(blob) for blob in blobs)
+    blobs = tuple(_payload(blob) for blob in self.data)
     size = len(blobs[0])
-    if any(len(blob) != size for blob in blobs): raise ValueError("per-core payload sizes must match")
     stride = _align(size)
     payload = b"".join(blob.ljust(stride, b"\0") for blob in blobs)
     return _write_record(Op.UNICAST_WRITE, targets, len(cores), self.addr, size, payload)
@@ -126,7 +123,6 @@ class McastWrite:
 @dataclass(frozen=True)
 class Run:
   cores: tuple[Core, ...]
-  result_addr: int
   event: int = 0
 
   def lower(self) -> bytes:
@@ -134,8 +130,7 @@ class Run:
     targets = b"".join(PacketLayout.UNICAST_TARGET.pack(noc_coord(core)) for core in cores)
     total_size = _align(PacketLayout.RUN_TARGETS + len(targets))
     header = PacketLayout.HEADER.pack(Op.RUN, len(cores), total_size, self.event, 0)
-    result = PacketLayout.RESULT_ADDRESS.pack(self.result_addr)
-    return (header + result + targets).ljust(total_size, b"\0")
+    return (header + targets).ljust(total_size, b"\0")
 
 Command = UnicastWrite | McastWrite | Run
 
@@ -146,14 +141,14 @@ class CommandQueue:
   def __init__(self, pcie):
     from pcie import TLBWindow
     self.pcie = pcie
-    self.issue = pcie.sysmem.alloc(HOST_ISSUE_SIZE, PAGE_SIZE, "cq_issue")
-    self.completion = pcie.sysmem.alloc(HOST_COMPLETION_SIZE, PAGE_SIZE, "cq_completion")
+    self.issue = pcie.sysmem.alloc(HOST_ISSUE_SIZE, PAGE_SIZE)
+    self.completion = pcie.sysmem.alloc(HOST_COMPLETION_SIZE, PAGE_SIZE)
     self.completion_base = self.completion + PAGE_SIZE
     self.completion_end = self.completion + HOST_COMPLETION_SIZE
     dram_base = _align(pcie.sysmem.allocator.next)
     self.dram_size = pcie.sysmem.allocator.end - dram_base
     if self.dram_size < PAGE_SIZE: raise MemoryError("sysmem has no DRAM staging region")
-    self.dram = pcie.sysmem.alloc(self.dram_size, ALIGN, "dram_staging")
+    self.dram = pcie.sysmem.alloc(self.dram_size, ALIGN)
     self.issue_write = self.queue_index = self.dispatch_page = self.event = 0
     self.completion_read = 0
     self.completion_toggle = 0
@@ -221,7 +216,7 @@ class CommandQueue:
     self.event += 1
     commands = tuple(commands)
     run = commands[-1]
-    commands = (*commands[:-1], Run(run.cores, 1, self.event))
+    commands = (*commands[:-1], Run(run.cores, self.event))
     for command in commands: self._publish(command.lower())
     return self.wait(self.event, timeout=timeout)
 

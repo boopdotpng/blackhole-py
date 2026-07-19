@@ -71,9 +71,6 @@ class Transaction:
       self.noc._allocator.release(self.tid)
       self._closed = True
 
-  def _ensure_open(self):
-    if self._closed: raise RuntimeError("transaction is already closed")
-
   @staticmethod
   def _packets_for(byte_count):
     if type(byte_count) is not int: return None
@@ -81,50 +78,40 @@ class Transaction:
 
   def read(self, source_address, source_coordinate, target_address,
            packet_bytes, source_middle_address=0):
-    self._ensure_open(); self._remote_pending = True
+    self._remote_pending = True
     self.noc._read(self.tid, source_address, source_coordinate, target_address, packet_bytes,
                    source_middle_address=source_middle_address)
     return self
 
   def write(self, source_address, target_address, target_coordinate,
             packet_bytes, target_middle_address=0, posted=True):
-    self._ensure_open(); self._source_pending = True
+    self._source_pending = True
     if not posted: self._remote_pending = True
     self.noc._write(self.tid, source_address, target_address, target_coordinate, packet_bytes,
                     target_middle_address=target_middle_address, posted=posted)
     return self
 
   def _multicast_write(self, source_address, target_address, target_start,
-                       target_end, packet_bytes, linked):
-    self._ensure_open(); self._source_pending = True
+                       target_end, packet_bytes):
+    self._source_pending = True
     self.noc._multicast_write(self.tid, source_address, target_address, target_start,
-                              target_end, packet_bytes, linked=linked)
+                              target_end, packet_bytes)
     return self
 
   def multicast_write(self, source_address, target_address, target_start,
                       target_end, packet_bytes):
-    return self._multicast_write(source_address, target_address, target_start,
-                                 target_end, packet_bytes, linked=False)
-
-  def multicast_write_chain(self, requests):
-    requests = tuple(tuple(request) for request in requests)
-    if not requests: raise ValueError("multicast chain must not be empty")
-    if any(len(request) != 5 for request in requests): raise ValueError("chain requests need five values")
-    rectangle = requests[0][2:4]
-    if any(r[2:4] != rectangle for r in requests[1:]): raise ValueError("chain rectangle changed")
-    for index, request in enumerate(requests): self._multicast_write(*request, linked=index + 1 < len(requests))
-    return self
+    return self._multicast_write(
+      source_address, target_address, target_start, target_end, packet_bytes,
+    )
 
   def inline_write(self, value, target_address, target_coordinate,
                    posted=True):
-    self._ensure_open()
     if not posted: self._remote_pending = True
     self.noc._inline_write(self.tid, value, target_address, target_coordinate, posted=posted)
     return self
 
   def atomic_inc(self, target_address, target_coordinate, value=1,
                  return_address=4, posted=False):
-    self._ensure_open()
     if not posted: self._remote_pending = True
     self.noc._atomic_inc(self.tid, target_address, target_coordinate, value,
                          return_address=return_address, posted=posted)
@@ -152,7 +139,6 @@ class Transaction:
 
   def _release(self):
     if self._closed: return self.noc
-    if self._source_pending or self._remote_pending: raise RuntimeError("pending traffic")
     self.noc._allocator.release(self.tid)
     self._closed = True
     return self.noc
@@ -161,14 +147,14 @@ class NoC:
   # Deliberately hardcoded request policy.
   unicast_vc = 1
   multicast_vc = 4
-  reserve_multicast_path = True
+  multicast_linked = False
+  reserve_multicast_path = False
   multicast_along_y = False
   multicast_include_sender = False
   arbitration_priority = 0
 
   def __init__(self, k, index: int):
-    if index not in (0, 1): raise ValueError("NoC index must be 0 or 1")
-    self.index, self.k = index, k
+    self.index, self.k, self.local_coordinate = index, k, None
     states = getattr(k, "_noc_tid_allocators", None)
     if states is None:
       states = {}
@@ -180,25 +166,28 @@ class NoC:
 
   def transaction(self, tid=None): return Transaction(self, tid)
 
+  def initialize(self, coordinate):
+    self.local_coordinate = coordinate
+    return self
+
   @staticmethod
-  def coordinate(x, y):
-    if any(type(v) is not int or not 0 <= v < 64 for v in (x, y)): raise ValueError("invalid coordinate")
-    return x | y << 6
+  def coordinate(x, y): return x | y << 6
 
   static_coord = coordinate
 
   @staticmethod
-  def _validate_rectangle(start, end):
-    for name, coordinate in (("start", start), ("end", end)):
-      if isinstance(coordinate, R): continue
-      if type(coordinate) is not int or not 0 <= coordinate < 1 << 12: raise ValueError(f"invalid {name}")
-      if coordinate & 0x3F in (8, 9): raise ValueError(f"{name} cannot use columns 8 or 9")
+  def _check_multicast_endpoint(coordinate):
+    if isinstance(coordinate, R): return
+    if type(coordinate) is not int or not 0 <= coordinate < 1 << 12:
+      raise ValueError("invalid multicast endpoint")
+    if coordinate & 0x3F in (8, 9):
+      raise ValueError("multicast start/end cannot use NoC columns 8 or 9")
+
+  def _rectangle(self, out, start, end):
+    self._check_multicast_endpoint(start); self._check_multicast_endpoint(end)
     if type(start) is int and type(end) is int:
       sx, sy, ex, ey = start & 0x3F, start >> 6, end & 0x3F, end >> 6
       if sx > ex or sy > ey: raise ValueError("multicast start must precede end")
-
-  def _rectangle(self, out, start, end):
-    self._validate_rectangle(start, end)
     low, high = (end, start) if self.index == 0 else (start, end)
     if type(low) is int and type(high) is int:
       self.k.li(out, low | high << 12)
@@ -210,17 +199,20 @@ class NoC:
     return out
 
   def _local_coordinate(self, out):
+    if self.local_coordinate is not None:
+      self.k.mv(out, self.local_coordinate) if isinstance(self.local_coordinate, R) else \
+        self.k.li(out, self.local_coordinate)
+      return out
     self.k.load(out, self._niu() + NIU_CONFIG + LOGICAL_NODE_ID)
     self.k.slli(out, out, 20); self.k.srli(out, out, 20)
     return out
 
-  def _packet_options(self, operation, posted=False, linked=False,
-                      multicast=False, inline=False):
+  def _packet_options(self, operation, posted=False, multicast=False, inline=False):
     options = {"read": 0, "atomic": 1, "write": 2}[operation]
     if inline: options |= 1 << 3
     if operation == "read" or not posted: options |= 1 << 4
     if multicast: options |= 1 << 5
-    if linked: options |= 1 << 6
+    if multicast and self.multicast_linked: options |= 1 << 6
     options |= 1 << 7  # static VC
     options |= (self.multicast_vc if multicast else self.unicast_vc) << 13
     if multicast and self.reserve_multicast_path: options |= 1 << 8
@@ -264,8 +256,8 @@ class NoC:
         k.break_(Cond(busy, "==", 0))
       NiuCommand.build(k, self.index, source, target, packet)
       k.write32(NiuCommand.address(self.index, NiuCommand.SEND_REQUEST), 1)
-      # This readback orders submission and waits for hardware auto-splitting;
-      # payload and response completion are tracked separately by the TID.
+      # Order submission and wait for hardware auto-splitting before the
+      # command registers can be reused by the next request.
       with k.loop():
         k.lw(busy, base, NiuCommand.SEND_REQUEST)
         k.break_(Cond(busy, "==", 0))
@@ -297,7 +289,7 @@ class NoC:
     return self
 
   def _multicast_write(self, tid, source_address, target_address, target_start,
-                       target_end, packet_bytes, linked=False):
+                       target_end, packet_bytes):
     self._wait_issue_safe(TidCounters.writes_outgoing(tid), packet_bytes)
     with self.k.scope():
       local, targets = self.k.reg(2)
@@ -305,8 +297,7 @@ class NoC:
       self._submit(
         _endpoint(source_address, local),
         _endpoint(target_address, targets),
-        _packet(tid, self._packet_options(
-          "write", posted=True, linked=linked, multicast=True), packet_bytes),
+        _packet(tid, self._packet_options("write", posted=True, multicast=True), packet_bytes),
       )
     return self
 
@@ -332,37 +323,61 @@ class NoC:
                 (1 << 12) | (31 << 2), value),
       )
 
-  def _complete(self, operation, *args, **options):
-    with self.transaction() as transaction: getattr(transaction, operation)(*args, **options)
+  def read(self, *args, **options):
+    with self.transaction() as transaction: transaction.read(*args, **options)
     return self
 
-  def read(self, *args, **options): return self._complete("read", *args, **options)
-  def write(self, *args, **options): return self._complete("write", *args, **options)
+  def write(self, *args, **options):
+    with self.transaction() as transaction: transaction.write(*args, **options)
+    return self
 
-  def read_into_cb(self, source_address, source_coordinate, cb, source_middle_address=0):
+  def _dram_page(self, buffer, page):
+    k, endpoints = self.k, buffer.dram_endpoints
+    base = k.param(buffer)
+    address, coordinate, bank, banks, scale = k.reg(5, exclude=(page, base))
+    k.li(banks, len(endpoints)); k.remu(bank, page, banks); k.divu(address, page, banks)
+    k.li(scale, buffer.page_size); k.mul(address, address, scale); k.add(address, address, base)
+    selected = k._new_label("dram_bank_selected")
+    invalid = k._new_label("dram_bank_invalid")
+    labels = {index: k._new_label(f"dram_bank_{index}") for index in range(len(endpoints))}
+    k.switch(bank, labels, invalid)
+    for index, label in labels.items():
+      k.label(label); k.li(coordinate, self.coordinate(*endpoints[index][self.index])); k.j(selected)
+    k.label(invalid); k.j(invalid); k.label(selected)
+    return address, coordinate
+
+  def read_into_cb(self, buffer, page, cb, source_middle_address=0):
     from ttk.cb import CB
     CB.reserve_back(self.k, cb)
     with self.k.scope():
-      target = self.k.reg()
+      source_address, source_coordinate = self._dram_page(buffer, page)
+      target = self.k.reg(exclude=(source_address, source_coordinate))
       CB.get_write_ptr(self.k, cb, target)
       self.read(source_address, source_coordinate, target, cb.page_size,
                 source_middle_address=source_middle_address)
     CB.push_back(self.k, cb)
     return self
 
-  def write_from_cb(self, cb, target_address, target_coordinate,
-                    target_middle_address=0, posted=False):
+  def write_from_cb(self, cb, buffer, page, target_middle_address=0, posted=False):
     from ttk.cb import CB
     CB.wait_front(self.k, cb)
     with self.k.scope():
-      source = self.k.reg()
+      target_address, target_coordinate = self._dram_page(buffer, page)
+      source = self.k.reg(exclude=(target_address, target_coordinate))
       CB.get_read_ptr(self.k, cb, source)
       self.write(source, target_address, target_coordinate, cb.page_size,
                  target_middle_address=target_middle_address, posted=posted)
     CB.pop_front(self.k, cb)
     return self
 
-  def multicast_write(self, *args): return self._complete("multicast_write", *args)
-  def multicast_write_chain(self, requests): return self._complete("multicast_write_chain", requests)
-  def inline_write(self, *args, **options): return self._complete("inline_write", *args, **options)
-  def atomic_inc(self, *args, **options): return self._complete("atomic_inc", *args, **options)
+  def multicast_write(self, *args):
+    with self.transaction() as transaction: transaction.multicast_write(*args)
+    return self
+
+  def inline_write(self, *args, **options):
+    with self.transaction() as transaction: transaction.inline_write(*args, **options)
+    return self
+
+  def atomic_inc(self, *args, **options):
+    with self.transaction() as transaction: transaction.atomic_inc(*args, **options)
+    return self

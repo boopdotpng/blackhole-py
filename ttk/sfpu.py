@@ -114,7 +114,6 @@ class SfpuProgramBuilder:
                       reads=(value,), writes=(value,), latency=2)
 
   def advance_dst(self, amount=2):
-    if not 0 <= amount < 16: raise ValueError("Dst increment must fit in four bits")
     return self._emit(TT.TTINCRWC(0, amount, 0, 0))
 
   def finish(self): self._open(); self.finished = True; return SfpuProgram(tuple(self.words))
@@ -155,7 +154,6 @@ class Sfpu:
         k.write32(TensixRegs.INSTRN_BUF_BASE, instruction)
       return self
     offset += delta
-    if not 0 <= offset < 1 << 12: raise ValueError("SFPU Dst offset must fit in 12 bits")
     return self._issue(opcode, value, format, addr_mod, offset)
 
   def load_dst(self, into, offset=0, format=SfpuFormat.DEFAULT, addr_mod=7, delta=0):
@@ -194,7 +192,6 @@ class Sfpu:
     return self
 
   def sum_32(self, source=LReg.L0, destination=LReg.L0):
-    """Reduce all 32 lanes of one LReg, using L0..L3 as scratch."""
     if int(source) != int(LReg.L0): self.move(source, LReg.L0)
     self.move(LReg.L0, LReg.L1)
     for _ in range(7):
@@ -217,7 +214,6 @@ class Sfpu:
     return self._issue(TT.TTSFPLOADI, int(destination), 8, bits >> 16)
 
   def load_float_from_l1(self, destination, address: int):
-    """Broadcast an FP32 value loaded by the issuing RISC into an SFPU LReg."""
     k = self.tensix.k
     with k.scope():
       bits, immediate, instruction = k.reg(3)
@@ -240,7 +236,6 @@ class Sfpu:
     raise ValueError(f"need {count} SFPU scratch LRegs avoiding {sorted(avoid)}")
 
   def exp(self, source, destination, scratch=(1, 2, 3, 4, 5, 6, 7)):
-    """Natural exponent using Blackhole's device-validated FP32-LReg path."""
     source, destination = int(source), int(destination)
     c, exponent, mantissa, polynomial = self._scratch(scratch, {source, destination}, 4)
     self.load_float(c, 1.4426950216293334961)
@@ -267,8 +262,6 @@ class Sfpu:
     return self
 
   def reciprocal(self, source, destination, scratch=(0, 1, 2, 3, 4, 5, 6, 7), iterations=2):
-    """Approximate reciprocal followed by FP32 Newton-Raphson refinement."""
-    if iterations < 0: raise ValueError("reciprocal iteration count must be non-negative")
     source, destination = int(source), int(destination)
     x = source
     if source == destination and iterations:
@@ -282,7 +275,6 @@ class Sfpu:
     return self
 
   def rsqrt_positive(self, source, destination, scratch=(0, 1, 2, 3, 4, 5, 6, 7)):
-    """Accurate reciprocal square root for a finite positive FP32 LReg."""
     source, destination = int(source), int(destination)
     x, y, temporary, c1, c2, half = self._scratch(scratch, {source, destination}, 6)
     self.move(source, x)._issue(TT.TTSFPNOP).move(x, y)._issue(TT.TTSFPNOP)
@@ -304,9 +296,6 @@ class Sfpu:
     return self
 
   def reciprocal_positive(self, source, destination, maximum, scratch=(0, 1, 2, 3, 4, 5, 6, 7), iterations=18):
-    """Reciprocal for ``0 < source <= maximum`` using a bounded FP32 Newton seed."""
-    if maximum <= 0 or iterations < 0:
-      raise ValueError("positive reciprocal needs a positive bound and iteration count")
     source, destination = int(source), int(destination)
     x = source
     if source == destination:
@@ -321,7 +310,6 @@ class Sfpu:
 
   @contextmanager
   def tile(self):
-    """Synchronize Math/SFPU around direct operations on the current Dst tile."""
     self.tensix.k.write32(TensixRegs.INSTRN_BUF_BASE, 0xB2010000)
     self._issue(TT.TTSETRWC, 0, 0, 0, 0, 0, 4)
     self.tensix.stall(TensixStall.SFPU, TensixWait.MATH)
@@ -345,13 +333,6 @@ class Sfpu:
     return installed
 
   def run(self, program, wait=True):
-    """Issue an arbitrary-length SFPU program from the kernel text.
-
-    ``install`` is ideal for small programs that fit in the 32-word replay
-    buffer.  Reduction and normalization programs are often larger, so this
-    path emits their words inline while preserving the same program object.
-    """
-    if not isinstance(program, SfpuProgram): raise TypeError("expected an SfpuProgram")
     self.tensix.issue(TT.TTSETRWC(0, 0, 0, 0, 0, 4))
     self.tensix.stall(TensixStall.SFPU, TensixWait.MATH)
     for word in program.words: self.tensix.issue(word)

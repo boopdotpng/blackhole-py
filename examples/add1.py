@@ -1,6 +1,9 @@
-import argparse
+import argparse, sys
+from pathlib import Path
 
-from isa import R, Tensix as TT
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from isa import Tensix as TT
 from program import Buffer, DType, Dram, Program
 from ttk.math import AddressModifier, DestinationCounter, SourceCounter, set_dst_row_base
 from ttk.mop import LoopTemplate
@@ -17,40 +20,12 @@ _COPY_MOP = LoopTemplate(
   last=_COPY, outer_last=_COPY,
 )
 
-def _dram_page(k, noc_index: int, buffer: Buffer, page: R):
-  coords = buffer.dram_coords[noc_index]
-  base = k.param(buffer)
-  address, coordinate, bank, banks, scale = k.reg(5, exclude=(page, base))
-  k.li(banks, len(coords))
-  k.remu(bank, page, banks)
-  k.divu(address, page, banks)
-  k.li(scale, buffer.page_size)
-  k.mul(address, address, scale)
-  k.add(address, address, base)
-
-  selected = k._new_label("dram_bank_selected")
-  invalid = k._new_label("dram_bank_invalid")
-  labels = {index: k._new_label(f"dram_bank_{index}") for index in range(len(coords))}
-  k.switch(bank, labels, invalid)
-  for index, label in labels.items():
-    k.label(label)
-    k.li(coordinate, coords[index])
-    k.j(selected)
-  k.label(invalid)
-  k.j(invalid)
-  k.label(selected)
-  return address, coordinate
-
-
 def add1(src: Buffer, dst: Buffer, *, core=(1, 2), cores=None) -> Program:
-  if src.dtype != DType.BF16 or dst.dtype != DType.BF16: raise ValueError("add1 requires BF16 buffers")
-  if src.pages != dst.pages: raise ValueError("add1 input and output must have the same tile count")
   cores = (core,) if cores is None else tuple(cores)
-  if src.pages < len(cores): raise ValueError("add1 requires at least one tile per core")
   p = Program(cores, buffers=(src, dst))
   tiles_per_core, extra = divmod(src.pages, len(cores))
-  input_cb = p.cb(src.dtype, name="input")
-  output_cb = p.cb(dst.dtype, name="output")
+  input_cb = p.cb(src.dtype)
+  output_cb = p.cb(dst.dtype)
 
   AddressModifier(source_a=SourceCounter(increment=8),
                   destination=DestinationCounter(increment=8)).configure(p.fpu, 2)
@@ -65,8 +40,7 @@ def add1(src: Buffer, dst: Buffer, *, core=(1, 2), cores=None) -> Program:
     with p.brisc.scope():
       page = p.brisc.reg(exclude=(start, tile))
       p.brisc.add(page, start, tile)
-      source, source_coordinate = _dram_page(p.brisc, noc.index, src, page)
-      noc.read_into_cb(source, source_coordinate, input_cb)
+      noc.read_into_cb(src, page, input_cb)
 
   for _ in p.trisc0.range(p.trisc0.arg(1)):
     p.unpack.move(input_cb, UnpackTarget.SRCA)
@@ -89,8 +63,7 @@ def add1(src: Buffer, dst: Buffer, *, core=(1, 2), cores=None) -> Program:
     with p.ncrisc.scope():
       page = p.ncrisc.reg(exclude=(start, tile))
       p.ncrisc.add(page, start, tile)
-      target, target_coordinate = _dram_page(p.ncrisc, noc.index, dst, page)
-      noc.write_from_cb(output_cb, target, target_coordinate)
+      noc.write_from_cb(output_cb, dst, page)
   args, start = {}, 0
   for index, worker in enumerate(cores):
     count = tiles_per_core + int(index < extra)

@@ -1,7 +1,6 @@
 import ctypes, fcntl, os
 import ctypes.util
 from pathlib import Path
-from typing import Tuple
 
 libc = ctypes.CDLL(ctypes.util.find_library("c"), use_errno=True)
 libc.mmap.argtypes = [ctypes.c_void_p, ctypes.c_size_t, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_long]
@@ -13,32 +12,12 @@ libc.msync.restype = ctypes.c_int
 
 IOCTL_MAGIC = 0xFA
 
-P100_DRAM_BANK_YS = (
-  (0, 1, 11), (2, 3, 10), (4, 8, 9), (5, 6, 7),
-  (0, 1, 11), (2, 3, 10), (4, 8, 9), (5, 6, 7),
+# Virtual NoC 0/1 coordinates for one usable endpoint in each DRAM bank.
+P100_DRAM_ENDPOINTS = (
+  ((18, 14), (18, 13)), ((18, 15), (18, 16)), ((18, 18), (18, 19)),
+  ((17, 21), (17, 22)), ((17, 14), (17, 13)), ((17, 17), (17, 16)),
+  ((17, 20), (17, 19)),
 )
-
-def p100_dram_tiles(enabled_gddr):
-  return tuple(
-    (bank, 0 if bank < 4 else 9, ys[0])
-    for bank, ys in enumerate(P100_DRAM_BANK_YS) if enabled_gddr >> bank & 1
-  )
-
-def p100_dram_endpoint_coordinates(harvested, noc):
-  half = 4
-  mirror = harvested + half - 1 if harvested < half else harvested - half
-  if harvested < half:
-    right = list(range(half - 1))
-    left = [bank for bank in range(half - 1, 7) if bank != mirror] + [mirror]
-  else:
-    left = [bank for bank in range(half) if bank != mirror] + [mirror]
-    right = list(range(half, 7))
-  bases = {bank: (18, 12 + index * 3) for index, bank in enumerate(right)}
-  bases.update({bank: (17, 12 + index * 3) for index, bank in enumerate(left)})
-  ports = ((2, 1), (0, 1), (0, 1), (0, 1), (2, 1), (2, 1), (2, 1))
-  return tuple(
-    bases[bank][0] | (bases[bank][1] + ports[bank][noc]) << 6 for bank in range(7)
-  )
 
 def _TT_IOCTL(nr, payload_type, result=None, **defaults):
   def call(fd, **kwargs):
@@ -141,14 +120,12 @@ SetPowerState = _TT_IOCTL(15, PowerState, _argsz=ctypes.sizeof(PowerState), _val
 class Allocator:
   def __init__(self, start: int, end: int, alignment: int = 1):
     self.next, self.end, self.alignment = start, end, alignment
-    self.allocations = {}
 
-  def alloc(self, size: int, alignment: int | None = None, name=None):
+  def alloc(self, size: int, alignment: int | None = None):
     alignment = self.alignment if alignment is None else alignment
     offset = (self.next + alignment - 1) & -alignment
     if size < 0 or offset + size > self.end: raise MemoryError("allocator is out of memory")
     self.next = offset + size
-    if name is not None: self.allocations[name] = (offset, size)
     return offset
 
 class Sysmem:
@@ -168,7 +145,7 @@ class Sysmem:
       self.addr = None
       raise
 
-  def alloc(self, size: int, alignment: int | None = None, name=None): return self.allocator.alloc(size, alignment, name)
+  def alloc(self, size: int, alignment: int | None = None): return self.allocator.alloc(size, alignment)
 
   def read(self, offset: int, size: int) -> bytes: return ctypes.string_at(self.addr + offset, size)
 
@@ -191,7 +168,7 @@ class TLBWindow:
   USER_ID_LIMIT = 201
   WORKER_START = (1, 2); WORKER_END = (14, 11)
 
-  def __init__(self, fd: int, core: Tuple[int, int]):
+  def __init__(self, fd: int, core: tuple[int, int]):
     tlb = AllocateTlb(fd)
     self.fd, self.id, self.core = fd, tlb.id, core
     if self.id >= self.USER_ID_LIMIT:
@@ -232,11 +209,6 @@ class TLBWindow:
   def __exit__(self, exc_type, exc, tb): self.close()
 
 class PCIDevice:
-  ARC_CORE = (8, 0)
-  ARC_NOC_BASE = 0x80000000
-  SCRATCH_RAM_12 = 0x30430
-  SCRATCH_RAM_13 = 0x30434
-  ENABLED_GDDR_TAG = 36
   P100A_X = (*range(1, 8), *range(10, 15))
   prefetch_core = (14, 2)
   dispatch_core = (14, 3)
@@ -247,39 +219,10 @@ class PCIDevice:
 
     self.fd = os.open(f"/dev/tenstorrent/{index}", os.O_RDWR | os.O_CLOEXEC | os.O_APPEND)
     SetPowerState(self.fd, power_flags=0b1111)
-    enabled_gddr = self._read_enabled_gddr() & 0xFF
-    harvested = [bank for bank in range(8) if not enabled_gddr >> bank & 1]
-    if len(harvested) != 1:
-      raise RuntimeError(f"P100A requires exactly one harvested DRAM bank, got {harvested}")
-    self.harvested_dram_bank = harvested[0]
-    self.dram_tiles = p100_dram_tiles(enabled_gddr)
-    self.dram_coords = tuple(
-      p100_dram_endpoint_coordinates(self.harvested_dram_bank, noc) for noc in range(2)
-    )
+    self.dram_endpoints = P100_DRAM_ENDPOINTS
     cq_cores = {self.prefetch_core, self.dispatch_core}
     self.cores = [(x, y) for x in self.P100A_X for y in range(2, 12) if (x, y) not in cq_cores]
     self.sysmem = Sysmem(self.fd, sysmem_size)
-
-  def _read_enabled_gddr(self):
-    with TLBWindow(self.fd, self.ARC_CORE) as win:
-      win.target(self.ARC_NOC_BASE)
-      table_base = int.from_bytes(win.read(self.SCRATCH_RAM_13), "little")
-      data_base = int.from_bytes(win.read(self.SCRATCH_RAM_12), "little")
-      if table_base in (0, 0xFFFFFFFF) or data_base in (0, 0xFFFFFFFF):
-        raise RuntimeError(f"invalid ARC telemetry pointers table=0x{table_base:x} data=0x{data_base:x}")
-
-      table_window = table_base & -win.SIZE
-      win.target(table_window)
-      entry_count = int.from_bytes(win.read(table_base + 4 - table_window), "little")
-      if entry_count in (0, 0xFFFFFFFF) or entry_count > 4096:
-        raise RuntimeError(f"invalid ARC telemetry entry count: {entry_count}")
-      for i in range(entry_count):
-        entry = int.from_bytes(win.read(table_base + 8 + i * 4 - table_window), "little")
-        if entry & 0xFFFF == self.ENABLED_GDDR_TAG:
-          data_window = data_base & -win.SIZE
-          win.target(data_window)
-          return int.from_bytes(win.read(data_base + (entry >> 16) * 4 - data_window), "little")
-      raise RuntimeError("missing enabled_gddr ARC telemetry tag")
 
   def close(self):
     if self.fd >= 0:

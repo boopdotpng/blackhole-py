@@ -2,7 +2,6 @@ from contextlib import ExitStack
 from dataclasses import dataclass
 from enum import IntEnum
 from math import prod
-from typing import Literal
 
 from asm import Asm
 from cq import Command, MAX_WRITE_SIZE, McastWrite, UnicastWrite
@@ -24,11 +23,10 @@ class DType(IntEnum):
 class Buffer:
   name: str
   addr: int
-  loc: Literal["host", "device"]
   dtype: DType
   shape: tuple[int, ...]
   padded_shape: tuple[int, ...]
-  dram_coords: tuple[tuple[int, ...], tuple[int, ...]] | None = None
+  dram_endpoints: tuple[tuple[Core, Core], ...] | None = None
 
   @property
   def size(self): return prod(self.padded_shape) * self.dtype.itemsize
@@ -45,22 +43,15 @@ class Buffer:
   def from_numpy(self, values) -> bytes:
     import numpy as np
     values = np.asarray(values, dtype=np.float32)
-    if values.shape != self.shape: raise ValueError(f"expected array shape {self.shape}, got {values.shape}")
-    if len(self.shape) != len(self.padded_shape) or any(x > y for x, y in zip(self.shape, self.padded_shape)):
-      raise ValueError("logical shape must fit within padded shape")
     padded = np.zeros(self.padded_shape, dtype=np.float32)
     padded[tuple(slice(0, size) for size in self.shape)] = values
     if self.dtype is DType.F32: return padded.astype("<f4", copy=False).tobytes()
-    if self.dtype is DType.BF16: return (padded.view(np.uint32) >> 16).astype("<u2").tobytes()
-    raise ValueError(f"unsupported NumPy conversion dtype {self.dtype}")
+    return (padded.view(np.uint32) >> 16).astype("<u2").tobytes()
 
   def to_numpy(self, data: bytes):
     import numpy as np
-    if len(data) != self.size: raise ValueError(f"buffer data requires exactly {self.size} bytes")
     if self.dtype is DType.F32: values = np.frombuffer(data, dtype="<f4")
-    elif self.dtype is DType.BF16:
-      values = (np.frombuffer(data, dtype="<u2").astype(np.uint32) << 16).view(np.float32)
-    else: raise ValueError(f"unsupported NumPy conversion dtype {self.dtype}")
+    else: values = (np.frombuffer(data, dtype="<u2").astype(np.uint32) << 16).view(np.float32)
     values = values.reshape(self.padded_shape)
     return values[tuple(slice(0, size) for size in self.shape)].copy()
 
@@ -69,23 +60,20 @@ class Dram:
   END = 1 << 32
   ALIGNMENT = 64
 
-  def __init__(self, harvested_dram_bank: int = 0, coords=None):
-    if coords is None:
-      from pcie import p100_dram_endpoint_coordinates
-      coords = tuple(
-        p100_dram_endpoint_coordinates(harvested_dram_bank, noc) for noc in range(2)
-      )
+  def __init__(self, endpoints=None):
+    if endpoints is None:
+      from pcie import P100_DRAM_ENDPOINTS
+      endpoints = P100_DRAM_ENDPOINTS
     self.allocator = Allocator(self.START, self.END, self.ALIGNMENT)
-    self.coords = tuple(tuple(noc) for noc in coords)
-    self.banks = len(self.coords[0])
+    self.endpoints = tuple(endpoints)
+    self.banks = len(self.endpoints)
 
   def buffer(self, name: str, dtype: DType, shape: tuple[int, ...],
              padded_shape: tuple[int, ...]):
-    buffer = Buffer(name, 0, "device", dtype, shape, padded_shape, self.coords)
-    if buffer.page_size % self.ALIGNMENT: raise ValueError("DRAM pages must be 64-byte aligned")
+    buffer = Buffer(name, 0, dtype, shape, padded_shape, self.endpoints)
     pages_per_bank = (buffer.pages + self.banks - 1) // self.banks
-    addr = self.allocator.alloc(pages_per_bank * buffer.page_size, name=name)
-    return Buffer(name, addr, "device", dtype, shape, padded_shape, self.coords)
+    addr = self.allocator.alloc(pages_per_bank * buffer.page_size)
+    return Buffer(name, addr, dtype, shape, padded_shape, self.endpoints)
 
 @dataclass(frozen=True)
 class CBConfig:
@@ -106,11 +94,7 @@ class CBConfig:
 class Program:
   def __init__(self, cores: tuple[Core, ...] | list[Core], buffers: tuple[Buffer, ...] | list[Buffer] = ()):
     self._cores = tuple(cores)
-    if not self._cores: raise ValueError("program requires at least one core")
-    if len(set(self._cores)) != len(self._cores): raise ValueError("program cores must be unique")
     buffers = tuple(buffers)
-    if len(buffers) > TensixL1.PARAM_SLOTS: raise ValueError("program parameter table is full")
-    if len({buffer.name for buffer in buffers}) != len(buffers): raise ValueError("program buffer names must be unique")
     self.params = {buffer.name: buffer for buffer in buffers}
     self._param_slots = {buffer: slot for slot, buffer in enumerate(buffers)}
     self._cbs: list[CBConfig] = []
@@ -138,50 +122,28 @@ class Program:
     program.params, program._param_slots = {}, {}
     program._runtime_args = None
     program._cbs, program.launch = list(cbs), tuple(launch)
-    program._l1 = None
     program._kernels = kernels
-    program.roles = {}
-    program._scopes = None
     return program
 
-  def cb(self, dtype: DType, depth: int = 2, name: str | None = None):
-    if self._kernels is not None: raise RuntimeError("program has already been lowered")
-    if depth <= 0: raise ValueError("CB depth must be positive")
-    if len(self._cbs) >= 32: raise ValueError("at most 32 circular buffers are supported")
+  def cb(self, dtype: DType, depth: int = 2):
     index = len(self._cbs)
     page_size = 1024 * dtype.itemsize
-    addr = self._l1.alloc(depth * page_size, name=name)
+    addr = self._l1.alloc(depth * page_size)
     cb = CBConfig(index, dtype, depth, addr)
     self._cbs.append(cb)
     return cb
 
-  def l1(self, size: int, alignment=4, name: str | None = None):
-    """Reserve shared worker L1 storage for kernel-side coordination."""
-    if self._kernels is not None: raise RuntimeError("program has already been lowered")
-    if type(size) is not int or size <= 0: raise ValueError("L1 allocation size must be positive")
-    if type(alignment) is not int or alignment <= 0 or alignment & (alignment - 1):
-      raise ValueError("L1 alignment must be a positive power of two")
-    return self._l1.alloc(size, alignment, name=name)
+  def l1(self, size: int, alignment=4):
+    return self._l1.alloc(size, alignment)
 
   def set_runtime_args(self, args_by_core):
-    """Set the per-core u32 argument rows loaded with ``Asm.arg(index)``."""
     if isinstance(args_by_core, dict):
-      missing = set(self.cores) - set(args_by_core)
-      extra = set(args_by_core) - set(self.cores)
-      if missing or extra:
-        raise ValueError(f"runtime argument cores differ (missing={sorted(missing)}, extra={sorted(extra)})")
       rows = tuple(tuple(args_by_core[core]) for core in self.cores)
     else:
       rows = tuple(tuple(row) for row in args_by_core)
-      if len(rows) != len(self.cores):
-        raise ValueError("runtime arguments require one row per program core")
-    widths = {len(row) for row in rows}
-    if len(widths) != 1: raise ValueError("runtime argument rows must have equal length")
-    width = widths.pop() if widths else 0
+    width = len(rows[0]) if rows else 0
     if len(self.params) + width > TensixL1.PARAM_SLOTS:
       raise ValueError("program parameter and runtime argument table is full")
-    if any(type(value) is not int or not 0 <= value <= 0xFFFFFFFF for row in rows for value in row):
-      raise ValueError("runtime arguments must be u32 integers")
     self._runtime_args = rows
     return self
 

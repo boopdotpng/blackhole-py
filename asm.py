@@ -1,7 +1,7 @@
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import ClassVar
-from fw.consts import Core, Firmware, KernelRole
+from fw.consts import Firmware, KernelRole
 from isa import R, RV32, TensixWord
 from pcie import Allocator
 from ttk.common import Common
@@ -45,22 +45,20 @@ class Cond:
     return {"beq": "bne", "bne": "beq", "blt": "bge", "bge": "blt", "bltu": "bgeu", "bgeu": "bltu"}[op]
 
 class Asm(RV32, Common):
-  def __init__(self, role: KernelRole, core: Core | None = None,
-               param_slots: dict[object, int] | None = None,
+  def __init__(self, role: KernelRole, param_slots: dict[object, int] | None = None,
                firmware: bool = False):
     self.items, self.labels, self._prologue = [], {}, []
 
     reserved = {R.ZERO, R.RA, R.SP, R.GP, R.TP}
     self._free, self._scopes = [reg for reg in R if reg not in reserved], []
     self._label_id, self._breaks = 0, []
-    self.role, self.core = role, core
+    self.role = role
     self.param_slots = {} if param_slots is None else param_slots
     self.is_firmware = bool(firmware)
     self._lowered = False
     self.local = Allocator(*Firmware.LOCAL_MEMORY.get(role, (0, 0)), 4)
-    self._return_addr = None
     if not self.is_firmware:
-      self._return_addr = self.local.alloc(4, name="kernel_return_addr")
+      self._return_addr = self.local.alloc(4)
       self.store(self._return_addr, R.RA)
     self._body_start = len(self.items)
 
@@ -131,7 +129,6 @@ class Asm(RV32, Common):
     return self
 
   def initialize_local(self, addr: int, value: int):
-    """Initialize RISC-local kernel state before the generated kernel body."""
     self._prologue += _li_words(R.T0, addr)
     source = R.ZERO
     if value:
@@ -165,11 +162,7 @@ class Asm(RV32, Common):
     self.j(start)
     self.label(end)
 
-  def while_(self, condition: Cond | None = None):
-    return self.loop(condition)
-
   def range(self, count: int | R):
-    if type(count) is int and count < 0: raise ValueError("range count must be nonnegative")
     with self.scope():
       index, limit = self.reg(2, exclude=count if isinstance(count, R) else ())
       self.li(index, 0)
@@ -255,5 +248,4 @@ class Asm(RV32, Common):
         self.load(return_addr, self._return_addr)
         self.jalr(R.ZERO, return_addr)
     self._lowered = True
-    image = self.assemble()
-    return image
+    return self.assemble()

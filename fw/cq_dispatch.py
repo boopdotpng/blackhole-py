@@ -9,14 +9,14 @@ from fw.consts import CQConfig, FirmwareControl, RunState, TensixMMIO
 from isa import R
 from asm import Asm
 
-def build_dispatch(core=CQConfig.DISPATCH_CORE):
-  fw = Asm("brisc", core)
+def build_dispatch():
+  fw = Asm("brisc")
   with fw.scope(): _emit_dispatch(fw, fw.reg(12))
   return fw
 
 def _emit_dispatch(fw, state):
   s0, s1, s2, s3, s4, s5, s6, s7, s8, s9, s10, s11 = state
-  noc = fw.noc(1)
+  noc = fw.noc(0)
   fw.li(s0, DISPATCH_RING_BASE)
   fw.li(s1, 0)
   fw.write32(DISPATCH_CREDIT_RETURN, (DISPATCH_RING_END - DISPATCH_RING_BASE) // PAGE_SIZE)
@@ -63,7 +63,6 @@ def _emit_dispatch(fw, state):
   fw.label("multicast_loop")
   fw.beq(s3, R.ZERO, "multicast_done")
   fw.lw(s8, s6, 0); fw.lw(s9, s6, 4)
-
   noc.multicast_write(s7, s4, s8, s9, s5)
   fw.addi(s6, s6, 8); fw.addi(s3, s3, -1)
   fw.j("multicast_loop")

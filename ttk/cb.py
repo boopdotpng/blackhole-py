@@ -25,8 +25,7 @@ class CB:
       states = kernel._cb_states = {}
     key = config.index, producer
     if key not in states:
-      side = "producer" if producer else "consumer"
-      state = kernel.local.alloc(8, name=f"cb{config.index}_{side}")
+      state = kernel.local.alloc(8)
       kernel.initialize_local(state, config.addr)
       kernel.initialize_local(state + 4, 0)
       states[key] = state
@@ -36,13 +35,7 @@ class CB:
   def _sync(config, base): return base + config.index * CB.SYNC_STRIDE
 
   @staticmethod
-  def _count(config, count):
-    if type(count) is not int or not 0 < count <= config.depth:
-      raise ValueError("CB count must be a positive integer within its depth")
-
-  @staticmethod
   def _advance(kernel, config, state, count):
-    CB._count(config, count)
     with kernel.scope():
       pointer, step, limit, size = kernel.reg(4)
       kernel.load(pointer, state)
@@ -55,7 +48,6 @@ class CB:
 
   @staticmethod
   def reserve_back(kernel, config, count=1):
-    CB._count(config, count)
     state = CB._state(kernel, config, producer=True)
     with kernel.scope():
       received, acked, used, free, need = kernel.reg(5)
@@ -82,7 +74,6 @@ class CB:
 
   @staticmethod
   def wait_front(kernel, config, count=1):
-    CB._count(config, count)
     state = CB._state(kernel, config, producer=False)
     with kernel.scope():
       acked, received, available, need = kernel.reg(4)
@@ -98,7 +89,6 @@ class CB:
   @staticmethod
   def pop_front(kernel, config, count=1):
     state = CB._state(kernel, config, producer=False)
-    CB._count(config, count)
     with kernel.scope():
       acked = kernel.reg()
       kernel.load(acked, state + 4); kernel.addi(acked, acked, count)

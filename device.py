@@ -10,7 +10,7 @@ from fw.consts import CQConfig
 class Device:
   def __init__(self, index: int = 0, sysmem_size: int = 1 << 30):
     self.pcie = PCIDevice(index, sysmem_size)
-    self.dram = Dram(coords=self.pcie.dram_coords)
+    self.dram = Dram(self.pcie.dram_endpoints)
     self.program_queue = []
     self.cq = None
     self._staging_write = 0
@@ -57,7 +57,7 @@ class Device:
 
     tiles = buffer.pages
     build = dram_write if write else dram_read
-    program = build(self.pcie.cores[:tiles], buffer.dram_coords[1])
+    program = build(self.pcie.cores[:tiles], buffer.dram_endpoints)
     tiles_per_core = (tiles + len(program.cores) - 1) // len(program.cores)
     sysmem_base = self.cq.noc + self.cq.dram + offset
     if sysmem_base + buffer.size > 1 << 32:
@@ -92,9 +92,6 @@ class Device:
     return values.transpose(axes).reshape(-1).tobytes()
 
   def dram_write(self, buffer, data: bytes):
-    if len(data) != buffer.size:
-      raise ValueError(f"buffer write requires exactly {buffer.size} bytes")
-    if self.cq is None: raise RuntimeError("init_device() must be called before tensor transfer")
     offset = self._staging_write
     program = self._dram_program(buffer, write=True, offset=offset)
     self.pcie.sysmem.write(self.cq.dram + offset, self._tile_data(buffer, data))
@@ -117,7 +114,7 @@ class Device:
       programs = (*self.program_queue, programs)
     else:
       programs = (*self.program_queue, *programs)
-    results = [self.cq.submit((*program.commands(), Run(program.cores, 1)), timeout=timeout) for program in programs]
+    results = [self.cq.submit((*program.commands(), Run(program.cores)), timeout=timeout) for program in programs]
     self.program_queue.clear()
     self._staging_write = 0
     return results

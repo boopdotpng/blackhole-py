@@ -82,8 +82,6 @@ class Common:
     return self
 
   def align_up(self, value: R, alignment: int, scratch: R = R.T0):
-    if type(alignment) is not int or alignment <= 0 or alignment & (alignment - 1):
-      raise ValueError("alignment must be a positive power of two")
     self.li(scratch, alignment - 1)
     self.add(value, value, scratch)
     self.li(scratch, -alignment)
@@ -138,9 +136,6 @@ class Common:
     return reg
 
   def arg(self, index: int):
-    """Load one per-core runtime argument from the Program argument table."""
-    if type(index) is not int or index < 0:
-      raise ValueError("runtime argument index must be a nonnegative integer")
     reg = self.reg()
     self.load(reg, PARAM_BASE + (len(self.param_slots) + index) * 4)
     return reg
