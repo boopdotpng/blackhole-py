@@ -75,8 +75,8 @@ class Asm(RV32, Common):
     if self._lowered: raise RuntimeError("kernel has already been lowered")
     if isinstance(word, TensixWord):
       if self.role == "brisc":
-        from ttk.tensix import push_tensix_word
-        return push_tensix_word(self, word)
+        from fw.consts import TensixMMIO
+        return self.write32(TensixMMIO.INSTRN_BUF_BASE, int(word))
       if self.role == "ncrisc": raise RuntimeError("ncrisc cannot emit Tensix instructions")
       if self.role not in ("trisc0", "trisc1", "trisc2"):
         raise RuntimeError(f"{self.role} cannot emit Tensix instructions")
@@ -136,6 +136,16 @@ class Asm(RV32, Common):
       source = R.T1
     self._prologue.append(_rv32.sw(source, R.T0, 0))
     return self
+
+  def initialize_tensix(self, *words):
+    if self._lowered: raise RuntimeError("kernel has already been lowered")
+    if self.role not in ("trisc0", "trisc1", "trisc2"):
+      raise RuntimeError(f"{self.role} cannot initialize Tensix instructions")
+    if any(not isinstance(word, TensixWord) for word in words):
+      raise TypeError("Tensix initialization requires Tensix instructions")
+    self._prologue.extend(words)
+    return self
+
   def mv(self, rd: R, rs: R): return self.addi(rd, rs, 0)
   def nop(self): return self.addi(R.ZERO, R.ZERO, 0)
   def j(self, label: str): return self.jal(R.ZERO, label)

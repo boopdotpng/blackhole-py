@@ -1,7 +1,6 @@
 from asm import Asm
 from isa import R
-from fw.consts import Firmware, FirmwareControl, RunState, TensixL1
-from ttk.tensix import TensixPipe, TensixRegs
+from fw.consts import Firmware, FirmwareControl, RunState, TensixL1, TensixMMIO
 
 def build_trisc(trisc_id: int):
   role = f"trisc{trisc_id}"
@@ -11,7 +10,7 @@ def build_trisc(trisc_id: int):
   fw.setup_stack(Firmware.TRISC_STACK_TOP)
   fw.configure_csr()
   fw.jal(R.RA, "init_tensix")
-  fw.write32(TensixRegs.PRNG_SEED_SEED_VAL, 0)
+  fw.write32(TensixMMIO.PRNG_SEED_SEED_VAL, 0)
   fw.delay_cycles(600)
 
   fw.signal8(sync, RunState.BOOT_READY)
@@ -24,6 +23,6 @@ def build_trisc(trisc_id: int):
   fw.j("run_loop")
 
   fw.label("init_tensix")
-  TensixPipe.init(fw)
+  fw.zero_words(TensixMMIO.REGFILE_BASE, 64)
   fw.jalr(R.ZERO, R.RA)
   return fw

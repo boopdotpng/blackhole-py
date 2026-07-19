@@ -73,8 +73,8 @@ class Common:
     return self.write32(addr, value)
 
   def invalidate_risc_caches(self):
-    from ttk.tensix import TensixRegs
-    return self.write32(TensixRegs.RISCV_IC_INVALIDATE, TensixRegs.RISCV_IC_ALL_MASK)
+    from fw.consts import TensixMMIO
+    return self.write32(TensixMMIO.RISCV_IC_INVALIDATE, TensixMMIO.RISCV_IC_ALL_MASK)
 
   def signal_range(self, base: int, offsets, value: int):
     for offset in offsets:

@@ -3,22 +3,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from isa import Tensix as TT
 from program import Buffer, DType, Dram, Program
-from ttk.math import AddressModifier, DestinationCounter, SourceCounter, set_dst_row_base
-from ttk.mop import LoopTemplate
 from ttk.sfpu import SfpuFormat
-from ttk.tensix import (
-  TensixSem, TensixSemWait, TensixStall, TensixWait,
-)
 from ttk.unpack import UnpackTarget
-
-_COPY = TT.TTMOVA2D(0, 0, 2, 2, 0)
-_COPY_MOP = LoopTemplate(
-  outer=4, inner=2, loop=_COPY,
-  end0=TT.TTSETRWC(3, 0, 0, 0, 0, 3),
-  last=_COPY, outer_last=_COPY,
-)
 
 def add1(src: Buffer, dst: Buffer, *, core=(1, 2), cores=None) -> Program:
   cores = (core,) if cores is None else tuple(cores)
@@ -27,12 +14,7 @@ def add1(src: Buffer, dst: Buffer, *, core=(1, 2), cores=None) -> Program:
   input_cb = p.cb(src.dtype)
   output_cb = p.cb(dst.dtype)
 
-  AddressModifier(source_a=SourceCounter(increment=8),
-                  destination=DestinationCounter(increment=8)).configure(p.fpu, 2)
-  set_dst_row_base(p.fpu)
-  p.fpu.mop.configure(_COPY_MOP)
-  p.sfpu.configure()
-  add_one = p.sfpu.install(p.sfpu.add_immediate_program(1, format=SfpuFormat.BF16))
+  dst_tile = p.dst.tile()
 
   noc = p.brisc.noc(0)
   start, count = p.brisc.arg(0), p.brisc.arg(1)
@@ -46,16 +28,12 @@ def add1(src: Buffer, dst: Buffer, *, core=(1, 2), cores=None) -> Program:
     p.unpack.move(input_cb, UnpackTarget.SRCA)
 
   for _ in p.trisc1.range(p.trisc1.arg(1)):
-    p.fpu.semaphore_wait(TensixSem.MATH_PACK, TensixSemWait.STALL_ON_MAX,
-                         TensixStall.SYNC | TensixStall.MATH | TensixStall.SFPU)
-    p.fpu.stall(TensixStall.MATH, TensixWait.SRCA_VLD)
-    p.fpu.mop.run()
-    p.sfpu.run_tile(add_one)
-    p.fpu.stall(TensixStall.SYNC, TensixWait.MATH | TensixWait.SFPU)
-    p.fpu.semaphore_post(TensixSem.MATH_PACK)
+    with p.fpu.tile(dst_tile):
+      p.fpu.copy_a(dst_tile)
+      p.sfpu.add_scalar(dst_tile, 1, format=SfpuFormat.BF16)
 
   for _ in p.trisc2.range(p.trisc2.arg(1)):
-    p.pack.move(0, output_cb)
+    p.pack.move(dst_tile, output_cb)
 
   noc = p.ncrisc.noc(1)
   start, count = p.ncrisc.arg(0), p.ncrisc.arg(1)

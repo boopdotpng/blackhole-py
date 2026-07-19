@@ -1,6 +1,7 @@
 from dataclasses import dataclass, field
 
 from isa import Tensix as TT
+from ttk.sync import mop_sync
 
 MOP_CFG = 0xFFB80000
 REPLAY_SIZE = 32
@@ -72,37 +73,36 @@ class MopState:
   replay: ReplayBuffer = field(default_factory=ReplayBuffer)
 
 class Mop:
-  def __init__(self, tensix):
-    role = getattr(tensix.k, "role", f"trisc{tensix.pipe}")
-    if tensix.pipe not in range(3) or role != f"trisc{tensix.pipe}": raise RuntimeError(f"{role} cannot use this MOP")
-    self.tensix = tensix
+  def __init__(self, kernel, pipe):
+    role = getattr(kernel, "role", f"trisc{pipe}")
+    if pipe not in range(3) or role != f"trisc{pipe}":
+      raise RuntimeError(f"{role} cannot use this MOP")
+    self.k, self.pipe, self.state = kernel, pipe, MopState()
 
-  @property
-  def state(self): return self.tensix.state.mop[self.tensix.pipe]
-
-  def load(self, replay, execute=False):
-    self.tensix.issue(TT.TTREPLAY(replay.start, len(replay.words), int(execute), 1))
-    for word in replay.words: self.tensix.issue(word)
+  def load(self, replay, execute=False, initialize=False):
+    words = (TT.TTREPLAY(replay.start, len(replay.words), int(execute), 1), *replay.words)
+    if initialize: self.k.initialize_tensix(*words)
+    else:
+      for word in words: self.k.emit(word)
     return self
 
   def _replay(self, start, length):
-    self.tensix.issue(TT.TTREPLAY(start, length, 0, 0)); return self
+    self.k.emit(TT.TTREPLAY(start, length, 0, 0)); return self
 
   def replay(self, replay):
     return self._replay(replay.start, len(replay.words))
 
   def configure(self, template):
     for replay in template.replays(): self.load(replay)
-    words, state = template.words(), self.state
-    if words != state.config:
-      self.tensix.mop_sync()
-      for index, word in enumerate(words): self.tensix.k.write32(MOP_CFG + index * 4, word)
-    state.config, state.masked = words, isinstance(template, MaskTemplate)
+    words = template.words()
+    mop_sync(self.k)
+    for index, word in enumerate(words): self.k.write32(MOP_CFG + index * 4, word)
+    self.state.config, self.state.masked = words, isinstance(template, MaskTemplate)
     return self
 
   def run(self, count=None, mask=0):
     if self.state.masked:
-      self.tensix.issue(TT.TTMOP_CFG(mask >> 16))
-      self.tensix.issue(TT.TTMOP(0, count - 1, mask & 0xFFFF))
-    else: self.tensix.issue(TT.TTMOP(1, 0, 0))
+      self.k.emit(TT.TTMOP_CFG(mask >> 16))
+      self.k.emit(TT.TTMOP(0, count - 1, mask & 0xFFFF))
+    else: self.k.emit(TT.TTMOP(1, 0, 0))
     return self

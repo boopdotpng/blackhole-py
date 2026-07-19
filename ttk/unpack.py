@@ -1,15 +1,17 @@
 from enum import IntEnum
 
+from fw.consts import TensixMMIO
 from isa import R, Tensix as TT
 from program import DType
 from ttk.cb import CB
-from ttk.mop import LoopTemplate, NOP
-from ttk.tensix import (
-  CFG_BASE, TensixPipe, TensixSem, TensixSemWait, TensixStall, TensixWait,
-)
+from ttk.dst import Dst, DstTile
+from ttk.mop import LoopTemplate, Mop, NOP
+from ttk.sync import Sem, SemWait, Stall, Wait, sem_get, sem_post, sem_wait, stall, sync
 
 class UnpackTarget(IntEnum):
   SRCA, SRCB, DST = range(3)
+
+CFG_BASE = TensixMMIO.CFG_BASE
 
 class _Cfg(IntEnum):
   UNPACK0_ADDRESS_XY0 = CFG_BASE + 0xB0; UNPACK0_ADDRESS_ZW0 = CFG_BASE + 0xB4
@@ -71,7 +73,15 @@ def _select_mop(target, tilize):
   return (_TILIZE_MOPS if tilize else _MOPS)[target]
 
 class Unpack:
-  def __init__(self, kernel): self.k, self.tensix = kernel, TensixPipe(kernel, 0)
+  def __init__(self, kernel, dst: Dst):
+    self.k, self.dst, self._mop = kernel, dst, Mop(kernel, 0)
+
+  def _issue(self, word):
+    self.k.emit(word)
+    return self
+
+  def _set_thread_cfg(self, register, value):
+    return self._issue(TT.TTSETC16(int(register), int(value)))
 
   def _wait_config_idle(self):
     k = self.k
@@ -86,7 +96,7 @@ class Unpack:
       observed = self.k.reg()
       self.k.read32(observed, int(register)); self.k.write32(_CONFIG_SYNC, 0)
 
-  def _write_mode(self, engine, input_format, output_format, target, tilize):
+  def _write_mode(self, engine, input_format, output_format, target, tilize, dst_tile=None):
     k = self.k
     x_dim = 1024 if tilize else 0 if engine == UNPACKER0 else 256
     descriptor = (input_format | 0x10 | x_dim << 16, 1 | (1 if tilize else 4) << 16, 0, 0)
@@ -108,6 +118,8 @@ class Unpack:
     ): k.write32(int(register), value)
 
     destination = 64 if engine == UNPACKER0 else 0
+    if target == UnpackTarget.DST:
+      destination += self.dst.check(dst_tile).row_base * 16
     x_dim = 1024 if tilize else 256
     for register, value in (
       (_DEST[engine], destination | destination << 16),
@@ -115,13 +127,13 @@ class Unpack:
       (_OFFSET[engine], 0), (int(_OFFSET[engine]) + 4, 0),
     ): k.write32(int(register), value)
 
-  def _configure(self, cb, target, tilize):
+  def _configure(self, cb, target, tilize, dst_tile=None):
     input_format = cb.dtype
     output_format = DType.BF16 if input_format == DType.F32 and target != UnpackTarget.DST else input_format
-    engine, t = int(target == UnpackTarget.SRCB), self.tensix
+    engine = int(target == UnpackTarget.SRCB)
     self._wait_config_idle()
-    t.select_config()
-    self._write_mode(engine, input_format, output_format, target, tilize)
+    self._set_thread_cfg(0, 0)
+    self._write_mode(engine, input_format, output_format, target, tilize, dst_tile)
     with self.k.scope():
       address = self.k.reg()
       CB.get_read_ptr(self.k, cb, address)
@@ -129,44 +141,41 @@ class Unpack:
       self.k.write32(int(_BASE[engine]), address)
       self.k.write32(int(_BASE[engine]) + 4, address)
     # This stateless path fully drains each move, so context 0 is always free.
-    t.issue(TT.TTSETC16(_MISC_CONFIG, 0))
+    self._issue(TT.TTSETC16(_MISC_CONFIG, 0))
     if engine == UNPACKER0:
-      t.issue(TT.TTSETC16(_SRCA_SET, 0 if target == UnpackTarget.DST else 4))
-    self._commit_config(_BASE[engine]); t.mop.configure(_select_mop(target, tilize))
+      self._issue(TT.TTSETC16(_SRCA_SET, 0 if target == UnpackTarget.DST else 4))
+    self._commit_config(_BASE[engine]); self._mop.configure(_select_mop(target, tilize))
     return engine
 
-  def _run(self, cb, target, tilize):
-    t = self.tensix
-    engine = self._configure(cb, target, tilize)
-    t.issue(TT.TTSETADCXX(engine + 1, 1023 if tilize else 255, 0))
-    t.issue(TT.TTSETADCZW(3, 0, 0, 0, 0, 0xF))
+  def _run(self, cb, target, tilize, dst_tile=None):
+    engine = self._configure(cb, target, tilize, dst_tile)
+    self._issue(TT.TTSETADCXX(engine + 1, 1023 if tilize else 255, 0))
+    self._issue(TT.TTSETADCZW(3, 0, 0, 0, 0, 0xF))
     if target == UnpackTarget.DST:
-      t.semaphore_wait(TensixSem.MATH_DONE, TensixSemWait.STALL_ON_ZERO,
-                       stall=TensixStall.UNPACK)
-      t.semaphore_get(TensixSem.MATH_DONE)
-      t.semaphore_wait(TensixSem.UNPACK_TO_DEST, TensixSemWait.STALL_ON_MAX,
-                       stall=TensixStall.UNPACK)
+      sem_wait(self.k, Sem.MATH_DONE, SemWait.STALL_ON_ZERO, Stall.UNPACK)
+      sem_get(self.k, Sem.MATH_DONE)
+      sem_wait(self.k, Sem.UNPACK_TO_DEST, SemWait.STALL_ON_MAX, Stall.UNPACK)
       # Both barriers are required on hardware; without direct-to-Dst serialization
       # the older RMSNorm path observed only the final face.
-      t.stall(TensixStall.UNPACK, TensixWait.TRISC_CFG | TensixWait.PACK0)
-    else: t.stall(TensixStall.UNPACK, TensixWait.TRISC_CFG)
-    t.mop.run()
+      stall(self.k, Stall.UNPACK, Wait.TRISC_CFG | Wait.PACK0)
+    else: stall(self.k, Stall.UNPACK, Wait.TRISC_CFG)
+    self._mop.run()
     if target == UnpackTarget.DST:
-      t.stall(TensixStall.UNPACK, TensixWait.THCON | TensixWait.UNPACK0)
+      stall(self.k, Stall.UNPACK, Wait.THCON | Wait.UNPACK0)
     else:
-      t.stall(TensixStall.UNPACK,
-              TensixWait.UNPACK1 if engine == UNPACKER1 else TensixWait.UNPACK0)
-    t.semaphore_get(TensixSem.UNPACK_SYNC); t.sync()
+      stall(self.k, Stall.UNPACK, Wait.UNPACK1 if engine == UNPACKER1 else Wait.UNPACK0)
+    sem_get(self.k, Sem.UNPACK_SYNC); sync(self.k)
     if target == UnpackTarget.DST:
-      t.issue(TT.TTSETC16(_SRCA_SET, 4))
-      t.semaphore_post(TensixSem.UNPACK_TO_DEST)
+      self._issue(TT.TTSETC16(_SRCA_SET, 4))
+      sem_post(self.k, Sem.UNPACK_TO_DEST)
 
   def move(self, source_cb, target, tilize=False):
+    dst_tile = self.dst.check(target) if isinstance(target, DstTile) else None
+    if dst_tile is not None: target = UnpackTarget.DST
     _select_mop(target, tilize)  # Validate before emitting CB operations.
     CB.wait_front(self.k, source_cb)
     if target != UnpackTarget.DST:
-      self.tensix.stall(TensixStall.UNPACK, TensixWait.SRCB_CLR if target == UnpackTarget.SRCB
-                        else TensixWait.SRCA_CLR)
-    self._run(source_cb, target, tilize)
+      stall(self.k, Stall.UNPACK, Wait.SRCB_CLR if target == UnpackTarget.SRCB else Wait.SRCA_CLR)
+    self._run(source_cb, target, tilize, dst_tile)
     CB.pop_front(self.k, source_cb)
     return self

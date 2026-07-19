@@ -92,7 +92,8 @@ class CBConfig:
   def limit(self): return self.addr + self.size
 
 class Program:
-  def __init__(self, cores: tuple[Core, ...] | list[Core], buffers: tuple[Buffer, ...] | list[Buffer] = ()):
+  def __init__(self, cores: tuple[Core, ...] | list[Core],
+               buffers: tuple[Buffer, ...] | list[Buffer] = (), *, fp32_dst=False):
     self._cores = tuple(cores)
     buffers = tuple(buffers)
     self.params = {buffer.name: buffer for buffer in buffers}
@@ -105,12 +106,16 @@ class Program:
 
     self.roles = {role: Asm(role, param_slots=self._param_slots) for role in KERNEL_ROLES}
     for role, stream in self.roles.items(): setattr(self, role, stream)
+    from ttk.dst import Dst
+    from ttk.fpu import Fpu
     from ttk.pack import Pack
     from ttk.sfpu import Sfpu
-    from ttk.tensix import TensixPipe
     from ttk.unpack import Unpack
-    self.unpack, self.fpu, self.pack = Unpack(self.trisc0), TensixPipe(self.trisc1, 1), Pack(self.trisc2)
-    self.sfpu = Sfpu(self.fpu)
+    self.dst = Dst(fp32_dst)
+    self.unpack = Unpack(self.trisc0, self.dst)
+    self.fpu = Fpu(self.trisc1, self.dst)
+    self.sfpu = Sfpu(self.trisc1, self.dst)
+    self.pack = Pack(self.trisc2, self.dst)
     self._scopes = ExitStack()
     for stream in self.roles.values(): self._scopes.enter_context(stream.scope())
 

@@ -1,10 +1,25 @@
 from asm import Asm
-from isa import R
+from isa import R, Tensix as TT
 from cq import DISPATCH_DONE_COUNT
 from fw.consts import CQConfig, Firmware, FirmwareControl, RunState, TensixL1, TensixMMIO
 from ttk.noc import NIU0, NIU_STRIDE, NIU_CONFIG, NIU_CONTROL, ROUTER_CONTROL
-from ttk.tensix import TensixPipe
 from ttk.cb import CB
+from ttk.sync import Sem
+
+_ECC_SCRUBBER = TensixMMIO.CFG_BASE + 0xC
+
+def _reset_tensix(fw):
+  fw.zero_words(TensixMMIO.CFG_BASE, 256)
+  push = lambda word: fw.write32(TensixMMIO.INSTRN_BUF_BASE, word)
+  push(TT.TTZEROACC(3, 0, 0, 0, 0))
+  push(TT.TTSFPENCC(3, 0, 0, 10))
+  push(TT.TTNOP())
+  push(TT.TTSFPLOADI(0, 0, 0xBF80))
+  push(TT.TTSFPCONFIG(0, 11, 0))
+  fw.write32(_ECC_SCRUBBER, 1 | 2 | (0x100 << 3))
+  for sem in (Sem.MATH_PACK, Sem.UNPACK_TO_DEST, Sem.MATH_DONE):
+    push(TT.TTSEMINIT(1, 0, 1 << sem))
+  return fw
 
 def _enable_clock_gating(fw):
   for noc in range(2):
@@ -55,7 +70,7 @@ def build_brisc():
   fw.j("run_loop")
 
   fw.label("reset_tensix")
-  TensixPipe.reset_hardware(fw)
+  _reset_tensix(fw)
   CB.reset_counters(fw)
   fw.jalr(R.ZERO, R.RA)
   return fw
