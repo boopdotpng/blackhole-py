@@ -1,79 +1,169 @@
 from contextlib import ExitStack
 from dataclasses import dataclass
-from enum import IntEnum
 from math import prod
 
-from asm import Asm
-from cq import Command, MAX_WRITE_SIZE, McastWrite, UnicastWrite
-from fw.consts import Core, KERNEL_ROLES, KernelRole, TensixL1
-from isa import R, RV32
-from pcie import Allocator
-from ttk.common import PARAM_BASE
+import numpy as np
 
+from asm import Asm
+from cq import MAX_WRITE_SIZE, McastWrite, UnicastWrite
+from fw.consts import KERNEL_ROLES, TensixL1
+from isa import R, RV32
+from pcie import Allocator, P100_WORKER_CORES
+from ttk import DType
+from ttk.dst import Dst
+from ttk.fpu import Fpu
+from ttk.pack import Pack
+from ttk.sfpu import Sfpu
+from ttk.unpack import Unpack
+
+PARAM_BASE = TensixL1.PARAM_BASE
 RETURN_KERNEL = RV32().jalr(R.ZERO, R.RA).to_bytes(4, "little")
 
-class DType(IntEnum):
-  F32 = 0
-  BF16 = 5
 
-  @property
-  def itemsize(self): return 4 if self is DType.F32 else 2
-
-@dataclass(frozen=True)
+@dataclass(frozen=True, eq=False)
 class Buffer:
   name: str
   addr: int
   dtype: DType
   shape: tuple[int, ...]
-  padded_shape: tuple[int, ...]
-  dram_endpoints: tuple[tuple[Core, Core], ...] | None = None
+  axis: int | None
+  cores: tuple[tuple[int, int], ...]
+  banks: int
+
+  def __post_init__(self):
+    shape, axis, cores = tuple(self.shape), self.axis, tuple(self.cores)
+    if axis is not None:
+      if axis < 0: axis += len(shape)
+      if not 0 <= axis < len(shape): raise ValueError("shard axis is outside the buffer shape")
+    object.__setattr__(self, "shape", shape)
+    object.__setattr__(self, "axis", axis)
+
+    if axis is None:
+      items = (prod(shape) + 1023) // 1024
+      item_elements, tiles_per_item = 1024, 1
+    else:
+      items = shape[axis]
+      item_elements = prod((*shape[:axis], *shape[axis + 1:]))
+      tiles_per_item = max(1, (item_elements + 1023) // 1024)
+
+    cores = cores[:min(max(1, items), len(cores))]
+    object.__setattr__(self, "cores", cores)
+    per_core, extra = divmod(items, len(cores))
+    item_counts = tuple(per_core + (index < extra) for index in range(len(cores)))
+    item_starts, start = [], 0
+    for count in item_counts:
+      item_starts.append(start)
+      start += count
+
+    items_per_core = max(1, per_core + bool(extra))
+    tiles_per_core = items_per_core * tiles_per_item
+    object.__setattr__(self, "items", items)
+    object.__setattr__(self, "item_elements", item_elements)
+    object.__setattr__(self, "items_per_core", items_per_core)
+    object.__setattr__(self, "tiles_per_item", tiles_per_item)
+    object.__setattr__(self, "tiles_per_core", tiles_per_core)
+    object.__setattr__(self, "item_starts", tuple(item_starts))
+    object.__setattr__(self, "item_counts", item_counts)
+    object.__setattr__(
+      self, "tile_starts",
+      tuple(index * tiles_per_core for index in range(len(cores))),
+    )
+    object.__setattr__(self, "tile_counts", (tiles_per_core,) * len(cores))
 
   @property
-  def size(self): return prod(self.padded_shape) * self.dtype.itemsize
+  def tiles(self): return self.items * self.tiles_per_item
 
   @property
-  def page_size(self): return 1024 * self.dtype.itemsize
+  def physical_tiles(self): return len(self.cores) * self.tiles_per_core
 
   @property
-  def pages(self):
-    elements = prod(self.padded_shape)
-    if elements % 1024: raise ValueError("buffer padding must contain a whole number of 1024-element pages")
-    return elements // 1024
+  def tile_size(self): return 1024 * self.dtype.itemsize
+
+  @property
+  def size(self): return self.physical_tiles * self.tile_size
+
+  @property
+  def storage_shape(self): return len(self.cores), self.tiles_per_core, 32, 32
+
+  def shard_addr(self, core):
+    tile = self.tile_starts[self.cores.index(core)]
+    rows, bank = divmod(tile, self.banks)
+    # Buffer addresses are 64-byte aligned. Use the otherwise-zero low bits
+    # to carry this shard's initial bank without adding another kernel param.
+    return self.addr + rows * self.tile_size | bank
 
   def from_numpy(self, values) -> bytes:
-    import numpy as np
-    values = np.asarray(values, dtype=np.float32)
-    padded = np.zeros(self.padded_shape, dtype=np.float32)
-    padded[tuple(slice(0, size) for size in self.shape)] = values
-    if self.dtype is DType.F32: return padded.astype("<f4", copy=False).tobytes()
-    return (padded.view(np.uint32) >> 16).astype("<u2").tobytes()
+    values = np.asarray(values, dtype=np.float32).reshape(self.shape)
+    if self.dtype is DType.F32: return values.astype("<f4", copy=False).tobytes()
+    return (values.view(np.uint32) >> 16).astype("<u2").tobytes()
 
   def to_numpy(self, data: bytes):
-    import numpy as np
     if self.dtype is DType.F32: values = np.frombuffer(data, dtype="<f4")
-    else: values = (np.frombuffer(data, dtype="<u2").astype(np.uint32) << 16).view(np.float32)
-    values = values.reshape(self.padded_shape)
-    return values[tuple(slice(0, size) for size in self.shape)].copy()
+    else:
+      values = (
+        np.frombuffer(data, dtype="<u2").astype(np.uint32) << 16
+      ).view(np.float32)
+    return values.reshape(self.shape).copy()
 
-class Dram:
-  START = 0x40
-  END = 1 << 32
-  ALIGNMENT = 64
+  def tile_data(self, data: bytes, *, inverse=False):
+    element = np.dtype(f"V{self.dtype.itemsize}")
+    if inverse:
+      physical = np.frombuffer(data, dtype=element)
+      tiles = physical.reshape(self.physical_tiles, 2, 2, 16, 16)
+      tiles = tiles.transpose(0, 1, 3, 2, 4).reshape(self.physical_tiles, 1024)
+      blocks = tiles.reshape(len(self.cores), self.items_per_core,
+                             self.tiles_per_item * 1024)
+      items = np.concatenate([
+        block[:count] for block, count in zip(blocks, self.item_counts)
+      ])
+      if self.axis is None: return items.reshape(-1)[:prod(self.shape)].tobytes()
+      items = items[:, :self.item_elements]
+      moved_shape = (
+        self.shape[self.axis], *self.shape[:self.axis], *self.shape[self.axis + 1:]
+      )
+      values = items.reshape(moved_shape)
+      return np.moveaxis(values, 0, self.axis).tobytes()
 
-  def __init__(self, endpoints=None):
-    if endpoints is None:
-      from pcie import P100_DRAM_ENDPOINTS
-      endpoints = P100_DRAM_ENDPOINTS
-    self.allocator = Allocator(self.START, self.END, self.ALIGNMENT)
-    self.endpoints = tuple(endpoints)
-    self.banks = len(self.endpoints)
+    values = np.frombuffer(data, dtype=element).reshape(self.shape)
+    if self.axis is None:
+      logical = np.zeros((self.items, 1024), dtype=element)
+      logical.reshape(-1)[:values.size] = values.reshape(-1)
+    else:
+      logical = np.zeros(
+        (self.items, self.tiles_per_item * 1024), dtype=element,
+      )
+      logical[:, :self.item_elements] = np.moveaxis(
+        values, self.axis, 0,
+      ).reshape(self.items, self.item_elements)
 
-  def buffer(self, name: str, dtype: DType, shape: tuple[int, ...],
-             padded_shape: tuple[int, ...]):
-    buffer = Buffer(name, 0, dtype, shape, padded_shape, self.endpoints)
-    pages_per_bank = (buffer.pages + self.banks - 1) // self.banks
-    addr = self.allocator.alloc(pages_per_bank * buffer.page_size)
-    return Buffer(name, addr, dtype, shape, padded_shape, self.endpoints)
+    blocks = np.zeros(
+      (len(self.cores), self.items_per_core, self.tiles_per_item * 1024),
+      dtype=element,
+    )
+    for block, start, count in zip(blocks, self.item_starts, self.item_counts):
+      block[:count] = logical[start:start + count]
+    tiles = blocks.reshape(self.physical_tiles, 2, 16, 2, 16)
+    return tiles.transpose(0, 1, 3, 2, 4).tobytes()
+
+
+@dataclass(frozen=True, eq=False)
+class Const:
+  name: str
+  value: int | tuple[int, ...]
+
+
+Param = Buffer | Const
+
+
+def _param_values(param, cores, value=None):
+  if value is None: value = param if isinstance(param, Buffer) else param.value
+  if isinstance(value, Buffer): return tuple(value.shard_addr(core) for core in cores)
+  return tuple(value) if isinstance(value, (tuple, list)) else (value,) * len(cores)
+
+
+def _param_word(value):
+  return value.addr if isinstance(value, Buffer) else value
+
 
 @dataclass(frozen=True)
 class CBConfig:
@@ -83,167 +173,156 @@ class CBConfig:
   addr: int
 
   @property
-  def page_size(self): return 1024 * self.dtype.itemsize
+  def tile_size(self): return 1024 * self.dtype.itemsize
 
   @property
-  def size(self): return self.depth * self.page_size
+  def size(self): return self.depth * self.tile_size
 
   @property
   def limit(self): return self.addr + self.size
 
-class Program:
-  def __init__(self, cores: tuple[Core, ...] | list[Core],
-               buffers: tuple[Buffer, ...] | list[Buffer] = (), *, fp32_dst=False):
-    self._cores = tuple(cores)
-    buffers = tuple(buffers)
-    self.params = {buffer.name: buffer for buffer in buffers}
-    self._param_slots = {buffer: slot for slot, buffer in enumerate(buffers)}
-    self._cbs: list[CBConfig] = []
-    self._l1 = Allocator(TensixL1.DATA_BUFFER_SPACE_BASE, TensixL1.SIZE, 16)
-    self._runtime_args: tuple[tuple[int, ...], ...] | None = None
-    self.launch: tuple[Command, ...] = ()
-    self._kernels = None
 
-    self.roles = {role: Asm(role, param_slots=self._param_slots) for role in KERNEL_ROLES}
+class Dram:
+  START = 0x40
+  END = 1 << 32
+  ALIGNMENT = 64
+  BANKS = 7
+
+  def __init__(self, banks=BANKS, cores=P100_WORKER_CORES):
+    self.allocator = Allocator(self.START, self.END, self.ALIGNMENT)
+    self.banks = banks
+    self.cores = tuple(cores)
+
+  def buffer(self, name: str, dtype: DType, shape: tuple[int, ...],
+             axis=None) -> Buffer:
+    buffer = Buffer(name, 0, dtype, shape, axis, self.cores, self.banks)
+    tiles_per_bank = (buffer.physical_tiles + self.banks - 1) // self.banks
+    addr = self.allocator.alloc(tiles_per_bank * buffer.tile_size)
+    return Buffer(name, addr, dtype, shape, axis, self.cores, self.banks)
+
+
+class Program:
+  def __init__(self, cores, *parameters, fp32_dst=False, images=None):
+    self._cores = tuple(cores)
+    params = tuple(parameters)
+    if len(params) > TensixL1.PARAM_SLOTS:
+      raise ValueError("program parameter table is full")
+    self.params = {param.name: param for param in params}
+    self._param_slots = {param: slot for slot, param in enumerate(params)}
+    self._cbs = []
+    self.launch = ()
+    self._l1 = Allocator(TensixL1.DATA_BUFFER_SPACE_BASE, TensixL1.SIZE, 16)
+    self._kernels = None if images is None else {
+      core: dict(images) for core in self._cores
+    }
+
+    if images is not None: return
+    self.roles = {
+      role: Asm(role, param_slots=self._param_slots)
+      for role in KERNEL_ROLES
+    }
     for role, stream in self.roles.items(): setattr(self, role, stream)
-    from ttk.dst import Dst
-    from ttk.fpu import Fpu
-    from ttk.pack import Pack
-    from ttk.sfpu import Sfpu
-    from ttk.unpack import Unpack
-    self.dst = Dst(fp32_dst)
-    self.unpack = Unpack(self.trisc0, self.dst)
-    self.fpu = Fpu(self.trisc1, self.dst)
-    self.sfpu = Sfpu(self.trisc1, self.dst)
-    self.pack = Pack(self.trisc2, self.dst)
+    dst = Dst(fp32_dst)
+    self.unpack = Unpack(self.trisc0, dst)
+    self.fpu = Fpu(self.trisc1, dst)
+    self.sfpu = Sfpu(self.trisc1, dst)
+    self.pack = Pack(self.trisc2, dst)
     self._scopes = ExitStack()
     for stream in self.roles.values(): self._scopes.enter_context(stream.scope())
 
-  @classmethod
-  def from_kernels(cls, kernels: dict[Core, dict[KernelRole, bytes]],
-                   cbs: tuple[CBConfig, ...] = (), launch: tuple[Command, ...] = ()):
-    program = cls.__new__(cls)
-    program._cores = tuple(kernels)
-    program.params, program._param_slots = {}, {}
-    program._runtime_args = None
-    program._cbs, program.launch = list(cbs), tuple(launch)
-    program._kernels = kernels
-    return program
-
-  def cb(self, dtype: DType, depth: int = 2):
-    index = len(self._cbs)
-    page_size = 1024 * dtype.itemsize
-    addr = self._l1.alloc(depth * page_size)
-    cb = CBConfig(index, dtype, depth, addr)
+  def cb(self, dtype: DType, depth=2):
+    cb = CBConfig(
+      len(self._cbs), dtype, depth,
+      self._l1.alloc(depth * 1024 * dtype.itemsize),
+    )
     self._cbs.append(cb)
     return cb
 
   def l1(self, size: int, alignment=4):
     return self._l1.alloc(size, alignment)
 
-  def set_runtime_args(self, args_by_core):
-    if isinstance(args_by_core, dict):
-      rows = tuple(tuple(args_by_core[core]) for core in self.cores)
-    else:
-      rows = tuple(tuple(row) for row in args_by_core)
-    width = len(rows[0]) if rows else 0
-    if len(self.params) + width > TensixL1.PARAM_SLOTS:
-      raise ValueError("program parameter and runtime argument table is full")
-    self._runtime_args = rows
-    return self
-
   @property
   def cbs(self): return tuple(self._cbs)
+
+  @property
+  def cores(self): return self._cores
 
   def lower(self):
     if self._kernels is None:
       self._scopes.close()
       images = {role: stream.lower() for role, stream in self.roles.items()}
-      self._kernels = {core: dict(images) for core in self._cores}
-    return self
+      self._kernels = {core: dict(images) for core in self.cores}
+    return self._kernels
 
-  @property
-  def kernels(self): self.lower(); return self._kernels
+  def param(self, name):
+    return self.params[name]
 
-  def kernel(self, core: Core, role: KernelRole):
-    image = self.kernels[core].get(role)
-    return RETURN_KERNEL if image is None else image
+  def param_addr(self, param):
+    return PARAM_BASE + self._param_slots[param] * 4
 
-  def param_addr(self, buffer: Buffer):
-    if buffer not in self._param_slots: raise KeyError(f"{buffer.name!r} is not a program buffer")
-    return PARAM_BASE + self._param_slots[buffer] * 4
+  def bind(self, param, value=None):
+    values = _param_values(param, self.cores, value)
+    data = tuple(_param_word(item).to_bytes(4, "little") for item in values)
+    return UnicastWrite(self.cores, self.param_addr(param), data)
 
-  def bind(self, parameter: Buffer, buffer: Buffer | None = None):
-    buffer = parameter if buffer is None else buffer
-    addr = int(buffer.addr).to_bytes(4, "little")
-    return UnicastWrite(self.cores, self.param_addr(parameter), (addr,) * len(self.cores))
+  def _param_table(self, values=None):
+    values = {} if values is None else dict(values)
+    resolved = {}
+    for key, value in values.items():
+      param = self.params[key] if isinstance(key, str) else key
+      resolved[param] = value
+    columns = [
+      _param_values(param, self.cores, resolved.get(param))
+      for param in self.params.values()
+    ]
+    return tuple(
+      b"".join(_param_word(column[index]).to_bytes(4, "little") for column in columns)
+      for index in range(len(self.cores))
+    )
 
-  def kernel_commands(self):
-    commands = []
+  def commands(self, params=None):
+    commands, kernels = [], self.lower()
     for role in KERNEL_ROLES:
       groups = {}
       for core in self.cores:
-        image = self.kernel(core, role)
-        if image:
-          if len(image) > TensixL1.WORKER_TEXT_SIZE:
-            raise ValueError(f"{role} kernel exceeds its fixed text partition")
-          groups.setdefault(image, []).append(core)
+        image = kernels[core].get(role, RETURN_KERNEL)
+        if len(image) > TensixL1.WORKER_TEXT_SIZE:
+          raise ValueError(f"{role} kernel exceeds its text partition")
+        groups.setdefault(image, []).append(core)
       for image, cores in groups.items():
-        size = len(image)
-        for offset in range(0, size, MAX_WRITE_SIZE):
+        for offset in range(0, len(image), MAX_WRITE_SIZE):
           data = image[offset:offset + MAX_WRITE_SIZE]
           if len(cores) == 1:
             commands.append(UnicastWrite(
               tuple(cores), TensixL1.WORKER_TEXT_BASE[role] + offset, (data,),
             ))
           else:
-            rects = rectangles(cores)
             commands.append(McastWrite(
-              rects, TensixL1.WORKER_TEXT_BASE[role] + offset, data,
+              rectangles(cores), TensixL1.WORKER_TEXT_BASE[role] + offset, data,
             ))
-    return tuple(commands)
+    if self.params:
+      commands.append(UnicastWrite(self.cores, PARAM_BASE, self._param_table(params)))
+    return (*commands, *self.launch)
 
-  def commands(self, bind_initial_params: bool = True):
-    commands = list(self.kernel_commands())
-    params = (b"".join(int(buffer.addr).to_bytes(4, "little") for buffer in self.params.values())
-              if bind_initial_params else b"")
-    arg_rows = self._runtime_args
-    if arg_rows is not None and arg_rows and arg_rows[0]:
-      args = tuple(b"".join(value.to_bytes(4, "little") for value in row) for row in arg_rows)
-      if params:
-        commands.append(UnicastWrite(self.cores, PARAM_BASE,
-                                     tuple(params + row for row in args)))
-      else:
-        commands.append(UnicastWrite(
-          self.cores, PARAM_BASE + len(self.params) * 4, args,
-        ))
-    elif params:
-      commands.append(UnicastWrite(self.cores, PARAM_BASE, (params,) * len(self.cores)))
-    commands += self.launch
-    return tuple(commands)
-
-  @property
-  def cores(self):
-    return self._cores
 
 def rectangles(cores):
   rows = {}
   for x, y in cores: rows.setdefault(y, []).append(x)
-  active, rectangles = {}, []
-  previous_y = None
+  active, result, previous_y = {}, [], None
   for y in sorted(rows):
     runs = []
     for x in sorted(rows[y]):
       if runs and x == runs[-1][1] + 1: runs[-1] = (runs[-1][0], x)
       else: runs.append((x, x))
     if previous_y is None or y != previous_y + 1:
-      rectangles.extend(active.values()); active = {}
-    next_active = {}
+      result.extend(active.values()); active = {}
+    following = {}
     for run in runs:
       if run in active:
-        start, _ = active[run]; next_active[run] = (start, (run[1], y))
-      else: next_active[run] = ((run[0], y), (run[1], y))
-    rectangles.extend(rect for run, rect in active.items() if run not in next_active)
-    active, previous_y = next_active, y
-  rectangles.extend(active.values())
-  return tuple(rectangles)
+        following[run] = (active[run][0], (run[1], y))
+      else:
+        following[run] = ((run[0], y), (run[1], y))
+    result.extend(rect for run, rect in active.items() if run not in following)
+    active, previous_y = following, y
+  result.extend(active.values())
+  return tuple(result)

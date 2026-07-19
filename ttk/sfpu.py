@@ -6,7 +6,7 @@ from fw.consts import TensixMMIO
 from isa import Tensix as TT
 from ttk.dst import Dst
 from ttk.mop import Mop, Replay
-from ttk.sync import Stall, Wait, stall
+from ttk.sync import Sem, SemWait, Stall, Wait, sem_wait, stall
 
 
 _CFG_STATE_ID = 0
@@ -190,12 +190,11 @@ class Sfpu:
     address = (int(register) - TensixMMIO.CFG_BASE) >> 2
     return self._issue(opcode(mask, data & mask, address))
 
-  def configure(self, tile, lane_config=LaneConfig()):
-    tile = self.dst.check(tile)
+  def _configure_dst(self, tile, lane_config):
     self._set_thread_cfg(_CFG_STATE_ID, 0)
-    self._set_thread_cfg(_DST_ROW_BASE, tile.row_base)
+    self._set_thread_cfg(_DST_ROW_BASE, self.dst.row_base(tile))
     stall(self.k, Stall.CFG, Wait.SFPU)
-    self._rmw_cfg_byte(_ALU_CONFIG, 3, 0x40, 0x40 if tile.fp32 else 0)
+    self._rmw_cfg_byte(_ALU_CONFIG, 3, 0x40, 0x40 if self.dst.fp32 else 0)
     self._issue(TT.TTSFPCONFIG(lane_config.word(), int(LReg.LANE_X2), 1))
     self._issue(_nop())
     self._issue(TT.TTSETRWC(0, 0, 0, 0, 0, 0xF))
@@ -213,10 +212,13 @@ class Sfpu:
       self.prepared[code] = start
     return code, self.prepared[code]
 
-  def run(self, tile, program):
-    tile = self.dst.check(tile)
+  def run(self, program, *, tile, lane_config=LaneConfig()):
     code, start = self._prepare(program)
-    self.configure(tile)
+    sem_wait(
+      self.k, Sem.MATH_PACK, SemWait.STALL_ON_MAX,
+      Stall.SYNC | Stall.MATH | Stall.SFPU,
+    )
+    self._configure_dst(tile, lane_config)
     stall(self.k, Stall.SFPU, Wait.MATH)
     for _ in range(4):
       for _ in range(8):
@@ -225,12 +227,11 @@ class Sfpu:
         self._issue(TT.TTSETRWC(0, 4, 8, 0, 0, 4))
     self._issue(TT.TTSETRWC(0, 0, 0, 0, 0, 4))
     stall(self.k, Stall.SYNC, Wait.MATH | Wait.SFPU)
-    self._set_thread_cfg(_DST_ROW_BASE, 0)
     return self
 
-  def add_scalar(self, tile, value, *, format=SfpuFormat.DEFAULT):
+  def add_scalar(self, value, *, tile, format=SfpuFormat.DEFAULT):
     program = self.program()
     vector = program.load(format=format)
     program.add_immediate(vector, value)
     program.store(vector, format=format)
-    return self.run(tile, program)
+    return self.run(program, tile=tile)

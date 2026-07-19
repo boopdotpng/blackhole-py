@@ -1,12 +1,13 @@
 from asm import Asm
-from isa import R, Tensix as TT
 from cq import DISPATCH_DONE_COUNT
 from fw.consts import CQConfig, Firmware, FirmwareControl, RunState, TensixL1, TensixMMIO
-from ttk.noc import NIU0, NIU_STRIDE, NIU_CONFIG, NIU_CONTROL, ROUTER_CONTROL
+from isa import R, Tensix as TT
 from ttk.cb import CB
+from ttk.noc import NIU0, NIU_STRIDE, NIU_CONFIG, NIU_CONTROL, ROUTER_CONTROL
 from ttk.sync import Sem
 
 _ECC_SCRUBBER = TensixMMIO.CFG_BASE + 0xC
+
 
 def _reset_tensix(fw):
   fw.zero_words(TensixMMIO.CFG_BASE, 256)
@@ -21,6 +22,7 @@ def _reset_tensix(fw):
     push(TT.TTSEMINIT(1, 0, 1 << sem))
   return fw
 
+
 def _enable_clock_gating(fw):
   for noc in range(2):
     for register in (NIU_CONTROL, ROUTER_CONTROL):
@@ -28,9 +30,6 @@ def _enable_clock_gating(fw):
       fw.update32(addr, set_bits=1)
   return fw
 
-def _notify_dispatch(fw):
-  fw.noc(1).atomic_inc(DISPATCH_DONE_COUNT, CQConfig.DISPATCH_COORD)
-  return fw
 
 def build_brisc():
   fw = Asm.firmware("brisc")
@@ -66,11 +65,50 @@ def build_brisc():
   for role in range(1, 5):
     fw.wait8(FirmwareControl.SUBORDINATE_SYNC + role - 1, RunState.DONE)
   fw.signal8(FirmwareControl.GO_SIGNAL, RunState.DONE)
-  _notify_dispatch(fw)
+  fw.noc_at(1).atomic_inc(DISPATCH_DONE_COUNT, CQConfig.DISPATCH_COORD)
   fw.j("run_loop")
 
   fw.label("reset_tensix")
   _reset_tensix(fw)
   CB.reset_counters(fw)
+  fw.jalr(R.ZERO, R.RA)
+  return fw
+
+
+def build_ncrisc():
+  fw = Asm.firmware("ncrisc")
+  fw.setup_stack(Firmware.NCRISC_STACK_TOP)
+  fw.configure_csr()
+  fw.signal8(FirmwareControl.SUBORDINATE_SYNC, RunState.BOOT_READY)
+
+  fw.label("run_loop")
+  fw.wait8(FirmwareControl.SUBORDINATE_SYNC, RunState.GO)
+  fw.call_fixed_kernel(TensixL1.WORKER_TEXT_BASE["ncrisc"])
+  fw.signal8(FirmwareControl.SUBORDINATE_SYNC, RunState.DONE)
+  fw.j("run_loop")
+  return fw
+
+
+def build_trisc(trisc_id):
+  role = f"trisc{trisc_id}"
+  sync = FirmwareControl.SUBORDINATE_SYNC + trisc_id + 1
+  fw = Asm.firmware(role)
+  fw.li(R.GP, Firmware.TRISC_GLOBAL_POINTER)
+  fw.setup_stack(Firmware.TRISC_STACK_TOP)
+  fw.configure_csr()
+  fw.jal(R.RA, "init_tensix")
+  fw.write32(TensixMMIO.PRNG_SEED_SEED_VAL, 0)
+  fw.delay_cycles(600)
+  fw.signal8(sync, RunState.BOOT_READY)
+
+  fw.label("run_loop")
+  fw.wait8(sync, RunState.GO)
+  fw.jal(R.RA, "init_tensix")
+  fw.call_fixed_kernel(TensixL1.WORKER_TEXT_BASE[role])
+  fw.signal8(sync, RunState.DONE)
+  fw.j("run_loop")
+
+  fw.label("init_tensix")
+  fw.zero_words(TensixMMIO.REGFILE_BASE, 64)
   fw.jalr(R.ZERO, R.RA)
   return fw

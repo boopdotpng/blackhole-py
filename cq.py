@@ -4,6 +4,7 @@ from struct import Struct
 from typing import ClassVar
 import time
 from fw.consts import Core
+from pcie import TLBWindow
 
 Rect = tuple[Core, Core]
 
@@ -139,7 +140,6 @@ def lower(commands: list[Command] | tuple[Command, ...]) -> bytes:
 
 class CommandQueue:
   def __init__(self, pcie):
-    from pcie import TLBWindow
     self.pcie = pcie
     self.issue = pcie.sysmem.alloc(HOST_ISSUE_SIZE, PAGE_SIZE)
     self.completion = pcie.sysmem.alloc(HOST_COMPLETION_SIZE, PAGE_SIZE)

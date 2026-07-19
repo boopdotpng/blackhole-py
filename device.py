@@ -1,16 +1,18 @@
 from struct import Struct
-import numpy as np
+
+from cq import CommandQueue, Run, UnicastWrite
+from fw.consts import CQConfig, Firmware, FirmwareControl, RunState, TensixL1, TensixMMIO
+from fw.core import build_brisc, build_ncrisc, build_trisc
+from fw.cq import build_dispatch, build_prefetch
+from fw.dram import ARGS_BASE, dram_read, dram_write
+from isa import R, RV32
 from pcie import PCIDevice, TLBWindow
 from program import Dram, Program
-from fw.consts import Firmware, FirmwareControl, RunState, TensixL1, TensixMMIO
-from isa import R, RV32
-from cq import CommandQueue, Run, UnicastWrite
-from fw.consts import CQConfig
 
 class Device:
   def __init__(self, index: int = 0, sysmem_size: int = 1 << 30):
     self.pcie = PCIDevice(index, sysmem_size)
-    self.dram = Dram(self.pcie.dram_endpoints)
+    self.dram = Dram(len(self.pcie.dram_endpoints), self.pcie.cores)
     self.program_queue = []
     self.cq = None
     self._staging_write = 0
@@ -20,11 +22,6 @@ class Device:
       win.mcast(TensixMMIO.RISCV_DEBUG_REG_SOFT_RESET_0, TensixMMIO.SOFT_RESET_ALL)
 
   def init_device(self):
-    from fw.brisc import build_brisc
-    from fw.cq_dispatch import build_dispatch
-    from fw.cq_prefetch import build_prefetch
-    from fw.ncrisc import build_ncrisc
-    from fw.trisc import build_trisc
     images = (build_brisc(), build_ncrisc(), *(build_trisc(i) for i in range(3)))
     firmware = b"".join(image.lower().ljust(size, b"\0")
                         for (_, size), image in zip(Firmware.TEXT.values(), images))
@@ -45,76 +42,57 @@ class Device:
         win.target(0, core)
         win.write(FirmwareControl.GO_SIGNAL, int(RunState.GO), bytes=1)
 
-  def queue(self, program: Program): self.program_queue.append(program); return program
+  def queue(self, program: Program, params=None):
+    self.program_queue.append((program, params))
+    return program
 
   def _dram_program(self, buffer, write, offset=0):
-    from fw.dram import ARGS_BASE, dram_read, dram_write
     if self.cq is None: raise RuntimeError("init_device() must be called before tensor transfer")
-    if not 0 < buffer.page_size <= 16 * 1024 or buffer.page_size % 16:
-      raise ValueError("DRAM transfer pages must be 16-byte aligned and at most 16 KiB")
+    if not 0 < buffer.tile_size <= 16 * 1024 or buffer.tile_size % 16:
+      raise ValueError("DRAM transfer tiles must be 16-byte aligned and at most 16 KiB")
     if offset + buffer.size > self.cq.dram_size:
       raise MemoryError(f"queued tensors need {offset + buffer.size} bytes; sysmem DRAM region has {self.cq.dram_size}")
 
-    tiles = buffer.pages
     build = dram_write if write else dram_read
-    program = build(self.pcie.cores[:tiles], buffer.dram_endpoints)
-    tiles_per_core = (tiles + len(program.cores) - 1) // len(program.cores)
+    program = build(buffer.cores, self.pcie.dram_endpoints)
     sysmem_base = self.cq.noc + self.cq.dram + offset
     if sysmem_base + buffer.size > 1 << 32:
       raise ValueError("sysmem DRAM transfer crosses a 4 GiB NoC address window")
     args = []
     pack = Struct("<6I").pack
     for index in range(len(program.cores)):
-      start = index * tiles_per_core
-      count = max(0, min(tiles_per_core, tiles - start))
+      start = buffer.tile_starts[index]
       args.append(pack(
-        buffer.addr, sysmem_base + start * buffer.page_size, CQConfig.PCIE_MID,
-        start, count, buffer.page_size,
+        buffer.addr, sysmem_base + start * buffer.tile_size, CQConfig.PCIE_MID,
+        start, buffer.tiles_per_core, buffer.tile_size,
       ))
     args_write = UnicastWrite(program.cores, ARGS_BASE, tuple(args))
     program.launch = (args_write,)
     return program
 
-  @staticmethod
-  def _tile_data(buffer, data, inverse=False):
-    shape = buffer.padded_shape
-    if len(shape) < 2 or shape[-2] % 32 or shape[-1] % 32:
-      raise ValueError("buffer padding must be a multiple of 32 in its final two dimensions")
-    prefix, height, width = shape[:-2], shape[-2], shape[-1]
-    rank = len(prefix)
-    values = np.frombuffer(data, dtype=np.dtype(f"V{buffer.dtype.itemsize}"))
-    if inverse:
-      values = values.reshape(*prefix, height // 32, width // 32, 2, 2, 16, 16)
-      axes = (*range(rank), rank, rank + 2, rank + 4, rank + 1, rank + 3, rank + 5)
-    else:
-      values = values.reshape(*prefix, height // 32, 2, 16, width // 32, 2, 16)
-      axes = (*range(rank), rank, rank + 3, rank + 1, rank + 4, rank + 2, rank + 5)
-    return values.transpose(axes).reshape(-1).tobytes()
-
-  def dram_write(self, buffer, data: bytes):
+  def write(self, buffer, data: bytes):
     offset = self._staging_write
     program = self._dram_program(buffer, write=True, offset=offset)
-    self.pcie.sysmem.write(self.cq.dram + offset, self._tile_data(buffer, data))
+    self.pcie.sysmem.write(self.cq.dram + offset, buffer.tile_data(data))
     self.pcie.sysmem.flush()
     self._staging_write += buffer.size
     return self.queue(program)
 
-  def dram_read(self, buffer, timeout=10.0):
+  def read(self, buffer, timeout=10.0):
     self.run(self._dram_program(buffer, write=False), timeout=timeout)
-    return self._tile_data(buffer, self.pcie.sysmem.read(self.cq.dram, buffer.size), inverse=True)
+    return buffer.tile_data(
+      self.pcie.sysmem.read(self.cq.dram, buffer.size), inverse=True,
+    )
 
-  write = dram_write
-  read = dram_read
-
-  def run(self, programs: Program | list[Program] | None = None, timeout=10.0):
+  def run(self, *programs: Program, params=None, timeout=10.0):
     if self.cq is None: raise RuntimeError("init_device() must be called before run()")
-    if programs is None:
-      programs = self.program_queue
-    elif isinstance(programs, Program):
-      programs = (*self.program_queue, programs)
-    else:
-      programs = (*self.program_queue, *programs)
-    results = [self.cq.submit((*program.commands(), Run(program.cores)), timeout=timeout) for program in programs]
+    if params is not None and len(programs) != 1:
+      raise ValueError("parameter overrides require exactly one explicit program")
+    for program in programs: self.queue(program, params)
+    results = [
+      self.cq.submit((*program.commands(values), Run(program.cores)), timeout=timeout)
+      for program, values in self.program_queue
+    ]
     self.program_queue.clear()
     self._staging_write = 0
     return results

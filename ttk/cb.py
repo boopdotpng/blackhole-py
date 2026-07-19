@@ -39,7 +39,7 @@ class CB:
     with kernel.scope():
       pointer, step, limit, size = kernel.reg(4)
       kernel.load(pointer, state)
-      kernel.li(step, count * config.page_size); kernel.add(pointer, pointer, step)
+      kernel.li(step, count * config.tile_size); kernel.add(pointer, pointer, step)
       kernel.li(limit, config.limit)
       no_wrap = kernel._new_label("cb_no_wrap")
       kernel.bltu(pointer, limit, no_wrap)

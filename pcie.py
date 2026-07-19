@@ -18,6 +18,10 @@ P100_DRAM_ENDPOINTS = (
   ((17, 21), (17, 22)), ((17, 14), (17, 13)), ((17, 17), (17, 16)),
   ((17, 20), (17, 19)),
 )
+P100_WORKER_CORES = tuple(
+  (x, y) for x in (*range(1, 8), *range(10, 15)) for y in range(2, 12)
+  if (x, y) not in ((14, 2), (14, 3))
+)
 
 def _TT_IOCTL(nr, payload_type, result=None, **defaults):
   def call(fd, **kwargs):
@@ -220,8 +224,7 @@ class PCIDevice:
     self.fd = os.open(f"/dev/tenstorrent/{index}", os.O_RDWR | os.O_CLOEXEC | os.O_APPEND)
     SetPowerState(self.fd, power_flags=0b1111)
     self.dram_endpoints = P100_DRAM_ENDPOINTS
-    cq_cores = {self.prefetch_core, self.dispatch_core}
-    self.cores = [(x, y) for x in self.P100A_X for y in range(2, 12) if (x, y) not in cq_cores]
+    self.cores = list(P100_WORKER_CORES)
     self.sysmem = Sysmem(self.fd, sysmem_size)
 
   def close(self):

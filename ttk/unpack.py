@@ -2,9 +2,9 @@ from enum import IntEnum
 
 from fw.consts import TensixMMIO
 from isa import R, Tensix as TT
-from program import DType
 from ttk.cb import CB
-from ttk.dst import Dst, DstTile
+from ttk import DType
+from ttk.dst import Dst
 from ttk.mop import LoopTemplate, Mop, NOP
 from ttk.sync import Sem, SemWait, Stall, Wait, sem_get, sem_post, sem_wait, stall, sync
 
@@ -96,7 +96,7 @@ class Unpack:
       observed = self.k.reg()
       self.k.read32(observed, int(register)); self.k.write32(_CONFIG_SYNC, 0)
 
-  def _write_mode(self, engine, input_format, output_format, target, tilize, dst_tile=None):
+  def _write_mode(self, engine, input_format, output_format, target, tilize, tile):
     k = self.k
     x_dim = 1024 if tilize else 0 if engine == UNPACKER0 else 256
     descriptor = (input_format | 0x10 | x_dim << 16, 1 | (1 if tilize else 4) << 16, 0, 0)
@@ -119,7 +119,7 @@ class Unpack:
 
     destination = 64 if engine == UNPACKER0 else 0
     if target == UnpackTarget.DST:
-      destination += self.dst.check(dst_tile).row_base * 16
+      destination += self.dst.row_base(tile) * 16
     x_dim = 1024 if tilize else 256
     for register, value in (
       (_DEST[engine], destination | destination << 16),
@@ -127,13 +127,13 @@ class Unpack:
       (_OFFSET[engine], 0), (int(_OFFSET[engine]) + 4, 0),
     ): k.write32(int(register), value)
 
-  def _configure(self, cb, target, tilize, dst_tile=None):
+  def _configure(self, cb, target, tilize, tile):
     input_format = cb.dtype
     output_format = DType.BF16 if input_format == DType.F32 and target != UnpackTarget.DST else input_format
     engine = int(target == UnpackTarget.SRCB)
     self._wait_config_idle()
     self._set_thread_cfg(0, 0)
-    self._write_mode(engine, input_format, output_format, target, tilize, dst_tile)
+    self._write_mode(engine, input_format, output_format, target, tilize, tile)
     with self.k.scope():
       address = self.k.reg()
       CB.get_read_ptr(self.k, cb, address)
@@ -147,8 +147,8 @@ class Unpack:
     self._commit_config(_BASE[engine]); self._mop.configure(_select_mop(target, tilize))
     return engine
 
-  def _run(self, cb, target, tilize, dst_tile=None):
-    engine = self._configure(cb, target, tilize, dst_tile)
+  def _run(self, cb, target, tilize, tile):
+    engine = self._configure(cb, target, tilize, tile)
     self._issue(TT.TTSETADCXX(engine + 1, 1023 if tilize else 255, 0))
     self._issue(TT.TTSETADCZW(3, 0, 0, 0, 0, 0xF))
     if target == UnpackTarget.DST:
@@ -169,13 +169,12 @@ class Unpack:
       self._issue(TT.TTSETC16(_SRCA_SET, 4))
       sem_post(self.k, Sem.UNPACK_TO_DEST)
 
-  def move(self, source_cb, target, tilize=False):
-    dst_tile = self.dst.check(target) if isinstance(target, DstTile) else None
-    if dst_tile is not None: target = UnpackTarget.DST
+  def move(self, source_cb, target, tilize=False, *, tile=None):
+    if target == UnpackTarget.DST: self.dst.check(tile)
     _select_mop(target, tilize)  # Validate before emitting CB operations.
     CB.wait_front(self.k, source_cb)
     if target != UnpackTarget.DST:
       stall(self.k, Stall.UNPACK, Wait.SRCB_CLR if target == UnpackTarget.SRCB else Wait.SRCA_CLR)
-    self._run(source_cb, target, tilize, dst_tile)
+    self._run(source_cb, target, tilize, tile)
     CB.pop_front(self.k, source_cb)
     return self

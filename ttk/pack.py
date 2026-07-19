@@ -2,11 +2,11 @@ from enum import IntEnum
 
 from fw.consts import TensixMMIO
 from isa import R, Tensix as TT
-from program import DType
 from ttk.cb import CB
 from ttk.dst import Dst
 from ttk.mop import LoopTemplate
 from ttk.mop import Mop
+from ttk import DType
 from ttk.sync import Sem, SemWait, Stall, Wait, sem_get, sem_wait, stall, sync
 
 class _Cfg(IntEnum):
@@ -75,7 +75,7 @@ class Pack:
       (_Cfg.ADDRESS_ZW, zw), (_Cfg.COUNTERS, 0x1000),
       (_Cfg.EDGE, 0xFFFF), (_Cfg.TILE_ROW_MAPPING, 0),
     ): self._write_cfg(reg, value)
-    self.k.write32(TensixMMIO.REGFILE_BASE + 16 * 4, output_cb.page_size >> 4)
+    self.k.write32(TensixMMIO.REGFILE_BASE + 16 * 4, output_cb.tile_size >> 4)
     self.k.write32(TensixMMIO.REGFILE_BASE + 52 * 4, 0x40000)
     for section, value in enumerate((0x0104, 0x2820, 0x1120)):
       self._set_thread_cfg(_ADDRESS_MODIFIER + section, value)
@@ -100,17 +100,17 @@ class Pack:
       self._issue(TT.TTWRCFG(12, 0, address))
       self._set_dma_reg16(25, high); self._issue(TT.TTDMANOP())
 
-  def move(self, source, output_cb):
-    source = self.dst.check(source)
+  def move(self, output_cb, *, tile):
+    tile = self.dst.check(tile)
     sem_wait(self.k, Sem.MATH_PACK, SemWait.STALL_ON_ZERO, Stall.TDMA)
     CB.reserve_back(self.k, output_cb)
-    self._configure(output_cb, source.fp32); self._destination(source.index, output_cb)
+    self._configure(output_cb, self.dst.fp32); self._destination(tile, output_cb)
     self._issue(TT.TTSETADCXX(4, 15, 0)); self._issue(TT.TTSETADCZW(4, 0, 0, 0, 0, 5))
     self._write_cfg(_Cfg.DESTINATION_OFFSET, 0)
     stall(self.k, Stall.CFG, Wait.PACK0); self._mop.run()
     stall(self.k, Stall.SYNC, Wait.PACK0); sync(self.k)
     # Full-Dst handoff: packing is complete, so invalidate Dst before returning
     # ownership to math. FPU assignment writes define it again before SFPU reads.
-    self._issue(TT.TTZEROACC(3, int(source.fp32), 0, 0, 0))
+    self._issue(TT.TTZEROACC(3, int(self.dst.fp32), 0, 0, 0))
     CB.push_back(self.k, output_cb); sem_get(self.k, Sem.MATH_PACK)
     return self

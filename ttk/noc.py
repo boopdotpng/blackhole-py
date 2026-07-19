@@ -1,5 +1,7 @@
 from asm import Cond
 from isa import R
+from pcie import P100_DRAM_ENDPOINTS
+from ttk.cb import CB
 
 # Every tile has two NIUs. NIU 0 drives NoC 0 and NIU 1 drives NoC 1.
 NIU0 = 0xFFB20000
@@ -331,12 +333,20 @@ class NoC:
     with self.transaction() as transaction: transaction.write(*args, **options)
     return self
 
-  def _dram_page(self, buffer, page):
-    k, endpoints = self.k, buffer.dram_endpoints
-    base = k.param(buffer)
-    address, coordinate, bank, banks, scale = k.reg(5, exclude=(page, base))
-    k.li(banks, len(endpoints)); k.remu(bank, page, banks); k.divu(address, page, banks)
-    k.li(scale, buffer.page_size); k.mul(address, address, scale); k.add(address, address, base)
+  def _dram_tile(self, param, tile):
+    k, endpoints, buffer = self.k, P100_DRAM_ENDPOINTS, param
+    base = k.param(param)
+    address, coordinate, bank, banks, scale, rotation = k.reg(
+      6, exclude=(tile, base),
+    )
+    # Program binding moves the base to this core's shard and stores the
+    # shard's first DRAM bank in the aligned address's low bits.
+    k.andi(rotation, base, 7); k.andi(base, base, -8)
+    if isinstance(tile, R): k.add(address, tile, rotation)
+    else: k.li(address, tile); k.add(address, address, rotation)
+    k.li(banks, len(endpoints))
+    k.remu(bank, address, banks); k.divu(address, address, banks)
+    k.li(scale, buffer.tile_size); k.mul(address, address, scale); k.add(address, address, base)
     selected = k._new_label("dram_bank_selected")
     invalid = k._new_label("dram_bank_invalid")
     labels = {index: k._new_label(f"dram_bank_{index}") for index in range(len(endpoints))}
@@ -346,26 +356,24 @@ class NoC:
     k.label(invalid); k.j(invalid); k.label(selected)
     return address, coordinate
 
-  def read_into_cb(self, buffer, page, cb, source_middle_address=0):
-    from ttk.cb import CB
+  def read_into_cb(self, param, tile, cb, source_middle_address=0):
     CB.reserve_back(self.k, cb)
     with self.k.scope():
-      source_address, source_coordinate = self._dram_page(buffer, page)
+      source_address, source_coordinate = self._dram_tile(param, tile)
       target = self.k.reg(exclude=(source_address, source_coordinate))
       CB.get_write_ptr(self.k, cb, target)
-      self.read(source_address, source_coordinate, target, cb.page_size,
+      self.read(source_address, source_coordinate, target, cb.tile_size,
                 source_middle_address=source_middle_address)
     CB.push_back(self.k, cb)
     return self
 
-  def write_from_cb(self, cb, buffer, page, target_middle_address=0, posted=False):
-    from ttk.cb import CB
+  def write_from_cb(self, cb, param, tile, target_middle_address=0, posted=False):
     CB.wait_front(self.k, cb)
     with self.k.scope():
-      target_address, target_coordinate = self._dram_page(buffer, page)
+      target_address, target_coordinate = self._dram_tile(param, tile)
       source = self.k.reg(exclude=(target_address, target_coordinate))
       CB.get_read_ptr(self.k, cb, source)
-      self.write(source, target_address, target_coordinate, cb.page_size,
+      self.write(source, target_address, target_coordinate, cb.tile_size,
                  target_middle_address=target_middle_address, posted=posted)
     CB.pop_front(self.k, cb)
     return self
