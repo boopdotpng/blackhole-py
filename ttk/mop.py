@@ -1,12 +1,10 @@
 from dataclasses import dataclass, field
 
-from isa import Tensix
+from isa import Tensix as TT
 
 MOP_CFG = 0xFFB80000
 REPLAY_SIZE = 32
-tensix = Tensix()
-
-NOP = tensix.TTNOP()
+NOP = TT.TTNOP()
 
 def _replays(values): return tuple(dict.fromkeys(x for x in values if isinstance(x, Replay)))
 def _slot_word(value): return value.play_word() if isinstance(value, Replay) else value
@@ -15,7 +13,7 @@ class Replay:
   def __init__(self, start, words):
     self.start, self.words = start, tuple(words)
 
-  def play_word(self): return tensix.TTREPLAY(self.start, len(self.words), 0, 0)
+  def play_word(self): return TT.TTREPLAY(self.start, len(self.words), 0, 0)
 
 @dataclass(frozen=True)
 class LoopTemplate:
@@ -58,7 +56,7 @@ class MaskTemplate:
 class ReplayBuffer:
   used: set[int] = field(default_factory=set)
 
-  def allocate(self, length, *, start=None, lower=0, upper=REPLAY_SIZE):
+  def allocate(self, length, start=None, lower=0, upper=REPLAY_SIZE):
     if length <= 0 or not 0 <= lower <= upper <= REPLAY_SIZE or length > upper - lower: raise ValueError("invalid replay allocation")
     starts = range(lower, upper - length + 1) if start is None else (start,)
     for candidate in starts:
@@ -82,13 +80,13 @@ class Mop:
   @property
   def state(self): return self.tensix.state.mop[self.tensix.pipe]
 
-  def load(self, replay, *, execute=False):
-    self.tensix.issue(tensix.TTREPLAY(replay.start, len(replay.words), int(execute), 1))
+  def load(self, replay, execute=False):
+    self.tensix.issue(TT.TTREPLAY(replay.start, len(replay.words), int(execute), 1))
     for word in replay.words: self.tensix.issue(word)
     return self
 
   def _replay(self, start, length):
-    self.tensix.issue(tensix.TTREPLAY(start, length, 0, 0)); return self
+    self.tensix.issue(TT.TTREPLAY(start, length, 0, 0)); return self
 
   def replay(self, replay):
     return self._replay(replay.start, len(replay.words))
@@ -102,9 +100,9 @@ class Mop:
     state.config, state.masked = words, isinstance(template, MaskTemplate)
     return self
 
-  def run(self, *, count=None, mask=0):
+  def run(self, count=None, mask=0):
     if self.state.masked:
-      self.tensix.issue(tensix.TTMOP_CFG(mask >> 16))
-      self.tensix.issue(tensix.TTMOP(0, count - 1, mask & 0xFFFF))
-    else: self.tensix.issue(tensix.TTMOP(1, 0, 0))
+      self.tensix.issue(TT.TTMOP_CFG(mask >> 16))
+      self.tensix.issue(TT.TTMOP(0, count - 1, mask & 0xFFFF))
+    else: self.tensix.issue(TT.TTMOP(1, 0, 0))
     return self

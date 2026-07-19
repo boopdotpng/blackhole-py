@@ -69,7 +69,7 @@ class Dram:
   END = 1 << 32
   ALIGNMENT = 64
 
-  def __init__(self, harvested_dram_bank: int = 0, *, coords=None):
+  def __init__(self, harvested_dram_bank: int = 0, coords=None):
     if coords is None:
       from pcie import p100_dram_endpoint_coordinates
       coords = tuple(
@@ -91,11 +91,17 @@ class Dram:
 class CBConfig:
   index: int
   dtype: DType
-  pages: int
+  depth: int
   addr: int
 
   @property
   def page_size(self): return 1024 * self.dtype.itemsize
+
+  @property
+  def size(self): return self.depth * self.page_size
+
+  @property
+  def limit(self): return self.addr + self.size
 
 class Program:
   def __init__(self, cores: tuple[Core, ...] | list[Core], buffers: tuple[Buffer, ...] | list[Buffer] = ()):
@@ -115,15 +121,17 @@ class Program:
 
     self.roles = {role: Asm(role, param_slots=self._param_slots) for role in KERNEL_ROLES}
     for role, stream in self.roles.items(): setattr(self, role, stream)
-    from ttk.math import Math
     from ttk.pack import Pack
+    from ttk.sfpu import Sfpu
+    from ttk.tensix import TensixPipe
     from ttk.unpack import Unpack
-    self.unpack, self.math, self.pack = Unpack(self.trisc0), Math(self.trisc1), Pack(self.trisc2)
+    self.unpack, self.fpu, self.pack = Unpack(self.trisc0), TensixPipe(self.trisc1, 1), Pack(self.trisc2)
+    self.sfpu = Sfpu(self.fpu)
     self._scopes = ExitStack()
     for stream in self.roles.values(): self._scopes.enter_context(stream.scope())
 
   @classmethod
-  def from_kernels(cls, kernels: dict[Core, dict[KernelRole, bytes]], *,
+  def from_kernels(cls, kernels: dict[Core, dict[KernelRole, bytes]],
                    cbs: tuple[CBConfig, ...] = (), launch: tuple[Command, ...] = ()):
     program = cls.__new__(cls)
     program._cores = tuple(kernels)
@@ -136,45 +144,24 @@ class Program:
     program._scopes = None
     return program
 
-  def cb(self, dtype: DType, pages: int, *, name: str | None = None):
+  def cb(self, dtype: DType, depth: int = 2, name: str | None = None):
     if self._kernels is not None: raise RuntimeError("program has already been lowered")
-    if pages <= 0: raise ValueError("CB pages must be positive")
+    if depth <= 0: raise ValueError("CB depth must be positive")
     if len(self._cbs) >= 32: raise ValueError("at most 32 circular buffers are supported")
     index = len(self._cbs)
     page_size = 1024 * dtype.itemsize
-    addr = self._l1.alloc(pages * page_size, name=name)
-    cb = CBConfig(index, dtype, pages, addr)
+    addr = self._l1.alloc(depth * page_size, name=name)
+    cb = CBConfig(index, dtype, depth, addr)
     self._cbs.append(cb)
     return cb
 
-  def l1(self, size: int, *, alignment=4, name: str | None = None):
+  def l1(self, size: int, alignment=4, name: str | None = None):
     """Reserve shared worker L1 storage for kernel-side coordination."""
     if self._kernels is not None: raise RuntimeError("program has already been lowered")
     if type(size) is not int or size <= 0: raise ValueError("L1 allocation size must be positive")
     if type(alignment) is not int or alignment <= 0 or alignment & (alignment - 1):
       raise ValueError("L1 alignment must be a positive power of two")
     return self._l1.alloc(size, alignment, name=name)
-
-  def scratch(self, size: int, *, alignment: int = 4, name: str | None = None):
-    """Allocate program-private storage shared by all five kernels on a core."""
-    return self.l1(size, alignment=alignment, name=name)
-
-  def initialize_scratch(self, addr: int, value=0, *, bytes: int = 4):
-    """Initialize a program-private L1 scalar before launch, optionally per core."""
-    if self._kernels is not None: raise RuntimeError("program has already been lowered")
-    if bytes not in (1, 2, 4): raise ValueError("scratch initialization supports 1, 2, or 4 bytes")
-    values = (value,) * len(self.cores) if isinstance(value, int) else tuple(value)
-    if len(values) != len(self.cores): raise ValueError("scratch initialization needs one value per core")
-    data = tuple(int(item).to_bytes(bytes, "little") for item in values)
-    self.launch += (UnicastWrite(self.cores, addr, data),)
-    return self
-
-  def initialize_scratch_bytes(self, addr: int, data: bytes):
-    """Initialize one shared-L1 byte range identically on every program core."""
-    data = bytes(data)
-    if not data: raise ValueError("scratch initialization data cannot be empty")
-    self.launch += (UnicastWrite(self.cores, addr, (data,) * len(self.cores)),)
-    return self
 
   def set_runtime_args(self, args_by_core):
     """Set the per-core u32 argument rows loaded with ``Asm.arg(index)``."""
@@ -249,7 +236,7 @@ class Program:
             ))
     return tuple(commands)
 
-  def commands(self, *, bind_initial_params: bool = True):
+  def commands(self, bind_initial_params: bool = True):
     commands = list(self.kernel_commands())
     params = (b"".join(int(buffer.addr).to_bytes(4, "little") for buffer in self.params.values())
               if bind_initial_params else b"")

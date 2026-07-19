@@ -1,7 +1,7 @@
 from asm import Asm
 from isa import R
 from fw.consts import Firmware, FirmwareControl, RunState, TensixL1
-from ttk.tensix import Tensix, TensixRegs
+from ttk.tensix import TensixPipe, TensixRegs
 
 def build_trisc(trisc_id: int):
   role = f"trisc{trisc_id}"
@@ -24,6 +24,6 @@ def build_trisc(trisc_id: int):
   fw.j("run_loop")
 
   fw.label("init_tensix")
-  Tensix.init(fw)
+  TensixPipe.init(fw)
   fw.jalr(R.ZERO, R.RA)
   return fw

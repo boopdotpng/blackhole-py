@@ -1,14 +1,21 @@
-import argparse, sys
-from pathlib import Path
+import argparse
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-
-from isa import R
+from isa import R, Tensix as TT
 from program import Buffer, DType, Dram, Program
+from ttk.math import AddressModifier, DestinationCounter, SourceCounter, set_dst_row_base
+from ttk.mop import LoopTemplate
 from ttk.sfpu import SfpuFormat
-from ttk.sync import RiscBarrier
+from ttk.tensix import (
+  TensixSem, TensixSemWait, TensixStall, TensixWait,
+)
 from ttk.unpack import UnpackTarget
 
+_COPY = TT.TTMOVA2D(0, 0, 2, 2, 0)
+_COPY_MOP = LoopTemplate(
+  outer=4, inner=2, loop=_COPY,
+  end0=TT.TTSETRWC(3, 0, 0, 0, 0, 3),
+  last=_COPY, outer_last=_COPY,
+)
 
 def _dram_page(k, noc_index: int, buffer: Buffer, page: R):
   coords = buffer.dram_coords[noc_index]
@@ -42,65 +49,48 @@ def add1(src: Buffer, dst: Buffer, *, core=(1, 2), cores=None) -> Program:
   if src.pages < len(cores): raise ValueError("add1 requires at least one tile per core")
   p = Program(cores, buffers=(src, dst))
   tiles_per_core, extra = divmod(src.pages, len(cores))
-  depth = min(16, tiles_per_core + bool(extra))
-  input_cb = p.cb(src.dtype, depth, name="input")
-  output_cb = p.cb(dst.dtype, depth, name="output")
-  init_barrier = RiscBarrier(p.scratch(3 * 4, name="init_barrier"), 3)
-  p.launch += (init_barrier.reset(p.cores),)
+  input_cb = p.cb(src.dtype, name="input")
+  output_cb = p.cb(dst.dtype, name="output")
 
-  input_reader = p.brisc.init_cb(input_cb)
-  input_unpack = p.trisc0.init_cb(input_cb)
-  output_pack = p.trisc2.init_cb(output_cb)
-  output_writer = p.ncrisc.init_cb(output_cb)
-
-  p.math.initialize()
-  add_one = p.math.sfpu.install(p.math.sfpu.add_immediate_program(1, format=SfpuFormat.BF16))
-  p.pack.init(output_pack)
-  init_barrier.arrive(p.trisc0, 0, 1)
-  init_barrier.arrive(p.trisc1, 1, 1)
-  init_barrier.arrive(p.trisc2, 2, 1)
+  AddressModifier(source_a=SourceCounter(increment=8),
+                  destination=DestinationCounter(increment=8)).configure(p.fpu, 2)
+  set_dst_row_base(p.fpu)
+  p.fpu.mop.configure(_COPY_MOP)
+  p.sfpu.configure()
+  add_one = p.sfpu.install(p.sfpu.add_immediate_program(1, format=SfpuFormat.BF16))
 
   noc = p.brisc.noc(0)
   start, count = p.brisc.arg(0), p.brisc.arg(1)
   for tile in p.brisc.range(count):
-    input_reader.reserve_back()
     with p.brisc.scope():
       page = p.brisc.reg(exclude=(start, tile))
       p.brisc.add(page, start, tile)
       source, source_coordinate = _dram_page(p.brisc, noc.index, src, page)
-      target = p.brisc.reg(exclude=(source, source_coordinate, page))
-      input_reader.write_ptr(target)
-      noc.read(source, source_coordinate, target, src.page_size)
-    input_reader.push_back()
+      noc.read_into_cb(source, source_coordinate, input_cb)
 
   for _ in p.trisc0.range(p.trisc0.arg(1)):
-    p.unpack.move(input_unpack, UnpackTarget.SRCA)
+    p.unpack.move(input_cb, UnpackTarget.SRCA)
 
   for _ in p.trisc1.range(p.trisc1.arg(1)):
-    p.math.acquire_dst()
-    p.math.copy_src_a_to_dst()
-    p.math.sfpu.run_tile(add_one)
-    p.math.publish_dst()
+    p.fpu.semaphore_wait(TensixSem.MATH_PACK, TensixSemWait.STALL_ON_MAX,
+                         TensixStall.SYNC | TensixStall.MATH | TensixStall.SFPU)
+    p.fpu.stall(TensixStall.MATH, TensixWait.SRCA_VLD)
+    p.fpu.mop.run()
+    p.sfpu.run_tile(add_one)
+    p.fpu.stall(TensixStall.SYNC, TensixWait.MATH | TensixWait.SFPU)
+    p.fpu.semaphore_post(TensixSem.MATH_PACK)
 
   for _ in p.trisc2.range(p.trisc2.arg(1)):
-    p.pack.acquire_dst()
-    output_pack.reserve_back()
-    p.pack.to_cb()
-    output_pack.push_back()
-    p.pack.release_dst()
+    p.pack.move(0, output_cb)
 
   noc = p.ncrisc.noc(1)
   start, count = p.ncrisc.arg(0), p.ncrisc.arg(1)
   for tile in p.ncrisc.range(count):
-    output_writer.wait_front()
     with p.ncrisc.scope():
       page = p.ncrisc.reg(exclude=(start, tile))
       p.ncrisc.add(page, start, tile)
       target, target_coordinate = _dram_page(p.ncrisc, noc.index, dst, page)
-      source = p.ncrisc.reg(exclude=(target, target_coordinate, page))
-      output_writer.read_ptr(source)
-      noc.write(source, target, target_coordinate, dst.page_size, posted=False)
-    output_writer.pop_front()
+      noc.write_from_cb(output_cb, target, target_coordinate)
   args, start = {}, 0
   for index, worker in enumerate(cores):
     count = tiles_per_core + int(index < extra)

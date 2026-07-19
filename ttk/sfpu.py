@@ -3,8 +3,11 @@ from dataclasses import dataclass
 from enum import IntEnum
 import struct
 
-from isa import R
-from ttk.tensix import Tensix, TensixRegs, TensixStall, TensixWait, ThreadCfg, tt_word
+from isa import R, Tensix as TT
+from ttk.mop import Replay
+from ttk.tensix import CFG_BASE, TensixPipe, TensixRegs, TensixStall, TensixWait
+
+_CONFIG = CFG_BASE + 4
 
 class SfpuFormat(IntEnum):
   SRCB = DEFAULT = 0
@@ -64,7 +67,7 @@ class InstalledSfpuProgram:
   owner: int
 
 def _bf16(value): return struct.unpack("<I", struct.pack("<f", float(value)))[0] >> 16
-def _nop(): return tt_word("TTSFPNOP")
+def _nop(): return TT.TTSFPNOP()
 
 class SfpuProgramBuilder:
   def __init__(self):
@@ -74,7 +77,7 @@ class SfpuProgramBuilder:
   def _open(self):
     if self.finished: raise RuntimeError("SFPU program is already finished")
 
-  def reg(self, index=None, *, name=None, initialized=False):
+  def reg(self, index=None, name=None, initialized=False):
     self._open()
     if index is None: index = next((x for x in range(8) if x not in self.allocated), None)
     if index is None: raise MemoryError("SFPU program has no free LRegs")
@@ -89,7 +92,7 @@ class SfpuProgramBuilder:
     if read and reg.index not in self.initialized: raise RuntimeError(f"read from uninitialized {reg!r}")
     return reg.index
 
-  def _emit(self, word, *, reads=(), writes=(), latency=1):
+  def _emit(self, word, reads=(), writes=(), latency=1):
     self._open(); read = [self._index(x) for x in reads]; write = [self._index(x, False) for x in writes]
     ready = max((self.ready_at.get(x, 0) for x in read), default=0)
     while self.cycle < ready: self.words.append(_nop()); self.cycle += 1
@@ -97,48 +100,48 @@ class SfpuProgramBuilder:
     for index in write: self.initialized.add(index); self.ready_at[index] = issued + latency
     return self
 
-  def load(self, source=DstRef(), *, into=None):
+  def load(self, source=DstRef(), into=None):
     if into is None: into = self.reg(name="value")
-    self._emit(tt_word("TTSFPLOAD", self._index(into, False), int(source.format), source.addr_mod, source.offset), writes=(into,))
+    self._emit(TT.TTSFPLOAD(self._index(into, False), int(source.format), source.addr_mod, source.offset), writes=(into,))
     return into
 
   def store(self, value, destination=DstRef()):
-    return self._emit(tt_word("TTSFPSTORE", self._index(value), int(destination.format),
+    return self._emit(TT.TTSFPSTORE(self._index(value), int(destination.format),
                               destination.addr_mod, destination.offset), reads=(value,))
 
   def add_immediate(self, value, immediate):
-    return self._emit(tt_word("TTSFPADDI", _bf16(immediate), self._index(value), 0),
+    return self._emit(TT.TTSFPADDI(_bf16(immediate), self._index(value), 0),
                       reads=(value,), writes=(value,), latency=2)
 
   def advance_dst(self, amount=2):
     if not 0 <= amount < 16: raise ValueError("Dst increment must fit in four bits")
-    return self._emit(tt_word("TTINCRWC", 0, amount, 0, 0))
+    return self._emit(TT.TTINCRWC(0, amount, 0, 0))
 
   def finish(self): self._open(); self.finished = True; return SfpuProgram(tuple(self.words))
 
 class Sfpu:
-  def __init__(self, tensix: Tensix):
+  def __init__(self, tensix: TensixPipe):
     self.tensix, self.owner, self.installed = tensix, id(self), {}
 
-  def initialize(self, lane_config=LaneConfig()):
+  def configure(self, fp32_destination=False, lane_config=LaneConfig()):
+    current = bool(self.tensix.state.cfg(1, _CONFIG) & 0x40000000)
+    if current != fp32_destination:
+      self.tensix.stall(TensixStall.CFG, TensixWait.SFPU)
+      self.tensix.rmw_cfg_byte(_CONFIG, 3, 0x40, 0x40 if fp32_destination else 0)
     self.configure_lane(lane_config)
-    for reg, value in ((ThreadCfg.SFPU_DEST_FMT, 0), (ThreadCfg.ADDR_MOD_AB_SEC6, 0),
-      (ThreadCfg.ADDR_MOD_DST_SEC6, 2), (ThreadCfg.ADDR_MOD_BIAS_SEC6, 0),
-      (ThreadCfg.ADDR_MOD_AB_SEC7, 0), (ThreadCfg.ADDR_MOD_DST_SEC7, 0), (ThreadCfg.ADDR_MOD_BIAS_SEC7, 0)):
-      self.tensix.set_thread_cfg(reg, value)
-    self.tensix.issue(tt_word("TTSETRWC", 0, 0, 0, 0, 0, 0xF)); return self
+    self.tensix.issue(TT.TTSETRWC(0, 0, 0, 0, 0, 0xF)); return self
 
   def configure_lane(self, config):
     word, old = config.word(), self.tensix.state.sfpu_lane_config
     if old == word: return self
-    self.tensix.issue(tt_word("TTSFPCONFIG", word, 15, 1))
+    self.tensix.issue(TT.TTSFPCONFIG(word, 15, 1))
     if old is None or (old ^ word) & 2: self.tensix.issue(_nop())
     self.tensix.state.sfpu_lane_config = word; return self
 
   def _issue(self, opcode, *args):
-    self.tensix.issue(tt_word(opcode, *args)); return self
+    self.tensix.issue(opcode(*args)); return self
 
-  def _dst_memory(self, opcode, value, offset, *, format, addr_mod, delta):
+  def _dst_memory(self, opcode, value, offset, format, addr_mod, delta):
     value, format = int(value), int(format)
     if isinstance(offset, R):
       k = self.tensix.k
@@ -147,7 +150,7 @@ class Sfpu:
         if delta: k.addi(address, offset, delta)
         else: k.mv(address, offset)
         instruction = k.reg(exclude=(offset, address))
-        k.li(instruction, tt_word(opcode, value, format, addr_mod, 0))
+        k.li(instruction, opcode(value, format, addr_mod, 0))
         k.add(instruction, instruction, address)
         k.write32(TensixRegs.INSTRN_BUF_BASE, instruction)
       return self
@@ -155,38 +158,38 @@ class Sfpu:
     if not 0 <= offset < 1 << 12: raise ValueError("SFPU Dst offset must fit in 12 bits")
     return self._issue(opcode, value, format, addr_mod, offset)
 
-  def load_dst(self, into, offset=0, *, format=SfpuFormat.DEFAULT, addr_mod=7, delta=0):
-    return self._dst_memory("TTSFPLOAD", into, offset, format=format, addr_mod=addr_mod, delta=delta)
+  def load_dst(self, into, offset=0, format=SfpuFormat.DEFAULT, addr_mod=7, delta=0):
+    return self._dst_memory(TT.TTSFPLOAD, into, offset, format=format, addr_mod=addr_mod, delta=delta)
 
-  def store_dst(self, value, offset=0, *, format=SfpuFormat.DEFAULT, addr_mod=7, delta=0):
-    return self._dst_memory("TTSFPSTORE", value, offset, format=format, addr_mod=addr_mod, delta=delta)
+  def store_dst(self, value, offset=0, format=SfpuFormat.DEFAULT, addr_mod=7, delta=0):
+    return self._dst_memory(TT.TTSFPSTORE, value, offset, format=format, addr_mod=addr_mod, delta=delta)
 
-  def move(self, source, destination): return self._issue("TTSFPMOV", 0, int(source), int(destination), 0)
+  def move(self, source, destination): return self._issue(TT.TTSFPMOV, 0, int(source), int(destination), 0)
 
-  def multiply(self, left, right, destination, *, negate=False):
+  def multiply(self, left, right, destination, negate=False):
     return self._issue(
-      "TTSFPMUL", int(left), int(right), int(LReg.CONST_0), int(destination), int(negate),
+      TT.TTSFPMUL, int(left), int(right), int(LReg.CONST_0), int(destination), int(negate),
     )
 
   def add(self, left, right, destination):
-    return self._issue("TTSFPADD", int(LReg.CONST_1), int(left), int(right), int(destination), 0)
+    return self._issue(TT.TTSFPADD, int(LReg.CONST_1), int(left), int(right), int(destination), 0)
 
   def add_into(self, destination, source): return self.add(destination, source, destination)
 
   def maximum_into(self, destination, source):
-    return self._issue("TTSFPSWAP", 0, int(destination), int(source), 1)
+    return self._issue(TT.TTSFPSWAP, 0, int(destination), int(source), 1)
 
   def horizontal_max(self, value=LReg.L0, scratch=LReg.L1):
     for shifts in (4, 2, 1):
       self.move(value, scratch)
-      for _ in range(shifts): self._issue("TTSFPSHFT2", 0, int(scratch), int(scratch), 3)
+      for _ in range(shifts): self._issue(TT.TTSFPSHFT2, 0, int(scratch), int(scratch), 3)
       self.maximum_into(value, scratch)
     return self
 
   def horizontal_sum(self, value=LReg.L0, scratch=LReg.L1):
     for shifts in (4, 2, 1):
       self.move(value, scratch)
-      for _ in range(shifts): self._issue("TTSFPSHFT2", 0, int(scratch), int(scratch), 3)
+      for _ in range(shifts): self._issue(TT.TTSFPSHFT2, 0, int(scratch), int(scratch), 3)
       self.add_into(value, scratch)
     return self
 
@@ -195,13 +198,13 @@ class Sfpu:
     if int(source) != int(LReg.L0): self.move(source, LReg.L0)
     self.move(LReg.L0, LReg.L1)
     for _ in range(7):
-      self._issue("TTSFPSHFT2", 0, int(LReg.L0), int(LReg.L2), 3)._issue("TTSFPNOP")
-      self.add(LReg.L1, LReg.L2, LReg.L1)._issue("TTSFPNOP")
+      self._issue(TT.TTSFPSHFT2, 0, int(LReg.L0), int(LReg.L2), 3)._issue(TT.TTSFPNOP)
+      self.add(LReg.L1, LReg.L2, LReg.L1)._issue(TT.TTSFPNOP)
       self.move(LReg.L2, LReg.L0)
     self.move(LReg.L1, LReg.L0)
-    for register in (LReg.L1, LReg.L2, LReg.L3): self._issue("TTSFPLOADI", int(register), 2, 0)
-    self._issue("TTSFPTRANSP", 0, 0, 0, 0)._issue("TTSFPNOP")
-    for register in (LReg.L1, LReg.L2, LReg.L3): self.add(LReg.L0, register, LReg.L0)._issue("TTSFPNOP")
+    for register in (LReg.L1, LReg.L2, LReg.L3): self._issue(TT.TTSFPLOADI, int(register), 2, 0)
+    self._issue(TT.TTSFPTRANSP, 0, 0, 0, 0)._issue(TT.TTSFPNOP)
+    for register in (LReg.L1, LReg.L2, LReg.L3): self.add(LReg.L0, register, LReg.L0)._issue(TT.TTSFPNOP)
     if int(destination) != int(LReg.L0): self.move(LReg.L0, destination)
     return self
 
@@ -210,8 +213,8 @@ class Sfpu:
 
   def load_float(self, destination, value):
     bits = self._float_bits(value)
-    self._issue("TTSFPLOADI", int(destination), 10, bits & 0xFFFF)
-    return self._issue("TTSFPLOADI", int(destination), 8, bits >> 16)
+    self._issue(TT.TTSFPLOADI, int(destination), 10, bits & 0xFFFF)
+    return self._issue(TT.TTSFPLOADI, int(destination), 8, bits >> 16)
 
   def load_float_from_l1(self, destination, address: int):
     """Broadcast an FP32 value loaded by the issuing RISC into an SFPU LReg."""
@@ -222,7 +225,7 @@ class Sfpu:
       for mode, upper in ((10, False), (8, True)):
         if upper: k.srli(immediate, bits, 16)
         else: k.slli(immediate, bits, 16); k.srli(immediate, immediate, 16)
-        k.li(instruction, tt_word("TTSFPLOADI", int(destination), mode, 0))
+        k.li(instruction, TT.TTSFPLOADI(int(destination), mode, 0))
         k.or_(instruction, instruction, immediate)
         k.write32(TensixRegs.INSTRN_BUF_BASE, instruction)
     return self
@@ -236,34 +239,34 @@ class Sfpu:
       if len(result) == count: return result
     raise ValueError(f"need {count} SFPU scratch LRegs avoiding {sorted(avoid)}")
 
-  def exp(self, source, destination, *, scratch=(1, 2, 3, 4, 5, 6, 7)):
+  def exp(self, source, destination, scratch=(1, 2, 3, 4, 5, 6, 7)):
     """Natural exponent using Blackhole's device-validated FP32-LReg path."""
     source, destination = int(source), int(destination)
     c, exponent, mantissa, polynomial = self._scratch(scratch, {source, destination}, 4)
     self.load_float(c, 1.4426950216293334961)
-    self.multiply(source, c, destination)._issue("TTSFPNOP")
-    self._issue("TTSFPADDI", self._float_bits(127.0) >> 16, destination, 0)._issue("TTSFPNOP")
-    self._issue("TTSFPLOADI", c, 0, 0)._issue("TTSFPSWAP", 0, destination, c, 1)._issue("TTSFPNOP")
-    self._issue("TTSFPLOADI", c, 0, self._float_bits(255.0) >> 16)
-    self._issue("TTSFPSWAP", 0, c, destination, 1)._issue("TTSFPNOP")
-    self._issue("TTSFPEXEXP", 0, destination, exponent, 0)
-    self._issue("TTSFPEXMAN", 0, destination, mantissa, 0)
-    self._issue("TTSFPSHFT", 0, exponent, mantissa, 0)._issue("TTSFPNOP")
-    self._issue("TTSFPEXEXP", 0, mantissa, exponent, 1)
-    self._issue("TTSFPEXMAN", 0, mantissa, mantissa, 1)
-    self._issue("TTSFPCAST", mantissa, mantissa, 0)._issue("TTSFPNOP")
+    self.multiply(source, c, destination)._issue(TT.TTSFPNOP)
+    self._issue(TT.TTSFPADDI, self._float_bits(127.0) >> 16, destination, 0)._issue(TT.TTSFPNOP)
+    self._issue(TT.TTSFPLOADI, c, 0, 0)._issue(TT.TTSFPSWAP, 0, destination, c, 1)._issue(TT.TTSFPNOP)
+    self._issue(TT.TTSFPLOADI, c, 0, self._float_bits(255.0) >> 16)
+    self._issue(TT.TTSFPSWAP, 0, c, destination, 1)._issue(TT.TTSFPNOP)
+    self._issue(TT.TTSFPEXEXP, 0, destination, exponent, 0)
+    self._issue(TT.TTSFPEXMAN, 0, destination, mantissa, 0)
+    self._issue(TT.TTSFPSHFT, 0, exponent, mantissa, 0)._issue(TT.TTSFPNOP)
+    self._issue(TT.TTSFPEXEXP, 0, mantissa, exponent, 1)
+    self._issue(TT.TTSFPEXMAN, 0, mantissa, mantissa, 1)
+    self._issue(TT.TTSFPCAST, mantissa, mantissa, 0)._issue(TT.TTSFPNOP)
     self.load_float(polynomial, 4.791750143340323e-15)
-    self.multiply(polynomial, mantissa, polynomial)._issue("TTSFPNOP")
+    self.multiply(polynomial, mantissa, polynomial)._issue(TT.TTSFPNOP)
     self.load_float(c, 7.839635491371155e-08)
-    self.add(polynomial, c, polynomial)._issue("TTSFPNOP")
-    self.multiply(polynomial, mantissa, polynomial)._issue("TTSFPNOP")
+    self.add(polynomial, c, polynomial)._issue(TT.TTSFPNOP)
+    self.multiply(polynomial, mantissa, polynomial)._issue(TT.TTSFPNOP)
     self.load_float(c, 1.0017248)
-    self.add(polynomial, c, polynomial)._issue("TTSFPNOP")
-    self._issue("TTSFPSETEXP", 0, polynomial, exponent, 0)._issue("TTSFPNOP")
+    self.add(polynomial, c, polynomial)._issue(TT.TTSFPNOP)
+    self._issue(TT.TTSFPSETEXP, 0, polynomial, exponent, 0)._issue(TT.TTSFPNOP)
     if exponent != destination: self.move(exponent, destination)
     return self
 
-  def reciprocal(self, source, destination, *, scratch=(0, 1, 2, 3, 4, 5, 6, 7), iterations=2):
+  def reciprocal(self, source, destination, scratch=(0, 1, 2, 3, 4, 5, 6, 7), iterations=2):
     """Approximate reciprocal followed by FP32 Newton-Raphson refinement."""
     if iterations < 0: raise ValueError("reciprocal iteration count must be non-negative")
     source, destination = int(source), int(destination)
@@ -272,35 +275,35 @@ class Sfpu:
       x = self._scratch(scratch, {source, destination}, 1)[0]
       self.move(source, x)
     two, temporary = self._scratch(scratch, {source, destination, x}, 2)
-    self.load_float(two, 2.0)._issue("TTSFPARECIP", 0, source, destination, 0)._issue("TTSFPNOP")
+    self.load_float(two, 2.0)._issue(TT.TTSFPARECIP, 0, source, destination, 0)._issue(TT.TTSFPNOP)
     for _ in range(iterations):
-      self._issue("TTSFPMAD", x, destination, two, temporary, 2)._issue("TTSFPNOP")
-      self.multiply(temporary, destination, destination, negate=True)._issue("TTSFPNOP")
+      self._issue(TT.TTSFPMAD, x, destination, two, temporary, 2)._issue(TT.TTSFPNOP)
+      self.multiply(temporary, destination, destination, negate=True)._issue(TT.TTSFPNOP)
     return self
 
-  def rsqrt_positive(self, source, destination, *, scratch=(0, 1, 2, 3, 4, 5, 6, 7)):
+  def rsqrt_positive(self, source, destination, scratch=(0, 1, 2, 3, 4, 5, 6, 7)):
     """Accurate reciprocal square root for a finite positive FP32 LReg."""
     source, destination = int(source), int(destination)
     x, y, temporary, c1, c2, half = self._scratch(scratch, {source, destination}, 6)
-    self.move(source, x)._issue("TTSFPNOP").move(x, y)._issue("TTSFPNOP")
-    self._issue("TTSFPSHFT", 0xFFF, 0, y, 1)._issue("TTSFPNOP")
+    self.move(source, x)._issue(TT.TTSFPNOP).move(x, y)._issue(TT.TTSFPNOP)
+    self._issue(TT.TTSFPSHFT, 0xFFF, 0, y, 1)._issue(TT.TTSFPNOP)
     bits = 0x5F1110A0
-    self._issue("TTSFPLOADI", temporary, 10, bits & 0xFFFF)._issue("TTSFPLOADI", temporary, 8, bits >> 16)
-    self._issue("TTSFPIADD", 0, temporary, y, 6)._issue("TTSFPNOP")
-    self.multiply(x, y, temporary)._issue("TTSFPNOP")
-    self.multiply(y, temporary, temporary, negate=True)._issue("TTSFPNOP")
+    self._issue(TT.TTSFPLOADI, temporary, 10, bits & 0xFFFF)._issue(TT.TTSFPLOADI, temporary, 8, bits >> 16)
+    self._issue(TT.TTSFPIADD, 0, temporary, y, 6)._issue(TT.TTSFPNOP)
+    self.multiply(x, y, temporary)._issue(TT.TTSFPNOP)
+    self.multiply(y, temporary, temporary, negate=True)._issue(TT.TTSFPNOP)
     self.load_float(c1, 2.2825186); self.load_float(c2, 2.2533049)
-    self.add(c2, temporary, c2)._issue("TTSFPNOP")
-    self._issue("TTSFPMAD", temporary, c2, c1, temporary, 0)._issue("TTSFPNOP")
-    self.multiply(y, temporary, y)._issue("TTSFPNOP")
-    self.multiply(x, y, temporary)._issue("TTSFPNOP")
-    self.multiply(y, temporary, temporary, negate=True)._issue("TTSFPNOP")
-    self.add(LReg.CONST_1, temporary, temporary)._issue("TTSFPNOP")
-    self.load_float(half, 0.5); self.multiply(y, half, half)._issue("TTSFPNOP")
-    self._issue("TTSFPMAD", temporary, half, y, destination, 0)._issue("TTSFPNOP")
+    self.add(c2, temporary, c2)._issue(TT.TTSFPNOP)
+    self._issue(TT.TTSFPMAD, temporary, c2, c1, temporary, 0)._issue(TT.TTSFPNOP)
+    self.multiply(y, temporary, y)._issue(TT.TTSFPNOP)
+    self.multiply(x, y, temporary)._issue(TT.TTSFPNOP)
+    self.multiply(y, temporary, temporary, negate=True)._issue(TT.TTSFPNOP)
+    self.add(LReg.CONST_1, temporary, temporary)._issue(TT.TTSFPNOP)
+    self.load_float(half, 0.5); self.multiply(y, half, half)._issue(TT.TTSFPNOP)
+    self._issue(TT.TTSFPMAD, temporary, half, y, destination, 0)._issue(TT.TTSFPNOP)
     return self
 
-  def reciprocal_positive(self, source, destination, *, maximum, scratch=(0, 1, 2, 3, 4, 5, 6, 7), iterations=18):
+  def reciprocal_positive(self, source, destination, maximum, scratch=(0, 1, 2, 3, 4, 5, 6, 7), iterations=18):
     """Reciprocal for ``0 < source <= maximum`` using a bounded FP32 Newton seed."""
     if maximum <= 0 or iterations < 0:
       raise ValueError("positive reciprocal needs a positive bound and iteration count")
@@ -312,36 +315,36 @@ class Sfpu:
     two, temporary = self._scratch(scratch, {source, destination, x}, 2)
     self.load_float(destination, 1.0 / float(maximum)); self.load_float(two, 2.0)
     for _ in range(iterations):
-      self._issue("TTSFPMAD", x, destination, two, temporary, 2)._issue("TTSFPNOP")
-      self.multiply(temporary, destination, destination, negate=True)._issue("TTSFPNOP")
+      self._issue(TT.TTSFPMAD, x, destination, two, temporary, 2)._issue(TT.TTSFPNOP)
+      self.multiply(temporary, destination, destination, negate=True)._issue(TT.TTSFPNOP)
     return self
 
   @contextmanager
   def tile(self):
     """Synchronize Math/SFPU around direct operations on the current Dst tile."""
     self.tensix.k.write32(TensixRegs.INSTRN_BUF_BASE, 0xB2010000)
-    self._issue("TTSETRWC", 0, 0, 0, 0, 0, 4)
+    self._issue(TT.TTSETRWC, 0, 0, 0, 0, 0, 4)
     self.tensix.stall(TensixStall.SFPU, TensixWait.MATH)
     yield self
-    self.tensix.k.write32(TensixRegs.INSTRN_BUF_BASE, tt_word("TTSETRWC", 0, 0, 0, 0, 0, 4))
-    self.tensix.k.write32(TensixRegs.INSTRN_BUF_BASE, tt_word(
-      "TTSTALLWAIT", int(TensixStall.SYNC), int(TensixWait.MATH | TensixWait.SFPU),
+    self.tensix.k.write32(TensixRegs.INSTRN_BUF_BASE, TT.TTSETRWC(0, 0, 0, 0, 0, 4))
+    self.tensix.k.write32(TensixRegs.INSTRN_BUF_BASE, TT.TTSTALLWAIT(
+      TensixStall.SYNC, TensixWait.MATH | TensixWait.SFPU,
     ))
 
-  def add_immediate_program(self, immediate, *, format=SfpuFormat.SRCB):
+  def add_immediate_program(self, immediate, format=SfpuFormat.SRCB):
     builder, dst = SfpuProgramBuilder(), DstRef(format=format)
     value = builder.load(dst); builder.add_immediate(value, immediate); builder.store(value, dst); builder.advance_dst()
     return builder.finish()
 
-  def install(self, program, *, start=None, replay_range=(0, 16)):
+  def install(self, program, start=None, replay_range=(0, 16)):
     if start is None and program in self.installed: return self.installed[program]
     lower, upper = replay_range
     start = self.tensix.state.mop[1].replay.allocate(len(program.words), start=start, lower=lower, upper=upper)
-    self.tensix.load_replay(program.words, start=start)
+    self.tensix.mop.load(Replay(start, program.words))
     installed = InstalledSfpuProgram(program, start, self.owner); self.installed[program] = installed
     return installed
 
-  def run(self, program, *, wait=True):
+  def run(self, program, wait=True):
     """Issue an arbitrary-length SFPU program from the kernel text.
 
     ``install`` is ideal for small programs that fit in the 32-word replay
@@ -349,18 +352,18 @@ class Sfpu:
     path emits their words inline while preserving the same program object.
     """
     if not isinstance(program, SfpuProgram): raise TypeError("expected an SfpuProgram")
-    self.tensix.issue(tt_word("TTSETRWC", 0, 0, 0, 0, 0, 4))
+    self.tensix.issue(TT.TTSETRWC(0, 0, 0, 0, 0, 4))
     self.tensix.stall(TensixStall.SFPU, TensixWait.MATH)
     for word in program.words: self.tensix.issue(word)
     if wait: self.tensix.stall(TensixStall.SYNC, TensixWait.MATH | TensixWait.SFPU)
     return self
 
   def run_tile(self, program):
-    self.tensix.issue(tt_word("TTSETRWC", 0, 0, 0, 0, 0, 4))
+    self.tensix.issue(TT.TTSETRWC(0, 0, 0, 0, 0, 4))
     self.tensix.stall(TensixStall.SFPU, TensixWait.MATH)
     for _ in range(4):
       for _ in range(8): self.tensix.replay(program.start, len(program.program.words))
-      for _ in range(2): self.tensix.issue(tt_word("TTSETRWC", 0, 4, 8, 0, 0, 4))
-    self.tensix.issue(tt_word("TTSETRWC", 0, 0, 0, 0, 0, 4))
+      for _ in range(2): self.tensix.issue(TT.TTSETRWC(0, 4, 8, 0, 0, 4))
+    self.tensix.issue(TT.TTSETRWC(0, 0, 0, 0, 0, 4))
     self.tensix.stall(TensixStall.SYNC, TensixWait.MATH | TensixWait.SFPU)
     return self

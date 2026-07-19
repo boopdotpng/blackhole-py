@@ -74,7 +74,7 @@ class RV32:
 
 class TensixWord(int): pass
 
-class Tensix:
+class _Tensix:
   def _emit(self, word: int): return word
 
   def _tt(self, opcode, *fields):
@@ -330,5 +330,4 @@ class Tensix:
   def TTXMOV(self, Mov_block_selection: int = 0, Last: int = 0):
     return self._tt(0x40, (Mov_block_selection, 23, 23), (Last, 22, 0))
 
-def tt_word(opcode, *args, **kwargs):
-  return getattr(Tensix(), opcode)(*args, **kwargs)
+Tensix = _Tensix()

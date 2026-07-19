@@ -80,14 +80,14 @@ class Transaction:
     return (byte_count + NiuCommand.MAX_PACKET_BYTES - 1) // NiuCommand.MAX_PACKET_BYTES
 
   def read(self, source_address, source_coordinate, target_address,
-           packet_bytes, *, source_middle_address=0):
+           packet_bytes, source_middle_address=0):
     self._ensure_open(); self._remote_pending = True
     self.noc._read(self.tid, source_address, source_coordinate, target_address, packet_bytes,
                    source_middle_address=source_middle_address)
     return self
 
   def write(self, source_address, target_address, target_coordinate,
-            packet_bytes, *, target_middle_address=0, posted=True):
+            packet_bytes, target_middle_address=0, posted=True):
     self._ensure_open(); self._source_pending = True
     if not posted: self._remote_pending = True
     self.noc._write(self.tid, source_address, target_address, target_coordinate, packet_bytes,
@@ -95,7 +95,7 @@ class Transaction:
     return self
 
   def _multicast_write(self, source_address, target_address, target_start,
-                       target_end, packet_bytes, *, linked):
+                       target_end, packet_bytes, linked):
     self._ensure_open(); self._source_pending = True
     self.noc._multicast_write(self.tid, source_address, target_address, target_start,
                               target_end, packet_bytes, linked=linked)
@@ -115,14 +115,14 @@ class Transaction:
     for index, request in enumerate(requests): self._multicast_write(*request, linked=index + 1 < len(requests))
     return self
 
-  def inline_write(self, value, target_address, target_coordinate, *,
+  def inline_write(self, value, target_address, target_coordinate,
                    posted=True):
     self._ensure_open()
     if not posted: self._remote_pending = True
     self.noc._inline_write(self.tid, value, target_address, target_coordinate, posted=posted)
     return self
 
-  def atomic_inc(self, target_address, target_coordinate, value=1, *,
+  def atomic_inc(self, target_address, target_coordinate, value=1,
                  return_address=4, posted=False):
     self._ensure_open()
     if not posted: self._remote_pending = True
@@ -214,7 +214,7 @@ class NoC:
     self.k.slli(out, out, 20); self.k.srli(out, out, 20)
     return out
 
-  def _packet_options(self, operation, *, posted=False, linked=False,
+  def _packet_options(self, operation, posted=False, linked=False,
                       multicast=False, inline=False):
     options = {"read": 0, "atomic": 1, "write": 2}[operation]
     if inline: options |= 1 << 3
@@ -272,7 +272,7 @@ class NoC:
     return self
 
   def _read(self, tid, source_address, source_coordinate, target_address,
-            packet_bytes, *, source_middle_address=0):
+            packet_bytes, source_middle_address=0):
     self._wait_issue_safe(TidCounters.requests_outstanding(tid), packet_bytes)
     with self.k.scope():
       local = self._local_coordinate(self.k.reg())
@@ -284,7 +284,7 @@ class NoC:
     return self
 
   def _write(self, tid, source_address, target_address, target_coordinate,
-             packet_bytes, *, target_middle_address=0, posted=True):
+             packet_bytes, target_middle_address=0, posted=True):
     self._wait_issue_safe(TidCounters.writes_outgoing(tid), packet_bytes)
     if not posted: self._wait_issue_safe(TidCounters.requests_outstanding(tid), packet_bytes)
     with self.k.scope():
@@ -297,7 +297,7 @@ class NoC:
     return self
 
   def _multicast_write(self, tid, source_address, target_address, target_start,
-                       target_end, packet_bytes, *, linked=False):
+                       target_end, packet_bytes, linked=False):
     self._wait_issue_safe(TidCounters.writes_outgoing(tid), packet_bytes)
     with self.k.scope():
       local, targets = self.k.reg(2)
@@ -310,7 +310,7 @@ class NoC:
       )
     return self
 
-  def _inline_write(self, tid, value, target_address, target_coordinate, *,
+  def _inline_write(self, tid, value, target_address, target_coordinate,
                     posted=True):
     if not posted: self._wait_issue_safe(TidCounters.requests_outstanding(tid))
     # Inline destinations occupy the hardware source endpoint group.
@@ -320,7 +320,7 @@ class NoC:
         "write", posted=posted, inline=True), 0xF, value),
     )
 
-  def _atomic_inc(self, tid, target_address, target_coordinate, value=1, *,
+  def _atomic_inc(self, tid, target_address, target_coordinate, value=1,
                   return_address=4, posted=False):
     if not posted: self._wait_issue_safe(TidCounters.requests_outstanding(tid))
     with self.k.scope():
@@ -338,6 +338,30 @@ class NoC:
 
   def read(self, *args, **options): return self._complete("read", *args, **options)
   def write(self, *args, **options): return self._complete("write", *args, **options)
+
+  def read_into_cb(self, source_address, source_coordinate, cb, source_middle_address=0):
+    from ttk.cb import CB
+    CB.reserve_back(self.k, cb)
+    with self.k.scope():
+      target = self.k.reg()
+      CB.get_write_ptr(self.k, cb, target)
+      self.read(source_address, source_coordinate, target, cb.page_size,
+                source_middle_address=source_middle_address)
+    CB.push_back(self.k, cb)
+    return self
+
+  def write_from_cb(self, cb, target_address, target_coordinate,
+                    target_middle_address=0, posted=False):
+    from ttk.cb import CB
+    CB.wait_front(self.k, cb)
+    with self.k.scope():
+      source = self.k.reg()
+      CB.get_read_ptr(self.k, cb, source)
+      self.write(source, target_address, target_coordinate, cb.page_size,
+                 target_middle_address=target_middle_address, posted=posted)
+    CB.pop_front(self.k, cb)
+    return self
+
   def multicast_write(self, *args): return self._complete("multicast_write", *args)
   def multicast_write_chain(self, requests): return self._complete("multicast_write_chain", requests)
   def inline_write(self, *args, **options): return self._complete("inline_write", *args, **options)

@@ -8,6 +8,15 @@ from ttk.common import Common
 
 _rv32 = RV32()
 
+def _li_words(rd: R, value: int):
+  value &= 0xFFFFFFFF
+  signed = value - 0x100000000 if value & 0x80000000 else value
+  if -2048 <= signed <= 2047: return [_rv32.addi(rd, R.ZERO, signed)]
+  hi, lo = (signed + 0x800) >> 12, signed - (((signed + 0x800) >> 12) << 12)
+  words = [_rv32.lui(rd, hi << 12)]
+  if lo: words.append(_rv32.addi(rd, rd, lo))
+  return words
+
 @dataclass(frozen=True)
 class Fixup:
   op: str
@@ -37,9 +46,9 @@ class Cond:
 
 class Asm(RV32, Common):
   def __init__(self, role: KernelRole, core: Core | None = None,
-               param_slots: dict[object, int] | None = None, *,
+               param_slots: dict[object, int] | None = None,
                firmware: bool = False):
-    self.items, self.labels = [], {}
+    self.items, self.labels, self._prologue = [], {}, []
 
     reserved = {R.ZERO, R.RA, R.SP, R.GP, R.TP}
     self._free, self._scopes = [reg for reg in R if reg not in reserved], []
@@ -53,6 +62,7 @@ class Asm(RV32, Common):
     if not self.is_firmware:
       self._return_addr = self.local.alloc(4, name="kernel_return_addr")
       self.store(self._return_addr, R.RA)
+    self._body_start = len(self.items)
 
   @classmethod
   def firmware(cls, role: KernelRole): return cls(role, firmware=True)
@@ -63,22 +73,21 @@ class Asm(RV32, Common):
     from ttk.noc import NoC
     return NoC(self, index)
 
-  def init_cb(self, config):
-    from ttk.cb import CB
-    return CB(self, config)
-
   def _emit(self, word: int):
     if self._lowered: raise RuntimeError("kernel has already been lowered")
     if isinstance(word, TensixWord):
       if self.role == "brisc":
-        return self.push_tensix_word(word)
+        from ttk.tensix import push_tensix_word
+        return push_tensix_word(self, word)
       if self.role == "ncrisc": raise RuntimeError("ncrisc cannot emit Tensix instructions")
       if self.role not in ("trisc0", "trisc1", "trisc2"):
         raise RuntimeError(f"{self.role} cannot emit Tensix instructions")
     self.items.append(word)
     return self
 
-  def reg(self, n: int = 1, *, exclude=()):
+  def emit(self, word: int): return self._emit(word)
+
+  def reg(self, n: int = 1, exclude=()):
     if not self._scopes: raise RuntimeError("reg() requires a register scope")
     excluded = {exclude} if isinstance(exclude, R) else set(exclude)
     available = [reg for reg in self._free if reg not in excluded]
@@ -118,13 +127,18 @@ class Asm(RV32, Common):
   def jal(self, rd: R, target: str | int): return self._fixup("jal", (rd,), target)
 
   def li(self, rd: R, value: int):
-    value &= 0xFFFFFFFF
-    signed = value - 0x100000000 if value & 0x80000000 else value
-    if -2048 <= signed <= 2047: return self.addi(rd, R.ZERO, signed)
-    hi, lo = (signed + 0x800) >> 12, signed - (((signed + 0x800) >> 12) << 12)
-    self.lui(rd, hi << 12)
-    return self.addi(rd, rd, lo) if lo else self
+    for word in _li_words(rd, value): self._emit(word)
+    return self
 
+  def initialize_local(self, addr: int, value: int):
+    """Initialize RISC-local kernel state before the generated kernel body."""
+    self._prologue += _li_words(R.T0, addr)
+    source = R.ZERO
+    if value:
+      self._prologue += _li_words(R.T1, value)
+      source = R.T1
+    self._prologue.append(_rv32.sw(source, R.T0, 0))
+    return self
   def mv(self, rd: R, rs: R): return self.addi(rd, rs, 0)
   def nop(self): return self.addi(R.ZERO, R.ZERO, 0)
   def j(self, label: str): return self.jal(R.ZERO, label)
@@ -205,6 +219,8 @@ class Asm(RV32, Common):
     out, pc = [], 0
     for i, item in enumerate(self.items):
       if not isinstance(item, Fixup):
+        # Only Tensix words inline in the RISC-V stream rotate by two. Words
+        # embedded in MMIO writes or MOP config are ordinary, unrotated data.
         word = ((item << 2) | (item >> 30)) & 0xFFFFFFFF if isinstance(item, TensixWord) else item
         out.append(word); pc += 4; continue
       if item.label not in targets: raise ValueError(f"undefined label {item.label!r}")
@@ -225,6 +241,14 @@ class Asm(RV32, Common):
 
   def lower(self):
     if self._lowered: raise RuntimeError("kernel has already been lowered")
+    if self._prologue:
+      count = len(self._prologue)
+      self.items[self._body_start:self._body_start] = self._prologue
+      self.labels = {
+        name: index + count if index >= self._body_start else index
+        for name, index in self.labels.items()
+      }
+      self._prologue = []
     if not self.is_firmware:
       with self.scope():
         return_addr = self.reg()

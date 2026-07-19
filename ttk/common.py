@@ -1,24 +1,10 @@
-from isa import R, tt_word
+from isa import R
 from fw.consts import TensixL1
 
 PARAM_BASE = TensixL1.PARAM_BASE
 
 class Common:
-  def risc_barrier(self, addr: int, participants: int, index: int, *, value: int = 1):
-    """Join a small software barrier backed by one shared L1 word per RISC."""
-    if participants <= 0 or not 0 <= index < participants:
-      raise ValueError("barrier index must identify one participant")
-    with self.scope():
-      ptr, actual, expected = self.reg(3)
-      self.write32(addr + index * 4, value); self.fence()
-      for participant in range(participants):
-        self.wait32(
-          addr + participant * 4, value,
-          ptr=ptr, actual=actual, expected=expected,
-        )
-    return self
-
-  def configure_csr(self, *, value: R = R.T0):
+  def configure_csr(self, value: R = R.T0):
     self.li(value, 2)
     self.csrrs(R.ZERO, value, 0x7C0)
     self.li(value, 1)
@@ -36,7 +22,7 @@ class Common:
   def setup_stack(self, stack_top: int):
     return self.li(R.SP, stack_top)
 
-  def call_fixed_kernel(self, entry: int, *, target: R = R.T0):
+  def call_fixed_kernel(self, entry: int, target: R = R.T0):
     self.li(target, entry)
     return self.jalr(R.RA, target, 0)
 
@@ -71,7 +57,7 @@ class Common:
   def write32(self, addr: int | R, value: int | R):
     return self.store(addr, value, bytes=4)
 
-  def update32(self, addr: int, *, set_bits: int = 0, clear_bits: int = 0,
+  def update32(self, addr: int, set_bits: int = 0, clear_bits: int = 0,
                value: R = R.T0):
     self.read32(value, addr)
     if clear_bits:
@@ -95,7 +81,7 @@ class Common:
       self.write8(base + offset, value)
     return self
 
-  def align_up(self, value: R, alignment: int, *, scratch: R = R.T0):
+  def align_up(self, value: R, alignment: int, scratch: R = R.T0):
     if type(alignment) is not int or alignment <= 0 or alignment & (alignment - 1):
       raise ValueError("alignment must be a positive power of two")
     self.li(scratch, alignment - 1)
@@ -112,7 +98,7 @@ class Common:
   def signal8(self, addr: int | R, value: int):
     return self.write8(addr, value)
 
-  def wait8(self, addr: int, value: int, *, ptr: R = R.T0,
+  def wait8(self, addr: int, value: int, ptr: R = R.T0,
             actual: R = R.T1, expected: R = R.T2):
     value = int(value)
     self.li(ptr, addr)
@@ -126,33 +112,6 @@ class Common:
     self.j(loop)
     self.label(done)
     return self.fence()
-
-  def wait32(self, addr: int, value: int, *, ptr: R = R.T0,
-             actual: R = R.T1, expected: R = R.T2):
-    self.li(ptr, addr)
-    self.li(expected, value)
-    loop = self._new_label("wait32")
-    done = self._new_label("wait32_done")
-    self.label(loop)
-    self.lw(actual, ptr, 0)
-    self.beq(actual, expected, done)
-    self.fence()
-    self.j(loop)
-    self.label(done)
-    return self.fence()
-
-  def push_tensix_word(self, word: int, *, addr: int = 0xFFE40000):
-    if self.role not in ("brisc", "trisc0", "trisc1", "trisc2"):
-      raise RuntimeError(f"{self.role} cannot push Tensix instructions")
-    if not isinstance(word, int):
-      raise TypeError("Tensix instruction must be an int")
-    if not 0 <= word <= 0xFFFFFFFF:
-      raise ValueError("Tensix instruction must fit in 32 bits")
-    return self.write32(addr, word)
-
-  @staticmethod
-  def tensix_word(opcode: str, *args, **kwargs) -> int:
-    return tt_word(opcode, *args, **kwargs)
 
   def load(self, rd: R, addr: int | R, bytes=4):
     op = {1: self.lbu, 2: self.lhu, 4: self.lw}[bytes]

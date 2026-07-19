@@ -3,7 +3,7 @@ from isa import R
 from cq import DISPATCH_DONE_COUNT
 from fw.consts import CQConfig, Firmware, FirmwareControl, RunState, TensixL1, TensixMMIO
 from ttk.noc import NIU0, NIU_STRIDE, NIU_CONFIG, NIU_CONTROL, ROUTER_CONTROL
-from ttk.tensix import Tensix
+from ttk.tensix import TensixPipe
 from ttk.cb import CB
 
 def _enable_clock_gating(fw):
@@ -55,7 +55,7 @@ def build_brisc():
   fw.j("run_loop")
 
   fw.label("reset_tensix")
-  Tensix.reset_hardware(fw)
-  CB.setup_local_cbs(fw)
+  TensixPipe.reset_hardware(fw)
+  CB.reset_counters(fw)
   fw.jalr(R.ZERO, R.RA)
   return fw
