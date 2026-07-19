@@ -1,8 +1,22 @@
 #!/usr/bin/env python3
 import os, sys, token, tokenize
-from tabulate import tabulate
 
 TOKENS = {token.OP, token.NAME, token.NUMBER, token.STRING}
+
+def tabulate(rows, headers, floatfmt=".1f"):
+  rows = [tuple(format(value, floatfmt) if isinstance(value, float) else str(value)
+                for value in row) for row in rows]
+  headers = tuple(map(str, headers))
+  widths = [max(len(header), *(len(row[i]) for row in rows))
+            for i, header in enumerate(headers)]
+
+  def format_row(row):
+    return "  ".join(value.ljust(width) if i == 0 else value.rjust(width)
+                     for i, (value, width) in enumerate(zip(row, widths)))
+
+  return "\n".join([format_row(headers),
+                    format_row(tuple("-" * width for width in widths)),
+                    *(format_row(row) for row in rows)])
 
 def stats(root):
   for path, dirs, files in os.walk(root):
@@ -11,8 +25,7 @@ def stats(root):
       if not name.endswith(".py") or name == "sz.py": continue
       filename = os.path.join(path, name)
       with tokenize.open(filename) as f:
-        tokens = [t for t in tokenize.generate_tokens(f.readline) if t.type in TOKENS and
-                  not (t.type == token.STRING and t.line.lstrip().startswith(('"""', "'''")))]
+        tokens = [t for t in tokenize.generate_tokens(f.readline) if t.type in TOKENS]
       lines = len({line for t in tokens for line in range(t.start[0], t.end[0] + 1)})
       if lines: yield os.path.relpath(filename, root), lines, len(tokens) / lines
 
