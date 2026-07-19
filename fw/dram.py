@@ -49,7 +49,7 @@ def _kernel(write: bool, core, dram_coords):
     fw.label("dram_done")
   return fw.lower()
 
-def _program(cores, dram_coords, *, write):
+def _program(cores, dram_coords, write):
   cores = tuple(cores)
   image = _kernel(write, cores[0], tuple(dram_coords))
   return Program.from_kernels({core: {"ncrisc": image} for core in cores})

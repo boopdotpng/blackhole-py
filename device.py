@@ -47,7 +47,7 @@ class Device:
 
   def queue(self, program: Program): self.program_queue.append(program); return program
 
-  def _dram_program(self, buffer, *, write, offset=0):
+  def _dram_program(self, buffer, write, offset=0):
     from fw.dram import ARGS_BASE, dram_read, dram_write
     if self.cq is None: raise RuntimeError("init_device() must be called before tensor transfer")
     if not 0 < buffer.page_size <= 16 * 1024 or buffer.page_size % 16:
@@ -76,7 +76,7 @@ class Device:
     return program
 
   @staticmethod
-  def _tile_data(buffer, data, *, inverse=False):
+  def _tile_data(buffer, data, inverse=False):
     shape = buffer.padded_shape
     if len(shape) < 2 or shape[-2] % 32 or shape[-1] % 32:
       raise ValueError("buffer padding must be a multiple of 32 in its final two dimensions")
@@ -102,14 +102,14 @@ class Device:
     self._staging_write += buffer.size
     return self.queue(program)
 
-  def dram_read(self, buffer, *, timeout=10.0):
+  def dram_read(self, buffer, timeout=10.0):
     self.run(self._dram_program(buffer, write=False), timeout=timeout)
     return self._tile_data(buffer, self.pcie.sysmem.read(self.cq.dram, buffer.size), inverse=True)
 
   write = dram_write
   read = dram_read
 
-  def run(self, programs: Program | list[Program] | None = None, *, timeout=10.0):
+  def run(self, programs: Program | list[Program] | None = None, timeout=10.0):
     if self.cq is None: raise RuntimeError("init_device() must be called before run()")
     if programs is None:
       programs = self.program_queue

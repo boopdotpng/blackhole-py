@@ -208,7 +208,7 @@ class CommandQueue:
     self.queue_index = (index + 1) % PREFETCH_QUEUE_ENTRIES
     self.issue_write += len(record)
 
-  def _publish(self, record: bytes, *, pad_ring=True):
+  def _publish(self, record: bytes, pad_ring=True):
     pages = (len(record) + PAGE_SIZE - 1) // PAGE_SIZE
     if pages > DISPATCH_RING_PAGES: raise ValueError("record exceeds dispatch ring")
     if pad_ring:
@@ -217,7 +217,7 @@ class CommandQueue:
     self._write_record(record)
     self.dispatch_page = (self.dispatch_page + pages) % DISPATCH_RING_PAGES
 
-  def submit(self, commands, *, timeout=10.0):
+  def submit(self, commands, timeout=10.0):
     self.event += 1
     commands = tuple(commands)
     run = commands[-1]
@@ -225,7 +225,7 @@ class CommandQueue:
     for command in commands: self._publish(command.lower())
     return self.wait(self.event, timeout=timeout)
 
-  def wait(self, event, *, timeout=10.0):
+  def wait(self, event, timeout=10.0):
     deadline = time.monotonic() + timeout
     expected = event & 0xFFFFFFFF
     while True:
