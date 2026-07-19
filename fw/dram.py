@@ -12,7 +12,7 @@ def _kernel(write: bool, dram_endpoints):
   with fw.scope():
     base, sysmem, mid, tile, tiles, tile_size, bank, address, coord, banks = fw.reg(10)
     for reg, offset in zip((base, sysmem, mid, tile, tiles, tile_size), range(0, ARGS_WORDS * 4, 4)):
-      fw.load(reg, ARGS_BASE + offset)
+      fw.read(reg, ARGS_BASE + offset)
 
     noc = fw.noc
     fw.li(banks, len(dram_endpoints))

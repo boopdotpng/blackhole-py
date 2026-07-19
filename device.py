@@ -30,7 +30,7 @@ class Device:
     with TLBWindow(self.pcie.fd, self.pcie.cores[0]) as win:
       win.mcast(TensixMMIO.RISCV_DEBUG_REG_SOFT_RESET_0, TensixMMIO.SOFT_RESET_ALL)
       win.mcast(firmware_base, firmware)
-      boot = RV32().jal(R.ZERO, firmware_base).to_bytes(4, "little")
+      boot = RV32().jal(R.ZERO, firmware_base + 4).to_bytes(4, "little")
       win.mcast(TensixL1.BOOT, boot)
       win.mcast(FirmwareControl.GO_SIGNAL, int(RunState.DONE), bytes=1)
       win.mcast(TensixMMIO.RISCV_DEBUG_REG_SOFT_RESET_0, TensixMMIO.SOFT_RESET_BRISC_ONLY_RUN)

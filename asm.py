@@ -1,11 +1,18 @@
 from contextlib import contextmanager
 from dataclasses import dataclass
+from functools import wraps
 from typing import ClassVar
 from fw.consts import Firmware, KernelRole, TensixL1, TensixMMIO
 from isa import R, RV32, TensixWord
 from pcie import Allocator
 
 _rv32 = RV32()
+
+def scoped(fn):
+  @wraps(fn)
+  def wrapped(asm, *args, **kwargs):
+    with asm.scope(): return fn(asm, *args, **kwargs)
+  return wrapped
 
 def _li_words(rd: R, value: int):
   value &= 0xFFFFFFFF
@@ -20,7 +27,7 @@ def _li_words(rd: R, value: int):
 class Fixup:
   op: str
   args: tuple
-  label: str
+  target: str | int
 
 @dataclass(frozen=True)
 class Cond:
@@ -48,23 +55,23 @@ class Asm(RV32):
                firmware: bool = False):
     self.items, self.labels, self._prologue = [], {}, []
 
-    reserved = {R.ZERO, R.RA, R.SP, R.GP, R.TP}
+    reserved = {R.ZERO, R.RA, R.SP, R.GP}
     self._free, self._scopes = [reg for reg in R if reg not in reserved], []
     self._label_id, self._breaks = 0, []
     self.role = role
     self.param_slots = {} if param_slots is None else param_slots
     self.is_firmware = bool(firmware)
+    self.base = Firmware.TEXT[role][0] if firmware else TensixL1.WORKER_TEXT_BASE[role]
     self._lowered = False
     self.local = Allocator(*Firmware.LOCAL_MEMORY.get(role, (0, 0)), 4)
-    if not self.is_firmware:
-      self._return_addr = self.local.alloc(4)
-      self.store(self._return_addr, R.RA)
     self._body_start = len(self.items)
 
   @classmethod
   def firmware(cls, role: KernelRole): return cls(role, firmware=True)
 
-  def configure_csr(self, value: R = R.T0):
+  @scoped
+  def configure_csr(self):
+    value = self.reg()
     self.li(value, 2)
     self.csrrs(R.ZERO, value, 0x7C0)
     self.li(value, 1)
@@ -82,117 +89,67 @@ class Asm(RV32):
   def setup_stack(self, stack_top: int):
     return self.li(R.SP, stack_top)
 
-  def call_fixed_kernel(self, entry: int, target: R = R.T0):
-    self.li(target, entry)
-    return self.jalr(R.RA, target, 0)
-
-  def delay_cycles(self, cycles: int):
-    if cycles == 0: return self
-    with self.scope():
-      counter = self.reg()
-      self.li(counter, cycles)
-      loop = self._new_label("delay")
-      self.label(loop)
-      self.addi(counter, counter, -1)
-      self.bne(counter, R.ZERO, loop)
-    return self
-
+  @scoped
   def zero_words(self, addr: int, count: int):
     if count == 0: return self
-    with self.scope():
-      ptr, remaining = self.reg(2)
-      self.li(ptr, addr)
-      self.li(remaining, count)
-      loop = self._new_label("zero_words")
-      done = self._new_label("zero_words_done")
-      self.label(loop)
-      self.beq(remaining, R.ZERO, done)
-      self.sw(R.ZERO, ptr, 0)
-      self.addi(ptr, ptr, 4)
-      self.addi(remaining, remaining, -1)
-      self.j(loop)
-      self.label(done)
+    ptr, remaining = self.reg(2)
+    self.li(ptr, addr)
+    self.li(remaining, count)
+    loop = self._new_label("zero_words")
+    done = self._new_label("zero_words_done")
+    self.label(loop)
+    self.beq(remaining, R.ZERO, done)
+    self.sw(R.ZERO, ptr, 0)
+    self.addi(ptr, ptr, 4)
+    self.addi(remaining, remaining, -1)
+    self.j(loop)
+    self.label(done)
     return self
-
-  def write32(self, addr: int | R, value: int | R):
-    return self.store(addr, value, bytes=4)
-
-  def update32(self, addr: int, set_bits: int = 0, clear_bits: int = 0,
-               value: R = R.T0):
-    self.read32(value, addr)
-    if clear_bits:
-      with self.scope():
-        mask = self.reg(exclude=value)
-        self.li(mask, ~clear_bits)
-        self.and_(value, value, mask)
-    if set_bits:
-      with self.scope():
-        bits = self.reg(exclude=value)
-        self.li(bits, set_bits)
-        self.or_(value, value, bits)
-    return self.write32(addr, value)
 
   def invalidate_risc_caches(self):
-    return self.write32(TensixMMIO.RISCV_IC_INVALIDATE, TensixMMIO.RISCV_IC_ALL_MASK)
+    return self.write(TensixMMIO.RISCV_IC_INVALIDATE, TensixMMIO.RISCV_IC_ALL_MASK)
 
-  def signal_range(self, base: int, offsets, value: int):
-    for offset in offsets:
-      self.write8(base + offset, value)
-    return self
-
-  def align_up(self, value: R, alignment: int, scratch: R = R.T0):
+  @scoped
+  def align_up(self, value: R, alignment: int):
+    scratch = self.reg(exclude=value)
     self.li(scratch, alignment - 1)
     self.add(value, value, scratch)
     self.li(scratch, -alignment)
     return self.and_(value, value, scratch)
 
-  def read32(self, rd: R, addr: int | R):
-    return self.load(rd, addr, bytes=4)
-
-  def write8(self, addr: int | R, value: int | R):
-    return self.store(addr, value, bytes=1)
-
-  def signal8(self, addr: int | R, value: int):
-    return self.write8(addr, value)
-
-  def wait8(self, addr: int, value: int, ptr: R = R.T0,
-            actual: R = R.T1, expected: R = R.T2):
-    value = int(value)
+  @scoped
+  def wait(self, addr: int, value: int, bytes=1):
+    ptr, actual, expected = self.reg(3)
     self.li(ptr, addr)
-    self.li(expected, value)
-    loop = self._new_label("wait8")
-    done = self._new_label("wait8_done")
+    self.li(expected, int(value))
+    loop = self._new_label("wait")
+    done = self._new_label("wait_done")
     self.label(loop)
-    self.lbu(actual, ptr, 0)
+    self.read(actual, ptr, bytes=bytes)
     self.beq(actual, expected, done)
     self.fence()
     self.j(loop)
     self.label(done)
     return self.fence()
 
-  def load(self, rd: R, addr: int | R, bytes=4):
+  @scoped
+  def read(self, rd: R, addr: int | R, bytes=4):
     op = {1: self.lbu, 2: self.lhu, 4: self.lw}[bytes]
     if isinstance(addr, R): return op(rd, addr)
-    with self.scope():
-      base = self.reg(exclude=rd)
-      self.li(base, addr)
-      return op(rd, base)
+    base = self.reg(exclude=rd)
+    self.li(base, addr)
+    return op(rd, base)
 
-  def store(self, addr: int | R, value: int | R, bytes=4):
+  @scoped
+  def write(self, addr: int | R, value: int | R, bytes=4):
     op = {1: self.sb, 2: self.sh, 4: self.sw}[bytes]
-    with self.scope():
-      if not isinstance(addr, R):
-        excluded = value if isinstance(value, R) else ()
-        self.li(base := self.reg(exclude=excluded), addr)
-      else: base = addr
-      if not isinstance(value, R): self.li(src := self.reg(exclude=base), value)
-      else: src = value
-      return op(src, base)
-
-  def param(self, param):
-    reg = self.reg()
-    self.load(reg, TensixL1.PARAM_BASE + self.param_slots[param] * 4)
-    return reg
+    if not isinstance(addr, R):
+      excluded = value if isinstance(value, R) else ()
+      self.li(base := self.reg(exclude=excluded), addr)
+    else: base = addr
+    if not isinstance(value, R): self.li(src := self.reg(exclude=base), value)
+    else: src = value
+    return op(src, base)
 
   @property
   def noc(self):
@@ -210,7 +167,7 @@ class Asm(RV32):
     if self._lowered: raise RuntimeError("kernel has already been lowered")
     if isinstance(word, TensixWord):
       if self.role == "brisc":
-        return self.write32(TensixMMIO.INSTRN_BUF_BASE, int(word))
+        return self.write(TensixMMIO.INSTRN_BUF_BASE, int(word))
       if self.role == "ncrisc": raise RuntimeError("ncrisc cannot emit Tensix instructions")
       if self.role not in ("trisc0", "trisc1", "trisc2"):
         raise RuntimeError(f"{self.role} cannot emit Tensix instructions")
@@ -262,13 +219,13 @@ class Asm(RV32):
     for word in _li_words(rd, value): self._emit(word)
     return self
 
+  @scoped
   def initialize_local(self, addr: int, value: int):
-    self._prologue += _li_words(R.T0, addr)
-    source = R.ZERO
-    if value:
-      self._prologue += _li_words(R.T1, value)
-      source = R.T1
-    self._prologue.append(_rv32.sw(source, R.T0, 0))
+    address, source = self.reg(2)
+    self._prologue += _li_words(address, addr)
+    if value: self._prologue += _li_words(source, value)
+    else: source = R.ZERO
+    self._prologue.append(_rv32.sw(source, address, 0))
     return self
 
   def initialize_tensix(self, *words):
@@ -281,8 +238,9 @@ class Asm(RV32):
     return self
 
   def mv(self, rd: R, rs: R): return self.addi(rd, rs, 0)
-  def nop(self): return self.addi(R.ZERO, R.ZERO, 0)
-  def j(self, label: str): return self.jal(R.ZERO, label)
+  def j(self, target: str | int):
+    if isinstance(target, str): return self.jal(R.ZERO, target)
+    self.items.append(Fixup("jal", (R.ZERO,), target)); return self
 
   def _branch_cond(self, c: Cond, label: str, invert=False):
     op, swap = c.branch(invert)
@@ -316,19 +274,12 @@ class Asm(RV32):
         yield index
         self.addi(index, index, 1)
 
-  @contextmanager
-  def if_(self, condition: Cond):
-    end = self._new_label("endif")
-    self._branch_cond(condition, end, invert=True)
-    yield
-    self.label(end)
-
+  @scoped
   def switch(self, value: R, cases: dict[int, str], default: str):
-    with self.scope():
-      expected = self.reg(exclude=value)
-      for literal, label in cases.items():
-        self.li(expected, literal)
-        self.beq(value, expected, label)
+    expected = self.reg(exclude=value)
+    for literal, label in cases.items():
+      self.li(expected, literal)
+      self.beq(value, expected, label)
     return self.j(default)
 
   def break_(self, condition: Cond | None = None):
@@ -347,8 +298,8 @@ class Asm(RV32):
       changed = False
       for i, item in enumerate(self.items):
         if isinstance(item, Fixup) and item.op in Cond.BRANCHES and i not in long:
-          if item.label not in targets: raise ValueError(f"undefined label {item.label!r}")
-          if not -4096 <= targets[item.label] - pc(i) < 4096: long.add(i); changed = True
+          if item.target not in targets: raise ValueError(f"undefined label {item.target!r}")
+          if not -4096 <= targets[item.target] - pc(i) < 4096: long.add(i); changed = True
       if not changed: return long, targets
 
   def instructions(self):
@@ -360,17 +311,19 @@ class Asm(RV32):
         # embedded in MMIO writes or MOP config are ordinary, unrotated data.
         word = ((item << 2) | (item >> 30)) & 0xFFFFFFFF if isinstance(item, TensixWord) else item
         out.append(word); pc += 4; continue
-      if item.label not in targets: raise ValueError(f"undefined label {item.label!r}")
-      offset = targets[item.label] - pc
-      if offset & 1: raise ValueError(f"misaligned target {item.label!r}")
+      if isinstance(item.target, str):
+        if item.target not in targets: raise ValueError(f"undefined label {item.target!r}")
+        offset = targets[item.target] - pc
+      else: offset = item.target - (self.base + pc)
+      if offset & 1: raise ValueError(f"misaligned target {item.target!r}")
       if i in long:
         out.append(getattr(_rv32, Cond.inverse(item.op))(*item.args, 8))
-        offset = targets[item.label] - (pc + 4)
-        if not -(1 << 20) <= offset < 1 << 20: raise ValueError(f"target {item.label!r} is out of range")
+        offset = targets[item.target] - (pc + 4)
+        if not -(1 << 20) <= offset < 1 << 20: raise ValueError(f"target {item.target!r} is out of range")
         out.append(_rv32.jal(R.ZERO, offset)); pc += 8
       else:
         limit = 1 << (20 if item.op == "jal" else 12)
-        if not -limit <= offset < limit: raise ValueError(f"target {item.label!r} is out of range")
+        if not -limit <= offset < limit: raise ValueError(f"target {item.target!r} is out of range")
         out.append(getattr(_rv32, item.op)(*item.args, offset)); pc += 4
     return out
 
@@ -378,6 +331,7 @@ class Asm(RV32):
 
   def lower(self):
     if self._lowered: raise RuntimeError("kernel has already been lowered")
+    if not self.is_firmware: self.j(Firmware.TEXT[self.role][0])
     if self._prologue:
       count = len(self._prologue)
       self.items[self._body_start:self._body_start] = self._prologue
@@ -386,10 +340,5 @@ class Asm(RV32):
         for name, index in self.labels.items()
       }
       self._prologue = []
-    if not self.is_firmware:
-      with self.scope():
-        return_addr = self.reg()
-        self.load(return_addr, self._return_addr)
-        self.jalr(R.ZERO, return_addr)
     self._lowered = True
     return self.assemble()

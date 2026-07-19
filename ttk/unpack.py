@@ -94,7 +94,7 @@ class Unpack:
   def _commit_config(self, register):
     with self.k.scope():
       observed = self.k.reg()
-      self.k.read32(observed, int(register)); self.k.write32(_CONFIG_SYNC, 0)
+      self.k.read(observed, int(register)); self.k.write(_CONFIG_SYNC, 0)
 
   def _write_mode(self, engine, input_format, output_format, target, tilize, tile):
     k = self.k
@@ -105,7 +105,7 @@ class Unpack:
     if tilize: word0 |= 1 << 9 | shift << 16 | shift << 20
     options = (word0, 0x03 | (0x30 if target == UnpackTarget.DST else 0), 0, 0)
     for base, words in ((_TILE_DESCRIPTOR[engine], descriptor), (_OPTIONS[engine], options)):
-      for index, word in enumerate(words): k.write32(int(base) + index * 4, word)
+      for index, word in enumerate(words): k.write(int(base) + index * 4, word)
 
     size = output_format.itemsize
     for register, value in (
@@ -115,7 +115,7 @@ class Unpack:
       (_ADDR_BASE0[engine], 0), (_ADDR_BASE1[engine], 0),
       (_ADDR_MISC[engine], 0x100 if engine == UNPACKER0 else 0),
       (_NOP_CLEAR[engine], 0),
-    ): k.write32(int(register), value)
+    ): k.write(int(register), value)
 
     destination = 64 if engine == UNPACKER0 else 0
     if target == UnpackTarget.DST:
@@ -125,7 +125,7 @@ class Unpack:
       (_DEST[engine], destination | destination << 16),
       (_X_DIM[engine], x_dim | x_dim << 16),
       (_OFFSET[engine], 0), (int(_OFFSET[engine]) + 4, 0),
-    ): k.write32(int(register), value)
+    ): k.write(int(register), value)
 
   def _configure(self, cb, target, tilize, tile):
     input_format = cb.dtype
@@ -138,8 +138,8 @@ class Unpack:
       address = self.k.reg()
       CB.get_read_ptr(self.k, cb, address)
       self.k.srli(address, address, 4); self.k.addi(address, address, -1)
-      self.k.write32(int(_BASE[engine]), address)
-      self.k.write32(int(_BASE[engine]) + 4, address)
+      self.k.write(int(_BASE[engine]), address)
+      self.k.write(int(_BASE[engine]) + 4, address)
     # This stateless path fully drains each move, so context 0 is always free.
     self._issue(TT.TTSETC16(_MISC_CONFIG, 0))
     if engine == UNPACKER0:

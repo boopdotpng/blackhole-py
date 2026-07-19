@@ -6,7 +6,7 @@ import numpy as np
 
 from asm import Asm
 from cq import MAX_WRITE_SIZE, McastWrite, UnicastWrite
-from fw.consts import KERNEL_ROLES, TensixL1
+from fw.consts import Firmware, KERNEL_ROLES, TensixL1
 from isa import R, RV32
 from pcie import Allocator, P100_WORKER_CORES
 from ttk import DType
@@ -17,7 +17,7 @@ from ttk.sfpu import Sfpu
 from ttk.unpack import Unpack
 
 PARAM_BASE = TensixL1.PARAM_BASE
-RETURN_KERNEL = RV32().jalr(R.ZERO, R.RA).to_bytes(4, "little")
+RETURN_KERNEL = {role: RV32().jal(R.ZERO, Firmware.TEXT[role][0] - TensixL1.WORKER_TEXT_BASE[role]).to_bytes(4, "little") for role in KERNEL_ROLES}
 
 
 @dataclass(frozen=True, eq=False)
@@ -285,7 +285,7 @@ class Program:
     for role in KERNEL_ROLES:
       groups = {}
       for core in self.cores:
-        image = kernels[core].get(role, RETURN_KERNEL)
+        image = kernels[core].get(role, RETURN_KERNEL[role])
         if len(image) > TensixL1.WORKER_TEXT_SIZE:
           raise ValueError(f"{role} kernel exceeds its text partition")
         groups.setdefault(image, []).append(core)

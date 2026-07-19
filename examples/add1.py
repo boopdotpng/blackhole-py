@@ -1,10 +1,5 @@
-import argparse, sys
-from pathlib import Path
-
 import numpy as np
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-
+import argparse
 from device import Device
 from program import Buffer, DType, Program
 from ttk.sfpu import SfpuFormat
@@ -59,11 +54,9 @@ def run_hardware(tiles=2):
     )
   finally: device.close()
 
-def main():
+if __name__ == "__main__":
   parser = argparse.ArgumentParser()
   parser.add_argument("--tiles", type=int, default=2, help="tiles per core")
   args = parser.parse_args()
   if args.tiles <= 0: parser.error("--tiles must be positive")
   run_hardware(args.tiles)
-
-if __name__ == "__main__": main()

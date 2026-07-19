@@ -37,7 +37,7 @@ class Pack:
     return self
 
   def _write_cfg(self, register, value):
-    self.k.write32(int(register), value)
+    self.k.write(int(register), value)
     return self
 
   def _rmw_cfg_byte(self, register, byte, mask, data):
@@ -55,7 +55,7 @@ class Pack:
       k.slli(instruction, value, 8)
       k.li(mask, 0x00FFFF00); k.and_(instruction, instruction, mask)
       k.li(base, TT.TTSETDMAREG(0, 0, 0, half_register))
-      k.or_(instruction, instruction, base); k.write32(TensixMMIO.INSTRN_BUF_BASE, instruction)
+      k.or_(instruction, instruction, base); k.write(TensixMMIO.INSTRN_BUF_BASE, instruction)
 
   @staticmethod
   def _strides(fmt):
@@ -75,8 +75,8 @@ class Pack:
       (_Cfg.ADDRESS_ZW, zw), (_Cfg.COUNTERS, 0x1000),
       (_Cfg.EDGE, 0xFFFF), (_Cfg.TILE_ROW_MAPPING, 0),
     ): self._write_cfg(reg, value)
-    self.k.write32(TensixMMIO.REGFILE_BASE + 16 * 4, output_cb.tile_size >> 4)
-    self.k.write32(TensixMMIO.REGFILE_BASE + 52 * 4, 0x40000)
+    self.k.write(TensixMMIO.REGFILE_BASE + 16 * 4, output_cb.tile_size >> 4)
+    self.k.write(TensixMMIO.REGFILE_BASE + 52 * 4, 0x40000)
     for section, value in enumerate((0x0104, 0x2820, 0x1120)):
       self._set_thread_cfg(_ADDRESS_MODIFIER + section, value)
     self._issue(TT.TTSETADCXY(4, 0, 0, 0, 0, 0xB))
@@ -91,7 +91,7 @@ class Pack:
       if isinstance(source, R):
         instruction = self.k.reg(exclude=source)
         self.k.li(instruction, TT.TTSETADC(4, 0, 3, 0)); self.k.or_(instruction, instruction, source)
-        self.k.write32(TensixMMIO.INSTRN_BUF_BASE, instruction)
+        self.k.write(TensixMMIO.INSTRN_BUF_BASE, instruction)
       else: self._issue(TT.TTSETADC(4, 0, 3, source))
       self._set_dma_reg16(24, address)
       self.k.srli(high, address, 16); self.k.li(valid, 0x8000); self.k.or_(valid, valid, high)

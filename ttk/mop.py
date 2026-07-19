@@ -96,7 +96,7 @@ class Mop:
     for replay in template.replays(): self.load(replay)
     words = template.words()
     mop_sync(self.k)
-    for index, word in enumerate(words): self.k.write32(MOP_CFG + index * 4, word)
+    for index, word in enumerate(words): self.k.write(MOP_CFG + index * 4, word)
     self.state.config, self.state.masked = words, isinstance(template, MaskTemplate)
     return self
 

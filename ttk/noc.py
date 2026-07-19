@@ -1,4 +1,5 @@
 from asm import Cond
+from fw.consts import TensixL1
 from isa import R
 from pcie import P100_DRAM_ENDPOINTS
 from ttk.cb import CB
@@ -26,7 +27,7 @@ class NiuCommand:
   @classmethod
   def build(cls, k, niu, source, target, packet):
     for index, value in enumerate((*source, *target, *packet)):
-      k.write32(cls.address(niu, index * 4), value)
+      k.write(cls.address(niu, index * 4), value)
 
 class TidCounters:
   STATUS_OFFSET = 0x200
@@ -205,7 +206,7 @@ class NoC:
       self.k.mv(out, self.local_coordinate) if isinstance(self.local_coordinate, R) else \
         self.k.li(out, self.local_coordinate)
       return out
-    self.k.load(out, self._niu() + NIU_CONFIG + LOGICAL_NODE_ID)
+    self.k.read(out, self._niu() + NIU_CONFIG + LOGICAL_NODE_ID)
     self.k.slli(out, out, 20); self.k.srli(out, out, 20)
     return out
 
@@ -228,7 +229,7 @@ class NoC:
     with k.scope():
       current = k.reg(exclude=expected if isinstance(expected, R) else ())
       with k.loop():
-        k.load(current, self._status(register))
+        k.read(current, self._status(register))
         k.break_(Cond(current, "==", expected))
       k.fence()
     return self
@@ -239,7 +240,7 @@ class NoC:
     with k.scope():
       current = k.reg()
       with k.loop():
-        k.load(current, self._status(register))
+        k.read(current, self._status(register))
         # A large auto-split command increments the counter all at once. Drain
         # the bucket first when that increment can exceed the half-range limit;
         # ordinary one-packet issue can retain up to 128 requests in flight.
@@ -257,7 +258,7 @@ class NoC:
         k.lw(busy, base, NiuCommand.SEND_REQUEST)
         k.break_(Cond(busy, "==", 0))
       NiuCommand.build(k, self.index, source, target, packet)
-      k.write32(NiuCommand.address(self.index, NiuCommand.SEND_REQUEST), 1)
+      k.write(NiuCommand.address(self.index, NiuCommand.SEND_REQUEST), 1)
       # Order submission and wait for hardware auto-splitting before the
       # command registers can be reused by the next request.
       with k.loop():
@@ -335,7 +336,8 @@ class NoC:
 
   def _dram_tile(self, param, tile):
     k, endpoints, buffer = self.k, P100_DRAM_ENDPOINTS, param
-    base = k.param(param)
+    base = k.reg()
+    k.read(base, TensixL1.PARAM_BASE + k.param_slots[param] * 4)
     address, coordinate, bank, banks, scale, rotation = k.reg(
       6, exclude=(tile, base),
     )
