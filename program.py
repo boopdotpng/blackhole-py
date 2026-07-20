@@ -208,9 +208,9 @@ class Program:
     dst = Dst(fp32_dst)
     self.unpack = Unpack(self.trisc0, dst)
     self.fpu = Fpu(self.trisc1, dst)
-    self.sfpu = Sfpu(self.trisc1, dst)
+    self.sfpu = Sfpu(self.trisc1, dst, seed_kernel=self.brisc)
     self.pack = Pack(self.trisc2, dst)
-    self.ops = Ops(self, self.unpack, self.fpu, self.pack)
+    self.ops = Ops(self, self.unpack, self.fpu, self.sfpu, self.pack)
     self._scopes = ExitStack()
     for stream in self.roles.values(): self._scopes.enter_context(stream.scope())
 

@@ -1,4 +1,6 @@
+from ttk import DType
 from ttk.fpu import Broadcast
+from ttk.sfpu import SfpuFormat
 
 
 class Ops:
@@ -8,15 +10,29 @@ class Ops:
   _BF16_ZERO = b"\0\0"
   _BF16_NEG_ONE = b"\x80\xbf"
 
-  def __init__(self, program, unpack, fpu, pack):
+  def __init__(self, program, unpack, fpu, sfpu, pack):
     self.program = program
     self.unpack = unpack
     self.fpu = fpu
+    self.sfpu = sfpu
     self.pack = pack
     self._unit_scaler = None
     self._row_scaler = None
     self._negative_tile = None
     self._negative_scaler = None
+
+  def rand_fast(self, *, seed=0, dst_tile=0):
+    """Generate one hardware-PRNG BF16 tile in an operation-owned CB."""
+    output_cb = self.program.cb.internal(
+      "ops.rand_fast.output", DType.BF16, depth=1,
+    )
+    builder = self.sfpu.program()
+    value = builder.rand_fast()
+    builder.store(value, format=SfpuFormat.BF16)
+    self.sfpu.seed(seed)
+    self.sfpu.map_tile(builder.finish(), tile=dst_tile).publish()
+    self.pack.move(output_cb, tile=dst_tile)
+    return output_cb
 
   def _unit_scaler_address(self):
     if self._unit_scaler is None:

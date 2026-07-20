@@ -10,14 +10,22 @@ def _firmware(role): fw = Asm.firmware(role); fw.j("worker_done"); return fw
 def _run_worker(fw, role): fw.j(TensixL1.WORKER_TEXT_BASE[role]); return fw.label("worker_done")
 
 def _reset_tensix(fw):
-  fw.zero_words(TensixMMIO.CFG_BASE, 256)
+  seed_index = (
+    int(TensixMMIO.PRNG_SEED_SEED_VAL) - int(TensixMMIO.CFG_BASE)
+  ) // 4
+  fw.zero_words(TensixMMIO.CFG_BASE, seed_index)
+  fw.zero_words(
+    TensixMMIO.PRNG_SEED_SEED_VAL + 4, 256 - seed_index - 1,
+  )
   fw.emit(TT.TTZEROACC(3, 0, 0, 0, 0))
   fw.emit(TT.TTSFPENCC(3, 0, 0, 10))
   fw.emit(TT.TTNOP())
   fw.emit(TT.TTSFPLOADI(0, 0, 0xBF80))
   fw.emit(TT.TTSFPCONFIG(0, 11, 0))
   fw.write(TensixMMIO.ECC_SCRUBBER, 1 | 2 | (0x100 << 3))
-  for sem in (Sem.MATH_PACK, Sem.UNPACK_TO_DEST, Sem.MATH_DONE):
+  for sem in (
+    Sem.FPU_SFPU, Sem.MATH_PACK, Sem.UNPACK_TO_DEST, Sem.MATH_DONE,
+  ):
     fw.emit(TT.TTSEMINIT(1, 0, 1 << sem))
   return fw
 
