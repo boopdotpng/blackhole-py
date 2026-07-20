@@ -1,3 +1,5 @@
+from enum import IntEnum
+
 from fw.consts import TensixMMIO
 from isa import Tensix as TT
 from ttk.dst import Dst
@@ -11,10 +13,33 @@ _ALU_CONFIG = TensixMMIO.CFG_BASE + 4
 _ADDR_MOD_AB, _ADDR_MOD_DST, _ADDR_MOD_BIAS = 12, 28, 47
 
 
+class Broadcast(IntEnum):
+  NONE = 0
+  COLUMN = 1
+  ROW = 2
+  SCALAR = 3
+
+
 def _tile_mop(instruction, release):
   return LoopTemplate(
     outer=4, inner=2, loop=instruction,
     end0=TT.TTSETRWC(release, 0, 0, 0, 0, 3),
+    last=instruction, outer_last=instruction,
+  )
+
+
+def _column_broadcast_mop(instruction, _release):
+  return LoopTemplate(
+    outer=2, inner=2, loop=instruction,
+    end0=TT.TTSETRWC(1, 3, 0, 0, 0, 3),
+    last=instruction, outer_last=instruction,
+  )
+
+
+def _scalar_broadcast_mop(instruction, _release):
+  return LoopTemplate(
+    outer=4, inner=2, loop=instruction,
+    end0=TT.TTSETRWC(1, 3, 0, 0, 0, 3),
     last=instruction, outer_last=instruction,
   )
 
@@ -58,7 +83,17 @@ class Fpu:
     return self
 
   def _run(self, dst_tile, instruction, *, source_a, source_b, release,
-           step=8, mop=_tile_mop):
+           step=8, mop=_tile_mop, broadcast=Broadcast.NONE):
+    try:
+      broadcast = Broadcast(broadcast)
+    except ValueError:
+      raise ValueError("invalid FPU broadcast mode") from None
+    if broadcast is not Broadcast.NONE and not source_b:
+      raise ValueError("FPU broadcast requires SrcB")
+    if broadcast is Broadcast.COLUMN:
+      mop = _column_broadcast_mop
+    elif broadcast is Broadcast.SCALAR:
+      mop = _scalar_broadcast_mop
     self._wait_for_dst()
     self._configure_dst(dst_tile)
     source = (step if source_a else 0) | ((step if source_b else 0) << 8)
@@ -70,7 +105,16 @@ class Fpu:
     self._issue(TT.TTSETRWC(0, 0, 0, 0, 0, 0xF))
     waits = (Wait.SRCA_VLD if source_a else 0) | (Wait.SRCB_VLD if source_b else 0)
     if waits: stall(self.k, Stall.MATH, waits)
-    self._mop.configure(mop(instruction, release)).run()
+    self._mop.configure(mop(instruction, release))
+    if broadcast is Broadcast.COLUMN:
+      self._mop.run()
+      self._issue(TT.TTSETRWC(2, 0, 0, 0, 0, 0))
+      self._mop.run()
+      self._issue(TT.TTSETRWC(2, 0, 0, 0, 0, 0))
+    else:
+      self._mop.run()
+      if broadcast is Broadcast.SCALAR:
+        self._issue(TT.TTSETRWC(2, 0, 0, 0, 0, 0))
     self._issue(TT.TTSETRWC(0, 0, 0, 0, 0, 0xF))
     return self
 
@@ -83,17 +127,72 @@ class Fpu:
     return self._run(dst_tile, TT.TTMOVB2D(0, 0, 2, 2, 0),
                      source_a=False, source_b=True, release=2)
 
-  def add(self, *, dst_tile, accumulate=False):
-    return self._run(dst_tile, TT.TTELWADD(0, int(accumulate), 0, 2, 0),
-                     source_a=True, source_b=True, release=3)
+  def add(self, *, dst_tile, accumulate=False, broadcast=Broadcast.NONE):
+    broadcast = Broadcast(broadcast)
+    return self._run(
+      dst_tile, TT.TTELWADD(0, int(accumulate), broadcast, 2, 0),
+      source_a=True, source_b=True, release=3, broadcast=broadcast,
+    )
 
-  def sub(self, *, dst_tile, accumulate=False):
-    return self._run(dst_tile, TT.TTELWSUB(0, int(accumulate), 0, 2, 0),
-                     source_a=True, source_b=True, release=3)
+  def sub(self, *, dst_tile, accumulate=False, broadcast=Broadcast.NONE):
+    broadcast = Broadcast(broadcast)
+    return self._run(
+      dst_tile, TT.TTELWSUB(0, int(accumulate), broadcast, 2, 0),
+      source_a=True, source_b=True, release=3, broadcast=broadcast,
+    )
 
-  def mul(self, *, dst_tile, accumulate=False):
-    return self._run(dst_tile, TT.TTELWMUL(0, int(accumulate), 0, 2, 0),
-                     source_a=True, source_b=True, release=3)
+  def mul(self, *, dst_tile, accumulate=False, broadcast=Broadcast.NONE):
+    broadcast = Broadcast(broadcast)
+    return self._run(
+      dst_tile, TT.TTELWMUL(0, int(accumulate), broadcast, 2, 0),
+      source_a=True, source_b=True, release=3, broadcast=broadcast,
+    )
+
+  def _configure_row_pool(self):
+    # Pool one face at a time. The transpose/add phase consumes SrcB in two
+    # eight-row halves while materializing the reduced destination column.
+    for slot, source, destination in (
+      (0, 0, 1 << 15),
+      (1, 8 << 8, 8),
+    ):
+      self._set_thread_cfg(_ADDR_MOD_AB + slot, source)
+      self._set_thread_cfg(_ADDR_MOD_DST + slot, destination)
+      self._set_thread_cfg(_ADDR_MOD_BIAS + slot, 0)
+    return self
+
+  def _transpose_row_result(self):
+    self._issue(TT.TTSETRWC(0, 4, 0, 0, 0, 3))
+    self._issue(TT.TTMOVD2B(0, 16, 0, 0, 0))
+    self._issue(TT.TTTRNSPSRCB())
+    self._issue(TT.TTMOVD2B(0, 16, 0, 0, 0))
+    self._issue(TT.TTSETRWC(0, 2, 0, 8, 0, 2))
+    self._issue(TT.TTSETRWC(0, 2, 0, 8, 0, 2))
+    self._issue(TT.TTZEROSRC(0, 1, 0, 1))
+    self._issue(TT.TTELWADD(0, 0, 0, 1, 0))
+    self._issue(TT.TTELWADD(0, 0, 0, 1, 0))
+    return self
+
+  def pool_row(self, *, dst_tile, maximum):
+    """Reduce each logical row, leaving a 32x1 column in Dst."""
+    self._wait_for_dst()
+    self._configure_dst(dst_tile)
+    self._configure_row_pool()
+    self._issue(TT.TTSETRWC(0, 0, 0, 0, 0, 0xF))
+    stall(self.k, Stall.MATH, Wait.SRCA_VLD | Wait.SRCB_VLD)
+    pool = TT.TTGMPOOL if maximum else TT.TTGAPOOL
+    self._issue(pool(3, 1, 0, 0, 0))
+    self._issue(pool(0, 1, 0, 0, 0))
+    self._transpose_row_result()
+
+    for _ in range(3):
+      self._issue(TT.TTSETRWC(0, 4, 8, 0, 0, 4))
+    self._issue(TT.TTSETRWC(3, 4, 8, 0, 0, 6))
+    self._issue(pool(3, 1, 0, 0, 0))
+    self._issue(pool(0, 1, 0, 0, 0))
+    self._transpose_row_result()
+
+    self._issue(TT.TTSETRWC(3, 0, 0, 0, 0, 6))
+    return self
 
   def pool_scalar(self, *, dst_tile, maximum, negate=False):
     """Pool four faces and their columns into Dst[0, 0]."""

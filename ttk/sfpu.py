@@ -17,7 +17,7 @@ from fw.consts import TensixMMIO
 from isa import Tensix as TT
 from ttk.dst import Dst
 from ttk.mop import LoopTemplate, Mop, REPLAY_SIZE, Replay
-from ttk.sync import Sem, SemWait, Stall, Wait, sem_wait, stall
+from ttk.sync import Sem, SemWait, Stall, Wait, sem_get, sem_post, sem_wait, stall
 
 
 _CFG_STATE_ID = 0
@@ -289,6 +289,29 @@ class SfpuProgramBuilder:
     )
     return into
 
+  def rand_fast(self, *, into=None):
+    """Advance Blackhole's fast hardware PRNG and return values in [0, 1)."""
+    into = self._destination(into, "rand_fast")
+    index = self._write_index(into)
+    self._emit(
+      TT.TTSFPMOV(0, 9, index, 8),
+      writes=(into,),
+    )
+    self._emit(
+      TT.TTSFPSETSGN(0, index, index, 1),
+      reads=(into,), writes=(into,),
+    )
+    self._emit(
+      TT.TTSFPSETEXP(127, index, index, 1),
+      reads=(into,), writes=(into,),
+    )
+    self._emit(
+      TT.TTSFPADDI(_bf16(-1.0), index, 0),
+      reads=(into,), writes=(into,), latency=2,
+    )
+    self.mad(into, LReg.ONE, LReg.ZERO, into=into)
+    return into
+
   def add(self, left, right, *, into=None):
     into = self._destination(into, "add")
     self._emit(
@@ -540,12 +563,36 @@ class SfpuProgramBuilder:
 class Sfpu:
   """Stateless mapping of immutable 32-lane programs over Dst regions."""
 
-  def __init__(self, kernel, dst: Dst):
+  def __init__(self, kernel, dst: Dst, seed_kernel=None):
     if kernel.role != "trisc1": raise RuntimeError("SFPU must run on trisc1")
     self.k, self.dst, self._mop = kernel, dst, Mop(kernel, 1)
+    self.seed_k = seed_kernel
     self.prepared = {}
 
   def program(self): return SfpuProgramBuilder()
+
+  def seed(self, value):
+    """Seed all 32 hardware PRNG lanes and wait for the seed to settle."""
+    if type(value) is not int or not 0 <= value <= 0xffffffff:
+      raise ValueError("SFPU PRNG seed must be a 32-bit unsigned integer")
+    if self.seed_k is None:
+      raise RuntimeError("SFPU seed requires a BRISC coordinator")
+    self.seed_k.write(TensixMMIO.PRNG_SEED_SEED_VAL, value)
+    for _ in self.seed_k.range(600):
+      pass
+    sem_post(self.seed_k, Sem.FPU_SFPU)
+    sem_wait(
+      self.k, Sem.FPU_SFPU, SemWait.STALL_ON_ZERO,
+      Stall.SYNC | Stall.MATH | Stall.SFPU,
+    )
+    sem_get(self.k, Sem.FPU_SFPU)
+    return self
+
+  def publish(self):
+    """Publish the current Dst contents to the pack thread."""
+    stall(self.k, Stall.SYNC, Wait.MATH | Wait.SFPU)
+    sem_post(self.k, Sem.MATH_PACK)
+    return self
 
   def _issue(self, word):
     self.k.emit(word)

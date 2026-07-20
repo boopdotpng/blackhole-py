@@ -17,7 +17,9 @@ def _reset_tensix(fw):
   fw.emit(TT.TTSFPLOADI(0, 0, 0xBF80))
   fw.emit(TT.TTSFPCONFIG(0, 11, 0))
   fw.write(TensixMMIO.ECC_SCRUBBER, 1 | 2 | (0x100 << 3))
-  for sem in (Sem.MATH_PACK, Sem.UNPACK_TO_DEST, Sem.MATH_DONE):
+  for sem in (
+    Sem.FPU_SFPU, Sem.MATH_PACK, Sem.UNPACK_TO_DEST, Sem.MATH_DONE,
+  ):
     fw.emit(TT.TTSEMINIT(1, 0, 1 << sem))
   return fw
 

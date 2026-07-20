@@ -1,17 +1,35 @@
+from ttk import DType
+from ttk.sfpu import SfpuFormat
+
+
 class Ops:
   """Cross-engine tile operations."""
 
   _BF16_ONE = b"\x80\x3f"
   _BF16_NEG_ONE = b"\x80\xbf"
 
-  def __init__(self, program, unpack, fpu, pack):
+  def __init__(self, program, unpack, fpu, sfpu, pack):
     self.program = program
     self.unpack = unpack
     self.fpu = fpu
+    self.sfpu = sfpu
     self.pack = pack
     self._unit_scaler = None
     self._negative_tile = None
     self._negative_scaler = None
+
+  def rand_fast(self, *, seed=0, dst_tile=0):
+    """Generate one hardware-PRNG BF16 tile in an operation-owned CB."""
+    output_cb = self.program.cb.internal(
+      "ops.rand_fast.output", DType.BF16, depth=1,
+    )
+    builder = self.sfpu.program()
+    value = builder.rand_fast()
+    builder.store(value, format=SfpuFormat.BF16)
+    self.sfpu.seed(seed)
+    self.sfpu.map_tile(builder.finish(), tile=dst_tile).publish()
+    self.pack.move(output_cb, tile=dst_tile)
+    return output_cb
 
   def _unit_scaler_address(self):
     if self._unit_scaler is None:
@@ -24,6 +42,14 @@ class Ops:
     self.unpack.move_reduce(input_cb, self._unit_scaler_address())
     self.fpu.pool_scalar(dst_tile=dst_tile, maximum=maximum).publish()
     self.pack.move_scalar(output_cb, tile=dst_tile)
+    return self
+
+  def _reduce_row(self, input_cb, output_cb, *, dst_tile, maximum):
+    self.unpack.move_reduce(
+      input_cb, self._unit_scaler_address(), scaler_rows=1, transpose=True,
+    )
+    self.fpu.pool_row(dst_tile=dst_tile, maximum=maximum).publish()
+    self.pack.move(output_cb, tile=dst_tile)
     return self
 
   def _negative_tile_address(self):
@@ -53,6 +79,16 @@ class Ops:
 
   def reduce_max(self, input_cb, output_cb, *, dst_tile=0):
     return self._reduce_scalar(
+      input_cb, output_cb, dst_tile=dst_tile, maximum=True,
+    )
+
+  def row_sum(self, input_cb, output_cb, *, dst_tile=0):
+    return self._reduce_row(
+      input_cb, output_cb, dst_tile=dst_tile, maximum=False,
+    )
+
+  def row_max(self, input_cb, output_cb, *, dst_tile=0):
+    return self._reduce_row(
       input_cb, output_cb, dst_tile=dst_tile, maximum=True,
     )
 

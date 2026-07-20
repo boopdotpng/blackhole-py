@@ -3,6 +3,7 @@ import numpy as np
 
 from device import Device
 from program import Buffer, DType, Program
+from ttk.fpu import Broadcast
 
 
 SHAPE = (32, 32)
@@ -40,28 +41,68 @@ def reduce_min(src: Buffer, dst: Buffer) -> Program:
   return _reduce(src, dst, "reduce_min")
 
 
+def row_sum(src: Buffer, dst: Buffer) -> Program:
+  return _reduce(src, dst, "row_sum")
+
+
+def row_max(src: Buffer, dst: Buffer) -> Program:
+  return _reduce(src, dst, "row_max")
+
+
+def row_max_sub(src: Buffer, dst: Buffer) -> Program:
+  p = Program(src.cores, src, dst)
+  input_cb = p.cb(src.dtype)
+  reduced_cb = p.cb.internal("row_max_sub.reduced", src.dtype, depth=1)
+  output_cb = p.cb(dst.dtype)
+  p.brisc.noc.read_into_cb(src, 0, input_cb)
+  p.ops.row_max(input_cb, reduced_cb, dst_tile=0)
+  p.brisc.noc.read_into_cb(src, 0, input_cb)
+  p.unpack.move_pair(input_cb, reduced_cb)
+  p.fpu.sub(dst_tile=0, broadcast=Broadcast.COLUMN).publish()
+  p.pack.move(output_cb, tile=0)
+  p.ncrisc.noc.write_from_cb(output_cb, dst, 0)
+  return p
+
+
 def _expected(values):
   sums = np.zeros(SHAPE, dtype=np.float32)
   maxima = np.zeros(SHAPE, dtype=np.float32)
   minima = np.zeros(SHAPE, dtype=np.float32)
+  row_sums = np.zeros(SHAPE, dtype=np.float32)
+  row_maxima = np.zeros(SHAPE, dtype=np.float32)
   sums[0, 0] = np.sum(values, dtype=np.float32)
   maxima[0, 0] = np.max(values)
   minima[0, 0] = np.min(values)
-  return {"sum": sums, "max": maxima, "min": minima}
+  row_sums[:, 0] = np.sum(values, axis=1, dtype=np.float32)
+  row_maxima[:, 0] = np.max(values, axis=1)
+  return {
+    "sum": sums,
+    "max": maxima,
+    "min": minima,
+    "row_sum": row_sums,
+    "row_max": row_maxima,
+  }
 
 
 def _tile_bytes(buffer, values):
-  return buffer.from_numpy(values)
+  return buffer.tile_data(buffer.from_numpy(values))
 
 
 def _read_tile(device, buffer):
-  return buffer.to_numpy(device.read(buffer))
+  return buffer.to_numpy(buffer.tile_data(device.read(buffer), inverse=True))
 
 
 def run_hardware(operation):
-  builders = {"sum": reduce_sum, "max": reduce_max, "min": reduce_min}
+  builders = {
+    "sum": reduce_sum,
+    "max": reduce_max,
+    "min": reduce_min,
+    "row_sum": row_sum,
+    "row_max": row_max,
+    "row_max_sub": row_max_sub,
+  }
   if operation not in builders:
-    raise ValueError("operation must be 'sum', 'max', or 'min'")
+    raise ValueError(f"unknown reduction operation {operation!r}")
   device = Device()
   try:
     device.init_device()
@@ -69,19 +110,35 @@ def run_hardware(operation):
     dst = device.dram.buffer(f"{operation}_dst", DType.BF16, SHAPE)
 
     rows, columns = np.indices(SHAPE)
-    values = ((3 * rows + 5 * columns) % 17 - 8).astype(np.float32)
+    if operation.startswith("row_"):
+      values = (2 * rows + columns / 16).astype(np.float32)
+    else:
+      values = ((3 * rows + 5 * columns) % 17 - 8).astype(np.float32)
     values = src.to_numpy(src.from_numpy(values))
-    expected = dst.to_numpy(dst.from_numpy(_expected(values)[operation]))
+    if operation == "row_max_sub":
+      expected_values = values - np.max(values, axis=1, keepdims=True)
+    else:
+      expected_values = _expected(values)[operation]
+    expected = dst.to_numpy(dst.from_numpy(expected_values))
 
     device.write(src, _tile_bytes(src, values))
     timestamps = device.run(builders[operation](src, dst))
     actual = _read_tile(device, dst)
-    if not np.array_equal(actual, expected):
+    comparison = (
+      np.array_equal(actual[:, 0], expected[:, 0])
+      if operation in ("row_sum", "row_max") else
+      np.array_equal(actual, expected)
+    )
+    if not comparison:
       error = np.abs(actual - expected)
-      row, column = np.unravel_index(int(error.argmax()), SHAPE)
+      if operation in ("row_sum", "row_max"):
+        row, column = int(error[:, 0].argmax()), 0
+      else:
+        row, column = np.unravel_index(int(error.argmax()), SHAPE)
       raise AssertionError(
         f"{operation} mismatch at ({row}, {column}): "
-        f"actual={actual[row, column]} expected={expected[row, column]}"
+        f"actual={actual[row, column]} expected={expected[row, column]}; "
+        f"nonzero={np.argwhere(actual)} values={actual[actual != 0]}"
       )
 
     print(f"PASS reduce_{operation}")
@@ -93,6 +150,8 @@ def run_hardware(operation):
 if __name__ == "__main__":
   parser = argparse.ArgumentParser()
   parser.add_argument(
-    "--operation", choices=("sum", "max", "min"), required=True,
+    "--operation",
+    choices=("sum", "max", "min", "row_sum", "row_max", "row_max_sub"),
+    required=True,
   )
   run_hardware(parser.parse_args().operation)
