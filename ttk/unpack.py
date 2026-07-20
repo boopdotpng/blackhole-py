@@ -5,7 +5,7 @@ from isa import R, Tensix as TT
 from ttk.cb import CB
 from ttk import DType
 from ttk.dst import Dst
-from ttk.mop import LoopTemplate, Mop, NOP
+from ttk.mop import LoopTemplate, MaskTemplate, Mop, NOP
 from ttk.sync import Sem, SemWait, Stall, Wait, sem_get, sem_post, sem_wait, stall, sync
 
 class UnpackTarget(IntEnum):
@@ -48,6 +48,16 @@ _MOPS = (
 _PAIR_MOP = LoopTemplate(
   outer=4, inner=1, start=_unpacr(UNPACKER0), loop=_unpacr(UNPACKER1),
   last=_unpacr(UNPACKER1), outer_last=_unpacr(UNPACKER1),
+)
+_COLUMN_PAIR_MOP = LoopTemplate(
+  outer=2, inner=2, start=_unpacr(UNPACKER1), loop=_unpacr(UNPACKER0),
+  end0=TT.TTSETADCZW(2, 0, 0, 0, 2, 1),
+  last=_unpacr(UNPACKER0), outer_last=_unpacr(UNPACKER0),
+)
+_REDUCE_MOP = MaskTemplate(
+  a0=TT.TTUNPACR_NOP(0, 0, 0, 0, 0, 0, 0, 0, 1),
+  a1=_unpacr(UNPACKER0), a2=NOP, a3=NOP,
+  b=_unpacr(UNPACKER1), skip_a0=NOP, skip_b=NOP,
 )
 _TILIZE_MOPS = (
   LoopTemplate(outer=1, inner=1, start=_unpacr(UNPACKER0), loop=_SRCB_DVALID),
@@ -101,7 +111,7 @@ class Unpack:
       self.k.read(observed, int(register)); self.k.write(_CONFIG_SYNC, 0)
 
   def _write_mode(self, engine, input_format, output_format, target, tilize,
-                  tile, x_dim=None):
+                  tile, x_dim=None, transpose=False):
     k = self.k
     descriptor_x_dim = (
       x_dim if x_dim is not None else
@@ -114,6 +124,7 @@ class Unpack:
     shift = 2 * input_format.itemsize
     word0 = 0x20 | output_format
     if tilize: word0 |= 1 << 9 | shift << 16 | shift << 20
+    if transpose: word0 |= 1 << 8
     options = (word0, 0x03 | (0x30 if target == UnpackTarget.DST else 0), 0, 0)
     for base, words in ((_TILE_DESCRIPTOR[engine], descriptor), (_OPTIONS[engine], options)):
       for index, word in enumerate(words): k.write(int(base) + index * 4, word)
@@ -139,13 +150,16 @@ class Unpack:
     ): k.write(int(register), value)
 
   def _configure(self, cb, target, tilize, tile, mop=None, *,
-                 commit=True, configure_mop=True):
+                 commit=True, configure_mop=True, transpose=False):
     input_format = cb.dtype
     output_format = DType.BF16 if input_format == DType.F32 and target != UnpackTarget.DST else input_format
     engine = int(target == UnpackTarget.SRCB)
     self._wait_config_idle()
     self._set_thread_cfg(0, 0)
-    self._write_mode(engine, input_format, output_format, target, tilize, tile)
+    self._write_mode(
+      engine, input_format, output_format, target, tilize, tile,
+      transpose=transpose,
+    )
     with self.k.scope():
       address = self.k.reg()
       CB.get_read_ptr(self.k, cb, address)
@@ -162,16 +176,20 @@ class Unpack:
     return engine
 
   def _configure_l1(self, dtype, target, address, x_dim, *,
-                    commit=True, configure_mop=True):
+                    commit=True, configure_mop=True, transpose=False):
     engine = int(target == UnpackTarget.SRCB)
     self._wait_config_idle()
     self._set_thread_cfg(0, 0)
     self._write_mode(
       engine, dtype, dtype, target, False, None, x_dim=x_dim,
+      transpose=transpose,
     )
     base = (address >> 4) - 1
     self.k.write(int(_BASE[engine]), base)
     self.k.write(int(_BASE[engine]) + 4, base)
+    self._issue(TT.TTSETC16(_MISC_CONFIG, 0))
+    if engine == UNPACKER0:
+      self._issue(TT.TTSETC16(_SRCA_SET, 4))
     if commit: self._commit_config(_BASE[engine])
     if configure_mop:
       self._mop.configure(_select_mop(target, False))
@@ -213,6 +231,13 @@ class Unpack:
     return self._move(source_cb, target, tilize, tile)
 
   def move_pair(self, source_a_cb, source_b_cb):
+    return self._move_pair(source_a_cb, source_b_cb, _PAIR_MOP)
+
+  def move_pair_rows(self, source_a_cb, source_b_cb):
+    """Unpack a tile and one value per logical row for FPU broadcasting."""
+    return self._move_pair(source_a_cb, source_b_cb, _COLUMN_PAIR_MOP)
+
+  def _move_pair(self, source_a_cb, source_b_cb, mop):
     CB.wait_front(self.k, source_a_cb)
     CB.wait_front(self.k, source_b_cb)
     stall(self.k, Stall.UNPACK, Wait.SRCA_CLR | Wait.SRCB_CLR)
@@ -225,7 +250,7 @@ class Unpack:
       commit=False, configure_mop=False,
     )
     self._commit_config(_BASE[UNPACKER0])
-    self._mop.configure(_PAIR_MOP)
+    self._mop.configure(mop)
     self._issue(TT.TTSETADCXX(1, 255, 0))
     self._issue(TT.TTSETADCXX(2, 255, 0))
     self._issue(TT.TTSETADCZW(3, 0, 0, 0, 0, 0xF))
@@ -278,9 +303,49 @@ class Unpack:
       commit=False, configure_mop=False,
     )
     self._commit_config(_BASE[UNPACKER0])
-    self._mop.configure(_PAIR_MOP)
+    self._mop.configure(_REDUCE_MOP)
     self._issue(TT.TTSETADCXX(1, 255, 0))
     self._issue(TT.TTSETADCXX(2, scaler_values - 1, 0))
+    self._issue(TT.TTSETADCZW(3, 0, 0, 0, 0, 0xF))
+    stall(self.k, Stall.UNPACK, Wait.TRISC_CFG)
+    self._mop.run(4)
+    stall(self.k, Stall.UNPACK, Wait.UNPACK0 | Wait.UNPACK1)
+    sem_get(self.k, Sem.UNPACK_SYNC); sync(self.k)
+    CB.pop_front(self.k, source_cb)
+    return self
+
+  def move_row_reduce(self, source_cb, scaler_address, *, maximum):
+    """Present one BF16 tile and a scaler tile for a native row reduction."""
+    if source_cb.dtype is not DType.BF16:
+      raise ValueError("row reduce unpack currently requires BF16 input")
+    CB.wait_front(self.k, source_cb)
+    stall(self.k, Stall.UNPACK, Wait.SRCA_CLR | Wait.SRCB_CLR)
+    if maximum:
+      # GMPOOL consumes data from SrcA. Haloize transposes each face so its
+      # logical rows become the columns reduced by GMPOOL.
+      self._configure(
+        source_cb, UnpackTarget.SRCA, False, None,
+        commit=False, configure_mop=False, transpose=True,
+      )
+      self._configure_l1(
+        DType.BF16, UnpackTarget.SRCB, scaler_address, 256,
+        commit=False, configure_mop=False,
+      )
+    else:
+      # MVMUL consumes a halo-transposed scaler column from SrcA and the
+      # untransposed data rows from SrcB.
+      self._configure_l1(
+        DType.BF16, UnpackTarget.SRCA, scaler_address, 256,
+        commit=False, configure_mop=False, transpose=True,
+      )
+      self._configure(
+        source_cb, UnpackTarget.SRCB, False, None,
+        commit=False, configure_mop=False,
+      )
+    self._commit_config(_BASE[UNPACKER0])
+    self._mop.configure(_PAIR_MOP)
+    self._issue(TT.TTSETADCXX(1, 255, 0))
+    self._issue(TT.TTSETADCXX(2, 255, 0))
     self._issue(TT.TTSETADCZW(3, 0, 0, 0, 0, 0xF))
     stall(self.k, Stall.UNPACK, Wait.TRISC_CFG)
     self._mop.run()

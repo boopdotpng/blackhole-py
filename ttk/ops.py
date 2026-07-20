@@ -1,7 +1,11 @@
+from ttk.fpu import Broadcast
+
+
 class Ops:
   """Cross-engine tile operations."""
 
   _BF16_ONE = b"\x80\x3f"
+  _BF16_ZERO = b"\0\0"
   _BF16_NEG_ONE = b"\x80\xbf"
 
   def __init__(self, program, unpack, fpu, pack):
@@ -10,6 +14,7 @@ class Ops:
     self.fpu = fpu
     self.pack = pack
     self._unit_scaler = None
+    self._row_scaler = None
     self._negative_tile = None
     self._negative_scaler = None
 
@@ -20,10 +25,34 @@ class Ops:
       self._unit_scaler = self.program.l1_constant(self._BF16_ONE * 4 * 16 * 4)
     return self._unit_scaler
 
+  def _row_scaler_address(self):
+    if self._row_scaler is None:
+      # The row reducer halo-transposes row 0 of each physical scaler face
+      # into the MVMUL column. GMPOOL also requires a valid SrcB row of ones.
+      face = self._BF16_ONE * 16 + self._BF16_ZERO * (16 * 15)
+      self._row_scaler = self.program.l1_constant(face * 4)
+    return self._row_scaler
+
   def _reduce_scalar(self, input_cb, output_cb, *, dst_tile, maximum):
     self.unpack.move_reduce(input_cb, self._unit_scaler_address())
     self.fpu.pool_scalar(dst_tile=dst_tile, maximum=maximum).publish()
     self.pack.move_scalar(output_cb, tile=dst_tile)
+    return self
+
+  def _accumulate_rows(self, input_cb, *, dst_tile, maximum):
+    self.unpack.move_row_reduce(
+      input_cb, self._row_scaler_address(), maximum=maximum,
+    )
+    reduce = self.fpu.reduce_row_max if maximum else self.fpu.reduce_row_sum
+    reduce(dst_tile=dst_tile)
+    return self
+
+  def _reduce_row(self, input_cb, output_cb, *, dst_tile, maximum):
+    self._accumulate_rows(
+      input_cb, dst_tile=dst_tile, maximum=maximum,
+    )
+    self.fpu.publish()
+    self.pack.move(output_cb, tile=dst_tile)
     return self
 
   def _negative_tile_address(self):
@@ -54,6 +83,65 @@ class Ops:
   def reduce_max(self, input_cb, output_cb, *, dst_tile=0):
     return self._reduce_scalar(
       input_cb, output_cb, dst_tile=dst_tile, maximum=True,
+    )
+
+  def row_sum(self, input_cb, output_cb, *, dst_tile=0):
+    """Reduce one tile's rows; output column 0 holds the 32 sums."""
+    return self._reduce_row(
+      input_cb, output_cb, dst_tile=dst_tile, maximum=False,
+    )
+
+  def row_max(self, input_cb, output_cb, *, dst_tile=0):
+    """Reduce one tile's rows; output column 0 holds the 32 maxima."""
+    return self._reduce_row(
+      input_cb, output_cb, dst_tile=dst_tile, maximum=True,
+    )
+
+  def accumulate_row_sum(self, input_cb, *, dst_tile=0):
+    """Accumulate one tile's 32 logical row sums into a live Dst tile."""
+    return self._accumulate_rows(
+      input_cb, dst_tile=dst_tile, maximum=False,
+    )
+
+  def accumulate_row_max(self, input_cb, *, dst_tile=0):
+    """Accumulate one tile's 32 logical row maxima into a live Dst tile."""
+    return self._accumulate_rows(
+      input_cb, dst_tile=dst_tile, maximum=True,
+    )
+
+  def store_row_values(self, output_cb, *, dst_tile=0):
+    """Publish and pack live row values; only column 0 is specified."""
+    self.fpu.publish()
+    self.pack.move(output_cb, tile=dst_tile)
+    return self
+
+  def _binary_rows(self, input_cb, row_values_cb, output_cb, *,
+                   dst_tile, operation):
+    # row_values_cb stores its 32 values in logical column 0. The unpacker
+    # visits only the two physical faces containing that column.
+    self.unpack.move_pair_rows(input_cb, row_values_cb)
+    getattr(self.fpu, operation)(
+      dst_tile=dst_tile, broadcast=Broadcast.COLUMN,
+    ).publish()
+    self.pack.move(output_cb, tile=dst_tile)
+    return self
+
+  def add_rows(self, input_cb, row_values_cb, output_cb, *, dst_tile=0):
+    return self._binary_rows(
+      input_cb, row_values_cb, output_cb,
+      dst_tile=dst_tile, operation="add",
+    )
+
+  def sub_rows(self, input_cb, row_values_cb, output_cb, *, dst_tile=0):
+    return self._binary_rows(
+      input_cb, row_values_cb, output_cb,
+      dst_tile=dst_tile, operation="sub",
+    )
+
+  def mul_rows(self, input_cb, row_values_cb, output_cb, *, dst_tile=0):
+    return self._binary_rows(
+      input_cb, row_values_cb, output_cb,
+      dst_tile=dst_tile, operation="mul",
     )
 
   def reduce_min(self, input_cb, output_cb, *, dst_tile=0):

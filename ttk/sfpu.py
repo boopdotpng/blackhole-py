@@ -659,6 +659,10 @@ class Sfpu:
       program, tile=tile, faces=2, column=True, lane_config=lane_config,
     )
 
+  def map_row_values(self, program, *, tile, lane_config=LaneConfig()):
+    """Map a 32-value row reduction stored in logical column 0."""
+    return self.map_column(program, tile=tile, lane_config=lane_config)
+
   def run(self, program, *, tile, lane_config=LaneConfig()):
     """Backward-compatible full-tile mapping."""
     if isinstance(program, SfpuProgramBuilder): program = program.finish()
