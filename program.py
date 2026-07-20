@@ -1,24 +1,23 @@
 from contextlib import ExitStack
 from dataclasses import dataclass
 from math import prod
-
 import numpy as np
-
 from asm import Asm
 from cq import MAX_WRITE_SIZE, McastWrite, UnicastWrite
 from fw.consts import Firmware, KERNEL_ROLES, TensixL1
 from isa import R, RV32
 from pcie import Allocator, P100_WORKER_CORES
 from ttk import DType
+from ttk.cb import CBRegistry
 from ttk.dst import Dst
 from ttk.fpu import Fpu
+from ttk.ops import Ops
 from ttk.pack import Pack
 from ttk.sfpu import Sfpu
 from ttk.unpack import Unpack
 
 PARAM_BASE = TensixL1.PARAM_BASE
 RETURN_KERNEL = {role: RV32().jal(R.ZERO, Firmware.TEXT[role][0] - TensixL1.WORKER_TEXT_BASE[role]).to_bytes(4, "little") for role in KERNEL_ROLES}
-
 
 @dataclass(frozen=True, eq=False)
 class Buffer:
@@ -165,23 +164,6 @@ def _param_word(value):
   return value.addr if isinstance(value, Buffer) else value
 
 
-@dataclass(frozen=True)
-class CBConfig:
-  index: int
-  dtype: DType
-  depth: int
-  addr: int
-
-  @property
-  def tile_size(self): return 1024 * self.dtype.itemsize
-
-  @property
-  def size(self): return self.depth * self.tile_size
-
-  @property
-  def limit(self): return self.addr + self.size
-
-
 class Dram:
   START = 0x40
   END = 1 << 32
@@ -209,9 +191,10 @@ class Program:
       raise ValueError("program parameter table is full")
     self.params = {param.name: param for param in params}
     self._param_slots = {param: slot for slot, param in enumerate(params)}
-    self._cbs = []
-    self.launch = ()
     self._l1 = Allocator(TensixL1.DATA_BUFFER_SPACE_BASE, TensixL1.SIZE, 16)
+    self.cb = CBRegistry(self._l1)
+    self._l1_constants = {}
+    self.launch = ()
     self._kernels = None if images is None else {
       core: dict(images) for core in self._cores
     }
@@ -227,22 +210,23 @@ class Program:
     self.fpu = Fpu(self.trisc1, dst)
     self.sfpu = Sfpu(self.trisc1, dst)
     self.pack = Pack(self.trisc2, dst)
+    self.ops = Ops(self, self.unpack, self.fpu, self.pack)
     self._scopes = ExitStack()
     for stream in self.roles.values(): self._scopes.enter_context(stream.scope())
-
-  def cb(self, dtype: DType, depth=2):
-    cb = CBConfig(
-      len(self._cbs), dtype, depth,
-      self._l1.alloc(depth * 1024 * dtype.itemsize),
-    )
-    self._cbs.append(cb)
-    return cb
 
   def l1(self, size: int, alignment=4):
     return self._l1.alloc(size, alignment)
 
+  def l1_constant(self, data: bytes, alignment=16):
+    data = bytes(data)
+    if not data: raise ValueError("L1 constant cannot be empty")
+    key = data, alignment
+    if key not in self._l1_constants:
+      self._l1_constants[key] = self._l1.alloc(len(data), alignment)
+    return self._l1_constants[key]
+
   @property
-  def cbs(self): return tuple(self._cbs)
+  def cbs(self): return self.cb.configs
 
   @property
   def cores(self): return self._cores
@@ -302,6 +286,17 @@ class Program:
             ))
     if self.params:
       commands.append(UnicastWrite(self.cores, PARAM_BASE, self._param_table(params)))
+    for (data, _), address in self._l1_constants.items():
+      for offset in range(0, len(data), MAX_WRITE_SIZE):
+        chunk = data[offset:offset + MAX_WRITE_SIZE]
+        if len(self.cores) == 1:
+          commands.append(UnicastWrite(
+            self.cores, address + offset, (chunk,),
+          ))
+        else:
+          commands.append(McastWrite(
+            rectangles(self.cores), address + offset, chunk,
+          ))
     return (*commands, *self.launch)
 
 

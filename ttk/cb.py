@@ -1,4 +1,73 @@
+from dataclasses import dataclass
+
 from isa import R
+from ttk import DType
+
+
+@dataclass(frozen=True)
+class CBConfig:
+  index: int
+  dtype: DType
+  depth: int
+  addr: int
+
+  @property
+  def tile_size(self): return 1024 * self.dtype.itemsize
+
+  @property
+  def size(self): return self.depth * self.tile_size
+
+  @property
+  def limit(self): return self.addr + self.size
+
+
+class CBRegistry:
+  """Allocate CB configurations and track named operation-owned scratch CBs."""
+
+  COUNT = 32
+
+  def __init__(self, l1_allocator):
+    self._l1 = l1_allocator
+    self._configs = []
+    self._internal = {}
+
+  def _allocate(self, dtype, depth):
+    if not isinstance(dtype, DType):
+      raise TypeError("CB dtype must be a DType")
+    if type(depth) is not int or depth < 1:
+      raise ValueError("CB depth must be a positive integer")
+    if len(self._configs) >= self.COUNT:
+      raise ValueError(f"program cannot allocate more than {self.COUNT} CBs")
+    tile_size = 1024 * dtype.itemsize
+    config = CBConfig(
+      len(self._configs), dtype, depth,
+      self._l1.alloc(depth * tile_size),
+    )
+    self._configs.append(config)
+    return config
+
+  def __call__(self, dtype, depth=2):
+    return self._allocate(dtype, depth)
+
+  def internal(self, name, dtype, depth=1):
+    """Allocate a named scratch CB with the normal runtime ring semantics."""
+    if not isinstance(name, str) or not name:
+      raise ValueError("internal CB name must be a non-empty string")
+    requested = dtype, depth
+    if name in self._internal:
+      config = self._internal[name]
+      if (config.dtype, config.depth) != requested:
+        raise ValueError(
+          f"internal CB {name!r} was already allocated as "
+          f"{config.dtype.name} depth {config.depth}"
+        )
+      return config
+    config = self._allocate(dtype, depth)
+    self._internal[name] = config
+    return config
+
+  @property
+  def configs(self): return tuple(self._configs)
 
 
 class CB:

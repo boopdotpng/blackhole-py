@@ -16,7 +16,7 @@ def add1(src: Buffer, dst: Buffer) -> Program:
     p.unpack.move(input_cb, UnpackTarget.SRCA)
 
   for _ in p.trisc1.range(src.tiles_per_core):
-    p.fpu.copy_a(tile=0)
+    p.fpu.copy_a(dst_tile=0)
     p.sfpu.add_scalar(1, tile=0, format=SfpuFormat.BF16)
     p.fpu.publish()
 

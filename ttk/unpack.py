@@ -45,6 +45,10 @@ _MOPS = (
   _mop(UNPACKER1),
   _mop(UNPACKER0, to_dst=True),
 )
+_PAIR_MOP = LoopTemplate(
+  outer=4, inner=1, start=_unpacr(UNPACKER0), loop=_unpacr(UNPACKER1),
+  last=_unpacr(UNPACKER1), outer_last=_unpacr(UNPACKER1),
+)
 _TILIZE_MOPS = (
   LoopTemplate(outer=1, inner=1, start=_unpacr(UNPACKER0), loop=_SRCB_DVALID),
   None,
@@ -96,10 +100,17 @@ class Unpack:
       observed = self.k.reg()
       self.k.read(observed, int(register)); self.k.write(_CONFIG_SYNC, 0)
 
-  def _write_mode(self, engine, input_format, output_format, target, tilize, tile):
+  def _write_mode(self, engine, input_format, output_format, target, tilize,
+                  tile, x_dim=None):
     k = self.k
-    x_dim = 1024 if tilize else 0 if engine == UNPACKER0 else 256
-    descriptor = (input_format | 0x10 | x_dim << 16, 1 | (1 if tilize else 4) << 16, 0, 0)
+    descriptor_x_dim = (
+      x_dim if x_dim is not None else
+      1024 if tilize else 0 if engine == UNPACKER0 else 256
+    )
+    descriptor = (
+      input_format | 0x10 | descriptor_x_dim << 16,
+      1 | (1 if tilize else 4) << 16, 0, 0,
+    )
     shift = 2 * input_format.itemsize
     word0 = 0x20 | output_format
     if tilize: word0 |= 1 << 9 | shift << 16 | shift << 20
@@ -120,14 +131,15 @@ class Unpack:
     destination = 64 if engine == UNPACKER0 else 0
     if target == UnpackTarget.DST:
       destination += self.dst.row_base(tile) * 16
-    x_dim = 1024 if tilize else 256
+    x_dim = x_dim if x_dim is not None else 1024 if tilize else 256
     for register, value in (
       (_DEST[engine], destination | destination << 16),
       (_X_DIM[engine], x_dim | x_dim << 16),
       (_OFFSET[engine], 0), (int(_OFFSET[engine]) + 4, 0),
     ): k.write(int(register), value)
 
-  def _configure(self, cb, target, tilize, tile):
+  def _configure(self, cb, target, tilize, tile, mop=None, *,
+                 commit=True, configure_mop=True):
     input_format = cb.dtype
     output_format = DType.BF16 if input_format == DType.F32 and target != UnpackTarget.DST else input_format
     engine = int(target == UnpackTarget.SRCB)
@@ -144,11 +156,29 @@ class Unpack:
     self._issue(TT.TTSETC16(_MISC_CONFIG, 0))
     if engine == UNPACKER0:
       self._issue(TT.TTSETC16(_SRCA_SET, 0 if target == UnpackTarget.DST else 4))
-    self._commit_config(_BASE[engine]); self._mop.configure(_select_mop(target, tilize))
+    if commit: self._commit_config(_BASE[engine])
+    if configure_mop:
+      self._mop.configure(_select_mop(target, tilize) if mop is None else mop)
     return engine
 
-  def _run(self, cb, target, tilize, tile):
-    engine = self._configure(cb, target, tilize, tile)
+  def _configure_l1(self, dtype, target, address, x_dim, *,
+                    commit=True, configure_mop=True):
+    engine = int(target == UnpackTarget.SRCB)
+    self._wait_config_idle()
+    self._set_thread_cfg(0, 0)
+    self._write_mode(
+      engine, dtype, dtype, target, False, None, x_dim=x_dim,
+    )
+    base = (address >> 4) - 1
+    self.k.write(int(_BASE[engine]), base)
+    self.k.write(int(_BASE[engine]) + 4, base)
+    if commit: self._commit_config(_BASE[engine])
+    if configure_mop:
+      self._mop.configure(_select_mop(target, False))
+    return engine
+
+  def _run(self, cb, target, tilize, tile, mop=None):
+    engine = self._configure(cb, target, tilize, tile, mop)
     self._issue(TT.TTSETADCXX(engine + 1, 1023 if tilize else 255, 0))
     self._issue(TT.TTSETADCZW(3, 0, 0, 0, 0, 0xF))
     if target == UnpackTarget.DST:
@@ -169,12 +199,92 @@ class Unpack:
       self._issue(TT.TTSETC16(_SRCA_SET, 4))
       sem_post(self.k, Sem.UNPACK_TO_DEST)
 
-  def move(self, source_cb, target, tilize=False, *, tile=None):
+  def _move(self, source_cb, target, tilize, tile, mop=None):
     if target == UnpackTarget.DST: self.dst.check(tile)
     _select_mop(target, tilize)  # Validate before emitting CB operations.
     CB.wait_front(self.k, source_cb)
     if target != UnpackTarget.DST:
       stall(self.k, Stall.UNPACK, Wait.SRCB_CLR if target == UnpackTarget.SRCB else Wait.SRCA_CLR)
-    self._run(source_cb, target, tilize, tile)
+    self._run(source_cb, target, tilize, tile, mop)
+    CB.pop_front(self.k, source_cb)
+    return self
+
+  def move(self, source_cb, target, tilize=False, *, tile=None):
+    return self._move(source_cb, target, tilize, tile)
+
+  def move_pair(self, source_a_cb, source_b_cb):
+    CB.wait_front(self.k, source_a_cb)
+    CB.wait_front(self.k, source_b_cb)
+    stall(self.k, Stall.UNPACK, Wait.SRCA_CLR | Wait.SRCB_CLR)
+    self._configure(
+      source_a_cb, UnpackTarget.SRCA, False, None,
+      commit=False, configure_mop=False,
+    )
+    self._configure(
+      source_b_cb, UnpackTarget.SRCB, False, None,
+      commit=False, configure_mop=False,
+    )
+    self._commit_config(_BASE[UNPACKER0])
+    self._mop.configure(_PAIR_MOP)
+    self._issue(TT.TTSETADCXX(1, 255, 0))
+    self._issue(TT.TTSETADCXX(2, 255, 0))
+    self._issue(TT.TTSETADCZW(3, 0, 0, 0, 0, 0xF))
+    stall(self.k, Stall.UNPACK, Wait.TRISC_CFG)
+    self._mop.run()
+    stall(self.k, Stall.UNPACK, Wait.UNPACK0 | Wait.UNPACK1)
+    sem_get(self.k, Sem.UNPACK_SYNC); sync(self.k)
+    CB.pop_front(self.k, source_a_cb)
+    CB.pop_front(self.k, source_b_cb)
+    return self
+
+  def move_l1_pair(self, source_cb, l1_address):
+    """Unpack a CB tile into SrcA and a same-format L1 tile into SrcB."""
+    CB.wait_front(self.k, source_cb)
+    stall(self.k, Stall.UNPACK, Wait.SRCA_CLR | Wait.SRCB_CLR)
+    self._configure(
+      source_cb, UnpackTarget.SRCA, False, None,
+      commit=False, configure_mop=False,
+    )
+    self._configure_l1(
+      source_cb.dtype, UnpackTarget.SRCB, l1_address, 256,
+      commit=False, configure_mop=False,
+    )
+    self._commit_config(_BASE[UNPACKER0])
+    self._mop.configure(_PAIR_MOP)
+    self._issue(TT.TTSETADCXX(1, 255, 0))
+    self._issue(TT.TTSETADCXX(2, 255, 0))
+    self._issue(TT.TTSETADCZW(3, 0, 0, 0, 0, 0xF))
+    stall(self.k, Stall.UNPACK, Wait.TRISC_CFG)
+    self._mop.run()
+    stall(self.k, Stall.UNPACK, Wait.UNPACK0 | Wait.UNPACK1)
+    sem_get(self.k, Sem.UNPACK_SYNC); sync(self.k)
+    CB.pop_front(self.k, source_cb)
+    return self
+
+  def move_reduce(self, source_cb, scaler_address, *, scaler_rows=4):
+    if source_cb.dtype is not DType.BF16:
+      raise ValueError("reduce unpack currently requires BF16 input")
+    if type(scaler_rows) is not int or not 1 <= scaler_rows <= 16:
+      raise ValueError("reduce scaler_rows must be in range 1..16")
+    scaler_values = scaler_rows * 16
+    CB.wait_front(self.k, source_cb)
+    stall(self.k, Stall.UNPACK, Wait.SRCA_CLR | Wait.SRCB_CLR)
+    self._configure(
+      source_cb, UnpackTarget.SRCA, False, None,
+      commit=False, configure_mop=False,
+    )
+    self._configure_l1(
+      DType.BF16, UnpackTarget.SRCB, scaler_address, scaler_values,
+      commit=False, configure_mop=False,
+    )
+    self._commit_config(_BASE[UNPACKER0])
+    self._mop.configure(_PAIR_MOP)
+    self._issue(TT.TTSETADCXX(1, 255, 0))
+    self._issue(TT.TTSETADCXX(2, scaler_values - 1, 0))
+    self._issue(TT.TTSETADCZW(3, 0, 0, 0, 0, 0xF))
+    stall(self.k, Stall.UNPACK, Wait.TRISC_CFG)
+    self._mop.run()
+    stall(self.k, Stall.UNPACK, Wait.UNPACK0 | Wait.UNPACK1)
+    sem_get(self.k, Sem.UNPACK_SYNC); sync(self.k)
     CB.pop_front(self.k, source_cb)
     return self

@@ -12,8 +12,11 @@ from ttk.sync import Sem, SemWait, Stall, Wait, sem_get, sem_wait, stall, sync
 class _Cfg(IntEnum):
   ALU_FORMAT = TensixMMIO.CFG_BASE + 4; ACCUMULATION = TensixMMIO.CFG_BASE + 8
   ADDRESS_XY = TensixMMIO.CFG_BASE + 0x30; ADDRESS_ZW = TensixMMIO.CFG_BASE + 0x34
-  DESTINATION_READ = TensixMMIO.CFG_BASE + 0x48; TILE_ROW_MAPPING = TensixMMIO.CFG_BASE + 0x50
-  EDGE = TensixMMIO.CFG_BASE + 0x60; COUNTERS = TensixMMIO.CFG_BASE + 0x70
+  DESTINATION_READ = TensixMMIO.CFG_BASE + 0x48
+  TILE_ROW_MAPPING = TensixMMIO.CFG_BASE + 0x50
+  TILE_ROW_MAPPING1 = TensixMMIO.CFG_BASE + 0x54
+  EDGE = TensixMMIO.CFG_BASE + 0x60; EDGE1 = TensixMMIO.CFG_BASE + 0x64
+  COUNTERS = TensixMMIO.CFG_BASE + 0x70
   SECTION_SIZES = TensixMMIO.CFG_BASE + 0x110; L1_DESTINATION = TensixMMIO.CFG_BASE + 0x114
   DATA_FORMAT = TensixMMIO.CFG_BASE + 0x118
   DESTINATION_OFFSET = TensixMMIO.CFG_BASE + 0x2D0
@@ -62,18 +65,20 @@ class Pack:
     size = fmt.itemsize
     return 16 * size << 16, 256 * size | 1024 * size << 16
 
-  def _configure(self, output_cb, fp32_dest):
+  def _configure(self, output_cb, fp32_dest, scalar):
     dst, src = output_cb.dtype, DType.F32 if fp32_dest else output_cb.dtype
     self._set_thread_cfg(0, 0)
     self._rmw_cfg_byte(_Cfg.ALU_FORMAT, 3, 0x1E, src << 1)
     for byte, mask in enumerate((0xFC, 0xFF, 0x3F)):
       self._rmw_cfg_byte(_Cfg.ACCUMULATION, byte, mask, 0)
     xy, zw = self._strides(src)
+    edge = 1 << 17 if scalar else 0xFFFF
     for reg, value in (
       (_Cfg.SECTION_SIZES, 0x00040000), (_Cfg.DATA_FORMAT, 1 | dst << 4 | src << 8),
       (_Cfg.DESTINATION_READ, int(src == DType.F32)), (_Cfg.ADDRESS_XY, xy),
       (_Cfg.ADDRESS_ZW, zw), (_Cfg.COUNTERS, 0x1000),
-      (_Cfg.EDGE, 0xFFFF), (_Cfg.TILE_ROW_MAPPING, 0),
+      (_Cfg.EDGE, edge), (_Cfg.EDGE1, int(scalar)),
+      (_Cfg.TILE_ROW_MAPPING, 0), (_Cfg.TILE_ROW_MAPPING1, int(scalar)),
     ): self._write_cfg(reg, value)
     self.k.write(TensixMMIO.REGFILE_BASE + 16 * 4, output_cb.tile_size >> 4)
     self.k.write(TensixMMIO.REGFILE_BASE + 52 * 4, 0x40000)
@@ -100,17 +105,24 @@ class Pack:
       self._issue(TT.TTWRCFG(12, 0, address))
       self._set_dma_reg16(25, high); self._issue(TT.TTDMANOP())
 
-  def move(self, output_cb, *, tile):
+  def _move(self, output_cb, tile, scalar):
     tile = self.dst.check(tile)
     sem_wait(self.k, Sem.MATH_PACK, SemWait.STALL_ON_ZERO, Stall.TDMA)
     CB.reserve_back(self.k, output_cb)
-    self._configure(output_cb, self.dst.fp32); self._destination(tile, output_cb)
+    self._configure(output_cb, self.dst.fp32, scalar)
+    self._destination(tile, output_cb)
     self._issue(TT.TTSETADCXX(4, 15, 0)); self._issue(TT.TTSETADCZW(4, 0, 0, 0, 0, 5))
     self._write_cfg(_Cfg.DESTINATION_OFFSET, 0)
     stall(self.k, Stall.CFG, Wait.PACK0); self._mop.run()
     stall(self.k, Stall.SYNC, Wait.PACK0); sync(self.k)
     # Full-Dst handoff: packing is complete, so invalidate Dst before returning
     # ownership to math. FPU assignment writes define it again before SFPU reads.
-    self._issue(TT.TTZEROACC(3, int(self.dst.fp32), 0, 0, 0))
+    self._issue(TT.TTZEROACC(3, int(self.dst.fp32), 0, 1, 0))
     CB.push_back(self.k, output_cb); sem_get(self.k, Sem.MATH_PACK)
     return self
+
+  def move(self, output_cb, *, tile):
+    return self._move(output_cb, tile, False)
+
+  def move_scalar(self, output_cb, *, tile):
+    return self._move(output_cb, tile, True)
