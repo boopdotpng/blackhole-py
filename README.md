@@ -14,6 +14,16 @@ A replacement for:
 PYTHONPATH=. python3 examples/add1.py
 ```
 
+Programs and transfers are batched until `run()`. Readbacks execute after all
+queued compute and become available when the batch completes:
+
+```python
+device.queue(program)
+output = device.queue_read(dst)
+timestamps = device.run()
+data = output.result()
+```
+
 ## SFPU programs
 
 `p.sfpu.program()` builds one statically scheduled operation over the SFPU's

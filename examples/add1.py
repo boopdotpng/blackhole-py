@@ -46,9 +46,11 @@ def run_hardware(tiles=2):
     source = src.from_numpy(values)
     expected = dst.from_numpy(src.to_numpy(source) + 1)
     device.write(src, source)
-    timestamps = device.run(program)
+    device.queue(program)
+    output = device.queue_read(dst)
+    timestamps = device.run()
     kernel_us = timestamps[-1].us
-    actual = device.read(dst)
+    actual = output.result()
     if actual != expected:
       mismatch = next(i for i, pair in enumerate(zip(actual, expected)) if pair[0] != pair[1])
       raise SystemExit(

@@ -20,6 +20,7 @@ DISPATCH_RING_END = DISPATCH_RING_BASE + DISPATCH_RING_PAGES * PAGE_SIZE
 DISPATCH_SCRATCH = DISPATCH_RING_END; DISPATCH_GO = DISPATCH_SCRATCH + 0x40; DISPATCH_DONE_COUNT = DISPATCH_SCRATCH + 0x50
 DISPATCH_COMPLETION_PUBLISH = DISPATCH_SCRATCH + 0x60; DISPATCH_CREDIT_RETURN = DISPATCH_SCRATCH + 0x70
 HOST_ISSUE_SIZE = 64 << 20; HOST_COMPLETION_SIZE = 1 << 20
+COMPLETION_ENTRIES = HOST_COMPLETION_SIZE // PAGE_SIZE - 1
 
 class Op(IntEnum):
   PAD = 0
@@ -150,6 +151,7 @@ class CommandQueue:
     if self.dram_size < PAGE_SIZE: raise MemoryError("sysmem has no DRAM staging region")
     self.dram = pcie.sysmem.alloc(self.dram_size, ALIGN)
     self.issue_write = self.queue_index = self.dispatch_page = self.event = 0
+    self.pending = 0
     self.completion_read = 0
     self.completion_toggle = 0
     pcie.sysmem.write(self.issue, bytes(HOST_ISSUE_SIZE))
@@ -212,13 +214,19 @@ class CommandQueue:
     self._write_record(record)
     self.dispatch_page = (self.dispatch_page + pages) % DISPATCH_RING_PAGES
 
-  def submit(self, commands, timeout=10.0):
-    self.event += 1
+  def enqueue(self, commands):
+    if self.pending >= COMPLETION_ENTRIES:
+      raise RuntimeError("CQ completion ring is full")
+    event = self.event + 1
     commands = tuple(commands)
     run = commands[-1]
-    commands = (*commands[:-1], Run(run.cores, self.event))
+    commands = (*commands[:-1], Run(run.cores, event))
     for command in commands: self._publish(command.lower())
-    return self.wait(self.event, timeout=timeout)
+    self.event, self.pending = event, self.pending + 1
+    return event
+
+  def submit(self, commands, timeout=10.0):
+    return self.wait(self.enqueue(commands), timeout=timeout)
 
   def wait(self, event, timeout=10.0):
     deadline = time.monotonic() + timeout
@@ -229,8 +237,11 @@ class CommandQueue:
         offset = (self.completion_read << 4) - self.noc
         result = Timestamp.unpack(self.pcie.sysmem.read(offset, Timestamp.STRUCT.size))
         if result.event == expected:
-          self.completion_read = raw & 0x7FFFFFFF
-          self.completion_toggle = raw >> 31
+          self.completion_read += PAGE_SIZE // 16
+          if self.completion_read >= (self.noc + self.completion_end) >> 4:
+            self.completion_read = (self.noc + self.completion_base) >> 4
+            self.completion_toggle ^= 1
+          self.pending -= 1
           return result
       if time.monotonic() >= deadline: raise TimeoutError(f"CQ completion {event} timed out")
       time.sleep(0.0002)

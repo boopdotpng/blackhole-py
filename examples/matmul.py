@@ -95,8 +95,10 @@ def run_hardware(*, hifi=False, f32_output=False):
 
     device.write(left, left_data)
     device.write(right, right_data)
-    timestamps = device.run(matmul(left, right, output, hifi=hifi))
-    actual = output.to_numpy(device.read(output))
+    device.queue(matmul(left, right, output, hifi=hifi))
+    readback = device.queue_read(output)
+    timestamps = device.run()
+    actual = output.to_numpy(readback.result())
 
     pcc, relative_l2 = _quality(actual, exact)
     model_pcc, model_relative_l2 = _quality(actual, fidelity_expected)

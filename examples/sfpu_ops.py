@@ -171,8 +171,8 @@ def _write_tile(device, buffer, values):
   device.write(buffer, buffer.tile_data(buffer.from_numpy(values)))
 
 
-def _read_tile(device, buffer):
-  logical = buffer.tile_data(device.read(buffer), inverse=True)
+def _read_tile(readback, buffer):
+  logical = buffer.tile_data(readback.result(), inverse=True)
   return buffer.to_numpy(logical)
 
 
@@ -193,7 +193,7 @@ def _check(name, actual, expected, exact):
   )
 
 
-def _run_offset_pair(device):
+def _queue_offset_pair(device):
   src = device.dram.buffer("sfpu_pair_src", DType.BF16, (1, 32, 64), axis=0)
   dst = device.dram.buffer("sfpu_pair_dst", DType.BF16, (1, 32, 32), axis=0)
   left = EXACT_INPUT
@@ -202,10 +202,8 @@ def _run_offset_pair(device):
   source = _quantize(src, values)
   expected = _quantize(dst, left + right)
   device.write(src, src.tile_data(src.from_numpy(source)))
-  timestamps = device.run(sfpu_offset_pair(src, dst))
-  actual = dst.to_numpy(dst.tile_data(device.read(dst), inverse=True))[0]
-  _check("offset_pair", actual, expected[0], exact=True)
-  return timestamps
+  device.queue(sfpu_offset_pair(src, dst))
+  return dst, device.queue_read(dst), expected[0], True, True
 
 
 def run_hardware(case_names=CASES):
@@ -213,32 +211,29 @@ def run_hardware(case_names=CASES):
   failures = []
   try:
     device.init_device()
-    src = device.dram.buffer("sfpu_src", DType.BF16, SHAPE)
-    dst = device.dram.buffer("sfpu_dst", DType.BF16, SHAPE)
-
+    jobs = []
     for name in case_names:
       if name == "offset_pair":
-        try:
-          timestamps = _run_offset_pair(device)
-          print(f"PASS {name}: {timestamps[-1].us:.3f} us")
-        except AssertionError as error:
-          failures.append(str(error))
-          print(f"FAIL {error}")
+        jobs.append((name, *_queue_offset_pair(device)))
         continue
 
+      src = device.dram.buffer(f"sfpu_{name}_src", DType.BF16, SHAPE)
+      dst = device.dram.buffer(f"sfpu_{name}_dst", DType.BF16, SHAPE)
       operation, region, inputs, reference, exact, fp32_dst = CASE_CONFIG[name]
       source = _quantize(src, inputs)
       transformed = reference(source)
       expected = _quantize(dst, _apply_region(source, transformed, region))
       _write_tile(device, src, source)
+      device.queue(sfpu_operation(src, dst, operation, region, fp32_dst))
+      jobs.append((name, dst, device.queue_read(dst), expected, exact, False))
 
+    timestamps = device.run()
+    for timestamp, (name, dst, readback, expected, exact, first) in zip(timestamps, jobs):
       try:
-        timestamps = device.run(
-          sfpu_operation(src, dst, operation, region, fp32_dst),
-        )
-        actual = _read_tile(device, dst)
+        actual = _read_tile(readback, dst)
+        if first: actual = actual[0]
         _check(name, actual, expected, exact)
-        print(f"PASS {name}: {timestamps[-1].us:.3f} us")
+        print(f"PASS {name}: {timestamp.us:.3f} us")
       except AssertionError as error:
         failures.append(str(error))
         print(f"FAIL {error}")

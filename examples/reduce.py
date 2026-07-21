@@ -174,8 +174,10 @@ def run_hardware(operation):
       program = row_max_sub(src, dst)
     else:
       program = _reduce(src, dst, operation)
-    timestamps = device.run(program)
-    actual = dst.to_numpy(device.read(dst))
+    device.queue(program)
+    readback = device.queue_read(dst)
+    timestamps = device.run()
+    actual = dst.to_numpy(readback.result())
     comparison = (
       np.array_equal(actual[:, 0], expected[:, 0])
       if operation in ROW_OUTPUTS else

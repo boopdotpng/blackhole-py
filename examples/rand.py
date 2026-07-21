@@ -22,8 +22,10 @@ def rand_fast(dst: Buffer, seed=0) -> Program:
 
 
 def _generate(device, dst, seed):
-  device.run(rand_fast(dst, seed))
-  return dst.to_numpy(device.read(dst))
+  device.queue(rand_fast(dst, seed))
+  readback = device.queue_read(dst)
+  device.run()
+  return dst.to_numpy(readback.result())
 
 
 def run_hardware(seed=0):

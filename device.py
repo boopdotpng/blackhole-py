@@ -1,6 +1,6 @@
 from struct import Struct
 
-from cq import CommandQueue, Run, UnicastWrite
+from cq import COMPLETION_ENTRIES, CommandQueue, Run, UnicastWrite
 from fw.consts import CQConfig, Firmware, FirmwareControl, RunState, TensixL1, TensixMMIO
 from fw.core import build_brisc, build_ncrisc, build_trisc
 from fw.cq import build_dispatch, build_prefetch
@@ -9,13 +9,25 @@ from isa import R, RV32
 from pcie import PCIDevice, TLBWindow
 from program import Dram, Program
 
+class Readback:
+  def __init__(self, device, buffer, offset):
+    self.device, self.buffer, self.offset, self.data = device, buffer, offset, None
+
+  def result(self):
+    if self.data is None: raise RuntimeError("DRAM read has not completed")
+    return self.data
+
+  def _finish(self):
+    data = self.device.pcie.sysmem.read(self.device.cq.dram + self.offset, self.buffer.size)
+    self.data = self.buffer.tile_data(data, inverse=True)
+
 class Device:
   def __init__(self, index: int = 0, sysmem_size: int = 1 << 30):
     self.pcie = PCIDevice(index, sysmem_size)
     self.dram = Dram(len(self.pcie.dram_endpoints), self.pcie.cores)
-    self.program_queue = []
+    self.program_queue, self.read_queue = [], []
     self.cq = None
-    self._staging_write = 0
+    self._staging_next = 0
 
   def reset_cores(self):
     with TLBWindow(self.pcie.fd, self.pcie.cores[0]) as win:
@@ -42,8 +54,8 @@ class Device:
         win.target(0, core)
         win.write(FirmwareControl.GO_SIGNAL, int(RunState.GO), bytes=1)
 
-  def queue(self, program: Program, params=None):
-    self.program_queue.append((program, params))
+  def queue(self, program: Program, params=None, report=True):
+    self.program_queue.append((program, params, None, report))
     return program
 
   def _dram_program(self, buffer, write, offset=0):
@@ -71,30 +83,45 @@ class Device:
     return program
 
   def write(self, buffer, data: bytes):
-    offset = self._staging_write
+    offset = self._staging_next
     program = self._dram_program(buffer, write=True, offset=offset)
     self.pcie.sysmem.write(self.cq.dram + offset, buffer.tile_data(data))
     self.pcie.sysmem.flush()
-    self._staging_write += buffer.size
-    return self.queue(program)
+    self._staging_next += buffer.size
+    return self.queue(program, report=False)
+
+  def queue_read(self, buffer):
+    offset = self._staging_next
+    program = self._dram_program(buffer, write=False, offset=offset)
+    readback = Readback(self, buffer, offset)
+    self._staging_next += buffer.size
+    self.read_queue.append((program, None, readback, False))
+    return readback
 
   def read(self, buffer, timeout=10.0):
-    self.run(self._dram_program(buffer, write=False), timeout=timeout)
-    return buffer.tile_data(
-      self.pcie.sysmem.read(self.cq.dram, buffer.size), inverse=True,
-    )
+    readback = self.queue_read(buffer)
+    self.run(timeout=timeout)
+    return readback.result()
 
   def run(self, *programs: Program, params=None, timeout=10.0):
     if self.cq is None: raise RuntimeError("init_device() must be called before run()")
     if params is not None and len(programs) != 1:
       raise ValueError("parameter overrides require exactly one explicit program")
     for program in programs: self.queue(program, params)
-    results = [
-      self.cq.submit((*program.commands(values), Run(program.cores)), timeout=timeout)
-      for program, values in self.program_queue
+    batch = (*self.program_queue, *self.read_queue)
+    if len(batch) > COMPLETION_ENTRIES:
+      raise ValueError(f"batch exceeds {COMPLETION_ENTRIES} CQ completion entries")
+    events = [
+      self.cq.enqueue((*program.commands(values), Run(program.cores)))
+      for program, values, _, _ in batch
     ]
-    self.program_queue.clear()
-    self._staging_write = 0
+    results = []
+    for (_, _, readback, report), event in zip(batch, events):
+      timestamp = self.cq.wait(event, timeout=timeout)
+      if report: results.append(timestamp)
+      if readback is not None: readback._finish()
+    self.program_queue.clear(); self.read_queue.clear()
+    self._staging_next = 0
     return results
 
   def close(self):
