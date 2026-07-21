@@ -81,6 +81,31 @@ def mcast_coords(rect: Rect):
   if start[0] > end[0] or start[1] > end[1]: raise ValueError("multicast start must precede end")
   return noc_coord(start), noc_coord(end)
 
+
+def _rectangles(cores):
+  rows = {}
+  for x, y in cores: rows.setdefault(y, []).append(x)
+  active, result, previous_y = {}, [], None
+  for y in sorted(rows):
+    runs = []
+    for x in sorted(rows[y]):
+      if runs and x == runs[-1][1] + 1:
+        runs[-1] = (runs[-1][0], x)
+      else:
+        runs.append((x, x))
+    if previous_y is None or y != previous_y + 1:
+      result.extend(active.values()); active = {}
+    following = {}
+    for run in runs:
+      if run in active:
+        following[run] = (active[run][0], (run[1], y))
+      else:
+        following[run] = ((run[0], y), (run[1], y))
+    result.extend(rect for run, rect in active.items() if run not in following)
+    active, previous_y = following, y
+  result.extend(active.values())
+  return tuple(result)
+
 def _payload(data: bytes):
   if not 0 < len(data) <= MAX_WRITE_SIZE:
     raise ValueError(f"write payload size must be in [1, {MAX_WRITE_SIZE}]")
@@ -129,9 +154,14 @@ class Run:
 
   def lower(self) -> bytes:
     cores = tuple(self.cores)
-    targets = b"".join(PacketLayout.UNICAST_TARGET.pack(noc_coord(core)) for core in cores)
+    rects = _rectangles(cores)
+    targets = b"".join(
+      PacketLayout.MCAST_TARGET.pack(*mcast_coords(rect)) for rect in rects
+    )
     total_size = _align(PacketLayout.RUN_TARGETS + len(targets))
-    header = PacketLayout.HEADER.pack(Op.RUN, len(cores), total_size, self.event, 0)
+    header = PacketLayout.HEADER.pack(
+      Op.RUN, len(rects), total_size, self.event, len(cores),
+    )
     return (header + targets).ljust(total_size, b"\0")
 
 Command = UnicastWrite | McastWrite | Run

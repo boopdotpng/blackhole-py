@@ -149,19 +149,23 @@ def _emit_dispatch(fw, state):
   fw.read(s9, TensixMMIO.RISCV_DEBUG_REG_WALL_CLOCK_H)
   fw.write(DISPATCH_SCRATCH + Timestamp.START, s8)
   fw.write(DISPATCH_SCRATCH + Timestamp.START + 4, s9)
-  fw.lhu(s3, s0, PacketLayout.TARGET_COUNT)
+  fw.lw(s3, s0, PacketLayout.DATA_SIZE)  # Number of workers expected to finish.
   fw.write(DISPATCH_DONE_COUNT, 0)
   fw.fence()
   fw.addi(s6, s0, PacketLayout.RUN_TARGETS)
   fw.write(DISPATCH_GO, int(RunState.GO) << 24)
-  fw.mv(s7, s3)
+  # The multicast NIU reads its payload back from dispatch-core L1. Make the
+  # local GO store visible before the first rectangle can source that word;
+  # without this fence a cold launch can multicast the previous zero value.
+  fw.fence()
+  fw.lhu(s7, s0, PacketLayout.TARGET_COUNT)  # Multicast rectangles.
   fw.label("go_loop")
   fw.beq(s7, R.ZERO, "go_done")
-  fw.lw(s8, s6, 0)
-  noc.write(
-    DISPATCH_GO, FirmwareControl.GO_SIGNAL & -4, s8, 4, posted=False,
+  fw.lw(s8, s6, 0); fw.lw(s9, s6, 4)
+  noc.multicast_write(
+    DISPATCH_GO, FirmwareControl.GO_SIGNAL & -4, s8, s9, 4,
   )
-  fw.addi(s6, s6, 4); fw.addi(s7, s7, -1); fw.j("go_loop")
+  fw.addi(s6, s6, 8); fw.addi(s7, s7, -1); fw.j("go_loop")
   fw.label("go_done")
   fw.label("wait_workers")
   fw.read(s8, DISPATCH_DONE_COUNT)
