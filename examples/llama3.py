@@ -13,6 +13,7 @@ from ttk.unpack import UnpackTarget
 VOCAB_SIZE = 128256
 EMBED_DIM = 2048
 PREFILL_BUCKET = 1024
+RMSNORM_BUCKETS = (1, 128, 256, 512, 1024)
 EMBEDDING_TILES = EMBED_DIM // 1024
 LLAMA_CORES = 118
 TOKENS_PER_CORE, NINE_TOKEN_CORES = divmod(PREFILL_BUCKET, LLAMA_CORES)
@@ -20,6 +21,19 @@ CORE_TOKEN_COUNTS = (
   (TOKENS_PER_CORE + 1,) * NINE_TOKEN_CORES +
   (TOKENS_PER_CORE,) * (LLAMA_CORES - NINE_TOKEN_CORES)
 )
+
+
+def _rmsnorm_bucket(valid_s):
+  if not 0 < valid_s <= PREFILL_BUCKET:
+    raise ValueError(f"valid_s must be in 1..{PREFILL_BUCKET}")
+  return next(bucket for bucket in RMSNORM_BUCKETS if valid_s <= bucket)
+
+
+def _token_counts(items, cores):
+  per_core, extra = divmod(items, cores)
+  return tuple(
+    per_core + (index < extra) for index in range(cores)
+  )
 
 
 def _sfpu_float_words(register, value):
@@ -319,19 +333,25 @@ def embedding(token_ids: Buffer, embedding_weight: Buffer,
 
 
 def _validate_fused_rmsnorm(x, weight, output):
+  bucket = x.shape[0] if len(x.shape) == 2 else None
+  expected_cores = 1 if bucket == 1 else LLAMA_CORES
+  expected_counts = (
+    _token_counts(bucket, expected_cores)
+    if bucket in RMSNORM_BUCKETS else None
+  )
   for name, buffer in (("x", x), ("output", output)):
     if (
       buffer.dtype is not DType.BF16 or
-      buffer.shape != (PREFILL_BUCKET, EMBED_DIM) or
+      buffer.shape != (bucket, EMBED_DIM) or
+      bucket not in RMSNORM_BUCKETS or
       buffer.axis != 0 or buffer.tiles_per_item != EMBEDDING_TILES or
-      len(buffer.cores) != LLAMA_CORES or
-      buffer.item_counts != CORE_TOKEN_COUNTS
+      len(buffer.cores) != expected_cores or
+      buffer.item_counts != expected_counts
     ):
       raise ValueError(
-        f"fused RMSNorm {name} must be "
-        f"BF16[{PREFILL_BUCKET}, {EMBED_DIM}] sharded 9 tokens on "
-        f"{NINE_TOKEN_CORES} cores and 8 tokens on "
-        f"{LLAMA_CORES - NINE_TOKEN_CORES} cores",
+        f"fused RMSNorm {name} must be BF16[bucket, {EMBED_DIM}] with "
+        f"bucket in {RMSNORM_BUCKETS}, using one core for bucket 1 and "
+        f"{LLAMA_CORES} cores for prefill buckets",
       )
   if x.cores != output.cores or x.item_starts != output.item_starts:
     raise ValueError("fused RMSNorm input and output must use identical shards")
@@ -345,29 +365,50 @@ def _validate_fused_rmsnorm(x, weight, output):
 
 
 def _rmsnorm_fused_program(
-  x: Buffer, weight: Buffer, output: Buffer, *, tokens_per_core,
+  x: Buffer, weight: Buffer, output: Buffer, *, token_capacity,
 ) -> Program:
-  p = Program(x.cores, x, weight, output, fp32_dst=True)
+  valid_s = Const("valid_s", x.shape[0])
+  token_start = Const("token_start", x.item_starts)
+  p = Program(
+    x.cores, x, weight, output, valid_s, token_start, fp32_dst=True,
+  )
   x_cb = p.cb(DType.BF16, depth=4)
   output_cb = p.cb(DType.BF16, depth=4)
   gamma_l1 = p.l1(EMBEDDING_TILES * weight.tile_size, alignment=16)
+  decode = x.shape[0] == 1
 
   # Gamma is shared model state. Fetch its two tiles once into persistent L1.
   for tile in range(EMBEDDING_TILES):
     p.brisc.noc.read_tile(
       weight, tile, gamma_l1 + tile * weight.tile_size,
     )
-  for local_token in p.brisc.range(tokens_per_core):
-    for tile in range(EMBEDDING_TILES):
-      with p.brisc.scope():
-        source_tile = p.brisc.reg(exclude=local_token)
-        p.brisc.slli(source_tile, local_token, 1)
-        if tile: p.brisc.addi(source_tile, source_tile, tile)
-        p.brisc.noc.read_into_cb(x, source_tile, x_cb)
 
-  # Present x0, x1, gamma0, gamma1 to math. FPU copy_a promotes each BF16
-  # source into FP32 Dst 0..3; all arithmetic after that stays in SFPU FP32.
-  for _ in p.trisc0.range(tokens_per_core):
+  def read_token(local_token):
+    for tile in range(EMBEDDING_TILES):
+      if type(local_token) is int:
+        p.brisc.noc.read_into_cb(
+          x, local_token * EMBEDDING_TILES + tile, x_cb,
+        )
+      else:
+        with p.brisc.scope():
+          source_tile = p.brisc.reg(exclude=local_token)
+          p.brisc.slli(source_tile, local_token, 1)
+          if tile: p.brisc.addi(source_tile, source_tile, tile)
+          p.brisc.noc.read_into_cb(x, source_tile, x_cb)
+
+  if decode:
+    read_token(0)
+  else:
+    with p.brisc.scope():
+      local_count, start = p.brisc.reg(2)
+      _load_local_count(
+        p.brisc, p, valid_s, token_start, token_capacity,
+        local_count, start,
+      )
+      for local_token in p.brisc.range(local_count):
+        read_token(local_token)
+
+  def unpack_token():
     for _ in range(EMBEDDING_TILES):
       p.unpack.move(x_cb, UnpackTarget.SRCA)
     for tile in range(EMBEDDING_TILES):
@@ -375,30 +416,80 @@ def _rmsnorm_fused_program(
         weight.dtype, gamma_l1 + tile * weight.tile_size,
       )
 
-  for _ in p.trisc1.range(tokens_per_core):
+  if decode:
+    unpack_token()
+  else:
+    with p.trisc0.scope():
+      local_count, start = p.trisc0.reg(2)
+      _load_local_count(
+        p.trisc0, p, valid_s, token_start, token_capacity,
+        local_count, start,
+      )
+      for _ in p.trisc0.range(local_count): unpack_token()
+
+  def compute_token():
     for tile in range(2 * EMBEDDING_TILES):
       p.fpu.copy_a(dst_tile=tile)
     _rmsnorm_one_token(p.sfpu)
 
-  for _ in p.trisc2.range(tokens_per_core):
+  if decode:
+    compute_token()
+  else:
+    with p.trisc1.scope():
+      local_count, start = p.trisc1.reg(2)
+      _load_local_count(
+        p.trisc1, p, valid_s, token_start, token_capacity,
+        local_count, start,
+      )
+      for _ in p.trisc1.range(local_count): compute_token()
+
+  def pack_token():
     p.pack.move_tiles(output_cb, tiles=(0, 1))
 
-  for local_token in p.ncrisc.range(tokens_per_core):
+  if decode:
+    pack_token()
+  else:
+    with p.trisc2.scope():
+      local_count, start = p.trisc2.reg(2)
+      _load_local_count(
+        p.trisc2, p, valid_s, token_start, token_capacity,
+        local_count, start,
+      )
+      for _ in p.trisc2.range(local_count): pack_token()
+
+  def write_token(local_token):
     for tile in range(EMBEDDING_TILES):
-      with p.ncrisc.scope():
-        output_tile = p.ncrisc.reg(exclude=local_token)
-        p.ncrisc.slli(output_tile, local_token, 1)
-        if tile: p.ncrisc.addi(output_tile, output_tile, tile)
-        p.ncrisc.noc.write_from_cb(output_cb, output, output_tile)
+      if type(local_token) is int:
+        p.ncrisc.noc.write_from_cb(
+          output_cb, output, local_token * EMBEDDING_TILES + tile,
+        )
+      else:
+        with p.ncrisc.scope():
+          output_tile = p.ncrisc.reg(exclude=local_token)
+          p.ncrisc.slli(output_tile, local_token, 1)
+          if tile: p.ncrisc.addi(output_tile, output_tile, tile)
+          p.ncrisc.noc.write_from_cb(output_cb, output, output_tile)
+
+  if decode:
+    write_token(0)
+  else:
+    with p.ncrisc.scope():
+      local_count, start = p.ncrisc.reg(2)
+      _load_local_count(
+        p.ncrisc, p, valid_s, token_start, token_capacity,
+        local_count, start,
+      )
+      for local_token in p.ncrisc.range(local_count):
+        write_token(local_token)
   return p
 
 
-def rmsnorm_118_core(x: Buffer, weight: Buffer, output: Buffer) -> Program:
-  """Fused FP32 RMSNorm over 118 cores (80x9 tokens, then 38x8)."""
+def rmsnorm(x: Buffer, weight: Buffer, output: Buffer) -> Program:
+  """Fused FP32 RMSNorm for one-token decode or bucketed prefill."""
   _validate_fused_rmsnorm(x, weight, output)
   return _specialize_token_counts(
     lambda count: _rmsnorm_fused_program(
-      x, weight, output, tokens_per_core=count,
+      x, weight, output, token_capacity=count,
     ),
     x.cores, x.item_counts,
   )
@@ -485,26 +576,34 @@ def run_embedding_hardware(seq_len=200, vocab_size=257,
     device.close()
 
 
-def run_rmsnorm_118_core_hardware(
-  repeats=5, safetensor_path="weights/model.safetensors",
+def run_rmsnorm_hardware(
+  valid_s=1024, bucket=None, repeats=5,
+  safetensor_path="weights/model.safetensors",
 ):
   if repeats < 1: raise ValueError("repeats must be positive")
+  selected_bucket = _rmsnorm_bucket(valid_s) if bucket is None else bucket
+  if selected_bucket not in RMSNORM_BUCKETS:
+    raise ValueError(f"bucket must be one of {RMSNORM_BUCKETS}")
+  if not 0 < valid_s <= selected_bucket:
+    raise ValueError("valid_s must be positive and no larger than bucket")
+  if selected_bucket == 1 and valid_s != 1:
+    raise ValueError("the decode bucket contains exactly one token")
 
   device = Device()
   try:
     device.init_device()
-    cores = device.dram.cores[:LLAMA_CORES]
+    core_count = 1 if selected_bucket == 1 else LLAMA_CORES
+    cores = device.dram.cores[:core_count]
+    shape = (selected_bucket, EMBED_DIM)
     x = device.dram.buffer(
-      "rmsnorm_118_core_x", DType.BF16,
-      (PREFILL_BUCKET, EMBED_DIM), axis=0, cores=cores,
+      "rmsnorm_x", DType.BF16, shape, axis=0, cores=cores,
     )
     weight = device.dram.buffer(
-      "rmsnorm_118_core_weight", DType.BF16, (EMBED_DIM,),
+      "rmsnorm_weight", DType.BF16, (EMBED_DIM,),
       global_address=True,
     )
     output = device.dram.buffer(
-      "rmsnorm_118_core_output", DType.BF16,
-      (PREFILL_BUCKET, EMBED_DIM), axis=0, cores=cores,
+      "rmsnorm_output", DType.BF16, shape, axis=0, cores=cores,
     )
 
     rng = np.random.default_rng(1)
@@ -534,42 +633,46 @@ def run_rmsnorm_118_core_hardware(
 
     device.write(x, x_data)
     device.write(weight, weight_data)
-    program = rmsnorm_118_core(x, weight, output)
-    device.queue(program)
+    program = rmsnorm(x, weight, output)
+    device.queue(program, params={"valid_s": valid_s})
     readback = device.queue_read(output)
     samples = [device.run(timeout=5.0)[-1].us]
     actual = output.to_numpy(readback.result())
 
-    difference = np.subtract(actual, expected, dtype=np.float32)
+    actual_valid, expected_valid = actual[:valid_s], expected[:valid_s]
+    difference = np.subtract(actual_valid, expected_valid, dtype=np.float32)
     error = np.abs(difference)
     relative_l2 = float(
       np.linalg.norm(difference) /
-      (np.linalg.norm(expected) + 1e-12),
+      (np.linalg.norm(expected_valid) + 1e-12),
     )
-    pcc = float(np.corrcoef(actual.reshape(-1), expected.reshape(-1))[0, 1])
-    exact = int(np.count_nonzero(actual == expected))
+    pcc = float(np.corrcoef(
+      actual_valid.reshape(-1), expected_valid.reshape(-1),
+    )[0, 1])
+    exact = int(np.count_nonzero(actual_valid == expected_valid))
     if (
-      not np.all(np.isfinite(actual)) or
+      not np.all(np.isfinite(actual_valid)) or
       float(error.max()) > 0.05 or relative_l2 > 0.01 or pcc < 0.999
     ):
       token, feature = np.unravel_index(int(error.argmax()), error.shape)
       raise AssertionError(
-        f"118-core RMSNorm mismatch at token {token}, feature {feature}: "
-        f"actual={actual[token, feature]}, expected={expected[token, feature]}, "
+        f"RMSNorm mismatch at token {token}, feature {feature}: "
+        f"actual={actual_valid[token, feature]}, "
+        f"expected={expected_valid[token, feature]}, "
         f"max_abs={error.max()}, relative_l2={relative_l2}, PCC={pcc}",
       )
     for _ in range(repeats - 1):
-      samples.append(device.run(program, timeout=5.0)[-1].us)
+      samples.append(device.run(
+        program, params={"valid_s": valid_s}, timeout=5.0,
+      )[-1].us)
 
-    print("PASS llama3 118-core RMSNorm")
+    print("PASS llama3 RMSNorm")
     print("weight: model.layers.0.input_layernorm.weight")
-    print(f"tokens: {PREFILL_BUCKET}")
-    print(f"cores: {LLAMA_CORES}")
-    print(
-      f"token split: {NINE_TOKEN_CORES}x{TOKENS_PER_CORE + 1} + "
-      f"{LLAMA_CORES - NINE_TOKEN_CORES}x{TOKENS_PER_CORE}"
-    )
-    print(f"exact BF16 values: {exact}/{expected.size}")
+    print(f"valid_s: {valid_s}")
+    print(f"bucket: {selected_bucket}")
+    print(f"cores: {core_count}")
+    print(f"tokens/core: min={min(x.item_counts)}, max={max(x.item_counts)}")
+    print(f"exact BF16 values: {exact}/{expected_valid.size}")
     print(f"max abs error: {error.max():.6g}")
     print(f"relative L2: {relative_l2:.6g}")
     print(f"PCC: {pcc:.9f}")
@@ -587,14 +690,15 @@ if __name__ == "__main__":
     help="load model.embed_tokens.weight from this file",
   )
   parser.add_argument(
-    "--rmsnorm", "--rmsnorm-118-core", dest="rmsnorm_118_core",
-    action="store_true",
+    "--rmsnorm", action="store_true",
   )
+  parser.add_argument("--bucket", type=int, choices=RMSNORM_BUCKETS)
   parser.add_argument("--repeats", type=int, default=5)
   args = parser.parse_args()
-  if args.rmsnorm_118_core:
-    run_rmsnorm_118_core_hardware(
-      args.repeats, args.safetensor or "weights/model.safetensors",
+  if args.rmsnorm:
+    run_rmsnorm_hardware(
+      args.seq_len, args.bucket, args.repeats,
+      args.safetensor or "weights/model.safetensors",
     )
   else:
     run_embedding_hardware(
