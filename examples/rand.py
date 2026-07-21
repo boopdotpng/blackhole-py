@@ -1,5 +1,3 @@
-"""Generate one BF16 tile with Blackhole's fast hardware PRNG."""
-
 import argparse
 
 import numpy as np

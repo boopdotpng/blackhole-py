@@ -22,8 +22,6 @@ class CBConfig:
 
 
 class CBRegistry:
-  """Allocate CB configurations and track named operation-owned scratch CBs."""
-
   COUNT = 32
 
   def __init__(self, l1_allocator):
@@ -50,7 +48,6 @@ class CBRegistry:
     return self._allocate(dtype, depth)
 
   def internal(self, name, dtype, depth=1):
-    """Allocate a named scratch CB with the normal runtime ring semantics."""
     if not isinstance(name, str) or not name:
       raise ValueError("internal CB name must be a non-empty string")
     requested = dtype, depth

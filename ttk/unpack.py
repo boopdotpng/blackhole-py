@@ -233,7 +233,6 @@ class Unpack:
     return self._move_pair(source_a_cb, source_b_cb, _PAIR_MOP)
 
   def move_matmul(self, left_cb, right_cb):
-    """Present two 32x32 tiles as SrcB @ SrcA for FPU matmul."""
     self.dst.require_fp32()
     if left_cb.dtype is not DType.BF16 or right_cb.dtype is not DType.BF16:
       raise ValueError("matmul unpack currently requires BF16 inputs")
@@ -269,7 +268,6 @@ class Unpack:
     return self
 
   def move_pair_rows(self, source_a_cb, source_b_cb):
-    """Unpack a tile and one value per logical row for FPU broadcasting."""
     return self._move_pair(source_a_cb, source_b_cb, _COLUMN_PAIR_MOP)
 
   def _move_pair(self, source_a_cb, source_b_cb, mop):
@@ -298,7 +296,6 @@ class Unpack:
     return self
 
   def move_l1_pair(self, source_cb, l1_address):
-    """Unpack a CB tile into SrcA and a same-format L1 tile into SrcB."""
     CB.wait_front(self.k, source_cb)
     stall(self.k, Stall.UNPACK, Wait.SRCA_CLR | Wait.SRCB_CLR)
     self._configure(
@@ -350,7 +347,6 @@ class Unpack:
     return self
 
   def move_row_reduce(self, source_cb, scaler_address, *, maximum):
-    """Present one BF16 tile and a scaler tile for a native row reduction."""
     if source_cb.dtype is not DType.BF16:
       raise ValueError("row reduce unpack currently requires BF16 input")
     CB.wait_front(self.k, source_cb)

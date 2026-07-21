@@ -51,7 +51,6 @@ _FIDELITY_MASKS = (
 
 
 def _fidelity_part(values, mask):
-  """Return one Blackhole BF16 mantissa contribution as FP32."""
   bits = values.astype(np.float32, copy=False).view(np.uint32)
   bf16 = bits >> 16
   exponent = ((bf16 >> 7) & 0xFF).astype(np.int32) - 127

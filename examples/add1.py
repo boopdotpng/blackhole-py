@@ -9,6 +9,12 @@ def add1(src: Buffer, dst: Buffer) -> Program:
   p = Program(src.cores, src, dst)
   input_cb, output_cb = p.cb(src.dtype), p.cb(dst.dtype)
 
+  b = p.sfpu.program()
+  value = b.load(format=SfpuFormat.BF16)
+  b.add_scalar(value, 1)
+  b.store(value, format=SfpuFormat.BF16)
+  add_one = b.finish()
+
   for tile in p.brisc.range(src.tiles_per_core):
     p.brisc.noc.read_into_cb(src, tile, input_cb)
 
@@ -17,7 +23,7 @@ def add1(src: Buffer, dst: Buffer) -> Program:
 
   for _ in p.trisc1.range(src.tiles_per_core):
     p.fpu.copy_a(dst_tile=0)
-    p.sfpu.add_scalar(1, tile=0, format=SfpuFormat.BF16)
+    p.sfpu.map(add_one, tile=0)
     p.fpu.publish()
 
   for _ in p.trisc2.range(dst.tiles_per_core):

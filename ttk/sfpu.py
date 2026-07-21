@@ -1,14 +1,3 @@
-"""Static, 32-lane SFPU programs and Dst-region traversal.
-
-An :class:`SfpuProgram` is one iteration over the SFPU's 32 lanes.  Mapping a
-program supplies the traversal: eight iterations per 16x16 face, over either a
-tile or the faces selected by Blackhole's row/column vector modes.
-
-The builder owns LReg allocation and instruction scheduling.  LRegs are not
-runtime state exposed to kernels: values cannot cross program boundaries, and
-only values explicitly stored by the program survive a mapping operation.
-"""
-
 from dataclasses import dataclass
 from enum import IntEnum
 import struct
@@ -104,8 +93,6 @@ class LaneConfig:
 
 @dataclass(frozen=True)
 class Vec:
-  """A compile-time handle to one 32-lane SFPU local register."""
-
   index: int
   owner: int
   name: str | None = None
@@ -115,8 +102,6 @@ class Vec:
 
 @dataclass(frozen=True)
 class SfpuProgram:
-  """An immutable SFPU setup sequence and one 32-lane iteration."""
-
   setup_words: tuple[int, ...]
   words: tuple[int, ...]
 
@@ -134,8 +119,6 @@ def _nop(): return TT.TTSFPNOP()
 
 
 class SfpuProgramBuilder:
-  """Build one statically scheduled iteration over the SFPU's 32 lanes."""
-
   def __init__(self):
     self.owner, self.words, self.cycle, self.finished = id(self), [], 0, False
     self.allocated, self.initialized, self.ready_at = {}, set(), {}
@@ -146,7 +129,6 @@ class SfpuProgramBuilder:
     if self.finished: raise RuntimeError("SFPU program is already finished")
 
   def vec(self, name=None):
-    """Allocate an uninitialized writable vector."""
     self._open()
     index = next((x for x in range(8) if x not in self.allocated), None)
     if index is None:
@@ -155,7 +137,6 @@ class SfpuProgramBuilder:
     return value
 
   def free(self, value):
-    """Release a writable vector so its LReg can be reused."""
     self._open()
     index = self._ordinary_index(value, read=False)
     if index in self.persistent:
@@ -215,7 +196,6 @@ class SfpuProgramBuilder:
     return self
 
   def load(self, *, format=SfpuFormat.DEFAULT, offset=0, into=None):
-    """Load 32 values from the current Dst position."""
     if type(offset) is not int or not 0 <= offset < 1024:
       raise ValueError("SFPU Dst offset must be in range 0..1023")
     into = self._destination(into, "load")
@@ -226,7 +206,6 @@ class SfpuProgramBuilder:
     return into
 
   def store(self, value, *, format=SfpuFormat.DEFAULT, offset=0):
-    """Store 32 values at the current Dst position."""
     if type(offset) is not int or not 0 <= offset < 1024:
       raise ValueError("SFPU Dst offset must be in range 0..1023")
     self._emit(
@@ -236,7 +215,6 @@ class SfpuProgramBuilder:
     return self
 
   def load_float(self, value, *, into=None):
-    """Materialize an exact FP32 value in every lane of a writable vector."""
     into = self._destination(into, "constant")
     bits = _float_bits(value)
     self._emit(
@@ -250,7 +228,6 @@ class SfpuProgramBuilder:
     return into
 
   def constant(self, value, *, name=None):
-    """Hoist an exact FP32 constant outside the repeated program body."""
     bits = _float_bits(value)
     for index, existing in self.persistent.items():
       if index < 8 and existing == bits: return self.allocated[index]
@@ -290,7 +267,6 @@ class SfpuProgramBuilder:
     return into
 
   def rand_fast(self, *, into=None):
-    """Advance Blackhole's fast hardware PRNG and return values in [0, 1)."""
     into = self._destination(into, "rand_fast")
     index = self._write_index(into)
     self._emit(
@@ -399,7 +375,6 @@ class SfpuProgramBuilder:
     )
 
   def exp(self, value, *, into=None):
-    """Compute exp with the current Blackhole 21-bit polynomial algorithm."""
     self._read_index(value)
     result = value if into is None else into
     if result is not value: self._write_index(result)
@@ -468,7 +443,6 @@ class SfpuProgramBuilder:
     return result
 
   def reciprocal(self, value, *, into=None):
-    """Compute reciprocal with Blackhole's fast 24-bit refinement."""
     self._read_index(value)
     result = value if into is None else into
     if result is not value: self._write_index(result)
@@ -492,7 +466,6 @@ class SfpuProgramBuilder:
     return result
 
   def rsqrt_positive(self, value, *, into=None):
-    """Compute reciprocal sqrt for finite positive values (no edge handling)."""
     self._read_index(value)
     result = value if into is None else into
     if result is not value: self._write_index(result)
@@ -531,7 +504,6 @@ class SfpuProgramBuilder:
     return result
 
   def finish(self):
-    """Freeze this builder into an immutable, reusable program."""
     if self._program is not None: return self._program
     self._open()
     setup = []
@@ -556,13 +528,7 @@ class SfpuProgramBuilder:
     self._program = SfpuProgram(tuple(setup), tuple(self.words))
     return self._program
 
-  # Kept temporarily for old callers while the public API moves to finish().
-  def _finish(self): return self.finish()
-
-
 class Sfpu:
-  """Stateless mapping of immutable 32-lane programs over Dst regions."""
-
   def __init__(self, kernel, dst: Dst, seed_kernel=None):
     if kernel.role != "trisc1": raise RuntimeError("SFPU must run on trisc1")
     self.k, self.dst, self._mop = kernel, dst, Mop(kernel, 1)
@@ -572,7 +538,6 @@ class Sfpu:
   def program(self): return SfpuProgramBuilder()
 
   def seed(self, value):
-    """Seed all 32 hardware PRNG lanes and wait for the seed to settle."""
     if type(value) is not int or not 0 <= value <= 0xffffffff:
       raise ValueError("SFPU PRNG seed must be a 32-bit unsigned integer")
     if self.seed_k is None:
@@ -589,7 +554,6 @@ class Sfpu:
     return self
 
   def publish(self):
-    """Publish the current Dst contents to the pack thread."""
     stall(self.k, Stall.SYNC, Wait.MATH | Wait.SFPU)
     sem_post(self.k, Sem.MATH_PACK)
     return self
@@ -625,9 +589,7 @@ class Sfpu:
         start = self._mop.state.replay.allocate(
           len(body), lower=0, upper=REPLAY_SIZE,
         )
-      except ValueError:
-        start = None
-      except MemoryError:
+      except (ValueError, MemoryError):
         start = None
       if start is not None:
         self._mop.load(Replay(start, body), initialize=True)
@@ -655,6 +617,10 @@ class Sfpu:
     # Expanders on Blackhole.
     for _ in range(faces): self._mop.run()
 
+  def _run_faces(self, start, body, faces):
+    if start is None: self._inline_faces(body, faces)
+    else: self._replay_faces(faces)
+
   def _map(self, program, *, tile, faces, column, lane_config):
     start, body = self._prepare(program)
     sem_wait(
@@ -669,55 +635,18 @@ class Sfpu:
     if column:
       # Column mode visits faces 0 and 2.  A one-face MOP leaves us at face 1,
       # so skip it explicitly before running the second face.
-      if start is None:
-        self._inline_faces(body, 1)
-      else:
-        self._replay_faces(1)
+      self._run_faces(start, body, 1)
       self._issue(_FACE_STEP)
       self._issue(_FACE_STEP)
-      if start is None:
-        self._inline_faces(body, 1)
-      else:
-        self._replay_faces(1)
-    elif start is None:
-      self._inline_faces(body, faces)
-    else:
-      self._replay_faces(faces)
+      self._run_faces(start, body, 1)
+    else: self._run_faces(start, body, faces)
 
     self._issue(_RESET_DST)
     stall(self.k, Stall.SYNC, Wait.MATH | Wait.SFPU)
     return self
 
-  def map_tile(self, program, *, tile, lane_config=LaneConfig()):
-    """Map over all four faces of a 32x32 tile."""
-    return self._map(
-      program, tile=tile, faces=4, column=False, lane_config=lane_config,
-    )
-
-  def map_row(self, program, *, tile, lane_config=LaneConfig()):
-    """Map using Blackhole row-vector traversal (faces 0 and 1)."""
-    return self._map(
-      program, tile=tile, faces=2, column=False, lane_config=lane_config,
-    )
-
-  def map_column(self, program, *, tile, lane_config=LaneConfig()):
-    """Map faces 0 and 2 (every even logical row in a swizzled tile)."""
-    return self._map(
-      program, tile=tile, faces=2, column=True, lane_config=lane_config,
-    )
-
-  def map_row_values(self, program, *, tile, lane_config=LaneConfig()):
-    """Map a 32-value row reduction stored in logical column 0."""
-    return self.map_column(program, tile=tile, lane_config=lane_config)
-
-  def run(self, program, *, tile, lane_config=LaneConfig()):
-    """Backward-compatible full-tile mapping."""
-    if isinstance(program, SfpuProgramBuilder): program = program.finish()
-    return self.map_tile(program, tile=tile, lane_config=lane_config)
-
-  def add_scalar(self, value, *, tile, format=SfpuFormat.DEFAULT):
-    builder = self.program()
-    vector = builder.load(format=format)
-    builder.add_scalar(vector, value)
-    builder.store(vector, format=format)
-    return self.map_tile(builder.finish(), tile=tile)
+  def map(self, program, *, tile, region="tile", lane_config=LaneConfig()):
+    if region not in ("tile", "row", "column"):
+      raise ValueError("SFPU region must be tile, row, or column")
+    return self._map(program, tile=tile, faces=4 if region == "tile" else 2,
+                     column=region == "column", lane_config=lane_config)

@@ -43,10 +43,9 @@ def _scalar_broadcast_mop(instruction, _release):
     last=instruction, outer_last=instruction,
   )
 
+_ELWISE = {"add": TT.TTELWADD, "sub": TT.TTELWSUB, "mul": TT.TTELWMUL}
 
 class Fpu:
-  """Tile-level interface to the matrix unit on TRISC1."""
-
   def __init__(self, kernel, dst: Dst):
     if kernel.role != "trisc1": raise RuntimeError("FPU must run on trisc1")
     self.k, self.dst, self._mop = kernel, dst, Mop(kernel, 1)
@@ -64,7 +63,6 @@ class Fpu:
                     srcb_clear=False, srcb_carry=False, dest=0,
                     dest_clear=False, dest_carry=False,
                     fidelity_increment=0, fidelity_clear=False):
-    """Program one FPU address-modifier slot."""
     if type(slot) is not int or not 0 <= slot < 8:
       raise ValueError("FPU address-modifier slot must be in range 0..7")
     source = (
@@ -154,33 +152,15 @@ class Fpu:
     return self._run(dst_tile, TT.TTMOVA2D(0, 0, 2, 2, 0),
                      source_a=True, source_b=False, release=3)
 
-  def copy_b(self, *, dst_tile):
-    return self._run(dst_tile, TT.TTMOVB2D(0, 0, 2, 2, 0),
-                     source_a=False, source_b=True, release=2)
-
-  def add(self, *, dst_tile, accumulate=False, broadcast=Broadcast.NONE):
+  def binary(self, operation, *, dst_tile, accumulate=False, broadcast=Broadcast.NONE):
+    if operation not in _ELWISE: raise ValueError(f"unknown FPU operation {operation!r}")
     broadcast = Broadcast(broadcast)
     return self._run(
-      dst_tile, TT.TTELWADD(0, int(accumulate), broadcast, 2, 0),
-      source_a=True, source_b=True, release=3, broadcast=broadcast,
-    )
-
-  def sub(self, *, dst_tile, accumulate=False, broadcast=Broadcast.NONE):
-    broadcast = Broadcast(broadcast)
-    return self._run(
-      dst_tile, TT.TTELWSUB(0, int(accumulate), broadcast, 2, 0),
-      source_a=True, source_b=True, release=3, broadcast=broadcast,
-    )
-
-  def mul(self, *, dst_tile, accumulate=False, broadcast=Broadcast.NONE):
-    broadcast = Broadcast(broadcast)
-    return self._run(
-      dst_tile, TT.TTELWMUL(0, int(accumulate), broadcast, 2, 0),
+      dst_tile, _ELWISE[operation](0, int(accumulate), broadcast, 2, 0),
       source_a=True, source_b=True, release=3, broadcast=broadcast,
     )
 
   def matmul(self, *, dst_tile, hifi=False):
-    """Multiply one 32x32 SrcB tile by one 32x32 SrcA tile."""
     self.dst.require_fp32()
     self._wait_for_dst()
     self._configure_dst(dst_tile)
@@ -246,7 +226,6 @@ class Fpu:
     return self
 
   def reduce_row_max(self, *, dst_tile):
-    """Accumulate the maximum of every logical row into a Dst column."""
     self._wait_for_dst()
     self._configure_dst(dst_tile)
     # GMPOOL reduces SrcA columns. Row reduction halo-transposes the operand,
@@ -270,7 +249,6 @@ class Fpu:
     return self
 
   def reduce_row_sum(self, *, dst_tile):
-    """Accumulate the sum of every logical row into a Dst column."""
     self._wait_for_dst()
     self._configure_dst(dst_tile)
     # SrcA contains a halo-transposed scaler row and SrcB contains data.
@@ -293,7 +271,6 @@ class Fpu:
     return self
 
   def pool_scalar(self, *, dst_tile, maximum, negate=False):
-    """Pool four faces and their columns into Dst[0, 0]."""
     if negate and not maximum:
       raise ValueError("in-place scalar negation requires max pooling")
     self._wait_for_dst()

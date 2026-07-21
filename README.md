@@ -29,19 +29,19 @@ b.free(row_max)
 b.exp(x, into=x)
 b.store(x, format=SfpuFormat.FP32, offset=128)
 
-p.sfpu.map_tile(b.finish(), tile=0)
+p.sfpu.map(b.finish(), tile=0)
 ```
 
-Use `map_tile`, `map_row`, or `map_column` to select the traversal. Values are
-compile-time LReg handles local to one program; explicitly store anything that
-must survive. The builder currently provides load/store, exact constants,
-move, add/subtract/multiply/MAD, scalar add/multiply, negation, exponential,
+Pass `region="row"` or `region="column"` to select a partial traversal. Values
+are compile-time LReg handles local to one program; explicitly store anything
+that must survive. The builder provides load/store, exact constants, move,
+add/subtract/multiply/MAD, scalar add/multiply, negation, exponential,
 reciprocal, and reciprocal square root for finite positive inputs.
 
-The first standalone hardware test uses scalar addition:
+The smallest hardware example uses scalar addition:
 
 ```
-PYTHONPATH=. python3 examples/sfpu_add_scalar.py --tiles 1
+PYTHONPATH=. python3 examples/add1.py --tiles 1
 ```
 
 The broader hardware suite covers every public builder operation, all three

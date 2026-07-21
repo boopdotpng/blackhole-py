@@ -7,6 +7,10 @@ from ttk.sfpu import SfpuFormat
 
 
 SHAPE = (32, 32)
+REDUCTIONS = ("sum", "max", "min", "row_sum", "row_max")
+OPERATIONS = (*REDUCTIONS, "row_max_sub", "row_add", "row_mul",
+              "row_sum_pair", "row_max_pair", "row_sum_sfpu")
+ROW_OUTPUTS = ("row_sum", "row_max", "row_sum_pair", "row_max_pair", "row_sum_sfpu")
 
 
 def _reduce(src: Buffer, dst: Buffer, operation: str) -> Program:
@@ -24,29 +28,12 @@ def _reduce(src: Buffer, dst: Buffer, operation: str) -> Program:
 
   p.brisc.noc.read_into_cb(src, 0, input_cb)
 
-  getattr(p.ops, operation)(input_cb, output_cb, dst_tile=0)
+  if operation == "min": p.ops.reduce_min(input_cb, output_cb)
+  elif operation.startswith("row_"):
+    p.ops.reduce_rows(input_cb, output_cb, maximum=operation == "row_max")
+  else: p.ops.reduce(input_cb, output_cb, maximum=operation == "max")
   p.ncrisc.noc.write_from_cb(output_cb, dst, 0)
   return p
-
-
-def reduce_sum(src: Buffer, dst: Buffer) -> Program:
-  return _reduce(src, dst, "reduce_sum")
-
-
-def reduce_max(src: Buffer, dst: Buffer) -> Program:
-  return _reduce(src, dst, "reduce_max")
-
-
-def reduce_min(src: Buffer, dst: Buffer) -> Program:
-  return _reduce(src, dst, "reduce_min")
-
-
-def row_sum(src: Buffer, dst: Buffer) -> Program:
-  return _reduce(src, dst, "row_sum")
-
-
-def row_max(src: Buffer, dst: Buffer) -> Program:
-  return _reduce(src, dst, "row_max")
 
 
 def row_max_sub(src: Buffer, dst: Buffer) -> Program:
@@ -58,8 +45,8 @@ def row_max_sub(src: Buffer, dst: Buffer) -> Program:
   # The row maximum is never expanded into a full broadcast tile.
   p.brisc.noc.read_into_cb(src, 0, input_cb)
   p.brisc.noc.read_into_cb(src, 0, input_cb)
-  p.ops.row_max(input_cb, reduced_cb, dst_tile=0)
-  p.ops.sub_rows(input_cb, reduced_cb, output_cb, dst_tile=0)
+  p.ops.reduce_rows(input_cb, reduced_cb, maximum=True)
+  p.ops.binary_rows(input_cb, reduced_cb, output_cb, operation="sub")
   p.ncrisc.noc.write_from_cb(output_cb, dst, 0)
   return p
 
@@ -71,41 +58,25 @@ def row_binary(src: Buffer, rows: Buffer, dst: Buffer, operation: str) -> Progra
   output_cb = p.cb(dst.dtype)
   p.brisc.noc.read_into_cb(src, 0, input_cb)
   p.brisc.noc.read_into_cb(rows, 0, rows_cb)
-  getattr(p.ops, f"{operation}_rows")(
-    input_cb, rows_cb, output_cb, dst_tile=0,
-  )
+  p.ops.binary_rows(input_cb, rows_cb, output_cb, operation=operation)
   p.ncrisc.noc.write_from_cb(output_cb, dst, 0)
   return p
 
 
-def row_sum_pair(left: Buffer, right: Buffer, dst: Buffer) -> Program:
+def row_pair(left: Buffer, right: Buffer, dst: Buffer, *, maximum) -> Program:
   p = Program(left.cores, left, right, dst, fp32_dst=True)
   input_cb = p.cb(left.dtype)
   output_cb = p.cb(dst.dtype)
   p.brisc.noc.read_into_cb(left, 0, input_cb)
   p.brisc.noc.read_into_cb(right, 0, input_cb)
-  p.ops.accumulate_row_sum(input_cb, dst_tile=0)
-  p.ops.accumulate_row_sum(input_cb, dst_tile=0)
-  p.ops.store_row_values(output_cb, dst_tile=0)
-  p.ncrisc.noc.write_from_cb(output_cb, dst, 0)
-  return p
-
-
-def row_max_pair(left: Buffer, right: Buffer, dst: Buffer) -> Program:
-  p = Program(left.cores, left, right, dst, fp32_dst=True)
-  input_cb = p.cb(left.dtype)
-  output_cb = p.cb(dst.dtype)
-  p.brisc.noc.read_into_cb(left, 0, input_cb)
-  p.brisc.noc.read_into_cb(right, 0, input_cb)
-  p.ops.accumulate_row_max(input_cb, dst_tile=0)
-  p.ops.accumulate_row_max(input_cb, dst_tile=0)
+  p.ops.accumulate_rows(input_cb, maximum=maximum)
+  p.ops.accumulate_rows(input_cb, maximum=maximum)
   p.ops.store_row_values(output_cb, dst_tile=0)
   p.ncrisc.noc.write_from_cb(output_cb, dst, 0)
   return p
 
 
 def row_sum_sfpu(src: Buffer, dst: Buffer) -> Program:
-  """Reduce rows, transform the 32 live FP32 values with SFPU, then pack."""
   p = Program(src.cores, src, dst, fp32_dst=True)
   input_cb = p.cb(src.dtype)
   output_cb = p.cb(dst.dtype)
@@ -117,56 +88,26 @@ def row_sum_sfpu(src: Buffer, dst: Buffer) -> Program:
   sfpu_program = builder.finish()
 
   p.brisc.noc.read_into_cb(src, 0, input_cb)
-  p.ops.accumulate_row_sum(input_cb, dst_tile=0)
-  p.sfpu.map_row_values(sfpu_program, tile=0)
+  p.ops.accumulate_rows(input_cb)
+  p.sfpu.map(sfpu_program, tile=0, region="column")
   p.ops.store_row_values(output_cb, dst_tile=0)
   p.ncrisc.noc.write_from_cb(output_cb, dst, 0)
   return p
 
 
-def _expected(values):
-  sums = np.zeros(SHAPE, dtype=np.float32)
-  maxima = np.zeros(SHAPE, dtype=np.float32)
-  minima = np.zeros(SHAPE, dtype=np.float32)
-  row_sums = np.zeros(SHAPE, dtype=np.float32)
-  row_maxima = np.zeros(SHAPE, dtype=np.float32)
-  sums[0, 0] = np.sum(values, dtype=np.float32)
-  maxima[0, 0] = np.max(values)
-  minima[0, 0] = np.min(values)
-  row_sums[:, 0] = np.sum(values, axis=1, dtype=np.float32)
-  row_maxima[:, 0] = np.max(values, axis=1)
-  return {
-    "sum": sums,
-    "max": maxima,
-    "min": minima,
-    "row_sum": row_sums,
-    "row_max": row_maxima,
-  }
-
-
-def _tile_bytes(buffer, values):
-  return buffer.from_numpy(values)
-
-
-def _read_tile(device, buffer):
-  return buffer.to_numpy(device.read(buffer))
+def _expected(values, operation):
+  expected = np.zeros(SHAPE, dtype=np.float32)
+  if operation == "sum": expected[0, 0] = np.sum(values, dtype=np.float32)
+  elif operation == "max": expected[0, 0] = np.max(values)
+  elif operation == "min": expected[0, 0] = np.min(values)
+  elif operation == "row_sum": expected[:, 0] = np.sum(values, axis=1, dtype=np.float32)
+  elif operation == "row_max": expected[:, 0] = np.max(values, axis=1)
+  else: raise ValueError(f"unknown reduction {operation!r}")
+  return expected
 
 
 def run_hardware(operation):
-  builders = {
-    "sum": reduce_sum,
-    "max": reduce_max,
-    "min": reduce_min,
-    "row_sum": row_sum,
-    "row_max": row_max,
-    "row_max_sub": row_max_sub,
-    "row_add": None,
-    "row_mul": None,
-    "row_sum_pair": None,
-    "row_max_pair": None,
-    "row_sum_sfpu": row_sum_sfpu,
-  }
-  if operation not in builders:
+  if operation not in OPERATIONS:
     raise ValueError(f"unknown reduction operation {operation!r}")
   device = Device()
   try:
@@ -212,43 +153,37 @@ def run_hardware(operation):
           np.max(values, axis=1), np.max(right_values, axis=1),
         )
     elif operation == "row_sum_sfpu":
-      expected_values = _expected(values)["row_sum"]
+      expected_values = _expected(values, "row_sum")
       expected_values[:, 0] += 1.0
     else:
-      expected_values = _expected(values)[operation]
+      expected_values = _expected(values, operation)
     expected = dst.to_numpy(dst.from_numpy(expected_values))
 
-    device.write(src, _tile_bytes(src, values))
+    device.write(src, src.from_numpy(values))
     if operation in ("row_add", "row_mul"):
       row_buffer = device.dram.buffer("row_values", DType.BF16, SHAPE)
-      device.write(row_buffer, _tile_bytes(row_buffer, row_values))
+      device.write(row_buffer, row_buffer.from_numpy(row_values))
       program = row_binary(src, row_buffer, dst, operation.removeprefix("row_"))
     elif operation in ("row_sum_pair", "row_max_pair"):
       right = device.dram.buffer("right", DType.BF16, SHAPE)
-      device.write(right, _tile_bytes(right, right_values))
-      program = (
-        row_sum_pair(src, right, dst)
-        if operation == "row_sum_pair" else
-        row_max_pair(src, right, dst)
-      )
+      device.write(right, right.from_numpy(right_values))
+      program = row_pair(src, right, dst, maximum=operation == "row_max_pair")
+    elif operation == "row_sum_sfpu":
+      program = row_sum_sfpu(src, dst)
+    elif operation == "row_max_sub":
+      program = row_max_sub(src, dst)
     else:
-      program = builders[operation](src, dst)
+      program = _reduce(src, dst, operation)
     timestamps = device.run(program)
-    actual = _read_tile(device, dst)
+    actual = dst.to_numpy(device.read(dst))
     comparison = (
       np.array_equal(actual[:, 0], expected[:, 0])
-      if operation in (
-        "row_sum", "row_max", "row_sum_pair", "row_max_pair",
-        "row_sum_sfpu",
-      ) else
+      if operation in ROW_OUTPUTS else
       np.array_equal(actual, expected)
     )
     if not comparison:
       error = np.abs(actual - expected)
-      if operation in (
-        "row_sum", "row_max", "row_sum_pair", "row_max_pair",
-        "row_sum_sfpu",
-      ):
+      if operation in ROW_OUTPUTS:
         row, column = int(error[:, 0].argmax()), 0
       else:
         row, column = np.unravel_index(int(error.argmax()), SHAPE)
@@ -268,11 +203,7 @@ if __name__ == "__main__":
   parser = argparse.ArgumentParser()
   parser.add_argument(
     "--operation",
-    choices=(
-      "sum", "max", "min", "row_sum", "row_max", "row_max_sub",
-      "row_add", "row_mul", "row_sum_pair", "row_max_pair",
-      "row_sum_sfpu",
-    ),
+    choices=OPERATIONS,
     required=True,
   )
   run_hardware(parser.parse_args().operation)

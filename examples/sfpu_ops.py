@@ -1,5 +1,3 @@
-"""Hardware validation suite for the public SFPU program-builder operations."""
-
 import argparse
 
 import numpy as np
@@ -97,7 +95,7 @@ def sfpu_operation(src: Buffer, dst: Buffer, operation: str,
   p.unpack.move(input_cb, UnpackTarget.SRCA)
 
   p.fpu.copy_a(dst_tile=0)
-  getattr(p.sfpu, f"map_{region}")(sfpu_program, tile=0)
+  p.sfpu.map(sfpu_program, tile=0, region=region)
   p.fpu.publish()
 
   p.pack.move(output_cb, tile=0)
@@ -106,7 +104,6 @@ def sfpu_operation(src: Buffer, dst: Buffer, operation: str,
 
 
 def sfpu_offset_pair(src: Buffer, dst: Buffer) -> Program:
-  """Add two Dst tiles using offset 64 and store into the second tile."""
   p = Program(src.cores, src, dst)
   input_cb, output_cb = p.cb(src.dtype), p.cb(dst.dtype)
 
@@ -124,7 +121,7 @@ def sfpu_offset_pair(src: Buffer, dst: Buffer) -> Program:
 
   p.fpu.copy_a(dst_tile=0)
   p.fpu.copy_a(dst_tile=1)
-  p.sfpu.map_tile(program, tile=0)
+  p.sfpu.map(program, tile=0)
   p.fpu.publish()
 
   p.pack.move(output_cb, tile=1)
@@ -132,76 +129,30 @@ def sfpu_offset_pair(src: Buffer, dst: Buffer) -> Program:
   return p
 
 
-def _case(name):
-  if name == "load_float":
-    return "load_float", "tile", EXACT_INPUT, lambda x: np.full_like(x, 1.5), True, False
-  if name == "constant":
-    return "constant", "tile", EXACT_INPUT, lambda x: x + 1.5, True, False
-  if name == "move":
-    return "move", "tile", EXACT_INPUT, lambda x: x, True, False
-  if name == "add":
-    return "add", "tile", EXACT_INPUT, lambda x: x + 2.0, True, False
-  if name == "sub":
-    return "sub", "tile", EXACT_INPUT, lambda x: x - 2.0, True, False
-  if name == "mul":
-    return "mul", "tile", EXACT_INPUT, lambda x: x * 2.0, True, False
-  if name == "mad":
-    return "mad", "tile", EXACT_INPUT, lambda x: x * 2.0 + 1.0, True, False
-  if name == "mad_negate_product":
-    return "mad_negate_product", "tile", EXACT_INPUT, lambda x: -x * 2.0 + 1.0, True, False
-  if name == "mad_negate_addend":
-    return "mad_negate_addend", "tile", EXACT_INPUT, lambda x: x * 2.0 - 1.0, True, False
-  if name == "add_scalar":
-    return "add_scalar", "tile", EXACT_INPUT, lambda x: x + 1.0, True, False
-  if name == "out_of_place":
-    return "out_of_place", "tile", EXACT_INPUT, lambda x: x + 1.0, True, False
-  if name == "mul_scalar":
-    return "mul_scalar", "tile", EXACT_INPUT, lambda x: x * 2.0, True, False
-  if name == "long_inline":
-    return "long_inline", "tile", EXACT_INPUT, lambda x: x, True, False
-  if name == "neg":
-    return "neg", "tile", EXACT_INPUT, lambda x: -x, True, False
-  if name == "fp32_add":
-    return "add_scalar", "tile", EXACT_INPUT, lambda x: x + 1.0, True, True
-  if name == "exp":
-    return "exp", "tile", EXP_INPUT, np.exp, False, False
-  if name == "reciprocal":
-    return "reciprocal", "tile", POSITIVE_INPUT, lambda x: 1.0 / x, False, False
-  if name == "rsqrt_positive":
-    return "rsqrt_positive", "tile", POSITIVE_INPUT, lambda x: 1.0 / np.sqrt(x), False, False
-  if name == "map_row":
-    return "add_scalar", "row", EXACT_INPUT, lambda x: x + 1.0, True, False
-  if name == "map_column":
-    return "add_scalar", "column", EXACT_INPUT, lambda x: x + 1.0, True, False
-  if name == "identity":
-    return "identity", "tile", EXACT_INPUT, lambda x: x, True, False
-  raise ValueError(f"unknown SFPU hardware case {name!r}")
-
-
-CASES = (
-  "identity",
-  "load_float",
-  "constant",
-  "move",
-  "add",
-  "sub",
-  "mul",
-  "mad",
-  "mad_negate_product",
-  "mad_negate_addend",
-  "add_scalar",
-  "out_of_place",
-  "mul_scalar",
-  "neg",
-  "fp32_add",
-  "map_row",
-  "map_column",
-  "exp",
-  "reciprocal",
-  "rsqrt_positive",
-  "long_inline",
-  "offset_pair",
-)
+CASE_CONFIG = {
+  "identity": ("identity", "tile", EXACT_INPUT, lambda x: x, True, False),
+  "load_float": ("load_float", "tile", EXACT_INPUT, lambda x: np.full_like(x, 1.5), True, False),
+  "constant": ("constant", "tile", EXACT_INPUT, lambda x: x + 1.5, True, False),
+  "move": ("move", "tile", EXACT_INPUT, lambda x: x, True, False),
+  "add": ("add", "tile", EXACT_INPUT, lambda x: x + 2, True, False),
+  "sub": ("sub", "tile", EXACT_INPUT, lambda x: x - 2, True, False),
+  "mul": ("mul", "tile", EXACT_INPUT, lambda x: x * 2, True, False),
+  "mad": ("mad", "tile", EXACT_INPUT, lambda x: x * 2 + 1, True, False),
+  "mad_negate_product": ("mad_negate_product", "tile", EXACT_INPUT, lambda x: -x * 2 + 1, True, False),
+  "mad_negate_addend": ("mad_negate_addend", "tile", EXACT_INPUT, lambda x: x * 2 - 1, True, False),
+  "add_scalar": ("add_scalar", "tile", EXACT_INPUT, lambda x: x + 1, True, False),
+  "out_of_place": ("out_of_place", "tile", EXACT_INPUT, lambda x: x + 1, True, False),
+  "mul_scalar": ("mul_scalar", "tile", EXACT_INPUT, lambda x: x * 2, True, False),
+  "long_inline": ("long_inline", "tile", EXACT_INPUT, lambda x: x, True, False),
+  "neg": ("neg", "tile", EXACT_INPUT, lambda x: -x, True, False),
+  "fp32_add": ("add_scalar", "tile", EXACT_INPUT, lambda x: x + 1, True, True),
+  "map_row": ("add_scalar", "row", EXACT_INPUT, lambda x: x + 1, True, False),
+  "map_column": ("add_scalar", "column", EXACT_INPUT, lambda x: x + 1, True, False),
+  "exp": ("exp", "tile", EXP_INPUT, np.exp, False, False),
+  "reciprocal": ("reciprocal", "tile", POSITIVE_INPUT, lambda x: 1 / x, False, False),
+  "rsqrt_positive": ("rsqrt_positive", "tile", POSITIVE_INPUT, lambda x: 1 / np.sqrt(x), False, False),
+}
+CASES = (*CASE_CONFIG, "offset_pair")
 
 
 def _quantize(buffer, values):
@@ -275,7 +226,7 @@ def run_hardware(case_names=CASES):
           print(f"FAIL {error}")
         continue
 
-      operation, region, inputs, reference, exact, fp32_dst = _case(name)
+      operation, region, inputs, reference, exact, fp32_dst = CASE_CONFIG[name]
       source = _quantize(src, inputs)
       transformed = reference(source)
       expected = _quantize(dst, _apply_region(source, transformed, region))
