@@ -27,9 +27,11 @@ class Buffer:
   axis: int | None
   cores: tuple[tuple[int, int], ...]
   banks: int
+  global_address: bool = False
 
   def __post_init__(self):
     shape, axis, cores = tuple(self.shape), self.axis, tuple(self.cores)
+    if not cores: raise ValueError("buffer requires at least one storage core")
     if axis is not None:
       if axis < 0: axis += len(shape)
       if not 0 <= axis < len(shape): raise ValueError("shard axis is outside the buffer shape")
@@ -84,6 +86,7 @@ class Buffer:
   def storage_shape(self): return len(self.cores), self.tiles_per_core, 32, 32
 
   def shard_addr(self, core):
+    if self.global_address: return self.addr
     tile = self.tile_starts[self.cores.index(core)]
     rows, bank = divmod(tile, self.banks)
     # Buffer addresses are 64-byte aligned. Use the otherwise-zero low bits
@@ -91,11 +94,39 @@ class Buffer:
     return self.addr + rows * self.tile_size | bank
 
   def from_numpy(self, values) -> bytes:
+    if self.dtype is DType.U32:
+      return np.asarray(values, dtype="<u4").reshape(self.shape).tobytes()
     values = np.asarray(values, dtype=np.float32).reshape(self.shape)
     if self.dtype is DType.F32: return values.astype("<f4", copy=False).tobytes()
     return (values.view(np.uint32) >> 16).astype("<u2").tobytes()
 
+  def from_safetensor(self, name,
+                      path="weights/model.safetensors") -> bytes:
+    from st import load
+
+    info, data = load(name, path)
+    expected_dtype = {
+      DType.BF16: "BF16",
+      DType.F32: "F32",
+      DType.U32: "U32",
+    }[self.dtype]
+    if info.dtype != expected_dtype:
+      raise ValueError(
+        f"safetensor {name!r} has dtype {info.dtype}, "
+        f"but buffer {self.name!r} requires {expected_dtype}",
+      )
+    if info.shape != self.shape:
+      raise ValueError(
+        f"safetensor {name!r} has shape {info.shape}, "
+        f"but buffer {self.name!r} requires {self.shape}",
+      )
+    if len(data) != prod(self.shape) * self.dtype.itemsize:
+      raise ValueError(f"safetensor {name!r} has an invalid byte length")
+    return data
+
   def to_numpy(self, data: bytes):
+    if self.dtype is DType.U32:
+      return np.frombuffer(data, dtype="<u4").reshape(self.shape).copy()
     if self.dtype is DType.F32: values = np.frombuffer(data, dtype="<f4")
     else:
       values = (
@@ -175,11 +206,24 @@ class Dram:
     self.cores = tuple(cores)
 
   def buffer(self, name: str, dtype: DType, shape: tuple[int, ...],
-             axis=None) -> Buffer:
-    buffer = Buffer(name, 0, dtype, shape, axis, self.cores, self.banks)
+             axis=None, *, global_address=False, cores=None) -> Buffer:
+    storage_cores = self.cores if cores is None else tuple(cores)
+    if not storage_cores: raise ValueError("buffer requires storage cores")
+    if len(set(storage_cores)) != len(storage_cores):
+      raise ValueError("buffer storage cores must be unique")
+    if any(core not in self.cores for core in storage_cores):
+      raise ValueError("buffer storage cores must belong to this DRAM device")
+    # Globally addressed buffers have one linear tile namespace shared by all
+    # worker cores. Use one storage core so sharding introduces no padding.
+    storage_cores = (storage_cores[0],) if global_address else storage_cores
+    buffer = Buffer(
+      name, 0, dtype, shape, axis, storage_cores, self.banks, global_address,
+    )
     tiles_per_bank = (buffer.physical_tiles + self.banks - 1) // self.banks
     addr = self.allocator.alloc(tiles_per_bank * buffer.tile_size)
-    return Buffer(name, addr, dtype, shape, axis, self.cores, self.banks)
+    return Buffer(
+      name, addr, dtype, shape, axis, storage_cores, self.banks, global_address,
+    )
 
 
 class Program:

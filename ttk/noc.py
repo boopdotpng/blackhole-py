@@ -369,6 +369,17 @@ class NoC:
     CB.push_back(self.k, cb)
     return self
 
+  def read_tile(self, param, tile, target_address,
+                source_middle_address=0):
+    """Read one DRAM tile directly into a caller-owned L1 address."""
+    with self.k.scope():
+      source_address, source_coordinate = self._dram_tile(param, tile)
+      self.read(
+        source_address, source_coordinate, target_address, param.tile_size,
+        source_middle_address=source_middle_address,
+      )
+    return self
+
   def write_from_cb(self, cb, param, tile, target_middle_address=0, posted=False):
     CB.wait_front(self.k, cb)
     with self.k.scope():

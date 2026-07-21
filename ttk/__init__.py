@@ -4,9 +4,10 @@ from enum import IntEnum
 class DType(IntEnum):
   F32 = 0
   BF16 = 5
+  U32 = 6
 
   @property
-  def itemsize(self): return 4 if self is DType.F32 else 2
+  def itemsize(self): return 2 if self is DType.BF16 else 4
 
 
 class Dst:
