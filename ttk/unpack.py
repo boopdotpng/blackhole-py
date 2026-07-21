@@ -2,9 +2,8 @@ from enum import IntEnum
 
 from fw.consts import TensixMMIO
 from isa import R, Tensix as TT
+from ttk import Dst, DType
 from ttk.cb import CB
-from ttk import DType
-from ttk.dst import Dst
 from ttk.mop import LoopTemplate, MaskTemplate, Mop, NOP
 from ttk.sync import Sem, SemWait, Stall, Wait, sem_get, sem_post, sem_wait, stall, sync
 
@@ -232,6 +231,42 @@ class Unpack:
 
   def move_pair(self, source_a_cb, source_b_cb):
     return self._move_pair(source_a_cb, source_b_cb, _PAIR_MOP)
+
+  def move_matmul(self, left_cb, right_cb):
+    """Present two 32x32 tiles as SrcB @ SrcA for FPU matmul."""
+    self.dst.require_fp32()
+    if left_cb.dtype is not DType.BF16 or right_cb.dtype is not DType.BF16:
+      raise ValueError("matmul unpack currently requires BF16 inputs")
+    CB.wait_front(self.k, left_cb)
+    CB.wait_front(self.k, right_cb)
+    stall(self.k, Stall.UNPACK, Wait.SRCA_CLR | Wait.SRCB_CLR)
+
+    # MVMUL computes SrcB @ SrcA. Unlike elementwise pair unpack, matmul
+    # presents all four faces of each tile in one UNPACR operation.
+    self._configure(
+      right_cb, UnpackTarget.SRCA, False, None,
+      commit=False, configure_mop=False,
+    )
+    self._configure(
+      left_cb, UnpackTarget.SRCB, False, None,
+      commit=False, configure_mop=False,
+    )
+    self._commit_config(_BASE[UNPACKER0])
+    self._issue(TT.TTSETADCXX(1, 1023, 0))
+    self._issue(TT.TTSETADCXX(2, 1023, 0))
+    self._issue(TT.TTSETADCZW(3, 0, 0, 0, 0, 0xF))
+    stall(self.k, Stall.UNPACK, Wait.TRISC_CFG)
+    self._issue(TT.TTUNPACR(
+      UNPACKER1, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 1,
+    ))
+    self._issue(TT.TTUNPACR(
+      UNPACKER0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 1,
+    ))
+    stall(self.k, Stall.UNPACK, Wait.UNPACK0 | Wait.UNPACK1)
+    sem_get(self.k, Sem.UNPACK_SYNC); sync(self.k)
+    CB.pop_front(self.k, left_cb)
+    CB.pop_front(self.k, right_cb)
+    return self
 
   def move_pair_rows(self, source_a_cb, source_b_cb):
     """Unpack a tile and one value per logical row for FPU broadcasting."""

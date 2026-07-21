@@ -2,11 +2,10 @@ from enum import IntEnum
 
 from fw.consts import TensixMMIO
 from isa import R, Tensix as TT
+from ttk import Dst, DType
 from ttk.cb import CB
-from ttk.dst import Dst
 from ttk.mop import LoopTemplate
 from ttk.mop import Mop
-from ttk import DType
 from ttk.sync import Sem, SemWait, Stall, Wait, sem_get, sem_wait, stall, sync
 
 class _Cfg(IntEnum):

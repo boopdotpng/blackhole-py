@@ -15,7 +15,7 @@ import struct
 
 from fw.consts import TensixMMIO
 from isa import Tensix as TT
-from ttk.dst import Dst
+from ttk import Dst
 from ttk.mop import LoopTemplate, Mop, REPLAY_SIZE, Replay
 from ttk.sync import Sem, SemWait, Stall, Wait, sem_get, sem_post, sem_wait, stall
 

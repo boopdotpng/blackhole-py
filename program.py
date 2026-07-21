@@ -7,9 +7,8 @@ from cq import MAX_WRITE_SIZE, McastWrite, UnicastWrite
 from fw.consts import Firmware, KERNEL_ROLES, TensixL1
 from isa import R, RV32
 from pcie import Allocator, P100_WORKER_CORES
-from ttk import DType
+from ttk import Dst, DType
 from ttk.cb import CBRegistry
-from ttk.dst import Dst
 from ttk.fpu import Fpu
 from ttk.ops import Ops
 from ttk.pack import Pack

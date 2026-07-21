@@ -2,9 +2,9 @@ from enum import IntEnum
 
 from fw.consts import TensixMMIO
 from isa import Tensix as TT
-from ttk.dst import Dst
-from ttk.mop import LoopTemplate, Mop
-from ttk.sync import Sem, SemWait, Stall, Wait, sem_post, sem_wait, stall
+from ttk import Dst
+from ttk.mop import LoopTemplate, Mop, Replay
+from ttk.sync import Sem, SemWait, Stall, Wait, sem_post, sem_wait, stall, sync
 
 
 _CFG_STATE_ID = 0
@@ -50,6 +50,7 @@ class Fpu:
   def __init__(self, kernel, dst: Dst):
     if kernel.role != "trisc1": raise RuntimeError("FPU must run on trisc1")
     self.k, self.dst, self._mop = kernel, dst, Mop(kernel, 1)
+    self._matmul_replay = None
 
   def _issue(self, word):
     self.k.emit(word)
@@ -177,6 +178,60 @@ class Fpu:
       dst_tile, TT.TTELWMUL(0, int(accumulate), broadcast, 2, 0),
       source_a=True, source_b=True, release=3, broadcast=broadcast,
     )
+
+  def matmul(self, *, dst_tile, hifi=False):
+    """Multiply one 32x32 SrcB tile by one 32x32 SrcA tile."""
+    self.dst.require_fp32()
+    self._wait_for_dst()
+    self._configure_dst(dst_tile)
+
+    # MVMUL computes D = SrcB @ SrcA in four 16x16 face products. Each
+    # instruction produces eight destination rows; these modifiers traverse
+    # both K faces and all four output faces before resetting for the next
+    # fidelity phase.
+    self._set_addr_mod(0, srcb=8, dest=8)
+    self._set_addr_mod(1, srca=16, srcb_carry=True, dest=8)
+    self._set_addr_mod(
+      2, srca_carry=True, srcb=32, srcb_carry=True, dest=8,
+    )
+    self._set_addr_mod(
+      4, srca=32, srca_carry=True,
+      srcb=48, srcb_carry=True, dest_carry=True,
+    )
+    self._set_addr_mod(
+      5, srca_clear=True, srca_carry=True,
+      srcb_clear=True, srcb_carry=True,
+      dest_clear=True, dest_carry=True,
+      fidelity_increment=int(bool(hifi)),
+    )
+
+    self._issue(TT.TTZEROACC(3, int(self.dst.fp32), 0, 1, 0))
+    self._issue(TT.TTSETRWC(0, 0, 0, 0, 0, 0xF))
+    if self._matmul_replay is None:
+      modes = (0, 1, 0, 2, 0, 1, 0, 4, 0, 1, 0, 2, 0, 1, 0, 5)
+      words = tuple(TT.TTMVMUL(0, 0, mode, 0) for mode in modes)
+      start = self._mop.state.replay.allocate(
+        len(words), lower=16, upper=32,
+      )
+      self._matmul_replay = (
+        Replay(start, words[:8]), Replay(start + 8, words[8:]),
+      )
+      for replay in self._matmul_replay: self._mop.load(replay)
+      sync(self.k)
+
+    # One MOP iteration executes all 16 face products. HiFi2 adds a second
+    # iteration for its second fidelity phase. Split replays keep MOP-to-Replay
+    # FIFO pressure bounded; they are adjacent and contain no throttle NOPs.
+    first, second = self._matmul_replay
+    clear_a = TT.TTSETRWC(1, 0, 0, 0, 0, 0xF)
+    self._mop.configure(LoopTemplate(
+      outer=1, inner=2 if hifi else 1,
+      loop=first.play_word(), alternate=second.play_word(),
+      end0=clear_a, last=second.play_word(), outer_last=second.play_word(),
+    ))
+    self._mop.run()
+    self._issue(TT.TTSETRWC(2, 0, 0, 0, 0, 0xF))
+    return self
 
   def _transpose_row_result(self):
     self._issue(TT.TTSETRWC(0, 4, 0, 0, 0, 3))
