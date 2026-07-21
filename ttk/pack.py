@@ -104,9 +104,8 @@ class Pack:
       self._issue(TT.TTWRCFG(12, 0, address))
       self._set_dma_reg16(25, high); self._issue(TT.TTDMANOP())
 
-  def _move(self, output_cb, tile, scalar):
+  def _move_acquired(self, output_cb, tile, scalar):
     tile = self.dst.check(tile)
-    sem_wait(self.k, Sem.MATH_PACK, SemWait.STALL_ON_ZERO, Stall.TDMA)
     CB.reserve_back(self.k, output_cb)
     self._configure(output_cb, self.dst.fp32, scalar)
     self._destination(tile, output_cb)
@@ -114,10 +113,20 @@ class Pack:
     self._write_cfg(_Cfg.DESTINATION_OFFSET, 0)
     stall(self.k, Stall.CFG, Wait.PACK0); self._mop.run()
     stall(self.k, Stall.SYNC, Wait.PACK0); sync(self.k)
+    CB.push_back(self.k, output_cb)
+    return self
+
+  def _release_dst(self):
     # Full-Dst handoff: packing is complete, so invalidate Dst before returning
     # ownership to math. FPU assignment writes define it again before SFPU reads.
     self._issue(TT.TTZEROACC(3, int(self.dst.fp32), 0, 1, 0))
-    CB.push_back(self.k, output_cb); sem_get(self.k, Sem.MATH_PACK)
+    sem_get(self.k, Sem.MATH_PACK)
+    return self
+
+  def _move(self, output_cb, tile, scalar):
+    sem_wait(self.k, Sem.MATH_PACK, SemWait.STALL_ON_ZERO, Stall.TDMA)
+    self._move_acquired(output_cb, tile, scalar)
+    self._release_dst()
     return self
 
   def move(self, output_cb, *, tile):
@@ -125,3 +134,12 @@ class Pack:
 
   def move_scalar(self, output_cb, *, tile):
     return self._move(output_cb, tile, True)
+
+  def move_tiles(self, output_cb, *, tiles):
+    tiles = tuple(tiles)
+    if not tiles: raise ValueError("move_tiles requires at least one Dst tile")
+    for tile in tiles: self.dst.check(tile)
+    sem_wait(self.k, Sem.MATH_PACK, SemWait.STALL_ON_ZERO, Stall.TDMA)
+    for tile in tiles: self._move_acquired(output_cb, tile, False)
+    self._release_dst()
+    return self

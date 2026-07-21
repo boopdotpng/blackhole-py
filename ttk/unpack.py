@@ -229,6 +229,24 @@ class Unpack:
   def move(self, source_cb, target, tilize=False, *, tile=None):
     return self._move(source_cb, target, tilize, tile)
 
+  def move_l1(self, dtype, address, target=UnpackTarget.SRCA):
+    """Present one face-tilized tile from a persistent L1 address."""
+    if not isinstance(dtype, DType):
+      raise TypeError("L1 unpack dtype must be a DType")
+    if type(address) is not int or address < 0:
+      raise ValueError("L1 unpack address must be a non-negative integer")
+    if target != UnpackTarget.SRCA:
+      raise ValueError("persistent L1 unpack currently supports only SrcA")
+
+    engine = self._configure_l1(dtype, target, address, 256)
+    self._issue(TT.TTSETADCXX(engine + 1, 255, 0))
+    self._issue(TT.TTSETADCZW(3, 0, 0, 0, 0, 0xF))
+    stall(self.k, Stall.UNPACK, Wait.TRISC_CFG | Wait.SRCA_CLR)
+    self._mop.run()
+    stall(self.k, Stall.UNPACK, Wait.UNPACK0)
+    sem_get(self.k, Sem.UNPACK_SYNC); sync(self.k)
+    return self
+
   def move_pair(self, source_a_cb, source_b_cb):
     return self._move_pair(source_a_cb, source_b_cb, _PAIR_MOP)
 
