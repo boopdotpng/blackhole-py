@@ -8,7 +8,7 @@ All shapes in this document distinguish between:
 - **Physical storage shape:** the dense allocation, including padding needed
   because every shard has the same stride.
 
-The current prefill bucket is 1024 tokens, the embedding dimension is 2048,
+The fixed prefill capacity is 1024 tokens, the embedding dimension is 2048,
 and one token row therefore occupies two 32x32 BF16 tiles.
 
 ## Prefill 118-core token layout
@@ -134,32 +134,28 @@ tiles, so both tiles must contribute to the same 2048-element sum of squares.
 
 #### Prefill
 
-Status: implemented with `valid_s` and buckets 128, 256, 512, and 1024.
+Status: implemented with a fixed 1024-token capacity and runtime `valid_s`.
 
 ```text
 x/output logical:        BF16[valid_s, 2048]
-x/output allocated:      BF16[bucket, 2048]
+x/output allocated:      BF16[1024, 2048]
+x/output physical:       (118, 18, 32, 32)
 
 weight logical:          BF16[2048]
 weight tiled:            (2, 32, 32), globally addressed
 ```
 
-The prefill program selects a tuned core count for each bucket. The logical
-shape remains unchanged; only the number and capacity of DRAM shards vary:
+RMSNorm uses the embedding output's existing 118-core token sharding, so the
+two operations compose without a reshard:
 
 ```text
-valid_s     bucket   cores   token capacities/core   physical storage
--------     ------   -----   ---------------------   ----------------
-2..128      128      64      64x2                    (64, 4, 32, 32)
-129..256    256      64      64x4                    (64, 8, 32, 32)
-257..512    512      73      1x8 + 72x7              (73, 16, 32, 32)
-513..1024   1024     73      2x15 + 71x14            (73, 30, 32, 32)
+cores 0..79:    80 cores x 9-token capacity
+cores 80..117:  38 cores x 8-token capacity
 ```
 
 For prefill, every RISC computes
 `local_count = clamp(valid_s - token_start, 0, token_capacity)`. Padded rows
-are never read or written and downstream bucketed kernels must also ignore
-them.
+are never read or written and downstream kernels must also ignore them.
 
 #### Decode
 
@@ -203,8 +199,8 @@ decode:
 token_body(local_token):
     BRISC -- input DMA:
         read the two x tiles from sharded DRAM -> x_cb
-        issue them as one paired transaction through bucket 512
-        serialize them at bucket 1024 to avoid NoC/DRAM saturation
+        issue them as one paired transaction for decode
+        serialize them for fixed-capacity prefill to avoid NoC/DRAM saturation
 
     TRISC0 -- unpack:
         unpack x tile 0 from x_cb       -> SrcA
@@ -265,21 +261,19 @@ the circular buffers provide backpressure between stages. Prefill capacity is
 compiled into each core image while `valid_s` supplies the runtime loop bound.
 The one-core decode specialization invokes the same token body directly.
 
-Final 101-launch hardware measurements using the real
-`model.layers.0.input_layernorm.weight`:
+The fixed-capacity implementation retains the optimized RMSNorm instruction
+and dataflow body. Existing hardware measurements using the real
+`model.layers.0.input_layernorm.weight` include:
 
 ```text
-valid_s / bucket   cores   min / p10 / median / p90 latency
-----------------   -----   --------------------------------
-1 / 1              1       4.787 / 4.795 / 4.804 / 4.844 us
-128 / 128          64      9.176 / 9.224 / 9.316 / 9.478 us
-256 / 256          64      11.872 / 12.070 / 12.274 / 12.584 us
-512 / 512          73      17.790 / 18.102 / 18.584 / 19.173 us
-1024 / 1024        73      28.273 / 28.564 / 28.995 / 29.504 us
+mode                valid_s / capacity   cores   median latency
+------------------  ------------------   -----   --------------
+decode              1 / 1                1       4.804 us
+prefill             1024 / 1024          118     32.401 us
 ```
 
-Decode is bit-exact. Across the prefill buckets, every non-exact value differs
-from the fused FP32 CPU expression by one BF16 ULP at most
+Decode is bit-exact. Across the measured prefill lengths, every non-exact
+value differs from the fused FP32 CPU expression by one BF16 ULP at most
 (`max_abs = 0.000976562`, worst `relative_L2 = 8.8913e-6`, PCC = 1.0). At
 1024 tokens, 2,097,144 of 2,097,152 values are exact.
 
@@ -301,57 +295,119 @@ device launch floor.
 ```text
 RTX 5090  F.rms_norm       6.02 us  ██████
 RTX 5090  torch.compile   19.94 us  ████████████████████
-Blackhole 73 cores        29.00 us  █████████████████████████████
+Blackhole 118 cores       32.40 us  ████████████████████████████
 RTX 5090  eager exact     40.80 us  █████████████████████████████████████████
-Blackhole 64 cores        41.80 us  ██████████████████████████████████████████
 ```
 
-The tuned Blackhole path is about 1.45x slower than the exact `torch.compile`
-expression and 4.8x slower than the 5090 native fused RMSNorm. Relative to the
-original 118-core Blackhole kernel's 36.589 us median, it is 20.8% faster.
-Forcing the optimized implementation back to 118 cores gives 32.185 us median,
-so both instruction/dataflow improvements and the lower-contention 73-core
-split contribute.
+The retained optimized 118-core path is faster than the original 118-core
+kernel's 36.589 us median. It deliberately gives up the previous 73-core
+shape tuning so embedding and RMSNorm share one fixed prefill layout.
 
 ### Attention
 
-Status: planned. The prefill and decode paths have materially different
-matrix shapes and should use different matmul schedules.
+Status: decode Q/K/V projection implemented; prefill and the remaining
+attention kernels are planned. Prefill and decode have materially different
+matrix shapes and use different schedules.
 
 #### QKV projection matmuls
 
 ##### Prefill
 
 ```text
-x: (valid_s, 2048), allocated to bucket rows
+x: (valid_s, 2048), allocated to 1024 rows
 
 Q = x @ Wq.T: (valid_s, 2048) -> (32, valid_s, 64)
 K = x @ Wk.T: (valid_s,  512) -> ( 8, valid_s, 64)
 V = x @ Wv.T: (valid_s,  512) -> ( 8, valid_s, 64)
 ```
 
-These are matrix-matrix operations with `M = bucket`; all 118 cores should
-participate. Padded output rows must be ignored using the same `valid_s`.
+These are matrix-matrix operations with `M_tiles = ceil(valid_s / 32)` inside
+the fixed 1024-row allocation. Padded output rows must be ignored using the
+same `valid_s`.
 
 ##### Decode
 
 ```text
-x: (1, 2048)
+x:       (1, 2048) logically
+Wq:      (2048, 2048) as stored by Hugging Face
+Wk, Wv: ( 512, 2048) as stored by Hugging Face
 
-Q: (1, 2048) -> (32, 1, 64)
-K: (1,  512) -> ( 8, 1, 64)
-V: (1,  512) -> ( 8, 1, 64)
+Q = Wq @ x: (2048,)
+K = Wk @ x: ( 512,)
+V = Wv @ x: ( 512,)
 ```
 
-These are GEMVs, not one-core operations. Weight/output columns should be
-sharded across all cores while the 2048-element activation is replicated.
+These are GEMVs, not one-core operations. The implementation shards weight
+**output rows** and replicates only the two-tile activation. There is no
+weight broadcast and no physical weight transpose.
+
+```text
+Q rows:
+  cores 0..41:    18 rows/core
+  cores 42..117:  17 rows/core
+  physical weight shard stride: 18 rows x 2 tiles = 36 tiles/core
+  physical weight storage:      (118, 36, 32, 32)
+
+K or V rows:
+  cores 0..39:     5 rows/core
+  cores 40..117:   4 rows/core
+  physical weight shard stride:  5 rows x 2 tiles = 10 tiles/core
+  physical weight storage:      (118, 10, 32, 32)
+```
+
+For each owned output row `r`, a core computes exactly these two partial dot
+products and adds them:
+
+```text
+partial0 = sum(W[r,    0:1024] * x[   0:1024])
+partial1 = sum(W[r, 1024:2048] * x[1024:2048])
+y[r] = BF16(partial0 + partial1)
+```
+
+The input can be the fixed RMSNorm allocation `(1024, 2048)` with only token
+0 valid. Token 0 is physical tiles 0 and 1, so every projection core takes a
+zero-copy globally addressed view of those two tiles. Each core reads only
+its local weight shard.
+
+One packed scalar normally consumes a full tile. The NCRISC compacts the
+local scalars into logical row 0 of a single output tile per core:
+
+```text
+Q compact output:   BF16[118, 18], physical (118, 1, 32, 32)
+K/V compact output: BF16[118,  5], physical (118, 1, 32, 32)
+```
+
+The smaller Q shards leave slot 17 unused; the smaller K/V shards leave slot
+4 unused. Concatenating only each core's valid slots reconstructs the model's
+ordinary 2048- or 512-element logical vector. This compact sharded layout is
+also the input layout expected by the future sharded RoPE/cache kernels.
+
+The implementation uses both BF16 ELWMUL fidelity phases and FP32 Dst, then
+performs FP32 SFPU accumulation. There is no LoFi projection path. Real
+layer-0 weights validate against a NumPy FP32-sum forward reference:
+
+```text
+Q: 30.417 us median, relative L2 0.00647, PCC 0.999995109
+K: 14.612 us median, relative L2 0.00679, PCC 0.999993437
+V: 14.647 us median, relative L2 0.00709, PCC 0.999993998
+```
+
+The former one-phase ELWMUL path measured roughly 2.8--2.9% relative L2 and
+is intentionally removed. RMSNorm remains on its exact SFPU implementation.
 
 #### RoPE
+
+The host computes the Llama 3 cosine and sine tables once in FP32 and uploads
+them with BF16 round-to-nearest-even as compact global buffers. Each has
+logical shape `(8192, 64)` and
+occupies 1 MiB. One physical tile holds 16 positions; position `p` selects tile
+`p // 16` and logical rows `2*(p % 16)` and `2*(p % 16)+1`. The device RoPE
+kernels only read these resident values and apply the split-half rotation.
 
 ##### Prefill
 
 Apply RoPE to all `valid_s` Q/K positions. Position IDs cover the full prompt,
-and padded bucket rows are skipped.
+and padded capacity rows are skipped.
 
 ```text
 Q: (32, valid_s, 64)
@@ -360,8 +416,49 @@ K: ( 8, valid_s, 64)
 
 ##### Decode
 
-Apply RoPE only to the newly generated Q/K vectors using the current absolute
-position. This is 32 Q heads and 8 K heads at one position.
+Status: implemented as one fused 40-core launch. Workers 0--31 each own one Q
+head and workers 32--39 each own one K/V head. V bypasses the RoPE arithmetic
+but shares K's compact-to-head-major gather.
+
+```text
+input Q: compact BF16[118, 18]  -> output Q: BF16[32, 64]
+input K: compact BF16[118,  5]  -> output K: BF16[ 8, 64]
+input V: compact BF16[118,  5]  -> output V: BF16[ 8, 64]
+```
+
+For every head, the BRISC maps each feature back to the projection core and
+slot that produced it. For a global compact tile `t`, the DRAM location is:
+
+```text
+bank       = t % 7
+bank_row   = t // 7
+byte_addr  = projection_base + bank_row * 2048
+slot 0..15 byte offset = 2 * slot
+slot 16/17 byte offset = 512 + 2 * (slot - 16)
+```
+
+Each Q worker reads the few complete aligned projection tiles intersecting its
+64-element head. Each K/V worker reads the matching compact K and V tiles and
+gathers both heads locally in L1. It applies RoPE only to K and writes V
+unchanged in ordinary head-major form. Every worker also reads one cosine and
+one sine tile for `start_pos`; each table tile supplies 16 runtime positions.
+
+TRISC0/FPU moves four ordinary BF16 tiles into Dst: `x`,
+`rotate_half(x)`, `cos`, and `sin`. SFPU expands the BF16 operands into full
+FP32 lane registers and evaluates:
+
+```text
+result = x * cos + rotate_half(x) * sin
+```
+
+Only the final Q/K result is rounded to BF16, stored, and packed; V remains
+bit-exact to the compact projection output. Simulator and real Blackhole
+validation at positions 0, 1, 127, and 8191 agree with each other exactly.
+Relative to an FP32 CPU expression with BF16 RNE output, the worst measured
+Q/K relative L2 is `2.003e-4` and the worst absolute difference is
+`0.00390625`; the few differences are BF16 midpoint tie handling. Hardware
+latency is 12.114 us minimum / 12.172 us median across 20 measured launches,
+up from roughly 10.3 us before adding V reassembly.
 
 #### KV-cache write
 
@@ -376,12 +473,37 @@ V cache update: (8, valid_s, 64)
 
 ##### Decode
 
-Append one K/V vector per KV head at cache position `kv_len - 1`:
+Status: implemented for the one-token decode path. Append one K/V vector per
+KV head at `start_pos`:
 
 ```text
-K cache update: (8, 1, 64)
-V cache update: (8, 1, 64)
+K/V input:       BF16[8, 64]
+K/V cache:       BF16[8, 8192, 64] each
+cache update:    cache[:, start_pos, :]
 ```
+
+The logical caches remain head-major `[8,8192,64]`, but their physical layout
+is ordinary 2-D tiles:
+
+```text
+physical view = [8 heads, 256 time blocks, 2 feature halves, 32, 32]
+tile(h, p, f) = h * 512 + (p // 32) * 2 + f
+row(h, p, f)  = p % 32
+f = 0 for features 0:32, f = 1 for features 32:64
+```
+
+Eight BRISC-only workers divide the update by KV head. Worker `h` reads one K
+and one V source tile, then writes the two 32-element feature halves to one
+row of two standard cache tiles. Each row is two aligned 32-byte physical face
+segments. The workers own disjoint cache regions, so there is no
+synchronization or write collision. The kernel never reads the cache and does
+not overwrite another token, including when `start_pos` crosses positions
+15/16, 31/32, or reaches 8191.
+
+Simulator and hardware validation initialize both complete caches with a
+sentinel, update positions 0, 1, 15, 16, 31, 32, 127, and 8191, then verify the
+written rows and every untouched cache element. Blackhole latency is
+3.635 us minimum / 3.674 us median in the boundary-validation run.
 
 #### Grouped-query head mapping
 
@@ -401,7 +523,7 @@ scores: (32, valid_s, valid_s)
 scores = (Q @ K.T) * (1 / sqrt(64))
 ```
 
-The allocation uses the selected sequence bucket in both score dimensions.
+The allocation reserves the fixed prefill capacity in both score dimensions.
 
 ##### Decode
 
@@ -411,7 +533,32 @@ K cache: ( 8, kv_len, 64), shared 4:1
 scores:  (32, 1, kv_len)
 ```
 
-Parallelism comes from heads and shards of the KV-cache length.
+Status: implemented as one eight-worker launch, including the `0.125` scale.
+Worker `hk` owns KV head `hk` and query heads `4*hk : 4*hk+4`. For each
+32-token history block it computes:
+
+```text
+Q0[4,32] @ K0[32,32].T + Q1[4,32] @ K1[32,32].T
+```
+
+The two matrix products use HiFi2 BF16 operand multiplication and accumulate
+into the same FP32 Dst tile. SFPU then applies the exact `1/8` scale in FP32.
+A full K transpose requires two pieces: the unpacker transposes each 16x16
+face, and transpose-aware FPU address modifiers swap the off-diagonal faces.
+
+Scores use physical storage `[8,256,32,32]`; rows 0--3 of each tile are the
+four Q heads sharing that KV head. The runtime launches
+`ceil(kv_len/32)` blocks. Columns after `kv_len` in the final tile are not
+valid and must be excluded by softmax.
+
+Hardware validation results:
+
+| `kv_len` | blocks | median latency | relative L2 | PCC |
+|---:|---:|---:|---:|---:|
+| 1 | 1 | 20.959 us | 0.004292 | 0.999994225 |
+| 33 | 2 | 32.101 us | 0.003935 | 0.999995757 |
+| 127 | 4 | 54.869 us | 0.003959 | 0.999995628 |
+| 8192 | 256 | 2919.036 us | 0.003952 | 0.999995693 |
 
 #### Attention mask
 
@@ -422,7 +569,7 @@ rows are not executed.
 
 ##### Decode
 
-There are no future cached positions, so only invalid/padded KV-bucket entries
+There are no future cached positions, so only invalid/padded KV-capacity entries
 need masking. The real reduction length is `kv_len`.
 
 #### Softmax
@@ -473,7 +620,7 @@ context:       (32, 1, 64) -> (1, 2048)
 (valid_s, 2048) @ (2048, 2048) -> (valid_s, 2048)
 ```
 
-This is a bucketed matrix-matrix operation using all cores.
+This is a fixed-capacity matrix-matrix operation using all cores.
 
 ##### Decode
 
@@ -487,7 +634,7 @@ This is an all-core GEMV with output columns sharded across cores.
 
 #### Prefill
 
-Elementwise add two `BF16[valid_s, 2048]` tensors using the selected bucket
+Elementwise add two `BF16[valid_s, 2048]` tensors in the fixed allocation
 layout and skipping padded rows.
 
 #### Decode
@@ -513,7 +660,7 @@ gate = x @ W_gate.T: (valid_s, 2048) @ (2048, 8192)
 up   = x @ W_up.T:   (valid_s, 2048) @ (2048, 8192)
 ```
 
-Both outputs are bucketed `BF16[valid_s, 8192]` tensors.
+Both outputs are fixed-capacity `BF16[valid_s, 8192]` tensors.
 
 ##### Decode
 
@@ -564,7 +711,7 @@ all cores, followed by the required cross-core accumulation.
 
 #### Prefill
 
-Elementwise add two `BF16[valid_s, 2048]` tensors in the selected bucket.
+Elementwise add two `BF16[valid_s, 2048]` tensors in the fixed allocation.
 
 #### Decode
 
@@ -573,7 +720,7 @@ Elementwise add two `BF16[1, 2048]` tensors on one core until fused.
 ## Final RMSNorm
 
 Prefill and decode use the same implemented RMSNorm code generator. Prefill
-selects a bucket and runtime `valid_s`; decode selects the loop-free one-core
+uses the fixed capacity and runtime `valid_s`; decode selects the loop-free one-core
 image.
 
 ## Logits projection

@@ -32,7 +32,7 @@ Runtime symbols:
 
 - `S`: valid tokens in this invocation. Initially `0<S<1024` for prefill and
   `S=1` for decode.
-- `S_bucket=1024`: fixed physical token capacity of the initial prefill path.
+- `S_capacity=1024`: fixed physical token capacity of the initial prefill path.
 - `start_pos`: absolute position of the first input token.
 - `T = start_pos + S`: valid KV-cache length after this invocation.
 - Batch size is one. Batch dimensions are omitted below.
@@ -48,14 +48,14 @@ sequence length.
 - A token activation has 2048 elements, so one decode activation is two densely
   packed 1024-element vector tiles.
 - Prefill has `S=prompt_length<1024`. Its fixed 1024-entry ID buffer is one
-  tile, but only `[0:S)` is valid. The physical bucket size and valid length
+  tile, but only `[0:S)` is valid. The physical capacity and valid length
   are separate launch parameters.
 - Matrix-oriented kernels pad each matrix axis as required by their layout.
   Padding is never promoted to a real token and never participates in a
   reduction.
 
 Treating all 1024 entries as valid during one-token decode would run a full
-bucket prefill, not a decode. All launches therefore receive a logical valid
+capacity prefill, not a decode. All launches therefore receive a logical valid
 length even when their buffers are tile padded.
 
 ## Numerical and tiling contract
@@ -106,6 +106,7 @@ new sequence; stale positions at or beyond `T` are never read.
 
 This requires **zero Tenstorrent runtime kernels**. Precompute it on the host
 while loading the model, convert the results to the device's tiled BF16 layout,
+rounding FP32 to BF16 with round-to-nearest-even as in the tinygrad reference,
 and upload the two immutable tables to DRAM once. Each table is
 `8192 * 64 * 2` bytes, so cosine plus sine occupy 2 MiB total.
 
@@ -135,6 +136,21 @@ pairs. The device never computes frequencies, wavelengths, smoothing, angles,
 cosine, or sine. K11 and K12 only calculate the address of table row
 `start_pos+s`, read its two 64-element BF16 rows, and apply the rotation.
 
+The logical `(8192, 64)` arrays are uploaded compactly, without padding each
+position to a tile. Flattened row-major groups of 1024 elements become one
+32x32 device tile, so each cache tile holds 16 positions:
+
+```text
+cache tile = p // 16
+first tile row  = 2 * (p % 16)       # features 0..31
+second tile row = first tile row + 1 # features 32..63
+```
+
+`examples/llama3.py::upload_rope_cache` queues these one-time BF16 DRAM
+uploads. The 8192-token inference cap is intentional and mirrors the reference
+implementation; it is separate from the model config's larger scaled context
+advertisement.
+
 ## Separate decode and prefill paths
 
 The two paths implement the same transformer equations and use the shared
@@ -161,8 +177,10 @@ Important logical shapes for one layer are:
 | logits | `[128256]` | 126 dense payloads if materialized |
 
 The persistent K and V cache each contain logical shape `[8,8192,64]` per
-layer. Only `[8,0:T,64]` is readable. Their physical layout should be chosen
-for attention reads; it need not be a densely flattened tensor.
+layer. Only `[8,0:T,64]` is readable. The implemented physical layout is
+`[8,256,2,32,32]`: 256 blocks of 32 tokens and two 32-feature tiles per head.
+This is an ordinary tiled `[T,64]` matrix for each head, so QK can transpose K
+while unpacking and AV can consume V without a layout conversion.
 
 Decode dispatches:
 
@@ -200,28 +218,28 @@ There is no causal-mask launch in decode: K/V positions `0..T-1` are all past
 or current positions. The score/softmax kernel must still ignore storage
 columns from `T` through the end of the final 32-column tile.
 
-### Prefill path (`S=seq_len<1024`, `S_bucket=1024`)
+### Prefill path (`S=seq_len<=1024`, `S_capacity=1024`)
 
 The initial prefill implementation has one fixed 1024-token capacity and starts
 at position zero. It accepts the actual prompt length as `valid_S`, and every
 kernel processes only `[0:valid_S)`. Supporting chunked prefill, larger
-prefills, or multiple buckets is deferred.
+prefills or capacities larger than 1024 is deferred.
 
-Worst-case buffer capacities for this bucket are:
+The one fixed prefill allocation has these worst-case capacities:
 
 | Value | Physical capacity | Maximum 1024-element tiles |
 |---|---:|---:|
-| input token IDs | `[S_bucket]` | 1 |
-| activation/residual | `[S_bucket,2048]` | 2048 |
-| Q | `[S_bucket,32,64]` | 2048 |
-| new K or V | `[S_bucket,8,64]` | 512 each |
-| scores/probabilities | `[32,S_bucket,S_bucket]` | 32768 each |
-| context | `[S_bucket,32,64]` | 2048 |
-| gate, up, or hidden | `[S_bucket,8192]` | 8192 each |
+| input token IDs | `[S_capacity]` | 1 |
+| activation/residual | `[S_capacity,2048]` | 2048 |
+| Q | `[S_capacity,32,64]` | 2048 |
+| new K or V | `[S_capacity,8,64]` | 512 each |
+| scores/probabilities | `[32,S_capacity,S_capacity]` | 32768 each |
+| context | `[S_capacity,32,64]` | 2048 |
+| gate, up, or hidden | `[S_capacity,8192]` | 8192 each |
 | final hidden vector used by LM head | `[2048]` | 2 |
 | logits | `[128256]` | 126 dense payloads if materialized |
 
-The logical shapes use `S`, not `S_bucket`: for example, valid scores are
+The logical shapes use `S`, not `S_capacity`: for example, valid scores are
 `[32,S,T]`. The table shows fixed worst-case capacity if buffers are allocated
 once. The maximum score tile count assumes matrix view `[32*1024,1024]`; FP32
 scores consume 128 MiB per intermediate at full capacity. A dynamic allocator
@@ -269,7 +287,7 @@ valid(s, key_position) = key_position <= start_pos + s
 ```
 
 It also masks key padding from `T` through the final tile boundary. Query rows
-`[valid_S:S_bucket)` are invalid and should not be computed or stored. With
+`[valid_S:S_capacity)` are invalid and should not be computed or stored. With
 this initial prefill `start_pos=0` and `T=S`, so this is the usual
 lower-triangular causal mask. The formula is already suitable for a later
 chunked-prefill implementation with `start_pos>0`.
@@ -378,6 +396,25 @@ v_new[S, Hkv, Dh] = attn_in[S, D] @ Wv[D, Hkv*Dh]
 Each is a general tiled matmul with FP32 accumulation and BF16 output. Write
 directly in projection-native `[S, heads, 64]` order.
 
+The current decode bootstrap specializes `S = 1` as three fixed GEMVs. HF
+weights remain in their stored `[out_features, in_features]` order, so the
+device computes `weight @ x` directly; upload does not transpose them. Output
+rows, rather than weight tiles, are assigned to cores:
+
+```text
+Q: 2048 rows -> 42 cores x 18 rows + 76 cores x 17 rows
+K:  512 rows -> 40 cores x  5 rows + 78 cores x  4 rows
+V:  512 rows -> 40 cores x  5 rows + 78 cores x  4 rows
+```
+
+Only the 2048-element normalized activation is replicated. Each output row is
+the sum of two 1024-element tile dot products. Results are kept sharded and
+compacted into one tile per core (`[118,18]` for Q and `[118,5]` for K/V),
+with invalid final slots skipped by downstream kernels. Products use HiFi2
+ELWMUL with FP32 Dst, followed by FP32 SFPU accumulation. The inaccurate
+one-phase multiplication path is not available; RMSNorm remains exact on its
+SFPU path.
+
 #### 1C. Rotary position embedding
 
 **K11 `rope_q`**
@@ -429,6 +466,12 @@ Input shapes per query head are `[S, 64] @ [64, T]`; output is `[S, T]`.
 Accumulate in FP32. `transpose(...)` describes the mathematical read pattern;
 the unpacker should feed cache tiles in the required orientation. Do not
 launch a K transpose and do not repeat K four times for GQA.
+
+For decode, K14 and K15 are implemented together on eight workers. Each
+worker handles one KV head and its four Q heads, producing one FP32 score tile
+per 32 cached tokens. The physical output view is `[8,256,32,32]`, with only
+rows 0--3 live in each tile. Both 32-feature products use HiFi2 and accumulate
+in FP32 before SFPU multiplies by `0.125`.
 
 **K15 `attention_scale`**
 
