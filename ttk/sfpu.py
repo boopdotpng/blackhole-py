@@ -214,6 +214,19 @@ class SfpuProgramBuilder:
     )
     return self
 
+  def round_bf16(self, value, *, into=None):
+    """Round an FP32 lane value to BF16 while retaining FP32 register form."""
+    self._read_index(value)
+    result = value if into is None else into
+    if result is not value: self._write_index(result)
+    self._emit(
+      TT.TTSFPSTOCHRND(
+        0, 0, 0, self._read_index(value), self._write_index(result), 1,
+      ),
+      reads=(value,), writes=(result,),
+    )
+    return result
+
   def load_float(self, value, *, into=None):
     into = self._destination(into, "constant")
     bits = _float_bits(value)

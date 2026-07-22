@@ -117,7 +117,7 @@ def run_hardware(operation):
 
     rows, columns = np.indices(SHAPE)
     if operation == "row_mul":
-      # Keep the structural broadcast test exact under LoFi FPU multiply.
+      # Keep the structural broadcast test exact under FPU multiply.
       values = (
         (rows % 7) - 3 + (columns % 4) / 4
       ).astype(np.float32)
@@ -176,7 +176,7 @@ def run_hardware(operation):
       program = _reduce(src, dst, operation)
     device.queue(program)
     readback = device.queue_read(dst)
-    timestamps = device.run()
+    timestamps = device.run(timeout=5.0)
     actual = dst.to_numpy(readback.result())
     comparison = (
       np.array_equal(actual[:, 0], expected[:, 0])

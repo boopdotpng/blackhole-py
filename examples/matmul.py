@@ -8,7 +8,8 @@ from program import Buffer, DType, Program
 SHAPE = (32, 32)
 
 
-def matmul(left: Buffer, right: Buffer, output: Buffer, *, hifi=False) -> Program:
+def matmul(left: Buffer, right: Buffer, output: Buffer, *,
+           right_transpose=False) -> Program:
   buffers = (left, right, output)
   if left.dtype is not DType.BF16 or right.dtype is not DType.BF16:
     raise ValueError("matmul example requires BF16 inputs")
@@ -26,8 +27,12 @@ def matmul(left: Buffer, right: Buffer, output: Buffer, *, hifi=False) -> Progra
   p.brisc.noc.read_into_cb(left, 0, left_cb)
   p.brisc.noc.read_into_cb(right, 0, right_cb)
 
-  p.unpack.move_matmul(left_cb, right_cb)
-  p.fpu.matmul(dst_tile=0, hifi=hifi).publish()
+  p.unpack.move_matmul(
+    left_cb, right_cb, right_transpose=right_transpose,
+  )
+  p.fpu.matmul(
+    dst_tile=0, right_transpose=right_transpose,
+  ).publish()
   p.pack.move(output_cb, tile=0)
 
   p.ncrisc.noc.write_from_cb(output_cb, output, 0)
@@ -59,10 +64,9 @@ def _fidelity_part(values, mask):
   return np.where(bf16 >> 15, -magnitude, magnitude)
 
 
-def _fidelity_reference(left, right, *, hifi):
-  phases = 2 if hifi else 1
+def _fidelity_reference(left, right):
   result = np.zeros(SHAPE, dtype=np.float32)
-  for srca_mask, srcb_mask in _FIDELITY_MASKS[:phases]:
+  for srca_mask, srcb_mask in _FIDELITY_MASKS:
     # MVMUL computes SrcB @ SrcA: left is SrcB and right is SrcA.
     result += (
       _fidelity_part(left, srcb_mask) @
@@ -71,7 +75,7 @@ def _fidelity_reference(left, right, *, hifi):
   return result
 
 
-def run_hardware(*, hifi=False, f32_output=False):
+def run_hardware(*, f32_output=False, right_transpose=False):
   device = Device()
   try:
     device.init_device()
@@ -88,22 +92,27 @@ def run_hardware(*, hifi=False, f32_output=False):
     )
     left_reference = left.to_numpy(left_data)
     right_reference = right.to_numpy(right_data)
-    exact = left_reference @ right_reference
+    exact = left_reference @ (
+      right_reference.T if right_transpose else right_reference
+    )
     fidelity_expected = _fidelity_reference(
-      left_reference, right_reference, hifi=hifi,
+      left_reference,
+      right_reference.T if right_transpose else right_reference,
     )
 
     device.write(left, left_data)
     device.write(right, right_data)
-    device.queue(matmul(left, right, output, hifi=hifi))
+    device.queue(matmul(
+      left, right, output, right_transpose=right_transpose,
+    ))
     readback = device.queue_read(output)
-    timestamps = device.run()
+    timestamps = device.run(timeout=5.0)
     actual = output.to_numpy(readback.result())
 
     pcc, relative_l2 = _quality(actual, exact)
     model_pcc, model_relative_l2 = _quality(actual, fidelity_expected)
-    minimum_pcc = 0.9999 if hifi else 0.999
-    maximum_relative_l2 = 0.01 if hifi else 0.05
+    minimum_pcc = 0.9999
+    maximum_relative_l2 = 0.01
     maximum_model_relative_l2 = 0.0005 if f32_output else maximum_relative_l2
     if (
       not np.all(np.isfinite(actual)) or
@@ -121,9 +130,10 @@ def run_hardware(*, hifi=False, f32_output=False):
       )
 
     print("PASS matmul")
-    print(f"fidelity: {'HiFi2' if hifi else 'LoFi'}")
+    print("fidelity: HiFi2")
     print("accumulation: FP32")
     print(f"output: {'F32' if f32_output else 'BF16'}")
+    print(f"right transpose: {right_transpose}")
     print(f"kernel: {timestamps[-1].us:.3f} us")
     print(f"exact PCC: {pcc:.6f}")
     print(f"exact relative L2: {relative_l2:.6f}")
@@ -135,7 +145,9 @@ def run_hardware(*, hifi=False, f32_output=False):
 
 if __name__ == "__main__":
   parser = argparse.ArgumentParser()
-  parser.add_argument("--hifi", action="store_true")
   parser.add_argument("--f32-output", action="store_true")
+  parser.add_argument("--transpose-right", action="store_true")
   args = parser.parse_args()
-  run_hardware(hifi=args.hifi, f32_output=args.f32_output)
+  run_hardware(
+    f32_output=args.f32_output, right_transpose=args.transpose_right,
+  )

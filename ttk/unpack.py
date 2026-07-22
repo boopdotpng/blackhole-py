@@ -250,7 +250,7 @@ class Unpack:
   def move_pair(self, source_a_cb, source_b_cb):
     return self._move_pair(source_a_cb, source_b_cb, _PAIR_MOP)
 
-  def move_matmul(self, left_cb, right_cb):
+  def move_matmul(self, left_cb, right_cb, *, right_transpose=False):
     self.dst.require_fp32()
     if left_cb.dtype is not DType.BF16 or right_cb.dtype is not DType.BF16:
       raise ValueError("matmul unpack currently requires BF16 inputs")
@@ -262,7 +262,7 @@ class Unpack:
     # presents all four faces of each tile in one UNPACR operation.
     self._configure(
       right_cb, UnpackTarget.SRCA, False, None,
-      commit=False, configure_mop=False,
+      commit=False, configure_mop=False, transpose=right_transpose,
     )
     self._configure(
       left_cb, UnpackTarget.SRCB, False, None,
@@ -287,6 +287,35 @@ class Unpack:
 
   def move_pair_rows(self, source_a_cb, source_b_cb):
     return self._move_pair(source_a_cb, source_b_cb, _COLUMN_PAIR_MOP)
+
+  def move_l1_pair_rows(self, source_a_cb, source_b_address,
+                        source_b_dtype=DType.BF16):
+    """Pair a streamed tile with persistent logical-column-0 row values."""
+    if source_b_dtype is not DType.BF16:
+      raise ValueError("persistent row values currently require BF16")
+    if type(source_b_address) is not int or source_b_address < 0:
+      raise ValueError("persistent row-value address must be non-negative")
+    CB.wait_front(self.k, source_a_cb)
+    stall(self.k, Stall.UNPACK, Wait.SRCA_CLR | Wait.SRCB_CLR)
+    self._configure(
+      source_a_cb, UnpackTarget.SRCA, False, None,
+      commit=False, configure_mop=False,
+    )
+    self._configure_l1(
+      source_b_dtype, UnpackTarget.SRCB, source_b_address, 256,
+      commit=False, configure_mop=False,
+    )
+    self._commit_config(_BASE[UNPACKER0])
+    self._mop.configure(_COLUMN_PAIR_MOP)
+    self._issue(TT.TTSETADCXX(1, 255, 0))
+    self._issue(TT.TTSETADCXX(2, 255, 0))
+    self._issue(TT.TTSETADCZW(3, 0, 0, 0, 0, 0xF))
+    stall(self.k, Stall.UNPACK, Wait.TRISC_CFG)
+    self._mop.run()
+    stall(self.k, Stall.UNPACK, Wait.UNPACK0 | Wait.UNPACK1)
+    sem_get(self.k, Sem.UNPACK_SYNC); sync(self.k)
+    CB.pop_front(self.k, source_a_cb)
+    return self
 
   def _move_pair(self, source_a_cb, source_b_cb, mop):
     CB.wait_front(self.k, source_a_cb)
@@ -365,8 +394,8 @@ class Unpack:
     return self
 
   def move_row_reduce(self, source_cb, scaler_address, *, maximum):
-    if source_cb.dtype is not DType.BF16:
-      raise ValueError("row reduce unpack currently requires BF16 input")
+    if source_cb.dtype not in (DType.BF16, DType.F32):
+      raise ValueError("row reduce unpack requires BF16 or F32 input")
     CB.wait_front(self.k, source_cb)
     stall(self.k, Stall.UNPACK, Wait.SRCA_CLR | Wait.SRCB_CLR)
     if maximum:
