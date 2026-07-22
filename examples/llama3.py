@@ -16,6 +16,7 @@ PREFILL_BUCKET = 1024
 RMSNORM_BUCKETS = (1, 128, 256, 512, 1024)
 EMBEDDING_TILES = EMBED_DIM // 1024
 LLAMA_CORES = 118
+RMSNORM_CORE_COUNTS = {1: 1, 128: 64, 256: 64, 512: 73, 1024: 73}
 TOKENS_PER_CORE, NINE_TOKEN_CORES = divmod(PREFILL_BUCKET, LLAMA_CORES)
 CORE_TOKEN_COUNTS = (
   (TOKENS_PER_CORE + 1,) * NINE_TOKEN_CORES +
@@ -55,35 +56,33 @@ def _sfpu_mul(words, left, right, output, modifier=0):
 def _rms_square_accumulate(*, reset):
   setup = _sfpu_float_words(LReg.L7, 0.0) if reset else ()
   return SfpuProgram(tuple(setup), (
-    TT.TTSFPLOAD(LReg.L0, SfpuFormat.FP32, 7, 0), TT.TTSFPNOP(),
-    TT.TTSFPMUL(LReg.L0, LReg.L0, LReg.ZERO, LReg.L0, 0), TT.TTSFPNOP(),
-    TT.TTSFPADD(LReg.ONE, LReg.L7, LReg.L0, LReg.L7, 0), TT.TTSFPNOP(),
+    TT.TTSFPLOAD(LReg.L0, SfpuFormat.FP32, 7, 0),
+    TT.TTSFPMAD(LReg.L0, LReg.L0, LReg.L7, LReg.L7, 0),
   ))
 
 
 def _rms_finalize_scale():
   """Reduce 32 accumulator lanes and leave reciprocal RMS in L0."""
-  words = [
-    TT.TTSFPMOV(0, LReg.L7, LReg.L0, 0), TT.TTSFPNOP(),
-    TT.TTSFPMOV(0, LReg.L0, LReg.L1, 0), TT.TTSFPNOP(),
-  ]
-  for _ in range(7):
-    words.extend((
-      TT.TTSFPSHFT2(0, LReg.L0, LReg.L2, 3), TT.TTSFPNOP(),
-      TT.TTSFPADD(LReg.ONE, LReg.L1, LReg.L2, LReg.L1, 0), TT.TTSFPNOP(),
-      TT.TTSFPMOV(0, LReg.L2, LReg.L0, 0), TT.TTSFPNOP(),
-    ))
-  words.extend((TT.TTSFPMOV(0, LReg.L1, LReg.L0, 0), TT.TTSFPNOP()))
+  words = [TT.TTSFPMOV(0, LReg.L7, LReg.L0, 0)]
+  # Butterfly-reduce each independent eight-lane SFPU row. Cyclic rotations
+  # make the final sum a broadcast, which the transpose below needs.
+  for rotations in (4, 2, 1):
+    words.append(TT.TTSFPMOV(0, LReg.L0, LReg.L1, 0))
+    for _ in range(rotations):
+      words.extend((
+        TT.TTSFPSHFT2(0, LReg.L1, LReg.L1, 3), TT.TTSFPNOP(),
+      ))
+    _sfpu_add(words, LReg.L0, LReg.L1, LReg.L0)
   # Copy the four eight-lane row sums, then transpose the four identical
   # registers. L0..L3 become broadcasts of rows 0..3 respectively.
   for register in (LReg.L1, LReg.L2, LReg.L3):
-    words.extend((TT.TTSFPMOV(0, LReg.L0, register, 0), TT.TTSFPNOP()))
-  words.extend((TT.TTSFPTRANSP(0, 0, 0, 0), TT.TTSFPNOP()))
+    words.append(TT.TTSFPMOV(0, LReg.L0, register, 0))
+  words.append(TT.TTSFPTRANSP(0, 0, 0, 0))
   for register in (LReg.L1, LReg.L2, LReg.L3):
     _sfpu_add(words, LReg.L0, register, LReg.L0)
 
   words.extend(_sfpu_float_words(LReg.L4, 1.0 / EMBED_DIM))
-  _sfpu_mul(words, LReg.L0, LReg.L4, LReg.L0)
+  words.append(TT.TTSFPMUL(LReg.L0, LReg.L4, LReg.ZERO, LReg.L0, 0))
   words.extend(_sfpu_float_words(LReg.L4, 1e-5))
   _sfpu_add(words, LReg.L0, LReg.L4, LReg.L0)
 
@@ -92,18 +91,18 @@ def _rms_finalize_scale():
     LReg.L6, LReg.L1, LReg.L2, LReg.L3, LReg.L4, LReg.L5,
   )
   words.extend((
-    TT.TTSFPMOV(0, LReg.L0, x, 0), TT.TTSFPNOP(),
-    TT.TTSFPMOV(0, x, y, 0), TT.TTSFPNOP(),
-    TT.TTSFPSHFT(0xfff, LReg.ZERO, y, 1), TT.TTSFPNOP(),
+    TT.TTSFPMOV(0, LReg.L0, x, 0),
+    TT.TTSFPMOV(0, x, y, 0),
+    TT.TTSFPSHFT(0xfff, LReg.ZERO, y, 1),
   ))
   magic = 0x5f1110a0
   words.extend((
     TT.TTSFPLOADI(temporary, 10, magic & 0xffff),
     TT.TTSFPLOADI(temporary, 8, magic >> 16),
-    TT.TTSFPIADD(0, temporary, y, 6), TT.TTSFPNOP(),
+    TT.TTSFPIADD(0, temporary, y, 6),
   ))
   _sfpu_mul(words, x, y, temporary)
-  _sfpu_mul(words, y, temporary, temporary, 1)
+  words.append(TT.TTSFPMUL(y, temporary, LReg.ZERO, temporary, 1))
   words.extend(_sfpu_float_words(c1, 2.2825186))
   words.extend(_sfpu_float_words(c2, 2.2533049))
   _sfpu_add(words, c2, temporary, c2)
@@ -111,30 +110,50 @@ def _rms_finalize_scale():
   _sfpu_mul(words, y, temporary, y)
   _sfpu_mul(words, x, y, temporary)
   _sfpu_mul(words, y, temporary, temporary, 1)
-  _sfpu_add(words, LReg.ONE, temporary, temporary)
+  words.append(TT.TTSFPADD(
+    LReg.ONE, LReg.ONE, temporary, temporary, 0,
+  ))
   words.extend(_sfpu_float_words(half, 0.5))
   _sfpu_mul(words, y, half, half)
-  words.extend((TT.TTSFPMAD(temporary, half, y, LReg.L0, 0), TT.TTSFPNOP()))
+  words.append(TT.TTSFPMAD(temporary, half, y, LReg.L0, 0))
   return SfpuProgram((), tuple(words))
 
 
-def _rms_apply_weight():
-  """Apply the live FP32 RMS scale and the gamma tile two Dst slots ahead."""
-  nop = TT.TTSFPNOP()
+def _rms_apply_weight_pair():
+  """Apply RMS scale and gamma to two independent 32-lane footprints."""
   return SfpuProgram((), (
-    TT.TTSFPLOAD(LReg.L1, SfpuFormat.FP32, 7, 0),
-    TT.TTSFPLOAD(LReg.L2, SfpuFormat.FP32, 7, 128), nop, nop,
-    TT.TTSFPMUL(LReg.L1, LReg.L0, LReg.ZERO, LReg.L1, 0), nop, nop, nop,
-    TT.TTSFPMUL(LReg.L1, LReg.L2, LReg.ZERO, LReg.L1, 0), nop, nop, nop,
-    TT.TTSFPSTORE(LReg.L1, SfpuFormat.FP32, 7, 0), nop,
+    TT.TTSFPLOADMACRO(LReg.L1, SfpuFormat.DEFAULT, 7, 0),
+    TT.TTSFPLOAD(LReg.L2, SfpuFormat.FP32, 7, 128),
+    TT.TTSFPLOADMACRO(LReg.L3, SfpuFormat.DEFAULT, 7, 2),
+    TT.TTSFPLOAD(LReg.L4, SfpuFormat.FP32, 7, 130),
+    TT.TTSFPMUL(LReg.L1, LReg.L2, LReg.ZERO, LReg.L1, 0),
+    TT.TTSFPMUL(LReg.L3, LReg.L4, LReg.ZERO, LReg.L3, 0),
+    TT.TTSFPSTORE(LReg.L1, SfpuFormat.FP32, 7, 0),
+    TT.TTSFPSTORE(LReg.L3, SfpuFormat.FP32, 7, 2),
+    TT.TTINCRWC(0, 2, 0, 0),
   ))
 
 
-def _rms_map_acquired(sfpu, program):
+def _rms_setup_apply_macro(sfpu):
+  """Configure macro 0 to multiply each loaded value by the live L0 scale."""
+  sfpu._issue(TT.TTSFPCONFIG(LaneConfig().word(), LReg.LANE_X2, 1))
+  sfpu._issue(TT.TTSFPNOP())
+  # Backdoor destination CONFIG0 installs this multiply as template slot 0.
+  sfpu._issue(TT.TTSFPMUL(
+    LReg.L0, LReg.L0, LReg.ZERO, LReg.CONFIG0, 0,
+  ))
+  # Macro sequence 0, MAD byte: selector 4, delay 0, replace VB with the
+  # just-loaded LReg. Other sub-units are disabled.
+  sfpu._issue(TT.TTSFPCONFIG(0x8400, 4, 1))
+  sfpu._issue(TT.TTSFPCONFIG(0x0f00, 8, 1))
+
+
+def _rms_map_acquired(sfpu, program, *, iterations=8):
   start, body = sfpu._prepare(program)
   for word in program.setup_words: sfpu._issue(word)
-  if start is not None: sfpu._configure_replay_mop(start, len(body))
-  sfpu._run_faces(start, body, 4)
+  if start is not None:
+    sfpu._configure_replay_mop(start, len(body), iterations)
+  sfpu._run_faces(start, body, 4, iterations)
   sfpu._issue(TT.TTSETRWC(0, 0, 0, 0, 0, 4))
   stall(sfpu.k, Stall.SYNC, Wait.MATH | Wait.SFPU)
 
@@ -157,11 +176,11 @@ def _rmsnorm_one_token(sfpu):
   for word in _rms_finalize_scale().words: sfpu._issue(word)
   stall(sfpu.k, Stall.SYNC, Wait.MATH | Wait.SFPU)
 
-  apply = _rms_apply_weight()
+  apply = _rms_apply_weight_pair()
   _rms_select_tile(sfpu, 0)
-  _rms_map_acquired(sfpu, apply)
+  _rms_map_acquired(sfpu, apply, iterations=4)
   _rms_select_tile(sfpu, 1)
-  _rms_map_acquired(sfpu, apply)
+  _rms_map_acquired(sfpu, apply, iterations=4)
   sfpu.publish()
 
 
@@ -334,10 +353,11 @@ def embedding(token_ids: Buffer, embedding_weight: Buffer,
 
 def _validate_fused_rmsnorm(x, weight, output):
   bucket = x.shape[0] if len(x.shape) == 2 else None
-  expected_cores = 1 if bucket == 1 else LLAMA_CORES
+  actual_cores = len(x.cores)
+  expected_cores = 1 if bucket == 1 else actual_cores
   expected_counts = (
     _token_counts(bucket, expected_cores)
-    if bucket in RMSNORM_BUCKETS else None
+    if bucket in RMSNORM_BUCKETS and expected_cores else None
   )
   for name, buffer in (("x", x), ("output", output)):
     if (
@@ -351,8 +371,12 @@ def _validate_fused_rmsnorm(x, weight, output):
       raise ValueError(
         f"fused RMSNorm {name} must be BF16[bucket, {EMBED_DIM}] with "
         f"bucket in {RMSNORM_BUCKETS}, using one core for bucket 1 and "
-        f"{LLAMA_CORES} cores for prefill buckets",
+        f"1..{LLAMA_CORES} cores for prefill buckets",
       )
+  if bucket != 1 and not 1 <= expected_cores <= LLAMA_CORES:
+    raise ValueError(
+      f"fused RMSNorm prefill must use 1..{LLAMA_CORES} cores",
+    )
   if x.cores != output.cores or x.item_starts != output.item_starts:
     raise ValueError("fused RMSNorm input and output must use identical shards")
   if (
@@ -376,25 +400,32 @@ def _rmsnorm_fused_program(
   output_cb = p.cb(DType.BF16, depth=4)
   gamma_l1 = p.l1(EMBEDDING_TILES * weight.tile_size, alignment=16)
   decode = x.shape[0] == 1
+  overlap_noc = x.shape[0] <= 512
 
   # Gamma is shared model state. Fetch its two tiles once into persistent L1.
-  for tile in range(EMBEDDING_TILES):
-    p.brisc.noc.read_tile(
-      weight, tile, gamma_l1 + tile * weight.tile_size,
-    )
+  p.brisc.noc.read_tiles(weight, tuple(
+    (tile, gamma_l1 + tile * weight.tile_size)
+    for tile in range(EMBEDDING_TILES)
+  ))
 
   def read_token(local_token):
-    for tile in range(EMBEDDING_TILES):
-      if type(local_token) is int:
-        p.brisc.noc.read_into_cb(
-          x, local_token * EMBEDDING_TILES + tile, x_cb,
-        )
+    if type(local_token) is int:
+      first = local_token * EMBEDDING_TILES
+      if overlap_noc:
+        p.brisc.noc.read_tiles_into_cb(x, (first, first + 1), x_cb)
       else:
-        with p.brisc.scope():
-          source_tile = p.brisc.reg(exclude=local_token)
-          p.brisc.slli(source_tile, local_token, 1)
-          if tile: p.brisc.addi(source_tile, source_tile, tile)
-          p.brisc.noc.read_into_cb(x, source_tile, x_cb)
+        for tile in (first, first + 1):
+          p.brisc.noc.read_into_cb(x, tile, x_cb)
+    else:
+      with p.brisc.scope():
+        first, second = p.brisc.reg(2, exclude=local_token)
+        p.brisc.slli(first, local_token, 1)
+        p.brisc.addi(second, first, 1)
+        if overlap_noc:
+          p.brisc.noc.read_tiles_into_cb(x, (first, second), x_cb)
+        else:
+          p.brisc.noc.read_into_cb(x, first, x_cb)
+          p.brisc.noc.read_into_cb(x, second, x_cb)
 
   if decode:
     read_token(0)
@@ -428,10 +459,10 @@ def _rmsnorm_fused_program(
       for _ in p.trisc0.range(local_count): unpack_token()
 
   def compute_token():
-    for tile in range(2 * EMBEDDING_TILES):
-      p.fpu.copy_a(dst_tile=tile)
+    p.fpu.copy_a_tiles(dst_tiles=range(2 * EMBEDDING_TILES))
     _rmsnorm_one_token(p.sfpu)
 
+  _rms_setup_apply_macro(p.sfpu)
   if decode:
     compute_token()
   else:
@@ -458,17 +489,19 @@ def _rmsnorm_fused_program(
       for _ in p.trisc2.range(local_count): pack_token()
 
   def write_token(local_token):
-    for tile in range(EMBEDDING_TILES):
-      if type(local_token) is int:
-        p.ncrisc.noc.write_from_cb(
-          output_cb, output, local_token * EMBEDDING_TILES + tile,
+    if type(local_token) is int:
+      first = local_token * EMBEDDING_TILES
+      p.ncrisc.noc.write_tiles_from_cb(
+        output_cb, output, (first, first + 1),
+      )
+    else:
+      with p.ncrisc.scope():
+        first, second = p.ncrisc.reg(2, exclude=local_token)
+        p.ncrisc.slli(first, local_token, 1)
+        p.ncrisc.addi(second, first, 1)
+        p.ncrisc.noc.write_tiles_from_cb(
+          output_cb, output, (first, second),
         )
-      else:
-        with p.ncrisc.scope():
-          output_tile = p.ncrisc.reg(exclude=local_token)
-          p.ncrisc.slli(output_tile, local_token, 1)
-          if tile: p.ncrisc.addi(output_tile, output_tile, tile)
-          p.ncrisc.noc.write_from_cb(output_cb, output, output_tile)
 
   if decode:
     write_token(0)
@@ -579,6 +612,8 @@ def run_embedding_hardware(seq_len=200, vocab_size=257,
 def run_rmsnorm_hardware(
   valid_s=1024, bucket=None, repeats=5,
   safetensor_path="weights/model.safetensors",
+  core_count=None,
+  core_start=0,
 ):
   if repeats < 1: raise ValueError("repeats must be positive")
   selected_bucket = _rmsnorm_bucket(valid_s) if bucket is None else bucket
@@ -592,8 +627,15 @@ def run_rmsnorm_hardware(
   device = Device()
   try:
     device.init_device()
-    core_count = 1 if selected_bucket == 1 else LLAMA_CORES
-    cores = device.dram.cores[:core_count]
+    if core_count is None:
+      core_count = RMSNORM_CORE_COUNTS[selected_bucket]
+    if selected_bucket == 1 and core_count != 1:
+      raise ValueError("the decode bucket uses exactly one core")
+    if selected_bucket != 1 and not 1 <= core_count <= LLAMA_CORES:
+      raise ValueError(f"prefill core count must be in 1..{LLAMA_CORES}")
+    if not 0 <= core_start <= len(device.dram.cores) - core_count:
+      raise ValueError("core range exceeds the available worker cores")
+    cores = device.dram.cores[core_start:core_start + core_count]
     shape = (selected_bucket, EMBED_DIM)
     x = device.dram.buffer(
       "rmsnorm_x", DType.BF16, shape, axis=0, cores=cores,
@@ -671,12 +713,18 @@ def run_rmsnorm_hardware(
     print(f"valid_s: {valid_s}")
     print(f"bucket: {selected_bucket}")
     print(f"cores: {core_count}")
+    print(f"core start: {core_start}")
     print(f"tokens/core: min={min(x.item_counts)}, max={max(x.item_counts)}")
     print(f"exact BF16 values: {exact}/{expected_valid.size}")
     print(f"max abs error: {error.max():.6g}")
     print(f"relative L2: {relative_l2:.6g}")
     print(f"PCC: {pcc:.9f}")
-    print(f"latency us: min={min(samples):.3f}, median={np.median(samples):.3f}")
+    print(
+      f"latency us: min={min(samples):.3f}, "
+      f"p10={np.percentile(samples, 10):.3f}, "
+      f"median={np.median(samples):.3f}, "
+      f"p90={np.percentile(samples, 90):.3f}"
+    )
   finally:
     device.close()
 
@@ -693,12 +741,16 @@ if __name__ == "__main__":
     "--rmsnorm", action="store_true",
   )
   parser.add_argument("--bucket", type=int, choices=RMSNORM_BUCKETS)
+  parser.add_argument("--cores", type=int)
+  parser.add_argument("--core-start", type=int, default=0)
   parser.add_argument("--repeats", type=int, default=5)
   args = parser.parse_args()
   if args.rmsnorm:
     run_rmsnorm_hardware(
       args.seq_len, args.bucket, args.repeats,
       args.safetensor or "weights/model.safetensors",
+      args.cores,
+      args.core_start,
     )
   else:
     run_embedding_hardware(

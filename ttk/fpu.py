@@ -152,6 +152,27 @@ class Fpu:
     return self._run(dst_tile, TT.TTMOVA2D(0, 0, 2, 2, 0),
                      source_a=True, source_b=False, release=3)
 
+  def copy_a_tiles(self, *, dst_tiles):
+    """Copy a sequence of SrcA tiles while retaining common FPU setup."""
+    dst_tiles = tuple(dst_tiles)
+    if not dst_tiles: raise ValueError("copy_a_tiles requires at least one tile")
+    for tile in dst_tiles: self.dst.check(tile)
+    self._wait_for_dst()
+    for register, value in (
+      (_ADDR_MOD_AB + 2, 8),
+      (_ADDR_MOD_DST + 2, 8),
+      (_ADDR_MOD_BIAS + 2, 0),
+    ): self._set_thread_cfg(register, value)
+    instruction = TT.TTMOVA2D(0, 0, 2, 2, 0)
+    self._mop.configure(_tile_mop(instruction, 3))
+    for tile in dst_tiles:
+      self._configure_dst(tile)
+      self._issue(TT.TTSETRWC(0, 0, 0, 0, 0, 0xF))
+      stall(self.k, Stall.MATH, Wait.SRCA_VLD)
+      self._mop.run()
+      self._issue(TT.TTSETRWC(0, 0, 0, 0, 0, 0xF))
+    return self
+
   def binary(self, operation, *, dst_tile, accumulate=False, broadcast=Broadcast.NONE):
     if operation not in _ELWISE: raise ValueError(f"unknown FPU operation {operation!r}")
     broadcast = Broadcast(broadcast)

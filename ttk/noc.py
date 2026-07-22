@@ -369,6 +369,30 @@ class NoC:
     CB.push_back(self.k, cb)
     return self
 
+  def read_tiles_into_cb(self, param, tiles, cb, source_middle_address=0):
+    """Issue a group of tile reads before waiting and publish them together."""
+    tiles = tuple(tiles)
+    if not tiles: raise ValueError("tile read group cannot be empty")
+    if cb.depth % len(tiles):
+      raise ValueError("tile read group must evenly divide circular-buffer depth")
+    CB.reserve_back(self.k, cb, len(tiles))
+    with self.transaction() as transaction:
+      for index, tile in enumerate(tiles):
+        with self.k.scope():
+          source_address, source_coordinate = self._dram_tile(param, tile)
+          target = self.k.reg(exclude=(source_address, source_coordinate))
+          CB.get_write_ptr(self.k, cb, target)
+          if index:
+            offset = self.k.reg(exclude=(source_address, source_coordinate, target))
+            self.k.li(offset, index * cb.tile_size)
+            self.k.add(target, target, offset)
+          transaction.read(
+            source_address, source_coordinate, target, cb.tile_size,
+            source_middle_address=source_middle_address,
+          )
+    CB.push_back(self.k, cb, len(tiles))
+    return self
+
   def read_tile(self, param, tile, target_address,
                 source_middle_address=0):
     """Read one DRAM tile directly into a caller-owned L1 address."""
@@ -380,6 +404,21 @@ class NoC:
       )
     return self
 
+  def read_tiles(self, param, tiles_and_targets, source_middle_address=0):
+    """Issue direct-to-L1 tile reads as one transaction."""
+    tiles_and_targets = tuple(tiles_and_targets)
+    if not tiles_and_targets:
+      raise ValueError("direct tile read group cannot be empty")
+    with self.transaction() as transaction:
+      for tile, target_address in tiles_and_targets:
+        with self.k.scope():
+          source_address, source_coordinate = self._dram_tile(param, tile)
+          transaction.read(
+            source_address, source_coordinate, target_address,
+            param.tile_size, source_middle_address=source_middle_address,
+          )
+    return self
+
   def write_from_cb(self, cb, param, tile, target_middle_address=0, posted=False):
     CB.wait_front(self.k, cb)
     with self.k.scope():
@@ -389,6 +428,31 @@ class NoC:
       self.write(source, target_address, target_coordinate, cb.tile_size,
                  target_middle_address=target_middle_address, posted=posted)
     CB.pop_front(self.k, cb)
+    return self
+
+  def write_tiles_from_cb(self, cb, param, tiles,
+                          target_middle_address=0, posted=False):
+    """Issue a group of CB tile writes before one completion wait."""
+    tiles = tuple(tiles)
+    if not tiles: raise ValueError("tile write group cannot be empty")
+    if cb.depth % len(tiles):
+      raise ValueError("tile write group must evenly divide circular-buffer depth")
+    CB.wait_front(self.k, cb, len(tiles))
+    with self.transaction() as transaction:
+      for index, tile in enumerate(tiles):
+        with self.k.scope():
+          target_address, target_coordinate = self._dram_tile(param, tile)
+          source = self.k.reg(exclude=(target_address, target_coordinate))
+          CB.get_read_ptr(self.k, cb, source)
+          if index:
+            offset = self.k.reg(exclude=(target_address, target_coordinate, source))
+            self.k.li(offset, index * cb.tile_size)
+            self.k.add(source, source, offset)
+          transaction.write(
+            source, target_address, target_coordinate, cb.tile_size,
+            target_middle_address=target_middle_address, posted=posted,
+          )
+    CB.pop_front(self.k, cb, len(tiles))
     return self
 
   def multicast_write(self, *args):

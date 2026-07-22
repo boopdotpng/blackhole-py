@@ -144,16 +144,16 @@ weight logical:          BF16[2048]
 weight tiled:            (2, 32, 32), globally addressed
 ```
 
-The prefill program launches 118 cores and installs two capacity variants for
-the selected bucket:
+The prefill program selects a tuned core count for each bucket. The logical
+shape remains unchanged; only the number and capacity of DRAM shards vary:
 
 ```text
-valid_s     bucket   token capacities/core   physical storage
--------     ------   ---------------------   ----------------
-2..128      128      10x2 + 108x1            (118, 4, 32, 32)
-129..256    256      20x3 + 98x2              (118, 6, 32, 32)
-257..512    512      40x5 + 78x4              (118, 10, 32, 32)
-513..1024   1024     80x9 + 38x8              (118, 18, 32, 32)
+valid_s     bucket   cores   token capacities/core   physical storage
+-------     ------   -----   ---------------------   ----------------
+2..128      128      64      64x2                    (64, 4, 32, 32)
+129..256    256      64      64x4                    (64, 8, 32, 32)
+257..512    512      73      1x8 + 72x7              (73, 16, 32, 32)
+513..1024   1024     73      2x15 + 71x14            (73, 30, 32, 32)
 ```
 
 For prefill, every RISC computes
@@ -202,8 +202,9 @@ decode:
 
 token_body(local_token):
     BRISC -- input DMA:
-        read x[local_token, 0, :, :] from sharded DRAM -> x_cb
-        read x[local_token, 1, :, :] from sharded DRAM -> x_cb
+        read the two x tiles from sharded DRAM -> x_cb
+        issue them as one paired transaction through bucket 512
+        serialize them at bucket 1024 to avoid NoC/DRAM saturation
 
     TRISC0 -- unpack:
         unpack x tile 0 from x_cb       -> SrcA
@@ -216,13 +217,13 @@ token_body(local_token):
         SrcA x tile 1      -> FP32 Dst tile 1
         SrcA gamma tile 0  -> FP32 Dst tile 2
         SrcA gamma tile 1  -> FP32 Dst tile 3
+        configure common copy state once for all four tiles
 
     TRISC1 / SFPU -- sum of squares:
         select Dst tile 0
         for each of its four faces:
             load FP32 x lanes
-            square the lanes
-            accumulate into SFPU L7
+            accumulate x*x into SFPU L7 with one fused MAD
 
         select Dst tile 1
         for each of its four faces:
@@ -231,7 +232,7 @@ token_body(local_token):
             accumulate into the same SFPU L7
 
     TRISC1 / SFPU -- scalar normalization factor:
-        reduce the 32 accumulator lanes in L7 to sum(x^2)
+        butterfly-reduce the 32 accumulator lanes in L7 to sum(x^2)
         mean_square = sum(x^2) * (1 / 2048)
         adjusted = mean_square + 1e-5
         scale = rsqrt(adjusted)
@@ -241,11 +242,10 @@ token_body(local_token):
         by refinement; the normalization arithmetic remains FP32.
 
     TRISC1 / SFPU -- apply scale and weight:
-        select Dst tile 0:
-            Dst0 = FP32(Dst0 * scale * Dst2)
-
-        select Dst tile 1:
-            Dst1 = FP32(Dst1 * scale * Dst3)
+        process two independent 32-lane footprints together
+        overlap x*scale with each gamma load using SFPLOADMACRO
+        Dst0 = FP32(Dst0 * scale * Dst2)
+        Dst1 = FP32(Dst1 * scale * Dst3)
 
         Dst2 and Dst3 are the matching gamma tiles. This multiply happens
         in SFPU, not the BF16 FPU elementwise path, to preserve FP32 precision.
@@ -253,11 +253,11 @@ token_body(local_token):
     TRISC2 -- pack:
         pack FP32 Dst0 -> BF16 output_cb tile
         pack FP32 Dst1 -> BF16 output_cb tile
-        both tiles are packed under one Math-to-Pack destination handoff
+        configure common pack state once for both tiles
+        both tiles share one Math-to-Pack destination handoff
 
     NCRISC -- output DMA:
-        write output_cb -> output[local_token, 0, :, :]
-        write output_cb -> output[local_token, 1, :, :]
+        write both output tiles in one paired transaction
 ```
 
 BRISC, the three TRISCs, and NCRISC execute as a producer/consumer pipeline;
@@ -265,23 +265,23 @@ the circular buffers provide backpressure between stages. Prefill capacity is
 compiled into each core image while `valid_s` supplies the runtime loop bound.
 The one-core decode specialization invokes the same token body directly.
 
-Hardware measurements using the real
+Final 101-launch hardware measurements using the real
 `model.layers.0.input_layernorm.weight`:
 
 ```text
-valid_s / bucket   cores   median latency
-----------------   -----   --------------
-1 / 1              1       6.288 us
-128 / 128          118     14.466 us
-256 / 256          118     17.550 us
-512 / 512          118     23.604 us
-1024 / 1024        118     35.838 us
+valid_s / bucket   cores   min / p10 / median / p90 latency
+----------------   -----   --------------------------------
+1 / 1              1       4.787 / 4.795 / 4.804 / 4.844 us
+128 / 128          64      9.176 / 9.224 / 9.316 / 9.478 us
+256 / 256          64      11.872 / 12.070 / 12.274 / 12.584 us
+512 / 512          73      17.790 / 18.102 / 18.584 / 19.173 us
+1024 / 1024        73      28.273 / 28.564 / 28.995 / 29.504 us
 ```
 
-Decode and the 128/256-token tests were bit-exact. At 1024 tokens the kernel
-matches 2,097,145 of 2,097,152 BF16 outputs exactly; the remaining seven values
-differ by one BF16 ULP (`max_abs = 0.000976562`, `relative_L2 = 5.95e-6`,
-PCC = 1.0).
+Decode is bit-exact. Across the prefill buckets, every non-exact value differs
+from the fused FP32 CPU expression by one BF16 ULP at most
+(`max_abs = 0.000976562`, worst `relative_L2 = 8.8913e-6`, PCC = 1.0). At
+1024 tokens, 2,097,144 of 2,097,152 values are exact.
 
 For comparison, the multicast dispatcher launch floor is about 3.04 us for 118
 cores. The previous serialized-unicast dispatcher cost 38.324 us for an empty
@@ -301,14 +301,17 @@ device launch floor.
 ```text
 RTX 5090  F.rms_norm       6.02 us  ██████
 RTX 5090  torch.compile   19.94 us  ████████████████████
-Blackhole 118 cores       36.80 us  █████████████████████████████████████
+Blackhole 73 cores        29.00 us  █████████████████████████████
 RTX 5090  eager exact     40.80 us  █████████████████████████████████████████
 Blackhole 64 cores        41.80 us  ██████████████████████████████████████████
 ```
 
-The 118-core split lowers Blackhole median latency by about 12% relative to
-the 64-core kernel. It is about 1.85x slower than the exact `torch.compile`
-expression and 6.1x slower than the 5090 native fused RMSNorm.
+The tuned Blackhole path is about 1.45x slower than the exact `torch.compile`
+expression and 4.8x slower than the 5090 native fused RMSNorm. Relative to the
+original 118-core Blackhole kernel's 36.589 us median, it is 20.8% faster.
+Forcing the optimized implementation back to 118 cores gives 32.185 us median,
+so both instruction/dataflow improvements and the lower-contention 73-core
+split contribute.
 
 ### Attention
 

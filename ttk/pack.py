@@ -104,10 +104,10 @@ class Pack:
       self._issue(TT.TTWRCFG(12, 0, address))
       self._set_dma_reg16(25, high); self._issue(TT.TTDMANOP())
 
-  def _move_acquired(self, output_cb, tile, scalar):
+  def _move_acquired(self, output_cb, tile, scalar, *, configure=True):
     tile = self.dst.check(tile)
     CB.reserve_back(self.k, output_cb)
-    self._configure(output_cb, self.dst.fp32, scalar)
+    if configure: self._configure(output_cb, self.dst.fp32, scalar)
     self._destination(tile, output_cb)
     self._issue(TT.TTSETADCXX(4, 15, 0)); self._issue(TT.TTSETADCZW(4, 0, 0, 0, 0, 5))
     self._write_cfg(_Cfg.DESTINATION_OFFSET, 0)
@@ -140,6 +140,8 @@ class Pack:
     if not tiles: raise ValueError("move_tiles requires at least one Dst tile")
     for tile in tiles: self.dst.check(tile)
     sem_wait(self.k, Sem.MATH_PACK, SemWait.STALL_ON_ZERO, Stall.TDMA)
-    for tile in tiles: self._move_acquired(output_cb, tile, False)
+    self._configure(output_cb, self.dst.fp32, False)
+    for tile in tiles:
+      self._move_acquired(output_cb, tile, False, configure=False)
     self._release_dst()
     return self

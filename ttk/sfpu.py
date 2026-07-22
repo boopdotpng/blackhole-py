@@ -596,17 +596,17 @@ class Sfpu:
       self.prepared[program] = (start, body)
     return self.prepared[program]
 
-  def _inline_faces(self, body, faces):
+  def _inline_faces(self, body, faces, iterations=8):
     for _ in range(faces):
-      for _ in range(8):
+      for _ in range(iterations):
         for word in body: self._issue(word)
       self._issue(_FACE_STEP)
       self._issue(_FACE_STEP)
 
-  def _configure_replay_mop(self, start, length):
+  def _configure_replay_mop(self, start, length, iterations=8):
     replay = TT.TTREPLAY(start, length, 0, 0)
     self._mop.configure(LoopTemplate(
-      outer=1, inner=8, loop=replay,
+      outer=1, inner=iterations, loop=replay,
       end0=_FACE_STEP, end1=_FACE_STEP,
       last=replay, outer_last=replay,
     ))
@@ -617,8 +617,8 @@ class Sfpu:
     # Expanders on Blackhole.
     for _ in range(faces): self._mop.run()
 
-  def _run_faces(self, start, body, faces):
-    if start is None: self._inline_faces(body, faces)
+  def _run_faces(self, start, body, faces, iterations=8):
+    if start is None: self._inline_faces(body, faces, iterations)
     else: self._replay_faces(faces)
 
   def _map(self, program, *, tile, faces, column, lane_config):
