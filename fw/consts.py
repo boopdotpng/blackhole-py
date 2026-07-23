@@ -17,6 +17,22 @@ class TensixL1:
     "trisc2": 0x2CD00,
   }
   WORKER_TEXT_SIZE = 0x9F00; DATA_BUFFER_SPACE_BASE = 0x37000
+  KERNEL_CACHE_BASE = 0x50000
+  KERNEL_CACHE_END = 0x0F0000
+
+  # Traced launches keep their immutable parameter tables resident in high
+  # worker L1. Dispatch puts the selected template address in the low 24 bits
+  # of the GO word; BRISC resolves the few dynamic slots from RUNTIME_PARAM_BASE
+  # before releasing the other worker RISCs.
+  RUNTIME_PARAM_BASE = 0x15FF00
+  RUNTIME_PARAM_SLOTS = 16
+  PARAM_TEMPLATE_BASE = 0x160000
+  PARAM_TEMPLATE_END = 0x170000
+  PARAM_TEMPLATE_STRIDE = 128
+  PARAM_TEMPLATE_MAX_PARAMS = 12
+  PARAM_TEMPLATE_VALUES = 4
+  PARAM_TEMPLATE_IDS = 52
+  PARAM_TEMPLATE_KERNELS = 64
 
 class Firmware:
   BRISC_STACK_TOP = NCRISC_STACK_TOP = 0xFFB01FF0

@@ -49,6 +49,57 @@ def _delay_cycles(fw, cycles):
   return fw
 
 
+@scoped
+def _load_param_template(fw):
+  (
+    go, template, count, values, ids, dst, param_id, value, scratch,
+  ) = fw.reg(9)
+  done = fw._new_label("param_template_done")
+  loop = fw._new_label("param_template_loop")
+  kernels = fw._new_label("param_template_kernels")
+  literal = fw._new_label("param_template_literal")
+  store = fw._new_label("param_template_store")
+
+  fw.read(go, FirmwareControl.GO_SIGNAL & -4)
+  fw.li(scratch, (1 << 24) - 1)
+  fw.and_(template, go, scratch)
+  fw.beq(template, R.ZERO, done)
+  fw.lw(count, template, 0)
+  fw.addi(values, template, TensixL1.PARAM_TEMPLATE_VALUES)
+  fw.addi(ids, template, TensixL1.PARAM_TEMPLATE_IDS)
+  fw.li(dst, TensixL1.PARAM_BASE)
+
+  fw.label(loop)
+  fw.beq(count, R.ZERO, kernels)
+  fw.lbu(param_id, ids, 0)
+  fw.li(scratch, 0xFF)
+  fw.beq(param_id, scratch, literal)
+  fw.slli(param_id, param_id, 2)
+  fw.li(scratch, TensixL1.RUNTIME_PARAM_BASE)
+  fw.add(param_id, param_id, scratch)
+  fw.lw(value, param_id, 0)
+  fw.j(store)
+  fw.label(literal)
+  fw.lw(value, values, 0)
+  fw.label(store)
+  fw.sw(value, dst, 0)
+  fw.addi(values, values, 4)
+  fw.addi(ids, ids, 1)
+  fw.addi(dst, dst, 4)
+  fw.addi(count, count, -1)
+  fw.j(loop)
+  fw.label(kernels)
+  for index, role in enumerate(TensixL1.WORKER_TEXT_BASE):
+    skip = fw._new_label(f"param_template_{role}_skip")
+    fw.lw(value, template, TensixL1.PARAM_TEMPLATE_KERNELS + index * 4)
+    fw.beq(value, R.ZERO, skip)
+    fw.li(dst, TensixL1.WORKER_TEXT_BASE[role])
+    fw.sw(value, dst, 0)
+    fw.label(skip)
+  fw.label(done)
+  return fw
+
+
 def build_brisc():
   fw = _firmware("brisc")
   fw.configure_csr()
@@ -76,6 +127,7 @@ def build_brisc():
 
   fw.label("run_loop")
   fw.wait(FirmwareControl.GO_SIGNAL, RunState.GO)
+  _load_param_template(fw)
   fw.jal(R.RA, "reset_tensix")
   fw.invalidate_risc_caches()
   for role in range(4):

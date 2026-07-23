@@ -234,7 +234,9 @@ class Program:
       raise ValueError("program parameter table is full")
     self.params = {param.name: param for param in params}
     self._param_slots = {param: slot for slot, param in enumerate(params)}
-    self._l1 = Allocator(TensixL1.DATA_BUFFER_SPACE_BASE, TensixL1.SIZE, 16)
+    self._l1 = Allocator(
+      TensixL1.DATA_BUFFER_SPACE_BASE, TensixL1.KERNEL_CACHE_BASE, 16,
+    )
     self.cb = CBRegistry(self._l1)
     self._l1_constants = {}
     self.launch = ()
@@ -307,7 +309,7 @@ class Program:
       for index in range(len(self.cores))
     )
 
-  def commands(self, params=None):
+  def static_commands(self):
     commands, kernels = [], self.lower()
     for role in KERNEL_ROLES:
       groups = {}
@@ -327,8 +329,6 @@ class Program:
             commands.append(McastWrite(
               rectangles(cores), TensixL1.WORKER_TEXT_BASE[role] + offset, data,
             ))
-    if self.params:
-      commands.append(UnicastWrite(self.cores, PARAM_BASE, self._param_table(params)))
     for (data, _), address in self._l1_constants.items():
       for offset in range(0, len(data), MAX_WRITE_SIZE):
         chunk = data[offset:offset + MAX_WRITE_SIZE]
@@ -340,7 +340,18 @@ class Program:
           commands.append(McastWrite(
             rectangles(self.cores), address + offset, chunk,
           ))
+    return tuple(commands)
+
+  def runtime_commands(self, params=None):
+    commands = []
+    if self.params:
+      commands.append(UnicastWrite(
+        self.cores, PARAM_BASE, self._param_table(params),
+      ))
     return (*commands, *self.launch)
+
+  def commands(self, params=None):
+    return (*self.static_commands(), *self.runtime_commands(params))
 
 
 def rectangles(cores):

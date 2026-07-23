@@ -7,6 +7,7 @@ from cq import (
   DISPATCH_SCRATCH, PAGE_SIZE, PREFETCH_CREDITS, PREFETCH_PCIE_BASE,
   PREFETCH_PCIE_END, PREFETCH_PCIE_READ, PREFETCH_QUEUE,
   PREFETCH_QUEUE_ENTRIES, PREFETCH_STAGING, Op, PacketLayout, Timestamp,
+  PREFETCH_TRACE_ACTIVE, PREFETCH_TRACE_BASE, PREFETCH_TRACE_END,
 )
 from fw.consts import CQConfig, FirmwareControl, RunState, TensixMMIO
 from isa import R
@@ -15,12 +16,15 @@ from ttk.noc import NiuCommand
 
 def build_prefetch():
   fw = Asm("brisc")
-  with fw.scope(): _emit_prefetch(fw, fw.reg(11))
+  with fw.scope(): _emit_prefetch(fw, fw.reg(12))
   return fw
 
 
 def _emit_prefetch(fw, state):
-  queue, queue_end, ring, used, size, cursor, src, dst, left, chunk, pages = state
+  (
+    queue, queue_end, ring, used, size, cursor, src, dst, left, chunk,
+    pages, remaining,
+  ) = state
   noc = fw.noc
   fw.write(PREFETCH_CREDITS, (DISPATCH_RING_END - DISPATCH_RING_BASE) // PAGE_SIZE)
   fw.li(queue, PREFETCH_QUEUE)
@@ -28,10 +32,29 @@ def _emit_prefetch(fw, state):
   fw.li(ring, DISPATCH_RING_BASE)
   fw.li(used, 0)
   fw.read(cursor, PREFETCH_PCIE_READ)
+  fw.write(PREFETCH_TRACE_ACTIVE, 0)
   fw.label("prefetch_loop")
   fw.lw(size, queue, 0)
   fw.beq(size, R.ZERO, "prefetch_loop")
+  fw.srli(src, size, 31)
+  fw.beq(src, R.ZERO, "normal_descriptor")
+
+  # A trace descriptor points at an immutable, already-lowered record stream
+  # in pinned host memory. Keep the ordinary issue-ring cursor parked while
+  # each trace record is fetched and forwarded to dispatch.
+  fw.li(src, 1); fw.write(PREFETCH_TRACE_ACTIVE, src)
+  fw.read(cursor, PREFETCH_TRACE_BASE)
+  fw.label("trace_record")
+  noc.read(
+    cursor, CQConfig.PCIE_COORD, PREFETCH_STAGING, ALIGN,
+    source_middle_address=CQConfig.PCIE_MID,
+  )
+  fw.read(size, PREFETCH_STAGING + PacketLayout.TOTAL_SIZE)
+  fw.j("pcie_read")
+
+  fw.label("normal_descriptor")
   fw.slli(size, size, 4)
+  fw.label("pcie_read")
   fw.mv(src, cursor); fw.li(dst, PREFETCH_STAGING); fw.mv(left, size)
   fw.label("pcie_read_loop")
   fw.beq(left, R.ZERO, "pcie_read_done")
@@ -46,15 +69,59 @@ def _emit_prefetch(fw, state):
   fw.add(src, src, chunk); fw.add(dst, dst, chunk); fw.sub(left, left, chunk)
   fw.j("pcie_read_loop")
   fw.label("pcie_read_done")
-  fw.sw(R.ZERO, queue, 0)
   fw.add(cursor, cursor, size)
+  fw.read(src, PREFETCH_TRACE_ACTIVE)
+  fw.bne(src, R.ZERO, "pcie_cursor_done")
+  fw.sw(R.ZERO, queue, 0)
   fw.read(src, PREFETCH_PCIE_END)
   fw.bltu(cursor, src, "pcie_no_wrap")
   fw.read(cursor, PREFETCH_PCIE_BASE)
   fw.label("pcie_no_wrap")
+  fw.write(PREFETCH_PCIE_READ, cursor)
+  fw.label("pcie_cursor_done")
   fw.li(src, PREFETCH_STAGING)
+  # DRAM_RECORD is a compact indirection used by the resident program cache.
+  # Replace the descriptor in staging with the immutable lowered CQ record.
+  fw.lbu(dst, src, PacketLayout.OP)
+  fw.li(left, int(Op.DRAM_RECORD))
+  fw.bne(dst, left, "record_ready")
+  fw.lw(left, src, PacketLayout.ADDRESS)
+  fw.lw(chunk, src, PacketLayout.DATA_SIZE)
+  fw.lw(dst, src, PacketLayout.DRAM_COORD)
+  noc.read(left, dst, PREFETCH_STAGING, chunk)
+  fw.li(src, PREFETCH_STAGING)
+  fw.label("record_ready")
   fw.lw(size, src, PacketLayout.TOTAL_SIZE)
   fw.li(pages, PAGE_SIZE - 1); fw.add(pages, size, pages); fw.srli(pages, pages, 12)
+
+  # A DRAM_RECORD expands after the host has published its 64-byte
+  # descriptor, so only prefetch knows its real page count. Insert one PAD
+  # record when it would straddle the dispatch ring boundary.
+  fw.li(remaining, DISPATCH_RING_END)
+  fw.sub(remaining, remaining, ring)
+  fw.srli(remaining, remaining, 12)
+  fw.bgeu(remaining, pages, "wait_dispatch_credit")
+  fw.label("wait_wrap_credit")
+  fw.read(left, PREFETCH_CREDITS); fw.sub(left, left, used)
+  fw.bltu(left, remaining, "wait_wrap_credit")
+  fw.add(used, used, remaining)
+  fw.write(CQ_STATE + 0x40 + PacketLayout.OP, int(Op.PAD), bytes=1)
+  fw.write(CQ_STATE + 0x40 + PacketLayout.TARGET_COUNT, 0, bytes=2)
+  fw.slli(left, remaining, 12)
+  fw.write(CQ_STATE + 0x40 + PacketLayout.TOTAL_SIZE, left)
+  fw.write(CQ_STATE + 0x40 + PacketLayout.ADDRESS, 0)
+  fw.write(CQ_STATE + 0x40 + PacketLayout.DATA_SIZE, 0)
+  noc.write(
+    CQ_STATE + 0x40, ring, CQConfig.DISPATCH_COORD,
+    PacketLayout.HEADER.size, posted=False,
+  )
+  fw.write(CQ_STATE + 0x20, used)
+  noc.write(
+    CQ_STATE + 0x20, DISPATCH_PUBLISHED, CQConfig.DISPATCH_COORD, 4,
+    posted=False,
+  )
+  fw.li(ring, DISPATCH_RING_BASE)
+
   fw.label("wait_dispatch_credit")
   fw.read(left, PREFETCH_CREDITS); fw.sub(left, left, used)
   fw.bltu(left, pages, "wait_dispatch_credit")
@@ -79,6 +146,15 @@ def _emit_prefetch(fw, state):
   fw.li(left, DISPATCH_RING_END); fw.bne(ring, left, "dispatch_no_wrap")
   fw.li(ring, DISPATCH_RING_BASE)
   fw.label("dispatch_no_wrap")
+
+  fw.read(src, PREFETCH_TRACE_ACTIVE)
+  fw.beq(src, R.ZERO, "advance_prefetch_queue")
+  fw.read(src, PREFETCH_TRACE_END)
+  fw.bltu(cursor, src, "trace_record")
+  fw.write(PREFETCH_TRACE_ACTIVE, 0)
+  fw.sw(R.ZERO, queue, 0)
+  fw.read(cursor, PREFETCH_PCIE_READ)
+  fw.label("advance_prefetch_queue")
   fw.addi(queue, queue, 4); fw.bne(queue, queue_end, "prefetch_loop")
   fw.li(queue, PREFETCH_QUEUE); fw.j("prefetch_loop")
 
@@ -153,7 +229,10 @@ def _emit_dispatch(fw, state):
   fw.write(DISPATCH_DONE_COUNT, 0)
   fw.fence()
   fw.addi(s6, s0, PacketLayout.RUN_TARGETS)
-  fw.write(DISPATCH_GO, int(RunState.GO) << 24)
+  fw.lw(s8, s0, PacketLayout.RUN_TEMPLATE)
+  fw.li(s9, int(RunState.GO) << 24)
+  fw.or_(s8, s8, s9)
+  fw.write(DISPATCH_GO, s8)
   # The multicast NIU reads its payload back from dispatch-core L1. Make the
   # local GO store visible before the first rectangle can source that word;
   # without this fence a cold launch can multicast the previous zero value.
@@ -176,6 +255,7 @@ def _emit_dispatch(fw, state):
   fw.write(DISPATCH_SCRATCH + Timestamp.END, s8)
   fw.write(DISPATCH_SCRATCH + Timestamp.END + 4, s9)
   fw.lw(s8, s0, PacketLayout.RUN_EVENT)
+  fw.beq(s8, R.ZERO, "command_done")
   fw.write(DISPATCH_SCRATCH + Timestamp.EVENT, s8)
   _publish_completion(fw, noc)
   fw.j("command_done")
