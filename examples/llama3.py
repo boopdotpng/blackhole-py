@@ -2682,6 +2682,10 @@ def run_decode_e2e(
     ({"role": "user", "content": prompt},),
     tokenize=True, add_generation_prompt=True,
   )
+  # Newer transformers return a BatchEncoding instead of a flat ID list.
+  if not isinstance(prompt_ids, list):
+    prompt_ids = prompt_ids["input_ids"]
+    if prompt_ids and isinstance(prompt_ids[0], list): prompt_ids = prompt_ids[0]
   if not prompt_ids:
     raise ValueError("prompt tokenization produced no tokens")
   max_steps = ROPE_CACHE_TOKENS - len(prompt_ids)
