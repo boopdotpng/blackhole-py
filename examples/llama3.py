@@ -13,10 +13,13 @@ from fw.consts import CQConfig, TensixL1
 from pcie import P100_WORKER_CORES
 from program import Buffer, Const, DType, Program, rectangles
 from isa import R, Tensix as TT
+from ttk import l1
 from ttk.cb import CB
+from ttk.check import check_buffer
 from ttk.sfpu import (
   LaneConfig, LReg, SfpuFormat, SfpuProgram, SfpuProgramBuilder,
 )
+from ttk.shard import local_range, specialize
 from ttk.sync import Sem, SemWait, Stall, Wait, sem_get, sem_wait, stall
 from ttk.unpack import UnpackTarget
 
@@ -25,14 +28,10 @@ VOCAB_SIZE = 128256
 EMBED_DIM = 2048
 PREFILL_CAPACITY = 1024
 EMBEDDING_TILES = EMBED_DIM // 1024
+EMBEDDING_TILES_SHIFT = EMBEDDING_TILES.bit_length() - 1  # multiply by a shift
 LLAMA_CORES = 118
 LLAMA_LAYERS = 16
 EOS_TOKEN_IDS = frozenset((128001, 128008, 128009))
-TOKENS_PER_CORE, NINE_TOKEN_CORES = divmod(PREFILL_CAPACITY, LLAMA_CORES)
-CORE_TOKEN_COUNTS = (
-  (TOKENS_PER_CORE + 1,) * NINE_TOKEN_CORES +
-  (TOKENS_PER_CORE,) * (LLAMA_CORES - NINE_TOKEN_CORES)
-)
 Q_PROJ_DIM = 2048
 KV_PROJ_DIM = 512
 MLP_DIM = 8192
@@ -128,23 +127,6 @@ def _bf16_rne_bytes(values):
   words = np.ascontiguousarray(values, dtype="<f4").view(np.uint32)
   rounded = words + np.uint32(0x7fff) + ((words >> 16) & np.uint32(1))
   return (rounded >> 16).astype("<u2").tobytes()
-
-
-def upload_rope_cache(device: Device):
-  """Queue one-time host-to-DRAM uploads of the fixed 8192-token cache."""
-  shape = (ROPE_CACHE_TOKENS, HEAD_DIM)
-  cos = device.dram.buffer(
-    "rope_cos", DType.BF16, shape, global_address=True,
-  )
-  sin = device.dram.buffer(
-    "rope_sin", DType.BF16, shape, global_address=True,
-  )
-  cos_values, sin_values = rope_table()
-  # This mirrors tinygrad's COS/SIN.cast(dtypes.bfloat16), which uses RNE.
-  # Buffer.from_numpy truncates BF16 and remains unchanged for existing users.
-  device.write(cos, _bf16_rne_bytes(cos_values))
-  device.write(sin, _bf16_rne_bytes(sin_values))
-  return cos, sin
 
 
 def _token_counts(items, cores):
@@ -299,118 +281,6 @@ def _rmsnorm_one_token(sfpu):
   _rms_select_tile(sfpu, 1)
   _rms_map_acquired(sfpu, apply, iterations=4)
   sfpu.publish()
-
-
-def _load_local_count(kernel, program, valid_s, token_start,
-                      token_capacity, count, start):
-  """Emit count = clamp(valid_s - token_start, 0, token_capacity)."""
-  kernel.read(start, program.param_addr(token_start))
-  with kernel.scope():
-    valid, capacity = kernel.reg(2, exclude=(count, start))
-    kernel.read(valid, program.param_addr(valid_s))
-    kernel.li(capacity, token_capacity)
-    kernel.li(count, 0)
-    done = kernel._new_label("embedding_local_count_done")
-    kernel.bgeu(start, valid, done)
-    kernel.sub(count, valid, start)
-    kernel.bltu(count, capacity, done)
-    kernel.mv(count, capacity)
-    kernel.label(done)
-
-
-def _load_tiled_u32(kernel, tile_l1, logical_index, output):
-  """Load a logical element from a 32x32 face-tilized U32 tile in L1."""
-  # Physical face order is TL, TR, BL, BR, with 16x16 elements per face.
-  with kernel.scope():
-    row, column, physical, scratch, address = kernel.reg(
-      5, exclude=(logical_index, output),
-    )
-    kernel.srli(row, logical_index, 5)
-    kernel.andi(column, logical_index, 31)
-
-    kernel.srli(scratch, row, 4)
-    kernel.slli(physical, scratch, 9)     # bottom faces start at element 512
-    kernel.srli(scratch, column, 4)
-    kernel.slli(scratch, scratch, 8)     # right faces start at element 256
-    kernel.add(physical, physical, scratch)
-    kernel.andi(scratch, row, 15)
-    kernel.slli(scratch, scratch, 4)
-    kernel.add(physical, physical, scratch)
-    kernel.andi(scratch, column, 15)
-    kernel.add(physical, physical, scratch)
-
-    kernel.slli(physical, physical, 2)   # U32 byte offset
-    kernel.li(address, tile_l1)
-    kernel.add(address, address, physical)
-    kernel.lw(output, address)
-
-
-def _store_tiled_u32(kernel, tile_l1, logical_index, value):
-  """Store one logical U32 element into a face-tilized tile in L1."""
-  with kernel.scope():
-    row, column, physical, scratch, address = kernel.reg(
-      5, exclude=(logical_index, value),
-    )
-    kernel.srli(row, logical_index, 5)
-    kernel.andi(column, logical_index, 31)
-
-    kernel.srli(scratch, row, 4)
-    kernel.slli(physical, scratch, 9)
-    kernel.srli(scratch, column, 4)
-    kernel.slli(scratch, scratch, 8)
-    kernel.add(physical, physical, scratch)
-    kernel.andi(scratch, row, 15)
-    kernel.slli(scratch, scratch, 4)
-    kernel.add(physical, physical, scratch)
-    kernel.andi(scratch, column, 15)
-    kernel.add(physical, physical, scratch)
-
-    kernel.slli(physical, physical, 2)
-    kernel.li(address, tile_l1)
-    kernel.add(address, address, physical)
-    kernel.sw(value, address)
-
-
-def _load_tiled_bf16(kernel, tiles_l1, logical_index, output):
-  """Load a logical BF16 element from consecutive face-tilized L1 tiles."""
-  with kernel.scope():
-    tile, within, row, column, physical, scratch, address = kernel.reg(
-      7, exclude=(logical_index, output),
-    )
-    kernel.srli(tile, logical_index, 10)
-    kernel.andi(within, logical_index, 1023)
-    kernel.srli(row, within, 5)
-    kernel.andi(column, within, 31)
-
-    kernel.srli(scratch, row, 4)
-    kernel.slli(physical, scratch, 9)
-    kernel.srli(scratch, column, 4)
-    kernel.slli(scratch, scratch, 8)
-    kernel.add(physical, physical, scratch)
-    kernel.andi(scratch, row, 15)
-    kernel.slli(scratch, scratch, 4)
-    kernel.add(physical, physical, scratch)
-    kernel.andi(scratch, column, 15)
-    kernel.add(physical, physical, scratch)
-
-    kernel.slli(tile, tile, 11)
-    kernel.slli(physical, physical, 1)
-    kernel.add(physical, physical, tile)
-    kernel.li(address, tiles_l1)
-    kernel.add(address, address, physical)
-    kernel.lhu(output, address)
-
-
-def _specialize_token_counts(build, cores, token_counts):
-  """Combine compile-time loop-count variants into one heterogeneous launch."""
-  variants = {count: build(count) for count in sorted(set(token_counts))}
-  lowered = {count: program.lower() for count, program in variants.items()}
-  combined = variants[max(variants)]
-  combined._kernels = {
-    core: dict(lowered[count][core])
-    for core, count in zip(cores, token_counts)
-  }
-  return combined
 
 
 def _dot_accumulate(*, reset):
@@ -601,7 +471,7 @@ def decode_projection(x: Buffer, weight: Buffer, output: Buffer) -> Program:
       f"decode projection output must be compact BF16{expected_shape}, "
       "axis=0 on the weight cores",
     )
-  return _specialize_token_counts(
+  return specialize(
     lambda count: _decode_projection_program(
       x, weight, output, local_rows=count,
     ),
@@ -676,7 +546,7 @@ def decode_argmax(
     p.brisc.li(best_id, 0)
     p.brisc.li(mask, 0x8000)
     for logical in p.brisc.range(count):
-      _load_tiled_bf16(p.brisc, logits_l1, logical, value)
+      l1.load(p.brisc, logits_l1, logical, value, DType.BF16)
       with p.brisc.scope():
         sign = p.brisc.reg(exclude=(value, key, mask))
         positive = p.brisc._new_label("argmax_positive")
@@ -768,7 +638,7 @@ def decode_argmax(
       p.brisc.srli(tile, position, 10)
       p.brisc.andi(within, position, 1023)
       p.brisc.noc.read_tile(token_history, tile, history_l1)
-      _store_tiled_u32(p.brisc, history_l1, within, best_id)
+      l1.store(p.brisc, history_l1, within, best_id)
       target_address, target_coordinate = p.brisc.noc._dram_tile(
         token_history, tile,
       )
@@ -867,7 +737,7 @@ def _decode_projection_residual_program(
     source_row = first_residual_row + feature_half
     target_row = feature_half
     for face in range(2):
-      _copy_l1_words(
+      l1.copy_words(
         p.brisc,
         residual_l1 + _bf16_tile_byte_offset(source_row * 32 + face * 16),
         residual_cb.addr +
@@ -1144,31 +1014,6 @@ def _compact_slot_byte_offset(slot):
   return slot * 2 if slot < 16 else 512 + (slot - 16) * 2
 
 
-def _copy_l1_words(kernel, source_base, target_base, words, *,
-                    source_offset=None):
-  """Emit a small runtime L1 copy."""
-  with kernel.scope():
-    source, target, remaining, value = kernel.reg(4)
-    if isinstance(source_base, R): kernel.mv(source, source_base)
-    else: kernel.li(source, source_base)
-    if isinstance(source_offset, R): kernel.add(source, source, source_offset)
-    elif source_offset: kernel.addi(source, source, source_offset)
-    if isinstance(target_base, R): kernel.mv(target, target_base)
-    else: kernel.li(target, target_base)
-    kernel.li(remaining, words)
-    loop = kernel._new_label("rope_l1_copy")
-    done = kernel._new_label("rope_l1_copy_done")
-    kernel.label(loop)
-    kernel.beq(remaining, R.ZERO, done)
-    kernel.lw(value, source)
-    kernel.sw(value, target)
-    kernel.addi(source, source, 4)
-    kernel.addi(target, target, 4)
-    kernel.addi(remaining, remaining, -1)
-    kernel.j(loop)
-    kernel.label(done)
-
-
 def _decode_rope_program(
   cores, q, k, v, cos, sin, q_output, k_output, v_output, start_pos,
   *, query, head,
@@ -1295,7 +1140,7 @@ def _decode_rope_program(
           p.brisc.mv(source_offset, table_row_offset)
           if source_delta:
             p.brisc.addi(source_offset, source_offset, source_delta)
-          _copy_l1_words(
+          l1.copy_words(
             p.brisc, table_l1,
             operands.addr + operand_tile * operands.tile_size + target_offset,
             8, source_offset=source_offset,
@@ -1788,11 +1633,11 @@ def gqa_attention_fused(
       for target, source_offset in (
         (query_low_l1, 0), (query_high_l1, 32),
       ):
-        _copy_l1_words(
+        l1.copy_words(
           p.brisc, source, target + target_left, 8,
           source_offset=source_offset,
         )
-        _copy_l1_words(
+        l1.copy_words(
           p.brisc, source, target + target_right, 8,
           source_offset=source_offset + 512,
         )
@@ -1804,8 +1649,8 @@ def gqa_attention_fused(
         CB.get_write_ptr(p.brisc, query_cb, low)
         p.brisc.li(tile_bytes, query_cb.tile_size)
         p.brisc.add(high, low, tile_bytes)
-        _copy_l1_words(p.brisc, query_low_l1, low, q.tile_size // 4)
-        _copy_l1_words(p.brisc, query_high_l1, high, q.tile_size // 4)
+        l1.copy_words(p.brisc, query_low_l1, low, q.tile_size // 4)
+        l1.copy_words(p.brisc, query_high_l1, high, q.tile_size // 4)
       CB.push_back(p.brisc, query_cb, 2)
       with p.brisc.scope():
         first, second, block_offset = p.brisc.reg(3, exclude=(head, block))
@@ -1949,148 +1794,32 @@ def gqa_attention_fused(
   return p
 
 
-def _embedding_program(
-  token_ids, embedding_weight, output, *, token_capacity,
-):
-  valid_s = Const("valid_s", PREFILL_CAPACITY)
-  token_start = Const("token_start", output.item_starts)
-  p = Program(
-    output.cores, token_ids, embedding_weight, output, valid_s, token_start,
-  )
-
-  # BRISC reads the one token-ID tile once, then produces embedding tiles.
-  # Four CB slots hold two complete embedding rows, allowing BRISC/NCRISC to
-  # overlap once the NOC helpers support multiple outstanding transactions.
-  ids_l1 = p.l1(token_ids.tile_size, alignment=16)
-  embedding_cb = p.cb(DType.BF16, depth=4)
-
-  brisc = p.brisc
-  with brisc.scope():
-    local_count, start = brisc.reg(2)
-    _load_local_count(
-      brisc, p, valid_s, token_start, token_capacity, local_count, start,
-    )
-    finished = brisc._new_label("embedding_brisc_finished")
-    brisc.beq(local_count, R.ZERO, finished)
-    brisc.noc.read_tile(token_ids, 0, ids_l1)
-
-    for local_token in brisc.range(local_count):
-      with brisc.scope():
-        global_token, token_id = brisc.reg(2)
-        brisc.add(global_token, start, local_token)
-        _load_tiled_u32(brisc, ids_l1, global_token, token_id)
-        for row_tile in brisc.range(EMBEDDING_TILES):
-          with brisc.scope():
-            source_tile = brisc.reg(exclude=(token_id, row_tile))
-            brisc.slli(source_tile, token_id, 1)
-            brisc.add(source_tile, source_tile, row_tile)
-            brisc.noc.read_into_cb(
-              embedding_weight, source_tile, embedding_cb,
-            )
-    brisc.label(finished)
-
-  # NCRISC drains the CB into this core's contiguous output-token shard.
-  ncrisc = p.ncrisc
-  with ncrisc.scope():
-    local_count, start = ncrisc.reg(2)
-    _load_local_count(
-      ncrisc, p, valid_s, token_start, token_capacity, local_count, start,
-    )
-    for local_token in ncrisc.range(local_count):
-      for row_tile in ncrisc.range(EMBEDDING_TILES):
-        with ncrisc.scope():
-          output_tile = ncrisc.reg(exclude=(local_token, row_tile))
-          ncrisc.slli(output_tile, local_token, 1)
-          ncrisc.add(output_tile, output_tile, row_tile)
-          ncrisc.noc.write_from_cb(
-            embedding_cb, output, output_tile,
-          )
-  return p
-
-
-def embedding(token_ids: Buffer, embedding_weight: Buffer,
-              output: Buffer) -> Program:
-  """Gather up to 1024 embedding rows over 118 cores (80x9, then 38x8).
-
-  Logical operation:
-    output[:valid_s, :] = embedding_weight[token_ids[:valid_s], :]
-
-  `valid_s` is a runtime Program parameter. The two inputs use one global tile
-  namespace, while output is sharded into contiguous token ranges over cores.
-  """
-  if token_ids.dtype is not DType.U32:
-    raise ValueError("embedding token IDs must be U32")
-  if token_ids.shape != (PREFILL_CAPACITY,) or token_ids.tiles != 1:
-    raise ValueError(
-      f"embedding token IDs must have shape ({PREFILL_CAPACITY},)",
-    )
-  if not token_ids.global_address:
-    raise ValueError("embedding token IDs must be globally addressed")
-  if embedding_weight.dtype is not DType.BF16:
-    raise ValueError("embedding weights must be BF16")
-  if (
-    len(embedding_weight.shape) != 2 or
-    embedding_weight.shape[1] != EMBED_DIM or
-    embedding_weight.axis != 0 or
-    embedding_weight.tiles_per_item != EMBEDDING_TILES
-  ):
-    raise ValueError(
-      f"embedding weights must have shape (vocab, {EMBED_DIM}) with axis=0",
-    )
-  if not embedding_weight.global_address:
-    raise ValueError("embedding weights must be globally addressed")
-  if (
-    output.dtype is not DType.BF16 or
-    output.shape != (PREFILL_CAPACITY, EMBED_DIM) or
-    output.axis != 0 or
-    output.tiles_per_item != EMBEDDING_TILES or
-    len(output.cores) != LLAMA_CORES or
-    output.item_counts != CORE_TOKEN_COUNTS
-  ):
-    raise ValueError(
-      f"embedding output must be BF16[{PREFILL_CAPACITY}, {EMBED_DIM}] "
-      f"sharded 9 tokens on {NINE_TOKEN_CORES} cores and 8 tokens on "
-      f"{LLAMA_CORES - NINE_TOKEN_CORES} cores",
-    )
-  return _specialize_token_counts(
-    lambda count: _embedding_program(
-      token_ids, embedding_weight, output, token_capacity=count,
-    ),
-    output.cores, output.item_counts,
-  )
-
-
 def decode_embedding(
   token_id: Buffer, embedding_weight: Buffer, output: Buffer,
 ) -> Program:
-  """Gather one embedding row directly into global BF16[1, 2048]."""
-  if (
-    token_id.dtype is not DType.U32 or
-    token_id.shape not in ((1,), (ROPE_CACHE_TOKENS,)) or
-    not token_id.global_address
-  ):
-    raise ValueError(
-      f"decode token IDs must be global U32[1] or U32[{ROPE_CACHE_TOKENS}]",
-    )
-  if (
-    embedding_weight.dtype is not DType.BF16 or
-    embedding_weight.shape != (VOCAB_SIZE, EMBED_DIM) or
-    embedding_weight.axis != 0 or
-    embedding_weight.tiles_per_item != EMBEDDING_TILES or
-    not embedding_weight.global_address
-  ):
-    raise ValueError(
-      f"decode embedding weight must be global "
-      f"BF16[{VOCAB_SIZE}, {EMBED_DIM}]",
-    )
-  if (
-    output.dtype is not DType.BF16 or output.shape != (1, EMBED_DIM) or
-    output.axis != 0 or output.tiles_per_item != EMBEDDING_TILES or
-    not output.global_address
-  ):
-    raise ValueError(
-      f"decode embedding output must be global BF16[1, {EMBED_DIM}]",
-    )
+  """Gather one embedding row on one core.
+
+    token_id          U32[1] or U32[8192]   global; `token_pos` selects the row
+    embedding_weight  BF16[128256, 2048]    global, 2 tiles per vocabulary row
+    output            BF16[1, 2048]         global, 2 tiles
+
+  Logical operation:
+    output[0, :] = embedding_weight[token_id[token_pos], :]
+  """
+  check_buffer(
+    "decode token IDs", token_id, dtype=DType.U32,
+    shape=frozenset(((1,), (ROPE_CACHE_TOKENS,))), global_address=True,
+  )
+  check_buffer(
+    "decode embedding weight", embedding_weight, dtype=DType.BF16,
+    shape=(VOCAB_SIZE, EMBED_DIM), axis=0, tiles_per_item=EMBEDDING_TILES,
+    global_address=True,
+  )
+  check_buffer(
+    "decode embedding output", output, dtype=DType.BF16,
+    shape=(1, EMBED_DIM), axis=0, tiles_per_item=EMBEDDING_TILES,
+    global_address=True,
+  )
 
   token_pos = Const("token_pos", 0)
   p = Program(
@@ -2101,14 +1830,15 @@ def decode_embedding(
   with p.brisc.scope():
     position, tile, within, token = p.brisc.reg(4)
     p.brisc.read(position, p.param_addr(token_pos))
-    p.brisc.srli(tile, position, 10)
+    p.brisc.srli(tile, position, 10)          # 1024 token IDs per tile
     p.brisc.andi(within, position, 1023)
     p.brisc.noc.read_tile(token_id, tile, ids_l1)
-    _load_tiled_u32(p.brisc, ids_l1, within, token)
+    l1.load(p.brisc, ids_l1, within, token)   # token = token_id[token_pos]
     for row_tile in range(EMBEDDING_TILES):
       with p.brisc.scope():
+        # weight tile index = token * EMBEDDING_TILES + row_tile
         source_tile = p.brisc.reg(exclude=token)
-        p.brisc.slli(source_tile, token, 1)
+        p.brisc.slli(source_tile, token, EMBEDDING_TILES_SHIFT)
         if row_tile: p.brisc.addi(source_tile, source_tile, row_tile)
         p.brisc.noc.read_into_cb(
           embedding_weight, source_tile, embedding_cb,
@@ -2195,7 +1925,7 @@ def _rmsnorm_fused_program(
   else:
     with p.brisc.scope():
       local_count, start = p.brisc.reg(2)
-      _load_local_count(
+      local_range(
         p.brisc, p, valid_s, token_start, token_capacity,
         local_count, start,
       )
@@ -2215,7 +1945,7 @@ def _rmsnorm_fused_program(
   else:
     with p.trisc0.scope():
       local_count, start = p.trisc0.reg(2)
-      _load_local_count(
+      local_range(
         p.trisc0, p, valid_s, token_start, token_capacity,
         local_count, start,
       )
@@ -2231,7 +1961,7 @@ def _rmsnorm_fused_program(
   else:
     with p.trisc1.scope():
       local_count, start = p.trisc1.reg(2)
-      _load_local_count(
+      local_range(
         p.trisc1, p, valid_s, token_start, token_capacity,
         local_count, start,
       )
@@ -2245,7 +1975,7 @@ def _rmsnorm_fused_program(
   else:
     with p.trisc2.scope():
       local_count, start = p.trisc2.reg(2)
-      _load_local_count(
+      local_range(
         p.trisc2, p, valid_s, token_start, token_capacity,
         local_count, start,
       )
@@ -2271,7 +2001,7 @@ def _rmsnorm_fused_program(
   else:
     with p.ncrisc.scope():
       local_count, start = p.ncrisc.reg(2)
-      _load_local_count(
+      local_range(
         p.ncrisc, p, valid_s, token_start, token_capacity,
         local_count, start,
       )
@@ -2283,7 +2013,7 @@ def _rmsnorm_fused_program(
 def rmsnorm(x: Buffer, weight: Buffer, output: Buffer) -> Program:
   """Fused FP32 RMSNorm for one-token decode or fixed-capacity prefill."""
   _validate_fused_rmsnorm(x, weight, output)
-  return _specialize_token_counts(
+  return specialize(
     lambda count: _rmsnorm_fused_program(
       x, weight, output, token_capacity=count,
     ),
@@ -2733,1661 +2463,16 @@ def run_decode_e2e(
   print(f"{generation_replays / generation_seconds:.2f} tok/s")
 
 
-def run_embedding_hardware(seq_len=200, vocab_size=257,
-                           safetensor_path=None, repeats=5):
-  if not 0 < seq_len <= PREFILL_CAPACITY:
-    raise ValueError(f"seq_len must be in 1..{PREFILL_CAPACITY}")
-  if repeats < 1: raise ValueError("repeats must be positive")
-  if safetensor_path is not None: vocab_size = VOCAB_SIZE
-  if not 1 < vocab_size <= VOCAB_SIZE:
-    raise ValueError(f"vocab_size must be in 2..{VOCAB_SIZE}")
-
-  device = Device()
-  try:
-    device.init_device()
-    token_ids = device.dram.buffer(
-      "token_ids", DType.U32, (PREFILL_CAPACITY,), global_address=True,
-    )
-    embedding_weight = device.dram.buffer(
-      "embedding_weight", DType.BF16, (vocab_size, EMBED_DIM), axis=0,
-      global_address=True,
-    )
-    output = device.dram.buffer(
-      "embedding_output", DType.BF16, (PREFILL_CAPACITY, EMBED_DIM), axis=0,
-      cores=device.dram.cores[:LLAMA_CORES],
-    )
-
-    rng = np.random.default_rng(0)
-    ids = np.zeros(PREFILL_CAPACITY, dtype=np.uint32)
-    ids[:seq_len] = rng.integers(0, vocab_size, size=seq_len, dtype=np.uint32)
-    boundary_ids = np.asarray((0, 1, vocab_size - 2, vocab_size - 1), dtype=np.uint32)
-    ids[:min(seq_len, len(boundary_ids))] = boundary_ids[:seq_len]
-
-    ids_data = token_ids.from_numpy(ids)
-    if safetensor_path is None:
-      rows = np.arange(vocab_size, dtype=np.float32)[:, None]
-      columns = np.arange(EMBED_DIM, dtype=np.float32)[None, :]
-      weights = ((rows * 17 + columns * 3) % 251 - 125) / 32
-      weights_data = embedding_weight.from_numpy(weights)
-    else:
-      weights_data = embedding_weight.from_safetensor(
-        "model.embed_tokens.weight", safetensor_path,
-      )
-
-    device.write(token_ids, ids_data)
-    device.write(embedding_weight, weights_data)
-    program = embedding(token_ids, embedding_weight, output)
-    device.queue(program, params={"valid_s": seq_len})
-    readback = device.queue_read(output)
-    timestamps = device.run(timeout=5.0)
-    actual = readback.result()
-
-    row_bytes = EMBED_DIM * DType.BF16.itemsize
-    for token in range(seq_len):
-      actual_row = actual[token * row_bytes:(token + 1) * row_bytes]
-      weight_row = int(ids[token]) * row_bytes
-      expected_row = weights_data[weight_row:weight_row + row_bytes]
-      if actual_row != expected_row:
-        byte = next(
-          index for index, pair in enumerate(zip(actual_row, expected_row))
-          if pair[0] != pair[1]
-        )
-        raise AssertionError(
-          f"embedding mismatch at token {token}, feature {byte//2}: "
-          f"id={int(ids[token])}, byte_in_row={byte}",
-        )
-
-    samples = [timestamps[-1].us]
-    for _ in range(repeats - 1):
-      samples.append(device.run(
-        program, params={"valid_s": seq_len}, timeout=5.0,
-      )[-1].us)
-    kernel_us = float(np.median(samples))
-    bytes_moved = seq_len * EMBED_DIM * DType.BF16.itemsize * 2
-    print("PASS llama3 embedding")
-    print(f"weights: {safetensor_path or 'synthetic'}")
-    print(f"tokens: {seq_len}")
-    print(f"cores: {len(output.cores)}")
-    print(f"latency us: min={min(samples):.3f}, median={kernel_us:.3f}")
-    print(f"effective read+write bandwidth: {bytes_moved/kernel_us/1e3:.3f} GB/s")
-  finally:
-    device.close()
-
-
-def run_rmsnorm_hardware(
-  valid_s=1024, repeats=5,
-  safetensor_path="weights/model.safetensors",
-  core_start=0,
-  decode=False,
-):
-  if repeats < 1: raise ValueError("repeats must be positive")
-  if decode:
-    if valid_s != 1:
-      raise ValueError("decode RMSNorm requires valid_s=1")
-    capacity, core_count = 1, 1
-  else:
-    if not 0 < valid_s <= PREFILL_CAPACITY:
-      raise ValueError(f"valid_s must be in 1..{PREFILL_CAPACITY}")
-    capacity, core_count = PREFILL_CAPACITY, LLAMA_CORES
-
-  device = Device()
-  try:
-    device.init_device()
-    if not 0 <= core_start <= len(device.dram.cores) - core_count:
-      raise ValueError("core range exceeds the available worker cores")
-    cores = device.dram.cores[core_start:core_start + core_count]
-    shape = (capacity, EMBED_DIM)
-    x = device.dram.buffer(
-      "rmsnorm_x", DType.BF16, shape, axis=0, cores=cores,
-    )
-    weight = device.dram.buffer(
-      "rmsnorm_weight", DType.BF16, (EMBED_DIM,),
-      global_address=True,
-    )
-    output = device.dram.buffer(
-      "rmsnorm_output", DType.BF16, shape, axis=0, cores=cores,
-    )
-
-    rng = np.random.default_rng(1)
-    values = rng.normal(0, 0.25, x.shape).astype(np.float32)
-    x_data = x.from_numpy(values)
-    weight_data = weight.from_safetensor(
-      "model.layers.0.input_layernorm.weight", safetensor_path,
-    )
-
-    # CPU oracle: BF16 storage -> one fused FP32 expression -> one BF16 cast.
-    xf = x.to_numpy(x_data)
-    xf.flags.writeable = False
-    wf = weight.to_numpy(weight_data)
-    squares = np.multiply(xf, xf, dtype=np.float32)
-    mean_square = np.sum(squares, axis=1, dtype=np.float32) * np.float32(
-      1.0 / EMBED_DIM,
-    )
-    scale = np.float32(1.0) / np.sqrt(
-      mean_square + np.float32(1e-5),
-    )
-    expected = output.to_numpy(output.from_numpy(
-      np.multiply(
-        np.multiply(xf, scale[:, None], dtype=np.float32),
-        wf[None, :], dtype=np.float32,
-      ),
-    ))
-
-    device.write(x, x_data)
-    device.write(weight, weight_data)
-    program = rmsnorm(x, weight, output)
-    device.queue(program, params={"valid_s": valid_s})
-    readback = device.queue_read(output)
-    samples = [device.run(timeout=5.0)[-1].us]
-    actual = output.to_numpy(readback.result())
-
-    actual_valid, expected_valid = actual[:valid_s], expected[:valid_s]
-    difference = np.subtract(actual_valid, expected_valid, dtype=np.float32)
-    error = np.abs(difference)
-    relative_l2 = float(
-      np.linalg.norm(difference) /
-      (np.linalg.norm(expected_valid) + 1e-12),
-    )
-    pcc = float(np.corrcoef(
-      actual_valid.reshape(-1), expected_valid.reshape(-1),
-    )[0, 1])
-    exact = int(np.count_nonzero(actual_valid == expected_valid))
-    if (
-      not np.all(np.isfinite(actual_valid)) or
-      float(error.max()) > 0.05 or relative_l2 > 0.01 or pcc < 0.999
-    ):
-      token, feature = np.unravel_index(int(error.argmax()), error.shape)
-      raise AssertionError(
-        f"RMSNorm mismatch at token {token}, feature {feature}: "
-        f"actual={actual_valid[token, feature]}, "
-        f"expected={expected_valid[token, feature]}, "
-        f"max_abs={error.max()}, relative_l2={relative_l2}, PCC={pcc}",
-      )
-    for _ in range(repeats - 1):
-      samples.append(device.run(
-        program, params={"valid_s": valid_s}, timeout=5.0,
-      )[-1].us)
-
-    print("PASS llama3 RMSNorm")
-    print("weight: model.layers.0.input_layernorm.weight")
-    print(f"mode: {'decode' if decode else 'prefill'}")
-    print(f"valid_s: {valid_s}")
-    print(f"capacity: {capacity}")
-    print(f"cores: {core_count}")
-    print(f"core start: {core_start}")
-    print(f"tokens/core: min={min(x.item_counts)}, max={max(x.item_counts)}")
-    print(f"exact BF16 values: {exact}/{expected_valid.size}")
-    print(f"max abs error: {error.max():.6g}")
-    print(f"relative L2: {relative_l2:.6g}")
-    print(f"PCC: {pcc:.9f}")
-    print(
-      f"latency us: min={min(samples):.3f}, "
-      f"p10={np.percentile(samples, 10):.3f}, "
-      f"median={np.median(samples):.3f}, "
-      f"p90={np.percentile(samples, 90):.3f}"
-    )
-  finally:
-    device.close()
-
-
-def _projection_values(output, data, row_counts):
-  compact = output.to_numpy(data)
-  return np.concatenate([
-    compact[core, :count]
-    for core, count in enumerate(row_counts)
-  ])
-
-
-def run_rope_cache_hardware():
-  """Validate the one-time host-built Llama 3 RoPE cache upload."""
-  device = Device()
-  try:
-    device.init_device()
-    cos, sin = upload_rope_cache(device)
-    cos_readback = device.queue_read(cos)
-    sin_readback = device.queue_read(sin)
-    device.run(timeout=5.0)
-
-    cos_values, sin_values = rope_table()
-    expected_cos = cos.to_numpy(_bf16_rne_bytes(cos_values))
-    expected_sin = sin.to_numpy(_bf16_rne_bytes(sin_values))
-    actual_cos = cos.to_numpy(cos_readback.result())
-    actual_sin = sin.to_numpy(sin_readback.result())
-    if not np.array_equal(actual_cos, expected_cos):
-      position, feature = np.argwhere(actual_cos != expected_cos)[0]
-      raise AssertionError(
-        f"RoPE cosine upload mismatch at [{position}, {feature}]: "
-        f"actual={actual_cos[position, feature]}, "
-        f"expected={expected_cos[position, feature]}",
-      )
-    if not np.array_equal(actual_sin, expected_sin):
-      position, feature = np.argwhere(actual_sin != expected_sin)[0]
-      raise AssertionError(
-        f"RoPE sine upload mismatch at [{position}, {feature}]: "
-        f"actual={actual_sin[position, feature]}, "
-        f"expected={expected_sin[position, feature]}",
-      )
-
-    print("PASS llama3 RoPE cache upload")
-    print(f"logical shape: {cos.shape}")
-    print(f"dtype in DRAM: {cos.dtype.name}")
-    print(f"bytes/table: {cos.size}")
-    print("positions/tile: 16")
-    print("position p: tile=p//16, tile rows=2*(p%16)..+1")
-  finally:
-    device.close()
-
-
-def run_decode_endpoints_hardware(
-  safetensor_path="weights/model.safetensors", token=128000,
-):
-  """Validate one-token embedding and the tied full-vocabulary projection."""
-  if not 0 <= token < VOCAB_SIZE:
-    raise ValueError(f"token must be in 0..{VOCAB_SIZE - 1}")
-  device = Device()
-  try:
-    device.init_device()
-    cores = device.dram.cores[:LLAMA_CORES]
-    token_id = device.dram.buffer(
-      "decode_token_id", DType.U32, (1,), global_address=True,
-    )
-    embedding_weight = device.dram.buffer(
-      "decode_embedding_weight", DType.BF16,
-      (VOCAB_SIZE, EMBED_DIM), axis=0, global_address=True,
-    )
-    activation = device.dram.buffer(
-      "decode_embedding_output", DType.BF16, (1, EMBED_DIM),
-      axis=0, global_address=True,
-    )
-    lm_weight = device.dram.buffer(
-      "decode_lm_weight", DType.BF16, (VOCAB_SIZE, EMBED_DIM),
-      axis=0, cores=cores,
-    )
-    logits = device.dram.buffer(
-      "decode_logits", DType.BF16,
-      (LLAMA_CORES, lm_weight.items_per_core), axis=0, cores=cores,
-    )
-
-    weight_data = embedding_weight.from_safetensor(
-      "model.embed_tokens.weight", safetensor_path,
-    )
-    device.write(embedding_weight, weight_data)
-    device.run(timeout=30.0)
-    device.write(lm_weight, weight_data)
-    device.run(timeout=30.0)
-    device.write(
-      token_id, token_id.from_numpy(np.asarray([token], dtype=np.uint32)),
-    )
-    embed_program = decode_embedding(
-      token_id, embedding_weight, activation,
-    )
-    lm_program = decode_projection(activation, lm_weight, logits)
-    device.queue(embed_program)
-    embedding_readback = device.queue_read(activation)
-    embed_timestamps = device.run(timeout=10.0)
-
-    row_bytes = EMBED_DIM * DType.BF16.itemsize
-    expected_embedding = weight_data[
-      token * row_bytes:(token + 1) * row_bytes
-    ]
-    if embedding_readback.result() != expected_embedding:
-      actual_embedding = activation.to_numpy(
-        embedding_readback.result(),
-      ).reshape(-1)
-      expected_values = embedding_weight.to_numpy(
-        expected_embedding,
-      ).reshape(-1)
-      feature = int(np.abs(actual_embedding - expected_values).argmax())
-      raise AssertionError(
-        f"decode embedding mismatch at feature {feature}: "
-        f"actual={actual_embedding[feature]}, "
-        f"expected={expected_values[feature]}",
-      )
-
-    device.queue(lm_program)
-    logits_readback = device.queue_read(logits)
-    lm_timestamps = device.run(timeout=30.0)
-    actual = _projection_values(
-      logits, logits_readback.result(), lm_weight.item_counts,
-    )
-    activation_values = activation.to_numpy(
-      embedding_readback.result(),
-    ).reshape(-1)
-    sample_rows = np.unique(np.linspace(
-      0, VOCAB_SIZE - 1, 65, dtype=np.int64,
-    ))
-    weight_words = np.frombuffer(weight_data, dtype="<u2").reshape(
-      VOCAB_SIZE, EMBED_DIM,
-    )
-    sample_weights = (
-      weight_words[sample_rows].astype(np.uint32) << 16
-    ).view(np.float32)
-    expected = np.sum(
-      np.multiply(
-        sample_weights, activation_values[None, :], dtype=np.float32,
-      ),
-      axis=1, dtype=np.float32,
-    )
-    difference = np.subtract(actual[sample_rows], expected, dtype=np.float32)
-    relative_l2 = float(
-      np.linalg.norm(difference) / (np.linalg.norm(expected) + 1e-12),
-    )
-    pcc = float(np.corrcoef(actual[sample_rows], expected)[0, 1])
-    if (
-      not np.all(np.isfinite(actual)) or relative_l2 > 0.02 or pcc < 0.999
-    ):
-      sample = int(np.abs(difference).argmax())
-      row = int(sample_rows[sample])
-      raise AssertionError(
-        f"tied LM head mismatch at row {row}: actual={actual[row]}, "
-        f"expected={expected[sample]}, relative_l2={relative_l2}, PCC={pcc}",
-      )
-
-    print("PASS llama3 decode embedding + tied LM head")
-    print(f"token: {token}")
-    print(f"embedding: {embed_timestamps[-1].us:.3f} us, bit-exact")
-    print(
-      f"LM head: {lm_timestamps[-1].us:.3f} us, "
-      f"sampled relative L2={relative_l2:.6g}, PCC={pcc:.9f}",
-    )
-    print(f"host argmax token: {int(np.argmax(actual))}")
-  finally:
-    device.close()
-
-
-def _compact_projection_data(buffer, values, row_counts):
-  compact = np.zeros(buffer.shape, dtype=np.float32)
-  start = 0
-  for core, count in enumerate(row_counts):
-    compact[core, :count] = values[start:start + count]
-    start += count
-  if start != len(values):
-    raise AssertionError("compact projection length mismatch")
-  return buffer.from_numpy(compact)
-
-
-def _rope_reference(values, cosine, sine):
-  heads = values.reshape(-1, HEAD_DIM)
-  rotated = np.concatenate(
-    (-heads[:, HEAD_DIM // 2:], heads[:, :HEAD_DIM // 2]), axis=1,
-  )
-  return np.add(
-    np.multiply(heads, cosine[None, :], dtype=np.float32),
-    np.multiply(rotated, sine[None, :], dtype=np.float32),
-    dtype=np.float32,
-  )
-
-
-def run_decode_rope_hardware(positions=(0, 1, 127, 8191), repeats=1):
-  """Validate fused Q/K RoPE and V reassembly against the host reference."""
-  if repeats < 1: raise ValueError("repeats must be positive")
-  positions = tuple(positions)
-  if not positions or any(not 0 <= p < ROPE_CACHE_TOKENS for p in positions):
-    raise ValueError(f"positions must be in 0..{ROPE_CACHE_TOKENS - 1}")
-
-  device = Device()
-  try:
-    device.init_device()
-    cores = device.dram.cores[:LLAMA_CORES]
-    q = device.dram.buffer(
-      "rope_q_input", DType.BF16, (LLAMA_CORES, 18), axis=0, cores=cores,
-    )
-    k = device.dram.buffer(
-      "rope_k_input", DType.BF16, (LLAMA_CORES, 5), axis=0, cores=cores,
-    )
-    v = device.dram.buffer(
-      "rope_v_input", DType.BF16, (LLAMA_CORES, 5), axis=0, cores=cores,
-    )
-    q_output = device.dram.buffer(
-      "rope_q_output", DType.BF16, (Q_HEADS, HEAD_DIM), axis=0,
-      global_address=True,
-    )
-    k_output = device.dram.buffer(
-      "rope_k_output", DType.BF16, (KV_HEADS, HEAD_DIM), axis=0,
-      global_address=True,
-    )
-    v_output = device.dram.buffer(
-      "rope_v_output", DType.BF16, (KV_HEADS, HEAD_DIM), axis=0,
-      global_address=True,
-    )
-    cos, sin = upload_rope_cache(device)
-
-    rng = np.random.default_rng(4)
-    q_values = rng.normal(0, 0.5, Q_PROJ_DIM).astype(np.float32)
-    k_values = rng.normal(0, 0.5, KV_PROJ_DIM).astype(np.float32)
-    v_values = rng.normal(0, 0.5, KV_PROJ_DIM).astype(np.float32)
-    q_data = _compact_projection_data(
-      q, q_values, (18,) * 42 + (17,) * 76,
-    )
-    k_data = _compact_projection_data(
-      k, k_values, (5,) * 40 + (4,) * 78,
-    )
-    v_data = _compact_projection_data(
-      v, v_values, (5,) * 40 + (4,) * 78,
-    )
-    q_reference_input = _projection_values(
-      q, q_data, (18,) * 42 + (17,) * 76,
-    )
-    k_reference_input = _projection_values(
-      k, k_data, (5,) * 40 + (4,) * 78,
-    )
-    v_reference_input = _projection_values(
-      v, v_data, (5,) * 40 + (4,) * 78,
-    )
-    cos_values, sin_values = rope_table()
-    cos_reference = cos.to_numpy(_bf16_rne_bytes(cos_values))
-    sin_reference = sin.to_numpy(_bf16_rne_bytes(sin_values))
-
-    device.write(q, q_data)
-    device.write(k, k_data)
-    device.write(v, v_data)
-    program = decode_rope(
-      q, k, v, cos, sin, q_output, k_output, v_output,
-    )
-    metrics, samples = {}, []
-    for position in positions:
-      device.queue(program, params={"start_pos": position})
-      q_readback = device.queue_read(q_output)
-      k_readback = device.queue_read(k_output)
-      v_readback = device.queue_read(v_output)
-      timestamps = device.run(timeout=5.0)
-      samples.append(timestamps[-1].us)
-
-      for name, actual, source_values in (
-        ("q", q_output.to_numpy(q_readback.result()), q_reference_input),
-        ("k", k_output.to_numpy(k_readback.result()), k_reference_input),
-        ("v", v_output.to_numpy(v_readback.result()), v_reference_input),
-      ):
-        expected_values = (
-          source_values.reshape(KV_HEADS, HEAD_DIM)
-          if name == "v" else
-          _rope_reference(
-            source_values, cos_reference[position], sin_reference[position],
-          )
-        )
-        expected_buffer = {
-          "q": q_output, "k": k_output, "v": v_output,
-        }[name]
-        expected = expected_buffer.to_numpy(
-          _bf16_rne_bytes(expected_values),
-        )
-        difference = np.subtract(actual, expected, dtype=np.float32)
-        error = np.abs(difference)
-        relative_l2 = float(
-          np.linalg.norm(difference) / (np.linalg.norm(expected) + 1e-12),
-        )
-        if (
-          not np.all(np.isfinite(actual)) or
-          float(error.max()) > 0.01 or relative_l2 > 0.005
-        ):
-          head, feature = np.unravel_index(int(error.argmax()), error.shape)
-          raise AssertionError(
-            f"decode Q/K RoPE + V gather {name} mismatch at position "
-            f"{position}, "
-            f"head {head}, feature {feature}: actual={actual[head, feature]}, "
-            f"expected={expected[head, feature]}, max_abs={error.max()}, "
-            f"relative_l2={relative_l2}, actual_min={actual.min()}, "
-            f"actual_max={actual.max()}, actual_nonzero={np.count_nonzero(actual)}",
-          )
-        metrics[position, name] = (
-          int(np.count_nonzero(actual == expected)),
-          float(error.max()), relative_l2,
-        )
-
-    for _ in range(repeats - 1):
-      samples.append(device.run(
-        program, params={"start_pos": positions[-1]}, timeout=5.0,
-      )[-1].us)
-
-    print("PASS llama3 fused decode Q/K RoPE + V reassembly")
-    print(f"workers: {ROPE_CORES} ({Q_HEADS} Q + {KV_HEADS} K/V)")
-    print(f"positions: {positions}")
-    for position in positions:
-      for name, elements in (
-        ("q", Q_PROJ_DIM), ("k", KV_PROJ_DIM), ("v", KV_PROJ_DIM),
-      ):
-        exact, max_abs, relative_l2 = metrics[position, name]
-        print(
-          f"position {position} {name}: exact={exact}/{elements}, "
-          f"max_abs={max_abs:.6g}, relative_l2={relative_l2:.6g}",
-        )
-    print(
-      f"latency us: min={min(samples):.3f}, median={np.median(samples):.3f}, "
-      f"max={max(samples):.3f}",
-    )
-  finally:
-    device.close()
-
-
-def run_decode_kv_cache_hardware(
-  positions=(0, 1, 15, 16, 31, 32, 127, 8191), repeats=1,
-):
-  """Validate one-token K/V cache writes and untouched cache contents."""
-  if repeats < 1: raise ValueError("repeats must be positive")
-  positions = tuple(positions)
-  if (
-    not positions or len(set(positions)) != len(positions) or
-    any(not 0 <= position < ROPE_CACHE_TOKENS for position in positions)
-  ):
-    raise ValueError(
-      f"positions must be unique values in 0..{ROPE_CACHE_TOKENS - 1}",
-    )
-
-  device = Device()
-  try:
-    device.init_device()
-    k = device.dram.buffer(
-      "decode_cache_k", DType.BF16, (KV_HEADS, HEAD_DIM), axis=0,
-      global_address=True,
-    )
-    v = device.dram.buffer(
-      "decode_cache_v", DType.BF16, (KV_HEADS, HEAD_DIM), axis=0,
-      global_address=True,
-    )
-    key_cache = device.dram.buffer(
-      "key_cache", DType.BF16, KV_CACHE_STORAGE_SHAPE, axis=0,
-      global_address=True,
-    )
-    value_cache = device.dram.buffer(
-      "value_cache", DType.BF16, KV_CACHE_STORAGE_SHAPE, axis=0,
-      global_address=True,
-    )
-
-    sentinel = np.float32(0.25)
-    sentinel_bytes = _bf16_rne_bytes(np.array([sentinel], dtype=np.float32))
-    device.write(key_cache, sentinel_bytes * (key_cache.size // 2))
-    device.write(value_cache, sentinel_bytes * (value_cache.size // 2))
-    device.run(timeout=5.0)
-
-    rng = np.random.default_rng(5)
-    expected_rows = {}
-    program = kv_cache_write(k, v, key_cache, value_cache)
-    samples = []
-    for index, position in enumerate(positions):
-      k_values = rng.normal(0, 0.5, k.shape).astype(np.float32)
-      v_values = rng.normal(0, 0.5, v.shape).astype(np.float32)
-      k_data, v_data = k.from_numpy(k_values), v.from_numpy(v_values)
-      expected_rows[position] = (
-        k.to_numpy(k_data), v.to_numpy(v_data),
-      )
-      device.write(k, k_data)
-      device.write(v, v_data)
-      device.queue(program, params={"start_pos": position})
-      if index == len(positions) - 1:
-        key_readback = device.queue_read(key_cache)
-        value_readback = device.queue_read(value_cache)
-      samples.append(device.run(timeout=5.0)[-1].us)
-
-    actual_caches = (
-      key_cache.to_numpy(key_readback.result()),
-      value_cache.to_numpy(value_readback.result()),
-    )
-    for cache_index, (name, actual) in enumerate(zip(
-      ("key", "value"), actual_caches,
-    )):
-      for position, rows in expected_rows.items():
-        expected = rows[cache_index]
-        time_block, row = divmod(position, KV_CACHE_TOKEN_BLOCK)
-        for feature_half in range(KV_CACHE_FEATURE_TILES):
-          tile = time_block * KV_CACHE_FEATURE_TILES + feature_half
-          row_values = actual[:, tile, row * 32:(row + 1) * 32]
-          expected_values = expected[
-            :, feature_half * 32:(feature_half + 1) * 32
-          ]
-          if not np.array_equal(row_values, expected_values):
-            head, feature = np.argwhere(row_values != expected_values)[0]
-            raise AssertionError(
-              f"{name} cache mismatch at position {position}, head {head}, "
-              f"feature {feature_half * 32 + feature}: "
-              f"actual={row_values[head, feature]}, "
-              f"expected={expected_values[head, feature]}",
-            )
-          actual[:, tile, row * 32:(row + 1) * 32] = sentinel
-      if not np.all(actual == sentinel):
-        head, tile, element = np.argwhere(actual != sentinel)[0]
-        raise AssertionError(
-          f"{name} cache unexpectedly changed at head {head}, tile {tile}, "
-          f"element {element}: actual={actual[head, tile, element]}",
-        )
-
-    for _ in range(repeats - 1):
-      samples.append(device.run(
-        program, params={"start_pos": positions[-1]}, timeout=5.0,
-      )[-1].us)
-
-    print("PASS llama3 one-token decode K/V cache write")
-    print(f"logical cache shape: {KV_CACHE_SHAPE}")
-    print(f"tile storage shape: {KV_CACHE_STORAGE_SHAPE}")
-    print(f"positions: {positions}")
-    print(f"workers: {KV_HEADS} BRISC-only (one per KV head)")
-    print(
-      f"latency us: min={min(samples):.3f}, median={np.median(samples):.3f}, "
-      f"max={max(samples):.3f}",
-    )
-  finally:
-    device.close()
-
-
-def run_decode_gqa_attention_hardware(tokens=127, repeats=1):
-  """Validate fused decode GQA without score/probability DRAM tensors."""
-  if not 1 <= tokens <= ROPE_CACHE_TOKENS:
-    raise ValueError(f"tokens must be in 1..{ROPE_CACHE_TOKENS}")
-  if repeats < 1: raise ValueError("repeats must be positive")
-  blocks = (tokens + KV_CACHE_TOKEN_BLOCK - 1) // KV_CACHE_TOKEN_BLOCK
-  tail = (tokens - 1) % KV_CACHE_TOKEN_BLOCK + 1
-
-  device = Device()
-  try:
-    device.init_device()
-    q = device.dram.buffer(
-      "attention_q", DType.BF16, (Q_HEADS, HEAD_DIM), axis=0,
-      global_address=True,
-    )
-    key_cache = device.dram.buffer(
-      "attention_key_cache", DType.BF16, KV_CACHE_STORAGE_SHAPE,
-      axis=0, global_address=True,
-    )
-    value_cache = device.dram.buffer(
-      "attention_value_cache", DType.BF16, KV_CACHE_STORAGE_SHAPE,
-      axis=0, global_address=True,
-    )
-    context = device.dram.buffer(
-      "attention_context", DType.BF16, GQA_CONTEXT_SHAPE,
-      axis=0, global_address=True,
-    )
-
-    rng = np.random.default_rng(8)
-    q_values = rng.normal(0, 0.25, q.shape).astype(np.float32)
-    key_values = rng.normal(
-      0, 0.25, (KV_HEADS, tokens, HEAD_DIM),
-    ).astype(np.float32)
-    value_values = rng.normal(
-      0, 0.25, (KV_HEADS, tokens, HEAD_DIM),
-    ).astype(np.float32)
-    key_storage = np.zeros(KV_CACHE_STORAGE_SHAPE, dtype=np.float32)
-    value_storage = np.zeros(KV_CACHE_STORAGE_SHAPE, dtype=np.float32)
-    for head in range(KV_HEADS):
-      for block in range(blocks):
-        start, end = block * 32, min((block + 1) * 32, tokens)
-        for feature_half in range(KV_CACHE_FEATURE_TILES):
-          tile = block * KV_CACHE_FEATURE_TILES + feature_half
-          features = slice(feature_half * 32, (feature_half + 1) * 32)
-          key_storage[head, tile].reshape(32, 32)[:end - start] = (
-            key_values[head, start:end, features]
-          )
-          value_storage[head, tile].reshape(32, 32)[:end - start] = (
-            value_values[head, start:end, features]
-          )
-
-    q_data = q.from_numpy(q_values)
-    key_data = key_cache.from_numpy(key_storage)
-    value_data = value_cache.from_numpy(value_storage)
-    q_reference = q.to_numpy(q_data)
-    key_reference = key_cache.to_numpy(key_data)
-    value_reference = value_cache.to_numpy(value_data)
-
-    expected = np.empty((Q_HEADS, HEAD_DIM), dtype=np.float32)
-    for kv_head_index in range(KV_HEADS):
-      keys = np.concatenate([
-        key_reference[kv_head_index, block * 2].reshape(32, 32)
-        for block in range(blocks)
-      ], axis=0)[:tokens]
-      keys_high = np.concatenate([
-        key_reference[kv_head_index, block * 2 + 1].reshape(32, 32)
-        for block in range(blocks)
-      ], axis=0)[:tokens]
-      keys = np.concatenate((keys, keys_high), axis=1)
-      values = np.concatenate([
-        np.concatenate((
-          value_reference[kv_head_index, block * 2].reshape(32, 32),
-          value_reference[kv_head_index, block * 2 + 1].reshape(32, 32),
-        ), axis=1)
-        for block in range(blocks)
-      ], axis=0)[:tokens]
-      query_start = kv_head_index * GQA_GROUP_SIZE
-      queries = q_reference[query_start:query_start + GQA_GROUP_SIZE]
-      scores = (queries @ keys.T) * np.float32(HEAD_DIM ** -0.5)
-      running_max = np.full((GQA_GROUP_SIZE, 1), -np.inf, dtype=np.float32)
-      running_sum = np.zeros((GQA_GROUP_SIZE, 1), dtype=np.float32)
-      output = np.zeros((GQA_GROUP_SIZE, HEAD_DIM), dtype=np.float32)
-      for block in range(blocks):
-        start, end = block * 32, min((block + 1) * 32, tokens)
-        block_scores = scores[:, start:end]
-        block_max = np.max(block_scores, axis=1, keepdims=True)
-        new_max = np.maximum(running_max, block_max)
-        alpha = np.exp(running_max - new_max, dtype=np.float32)
-        probability = np.exp(block_scores - new_max, dtype=np.float32)
-        probability_words = np.frombuffer(
-          _bf16_rne_bytes(probability), dtype="<u2",
-        ).astype(np.uint32)
-        probability_bf16 = (probability_words << 16).view(np.float32).reshape(
-          probability.shape,
-        )
-        output = output * alpha + probability_bf16 @ values[start:end]
-        running_sum = running_sum * alpha + np.sum(
-          probability, axis=1, keepdims=True, dtype=np.float32,
-        )
-        running_max = new_max
-      expected[query_start:query_start + GQA_GROUP_SIZE] = output / running_sum
-    expected_words = np.frombuffer(
-      _bf16_rne_bytes(expected), dtype="<u2",
-    ).astype(np.uint32)
-    expected = (expected_words << 16).view(np.float32).reshape(expected.shape)
-
-    device.write(q, q_data)
-    device.write(key_cache, key_data)
-    device.write(value_cache, value_data)
-    device.write(
-      context,
-      context.from_numpy(np.full(GQA_CONTEXT_SHAPE, -0.5, dtype=np.float32)),
-    )
-    program = gqa_attention_fused(q, key_cache, value_cache, context)
-    params = {"kv_blocks": blocks, "valid_columns": tail}
-    device.queue(program, params=params)
-    readback = device.queue_read(context)
-    timestamps = device.run(timeout=10.0)
-    samples = [timestamps[-1].us]
-    actual = context.to_numpy(readback.result()).reshape(Q_HEADS, HEAD_DIM)
-
-    difference = np.subtract(actual, expected, dtype=np.float32)
-    error = np.abs(difference)
-    relative_l2 = float(
-      np.linalg.norm(difference) / (np.linalg.norm(expected) + 1e-12),
-    )
-    pcc = float(np.corrcoef(actual.reshape(-1), expected.reshape(-1))[0, 1])
-    if (
-      not np.all(np.isfinite(actual)) or float(error.max()) > 0.003 or
-      relative_l2 > 0.15 or pcc < 0.99
-    ):
-      query_head, feature = np.unravel_index(int(error.argmax()), error.shape)
-      raise AssertionError(
-        f"fused GQA mismatch at head {query_head}, feature {feature}: "
-        f"actual={actual[query_head, feature]}, "
-        f"expected={expected[query_head, feature]}, max_abs={error.max()}, "
-        f"relative_l2={relative_l2}, PCC={pcc}",
-      )
-
-    for _ in range(repeats - 1):
-      samples.append(device.run(program, params=params, timeout=10.0)[-1].us)
-    print("PASS llama3 fused decode GQA attention")
-    print(f"logical operation: [32,64] x [8,{tokens},64] -> [1,2048]")
-    print(f"workers: {KV_HEADS}, history blocks: {blocks}, tail: {tail}")
-    print(f"max abs error: {error.max():.6g}")
-    print(f"relative L2: {relative_l2:.6g}, PCC: {pcc:.9f}")
-    print(
-      f"latency us: min={min(samples):.3f}, median={np.median(samples):.3f}, "
-      f"max={max(samples):.3f}",
-    )
-  finally:
-    device.close()
-
-
-def run_decode_mlp_up_hardware(
-  safetensor_path="weights/model.safetensors", repeats=1,
-):
-  """Validate 2048->8192 gate/up projections and compact SwiGLU."""
-  if repeats < 1: raise ValueError("repeats must be positive")
-  device = Device()
-  try:
-    device.init_device()
-    cores = device.dram.cores[:LLAMA_CORES]
-    x = device.dram.buffer(
-      "mlp_x", DType.BF16, (1, EMBED_DIM), axis=0,
-      global_address=True,
-    )
-    specs = (
-      ("gate", "model.layers.0.mlp.gate_proj.weight"),
-      ("up", "model.layers.0.mlp.up_proj.weight"),
-    )
-    weights, outputs, programs, weight_data = {}, {}, {}, {}
-    for name, tensor in specs:
-      weight = device.dram.buffer(
-        f"mlp_{name}_weight", DType.BF16, (MLP_DIM, EMBED_DIM),
-        axis=0, cores=cores,
-      )
-      output = device.dram.buffer(
-        f"mlp_{name}_compact", DType.BF16,
-        (LLAMA_CORES, weight.items_per_core), axis=0, cores=cores,
-      )
-      weights[name], outputs[name] = weight, output
-      weight_data[name] = weight.from_safetensor(tensor, safetensor_path)
-      programs[name] = decode_projection(x, weight, output)
-    hidden = device.dram.buffer(
-      "mlp_hidden_compact", DType.BF16, outputs["gate"].shape,
-      axis=0, cores=cores,
-    )
-    swiglu_program = decode_swiglu(outputs["gate"], outputs["up"], hidden)
-    dense_hidden = device.dram.buffer(
-      "mlp_hidden_dense", DType.BF16, (1, MLP_DIM), axis=0,
-      global_address=True,
-    )
-    reassembly_program = decode_compact_to_dense(hidden, dense_hidden)
-
-    rng = np.random.default_rng(10)
-    x_data = x.from_numpy(
-      rng.normal(0, 0.25, x.shape).astype(np.float32),
-    )
-    x_reference = x.to_numpy(x_data).reshape(-1)
-    references = {
-      name: np.sum(
-        np.multiply(
-          weights[name].to_numpy(weight_data[name]), x_reference[None, :],
-          dtype=np.float32,
-        ),
-        axis=1, dtype=np.float32,
-      )
-      for name, _ in specs
-    }
-
-    device.write(x, x_data)
-    for name, _ in specs: device.write(weights[name], weight_data[name])
-    device.write(
-      dense_hidden,
-      dense_hidden.from_numpy(np.full(
-        dense_hidden.shape, -0.5, dtype=np.float32,
-      )),
-    )
-    for name, _ in specs: device.queue(programs[name])
-    device.queue(swiglu_program)
-    device.queue(reassembly_program)
-    readbacks = {
-      name: device.queue_read(outputs[name]) for name, _ in specs
-    }
-    hidden_readback = device.queue_read(hidden)
-    dense_readback = device.queue_read(dense_hidden)
-    timestamps = device.run(timeout=15.0)
-
-    actuals, metrics = {}, {}
-    for name, _ in specs:
-      actual = _projection_values(
-        outputs[name], readbacks[name].result(), weights[name].item_counts,
-      )
-      difference = np.subtract(actual, references[name], dtype=np.float32)
-      relative_l2 = float(
-        np.linalg.norm(difference) /
-        (np.linalg.norm(references[name]) + 1e-12),
-      )
-      pcc = float(np.corrcoef(actual, references[name])[0, 1])
-      if (
-        not np.all(np.isfinite(actual)) or relative_l2 > 0.02 or pcc < 0.999
-      ):
-        row = int(np.abs(difference).argmax())
-        raise AssertionError(
-          f"MLP {name} mismatch at row {row}: actual={actual[row]}, "
-          f"expected={references[name][row]}, "
-          f"relative_l2={relative_l2}, PCC={pcc}",
-        )
-      actuals[name] = actual
-      metrics[name] = relative_l2, pcc
-
-    gate_actual, up_actual = actuals["gate"], actuals["up"]
-    activated = np.multiply(
-      gate_actual,
-      np.reciprocal(
-        np.float32(1.0) + np.exp(-gate_actual, dtype=np.float32),
-        dtype=np.float32,
-      ),
-      dtype=np.float32,
-    )
-    hidden_values = np.multiply(activated, up_actual, dtype=np.float32)
-    expected_words = np.frombuffer(
-      _bf16_rne_bytes(hidden_values), dtype="<u2",
-    ).astype(np.uint32)
-    expected = (expected_words << 16).view(np.float32)
-    actual = _projection_values(
-      hidden, hidden_readback.result(), weights["gate"].item_counts,
-    )
-    difference = np.subtract(actual, expected, dtype=np.float32)
-    error = np.abs(difference)
-    relative_l2 = float(
-      np.linalg.norm(difference) / (np.linalg.norm(expected) + 1e-12),
-    )
-    pcc = float(np.corrcoef(actual, expected)[0, 1])
-    if (
-      not np.all(np.isfinite(actual)) or float(error.max()) > 0.02 or
-      relative_l2 > 0.02 or pcc < 0.999
-    ):
-      feature = int(error.argmax())
-      raise AssertionError(
-        f"SwiGLU mismatch at feature {feature}: actual={actual[feature]}, "
-        f"expected={expected[feature]}, max_abs={error.max()}, "
-        f"relative_l2={relative_l2}, PCC={pcc}",
-      )
-    dense_actual = dense_hidden.to_numpy(dense_readback.result()).reshape(-1)
-    if not np.array_equal(dense_actual, actual):
-      feature = int(np.abs(dense_actual - actual).argmax())
-      raise AssertionError(
-        f"MLP compact reassembly mismatch at feature {feature}: "
-        f"actual={dense_actual[feature]}, expected={actual[feature]}",
-      )
-
-    samples = {"gate": [timestamps[0].us], "up": [timestamps[1].us],
-               "swiglu": [timestamps[2].us], "reassembly": [timestamps[3].us]}
-    for _ in range(repeats - 1):
-      for name, _ in specs:
-        samples[name].append(device.run(programs[name], timeout=15.0)[-1].us)
-      samples["swiglu"].append(device.run(
-        swiglu_program, timeout=10.0,
-      )[-1].us)
-      samples["reassembly"].append(device.run(
-        reassembly_program, timeout=10.0,
-      )[-1].us)
-    print("PASS llama3 decode gate/up + SwiGLU")
-    for name, _ in specs:
-      rel, corr = metrics[name]
-      print(
-        f"{name}: median={np.median(samples[name]):.3f} us, "
-        f"relative L2={rel:.6g}, PCC={corr:.9f}",
-      )
-    print(
-      f"SwiGLU: median={np.median(samples['swiglu']):.3f} us, "
-      f"max_abs={error.max():.6g}, relative L2={relative_l2:.6g}, "
-      f"PCC={pcc:.9f}",
-    )
-    print(
-      f"compact -> dense: median={np.median(samples['reassembly']):.3f} us, "
-      "bit-exact",
-    )
-  finally:
-    device.close()
-
-
-def run_decode_mlp_down_hardware(
-  safetensor_path="weights/model.safetensors", repeats=1,
-):
-  """Validate the 8192->2048 down projection and fused residual add."""
-  if repeats < 1: raise ValueError("repeats must be positive")
-  device = Device()
-  try:
-    device.init_device()
-    cores = device.dram.cores[:LLAMA_CORES]
-    hidden = device.dram.buffer(
-      "mlp_down_hidden", DType.BF16, (1, MLP_DIM), axis=0,
-      global_address=True,
-    )
-    residual = device.dram.buffer(
-      "mlp_down_residual", DType.BF16, (1, EMBED_DIM), axis=0,
-      global_address=True,
-    )
-    weight = device.dram.buffer(
-      "mlp_down_weight", DType.BF16, (EMBED_DIM, MLP_DIM),
-      axis=0, cores=cores,
-    )
-    compact = device.dram.buffer(
-      "mlp_down_compact", DType.BF16, (LLAMA_CORES, 18),
-      axis=0, cores=cores,
-    )
-    output = device.dram.buffer(
-      "mlp_down_output", DType.BF16, (1, EMBED_DIM), axis=0,
-      global_address=True,
-    )
-
-    rng = np.random.default_rng(11)
-    hidden_data = hidden.from_numpy(
-      rng.normal(0, 0.05, hidden.shape).astype(np.float32),
-    )
-    residual_data = residual.from_numpy(
-      rng.normal(0, 0.25, residual.shape).astype(np.float32),
-    )
-    weight_data = weight.from_safetensor(
-      "model.layers.0.mlp.down_proj.weight", safetensor_path,
-    )
-    hidden_reference = hidden.to_numpy(hidden_data).reshape(-1)
-    residual_reference = residual.to_numpy(residual_data).reshape(-1)
-    projection_reference = np.sum(
-      np.multiply(
-        weight.to_numpy(weight_data), hidden_reference[None, :],
-        dtype=np.float32,
-      ),
-      axis=1, dtype=np.float32,
-    )
-
-    projection_program = decode_projection(hidden, weight, compact)
-    residual_program = decode_projection_residual(
-      compact, residual, output,
-    )
-    device.write(hidden, hidden_data)
-    device.write(residual, residual_data)
-    device.write(weight, weight_data)
-    device.queue(projection_program)
-    device.queue(residual_program)
-    compact_readback = device.queue_read(compact)
-    output_readback = device.queue_read(output)
-    timestamps = device.run(timeout=15.0)
-
-    projection_actual = _projection_values(
-      compact, compact_readback.result(), weight.item_counts,
-    )
-    projection_difference = np.subtract(
-      projection_actual, projection_reference, dtype=np.float32,
-    )
-    projection_relative_l2 = float(
-      np.linalg.norm(projection_difference) /
-      (np.linalg.norm(projection_reference) + 1e-12),
-    )
-    projection_pcc = float(np.corrcoef(
-      projection_actual, projection_reference,
-    )[0, 1])
-    if (
-      not np.all(np.isfinite(projection_actual)) or
-      projection_relative_l2 > 0.03 or projection_pcc < 0.999
-    ):
-      row = int(np.abs(projection_difference).argmax())
-      raise AssertionError(
-        f"down_proj mismatch at row {row}: "
-        f"actual={projection_actual[row]}, "
-        f"expected={projection_reference[row]}, "
-        f"relative_l2={projection_relative_l2}, PCC={projection_pcc}",
-      )
-
-    summed = np.add(
-      projection_actual, residual_reference, dtype=np.float32,
-    ).reshape(output.shape)
-    expected_words = np.frombuffer(
-      _bf16_rne_bytes(summed), dtype="<u2",
-    ).astype(np.uint32)
-    expected = (expected_words << 16).view(np.float32).reshape(-1)
-    actual = output.to_numpy(output_readback.result()).reshape(-1)
-    difference = np.subtract(actual, expected, dtype=np.float32)
-    error = np.abs(difference)
-    relative_l2 = float(
-      np.linalg.norm(difference) / (np.linalg.norm(expected) + 1e-12),
-    )
-    pcc = float(np.corrcoef(actual, expected)[0, 1])
-    if (
-      not np.all(np.isfinite(actual)) or float(error.max()) > 0.005 or
-      relative_l2 > 0.01 or pcc < 0.9999
-    ):
-      feature = int(error.argmax())
-      raise AssertionError(
-        f"down_proj residual mismatch at feature {feature}: "
-        f"actual={actual[feature]}, expected={expected[feature]}, "
-        f"max_abs={error.max()}, relative_l2={relative_l2}, PCC={pcc}",
-      )
-
-    projection_samples = [timestamps[0].us]
-    residual_samples = [timestamps[1].us]
-    for _ in range(repeats - 1):
-      projection_samples.append(device.run(
-        projection_program, timeout=15.0,
-      )[-1].us)
-      residual_samples.append(device.run(
-        residual_program, timeout=10.0,
-      )[-1].us)
-    print("PASS llama3 decode down_proj + residual")
-    print(f"weights: {safetensor_path}")
-    print(
-      f"down_proj: median={np.median(projection_samples):.3f} us, "
-      f"relative L2={projection_relative_l2:.6g}, "
-      f"PCC={projection_pcc:.9f}",
-    )
-    print(
-      f"reassembly + residual: median={np.median(residual_samples):.3f} us, "
-      f"max_abs={error.max():.6g}, relative L2={relative_l2:.6g}, "
-      f"PCC={pcc:.9f}",
-    )
-  finally:
-    device.close()
-
-
-def run_decode_o_proj_hardware(
-  safetensor_path="weights/model.safetensors", repeats=1,
-):
-  """Validate o_proj followed by compact reassembly and residual add."""
-  if repeats < 1: raise ValueError("repeats must be positive")
-  device = Device()
-  try:
-    device.init_device()
-    cores = device.dram.cores[:LLAMA_CORES]
-    context = device.dram.buffer(
-      "o_proj_context", DType.BF16, (1, EMBED_DIM), axis=0,
-      global_address=True,
-    )
-    residual = device.dram.buffer(
-      "o_proj_residual", DType.BF16, (1, EMBED_DIM), axis=0,
-      global_address=True,
-    )
-    weight = device.dram.buffer(
-      "o_proj_weight", DType.BF16, (EMBED_DIM, EMBED_DIM), axis=0,
-      cores=cores,
-    )
-    compact = device.dram.buffer(
-      "o_proj_compact", DType.BF16, (LLAMA_CORES, 18), axis=0,
-      cores=cores,
-    )
-    output = device.dram.buffer(
-      "o_proj_output", DType.BF16, (1, EMBED_DIM), axis=0,
-      global_address=True,
-    )
-
-    rng = np.random.default_rng(9)
-    context_data = context.from_numpy(
-      rng.normal(0, 0.05, context.shape).astype(np.float32),
-    )
-    residual_data = residual.from_numpy(
-      rng.normal(0, 0.25, residual.shape).astype(np.float32),
-    )
-    weight_data = weight.from_safetensor(
-      "model.layers.0.self_attn.o_proj.weight", safetensor_path,
-    )
-    context_reference = context.to_numpy(context_data).reshape(-1)
-    residual_reference = residual.to_numpy(residual_data).reshape(-1)
-    projection_reference = np.sum(
-      np.multiply(
-        weight.to_numpy(weight_data), context_reference[None, :],
-        dtype=np.float32,
-      ),
-      axis=1, dtype=np.float32,
-    )
-
-    projection_program = decode_projection(context, weight, compact)
-    residual_program = decode_projection_residual(compact, residual, output)
-    device.write(context, context_data)
-    device.write(residual, residual_data)
-    device.write(weight, weight_data)
-    device.write(
-      output,
-      output.from_numpy(np.full(output.shape, -0.5, dtype=np.float32)),
-    )
-    device.queue(projection_program)
-    device.queue(residual_program)
-    compact_readback = device.queue_read(compact)
-    output_readback = device.queue_read(output)
-    timestamps = device.run(timeout=10.0)
-
-    projection_actual = _projection_values(
-      compact, compact_readback.result(), weight.item_counts,
-    )
-    projection_difference = np.subtract(
-      projection_actual, projection_reference, dtype=np.float32,
-    )
-    projection_relative_l2 = float(
-      np.linalg.norm(projection_difference) /
-      (np.linalg.norm(projection_reference) + 1e-12),
-    )
-    projection_pcc = float(np.corrcoef(
-      projection_actual, projection_reference,
-    )[0, 1])
-    if (
-      not np.all(np.isfinite(projection_actual)) or
-      projection_relative_l2 > 0.02 or projection_pcc < 0.999
-    ):
-      row = int(np.abs(projection_difference).argmax())
-      raise AssertionError(
-        f"o_proj mismatch at row {row}: actual={projection_actual[row]}, "
-        f"expected={projection_reference[row]}, "
-        f"relative_l2={projection_relative_l2}, PCC={projection_pcc}",
-      )
-
-    # Use the actual compact projection to isolate reassembly/add correctness.
-    summed = np.add(
-      projection_actual, residual_reference, dtype=np.float32,
-    ).reshape(output.shape)
-    expected_words = np.frombuffer(
-      _bf16_rne_bytes(summed), dtype="<u2",
-    ).astype(np.uint32)
-    expected = (expected_words << 16).view(np.float32).reshape(-1)
-    actual = output.to_numpy(output_readback.result()).reshape(-1)
-    difference = np.subtract(actual, expected, dtype=np.float32)
-    error = np.abs(difference)
-    relative_l2 = float(
-      np.linalg.norm(difference) / (np.linalg.norm(expected) + 1e-12),
-    )
-    pcc = float(np.corrcoef(actual, expected)[0, 1])
-    if (
-      not np.all(np.isfinite(actual)) or float(error.max()) > 0.005 or
-      relative_l2 > 0.01 or pcc < 0.9999
-    ):
-      feature = int(error.argmax())
-      raise AssertionError(
-        f"o_proj residual mismatch at feature {feature}: "
-        f"actual={actual[feature]}, expected={expected[feature]}, "
-        f"max_abs={error.max()}, relative_l2={relative_l2}, PCC={pcc}",
-      )
-
-    projection_samples = [timestamps[0].us]
-    residual_samples = [timestamps[1].us]
-    for _ in range(repeats - 1):
-      projection_samples.append(device.run(
-        projection_program, timeout=10.0,
-      )[-1].us)
-      residual_samples.append(device.run(
-        residual_program, timeout=10.0,
-      )[-1].us)
-    print("PASS llama3 decode o_proj + residual")
-    print(f"weights: {safetensor_path}")
-    print(
-      f"o_proj: median={np.median(projection_samples):.3f} us, "
-      f"relative L2={projection_relative_l2:.6g}, "
-      f"PCC={projection_pcc:.9f}",
-    )
-    print(
-      f"reassembly + residual: median={np.median(residual_samples):.3f} us, "
-      f"max_abs={error.max():.6g}, relative L2={relative_l2:.6g}, "
-      f"PCC={pcc:.9f}",
-    )
-  finally:
-    device.close()
-
-
-def run_decode_qkv_hardware(
-  safetensor_path="weights/model.safetensors", repeats=1,
-):
-  """Validate the three layer-0 decode projections from fixed RMS layout."""
-  if repeats < 1: raise ValueError("repeats must be positive")
-  device = Device()
-  try:
-    device.init_device()
-    cores = device.dram.cores[:LLAMA_CORES]
-    x = device.dram.buffer(
-      "qkv_x", DType.BF16, (PREFILL_CAPACITY, EMBED_DIM), axis=0,
-      cores=cores,
-    )
-    projection_specs = (
-      ("q", Q_PROJ_DIM, "model.layers.0.self_attn.q_proj.weight"),
-      ("k", KV_PROJ_DIM, "model.layers.0.self_attn.k_proj.weight"),
-      ("v", KV_PROJ_DIM, "model.layers.0.self_attn.v_proj.weight"),
-    )
-    weights, outputs, programs, weight_data = {}, {}, {}, {}
-    for name, rows, tensor_name in projection_specs:
-      weight = device.dram.buffer(
-        f"{name}_proj_weight", DType.BF16, (rows, EMBED_DIM), axis=0,
-        cores=cores,
-      )
-      output = device.dram.buffer(
-        f"{name}_proj_output", DType.BF16,
-        (LLAMA_CORES, weight.items_per_core), axis=0, cores=cores,
-      )
-      weights[name], outputs[name] = weight, output
-      weight_data[name] = weight.from_safetensor(
-        tensor_name, safetensor_path,
-      )
-      programs[name] = decode_projection(x, weight, output)
-
-    rng = np.random.default_rng(3)
-    values = np.zeros(x.shape, dtype=np.float32)
-    values[0] = rng.normal(0, 0.25, EMBED_DIM).astype(np.float32)
-    x_data = x.from_numpy(values)
-    x_reference = x.to_numpy(x_data)[0]
-
-    device.write(x, x_data)
-    for name, _, _ in projection_specs:
-      device.write(weights[name], weight_data[name])
-    for name, _, _ in projection_specs:
-      device.queue(programs[name])
-    readbacks = {
-      name: device.queue_read(outputs[name])
-      for name, _, _ in projection_specs
-    }
-    timestamps = device.run(timeout=5.0)
-
-    metrics = {}
-    for name, _, _ in projection_specs:
-      weight = weights[name]
-      actual = _projection_values(
-        outputs[name], readbacks[name].result(), weight.item_counts,
-      )
-      expected = np.sum(
-        np.multiply(
-          weight.to_numpy(weight_data[name]), x_reference[None, :],
-          dtype=np.float32,
-        ),
-        axis=1, dtype=np.float32,
-      )
-      difference = np.subtract(actual, expected, dtype=np.float32)
-      error = np.abs(difference)
-      relative_l2 = float(
-        np.linalg.norm(difference) / (np.linalg.norm(expected) + 1e-12),
-      )
-      pcc = float(np.corrcoef(actual, expected)[0, 1])
-      if (
-        not np.all(np.isfinite(actual)) or relative_l2 > 0.05 or pcc < 0.999
-      ):
-        row = int(error.argmax())
-        raise AssertionError(
-          f"{name}_proj mismatch at output row {row}: "
-          f"actual={actual[row]}, expected={expected[row]}, "
-          f"max_abs={error.max()}, relative_l2={relative_l2}, PCC={pcc}",
-        )
-      metrics[name] = float(error.max()), relative_l2, pcc
-
-    samples = {name: [timestamps[index].us] for index, (name, _, _) in enumerate(projection_specs)}
-    for _ in range(repeats - 1):
-      for name, _, _ in projection_specs:
-        samples[name].append(device.run(programs[name], timeout=5.0)[-1].us)
-
-    print("PASS llama3 decode QKV projections")
-    print(f"weights: {safetensor_path}")
-    print(f"input: ({PREFILL_CAPACITY}, {EMBED_DIM}), token 0 only")
-    print(f"cores: {LLAMA_CORES}")
-    for name, rows, _ in projection_specs:
-      weight = weights[name]
-      max_abs, relative_l2, pcc = metrics[name]
-      print(
-        f"{name}: ({rows}, {EMBED_DIM}) @ ({EMBED_DIM},) -> ({rows},); "
-        f"rows/core={min(weight.item_counts)}..{max(weight.item_counts)}, "
-        f"compact={outputs[name].shape}, median={np.median(samples[name]):.3f} us, "
-        f"max_abs={max_abs:.6g}, rel_l2={relative_l2:.6g}, PCC={pcc:.9f}"
-      )
-  finally:
-    device.close()
-
-
-def run_prefill_frontend_hardware(
-  valid_s=200, vocab_size=257, embedding_safetensor_path=None,
-  rmsnorm_safetensor_path="weights/model.safetensors",
-  qkv=False,
-):
-  """Validate embedding -> RMSNorm, optionally followed by token-0 Q/K/V."""
-  if not 0 < valid_s <= PREFILL_CAPACITY:
-    raise ValueError(f"valid_s must be in 1..{PREFILL_CAPACITY}")
-  if embedding_safetensor_path is not None:
-    vocab_size = VOCAB_SIZE
-  if not 1 < vocab_size <= VOCAB_SIZE:
-    raise ValueError(f"vocab_size must be in 2..{VOCAB_SIZE}")
-
-  device = Device()
-  try:
-    device.init_device()
-    cores = device.dram.cores[:LLAMA_CORES]
-    activation_shape = (PREFILL_CAPACITY, EMBED_DIM)
-    token_ids = device.dram.buffer(
-      "token_ids", DType.U32, (PREFILL_CAPACITY,), global_address=True,
-    )
-    embedding_weight = device.dram.buffer(
-      "embedding_weight", DType.BF16, (vocab_size, EMBED_DIM), axis=0,
-      global_address=True,
-    )
-    embedded = device.dram.buffer(
-      "embedded", DType.BF16, activation_shape, axis=0, cores=cores,
-    )
-    rmsnorm_weight = device.dram.buffer(
-      "rmsnorm_weight", DType.BF16, (EMBED_DIM,), global_address=True,
-    )
-    normalized = device.dram.buffer(
-      "normalized", DType.BF16, activation_shape, axis=0, cores=cores,
-    )
-    projection_specs = (
-      ("q", Q_PROJ_DIM, "model.layers.0.self_attn.q_proj.weight"),
-      ("k", KV_PROJ_DIM, "model.layers.0.self_attn.k_proj.weight"),
-      ("v", KV_PROJ_DIM, "model.layers.0.self_attn.v_proj.weight"),
-    ) if qkv else ()
-    projection_weights, projection_outputs = {}, {}
-    for name, rows, _ in projection_specs:
-      weight = device.dram.buffer(
-        f"frontend_{name}_weight", DType.BF16, (rows, EMBED_DIM),
-        axis=0, cores=cores,
-      )
-      projection_weights[name] = weight
-      projection_outputs[name] = device.dram.buffer(
-        f"frontend_{name}_output", DType.BF16,
-        (LLAMA_CORES, weight.items_per_core), axis=0, cores=cores,
-      )
-
-    if embedded.cores != normalized.cores or embedded.item_starts != normalized.item_starts:
-      raise AssertionError("embedding and RMSNorm activation shards differ")
-
-    rng = np.random.default_rng(2)
-    ids = np.zeros(PREFILL_CAPACITY, dtype=np.uint32)
-    ids[:valid_s] = rng.integers(
-      0, vocab_size, size=valid_s, dtype=np.uint32,
-    )
-    boundary_ids = np.asarray(
-      (0, 1, vocab_size - 2, vocab_size - 1), dtype=np.uint32,
-    )
-    ids[:min(valid_s, len(boundary_ids))] = boundary_ids[:valid_s]
-    ids_data = token_ids.from_numpy(ids)
-
-    if embedding_safetensor_path is None:
-      rows = np.arange(vocab_size, dtype=np.float32)[:, None]
-      columns = np.arange(EMBED_DIM, dtype=np.float32)[None, :]
-      embedding_values = ((rows * 17 + columns * 3) % 251 - 125) / 32
-      embedding_data = embedding_weight.from_numpy(embedding_values)
-    else:
-      embedding_data = embedding_weight.from_safetensor(
-        "model.embed_tokens.weight", embedding_safetensor_path,
-      )
-    gamma_data = rmsnorm_weight.from_safetensor(
-      "model.layers.0.input_layernorm.weight", rmsnorm_safetensor_path,
-    )
-    projection_data = {
-      name: projection_weights[name].from_safetensor(
-        tensor_name, rmsnorm_safetensor_path,
-      )
-      for name, _, tensor_name in projection_specs
-    }
-
-    embedding_reference = embedding_weight.to_numpy(embedding_data)[
-      ids[:valid_s]
-    ]
-    gamma_reference = rmsnorm_weight.to_numpy(gamma_data)
-    squares = np.multiply(
-      embedding_reference, embedding_reference, dtype=np.float32,
-    )
-    mean_square = np.sum(squares, axis=1, dtype=np.float32) * np.float32(
-      1.0 / EMBED_DIM,
-    )
-    scale = np.float32(1.0) / np.sqrt(
-      mean_square + np.float32(1e-5),
-    )
-    normalized_values = np.zeros(activation_shape, dtype=np.float32)
-    normalized_values[:valid_s] = np.multiply(
-      np.multiply(
-        embedding_reference, scale[:, None], dtype=np.float32,
-      ),
-      gamma_reference[None, :], dtype=np.float32,
-    )
-    normalized_reference = normalized.to_numpy(
-      normalized.from_numpy(normalized_values),
-    )[:valid_s]
-
-    device.write(token_ids, ids_data)
-    device.write(embedding_weight, embedding_data)
-    device.write(rmsnorm_weight, gamma_data)
-    for name, _, _ in projection_specs:
-      device.write(projection_weights[name], projection_data[name])
-    device.queue(
-      embedding(token_ids, embedding_weight, embedded),
-      params={"valid_s": valid_s},
-    )
-    device.queue(
-      rmsnorm(embedded, rmsnorm_weight, normalized),
-      params={"valid_s": valid_s},
-    )
-    for name, _, _ in projection_specs:
-      device.queue(decode_projection(
-        normalized, projection_weights[name], projection_outputs[name],
-      ))
-    embedded_readback = device.queue_read(embedded)
-    normalized_readback = device.queue_read(normalized)
-    projection_readbacks = {
-      name: device.queue_read(projection_outputs[name])
-      for name, _, _ in projection_specs
-    }
-    timestamps = device.run(timeout=5.0)
-
-    embedded_actual = embedded.to_numpy(embedded_readback.result())[:valid_s]
-    if not np.array_equal(embedded_actual, embedding_reference):
-      error = np.abs(embedded_actual - embedding_reference)
-      token, feature = np.unravel_index(int(error.argmax()), error.shape)
-      raise AssertionError(
-        f"frontend embedding mismatch at token {token}, feature {feature}: "
-        f"actual={embedded_actual[token, feature]}, "
-        f"expected={embedding_reference[token, feature]}",
-      )
-
-    normalized_actual = normalized.to_numpy(
-      normalized_readback.result(),
-    )[:valid_s]
-    rms_difference = np.subtract(
-      normalized_actual, normalized_reference, dtype=np.float32,
-    )
-    rms_error = np.abs(rms_difference)
-    rms_relative_l2 = float(
-      np.linalg.norm(rms_difference) /
-      (np.linalg.norm(normalized_reference) + 1e-12),
-    )
-    rms_pcc = float(np.corrcoef(
-      normalized_actual.reshape(-1), normalized_reference.reshape(-1),
-    )[0, 1])
-    if (
-      not np.all(np.isfinite(normalized_actual)) or
-      float(rms_error.max()) > 0.05 or
-      rms_relative_l2 > 0.01 or rms_pcc < 0.999
-    ):
-      token, feature = np.unravel_index(
-        int(rms_error.argmax()), rms_error.shape,
-      )
-      raise AssertionError(
-        f"frontend RMSNorm mismatch at token {token}, feature {feature}: "
-        f"actual={normalized_actual[token, feature]}, "
-        f"expected={normalized_reference[token, feature]}, "
-        f"max_abs={rms_error.max()}, relative_l2={rms_relative_l2}, "
-        f"PCC={rms_pcc}",
-      )
-
-    projection_metrics = {}
-    for name, _, _ in projection_specs:
-      weight = projection_weights[name]
-      actual = _projection_values(
-        projection_outputs[name], projection_readbacks[name].result(),
-        weight.item_counts,
-      )
-      expected = np.sum(
-        np.multiply(
-          weight.to_numpy(projection_data[name]),
-          normalized_reference[0][None, :], dtype=np.float32,
-        ),
-        axis=1, dtype=np.float32,
-      )
-      difference = np.subtract(actual, expected, dtype=np.float32)
-      error = np.abs(difference)
-      relative_l2 = float(
-        np.linalg.norm(difference) / (np.linalg.norm(expected) + 1e-12),
-      )
-      pcc = float(np.corrcoef(actual, expected)[0, 1])
-      if (
-        not np.all(np.isfinite(actual)) or
-        relative_l2 > 0.01 or pcc < 0.9999
-      ):
-        row = int(error.argmax())
-        raise AssertionError(
-          f"frontend {name}_proj mismatch at output row {row}: "
-          f"actual={actual[row]}, expected={expected[row]}, "
-          f"max_abs={error.max()}, relative_l2={relative_l2}, PCC={pcc}",
-        )
-      projection_metrics[name] = float(error.max()), relative_l2, pcc
-
-    print("PASS llama3 prefill frontend")
-    print(f"embedding weights: {embedding_safetensor_path or 'synthetic'}")
-    print("RMSNorm weight: model.layers.0.input_layernorm.weight")
-    print(f"valid_s: {valid_s}")
-    print(f"capacity: {PREFILL_CAPACITY}")
-    print(f"cores: {LLAMA_CORES}")
-    print(f"tokens/core: min={min(embedded.item_counts)}, max={max(embedded.item_counts)}")
-    print(f"embedding kernel: {timestamps[0].us:.3f} us")
-    print(f"RMSNorm kernel: {timestamps[1].us:.3f} us")
-    print(f"RMSNorm max abs error: {rms_error.max():.6g}")
-    print(f"RMSNorm relative L2: {rms_relative_l2:.6g}")
-    print(f"RMSNorm PCC: {rms_pcc:.9f}")
-    for index, (name, rows, _) in enumerate(projection_specs, start=2):
-      max_abs, relative_l2, projection_pcc = projection_metrics[name]
-      print(
-        f"{name}_proj: ({rows}, {EMBED_DIM}) @ ({EMBED_DIM},), "
-        f"kernel={timestamps[index].us:.3f} us, max_abs={max_abs:.6g}, "
-        f"relative_l2={relative_l2:.6g}, PCC={projection_pcc:.9f}"
-      )
-  finally:
-    device.close()
-
-
 if __name__ == "__main__":
   parser = argparse.ArgumentParser()
-  parser.add_argument("--seq-len", type=int, default=200)
-  parser.add_argument("--vocab-size", type=int, default=257)
   parser.add_argument(
-    "--prompt",
-    help="run end-to-end generation from this prompt (an empty prompt is valid)",
+    "--prompt", default="The capital of France is",
+    help="generate from this prompt (an empty prompt is valid)",
   )
   parser.add_argument(
     "--steps", type=int,
     help="optional generation cap; default runs until EOS/context limit",
   )
-  parser.add_argument(
-    "--safetensor", nargs="?", const="weights/model.safetensors",
-    help="load model.embed_tokens.weight from this file",
-  )
-  parser.add_argument(
-    "--rmsnorm", action="store_true",
-  )
-  parser.add_argument("--frontend", action="store_true")
-  parser.add_argument("--qkv", action="store_true")
-  parser.add_argument("--rope-cache", action="store_true")
-  parser.add_argument("--endpoints", action="store_true")
-  parser.add_argument("--e2e", action="store_true")
-  parser.add_argument("--rope", action="store_true")
-  parser.add_argument("--kv-cache", action="store_true")
-  parser.add_argument("--attention", action="store_true")
-  parser.add_argument("--o-proj", action="store_true")
-  parser.add_argument("--mlp-up", action="store_true")
-  parser.add_argument("--mlp-down", action="store_true")
-  parser.add_argument("--decode", action="store_true")
-  parser.add_argument("--core-start", type=int, default=0)
-  parser.add_argument("--repeats", type=int, default=5)
+  parser.add_argument("--safetensor", default="weights/model.safetensors")
   args = parser.parse_args()
-  if args.attention:
-    run_decode_gqa_attention_hardware(args.seq_len, args.repeats)
-  elif args.e2e or args.prompt is not None:
-    run_decode_e2e(
-      (
-        "The capital of France is"
-        if args.prompt is None else args.prompt
-      ),
-      args.steps,
-      args.safetensor or "weights/model.safetensors",
-    )
-  elif args.o_proj:
-    run_decode_o_proj_hardware(
-      args.safetensor or "weights/model.safetensors", args.repeats,
-    )
-  elif args.mlp_up:
-    run_decode_mlp_up_hardware(
-      args.safetensor or "weights/model.safetensors", args.repeats,
-    )
-  elif args.mlp_down:
-    run_decode_mlp_down_hardware(
-      args.safetensor or "weights/model.safetensors", args.repeats,
-    )
-  elif args.kv_cache:
-    run_decode_kv_cache_hardware(repeats=args.repeats)
-  elif args.rope:
-    run_decode_rope_hardware(repeats=args.repeats)
-  elif args.rope_cache:
-    run_rope_cache_hardware()
-  elif args.endpoints:
-    run_decode_endpoints_hardware(
-      args.safetensor or "weights/model.safetensors",
-    )
-  elif args.frontend:
-    run_prefill_frontend_hardware(
-      args.seq_len,
-      args.vocab_size,
-      args.safetensor,
-      args.safetensor or "weights/model.safetensors",
-      args.qkv,
-    )
-  elif args.qkv:
-    run_decode_qkv_hardware(
-      args.safetensor or "weights/model.safetensors", args.repeats,
-    )
-  elif args.rmsnorm:
-    run_rmsnorm_hardware(
-      args.seq_len, args.repeats,
-      args.safetensor or "weights/model.safetensors",
-      args.core_start,
-      args.decode,
-    )
-  else:
-    run_embedding_hardware(
-      args.seq_len, args.vocab_size, args.safetensor, args.repeats,
-    )
+  run_decode_e2e(args.prompt, args.steps, args.safetensor)
