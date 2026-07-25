@@ -246,7 +246,6 @@ class CommandQueue:
     pcie.sysmem.write(self.completion, bytes(HOST_COMPLETION_SIZE))
     pcie.sysmem.write(self.live, bytes(HOST_LIVE_SIZE))
     pcie.sysmem.write(self.completion, self.completion_read.to_bytes(4, "little"))
-    pcie.sysmem.flush()
     self.prefetch = TLBWindow(pcie.fd, pcie.prefetch_core)
     self.dispatch = TLBWindow(pcie.fd, pcie.dispatch_core)
     self.prefetch.target(0, pcie.prefetch_core)
@@ -264,7 +263,6 @@ class CommandQueue:
     self.dispatch.write(DISPATCH_COMPLETION_END, (self.noc + self.completion_end) >> 4)
     self.dispatch.write(DISPATCH_COMPLETION_HOST_PTR, self.noc + self.completion)
     pcie.sysmem.write(self.completion, self.completion_read.to_bytes(4, "little"))
-    pcie.sysmem.flush()
 
   def _slot_free(self, index, timeout=5.0):
     deadline = time.monotonic() + timeout
@@ -288,7 +286,6 @@ class CommandQueue:
       self.issue_write = 0
     addr = self.issue + self.issue_write
     self.pcie.sysmem.write(addr, record)
-    self.pcie.sysmem.flush()
     index = self.queue_index
     self._slot_free(index)
     self.prefetch.write(PREFETCH_QUEUE + index * 4, len(record) >> 4)
@@ -305,17 +302,18 @@ class CommandQueue:
     self._write_record(record)
     self.dispatch_page = (self.dispatch_page + pages) % DISPATCH_RING_PAGES
 
-  def enqueue(self, commands):
-    if self.pending >= COMPLETION_ENTRIES:
+  def enqueue(self, commands, *, completion=True):
+    if completion and self.pending >= COMPLETION_ENTRIES:
       raise RuntimeError("CQ completion ring is full")
-    event = self.event + 1
+    event = self.event + 1 if completion else 0
     commands = tuple(commands)
     run = commands[-1]
     commands = (*commands[:-1], Run(run.cores, event, run.param_template))
     for command in commands:
       dispatch_size = command.size if isinstance(command, DramRecord) else None
       self._publish(command.lower(), dispatch_size=dispatch_size)
-    self.event, self.pending = event, self.pending + 1
+    if completion:
+      self.event, self.pending = event, self.pending + 1
     return event
 
   def capture_trace(self, records, dispatch_sizes=None):
@@ -343,7 +341,6 @@ class CommandQueue:
     if not 0 <= final_event_offset <= len(blob) - 4:
       raise ValueError("trace final-event patch is outside the trace")
     self.pcie.sysmem.write(offset, blob)
-    self.pcie.sysmem.flush()
     dispatch_pages = sum(
       (size + PAGE_SIZE - 1) // PAGE_SIZE for size in dispatch_sizes
     )
@@ -366,8 +363,6 @@ class CommandQueue:
       trace, trace.final_event_offset, event.to_bytes(4, "little"),
     )
     patched = time.perf_counter_ns()
-    self.pcie.sysmem.flush()
-    flushed = time.perf_counter_ns()
 
     index = self.queue_index
     self._slot_free(index)
@@ -383,14 +378,16 @@ class CommandQueue:
       self.dispatch_page + trace.dispatch_pages
     ) % DISPATCH_RING_PAGES
     self.event, self.pending = event, 1
-    result = self.wait(event, timeout=timeout)
+    # Decode traces are short and latency-sensitive. Poll their pinned
+    # completion word directly instead of adding a scheduler wake-up to every
+    # token; ordinary (potentially long) uploads retain the sleep below.
+    result = self.wait(event, timeout=timeout, poll_interval=0.0)
     completed = time.perf_counter_ns()
     self._slot_free(index, timeout=timeout)
     drained = time.perf_counter_ns()
     self.last_replay_profile = {
       "event_patch_us": (patched - started) / 1e3,
-      "sysmem_flush_us": (flushed - patched) / 1e3,
-      "queue_slot_wait_us": (slot_ready - flushed) / 1e3,
+      "queue_slot_wait_us": (slot_ready - patched) / 1e3,
       "doorbell_us": (submitted - slot_ready) / 1e3,
       "device_wait_us": (completed - submitted) / 1e3,
       "descriptor_drain_us": (drained - completed) / 1e3,
@@ -400,9 +397,10 @@ class CommandQueue:
   def submit(self, commands, timeout=10.0):
     return self.wait(self.enqueue(commands), timeout=timeout)
 
-  def wait(self, event, timeout=10.0):
+  def wait(self, event, timeout=10.0, poll_interval=0.0002):
     deadline = time.monotonic() + timeout
     expected = event & 0xFFFFFFFF
+    polls = 0
     while True:
       raw = int.from_bytes(self.pcie.sysmem.read(self.completion, 4), "little")
       if raw != (self.completion_read | self.completion_toggle << 31):
@@ -415,8 +413,13 @@ class CommandQueue:
             self.completion_toggle ^= 1
           self.pending -= 1
           return result
-      if time.monotonic() >= deadline: raise TimeoutError(f"CQ completion {event} timed out")
-      time.sleep(0.0002)
+      polls += 1
+      if poll_interval:
+        if time.monotonic() >= deadline:
+          raise TimeoutError(f"CQ completion {event} timed out")
+        time.sleep(poll_interval)
+      elif polls & 0xff == 0 and time.monotonic() >= deadline:
+        raise TimeoutError(f"CQ completion {event} timed out")
 
   def close(self):
     self.prefetch.close()

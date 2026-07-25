@@ -7,8 +7,6 @@ libc.mmap.argtypes = [ctypes.c_void_p, ctypes.c_size_t, ctypes.c_int, ctypes.c_i
 libc.mmap.restype = ctypes.c_void_p
 libc.munmap.argtypes = [ctypes.c_void_p, ctypes.c_size_t]
 libc.munmap.restype = ctypes.c_int
-libc.msync.argtypes = [ctypes.c_void_p, ctypes.c_size_t, ctypes.c_int]
-libc.msync.restype = ctypes.c_int
 
 IOCTL_MAGIC = 0xFA
 
@@ -154,9 +152,6 @@ class Sysmem:
   def read(self, offset: int, size: int) -> bytes: return ctypes.string_at(self.addr + offset, size)
 
   def write(self, offset: int, data: bytes): ctypes.memmove(self.addr + offset, data, len(data))
-
-  def flush(self):
-    if libc.msync(self.addr, self.size, 4) != 0: raise OSError(ctypes.get_errno(), "msync sysmem failed")
 
   def close(self):
     if self.noc_addr is not None:

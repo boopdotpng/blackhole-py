@@ -20,6 +20,9 @@ from program import (
 )
 from ttk import DType
 
+DRAM_TRANSFER_BYTES_PER_CORE = 4 << 20
+
+
 class Readback:
   def __init__(self, device, buffer, offset):
     self.device, self.buffer, self.offset, self.data = device, buffer, offset, None
@@ -110,6 +113,10 @@ class DeviceTrace:
         "runtime_encode_us": (encoded - started) / 1e3,
         "runtime_patch_us": (patched - encoded) / 1e3,
         **self.device.cq.last_replay_profile,
+        # A completion Timestamp covers the final RUN only. The full trace
+        # interval is the host-observed doorbell-to-completion duration.
+        "device_us": self.device.cq.last_replay_profile["device_wait_us"],
+        "final_kernel_us": result.us,
       })
       return result
 
@@ -135,7 +142,6 @@ class DeviceTrace:
         raise RuntimeError("runtime PARAM record changed size during replay")
       self.device.cq.patch_trace(self.trace, patch.offset, record)
     return self.device.cq.replay_trace(self.trace, timeout=timeout)
-
 
 class Device:
   def __init__(self, index: int = 0, sysmem_size: int = 1 << 30):
@@ -181,6 +187,34 @@ class Device:
     self.program_queue.append((program, params, None, report))
     return program
 
+  def _dram_transfer_ranges(self, buffer, write):
+    cores = buffer.cores
+    starts = buffer.tile_starts
+    counts = buffer.tile_counts
+    if not write or not buffer.global_address:
+      return cores, starts, counts
+
+    worker_count = min(
+      len(self.dram.cores),
+      buffer.physical_tiles,
+      max(
+        1,
+        (buffer.size + DRAM_TRANSFER_BYTES_PER_CORE - 1) //
+        DRAM_TRANSFER_BYTES_PER_CORE,
+      ),
+    )
+    cores = self.dram.cores[:worker_count]
+    tiles_per_worker, extra = divmod(buffer.physical_tiles, worker_count)
+    counts = tuple(
+      tiles_per_worker + (index < extra)
+      for index in range(worker_count)
+    )
+    starts, start = [], 0
+    for count in counts:
+      starts.append(start)
+      start += count
+    return cores, tuple(starts), counts
+
   def _dram_program(self, buffer, write, offset=0, dram_endpoints=None):
     if self.cq is None: raise RuntimeError("init_device() must be called before tensor transfer")
     if not 0 < buffer.tile_size <= 16 * 1024 or buffer.tile_size % 16:
@@ -193,17 +227,19 @@ class Device:
       self.pcie.dram_endpoints
       if dram_endpoints is None else tuple(dram_endpoints)
     )
-    program = build(buffer.cores, endpoints)
+    cores, starts, counts = self._dram_transfer_ranges(buffer, write)
+    program = build(
+      cores, endpoints, bank_block_tiles=buffer.bank_block_tiles,
+    )
     sysmem_base = self.cq.noc + self.cq.dram + offset
     if sysmem_base + buffer.size > 1 << 32:
       raise ValueError("sysmem DRAM transfer crosses a 4 GiB NoC address window")
     args = []
     pack = Struct("<6I").pack
-    for index in range(len(program.cores)):
-      start = buffer.tile_starts[index]
+    for start, count in zip(starts, counts):
       args.append(pack(
         buffer.addr, sysmem_base + start * buffer.tile_size, CQConfig.PCIE_MID,
-        start, buffer.tiles_per_core, buffer.tile_size,
+        start, count, buffer.tile_size,
       ))
     args_write = UnicastWrite(program.cores, ARGS_BASE, tuple(args))
     program.launch = (args_write,)
@@ -221,7 +257,6 @@ class Device:
     self.pcie.sysmem.write(
       self.cq.dram + offset, data.ljust(buffer.size, b"\0"),
     )
-    self.pcie.sysmem.flush()
     self._staging_next += buffer.size
     return self.queue(program, report=False)
 
@@ -587,7 +622,6 @@ class Device:
     offset = self._staging_next
     program = self._dram_program(buffer, write=True, offset=offset)
     self.pcie.sysmem.write(self.cq.dram + offset, buffer.tile_data(data))
-    self.pcie.sysmem.flush()
     self._staging_next += buffer.size
     return self.queue(program, report=False)
 
@@ -610,15 +644,32 @@ class Device:
       raise ValueError("parameter overrides require exactly one explicit program")
     for program in programs: self.queue(program, params)
     batch = (*self.program_queue, *self.read_queue)
-    if len(batch) > COMPLETION_ENTRIES:
-      raise ValueError(f"batch exceeds {COMPLETION_ENTRIES} CQ completion entries")
+    completions = sum(
+      report or readback is not None or index == len(batch) - 1
+      for index, (_, _, readback, report) in enumerate(batch)
+    )
+    if completions > COMPLETION_ENTRIES:
+      raise ValueError(
+        f"batch needs {completions} completion entries, "
+        f"but the ring holds {COMPLETION_ENTRIES}",
+      )
     results = []
-    for program, values, readback, report in batch:
+    pending = []
+    for index, (program, values, readback, report) in enumerate(batch):
       static = self._cached_static.get(program)
       commands = program.commands(values) if static is None else (
         *static, *program.runtime_commands(values),
       )
-      event = self.cq.enqueue((*commands, Run(program.cores)))
+      completion = (
+        report or readback is not None or index == len(batch) - 1
+      )
+      event = self.cq.enqueue(
+        (*commands, Run(program.cores)), completion=completion,
+      )
+      if completion:
+        pending.append((event, readback, report))
+
+    for event, readback, report in pending:
       timestamp = self.cq.wait(event, timeout=timeout)
       if report: results.append(timestamp)
       if readback is not None: readback._finish()
