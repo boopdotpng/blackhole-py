@@ -10,6 +10,7 @@ from ttk.sync import Sem, SemWait, Stall, Wait, sem_post, sem_wait, stall, sync
 _CFG_STATE_ID = 0
 _DST_ROW_BASE = 1
 _ALU_CONFIG = TensixMMIO.CFG_BASE + 4
+_DEST_ACCESS = TensixMMIO.CFG_BASE + 220 * 4
 _ADDR_MOD_AB, _ADDR_MOD_DST, _ADDR_MOD_BIAS = 12, 28, 47
 
 
@@ -154,6 +155,37 @@ class Fpu:
     return self._run(dst_tile, TT.TTMOVA2D(0, 0, 2, 2, 0),
                      source_a=True, source_b=False, release=3)
 
+  def copy_a_tilized(self, *, dst_tile):
+    """Copy a tilizer-filled SrcA into Dst, undoing the tilizer's row order.
+
+    A tilizing UNPACR reads 32 datums per source row but writes SrcA 16 at a
+    time, so a 32x32 tile lands as row 2t = source row t's left half and row
+    2t+1 its right half. Faces need SrcA rows 16f..16f+15, so this walks the
+    banks with a stride of 2. `MOVA2D` takes SrcRow/DstRow immediates that are
+    added to the RWC counters, so the mapping is expressed directly rather than
+    through address modifiers, and the counters stay at zero throughout.
+
+    The tilizer also raises a single data-valid rather than the four that
+    `_tile_mop` consumes, so there is exactly one release at the end.
+    """
+    self.dst.check(dst_tile)
+    self._wait_for_dst()
+    self._configure_dst(dst_tile)
+    for register in (_ADDR_MOD_AB + 2, _ADDR_MOD_DST + 2, _ADDR_MOD_BIAS + 2):
+      self._set_thread_cfg(register, 0)
+    self._issue(TT.TTSETRWC(0, 0, 0, 0, 0, 0xF))
+    stall(self.k, Stall.MATH, Wait.SRCA_VLD)
+    for source_row in range(64):
+      token, half = divmod(source_row, 2)
+      group, index = divmod(token, 16)
+      self._issue(
+        TT.TTMOVA2D(0, source_row, 2, 0, group * 32 + half * 16 + index),
+      )
+    # Release both banks: the unary SrcA path advances an empty SrcB bank too.
+    self._issue(TT.TTSETRWC(3, 0, 0, 0, 0, 3))
+    self._issue(TT.TTSETRWC(0, 0, 0, 0, 0, 0xF))
+    return self
+
   def copy_a_tiles(self, *, dst_tiles):
     """Copy a sequence of SrcA tiles while retaining common FPU setup."""
     dst_tiles = tuple(dst_tiles)
@@ -173,6 +205,35 @@ class Fpu:
       stall(self.k, Stall.MATH, Wait.SRCA_VLD)
       self._mop.run()
       self._issue(TT.TTSETRWC(0, 0, 0, 0, 0, 0xF))
+    return self
+
+  def fast_tilize(self, *, chunks):
+    """Move BH fast-tilize SrcA groups into Dst for the strided packer."""
+    if self.dst.fp32:
+      raise ValueError("fast tilize requires 16-bit Dst")
+    if type(chunks) is not int or chunks <= 0:
+      raise ValueError("fast tilize chunks must be positive")
+
+    # Strided PACK reads require the Blackhole Dst remap and swizzle bits.
+    stall(self.k, Stall.CFG, Wait.MATH | Wait.SFPU | Wait.PACK0)
+    self._rmw_cfg_byte(_DEST_ACCESS, 0, 0x3, 0x3)
+    self._set_thread_cfg(7, 0)  # SETRWC(CLR_A) returns SrcA banks.
+    self._set_addr_mod(2, srca=8, dest=16)
+    move = TT.TTMOVA2D(0, 0, 2, 2, 0)
+    self._mop.configure(LoopTemplate(
+      outer=4, inner=8, loop=move,
+      end0=TT.TTSETRWC(1, 0, 0, 0, 0, 1),
+      last=move, outer_last=move,
+    ))
+
+    for _ in self.k.range(chunks):
+      self._wait_for_dst()
+      self._configure_dst(0)
+      self._issue(TT.TTSETRWC(0, 0, 0, 0, 0, 0xF))
+      stall(self.k, Stall.MATH, Wait.SRCA_VLD)
+      self._mop.run()
+      self._issue(TT.TTSETRWC(0, 0, 0, 0, 0, 0xF))
+      self.publish()
     return self
 
   def binary(self, operation, *, dst_tile, accumulate=False, broadcast=Broadcast.NONE):
@@ -341,8 +402,11 @@ class Fpu:
     self._wait_for_dst()
     self._configure_dst(dst_tile)
     # SrcA contains a halo-transposed scaler row and SrcB contains data.
-    # MVMUL produces eight row sums at a time. The last modifier for each
-    # physical face row advances Dst to its lower 16 logical rows.
+    # MVMUL produces eight row sums at a time. HiFi2 requires two fidelity
+    # phases for each half-face; only the second phase clears fidelity. The
+    # first column face releases both operands, while the second retains them
+    # until the MOP-equivalent row boundary clear.
+    self._set_addr_mod(0, fidelity_increment=1)
     self._set_addr_mod(1, srcb=8, fidelity_clear=True)
     self._set_addr_mod(2, srcb_carry=True, fidelity_clear=True)
     self._set_addr_mod(
@@ -351,9 +415,13 @@ class Fpu:
     self._issue(TT.TTSETRWC(0, 0, 0, 0, 0, 0xF))
     stall(self.k, Stall.MATH, Wait.SRCA_VLD | Wait.SRCB_VLD)
     for _ in range(2):
+      self._issue(TT.TTMVMUL(0, 0, 0, 0))
       self._issue(TT.TTMVMUL(0, 0, 1, 0))
+      self._issue(TT.TTMVMUL(0, 0, 0, 8))
       self._issue(TT.TTMVMUL(3, 0, 2, 8))
+      self._issue(TT.TTMVMUL(0, 0, 0, 0))
       self._issue(TT.TTMVMUL(0, 0, 1, 0))
+      self._issue(TT.TTMVMUL(0, 0, 0, 8))
       self._issue(TT.TTMVMUL(0, 0, 3, 8))
       self._issue(TT.TTSETRWC(3, 0, 0, 0, 0, 2))
     self._issue(TT.TTSETRWC(0, 0, 0, 0, 0, 6))

@@ -4,7 +4,7 @@ from fw.consts import TensixMMIO
 from isa import R, Tensix as TT
 from ttk import Dst, DType
 from ttk.cb import CB
-from ttk.mop import LoopTemplate, MaskTemplate, Mop, NOP
+from ttk.mop import LoopTemplate, MaskTemplate, Mop, NOP, Replay
 from ttk.sync import Sem, SemWait, Stall, Wait, sem_get, sem_post, sem_wait, stall, sync
 
 class UnpackTarget(IntEnum):
@@ -48,9 +48,21 @@ _PAIR_MOP = LoopTemplate(
   outer=4, inner=1, start=_unpacr(UNPACKER0), loop=_unpacr(UNPACKER1),
   last=_unpacr(UNPACKER1), outer_last=_unpacr(UNPACKER1),
 )
+_REDUCE_PAIR_REPLAY = Replay(
+  0, (_unpacr(UNPACKER0), _unpacr(UNPACKER1)),
+)
+_REDUCE_PAIR_MOP = LoopTemplate(
+  outer=1, inner=4, loop=_REDUCE_PAIR_REPLAY,
+  last=_REDUCE_PAIR_REPLAY, outer_last=_REDUCE_PAIR_REPLAY,
+)
 _COLUMN_PAIR_MOP = LoopTemplate(
   outer=2, inner=2, start=_unpacr(UNPACKER1), loop=_unpacr(UNPACKER0),
   end0=TT.TTSETADCZW(2, 0, 0, 0, 2, 1),
+  last=_unpacr(UNPACKER0), outer_last=_unpacr(UNPACKER0),
+)
+_ROW_PAIR_MOP = LoopTemplate(
+  outer=2, inner=2, start=_unpacr(UNPACKER1), loop=_unpacr(UNPACKER0),
+  end0=TT.TTSETADCZW(2, 0, 0, 0, 0, 1),
   last=_unpacr(UNPACKER0), outer_last=_unpacr(UNPACKER0),
 )
 _REDUCE_MOP = MaskTemplate(
@@ -58,8 +70,21 @@ _REDUCE_MOP = MaskTemplate(
   a1=_unpacr(UNPACKER0), a2=NOP, a3=NOP,
   b=_unpacr(UNPACKER1), skip_a0=NOP, skip_b=NOP,
 )
+_FAST_TILIZE_MOP = MaskTemplate(
+  a0=TT.TTUNPACR(UNPACKER0, 0x11, 0, 0, 0, 1, 0,
+                 0, 0, 0, 0, 0, 1),
+  # Masked iterations terminate each group of eight reads and publish SrcA.
+  skip_a0=TT.TTUNPACR(UNPACKER0, 0x11, 0, 0, 0, 1, 1,
+                      0, 0, 0, 0, 0, 1),
+)
 _TILIZE_MOPS = (
-  LoopTemplate(outer=1, inner=1, start=_unpacr(UNPACKER0), loop=_SRCB_DVALID),
+  # One UNPACR consumes all 1024 datums, so the sole iteration is also the last
+  # and `loop` never runs -- the SrcB data-valid has to come from `last` and
+  # `outer_last`. Math clears both banks, so SrcB is marked valid even though
+  # only SrcA is written. Pair this with `fpu.copy_a_tilized`, which expects a
+  # single data-valid and undoes the tilizer's stride-2 row order.
+  LoopTemplate(outer=1, inner=1, start=_unpacr(UNPACKER0), loop=_SRCB_DVALID,
+               last=_SRCB_DVALID, outer_last=_SRCB_DVALID),
   None,
   _mop(UNPACKER0, 1, to_dst=True),
 )
@@ -82,8 +107,10 @@ _CONFIG_SYNC = 0xFFE80034
 
 def _select_mop(target, tilize):
   if tilize and target == UnpackTarget.SRCB:
-    raise ValueError("Blackhole tilize is supported only by unpacker 0")
-  return (_TILIZE_MOPS if tilize else _MOPS)[target]
+    raise ValueError("tilize into SrcB is not implemented")
+  mop = (_TILIZE_MOPS if tilize else _MOPS)[target]
+  if mop is None: raise ValueError("unsupported tilize target")
+  return mop
 
 class Unpack:
   def __init__(self, kernel, dst: Dst):
@@ -110,7 +137,7 @@ class Unpack:
       self.k.read(observed, int(register)); self.k.write(_CONFIG_SYNC, 0)
 
   def _write_mode(self, engine, input_format, output_format, target, tilize,
-                  tile, x_dim=None, transpose=False):
+                  tile, x_dim=None, transpose=False, row_stride=None):
     k = self.k
     descriptor_x_dim = (
       x_dim if x_dim is not None else
@@ -120,9 +147,25 @@ class Unpack:
       input_format | 0x10 | descriptor_x_dim << 16,
       1 | (1 if tilize else 4) << 16, 0, 0,
     )
-    shift = 2 * input_format.itemsize
     word0 = 0x20 | output_format
-    if tilize: word0 |= 1 << 9 | shift << 16 | shift << 20
+    if tilize:
+      # Tileize_mode makes the unpacker gather 32 discontiguous source rows.
+      # RowStride is assembled from three 4-bit Shift_amount_cntx fields at
+      # bits 16/20/24, contributing at bit positions 4/8/12 respectively --
+      # so the register just holds (stride bytes / 16) split into nibbles.
+      stride = (
+        32 * input_format.itemsize if row_stride is None else row_stride
+      )
+      if stride <= 0 or stride % 16 or stride > 65520:
+        raise ValueError(
+          "tilize row stride must be a positive multiple of 16 bytes "
+          "no larger than 65520",
+        )
+      units = stride // 16
+      word0 |= (
+        1 << 9 | (units & 0xF) << 16
+        | (units >> 4 & 0xF) << 20 | (units >> 8 & 0xF) << 24
+      )
     if transpose: word0 |= 1 << 8
     options = (word0, 0x03 | (0x30 if target == UnpackTarget.DST else 0), 0, 0)
     for base, words in ((_TILE_DESCRIPTOR[engine], descriptor), (_OPTIONS[engine], options)):
@@ -149,7 +192,8 @@ class Unpack:
     ): k.write(int(register), value)
 
   def _configure(self, cb, target, tilize, tile, mop=None, *,
-                 commit=True, configure_mop=True, transpose=False):
+                 commit=True, configure_mop=True, transpose=False,
+                 row_stride=None):
     input_format = cb.dtype
     output_format = DType.BF16 if input_format == DType.F32 and target != UnpackTarget.DST else input_format
     engine = int(target == UnpackTarget.SRCB)
@@ -157,7 +201,7 @@ class Unpack:
     self._set_thread_cfg(0, 0)
     self._write_mode(
       engine, input_format, output_format, target, tilize, tile,
-      transpose=transpose,
+      transpose=transpose, row_stride=row_stride,
     )
     with self.k.scope():
       address = self.k.reg()
@@ -183,9 +227,17 @@ class Unpack:
       engine, dtype, dtype, target, False, None, x_dim=x_dim,
       transpose=transpose,
     )
-    base = (address >> 4) - 1
-    self.k.write(int(_BASE[engine]), base)
-    self.k.write(int(_BASE[engine]) + 4, base)
+    if isinstance(address, R):
+      with self.k.scope():
+        base = self.k.reg(exclude=address)
+        self.k.srli(base, address, 4)
+        self.k.addi(base, base, -1)
+        self.k.write(int(_BASE[engine]), base)
+        self.k.write(int(_BASE[engine]) + 4, base)
+    else:
+      base = (address >> 4) - 1
+      self.k.write(int(_BASE[engine]), base)
+      self.k.write(int(_BASE[engine]) + 4, base)
     self._issue(TT.TTSETC16(_MISC_CONFIG, 0))
     if engine == UNPACKER0:
       self._issue(TT.TTSETC16(_SRCA_SET, 4))
@@ -194,8 +246,10 @@ class Unpack:
       self._mop.configure(_select_mop(target, False))
     return engine
 
-  def _run(self, cb, target, tilize, tile, mop=None):
-    engine = self._configure(cb, target, tilize, tile, mop)
+  def _run(self, cb, target, tilize, tile, mop=None, row_stride=None):
+    engine = self._configure(
+      cb, target, tilize, tile, mop, row_stride=row_stride,
+    )
     self._issue(TT.TTSETADCXX(engine + 1, 1023 if tilize else 255, 0))
     self._issue(TT.TTSETADCZW(3, 0, 0, 0, 0, 0xF))
     if target == UnpackTarget.DST:
@@ -216,18 +270,92 @@ class Unpack:
       self._issue(TT.TTSETC16(_SRCA_SET, 4))
       sem_post(self.k, Sem.UNPACK_TO_DEST)
 
-  def _move(self, source_cb, target, tilize, tile, mop=None):
+  def _move(self, source_cb, target, tilize, tile, mop=None,
+            row_stride=None):
     if target == UnpackTarget.DST: self.dst.check(tile)
     _select_mop(target, tilize)  # Validate before emitting CB operations.
     CB.wait_front(self.k, source_cb)
     if target != UnpackTarget.DST:
       stall(self.k, Stall.UNPACK, Wait.SRCB_CLR if target == UnpackTarget.SRCB else Wait.SRCA_CLR)
-    self._run(source_cb, target, tilize, tile, mop)
+    self._run(source_cb, target, tilize, tile, mop, row_stride)
     CB.pop_front(self.k, source_cb)
     return self
 
-  def move(self, source_cb, target, tilize=False, *, tile=None):
-    return self._move(source_cb, target, tilize, tile)
+  def move(self, source_cb, target, tilize=False, *, tile=None,
+           row_stride=None):
+    """Move one tile into SrcA/SrcB/Dst, optionally tilizing on the way.
+
+    `row_stride` is the byte pitch between consecutive source rows and only
+    applies when tilizing. It defaults to a packed 32-datum row; pass the
+    pitch of the surrounding block to gather a 32-wide column slice out of a
+    wider row-major region.
+    """
+    return self._move(source_cb, target, tilize, tile, row_stride=row_stride)
+
+  def fast_tilize(self, source_cb, *, width_tiles):
+    return self.fast_tilize_blocks(
+      source_cb, width_tiles=width_tiles, blocks=1,
+    )
+
+  def fast_tilize_blocks(self, source_cb, *, width_tiles, blocks):
+    """Present one row-major 32-row block to the BH fast-tilize math path.
+
+    Four adjacent output tiles are processed per chunk.  UNPACR reads 128
+    BF16 datums from each input row into eight SrcA rows, and publishes after
+    every eight rows.  This is the Blackhole LLK workaround for the ordinary
+    tilizer's SrcA 16-row-set write hazard. Multiple blocks retain the same
+    unpack configuration so producer/consumer staging does not reconfigure
+    SrcA while math is still returning banks from the preceding block.
+    """
+    if source_cb.dtype is not DType.BF16:
+      raise ValueError("fast tilize currently requires BF16 input")
+    if type(width_tiles) is not int or width_tiles < 4 or width_tiles % 4:
+      raise ValueError("fast tilize width must be a positive multiple of 4")
+    if source_cb.depth < width_tiles:
+      raise ValueError("fast tilize input CB must hold one complete row")
+    if type(blocks) is not int or blocks <= 0:
+      raise ValueError("fast tilize block count must be positive")
+
+    stall(self.k, Stall.UNPACK, Wait.SRCA_CLR)
+    self._configure(
+      source_cb, UnpackTarget.SRCA, False, None,
+      commit=False, configure_mop=False,
+    )
+
+    # Match the current Blackhole experimental fast-tilize LLK:
+    # Tile_x_dim=32, Tile_y_dim=the row width, Tile_z_dim=16, and an
+    # eight-SrcA-row (256-byte) CH1 Z stride.
+    self.k.write(int(_X_DIM[UNPACKER0]), 32 | 32 << 16)
+    self.k.write(
+      int(_TILE_DESCRIPTOR[UNPACKER0]) + 4,
+      width_tiles | 16 << 16,
+    )
+    self.k.write(int(_ADDR_ZW1[UNPACKER0]), 256)
+    self._mop.configure(_FAST_TILIZE_MOP)
+    self._issue(TT.TTSETADCXX(1, 4 * 32 - 1, 0))
+
+    for _ in range(blocks):
+      CB.wait_front(self.k, source_cb, width_tiles)
+      for chunk in self.k.range(width_tiles // 4):
+        with self.k.scope():
+          address, offset = self.k.reg(2, exclude=chunk)
+          CB.get_read_ptr(self.k, source_cb, address)
+          self.k.slli(offset, chunk, 8)
+          self.k.add(address, address, offset)
+          self.k.srli(address, address, 4)
+          self.k.addi(address, address, -1)
+          self.k.write(int(_BASE[UNPACKER0]), address)
+          self.k.write(int(_BASE[UNPACKER0]) + 4, address)
+        self._commit_config(_BASE[UNPACKER0])
+        self._issue(TT.TTSETADCXY(1, 0, 0, 0, 0, 0x3))
+        self._issue(TT.TTSETADCZW(1, 0, 0, 0, 0, 0xF))
+        stall(self.k, Stall.UNPACK, Wait.TRISC_CFG)
+        self._mop.run(32, 0x80808080)
+        stall(self.k, Stall.UNPACK, Wait.UNPACK0)
+        sem_get(self.k, Sem.UNPACK_SYNC)
+        sync(self.k)
+      CB.pop_front(self.k, source_cb, width_tiles)
+    return self
 
   def move_l1(self, dtype, address, target=UnpackTarget.SRCA):
     """Present one face-tilized tile from a persistent L1 address."""
@@ -249,6 +377,31 @@ class Unpack:
 
   def move_pair(self, source_a_cb, source_b_cb):
     return self._move_pair(source_a_cb, source_b_cb, _PAIR_MOP)
+
+  def move_pair_same(self, source_cb):
+    """Present one CB tile as both operands without reading or copying it twice."""
+    CB.wait_front(self.k, source_cb)
+    stall(self.k, Stall.UNPACK, Wait.SRCA_CLR | Wait.SRCB_CLR)
+    self._configure(
+      source_cb, UnpackTarget.SRCA, False, None,
+      commit=False, configure_mop=False,
+    )
+    self._configure(
+      source_cb, UnpackTarget.SRCB, False, None,
+      commit=False, configure_mop=False,
+    )
+    self._commit_config(_BASE[UNPACKER0])
+    self._mop.configure(_PAIR_MOP)
+    self._issue(TT.TTSETADCXX(1, 255, 0))
+    self._issue(TT.TTSETADCXX(2, 255, 0))
+    self._issue(TT.TTSETADCZW(3, 0, 0, 0, 0, 0xF))
+    stall(self.k, Stall.UNPACK, Wait.TRISC_CFG)
+    self._mop.run()
+    stall(self.k, Stall.UNPACK, Wait.UNPACK0 | Wait.UNPACK1)
+    sem_get(self.k, Sem.UNPACK_SYNC)
+    sync(self.k)
+    CB.pop_front(self.k, source_cb)
+    return self
 
   def move_matmul(self, left_cb, right_cb, *, right_transpose=False):
     self.dst.require_fp32()
@@ -287,6 +440,90 @@ class Unpack:
 
   def move_pair_rows(self, source_a_cb, source_b_cb):
     return self._move_pair(source_a_cb, source_b_cb, _COLUMN_PAIR_MOP)
+
+  def move_pair_rows_persistent(self, source_a_cb, source_b_cb):
+    """Column-broadcast SrcB without consuming its persistent CB front tile."""
+    CB.wait_front(self.k, source_a_cb)
+    CB.wait_front(self.k, source_b_cb)
+    stall(self.k, Stall.UNPACK, Wait.SRCA_CLR | Wait.SRCB_CLR)
+    self._configure(
+      source_a_cb, UnpackTarget.SRCA, False, None,
+      commit=False, configure_mop=False,
+    )
+    self._configure(
+      source_b_cb, UnpackTarget.SRCB, False, None,
+      commit=False, configure_mop=False,
+    )
+    self._commit_config(_BASE[UNPACKER0])
+    self._mop.configure(_COLUMN_PAIR_MOP)
+    self._issue(TT.TTSETADCXX(1, 255, 0))
+    self._issue(TT.TTSETADCXX(2, 255, 0))
+    self._issue(TT.TTSETADCZW(3, 0, 0, 0, 0, 0xF))
+    stall(self.k, Stall.UNPACK, Wait.TRISC_CFG)
+    self._mop.run()
+    stall(self.k, Stall.UNPACK, Wait.UNPACK0 | Wait.UNPACK1)
+    sem_get(self.k, Sem.UNPACK_SYNC)
+    sync(self.k)
+    CB.pop_front(self.k, source_a_cb)
+    return self
+
+  def move_l1_cb_rows(self, source_a_address, source_b_cb):
+    """Column-broadcast a CB row over one persistent full L1 SrcA tile."""
+    if type(source_a_address) is not int or source_a_address < 0:
+      raise ValueError("persistent L1 tile address must be non-negative")
+    CB.wait_front(self.k, source_b_cb)
+    stall(self.k, Stall.UNPACK, Wait.SRCA_CLR | Wait.SRCB_CLR)
+    self._configure_l1(
+      DType.BF16, UnpackTarget.SRCA, source_a_address, 256,
+      commit=False, configure_mop=False,
+    )
+    self._configure(
+      source_b_cb, UnpackTarget.SRCB, False, None,
+      commit=False, configure_mop=False,
+    )
+    self._commit_config(_BASE[UNPACKER0])
+    self._mop.configure(_COLUMN_PAIR_MOP)
+    self._issue(TT.TTSETADCXX(1, 255, 0))
+    self._issue(TT.TTSETADCXX(2, 255, 0))
+    self._issue(TT.TTSETADCZW(3, 0, 0, 0, 0, 0xF))
+    stall(self.k, Stall.UNPACK, Wait.TRISC_CFG)
+    self._mop.run()
+    stall(self.k, Stall.UNPACK, Wait.UNPACK0 | Wait.UNPACK1)
+    sem_get(self.k, Sem.UNPACK_SYNC)
+    sync(self.k)
+    CB.pop_front(self.k, source_b_cb)
+    return self
+
+  def move_l1_pair_row_broadcast(
+    self, source_a_cb, source_b_address, source_b_dtype=DType.BF16,
+  ):
+    """Pair a streamed tile with one persistent 32-value SrcB row."""
+    if source_b_dtype is not DType.BF16:
+      raise ValueError("persistent broadcast rows currently require BF16")
+    if not isinstance(source_b_address, (int, R)):
+      raise TypeError("persistent broadcast-row address must be int or register")
+    CB.wait_front(self.k, source_a_cb)
+    stall(self.k, Stall.UNPACK, Wait.SRCA_CLR | Wait.SRCB_CLR)
+    self._configure(
+      source_a_cb, UnpackTarget.SRCA, False, None,
+      commit=False, configure_mop=False,
+    )
+    self._configure_l1(
+      source_b_dtype, UnpackTarget.SRCB, source_b_address, 256,
+      commit=False, configure_mop=False,
+    )
+    self._commit_config(_BASE[UNPACKER0])
+    self._mop.configure(_ROW_PAIR_MOP)
+    self._issue(TT.TTSETADCXX(1, 255, 0))
+    self._issue(TT.TTSETADCXX(2, 255, 0))
+    self._issue(TT.TTSETADCZW(3, 0, 0, 0, 0, 0xF))
+    stall(self.k, Stall.UNPACK, Wait.TRISC_CFG)
+    self._mop.run()
+    stall(self.k, Stall.UNPACK, Wait.UNPACK0 | Wait.UNPACK1)
+    sem_get(self.k, Sem.UNPACK_SYNC)
+    sync(self.k)
+    CB.pop_front(self.k, source_a_cb)
+    return self
 
   def move_l1_pair_rows(self, source_a_cb, source_b_address,
                         source_b_dtype=DType.BF16):
@@ -421,7 +658,7 @@ class Unpack:
         commit=False, configure_mop=False,
       )
     self._commit_config(_BASE[UNPACKER0])
-    self._mop.configure(_PAIR_MOP)
+    self._mop.configure(_REDUCE_PAIR_MOP)
     self._issue(TT.TTSETADCXX(1, 255, 0))
     self._issue(TT.TTSETADCXX(2, 255, 0))
     self._issue(TT.TTSETADCZW(3, 0, 0, 0, 0, 0xF))

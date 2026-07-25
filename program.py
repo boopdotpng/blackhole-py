@@ -28,10 +28,31 @@ class Buffer:
   cores: tuple[tuple[int, int], ...]
   banks: int
   global_address: bool = False
+  # Face-tilize each 1024-element tile on upload. Required for anything the
+  # Tensix datapath consumes directly (unpack -> srcA/srcB), because the
+  # unpacker's address generator walks 16x16 faces. Set False only for buffers
+  # read as raw bytes by BRISC/NCRISC -- e.g. an embedding table gathered by
+  # NoC and tilized on device afterwards. Operands that are elementwise-
+  # combined must agree: a row-major activation against a tilized weight
+  # silently pairs the wrong elements.
+  tilized: bool = True
+  # Number of consecutive logical tiles placed in one DRAM bank before
+  # rotating to the next bank. The default tile-interleaved layout is 1.
+  # A value of 2 keeps a 4 KiB BF16 embedding row in one bank.
+  bank_block_tiles: int = 1
 
   def __post_init__(self):
     shape, axis, cores = tuple(self.shape), self.axis, tuple(self.cores)
     if not cores: raise ValueError("buffer requires at least one storage core")
+    if (
+      type(self.bank_block_tiles) is not int or
+      self.bank_block_tiles <= 0
+    ):
+      raise ValueError("DRAM bank block size must be a positive integer")
+    if self.bank_block_tiles != 1 and not self.global_address:
+      raise ValueError(
+        "blocked DRAM bank interleave currently requires global addressing",
+      )
     if axis is not None:
       if axis < 0: axis += len(shape)
       if not 0 <= axis < len(shape): raise ValueError("shard axis is outside the buffer shape")
@@ -138,8 +159,11 @@ class Buffer:
     element = np.dtype(f"V{self.dtype.itemsize}")
     if inverse:
       physical = np.frombuffer(data, dtype=element)
-      tiles = physical.reshape(self.physical_tiles, 2, 2, 16, 16)
-      tiles = tiles.transpose(0, 1, 3, 2, 4).reshape(self.physical_tiles, 1024)
+      if self.tilized:
+        tiles = physical.reshape(self.physical_tiles, 2, 2, 16, 16)
+        tiles = tiles.transpose(0, 1, 3, 2, 4).reshape(self.physical_tiles, 1024)
+      else:
+        tiles = physical.reshape(self.physical_tiles, 1024)
       blocks = tiles.reshape(len(self.cores), self.items_per_core,
                              self.tiles_per_item * 1024)
       items = np.concatenate([
@@ -154,6 +178,36 @@ class Buffer:
       return np.moveaxis(values, 0, self.axis).tobytes()
 
     values = np.frombuffer(data, dtype=element).reshape(self.shape)
+    # Llama weights use axis-0 rows made of complete tiles. Tilize directly
+    # from the safetensor view into final sharded storage, avoiding the two
+    # full-size "logical" and "blocks" intermediates below. This matters for
+    # multi-gigabyte model startup, while the generic path still handles
+    # partial items and arbitrary shard axes.
+    if (
+      self.axis == 0 and
+      self.item_elements == self.tiles_per_item * 1024
+    ):
+      items = values.reshape(
+        self.items, self.tiles_per_item, 2, 16, 2, 16,
+      )
+      if self.tilized:
+        items = items.transpose(0, 1, 2, 4, 3, 5)
+      if len(self.cores) == 1 and self.items_per_core == self.items:
+        return items.tobytes()
+      item_shape = (
+        (self.tiles_per_item, 2, 2, 16, 16)
+        if self.tilized else (self.tiles_per_item, 2, 16, 2, 16)
+      )
+      blocks = np.zeros(
+        (len(self.cores), self.items_per_core, *item_shape),
+        dtype=element,
+      )
+      for block, start, count in zip(
+        blocks, self.item_starts, self.item_counts,
+      ):
+        block[:count] = items[start:start + count]
+      return blocks.tobytes()
+
     if self.axis is None:
       logical = np.zeros((self.items, 1024), dtype=element)
       logical.reshape(-1)[:values.size] = values.reshape(-1)
@@ -171,6 +225,7 @@ class Buffer:
     )
     for block, start, count in zip(blocks, self.item_starts, self.item_counts):
       block[:count] = logical[start:start + count]
+    if not self.tilized: return blocks.tobytes()
     tiles = blocks.reshape(self.physical_tiles, 2, 16, 2, 16)
     return tiles.transpose(0, 1, 3, 2, 4).tobytes()
 
@@ -206,7 +261,8 @@ class Dram:
     self.cores = tuple(cores)
 
   def buffer(self, name: str, dtype: DType, shape: tuple[int, ...],
-             axis=None, *, global_address=False, cores=None) -> Buffer:
+             axis=None, *, global_address=False, cores=None,
+             tilized=True, bank_block_tiles=1) -> Buffer:
     storage_cores = self.cores if cores is None else tuple(cores)
     if not storage_cores: raise ValueError("buffer requires storage cores")
     if len(set(storage_cores)) != len(storage_cores):
@@ -218,25 +274,50 @@ class Dram:
     storage_cores = (storage_cores[0],) if global_address else storage_cores
     buffer = Buffer(
       name, 0, dtype, shape, axis, storage_cores, self.banks, global_address,
+      tilized, bank_block_tiles,
     )
-    tiles_per_bank = (buffer.physical_tiles + self.banks - 1) // self.banks
+    tile_groups = (
+      buffer.physical_tiles + bank_block_tiles - 1
+    ) // bank_block_tiles
+    groups_per_bank = (tile_groups + self.banks - 1) // self.banks
+    tiles_per_bank = groups_per_bank * bank_block_tiles
     addr = self.allocator.alloc(tiles_per_bank * buffer.tile_size)
     return Buffer(
       name, addr, dtype, shape, axis, storage_cores, self.banks, global_address,
+      tilized, bank_block_tiles,
     )
 
 
 class Program:
-  def __init__(self, cores, *parameters, fp32_dst=False, images=None):
+  def __init__(self, cores, *parameters, fp32_dst=False, images=None,
+               l1_range=None):
     self._cores = tuple(cores)
     params = tuple(parameters)
     if len(params) > TensixL1.PARAM_SLOTS:
       raise ValueError("program parameter table is full")
     self.params = {param.name: param for param in params}
     self._param_slots = {param: slot for slot, param in enumerate(params)}
-    self._l1 = Allocator(
-      TensixL1.DATA_BUFFER_SPACE_BASE, TensixL1.KERNEL_CACHE_BASE, 16,
-    )
+    if l1_range is None:
+      l1_range = (
+        TensixL1.DATA_BUFFER_SPACE_BASE, TensixL1.KERNEL_CACHE_BASE,
+      )
+    else:
+      l1_range = tuple(l1_range)
+      arenas = (
+        (TensixL1.DATA_BUFFER_SPACE_BASE, TensixL1.KERNEL_CACHE_BASE),
+        (TensixL1.KERNEL_CACHE_END, TensixL1.RUNTIME_PARAM_BASE),
+      )
+      if (
+        len(l1_range) != 2 or
+        not any(
+          start <= l1_range[0] < l1_range[1] <= end
+          for start, end in arenas
+        )
+      ):
+        raise ValueError(
+          "program L1 range must lie wholly within a data-buffer arena",
+        )
+    self._l1 = Allocator(*l1_range, 16)
     self.cb = CBRegistry(self._l1)
     self._l1_constants = {}
     self.launch = ()
