@@ -1,3 +1,15 @@
+"""Llama 3.2 1B batch-1 decode kernels and resident runtime.
+
+Decode dataflow:
+
+  embedding -> RMSNorm -> fused QKV -> RoPE -> KV append -> GQA attention
+            -> O projection + residual -> RMSNorm
+            -> gate/up -> SwiGLU -> dense -> down projection + residual
+            -> final RMSNorm -> LM head -> argmax/token publication
+
+The file is grouped by kernel family below and contains decode only.
+"""
+
 from pathlib import Path
 
 import argparse
@@ -15,18 +27,16 @@ from program import Buffer, Const, DType, Program, rectangles
 from isa import R, Tensix as TT
 from ttk import l1
 from ttk.cb import CB
-from ttk.check import check_buffer
 from ttk.sfpu import (
   LaneConfig, LReg, SfpuFormat, SfpuProgram, SfpuProgramBuilder,
 )
-from ttk.shard import local_range, specialize
+from ttk.shard import specialize
 from ttk.sync import Sem, SemWait, Stall, Wait, sem_get, sem_wait, stall
 from ttk.unpack import UnpackTarget
 
 
 VOCAB_SIZE = 128256
 EMBED_DIM = 2048
-PREFILL_CAPACITY = 1024
 EMBEDDING_TILES = EMBED_DIM // 1024
 EMBEDDING_TILES_SHIFT = EMBEDDING_TILES.bit_length() - 1  # multiply by a shift
 LLAMA_CORES = 118
@@ -45,14 +55,12 @@ ROPE_FACTOR = 32.0
 ROPE_LOW_FREQ_FACTOR = 1.0
 ROPE_HIGH_FREQ_FACTOR = 4.0
 ROPE_ORIGINAL_MAX_POSITION_EMBEDDINGS = 8192
-KV_CACHE_SHAPE = (KV_HEADS, ROPE_CACHE_TOKENS, HEAD_DIM)
 KV_CACHE_TOKEN_BLOCK = 32
 KV_CACHE_TIME_BLOCKS = ROPE_CACHE_TOKENS // KV_CACHE_TOKEN_BLOCK
 KV_CACHE_FEATURE_TILES = HEAD_DIM // 32
 KV_CACHE_TILES_PER_HEAD = KV_CACHE_TIME_BLOCKS * KV_CACHE_FEATURE_TILES
 # Each innermost 1024-element row is one ordinary 32x32 tile.  Keeping this
-# separate from KV_CACHE_SHAPE makes the logical model shape explicit while
-# exposing the exact physical tile order expected by the score matmul.
+# This exposes the physical tile order expected by the score matmul.
 KV_CACHE_STORAGE_SHAPE = (
   KV_HEADS, KV_CACHE_TILES_PER_HEAD, 32 * 32,
 )
@@ -60,6 +68,10 @@ GQA_GROUP_SIZE = Q_HEADS // KV_HEADS
 GQA_CONTEXT_SHAPE = (1, EMBED_DIM)
 GQA_ROW_CHUNKS = (0, 2, 16, 18)
 
+
+# ---------------------------------------------------------------------------
+# Host tables and shared code-generation helpers
+# ---------------------------------------------------------------------------
 
 def rope_table(
   max_seq_len=ROPE_CACHE_TOKENS, head_dim=HEAD_DIM,
@@ -76,12 +88,6 @@ def rope_table(
   angles exactly as Llama's split-half ``rotate_half`` convention expects.
   They are quantized only when copied into the resident BF16 DRAM buffers.
   """
-  if max_seq_len < 1: raise ValueError("max_seq_len must be positive")
-  if head_dim < 2 or head_dim % 2:
-    raise ValueError("head_dim must be a positive even number")
-  if not 0 < rope_low_freq_factor < rope_high_freq_factor:
-    raise ValueError("RoPE frequency factors must be positive and ordered")
-
   dimensions = np.arange(0, head_dim, 2, dtype=np.float32)
   dimensions = np.divide(
     dimensions, np.float32(head_dim), dtype=np.float32,
@@ -314,114 +320,149 @@ def _dot_finalize():
   return SfpuProgram((), tuple(words))
 
 
-def _decode_projection_program(x, weight, output, *, local_rows):
+# ---------------------------------------------------------------------------
+# Linear projections: generic GEMV and fused Q/K/V
+# ---------------------------------------------------------------------------
+
+def _decode_projections_program(x, projections):
+  """Build one launch containing one or more identically shaped GEMV pipes."""
   input_dim = x.shape[1]
   input_tiles = input_dim // 1024
-  # Token 0 starts at the allocation base. Expose its 2 or 8 physical tiles
-  # through one global view so every projection core can replicate it.
+  row_starts = tuple(
+    Const(f"{weight.name}_row_start", weight.item_starts)
+    if weight.global_address and len(weight.cores) > 1 else None
+    for weight, _, _ in projections
+  )
   token = Buffer(
     f"{x.name}_decode_token", x.addr, x.dtype, (input_dim,), None,
     (x.cores[0],), x.banks, global_address=True,
   )
-  p = Program(weight.cores, token, weight, output, fp32_dst=True)
+  parameters = tuple(
+    parameter
+    for (weight, output, _), row_start in zip(projections, row_starts)
+    for parameter in (
+      (weight, output) if row_start is None
+      else (weight, output, row_start)
+    )
+  )
+  p = Program(
+    projections[0][0].cores, token, *parameters, fp32_dst=True,
+  )
   weight_cb = p.cb(DType.BF16, depth=4)
   scalar_cb = p.cb(DType.BF16, depth=2)
   token_l1 = p.l1(input_tiles * token.tile_size, alignment=16)
-  compact_l1 = p.l1(
-    output.tiles_per_item * output.tile_size, alignment=16,
+  compact_l1 = tuple(
+    p.l1(output.tiles_per_item * output.tile_size, alignment=16)
+    for _, output, _ in projections
   )
 
   p.brisc.noc.read_tiles(token, tuple(
     (tile, token_l1 + tile * token.tile_size)
     for tile in range(input_tiles)
   ))
-  for local_row in p.brisc.range(local_rows):
-    if input_tiles == 2:
-      with p.brisc.scope():
-        first, second = p.brisc.reg(2, exclude=local_row)
-        p.brisc.slli(first, local_row, 1)
-        p.brisc.addi(second, first, 1)
-        p.brisc.noc.read_tiles_into_cb(weight, (first, second), weight_cb)
-    else:
-      for input_tile in range(input_tiles):
+  for (weight, _, local_rows), row_start in zip(
+    projections, row_starts,
+  ):
+    for local_row in p.brisc.range(local_rows):
+      source_row = local_row
+      if row_start is not None:
+        source_row = p.brisc.reg(exclude=local_row)
+        p.brisc.read(source_row, p.param_addr(row_start))
+        p.brisc.add(source_row, source_row, local_row)
+      if input_tiles == 2:
         with p.brisc.scope():
-          tile, stride = p.brisc.reg(2, exclude=local_row)
-          p.brisc.li(stride, input_tiles)
-          p.brisc.mul(tile, local_row, stride)
-          if input_tile: p.brisc.addi(tile, tile, input_tile)
-          p.brisc.noc.read_into_cb(weight, tile, weight_cb)
+          first, second = p.brisc.reg(2, exclude=source_row)
+          p.brisc.slli(first, source_row, 1)
+          p.brisc.addi(second, first, 1)
+          p.brisc.noc.read_tiles_into_cb(
+            weight, (first, second), weight_cb,
+          )
+      else:
+        for input_tile in range(input_tiles):
+          with p.brisc.scope():
+            tile, stride = p.brisc.reg(2, exclude=source_row)
+            p.brisc.li(stride, input_tiles)
+            p.brisc.mul(tile, source_row, stride)
+            if input_tile: p.brisc.addi(tile, tile, input_tile)
+            p.brisc.noc.read_into_cb(weight, tile, weight_cb)
 
-  for _ in p.trisc0.range(local_rows):
-    for input_tile in range(input_tiles):
-      p.unpack.move_l1_pair(
-        weight_cb, token_l1 + input_tile * token.tile_size,
-      )
+  for _, _, local_rows in projections:
+    for _ in p.trisc0.range(local_rows):
+      for input_tile in range(input_tiles):
+        p.unpack.move_l1_pair(
+          weight_cb, token_l1 + input_tile * token.tile_size,
+        )
 
   accumulate_first = _dot_accumulate(reset=True)
   accumulate_next = _dot_accumulate(reset=False)
   finalize = _dot_finalize()
-  for _ in p.trisc1.range(local_rows):
-    for input_tile in range(input_tiles):
-      p.fpu.binary("mul", dst_tile=0)
-      _rms_select_tile(p.sfpu, 0)
-      _rms_map_acquired(
-        p.sfpu, accumulate_first if input_tile == 0 else accumulate_next,
-      )
-    _rms_select_tile(p.sfpu, 0)
-    for word in finalize.words: p.sfpu._issue(word)
-    stall(p.trisc1, Stall.SYNC, Wait.MATH | Wait.SFPU)
-    p.sfpu.publish()
-
-  for _ in p.trisc2.range(local_rows):
-    p.pack.move_scalar(scalar_cb, tile=0)
-
-  # One scalar pack occupies a tile. Compact local results into ordinary
-  # face-tilized storage before writing the core's output shard.
-  p.ncrisc.zero_words(
-    compact_l1, output.tiles_per_item * output.tile_size // 4,
-  )
-  for local_row in p.ncrisc.range(local_rows):
-    CB.wait_front(p.ncrisc, scalar_cb)
-    with p.ncrisc.scope():
-      source, value, row, column, byte_offset, target = p.ncrisc.reg(
-        6, exclude=local_row,
-      )
-      CB.get_read_ptr(p.ncrisc, scalar_cb, source)
-      p.ncrisc.read(value, source, bytes=2)
-      p.ncrisc.srli(row, local_row, 5)
-      p.ncrisc.andi(column, local_row, 31)
-      with p.ncrisc.scope():
-        tile, within_row, face = p.ncrisc.reg(
-          3, exclude=(row, column, byte_offset),
+  for _, _, local_rows in projections:
+    for _ in p.trisc1.range(local_rows):
+      for input_tile in range(input_tiles):
+        p.fpu.binary("mul", dst_tile=0)
+        _rms_select_tile(p.sfpu, 0)
+        _rms_map_acquired(
+          p.sfpu,
+          accumulate_first if input_tile == 0 else accumulate_next,
         )
-        p.ncrisc.srli(tile, row, 5)
-        p.ncrisc.slli(byte_offset, tile, 11)
-        p.ncrisc.andi(within_row, row, 31)
-        p.ncrisc.srli(face, within_row, 4)
-        p.ncrisc.slli(face, face, 10)
-        p.ncrisc.add(byte_offset, byte_offset, face)
-        p.ncrisc.andi(within_row, within_row, 15)
-        p.ncrisc.slli(within_row, within_row, 5)
-        p.ncrisc.add(byte_offset, byte_offset, within_row)
-        p.ncrisc.srli(face, column, 4)
-        p.ncrisc.slli(face, face, 9)
-        p.ncrisc.add(byte_offset, byte_offset, face)
-      p.ncrisc.andi(column, column, 15)
-      p.ncrisc.slli(column, column, 1)
-      p.ncrisc.add(byte_offset, byte_offset, column)
-      p.ncrisc.li(target, compact_l1)
-      p.ncrisc.add(target, target, byte_offset)
-      p.ncrisc.write(target, value, bytes=2)
-    CB.pop_front(p.ncrisc, scalar_cb)
-  for tile in range(output.tiles_per_item):
-    with p.ncrisc.scope():
-      target_address, target_coordinate = p.ncrisc.noc._dram_tile(
-        output, tile,
-      )
-      p.ncrisc.noc.write(
-        compact_l1 + tile * output.tile_size,
-        target_address, target_coordinate, output.tile_size, posted=False,
-      )
+      _rms_select_tile(p.sfpu, 0)
+      for word in finalize.words: p.sfpu._issue(word)
+      stall(p.trisc1, Stall.SYNC, Wait.MATH | Wait.SFPU)
+      p.sfpu.publish()
+
+  for _, _, local_rows in projections:
+    for _ in p.trisc2.range(local_rows):
+      p.pack.move_scalar(scalar_cb, tile=0)
+
+  for target_l1, (_, output, local_rows) in zip(
+    compact_l1, projections,
+  ):
+    p.ncrisc.zero_words(
+      target_l1, output.tiles_per_item * output.tile_size // 4,
+    )
+    for local_row in p.ncrisc.range(local_rows):
+      CB.wait_front(p.ncrisc, scalar_cb)
+      with p.ncrisc.scope():
+        source, value, row, column, byte_offset, target = p.ncrisc.reg(
+          6, exclude=local_row,
+        )
+        CB.get_read_ptr(p.ncrisc, scalar_cb, source)
+        p.ncrisc.read(value, source, bytes=2)
+        p.ncrisc.srli(row, local_row, 5)
+        p.ncrisc.andi(column, local_row, 31)
+        with p.ncrisc.scope():
+          tile, within_row, face = p.ncrisc.reg(
+            3, exclude=(row, column, byte_offset),
+          )
+          p.ncrisc.srli(tile, row, 5)
+          p.ncrisc.slli(byte_offset, tile, 11)
+          p.ncrisc.andi(within_row, row, 31)
+          p.ncrisc.srli(face, within_row, 4)
+          p.ncrisc.slli(face, face, 10)
+          p.ncrisc.add(byte_offset, byte_offset, face)
+          p.ncrisc.andi(within_row, within_row, 15)
+          p.ncrisc.slli(within_row, within_row, 5)
+          p.ncrisc.add(byte_offset, byte_offset, within_row)
+          p.ncrisc.srli(face, column, 4)
+          p.ncrisc.slli(face, face, 9)
+          p.ncrisc.add(byte_offset, byte_offset, face)
+        p.ncrisc.andi(column, column, 15)
+        p.ncrisc.slli(column, column, 1)
+        p.ncrisc.add(byte_offset, byte_offset, column)
+        p.ncrisc.li(target, target_l1)
+        p.ncrisc.add(target, target, byte_offset)
+        p.ncrisc.write(target, value, bytes=2)
+      CB.pop_front(p.ncrisc, scalar_cb)
+    for tile in range(output.tiles_per_item):
+      with p.ncrisc.scope():
+        target_address, target_coordinate = p.ncrisc.noc._dram_tile(
+          output, tile,
+        )
+        p.ncrisc.noc.write(
+          target_l1 + tile * output.tile_size,
+          target_address, target_coordinate,
+          output.tile_size, posted=False,
+        )
   return p
 
 
@@ -434,74 +475,51 @@ def decode_projection(x: Buffer, weight: Buffer, output: Buffer) -> Program:
   ``[118, max_rows_per_core]``: one tile per core, with padding only in the
   final slot of smaller shards.
   """
-  valid_x_shapes = (
-    (1, EMBED_DIM), (PREFILL_CAPACITY, EMBED_DIM), (1, MLP_DIM),
-  )
-  if (
-    x.dtype is not DType.BF16 or x.shape not in valid_x_shapes or
-    x.axis != 0 or x.tiles_per_item != x.shape[1] // 1024
-  ):
-    raise ValueError(
-      "decode projection x must be BF16[1,2048], BF16[1024,2048], "
-      "or BF16[1,8192], axis=0",
-    )
-  valid_weight_shapes = (
-    (Q_PROJ_DIM, EMBED_DIM), (KV_PROJ_DIM, EMBED_DIM),
-    (MLP_DIM, EMBED_DIM), (EMBED_DIM, MLP_DIM),
-    (VOCAB_SIZE, EMBED_DIM),
-  )
-  if (
-    weight.dtype is not DType.BF16 or weight.shape not in valid_weight_shapes or
-    weight.shape[1] != x.shape[1] or weight.axis != 0 or
-    weight.tiles_per_item != x.shape[1] // 1024 or
-    len(weight.cores) != LLAMA_CORES
-  ):
-    raise ValueError(
-      "decode projection weight must be one of the supported Llama Q/K/V, "
-      "o_proj, gate/up, down, or tied LM-head projection shapes, "
-      "axis=0 over 118 cores",
-    )
-  expected_shape = (LLAMA_CORES, weight.items_per_core)
-  if (
-    output.dtype is not DType.BF16 or output.shape != expected_shape or
-    output.axis != 0 or output.cores != weight.cores or
-    output.item_counts != (1,) * LLAMA_CORES
-  ):
-    raise ValueError(
-      f"decode projection output must be compact BF16{expected_shape}, "
-      "axis=0 on the weight cores",
-    )
   return specialize(
-    lambda count: _decode_projection_program(
-      x, weight, output, local_rows=count,
+    lambda count: _decode_projections_program(
+      x, ((weight, output, count),),
     ),
     weight.cores, weight.item_counts,
   )
 
 
+def decode_qkv_projection(
+  x: Buffer, q_weight: Buffer, k_weight: Buffer, v_weight: Buffer,
+  q_output: Buffer, k_output: Buffer, v_output: Buffer,
+) -> Program:
+  """Fuse decode Q/K/V while preserving their existing per-core layouts."""
+  per_core = tuple(zip(
+    q_weight.item_counts, k_weight.item_counts, v_weight.item_counts,
+  ))
+  variants = {
+    counts: _decode_projections_program(
+      x, (
+        (q_weight, q_output, counts[0]),
+        (k_weight, k_output, counts[1]),
+        (v_weight, v_output, counts[2]),
+      ),
+    )
+    for counts in set(per_core)
+  }
+  lowered = {
+    counts: program.lower() for counts, program in variants.items()
+  }
+  combined = variants[max(variants)]
+  combined._kernels = {
+    core: dict(lowered[counts][core])
+    for core, counts in zip(q_weight.cores, per_core)
+  }
+  return combined
+
+
+# ---------------------------------------------------------------------------
+# Vocabulary reduction and device-to-host token publication
+# ---------------------------------------------------------------------------
+
 def decode_argmax(
-  logits: Buffer, output: Buffer, token_history: Buffer, host_output=None,
+  logits: Buffer, token_history: Buffer, host_output: int,
 ) -> Program:
   """Reduce logits, publish the winner, and append it to token history."""
-  if (
-    logits.dtype is not DType.BF16 or logits.axis != 0 or
-    len(logits.cores) != LLAMA_CORES or logits.tiles_per_item != 2
-  ):
-    raise ValueError("argmax expects two compact BF16 logit tiles per core")
-  if (
-    output.dtype is not DType.U32 or output.shape != (1,) or
-    not output.global_address
-  ):
-    raise ValueError("argmax output must be a global U32[1] buffer")
-  if (
-    token_history.dtype is not DType.U32 or
-    token_history.shape != (ROPE_CACHE_TOKENS,) or
-    not token_history.global_address
-  ):
-    raise ValueError(
-      f"argmax token history must be global U32[{ROPE_CACHE_TOKENS}]",
-    )
-
   local_counts = _token_counts(VOCAB_SIZE, len(logits.cores))
   local_starts, cursor = [], 0
   for count in local_counts:
@@ -512,13 +530,10 @@ def decode_argmax(
   indices = Const("argmax_core", tuple(range(len(logits.cores))))
   write_pos = Const("write_pos", 1)
   write_token = Const("write_token", 1)
-  host_address = (
-    None if host_output is None else Const("argmax_host_address", host_output)
-  )
+  host_address = Const("argmax_host_address", host_output)
   p = Program(
-    logits.cores, logits, output, token_history,
+    logits.cores, logits, token_history, host_address,
     starts, counts, indices, write_pos, write_token,
-    *((host_address,) if host_address is not None else ()),
   )
   logits_l1 = p.l1(logits.tiles_per_item * logits.tile_size, alignment=16)
   history_l1 = p.l1(token_history.tile_size, alignment=16)
@@ -610,25 +625,16 @@ def decode_argmax(
         p.brisc.label(skip)
     # Scalar NoC writes require a 16-byte-aligned source address.
     p.brisc.write(local, best_id)
-    if host_address is None:
-      with p.brisc.scope():
-        target_address, target_coordinate = p.brisc.noc._dram_tile(output, 0)
-        p.brisc.noc.write(
-          local, target_address, target_coordinate, 4, posted=False,
-        )
-    else:
-      with p.brisc.scope():
-        target_address, position, marker = p.brisc.reg(3)
-        p.brisc.read(target_address, p.param_addr(host_address))
-        p.brisc.read(position, p.param_addr(write_pos))
-        p.brisc.slli(marker, position, 4)
-        p.brisc.add(target_address, target_address, marker)
-        p.brisc.addi(marker, position, 1)
-        p.brisc.write(local + 4, marker)
-        p.brisc.noc.write(
-          local, target_address, CQConfig.PCIE_COORD, 16,
-          target_middle_address=CQConfig.PCIE_MID, posted=False,
-        )
+    with p.brisc.scope():
+      target_address, position, offset = p.brisc.reg(3)
+      p.brisc.read(target_address, p.param_addr(host_address))
+      p.brisc.read(position, p.param_addr(write_pos))
+      p.brisc.slli(offset, position, 4)
+      p.brisc.add(target_address, target_address, offset)
+      p.brisc.noc.write(
+        local, target_address, CQConfig.PCIE_COORD, 16,
+        target_middle_address=CQConfig.PCIE_MID, posted=False,
+      )
     history_done = p.brisc._new_label("argmax_history_done")
     with p.brisc.scope():
       position, tile, within, enabled = p.brisc.reg(4)
@@ -678,6 +684,10 @@ def decode_argmax(
     p.brisc.label(reducer_done)
   return p
 
+
+# ---------------------------------------------------------------------------
+# Residual and MLP layout kernels
+# ---------------------------------------------------------------------------
 
 def _decode_projection_residual_program(
   cores, compact, residual, output, *, head,
@@ -791,25 +801,6 @@ def decode_projection_residual(
   compact: Buffer, residual: Buffer, output: Buffer,
 ) -> Program:
   """Reassemble a 2048-row decode projection and fuse its residual add."""
-  if (
-    compact.dtype is not DType.BF16 or
-    compact.shape != (LLAMA_CORES, 18) or compact.axis != 0 or
-    compact.item_counts != (1,) * LLAMA_CORES or
-    len(compact.cores) != LLAMA_CORES
-  ):
-    raise ValueError(
-      f"projection residual input must be compact BF16[{LLAMA_CORES}, 18]",
-    )
-  for buffer, name in ((residual, "residual"), (output, "output")):
-    if (
-      buffer.dtype is not DType.BF16 or buffer.shape != (1, EMBED_DIM) or
-      buffer.axis != 0 or not buffer.global_address or
-      buffer.tiles_per_item != EMBEDDING_TILES
-    ):
-      raise ValueError(
-        f"projection residual {name} must be global BF16[1, {EMBED_DIM}]",
-      )
-
   cores = compact.cores[:Q_HEADS]
   compact_tiles = _global_tile_view(
     compact, "projection_residual_compact_tiles",
@@ -831,19 +822,6 @@ def decode_projection_residual(
 
 def decode_swiglu(gate: Buffer, up: Buffer, hidden: Buffer) -> Program:
   """Compute compact BF16 ``silu(gate) * up`` on all projection cores."""
-  expected_shape = (LLAMA_CORES, (MLP_DIM + LLAMA_CORES - 1) // LLAMA_CORES)
-  for buffer, name in ((gate, "gate"), (up, "up"), (hidden, "hidden")):
-    if (
-      buffer.dtype is not DType.BF16 or buffer.shape != expected_shape or
-      buffer.axis != 0 or len(buffer.cores) != LLAMA_CORES or
-      buffer.item_counts != (1,) * LLAMA_CORES or buffer.tiles_per_item != 1
-    ):
-      raise ValueError(
-        f"decode SwiGLU {name} must be compact BF16{expected_shape}",
-      )
-  if gate.cores != up.cores or gate.cores != hidden.cores:
-    raise ValueError("decode SwiGLU buffers must use identical cores")
-
   p = Program(gate.cores, gate, up, hidden, fp32_dst=True)
   gate_cb = p.cb(DType.BF16, depth=1)
   up_cb = p.cb(DType.BF16, depth=1)
@@ -953,22 +931,6 @@ def _decode_compact_to_dense_program(
 
 def decode_compact_to_dense(compact: Buffer, output: Buffer) -> Program:
   """Reassemble compact 118-core MLP state into global BF16[1,8192]."""
-  expected_shape = (LLAMA_CORES, (MLP_DIM + LLAMA_CORES - 1) // LLAMA_CORES)
-  if (
-    compact.dtype is not DType.BF16 or compact.shape != expected_shape or
-    compact.axis != 0 or len(compact.cores) != LLAMA_CORES or
-    compact.item_counts != (1,) * LLAMA_CORES or compact.tiles_per_item != 1
-  ):
-    raise ValueError(
-      f"compact MLP input must be BF16{expected_shape} over {LLAMA_CORES} cores",
-    )
-  if (
-    output.dtype is not DType.BF16 or output.shape != (1, MLP_DIM) or
-    output.axis != 0 or not output.global_address or
-    output.tiles_per_item != MLP_DIM // 1024
-  ):
-    raise ValueError(f"dense MLP output must be global BF16[1, {MLP_DIM}]")
-
   block_count = MLP_DIM // HEAD_DIM
   cores = P100_WORKER_CORES[:min(block_count, len(P100_WORKER_CORES))]
   compact_tiles = _global_tile_view(compact, "mlp_compact_tiles")
@@ -1013,6 +975,10 @@ def _compact_projection_location(feature, *, query):
 def _compact_slot_byte_offset(slot):
   return slot * 2 if slot < 16 else 512 + (slot - 16) * 2
 
+
+# ---------------------------------------------------------------------------
+# RoPE, KV cache, and grouped-query attention
+# ---------------------------------------------------------------------------
 
 def _decode_rope_program(
   cores, q, k, v, cos, sin, q_output, k_output, v_output, start_pos,
@@ -1182,6 +1148,7 @@ def _global_tile_view(buffer, name):
   return Buffer(
     name, buffer.addr, buffer.dtype, (buffer.physical_tiles, 1024), 0,
     (buffer.cores[0],), buffer.banks, global_address=True,
+    tilized=buffer.tilized, bank_block_tiles=buffer.bank_block_tiles,
   )
 
 
@@ -1189,42 +1156,6 @@ def decode_rope(q: Buffer, k: Buffer, v: Buffer, cos: Buffer, sin: Buffer,
                 q_output: Buffer, k_output: Buffer,
                 v_output: Buffer) -> Program:
   """Apply Q/K RoPE and reassemble V together in one 40-core launch."""
-  if (
-    q.dtype is not DType.BF16 or q.shape != (LLAMA_CORES, 18) or
-    q.axis != 0 or q.item_counts != (1,) * LLAMA_CORES
-  ):
-    raise ValueError("decode RoPE q must be compact BF16[118, 18]")
-  for source, name in ((k, "k"), (v, "v")):
-    if (
-      source.dtype is not DType.BF16 or
-      source.shape != (LLAMA_CORES, 5) or source.axis != 0 or
-      source.item_counts != (1,) * LLAMA_CORES or source.cores != q.cores
-    ):
-      raise ValueError(
-        f"decode RoPE {name} must be compact BF16[118, 5]",
-      )
-  for table, name in ((cos, "cos"), (sin, "sin")):
-    if (
-      table.dtype is not DType.BF16 or
-      table.shape != (ROPE_CACHE_TOKENS, HEAD_DIM) or
-      not table.global_address or table.axis is not None
-    ):
-      raise ValueError(
-        f"decode RoPE {name} must be global BF16"
-        f"[{ROPE_CACHE_TOKENS}, {HEAD_DIM}]",
-      )
-  for output, shape, name in (
-    (q_output, (Q_HEADS, HEAD_DIM), "q_output"),
-    (k_output, (KV_HEADS, HEAD_DIM), "k_output"),
-    (v_output, (KV_HEADS, HEAD_DIM), "v_output"),
-  ):
-    if (
-      output.dtype is not DType.BF16 or output.shape != shape or
-      output.axis != 0 or not output.global_address or
-      output.tiles_per_item != 1
-    ):
-      raise ValueError(f"decode RoPE {name} must be global BF16{shape}")
-
   cores = q.cores[:ROPE_CORES]
   q_tiles, k_tiles, v_tiles = (
     _global_tile_view(q, "rope_q_compact_tiles"),
@@ -1261,28 +1192,6 @@ def kv_cache_write(k: Buffer, v: Buffer, key_cache: Buffer,
   independently, one per KV head, and update one row in each feature tile.
   Other cache positions are never read or overwritten.
   """
-  for source, name in ((k, "k"), (v, "v")):
-    if (
-      source.dtype is not DType.BF16 or
-      source.shape != (KV_HEADS, HEAD_DIM) or source.axis != 0 or
-      not source.global_address or source.tiles_per_item != 1
-    ):
-      raise ValueError(
-        f"kv cache {name} must be global BF16[{KV_HEADS}, {HEAD_DIM}] "
-        "with axis=0",
-      )
-  for cache, name in ((key_cache, "key_cache"),
-                      (value_cache, "value_cache")):
-    if (
-      cache.dtype is not DType.BF16 or
-      cache.shape != KV_CACHE_STORAGE_SHAPE or
-      cache.axis != 0 or not cache.global_address or
-      cache.tiles_per_item != KV_CACHE_TILES_PER_HEAD
-    ):
-      raise ValueError(
-        f"{name} must be global BF16{KV_CACHE_STORAGE_SHAPE} with axis=0",
-      )
-
   start_pos = Const("start_pos", 0)
   head_index = Const("head_index", tuple(range(KV_HEADS)))
   p = Program(
@@ -1497,34 +1406,6 @@ def gqa_attention_fused(
   q: Buffer, key_cache: Buffer, value_cache: Buffer, context: Buffer,
 ) -> Program:
   """Fused streaming decode GQA: scaled QK, online softmax, and PV."""
-  if (
-    q.dtype is not DType.BF16 or q.shape != (Q_HEADS, HEAD_DIM) or
-    q.axis != 0 or not q.global_address or q.tiles_per_item != 1
-  ):
-    raise ValueError(
-      f"GQA q must be global BF16[{Q_HEADS}, {HEAD_DIM}] with axis=0",
-    )
-  for cache, name in ((key_cache, "key_cache"),
-                      (value_cache, "value_cache")):
-    if (
-      cache.dtype is not DType.BF16 or
-      cache.shape != KV_CACHE_STORAGE_SHAPE or cache.axis != 0 or
-      not cache.global_address or
-      cache.tiles_per_item != KV_CACHE_TILES_PER_HEAD
-    ):
-      raise ValueError(
-        f"GQA {name} must be global BF16{KV_CACHE_STORAGE_SHAPE} "
-        "with axis=0",
-      )
-  if (
-    context.dtype is not DType.BF16 or context.shape != GQA_CONTEXT_SHAPE or
-    context.axis != 0 or not context.global_address or
-    context.tiles_per_item != EMBEDDING_TILES
-  ):
-    raise ValueError(
-      f"GQA context must be global BF16{GQA_CONTEXT_SHAPE} with axis=0",
-    )
-
   kv_blocks = Const("kv_blocks", 1)
   valid_columns = Const("valid_columns", 1)
   kv_head = Const("kv_head", tuple(range(KV_HEADS)))
@@ -1794,6 +1675,10 @@ def gqa_attention_fused(
   return p
 
 
+# ---------------------------------------------------------------------------
+# Token embedding and RMSNorm
+# ---------------------------------------------------------------------------
+
 def decode_embedding(
   token_id: Buffer, embedding_weight: Buffer, output: Buffer,
 ) -> Program:
@@ -1806,21 +1691,6 @@ def decode_embedding(
   Logical operation:
     output[0, :] = embedding_weight[token_id[token_pos], :]
   """
-  check_buffer(
-    "decode token IDs", token_id, dtype=DType.U32,
-    shape=frozenset(((1,), (ROPE_CACHE_TOKENS,))), global_address=True,
-  )
-  check_buffer(
-    "decode embedding weight", embedding_weight, dtype=DType.BF16,
-    shape=(VOCAB_SIZE, EMBED_DIM), axis=0, tiles_per_item=EMBEDDING_TILES,
-    global_address=True,
-  )
-  check_buffer(
-    "decode embedding output", output, dtype=DType.BF16,
-    shape=(1, EMBED_DIM), axis=0, tiles_per_item=EMBEDDING_TILES,
-    global_address=True,
-  )
-
   token_pos = Const("token_pos", 0)
   p = Program(
     output.cores, token_id, embedding_weight, output, token_pos,
@@ -1849,177 +1719,35 @@ def decode_embedding(
   return p
 
 
-def _validate_fused_rmsnorm(x, weight, output):
-  capacity = x.shape[0] if len(x.shape) == 2 else None
-  expected_cores = 1 if capacity == 1 else LLAMA_CORES
-  expected_counts = (
-    _token_counts(capacity, expected_cores)
-    if capacity in (1, PREFILL_CAPACITY) else None
-  )
-  for name, buffer in (("x", x), ("output", output)):
-    if (
-      buffer.dtype is not DType.BF16 or
-      buffer.shape != (capacity, EMBED_DIM) or
-      capacity not in (1, PREFILL_CAPACITY) or
-      buffer.axis != 0 or buffer.tiles_per_item != EMBEDDING_TILES or
-      len(buffer.cores) != expected_cores or
-      buffer.item_counts != expected_counts
-    ):
-      raise ValueError(
-        f"fused RMSNorm {name} must be BF16[1, {EMBED_DIM}] on one core "
-        f"for decode or BF16[{PREFILL_CAPACITY}, {EMBED_DIM}] sharded "
-        f"over {LLAMA_CORES} cores for prefill",
-      )
-  if x.cores != output.cores or x.item_starts != output.item_starts:
-    raise ValueError("fused RMSNorm input and output must use identical shards")
-  if (
-    weight.dtype is not DType.BF16 or weight.shape != (EMBED_DIM,) or
-    weight.tiles != EMBEDDING_TILES or not weight.global_address
-  ):
-    raise ValueError(
-      f"fused RMSNorm weight must be globally addressed BF16[{EMBED_DIM}]",
-    )
-
-
-def _rmsnorm_fused_program(
-  x: Buffer, weight: Buffer, output: Buffer, *, token_capacity,
-) -> Program:
-  valid_s = Const("valid_s", x.shape[0])
-  token_start = Const("token_start", x.item_starts)
-  p = Program(
-    x.cores, x, weight, output, valid_s, token_start, fp32_dst=True,
-  )
+def rmsnorm(x: Buffer, weight: Buffer, output: Buffer) -> Program:
+  """Normalize one decode token and apply the learned scale."""
+  p = Program(x.cores, x, weight, output, fp32_dst=True)
   x_cb = p.cb(DType.BF16, depth=4)
   output_cb = p.cb(DType.BF16, depth=4)
   gamma_l1 = p.l1(EMBEDDING_TILES * weight.tile_size, alignment=16)
-  decode = x.shape[0] == 1
-  overlap_noc = x.shape[0] <= 512
 
-  # Gamma is shared model state. Fetch its two tiles once into persistent L1.
   p.brisc.noc.read_tiles(weight, tuple(
     (tile, gamma_l1 + tile * weight.tile_size)
     for tile in range(EMBEDDING_TILES)
   ))
-
-  def read_token(local_token):
-    if type(local_token) is int:
-      first = local_token * EMBEDDING_TILES
-      if overlap_noc:
-        p.brisc.noc.read_tiles_into_cb(x, (first, first + 1), x_cb)
-      else:
-        for tile in (first, first + 1):
-          p.brisc.noc.read_into_cb(x, tile, x_cb)
-    else:
-      with p.brisc.scope():
-        first, second = p.brisc.reg(2, exclude=local_token)
-        p.brisc.slli(first, local_token, 1)
-        p.brisc.addi(second, first, 1)
-        if overlap_noc:
-          p.brisc.noc.read_tiles_into_cb(x, (first, second), x_cb)
-        else:
-          p.brisc.noc.read_into_cb(x, first, x_cb)
-          p.brisc.noc.read_into_cb(x, second, x_cb)
-
-  if decode:
-    read_token(0)
-  else:
-    with p.brisc.scope():
-      local_count, start = p.brisc.reg(2)
-      local_range(
-        p.brisc, p, valid_s, token_start, token_capacity,
-        local_count, start,
-      )
-      for local_token in p.brisc.range(local_count):
-        read_token(local_token)
-
-  def unpack_token():
-    for _ in range(EMBEDDING_TILES):
-      p.unpack.move(x_cb, UnpackTarget.SRCA)
-    for tile in range(EMBEDDING_TILES):
-      p.unpack.move_l1(
-        weight.dtype, gamma_l1 + tile * weight.tile_size,
-      )
-
-  if decode:
-    unpack_token()
-  else:
-    with p.trisc0.scope():
-      local_count, start = p.trisc0.reg(2)
-      local_range(
-        p.trisc0, p, valid_s, token_start, token_capacity,
-        local_count, start,
-      )
-      for _ in p.trisc0.range(local_count): unpack_token()
-
-  def compute_token():
-    p.fpu.copy_a_tiles(dst_tiles=range(2 * EMBEDDING_TILES))
-    _rmsnorm_one_token(p.sfpu)
-
+  p.brisc.noc.read_tiles_into_cb(x, (0, 1), x_cb)
+  for _ in range(EMBEDDING_TILES):
+    p.unpack.move(x_cb, UnpackTarget.SRCA)
+  for tile in range(EMBEDDING_TILES):
+    p.unpack.move_l1(weight.dtype, gamma_l1 + tile * weight.tile_size)
   _rms_setup_apply_macro(p.sfpu)
-  if decode:
-    compute_token()
-  else:
-    with p.trisc1.scope():
-      local_count, start = p.trisc1.reg(2)
-      local_range(
-        p.trisc1, p, valid_s, token_start, token_capacity,
-        local_count, start,
-      )
-      for _ in p.trisc1.range(local_count): compute_token()
-
-  def pack_token():
-    p.pack.move_tiles(output_cb, tiles=(0, 1))
-
-  if decode:
-    pack_token()
-  else:
-    with p.trisc2.scope():
-      local_count, start = p.trisc2.reg(2)
-      local_range(
-        p.trisc2, p, valid_s, token_start, token_capacity,
-        local_count, start,
-      )
-      for _ in p.trisc2.range(local_count): pack_token()
-
-  def write_token(local_token):
-    if type(local_token) is int:
-      first = local_token * EMBEDDING_TILES
-      p.ncrisc.noc.write_tiles_from_cb(
-        output_cb, output, (first, first + 1),
-      )
-    else:
-      with p.ncrisc.scope():
-        first, second = p.ncrisc.reg(2, exclude=local_token)
-        p.ncrisc.slli(first, local_token, 1)
-        p.ncrisc.addi(second, first, 1)
-        p.ncrisc.noc.write_tiles_from_cb(
-          output_cb, output, (first, second),
-        )
-
-  if decode:
-    write_token(0)
-  else:
-    with p.ncrisc.scope():
-      local_count, start = p.ncrisc.reg(2)
-      local_range(
-        p.ncrisc, p, valid_s, token_start, token_capacity,
-        local_count, start,
-      )
-      for local_token in p.ncrisc.range(local_count):
-        write_token(local_token)
+  p.fpu.copy_a_tiles(dst_tiles=range(2 * EMBEDDING_TILES))
+  _rmsnorm_one_token(p.sfpu)
+  p.pack.move_tiles(output_cb, tiles=(0, 1))
+  p.ncrisc.noc.write_tiles_from_cb(
+    output_cb, output, tuple(range(EMBEDDING_TILES)),
+  )
   return p
 
 
-def rmsnorm(x: Buffer, weight: Buffer, output: Buffer) -> Program:
-  """Fused FP32 RMSNorm for one-token decode or fixed-capacity prefill."""
-  _validate_fused_rmsnorm(x, weight, output)
-  return specialize(
-    lambda count: _rmsnorm_fused_program(
-      x, weight, output, token_capacity=count,
-    ),
-    x.cores, x.item_counts,
-  )
-
+# ---------------------------------------------------------------------------
+# Resident decode runtime and end-to-end driver
+# ---------------------------------------------------------------------------
 
 class Llama3Decode:
   """Resident-weight, batch-1 Llama 3.2 1B decode runtime."""
@@ -2028,12 +1756,32 @@ class Llama3Decode:
     self.safetensor_path = str(safetensor_path)
     self.host_result_read_us = 0.0
     self.host_result_reads = 0
+    self.profile = {
+      "dram_upload_bytes": 0,
+      "weight_prepare_s": 0.0,
+      "weight_stage_s": 0.0,
+      "dram_upload_wall_s": 0.0,
+    }
+    total_started = time.perf_counter()
+    started = time.perf_counter()
     self.device = Device()
     self.device.init_device()
+    self.profile["device_init_s"] = time.perf_counter() - started
     try:
+      started = time.perf_counter()
       self._allocate()
+      self.profile["allocate_s"] = time.perf_counter() - started
+      started = time.perf_counter()
       self._upload_weights()
+      self.profile["weight_upload_total_s"] = (
+        time.perf_counter() - started
+      )
+      started = time.perf_counter()
       self._build_programs()
+      self.profile["program_build_s"] = time.perf_counter() - started
+      self.profile["startup_total_s"] = (
+        time.perf_counter() - total_started
+      )
     except Exception:
       self.close()
       raise
@@ -2048,15 +1796,17 @@ class Llama3Decode:
     self.token_history = global_buffer(
       "e2e_token_history", DType.U32, (ROPE_CACHE_TOKENS,), None,
     )
-    self.next_token = global_buffer(
-      "e2e_next_token", DType.U32, (1,), None,
-    )
     self.embedding_weight = global_buffer(
       "e2e_embedding_weight", DType.BF16, (VOCAB_SIZE, EMBED_DIM),
     )
-    self.lm_weight = device.dram.buffer(
-      "e2e_lm_weight", DType.BF16, (VOCAB_SIZE, EMBED_DIM),
-      axis=0, cores=cores,
+    # The model ties embedding and LM-head weights. This view adds 118-core
+    # row-sharding metadata without allocating or uploading a second copy.
+    self.lm_weight = Buffer(
+      "e2e_lm_weight", self.embedding_weight.addr,
+      self.embedding_weight.dtype, self.embedding_weight.shape,
+      0, cores, self.embedding_weight.banks, global_address=True,
+      tilized=self.embedding_weight.tilized,
+      bank_block_tiles=self.embedding_weight.bank_block_tiles,
     )
     self.cos = global_buffer(
       "e2e_rope_cos", DType.BF16, (ROPE_CACHE_TOKENS, HEAD_DIM), None,
@@ -2174,25 +1924,46 @@ class Llama3Decode:
     )
 
   def _upload(self, buffer, tensor):
+    started = time.perf_counter()
     data = buffer.from_safetensor(tensor, self.safetensor_path)
+    self.profile["weight_prepare_s"] += time.perf_counter() - started
+    self._stage_upload(buffer, data)
+
+  def _stage_upload(self, buffer, data):
+    started = time.perf_counter()
     self.device.write(buffer, data)
+    self.profile["weight_stage_s"] += time.perf_counter() - started
+    self.profile["dram_upload_bytes"] += buffer.size
+
+  def _run_uploads(self, timeout):
+    started = time.perf_counter()
+    result = self.device.run(timeout=timeout)
+    self.profile["dram_upload_wall_s"] += time.perf_counter() - started
+    return result
 
   def _upload_weights(self):
+    started = time.perf_counter()
     embedding_data = self.embedding_weight.from_safetensor(
       "model.embed_tokens.weight", self.safetensor_path,
     )
-    self.device.write(self.embedding_weight, embedding_data)
-    self.device.run(timeout=60.0)
-    self.device.write(self.lm_weight, embedding_data)
-    self.device.run(timeout=60.0)
+    self.profile["weight_prepare_s"] += time.perf_counter() - started
+    self._stage_upload(self.embedding_weight, embedding_data)
+    self._run_uploads(60.0)
     del embedding_data
 
+    started = time.perf_counter()
     cos_values, sin_values = rope_table()
-    self.device.write(self.cos, _bf16_rne_bytes(cos_values))
-    self.device.write(self.sin, _bf16_rne_bytes(sin_values))
-    self.device.run(timeout=30.0)
+    cos_data = _bf16_rne_bytes(cos_values)
+    sin_data = _bf16_rne_bytes(sin_values)
+    self.profile["weight_prepare_s"] += time.perf_counter() - started
+    self._stage_upload(self.cos, cos_data)
+    self._stage_upload(self.sin, sin_data)
+    self._run_uploads(30.0)
     del cos_values, sin_values
 
+    cache_zeros = bytes(
+      math.prod(KV_CACHE_STORAGE_SHAPE) * DType.BF16.itemsize,
+    )
     for index, layer in enumerate(self.layers):
       weights = layer["weights"]
       prefix = f"model.layers.{index}"
@@ -2209,18 +1980,15 @@ class Llama3Decode:
       }
       for name, tensor in tensors.items():
         self._upload(weights[name], tensor)
-      cache_zeros = bytes(
-        math.prod(KV_CACHE_STORAGE_SHAPE) * DType.BF16.itemsize,
-      )
-      self.device.write(layer["key_cache"], cache_zeros)
-      self.device.write(layer["value_cache"], cache_zeros)
-      self.device.run(timeout=60.0)
+      self._stage_upload(layer["key_cache"], cache_zeros)
+      self._stage_upload(layer["value_cache"], cache_zeros)
+      self._run_uploads(60.0)
     self._upload(self.final_norm, "model.norm.weight")
-    self.device.run(timeout=30.0)
+    self._run_uploads(30.0)
 
   def _build_programs(self):
     weights = self.layers[0]["weights"]
-    q_projection = decode_projection(
+    o_projection = decode_projection(
       self.normalized, weights["q"], self.q_compact,
     )
     self.programs = {
@@ -2228,9 +1996,11 @@ class Llama3Decode:
         self.token_history, self.embedding_weight, self.x_a,
       ),
       "rms": rmsnorm(self.x_a, weights["input_norm"], self.normalized),
-      "q": q_projection,
-      "k": decode_projection(
-        self.normalized, weights["k"], self.k_compact,
+      "o": o_projection,
+      "qkv": decode_qkv_projection(
+        self.normalized,
+        weights["q"], weights["k"], weights["v"],
+        self.q_compact, self.k_compact, self.v_compact,
       ),
       "rope": decode_rope(
         self.q_compact, self.k_compact, self.v_compact,
@@ -2259,11 +2029,11 @@ class Llama3Decode:
         self.normalized, self.lm_weight, self.logits,
       ),
       "argmax": decode_argmax(
-        self.logits, self.next_token, self.token_history,
+        self.logits, self.token_history,
         self.device.cq.noc + self.device.cq.live,
       ),
     }
-    self.q_projection_input = q_projection.param(
+    self.o_projection_input = o_projection.param(
       f"{self.normalized.name}_decode_token",
     )
     self.context_projection_input = Buffer(
@@ -2301,11 +2071,10 @@ class Llama3Decode:
       (self.x_a, self.x_a),
       (template_weights["input_norm"], weights["input_norm"]),
     ))
-    self._queue("q", ((template_weights["q"], weights["q"]),))
-    self._queue("k", ((template_weights["k"], weights["k"]),))
-    self._queue("k", (
-      (template_weights["k"], weights["v"]),
-      (self.k_compact, self.v_compact),
+    self._queue("qkv", (
+      (template_weights["q"], weights["q"]),
+      (template_weights["k"], weights["k"]),
+      (template_weights["v"], weights["v"]),
     ))
     self._queue("rope", constants={"start_pos": position})
     self._queue("cache", (
@@ -2316,8 +2085,8 @@ class Llama3Decode:
       (template["key_cache"], layer["key_cache"]),
       (template["value_cache"], layer["value_cache"]),
     ), {"kv_blocks": blocks, "valid_columns": tail})
-    self._queue("q", (
-      (self.q_projection_input, self.context_projection_input),
+    self._queue("o", (
+      (self.o_projection_input, self.context_projection_input),
       (template_weights["q"], weights["o"]),
     ))
     self._queue("residual")
@@ -2360,7 +2129,7 @@ class Llama3Decode:
       raise ValueError(
         f"decode position must be in 0..{ROPE_CACHE_TOKENS - 2}",
       )
-    started = time.monotonic()
+    started = time.perf_counter_ns()
     self.decode_trace.replay({
       "token_pos": position,
       "write_pos": position + 1,
@@ -2369,23 +2138,17 @@ class Llama3Decode:
       "kv_blocks": position // KV_CACHE_TOKEN_BLOCK + 1,
       "valid_columns": position % KV_CACHE_TOKEN_BLOCK + 1,
     }, timeout=30.0)
-    device_us = (time.monotonic() - started) * 1e6
+    wall_us = (time.perf_counter_ns() - started) / 1e3
 
-    if not logits: return None, device_us
+    if not logits: return None, wall_us
     read_started = time.perf_counter_ns()
     live = self.device.cq.live + (position + 1) * 16
-    token, marker = struct.unpack(
-      "<II", self.device.pcie.sysmem.read(live, 8),
-    )
+    token, = struct.unpack("<I", self.device.pcie.sysmem.read(live, 4))
     self.host_result_read_us += (
       time.perf_counter_ns() - read_started
     ) / 1e3
     self.host_result_reads += 1
-    if marker != position + 2:
-      raise RuntimeError(
-        f"live token slot {position + 1} was not published",
-      )
-    return token, device_us
+    return token, wall_us
 
   def close(self):
     if getattr(self, "device", None) is not None:
@@ -2397,6 +2160,7 @@ def run_decode_e2e(
   prompt="The capital of France is", steps=None,
   safetensor_path="weights/model.safetensors",
   tokenizer_path="weights",
+  profile=False,
 ):
   """Run prompt ingestion and greedy generation entirely through decode."""
   if steps is not None and steps < 1:
@@ -2429,38 +2193,119 @@ def run_decode_e2e(
   runtime = Llama3Decode(safetensor_path)
   generation_seconds = 0.0
   generation_replays = 0
+  generation_profiles = []
   generated = []
+  stream_us = 0.0
   streamer = TextStreamer(
     tokenizer, skip_prompt=False, skip_special_tokens=True,
     clean_up_tokenization_spaces=False,
   )
   try:
+    prompt_started = time.perf_counter()
     runtime.load_tokens(prompt_ids)
     next_token = None
     for position in range(len(prompt_ids)):
       last_prompt_token = position == len(prompt_ids) - 1
-      if last_prompt_token: token_started = time.monotonic()
-      next_token, _ = runtime.decode(
+      if last_prompt_token: token_started = time.perf_counter_ns()
+      read_before = runtime.host_result_read_us
+      next_token, replay_wall_us = runtime.decode(
         position, logits=last_prompt_token, append=last_prompt_token,
       )
       if last_prompt_token:
-        generation_seconds += time.monotonic() - token_started
+        full_wall_us = (time.perf_counter_ns() - token_started) / 1e3
+        generation_seconds += full_wall_us / 1e6
         generation_replays += 1
+        generation_profiles.append({
+          **runtime.decode_trace.last_profile,
+          "replay_wall_us": replay_wall_us,
+          "result_read_us": runtime.host_result_read_us - read_before,
+          "full_wall_us": full_wall_us,
+        })
+    prompt_seconds = time.perf_counter() - prompt_started
 
     for step in range(steps):
       generated.append(next_token)
+      stream_started = time.perf_counter_ns()
       streamer.put(np.asarray([next_token], dtype=np.int64))
+      stream_us += (time.perf_counter_ns() - stream_started) / 1e3
       if next_token in EOS_TOKEN_IDS or step + 1 == steps: break
       position = len(prompt_ids) + step
-      token_started = time.monotonic()
-      next_token, _ = runtime.decode(position, logits=True)
-      generation_seconds += time.monotonic() - token_started
+      token_started = time.perf_counter_ns()
+      read_before = runtime.host_result_read_us
+      next_token, replay_wall_us = runtime.decode(
+        position, logits=True,
+      )
+      full_wall_us = (time.perf_counter_ns() - token_started) / 1e3
+      generation_seconds += full_wall_us / 1e6
       generation_replays += 1
+      generation_profiles.append({
+        **runtime.decode_trace.last_profile,
+        "replay_wall_us": replay_wall_us,
+        "result_read_us": runtime.host_result_read_us - read_before,
+        "full_wall_us": full_wall_us,
+      })
     streamer.end()
   finally:
     runtime.close()
 
   print(f"{generation_replays / generation_seconds:.2f} tok/s")
+  if profile:
+    startup = runtime.profile
+    print(
+      f"startup total          {startup['startup_total_s'] * 1e3:9.2f} ms"
+    )
+    print(
+      f"  device init          {startup['device_init_s'] * 1e3:9.2f} ms"
+    )
+    print(
+      f"  weight prepare       {startup['weight_prepare_s'] * 1e3:9.2f} ms"
+    )
+    print(
+      f"  host tile/stage      {startup['weight_stage_s'] * 1e3:9.2f} ms"
+    )
+    upload_gib = startup["dram_upload_bytes"] / (1 << 30)
+    upload_s = startup["dram_upload_wall_s"]
+    print(
+      f"  DRAM upload          {upload_s * 1e3:9.2f} ms  "
+      f"({upload_gib:.3f} GiB, {upload_gib / upload_s:.2f} GiB/s)"
+    )
+    print(
+      f"  program build        {startup['program_build_s'] * 1e3:9.2f} ms"
+    )
+    print(
+      f"prompt decode          {prompt_seconds * 1e3:9.2f} ms  "
+      f"({len(prompt_ids)} tokens)"
+    )
+    if generation_profiles:
+      def average(name):
+        return sum(sample[name] for sample in generation_profiles) / len(
+          generation_profiles
+        )
+
+      device_us = average("device_us")
+      replay_wall_us = average("replay_wall_us")
+      full_wall_us = average("full_wall_us")
+      print(f"generated-token average ({len(generation_profiles)} replays)")
+      print(f"  device/CQ interval   {device_us:9.2f} us")
+      print(f"  final kernel stamp   {average('final_kernel_us'):9.2f} us")
+      print(f"  host replay wall     {replay_wall_us:9.2f} us")
+      print(f"  token readback       {average('result_read_us'):9.2f} us")
+      print(f"  full decode call     {full_wall_us:9.2f} us")
+      print(f"  wall - device        {full_wall_us - device_us:9.2f} us")
+      print(
+        f"  runtime encode/patch "
+        f"{average('runtime_encode_us') + average('runtime_patch_us'):9.2f} us"
+      )
+      print(
+        f"  CQ event/doorbell    "
+        f"{average('event_patch_us') + average('queue_slot_wait_us') + average('doorbell_us'):9.2f} us"
+      )
+      print(
+        f"  completion tail      {average('descriptor_drain_us'):9.2f} us"
+      )
+      print(
+        f"  text streaming       {stream_us / max(1, len(generated)):9.2f} us/token"
+      )
 
 
 if __name__ == "__main__":
@@ -2474,5 +2319,11 @@ if __name__ == "__main__":
     help="optional generation cap; default runs until EOS/context limit",
   )
   parser.add_argument("--safetensor", default="weights/model.safetensors")
+  parser.add_argument(
+    "--profile", action="store_true",
+    help="print startup, DRAM-upload, device, and host-loop timing",
+  )
   args = parser.parse_args()
-  run_decode_e2e(args.prompt, args.steps, args.safetensor)
+  run_decode_e2e(
+    args.prompt, args.steps, args.safetensor, profile=args.profile,
+  )

@@ -6,7 +6,7 @@ Three measurements:
   3. in-situ ablation: rebuild the token trace with one stage class removed,
      which gives the true marginal cost of those launches inside the pipeline
 """
-import time, statistics, sys
+import time, sys
 sys.path.insert(0, ".")
 
 from examples.llama3 import Llama3Decode, LLAMA_LAYERS, LLAMA_CORES
@@ -14,7 +14,7 @@ from program import Program
 from pcie import P100_WORKER_CORES
 
 STAGES = (
-  "rms", "q", "k", "k", "rope", "cache", "attention", "q", "residual",
+  "rms", "qkv", "rope", "cache", "attention", "o", "residual",
   "rms", "gate", "gate", "swiglu", "dense", "down", "residual",
 )
 ORDER = ("embedding", *dict.fromkeys(STAGES), "lm", "argmax")
@@ -26,11 +26,14 @@ PARAMS = {
 }
 # Bytes of weight streamed from DRAM by each stage launch.
 WEIGHT_BYTES = {
-  "q": 2048 * 2048 * 2, "k": 512 * 2048 * 2, "gate": 8192 * 2048 * 2,
+  "o": 2048 * 2048 * 2,
+  "qkv": (2048 + 512 + 512) * 2048 * 2,
+  "gate": 8192 * 2048 * 2,
   "down": 2048 * 8192 * 2, "lm": 128256 * 2048 * 2,
 }
 CORES = {
-  "embedding": 1, "rms": 1, "q": 118, "k": 118, "rope": 40, "cache": 8,
+  "embedding": 1, "rms": 1, "o": 118, "qkv": 118,
+  "rope": 40, "cache": 8,
   "attention": 8, "residual": 32, "gate": 118, "swiglu": 118,
   "dense": 118, "down": 118, "lm": 118, "argmax": 118,
 }
@@ -70,9 +73,9 @@ def build_trace(runtime, skip=()):
     w = layer["weights"]
     queue("rms", ((runtime.x_a, runtime.x_a),
                   (tw["input_norm"], w["input_norm"])))
-    queue("q", ((tw["q"], w["q"]),))
-    queue("k", ((tw["k"], w["k"]),))
-    queue("k", ((tw["k"], w["v"]), (runtime.k_compact, runtime.v_compact)))
+    queue("qkv", (
+      (tw["q"], w["q"]), (tw["k"], w["k"]), (tw["v"], w["v"]),
+    ))
     queue("rope", constants={"start_pos": 0})
     queue("cache", ((template["key_cache"], layer["key_cache"]),
                     (template["value_cache"], layer["value_cache"])),
@@ -80,7 +83,7 @@ def build_trace(runtime, skip=()):
     queue("attention", ((template["key_cache"], layer["key_cache"]),
                         (template["value_cache"], layer["value_cache"])),
           {"kv_blocks": 1, "valid_columns": 1})
-    queue("q", ((runtime.q_projection_input, runtime.context_projection_input),
+    queue("o", ((runtime.o_projection_input, runtime.context_projection_input),
                 (tw["q"], w["o"])))
     queue("residual")
     queue("rms", ((runtime.x_a, runtime.x_b),
@@ -154,7 +157,7 @@ def main():
       ("dense", ("dense",)),
       ("swiglu+dense", ("swiglu", "dense")),
       ("all small stages", ("rms", "cache", "residual", "swiglu", "dense")),
-      ("k/v projections", ("k",)),
+      ("qkv projection", ("qkv",)),
       ("attention", ("attention",)),
       ("lm+argmax", ("lm", "argmax")),
     )
@@ -202,23 +205,7 @@ def main():
     out(f"sum of isolated kernel time: {sum(device_us[s] * per_token[s] for s in ORDER):.0f} us")
     out()
 
-    # ---- 4. projection cost model -----------------------------------------
-    out("-- projection cost model " + "-" * 48)
-    slope = (device_us["q"] - device_us["k"]) / (2048 - 512)
-    fixed = device_us["k"] - 512 * slope
-    out(f"decode_projection(rows) ~ {fixed:.2f} us + {slope * 1e3:.2f} ns/row")
-    for stage, rows in (("q", 2048), ("k", 512), ("gate", 8192), ("lm", 128256)):
-      out(f"  predict {stage:<5} {fixed + rows * slope:8.2f} us   "
-          f"actual {device_us[stage]:8.2f} us")
-    projections = 7 * LLAMA_LAYERS + 1
-    out(f"projection launches/token: {projections}  "
-        f"fixed overhead: {projections * fixed:.0f} us "
-        f"({projections * fixed / full * 100:.1f}% of token)")
-    out(f"  fuse q+k+v -> 1 launch : saves ~{2 * fixed * LLAMA_LAYERS:.0f} us")
-    out(f"  fuse gate+up -> 1      : saves ~{fixed * LLAMA_LAYERS:.0f} us")
-    out()
-
-    # ---- 5. DRAM bandwidth -------------------------------------------------
+    # ---- 4. DRAM bandwidth -------------------------------------------------
     layer_bytes = 2 * (2048 * 2048 * 2) + 2 * (512 * 2048 * 2) + 3 * (8192 * 2048 * 2)
     token_bytes = LLAMA_LAYERS * layer_bytes + WEIGHT_BYTES["lm"]
     out("-- DRAM roofline " + "-" * 56)
