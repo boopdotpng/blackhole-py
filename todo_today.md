@@ -1,0 +1,7 @@
+- understand llama3 end to end
+- remove host tilize
+- remove kv cache zero hack
+- make dram uploads go through cq or mirror tt-metal, no more kernel launches to upload dram
+- move llama3 into ttk/ and make it much smaller
+- shrink repo lines <6500 ish
+- llama3 prefill implementation too

@@ -1,5 +1,11 @@
 # Llama 3.2 1B bs=1 decode: launch count, fusion, and implementation review
 
+> July 25, 2026 update: Q/K/V projection is now fused per layer while
+> preserving the three existing compact layouts. The trace has 228 launches,
+> produces bit-exact Q/K/V versus separate projections, and measures 108.15
+> tok/s. Embedding and LM-head storage is also tied, removing a duplicate
+> 0.489 GiB upload. See [`llama3_e2e_profile.md`](llama3_e2e_profile.md).
+
 Hardware: p100a, 118 worker cores, 1350 MHz ref clock. Measured at position 64
 with `weights/model.safetensors` (unsloth 1B Instruct).
 
@@ -229,7 +235,7 @@ big projections get faster and the floor starts to bite.
    both consume it natively.
 5. **The device closes the loop itself.** `decode_argmax` publishes the token to
    pinned host memory *and* appends it to device-side token history *and* writes
-   the next token's runtime params. Host reads 8 bytes; no readback program.
+   the next token's runtime params. Host reads 4 bytes; no readback program.
 
 **What I'd push back on:**
 
@@ -259,16 +265,15 @@ big projections get faster and the floor starts to bite.
    reduction. It's dispatch-bound so it's cheap in absolute terms, but combined
    with the fact that all 118 cores then need the result, a broadcast-fused
    norm+projection would be strictly better.
-5. **Prefill still ingests one token per launch.** `run_decode_e2e` runs the
-   full 260-launch decode trace for every prompt token, so a 100-token prompt
-   costs 100 x 9.7 ms ≈ 1 s of TTFT. The prefill GEMM path exists
-   (`PREFILL_CAPACITY`, the `[1024, 2048]` rmsnorm/embedding variants) but isn't
-   wired into the e2e path. Highest-value *user-visible* fix that isn't tok/s.
+5. **Prompt ingestion still uses decode.** `run_decode_e2e` runs the full
+   228-launch decode trace for every prompt token, so a 100-token prompt costs
+   about 0.92 s of TTFT. Prefill is intentionally outside this decode-only
+   module.
 6. **Minor bugs/rough edges found while benchmarking:**
    - `run_decode_e2e` crashed on current `transformers`: `apply_chat_template`
      returns a `BatchEncoding`, not a list. Fixed in `examples/llama3.py`.
    - `_install_param_templates` leaks the L1 template arena — capturing a second
-     260-launch trace in one session raises "arena is full". Traces never free
+     228-launch trace in one session raises "arena is full". Traces never free
      their templates. The benchmark works around it by rewinding
      `_param_template_next`; a real fix needs refcounting or a `DeviceTrace.free()`.
    - Calling `cache_kernels` after traces are live corrupts subsequent
@@ -285,10 +290,9 @@ big projections get faster and the floor starts to bite.
   1. GEMV rewrite: 32 output rows per Dst tile, amortized reduction + pack
      -> targets the 277->400 GB/s gap on 74% of the token   ~+30-40 tok/s
   2. Parallelize attention across >8 cores                   fixes context scaling
-  3. Fuse Q+K+V and gate+up (concatenated weights)           ~+5 tok/s, 48 fewer launches
+  3. Fuse gate+up (Q+K+V is complete)                        next launch fusion
   4. Fold dense into swiglu, residual into projection wb     ~+2 tok/s, 48 fewer launches
-  5. Wire up the real prefill path                           ~10x better TTFT
-  6. Fix the trace/template arena leak                        correctness
+  5. Fix the trace/template arena leak                        correctness
 ```
 
 Fusion is worth roughly +7-8 tok/s total (102 -> ~110). Bandwidth efficiency in
