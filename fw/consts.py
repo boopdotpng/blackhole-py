@@ -89,8 +89,9 @@ class FirmwareControl:
 
 class CQConfig:
   PCIE_MID = 0x10000000; PCIE_COORD = (1 << 24) | (24 << 6) | 19
-  PREFETCH_CORE = (14, 2); DISPATCH_CORE = (14, 3)
+  PREFETCH_CORE = (14, 2); DISPATCH_CORE = (14, 3); DRAM_CORE = (14, 4)
   PREFETCH_COORD = (2 << 6) | 14; DISPATCH_COORD = (3 << 6) | 14
+  DRAM_COORD = (4 << 6) | 14
 
 class TensixMMIO:
   LOCAL_RAM_START = 0xFFB00000; LOCAL_RAM_END = 0xFFB01FFF

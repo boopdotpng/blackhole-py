@@ -3,25 +3,21 @@ from struct import Struct
 import time
 
 from cq import (
-  ALIGN, COMPLETION_ENTRIES, CommandQueue, DramRecord, McastWrite, Run,
-  UnicastWrite, noc_coord,
+  ALIGN, DRAM_BRISC_READY, DRAM_NCRISC_READY, CommandQueue, DramCopy,
+  DramRecord, McastWrite, Run, UnicastWrite, noc_coord,
 )
 from fw.consts import (
-  CQConfig, Firmware, FirmwareControl, KERNEL_ROLES, RunState, TensixL1,
-  TensixMMIO,
+  Firmware, FirmwareControl, KERNEL_ROLES, RunState, TensixL1, TensixMMIO,
 )
 from fw.core import build_brisc, build_ncrisc, build_trisc
 from fw.cq import build_dispatch, build_prefetch
-from fw.dram import ARGS_BASE, dram_read, dram_write
+from fw.dram_cq import build_dram_brisc, build_dram_ncrisc
 from isa import R, RV32
 from pcie import PCIDevice, TLBWindow
 from program import (
   PARAM_BASE, RETURN_KERNEL, Buffer, Dram, Program, rectangles,
 )
 from ttk import DType
-
-DRAM_TRANSFER_BYTES_PER_CORE = 4 << 20
-
 
 class Readback:
   def __init__(self, device, buffer, offset):
@@ -113,10 +109,9 @@ class DeviceTrace:
         "runtime_encode_us": (encoded - started) / 1e3,
         "runtime_patch_us": (patched - encoded) / 1e3,
         **self.device.cq.last_replay_profile,
-        # A completion Timestamp covers the final RUN only. The full trace
-        # interval is the host-observed doorbell-to-completion duration.
+        # HCQSignal timestamps are absolute device-clock values. The full
+        # trace interval is the host-observed doorbell-to-completion duration.
         "device_us": self.device.cq.last_replay_profile["device_wait_us"],
-        "final_kernel_us": result.us,
       })
       return result
 
@@ -165,7 +160,11 @@ class Device:
     firmware = b"".join(image.lower().ljust(size, b"\0")
                         for (_, size), image in zip(Firmware.TEXT.values(), images))
     firmware_base = Firmware.TEXT["brisc"][0]
-    prefetch, dispatch = build_prefetch().lower(), build_dispatch().lower()
+    pcie_mid = self.pcie.sysmem.noc_addr >> 32
+    prefetch = build_prefetch(pcie_mid).lower()
+    dispatch = build_dispatch(pcie_mid).lower()
+    dram_brisc = build_dram_brisc().lower()
+    dram_ncrisc = build_dram_ncrisc().lower()
     with TLBWindow(self.pcie.fd, self.pcie.cores[0]) as win:
       win.mcast(TensixMMIO.RISCV_DEBUG_REG_SOFT_RESET_0, TensixMMIO.SOFT_RESET_ALL)
       win.mcast(firmware_base, firmware)
@@ -176,72 +175,58 @@ class Device:
       # legacy (no-template) path.
       win.mcast(FirmwareControl.GO_SIGNAL & -4, 0)
       win.mcast(TensixMMIO.RISCV_DEBUG_REG_SOFT_RESET_0, TensixMMIO.SOFT_RESET_BRISC_ONLY_RUN)
-      for core, image in ((self.pcie.prefetch_core, prefetch), (self.pcie.dispatch_core, dispatch)):
+      for core, images in (
+        (self.pcie.prefetch_core, {"brisc": prefetch}),
+        (self.pcie.dispatch_core, {"brisc": dispatch}),
+        (self.pcie.dram_core, {"brisc": dram_brisc, "ncrisc": dram_ncrisc}),
+      ):
         win.target(0, core)
-        win.write(TensixL1.WORKER_TEXT_BASE["brisc"], image)
+        for role, image in images.items():
+          win.write(TensixL1.WORKER_TEXT_BASE[role], image)
+      win.target(0, self.pcie.dram_core)
+      win.write(DRAM_BRISC_READY, bytes(8))
       self.cq = CommandQueue(self.pcie)
-      for core in (self.pcie.prefetch_core, self.pcie.dispatch_core):
+      for core in (
+        self.pcie.prefetch_core, self.pcie.dispatch_core, self.pcie.dram_core,
+      ):
         win.target(0, core)
         win.write(FirmwareControl.GO_SIGNAL, int(RunState.GO), bytes=1)
+      win.target(0, self.pcie.dram_core)
+      deadline = time.monotonic() + 5.0
+      while (
+        int.from_bytes(win.read(DRAM_BRISC_READY, 4), "little") != 1 or
+        int.from_bytes(win.read(DRAM_NCRISC_READY, 4), "little") != 1
+      ):
+        if time.monotonic() >= deadline:
+          raise TimeoutError("CQ DRAM engines did not start")
+        time.sleep(0)
 
   def queue(self, program: Program, params=None, report=True):
     self.program_queue.append((program, params, None, report))
     return program
 
-  def _dram_transfer_ranges(self, buffer, write):
-    cores = buffer.cores
-    starts = buffer.tile_starts
-    counts = buffer.tile_counts
-    if not write or not buffer.global_address:
-      return cores, starts, counts
-
-    worker_count = min(
-      len(self.dram.cores),
-      buffer.physical_tiles,
-      max(
-        1,
-        (buffer.size + DRAM_TRANSFER_BYTES_PER_CORE - 1) //
-        DRAM_TRANSFER_BYTES_PER_CORE,
-      ),
-    )
-    cores = self.dram.cores[:worker_count]
-    tiles_per_worker, extra = divmod(buffer.physical_tiles, worker_count)
-    counts = tuple(
-      tiles_per_worker + (index < extra)
-      for index in range(worker_count)
-    )
-    starts, start = [], 0
-    for count in counts:
-      starts.append(start)
-      start += count
-    return cores, tuple(starts), counts
-
-  def _dram_program(self, buffer, write, offset=0, dram_endpoints=None):
-    if self.cq is None: raise RuntimeError("init_device() must be called before tensor transfer")
-    if not 0 < buffer.tile_size <= 16 * 1024 or buffer.tile_size % 16:
-      raise ValueError("DRAM transfer tiles must be 16-byte aligned and at most 16 KiB")
+  def _dram_copy_program(self, buffer, write, offset=0,
+                         dram_endpoints=None):
+    if self.cq is None:
+      raise RuntimeError("init_device() must be called before tensor transfer")
     if offset + buffer.size > self.cq.dram_size:
-      raise MemoryError(f"queued tensors need {offset + buffer.size} bytes; sysmem DRAM region has {self.cq.dram_size}")
-
-    build = dram_write if write else dram_read
+      raise MemoryError(
+        f"queued tensors need {offset + buffer.size} bytes; "
+        f"sysmem DRAM region has {self.cq.dram_size}",
+      )
     endpoints = (
       self.pcie.dram_endpoints
       if dram_endpoints is None else tuple(dram_endpoints)
     )
-    cores, starts, counts = self._dram_transfer_ranges(buffer, write)
-    program = build(cores, endpoints)
-    sysmem_base = self.cq.noc + self.cq.dram + offset
-    if sysmem_base + buffer.size > 1 << 32:
-      raise ValueError("sysmem DRAM transfer crosses a 4 GiB NoC address window")
-    args = []
-    pack = Struct("<6I").pack
-    for start, count in zip(starts, counts):
-      args.append(pack(
-        buffer.addr, sysmem_base + start * buffer.tile_size, CQConfig.PCIE_MID,
-        start, count, buffer.tile_size,
-      ))
-    args_write = UnicastWrite(program.cores, ARGS_BASE, tuple(args))
-    program.launch = (args_write,)
+    if not endpoints or endpoints != self.pcie.dram_endpoints[:len(endpoints)]:
+      raise ValueError("CQ DRAM copies require a non-empty prefix of DRAM banks")
+    source = self.pcie.sysmem.noc_addr + self.cq.dram + offset
+    command = DramCopy(
+      buffer.addr, source, buffer.tile_size, buffer.physical_tiles,
+      len(endpoints), int(not write),
+    )
+    program = Program((), images={})
+    program.launch = (command,)
     return program
 
   def _write_physical(self, buffer, data: bytes, *, dram_endpoints=None):
@@ -250,7 +235,7 @@ class Device:
     if len(data) > buffer.size:
       raise ValueError("physical upload exceeds its DRAM buffer")
     offset = self._staging_next
-    program = self._dram_program(
+    program = self._dram_copy_program(
       buffer, write=True, offset=offset, dram_endpoints=dram_endpoints,
     )
     self.pcie.sysmem.write(
@@ -582,7 +567,8 @@ class Device:
           runtime = runtime[1:]
         for command in runtime:
           append_compact(command)
-        append_compact(Run(program.cores, param_template=template))
+        if program.cores:
+          append_compact(Run(program.cores, param_template=template))
 
       trace = self.cq.capture_trace(records, dispatch_sizes)
       runtime = _TraceRuntime(
@@ -618,7 +604,7 @@ class Device:
         param_specs.append((index, size, program, values))
         runtime = runtime[1:]
       for command in runtime: append(command)
-      append(Run(program.cores))
+      if program.cores: append(Run(program.cores))
 
     trace = self.cq.capture_trace(records, dispatch_sizes)
     patches = tuple(
@@ -632,15 +618,11 @@ class Device:
     return DeviceTrace(self, trace, patches)
 
   def write(self, buffer, data: bytes):
-    offset = self._staging_next
-    program = self._dram_program(buffer, write=True, offset=offset)
-    self.pcie.sysmem.write(self.cq.dram + offset, buffer.tile_data(data))
-    self._staging_next += buffer.size
-    return self.queue(program, report=False)
+    return self._write_physical(buffer, buffer.tile_data(data))
 
   def queue_read(self, buffer):
     offset = self._staging_next
-    program = self._dram_program(buffer, write=False, offset=offset)
+    program = self._dram_copy_program(buffer, write=False, offset=offset)
     readback = Readback(self, buffer, offset)
     self._staging_next += buffer.size
     self.read_queue.append((program, None, readback, False))
@@ -657,15 +639,6 @@ class Device:
       raise ValueError("parameter overrides require exactly one explicit program")
     for program in programs: self.queue(program, params)
     batch = (*self.program_queue, *self.read_queue)
-    completions = sum(
-      report or readback is not None or index == len(batch) - 1
-      for index, (_, _, readback, report) in enumerate(batch)
-    )
-    if completions > COMPLETION_ENTRIES:
-      raise ValueError(
-        f"batch needs {completions} completion entries, "
-        f"but the ring holds {COMPLETION_ENTRIES}",
-      )
     results = []
     pending = []
     for index, (program, values, readback, report) in enumerate(batch):
@@ -676,9 +649,8 @@ class Device:
       completion = (
         report or readback is not None or index == len(batch) - 1
       )
-      event = self.cq.enqueue(
-        (*commands, Run(program.cores)), completion=completion,
-      )
+      if program.cores: commands = (*commands, Run(program.cores))
+      event = self.cq.enqueue(commands, completion=completion)
       if completion:
         pending.append((event, readback, report))
 

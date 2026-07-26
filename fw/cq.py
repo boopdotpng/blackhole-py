@@ -1,60 +1,94 @@
 from asm import Asm
 from cq import (
-  ALIGN, CQ_STATE, DISPATCH_COMPLETION_BASE, DISPATCH_COMPLETION_END,
-  DISPATCH_COMPLETION_HOST_PTR, DISPATCH_COMPLETION_PUBLISH,
-  DISPATCH_COMPLETION_WRITE, DISPATCH_CREDIT_RETURN, DISPATCH_DONE_COUNT,
-  DISPATCH_GO, DISPATCH_PUBLISHED, DISPATCH_RING_BASE, DISPATCH_RING_END,
-  DISPATCH_SCRATCH, PAGE_SIZE, PREFETCH_CREDITS, PREFETCH_PCIE_BASE,
-  PREFETCH_PCIE_END, PREFETCH_PCIE_READ, PREFETCH_QUEUE,
-  PREFETCH_QUEUE_ENTRIES, PREFETCH_STAGING, Op, PacketLayout, Timestamp,
-  PREFETCH_TRACE_ACTIVE, PREFETCH_TRACE_BASE, PREFETCH_TRACE_END,
+  ALIGN, CQ_STATE, DISPATCH_DONE_COUNT, DISPATCH_DRAM_PUT,
+  DISPATCH_DRAM_READ, DISPATCH_GO, DISPATCH_PUBLISHED, DISPATCH_READ_PUBLISH,
+  DISPATCH_RING_BASE, DISPATCH_RING_END, DISPATCH_RING_PAGES,
+  DRAM_PUBLISHED, DRAM_QUEUE_BASE, DRAM_QUEUE_ENTRIES, DRAM_READ_PUBLISH,
+  HOST_ISSUE_SIZE,
+  PAGE_SIZE, PREFETCH_DISPATCH_READ, PREFETCH_DOORBELL, PREFETCH_PCIE_BASE,
+  PREFETCH_READ_PTR, PREFETCH_READ_PUBLISH, PREFETCH_RECORD_SIZE,
+  PREFETCH_STAGING, PREFETCH_TRACE_ACTIVE, PREFETCH_TRACE_CURSOR,
+  PREFETCH_TRACE_END, Op, PacketLayout,
 )
-from fw.consts import CQConfig, FirmwareControl, RunState, TensixMMIO
+from fw.consts import CQConfig, FirmwareControl, RunState
 from isa import R
 from ttk.noc import NiuCommand
 
+PREFETCH_DISPATCH_PUBLISH = CQ_STATE + 0x40
 
-def build_prefetch():
+
+def build_prefetch(pcie_mid=CQConfig.PCIE_MID):
   fw = Asm("brisc")
-  with fw.scope(): _emit_prefetch(fw, fw.reg(12))
+  with fw.scope(): _emit_prefetch(fw, fw.reg(12), pcie_mid)
   return fw
 
 
-def _emit_prefetch(fw, state):
+def _emit_prefetch(fw, state, pcie_mid):
   (
-    queue, queue_end, ring, used, size, cursor, src, dst, left, chunk,
-    pages, remaining,
+    ring, put, size, cursor, src, dst, left, chunk, pages, remaining,
+    read_lo, read_hi,
   ) = state
   noc = fw.noc
-  fw.write(PREFETCH_CREDITS, (DISPATCH_RING_END - DISPATCH_RING_BASE) // PAGE_SIZE)
-  fw.li(queue, PREFETCH_QUEUE)
-  fw.li(queue_end, PREFETCH_QUEUE + PREFETCH_QUEUE_ENTRIES * 4)
   fw.li(ring, DISPATCH_RING_BASE)
-  fw.li(used, 0)
-  fw.read(cursor, PREFETCH_PCIE_READ)
+  fw.li(put, 0)
+  fw.li(read_lo, 0)
+  fw.li(read_hi, 0)
+  fw.write(PREFETCH_DISPATCH_READ, 0)
   fw.write(PREFETCH_TRACE_ACTIVE, 0)
-  fw.label("prefetch_loop")
-  fw.lw(size, queue, 0)
-  fw.beq(size, R.ZERO, "prefetch_loop")
-  fw.srli(src, size, 31)
-  fw.beq(src, R.ZERO, "normal_descriptor")
 
-  # A trace descriptor points at an immutable, already-lowered record stream
-  # in pinned host memory. Keep the ordinary issue-ring cursor parked while
-  # each trace record is fetched and forwarded to dispatch.
-  fw.li(src, 1); fw.write(PREFETCH_TRACE_ACTIVE, src)
-  fw.read(cursor, PREFETCH_TRACE_BASE)
-  fw.label("trace_record")
+  fw.label("prefetch_loop")
+  fw.read(src, PREFETCH_TRACE_ACTIVE)
+  fw.bne(src, R.ZERO, "trace_header")
+
+  # The host publishes an eight-byte monotonic put pointer after writing all
+  # record bytes. Read high/low/high so a carry cannot look like a huge put.
+  fw.label("read_doorbell")
+  fw.read(remaining, PREFETCH_DOORBELL + 4)
+  fw.read(src, PREFETCH_DOORBELL)
+  fw.read(dst, PREFETCH_DOORBELL + 4)
+  fw.bne(remaining, dst, "read_doorbell")
+  fw.bne(dst, read_hi, "host_header")
+  fw.bne(src, read_lo, "host_header")
+  fw.fence(); fw.j("prefetch_loop")
+
+  fw.label("host_header")
+  fw.read(cursor, PREFETCH_PCIE_BASE)
+  fw.li(dst, HOST_ISSUE_SIZE - 1)
+  fw.and_(dst, read_lo, dst)
+  fw.add(cursor, cursor, dst)
+  fw.j("read_header")
+
+  fw.label("trace_header")
+  fw.read(cursor, PREFETCH_TRACE_CURSOR)
+
+  # Every source record starts with one aligned header. PAD consumes host-ring
+  # space without entering the dispatch ring; TRACE switches to its immutable
+  # host record stream while leaving the issue read pointer parked.
+  fw.label("read_header")
   noc.read(
     cursor, CQConfig.PCIE_COORD, PREFETCH_STAGING, ALIGN,
-    source_middle_address=CQConfig.PCIE_MID,
+    source_middle_address=pcie_mid,
   )
-  fw.read(size, PREFETCH_STAGING + PacketLayout.TOTAL_SIZE)
-  fw.j("pcie_read")
+  fw.read(src, PREFETCH_STAGING + PacketLayout.OP, bytes=1)
+  fw.read(dst, PREFETCH_TRACE_ACTIVE)
+  fw.bne(dst, R.ZERO, "normal_record")
+  fw.li(dst, int(Op.PAD)); fw.beq(src, dst, "issue_pad")
+  fw.li(dst, int(Op.TRACE)); fw.bne(src, dst, "normal_record")
+  fw.read(cursor, PREFETCH_STAGING + PacketLayout.TRACE_SOURCE_LO)
+  fw.read(size, PREFETCH_STAGING + PacketLayout.TRACE_SIZE)
+  fw.write(PREFETCH_TRACE_CURSOR, cursor)
+  fw.add(dst, cursor, size)
+  fw.write(PREFETCH_TRACE_END, dst)
+  fw.write(PREFETCH_TRACE_ACTIVE, 1)
+  fw.j("trace_header")
 
-  fw.label("normal_descriptor")
-  fw.slli(size, size, 4)
-  fw.label("pcie_read")
+  fw.label("issue_pad")
+  fw.read(size, PREFETCH_STAGING + PacketLayout.TOTAL_SIZE)
+  fw.j("advance_issue")
+
+  fw.label("normal_record")
+  fw.read(size, PREFETCH_STAGING + PacketLayout.TOTAL_SIZE)
+  fw.write(PREFETCH_RECORD_SIZE, size)
   fw.mv(src, cursor); fw.li(dst, PREFETCH_STAGING); fw.mv(left, size)
   fw.label("pcie_read_loop")
   fw.beq(left, R.ZERO, "pcie_read_done")
@@ -64,21 +98,12 @@ def _emit_prefetch(fw, state):
   fw.label("pcie_read_size")
   noc.read(
     src, CQConfig.PCIE_COORD, dst, chunk,
-    source_middle_address=CQConfig.PCIE_MID,
+    source_middle_address=pcie_mid,
   )
   fw.add(src, src, chunk); fw.add(dst, dst, chunk); fw.sub(left, left, chunk)
   fw.j("pcie_read_loop")
   fw.label("pcie_read_done")
-  fw.add(cursor, cursor, size)
-  fw.read(src, PREFETCH_TRACE_ACTIVE)
-  fw.bne(src, R.ZERO, "pcie_cursor_done")
-  fw.sw(R.ZERO, queue, 0)
-  fw.read(src, PREFETCH_PCIE_END)
-  fw.bltu(cursor, src, "pcie_no_wrap")
-  fw.read(cursor, PREFETCH_PCIE_BASE)
-  fw.label("pcie_no_wrap")
-  fw.write(PREFETCH_PCIE_READ, cursor)
-  fw.label("pcie_cursor_done")
+
   fw.li(src, PREFETCH_STAGING)
   # DRAM_RECORD is a compact indirection used by the resident program cache.
   # Replace the descriptor in staging with the immutable lowered CQ record.
@@ -94,38 +119,46 @@ def _emit_prefetch(fw, state):
   fw.lw(size, src, PacketLayout.TOTAL_SIZE)
   fw.li(pages, PAGE_SIZE - 1); fw.add(pages, size, pages); fw.srli(pages, pages, 12)
 
-  # A DRAM_RECORD expands after the host has published its 64-byte
-  # descriptor, so only prefetch knows its real page count. Insert one PAD
-  # record when it would straddle the dispatch ring boundary.
+  # The dispatch ring uses the same monotonic put/read model as the host ring.
+  # Insert one dispatch-local PAD when an expanded record would straddle it.
   fw.li(remaining, DISPATCH_RING_END)
   fw.sub(remaining, remaining, ring)
   fw.srli(remaining, remaining, 12)
-  fw.bgeu(remaining, pages, "wait_dispatch_credit")
-  fw.label("wait_wrap_credit")
-  fw.read(left, PREFETCH_CREDITS); fw.sub(left, left, used)
-  fw.bltu(left, remaining, "wait_wrap_credit")
-  fw.add(used, used, remaining)
-  fw.write(CQ_STATE + 0x40 + PacketLayout.OP, int(Op.PAD), bytes=1)
-  fw.write(CQ_STATE + 0x40 + PacketLayout.TARGET_COUNT, 0, bytes=2)
+  fw.bgeu(remaining, pages, "wait_dispatch_space")
+  fw.label("wait_wrap_space")
+  fw.read(left, PREFETCH_DISPATCH_READ)
+  fw.sub(left, put, left)
+  fw.li(chunk, DISPATCH_RING_PAGES); fw.sub(chunk, chunk, left)
+  fw.bgeu(chunk, remaining, "wrap_space_ready")
+  fw.fence(); fw.j("wait_wrap_space")
+  fw.label("wrap_space_ready")
+  fw.add(put, put, remaining)
+  fw.write(CQ_STATE + 0x60 + PacketLayout.OP, int(Op.PAD), bytes=1)
+  fw.write(CQ_STATE + 0x60 + PacketLayout.TARGET_COUNT, 0, bytes=2)
   fw.slli(left, remaining, 12)
-  fw.write(CQ_STATE + 0x40 + PacketLayout.TOTAL_SIZE, left)
-  fw.write(CQ_STATE + 0x40 + PacketLayout.ADDRESS, 0)
-  fw.write(CQ_STATE + 0x40 + PacketLayout.DATA_SIZE, 0)
+  fw.write(CQ_STATE + 0x60 + PacketLayout.TOTAL_SIZE, left)
+  fw.write(CQ_STATE + 0x60 + PacketLayout.ADDRESS, 0)
+  fw.write(CQ_STATE + 0x60 + PacketLayout.DATA_SIZE, 0)
   noc.write(
-    CQ_STATE + 0x40, ring, CQConfig.DISPATCH_COORD,
+    CQ_STATE + 0x60, ring, CQConfig.DISPATCH_COORD,
     PacketLayout.HEADER.size, posted=False,
   )
-  fw.write(CQ_STATE + 0x20, used)
+  fw.write(PREFETCH_DISPATCH_PUBLISH, put)
+  fw.fence()
   noc.write(
-    CQ_STATE + 0x20, DISPATCH_PUBLISHED, CQConfig.DISPATCH_COORD, 4,
-    posted=False,
+    PREFETCH_DISPATCH_PUBLISH, DISPATCH_PUBLISHED,
+    CQConfig.DISPATCH_COORD, 4, posted=False,
   )
   fw.li(ring, DISPATCH_RING_BASE)
 
-  fw.label("wait_dispatch_credit")
-  fw.read(left, PREFETCH_CREDITS); fw.sub(left, left, used)
-  fw.bltu(left, pages, "wait_dispatch_credit")
-  fw.add(used, used, pages)
+  fw.label("wait_dispatch_space")
+  fw.read(left, PREFETCH_DISPATCH_READ)
+  fw.sub(left, put, left)
+  fw.li(chunk, DISPATCH_RING_PAGES); fw.sub(chunk, chunk, left)
+  fw.bgeu(chunk, pages, "dispatch_space_ready")
+  fw.fence(); fw.j("wait_dispatch_space")
+  fw.label("dispatch_space_ready")
+  fw.add(put, put, pages)
   fw.mv(dst, ring); fw.mv(left, size)
   fw.label("dispatch_copy_loop")
   fw.beq(left, R.ZERO, "dispatch_copy_done")
@@ -137,40 +170,59 @@ def _emit_prefetch(fw, state):
   fw.add(src, src, chunk); fw.add(dst, dst, chunk); fw.sub(left, left, chunk)
   fw.j("dispatch_copy_loop")
   fw.label("dispatch_copy_done")
-  fw.write(CQ_STATE + 0x20, used)
+  fw.write(PREFETCH_DISPATCH_PUBLISH, put)
+  fw.fence()
   noc.write(
-    CQ_STATE + 0x20, DISPATCH_PUBLISHED, CQConfig.DISPATCH_COORD, 4,
-    posted=False,
+    PREFETCH_DISPATCH_PUBLISH, DISPATCH_PUBLISHED,
+    CQConfig.DISPATCH_COORD, 4, posted=False,
   )
   fw.slli(left, pages, 12); fw.add(ring, ring, left)
   fw.li(left, DISPATCH_RING_END); fw.bne(ring, left, "dispatch_no_wrap")
   fw.li(ring, DISPATCH_RING_BASE)
   fw.label("dispatch_no_wrap")
 
+  # Advance either the trace cursor or the host issue read pointer only after
+  # dispatch owns the record, so host backpressure can safely reclaim bytes.
+  fw.read(size, PREFETCH_RECORD_SIZE)
   fw.read(src, PREFETCH_TRACE_ACTIVE)
-  fw.beq(src, R.ZERO, "advance_prefetch_queue")
-  fw.read(src, PREFETCH_TRACE_END)
-  fw.bltu(cursor, src, "trace_record")
+  fw.beq(src, R.ZERO, "advance_issue")
+  fw.read(cursor, PREFETCH_TRACE_CURSOR)
+  fw.add(cursor, cursor, size)
+  fw.write(PREFETCH_TRACE_CURSOR, cursor)
+  fw.read(dst, PREFETCH_TRACE_END)
+  fw.bltu(cursor, dst, "trace_header")
   fw.write(PREFETCH_TRACE_ACTIVE, 0)
-  fw.sw(R.ZERO, queue, 0)
-  fw.read(cursor, PREFETCH_PCIE_READ)
-  fw.label("advance_prefetch_queue")
-  fw.addi(queue, queue, 4); fw.bne(queue, queue_end, "prefetch_loop")
-  fw.li(queue, PREFETCH_QUEUE); fw.j("prefetch_loop")
+  fw.li(size, ALIGN)  # Consume the TRACE descriptor in the issue ring.
+
+  fw.label("advance_issue")
+  fw.mv(chunk, read_lo)
+  fw.add(read_lo, read_lo, size)
+  fw.sltu(left, read_lo, chunk)
+  fw.add(read_hi, read_hi, left)
+  fw.write(PREFETCH_READ_PUBLISH, read_lo)
+  fw.write(PREFETCH_READ_PUBLISH + 4, read_hi)
+  fw.fence()
+  fw.read(dst, PREFETCH_READ_PTR)
+  noc.write(
+    PREFETCH_READ_PUBLISH, dst, CQConfig.PCIE_COORD, 8,
+    target_middle_address=pcie_mid, posted=False,
+  )
+  fw.j("prefetch_loop")
 
 
-def build_dispatch():
+def build_dispatch(pcie_mid=CQConfig.PCIE_MID):
   fw = Asm("brisc")
-  with fw.scope(): _emit_dispatch(fw, fw.reg(12))
+  with fw.scope(): _emit_dispatch(fw, fw.reg(12), pcie_mid)
   return fw
 
 
-def _emit_dispatch(fw, state):
+def _emit_dispatch(fw, state, pcie_mid):
   s0, s1, s2, s3, s4, s5, s6, s7, s8, s9, s10, s11 = state
   noc = fw.noc
   fw.li(s0, DISPATCH_RING_BASE)
   fw.li(s1, 0)
-  fw.write(DISPATCH_CREDIT_RETURN, (DISPATCH_RING_END - DISPATCH_RING_BASE) // PAGE_SIZE)
+  fw.write(DISPATCH_DRAM_PUT, 0)
+  fw.write(DISPATCH_DRAM_READ, 0)
 
   fw.label("dispatch_loop")
   fw.label("wait_published")
@@ -179,12 +231,58 @@ def _emit_dispatch(fw, state):
   fw.fence(); fw.j("wait_published")
   fw.label("published")
   fw.lbu(s3, s0, PacketLayout.OP)
+  fw.li(s4, int(Op.DRAM_COPY)); fw.beq(s3, s4, "dram_enqueue")
+  fw.li(s4, int(Op.SIGNAL)); fw.beq(s3, s4, "dram_enqueue")
+
+  # Preserve queue ordering: ordinary dispatch work can begin only after all
+  # earlier asynchronous DRAM descriptors have completed on both copy RISCs.
+  fw.label("wait_dram_idle")
+  fw.read(s4, DISPATCH_DRAM_PUT)
+  fw.fence()
+  noc.read(
+    DRAM_READ_PUBLISH, CQConfig.DRAM_COORD,
+    DISPATCH_DRAM_READ, 4,
+  )
+  fw.fence()
+  fw.read(s5, DISPATCH_DRAM_READ)
+  fw.beq(s4, s5, "dram_idle")
+  fw.j("wait_dram_idle")
+  fw.label("dram_idle")
   fw.switch(s3, {
     int(Op.PAD): "command_done",
     int(Op.UNICAST_WRITE): "unicast",
     int(Op.MCAST_WRITE): "multicast",
     int(Op.RUN): "run",
   }, "bad_command")
+
+  # Copy each asynchronous descriptor into the dedicated DRAM core's local
+  # ring before returning dispatch-ring credit.
+  fw.label("dram_enqueue")
+  fw.label("wait_dram_queue_space")
+  fw.read(s4, DISPATCH_DRAM_PUT)
+  fw.read(s5, DISPATCH_DRAM_READ)
+  fw.sub(s6, s4, s5)
+  fw.li(s7, DRAM_QUEUE_ENTRIES)
+  fw.bltu(s6, s7, "dram_queue_ready")
+  fw.fence()
+  noc.read(
+    DRAM_READ_PUBLISH, CQConfig.DRAM_COORD,
+    DISPATCH_DRAM_READ, 4,
+  )
+  fw.fence(); fw.j("wait_dram_queue_space")
+  fw.label("dram_queue_ready")
+  fw.andi(s5, s4, DRAM_QUEUE_ENTRIES - 1)
+  fw.slli(s5, s5, 6)
+  fw.li(s6, DRAM_QUEUE_BASE); fw.add(s5, s5, s6)
+  noc.write(s0, s5, CQConfig.DRAM_COORD, ALIGN, posted=False)
+  fw.addi(s4, s4, 1)
+  fw.write(DISPATCH_DRAM_PUT, s4)
+  fw.fence()
+  noc.write(
+    DISPATCH_DRAM_PUT, DRAM_PUBLISHED, CQConfig.DRAM_COORD, 4,
+    posted=False,
+  )
+  fw.j("command_done")
 
   fw.label("unicast")
   fw.lhu(s3, s0, PacketLayout.TARGET_COUNT)
@@ -221,10 +319,6 @@ def _emit_dispatch(fw, state):
   fw.j("command_done")
 
   fw.label("run")
-  fw.read(s8, TensixMMIO.RISCV_DEBUG_REG_WALL_CLOCK_L)
-  fw.read(s9, TensixMMIO.RISCV_DEBUG_REG_WALL_CLOCK_H)
-  fw.write(DISPATCH_SCRATCH + Timestamp.START, s8)
-  fw.write(DISPATCH_SCRATCH + Timestamp.START + 4, s9)
   fw.lw(s3, s0, PacketLayout.DATA_SIZE)  # Number of workers expected to finish.
   fw.write(DISPATCH_DONE_COUNT, 0)
   fw.fence()
@@ -233,11 +327,8 @@ def _emit_dispatch(fw, state):
   fw.li(s9, int(RunState.GO) << 24)
   fw.or_(s8, s8, s9)
   fw.write(DISPATCH_GO, s8)
-  # The multicast NIU reads its payload back from dispatch-core L1. Make the
-  # local GO store visible before the first rectangle can source that word;
-  # without this fence a cold launch can multicast the previous zero value.
   fw.fence()
-  fw.lhu(s7, s0, PacketLayout.TARGET_COUNT)  # Multicast rectangles.
+  fw.lhu(s7, s0, PacketLayout.TARGET_COUNT)
   fw.label("go_loop")
   fw.beq(s7, R.ZERO, "go_done")
   fw.lw(s8, s6, 0); fw.lw(s9, s6, 4)
@@ -248,58 +339,24 @@ def _emit_dispatch(fw, state):
   fw.label("go_done")
   fw.label("wait_workers")
   fw.read(s8, DISPATCH_DONE_COUNT)
-  fw.bne(s8, s3, "wait_workers")
+  fw.beq(s8, s3, "workers_done")
+  fw.fence(); fw.j("wait_workers")
+  fw.label("workers_done")
   fw.fence()
-  fw.read(s8, TensixMMIO.RISCV_DEBUG_REG_WALL_CLOCK_L)
-  fw.read(s9, TensixMMIO.RISCV_DEBUG_REG_WALL_CLOCK_H)
-  fw.write(DISPATCH_SCRATCH + Timestamp.END, s8)
-  fw.write(DISPATCH_SCRATCH + Timestamp.END + 4, s9)
-  fw.lw(s8, s0, PacketLayout.RUN_EVENT)
-  fw.beq(s8, R.ZERO, "command_done")
-  fw.write(DISPATCH_SCRATCH + Timestamp.EVENT, s8)
-  _publish_completion(fw, noc)
   fw.j("command_done")
 
   fw.label("command_done")
   fw.lw(s3, s0, PacketLayout.TOTAL_SIZE)
   fw.li(s4, PAGE_SIZE - 1); fw.add(s3, s3, s4); fw.srli(s3, s3, 12)
-  fw.read(s4, DISPATCH_CREDIT_RETURN); fw.add(s4, s4, s3)
-  fw.write(DISPATCH_CREDIT_RETURN, s4)
-  noc.write(
-    DISPATCH_CREDIT_RETURN, PREFETCH_CREDITS, CQConfig.PREFETCH_COORD, 4,
-  )
   fw.add(s1, s1, s3)
+  fw.write(DISPATCH_READ_PUBLISH, s1)
+  fw.fence()
+  noc.write(
+    DISPATCH_READ_PUBLISH, PREFETCH_DISPATCH_READ,
+    CQConfig.PREFETCH_COORD, 4, posted=False,
+  )
   fw.slli(s4, s3, 12); fw.add(s0, s0, s4)
   fw.li(s4, DISPATCH_RING_END); fw.bne(s0, s4, "dispatch_loop")
   fw.li(s0, DISPATCH_RING_BASE); fw.j("dispatch_loop")
   fw.label("bad_command"); fw.j("bad_command")
   return fw
-
-
-def _publish_completion(fw, noc):
-  with fw.scope(): return _emit_completion(fw, noc, fw.reg(4))
-
-
-def _emit_completion(fw, noc, state):
-  s10, s11, s3, s4 = state
-  no_wrap = fw._new_label("completion_no_wrap")
-  fw.read(s10, DISPATCH_COMPLETION_WRITE)
-  fw.li(s11, 0x7FFFFFFF); fw.and_(s11, s10, s11); fw.slli(s11, s11, 4)
-  noc.write(
-    DISPATCH_SCRATCH, s11, CQConfig.PCIE_COORD, Timestamp.STRUCT.size,
-    target_middle_address=CQConfig.PCIE_MID, posted=False,
-  )
-  fw.addi(s11, s10, PAGE_SIZE // 16)
-  fw.read(s3, DISPATCH_COMPLETION_END)
-  fw.li(s4, 0x7FFFFFFF); fw.and_(s4, s11, s4)
-  fw.bltu(s4, s3, no_wrap)
-  fw.read(s11, DISPATCH_COMPLETION_BASE)
-  fw.li(s4, 0x80000000); fw.xor(s11, s11, s4)
-  fw.label(no_wrap)
-  fw.write(DISPATCH_COMPLETION_WRITE, s11)
-  fw.write(DISPATCH_COMPLETION_PUBLISH, s11)
-  fw.read(s3, DISPATCH_COMPLETION_HOST_PTR)
-  noc.write(
-    DISPATCH_COMPLETION_PUBLISH, s3, CQConfig.PCIE_COORD, 4,
-    target_middle_address=CQConfig.PCIE_MID, posted=False,
-  )

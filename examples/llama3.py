@@ -39,7 +39,7 @@ VOCAB_SIZE = 128256
 EMBED_DIM = 2048
 EMBEDDING_TILES = EMBED_DIM // 1024
 EMBEDDING_TILES_SHIFT = EMBEDDING_TILES.bit_length() - 1  # multiply by a shift
-LLAMA_CORES = 118
+LLAMA_CORES = 117
 LLAMA_LAYERS = 16
 EOS_TOKEN_IDS = frozenset((128001, 128008, 128009))
 Q_PROJ_DIM = 2048
@@ -467,12 +467,12 @@ def _decode_projections_program(x, projections):
 
 
 def decode_projection(x: Buffer, weight: Buffer, output: Buffer) -> Program:
-  """Compute one bias-free HF Linear as ``weight @ x`` over 118 cores.
+  """Compute one bias-free HF Linear as ``weight @ x`` over 117 cores.
 
   Hugging Face stores Linear weights as ``[out_features, in_features]``.
   Each core owns a contiguous set of output rows and computes the complete
   2048- or 8192-element dot product for every row. The compact output has logical shape
-  ``[118, max_rows_per_core]``: one tile per core, with padding only in the
+  ``[117, max_rows_per_core]``: one tile per core, with padding only in the
   final slot of smaller shards.
   """
   return specialize(
@@ -930,7 +930,7 @@ def _decode_compact_to_dense_program(
 
 
 def decode_compact_to_dense(compact: Buffer, output: Buffer) -> Program:
-  """Reassemble compact 118-core MLP state into global BF16[1,8192]."""
+  """Reassemble compact 117-core MLP state into global BF16[1,8192]."""
   block_count = MLP_DIM // HEAD_DIM
   cores = P100_WORKER_CORES[:min(block_count, len(P100_WORKER_CORES))]
   compact_tiles = _global_tile_view(compact, "mlp_compact_tiles")
@@ -963,13 +963,9 @@ def _bf16_tile_byte_offset(index):
 
 
 def _compact_projection_location(feature, *, query):
-  if query:
-    if feature < 42 * 18: return divmod(feature, 18)
-    core, slot = divmod(feature - 42 * 18, 17)
-    return core + 42, slot
-  if feature < 40 * 5: return divmod(feature, 5)
-  core, slot = divmod(feature - 40 * 5, 4)
-  return core + 40, slot
+  return _compact_feature_location(
+    feature, Q_PROJ_DIM if query else KV_PROJ_DIM,
+  )
 
 
 def _compact_slot_byte_offset(slot):
@@ -1799,7 +1795,7 @@ class Llama3Decode:
     self.embedding_weight = global_buffer(
       "e2e_embedding_weight", DType.BF16, (VOCAB_SIZE, EMBED_DIM),
     )
-    # The model ties embedding and LM-head weights. This view adds 118-core
+    # The model ties embedding and LM-head weights. This view adds 117-core
     # row-sharding metadata without allocating or uploading a second copy.
     self.lm_weight = Buffer(
       "e2e_lm_weight", self.embedding_weight.addr,
@@ -2286,7 +2282,6 @@ def run_decode_e2e(
       full_wall_us = average("full_wall_us")
       print(f"generated-token average ({len(generation_profiles)} replays)")
       print(f"  device/CQ interval   {device_us:9.2f} us")
-      print(f"  final kernel stamp   {average('final_kernel_us'):9.2f} us")
       print(f"  host replay wall     {replay_wall_us:9.2f} us")
       print(f"  token readback       {average('result_read_us'):9.2f} us")
       print(f"  full decode call     {full_wall_us:9.2f} us")

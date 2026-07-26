@@ -18,7 +18,7 @@ P100_DRAM_ENDPOINTS = (
 )
 P100_WORKER_CORES = tuple(
   (x, y) for x in (*range(1, 8), *range(10, 15)) for y in range(2, 12)
-  if (x, y) not in ((14, 2), (14, 3))
+  if (x, y) not in ((14, 2), (14, 3), (14, 4))
 )
 
 def _TT_IOCTL(nr, payload_type, result=None, **defaults):
@@ -211,6 +211,7 @@ class PCIDevice:
   P100A_X = (*range(1, 8), *range(10, 15))
   prefetch_core = (14, 2)
   dispatch_core = (14, 3)
+  dram_core = (14, 4)
 
   def __init__(self, index=0, sysmem_size=1 << 30):
     card_type = Path(f"/sys/class/tenstorrent/tenstorrent!{index}/tt_card_type").read_text().strip()
