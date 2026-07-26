@@ -7,8 +7,14 @@ KERNEL_ROLES: tuple[KernelRole, ...] = ("brisc", "ncrisc", "trisc0", "trisc1", "
 
 class TensixL1:
   SIZE = 0x180000
+
+  # Device-owned boot/control state and a 512-byte zero page precede firmware.
   BOOT = 0; BOOT_SIZE = 4; MEM_ZEROS_BASE = 0x32E0; MEM_ZEROS_SIZE = 0x200
+
+  # Firmware.TEXT is packed immediately below this direct-launch argument table.
   PARAM_BASE = 0x3FD0; PARAM_SIZE = 0x30; PARAM_SLOTS = PARAM_SIZE // 4
+
+  # Direct launches overwrite one fixed, independently sized slot per RISC.
   WORKER_TEXT_BASE = {
     "brisc": 0x04000,
     "ncrisc": 0x0A000,
@@ -23,6 +29,9 @@ class TensixL1:
     "trisc1": 0x2000,
     "trisc2": 0x1000,
   }
+
+  # Resident kernels grow upward per core; deduplicated parameter templates
+  # follow the fullest core. Both must fit in this persistent program arena.
   KERNEL_CACHE_BASE = 0x12000
   KERNEL_CACHE_END = 0x42000
 
@@ -36,6 +45,9 @@ class TensixL1:
   PARAM_TEMPLATE_VALUES = 4
   PARAM_TEMPLATE_IDS = 52
   PARAM_TEMPLATE_KERNELS = 64
+
+  # CBs, L1 constants, and other program-owned storage share all remaining L1.
+  # The final words stay fixed so traced launches can patch runtime values.
   DATA_BUFFER_SPACE_BASE = KERNEL_CACHE_END
   RUNTIME_PARAM_BASE = 0x17FFE0
   RUNTIME_PARAM_SLOTS = 8
@@ -59,6 +71,7 @@ class Firmware:
     "trisc2": (0xFFB008C0, 0xFFB00F00),
   }
 
+  # Packed back-to-back in worker L1; the final image ends at PARAM_BASE.
   TEXT = {
     "brisc": (0x34E0, 0x07C0),
     "ncrisc": (0x3CA0, 0x00D8),

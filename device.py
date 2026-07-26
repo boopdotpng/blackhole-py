@@ -336,7 +336,7 @@ class Device:
     }
 
   def cache_kernels(self, programs, timeout=30.0):
-    """Install every unique worker kernel in a per-core resident L1 arena."""
+    """Install unique worker kernels below the shared template arena."""
     if self.cq is None:
       raise RuntimeError("init_device() must be called before caching kernels")
     if self.program_queue or self.read_queue:
@@ -473,6 +473,7 @@ class Device:
           ).pack(*trampolines)
         payloads.append(bytes(payload))
 
+      # Identical core-local tables share one address across trace launches.
       key = program.cores, tuple(payloads)
       if key in self._param_templates:
         address = self._param_templates[key]

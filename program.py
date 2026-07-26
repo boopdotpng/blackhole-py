@@ -279,6 +279,7 @@ class Program:
       raise ValueError("program parameter table is full")
     self.params = {param.name: param for param in params}
     self._param_slots = {param: slot for slot, param in enumerate(params)}
+    # Program-scoped CBs and constants consume the large non-persistent arena.
     self._l1 = Allocator(
       TensixL1.DATA_BUFFER_SPACE_BASE, TensixL1.DATA_BUFFER_SPACE_END, 16,
     )
