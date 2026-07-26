@@ -40,7 +40,10 @@ All of these share the same bump allocator in allocation order:
 - `p.l1_constant(...)`: immutable constants; these are uploaded before execution.
 - The DRAM transfer kernel separately uses `0x37000` as fixed staging scratch, up to one 16 KiB tile.
 
-The normal default allocator is `[0x37000, 0x50000)`. A program may instead explicitly select a range wholly inside `[0xF0000, 0x15FF00)`, as the prefill example does. One program cannot allocate across both arenas. See [program.py](/home/boop/tenstorrent/blackhole-py/program.py:244), [ttk/cb.py](/home/boop/tenstorrent/blackhole-py/ttk/cb.py:27), and [fw/dram.py](/home/boop/tenstorrent/blackhole-py/fw/dram.py:6).
+Programs allocate from `[0x37000, 0x50000)`. The upper data arena remains
+unused. See [program.py](/home/boop/tenstorrent/blackhole-py/program.py),
+[ttk/cb.py](/home/boop/tenstorrent/blackhole-py/ttk/cb.py), and
+[fw/dram.py](/home/boop/tenstorrent/blackhole-py/fw/dram.py).
 
 These are reservations, not initialized memory: `p.l1()` and CB allocation do not clear or upload anything. Kernel/NoC operations populate them later, so unused bytes may contain stale data.
 
