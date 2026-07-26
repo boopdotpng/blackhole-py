@@ -36,23 +36,10 @@ class Buffer:
   # combined must agree: a row-major activation against a tilized weight
   # silently pairs the wrong elements.
   tilized: bool = True
-  # Number of consecutive logical tiles placed in one DRAM bank before
-  # rotating to the next bank. The default tile-interleaved layout is 1.
-  # A value of 2 keeps a 4 KiB BF16 embedding row in one bank.
-  bank_block_tiles: int = 1
 
   def __post_init__(self):
     shape, axis, cores = tuple(self.shape), self.axis, tuple(self.cores)
     if not cores: raise ValueError("buffer requires at least one storage core")
-    if (
-      type(self.bank_block_tiles) is not int or
-      self.bank_block_tiles <= 0
-    ):
-      raise ValueError("DRAM bank block size must be a positive integer")
-    if self.bank_block_tiles != 1 and not self.global_address:
-      raise ValueError(
-        "blocked DRAM bank interleave currently requires global addressing",
-      )
     if axis is not None:
       if axis < 0: axis += len(shape)
       if not 0 <= axis < len(shape): raise ValueError("shard axis is outside the buffer shape")
@@ -262,7 +249,7 @@ class Dram:
 
   def buffer(self, name: str, dtype: DType, shape: tuple[int, ...],
              axis=None, *, global_address=False, cores=None,
-             tilized=True, bank_block_tiles=1) -> Buffer:
+             tilized=True) -> Buffer:
     storage_cores = self.cores if cores is None else tuple(cores)
     if not storage_cores: raise ValueError("buffer requires storage cores")
     if len(set(storage_cores)) != len(storage_cores):
@@ -274,50 +261,27 @@ class Dram:
     storage_cores = (storage_cores[0],) if global_address else storage_cores
     buffer = Buffer(
       name, 0, dtype, shape, axis, storage_cores, self.banks, global_address,
-      tilized, bank_block_tiles,
+      tilized,
     )
-    tile_groups = (
-      buffer.physical_tiles + bank_block_tiles - 1
-    ) // bank_block_tiles
-    groups_per_bank = (tile_groups + self.banks - 1) // self.banks
-    tiles_per_bank = groups_per_bank * bank_block_tiles
+    tiles_per_bank = (buffer.physical_tiles + self.banks - 1) // self.banks
     addr = self.allocator.alloc(tiles_per_bank * buffer.tile_size)
     return Buffer(
       name, addr, dtype, shape, axis, storage_cores, self.banks, global_address,
-      tilized, bank_block_tiles,
+      tilized,
     )
 
 
 class Program:
-  def __init__(self, cores, *parameters, fp32_dst=False, images=None,
-               l1_range=None):
+  def __init__(self, cores, *parameters, fp32_dst=False, images=None):
     self._cores = tuple(cores)
     params = tuple(parameters)
     if len(params) > TensixL1.PARAM_SLOTS:
       raise ValueError("program parameter table is full")
     self.params = {param.name: param for param in params}
     self._param_slots = {param: slot for slot, param in enumerate(params)}
-    if l1_range is None:
-      l1_range = (
-        TensixL1.DATA_BUFFER_SPACE_BASE, TensixL1.KERNEL_CACHE_BASE,
-      )
-    else:
-      l1_range = tuple(l1_range)
-      arenas = (
-        (TensixL1.DATA_BUFFER_SPACE_BASE, TensixL1.KERNEL_CACHE_BASE),
-        (TensixL1.KERNEL_CACHE_END, TensixL1.RUNTIME_PARAM_BASE),
-      )
-      if (
-        len(l1_range) != 2 or
-        not any(
-          start <= l1_range[0] < l1_range[1] <= end
-          for start, end in arenas
-        )
-      ):
-        raise ValueError(
-          "program L1 range must lie wholly within a data-buffer arena",
-        )
-    self._l1 = Allocator(*l1_range, 16)
+    self._l1 = Allocator(
+      TensixL1.DATA_BUFFER_SPACE_BASE, TensixL1.KERNEL_CACHE_BASE, 16,
+    )
     self.cb = CBRegistry(self._l1)
     self._l1_constants = {}
     self.launch = ()

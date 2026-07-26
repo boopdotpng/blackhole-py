@@ -1148,7 +1148,7 @@ def _global_tile_view(buffer, name):
   return Buffer(
     name, buffer.addr, buffer.dtype, (buffer.physical_tiles, 1024), 0,
     (buffer.cores[0],), buffer.banks, global_address=True,
-    tilized=buffer.tilized, bank_block_tiles=buffer.bank_block_tiles,
+    tilized=buffer.tilized,
   )
 
 
@@ -1806,7 +1806,6 @@ class Llama3Decode:
       self.embedding_weight.dtype, self.embedding_weight.shape,
       0, cores, self.embedding_weight.banks, global_address=True,
       tilized=self.embedding_weight.tilized,
-      bank_block_tiles=self.embedding_weight.bank_block_tiles,
     )
     self.cos = global_buffer(
       "e2e_rope_cos", DType.BF16, (ROPE_CACHE_TOKENS, HEAD_DIM), None,

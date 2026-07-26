@@ -4,7 +4,7 @@ from fw.consts import TensixMMIO
 from isa import R, Tensix as TT
 from ttk import Dst, DType
 from ttk.cb import CB
-from ttk.mop import LoopTemplate, Mop, Replay
+from ttk.mop import LoopTemplate, Mop
 from ttk.sync import Sem, SemWait, Stall, Wait, sem_get, sem_wait, stall, sync
 
 class _Cfg(IntEnum):
@@ -20,8 +20,6 @@ class _Cfg(IntEnum):
   DESTINATION_OFFSET = TensixMMIO.CFG_BASE + 0x2D0
 
 _ADDRESS_MODIFIER = 37
-_OUTPUT_ADDRESS, _OUTPUT_ADDRESS_OFFSET = 12, 50
-
 def _pack(addr_mode=0, last=False):
   return TT.TTPACR(0, 0, 0, addr_mode, 0, 0, 0, 0, 0, 0, 0, int(last))
 
@@ -144,88 +142,4 @@ class Pack:
     for tile in tiles:
       self._move_acquired(output_cb, tile, False, configure=False)
     self._release_dst()
-    return self
-
-  def move_repeated(self, output_cb, *, tile, count):
-    """Pack one live Dst tile repeatedly within a single ownership window."""
-    tile = self.dst.check(tile)
-    if type(count) is not int or count <= 0:
-      raise ValueError("repeated pack count must be positive")
-    sem_wait(self.k, Sem.MATH_PACK, SemWait.STALL_ON_ZERO, Stall.TDMA)
-    self._configure(output_cb, self.dst.fp32, False)
-    for _ in self.k.range(count):
-      self._move_acquired(output_cb, tile, False, configure=False)
-    self._release_dst()
-    return self
-
-  def fast_tilize(self, output_cb, *, chunks):
-    """Pack four tiles per BH fast-tilize Dst section into an output CB."""
-    if self.dst.fp32 or output_cb.dtype is not DType.BF16:
-      raise ValueError("fast tilize currently requires BF16 output")
-    if type(chunks) is not int or chunks <= 0:
-      raise ValueError("fast tilize chunks must be positive")
-    if output_cb.depth < 4 or output_cb.depth % 4:
-      raise ValueError("fast tilize output CB depth must be a multiple of 4")
-
-    self._configure(output_cb, False, False)
-    self._write_cfg(_Cfg.ADDRESS_XY, 2048 << 16)
-    self._write_cfg(_Cfg.ADDRESS_ZW, 32 | 64 << 16)
-    self.k.write(
-      TensixMMIO.REGFILE_BASE + _OUTPUT_ADDRESS_OFFSET * 4,
-      output_cb.tile_size >> 4,
-    )
-    for slot, value in enumerate((0x0001, 0x2030, 0x2014, 0x1010)):
-      self._set_thread_cfg(_ADDRESS_MODIFIER + slot, value)
-
-    pacr = lambda mode=0, last=False: TT.TTPACR(
-      0, 0, 1, mode, 0, 0, 0, 0, 0, 0, 0, int(last),
-    )
-    tile_words = (
-      pacr(), pacr(), pacr(), pacr(3),
-      pacr(), pacr(), pacr(), pacr(2),
-      pacr(), pacr(), pacr(), pacr(3),
-      pacr(), pacr(), pacr(), pacr(1, True),
-    )
-    tile_start = self._mop.state.replay.allocate(
-      len(tile_words), start=0,
-    )
-    tile_replay = Replay(tile_start, tile_words)
-    update_words = (
-      TT.TTADDDMAREG(
-        0, _OUTPUT_ADDRESS, _OUTPUT_ADDRESS_OFFSET, _OUTPUT_ADDRESS,
-      ),
-      TT.TTSTALLWAIT(int(Stall.CFG), int(Wait.THCON)),
-      TT.TTWRCFG(
-        _OUTPUT_ADDRESS, 0,
-        (int(_Cfg.L1_DESTINATION) - TensixMMIO.CFG_BASE) >> 2,
-      ),
-      TT.TTNOP(),
-    )
-    update_start = self._mop.state.replay.allocate(
-      len(update_words), start=16,
-    )
-    update_replay = Replay(update_start, update_words)
-    advance_w = TT.TTADDRCRZW(4, 0, 0, 1, 0, 0x2)
-    self._mop.configure(LoopTemplate(
-      outer=4, inner=1,
-      start=TT.TTADDRCRZW(4, 0, 0, 0, 0, 0x3),
-      loop=tile_replay, alternate=advance_w,
-      end0=update_replay, last=advance_w, outer_last=advance_w,
-    ))
-    sync(self.k)
-
-    for _ in self.k.range(chunks):
-      CB.reserve_back(self.k, output_cb, 4)
-      sem_wait(self.k, Sem.MATH_PACK, SemWait.STALL_ON_ZERO, Stall.TDMA)
-      self._destination(0, output_cb)
-      self._issue(TT.TTSETADCXX(4, 15, 0))
-      self._issue(TT.TTSETADCXY(4, 0, 0, 0, 0, 0x3))
-      self._issue(TT.TTSETADCZW(4, 0, 0, 0, 0, 0x2))
-      self._write_cfg(_Cfg.DESTINATION_OFFSET, 0)
-      stall(self.k, Stall.CFG, Wait.PACK0)
-      self._mop.run()
-      stall(self.k, Stall.SYNC, Wait.PACK0)
-      sync(self.k)
-      CB.push_back(self.k, output_cb, 4)
-      self._release_dst()
     return self

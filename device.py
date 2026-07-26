@@ -228,9 +228,7 @@ class Device:
       if dram_endpoints is None else tuple(dram_endpoints)
     )
     cores, starts, counts = self._dram_transfer_ranges(buffer, write)
-    program = build(
-      cores, endpoints, bank_block_tiles=buffer.bank_block_tiles,
-    )
+    program = build(cores, endpoints)
     sysmem_base = self.cq.noc + self.cq.dram + offset
     if sysmem_base + buffer.size > 1 << 32:
       raise ValueError("sysmem DRAM transfer crosses a 4 GiB NoC address window")

@@ -7,7 +7,7 @@ ARGS_BASE = TensixL1.PARAM_BASE
 ARGS_WORDS = 6
 SCRATCH = TensixL1.DATA_BUFFER_SPACE_BASE
 
-def _kernel(write: bool, dram_endpoints, bank_block_tiles=1):
+def _kernel(write: bool, dram_endpoints):
   fw = Asm("ncrisc")
   with fw.scope():
     base, sysmem, mid, tile, tiles, tile_size, bank, address, coord, banks = fw.reg(10)
@@ -19,19 +19,8 @@ def _kernel(write: bool, dram_endpoints, bank_block_tiles=1):
 
     fw.label("dram_loop")
     fw.beq(tiles, R.ZERO, "dram_done")
-    if bank_block_tiles == 1:
-      fw.remu(bank, tile, banks)
-      fw.divu(address, tile, banks)
-    else:
-      with fw.scope():
-        group, within, block = fw.reg(3)
-        fw.li(block, bank_block_tiles)
-        fw.divu(group, tile, block)
-        fw.remu(within, tile, block)
-        fw.remu(bank, group, banks)
-        fw.divu(address, group, banks)
-        fw.mul(address, address, block)
-        fw.add(address, address, within)
+    fw.remu(bank, tile, banks)
+    fw.divu(address, tile, banks)
     fw.mul(address, address, tile_size); fw.add(address, address, base)
     fw.switch(bank, {index: f"dram_bank_{index}" for index in range(len(dram_endpoints))}, "dram_bad_bank")
     for index, ((_, _), (x, y)) in enumerate(dram_endpoints):
@@ -60,21 +49,13 @@ def _kernel(write: bool, dram_endpoints, bank_block_tiles=1):
     fw.label("dram_done")
   return fw.lower()
 
-def _program(cores, dram_endpoints, write, bank_block_tiles=1):
+def _program(cores, dram_endpoints, write):
   cores = tuple(cores)
-  image = _kernel(
-    write, tuple(dram_endpoints), bank_block_tiles=bank_block_tiles,
-  )
+  image = _kernel(write, tuple(dram_endpoints))
   return Program(cores, images={"ncrisc": image})
 
-def dram_write(cores, dram_endpoints, *, bank_block_tiles=1):
-  return _program(
-    cores, dram_endpoints, write=True,
-    bank_block_tiles=bank_block_tiles,
-  )
+def dram_write(cores, dram_endpoints):
+  return _program(cores, dram_endpoints, write=True)
 
-def dram_read(cores, dram_endpoints, *, bank_block_tiles=1):
-  return _program(
-    cores, dram_endpoints, write=False,
-    bank_block_tiles=bank_block_tiles,
-  )
+def dram_read(cores, dram_endpoints):
+  return _program(cores, dram_endpoints, write=False)

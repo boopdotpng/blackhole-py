@@ -344,29 +344,10 @@ class NoC:
     # Program binding moves the base to this core's shard and stores the
     # shard's first DRAM bank in the aligned address's low bits.
     k.andi(rotation, base, 7); k.andi(base, base, -8)
+    if isinstance(tile, R): k.add(address, tile, rotation)
+    else: k.li(address, tile); k.add(address, address, rotation)
     k.li(banks, len(endpoints))
-    if param.bank_block_tiles == 1:
-      if isinstance(tile, R): k.add(address, tile, rotation)
-      else: k.li(address, tile); k.add(address, address, rotation)
-      k.remu(bank, address, banks); k.divu(address, address, banks)
-    else:
-      if not param.global_address:
-        raise ValueError(
-          "blocked DRAM bank interleave requires global addressing",
-        )
-      with k.scope():
-        group, within, block = k.reg(3, exclude=(tile, base))
-        k.li(block, param.bank_block_tiles)
-        if isinstance(tile, R):
-          k.divu(group, tile, block)
-          k.remu(within, tile, block)
-        else:
-          k.li(group, tile // param.bank_block_tiles)
-          k.li(within, tile % param.bank_block_tiles)
-        k.remu(bank, group, banks)
-        k.divu(address, group, banks)
-        k.mul(address, address, block)
-        k.add(address, address, within)
+    k.remu(bank, address, banks); k.divu(address, address, banks)
     k.li(scale, buffer.tile_size); k.mul(address, address, scale); k.add(address, address, base)
     selected = k._new_label("dram_bank_selected")
     invalid = k._new_label("dram_bank_invalid")
