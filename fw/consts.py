@@ -8,31 +8,38 @@ KERNEL_ROLES: tuple[KernelRole, ...] = ("brisc", "ncrisc", "trisc0", "trisc1", "
 class TensixL1:
   SIZE = 0x180000
   BOOT = 0; BOOT_SIZE = 4; MEM_ZEROS_BASE = 0x32E0; MEM_ZEROS_SIZE = 0x200
-  PARAM_BASE = 0x4240; PARAM_SIZE = 0xEC0; PARAM_SLOTS = PARAM_SIZE // 4
+  PARAM_BASE = 0x3FD0; PARAM_SIZE = 0x30; PARAM_SLOTS = PARAM_SIZE // 4
   WORKER_TEXT_BASE = {
-    "brisc": 0x05100,
-    "ncrisc": 0x0F000,
-    "trisc0": 0x18F00,
-    "trisc1": 0x22E00,
-    "trisc2": 0x2CD00,
+    "brisc": 0x04000,
+    "ncrisc": 0x0A000,
+    "trisc0": 0x0C000,
+    "trisc1": 0x0F000,
+    "trisc2": 0x11000,
   }
-  WORKER_TEXT_SIZE = 0x9F00; DATA_BUFFER_SPACE_BASE = 0x37000
-  KERNEL_CACHE_BASE = 0x50000
-  KERNEL_CACHE_END = 0x0F0000
+  WORKER_TEXT_SIZE = {
+    "brisc": 0x6000,
+    "ncrisc": 0x2000,
+    "trisc0": 0x3000,
+    "trisc1": 0x2000,
+    "trisc2": 0x1000,
+  }
+  KERNEL_CACHE_BASE = 0x12000
+  KERNEL_CACHE_END = 0x42000
 
-  # Traced launches keep their immutable parameter tables resident in high
-  # worker L1. Dispatch puts the selected template address in the low 24 bits
-  # of the GO word; BRISC resolves the few dynamic slots from RUNTIME_PARAM_BASE
-  # before releasing the other worker RISCs.
-  RUNTIME_PARAM_BASE = 0x15FF00
-  RUNTIME_PARAM_SLOTS = 16
-  PARAM_TEMPLATE_BASE = 0x160000
-  PARAM_TEMPLATE_END = 0x170000
-  PARAM_TEMPLATE_STRIDE = 128
+  # Traced launches keep their immutable parameter tables resident in worker
+  # L1 alongside the resident kernels. Dispatch puts the selected
+  # template address in the low 24 bits of the GO word; BRISC resolves the few
+  # dynamic slots from RUNTIME_PARAM_BASE before releasing the other RISCs.
+  PARAM_TEMPLATE_ALIGNMENT = 32
+  PARAM_TEMPLATE_STRIDE = 96
   PARAM_TEMPLATE_MAX_PARAMS = 12
   PARAM_TEMPLATE_VALUES = 4
   PARAM_TEMPLATE_IDS = 52
   PARAM_TEMPLATE_KERNELS = 64
+  DATA_BUFFER_SPACE_BASE = KERNEL_CACHE_END
+  RUNTIME_PARAM_BASE = 0x17FFE0
+  RUNTIME_PARAM_SLOTS = 8
+  DATA_BUFFER_SPACE_END = RUNTIME_PARAM_BASE
 
 class Firmware:
   BRISC_STACK_TOP = NCRISC_STACK_TOP = 0xFFB01FF0
@@ -53,11 +60,11 @@ class Firmware:
   }
 
   TEXT = {
-    "brisc": (0x3840, 0x06B0),
-    "ncrisc": (0x3EF0, 0x00D8),
-    "trisc0": (0x3FC8, 0x00C8),
-    "trisc1": (0x4090, 0x00C8),
-    "trisc2": (0x4158, 0x00C8),
+    "brisc": (0x34E0, 0x07C0),
+    "ncrisc": (0x3CA0, 0x00D8),
+    "trisc0": (0x3D78, 0x00C8),
+    "trisc1": (0x3E40, 0x00C8),
+    "trisc2": (0x3F08, 0x00C8),
   }
 
 class RunState(IntEnum):

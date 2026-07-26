@@ -153,7 +153,8 @@ class Device:
     self._cached_static = {}
     self._kernel_cache_buffer = None
     self._resident_programs = {}
-    self._param_template_next = TensixL1.PARAM_TEMPLATE_BASE
+    self._param_templates = {}
+    self._param_template_next = TensixL1.KERNEL_CACHE_BASE
 
   def reset_cores(self):
     with TLBWindow(self.pcie.fd, self.pcie.cores[0]) as win:
@@ -345,8 +346,10 @@ class Device:
       raise ValueError(
         "resident kernel traces do not yet support per-program L1 constants",
       )
-    if any(program in self._resident_programs for program in programs):
+    if self._resident_programs:
       raise RuntimeError("resident kernels can only be installed once")
+    if self._param_templates:
+      raise RuntimeError("resident kernels must be installed before templates")
 
     next_address = {
       core: TensixL1.KERNEL_CACHE_BASE for core in self.pcie.cores
@@ -413,6 +416,13 @@ class Device:
     used = tuple(
       next_address[core] - TensixL1.KERNEL_CACHE_BASE for core in cores
     )
+    alignment = TensixL1.PARAM_TEMPLATE_ALIGNMENT
+    self._param_template_next = (
+      max(next_address.values(), default=TensixL1.KERNEL_CACHE_BASE)
+      + alignment - 1
+    ) & -alignment
+    if self._param_template_next > TensixL1.KERNEL_CACHE_END:
+      raise MemoryError("resident kernels exceed the persistent program arena")
     return {
       "programs": len(programs),
       "images": len(global_images),
@@ -436,13 +446,6 @@ class Device:
           f"trace program has {count} parameters; resident templates support "
           f"at most {TensixL1.PARAM_TEMPLATE_MAX_PARAMS}",
         )
-      address = self._param_template_next
-      following = address + TensixL1.PARAM_TEMPLATE_STRIDE
-      if following > TensixL1.PARAM_TEMPLATE_END:
-        raise MemoryError("worker-L1 parameter-template arena is full")
-      self._param_template_next = following
-      addresses.append(address)
-
       names = tuple(program.params)
       ids = bytes(runtime_ids.get(name, 0xFF) for name in names)
       tables = program._param_table(values)
@@ -470,6 +473,19 @@ class Device:
           ).pack(*trampolines)
         payloads.append(bytes(payload))
 
+      key = program.cores, tuple(payloads)
+      if key in self._param_templates:
+        address = self._param_templates[key]
+      else:
+        address = self._param_template_next
+        following = address + TensixL1.PARAM_TEMPLATE_STRIDE
+        if following > TensixL1.KERNEL_CACHE_END:
+          raise MemoryError("worker-L1 persistent program arena is full")
+        self._param_template_next = following
+        self._param_templates[key] = address
+        writes.append(UnicastWrite(program.cores, address, tuple(payloads)))
+      addresses.append(address)
+
       for slot, name in enumerate(names):
         if name not in runtime_ids:
           continue
@@ -489,8 +505,6 @@ class Device:
             "capture-time values",
           )
         defaults[name] = value
-      writes.append(UnicastWrite(program.cores, address, tuple(payloads)))
-
     missing = set(runtime_names) - seen
     if missing:
       raise KeyError(

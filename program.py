@@ -280,7 +280,7 @@ class Program:
     self.params = {param.name: param for param in params}
     self._param_slots = {param: slot for slot, param in enumerate(params)}
     self._l1 = Allocator(
-      TensixL1.DATA_BUFFER_SPACE_BASE, TensixL1.KERNEL_CACHE_BASE, 16,
+      TensixL1.DATA_BUFFER_SPACE_BASE, TensixL1.DATA_BUFFER_SPACE_END, 16,
     )
     self.cb = CBRegistry(self._l1)
     self._l1_constants = {}
@@ -360,7 +360,7 @@ class Program:
       groups = {}
       for core in self.cores:
         image = kernels[core].get(role, RETURN_KERNEL[role])
-        if len(image) > TensixL1.WORKER_TEXT_SIZE:
+        if len(image) > TensixL1.WORKER_TEXT_SIZE[role]:
           raise ValueError(f"{role} kernel exceeds its text partition")
         groups.setdefault(image, []).append(core)
       for image, cores in groups.items():
