@@ -234,10 +234,10 @@ a decent signal the eventual hcq2 port will feel natural. Not now.
 Structurally very close. One real difference: **where the command processor
 lives.**
 
-- Ours (`cq.py` + `fw/cq.py`): host writes records into a prefetch queue,
-  on-device brisc firmware prefetches, dispatches to cores, writes completions.
-  Our `Op` enum (`PAD`/`UNICAST_WRITE`/`MCAST_WRITE`/`RUN`/`DRAM_RECORD`) is a
-  packet ISA interpreted by microcode we wrote.
+- Ours (`cq.py` + `fw/cq.py`): host writes records into a 4 MiB issue ring,
+  on-device BRISC firmware prefetches and dispatches them, and the resident
+  DRAM core handles copies. Our `Op` enum is a packet ISA interpreted by
+  microcode we wrote.
 - tinygrad's `HWQueue`: host builds the packet stream and rings a doorbell; a
   *hardware* command processor consumes it. AMD PM4 and NV methods are packet
   ISAs interpreted by fixed-function microcode.
@@ -253,16 +253,16 @@ The mapping is nearly mechanical:
 |---|---|
 | `HWQueue.q(*values)` | append a record to the issue ring |
 | `HWQueue.exec(prg, args, gs, ls)` | `Op.RUN` |
-| `HWQueue.copy(dest, src, sz)` | `Op.UNICAST_WRITE` / `Op.MCAST_WRITE` |
-| `HWQueue._submit(dev)` | bump the prefetch queue write pointer |
-| `HCQSignal` | `DISPATCH_DONE_COUNT` / completion ring |
+| `HWQueue.copy(dest, src, sz)` | `Op.DRAM_COPY` / `Op.UNICAST_WRITE` / `Op.MCAST_WRITE` |
+| `HWQueue.signal(sig, value)` | `Op.SIGNAL` |
+| `HWQueue._submit(dev)` | publish the monotonic issue-ring put pointer |
+| `HCQSignal` | 64-bit value at +0, device timestamp at +8 |
 | `HCQBuffer(va_addr, meta, view)` | `Allocator` + `TLBWindow` |
 
-`HCQSignal` is the piece to look at hardest. It needs a monotonic 64-bit value
-the device writes and the host polls, with `wait()` doing backoff
-(`hcq.py:283`). Our `DISPATCH_COMPLETION_*` machinery is already that shape; it
-mostly needs reframing as "a counter at an address" rather than a ring of
-entries.
+`HCQSignal` now has the same memory shape on both sides: a monotonic 64-bit
+value the device writes and the host polls, followed by a 64-bit device-clock
+timestamp. The old page-strided completion ring and descriptor array are gone;
+issue flow control is the same monotonic put/read model used by HCQ backends.
 
 `fw/` stays exactly as it is — it sits below `HWQueue` and is invisible to
 tinygrad.
@@ -411,7 +411,7 @@ them. Ugly but zero-diff — and x86 already cheats in the same direction
    `examples/llama3.py:1438-1494`, ~57 lines of hand-written brisc RISC-V) that
    currently exists in hand-written form.
 4. **Tensix words + isel** for one op. `decode_projection` is the right first
-   target: single bias-free `weight @ x`, already sharded over 118 cores, no
+   target: single bias-free `weight @ x`, already sharded over 117 cores, no
    softmax.
 5. **`codegen/tensix.py`** — CB assignment, stream split — driven by whatever
    step 4 needs.

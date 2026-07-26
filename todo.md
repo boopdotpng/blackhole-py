@@ -100,11 +100,10 @@ list is the isel matcher's spec.
 
 ### Phase 0 — unblock and learn
 
-**1. Move DRAM transfers to the CQ.** (was: "make dram uploads go through cq or
-mirror tt-metal, no more kernel launches to upload dram")
-Independent of everything else, unblocked now, doesn't depend on knowing the op
-set. Deletes a launch mechanism rather than adding code. Prerequisite for the
-`HWQueue` subclass in phase 1.
+**1. Move DRAM transfers to the CQ. — done.** Uploads and readbacks are
+`Op.DRAM_COPY` records consumed by the resident BRISC/NCRISC engines on `(14,4)`;
+`fw/dram.py` and per-transfer kernel launches are gone. The post-tilize path
+sustains more than 20 GB/s.
 
 **2. Split ttk's select/encode seam.** Produces the table above.
 
@@ -120,10 +119,8 @@ opaque bytes and tinygrad's CPU backend will not beat it. See
 `tinygrad-integration.md` §3.
 
 **4. `HWQueue` subclass** over `cq.py` + `fw/`. Target: launch an existing
-hand-written kernel through tinygrad's queue. `HCQSignal` is the piece to look
-at hardest — it needs a monotonic 64-bit counter the device writes and the host
-polls, which means reframing `DISPATCH_COMPLETION_*` as "a counter at an
-address" rather than a ring of entries.
+hand-written kernel through tinygrad's queue. The CQ protocol now already has
+the required `HCQSignal` layout and monotonic put/read issue-ring pointers.
 
 ### Phase 2 — codegen bring-up
 
@@ -132,7 +129,7 @@ fill loop (`examples/llama3.py:1438-1494`, ~57 lines of hand-written brisc)
 regenerated from UOps and byte-identical.
 
 **6. Tensix words + isel for one kernel.** `decode_projection` is the right
-first target: single bias-free `weight @ x`, already sharded over 118 cores, no
+first target: single bias-free `weight @ x`, already sharded over 117 cores, no
 softmax.
 
 **7. `codegen/tensix.py`** — CB assignment, stream split, driven by whatever
