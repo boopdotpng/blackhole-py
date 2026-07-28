@@ -1,5 +1,10 @@
 # blackhole-py
 
+> [!WARNING]
+> **The current repository state is broken.** The dense row-major storage
+> rewrite is incomplete, so the Llama example and hardware paths are not
+> expected to run end to end.
+
 Run Llama 3.2 1B Instruct end-to-end decode:
 
 ```sh
@@ -10,8 +15,6 @@ PYTHONPATH=. python3 examples/llama3.py \
 
 Add `--profile` to print startup preparation/staging/DRAM-upload time and the
 generated-token device/CQ versus host-loop breakdown.
-
-`examples/rand.py` is retained as a standalone hardware RNG kernel utility.
 
 ## Requirements
 

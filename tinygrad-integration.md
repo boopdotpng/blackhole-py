@@ -1,448 +1,778 @@
 # tinygrad integration
 
-Notes on porting blackhole-py to a tinygrad backend. Line references are against
-tinygrad `3946df787` (clean master) unless stated otherwise.
+Working design for turning blackhole-py into a tinygrad backend.
 
-The guiding constraint: **make as few changes to tinygrad core as possible.** The
-conclusion below is that we need roughly one, in `codegen/__init__.py`.
+This document is organized around the backend layers sketched on the whiteboard.
+References to tinygrad are against `4b62c82a8`; avoid depending on exact line
+numbers because that tree moves quickly.
 
----
+The main architectural decision is:
 
-## 1. Registration needs zero core edits
+> Every tinygrad-visible and persistent device buffer is ordinary dense
+> row-major data with its exact logical size. The backend never tilizes a
+> tensor. Tensix faces, vector tails, FPU panels, and Dst layout exist only as
+> transient addressing decisions inside a generated kernel.
 
-`device.py` contains no backend-specific code at all — no allocator, no device.
-Registration is pure filename convention (`device.py:17`):
-
-```python
-self._devices = [x.stem[len("ops_"):].upper()
-                 for x in (pathlib.Path(__file__).parent/"runtime").iterdir()
-                 if x.stem.startswith("ops_")]
-```
-
-and `_Device.get_class` (`device.py:31`) imports `tinygrad.runtime.ops_{x}` and
-picks the member whose lowercased name is `x + "device"`.
-
-So `runtime/ops_tt.py` containing `class TTDevice` **is** the registration.
-
-The only optional core edit here is appending `"TT"` to `ALL_DEVICES`
-(`device.py:14`), which affects nothing but autodetect ordering and the
-`enumerate_devices_str` banner.
-
-Every real backend — AMD, NV, QCOM, CPU, RDMA — lives entirely in
-`runtime/ops_*.py`. `device.py` is the abstract `Allocator` / `Buffer` /
-`Compiled` contract only.
+There is no graph-visible `pad -> realize -> shrink` layout protocol. A TT tensor
+does not need persistent `padded_shape` or `tilized` metadata. The allocator may
+reserve aligned physical slack, as every GPU allocator does, but that slack is
+not part of tensor semantics. Copy-in, inter-kernel storage, and copy-out all
+use the same dense row-major byte order.
 
 ---
 
-## 2. File layout
+## 1. Execution model: SFPU baseline, FPU fast path
 
-### `tinygrad/runtime/support/tt/`
-Everything that talks to hardware, nothing that knows about kernels.
+Blackhole has two useful compute personalities.
 
-| file | from | contents |
+| engine | hardware operation | compiler role |
 |---|---|---|
-| `pcie.py` | `pcie.py` | TLB windows, BAR mapping, physical allocator |
-| `chip.py` | `device.py` | reset, harvesting, NOC coordinate translation, core enumeration |
-| `cq.py` | `cq.py` | ring layout, `Op` enum, `PacketLayout`, host-side queue structure |
-| `firmware.py` | `fw/` | prefetch / dispatch / core firmware (see §6) |
+| SFPU | 32 lanes of 32-bit arithmetic | complete, slower SIMD fallback |
+| FPU `ELW*` | aligned `8x16` elementwise block | optional elementwise fast path |
+| FPU `MVMUL` | `SrcB[8x16] @ SrcA[16x16] -> Dst[8x16]` | tensor-core-style matmul fast path |
 
-Read `runtime/support/system.py` before writing `pcie.py` — its generic
-PCI/mmap/ioctl helpers may already cover the boring parts. Also
-`hcq.py:15-57` (`MMIOInterface`, `FileIOInterface`) which is the standard
-wrapper every backend uses for exactly this.
+The MVMUL result is `8x16`, not `16x16`. A software sequence commonly combines
+multiple instructions into a `16x16` face or a `32x32` tile, but that larger
+shape is not the atomic instruction.
 
-Skip autogen. AMD hand-writes plenty of its structs.
+### 1.1 The smallest unit we must support
 
-### `tinygrad/renderer/isa/tensix.py`
-From `isa.py` + `asm.py`. Opcode enums (RV32 **and** Tensix words), encoders, the
-five matcher slots, `is_two_address`, `stack_pointer`, `spill`/`fill`,
-`asm_str`, `render`.
+The smallest **logical** computation is one scalar. The smallest general-purpose
+**physical issue** is one 32-lane SFPU instruction.
 
-Structurally the `x86.py` analogue. Mirror its section boundaries:
+The SFPU has per-lane enable state. Codegen can therefore execute a vector with
+`1..32` live lanes and ignore the others. A normal dense kernel becomes:
 
-```
-  11-122   X86Ops enum
- 123-160   extra_matcher
- 162-199   pre_isel_matcher
- 200-220   register definitions
- 221-547   isel_matcher
- 548-604   pre/post regalloc (lower_range / lower_end)
- 605-800   encode
- 802-880   X86Renderer class
+```text
+for each full group of 32 outputs:
+    load/stage 32 values
+    run SFPU program with 32 active lanes
+    store 32 values
+
+for the final partial group:
+    load/stage N values, 1 <= N < 32
+    run the same program with lanes [0, N) active
+    store N values
 ```
 
-**Naming: `tensix.py`, not `rv.py`.** A single trisc stream interleaves both
-instruction families — `asm.py:166-177` shows Tensix words go inline in the RV32
-stream on trisc0/1/2, and only brisc needs the MMIO store to
-`INSTRN_BUF_BASE`. One renderer owns both.
+This gives a correctness path for arbitrary tinygrad shapes without making
+`32x32` part of the tensor layout.
 
-Keep the RV32 encoder table (`_r`/`_i`/`_s`/`_b`/`_u`/`_j` from `isa.py`) as a
-self-contained section inside the file. It's pure RISC-V with nothing Tensix
-about it, so if a generic RISC-V backend is ever wanted, that section lifts out
-into `rv.py` and `tensix.py` subclasses it. Don't do that split preemptively.
+`SFPLOAD` is not an arbitrary gather: it moves up to 32 values from a fixed
+`4x8` footprint in Dst (even or odd columns of four rows). Codegen must stage
+irregular loads into L1/Dst first. Contiguous lanes should become one NoC span;
+irregular lanes may initially become several small spans. That can be slow and
+still be correct, which is the right baseline.
 
-Renderer naming is derived from the class name: `_renderer_name` strips
-`RENDERER` and the device prefix, so `TensixRenderer` with `device = "TT"`
-becomes selectable as `DEV=TT:TENSIX`. Multiple renderers per device are
-supported — `CPUDevice` registers four — so a readable debug renderer alongside
-the real one is free.
+### 1.2 FPU blocks are optimizations
 
-### `tinygrad/codegen/tensix.py`
-From `ttk/`. The part with **no upstream analogue**:
+The FPU is the Tensix analogue of a GPU tensor core:
 
-- pad to nearest 32-visible shape, tile-ification
-- CB assignment and the reserve/push/wait/pop credit protocol
-- the retain-vs-consume edge attribute (last consumer pops, earlier readers retain)
-- engine assignment (unpack / FPU / SFPU / pack)
-- the 5-stream split
+- `ELWADD`, `ELWSUB`, and `ELWMUL` consume aligned `8x16` blocks.
+- `MVMUL` has `M=8`, `N=16`, `K=16`.
+- Fidelity phases affect both numerical behavior and cost.
+- Dst accumulation, SrcA/SrcB bank ownership, and explicit zeroing are part of
+  instruction selection.
 
-`ttk/cb.py`, `ttk/sync.py`, `ttk/shard.py`, `ttk/l1.py` land here, as rewrite
-rules rather than imperative builders.
+Codegen should select an FPU block only when it can prove the appropriate
+alignment and operand layout. Edge panels can be staged with local identities:
 
-**`ttk/fpu.py`, `ttk/sfpu.py`, `ttk/unpack.py`, `ttk/pack.py` split across the
-two files.** The "which instruction, and how is it encoded" half goes to
-`isa/tensix.py`; the "when do I choose this, and what does it cost" half goes to
-`codegen/tensix.py`. Today these are fused — `fpu.py:matmul` both selects and
-emits. Separating them is most of the porting work, and it's the thing that
-keeps tile logic out of isel matchers where it can't be tested.
+- zero for sum, add, and matmul;
+- `-inf` for max reductions;
+- one for product reductions;
+- an inactive SFPU lane when no identity materialization is needed.
 
-### `tinygrad/runtime/ops_tt.py`
-From `program.py`. `TTDevice`, `TTAllocator`, `TTProgram`, `TTComputeQueue`,
-`pm_lower`.
+This padding exists only in L1, Src, or Dst scratch. It never changes the global
+buffer shape.
 
-### `tinygrad/codegen/__init__.py`
-The one core edit. See §5.
+### 1.3 What remains of the 32x32 tile
+
+A `32x32` tile remains useful as:
+
+- a transfer or circular-buffer page;
+- a convenient Dst allocation unit;
+- a hand-written kernel scheduling unit;
+- a matmul macro composed from smaller FPU instructions.
+
+It is not the minimum allocation, minimum computation, or required tinygrad
+layout. In new APIs, use **page** for a storage/transport chunk and **block** or
+**vector** for an execution footprint; reserve **tile** for an explicitly
+`32x32` Tensix object.
+
+### 1.4 Proven row-major execution
+
+`examples/row_major_mvmul.py` validates the important feasibility result on
+Blackhole:
+
+```text
+dense BF16 left  [64, 16]
+dense BF16 right [64, 16]
+    -> left @ right.T
+dense BF16 output [64, 64]
+```
+
+All three DRAM buffers use the row-major-only buffer API. There is no host
+permutation and no device layout-conversion pass. The unpacker performs the
+ordinary per-panel transpose needed by the RHS of MVMUL, and NCRISC scatters the
+naturally face-organized Dst result directly into dense output rows. The
+complete result matches the CPU BF16 reference; the repeated HiFi2 sequence
+reaches approximately 97% of the ideal MVMUL issue rate.
+
+This establishes the backend rule:
+
+```text
+global row-major bytes
+  -> row-major-aware NoC/unpack/address schedule
+  -> transient SrcA/SrcB/Dst organization
+  -> row-major-aware pack/NoC schedule
+  -> global row-major bytes
+```
+
+The transient middle is analogous to register-lane or tensor-core fragment
+layout on a conventional GPU. It is not a tensor representation and does not
+justify a tilize operation.
 
 ---
 
-## 3. Host tilization goes in `_copyin`
+## 2. Backend layers and file layout
 
-The allocator contract (`device.py:238-241`):
+### 2.1 PCIe and raw transport
 
-```python
-def _alloc(self, size:int, options:BufferSpec): ...
-def _copyin(self, dest, src:memoryview): ...
-```
+Target: `tinygrad/runtime/support/tt/pcie.py`
 
-Call site (`engine/realize.py:171`):
+Responsibilities:
 
-```python
-dest.allocator._copyin(dest._buf, src.as_memoryview(allow_zero_copy=True))
-```
+- device discovery and BAR mappings;
+- power-state ioctls;
+- pinning and freeing host pages;
+- TLB allocation, configuration, and release;
+- small MMIO reads/writes;
+- mapping pinned sysmem for command queues and signals.
 
-`dest` is **whatever opaque `_alloc` returned** — AMD and CPU return their own
-`HCQBuffer` dataclass. So `TTAllocator._alloc` returns a `TTBuffer` carrying
-layout metadata, and `_copyin` reads it off `dest` and permutes on the way in.
+Start from blackhole-py's `pcie.py`, but use tinygrad's existing system helpers
+where possible. `tinygrad/runtime/support/system.py` and the interface classes
+in `runtime/support/hcq.py` already cover much of the mmap/ioctl plumbing used by
+AMD and other backends.
 
-`Buffer.tile_data` (`program.py:158+`) moves in verbatim. It's a pure
-permutation on opaque bytes:
+This layer knows addresses and bytes. It does not know tensor shapes, dtypes, or
+Tensix tiles.
 
-```python
-element = np.dtype(f"V{self.dtype.itemsize}")   # never inspects values
-tiles = physical.reshape(self.physical_tiles, 2, 2, 16, 16)
-tiles = tiles.transpose(0, 1, 3, 2, 4).reshape(self.physical_tiles, 1024)
-```
+### 2.2 Device initialization and boot
 
-Nothing above the allocator can tell the difference. Keep numpy here — it's a
-strided memcpy and tinygrad's CPU backend will not beat it.
+Target: `tinygrad/runtime/support/tt/chip.py`
 
-### Why not a `BufferSpec` field
+Responsibilities:
 
-`BufferSpec` (`device.py:80`) *is* passed to `_alloc` and lands on
-`Buffer.options`, so a `layout` field would work. But it's `frozen=True,
-eq=True` and used as the LRU alloc cache key, so adding a field is a genuine
-core edit. It'd be a *correct* one — two differently-tiled buffers genuinely
-aren't interchangeable in the alloc cache — but it's avoidable.
+- harvesting and card information;
+- DRAM-bank and usable-core enumeration;
+- NoC coordinate translation;
+- reset and boot of worker firmware;
+- boot of the command-queue/prefetch/dispatch firmware;
+- initialization of pinned sysmem, signals, and issue rings.
 
-The layout of a TT weight is a function of how the kernel consumes it, which we
-know at schedule time, not at `Buffer.__init__`. Deriving it into our own
-`TTBuffer` at `_alloc` keeps the diff at zero. Reach for the `BufferSpec` field
-only if a case turns up where the user must state layout up front.
+Keep using known-good blackhole-py firmware during the first backend bring-up.
+Rewriting firmware in UOps is valuable, but it should happen after the renderer
+and queue can already launch and debug a compute program.
 
-### Context: nothing in tinygrad models physical layout
+### 2.3 HCQ
 
-`dtype` + `size` is the entire buffer model. `AddrSpace` is about *where*, not
-*how arranged*. This is genuinely new ground, and hiding it behind `_copyin` is
-the move precisely because it means not having to win an argument about the core
-model before getting started.
+Targets:
 
-### Known gotcha: bf16 rounding
+- `tinygrad/runtime/support/tt/cq.py`
+- `tinygrad/runtime/ops_tt.py`
 
-`Buffer.from_numpy` (`program.py:122`) truncates:
+Use tinygrad's current HCQ v1 abstraction first:
 
-```python
-(values.view(np.uint32) >> 16).astype("<u2")
-```
+- `HWQueue` for copy, execute, wait, and signal packets;
+- `HCQSignal` for host/device timeline values;
+- `HCQCompiled` for the device integration;
+- the existing blackhole-py issue ring and resident prefetch/dispatch firmware
+  below the `HWQueue` interface.
 
-while `_bf16_rne_bytes` (used for the rope tables, `examples/llama3.py:1956`)
-rounds to nearest even. Two conventions already live in one file. tinygrad's
-bf16 cast is RNE, so routing conversion through tinygrad silently switches the
-truncating path and shifts golden-test numerics by up to 1 ulp. Decide
-deliberately.
+Tenstorrent differs from AMD/NVIDIA in where the command processor lives: we
+supply firmware that interprets our packet stream. That difference is below
+HCQ. The host abstraction is still:
 
-Also `X86Renderer.supported_dtypes()` (`x86.py:879`) explicitly excludes
-`bfloat16`. `ClangRenderer` / LLVM handle it fine.
-
----
-
-## 4. HCQ — use v1, not v2
-
-**HCQ = Hardware Command Queue. It is not AMD-specific.** `support/hcq.py` (644
-lines) is the shared abstraction subclassed by **AMD, NV, QCOM, CPU, and
-RDMA**: `HCQCompiled`, `HWQueue`, `HCQSignal`, `HCQProgram`, `HCQBuffer`. This
-is the one to use.
-
-`support/hcq2.py` is a separate in-progress rewrite and is barely live:
-
-```python
-HCQ_DEVS = frozenset(("AMD",))                          # hcq2.py:24
-if getenv("HCQ2"): from extra.hcq2.ops_amd2 import *    # ops_amd.py:1104
-```
-
-AMD-only, opt-in by env var, device implementation out of tree in `extra/`.
-`ops_cpu.py` carries three `# TODO: move to hcq2` comments — direction of
-travel, not current state.
-
-**Consequence:** hcq2's `DepsTracker`, which derives signal/wait automatically
-from buffer read/write sets, is *not* available to us. On hcq v1 sync is
-explicit — `HWQueue.signal(sig, val)` / `.wait(sig, val)` against timeline
-signals. Still much better than hand-ordering, but we write the deps rather than
-having them inferred.
-
-### What hcq2 actually does
-
-Not C generation. The UOps **are the command packets**. `make_cmdbuf`
-(`hcq2.py:52`) walks the queue's `Ops.INS` operands and splits them:
-
-```python
-for s in (s for ins in lin.src for s in ins.src):
-    if (ssimp:=s.simplify()).op is not Ops.CONST: patches.append((len(blob), ssimp))
-    blob += struct.pack(...)
-```
-
-Constants bake into a literal blob; non-constants become *patches* — stores into
-the command buffer resolved at link time. The packet stream compiles once and
-only varying fields (buffer addresses, timeline values) get written per launch.
-
-**That is our `DeviceTrace`.** `device.py:40-56` — `_TraceParam`,
-`_TraceRuntime`, `DeviceTrace` — is the same mechanism: record once, patch the
-varying fields on replay. We arrived at the same design independently, which is
-a decent signal the eventual hcq2 port will feel natural. Not now.
-
-### Our CQ vs. theirs
-
-Structurally very close. One real difference: **where the command processor
-lives.**
-
-- Ours (`cq.py` + `fw/cq.py`): host writes records into a 4 MiB issue ring,
-  on-device BRISC firmware prefetches and dispatches them, and the resident
-  DRAM core handles copies. Our `Op` enum is a packet ISA interpreted by
-  microcode we wrote.
-- tinygrad's `HWQueue`: host builds the packet stream and rings a doorbell; a
-  *hardware* command processor consumes it. AMD PM4 and NV methods are packet
-  ISAs interpreted by fixed-function microcode.
-
-So the only difference is that on Tenstorrent we supply the command processor.
-That sits *below* `HWQueue`, which doesn't care — it only requires that
-`_submit(dev)` gets bytes to the device and that a signal eventually becomes
-visible to the host.
-
-The mapping is nearly mechanical:
-
-| `hcq.py` | ours |
+| tinygrad HCQ | TT implementation |
 |---|---|
-| `HWQueue.q(*values)` | append a record to the issue ring |
-| `HWQueue.exec(prg, args, gs, ls)` | `Op.RUN` |
-| `HWQueue.copy(dest, src, sz)` | `Op.DRAM_COPY` / `Op.UNICAST_WRITE` / `Op.MCAST_WRITE` |
-| `HWQueue.signal(sig, value)` | `Op.SIGNAL` |
-| `HWQueue._submit(dev)` | publish the monotonic issue-ring put pointer |
-| `HCQSignal` | 64-bit value at +0, device timestamp at +8 |
-| `HCQBuffer(va_addr, meta, view)` | `Allocator` + `TLBWindow` |
+| `exec(program, args, global, local)` | enqueue `RUN` |
+| `copy(dst, src, size)` | enqueue DRAM/sysmem or NoC copy |
+| `wait(signal, value)` | queue/device wait |
+| `signal(signal, value)` | queue/device signal |
+| queue submit | publish the issue-ring put pointer |
 
-`HCQSignal` now has the same memory shape on both sides: a monotonic 64-bit
-value the device writes and the host polls, followed by a 64-bit device-clock
-timestamp. The old page-strided completion ring and descriptor array are gone;
-issue flow control is the same monotonic put/read model used by HCQ backends.
+`hcq2.py` is the likely long-term target because it represents command buffers
+as UOps and derives more dependencies, but it is still AMD-only and opt-in in
+the current tree. Do not block the first TT backend on it.
 
-`fw/` stays exactly as it is — it sits below `HWQueue` and is invisible to
-tinygrad.
+Open design point: map tinygrad launch geometry onto the participating Tensix
+cores. This may use `Ops.SPECIAL`, explicit program metadata, or both. Do not
+pretend a Tensix core is a conventional GPU thread until the mapping is defined.
 
-### Bonus: `pm_lower` / `pm_bufferize` already exist
+### 2.4 Allocator
 
-`Compiled.pm_lower` and `Compiled.pm_bufferize` (`device.py:330-331`) are
-per-device `PatternMatcher` hooks. They fire on the **host command queue** path,
-not kernel codegen — `CPUDevice.pm_lower` (`ops_cpu.py:163`) rewrites
-`CUSTOM_FUNCTION("submit_cmdbuf")` into a store.
+Target: the allocator owned by `TTDevice` in `runtime/ops_tt.py`.
 
-That's the hook for *"make dram uploads go through cq"* from `todo_today.md`.
-Already device-overridable, zero core changes.
+The allocator receives a byte count. That is sufficient under the dense-buffer
+design:
 
----
-
-## 5. Where lowering hooks in
-
-`to_program` is called from `engine/realize.py:246` with `Device[...].renderer`.
-`do_to_program` (`codegen/__init__.py:424`) does:
-
-```python
-full_sink = full_rewrite_to_sink(ast, renderer, optimize=ast.tag is None)
-prog_info = ProgramInfo.from_sink(full_sink, renderer.target)
-if isinstance(renderer, ISARenderer):
-    full_sink = graph_rewrite(full_sink, renderer.pre_isel_matcher, ...)
-    full_sink = graph_rewrite(full_sink, renderer.isel_matcher, ...)
+```text
+tinygrad-visible size = exact requested bytes
+physical reservation = round_up(requested bytes, allocator/page alignment)
 ```
 
-**There is no per-device override of `to_program`.** So an early divergence
-needs either a branch here or a `Renderer`-level hook — e.g. giving `Renderer` a
-`to_sink` classmethod defaulting to `full_rewrite_to_sink`. Realistically two or
-three lines. **This is the one unavoidable core change; budget for it and
-nothing more.**
+The buffer needs only the normal device-buffer state:
 
-### Why we need to diverge early
+- base virtual/device address;
+- requested byte size;
+- physical allocation handle/capacity;
+- optional host mapping or TLB information.
 
-Diverge after `pm_simplify_ranges` (`codegen/__init__.py:277`), before
-`expander2` (286) and "remove reduces" (289). At that point `Ops.REDUCE`,
-`AxisType`-tagged RANGEs, shapes, and symbolic INDEX are all still intact. It is
-also the same seam where tinygrad itself inserts WMMA
-(`codegen/opt/postrange.py:219-312`), so it's a load-bearing seam, not a
-convenient gap.
+It does **not** need:
 
-Rejoin at `pm_add_control_flow` → `linearize` → `regalloc` → `asm_str`.
+- real versus padded tensor dimensions;
+- a minimum compute shape;
+- a `tilized` flag;
+- dtype-dependent face layout;
+- a hidden shrink view.
 
-Note the existing escape hatch: `optimize=ast.tag is None`. `ops_cpu.py:192`
-builds its firmware programs as hand-written UOps with
-`.sink(arg=KernelInfo(...), tag=1)` and pushes them straight through
-`do_to_program`, skipping the optimizer entirely.
+Weights can later be prepacked into a separate optimized buffer, just like a GPU
+backend may cache a tensor-core weight layout. That is an optimization with an
+explicit producer/consumer, not the representation of every TT tensor.
 
-### Things settled earlier, recorded so they don't get re-litigated
+### 2.5 Renderer and ISA
 
-- **No new UOps needed.** `Ops.INS` is unconstrained in `uop/spec.py:100`
-  (`(UPat(Ops.INS), lambda: True)`). SFPSTORE, TTMVMUL etc. are all just `INS`
-  with our opcode in `arg`.
-- **`TensorCore` / `Ops.WMMA` cannot describe MVMUL.** `codegen/opt/tc.py`
-  asserts `dims[0]*dims[1] == 2**(local_axes+upcast_axes)` and
-  `2**local_axes == self.threads` — warp/thread-shaped, which Tensix isn't.
-  Match `REDUCE(MUL(a,b))` directly in `pre_isel_matcher` instead.
-- **`BARRIER` is not the sync primitive.** It's a symmetric rendezvous and it's
-  in `PSEUDO_OPS` (`codegen/late/regalloc.py`), so it emits nothing on the ISA
-  path. Use `Ops.AFTER` for graph ordering and `INS(TT.SEMWAIT/SEMPOST)` for
-  emitted sync — the split hcq2 already uses (`hcq2.py:127,148,179`).
-- **Loop-carried Dst liveness is already handled.** `codegen/late/regalloc.py:29-31`
-  extends live ranges across RANGE. The persistent `O0/O1/M/L` state across
-  kv_blocks in `gqa_attention_fused` does not need custom machinery.
-- **`GroupOp.ALU`** is the IR's arithmetic op set (dtype-polymorphic, includes
-  vectors). Unrelated to `AddrSpace.ALU`, which is a PARAM passed by value.
-  Easy confusable.
-- **Control flow must be replicated per stream.** In `gqa_attention_fused`,
-  trisc0 (1551), trisc1 (1592), and trisc2 (1619) each run their own
-  `for block in range(block_count)`. The stream split therefore happens **after**
-  regalloc, because SrcA/Dst live ranges cross streams.
-- **The isel decision that needs a rule:** `Ops.ADD` maps to two different
-  Tensix instructions with different operand locations and costs — FPU
-  `TTELWADD` (whole-tile, SrcA+SrcB→Dst) vs SFPU `TTSFPADD` (lane-wise,
-  LReg→LReg). `WHERE`/`EXP2`/`RECIPROCAL` are SFPU-only. Start with a hard rule
-  (SFPU iff transcendental, or the value is already Dst-resident) rather than a
-  cost model.
+Target: `tinygrad/renderer/isa/tensix.py`
 
----
+This file owns representation and encoding:
 
-## 6. Firmware in UOps — viable, and worth it, but not first
+- the Blackhole Baby RISC-V subset used by BRISC/NCRISC/TRISC;
+- Tensix coprocessor instruction words;
+- register classes and instruction constraints;
+- pre-isel, isel, pre-regalloc, and post-regalloc matchers;
+- branch fixups and long-jump expansion;
+- dependency NOP insertion;
+- final byte encoding.
 
-`fw/cq.py` is already an embedded RV32 DSL with **hand-rolled register
-allocation**:
+Keep RV32 and Tensix words in one renderer because TRISC instruction streams
+interleave them.
 
-```python
-fw = Asm("brisc")
-with fw.scope(): _emit_prefetch(fw, fw.reg(12))
+SFPU registers are vector registers, not ordinary RV registers:
+
+- `L0..L7` are writable `32 x 32-bit` registers, 128 bytes each;
+- the higher LRegs include read-only and configurable constants, lane IDs, and
+  the load-macro register;
+- spills should use Dst or compiler-owned L1 scratch;
+- tinygrad can perform liveness and spill placement once the renderer describes
+  the register class and implements `spill`/`fill`.
+
+Initial matcher structure:
+
+```text
+high-level UOps
+  -> TT scheduling/rewrite
+  -> abstract Ops.INS for RV32, SFPU, FPU, unpack, pack, and sync
+  -> per-stream register allocation
+  -> post-regalloc dependency/NOP pass
+  -> instruction bytes
 ```
 
-Twelve registers reserved by hand and threaded through as a tuple. Porting to
-UOps deletes `fw.reg`, `fw.scope`, and all the manual liveness reasoning,
-because `codegen/late/regalloc.py` does linear-scan with spill/fill and
-RANGE-aware live-range extension. That isn't a code-sharing win, it's deleting a
-category of bug.
+The SFPU needs explicit latency tracking. For example, a two-cycle SFPU result
+cannot be consumed immediately without a NOP or independent instruction.
 
-The precedent is close to our use case: **read `signal_prog`, `wait_prog`,
-`timestamp_prog`, `worker_prog` in `ops_cpu.py:25-60`.** `worker_prog` is a
-firmware dispatch loop — spins on a semaphore, indexes a ring buffer, calls the
-entry — in ~8 lines of UOps using `UOp.param(..., volatile=True)`, `UOp.range`,
-`.after()`, `.end()`. Structurally our prefetch loop. This is also the best
-existing demonstration that the scalar RISC-V side works via
-`INS` + `RANGE` + `STORE` + `AFTER`.
+### 2.6 TT-specific codegen
 
-Location: `runtime/support/tt/firmware.py`, matching ops_cpu keeping its
-programs in the runtime file.
+Target: `tinygrad/codegen/tensix.py`
 
-**Ordering warning.** Do not port firmware first. Debugging a miscompiled
-register allocation on a hung Tensix core with no printf is a bad time, and the
-firmware is the thing that would tell us what went wrong. Keep `fw/` as-is, get
-one compute kernel end-to-end against working firmware, port firmware once the
-RV32 encoder has been exercised.
+This file owns choices rather than encodings:
 
-The firmware is also a *fixed* artifact — it doesn't change per graph, so it
-earns the least per unit of risk. That flips once we want to specialize the
-dispatch loop per graph, which is the actual long-term prize.
+- dense index lowering into DRAM byte spans;
+- coalescing and gathering into L1;
+- SFPU vectorization and tail masks;
+- FPU block recognition and fidelity selection;
+- Dst allocation;
+- SrcA/SrcB and Dst ownership;
+- CB assignment and credit protocols;
+- pack/unpack region sizing;
+- assignment to five instruction streams;
+- insertion of cross-stream dependency edges and semaphores.
 
----
+The present `ttk/fpu.py`, `ttk/sfpu.py`, `ttk/unpack.py`, and `ttk/pack.py`
+combine selection with emission. Porting means splitting those responsibilities:
+codegen decides *what* and *when*; the ISA renderer decides *how it is encoded*.
 
-## 7. The one structural mismatch: 5 streams, 1 binary
+### 2.7 Runtime device
 
-`TinyELF.lib` is a single `bytes`. `render(uops) -> str` returns one string.
-`Program.__call__` launches one thing. Tensix needs five instruction streams
-(brisc, ncrisc, trisc0/1/2) from one linearized list.
+Target: `tinygrad/runtime/ops_tt.py`
 
-Escape: `obj.lib` is opaque to everything except our own `TTProgram.__init__`.
-So `render` emits all five concatenated behind a header and `TTProgram` splits
-them. Ugly but zero-diff — and x86 already cheats in the same direction
-(`x86.py:865` returns `binary.hex()`, a binary pretending to be text).
+Owns:
 
----
+- `TTDevice`;
+- allocator construction;
+- renderer registration;
+- program loading;
+- kernel argument binding;
+- compute/copy queue creation;
+- device synchronization and profiling hooks.
 
-## 8. Suggested order
-
-1. **`TTAllocator`** (`_alloc`/`_copyin`/`_copyout`) against existing `pcie.py`,
-   with `TTDevice` having no renderer at all. Target:
-   `Tensor([1,2,3]).to("TT").numpy()` round-trips. Validates registration,
-   allocator, and the tilize hook before any codegen exists.
-2. **`HWQueue` subclass** over existing `cq.py` + `fw/`. Target: launching an
-   existing hand-written kernel through tinygrad's queue.
-3. **`TensixRenderer`** — RV32 encoding only at first, no Tensix words. Target:
-   a scalar kernel (the mask/zero fill loop from
-   `examples/llama3.py:1438-1494`, ~57 lines of hand-written brisc RISC-V) that
-   currently exists in hand-written form.
-4. **Tensix words + isel** for one op. `decode_projection` is the right first
-   target: single bias-free `weight @ x`, already sharded over 117 cores, no
-   softmax.
-5. **`codegen/tensix.py`** — CB assignment, stream split — driven by whatever
-   step 4 needs.
-6. **Firmware in UOps**, last.
-
-An earlier suggested probe, still worth doing at any point: write
-`decode_projection` as a `Tensor.custom_kernel` (`tensor.py:160`, marked "alpha
-and may change") and run it on CPU/CLANG to test whether the opt pipeline can be
-constrained to 32×32 tiles without forking `codegen/opt/`. See
-`test/backend/test_custom_kernel.py` — `custom_gemm`, `simple_qkv_kernel`,
-`slice_sum_kernel` — which is the single highest-value file to read.
+Registration requires only the normal tinygrad naming convention:
+`runtime/ops_tt.py` containing `TTDevice`.
 
 ---
 
-## 9. Open questions
+## 3. Dense storage and byte-page NoC addressing
 
-- Can `codegen/opt/` be constrained to only ever emit 32×32 tiles, or does it
-  need a fork? (Probe in §8.)
-- Does the layout decision (which weights tilized, which not) belong on the
-  buffer, or derived from consumers at schedule time? Currently the selectivity
-  lives at the *upload call site* — `_upload_weights` (`examples/llama3.py:1944-1952`)
-  passes `embedding_data` straight to `_stage_upload` with no `tile_data()`
-  call — not in the `tilized` flag.
-- `embedding_weight` and `lm_weight` are the **same buffer** (tied weights,
-  `examples/llama3.py:1802-1809`) with two consumers. Both are row-oriented — a
-  single-row gather in `decode_embedding`, and a GEMV in the LM head — so
-  untilized is correct for both. Good evidence for treating layout as a
-  scheduling decision. Note `lm_weight` is constructed with
-  `tilized=self.embedding_weight.tilized`, i.e. the default `True`, while the
-  bytes on device are unpermuted. The flag is only read inside `tile_data`
-  (`program.py:162,193,199,228`) so it's inert today, but anyone calling
-  `.tile_data()` on either buffer would silently permute already-flat data.
-- Once layout is one index expression shared by host and device, the separate
-  host/device tilization equivalence probe becomes structurally unnecessary.
+### 3.1 Storage pages are not compute tiles
+
+Use one fixed, dtype-independent byte stripe for DRAM interleaving. The initial
+size can be conservative and tuned later. A logical buffer is:
+
+```text
+full stripe, full stripe, ..., final partial stripe
+```
+
+For stripe size `S`, logical byte offset `o`, and a seven-bank rotation:
+
+```python
+stripe, within = divmod(o, S)
+bank = (first_bank + stripe) % 7
+bank_local = base + (stripe // 7) * S + within
+span = min(remaining, S - within)
+```
+
+A request crossing a stripe boundary becomes multiple NoC spans. This replaces
+the current assumption in `ttk/noc.py::_dram_tile` that every address is
+`tile_index * dtype_dependent_tile_size`.
+
+The low-level NoC interface already accepts a byte count. Blackhole length-based
+L1/DRAM reads and writes support short transfers and up to 16 KiB per packet.
+Add high-level helpers shaped like:
+
+```python
+read_span(buffer, byte_offset, byte_count, l1_address)
+write_span(l1_address, buffer, byte_offset, byte_count)
+```
+
+These helpers split at DRAM stripes and the hardware packet limit.
+
+### 3.2 Tails
+
+There are three independent granularities:
+
+| boundary | granularity | tail treatment |
+|---|---:|---|
+| global buffer | byte | exact logical size |
+| host DRAM CQ | 16 bytes | aligned bounce plus explicit valid-byte count |
+| worker NoC | byte-counted packet | split transfer and preserve valid-byte count |
+| SFPU | 32 values | predicate up to 31 lanes |
+| packer to L1 | aligned 16-byte writes | flush into scratch, then NoC-write exact bytes |
+| FPU elementwise | 128 values | use SFPU tail or local identity fill |
+
+The packer can be programmed with a datum count; its output FIFO writes aligned
+16-byte chunks to L1. For a partial final group:
+
+1. pack the valid datums into aligned L1 scratch;
+2. allow the packer to zero-fill its final 16-byte flush;
+3. NoC-write only `valid_count * itemsize` bytes to the dense buffer.
+
+Thus even packer alignment does not become tensor padding.
+
+### 3.3 Arbitrary tinygrad indexing
+
+A single ragged final page describes dense storage, but not every kernel access.
+Views, broadcasts, reductions, and gathers can give every lane a different input
+index. Codegen must preserve the validity predicate attached to each load/store:
+
+- contiguous indices: one coalesced NoC read;
+- regularly strided indices: a strided unpack or several coalesced spans;
+- irregular indices: gather through compiler-owned L1/Dst staging;
+- invalid tail lane: no global read or write.
+
+The first implementation may use small transfers for irregular access. Later
+passes can recognize transpose, broadcast, and shared-input patterns.
+
+### 3.4 Remove tilization entirely
+
+Tilization is not part of the tinygrad backend, including as a hidden copy-in or
+copy-out transformation. Persistent tensors, weights, activations, cache state,
+and kernel boundaries all use exact dense row-major bytes.
+
+Generated kernels may still use:
+
+- unpacker address generators to select or transpose dense panels;
+- row-major-aware SrcA/SrcB row-counter sequences;
+- compiler-owned L1 scratch for a partial block;
+- Dst/SFPU movement instructions;
+- direct scatter from pack/L1 into dense output rows.
+
+Do not call these operations tilization. They do not create another tensor
+layout and do not require buffer metadata. They are local instruction selection
+and addressing, and disappear at the kernel boundary.
+
+Immutable weights may eventually have an explicitly cached prepacked copy if a
+measured kernel benefits from one. Such a copy is a separate optimization
+object with an explicit producer and consumer, never the canonical tensor.
+
+Blackhole-py now has no `Buffer.tilized` flag, host `tile_data` permutation, or
+logical tail padding. `Buffer.size` is exactly `prod(shape) * itemsize`, and its
+storage byte stream is the original dense row-major byte stream. Full
+1024-element pages rotate across DRAM banks; the last page carries an explicit
+short byte count. Sharding is metadata and does not reorder or expand storage.
+
+The host-to-DRAM CQ has a 16-byte transfer floor. It uses an internal aligned
+bounce only for the final short transaction and returns only the valid bytes;
+this does not change the buffer size or introduce readable tensor elements.
+Kernels receive the valid tail count and must handle it explicitly.
+
+The llama3 kernels still need to be migrated one at a time from face-oriented
+pack/unpack assumptions and explicitly padded per-core compact shapes to dense
+inter-kernel outputs. Until their stores honor the valid tail count, end-to-end
+decode is intentionally unsupported: an old full-page store can overwrite the
+following exact allocation, producing garbage or a CQ timeout.
+
+### 3.5 Row-major FPU broadcasts
+
+FPU elementwise broadcasts apply only to SrcB and operate on one `8x16` issue:
+
+| hardware mode | SrcB selection | logical broadcast |
+|---|---|---|
+| `NONE` | `B[i,j]` | full operand |
+| `COLUMN` | `B[i,0]` | `[M,1] -> [M,N]` |
+| `ROW` | `B[selected_row,j]` | `[1,N] -> [M,N]` |
+| `SCALAR` | `B[selected_row,0]` | scalar |
+
+Ordinary elementwise operations can consume two equally permuted physical
+blocks, so their local layout cancels. Broadcasts are different: only part of
+SrcB is reused, so codegen must preserve the logical axis explicitly.
+
+Lower broadcasts from tinygrad index relationships rather than exposing the raw
+hardware enum:
+
+- for `[M,1]`, present the logical values in SrcB column zero and reuse them
+  across output-column panels;
+- for `[1,N]`, present each 16-value segment as a selected SrcB row and reuse it
+  across output-row panels;
+- for a scalar, retain one known SrcB row/column-zero value;
+- swap operands for commutative add/multiply when that places the broadcast
+  operand in SrcB; lower subtraction with its operand order preserved.
+
+The existing `ttk` implementation is only partially suitable. Its specialized
+`move_pair_rows` plus `Broadcast.COLUMN` path works. The generic
+`Broadcast.ROW` walk selects a new SrcB row every eight physical output rows,
+which is not a logical whole-tensor row broadcast, and the scalar orchestration
+also needs rework. Redesign these as logical-shape operations with coordinated
+unpack, FPU, and row-counter schedules.
+
+SFPU has no equivalent SrcB broadcast flag. Immediate constants are naturally
+lane-wide. Runtime values require explicit loads and lane shuffles, but this is
+independent of global tilization. The compiler must remember the four groups of
+eight lanes when lowering dynamic SFPU reductions and broadcasts.
+
+### 3.6 Compact decode tensors and GEMV
+
+For single-token decode, the logical device state can be:
+
+```text
+active token id:  U32[1]
+embedding output: BF16[1, 2048]
+```
+
+The token-history/KV-cache state is separate from the active token input. Do not
+represent `U32[1]` as a padded token tile, and do not represent `[1,2048]` as a
+tilized activation. A transport implementation may split 2048 values into
+multiple byte pages, but those pages are not logical tensors or layout changes.
+
+The current llama3 decode projection is GEMV:
+
+```text
+weight[out_features, 2048] @ token[2048]
+```
+
+It currently lowers each output row to FPU `ELWMUL` followed by an SFPU dot
+reduction. It does not use MVMUL. That is a valid row-major implementation once
+its page/tile assumptions are removed.
+
+MVMUL remains an optional GEMV optimization: a core can batch eight output rows
+and use `SrcB[8x16] @ SrcA[16x16] -> Dst[8x16]` panels while accumulating K.
+Codegen should choose between ELWMUL+SFPU reduction and batched MVMUL based on
+sharding, available rows, and measured cost. Neither path requires persistent
+tilization.
+
+The two activation buffers used for layer ping-pong or residual liveness are a
+separate scheduling choice. Dense storage removes layout duplication; it does
+not by itself prove that every ping-pong buffer can be eliminated.
+
+### 3.7 Reductions
+
+Masked elementwise tails can simply suppress invalid lanes. Reductions need an
+identity:
+
+| reduction | invalid-lane value |
+|---|---:|
+| sum / matmul K tail | `0` |
+| max | `-inf` |
+| product | `1` |
+
+Materialize the identity in L1/Dst or select it with SFPU predication before the
+reduction. This is a codegen property of the reduction, not allocator metadata.
+
+---
+
+## 4. Early TT rewrite and kernel boundaries
+
+### 4.1 Why the normal final matcher is too late
+
+TT scheduling needs information that generic lowering eventually destroys:
+
+- reduction axes;
+- symbolic index and validity expressions;
+- broadcast relationships;
+- opportunities to form `M=8, N=16, K=16` FPU panels;
+- values that should remain resident in Dst across a loop;
+- producer/consumer relationships needed for CBs and semaphores.
+
+`Renderer.extra_matcher` runs near the end of generic codegen. It is useful for
+ordinary instruction decomposition but too late to recover these structures.
+
+Add a small renderer/device hook around `full_rewrite_to_sink`, defaulting to the
+current path. The TT implementation can reuse the early generic simplification
+passes, diverge before reductions and ranges become unrecoverable, then rejoin
+at control-flow lowering and instruction selection.
+
+Call this TT path `tt_rewrite_to_sink` until the exact API is settled.
+
+This should be the only codegen-specific tinygrad core change. No new UOp is
+required: hardware instructions can be represented by `Ops.INS`.
+
+### 4.2 Do not force Tensix into generic `TensorCore`
+
+Tinygrad's `TensorCore` model assumes a warp of threads collectively constructs
+the result. Tensix MVMUL is issued by a control core into a matrix engine and
+does not have that thread mapping.
+
+Match the matmul reduction directly and lower it to an abstract TT FPU block:
+
+```text
+reduce_k(a[m,k] * b[k,n])
+  -> TT_MVMUL_BLOCK(M=8, N=16, K=16, fidelity=...)
+```
+
+`OptOps.PADTO` may still be useful for rounding a loop range inside the fast
+path, but it must not resize the global buffer or create the old physical-layout
+protocol.
+
+### 4.3 Fusion and buffer-count limits
+
+Study tinygrad's current callification and kernel-fusion boundary before adding a
+separate TT graph compiler. Prefer an additional matcher chain over a fork of
+the scheduler.
+
+TT kernels have finite parameter slots and local staging resources. Tinygrad
+already has `MAX_KERNEL_BUFFERS` and a Metal rule limiting kernels to roughly 32
+buffers. Add a TT device limit once the real command ABI is fixed, and let the
+existing rangeify split machinery enforce it where possible.
+
+---
+
+## 5. Five-stream kernel compiler
+
+A Tensix program contains:
+
+- BRISC;
+- NCRISC;
+- TRISC0 (unpack);
+- TRISC1 (FPU/SFPU math);
+- TRISC2 (pack).
+
+The compiler should first build one TT kernel/dependency graph while tensor
+relationships are still visible. Then:
+
+1. choose L1 staging and circular buffers;
+2. assign operations to engines and streams;
+3. insert cross-stream CB, semaphore, and ownership edges;
+4. reproduce loop/control structure in every participating stream;
+5. split into five stream-local graphs;
+6. linearize and register-allocate each stream independently;
+7. insert stream-local latency NOPs and encode bytes.
+
+Registers are not live across processors; hardware resources are. Therefore the
+global pass tracks Dst/Src/CB ownership, while ordinary register allocation runs
+after the stream split.
+
+Tinygrad currently expects one program object. The TT renderer/runtime can place
+the five binaries in a small container:
+
+```text
+header
+brisc offset/size
+ncrisc offset/size
+trisc0 offset/size
+trisc1 offset/size
+trisc2 offset/size
+payloads...
+```
+
+`TTProgram` parses the container and uploads each stream to its firmware-defined
+address.
+
+---
+
+## 6. Explicit synchronization and ownership
+
+The TT scheduler must model at least:
+
+- NoC read completion before an unpack consumes L1;
+- NoC write source completion before L1 reuse;
+- CB reserve/push/wait/pop and page counters;
+- retained versus last-consuming CB reads;
+- unpack configuration and completion;
+- SrcA/SrcB valid, clear, and bank-flip state;
+- Dst row validity;
+- Dst ownership transitions between math, SFPU, and pack;
+- FPU-to-SFPU and SFPU-to-pack visibility delays;
+- SFPU register producer/consumer latency;
+- unpack-to-Dst serialization;
+- pack completion and output FIFO flush;
+- the finite hardware semaphore inventory;
+- loop-carried resources across generated loops.
+
+Represent ordering in the compiler graph first. Lower graph edges to the
+appropriate combination of:
+
+- `Ops.AFTER` for compiler ordering;
+- CB protocol operations;
+- `STALLWAIT`;
+- `SEMWAIT`, `SEMPOST`, and semaphore get;
+- explicit NOPs for fixed pipeline hazards.
+
+`Ops.BARRIER` is not a substitute for these resource-specific protocols.
+
+---
+
+## 7. Firmware in UOps
+
+Porting the resident queue firmware to UOps is viable:
+
+- RV register allocation replaces the manual `fw.reg()` scopes;
+- ranges and branches represent the dispatch loop;
+- volatile loads represent issue-ring and signal polling;
+- the same RISC-V encoder serves firmware and compute streams.
+
+Do it after one end-to-end compute kernel works with the existing firmware.
+Otherwise a renderer bug can hang the firmware needed to diagnose the renderer.
+
+Longer term, graph-specialized dispatch firmware may remove generic queue
+overhead. That is the point where firmware UOps become more than a cleanup.
+
+---
+
+## 8. Validation plan
+
+### 8.1 Storage and tails
+
+1. Allocate exact logical sizes from 1 byte through several storage stripes.
+2. Round-trip host copy-in/out without tilization.
+3. Exercise NoC reads/writes ending at every byte offset around 16- and 64-byte
+   boundaries.
+4. Verify span splitting across all seven DRAM banks.
+5. Confirm no final write modifies the following allocation.
+
+### 8.2 SFPU baseline
+
+1. Run one 32-lane add/multiply program.
+2. Sweep active lanes from 1 through 32.
+3. Verify disabled lanes do not read or write global memory.
+4. Test a non-contiguous gather through L1/Dst staging.
+5. Test spill/fill of an LReg through Dst and L1.
+6. Validate generated dependency NOPs against documented latencies.
+
+### 8.3 Pack and unpack
+
+1. Unpack variable datum counts into SrcA, SrcB, and Dst.
+2. Pack `N` datums for `N in {1, 7, 8, 15, 16, 17, 31, 32, 127, 128, 255, 256}`.
+3. Inspect raw L1 bytes for headers and 16-byte flush padding.
+4. Verify that pack output is contiguous for the requested Dst range.
+5. NoC-write only the valid bytes and round-trip the result.
+6. Compare direct dense addressing with explicit compiler-owned staging.
+
+### 8.4 FPU
+
+1. Validate one `8x16` ELW block for add, subtract, and multiply.
+2. Validate one `8x16 @ 16x16 -> 8x16` MVMUL.
+3. Validate dense row-major `64x16 @ 64x16.T -> 64x64` without a tilize pass.
+4. Validate `[M,1]`, `[1,N]`, and scalar broadcasts from dense buffers.
+5. Sweep fidelity phases and record numerical error and cycle cost.
+6. Test M/N/K edge panels using local identity fill.
+7. Verify Dst32 address swizzling and FPU/SFPU handoff.
+
+### 8.5 Scheduling
+
+1. Deliberately test every CB retain/consume ordering.
+2. Double-buffer NoC read against unpack/math.
+3. Switch Dst ownership math -> SFPU -> pack -> math.
+4. Exhaust and recycle the semaphore allocation strategy.
+5. Compile a five-stream loop and verify every stream takes the same iteration
+   count and reaches compatible synchronization points.
+
+### 8.6 Numerical conventions
+
+Decide and test:
+
+- BF16 truncation versus round-to-nearest-even;
+- denormal handling;
+- NaN/infinity behavior;
+- reduction identities;
+- integer sign-magnitude conversions in Dst.
+
+Do not let host conversion and device conversion silently use different BF16
+rounding conventions.
+
+---
+
+## 9. Bring-up order
+
+1. **PCIe:** map BARs, pin sysmem, and perform safe MMIO.
+2. **Boot:** enumerate harvested hardware and start existing firmware.
+3. **Allocator:** exact-sized dense byte buffers; host round-trip only.
+4. **HCQ v1:** launch an existing hand-written blackhole-py kernel.
+5. **RV renderer:** compile a scalar control/NoC kernel to Baby RISC-V.
+6. **One SFPU vector:** dense 32-element add with existing pack/unpack helpers.
+7. **SFPU tails:** active counts `1..32`, exact final NoC writes.
+8. **Generic elementwise backend:** ordinary tinygrad shapes and views through
+   the SFPU fallback.
+9. **Reductions:** masked tails and correct identities.
+10. **FPU blocks:** row-major ELW and logical broadcasts, then optional MVMUL
+    matmul/GEMV lowering.
+11. **Five-stream scheduler:** generated CBs, semaphores, and ownership edges.
+12. **Decode projection:** first meaningful model kernel.
+13. **Firmware UOps and HCQ2:** after correctness and profiling infrastructure
+    are reliable.
+
+---
+
+## 10. Open questions
+
+- What fixed DRAM stripe size gives the best balance of bank parallelism and
+  span-splitting overhead?
+- Can pack/unpack variable-count operation be made fast enough for every tail,
+  or should very small tails use RISC Dst access?
+- Which irregular access patterns deserve dedicated coalescing/transpose rules?
+- What is the correct tinygrad hook for `tt_rewrite_to_sink` with the smallest
+  maintainable core change?
+- Where should TT-specific fusion boundaries live relative to callify/rangeify?
+- What kernel buffer/parameter limit should TT publish?
+- How should core launch geometry and sharding map to `Ops.SPECIAL` and
+  `Ops.MULTI`?
+- How many hardware semaphores are safely available to generated programs after
+  firmware reservations?
+- Can Dst allocation and spill placement be expressed as a conventional
+  register-allocation problem, or does it need a separate interval allocator?
+- When is immutable weight prepacking profitable, and how should the cache be
+  invalidated?
+- How should BFP formats and their shared exponent streams be represented if
+  tinygrad does not expose the dtype?
+- What fidelity mode should the cost model use for BF16 MVMUL and ELWMUL?
+
+The first backend does not need all of these answers. Dense buffers plus the
+masked SFPU path establish ordinary GPU semantics; everything else can then be
+added as a measured optimization.
