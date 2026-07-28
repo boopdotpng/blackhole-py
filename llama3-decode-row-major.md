@@ -23,6 +23,43 @@ The target schedule is 82 launches per token:
 = 82 launches
 ```
 
+## Launches, cores, and splits at a glance
+
+A **kernel type** is one of K0 through K6. A **launch** is one execution of a
+kernel type. K1 through K5 are each launched 16 times, once per transformer
+layer.
+
+The core count is the number of Tensix worker cores participating in one
+launch. BRISC, TRISC0, TRISC1, TRISC2, and NCRISC in the pseudocode are the five
+firmware threads on each participating Tensix core. They are not five
+additional cores.
+
+| kernel | launches/token | worker cores/launch | exact work split inside one launch |
+|---|---:|---:|---|
+| K0 embedding + input RMSNorm | 1 | **1** | the one core owns all 2048 embedding and gamma values |
+| K1 fused QKV GEMV | 16 | **117** | output axis `N=3072`: 30 cores own 27 rows, 87 own 26 |
+| K2 RoPE + KV append + GQA | 16 | **8** | core `h` owns KV head `h` and Q heads `[4h,4h+4)` |
+| K3 O + residual + post RMSNorm | 16 | **117** | output axis `N=2048`: 59 cores own 18 rows, 58 own 17; one of those cores also reduces 117 RMS partials |
+| K4 gate/up + SwiGLU | 16 | **117** | MLP axis `N=8192`: 2 cores own 71 matching gate/up row pairs, 115 own 70 |
+| K5 down + residual + next RMSNorm | 16 | **117** | output axis `N=2048`: 59 cores own 18 rows, 58 own 17; one of those cores also reduces 117 RMS partials |
+| K6 LM head + argmax | 1 | **117** | vocabulary axis `N=128256`: 24 cores own 1097 rows, 93 own 1096; one of those cores also reduces 117 argmax candidates |
+
+All core counts above are active cores, including the reducer. For example,
+K3 launches on 117 cores, not 117 projection cores plus a 118th reducer.
+Launches are sequential stages in the token graph; the table does not mean
+that all listed cores from all 82 launches are active simultaneously.
+
+For every output-axis split, core `c` receives the exact half-open interval:
+
+```text
+start = floor(c       * N / C)
+end   = floor((c + 1) * N / C)
+rows  = [start, end)
+```
+
+Consequently no core owns padding, and the difference between the largest and
+smallest shard is at most one row.
+
 The implementation order is deliberately one fused kernel at a time. Kernels 0
 through 2 have detailed engine pseudocode. Kernels 3 through 6 have exact
 contracts and fusion protocols, but remain placeholder work until the first
@@ -279,33 +316,33 @@ schemes are not prerequisites for the first exact row-major kernels.
 
 ```mermaid
 flowchart TD
-    T["U32 token ID"] --> K0["K0 embedding + layer-0 input RMSNorm"]
+    T["U32 token ID"] --> K0["K0 · 1 core<br/>embedding + layer-0 input RMSNorm"]
     E["row-major embedding weight"] --> K0
     G0["layer-0 input gamma"] --> K0
     K0 --> X["residual x: BF16[2048]"]
     K0 --> N["normalized x: BF16[2048]"]
 
-    N --> K1["K1 fused Q/K/V GEMV"]
+    N --> K1["K1 · 117 cores<br/>fused Q/K/V GEMV"]
     K1 --> QKV["BF16[3072]"]
-    QKV --> K2["K2 RoPE + KV append + GQA attention"]
+    QKV --> K2["K2 · 8 cores<br/>RoPE + KV append + GQA attention"]
     R["resident NumPy-built cos/sin"] --> K2
     KV["dense per-layer K/V cache"] <--> K2
     K2 --> C["context: BF16[2048]"]
 
-    C --> K3["K3 O projection + residual + post RMSNorm"]
+    C --> K3["K3 · 117 cores<br/>O projection + residual + post RMSNorm"]
     X --> K3
     K3 --> XA["post-attention residual: BF16[2048]"]
     K3 --> PN["post-attention normalized: BF16[2048]"]
-    PN --> K4["K4 gate/up GEMV + SwiGLU"]
+    PN --> K4["K4 · 117 cores<br/>gate/up GEMV + SwiGLU"]
     K4 --> H["hidden: BF16[8192]"]
-    H --> K5["K5 down projection + residual + next/final RMSNorm"]
+    H --> K5["K5 · 117 cores<br/>down projection + residual + next/final RMSNorm"]
     XA --> K5
     K5 --> XO["layer residual: BF16[2048]"]
     K5 --> NN["next-layer normalized: BF16[2048]"]
 
     NN --> MORE{"another layer?"}
     MORE -->|"yes"| N
-    MORE -->|"no: NN is final norm"| K6["K6 LM head + argmax + token publication"]
+    MORE -->|"no: NN is final norm"| K6["K6 · 117 cores<br/>LM head + argmax + token publication"]
 ```
 
 `K1` through `K5` execute once per layer. `K0` produces the first layer's
@@ -342,6 +379,79 @@ would make synchronization substantially more complex.
 
 These are desired codegen helpers, not claims that the current `ttk` API
 already implements them.
+
+### FPU-first engine allocation
+
+The default optimization rule is:
+
+1. Put wide multiply, add, subtract, matrix multiply, pooling, and ordinary
+   reductions on the FPU.
+2. Use HiFi2 for every BF16 multiply that contributes to an FP32 result.
+3. Keep FP32 intermediates in Dst and use Dst-to-SrcA/SrcB reuse when the next
+   operation is another FPU operation.
+4. Reserve SFPU for reciprocal square root, exponential, reciprocal,
+   comparisons carrying indices, nonlinear activation, and small scalar state.
+5. Do not pack and unpack an SFPU-produced value solely to move one cheap
+   multiply to the FPU. Engine transitions and BF16 boundaries are costs and
+   may also change the numerical contract.
+
+This is grounded in the local Blackhole `tt-metal` implementation rather than
+in the older Llama example:
+
+- `tt_metal/hw/inc/api/compute/experimental/mul_reduce_scalar.h` performs
+  elementwise multiply followed by GAPOOL scalar reduction on the FPU;
+- `tt_metal/hw/inc/api/compute/eltwise_binary.h` exposes
+  `binary_dest_reuse_tiles`, which moves FP32 Dst back to SrcA or SrcB;
+- `models/demos/deepseek_v3_b1/.../compute_kernel_api/rmsnorm.h` uses scalar
+  broadcast plus Dst reuse for the normalization multiply;
+- `ttnn/.../sdpa_flash_decode.cpp` uses FPU reductions and MVMUL around the
+  SFPU exponential in online softmax;
+- `ttnn/.../rotary_embedding_hf_*.cpp` uses FPU multiply/add for RoPE.
+
+The row-major kernels should port the useful instruction schedules, not their
+tile-shaped global storage. Src/Dst organization remains transient.
+
+| kernel phase | FPU work | SFPU work |
+|---|---|---|
+| K0/K3/K5 RMSNorm | `x*x`, GAPOOL sum, scalar-broadcast normalize, gamma multiply | `+eps`, reciprocal square root |
+| K1/K3/K4/K5/K6 GEMV | HiFi2 products and FP32 reduction | none in the steady-state dot loop |
+| K2 RoPE | HiFi2 `x*cos`, `rotate(x)*sin`, then add | none |
+| K2 attention | QK and PV MVMUL, max/sum reductions, subtract/add, scalar broadcasts | exponential, reciprocal, online scalar bookkeeping |
+| K3/K5 residual | FP32/BF16 add before the defined output rounding | none |
+| K4 SwiGLU | gate/up dots and preferably final `silu(gate)*up` via Dst reuse | SiLU |
+| K6 argmax | dot products | value/index comparison and tie break |
+
+These are starting assignments, not immunity from measurement. Every kernel
+must report FPU, SFPU, unpack, pack, and NoC time. A slower engine handoff
+should be removed even if the individual arithmetic instruction is faster.
+
+### Direct FPU/SFPU handoff
+
+The v1 cost model can come directly from the Blackhole ISA:
+
+| path | direct mechanism | minimum steady-state issue width |
+|---|---|---:|
+| FPU to SFPU | FPU leaves FP32 in Dst; `SFPLOAD` reads Dst into an LReg | 32 values/instruction |
+| SFPU to FPU | `SFPSTORE` writes the LReg to Dst; `MOVD2A` or `MOVD2B` reuses Dst | 32-value store, then 4-row Dst moves |
+| FPU to FPU | `MOVD2A`/`MOVD2B` destination reuse | no pack or L1 round trip |
+| SFPU to pack | `SFPSTORE` to Dst, then ordinary pack | 32-value store before pack |
+
+There is no direct LReg-to-SrcA/SrcB instruction. If a value exists only in an
+SFPU LReg, it must first be stored to Dst. If the SFPU operation has already
+stored its output to Dst, skip that step and use Dst reuse immediately.
+
+Blackhole SFPU has 32 lanes and accepts at most one instruction per cycle.
+Ordinary SFPU FP32 add/multiply has two-cycle result latency but one-cycle
+independent issue throughput. FPU elementwise work covers 128 values per
+fidelity phase, so HiFi2 multiply has a nominal 64 values/cycle before setup
+and handoff costs. The FPU advantage for one wide multiply is therefore at
+least a useful 2x in arithmetic throughput, and is larger relative to an SFPU
+load/multiply/store sequence.
+
+The first implementation should use these direct paths rather than block on a
+standalone transition benchmark. Measure the complete repeated chain inside
+Kernel 0. Add a microbenchmark only if the measured kernel time cannot be
+explained by its FPU, SFPU, unpack, pack, and NoC instruction counts.
 
 ### Exact NoC spans
 
@@ -412,23 +522,56 @@ unpack_rm_mvmul(B_rm, A_rm, live_m, live_n, live_k, transpose_A):
 This is panel formation, not a layout conversion. `B_rm` and `A_rm` remain
 row-major at every kernel boundary.
 
-### FPU: 128-value dot block
+### FPU: 128-value multiply/reduce block
 
 ```text
-fpu_dot128(weight_rm, x_rm):
-    unpack_rm_elw_8x16(weight_rm, x_rm)
-    ELWMUL_HIFI2 -> FP32 Dst[8,16]
-    return sfpu_reduce_sum128(Dst)
+fpu_mul_reduce128(a_rm, b_rm, fp32_accumulator):
+    unpack_rm_elw_8x16(a_rm, b_rm)
+    FPU.ELWMUL_HIFI2 -> FP32 Dst[8,16]
+    move Dst to source registers without packing
+    FPU.GAPOOL_HIFI2 reduce columns and rows
+    accumulate the resulting scalar into fp32_accumulator
 ```
 
-The BS=1 GEMV baseline intentionally uses ELWMUL plus a reduction. MVMUL would
-produce 16 result columns for one input vector, so it either repeats the same
-dot product or wastes 15 columns. It becomes attractive only if a later design
-batches tokens, which is outside this document's fixed scope.
+Port this sequence from Blackhole `mul_reduce_scalar`; do not route all 128
+products through SFPU merely because the current `ttk` lacks the helper. The
+first bring-up fallback may use `sfpu_reduce_sum128` to validate row-major
+unpack, but it is not the performance target.
 
-### SFPU: reductions and scalar functions
+The BS=1 GEMV target intentionally uses ELWMUL plus FPU reduction. MVMUL would
+produce 16 result columns for one input vector, so it either repeats the same
+dot product or wastes 15 columns. It becomes attractive only if a measured
+multi-row schedule beats this path or a later design batches tokens.
+
+### Dst reuse and FPU scalar broadcast
 
 ```text
+fpu_mul_broadcast_fp32(x_rm, scalar_dst, output_dst):
+    unpack x_rm to SrcA
+    move scalar_dst to scalar-broadcast SrcB without packing
+    FPU.ELWMUL_HIFI2 -> output_dst
+
+fpu_mul_dest_reuse(output_dst, gamma_rm):
+    move output_dst to SrcA without packing
+    unpack gamma_rm to SrcB
+    FPU.ELWMUL_HIFI2 -> the same output_dst
+```
+
+This permits RMSNorm to execute:
+
+```text
+output_dst = FPU(x * inv_rms)
+output_dst = FPU(output_dst * gamma)
+```
+
+with an FP32 `inv_rms`, FP32 Dst, and no BF16 boundary between the two
+multiplications. It preserves the operation order of the older RMSNorm while
+moving both wide multiplications off SFPU.
+
+### SFPU: nonlinear and scalar functions
+
+```text
+# Bring-up fallback only; the performance path uses FPU GAPOOL reduction.
 sfpu_reduce_sum32(vec, valid_lanes):
     replace inactive lanes with 0
     reduce each physical 8-lane subgroup
@@ -483,7 +626,7 @@ TRISC0 / UNPACK:
 
 TRISC1 / MATH:
     run FPU blocks
-    run SFPU reductions/functions
+    run SFPU nonlinear/scalar functions and any bring-up fallback reductions
     publish Dst ownership
 
 TRISC2 / PACK:
@@ -498,9 +641,29 @@ Every producer/consumer relationship must be represented by CB credit,
 semaphore, Src/Dst ownership, or an explicit stall. A generic barrier is not a
 replacement for resource ownership.
 
-## Kernel 0: fused embedding gather + layer-0 input RMSNorm
+## Kernel 0 [1 core]: fused embedding gather + layer-0 input RMSNorm
 
 This replaces the current `decode_embedding` followed by `rmsnorm`.
+
+### Core ownership
+
+Launch this program on exactly one worker:
+
+```text
+cores = P100_WORKER_CORES[0:1]
+
+core 0 owns:
+    embedding feature range [0, 2048)
+    gamma feature range     [0, 2048)
+    residual output range   [0, 2048)
+    normalized output range [0, 2048)
+```
+
+There is no shard descriptor and no cross-core reduction in K0. The BRISC,
+three TRISCs, and NCRISC shown below all run concurrently on this same worker.
+BRISC and NCRISC handle movement; TRISC0 unpacks; TRISC1 runs FPU/SFPU math;
+TRISC2 packs. This division is pipeline parallelism within one Tensix core, not
+tensor parallelism across cores.
 
 Exact contract:
 
@@ -519,69 +682,87 @@ normalized[i] = BF16_RNE(float(x[i]) * inv_rms * float(gamma[i]))
 ```
 
 One core is sufficient. The kernel reads one 4 KiB embedding row and one 4 KiB
-gamma vector. A cross-core RMS reduction would cost more synchronization than
-it saves here.
+gamma vector. It writes one 4 KiB residual and one 4 KiB normalized vector. A
+cross-core RMS reduction would cost more synchronization than it saves here.
 
-### UNPACK / FPU / SFPU pseudocode
+### Current bring-up schedule and hardware status
 
 ```text
 embedding_rms_math(x_l1, gamma_l1):
-    sumsq = FP32(0)
+    # Baseline: materialize x through the proven two-input HiFi2 path.
+    for page in (0, 1):
+        unpack_l1_pair(x_page, bf16_ones_page)
+        x_dst[page] = FPU.ELWMUL_HIFI2()
 
-    for k in 0 .. 2048 step 128:
-        unpack_rm_elw_8x16(x_l1[k:k+128], x_l1[k:k+128])
-        squares = FPU.ELWMUL_HIFI2(SrcA, SrcB)
-        sumsq += sfpu_reduce_sum128(squares)
+    sumsq = SFPU.SQUARE_AND_REDUCE_2048_FP32(x_dst[0], x_dst[1])
+    inv_rms = SFPU.RSQRT_POSITIVE(sumsq / 2048 + 1e-5)
 
-    inv_rms = sfpu_rsqrt_positive(sumsq * (1.0 / 2048.0) + 1e-5)
+    for page in (0, 1):
+        unpack_l1_pair(x_page, gamma_page)
+        normalized_dst[page] = FPU.ELWMUL_HIFI2()
+        SFPU.MUL_LIVE_SCALAR_IN_PLACE(normalized_dst[page], inv_rms)
 
-    for k in 0 .. 2048 step 32:
-        unpack x_l1[k:k+32] and gamma_l1[k:k+32] to SFPU-visible Dst
-        xv = SFPU.load32(x)
-        gv = SFPU.load32(gamma)
-        yv = xv * gv
-        yv = yv * broadcast(inv_rms)
-        SFPU.store32(yv)
-        pack_rm_exact(Dst, 32, normalized_l1 + 2*k)
+    pack_bf16(normalized_dst[0], normalized_dst[1])
 ```
+
+The bring-up implementation is `examples/llama3_row_major.py`. It has an
+instrumented hardware runner and explicit `--reduction sfpu|gapool` selection.
+As of the current bring-up, neither complete RMS path is numerically accepted;
+do not treat K0 as finished:
+
+| measured path, token 42 | kernel wall clock | numerical result |
+|---|---:|---|
+| gather + HiFi2 `x*1` + write | 2.649 us | 2048/2048 BF16 exact |
+| gather + HiFi2 `x*x` + write | 2.645 us | max absolute error 3.052e-5 |
+| SFPU reduction baseline | 3.497 us | completes, but scalar broadcast is incorrect |
+| experimental Dst-reuse GAPOOL reduction probe | 2.990 us | stable scalar 0.671875; FP32 host reference 0.728029 |
+| full experimental GAPOOL RMS path | 3.593 us | completes, but scratch Dst state contaminates the following multiply |
+
+The GAPOOL experiment ports the Blackhole `mul_reduce_scalar` structure:
+HiFi2 squares remain in FP32 Dst, Dst is moved to SrcA, an SFPU-created unit
+scaler is moved to SrcB, and HiFi2 GAPOOL performs column and scalar reduction.
+The current Python schedule reduces the two 1024-element pages separately into
+scratch Dst tiles and adds their scalars in SFPU. This is deliberately exposed
+as experimental until its scalar matches the reference and the post-reduction
+Dst/source state is clean.
 
 ### Five-stream pseudocode
 
 ```text
 BRISC:
-    token = read_exact(token_id, 0, 1)
+    token = read_16_bytes(token_id)[0]
     assert token < 128256
-    read_exact(embedding_weight, token * 2048, 2048, x_l1)
-    read_exact(gamma, 0, 2048, gamma_l1)
+    read two 2048-byte embedding pages into x_l1
 
-    # x_l1 already contains the exact row-major residual result.
     signal x_ready
+    signal residual_ready
+
+    read two 2048-byte gamma pages into gamma_l1
+    signal gamma_ready
 
 TRISC0:
-    for each 128-value square block:
-        unpack_rm_elw_8x16(x_block, x_block)
-    for each 32-value normalization block:
-        unpack_rm_vec32(x_block)
-        unpack_rm_vec32(gamma_block)
+    wait x_ready
+    unpack two x_page/x_page pairs
+    wait gamma_ready
+    unpack two x_page/gamma_page pairs
 
 TRISC1:
-    sumsq = 0
-    for each square block:
-        squares = FPU.ELWMUL_HIFI2()
-        sumsq += sfpu_reduce_sum128(squares)
-    inv_rms = sfpu_rsqrt_positive(sumsq / 2048 + 1e-5)
-    for each normalization block:
-        y = SFPU(x * gamma * inv_rms)
-        publish 32 live results
+    square_dst[0] = FPU.ELWMUL_HIFI2(x_page[0], x_page[0])
+    square_dst[1] = FPU.ELWMUL_HIFI2(x_page[1], x_page[1])
+    inv_rms = SFPU.REDUCE_AND_RSQRT(square_dst[0:2])
+    normalized_dst[0] = FPU.ELWMUL_HIFI2(x_page[0], gamma_page[0])
+    normalized_dst[1] = FPU.ELWMUL_HIFI2(x_page[1], gamma_page[1])
+    SFPU.MUL_LIVE_SCALAR_IN_PLACE(normalized_dst[0:2], inv_rms)
+    publish two tiles
 
 TRISC2:
-    pack all 2048 normalized values to dense normalized_l1
+    pack two FP32 tiles to two dense BF16 pages
 
 NCRISC:
-    wait x_ready
-    write_exact(x_l1, residual_x, 0, 2048)
-    wait normalized_l1
-    write_exact(normalized_l1, normalized_x, 0, 2048)
+    wait residual_ready
+    write two x_l1 pages to residual_x
+    wait for two packed pages
+    write them to normalized_x
 ```
 
 Acceptance checks:
@@ -592,7 +773,7 @@ Acceptance checks:
 - compare the numerical path with the current tested RMSNorm;
 - measure this fused kernel against the two current launches.
 
-## Kernel 1: fused row-major Q/K/V GEMV
+## Kernel 1 [117 cores]: fused row-major Q/K/V GEMV
 
 Yes, Q, K, and V should be one logical GEMV launch:
 
@@ -602,6 +783,19 @@ Wqkv @ x = concat(Wq @ x, Wk @ x, Wv @ x)
 
 It is one GEMV scheduling domain, not one MVMUL instruction and not necessarily
 one physically concatenated weight allocation.
+
+### Core ownership
+
+Launch on `P100_WORKER_CORES[0:117]`. Treat Q, K, and V as one logical
+3072-row output domain. Core `c` owns:
+
+```text
+qkv rows [floor(c * 3072 / 117), floor((c + 1) * 3072 / 117))
+```
+
+Thirty cores receive 27 output rows and 87 receive 26. Each owned output row is
+a complete length-2048 dot product performed locally; the K dimension is not
+split across cores and there is no cross-core GEMV reduction.
 
 Exact contract:
 
@@ -636,9 +830,11 @@ gemv_row(weight_row_l1, x_l1):
 
     for k in 0 .. 2048 step 128:
         # BRISC fetch of block k+128 overlaps this block.
-        unpack_rm_elw_8x16(weight_row_l1[k:k+128], x_l1[k:k+128])
-        products = FPU.ELWMUL_HIFI2(SrcA, SrcB)
-        accumulator += sfpu_reduce_sum128(products)
+        fpu_mul_reduce128(
+            weight_row_l1[k:k+128],
+            x_l1[k:k+128],
+            accumulator,
+        )
 
     return BF16_RNE(accumulator)
 
@@ -649,9 +845,9 @@ pack_core_qkv_results(results, descriptors):
         write_exact(dense_l1, qkv, range.start, range.length)
 ```
 
-The math path should retain the scalar accumulator in an SFPU LReg across the
-16 K blocks. Dst is recycled after each 128-value reduction. Do not materialize
-2048 products or a 1024-element output page.
+The math path should retain the scalar accumulator in FP32 Dst/FPU state across
+the 16 K blocks. Dst is recycled after each 128-value reduction. Do not
+materialize 2048 products or a 1024-element output page.
 
 ### Five-stream pseudocode
 
@@ -682,7 +878,7 @@ TRISC1:
         acc = FP32(0)
         for k in 0 .. 2048 step 128:
             products = FPU.ELWMUL_HIFI2()
-            acc += sfpu_reduce_sum128(products)
+            acc = FPU.GAPOOL_REDUCE_ACCUMULATE(products, acc)
         publish BF16_RNE(acc) with descriptor.output_index
 
 TRISC2:
@@ -704,14 +900,30 @@ Performance requirements:
 - profile QKV achieved DRAM bandwidth separately from end-to-end decode.
 
 Possible later optimization: compute two or more output rows in a pipelined
-Dst schedule so unpack and SFPU reduction latency is hidden. Do not switch BS=1
-GEMV to MVMUL until measurement beats ELWMUL plus reduction.
+Dst schedule so unpack and FPU reduction latency is hidden. Do not switch BS=1
+GEMV to MVMUL until measurement beats ELWMUL plus GAPOOL reduction.
 
-## Kernel 2: fused RoPE + K/V cache append + grouped-query attention
+## Kernel 2 [8 cores]: fused RoPE + K/V cache append + grouped-query attention
 
 This replaces `decode_rope`, `kv_cache_write`, and `gqa_attention_fused` with
 one eight-core launch. It removes `q_heads`, `k_heads`, and `v_heads`
 inter-kernel buffers and never writes rotated Q to global memory.
+
+### Core ownership
+
+Launch on `P100_WORKER_CORES[0:8]`. There is no ragged numerical split:
+
+```text
+core h, for h in [0, 8):
+    owns KV head h
+    owns Q heads [4*h, 4*h + 4)
+    owns key_cache[h, 0:S, :]
+    owns value_cache[h, 0:S, :]
+    writes context[4*h:4*h+4, :]
+```
+
+All softmax state for those four query heads remains local. The eight workers
+do not reduce or exchange partial attention results.
 
 The NumPy `rope_table()` remains the source of the resident cosine and sine
 tables. They are uploaded once as exact row-major `BF16[8192,64]`.
@@ -756,27 +968,28 @@ into the final attention block, so attention does not write then reread the
 current token. The exact cache writes complete before kernel completion and
 make the row persistent for the next token.
 
-### RoPE phase: UNPACK / SFPU pseudocode
+### RoPE phase: UNPACK / FPU pseudocode
 
 ```text
 rope64(x_l1, cos_l1, sin_l1):
-    # Two exact 32-lane groups; no 1024-element operand pages.
-    x_lo = SFPU.load32(x_l1[0:32])
-    x_hi = SFPU.load32(x_l1[32:64])
-    c_lo = SFPU.load32(cos_l1[0:32])
-    c_hi = SFPU.load32(cos_l1[32:64])
-    s_lo = SFPU.load32(sin_l1[0:32])
-    s_hi = SFPU.load32(sin_l1[32:64])
+    # TRISC0 forms the split-half/sign mapping while unpacking. The inactive
+    # half of the 8x16 execution footprint is private reduction identity.
+    unpack_rm_elw_8x16(x_l1, cos_l1, live_values=64)
+    cos_term = FPU.ELWMUL_HIFI2()
 
-    y_lo = x_lo * c_lo + (-x_hi) * s_lo
-    y_hi = x_hi * c_hi + x_lo * s_hi
+    unpack_rm_elw_8x16(
+        rotate_half_view(x_l1), sin_l1, live_values=64,
+    )
+    sin_term = FPU.ELWMUL_HIFI2()
 
-    store BF16_RNE(y_lo), BF16_RNE(y_hi)
-    return y[64]
+    y = FPU.ELWADD(dest_reuse(cos_term), sin_term)
+    pack_rm_exact(y, 64, rope_l1)
+    return rope_l1
 ```
 
-FPU is not needed. RoPE is two vector multiply-adds with a split-half exchange,
-which maps directly to SFPU LRegs.
+The split-half permutation and sign change belong in the unpack/L1 mapping.
+The two wide products and final add belong on the FPU. This follows the local
+`tt-metal` rotary kernels and leaves SFPU idle during RoPE.
 
 ### RoPE/cache phase: five-stream pseudocode
 
@@ -789,11 +1002,13 @@ BRISC, core h:
     read_exact(qkv, 2560 + h * 64, 64, v_l1)
 
 TRISC0:
-    unpack the five head vectors and shared cos/sin row for rope64
+    form the split-half/sign views and unpack the five RoPE operations
 
 TRISC1:
     for query row in 0 .. 4:
-        Q_local[row,:] = rope64(q_group_l1[row,:], cos_l1, sin_l1)
+        Q_local[row,:] = FPU.rope64(
+            q_group_l1[row,:], cos_l1, sin_l1,
+        )
     K_local = rope64(k_l1, cos_l1, sin_l1)
 
 TRISC2:
@@ -848,17 +1063,21 @@ l = 0
 O = zeros([4,64])
 
 for each live cache block:
-    scores = Q @ K_block.T * (1 / sqrt(64))
-    block_m = row_max(scores over T live columns)
+    raw_scores = Q @ K_block.T
+    block_m = row_max(raw_scores over T live columns)
     new_m = max(m, block_m)
-    alpha = exp(m - new_m)
-    P = exp(scores - new_m)
+    alpha = exp((m - new_m) * (1 / sqrt(64)))
+    P = exp((raw_scores - new_m) * (1 / sqrt(64)))
     l = l * alpha + row_sum(P)
     O = O * alpha + P @ V_block
     m = new_m
 
 context = O / l
 ```
+
+Keeping `m` in unscaled score units is valid because the attention scale is
+positive. Folding `1/sqrt(64)` into the SFPU exponential removes a separate
+wide score-multiply pass, following the local flash-decode implementation.
 
 `m`, `l`, and `O` stay FP32 in Dst for the entire kernel. `P` is a private
 row-major BF16 handoff from SFPU/pack to the PV MVMUL. It is never a global
@@ -883,16 +1102,19 @@ attention_score_block(Q[4,64], K[T,64]):
             )
             FPU.MVMUL_HIFI2(accumulate=(k != 0))
 
-    SFPU multiply all live scores by 1/sqrt(64)
-    return only score[0:4,0:T]
+    return only raw_score[0:4,0:T]
 
-online_update(scores[4,T], m[4], l[4], O[4,64]):
-    block_m = SFPU.row_max(scores, live_columns=T)
+online_update(raw_scores[4,T], m[4], l[4], O[4,64]):
+    block_m = FPU.GAPOOL_ROW_MAX(raw_scores, live_columns=T)
     new_m   = max(m, block_m)
-    alpha   = sfpu_exp(m - new_m)
-    P       = sfpu_exp(scores - new_m)
-    l       = l * alpha + SFPU.row_sum(P, live_columns=T)
-    O       = O * alpha
+    alpha   = sfpu_exp((m - new_m) * (1/sqrt(64)))
+
+    centered = FPU.ELWSUB_BROADCAST(raw_scores, new_m)
+    P        = sfpu_exp(centered, scale=(1/sqrt(64)))
+    block_l  = FPU.GAPOOL_ROW_SUM(dest_reuse(P), live_columns=T)
+
+    l       = scalar_fma(l, alpha, block_l)
+    O       = FPU.ELWMUL_BROADCAST(dest_reuse(O), alpha)
     m       = new_m
     return P
 
@@ -964,7 +1186,8 @@ TRISC1:
         attention_value_block(P, V, O)
 
     for row in 0 .. 4:
-        O[row,:] *= reciprocal(l[row])
+        inv_l = SFPU.reciprocal(l[row])
+        O[row,:] = FPU.ELWMUL_BROADCAST(O[row,:], inv_l)
     publish exact 4x64 context
 
 TRISC2:
@@ -1016,9 +1239,23 @@ Acceptance checks:
 - byte-check the next allocation after QKV, context, and each cache;
 - measure against the three current RoPE, cache-write, and attention launches.
 
-## Kernel 3: fused output projection + residual + post-attention RMSNorm
+## Kernel 3 [117 cores]: fused output projection + residual + post-attention RMSNorm
 
 Placeholder after Kernel 2 is correct and measured.
+
+### Core ownership
+
+Launch on `P100_WORKER_CORES[0:117]`. Core `c` owns the same exact range in
+`Wo` output rows, `residual_x`, `x_attn`, `post_gamma`, and `x_postnorm`:
+
+```text
+rows = [floor(c * 2048 / 117), floor((c + 1) * 2048 / 117))
+```
+
+Fifty-nine workers own 18 rows and 58 own 17. Each sends one FP32
+sum-of-squares partial to a designated reducer chosen from these 117 workers.
+After that worker broadcasts the scale, every worker normalizes only its owned
+range.
 
 Exact contract:
 
@@ -1053,9 +1290,38 @@ BF16 rounding before the sum of squares preserves the original kernel-boundary
 semantics. There is no compact projection buffer, reassembly kernel, or
 standalone RMSNorm launch.
 
-## Kernel 4: fused gate/up row-major GEMV + SwiGLU
+Engine assignment:
+
+```text
+FPU:  Wo dot products, residual add, local x_attn*x_attn reduction,
+      x_attn*inv_rms scalar broadcast, normalized*post_gamma via Dst reuse
+SFPU: reducer-side +epsilon and reciprocal square root
+```
+
+The reducer may initially sum the 117 FP32 partials in SFPU because this is only
+117 scalars once per launch. Moving that tiny reduction to FPU is optional and
+must not complicate the communication path.
+
+## Kernel 4 [117 cores]: fused gate/up row-major GEMV + SwiGLU
 
 Placeholder using one staged input and two row-major weight streams.
+
+### Core ownership
+
+Launch on `P100_WORKER_CORES[0:117]`. Core `c` owns matching rows from both
+matrices and the corresponding hidden output:
+
+```text
+rows = [floor(c * 8192 / 117), floor((c + 1) * 8192 / 117))
+
+for i in rows:
+    compute Wgate[i, :] @ x
+    compute Wup[i, :] @ x
+    write hidden[i]
+```
+
+Two workers own 71 row pairs and 115 own 70. Keeping matching gate and up rows
+on the same worker makes SwiGLU local and requires no cross-core exchange.
 
 Exact contract:
 
@@ -1073,14 +1339,41 @@ hidden_i = BF16_RNE(silu(float(gate_i)) * float(up_i))
 ```
 
 Each core owns matching gate/up rows, computes both FP32 dots, applies the
-explicit BF16 boundary rounding, and runs scalar/vector SFPU SwiGLU before
-discarding gate and up. It reads exactly 67,108,864 weight bytes and writes one
-exact 16,384-byte hidden vector. Gate/up are never global buffers, there is no
-`[117,71]` output, and no compact-to-dense kernel follows.
+explicit BF16 boundary rounding, runs SiLU in SFPU, and returns to the FPU for
+the final multiply before discarding gate and up. It reads exactly 67,108,864
+weight bytes and writes one exact 16,384-byte hidden vector. Gate/up are never
+global buffers, there is no `[117,71]` output, and no compact-to-dense kernel
+follows.
 
-## Kernel 5: fused down projection + residual + next/final RMSNorm
+Engine assignment:
+
+```text
+FPU:  gate/up dot products
+SFPU: SiLU(gate)
+FPU:  silu(gate)*up using SFPU-store-to-Dst plus Dst reuse
+```
+
+The explicit `gate_i` and `up_i` BF16 boundaries occur before SiLU, matching
+the contract. After that required rounding/unpack, SiLU writes its FP32 result
+to Dst, and the FPU consumes it directly with `up_i`; do not pack the activated
+gate merely to feed the final multiply.
+
+## Kernel 5 [117 cores]: fused down projection + residual + next/final RMSNorm
 
 Placeholder using the Kernel 1 GEMV pipe with K=8192.
+
+### Core ownership
+
+Launch on `P100_WORKER_CORES[0:117]`. The output/residual/norm range is
+identical to K3:
+
+```text
+rows = [floor(c * 2048 / 117), floor((c + 1) * 2048 / 117))
+```
+
+Fifty-nine workers own 18 rows and 58 own 17. Each output dot consumes the full
+8192-element hidden vector locally. As in K3, one of the 117 workers reduces
+one FP32 RMS partial from every worker and broadcasts the common scale.
 
 Exact contract:
 
@@ -1108,10 +1401,27 @@ feeds the next Kernel 1. On layer 15, `norm_gamma` is the final RMS weight and
 `next_norm` feeds Kernel 6. This removes all 15 standalone next-layer input
 RMSNorm launches and the standalone final RMSNorm launch.
 
-## Kernel 6: fused row-major LM-head GEMV + argmax + token publication
+Engine assignment is identical to K3, except every down-projection dot has 64
+fully live 128-value FPU multiply/reduce blocks instead of 16.
+
+## Kernel 6 [117 cores]: fused row-major LM-head GEMV + argmax + token publication
 
 Placeholder using the tied embedding allocation as a row-major
 `BF16[128256,2048]` matrix.
+
+### Core ownership
+
+Launch on `P100_WORKER_CORES[0:117]`. Core `c` owns:
+
+```text
+vocabulary rows =
+    [floor(c * 128256 / 117), floor((c + 1) * 128256 / 117))
+```
+
+Twenty-four workers own 1097 vocabulary rows and 93 own 1096. Each worker
+reduces its owned rows to one local `(BF16 value, U32 token index)` candidate.
+One designated worker from the same 117 compares those candidates and
+publishes the token.
 
 Exact greedy-decode contract:
 
@@ -1135,6 +1445,10 @@ defined tie break, publishes one U32, and optionally writes
 Validation mode writes the exact `BF16[128256]` logits buffer while performing
 the same local reduction. It is not `[117,max_vocab_rows_per_core]` and does not
 add a second launch.
+
+The dot loop is entirely FPU. SFPU sees only one rounded logit at a time for the
+local value/index comparison and tie break. This avoids routing full logit
+vectors through SFPU while retaining the exact token index.
 
 ## Kernel-by-kernel bring-up order
 

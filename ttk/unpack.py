@@ -369,6 +369,47 @@ class Unpack:
     CB.pop_front(self.k, source_cb)
     return self
 
+  def move_l1_pair_pair(self, source_a_dtype, source_a_address,
+                        source_b_dtype, source_b_address):
+    """Present two persistent 1024-element L1 pages as SrcA and SrcB."""
+    for name, dtype, address in (
+      ("SrcA", source_a_dtype, source_a_address),
+      ("SrcB", source_b_dtype, source_b_address),
+    ):
+      if not isinstance(dtype, DType):
+        raise TypeError(f"{name} L1 unpack dtype must be a DType")
+      if type(address) is not int or address < 0:
+        raise ValueError(f"{name} L1 unpack address must be non-negative")
+
+    stall(self.k, Stall.UNPACK, Wait.SRCA_CLR | Wait.SRCB_CLR)
+    self._configure_l1(
+      source_a_dtype, UnpackTarget.SRCA, source_a_address, 256,
+      commit=False, configure_mop=False,
+    )
+    self._configure_l1(
+      source_b_dtype, UnpackTarget.SRCB, source_b_address, 256,
+      commit=False, configure_mop=False,
+    )
+    self._commit_config(_BASE[UNPACKER0])
+    self._mop.configure(_PAIR_MOP)
+    self._issue(TT.TTSETADCXX(1, 255, 0))
+    self._issue(TT.TTSETADCXX(2, 255, 0))
+    self._issue(TT.TTSETADCZW(3, 0, 0, 0, 0, 0xF))
+    stall(self.k, Stall.UNPACK, Wait.TRISC_CFG)
+    self._mop.run()
+    stall(self.k, Stall.UNPACK, Wait.UNPACK0 | Wait.UNPACK1)
+    sem_get(self.k, Sem.UNPACK_SYNC); sync(self.k)
+    return self
+
+  def switch_to_mul_reduce(self):
+    """Match Blackhole LLK's Dst-reuse transition for mul-reduce-scalar."""
+    self._issue(TT.TTSETADCZW(3, 0, 0, 0, 0, 0xF))
+    sem_post(self.k, Sem.UNPACK_SYNC)
+    self._issue(TT.TTUNPACR_NOP(0, 0, 0, 1, 0, 0, 0, 0, 1))
+    self._issue(TT.TTUNPACR_NOP(1, 0, 0, 1, 0, 0, 0, 0, 1))
+    sem_get(self.k, Sem.UNPACK_SYNC)
+    return self
+
   def move_reduce(self, source_cb, scaler_address, *, scaler_rows=4):
     if source_cb.dtype is not DType.BF16:
       raise ValueError("reduce unpack currently requires BF16 input")
