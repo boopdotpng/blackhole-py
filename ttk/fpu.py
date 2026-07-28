@@ -63,7 +63,8 @@ class Fpu:
                     srcb_clear=False, srcb_carry=False, dest=0,
                     dest_clear=False, dest_carry=False,
                     dest_carry_to_carry=False,
-                    fidelity_increment=0, fidelity_clear=False):
+                    fidelity_increment=0, fidelity_clear=False,
+                    bias_increment=0, bias_clear=False):
     if type(slot) is not int or not 0 <= slot < 8:
       raise ValueError("FPU address-modifier slot must be in range 0..7")
     source = (
@@ -86,7 +87,8 @@ class Fpu:
     )
     self._set_thread_cfg(_ADDR_MOD_AB + slot, source)
     self._set_thread_cfg(_ADDR_MOD_DST + slot, destination)
-    self._set_thread_cfg(_ADDR_MOD_BIAS + slot, 0)
+    bias = (bias_increment & 0xF) | int(bias_clear) << 4
+    self._set_thread_cfg(_ADDR_MOD_BIAS + slot, bias)
     return self
 
   def _rmw_cfg_byte(self, register, byte, mask, data):

@@ -65,12 +65,6 @@ _REDUCE_MOP = MaskTemplate(
   a1=_unpacr(UNPACKER0), a2=NOP, a3=NOP,
   b=_unpacr(UNPACKER1), skip_a0=NOP, skip_b=NOP,
 )
-_TILIZE_MOPS = (
-  LoopTemplate(outer=1, inner=1, start=_unpacr(UNPACKER0), loop=_SRCB_DVALID),
-  None,
-  _mop(UNPACKER0, 1, to_dst=True),
-)
-
 _TILE_DESCRIPTOR = (_Cfg.UNPACK0_TILE_DESCRIPTOR, _Cfg.UNPACK1_TILE_DESCRIPTOR)
 _OPTIONS = (_Cfg.UNPACK0_OPTIONS, _Cfg.UNPACK1_OPTIONS)
 _BASE = (_Cfg.UNPACK0_BASE, _Cfg.UNPACK1_BASE)
@@ -87,12 +81,7 @@ _ADDR_MISC = (_Cfg.UNPACK0_MISC, CFG_BASE + 62 * 4)
 _NOP_CLEAR = (CFG_BASE + 53 * 4, CFG_BASE + 63 * 4)
 _CONFIG_SYNC = 0xFFE80034
 
-def _select_mop(target, tilize):
-  if tilize and target == UnpackTarget.SRCB:
-    raise ValueError("tilize into SrcB is not implemented")
-  mop = (_TILIZE_MOPS if tilize else _MOPS)[target]
-  if mop is None: raise ValueError("unsupported tilize target")
-  return mop
+def _select_mop(target): return _MOPS[target]
 
 class Unpack:
   def __init__(self, kernel, dst: Dst):
@@ -118,20 +107,18 @@ class Unpack:
       observed = self.k.reg()
       self.k.read(observed, int(register)); self.k.write(_CONFIG_SYNC, 0)
 
-  def _write_mode(self, engine, input_format, output_format, target, tilize,
+  def _write_mode(self, engine, input_format, output_format, target,
                   tile, x_dim=None, transpose=False):
     k = self.k
     descriptor_x_dim = (
       x_dim if x_dim is not None else
-      1024 if tilize else 0 if engine == UNPACKER0 else 256
+      0 if engine == UNPACKER0 else 256
     )
     descriptor = (
       input_format | 0x10 | descriptor_x_dim << 16,
-      1 | (1 if tilize else 4) << 16, 0, 0,
+      1 | 4 << 16, 0, 0,
     )
-    shift = 2 * input_format.itemsize
     word0 = 0x20 | output_format
-    if tilize: word0 |= 1 << 9 | shift << 16 | shift << 20
     if transpose: word0 |= 1 << 8
     options = (word0, 0x03 | (0x30 if target == UnpackTarget.DST else 0), 0, 0)
     for base, words in ((_TILE_DESCRIPTOR[engine], descriptor), (_OPTIONS[engine], options)):
@@ -150,14 +137,14 @@ class Unpack:
     destination = 64 if engine == UNPACKER0 else 0
     if target == UnpackTarget.DST:
       destination += self.dst.row_base(tile) * 16
-    x_dim = x_dim if x_dim is not None else 1024 if tilize else 256
+    x_dim = x_dim if x_dim is not None else 256
     for register, value in (
       (_DEST[engine], destination | destination << 16),
       (_X_DIM[engine], x_dim | x_dim << 16),
       (_OFFSET[engine], 0), (int(_OFFSET[engine]) + 4, 0),
     ): k.write(int(register), value)
 
-  def _configure(self, cb, target, tilize, tile, mop=None, *,
+  def _configure(self, cb, target, tile, mop=None, *,
                  commit=True, configure_mop=True, transpose=False):
     input_format = cb.dtype
     output_format = DType.BF16 if input_format == DType.F32 and target != UnpackTarget.DST else input_format
@@ -165,7 +152,7 @@ class Unpack:
     self._wait_config_idle()
     self._set_thread_cfg(0, 0)
     self._write_mode(
-      engine, input_format, output_format, target, tilize, tile,
+      engine, input_format, output_format, target, tile,
       transpose=transpose,
     )
     with self.k.scope():
@@ -180,7 +167,7 @@ class Unpack:
       self._issue(TT.TTSETC16(_SRCA_SET, 0 if target == UnpackTarget.DST else 4))
     if commit: self._commit_config(_BASE[engine])
     if configure_mop:
-      self._mop.configure(_select_mop(target, tilize) if mop is None else mop)
+      self._mop.configure(_select_mop(target) if mop is None else mop)
     return engine
 
   def _configure_l1(self, dtype, target, address, x_dim, *,
@@ -189,7 +176,7 @@ class Unpack:
     self._wait_config_idle()
     self._set_thread_cfg(0, 0)
     self._write_mode(
-      engine, dtype, dtype, target, False, None, x_dim=x_dim,
+      engine, dtype, dtype, target, None, x_dim=x_dim,
       transpose=transpose,
     )
     if isinstance(address, R):
@@ -208,12 +195,12 @@ class Unpack:
       self._issue(TT.TTSETC16(_SRCA_SET, 4))
     if commit: self._commit_config(_BASE[engine])
     if configure_mop:
-      self._mop.configure(_select_mop(target, False))
+      self._mop.configure(_select_mop(target))
     return engine
 
-  def _run(self, cb, target, tilize, tile, mop=None):
-    engine = self._configure(cb, target, tilize, tile, mop)
-    self._issue(TT.TTSETADCXX(engine + 1, 1023 if tilize else 255, 0))
+  def _run(self, cb, target, tile, mop=None):
+    engine = self._configure(cb, target, tile, mop)
+    self._issue(TT.TTSETADCXX(engine + 1, 255, 0))
     self._issue(TT.TTSETADCZW(3, 0, 0, 0, 0, 0xF))
     if target == UnpackTarget.DST:
       sem_wait(self.k, Sem.MATH_DONE, SemWait.STALL_ON_ZERO, Stall.UNPACK)
@@ -233,21 +220,21 @@ class Unpack:
       self._issue(TT.TTSETC16(_SRCA_SET, 4))
       sem_post(self.k, Sem.UNPACK_TO_DEST)
 
-  def _move(self, source_cb, target, tilize, tile, mop=None):
+  def _move(self, source_cb, target, tile, mop=None):
     if target == UnpackTarget.DST: self.dst.check(tile)
-    _select_mop(target, tilize)  # Validate before emitting CB operations.
+    _select_mop(target)  # Validate before emitting CB operations.
     CB.wait_front(self.k, source_cb)
     if target != UnpackTarget.DST:
       stall(self.k, Stall.UNPACK, Wait.SRCB_CLR if target == UnpackTarget.SRCB else Wait.SRCA_CLR)
-    self._run(source_cb, target, tilize, tile, mop)
+    self._run(source_cb, target, tile, mop)
     CB.pop_front(self.k, source_cb)
     return self
 
-  def move(self, source_cb, target, tilize=False, *, tile=None):
-    return self._move(source_cb, target, tilize, tile)
+  def move(self, source_cb, target, *, tile=None):
+    return self._move(source_cb, target, tile)
 
   def move_l1(self, dtype, address, target=UnpackTarget.SRCA):
-    """Present one face-tilized tile from a persistent L1 address."""
+    """Present one 1024-element page from a persistent L1 address."""
     if not isinstance(dtype, DType):
       raise TypeError("L1 unpack dtype must be a DType")
     if type(address) is not int or address < 0:
@@ -278,11 +265,11 @@ class Unpack:
     # MVMUL computes SrcB @ SrcA. Unlike elementwise pair unpack, matmul
     # presents all four faces of each tile in one UNPACR operation.
     self._configure(
-      right_cb, UnpackTarget.SRCA, False, None,
+      right_cb, UnpackTarget.SRCA, None,
       commit=False, configure_mop=False, transpose=right_transpose,
     )
     self._configure(
-      left_cb, UnpackTarget.SRCB, False, None,
+      left_cb, UnpackTarget.SRCB, None,
       commit=False, configure_mop=False,
     )
     self._commit_config(_BASE[UNPACKER0])
@@ -315,7 +302,7 @@ class Unpack:
     CB.wait_front(self.k, source_a_cb)
     stall(self.k, Stall.UNPACK, Wait.SRCA_CLR | Wait.SRCB_CLR)
     self._configure(
-      source_a_cb, UnpackTarget.SRCA, False, None,
+      source_a_cb, UnpackTarget.SRCA, None,
       commit=False, configure_mop=False,
     )
     self._configure_l1(
@@ -339,11 +326,11 @@ class Unpack:
     CB.wait_front(self.k, source_b_cb)
     stall(self.k, Stall.UNPACK, Wait.SRCA_CLR | Wait.SRCB_CLR)
     self._configure(
-      source_a_cb, UnpackTarget.SRCA, False, None,
+      source_a_cb, UnpackTarget.SRCA, None,
       commit=False, configure_mop=False,
     )
     self._configure(
-      source_b_cb, UnpackTarget.SRCB, False, None,
+      source_b_cb, UnpackTarget.SRCB, None,
       commit=False, configure_mop=False,
     )
     self._commit_config(_BASE[UNPACKER0])
@@ -363,7 +350,7 @@ class Unpack:
     CB.wait_front(self.k, source_cb)
     stall(self.k, Stall.UNPACK, Wait.SRCA_CLR | Wait.SRCB_CLR)
     self._configure(
-      source_cb, UnpackTarget.SRCA, False, None,
+      source_cb, UnpackTarget.SRCA, None,
       commit=False, configure_mop=False,
     )
     self._configure_l1(
@@ -391,7 +378,7 @@ class Unpack:
     CB.wait_front(self.k, source_cb)
     stall(self.k, Stall.UNPACK, Wait.SRCA_CLR | Wait.SRCB_CLR)
     self._configure(
-      source_cb, UnpackTarget.SRCA, False, None,
+      source_cb, UnpackTarget.SRCA, None,
       commit=False, configure_mop=False,
     )
     self._configure_l1(
@@ -419,7 +406,7 @@ class Unpack:
       # GMPOOL consumes data from SrcA. Haloize transposes each face so its
       # logical rows become the columns reduced by GMPOOL.
       self._configure(
-        source_cb, UnpackTarget.SRCA, False, None,
+        source_cb, UnpackTarget.SRCA, None,
         commit=False, configure_mop=False, transpose=True,
       )
       self._configure_l1(
@@ -434,7 +421,7 @@ class Unpack:
         commit=False, configure_mop=False, transpose=True,
       )
       self._configure(
-        source_cb, UnpackTarget.SRCB, False, None,
+        source_cb, UnpackTarget.SRCB, None,
         commit=False, configure_mop=False,
       )
     self._commit_config(_BASE[UNPACKER0])
