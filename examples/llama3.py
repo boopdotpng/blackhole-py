@@ -956,7 +956,7 @@ def decode_compact_to_dense(compact: Buffer, output: Buffer) -> Program:
 
 
 def _bf16_tile_byte_offset(index):
-  """Physical byte offset of a logical BF16 element in a face-tilized tile."""
+  """Byte offset of a logical BF16 element in hardware face scratch."""
   row, column = divmod(index, 32)
   face = (row // 16) * 2 + column // 16
   return face * 512 + (row % 16) * 32 + (column % 16) * 2
@@ -1144,7 +1144,6 @@ def _global_tile_view(buffer, name):
   return Buffer(
     name, buffer.addr, buffer.dtype, (buffer.physical_tiles, 1024), 0,
     (buffer.cores[0],), buffer.banks, global_address=True,
-    tilized=buffer.tilized,
   )
 
 
@@ -1801,7 +1800,6 @@ class Llama3Decode:
       "e2e_lm_weight", self.embedding_weight.addr,
       self.embedding_weight.dtype, self.embedding_weight.shape,
       0, cores, self.embedding_weight.banks, global_address=True,
-      tilized=self.embedding_weight.tilized,
     )
     self.cos = global_buffer(
       "e2e_rope_cos", DType.BF16, (ROPE_CACHE_TOKENS, HEAD_DIM), None,

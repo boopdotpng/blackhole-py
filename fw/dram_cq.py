@@ -71,13 +71,28 @@ def _emit_engine(fw, state, first_bank, staging):
   fw.lw(banks, slot, PacketLayout.COPY_BANKS)
   fw.lw(direction, slot, PacketLayout.COPY_DIRECTION)
   with fw.scope():
-    bank, row, rows, batch, limit, host, remote, stage, coord, stride = fw.reg(10)
+    (
+      bank, row, rows, batch, limit, host, remote, stage, coord, stride,
+      bank_start,
+    ) = fw.reg(11)
+    fw.lw(bank_start, slot, PacketLayout.COPY_BANK_START)
     fw.li(bank, first_bank)
+    # Each engine owns one bank parity. Advance to the first physical bank in
+    # this descriptor's possibly-nonzero range with the matching parity.
+    fw.bgeu(bank, bank_start, "copy_bank_start_ready")
+    fw.mv(bank, bank_start)
+    fw.andi(scratch, bank, 1)
+    fw.li(rows, first_bank)
+    fw.beq(scratch, rows, "copy_bank_start_ready")
+    fw.addi(bank, bank, 1)
+    fw.label("copy_bank_start_ready")
     fw.label("copy_bank_loop")
-    fw.bgeu(bank, banks, "engine_done")
-    fw.bgeu(bank, tile_count, "copy_next_bank")
-    # Number of tiles in this bank: ceil((tile_count - bank) / banks).
-    fw.sub(rows, tile_count, bank)
+    fw.sub(scratch, bank, bank_start)
+    fw.bgeu(scratch, banks, "engine_done")
+    fw.bgeu(scratch, tile_count, "copy_next_bank")
+    # Number of tiles in this bank:
+    # ceil((tile_count - local_bank) / banks).
+    fw.sub(rows, tile_count, scratch)
     fw.add(rows, rows, banks); fw.addi(rows, rows, -1)
     fw.divu(rows, rows, banks)
     fw.li(row, 0)
@@ -92,7 +107,7 @@ def _emit_engine(fw, state, first_bank, staging):
     fw.li(stage, coord_table)
     fw.slli(coord, bank, 2); fw.add(coord, coord, stage); fw.lw(coord, coord, 0)
     fw.mul(remote, row, tile_size); fw.add(remote, remote, dram)
-    fw.mul(host, row, banks); fw.add(host, host, bank)
+    fw.mul(host, row, banks); fw.add(host, host, scratch)
     fw.mul(host, host, tile_size); fw.add(host, host, source)
     fw.beq(direction, R.ZERO, "copy_batch_to_dram")
 
