@@ -581,10 +581,8 @@ def kernel0_embedding_rmsnorm(
   CB.wait_front(p.trisc0, x_ready)
   if probe is None:
     for page in range(VECTOR_PAGES):
-      address = x_l1 + page * embedding_weight.tile_size
-      p.unpack.move_l1_pair_pair(
-        DType.BF16, address, DType.BF16,
-        address if reduction == "gapool" else ones_l1,
+      p.unpack.move_l1(
+        DType.BF16, x_l1 + page * embedding_weight.tile_size,
       )
   elif probe == "copy":
     for page in range(VECTOR_PAGES):
@@ -604,8 +602,7 @@ def kernel0_embedding_rmsnorm(
   CB.wait_front(p.trisc0, gamma_ready)
   if probe is None:
     for page in range(VECTOR_PAGES):
-      p.unpack.move_l1_pair_pair(
-        DType.BF16, x_l1 + page * embedding_weight.tile_size,
+      p.unpack.move_l1(
         DType.BF16, gamma_l1 + page * gamma.tile_size,
       )
   elif probe not in ("copy", "square", "gapool"):
@@ -619,21 +616,9 @@ def kernel0_embedding_rmsnorm(
   # TRISC1: HiFi2 does both wide products.  SFPU only performs the cross-page
   # reduction, epsilon + rsqrt, and the final scalar multiplication.
   if probe is None:
-    if reduction == "sfpu":
-      for page in range(VECTOR_PAGES):
-        p.fpu.binary("mul", dst_tile=page)
-      _legacy_begin_rms(p.sfpu)
-      for page in range(VECTOR_PAGES):
-        p.fpu.binary("mul", dst_tile=page)
-      _finish_rms(p.sfpu)
-    else:
-      _gapool_square_sum(p)
-      for word in _gapool_rsqrt_from_l0().words:
-        p.sfpu._issue(word)
-      stall(p.trisc1, Stall.SYNC, Wait.MATH | Wait.SFPU)
-      for page in range(VECTOR_PAGES):
-        p.fpu.binary("mul", dst_tile=page)
-      _finish_rms(p.sfpu)
+    _setup_apply_macro(p.sfpu)
+    p.fpu.copy_a_tiles(dst_tiles=range(2 * VECTOR_PAGES))
+    _legacy_rms(p.sfpu)
   elif probe == "gapool":
     _gapool_square_sum(p)
     _select_dst_tile(p.sfpu, 0)
