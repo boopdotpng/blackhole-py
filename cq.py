@@ -79,7 +79,6 @@ class PacketLayout:
   COPY_TILE_COUNT = COPY_SOURCE_MID + 4
   COPY_BANKS = COPY_TILE_COUNT + 4
   COPY_DIRECTION = COPY_BANKS + 4
-  COPY_BANK_START = COPY_DIRECTION + 4
   WRITE_TARGETS = HEADER.size
   RUN_TEMPLATE = HEADER.size
   RUN_TARGETS = HEADER.size + 8
@@ -262,14 +261,13 @@ class Trace:
 
 @dataclass(frozen=True)
 class DramCopy:
-  """Copy dense pages between pinned sysmem and interleaved device DRAM."""
+  """Copy physical tiles between pinned sysmem and interleaved device DRAM."""
   addr: int
   source: int
   tile_size: int
   tile_count: int
   banks: int
   direction: int = 0  # 0: sysmem -> DRAM, 1: DRAM -> sysmem
-  bank_start: int = 0
 
   def lower(self) -> bytes:
     if not 0 <= self.addr < 1 << 32:
@@ -277,23 +275,19 @@ class DramCopy:
     if not 0 <= self.source < 1 << 64:
       raise ValueError("DRAM copy sysmem address must fit in 64 bits")
     if not 0 < self.tile_size <= 16 * 1024 or self.tile_size % 16:
-      raise ValueError(
-        "DRAM copy tile size must be 16-byte aligned and at most 16 KiB",
-      )
+      raise ValueError("DRAM copy tile size must be 16-byte aligned and at most 16 KiB")
     if not 0 < self.tile_count < 1 << 32:
       raise ValueError("DRAM copy tile count must fit in 32 bits")
-    if not 0 < self.banks <= 7:
-      raise ValueError("DRAM copy bank count must be in [1, 7]")
+    if not 0 < self.banks <= 8:
+      raise ValueError("DRAM copy bank count must be in [1, 8]")
     if self.direction not in (0, 1):
       raise ValueError("DRAM copy direction must be 0 or 1")
-    if not 0 <= self.bank_start or self.bank_start + self.banks > 7:
-      raise ValueError("DRAM copy bank range must be within [0, 7)")
     header = PacketLayout.HEADER.pack(
       Op.DRAM_COPY, 0, ALIGN, self.addr, self.tile_size,
     )
-    descriptor = header + Struct("<6I").pack(
+    descriptor = header + Struct("<5I").pack(
       self.source & 0xFFFFFFFF, self.source >> 32, self.tile_count,
-      self.banks, self.direction, self.bank_start,
+      self.banks, self.direction,
     )
     return descriptor.ljust(ALIGN, b"\0")
 

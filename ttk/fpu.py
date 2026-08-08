@@ -63,8 +63,7 @@ class Fpu:
                     srcb_clear=False, srcb_carry=False, dest=0,
                     dest_clear=False, dest_carry=False,
                     dest_carry_to_carry=False,
-                    fidelity_increment=0, fidelity_clear=False,
-                    bias_increment=0, bias_clear=False):
+                    fidelity_increment=0, fidelity_clear=False):
     if type(slot) is not int or not 0 <= slot < 8:
       raise ValueError("FPU address-modifier slot must be in range 0..7")
     source = (
@@ -87,8 +86,7 @@ class Fpu:
     )
     self._set_thread_cfg(_ADDR_MOD_AB + slot, source)
     self._set_thread_cfg(_ADDR_MOD_DST + slot, destination)
-    bias = (bias_increment & 0xF) | int(bias_clear) << 4
-    self._set_thread_cfg(_ADDR_MOD_BIAS + slot, bias)
+    self._set_thread_cfg(_ADDR_MOD_BIAS + slot, 0)
     return self
 
   def _rmw_cfg_byte(self, register, byte, mask, data):
@@ -213,6 +211,11 @@ class Fpu:
       dest_carry_to_carry=True, fidelity_clear=True,
     )
 
+    if not accumulate:
+      # In FP32 mode a tile has four independently valid 16-row faces.
+      for face in range(4):
+        self._issue(TT.TTZEROACC(1, 1, 0, 1, dst_tile * 4 + face))
+
     self._issue(TT.TTSETRWC(0, 0, 0, 0, 0, 0xF))
     stall(self.k, Stall.MATH, Wait.SRCA_VLD | Wait.SRCB_VLD)
     clear_sources = (
@@ -227,7 +230,6 @@ class Fpu:
       # outer_last maps to its last-inner register.
       last=last_face, outer_last=last_phase,
     ))
-    sync(self.k)
 
     if broadcast is Broadcast.COLUMN:
       for _ in range(2):
@@ -401,77 +403,4 @@ class Fpu:
       self._issue(TT.TTSETRWC(0, 0, 0, 0, 0, 0xF))
       self._issue(TT.TTELWSUB(3, 0, 0, 0, 0))
     self._issue(TT.TTSETRWC(0, 0, 0, 0, 0, 0xF))
-    return self
-
-  def gapool_reduce_init(self):
-    """Configure the HiFi2 GAPOOL address modifiers used by tt-metal."""
-    self._set_addr_mod(0, fidelity_clear=True)
-    self._set_addr_mod(1, srca=16, fidelity_clear=True)
-    self._set_addr_mod(2, fidelity_increment=1)
-    self._issue(TT.TTSETRWC(0, 0, 0, 0, 0, 0xF))
-    return self
-
-  def gapool_reduce_restart(self):
-    """Re-arm synthetic SrcA/SrcB dvalids for another Dst-reuse reduction."""
-    self._issue(TT.TTSETDVALID(3))
-    return self
-
-  def move_dst_tile_to_srca(self, *, dst_tile):
-    """Copy one FP32 Dst tile to SrcA for Dst-reuse GAPOOL."""
-    self._set_thread_cfg(_DST_ROW_BASE, 0)
-    self._issue(TT.TTSETRWC(0, 0, 0, 0, 0, 4))
-    base = self.dst.row_base(dst_tile)
-    for row in range(0, 64, 4):
-      self._issue(TT.TTMOVD2A(0, row, 0, 2, base + row))
-    return self
-
-  def move_dst_tile_to_srcb(self, *, dst_tile):
-    """Copy one FP32 Dst tile to SrcB for Dst-reuse GAPOOL."""
-    self._configure_dst(0)
-    self._issue(TT.TTSETRWC(0, 0, 0, 0, 0, 6))
-    base = self.dst.row_base(dst_tile)
-    for row in range(0, 64, 4):
-      self._issue(TT.TTMOVD2B(0, row, 1, 2, base + row))
-    return self
-
-  def gapool_reduce_column(self, *, dst_tile, reconfigure=True):
-    """Accumulate one SrcA tile against SrcB into a Dst column."""
-    if reconfigure:
-      self._configure_dst(dst_tile)
-    else:
-      self._set_thread_cfg(_DST_ROW_BASE, self.dst.row_base(dst_tile))
-    self._issue(TT.TTSETRWC(0, 0, 0, 0, 0, 4))
-    for row_tile in range(2):
-      self._issue(TT.TTGAPOOL(0, 1, 2, 0, 0))
-      self._issue(TT.TTGAPOOL(0, 1, 0, 0, 0))
-      self._issue(TT.TTSETRWC(0, 1, 0, 0, 8, 1))
-      self._issue(TT.TTSETRWC(0, 1, 0, 0, 8, 1))
-      self._issue(TT.TTGAPOOL(0, 1, 2, 0, 0))
-      self._issue(TT.TTGAPOOL(0, 1, 0, 0, 0))
-      if row_tile == 0:
-        self._issue(TT.TTSETRWC(0, 1, 0, 0, 8, 1))
-        self._issue(TT.TTSETRWC(0, 1, 0, 0, 8, 1))
-        self._issue(TT.TTSETRWC(0, 0, 0, 0, 0, 4))
-      else:
-        self._issue(TT.TTSETRWC(0, 0, 0, 0, 0, 5))
-    return self
-
-  def gapool_reduce_scalar(self, *, dst_tile, clear_dvalid=True):
-    """Collapse a GAPOOL column result to Dst[0], matching tt-metal LLK."""
-    self._configure_dst(dst_tile)
-    self._issue(TT.TTMOVD2B(0, 16, 0, 0, 0))
-    self._issue(TT.TTGATESRCRST(1, 1))
-    self._issue(TT.TTTRNSPSRCB())
-    self._issue(TT.TTGATESRCRST(1, 1))
-    for row in range(0, 16, 4):
-      self._issue(TT.TTMOVB2A(row, 0, 2, 16 + row))
-    self._issue(TT.TTGATESRCRST(1, 1))
-    self._issue(TT.TTZEROACC(0, 0, 0, 0, 0))
-    self._issue(TT.TTGAPOOL(0, 1, 2, 0, 0))
-    self._issue(TT.TTGAPOOL(0, 1, 0, 0, 0))
-    if clear_dvalid:
-      self._issue(TT.TTCLEARDVALID(3, 0))
-    self._issue(TT.TTSETRWC(
-      3 if clear_dvalid else 0, 0, 0, 0, 0, 0xF,
-    ))
     return self

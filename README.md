@@ -1,15 +1,12 @@
 # blackhole-py
 
-> [!WARNING]
-> **The current repository state is broken.** The dense row-major storage
-> rewrite is incomplete, so the Llama example and hardware paths are not
-> expected to run end to end.
-
 Run Llama 3.2 1B Instruct end-to-end decode:
 
 ```sh
 PYTHONPATH=. python3 examples/llama3.py \
   --safetensor weights/model.safetensors \
+  --tokenizer weights \
+  --device 0 \
   --prompt "hello"
 ```
 
@@ -19,4 +16,7 @@ generated-token device/CQ versus host-loop breakdown.
 ## Requirements
 
 - `tt-kmd` > 2.9.0
-- P100a (P150 support is not implemented)
+- P100A with 120 Tensix cores, or P150A/P150B/P150C with either the stock
+  120-core firmware topology or a restored 140-core topology
+
+P150 uses all eight DRAM banks; P100A uses its seven enabled banks.

@@ -6,7 +6,7 @@ from asm import Asm
 from cq import MAX_WRITE_SIZE, McastWrite, UnicastWrite
 from fw.consts import Firmware, KERNEL_ROLES, TensixL1
 from isa import R, RV32
-from pcie import Allocator, P100_WORKER_CORES
+from pcie import Allocator, P100_DRAM_ENDPOINTS, P100_WORKER_CORES
 from ttk import Dst, DType
 from ttk.cb import CBRegistry
 from ttk.fpu import Fpu
@@ -28,12 +28,19 @@ class Buffer:
   cores: tuple[tuple[int, int], ...]
   banks: int
   global_address: bool = False
+  # Face-tilize each 1024-element tile on upload. Required for anything the
+  # Tensix datapath consumes directly (unpack -> srcA/srcB), because the
+  # unpacker's address generator walks 16x16 faces. Set False only for buffers
+  # read as raw bytes by BRISC/NCRISC -- e.g. an embedding table gathered by
+  # NoC and tilized on device afterwards. Operands that are elementwise-
+  # combined must agree: a row-major activation against a tilized weight
+  # silently pairs the wrong elements.
+  tilized: bool = True
+  dram_endpoints: tuple[tuple[tuple[int, int], tuple[int, int]], ...] = ()
 
   def __post_init__(self):
     shape, axis, cores = tuple(self.shape), self.axis, tuple(self.cores)
     if not cores: raise ValueError("buffer requires at least one storage core")
-    elements = prod(shape)
-    if elements <= 0: raise ValueError("buffer shape must contain at least one element")
     if axis is not None:
       if axis < 0: axis += len(shape)
       if not 0 <= axis < len(shape): raise ValueError("shard axis is outside the buffer shape")
@@ -57,69 +64,35 @@ class Buffer:
       item_starts.append(start)
       start += count
 
-    items_per_core = max(item_counts)
-    if axis is None:
-      shard_element_starts = tuple(start * 1024 for start in item_starts)
-      shard_element_counts = tuple(
-        min(count * 1024, elements - start)
-        for start, count in zip(shard_element_starts, item_counts)
-      )
-    else:
-      # Axis 0 shards are contiguous in row-major storage. For other axes this
-      # identifies the first element; codegen must apply the tensor strides.
-      axis_stride = prod(shape[axis + 1:])
-      shard_element_starts = tuple(start * axis_stride for start in item_starts)
-      shard_element_counts = tuple(count * item_elements for count in item_counts)
-    tile_starts = tuple(start // 1024 for start in shard_element_starts)
-    shard_offsets = tuple(start % 1024 for start in shard_element_starts)
-    tile_counts = tuple(
-      (offset + count + 1023) // 1024
-      for offset, count in zip(shard_offsets, shard_element_counts)
-    )
+    items_per_core = max(1, per_core + bool(extra))
+    tiles_per_core = items_per_core * tiles_per_item
     object.__setattr__(self, "items", items)
     object.__setattr__(self, "item_elements", item_elements)
     object.__setattr__(self, "items_per_core", items_per_core)
     object.__setattr__(self, "tiles_per_item", tiles_per_item)
-    object.__setattr__(self, "tiles_per_core", max(tile_counts))
+    object.__setattr__(self, "tiles_per_core", tiles_per_core)
     object.__setattr__(self, "item_starts", tuple(item_starts))
     object.__setattr__(self, "item_counts", item_counts)
-    object.__setattr__(self, "tile_starts", tile_starts)
-    object.__setattr__(self, "tile_counts", tile_counts)
-    object.__setattr__(self, "shard_offsets", shard_offsets)
-    object.__setattr__(self, "shard_element_starts", shard_element_starts)
-    object.__setattr__(self, "shard_element_counts", shard_element_counts)
+    object.__setattr__(
+      self, "tile_starts",
+      tuple(index * tiles_per_core for index in range(len(cores))),
+    )
+    object.__setattr__(self, "tile_counts", (tiles_per_core,) * len(cores))
 
   @property
-  def tiles(self): return (prod(self.shape) + 1023) // 1024
+  def tiles(self): return self.items * self.tiles_per_item
 
   @property
-  def physical_tiles(self): return self.tiles
+  def physical_tiles(self): return len(self.cores) * self.tiles_per_core
 
   @property
   def tile_size(self): return 1024 * self.dtype.itemsize
 
   @property
-  def size(self): return prod(self.shape) * self.dtype.itemsize
+  def size(self): return self.physical_tiles * self.tile_size
 
   @property
-  def tail_size(self): return self.size % self.tile_size
-
-  @property
-  def allocation_size(self):
-    """Largest exact byte span occupied in any one interleaved DRAM bank."""
-    full_tiles, tail = divmod(self.size, self.tile_size)
-    tail_transfer = (tail + 15) & -16 if tail else 0
-    spans = []
-    for bank in range(self.banks):
-      full_in_bank = (
-        (full_tiles - bank + self.banks - 1) // self.banks
-        if bank < full_tiles else 0
-      )
-      span = full_in_bank * self.tile_size
-      if tail and bank == full_tiles % self.banks:
-        span += tail_transfer
-      spans.append(span)
-    return max(spans)
+  def storage_shape(self): return len(self.cores), self.tiles_per_core, 32, 32
 
   def shard_addr(self, core):
     if self.global_address: return self.addr
@@ -170,20 +143,79 @@ class Buffer:
       ).view(np.float32)
     return values.reshape(self.shape).copy()
 
-  def storage_data(self, data: bytes, *, inverse=False):
-    """Validate exact, dense row-major storage bytes.
-
-    The final DRAM page is short rather than zero-padded. Sharding is metadata
-    only and never changes or expands the logical byte stream.
-    """
-    data = bytes(data)
-    if len(data) != self.size:
-      direction = "readback" if inverse else "upload"
-      raise ValueError(
-        f"{direction} for {self.name!r} has {len(data)} bytes; "
-        f"expected exactly {self.size}",
+  def tile_data(self, data: bytes, *, inverse=False):
+    element = np.dtype(f"V{self.dtype.itemsize}")
+    if inverse:
+      physical = np.frombuffer(data, dtype=element)
+      if self.tilized:
+        tiles = physical.reshape(self.physical_tiles, 2, 2, 16, 16)
+        tiles = tiles.transpose(0, 1, 3, 2, 4).reshape(self.physical_tiles, 1024)
+      else:
+        tiles = physical.reshape(self.physical_tiles, 1024)
+      blocks = tiles.reshape(len(self.cores), self.items_per_core,
+                             self.tiles_per_item * 1024)
+      items = np.concatenate([
+        block[:count] for block, count in zip(blocks, self.item_counts)
+      ])
+      if self.axis is None: return items.reshape(-1)[:prod(self.shape)].tobytes()
+      items = items[:, :self.item_elements]
+      moved_shape = (
+        self.shape[self.axis], *self.shape[:self.axis], *self.shape[self.axis + 1:]
       )
-    return data
+      values = items.reshape(moved_shape)
+      return np.moveaxis(values, 0, self.axis).tobytes()
+
+    values = np.frombuffer(data, dtype=element).reshape(self.shape)
+    # Llama weights use axis-0 rows made of complete tiles. Tilize directly
+    # from the safetensor view into final sharded storage, avoiding the two
+    # full-size "logical" and "blocks" intermediates below. This matters for
+    # multi-gigabyte model startup, while the generic path still handles
+    # partial items and arbitrary shard axes.
+    if (
+      self.axis == 0 and
+      self.item_elements == self.tiles_per_item * 1024
+    ):
+      items = values.reshape(
+        self.items, self.tiles_per_item, 2, 16, 2, 16,
+      )
+      if self.tilized:
+        items = items.transpose(0, 1, 2, 4, 3, 5)
+      if len(self.cores) == 1 and self.items_per_core == self.items:
+        return items.tobytes()
+      item_shape = (
+        (self.tiles_per_item, 2, 2, 16, 16)
+        if self.tilized else (self.tiles_per_item, 2, 16, 2, 16)
+      )
+      blocks = np.zeros(
+        (len(self.cores), self.items_per_core, *item_shape),
+        dtype=element,
+      )
+      for block, start, count in zip(
+        blocks, self.item_starts, self.item_counts,
+      ):
+        block[:count] = items[start:start + count]
+      return blocks.tobytes()
+
+    if self.axis is None:
+      logical = np.zeros((self.items, 1024), dtype=element)
+      logical.reshape(-1)[:values.size] = values.reshape(-1)
+    else:
+      logical = np.zeros(
+        (self.items, self.tiles_per_item * 1024), dtype=element,
+      )
+      logical[:, :self.item_elements] = np.moveaxis(
+        values, self.axis, 0,
+      ).reshape(self.items, self.item_elements)
+
+    blocks = np.zeros(
+      (len(self.cores), self.items_per_core, self.tiles_per_item * 1024),
+      dtype=element,
+    )
+    for block, start, count in zip(blocks, self.item_starts, self.item_counts):
+      block[:count] = logical[start:start + count]
+    if not self.tilized: return blocks.tobytes()
+    tiles = blocks.reshape(self.physical_tiles, 2, 16, 2, 16)
+    return tiles.transpose(0, 1, 3, 2, 4).tobytes()
 
 
 @dataclass(frozen=True, eq=False)
@@ -211,28 +243,41 @@ class Dram:
   ALIGNMENT = 64
   BANKS = 7
 
-  def __init__(self, banks=BANKS, cores=P100_WORKER_CORES):
+  def __init__(self, banks=BANKS, cores=P100_WORKER_CORES,
+               dram_endpoints=None):
     self.allocator = Allocator(self.START, self.END, self.ALIGNMENT)
     self.banks = banks
     self.cores = tuple(cores)
+    self.dram_endpoints = tuple(
+      P100_DRAM_ENDPOINTS[:banks]
+      if dram_endpoints is None else dram_endpoints
+    )
+    if len(self.dram_endpoints) != banks:
+      raise ValueError(
+        f"DRAM has {banks} banks but {len(self.dram_endpoints)} endpoints",
+      )
 
   def buffer(self, name: str, dtype: DType, shape: tuple[int, ...],
-             axis=None, *, global_address=False, cores=None) -> Buffer:
+             axis=None, *, global_address=False, cores=None,
+             tilized=True) -> Buffer:
     storage_cores = self.cores if cores is None else tuple(cores)
     if not storage_cores: raise ValueError("buffer requires storage cores")
     if len(set(storage_cores)) != len(storage_cores):
       raise ValueError("buffer storage cores must be unique")
     if any(core not in self.cores for core in storage_cores):
       raise ValueError("buffer storage cores must belong to this DRAM device")
-    # Globally addressed buffers have one linear page namespace shared by all
-    # worker cores, so they need only one metadata owner.
+    # Globally addressed buffers have one linear tile namespace shared by all
+    # worker cores. Use one storage core so sharding introduces no padding.
     storage_cores = (storage_cores[0],) if global_address else storage_cores
     buffer = Buffer(
       name, 0, dtype, shape, axis, storage_cores, self.banks, global_address,
+      tilized, self.dram_endpoints,
     )
-    addr = self.allocator.alloc(buffer.allocation_size)
+    tiles_per_bank = (buffer.physical_tiles + self.banks - 1) // self.banks
+    addr = self.allocator.alloc(tiles_per_bank * buffer.tile_size)
     return Buffer(
       name, addr, dtype, shape, axis, storage_cores, self.banks, global_address,
+      tilized, self.dram_endpoints,
     )
 
 

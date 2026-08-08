@@ -1,7 +1,6 @@
 from asm import Cond
 from fw.consts import TensixL1
 from isa import R
-from pcie import P100_DRAM_ENDPOINTS
 from ttk.cb import CB
 
 # Every tile has two NIUs. NIU 0 drives NoC 0 and NIU 1 drives NoC 1.
@@ -335,7 +334,13 @@ class NoC:
     return self
 
   def _dram_tile(self, param, tile):
-    k, endpoints, buffer = self.k, P100_DRAM_ENDPOINTS, param
+    k, buffer = self.k, param
+    endpoints = buffer.dram_endpoints
+    if len(endpoints) != buffer.banks:
+      raise ValueError(
+        f"buffer uses {buffer.banks} DRAM banks but has "
+        f"{len(endpoints)} endpoints",
+      )
     base = k.reg()
     k.read(base, TensixL1.PARAM_BASE + k.param_slots[param] * 4)
     address, coordinate, bank, banks, scale, rotation = k.reg(

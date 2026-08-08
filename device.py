@@ -29,7 +29,7 @@ class Readback:
 
   def _finish(self):
     data = self.device.pcie.sysmem.read(self.device.cq.dram + self.offset, self.buffer.size)
-    self.data = self.buffer.storage_data(data, inverse=True)
+    self.data = self.buffer.tile_data(data, inverse=True)
 
 
 @dataclass(frozen=True)
@@ -141,7 +141,10 @@ class DeviceTrace:
 class Device:
   def __init__(self, index: int = 0, sysmem_size: int = 1 << 30):
     self.pcie = PCIDevice(index, sysmem_size)
-    self.dram = Dram(len(self.pcie.dram_endpoints), self.pcie.cores)
+    self.dram = Dram(
+      len(self.pcie.dram_endpoints), self.pcie.cores,
+      self.pcie.dram_endpoints,
+    )
     self.program_queue, self.read_queue = [], []
     self.cq = None
     self._staging_next = 0
@@ -163,8 +166,8 @@ class Device:
     pcie_mid = self.pcie.sysmem.noc_addr >> 32
     prefetch = build_prefetch(pcie_mid).lower()
     dispatch = build_dispatch(pcie_mid).lower()
-    dram_brisc = build_dram_brisc().lower()
-    dram_ncrisc = build_dram_ncrisc().lower()
+    dram_brisc = build_dram_brisc(self.pcie.dram_endpoints).lower()
+    dram_ncrisc = build_dram_ncrisc(self.pcie.dram_endpoints).lower()
     with TLBWindow(self.pcie.fd, self.pcie.cores[0]) as win:
       win.mcast(TensixMMIO.RISCV_DEBUG_REG_SOFT_RESET_0, TensixMMIO.SOFT_RESET_ALL)
       win.mcast(firmware_base, firmware)
@@ -209,10 +212,9 @@ class Device:
                          dram_endpoints=None):
     if self.cq is None:
       raise RuntimeError("init_device() must be called before tensor transfer")
-    transfer_size = self._dram_transfer_size(buffer)
-    if offset + transfer_size > self.cq.dram_size:
+    if offset + buffer.size > self.cq.dram_size:
       raise MemoryError(
-        f"queued tensors need {offset + transfer_size} bytes; "
+        f"queued tensors need {offset + buffer.size} bytes; "
         f"sysmem DRAM region has {self.cq.dram_size}",
       )
     endpoints = (
@@ -221,53 +223,28 @@ class Device:
     )
     if not endpoints or endpoints != self.pcie.dram_endpoints[:len(endpoints)]:
       raise ValueError("CQ DRAM copies require a non-empty prefix of DRAM banks")
-    if len(endpoints) != buffer.banks:
-      raise ValueError("CQ DRAM copy bank count must match the buffer")
     source = self.pcie.sysmem.noc_addr + self.cq.dram + offset
-    full_tiles, tail = divmod(buffer.size, buffer.tile_size)
-    commands = []
-    if full_tiles:
-      commands.append(DramCopy(
-        buffer.addr, source, buffer.tile_size, full_tiles,
-        len(endpoints), int(not write),
-      ))
-    if tail:
-      bank = full_tiles % len(endpoints)
-      row = full_tiles // len(endpoints)
-      tail_transfer = (tail + 15) & -16
-      commands.append(DramCopy(
-        buffer.addr + row * buffer.tile_size,
-        source + full_tiles * buffer.tile_size,
-        tail_transfer, 1, 1, int(not write), bank,
-      ))
+    command = DramCopy(
+      buffer.addr, source, buffer.tile_size, buffer.physical_tiles,
+      len(endpoints), int(not write),
+    )
     program = Program((), images={})
-    program.launch = tuple(commands)
+    program.launch = (command,)
     return program
 
-  @staticmethod
-  def _dram_transfer_size(buffer):
-    full_tiles, tail = divmod(buffer.size, buffer.tile_size)
-    return full_tiles * buffer.tile_size + ((tail + 15) & -16 if tail else 0)
-
-  def _write_storage(self, buffer, data: bytes, *, dram_endpoints=None):
-    """Upload bytes already arranged for the buffer's DRAM pages/shards."""
+  def _write_physical(self, buffer, data: bytes, *, dram_endpoints=None):
+    """Upload already-physical tile bytes without applying tensor tilization."""
     data = bytes(data)
-    if len(data) != buffer.size:
-      raise ValueError(
-        f"storage upload has {len(data)} bytes; expected {buffer.size}",
-      )
+    if len(data) > buffer.size:
+      raise ValueError("physical upload exceeds its DRAM buffer")
     offset = self._staging_next
     program = self._dram_copy_program(
       buffer, write=True, offset=offset, dram_endpoints=dram_endpoints,
     )
-    self.pcie.sysmem.write(self.cq.dram + offset, data)
-    transfer_size = self._dram_transfer_size(buffer)
-    if transfer_size != buffer.size:
-      self.pcie.sysmem.write(
-        self.cq.dram + offset + buffer.size,
-        bytes(transfer_size - buffer.size),
-      )
-    self._staging_next += transfer_size
+    self.pcie.sysmem.write(
+      self.cq.dram + offset, data.ljust(buffer.size, b"\0"),
+    )
+    self._staging_next += buffer.size
     return self.queue(program, report=False)
 
   def cache_programs(self, programs, timeout=30.0):
@@ -320,7 +297,7 @@ class Device:
     core = self.pcie.cores[0]
     arena = Buffer(
       "cq_kernel_cache", address, DType.U32, (physical_size // 4,),
-      None, (core,), 1, True,
+      None, (core,), 1, True, True, (self.pcie.dram_endpoints[0],),
     )
     blob = bytearray(physical_size)
     for record, offset in offsets.items():
@@ -328,7 +305,7 @@ class Device:
 
     # A single-bank arena makes every cached record a linear DRAM read.
     endpoint = self.pcie.dram_endpoints[0]
-    self._write_storage(arena, blob, dram_endpoints=(endpoint,))
+    self._write_physical(arena, blob, dram_endpoints=(endpoint,))
     self.run(timeout=timeout)
     coord = noc_coord(endpoint[0])
     entries = {
@@ -644,13 +621,13 @@ class Device:
     return DeviceTrace(self, trace, patches)
 
   def write(self, buffer, data: bytes):
-    return self._write_storage(buffer, buffer.storage_data(data))
+    return self._write_physical(buffer, buffer.tile_data(data))
 
   def queue_read(self, buffer):
     offset = self._staging_next
     program = self._dram_copy_program(buffer, write=False, offset=offset)
     readback = Readback(self, buffer, offset)
-    self._staging_next += self._dram_transfer_size(buffer)
+    self._staging_next += buffer.size
     self.read_queue.append((program, None, readback, False))
     return readback
 

@@ -336,6 +336,7 @@ def _decode_projections_program(x, projections):
   token = Buffer(
     f"{x.name}_decode_token", x.addr, x.dtype, (input_dim,), None,
     (x.cores[0],), x.banks, global_address=True,
+    dram_endpoints=x.dram_endpoints,
   )
   parameters = tuple(
     parameter
@@ -956,7 +957,7 @@ def decode_compact_to_dense(compact: Buffer, output: Buffer) -> Program:
 
 
 def _bf16_tile_byte_offset(index):
-  """Byte offset of a logical BF16 element in hardware face scratch."""
+  """Physical byte offset of a logical BF16 element in a face-tilized tile."""
   row, column = divmod(index, 32)
   face = (row // 16) * 2 + column // 16
   return face * 512 + (row % 16) * 32 + (column % 16) * 2
@@ -1144,6 +1145,7 @@ def _global_tile_view(buffer, name):
   return Buffer(
     name, buffer.addr, buffer.dtype, (buffer.physical_tiles, 1024), 0,
     (buffer.cores[0],), buffer.banks, global_address=True,
+    tilized=buffer.tilized, dram_endpoints=buffer.dram_endpoints,
   )
 
 
@@ -1747,7 +1749,8 @@ def rmsnorm(x: Buffer, weight: Buffer, output: Buffer) -> Program:
 class Llama3Decode:
   """Resident-weight, batch-1 Llama 3.2 1B decode runtime."""
 
-  def __init__(self, safetensor_path="weights/model.safetensors"):
+  def __init__(self, safetensor_path="weights/model.safetensors",
+               device_index=0):
     self.safetensor_path = str(safetensor_path)
     self.host_result_read_us = 0.0
     self.host_result_reads = 0
@@ -1759,7 +1762,7 @@ class Llama3Decode:
     }
     total_started = time.perf_counter()
     started = time.perf_counter()
-    self.device = Device()
+    self.device = Device(device_index)
     self.device.init_device()
     self.profile["device_init_s"] = time.perf_counter() - started
     try:
@@ -1800,6 +1803,8 @@ class Llama3Decode:
       "e2e_lm_weight", self.embedding_weight.addr,
       self.embedding_weight.dtype, self.embedding_weight.shape,
       0, cores, self.embedding_weight.banks, global_address=True,
+      tilized=self.embedding_weight.tilized,
+      dram_endpoints=self.embedding_weight.dram_endpoints,
     )
     self.cos = global_buffer(
       "e2e_rope_cos", DType.BF16, (ROPE_CACHE_TOKENS, HEAD_DIM), None,
@@ -2032,7 +2037,7 @@ class Llama3Decode:
     self.context_projection_input = Buffer(
       "e2e_context_decode_token", self.context.addr, self.context.dtype,
       (EMBED_DIM,), None, (self.context.cores[0],), self.context.banks,
-      global_address=True,
+      global_address=True, dram_endpoints=self.context.dram_endpoints,
     )
     self.device.cache_kernels(self.programs.values())
     self._queue("embedding")
@@ -2154,6 +2159,7 @@ def run_decode_e2e(
   safetensor_path="weights/model.safetensors",
   tokenizer_path="weights",
   profile=False,
+  device_index=0,
 ):
   """Run prompt ingestion and greedy generation entirely through decode."""
   if steps is not None and steps < 1:
@@ -2183,7 +2189,7 @@ def run_decode_e2e(
   elif steps > max_steps:
     raise ValueError("prompt plus generation exceeds the 8192-token cache")
 
-  runtime = Llama3Decode(safetensor_path)
+  runtime = Llama3Decode(safetensor_path, device_index)
   generation_seconds = 0.0
   generation_replays = 0
   generation_profiles = []
@@ -2311,11 +2317,17 @@ if __name__ == "__main__":
     help="optional generation cap; default runs until EOS/context limit",
   )
   parser.add_argument("--safetensor", default="weights/model.safetensors")
+  parser.add_argument("--tokenizer", default="weights")
+  parser.add_argument(
+    "--device", type=int, default=0,
+    help="Tenstorrent device index (default: 0)",
+  )
   parser.add_argument(
     "--profile", action="store_true",
     help="print startup, DRAM-upload, device, and host-loop timing",
   )
   args = parser.parse_args()
   run_decode_e2e(
-    args.prompt, args.steps, args.safetensor, profile=args.profile,
+    args.prompt, args.steps, args.safetensor, args.tokenizer,
+    profile=args.profile, device_index=args.device,
   )
