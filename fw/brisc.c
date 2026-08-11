@@ -2,7 +2,7 @@
 
 #define SUBORDINATE_SYNC 0x0068u
 #define GO_SIGNAL 0x0373u
-#define DISPATCH_DONE_COUNT 0x160050u
+#define DISPATCH_DONE_COUNT 0x30010u
 #define DISPATCH_COORD TT_DISPATCH_COORD
 
 static void enable_clock_gating(void) {

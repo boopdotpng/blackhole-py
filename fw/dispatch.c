@@ -116,7 +116,7 @@ static void execute_run(u32 packet) {
   }
 
   mmio_write32(DISPATCH_DONE_COUNT, 0);
-  mmio_write32(DISPATCH_GO, 0x80u);
+  mmio_write32(DISPATCH_GO, 0x80000000u);
   fence();
   for (u32 index = 0; index < target_count; index++) {
     u32 target = DISPATCH_TARGETS + index * 8u;
@@ -127,17 +127,10 @@ static void execute_run(u32 packet) {
         0, DISPATCH_ARGS, PARAM_BASE, start, end, args_size
       );
     }
-    for (u32 role = 0; role < 5; role++) {
-      u32 entry = mmio_read32(
-        packet + PACKET_RUN_ENTRY_POINTS + role * 4u
-      );
-      mmio_write32(DISPATCH_ARGS + 0x40u, entry);
-      fence();
-      noc_multicast_write(
-        0, DISPATCH_ARGS + 0x40u,
-        WORKER_ENTRY_BASE + role * 4u, start, end, 4
-      );
-    }
+    noc_multicast_write(
+      0, packet + PACKET_RUN_ENTRY_POINTS,
+      WORKER_ENTRY_BASE, start, end, 5u * 4u
+    );
     noc_multicast_write(
       0, DISPATCH_GO, GO_SIGNAL & -4u, start, end, 4
     );
