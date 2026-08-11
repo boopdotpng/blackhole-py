@@ -46,6 +46,47 @@ HOST_ISSUE_SIZE = 4 << 20
 HOST_COMPLETION_SIZE = PAGE_SIZE
 HOST_TRACE_SIZE = 256 << 20
 HOST_LIVE_SIZE = 128 << 10
+CQ_BREADCRUMB = CQ_STATE + 0xA0
+CQ_BREADCRUMB_STRUCT = Struct("<5I")
+CQ_BREADCRUMB_STAGES = {
+  0x100: "prefetch boot",
+  0x102: "prefetch read header",
+  0x103: "prefetch record",
+  0x104: "prefetch wait dispatch space",
+  0x105: "prefetch copy to dispatch",
+  0x106: "prefetch advance issue",
+  0x107: "prefetch publish dispatch",
+  0x200: "dispatch boot",
+  0x201: "dispatch wait published",
+  0x202: "dispatch command",
+  0x203: "dispatch wait DRAM idle",
+  0x204: "dispatch enqueue DRAM",
+  0x205: "dispatch unicast",
+  0x206: "dispatch multicast",
+  0x208: "dispatch wait workers",
+  0x209: "dispatch command done",
+  0x2FF: "dispatch bad command",
+  0x300: "DRAM BRISC boot",
+  0x301: "DRAM BRISC wait published",
+  0x302: "DRAM BRISC command",
+  0x303: "DRAM BRISC copy descriptor",
+  0x304: "DRAM BRISC bank",
+  0x305: "DRAM BRISC device to host",
+  0x306: "DRAM BRISC host to device",
+  0x307: "DRAM BRISC wait NCRISC",
+  0x308: "DRAM BRISC publish",
+  0x309: "DRAM BRISC signal",
+  0x3FF: "DRAM BRISC bad command",
+  0x400: "DRAM NCRISC boot",
+  0x401: "DRAM NCRISC wait published",
+  0x402: "DRAM NCRISC command",
+  0x403: "DRAM NCRISC copy descriptor",
+  0x404: "DRAM NCRISC bank",
+  0x405: "DRAM NCRISC device to host",
+  0x406: "DRAM NCRISC host to device",
+  0x409: "DRAM NCRISC signal",
+  0x4FF: "DRAM NCRISC bad command",
+}
 
 class Op(IntEnum):
   PAD = 0
@@ -76,9 +117,10 @@ class PacketLayout:
   TRACE_SIZE = HEADER.size
   COPY_SOURCE_LO = HEADER.size
   COPY_SOURCE_MID = COPY_SOURCE_LO + 4
-  COPY_TILE_COUNT = COPY_SOURCE_MID + 4
-  COPY_BANKS = COPY_TILE_COUNT + 4
+  COPY_PAGE_COUNT = COPY_SOURCE_MID + 4
+  COPY_BANKS = COPY_PAGE_COUNT + 4
   COPY_DIRECTION = COPY_BANKS + 4
+  COPY_BANK_START = COPY_DIRECTION + 4
   WRITE_TARGETS = HEADER.size
   RUN_TEMPLATE = HEADER.size
   RUN_TARGETS = HEADER.size + 8
@@ -261,33 +303,38 @@ class Trace:
 
 @dataclass(frozen=True)
 class DramCopy:
-  """Copy physical tiles between pinned sysmem and interleaved device DRAM."""
+  """Copy dense byte pages between pinned sysmem and interleaved device DRAM."""
   addr: int
   source: int
-  tile_size: int
-  tile_count: int
+  page_size: int
+  page_count: int
   banks: int
   direction: int = 0  # 0: sysmem -> DRAM, 1: DRAM -> sysmem
+  bank_start: int = 0
 
   def lower(self) -> bytes:
     if not 0 <= self.addr < 1 << 32:
       raise ValueError("DRAM copy address must fit in 32 bits")
     if not 0 <= self.source < 1 << 64:
       raise ValueError("DRAM copy sysmem address must fit in 64 bits")
-    if not 0 < self.tile_size <= 16 * 1024 or self.tile_size % 16:
-      raise ValueError("DRAM copy tile size must be 16-byte aligned and at most 16 KiB")
-    if not 0 < self.tile_count < 1 << 32:
-      raise ValueError("DRAM copy tile count must fit in 32 bits")
+    if not 0 < self.page_size <= 16 * 1024 or self.page_size % 16:
+      raise ValueError(
+        "DRAM copy page size must be 16-byte aligned and at most 16 KiB",
+      )
+    if not 0 < self.page_count < 1 << 32:
+      raise ValueError("DRAM copy page count must fit in 32 bits")
     if not 0 < self.banks <= 8:
       raise ValueError("DRAM copy bank count must be in [1, 8]")
     if self.direction not in (0, 1):
       raise ValueError("DRAM copy direction must be 0 or 1")
+    if not 0 <= self.bank_start or self.bank_start + self.banks > 8:
+      raise ValueError("DRAM copy bank range must be within [0, 8)")
     header = PacketLayout.HEADER.pack(
-      Op.DRAM_COPY, 0, ALIGN, self.addr, self.tile_size,
+      Op.DRAM_COPY, 0, ALIGN, self.addr, self.page_size,
     )
-    descriptor = header + Struct("<5I").pack(
-      self.source & 0xFFFFFFFF, self.source >> 32, self.tile_count,
-      self.banks, self.direction,
+    descriptor = header + Struct("<6I").pack(
+      self.source & 0xFFFFFFFF, self.source >> 32, self.page_count,
+      self.banks, self.direction, self.bank_start,
     )
     return descriptor.ljust(ALIGN, b"\0")
 
@@ -470,6 +517,36 @@ class CommandQueue:
   def submit(self, commands, timeout=10.0):
     return self.wait(self.enqueue(commands), timeout=timeout)
 
+  def _firmware_breadcrumbs(self):
+    slots = (
+      ("prefetch", self.pcie.prefetch_core, CQ_BREADCRUMB),
+      ("dispatch", self.pcie.dispatch_core, CQ_BREADCRUMB),
+      ("dram_brisc", self.pcie.dram_core, CQ_BREADCRUMB),
+      ("dram_ncrisc", self.pcie.dram_core, CQ_BREADCRUMB + 0x20),
+    )
+    result = {}
+    with TLBWindow(self.pcie.fd, self.pcie.cores[0]) as window:
+      for name, core, address in slots:
+        window.target(0, core)
+        words = CQ_BREADCRUMB_STRUCT.unpack(
+          window.read(address, CQ_BREADCRUMB_STRUCT.size),
+        )
+        stage, *values = words
+        result[name] = {
+          "stage": CQ_BREADCRUMB_STAGES.get(stage, f"unknown {stage:#x}"),
+          "values": tuple(f"{value:#x}" for value in values),
+        }
+    return result
+
+  def _timeout(self, event):
+    try:
+      breadcrumbs = self._firmware_breadcrumbs()
+    except Exception as error:
+      breadcrumbs = f"unavailable: {error}"
+    return TimeoutError(
+      f"CQ completion {event} timed out; firmware breadcrumbs: {breadcrumbs}",
+    )
+
   def wait(self, event, timeout=10.0, poll_interval=0.0002):
     deadline = time.monotonic() + timeout
     polls = 0
@@ -477,10 +554,10 @@ class CommandQueue:
       polls += 1
       if poll_interval:
         if time.monotonic() >= deadline:
-          raise TimeoutError(f"CQ completion {event} timed out")
+          raise self._timeout(event)
         time.sleep(poll_interval)
       elif polls & 0xff == 0 and time.monotonic() >= deadline:
-        raise TimeoutError(f"CQ completion {event} timed out")
+        raise self._timeout(event)
     return Timestamp.unpack(
       self.pcie.sysmem.read(self.completion + 8, Timestamp.STRUCT.size),
     )

@@ -9,9 +9,7 @@ from cq import (
 from fw.consts import (
   Firmware, FirmwareControl, KERNEL_ROLES, RunState, TensixL1, TensixMMIO,
 )
-from fw.core import build_brisc, build_ncrisc, build_trisc
-from fw.cq import build_dispatch, build_prefetch
-from fw.dram_cq import build_dram_brisc, build_dram_ncrisc
+from fw import c_firmware
 from isa import R, RV32
 from pcie import PCIDevice, TLBWindow
 from program import (
@@ -159,15 +157,14 @@ class Device:
       win.mcast(TensixMMIO.RISCV_DEBUG_REG_SOFT_RESET_0, TensixMMIO.SOFT_RESET_ALL)
 
   def init_device(self):
-    images = (build_brisc(), build_ncrisc(), *(build_trisc(i) for i in range(3)))
-    firmware = b"".join(image.lower().ljust(size, b"\0")
+    pcie_mid = self.pcie.sysmem.noc_addr >> 32
+    c_images = c_firmware.build(pcie_mid, self.pcie.dram_endpoints)
+    images = c_images.workers
+    prefetch, dispatch = c_images.prefetch, c_images.dispatch
+    dram_brisc, dram_ncrisc = c_images.dram_brisc, c_images.dram_ncrisc
+    firmware = b"".join(image.ljust(size, b"\0")
                         for (_, size), image in zip(Firmware.TEXT.values(), images))
     firmware_base = Firmware.TEXT["brisc"][0]
-    pcie_mid = self.pcie.sysmem.noc_addr >> 32
-    prefetch = build_prefetch(pcie_mid).lower()
-    dispatch = build_dispatch(pcie_mid).lower()
-    dram_brisc = build_dram_brisc(self.pcie.dram_endpoints).lower()
-    dram_ncrisc = build_dram_ncrisc(self.pcie.dram_endpoints).lower()
     with TLBWindow(self.pcie.fd, self.pcie.cores[0]) as win:
       win.mcast(TensixMMIO.RISCV_DEBUG_REG_SOFT_RESET_0, TensixMMIO.SOFT_RESET_ALL)
       win.mcast(firmware_base, firmware)
@@ -178,6 +175,18 @@ class Device:
       # legacy (no-template) path.
       win.mcast(FirmwareControl.GO_SIGNAL & -4, 0)
       win.mcast(TensixMMIO.RISCV_DEBUG_REG_SOFT_RESET_0, TensixMMIO.SOFT_RESET_BRISC_ONLY_RUN)
+      service_cores = (
+        self.pcie.prefetch_core, self.pcie.dispatch_core, self.pcie.dram_core,
+      )
+      def service_mmio(core, address, value):
+        base = address & -TLBWindow.SIZE
+        win.target(base, core)
+        win.write(address - base, value)
+      for core in service_cores:
+        service_mmio(
+          core, TensixMMIO.RISCV_DEBUG_REG_SOFT_RESET_0,
+          TensixMMIO.SOFT_RESET_ALL,
+        )
       for core, images in (
         (self.pcie.prefetch_core, {"brisc": prefetch}),
         (self.pcie.dispatch_core, {"brisc": dispatch}),
@@ -186,14 +195,27 @@ class Device:
         win.target(0, core)
         for role, image in images.items():
           win.write(TensixL1.WORKER_TEXT_BASE[role], image)
+        win.write(
+          TensixL1.BOOT,
+          RV32().jal(R.ZERO, TensixL1.WORKER_TEXT_BASE["brisc"]).to_bytes(
+            4, "little",
+          ),
+        )
       win.target(0, self.pcie.dram_core)
       win.write(DRAM_BRISC_READY, bytes(8))
       self.cq = CommandQueue(self.pcie)
-      for core in (
-        self.pcie.prefetch_core, self.pcie.dispatch_core, self.pcie.dram_core,
-      ):
+      for core in service_cores:
         win.target(0, core)
         win.write(FirmwareControl.GO_SIGNAL, int(RunState.GO), bytes=1)
+      for core in (self.pcie.prefetch_core, self.pcie.dispatch_core):
+        service_mmio(
+          core, TensixMMIO.RISCV_DEBUG_REG_SOFT_RESET_0,
+          TensixMMIO.SOFT_RESET_BRISC_ONLY_RUN,
+        )
+      service_mmio(
+        self.pcie.dram_core, TensixMMIO.RISCV_DEBUG_REG_SOFT_RESET_0,
+        TensixMMIO.SOFT_RESET_BRISC_ONLY_RUN,
+      )
       win.target(0, self.pcie.dram_core)
       deadline = time.monotonic() + 5.0
       while (
@@ -201,7 +223,10 @@ class Device:
         int.from_bytes(win.read(DRAM_NCRISC_READY, 4), "little") != 1
       ):
         if time.monotonic() >= deadline:
-          raise TimeoutError("CQ DRAM engines did not start")
+          raise TimeoutError(
+            "CQ DRAM engines did not start; "
+            f"firmware breadcrumbs: {self.cq._firmware_breadcrumbs()}",
+          )
         time.sleep(0)
 
   def queue(self, program: Program, params=None, report=True):

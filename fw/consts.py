@@ -9,7 +9,7 @@ class TensixL1:
   SIZE = 0x180000
 
   # Device-owned boot/control state and a 512-byte zero page precede firmware.
-  BOOT = 0; BOOT_SIZE = 4; MEM_ZEROS_BASE = 0x32E0; MEM_ZEROS_SIZE = 0x200
+  BOOT = 0; BOOT_SIZE = 4; MEM_ZEROS_BASE = 0x2BB8; MEM_ZEROS_SIZE = 0x200
 
   # Firmware.TEXT is packed immediately below this direct-launch argument table.
   PARAM_BASE = 0x3FD0; PARAM_SIZE = 0x30; PARAM_SLOTS = PARAM_SIZE // 4
@@ -71,13 +71,22 @@ class Firmware:
     "trisc2": (0xFFB008C0, 0xFFB00F00),
   }
 
-  # Packed back-to-back in worker L1; the final image ends at PARAM_BASE.
+  # Non-code C ELF sections get 0x100 bytes per RISC in addition to the
+  # original code budget. Images stay packed back-to-back below PARAM_BASE.
+  ELF_DATA_SIZE = 0x100
+  TEXT_CODE_SIZE = {
+    "brisc": 0x07C0,
+    "ncrisc": 0x00D8,
+    "trisc0": 0x0180,
+    "trisc1": 0x0180,
+    "trisc2": 0x0180,
+  }
   TEXT = {
-    "brisc": (0x34E0, 0x07C0),
-    "ncrisc": (0x3CA0, 0x00D8),
-    "trisc0": (0x3D78, 0x00C8),
-    "trisc1": (0x3E40, 0x00C8),
-    "trisc2": (0x3F08, 0x00C8),
+    "brisc": (0x2DB8, TEXT_CODE_SIZE["brisc"] + ELF_DATA_SIZE),
+    "ncrisc": (0x3678, TEXT_CODE_SIZE["ncrisc"] + ELF_DATA_SIZE),
+    "trisc0": (0x3850, TEXT_CODE_SIZE["trisc0"] + ELF_DATA_SIZE),
+    "trisc1": (0x3AD0, TEXT_CODE_SIZE["trisc1"] + ELF_DATA_SIZE),
+    "trisc2": (0x3D50, TEXT_CODE_SIZE["trisc2"] + ELF_DATA_SIZE),
   }
 
 class RunState(IntEnum):
