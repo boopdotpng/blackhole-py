@@ -43,6 +43,11 @@ class Device:
     firmware_base = Firmware.TEXT["brisc"][0]
 
     with TLBWindow(self.pcie.fd, self.pcie.cores[0]) as window:
+      def service_mmio(core, address, value):
+        base = address & -TLBWindow.SIZE
+        window.target(base, core)
+        window.write(address - base, value)
+
       window.mcast(
         TensixMMIO.RISCV_DEBUG_REG_SOFT_RESET_0,
         TensixMMIO.SOFT_RESET_ALL,
@@ -65,8 +70,8 @@ class Device:
         }),
       )
       for core, _ in service_images:
-        window.target(0, core)
-        window.write(
+        service_mmio(
+          core,
           TensixMMIO.RISCV_DEBUG_REG_SOFT_RESET_0,
           TensixMMIO.SOFT_RESET_ALL,
         )
@@ -87,13 +92,13 @@ class Device:
       self.dma = self.queues.dma
 
       for core in (self.pcie.prefetch_core, self.pcie.dispatch_core):
-        window.target(0, core)
-        window.write(
+        service_mmio(
+          core,
           TensixMMIO.RISCV_DEBUG_REG_SOFT_RESET_0,
           TensixMMIO.SOFT_RESET_BRISC_ONLY_RUN,
         )
-      window.target(0, self.pcie.dma_core)
-      window.write(
+      service_mmio(
+        self.pcie.dma_core,
         TensixMMIO.RISCV_DEBUG_REG_SOFT_RESET_0,
         TensixMMIO.SOFT_RESET_BRISC_ONLY_RUN,
       )
