@@ -170,7 +170,7 @@ class UnicastWrite:
     if not 0 < size <= MAX_WRITE_SIZE or any(len(blob) != size for blob in blobs):
       raise ValueError("unicast payloads must have one equal size in [1, 16 KiB]")
     source = queue.stage(b"".join(blobs))
-    targets = queue.stage(b"".join(noc_coord(core).to_bytes(4, "little") for core in cores), 4)
+    targets = queue.stage(b"".join(noc_coord(core).to_bytes(4, "little") for core in cores))
     return _packet(
       Op.UNICAST_WRITE, len(cores), _u32(self.addr, "write address"), size,
       source & 0xFFFFFFFF, source >> 32, targets & 0xFFFFFFFF, targets >> 32,
@@ -191,7 +191,7 @@ class McastWrite:
     source = queue.stage(data)
     targets = queue.stage(b"".join(
       Struct("<II").pack(*mcast_coords(rect)) for rect in rects
-    ), 4)
+    ))
     return _packet(
       Op.MCAST_WRITE, len(rects), _u32(self.addr, "write address"), len(data),
       source & 0xFFFFFFFF, source >> 32, targets & 0xFFFFFFFF, targets >> 32,
@@ -220,7 +220,7 @@ class Run:
     rects = rectangles(cores)
     targets = queue.stage(b"".join(
       Struct("<II").pack(*mcast_coords(rect)) for rect in rects
-    ), 4)
+    ))
     return _packet(
       Op.RUN, len(rects), self.args_addr & 0xFFFFFFFF, self.args_addr >> 32,
       self.args_size, len(cores), targets & 0xFFFFFFFF, targets >> 32,
@@ -305,10 +305,10 @@ class SubmissionMemory:
     self.indirect = sysmem.alloc(HOST_INDIRECT_SIZE, PAGE_SIZE)
     self.indirect_allocator = Allocator(self.indirect, self.indirect + HOST_INDIRECT_SIZE, PACKET_SIZE)
     self.args = sysmem.alloc(HOST_ARGS_SIZE, PAGE_SIZE)
-    self.args_allocator = Allocator(self.args, self.args + HOST_ARGS_SIZE, 16)
+    self.args_allocator = Allocator(self.args, self.args + HOST_ARGS_SIZE, 64)
     self.command_data = sysmem.alloc(HOST_COMMAND_DATA_SIZE, PAGE_SIZE)
     self.command_data_allocator = Allocator(
-      self.command_data, self.command_data + HOST_COMMAND_DATA_SIZE, 16,
+      self.command_data, self.command_data + HOST_COMMAND_DATA_SIZE, 64,
     )
     self.live = sysmem.alloc(HOST_LIVE_SIZE, PAGE_SIZE)
     dma_base = (sysmem.allocator.next + PAGE_SIZE - 1) & -PAGE_SIZE
@@ -355,10 +355,10 @@ class ComputeQueue:
     self.prefetch.write(PREFETCH_INDIRECT_ACTIVE, 0)
     self.dispatch.write(DISPATCH_PUBLISHED, 0)
 
-  def stage(self, data, alignment=16):
+  def stage(self, data):
     data = bytes(data)
     if not data: raise ValueError("cannot stage an empty command payload")
-    offset = self.memory.command_data_allocator.alloc(len(data), alignment)
+    offset = self.memory.command_data_allocator.alloc(len(data))
     self.pcie.sysmem.write(offset, data)
     return self.memory.noc_address(offset)
 
@@ -367,7 +367,7 @@ class ComputeQueue:
     if not data: return 0
     if len(data) > 48 or len(data) % 4:
       raise ValueError("kernel arguments must be a multiple of four up to 48 bytes")
-    offset = self.memory.args_allocator.alloc(len(data), 16)
+    offset = self.memory.args_allocator.alloc(len(data))
     self.pcie.sysmem.write(offset, data)
     return self.memory.noc_address(offset)
 
