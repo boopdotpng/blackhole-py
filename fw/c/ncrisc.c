@@ -4,14 +4,6 @@
 
 static void launch_worker(void) {
   wait_u8(SYNC, 0x80u);
-  u32 launch_delay = 10000;
-  __asm__ volatile(
-    "1: addi %0, %0, -1\n"
-    "bnez %0, 1b\n"
-    : "+r"(launch_delay)
-    :
-    : "memory"
-  );
   run_worker_kernel();
 }
 
