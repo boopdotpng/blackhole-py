@@ -49,6 +49,8 @@ SECTIONS
     *(COMMON)
     __bss_end = .;
   }
+  ASSERT(SIZEOF(.bss) == 0,
+         "firmware must not require host-side BSS initialization")
 
   __image_end = .;
   ASSERT(__image_end - __data_start <= TT_DATA_CAPACITY,

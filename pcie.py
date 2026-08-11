@@ -43,7 +43,7 @@ class BoardConfig:
   dram_endpoints: tuple[tuple[tuple[int, int], tuple[int, int]], ...]
   prefetch_core: tuple[int, int]
   dispatch_core: tuple[int, int]
-  dram_core: tuple[int, int]
+  dma_core: tuple[int, int]
 
 def board_config(card_type, tensix_enabled, gddr_enabled):
   """Select the supported runtime topology from sysfs and ARC telemetry."""
@@ -282,7 +282,7 @@ class PCIDevice:
       self.cores = list(config.cores)
       self.prefetch_core = config.prefetch_core
       self.dispatch_core = config.dispatch_core
-      self.dram_core = config.dram_core
+      self.dma_core = config.dma_core
       SetPowerState(self.fd, power_flags=0b1111)
       self.powered = True
       self.sysmem = Sysmem(self.fd, sysmem_size)

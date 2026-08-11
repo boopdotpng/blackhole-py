@@ -1,5 +1,4 @@
-#ifndef TT_FW_H
-#define TT_FW_H
+#pragma once
 
 typedef unsigned char u8;
 typedef unsigned short u16;
@@ -56,22 +55,6 @@ TT_INLINE void configure_csr(void) {
 
 TT_INLINE void push_tensix_word(u32 word) {
   mmio_write32(0xFFE40000u, word);
-}
-#define TT_BREADCRUMB_BASE 0x10A0u
-
-static void breadcrumb_at(
-  u32 base, u32 stage, u32 a, u32 b, u32 c, u32 d
-) {
-  mmio_write32(base + 4, a);
-  mmio_write32(base + 8, b);
-  mmio_write32(base + 12, c);
-  mmio_write32(base + 16, d);
-  fence();
-  mmio_write32(base, stage);
-}
-
-static void breadcrumb(u32 stage, u32 a, u32 b, u32 c, u32 d) {
-  breadcrumb_at(TT_BREADCRUMB_BASE, stage, a, b, c, d);
 }
 
 #define TT_NOC_MAX_PACKET_BYTES (16u * 1024u)
@@ -218,15 +201,12 @@ static void noc_atomic_inc(
   noc_wait_counter(niu, 0x44u, 0);
 }
 
-#ifdef TT_WORKER_KERNEL_BASE
+#ifdef TT_WORKER_ENTRY_SLOT
 TT_INLINE void run_worker_kernel(void) {
-  __asm__ volatile("jr %0" :: "r"(TT_WORKER_KERNEL_BASE) : "memory");
+  u32 entry = mmio_read32(TT_WORKER_ENTRY_SLOT);
+  __asm__ volatile("jr %0" :: "r"(entry) : "memory");
   __builtin_unreachable();
 }
-#endif
-
-#ifndef TT_FW_STACK_TOP
-#error "firmware requires TT_FW_STACK_TOP"
 #endif
 
 __asm__(
@@ -268,4 +248,3 @@ __asm__(
   "j .Ltt_hang\n"
   ".popsection\n"
 );
-#endif

@@ -1,19 +1,22 @@
 from contextlib import ExitStack
 from dataclasses import dataclass
+from enum import IntEnum
 from math import prod
 import numpy as np
 from asm import Asm
 from cq import MAX_WRITE_SIZE, McastWrite, UnicastWrite
-from fw.consts import Firmware, KERNEL_ROLES, TensixL1
+from fw import Firmware, KERNEL_ROLES, TensixL1
 from isa import R, RV32
 from pcie import Allocator, P100_DRAM_ENDPOINTS, P100_WORKER_CORES
-from ttk import Dst, DType
-from ttk.cb import CBRegistry
-from ttk.fpu import Fpu
-from ttk.ops import Ops
-from ttk.pack import Pack
-from ttk.sfpu import Sfpu
-from ttk.unpack import Unpack
+
+
+class DType(IntEnum):
+  F32 = 0
+  BF16 = 5
+  U32 = 6
+
+  @property
+  def itemsize(self): return 2 if self is DType.BF16 else 4
 
 PARAM_BASE = TensixL1.PARAM_BASE
 RETURN_KERNEL = {role: RV32().jal(R.ZERO, Firmware.TEXT[role][0] - TensixL1.WORKER_TEXT_BASE[role]).to_bytes(4, "little") for role in KERNEL_ROLES}
@@ -24,83 +27,29 @@ class Buffer:
   addr: int
   dtype: DType
   shape: tuple[int, ...]
-  axis: int | None
-  cores: tuple[tuple[int, int], ...]
   banks: int
-  global_address: bool = False
-  # Face-tilize each 1024-element tile on upload. Required for anything the
-  # Tensix datapath consumes directly (unpack -> srcA/srcB), because the
-  # unpacker's address generator walks 16x16 faces. Set False only for buffers
-  # read as raw bytes by BRISC/NCRISC -- e.g. an embedding table gathered by
-  # NoC and tilized on device afterwards. Operands that are elementwise-
-  # combined must agree: a row-major activation against a tilized weight
-  # silently pairs the wrong elements.
-  tilized: bool = True
+  page_size: int
   dram_endpoints: tuple[tuple[tuple[int, int], tuple[int, int]], ...] = ()
 
   def __post_init__(self):
-    shape, axis, cores = tuple(self.shape), self.axis, tuple(self.cores)
-    if not cores: raise ValueError("buffer requires at least one storage core")
-    if axis is not None:
-      if axis < 0: axis += len(shape)
-      if not 0 <= axis < len(shape): raise ValueError("shard axis is outside the buffer shape")
+    shape = tuple(self.shape)
+    if not shape or any(type(dim) is not int or dim <= 0 for dim in shape):
+      raise ValueError("buffer shape must contain positive integer dimensions")
+    if not isinstance(self.dtype, DType):
+      raise TypeError("buffer dtype must be a DType")
+    if type(self.banks) is not int or self.banks < 1:
+      raise ValueError("buffer requires at least one DRAM bank")
+    if type(self.page_size) is not int or not 0 < self.page_size <= 16 * 1024:
+      raise ValueError("buffer page size must be in [1, 16 KiB]")
+    if len(self.dram_endpoints) != self.banks:
+      raise ValueError("buffer DRAM endpoints must match its bank count")
     object.__setattr__(self, "shape", shape)
-    object.__setattr__(self, "axis", axis)
-
-    if axis is None:
-      items = (prod(shape) + 1023) // 1024
-      item_elements, tiles_per_item = 1024, 1
-    else:
-      items = shape[axis]
-      item_elements = prod((*shape[:axis], *shape[axis + 1:]))
-      tiles_per_item = max(1, (item_elements + 1023) // 1024)
-
-    cores = cores[:min(max(1, items), len(cores))]
-    object.__setattr__(self, "cores", cores)
-    per_core, extra = divmod(items, len(cores))
-    item_counts = tuple(per_core + (index < extra) for index in range(len(cores)))
-    item_starts, start = [], 0
-    for count in item_counts:
-      item_starts.append(start)
-      start += count
-
-    items_per_core = max(1, per_core + bool(extra))
-    tiles_per_core = items_per_core * tiles_per_item
-    object.__setattr__(self, "items", items)
-    object.__setattr__(self, "item_elements", item_elements)
-    object.__setattr__(self, "items_per_core", items_per_core)
-    object.__setattr__(self, "tiles_per_item", tiles_per_item)
-    object.__setattr__(self, "tiles_per_core", tiles_per_core)
-    object.__setattr__(self, "item_starts", tuple(item_starts))
-    object.__setattr__(self, "item_counts", item_counts)
-    object.__setattr__(
-      self, "tile_starts",
-      tuple(index * tiles_per_core for index in range(len(cores))),
-    )
-    object.__setattr__(self, "tile_counts", (tiles_per_core,) * len(cores))
 
   @property
-  def tiles(self): return self.items * self.tiles_per_item
+  def size(self): return prod(self.shape) * self.dtype.itemsize
 
   @property
-  def physical_tiles(self): return len(self.cores) * self.tiles_per_core
-
-  @property
-  def tile_size(self): return 1024 * self.dtype.itemsize
-
-  @property
-  def size(self): return self.physical_tiles * self.tile_size
-
-  @property
-  def storage_shape(self): return len(self.cores), self.tiles_per_core, 32, 32
-
-  def shard_addr(self, core):
-    if self.global_address: return self.addr
-    tile = self.tile_starts[self.cores.index(core)]
-    rows, bank = divmod(tile, self.banks)
-    # Buffer addresses are 64-byte aligned. Use the otherwise-zero low bits
-    # to carry this shard's initial bank without adding another kernel param.
-    return self.addr + rows * self.tile_size | bank
+  def page_count(self): return (self.size + self.page_size - 1) // self.page_size
 
   def from_numpy(self, values) -> bytes:
     if self.dtype is DType.U32:
@@ -134,6 +83,10 @@ class Buffer:
     return data
 
   def to_numpy(self, data: bytes):
+    if len(data) != self.size:
+      raise ValueError(
+        f"buffer {self.name!r} requires exactly {self.size} bytes, got {len(data)}",
+      )
     if self.dtype is DType.U32:
       return np.frombuffer(data, dtype="<u4").reshape(self.shape).copy()
     if self.dtype is DType.F32: values = np.frombuffer(data, dtype="<f4")
@@ -143,81 +96,6 @@ class Buffer:
       ).view(np.float32)
     return values.reshape(self.shape).copy()
 
-  def tile_data(self, data: bytes, *, inverse=False):
-    element = np.dtype(f"V{self.dtype.itemsize}")
-    if inverse:
-      physical = np.frombuffer(data, dtype=element)
-      if self.tilized:
-        tiles = physical.reshape(self.physical_tiles, 2, 2, 16, 16)
-        tiles = tiles.transpose(0, 1, 3, 2, 4).reshape(self.physical_tiles, 1024)
-      else:
-        tiles = physical.reshape(self.physical_tiles, 1024)
-      blocks = tiles.reshape(len(self.cores), self.items_per_core,
-                             self.tiles_per_item * 1024)
-      items = np.concatenate([
-        block[:count] for block, count in zip(blocks, self.item_counts)
-      ])
-      if self.axis is None: return items.reshape(-1)[:prod(self.shape)].tobytes()
-      items = items[:, :self.item_elements]
-      moved_shape = (
-        self.shape[self.axis], *self.shape[:self.axis], *self.shape[self.axis + 1:]
-      )
-      values = items.reshape(moved_shape)
-      return np.moveaxis(values, 0, self.axis).tobytes()
-
-    values = np.frombuffer(data, dtype=element).reshape(self.shape)
-    # Llama weights use axis-0 rows made of complete tiles. Tilize directly
-    # from the safetensor view into final sharded storage, avoiding the two
-    # full-size "logical" and "blocks" intermediates below. This matters for
-    # multi-gigabyte model startup, while the generic path still handles
-    # partial items and arbitrary shard axes.
-    if (
-      self.axis == 0 and
-      self.item_elements == self.tiles_per_item * 1024
-    ):
-      items = values.reshape(
-        self.items, self.tiles_per_item, 2, 16, 2, 16,
-      )
-      if self.tilized:
-        items = items.transpose(0, 1, 2, 4, 3, 5)
-      if len(self.cores) == 1 and self.items_per_core == self.items:
-        return items.tobytes()
-      item_shape = (
-        (self.tiles_per_item, 2, 2, 16, 16)
-        if self.tilized else (self.tiles_per_item, 2, 16, 2, 16)
-      )
-      blocks = np.zeros(
-        (len(self.cores), self.items_per_core, *item_shape),
-        dtype=element,
-      )
-      for block, start, count in zip(
-        blocks, self.item_starts, self.item_counts,
-      ):
-        block[:count] = items[start:start + count]
-      return blocks.tobytes()
-
-    if self.axis is None:
-      logical = np.zeros((self.items, 1024), dtype=element)
-      logical.reshape(-1)[:values.size] = values.reshape(-1)
-    else:
-      logical = np.zeros(
-        (self.items, self.tiles_per_item * 1024), dtype=element,
-      )
-      logical[:, :self.item_elements] = np.moveaxis(
-        values, self.axis, 0,
-      ).reshape(self.items, self.item_elements)
-
-    blocks = np.zeros(
-      (len(self.cores), self.items_per_core, self.tiles_per_item * 1024),
-      dtype=element,
-    )
-    for block, start, count in zip(blocks, self.item_starts, self.item_counts):
-      block[:count] = logical[start:start + count]
-    if not self.tilized: return blocks.tobytes()
-    tiles = blocks.reshape(self.physical_tiles, 2, 16, 2, 16)
-    return tiles.transpose(0, 1, 3, 2, 4).tobytes()
-
-
 @dataclass(frozen=True, eq=False)
 class Const:
   name: str
@@ -225,12 +103,6 @@ class Const:
 
 
 Param = Buffer | Const
-
-
-def _param_values(param, cores, value=None):
-  if value is None: value = param if isinstance(param, Buffer) else param.value
-  if isinstance(value, Buffer): return tuple(value.shard_addr(core) for core in cores)
-  return tuple(value) if isinstance(value, (tuple, list)) else (value,) * len(cores)
 
 
 def _param_word(value):
@@ -258,44 +130,32 @@ class Dram:
       )
 
   def buffer(self, name: str, dtype: DType, shape: tuple[int, ...],
-             axis=None, *, global_address=False, cores=None,
-             tilized=True) -> Buffer:
-    storage_cores = self.cores if cores is None else tuple(cores)
-    if not storage_cores: raise ValueError("buffer requires storage cores")
-    if len(set(storage_cores)) != len(storage_cores):
-      raise ValueError("buffer storage cores must be unique")
-    if any(core not in self.cores for core in storage_cores):
-      raise ValueError("buffer storage cores must belong to this DRAM device")
-    # Globally addressed buffers have one linear tile namespace shared by all
-    # worker cores. Use one storage core so sharding introduces no padding.
-    storage_cores = (storage_cores[0],) if global_address else storage_cores
-    buffer = Buffer(
-      name, 0, dtype, shape, axis, storage_cores, self.banks, global_address,
-      tilized, self.dram_endpoints,
-    )
-    tiles_per_bank = (buffer.physical_tiles + self.banks - 1) // self.banks
-    addr = self.allocator.alloc(tiles_per_bank * buffer.tile_size)
-    return Buffer(
-      name, addr, dtype, shape, axis, storage_cores, self.banks, global_address,
-      tilized, self.dram_endpoints,
-    )
+             *, page_size=4096, banks=None) -> Buffer:
+    banks = self.banks if banks is None else banks
+    if not 0 < banks <= self.banks:
+      raise ValueError("buffer bank count must be within the device bank count")
+    endpoints = self.dram_endpoints[:banks]
+    buffer = Buffer(name, 0, dtype, shape, banks, page_size, endpoints)
+    rows_per_bank = (buffer.page_count + banks - 1) // banks
+    addr = self.allocator.alloc(rows_per_bank * page_size)
+    return Buffer(name, addr, dtype, shape, banks, page_size, endpoints)
 
 
 class Program:
-  def __init__(self, cores, *parameters, fp32_dst=False, images=None):
+  def __init__(self, cores, *parameters, images=None):
     self._cores = tuple(cores)
     params = tuple(parameters)
     if len(params) > TensixL1.PARAM_SLOTS:
       raise ValueError("program parameter table is full")
     self.params = {param.name: param for param in params}
     self._param_slots = {param: slot for slot, param in enumerate(params)}
-    # Program-scoped CBs and constants consume the large non-persistent arena.
+    # Program-scoped scratch and constants consume the non-persistent arena.
     self._l1 = Allocator(
       TensixL1.DATA_BUFFER_SPACE_BASE, TensixL1.DATA_BUFFER_SPACE_END, 16,
     )
-    self.cb = CBRegistry(self._l1)
     self._l1_constants = {}
     self.launch = ()
+    self._static = None
     self._kernels = None if images is None else {
       core: dict(images) for core in self._cores
     }
@@ -306,12 +166,6 @@ class Program:
       for role in KERNEL_ROLES
     }
     for role, stream in self.roles.items(): setattr(self, role, stream)
-    dst = Dst(fp32_dst)
-    self.unpack = Unpack(self.trisc0, dst)
-    self.fpu = Fpu(self.trisc1, dst)
-    self.sfpu = Sfpu(self.trisc1, dst, seed_kernel=self.brisc)
-    self.pack = Pack(self.trisc2, dst)
-    self.ops = Ops(self, self.unpack, self.fpu, self.sfpu, self.pack)
     self._scopes = ExitStack()
     for stream in self.roles.values(): self._scopes.enter_context(stream.scope())
 
@@ -325,9 +179,6 @@ class Program:
     if key not in self._l1_constants:
       self._l1_constants[key] = self._l1.alloc(len(data), alignment)
     return self._l1_constants[key]
-
-  @property
-  def cbs(self): return self.cb.configs
 
   @property
   def cores(self): return self._cores
@@ -345,27 +196,23 @@ class Program:
   def param_addr(self, param):
     return PARAM_BASE + self._param_slots[param] * 4
 
-  def bind(self, param, value=None):
-    values = _param_values(param, self.cores, value)
-    data = tuple(_param_word(item).to_bytes(4, "little") for item in values)
-    return UnicastWrite(self.cores, self.param_addr(param), data)
-
-  def _param_table(self, values=None):
+  def arg_data(self, values=None):
     values = {} if values is None else dict(values)
     resolved = {}
     for key, value in values.items():
       param = self.params[key] if isinstance(key, str) else key
       resolved[param] = value
-    columns = [
-      _param_values(param, self.cores, resolved.get(param))
-      for param in self.params.values()
-    ]
-    return tuple(
-      b"".join(_param_word(column[index]).to_bytes(4, "little") for column in columns)
-      for index in range(len(self.cores))
-    )
+    words = []
+    for param in self.params.values():
+      value = resolved.get(param, param if isinstance(param, Buffer) else param.value)
+      value = _param_word(value)
+      if type(value) is not int or not 0 <= value < 1 << 32:
+        raise ValueError(f"parameter {param.name!r} must be a 32-bit integer or Buffer")
+      words.append(value)
+    return b"".join(word.to_bytes(4, "little") for word in words)
 
   def static_commands(self):
+    if self._static is not None: return self._static
     commands, kernels = [], self.lower()
     for role in KERNEL_ROLES:
       groups = {}
@@ -396,15 +243,11 @@ class Program:
           commands.append(McastWrite(
             rectangles(self.cores), address + offset, chunk,
           ))
-    return tuple(commands)
+    self._static = tuple(commands)
+    return self._static
 
   def runtime_commands(self, params=None):
-    commands = []
-    if self.params:
-      commands.append(UnicastWrite(
-        self.cores, PARAM_BASE, self._param_table(params),
-      ))
-    return (*commands, *self.launch)
+    return self.launch
 
   def commands(self, params=None):
     return (*self.static_commands(), *self.runtime_commands(params))

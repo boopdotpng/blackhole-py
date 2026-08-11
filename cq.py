@@ -1,200 +1,160 @@
 from dataclasses import dataclass
 from enum import IntEnum
 from struct import Struct
-from typing import ClassVar
-import os, time
-from fw.consts import Core
+import time
+
+from fw import Core
 from pcie import Allocator, TLBWindow
 
-Rect = tuple[Core, Core]
 
-ALIGN = 64; MAX_WRITE_SIZE = 16 * 1024; MAX_RECORD_SIZE = 64 * 1024; PAGE_SIZE = 4096
+PACKET_SIZE = 64
+MAX_WRITE_SIZE = 16 * 1024
+PAGE_SIZE = 4096
 
+HOST_ISSUE_SIZE = 1 << 20
+HOST_ISSUE_SLOTS = HOST_ISSUE_SIZE // PACKET_SIZE
+HOST_COMPLETION_SIZE = PAGE_SIZE
+HOST_INDIRECT_SIZE = 16 << 20
+HOST_ARGS_SIZE = 4 << 20
+HOST_COMMAND_DATA_SIZE = 16 << 20
+HOST_LIVE_SIZE = 128 << 10
+
+# Prefetch-core state. All queue pointers count 64-byte packets, not bytes.
 CQ_STATE = 0x1000
 PREFETCH_DOORBELL = CQ_STATE
 PREFETCH_PCIE_BASE = CQ_STATE + 0x08
 PREFETCH_READ_PTR = CQ_STATE + 0x0C
 PREFETCH_DISPATCH_READ = CQ_STATE + 0x10
-PREFETCH_TRACE_ACTIVE = CQ_STATE + 0x14
-PREFETCH_TRACE_CURSOR = CQ_STATE + 0x18
-PREFETCH_TRACE_END = CQ_STATE + 0x1C
-PREFETCH_RECORD_SIZE = CQ_STATE + 0x20
-PREFETCH_READ_PUBLISH = CQ_STATE + 0x30  # Scalar NoC sources are 16-byte aligned.
-# The largest CQ record is 64 KiB. Keep staging clear of the BRISC firmware
-# image and the small CQ state area below 0x2000.
+PREFETCH_INDIRECT_ACTIVE = CQ_STATE + 0x14
+PREFETCH_INDIRECT_LO = CQ_STATE + 0x18
+PREFETCH_INDIRECT_MID = CQ_STATE + 0x1C
+PREFETCH_INDIRECT_INDEX = CQ_STATE + 0x20
+PREFETCH_INDIRECT_COUNT = CQ_STATE + 0x24
+PREFETCH_READ_PUBLISH = CQ_STATE + 0x30
+PREFETCH_DISPATCH_PUBLISH = CQ_STATE + 0x40
 PREFETCH_STAGING = 0x20000
+
+# Dispatch has a fixed-slot L1 ring. Variable payloads remain out of line.
 DISPATCH_PUBLISHED = CQ_STATE
-DISPATCH_RING_BASE = 0x20000; DISPATCH_RING_PAGES = 320
-DISPATCH_RING_END = DISPATCH_RING_BASE + DISPATCH_RING_PAGES * PAGE_SIZE
-DISPATCH_SCRATCH = DISPATCH_RING_END
-DISPATCH_GO = DISPATCH_SCRATCH + 0x40
-DISPATCH_DONE_COUNT = DISPATCH_SCRATCH + 0x50
-DISPATCH_READ_PUBLISH = DISPATCH_SCRATCH + 0x60
-DISPATCH_SIGNAL = DISPATCH_SCRATCH + 0x70
-DISPATCH_DRAM_PUT = DISPATCH_SCRATCH + 0x80
-DISPATCH_DRAM_READ = DISPATCH_SCRATCH + 0x90  # NoC read destination must be 16-byte aligned.
-DRAM_PUBLISHED = CQ_STATE
-DRAM_NCRISC_READ = CQ_STATE + 4
-DRAM_BRISC_READY = CQ_STATE + 8
-DRAM_NCRISC_READY = CQ_STATE + 0xC
-DRAM_READ_PUBLISH = CQ_STATE + 0x60
-DRAM_QUEUE_BASE = 0x2000
-DRAM_QUEUE_ENTRIES = 32
-DRAM_BRISC_STAGING = 0x20000
-DRAM_NCRISC_STAGING = 0x30000
-HOST_ISSUE_SIZE = 4 << 20
-HOST_COMPLETION_SIZE = PAGE_SIZE
-HOST_TRACE_SIZE = 256 << 20
-HOST_LIVE_SIZE = 128 << 10
-CQ_BREADCRUMB = CQ_STATE + 0xA0
-CQ_BREADCRUMB_STRUCT = Struct("<5I")
-CQ_BREADCRUMB_STAGES = {
-  0x100: "prefetch boot",
-  0x102: "prefetch read header",
-  0x103: "prefetch record",
-  0x104: "prefetch wait dispatch space",
-  0x105: "prefetch copy to dispatch",
-  0x106: "prefetch advance issue",
-  0x107: "prefetch publish dispatch",
-  0x200: "dispatch boot",
-  0x201: "dispatch wait published",
-  0x202: "dispatch command",
-  0x203: "dispatch wait DRAM idle",
-  0x204: "dispatch enqueue DRAM",
-  0x205: "dispatch unicast",
-  0x206: "dispatch multicast",
-  0x208: "dispatch wait workers",
-  0x209: "dispatch command done",
-  0x2FF: "dispatch bad command",
-  0x300: "DRAM BRISC boot",
-  0x301: "DRAM BRISC wait published",
-  0x302: "DRAM BRISC command",
-  0x303: "DRAM BRISC copy descriptor",
-  0x304: "DRAM BRISC bank",
-  0x305: "DRAM BRISC device to host",
-  0x306: "DRAM BRISC host to device",
-  0x307: "DRAM BRISC wait NCRISC",
-  0x308: "DRAM BRISC publish",
-  0x309: "DRAM BRISC signal",
-  0x3FF: "DRAM BRISC bad command",
-  0x400: "DRAM NCRISC boot",
-  0x401: "DRAM NCRISC wait published",
-  0x402: "DRAM NCRISC command",
-  0x403: "DRAM NCRISC copy descriptor",
-  0x404: "DRAM NCRISC bank",
-  0x405: "DRAM NCRISC device to host",
-  0x406: "DRAM NCRISC host to device",
-  0x409: "DRAM NCRISC signal",
-  0x4FF: "DRAM NCRISC bad command",
-}
+DISPATCH_RING_BASE = 0x20000
+DISPATCH_RING_SLOTS = 1024
+DISPATCH_RING_END = DISPATCH_RING_BASE + DISPATCH_RING_SLOTS * PACKET_SIZE
+DISPATCH_READ_PUBLISH = DISPATCH_RING_END
+DISPATCH_DONE_COUNT = DISPATCH_RING_END + 0x10
+DISPATCH_GO = DISPATCH_RING_END + 0x20
+DISPATCH_SIGNAL = DISPATCH_RING_END + 0x40
+DISPATCH_ARGS = DISPATCH_RING_END + 0x80
+DISPATCH_TARGETS = DISPATCH_RING_END + 0x100
+DISPATCH_DATA = DISPATCH_RING_END + 0x1000
+
+# DMA-core mailbox. It is a separate engine, not a compute-queue opcode.
+DMA_SUBMIT = CQ_STATE
+DMA_COMPLETE = CQ_STATE + 0x04
+DMA_BRISC_DONE = CQ_STATE + 0x08
+DMA_NCRISC_DONE = CQ_STATE + 0x0C
+DMA_BRISC_READY = CQ_STATE + 0x10
+DMA_NCRISC_READY = CQ_STATE + 0x14
+DMA_DESCRIPTOR = CQ_STATE + 0x40
+
 
 class Op(IntEnum):
-  PAD = 0
   UNICAST_WRITE = 1
   MCAST_WRITE = 2
   RUN = 3
-  DRAM_RECORD = 4
-  SIGNAL = 5
-  TRACE = 6
-  DRAM_COPY = 7
+  SIGNAL = 4
+  INDIRECT = 5
+
 
 class PacketLayout:
-  HEADER = Struct("<BxHIII")
-  UNICAST_TARGET = Struct("<I")
-  MCAST_TARGET = Struct("<II")
+  WORDS = Struct("<16I")
 
   OP = 0
-  TARGET_COUNT = 2
-  TOTAL_SIZE = 4
+  TARGET_COUNT = 4
   ADDRESS = 8
-  DATA_SIZE = 12
-  DRAM_COORD = HEADER.size
-  SIGNAL_TARGET_LO = ADDRESS
-  SIGNAL_TARGET_MID = DATA_SIZE
-  SIGNAL_VALUE = HEADER.size
-  TRACE_SOURCE_LO = ADDRESS
-  TRACE_SOURCE_MID = DATA_SIZE
-  TRACE_SIZE = HEADER.size
-  COPY_SOURCE_LO = HEADER.size
-  COPY_SOURCE_MID = COPY_SOURCE_LO + 4
-  COPY_PAGE_COUNT = COPY_SOURCE_MID + 4
-  COPY_BANKS = COPY_PAGE_COUNT + 4
-  COPY_DIRECTION = COPY_BANKS + 4
-  COPY_BANK_START = COPY_DIRECTION + 4
-  WRITE_TARGETS = HEADER.size
-  RUN_TEMPLATE = HEADER.size
-  RUN_TARGETS = HEADER.size + 8
+  BYTE_COUNT = 12
+  SOURCE_LO = 16
+  SOURCE_MID = 20
+  TARGETS_LO = 24
+  TARGETS_MID = 28
 
-@dataclass(frozen=True)
-class Timestamp:
-  """A device clock value decoded from an HCQSignal's field at +8."""
-  cycles: int
-  STRUCT: ClassVar[Struct] = Struct("<Q")
+  RUN_ARGS_LO = 8
+  RUN_ARGS_MID = 12
+  RUN_ARGS_SIZE = 16
+  RUN_EXPECTED = 20
+  RUN_TARGETS_LO = 24
+  RUN_TARGETS_MID = 28
+  RUN_ENTRY_POINTS = 32
 
-  @property
-  def us(self): return self.cycles / 1350
+  SIGNAL_TARGET_LO = 8
+  SIGNAL_TARGET_MID = 12
+  SIGNAL_VALUE = 16
 
-  @property
-  def seconds(self): return self.cycles / 1_350_000_000
+  INDIRECT_SOURCE_LO = 8
+  INDIRECT_SOURCE_MID = 12
+  INDIRECT_COUNT = 16
 
-  @classmethod
-  def unpack(cls, data): return cls(*cls.STRUCT.unpack(data))
 
-def _align(value: int): return (value + ALIGN - 1) & -ALIGN
+def _u32(value, name):
+  if type(value) is not int or not 0 <= value < 1 << 32:
+    raise ValueError(f"{name} must fit in 32 bits")
+  return value
+
+
+def _u64(value, name):
+  if type(value) is not int or not 0 <= value < 1 << 64:
+    raise ValueError(f"{name} must fit in 64 bits")
+  return value
+
+
+def _packet(*words):
+  if len(words) > 16: raise ValueError("packet has more than 16 words")
+  return PacketLayout.WORDS.pack(*(tuple(words) + (0,) * (16 - len(words))))
+
 
 def noc_coord(core: Core):
-  x, y = core
-  if any(type(value) is not int or not 0 <= value < 64 for value in core):
+  if (
+    type(core) is not tuple or len(core) != 2 or
+    any(type(value) is not int or not 0 <= value < 64 for value in core)
+  ):
     raise ValueError("NoC coordinate components must be integers in [0, 63]")
-  return x | y << 6
+  return core[0] | core[1] << 6
+
 
 def _check_mcast_endpoint(core: Core):
-  if core[0] in (8, 9): raise ValueError("multicast start/end cannot use NoC columns 8 or 9")
+  if core[0] in (8, 9):
+    raise ValueError("multicast start/end cannot use NoC columns 8 or 9")
 
-def mcast_coords(rect: Rect):
+
+def mcast_coords(rect):
   start, end = rect
   _check_mcast_endpoint(start); _check_mcast_endpoint(end)
-  if start[0] > end[0] or start[1] > end[1]: raise ValueError("multicast start must precede end")
+  if start[0] > end[0] or start[1] > end[1]:
+    raise ValueError("multicast start must precede end")
   return noc_coord(start), noc_coord(end)
 
 
-def _rectangles(cores):
+def rectangles(cores):
   rows = {}
   for x, y in cores: rows.setdefault(y, []).append(x)
   active, result, previous_y = {}, [], None
   for y in sorted(rows):
     runs = []
     for x in sorted(rows[y]):
-      if runs and x == runs[-1][1] + 1:
-        runs[-1] = (runs[-1][0], x)
-      else:
-        runs.append((x, x))
+      if runs and x == runs[-1][1] + 1: runs[-1] = (runs[-1][0], x)
+      else: runs.append((x, x))
     if previous_y is None or y != previous_y + 1:
       result.extend(active.values()); active = {}
     following = {}
     for run in runs:
-      if run in active:
-        following[run] = (active[run][0], (run[1], y))
-      else:
-        following[run] = ((run[0], y), (run[1], y))
+      following[run] = (
+        (active[run][0], (run[1], y)) if run in active
+        else ((run[0], y), (run[1], y))
+      )
     result.extend(rect for run, rect in active.items() if run not in following)
     active, previous_y = following, y
   result.extend(active.values())
   return tuple(result)
 
-def _payload(data: bytes):
-  if not 0 < len(data) <= MAX_WRITE_SIZE:
-    raise ValueError(f"write payload size must be in [1, {MAX_WRITE_SIZE}]")
-  return data
-
-def _write_record(op: Op, targets: bytes, target_count: int, address: int,
-                  data_size: int, payload: bytes):
-  target_end = PacketLayout.HEADER.size + len(targets)
-  payload_start = _align(target_end)
-  total_size = _align(payload_start + len(payload))
-  if total_size > MAX_RECORD_SIZE: raise ValueError("CQ record exceeds the 64 KiB staging buffer")
-  header = PacketLayout.HEADER.pack(op, target_count, total_size, address, data_size)
-  return header + targets + bytes(payload_start - target_end) + payload + bytes(total_size - payload_start - len(payload))
 
 @dataclass(frozen=True)
 class UnicastWrite:
@@ -202,366 +162,345 @@ class UnicastWrite:
   addr: int
   data: tuple[bytes, ...]
 
-  def lower(self) -> bytes:
-    cores = tuple(self.cores)
-    targets = b"".join(PacketLayout.UNICAST_TARGET.pack(noc_coord(core)) for core in cores)
-    blobs = tuple(_payload(blob) for blob in self.data)
+  def encode(self, queue):
+    cores, blobs = tuple(self.cores), tuple(bytes(blob) for blob in self.data)
+    if not cores or len(cores) != len(blobs):
+      raise ValueError("unicast write needs one payload for each target core")
     size = len(blobs[0])
-    stride = _align(size)
-    payload = b"".join(blob.ljust(stride, b"\0") for blob in blobs)
-    return _write_record(Op.UNICAST_WRITE, targets, len(cores), self.addr, size, payload)
+    if not 0 < size <= MAX_WRITE_SIZE or any(len(blob) != size for blob in blobs):
+      raise ValueError("unicast payloads must have one equal size in [1, 16 KiB]")
+    source = queue.stage(b"".join(blobs))
+    targets = queue.stage(b"".join(noc_coord(core).to_bytes(4, "little") for core in cores), 4)
+    return _packet(
+      Op.UNICAST_WRITE, len(cores), _u32(self.addr, "write address"), size,
+      source & 0xFFFFFFFF, source >> 32, targets & 0xFFFFFFFF, targets >> 32,
+    )
+
 
 @dataclass(frozen=True)
 class McastWrite:
-  rects: tuple[Rect, ...]
+  rects: tuple[tuple[Core, Core], ...]
   addr: int
   data: bytes
 
-  def lower(self) -> bytes:
-    rects = tuple(self.rects)
-    data = _payload(self.data)
-    targets = b"".join(PacketLayout.MCAST_TARGET.pack(*mcast_coords(rect)) for rect in rects)
-    return _write_record(Op.MCAST_WRITE, targets, len(rects), self.addr, len(data), data)
+  def encode(self, queue):
+    rects, data = tuple(self.rects), bytes(self.data)
+    if not rects: raise ValueError("multicast write needs at least one rectangle")
+    if not 0 < len(data) <= MAX_WRITE_SIZE:
+      raise ValueError("multicast payload size must be in [1, 16 KiB]")
+    source = queue.stage(data)
+    targets = queue.stage(b"".join(
+      Struct("<II").pack(*mcast_coords(rect)) for rect in rects
+    ), 4)
+    return _packet(
+      Op.MCAST_WRITE, len(rects), _u32(self.addr, "write address"), len(data),
+      source & 0xFFFFFFFF, source >> 32, targets & 0xFFFFFFFF, targets >> 32,
+    )
+
 
 @dataclass(frozen=True)
 class Run:
   cores: tuple[Core, ...]
-  param_template: int = 0
+  entry_points: tuple[int, ...]
+  args_addr: int = 0
+  args_size: int = 0
 
-  def lower(self) -> bytes:
+  def encode(self, queue):
     cores = tuple(self.cores)
-    if not 0 <= self.param_template < 1 << 24:
-      raise ValueError("RUN parameter-template address must fit in 24 bits")
-    rects = _rectangles(cores)
-    targets = b"".join(
-      PacketLayout.MCAST_TARGET.pack(*mcast_coords(rect)) for rect in rects
-    )
-    total_size = _align(PacketLayout.RUN_TARGETS + len(targets))
-    header = PacketLayout.HEADER.pack(
-      Op.RUN, len(rects), total_size, 0, len(cores),
-    )
-    template = self.param_template.to_bytes(4, "little") + bytes(4)
-    return (header + template + targets).ljust(total_size, b"\0")
-
-@dataclass(frozen=True)
-class DramRecord:
-  """Reference an immutable, already-lowered CQ record in device DRAM."""
-  addr: int
-  coord: int
-  size: int
-
-  def lower(self) -> bytes:
-    if self.addr < 0 or self.addr >= 1 << 32:
-      raise ValueError("DRAM CQ record address must fit in 32 bits")
-    if not 0 < self.coord < 1 << 12:
-      raise ValueError("DRAM CQ record coordinate must fit in 12 bits")
-    if not 0 < self.size <= MAX_RECORD_SIZE or self.size % ALIGN:
-      raise ValueError("cached DRAM CQ record must be aligned and at most 64 KiB")
-    total_size = ALIGN
-    header = PacketLayout.HEADER.pack(
-      Op.DRAM_RECORD, 0, total_size, self.addr, self.size,
-    )
-    return (header + self.coord.to_bytes(4, "little")).ljust(
-      total_size, b"\0",
+    if not cores: raise ValueError("RUN needs at least one worker core")
+    _u64(self.args_addr, "RUN argument address")
+    if not 0 <= self.args_size <= 48 or self.args_size % 4:
+      raise ValueError("RUN argument size must be a multiple of four up to 48 bytes")
+    if bool(self.args_addr) != bool(self.args_size):
+      raise ValueError("RUN argument address and size must both be set or both be zero")
+    entries = tuple(self.entry_points)
+    if len(entries) != 5:
+      raise ValueError("RUN requires five worker entry points")
+    for entry in entries: _u32(entry, "RUN entry point")
+    rects = rectangles(cores)
+    targets = queue.stage(b"".join(
+      Struct("<II").pack(*mcast_coords(rect)) for rect in rects
+    ), 4)
+    return _packet(
+      Op.RUN, len(rects), self.args_addr & 0xFFFFFFFF, self.args_addr >> 32,
+      self.args_size, len(cores), targets & 0xFFFFFFFF, targets >> 32,
+      *entries,
     )
 
 
 @dataclass(frozen=True)
 class Signal:
-  """Set one HCQ-shaped 64-bit signal and its timestamp."""
   addr: int
   value: int
 
-  def lower(self) -> bytes:
-    if not 0 <= self.addr < 1 << 64:
-      raise ValueError("signal address must fit in 64 bits")
-    if not 0 <= self.value < 1 << 64:
-      raise ValueError("signal value must fit in 64 bits")
-    header = PacketLayout.HEADER.pack(
-      Op.SIGNAL, 0, ALIGN, self.addr & 0xFFFFFFFF,
-      self.addr >> 32,
+  def encode(self, queue):
+    _u64(self.addr, "signal address"); _u64(self.value, "signal value")
+    return _packet(
+      Op.SIGNAL, 0, self.addr & 0xFFFFFFFF, self.addr >> 32,
+      self.value & 0xFFFFFFFF, self.value >> 32,
     )
-    return (header + Struct("<Q").pack(self.value)).ljust(ALIGN, b"\0")
 
 
 @dataclass(frozen=True)
-class Trace:
-  """Reference an immutable CQ record stream in pinned host memory."""
+class Indirect:
   addr: int
-  size: int
+  count: int
 
-  def lower(self) -> bytes:
-    if not 0 <= self.addr < 1 << 64:
-      raise ValueError("trace address must fit in 64 bits")
-    if not 0 < self.size < 1 << 32 or self.size % ALIGN:
-      raise ValueError("trace size must be positive, aligned, and fit in 32 bits")
-    header = PacketLayout.HEADER.pack(
-      Op.TRACE, 0, ALIGN, self.addr & 0xFFFFFFFF, self.addr >> 32,
+  def encode(self, queue):
+    _u64(self.addr, "indirect address")
+    if not 0 < self.count < 1 << 32:
+      raise ValueError("indirect packet count must fit in 32 bits")
+    return _packet(
+      Op.INDIRECT, 0, self.addr & 0xFFFFFFFF, self.addr >> 32, self.count,
     )
-    return (header + Struct("<I").pack(self.size)).ljust(ALIGN, b"\0")
+
+
+ComputeCommand = UnicastWrite | McastWrite | Run | Signal | Indirect
 
 
 @dataclass(frozen=True)
-class DramCopy:
-  """Copy dense byte pages between pinned sysmem and interleaved device DRAM."""
+class CommandBuffer:
   addr: int
-  source: int
+  count: int
+
+
+@dataclass(frozen=True)
+class DMACopy:
+  device_addr: int
+  host_addr: int
+  byte_count: int
   page_size: int
-  page_count: int
   banks: int
-  direction: int = 0  # 0: sysmem -> DRAM, 1: DRAM -> sysmem
+  direction: int = 0  # 0: host -> DRAM, 1: DRAM -> host
   bank_start: int = 0
 
-  def lower(self) -> bytes:
-    if not 0 <= self.addr < 1 << 32:
-      raise ValueError("DRAM copy address must fit in 32 bits")
-    if not 0 <= self.source < 1 << 64:
-      raise ValueError("DRAM copy sysmem address must fit in 64 bits")
-    if not 0 < self.page_size <= 16 * 1024 or self.page_size % 16:
-      raise ValueError(
-        "DRAM copy page size must be 16-byte aligned and at most 16 KiB",
-      )
-    if not 0 < self.page_count < 1 << 32:
-      raise ValueError("DRAM copy page count must fit in 32 bits")
+  def encode(self):
+    _u32(self.device_addr, "DMA device address")
+    _u64(self.host_addr, "DMA host address")
+    if not 0 < self.byte_count < 1 << 32:
+      raise ValueError("DMA byte count must fit in 32 bits")
+    if not 0 < self.page_size <= MAX_WRITE_SIZE:
+      raise ValueError("DMA page size must be in [1, 16 KiB]")
     if not 0 < self.banks <= 8:
-      raise ValueError("DRAM copy bank count must be in [1, 8]")
-    if self.direction not in (0, 1):
-      raise ValueError("DRAM copy direction must be 0 or 1")
+      raise ValueError("DMA bank count must be in [1, 8]")
+    if self.direction not in (0, 1): raise ValueError("DMA direction must be 0 or 1")
     if not 0 <= self.bank_start or self.bank_start + self.banks > 8:
-      raise ValueError("DRAM copy bank range must be within [0, 8)")
-    header = PacketLayout.HEADER.pack(
-      Op.DRAM_COPY, 0, ALIGN, self.addr, self.page_size,
+      raise ValueError("DMA bank range must be within [0, 8)")
+    return _packet(
+      self.device_addr, self.host_addr & 0xFFFFFFFF, self.host_addr >> 32,
+      self.byte_count, self.page_size, self.banks, self.direction,
+      self.bank_start,
     )
-    descriptor = header + Struct("<6I").pack(
-      self.source & 0xFFFFFFFF, self.source >> 32, self.page_count,
-      self.banks, self.direction, self.bank_start,
-    )
-    return descriptor.ljust(ALIGN, b"\0")
 
 
-Command = UnicastWrite | McastWrite | Run | DramRecord | Signal | DramCopy
+class SubmissionMemory:
+  """Pinned storage shared by the two submission engines."""
 
-def lower(commands: list[Command] | tuple[Command, ...]) -> bytes:
-  return b"".join(command.lower() for command in commands)
-
-
-@dataclass(frozen=True)
-class CQTrace:
-  offset: int
-  size: int
-  final_signal_offset: int
-  record_offsets: tuple[int, ...]
-
-
-class CommandQueue:
   def __init__(self, pcie):
     self.pcie = pcie
-    self.issue = pcie.sysmem.alloc(HOST_ISSUE_SIZE, PAGE_SIZE)
-    self.completion = pcie.sysmem.alloc(HOST_COMPLETION_SIZE, PAGE_SIZE)
+    sysmem = pcie.sysmem
+    self.issue = sysmem.alloc(HOST_ISSUE_SIZE, PAGE_SIZE)
+    self.completion = sysmem.alloc(HOST_COMPLETION_SIZE, PAGE_SIZE)
     self.read_ptr = self.completion + 16
-    self.trace = pcie.sysmem.alloc(HOST_TRACE_SIZE, PAGE_SIZE)
-    self.trace_allocator = Allocator(
-      self.trace, self.trace + HOST_TRACE_SIZE, ALIGN,
+    self.indirect = sysmem.alloc(HOST_INDIRECT_SIZE, PAGE_SIZE)
+    self.indirect_allocator = Allocator(self.indirect, self.indirect + HOST_INDIRECT_SIZE, PACKET_SIZE)
+    self.args = sysmem.alloc(HOST_ARGS_SIZE, PAGE_SIZE)
+    self.args_allocator = Allocator(self.args, self.args + HOST_ARGS_SIZE, 16)
+    self.command_data = sysmem.alloc(HOST_COMMAND_DATA_SIZE, PAGE_SIZE)
+    self.command_data_allocator = Allocator(
+      self.command_data, self.command_data + HOST_COMMAND_DATA_SIZE, 16,
     )
-    # Device kernels can publish small live results here without launching a
-    # DRAM-read program. Reserve it before the remaining sysmem becomes the
-    # bulk DRAM staging arena.
-    self.live = pcie.sysmem.alloc(HOST_LIVE_SIZE, PAGE_SIZE)
-    dram_base = _align(pcie.sysmem.allocator.next)
-    self.dram_size = pcie.sysmem.allocator.end - dram_base
-    if self.dram_size < PAGE_SIZE: raise MemoryError("sysmem has no DRAM staging region")
-    self.dram = pcie.sysmem.alloc(self.dram_size, ALIGN)
+    self.live = sysmem.alloc(HOST_LIVE_SIZE, PAGE_SIZE)
+    dma_base = (sysmem.allocator.next + PAGE_SIZE - 1) & -PAGE_SIZE
+    self.dma_size = sysmem.allocator.end - dma_base
+    if self.dma_size < PAGE_SIZE: raise MemoryError("sysmem has no DMA staging region")
+    self.dma = sysmem.alloc(self.dma_size, PAGE_SIZE)
 
-    base = pcie.sysmem.noc_addr
-    regions = (
+    base = sysmem.noc_addr
+    for name, offset, size in (
       ("issue", self.issue, HOST_ISSUE_SIZE),
       ("completion", self.completion, HOST_COMPLETION_SIZE),
-      ("trace", self.trace, HOST_TRACE_SIZE),
+      ("indirect", self.indirect, HOST_INDIRECT_SIZE),
+      ("args", self.args, HOST_ARGS_SIZE),
+      ("command data", self.command_data, HOST_COMMAND_DATA_SIZE),
       ("live", self.live, HOST_LIVE_SIZE),
-      ("dram", self.dram, self.dram_size),
-    )
-    for name, offset, size in regions:
+      ("DMA", self.dma, self.dma_size),
+    ):
       start, end = base + offset, base + offset + size - 1
       if start >> 32 != end >> 32:
         raise ValueError(f"{name} sysmem region crosses a 4 GiB NoC aperture")
-    if os.getenv("BLACKHOLE_DEBUG"):
-      print(f"sysmem noc_addr=0x{base:016x} size=0x{pcie.sysmem.size:x}")
 
-    self.noc = base & 0xFFFFFFFF
-    self.pcie_mid = base >> 32
-    self.signal_addr = base + self.completion
+  def noc_address(self, offset): return self.pcie.sysmem.noc_addr + offset
+
+
+class ComputeQueue:
+  """Fixed-slot compute submission with no scheduling policy."""
+
+  def __init__(self, pcie, memory: SubmissionMemory):
+    self.pcie, self.memory = pcie, memory
     self.put = self.event = 0
-    pcie.sysmem.write(self.issue, bytes(HOST_ISSUE_SIZE))
-    pcie.sysmem.write(self.completion, bytes(HOST_COMPLETION_SIZE))
-    pcie.sysmem.write(self.live, bytes(HOST_LIVE_SIZE))
+    self.signal_addr = memory.noc_address(memory.completion)
+    self._encoded = {}
+    pcie.sysmem.write(memory.issue, bytes(HOST_ISSUE_SIZE))
+    pcie.sysmem.write(memory.completion, bytes(HOST_COMPLETION_SIZE))
+    pcie.sysmem.write(memory.live, bytes(HOST_LIVE_SIZE))
     self.prefetch = TLBWindow(pcie.fd, pcie.prefetch_core)
     self.dispatch = TLBWindow(pcie.fd, pcie.dispatch_core)
     self.prefetch.target(0, pcie.prefetch_core)
     self.dispatch.target(0, pcie.dispatch_core)
     self.prefetch.write(PREFETCH_DOORBELL, bytes(8))
-    self.prefetch.write(PREFETCH_PCIE_BASE, self.noc + self.issue)
-    self.prefetch.write(PREFETCH_READ_PTR, self.noc + self.read_ptr)
+    self.prefetch.write(PREFETCH_PCIE_BASE, memory.noc_address(memory.issue) & 0xFFFFFFFF)
+    self.prefetch.write(PREFETCH_READ_PTR, memory.noc_address(memory.read_ptr) & 0xFFFFFFFF)
     self.prefetch.write(PREFETCH_DISPATCH_READ, 0)
-    self.prefetch.write(PREFETCH_TRACE_ACTIVE, 0)
+    self.prefetch.write(PREFETCH_INDIRECT_ACTIVE, 0)
     self.dispatch.write(DISPATCH_PUBLISHED, 0)
 
-  @property
-  def issue_write(self): return self.put % HOST_ISSUE_SIZE
+  def stage(self, data, alignment=16):
+    data = bytes(data)
+    if not data: raise ValueError("cannot stage an empty command payload")
+    offset = self.memory.command_data_allocator.alloc(len(data), alignment)
+    self.pcie.sysmem.write(offset, data)
+    return self.memory.noc_address(offset)
+
+  def alloc_args(self, data):
+    data = bytes(data)
+    if not data: return 0
+    if len(data) > 48 or len(data) % 4:
+      raise ValueError("kernel arguments must be a multiple of four up to 48 bytes")
+    offset = self.memory.args_allocator.alloc(len(data), 16)
+    self.pcie.sysmem.write(offset, data)
+    return self.memory.noc_address(offset)
+
+  def write_host(self, noc_address, data):
+    offset = noc_address - self.pcie.sysmem.noc_addr
+    data = bytes(data)
+    if offset < 0 or offset + len(data) > self.pcie.sysmem.size:
+      raise ValueError("host write is outside pinned sysmem")
+    self.pcie.sysmem.write(offset, data)
+
+  def encode(self, command):
+    if isinstance(command, bytes):
+      packet = bytes(command)
+    else:
+      try: packet = self._encoded[command]
+      except (KeyError, TypeError):
+        packet = command.encode(self)
+        try: self._encoded[command] = packet
+        except TypeError: pass
+    if len(packet) != PACKET_SIZE:
+      raise ValueError("compute queue entries must be exactly 64 bytes")
+    return packet
+
+  def capture(self, commands):
+    packets = tuple(self.encode(command) for command in commands)
+    if not packets: raise ValueError("indirect command buffer cannot be empty")
+    blob = b"".join(packets)
+    offset = self.memory.indirect_allocator.alloc(len(blob), PACKET_SIZE)
+    self.pcie.sysmem.write(offset, blob)
+    return CommandBuffer(self.memory.noc_address(offset), len(packets))
 
   def _read_u64(self, offset):
     return int.from_bytes(self.pcie.sysmem.read(offset, 8), "little")
 
-  @staticmethod
-  def _padding(size):
-    if size < ALIGN or size % ALIGN:
-      raise ValueError("CQ padding must be a positive multiple of 64 bytes")
-    return PacketLayout.HEADER.pack(Op.PAD, 0, size, 0, 0).ljust(ALIGN, b"\0")
-
   def _wait_for_space(self, following, timeout=5.0):
     deadline = time.monotonic() + timeout
-    while following - self._read_u64(self.read_ptr) > HOST_ISSUE_SIZE:
-      if time.monotonic() >= deadline:
-        raise TimeoutError("CQ issue ring did not drain")
+    while following - self._read_u64(self.memory.read_ptr) > HOST_ISSUE_SLOTS:
+      if time.monotonic() >= deadline: raise TimeoutError("compute issue ring did not drain")
       time.sleep(0)
 
-  def _publish(self, record: bytes, dispatch_size=None):
-    if len(record) > MAX_RECORD_SIZE or len(record) % ALIGN:
-      raise ValueError("CQ issue records must be aligned and at most 64 KiB")
-    dispatch_size = len(record) if dispatch_size is None else dispatch_size
-    if (dispatch_size + PAGE_SIZE - 1) // PAGE_SIZE > DISPATCH_RING_PAGES:
-      raise ValueError("record exceeds dispatch ring")
-
-    offset = self.put % HOST_ISSUE_SIZE
-    padding = HOST_ISSUE_SIZE - offset if offset + len(record) > HOST_ISSUE_SIZE else 0
-    following = self.put + padding + len(record)
-    self._wait_for_space(following)
-    if padding:
-      self.pcie.sysmem.write(self.issue + offset, self._padding(padding))
-      self.put += padding
-      offset = 0
-    self.pcie.sysmem.write(self.issue + offset, record)
-    self.put += len(record)
-    # Record bytes are visible before this UC MMIO doorbell store.
+  def submit(self, commands, signal=True):
+    packets = [self.encode(command) for command in commands]
+    event = 0
+    if signal:
+      event = self.event + 1
+      packets.append(self.encode(Signal(self.signal_addr, event)))
+    if not packets: raise ValueError("compute submission cannot be empty")
+    self._wait_for_space(self.put + len(packets))
+    for packet in packets:
+      slot = self.put & (HOST_ISSUE_SLOTS - 1)
+      self.pcie.sysmem.write(self.memory.issue + slot * PACKET_SIZE, packet)
+      self.put += 1
+    # Packet stores are visible before the uncached MMIO doorbell store.
     self.prefetch.write(PREFETCH_DOORBELL, self.put.to_bytes(8, "little"))
-
-  def enqueue(self, commands, *, completion=True):
-    event = self.event + 1 if completion else 0
-    for command in commands:
-      dispatch_size = command.size if isinstance(command, DramRecord) else None
-      self._publish(command.lower(), dispatch_size=dispatch_size)
-    if completion:
-      self._publish(Signal(self.signal_addr, event).lower())
-      self.event = event
+    if signal: self.event = event
     return event
 
-  def capture_trace(self, records, dispatch_sizes=None):
-    records = tuple(bytes(record) for record in records)
-    if not records:
-      raise ValueError("trace requires at least one CQ record")
-    if dispatch_sizes is None:
-      dispatch_sizes = tuple(map(len, records))
-    else:
-      dispatch_sizes = tuple(dispatch_sizes)
-    if len(records) != len(dispatch_sizes):
-      raise ValueError("trace records and dispatch sizes differ")
-    if any(
-      len(record) > MAX_RECORD_SIZE or len(record) % ALIGN
-      for record in records
-    ):
-      raise ValueError("trace records must be aligned and at most 64 KiB")
-    if any((size + PAGE_SIZE - 1) // PAGE_SIZE > DISPATCH_RING_PAGES
-           for size in dispatch_sizes):
-      raise ValueError("trace record exceeds dispatch ring")
-    offsets, cursor = [], 0
-    for record in records:
-      offsets.append(cursor)
-      cursor += len(record)
-    final_signal_offset = cursor + PacketLayout.SIGNAL_VALUE
-    records = (*records, Signal(self.signal_addr, 0).lower())
-    blob = b"".join(records)
-    offset = self.trace_allocator.alloc(len(blob), ALIGN)
-    self.pcie.sysmem.write(offset, blob)
-    return CQTrace(
-      offset, len(blob), final_signal_offset, tuple(offsets),
-    )
-
-  def patch_trace(self, trace, offset, data):
-    data = bytes(data)
-    if not 0 <= offset <= trace.size - len(data):
-      raise ValueError("trace patch is outside the trace")
-    self.pcie.sysmem.write(trace.offset + offset, data)
-
-  def replay_trace(self, trace, timeout=10.0):
-    started = time.perf_counter_ns()
-    event = self.event + 1
-    self.patch_trace(
-      trace, trace.final_signal_offset, event.to_bytes(8, "little"),
-    )
-    patched = time.perf_counter_ns()
-    self._publish(Trace(self.pcie.sysmem.noc_addr + trace.offset, trace.size).lower())
-    submitted = time.perf_counter_ns()
-    self.event = event
-    # Decode traces are short and latency-sensitive. Poll their pinned signal
-    # directly instead of adding a scheduler wake-up to every token.
-    result = self.wait(event, timeout=timeout, poll_interval=0.0)
-    completed = time.perf_counter_ns()
-    self.last_replay_profile = {
-      "event_patch_us": (patched - started) / 1e3,
-      "queue_slot_wait_us": 0.0,
-      "doorbell_us": (submitted - patched) / 1e3,
-      "device_wait_us": (completed - submitted) / 1e3,
-      "descriptor_drain_us": 0.0,
-    }
-    return result
-
-  def submit(self, commands, timeout=10.0):
-    return self.wait(self.enqueue(commands), timeout=timeout)
-
-  def _firmware_breadcrumbs(self):
-    slots = (
-      ("prefetch", self.pcie.prefetch_core, CQ_BREADCRUMB),
-      ("dispatch", self.pcie.dispatch_core, CQ_BREADCRUMB),
-      ("dram_brisc", self.pcie.dram_core, CQ_BREADCRUMB),
-      ("dram_ncrisc", self.pcie.dram_core, CQ_BREADCRUMB + 0x20),
-    )
-    result = {}
-    with TLBWindow(self.pcie.fd, self.pcie.cores[0]) as window:
-      for name, core, address in slots:
-        window.target(0, core)
-        words = CQ_BREADCRUMB_STRUCT.unpack(
-          window.read(address, CQ_BREADCRUMB_STRUCT.size),
-        )
-        stage, *values = words
-        result[name] = {
-          "stage": CQ_BREADCRUMB_STAGES.get(stage, f"unknown {stage:#x}"),
-          "values": tuple(f"{value:#x}" for value in values),
-        }
-    return result
-
-  def _timeout(self, event):
-    try:
-      breadcrumbs = self._firmware_breadcrumbs()
-    except Exception as error:
-      breadcrumbs = f"unavailable: {error}"
-    return TimeoutError(
-      f"CQ completion {event} timed out; firmware breadcrumbs: {breadcrumbs}",
-    )
+  def replay(self, command_buffer: CommandBuffer):
+    return self.submit((Indirect(command_buffer.addr, command_buffer.count),))
 
   def wait(self, event, timeout=10.0, poll_interval=0.0002):
     deadline = time.monotonic() + timeout
     polls = 0
-    while self._read_u64(self.completion) < event:
+    while self._read_u64(self.memory.completion) < event:
       polls += 1
       if poll_interval:
-        if time.monotonic() >= deadline:
-          raise self._timeout(event)
+        if time.monotonic() >= deadline: raise TimeoutError(f"compute completion {event} timed out")
         time.sleep(poll_interval)
-      elif polls & 0xff == 0 and time.monotonic() >= deadline:
-        raise self._timeout(event)
-    return Timestamp.unpack(
-      self.pcie.sysmem.read(self.completion + 8, Timestamp.STRUCT.size),
-    )
+      elif polls & 0xFF == 0 and time.monotonic() >= deadline:
+        raise TimeoutError(f"compute completion {event} timed out")
+    return event
 
   def close(self):
-    self.prefetch.close()
-    self.dispatch.close()
+    self.prefetch.close(); self.dispatch.close()
+
+
+class DMAEngine:
+  """One-deep descriptor mailbox for the independent DMA service core."""
+
+  def __init__(self, pcie, memory: SubmissionMemory):
+    self.pcie, self.memory, self.sequence = pcie, memory, 0
+    self.window = TLBWindow(pcie.fd, pcie.dma_core)
+    self.window.target(0, pcie.dma_core)
+    self.window.write(DMA_SUBMIT, bytes(0x18))
+    self.window.write(DMA_DESCRIPTOR, bytes(PACKET_SIZE))
+
+  @property
+  def staging_offset(self): return self.memory.dma
+
+  @property
+  def staging_size(self): return self.memory.dma_size
+
+  @property
+  def staging_address(self): return self.memory.noc_address(self.memory.dma)
+
+  def wait_ready(self, timeout=5.0):
+    deadline = time.monotonic() + timeout
+    while (
+      int.from_bytes(self.window.read(DMA_BRISC_READY, 4), "little") != 1 or
+      int.from_bytes(self.window.read(DMA_NCRISC_READY, 4), "little") != 1
+    ):
+      if time.monotonic() >= deadline: raise TimeoutError("DMA engine did not start")
+      time.sleep(0)
+
+  def submit(self, command: DMACopy):
+    if self.sequence: self.wait(self.sequence)
+    self.sequence += 1
+    self.window.write(DMA_DESCRIPTOR, command.encode())
+    # Descriptor stores must land before publishing the new sequence.
+    self.window.write(DMA_SUBMIT, self.sequence)
+    return self.sequence
+
+  def wait(self, sequence, timeout=30.0):
+    deadline = time.monotonic() + timeout
+    while int.from_bytes(self.window.read(DMA_COMPLETE, 4), "little") < sequence:
+      if time.monotonic() >= deadline: raise TimeoutError(f"DMA completion {sequence} timed out")
+      time.sleep(0)
+    return sequence
+
+  def close(self): self.window.close()
+
+
+class CommandQueues:
+  """Dumb ownership wrapper for the independent compute and DMA engines."""
+
+  def __init__(self, pcie):
+    self.memory = SubmissionMemory(pcie)
+    self.compute = ComputeQueue(pcie, self.memory)
+    self.dma = DMAEngine(pcie, self.memory)
+
+  def close(self):
+    self.compute.close(); self.dma.close()
+
+
+def lower(commands, queue: ComputeQueue):
+  return b"".join(queue.encode(command) for command in commands)

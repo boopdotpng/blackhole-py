@@ -2,10 +2,8 @@
 
 #define SUBORDINATE_SYNC 0x0068u
 #define GO_SIGNAL 0x0373u
-#define PARAM_BASE 0x3FD0u
-#define RUNTIME_PARAM_BASE 0x17FFE0u
 #define DISPATCH_DONE_COUNT 0x160050u
-#define DISPATCH_COORD 0xCEu
+#define DISPATCH_COORD TT_DISPATCH_COORD
 
 static void enable_clock_gating(void) {
   for (u32 noc = 0; noc < 2; noc++) {
@@ -39,40 +37,12 @@ static void reset_tensix(void) {
   reset_cb_counters();
 }
 
-static void load_param_template(void) {
-  u32 template = mmio_read32(GO_SIGNAL & ~3u) & 0xFFFFFFu;
-  if (template == 0) return;
-
-  u32 count = mmio_read32(template);
-  u32 values = template + 4;
-  u32 ids = template + 52;
-  u32 destination = PARAM_BASE;
-  while (count--) {
-    u8 id = mmio_read8(ids++);
-    u32 value = id == 0xFFu
-      ? mmio_read32(values)
-      : mmio_read32(RUNTIME_PARAM_BASE + (u32)id * 4u);
-    mmio_write32(destination, value);
-    values += 4;
-    destination += 4;
-  }
-
-  static const u32 kernel_bases[5] = {
-    0x04000u, 0x0A000u, 0x0C000u, 0x0F000u, 0x11000u,
-  };
-  for (u32 index = 0; index < 5; index++) {
-    u32 entry = mmio_read32(template + 64 + index * 4);
-    if (entry != 0) mmio_write32(kernel_bases[index], entry);
-  }
-}
-
 static void notify_dispatch(void) {
   noc_atomic_inc(1, DISPATCH_DONE_COUNT, DISPATCH_COORD, 1);
 }
 
 static void launch_worker(void) {
   wait_u8(GO_SIGNAL, 0x80u);
-  load_param_template();
   reset_tensix();
   mmio_write32(0xFFEF02E4u, 0x1Fu);
   /* The parameter/kernel-entry stores, Tensix reset, CB counter resets,

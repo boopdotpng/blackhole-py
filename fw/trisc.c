@@ -1,15 +1,11 @@
 #include "fw.h"
 
-#ifndef TT_TRISC_ID
-#error "compile trisc.c with -DTT_TRISC_ID=0, 1, or 2"
-#elif TT_TRISC_ID == 0
+#if TT_TRISC_ID == 0
 #define SYNC 0x0069u
 #elif TT_TRISC_ID == 1
 #define SYNC 0x006Au
-#elif TT_TRISC_ID == 2
-#define SYNC 0x006Bu
 #else
-#error "TT_TRISC_ID must select TRISC 0, 1, or 2"
+#define SYNC 0x006Bu
 #endif
 
 static void initialize_tensix(void) {

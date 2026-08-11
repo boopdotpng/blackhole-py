@@ -2,7 +2,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from functools import wraps
 from typing import ClassVar
-from fw.consts import Firmware, KernelRole, TensixL1, TensixMMIO
+from fw import Firmware, KernelRole, TensixL1, TensixMMIO
 from isa import R, RV32, TensixWord
 from pcie import Allocator
 
