@@ -22,8 +22,12 @@ def stats(root):
   for path, dirs, files in os.walk(root):
     dirs[:] = [name for name in dirs if name not in (".git", ".venv", "venv", "__pycache__")]
     for name in files:
-      if not name.endswith(".py") or name == "sz.py": continue
+      if not name.endswith((".py", ".c")) or name == "sz.py": continue
       filename = os.path.join(path, name)
+      if name.endswith(".c"):
+        with open(filename) as f: lines = sum(1 for line in f if line.strip())
+        if lines: yield os.path.relpath(filename, root), lines, 1.0
+        continue
       with tokenize.open(filename) as f:
         tokens = [t for t in tokenize.generate_tokens(f.readline) if t.type in TOKENS]
       lines = len({line for t in tokens for line in range(t.start[0], t.end[0] + 1)})
