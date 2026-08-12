@@ -54,15 +54,15 @@ DMA_BRISC_DONE = CQ_STATE + 0x08
 DMA_NCRISC_DONE = CQ_STATE + 0x0C
 DMA_BRISC_READY = CQ_STATE + 0x10
 DMA_NCRISC_READY = CQ_STATE + 0x14
+DMA_BANKS = CQ_STATE + 0x18
 DMA_DESCRIPTOR = CQ_STATE + 0x40
 
 
 class Op(IntEnum):
-  UNICAST_WRITE = 1
-  MCAST_WRITE = 2
-  RUN = 3
-  SIGNAL = 4
-  INDIRECT = 5
+  WRITE = 1
+  EXEC = 2
+  SIGNAL = 3
+  INDIRECT = 4
 
 
 class PacketLayout:
@@ -77,13 +77,13 @@ class PacketLayout:
   TARGETS_LO = 24
   TARGETS_MID = 28
 
-  RUN_ARGS_LO = 8
-  RUN_ARGS_MID = 12
-  RUN_ARGS_SIZE = 16
-  RUN_EXPECTED = 20
-  RUN_TARGETS_LO = 24
-  RUN_TARGETS_MID = 28
-  RUN_ENTRY_POINTS = 32
+  EXEC_ARGS_LO = 8
+  EXEC_ARGS_MID = 12
+  EXEC_ARGS_SIZE = 16
+  EXEC_EXPECTED = 20
+  EXEC_TARGETS_LO = 24
+  EXEC_TARGETS_MID = 28
+  EXEC_ENTRY_POINTS = 32
 
   SIGNAL_TARGET_LO = 8
   SIGNAL_TARGET_MID = 12
@@ -120,86 +120,27 @@ def noc_coord(core: Core):
   return core[0] | core[1] << 6
 
 
-def _check_mcast_endpoint(core: Core):
-  if core[0] in (8, 9):
-    raise ValueError("multicast start/end cannot use NoC columns 8 or 9")
-
-
-def mcast_coords(rect):
-  start, end = rect
-  _check_mcast_endpoint(start); _check_mcast_endpoint(end)
-  if start[0] > end[0] or start[1] > end[1]:
-    raise ValueError("multicast start must precede end")
-  return noc_coord(start), noc_coord(end)
-
-
-def rectangles(cores):
-  rows = {}
-  for x, y in cores: rows.setdefault(y, []).append(x)
-  active, result, previous_y = {}, [], None
-  for y in sorted(rows):
-    runs = []
-    for x in sorted(rows[y]):
-      if runs and x == runs[-1][1] + 1: runs[-1] = (runs[-1][0], x)
-      else: runs.append((x, x))
-    if previous_y is None or y != previous_y + 1:
-      result.extend(active.values()); active = {}
-    following = {}
-    for run in runs:
-      following[run] = (
-        (active[run][0], (run[1], y)) if run in active
-        else ((run[0], y), (run[1], y))
-      )
-    result.extend(rect for run, rect in active.items() if run not in following)
-    active, previous_y = following, y
-  result.extend(active.values())
-  return tuple(result)
-
-
 @dataclass(frozen=True)
-class UnicastWrite:
+class Write:
   cores: tuple[Core, ...]
-  addr: int
-  data: tuple[bytes, ...]
-
-  def encode(self, queue):
-    cores, blobs = tuple(self.cores), tuple(bytes(blob) for blob in self.data)
-    if not cores or len(cores) != len(blobs):
-      raise ValueError("unicast write needs one payload for each target core")
-    size = len(blobs[0])
-    if not 0 < size <= MAX_WRITE_SIZE or any(len(blob) != size for blob in blobs):
-      raise ValueError("unicast payloads must have one equal size in [1, 16 KiB]")
-    source = queue.stage(b"".join(blobs))
-    targets = queue.stage(b"".join(noc_coord(core).to_bytes(4, "little") for core in cores))
-    return _packet(
-      Op.UNICAST_WRITE, len(cores), _u32(self.addr, "write address"), size,
-      source & 0xFFFFFFFF, source >> 32, targets & 0xFFFFFFFF, targets >> 32,
-    )
-
-
-@dataclass(frozen=True)
-class McastWrite:
-  rects: tuple[tuple[Core, Core], ...]
   addr: int
   data: bytes
 
   def encode(self, queue):
-    rects, data = tuple(self.rects), bytes(self.data)
-    if not rects: raise ValueError("multicast write needs at least one rectangle")
+    cores, data = tuple(self.cores), bytes(self.data)
+    if not cores: raise ValueError("write needs at least one target core")
     if not 0 < len(data) <= MAX_WRITE_SIZE:
-      raise ValueError("multicast payload size must be in [1, 16 KiB]")
+      raise ValueError("write payload size must be in [1, 16 KiB]")
     source = queue.stage(data)
-    targets = queue.stage(b"".join(
-      Struct("<II").pack(*mcast_coords(rect)) for rect in rects
-    ))
+    targets = queue.stage(b"".join(noc_coord(core).to_bytes(4, "little") for core in cores))
     return _packet(
-      Op.MCAST_WRITE, len(rects), _u32(self.addr, "write address"), len(data),
+      Op.WRITE, len(cores), _u32(self.addr, "write address"), len(data),
       source & 0xFFFFFFFF, source >> 32, targets & 0xFFFFFFFF, targets >> 32,
     )
 
 
 @dataclass(frozen=True)
-class Run:
+class Exec:
   cores: tuple[Core, ...]
   entry_points: tuple[int, ...]
   args_addr: int = 0
@@ -207,22 +148,19 @@ class Run:
 
   def encode(self, queue):
     cores = tuple(self.cores)
-    if not cores: raise ValueError("RUN needs at least one worker core")
-    _u64(self.args_addr, "RUN argument address")
+    if not cores: raise ValueError("exec needs at least one worker core")
+    _u64(self.args_addr, "exec argument address")
     if not 0 <= self.args_size <= 48 or self.args_size % 4:
-      raise ValueError("RUN argument size must be a multiple of four up to 48 bytes")
+      raise ValueError("exec argument size must be a multiple of four up to 48 bytes")
     if bool(self.args_addr) != bool(self.args_size):
-      raise ValueError("RUN argument address and size must both be set or both be zero")
+      raise ValueError("exec argument address and size must both be set or both be zero")
     entries = tuple(self.entry_points)
     if len(entries) != 5:
-      raise ValueError("RUN requires five worker entry points")
-    for entry in entries: _u32(entry, "RUN entry point")
-    rects = rectangles(cores)
-    targets = queue.stage(b"".join(
-      Struct("<II").pack(*mcast_coords(rect)) for rect in rects
-    ))
+      raise ValueError("exec requires five worker entry points")
+    for entry in entries: _u32(entry, "exec entry point")
+    targets = queue.stage(b"".join(noc_coord(core).to_bytes(4, "little") for core in cores))
     return _packet(
-      Op.RUN, len(rects), self.args_addr & 0xFFFFFFFF, self.args_addr >> 32,
+      Op.EXEC, len(cores), self.args_addr & 0xFFFFFFFF, self.args_addr >> 32,
       self.args_size, len(cores), targets & 0xFFFFFFFF, targets >> 32,
       *entries,
     )
@@ -255,7 +193,7 @@ class Indirect:
     )
 
 
-ComputeCommand = UnicastWrite | McastWrite | Run | Signal | Indirect
+ComputeCommand = Write | Exec | Signal | Indirect
 
 
 @dataclass(frozen=True)
@@ -265,31 +203,21 @@ class CommandBuffer:
 
 
 @dataclass(frozen=True)
-class DMACopy:
+class Copy:
   device_addr: int
   host_addr: int
   byte_count: int
-  page_size: int
-  banks: int
   direction: int = 0  # 0: host -> DRAM, 1: DRAM -> host
-  bank_start: int = 0
 
   def encode(self):
     _u32(self.device_addr, "DMA device address")
     _u64(self.host_addr, "DMA host address")
     if not 0 < self.byte_count < 1 << 32:
       raise ValueError("DMA byte count must fit in 32 bits")
-    if not 0 < self.page_size <= MAX_WRITE_SIZE:
-      raise ValueError("DMA page size must be in [1, 16 KiB]")
-    if not 0 < self.banks <= 8:
-      raise ValueError("DMA bank count must be in [1, 8]")
     if self.direction not in (0, 1): raise ValueError("DMA direction must be 0 or 1")
-    if not 0 <= self.bank_start or self.bank_start + self.banks > 8:
-      raise ValueError("DMA bank range must be within [0, 8)")
     return _packet(
       self.device_addr, self.host_addr & 0xFFFFFFFF, self.host_addr >> 32,
-      self.byte_count, self.page_size, self.banks, self.direction,
-      self.bank_start,
+      self.byte_count, self.direction,
     )
 
 
@@ -444,14 +372,15 @@ class ComputeQueue:
     self.prefetch.close(); self.dispatch.close()
 
 
-class DMAEngine:
+class DMAQueue:
   """One-deep descriptor mailbox for the independent DMA service core."""
 
   def __init__(self, pcie, memory: SubmissionMemory):
     self.pcie, self.memory, self.sequence = pcie, memory, 0
+    self.banks = 0
     self.window = TLBWindow(pcie.fd, pcie.dma_core)
     self.window.target(0, pcie.dma_core)
-    self.window.write(DMA_SUBMIT, bytes(0x18))
+    self.window.write(DMA_SUBMIT, bytes(0x1C))
     self.window.write(DMA_DESCRIPTOR, bytes(PACKET_SIZE))
 
   @property
@@ -471,8 +400,11 @@ class DMAEngine:
     ):
       if time.monotonic() >= deadline: raise TimeoutError("DMA engine did not start")
       time.sleep(0)
+    self.banks = int.from_bytes(self.window.read(DMA_BANKS, 4), "little")
+    if self.banks not in (7, 8):
+      raise RuntimeError(f"DMA firmware discovered {self.banks} DRAM banks")
 
-  def submit(self, command: DMACopy):
+  def submit(self, command: Copy):
     if self.sequence: self.wait(self.sequence)
     self.sequence += 1
     self.window.write(DMA_DESCRIPTOR, command.encode())
@@ -496,7 +428,7 @@ class CommandQueues:
   def __init__(self, pcie):
     self.memory = SubmissionMemory(pcie)
     self.compute = ComputeQueue(pcie, self.memory)
-    self.dma = DMAEngine(pcie, self.memory)
+    self.dma = DMAQueue(pcie, self.memory)
 
   def close(self):
     self.compute.close(); self.dma.close()

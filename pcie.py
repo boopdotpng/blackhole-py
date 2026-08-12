@@ -1,7 +1,5 @@
 import ctypes, fcntl, os, struct
 import ctypes.util
-from dataclasses import dataclass
-from pathlib import Path
 
 libc = ctypes.CDLL(ctypes.util.find_library("c"), use_errno=True)
 libc.mmap.argtypes = [ctypes.c_void_p, ctypes.c_size_t, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_long]
@@ -10,75 +8,6 @@ libc.munmap.argtypes = [ctypes.c_void_p, ctypes.c_size_t]
 libc.munmap.restype = ctypes.c_int
 
 IOCTL_MAGIC = 0xFA
-
-# Virtual NoC 0/1 coordinates for one usable endpoint in each DRAM bank.
-P100_DRAM_ENDPOINTS = (
-  ((18, 14), (18, 13)), ((18, 15), (18, 16)), ((18, 18), (18, 19)),
-  ((17, 21), (17, 22)), ((17, 14), (17, 13)), ((17, 17), (17, 16)),
-  ((17, 20), (17, 19)),
-)
-# An unharvested Blackhole exposes eight DRAM banks in two translated NoC
-# columns.  Each pair selects the firmware-recommended worker port for NoC
-# 0/1.  P150 keeps all eight banks even when current firmware presents its
-# Tensix grid as the same 120-core layout used by P100A.
-P150_DRAM_ENDPOINTS = (
-  ((17, 14), (17, 13)), ((17, 15), (17, 16)),
-  ((17, 18), (17, 19)), ((17, 21), (17, 22)),
-  ((18, 14), (18, 13)), ((18, 17), (18, 16)),
-  ((18, 20), (18, 19)), ((18, 23), (18, 22)),
-)
-P100_WORKER_CORES = tuple(
-  (x, y) for x in (*range(1, 8), *range(10, 15)) for y in range(2, 12)
-  if (x, y) not in ((14, 2), (14, 3), (14, 4))
-)
-P150_WORKER_CORES = tuple(
-  (x, y) for x in (*range(1, 8), *range(10, 17)) for y in range(2, 12)
-  if (x, y) not in ((16, 2), (16, 3), (16, 4))
-)
-
-@dataclass(frozen=True)
-class BoardConfig:
-  card_type: str
-  cores: tuple[tuple[int, int], ...]
-  dram_endpoints: tuple[tuple[tuple[int, int], tuple[int, int]], ...]
-  prefetch_core: tuple[int, int]
-  dispatch_core: tuple[int, int]
-  dma_core: tuple[int, int]
-
-def board_config(card_type, tensix_enabled, gddr_enabled):
-  """Select the supported runtime topology from sysfs and ARC telemetry."""
-  core_count = (tensix_enabled & 0x3FFF).bit_count() * 10
-  dram_count = (gddr_enabled & 0xFF).bit_count()
-  if card_type == "p100a":
-    if (core_count, dram_count) != (120, 7):
-      raise RuntimeError(
-        f"unsupported p100a topology: {core_count} Tensix cores, "
-        f"{dram_count} DRAM banks",
-      )
-    cores, endpoints = P100_WORKER_CORES, P100_DRAM_ENDPOINTS
-    service_x = 14
-  elif card_type in ("p150a", "p150b", "p150c"):
-    if core_count not in (120, 140):
-      raise RuntimeError(
-        f"unsupported {card_type} topology: firmware exposes {core_count} "
-        "Tensix cores; expected the stock 120-core or restored 140-core layout",
-      )
-    if dram_count != 8:
-      raise RuntimeError(
-        f"unsupported {card_type} topology: expected 8 DRAM banks, "
-        f"firmware exposes {dram_count}",
-      )
-    cores = P100_WORKER_CORES if core_count == 120 else P150_WORKER_CORES
-    service_x = 14 if core_count == 120 else 16
-    endpoints = P150_DRAM_ENDPOINTS
-  else:
-    raise RuntimeError(
-      f"unsupported Blackhole card {card_type}; expected p100a or p150a/b/c",
-    )
-  return BoardConfig(
-    card_type, cores, endpoints,
-    (service_x, 2), (service_x, 3), (service_x, 4),
-  )
 
 def _TT_IOCTL(nr, payload_type, result=None, **defaults):
   def call(fd, **kwargs):
@@ -212,6 +141,9 @@ class Sysmem:
 
   def write(self, offset: int, data: bytes): ctypes.memmove(self.addr + offset, data, len(data))
 
+  def view(self, offset: int, size: int):
+    return memoryview((ctypes.c_ubyte * size).from_address(self.addr + offset)).cast("B")
+
   def close(self):
     if self.noc_addr is not None:
       UnpinPages(self.fd, virtual_address=self.addr, size=self.size)
@@ -224,7 +156,6 @@ class Sysmem:
 class TLBWindow:
   SIZE = 1 << 21
   USER_ID_LIMIT = 201
-  WORKER_START = (1, 2); WORKER_END = (14, 11)
 
   def __init__(self, fd: int, core: tuple[int, int]):
     tlb = AllocateTlb(fd)
@@ -248,9 +179,9 @@ class TLBWindow:
     data = value.to_bytes(bytes, "little") if isinstance(value, int) else value
     ctypes.memmove(self.addr + offset, data, len(data))
 
-  def mcast(self, addr: int, value, bytes=4):
+  def mcast(self, addr: int, value, start, end, bytes=4):
     base = addr & -self.SIZE
-    self.target(base, self.WORKER_START, self.WORKER_END)
+    self.target(base, start, end)
     self.write(addr - base, value, bytes)
 
   def close(self):
@@ -268,21 +199,21 @@ class TLBWindow:
 
 class PCIDevice:
   def __init__(self, index=0, sysmem_size=1 << 30):
-    card_type = Path(f"/sys/class/tenstorrent/tenstorrent!{index}/tt_card_type").read_text().strip()
     self.fd = os.open(f"/dev/tenstorrent/{index}", os.O_RDWR | os.O_CLOEXEC | os.O_APPEND)
     self.sysmem = None
     self.powered = False
     try:
-      tensix_enabled, gddr_enabled = self._read_enabled_masks()
-      config = board_config(card_type, tensix_enabled, gddr_enabled)
-      self.card_type = config.card_type
-      self.tensix_enabled = tensix_enabled
-      self.gddr_enabled = gddr_enabled
-      self.dram_endpoints = config.dram_endpoints
-      self.cores = list(config.cores)
-      self.prefetch_core = config.prefetch_core
-      self.dispatch_core = config.dispatch_core
-      self.dma_core = config.dma_core
+      columns = (self._read_enabled_tensix() & 0x3FFF).bit_count()
+      if columns not in (12, 14):
+        raise RuntimeError(f"unsupported Blackhole topology: {columns * 10} Tensix cores")
+      service_x = columns + 2
+      xs = (*range(1, 8), *range(10, service_x + 1))
+      services = ((service_x, 2), (service_x, 3), (service_x, 4))
+      self.cores = [
+        (x, y) for x in xs for y in range(2, 12)
+        if (x, y) not in services
+      ]
+      self.prefetch_core, self.dispatch_core, self.dma_core = services
       SetPowerState(self.fd, power_flags=0b1111)
       self.powered = True
       self.sysmem = Sysmem(self.fd, sysmem_size)
@@ -294,8 +225,7 @@ class PCIDevice:
       self.fd = -1
       raise
 
-  def _read_enabled_masks(self):
-    """Read ENABLED_TENSIX_COL and ENABLED_GDDR from ARC telemetry."""
+  def _read_enabled_tensix(self):
     arc, arc_base, scratch_13 = (8, 0), 0x80000000, 0x30434
     with TLBWindow(self.fd, arc) as win:
       win.target(arc_base, arc)
@@ -310,16 +240,12 @@ class PCIDevice:
       for index in range(entry_count):
         entry, = struct.unpack_from("<I", tags, index * 4)
         tag_offsets[entry & 0xFFFF] = entry >> 16
-      missing = {34, 36} - tag_offsets.keys()
-      if missing:
-        raise RuntimeError(
-          f"ARC telemetry is missing topology tags {sorted(missing)}",
-        )
+      if 34 not in tag_offsets:
+        raise RuntimeError("ARC telemetry is missing enabled Tensix columns")
       data = offset + 8 + entry_count * 4
-      value = lambda tag: struct.unpack(
-        "<I", win.read(data + tag_offsets[tag] * 4, 4),
+      return struct.unpack(
+        "<I", win.read(data + tag_offsets[34] * 4, 4),
       )[0]
-      return value(34), value(36)
 
   def close(self):
     if self.fd >= 0:

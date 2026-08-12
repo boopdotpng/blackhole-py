@@ -28,7 +28,7 @@
 #define PACKET_INDIRECT_COUNT 16u
 
 enum {
-  OP_INDIRECT = 5,
+  OP_INDIRECT = 4,
 };
 
 static void read_doorbell(u32 *low, u32 *high) {

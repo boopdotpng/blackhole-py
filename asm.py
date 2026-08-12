@@ -51,15 +51,13 @@ class Cond:
     return {"beq": "bne", "bne": "beq", "blt": "bge", "bge": "blt", "bltu": "bgeu", "bgeu": "bltu"}[op]
 
 class Asm(RV32):
-  def __init__(self, role: KernelRole, param_slots: dict[object, int] | None = None,
-               firmware: bool = False):
+  def __init__(self, role: KernelRole, firmware: bool = False):
     self.items, self.labels, self._prologue = [], {}, []
 
     reserved = {R.ZERO, R.RA, R.SP, R.GP}
     self._free, self._scopes = [reg for reg in R if reg not in reserved], []
     self._label_id, self._breaks = 0, []
     self.role = role
-    self.param_slots = {} if param_slots is None else param_slots
     self.is_firmware = bool(firmware)
     self.base = Firmware.TEXT[role][0] if firmware else TensixL1.WORKER_TEXT_BASE[role]
     self._lowered = False

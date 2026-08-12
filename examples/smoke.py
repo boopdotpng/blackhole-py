@@ -1,22 +1,18 @@
-import os
-
 from device import Device
 from pcie import TLBWindow
-from program import Program
-
+from program import Kernel
 
 MARKER = 0xC0DEF00D
 
-
 def main():
-  device_index = int(os.environ.get("TT_VISIBLE_DEVICES", "0").split(",")[0])
-  device = Device(device_index)
+  device = Device(0, idx=0)
   try:
     device.init_device()
-    program = Program(device.pcie.cores)
-    result = program.l1(4, alignment=4)
-    program.brisc.write(result, MARKER)
-    program.brisc.fence()
+    kernel = Kernel(device.pcie.cores)
+    result = kernel.l1(4, alignment=4)
+    kernel.brisc.write(result, MARKER)
+    kernel.brisc.fence()
+    program = kernel.build()
 
     with TLBWindow(device.pcie.fd, device.pcie.cores[0]) as window:
       for core in device.pcie.cores:

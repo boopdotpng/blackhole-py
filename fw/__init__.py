@@ -204,8 +204,7 @@ def _compile(source, base, capacity, defines=(), *, text_capacity=None,
   return image
 
 
-def build(pcie_mid, dram_endpoints, prefetch_core=(14, 2),
-          dispatch_core=(14, 3)):
+def build(pcie_mid, prefetch_core=(14, 2), dispatch_core=(14, 3)):
   """Compile fixed-address firmware immediately before device upload."""
   prefetch_coord = prefetch_core[0] | prefetch_core[1] << 6
   dispatch_coord = dispatch_core[0] | dispatch_core[1] << 6
@@ -250,23 +249,16 @@ def build(pcie_mid, dram_endpoints, prefetch_core=(14, 2),
     common + (("TT_PREFETCH_COORD", prefetch_coord),),
   )
 
-  endpoints = [("TT_DRAM_BANKS", len(dram_endpoints))]
-  for bank, pair in enumerate(dram_endpoints):
-    for risc, (x, y) in enumerate(pair):
-      endpoints += [
-        (f"TT_DRAM_{bank}_{risc}_X", x),
-        (f"TT_DRAM_{bank}_{risc}_Y", y),
-      ]
   dma_brisc = _compile(
     _ROOT / "dma.c", TensixL1.WORKER_TEXT_BASE["brisc"],
-    TensixL1.WORKER_TEXT_SIZE["brisc"], endpoints + [
+    TensixL1.WORKER_TEXT_SIZE["brisc"], [
       ("TT_FW_RISC", 0), ("TT_FW_STACK_TOP", Firmware.BRISC_STACK_TOP),
       ("TT_FW_INVALIDATE_ON_BOOT", 1),
     ],
   )
   dma_ncrisc = _compile(
     _ROOT / "dma.c", TensixL1.WORKER_TEXT_BASE["ncrisc"],
-    TensixL1.WORKER_TEXT_SIZE["ncrisc"], endpoints + [
+    TensixL1.WORKER_TEXT_SIZE["ncrisc"], [
       ("TT_FW_RISC", 1), ("TT_FW_STACK_TOP", Firmware.NCRISC_STACK_TOP),
     ],
   )

@@ -11,6 +11,7 @@ Tensor data offsets in the JSON are relative to the end of the header.
 from dataclasses import dataclass
 import json
 from math import prod
+import os
 from pathlib import Path
 import struct
 
@@ -114,9 +115,30 @@ class Safetensor:
       raise ValueError(f"{self.path} ended while reading tensor {name!r}")
     return info, data
 
+  def readinto(self, name, destination):
+    info = self.info(name)
+    view = memoryview(destination).cast("B")
+    if view.nbytes != info.nbytes:
+      raise ValueError(
+        f"tensor {name!r} has {info.nbytes} bytes, destination has {view.nbytes}",
+      )
+    offset = self.data_start + info.start
+    with self.path.open("rb", buffering=0) as file:
+      while view:
+        count = os.preadv(file.fileno(), (view,), offset)
+        if count == 0:
+          raise ValueError(f"{self.path} ended while reading tensor {name!r}")
+        view = view[count:]
+        offset += count
+    return info
+
 
 def load(name, path="weights/model.safetensors"):
   return Safetensor(path).load(name)
+
+
+def readinto(name, destination, path="weights/model.safetensors"):
+  return Safetensor(path).readinto(name, destination)
 
 
 if __name__ == "__main__":
