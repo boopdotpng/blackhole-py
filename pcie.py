@@ -1,4 +1,4 @@
-import ctypes, fcntl, os, struct
+import ctypes, fcntl, os
 import ctypes.util
 
 libc = ctypes.CDLL(ctypes.util.find_library("c"), use_errno=True)
@@ -8,6 +8,34 @@ libc.munmap.argtypes = [ctypes.c_void_p, ctypes.c_size_t]
 libc.munmap.restype = ctypes.c_int
 
 IOCTL_MAGIC = 0xFA
+
+
+def dram_tiles(enabled):
+  """Return the translated tile used for each enabled DRAM bank."""
+  enabled &= 0xFF
+  banks = enabled.bit_count()
+  if banks not in (7, 8):
+    raise RuntimeError(f"unsupported Blackhole DRAM mask {enabled:#x}")
+
+  missing = next((bank for bank in range(8) if not enabled >> bank & 1), 8)
+  tiles = []
+  for bank in range(banks):
+    if banks == 8:
+      x, slot = (17 if bank < 4 else 18), bank & 3
+    elif missing < 4 and bank < 3:
+      x, slot = 18, bank
+    elif missing >= 4 and bank >= 4:
+      x, slot = 18, bank - 4
+    else:
+      mirror = missing + 3 if missing < 4 else missing - 4
+      order = range(3, 7) if missing < 4 else range(4)
+      order = (*[candidate for candidate in order if candidate != mirror], mirror)
+      x, slot = 17, order.index(bank)
+    y = 12 + slot * 3
+    # BRISC transfers even banks over NoC 0; NCRISC transfers odd banks over NoC 1.
+    port = (2 if bank == 0 or bank >= 4 else 0) if bank % 2 == 0 else 1
+    tiles.append((x, y + port))
+  return tuple(tiles)
 
 def _TT_IOCTL(nr, payload_type, result=None, **defaults):
   def call(fd, **kwargs):
@@ -198,22 +226,27 @@ class TLBWindow:
   def __exit__(self, exc_type, exc, tb): self.close()
 
 class PCIDevice:
+  TENSIX_X = (*range(1, 8), *range(10, 15))
+  SERVICE_CORES = ((14, 2), (14, 3), (14, 4))
+  TENSIX_COUNT = 120
+  COMPUTE_CORE_COUNT = TENSIX_COUNT - len(SERVICE_CORES)
+
   def __init__(self, index=0, sysmem_size=1 << 30):
     self.fd = os.open(f"/dev/tenstorrent/{index}", os.O_RDWR | os.O_CLOEXEC | os.O_APPEND)
     self.sysmem = None
     self.powered = False
     try:
-      columns = (self._read_enabled_tensix() & 0x3FFF).bit_count()
-      if columns not in (12, 14):
-        raise RuntimeError(f"unsupported Blackhole topology: {columns * 10} Tensix cores")
-      service_x = columns + 2
-      xs = (*range(1, 8), *range(10, service_x + 1))
-      services = ((service_x, 2), (service_x, 3), (service_x, 4))
+      services = self.SERVICE_CORES
+      self.tensix_cores = tuple(
+        (x, y) for x in self.TENSIX_X for y in range(2, 12)
+      )
       self.cores = [
-        (x, y) for x in xs for y in range(2, 12)
-        if (x, y) not in services
+        core for core in self.tensix_cores if core not in services
       ]
+      assert len(self.tensix_cores) == self.TENSIX_COUNT
+      assert len(self.cores) == self.COMPUTE_CORE_COUNT
       self.prefetch_core, self.dispatch_core, self.dma_core = services
+      self.dram_tiles = dram_tiles(self._read_gddr_enabled())
       SetPowerState(self.fd, power_flags=0b1111)
       self.powered = True
       self.sysmem = Sysmem(self.fd, sysmem_size)
@@ -225,27 +258,25 @@ class PCIDevice:
       self.fd = -1
       raise
 
-  def _read_enabled_tensix(self):
-    arc, arc_base, scratch_13 = (8, 0), 0x80000000, 0x30434
-    with TLBWindow(self.fd, arc) as win:
-      win.target(arc_base, arc)
-      telemetry, = struct.unpack("<I", win.read(scratch_13, 4))
-      base, offset = telemetry & -TLBWindow.SIZE, telemetry % TLBWindow.SIZE
-      win.target(base, arc)
-      entry_count, = struct.unpack("<I", win.read(offset + 4, 4))
-      if not 0 < entry_count <= 256:
-        raise RuntimeError(f"invalid ARC telemetry entry count {entry_count}")
-      tags = win.read(offset + 8, entry_count * 4)
-      tag_offsets = {}
-      for index in range(entry_count):
-        entry, = struct.unpack_from("<I", tags, index * 4)
-        tag_offsets[entry & 0xFFFF] = entry >> 16
-      if 34 not in tag_offsets:
-        raise RuntimeError("ARC telemetry is missing enabled Tensix columns")
-      data = offset + 8 + entry_count * 4
-      return struct.unpack(
-        "<I", win.read(data + tag_offsets[34] * 4, 4),
-      )[0]
+  def _arc_telemetry(self):
+    with TLBWindow(self.fd, (8, 0)) as window:
+      window.target(0x80000000, (8, 0))
+      pointer = int.from_bytes(window.read(0x30434, 4), "little")
+      base, offset = pointer & -window.SIZE, pointer % window.SIZE
+      window.target(base, (8, 0))
+      return window.read(offset, 4096)
+
+  def _read_gddr_enabled(self):
+    telemetry = self._arc_telemetry()
+    entry_count = int.from_bytes(telemetry[4:8], "little")
+    if not 0 < entry_count <= 256:
+      raise RuntimeError(f"invalid ARC telemetry entry count {entry_count}")
+    for index in range(entry_count):
+      entry = int.from_bytes(telemetry[8 + index * 4:12 + index * 4], "little")
+      if entry & 0xFFFF == 36:
+        data = 8 + entry_count * 4 + (entry >> 16) * 4
+        return int.from_bytes(telemetry[data:data + 4], "little") & 0xFF
+    raise RuntimeError("ARC telemetry is missing enabled GDDR banks")
 
   def close(self):
     if self.fd >= 0:

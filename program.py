@@ -3,7 +3,6 @@ from dataclasses import dataclass
 
 from asm import Asm
 from fw import KERNEL_ROLES, TensixL1
-from memory import Buffer
 from pcie import Allocator
 
 
@@ -50,11 +49,7 @@ class KernargLayout:
       raise ValueError(f"program requires {self.buffers} buffers, got {len(bufs)}")
     if len(vals) != self.vals:
       raise ValueError(f"program requires {self.vals} values, got {len(vals)}")
-    addresses = tuple(
-      _u32(buf.addr, f"buffer {i} address") if isinstance(buf, Buffer)
-      else _u32(buf, f"buffer {i} address")
-      for i, buf in enumerate(bufs)
-    )
+    addresses = tuple(_u32(buf.addr, f"buffer {i} address") for i, buf in enumerate(bufs))
     words = addresses + tuple(_u32(val, f"value {i}") for i, val in enumerate(vals))
     return b"".join(word.to_bytes(4, "little") for word in words)
 

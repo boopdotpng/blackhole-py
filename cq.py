@@ -10,6 +10,8 @@ from pcie import Allocator, TLBWindow
 PACKET_SIZE = 64
 MAX_WRITE_SIZE = 16 * 1024
 PAGE_SIZE = 4096
+TARGET_REGION = Struct("<HH")
+TENSIX_X = (*range(1, 8), *range(10, 15))
 
 HOST_ISSUE_SIZE = 1 << 20
 HOST_ISSUE_SLOTS = HOST_ISSUE_SIZE // PACKET_SIZE
@@ -25,11 +27,6 @@ PREFETCH_DOORBELL = CQ_STATE
 PREFETCH_PCIE_BASE = CQ_STATE + 0x08
 PREFETCH_READ_PTR = CQ_STATE + 0x0C
 PREFETCH_DISPATCH_READ = CQ_STATE + 0x10
-PREFETCH_INDIRECT_ACTIVE = CQ_STATE + 0x14
-PREFETCH_INDIRECT_LO = CQ_STATE + 0x18
-PREFETCH_INDIRECT_MID = CQ_STATE + 0x1C
-PREFETCH_INDIRECT_INDEX = CQ_STATE + 0x20
-PREFETCH_INDIRECT_COUNT = CQ_STATE + 0x24
 PREFETCH_READ_PUBLISH = CQ_STATE + 0x30
 PREFETCH_DISPATCH_PUBLISH = CQ_STATE + 0x40
 PREFETCH_STAGING = 0x20000
@@ -44,7 +41,6 @@ DISPATCH_DONE_COUNT = DISPATCH_RING_END + 0x10
 DISPATCH_GO = DISPATCH_RING_END + 0x20
 DISPATCH_SIGNAL = DISPATCH_RING_END + 0x40
 DISPATCH_ARGS = DISPATCH_RING_END + 0x80
-DISPATCH_TARGETS = DISPATCH_RING_END + 0x100
 DISPATCH_DATA = DISPATCH_RING_END + 0x1000
 
 # DMA-core mailbox. It is a separate engine, not a compute-queue opcode.
@@ -54,7 +50,6 @@ DMA_BRISC_DONE = CQ_STATE + 0x08
 DMA_NCRISC_DONE = CQ_STATE + 0x0C
 DMA_BRISC_READY = CQ_STATE + 0x10
 DMA_NCRISC_READY = CQ_STATE + 0x14
-DMA_BANKS = CQ_STATE + 0x18
 DMA_DESCRIPTOR = CQ_STATE + 0x40
 
 
@@ -67,31 +62,6 @@ class Op(IntEnum):
 
 class PacketLayout:
   WORDS = Struct("<16I")
-
-  OP = 0
-  TARGET_COUNT = 4
-  ADDRESS = 8
-  BYTE_COUNT = 12
-  SOURCE_LO = 16
-  SOURCE_MID = 20
-  TARGETS_LO = 24
-  TARGETS_MID = 28
-
-  EXEC_ARGS_LO = 8
-  EXEC_ARGS_MID = 12
-  EXEC_ARGS_SIZE = 16
-  EXEC_EXPECTED = 20
-  EXEC_TARGETS_LO = 24
-  EXEC_TARGETS_MID = 28
-  EXEC_ENTRY_POINTS = 32
-
-  SIGNAL_TARGET_LO = 8
-  SIGNAL_TARGET_MID = 12
-  SIGNAL_VALUE = 16
-
-  INDIRECT_SOURCE_LO = 8
-  INDIRECT_SOURCE_MID = 12
-  INDIRECT_COUNT = 16
 
 
 def _u32(value, name):
@@ -114,10 +84,42 @@ def _packet(*words):
 def noc_coord(core: Core):
   if (
     type(core) is not tuple or len(core) != 2 or
-    any(type(value) is not int or not 0 <= value < 64 for value in core)
+    core[0] not in TENSIX_X or not 2 <= core[1] <= 11
   ):
-    raise ValueError("NoC coordinate components must be integers in [0, 63]")
+    raise ValueError("target must be a translated Tensix coordinate")
   return core[0] | core[1] << 6
+
+
+def target_regions(cores):
+  """Lower an exact core set; the non-Tensix x=8/9 gap is transparent."""
+  cores = tuple(cores)
+  for core in cores: noc_coord(core)
+  if len(set(cores)) != len(cores): raise ValueError("target cores must be unique")
+  x_to_index = {x: index for index, x in enumerate(TENSIX_X)}
+  remaining = {(x_to_index[x], y) for x, y in cores}
+  regions = []
+  while remaining:
+    start_x, start_y = min(remaining, key=lambda core: (core[1], core[0]))
+    end_x = start_x
+    while (end_x + 1, start_y) in remaining: end_x += 1
+    end_y = start_y
+    while all((x, end_y + 1) in remaining for x in range(start_x, end_x + 1)):
+      end_y += 1
+    for y in range(start_y, end_y + 1):
+      for x in range(start_x, end_x + 1): remaining.remove((x, y))
+    regions.append(((TENSIX_X[start_x], start_y), (TENSIX_X[end_x], end_y)))
+  return tuple(regions)
+
+
+def encode_regions(cores, all_cores):
+  if not set(cores) <= set(all_cores):
+    raise ValueError("target includes a non-compute core")
+  regions = target_regions(cores)
+  if len(cores) == len(all_cores) and set(cores) == set(all_cores): return (), b""
+  return regions, b"".join(
+    TARGET_REGION.pack(noc_coord(start), noc_coord(end))
+    for start, end in regions
+  )
 
 
 @dataclass(frozen=True)
@@ -132,10 +134,12 @@ class Write:
     if not 0 < len(data) <= MAX_WRITE_SIZE:
       raise ValueError("write payload size must be in [1, 16 KiB]")
     source = queue.stage(data)
-    targets = queue.stage(b"".join(noc_coord(core).to_bytes(4, "little") for core in cores))
+    regions, encoded_regions = encode_regions(cores, queue.pcie.cores)
+    targets = queue.stage(encoded_regions) if encoded_regions else 0
     return _packet(
-      Op.WRITE, len(cores), _u32(self.addr, "write address"), len(data),
-      source & 0xFFFFFFFF, source >> 32, targets & 0xFFFFFFFF, targets >> 32,
+      Op.WRITE, len(regions), _u32(self.addr, "write address"), len(data),
+      source & 0xFFFFFFFF, source >> 32,
+      targets & 0xFFFFFFFF, targets >> 32,
     )
 
 
@@ -158,9 +162,10 @@ class Exec:
     if len(entries) != 5:
       raise ValueError("exec requires five worker entry points")
     for entry in entries: _u32(entry, "exec entry point")
-    targets = queue.stage(b"".join(noc_coord(core).to_bytes(4, "little") for core in cores))
+    regions, encoded_regions = encode_regions(cores, queue.pcie.cores)
+    targets = queue.stage(encoded_regions) if encoded_regions else 0
     return _packet(
-      Op.EXEC, len(cores), self.args_addr & 0xFFFFFFFF, self.args_addr >> 32,
+      Op.EXEC, len(regions), self.args_addr & 0xFFFFFFFF, self.args_addr >> 32,
       self.args_size, len(cores), targets & 0xFFFFFFFF, targets >> 32,
       *entries,
     )
@@ -280,7 +285,6 @@ class ComputeQueue:
     self.prefetch.write(PREFETCH_PCIE_BASE, memory.noc_address(memory.issue) & 0xFFFFFFFF)
     self.prefetch.write(PREFETCH_READ_PTR, memory.noc_address(memory.read_ptr) & 0xFFFFFFFF)
     self.prefetch.write(PREFETCH_DISPATCH_READ, 0)
-    self.prefetch.write(PREFETCH_INDIRECT_ACTIVE, 0)
     self.dispatch.write(DISPATCH_PUBLISHED, 0)
 
   def stage(self, data):
@@ -377,10 +381,9 @@ class DMAQueue:
 
   def __init__(self, pcie, memory: SubmissionMemory):
     self.pcie, self.memory, self.sequence = pcie, memory, 0
-    self.banks = 0
     self.window = TLBWindow(pcie.fd, pcie.dma_core)
     self.window.target(0, pcie.dma_core)
-    self.window.write(DMA_SUBMIT, bytes(0x1C))
+    self.window.write(DMA_SUBMIT, bytes(0x18))
     self.window.write(DMA_DESCRIPTOR, bytes(PACKET_SIZE))
 
   @property
@@ -400,9 +403,6 @@ class DMAQueue:
     ):
       if time.monotonic() >= deadline: raise TimeoutError("DMA engine did not start")
       time.sleep(0)
-    self.banks = int.from_bytes(self.window.read(DMA_BANKS, 4), "little")
-    if self.banks not in (7, 8):
-      raise RuntimeError(f"DMA firmware discovered {self.banks} DRAM banks")
 
   def submit(self, command: Copy):
     if self.sequence: self.wait(self.sequence)

@@ -204,10 +204,14 @@ def _compile(source, base, capacity, defines=(), *, text_capacity=None,
   return image
 
 
-def build(pcie_mid, prefetch_core=(14, 2), dispatch_core=(14, 3)):
+def build(pcie_mid, dram_tiles):
   """Compile fixed-address firmware immediately before device upload."""
-  prefetch_coord = prefetch_core[0] | prefetch_core[1] << 6
-  dispatch_coord = dispatch_core[0] | dispatch_core[1] << 6
+  dram_tiles = tuple(dram_tiles)
+  dram_banks = len(dram_tiles)
+  if dram_banks not in (7, 8):
+    raise ValueError(f"unsupported Blackhole DRAM bank count {dram_banks}")
+  prefetch_coord = 14 | 2 << 6
+  dispatch_coord = 14 | 3 << 6
   sources = {
     "brisc": "brisc.c", "ncrisc": "ncrisc.c",
     "trisc0": "trisc.c", "trisc1": "trisc.c", "trisc2": "trisc.c",
@@ -249,16 +253,20 @@ def build(pcie_mid, prefetch_core=(14, 2), dispatch_core=(14, 3)):
     common + (("TT_PREFETCH_COORD", prefetch_coord),),
   )
 
+  dram_defines = [("TT_DRAM_BANKS", dram_banks)]
+  for bank, (x, y) in enumerate(dram_tiles):
+    dram_defines.append((f"TT_DRAM_{bank}", x | y << 6))
+
   dma_brisc = _compile(
     _ROOT / "dma.c", TensixL1.WORKER_TEXT_BASE["brisc"],
-    TensixL1.WORKER_TEXT_SIZE["brisc"], [
+    TensixL1.WORKER_TEXT_SIZE["brisc"], dram_defines + [
       ("TT_FW_RISC", 0), ("TT_FW_STACK_TOP", Firmware.BRISC_STACK_TOP),
       ("TT_FW_INVALIDATE_ON_BOOT", 1),
     ],
   )
   dma_ncrisc = _compile(
     _ROOT / "dma.c", TensixL1.WORKER_TEXT_BASE["ncrisc"],
-    TensixL1.WORKER_TEXT_SIZE["ncrisc"], [
+    TensixL1.WORKER_TEXT_SIZE["ncrisc"], dram_defines + [
       ("TT_FW_RISC", 1), ("TT_FW_STACK_TOP", Firmware.NCRISC_STACK_TOP),
     ],
   )

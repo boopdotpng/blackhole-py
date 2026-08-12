@@ -8,8 +8,7 @@ from fw import (
   Firmware, FirmwareControl, KERNEL_ROLES, RunState, TensixL1, TensixMMIO,
 )
 from isa import R, RV32
-from memory import Buffer, Dram
-from pcie import PCIDevice, TLBWindow
+from pcie import Allocator, PCIDevice, TLBWindow
 from program import Program
 
 
@@ -19,6 +18,30 @@ RETURN_KERNEL = {
   ).to_bytes(4, "little")
   for role in KERNEL_ROLES
 }
+
+
+@dataclass(frozen=True, eq=False)
+class Buffer:
+  name: str
+  addr: int
+  size: int
+
+
+class Dram:
+  START = 0x40
+  END = 1 << 32
+  ALIGNMENT = 64
+  PAGE_SIZE = 4096
+
+  def __init__(self, tiles):
+    self.allocator = Allocator(self.START, self.END, self.ALIGNMENT)
+    self.tiles = tuple(tiles)
+
+  def buffer(self, name: str, size: int) -> Buffer:
+    pages = (size + self.PAGE_SIZE - 1) // self.PAGE_SIZE
+    rows_per_bank = (pages + len(self.tiles) - 1) // len(self.tiles)
+    addr = self.allocator.alloc(rows_per_bank * self.PAGE_SIZE)
+    return Buffer(name, addr, size)
 
 
 @dataclass(frozen=True)
@@ -35,16 +58,14 @@ class Device:
       raise ValueError("device idx must be a non-negative integer")
     self.idx = idx
     self.pcie = PCIDevice(index, sysmem_size)
-    self.dram = None
+    self.dram = Dram(self.pcie.dram_tiles)
     self.queues = self.compute = self.dma = None
     self.program_queue = []
     self._resident_programs = {}
     self._args = {}
 
   def _worker_mcast(self, window, address, value):
-    end_x = self.pcie.dispatch_core[0]
-    for start, end in (((1, 2), (7, 11)), ((10, 2), (end_x, 11))):
-      window.mcast(address, value, start, end)
+    window.mcast(address, value, (1, 2), (14, 11))
 
   def reset_cores(self):
     with TLBWindow(self.pcie.fd, self.pcie.cores[0]) as window:
@@ -56,9 +77,7 @@ class Device:
 
   def init_device(self):
     pcie_mid = self.pcie.sysmem.noc_addr >> 32
-    images = fw.build(
-      pcie_mid, self.pcie.prefetch_core, self.pcie.dispatch_core,
-    )
+    images = fw.build(pcie_mid, self.pcie.dram_tiles)
     worker_blob = b"".join(
       image.ljust(size, b"\0")
       for (_, size), image in zip(Firmware.TEXT.values(), images.workers)
@@ -129,7 +148,6 @@ class Device:
       )
 
     self.dma.wait_ready()
-    self.dram = Dram(self.dma.banks)
     return self
 
   def _require_ready(self):
@@ -235,9 +253,7 @@ class Device:
         tuple(TensixL1.WORKER_TEXT_BASE[role] for role in KERNEL_ROLES)
         if resident is None else resident
       )
-      commands.append(Exec(
-        program.cores, entries, *args,
-      ))
+      commands.append(Exec(program.cores, entries, *args))
     return commands
 
   def run(self, program: Program | None = None, *bufs, vals=(), timeout=10.0):
