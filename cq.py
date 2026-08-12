@@ -381,6 +381,7 @@ class DMAQueue:
 
   def __init__(self, pcie, memory: SubmissionMemory):
     self.pcie, self.memory, self.sequence = pcie, memory, 0
+    self.completed = 0
     self.window = TLBWindow(pcie.fd, pcie.dma_core)
     self.window.target(0, pcie.dma_core)
     self.window.write(DMA_SUBMIT, bytes(0x18))
@@ -405,7 +406,7 @@ class DMAQueue:
       time.sleep(0)
 
   def submit(self, command: Copy):
-    if self.sequence: self.wait(self.sequence)
+    if self.completed != self.sequence: self.wait(self.sequence)
     self.sequence += 1
     self.window.write(DMA_DESCRIPTOR, command.encode())
     # Descriptor stores must land before publishing the new sequence.
@@ -414,9 +415,12 @@ class DMAQueue:
 
   def wait(self, sequence, timeout=30.0):
     deadline = time.monotonic() + timeout
+    polls = 0
     while int.from_bytes(self.window.read(DMA_COMPLETE, 4), "little") < sequence:
-      if time.monotonic() >= deadline: raise TimeoutError(f"DMA completion {sequence} timed out")
-      time.sleep(0)
+      polls += 1
+      if polls & 0xFF == 0 and time.monotonic() >= deadline:
+        raise TimeoutError(f"DMA completion {sequence} timed out")
+    self.completed = max(self.completed, sequence)
     return sequence
 
   def close(self): self.window.close()

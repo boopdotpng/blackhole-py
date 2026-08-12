@@ -200,10 +200,25 @@ class Device:
     self.dma.wait(self.dma.submit(command), timeout=timeout)
     return buffer
 
-  def read(self, buffer: Buffer, timeout=30.0):
+  def read(self, buffer: Buffer, destination=None, timeout=30.0):
+    """DMA into staging and return its view, or copy into a stable destination."""
+    target = None
+    if destination is not None:
+      target = memoryview(destination)
+      if target.readonly: raise TypeError("destination must be writable")
+      if target.nbytes != buffer.size:
+        raise ValueError(
+          f"buffer {buffer.name!r} requires exactly {buffer.size} destination bytes, "
+          f"got {target.nbytes}",
+        )
+      try: target = target.cast("B")
+      except TypeError as error: raise ValueError("destination must be contiguous") from error
     command = self._dma_command(buffer, 1)
     self.dma.wait(self.dma.submit(command), timeout=timeout)
-    return self.pcie.sysmem.read(self.dma.staging_offset, buffer.size)
+    source = self.pcie.sysmem.view(self.dma.staging_offset, buffer.size)
+    if target is None: return source  # Shared staging: consume before the next DMA.
+    target[:] = source
+    return destination
 
   def _args_for(self, launches, dedicated=False):
     occurrences, args = {}, []

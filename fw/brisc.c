@@ -15,25 +15,25 @@ static void enable_clock_gating(void) {
 
 static void reset_cb_counters(void) {
   for (u32 index = 0; index < 32; index++) {
-    u32 base = 0xFFB48020u + index * 0x1000u;
-    mmio_write32(base, 0);
-    mmio_write32(base + 8, 0);
+    u32 base = 0xFFB48020u + index * 0x1000u; // CB[index] tiles-acked register.
+    mmio_write32(base, 0);                    // Reset tiles acked by the consumer.
+    mmio_write32(base + 8, 0);                // Reset tiles received from the producer.
   }
 }
 
 static void reset_tensix(void) {
-  zero_words(0xFFEF0000u, 186);
-  zero_words(0xFFEF02ECu, 69);
-  push_tensix_word(0x10180000u);
-  push_tensix_word(0x8A00300Au);
-  push_tensix_word(0x02000000u);
-  push_tensix_word(0x7100BF80u);
-  push_tensix_word(0x910000B0u);
-  mmio_write32(0xFFEF000Cu, 0x803u);
-  push_tensix_word(0xA3100004u);
-  push_tensix_word(0xA3100008u);
-  push_tensix_word(0xA3100010u);
-  push_tensix_word(0xA3100200u);
+  zero_words(0xFFEF0000u, 186);  // Clear Tensix CFG[0..185].
+  zero_words(0xFFEF02ECu, 69);   // Clear CFG[187..255], preserving PRNG_SEED at CFG[186].
+  push_tensix_word(0x10180000u); // ZEROACC(clear_mode=3): clear all DST accumulators.
+  push_tensix_word(0x8A00300Au); // SFPENCC(3, 0, 0, 10): enable and initialize SFPU condition codes.
+  push_tensix_word(0x02000000u); // NOP: required SFPU pipeline slot after SFPENCC.
+  push_tensix_word(0x7100BF80u); // SFPLOADI(LREG0, FLOATB, 0xBF80): load -1.0f.
+  push_tensix_word(0x910000B0u); // SFPCONFIG(0, LREG11, 0): install LREG0 as the -1.0f constant.
+  mmio_write32(0xFFEF000Cu, 0x803u); // ECC_SCRUBBER: enable, scrub on error, delay 0x100.
+  push_tensix_word(0xA3100004u); // SEMINIT(max=1, init=0, FPU_SFPU).
+  push_tensix_word(0xA3100008u); // SEMINIT(max=1, init=0, MATH_PACK).
+  push_tensix_word(0xA3100010u); // SEMINIT(max=1, init=0, UNPACK_TO_DEST).
+  push_tensix_word(0xA3100200u); // SEMINIT(max=1, init=0, MATH_DONE).
   reset_cb_counters();
 }
 
