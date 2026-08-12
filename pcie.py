@@ -8,6 +8,7 @@ libc.munmap.argtypes = [ctypes.c_void_p, ctypes.c_size_t]
 libc.munmap.restype = ctypes.c_int
 
 IOCTL_MAGIC = 0xFA
+TENSIX_X = (*range(1, 8), *range(10, 15))
 
 
 def dram_tiles(enabled):
@@ -226,7 +227,6 @@ class TLBWindow:
   def __exit__(self, exc_type, exc, tb): self.close()
 
 class PCIDevice:
-  TENSIX_X = (*range(1, 8), *range(10, 15))
   SERVICE_CORES = ((14, 2), (14, 3), (14, 4))
   TENSIX_COUNT = 120
   COMPUTE_CORE_COUNT = TENSIX_COUNT - len(SERVICE_CORES)
@@ -238,7 +238,7 @@ class PCIDevice:
     try:
       services = self.SERVICE_CORES
       self.tensix_cores = tuple(
-        (x, y) for x in self.TENSIX_X for y in range(2, 12)
+        (x, y) for x in TENSIX_X for y in range(2, 12)
       )
       self.cores = [
         core for core in self.tensix_cores if core not in services

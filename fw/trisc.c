@@ -9,7 +9,7 @@
 #endif
 
 static void initialize_tensix(void) {
-  zero_words(0xFFE00000u, 64);
+  zero_words(0xFFE00000u, 64); // Clear the Tensix thread's 64-word register file.
 }
 
 static void delay_600_cycles(void) {
@@ -30,7 +30,7 @@ static void launch_worker(void) {
 void firmware_boot(void) {
   configure_csr();
   initialize_tensix();
-  mmio_write32(0xFFEF02E8u, 0);
+  mmio_write32(0xFFEF02E8u, 0); // Reset the Tensix PRNG seed.
   delay_600_cycles();
   mmio_write8(SYNC, 2);
   fence();

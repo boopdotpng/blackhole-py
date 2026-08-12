@@ -1,12 +1,11 @@
 from dataclasses import dataclass
 
 from cq import (
-  MAX_WRITE_SIZE, CommandBuffer, CommandQueues, Copy, Exec, Write,
+  MAX_WRITE_SIZE, CommandBuffer, ComputeQueue, Copy, DMAQueue, Exec,
+  SubmissionMemory, Write,
 )
 import fw
-from fw import (
-  Firmware, FirmwareControl, KERNEL_ROLES, RunState, TensixL1, TensixMMIO,
-)
+from fw import Firmware, KERNEL_ROLES, TensixL1, TensixMMIO
 from isa import R, RV32
 from pcie import Allocator, PCIDevice, TLBWindow
 from program import Program
@@ -59,7 +58,7 @@ class Device:
     self.idx = idx
     self.pcie = PCIDevice(index, sysmem_size)
     self.dram = Dram(self.pcie.dram_tiles)
-    self.queues = self.compute = self.dma = None
+    self.compute = self.dma = None
     self.program_queue = []
     self._resident_programs = {}
     self._args = {}
@@ -98,7 +97,7 @@ class Device:
       self._worker_mcast(window, firmware_base, worker_blob)
       boot = RV32().jal(R.ZERO, firmware_base + 4).to_bytes(4, "little")
       self._worker_mcast(window, TensixL1.BOOT, boot)
-      self._worker_mcast(window, FirmwareControl.GO_SIGNAL & -4, 0)
+      self._worker_mcast(window, 0x0370, 0)  # Word containing the worker GO byte at 0x373.
       self._worker_mcast(
         window,
         TensixMMIO.RISCV_DEBUG_REG_SOFT_RESET_0,
@@ -131,9 +130,9 @@ class Device:
         )
 
       # Initialize both submission ABIs while their service cores are reset.
-      self.queues = CommandQueues(self.pcie)
-      self.compute = self.queues.compute
-      self.dma = self.queues.dma
+      memory = SubmissionMemory(self.pcie)
+      self.compute = ComputeQueue(self.pcie, memory)
+      self.dma = DMAQueue(self.pcie, memory)
 
       for core in (self.pcie.prefetch_core, self.pcie.dispatch_core):
         service_mmio(
@@ -151,7 +150,7 @@ class Device:
     return self
 
   def _require_ready(self):
-    if self.queues is None:
+    if self.compute is None:
       raise RuntimeError("init_device() must be called before submission")
 
   def queue(self, program: Program, *bufs, vals=(), report=True):
@@ -369,7 +368,7 @@ class Device:
   def close(self):
     if self.pcie.fd < 0: return
     self.reset_cores()
-    if self.queues is not None:
-      self.queues.close()
-      self.queues = self.compute = self.dma = None
+    if self.compute is not None: self.compute.close()
+    if self.dma is not None: self.dma.close()
+    self.compute = self.dma = None
     self.pcie.close()

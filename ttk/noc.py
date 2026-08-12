@@ -5,8 +5,6 @@ from isa import R
 NIU0 = 0xFFB20000
 NIU_STRIDE = 0x10000
 NIU_CONFIG = 0x100            # config region offset within a NIU window
-NIU_CONTROL = 0x00            # within the config region
-ROUTER_CONTROL = 0x04
 LOGICAL_NODE_ID = 0x48
 
 def _endpoint(address, coordinate, middle=0): return address, middle, coordinate
@@ -91,18 +89,12 @@ class Transaction:
                     target_middle_address=target_middle_address, posted=posted)
     return self
 
-  def _multicast_write(self, source_address, target_address, target_start,
-                       target_end, packet_bytes):
+  def multicast_write(self, source_address, target_address, target_start,
+                      target_end, packet_bytes):
     self._source_pending = True
     self.noc._multicast_write(self.tid, source_address, target_address, target_start,
                               target_end, packet_bytes)
     return self
-
-  def multicast_write(self, source_address, target_address, target_start,
-                      target_end, packet_bytes):
-    return self._multicast_write(
-      source_address, target_address, target_start, target_end, packet_bytes,
-    )
 
   def inline_write(self, value, target_address, target_coordinate,
                    posted=True):

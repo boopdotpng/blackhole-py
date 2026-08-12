@@ -1,29 +1,21 @@
 #include "cq.h"
+#include "noc.h"
 
 #if TT_FW_RISC == 0
-#define FIRST_BANK 0u
 #define DRAM_STAGING 0x20000u
 #else
-#define FIRST_BANK 1u
 #define DRAM_STAGING 0x30000u
 #endif
 
 #define DRAM_COORD(bank) TT_DRAM_##bank
 
 #define PAGE_SIZE 4096u
-#define CQ_STATE 0x1000u
-#define DMA_SUBMIT CQ_STATE
-#define DMA_COMPLETE (CQ_STATE + 4u)
-#define DMA_BRISC_DONE (CQ_STATE + 8u)
-#define DMA_NCRISC_DONE (CQ_STATE + 0x0Cu)
-#define DMA_BRISC_READY (CQ_STATE + 0x10u)
-#define DMA_NCRISC_READY (CQ_STATE + 0x14u)
-#define DMA_DESCRIPTOR (CQ_STATE + 0x40u)
+#define DMA_SUBMIT 0x1000u
+#define DMA_COMPLETE 0x1004u
+#define DMA_BRISC_DONE 0x1008u
+#define DMA_NCRISC_DONE 0x100Cu
 
 #define PCIE_COORD ((1u << 24) | (24u << 6) | 19u)
-#define NCRISC_RESET_PC 0xFFB12238u
-#define NCRISC_RESET_PC_OVERRIDE 0xFFB1223Cu
-#define SOFT_RESET 0xFFB121B0u
 
 static const u32 dram_coordinates[TT_DRAM_BANKS] = {
   DRAM_COORD(0), DRAM_COORD(1), DRAM_COORD(2), DRAM_COORD(3),
@@ -34,7 +26,7 @@ static const u32 dram_coordinates[TT_DRAM_BANKS] = {
 };
 
 static void copy_pages(void) {
-  volatile dma_copy *copy = (volatile dma_copy *)DMA_DESCRIPTOR;
+  volatile dma_copy *copy = (volatile dma_copy *)0x1040u; // DMA descriptor mailbox.
   u32 dram = copy->device_address;
   u32 host_base = copy->host_lo;
   u32 host_mid = copy->host_mid;
@@ -43,7 +35,7 @@ static void copy_pages(void) {
   u32 banks = TT_DRAM_BANKS;
   u32 page_count = (byte_count + PAGE_SIZE - 1u) / PAGE_SIZE;
 
-  for (u32 bank = FIRST_BANK; bank < banks; bank += 2u) {
+  for (u32 bank = TT_FW_RISC; bank < banks; bank += 2u) {
     if (bank >= page_count) continue;
     u32 rows = (page_count - bank + banks - 1u) / banks;
     u32 full_rows = rows;
@@ -124,12 +116,12 @@ void firmware_boot(void) {
     mmio_write32(DMA_BRISC_DONE, 0);
     mmio_write32(DMA_NCRISC_DONE, 0);
     fence();
-    mmio_write32(NCRISC_RESET_PC, 0xA000u);
-    mmio_write32(NCRISC_RESET_PC_OVERRIDE, 1);
-    mmio_write32(SOFT_RESET, 0);
+    mmio_write32(0xFFB12238u, 0xA000u); // NCRISC reset PC: DMA NCRISC image base.
+    mmio_write32(0xFFB1223Cu, 1);       // Override the NCRISC reset PC.
+    mmio_write32(0xFFB121B0u, 0);       // Release NCRISC from soft reset.
   }
   mmio_write32(
-    TT_FW_RISC == 0 ? DMA_BRISC_READY : DMA_NCRISC_READY, 1
+    TT_FW_RISC == 0 ? 0x1010u : 0x1014u, 1 // BRISC/NCRISC ready mailbox.
   );
   fence();
 

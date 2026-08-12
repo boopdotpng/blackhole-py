@@ -1,9 +1,8 @@
-#include "fw.h"
+#include "noc.h"
 
 #define SUBORDINATE_SYNC 0x0068u
 #define GO_SIGNAL 0x0373u
 #define DISPATCH_DONE_COUNT 0x30010u
-#define DISPATCH_COORD TT_DISPATCH_COORD
 
 static void enable_clock_gating(void) {
   for (u32 noc = 0; noc < 2; noc++) {
@@ -38,7 +37,7 @@ static void reset_tensix(void) {
 }
 
 static void notify_dispatch(void) {
-  noc_atomic_inc(1, DISPATCH_DONE_COUNT, DISPATCH_COORD, 1);
+  noc_atomic_inc(1, DISPATCH_DONE_COUNT, TT_DISPATCH_COORD, 1);
 }
 
 static void launch_worker(void) {
@@ -62,27 +61,27 @@ static void launch_worker(void) {
 
 void firmware_boot(void) {
   configure_csr();
-  mmio_write32(0xFFB12238u, 0x367Cu);
-  mmio_write32(0xFFB12228u, 0x3854u);
-  mmio_write32(0xFFB1222Cu, 0x3AD4u);
-  mmio_write32(0xFFB12230u, 0x3D54u);
-  mmio_write32(0xFFB12234u, 7);
-  mmio_write32(0xFFB1223Cu, 1);
-  mmio_write32(0xFFB12240u, 0);
-  mmio_write32(0xFFB11024u, 0x3Fu);
+  mmio_write32(0xFFB12238u, 0x367Cu); // NCRISC reset PC: resident firmware entry.
+  mmio_write32(0xFFB12228u, 0x3854u); // TRISC0 reset PC: resident firmware entry.
+  mmio_write32(0xFFB1222Cu, 0x3AD4u); // TRISC1 reset PC: resident firmware entry.
+  mmio_write32(0xFFB12230u, 0x3D54u); // TRISC2 reset PC: resident firmware entry.
+  mmio_write32(0xFFB12234u, 7);       // Override all three TRISC reset PCs.
+  mmio_write32(0xFFB1223Cu, 1);       // Override the NCRISC reset PC.
+  mmio_write32(0xFFB12240u, 0);       // Disable destination clock-gating override.
+  mmio_write32(0xFFB11024u, 0x3Fu);   // Enable TDMA clock-gating controls.
   enable_clock_gating();
-  zero_words(0x2BB8u, 0x80u);
-  mmio_write32(0xFFEF02E4u, 0x1Fu);
+  zero_words(0x2BB8u, 0x80u);         // Clear the resident firmware zero area.
+  mmio_write32(0xFFEF02E4u, 0x1Fu);   // Invalidate every RISC instruction cache.
   reset_tensix();
-  mmio_write32(0x60u, 0);
-  mmio_write32(0xFFEF02E4u, 0x1Fu);
+  mmio_write32(0x60u, 0);             // Clear the NCRISC halt/resume word.
+  mmio_write32(0xFFEF02E4u, 0x1Fu);   // Invalidate caches after reset/config writes.
   fence();
   /* The sync-word init must be visible before the subordinates are
    * released from soft reset; a delayed L1 store could otherwise land
    * after their BOOT_READY bytes and hide them from the wait below. */
   mmio_write32(SUBORDINATE_SYNC, 0x40404040u);
   fence();
-  mmio_write32(0xFFB121B0u, 0);
+  mmio_write32(0xFFB121B0u, 0);       // Release NCRISC and TRISCs from soft reset.
   for (u32 index = 0; index < 4; index++) {
     wait_u8(SUBORDINATE_SYNC + index, 2);
   }

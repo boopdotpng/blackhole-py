@@ -1,20 +1,18 @@
 #include "cq.h"
+#include "noc.h"
 
 #define HOST_ISSUE_SLOTS 16384u
-#define CQ_STATE 0x1000u
-#define PREFETCH_DOORBELL CQ_STATE
-#define PREFETCH_PCIE_BASE (CQ_STATE + 0x08u)
-#define PREFETCH_READ_PTR (CQ_STATE + 0x0Cu)
-#define PREFETCH_DISPATCH_READ (CQ_STATE + 0x10u)
-#define PREFETCH_READ_PUBLISH (CQ_STATE + 0x30u)
-#define PREFETCH_DISPATCH_PUBLISH (CQ_STATE + 0x40u)
+#define PREFETCH_DOORBELL 0x1000u
+#define PREFETCH_PCIE_BASE 0x1008u
+#define PREFETCH_READ_PTR 0x100Cu
+#define PREFETCH_DISPATCH_READ 0x1010u
+#define PREFETCH_READ_PUBLISH 0x1030u
+#define PREFETCH_DISPATCH_PUBLISH 0x1040u
 #define PREFETCH_STAGING 0x20000u
 
-#define DISPATCH_PUBLISHED CQ_STATE
 #define DISPATCH_RING_BASE 0x20000u
 #define DISPATCH_RING_SLOTS 1024u
 #define PCIE_COORD ((1u << 24) | (24u << 6) | 19u)
-#define DISPATCH_COORD TT_DISPATCH_COORD
 
 static void read_doorbell(u32 *low, u32 *high) {
   u32 before, after;
@@ -43,14 +41,14 @@ static void forward_packet(u32 *put) {
                     (*put & (DISPATCH_RING_SLOTS - 1u)) * CQ_PACKET_SIZE;
   noc_write(
     0, PREFETCH_STAGING, destination,
-    0, DISPATCH_COORD, CQ_PACKET_SIZE, 0
+    0, TT_DISPATCH_COORD, CQ_PACKET_SIZE, 0
   );
   (*put)++;
   mmio_write32(PREFETCH_DISPATCH_PUBLISH, *put);
   fence();
   noc_write(
-    0, PREFETCH_DISPATCH_PUBLISH, DISPATCH_PUBLISHED,
-    0, DISPATCH_COORD, 4, 0
+    0, PREFETCH_DISPATCH_PUBLISH, 0x1000u, // Dispatch published-count mailbox.
+    0, TT_DISPATCH_COORD, 4, 0
   );
 }
 

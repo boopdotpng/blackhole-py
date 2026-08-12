@@ -4,14 +4,13 @@ from struct import Struct
 import time
 
 from fw import Core
-from pcie import Allocator, TLBWindow
+from pcie import Allocator, TENSIX_X, TLBWindow
 
 
 PACKET_SIZE = 64
 MAX_WRITE_SIZE = 16 * 1024
 PAGE_SIZE = 4096
 TARGET_REGION = Struct("<HH")
-TENSIX_X = (*range(1, 8), *range(10, 15))
 
 HOST_ISSUE_SIZE = 1 << 20
 HOST_ISSUE_SLOTS = HOST_ISSUE_SIZE // PACKET_SIZE
@@ -21,36 +20,17 @@ HOST_ARGS_SIZE = 4 << 20
 HOST_COMMAND_DATA_SIZE = 16 << 20
 HOST_LIVE_SIZE = 128 << 10
 
-# Prefetch-core state. All queue pointers count 64-byte packets, not bytes.
-CQ_STATE = 0x1000
-PREFETCH_DOORBELL = CQ_STATE
-PREFETCH_PCIE_BASE = CQ_STATE + 0x08
-PREFETCH_READ_PTR = CQ_STATE + 0x0C
-PREFETCH_DISPATCH_READ = CQ_STATE + 0x10
-PREFETCH_READ_PUBLISH = CQ_STATE + 0x30
-PREFETCH_DISPATCH_PUBLISH = CQ_STATE + 0x40
-PREFETCH_STAGING = 0x20000
-
-# Dispatch has a fixed-slot L1 ring. Variable payloads remain out of line.
-DISPATCH_PUBLISHED = CQ_STATE
-DISPATCH_RING_BASE = 0x20000
-DISPATCH_RING_SLOTS = 1024
-DISPATCH_RING_END = DISPATCH_RING_BASE + DISPATCH_RING_SLOTS * PACKET_SIZE
-DISPATCH_READ_PUBLISH = DISPATCH_RING_END
-DISPATCH_DONE_COUNT = DISPATCH_RING_END + 0x10
-DISPATCH_GO = DISPATCH_RING_END + 0x20
-DISPATCH_SIGNAL = DISPATCH_RING_END + 0x40
-DISPATCH_ARGS = DISPATCH_RING_END + 0x80
-DISPATCH_DATA = DISPATCH_RING_END + 0x1000
-
-# DMA-core mailbox. It is a separate engine, not a compute-queue opcode.
-DMA_SUBMIT = CQ_STATE
-DMA_COMPLETE = CQ_STATE + 0x04
-DMA_BRISC_DONE = CQ_STATE + 0x08
-DMA_NCRISC_DONE = CQ_STATE + 0x0C
-DMA_BRISC_READY = CQ_STATE + 0x10
-DMA_NCRISC_READY = CQ_STATE + 0x14
-DMA_DESCRIPTOR = CQ_STATE + 0x40
+# Host-visible service-core mailboxes. Queue pointers count packets, not bytes.
+PREFETCH_DOORBELL = 0x1000
+PREFETCH_PCIE_BASE = 0x1008
+PREFETCH_READ_PTR = 0x100C
+PREFETCH_DISPATCH_READ = 0x1010
+DISPATCH_PUBLISHED = 0x1000
+DMA_SUBMIT = 0x1000
+DMA_COMPLETE = 0x1004
+DMA_BRISC_READY = 0x1010
+DMA_NCRISC_READY = 0x1014
+DMA_DESCRIPTOR = 0x1040
 
 
 class Op(IntEnum):
@@ -60,8 +40,7 @@ class Op(IntEnum):
   INDIRECT = 4
 
 
-class PacketLayout:
-  WORDS = Struct("<16I")
+PACKET = Struct("<16I")
 
 
 def _u32(value, name):
@@ -78,7 +57,7 @@ def _u64(value, name):
 
 def _packet(*words):
   if len(words) > 16: raise ValueError("packet has more than 16 words")
-  return PacketLayout.WORDS.pack(*(tuple(words) + (0,) * (16 - len(words))))
+  return PACKET.pack(*(tuple(words) + (0,) * (16 - len(words))))
 
 
 def noc_coord(core: Core):
@@ -196,9 +175,6 @@ class Indirect:
     return _packet(
       Op.INDIRECT, 0, self.addr & 0xFFFFFFFF, self.addr >> 32, self.count,
     )
-
-
-ComputeCommand = Write | Exec | Signal | Indirect
 
 
 @dataclass(frozen=True)
@@ -382,19 +358,13 @@ class DMAQueue:
   def __init__(self, pcie, memory: SubmissionMemory):
     self.pcie, self.memory, self.sequence = pcie, memory, 0
     self.completed = 0
+    self.staging_offset = memory.dma
+    self.staging_size = memory.dma_size
+    self.staging_address = memory.noc_address(memory.dma)
     self.window = TLBWindow(pcie.fd, pcie.dma_core)
     self.window.target(0, pcie.dma_core)
     self.window.write(DMA_SUBMIT, bytes(0x18))
     self.window.write(DMA_DESCRIPTOR, bytes(PACKET_SIZE))
-
-  @property
-  def staging_offset(self): return self.memory.dma
-
-  @property
-  def staging_size(self): return self.memory.dma_size
-
-  @property
-  def staging_address(self): return self.memory.noc_address(self.memory.dma)
 
   def wait_ready(self, timeout=5.0):
     deadline = time.monotonic() + timeout
@@ -424,19 +394,3 @@ class DMAQueue:
     return sequence
 
   def close(self): self.window.close()
-
-
-class CommandQueues:
-  """Dumb ownership wrapper for the independent compute and DMA engines."""
-
-  def __init__(self, pcie):
-    self.memory = SubmissionMemory(pcie)
-    self.compute = ComputeQueue(pcie, self.memory)
-    self.dma = DMAQueue(pcie, self.memory)
-
-  def close(self):
-    self.compute.close(); self.dma.close()
-
-
-def lower(commands, queue: ComputeQueue):
-  return b"".join(queue.encode(command) for command in commands)
