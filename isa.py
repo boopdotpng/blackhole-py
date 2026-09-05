@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from enum import IntEnum
 
 class R(IntEnum):
@@ -9,6 +10,23 @@ class R(IntEnum):
   S0, S1, A0, A1, A2, A3, A4, A5, A6, A7 = X8, X9, X10, X11, X12, X13, X14, X15, X16, X17
   S2, S3, S4, S5, S6, S7, S8, S9, S10, S11 = X18, X19, X20, X21, X22, X23, X24, X25, X26, X27
   T3, T4, T5, T6 = X28, X29, X30, X31
+
+@dataclass(frozen=True, order=True)
+class VReg:
+  """A register name whose physical RV32 register is chosen during assembly."""
+  index: int
+
+  def __repr__(self): return f"v{self.index}"
+
+type Reg = R | VReg
+
+def is_reg(value): return isinstance(value, (R, VReg))
+
+@dataclass(frozen=True)
+class Insn:
+  op: str
+  args: tuple
+  target: str | int | None = None
 
 def _signed(value, bits, alignment=1):
   if value % alignment or not -(1 << (bits - 1)) <= value < (1 << (bits - 1)):
