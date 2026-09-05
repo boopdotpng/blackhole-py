@@ -1,0 +1,548 @@
+cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 227 cycles
+  [3] reduction: 104 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 226 cycles
+  [3] reduction: 104 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 227 cycles
+  [3] reduction: 104 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 227 cycles
+  [3] reduction: 104 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 227 cycles
+  [3] reduction: 104 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 227 cycles
+  [3] reduction: 104 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 227 cycles
+  [3] reduction: 104 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 227 cycles
+  [3] reduction: 104 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 227 cycles
+  [3] reduction: 104 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 227 cycles
+  [3] reduction: 104 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 227 cycles
+  [3] reduction: 104 cycles
+SUM gapool/sfpu split=False: empty median=12, min=12, max=12; L1 to L1 median=227, min=226, max=227; reduction median=104, min=104, max=104
+cycle profile:
+  [1] empty: 12 cycles
+  [2] reduction: 146 cycles
+  [3] finish: 56 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] reduction: 146 cycles
+  [3] finish: 56 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] reduction: 146 cycles
+  [3] finish: 56 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] reduction: 146 cycles
+  [3] finish: 56 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] reduction: 146 cycles
+  [3] finish: 56 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] reduction: 146 cycles
+  [3] finish: 56 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] reduction: 146 cycles
+  [3] finish: 56 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] reduction: 146 cycles
+  [3] finish: 56 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] reduction: 146 cycles
+  [3] finish: 56 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] reduction: 146 cycles
+  [3] finish: 56 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] reduction: 146 cycles
+  [3] finish: 56 cycles
+SUM gapool/sfpu split=True: empty median=12, min=12, max=12; reduction median=146, min=146, max=146; finish median=56, min=56, max=56
+.cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 227 cycles
+  [3] reduction: 104 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 227 cycles
+  [3] reduction: 104 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 227 cycles
+  [3] reduction: 104 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 227 cycles
+  [3] reduction: 104 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 227 cycles
+  [3] reduction: 104 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 227 cycles
+  [3] reduction: 104 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 227 cycles
+  [3] reduction: 104 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 228 cycles
+  [3] reduction: 104 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 226 cycles
+  [3] reduction: 104 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 227 cycles
+  [3] reduction: 104 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 228 cycles
+  [3] reduction: 104 cycles
+SUM mvmul/sfpu split=False: empty median=12, min=12, max=12; L1 to L1 median=227, min=226, max=228; reduction median=104, min=104, max=104
+cycle profile:
+  [1] empty: 12 cycles
+  [2] reduction: 146 cycles
+  [3] finish: 56 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] reduction: 146 cycles
+  [3] finish: 56 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] reduction: 146 cycles
+  [3] finish: 56 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] reduction: 146 cycles
+  [3] finish: 56 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] reduction: 146 cycles
+  [3] finish: 56 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] reduction: 146 cycles
+  [3] finish: 56 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] reduction: 146 cycles
+  [3] finish: 56 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] reduction: 146 cycles
+  [3] finish: 56 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] reduction: 146 cycles
+  [3] finish: 56 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] reduction: 146 cycles
+  [3] finish: 56 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] reduction: 146 cycles
+  [3] finish: 56 cycles
+SUM mvmul/sfpu split=True: empty median=12, min=12, max=12; reduction median=146, min=146, max=146; finish median=56, min=56, max=56
+.cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 220 cycles
+  [3] reduction: 97 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 219 cycles
+  [3] reduction: 97 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 220 cycles
+  [3] reduction: 97 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 220 cycles
+  [3] reduction: 97 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 220 cycles
+  [3] reduction: 97 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 220 cycles
+  [3] reduction: 97 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 220 cycles
+  [3] reduction: 97 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 220 cycles
+  [3] reduction: 97 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 219 cycles
+  [3] reduction: 97 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 220 cycles
+  [3] reduction: 97 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 220 cycles
+  [3] reduction: 97 cycles
+SUM gapool/fpu-transpose split=False: empty median=12, min=12, max=12; L1 to L1 median=220, min=219, max=220; reduction median=97, min=97, max=97
+cycle profile:
+  [1] empty: 12 cycles
+  [2] reduction: 140 cycles
+  [3] finish: 50 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] reduction: 140 cycles
+  [3] finish: 50 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] reduction: 140 cycles
+  [3] finish: 50 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] reduction: 140 cycles
+  [3] finish: 50 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] reduction: 140 cycles
+  [3] finish: 50 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] reduction: 140 cycles
+  [3] finish: 50 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] reduction: 140 cycles
+  [3] finish: 50 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] reduction: 140 cycles
+  [3] finish: 50 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] reduction: 140 cycles
+  [3] finish: 50 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] reduction: 140 cycles
+  [3] finish: 50 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] reduction: 140 cycles
+  [3] finish: 50 cycles
+SUM gapool/fpu-transpose split=True: empty median=12, min=12, max=12; reduction median=140, min=140, max=140; finish median=50, min=50, max=50
+.cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 220 cycles
+  [3] reduction: 97 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 220 cycles
+  [3] reduction: 97 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 220 cycles
+  [3] reduction: 97 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 220 cycles
+  [3] reduction: 97 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 221 cycles
+  [3] reduction: 97 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 220 cycles
+  [3] reduction: 97 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 220 cycles
+  [3] reduction: 97 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 220 cycles
+  [3] reduction: 97 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 220 cycles
+  [3] reduction: 97 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 220 cycles
+  [3] reduction: 97 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 220 cycles
+  [3] reduction: 97 cycles
+SUM mvmul/fpu-transpose split=False: empty median=12, min=12, max=12; L1 to L1 median=220, min=220, max=221; reduction median=97, min=97, max=97
+cycle profile:
+  [1] empty: 12 cycles
+  [2] reduction: 140 cycles
+  [3] finish: 50 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] reduction: 140 cycles
+  [3] finish: 50 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] reduction: 140 cycles
+  [3] finish: 50 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] reduction: 140 cycles
+  [3] finish: 50 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] reduction: 140 cycles
+  [3] finish: 50 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] reduction: 140 cycles
+  [3] finish: 50 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] reduction: 140 cycles
+  [3] finish: 50 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] reduction: 140 cycles
+  [3] finish: 50 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] reduction: 140 cycles
+  [3] finish: 50 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] reduction: 140 cycles
+  [3] finish: 50 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] reduction: 140 cycles
+  [3] finish: 50 cycles
+SUM mvmul/fpu-transpose split=True: empty median=12, min=12, max=12; reduction median=140, min=140, max=140; finish median=50, min=50, max=50
+.cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 219 cycles
+  [3] reduction: 95 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 218 cycles
+  [3] reduction: 95 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 218 cycles
+  [3] reduction: 95 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 218 cycles
+  [3] reduction: 95 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 218 cycles
+  [3] reduction: 95 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 218 cycles
+  [3] reduction: 95 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 218 cycles
+  [3] reduction: 95 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 219 cycles
+  [3] reduction: 95 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 218 cycles
+  [3] reduction: 95 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 218 cycles
+  [3] reduction: 95 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 218 cycles
+  [3] reduction: 95 cycles
+SUM gapool/fpu-row split=False: empty median=12, min=12, max=12; L1 to L1 median=218, min=218, max=219; reduction median=95, min=95, max=95
+cycle profile:
+  [1] empty: 12 cycles
+  [2] reduction: 138 cycles
+  [3] finish: 48 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] reduction: 138 cycles
+  [3] finish: 48 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] reduction: 138 cycles
+  [3] finish: 48 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] reduction: 138 cycles
+  [3] finish: 48 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] reduction: 138 cycles
+  [3] finish: 48 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] reduction: 138 cycles
+  [3] finish: 48 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] reduction: 138 cycles
+  [3] finish: 48 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] reduction: 138 cycles
+  [3] finish: 48 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] reduction: 138 cycles
+  [3] finish: 48 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] reduction: 138 cycles
+  [3] finish: 48 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] reduction: 138 cycles
+  [3] finish: 48 cycles
+SUM gapool/fpu-row split=True: empty median=12, min=12, max=12; reduction median=138, min=138, max=138; finish median=48, min=48, max=48
+.cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 218 cycles
+  [3] reduction: 95 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 217 cycles
+  [3] reduction: 95 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 218 cycles
+  [3] reduction: 95 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 218 cycles
+  [3] reduction: 95 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 218 cycles
+  [3] reduction: 95 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 218 cycles
+  [3] reduction: 95 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 218 cycles
+  [3] reduction: 95 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 218 cycles
+  [3] reduction: 95 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 218 cycles
+  [3] reduction: 95 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 218 cycles
+  [3] reduction: 95 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 217 cycles
+  [3] reduction: 95 cycles
+SUM mvmul/fpu-row split=False: empty median=12, min=12, max=12; L1 to L1 median=218, min=217, max=218; reduction median=95, min=95, max=95
+cycle profile:
+  [1] empty: 12 cycles
+  [2] reduction: 138 cycles
+  [3] finish: 48 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] reduction: 138 cycles
+  [3] finish: 48 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] reduction: 138 cycles
+  [3] finish: 48 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] reduction: 138 cycles
+  [3] finish: 48 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] reduction: 138 cycles
+  [3] finish: 48 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] reduction: 138 cycles
+  [3] finish: 48 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] reduction: 138 cycles
+  [3] finish: 48 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] reduction: 138 cycles
+  [3] finish: 48 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] reduction: 138 cycles
+  [3] finish: 48 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] reduction: 138 cycles
+  [3] finish: 48 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] reduction: 138 cycles
+  [3] finish: 48 cycles
+SUM mvmul/fpu-row split=True: empty median=12, min=12, max=12; reduction median=138, min=138, max=138; finish median=48, min=48, max=48
+.PRECISION sfpu: exact=1024.001953125, actual=1024.001953125
+CANCELLATION sfpu: exact=0.001953125, actual=0.001953125
+.PRECISION fpu-transpose: exact=1024.001953125, actual=1024.0
+CANCELLATION fpu-transpose: exact=0.001953125, actual=0.0
+.PRECISION fpu-row: exact=1024.001953125, actual=1024.0
+CANCELLATION fpu-row: exact=0.001953125, actual=0.0
+.
+9 passed in 0.94s

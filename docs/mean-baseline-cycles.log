@@ -1,0 +1,206 @@
+cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 221 cycles
+  [3] reduction: 106 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 221 cycles
+  [3] reduction: 106 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 221 cycles
+  [3] reduction: 106 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 221 cycles
+  [3] reduction: 106 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 220 cycles
+  [3] reduction: 106 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 221 cycles
+  [3] reduction: 106 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 220 cycles
+  [3] reduction: 106 cycles
+srcA-gapool: arange mean=511.5, permuted signed mean=-0.5; reduction median=106, min=106, max=106 cycles; L1 to L1 median=221, min=220, max=221 cycles; empty median=12, min=12, max=12 cycles
+.cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 222 cycles
+  [3] reduction: 106 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 221 cycles
+  [3] reduction: 106 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 221 cycles
+  [3] reduction: 106 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 221 cycles
+  [3] reduction: 106 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 221 cycles
+  [3] reduction: 106 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 221 cycles
+  [3] reduction: 106 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 221 cycles
+  [3] reduction: 106 cycles
+srcA-mvmul: arange mean=511.5, permuted signed mean=-0.5; reduction median=106, min=106, max=106 cycles; L1 to L1 median=221, min=221, max=222 cycles; empty median=12, min=12, max=12 cycles
+.cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 256 cycles
+  [3] reduction: 141 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 256 cycles
+  [3] reduction: 141 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 256 cycles
+  [3] reduction: 141 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 256 cycles
+  [3] reduction: 141 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 256 cycles
+  [3] reduction: 141 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 255 cycles
+  [3] reduction: 141 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 256 cycles
+  [3] reduction: 141 cycles
+srcB-mvmul: arange mean=511.5, permuted signed mean=-0.5; reduction median=141, min=141, max=141 cycles; L1 to L1 median=256, min=255, max=256 cycles; empty median=12, min=12, max=12 cycles
+.cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 219 cycles
+  [3] reduction: 104 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 219 cycles
+  [3] reduction: 104 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 218 cycles
+  [3] reduction: 104 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 219 cycles
+  [3] reduction: 104 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 219 cycles
+  [3] reduction: 104 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 219 cycles
+  [3] reduction: 104 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 219 cycles
+  [3] reduction: 104 cycles
+srcA-gapool-scaled: arange mean=511.5, permuted signed mean=-0.5; reduction median=104, min=104, max=104 cycles; L1 to L1 median=219, min=218, max=219 cycles; empty median=12, min=12, max=12 cycles
+.cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 219 cycles
+  [3] reduction: 104 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 219 cycles
+  [3] reduction: 104 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 219 cycles
+  [3] reduction: 104 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 218 cycles
+  [3] reduction: 104 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 219 cycles
+  [3] reduction: 104 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 219 cycles
+  [3] reduction: 104 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 219 cycles
+  [3] reduction: 104 cycles
+srcA-mvmul-scaled: arange mean=511.5, permuted signed mean=-0.5; reduction median=104, min=104, max=104 cycles; L1 to L1 median=219, min=218, max=219 cycles; empty median=12, min=12, max=12 cycles
+.cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 254 cycles
+  [3] reduction: 139 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 253 cycles
+  [3] reduction: 139 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 254 cycles
+  [3] reduction: 139 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 254 cycles
+  [3] reduction: 139 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 254 cycles
+  [3] reduction: 139 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 254 cycles
+  [3] reduction: 139 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 254 cycles
+  [3] reduction: 139 cycles
+srcB-mvmul-scaled: arange mean=511.5, permuted signed mean=-0.5; reduction median=139, min=139, max=139 cycles; L1 to L1 median=254, min=253, max=254 cycles; empty median=12, min=12, max=12 cycles
+.cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 298 cycles
+  [3] reduction: 138 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 298 cycles
+  [3] reduction: 138 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 288 cycles
+  [3] reduction: 128 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 288 cycles
+  [3] reduction: 128 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 288 cycles
+  [3] reduction: 128 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 288 cycles
+  [3] reduction: 128 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 288 cycles
+  [3] reduction: 128 cycles
+sfpu: arange mean=511.5, permuted signed mean=-0.5; reduction median=128, min=128, max=138 cycles; L1 to L1 median=288, min=288, max=298 cycles; empty median=12, min=12, max=12 cycles
+.BF16 input truncation + FP32 Dst: mean=510.625; exact input mean=511.5
+.
+8 passed in 0.87s

@@ -1,0 +1,190 @@
+Fcycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 227 cycles
+  [3] reduction: 104 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 227 cycles
+  [3] reduction: 104 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 227 cycles
+  [3] reduction: 104 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 227 cycles
+  [3] reduction: 104 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 226 cycles
+  [3] reduction: 104 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 227 cycles
+  [3] reduction: 104 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 228 cycles
+  [3] reduction: 104 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 227 cycles
+  [3] reduction: 104 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 227 cycles
+  [3] reduction: 104 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 227 cycles
+  [3] reduction: 104 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] L1 to L1: 227 cycles
+  [3] reduction: 104 cycles
+SUM mvmul/sfpu split=False: empty median=12, min=12, max=12; L1 to L1 median=227, min=226, max=228; reduction median=104, min=104, max=104
+cycle profile:
+  [1] empty: 12 cycles
+  [2] reduction: 146 cycles
+  [3] finish: 56 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] reduction: 146 cycles
+  [3] finish: 56 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] reduction: 146 cycles
+  [3] finish: 56 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] reduction: 146 cycles
+  [3] finish: 56 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] reduction: 146 cycles
+  [3] finish: 56 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] reduction: 146 cycles
+  [3] finish: 56 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] reduction: 146 cycles
+  [3] finish: 56 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] reduction: 146 cycles
+  [3] finish: 56 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] reduction: 146 cycles
+  [3] finish: 56 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] reduction: 146 cycles
+  [3] finish: 56 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] reduction: 146 cycles
+  [3] finish: 56 cycles
+SUM mvmul/sfpu split=True: empty median=12, min=12, max=12; reduction median=146, min=146, max=146; finish median=56, min=56, max=56
+.FFFF
+=================================== FAILURES ===================================
+_____________________ test_sum_finish_cycles[sfpu-gapool] ______________________
+
+bh = <tests.harness.RawHarness object at 0x7fc9df9363c0>, first = 'gapool'
+finish = 'sfpu'
+
+    @pytest.mark.parametrize("first", ("gapool", "mvmul"))
+    @pytest.mark.parametrize("finish", FINISHES)
+    def test_sum_finish_cycles(bh, first, finish):
+      values = list(range(1024))  # Exact in both paths, including partial transfers.
+      for split in (False, True):
+        images, profile = _images(first, finish, split=split)
+>       assert _run(bh, images, finish, values) == sum(values)  # unmeasured warmup
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       assert 1507168.0 == 523776
+E        +  where 1507168.0 = _run(<tests.harness.RawHarness object at 0x7fc9df9363c0>, {'trisc0': b'7\x02\xe8\xff\x13\x02B\x03\x83"\x02\x00\x93\xf2\xe2\x0fc\x86\x02\x00\x0f\x00\xf0\x0fo\xf0\x1f\xff\x02\x00...\x00\x00\x06"\x00\x04\x887\x02\xe8\xff\x13\x02B\x00# \x02\x00\x83"\x02\x003pP\x00"\x00\x00\x94\x02\x08\x00\x90o _\x87'}, 'sfpu', [0, 1, 2, 3, 4, 5, ...])
+E        +  and   523776 = sum([0, 1, 2, 3, 4, 5, ...])
+
+tests/compute/fpu/test_sum_finish.py:152: AssertionError
+_________________ test_sum_finish_cycles[fpu-transpose-gapool] _________________
+
+bh = <tests.harness.RawHarness object at 0x7fc9df9363c0>, first = 'gapool'
+finish = 'fpu-transpose'
+
+    @pytest.mark.parametrize("first", ("gapool", "mvmul"))
+    @pytest.mark.parametrize("finish", FINISHES)
+    def test_sum_finish_cycles(bh, first, finish):
+      values = list(range(1024))  # Exact in both paths, including partial transfers.
+      for split in (False, True):
+        images, profile = _images(first, finish, split=split)
+>       assert _run(bh, images, finish, values) == sum(values)  # unmeasured warmup
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       assert 32256.0 == 523776
+E        +  where 32256.0 = _run(<tests.harness.RawHarness object at 0x7fc9df9363c0>, {'trisc0': b'7\x02\xe8\xff\x13\x02B\x03\x83"\x02\x00\x93\xf2\xe2\x0fc\x86\x02\x00\x0f\x00\xf0\x0fo\xf0\x1f\xff\x02\x00...\x00\x00\x06"\x00\x04\x887\x02\xe8\xff\x13\x02B\x00# \x02\x00\x83"\x02\x003pP\x00"\x00\x00\x94\x02\x08\x00\x90o _\x87'}, 'fpu-transpose', [0, 1, 2, 3, 4, 5, ...])
+E        +  and   523776 = sum([0, 1, 2, 3, 4, 5, ...])
+
+tests/compute/fpu/test_sum_finish.py:152: AssertionError
+_________________ test_sum_finish_cycles[fpu-transpose-mvmul] __________________
+
+bh = <tests.harness.RawHarness object at 0x7fc9df9363c0>, first = 'mvmul'
+finish = 'fpu-transpose'
+
+    @pytest.mark.parametrize("first", ("gapool", "mvmul"))
+    @pytest.mark.parametrize("finish", FINISHES)
+    def test_sum_finish_cycles(bh, first, finish):
+      values = list(range(1024))  # Exact in both paths, including partial transfers.
+      for split in (False, True):
+        images, profile = _images(first, finish, split=split)
+>       assert _run(bh, images, finish, values) == sum(values)  # unmeasured warmup
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       assert 62592.0 == 523776
+E        +  where 62592.0 = _run(<tests.harness.RawHarness object at 0x7fc9df9363c0>, {'trisc0': b'7\x02\xe8\xff\x13\x02B\x03\x83"\x02\x00\x93\xf2\xe2\x0fc\x86\x02\x00\x0f\x00\xf0\x0fo\xf0\x1f\xff\x02\x00...\x00\x00\x06"\x00\x04\x887\x02\xe8\xff\x13\x02B\x00# \x02\x00\x83"\x02\x003pP\x00"\x00\x00\x94\x02\x08\x00\x90o _\x87'}, 'fpu-transpose', [0, 1, 2, 3, 4, 5, ...])
+E        +  and   523776 = sum([0, 1, 2, 3, 4, 5, ...])
+
+tests/compute/fpu/test_sum_finish.py:152: AssertionError
+_______________________ test_sum_finish_precision[sfpu] ________________________
+
+bh = <tests.harness.RawHarness object at 0x7fc9df9363c0>, finish = 'sfpu'
+
+    @pytest.mark.parametrize("finish", FINISHES)
+    def test_sum_finish_precision(bh, finish):
+      images, _ = _images("gapool", finish)
+      # Every input is exactly representable by the first-stage TF32 multiplier.
+      # The sum in column zero needs extra bits, lost only on the FPU round trip.
+      values = [1.] * 1024
+      values[0] += 1 / 512
+      expected = sum(values) if finish == "sfpu" else 1024.
+      actual = _run(bh, images, finish, values)
+>     assert actual == expected, (finish, actual, expected)
+E     AssertionError: ('sfpu', 1016240.0, 1024.001953125)
+E     assert 1016240.0 == 1024.001953125
+
+tests/compute/fpu/test_sum_finish.py:179: AssertionError
+___________________ test_sum_finish_precision[fpu-transpose] ___________________
+
+bh = <tests.harness.RawHarness object at 0x7fc9df9363c0>
+finish = 'fpu-transpose'
+
+    @pytest.mark.parametrize("finish", FINISHES)
+    def test_sum_finish_precision(bh, finish):
+      images, _ = _images("gapool", finish)
+      # Every input is exactly representable by the first-stage TF32 multiplier.
+      # The sum in column zero needs extra bits, lost only on the FPU round trip.
+      values = [1.] * 1024
+      values[0] += 1 / 512
+      expected = sum(values) if finish == "sfpu" else 1024.
+      actual = _run(bh, images, finish, values)
+>     assert actual == expected, (finish, actual, expected)
+E     AssertionError: ('fpu-transpose', 64.001953125, 1024.0)
+E     assert 64.001953125 == 1024.0
+
+tests/compute/fpu/test_sum_finish.py:179: AssertionError
+=========================== short test summary info ============================
+FAILED tests/compute/fpu/test_sum_finish.py::test_sum_finish_cycles[sfpu-gapool]
+FAILED tests/compute/fpu/test_sum_finish.py::test_sum_finish_cycles[fpu-transpose-gapool]
+FAILED tests/compute/fpu/test_sum_finish.py::test_sum_finish_cycles[fpu-transpose-mvmul]
+FAILED tests/compute/fpu/test_sum_finish.py::test_sum_finish_precision[sfpu]
+FAILED tests/compute/fpu/test_sum_finish.py::test_sum_finish_precision[fpu-transpose]
+5 failed, 1 passed in 0.71s
