@@ -1,473 +1,510 @@
-from asm import Cond
-from fw.consts import TensixL1
-from isa import R
-from ttk.cb import CB
+"""Small direct-RISC-V Blackhole NoC interface.
 
-# Every tile has two NIUs. NIU 0 drives NoC 0 and NIU 1 drives NoC 1.
+This module emits four complete logical operations: ``read``, ``write``,
+``send``, and ``atomic_inc``. It deliberately does not batch operations or
+remember configuration across calls. A later whole-kernel lowering pass can
+fuse compatible calls, hoist repeated command words, overlap requests, and
+coalesce contiguous payloads without changing this interface.
+"""
+
+from dataclasses import dataclass
+
+from isa import R, Reg, is_reg
+from ttk.cb import CB, CBSyncSlot
+
+
+Value = int | Reg
+Core = tuple[int, int]
+
 NIU0 = 0xFFB20000
 NIU_STRIDE = 0x10000
-NIU_CONFIG = 0x100            # config region offset within a NIU window
-NIU_CONTROL = 0x00            # within the config region
-ROUTER_CONTROL = 0x04
+COMMAND_BUFFER_STRIDE = 0x800
+NIU_CONFIG = 0x100
 LOGICAL_NODE_ID = 0x48
+COMMAND_SEND = 0x40
+STATUS = 0x200
+REQUESTS_OUTSTANDING = 0x40
+WRITES_OUTGOING = 0x80
 
-def _endpoint(address, coordinate, middle=0): return address, middle, coordinate
+WRITE = 1 << 1
+WRITE_INLINE = 1 << 3
+RESPONSE_MARKED = 1 << 4
+MULTICAST = 1 << 5
+VC_STATIC = 1 << 7
+VC_SHIFT = 13
+PRIORITY_SHIFT = 27
+TID_SHIFT = 10
 
-def _packet(tid, options, packet_bytes, immediate=0, exclusions=0):
-  return tid << 10, options, packet_bytes, 0, immediate, exclusions
+ATOMIC = 1 << 0
+INCR_GET = 1 << 12
+WRAP_32 = 31 << 2
+MAX_PACKET_BYTES = 16 * 1024
 
-class NiuCommand:
-  MAX_PACKET_BYTES = 16 * 1024
-  SEND_REQUEST = 0x40
 
-  @classmethod
-  def address(cls, niu, register): return NIU0 + niu * NIU_STRIDE + register
-
-  @classmethod
-  def build(cls, k, niu, source, target, packet):
-    for index, value in enumerate((*source, *target, *packet)):
-      k.write(cls.address(niu, index * 4), value)
-
-class TidCounters:
-  STATUS_OFFSET = 0x200
-  REQS_OUTSTANDING_BASE = 0x40
-  WRITE_REQS_OUTGOING_BASE = 0x80
-  FIRST_MANAGED_TID = 1
-  LAST_MANAGED_TID = 15
-  ISSUE_SAFE_LIMIT = 129
-
-  @classmethod
-  def requests_outstanding(cls, tid): return cls.REQS_OUTSTANDING_BASE + tid * 4
-
-  @classmethod
-  def writes_outgoing(cls, tid): return cls.WRITE_REQS_OUTGOING_BASE + tid * 4
-
-class _TidAllocator:
-  def __init__(self):
-    self.free = set(range(TidCounters.FIRST_MANAGED_TID, TidCounters.LAST_MANAGED_TID + 1))
-
-  def acquire(self, requested=None):
-    tid = min(self.free) if requested is None else requested
-    self.free.remove(tid)
-    return tid
-
-  def release(self, tid): self.free.add(tid)
-
-class Transaction:
-  def __init__(self, noc, tid=None):
-    self.noc, self.k = noc, noc.k
-    self.tid = noc._allocator.acquire(tid)
-    self._source_pending = self._remote_pending = self._closed = False
-    # A free TID must have no old payload reads or responses. Poll rather than
-    # forcibly clearing it: clearing an actually-live bucket would hide traffic.
-    noc._wait_counter(TidCounters.writes_outgoing(self.tid), 0)
-    noc._wait_counter(TidCounters.requests_outstanding(self.tid), 0)
-
-  def __enter__(self): return self
-
-  def __exit__(self, exc_type, exc, tb):
-    if exc_type is None:
-      self.wait()
-    elif not self._closed:
-      # Code generation is being abandoned, so release compile-time ownership.
-      self.noc._allocator.release(self.tid)
-      self._closed = True
-
-  @staticmethod
-  def _packets_for(byte_count):
-    if type(byte_count) is not int: return None
-    return (byte_count + NiuCommand.MAX_PACKET_BYTES - 1) // NiuCommand.MAX_PACKET_BYTES
-
-  def read(self, source_address, source_coordinate, target_address,
-           packet_bytes, source_middle_address=0):
-    self._remote_pending = True
-    self.noc._read(self.tid, source_address, source_coordinate, target_address, packet_bytes,
-                   source_middle_address=source_middle_address)
-    return self
-
-  def write(self, source_address, target_address, target_coordinate,
-            packet_bytes, target_middle_address=0, posted=True):
-    self._source_pending = True
-    if not posted: self._remote_pending = True
-    self.noc._write(self.tid, source_address, target_address, target_coordinate, packet_bytes,
-                    target_middle_address=target_middle_address, posted=posted)
-    return self
-
-  def _multicast_write(self, source_address, target_address, target_start,
-                       target_end, packet_bytes):
-    self._source_pending = True
-    self.noc._multicast_write(self.tid, source_address, target_address, target_start,
-                              target_end, packet_bytes)
-    return self
-
-  def multicast_write(self, source_address, target_address, target_start,
-                      target_end, packet_bytes):
-    return self._multicast_write(
-      source_address, target_address, target_start, target_end, packet_bytes,
+def _static_aligned(value, name, alignment=16):
+  if type(value) is not int or value < 0 or value % alignment:
+    raise ValueError(
+      f"{name} must be a non-negative, {alignment}-byte-aligned integer",
     )
+  return value
 
-  def inline_write(self, value, target_address, target_coordinate,
-                   posted=True):
-    if not posted: self._remote_pending = True
-    self.noc._inline_write(self.tid, value, target_address, target_coordinate, posted=posted)
-    return self
 
-  def atomic_inc(self, target_address, target_coordinate, value=1,
-                 return_address=4, posted=False):
-    if not posted: self._remote_pending = True
-    self.noc._atomic_inc(self.tid, target_address, target_coordinate, value,
-                         return_address=return_address, posted=posted)
-    return self
+def _coordinate(core: Core):
+  if not isinstance(core, tuple) or len(core) != 2:
+    raise TypeError("NoC core must be an (x, y) tuple")
+  if any(type(axis) is not int or not 0 <= axis < 64 for axis in core):
+    raise ValueError("NoC coordinate components must be integers in [0, 63]")
+  return core[0] | core[1] << 6
 
-  def wait_source(self):
-    if self._closed: return self
-    if self._source_pending:
-      self.noc._wait_counter(TidCounters.writes_outgoing(self.tid), 0)
-      self._source_pending = False
-    return self
 
-  def wait_remote(self):
-    if self._closed: return self
-    if self._remote_pending:
-      self.noc._wait_counter(TidCounters.requests_outstanding(self.tid), 0)
-      self._remote_pending = False
-    return self
+def _rectangles(cores):
+  """Cover a static core set with exact non-overlapping rectangles."""
+  rows = {}
+  for x, y in cores:
+    rows.setdefault(y, []).append(x)
+  active, result, previous_y = {}, [], None
+  for y in sorted(rows):
+    runs = []
+    for x in sorted(rows[y]):
+      if runs and x == runs[-1][1] + 1:
+        runs[-1] = runs[-1][0], x
+      else:
+        runs.append((x, x))
+    if previous_y is None or y != previous_y + 1:
+      result.extend(active.values())
+      active = {}
+    following = {}
+    for run in runs:
+      if run in active:
+        following[run] = active[run][0], (run[1], y)
+      else:
+        following[run] = (run[0], y), (run[1], y)
+    result.extend(rect for run, rect in active.items() if run not in following)
+    active, previous_y = following, y
+  result.extend(active.values())
+  return tuple(result)
 
-  def wait(self):
-    if self._closed: return self.noc
-    self.wait_source()
-    self.wait_remote()
-    return self._release()
 
-  def _release(self):
-    if self._closed: return self.noc
-    self.noc._allocator.release(self.tid)
-    self._closed = True
-    return self.noc
+@dataclass(frozen=True, slots=True)
+class Interleaved:
+  """Addressing configuration for a logical interleaved DRAM buffer."""
+
+  base: Value
+  coordinates: tuple[int, ...]
+  page_bytes: int = 2048
+
+  def __post_init__(self):
+    if type(self.base) is int:
+      _static_aligned(self.base, "DRAM base")
+    elif not is_reg(self.base):
+      raise TypeError("DRAM base must be an integer or RISC register")
+    coordinates = tuple(self.coordinates)
+    if not 1 <= len(coordinates) <= 8:
+      raise ValueError("interleaved DRAM requires between one and eight banks")
+    if any(type(value) is not int or not 0 <= value < 1 << 12
+           for value in coordinates):
+      raise ValueError("DRAM coordinates must be packed 12-bit coordinates")
+    _static_aligned(self.page_bytes, "DRAM page size")
+    if self.page_bytes > MAX_PACKET_BYTES:
+      raise ValueError("DRAM page size cannot exceed 16 KiB")
+    object.__setattr__(self, "coordinates", coordinates)
+
 
 class NoC:
-  # Deliberately hardcoded request policy.
-  unicast_vc = 1
-  multicast_vc = 4
-  multicast_linked = False
-  reserve_multicast_path = False
-  multicast_along_y = False
-  multicast_include_sender = False
-  arbitration_priority = 0
+  """Emit standalone NoC operations on one BRISC or NCRISC instance."""
 
-  def __init__(self, k, index: int):
-    self.index, self.k, self.local_coordinate = index, k, None
-    states = getattr(k, "_noc_tid_allocators", None)
-    if states is None:
-      states = {}
-      setattr(k, "_noc_tid_allocators", states)
-    self._allocator = states.setdefault(index, _TidAllocator())
+  def __init__(self, kernel, index=0, *, command_slot=0, tid=1,
+               static_vc=1, priority=0):
+    if kernel.role not in ("brisc", "ncrisc"):
+      raise ValueError("only BRISC and NCRISC can issue NoC requests")
+    if index not in (0, 1):
+      raise ValueError("NoC index must be zero or one")
+    if type(command_slot) is not int or not 0 <= command_slot < 4:
+      raise ValueError("NoC command-buffer slot must be in [0, 3]")
+    if type(tid) is not int or not 0 <= tid <= 15:
+      raise ValueError("NoC transaction id must be in [0, 15]")
+    if type(static_vc) is not int or not 0 <= static_vc <= 5:
+      raise ValueError("static VC must be in [0, 5]")
+    if type(priority) is not int or not 0 <= priority <= 15:
+      raise ValueError("NoC priority must be in [0, 15]")
+    self.kernel = kernel
+    self.index = index
+    self.command_slot = command_slot
+    self.tid = tid
+    self.static_vc = static_vc
+    self.priority = priority
 
-  def _niu(self): return NIU0 + self.index * NIU_STRIDE
-  def _status(self, register): return self._niu() + TidCounters.STATUS_OFFSET + register
+  @property
+  def niu(self):
+    return NIU0 + self.index * NIU_STRIDE
 
-  def transaction(self, tid=None): return Transaction(self, tid)
+  @property
+  def command(self):
+    return self.niu + self.command_slot * COMMAND_BUFFER_STRIDE
 
-  def initialize(self, coordinate):
-    self.local_coordinate = coordinate
-    return self
+  def _reg(self, value: Value):
+    if is_reg(value):
+      return value
+    if type(value) is not int or value < 0:
+      raise TypeError("NoC values must be non-negative integers or registers")
+    result = self.kernel.reg()
+    self.kernel.li(result, value)
+    return result
 
-  @staticmethod
-  def coordinate(x, y): return x | y << 6
+  def _check_aligned(self, value: Value, name, alignment=16):
+    if type(value) is int:
+      return _static_aligned(value, name, alignment)
+    if not is_reg(value):
+      raise TypeError(f"{name} must be an integer or RISC register")
+    low = self.kernel.reg()
+    invalid = self.kernel._new_label("noc_unaligned")
+    valid = self.kernel._new_label("noc_aligned")
+    self.kernel.andi(low, value, alignment - 1)
+    self.kernel.bne(low, R.ZERO, invalid)
+    self.kernel.j(valid)
+    self.kernel.label(invalid)
+    self.kernel.j(invalid)
+    self.kernel.label(valid)
+    return value
 
-  static_coord = coordinate
-
-  @staticmethod
-  def _check_multicast_endpoint(coordinate):
-    if isinstance(coordinate, R): return
-    if type(coordinate) is not int or not 0 <= coordinate < 1 << 12:
-      raise ValueError("invalid multicast endpoint")
-    if coordinate & 0x3F in (8, 9):
-      raise ValueError("multicast start/end cannot use NoC columns 8 or 9")
-
-  def _rectangle(self, out, start, end):
-    self._check_multicast_endpoint(start); self._check_multicast_endpoint(end)
-    if type(start) is int and type(end) is int:
-      sx, sy, ex, ey = start & 0x3F, start >> 6, end & 0x3F, end >> 6
-      if sx > ex or sy > ey: raise ValueError("multicast start must precede end")
-    low, high = (end, start) if self.index == 0 else (start, end)
-    if type(low) is int and type(high) is int:
-      self.k.li(out, low | high << 12)
+  def _store(self, command: Reg, offset: int, value: Value, scratch: Reg):
+    if is_reg(value):
+      self.kernel.sw(value, command, offset)
+    elif value:
+      self.kernel.li(scratch, value)
+      self.kernel.sw(scratch, command, offset)
     else:
-      shifted = self.k.reg(exclude=(out, *(x for x in (start, end) if isinstance(x, R))))
-      self.k.mv(out, low) if isinstance(low, R) else self.k.li(out, low)
-      self.k.mv(shifted, high) if isinstance(high, R) else self.k.li(shifted, high)
-      self.k.slli(shifted, shifted, 12); self.k.or_(out, out, shifted)
-    return out
+      self.kernel.sw(R.ZERO, command, offset)
 
-  def _local_coordinate(self, out):
-    if self.local_coordinate is not None:
-      self.k.mv(out, self.local_coordinate) if isinstance(self.local_coordinate, R) else \
-        self.k.li(out, self.local_coordinate)
-      return out
-    self.k.read(out, self._niu() + NIU_CONFIG + LOGICAL_NODE_ID)
-    self.k.slli(out, out, 20); self.k.srli(out, out, 20)
-    return out
+  def _wait_ready(self, command: Reg):
+    busy = self.kernel.reg()
+    again = self.kernel._new_label("noc_command_ready")
+    self.kernel.label(again)
+    self.kernel.lw(busy, command, COMMAND_SEND)
+    self.kernel.bne(busy, R.ZERO, again)
 
-  def _packet_options(self, operation, posted=False, multicast=False, inline=False):
-    options = {"read": 0, "atomic": 1, "write": 2}[operation]
-    if inline: options |= 1 << 3
-    if operation == "read" or not posted: options |= 1 << 4
-    if multicast: options |= 1 << 5
-    if multicast and self.multicast_linked: options |= 1 << 6
-    options |= 1 << 7  # static VC
-    options |= (self.multicast_vc if multicast else self.unicast_vc) << 13
-    if multicast and self.reserve_multicast_path: options |= 1 << 8
-    if multicast and self.multicast_along_y: options |= 1 << 16
-    if multicast and self.multicast_include_sender: options |= 1 << 17
-    options |= self.arbitration_priority << 27
-    return options
+  def _wait_zero(self, niu: Reg, offset: int):
+    value = self.kernel.reg()
+    again = self.kernel._new_label("noc_completion")
+    self.kernel.label(again)
+    self.kernel.lw(value, niu, offset)
+    self.kernel.bne(value, R.ZERO, again)
+    self.kernel.fence()
 
-  def _wait_counter(self, register, expected):
-    k = self.k
-    with k.scope():
-      current = k.reg(exclude=expected if isinstance(expected, R) else ())
-      with k.loop():
-        k.read(current, self._status(register))
-        k.break_(Cond(current, "==", expected))
-      k.fence()
-    return self
+  def _local_coordinate(self):
+    address, coordinate = self.kernel.reg(2)
+    self.kernel.li(address, self.niu + NIU_CONFIG + LOGICAL_NODE_ID)
+    self.kernel.lw(coordinate, address)
+    self.kernel.slli(coordinate, coordinate, 20)
+    self.kernel.srli(coordinate, coordinate, 20)
+    return coordinate
 
-  def _wait_issue_safe(self, register, packet_bytes=None):
-    k = self.k
-    packets = Transaction._packets_for(packet_bytes) if packet_bytes is not None else 1
-    with k.scope():
-      current = k.reg()
-      with k.loop():
-        k.read(current, self._status(register))
-        # A large auto-split command increments the counter all at once. Drain
-        # the bucket first when that increment can exceed the half-range limit;
-        # ordinary one-packet issue can retain up to 128 requests in flight.
-        condition = Cond(current, "==", 0) if packets is not None and packets >= 128 else \
-                    Cond(current, "<u", TidCounters.ISSUE_SAFE_LIMIT)
-        k.break_(condition)
-    return self
+  def _coordinate_table(self, coordinates):
+    address = self.kernel.local.alloc(4 * len(coordinates))
+    for index, coordinate in enumerate(coordinates):
+      self.kernel.initialize_local(address + index * 4, coordinate)
+    result = self.kernel.reg()
+    self.kernel.li(result, address)
+    return result
 
-  def _submit(self, source, target, packet):
-    k = self.k
-    with k.scope():
-      base, busy = k.reg(2)
-      k.li(base, NiuCommand.address(self.index, 0))
-      with k.loop():
-        k.lw(busy, base, NiuCommand.SEND_REQUEST)
-        k.break_(Cond(busy, "==", 0))
-      NiuCommand.build(k, self.index, source, target, packet)
-      k.write(NiuCommand.address(self.index, NiuCommand.SEND_REQUEST), 1)
-      # Order submission and wait for hardware auto-splitting before the
-      # command registers can be reused by the next request.
-      with k.loop():
-        k.lw(busy, base, NiuCommand.SEND_REQUEST)
-        k.break_(Cond(busy, "==", 0))
-    return self
+  def _select_coordinate(self, bank: Reg, table: Reg):
+    address, coordinate = self.kernel.reg(2)
+    self.kernel.slli(address, bank, 2)
+    self.kernel.add(address, address, table)
+    self.kernel.lw(coordinate, address)
+    return coordinate
 
-  def _read(self, tid, source_address, source_coordinate, target_address,
-            packet_bytes, source_middle_address=0):
-    self._wait_issue_safe(TidCounters.requests_outstanding(tid), packet_bytes)
-    with self.k.scope():
-      local = self._local_coordinate(self.k.reg())
-      self._submit(
-        _endpoint(source_address, source_coordinate, source_middle_address),
-        _endpoint(target_address, local),
-        _packet(tid, self._packet_options("read"), packet_bytes),
-      )
-    return self
+  def _configure(self, command: Reg, control: int):
+    self._wait_ready(command)
+    scratch = self.kernel.reg()
+    for offset, value in (
+      (4, 0), (16, 0), (24, self.tid << TID_SHIFT),
+      (28, control), (36, 0), (40, 0), (44, 0),
+    ):
+      self._store(command, offset, value, scratch)
 
-  def _write(self, tid, source_address, target_address, target_coordinate,
-             packet_bytes, target_middle_address=0, posted=True):
-    self._wait_issue_safe(TidCounters.writes_outgoing(tid), packet_bytes)
-    if not posted: self._wait_issue_safe(TidCounters.requests_outstanding(tid), packet_bytes)
-    with self.k.scope():
-      local = self._local_coordinate(self.k.reg())
-      self._submit(
-        _endpoint(source_address, local),
-        _endpoint(target_address, target_coordinate, target_middle_address),
-        _packet(tid, self._packet_options("write", posted=posted), packet_bytes),
-      )
-    return self
+  def _submit(self, command: Reg, source_address: Reg,
+              source_coordinate: Reg, target_address: Reg,
+              target_coordinate: Reg, byte_count: Reg):
+    self._wait_ready(command)
+    self.kernel.sw(source_address, command, 0)
+    self.kernel.sw(source_coordinate, command, 8)
+    self.kernel.sw(target_address, command, 12)
+    self.kernel.sw(target_coordinate, command, 20)
+    self.kernel.sw(byte_count, command, 32)
+    send = self.kernel.reg()
+    self.kernel.li(send, 1)
+    self.kernel.sw(send, command, COMMAND_SEND)
 
-  def _multicast_write(self, tid, source_address, target_address, target_start,
-                       target_end, packet_bytes):
-    self._wait_issue_safe(TidCounters.writes_outgoing(tid), packet_bytes)
-    with self.k.scope():
-      local, targets = self.k.reg(2)
-      self._local_coordinate(local); self._rectangle(targets, target_start, target_end)
-      self._submit(
-        _endpoint(source_address, local),
-        _endpoint(target_address, targets),
-        _packet(tid, self._packet_options("write", posted=True, multicast=True), packet_bytes),
-      )
-    return self
-
-  def _inline_write(self, tid, value, target_address, target_coordinate,
-                    posted=True):
-    if not posted: self._wait_issue_safe(TidCounters.requests_outstanding(tid))
-    # Inline destinations occupy the hardware source endpoint group.
-    return self._submit(
-      _endpoint(target_address, target_coordinate), _endpoint(0, 0),
-      _packet(tid, self._packet_options(
-        "write", posted=posted, inline=True), 0xF, value),
+  def _control(self, *, write=False, multicast=False, inline=False,
+               vc=None):
+    vc = self.static_vc if vc is None else vc
+    return (
+      (WRITE if write else 0) |
+      (WRITE_INLINE if inline else 0) |
+      (MULTICAST if multicast else 0) |
+      VC_STATIC | vc << VC_SHIFT | self.priority << PRIORITY_SHIFT
     )
 
-  def _atomic_inc(self, tid, target_address, target_coordinate, value=1,
-                  return_address=4, posted=False):
-    if not posted: self._wait_issue_safe(TidCounters.requests_outstanding(tid))
-    with self.k.scope():
-      local = self._local_coordinate(self.k.reg())
-      return self._submit(
-        _endpoint(target_address, target_coordinate),
-        _endpoint(return_address, local),
-        _packet(tid, self._packet_options("atomic", posted=posted),
-                (1 << 12) | (31 << 2), value),
-      )
-
-  def read(self, *args, **options):
-    with self.transaction() as transaction: transaction.read(*args, **options)
-    return self
-
-  def write(self, *args, **options):
-    with self.transaction() as transaction: transaction.write(*args, **options)
-    return self
-
-  def _dram_tile(self, param, tile):
-    k, buffer = self.k, param
-    endpoints = buffer.dram_endpoints
-    if len(endpoints) != buffer.banks:
-      raise ValueError(
-        f"buffer uses {buffer.banks} DRAM banks but has "
-        f"{len(endpoints)} endpoints",
-      )
-    base = k.reg()
-    k.read(base, TensixL1.PARAM_BASE + k.param_slots[param] * 4)
-    address, coordinate, bank, banks, scale, rotation = k.reg(
-      6, exclude=(tile, base),
+  def _transfer(self, memory: Interleaved, logical_offset: Value,
+                l1_address: Value, byte_count: Value, *, write: bool):
+    """Emit one complete exact-range interleaved transfer."""
+    if not isinstance(memory, Interleaved):
+      raise TypeError("read/write require an Interleaved DRAM buffer")
+    self._check_aligned(memory.base, "DRAM base")
+    self._check_aligned(logical_offset, "logical DRAM offset")
+    self._check_aligned(l1_address, "L1 address")
+    base = self._reg(memory.base)
+    offset = self._reg(logical_offset)
+    local_address = self._reg(l1_address)
+    remaining = self._reg(byte_count)
+    page, banks = self.kernel.reg(2)
+    self.kernel.li(page, memory.page_bytes)
+    self.kernel.li(banks, len(memory.coordinates))
+    table = self._coordinate_table(memory.coordinates)
+    local = self._local_coordinate()
+    niu, command = self.kernel.reg(2)
+    self.kernel.li(niu, self.niu)
+    self.kernel.li(command, self.command)
+    self._wait_zero(
+      niu, STATUS + REQUESTS_OUTSTANDING + self.tid * 4,
     )
-    # Program binding moves the base to this core's shard and stores the
-    # shard's first DRAM bank in the aligned address's low bits.
-    k.andi(rotation, base, 7); k.andi(base, base, -8)
-    if isinstance(tile, R): k.add(address, tile, rotation)
-    else: k.li(address, tile); k.add(address, address, rotation)
-    k.li(banks, len(endpoints))
-    k.remu(bank, address, banks); k.divu(address, address, banks)
-    k.li(scale, buffer.tile_size); k.mul(address, address, scale); k.add(address, address, base)
-    selected = k._new_label("dram_bank_selected")
-    invalid = k._new_label("dram_bank_invalid")
-    labels = {index: k._new_label(f"dram_bank_{index}") for index in range(len(endpoints))}
-    k.switch(bank, labels, invalid)
-    for index, label in labels.items():
-      k.label(label); k.li(coordinate, self.coordinate(*endpoints[index][self.index])); k.j(selected)
-    k.label(invalid); k.j(invalid); k.label(selected)
-    return address, coordinate
+    if write:
+      self._wait_zero(niu, STATUS + WRITES_OUTGOING + self.tid * 4)
+    self._configure(
+      command, self._control(write=write) | RESPONSE_MARKED,
+    )
 
-  def read_into_cb(self, param, tile, cb, source_middle_address=0):
-    CB.reserve_back(self.k, cb)
-    with self.k.scope():
-      source_address, source_coordinate = self._dram_tile(param, tile)
-      target = self.k.reg(exclude=(source_address, source_coordinate))
-      CB.get_write_ptr(self.k, cb, target)
-      self.read(source_address, source_coordinate, target, cb.tile_size,
-                source_middle_address=source_middle_address)
-    CB.push_back(self.k, cb)
-    return self
-
-  def read_tiles_into_cb(self, param, tiles, cb, source_middle_address=0):
-    """Issue a group of tile reads before waiting and publish them together."""
-    tiles = tuple(tiles)
-    if not tiles: raise ValueError("tile read group cannot be empty")
-    if cb.depth % len(tiles):
-      raise ValueError("tile read group must evenly divide circular-buffer depth")
-    CB.reserve_back(self.k, cb, len(tiles))
-    with self.transaction() as transaction:
-      for index, tile in enumerate(tiles):
-        with self.k.scope():
-          source_address, source_coordinate = self._dram_tile(param, tile)
-          target = self.k.reg(exclude=(source_address, source_coordinate))
-          CB.get_write_ptr(self.k, cb, target)
-          if index:
-            offset = self.k.reg(exclude=(source_address, source_coordinate, target))
-            self.k.li(offset, index * cb.tile_size)
-            self.k.add(target, target, offset)
-          transaction.read(
-            source_address, source_coordinate, target, cb.tile_size,
-            source_middle_address=source_middle_address,
-          )
-    CB.push_back(self.k, cb, len(tiles))
-    return self
-
-  def read_tile(self, param, tile, target_address,
-                source_middle_address=0):
-    """Read one DRAM tile directly into a caller-owned L1 address."""
-    with self.k.scope():
-      source_address, source_coordinate = self._dram_tile(param, tile)
-      self.read(
-        source_address, source_coordinate, target_address, param.tile_size,
-        source_middle_address=source_middle_address,
+    loop = self.kernel._new_label("noc_interleaved_range")
+    done = self.kernel._new_label("noc_interleaved_done")
+    self.kernel.label(loop)
+    self.kernel.beq(remaining, R.ZERO, done)
+    logical_page, within_page, bank, bank_row = self.kernel.reg(4)
+    self.kernel.divu(logical_page, offset, page)
+    self.kernel.remu(within_page, offset, page)
+    self.kernel.remu(bank, logical_page, banks)
+    self.kernel.divu(bank_row, logical_page, banks)
+    remote_address, remote_offset = self.kernel.reg(2)
+    self.kernel.mul(remote_offset, bank_row, page)
+    self.kernel.add(remote_address, base, remote_offset)
+    self.kernel.add(remote_address, remote_address, within_page)
+    remote = self._select_coordinate(bank, table)
+    chunk = self.kernel.reg()
+    self.kernel.sub(chunk, page, within_page)
+    have_chunk = self.kernel._new_label("noc_interleaved_chunk")
+    self.kernel.bltu(chunk, remaining, have_chunk)
+    self.kernel.mv(chunk, remaining)
+    self.kernel.label(have_chunk)
+    if write:
+      self._submit(
+        command, local_address, local, remote_address, remote, chunk,
       )
+    else:
+      self._submit(
+        command, remote_address, remote, local_address, local, chunk,
+      )
+    self.kernel.add(offset, offset, chunk)
+    self.kernel.add(local_address, local_address, chunk)
+    self.kernel.sub(remaining, remaining, chunk)
+    self.kernel.j(loop)
+    self.kernel.label(done)
+    self._wait_ready(command)
+    if write:
+      self._wait_zero(niu, STATUS + WRITES_OUTGOING + self.tid * 4)
+    self._wait_zero(
+      niu, STATUS + REQUESTS_OUTSTANDING + self.tid * 4,
+    )
     return self
 
-  def read_tiles(self, param, tiles_and_targets, source_middle_address=0):
-    """Issue direct-to-L1 tile reads as one transaction."""
-    tiles_and_targets = tuple(tiles_and_targets)
-    if not tiles_and_targets:
-      raise ValueError("direct tile read group cannot be empty")
-    with self.transaction() as transaction:
-      for tile, target_address in tiles_and_targets:
-        with self.k.scope():
-          source_address, source_coordinate = self._dram_tile(param, tile)
-          transaction.read(
-            source_address, source_coordinate, target_address,
-            param.tile_size, source_middle_address=source_middle_address,
-          )
+  def read(self, memory: Interleaved, logical_offset: Value,
+           destination: Value, byte_count: Value):
+    """Read an exact logical interleaved DRAM range into contiguous L1."""
+    return self._transfer(
+      memory, logical_offset, destination, byte_count, write=False,
+    )
+
+  def write(self, memory: Interleaved, logical_offset: Value,
+            source: Value, byte_count: Value):
+    """Write contiguous L1 bytes to an exact logical interleaved DRAM range."""
+    return self._transfer(
+      memory, logical_offset, source, byte_count, write=True,
+    )
+
+  def _rectangle_coordinate(self, start, end):
+    low, high = (end, start) if self.index == 0 else (start, end)
+    return _coordinate(low) | _coordinate(high) << 12
+
+  def _send_packet(self, command: Reg, local: Reg, source: Reg,
+                   target: Reg, byte_count: Reg, rectangle, *, inline=False,
+                   inline_value=None):
+    multicast = rectangle[0] != rectangle[1]
+    coordinate = (
+      self._rectangle_coordinate(*rectangle) if multicast else
+      _coordinate(rectangle[0])
+    )
+    self._wait_ready(command)
+    scratch = self.kernel.reg()
+    words = (
+      target if inline else source, 0,
+      coordinate if inline else local,
+      0 if inline else target, 0,
+      0 if inline else coordinate,
+      self.tid << TID_SHIFT,
+      self._control(
+        write=True, multicast=multicast, inline=inline,
+        vc=4 if multicast else self.static_vc,
+      ),
+      0xF if inline else byte_count, 0,
+      inline_value if inline else 0, 0,
+    )
+    for index, word in enumerate(words):
+      self._store(command, index * 4, word, scratch)
+    self._store(command, COMMAND_SEND, 1, scratch)
+
+  def send(self, cb: CB, destinations, page_count: Value,
+           last_page_bytes: Value, sync: CBSyncSlot):
+    """Send one ready CB prefix and publish it to remote CB consumers.
+
+    Contiguous bytes are limited to 16 KiB packets. This validated POC form
+    assumes launch-local zeroed remote counters; repeated-send credit tracking
+    belongs to later stream lowering.
+    """
+    if not isinstance(cb, CB):
+      raise TypeError("send requires a CB")
+    if not isinstance(sync, CBSyncSlot):
+      raise TypeError("send requires a physical CB synchronization slot")
+    destinations = tuple(destinations)
+    if not destinations or len(set(destinations)) != len(destinations):
+      raise ValueError("send destinations must be non-empty and unique")
+    for core in destinations:
+      _coordinate(core)
+    rectangles = _rectangles(destinations)
+    for start, end in rectangles:
+      if start != end and (start[0] in (8, 9) or end[0] in (8, 9)):
+        raise ValueError("multicast endpoints cannot use NoC columns 8 or 9")
+    if cb.item_bytes > MAX_PACKET_BYTES:
+      raise ValueError("CB page size cannot exceed 16 KiB")
+    pages = self._reg(page_count)
+    tail = self._reg(last_page_bytes)
+    page = self.kernel.reg()
+    self.kernel.li(page, cb.item_bytes)
+    invalid = self.kernel._new_label("noc_invalid_send")
+    nonempty = self.kernel._new_label("noc_nonempty_send")
+    empty = self.kernel._new_label("noc_empty_send")
+    valid = self.kernel._new_label("noc_valid_send")
+    self.kernel.bne(pages, R.ZERO, nonempty)
+    self.kernel.bne(tail, R.ZERO, invalid)
+    self.kernel.j(empty)
+    self.kernel.label(nonempty)
+    depth = self.kernel.reg()
+    self.kernel.li(depth, cb.depth)
+    self.kernel.bltu(depth, pages, invalid)
+    self.kernel.beq(tail, R.ZERO, invalid)
+    self.kernel.bltu(page, tail, invalid)
+    complete, byte_count = self.kernel.reg(2)
+    self.kernel.addi(complete, pages, -1)
+    self.kernel.mul(byte_count, complete, page)
+    self.kernel.add(byte_count, byte_count, tail)
+    self.kernel.j(valid)
+    self.kernel.label(invalid)
+    self.kernel.j(invalid)
+    self.kernel.label(valid)
+
+    niu, command, source, target = self.kernel.reg(4)
+    self.kernel.li(niu, self.niu)
+    self.kernel.li(command, self.command)
+    self.kernel.li(source, cb.address)
+    self.kernel.li(target, cb.address)
+    local = self._local_coordinate()
+    self._wait_zero(niu, STATUS + WRITES_OUTGOING + self.tid * 4)
+    remaining, limit = self.kernel.reg(2)
+    self.kernel.mv(remaining, byte_count)
+    self.kernel.li(limit, MAX_PACKET_BYTES)
+    loop = self.kernel._new_label("noc_send_payload")
+    payload_done = self.kernel._new_label("noc_send_payload_done")
+    self.kernel.label(loop)
+    self.kernel.beq(remaining, R.ZERO, payload_done)
+    chunk = self.kernel.reg()
+    self.kernel.mv(chunk, remaining)
+    have_chunk = self.kernel._new_label("noc_send_chunk")
+    self.kernel.bltu(remaining, limit, have_chunk)
+    self.kernel.mv(chunk, limit)
+    self.kernel.label(have_chunk)
+    for rectangle in rectangles:
+      self._send_packet(
+        command, local, source, target, chunk, rectangle,
+      )
+    self.kernel.add(source, source, chunk)
+    self.kernel.add(target, target, chunk)
+    self.kernel.sub(remaining, remaining, chunk)
+    self.kernel.j(loop)
+    self.kernel.label(payload_done)
+    self._wait_ready(command)
+    self._wait_zero(niu, STATUS + WRITES_OUTGOING + self.tid * 4)
+    received = self._reg(sync.received_address)
+    for rectangle in rectangles:
+      self._send_packet(
+        command, local, source, received, pages, rectangle,
+        inline=True, inline_value=pages,
+      )
+    self._wait_ready(command)
+    self.kernel.label(empty)
     return self
 
-  def write_from_cb(self, cb, param, tile, target_middle_address=0, posted=False):
-    CB.wait_front(self.k, cb)
-    with self.k.scope():
-      target_address, target_coordinate = self._dram_tile(param, tile)
-      source = self.k.reg(exclude=(target_address, target_coordinate))
-      CB.get_read_ptr(self.k, cb, source)
-      self.write(source, target_address, target_coordinate, cb.tile_size,
-                 target_middle_address=target_middle_address, posted=posted)
-    CB.pop_front(self.k, cb)
-    return self
+  def atomic_inc(self, destination: Core | Value, address: Value,
+                 increment: Value, *, return_value=False,
+                 return_address=None):
+    """Atomically add to a remote 32-bit L1 word, optionally returning old."""
+    if type(return_value) is not bool:
+      raise TypeError("return_value must be a bool")
+    if isinstance(destination, tuple):
+      destination = _coordinate(destination)
+    target_coordinate = self._reg(destination)
+    self._check_aligned(address, "atomic address", 4)
+    target_address = self._reg(address)
+    addend = self._reg(increment)
+    if return_value:
+      if return_address is None:
+        raise ValueError("returning atomic_inc requires an L1 return address")
+      self._check_aligned(return_address, "atomic return address", 4)
+      result_address = self._reg(return_address)
+      result_coordinate = self._local_coordinate()
+    else:
+      result_address = self._reg(0)
+      result_coordinate = R.ZERO
 
-  def write_tiles_from_cb(self, cb, param, tiles,
-                          target_middle_address=0, posted=False):
-    """Issue a group of CB tile writes before one completion wait."""
-    tiles = tuple(tiles)
-    if not tiles: raise ValueError("tile write group cannot be empty")
-    if cb.depth % len(tiles):
-      raise ValueError("tile write group must evenly divide circular-buffer depth")
-    CB.wait_front(self.k, cb, len(tiles))
-    with self.transaction() as transaction:
-      for index, tile in enumerate(tiles):
-        with self.k.scope():
-          target_address, target_coordinate = self._dram_tile(param, tile)
-          source = self.k.reg(exclude=(target_address, target_coordinate))
-          CB.get_read_ptr(self.k, cb, source)
-          if index:
-            offset = self.k.reg(exclude=(target_address, target_coordinate, source))
-            self.k.li(offset, index * cb.tile_size)
-            self.k.add(source, source, offset)
-          transaction.write(
-            source, target_address, target_coordinate, cb.tile_size,
-            target_middle_address=target_middle_address, posted=posted,
-          )
-    CB.pop_front(self.k, cb, len(tiles))
-    return self
-
-  def multicast_write(self, *args):
-    with self.transaction() as transaction: transaction.multicast_write(*args)
-    return self
-
-  def inline_write(self, *args, **options):
-    with self.transaction() as transaction: transaction.inline_write(*args, **options)
-    return self
-
-  def atomic_inc(self, *args, **options):
-    with self.transaction() as transaction: transaction.atomic_inc(*args, **options)
-    return self
+    niu, command = self.kernel.reg(2)
+    self.kernel.li(niu, self.niu)
+    self.kernel.li(command, self.command)
+    if return_value:
+      self._wait_zero(
+        niu, STATUS + REQUESTS_OUTSTANDING + self.tid * 4,
+      )
+    selector, instruction = self.kernel.reg(2)
+    self.kernel.andi(selector, target_address, 12)
+    self.kernel.srli(selector, selector, 2)
+    self.kernel.li(instruction, INCR_GET | WRAP_32)
+    self.kernel.or_(instruction, instruction, selector)
+    control = (
+      ATOMIC | RESPONSE_MARKED | VC_STATIC |
+      min(self.static_vc, 3) << VC_SHIFT |
+      self.priority << PRIORITY_SHIFT
+    )
+    scratch = self.kernel.reg()
+    for index, word in enumerate((
+      target_address, 0, target_coordinate,
+      result_address, 0, result_coordinate,
+      self.tid << TID_SHIFT, control, instruction, 0, addend, 0,
+    )):
+      self._store(command, index * 4, word, scratch)
+    self._wait_ready(command)
+    self._store(command, COMMAND_SEND, 1, scratch)
+    self._wait_ready(command)
+    if not return_value:
+      return None
+    self._wait_zero(
+      niu, STATUS + REQUESTS_OUTSTANDING + self.tid * 4,
+    )
+    result = self.kernel.reg()
+    self.kernel.lw(result, result_address)
+    return result
