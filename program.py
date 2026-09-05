@@ -1,4 +1,3 @@
-from contextlib import ExitStack
 from dataclasses import dataclass
 from math import prod
 import numpy as np
@@ -13,7 +12,7 @@ from ttk.fpu import Fpu
 from ttk.ops import Ops
 from ttk.pack import Pack
 from ttk.sfpu import Sfpu
-from ttk.unpack import Unpack
+from ttk.model import Unpack
 
 PARAM_BASE = TensixL1.PARAM_BASE
 RETURN_KERNEL = {role: RV32().jal(R.ZERO, Firmware.TEXT[role][0] - TensixL1.WORKER_TEXT_BASE[role]).to_bytes(4, "little") for role in KERNEL_ROLES}
@@ -312,8 +311,6 @@ class Program:
     self.sfpu = Sfpu(self.trisc1, dst, seed_kernel=self.brisc)
     self.pack = Pack(self.trisc2, dst)
     self.ops = Ops(self, self.unpack, self.fpu, self.sfpu, self.pack)
-    self._scopes = ExitStack()
-    for stream in self.roles.values(): self._scopes.enter_context(stream.scope())
 
   def l1(self, size: int, alignment=4):
     return self._l1.alloc(size, alignment)
@@ -334,7 +331,6 @@ class Program:
 
   def lower(self):
     if self._kernels is None:
-      self._scopes.close()
       images = {role: stream.lower() for role, stream in self.roles.items()}
       self._kernels = {core: dict(images) for core in self.cores}
     return self._kernels

@@ -32,7 +32,7 @@ from ttk.sfpu import (
 )
 from ttk.shard import specialize
 from ttk.sync import Sem, SemWait, Stall, Wait, sem_get, sem_wait, stall
-from ttk.unpack import UnpackTarget
+from ttk.model import UnpackTarget
 
 
 VOCAB_SIZE = 128256
