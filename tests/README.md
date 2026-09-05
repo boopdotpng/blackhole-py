@@ -1,8 +1,8 @@
 # Raw Blackhole tests
 
-These tests are small, explicit proofs for the operations in
-[`docs/components.md`](../docs/components.md). They use `Asm` directly and do
-not import `ttk`. Create only the worker streams a test needs:
+These tests are small, explicit hardware proofs. They use `Asm` directly and
+do not import `ttk`. The runtime lives in `device.py` and `program.py`;
+`tests/harness.py` supplies only test conveniences. Create only the worker streams a test needs:
 
 ```python
 from asm import Asm

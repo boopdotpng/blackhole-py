@@ -1,44 +1,5 @@
 #include "fw.h"
-
-#define ALIGN 64u
-#define PAGE_SIZE 4096u
-#define CQ_STATE 0x1000u
-#define PREFETCH_DISPATCH_READ (CQ_STATE + 0x10u)
-#define DISPATCH_PUBLISHED CQ_STATE
-#define DISPATCH_RING_BASE 0x20000u
-#define DISPATCH_RING_PAGES 320u
-#define DISPATCH_RING_END (DISPATCH_RING_BASE + DISPATCH_RING_PAGES * PAGE_SIZE)
-#define DISPATCH_SCRATCH DISPATCH_RING_END
-#define DISPATCH_GO (DISPATCH_SCRATCH + 0x40u)
-#define DISPATCH_DONE_COUNT (DISPATCH_SCRATCH + 0x50u)
-#define DISPATCH_READ_PUBLISH (DISPATCH_SCRATCH + 0x60u)
-#define DISPATCH_DRAM_PUT (DISPATCH_SCRATCH + 0x80u)
-#define DISPATCH_DRAM_READ (DISPATCH_SCRATCH + 0x90u)
-#define DRAM_PUBLISHED CQ_STATE
-#define DRAM_READ_PUBLISH (CQ_STATE + 0x60u)
-#define DRAM_QUEUE_BASE 0x2000u
-#define DRAM_QUEUE_ENTRIES 32u
-#define PREFETCH_COORD ((2u << 6) | 14u)
-#define DRAM_COORD ((4u << 6) | 14u)
-#define GO_SIGNAL 0x0373u
-
-#define PACKET_OP 0u
-#define PACKET_TARGET_COUNT 2u
-#define PACKET_TOTAL_SIZE 4u
-#define PACKET_ADDRESS 8u
-#define PACKET_DATA_SIZE 12u
-#define PACKET_WRITE_TARGETS 16u
-#define PACKET_RUN_TEMPLATE 16u
-#define PACKET_RUN_TARGETS 24u
-
-enum {
-  OP_PAD = 0,
-  OP_UNICAST_WRITE = 1,
-  OP_MCAST_WRITE = 2,
-  OP_RUN = 3,
-  OP_SIGNAL = 5,
-  OP_DRAM_COPY = 7,
-};
+#include "cq.h"
 
 static void wait_dram_idle(void) {
   for (;;) {
@@ -146,8 +107,7 @@ void firmware_boot(void) {
         mmio_write32(DISPATCH_DONE_COUNT, 0);
         fence();
         u32 targets = ring + PACKET_RUN_TARGETS;
-        u32 go = mmio_read32(ring + PACKET_RUN_TEMPLATE) |
-                 (0x80u << 24);
+        u32 go = 0x80u << 24;
         mmio_write32(DISPATCH_GO, go);
         fence();
         u32 target_count = mmio_read16(ring + PACKET_TARGET_COUNT);

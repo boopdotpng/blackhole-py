@@ -1,7 +1,6 @@
 # Unpacker movement kernels
 
-Handwritten, row-major L1 proofs for every unpacker bullet in
-`docs/components.md`:
+Handwritten, row-major L1 proofs for unpacker movement:
 
 - runtime-sized F32 copies directly into FP32 Dst tiles 0 through 7;
 - BF16 tile copies to SrcA and SrcB, copied through FP32 Dst only for readback;

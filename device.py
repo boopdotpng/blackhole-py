@@ -1,708 +1,231 @@
+"""Byte-buffer runtime: C firmware boot, DRAM transfers, and raw program launches."""
+
 from dataclasses import dataclass
-from struct import Struct
 import time
 
-from cq import (
-  ALIGN, DRAM_BRISC_READY, DRAM_NCRISC_READY, CommandQueue, DramCopy,
-  DramRecord, McastWrite, Run, UnicastWrite, noc_coord,
-)
-from fw.consts import (
-  Firmware, FirmwareControl, KERNEL_ROLES, RunState, TensixL1, TensixMMIO,
-)
+from cq import DRAM_BRISC_READY, DRAM_NCRISC_READY, CommandQueue, DramCopy, rectangles
 from fw import c_firmware
+from fw.consts import Firmware, FirmwareControl, RunState, TensixL1, TensixMMIO
 from isa import R, RV32
-from pcie import PCIDevice, TLBWindow
-from program import (
-  PARAM_BASE, RETURN_KERNEL, Buffer, Dram, Program, rectangles,
-)
-from ttk import DType
-
-class Readback:
-  def __init__(self, device, buffer, offset):
-    self.device, self.buffer, self.offset, self.data = device, buffer, offset, None
-
-  def result(self):
-    if self.data is None: raise RuntimeError("DRAM read has not completed")
-    return self.data
-
-  def _finish(self):
-    data = self.device.pcie.sysmem.read(self.device.cq.dram + self.offset, self.buffer.size)
-    self.data = self.buffer.tile_data(data, inverse=True)
+from pcie import Allocator, PCIDevice, TLBWindow
+from program import Program
 
 
 @dataclass(frozen=True)
-class _TraceParam:
-  offset: int
+class DramBuffer:
+  """One dense allocation in one physical DRAM bank."""
+
+  address: int
   size: int
-  program: Program
-  values: object
+  physical_size: int
+  page_size: int
+  page_count: int
+  bank: int
+  coordinate: int
 
 
 @dataclass(frozen=True)
-class _TraceRuntime:
-  offset: int
+class InterleavedDramBuffer:
+  """Dense logical pages striped over a contiguous physical bank range."""
+
+  address: int
   size: int
-  names: tuple[str, ...]
-  values: tuple[int, ...]
-  rects: tuple
+  physical_size: int
+  page_size: int
+  page_count: int
+  banks: int
+  bank_start: int = 0
 
-
-class DeviceTrace:
-  """A pre-lowered range with either compact or legacy PARAM patching."""
-
-  def __init__(self, device, trace, params=(), runtime=None,
-               template_count=0):
-    self.device = device
-    self.trace = trace
-    self._legacy_params = tuple(params)
-    self.runtime = runtime
-    self.params = (
-      self._legacy_params if runtime is None else runtime.names
-    )
-    self.template_count = template_count
-    self.last_profile = {}
-    self.profile_totals = {}
-    self.profile_replays = 0
-
-  def _record_profile(self, profile):
-    self.last_profile = dict(profile)
-    for name, value in profile.items():
-      self.profile_totals[name] = self.profile_totals.get(name, 0.0) + value
-    self.profile_replays += 1
-
-  def average_profile(self):
-    if not self.profile_replays:
-      return {}
-    return {
-      name: total / self.profile_replays
-      for name, total in self.profile_totals.items()
-    }
-
-  def replay(self, params=None, timeout=30.0):
-    overrides = {} if params is None else dict(params)
-    if self.runtime is not None:
-      started = time.perf_counter_ns()
-      unknown = set(overrides) - set(self.runtime.names)
-      if unknown:
-        raise KeyError(
-          f"trace has no runtime parameters: {sorted(unknown)}",
-        )
-      selected = dict(zip(self.runtime.names, self.runtime.values))
-      selected.update(overrides)
-      words = tuple(selected[name] for name in self.runtime.names)
-      if any(type(value) is not int or not 0 <= value < 1 << 32
-             for value in words):
-        raise ValueError("trace runtime parameters must be 32-bit integers")
-      record = McastWrite(
-        self.runtime.rects, TensixL1.RUNTIME_PARAM_BASE,
-        Struct(f"<{len(words)}I").pack(*words),
-      ).lower()
-      encoded = time.perf_counter_ns()
-      if len(record) != self.runtime.size:
-        raise RuntimeError("compact runtime-state record changed size")
-      self.device.cq.patch_trace(self.trace, self.runtime.offset, record)
-      patched = time.perf_counter_ns()
-      result = self.device.cq.replay_trace(self.trace, timeout=timeout)
-      self._record_profile({
-        "runtime_encode_us": (encoded - started) / 1e3,
-        "runtime_patch_us": (patched - encoded) / 1e3,
-        **self.device.cq.last_replay_profile,
-        # HCQSignal timestamps are absolute device-clock values. The full
-        # trace interval is the host-observed doorbell-to-completion duration.
-        "device_us": self.device.cq.last_replay_profile["device_wait_us"],
-      })
-      return result
-
-    unknown = set(overrides) - {
-      name for patch in self._legacy_params for name in patch.program.params
-    }
-    if unknown:
-      raise KeyError(f"trace has no runtime parameters: {sorted(unknown)}")
-    for patch in self._legacy_params:
-      selected = {
-        name: value for name, value in overrides.items()
-        if name in patch.program.params
-      }
-      if not selected:
-        continue
-      values = {} if patch.values is None else dict(patch.values)
-      values.update(selected)
-      record = UnicastWrite(
-        patch.program.cores, PARAM_BASE,
-        patch.program._param_table(values),
-      ).lower()
-      if len(record) != patch.size:
-        raise RuntimeError("runtime PARAM record changed size during replay")
-      self.device.cq.patch_trace(self.trace, patch.offset, record)
-    return self.device.cq.replay_trace(self.trace, timeout=timeout)
 
 class Device:
-  # Change this to 1 to make ordinary Device() instances use the second card.
+  """Command-queue runtime with no tensor, kernel, or TTK abstractions."""
+
   DEFAULT_INDEX = 0
 
-  def __init__(self, index: int | None = None,
-               sysmem_size: int = 1 << 30):
+  def __init__(self, index=None, sysmem_size=1 << 30):
     index = self.DEFAULT_INDEX if index is None else index
-    if type(index) is not int or index not in (0, 1):
-      raise ValueError("device index must be 0 or 1")
-    self.index = index
     self.pcie = PCIDevice(index, sysmem_size)
-    self.dram = Dram(
-      len(self.pcie.dram_endpoints), self.pcie.cores,
-      self.pcie.dram_endpoints,
-    )
-    self.program_queue, self.read_queue = [], []
     self.cq = None
-    self._staging_next = 0
-    self._cached_static = {}
-    self._kernel_cache_buffer = None
-    self._resident_programs = {}
-    self._param_templates = {}
-    self._param_template_next = TensixL1.KERNEL_CACHE_BASE
+    self._dram = Allocator(0x40, 1 << 32, 64)
 
-  def reset_cores(self):
-    with TLBWindow(self.pcie.fd, self.pcie.cores[0]) as win:
-      win.mcast(TensixMMIO.RISCV_DEBUG_REG_SOFT_RESET_0, TensixMMIO.SOFT_RESET_ALL)
+  @property
+  def cores(self):
+    return tuple(self.pcie.cores)
 
-  def init_device(self):
+  def boot(self):
     pcie_mid = self.pcie.sysmem.noc_addr >> 32
-    c_images = c_firmware.build(pcie_mid, self.pcie.dram_endpoints)
-    images = c_images.workers
-    prefetch, dispatch = c_images.prefetch, c_images.dispatch
-    dram_brisc, dram_ncrisc = c_images.dram_brisc, c_images.dram_ncrisc
-    firmware = b"".join(image.ljust(size, b"\0")
-                        for (_, size), image in zip(Firmware.TEXT.values(), images))
+    images = c_firmware.build(pcie_mid, self.pcie.dram_endpoints)
+    worker_firmware = b"".join(
+      image.ljust(size, b"\0")
+      for (_, size), image in zip(Firmware.TEXT.values(), images.workers)
+    )
     firmware_base = Firmware.TEXT["brisc"][0]
-    with TLBWindow(self.pcie.fd, self.pcie.cores[0]) as win:
-      win.mcast(TensixMMIO.RISCV_DEBUG_REG_SOFT_RESET_0, TensixMMIO.SOFT_RESET_ALL)
-      win.mcast(firmware_base, firmware)
+
+    with TLBWindow(self.pcie.fd, self.pcie.cores[0]) as window:
+      def worker_write(address, value, *, bytes=4):
+        data = value.to_bytes(bytes, "little") if isinstance(value, int) else value
+        base = address & -TLBWindow.SIZE
+        for start, end in rectangles(self.pcie.cores):
+          window.target(base, start, end)
+          window.write(address - base, data)
+
+      worker_write(
+        TensixMMIO.RISCV_DEBUG_REG_SOFT_RESET_0,
+        TensixMMIO.SOFT_RESET_ALL,
+      )
+      worker_write(firmware_base, worker_firmware)
       boot = RV32().jal(R.ZERO, firmware_base + 4).to_bytes(4, "little")
-      win.mcast(TensixL1.BOOT, boot)
-      # GO's low 24 bits carry a traced PARAM-template address. Initialize the
-      # complete word so the direct byte-sized CQ-core boot signal selects the
-      # legacy (no-template) path.
-      win.mcast(FirmwareControl.GO_SIGNAL & -4, 0)
-      win.mcast(TensixMMIO.RISCV_DEBUG_REG_SOFT_RESET_0, TensixMMIO.SOFT_RESET_BRISC_ONLY_RUN)
+      worker_write(TensixL1.BOOT, boot)
+      worker_write(FirmwareControl.GO_SIGNAL & -4, 0)
+      worker_write(
+        TensixMMIO.RISCV_DEBUG_REG_SOFT_RESET_0,
+        TensixMMIO.SOFT_RESET_BRISC_ONLY_RUN,
+      )
+
       service_cores = (
         self.pcie.prefetch_core, self.pcie.dispatch_core, self.pcie.dram_core,
       )
-      def service_mmio(core, address, value):
+
+      def service_write(core, address, value):
         base = address & -TLBWindow.SIZE
-        win.target(base, core)
-        win.write(address - base, value)
+        window.target(base, core)
+        window.write(address - base, value)
+
       for core in service_cores:
-        service_mmio(
+        service_write(
           core, TensixMMIO.RISCV_DEBUG_REG_SOFT_RESET_0,
           TensixMMIO.SOFT_RESET_ALL,
         )
-      for core, images in (
-        (self.pcie.prefetch_core, {"brisc": prefetch}),
-        (self.pcie.dispatch_core, {"brisc": dispatch}),
-        (self.pcie.dram_core, {"brisc": dram_brisc, "ncrisc": dram_ncrisc}),
+      for core, role_images in (
+        (self.pcie.prefetch_core, {"brisc": images.prefetch}),
+        (self.pcie.dispatch_core, {"brisc": images.dispatch}),
+        (
+          self.pcie.dram_core,
+          {"brisc": images.dram_brisc, "ncrisc": images.dram_ncrisc},
+        ),
       ):
-        win.target(0, core)
-        for role, image in images.items():
-          win.write(TensixL1.WORKER_TEXT_BASE[role], image)
-        win.write(
-          TensixL1.BOOT,
-          RV32().jal(R.ZERO, TensixL1.WORKER_TEXT_BASE["brisc"]).to_bytes(
-            4, "little",
-          ),
-        )
-      win.target(0, self.pcie.dram_core)
-      win.write(DRAM_BRISC_READY, bytes(8))
+        window.target(0, core)
+        for role, image in role_images.items():
+          window.write(TensixL1.WORKER_TEXT_BASE[role], image)
+        entry = RV32().jal(
+          R.ZERO, TensixL1.WORKER_TEXT_BASE["brisc"],
+        ).to_bytes(4, "little")
+        window.write(TensixL1.BOOT, entry)
+
+      # These readiness words belong to the two service RISCs on the DRAM tile.
+      window.target(0, self.pcie.dram_core)
+      window.write(DRAM_BRISC_READY, bytes(8))
       self.cq = CommandQueue(self.pcie)
       for core in service_cores:
-        win.target(0, core)
-        win.write(FirmwareControl.GO_SIGNAL, int(RunState.GO), bytes=1)
-      for core in (self.pcie.prefetch_core, self.pcie.dispatch_core):
-        service_mmio(
+        window.target(0, core)
+        window.write(FirmwareControl.GO_SIGNAL, int(RunState.GO), bytes=1)
+      for core in service_cores:
+        service_write(
           core, TensixMMIO.RISCV_DEBUG_REG_SOFT_RESET_0,
           TensixMMIO.SOFT_RESET_BRISC_ONLY_RUN,
         )
-      service_mmio(
-        self.pcie.dram_core, TensixMMIO.RISCV_DEBUG_REG_SOFT_RESET_0,
-        TensixMMIO.SOFT_RESET_BRISC_ONLY_RUN,
-      )
-      win.target(0, self.pcie.dram_core)
+      window.target(0, self.pcie.dram_core)
+
       deadline = time.monotonic() + 5.0
       while (
-        int.from_bytes(win.read(DRAM_BRISC_READY, 4), "little") != 1 or
-        int.from_bytes(win.read(DRAM_NCRISC_READY, 4), "little") != 1
+        int.from_bytes(window.read(DRAM_BRISC_READY, 4), "little") != 1 or
+        int.from_bytes(window.read(DRAM_NCRISC_READY, 4), "little") != 1
       ):
         if time.monotonic() >= deadline:
-          raise TimeoutError(
-            "CQ DRAM engines did not start; "
-            f"firmware breadcrumbs: {self.cq._firmware_breadcrumbs()}",
-          )
+          raise TimeoutError("command-queue firmware did not start")
         time.sleep(0)
 
-  def queue(self, program: Program, params=None, report=True):
-    self.program_queue.append((program, params, None, report))
-    return program
-
-  def _dram_copy_program(self, buffer, write, offset=0,
-                         dram_endpoints=None):
-    if self.cq is None:
-      raise RuntimeError("init_device() must be called before tensor transfer")
-    if offset + buffer.size > self.cq.dram_size:
-      raise MemoryError(
-        f"queued tensors need {offset + buffer.size} bytes; "
-        f"sysmem DRAM region has {self.cq.dram_size}",
-      )
-    endpoints = (
-      self.pcie.dram_endpoints
-      if dram_endpoints is None else tuple(dram_endpoints)
+  def alloc_dram(self, size, *, bank=0):
+    if type(size) is not int or size <= 0:
+      raise ValueError("DRAM result size must be a positive integer")
+    if not 0 <= bank < len(self.pcie.dram_endpoints):
+      raise ValueError("DRAM bank is not enabled on this device")
+    if size <= 16 * 1024:
+      page_size = (size + 15) & -16
+      page_count = 1
+    else:
+      page_size = 16 * 1024
+      page_count = (size + page_size - 1) // page_size
+    physical_size = page_size * page_count
+    address = self._dram.alloc(physical_size)
+    x, y = self.pcie.dram_endpoints[bank][0]
+    return DramBuffer(
+      address, size, physical_size, page_size, page_count, bank, x | y << 6,
     )
-    if not endpoints or endpoints != self.pcie.dram_endpoints[:len(endpoints)]:
-      raise ValueError("CQ DRAM copies require a non-empty prefix of DRAM banks")
-    source = self.pcie.sysmem.noc_addr + self.cq.dram + offset
+
+  def alloc_interleaved_dram(self, size, *, page_size=2048, banks=None,
+                             bank_start=0):
+    if type(size) is not int or size <= 0:
+      raise ValueError("DRAM result size must be a positive integer")
+    if type(page_size) is not int or not 0 < page_size <= 16 * 1024 or page_size % 16:
+      raise ValueError("interleaved DRAM page size must be 16-byte aligned and at most 16 KiB")
+    banks = len(self.pcie.dram_endpoints) if banks is None else banks
+    if type(banks) is not int or not 0 < banks <= len(self.pcie.dram_endpoints):
+      raise ValueError("interleaved DRAM bank count exceeds the enabled banks")
+    if (type(bank_start) is not int or bank_start < 0 or
+        bank_start + banks > len(self.pcie.dram_endpoints)):
+      raise ValueError("interleaved DRAM bank range exceeds the enabled banks")
+    page_count = (size + page_size - 1) // page_size
+    physical_size = page_count * page_size
+    rows = (page_count + banks - 1) // banks
+    address = self._dram.alloc(rows * page_size)
+    return InterleavedDramBuffer(
+      address, size, physical_size, page_size, page_count, banks, bank_start,
+    )
+
+  def _copy_dram(self, buffer, *, write, data=b"", timeout=10.0):
+    if self.cq is None:
+      raise RuntimeError("boot() must be called first")
+    if buffer.physical_size > self.cq.dram_size:
+      raise MemoryError("DRAM transfer exceeds the host staging region")
+    if write:
+      data = bytes(data)
+      if len(data) != buffer.size:
+        raise ValueError("DRAM write size does not match the allocation")
+      self.pcie.sysmem.write(
+        self.cq.dram, data.ljust(buffer.physical_size, b"\0"),
+      )
+    interleaved = isinstance(buffer, InterleavedDramBuffer)
     command = DramCopy(
-      buffer.addr, source, buffer.tile_size, buffer.physical_tiles,
-      len(endpoints), int(not write),
+      buffer.address,
+      self.pcie.sysmem.noc_addr + self.cq.dram,
+      buffer.page_size,
+      buffer.page_count,
+      buffer.banks if interleaved else 1,
+      int(not write),
+      buffer.bank_start if interleaved else buffer.bank,
     )
-    program = Program((), images={})
-    program.launch = (command,)
-    return program
+    self.cq.submit((command,), timeout=timeout)
+    if not write:
+      return self.pcie.sysmem.read(self.cq.dram, buffer.size)
 
-  def _write_physical(self, buffer, data: bytes, *, dram_endpoints=None):
-    """Upload already-physical tile bytes without applying tensor tilization."""
-    data = bytes(data)
-    if len(data) > buffer.size:
-      raise ValueError("physical upload exceeds its DRAM buffer")
-    offset = self._staging_next
-    program = self._dram_copy_program(
-      buffer, write=True, offset=offset, dram_endpoints=dram_endpoints,
-    )
-    self.pcie.sysmem.write(
-      self.cq.dram + offset, data.ljust(buffer.size, b"\0"),
-    )
-    self._staging_next += buffer.size
-    return self.queue(program, report=False)
+  def write_dram(self, buffer, data, timeout=10.0):
+    self._copy_dram(buffer, write=True, data=data, timeout=timeout)
 
-  def cache_programs(self, programs, timeout=30.0):
-    """Place immutable lowered CQ records in one bank of device DRAM.
+  def read_dram(self, buffer, timeout=10.0):
+    return self._copy_dram(buffer, write=False, timeout=timeout)
 
-    Runtime PARAM and launch records remain inline. Each immutable record is
-    replaced by a 64-byte DramRecord descriptor that prefetch dereferences.
-    """
-    if self.cq is None:
-      raise RuntimeError("init_device() must be called before caching programs")
-    programs = tuple(dict.fromkeys(programs))
-    uncached = tuple(
-      program for program in programs if program not in self._cached_static
-    )
-    if not uncached:
-      return {
-        "programs": len(programs),
-        "records": 0,
-        "bytes": 0,
-      }
-    if self._kernel_cache_buffer is not None:
-      raise RuntimeError(
-        "the DRAM program cache is immutable; cache all programs in one call",
-      )
-    if self.program_queue or self.read_queue:
-      raise RuntimeError("flush queued work before building the program cache")
+  def launch(self, core_images, *, params=None, l1=None, timeout=10.0):
+    return self.run(Program(core_images), params=params, l1=l1, timeout=timeout)
 
-    lowered = {
-      program: tuple(command.lower() for command in program.static_commands())
-      for program in uncached
-    }
-    unique = tuple(dict.fromkeys(
-      record for records in lowered.values() for record in records
-    ))
-    offsets, size = {}, 0
-    for record in unique:
-      size = (size + ALIGN - 1) & -ALIGN
-      offsets[record] = size
-      size += len(record)
-    physical_size = (size + 4095) & -4096
-    if not physical_size:
-      for program in uncached: self._cached_static[program] = ()
-      return {
-        "programs": len(uncached),
-        "records": 0,
-        "bytes": 0,
-      }
-
-    address = self.dram.allocator.alloc(physical_size, ALIGN)
-    core = self.pcie.cores[0]
-    arena = Buffer(
-      "cq_kernel_cache", address, DType.U32, (physical_size // 4,),
-      None, (core,), 1, True, True, (self.pcie.dram_endpoints[0],),
-    )
-    blob = bytearray(physical_size)
-    for record, offset in offsets.items():
-      blob[offset:offset + len(record)] = record
-
-    # A single-bank arena makes every cached record a linear DRAM read.
-    endpoint = self.pcie.dram_endpoints[0]
-    self._write_physical(arena, blob, dram_endpoints=(endpoint,))
-    self.run(timeout=timeout)
-    coord = noc_coord(endpoint[0])
-    entries = {
-      record: DramRecord(address + offset, coord, len(record))
-      for record, offset in offsets.items()
-    }
-    for program, records in lowered.items():
-      self._cached_static[program] = tuple(
-        entries[record] for record in records
-      )
-    self._kernel_cache_buffer = arena
-    return {
-      "programs": len(uncached),
-      "records": len(unique),
-      "bytes": size,
-    }
-
-  def cache_kernels(self, programs, timeout=30.0):
-    """Install unique worker kernels below the shared template arena."""
-    if self.cq is None:
-      raise RuntimeError("init_device() must be called before caching kernels")
-    if self.program_queue or self.read_queue:
-      raise RuntimeError("flush queued work before building the kernel cache")
-    programs = tuple(dict.fromkeys(programs))
-    if any(program._l1_constants for program in programs):
-      raise ValueError(
-        "resident kernel traces do not yet support per-program L1 constants",
-      )
-    if self._resident_programs:
-      raise RuntimeError("resident kernels can only be installed once")
-    if self._param_templates:
-      raise RuntimeError("resident kernels must be installed before templates")
-
-    next_address = {
-      core: TensixL1.KERNEL_CACHE_BASE for core in self.pcie.cores
-    }
-    resident = {core: {} for core in self.pcie.cores}
-    uploads = {}
-    global_images = set()
-
-    for program in programs:
-      kernels = program.lower()
-      entries = {}
-      for core in program.cores:
-        role_addresses = []
-        for role in KERNEL_ROLES:
-          image = kernels[core].get(role, RETURN_KERNEL[role])
-          key = role, image
-          global_images.add(key)
-          if key not in resident[core]:
-            address = (next_address[core] + ALIGN - 1) & -ALIGN
-            following = address + len(image)
-            if following > TensixL1.KERNEL_CACHE_END:
-              raise MemoryError(
-                f"resident kernel arena is full on core {core}",
-              )
-            pc = address + len(image) - 4
-            offset = Firmware.TEXT[role][0] - pc
-            if not -(1 << 20) <= offset < 1 << 20:
-              raise ValueError("resident kernel return is outside JAL range")
-            relocated = (
-              image[:-4] +
-              RV32().jal(R.ZERO, offset).to_bytes(4, "little")
-            )
-            resident[core][key] = address
-            uploads.setdefault((address, relocated), []).append(core)
-            next_address[core] = following
-          role_addresses.append(resident[core][key])
-        entries[core] = tuple(role_addresses)
-      self._resident_programs[program] = entries
-
-    commands = []
-    for (address, image), cores in uploads.items():
-      cores = tuple(cores)
-      for offset in range(0, len(image), 16 * 1024):
-        chunk = image[offset:offset + 16 * 1024]
-        if len(cores) == 1:
-          commands.append(UnicastWrite(
-            cores, address + offset, (chunk,),
-          ))
-        else:
-          commands.append(McastWrite(
-            rectangles(cores), address + offset, chunk,
-          ))
-
-    active = {
-      core for program in programs for core in program.cores
-    }
-    cores = tuple(core for core in self.pcie.cores if core in active)
-    if commands:
-      noop = Program(cores, images={})
-      self.cq.submit(
-        (*noop.static_commands(), *commands, Run(cores)),
-        timeout=timeout,
-      )
-    used = tuple(
-      next_address[core] - TensixL1.KERNEL_CACHE_BASE for core in cores
-    )
-    alignment = TensixL1.PARAM_TEMPLATE_ALIGNMENT
-    self._param_template_next = (
-      max(next_address.values(), default=TensixL1.KERNEL_CACHE_BASE)
-      + alignment - 1
-    ) & -alignment
-    if self._param_template_next > TensixL1.KERNEL_CACHE_END:
-      raise MemoryError("resident kernels exceed the persistent program arena")
-    return {
-      "programs": len(programs),
-      "images": len(global_images),
-      "records": len(commands),
-      "source_bytes": sum(len(image) for _, image in global_images),
-      "max_bytes_per_core": max(used, default=0),
-      "average_bytes_per_core": sum(used) / len(used) if used else 0.0,
-    }
-
-  def _install_param_templates(self, queued, runtime_names, timeout=30.0):
-    runtime_ids = {name: index for index, name in enumerate(runtime_names)}
-    addresses, writes, defaults, seen = [], [], {}, set()
-
-    for program, values, _, _ in queued:
-      if not program.params:
-        addresses.append(0)
-        continue
-      count = len(program.params)
-      if count > TensixL1.PARAM_TEMPLATE_MAX_PARAMS:
-        raise ValueError(
-          f"trace program has {count} parameters; resident templates support "
-          f"at most {TensixL1.PARAM_TEMPLATE_MAX_PARAMS}",
-        )
-      names = tuple(program.params)
-      ids = bytes(runtime_ids.get(name, 0xFF) for name in names)
-      tables = program._param_table(values)
-      payloads = []
-      resident = self._resident_programs.get(program)
-      for core, table in zip(program.cores, tables):
-        if len(table) != count * 4:
-          raise RuntimeError("program parameter table has an invalid size")
-        payload = bytearray(TensixL1.PARAM_TEMPLATE_STRIDE)
-        payload[0:4] = count.to_bytes(4, "little")
-        start = TensixL1.PARAM_TEMPLATE_VALUES
-        payload[start:start + len(table)] = table
-        start = TensixL1.PARAM_TEMPLATE_IDS
-        payload[start:start + len(ids)] = ids
-        if resident is not None:
-          trampolines = tuple(
-            RV32().jal(
-              R.ZERO, address - TensixL1.WORKER_TEXT_BASE[role],
-            )
-            for role, address in zip(KERNEL_ROLES, resident[core])
-          )
-          start = TensixL1.PARAM_TEMPLATE_KERNELS
-          payload[start:start + 4 * len(trampolines)] = Struct(
-            f"<{len(trampolines)}I",
-          ).pack(*trampolines)
-        payloads.append(bytes(payload))
-
-      # Identical core-local tables share one address across trace launches.
-      key = program.cores, tuple(payloads)
-      if key in self._param_templates:
-        address = self._param_templates[key]
-      else:
-        address = self._param_template_next
-        following = address + TensixL1.PARAM_TEMPLATE_STRIDE
-        if following > TensixL1.KERNEL_CACHE_END:
-          raise MemoryError("worker-L1 persistent program arena is full")
-        self._param_template_next = following
-        self._param_templates[key] = address
-        writes.append(UnicastWrite(program.cores, address, tuple(payloads)))
-      addresses.append(address)
-
-      for slot, name in enumerate(names):
-        if name not in runtime_ids:
-          continue
-        seen.add(name)
-        core_values = {
-          int.from_bytes(table[slot * 4:slot * 4 + 4], "little")
-          for table in tables
-        }
-        if len(core_values) != 1:
-          raise ValueError(
-            f"compact runtime parameter {name!r} must be uniform across cores",
-          )
-        value = core_values.pop()
-        if name in defaults and defaults[name] != value:
-          raise ValueError(
-            f"compact runtime parameter {name!r} has conflicting "
-            "capture-time values",
-          )
-        defaults[name] = value
-    missing = set(runtime_names) - seen
-    if missing:
-      raise KeyError(
-        f"trace programs have no runtime parameters: {sorted(missing)}",
-      )
-    if writes:
-      active = {core for write in writes for core in write.cores}
-      cores = tuple(core for core in self.pcie.cores if core in active)
-      noop = Program(cores, images={})
-      self.cq.submit(
-        (*noop.static_commands(), *writes, Run(cores)),
-        timeout=timeout,
-      )
-    return tuple(addresses), tuple(defaults[name] for name in runtime_names)
-
-  def capture_trace(self, runtime_params=None):
-    """Consume queued programs and capture them as one replayable CQ range."""
-    if self.cq is None:
-      raise RuntimeError("init_device() must be called before trace capture")
-    if self.read_queue:
-      raise ValueError("DRAM readbacks are not supported inside a trace")
-    if not self.program_queue:
-      raise ValueError("trace capture requires at least one queued program")
-
-    if runtime_params is not None:
-      runtime_names = tuple(runtime_params)
-      if not runtime_names:
-        raise ValueError("compact trace requires at least one runtime parameter")
-      if len(set(runtime_names)) != len(runtime_names):
-        raise ValueError("compact trace runtime parameter names must be unique")
-      if any(type(name) is not str or not name for name in runtime_names):
-        raise TypeError("compact trace runtime parameters must be named strings")
-      if len(runtime_names) > TensixL1.RUNTIME_PARAM_SLOTS:
-        raise ValueError(
-          f"compact trace supports at most "
-          f"{TensixL1.RUNTIME_PARAM_SLOTS} runtime parameters",
-        )
-      queued = tuple(self.program_queue)
-      template_addresses, defaults = self._install_param_templates(
-        queued, runtime_names,
-      )
-      records, dispatch_sizes = [], []
-
-      def append_compact(command):
-        record = command.lower()
-        records.append(record)
-        dispatch_sizes.append(
-          command.size if isinstance(command, DramRecord) else len(record),
-        )
-        return len(records) - 1, len(record)
-
-      active = {
-        core for program, _, _, _ in queued for core in program.cores
-      }
-      cores = tuple(core for core in self.pcie.cores if core in active)
-      rects = rectangles(cores)
-      runtime_index, runtime_size = append_compact(McastWrite(
-        rects, TensixL1.RUNTIME_PARAM_BASE,
-        Struct(f"<{len(defaults)}I").pack(*defaults),
-      ))
-
-      for (program, values, _, _), template in zip(
-        queued, template_addresses,
-      ):
-        static = (
-          () if program in self._resident_programs
-          else self._cached_static.get(program)
-        )
-        if static is None: static = program.static_commands()
-        for command in static:
-          append_compact(command)
-        runtime = program.runtime_commands(values)
-        if program.params:
-          runtime = runtime[1:]
-        for command in runtime:
-          append_compact(command)
-        if program.cores:
-          append_compact(Run(program.cores, param_template=template))
-
-      trace = self.cq.capture_trace(records, dispatch_sizes)
-      runtime = _TraceRuntime(
-        trace.record_offsets[runtime_index], runtime_size,
-        runtime_names, defaults, rects,
-      )
-      self.program_queue.clear()
-      self._staging_next = 0
-      return DeviceTrace(
-        self, trace, runtime=runtime,
-        template_count=sum(address != 0 for address in template_addresses),
-      )
-
-    records, dispatch_sizes, param_specs = [], [], []
-
-    def append(command):
-      index = len(records)
-      record = command.lower()
-      records.append(record)
-      dispatch_sizes.append(
-        command.size if isinstance(command, DramRecord) else len(record),
-      )
-      return index, len(record)
-
-    for program, values, _, _ in self.program_queue:
-      static = self._cached_static.get(program)
-      if static is None:
-        static = program.static_commands()
-      for command in static: append(command)
-      runtime = program.runtime_commands(values)
-      if program.params:
-        index, size = append(runtime[0])
-        param_specs.append((index, size, program, values))
-        runtime = runtime[1:]
-      for command in runtime: append(command)
-      if program.cores: append(Run(program.cores))
-
-    trace = self.cq.capture_trace(records, dispatch_sizes)
-    patches = tuple(
-      _TraceParam(
-        trace.record_offsets[index], size, program, values,
-      )
-      for index, size, program, values in param_specs
-    )
-    self.program_queue.clear()
-    self._staging_next = 0
-    return DeviceTrace(self, trace, patches)
-
-  def write(self, buffer, data: bytes):
-    return self._write_physical(buffer, buffer.tile_data(data))
-
-  def queue_read(self, buffer):
-    offset = self._staging_next
-    program = self._dram_copy_program(buffer, write=False, offset=offset)
-    readback = Readback(self, buffer, offset)
-    self._staging_next += buffer.size
-    self.read_queue.append((program, None, readback, False))
-    return readback
-
-  def read(self, buffer, timeout=10.0):
-    readback = self.queue_read(buffer)
-    self.run(timeout=timeout)
-    return readback.result()
-
-  def run(self, *programs: Program, params=None, timeout=10.0):
-    if self.cq is None: raise RuntimeError("init_device() must be called before run()")
-    if params is not None and len(programs) != 1:
-      raise ValueError("parameter overrides require exactly one explicit program")
-    for program in programs: self.queue(program, params)
-    batch = (*self.program_queue, *self.read_queue)
-    results = []
-    pending = []
-    for index, (program, values, readback, report) in enumerate(batch):
-      static = self._cached_static.get(program)
-      commands = program.commands(values) if static is None else (
-        *static, *program.runtime_commands(values),
-      )
-      completion = (
-        report or readback is not None or index == len(batch) - 1
-      )
-      if program.cores: commands = (*commands, Run(program.cores))
-      event = self.cq.enqueue(commands, completion=completion)
-      if completion:
-        pending.append((event, readback, report))
-
-    for event, readback, report in pending:
-      timestamp = self.cq.wait(event, timeout=timeout)
-      if report: results.append(timestamp)
-      if readback is not None: readback._finish()
-    self.program_queue.clear(); self.read_queue.clear()
-    self._staging_next = 0
-    return results
+  def run(self, program, *, params=None, l1=None, timeout=10.0):
+    if self.cq is None: raise RuntimeError("boot() must be called first")
+    if any(core not in self.cores for core in program.cores):
+      raise ValueError("launch contains an unavailable worker tile")
+    return self.cq.submit(program.commands(params=params, l1=l1), timeout=timeout)
 
   def close(self):
     if self.pcie.fd < 0:
       return
-    self.reset_cores()
-    if self.cq is not None:
-      self.cq.close()
-      self.cq = None
-    self.pcie.close()
+    try:
+      with TLBWindow(self.pcie.fd, self.pcie.cores[0]) as window:
+        address = TensixMMIO.RISCV_DEBUG_REG_SOFT_RESET_0
+        base = address & -TLBWindow.SIZE
+        for start, end in rectangles(self.pcie.cores):
+          window.target(base, start, end)
+          window.write(address - base, TensixMMIO.SOFT_RESET_ALL)
+    finally:
+      if self.cq is not None:
+        self.cq.close()
+        self.cq = None
+      self.pcie.close()

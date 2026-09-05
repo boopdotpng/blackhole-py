@@ -3,7 +3,8 @@ from pathlib import Path
 
 import pytest
 
-from tests.harness import RawDevice, RawHarness
+from device import Device
+from tests.harness import RawHarness
 
 
 def pytest_addoption(parser):
@@ -40,7 +41,7 @@ def bh(request):
   lock_path = Path(f"/tmp/blackhole-py-raw-device-{index}.lock")
   with lock_path.open("w") as lock:
     fcntl.flock(lock, fcntl.LOCK_EX)
-    device = RawDevice(index)
+    device = Device(index)
     try:
       device.boot()
       core_index = request.config.getoption("--bh-core")

@@ -1,4 +1,5 @@
 #include "fw.h"
+#include "cq.h"
 #define breadcrumb(stage, a, b, c, d) \
   breadcrumb_at(TT_BREADCRUMB_BASE + TT_FW_RISC * 0x20u, stage, a, b, c, d)
 
@@ -36,41 +37,12 @@
 #error "TT_FW_RISC must select BRISC (0) or NCRISC (1)"
 #endif
 
-#define ALIGN 64u
-#define CQ_STATE 0x1000u
-#define DRAM_PUBLISHED CQ_STATE
-#define DRAM_NCRISC_READ (CQ_STATE + 4u)
-#define DRAM_READ_PUBLISH (CQ_STATE + 0x60u)
-#define DRAM_QUEUE_BASE 0x2000u
-#define DRAM_QUEUE_ENTRIES 32u
-#define DISPATCH_DRAM_READ 0x160090u
-#define DISPATCH_SIGNAL 0x160070u
-#define DISPATCH_COORD ((3u << 6) | 14u)
-#define PCIE_COORD ((1u << 24) | (24u << 6) | 19u)
 #define WALL_CLOCK_LO 0xFFB121F0u
 #define BC_BASE (0x300u + TT_FW_RISC * 0x100u)
 #define WALL_CLOCK_HI 0xFFB121F8u
 #define NCRISC_RESET_PC 0xFFB12238u
 #define NCRISC_RESET_PC_OVERRIDE 0xFFB1223Cu
 #define SOFT_RESET 0xFFB121B0u
-
-#define PACKET_OP 0u
-#define PACKET_ADDRESS 8u
-#define PACKET_DATA_SIZE 12u
-#define COPY_SOURCE_LO 16u
-#define COPY_SOURCE_MID 20u
-#define COPY_PAGE_COUNT 24u
-#define COPY_BANKS 28u
-#define COPY_DIRECTION 32u
-#define COPY_BANK_START 36u
-#define SIGNAL_TARGET_LO 8u
-#define SIGNAL_TARGET_MID 12u
-#define SIGNAL_VALUE 16u
-
-enum {
-  OP_SIGNAL = 5,
-  OP_DRAM_COPY = 7,
-};
 
 static const u32 coordinates[TT_DRAM_BANKS] = {
   COORD_0, COORD_1, COORD_2, COORD_3,

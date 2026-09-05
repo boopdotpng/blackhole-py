@@ -1,6 +1,6 @@
 # Packer movement kernels
 
-Handwritten row-major proofs for every packer bullet in `docs/components.md`:
+Handwritten row-major proofs for packer movement:
 
 - runtime-sized copies from any FP32 Dst tile (0 through 7), at a chosen
   16-element Dst row offset, into an arbitrary aligned L1 CB page;

@@ -5,7 +5,7 @@ import pytest
 from asm import Asm
 from fw.consts import TensixL1, TensixMMIO
 from isa import R
-from tests.harness import _rectangles
+from cq import rectangles as _rectangles
 from tests.movement.remote_cb import (
   RemoteCBConfig, emit_send_pages, emit_wait_and_pop_pages,
 )

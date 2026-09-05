@@ -1,6 +1,3 @@
-from contextlib import contextmanager
-from dataclasses import dataclass
-from typing import ClassVar
 from fw.consts import Firmware, KernelRole, TensixL1, TensixMMIO
 from isa import Insn, R, RV32, Reg, TensixWord, VReg, is_reg
 from pcie import Allocator
@@ -19,94 +16,26 @@ def _li_words(rd: Reg, value: int):
   if lo: words.append(Insn("addi", (rd, rd, lo)))
   return words
 
-@dataclass(frozen=True)
-class Cond:
-  lhs: Reg
-  op: str
-  rhs: Reg | int
-  BRANCHES: ClassVar[set[str]] = {"beq", "bne", "blt", "bge", "bltu", "bgeu"}
-  OPS: ClassVar[dict[str, tuple[str, bool]]] = {
-    "==": ("beq", False), "!=": ("bne", False), "<": ("blt", False), ">=": ("bge", False),
-    "<u": ("bltu", False), ">=u": ("bgeu", False), ">": ("blt", True), "<=": ("bge", True),
-    ">u": ("bltu", True), "<=u": ("bgeu", True),
-  }
-
-  def branch(self, invert=False):
-    op, swap = self.OPS[self.op]
-    if invert: op = self.inverse(op)
-    return op, swap
-
-  @classmethod
-  def inverse(cls, op):
-    return {"beq": "bne", "bne": "beq", "blt": "bge", "bge": "blt", "bltu": "bgeu", "bgeu": "bltu"}[op]
-
 class Asm:
+  _BRANCHES = {"beq": "bne", "bne": "beq", "blt": "bge", "bge": "blt", "bltu": "bgeu", "bgeu": "bltu"}
   _DEFINES = {
     "add", "sub", "mul", "divu", "remu", "sltu", "min", "and_", "or_", "xor",
     "addi", "sltiu", "andi", "ori", "xori", "slli", "srli", "srai",
     "lw", "lbu", "lhu", "lui", "auipc", "jal", "jalr", "csrrs", "csrrc",
   }
 
-  def __init__(self, role: KernelRole, param_slots: dict[object, int] | None = None,
-               firmware: bool = False):
+  def __init__(self, role: KernelRole, firmware: bool = False):
     self.items, self.labels, self._prologue = [], {}, []
 
-    self._vreg_id, self._label_id, self._breaks = 0, 0, []
+    self._vreg_id = self._label_id = 0
     self.role = role
-    self.param_slots = {} if param_slots is None else param_slots
     self.is_firmware = bool(firmware)
     self.base = Firmware.TEXT[role][0] if firmware else TensixL1.WORKER_TEXT_BASE[role]
     self._lowered = False
     self.local = Allocator(*Firmware.LOCAL_MEMORY.get(role, (0, 0)), 4)
-    self._body_start = len(self.items)
 
   @classmethod
   def firmware(cls, role: KernelRole): return cls(role, firmware=True)
-
-  def configure_csr(self):
-    value = self.reg()
-    self.li(value, 2)
-    self.csrrs(R.ZERO, value, 0x7C0)
-    self.li(value, 1)
-    self.slli(value, value, 18)
-    self.fence()
-    self.csrrs(R.ZERO, value, 0x7C0)
-    self.li(value, 2)
-    self.csrrc(R.ZERO, value, 0x7C0)
-    self.fence()
-    self.fence()
-    self.li(value, 8)
-    self.csrrs(R.ZERO, value, 0x7C0)
-    return self
-
-  def setup_stack(self, stack_top: int):
-    return self.li(R.SP, stack_top)
-
-  def zero_words(self, addr: int, count: int):
-    if count == 0: return self
-    ptr, remaining = self.reg(2)
-    self.li(ptr, addr)
-    self.li(remaining, count)
-    loop = self._new_label("zero_words")
-    done = self._new_label("zero_words_done")
-    self.label(loop)
-    self.beq(remaining, R.ZERO, done)
-    self.sw(R.ZERO, ptr, 0)
-    self.addi(ptr, ptr, 4)
-    self.addi(remaining, remaining, -1)
-    self.j(loop)
-    self.label(done)
-    return self
-
-  def invalidate_risc_caches(self):
-    return self.write(TensixMMIO.RISCV_IC_INVALIDATE, TensixMMIO.RISCV_IC_ALL_MASK)
-
-  def align_up(self, value: Reg, alignment: int):
-    scratch = self.reg()
-    self.li(scratch, alignment - 1)
-    self.add(value, value, scratch)
-    self.li(scratch, -alignment)
-    return self.and_(value, value, scratch)
 
   def wait(self, addr: int, value: int, bytes=1):
     ptr, actual, expected = self.reg(3)
@@ -137,18 +66,6 @@ class Asm:
     if not is_reg(value): self.li(src := self.reg(), value)
     else: src = value
     return op(src, base)
-
-  @property
-  def noc(self):
-    if self.role not in ("brisc", "ncrisc"):
-      raise RuntimeError(f"{self.role} cannot access a NoC")
-    return self.noc_at(0 if self.role == "brisc" else 1)
-
-  def noc_at(self, index: int):
-    if self.role not in ("brisc", "ncrisc"):
-      raise RuntimeError(f"{self.role} cannot access a NoC")
-    from ttk.noc import NoC
-    return NoC(self, index)
 
   def _emit(self, word: int):
     if self._lowered: raise RuntimeError("kernel has already been lowered")
@@ -208,63 +125,26 @@ class Asm:
     self._prologue.append(Insn("sw", (source, address, 0)))
     return self
 
-  def initialize_tensix(self, *words):
-    if self._lowered: raise RuntimeError("kernel has already been lowered")
-    if self.role not in ("trisc0", "trisc1", "trisc2"):
-      raise RuntimeError(f"{self.role} cannot initialize Tensix instructions")
-    if any(not isinstance(word, TensixWord) for word in words):
-      raise TypeError("Tensix initialization requires Tensix instructions")
-    self._prologue.extend(words)
-    return self
-
   def mv(self, rd: Reg, rs: Reg): return self.addi(rd, rs, 0)
   def j(self, target: str | int):
     if isinstance(target, str): return self.jal(R.ZERO, target)
     self.items.append(Insn("jal", (R.ZERO,), target)); return self
-
-  def _branch_cond(self, c: Cond, label: str, invert=False):
-    op, swap = c.branch(invert)
-    if is_reg(c.rhs):
-      a, b = c.lhs, c.rhs
-      return getattr(self, op)(b, a, label) if swap else getattr(self, op)(a, b, label)
-    if c.rhs == 0: return self._branch_cond(Cond(c.lhs, c.op, R.X0), label, invert)
-    rhs = self.reg()
-    self.li(rhs, c.rhs)
-    return self._branch_cond(Cond(c.lhs, c.op, rhs), label, invert)
-
-  @contextmanager
-  def loop(self, condition: Cond | None = None):
-    start, end = self._new_label("loop"), self._new_label("endloop")
-    self.label(start)
-    if condition is not None: self._branch_cond(condition, end, invert=True)
-    self._breaks.append(end)
-    try: yield
-    finally: self._breaks.pop()
-    self.j(start)
-    self.label(end)
 
   def range(self, count: int | Reg):
     index, limit = self.reg(2)
     self.li(index, 0)
     if is_reg(count): self.mv(limit, count)
     else: self.li(limit, count)
-    with self.loop(Cond(index, "<u", limit)):
-      yield index
-      self.addi(index, index, 1)
-
-  def switch(self, value: Reg, cases: dict[int, str], default: str):
-    expected = self.reg()
-    for literal, label in cases.items():
-      self.li(expected, literal)
-      self.beq(value, expected, label)
-    return self.j(default)
-
-  def break_(self, condition: Cond | None = None):
-    if not self._breaks: raise RuntimeError("break_() used outside loop()")
-    return self.j(self._breaks[-1]) if condition is None else self._branch_cond(condition, self._breaks[-1])
+    start, end = self._new_label("loop"), self._new_label("endloop")
+    self.label(start)
+    self.bgeu(index, limit, end)
+    yield index
+    self.addi(index, index, 1)
+    self.j(start)
+    self.label(end)
 
   def _allocate_registers(self):
-    return allocate(self.items, self.labels, self.base, Cond.BRANCHES, self._DEFINES)
+    return allocate(self.items, self.labels, self.base, self._BRANCHES.keys(), self._DEFINES)
 
   @staticmethod
   def _resolve(args, allocation):
@@ -281,7 +161,7 @@ class Asm:
       targets = {name: pc(index) for name, index in self.labels.items()}
       changed = False
       for i, item in enumerate(self.items):
-        if isinstance(item, Insn) and item.target is not None and item.op in Cond.BRANCHES and i not in long:
+        if isinstance(item, Insn) and item.target is not None and item.op in self._BRANCHES.keys() and i not in long:
           if item.target not in targets: raise ValueError(f"undefined label {item.target!r}")
           if not -4096 <= targets[item.target] - pc(i) < 4096: long.add(i); changed = True
       if not changed: return long, targets
@@ -305,7 +185,7 @@ class Asm:
       else: offset = item.target - (self.base + pc)
       if offset & 1: raise ValueError(f"misaligned target {item.target!r}")
       if i in long:
-        out.append(getattr(_rv32, Cond.inverse(item.op))(*args, 8))
+        out.append(getattr(_rv32, self._BRANCHES[item.op])(*args, 8))
         offset = targets[item.target] - (pc + 4)
         if not -(1 << 20) <= offset < 1 << 20: raise ValueError(f"target {item.target!r} is out of range")
         out.append(_rv32.jal(R.ZERO, offset)); pc += 8
@@ -322,9 +202,9 @@ class Asm:
     if not self.is_firmware: self.j(Firmware.TEXT[self.role][0])
     if self._prologue:
       count = len(self._prologue)
-      self.items[self._body_start:self._body_start] = self._prologue
+      self.items[:0] = self._prologue
       self.labels = {
-        name: index + count if index >= self._body_start else index
+        name: index + count
         for name, index in self.labels.items()
       }
       self._prologue = []

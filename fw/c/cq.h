@@ -1,0 +1,68 @@
+#ifndef TT_CQ_H
+#define TT_CQ_H
+
+/* Host packet layout and service-core L1 mailboxes. Keep in sync with cq.py.
+ * Opcode slots 4 and 6 are reserved for the removed indirect/trace commands. */
+#define ALIGN 64u
+#define PAGE_SIZE 4096u
+#define HOST_ISSUE_SIZE (4u << 20)
+#define CQ_STATE 0x1000u
+#define PCIE_COORD ((1u << 24) | (24u << 6) | 19u)
+#define GO_SIGNAL 0x0373u
+
+#define PREFETCH_DOORBELL CQ_STATE
+#define PREFETCH_PCIE_BASE (CQ_STATE + 0x08u)
+#define PREFETCH_READ_PTR (CQ_STATE + 0x0Cu)
+#define PREFETCH_DISPATCH_READ (CQ_STATE + 0x10u)
+#define PREFETCH_READ_PUBLISH (CQ_STATE + 0x30u)
+#define PREFETCH_DISPATCH_PUBLISH (CQ_STATE + 0x40u)
+#define PREFETCH_STAGING 0x20000u
+#define PREFETCH_COORD ((2u << 6) | 14u)
+
+#define DISPATCH_PUBLISHED CQ_STATE
+#define DISPATCH_RING_BASE 0x20000u
+#define DISPATCH_RING_PAGES 320u
+#define DISPATCH_RING_END (DISPATCH_RING_BASE + DISPATCH_RING_PAGES * PAGE_SIZE)
+#define DISPATCH_SCRATCH DISPATCH_RING_END
+#define DISPATCH_READ_PUBLISH (DISPATCH_SCRATCH + 0x60u)
+#define DISPATCH_COORD ((3u << 6) | 14u)
+#define DISPATCH_GO (DISPATCH_SCRATCH + 0x40u)
+#define DISPATCH_DONE_COUNT (DISPATCH_SCRATCH + 0x50u)
+#define DISPATCH_DRAM_PUT (DISPATCH_SCRATCH + 0x80u)
+#define DISPATCH_DRAM_READ (DISPATCH_SCRATCH + 0x90u)
+#define DISPATCH_SIGNAL (DISPATCH_SCRATCH + 0x70u)
+
+#define DRAM_PUBLISHED CQ_STATE
+#define DRAM_READ_PUBLISH (CQ_STATE + 0x60u)
+#define DRAM_QUEUE_BASE 0x2000u
+#define DRAM_QUEUE_ENTRIES 32u
+#define DRAM_COORD ((4u << 6) | 14u)
+#define DRAM_NCRISC_READ (CQ_STATE + 4u)
+
+#define PACKET_OP 0u
+#define PACKET_TARGET_COUNT 2u
+#define PACKET_TOTAL_SIZE 4u
+#define PACKET_ADDRESS 8u
+#define PACKET_DATA_SIZE 12u
+#define PACKET_WRITE_TARGETS 16u
+#define PACKET_RUN_TARGETS 24u
+
+#define COPY_SOURCE_LO 16u
+#define COPY_SOURCE_MID 20u
+#define COPY_PAGE_COUNT 24u
+#define COPY_BANKS 28u
+#define COPY_DIRECTION 32u
+#define COPY_BANK_START 36u
+#define SIGNAL_TARGET_LO 8u
+#define SIGNAL_TARGET_MID 12u
+#define SIGNAL_VALUE 16u
+
+enum {
+  OP_PAD = 0,
+  OP_UNICAST_WRITE = 1,
+  OP_MCAST_WRITE = 2,
+  OP_RUN = 3,
+  OP_SIGNAL = 5,
+  OP_DRAM_COPY = 7,
+};
+#endif
