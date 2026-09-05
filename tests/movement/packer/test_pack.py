@@ -117,9 +117,9 @@ def test_pack_runtime_rows_from_dst_to_row_major_cb(
   assert profile.last[label] > 0
 
 
-def _bf16_rne(value):
+def _bf16_nearest(value):
   bits = unpack("<I", pack("<f", value))[0]
-  return ((bits + 0x7FFF + ((bits >> 16) & 1)) >> 16) & 0xFFFF
+  return ((bits + 0x8000) >> 16) & 0xFFFF
 
 
 @pytest.mark.parametrize(("mode", "upper", "output_format", "count", "offset"), [
@@ -138,13 +138,13 @@ def test_packer_activation_is_a_standalone_partial_kernel(
     relu_mode, threshold = 1, 0
     transformed = (max(value, 0.0) for value in values[offset:offset + count])
   else:
-    relu_mode, threshold = 3, _bf16_rne(upper)
+    relu_mode, threshold = 3, _bf16_nearest(upper)
     transformed = (
       min(max(value, 0.0), upper) for value in values[offset:offset + count]
     )
   transformed = tuple(transformed)
   expected = (
-    pack(f"<{count}H", *(_bf16_rne(value) for value in transformed))
+    pack(f"<{count}H", *(_bf16_nearest(value) for value in transformed))
     if output_format == BF16 else pack(f"<{count}f", *transformed)
   )
   format_name = "BF16" if output_format == BF16 else "F32"
@@ -176,6 +176,8 @@ def _rounding_source():
     ((index * 40503 + 0x1234) & 0xFFFF)
     for index in range(TILE_ELEMENTS)
   )
+  # Include positive/negative halfway values with even and odd retained LSBs.
+  words = (0x3F008000, 0x3F018000, 0xBF008000, 0xBF018000) + words[4:]
   return words, pack(f"<{TILE_ELEMENTS}I", *words)
 
 
@@ -211,9 +213,9 @@ def test_deterministic_and_stochastic_bf16_format_conversion(bh):
     bh, source, stochastic=False, seed=0, label="deterministic rounding",
   )
   # With pack/gasket stochastic rounding disabled, the supported gasket path
-  # performs deterministic round-to-nearest-even conversion to BF16.
+  # performs round-to-nearest with ties away from zero (not ties to even).
   expected = tuple(
-    ((word + 0x7FFF + ((word >> 16) & 1)) >> 16) & 0xFFFF
+    ((word + 0x8000) >> 16) & 0xFFFF
     for word in words
   )
   assert deterministic == expected
