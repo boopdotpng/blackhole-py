@@ -137,7 +137,15 @@ class DeviceTrace:
     return self.device.cq.replay_trace(self.trace, timeout=timeout)
 
 class Device:
-  def __init__(self, index: int = 0, sysmem_size: int = 1 << 30):
+  # Change this to 1 to make ordinary Device() instances use the second card.
+  DEFAULT_INDEX = 0
+
+  def __init__(self, index: int | None = None,
+               sysmem_size: int = 1 << 30):
+    index = self.DEFAULT_INDEX if index is None else index
+    if type(index) is not int or index not in (0, 1):
+      raise ValueError("device index must be 0 or 1")
+    self.index = index
     self.pcie = PCIDevice(index, sysmem_size)
     self.dram = Dram(
       len(self.pcie.dram_endpoints), self.pcie.cores,

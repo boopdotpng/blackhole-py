@@ -1750,7 +1750,7 @@ class Llama3Decode:
   """Resident-weight, batch-1 Llama 3.2 1B decode runtime."""
 
   def __init__(self, safetensor_path="weights/model.safetensors",
-               device_index=0):
+               device_index=None):
     self.safetensor_path = str(safetensor_path)
     self.host_result_read_us = 0.0
     self.host_result_reads = 0
@@ -2159,7 +2159,7 @@ def run_decode_e2e(
   safetensor_path="weights/model.safetensors",
   tokenizer_path="weights",
   profile=False,
-  device_index=0,
+  device_index=None,
 ):
   """Run prompt ingestion and greedy generation entirely through decode."""
   if steps is not None and steps < 1:
@@ -2319,15 +2319,11 @@ if __name__ == "__main__":
   parser.add_argument("--safetensor", default="weights/model.safetensors")
   parser.add_argument("--tokenizer", default="weights")
   parser.add_argument(
-    "--device", type=int, default=0,
-    help="Tenstorrent device index (default: 0)",
-  )
-  parser.add_argument(
     "--profile", action="store_true",
     help="print startup, DRAM-upload, device, and host-loop timing",
   )
   args = parser.parse_args()
   run_decode_e2e(
     args.prompt, args.steps, args.safetensor, args.tokenizer,
-    profile=args.profile, device_index=args.device,
+    profile=args.profile,
   )
