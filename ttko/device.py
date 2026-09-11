@@ -157,7 +157,9 @@ class Device(RawDevice):
 
   def reset_cores(self):
     with TLBWindow(self.pcie.fd, self.pcie.cores[0]) as win:
-      win.mcast(TensixMMIO.RISCV_DEBUG_REG_SOFT_RESET_0, TensixMMIO.SOFT_RESET_ALL)
+      address = TensixMMIO.RISCV_DEBUG_REG_SOFT_RESET_0
+      win.target(address & -TLBWindow.SIZE, (1, 2), (14, 11))
+      win.write(address % TLBWindow.SIZE, TensixMMIO.SOFT_RESET_ALL)
 
   def init_device(self):
     return self.boot()

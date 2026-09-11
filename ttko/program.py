@@ -163,9 +163,11 @@ class Buffer:
 
   def pad_data(self, data: bytes):
     """Pad and shard row-major elements without changing order within a tile."""
+    if len(data) != prod(self.shape) * self.dtype.itemsize:
+      raise ValueError("row-major byte length does not match buffer shape")
+    if self._raw_global: return bytes(data)
     element = np.dtype(f"V{self.dtype.itemsize}")
     values = np.frombuffer(data, dtype=element).reshape(self.shape)
-    if self._raw_global: return bytes(data)
     if self.axis is None:
       logical = np.zeros((self.items, 1024), dtype=element)
       logical.reshape(-1)[:values.size] = values.reshape(-1)

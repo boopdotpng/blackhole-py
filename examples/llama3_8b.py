@@ -2620,7 +2620,7 @@ def run_decode_e2e(
       f"  program build        {startup['program_build_s'] * 1e3:9.2f} ms"
     )
     print(
-      f"prompt prefill         {prompt_seconds * 1e3:9.2f} ms  "
+      f"prompt {'prefill' if prefill else 'decode'}         {prompt_seconds * 1e3:9.2f} ms  "
       f"({len(prompt_ids)} tokens)"
     )
     if generation_profiles:
