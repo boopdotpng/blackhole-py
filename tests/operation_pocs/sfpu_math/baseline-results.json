@@ -1,0 +1,394 @@
+[
+  {
+    "op": "add",
+    "mode": "refined",
+    "slots": [
+      0,
+      17,
+      63
+    ],
+    "mask": "all",
+    "alias": "none",
+    "dtype": "fp32",
+    "N": 128,
+    "K": 4,
+    "warmup": 1,
+    "raw": [
+      78,
+      78,
+      78,
+      78,
+      78,
+      78,
+      78
+    ],
+    "empty": [
+      12,
+      12,
+      12,
+      12,
+      12,
+      12,
+      12
+    ],
+    "min": 78,
+    "median": 78,
+    "max": 78,
+    "cycles_per_vector": 19.5,
+    "worst": [
+      0.0,
+      0.0,
+      0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "core": "(1, 2)",
+    "job_id": "7e7ec43b14ba496f928a1a9f2f207286",
+    "device": 1,
+    "evidence": "historical baseline; before resumed control instrumentation"
+  },
+  {
+    "op": "sub",
+    "mode": "refined",
+    "slots": [
+      0,
+      17,
+      63
+    ],
+    "mask": "all",
+    "alias": "none",
+    "dtype": "fp32",
+    "N": 128,
+    "K": 4,
+    "warmup": 1,
+    "raw": [
+      78,
+      78,
+      78,
+      78,
+      78,
+      78,
+      78
+    ],
+    "empty": [
+      12,
+      12,
+      12,
+      12,
+      12,
+      12,
+      12
+    ],
+    "min": 78,
+    "median": 78,
+    "max": 78,
+    "cycles_per_vector": 19.5,
+    "worst": [
+      0.0,
+      0.0,
+      0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "core": "(1, 2)",
+    "job_id": "7e7ec43b14ba496f928a1a9f2f207286",
+    "device": 1,
+    "evidence": "historical baseline; before resumed control instrumentation"
+  },
+  {
+    "op": "mul",
+    "mode": "refined",
+    "slots": [
+      0,
+      17,
+      63
+    ],
+    "mask": "all",
+    "alias": "none",
+    "dtype": "fp32",
+    "N": 128,
+    "K": 4,
+    "warmup": 1,
+    "raw": [
+      78,
+      78,
+      78,
+      78,
+      78,
+      78,
+      78
+    ],
+    "empty": [
+      12,
+      12,
+      12,
+      12,
+      12,
+      12,
+      12
+    ],
+    "min": 78,
+    "median": 78,
+    "max": 78,
+    "cycles_per_vector": 19.5,
+    "worst": [
+      0.0,
+      0.0,
+      0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "core": "(1, 2)",
+    "job_id": "7e7ec43b14ba496f928a1a9f2f207286",
+    "device": 1,
+    "evidence": "historical baseline; before resumed control instrumentation"
+  },
+  {
+    "op": "mad",
+    "mode": "refined",
+    "slots": [
+      0,
+      17,
+      63
+    ],
+    "mask": "all",
+    "alias": "none",
+    "dtype": "fp32",
+    "N": 128,
+    "K": 4,
+    "warmup": 1,
+    "raw": [
+      78,
+      78,
+      78,
+      78,
+      78,
+      78,
+      78
+    ],
+    "empty": [
+      12,
+      12,
+      12,
+      12,
+      12,
+      12,
+      12
+    ],
+    "min": 78,
+    "median": 78,
+    "max": 78,
+    "cycles_per_vector": 19.5,
+    "worst": [
+      0.0,
+      0.0,
+      0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "core": "(1, 2)",
+    "job_id": "7e7ec43b14ba496f928a1a9f2f207286",
+    "device": 1,
+    "evidence": "historical baseline; before resumed control instrumentation"
+  },
+  {
+    "op": "neg",
+    "mode": "refined",
+    "slots": [
+      0,
+      17,
+      63
+    ],
+    "mask": "all",
+    "alias": "none",
+    "dtype": "fp32",
+    "N": 128,
+    "K": 4,
+    "warmup": 1,
+    "raw": [
+      74,
+      74,
+      74,
+      74,
+      74,
+      74,
+      74
+    ],
+    "empty": [
+      12,
+      12,
+      12,
+      12,
+      12,
+      12,
+      12
+    ],
+    "min": 74,
+    "median": 74,
+    "max": 74,
+    "cycles_per_vector": 18.5,
+    "worst": [
+      0.0,
+      0.0,
+      0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "core": "(1, 2)",
+    "job_id": "7e7ec43b14ba496f928a1a9f2f207286",
+    "device": 1,
+    "evidence": "historical baseline; before resumed control instrumentation"
+  },
+  {
+    "op": "abs",
+    "mode": "refined",
+    "slots": [
+      0,
+      17,
+      63
+    ],
+    "mask": "all",
+    "alias": "none",
+    "dtype": "fp32",
+    "N": 128,
+    "K": 4,
+    "warmup": 1,
+    "raw": [
+      74,
+      74,
+      74,
+      74,
+      74,
+      74,
+      74
+    ],
+    "empty": [
+      12,
+      12,
+      12,
+      12,
+      12,
+      12,
+      12
+    ],
+    "min": 74,
+    "median": 74,
+    "max": 74,
+    "cycles_per_vector": 18.5,
+    "worst": [
+      0.0,
+      0.0,
+      0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "core": "(1, 2)",
+    "job_id": "7e7ec43b14ba496f928a1a9f2f207286",
+    "device": 1,
+    "evidence": "historical baseline; before resumed control instrumentation"
+  },
+  {
+    "op": "exp",
+    "mode": "refined",
+    "slots": [
+      0,
+      17,
+      63
+    ],
+    "mask": "all",
+    "alias": "none",
+    "dtype": "fp32",
+    "N": 128,
+    "K": 4,
+    "warmup": 1,
+    "raw": [
+      250,
+      250,
+      250,
+      250,
+      250,
+      250,
+      250
+    ],
+    "empty": [
+      12,
+      12,
+      12,
+      12,
+      12,
+      12,
+      12
+    ],
+    "min": 250,
+    "median": 250,
+    "max": 250,
+    "cycles_per_vector": 62.5,
+    "worst": [
+      2.089872557963821e-05,
+      3.7469948899722527e+18,
+      208,
+      53.54330825805664,
+      1.7928923791434194e+23,
+      1.792929849092319e+23
+    ],
+    "core": "(1, 2)",
+    "job_id": "7e7ec43b14ba496f928a1a9f2f207286",
+    "device": 1,
+    "evidence": "historical baseline; before resumed control instrumentation"
+  },
+  {
+    "op": "reciprocal",
+    "mode": "refined",
+    "slots": [
+      0,
+      17,
+      63
+    ],
+    "mask": "all",
+    "alias": "none",
+    "dtype": "fp32",
+    "N": 128,
+    "K": 4,
+    "warmup": 1,
+    "raw": [
+      118,
+      118,
+      118,
+      118,
+      118,
+      118,
+      118
+    ],
+    "empty": [
+      12,
+      12,
+      12,
+      12,
+      12,
+      12,
+      12
+    ],
+    "min": 118,
+    "median": 118,
+    "max": 118,
+    "cycles_per_vector": 29.5,
+    "worst": [
+      1.0803341905785135e-07,
+      7.205759403792794e+16,
+      1,
+      -1.4992648602523627e-24,
+      -6.669934811071119e+23,
+      -6.66993553164706e+23
+    ],
+    "core": "(1, 2)",
+    "job_id": "7e7ec43b14ba496f928a1a9f2f207286",
+    "device": 1,
+    "evidence": "historical baseline; before resumed control instrumentation"
+  }
+]

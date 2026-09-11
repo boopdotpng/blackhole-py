@@ -4,6 +4,9 @@ from struct import pack, unpack
 
 import pytest
 
+from tests import fp8
+from tests.movement.unpacker.unpack import BF16, FP8_E4M3
+
 from tests.compute.fpu.test_elwmul_slots import INPUT, INPUT_A, INPUT_B, OUTPUT, REPEATS, SAMPLES, _images
 
 CASES = (
@@ -14,11 +17,13 @@ CASES = (
 )
 
 
-def _inputs(operation, a_slots, b_slots):
+def _inputs(operation, a_slots, b_slots, input_format=BF16):
   a_size = 128 if operation == "ELWADD" else 256
   a = [[1 + ((i * 13 + block * 29) % 128) / 128 for i in range(a_size)] for block in range(2)]
   b = [[0.5 + ((i * 37 + block * 11) % 64) / 128 for i in range(128)] for block in range(2)]
   if operation == "GMPOOL": b = [[1.] * 128 for _ in range(2)]
+  if input_format == FP8_E4M3:
+    a, b = ([[fp8.decode(c) for c in fp8.encode(block)] for block in blocks] for blocks in (a, b))
   initial = [1 + (i % 16) / 16 for i in range(256)]
   expected = initial.copy()
   for block in range(2):
@@ -38,7 +43,8 @@ def _inputs(operation, a_slots, b_slots):
     physical = [0x4100 + i % 128 for i in range(1024)]
     for values, slot in zip(blocks, slots):
       physical[slot*128:slot*128+len(values)] = [unpack("<I", pack("<f", x))[0] >> 16 for x in values]
-    data[address] = pack("<1024H", *physical)
+    data[address] = (fp8.encode(unpack("<1024f", pack("<1024I", *(v << 16 for v in physical))))
+                     if input_format == FP8_E4M3 else pack("<1024H", *physical))
   return data, pack("<256f", *expected)
 
 
@@ -49,13 +55,18 @@ def _inputs(operation, a_slots, b_slots):
   pytest.param(op, "odd counter rounds down", (1, 5), (7, 0), id=f"{op}-odd-counter-rounds-down")
   for op in ("MVMUL", "GAPOOL")
 ])
-def test_arithmetic_source_slot_placement(bh, operation, name, a_slots, b_slots):
+@pytest.mark.parametrize("input_format", (BF16, FP8_E4M3), ids=("bf16", "fp8-e4m3"))
+def test_arithmetic_source_slot_placement(bh, operation, name, a_slots, b_slots, input_format, request):
+  if operation == "GMPOOL" and input_format == FP8_E4M3:
+    request.node.add_marker(pytest.mark.xfail(
+      strict=True, raises=AssertionError, reason="FP16 source GMPOOL does not widen to FP32 Dst correctly on Blackhole",
+    ))
   if operation == "ELWADD":
     a_slots = (0, 1) if a_slots == (0, 2) else (0, 7)
-  images, profile = _images(a_slots, b_slots, operation)
+  images, profile = _images(a_slots, b_slots, operation, input_format)
   # A uses aligned 16-row blocks on Blackhole, including MVMUL/GAPOOL.
   physical_a = tuple(slot & ~1 for slot in a_slots) if name == "odd counter rounds down" else a_slots
-  data, expected = _inputs(operation, physical_a, b_slots)
+  data, expected = _inputs(operation, physical_a, b_slots, input_format)
   samples = []
   for _ in range(SAMPLES):
     bh.launch(images, l1=data, profiler=profile)

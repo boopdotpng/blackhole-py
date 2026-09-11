@@ -1,0 +1,54 @@
+[tt-device-queue] Queue 0
+RUNTIME_CONTEXT {"card": 0, "core": [1, 5], "core_index": 3, "dram_endpoints": [[[17, 14], [17, 13]], [[17, 15], [17, 16]], [[17, 18], [17, 19]], [[17, 21], [17, 22]], [[18, 14], [18, 13]], [[18, 17], [18, 16]], [[18, 20], [18, 19]], [[18, 23], [18, 22]]], "firmware_manifest_sha256": "8d7e24525e5a0cbcabf97e70d0415c8871c9f3c899c031ddc23a03cff61a02d6", "ops_sha256": "ae96742ac2dabcd191db4b2ac0178b4150709d00731595cc2c5e61f3abac5ef4", "runtime_sha256": "094ac79248655ba75aa70810e43636858ba83e3a31b1d11e20f23efc40d80687", "worker_count": 117}
+cycle profile:
+  [1] empty: 12 cycles
+  [2] wait_valid: 2135 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] wait_valid: 2133 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] wait_valid: 2135 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] wait_valid: 2132 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] wait_valid: 2135 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] wait_valid: 2132 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] wait_valid: 2133 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] wait_valid: 2132 cycles
+RUNTIME_RESULT {"K": 1, "card": 0, "control": [12, 12, 12, 12, 12, 12, 12], "core": [1, 5], "cycles_per_operation": [2133.0, 2135.0, 2132.0, 2135.0, 2132.0, 2133.0, 2132.0], "delay_iterations": 1024, "maximum": 2135, "median": 2133, "minimum": 2132, "mode": "intentional-peer-wait", "operation": "source_wait_valid", "samples": [2133, 2135, 2132, 2135, 2132, 2133, 2132], "source_bank": "A", "warmup": 1}
+.cycle profile:
+  [1] empty: 12 cycles
+  [2] wait_valid: 2131 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] wait_valid: 2130 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] wait_valid: 2132 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] wait_valid: 2130 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] wait_valid: 2130 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] wait_valid: 2130 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] wait_valid: 2132 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] wait_valid: 2130 cycles
+RUNTIME_RESULT {"K": 1, "card": 0, "control": [12, 12, 12, 12, 12, 12, 12], "core": [1, 5], "cycles_per_operation": [2130.0, 2132.0, 2130.0, 2130.0, 2130.0, 2132.0, 2130.0], "delay_iterations": 1024, "maximum": 2132, "median": 2130, "minimum": 2130, "mode": "intentional-peer-wait", "operation": "source_wait_valid", "samples": [2130, 2132, 2130, 2130, 2130, 2132, 2130], "source_bank": "B", "warmup": 1}
+.
+2 passed, 52 deselected in 0.65s

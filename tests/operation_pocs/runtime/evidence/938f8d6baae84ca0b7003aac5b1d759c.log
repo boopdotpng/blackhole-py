@@ -1,0 +1,1068 @@
+[tt-device-queue] Queue 0
+cycle profile:
+  [1] empty: 13 cycles
+  [2] read: 534 cycles
+cycle profile:
+  [1] empty: 16 cycles
+  [2] read: 534 cycles
+cycle profile:
+  [1] empty: 18 cycles
+  [2] read: 534 cycles
+cycle profile:
+  [1] empty: 16 cycles
+  [2] read: 534 cycles
+cycle profile:
+  [1] empty: 18 cycles
+  [2] read: 534 cycles
+cycle profile:
+  [1] empty: 17 cycles
+  [2] read: 534 cycles
+cycle profile:
+  [1] empty: 16 cycles
+  [2] read: 534 cycles
+cycle profile:
+  [1] empty: 17 cycles
+  [2] read: 534 cycles
+RUNTIME_RESULT {"K": 1, "N": 128, "bank": 0, "card": 0, "control": [16, 18, 16, 18, 17, 16, 17], "coordinate": 913, "core": [1, 2], "cycles_per_operation": [534.0, 534.0, 534.0, 534.0, 534.0, 534.0, 534.0], "element_bytes": 2, "image_bytes": 336, "l1_address": 270400, "maximum": 534, "median": 534, "minimum": 534, "mode": "serial-baseline", "noc": 0, "offset_bytes": 64, "operation": "read", "samples": [534, 534, 534, 534, 534, 534, 534], "stride_bytes": 0, "warmup": 1}
+cycle profile:
+  [1] empty: 16 cycles
+  [2] read: 514 cycles
+cycle profile:
+  [1] empty: 19 cycles
+  [2] read: 514 cycles
+cycle profile:
+  [1] empty: 16 cycles
+  [2] read: 594 cycles
+cycle profile:
+  [1] empty: 19 cycles
+  [2] read: 514 cycles
+cycle profile:
+  [1] empty: 16 cycles
+  [2] read: 506 cycles
+cycle profile:
+  [1] empty: 18 cycles
+  [2] read: 522 cycles
+cycle profile:
+  [1] empty: 18 cycles
+  [2] read: 514 cycles
+cycle profile:
+  [1] empty: 18 cycles
+  [2] read: 514 cycles
+RUNTIME_RESULT {"K": 1, "N": 128, "bank": 0, "card": 0, "control": [19, 16, 19, 16, 18, 18, 18], "coordinate": 913, "core": [1, 2], "cycles_per_operation": [514.0, 594.0, 514.0, 506.0, 522.0, 514.0, 514.0], "element_bytes": 2, "image_bytes": 316, "l1_address": 270400, "maximum": 594, "median": 514, "minimum": 506, "mode": "batched", "noc": 0, "offset_bytes": 64, "operation": "read", "samples": [514, 594, 514, 506, 522, 514, 514], "stride_bytes": 0, "warmup": 1}
+.cycle profile:
+  [1] empty: 12 cycles
+  [2] write: 451 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] write: 451 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] write: 451 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] write: 451 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] write: 451 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] write: 451 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] write: 451 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] write: 451 cycles
+RUNTIME_RESULT {"K": 1, "N": 128, "bank": 0, "card": 0, "control": [12, 12, 12, 12, 12, 12, 12], "coordinate": 913, "core": [1, 2], "cycles_per_operation": [451.0, 451.0, 451.0, 451.0, 451.0, 451.0, 451.0], "element_bytes": 2, "image_bytes": 372, "l1_address": 270400, "maximum": 451, "median": 451, "minimum": 451, "mode": "serial-baseline", "noc": 0, "offset_bytes": 64, "operation": "write", "samples": [451, 451, 451, 451, 451, 451, 451], "stride_bytes": 0, "warmup": 1}
+cycle profile:
+  [1] empty: 12 cycles
+  [2] write: 419 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] write: 419 cycles
+cycle profile:
+  [1] empty: 14 cycles
+  [2] write: 419 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] write: 419 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] write: 419 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] write: 419 cycles
+cycle profile:
+  [1] empty: 14 cycles
+  [2] write: 419 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] write: 419 cycles
+RUNTIME_RESULT {"K": 1, "N": 128, "bank": 0, "card": 0, "control": [12, 14, 12, 12, 12, 14, 12], "coordinate": 913, "core": [1, 2], "cycles_per_operation": [419.0, 419.0, 419.0, 419.0, 419.0, 419.0, 419.0], "element_bytes": 2, "image_bytes": 340, "l1_address": 270400, "maximum": 419, "median": 419, "minimum": 419, "mode": "batched", "noc": 0, "offset_bytes": 64, "operation": "write", "samples": [419, 419, 419, 419, 419, 419, 419], "stride_bytes": 0, "warmup": 1}
+.cycle profile:
+  [1] empty: 16 cycles
+  [2] read: 526 cycles
+cycle profile:
+  [1] empty: 20 cycles
+  [2] read: 534 cycles
+cycle profile:
+  [1] empty: 18 cycles
+  [2] read: 534 cycles
+cycle profile:
+  [1] empty: 24 cycles
+  [2] read: 526 cycles
+cycle profile:
+  [1] empty: 16 cycles
+  [2] read: 534 cycles
+cycle profile:
+  [1] empty: 17 cycles
+  [2] read: 526 cycles
+cycle profile:
+  [1] empty: 18 cycles
+  [2] read: 526 cycles
+cycle profile:
+  [1] empty: 27 cycles
+  [2] read: 534 cycles
+RUNTIME_RESULT {"K": 1, "N": 128, "bank": 0, "card": 0, "control": [20, 18, 24, 16, 17, 18, 27], "coordinate": 849, "core": [1, 2], "cycles_per_operation": [534.0, 534.0, 526.0, 534.0, 526.0, 526.0, 534.0], "element_bytes": 2, "image_bytes": 336, "l1_address": 270400, "maximum": 534, "median": 534, "minimum": 526, "mode": "serial-baseline", "noc": 1, "offset_bytes": 64, "operation": "read", "samples": [534, 534, 526, 534, 526, 526, 534], "stride_bytes": 0, "warmup": 1}
+cycle profile:
+  [1] empty: 22 cycles
+  [2] read: 514 cycles
+cycle profile:
+  [1] empty: 16 cycles
+  [2] read: 514 cycles
+cycle profile:
+  [1] empty: 16 cycles
+  [2] read: 514 cycles
+cycle profile:
+  [1] empty: 17 cycles
+  [2] read: 514 cycles
+cycle profile:
+  [1] empty: 17 cycles
+  [2] read: 514 cycles
+cycle profile:
+  [1] empty: 16 cycles
+  [2] read: 514 cycles
+cycle profile:
+  [1] empty: 18 cycles
+  [2] read: 522 cycles
+cycle profile:
+  [1] empty: 16 cycles
+  [2] read: 506 cycles
+RUNTIME_RESULT {"K": 1, "N": 128, "bank": 0, "card": 0, "control": [16, 16, 17, 17, 16, 18, 16], "coordinate": 849, "core": [1, 2], "cycles_per_operation": [514.0, 514.0, 514.0, 514.0, 514.0, 522.0, 506.0], "element_bytes": 2, "image_bytes": 316, "l1_address": 270400, "maximum": 522, "median": 514, "minimum": 506, "mode": "batched", "noc": 1, "offset_bytes": 64, "operation": "read", "samples": [514, 514, 514, 514, 514, 522, 506], "stride_bytes": 0, "warmup": 1}
+.cycle profile:
+  [1] empty: 12 cycles
+  [2] write: 453 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] write: 451 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] write: 451 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] write: 451 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] write: 451 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] write: 451 cycles
+cycle profile:
+  [1] empty: 15 cycles
+  [2] write: 451 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] write: 451 cycles
+RUNTIME_RESULT {"K": 1, "N": 128, "bank": 0, "card": 0, "control": [12, 12, 12, 12, 12, 15, 12], "coordinate": 849, "core": [1, 2], "cycles_per_operation": [451.0, 451.0, 451.0, 451.0, 451.0, 451.0, 451.0], "element_bytes": 2, "image_bytes": 372, "l1_address": 270400, "maximum": 451, "median": 451, "minimum": 451, "mode": "serial-baseline", "noc": 1, "offset_bytes": 64, "operation": "write", "samples": [451, 451, 451, 451, 451, 451, 451], "stride_bytes": 0, "warmup": 1}
+cycle profile:
+  [1] empty: 12 cycles
+  [2] write: 419 cycles
+cycle profile:
+  [1] empty: 14 cycles
+  [2] write: 419 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] write: 419 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] write: 419 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] write: 419 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] write: 419 cycles
+cycle profile:
+  [1] empty: 14 cycles
+  [2] write: 419 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] write: 419 cycles
+RUNTIME_RESULT {"K": 1, "N": 128, "bank": 0, "card": 0, "control": [14, 12, 12, 12, 12, 14, 12], "coordinate": 849, "core": [1, 2], "cycles_per_operation": [419.0, 419.0, 419.0, 419.0, 419.0, 419.0, 419.0], "element_bytes": 2, "image_bytes": 340, "l1_address": 270400, "maximum": 419, "median": 419, "minimum": 419, "mode": "batched", "noc": 1, "offset_bytes": 64, "operation": "write", "samples": [419, 419, 419, 419, 419, 419, 419], "stride_bytes": 0, "warmup": 1}
+.cycle profile:
+  [1] empty: 17 cycles
+  [2] read: 550 cycles
+cycle profile:
+  [1] empty: 16 cycles
+  [2] read: 550 cycles
+cycle profile:
+  [1] empty: 17 cycles
+  [2] read: 550 cycles
+cycle profile:
+  [1] empty: 19 cycles
+  [2] read: 550 cycles
+cycle profile:
+  [1] empty: 20 cycles
+  [2] read: 550 cycles
+cycle profile:
+  [1] empty: 19 cycles
+  [2] read: 550 cycles
+cycle profile:
+  [1] empty: 16 cycles
+  [2] read: 550 cycles
+cycle profile:
+  [1] empty: 19 cycles
+  [2] read: 550 cycles
+RUNTIME_RESULT {"K": 1, "N": 128, "bank": 7, "card": 0, "control": [16, 17, 19, 20, 19, 16, 19], "coordinate": 1490, "core": [1, 2], "cycles_per_operation": [550.0, 550.0, 550.0, 550.0, 550.0, 550.0, 550.0], "element_bytes": 4, "image_bytes": 336, "l1_address": 286784, "maximum": 550, "median": 550, "minimum": 550, "mode": "serial-baseline", "noc": 0, "offset_bytes": 64, "operation": "read", "samples": [550, 550, 550, 550, 550, 550, 550], "stride_bytes": 0, "warmup": 1}
+cycle profile:
+  [1] empty: 19 cycles
+  [2] read: 530 cycles
+cycle profile:
+  [1] empty: 16 cycles
+  [2] read: 586 cycles
+cycle profile:
+  [1] empty: 18 cycles
+  [2] read: 530 cycles
+cycle profile:
+  [1] empty: 16 cycles
+  [2] read: 530 cycles
+cycle profile:
+  [1] empty: 19 cycles
+  [2] read: 530 cycles
+cycle profile:
+  [1] empty: 17 cycles
+  [2] read: 530 cycles
+cycle profile:
+  [1] empty: 17 cycles
+  [2] read: 530 cycles
+cycle profile:
+  [1] empty: 17 cycles
+  [2] read: 530 cycles
+RUNTIME_RESULT {"K": 1, "N": 128, "bank": 7, "card": 0, "control": [16, 18, 16, 19, 17, 17, 17], "coordinate": 1490, "core": [1, 2], "cycles_per_operation": [586.0, 530.0, 530.0, 530.0, 530.0, 530.0, 530.0], "element_bytes": 4, "image_bytes": 316, "l1_address": 286784, "maximum": 586, "median": 530, "minimum": 530, "mode": "batched", "noc": 0, "offset_bytes": 64, "operation": "read", "samples": [586, 530, 530, 530, 530, 530, 530], "stride_bytes": 0, "warmup": 1}
+.cycle profile:
+  [1] empty: 12 cycles
+  [2] write: 461 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] write: 459 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] write: 459 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] write: 459 cycles
+cycle profile:
+  [1] empty: 14 cycles
+  [2] write: 459 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] write: 459 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] write: 459 cycles
+cycle profile:
+  [1] empty: 15 cycles
+  [2] write: 459 cycles
+RUNTIME_RESULT {"K": 1, "N": 128, "bank": 7, "card": 0, "control": [12, 12, 12, 14, 12, 12, 15], "coordinate": 1490, "core": [1, 2], "cycles_per_operation": [459.0, 459.0, 459.0, 459.0, 459.0, 459.0, 459.0], "element_bytes": 4, "image_bytes": 372, "l1_address": 286784, "maximum": 459, "median": 459, "minimum": 459, "mode": "serial-baseline", "noc": 0, "offset_bytes": 64, "operation": "write", "samples": [459, 459, 459, 459, 459, 459, 459], "stride_bytes": 0, "warmup": 1}
+cycle profile:
+  [1] empty: 13 cycles
+  [2] write: 427 cycles
+cycle profile:
+  [1] empty: 14 cycles
+  [2] write: 427 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] write: 427 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] write: 427 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] write: 427 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] write: 427 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] write: 427 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] write: 427 cycles
+RUNTIME_RESULT {"K": 1, "N": 128, "bank": 7, "card": 0, "control": [14, 12, 12, 12, 12, 12, 12], "coordinate": 1490, "core": [1, 2], "cycles_per_operation": [427.0, 427.0, 427.0, 427.0, 427.0, 427.0, 427.0], "element_bytes": 4, "image_bytes": 340, "l1_address": 286784, "maximum": 427, "median": 427, "minimum": 427, "mode": "batched", "noc": 0, "offset_bytes": 64, "operation": "write", "samples": [427, 427, 427, 427, 427, 427, 427], "stride_bytes": 0, "warmup": 1}
+.cycle profile:
+  [1] empty: 18 cycles
+  [2] read: 550 cycles
+cycle profile:
+  [1] empty: 17 cycles
+  [2] read: 550 cycles
+cycle profile:
+  [1] empty: 16 cycles
+  [2] read: 550 cycles
+cycle profile:
+  [1] empty: 17 cycles
+  [2] read: 550 cycles
+cycle profile:
+  [1] empty: 18 cycles
+  [2] read: 550 cycles
+cycle profile:
+  [1] empty: 20 cycles
+  [2] read: 550 cycles
+cycle profile:
+  [1] empty: 16 cycles
+  [2] read: 710 cycles
+cycle profile:
+  [1] empty: 17 cycles
+  [2] read: 550 cycles
+RUNTIME_RESULT {"K": 1, "N": 128, "bank": 7, "card": 0, "control": [17, 16, 17, 18, 20, 16, 17], "coordinate": 1426, "core": [1, 2], "cycles_per_operation": [550.0, 550.0, 550.0, 550.0, 550.0, 710.0, 550.0], "element_bytes": 4, "image_bytes": 336, "l1_address": 286784, "maximum": 710, "median": 550, "minimum": 550, "mode": "serial-baseline", "noc": 1, "offset_bytes": 64, "operation": "read", "samples": [550, 550, 550, 550, 550, 710, 550], "stride_bytes": 0, "warmup": 1}
+cycle profile:
+  [1] empty: 16 cycles
+  [2] read: 530 cycles
+cycle profile:
+  [1] empty: 20 cycles
+  [2] read: 674 cycles
+cycle profile:
+  [1] empty: 16 cycles
+  [2] read: 530 cycles
+cycle profile:
+  [1] empty: 16 cycles
+  [2] read: 530 cycles
+cycle profile:
+  [1] empty: 16 cycles
+  [2] read: 530 cycles
+cycle profile:
+  [1] empty: 17 cycles
+  [2] read: 530 cycles
+cycle profile:
+  [1] empty: 17 cycles
+  [2] read: 530 cycles
+cycle profile:
+  [1] empty: 17 cycles
+  [2] read: 530 cycles
+RUNTIME_RESULT {"K": 1, "N": 128, "bank": 7, "card": 0, "control": [20, 16, 16, 16, 17, 17, 17], "coordinate": 1426, "core": [1, 2], "cycles_per_operation": [674.0, 530.0, 530.0, 530.0, 530.0, 530.0, 530.0], "element_bytes": 4, "image_bytes": 316, "l1_address": 286784, "maximum": 674, "median": 530, "minimum": 530, "mode": "batched", "noc": 1, "offset_bytes": 64, "operation": "read", "samples": [674, 530, 530, 530, 530, 530, 530], "stride_bytes": 0, "warmup": 1}
+.cycle profile:
+  [1] empty: 12 cycles
+  [2] write: 461 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] write: 459 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] write: 459 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] write: 459 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] write: 459 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] write: 459 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] write: 459 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] write: 459 cycles
+RUNTIME_RESULT {"K": 1, "N": 128, "bank": 7, "card": 0, "control": [12, 12, 12, 12, 12, 12, 12], "coordinate": 1426, "core": [1, 2], "cycles_per_operation": [459.0, 459.0, 459.0, 459.0, 459.0, 459.0, 459.0], "element_bytes": 4, "image_bytes": 372, "l1_address": 286784, "maximum": 459, "median": 459, "minimum": 459, "mode": "serial-baseline", "noc": 1, "offset_bytes": 64, "operation": "write", "samples": [459, 459, 459, 459, 459, 459, 459], "stride_bytes": 0, "warmup": 1}
+cycle profile:
+  [1] empty: 13 cycles
+  [2] write: 427 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] write: 427 cycles
+cycle profile:
+  [1] empty: 13 cycles
+  [2] write: 427 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] write: 427 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] write: 427 cycles
+cycle profile:
+  [1] empty: 14 cycles
+  [2] write: 427 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] write: 427 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] write: 427 cycles
+RUNTIME_RESULT {"K": 1, "N": 128, "bank": 7, "card": 0, "control": [12, 13, 12, 12, 14, 12, 12], "coordinate": 1426, "core": [1, 2], "cycles_per_operation": [427.0, 427.0, 427.0, 427.0, 427.0, 427.0, 427.0], "element_bytes": 4, "image_bytes": 340, "l1_address": 286784, "maximum": 427, "median": 427, "minimum": 427, "mode": "batched", "noc": 1, "offset_bytes": 64, "operation": "write", "samples": [427, 427, 427, 427, 427, 427, 427], "stride_bytes": 0, "warmup": 1}
+.cycle profile:
+  [1] empty: 19 cycles
+  [2] read: 1053 cycles
+cycle profile:
+  [1] empty: 18 cycles
+  [2] read: 1002 cycles
+cycle profile:
+  [1] empty: 22 cycles
+  [2] read: 997 cycles
+cycle profile:
+  [1] empty: 19 cycles
+  [2] read: 994 cycles
+cycle profile:
+  [1] empty: 18 cycles
+  [2] read: 994 cycles
+cycle profile:
+  [1] empty: 18 cycles
+  [2] read: 994 cycles
+cycle profile:
+  [1] empty: 18 cycles
+  [2] read: 1002 cycles
+cycle profile:
+  [1] empty: 18 cycles
+  [2] read: 1098 cycles
+RUNTIME_RESULT {"K": 1, "N": 256, "bank": 7, "card": 0, "control": [18, 22, 19, 18, 18, 18, 18], "coordinate": 1490, "core": [1, 2], "cycles_per_operation": [1002.0, 997.0, 994.0, 994.0, 994.0, 1002.0, 1098.0], "element_bytes": 2, "image_bytes": 408, "l1_address": 303168, "maximum": 1098, "median": 997, "minimum": 994, "mode": "serial-baseline", "noc": 0, "offset_bytes": 64, "operation": "read", "samples": [1002, 997, 994, 994, 994, 1002, 1098], "stride_bytes": 512, "warmup": 1}
+cycle profile:
+  [1] empty: 17 cycles
+  [2] read: 525 cycles
+cycle profile:
+  [1] empty: 19 cycles
+  [2] read: 525 cycles
+cycle profile:
+  [1] empty: 22 cycles
+  [2] read: 525 cycles
+cycle profile:
+  [1] empty: 20 cycles
+  [2] read: 525 cycles
+cycle profile:
+  [1] empty: 16 cycles
+  [2] read: 525 cycles
+cycle profile:
+  [1] empty: 18 cycles
+  [2] read: 525 cycles
+cycle profile:
+  [1] empty: 18 cycles
+  [2] read: 525 cycles
+cycle profile:
+  [1] empty: 18 cycles
+  [2] read: 529 cycles
+RUNTIME_RESULT {"K": 1, "N": 256, "bank": 7, "card": 0, "control": [19, 22, 20, 16, 18, 18, 18], "coordinate": 1490, "core": [1, 2], "cycles_per_operation": [525.0, 525.0, 525.0, 525.0, 525.0, 525.0, 529.0], "element_bytes": 2, "image_bytes": 368, "l1_address": 303168, "maximum": 529, "median": 525, "minimum": 525, "mode": "batched", "noc": 0, "offset_bytes": 64, "operation": "read", "samples": [525, 525, 525, 525, 525, 525, 529], "stride_bytes": 512, "warmup": 1}
+.cycle profile:
+  [1] empty: 15 cycles
+  [2] write: 804 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] write: 793 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] write: 793 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] write: 793 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] write: 793 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] write: 793 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] write: 793 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] write: 793 cycles
+RUNTIME_RESULT {"K": 1, "N": 256, "bank": 7, "card": 0, "control": [12, 12, 12, 12, 12, 12, 12], "coordinate": 1490, "core": [1, 2], "cycles_per_operation": [793.0, 793.0, 793.0, 793.0, 793.0, 793.0, 793.0], "element_bytes": 2, "image_bytes": 456, "l1_address": 303168, "maximum": 793, "median": 793, "minimum": 793, "mode": "serial-baseline", "noc": 0, "offset_bytes": 64, "operation": "write", "samples": [793, 793, 793, 793, 793, 793, 793], "stride_bytes": 512, "warmup": 1}
+cycle profile:
+  [1] empty: 13 cycles
+  [2] write: 438 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] write: 438 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] write: 438 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] write: 438 cycles
+cycle profile:
+  [1] empty: 14 cycles
+  [2] write: 438 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] write: 438 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] write: 438 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] write: 438 cycles
+RUNTIME_RESULT {"K": 1, "N": 256, "bank": 7, "card": 0, "control": [12, 12, 12, 14, 12, 12, 12], "coordinate": 1490, "core": [1, 2], "cycles_per_operation": [438.0, 438.0, 438.0, 438.0, 438.0, 438.0, 438.0], "element_bytes": 2, "image_bytes": 392, "l1_address": 303168, "maximum": 438, "median": 438, "minimum": 438, "mode": "batched", "noc": 0, "offset_bytes": 64, "operation": "write", "samples": [438, 438, 438, 438, 438, 438, 438], "stride_bytes": 512, "warmup": 1}
+.cycle profile:
+  [1] empty: 19 cycles
+  [2] read: 997 cycles
+cycle profile:
+  [1] empty: 18 cycles
+  [2] read: 994 cycles
+cycle profile:
+  [1] empty: 16 cycles
+  [2] read: 994 cycles
+cycle profile:
+  [1] empty: 16 cycles
+  [2] read: 994 cycles
+cycle profile:
+  [1] empty: 16 cycles
+  [2] read: 1082 cycles
+cycle profile:
+  [1] empty: 18 cycles
+  [2] read: 986 cycles
+cycle profile:
+  [1] empty: 16 cycles
+  [2] read: 994 cycles
+cycle profile:
+  [1] empty: 16 cycles
+  [2] read: 989 cycles
+RUNTIME_RESULT {"K": 1, "N": 256, "bank": 7, "card": 0, "control": [18, 16, 16, 16, 18, 16, 16], "coordinate": 1426, "core": [1, 2], "cycles_per_operation": [994.0, 994.0, 994.0, 1082.0, 986.0, 994.0, 989.0], "element_bytes": 2, "image_bytes": 408, "l1_address": 303168, "maximum": 1082, "median": 994, "minimum": 986, "mode": "serial-baseline", "noc": 1, "offset_bytes": 64, "operation": "read", "samples": [994, 994, 994, 1082, 986, 994, 989], "stride_bytes": 512, "warmup": 1}
+cycle profile:
+  [1] empty: 16 cycles
+  [2] read: 525 cycles
+cycle profile:
+  [1] empty: 16 cycles
+  [2] read: 525 cycles
+cycle profile:
+  [1] empty: 16 cycles
+  [2] read: 529 cycles
+cycle profile:
+  [1] empty: 16 cycles
+  [2] read: 525 cycles
+cycle profile:
+  [1] empty: 22 cycles
+  [2] read: 529 cycles
+cycle profile:
+  [1] empty: 18 cycles
+  [2] read: 529 cycles
+cycle profile:
+  [1] empty: 18 cycles
+  [2] read: 621 cycles
+cycle profile:
+  [1] empty: 19 cycles
+  [2] read: 529 cycles
+RUNTIME_RESULT {"K": 1, "N": 256, "bank": 7, "card": 0, "control": [16, 16, 16, 22, 18, 18, 19], "coordinate": 1426, "core": [1, 2], "cycles_per_operation": [525.0, 529.0, 525.0, 529.0, 529.0, 621.0, 529.0], "element_bytes": 2, "image_bytes": 368, "l1_address": 303168, "maximum": 621, "median": 529, "minimum": 525, "mode": "batched", "noc": 1, "offset_bytes": 64, "operation": "read", "samples": [525, 529, 525, 529, 529, 621, 529], "stride_bytes": 512, "warmup": 1}
+.cycle profile:
+  [1] empty: 12 cycles
+  [2] write: 793 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] write: 793 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] write: 793 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] write: 793 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] write: 793 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] write: 793 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] write: 793 cycles
+cycle profile:
+  [1] empty: 13 cycles
+  [2] write: 793 cycles
+RUNTIME_RESULT {"K": 1, "N": 256, "bank": 7, "card": 0, "control": [12, 12, 12, 12, 12, 12, 13], "coordinate": 1426, "core": [1, 2], "cycles_per_operation": [793.0, 793.0, 793.0, 793.0, 793.0, 793.0, 793.0], "element_bytes": 2, "image_bytes": 456, "l1_address": 303168, "maximum": 793, "median": 793, "minimum": 793, "mode": "serial-baseline", "noc": 1, "offset_bytes": 64, "operation": "write", "samples": [793, 793, 793, 793, 793, 793, 793], "stride_bytes": 512, "warmup": 1}
+cycle profile:
+  [1] empty: 14 cycles
+  [2] write: 438 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] write: 438 cycles
+cycle profile:
+  [1] empty: 14 cycles
+  [2] write: 438 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] write: 438 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] write: 438 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] write: 438 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] write: 438 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] write: 438 cycles
+RUNTIME_RESULT {"K": 1, "N": 256, "bank": 7, "card": 0, "control": [12, 14, 12, 12, 12, 12, 12], "coordinate": 1426, "core": [1, 2], "cycles_per_operation": [438.0, 438.0, 438.0, 438.0, 438.0, 438.0, 438.0], "element_bytes": 2, "image_bytes": 392, "l1_address": 303168, "maximum": 438, "median": 438, "minimum": 438, "mode": "batched", "noc": 1, "offset_bytes": 64, "operation": "write", "samples": [438, 438, 438, 438, 438, 438, 438], "stride_bytes": 512, "warmup": 1}
+.cycle profile:
+  [1] empty: 24 cycles
+  [2] read: 1013 cycles
+cycle profile:
+  [1] empty: 16 cycles
+  [2] read: 1018 cycles
+cycle profile:
+  [1] empty: 17 cycles
+  [2] read: 1010 cycles
+cycle profile:
+  [1] empty: 16 cycles
+  [2] read: 1013 cycles
+cycle profile:
+  [1] empty: 16 cycles
+  [2] read: 1018 cycles
+cycle profile:
+  [1] empty: 16 cycles
+  [2] read: 1013 cycles
+cycle profile:
+  [1] empty: 18 cycles
+  [2] read: 1010 cycles
+cycle profile:
+  [1] empty: 27 cycles
+  [2] read: 1018 cycles
+RUNTIME_RESULT {"K": 1, "N": 256, "bank": 7, "card": 0, "control": [16, 17, 16, 16, 16, 18, 27], "coordinate": 1490, "core": [1, 2], "cycles_per_operation": [1018.0, 1010.0, 1013.0, 1018.0, 1013.0, 1010.0, 1018.0], "element_bytes": 4, "image_bytes": 408, "l1_address": 319552, "maximum": 1018, "median": 1013, "minimum": 1010, "mode": "serial-baseline", "noc": 0, "offset_bytes": 64, "operation": "read", "samples": [1018, 1010, 1013, 1018, 1013, 1010, 1018], "stride_bytes": 1024, "warmup": 1}
+cycle profile:
+  [1] empty: 18 cycles
+  [2] read: 541 cycles
+cycle profile:
+  [1] empty: 16 cycles
+  [2] read: 541 cycles
+cycle profile:
+  [1] empty: 16 cycles
+  [2] read: 545 cycles
+cycle profile:
+  [1] empty: 18 cycles
+  [2] read: 541 cycles
+cycle profile:
+  [1] empty: 16 cycles
+  [2] read: 545 cycles
+cycle profile:
+  [1] empty: 18 cycles
+  [2] read: 541 cycles
+cycle profile:
+  [1] empty: 16 cycles
+  [2] read: 541 cycles
+cycle profile:
+  [1] empty: 18 cycles
+  [2] read: 541 cycles
+RUNTIME_RESULT {"K": 1, "N": 256, "bank": 7, "card": 0, "control": [16, 16, 18, 16, 18, 16, 18], "coordinate": 1490, "core": [1, 2], "cycles_per_operation": [541.0, 545.0, 541.0, 545.0, 541.0, 541.0, 541.0], "element_bytes": 4, "image_bytes": 368, "l1_address": 319552, "maximum": 545, "median": 541, "minimum": 541, "mode": "batched", "noc": 0, "offset_bytes": 64, "operation": "read", "samples": [541, 545, 541, 545, 541, 541, 541], "stride_bytes": 1024, "warmup": 1}
+.cycle profile:
+  [1] empty: 13 cycles
+  [2] write: 809 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] write: 809 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] write: 809 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] write: 809 cycles
+cycle profile:
+  [1] empty: 15 cycles
+  [2] write: 809 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] write: 809 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] write: 809 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] write: 809 cycles
+RUNTIME_RESULT {"K": 1, "N": 256, "bank": 7, "card": 0, "control": [12, 12, 12, 15, 12, 12, 12], "coordinate": 1490, "core": [1, 2], "cycles_per_operation": [809.0, 809.0, 809.0, 809.0, 809.0, 809.0, 809.0], "element_bytes": 4, "image_bytes": 456, "l1_address": 319552, "maximum": 809, "median": 809, "minimum": 809, "mode": "serial-baseline", "noc": 0, "offset_bytes": 64, "operation": "write", "samples": [809, 809, 809, 809, 809, 809, 809], "stride_bytes": 1024, "warmup": 1}
+cycle profile:
+  [1] empty: 12 cycles
+  [2] write: 446 cycles
+cycle profile:
+  [1] empty: 14 cycles
+  [2] write: 446 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] write: 446 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] write: 446 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] write: 446 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] write: 446 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] write: 446 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] write: 446 cycles
+RUNTIME_RESULT {"K": 1, "N": 256, "bank": 7, "card": 0, "control": [14, 12, 12, 12, 12, 12, 12], "coordinate": 1490, "core": [1, 2], "cycles_per_operation": [446.0, 446.0, 446.0, 446.0, 446.0, 446.0, 446.0], "element_bytes": 4, "image_bytes": 392, "l1_address": 319552, "maximum": 446, "median": 446, "minimum": 446, "mode": "batched", "noc": 0, "offset_bytes": 64, "operation": "write", "samples": [446, 446, 446, 446, 446, 446, 446], "stride_bytes": 1024, "warmup": 1}
+.cycle profile:
+  [1] empty: 18 cycles
+  [2] read: 1069 cycles
+cycle profile:
+  [1] empty: 16 cycles
+  [2] read: 1010 cycles
+cycle profile:
+  [1] empty: 18 cycles
+  [2] read: 1018 cycles
+cycle profile:
+  [1] empty: 19 cycles
+  [2] read: 1018 cycles
+cycle profile:
+  [1] empty: 18 cycles
+  [2] read: 1018 cycles
+cycle profile:
+  [1] empty: 18 cycles
+  [2] read: 1018 cycles
+cycle profile:
+  [1] empty: 19 cycles
+  [2] read: 1018 cycles
+cycle profile:
+  [1] empty: 18 cycles
+  [2] read: 1130 cycles
+RUNTIME_RESULT {"K": 1, "N": 256, "bank": 7, "card": 0, "control": [16, 18, 19, 18, 18, 19, 18], "coordinate": 1426, "core": [1, 2], "cycles_per_operation": [1010.0, 1018.0, 1018.0, 1018.0, 1018.0, 1018.0, 1130.0], "element_bytes": 4, "image_bytes": 408, "l1_address": 319552, "maximum": 1130, "median": 1018, "minimum": 1010, "mode": "serial-baseline", "noc": 1, "offset_bytes": 64, "operation": "read", "samples": [1010, 1018, 1018, 1018, 1018, 1018, 1130], "stride_bytes": 1024, "warmup": 1}
+cycle profile:
+  [1] empty: 20 cycles
+  [2] read: 541 cycles
+cycle profile:
+  [1] empty: 16 cycles
+  [2] read: 541 cycles
+cycle profile:
+  [1] empty: 18 cycles
+  [2] read: 541 cycles
+cycle profile:
+  [1] empty: 18 cycles
+  [2] read: 549 cycles
+cycle profile:
+  [1] empty: 18 cycles
+  [2] read: 541 cycles
+cycle profile:
+  [1] empty: 17 cycles
+  [2] read: 541 cycles
+cycle profile:
+  [1] empty: 17 cycles
+  [2] read: 541 cycles
+cycle profile:
+  [1] empty: 18 cycles
+  [2] read: 541 cycles
+RUNTIME_RESULT {"K": 1, "N": 256, "bank": 7, "card": 0, "control": [16, 18, 18, 18, 17, 17, 18], "coordinate": 1426, "core": [1, 2], "cycles_per_operation": [541.0, 541.0, 549.0, 541.0, 541.0, 541.0, 541.0], "element_bytes": 4, "image_bytes": 368, "l1_address": 319552, "maximum": 549, "median": 541, "minimum": 541, "mode": "batched", "noc": 1, "offset_bytes": 64, "operation": "read", "samples": [541, 541, 549, 541, 541, 541, 541], "stride_bytes": 1024, "warmup": 1}
+.cycle profile:
+  [1] empty: 12 cycles
+  [2] write: 809 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] write: 809 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] write: 809 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] write: 809 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] write: 809 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] write: 809 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] write: 809 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] write: 809 cycles
+RUNTIME_RESULT {"K": 1, "N": 256, "bank": 7, "card": 0, "control": [12, 12, 12, 12, 12, 12, 12], "coordinate": 1426, "core": [1, 2], "cycles_per_operation": [809.0, 809.0, 809.0, 809.0, 809.0, 809.0, 809.0], "element_bytes": 4, "image_bytes": 456, "l1_address": 319552, "maximum": 809, "median": 809, "minimum": 809, "mode": "serial-baseline", "noc": 1, "offset_bytes": 64, "operation": "write", "samples": [809, 809, 809, 809, 809, 809, 809], "stride_bytes": 1024, "warmup": 1}
+cycle profile:
+  [1] empty: 12 cycles
+  [2] write: 446 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] write: 446 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] write: 446 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] write: 446 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] write: 446 cycles
+cycle profile:
+  [1] empty: 14 cycles
+  [2] write: 446 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] write: 446 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] write: 446 cycles
+RUNTIME_RESULT {"K": 1, "N": 256, "bank": 7, "card": 0, "control": [12, 12, 12, 12, 14, 12, 12], "coordinate": 1426, "core": [1, 2], "cycles_per_operation": [446.0, 446.0, 446.0, 446.0, 446.0, 446.0, 446.0], "element_bytes": 4, "image_bytes": 392, "l1_address": 319552, "maximum": 446, "median": 446, "minimum": 446, "mode": "batched", "noc": 1, "offset_bytes": 64, "operation": "write", "samples": [446, 446, 446, 446, 446, 446, 446], "stride_bytes": 1024, "warmup": 1}
+.cycle profile:
+  [1] empty: 12 cycles
+  [2] reserve: 479 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] reserve: 441 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] reserve: 443 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] reserve: 439 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] reserve: 431 cycles
+cycle profile:
+  [1] empty: 14 cycles
+  [2] reserve: 440 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] reserve: 435 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] reserve: 440 cycles
+RUNTIME_RESULT {"K": 16, "card": 0, "control": [12, 12, 12, 12, 14, 12, 12], "core": [1, 2], "count": 1, "cycles_per_operation": [27.5625, 27.6875, 27.4375, 26.9375, 27.5, 27.1875, 27.5], "depth": 32, "image_bytes": 1292, "initial_counter": 0, "maximum": 443, "median": 440, "minimum": 431, "mode": "uncontended", "operation": "cb_reserve", "samples": [441, 443, 439, 431, 440, 435, 440], "slot": 0, "warmup": 1}
+.cycle profile:
+  [1] empty: 12 cycles
+  [2] publish: 410 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] publish: 400 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] publish: 400 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] publish: 400 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] publish: 400 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] publish: 400 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] publish: 400 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] publish: 400 cycles
+RUNTIME_RESULT {"K": 16, "card": 0, "control": [12, 12, 12, 12, 12, 12, 12], "core": [1, 2], "count": 1, "cycles_per_operation": [25.0, 25.0, 25.0, 25.0, 25.0, 25.0, 25.0], "depth": 32, "image_bytes": 972, "initial_counter": 0, "maximum": 400, "median": 400, "minimum": 400, "mode": "uncontended", "operation": "cb_publish", "samples": [400, 400, 400, 400, 400, 400, 400], "slot": 0, "warmup": 1}
+.cycle profile:
+  [1] empty: 12 cycles
+  [2] wait: 447 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] wait: 385 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] wait: 385 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] wait: 385 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] wait: 391 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] wait: 385 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] wait: 385 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] wait: 385 cycles
+RUNTIME_RESULT {"K": 16, "card": 0, "control": [12, 12, 12, 12, 12, 12, 12], "core": [1, 2], "count": 1, "cycles_per_operation": [24.0625, 24.0625, 24.0625, 24.4375, 24.0625, 24.0625, 24.0625], "depth": 32, "image_bytes": 1164, "initial_counter": 0, "maximum": 391, "median": 385, "minimum": 385, "mode": "uncontended", "operation": "cb_wait", "samples": [385, 385, 385, 391, 385, 385, 385], "slot": 0, "warmup": 1}
+.cycle profile:
+  [1] empty: 12 cycles
+  [2] release: 420 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] release: 397 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] release: 397 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] release: 397 cycles
+cycle profile:
+  [1] empty: 10 cycles
+  [2] release: 397 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] release: 397 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] release: 397 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] release: 401 cycles
+RUNTIME_RESULT {"K": 16, "card": 0, "control": [12, 12, 12, 10, 12, 12, 12], "core": [1, 2], "count": 1, "cycles_per_operation": [24.8125, 24.8125, 24.8125, 24.8125, 24.8125, 24.8125, 25.0625], "depth": 32, "image_bytes": 972, "initial_counter": 0, "maximum": 401, "median": 397, "minimum": 397, "mode": "uncontended", "operation": "cb_release", "samples": [397, 397, 397, 397, 397, 397, 401], "slot": 0, "warmup": 1}
+.cycle profile:
+  [1] empty: 12 cycles
+  [2] reserve: 482 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] reserve: 436 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] reserve: 422 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] reserve: 432 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] reserve: 423 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] reserve: 424 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] reserve: 428 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] reserve: 428 cycles
+RUNTIME_RESULT {"K": 16, "card": 0, "control": [12, 12, 12, 12, 12, 12, 12], "core": [1, 2], "count": 1, "cycles_per_operation": [27.25, 26.375, 27.0, 26.4375, 26.5, 26.75, 26.75], "depth": 32, "image_bytes": 1300, "initial_counter": 65535, "maximum": 436, "median": 428, "minimum": 422, "mode": "uncontended", "operation": "cb_reserve", "samples": [436, 422, 432, 423, 424, 428, 428], "slot": 31, "warmup": 1}
+.cycle profile:
+  [1] empty: 13 cycles
+  [2] publish: 408 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] publish: 399 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] publish: 399 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] publish: 399 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] publish: 399 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] publish: 399 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] publish: 399 cycles
+cycle profile:
+  [1] empty: 13 cycles
+  [2] publish: 399 cycles
+RUNTIME_RESULT {"K": 16, "card": 0, "control": [12, 12, 12, 12, 12, 12, 13], "core": [1, 2], "count": 1, "cycles_per_operation": [24.9375, 24.9375, 24.9375, 24.9375, 24.9375, 24.9375, 24.9375], "depth": 32, "image_bytes": 980, "initial_counter": 65535, "maximum": 399, "median": 399, "minimum": 399, "mode": "uncontended", "operation": "cb_publish", "samples": [399, 399, 399, 399, 399, 399, 399], "slot": 31, "warmup": 1}
+.cycle profile:
+  [1] empty: 12 cycles
+  [2] wait: 440 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] wait: 387 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] wait: 387 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] wait: 387 cycles
+cycle profile:
+  [1] empty: 14 cycles
+  [2] wait: 387 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] wait: 387 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] wait: 387 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] wait: 387 cycles
+RUNTIME_RESULT {"K": 16, "card": 0, "control": [12, 12, 12, 14, 12, 12, 12], "core": [1, 2], "count": 1, "cycles_per_operation": [24.1875, 24.1875, 24.1875, 24.1875, 24.1875, 24.1875, 24.1875], "depth": 32, "image_bytes": 1168, "initial_counter": 65535, "maximum": 387, "median": 387, "minimum": 387, "mode": "uncontended", "operation": "cb_wait", "samples": [387, 387, 387, 387, 387, 387, 387], "slot": 31, "warmup": 1}
+.cycle profile:
+  [1] empty: 12 cycles
+  [2] release: 419 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] release: 397 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] release: 397 cycles
+cycle profile:
+  [1] empty: 13 cycles
+  [2] release: 401 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] release: 397 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] release: 397 cycles
+cycle profile:
+  [1] empty: 14 cycles
+  [2] release: 397 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] release: 397 cycles
+RUNTIME_RESULT {"K": 16, "card": 0, "control": [12, 12, 13, 12, 12, 14, 12], "core": [1, 2], "count": 1, "cycles_per_operation": [24.8125, 24.8125, 25.0625, 24.8125, 24.8125, 24.8125, 24.8125], "depth": 32, "image_bytes": 976, "initial_counter": 65535, "maximum": 401, "median": 397, "minimum": 397, "mode": "uncontended", "operation": "cb_release", "samples": [397, 397, 401, 397, 397, 397, 397], "slot": 31, "warmup": 1}
+.F
+=================================== FAILURES ===================================
+_______________________ test_semaphore_primitive[1-post] _______________________
+
+bh = <tests.harness.RawHarness object at 0x7f7fb0ec5d30>
+request = <FixtureRequest for <Function test_semaphore_primitive[1-post]>>
+action = 'post', semaphore = 1
+
+    @pytest.mark.parametrize('action', ['post', 'get', 'wait_ready', 'wait_space'])
+    @pytest.mark.parametrize('semaphore', [1, 2, 5, 7])
+    def test_semaphore_primitive(bh, request, action, semaphore):
+      from isa import Tensix as TT
+      from tests.movement.unpacker.unpack import pc_sync, PC_SEMAPHORE_BASE
+      from tests.operation_pocs.runtime.ops import semaphore_action
+      k = Asm('trisc1'); p = Profiler(k)
+      initial = 7 if action in ('get', 'wait_ready') else 0
+      # Only selected handoff semaphore is owned; sentinel in unused semaphore 0.
+      k.emit(TT.TTSEMINIT(15, initial, 1 << semaphore))
+      k.emit(TT.TTSEMINIT(15, 9, 1))
+      pc_sync(k)
+      p.record('empty'); p.record('empty')
+      p.record(action)
+      for _ in range(7): semaphore_action(k, semaphore, action)
+      p.record(action)
+      for i, slot in enumerate((semaphore, 0)):
+        value = k.reg(); k.read(value, PC_SEMAPHORE_BASE + slot * 4)
+        k.write(BASE + 0x13000 + i * 4, value)
+      expected = initial + (7 if action == 'post' else -7 if action == 'get' else 0)
+      samples, controls = [], []
+      image = k.lower()
+      for sample in range(8):
+>       bh.launch({'trisc1': image}, profiler=p,
+                  l1={BASE + 0x13000 - 64: GUARD + bytes(8) + GUARD})
+
+tests/operation_pocs/runtime/test_runtime.py:142: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/harness.py:57: in launch
+    result = self.device.launch(
+device.py:206: in launch
+    return self.run(Program(core_images), params=params, l1=l1, timeout=timeout)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+device.py:212: in run
+    return self.cq.submit(program.commands(params=params, l1=l1), timeout=timeout)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+cq.py:289: in submit
+    return self.wait(self.enqueue(commands), timeout=timeout)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <cq.CommandQueue object at 0x7f7fb0ec5940>, event = 1761, timeout = 10.0
+poll_interval = 0.0002
+
+    def wait(self, event, timeout=10.0, poll_interval=0.0002):
+      deadline = time.monotonic() + timeout
+      polls = 0
+      while self._read_u64(self.completion) < event:
+        polls += 1
+        if poll_interval:
+          if time.monotonic() >= deadline:
+>           raise self._timeout(event)
+E           TimeoutError: CQ completion 1761 timed out
+
+cq.py:301: TimeoutError
+=========================== short test summary info ============================
+FAILED tests/operation_pocs/runtime/test_runtime.py::test_semaphore_primitive[1-post]
+!!!!!!!!!!!!!!!!!!!!!!!!!! stopping after 1 failures !!!!!!!!!!!!!!!!!!!!!!!!!!!
+1 failed, 24 passed, 8 deselected in 11.45s

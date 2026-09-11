@@ -5,6 +5,9 @@ from struct import pack, unpack
 
 import pytest
 
+from tests import fp8
+from tests.movement.unpacker.unpack import BF16, FP8_E4M3
+
 from asm import Asm
 from fw.consts import TensixL1
 from isa import Tensix as TT
@@ -32,11 +35,13 @@ CASES = (
 )
 
 
-def _inputs(a_slots, b_slots):
+def _inputs(a_slots, b_slots, input_format=BF16):
   a = tuple(1 + (i % 128) / 128 for i in range(256))
   # HiFi2 covers both A phases but only the high B phase. Keep B's
   # significand within that phase; A still needs phase 1 for exact products.
   b = tuple(0.5 + ((i * 37 + 11) % 64) / 128 for i in range(256))
+  if input_format == FP8_E4M3:
+    a, b = (tuple(map(fp8.decode, fp8.encode(values))) for values in (a, b))
   initial = tuple(1 + i / 512 for i in range(256))
   data = {INPUT: pack("<1024f", *initial, *([0.0] * 768))}
   for address, values, slots in ((INPUT_A, a, a_slots), (INPUT_B, b, b_slots)):
@@ -47,14 +52,15 @@ def _inputs(a_slots, b_slots):
         unpack("<I", pack("<f", x))[0] >> 16
         for x in values[block * 128:(block + 1) * 128]
       ]
-    data[address] = pack("<1024H", *physical)
+    data[address] = (fp8.encode(unpack("<1024f", pack("<1024I", *(v << 16 for v in physical))))
+                     if input_format == FP8_E4M3 else pack("<1024H", *physical))
   # All values and all intermediate sums are exactly representable in FP32.
   expected = pack("<256f", *(c + REPEATS * x * y for c, x, y in zip(initial, a, b)))
   data[OUTPUT] = b"\xA5" * 1088
   return data, expected
 
 
-def _images(a_slots, b_slots, operation="ELWMUL"):
+def _images(a_slots, b_slots, operation="ELWMUL", input_format=BF16):
   loader, math, packer = (Asm(role) for role in ("trisc0", "trisc1", "trisc2"))
   size = loader.reg()
   loader.li(size, F32_TILE_BYTES)
@@ -68,7 +74,7 @@ def _images(a_slots, b_slots, operation="ELWMUL"):
 
   # Load a complete bank in one UNPACR per source, with one bank handoff.
   # Unused slots hold distractors; input placement is outside the timer.
-  configure_unpack_pair(loader, INPUT_A, INPUT_B)
+  configure_unpack_pair(loader, INPUT_A, INPUT_B, input_format=input_format)
   loader.emit(TT.TTSETADCXX(3, 1023, 0))
   stall(loader, Stall.UNPACK, Wait.SRCA_CLR | Wait.SRCB_CLR)
   configure_mop(loader, _mop_loop_words(
@@ -128,9 +134,10 @@ def _images(a_slots, b_slots, operation="ELWMUL"):
 
 
 @pytest.mark.parametrize("name,a_slots,b_slots", CASES, ids=[case[0] for case in CASES])
-def test_hifi2_elwmul_source_slot_placement(bh, name, a_slots, b_slots):
-  images, profile = _images(a_slots, b_slots)
-  data, expected = _inputs(a_slots, b_slots)
+@pytest.mark.parametrize("input_format", (BF16, FP8_E4M3), ids=("bf16", "fp8-e4m3"))
+def test_hifi2_elwmul_source_slot_placement(bh, name, a_slots, b_slots, input_format):
+  images, profile = _images(a_slots, b_slots, input_format=input_format)
+  data, expected = _inputs(a_slots, b_slots, input_format)
   samples = []
   for _ in range(SAMPLES):
     bh.launch(images, l1=data, profiler=profile)
@@ -139,3 +146,12 @@ def test_hifi2_elwmul_source_slot_placement(bh, name, a_slots, b_slots):
     samples.append(profile.last["HiFi2 accumulate"] / REPEATS)
   print(f"{name}: A={a_slots}, B={b_slots}; cycles per 256-element HiFi2 accumulation "
         f"median={median(samples):.3f}, min={min(samples):.3f}, max={max(samples):.3f}")
+
+
+@pytest.mark.parametrize('operation', ('ELWADD', 'ELWMUL', 'MVMUL', 'GAPOOL'))
+def test_fp8_keeps_compute_and_observation_instructions(operation):
+  bf16, _ = _images((0, 2), (0, 7), operation, BF16)
+  fp8_images, _ = _images((0, 2), (0, 7), operation, FP8_E4M3)
+  assert bf16['trisc1'] == fp8_images['trisc1']
+  assert bf16['trisc2'] == fp8_images['trisc2']
+  assert bf16['trisc0'] != fp8_images['trisc0']

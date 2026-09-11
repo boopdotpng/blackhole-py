@@ -1,0 +1,454 @@
+[tt-device-queue] Queue 0
+RUNTIME_CONTEXT {"card": 0, "core": [1, 3], "core_index": 1, "dram_endpoints": [[[17, 14], [17, 13]], [[17, 15], [17, 16]], [[17, 18], [17, 19]], [[17, 21], [17, 22]], [[18, 14], [18, 13]], [[18, 17], [18, 16]], [[18, 20], [18, 19]], [[18, 23], [18, 22]]], "firmware_manifest_sha256": "8d7e24525e5a0cbcabf97e70d0415c8871c9f3c899c031ddc23a03cff61a02d6", "ops_sha256": "ae96742ac2dabcd191db4b2ac0178b4150709d00731595cc2c5e61f3abac5ef4", "runtime_sha256": "094ac79248655ba75aa70810e43636858ba83e3a31b1d11e20f23efc40d80687", "worker_count": 117}
+cycle profile:
+  [1] empty: 13 cycles
+  [2] post: 76 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] post: 77 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] post: 76 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] post: 76 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] post: 76 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] post: 77 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] post: 76 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] post: 76 cycles
+RUNTIME_RESULT {"K": 7, "card": 0, "control": [12, 12, 12, 12, 12, 12, 12], "core": [1, 3], "cycles_per_operation": [11.0, 10.857142857142858, 10.857142857142858, 10.857142857142858, 11.0, 10.857142857142858, 10.857142857142858], "image_bytes": 348, "initial": 0, "maximum": 77, "median": 76, "minimum": 76, "mode": "uncontended", "operation": "semaphore_post", "samples": [77, 76, 76, 76, 77, 76, 76], "semaphore": 1, "warmup": 1}
+.cycle profile:
+  [1] empty: 12 cycles
+  [2] get: 76 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] get: 76 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] get: 76 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] get: 76 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] get: 76 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] get: 76 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] get: 77 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] get: 76 cycles
+RUNTIME_RESULT {"K": 7, "card": 0, "control": [12, 12, 12, 12, 12, 12, 12], "core": [1, 3], "cycles_per_operation": [10.857142857142858, 10.857142857142858, 10.857142857142858, 10.857142857142858, 10.857142857142858, 11.0, 10.857142857142858], "image_bytes": 348, "initial": 7, "maximum": 77, "median": 76, "minimum": 76, "mode": "uncontended", "operation": "semaphore_get", "samples": [76, 76, 76, 76, 76, 77, 76], "semaphore": 1, "warmup": 1}
+.cycle profile:
+  [1] empty: 12 cycles
+  [2] wait_ready: 90 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] wait_ready: 91 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] wait_ready: 90 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] wait_ready: 91 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] wait_ready: 90 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] wait_ready: 90 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] wait_ready: 90 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] wait_ready: 90 cycles
+RUNTIME_RESULT {"K": 7, "card": 0, "control": [12, 12, 12, 12, 12, 12, 12], "core": [1, 3], "cycles_per_operation": [13.0, 12.857142857142858, 13.0, 12.857142857142858, 12.857142857142858, 12.857142857142858, 12.857142857142858], "image_bytes": 376, "initial": 7, "maximum": 91, "median": 90, "minimum": 90, "mode": "uncontended", "operation": "semaphore_wait_ready", "samples": [91, 90, 91, 90, 90, 90, 90], "semaphore": 1, "warmup": 1}
+.cycle profile:
+  [1] empty: 12 cycles
+  [2] wait_space: 90 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] wait_space: 90 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] wait_space: 90 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] wait_space: 90 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] wait_space: 90 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] wait_space: 90 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] wait_space: 90 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] wait_space: 90 cycles
+RUNTIME_RESULT {"K": 7, "card": 0, "control": [12, 12, 12, 12, 12, 12, 12], "core": [1, 3], "cycles_per_operation": [12.857142857142858, 12.857142857142858, 12.857142857142858, 12.857142857142858, 12.857142857142858, 12.857142857142858, 12.857142857142858], "image_bytes": 376, "initial": 0, "maximum": 90, "median": 90, "minimum": 90, "mode": "uncontended", "operation": "semaphore_wait_space", "samples": [90, 90, 90, 90, 90, 90, 90], "semaphore": 1, "warmup": 1}
+.cycle profile:
+  [1] empty: 12 cycles
+  [2] post: 76 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] post: 76 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] post: 76 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] post: 76 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] post: 76 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] post: 76 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] post: 76 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] post: 77 cycles
+RUNTIME_RESULT {"K": 7, "card": 0, "control": [12, 12, 12, 12, 12, 12, 12], "core": [1, 3], "cycles_per_operation": [10.857142857142858, 10.857142857142858, 10.857142857142858, 10.857142857142858, 10.857142857142858, 10.857142857142858, 11.0], "image_bytes": 348, "initial": 0, "maximum": 77, "median": 76, "minimum": 76, "mode": "uncontended", "operation": "semaphore_post", "samples": [76, 76, 76, 76, 76, 76, 77], "semaphore": 2, "warmup": 1}
+.cycle profile:
+  [1] empty: 12 cycles
+  [2] get: 76 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] get: 77 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] get: 77 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] get: 76 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] get: 76 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] get: 76 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] get: 77 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] get: 76 cycles
+RUNTIME_RESULT {"K": 7, "card": 0, "control": [12, 12, 12, 12, 12, 12, 12], "core": [1, 3], "cycles_per_operation": [11.0, 11.0, 10.857142857142858, 10.857142857142858, 10.857142857142858, 11.0, 10.857142857142858], "image_bytes": 348, "initial": 7, "maximum": 77, "median": 76, "minimum": 76, "mode": "uncontended", "operation": "semaphore_get", "samples": [77, 77, 76, 76, 76, 77, 76], "semaphore": 2, "warmup": 1}
+.cycle profile:
+  [1] empty: 12 cycles
+  [2] wait_ready: 90 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] wait_ready: 90 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] wait_ready: 91 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] wait_ready: 90 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] wait_ready: 90 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] wait_ready: 91 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] wait_ready: 90 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] wait_ready: 90 cycles
+RUNTIME_RESULT {"K": 7, "card": 0, "control": [12, 12, 12, 12, 12, 12, 12], "core": [1, 3], "cycles_per_operation": [12.857142857142858, 13.0, 12.857142857142858, 12.857142857142858, 13.0, 12.857142857142858, 12.857142857142858], "image_bytes": 376, "initial": 7, "maximum": 91, "median": 90, "minimum": 90, "mode": "uncontended", "operation": "semaphore_wait_ready", "samples": [90, 91, 90, 90, 91, 90, 90], "semaphore": 2, "warmup": 1}
+.cycle profile:
+  [1] empty: 12 cycles
+  [2] wait_space: 90 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] wait_space: 90 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] wait_space: 90 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] wait_space: 90 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] wait_space: 91 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] wait_space: 90 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] wait_space: 90 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] wait_space: 90 cycles
+RUNTIME_RESULT {"K": 7, "card": 0, "control": [12, 12, 12, 12, 12, 12, 12], "core": [1, 3], "cycles_per_operation": [12.857142857142858, 12.857142857142858, 12.857142857142858, 13.0, 12.857142857142858, 12.857142857142858, 12.857142857142858], "image_bytes": 376, "initial": 0, "maximum": 91, "median": 90, "minimum": 90, "mode": "uncontended", "operation": "semaphore_wait_space", "samples": [90, 90, 90, 91, 90, 90, 90], "semaphore": 2, "warmup": 1}
+.cycle profile:
+  [1] empty: 12 cycles
+  [2] post: 76 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] post: 77 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] post: 77 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] post: 76 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] post: 76 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] post: 76 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] post: 77 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] post: 77 cycles
+RUNTIME_RESULT {"K": 7, "card": 0, "control": [12, 12, 12, 12, 12, 12, 12], "core": [1, 3], "cycles_per_operation": [11.0, 11.0, 10.857142857142858, 10.857142857142858, 10.857142857142858, 11.0, 11.0], "image_bytes": 348, "initial": 0, "maximum": 77, "median": 77, "minimum": 76, "mode": "uncontended", "operation": "semaphore_post", "samples": [77, 77, 76, 76, 76, 77, 77], "semaphore": 5, "warmup": 1}
+.cycle profile:
+  [1] empty: 12 cycles
+  [2] get: 76 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] get: 77 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] get: 76 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] get: 77 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] get: 77 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] get: 76 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] get: 76 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] get: 76 cycles
+RUNTIME_RESULT {"K": 7, "card": 0, "control": [12, 12, 12, 12, 12, 12, 12], "core": [1, 3], "cycles_per_operation": [11.0, 10.857142857142858, 11.0, 11.0, 10.857142857142858, 10.857142857142858, 10.857142857142858], "image_bytes": 348, "initial": 7, "maximum": 77, "median": 76, "minimum": 76, "mode": "uncontended", "operation": "semaphore_get", "samples": [77, 76, 77, 77, 76, 76, 76], "semaphore": 5, "warmup": 1}
+.cycle profile:
+  [1] empty: 12 cycles
+  [2] wait_ready: 90 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] wait_ready: 90 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] wait_ready: 90 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] wait_ready: 90 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] wait_ready: 91 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] wait_ready: 90 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] wait_ready: 90 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] wait_ready: 90 cycles
+RUNTIME_RESULT {"K": 7, "card": 0, "control": [12, 12, 12, 12, 12, 12, 12], "core": [1, 3], "cycles_per_operation": [12.857142857142858, 12.857142857142858, 12.857142857142858, 13.0, 12.857142857142858, 12.857142857142858, 12.857142857142858], "image_bytes": 376, "initial": 7, "maximum": 91, "median": 90, "minimum": 90, "mode": "uncontended", "operation": "semaphore_wait_ready", "samples": [90, 90, 90, 91, 90, 90, 90], "semaphore": 5, "warmup": 1}
+.cycle profile:
+  [1] empty: 12 cycles
+  [2] wait_space: 90 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] wait_space: 90 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] wait_space: 90 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] wait_space: 91 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] wait_space: 90 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] wait_space: 90 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] wait_space: 90 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] wait_space: 91 cycles
+RUNTIME_RESULT {"K": 7, "card": 0, "control": [12, 12, 12, 12, 12, 12, 12], "core": [1, 3], "cycles_per_operation": [12.857142857142858, 12.857142857142858, 13.0, 12.857142857142858, 12.857142857142858, 12.857142857142858, 13.0], "image_bytes": 376, "initial": 0, "maximum": 91, "median": 90, "minimum": 90, "mode": "uncontended", "operation": "semaphore_wait_space", "samples": [90, 90, 91, 90, 90, 90, 91], "semaphore": 5, "warmup": 1}
+.cycle profile:
+  [1] empty: 12 cycles
+  [2] post: 76 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] post: 76 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] post: 76 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] post: 76 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] post: 76 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] post: 76 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] post: 76 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] post: 76 cycles
+RUNTIME_RESULT {"K": 7, "card": 0, "control": [12, 12, 12, 12, 12, 12, 12], "core": [1, 3], "cycles_per_operation": [10.857142857142858, 10.857142857142858, 10.857142857142858, 10.857142857142858, 10.857142857142858, 10.857142857142858, 10.857142857142858], "image_bytes": 348, "initial": 0, "maximum": 76, "median": 76, "minimum": 76, "mode": "uncontended", "operation": "semaphore_post", "samples": [76, 76, 76, 76, 76, 76, 76], "semaphore": 7, "warmup": 1}
+.cycle profile:
+  [1] empty: 12 cycles
+  [2] get: 76 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] get: 76 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] get: 76 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] get: 77 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] get: 76 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] get: 76 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] get: 76 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] get: 76 cycles
+RUNTIME_RESULT {"K": 7, "card": 0, "control": [12, 12, 12, 12, 12, 12, 12], "core": [1, 3], "cycles_per_operation": [10.857142857142858, 10.857142857142858, 11.0, 10.857142857142858, 10.857142857142858, 10.857142857142858, 10.857142857142858], "image_bytes": 348, "initial": 7, "maximum": 77, "median": 76, "minimum": 76, "mode": "uncontended", "operation": "semaphore_get", "samples": [76, 76, 77, 76, 76, 76, 76], "semaphore": 7, "warmup": 1}
+.cycle profile:
+  [1] empty: 12 cycles
+  [2] wait_ready: 90 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] wait_ready: 90 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] wait_ready: 90 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] wait_ready: 90 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] wait_ready: 91 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] wait_ready: 90 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] wait_ready: 90 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] wait_ready: 90 cycles
+RUNTIME_RESULT {"K": 7, "card": 0, "control": [12, 12, 12, 12, 12, 12, 12], "core": [1, 3], "cycles_per_operation": [12.857142857142858, 12.857142857142858, 12.857142857142858, 13.0, 12.857142857142858, 12.857142857142858, 12.857142857142858], "image_bytes": 376, "initial": 7, "maximum": 91, "median": 90, "minimum": 90, "mode": "uncontended", "operation": "semaphore_wait_ready", "samples": [90, 90, 90, 91, 90, 90, 90], "semaphore": 7, "warmup": 1}
+.cycle profile:
+  [1] empty: 12 cycles
+  [2] wait_space: 90 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] wait_space: 90 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] wait_space: 91 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] wait_space: 90 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] wait_space: 90 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] wait_space: 90 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] wait_space: 91 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] wait_space: 90 cycles
+RUNTIME_RESULT {"K": 7, "card": 0, "control": [12, 12, 12, 12, 12, 12, 12], "core": [1, 3], "cycles_per_operation": [12.857142857142858, 13.0, 12.857142857142858, 12.857142857142858, 12.857142857142858, 13.0, 12.857142857142858], "image_bytes": 376, "initial": 0, "maximum": 91, "median": 90, "minimum": 90, "mode": "uncontended", "operation": "semaphore_wait_space", "samples": [90, 91, 90, 90, 90, 91, 90], "semaphore": 7, "warmup": 1}
+.cycle profile:
+  [1] empty: 12 cycles
+  [2] wait_ready: 2126 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] wait_ready: 2123 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] wait_ready: 2123 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] wait_ready: 2123 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] wait_ready: 2123 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] wait_ready: 2126 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] wait_ready: 2123 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] wait_ready: 2125 cycles
+RUNTIME_RESULT {"K": 1, "card": 0, "control": [12, 12, 12, 12, 12, 12, 12], "core": [1, 3], "cycles_per_operation": [2123.0, 2123.0, 2123.0, 2123.0, 2126.0, 2123.0, 2125.0], "delay_iterations": 1024, "maximum": 2126, "median": 2123, "minimum": 2123, "mode": "intentional-peer-wait", "operation": "semaphore_wait_ready", "samples": [2123, 2123, 2123, 2123, 2126, 2123, 2125], "semaphore": 2, "warmup": 1}
+.cycle profile:
+  [1] empty: 12 cycles
+  [2] wait_space: 2124 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] wait_space: 2123 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] wait_space: 2124 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] wait_space: 2125 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] wait_space: 2124 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] wait_space: 2123 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] wait_space: 2124 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] wait_space: 2123 cycles
+RUNTIME_RESULT {"K": 1, "card": 0, "control": [12, 12, 12, 12, 12, 12, 12], "core": [1, 3], "cycles_per_operation": [2123.0, 2124.0, 2125.0, 2124.0, 2123.0, 2124.0, 2123.0], "delay_iterations": 1024, "maximum": 2125, "median": 2124, "minimum": 2123, "mode": "intentional-peer-wait", "operation": "semaphore_wait_space", "samples": [2123, 2124, 2125, 2124, 2123, 2124, 2123], "semaphore": 2, "warmup": 1}
+.
+18 passed, 34 deselected in 0.86s

@@ -42,6 +42,9 @@ PYTHONPATH=. pytest -q -s \
   --bh-hardware --bh-device=0
 ```
 
+FP8 E4M3 input/output coverage and observed hardware limitations are documented
+in [fp8.md](fp8.md).
+
 ## The `bh` fixture
 
 ```python

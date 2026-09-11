@@ -1,0 +1,7 @@
+{
+  "blackhole-py/fw/build.py": "5a22e818786469af1a9b26138ee74e5e3e496475dcb5e2f450f19937873ff78f",
+  "blackhole-py/fw/llama3/fw/consts.py": "40552af851e2e65e9c111e68e8a0eb158ce1c0825eae7bbd45c1716169f0d3f4",
+  "blackhole-py/fw/llama3/fw/core.py": "48a578c61ac97290fcfb2be6d02925235c330d648e0f01a6595071ebe098f325",
+  "blackhole-py/fw/llama3/fw/cq.py": "11e25b759e6c002aeb4a1673a27e10d0d32c233ec95d7a70e8443c6c2a6a6436",
+  "blackhole-py/fw/llama3/fw/dram_cq.py": "42f4760c90cee73a480a1c1e9c7eea9cbeb00b02b6e277c7550a731e083148f1"
+}

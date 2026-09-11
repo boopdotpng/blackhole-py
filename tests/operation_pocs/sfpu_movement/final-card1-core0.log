@@ -1,0 +1,66 @@
+[tt-device-queue] Queue 1
+F
+=================================== FAILURES ===================================
+__________________________ test_load_lane_mapping[0] ___________________________
+
+bh = <tests.harness.RawHarness object at 0x7f7e59eb96a0>
+request = <FixtureRequest for <Function test_load_lane_mapping[0]>>, start = 0
+
+    @pytest.mark.parametrize('start', (0, 14, 126))
+    def test_load_lane_mapping(bh, request, start):
+      loader, math, packer, p, initial = fixture()
+      expected = initial.copy()
+      p.record('load')
+      for _ in range(K):
+        for position in range(4):
+          sf.load(math, position, start, position=position)
+      sf.drain(math)
+      p.record('load')
+      # Independent stores: values in even columns, physical lane*2 tags in odd.
+      sf.copy(math, 4, 15)
+      for position in range(4):
+        base = 28 * 128 + position * 64
+        math.emit(TT.TTSFPSTORE(position, 3, 0, base // 16))
+        math.emit(TT.TTSFPSTORE(4, 4, 0, base // 16 + 2))
+        for lane in range(32):
+          element = (lane // 8) * 16 + (lane % 8) * 2
+          expected[base + element] = initial[start // 2 * 128 + lane_index(position, lane)]
+          expected[base + element + 1] = unpack('<f', pack('<I', lane * 2))[0]
+>     finish(bh, request, (loader, math, packer), p, initial, expected,
+             f'load:allocation={start}:all_positions:independent_lane_tags', {'load': K * 4})
+
+tests/operation_pocs/sfpu_movement/test_operations.py:109: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/operation_pocs/sfpu_movement/test_operations.py:70: in finish
+    bh.launch(images, l1=l1, profiler=profiler)
+tests/harness.py:57: in launch
+    result = self.device.launch(
+device.py:206: in launch
+    return self.run(Program(core_images), params=params, l1=l1, timeout=timeout)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+device.py:212: in run
+    return self.cq.submit(program.commands(params=params, l1=l1), timeout=timeout)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+cq.py:289: in submit
+    return self.wait(self.enqueue(commands), timeout=timeout)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <cq.CommandQueue object at 0x7f7e59eb9160>, event = 1, timeout = 10.0
+poll_interval = 0.0002
+
+    def wait(self, event, timeout=10.0, poll_interval=0.0002):
+      deadline = time.monotonic() + timeout
+      polls = 0
+      while self._read_u64(self.completion) < event:
+        polls += 1
+        if poll_interval:
+          if time.monotonic() >= deadline:
+>           raise self._timeout(event)
+E           TimeoutError: CQ completion 1 timed out
+
+cq.py:301: TimeoutError
+=========================== short test summary info ============================
+FAILED tests/operation_pocs/sfpu_movement/test_operations.py::test_load_lane_mapping[0]
+!!!!!!!!!!!!!!!!!!!!!!!!!! stopping after 1 failures !!!!!!!!!!!!!!!!!!!!!!!!!!!
+1 failed in 10.66s

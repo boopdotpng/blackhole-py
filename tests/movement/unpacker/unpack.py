@@ -16,6 +16,8 @@ from isa import R, Reg, Tensix as TT, is_reg
 
 
 BF16 = 5
+FP16 = 1
+FP8_E4M3 = 0x1A  # LF8 code point 10 plus the separate four-bit exponent mode.
 F32 = 0
 TILE_ELEMENTS = 32 * 32
 FACE_ELEMENTS = 16 * 16
@@ -218,8 +220,10 @@ def configure_unpacker(k: Asm, engine: int, address: int | Reg, input_format: in
     raise ValueError("unpacker engine must be zero or one")
   if target is UnpackTarget.DST and engine != UNPACKER0:
     raise ValueError("only unpacker zero can write Dst")
-  if input_format not in (BF16, F32):
-    raise ValueError("the unpacker proof supports BF16 and F32")
+  if input_format not in (BF16, F32, FP8_E4M3):
+    raise ValueError("unsupported unpack input format")
+  if input_format == FP8_E4M3 and target is UnpackTarget.DST:
+    raise ValueError("FP8 input currently uses SrcA/SrcB")
   if type(dst_tile) is not int or not 0 <= dst_tile < 8:
     raise ValueError("FP32 Dst tile must be in range 0..7")
   if type(dst_element_offset) is not int or not 0 <= dst_element_offset < TILE_ELEMENTS:
@@ -230,13 +234,14 @@ def configure_unpacker(k: Asm, engine: int, address: int | Reg, input_format: in
 
   descriptor_x = 0 if engine == UNPACKER0 else FACE_ELEMENTS
   descriptor = (
-    input_format | 0x10 | descriptor_x << 16,
+    (input_format & 0xF) | 0x10 | descriptor_x << 16,
     1 | 4 << 16,
     0,
     0,
   )
   direct = target is UnpackTarget.DST
-  options = (0x20 | input_format, 0x03 | (0x30 if direct else 0), 0, 0)
+  register_format = FP16 if input_format == FP8_E4M3 else input_format
+  options = (0x20 | (input_format & 0xF), 0x03 | (0x30 if direct else 0), 0, 0)
   for register, words in (
     (_engine_cfg(UnpackCfg.TILE_DESCRIPTOR, engine), descriptor),
     (_engine_cfg(UnpackCfg.OPTIONS, engine), options),
@@ -244,7 +249,10 @@ def configure_unpacker(k: Asm, engine: int, address: int | Reg, input_format: in
     for index, word in enumerate(words):
       k.write(register + index * 4, word)
 
-  item_size = 2 if input_format == BF16 else 4
+  item_size = 4 if register_format == F32 else 2
+  # Channel 1 strides address expanded registers, not packed L1 bytes.
+  _rmw_cfg_byte(k, CFG_BASE + (71 + engine * 48) * 4, 2, 0x40,
+                0x40 if input_format == FP8_E4M3 else 0)
   for register, value in (
     (_engine_cfg(UnpackCfg.ADDRESS_XY0, engine), 0),
     (_engine_cfg(UnpackCfg.ADDRESS_ZW0, engine), 0),
@@ -358,11 +366,11 @@ def emit_unpack_to_dst(k: Asm, address: int | Reg, byte_count: Reg,
   sem_post(k, Sem.UNPACK_TO_DEST)
 
 
-def emit_unpack_to_src(k: Asm, address: int, target: UnpackTarget):
+def emit_unpack_to_src(k: Asm, address: int, target: UnpackTarget, *, input_format=BF16):
   if target not in (UnpackTarget.SRCA, UnpackTarget.SRCB):
     raise ValueError("source target must be SrcA or SrcB")
   engine = UNPACKER0 if target is UnpackTarget.SRCA else UNPACKER1
-  configure_unpacker(k, engine, address, BF16, target)
+  configure_unpacker(k, engine, address, input_format, target)
   k.emit(TT.TTSETADCXX(engine + 1, FACE_ELEMENTS - 1, 0))
   k.emit(TT.TTSETADCZW(3, 0, 0, 0, 0, 0xF))
   stall(k, Stall.UNPACK, Wait.SRCA_CLR if engine == 0 else Wait.SRCB_CLR)
@@ -380,12 +388,12 @@ def emit_unpack_to_src(k: Asm, address: int, target: UnpackTarget):
   pc_sync(k)
 
 
-def configure_unpack_pair(k: Asm, address_a: int, address_b: int):
+def configure_unpack_pair(k: Asm, address_a: int, address_b: int, *, input_format=BF16):
   configure_unpacker(
-    k, UNPACKER0, address_a, BF16, UnpackTarget.SRCA, commit=False,
+    k, UNPACKER0, address_a, input_format, UnpackTarget.SRCA, commit=False,
   )
   configure_unpacker(
-    k, UNPACKER1, address_b, BF16, UnpackTarget.SRCB, commit=False,
+    k, UNPACKER1, address_b, input_format, UnpackTarget.SRCB, commit=False,
   )
   observed = k.reg()
   k.read(observed, _engine_cfg(UnpackCfg.BASE, UNPACKER0))
@@ -395,8 +403,8 @@ def configure_unpack_pair(k: Asm, address_a: int, address_b: int):
   k.emit(TT.TTSETADCZW(3, 0, 0, 0, 0, 0xF))
 
 
-def emit_unpack_pair(k: Asm, address_a: int, address_b: int):
-  configure_unpack_pair(k, address_a, address_b)
+def emit_unpack_pair(k: Asm, address_a: int, address_b: int, *, input_format=BF16):
+  configure_unpack_pair(k, address_a, address_b, input_format=input_format)
   stall(k, Stall.UNPACK, Wait.SRCA_CLR | Wait.SRCB_CLR)
   configure_mop(k, _mop_loop_words(
     4, 1, start=_unpacr(UNPACKER0), loop=_unpacr(UNPACKER1),
@@ -452,12 +460,16 @@ def _configure_copy_mop(k: Asm, bank: UnpackTarget, release: int):
 
 
 def emit_copy_src_to_dst(k: Asm, bank: UnpackTarget, tile: int, *, release=3,
-                         wait_for_dst=True):
+                         wait_for_dst=True, input_format=BF16):
   if bank not in (UnpackTarget.SRCA, UnpackTarget.SRCB):
     raise ValueError("copy source must be SrcA or SrcB")
   if wait_for_dst:
     sem_wait(k, Sem.MATH_PACK, SemWait.ON_MAX, Stall.SYNC | Stall.MATH | Stall.SFPU)
   configure_fp32_dst(k, tile)
+  if input_format == FP8_E4M3:
+    # Blackhole MOVA/B2D in FP32 mode treats every source as TF32.
+    # Preserve FP16 in native Dst and let the packer widen it instead.
+    _rmw_cfg_byte(k, PackCfg.ALU_FORMAT, 3, 0x20, 0)
   source_step = 8 if bank is UnpackTarget.SRCA else 4 << 8
   destination_step = 8 if bank is UnpackTarget.SRCA else 4
   for register, value in (
@@ -505,14 +517,22 @@ def _set_dma_reg16(k: Asm, half_register: int, value: int | Reg):
 
 
 def configure_packer(k: Asm, output_format: int, *, relu_mode=0,
-                     relu_threshold=0, stochastic=False):
-  if output_format not in (BF16, F32):
-    raise ValueError("the packer proof supports BF16 and F32")
+                     relu_threshold=0, stochastic=False, source_format=None, dst_fp32=True):
+  if output_format not in (BF16, F32, FP8_E4M3):
+    raise ValueError("unsupported pack output format")
   if relu_mode not in (0, 1, 3):
     raise ValueError("packer ReLU mode must be 0, 1, or 3")
   if not 0 <= relu_threshold < 1 << 16:
     raise ValueError("packer ReLU threshold must be a 16-bit value")
-  pack_source_format = output_format
+  pack_source_format = BF16 if output_format == FP8_E4M3 else output_format
+  if source_format is not None:
+    if source_format not in (FP16, BF16, F32):
+      raise ValueError("unsupported pack source format")
+    pack_source_format = source_format
+  # E4M3 needs the BF16/TF32 gasket path with Round_10b_mant,
+  # then FP16 at the packer input and the separate E4M3 output-mode bit.
+  _rmw_cfg_byte(k, CFG_BASE + 71 * 4, 2, 0x80,
+                0x80 if output_format == FP8_E4M3 else 0)
   _set_thread_cfg(k, 0, 0)
   _rmw_cfg_byte(
     k, PackCfg.ALU_FORMAT, 3, 0x1E, pack_source_format << 1,
@@ -523,15 +543,16 @@ def configure_packer(k: Asm, output_format: int, *, relu_mode=0,
   for byte, mask in enumerate((0xFC, 0xFF, 0x3F)):
     _rmw_cfg_byte(k, PackCfg.ACCUMULATION, byte, mask, relu >> (byte * 8))
   for register, value in (
-    (PackCfg.SECTION_SIZES, 0x00040000),
+    (PackCfg.SECTION_SIZES, 0 if output_format == FP8_E4M3 else 0x00040000),
     (PackCfg.DATA_FORMAT,
-     1 | output_format << 4 | pack_source_format << 8),
-    (PackCfg.DESTINATION_READ, 1),
+     1 | (output_format & 0xF) << 4 |
+     (FP16 if output_format == FP8_E4M3 else pack_source_format) << 8),
+    (PackCfg.DESTINATION_READ, int(dst_fp32) | (8 if output_format == FP8_E4M3 and dst_fp32 else 0)),
     (PackCfg.ADDRESS_XY,
-     16 * (2 if pack_source_format == BF16 else 4) << 16),
+     16 * (4 if pack_source_format == F32 else 2) << 16),
     (PackCfg.ADDRESS_ZW,
-     FACE_ELEMENTS * (2 if pack_source_format == BF16 else 4) |
-     TILE_ELEMENTS * (2 if pack_source_format == BF16 else 4) << 16),
+     FACE_ELEMENTS * (4 if pack_source_format == F32 else 2) |
+     TILE_ELEMENTS * (4 if pack_source_format == F32 else 2) << 16),
     (PackCfg.COUNTERS, 0x1000),
     (PackCfg.EDGE, 0xFFFF),
     (PackCfg.EDGE1, 0),
@@ -539,7 +560,7 @@ def configure_packer(k: Asm, output_format: int, *, relu_mode=0,
     (PackCfg.TILE_ROW_MAPPING1, 0),
   ):
     k.write(int(register), value)
-  tile_bytes = BF16_TILE_BYTES if output_format == BF16 else F32_TILE_BYTES
+  tile_bytes = {BF16: BF16_TILE_BYTES, F32: F32_TILE_BYTES, FP8_E4M3: TILE_ELEMENTS}[output_format]
   k.write(TensixMMIO.REGFILE_BASE + 16 * 4, tile_bytes >> 4)
   k.write(TensixMMIO.REGFILE_BASE + 52 * 4, 0x40000)
   for section, value in enumerate((0x0104, 0x2820, 0x1120)):
@@ -574,11 +595,11 @@ def _set_pack_destination(k: Asm, tile: int, output_address: int):
 
 
 def emit_pack_dst(k: Asm, tile: int, output_address: int, output_format: int,
-                  *, configure=True, wait_for_dst=True):
+                  *, configure=True, wait_for_dst=True, source_format=None, dst_fp32=True):
   if wait_for_dst:
     sem_wait(k, Sem.MATH_PACK, SemWait.ON_ZERO, Stall.TDMA)
   if configure:
-    configure_packer(k, output_format)
+    configure_packer(k, output_format, source_format=source_format, dst_fp32=dst_fp32)
   _set_pack_destination(k, tile, output_address)
   k.emit(TT.TTSETADCXX(4, 15, 0))
   k.emit(TT.TTSETADCZW(4, 0, 0, 0, 0, 5))

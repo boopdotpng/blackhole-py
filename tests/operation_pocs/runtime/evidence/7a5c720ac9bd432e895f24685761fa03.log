@@ -1,0 +1,89 @@
+[tt-device-queue] Queue 1
+RUNTIME_CONTEXT {"card": 1, "core": [1, 3], "core_index": 1, "dram_endpoints": [[[17, 14], [17, 13]], [[17, 15], [17, 16]], [[17, 18], [17, 19]], [[17, 21], [17, 22]], [[18, 14], [18, 13]], [[18, 17], [18, 16]], [[18, 20], [18, 19]], [[18, 23], [18, 22]]], "firmware_manifest_sha256": "8d7e24525e5a0cbcabf97e70d0415c8871c9f3c899c031ddc23a03cff61a02d6", "ops_sha256": "ae96742ac2dabcd191db4b2ac0178b4150709d00731595cc2c5e61f3abac5ef4", "runtime_sha256": "094ac79248655ba75aa70810e43636858ba83e3a31b1d11e20f23efc40d80687", "worker_count": 117}
+F
+=================================== FAILURES ===================================
+_______________________ test_external[2-128-0-0-0-read] ________________________
+
+bh = <tests.harness.RawHarness object at 0x7fcbd19cdd30>
+request = <FixtureRequest for <Function test_external[2-128-0-0-0-read]>>
+direction = 'read', noc_index = 0, element_bytes = 2, elements = 128
+placement = 0, stride = 0
+
+    @pytest.mark.parametrize('direction', ['read', 'write'])
+    @pytest.mark.parametrize('noc_index', [0, 1])
+    @pytest.mark.parametrize('element_bytes,elements,placement,stride', [
+      (2, 128, 0, 0), (4, 128, 0x4000, 0), (2, 256, 0x8000, 512),
+      (4, 256, 0xC000, 1024),
+    ])
+    def test_external(bh, request, direction, noc_index, element_bytes, elements, placement, stride):
+      block_bytes = 128 * element_bytes
+      size = elements * element_bytes
+      offset = 64
+      extent = offset + (elements // 128 - 1) * (stride or block_bytes) + block_bytes + 64
+      original = bytes((i * 37 + i // 7 + 13) & 255 for i in range(extent))
+      payload = bytes((i * 73 + i // 11 + 19) & 255 for i in range(size))
+      bank = 0 if placement == 0 else len(bh.device.pcie.dram_endpoints) - 1
+      external = bh.dram_buffer(extent, bank=bank, initial=original)
+      neighbor = bh.dram_buffer(256, bank=bank, initial=GUARD * 4)
+      address = BASE + placement + 64
+      spec = Transfer(bh.dram_coordinates(noc_index, banks=1, bank_start=bank)[0],
+                      address, elements, element_bytes, offset, stride, noc_index)
+      expected = bytearray(original)
+      if direction == 'read':
+        payload = b''.join(original[offset + b * (stride or block_bytes):
+                                     offset + b * (stride or block_bytes) + block_bytes]
+                           for b in range(elements // 128))
+      else:
+        for b in range(elements // 128):
+          start = offset + b * (stride or block_bytes)
+          expected[start:start + block_bytes] = payload[b * block_bytes:(b + 1) * block_bytes]
+      for serial in (True, False):
+        k = Asm('brisc' if direction == 'read' else 'ncrisc')
+        p = Profiler(k)
+        external_address = k.reg()
+        k.read(external_address, TensixL1.PARAM_BASE)
+        p.record('empty'); p.record('empty')
+        p.record(direction)
+        (read_from if direction == 'read' else write_to)(k, spec, external_address, serial=serial)
+        p.record(direction)
+        images = {k.role: k.lower()}
+        samples, controls = [], []
+        for sample in range(8):
+          bh.write(external, original)
+          initial = bytes([0xD3]) * size if direction == 'read' else payload
+>         bh.launch(images, params=(external.address,),
+                    l1={address - 64: GUARD + initial + GUARD}, profiler=p)
+
+tests/operation_pocs/runtime/test_runtime.py:68: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/harness.py:57: in launch
+    result = self.device.launch(
+device.py:206: in launch
+    return self.run(Program(core_images), params=params, l1=l1, timeout=timeout)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+device.py:212: in run
+    return self.cq.submit(program.commands(params=params, l1=l1), timeout=timeout)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+cq.py:289: in submit
+    return self.wait(self.enqueue(commands), timeout=timeout)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <cq.CommandQueue object at 0x7fcbd19cd940>, event = 4, timeout = 3.0
+poll_interval = 0.0002
+
+    def wait(self, event, timeout=10.0, poll_interval=0.0002):
+      deadline = time.monotonic() + timeout
+      polls = 0
+      while self._read_u64(self.completion) < event:
+        polls += 1
+        if poll_interval:
+          if time.monotonic() >= deadline:
+>           raise self._timeout(event)
+E           TimeoutError: CQ completion 4 timed out
+
+cq.py:301: TimeoutError
+=========================== short test summary info ============================
+FAILED tests/operation_pocs/runtime/test_runtime.py::test_external[2-128-0-0-0-read]
+!!!!!!!!!!!!!!!!!!!!!!!!!! stopping after 1 failures !!!!!!!!!!!!!!!!!!!!!!!!!!!
+1 failed in 3.65s

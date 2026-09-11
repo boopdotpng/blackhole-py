@@ -1,0 +1,7542 @@
+[
+  {
+    "A": 0,
+    "B": 7,
+    "Dst": 0,
+    "K": 16,
+    "N": 128,
+    "accumulate": false,
+    "broadcast": 0,
+    "dtype": "BF16 sources/FP32 Dst",
+    "fidelity": 2,
+    "op": "elwadd",
+    "raw": {
+      "complete": [
+        446,
+        446,
+        446,
+        447,
+        447,
+        447,
+        446
+      ],
+      "control": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "operation": [
+        120,
+        120,
+        120,
+        120,
+        120,
+        120,
+        120
+      ]
+    },
+    "summary": {
+      "complete": {
+        "max": 447,
+        "median": 446,
+        "median_per_call": 27.875,
+        "min": 446
+      },
+      "control": {
+        "max": 12,
+        "median": 12,
+        "median_per_call": 0.75,
+        "min": 12
+      },
+      "operation": {
+        "max": 120,
+        "median": 120,
+        "median_per_call": 7.5,
+        "min": 120
+      }
+    },
+    "queue_job_id": "5666ef642d2845929f066423bb00a36a",
+    "device": 0,
+    "core_index": 0,
+    "evidence": "recovered prior baseline; final revalidation required"
+  },
+  {
+    "A": 0,
+    "B": 7,
+    "Dst": 0,
+    "K": 16,
+    "N": 128,
+    "accumulate": true,
+    "broadcast": 0,
+    "dtype": "BF16 sources/FP32 Dst",
+    "fidelity": 2,
+    "op": "elwadd",
+    "raw": {
+      "complete": [
+        445,
+        447,
+        445,
+        446,
+        445,
+        446,
+        446
+      ],
+      "control": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "operation": [
+        120,
+        120,
+        120,
+        120,
+        120,
+        120,
+        120
+      ]
+    },
+    "summary": {
+      "complete": {
+        "max": 447,
+        "median": 446,
+        "median_per_call": 27.875,
+        "min": 445
+      },
+      "control": {
+        "max": 12,
+        "median": 12,
+        "median_per_call": 0.75,
+        "min": 12
+      },
+      "operation": {
+        "max": 120,
+        "median": 120,
+        "median_per_call": 7.5,
+        "min": 120
+      }
+    },
+    "queue_job_id": "5666ef642d2845929f066423bb00a36a",
+    "device": 0,
+    "core_index": 0,
+    "evidence": "recovered prior baseline; final revalidation required"
+  },
+  {
+    "A": 0,
+    "B": 7,
+    "Dst": 0,
+    "K": 16,
+    "N": 128,
+    "accumulate": false,
+    "broadcast": 1,
+    "dtype": "BF16 sources/FP32 Dst",
+    "fidelity": 2,
+    "op": "elwadd",
+    "raw": {
+      "complete": [
+        446,
+        446,
+        445,
+        446,
+        446,
+        448,
+        446
+      ],
+      "control": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "operation": [
+        120,
+        120,
+        120,
+        120,
+        120,
+        120,
+        120
+      ]
+    },
+    "summary": {
+      "complete": {
+        "max": 448,
+        "median": 446,
+        "median_per_call": 27.875,
+        "min": 445
+      },
+      "control": {
+        "max": 12,
+        "median": 12,
+        "median_per_call": 0.75,
+        "min": 12
+      },
+      "operation": {
+        "max": 120,
+        "median": 120,
+        "median_per_call": 7.5,
+        "min": 120
+      }
+    },
+    "queue_job_id": "5666ef642d2845929f066423bb00a36a",
+    "device": 0,
+    "core_index": 0,
+    "evidence": "recovered prior baseline; final revalidation required"
+  },
+  {
+    "A": 0,
+    "B": 7,
+    "Dst": 0,
+    "K": 16,
+    "N": 128,
+    "accumulate": true,
+    "broadcast": 1,
+    "dtype": "BF16 sources/FP32 Dst",
+    "fidelity": 2,
+    "op": "elwadd",
+    "raw": {
+      "complete": [
+        446,
+        446,
+        446,
+        445,
+        446,
+        446,
+        447
+      ],
+      "control": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "operation": [
+        120,
+        120,
+        120,
+        120,
+        120,
+        120,
+        120
+      ]
+    },
+    "summary": {
+      "complete": {
+        "max": 447,
+        "median": 446,
+        "median_per_call": 27.875,
+        "min": 445
+      },
+      "control": {
+        "max": 12,
+        "median": 12,
+        "median_per_call": 0.75,
+        "min": 12
+      },
+      "operation": {
+        "max": 120,
+        "median": 120,
+        "median_per_call": 7.5,
+        "min": 120
+      }
+    },
+    "queue_job_id": "5666ef642d2845929f066423bb00a36a",
+    "device": 0,
+    "core_index": 0,
+    "evidence": "recovered prior baseline; final revalidation required"
+  },
+  {
+    "A": 0,
+    "B": 7,
+    "Dst": 0,
+    "K": 16,
+    "N": 128,
+    "accumulate": false,
+    "broadcast": 2,
+    "dtype": "BF16 sources/FP32 Dst",
+    "fidelity": 2,
+    "op": "elwadd",
+    "raw": {
+      "complete": [
+        445,
+        445,
+        445,
+        445,
+        446,
+        445,
+        446
+      ],
+      "control": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "operation": [
+        120,
+        120,
+        120,
+        120,
+        120,
+        120,
+        120
+      ]
+    },
+    "summary": {
+      "complete": {
+        "max": 446,
+        "median": 445,
+        "median_per_call": 27.8125,
+        "min": 445
+      },
+      "control": {
+        "max": 12,
+        "median": 12,
+        "median_per_call": 0.75,
+        "min": 12
+      },
+      "operation": {
+        "max": 120,
+        "median": 120,
+        "median_per_call": 7.5,
+        "min": 120
+      }
+    },
+    "queue_job_id": "5666ef642d2845929f066423bb00a36a",
+    "device": 0,
+    "core_index": 0,
+    "evidence": "recovered prior baseline; final revalidation required"
+  },
+  {
+    "A": 0,
+    "B": 7,
+    "Dst": 0,
+    "K": 16,
+    "N": 128,
+    "accumulate": true,
+    "broadcast": 2,
+    "dtype": "BF16 sources/FP32 Dst",
+    "fidelity": 2,
+    "op": "elwadd",
+    "raw": {
+      "complete": [
+        446,
+        446,
+        446,
+        445,
+        445,
+        445,
+        446
+      ],
+      "control": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "operation": [
+        120,
+        120,
+        120,
+        120,
+        120,
+        120,
+        120
+      ]
+    },
+    "summary": {
+      "complete": {
+        "max": 446,
+        "median": 446,
+        "median_per_call": 27.875,
+        "min": 445
+      },
+      "control": {
+        "max": 12,
+        "median": 12,
+        "median_per_call": 0.75,
+        "min": 12
+      },
+      "operation": {
+        "max": 120,
+        "median": 120,
+        "median_per_call": 7.5,
+        "min": 120
+      }
+    },
+    "queue_job_id": "5666ef642d2845929f066423bb00a36a",
+    "device": 0,
+    "core_index": 0,
+    "evidence": "recovered prior baseline; final revalidation required"
+  },
+  {
+    "A": 0,
+    "B": 7,
+    "Dst": 0,
+    "K": 16,
+    "N": 128,
+    "accumulate": false,
+    "broadcast": 3,
+    "dtype": "BF16 sources/FP32 Dst",
+    "fidelity": 2,
+    "op": "elwadd",
+    "raw": {
+      "complete": [
+        446,
+        445,
+        445,
+        447,
+        446,
+        446,
+        446
+      ],
+      "control": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "operation": [
+        120,
+        120,
+        120,
+        120,
+        120,
+        120,
+        120
+      ]
+    },
+    "summary": {
+      "complete": {
+        "max": 447,
+        "median": 446,
+        "median_per_call": 27.875,
+        "min": 445
+      },
+      "control": {
+        "max": 12,
+        "median": 12,
+        "median_per_call": 0.75,
+        "min": 12
+      },
+      "operation": {
+        "max": 120,
+        "median": 120,
+        "median_per_call": 7.5,
+        "min": 120
+      }
+    },
+    "queue_job_id": "5666ef642d2845929f066423bb00a36a",
+    "device": 0,
+    "core_index": 0,
+    "evidence": "recovered prior baseline; final revalidation required"
+  },
+  {
+    "A": 0,
+    "B": 7,
+    "Dst": 0,
+    "K": 16,
+    "N": 128,
+    "accumulate": true,
+    "broadcast": 3,
+    "dtype": "BF16 sources/FP32 Dst",
+    "fidelity": 2,
+    "op": "elwadd",
+    "raw": {
+      "complete": [
+        445,
+        445,
+        447,
+        445,
+        446,
+        445,
+        445
+      ],
+      "control": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "operation": [
+        120,
+        120,
+        120,
+        120,
+        120,
+        120,
+        120
+      ]
+    },
+    "summary": {
+      "complete": {
+        "max": 447,
+        "median": 445,
+        "median_per_call": 27.8125,
+        "min": 445
+      },
+      "control": {
+        "max": 12,
+        "median": 12,
+        "median_per_call": 0.75,
+        "min": 12
+      },
+      "operation": {
+        "max": 120,
+        "median": 120,
+        "median_per_call": 7.5,
+        "min": 120
+      }
+    },
+    "queue_job_id": "5666ef642d2845929f066423bb00a36a",
+    "device": 0,
+    "core_index": 0,
+    "evidence": "recovered prior baseline; final revalidation required"
+  },
+  {
+    "A": 2,
+    "B": 0,
+    "Dst": 7,
+    "K": 16,
+    "N": 128,
+    "accumulate": false,
+    "broadcast": 0,
+    "dtype": "BF16 sources/FP32 Dst",
+    "fidelity": 2,
+    "op": "elwadd",
+    "raw": {
+      "complete": [
+        440,
+        439,
+        440,
+        440,
+        440,
+        440,
+        440
+      ],
+      "control": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "operation": [
+        119,
+        119,
+        119,
+        119,
+        119,
+        119,
+        119
+      ]
+    },
+    "summary": {
+      "complete": {
+        "max": 440,
+        "median": 440,
+        "median_per_call": 27.5,
+        "min": 439
+      },
+      "control": {
+        "max": 12,
+        "median": 12,
+        "median_per_call": 0.75,
+        "min": 12
+      },
+      "operation": {
+        "max": 119,
+        "median": 119,
+        "median_per_call": 7.4375,
+        "min": 119
+      }
+    },
+    "queue_job_id": "5666ef642d2845929f066423bb00a36a",
+    "device": 0,
+    "core_index": 0,
+    "evidence": "recovered prior baseline; final revalidation required"
+  },
+  {
+    "A": 2,
+    "B": 0,
+    "Dst": 7,
+    "K": 16,
+    "N": 128,
+    "accumulate": true,
+    "broadcast": 0,
+    "dtype": "BF16 sources/FP32 Dst",
+    "fidelity": 2,
+    "op": "elwadd",
+    "raw": {
+      "complete": [
+        439,
+        440,
+        439,
+        439,
+        440,
+        440,
+        440
+      ],
+      "control": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "operation": [
+        119,
+        119,
+        119,
+        119,
+        119,
+        119,
+        119
+      ]
+    },
+    "summary": {
+      "complete": {
+        "max": 440,
+        "median": 440,
+        "median_per_call": 27.5,
+        "min": 439
+      },
+      "control": {
+        "max": 12,
+        "median": 12,
+        "median_per_call": 0.75,
+        "min": 12
+      },
+      "operation": {
+        "max": 119,
+        "median": 119,
+        "median_per_call": 7.4375,
+        "min": 119
+      }
+    },
+    "queue_job_id": "5666ef642d2845929f066423bb00a36a",
+    "device": 0,
+    "core_index": 0,
+    "evidence": "recovered prior baseline; final revalidation required"
+  },
+  {
+    "A": 2,
+    "B": 0,
+    "Dst": 7,
+    "K": 16,
+    "N": 128,
+    "accumulate": false,
+    "broadcast": 1,
+    "dtype": "BF16 sources/FP32 Dst",
+    "fidelity": 2,
+    "op": "elwadd",
+    "raw": {
+      "complete": [
+        440,
+        440,
+        439,
+        440,
+        439,
+        440,
+        440
+      ],
+      "control": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "operation": [
+        119,
+        119,
+        119,
+        119,
+        119,
+        119,
+        119
+      ]
+    },
+    "summary": {
+      "complete": {
+        "max": 440,
+        "median": 440,
+        "median_per_call": 27.5,
+        "min": 439
+      },
+      "control": {
+        "max": 12,
+        "median": 12,
+        "median_per_call": 0.75,
+        "min": 12
+      },
+      "operation": {
+        "max": 119,
+        "median": 119,
+        "median_per_call": 7.4375,
+        "min": 119
+      }
+    },
+    "queue_job_id": "5666ef642d2845929f066423bb00a36a",
+    "device": 0,
+    "core_index": 0,
+    "evidence": "recovered prior baseline; final revalidation required"
+  },
+  {
+    "A": 2,
+    "B": 0,
+    "Dst": 7,
+    "K": 16,
+    "N": 128,
+    "accumulate": true,
+    "broadcast": 1,
+    "dtype": "BF16 sources/FP32 Dst",
+    "fidelity": 2,
+    "op": "elwadd",
+    "raw": {
+      "complete": [
+        440,
+        439,
+        439,
+        440,
+        439,
+        439,
+        440
+      ],
+      "control": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "operation": [
+        119,
+        119,
+        119,
+        119,
+        119,
+        119,
+        119
+      ]
+    },
+    "summary": {
+      "complete": {
+        "max": 440,
+        "median": 439,
+        "median_per_call": 27.4375,
+        "min": 439
+      },
+      "control": {
+        "max": 12,
+        "median": 12,
+        "median_per_call": 0.75,
+        "min": 12
+      },
+      "operation": {
+        "max": 119,
+        "median": 119,
+        "median_per_call": 7.4375,
+        "min": 119
+      }
+    },
+    "queue_job_id": "5666ef642d2845929f066423bb00a36a",
+    "device": 0,
+    "core_index": 0,
+    "evidence": "recovered prior baseline; final revalidation required"
+  },
+  {
+    "A": 2,
+    "B": 0,
+    "Dst": 7,
+    "K": 16,
+    "N": 128,
+    "accumulate": false,
+    "broadcast": 2,
+    "dtype": "BF16 sources/FP32 Dst",
+    "fidelity": 2,
+    "op": "elwadd",
+    "raw": {
+      "complete": [
+        440,
+        442,
+        439,
+        440,
+        440,
+        439,
+        439
+      ],
+      "control": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "operation": [
+        119,
+        119,
+        119,
+        119,
+        119,
+        119,
+        119
+      ]
+    },
+    "summary": {
+      "complete": {
+        "max": 442,
+        "median": 440,
+        "median_per_call": 27.5,
+        "min": 439
+      },
+      "control": {
+        "max": 12,
+        "median": 12,
+        "median_per_call": 0.75,
+        "min": 12
+      },
+      "operation": {
+        "max": 119,
+        "median": 119,
+        "median_per_call": 7.4375,
+        "min": 119
+      }
+    },
+    "queue_job_id": "5666ef642d2845929f066423bb00a36a",
+    "device": 0,
+    "core_index": 0,
+    "evidence": "recovered prior baseline; final revalidation required"
+  },
+  {
+    "A": 2,
+    "B": 0,
+    "Dst": 7,
+    "K": 16,
+    "N": 128,
+    "accumulate": true,
+    "broadcast": 2,
+    "dtype": "BF16 sources/FP32 Dst",
+    "fidelity": 2,
+    "op": "elwadd",
+    "raw": {
+      "complete": [
+        440,
+        439,
+        440,
+        440,
+        439,
+        441,
+        440
+      ],
+      "control": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "operation": [
+        119,
+        119,
+        119,
+        119,
+        119,
+        119,
+        119
+      ]
+    },
+    "summary": {
+      "complete": {
+        "max": 441,
+        "median": 440,
+        "median_per_call": 27.5,
+        "min": 439
+      },
+      "control": {
+        "max": 12,
+        "median": 12,
+        "median_per_call": 0.75,
+        "min": 12
+      },
+      "operation": {
+        "max": 119,
+        "median": 119,
+        "median_per_call": 7.4375,
+        "min": 119
+      }
+    },
+    "queue_job_id": "5666ef642d2845929f066423bb00a36a",
+    "device": 0,
+    "core_index": 0,
+    "evidence": "recovered prior baseline; final revalidation required"
+  },
+  {
+    "A": 2,
+    "B": 0,
+    "Dst": 7,
+    "K": 16,
+    "N": 128,
+    "accumulate": false,
+    "broadcast": 3,
+    "dtype": "BF16 sources/FP32 Dst",
+    "fidelity": 2,
+    "op": "elwadd",
+    "raw": {
+      "complete": [
+        440,
+        440,
+        439,
+        440,
+        440,
+        440,
+        440
+      ],
+      "control": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "operation": [
+        119,
+        119,
+        119,
+        119,
+        119,
+        119,
+        119
+      ]
+    },
+    "summary": {
+      "complete": {
+        "max": 440,
+        "median": 440,
+        "median_per_call": 27.5,
+        "min": 439
+      },
+      "control": {
+        "max": 12,
+        "median": 12,
+        "median_per_call": 0.75,
+        "min": 12
+      },
+      "operation": {
+        "max": 119,
+        "median": 119,
+        "median_per_call": 7.4375,
+        "min": 119
+      }
+    },
+    "queue_job_id": "5666ef642d2845929f066423bb00a36a",
+    "device": 0,
+    "core_index": 0,
+    "evidence": "recovered prior baseline; final revalidation required"
+  },
+  {
+    "A": 2,
+    "B": 0,
+    "Dst": 7,
+    "K": 16,
+    "N": 128,
+    "accumulate": true,
+    "broadcast": 3,
+    "dtype": "BF16 sources/FP32 Dst",
+    "fidelity": 2,
+    "op": "elwadd",
+    "raw": {
+      "complete": [
+        441,
+        440,
+        440,
+        440,
+        440,
+        440,
+        440
+      ],
+      "control": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "operation": [
+        119,
+        119,
+        119,
+        119,
+        119,
+        119,
+        119
+      ]
+    },
+    "summary": {
+      "complete": {
+        "max": 441,
+        "median": 440,
+        "median_per_call": 27.5,
+        "min": 440
+      },
+      "control": {
+        "max": 12,
+        "median": 12,
+        "median_per_call": 0.75,
+        "min": 12
+      },
+      "operation": {
+        "max": 119,
+        "median": 119,
+        "median_per_call": 7.4375,
+        "min": 119
+      }
+    },
+    "queue_job_id": "5666ef642d2845929f066423bb00a36a",
+    "device": 0,
+    "core_index": 0,
+    "evidence": "recovered prior baseline; final revalidation required"
+  },
+  {
+    "A": 4,
+    "B": 3,
+    "Dst": 32,
+    "K": 16,
+    "N": 128,
+    "accumulate": false,
+    "broadcast": 0,
+    "dtype": "BF16 sources/FP32 Dst",
+    "fidelity": 2,
+    "op": "elwadd",
+    "raw": {
+      "complete": [
+        446,
+        446,
+        446,
+        446,
+        446,
+        446,
+        446
+      ],
+      "control": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "operation": [
+        120,
+        120,
+        120,
+        120,
+        120,
+        120,
+        120
+      ]
+    },
+    "summary": {
+      "complete": {
+        "max": 446,
+        "median": 446,
+        "median_per_call": 27.875,
+        "min": 446
+      },
+      "control": {
+        "max": 12,
+        "median": 12,
+        "median_per_call": 0.75,
+        "min": 12
+      },
+      "operation": {
+        "max": 120,
+        "median": 120,
+        "median_per_call": 7.5,
+        "min": 120
+      }
+    },
+    "queue_job_id": "5666ef642d2845929f066423bb00a36a",
+    "device": 0,
+    "core_index": 0,
+    "evidence": "recovered prior baseline; final revalidation required"
+  },
+  {
+    "A": 4,
+    "B": 3,
+    "Dst": 32,
+    "K": 16,
+    "N": 128,
+    "accumulate": true,
+    "broadcast": 0,
+    "dtype": "BF16 sources/FP32 Dst",
+    "fidelity": 2,
+    "op": "elwadd",
+    "raw": {
+      "complete": [
+        446,
+        447,
+        446,
+        446,
+        446,
+        447,
+        445
+      ],
+      "control": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "operation": [
+        120,
+        120,
+        120,
+        120,
+        120,
+        120,
+        120
+      ]
+    },
+    "summary": {
+      "complete": {
+        "max": 447,
+        "median": 446,
+        "median_per_call": 27.875,
+        "min": 445
+      },
+      "control": {
+        "max": 12,
+        "median": 12,
+        "median_per_call": 0.75,
+        "min": 12
+      },
+      "operation": {
+        "max": 120,
+        "median": 120,
+        "median_per_call": 7.5,
+        "min": 120
+      }
+    },
+    "queue_job_id": "5666ef642d2845929f066423bb00a36a",
+    "device": 0,
+    "core_index": 0,
+    "evidence": "recovered prior baseline; final revalidation required"
+  },
+  {
+    "A": 4,
+    "B": 3,
+    "Dst": 32,
+    "K": 16,
+    "N": 128,
+    "accumulate": false,
+    "broadcast": 1,
+    "dtype": "BF16 sources/FP32 Dst",
+    "fidelity": 2,
+    "op": "elwadd",
+    "raw": {
+      "complete": [
+        446,
+        446,
+        446,
+        446,
+        446,
+        446,
+        445
+      ],
+      "control": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "operation": [
+        120,
+        120,
+        120,
+        120,
+        120,
+        120,
+        120
+      ]
+    },
+    "summary": {
+      "complete": {
+        "max": 446,
+        "median": 446,
+        "median_per_call": 27.875,
+        "min": 445
+      },
+      "control": {
+        "max": 12,
+        "median": 12,
+        "median_per_call": 0.75,
+        "min": 12
+      },
+      "operation": {
+        "max": 120,
+        "median": 120,
+        "median_per_call": 7.5,
+        "min": 120
+      }
+    },
+    "queue_job_id": "5666ef642d2845929f066423bb00a36a",
+    "device": 0,
+    "core_index": 0,
+    "evidence": "recovered prior baseline; final revalidation required"
+  },
+  {
+    "A": 4,
+    "B": 3,
+    "Dst": 32,
+    "K": 16,
+    "N": 128,
+    "accumulate": true,
+    "broadcast": 1,
+    "dtype": "BF16 sources/FP32 Dst",
+    "fidelity": 2,
+    "op": "elwadd",
+    "raw": {
+      "complete": [
+        446,
+        446,
+        447,
+        447,
+        446,
+        445,
+        446
+      ],
+      "control": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "operation": [
+        120,
+        120,
+        120,
+        120,
+        120,
+        120,
+        120
+      ]
+    },
+    "summary": {
+      "complete": {
+        "max": 447,
+        "median": 446,
+        "median_per_call": 27.875,
+        "min": 445
+      },
+      "control": {
+        "max": 12,
+        "median": 12,
+        "median_per_call": 0.75,
+        "min": 12
+      },
+      "operation": {
+        "max": 120,
+        "median": 120,
+        "median_per_call": 7.5,
+        "min": 120
+      }
+    },
+    "queue_job_id": "5666ef642d2845929f066423bb00a36a",
+    "device": 0,
+    "core_index": 0,
+    "evidence": "recovered prior baseline; final revalidation required"
+  },
+  {
+    "A": 4,
+    "B": 3,
+    "Dst": 32,
+    "K": 16,
+    "N": 128,
+    "accumulate": false,
+    "broadcast": 2,
+    "dtype": "BF16 sources/FP32 Dst",
+    "fidelity": 2,
+    "op": "elwadd",
+    "raw": {
+      "complete": [
+        445,
+        446,
+        446,
+        446,
+        447,
+        445,
+        445
+      ],
+      "control": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "operation": [
+        120,
+        120,
+        120,
+        120,
+        120,
+        120,
+        120
+      ]
+    },
+    "summary": {
+      "complete": {
+        "max": 447,
+        "median": 446,
+        "median_per_call": 27.875,
+        "min": 445
+      },
+      "control": {
+        "max": 12,
+        "median": 12,
+        "median_per_call": 0.75,
+        "min": 12
+      },
+      "operation": {
+        "max": 120,
+        "median": 120,
+        "median_per_call": 7.5,
+        "min": 120
+      }
+    },
+    "queue_job_id": "5666ef642d2845929f066423bb00a36a",
+    "device": 0,
+    "core_index": 0,
+    "evidence": "recovered prior baseline; final revalidation required"
+  },
+  {
+    "A": 4,
+    "B": 3,
+    "Dst": 32,
+    "K": 16,
+    "N": 128,
+    "accumulate": true,
+    "broadcast": 2,
+    "dtype": "BF16 sources/FP32 Dst",
+    "fidelity": 2,
+    "op": "elwadd",
+    "raw": {
+      "complete": [
+        445,
+        445,
+        445,
+        446,
+        446,
+        446,
+        446
+      ],
+      "control": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "operation": [
+        120,
+        120,
+        120,
+        120,
+        120,
+        120,
+        120
+      ]
+    },
+    "summary": {
+      "complete": {
+        "max": 446,
+        "median": 446,
+        "median_per_call": 27.875,
+        "min": 445
+      },
+      "control": {
+        "max": 12,
+        "median": 12,
+        "median_per_call": 0.75,
+        "min": 12
+      },
+      "operation": {
+        "max": 120,
+        "median": 120,
+        "median_per_call": 7.5,
+        "min": 120
+      }
+    },
+    "queue_job_id": "5666ef642d2845929f066423bb00a36a",
+    "device": 0,
+    "core_index": 0,
+    "evidence": "recovered prior baseline; final revalidation required"
+  },
+  {
+    "A": 4,
+    "B": 3,
+    "Dst": 32,
+    "K": 16,
+    "N": 128,
+    "accumulate": false,
+    "broadcast": 3,
+    "dtype": "BF16 sources/FP32 Dst",
+    "fidelity": 2,
+    "op": "elwadd",
+    "raw": {
+      "complete": [
+        445,
+        446,
+        445,
+        445,
+        445,
+        445,
+        446
+      ],
+      "control": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "operation": [
+        120,
+        120,
+        120,
+        120,
+        120,
+        120,
+        120
+      ]
+    },
+    "summary": {
+      "complete": {
+        "max": 446,
+        "median": 445,
+        "median_per_call": 27.8125,
+        "min": 445
+      },
+      "control": {
+        "max": 12,
+        "median": 12,
+        "median_per_call": 0.75,
+        "min": 12
+      },
+      "operation": {
+        "max": 120,
+        "median": 120,
+        "median_per_call": 7.5,
+        "min": 120
+      }
+    },
+    "queue_job_id": "5666ef642d2845929f066423bb00a36a",
+    "device": 0,
+    "core_index": 0,
+    "evidence": "recovered prior baseline; final revalidation required"
+  },
+  {
+    "A": 4,
+    "B": 3,
+    "Dst": 32,
+    "K": 16,
+    "N": 128,
+    "accumulate": true,
+    "broadcast": 3,
+    "dtype": "BF16 sources/FP32 Dst",
+    "fidelity": 2,
+    "op": "elwadd",
+    "raw": {
+      "complete": [
+        446,
+        446,
+        445,
+        446,
+        446,
+        446,
+        446
+      ],
+      "control": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "operation": [
+        120,
+        120,
+        120,
+        120,
+        120,
+        120,
+        120
+      ]
+    },
+    "summary": {
+      "complete": {
+        "max": 446,
+        "median": 446,
+        "median_per_call": 27.875,
+        "min": 445
+      },
+      "control": {
+        "max": 12,
+        "median": 12,
+        "median_per_call": 0.75,
+        "min": 12
+      },
+      "operation": {
+        "max": 120,
+        "median": 120,
+        "median_per_call": 7.5,
+        "min": 120
+      }
+    },
+    "queue_job_id": "5666ef642d2845929f066423bb00a36a",
+    "device": 0,
+    "core_index": 0,
+    "evidence": "recovered prior baseline; final revalidation required"
+  },
+  {
+    "A": 6,
+    "B": 1,
+    "Dst": 63,
+    "K": 16,
+    "N": 128,
+    "accumulate": false,
+    "broadcast": 0,
+    "dtype": "BF16 sources/FP32 Dst",
+    "fidelity": 2,
+    "op": "elwadd",
+    "raw": {
+      "complete": [
+        446,
+        445,
+        446,
+        446,
+        446,
+        446,
+        446
+      ],
+      "control": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "operation": [
+        120,
+        120,
+        120,
+        120,
+        120,
+        120,
+        120
+      ]
+    },
+    "summary": {
+      "complete": {
+        "max": 446,
+        "median": 446,
+        "median_per_call": 27.875,
+        "min": 445
+      },
+      "control": {
+        "max": 12,
+        "median": 12,
+        "median_per_call": 0.75,
+        "min": 12
+      },
+      "operation": {
+        "max": 120,
+        "median": 120,
+        "median_per_call": 7.5,
+        "min": 120
+      }
+    },
+    "queue_job_id": "5666ef642d2845929f066423bb00a36a",
+    "device": 0,
+    "core_index": 0,
+    "evidence": "recovered prior baseline; final revalidation required"
+  },
+  {
+    "A": 6,
+    "B": 1,
+    "Dst": 63,
+    "K": 16,
+    "N": 128,
+    "accumulate": true,
+    "broadcast": 0,
+    "dtype": "BF16 sources/FP32 Dst",
+    "fidelity": 2,
+    "op": "elwadd",
+    "raw": {
+      "complete": [
+        446,
+        447,
+        446,
+        446,
+        446,
+        446,
+        447
+      ],
+      "control": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "operation": [
+        120,
+        120,
+        120,
+        120,
+        120,
+        120,
+        120
+      ]
+    },
+    "summary": {
+      "complete": {
+        "max": 447,
+        "median": 446,
+        "median_per_call": 27.875,
+        "min": 446
+      },
+      "control": {
+        "max": 12,
+        "median": 12,
+        "median_per_call": 0.75,
+        "min": 12
+      },
+      "operation": {
+        "max": 120,
+        "median": 120,
+        "median_per_call": 7.5,
+        "min": 120
+      }
+    },
+    "queue_job_id": "5666ef642d2845929f066423bb00a36a",
+    "device": 0,
+    "core_index": 0,
+    "evidence": "recovered prior baseline; final revalidation required"
+  },
+  {
+    "A": 6,
+    "B": 1,
+    "Dst": 63,
+    "K": 16,
+    "N": 128,
+    "accumulate": false,
+    "broadcast": 1,
+    "dtype": "BF16 sources/FP32 Dst",
+    "fidelity": 2,
+    "op": "elwadd",
+    "raw": {
+      "complete": [
+        446,
+        445,
+        446,
+        445,
+        446,
+        445,
+        446
+      ],
+      "control": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "operation": [
+        120,
+        120,
+        120,
+        120,
+        120,
+        120,
+        120
+      ]
+    },
+    "summary": {
+      "complete": {
+        "max": 446,
+        "median": 446,
+        "median_per_call": 27.875,
+        "min": 445
+      },
+      "control": {
+        "max": 12,
+        "median": 12,
+        "median_per_call": 0.75,
+        "min": 12
+      },
+      "operation": {
+        "max": 120,
+        "median": 120,
+        "median_per_call": 7.5,
+        "min": 120
+      }
+    },
+    "queue_job_id": "5666ef642d2845929f066423bb00a36a",
+    "device": 0,
+    "core_index": 0,
+    "evidence": "recovered prior baseline; final revalidation required"
+  },
+  {
+    "A": 6,
+    "B": 1,
+    "Dst": 63,
+    "K": 16,
+    "N": 128,
+    "accumulate": true,
+    "broadcast": 1,
+    "dtype": "BF16 sources/FP32 Dst",
+    "fidelity": 2,
+    "op": "elwadd",
+    "raw": {
+      "complete": [
+        446,
+        446,
+        446,
+        445,
+        446,
+        445,
+        446
+      ],
+      "control": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "operation": [
+        120,
+        120,
+        120,
+        120,
+        120,
+        120,
+        120
+      ]
+    },
+    "summary": {
+      "complete": {
+        "max": 446,
+        "median": 446,
+        "median_per_call": 27.875,
+        "min": 445
+      },
+      "control": {
+        "max": 12,
+        "median": 12,
+        "median_per_call": 0.75,
+        "min": 12
+      },
+      "operation": {
+        "max": 120,
+        "median": 120,
+        "median_per_call": 7.5,
+        "min": 120
+      }
+    },
+    "queue_job_id": "5666ef642d2845929f066423bb00a36a",
+    "device": 0,
+    "core_index": 0,
+    "evidence": "recovered prior baseline; final revalidation required"
+  },
+  {
+    "A": 6,
+    "B": 1,
+    "Dst": 63,
+    "K": 16,
+    "N": 128,
+    "accumulate": false,
+    "broadcast": 2,
+    "dtype": "BF16 sources/FP32 Dst",
+    "fidelity": 2,
+    "op": "elwadd",
+    "raw": {
+      "complete": [
+        445,
+        446,
+        446,
+        446,
+        448,
+        445,
+        446
+      ],
+      "control": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "operation": [
+        120,
+        120,
+        120,
+        120,
+        120,
+        120,
+        120
+      ]
+    },
+    "summary": {
+      "complete": {
+        "max": 448,
+        "median": 446,
+        "median_per_call": 27.875,
+        "min": 445
+      },
+      "control": {
+        "max": 12,
+        "median": 12,
+        "median_per_call": 0.75,
+        "min": 12
+      },
+      "operation": {
+        "max": 120,
+        "median": 120,
+        "median_per_call": 7.5,
+        "min": 120
+      }
+    },
+    "queue_job_id": "5666ef642d2845929f066423bb00a36a",
+    "device": 0,
+    "core_index": 0,
+    "evidence": "recovered prior baseline; final revalidation required"
+  },
+  {
+    "A": 6,
+    "B": 1,
+    "Dst": 63,
+    "K": 16,
+    "N": 128,
+    "accumulate": true,
+    "broadcast": 2,
+    "dtype": "BF16 sources/FP32 Dst",
+    "fidelity": 2,
+    "op": "elwadd",
+    "raw": {
+      "complete": [
+        446,
+        445,
+        445,
+        446,
+        445,
+        446,
+        445
+      ],
+      "control": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "operation": [
+        120,
+        120,
+        120,
+        120,
+        120,
+        120,
+        120
+      ]
+    },
+    "summary": {
+      "complete": {
+        "max": 446,
+        "median": 445,
+        "median_per_call": 27.8125,
+        "min": 445
+      },
+      "control": {
+        "max": 12,
+        "median": 12,
+        "median_per_call": 0.75,
+        "min": 12
+      },
+      "operation": {
+        "max": 120,
+        "median": 120,
+        "median_per_call": 7.5,
+        "min": 120
+      }
+    },
+    "queue_job_id": "5666ef642d2845929f066423bb00a36a",
+    "device": 0,
+    "core_index": 0,
+    "evidence": "recovered prior baseline; final revalidation required"
+  },
+  {
+    "A": 6,
+    "B": 1,
+    "Dst": 63,
+    "K": 16,
+    "N": 128,
+    "accumulate": false,
+    "broadcast": 3,
+    "dtype": "BF16 sources/FP32 Dst",
+    "fidelity": 2,
+    "op": "elwadd",
+    "raw": {
+      "complete": [
+        446,
+        446,
+        446,
+        446,
+        447,
+        445,
+        445
+      ],
+      "control": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "operation": [
+        120,
+        120,
+        120,
+        120,
+        120,
+        120,
+        120
+      ]
+    },
+    "summary": {
+      "complete": {
+        "max": 447,
+        "median": 446,
+        "median_per_call": 27.875,
+        "min": 445
+      },
+      "control": {
+        "max": 12,
+        "median": 12,
+        "median_per_call": 0.75,
+        "min": 12
+      },
+      "operation": {
+        "max": 120,
+        "median": 120,
+        "median_per_call": 7.5,
+        "min": 120
+      }
+    },
+    "queue_job_id": "5666ef642d2845929f066423bb00a36a",
+    "device": 0,
+    "core_index": 0,
+    "evidence": "recovered prior baseline; final revalidation required"
+  },
+  {
+    "A": 6,
+    "B": 1,
+    "Dst": 63,
+    "K": 16,
+    "N": 128,
+    "accumulate": true,
+    "broadcast": 3,
+    "dtype": "BF16 sources/FP32 Dst",
+    "fidelity": 2,
+    "op": "elwadd",
+    "raw": {
+      "complete": [
+        446,
+        446,
+        446,
+        445,
+        445,
+        446,
+        446
+      ],
+      "control": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "operation": [
+        120,
+        120,
+        120,
+        120,
+        120,
+        120,
+        120
+      ]
+    },
+    "summary": {
+      "complete": {
+        "max": 446,
+        "median": 446,
+        "median_per_call": 27.875,
+        "min": 445
+      },
+      "control": {
+        "max": 12,
+        "median": 12,
+        "median_per_call": 0.75,
+        "min": 12
+      },
+      "operation": {
+        "max": 120,
+        "median": 120,
+        "median_per_call": 7.5,
+        "min": 120
+      }
+    },
+    "queue_job_id": "5666ef642d2845929f066423bb00a36a",
+    "device": 0,
+    "core_index": 0,
+    "evidence": "recovered prior baseline; final revalidation required"
+  },
+  {
+    "A": 0,
+    "B": 7,
+    "Dst": 0,
+    "K": 16,
+    "N": 128,
+    "accumulate": false,
+    "broadcast": 0,
+    "dtype": "BF16 sources/FP32 Dst",
+    "fidelity": 2,
+    "op": "elwsub",
+    "raw": {
+      "complete": [
+        445,
+        446,
+        446,
+        446,
+        445,
+        447,
+        445
+      ],
+      "control": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "operation": [
+        120,
+        120,
+        120,
+        120,
+        120,
+        120,
+        120
+      ]
+    },
+    "summary": {
+      "complete": {
+        "max": 447,
+        "median": 446,
+        "median_per_call": 27.875,
+        "min": 445
+      },
+      "control": {
+        "max": 12,
+        "median": 12,
+        "median_per_call": 0.75,
+        "min": 12
+      },
+      "operation": {
+        "max": 120,
+        "median": 120,
+        "median_per_call": 7.5,
+        "min": 120
+      }
+    },
+    "queue_job_id": "5666ef642d2845929f066423bb00a36a",
+    "device": 0,
+    "core_index": 0,
+    "evidence": "recovered prior baseline; final revalidation required"
+  },
+  {
+    "A": 0,
+    "B": 7,
+    "Dst": 0,
+    "K": 16,
+    "N": 128,
+    "accumulate": true,
+    "broadcast": 0,
+    "dtype": "BF16 sources/FP32 Dst",
+    "fidelity": 2,
+    "op": "elwsub",
+    "raw": {
+      "complete": [
+        446,
+        447,
+        447,
+        447,
+        447,
+        446,
+        446
+      ],
+      "control": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "operation": [
+        120,
+        120,
+        120,
+        120,
+        120,
+        120,
+        120
+      ]
+    },
+    "summary": {
+      "complete": {
+        "max": 447,
+        "median": 447,
+        "median_per_call": 27.9375,
+        "min": 446
+      },
+      "control": {
+        "max": 12,
+        "median": 12,
+        "median_per_call": 0.75,
+        "min": 12
+      },
+      "operation": {
+        "max": 120,
+        "median": 120,
+        "median_per_call": 7.5,
+        "min": 120
+      }
+    },
+    "queue_job_id": "5666ef642d2845929f066423bb00a36a",
+    "device": 0,
+    "core_index": 0,
+    "evidence": "recovered prior baseline; final revalidation required"
+  },
+  {
+    "A": 0,
+    "B": 7,
+    "Dst": 0,
+    "K": 16,
+    "N": 128,
+    "accumulate": false,
+    "broadcast": 1,
+    "dtype": "BF16 sources/FP32 Dst",
+    "fidelity": 2,
+    "op": "elwsub",
+    "raw": {
+      "complete": [
+        446,
+        445,
+        445,
+        445,
+        446,
+        445,
+        445
+      ],
+      "control": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "operation": [
+        120,
+        120,
+        120,
+        120,
+        120,
+        120,
+        120
+      ]
+    },
+    "summary": {
+      "complete": {
+        "max": 446,
+        "median": 445,
+        "median_per_call": 27.8125,
+        "min": 445
+      },
+      "control": {
+        "max": 12,
+        "median": 12,
+        "median_per_call": 0.75,
+        "min": 12
+      },
+      "operation": {
+        "max": 120,
+        "median": 120,
+        "median_per_call": 7.5,
+        "min": 120
+      }
+    },
+    "queue_job_id": "5666ef642d2845929f066423bb00a36a",
+    "device": 0,
+    "core_index": 0,
+    "evidence": "recovered prior baseline; final revalidation required"
+  },
+  {
+    "A": 0,
+    "B": 7,
+    "Dst": 0,
+    "K": 16,
+    "N": 128,
+    "accumulate": true,
+    "broadcast": 1,
+    "dtype": "BF16 sources/FP32 Dst",
+    "fidelity": 2,
+    "op": "elwsub",
+    "raw": {
+      "complete": [
+        446,
+        446,
+        446,
+        445,
+        446,
+        445,
+        446
+      ],
+      "control": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "operation": [
+        120,
+        120,
+        120,
+        120,
+        120,
+        120,
+        120
+      ]
+    },
+    "summary": {
+      "complete": {
+        "max": 446,
+        "median": 446,
+        "median_per_call": 27.875,
+        "min": 445
+      },
+      "control": {
+        "max": 12,
+        "median": 12,
+        "median_per_call": 0.75,
+        "min": 12
+      },
+      "operation": {
+        "max": 120,
+        "median": 120,
+        "median_per_call": 7.5,
+        "min": 120
+      }
+    },
+    "queue_job_id": "5666ef642d2845929f066423bb00a36a",
+    "device": 0,
+    "core_index": 0,
+    "evidence": "recovered prior baseline; final revalidation required"
+  },
+  {
+    "A": 0,
+    "B": 7,
+    "Dst": 0,
+    "K": 16,
+    "N": 128,
+    "accumulate": false,
+    "broadcast": 2,
+    "dtype": "BF16 sources/FP32 Dst",
+    "fidelity": 2,
+    "op": "elwsub",
+    "raw": {
+      "complete": [
+        445,
+        446,
+        446,
+        446,
+        446,
+        447,
+        445
+      ],
+      "control": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "operation": [
+        120,
+        120,
+        120,
+        120,
+        120,
+        120,
+        120
+      ]
+    },
+    "summary": {
+      "complete": {
+        "max": 447,
+        "median": 446,
+        "median_per_call": 27.875,
+        "min": 445
+      },
+      "control": {
+        "max": 12,
+        "median": 12,
+        "median_per_call": 0.75,
+        "min": 12
+      },
+      "operation": {
+        "max": 120,
+        "median": 120,
+        "median_per_call": 7.5,
+        "min": 120
+      }
+    },
+    "queue_job_id": "5666ef642d2845929f066423bb00a36a",
+    "device": 0,
+    "core_index": 0,
+    "evidence": "recovered prior baseline; final revalidation required"
+  },
+  {
+    "A": 0,
+    "B": 7,
+    "Dst": 0,
+    "K": 16,
+    "N": 128,
+    "accumulate": true,
+    "broadcast": 2,
+    "dtype": "BF16 sources/FP32 Dst",
+    "fidelity": 2,
+    "op": "elwsub",
+    "raw": {
+      "complete": [
+        446,
+        445,
+        446,
+        446,
+        446,
+        446,
+        445
+      ],
+      "control": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "operation": [
+        120,
+        120,
+        120,
+        120,
+        120,
+        120,
+        120
+      ]
+    },
+    "summary": {
+      "complete": {
+        "max": 446,
+        "median": 446,
+        "median_per_call": 27.875,
+        "min": 445
+      },
+      "control": {
+        "max": 12,
+        "median": 12,
+        "median_per_call": 0.75,
+        "min": 12
+      },
+      "operation": {
+        "max": 120,
+        "median": 120,
+        "median_per_call": 7.5,
+        "min": 120
+      }
+    },
+    "queue_job_id": "5666ef642d2845929f066423bb00a36a",
+    "device": 0,
+    "core_index": 0,
+    "evidence": "recovered prior baseline; final revalidation required"
+  },
+  {
+    "A": 0,
+    "B": 7,
+    "Dst": 0,
+    "K": 16,
+    "N": 128,
+    "accumulate": false,
+    "broadcast": 3,
+    "dtype": "BF16 sources/FP32 Dst",
+    "fidelity": 2,
+    "op": "elwsub",
+    "raw": {
+      "complete": [
+        445,
+        446,
+        445,
+        446,
+        445,
+        446,
+        445
+      ],
+      "control": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "operation": [
+        120,
+        120,
+        120,
+        120,
+        120,
+        120,
+        120
+      ]
+    },
+    "summary": {
+      "complete": {
+        "max": 446,
+        "median": 445,
+        "median_per_call": 27.8125,
+        "min": 445
+      },
+      "control": {
+        "max": 12,
+        "median": 12,
+        "median_per_call": 0.75,
+        "min": 12
+      },
+      "operation": {
+        "max": 120,
+        "median": 120,
+        "median_per_call": 7.5,
+        "min": 120
+      }
+    },
+    "queue_job_id": "5666ef642d2845929f066423bb00a36a",
+    "device": 0,
+    "core_index": 0,
+    "evidence": "recovered prior baseline; final revalidation required"
+  },
+  {
+    "A": 0,
+    "B": 7,
+    "Dst": 0,
+    "K": 16,
+    "N": 128,
+    "accumulate": true,
+    "broadcast": 3,
+    "dtype": "BF16 sources/FP32 Dst",
+    "fidelity": 2,
+    "op": "elwsub",
+    "raw": {
+      "complete": [
+        446,
+        446,
+        446,
+        446,
+        446,
+        445,
+        446
+      ],
+      "control": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "operation": [
+        120,
+        120,
+        120,
+        120,
+        120,
+        120,
+        120
+      ]
+    },
+    "summary": {
+      "complete": {
+        "max": 446,
+        "median": 446,
+        "median_per_call": 27.875,
+        "min": 445
+      },
+      "control": {
+        "max": 12,
+        "median": 12,
+        "median_per_call": 0.75,
+        "min": 12
+      },
+      "operation": {
+        "max": 120,
+        "median": 120,
+        "median_per_call": 7.5,
+        "min": 120
+      }
+    },
+    "queue_job_id": "5666ef642d2845929f066423bb00a36a",
+    "device": 0,
+    "core_index": 0,
+    "evidence": "recovered prior baseline; final revalidation required"
+  },
+  {
+    "A": 2,
+    "B": 0,
+    "Dst": 7,
+    "K": 16,
+    "N": 128,
+    "accumulate": false,
+    "broadcast": 0,
+    "dtype": "BF16 sources/FP32 Dst",
+    "fidelity": 2,
+    "op": "elwsub",
+    "raw": {
+      "complete": [
+        439,
+        440,
+        440,
+        440,
+        439,
+        440,
+        440
+      ],
+      "control": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "operation": [
+        119,
+        119,
+        119,
+        119,
+        119,
+        119,
+        119
+      ]
+    },
+    "summary": {
+      "complete": {
+        "max": 440,
+        "median": 440,
+        "median_per_call": 27.5,
+        "min": 439
+      },
+      "control": {
+        "max": 12,
+        "median": 12,
+        "median_per_call": 0.75,
+        "min": 12
+      },
+      "operation": {
+        "max": 119,
+        "median": 119,
+        "median_per_call": 7.4375,
+        "min": 119
+      }
+    },
+    "queue_job_id": "5666ef642d2845929f066423bb00a36a",
+    "device": 0,
+    "core_index": 0,
+    "evidence": "recovered prior baseline; final revalidation required"
+  },
+  {
+    "A": 2,
+    "B": 0,
+    "Dst": 7,
+    "K": 16,
+    "N": 128,
+    "accumulate": true,
+    "broadcast": 0,
+    "dtype": "BF16 sources/FP32 Dst",
+    "fidelity": 2,
+    "op": "elwsub",
+    "raw": {
+      "complete": [
+        440,
+        440,
+        439,
+        440,
+        439,
+        440,
+        440
+      ],
+      "control": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "operation": [
+        119,
+        119,
+        119,
+        119,
+        119,
+        119,
+        119
+      ]
+    },
+    "summary": {
+      "complete": {
+        "max": 440,
+        "median": 440,
+        "median_per_call": 27.5,
+        "min": 439
+      },
+      "control": {
+        "max": 12,
+        "median": 12,
+        "median_per_call": 0.75,
+        "min": 12
+      },
+      "operation": {
+        "max": 119,
+        "median": 119,
+        "median_per_call": 7.4375,
+        "min": 119
+      }
+    },
+    "queue_job_id": "5666ef642d2845929f066423bb00a36a",
+    "device": 0,
+    "core_index": 0,
+    "evidence": "recovered prior baseline; final revalidation required"
+  },
+  {
+    "A": 2,
+    "B": 0,
+    "Dst": 7,
+    "K": 16,
+    "N": 128,
+    "accumulate": false,
+    "broadcast": 1,
+    "dtype": "BF16 sources/FP32 Dst",
+    "fidelity": 2,
+    "op": "elwsub",
+    "raw": {
+      "complete": [
+        439,
+        440,
+        440,
+        440,
+        440,
+        439,
+        440
+      ],
+      "control": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "operation": [
+        119,
+        119,
+        119,
+        119,
+        119,
+        119,
+        119
+      ]
+    },
+    "summary": {
+      "complete": {
+        "max": 440,
+        "median": 440,
+        "median_per_call": 27.5,
+        "min": 439
+      },
+      "control": {
+        "max": 12,
+        "median": 12,
+        "median_per_call": 0.75,
+        "min": 12
+      },
+      "operation": {
+        "max": 119,
+        "median": 119,
+        "median_per_call": 7.4375,
+        "min": 119
+      }
+    },
+    "queue_job_id": "5666ef642d2845929f066423bb00a36a",
+    "device": 0,
+    "core_index": 0,
+    "evidence": "recovered prior baseline; final revalidation required"
+  },
+  {
+    "A": 2,
+    "B": 0,
+    "Dst": 7,
+    "K": 16,
+    "N": 128,
+    "accumulate": true,
+    "broadcast": 1,
+    "dtype": "BF16 sources/FP32 Dst",
+    "fidelity": 2,
+    "op": "elwsub",
+    "raw": {
+      "complete": [
+        440,
+        440,
+        440,
+        440,
+        439,
+        440,
+        439
+      ],
+      "control": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "operation": [
+        119,
+        119,
+        119,
+        119,
+        119,
+        119,
+        119
+      ]
+    },
+    "summary": {
+      "complete": {
+        "max": 440,
+        "median": 440,
+        "median_per_call": 27.5,
+        "min": 439
+      },
+      "control": {
+        "max": 12,
+        "median": 12,
+        "median_per_call": 0.75,
+        "min": 12
+      },
+      "operation": {
+        "max": 119,
+        "median": 119,
+        "median_per_call": 7.4375,
+        "min": 119
+      }
+    },
+    "queue_job_id": "5666ef642d2845929f066423bb00a36a",
+    "device": 0,
+    "core_index": 0,
+    "evidence": "recovered prior baseline; final revalidation required"
+  },
+  {
+    "A": 2,
+    "B": 0,
+    "Dst": 7,
+    "K": 16,
+    "N": 128,
+    "accumulate": false,
+    "broadcast": 2,
+    "dtype": "BF16 sources/FP32 Dst",
+    "fidelity": 2,
+    "op": "elwsub",
+    "raw": {
+      "complete": [
+        440,
+        439,
+        440,
+        440,
+        440,
+        440,
+        442
+      ],
+      "control": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "operation": [
+        119,
+        119,
+        119,
+        119,
+        119,
+        119,
+        119
+      ]
+    },
+    "summary": {
+      "complete": {
+        "max": 442,
+        "median": 440,
+        "median_per_call": 27.5,
+        "min": 439
+      },
+      "control": {
+        "max": 12,
+        "median": 12,
+        "median_per_call": 0.75,
+        "min": 12
+      },
+      "operation": {
+        "max": 119,
+        "median": 119,
+        "median_per_call": 7.4375,
+        "min": 119
+      }
+    },
+    "queue_job_id": "5666ef642d2845929f066423bb00a36a",
+    "device": 0,
+    "core_index": 0,
+    "evidence": "recovered prior baseline; final revalidation required"
+  },
+  {
+    "A": 2,
+    "B": 0,
+    "Dst": 7,
+    "K": 16,
+    "N": 128,
+    "accumulate": true,
+    "broadcast": 2,
+    "dtype": "BF16 sources/FP32 Dst",
+    "fidelity": 2,
+    "op": "elwsub",
+    "raw": {
+      "complete": [
+        440,
+        439,
+        441,
+        439,
+        440,
+        440,
+        439
+      ],
+      "control": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "operation": [
+        119,
+        119,
+        119,
+        119,
+        119,
+        119,
+        119
+      ]
+    },
+    "summary": {
+      "complete": {
+        "max": 441,
+        "median": 440,
+        "median_per_call": 27.5,
+        "min": 439
+      },
+      "control": {
+        "max": 12,
+        "median": 12,
+        "median_per_call": 0.75,
+        "min": 12
+      },
+      "operation": {
+        "max": 119,
+        "median": 119,
+        "median_per_call": 7.4375,
+        "min": 119
+      }
+    },
+    "queue_job_id": "5666ef642d2845929f066423bb00a36a",
+    "device": 0,
+    "core_index": 0,
+    "evidence": "recovered prior baseline; final revalidation required"
+  },
+  {
+    "A": 2,
+    "B": 0,
+    "Dst": 7,
+    "K": 16,
+    "N": 128,
+    "accumulate": false,
+    "broadcast": 3,
+    "dtype": "BF16 sources/FP32 Dst",
+    "fidelity": 2,
+    "op": "elwsub",
+    "raw": {
+      "complete": [
+        439,
+        440,
+        439,
+        440,
+        440,
+        439,
+        440
+      ],
+      "control": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "operation": [
+        119,
+        119,
+        119,
+        119,
+        119,
+        119,
+        119
+      ]
+    },
+    "summary": {
+      "complete": {
+        "max": 440,
+        "median": 440,
+        "median_per_call": 27.5,
+        "min": 439
+      },
+      "control": {
+        "max": 12,
+        "median": 12,
+        "median_per_call": 0.75,
+        "min": 12
+      },
+      "operation": {
+        "max": 119,
+        "median": 119,
+        "median_per_call": 7.4375,
+        "min": 119
+      }
+    },
+    "queue_job_id": "5666ef642d2845929f066423bb00a36a",
+    "device": 0,
+    "core_index": 0,
+    "evidence": "recovered prior baseline; final revalidation required"
+  },
+  {
+    "A": 2,
+    "B": 0,
+    "Dst": 7,
+    "K": 16,
+    "N": 128,
+    "accumulate": true,
+    "broadcast": 3,
+    "dtype": "BF16 sources/FP32 Dst",
+    "fidelity": 2,
+    "op": "elwsub",
+    "raw": {
+      "complete": [
+        441,
+        439,
+        439,
+        440,
+        440,
+        440,
+        439
+      ],
+      "control": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "operation": [
+        119,
+        119,
+        119,
+        119,
+        119,
+        119,
+        119
+      ]
+    },
+    "summary": {
+      "complete": {
+        "max": 441,
+        "median": 440,
+        "median_per_call": 27.5,
+        "min": 439
+      },
+      "control": {
+        "max": 12,
+        "median": 12,
+        "median_per_call": 0.75,
+        "min": 12
+      },
+      "operation": {
+        "max": 119,
+        "median": 119,
+        "median_per_call": 7.4375,
+        "min": 119
+      }
+    },
+    "queue_job_id": "5666ef642d2845929f066423bb00a36a",
+    "device": 0,
+    "core_index": 0,
+    "evidence": "recovered prior baseline; final revalidation required"
+  },
+  {
+    "A": 4,
+    "B": 3,
+    "Dst": 32,
+    "K": 16,
+    "N": 128,
+    "accumulate": false,
+    "broadcast": 0,
+    "dtype": "BF16 sources/FP32 Dst",
+    "fidelity": 2,
+    "op": "elwsub",
+    "raw": {
+      "complete": [
+        446,
+        446,
+        446,
+        445,
+        446,
+        445,
+        446
+      ],
+      "control": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "operation": [
+        120,
+        120,
+        120,
+        120,
+        120,
+        120,
+        120
+      ]
+    },
+    "summary": {
+      "complete": {
+        "max": 446,
+        "median": 446,
+        "median_per_call": 27.875,
+        "min": 445
+      },
+      "control": {
+        "max": 12,
+        "median": 12,
+        "median_per_call": 0.75,
+        "min": 12
+      },
+      "operation": {
+        "max": 120,
+        "median": 120,
+        "median_per_call": 7.5,
+        "min": 120
+      }
+    },
+    "queue_job_id": "5666ef642d2845929f066423bb00a36a",
+    "device": 0,
+    "core_index": 0,
+    "evidence": "recovered prior baseline; final revalidation required"
+  },
+  {
+    "A": 4,
+    "B": 3,
+    "Dst": 32,
+    "K": 16,
+    "N": 128,
+    "accumulate": true,
+    "broadcast": 0,
+    "dtype": "BF16 sources/FP32 Dst",
+    "fidelity": 2,
+    "op": "elwsub",
+    "raw": {
+      "complete": [
+        446,
+        446,
+        446,
+        445,
+        446,
+        446,
+        445
+      ],
+      "control": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "operation": [
+        120,
+        120,
+        120,
+        120,
+        120,
+        120,
+        120
+      ]
+    },
+    "summary": {
+      "complete": {
+        "max": 446,
+        "median": 446,
+        "median_per_call": 27.875,
+        "min": 445
+      },
+      "control": {
+        "max": 12,
+        "median": 12,
+        "median_per_call": 0.75,
+        "min": 12
+      },
+      "operation": {
+        "max": 120,
+        "median": 120,
+        "median_per_call": 7.5,
+        "min": 120
+      }
+    },
+    "queue_job_id": "5666ef642d2845929f066423bb00a36a",
+    "device": 0,
+    "core_index": 0,
+    "evidence": "recovered prior baseline; final revalidation required"
+  },
+  {
+    "A": 4,
+    "B": 3,
+    "Dst": 32,
+    "K": 16,
+    "N": 128,
+    "accumulate": false,
+    "broadcast": 1,
+    "dtype": "BF16 sources/FP32 Dst",
+    "fidelity": 2,
+    "op": "elwsub",
+    "raw": {
+      "complete": [
+        446,
+        446,
+        447,
+        445,
+        446,
+        447,
+        447
+      ],
+      "control": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "operation": [
+        120,
+        120,
+        120,
+        120,
+        120,
+        120,
+        120
+      ]
+    },
+    "summary": {
+      "complete": {
+        "max": 447,
+        "median": 446,
+        "median_per_call": 27.875,
+        "min": 445
+      },
+      "control": {
+        "max": 12,
+        "median": 12,
+        "median_per_call": 0.75,
+        "min": 12
+      },
+      "operation": {
+        "max": 120,
+        "median": 120,
+        "median_per_call": 7.5,
+        "min": 120
+      }
+    },
+    "queue_job_id": "5666ef642d2845929f066423bb00a36a",
+    "device": 0,
+    "core_index": 0,
+    "evidence": "recovered prior baseline; final revalidation required"
+  },
+  {
+    "A": 4,
+    "B": 3,
+    "Dst": 32,
+    "K": 16,
+    "N": 128,
+    "accumulate": true,
+    "broadcast": 1,
+    "dtype": "BF16 sources/FP32 Dst",
+    "fidelity": 2,
+    "op": "elwsub",
+    "raw": {
+      "complete": [
+        445,
+        446,
+        446,
+        447,
+        446,
+        445,
+        447
+      ],
+      "control": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "operation": [
+        120,
+        120,
+        120,
+        120,
+        120,
+        120,
+        120
+      ]
+    },
+    "summary": {
+      "complete": {
+        "max": 447,
+        "median": 446,
+        "median_per_call": 27.875,
+        "min": 445
+      },
+      "control": {
+        "max": 12,
+        "median": 12,
+        "median_per_call": 0.75,
+        "min": 12
+      },
+      "operation": {
+        "max": 120,
+        "median": 120,
+        "median_per_call": 7.5,
+        "min": 120
+      }
+    },
+    "queue_job_id": "5666ef642d2845929f066423bb00a36a",
+    "device": 0,
+    "core_index": 0,
+    "evidence": "recovered prior baseline; final revalidation required"
+  },
+  {
+    "A": 4,
+    "B": 3,
+    "Dst": 32,
+    "K": 16,
+    "N": 128,
+    "accumulate": false,
+    "broadcast": 2,
+    "dtype": "BF16 sources/FP32 Dst",
+    "fidelity": 2,
+    "op": "elwsub",
+    "raw": {
+      "complete": [
+        447,
+        446,
+        446,
+        446,
+        445,
+        445,
+        447
+      ],
+      "control": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "operation": [
+        120,
+        120,
+        120,
+        120,
+        120,
+        120,
+        120
+      ]
+    },
+    "summary": {
+      "complete": {
+        "max": 447,
+        "median": 446,
+        "median_per_call": 27.875,
+        "min": 445
+      },
+      "control": {
+        "max": 12,
+        "median": 12,
+        "median_per_call": 0.75,
+        "min": 12
+      },
+      "operation": {
+        "max": 120,
+        "median": 120,
+        "median_per_call": 7.5,
+        "min": 120
+      }
+    },
+    "queue_job_id": "5666ef642d2845929f066423bb00a36a",
+    "device": 0,
+    "core_index": 0,
+    "evidence": "recovered prior baseline; final revalidation required"
+  },
+  {
+    "A": 4,
+    "B": 3,
+    "Dst": 32,
+    "K": 16,
+    "N": 128,
+    "accumulate": true,
+    "broadcast": 2,
+    "dtype": "BF16 sources/FP32 Dst",
+    "fidelity": 2,
+    "op": "elwsub",
+    "raw": {
+      "complete": [
+        445,
+        445,
+        446,
+        445,
+        446,
+        447,
+        446
+      ],
+      "control": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "operation": [
+        120,
+        120,
+        120,
+        120,
+        120,
+        120,
+        120
+      ]
+    },
+    "summary": {
+      "complete": {
+        "max": 447,
+        "median": 446,
+        "median_per_call": 27.875,
+        "min": 445
+      },
+      "control": {
+        "max": 12,
+        "median": 12,
+        "median_per_call": 0.75,
+        "min": 12
+      },
+      "operation": {
+        "max": 120,
+        "median": 120,
+        "median_per_call": 7.5,
+        "min": 120
+      }
+    },
+    "queue_job_id": "5666ef642d2845929f066423bb00a36a",
+    "device": 0,
+    "core_index": 0,
+    "evidence": "recovered prior baseline; final revalidation required"
+  },
+  {
+    "A": 4,
+    "B": 3,
+    "Dst": 32,
+    "K": 16,
+    "N": 128,
+    "accumulate": false,
+    "broadcast": 3,
+    "dtype": "BF16 sources/FP32 Dst",
+    "fidelity": 2,
+    "op": "elwsub",
+    "raw": {
+      "complete": [
+        446,
+        445,
+        445,
+        445,
+        446,
+        446,
+        446
+      ],
+      "control": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "operation": [
+        120,
+        120,
+        120,
+        120,
+        120,
+        120,
+        120
+      ]
+    },
+    "summary": {
+      "complete": {
+        "max": 446,
+        "median": 446,
+        "median_per_call": 27.875,
+        "min": 445
+      },
+      "control": {
+        "max": 12,
+        "median": 12,
+        "median_per_call": 0.75,
+        "min": 12
+      },
+      "operation": {
+        "max": 120,
+        "median": 120,
+        "median_per_call": 7.5,
+        "min": 120
+      }
+    },
+    "queue_job_id": "5666ef642d2845929f066423bb00a36a",
+    "device": 0,
+    "core_index": 0,
+    "evidence": "recovered prior baseline; final revalidation required"
+  },
+  {
+    "A": 4,
+    "B": 3,
+    "Dst": 32,
+    "K": 16,
+    "N": 128,
+    "accumulate": true,
+    "broadcast": 3,
+    "dtype": "BF16 sources/FP32 Dst",
+    "fidelity": 2,
+    "op": "elwsub",
+    "raw": {
+      "complete": [
+        445,
+        446,
+        447,
+        445,
+        446,
+        445,
+        445
+      ],
+      "control": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "operation": [
+        120,
+        120,
+        120,
+        120,
+        120,
+        120,
+        120
+      ]
+    },
+    "summary": {
+      "complete": {
+        "max": 447,
+        "median": 445,
+        "median_per_call": 27.8125,
+        "min": 445
+      },
+      "control": {
+        "max": 12,
+        "median": 12,
+        "median_per_call": 0.75,
+        "min": 12
+      },
+      "operation": {
+        "max": 120,
+        "median": 120,
+        "median_per_call": 7.5,
+        "min": 120
+      }
+    },
+    "queue_job_id": "5666ef642d2845929f066423bb00a36a",
+    "device": 0,
+    "core_index": 0,
+    "evidence": "recovered prior baseline; final revalidation required"
+  },
+  {
+    "A": 6,
+    "B": 1,
+    "Dst": 63,
+    "K": 16,
+    "N": 128,
+    "accumulate": false,
+    "broadcast": 0,
+    "dtype": "BF16 sources/FP32 Dst",
+    "fidelity": 2,
+    "op": "elwsub",
+    "raw": {
+      "complete": [
+        445,
+        446,
+        445,
+        448,
+        445,
+        446,
+        445
+      ],
+      "control": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "operation": [
+        120,
+        120,
+        120,
+        120,
+        120,
+        120,
+        120
+      ]
+    },
+    "summary": {
+      "complete": {
+        "max": 448,
+        "median": 445,
+        "median_per_call": 27.8125,
+        "min": 445
+      },
+      "control": {
+        "max": 12,
+        "median": 12,
+        "median_per_call": 0.75,
+        "min": 12
+      },
+      "operation": {
+        "max": 120,
+        "median": 120,
+        "median_per_call": 7.5,
+        "min": 120
+      }
+    },
+    "queue_job_id": "5666ef642d2845929f066423bb00a36a",
+    "device": 0,
+    "core_index": 0,
+    "evidence": "recovered prior baseline; final revalidation required"
+  },
+  {
+    "A": 6,
+    "B": 1,
+    "Dst": 63,
+    "K": 16,
+    "N": 128,
+    "accumulate": true,
+    "broadcast": 0,
+    "dtype": "BF16 sources/FP32 Dst",
+    "fidelity": 2,
+    "op": "elwsub",
+    "raw": {
+      "complete": [
+        445,
+        447,
+        446,
+        446,
+        447,
+        446,
+        445
+      ],
+      "control": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "operation": [
+        120,
+        120,
+        120,
+        120,
+        120,
+        120,
+        120
+      ]
+    },
+    "summary": {
+      "complete": {
+        "max": 447,
+        "median": 446,
+        "median_per_call": 27.875,
+        "min": 445
+      },
+      "control": {
+        "max": 12,
+        "median": 12,
+        "median_per_call": 0.75,
+        "min": 12
+      },
+      "operation": {
+        "max": 120,
+        "median": 120,
+        "median_per_call": 7.5,
+        "min": 120
+      }
+    },
+    "queue_job_id": "5666ef642d2845929f066423bb00a36a",
+    "device": 0,
+    "core_index": 0,
+    "evidence": "recovered prior baseline; final revalidation required"
+  },
+  {
+    "A": 6,
+    "B": 1,
+    "Dst": 63,
+    "K": 16,
+    "N": 128,
+    "accumulate": false,
+    "broadcast": 1,
+    "dtype": "BF16 sources/FP32 Dst",
+    "fidelity": 2,
+    "op": "elwsub",
+    "raw": {
+      "complete": [
+        445,
+        446,
+        446,
+        447,
+        447,
+        446,
+        446
+      ],
+      "control": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "operation": [
+        120,
+        120,
+        120,
+        120,
+        120,
+        120,
+        120
+      ]
+    },
+    "summary": {
+      "complete": {
+        "max": 447,
+        "median": 446,
+        "median_per_call": 27.875,
+        "min": 445
+      },
+      "control": {
+        "max": 12,
+        "median": 12,
+        "median_per_call": 0.75,
+        "min": 12
+      },
+      "operation": {
+        "max": 120,
+        "median": 120,
+        "median_per_call": 7.5,
+        "min": 120
+      }
+    },
+    "queue_job_id": "5666ef642d2845929f066423bb00a36a",
+    "device": 0,
+    "core_index": 0,
+    "evidence": "recovered prior baseline; final revalidation required"
+  },
+  {
+    "A": 6,
+    "B": 1,
+    "Dst": 63,
+    "K": 16,
+    "N": 128,
+    "accumulate": true,
+    "broadcast": 1,
+    "dtype": "BF16 sources/FP32 Dst",
+    "fidelity": 2,
+    "op": "elwsub",
+    "raw": {
+      "complete": [
+        445,
+        445,
+        445,
+        445,
+        446,
+        446,
+        446
+      ],
+      "control": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "operation": [
+        120,
+        120,
+        120,
+        120,
+        120,
+        120,
+        120
+      ]
+    },
+    "summary": {
+      "complete": {
+        "max": 446,
+        "median": 445,
+        "median_per_call": 27.8125,
+        "min": 445
+      },
+      "control": {
+        "max": 12,
+        "median": 12,
+        "median_per_call": 0.75,
+        "min": 12
+      },
+      "operation": {
+        "max": 120,
+        "median": 120,
+        "median_per_call": 7.5,
+        "min": 120
+      }
+    },
+    "queue_job_id": "5666ef642d2845929f066423bb00a36a",
+    "device": 0,
+    "core_index": 0,
+    "evidence": "recovered prior baseline; final revalidation required"
+  },
+  {
+    "A": 6,
+    "B": 1,
+    "Dst": 63,
+    "K": 16,
+    "N": 128,
+    "accumulate": false,
+    "broadcast": 2,
+    "dtype": "BF16 sources/FP32 Dst",
+    "fidelity": 2,
+    "op": "elwsub",
+    "raw": {
+      "complete": [
+        445,
+        446,
+        446,
+        446,
+        446,
+        447,
+        447
+      ],
+      "control": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "operation": [
+        120,
+        120,
+        120,
+        120,
+        120,
+        120,
+        120
+      ]
+    },
+    "summary": {
+      "complete": {
+        "max": 447,
+        "median": 446,
+        "median_per_call": 27.875,
+        "min": 445
+      },
+      "control": {
+        "max": 12,
+        "median": 12,
+        "median_per_call": 0.75,
+        "min": 12
+      },
+      "operation": {
+        "max": 120,
+        "median": 120,
+        "median_per_call": 7.5,
+        "min": 120
+      }
+    },
+    "queue_job_id": "5666ef642d2845929f066423bb00a36a",
+    "device": 0,
+    "core_index": 0,
+    "evidence": "recovered prior baseline; final revalidation required"
+  },
+  {
+    "A": 6,
+    "B": 1,
+    "Dst": 63,
+    "K": 16,
+    "N": 128,
+    "accumulate": true,
+    "broadcast": 2,
+    "dtype": "BF16 sources/FP32 Dst",
+    "fidelity": 2,
+    "op": "elwsub",
+    "raw": {
+      "complete": [
+        445,
+        446,
+        446,
+        446,
+        446,
+        446,
+        446
+      ],
+      "control": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "operation": [
+        120,
+        120,
+        120,
+        120,
+        120,
+        120,
+        120
+      ]
+    },
+    "summary": {
+      "complete": {
+        "max": 446,
+        "median": 446,
+        "median_per_call": 27.875,
+        "min": 445
+      },
+      "control": {
+        "max": 12,
+        "median": 12,
+        "median_per_call": 0.75,
+        "min": 12
+      },
+      "operation": {
+        "max": 120,
+        "median": 120,
+        "median_per_call": 7.5,
+        "min": 120
+      }
+    },
+    "queue_job_id": "5666ef642d2845929f066423bb00a36a",
+    "device": 0,
+    "core_index": 0,
+    "evidence": "recovered prior baseline; final revalidation required"
+  },
+  {
+    "A": 6,
+    "B": 1,
+    "Dst": 63,
+    "K": 16,
+    "N": 128,
+    "accumulate": false,
+    "broadcast": 3,
+    "dtype": "BF16 sources/FP32 Dst",
+    "fidelity": 2,
+    "op": "elwsub",
+    "raw": {
+      "complete": [
+        446,
+        445,
+        446,
+        446,
+        445,
+        445,
+        445
+      ],
+      "control": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "operation": [
+        120,
+        120,
+        120,
+        120,
+        120,
+        120,
+        120
+      ]
+    },
+    "summary": {
+      "complete": {
+        "max": 446,
+        "median": 445,
+        "median_per_call": 27.8125,
+        "min": 445
+      },
+      "control": {
+        "max": 12,
+        "median": 12,
+        "median_per_call": 0.75,
+        "min": 12
+      },
+      "operation": {
+        "max": 120,
+        "median": 120,
+        "median_per_call": 7.5,
+        "min": 120
+      }
+    },
+    "queue_job_id": "5666ef642d2845929f066423bb00a36a",
+    "device": 0,
+    "core_index": 0,
+    "evidence": "recovered prior baseline; final revalidation required"
+  },
+  {
+    "A": 6,
+    "B": 1,
+    "Dst": 63,
+    "K": 16,
+    "N": 128,
+    "accumulate": true,
+    "broadcast": 3,
+    "dtype": "BF16 sources/FP32 Dst",
+    "fidelity": 2,
+    "op": "elwsub",
+    "raw": {
+      "complete": [
+        446,
+        446,
+        446,
+        445,
+        446,
+        445,
+        445
+      ],
+      "control": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "operation": [
+        120,
+        120,
+        120,
+        120,
+        120,
+        120,
+        120
+      ]
+    },
+    "summary": {
+      "complete": {
+        "max": 446,
+        "median": 446,
+        "median_per_call": 27.875,
+        "min": 445
+      },
+      "control": {
+        "max": 12,
+        "median": 12,
+        "median_per_call": 0.75,
+        "min": 12
+      },
+      "operation": {
+        "max": 120,
+        "median": 120,
+        "median_per_call": 7.5,
+        "min": 120
+      }
+    },
+    "queue_job_id": "5666ef642d2845929f066423bb00a36a",
+    "device": 0,
+    "core_index": 0,
+    "evidence": "recovered prior baseline; final revalidation required"
+  },
+  {
+    "A": 0,
+    "B": 7,
+    "Dst": 0,
+    "K": 16,
+    "N": 128,
+    "accumulate": true,
+    "broadcast": 0,
+    "dtype": "BF16 sources/FP32 Dst",
+    "fidelity": 2,
+    "op": "elwmul",
+    "raw": {
+      "complete": [
+        541,
+        541,
+        541,
+        541,
+        540,
+        541,
+        541
+      ],
+      "control": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "operation": [
+        215,
+        215,
+        215,
+        215,
+        215,
+        215,
+        215
+      ]
+    },
+    "summary": {
+      "complete": {
+        "max": 541,
+        "median": 541,
+        "median_per_call": 33.8125,
+        "min": 540
+      },
+      "control": {
+        "max": 12,
+        "median": 12,
+        "median_per_call": 0.75,
+        "min": 12
+      },
+      "operation": {
+        "max": 215,
+        "median": 215,
+        "median_per_call": 13.4375,
+        "min": 215
+      }
+    },
+    "queue_job_id": "5666ef642d2845929f066423bb00a36a",
+    "device": 0,
+    "core_index": 0,
+    "evidence": "recovered prior baseline; final revalidation required"
+  },
+  {
+    "A": 0,
+    "B": 7,
+    "Dst": 0,
+    "K": 16,
+    "N": 128,
+    "accumulate": true,
+    "broadcast": 1,
+    "dtype": "BF16 sources/FP32 Dst",
+    "fidelity": 2,
+    "op": "elwmul",
+    "raw": {
+      "complete": [
+        541,
+        540,
+        541,
+        541,
+        540,
+        540,
+        541
+      ],
+      "control": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "operation": [
+        215,
+        215,
+        215,
+        215,
+        215,
+        215,
+        215
+      ]
+    },
+    "summary": {
+      "complete": {
+        "max": 541,
+        "median": 541,
+        "median_per_call": 33.8125,
+        "min": 540
+      },
+      "control": {
+        "max": 12,
+        "median": 12,
+        "median_per_call": 0.75,
+        "min": 12
+      },
+      "operation": {
+        "max": 215,
+        "median": 215,
+        "median_per_call": 13.4375,
+        "min": 215
+      }
+    },
+    "queue_job_id": "5666ef642d2845929f066423bb00a36a",
+    "device": 0,
+    "core_index": 0,
+    "evidence": "recovered prior baseline; final revalidation required"
+  },
+  {
+    "A": 0,
+    "B": 7,
+    "Dst": 0,
+    "K": 16,
+    "N": 128,
+    "accumulate": true,
+    "broadcast": 2,
+    "dtype": "BF16 sources/FP32 Dst",
+    "fidelity": 2,
+    "op": "elwmul",
+    "raw": {
+      "complete": [
+        541,
+        540,
+        541,
+        541,
+        540,
+        541,
+        541
+      ],
+      "control": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "operation": [
+        215,
+        215,
+        215,
+        215,
+        215,
+        215,
+        215
+      ]
+    },
+    "summary": {
+      "complete": {
+        "max": 541,
+        "median": 541,
+        "median_per_call": 33.8125,
+        "min": 540
+      },
+      "control": {
+        "max": 12,
+        "median": 12,
+        "median_per_call": 0.75,
+        "min": 12
+      },
+      "operation": {
+        "max": 215,
+        "median": 215,
+        "median_per_call": 13.4375,
+        "min": 215
+      }
+    },
+    "queue_job_id": "5666ef642d2845929f066423bb00a36a",
+    "device": 0,
+    "core_index": 0,
+    "evidence": "recovered prior baseline; final revalidation required"
+  },
+  {
+    "A": 0,
+    "B": 7,
+    "Dst": 0,
+    "K": 16,
+    "N": 128,
+    "accumulate": true,
+    "broadcast": 3,
+    "dtype": "BF16 sources/FP32 Dst",
+    "fidelity": 2,
+    "op": "elwmul",
+    "raw": {
+      "complete": [
+        542,
+        541,
+        541,
+        541,
+        541,
+        540,
+        541
+      ],
+      "control": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "operation": [
+        215,
+        215,
+        215,
+        215,
+        215,
+        215,
+        215
+      ]
+    },
+    "summary": {
+      "complete": {
+        "max": 542,
+        "median": 541,
+        "median_per_call": 33.8125,
+        "min": 540
+      },
+      "control": {
+        "max": 12,
+        "median": 12,
+        "median_per_call": 0.75,
+        "min": 12
+      },
+      "operation": {
+        "max": 215,
+        "median": 215,
+        "median_per_call": 13.4375,
+        "min": 215
+      }
+    },
+    "queue_job_id": "5666ef642d2845929f066423bb00a36a",
+    "device": 0,
+    "core_index": 0,
+    "evidence": "recovered prior baseline; final revalidation required"
+  },
+  {
+    "A": 2,
+    "B": 0,
+    "Dst": 7,
+    "K": 16,
+    "N": 128,
+    "accumulate": true,
+    "broadcast": 0,
+    "dtype": "BF16 sources/FP32 Dst",
+    "fidelity": 2,
+    "op": "elwmul",
+    "raw": {
+      "complete": [
+        537,
+        536,
+        537,
+        537,
+        536,
+        537,
+        537
+      ],
+      "control": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "operation": [
+        216,
+        216,
+        216,
+        216,
+        216,
+        216,
+        216
+      ]
+    },
+    "summary": {
+      "complete": {
+        "max": 537,
+        "median": 537,
+        "median_per_call": 33.5625,
+        "min": 536
+      },
+      "control": {
+        "max": 12,
+        "median": 12,
+        "median_per_call": 0.75,
+        "min": 12
+      },
+      "operation": {
+        "max": 216,
+        "median": 216,
+        "median_per_call": 13.5,
+        "min": 216
+      }
+    },
+    "queue_job_id": "5666ef642d2845929f066423bb00a36a",
+    "device": 0,
+    "core_index": 0,
+    "evidence": "recovered prior baseline; final revalidation required"
+  },
+  {
+    "A": 2,
+    "B": 0,
+    "Dst": 7,
+    "K": 16,
+    "N": 128,
+    "accumulate": true,
+    "broadcast": 1,
+    "dtype": "BF16 sources/FP32 Dst",
+    "fidelity": 2,
+    "op": "elwmul",
+    "raw": {
+      "complete": [
+        537,
+        536,
+        537,
+        537,
+        537,
+        536,
+        536
+      ],
+      "control": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "operation": [
+        216,
+        216,
+        216,
+        216,
+        216,
+        216,
+        216
+      ]
+    },
+    "summary": {
+      "complete": {
+        "max": 537,
+        "median": 537,
+        "median_per_call": 33.5625,
+        "min": 536
+      },
+      "control": {
+        "max": 12,
+        "median": 12,
+        "median_per_call": 0.75,
+        "min": 12
+      },
+      "operation": {
+        "max": 216,
+        "median": 216,
+        "median_per_call": 13.5,
+        "min": 216
+      }
+    },
+    "queue_job_id": "5666ef642d2845929f066423bb00a36a",
+    "device": 0,
+    "core_index": 0,
+    "evidence": "recovered prior baseline; final revalidation required"
+  },
+  {
+    "A": 2,
+    "B": 0,
+    "Dst": 7,
+    "K": 16,
+    "N": 128,
+    "accumulate": true,
+    "broadcast": 2,
+    "dtype": "BF16 sources/FP32 Dst",
+    "fidelity": 2,
+    "op": "elwmul",
+    "raw": {
+      "complete": [
+        537,
+        537,
+        537,
+        537,
+        537,
+        537,
+        537
+      ],
+      "control": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "operation": [
+        216,
+        216,
+        216,
+        216,
+        216,
+        216,
+        216
+      ]
+    },
+    "summary": {
+      "complete": {
+        "max": 537,
+        "median": 537,
+        "median_per_call": 33.5625,
+        "min": 537
+      },
+      "control": {
+        "max": 12,
+        "median": 12,
+        "median_per_call": 0.75,
+        "min": 12
+      },
+      "operation": {
+        "max": 216,
+        "median": 216,
+        "median_per_call": 13.5,
+        "min": 216
+      }
+    },
+    "queue_job_id": "5666ef642d2845929f066423bb00a36a",
+    "device": 0,
+    "core_index": 0,
+    "evidence": "recovered prior baseline; final revalidation required"
+  },
+  {
+    "A": 2,
+    "B": 0,
+    "Dst": 7,
+    "K": 16,
+    "N": 128,
+    "accumulate": true,
+    "broadcast": 3,
+    "dtype": "BF16 sources/FP32 Dst",
+    "fidelity": 2,
+    "op": "elwmul",
+    "raw": {
+      "complete": [
+        537,
+        536,
+        537,
+        536,
+        537,
+        537,
+        536
+      ],
+      "control": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "operation": [
+        216,
+        216,
+        216,
+        216,
+        216,
+        216,
+        216
+      ]
+    },
+    "summary": {
+      "complete": {
+        "max": 537,
+        "median": 537,
+        "median_per_call": 33.5625,
+        "min": 536
+      },
+      "control": {
+        "max": 12,
+        "median": 12,
+        "median_per_call": 0.75,
+        "min": 12
+      },
+      "operation": {
+        "max": 216,
+        "median": 216,
+        "median_per_call": 13.5,
+        "min": 216
+      }
+    },
+    "queue_job_id": "5666ef642d2845929f066423bb00a36a",
+    "device": 0,
+    "core_index": 0,
+    "evidence": "recovered prior baseline; final revalidation required"
+  },
+  {
+    "A": 4,
+    "B": 3,
+    "Dst": 32,
+    "K": 16,
+    "N": 128,
+    "accumulate": true,
+    "broadcast": 0,
+    "dtype": "BF16 sources/FP32 Dst",
+    "fidelity": 2,
+    "op": "elwmul",
+    "raw": {
+      "complete": [
+        541,
+        541,
+        541,
+        540,
+        540,
+        541,
+        541
+      ],
+      "control": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "operation": [
+        215,
+        215,
+        215,
+        215,
+        215,
+        215,
+        215
+      ]
+    },
+    "summary": {
+      "complete": {
+        "max": 541,
+        "median": 541,
+        "median_per_call": 33.8125,
+        "min": 540
+      },
+      "control": {
+        "max": 12,
+        "median": 12,
+        "median_per_call": 0.75,
+        "min": 12
+      },
+      "operation": {
+        "max": 215,
+        "median": 215,
+        "median_per_call": 13.4375,
+        "min": 215
+      }
+    },
+    "queue_job_id": "5666ef642d2845929f066423bb00a36a",
+    "device": 0,
+    "core_index": 0,
+    "evidence": "recovered prior baseline; final revalidation required"
+  },
+  {
+    "A": 4,
+    "B": 3,
+    "Dst": 32,
+    "K": 16,
+    "N": 128,
+    "accumulate": true,
+    "broadcast": 1,
+    "dtype": "BF16 sources/FP32 Dst",
+    "fidelity": 2,
+    "op": "elwmul",
+    "raw": {
+      "complete": [
+        540,
+        541,
+        541,
+        540,
+        541,
+        540,
+        543
+      ],
+      "control": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "operation": [
+        215,
+        215,
+        215,
+        215,
+        215,
+        215,
+        215
+      ]
+    },
+    "summary": {
+      "complete": {
+        "max": 543,
+        "median": 541,
+        "median_per_call": 33.8125,
+        "min": 540
+      },
+      "control": {
+        "max": 12,
+        "median": 12,
+        "median_per_call": 0.75,
+        "min": 12
+      },
+      "operation": {
+        "max": 215,
+        "median": 215,
+        "median_per_call": 13.4375,
+        "min": 215
+      }
+    },
+    "queue_job_id": "5666ef642d2845929f066423bb00a36a",
+    "device": 0,
+    "core_index": 0,
+    "evidence": "recovered prior baseline; final revalidation required"
+  },
+  {
+    "A": 4,
+    "B": 3,
+    "Dst": 32,
+    "K": 16,
+    "N": 128,
+    "accumulate": true,
+    "broadcast": 2,
+    "dtype": "BF16 sources/FP32 Dst",
+    "fidelity": 2,
+    "op": "elwmul",
+    "raw": {
+      "complete": [
+        541,
+        540,
+        540,
+        541,
+        540,
+        541,
+        540
+      ],
+      "control": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "operation": [
+        215,
+        215,
+        215,
+        215,
+        215,
+        215,
+        215
+      ]
+    },
+    "summary": {
+      "complete": {
+        "max": 541,
+        "median": 540,
+        "median_per_call": 33.75,
+        "min": 540
+      },
+      "control": {
+        "max": 12,
+        "median": 12,
+        "median_per_call": 0.75,
+        "min": 12
+      },
+      "operation": {
+        "max": 215,
+        "median": 215,
+        "median_per_call": 13.4375,
+        "min": 215
+      }
+    },
+    "queue_job_id": "5666ef642d2845929f066423bb00a36a",
+    "device": 0,
+    "core_index": 0,
+    "evidence": "recovered prior baseline; final revalidation required"
+  },
+  {
+    "A": 4,
+    "B": 3,
+    "Dst": 32,
+    "K": 16,
+    "N": 128,
+    "accumulate": true,
+    "broadcast": 3,
+    "dtype": "BF16 sources/FP32 Dst",
+    "fidelity": 2,
+    "op": "elwmul",
+    "raw": {
+      "complete": [
+        540,
+        541,
+        541,
+        540,
+        541,
+        541,
+        541
+      ],
+      "control": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "operation": [
+        215,
+        215,
+        215,
+        215,
+        215,
+        215,
+        215
+      ]
+    },
+    "summary": {
+      "complete": {
+        "max": 541,
+        "median": 541,
+        "median_per_call": 33.8125,
+        "min": 540
+      },
+      "control": {
+        "max": 12,
+        "median": 12,
+        "median_per_call": 0.75,
+        "min": 12
+      },
+      "operation": {
+        "max": 215,
+        "median": 215,
+        "median_per_call": 13.4375,
+        "min": 215
+      }
+    },
+    "queue_job_id": "5666ef642d2845929f066423bb00a36a",
+    "device": 0,
+    "core_index": 0,
+    "evidence": "recovered prior baseline; final revalidation required"
+  },
+  {
+    "A": 6,
+    "B": 1,
+    "Dst": 63,
+    "K": 16,
+    "N": 128,
+    "accumulate": true,
+    "broadcast": 0,
+    "dtype": "BF16 sources/FP32 Dst",
+    "fidelity": 2,
+    "op": "elwmul",
+    "raw": {
+      "complete": [
+        541,
+        541,
+        541,
+        541,
+        541,
+        541,
+        541
+      ],
+      "control": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "operation": [
+        215,
+        215,
+        215,
+        215,
+        215,
+        215,
+        215
+      ]
+    },
+    "summary": {
+      "complete": {
+        "max": 541,
+        "median": 541,
+        "median_per_call": 33.8125,
+        "min": 541
+      },
+      "control": {
+        "max": 12,
+        "median": 12,
+        "median_per_call": 0.75,
+        "min": 12
+      },
+      "operation": {
+        "max": 215,
+        "median": 215,
+        "median_per_call": 13.4375,
+        "min": 215
+      }
+    },
+    "queue_job_id": "5666ef642d2845929f066423bb00a36a",
+    "device": 0,
+    "core_index": 0,
+    "evidence": "recovered prior baseline; final revalidation required"
+  },
+  {
+    "A": 6,
+    "B": 1,
+    "Dst": 63,
+    "K": 16,
+    "N": 128,
+    "accumulate": true,
+    "broadcast": 1,
+    "dtype": "BF16 sources/FP32 Dst",
+    "fidelity": 2,
+    "op": "elwmul",
+    "raw": {
+      "complete": [
+        541,
+        541,
+        541,
+        540,
+        541,
+        541,
+        541
+      ],
+      "control": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "operation": [
+        215,
+        215,
+        215,
+        215,
+        215,
+        215,
+        215
+      ]
+    },
+    "summary": {
+      "complete": {
+        "max": 541,
+        "median": 541,
+        "median_per_call": 33.8125,
+        "min": 540
+      },
+      "control": {
+        "max": 12,
+        "median": 12,
+        "median_per_call": 0.75,
+        "min": 12
+      },
+      "operation": {
+        "max": 215,
+        "median": 215,
+        "median_per_call": 13.4375,
+        "min": 215
+      }
+    },
+    "queue_job_id": "5666ef642d2845929f066423bb00a36a",
+    "device": 0,
+    "core_index": 0,
+    "evidence": "recovered prior baseline; final revalidation required"
+  },
+  {
+    "A": 6,
+    "B": 1,
+    "Dst": 63,
+    "K": 16,
+    "N": 128,
+    "accumulate": true,
+    "broadcast": 2,
+    "dtype": "BF16 sources/FP32 Dst",
+    "fidelity": 2,
+    "op": "elwmul",
+    "raw": {
+      "complete": [
+        541,
+        541,
+        541,
+        541,
+        540,
+        541,
+        540
+      ],
+      "control": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "operation": [
+        215,
+        215,
+        215,
+        215,
+        215,
+        215,
+        215
+      ]
+    },
+    "summary": {
+      "complete": {
+        "max": 541,
+        "median": 541,
+        "median_per_call": 33.8125,
+        "min": 540
+      },
+      "control": {
+        "max": 12,
+        "median": 12,
+        "median_per_call": 0.75,
+        "min": 12
+      },
+      "operation": {
+        "max": 215,
+        "median": 215,
+        "median_per_call": 13.4375,
+        "min": 215
+      }
+    },
+    "queue_job_id": "5666ef642d2845929f066423bb00a36a",
+    "device": 0,
+    "core_index": 0,
+    "evidence": "recovered prior baseline; final revalidation required"
+  },
+  {
+    "A": 6,
+    "B": 1,
+    "Dst": 63,
+    "K": 16,
+    "N": 128,
+    "accumulate": true,
+    "broadcast": 3,
+    "dtype": "BF16 sources/FP32 Dst",
+    "fidelity": 2,
+    "op": "elwmul",
+    "raw": {
+      "complete": [
+        540,
+        541,
+        541,
+        541,
+        541,
+        541,
+        541
+      ],
+      "control": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "operation": [
+        215,
+        215,
+        215,
+        215,
+        215,
+        215,
+        215
+      ]
+    },
+    "summary": {
+      "complete": {
+        "max": 541,
+        "median": 541,
+        "median_per_call": 33.8125,
+        "min": 540
+      },
+      "control": {
+        "max": 12,
+        "median": 12,
+        "median_per_call": 0.75,
+        "min": 12
+      },
+      "operation": {
+        "max": 215,
+        "median": 215,
+        "median_per_call": 13.4375,
+        "min": 215
+      }
+    },
+    "queue_job_id": "5666ef642d2845929f066423bb00a36a",
+    "device": 0,
+    "core_index": 0,
+    "evidence": "recovered prior baseline; final revalidation required"
+  },
+  {
+    "A": 0,
+    "B": 7,
+    "Dst": 0,
+    "K": 16,
+    "N": 128,
+    "accumulate": true,
+    "broadcast": 0,
+    "dtype": "BF16 sources/FP32 Dst",
+    "fidelity": 1,
+    "op": "mvmul",
+    "raw": {
+      "complete": [
+        446,
+        446,
+        447,
+        445,
+        446,
+        446,
+        446
+      ],
+      "control": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "operation": [
+        120,
+        120,
+        120,
+        120,
+        120,
+        120,
+        120
+      ]
+    },
+    "summary": {
+      "complete": {
+        "max": 447,
+        "median": 446,
+        "median_per_call": 27.875,
+        "min": 445
+      },
+      "control": {
+        "max": 12,
+        "median": 12,
+        "median_per_call": 0.75,
+        "min": 12
+      },
+      "operation": {
+        "max": 120,
+        "median": 120,
+        "median_per_call": 7.5,
+        "min": 120
+      }
+    },
+    "queue_job_id": "5666ef642d2845929f066423bb00a36a",
+    "device": 0,
+    "core_index": 0,
+    "evidence": "recovered prior baseline; final revalidation required"
+  },
+  {
+    "A": 0,
+    "B": 7,
+    "Dst": 0,
+    "K": 16,
+    "N": 128,
+    "accumulate": true,
+    "broadcast": 0,
+    "dtype": "BF16 sources/FP32 Dst",
+    "fidelity": 2,
+    "op": "mvmul",
+    "raw": {
+      "complete": [
+        541,
+        541,
+        541,
+        541,
+        540,
+        541,
+        541
+      ],
+      "control": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "operation": [
+        215,
+        215,
+        215,
+        215,
+        215,
+        215,
+        215
+      ]
+    },
+    "summary": {
+      "complete": {
+        "max": 541,
+        "median": 541,
+        "median_per_call": 33.8125,
+        "min": 540
+      },
+      "control": {
+        "max": 12,
+        "median": 12,
+        "median_per_call": 0.75,
+        "min": 12
+      },
+      "operation": {
+        "max": 215,
+        "median": 215,
+        "median_per_call": 13.4375,
+        "min": 215
+      }
+    },
+    "queue_job_id": "5666ef642d2845929f066423bb00a36a",
+    "device": 0,
+    "core_index": 0,
+    "evidence": "recovered prior baseline; final revalidation required"
+  },
+  {
+    "A": 2,
+    "B": 0,
+    "Dst": 7,
+    "K": 16,
+    "N": 128,
+    "accumulate": true,
+    "broadcast": 0,
+    "dtype": "BF16 sources/FP32 Dst",
+    "fidelity": 1,
+    "op": "mvmul",
+    "raw": {
+      "complete": [
+        440,
+        440,
+        439,
+        440,
+        440,
+        439,
+        440
+      ],
+      "control": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "operation": [
+        119,
+        119,
+        119,
+        119,
+        119,
+        119,
+        119
+      ]
+    },
+    "summary": {
+      "complete": {
+        "max": 440,
+        "median": 440,
+        "median_per_call": 27.5,
+        "min": 439
+      },
+      "control": {
+        "max": 12,
+        "median": 12,
+        "median_per_call": 0.75,
+        "min": 12
+      },
+      "operation": {
+        "max": 119,
+        "median": 119,
+        "median_per_call": 7.4375,
+        "min": 119
+      }
+    },
+    "queue_job_id": "5666ef642d2845929f066423bb00a36a",
+    "device": 0,
+    "core_index": 0,
+    "evidence": "recovered prior baseline; final revalidation required"
+  },
+  {
+    "A": 2,
+    "B": 0,
+    "Dst": 7,
+    "K": 16,
+    "N": 128,
+    "accumulate": true,
+    "broadcast": 0,
+    "dtype": "BF16 sources/FP32 Dst",
+    "fidelity": 2,
+    "op": "mvmul",
+    "raw": {
+      "complete": [
+        536,
+        537,
+        536,
+        537,
+        536,
+        537,
+        537
+      ],
+      "control": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "operation": [
+        216,
+        216,
+        216,
+        216,
+        216,
+        216,
+        216
+      ]
+    },
+    "summary": {
+      "complete": {
+        "max": 537,
+        "median": 537,
+        "median_per_call": 33.5625,
+        "min": 536
+      },
+      "control": {
+        "max": 12,
+        "median": 12,
+        "median_per_call": 0.75,
+        "min": 12
+      },
+      "operation": {
+        "max": 216,
+        "median": 216,
+        "median_per_call": 13.5,
+        "min": 216
+      }
+    },
+    "queue_job_id": "5666ef642d2845929f066423bb00a36a",
+    "device": 0,
+    "core_index": 0,
+    "evidence": "recovered prior baseline; final revalidation required"
+  },
+  {
+    "A": 4,
+    "B": 3,
+    "Dst": 32,
+    "K": 16,
+    "N": 128,
+    "accumulate": true,
+    "broadcast": 0,
+    "dtype": "BF16 sources/FP32 Dst",
+    "fidelity": 1,
+    "op": "mvmul",
+    "raw": {
+      "complete": [
+        446,
+        446,
+        446,
+        446,
+        446,
+        446,
+        445
+      ],
+      "control": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "operation": [
+        120,
+        120,
+        120,
+        120,
+        120,
+        120,
+        120
+      ]
+    },
+    "summary": {
+      "complete": {
+        "max": 446,
+        "median": 446,
+        "median_per_call": 27.875,
+        "min": 445
+      },
+      "control": {
+        "max": 12,
+        "median": 12,
+        "median_per_call": 0.75,
+        "min": 12
+      },
+      "operation": {
+        "max": 120,
+        "median": 120,
+        "median_per_call": 7.5,
+        "min": 120
+      }
+    },
+    "queue_job_id": "5666ef642d2845929f066423bb00a36a",
+    "device": 0,
+    "core_index": 0,
+    "evidence": "recovered prior baseline; final revalidation required"
+  },
+  {
+    "A": 4,
+    "B": 3,
+    "Dst": 32,
+    "K": 16,
+    "N": 128,
+    "accumulate": true,
+    "broadcast": 0,
+    "dtype": "BF16 sources/FP32 Dst",
+    "fidelity": 2,
+    "op": "mvmul",
+    "raw": {
+      "complete": [
+        541,
+        541,
+        541,
+        541,
+        541,
+        541,
+        543
+      ],
+      "control": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "operation": [
+        215,
+        215,
+        215,
+        215,
+        215,
+        215,
+        215
+      ]
+    },
+    "summary": {
+      "complete": {
+        "max": 543,
+        "median": 541,
+        "median_per_call": 33.8125,
+        "min": 541
+      },
+      "control": {
+        "max": 12,
+        "median": 12,
+        "median_per_call": 0.75,
+        "min": 12
+      },
+      "operation": {
+        "max": 215,
+        "median": 215,
+        "median_per_call": 13.4375,
+        "min": 215
+      }
+    },
+    "queue_job_id": "5666ef642d2845929f066423bb00a36a",
+    "device": 0,
+    "core_index": 0,
+    "evidence": "recovered prior baseline; final revalidation required"
+  },
+  {
+    "A": 6,
+    "B": 1,
+    "Dst": 63,
+    "K": 16,
+    "N": 128,
+    "accumulate": true,
+    "broadcast": 0,
+    "dtype": "BF16 sources/FP32 Dst",
+    "fidelity": 1,
+    "op": "mvmul",
+    "raw": {
+      "complete": [
+        446,
+        445,
+        446,
+        445,
+        447,
+        446,
+        447
+      ],
+      "control": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "operation": [
+        120,
+        120,
+        120,
+        120,
+        120,
+        120,
+        120
+      ]
+    },
+    "summary": {
+      "complete": {
+        "max": 447,
+        "median": 446,
+        "median_per_call": 27.875,
+        "min": 445
+      },
+      "control": {
+        "max": 12,
+        "median": 12,
+        "median_per_call": 0.75,
+        "min": 12
+      },
+      "operation": {
+        "max": 120,
+        "median": 120,
+        "median_per_call": 7.5,
+        "min": 120
+      }
+    },
+    "queue_job_id": "5666ef642d2845929f066423bb00a36a",
+    "device": 0,
+    "core_index": 0,
+    "evidence": "recovered prior baseline; final revalidation required"
+  },
+  {
+    "A": 6,
+    "B": 1,
+    "Dst": 63,
+    "K": 16,
+    "N": 128,
+    "accumulate": true,
+    "broadcast": 0,
+    "dtype": "BF16 sources/FP32 Dst",
+    "fidelity": 2,
+    "op": "mvmul",
+    "raw": {
+      "complete": [
+        541,
+        541,
+        540,
+        540,
+        541,
+        541,
+        541
+      ],
+      "control": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "operation": [
+        215,
+        215,
+        215,
+        215,
+        215,
+        215,
+        215
+      ]
+    },
+    "summary": {
+      "complete": {
+        "max": 541,
+        "median": 541,
+        "median_per_call": 33.8125,
+        "min": 540
+      },
+      "control": {
+        "max": 12,
+        "median": 12,
+        "median_per_call": 0.75,
+        "min": 12
+      },
+      "operation": {
+        "max": 215,
+        "median": 215,
+        "median_per_call": 13.4375,
+        "min": 215
+      }
+    },
+    "queue_job_id": "5666ef642d2845929f066423bb00a36a",
+    "device": 0,
+    "core_index": 0,
+    "evidence": "recovered prior baseline; final revalidation required"
+  },
+  {
+    "A": 0,
+    "B": 7,
+    "Dst": 0,
+    "K": 16,
+    "N": 128,
+    "accumulate": true,
+    "broadcast": 0,
+    "dtype": "BF16 sources/FP32 Dst",
+    "fidelity": 2,
+    "op": "gapool",
+    "raw": {
+      "complete": [
+        542,
+        541,
+        541,
+        540,
+        541,
+        541,
+        541
+      ],
+      "control": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "operation": [
+        215,
+        215,
+        215,
+        215,
+        215,
+        215,
+        215
+      ]
+    },
+    "summary": {
+      "complete": {
+        "max": 542,
+        "median": 541,
+        "median_per_call": 33.8125,
+        "min": 540
+      },
+      "control": {
+        "max": 12,
+        "median": 12,
+        "median_per_call": 0.75,
+        "min": 12
+      },
+      "operation": {
+        "max": 215,
+        "median": 215,
+        "median_per_call": 13.4375,
+        "min": 215
+      }
+    },
+    "queue_job_id": "5666ef642d2845929f066423bb00a36a",
+    "device": 0,
+    "core_index": 0,
+    "evidence": "recovered prior baseline; final revalidation required"
+  },
+  {
+    "A": 2,
+    "B": 0,
+    "Dst": 7,
+    "K": 16,
+    "N": 128,
+    "accumulate": true,
+    "broadcast": 0,
+    "dtype": "BF16 sources/FP32 Dst",
+    "fidelity": 2,
+    "op": "gapool",
+    "raw": {
+      "complete": [
+        536,
+        537,
+        537,
+        536,
+        537,
+        536,
+        536
+      ],
+      "control": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "operation": [
+        216,
+        216,
+        216,
+        216,
+        216,
+        216,
+        216
+      ]
+    },
+    "summary": {
+      "complete": {
+        "max": 537,
+        "median": 536,
+        "median_per_call": 33.5,
+        "min": 536
+      },
+      "control": {
+        "max": 12,
+        "median": 12,
+        "median_per_call": 0.75,
+        "min": 12
+      },
+      "operation": {
+        "max": 216,
+        "median": 216,
+        "median_per_call": 13.5,
+        "min": 216
+      }
+    },
+    "queue_job_id": "5666ef642d2845929f066423bb00a36a",
+    "device": 0,
+    "core_index": 0,
+    "evidence": "recovered prior baseline; final revalidation required"
+  },
+  {
+    "A": 4,
+    "B": 3,
+    "Dst": 32,
+    "K": 16,
+    "N": 128,
+    "accumulate": true,
+    "broadcast": 0,
+    "dtype": "BF16 sources/FP32 Dst",
+    "fidelity": 2,
+    "op": "gapool",
+    "raw": {
+      "complete": [
+        541,
+        541,
+        541,
+        541,
+        540,
+        541,
+        541
+      ],
+      "control": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "operation": [
+        215,
+        215,
+        215,
+        215,
+        215,
+        215,
+        215
+      ]
+    },
+    "summary": {
+      "complete": {
+        "max": 541,
+        "median": 541,
+        "median_per_call": 33.8125,
+        "min": 540
+      },
+      "control": {
+        "max": 12,
+        "median": 12,
+        "median_per_call": 0.75,
+        "min": 12
+      },
+      "operation": {
+        "max": 215,
+        "median": 215,
+        "median_per_call": 13.4375,
+        "min": 215
+      }
+    },
+    "queue_job_id": "5666ef642d2845929f066423bb00a36a",
+    "device": 0,
+    "core_index": 0,
+    "evidence": "recovered prior baseline; final revalidation required"
+  },
+  {
+    "A": 6,
+    "B": 1,
+    "Dst": 63,
+    "K": 16,
+    "N": 128,
+    "accumulate": true,
+    "broadcast": 0,
+    "dtype": "BF16 sources/FP32 Dst",
+    "fidelity": 2,
+    "op": "gapool",
+    "raw": {
+      "complete": [
+        541,
+        541,
+        541,
+        540,
+        540,
+        540,
+        541
+      ],
+      "control": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "operation": [
+        215,
+        215,
+        215,
+        215,
+        215,
+        215,
+        215
+      ]
+    },
+    "summary": {
+      "complete": {
+        "max": 541,
+        "median": 541,
+        "median_per_call": 33.8125,
+        "min": 540
+      },
+      "control": {
+        "max": 12,
+        "median": 12,
+        "median_per_call": 0.75,
+        "min": 12
+      },
+      "operation": {
+        "max": 215,
+        "median": 215,
+        "median_per_call": 13.4375,
+        "min": 215
+      }
+    },
+    "queue_job_id": "5666ef642d2845929f066423bb00a36a",
+    "device": 0,
+    "core_index": 0,
+    "evidence": "recovered prior baseline; final revalidation required"
+  },
+  {
+    "A": 0,
+    "B": 7,
+    "Dst": 0,
+    "K": 16,
+    "N": 128,
+    "accumulate": true,
+    "broadcast": 0,
+    "dtype": "BF16 sources/FP32 Dst",
+    "fidelity": 2,
+    "op": "gmpool",
+    "raw": {
+      "complete": [
+        446,
+        447,
+        446,
+        446,
+        447,
+        447,
+        445
+      ],
+      "control": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "operation": [
+        120,
+        120,
+        120,
+        120,
+        120,
+        120,
+        120
+      ]
+    },
+    "summary": {
+      "complete": {
+        "max": 447,
+        "median": 446,
+        "median_per_call": 27.875,
+        "min": 445
+      },
+      "control": {
+        "max": 12,
+        "median": 12,
+        "median_per_call": 0.75,
+        "min": 12
+      },
+      "operation": {
+        "max": 120,
+        "median": 120,
+        "median_per_call": 7.5,
+        "min": 120
+      }
+    },
+    "queue_job_id": "5666ef642d2845929f066423bb00a36a",
+    "device": 0,
+    "core_index": 0,
+    "evidence": "recovered prior baseline; final revalidation required"
+  },
+  {
+    "A": 2,
+    "B": 0,
+    "Dst": 7,
+    "K": 16,
+    "N": 128,
+    "accumulate": true,
+    "broadcast": 0,
+    "dtype": "BF16 sources/FP32 Dst",
+    "fidelity": 2,
+    "op": "gmpool",
+    "raw": {
+      "complete": [
+        439,
+        439,
+        439,
+        440,
+        439,
+        439,
+        439
+      ],
+      "control": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "operation": [
+        119,
+        119,
+        119,
+        119,
+        119,
+        119,
+        119
+      ]
+    },
+    "summary": {
+      "complete": {
+        "max": 440,
+        "median": 439,
+        "median_per_call": 27.4375,
+        "min": 439
+      },
+      "control": {
+        "max": 12,
+        "median": 12,
+        "median_per_call": 0.75,
+        "min": 12
+      },
+      "operation": {
+        "max": 119,
+        "median": 119,
+        "median_per_call": 7.4375,
+        "min": 119
+      }
+    },
+    "queue_job_id": "5666ef642d2845929f066423bb00a36a",
+    "device": 0,
+    "core_index": 0,
+    "evidence": "recovered prior baseline; final revalidation required"
+  },
+  {
+    "A": 4,
+    "B": 3,
+    "Dst": 32,
+    "K": 16,
+    "N": 128,
+    "accumulate": true,
+    "broadcast": 0,
+    "dtype": "BF16 sources/FP32 Dst",
+    "fidelity": 2,
+    "op": "gmpool",
+    "raw": {
+      "complete": [
+        446,
+        447,
+        446,
+        447,
+        446,
+        445,
+        445
+      ],
+      "control": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "operation": [
+        120,
+        120,
+        120,
+        120,
+        120,
+        120,
+        120
+      ]
+    },
+    "summary": {
+      "complete": {
+        "max": 447,
+        "median": 446,
+        "median_per_call": 27.875,
+        "min": 445
+      },
+      "control": {
+        "max": 12,
+        "median": 12,
+        "median_per_call": 0.75,
+        "min": 12
+      },
+      "operation": {
+        "max": 120,
+        "median": 120,
+        "median_per_call": 7.5,
+        "min": 120
+      }
+    },
+    "queue_job_id": "5666ef642d2845929f066423bb00a36a",
+    "device": 0,
+    "core_index": 0,
+    "evidence": "recovered prior baseline; final revalidation required"
+  },
+  {
+    "A": 6,
+    "B": 1,
+    "Dst": 63,
+    "K": 16,
+    "N": 128,
+    "accumulate": true,
+    "broadcast": 0,
+    "dtype": "BF16 sources/FP32 Dst",
+    "fidelity": 2,
+    "op": "gmpool",
+    "raw": {
+      "complete": [
+        445,
+        447,
+        447,
+        447,
+        446,
+        445,
+        445
+      ],
+      "control": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "operation": [
+        120,
+        120,
+        120,
+        120,
+        120,
+        120,
+        120
+      ]
+    },
+    "summary": {
+      "complete": {
+        "max": 447,
+        "median": 446,
+        "median_per_call": 27.875,
+        "min": 445
+      },
+      "control": {
+        "max": 12,
+        "median": 12,
+        "median_per_call": 0.75,
+        "min": 12
+      },
+      "operation": {
+        "max": 120,
+        "median": 120,
+        "median_per_call": 7.5,
+        "min": 120
+      }
+    },
+    "queue_job_id": "5666ef642d2845929f066423bb00a36a",
+    "device": 0,
+    "core_index": 0,
+    "evidence": "recovered prior baseline; final revalidation required"
+  },
+  {
+    "A": 0,
+    "B": 7,
+    "Dst": 0,
+    "K": 16,
+    "N": 128,
+    "accumulate": true,
+    "broadcast": 0,
+    "dtype": "BF16 sources/FP32 Dst",
+    "fidelity": 2,
+    "op": "zero",
+    "raw": {
+      "complete": [
+        474,
+        475,
+        475,
+        475,
+        476,
+        474,
+        474
+      ],
+      "control": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "operation": [
+        156,
+        156,
+        156,
+        156,
+        156,
+        156,
+        156
+      ]
+    },
+    "summary": {
+      "complete": {
+        "max": 476,
+        "median": 475,
+        "median_per_call": 29.6875,
+        "min": 474
+      },
+      "control": {
+        "max": 12,
+        "median": 12,
+        "median_per_call": 0.75,
+        "min": 12
+      },
+      "operation": {
+        "max": 156,
+        "median": 156,
+        "median_per_call": 9.75,
+        "min": 156
+      }
+    },
+    "queue_job_id": "5666ef642d2845929f066423bb00a36a",
+    "device": 0,
+    "core_index": 0,
+    "evidence": "recovered prior baseline; final revalidation required"
+  },
+  {
+    "A": 2,
+    "B": 0,
+    "Dst": 7,
+    "K": 16,
+    "N": 128,
+    "accumulate": true,
+    "broadcast": 0,
+    "dtype": "BF16 sources/FP32 Dst",
+    "fidelity": 2,
+    "op": "zero",
+    "raw": {
+      "complete": [
+        474,
+        475,
+        476,
+        476,
+        476,
+        475,
+        475
+      ],
+      "control": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "operation": [
+        156,
+        156,
+        156,
+        156,
+        156,
+        156,
+        156
+      ]
+    },
+    "summary": {
+      "complete": {
+        "max": 476,
+        "median": 475,
+        "median_per_call": 29.6875,
+        "min": 474
+      },
+      "control": {
+        "max": 12,
+        "median": 12,
+        "median_per_call": 0.75,
+        "min": 12
+      },
+      "operation": {
+        "max": 156,
+        "median": 156,
+        "median_per_call": 9.75,
+        "min": 156
+      }
+    },
+    "queue_job_id": "5666ef642d2845929f066423bb00a36a",
+    "device": 0,
+    "core_index": 0,
+    "evidence": "recovered prior baseline; final revalidation required"
+  },
+  {
+    "A": 4,
+    "B": 3,
+    "Dst": 32,
+    "K": 16,
+    "N": 128,
+    "accumulate": true,
+    "broadcast": 0,
+    "dtype": "BF16 sources/FP32 Dst",
+    "fidelity": 2,
+    "op": "zero",
+    "raw": {
+      "complete": [
+        476,
+        476,
+        474,
+        476,
+        474,
+        474,
+        475
+      ],
+      "control": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "operation": [
+        156,
+        156,
+        156,
+        156,
+        156,
+        156,
+        156
+      ]
+    },
+    "summary": {
+      "complete": {
+        "max": 476,
+        "median": 475,
+        "median_per_call": 29.6875,
+        "min": 474
+      },
+      "control": {
+        "max": 12,
+        "median": 12,
+        "median_per_call": 0.75,
+        "min": 12
+      },
+      "operation": {
+        "max": 156,
+        "median": 156,
+        "median_per_call": 9.75,
+        "min": 156
+      }
+    },
+    "queue_job_id": "5666ef642d2845929f066423bb00a36a",
+    "device": 0,
+    "core_index": 0,
+    "evidence": "recovered prior baseline; final revalidation required"
+  },
+  {
+    "A": 6,
+    "B": 1,
+    "Dst": 63,
+    "K": 16,
+    "N": 128,
+    "accumulate": true,
+    "broadcast": 0,
+    "dtype": "BF16 sources/FP32 Dst",
+    "fidelity": 2,
+    "op": "zero",
+    "raw": {
+      "complete": [
+        475,
+        475,
+        475,
+        474,
+        476,
+        476,
+        475
+      ],
+      "control": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "operation": [
+        156,
+        156,
+        156,
+        156,
+        156,
+        156,
+        156
+      ]
+    },
+    "summary": {
+      "complete": {
+        "max": 476,
+        "median": 475,
+        "median_per_call": 29.6875,
+        "min": 474
+      },
+      "control": {
+        "max": 12,
+        "median": 12,
+        "median_per_call": 0.75,
+        "min": 12
+      },
+      "operation": {
+        "max": 156,
+        "median": 156,
+        "median_per_call": 9.75,
+        "min": 156
+      }
+    },
+    "queue_job_id": "5666ef642d2845929f066423bb00a36a",
+    "device": 0,
+    "core_index": 0,
+    "evidence": "recovered prior baseline; final revalidation required"
+  },
+  {
+    "A": 0,
+    "B": 7,
+    "Dst": 0,
+    "K": 16,
+    "N": 128,
+    "accumulate": true,
+    "broadcast": 0,
+    "dtype": "BF16 sources/FP32 Dst",
+    "fidelity": 2,
+    "op": "a2d",
+    "raw": {
+      "complete": [
+        363,
+        362,
+        361,
+        361,
+        361,
+        361,
+        364
+      ],
+      "control": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "operation": [
+        43,
+        43,
+        43,
+        43,
+        43,
+        43,
+        43
+      ]
+    },
+    "summary": {
+      "complete": {
+        "max": 364,
+        "median": 361,
+        "median_per_call": 22.5625,
+        "min": 361
+      },
+      "control": {
+        "max": 12,
+        "median": 12,
+        "median_per_call": 0.75,
+        "min": 12
+      },
+      "operation": {
+        "max": 43,
+        "median": 43,
+        "median_per_call": 2.6875,
+        "min": 43
+      }
+    },
+    "queue_job_id": "5666ef642d2845929f066423bb00a36a",
+    "device": 0,
+    "core_index": 0,
+    "evidence": "recovered prior baseline; final revalidation required"
+  },
+  {
+    "A": 2,
+    "B": 0,
+    "Dst": 7,
+    "K": 16,
+    "N": 128,
+    "accumulate": true,
+    "broadcast": 0,
+    "dtype": "BF16 sources/FP32 Dst",
+    "fidelity": 2,
+    "op": "a2d",
+    "raw": {
+      "complete": [
+        362,
+        362,
+        361,
+        364,
+        361,
+        362,
+        362
+      ],
+      "control": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "operation": [
+        43,
+        43,
+        43,
+        43,
+        43,
+        43,
+        43
+      ]
+    },
+    "summary": {
+      "complete": {
+        "max": 364,
+        "median": 362,
+        "median_per_call": 22.625,
+        "min": 361
+      },
+      "control": {
+        "max": 12,
+        "median": 12,
+        "median_per_call": 0.75,
+        "min": 12
+      },
+      "operation": {
+        "max": 43,
+        "median": 43,
+        "median_per_call": 2.6875,
+        "min": 43
+      }
+    },
+    "queue_job_id": "5666ef642d2845929f066423bb00a36a",
+    "device": 0,
+    "core_index": 0,
+    "evidence": "recovered prior baseline; final revalidation required"
+  },
+  {
+    "A": 4,
+    "B": 3,
+    "Dst": 32,
+    "K": 16,
+    "N": 128,
+    "accumulate": true,
+    "broadcast": 0,
+    "dtype": "BF16 sources/FP32 Dst",
+    "fidelity": 2,
+    "op": "a2d",
+    "raw": {
+      "complete": [
+        377,
+        377,
+        378,
+        377,
+        378,
+        377,
+        377
+      ],
+      "control": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "operation": [
+        58,
+        58,
+        58,
+        58,
+        58,
+        58,
+        58
+      ]
+    },
+    "summary": {
+      "complete": {
+        "max": 378,
+        "median": 377,
+        "median_per_call": 23.5625,
+        "min": 377
+      },
+      "control": {
+        "max": 12,
+        "median": 12,
+        "median_per_call": 0.75,
+        "min": 12
+      },
+      "operation": {
+        "max": 58,
+        "median": 58,
+        "median_per_call": 3.625,
+        "min": 58
+      }
+    },
+    "queue_job_id": "5666ef642d2845929f066423bb00a36a",
+    "device": 0,
+    "core_index": 0,
+    "evidence": "recovered prior baseline; final revalidation required"
+  },
+  {
+    "A": 6,
+    "B": 1,
+    "Dst": 63,
+    "K": 16,
+    "N": 128,
+    "accumulate": true,
+    "broadcast": 0,
+    "dtype": "BF16 sources/FP32 Dst",
+    "fidelity": 2,
+    "op": "a2d",
+    "raw": {
+      "complete": [
+        377,
+        376,
+        377,
+        377,
+        377,
+        377,
+        376
+      ],
+      "control": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "operation": [
+        58,
+        58,
+        58,
+        58,
+        58,
+        58,
+        58
+      ]
+    },
+    "summary": {
+      "complete": {
+        "max": 377,
+        "median": 377,
+        "median_per_call": 23.5625,
+        "min": 376
+      },
+      "control": {
+        "max": 12,
+        "median": 12,
+        "median_per_call": 0.75,
+        "min": 12
+      },
+      "operation": {
+        "max": 58,
+        "median": 58,
+        "median_per_call": 3.625,
+        "min": 58
+      }
+    },
+    "queue_job_id": "5666ef642d2845929f066423bb00a36a",
+    "device": 0,
+    "core_index": 0,
+    "evidence": "recovered prior baseline; final revalidation required"
+  },
+  {
+    "A": 0,
+    "B": 7,
+    "Dst": 0,
+    "K": 16,
+    "N": 128,
+    "accumulate": true,
+    "broadcast": 0,
+    "dtype": "BF16 sources/FP32 Dst",
+    "fidelity": 2,
+    "op": "b2d",
+    "raw": {
+      "complete": [
+        378,
+        378,
+        379,
+        377,
+        377,
+        378,
+        379
+      ],
+      "control": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "operation": [
+        59,
+        59,
+        59,
+        59,
+        59,
+        59,
+        59
+      ]
+    },
+    "summary": {
+      "complete": {
+        "max": 379,
+        "median": 378,
+        "median_per_call": 23.625,
+        "min": 377
+      },
+      "control": {
+        "max": 12,
+        "median": 12,
+        "median_per_call": 0.75,
+        "min": 12
+      },
+      "operation": {
+        "max": 59,
+        "median": 59,
+        "median_per_call": 3.6875,
+        "min": 59
+      }
+    },
+    "queue_job_id": "5666ef642d2845929f066423bb00a36a",
+    "device": 0,
+    "core_index": 0,
+    "evidence": "recovered prior baseline; final revalidation required"
+  },
+  {
+    "A": 2,
+    "B": 0,
+    "Dst": 7,
+    "K": 16,
+    "N": 128,
+    "accumulate": true,
+    "broadcast": 0,
+    "dtype": "BF16 sources/FP32 Dst",
+    "fidelity": 2,
+    "op": "b2d",
+    "raw": {
+      "complete": [
+        377,
+        378,
+        378,
+        378,
+        377,
+        377,
+        378
+      ],
+      "control": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "operation": [
+        59,
+        59,
+        59,
+        59,
+        59,
+        59,
+        59
+      ]
+    },
+    "summary": {
+      "complete": {
+        "max": 378,
+        "median": 378,
+        "median_per_call": 23.625,
+        "min": 377
+      },
+      "control": {
+        "max": 12,
+        "median": 12,
+        "median_per_call": 0.75,
+        "min": 12
+      },
+      "operation": {
+        "max": 59,
+        "median": 59,
+        "median_per_call": 3.6875,
+        "min": 59
+      }
+    },
+    "queue_job_id": "5666ef642d2845929f066423bb00a36a",
+    "device": 0,
+    "core_index": 0,
+    "evidence": "recovered prior baseline; final revalidation required"
+  },
+  {
+    "A": 4,
+    "B": 3,
+    "Dst": 32,
+    "K": 16,
+    "N": 128,
+    "accumulate": true,
+    "broadcast": 0,
+    "dtype": "BF16 sources/FP32 Dst",
+    "fidelity": 2,
+    "op": "b2d",
+    "raw": {
+      "complete": [
+        378,
+        378,
+        378,
+        378,
+        378,
+        378,
+        378
+      ],
+      "control": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "operation": [
+        59,
+        59,
+        59,
+        59,
+        59,
+        59,
+        59
+      ]
+    },
+    "summary": {
+      "complete": {
+        "max": 378,
+        "median": 378,
+        "median_per_call": 23.625,
+        "min": 378
+      },
+      "control": {
+        "max": 12,
+        "median": 12,
+        "median_per_call": 0.75,
+        "min": 12
+      },
+      "operation": {
+        "max": 59,
+        "median": 59,
+        "median_per_call": 3.6875,
+        "min": 59
+      }
+    },
+    "queue_job_id": "5666ef642d2845929f066423bb00a36a",
+    "device": 0,
+    "core_index": 0,
+    "evidence": "recovered prior baseline; final revalidation required"
+  },
+  {
+    "A": 6,
+    "B": 1,
+    "Dst": 63,
+    "K": 16,
+    "N": 128,
+    "accumulate": true,
+    "broadcast": 0,
+    "dtype": "BF16 sources/FP32 Dst",
+    "fidelity": 2,
+    "op": "b2d",
+    "raw": {
+      "complete": [
+        377,
+        378,
+        378,
+        377,
+        378,
+        377,
+        378
+      ],
+      "control": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "operation": [
+        59,
+        59,
+        59,
+        59,
+        59,
+        59,
+        59
+      ]
+    },
+    "summary": {
+      "complete": {
+        "max": 378,
+        "median": 378,
+        "median_per_call": 23.625,
+        "min": 377
+      },
+      "control": {
+        "max": 12,
+        "median": 12,
+        "median_per_call": 0.75,
+        "min": 12
+      },
+      "operation": {
+        "max": 59,
+        "median": 59,
+        "median_per_call": 3.6875,
+        "min": 59
+      }
+    },
+    "queue_job_id": "5666ef642d2845929f066423bb00a36a",
+    "device": 0,
+    "core_index": 0,
+    "evidence": "recovered prior baseline; final revalidation required"
+  },
+  {
+    "A": 0,
+    "B": 7,
+    "Dst": 0,
+    "K": 16,
+    "N": 128,
+    "accumulate": true,
+    "broadcast": 0,
+    "dtype": "BF16 sources/FP32 Dst",
+    "fidelity": 2,
+    "op": "d2a",
+    "raw": {
+      "complete": [
+        379,
+        378,
+        378,
+        377,
+        378,
+        378,
+        377
+      ],
+      "control": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "operation": [
+        59,
+        59,
+        59,
+        59,
+        59,
+        59,
+        59
+      ]
+    },
+    "summary": {
+      "complete": {
+        "max": 379,
+        "median": 378,
+        "median_per_call": 23.625,
+        "min": 377
+      },
+      "control": {
+        "max": 12,
+        "median": 12,
+        "median_per_call": 0.75,
+        "min": 12
+      },
+      "operation": {
+        "max": 59,
+        "median": 59,
+        "median_per_call": 3.6875,
+        "min": 59
+      }
+    },
+    "queue_job_id": "5666ef642d2845929f066423bb00a36a",
+    "device": 0,
+    "core_index": 0,
+    "evidence": "recovered prior baseline; final revalidation required"
+  },
+  {
+    "A": 2,
+    "B": 0,
+    "Dst": 7,
+    "K": 16,
+    "N": 128,
+    "accumulate": true,
+    "broadcast": 0,
+    "dtype": "BF16 sources/FP32 Dst",
+    "fidelity": 2,
+    "op": "d2a",
+    "raw": {
+      "complete": [
+        378,
+        377,
+        378,
+        378,
+        377,
+        378,
+        378
+      ],
+      "control": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "operation": [
+        59,
+        59,
+        59,
+        59,
+        59,
+        59,
+        59
+      ]
+    },
+    "summary": {
+      "complete": {
+        "max": 378,
+        "median": 378,
+        "median_per_call": 23.625,
+        "min": 377
+      },
+      "control": {
+        "max": 12,
+        "median": 12,
+        "median_per_call": 0.75,
+        "min": 12
+      },
+      "operation": {
+        "max": 59,
+        "median": 59,
+        "median_per_call": 3.6875,
+        "min": 59
+      }
+    },
+    "queue_job_id": "5666ef642d2845929f066423bb00a36a",
+    "device": 0,
+    "core_index": 0,
+    "evidence": "recovered prior baseline; final revalidation required"
+  },
+  {
+    "A": 4,
+    "B": 3,
+    "Dst": 32,
+    "K": 16,
+    "N": 128,
+    "accumulate": true,
+    "broadcast": 0,
+    "dtype": "BF16 sources/FP32 Dst",
+    "fidelity": 2,
+    "op": "d2a",
+    "raw": {
+      "complete": [
+        378,
+        378,
+        377,
+        378,
+        377,
+        377,
+        377
+      ],
+      "control": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "operation": [
+        59,
+        59,
+        59,
+        59,
+        59,
+        59,
+        59
+      ]
+    },
+    "summary": {
+      "complete": {
+        "max": 378,
+        "median": 377,
+        "median_per_call": 23.5625,
+        "min": 377
+      },
+      "control": {
+        "max": 12,
+        "median": 12,
+        "median_per_call": 0.75,
+        "min": 12
+      },
+      "operation": {
+        "max": 59,
+        "median": 59,
+        "median_per_call": 3.6875,
+        "min": 59
+      }
+    },
+    "queue_job_id": "5666ef642d2845929f066423bb00a36a",
+    "device": 0,
+    "core_index": 0,
+    "evidence": "recovered prior baseline; final revalidation required"
+  },
+  {
+    "A": 6,
+    "B": 1,
+    "Dst": 63,
+    "K": 16,
+    "N": 128,
+    "accumulate": true,
+    "broadcast": 0,
+    "dtype": "BF16 sources/FP32 Dst",
+    "fidelity": 2,
+    "op": "d2a",
+    "raw": {
+      "complete": [
+        378,
+        379,
+        380,
+        380,
+        378,
+        378,
+        377
+      ],
+      "control": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "operation": [
+        59,
+        59,
+        59,
+        59,
+        59,
+        59,
+        59
+      ]
+    },
+    "summary": {
+      "complete": {
+        "max": 380,
+        "median": 378,
+        "median_per_call": 23.625,
+        "min": 377
+      },
+      "control": {
+        "max": 12,
+        "median": 12,
+        "median_per_call": 0.75,
+        "min": 12
+      },
+      "operation": {
+        "max": 59,
+        "median": 59,
+        "median_per_call": 3.6875,
+        "min": 59
+      }
+    },
+    "queue_job_id": "5666ef642d2845929f066423bb00a36a",
+    "device": 0,
+    "core_index": 0,
+    "evidence": "recovered prior baseline; final revalidation required"
+  },
+  {
+    "A": 0,
+    "B": 7,
+    "Dst": 0,
+    "K": 16,
+    "N": 128,
+    "accumulate": true,
+    "broadcast": 0,
+    "dtype": "BF16 sources/FP32 Dst",
+    "fidelity": 2,
+    "op": "d2b",
+    "raw": {
+      "complete": [
+        377,
+        377,
+        377,
+        378,
+        377,
+        378,
+        378
+      ],
+      "control": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "operation": [
+        59,
+        59,
+        59,
+        59,
+        59,
+        59,
+        59
+      ]
+    },
+    "summary": {
+      "complete": {
+        "max": 378,
+        "median": 377,
+        "median_per_call": 23.5625,
+        "min": 377
+      },
+      "control": {
+        "max": 12,
+        "median": 12,
+        "median_per_call": 0.75,
+        "min": 12
+      },
+      "operation": {
+        "max": 59,
+        "median": 59,
+        "median_per_call": 3.6875,
+        "min": 59
+      }
+    },
+    "queue_job_id": "5666ef642d2845929f066423bb00a36a",
+    "device": 0,
+    "core_index": 0,
+    "evidence": "recovered prior baseline; final revalidation required"
+  },
+  {
+    "A": 2,
+    "B": 0,
+    "Dst": 7,
+    "K": 16,
+    "N": 128,
+    "accumulate": true,
+    "broadcast": 0,
+    "dtype": "BF16 sources/FP32 Dst",
+    "fidelity": 2,
+    "op": "d2b",
+    "raw": {
+      "complete": [
+        377,
+        378,
+        378,
+        378,
+        378,
+        378,
+        380
+      ],
+      "control": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "operation": [
+        59,
+        59,
+        59,
+        59,
+        59,
+        59,
+        59
+      ]
+    },
+    "summary": {
+      "complete": {
+        "max": 380,
+        "median": 378,
+        "median_per_call": 23.625,
+        "min": 377
+      },
+      "control": {
+        "max": 12,
+        "median": 12,
+        "median_per_call": 0.75,
+        "min": 12
+      },
+      "operation": {
+        "max": 59,
+        "median": 59,
+        "median_per_call": 3.6875,
+        "min": 59
+      }
+    },
+    "queue_job_id": "5666ef642d2845929f066423bb00a36a",
+    "device": 0,
+    "core_index": 0,
+    "evidence": "recovered prior baseline; final revalidation required"
+  },
+  {
+    "A": 4,
+    "B": 3,
+    "Dst": 32,
+    "K": 16,
+    "N": 128,
+    "accumulate": true,
+    "broadcast": 0,
+    "dtype": "BF16 sources/FP32 Dst",
+    "fidelity": 2,
+    "op": "d2b",
+    "raw": {
+      "complete": [
+        378,
+        380,
+        378,
+        378,
+        378,
+        378,
+        378
+      ],
+      "control": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "operation": [
+        59,
+        59,
+        59,
+        59,
+        59,
+        59,
+        59
+      ]
+    },
+    "summary": {
+      "complete": {
+        "max": 380,
+        "median": 378,
+        "median_per_call": 23.625,
+        "min": 378
+      },
+      "control": {
+        "max": 12,
+        "median": 12,
+        "median_per_call": 0.75,
+        "min": 12
+      },
+      "operation": {
+        "max": 59,
+        "median": 59,
+        "median_per_call": 3.6875,
+        "min": 59
+      }
+    },
+    "queue_job_id": "5666ef642d2845929f066423bb00a36a",
+    "device": 0,
+    "core_index": 0,
+    "evidence": "recovered prior baseline; final revalidation required"
+  },
+  {
+    "A": 6,
+    "B": 1,
+    "Dst": 63,
+    "K": 16,
+    "N": 128,
+    "accumulate": true,
+    "broadcast": 0,
+    "dtype": "BF16 sources/FP32 Dst",
+    "fidelity": 2,
+    "op": "d2b",
+    "raw": {
+      "complete": [
+        378,
+        377,
+        378,
+        377,
+        377,
+        377,
+        378
+      ],
+      "control": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "operation": [
+        59,
+        59,
+        59,
+        59,
+        59,
+        59,
+        59
+      ]
+    },
+    "summary": {
+      "complete": {
+        "max": 378,
+        "median": 377,
+        "median_per_call": 23.5625,
+        "min": 377
+      },
+      "control": {
+        "max": 12,
+        "median": 12,
+        "median_per_call": 0.75,
+        "min": 12
+      },
+      "operation": {
+        "max": 59,
+        "median": 59,
+        "median_per_call": 3.6875,
+        "min": 59
+      }
+    },
+    "queue_job_id": "5666ef642d2845929f066423bb00a36a",
+    "device": 0,
+    "core_index": 0,
+    "evidence": "recovered prior baseline; final revalidation required"
+  }
+]

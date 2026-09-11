@@ -1,0 +1,4739 @@
+{
+  "context": {
+    "device": 0,
+    "core_index": 1,
+    "core": [
+      1,
+      3
+    ],
+    "firmware_worker_sha256": [
+      "e878452ea85284edd03700b67e30681f8f86f8f250fdfe5bcf9233c634c4236b",
+      "221cc6773fb6737af91a1f2978797fe087e02d3e65a2a9781ab9eae3fac5d08a",
+      "5ac368b93cd3770ee10d7215809ac43244803efbcbe37750440cfb6b8167ed50",
+      "5ea072c0af23c2cd2d8e8e3258f561c578c315121d0143bae6c27cd01e91b87a",
+      "7de9d93d6bccd81bd6a3e06967a07a7c42d35b8591945abdaf4e252302b09a83"
+    ],
+    "config": "FP32 Dst; thread cfg12/28/47=0; RWC=0; architectural L9=0 L10=1"
+  },
+  "job_id": "5a833c0cd88440328d4af1a1bebd849b",
+  "records": [
+    {
+      "op": "add",
+      "mode": "refined",
+      "slots": [
+        0,
+        17,
+        63
+      ],
+      "mask": "all",
+      "alias": "none",
+      "dtype": "fp32",
+      "N": 128,
+      "K": 4,
+      "warmup": 1,
+      "raw": [
+        77,
+        77,
+        77,
+        77,
+        77,
+        77,
+        77
+      ],
+      "empty": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "control": [
+        64,
+        64,
+        64,
+        64,
+        64,
+        64,
+        64
+      ],
+      "min": 77,
+      "median": 77,
+      "max": 77,
+      "cycles_per_vector": 19.25,
+      "worst": [
+        0.0,
+        0.0,
+        0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "core": "(1, 3)",
+      "job_id": "5a833c0cd88440328d4af1a1bebd849b",
+      "device": 0,
+      "kind": "SFPU_RESULT",
+      "test": "tests/operation_pocs/sfpu_math/test_math.py::test_operations[add]"
+    },
+    {
+      "op": "sub",
+      "mode": "refined",
+      "slots": [
+        0,
+        17,
+        63
+      ],
+      "mask": "all",
+      "alias": "none",
+      "dtype": "fp32",
+      "N": 128,
+      "K": 4,
+      "warmup": 1,
+      "raw": [
+        77,
+        77,
+        77,
+        77,
+        77,
+        77,
+        77
+      ],
+      "empty": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "control": [
+        64,
+        64,
+        64,
+        64,
+        64,
+        64,
+        64
+      ],
+      "min": 77,
+      "median": 77,
+      "max": 77,
+      "cycles_per_vector": 19.25,
+      "worst": [
+        0.0,
+        0.0,
+        0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "core": "(1, 3)",
+      "job_id": "5a833c0cd88440328d4af1a1bebd849b",
+      "device": 0,
+      "kind": "SFPU_RESULT",
+      "test": "tests/operation_pocs/sfpu_math/test_math.py::test_operations[sub]"
+    },
+    {
+      "op": "mul",
+      "mode": "refined",
+      "slots": [
+        0,
+        17,
+        63
+      ],
+      "mask": "all",
+      "alias": "none",
+      "dtype": "fp32",
+      "N": 128,
+      "K": 4,
+      "warmup": 1,
+      "raw": [
+        77,
+        77,
+        77,
+        77,
+        77,
+        77,
+        77
+      ],
+      "empty": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "control": [
+        64,
+        64,
+        64,
+        64,
+        64,
+        64,
+        64
+      ],
+      "min": 77,
+      "median": 77,
+      "max": 77,
+      "cycles_per_vector": 19.25,
+      "worst": [
+        0.0,
+        0.0,
+        0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "core": "(1, 3)",
+      "job_id": "5a833c0cd88440328d4af1a1bebd849b",
+      "device": 0,
+      "kind": "SFPU_RESULT",
+      "test": "tests/operation_pocs/sfpu_math/test_math.py::test_operations[mul]"
+    },
+    {
+      "op": "mad",
+      "mode": "refined",
+      "slots": [
+        0,
+        17,
+        63
+      ],
+      "mask": "all",
+      "alias": "none",
+      "dtype": "fp32",
+      "N": 128,
+      "K": 4,
+      "warmup": 1,
+      "raw": [
+        77,
+        77,
+        77,
+        77,
+        77,
+        77,
+        77
+      ],
+      "empty": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "control": [
+        64,
+        64,
+        64,
+        64,
+        64,
+        64,
+        64
+      ],
+      "min": 77,
+      "median": 77,
+      "max": 77,
+      "cycles_per_vector": 19.25,
+      "worst": [
+        0.0,
+        0.0,
+        0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "core": "(1, 3)",
+      "job_id": "5a833c0cd88440328d4af1a1bebd849b",
+      "device": 0,
+      "kind": "SFPU_RESULT",
+      "test": "tests/operation_pocs/sfpu_math/test_math.py::test_operations[mad]"
+    },
+    {
+      "op": "neg",
+      "mode": "refined",
+      "slots": [
+        0,
+        17,
+        63
+      ],
+      "mask": "all",
+      "alias": "none",
+      "dtype": "fp32",
+      "N": 128,
+      "K": 4,
+      "warmup": 1,
+      "raw": [
+        73,
+        73,
+        73,
+        73,
+        73,
+        73,
+        73
+      ],
+      "empty": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "control": [
+        64,
+        64,
+        64,
+        64,
+        64,
+        64,
+        64
+      ],
+      "min": 73,
+      "median": 73,
+      "max": 73,
+      "cycles_per_vector": 18.25,
+      "worst": [
+        0.0,
+        0.0,
+        0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "core": "(1, 3)",
+      "job_id": "5a833c0cd88440328d4af1a1bebd849b",
+      "device": 0,
+      "kind": "SFPU_RESULT",
+      "test": "tests/operation_pocs/sfpu_math/test_math.py::test_operations[neg]"
+    },
+    {
+      "op": "abs",
+      "mode": "refined",
+      "slots": [
+        0,
+        17,
+        63
+      ],
+      "mask": "all",
+      "alias": "none",
+      "dtype": "fp32",
+      "N": 128,
+      "K": 4,
+      "warmup": 1,
+      "raw": [
+        73,
+        73,
+        73,
+        73,
+        73,
+        73,
+        73
+      ],
+      "empty": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "control": [
+        64,
+        64,
+        64,
+        64,
+        64,
+        64,
+        64
+      ],
+      "min": 73,
+      "median": 73,
+      "max": 73,
+      "cycles_per_vector": 18.25,
+      "worst": [
+        0.0,
+        0.0,
+        0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "core": "(1, 3)",
+      "job_id": "5a833c0cd88440328d4af1a1bebd849b",
+      "device": 0,
+      "kind": "SFPU_RESULT",
+      "test": "tests/operation_pocs/sfpu_math/test_math.py::test_operations[abs]"
+    },
+    {
+      "op": "exp",
+      "mode": "refined",
+      "slots": [
+        0,
+        17,
+        63
+      ],
+      "mask": "all",
+      "alias": "none",
+      "dtype": "fp32",
+      "N": 128,
+      "K": 4,
+      "warmup": 1,
+      "raw": [
+        249,
+        249,
+        249,
+        249,
+        249,
+        249,
+        249
+      ],
+      "empty": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "control": [
+        64,
+        64,
+        64,
+        64,
+        64,
+        64,
+        64
+      ],
+      "min": 249,
+      "median": 249,
+      "max": 249,
+      "cycles_per_vector": 62.25,
+      "worst": [
+        2.09489393168531e-05,
+        3.7559980494075986e+18,
+        208,
+        53.54330825805664,
+        1.7928923791434194e+23,
+        1.7929299391239135e+23
+      ],
+      "core": "(1, 3)",
+      "job_id": "5a833c0cd88440328d4af1a1bebd849b",
+      "device": 0,
+      "kind": "SFPU_RESULT",
+      "test": "tests/operation_pocs/sfpu_math/test_math.py::test_operations[exp]"
+    },
+    {
+      "op": "reciprocal",
+      "mode": "refined",
+      "slots": [
+        0,
+        17,
+        63
+      ],
+      "mask": "all",
+      "alias": "none",
+      "dtype": "fp32",
+      "N": 128,
+      "K": 4,
+      "warmup": 1,
+      "raw": [
+        117,
+        117,
+        117,
+        117,
+        117,
+        117,
+        117
+      ],
+      "empty": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "control": [
+        64,
+        64,
+        64,
+        64,
+        64,
+        64,
+        64
+      ],
+      "min": 117,
+      "median": 117,
+      "max": 117,
+      "cycles_per_vector": 29.25,
+      "worst": [
+        1.1175870893997963e-07,
+        7.454233865066906e+16,
+        1,
+        -1.4992648602523627e-24,
+        -6.669934811071119e+23,
+        -6.669935556494506e+23
+      ],
+      "core": "(1, 3)",
+      "job_id": "5a833c0cd88440328d4af1a1bebd849b",
+      "device": 0,
+      "kind": "SFPU_RESULT",
+      "test": "tests/operation_pocs/sfpu_math/test_math.py::test_operations[reciprocal]"
+    },
+    {
+      "op": "add",
+      "mode": "refined",
+      "slots": [
+        63,
+        4,
+        0
+      ],
+      "mask": "none",
+      "alias": "none",
+      "dtype": "fp32",
+      "N": 128,
+      "K": 4,
+      "warmup": 1,
+      "raw": [
+        77,
+        77,
+        77,
+        77,
+        77,
+        77,
+        77
+      ],
+      "empty": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "control": [
+        64,
+        64,
+        64,
+        64,
+        64,
+        64,
+        64
+      ],
+      "min": 77,
+      "median": 77,
+      "max": 77,
+      "cycles_per_vector": 19.25,
+      "worst": [
+        0.0,
+        0.0,
+        0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "core": "(1, 3)",
+      "job_id": "5a833c0cd88440328d4af1a1bebd849b",
+      "device": 0,
+      "kind": "SFPU_RESULT",
+      "test": "tests/operation_pocs/sfpu_math/test_math.py::test_masks_placement[none-add]"
+    },
+    {
+      "op": "sub",
+      "mode": "refined",
+      "slots": [
+        63,
+        4,
+        0
+      ],
+      "mask": "none",
+      "alias": "none",
+      "dtype": "fp32",
+      "N": 128,
+      "K": 4,
+      "warmup": 1,
+      "raw": [
+        77,
+        77,
+        77,
+        77,
+        77,
+        77,
+        77
+      ],
+      "empty": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "control": [
+        64,
+        64,
+        64,
+        64,
+        64,
+        64,
+        64
+      ],
+      "min": 77,
+      "median": 77,
+      "max": 77,
+      "cycles_per_vector": 19.25,
+      "worst": [
+        0.0,
+        0.0,
+        0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "core": "(1, 3)",
+      "job_id": "5a833c0cd88440328d4af1a1bebd849b",
+      "device": 0,
+      "kind": "SFPU_RESULT",
+      "test": "tests/operation_pocs/sfpu_math/test_math.py::test_masks_placement[none-sub]"
+    },
+    {
+      "op": "mul",
+      "mode": "refined",
+      "slots": [
+        63,
+        4,
+        0
+      ],
+      "mask": "none",
+      "alias": "none",
+      "dtype": "fp32",
+      "N": 128,
+      "K": 4,
+      "warmup": 1,
+      "raw": [
+        77,
+        77,
+        77,
+        77,
+        77,
+        77,
+        77
+      ],
+      "empty": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "control": [
+        64,
+        64,
+        64,
+        64,
+        64,
+        64,
+        64
+      ],
+      "min": 77,
+      "median": 77,
+      "max": 77,
+      "cycles_per_vector": 19.25,
+      "worst": [
+        0.0,
+        0.0,
+        0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "core": "(1, 3)",
+      "job_id": "5a833c0cd88440328d4af1a1bebd849b",
+      "device": 0,
+      "kind": "SFPU_RESULT",
+      "test": "tests/operation_pocs/sfpu_math/test_math.py::test_masks_placement[none-mul]"
+    },
+    {
+      "op": "mad",
+      "mode": "refined",
+      "slots": [
+        63,
+        4,
+        0
+      ],
+      "mask": "none",
+      "alias": "none",
+      "dtype": "fp32",
+      "N": 128,
+      "K": 4,
+      "warmup": 1,
+      "raw": [
+        77,
+        77,
+        77,
+        77,
+        77,
+        77,
+        77
+      ],
+      "empty": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "control": [
+        64,
+        64,
+        64,
+        64,
+        64,
+        64,
+        64
+      ],
+      "min": 77,
+      "median": 77,
+      "max": 77,
+      "cycles_per_vector": 19.25,
+      "worst": [
+        0.0,
+        0.0,
+        0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "core": "(1, 3)",
+      "job_id": "5a833c0cd88440328d4af1a1bebd849b",
+      "device": 0,
+      "kind": "SFPU_RESULT",
+      "test": "tests/operation_pocs/sfpu_math/test_math.py::test_masks_placement[none-mad]"
+    },
+    {
+      "op": "neg",
+      "mode": "refined",
+      "slots": [
+        63,
+        4,
+        0
+      ],
+      "mask": "none",
+      "alias": "none",
+      "dtype": "fp32",
+      "N": 128,
+      "K": 4,
+      "warmup": 1,
+      "raw": [
+        73,
+        73,
+        73,
+        73,
+        73,
+        73,
+        73
+      ],
+      "empty": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "control": [
+        64,
+        64,
+        64,
+        64,
+        64,
+        64,
+        64
+      ],
+      "min": 73,
+      "median": 73,
+      "max": 73,
+      "cycles_per_vector": 18.25,
+      "worst": [
+        0.0,
+        0.0,
+        0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "core": "(1, 3)",
+      "job_id": "5a833c0cd88440328d4af1a1bebd849b",
+      "device": 0,
+      "kind": "SFPU_RESULT",
+      "test": "tests/operation_pocs/sfpu_math/test_math.py::test_masks_placement[none-neg]"
+    },
+    {
+      "op": "abs",
+      "mode": "refined",
+      "slots": [
+        63,
+        4,
+        0
+      ],
+      "mask": "none",
+      "alias": "none",
+      "dtype": "fp32",
+      "N": 128,
+      "K": 4,
+      "warmup": 1,
+      "raw": [
+        73,
+        73,
+        73,
+        73,
+        73,
+        73,
+        73
+      ],
+      "empty": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "control": [
+        64,
+        64,
+        64,
+        64,
+        64,
+        64,
+        64
+      ],
+      "min": 73,
+      "median": 73,
+      "max": 73,
+      "cycles_per_vector": 18.25,
+      "worst": [
+        0.0,
+        0.0,
+        0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "core": "(1, 3)",
+      "job_id": "5a833c0cd88440328d4af1a1bebd849b",
+      "device": 0,
+      "kind": "SFPU_RESULT",
+      "test": "tests/operation_pocs/sfpu_math/test_math.py::test_masks_placement[none-abs]"
+    },
+    {
+      "op": "exp",
+      "mode": "refined",
+      "slots": [
+        63,
+        4,
+        0
+      ],
+      "mask": "none",
+      "alias": "none",
+      "dtype": "fp32",
+      "N": 128,
+      "K": 4,
+      "warmup": 1,
+      "raw": [
+        249,
+        249,
+        249,
+        249,
+        249,
+        249,
+        249
+      ],
+      "empty": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "control": [
+        64,
+        64,
+        64,
+        64,
+        64,
+        64,
+        64
+      ],
+      "min": 249,
+      "median": 249,
+      "max": 249,
+      "cycles_per_vector": 62.25,
+      "worst": [
+        0.0,
+        0.0,
+        0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "core": "(1, 3)",
+      "job_id": "5a833c0cd88440328d4af1a1bebd849b",
+      "device": 0,
+      "kind": "SFPU_RESULT",
+      "test": "tests/operation_pocs/sfpu_math/test_math.py::test_masks_placement[none-exp]"
+    },
+    {
+      "op": "reciprocal",
+      "mode": "refined",
+      "slots": [
+        63,
+        4,
+        0
+      ],
+      "mask": "none",
+      "alias": "none",
+      "dtype": "fp32",
+      "N": 128,
+      "K": 4,
+      "warmup": 1,
+      "raw": [
+        117,
+        117,
+        117,
+        117,
+        117,
+        117,
+        117
+      ],
+      "empty": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "control": [
+        64,
+        64,
+        64,
+        64,
+        64,
+        64,
+        64
+      ],
+      "min": 117,
+      "median": 117,
+      "max": 117,
+      "cycles_per_vector": 29.25,
+      "worst": [
+        0.0,
+        0.0,
+        0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "core": "(1, 3)",
+      "job_id": "5a833c0cd88440328d4af1a1bebd849b",
+      "device": 0,
+      "kind": "SFPU_RESULT",
+      "test": "tests/operation_pocs/sfpu_math/test_math.py::test_masks_placement[none-reciprocal]"
+    },
+    {
+      "op": "add",
+      "mode": "refined",
+      "slots": [
+        63,
+        4,
+        0
+      ],
+      "mask": "alternating",
+      "alias": "none",
+      "dtype": "fp32",
+      "N": 128,
+      "K": 4,
+      "warmup": 1,
+      "raw": [
+        77,
+        77,
+        77,
+        77,
+        77,
+        77,
+        77
+      ],
+      "empty": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "control": [
+        64,
+        64,
+        64,
+        64,
+        64,
+        64,
+        64
+      ],
+      "min": 77,
+      "median": 77,
+      "max": 77,
+      "cycles_per_vector": 19.25,
+      "worst": [
+        0.0,
+        0.0,
+        0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "core": "(1, 3)",
+      "job_id": "5a833c0cd88440328d4af1a1bebd849b",
+      "device": 0,
+      "kind": "SFPU_RESULT",
+      "test": "tests/operation_pocs/sfpu_math/test_math.py::test_masks_placement[alternating-add]"
+    },
+    {
+      "op": "sub",
+      "mode": "refined",
+      "slots": [
+        63,
+        4,
+        0
+      ],
+      "mask": "alternating",
+      "alias": "none",
+      "dtype": "fp32",
+      "N": 128,
+      "K": 4,
+      "warmup": 1,
+      "raw": [
+        77,
+        77,
+        77,
+        77,
+        77,
+        77,
+        77
+      ],
+      "empty": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "control": [
+        64,
+        64,
+        64,
+        64,
+        64,
+        64,
+        64
+      ],
+      "min": 77,
+      "median": 77,
+      "max": 77,
+      "cycles_per_vector": 19.25,
+      "worst": [
+        0.0,
+        0.0,
+        0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "core": "(1, 3)",
+      "job_id": "5a833c0cd88440328d4af1a1bebd849b",
+      "device": 0,
+      "kind": "SFPU_RESULT",
+      "test": "tests/operation_pocs/sfpu_math/test_math.py::test_masks_placement[alternating-sub]"
+    },
+    {
+      "op": "mul",
+      "mode": "refined",
+      "slots": [
+        63,
+        4,
+        0
+      ],
+      "mask": "alternating",
+      "alias": "none",
+      "dtype": "fp32",
+      "N": 128,
+      "K": 4,
+      "warmup": 1,
+      "raw": [
+        77,
+        77,
+        77,
+        77,
+        77,
+        77,
+        77
+      ],
+      "empty": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "control": [
+        64,
+        64,
+        64,
+        64,
+        64,
+        64,
+        64
+      ],
+      "min": 77,
+      "median": 77,
+      "max": 77,
+      "cycles_per_vector": 19.25,
+      "worst": [
+        0.0,
+        0.0,
+        0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "core": "(1, 3)",
+      "job_id": "5a833c0cd88440328d4af1a1bebd849b",
+      "device": 0,
+      "kind": "SFPU_RESULT",
+      "test": "tests/operation_pocs/sfpu_math/test_math.py::test_masks_placement[alternating-mul]"
+    },
+    {
+      "op": "mad",
+      "mode": "refined",
+      "slots": [
+        63,
+        4,
+        0
+      ],
+      "mask": "alternating",
+      "alias": "none",
+      "dtype": "fp32",
+      "N": 128,
+      "K": 4,
+      "warmup": 1,
+      "raw": [
+        77,
+        77,
+        77,
+        77,
+        77,
+        77,
+        77
+      ],
+      "empty": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "control": [
+        64,
+        64,
+        64,
+        64,
+        64,
+        64,
+        64
+      ],
+      "min": 77,
+      "median": 77,
+      "max": 77,
+      "cycles_per_vector": 19.25,
+      "worst": [
+        0.0,
+        0.0,
+        0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "core": "(1, 3)",
+      "job_id": "5a833c0cd88440328d4af1a1bebd849b",
+      "device": 0,
+      "kind": "SFPU_RESULT",
+      "test": "tests/operation_pocs/sfpu_math/test_math.py::test_masks_placement[alternating-mad]"
+    },
+    {
+      "op": "neg",
+      "mode": "refined",
+      "slots": [
+        63,
+        4,
+        0
+      ],
+      "mask": "alternating",
+      "alias": "none",
+      "dtype": "fp32",
+      "N": 128,
+      "K": 4,
+      "warmup": 1,
+      "raw": [
+        73,
+        73,
+        73,
+        73,
+        73,
+        73,
+        73
+      ],
+      "empty": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "control": [
+        64,
+        64,
+        64,
+        64,
+        64,
+        64,
+        64
+      ],
+      "min": 73,
+      "median": 73,
+      "max": 73,
+      "cycles_per_vector": 18.25,
+      "worst": [
+        0.0,
+        0.0,
+        0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "core": "(1, 3)",
+      "job_id": "5a833c0cd88440328d4af1a1bebd849b",
+      "device": 0,
+      "kind": "SFPU_RESULT",
+      "test": "tests/operation_pocs/sfpu_math/test_math.py::test_masks_placement[alternating-neg]"
+    },
+    {
+      "op": "abs",
+      "mode": "refined",
+      "slots": [
+        63,
+        4,
+        0
+      ],
+      "mask": "alternating",
+      "alias": "none",
+      "dtype": "fp32",
+      "N": 128,
+      "K": 4,
+      "warmup": 1,
+      "raw": [
+        73,
+        73,
+        73,
+        73,
+        73,
+        73,
+        73
+      ],
+      "empty": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "control": [
+        64,
+        64,
+        64,
+        64,
+        64,
+        64,
+        64
+      ],
+      "min": 73,
+      "median": 73,
+      "max": 73,
+      "cycles_per_vector": 18.25,
+      "worst": [
+        0.0,
+        0.0,
+        0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "core": "(1, 3)",
+      "job_id": "5a833c0cd88440328d4af1a1bebd849b",
+      "device": 0,
+      "kind": "SFPU_RESULT",
+      "test": "tests/operation_pocs/sfpu_math/test_math.py::test_masks_placement[alternating-abs]"
+    },
+    {
+      "op": "exp",
+      "mode": "refined",
+      "slots": [
+        63,
+        4,
+        0
+      ],
+      "mask": "alternating",
+      "alias": "none",
+      "dtype": "fp32",
+      "N": 128,
+      "K": 4,
+      "warmup": 1,
+      "raw": [
+        249,
+        249,
+        249,
+        249,
+        249,
+        249,
+        249
+      ],
+      "empty": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "control": [
+        64,
+        64,
+        64,
+        64,
+        64,
+        64,
+        64
+      ],
+      "min": 249,
+      "median": 249,
+      "max": 249,
+      "cycles_per_vector": 62.25,
+      "worst": [
+        1.5107229057555766e-05,
+        0.015433677738883489,
+        253,
+        6.929133892059326,
+        1021.6242065429688,
+        1021.6087728652299
+      ],
+      "core": "(1, 3)",
+      "job_id": "5a833c0cd88440328d4af1a1bebd849b",
+      "device": 0,
+      "kind": "SFPU_RESULT",
+      "test": "tests/operation_pocs/sfpu_math/test_math.py::test_masks_placement[alternating-exp]"
+    },
+    {
+      "op": "reciprocal",
+      "mode": "refined",
+      "slots": [
+        63,
+        4,
+        0
+      ],
+      "mask": "alternating",
+      "alias": "none",
+      "dtype": "fp32",
+      "N": 128,
+      "K": 4,
+      "warmup": 1,
+      "raw": [
+        117,
+        117,
+        117,
+        117,
+        117,
+        117,
+        117
+      ],
+      "empty": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "control": [
+        64,
+        64,
+        64,
+        64,
+        64,
+        64,
+        64
+      ],
+      "min": 117,
+      "median": 117,
+      "max": 117,
+      "cycles_per_vector": 29.25,
+      "worst": [
+        1.1175870893997963e-07,
+        7.454233865066906e+16,
+        1,
+        -1.4992648602523627e-24,
+        -6.669934811071119e+23,
+        -6.669935556494506e+23
+      ],
+      "core": "(1, 3)",
+      "job_id": "5a833c0cd88440328d4af1a1bebd849b",
+      "device": 0,
+      "kind": "SFPU_RESULT",
+      "test": "tests/operation_pocs/sfpu_math/test_math.py::test_masks_placement[alternating-reciprocal]"
+    },
+    {
+      "op": "add",
+      "mode": "refined",
+      "slots": [
+        63,
+        4,
+        0
+      ],
+      "mask": "lane17",
+      "alias": "none",
+      "dtype": "fp32",
+      "N": 128,
+      "K": 4,
+      "warmup": 1,
+      "raw": [
+        77,
+        77,
+        77,
+        77,
+        77,
+        77,
+        77
+      ],
+      "empty": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "control": [
+        64,
+        64,
+        64,
+        64,
+        64,
+        64,
+        64
+      ],
+      "min": 77,
+      "median": 77,
+      "max": 77,
+      "cycles_per_vector": 19.25,
+      "worst": [
+        0.0,
+        0.0,
+        0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "core": "(1, 3)",
+      "job_id": "5a833c0cd88440328d4af1a1bebd849b",
+      "device": 0,
+      "kind": "SFPU_RESULT",
+      "test": "tests/operation_pocs/sfpu_math/test_math.py::test_masks_placement[lane17-add]"
+    },
+    {
+      "op": "sub",
+      "mode": "refined",
+      "slots": [
+        63,
+        4,
+        0
+      ],
+      "mask": "lane17",
+      "alias": "none",
+      "dtype": "fp32",
+      "N": 128,
+      "K": 4,
+      "warmup": 1,
+      "raw": [
+        77,
+        77,
+        77,
+        77,
+        77,
+        77,
+        77
+      ],
+      "empty": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "control": [
+        64,
+        64,
+        64,
+        64,
+        64,
+        64,
+        64
+      ],
+      "min": 77,
+      "median": 77,
+      "max": 77,
+      "cycles_per_vector": 19.25,
+      "worst": [
+        0.0,
+        0.0,
+        0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "core": "(1, 3)",
+      "job_id": "5a833c0cd88440328d4af1a1bebd849b",
+      "device": 0,
+      "kind": "SFPU_RESULT",
+      "test": "tests/operation_pocs/sfpu_math/test_math.py::test_masks_placement[lane17-sub]"
+    },
+    {
+      "op": "mul",
+      "mode": "refined",
+      "slots": [
+        63,
+        4,
+        0
+      ],
+      "mask": "lane17",
+      "alias": "none",
+      "dtype": "fp32",
+      "N": 128,
+      "K": 4,
+      "warmup": 1,
+      "raw": [
+        77,
+        77,
+        77,
+        77,
+        77,
+        77,
+        77
+      ],
+      "empty": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "control": [
+        64,
+        64,
+        64,
+        64,
+        64,
+        64,
+        64
+      ],
+      "min": 77,
+      "median": 77,
+      "max": 77,
+      "cycles_per_vector": 19.25,
+      "worst": [
+        0.0,
+        0.0,
+        0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "core": "(1, 3)",
+      "job_id": "5a833c0cd88440328d4af1a1bebd849b",
+      "device": 0,
+      "kind": "SFPU_RESULT",
+      "test": "tests/operation_pocs/sfpu_math/test_math.py::test_masks_placement[lane17-mul]"
+    },
+    {
+      "op": "mad",
+      "mode": "refined",
+      "slots": [
+        63,
+        4,
+        0
+      ],
+      "mask": "lane17",
+      "alias": "none",
+      "dtype": "fp32",
+      "N": 128,
+      "K": 4,
+      "warmup": 1,
+      "raw": [
+        77,
+        77,
+        77,
+        77,
+        77,
+        77,
+        77
+      ],
+      "empty": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "control": [
+        64,
+        64,
+        64,
+        64,
+        64,
+        64,
+        64
+      ],
+      "min": 77,
+      "median": 77,
+      "max": 77,
+      "cycles_per_vector": 19.25,
+      "worst": [
+        0.0,
+        0.0,
+        0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "core": "(1, 3)",
+      "job_id": "5a833c0cd88440328d4af1a1bebd849b",
+      "device": 0,
+      "kind": "SFPU_RESULT",
+      "test": "tests/operation_pocs/sfpu_math/test_math.py::test_masks_placement[lane17-mad]"
+    },
+    {
+      "op": "neg",
+      "mode": "refined",
+      "slots": [
+        63,
+        4,
+        0
+      ],
+      "mask": "lane17",
+      "alias": "none",
+      "dtype": "fp32",
+      "N": 128,
+      "K": 4,
+      "warmup": 1,
+      "raw": [
+        73,
+        73,
+        73,
+        73,
+        73,
+        73,
+        73
+      ],
+      "empty": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "control": [
+        64,
+        64,
+        64,
+        64,
+        64,
+        64,
+        64
+      ],
+      "min": 73,
+      "median": 73,
+      "max": 73,
+      "cycles_per_vector": 18.25,
+      "worst": [
+        0.0,
+        0.0,
+        0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "core": "(1, 3)",
+      "job_id": "5a833c0cd88440328d4af1a1bebd849b",
+      "device": 0,
+      "kind": "SFPU_RESULT",
+      "test": "tests/operation_pocs/sfpu_math/test_math.py::test_masks_placement[lane17-neg]"
+    },
+    {
+      "op": "abs",
+      "mode": "refined",
+      "slots": [
+        63,
+        4,
+        0
+      ],
+      "mask": "lane17",
+      "alias": "none",
+      "dtype": "fp32",
+      "N": 128,
+      "K": 4,
+      "warmup": 1,
+      "raw": [
+        73,
+        73,
+        73,
+        73,
+        73,
+        73,
+        73
+      ],
+      "empty": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "control": [
+        64,
+        64,
+        64,
+        64,
+        64,
+        64,
+        64
+      ],
+      "min": 73,
+      "median": 73,
+      "max": 73,
+      "cycles_per_vector": 18.25,
+      "worst": [
+        0.0,
+        0.0,
+        0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "core": "(1, 3)",
+      "job_id": "5a833c0cd88440328d4af1a1bebd849b",
+      "device": 0,
+      "kind": "SFPU_RESULT",
+      "test": "tests/operation_pocs/sfpu_math/test_math.py::test_masks_placement[lane17-abs]"
+    },
+    {
+      "op": "exp",
+      "mode": "refined",
+      "slots": [
+        63,
+        4,
+        0
+      ],
+      "mask": "lane17",
+      "alias": "none",
+      "dtype": "fp32",
+      "N": 128,
+      "K": 4,
+      "warmup": 1,
+      "raw": [
+        249,
+        249,
+        249,
+        249,
+        249,
+        249,
+        249
+      ],
+      "empty": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "control": [
+        64,
+        64,
+        64,
+        64,
+        64,
+        64,
+        64
+      ],
+      "min": 249,
+      "median": 249,
+      "max": 249,
+      "cycles_per_vector": 62.25,
+      "worst": [
+        9.504292339494876e-06,
+        252048835051520.0,
+        115,
+        44.72441101074219,
+        2.65192221053991e+19,
+        2.651947415423415e+19
+      ],
+      "core": "(1, 3)",
+      "job_id": "5a833c0cd88440328d4af1a1bebd849b",
+      "device": 0,
+      "kind": "SFPU_RESULT",
+      "test": "tests/operation_pocs/sfpu_math/test_math.py::test_masks_placement[lane17-exp]"
+    },
+    {
+      "op": "reciprocal",
+      "mode": "refined",
+      "slots": [
+        63,
+        4,
+        0
+      ],
+      "mask": "lane17",
+      "alias": "none",
+      "dtype": "fp32",
+      "N": 128,
+      "K": 4,
+      "warmup": 1,
+      "raw": [
+        117,
+        117,
+        117,
+        117,
+        117,
+        117,
+        117
+      ],
+      "empty": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "control": [
+        64,
+        64,
+        64,
+        64,
+        64,
+        64,
+        64
+      ],
+      "min": 117,
+      "median": 117,
+      "max": 117,
+      "cycles_per_vector": 29.25,
+      "worst": [
+        6.332993501834139e-08,
+        58637.4736328125,
+        1,
+        -1.0800249583553523e-12,
+        -925904470016.0,
+        -925904528653.4736
+      ],
+      "core": "(1, 3)",
+      "job_id": "5a833c0cd88440328d4af1a1bebd849b",
+      "device": 0,
+      "kind": "SFPU_RESULT",
+      "test": "tests/operation_pocs/sfpu_math/test_math.py::test_masks_placement[lane17-reciprocal]"
+    },
+    {
+      "op": "add",
+      "mode": "refined",
+      "slots": [
+        7,
+        0,
+        57
+      ],
+      "mask": "all",
+      "alias": "other",
+      "dtype": "fp32",
+      "N": 128,
+      "K": 4,
+      "warmup": 1,
+      "raw": [
+        77,
+        77,
+        77,
+        77,
+        77,
+        77,
+        77
+      ],
+      "empty": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "control": [
+        64,
+        64,
+        64,
+        64,
+        64,
+        64,
+        64
+      ],
+      "min": 77,
+      "median": 77,
+      "max": 77,
+      "cycles_per_vector": 19.25,
+      "worst": [
+        0.0,
+        0.0,
+        0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "core": "(1, 3)",
+      "job_id": "5a833c0cd88440328d4af1a1bebd849b",
+      "device": 0,
+      "kind": "SFPU_RESULT",
+      "test": "tests/operation_pocs/sfpu_math/test_math.py::test_aliases[other-add]"
+    },
+    {
+      "op": "sub",
+      "mode": "refined",
+      "slots": [
+        7,
+        0,
+        57
+      ],
+      "mask": "all",
+      "alias": "other",
+      "dtype": "fp32",
+      "N": 128,
+      "K": 4,
+      "warmup": 1,
+      "raw": [
+        77,
+        77,
+        77,
+        77,
+        77,
+        77,
+        77
+      ],
+      "empty": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "control": [
+        64,
+        64,
+        64,
+        64,
+        64,
+        64,
+        64
+      ],
+      "min": 77,
+      "median": 77,
+      "max": 77,
+      "cycles_per_vector": 19.25,
+      "worst": [
+        0.0,
+        0.0,
+        0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "core": "(1, 3)",
+      "job_id": "5a833c0cd88440328d4af1a1bebd849b",
+      "device": 0,
+      "kind": "SFPU_RESULT",
+      "test": "tests/operation_pocs/sfpu_math/test_math.py::test_aliases[other-sub]"
+    },
+    {
+      "op": "mul",
+      "mode": "refined",
+      "slots": [
+        7,
+        0,
+        57
+      ],
+      "mask": "all",
+      "alias": "other",
+      "dtype": "fp32",
+      "N": 128,
+      "K": 4,
+      "warmup": 1,
+      "raw": [
+        77,
+        77,
+        77,
+        77,
+        77,
+        77,
+        77
+      ],
+      "empty": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "control": [
+        64,
+        64,
+        64,
+        64,
+        64,
+        64,
+        64
+      ],
+      "min": 77,
+      "median": 77,
+      "max": 77,
+      "cycles_per_vector": 19.25,
+      "worst": [
+        0.0,
+        0.0,
+        0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "core": "(1, 3)",
+      "job_id": "5a833c0cd88440328d4af1a1bebd849b",
+      "device": 0,
+      "kind": "SFPU_RESULT",
+      "test": "tests/operation_pocs/sfpu_math/test_math.py::test_aliases[other-mul]"
+    },
+    {
+      "op": "mad",
+      "mode": "refined",
+      "slots": [
+        7,
+        0,
+        57
+      ],
+      "mask": "all",
+      "alias": "other",
+      "dtype": "fp32",
+      "N": 128,
+      "K": 4,
+      "warmup": 1,
+      "raw": [
+        77,
+        77,
+        77,
+        77,
+        77,
+        77,
+        77
+      ],
+      "empty": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "control": [
+        64,
+        64,
+        64,
+        64,
+        64,
+        64,
+        64
+      ],
+      "min": 77,
+      "median": 77,
+      "max": 77,
+      "cycles_per_vector": 19.25,
+      "worst": [
+        0.0,
+        0.0,
+        0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "core": "(1, 3)",
+      "job_id": "5a833c0cd88440328d4af1a1bebd849b",
+      "device": 0,
+      "kind": "SFPU_RESULT",
+      "test": "tests/operation_pocs/sfpu_math/test_math.py::test_aliases[other-mad]"
+    },
+    {
+      "op": "add",
+      "mode": "refined",
+      "slots": [
+        7,
+        0,
+        57
+      ],
+      "mask": "all",
+      "alias": "addend",
+      "dtype": "fp32",
+      "N": 128,
+      "K": 4,
+      "warmup": 1,
+      "raw": [
+        77,
+        77,
+        77,
+        77,
+        77,
+        77,
+        77
+      ],
+      "empty": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "control": [
+        64,
+        64,
+        64,
+        64,
+        64,
+        64,
+        64
+      ],
+      "min": 77,
+      "median": 77,
+      "max": 77,
+      "cycles_per_vector": 19.25,
+      "worst": [
+        0.0,
+        0.0,
+        0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "core": "(1, 3)",
+      "job_id": "5a833c0cd88440328d4af1a1bebd849b",
+      "device": 0,
+      "kind": "SFPU_RESULT",
+      "test": "tests/operation_pocs/sfpu_math/test_math.py::test_aliases[addend-add]"
+    },
+    {
+      "op": "sub",
+      "mode": "refined",
+      "slots": [
+        7,
+        0,
+        57
+      ],
+      "mask": "all",
+      "alias": "addend",
+      "dtype": "fp32",
+      "N": 128,
+      "K": 4,
+      "warmup": 1,
+      "raw": [
+        77,
+        77,
+        77,
+        77,
+        77,
+        77,
+        77
+      ],
+      "empty": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "control": [
+        64,
+        64,
+        64,
+        64,
+        64,
+        64,
+        64
+      ],
+      "min": 77,
+      "median": 77,
+      "max": 77,
+      "cycles_per_vector": 19.25,
+      "worst": [
+        0.0,
+        0.0,
+        0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "core": "(1, 3)",
+      "job_id": "5a833c0cd88440328d4af1a1bebd849b",
+      "device": 0,
+      "kind": "SFPU_RESULT",
+      "test": "tests/operation_pocs/sfpu_math/test_math.py::test_aliases[addend-sub]"
+    },
+    {
+      "op": "mul",
+      "mode": "refined",
+      "slots": [
+        7,
+        0,
+        57
+      ],
+      "mask": "all",
+      "alias": "addend",
+      "dtype": "fp32",
+      "N": 128,
+      "K": 4,
+      "warmup": 1,
+      "raw": [
+        77,
+        77,
+        77,
+        77,
+        77,
+        77,
+        77
+      ],
+      "empty": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "control": [
+        64,
+        64,
+        64,
+        64,
+        64,
+        64,
+        64
+      ],
+      "min": 77,
+      "median": 77,
+      "max": 77,
+      "cycles_per_vector": 19.25,
+      "worst": [
+        0.0,
+        0.0,
+        0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "core": "(1, 3)",
+      "job_id": "5a833c0cd88440328d4af1a1bebd849b",
+      "device": 0,
+      "kind": "SFPU_RESULT",
+      "test": "tests/operation_pocs/sfpu_math/test_math.py::test_aliases[addend-mul]"
+    },
+    {
+      "op": "mad",
+      "mode": "refined",
+      "slots": [
+        7,
+        0,
+        57
+      ],
+      "mask": "all",
+      "alias": "addend",
+      "dtype": "fp32",
+      "N": 128,
+      "K": 4,
+      "warmup": 1,
+      "raw": [
+        77,
+        77,
+        77,
+        77,
+        77,
+        77,
+        77
+      ],
+      "empty": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "control": [
+        64,
+        64,
+        64,
+        64,
+        64,
+        64,
+        64
+      ],
+      "min": 77,
+      "median": 77,
+      "max": 77,
+      "cycles_per_vector": 19.25,
+      "worst": [
+        0.0,
+        0.0,
+        0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "core": "(1, 3)",
+      "job_id": "5a833c0cd88440328d4af1a1bebd849b",
+      "device": 0,
+      "kind": "SFPU_RESULT",
+      "test": "tests/operation_pocs/sfpu_math/test_math.py::test_aliases[addend-mad]"
+    },
+    {
+      "op": "add",
+      "mode": "refined",
+      "slots": [
+        7,
+        0,
+        57
+      ],
+      "mask": "all",
+      "alias": "all",
+      "dtype": "fp32",
+      "N": 128,
+      "K": 4,
+      "warmup": 1,
+      "raw": [
+        77,
+        77,
+        77,
+        77,
+        77,
+        77,
+        77
+      ],
+      "empty": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "control": [
+        64,
+        64,
+        64,
+        64,
+        64,
+        64,
+        64
+      ],
+      "min": 77,
+      "median": 77,
+      "max": 77,
+      "cycles_per_vector": 19.25,
+      "worst": [
+        0.0,
+        0.0,
+        0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "core": "(1, 3)",
+      "job_id": "5a833c0cd88440328d4af1a1bebd849b",
+      "device": 0,
+      "kind": "SFPU_RESULT",
+      "test": "tests/operation_pocs/sfpu_math/test_math.py::test_aliases[all-add]"
+    },
+    {
+      "op": "sub",
+      "mode": "refined",
+      "slots": [
+        7,
+        0,
+        57
+      ],
+      "mask": "all",
+      "alias": "all",
+      "dtype": "fp32",
+      "N": 128,
+      "K": 4,
+      "warmup": 1,
+      "raw": [
+        77,
+        77,
+        77,
+        77,
+        77,
+        77,
+        77
+      ],
+      "empty": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "control": [
+        64,
+        64,
+        64,
+        64,
+        64,
+        64,
+        64
+      ],
+      "min": 77,
+      "median": 77,
+      "max": 77,
+      "cycles_per_vector": 19.25,
+      "worst": [
+        0.0,
+        0.0,
+        0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "core": "(1, 3)",
+      "job_id": "5a833c0cd88440328d4af1a1bebd849b",
+      "device": 0,
+      "kind": "SFPU_RESULT",
+      "test": "tests/operation_pocs/sfpu_math/test_math.py::test_aliases[all-sub]"
+    },
+    {
+      "op": "mul",
+      "mode": "refined",
+      "slots": [
+        7,
+        0,
+        57
+      ],
+      "mask": "all",
+      "alias": "all",
+      "dtype": "fp32",
+      "N": 128,
+      "K": 4,
+      "warmup": 1,
+      "raw": [
+        77,
+        77,
+        77,
+        77,
+        77,
+        77,
+        77
+      ],
+      "empty": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "control": [
+        64,
+        64,
+        64,
+        64,
+        64,
+        64,
+        64
+      ],
+      "min": 77,
+      "median": 77,
+      "max": 77,
+      "cycles_per_vector": 19.25,
+      "worst": [
+        0.0,
+        0.0,
+        0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "core": "(1, 3)",
+      "job_id": "5a833c0cd88440328d4af1a1bebd849b",
+      "device": 0,
+      "kind": "SFPU_RESULT",
+      "test": "tests/operation_pocs/sfpu_math/test_math.py::test_aliases[all-mul]"
+    },
+    {
+      "op": "mad",
+      "mode": "refined",
+      "slots": [
+        7,
+        0,
+        57
+      ],
+      "mask": "all",
+      "alias": "all",
+      "dtype": "fp32",
+      "N": 128,
+      "K": 4,
+      "warmup": 1,
+      "raw": [
+        77,
+        77,
+        77,
+        77,
+        77,
+        77,
+        77
+      ],
+      "empty": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "control": [
+        64,
+        64,
+        64,
+        64,
+        64,
+        64,
+        64
+      ],
+      "min": 77,
+      "median": 77,
+      "max": 77,
+      "cycles_per_vector": 19.25,
+      "worst": [
+        0.0,
+        0.0,
+        0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "core": "(1, 3)",
+      "job_id": "5a833c0cd88440328d4af1a1bebd849b",
+      "device": 0,
+      "kind": "SFPU_RESULT",
+      "test": "tests/operation_pocs/sfpu_math/test_math.py::test_aliases[all-mad]"
+    },
+    {
+      "op": "exp",
+      "mode": "native",
+      "slots": [
+        0,
+        17,
+        63
+      ],
+      "mask": "all",
+      "alias": "none",
+      "dtype": "fp32",
+      "N": 128,
+      "K": 4,
+      "warmup": 1,
+      "raw": [
+        81,
+        81,
+        81,
+        81,
+        81,
+        81,
+        81
+      ],
+      "empty": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "control": [
+        64,
+        64,
+        64,
+        64,
+        64,
+        64,
+        64
+      ],
+      "min": 81,
+      "median": 81,
+      "max": 81,
+      "cycles_per_vector": 20.25,
+      "worst": [
+        0.00796918964144044,
+        0.0011967368001675471,
+        80312,
+        -1.8959842920303345,
+        0.1513671875,
+        0.15017045069983245
+      ],
+      "core": "(1, 3)",
+      "job_id": "5a833c0cd88440328d4af1a1bebd849b",
+      "device": 0,
+      "kind": "SFPU_RESULT",
+      "test": "tests/operation_pocs/sfpu_math/test_math.py::test_native[exp]"
+    },
+    {
+      "op": "reciprocal",
+      "mode": "native",
+      "slots": [
+        0,
+        17,
+        63
+      ],
+      "mask": "all",
+      "alias": "none",
+      "dtype": "fp32",
+      "N": 128,
+      "K": 4,
+      "warmup": 1,
+      "raw": [
+        73,
+        73,
+        73,
+        73,
+        73,
+        73,
+        73
+      ],
+      "empty": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "control": [
+        64,
+        64,
+        64,
+        64,
+        64,
+        64,
+        64
+      ],
+      "min": 73,
+      "median": 73,
+      "max": 73,
+      "cycles_per_vector": 18.25,
+      "worst": [
+        0.0053710937499999445,
+        4.947241077291958e+21,
+        68657,
+        -1.0856745539758488e-24,
+        -9.161390976767112e+23,
+        -9.210863387540031e+23
+      ],
+      "core": "(1, 3)",
+      "job_id": "5a833c0cd88440328d4af1a1bebd849b",
+      "device": 0,
+      "kind": "SFPU_RESULT",
+      "test": "tests/operation_pocs/sfpu_math/test_math.py::test_native[reciprocal]"
+    },
+    {
+      "op": "add",
+      "mode": "refined",
+      "slots": [
+        0,
+        17,
+        63
+      ],
+      "mask": "all",
+      "alias": "none",
+      "dtype": "fp32",
+      "N": 128,
+      "K": 64,
+      "warmup": 1,
+      "raw": [
+        197,
+        197,
+        197,
+        197,
+        197,
+        197,
+        197
+      ],
+      "empty": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "control": [
+        64,
+        64,
+        64,
+        64,
+        64,
+        64,
+        64
+      ],
+      "min": 197,
+      "median": 197,
+      "max": 197,
+      "cycles_per_vector": 3.078125,
+      "worst": [
+        0.0,
+        0.0,
+        0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "core": "(1, 3)",
+      "job_id": "5a833c0cd88440328d4af1a1bebd849b",
+      "device": 0,
+      "kind": "SFPU_RESULT",
+      "test": "tests/operation_pocs/sfpu_math/test_math.py::test_repeated_short_operations[add]"
+    },
+    {
+      "op": "sub",
+      "mode": "refined",
+      "slots": [
+        0,
+        17,
+        63
+      ],
+      "mask": "all",
+      "alias": "none",
+      "dtype": "fp32",
+      "N": 128,
+      "K": 64,
+      "warmup": 1,
+      "raw": [
+        197,
+        197,
+        197,
+        197,
+        197,
+        197,
+        197
+      ],
+      "empty": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "control": [
+        64,
+        64,
+        64,
+        64,
+        64,
+        64,
+        64
+      ],
+      "min": 197,
+      "median": 197,
+      "max": 197,
+      "cycles_per_vector": 3.078125,
+      "worst": [
+        0.0,
+        0.0,
+        0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "core": "(1, 3)",
+      "job_id": "5a833c0cd88440328d4af1a1bebd849b",
+      "device": 0,
+      "kind": "SFPU_RESULT",
+      "test": "tests/operation_pocs/sfpu_math/test_math.py::test_repeated_short_operations[sub]"
+    },
+    {
+      "op": "mul",
+      "mode": "refined",
+      "slots": [
+        0,
+        17,
+        63
+      ],
+      "mask": "all",
+      "alias": "none",
+      "dtype": "fp32",
+      "N": 128,
+      "K": 64,
+      "warmup": 1,
+      "raw": [
+        197,
+        197,
+        197,
+        197,
+        197,
+        197,
+        197
+      ],
+      "empty": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "control": [
+        64,
+        64,
+        64,
+        64,
+        64,
+        64,
+        64
+      ],
+      "min": 197,
+      "median": 197,
+      "max": 197,
+      "cycles_per_vector": 3.078125,
+      "worst": [
+        0.0,
+        0.0,
+        0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "core": "(1, 3)",
+      "job_id": "5a833c0cd88440328d4af1a1bebd849b",
+      "device": 0,
+      "kind": "SFPU_RESULT",
+      "test": "tests/operation_pocs/sfpu_math/test_math.py::test_repeated_short_operations[mul]"
+    },
+    {
+      "op": "mad",
+      "mode": "refined",
+      "slots": [
+        0,
+        17,
+        63
+      ],
+      "mask": "all",
+      "alias": "none",
+      "dtype": "fp32",
+      "N": 128,
+      "K": 64,
+      "warmup": 1,
+      "raw": [
+        197,
+        197,
+        197,
+        197,
+        197,
+        197,
+        197
+      ],
+      "empty": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "control": [
+        64,
+        64,
+        64,
+        64,
+        64,
+        64,
+        64
+      ],
+      "min": 197,
+      "median": 197,
+      "max": 197,
+      "cycles_per_vector": 3.078125,
+      "worst": [
+        1.706126820842523e-07,
+        4.0,
+        2,
+        -8.1875,
+        -23444912.0,
+        -23444916.0
+      ],
+      "core": "(1, 3)",
+      "job_id": "5a833c0cd88440328d4af1a1bebd849b",
+      "device": 0,
+      "kind": "SFPU_RESULT",
+      "test": "tests/operation_pocs/sfpu_math/test_math.py::test_repeated_short_operations[mad]"
+    },
+    {
+      "op": "neg",
+      "mode": "refined",
+      "slots": [
+        0,
+        17,
+        63
+      ],
+      "mask": "all",
+      "alias": "none",
+      "dtype": "fp32",
+      "N": 128,
+      "K": 64,
+      "warmup": 1,
+      "raw": [
+        133,
+        133,
+        133,
+        133,
+        133,
+        133,
+        133
+      ],
+      "empty": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "control": [
+        64,
+        64,
+        64,
+        64,
+        64,
+        64,
+        64
+      ],
+      "min": 133,
+      "median": 133,
+      "max": 133,
+      "cycles_per_vector": 2.078125,
+      "worst": [
+        0.0,
+        0.0,
+        0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "core": "(1, 3)",
+      "job_id": "5a833c0cd88440328d4af1a1bebd849b",
+      "device": 0,
+      "kind": "SFPU_RESULT",
+      "test": "tests/operation_pocs/sfpu_math/test_math.py::test_repeated_short_operations[neg]"
+    },
+    {
+      "op": "abs",
+      "mode": "refined",
+      "slots": [
+        0,
+        17,
+        63
+      ],
+      "mask": "all",
+      "alias": "none",
+      "dtype": "fp32",
+      "N": 128,
+      "K": 64,
+      "warmup": 1,
+      "raw": [
+        133,
+        133,
+        133,
+        133,
+        133,
+        133,
+        133
+      ],
+      "empty": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "control": [
+        64,
+        64,
+        64,
+        64,
+        64,
+        64,
+        64
+      ],
+      "min": 133,
+      "median": 133,
+      "max": 133,
+      "cycles_per_vector": 2.078125,
+      "worst": [
+        0.0,
+        0.0,
+        0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "core": "(1, 3)",
+      "job_id": "5a833c0cd88440328d4af1a1bebd849b",
+      "device": 0,
+      "kind": "SFPU_RESULT",
+      "test": "tests/operation_pocs/sfpu_math/test_math.py::test_repeated_short_operations[abs]"
+    },
+    {
+      "op": "reciprocal",
+      "mode": "native",
+      "slots": [
+        0,
+        17,
+        63
+      ],
+      "mask": "all",
+      "alias": "none",
+      "dtype": "fp32",
+      "N": 128,
+      "K": 4,
+      "warmup": 1,
+      "raw": [
+        73,
+        73,
+        73,
+        73,
+        73,
+        73,
+        73
+      ],
+      "empty": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "control": [
+        64,
+        64,
+        64,
+        64,
+        64,
+        64,
+        64
+      ],
+      "min": 73,
+      "median": 73,
+      "max": 73,
+      "cycles_per_vector": 18.25,
+      "worst": [
+        0.005371093749999981,
+        3.014743907965778e+35,
+        59455,
+        1.7816086254650295e-38,
+        5.582757582296647e+37,
+        5.612905021376304e+37
+      ],
+      "core": "(1, 3)",
+      "job_id": "5a833c0cd88440328d4af1a1bebd849b",
+      "device": 0,
+      "kind": "SFPU_RESULT",
+      "test": "tests/operation_pocs/sfpu_math/test_math.py::test_reciprocal_boundaries[-126-native]"
+    },
+    {
+      "op": "reciprocal",
+      "mode": "refined",
+      "slots": [
+        0,
+        17,
+        63
+      ],
+      "mask": "all",
+      "alias": "none",
+      "dtype": "fp32",
+      "N": 128,
+      "K": 4,
+      "warmup": 1,
+      "raw": [
+        117,
+        117,
+        117,
+        117,
+        117,
+        117,
+        117
+      ],
+      "empty": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "control": [
+        64,
+        64,
+        64,
+        64,
+        64,
+        64,
+        64
+      ],
+      "min": 117,
+      "median": 117,
+      "max": 117,
+      "cycles_per_vector": 29.25,
+      "worst": [
+        1.1175870893997963e-07,
+        5.245450758913726e+30,
+        1,
+        -2.130583510865396e-38,
+        -4.6935493640195925e+37,
+        -4.693549888564668e+37
+      ],
+      "core": "(1, 3)",
+      "job_id": "5a833c0cd88440328d4af1a1bebd849b",
+      "device": 0,
+      "kind": "SFPU_RESULT",
+      "test": "tests/operation_pocs/sfpu_math/test_math.py::test_reciprocal_boundaries[-126-refined]"
+    },
+    {
+      "op": "reciprocal",
+      "mode": "native",
+      "slots": [
+        0,
+        17,
+        63
+      ],
+      "mask": "all",
+      "alias": "none",
+      "dtype": "fp32",
+      "N": 128,
+      "K": 4,
+      "warmup": 1,
+      "raw": [
+        73,
+        73,
+        73,
+        73,
+        73,
+        73,
+        73
+      ],
+      "empty": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "control": [
+        64,
+        64,
+        64,
+        64,
+        64,
+        64,
+        64
+      ],
+      "min": 73,
+      "median": 73,
+      "max": 73,
+      "cycles_per_vector": 18.25,
+      "worst": [
+        0.005371093749999981,
+        1.507371953982889e+35,
+        59455,
+        3.563217250930059e-38,
+        2.7913787911483233e+37,
+        2.806452510688152e+37
+      ],
+      "core": "(1, 3)",
+      "job_id": "5a833c0cd88440328d4af1a1bebd849b",
+      "device": 0,
+      "kind": "SFPU_RESULT",
+      "test": "tests/operation_pocs/sfpu_math/test_math.py::test_reciprocal_boundaries[-125-native]"
+    },
+    {
+      "op": "reciprocal",
+      "mode": "refined",
+      "slots": [
+        0,
+        17,
+        63
+      ],
+      "mask": "all",
+      "alias": "none",
+      "dtype": "fp32",
+      "N": 128,
+      "K": 4,
+      "warmup": 1,
+      "raw": [
+        117,
+        117,
+        117,
+        117,
+        117,
+        117,
+        117
+      ],
+      "empty": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "control": [
+        64,
+        64,
+        64,
+        64,
+        64,
+        64,
+        64
+      ],
+      "min": 117,
+      "median": 117,
+      "max": 117,
+      "cycles_per_vector": 29.25,
+      "worst": [
+        1.1175870893997963e-07,
+        2.622725379456863e+30,
+        1,
+        -4.261167021730792e-38,
+        -2.3467746820097963e+37,
+        -2.346774944282334e+37
+      ],
+      "core": "(1, 3)",
+      "job_id": "5a833c0cd88440328d4af1a1bebd849b",
+      "device": 0,
+      "kind": "SFPU_RESULT",
+      "test": "tests/operation_pocs/sfpu_math/test_math.py::test_reciprocal_boundaries[-125-refined]"
+    },
+    {
+      "op": "reciprocal",
+      "mode": "native",
+      "slots": [
+        0,
+        17,
+        63
+      ],
+      "mask": "all",
+      "alias": "none",
+      "dtype": "fp32",
+      "N": 128,
+      "K": 4,
+      "warmup": 1,
+      "raw": [
+        73,
+        73,
+        73,
+        73,
+        73,
+        73,
+        73
+      ],
+      "empty": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "control": [
+        64,
+        64,
+        64,
+        64,
+        64,
+        64,
+        64
+      ],
+      "min": 73,
+      "median": 73,
+      "max": 73,
+      "cycles_per_vector": 18.25,
+      "worst": [
+        0.005371093749999981,
+        6.537183789007872e+16,
+        59455,
+        8.216219588366713e-20,
+        1.2105675798371893e+19,
+        1.2171047636261972e+19
+      ],
+      "core": "(1, 3)",
+      "job_id": "5a833c0cd88440328d4af1a1bebd849b",
+      "device": 0,
+      "kind": "SFPU_RESULT",
+      "test": "tests/operation_pocs/sfpu_math/test_math.py::test_reciprocal_boundaries[-64-native]"
+    },
+    {
+      "op": "reciprocal",
+      "mode": "refined",
+      "slots": [
+        0,
+        17,
+        63
+      ],
+      "mask": "all",
+      "alias": "none",
+      "dtype": "fp32",
+      "N": 128,
+      "K": 4,
+      "warmup": 1,
+      "raw": [
+        117,
+        117,
+        117,
+        117,
+        117,
+        117,
+        117
+      ],
+      "empty": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "control": [
+        64,
+        64,
+        64,
+        64,
+        64,
+        64,
+        64
+      ],
+      "min": 117,
+      "median": 117,
+      "max": 117,
+      "cycles_per_vector": 29.25,
+      "worst": [
+        1.1175870893997963e-07,
+        1137425821696.0,
+        1,
+        -9.825582188149884e-20,
+        -1.0177512834276e+19,
+        -1.0177513971701821e+19
+      ],
+      "core": "(1, 3)",
+      "job_id": "5a833c0cd88440328d4af1a1bebd849b",
+      "device": 0,
+      "kind": "SFPU_RESULT",
+      "test": "tests/operation_pocs/sfpu_math/test_math.py::test_reciprocal_boundaries[-64-refined]"
+    },
+    {
+      "op": "reciprocal",
+      "mode": "native",
+      "slots": [
+        0,
+        17,
+        63
+      ],
+      "mask": "all",
+      "alias": "none",
+      "dtype": "fp32",
+      "N": 128,
+      "K": 4,
+      "warmup": 1,
+      "raw": [
+        73,
+        73,
+        73,
+        73,
+        73,
+        73,
+        73
+      ],
+      "empty": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "control": [
+        64,
+        64,
+        64,
+        64,
+        64,
+        64,
+        64
+      ],
+      "min": 73,
+      "median": 73,
+      "max": 73,
+      "cycles_per_vector": 18.25,
+      "worst": [
+        0.005371093749999981,
+        0.007087628865979356,
+        59455,
+        0.7578125,
+        1.3125,
+        1.3195876288659794
+      ],
+      "core": "(1, 3)",
+      "job_id": "5a833c0cd88440328d4af1a1bebd849b",
+      "device": 0,
+      "kind": "SFPU_RESULT",
+      "test": "tests/operation_pocs/sfpu_math/test_math.py::test_reciprocal_boundaries[-1-native]"
+    },
+    {
+      "op": "reciprocal",
+      "mode": "refined",
+      "slots": [
+        0,
+        17,
+        63
+      ],
+      "mask": "all",
+      "alias": "none",
+      "dtype": "fp32",
+      "N": 128,
+      "K": 4,
+      "warmup": 1,
+      "raw": [
+        117,
+        117,
+        117,
+        117,
+        117,
+        117,
+        117
+      ],
+      "empty": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "control": [
+        64,
+        64,
+        64,
+        64,
+        64,
+        64,
+        64
+      ],
+      "min": 117,
+      "median": 117,
+      "max": 117,
+      "cycles_per_vector": 29.25,
+      "worst": [
+        1.1175870893997963e-07,
+        1.2331995469239132e-07,
+        1,
+        -0.90625,
+        -1.1034481525421143,
+        -1.103448275862069
+      ],
+      "core": "(1, 3)",
+      "job_id": "5a833c0cd88440328d4af1a1bebd849b",
+      "device": 0,
+      "kind": "SFPU_RESULT",
+      "test": "tests/operation_pocs/sfpu_math/test_math.py::test_reciprocal_boundaries[-1-refined]"
+    },
+    {
+      "op": "reciprocal",
+      "mode": "native",
+      "slots": [
+        0,
+        17,
+        63
+      ],
+      "mask": "all",
+      "alias": "none",
+      "dtype": "fp32",
+      "N": 128,
+      "K": 4,
+      "warmup": 1,
+      "raw": [
+        73,
+        73,
+        73,
+        73,
+        73,
+        73,
+        73
+      ],
+      "empty": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "control": [
+        64,
+        64,
+        64,
+        64,
+        64,
+        64,
+        64
+      ],
+      "min": 73,
+      "median": 73,
+      "max": 73,
+      "cycles_per_vector": 18.25,
+      "worst": [
+        0.005371093749999981,
+        0.003543814432989678,
+        59455,
+        1.515625,
+        0.65625,
+        0.6597938144329897
+      ],
+      "core": "(1, 3)",
+      "job_id": "5a833c0cd88440328d4af1a1bebd849b",
+      "device": 0,
+      "kind": "SFPU_RESULT",
+      "test": "tests/operation_pocs/sfpu_math/test_math.py::test_reciprocal_boundaries[0-native]"
+    },
+    {
+      "op": "reciprocal",
+      "mode": "refined",
+      "slots": [
+        0,
+        17,
+        63
+      ],
+      "mask": "all",
+      "alias": "none",
+      "dtype": "fp32",
+      "N": 128,
+      "K": 4,
+      "warmup": 1,
+      "raw": [
+        117,
+        117,
+        117,
+        117,
+        117,
+        117,
+        117
+      ],
+      "empty": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "control": [
+        64,
+        64,
+        64,
+        64,
+        64,
+        64,
+        64
+      ],
+      "min": 117,
+      "median": 117,
+      "max": 117,
+      "cycles_per_vector": 29.25,
+      "worst": [
+        1.1175870893997963e-07,
+        6.165997734619566e-08,
+        1,
+        -1.8125,
+        -0.5517240762710571,
+        -0.5517241379310345
+      ],
+      "core": "(1, 3)",
+      "job_id": "5a833c0cd88440328d4af1a1bebd849b",
+      "device": 0,
+      "kind": "SFPU_RESULT",
+      "test": "tests/operation_pocs/sfpu_math/test_math.py::test_reciprocal_boundaries[0-refined]"
+    },
+    {
+      "op": "reciprocal",
+      "mode": "native",
+      "slots": [
+        0,
+        17,
+        63
+      ],
+      "mask": "all",
+      "alias": "none",
+      "dtype": "fp32",
+      "N": 128,
+      "K": 4,
+      "warmup": 1,
+      "raw": [
+        73,
+        73,
+        73,
+        73,
+        73,
+        73,
+        73
+      ],
+      "empty": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "control": [
+        64,
+        64,
+        64,
+        64,
+        64,
+        64,
+        64
+      ],
+      "min": 73,
+      "median": 73,
+      "max": 73,
+      "cycles_per_vector": 18.25,
+      "worst": [
+        0.005371093749999981,
+        0.001771907216494839,
+        59455,
+        3.03125,
+        0.328125,
+        0.32989690721649484
+      ],
+      "core": "(1, 3)",
+      "job_id": "5a833c0cd88440328d4af1a1bebd849b",
+      "device": 0,
+      "kind": "SFPU_RESULT",
+      "test": "tests/operation_pocs/sfpu_math/test_math.py::test_reciprocal_boundaries[1-native]"
+    },
+    {
+      "op": "reciprocal",
+      "mode": "refined",
+      "slots": [
+        0,
+        17,
+        63
+      ],
+      "mask": "all",
+      "alias": "none",
+      "dtype": "fp32",
+      "N": 128,
+      "K": 4,
+      "warmup": 1,
+      "raw": [
+        117,
+        117,
+        117,
+        117,
+        117,
+        117,
+        117
+      ],
+      "empty": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "control": [
+        64,
+        64,
+        64,
+        64,
+        64,
+        64,
+        64
+      ],
+      "min": 117,
+      "median": 117,
+      "max": 117,
+      "cycles_per_vector": 29.25,
+      "worst": [
+        1.1175870893997963e-07,
+        3.082998867309783e-08,
+        1,
+        -3.625,
+        -0.27586203813552856,
+        -0.27586206896551724
+      ],
+      "core": "(1, 3)",
+      "job_id": "5a833c0cd88440328d4af1a1bebd849b",
+      "device": 0,
+      "kind": "SFPU_RESULT",
+      "test": "tests/operation_pocs/sfpu_math/test_math.py::test_reciprocal_boundaries[1-refined]"
+    },
+    {
+      "op": "reciprocal",
+      "mode": "native",
+      "slots": [
+        0,
+        17,
+        63
+      ],
+      "mask": "all",
+      "alias": "none",
+      "dtype": "fp32",
+      "N": 128,
+      "K": 4,
+      "warmup": 1,
+      "raw": [
+        73,
+        73,
+        73,
+        73,
+        73,
+        73,
+        73
+      ],
+      "empty": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "control": [
+        64,
+        64,
+        64,
+        64,
+        64,
+        64,
+        64
+      ],
+      "min": 73,
+      "median": 73,
+      "max": 73,
+      "cycles_per_vector": 18.25,
+      "worst": [
+        0.005371093749999981,
+        1.9211056535664476e-22,
+        59455,
+        2.795834648671604e+19,
+        3.5575383784680614e-20,
+        3.576749435003726e-20
+      ],
+      "core": "(1, 3)",
+      "job_id": "5a833c0cd88440328d4af1a1bebd849b",
+      "device": 0,
+      "kind": "SFPU_RESULT",
+      "test": "tests/operation_pocs/sfpu_math/test_math.py::test_reciprocal_boundaries[64-native]"
+    },
+    {
+      "op": "reciprocal",
+      "mode": "refined",
+      "slots": [
+        0,
+        17,
+        63
+      ],
+      "mask": "all",
+      "alias": "none",
+      "dtype": "fp32",
+      "N": 128,
+      "K": 4,
+      "warmup": 1,
+      "raw": [
+        117,
+        117,
+        117,
+        117,
+        117,
+        117,
+        117
+      ],
+      "empty": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "control": [
+        64,
+        64,
+        64,
+        64,
+        64,
+        64,
+        64
+      ],
+      "min": 117,
+      "median": 117,
+      "max": 117,
+      "cycles_per_vector": 29.25,
+      "worst": [
+        1.1175870893997963e-07,
+        3.342594069707616e-27,
+        1,
+        -3.3434723633598562e+19,
+        -2.9909022105281914e-20,
+        -2.9909025447875984e-20
+      ],
+      "core": "(1, 3)",
+      "job_id": "5a833c0cd88440328d4af1a1bebd849b",
+      "device": 0,
+      "kind": "SFPU_RESULT",
+      "test": "tests/operation_pocs/sfpu_math/test_math.py::test_reciprocal_boundaries[64-refined]"
+    },
+    {
+      "op": "reciprocal",
+      "mode": "native",
+      "slots": [
+        0,
+        17,
+        63
+      ],
+      "mask": "all",
+      "alias": "none",
+      "dtype": "fp32",
+      "N": 128,
+      "K": 4,
+      "warmup": 1,
+      "raw": [
+        73,
+        73,
+        73,
+        73,
+        73,
+        73,
+        73
+      ],
+      "empty": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "control": [
+        64,
+        64,
+        64,
+        64,
+        64,
+        64,
+        64
+      ],
+      "min": 73,
+      "median": 73,
+      "max": 73,
+      "cycles_per_vector": 18.25,
+      "worst": [
+        0.005371093749999981,
+        1.6662935385367418e-40,
+        59455,
+        3.223377889778421e+37,
+        3.0856726709085047e-38,
+        3.102335606293872e-38
+      ],
+      "core": "(1, 3)",
+      "job_id": "5a833c0cd88440328d4af1a1bebd849b",
+      "device": 0,
+      "kind": "SFPU_RESULT",
+      "test": "tests/operation_pocs/sfpu_math/test_math.py::test_reciprocal_boundaries[124-native]"
+    },
+    {
+      "op": "reciprocal",
+      "mode": "refined",
+      "slots": [
+        0,
+        17,
+        63
+      ],
+      "mask": "all",
+      "alias": "none",
+      "dtype": "fp32",
+      "N": 128,
+      "K": 4,
+      "warmup": 1,
+      "raw": [
+        117,
+        117,
+        117,
+        117,
+        117,
+        117,
+        117
+      ],
+      "empty": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "control": [
+        64,
+        64,
+        64,
+        64,
+        64,
+        64,
+        64
+      ],
+      "min": 117,
+      "median": 117,
+      "max": 117,
+      "cycles_per_vector": 29.25,
+      "worst": [
+        1.1175870893997963e-07,
+        2.899238201691329e-45,
+        1,
+        -3.854761187776256e+37,
+        -2.59419413947709e-38,
+        -2.5941944294009103e-38
+      ],
+      "core": "(1, 3)",
+      "job_id": "5a833c0cd88440328d4af1a1bebd849b",
+      "device": 0,
+      "kind": "SFPU_RESULT",
+      "test": "tests/operation_pocs/sfpu_math/test_math.py::test_reciprocal_boundaries[124-refined]"
+    },
+    {
+      "op": "reciprocal",
+      "mode": "native",
+      "slots": [
+        0,
+        17,
+        63
+      ],
+      "mask": "all",
+      "alias": "none",
+      "dtype": "fp32",
+      "N": 128,
+      "K": 4,
+      "warmup": 1,
+      "raw": [
+        73,
+        73,
+        73,
+        73,
+        73,
+        73,
+        73
+      ],
+      "empty": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "control": [
+        64,
+        64,
+        64,
+        64,
+        64,
+        64,
+        64
+      ],
+      "min": 73,
+      "median": 73,
+      "max": 73,
+      "cycles_per_vector": 18.25,
+      "worst": [
+        0.005371093749999981,
+        8.331467692683709e-41,
+        59455,
+        6.446755779556842e+37,
+        1.5428363354542524e-38,
+        1.551167803146936e-38
+      ],
+      "core": "(1, 3)",
+      "job_id": "5a833c0cd88440328d4af1a1bebd849b",
+      "device": 0,
+      "kind": "SFPU_RESULT",
+      "test": "tests/operation_pocs/sfpu_math/test_math.py::test_reciprocal_boundaries[125-native]"
+    },
+    {
+      "op": "reciprocal",
+      "mode": "refined",
+      "slots": [
+        0,
+        17,
+        63
+      ],
+      "mask": "all",
+      "alias": "none",
+      "dtype": "fp32",
+      "N": 128,
+      "K": 4,
+      "warmup": 1,
+      "raw": [
+        117,
+        117,
+        117,
+        117,
+        117,
+        117,
+        117
+      ],
+      "empty": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "control": [
+        64,
+        64,
+        64,
+        64,
+        64,
+        64,
+        64
+      ],
+      "min": 117,
+      "median": 117,
+      "max": 117,
+      "cycles_per_vector": 29.25,
+      "worst": [
+        1.1175870893997963e-07,
+        1.4496191008456644e-45,
+        1,
+        -7.709522375552512e+37,
+        -1.297097069738545e-38,
+        -1.2970972147004552e-38
+      ],
+      "core": "(1, 3)",
+      "job_id": "5a833c0cd88440328d4af1a1bebd849b",
+      "device": 0,
+      "kind": "SFPU_RESULT",
+      "test": "tests/operation_pocs/sfpu_math/test_math.py::test_reciprocal_boundaries[125-refined]"
+    },
+    {
+      "op": "exp",
+      "mode": "native",
+      "slots": [
+        0,
+        17,
+        63
+      ],
+      "mask": "all",
+      "alias": "none",
+      "dtype": "fp32",
+      "N": 128,
+      "K": 4,
+      "warmup": 1,
+      "raw": [
+        81,
+        81,
+        81,
+        81,
+        81,
+        81,
+        81
+      ],
+      "empty": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "control": [
+        64,
+        64,
+        64,
+        64,
+        64,
+        64,
+        64
+      ],
+      "min": 81,
+      "median": 81,
+      "max": 81,
+      "cycles_per_vector": 20.25,
+      "worst": [
+        0.01171875,
+        0.01171875,
+        196608,
+        -1.1754943508222875e-38,
+        0.98828125,
+        1.0
+      ],
+      "core": "(1, 3)",
+      "job_id": "5a833c0cd88440328d4af1a1bebd849b",
+      "device": 0,
+      "kind": "SFPU_RESULT",
+      "test": "tests/operation_pocs/sfpu_math/test_math.py::test_exp_boundaries[native]"
+    },
+    {
+      "op": "exp",
+      "mode": "refined",
+      "slots": [
+        0,
+        17,
+        63
+      ],
+      "mask": "all",
+      "alias": "none",
+      "dtype": "fp32",
+      "N": 128,
+      "K": 4,
+      "warmup": 1,
+      "raw": [
+        249,
+        249,
+        249,
+        249,
+        249,
+        249,
+        249
+      ],
+      "empty": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "control": [
+        64,
+        64,
+        64,
+        64,
+        64,
+        64,
+        64
+      ],
+      "min": 249,
+      "median": 249,
+      "max": 249,
+      "cycles_per_vector": 62.25,
+      "worst": [
+        1.5859983253773698e-05,
+        1252356003.515625,
+        149,
+        32.000003814697266,
+        78962009047040.0,
+        78963261403043.52
+      ],
+      "core": "(1, 3)",
+      "job_id": "5a833c0cd88440328d4af1a1bebd849b",
+      "device": 0,
+      "kind": "SFPU_RESULT",
+      "test": "tests/operation_pocs/sfpu_math/test_math.py::test_exp_boundaries[refined]"
+    },
+    {
+      "op": "exp",
+      "mode": "native",
+      "slots": [
+        0,
+        17,
+        63
+      ],
+      "mask": "all",
+      "alias": "none",
+      "dtype": "fp32",
+      "N": 128,
+      "K": 4,
+      "warmup": 1,
+      "raw": [
+        81,
+        81,
+        81,
+        81,
+        81,
+        81,
+        81
+      ],
+      "empty": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "control": [
+        64,
+        64,
+        64,
+        64,
+        64,
+        64,
+        64
+      ],
+      "min": 81,
+      "median": 81,
+      "max": 81,
+      "cycles_per_vector": 20.25,
+      "worst": [
+        0.00796918964144044,
+        0.0011967368001675471,
+        80312,
+        -1.8959842920303345,
+        0.1513671875,
+        0.15017045069983245
+      ],
+      "core": "(1, 3)",
+      "job_id": "5a833c0cd88440328d4af1a1bebd849b",
+      "device": 0,
+      "kind": "SFPU_RESULT",
+      "test": "tests/operation_pocs/sfpu_math/test_math.py::test_exp_same_domain_comparison[native]"
+    },
+    {
+      "op": "exp",
+      "mode": "refined",
+      "slots": [
+        0,
+        17,
+        63
+      ],
+      "mask": "all",
+      "alias": "none",
+      "dtype": "fp32",
+      "N": 128,
+      "K": 4,
+      "warmup": 1,
+      "raw": [
+        249,
+        249,
+        249,
+        249,
+        249,
+        249,
+        249
+      ],
+      "empty": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "control": [
+        64,
+        64,
+        64,
+        64,
+        64,
+        64,
+        64
+      ],
+      "min": 249,
+      "median": 249,
+      "max": 249,
+      "cycles_per_vector": 62.25,
+      "worst": [
+        2.3274292472951915e-05,
+        0.00011689620968891035,
+        245,
+        1.6139370203018188,
+        5.022663116455078,
+        5.022546220245389
+      ],
+      "core": "(1, 3)",
+      "job_id": "5a833c0cd88440328d4af1a1bebd849b",
+      "device": 0,
+      "kind": "SFPU_RESULT",
+      "test": "tests/operation_pocs/sfpu_math/test_math.py::test_exp_same_domain_comparison[refined]"
+    },
+    {
+      "op": "exp",
+      "mode": "native",
+      "dtype": "fp32",
+      "N": 128,
+      "slots": [
+        0,
+        17,
+        63
+      ],
+      "mask": "all",
+      "alias": "none",
+      "warmup": 1,
+      "inputs": [
+        "0x0",
+        "0x80000000",
+        "0x1",
+        "0x80000001",
+        "0x7fffff",
+        "0x807fffff",
+        "0x800000",
+        "0x80800000",
+        "0x7e800000",
+        "0xfe800000",
+        "0x7f7fffff",
+        "0xff7fffff",
+        "0x7f800000",
+        "0xff800000",
+        "0x7fc00000",
+        "0xffc00000"
+      ],
+      "outputs": [
+        "0x3f800000",
+        "0x3f7f0000",
+        "0x3f800000",
+        "0x3f7f0000",
+        "0x3f800000",
+        "0x3f7f0000",
+        "0x3f810000",
+        "0x3f7d0000",
+        "0x40800000",
+        "0x3e7f0000",
+        "0x4080ffff",
+        "0x3e7f0000",
+        "0x40800000",
+        "0x3e7f0000",
+        "0x40800000",
+        "0x3e7f0000"
+      ],
+      "raw": [
+        81,
+        81,
+        81,
+        81,
+        81,
+        81,
+        81
+      ],
+      "control": [
+        64,
+        64,
+        64,
+        64,
+        64,
+        64,
+        64
+      ],
+      "empty": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "min": 81,
+      "median": 81,
+      "max": 81,
+      "K": 4,
+      "cycles_per_vector": 20.25,
+      "core": "(1, 3)",
+      "semantic_scope": "characterization; unsupported inputs do not establish IEEE conformance",
+      "job_id": "5a833c0cd88440328d4af1a1bebd849b",
+      "device": 0,
+      "kind": "SFPU_EXCEPTION",
+      "test": "tests/operation_pocs/sfpu_math/test_math.py::test_exception_characterization[native-exp]"
+    },
+    {
+      "op": "reciprocal",
+      "mode": "native",
+      "dtype": "fp32",
+      "N": 128,
+      "slots": [
+        0,
+        17,
+        63
+      ],
+      "mask": "all",
+      "alias": "none",
+      "warmup": 1,
+      "inputs": [
+        "0x0",
+        "0x80000000",
+        "0x1",
+        "0x80000001",
+        "0x7fffff",
+        "0x807fffff",
+        "0x800000",
+        "0x80800000",
+        "0x7e800000",
+        "0xfe800000",
+        "0x7f7fffff",
+        "0xff7fffff",
+        "0x7f800000",
+        "0xff800000",
+        "0x7fc00000",
+        "0xffc00000"
+      ],
+      "outputs": [
+        "0x7f800000",
+        "0xff800000",
+        "0x7f800000",
+        "0xff800000",
+        "0x7f800000",
+        "0xff800000",
+        "0x7e7f0000",
+        "0xfe7f0000",
+        "0x0",
+        "0x80000000",
+        "0x0",
+        "0x80000000",
+        "0x0",
+        "0x80000000",
+        "0x0",
+        "0x80000000"
+      ],
+      "raw": [
+        73,
+        73,
+        73,
+        73,
+        73,
+        73,
+        73
+      ],
+      "control": [
+        64,
+        64,
+        64,
+        64,
+        64,
+        64,
+        64
+      ],
+      "empty": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "min": 73,
+      "median": 73,
+      "max": 73,
+      "K": 4,
+      "cycles_per_vector": 18.25,
+      "core": "(1, 3)",
+      "semantic_scope": "characterization; unsupported inputs do not establish IEEE conformance",
+      "job_id": "5a833c0cd88440328d4af1a1bebd849b",
+      "device": 0,
+      "kind": "SFPU_EXCEPTION",
+      "test": "tests/operation_pocs/sfpu_math/test_math.py::test_exception_characterization[native-reciprocal]"
+    },
+    {
+      "op": "exp",
+      "mode": "refined",
+      "dtype": "fp32",
+      "N": 128,
+      "slots": [
+        0,
+        17,
+        63
+      ],
+      "mask": "all",
+      "alias": "none",
+      "warmup": 1,
+      "inputs": [
+        "0x0",
+        "0x80000000",
+        "0x1",
+        "0x80000001",
+        "0x7fffff",
+        "0x807fffff",
+        "0x800000",
+        "0x80800000",
+        "0x7e800000",
+        "0xfe800000",
+        "0x7f7fffff",
+        "0xff7fffff",
+        "0x7f800000",
+        "0xff800000",
+        "0x7fc00000",
+        "0xffc00000"
+      ],
+      "outputs": [
+        "0x3f800000",
+        "0x3f800000",
+        "0x3f800000",
+        "0x3f800000",
+        "0x3f800000",
+        "0x3f800000",
+        "0x3f800000",
+        "0x3f800000",
+        "0x7f800000",
+        "0x7f800000",
+        "0x7f800000",
+        "0x7f800000",
+        "0x7f800000",
+        "0x7f800000",
+        "0x7fc00000",
+        "0x7fc00000"
+      ],
+      "raw": [
+        249,
+        249,
+        249,
+        249,
+        249,
+        249,
+        249
+      ],
+      "control": [
+        64,
+        64,
+        64,
+        64,
+        64,
+        64,
+        64
+      ],
+      "empty": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "min": 249,
+      "median": 249,
+      "max": 249,
+      "K": 4,
+      "cycles_per_vector": 62.25,
+      "core": "(1, 3)",
+      "semantic_scope": "characterization; unsupported inputs do not establish IEEE conformance",
+      "job_id": "5a833c0cd88440328d4af1a1bebd849b",
+      "device": 0,
+      "kind": "SFPU_EXCEPTION",
+      "test": "tests/operation_pocs/sfpu_math/test_math.py::test_exception_characterization[refined-exp]"
+    },
+    {
+      "op": "reciprocal",
+      "mode": "refined",
+      "dtype": "fp32",
+      "N": 128,
+      "slots": [
+        0,
+        17,
+        63
+      ],
+      "mask": "all",
+      "alias": "none",
+      "warmup": 1,
+      "inputs": [
+        "0x0",
+        "0x80000000",
+        "0x1",
+        "0x80000001",
+        "0x7fffff",
+        "0x807fffff",
+        "0x800000",
+        "0x80800000",
+        "0x7e800000",
+        "0xfe800000",
+        "0x7f7fffff",
+        "0xff7fffff",
+        "0x7f800000",
+        "0xff800000",
+        "0x7fc00000",
+        "0xffc00000"
+      ],
+      "outputs": [
+        "0x7fc00000",
+        "0x7fc00000",
+        "0x7fc00000",
+        "0x7fc00000",
+        "0x7fc00000",
+        "0x7fc00000",
+        "0x7e800000",
+        "0xfe800000",
+        "0x0",
+        "0x0",
+        "0x0",
+        "0x0",
+        "0x7fc00000",
+        "0x7fc00000",
+        "0x7fc00000",
+        "0x7fc00000"
+      ],
+      "raw": [
+        117,
+        117,
+        117,
+        117,
+        117,
+        117,
+        117
+      ],
+      "control": [
+        64,
+        64,
+        64,
+        64,
+        64,
+        64,
+        64
+      ],
+      "empty": [
+        12,
+        12,
+        12,
+        12,
+        12,
+        12,
+        12
+      ],
+      "min": 117,
+      "median": 117,
+      "max": 117,
+      "K": 4,
+      "cycles_per_vector": 29.25,
+      "core": "(1, 3)",
+      "semantic_scope": "characterization; unsupported inputs do not establish IEEE conformance",
+      "job_id": "5a833c0cd88440328d4af1a1bebd849b",
+      "device": 0,
+      "kind": "SFPU_EXCEPTION",
+      "test": "tests/operation_pocs/sfpu_math/test_math.py::test_exception_characterization[refined-reciprocal]"
+    }
+  ]
+}

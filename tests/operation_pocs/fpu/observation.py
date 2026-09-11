@@ -1,10 +1,14 @@
-"""Handwritten Blackhole row-major packer kernels used by movement tests."""
+"""Fixture-only pack adapter copied from tests/movement/packer/pack.py.
+
+Changes admit all 16 BF16 physical Dst tiles and configure native BF16 reads.
+FP32 callers remain restricted by the FPU emitter to 64 slots / 8 tiles.
+"""
 
 from asm import Asm
 from fw.consts import TensixMMIO
 from isa import R, Reg, Tensix as TT, is_reg
 from tests.movement.unpacker.unpack import (
-  BF16, FP8_E4M3, F32, TILE_ELEMENTS, PackCfg, Sem, SemWait, Stall, Wait,
+  BF16, F32, TILE_ELEMENTS, PackCfg, Sem, SemWait, Stall, Wait,
   _mop_loop_words, _set_pack_destination, _set_thread_cfg,
   configure_mop, configure_packer, pc_sync, run_mop, sem_get, sem_wait, stall,
 )
@@ -84,15 +88,15 @@ def emit_pack_dst_to_cb(
   """
   if not is_reg(element_count):
     raise TypeError("element_count must be a runtime register")
-  if type(tile) is not int or not 0 <= tile < 8:
-    raise ValueError("FP32 Dst tile must be in range 0..7")
+  if type(tile) is not int or not 0 <= tile < 16:
+    raise ValueError("Dst tile must be in range 0..15")
   if (type(dst_element_offset) is not int or
       not 0 <= dst_element_offset < TILE_ELEMENTS):
     raise ValueError("Dst element offset must be in range 0..1023")
   if dst_element_offset % 16:
     raise ValueError("Dst element offset must begin on a 16-element row")
-  if output_format not in (BF16, F32, FP8_E4M3):
-    raise ValueError("unsupported row pack output format")
+  if output_format not in (BF16, F32):
+    raise ValueError("row pack supports BF16 and F32 output")
   if relu_mode not in (0, 1, 3):
     raise ValueError("packer ReLU mode must be 0, 1, or 3")
   if not 0 <= relu_threshold < 1 << 16:
@@ -103,6 +107,9 @@ def emit_pack_dst_to_cb(
     k, output_format, relu_mode=relu_mode, relu_threshold=relu_threshold,
     stochastic=stochastic,
   )
+  # The shared helper assumes FP32 Dst even when converting to BF16 output.
+  # This fixture observes native BF16 storage when BF16 output is selected.
+  k.write(PackCfg.DESTINATION_READ, int(output_format == F32))
   _configure_row_addressing(k)
   _set_pack_destination(k, tile, output_address)
   _set_dst_position(k, tile, dst_element_offset)

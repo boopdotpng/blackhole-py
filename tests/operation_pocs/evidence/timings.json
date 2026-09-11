@@ -1,0 +1,27 @@
+{
+  "job": "1ada983fbffe4279a35db72be7edda6c",
+  "pytest_seconds": 111.42,
+  "queue_seconds": 111.78,
+  "areas": {
+    "fpu": {
+      "cases": 224,
+      "seconds": 47.807
+    },
+    "sfpu_math": {
+      "cases": 74,
+      "seconds": 2.023
+    },
+    "sfpu_movement": {
+      "cases": 238,
+      "seconds": 5.907
+    },
+    "transport": {
+      "cases": 32,
+      "seconds": 54.146
+    },
+    "runtime": {
+      "cases": 54,
+      "seconds": 1.324
+    }
+  }
+}

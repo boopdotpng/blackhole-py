@@ -1,0 +1,103 @@
+[tt-device-queue] Queue 1
+RUNTIME_CONTEXT {"card": 1, "core": [1, 4], "core_index": 2, "dram_endpoints": [[[17, 14], [17, 13]], [[17, 15], [17, 16]], [[17, 18], [17, 19]], [[17, 21], [17, 22]], [[18, 14], [18, 13]], [[18, 17], [18, 16]], [[18, 20], [18, 19]], [[18, 23], [18, 22]]], "firmware_manifest_sha256": "8d7e24525e5a0cbcabf97e70d0415c8871c9f3c899c031ddc23a03cff61a02d6", "ops_sha256": "ae96742ac2dabcd191db4b2ac0178b4150709d00731595cc2c5e61f3abac5ef4", "runtime_sha256": "094ac79248655ba75aa70810e43636858ba83e3a31b1d11e20f23efc40d80687", "worker_count": 117}
+cycle profile:
+  [1] empty: 12 cycles
+  [2] wait_valid: 2132 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] wait_valid: 2132 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] wait_valid: 2132 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] wait_valid: 2132 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] wait_valid: 2140 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] wait_valid: 2133 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] wait_valid: 2133 cycles
+cycle profile:
+  [1] empty: 12 cycles
+  [2] wait_valid: 2132 cycles
+RUNTIME_RESULT {"K": 1, "card": 1, "control": [12, 12, 12, 12, 12, 12, 12], "core": [1, 4], "cycles_per_operation": [2132.0, 2132.0, 2132.0, 2140.0, 2133.0, 2133.0, 2132.0], "delay_iterations": 1024, "maximum": 2140, "median": 2132, "minimum": 2132, "mode": "intentional-peer-wait", "operation": "source_wait_valid", "samples": [2132, 2132, 2132, 2140, 2133, 2133, 2132], "source_bank": "A", "warmup": 1}
+.F
+=================================== FAILURES ===================================
+____________________ test_source_flag_blocking[0-wait_free] ____________________
+
+bh = <tests.harness.RawHarness object at 0x7f2b72d3dbe0>
+request = <FixtureRequest for <Function test_source_flag_blocking[0-wait_free]>>
+action = 'wait_free', bank = 0
+
+    @pytest.mark.parametrize('action', ['wait_valid', 'wait_free'])
+    @pytest.mark.parametrize('bank', [0, 1])
+    def test_source_flag_blocking(bh, request, action, bank):
+      from isa import R
+      from tests.movement.unpacker.unpack import configure_unpacker, UnpackTarget, BF16, pc_sync
+      from tests.operation_pocs.runtime.ops import source_flag
+      start, proof, observed = BASE + 0x18000, BASE + 0x18004, BASE + 0x18008
+      k, peer = Asm('trisc0'), Asm('trisc1')
+      p = Profiler(k)
+      configure_unpacker(k, bank, BASE + 0x16000, BF16,
+                         UnpackTarget.SRCA if bank == 0 else UnpackTarget.SRCB, commit=False)
+      pc_sync(k)
+      if action == 'wait_free':
+        # Occupy both ping-pong banks so the unpacker must await the peer release.
+        source_flag(k, bank, 'publish'); source_flag(k, bank, 'publish')
+      peer.wait(start, 1)
+      delay = peer.reg(); peer.li(delay, 1024)
+      again = peer._new_label('fixture_delay'); peer.label(again)
+      peer.addi(delay, delay, -1); peer.bne(delay, R.ZERO, again)
+      peer.write(proof, 0xABCDEF12); peer.fence()
+      source_flag(peer, bank, 'publish' if action == 'wait_valid' else 'release')
+      p.record('empty'); p.record('empty')
+      p.record(action)
+      k.write(start, 1); k.fence()
+      source_flag(k, bank, action)
+      p.record(action)
+      value = k.reg(); k.read(value, proof); k.write(observed, value)
+      # Return every acquired bank. wait_valid advances both selectors once;
+      # wait_free's two publishes and two releases advance both twice.
+      source_flag(k, bank, 'release')
+      images = {'trisc0': k.lower(), 'trisc1': peer.lower()}
+      samples, controls = [], []
+      for sample in range(8):
+>       bh.launch(images, profiler=p, l1={start: bytes(12)})
+
+tests/operation_pocs/runtime/test_runtime.py:288: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/harness.py:57: in launch
+    result = self.device.launch(
+device.py:206: in launch
+    return self.run(Program(core_images), params=params, l1=l1, timeout=timeout)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+device.py:212: in run
+    return self.cq.submit(program.commands(params=params, l1=l1), timeout=timeout)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+cq.py:289: in submit
+    return self.wait(self.enqueue(commands), timeout=timeout)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <cq.CommandQueue object at 0x7f2b72d3d6a0>, event = 25, timeout = 3.0
+poll_interval = 0.0002
+
+    def wait(self, event, timeout=10.0, poll_interval=0.0002):
+      deadline = time.monotonic() + timeout
+      polls = 0
+      while self._read_u64(self.completion) < event:
+        polls += 1
+        if poll_interval:
+          if time.monotonic() >= deadline:
+>           raise self._timeout(event)
+E           TimeoutError: CQ completion 25 timed out
+
+cq.py:301: TimeoutError
+=========================== short test summary info ============================
+FAILED tests/operation_pocs/runtime/test_runtime.py::test_source_flag_blocking[0-wait_free]
+!!!!!!!!!!!!!!!!!!!!!!!!!! stopping after 1 failures !!!!!!!!!!!!!!!!!!!!!!!!!!!
+1 failed, 1 passed, 52 deselected in 3.65s
