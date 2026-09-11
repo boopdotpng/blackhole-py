@@ -2332,7 +2332,7 @@ class Llama3Decode:
         f"{prefix}_value_cache", DType.BF16, KV_CACHE_STORAGE_SHAPE,
       )
       self.layers.append({
-        "weights/llama3-1b": weights,
+        "weights": weights,
         "key_cache": key_cache,
         "value_cache": value_cache,
       })
@@ -2386,7 +2386,7 @@ class Llama3Decode:
       math.prod(KV_CACHE_STORAGE_SHAPE) * DType.BF16.itemsize,
     )
     for index, layer in enumerate(self.layers):
-      weights = layer["weights/llama3-1b"]
+      weights = layer["weights"]
       prefix = f"model.layers.{index}"
       tensors = {
         "input_norm": f"{prefix}.input_layernorm.weight",
@@ -2409,7 +2409,7 @@ class Llama3Decode:
     self._run_uploads(30.0)
 
   def _build_programs(self):
-    weights = self.layers[0]["weights/llama3-1b"]
+    weights = self.layers[0]["weights"]
     o_projection = _decode_fused_projections(
       self.normalized, ((weights["q"], self.q_compact),),
       residual=self.x_a, dense_output=self.x_b,
@@ -2474,9 +2474,9 @@ class Llama3Decode:
 
   def _queue_layer(self, index, position):
     layer = self.layers[index]
-    weights = layer["weights/llama3-1b"]
+    weights = layer["weights"]
     template = self.layers[0]
-    template_weights = template["weights/llama3-1b"]
+    template_weights = template["weights"]
     blocks = position // KV_CACHE_TOKEN_BLOCK + 1
     tail = position % KV_CACHE_TOKEN_BLOCK + 1
 

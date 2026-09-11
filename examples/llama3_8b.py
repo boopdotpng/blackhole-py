@@ -2259,7 +2259,7 @@ class Llama3Decode:
         f"{prefix}_value_cache", DType.BF16, KV_CACHE_STORAGE_SHAPE,
       )
       self.layers.append({
-        "weights/llama3-8b-bf16": weights,
+        "weights": weights,
         "key_cache": key_cache,
         "value_cache": value_cache,
       })
@@ -2317,7 +2317,7 @@ class Llama3Decode:
       math.prod(KV_CACHE_STORAGE_SHAPE) * DType.BF16.itemsize,
     )
     for index, layer in enumerate(self.layers):
-      weights = layer["weights/llama3-8b-bf16"]
+      weights = layer["weights"]
       prefix = f"model.layers.{index}"
       tensors = {
         "input_norm": f"{prefix}.input_layernorm.weight",
@@ -2340,7 +2340,12 @@ class Llama3Decode:
     self._run_uploads(30.0)
 
   def _build_programs(self):
-    weights = self.layers[0]["weights/llama3-8b-bf16"]
+    self._create_programs()
+    self.device.cache_kernels(self.programs.values())
+    self._capture_decode_trace()
+
+  def _create_programs(self):
+    weights = self.layers[0]["weights"]
     o_projection = _decode_fused_projections(
       self.normalized, ((weights["q"], self.q_compact),),
       residual=self.x_a, dense_output=self.x_b,
@@ -2386,7 +2391,8 @@ class Llama3Decode:
       global_address=True, tilized=self.context.tilized,
       dram_endpoints=self.context.dram_endpoints,
     )
-    self.device.cache_kernels(self.programs.values())
+
+  def _capture_decode_trace(self):
     self._queue("embedding")
     for layer in range(LLAMA_LAYERS):
       self._queue_layer(layer, 0)
@@ -2405,9 +2411,9 @@ class Llama3Decode:
 
   def _queue_layer(self, index, position):
     layer = self.layers[index]
-    weights = layer["weights/llama3-8b-bf16"]
+    weights = layer["weights"]
     template = self.layers[0]
-    template_weights = template["weights/llama3-8b-bf16"]
+    template_weights = template["weights"]
     blocks = position // KV_CACHE_TOKEN_BLOCK + 1
     tail = position % KV_CACHE_TOKEN_BLOCK + 1
 
@@ -2512,8 +2518,9 @@ def run_decode_e2e(
   device_index=0,
   attention_cores=32,
   prefill_chunk_size=4,
+  prefill=False,
 ):
-  """Run BS=1 chunked prefill followed by resident greedy decode."""
+  """Run resident greedy decode with optional chunked BF16 prefill."""
   if steps is not None and steps < 1:
     raise ValueError("steps must be positive")
   from transformers import AutoTokenizer, TextStreamer
@@ -2553,7 +2560,13 @@ def run_decode_e2e(
   )
   try:
     prompt_started = time.perf_counter()
-    next_token, _ = runtime.prefill(prompt_ids, chunk_size=prefill_chunk_size)
+    if prefill:
+      next_token, _ = runtime.prefill(prompt_ids, chunk_size=prefill_chunk_size)
+    else:
+      runtime.load_tokens(prompt_ids)
+      for position in range(len(prompt_ids)):
+        next_token, _ = runtime.decode(position, logits=position == len(prompt_ids) - 1,
+                                       append=position == len(prompt_ids) - 1)
     prompt_seconds = time.perf_counter() - prompt_started
 
     for step in range(steps):
@@ -2653,6 +2666,7 @@ if __name__ == "__main__":
   )
   parser.add_argument("--safetensor", default="weights/llama3-8b-bf16")
   parser.add_argument("--tokenizer", default="weights/llama3-8b-bf16")
+  parser.add_argument("--prefill", action="store_true", help="ingest the prompt with chunked 8B BF16 prefill")
   parser.add_argument("--prefill-chunk-size", type=int, choices=range(1, 9), default=4)
   parser.add_argument("--attention-cores", type=int, choices=(8, 16, 32), default=32)
   parser.add_argument(
@@ -2667,5 +2681,5 @@ if __name__ == "__main__":
   run_decode_e2e(
     args.prompt, args.steps, args.safetensor, args.tokenizer,
     profile=args.profile, device_index=args.device, attention_cores=args.attention_cores,
-    prefill_chunk_size=args.prefill_chunk_size,
+    prefill_chunk_size=args.prefill_chunk_size, prefill=args.prefill,
   )
