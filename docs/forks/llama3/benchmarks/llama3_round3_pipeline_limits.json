@@ -1,0 +1,46 @@
+[
+  {
+    "name": "o",
+    "input_dim": 2048,
+    "output_dims": [
+      2048
+    ],
+    "device": 0,
+    "workers": 117,
+    "results": {
+      "real": {
+        "us": 27.3335,
+        "effective_weight_GB_s": 306.8984213510893,
+        "max_kernel_bytes": {
+          "brisc": 4712,
+          "ncrisc": 808,
+          "trisc0": 1724,
+          "trisc1": 888,
+          "trisc2": 864
+        }
+      },
+      "resident_weights": {
+        "us": 16.408,
+        "effective_weight_GB_s": null,
+        "max_kernel_bytes": {
+          "brisc": 1060,
+          "ncrisc": 808,
+          "trisc0": 1724,
+          "trisc1": 888,
+          "trisc2": 864
+        }
+      },
+      "cheap_math": {
+        "us": 27.343562499999997,
+        "effective_weight_GB_s": null,
+        "max_kernel_bytes": {
+          "brisc": 4712,
+          "ncrisc": 808,
+          "trisc0": 1724,
+          "trisc1": 260,
+          "trisc2": 864
+        }
+      }
+    }
+  }
+]

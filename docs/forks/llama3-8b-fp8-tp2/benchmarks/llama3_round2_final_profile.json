@@ -1,0 +1,286 @@
+[
+  {
+    "context": 32,
+    "device": 0,
+    "attention_cores": 16,
+    "launch_counts": {
+      "embedding": 1,
+      "qkv": 16,
+      "attention": 16,
+      "o": 16,
+      "gate": 16,
+      "down": 16,
+      "lm": 1,
+      "argmax": 1
+    },
+    "full_decode_us": 6506.045,
+    "kernels": {
+      "embedding": {
+        "us": 4.355625,
+        "per_token_us": 4.355625
+      },
+      "o": {
+        "us": 32.706624999999995,
+        "per_token_us": 523.3059999999999
+      },
+      "qkv": {
+        "us": 41.781,
+        "per_token_us": 668.496
+      },
+      "attention": {
+        "us": 28.419125,
+        "per_token_us": 454.706
+      },
+      "gate": {
+        "us": 151.2064375,
+        "per_token_us": 2419.303
+      },
+      "down": {
+        "us": 81.946375,
+        "per_token_us": 1311.142
+      },
+      "lm": {
+        "us": 1057.3815,
+        "per_token_us": 1057.3815
+      },
+      "argmax": {
+        "us": 37.35724999999999,
+        "per_token_us": 37.35724999999999
+      },
+      "noop1": {
+        "us": 2.51375,
+        "per_token_us": 0.0
+      },
+      "noop8": {
+        "us": 2.5212499999999993,
+        "per_token_us": 0.0
+      },
+      "noop32": {
+        "us": 2.7605624999999994,
+        "per_token_us": 0.0
+      },
+      "noop40": {
+        "us": 2.7393125,
+        "per_token_us": 0.0
+      },
+      "noop117": {
+        "us": 3.5319374999999997,
+        "per_token_us": 0.0
+      }
+    },
+    "sum_kernel_us": 6476.047375
+  },
+  {
+    "context": 64,
+    "device": 0,
+    "attention_cores": 16,
+    "launch_counts": {
+      "embedding": 1,
+      "qkv": 16,
+      "attention": 16,
+      "o": 16,
+      "gate": 16,
+      "down": 16,
+      "lm": 1,
+      "argmax": 1
+    },
+    "full_decode_us": 6532.765,
+    "kernels": {
+      "embedding": {
+        "us": 4.3555625,
+        "per_token_us": 4.3555625
+      },
+      "o": {
+        "us": 32.6891875,
+        "per_token_us": 523.027
+      },
+      "qkv": {
+        "us": 41.847875,
+        "per_token_us": 669.566
+      },
+      "attention": {
+        "us": 30.131,
+        "per_token_us": 482.096
+      },
+      "gate": {
+        "us": 151.2083125,
+        "per_token_us": 2419.333
+      },
+      "down": {
+        "us": 81.8669375,
+        "per_token_us": 1309.871
+      },
+      "lm": {
+        "us": 1057.2951874999999,
+        "per_token_us": 1057.2951874999999
+      },
+      "argmax": {
+        "us": 36.375375000000005,
+        "per_token_us": 36.375375000000005
+      },
+      "noop1": {
+        "us": 2.5299374999999995,
+        "per_token_us": 0.0
+      },
+      "noop8": {
+        "us": 2.5325,
+        "per_token_us": 0.0
+      },
+      "noop32": {
+        "us": 2.7656249999999996,
+        "per_token_us": 0.0
+      },
+      "noop40": {
+        "us": 2.7368750000000004,
+        "per_token_us": 0.0
+      },
+      "noop117": {
+        "us": 3.5361875000000005,
+        "per_token_us": 0.0
+      }
+    },
+    "sum_kernel_us": 6501.919125
+  },
+  {
+    "context": 128,
+    "device": 0,
+    "attention_cores": 16,
+    "launch_counts": {
+      "embedding": 1,
+      "qkv": 16,
+      "attention": 16,
+      "o": 16,
+      "gate": 16,
+      "down": 16,
+      "lm": 1,
+      "argmax": 1
+    },
+    "full_decode_us": 6584.315,
+    "kernels": {
+      "embedding": {
+        "us": 4.3518125,
+        "per_token_us": 4.3518125
+      },
+      "o": {
+        "us": 32.65225,
+        "per_token_us": 522.436
+      },
+      "qkv": {
+        "us": 41.8265625,
+        "per_token_us": 669.225
+      },
+      "attention": {
+        "us": 33.360375000000005,
+        "per_token_us": 533.7660000000001
+      },
+      "gate": {
+        "us": 151.0908125,
+        "per_token_us": 2417.453
+      },
+      "down": {
+        "us": 81.9056875,
+        "per_token_us": 1310.491
+      },
+      "lm": {
+        "us": 1056.6051874999998,
+        "per_token_us": 1056.6051874999998
+      },
+      "argmax": {
+        "us": 35.95475,
+        "per_token_us": 35.95475
+      },
+      "noop1": {
+        "us": 2.5231250000000003,
+        "per_token_us": 0.0
+      },
+      "noop8": {
+        "us": 2.5243749999999996,
+        "per_token_us": 0.0
+      },
+      "noop32": {
+        "us": 2.7600000000000002,
+        "per_token_us": 0.0
+      },
+      "noop40": {
+        "us": 2.7218125,
+        "per_token_us": 0.0
+      },
+      "noop117": {
+        "us": 3.5386875,
+        "per_token_us": 0.0
+      }
+    },
+    "sum_kernel_us": 6550.28275
+  },
+  {
+    "context": 512,
+    "device": 0,
+    "attention_cores": 16,
+    "launch_counts": {
+      "embedding": 1,
+      "qkv": 16,
+      "attention": 16,
+      "o": 16,
+      "gate": 16,
+      "down": 16,
+      "lm": 1,
+      "argmax": 1
+    },
+    "full_decode_us": 6897.512,
+    "kernels": {
+      "embedding": {
+        "us": 4.3493125,
+        "per_token_us": 4.3493125
+      },
+      "o": {
+        "us": 32.66856250000001,
+        "per_token_us": 522.6970000000001
+      },
+      "qkv": {
+        "us": 41.77974999999999,
+        "per_token_us": 668.4759999999999
+      },
+      "attention": {
+        "us": 52.965875,
+        "per_token_us": 847.454
+      },
+      "gate": {
+        "us": 151.0551875,
+        "per_token_us": 2416.883
+      },
+      "down": {
+        "us": 82.046875,
+        "per_token_us": 1312.75
+      },
+      "lm": {
+        "us": 1056.9901875,
+        "per_token_us": 1056.9901875
+      },
+      "argmax": {
+        "us": 36.610375000000005,
+        "per_token_us": 36.610375000000005
+      },
+      "noop1": {
+        "us": 2.5230625,
+        "per_token_us": 0.0
+      },
+      "noop8": {
+        "us": 2.5349999999999997,
+        "per_token_us": 0.0
+      },
+      "noop32": {
+        "us": 2.7456249999999995,
+        "per_token_us": 0.0
+      },
+      "noop40": {
+        "us": 2.7330624999999995,
+        "per_token_us": 0.0
+      },
+      "noop117": {
+        "us": 3.531875,
+        "per_token_us": 0.0
+      }
+    },
+    "sum_kernel_us": 6866.209875
+  }
+]

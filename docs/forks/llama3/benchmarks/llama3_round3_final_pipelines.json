@@ -1,0 +1,170 @@
+[
+  {
+    "name": "o",
+    "input_dim": 2048,
+    "output_dims": [
+      2048
+    ],
+    "device": 0,
+    "workers": 117,
+    "results": {
+      "real": {
+        "us": 27.1973125,
+        "effective_weight_GB_s": 308.43518086575654,
+        "max_kernel_bytes": {
+          "brisc": 4712,
+          "ncrisc": 808,
+          "trisc0": 1724,
+          "trisc1": 888,
+          "trisc2": 864
+        }
+      },
+      "resident_weights": {
+        "us": 16.4093125,
+        "effective_weight_GB_s": null,
+        "max_kernel_bytes": {
+          "brisc": 1060,
+          "ncrisc": 808,
+          "trisc0": 1724,
+          "trisc1": 888,
+          "trisc2": 864
+        }
+      }
+    }
+  },
+  {
+    "name": "qkv",
+    "input_dim": 2048,
+    "output_dims": [
+      2048,
+      512,
+      512
+    ],
+    "device": 0,
+    "workers": 117,
+    "results": {
+      "real": {
+        "us": 39.0840625,
+        "effective_weight_GB_s": 321.9448336518242,
+        "max_kernel_bytes": {
+          "brisc": 11280,
+          "ncrisc": 2372,
+          "trisc0": 3332,
+          "trisc1": 2120,
+          "trisc2": 1688
+        }
+      },
+      "resident_weights": {
+        "us": 20.069812499999998,
+        "effective_weight_GB_s": null,
+        "max_kernel_bytes": {
+          "brisc": 1428,
+          "ncrisc": 2372,
+          "trisc0": 3332,
+          "trisc1": 2120,
+          "trisc2": 1688
+        }
+      }
+    }
+  },
+  {
+    "name": "gate",
+    "input_dim": 2048,
+    "output_dims": [
+      8192,
+      8192
+    ],
+    "device": 0,
+    "workers": 117,
+    "results": {
+      "real": {
+        "us": 143.4883125,
+        "effective_weight_GB_s": 467.6956807893325,
+        "max_kernel_bytes": {
+          "brisc": 9884,
+          "ncrisc": 1596,
+          "trisc0": 2528,
+          "trisc1": 1504,
+          "trisc2": 1276
+        }
+      },
+      "resident_weights": {
+        "us": 60.0451875,
+        "effective_weight_GB_s": null,
+        "max_kernel_bytes": {
+          "brisc": 1244,
+          "ncrisc": 1596,
+          "trisc0": 2528,
+          "trisc1": 1504,
+          "trisc2": 1276
+        }
+      }
+    }
+  },
+  {
+    "name": "down",
+    "input_dim": 8192,
+    "output_dims": [
+      2048
+    ],
+    "device": 0,
+    "workers": 117,
+    "results": {
+      "real": {
+        "us": 76.8100625,
+        "effective_weight_GB_s": 436.849429721529,
+        "max_kernel_bytes": {
+          "brisc": 4912,
+          "ncrisc": 808,
+          "trisc0": 4076,
+          "trisc1": 2184,
+          "trisc2": 864
+        }
+      },
+      "resident_weights": {
+        "us": 36.18543749999999,
+        "effective_weight_GB_s": null,
+        "max_kernel_bytes": {
+          "brisc": 3204,
+          "ncrisc": 808,
+          "trisc0": 4076,
+          "trisc1": 2184,
+          "trisc2": 864
+        }
+      }
+    }
+  },
+  {
+    "name": "lm",
+    "input_dim": 2048,
+    "output_dims": [
+      128256
+    ],
+    "device": 0,
+    "workers": 117,
+    "results": {
+      "real": {
+        "us": 1049.0816875,
+        "effective_weight_GB_s": 500.7585036127132,
+        "max_kernel_bytes": {
+          "brisc": 4096,
+          "ncrisc": 1288,
+          "trisc0": 1724,
+          "trisc1": 888,
+          "trisc2": 864
+        }
+      },
+      "resident_weights": {
+        "us": 395.96975,
+        "effective_weight_GB_s": null,
+        "max_kernel_bytes": {
+          "brisc": 1060,
+          "ncrisc": 1288,
+          "trisc0": 1724,
+          "trisc1": 888,
+          "trisc2": 864
+        }
+      }
+    }
+  }
+]

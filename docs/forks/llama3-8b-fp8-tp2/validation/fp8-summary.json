@@ -1,0 +1,62 @@
+{
+  "device": 1,
+  "launches_per_token": 163,
+  "checkpoint": "RedHatAI/Meta-Llama-3-8B-Instruct-FP8",
+  "revision": "c5c6b5700a4178ef1fdae2ae37827382b90eb400",
+  "projection_cores": 96,
+  "attention_cores": 32,
+  "noc_split_x": 10,
+  "fidelity": 1,
+  "rates": [
+    {
+      "steps": 64,
+      "fp8_tok_s": 47.72084818056533,
+      "bf16_tok_s": 29.382805625025163,
+      "speedup": 1.6241079490353967
+    },
+    {
+      "steps": 256,
+      "fp8_tok_s": 46.74086853918801,
+      "bf16_tok_s": 29.01335570040622,
+      "speedup": 1.6110121497780963
+    },
+    {
+      "steps": 512,
+      "fp8_tok_s": 45.50942168204246,
+      "bf16_tok_s": null,
+      "speedup": null
+    }
+  ],
+  "fp8_dram_bytes": 10161472000,
+  "bf16_dram_bytes": 17140662784,
+  "accuracy": {
+    "positions": 11,
+    "cpu_min_pcc": 0.9929368615215489,
+    "cpu_token_matches": 11,
+    "bf16_min_pcc": 0.845765602770762,
+    "bf16_token_matches": 10,
+    "scope": "256 teacher-forced tokens, 11 sampled logit vectors; not a model-quality benchmark suite"
+  },
+  "source_sha256": {
+    "examples/llama3.py": "cf7c6f83cfe22c45e1a64978d7cc1559091327d6fbe148273513f16774e84575",
+    "fw/consts.py": "615c781781541a4d8b1dd0e6b35effb755ddfa5720e9df7b535a1438301d76b1",
+    "fw/core.py": "48a578c61ac97290fcfb2be6d02925235c330d648e0f01a6595071ebe098f325",
+    "fw/cq.py": "11e25b759e6c002aeb4a1673a27e10d0d32c233ec95d7a70e8443c6c2a6a6436",
+    "fw/dram_cq.py": "42f4760c90cee73a480a1c1e9c7eea9cbeb00b02b6e277c7550a731e083148f1",
+    "llama_checkpoint.py": "f31aee0431a9a3db03a9fe2870156dbc88850fa77f5c52b9eb8730b2404d68e3",
+    "program.py": "faa7928d0d536f578e611831c35cf407eae78eb6ff621b7ccd6244b6ca9cec3b",
+    "ttk/__init__.py": "f811a0344ed7db35479375393b5768fc6ae7d436c22084b8c22dfd098389a8bb",
+    "ttk/cb.py": "944b85fff10cbb884c468d8a62a84854dea5989f01c21857c4f03d5151ae93ae",
+    "ttk/check.py": "b282276fa6f0c6dc212adf05b6ba3dc33718266e4865d35fd3097ccc8ac32063",
+    "ttk/fpu.py": "4286428544eda9e6e068396fc2f14a395de3ee707d3218db3fd84bd21dbb41c7",
+    "ttk/l1.py": "666cb3e93e3213123c6c6720b1babe0f64778befd34a27fbbd7e12fcb9b42951",
+    "ttk/mop.py": "2d3bcb061fe2b3df248d72897e3fd3157dfce04e0cbc1edcd19aa6c179b66a32",
+    "ttk/noc.py": "5455e43f3ce9d3412167be34876aa47a0835b48351683638b74a2e75399460ce",
+    "ttk/ops.py": "68389aa44d370117b316d7568905a112da52029a527318afab578df1622b585a",
+    "ttk/pack.py": "b6ac6e1c11005cb149dfb921f3b9f634c8b295c7767618d255fbc2926eb33a30",
+    "ttk/sfpu.py": "eff128dc454f92bbee871218c636ad68dc7ceaa47b2a2f1d32747dd536eaab4b",
+    "ttk/shard.py": "69405c3fb4e958fb1c620ae5e2342eddef10d14a4ad3cf00c031ab74c91a4e21",
+    "ttk/sync.py": "0bf335ca4d80f961110d04c708fcd98ed38878b60d98515d224d24d45ca5e3b3",
+    "ttk/unpack.py": "679c47985b1435a7326284904bd9f7e11a4084e96ff637e2536f475dcb4d8f12"
+  }
+}

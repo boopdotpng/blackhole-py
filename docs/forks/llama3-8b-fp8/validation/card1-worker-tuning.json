@@ -1,0 +1,84 @@
+[
+  {
+    "projection_workers": 117,
+    "tok_s": 29.099232898900276,
+    "median_us": 34391.138,
+    "exact_match": true,
+    "logit_sha256": {
+      "0": "34c0cbced4f8a513f596f6ad360d57fe83d5a3b51de85b06fdb3c0e9110c19cf",
+      "15": "836644bb13e455d73372c94f32dae850c1acdddf2b9e115b6eeaab991f9f4e8b",
+      "31": "26b40386177aa57cc14a9e41f11dc8c1e20528dfd6968ea2177a0a650f21ec26",
+      "32": "b042e4a57d41ed8ad0d4db82ff907120fda114a7269835c2cf22ae2f5c38cda4",
+      "62": "00f4b8ab6ca11292d9afc946106b581ded27dd752e3f0017226fe4aa2ae078a4"
+    }
+  },
+  {
+    "projection_workers": 112,
+    "tok_s": 25.034665954702074,
+    "median_us": 39902.17,
+    "exact_match": true,
+    "logit_sha256": {
+      "0": "34c0cbced4f8a513f596f6ad360d57fe83d5a3b51de85b06fdb3c0e9110c19cf",
+      "15": "836644bb13e455d73372c94f32dae850c1acdddf2b9e115b6eeaab991f9f4e8b",
+      "31": "26b40386177aa57cc14a9e41f11dc8c1e20528dfd6968ea2177a0a650f21ec26",
+      "32": "b042e4a57d41ed8ad0d4db82ff907120fda114a7269835c2cf22ae2f5c38cda4",
+      "62": "00f4b8ab6ca11292d9afc946106b581ded27dd752e3f0017226fe4aa2ae078a4"
+    }
+  },
+  {
+    "projection_workers": 104,
+    "tok_s": 28.98894678535984,
+    "median_us": 34524.986,
+    "exact_match": true,
+    "logit_sha256": {
+      "0": "34c0cbced4f8a513f596f6ad360d57fe83d5a3b51de85b06fdb3c0e9110c19cf",
+      "15": "836644bb13e455d73372c94f32dae850c1acdddf2b9e115b6eeaab991f9f4e8b",
+      "31": "26b40386177aa57cc14a9e41f11dc8c1e20528dfd6968ea2177a0a650f21ec26",
+      "32": "b042e4a57d41ed8ad0d4db82ff907120fda114a7269835c2cf22ae2f5c38cda4",
+      "62": "00f4b8ab6ca11292d9afc946106b581ded27dd752e3f0017226fe4aa2ae078a4"
+    }
+  },
+  {
+    "projection_workers": 96,
+    "tok_s": 29.309675712204026,
+    "median_us": 34147.96,
+    "exact_match": true,
+    "logit_sha256": {
+      "0": "34c0cbced4f8a513f596f6ad360d57fe83d5a3b51de85b06fdb3c0e9110c19cf",
+      "15": "836644bb13e455d73372c94f32dae850c1acdddf2b9e115b6eeaab991f9f4e8b",
+      "31": "26b40386177aa57cc14a9e41f11dc8c1e20528dfd6968ea2177a0a650f21ec26",
+      "32": "b042e4a57d41ed8ad0d4db82ff907120fda114a7269835c2cf22ae2f5c38cda4",
+      "62": "00f4b8ab6ca11292d9afc946106b581ded27dd752e3f0017226fe4aa2ae078a4"
+    }
+  },
+  {
+    "projection_workers": 88,
+    "tok_s": 29.417341298623025,
+    "median_us": 34019.25,
+    "exact_match": true,
+    "logit_sha256": {
+      "0": "34c0cbced4f8a513f596f6ad360d57fe83d5a3b51de85b06fdb3c0e9110c19cf",
+      "15": "836644bb13e455d73372c94f32dae850c1acdddf2b9e115b6eeaab991f9f4e8b",
+      "31": "26b40386177aa57cc14a9e41f11dc8c1e20528dfd6968ea2177a0a650f21ec26",
+      "32": "b042e4a57d41ed8ad0d4db82ff907120fda114a7269835c2cf22ae2f5c38cda4",
+      "62": "00f4b8ab6ca11292d9afc946106b581ded27dd752e3f0017226fe4aa2ae078a4"
+    }
+  },
+  {
+    "projection_workers": 80,
+    "tok_s": 28.79912167531849,
+    "median_us": 34737.596,
+    "exact_match": true,
+    "logit_sha256": {
+      "0": "34c0cbced4f8a513f596f6ad360d57fe83d5a3b51de85b06fdb3c0e9110c19cf",
+      "15": "836644bb13e455d73372c94f32dae850c1acdddf2b9e115b6eeaab991f9f4e8b",
+      "31": "26b40386177aa57cc14a9e41f11dc8c1e20528dfd6968ea2177a0a650f21ec26",
+      "32": "b042e4a57d41ed8ad0d4db82ff907120fda114a7269835c2cf22ae2f5c38cda4",
+      "62": "00f4b8ab6ca11292d9afc946106b581ded27dd752e3f0017226fe4aa2ae078a4"
+    }
+  },
+  {
+    "projection_workers": 64,
+    "status": "CQ timeout; excluded; card 1 recovered with targeted ASIC warm reset"
+  }
+]

@@ -1,0 +1,12 @@
+_bf16_rne_bytes _bf16_rne_bytes equal 2583 rel 0.003533649
+_bf16_rne_bytes <lambda> equal 2212 rel 0.0038373068
+_bf16_rne_bytes <lambda> equal 2648 rel 0.003525064
+<lambda> _bf16_rne_bytes equal 3663 rel 0.0021371704
+<lambda> <lambda> equal 2539 rel 0.0039541367
+<lambda> <lambda> equal 4083 rel 0.00024201017
+<lambda> _bf16_rne_bytes equal 2583 rel 0.003533649
+<lambda> <lambda> equal 2212 rel 0.0038373068
+<lambda> <lambda> equal 2648 rel 0.003525064
+actual [ 0.8828125 -2.6875     3.25      -0.1875     1.9375    -0.484375
+ -1.953125   0.453125   4.59375    6.875      0.859375   3.265625
+ -1.3203125  0.640625   2.46875    3.140625 ]

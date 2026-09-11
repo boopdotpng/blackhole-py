@@ -1,0 +1,13 @@
+test_supported_topologies (test_llama3_lowering.DecodeResidencyTest.test_supported_topologies) ... ok
+test_all_model_weights_and_dense_projection_inputs_are_raw (test_llama3_row_major_weights.RowMajorWeightsTest.test_all_model_weights_and_dense_projection_inputs_are_raw) ... ok
+test_global_row_shards_do_not_change_checkpoint_bytes (test_llama3_row_major_weights.RowMajorWeightsTest.test_global_row_shards_do_not_change_checkpoint_bytes) ... ok
+test_kernel0_weights_are_raw (test_llama3_row_major_weights.RowMajorWeightsTest.test_kernel0_weights_are_raw) ... ok
+test_model_staging_bypasses_layout_conversion (test_llama3_row_major_weights.RowMajorWeightsTest.test_model_staging_bypasses_layout_conversion) ... ok
+test_raw_weight_device_readback (test_llama3_row_major_weights.RowMajorWeightsTest.test_raw_weight_device_readback) ... skipped 'set LLAMA_TEST_DEVICE to select hardware'
+test_weight_write_never_enters_numpy_layout_code (test_llama3_row_major_weights.RowMajorWeightsTest.test_weight_write_never_enters_numpy_layout_code) ... ok
+test_command_words_and_register_preservation (test_noc_codegen.NiuCodegenTest.test_command_words_and_register_preservation) ... ok
+
+----------------------------------------------------------------------
+Ran 8 tests in 5.598s
+
+OK (skipped=1)

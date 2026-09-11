@@ -1,0 +1,139 @@
+2026-09-07 20:42:24.140 | info     |             UMD | Creating TopologyDiscovery for architecture: blackhole (topology_discovery.cpp:74)
+2026-09-07 20:42:24.140 | info     |             UMD | Starting topology discovery. (topology_discovery.cpp:91)
+2026-09-07 20:42:24.143 | info     |             UMD | Established firmware bundle version: 19.13.1 (topology_discovery.cpp:548)
+2026-09-07 20:42:24.143 | info     |             UMD | Firmware bundle version 19.13.1 on the system is newer than the latest fully tested version 19.5.0 for blackhole architecture. Newest features may not be supported. (topology_discovery.cpp:574)
+2026-09-07 20:42:24.147 | info     |             UMD | Completed topology discovery. (topology_discovery.cpp:95)
+single: 42.99 tokens/s
+Rank 0 ready on card 0
+Rank 1 ready on card 1
+tp2: 57.43 tokens/s
+{
+  "runs": {
+    "single": {
+      "start": 126296.96368527,
+      "end": 126320.780521497,
+      "tokens": 1024,
+      "seconds": 23.816836226993473,
+      "tps": 42.99479537250296,
+      "cards": {
+        "0": {
+          "samples": 238,
+          "board_watts": {
+            "mean": 93.56893870539989,
+            "peak": 102.0,
+            "joules": 2228.5160890801,
+            "joules_per_token": 2.176285243242285
+          },
+          "asic_watts": {
+            "mean": 21.900130574890046,
+            "peak": 23.0,
+            "joules": 521.5918232519286,
+            "joules_per_token": 0.5093670148944616
+          }
+        },
+        "1": {
+          "samples": 238,
+          "board_watts": {
+            "mean": 255.2540380768578,
+            "peak": 288.0,
+            "joules": 6079.343621155278,
+            "joules_per_token": 5.936859005034451
+          },
+          "asic_watts": {
+            "mean": 89.85732719904644,
+            "peak": 97.0,
+            "joules": 2140.1172456950553,
+            "joules_per_token": 2.0899582477490775
+          }
+        }
+      },
+      "combined_mean_board_watts": 348.8229767822577,
+      "combined_board_joules": 8307.859710235378,
+      "combined_board_joules_per_token": 8.113144248276736
+    },
+    "tp2": {
+      "start": 126348.093134643,
+      "end": 126365.924215166,
+      "tokens": 1024,
+      "seconds": 17.8310805229994,
+      "tps": 57.427815363134876,
+      "cards": {
+        "0": {
+          "samples": 179,
+          "board_watts": {
+            "mean": 240.1110114439485,
+            "peak": 293.0,
+            "joules": 4281.438779515876,
+            "joules_per_token": 4.181092558120973
+          },
+          "asic_watts": {
+            "mean": 84.96968460876917,
+            "peak": 94.0,
+            "joules": 1515.101288272826,
+            "joules_per_token": 1.4795911018289316
+          }
+        },
+        "1": {
+          "samples": 179,
+          "board_watts": {
+            "mean": 228.99684827232113,
+            "peak": 286.0,
+            "joules": 4083.261241056834,
+            "joules_per_token": 3.9875598057195645
+          },
+          "asic_watts": {
+            "mean": 81.28011458132251,
+            "peak": 94.0,
+            "joules": 1449.3122680181793,
+            "joules_per_token": 1.4153440117365033
+          }
+        }
+      },
+      "combined_mean_board_watts": 469.1078597162697,
+      "combined_board_joules": 8364.70002057271,
+      "combined_board_joules_per_token": 8.168652363840538
+    }
+  },
+  "speedup": 1.335692259158011,
+  "sampling_interval_seconds": 0.1,
+  "source": "tt-smi backend INPUT_POWER (total board) and TDP (ASIC)",
+  "initial_tokens": [
+    128000,
+    9906
+  ],
+  "timing": "Independent continuous batch-one greedy decode from the same initial tokens, after 66 warmup tokens; fixed token count, including continuation after EOS; no full-logit readbacks.",
+  "energy": "Time-integrated board telemetry; includes board idle draw, excludes host CPU/system. Single run combined power includes the idle second card.",
+  "raw_samples": "validation/tp2-power.jsonl",
+  "phases": [
+    {
+      "name": "single_load",
+      "start": 126265.21602021,
+      "end": 126295.589796208
+    },
+    {
+      "name": "single_warmup",
+      "start": 126295.590171186,
+      "end": 126296.96368484
+    },
+    {
+      "name": "single_generation",
+      "start": 126296.96368527,
+      "end": 126320.780521497
+    },
+    {
+      "name": "tp2_load",
+      "start": 126321.023450922,
+      "end": 126347.095991901
+    },
+    {
+      "name": "tp2_warmup",
+      "start": 126347.095992891,
+      "end": 126348.093134173
+    },
+    {
+      "name": "tp2_generation",
+      "start": 126348.093134643,
+      "end": 126365.924215166
+    }
+  ]
+}

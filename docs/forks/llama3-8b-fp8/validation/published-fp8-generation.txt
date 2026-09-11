@@ -1,0 +1,19 @@
+The capital of France is Paris.
+48.08 tok/s
+startup total           30347.45 ms
+  device init             789.03 ms
+  weight prepare        10828.57 ms
+  host tile/stage        4748.05 ms
+  DRAM upload           12232.79 ms  (9.461 GiB, 0.77 GiB/s)
+  program build          1342.38 ms
+prompt decode             478.63 ms  (23 tokens)
+generated-token average (8 replays)
+  device/CQ interval    20761.62 us
+  host replay wall      20797.33 us
+  token readback            1.11 us
+  full decode call      20799.33 us
+  wall - device            37.71 us
+  runtime encode/patch     24.42 us
+  CQ event/doorbell         8.61 us
+  completion tail           0.00 us
+  text streaming           17.67 us/token

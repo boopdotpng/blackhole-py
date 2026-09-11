@@ -1,0 +1,15 @@
+{
+  "device": 1,
+  "checks": [
+    {
+      "source": "FP8",
+      "target": "F32",
+      "max_error": 0.0
+    },
+    {
+      "source": "F32",
+      "target": "FP8",
+      "max_error": 0.0
+    }
+  ]
+}

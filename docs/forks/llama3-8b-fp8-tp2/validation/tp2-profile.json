@@ -1,0 +1,47 @@
+{
+  "single_card_kernel_us": {
+    "embedding": 9.586666666666666,
+    "qkv": 2295.155555555555,
+    "attention": 1536.0803703703705,
+    "o": 1667.8744444444444,
+    "gate": 8305.744074074075,
+    "down": 5029.573703703703,
+    "lm": 2220.211111111111,
+    "argmax": 50.980000000000004
+  },
+  "tp_card_kernel_us": [
+    {
+      "qkv": 1469.8329629629632,
+      "attention": 1563.2633333333338,
+      "o": 1156.0311111111114,
+      "reduce": 1812.83,
+      "gate": 4470.087777777777,
+      "down": 2521.2859259259258,
+      "lm": 2219.7096296296295,
+      "argmax": 50.154444444444444
+    },
+    {
+      "qkv": 1474.5148148148148,
+      "attention": 1564.6196296296298,
+      "o": 1159.7692592592591,
+      "reduce": 1491.6944444444443,
+      "gate": 4470.556296296297,
+      "down": 2525.2255555555553
+    }
+  ],
+  "erisc_us_per_token": [
+    {
+      "producer_wait": 13602.342222222222,
+      "exchange": 1427.4362962962964,
+      "consumer_and_credit": 766.6748148148148
+    },
+    {
+      "producer_wait": 14125.850740740741,
+      "exchange": 1109.9792592592594,
+      "consumer_and_credit": 552.8062962962963
+    }
+  ],
+  "context": 64,
+  "clock_mhz": 1350,
+  "note": "Real trace device timestamps with one marker per launch; includes marker/dispatch overhead. ERISC intervals overlap Tensix work; do not sum them with kernel intervals."
+}

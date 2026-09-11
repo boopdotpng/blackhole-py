@@ -1,0 +1,47 @@
+test_conversion_matches_torch (test_fp8.FP8Test.test_conversion_matches_torch) ... FAIL
+test_fp8_tiling_roundtrip (test_fp8.FP8Test.test_fp8_tiling_roundtrip) ... ok
+test_ties_and_saturation (test_fp8.FP8Test.test_ties_and_saturation) ... ok
+test_mixed_checkpoint_and_invalid_scales (test_fp8.PublishedCheckpointTest.test_mixed_checkpoint_and_invalid_scales) ... ok
+test_compact_offsets_match_real_tilizer (test_llama3_8b.Llama8BTest.test_compact_offsets_match_real_tilizer) ... ok
+test_rope_matches_transformers (test_llama3_8b.Llama8BTest.test_rope_matches_transformers) ... ok
+test_sharded_reader (test_llama3_8b.Llama8BTest.test_sharded_reader) ... ok
+test_wrong_model_rejected_before_device_access (test_llama3_8b.Llama8BTest.test_wrong_model_rejected_before_device_access) ... ok
+test_supported_topologies (test_llama3_lowering.DecodeResidencyTest.test_supported_topologies) ... ok
+test_all_model_weights_and_dense_projection_inputs_are_raw (test_llama3_row_major_weights.RowMajorWeightsTest.test_all_model_weights_and_dense_projection_inputs_are_raw) ... ok
+test_global_row_shards_do_not_change_checkpoint_bytes (test_llama3_row_major_weights.RowMajorWeightsTest.test_global_row_shards_do_not_change_checkpoint_bytes) ... ok
+test_kernel0_weights_are_raw (test_llama3_row_major_weights.RowMajorWeightsTest.test_kernel0_weights_are_raw) ... ok
+test_model_staging_bypasses_layout_conversion (test_llama3_row_major_weights.RowMajorWeightsTest.test_model_staging_bypasses_layout_conversion) ... ok
+test_raw_weight_device_readback (test_llama3_row_major_weights.RowMajorWeightsTest.test_raw_weight_device_readback) ... skipped 'set LLAMA_TEST_DEVICE to select hardware'
+test_weight_write_never_enters_numpy_layout_code (test_llama3_row_major_weights.RowMajorWeightsTest.test_weight_write_never_enters_numpy_layout_code) ... ok
+
+======================================================================
+FAIL: test_conversion_matches_torch (test_fp8.FP8Test.test_conversion_matches_torch)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/boop/tenstorrent/blackhole-py-llama3-8b-fp8/tests/test_fp8.py", line 13, in test_conversion_matches_torch
+    np.testing.assert_array_equal(encode(values),expected)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/boop/.local/lib/python3.14/site-packages/numpy/testing/_private/utils.py", line 920, in assert_array_equal
+    assert_array_compare(operator.__eq__, x, y, err_msg=err_msg,
+    ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+                         verbose=verbose, header='Arrays are not equal',
+                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+                         strict=strict)
+                         ^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.14/contextlib.py", line 85, in inner
+    return func(*args, **kwds)
+  File "/home/boop/.local/lib/python3.14/site-packages/numpy/testing/_private/utils.py", line 797, in assert_array_compare
+    raise AssertionError(msg)
+AssertionError: 
+Arrays are not equal
+
+Mismatched elements: 100000 / 100000 (100%)
+Max absolute difference: 125
+Max relative difference: 1.
+ x: array([  1, 128, 128, ...,   1,   0,   1], dtype=uint8)
+ y: array([111, 245, 253, ..., 120, 105,  75], dtype=uint8)
+
+----------------------------------------------------------------------
+Ran 15 tests in 18.046s
+
+FAILED (failures=1, skipped=1)

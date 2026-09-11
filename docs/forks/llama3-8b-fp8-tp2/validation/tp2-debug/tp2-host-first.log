@@ -1,0 +1,11 @@
+Rank 0 ready on card 0
+Rank 1 ready on card 1
+{"position": 0, "input_token": 128000, "token": 2943, "seconds": 0.06573537999065593, "host_sum_seconds": 0.0012698529899353161}
+{"position": 1, "input_token": 791, "token": 2943, "seconds": 0.0640124790079426, "host_sum_seconds": 0.0011541839921846986}
+{"position": 2, "input_token": 6864, "token": 2943, "seconds": 0.06519370300520677, "host_sum_seconds": 0.0015844290610402822}
+{"position": 3, "input_token": 315, "token": 43289, "seconds": 0.06334053399041295, "host_sum_seconds": 0.0012114240089431405}
+{"position": 4, "input_token": 9822, "token": 34605, "seconds": 0.06442591799714137, "host_sum_seconds": 0.0011858140205731615}
+{"position": 5, "input_token": 374, "token": 43289, "seconds": 0.06277167701045983, "host_sum_seconds": 0.001155383957666345}
+{"position": 6, "input_token": 43289, "token": 34605, "seconds": 0.061240757000632584, "host_sum_seconds": 0.001140247011790052}
+etzholm
+16.13 tok/s (host transport)

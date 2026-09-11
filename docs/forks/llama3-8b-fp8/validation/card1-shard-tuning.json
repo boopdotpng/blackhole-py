@@ -1,0 +1,107 @@
+[
+  {
+    "balanced_shards": false,
+    "balanced_noc": false,
+    "projection_workers": 117,
+    "tok_s": 29.101954711363465,
+    "median_us": 34389.838,
+    "exact_match": true,
+    "logit_sha256": {
+      "0": "34c0cbced4f8a513f596f6ad360d57fe83d5a3b51de85b06fdb3c0e9110c19cf",
+      "15": "836644bb13e455d73372c94f32dae850c1acdddf2b9e115b6eeaab991f9f4e8b",
+      "31": "26b40386177aa57cc14a9e41f11dc8c1e20528dfd6968ea2177a0a650f21ec26",
+      "32": "b042e4a57d41ed8ad0d4db82ff907120fda114a7269835c2cf22ae2f5c38cda4",
+      "62": "00f4b8ab6ca11292d9afc946106b581ded27dd752e3f0017226fe4aa2ae078a4"
+    }
+  },
+  {
+    "balanced_shards": true,
+    "balanced_noc": false,
+    "projection_workers": 117,
+    "tok_s": 29.29537787276428,
+    "median_us": 34157.469,
+    "exact_match": true,
+    "logit_sha256": {
+      "0": "34c0cbced4f8a513f596f6ad360d57fe83d5a3b51de85b06fdb3c0e9110c19cf",
+      "15": "836644bb13e455d73372c94f32dae850c1acdddf2b9e115b6eeaab991f9f4e8b",
+      "31": "26b40386177aa57cc14a9e41f11dc8c1e20528dfd6968ea2177a0a650f21ec26",
+      "32": "b042e4a57d41ed8ad0d4db82ff907120fda114a7269835c2cf22ae2f5c38cda4",
+      "62": "00f4b8ab6ca11292d9afc946106b581ded27dd752e3f0017226fe4aa2ae078a4"
+    }
+  },
+  {
+    "balanced_shards": true,
+    "balanced_noc": true,
+    "projection_workers": 117,
+    "tok_s": 28.621492886606898,
+    "median_us": 34965.204,
+    "exact_match": true,
+    "logit_sha256": {
+      "0": "34c0cbced4f8a513f596f6ad360d57fe83d5a3b51de85b06fdb3c0e9110c19cf",
+      "15": "836644bb13e455d73372c94f32dae850c1acdddf2b9e115b6eeaab991f9f4e8b",
+      "31": "26b40386177aa57cc14a9e41f11dc8c1e20528dfd6968ea2177a0a650f21ec26",
+      "32": "b042e4a57d41ed8ad0d4db82ff907120fda114a7269835c2cf22ae2f5c38cda4",
+      "62": "00f4b8ab6ca11292d9afc946106b581ded27dd752e3f0017226fe4aa2ae078a4"
+    }
+  },
+  {
+    "balanced_shards": false,
+    "balanced_noc": true,
+    "projection_workers": 117,
+    "tok_s": 28.520439936961115,
+    "median_us": 35086.363,
+    "exact_match": true,
+    "logit_sha256": {
+      "0": "34c0cbced4f8a513f596f6ad360d57fe83d5a3b51de85b06fdb3c0e9110c19cf",
+      "15": "836644bb13e455d73372c94f32dae850c1acdddf2b9e115b6eeaab991f9f4e8b",
+      "31": "26b40386177aa57cc14a9e41f11dc8c1e20528dfd6968ea2177a0a650f21ec26",
+      "32": "b042e4a57d41ed8ad0d4db82ff907120fda114a7269835c2cf22ae2f5c38cda4",
+      "62": "00f4b8ab6ca11292d9afc946106b581ded27dd752e3f0017226fe4aa2ae078a4"
+    }
+  },
+  {
+    "balanced_shards": true,
+    "balanced_noc": false,
+    "projection_workers": 88,
+    "tok_s": 29.30468675585288,
+    "median_us": 34147.36,
+    "exact_match": true,
+    "logit_sha256": {
+      "0": "34c0cbced4f8a513f596f6ad360d57fe83d5a3b51de85b06fdb3c0e9110c19cf",
+      "15": "836644bb13e455d73372c94f32dae850c1acdddf2b9e115b6eeaab991f9f4e8b",
+      "31": "26b40386177aa57cc14a9e41f11dc8c1e20528dfd6968ea2177a0a650f21ec26",
+      "32": "b042e4a57d41ed8ad0d4db82ff907120fda114a7269835c2cf22ae2f5c38cda4",
+      "62": "00f4b8ab6ca11292d9afc946106b581ded27dd752e3f0017226fe4aa2ae078a4"
+    }
+  },
+  {
+    "balanced_shards": true,
+    "balanced_noc": true,
+    "projection_workers": 88,
+    "tok_s": 28.88421478516226,
+    "median_us": 34640.396,
+    "exact_match": true,
+    "logit_sha256": {
+      "0": "34c0cbced4f8a513f596f6ad360d57fe83d5a3b51de85b06fdb3c0e9110c19cf",
+      "15": "836644bb13e455d73372c94f32dae850c1acdddf2b9e115b6eeaab991f9f4e8b",
+      "31": "26b40386177aa57cc14a9e41f11dc8c1e20528dfd6968ea2177a0a650f21ec26",
+      "32": "b042e4a57d41ed8ad0d4db82ff907120fda114a7269835c2cf22ae2f5c38cda4",
+      "62": "00f4b8ab6ca11292d9afc946106b581ded27dd752e3f0017226fe4aa2ae078a4"
+    }
+  },
+  {
+    "balanced_shards": true,
+    "balanced_noc": true,
+    "projection_workers": 96,
+    "tok_s": 28.47968306431966,
+    "median_us": 35143.332,
+    "exact_match": true,
+    "logit_sha256": {
+      "0": "34c0cbced4f8a513f596f6ad360d57fe83d5a3b51de85b06fdb3c0e9110c19cf",
+      "15": "836644bb13e455d73372c94f32dae850c1acdddf2b9e115b6eeaab991f9f4e8b",
+      "31": "26b40386177aa57cc14a9e41f11dc8c1e20528dfd6968ea2177a0a650f21ec26",
+      "32": "b042e4a57d41ed8ad0d4db82ff907120fda114a7269835c2cf22ae2f5c38cda4",
+      "62": "00f4b8ab6ca11292d9afc946106b581ded27dd752e3f0017226fe4aa2ae078a4"
+    }
+  }
+]

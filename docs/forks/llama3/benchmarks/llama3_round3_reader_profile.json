@@ -1,0 +1,73 @@
+[
+  {
+    "context": 64,
+    "device": 0,
+    "attention_cores": 16,
+    "launch_counts": {
+      "embedding": 1,
+      "qkv": 16,
+      "attention": 16,
+      "o": 16,
+      "gate": 16,
+      "down": 16,
+      "lm": 1,
+      "argmax": 1
+    },
+    "full_decode_us": 6494.416,
+    "kernels": {
+      "embedding": {
+        "us": 4.1655625,
+        "per_token_us": 4.1655625
+      },
+      "o": {
+        "us": 32.51231250000001,
+        "per_token_us": 520.1970000000001
+      },
+      "qkv": {
+        "us": 41.1235625,
+        "per_token_us": 657.977
+      },
+      "attention": {
+        "us": 29.557375000000004,
+        "per_token_us": 472.91800000000006
+      },
+      "gate": {
+        "us": 151.01775,
+        "per_token_us": 2416.284
+      },
+      "down": {
+        "us": 81.9394375,
+        "per_token_us": 1311.031
+      },
+      "lm": {
+        "us": 1054.957875,
+        "per_token_us": 1054.957875
+      },
+      "argmax": {
+        "us": 35.97225,
+        "per_token_us": 35.97225
+      },
+      "noop1": {
+        "us": 2.4380625,
+        "per_token_us": 0.0
+      },
+      "noop8": {
+        "us": 2.4344374999999996,
+        "per_token_us": 0.0
+      },
+      "noop32": {
+        "us": 2.6468125000000002,
+        "per_token_us": 0.0
+      },
+      "noop40": {
+        "us": 2.6450625,
+        "per_token_us": 0.0
+      },
+      "noop117": {
+        "us": 3.4493750000000003,
+        "per_token_us": 0.0
+      }
+    },
+    "sum_kernel_us": 6473.5026875
+  }
+]

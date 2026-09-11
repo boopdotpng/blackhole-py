@@ -1,0 +1,20 @@
+{
+  "64": {
+    "exact_tokens_and_sampled_logits": true,
+    "tokens_compared": 192,
+    "logit_buffers_compared": 18,
+    "round2_tok_s": 152.3421370553082,
+    "round3_tok_s": 153.3656173389531,
+    "reference": "llama3_round2_final_64.json",
+    "candidate": "llama3_round3_final_64.json"
+  },
+  "512": {
+    "exact_tokens_and_sampled_logits": true,
+    "tokens_compared": 1536,
+    "logit_buffers_compared": 102,
+    "round2_tok_s": 148.23790256655235,
+    "round3_tok_s": 149.21538503953204,
+    "reference": "llama3_round2_final_512.json",
+    "candidate": "llama3_round3_final_512.json"
+  }
+}

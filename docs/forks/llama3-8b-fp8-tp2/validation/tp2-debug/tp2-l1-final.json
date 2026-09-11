@@ -1,0 +1,116 @@
+{
+  "transport": "l1",
+  "devices": [
+    0,
+    1
+  ],
+  "startup_seconds": 24.463689819007413,
+  "tokens_per_second": 66.09877791364735,
+  "prompt_tokens": [
+    128000,
+    791,
+    6864,
+    315,
+    9822,
+    374
+  ],
+  "generated_tokens": [
+    12366,
+    11,
+    902,
+    374
+  ],
+  "text": " Paris, which is",
+  "rows": [
+    {
+      "position": 0,
+      "input_token": 128000,
+      "token": 14924,
+      "seconds": 0.015660230012144893,
+      "host_sum_seconds": 0.0,
+      "reference_token": 14924,
+      "relative_rms": 0.02150077000260353,
+      "max_abs_error": 0.375
+    },
+    {
+      "position": 1,
+      "input_token": 791,
+      "token": 220,
+      "seconds": 0.015113553003175184,
+      "host_sum_seconds": 0.0,
+      "reference_token": 220,
+      "relative_rms": 0.01508200541138649,
+      "max_abs_error": 0.34375
+    },
+    {
+      "position": 2,
+      "input_token": 6864,
+      "token": 315,
+      "seconds": 0.015109993008081801,
+      "host_sum_seconds": 0.0,
+      "reference_token": 315,
+      "relative_rms": 0.04519100487232208,
+      "max_abs_error": 0.859375
+    },
+    {
+      "position": 3,
+      "input_token": 315,
+      "token": 279,
+      "seconds": 0.01510776299983263,
+      "host_sum_seconds": 0.0,
+      "reference_token": 279,
+      "relative_rms": 0.04090528562664986,
+      "max_abs_error": 0.578125
+    },
+    {
+      "position": 4,
+      "input_token": 9822,
+      "token": 11,
+      "seconds": 0.014999312988948077,
+      "host_sum_seconds": 0.0,
+      "reference_token": 11,
+      "relative_rms": 0.05276526138186455,
+      "max_abs_error": 0.6953125
+    },
+    {
+      "position": 5,
+      "input_token": 374,
+      "token": 12366,
+      "seconds": 0.015114912996068597,
+      "host_sum_seconds": 0.0,
+      "reference_token": 12366,
+      "relative_rms": 0.03800574690103531,
+      "max_abs_error": 0.5390625
+    },
+    {
+      "position": 6,
+      "input_token": 12366,
+      "token": 11,
+      "seconds": 0.015099373005796224,
+      "host_sum_seconds": 0.0,
+      "reference_token": 11,
+      "relative_rms": 0.07090955972671509,
+      "max_abs_error": 0.65234375
+    },
+    {
+      "position": 7,
+      "input_token": 11,
+      "token": 902,
+      "seconds": 0.015176542001427151,
+      "host_sum_seconds": 0.0,
+      "reference_token": 902,
+      "relative_rms": 0.06567061692476273,
+      "max_abs_error": 0.6484375
+    },
+    {
+      "position": 8,
+      "input_token": 902,
+      "token": 374,
+      "seconds": 0.015124662997550331,
+      "host_sum_seconds": 0.0,
+      "reference_token": 374,
+      "relative_rms": 0.06033153831958771,
+      "max_abs_error": 0.609375
+    }
+  ]
+}

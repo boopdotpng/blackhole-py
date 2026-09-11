@@ -1,0 +1,4 @@
+Optimized
+  context 17..144: 48.11 tok/s, 20784.07 us median
+  context 20..147: 48.08 tok/s, 20785.84 us median
+  context 19..146: 48.09 tok/s, 20790.30 us median
