@@ -41,6 +41,12 @@ class Timestamp:
   cycles: int
   STRUCT: ClassVar[Struct] = Struct("<Q")
 
+  @property
+  def us(self): return self.cycles / 1350
+
+  @property
+  def seconds(self): return self.cycles / 1_350_000_000
+
   @classmethod
   def unpack(cls, data): return cls(*cls.STRUCT.unpack(data))
 

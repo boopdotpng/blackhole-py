@@ -41,6 +41,7 @@ class Device:
   """Command-queue runtime with no tensor, kernel, or TTK abstractions."""
 
   DEFAULT_INDEX = 0
+  command_queue_type = CommandQueue
 
   def __init__(self, index=None, sysmem_size=1 << 30):
     index = self.DEFAULT_INDEX if index is None else index
@@ -80,7 +81,7 @@ class Device:
           window.write(TensixL1.WORKER_TEXT_BASE[role], image)
       window.target(0, self.pcie.dram_core)
       window.write(DRAM_BRISC_READY, bytes(8))
-      self.cq = CommandQueue(self.pcie)
+      self.cq = self.command_queue_type(self.pcie)
       for core in (self.pcie.prefetch_core, self.pcie.dispatch_core, self.pcie.dram_core):
         window.target(0, core)
         window.write(FirmwareControl.GO_SIGNAL, int(RunState.GO), bytes=1)
