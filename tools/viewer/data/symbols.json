@@ -1,0 +1,341 @@
+{
+  "addresses": {
+    "1572864": [
+      "TensixL1.SIZE"
+    ],
+    "13024": [
+      "TensixL1.MEM_ZEROS_BASE"
+    ],
+    "16336": [
+      "TensixL1.PARAM_BASE"
+    ],
+    "73728": [
+      "TensixL1.KERNEL_CACHE_BASE"
+    ],
+    "270336": [
+      "TensixL1.KERNEL_CACHE_END",
+      "TensixL1.DATA_BUFFER_SPACE_BASE"
+    ],
+    "1572832": [
+      "TensixL1.RUNTIME_PARAM_BASE",
+      "TensixL1.DATA_BUFFER_SPACE_END"
+    ],
+    "4289732592": [
+      "Firmware.BRISC_STACK_TOP",
+      "Firmware.NCRISC_STACK_TOP"
+    ],
+    "4289728496": [
+      "Firmware.TRISC_STACK_TOP"
+    ],
+    "4289726448": [
+      "Firmware.TRISC_GLOBAL_POINTER"
+    ],
+    "1077952576": [
+      "RunState.ALL_INIT"
+    ],
+    "268435456": [
+      "CQConfig.PCIE_MID"
+    ],
+    "16778771": [
+      "CQConfig.PCIE_COORD"
+    ],
+    "4289724416": [
+      "TensixMMIO.LOCAL_RAM_START"
+    ],
+    "4289732607": [
+      "TensixMMIO.LOCAL_RAM_END"
+    ],
+    "4292870144": [
+      "TensixMMIO.REGFILE_BASE"
+    ],
+    "4293132288": [
+      "TensixMMIO.INSTRN_BUF_BASE"
+    ],
+    "4293394436": [
+      "TensixMMIO.PC_BUF_SYNC"
+    ],
+    "4293394440": [
+      "TensixMMIO.PC_BUF_MOP_SYNC"
+    ],
+    "4293853184": [
+      "TensixMMIO.CFG_BASE",
+      "CFG_BASE"
+    ],
+    "4293853196": [
+      "TensixMMIO.ECC_SCRUBBER"
+    ],
+    "4293853928": [
+      "TensixMMIO.PRNG_SEED_SEED_VAL"
+    ],
+    "4293853924": [
+      "TensixMMIO.RISCV_IC_INVALIDATE"
+    ],
+    "4289798576": [
+      "TensixMMIO.RISCV_DEBUG_REG_SOFT_RESET_0"
+    ],
+    "4289798640": [
+      "TensixMMIO.RISCV_DEBUG_REG_WALL_CLOCK_L"
+    ],
+    "4289798648": [
+      "TensixMMIO.RISCV_DEBUG_REG_WALL_CLOCK_H"
+    ],
+    "4289794084": [
+      "TensixMMIO.RISCV_TDMA_REG_CLK_GATE_EN"
+    ],
+    "4289798696": [
+      "TensixMMIO.RISCV_DEBUG_REG_TRISC0_RESET_PC"
+    ],
+    "4289798700": [
+      "TensixMMIO.RISCV_DEBUG_REG_TRISC1_RESET_PC"
+    ],
+    "4289798704": [
+      "TensixMMIO.RISCV_DEBUG_REG_TRISC2_RESET_PC"
+    ],
+    "4289798708": [
+      "TensixMMIO.RISCV_DEBUG_REG_TRISC_RESET_PC_OVERRIDE"
+    ],
+    "4289798712": [
+      "TensixMMIO.RISCV_DEBUG_REG_NCRISC_RESET_PC"
+    ],
+    "4289798716": [
+      "TensixMMIO.RISCV_DEBUG_REG_NCRISC_RESET_PC_OVERRIDE"
+    ],
+    "4289798720": [
+      "TensixMMIO.RISCV_DEBUG_REG_DEST_CG_CTRL"
+    ],
+    "292864": [
+      "TensixMMIO.SOFT_RESET_ALL"
+    ],
+    "290816": [
+      "TensixMMIO.SOFT_RESET_BRISC_ONLY_RUN"
+    ],
+    "4096": [
+      "F32_TILE_BYTES",
+      "Wait.CFGEXU"
+    ],
+    "4290248704": [
+      "MOP_CFG"
+    ],
+    "4293394484": [
+      "UNPACK_CONFIG_SYNC"
+    ],
+    "4293394464": [
+      "PC_SEMAPHORE_BASE"
+    ],
+    "4293853360": [
+      "UnpackCfg.ADDRESS_XY0"
+    ],
+    "4293853364": [
+      "UnpackCfg.ADDRESS_ZW0"
+    ],
+    "4293853408": [
+      "UnpackCfg.ADDRESS_XY1"
+    ],
+    "4293853412": [
+      "UnpackCfg.ADDRESS_ZW1"
+    ],
+    "4293853440": [
+      "UnpackCfg.TILE_DESCRIPTOR"
+    ],
+    "4293853472": [
+      "UnpackCfg.OPTIONS"
+    ],
+    "4293853488": [
+      "UnpackCfg.BASE"
+    ],
+    "4293853520": [
+      "UnpackCfg.DESTINATION"
+    ],
+    "4293853528": [
+      "UnpackCfg.X_DIMENSION"
+    ],
+    "4293853552": [
+      "UnpackCfg.OFFSET"
+    ],
+    "4293853188": [
+      "PackCfg.ALU_FORMAT"
+    ],
+    "4293853192": [
+      "PackCfg.ACCUMULATION"
+    ],
+    "4293853232": [
+      "PackCfg.ADDRESS_XY"
+    ],
+    "4293853236": [
+      "PackCfg.ADDRESS_ZW"
+    ],
+    "4293853256": [
+      "PackCfg.DESTINATION_READ"
+    ],
+    "4293853264": [
+      "PackCfg.TILE_ROW_MAPPING"
+    ],
+    "4293853268": [
+      "PackCfg.TILE_ROW_MAPPING1"
+    ],
+    "4293853280": [
+      "PackCfg.EDGE"
+    ],
+    "4293853284": [
+      "PackCfg.EDGE1"
+    ],
+    "4293853296": [
+      "PackCfg.COUNTERS"
+    ],
+    "4293853456": [
+      "PackCfg.SECTION_SIZES"
+    ],
+    "4293853460": [
+      "PackCfg.L1_DESTINATION"
+    ],
+    "4293853464": [
+      "PackCfg.DATA_FORMAT"
+    ],
+    "4293853904": [
+      "PackCfg.DESTINATION_OFFSET"
+    ]
+  },
+  "enums": {
+    "TensixL1": {
+      "SIZE": 1572864,
+      "BOOT": 0,
+      "BOOT_SIZE": 4,
+      "MEM_ZEROS_BASE": 13024,
+      "MEM_ZEROS_SIZE": 512,
+      "PARAM_BASE": 16336,
+      "PARAM_SIZE": 48,
+      "PARAM_SLOTS": 12,
+      "KERNEL_CACHE_BASE": 73728,
+      "KERNEL_CACHE_END": 270336,
+      "PARAM_TEMPLATE_ALIGNMENT": 32,
+      "PARAM_TEMPLATE_STRIDE": 96,
+      "PARAM_TEMPLATE_MAX_PARAMS": 12,
+      "PARAM_TEMPLATE_VALUES": 4,
+      "PARAM_TEMPLATE_IDS": 52,
+      "PARAM_TEMPLATE_KERNELS": 64,
+      "DATA_BUFFER_SPACE_BASE": 270336,
+      "RUNTIME_PARAM_BASE": 1572832,
+      "RUNTIME_PARAM_SLOTS": 8,
+      "DATA_BUFFER_SPACE_END": 1572832
+    },
+    "Firmware": {
+      "BRISC_STACK_TOP": 4289732592,
+      "NCRISC_STACK_TOP": 4289732592,
+      "TRISC_STACK_TOP": 4289728496,
+      "TRISC_GLOBAL_POINTER": 4289726448
+    },
+    "RunState": {
+      "DONE": 0,
+      "BOOT_READY": 2,
+      "GO": 128,
+      "ALL_INIT": 1077952576
+    },
+    "FirmwareControl": {
+      "SUBORDINATE_SYNC": 104,
+      "GO_SIGNAL": 883
+    },
+    "CQConfig": {
+      "PCIE_MID": 268435456,
+      "PCIE_COORD": 16778771,
+      "PREFETCH_COORD": 142,
+      "DISPATCH_COORD": 206,
+      "DRAM_COORD": 270
+    },
+    "TensixMMIO": {
+      "LOCAL_RAM_START": 4289724416,
+      "LOCAL_RAM_END": 4289732607,
+      "REGFILE_BASE": 4292870144,
+      "INSTRN_BUF_BASE": 4293132288,
+      "PC_BUF_SYNC": 4293394436,
+      "PC_BUF_MOP_SYNC": 4293394440,
+      "CFG_BASE": 4293853184,
+      "ECC_SCRUBBER": 4293853196,
+      "PRNG_SEED_SEED_VAL": 4293853928,
+      "RISCV_IC_INVALIDATE": 4293853924,
+      "RISCV_IC_ALL_MASK": 31,
+      "NCRISC_HALT_RESUME_ADDR": 96,
+      "RISCV_DEBUG_REG_SOFT_RESET_0": 4289798576,
+      "RISCV_DEBUG_REG_WALL_CLOCK_L": 4289798640,
+      "RISCV_DEBUG_REG_WALL_CLOCK_H": 4289798648,
+      "RISCV_TDMA_REG_CLK_GATE_EN": 4289794084,
+      "RISCV_DEBUG_REG_TRISC0_RESET_PC": 4289798696,
+      "RISCV_DEBUG_REG_TRISC1_RESET_PC": 4289798700,
+      "RISCV_DEBUG_REG_TRISC2_RESET_PC": 4289798704,
+      "RISCV_DEBUG_REG_TRISC_RESET_PC_OVERRIDE": 4289798708,
+      "RISCV_DEBUG_REG_NCRISC_RESET_PC": 4289798712,
+      "RISCV_DEBUG_REG_NCRISC_RESET_PC_OVERRIDE": 4289798716,
+      "RISCV_DEBUG_REG_DEST_CG_CTRL": 4289798720,
+      "SOFT_RESET_ALL": 292864,
+      "SOFT_RESET_BRISC_ONLY_RUN": 290816
+    },
+    "Stall": {
+      "TDMA": 1,
+      "SYNC": 2,
+      "PACK": 4,
+      "UNPACK": 8,
+      "XMOV": 16,
+      "THCON": 32,
+      "MATH": 64,
+      "CFG": 128,
+      "SFPU": 256
+    },
+    "Wait": {
+      "THCON": 1,
+      "UNPACK0": 2,
+      "UNPACK1": 4,
+      "PACK0": 8,
+      "MATH": 16,
+      "SRCA_CLR": 32,
+      "SRCB_CLR": 64,
+      "SRCA_VLD": 128,
+      "SRCB_VLD": 256,
+      "XMOV": 512,
+      "TRISC_CFG": 1024,
+      "SFPU": 2048,
+      "CFGEXU": 4096
+    },
+    "SemWait": {
+      "ON_ZERO": 1,
+      "ON_MAX": 2
+    },
+    "Sem": {
+      "MATH_PACK": 1,
+      "UNPACK_TO_DEST": 2,
+      "UNPACK_SYNC": 5,
+      "MATH_DONE": 7
+    },
+    "UnpackTarget": {
+      "SRCA": 0,
+      "SRCB": 1,
+      "DST": 2
+    },
+    "UnpackCfg": {
+      "ADDRESS_XY0": 4293853360,
+      "ADDRESS_ZW0": 4293853364,
+      "ADDRESS_XY1": 4293853408,
+      "ADDRESS_ZW1": 4293853412,
+      "TILE_DESCRIPTOR": 4293853440,
+      "OPTIONS": 4293853472,
+      "BASE": 4293853488,
+      "DESTINATION": 4293853520,
+      "X_DIMENSION": 4293853528,
+      "OFFSET": 4293853552
+    },
+    "PackCfg": {
+      "ALU_FORMAT": 4293853188,
+      "ACCUMULATION": 4293853192,
+      "ADDRESS_XY": 4293853232,
+      "ADDRESS_ZW": 4293853236,
+      "DESTINATION_READ": 4293853256,
+      "TILE_ROW_MAPPING": 4293853264,
+      "TILE_ROW_MAPPING1": 4293853268,
+      "EDGE": 4293853280,
+      "EDGE1": 4293853284,
+      "COUNTERS": 4293853296,
+      "SECTION_SIZES": 4293853456,
+      "L1_DESTINATION": 4293853460,
+      "DATA_FORMAT": 4293853464,
+      "DESTINATION_OFFSET": 4293853904
+    }
+  }
+}

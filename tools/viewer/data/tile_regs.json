@@ -1,0 +1,1394 @@
+{
+  "address_map": [
+    {
+      "base": "0xFFB00000",
+      "limit": "0xFFB00FFF",
+      "name": "riscv_local_mem"
+    },
+    {
+      "base": "0xFFB11000",
+      "limit": "0xFFB11FFF",
+      "name": "riscv_tdma_regs"
+    },
+    {
+      "base": "0xFFB12000",
+      "limit": "0xFFB12FFF",
+      "name": "riscv_debug_regs"
+    },
+    {
+      "base": "0xFFB14000",
+      "limit": "0xFFB14FFF",
+      "name": "eth_risc_ctrl"
+    },
+    {
+      "base": "0xFFB14000",
+      "limit": "0xFFB15FFF",
+      "name": "brisc_local_mem"
+    },
+    {
+      "base": "0xFFB16000",
+      "limit": "0xFFB17FFF",
+      "name": "ncrisc_local_mem"
+    },
+    {
+      "base": "0xFFB18000",
+      "limit": "0xFFB18FFF",
+      "name": "trisc0_local_mem"
+    },
+    {
+      "base": "0xFFB1A000",
+      "limit": "0xFFB1AFFF",
+      "name": "trisc1_local_mem"
+    },
+    {
+      "base": "0xFFB1C000",
+      "limit": "0xFFB1CFFF",
+      "name": "trisc2_local_mem"
+    },
+    {
+      "base": "0xFFB20000",
+      "limit": "0xFFB2FFFF",
+      "name": "noc0_regs"
+    },
+    {
+      "base": "0xFFB30000",
+      "limit": "0xFFB3FFFF",
+      "name": "noc1_regs"
+    },
+    {
+      "base": "0xFFB40000",
+      "limit": "0xFFB40000",
+      "name": "noc_overlay"
+    },
+    {
+      "base": "0xFFB80000",
+      "limit": "0xFFB80FFF",
+      "name": "tensix_mop_cfg"
+    },
+    {
+      "base": "0xFFBD8000",
+      "limit": "0xFFBDFFFF",
+      "name": "tensix_dst"
+    },
+    {
+      "base": "0xFFE00000",
+      "limit": "0xFFE00FFF",
+      "name": "tensix_regfile"
+    },
+    {
+      "base": "0xFFE40000",
+      "limit": "0xFFE40FFF",
+      "name": "tensix_inst"
+    },
+    {
+      "base": "0xFFE50000",
+      "limit": "0xFFE50FFF",
+      "name": "tensix_inst1"
+    },
+    {
+      "base": "0xFFE60000",
+      "limit": "0xFFE60FFF",
+      "name": "tensix_inst2"
+    },
+    {
+      "base": "0xFFE80000",
+      "limit": "0xFFE80FFF",
+      "name": "tensix_pc_buf"
+    },
+    {
+      "base": "0xFFE90000",
+      "limit": "0xFFE90FFF",
+      "name": "tensix_pc1_buf"
+    },
+    {
+      "base": "0xFFEA0000",
+      "limit": "0xFFEA0FFF",
+      "name": "tensix_pc2_buf"
+    },
+    {
+      "base": "0xFFEC0000",
+      "limit": "0xFFEC0FFF",
+      "name": "tensix_mailbox0"
+    },
+    {
+      "base": "0xFFEC1000",
+      "limit": "0xFFEC1FFF",
+      "name": "tensix_mailbox1"
+    },
+    {
+      "base": "0xFFEC2000",
+      "limit": "0xFFEC2FFF",
+      "name": "tensix_mailbox2"
+    },
+    {
+      "base": "0xFFEC3000",
+      "limit": "0xFFEC3FFF",
+      "name": "tensix_mailbox3"
+    },
+    {
+      "base": "0xFFEF0000",
+      "limit": "0xFFEF0FFF",
+      "name": "tensix_cfg"
+    },
+    {
+      "base": "0xFFB90000",
+      "limit": "0xFFB92FFF",
+      "name": "eth_txq"
+    },
+    {
+      "base": "0xFFB94000",
+      "limit": "0xFFB96FFF",
+      "name": "eth_rxq"
+    },
+    {
+      "base": "0xFFB98000",
+      "limit": "0xFFB981FF",
+      "name": "eth_ctrl_regs"
+    },
+    {
+      "base": "0xFFB98200",
+      "limit": "0xFFB986FF",
+      "name": "eth_txpkt_cfg"
+    },
+    {
+      "base": "0x10000000",
+      "limit": "0x1007FFFF",
+      "name": "arc_csm"
+    },
+    {
+      "base": "0x80000000",
+      "limit": "0x800FFFFF",
+      "name": "arc_apb"
+    },
+    {
+      "base": "0x30000",
+      "limit": "0x3FFFF",
+      "name": "arc_apb_reset_unit"
+    },
+    {
+      "base": "0x50000",
+      "limit": "0x50FFF",
+      "name": "arc_apb_niu0"
+    },
+    {
+      "base": "0x58000",
+      "limit": "0x58FFF",
+      "name": "arc_apb_niu1"
+    },
+    {
+      "base": "0xB0000",
+      "limit": "0xB0FFF",
+      "name": "arc_apb_msi_fifo"
+    },
+    {
+      "base": "0xF800000000000000",
+      "limit": "0xFBFFFFFFFFFFFFFF",
+      "name": "pcie_dbi"
+    },
+    {
+      "base": "0xFFFFFFFFFF000000",
+      "limit": "0xFFFFFFFFFFFFFFFF",
+      "name": "pcie_niu"
+    }
+  ],
+  "regs": [
+    {
+      "name": "riscv_tdma_regs",
+      "regs": [
+        {
+          "offset": "0x0",
+          "rw": null,
+          "reset_value": null,
+          "name": "xmov_src_addr",
+          "unsupported": true
+        },
+        {
+          "offset": "0x4",
+          "rw": null,
+          "reset_value": null,
+          "name": "xmov_dst_addr",
+          "unsupported": true
+        },
+        {
+          "offset": "0x8",
+          "rw": null,
+          "reset_value": null,
+          "name": "xmov_size",
+          "unsupported": true
+        },
+        {
+          "offset": "0xC",
+          "rw": null,
+          "reset_value": null,
+          "name": "xmov_direction",
+          "unsupported": true
+        },
+        {
+          "offset": "0x10",
+          "rw": null,
+          "reset_value": null,
+          "name": "command_addr",
+          "unsupported": true
+        },
+        {
+          "offset": "0x14",
+          "rw": null,
+          "reset_value": null,
+          "name": "status",
+          "unsupported": true
+        },
+        {
+          "offset": "0x18",
+          "rw": null,
+          "reset_value": null,
+          "name": "packed_size",
+          "unsupported": true
+        },
+        {
+          "offset": "0x1C",
+          "rw": null,
+          "reset_value": null,
+          "name": "acc_packed_size",
+          "unsupported": true
+        },
+        {
+          "offset": "0x24",
+          "rw": "wo",
+          "reset_value": null,
+          "name": "clk_gate_en"
+        },
+        {
+          "offset": "0x28",
+          "rw": null,
+          "reset_value": null,
+          "name": "clk_gate_hyst",
+          "unsupported": true
+        },
+        {
+          "offset": "0x2C",
+          "rw": null,
+          "reset_value": null,
+          "name": "xmov_l1_base_addr",
+          "unsupported": true
+        },
+        {
+          "offset": "0x30",
+          "rw": null,
+          "reset_value": null,
+          "name": "fifo_packed_tile_size",
+          "array_size": 1,
+          "array_stride": "0x100",
+          "unsupported": true
+        },
+        {
+          "offset": "0x34",
+          "rw": null,
+          "reset_value": null,
+          "name": "fifo_packed_tile_zeromask",
+          "array_size": 1,
+          "array_stride": "0x100",
+          "unsupported": true
+        },
+        {
+          "offset": "0x38",
+          "rw": null,
+          "reset_value": null,
+          "name": "fifo_packed_tile_status",
+          "unsupported": true
+        }
+      ]
+    },
+    {
+      "name": "riscv_debug_regs",
+      "regs": [
+        {
+          "offset": "0x0",
+          "rw": null,
+          "reset_value": null,
+          "name": "perf_cnt_instrn_thread0",
+          "unsupported": true
+        },
+        {
+          "offset": "0x4",
+          "rw": null,
+          "reset_value": null,
+          "name": "perf_cnt_instrn_thread1",
+          "unsupported": true
+        },
+        {
+          "offset": "0x8",
+          "rw": null,
+          "reset_value": null,
+          "name": "perf_cnt_instrn_thread2",
+          "unsupported": true
+        },
+        {
+          "offset": "0xC",
+          "rw": null,
+          "reset_value": null,
+          "name": "perf_cnt_tdma_unpack0",
+          "unsupported": true
+        },
+        {
+          "offset": "0x10",
+          "rw": null,
+          "reset_value": null,
+          "name": "perf_cnt_tdma_unpack1",
+          "unsupported": true
+        },
+        {
+          "offset": "0x14",
+          "rw": null,
+          "reset_value": null,
+          "name": "perf_cnt_tdma_unpack2",
+          "unsupported": true
+        },
+        {
+          "offset": "0x18",
+          "rw": null,
+          "reset_value": null,
+          "name": "perf_cnt_fpu0",
+          "unsupported": true
+        },
+        {
+          "offset": "0x1C",
+          "rw": null,
+          "reset_value": null,
+          "name": "perf_cnt_fpu1",
+          "unsupported": true
+        },
+        {
+          "offset": "0x20",
+          "rw": null,
+          "reset_value": null,
+          "name": "perf_cnt_fpu2",
+          "unsupported": true
+        },
+        {
+          "offset": "0x30",
+          "rw": null,
+          "reset_value": null,
+          "name": "perf_cnt_l1_0",
+          "unsupported": true
+        },
+        {
+          "offset": "0x34",
+          "rw": null,
+          "reset_value": null,
+          "name": "perf_cnt_l1_1",
+          "unsupported": true
+        },
+        {
+          "offset": "0x38",
+          "rw": null,
+          "reset_value": null,
+          "name": "perf_cnt_l1_2",
+          "unsupported": true
+        },
+        {
+          "offset": "0x3C",
+          "rw": null,
+          "reset_value": null,
+          "name": "perf_cnt_all",
+          "unsupported": true
+        },
+        {
+          "offset": "0x48",
+          "rw": null,
+          "reset_value": null,
+          "name": "dbg_l1_mem_reg0",
+          "unsupported": true
+        },
+        {
+          "offset": "0x4C",
+          "rw": null,
+          "reset_value": null,
+          "name": "dbg_l1_mem_reg1",
+          "unsupported": true
+        },
+        {
+          "offset": "0x50",
+          "rw": null,
+          "reset_value": null,
+          "name": "dbg_l1_mem_reg2",
+          "unsupported": true
+        },
+        {
+          "offset": "0x54",
+          "rw": "wo",
+          "reset_value": null,
+          "name": "dbg_bus_ctrl"
+        },
+        {
+          "offset": "0x58",
+          "rw": "wo",
+          "reset_value": null,
+          "name": "tensix_creg_read"
+        },
+        {
+          "offset": "0x5C",
+          "rw": "ro",
+          "reset_value": null,
+          "name": "dbg_rd_data"
+        },
+        {
+          "offset": "0x60",
+          "rw": "wo",
+          "reset_value": null,
+          "name": "dbg_array_rd_en"
+        },
+        {
+          "offset": "0x64",
+          "rw": "wo",
+          "reset_value": null,
+          "name": "dbg_array_rd_cmd"
+        },
+        {
+          "offset": "0x68",
+          "rw": "rw",
+          "reset_value": "0x00000000",
+          "name": "dbg_feature_disable"
+        },
+        {
+          "offset": "0x6C",
+          "rw": "ro",
+          "reset_value": null,
+          "name": "dbg_array_rd_data"
+        },
+        {
+          "offset": "0x70",
+          "rw": "wo",
+          "reset_value": null,
+          "name": "cg_ctrl_hyst0"
+        },
+        {
+          "offset": "0x74",
+          "rw": "wo",
+          "reset_value": null,
+          "name": "cg_ctrl_hyst1"
+        },
+        {
+          "offset": "0x78",
+          "rw": "ro",
+          "reset_value": null,
+          "name": "tensix_creg_rddata"
+        },
+        {
+          "offset": "0x7C",
+          "rw": "wo",
+          "reset_value": null,
+          "name": "cg_ctrl_hyst2"
+        },
+        {
+          "offset": "0x80",
+          "rw": null,
+          "reset_value": null,
+          "name": "risc_dbg_cntl_0",
+          "unsupported": true
+        },
+        {
+          "offset": "0x84",
+          "rw": null,
+          "reset_value": null,
+          "name": "risc_dbg_cntl_1",
+          "unsupported": true
+        },
+        {
+          "offset": "0x88",
+          "rw": null,
+          "reset_value": null,
+          "name": "risc_dbg_status_0",
+          "unsupported": true
+        },
+        {
+          "offset": "0x8C",
+          "rw": null,
+          "reset_value": null,
+          "name": "risc_dbg_status_1",
+          "unsupported": true
+        },
+        {
+          "offset": "0x90",
+          "rw": null,
+          "reset_value": null,
+          "name": "trisc_pc_buf_override",
+          "unsupported": true
+        },
+        {
+          "offset": "0x94",
+          "rw": null,
+          "reset_value": null,
+          "name": "dbg_invalid_instrn",
+          "unsupported": true
+        },
+        {
+          "offset": "0xA0",
+          "rw": null,
+          "reset_value": null,
+          "name": "dbg_instrn_buf_ctrl0",
+          "unsupported": true
+        },
+        {
+          "offset": "0xA4",
+          "rw": null,
+          "reset_value": null,
+          "name": "dbg_instrn_buf_ctrl1",
+          "unsupported": true
+        },
+        {
+          "offset": "0xA8",
+          "rw": "ro",
+          "reset_value": null,
+          "name": "dbg_instrn_buf_status"
+        },
+        {
+          "offset": "0xAC",
+          "rw": null,
+          "reset_value": null,
+          "name": "stoch_rnd_mask0",
+          "unsupported": true
+        },
+        {
+          "offset": "0xB0",
+          "rw": null,
+          "reset_value": null,
+          "name": "stoch_rnd_mask1",
+          "unsupported": true
+        },
+        {
+          "offset": "0xB4",
+          "rw": null,
+          "reset_value": null,
+          "name": "fpu_sticky_bits",
+          "unsupported": true
+        },
+        {
+          "offset": "0xB8",
+          "rw": null,
+          "reset_value": null,
+          "name": "eth_risc_prefetch_ctrl",
+          "unsupported": true
+        },
+        {
+          "offset": "0xBC",
+          "rw": null,
+          "reset_value": null,
+          "name": "eth_risc_prefetch_pc",
+          "unsupported": true
+        },
+        {
+          "offset": "0xF0",
+          "rw": null,
+          "reset_value": null,
+          "name": "perf_cnt_tdma_pack0",
+          "unsupported": true
+        },
+        {
+          "offset": "0xF4",
+          "rw": null,
+          "reset_value": null,
+          "name": "perf_cnt_tdma_pack1",
+          "unsupported": true
+        },
+        {
+          "offset": "0xF8",
+          "rw": null,
+          "reset_value": null,
+          "name": "perf_cnt_tdma_pack2",
+          "unsupported": true
+        },
+        {
+          "offset": "0x100",
+          "rw": null,
+          "reset_value": null,
+          "name": "perf_cnt_out_l_instrn_thread",
+          "unsupported": true
+        },
+        {
+          "offset": "0x104",
+          "rw": null,
+          "reset_value": null,
+          "name": "perf_cnt_out_h_instrn_thread",
+          "unsupported": true
+        },
+        {
+          "offset": "0x108",
+          "rw": null,
+          "reset_value": null,
+          "name": "perf_cnt_out_l_tdma_unpack",
+          "unsupported": true
+        },
+        {
+          "offset": "0x10C",
+          "rw": null,
+          "reset_value": null,
+          "name": "perf_cnt_out_h_tdma_unpack",
+          "unsupported": true
+        },
+        {
+          "offset": "0x110",
+          "rw": null,
+          "reset_value": null,
+          "name": "perf_cnt_out_l_tdma_pack",
+          "unsupported": true
+        },
+        {
+          "offset": "0x114",
+          "rw": null,
+          "reset_value": null,
+          "name": "perf_cnt_out_h_tdma_pack",
+          "unsupported": true
+        },
+        {
+          "offset": "0x118",
+          "rw": null,
+          "reset_value": null,
+          "name": "perf_cnt_out_l_dbg_l1",
+          "unsupported": true
+        },
+        {
+          "offset": "0x11C",
+          "rw": null,
+          "reset_value": null,
+          "name": "perf_cnt_out_h_dbg_l1",
+          "unsupported": true
+        },
+        {
+          "offset": "0x120",
+          "rw": null,
+          "reset_value": null,
+          "name": "perf_cnt_out_l_fpu",
+          "unsupported": true
+        },
+        {
+          "offset": "0x124",
+          "rw": null,
+          "reset_value": null,
+          "name": "perf_cnt_out_h_fpu",
+          "unsupported": true
+        },
+        {
+          "offset": "0x1B0",
+          "rw": "rw",
+          "reset_value": "0x00047800",
+          "name": "soft_reset_0"
+        },
+        {
+          "offset": "0x1D0",
+          "rw": null,
+          "reset_value": null,
+          "name": "ecc_ctrl",
+          "unsupported": true
+        },
+        {
+          "offset": "0x1D4",
+          "rw": null,
+          "reset_value": null,
+          "name": "ecc_status",
+          "unsupported": true
+        },
+        {
+          "offset": "0x1E0",
+          "rw": null,
+          "reset_value": null,
+          "name": "watchdog_timer",
+          "unsupported": true
+        },
+        {
+          "offset": "0x1E4",
+          "rw": null,
+          "reset_value": null,
+          "name": "wdt_cntl",
+          "unsupported": true
+        },
+        {
+          "offset": "0x1E8",
+          "rw": null,
+          "reset_value": null,
+          "name": "wdt_status",
+          "unsupported": true
+        },
+        {
+          "offset": "0x1F0",
+          "rw": "ro",
+          "reset_value": null,
+          "name": "wall_clock_0"
+        },
+        {
+          "offset": "0x1F4",
+          "rw": "ro",
+          "reset_value": null,
+          "name": "wall_clock_1"
+        },
+        {
+          "offset": "0x1F8",
+          "rw": "ro",
+          "reset_value": null,
+          "name": "wall_clock_1_at"
+        },
+        {
+          "offset": "0x1FC",
+          "rw": null,
+          "reset_value": null,
+          "name": "timestamp_dump_cmd",
+          "unsupported": true
+        },
+        {
+          "offset": "0x200",
+          "rw": null,
+          "reset_value": null,
+          "name": "timestamp_dump_cntl",
+          "unsupported": true
+        },
+        {
+          "offset": "0x204",
+          "rw": null,
+          "reset_value": null,
+          "name": "timestamp_dump_status",
+          "unsupported": true
+        },
+        {
+          "offset": "0x208",
+          "rw": null,
+          "reset_value": null,
+          "name": "timestamp_dump_buf0_start_addr",
+          "unsupported": true
+        },
+        {
+          "offset": "0x20C",
+          "rw": null,
+          "reset_value": null,
+          "name": "timestamp_dump_buf0_end_addr",
+          "unsupported": true
+        },
+        {
+          "offset": "0x210",
+          "rw": null,
+          "reset_value": null,
+          "name": "timestamp_dump_buf1_start_addr",
+          "unsupported": true
+        },
+        {
+          "offset": "0x214",
+          "rw": null,
+          "reset_value": null,
+          "name": "timestamp_dump_buf1_end_addr",
+          "unsupported": true
+        },
+        {
+          "offset": "0x218",
+          "rw": null,
+          "reset_value": null,
+          "name": "perf_cnt_mux_ctrl",
+          "unsupported": true
+        },
+        {
+          "offset": "0x21C",
+          "rw": null,
+          "reset_value": null,
+          "name": "dbg_l1_readback_offset",
+          "unsupported": true
+        },
+        {
+          "offset": "0x220",
+          "rw": null,
+          "reset_value": null,
+          "name": "lfsr_hit_mask",
+          "unsupported": true
+        },
+        {
+          "offset": "0x224",
+          "rw": null,
+          "reset_value": null,
+          "name": "disable_reset",
+          "unsupported": true
+        },
+        {
+          "offset": "0x228",
+          "rw": "rw",
+          "reset_value": null,
+          "name": "trisc0_reset_pc"
+        },
+        {
+          "offset": "0x22C",
+          "rw": "rw",
+          "reset_value": null,
+          "name": "trisc1_reset_pc"
+        },
+        {
+          "offset": "0x230",
+          "rw": "rw",
+          "reset_value": null,
+          "name": "trisc2_reset_pc"
+        },
+        {
+          "offset": "0x234",
+          "rw": "rw",
+          "reset_value": "0x00000000",
+          "name": "trisc_reset_pc_override"
+        },
+        {
+          "offset": "0x238",
+          "rw": "wo",
+          "reset_value": null,
+          "name": "ncrisc_reset_pc"
+        },
+        {
+          "offset": "0x23C",
+          "rw": "wo",
+          "reset_value": "0x00000000",
+          "name": "ncrisc_reset_pc_override"
+        },
+        {
+          "offset": "0x240",
+          "rw": "wo",
+          "reset_value": null,
+          "name": "dest_cg_ctrl"
+        },
+        {
+          "offset": "0x244",
+          "rw": "wo",
+          "reset_value": null,
+          "name": "cg_ctrl_en"
+        },
+        {
+          "offset": "0x248",
+          "rw": null,
+          "reset_value": null,
+          "name": "cg_kick",
+          "unsupported": true
+        }
+      ]
+    },
+    {
+      "name": "eth_risc_ctrl",
+      "regs": [
+        {
+          "offset": "0x0",
+          "rw": "rw",
+          "reset_value": "0x00000000",
+          "name": "ierisc_reset_pc"
+        },
+        {
+          "offset": "0x8",
+          "rw": "rw",
+          "reset_value": "0x00000000",
+          "name": "subordinate_ierisc_reset_pc"
+        },
+        {
+          "offset": "0x20",
+          "rw": "wo",
+          "reset_value": null,
+          "name": "interrupt_mode",
+          "array_size": 5,
+          "array_stride": "0x4"
+        }
+      ]
+    },
+    {
+      "name": "noc_regs",
+      "regs": [
+        {
+          "offset": "0x0",
+          "rw": "rw",
+          "reset_value": "0x00000000",
+          "name": "noc_targ_addr_lo",
+          "array_size": 4,
+          "array_stride": "0x800"
+        },
+        {
+          "offset": "0x4",
+          "rw": "rw",
+          "reset_value": "0x00000000",
+          "name": "noc_targ_addr_mid",
+          "array_size": 4,
+          "array_stride": "0x800"
+        },
+        {
+          "offset": "0x8",
+          "rw": "rw",
+          "reset_value": "0x00000000",
+          "name": "noc_targ_addr_hi",
+          "array_size": 4,
+          "array_stride": "0x800"
+        },
+        {
+          "offset": "0xC",
+          "rw": "rw",
+          "reset_value": "0x00000000",
+          "name": "noc_ret_addr_lo",
+          "array_size": 4,
+          "array_stride": "0x800"
+        },
+        {
+          "offset": "0x10",
+          "rw": "rw",
+          "reset_value": "0x00000000",
+          "name": "noc_ret_addr_mid",
+          "array_size": 4,
+          "array_stride": "0x800"
+        },
+        {
+          "offset": "0x14",
+          "rw": "rw",
+          "reset_value": "0x00000000",
+          "name": "noc_ret_addr_hi",
+          "array_size": 4,
+          "array_stride": "0x800"
+        },
+        {
+          "offset": "0x18",
+          "rw": "rw",
+          "reset_value": "0x00000000",
+          "name": "noc_packet_tag",
+          "array_size": 4,
+          "array_stride": "0x800"
+        },
+        {
+          "offset": "0x1C",
+          "rw": "rw",
+          "reset_value": "0x00000000",
+          "name": "noc_ctrl",
+          "array_size": 4,
+          "array_stride": "0x800"
+        },
+        {
+          "offset": "0x20",
+          "rw": "rw",
+          "reset_value": "0x00000000",
+          "name": "noc_at_len_be",
+          "array_size": 4,
+          "array_stride": "0x800"
+        },
+        {
+          "offset": "0x28",
+          "rw": "rw",
+          "reset_value": "0x00000000",
+          "name": "noc_at_data",
+          "array_size": 4,
+          "array_stride": "0x800"
+        },
+        {
+          "offset": "0x2C",
+          "rw": "wo",
+          "reset_value": null,
+          "name": "noc_brcst_exclude",
+          "array_size": 4,
+          "array_stride": "0x800"
+        },
+        {
+          "offset": "0x40",
+          "rw": "rw",
+          "reset_value": "0x00000000",
+          "name": "noc_cmd_ctrl",
+          "array_size": 4,
+          "array_stride": "0x800"
+        },
+        {
+          "offset": "0x44",
+          "rw": "ro",
+          "reset_value": null,
+          "name": "noc_node_id"
+        },
+        {
+          "offset": "0x60",
+          "rw": "wo",
+          "reset_value": null,
+          "name": "noc_clear_outstanding_req_cnt"
+        },
+        {
+          "offset": "0x100",
+          "rw": "rw",
+          "reset_value": "0x00000000",
+          "name": "niu_cfg_0"
+        },
+        {
+          "offset": "0x104",
+          "rw": "rw",
+          "reset_value": "0x00000000",
+          "name": "router_cfg_0"
+        },
+        {
+          "offset": "0x108",
+          "rw": "rw",
+          "reset_value": "0x00000000",
+          "name": "router_cfg_1"
+        },
+        {
+          "offset": "0x10C",
+          "rw": "rw",
+          "reset_value": "0x00000000",
+          "name": "router_cfg_2"
+        },
+        {
+          "offset": "0x110",
+          "rw": "rw",
+          "reset_value": "0x00000000",
+          "name": "router_cfg_3"
+        },
+        {
+          "offset": "0x118",
+          "rw": "rw",
+          "reset_value": "0x00000000",
+          "name": "noc_x_id_translate_table_0"
+        },
+        {
+          "offset": "0x11C",
+          "rw": "rw",
+          "reset_value": "0x00000000",
+          "name": "noc_x_id_translate_table_1"
+        },
+        {
+          "offset": "0x120",
+          "rw": "rw",
+          "reset_value": "0x00000000",
+          "name": "noc_x_id_translate_table_2"
+        },
+        {
+          "offset": "0x124",
+          "rw": "rw",
+          "reset_value": "0x00000000",
+          "name": "noc_x_id_translate_table_3"
+        },
+        {
+          "offset": "0x128",
+          "rw": "rw",
+          "reset_value": "0x00000000",
+          "name": "noc_x_id_translate_table_4"
+        },
+        {
+          "offset": "0x12C",
+          "rw": "rw",
+          "reset_value": "0x00000000",
+          "name": "noc_x_id_translate_table_5"
+        },
+        {
+          "offset": "0x130",
+          "rw": "rw",
+          "reset_value": "0x00000000",
+          "name": "noc_y_id_translate_table_0"
+        },
+        {
+          "offset": "0x134",
+          "rw": "rw",
+          "reset_value": "0x00000000",
+          "name": "noc_y_id_translate_table_1"
+        },
+        {
+          "offset": "0x138",
+          "rw": "rw",
+          "reset_value": "0x00000000",
+          "name": "noc_y_id_translate_table_2"
+        },
+        {
+          "offset": "0x13C",
+          "rw": "rw",
+          "reset_value": "0x00000000",
+          "name": "noc_y_id_translate_table_3"
+        },
+        {
+          "offset": "0x140",
+          "rw": "rw",
+          "reset_value": "0x00000000",
+          "name": "noc_y_id_translate_table_4"
+        },
+        {
+          "offset": "0x144",
+          "rw": "rw",
+          "reset_value": "0x00000000",
+          "name": "noc_y_id_translate_table_5"
+        },
+        {
+          "offset": "0x148",
+          "rw": "rw",
+          "reset_value": null,
+          "name": "noc_id_logical"
+        },
+        {
+          "offset": "0x150",
+          "rw": "rw",
+          "reset_value": "0x00000000",
+          "name": "noc_id_translate_col_mask"
+        },
+        {
+          "offset": "0x154",
+          "rw": "rw",
+          "reset_value": "0x00000000",
+          "name": "noc_id_translate_row_mask"
+        },
+        {
+          "offset": "0x200",
+          "rw": "ro",
+          "reset_value": "0x00000000",
+          "name": "niu_mst_atomic_resp_received"
+        },
+        {
+          "offset": "0x204",
+          "rw": "ro",
+          "reset_value": "0x00000000",
+          "name": "niu_mst_wr_ack_received"
+        },
+        {
+          "offset": "0x208",
+          "rw": "ro",
+          "reset_value": "0x00000000",
+          "name": "niu_mst_rd_resp_received"
+        },
+        {
+          "offset": "0x21C",
+          "rw": "ro",
+          "reset_value": "0x00000000",
+          "name": "niu_mst_posted_atomic_sent"
+        },
+        {
+          "offset": "0x228",
+          "rw": "ro",
+          "reset_value": "0x00000000",
+          "name": "niu_mst_nonposted_wr_req_sent"
+        },
+        {
+          "offset": "0x22C",
+          "rw": "ro",
+          "reset_value": "0x00000000",
+          "name": "niu_mst_posted_wr_req_sent"
+        },
+        {
+          "offset": "0x240",
+          "rw": "ro",
+          "reset_value": "0x00000000",
+          "name": "niu_mst_reqs_outstanding_id",
+          "array_size": 16,
+          "array_stride": "0x4"
+        },
+        {
+          "offset": "0x280",
+          "rw": "ro",
+          "reset_value": "0x00000000",
+          "name": "niu_mst_write_reqs_outgoing_id",
+          "array_size": 16,
+          "array_stride": "0x4"
+        }
+      ]
+    },
+    {
+      "name": "noc_overlay_stream",
+      "regs": [
+        {
+          "offset": "0x10",
+          "rw": "rw",
+          "reset_value": "0x00000000",
+          "name": "remote_src"
+        },
+        {
+          "offset": "0x20",
+          "rw": "rw",
+          "reset_value": "0x00000000",
+          "name": "remote_dest_buf_start"
+        },
+        {
+          "offset": "0x28",
+          "rw": "rw",
+          "reset_value": "0x00000000",
+          "name": "remote_dest_buf_size"
+        },
+        {
+          "offset": "0x8C",
+          "rw": "rw",
+          "reset_value": "0x00000000",
+          "name": "perf_config"
+        },
+        {
+          "offset": "0x438",
+          "rw": "wo",
+          "reset_value": null,
+          "name": "remote_dest_buf_space_available_update"
+        },
+        {
+          "offset": "0x4A4",
+          "rw": "ro",
+          "reset_value": "0x00000000",
+          "name": "remote_dest_buf_space_available"
+        }
+      ]
+    },
+    {
+      "name": "tensix_pc_buf",
+      "regs": [
+        {
+          "offset": "0x4",
+          "rw": "rw",
+          "reset_value": "0x00000000",
+          "name": "tensix_sync"
+        },
+        {
+          "offset": "0x8",
+          "rw": "rw",
+          "reset_value": "0x00000000",
+          "name": "mop_sync"
+        },
+        {
+          "offset": "0x20",
+          "rw": "rw",
+          "reset_value": "0x00000000",
+          "name": "semaphore",
+          "array_size": 8,
+          "array_stride": "0x4"
+        }
+      ]
+    },
+    {
+      "name": "eth_txq",
+      "regs": [
+        {
+          "offset": "0x0",
+          "rw": "rw",
+          "reset_value": "0x00000001",
+          "name": "control"
+        },
+        {
+          "offset": "0x4",
+          "rw": "rw",
+          "reset_value": "0x00000000",
+          "name": "cmd"
+        },
+        {
+          "offset": "0x8",
+          "rw": "ro",
+          "reset_value": "0x00000000",
+          "name": "status"
+        },
+        {
+          "offset": "0x14",
+          "rw": "wo",
+          "reset_value": null,
+          "name": "transfer_start_addr"
+        },
+        {
+          "offset": "0x18",
+          "rw": "wo",
+          "reset_value": null,
+          "name": "transfer_size_bytes"
+        },
+        {
+          "offset": "0x1C",
+          "rw": "wo",
+          "reset_value": null,
+          "name": "dest_addr"
+        },
+        {
+          "offset": "0x44",
+          "rw": "wo",
+          "reset_value": null,
+          "name": "remote_reg_data"
+        },
+        {
+          "offset": "0x6C",
+          "rw": "wo",
+          "reset_value": null,
+          "name": "data_packet_accept_ahead"
+        },
+        {
+          "offset": "0x80",
+          "rw": "wo",
+          "reset_value": null,
+          "name": "txpkt_cfg_sel_sw"
+        },
+        {
+          "offset": "0x84",
+          "rw": "wo",
+          "reset_value": null,
+          "name": "txpkt_cfg_sel_hw"
+        }
+      ]
+    },
+    {
+      "name": "eth_rxq",
+      "regs": [
+        {
+          "offset": "0x0",
+          "rw": "rw",
+          "reset_value": "0x00000002",
+          "name": "control"
+        }
+      ]
+    },
+    {
+      "name": "eth_ctrl_regs",
+      "regs": [
+        {
+          "offset": "0xC",
+          "rw": "ro",
+          "reset_value": null,
+          "name": "pcs_status"
+        },
+        {
+          "offset": "0x150",
+          "rw": "wo",
+          "reset_value": null,
+          "name": "mac_rx_routing"
+        },
+        {
+          "offset": "0x154",
+          "rw": "rw",
+          "reset_value": "0x00000A00",
+          "name": "mac_rx_addr_routing"
+        }
+      ]
+    },
+    {
+      "name": "eth_txpkt_cfg",
+      "regs": [
+        {
+          "offset": "0x18",
+          "rw": "wo",
+          "reset_value": null,
+          "name": "mac_da_lo"
+        },
+        {
+          "offset": "0x1C",
+          "rw": "wo",
+          "reset_value": null,
+          "name": "mac_da_hi"
+        }
+      ]
+    },
+    {
+      "name": "dbi",
+      "regs": [
+        {
+          "offset": "0x78",
+          "rw": "rw",
+          "reset_value": null,
+          "name": "device_control_device_status"
+        }
+      ]
+    },
+    {
+      "name": "reset_unit",
+      "regs": [
+        {
+          "offset": "0x60",
+          "rw": "rw",
+          "reset_value": "0x00000000",
+          "name": "scratch",
+          "array_size": 8,
+          "array_stride": "0x4"
+        },
+        {
+          "offset": "0x100",
+          "rw": "rw",
+          "reset_value": "0x00000000",
+          "name": "arc_misc_cntl"
+        },
+        {
+          "offset": "0x400",
+          "rw": "rw",
+          "reset_value": "0x00000000",
+          "name": "scratch_ram",
+          "array_size": 16,
+          "array_stride": "0x4"
+        }
+      ]
+    }
+  ]
+}

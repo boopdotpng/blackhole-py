@@ -1,0 +1,32 @@
+{
+  "sources": [
+    {
+      "path": "tt-ins-docs/lib/instructions.json",
+      "sha256": "789cc01c3032f09a4f2502cb4aa9724ff0536578a15ef664a1f382104a71799d"
+    },
+    {
+      "path": "blackhole-py/isa.py",
+      "sha256": "b9b11166638f297c27d40621bc378aa6854f58be4075789d7b8b6fb9d4883e89"
+    },
+    {
+      "path": "ttsim/data/bh/tensix_regs.json",
+      "sha256": "708c1b0983d2c8291b415a1f133f9b1861f23f18fe09ec34adaeb98540c8ed74"
+    },
+    {
+      "path": "ttsim/data/bh/tile_regs.json",
+      "sha256": "1664c3e11bafc757940ebcc6c20659bebd0f26e7b9ce0089bfbe4b1bbbf23d62"
+    },
+    {
+      "path": "ttsim/data/bh/tensix_isa.json",
+      "sha256": "8b0db923a59256b2fb184047a6c0afccb08e8699fd9e5897b873d2688b0d8e0d"
+    },
+    {
+      "path": "tt-metal/tt_metal/hw/inc/internal/tt-1xx/blackhole/cfg_defines.h",
+      "sha256": "df24c01e990cd8c1f395fb133f035692fc2d6ccbbc25f912071c5827964cc096"
+    },
+    {
+      "path": "ttsim/src/tensix.cpp",
+      "sha256": "5f7c5f702713d963e22109cd73fd7816c0578ae793b43495f91830327a516c0d"
+    }
+  ]
+}

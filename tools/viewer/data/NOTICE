@@ -1,0 +1,6 @@
+The instruction reference was adapted from the sibling tt-ins-docs project.
+Tensix ISA/register data and reset constants originate from Tenstorrent ttsim.
+Supplemental register fields originate from Tenstorrent tt-metal's Blackhole
+cfg_defines.h, as referenced by the Blackhole ISA BackendConfiguration manual.
+Tenstorrent source data: Copyright Tenstorrent USA, Inc., Apache-2.0.
+See LICENSE-APACHE-2.0 and provenance.json for source paths and content hashes.

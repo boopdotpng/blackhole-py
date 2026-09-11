@@ -1,0 +1,998 @@
+{
+ "MOP": {
+  "opcode": 1,
+  "args": {
+   "zmask_lo16_or_loop_count": "0:0",
+   "loop_count": "16:16",
+   "mop_type": "23:23"
+  }
+ },
+ "NOP": {
+  "opcode": 2,
+  "args": {}
+ },
+ "MOP_CFG": {
+  "opcode": 3,
+  "args": {
+   "zmask_hi16": "0:0"
+  }
+ },
+ "REPLAY": {
+  "opcode": 4,
+  "args": {
+   "load_mode": "0:0",
+   "execute_while_loading": "1:1",
+   "len": "4:4",
+   "start_idx": "14:14"
+  }
+ },
+ "RESOURCEDECL": {
+  "opcode": 5,
+  "unsupported": true
+ },
+ "MOVD2A": {
+  "opcode": 8,
+  "args": {
+   "dst": "9:0",
+   "instr_mod": "13:12",
+   "addr_mode": "16:14",
+   "src": "22:17",
+   "dest_32b_lo": "23:23"
+  }
+ },
+ "MOVDBGA2D": {
+  "opcode": 9,
+  "unsupported": true
+ },
+ "MOVD2B": {
+  "opcode": 10,
+  "args": {
+   "dst": "9:0",
+   "instr_mod": "13:12",
+   "addr_mode": "16:14",
+   "src": "22:17",
+   "dest_32b_lo": "23:23"
+  }
+ },
+ "MOVB2A": {
+  "opcode": 11,
+  "args": {
+   "srcb": "5:0",
+   "instr_mod": "13:12",
+   "addr_mode": "16:14",
+   "srca": "22:17"
+  }
+ },
+ "MOVDBGB2D": {
+  "opcode": 12,
+  "unsupported": true
+ },
+ "ZEROACC": {
+  "opcode": 16,
+  "args": {
+   "where": "9:0",
+   "addr_mode": "16:14",
+   "clear_zero_flags": "17:17",
+   "use_32_bit_mode": "18:18",
+   "clear_mode": "20:19"
+  }
+ },
+ "ZEROSRC": {
+  "opcode": 17,
+  "args": {
+   "src_mask": "1:0",
+   "bank_mask": "2:2",
+   "write_mode": "3:3",
+   "zero_val": "4:4"
+  }
+ },
+ "MOVA2D": {
+  "opcode": 18,
+  "args": {
+   "dst": "9:0",
+   "instr_mod": "13:12",
+   "addr_mode": "16:14",
+   "src": "22:17",
+   "dest_32b_lo": "23:23"
+  }
+ },
+ "MOVB2D": {
+  "opcode": 19,
+  "args": {
+   "dst": "9:0",
+   "movb2d_instr_mod": "13:11",
+   "addr_mode": "16:14",
+   "src": "22:17",
+   "dest_32b_lo": "23:23"
+  }
+ },
+ "TRNSPSRCA": {
+  "opcode": 20,
+  "unsupported": true
+ },
+ "RAREB": {
+  "opcode": 21,
+  "unsupported": true
+ },
+ "TRNSPSRCB": {
+  "opcode": 22,
+  "args": {}
+ },
+ "SHIFTXA": {
+  "opcode": 23,
+  "unsupported": true
+ },
+ "SHIFTXB": {
+  "opcode": 24,
+  "unsupported": true
+ },
+ "SETASHRMH0": {
+  "opcode": 26,
+  "unsupported": true
+ },
+ "SETASHRMH1": {
+  "opcode": 27,
+  "unsupported": true
+ },
+ "SETASHRMV": {
+  "opcode": 28,
+  "unsupported": true
+ },
+ "SETPKEDGOF": {
+  "opcode": 29,
+  "unsupported": true
+ },
+ "SETASHRMH": {
+  "opcode": 30,
+  "unsupported": true
+ },
+ "CLREXPHIST": {
+  "opcode": 33,
+  "unsupported": true
+ },
+ "CONV3S1": {
+  "opcode": 34,
+  "unsupported": true
+ },
+ "CONV3S2": {
+  "opcode": 35,
+  "unsupported": true
+ },
+ "MPOOL3S1": {
+  "opcode": 36,
+  "unsupported": true
+ },
+ "APOOL3S1": {
+  "opcode": 37,
+  "unsupported": true
+ },
+ "MVMUL": {
+  "opcode": 38,
+  "args": {
+   "dst": "9:0",
+   "addr_mode": "16:14",
+   "instr_mod19": "19:19",
+   "clear_dvalid": "23:22"
+  }
+ },
+ "ELWMUL": {
+  "opcode": 39,
+  "args": {
+   "dst": "9:0",
+   "addr_mode": "16:14",
+   "instr_mod19": "20:19",
+   "dest_accum_en": "21:21",
+   "clear_dvalid": "23:22"
+  }
+ },
+ "ELWADD": {
+  "opcode": 40,
+  "args": {
+   "dst": "9:0",
+   "addr_mode": "16:14",
+   "instr_mod19": "20:19",
+   "dest_accum_en": "21:21",
+   "clear_dvalid": "23:22"
+  }
+ },
+ "DOTPV": {
+  "opcode": 41,
+  "unsupported": true
+ },
+ "ELWSUB": {
+  "opcode": 48,
+  "args": {
+   "dst": "9:0",
+   "addr_mode": "16:14",
+   "instr_mod19": "20:19",
+   "dest_accum_en": "21:21",
+   "clear_dvalid": "23:22"
+  }
+ },
+ "MPOOL3S2": {
+  "opcode": 49,
+  "unsupported": true
+ },
+ "APOOL3S2": {
+  "opcode": 50,
+  "unsupported": true
+ },
+ "GMPOOL": {
+  "opcode": 51,
+  "args": {
+   "dst": "9:0",
+   "max_pool_index_en": "14:14",
+   "pool_addr_mode": "17:15",
+   "instr_mod19": "19:19",
+   "clear_dvalid": "23:22"
+  }
+ },
+ "GAPOOL": {
+  "opcode": 52,
+  "args": {
+   "dst": "9:0",
+   "max_pool_index_en": "14:14",
+   "pool_addr_mode": "17:15",
+   "instr_mod19": "19:19",
+   "clear_dvalid": "23:22"
+  }
+ },
+ "GATESRCRST": {
+  "opcode": 53,
+  "args": {
+   "reset_srca_gate_control": "0:0",
+   "reset_srcb_gate_control": "1:1"
+  }
+ },
+ "CLEARDVALID": {
+  "opcode": 54,
+  "args": {
+   "reset": "1:0",
+   "cleardvalid": "23:22"
+  }
+ },
+ "SETRWC": {
+  "opcode": 55,
+  "args": {
+   "bit_mask": "3:0",
+   "rwc_a": "9:6",
+   "rwc_b": "13:10",
+   "rwc_d": "17:14",
+   "rwc_cr": "21:18",
+   "clear_ab_vld": "23:22"
+  }
+ },
+ "INCRWC": {
+  "opcode": 56,
+  "args": {
+   "rwc_a": "9:6",
+   "rwc_b": "13:10",
+   "rwc_d": "17:14",
+   "rwc_cr": "20:18"
+  }
+ },
+ "SETIBRWC": {
+  "opcode": 57,
+  "unsupported": true
+ },
+ "MFCONV3S1": {
+  "opcode": 58,
+  "unsupported": true
+ },
+ "XMOV": {
+  "opcode": 64,
+  "unsupported": true
+ },
+ "PACR": {
+  "opcode": 65,
+  "args": {
+   "last": "0:0",
+   "flush": "1:1",
+   "ctxt_ctrl": "3:2",
+   "concat": "4:4",
+   "ovrd_thread_id": "7:7",
+   "read_intf_sel": "11:8",
+   "zero_write": "12:12",
+   "addr_cnt_context": "14:13",
+   "addr_mode": "16:15",
+   "dst_access_mode": "17:17",
+   "row_pad_zero": "20:18",
+   "cfg_context": "22:21"
+  }
+ },
+ "UNPACR": {
+  "opcode": 66,
+  "args": {
+   "last": "0:0",
+   "search_cache_flush": "1:1",
+   "row_search": "2:2",
+   "auto_inc_context_id": "3:3",
+   "zero_write2": "4:4",
+   "srcb_bcast": "5:5",
+   "set_dat_valid": "6:6",
+   "ovrd_thread_id": "7:7",
+   "addr_cnt_context_id": "9:8",
+   "cfg_context_id": "12:10",
+   "cfg_context_cnt_inc": "13:13",
+   "addr_mode": "22:15",
+   "unpack_block_selection": "23:23"
+  }
+ },
+ "UNPACR_NOP": {
+  "opcode": 67,
+  "args": {
+   "unpack_pop": "1:0",
+   "src_clr_val_ctrl": "3:2",
+   "bank_clr_ctrl": "4:4",
+   "stall_clr_cntrl": "5:5",
+   "clr_to1_fmt_ctrl": "7:6",
+   "set_dvalid": "8:8",
+   "msg_clr_cnt": "14:12",
+   "stream_id": "21:16",
+   "unpacker_select": "23:23"
+  }
+ },
+ "RSTDMA": {
+  "opcode": 68,
+  "unsupported": true
+ },
+ "SETDMAREG": {
+  "opcode": 69,
+  "args": {
+   "reg_index_16b": "6:0",
+   "set_signals_mode": "7:7",
+   "payload_sig_sel": "21:8",
+   "payload_sig_sel_size": "23:22"
+  }
+ },
+ "FLUSHDMA": {
+  "opcode": 70,
+  "unsupported": true
+ },
+ "REG2FLOP": {
+  "opcode": 72,
+  "args": {
+   "reg_index": "5:0",
+   "flop_index": "12:6",
+   "context_id_2": "17:16",
+   "byte_offset": "19:18",
+   "target_sel": "21:20",
+   "size_sel": "23:22"
+  }
+ },
+ "LOADIND": {
+  "opcode": 73,
+  "unsupported": true
+ },
+ "PACR_SETREG": {
+  "opcode": 74,
+  "unsupported": true
+ },
+ "TBUFCMD": {
+  "opcode": 75,
+  "unsupported": true
+ },
+ "SETADC": {
+  "opcode": 80,
+  "args": {
+   "value": "17:0",
+   "dimension_index": "19:18",
+   "channel_index": "20:20",
+   "cnt_set_mask": "23:21"
+  }
+ },
+ "SETADCXY": {
+  "opcode": 81,
+  "args": {
+   "bit_mask": "3:0",
+   "ch0_x": "8:6",
+   "ch0_y": "11:9",
+   "ch1_x": "14:12",
+   "ch1_y": "17:15",
+   "cnt_set_mask": "23:21"
+  }
+ },
+ "INCADCXY": {
+  "opcode": 82,
+  "args": {
+   "ch0_x": "8:6",
+   "ch0_y": "11:9",
+   "ch1_x": "14:12",
+   "ch1_y": "17:15",
+   "cnt_set_mask": "23:21"
+  }
+ },
+ "ADDRCRXY": {
+  "opcode": 83,
+  "args": {
+   "bit_mask": "3:0",
+   "ch0_x": "8:6",
+   "ch0_y": "11:9",
+   "ch1_x": "14:12",
+   "ch1_y": "17:15",
+   "cnt_set_mask": "23:21"
+  }
+ },
+ "SETADCZW": {
+  "opcode": 84,
+  "args": {
+   "bit_mask": "3:0",
+   "ch0_x": "8:6",
+   "ch0_y": "11:9",
+   "ch1_x": "14:12",
+   "ch1_y": "17:15",
+   "cnt_set_mask": "23:21"
+  }
+ },
+ "INCADCZW": {
+  "opcode": 85,
+  "args": {
+   "ch0_x": "8:6",
+   "ch0_y": "11:9",
+   "ch1_x": "14:12",
+   "ch1_y": "17:15",
+   "cnt_set_mask": "23:21"
+  }
+ },
+ "ADDRCRZW": {
+  "opcode": 86,
+  "args": {
+   "bit_mask": "3:0",
+   "ch0_x": "8:6",
+   "ch0_y": "11:9",
+   "ch1_x": "14:12",
+   "ch1_y": "17:15",
+   "cnt_set_mask": "23:21"
+  }
+ },
+ "SETDVALID": {
+  "opcode": 87,
+  "args": {
+   "setvalid": "1:0"
+  }
+ },
+ "ADDDMAREG": {
+  "opcode": 88,
+  "args": {
+   "op_a_reg_index": "5:0",
+   "op_b_reg_index": "11:6",
+   "result_reg_index": "17:12",
+   "op_b_is_const": "23:23"
+  }
+ },
+ "SUBDMAREG": {
+  "opcode": 89,
+  "unsupported": true
+ },
+ "MULDMAREG": {
+  "opcode": 90,
+  "args": {
+   "op_a_reg_index": "5:0",
+   "op_b_reg_index": "11:6",
+   "result_reg_index": "17:12",
+   "op_b_is_const": "23:23"
+  }
+ },
+ "BITWOPDMAREG": {
+  "opcode": 91,
+  "unsupported": true
+ },
+ "SHIFTDMAREG": {
+  "opcode": 92,
+  "unsupported": true
+ },
+ "CMPDMAREG": {
+  "opcode": 93,
+  "unsupported": true
+ },
+ "SETADCXX": {
+  "opcode": 94,
+  "args": {
+   "x_start": "9:0",
+   "x_end2": "19:10",
+   "cnt_set_mask": "23:21"
+  }
+ },
+ "DMANOP": {
+  "opcode": 96,
+  "args": {}
+ },
+ "ATINCGET": {
+  "opcode": 97,
+  "unsupported": true
+ },
+ "ATINCGETPTR": {
+  "opcode": 98,
+  "unsupported": true
+ },
+ "ATSWAP": {
+  "opcode": 99,
+  "unsupported": true
+ },
+ "ATCAS": {
+  "opcode": 100,
+  "unsupported": true
+ },
+ "STOREIND": {
+  "opcode": 102,
+  "unsupported": true
+ },
+ "STOREREG": {
+  "opcode": 103,
+  "args": {
+   "reg_addr": "17:0",
+   "tdma_data_reg_index": "23:18"
+  }
+ },
+ "LOADREG": {
+  "opcode": 104,
+  "unsupported": true
+ },
+ "SFPLOAD": {
+  "opcode": 112,
+  "args": {
+   "dest_reg_addr": "9:0",
+   "sfpu_addr_mode": "15:13",
+   "instr_mod0": "19:16",
+   "lreg_ind": "23:20"
+  }
+ },
+ "SFPLOADI": {
+  "opcode": 113,
+  "args": {
+   "imm16": "15:0",
+   "instr_mod0": "19:16",
+   "lreg_ind": "23:20"
+  }
+ },
+ "SFPSTORE": {
+  "opcode": 114,
+  "args": {
+   "dest_reg_addr": "9:0",
+   "sfpu_addr_mode": "15:13",
+   "instr_mod0": "19:16",
+   "lreg_ind": "23:20"
+  }
+ },
+ "SFPLUT": {
+  "opcode": 115,
+  "args": {
+   "instr_mod0": "19:16",
+   "lreg_ind": "23:20"
+  }
+ },
+ "SFPMULI": {
+  "opcode": 116,
+  "args": {
+   "instr_mod1": "3:0",
+   "lreg_dest": "7:4",
+   "imm16_math": "23:8"
+  }
+ },
+ "SFPADDI": {
+  "opcode": 117,
+  "args": {
+   "instr_mod1": "3:0",
+   "lreg_dest": "7:4",
+   "imm16_math": "23:8"
+  }
+ },
+ "SFPDIVP2": {
+  "opcode": 118,
+  "args": {
+   "instr_mod1": "3:0",
+   "lreg_dest": "7:4",
+   "lreg_c": "11:8",
+   "imm12_math": "23:12"
+  }
+ },
+ "SFPEXEXP": {
+  "opcode": 119,
+  "args": {
+   "instr_mod1": "3:0",
+   "lreg_dest": "7:4",
+   "lreg_c": "11:8"
+  }
+ },
+ "SFPEXMAN": {
+  "opcode": 120,
+  "args": {
+   "instr_mod1": "3:0",
+   "lreg_dest": "7:4",
+   "lreg_c": "11:8"
+  }
+ },
+ "SFPIADD": {
+  "opcode": 121,
+  "args": {
+   "instr_mod1": "3:0",
+   "lreg_dest": "7:4",
+   "lreg_c": "11:8",
+   "imm12_math": "23:12"
+  }
+ },
+ "SFPSHFT": {
+  "opcode": 122,
+  "args": {
+   "instr_mod1": "3:0",
+   "lreg_dest": "7:4",
+   "lreg_c": "11:8",
+   "imm12_math": "23:12"
+  }
+ },
+ "SFPSETCC": {
+  "opcode": 123,
+  "args": {
+   "instr_mod1": "3:0",
+   "lreg_dest": "7:4",
+   "lreg_c": "11:8",
+   "imm12_math": "12:12"
+  }
+ },
+ "SFPMOV": {
+  "opcode": 124,
+  "args": {
+   "instr_mod1": "3:0",
+   "lreg_dest": "7:4",
+   "lreg_c": "11:8"
+  }
+ },
+ "SFPABS": {
+  "opcode": 125,
+  "args": {
+   "instr_mod1": "3:0",
+   "lreg_dest": "7:4",
+   "lreg_c": "11:8"
+  }
+ },
+ "SFPAND": {
+  "opcode": 126,
+  "args": {
+   "instr_mod1": "3:0",
+   "lreg_dest": "7:4",
+   "lreg_c": "11:8",
+   "imm12_math": "15:12"
+  }
+ },
+ "SFPOR": {
+  "opcode": 127,
+  "args": {
+   "instr_mod1": "3:0",
+   "lreg_dest": "7:4",
+   "lreg_c": "11:8",
+   "imm12_math": "15:12"
+  }
+ },
+ "SFPNOT": {
+  "opcode": 128,
+  "args": {
+   "lreg_dest": "7:4",
+   "lreg_c": "11:8"
+  }
+ },
+ "SFPLZ": {
+  "opcode": 129,
+  "args": {
+   "instr_mod1": "3:0",
+   "lreg_dest": "7:4",
+   "lreg_c": "11:8"
+  }
+ },
+ "SFPSETEXP": {
+  "opcode": 130,
+  "args": {
+   "instr_mod1": "3:0",
+   "lreg_dest": "7:4",
+   "lreg_c": "11:8",
+   "imm12_math": "19:12"
+  }
+ },
+ "SFPSETMAN": {
+  "opcode": 131,
+  "args": {
+   "instr_mod1": "3:0",
+   "lreg_dest": "7:4",
+   "lreg_c": "11:8",
+   "imm12_math": "23:12"
+  }
+ },
+ "SFPMAD": {
+  "opcode": 132,
+  "args": {
+   "instr_mod1": "3:0",
+   "lreg_dest": "7:4",
+   "lreg_src_c": "11:8",
+   "lreg_src_b": "15:12",
+   "lreg_src_a": "19:16"
+  }
+ },
+ "SFPADD": {
+  "opcode": 133,
+  "args": {
+   "instr_mod1": "3:0",
+   "lreg_dest": "7:4",
+   "lreg_src_c": "11:8",
+   "lreg_src_b": "15:12",
+   "lreg_src_a": "19:16"
+  }
+ },
+ "SFPMUL": {
+  "opcode": 134,
+  "args": {
+   "instr_mod1": "3:0",
+   "lreg_dest": "7:4",
+   "lreg_src_c": "11:8",
+   "lreg_src_b": "15:12",
+   "lreg_src_a": "19:16"
+  }
+ },
+ "SFPPUSHC": {
+  "opcode": 135,
+  "args": {
+   "instr_mod1": "3:0",
+   "lreg_dest": "7:4"
+  }
+ },
+ "SFPPOPC": {
+  "opcode": 136,
+  "args": {
+   "instr_mod1": "3:0",
+   "lreg_dest": "7:4"
+  }
+ },
+ "SFPSETSGN": {
+  "opcode": 137,
+  "args": {
+   "instr_mod1": "3:0",
+   "lreg_dest": "7:4",
+   "lreg_c": "11:8",
+   "imm12_math": "12:12"
+  }
+ },
+ "SFPENCC": {
+  "opcode": 138,
+  "args": {
+   "instr_mod1": "3:0",
+   "lreg_dest": "7:4",
+   "imm12_math": "13:12"
+  }
+ },
+ "SFPCOMPC": {
+  "opcode": 139,
+  "args": {
+   "lreg_dest": "7:4"
+  }
+ },
+ "SFPTRANSP": {
+  "opcode": 140,
+  "args": {
+   "lreg_dest": "7:4"
+  }
+ },
+ "SFPXOR": {
+  "opcode": 141,
+  "args": {
+   "lreg_dest": "7:4",
+   "lreg_c": "11:8"
+  }
+ },
+ "SFP_STOCH_RND": {
+  "opcode": 142,
+  "args": {
+   "instr_mod1": "3:0",
+   "lreg_dest": "7:4",
+   "lreg_src_c": "11:8",
+   "lreg_src_b": "15:12",
+   "imm8_math": "20:16",
+   "rnd_mode": "22:21"
+  }
+ },
+ "SFPNOP": {
+  "opcode": 143,
+  "args": {}
+ },
+ "SFPCAST": {
+  "opcode": 144,
+  "args": {
+   "instr_mod1": "3:0",
+   "lreg_dest": "7:4",
+   "lreg_src_c": "11:8"
+  }
+ },
+ "SFPCONFIG": {
+  "opcode": 145,
+  "args": {
+   "instr_mod1": "3:0",
+   "config_dest": "7:4",
+   "imm16_math": "23:8"
+  }
+ },
+ "SFPSWAP": {
+  "opcode": 146,
+  "args": {
+   "instr_mod1": "3:0",
+   "lreg_dest": "7:4",
+   "lreg_src_c": "11:8"
+  }
+ },
+ "SFPLOADMACRO": {
+  "opcode": 147,
+  "args": {
+   "dest_reg_addr": "9:0",
+   "sfpu_addr_mode": "15:13",
+   "instr_mod0": "19:16",
+   "lreg_ind": "23:20"
+  }
+ },
+ "SFPSHFT2": {
+  "opcode": 148,
+  "args": {
+   "instr_mod1": "3:0",
+   "lreg_dest": "7:4",
+   "lreg_src_c": "11:8",
+   "imm12_math": "23:12"
+  }
+ },
+ "SFPLUTFP32": {
+  "opcode": 149,
+  "args": {
+   "instr_mod1": "3:0",
+   "lreg_dest": "7:4"
+  }
+ },
+ "SFPLE": {
+  "opcode": 150,
+  "args": {
+   "instr_mod1": "3:0",
+   "lreg_dest": "7:4",
+   "lreg_c": "11:8"
+  }
+ },
+ "SFPGT": {
+  "opcode": 151,
+  "args": {
+   "instr_mod1": "3:0",
+   "lreg_dest": "7:4",
+   "lreg_c": "11:8"
+  }
+ },
+ "SFPMUL24": {
+  "opcode": 152,
+  "args": {
+   "instr_mod1": "3:0",
+   "lreg_dest": "7:4",
+   "lreg_src_c": "11:8",
+   "lreg_src_b": "15:12",
+   "lreg_src_a": "19:16"
+  }
+ },
+ "SFPARECIP": {
+  "opcode": 153,
+  "args": {
+   "instr_mod1": "3:0",
+   "lreg_dest": "7:4",
+   "lreg_c": "11:8",
+   "imm12_math": "15:12"
+  }
+ },
+ "ATGETM": {
+  "opcode": 160,
+  "args": {
+   "mutex_index": "15:0"
+  }
+ },
+ "ATRELM": {
+  "opcode": 161,
+  "args": {
+   "mutex_index": "15:0"
+  }
+ },
+ "STALLWAIT": {
+  "opcode": 162,
+  "args": {
+   "wait_res": "12:0",
+   "stall_res": "23:15"
+  }
+ },
+ "SEMINIT": {
+  "opcode": 163,
+  "args": {
+   "sem_sel": "9:2",
+   "init_value": "19:16",
+   "max_value": "23:20"
+  }
+ },
+ "SEMPOST": {
+  "opcode": 164,
+  "args": {
+   "sem_sel": "9:2"
+  }
+ },
+ "SEMGET": {
+  "opcode": 165,
+  "args": {
+   "sem_sel": "9:2"
+  }
+ },
+ "SEMWAIT": {
+  "opcode": 166,
+  "args": {
+   "wait_sem_cond": "1:0",
+   "sem_sel": "9:2",
+   "stall_res": "23:15"
+  }
+ },
+ "STREAMWAIT": {
+  "opcode": 167,
+  "unsupported": true
+ },
+ "WRCFG": {
+  "opcode": 176,
+  "args": {
+   "cfg_reg": "10:0",
+   "wr128b": "15:15",
+   "gpr_address": "21:16"
+  }
+ },
+ "RDCFG": {
+  "opcode": 177,
+  "args": {
+   "cfg_reg": "10:0",
+   "gpr_address": "21:16"
+  }
+ },
+ "SETC16": {
+  "opcode": 178,
+  "args": {
+   "setc16_value": "15:0",
+   "setc16_reg": "23:16"
+  }
+ },
+ "RMWCIB0": {
+  "opcode": 179,
+  "args": {
+   "cfg_reg_addr": "7:0",
+   "data": "15:8",
+   "mask": "23:16"
+  }
+ },
+ "RMWCIB1": {
+  "opcode": 180,
+  "args": {
+   "cfg_reg_addr": "7:0",
+   "data": "15:8",
+   "mask": "23:16"
+  }
+ },
+ "RMWCIB2": {
+  "opcode": 181,
+  "args": {
+   "cfg_reg_addr": "7:0",
+   "data": "15:8",
+   "mask": "23:16"
+  }
+ },
+ "RMWCIB3": {
+  "opcode": 182,
+  "args": {
+   "cfg_reg_addr": "7:0",
+   "data": "15:8",
+   "mask": "23:16"
+  }
+ },
+ "STREAMWRCFG": {
+  "opcode": 183,
+  "unsupported": true
+ },
+ "CFGSHIFTMASK": {
+  "opcode": 184,
+  "args": {
+   "cfg_reg": "7:0",
+   "scratch_sel": "9:8",
+   "right_cshift_amt": "14:10",
+   "mask_width": "19:15",
+   "operation": "22:20",
+   "disable_mask_on_old_val": "23:23"
+  }
+ }
+}

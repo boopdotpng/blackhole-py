@@ -1,0 +1,34 @@
+{
+  "9": {
+    "value": 0,
+    "note": "Zero from memset in tensix_init"
+  },
+  "8": {
+    "value": 1062623563,
+    "line": 23
+  },
+  "10": {
+    "value": 1065353216,
+    "line": 24
+  },
+  "11": {
+    "value": 3212836864,
+    "line": 25
+  },
+  "12": {
+    "value": 989855744,
+    "line": 26
+  },
+  "13": {
+    "value": 3207382215,
+    "line": 27
+  },
+  "14": {
+    "value": 3199242233,
+    "line": 28
+  },
+  "15": {
+    "expression": "lane << 1",
+    "note": "Lane ID; mutable lane configuration"
+  }
+}

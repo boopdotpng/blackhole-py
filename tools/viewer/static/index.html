@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Blackhole · Test assembly</title><link rel="stylesheet" href="/style.css"><script type="module" src="/app.js"></script></head>
+<body>
+<a class="skip" href="#listing">Skip to assembly</a>
+<header class="topbar"><a class="brand" href="#"><span class="mark">bh</span><strong>blackhole<span class="dim"> / </span><span class="title">test assembly</span></strong></a><nav aria-label="Views"><button id="assembly-view" class="nav active">Assembly</button><button id="reference-view" class="nav">Instructions <span id="doc-count"></span></button></nav><button id="theme" class="plain" aria-label="Toggle color theme">◐</button></header>
+<div class="app-body">
+<aside id="test-browser" aria-label="Tests and cases">
+  <div class="browser-heading"><strong>Tests</strong><span id="test-total"></span></div>
+  <label class="sr-only" for="test-search">Search tests</label><input id="test-search" type="search" placeholder="Search tests…" autocomplete="off">
+  <nav id="test-list" aria-label="Choose a test"><p class="note">Collecting tests…</p></nav>
+  <div class="case-browser"><div class="browser-heading"><strong>Cases</strong><span id="case-count"></span></div>
+  <label class="sr-only" for="case-search">Search cases and parameters</label><input id="case-search" type="search" placeholder="Search cases or parameters…" autocomplete="off">
+  <div id="case-list" aria-label="Choose an exact case"></div></div>
+</aside>
+<main id="assembly">
+<section class="selectors" aria-label="Current test">
+<div class="selection-title"><h1 id="test-heading">Test assembly</h1><div id="active-case"></div></div>
+<select id="test" hidden disabled aria-label="Selected test"></select><select id="case" hidden disabled aria-label="Selected case"></select>
+<button class="plain refresh" id="refresh" title="Recollect tests and refresh assembly"><span>Refresh</span></button>
+</section>
+<div class="case-info"><span id="test-path" class="mono"></span><div id="parameters"></div></div>
+<div class="workspace-bar"><div id="kernels" aria-label="Kernel images"></div><div class="listing-tools"><label class="setup-toggle"><input id="show-setup" type="checkbox">Show RISC-V setup</label><label class="sr-only" for="find">Find in assembly</label><input id="find" type="search" placeholder="Find in assembly…"><span id="find-count"></span><button id="find-prev" class="plain" disabled title="Previous search match (Shift+Enter)" aria-label="Previous search match">↑</button><button id="find-next" class="plain" disabled title="Next search match (Enter)" aria-label="Next search match">↓</button><button id="download" class="plain" disabled>Save .s</button></div></div>
+<div id="capture-status" role="status" aria-live="polite">Collecting pytest cases…</div>
+<div class="reading-layout"><section id="listing" tabindex="-1" aria-label="Annotated assembly"><div class="empty">Loading test list…</div></section><aside id="detail" hidden aria-label="Instruction details"></aside></div>
+<footer><span id="image-meta"></span><span>Blackhole A0 · raw RV32 + Tensix</span></footer>
+</main>
+<aside id="instruction-browser" hidden aria-label="Instruction navigation"><div class="browser-heading"><strong>Instructions</strong><span>Blackhole A0</span></div><label class="sr-only" for="instruction-search">Search instructions by name or behavior</label><input id="instruction-search" type="search" placeholder="Search name or operation…" autocomplete="off"><nav id="instruction-list" aria-label="Choose an instruction"></nav></aside>
+<main id="reference" hidden><select id="instruction-select" hidden aria-label="Selected instruction"></select><article id="instruction-article"></article></main>
+</div>
+</body></html>
