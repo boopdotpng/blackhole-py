@@ -1,0 +1,185 @@
+{
+  "transport": "l1",
+  "devices": [
+    0,
+    1
+  ],
+  "startup_seconds": 51.78135766299965,
+  "tokens_per_second": 66.20866108152605,
+  "prompt_tokens": [
+    128000,
+    791,
+    6864,
+    315,
+    9822,
+    374
+  ],
+  "generated_tokens": [
+    12366,
+    11,
+    902,
+    374,
+    7559,
+    304,
+    279,
+    10411,
+    85181,
+    961,
+    315,
+    279,
+    3224,
+    13,
+    12366,
+    374
+  ],
+  "text": " Paris, which is located in the north-central part of the country. Paris is",
+  "rows": [
+    {
+      "position": 0,
+      "input_token": 128000,
+      "token": 14924,
+      "seconds": 0.01569548199768178,
+      "host_sum_seconds": 0.0
+    },
+    {
+      "position": 1,
+      "input_token": 791,
+      "token": 220,
+      "seconds": 0.015157916997850407,
+      "host_sum_seconds": 0.0
+    },
+    {
+      "position": 2,
+      "input_token": 6864,
+      "token": 315,
+      "seconds": 0.015045558000565507,
+      "host_sum_seconds": 0.0
+    },
+    {
+      "position": 3,
+      "input_token": 315,
+      "token": 279,
+      "seconds": 0.015025388005597051,
+      "host_sum_seconds": 0.0
+    },
+    {
+      "position": 4,
+      "input_token": 9822,
+      "token": 11,
+      "seconds": 0.015102737001143396,
+      "host_sum_seconds": 0.0
+    },
+    {
+      "position": 5,
+      "input_token": 374,
+      "token": 12366,
+      "seconds": 0.015090148001036141,
+      "host_sum_seconds": 0.0
+    },
+    {
+      "position": 6,
+      "input_token": 12366,
+      "token": 11,
+      "seconds": 0.015094757000042591,
+      "host_sum_seconds": 0.0
+    },
+    {
+      "position": 7,
+      "input_token": 11,
+      "token": 902,
+      "seconds": 0.015174667001701891,
+      "host_sum_seconds": 0.0
+    },
+    {
+      "position": 8,
+      "input_token": 902,
+      "token": 374,
+      "seconds": 0.015060667996294796,
+      "host_sum_seconds": 0.0
+    },
+    {
+      "position": 9,
+      "input_token": 374,
+      "token": 7559,
+      "seconds": 0.015036868004244752,
+      "host_sum_seconds": 0.0
+    },
+    {
+      "position": 10,
+      "input_token": 7559,
+      "token": 304,
+      "seconds": 0.015085386999999173,
+      "host_sum_seconds": 0.0
+    },
+    {
+      "position": 11,
+      "input_token": 304,
+      "token": 279,
+      "seconds": 0.01509598800475942,
+      "host_sum_seconds": 0.0
+    },
+    {
+      "position": 12,
+      "input_token": 279,
+      "token": 10411,
+      "seconds": 0.01517882599728182,
+      "host_sum_seconds": 0.0
+    },
+    {
+      "position": 13,
+      "input_token": 10411,
+      "token": 85181,
+      "seconds": 0.015032228002382908,
+      "host_sum_seconds": 0.0
+    },
+    {
+      "position": 14,
+      "input_token": 85181,
+      "token": 961,
+      "seconds": 0.01496672900248086,
+      "host_sum_seconds": 0.0
+    },
+    {
+      "position": 15,
+      "input_token": 961,
+      "token": 315,
+      "seconds": 0.01519436599483015,
+      "host_sum_seconds": 0.0
+    },
+    {
+      "position": 16,
+      "input_token": 315,
+      "token": 279,
+      "seconds": 0.015044806998048443,
+      "host_sum_seconds": 0.0
+    },
+    {
+      "position": 17,
+      "input_token": 279,
+      "token": 3224,
+      "seconds": 0.015057846998388413,
+      "host_sum_seconds": 0.0
+    },
+    {
+      "position": 18,
+      "input_token": 3224,
+      "token": 13,
+      "seconds": 0.015148106998822186,
+      "host_sum_seconds": 0.0
+    },
+    {
+      "position": 19,
+      "input_token": 13,
+      "token": 12366,
+      "seconds": 0.015232265999657102,
+      "host_sum_seconds": 0.0
+    },
+    {
+      "position": 20,
+      "input_token": 12366,
+      "token": 374,
+      "seconds": 0.015166566998232156,
+      "host_sum_seconds": 0.0
+    }
+  ]
+}

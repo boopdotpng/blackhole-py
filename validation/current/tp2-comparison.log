@@ -1,0 +1,26 @@
+Baseline prompt 0: 48.09 tok/s
+Baseline prompt 1: 48.12 tok/s
+Baseline prompt 2: 48.11 tok/s
+Rank 0 ready on card 0
+Rank 1 ready on card 1
+TP prompt 0: 66.27 tok/s, 1.378x, 86/86 token matches
+TP prompt 1: 66.25 tok/s, 1.377x, 81/81 token matches
+TP prompt 2: 66.34 tok/s, 1.379x, 83/83 token matches
+{
+  "steps_per_prompt": 64,
+  "baseline_device": 1,
+  "tp_devices": [
+    0,
+    1
+  ],
+  "baseline_startup_seconds": 33.476384767003765,
+  "tp_startup_seconds": 26.761858732999826,
+  "transport": "Tensix L1 -> ERISC L1 -> cable -> peer ERISC L1 -> Tensix FP32 reduction",
+  "timing": "generation decode wall time; excludes startup, prefill and full-logit diagnostics",
+  "baseline_tps": 48.10707382736946,
+  "tp_tps": 66.28883931850363,
+  "speedup": 1.377943700262851,
+  "max_relative_rms": 0.1235014796257019,
+  "min_pcc": 0.992955845813782
+}
+logit comparison failed (PCC .99 / relative RMS .05)
