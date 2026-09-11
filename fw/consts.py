@@ -11,8 +11,8 @@ class TensixL1:
   # Device-owned boot/control state and a 512-byte zero page precede firmware.
   BOOT = 0; BOOT_SIZE = 4; MEM_ZEROS_BASE = 0x32E0; MEM_ZEROS_SIZE = 0x200
 
-  # Firmware.TEXT is packed immediately below this direct-launch argument table.
-  PARAM_BASE = 0x3FD0; PARAM_SIZE = 0x30; PARAM_SLOTS = PARAM_SIZE // 4
+  # FP8 projections need 24 argument slots; place them before the zero page.
+  PARAM_BASE = 0x3280; PARAM_SIZE = 0x60; PARAM_SLOTS = PARAM_SIZE // 4
 
   # Direct launches overwrite one fixed, independently sized slot per RISC.
   WORKER_TEXT_BASE = {
@@ -33,18 +33,18 @@ class TensixL1:
   # Resident kernels grow upward per core; deduplicated parameter templates
   # follow the fullest core. Both must fit in this persistent program arena.
   KERNEL_CACHE_BASE = 0x12000
-  KERNEL_CACHE_END = 0x42000
+  KERNEL_CACHE_END = 0x90000
 
   # Traced launches keep their immutable parameter tables resident in worker
   # L1 alongside the resident kernels. Dispatch puts the selected
   # template address in the low 24 bits of the GO word; BRISC resolves the few
   # dynamic slots from RUNTIME_PARAM_BASE before releasing the other RISCs.
   PARAM_TEMPLATE_ALIGNMENT = 32
-  PARAM_TEMPLATE_STRIDE = 96
-  PARAM_TEMPLATE_MAX_PARAMS = 12
+  PARAM_TEMPLATE_STRIDE = 160
+  PARAM_TEMPLATE_MAX_PARAMS = 24
   PARAM_TEMPLATE_VALUES = 4
-  PARAM_TEMPLATE_IDS = 52
-  PARAM_TEMPLATE_KERNELS = 64
+  PARAM_TEMPLATE_IDS = 100
+  PARAM_TEMPLATE_KERNELS = 124
 
   # CBs, L1 constants, and other program-owned storage share all remaining L1.
   # The final words stay fixed so traced launches can patch runtime values.
@@ -71,7 +71,7 @@ class Firmware:
     "trisc2": (0xFFB008C0, 0xFFB00F00),
   }
 
-  # Packed back-to-back in worker L1; the final image ends at PARAM_BASE.
+  # Packed back-to-back in worker L1; the final image ends at 0x3FD0.
   TEXT = {
     "brisc": (0x34E0, 0x07C0),
     "ncrisc": (0x3CA0, 0x00D8),

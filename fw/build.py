@@ -8,6 +8,7 @@ from pathlib import Path
 import json
 import subprocess
 import sys
+from fw.consts import TensixL1
 
 SOURCE = Path(__file__).with_name('llama3')
 
@@ -61,6 +62,10 @@ def reset_tensix(fw):
     return fw
 core._reset_tensix = reset_tensix
 options = json.loads(sys.argv[2])
+# Apply the central ABI without editing the reference source snapshot.
+from fw.consts import TensixL1
+for name, value in options['l1_abi'].items():
+    setattr(TensixL1, name, value)
 images = [build_brisc(), build_ncrisc(), *(build_trisc(i) for i in range(3)),
           build_prefetch(options['pcie_mid']), build_dispatch(options['pcie_mid']),
           build_dram_brisc(options['endpoints']), build_dram_ncrisc(options['endpoints'])]
@@ -73,7 +78,11 @@ print(json.dumps([image.hex() for image in lowered]))
 
 def build(pcie_mid, dram_endpoints):
   result = subprocess.run([sys.executable, '-I', '-c', _SCRIPT, str(SOURCE),
-    json.dumps({'pcie_mid': pcie_mid, 'endpoints': dram_endpoints})],
+    json.dumps({'pcie_mid': pcie_mid, 'endpoints': dram_endpoints,
+      'l1_abi': {name: getattr(TensixL1, name) for name in (
+        'PARAM_BASE', 'PARAM_SIZE', 'PARAM_SLOTS', 'KERNEL_CACHE_END',
+        'PARAM_TEMPLATE_STRIDE', 'PARAM_TEMPLATE_MAX_PARAMS',
+        'PARAM_TEMPLATE_IDS', 'PARAM_TEMPLATE_KERNELS', 'DATA_BUFFER_SPACE_BASE')}})],
     check=True, capture_output=True, text=True)
   images = tuple(bytes.fromhex(value) for value in json.loads(result.stdout))
   return FirmwareImages(images[:5], *images[5:])

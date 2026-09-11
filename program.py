@@ -56,7 +56,7 @@ class Program:
     for core in cores:
       words = tuple(params.get(core, ()))
       if len(words) > TensixL1.PARAM_SLOTS:
-        raise ValueError("raw parameter table has more than 12 words")
+        raise ValueError(f"raw parameter table has more than {TensixL1.PARAM_SLOTS} words")
       if any(type(word) is not int or not 0 <= word < 1 << 32 for word in words):
         raise ValueError("raw parameters must be u32 integers")
       tables.append(PARAM_STRUCT.pack(*(words + (0,) * (TensixL1.PARAM_SLOTS - len(words)))))

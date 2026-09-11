@@ -29,3 +29,9 @@ BRISC/TRISC images. The snapshot files remain unchanged.
 `tests/timing/test_firmware_cache.py` checks live CSR and backend settings on
 the selected test core and all compute workers. The builder checks resident
 image sizes against the fixed ABI slots.
+
+The consolidated runtime adopts the FP8 ABI: 24 parameter words at `0x3280`,
+160-byte parameter templates, and the resident arena ending at `0x90000`.
+The builder applies these constants from central `fw/consts.py` to the isolated
+reference interpreter. The reference files and CQ firmware logic stay unchanged.
+The instruction prefetch, cache, and fusion policy above still applies.
