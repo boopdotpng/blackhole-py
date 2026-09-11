@@ -1,0 +1,22 @@
+[
+  {
+    "from": "/home/boop/tenstorrent/blackhole-py-llama3-8b/weights",
+    "to": "/home/boop/tenstorrent/blackhole-py/weights/llama3-8b-bf16"
+  },
+  {
+    "from": "/home/boop/tenstorrent/blackhole-py-llama3-8b-fp8/weights",
+    "to": "/home/boop/tenstorrent/blackhole-py/weights/archive/fp8-source-bf16"
+  },
+  {
+    "from": "/home/boop/tenstorrent/blackhole-py-llama3-8b-speculative/weights",
+    "to": "/home/boop/tenstorrent/blackhole-py/weights/archive/speculative-source-bf16"
+  },
+  {
+    "from": "/home/boop/tenstorrent/blackhole-py-llama3-8b-fp8/weights-fp8",
+    "to": "/home/boop/tenstorrent/blackhole-py/weights/llama3-8b-fp8-experimental"
+  },
+  {
+    "from": "/home/boop/tenstorrent/blackhole-py-llama3-8b-fp8/weights-published-fp8",
+    "to": "/home/boop/tenstorrent/blackhole-py/weights/llama3-8b-fp8"
+  }
+]

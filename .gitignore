@@ -1,3 +1,9 @@
 __pycache__/
 *.py[cod]
 weights/
+
+.venv/
+.pytest_cache/
+weights-*/
+fw/erisc/**/build/
+validation/current/*.npz
