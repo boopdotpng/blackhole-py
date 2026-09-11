@@ -47,7 +47,7 @@ class TensorInfo:
 
 
 class Safetensor:
-  def __init__(self, path="weights/model.safetensors"):
+  def __init__(self, path="weights/llama3-1b/model.safetensors"):
     self.path = Path(path)
     self.shards = None
     if self.path.is_dir():
@@ -141,7 +141,7 @@ class Safetensor:
     return info, data
 
 
-def load(name, path="weights/model.safetensors"):
+def load(name, path="weights/llama3-1b/model.safetensors"):
   return Safetensor(path).load(name)
 
 
@@ -150,7 +150,7 @@ if __name__ == "__main__":
 
   parser = argparse.ArgumentParser()
   parser.add_argument("name")
-  parser.add_argument("--path", default="weights/model.safetensors")
+  parser.add_argument("--path", default="weights/llama3-1b/model.safetensors")
   args = parser.parse_args()
   info, data = load(args.name, args.path)
   print(f"{info.name}: {info.dtype}{list(info.shape)}, {len(data)} bytes")

@@ -118,7 +118,7 @@ class Buffer:
     return (values.view(np.uint32) >> 16).astype("<u2").tobytes()
 
   def from_safetensor(self, name,
-                      path="weights/model.safetensors") -> bytes:
+                      path="weights/llama3-1b/model.safetensors") -> bytes:
     from st import load
 
     info, data = load(name, path)

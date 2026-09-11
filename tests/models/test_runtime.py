@@ -1,3 +1,4 @@
+from dataclasses import replace
 import numpy as np
 import pytest
 
@@ -34,6 +35,11 @@ def test_model_runtime_hardware(request):
       device.write(b, data)
       assert device.read(b) == data
       assert device.read(b) == data
+      physical_view = replace(b, shape=(b.physical_tiles * 1024,), axis=None,
+                              cores=(b.cores[0],), tilized=False, global_address=True)
+      raw = np.frombuffer(b.pad_data(data), dtype=f'V{dtype.itemsize}')
+      expected = raw.reshape(-1, 2, 16, 2, 16).transpose(0, 1, 3, 2, 4).tobytes()
+      assert device.read(physical_view) == expected
     # Exercise the enlarged parameter template and resident kernel path.
     params = tuple(Const(f'p{i}', i + 100) for i in range(24))
     p = Program((device.cores[0],), *params)
