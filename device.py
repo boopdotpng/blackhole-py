@@ -1,10 +1,10 @@
-"""Byte-buffer runtime: C firmware boot, DRAM transfers, and raw program launches."""
+"""Byte-buffer runtime: llama3 firmware boot, DRAM transfers, and raw program launches."""
 
 from dataclasses import dataclass
 import time
 
-from cq import DRAM_BRISC_READY, DRAM_NCRISC_READY, CommandQueue, DramCopy, rectangles
-from fw import c_firmware
+from cq import DRAM_BRISC_READY, DRAM_NCRISC_READY, CommandQueue, DramCopy
+from fw import build as firmware
 from fw.consts import Firmware, FirmwareControl, RunState, TensixL1, TensixMMIO
 from isa import R, RV32
 from pcie import Allocator, PCIDevice, TLBWindow
@@ -53,86 +53,43 @@ class Device:
     return tuple(self.pcie.cores)
 
   def boot(self):
-    pcie_mid = self.pcie.sysmem.noc_addr >> 32
-    images = c_firmware.build(pcie_mid, self.pcie.dram_endpoints)
-    worker_firmware = b"".join(
-      image.ljust(size, b"\0")
-      for (_, size), image in zip(Firmware.TEXT.values(), images.workers)
-    )
+    images = firmware.build(self.pcie.sysmem.noc_addr >> 32, self.pcie.dram_endpoints)
+    resident = b"".join(image.ljust(size, b"\0")
+      for (_, size), image in zip(Firmware.TEXT.values(), images.workers))
     firmware_base = Firmware.TEXT["brisc"][0]
-
     with TLBWindow(self.pcie.fd, self.pcie.cores[0]) as window:
-      def worker_write(address, value, *, bytes=4):
-        data = value.to_bytes(bytes, "little") if isinstance(value, int) else value
+      # Match llama3's boot: resident firmware runs on all 120 tiles,
+      # including the three service tiles, and GO enters the service loops.
+      def broadcast(address, value):
         base = address & -TLBWindow.SIZE
-        for start, end in rectangles(self.pcie.cores):
-          window.target(base, start, end)
-          window.write(address - base, data)
-
-      worker_write(
-        TensixMMIO.RISCV_DEBUG_REG_SOFT_RESET_0,
-        TensixMMIO.SOFT_RESET_ALL,
-      )
-      worker_write(firmware_base, worker_firmware)
-      boot = RV32().jal(R.ZERO, firmware_base + 4).to_bytes(4, "little")
-      worker_write(TensixL1.BOOT, boot)
-      worker_write(FirmwareControl.GO_SIGNAL & -4, 0)
-      worker_write(
-        TensixMMIO.RISCV_DEBUG_REG_SOFT_RESET_0,
-        TensixMMIO.SOFT_RESET_BRISC_ONLY_RUN,
-      )
-
-      service_cores = (
-        self.pcie.prefetch_core, self.pcie.dispatch_core, self.pcie.dram_core,
-      )
-
-      def service_write(core, address, value):
-        base = address & -TLBWindow.SIZE
-        window.target(base, core)
+        window.target(base, (1, 2), (14, 11))
         window.write(address - base, value)
 
-      for core in service_cores:
-        service_write(
-          core, TensixMMIO.RISCV_DEBUG_REG_SOFT_RESET_0,
-          TensixMMIO.SOFT_RESET_ALL,
-        )
+      broadcast(TensixMMIO.RISCV_DEBUG_REG_SOFT_RESET_0, TensixMMIO.SOFT_RESET_ALL)
+      broadcast(firmware_base, resident)
+      broadcast(TensixL1.BOOT, RV32().jal(R.ZERO, firmware_base + 4).to_bytes(4, "little"))
+      broadcast(FirmwareControl.GO_SIGNAL & -4, 0)
+      broadcast(TensixMMIO.RISCV_DEBUG_REG_SOFT_RESET_0, TensixMMIO.SOFT_RESET_BRISC_ONLY_RUN)
       for core, role_images in (
         (self.pcie.prefetch_core, {"brisc": images.prefetch}),
         (self.pcie.dispatch_core, {"brisc": images.dispatch}),
-        (
-          self.pcie.dram_core,
-          {"brisc": images.dram_brisc, "ncrisc": images.dram_ncrisc},
-        ),
+        (self.pcie.dram_core, {"brisc": images.dram_brisc, "ncrisc": images.dram_ncrisc}),
       ):
         window.target(0, core)
         for role, image in role_images.items():
           window.write(TensixL1.WORKER_TEXT_BASE[role], image)
-        entry = RV32().jal(
-          R.ZERO, TensixL1.WORKER_TEXT_BASE["brisc"],
-        ).to_bytes(4, "little")
-        window.write(TensixL1.BOOT, entry)
-
-      # These readiness words belong to the two service RISCs on the DRAM tile.
       window.target(0, self.pcie.dram_core)
       window.write(DRAM_BRISC_READY, bytes(8))
       self.cq = CommandQueue(self.pcie)
-      for core in service_cores:
+      for core in (self.pcie.prefetch_core, self.pcie.dispatch_core, self.pcie.dram_core):
         window.target(0, core)
         window.write(FirmwareControl.GO_SIGNAL, int(RunState.GO), bytes=1)
-      for core in service_cores:
-        service_write(
-          core, TensixMMIO.RISCV_DEBUG_REG_SOFT_RESET_0,
-          TensixMMIO.SOFT_RESET_BRISC_ONLY_RUN,
-        )
       window.target(0, self.pcie.dram_core)
-
       deadline = time.monotonic() + 5.0
-      while (
-        int.from_bytes(window.read(DRAM_BRISC_READY, 4), "little") != 1 or
-        int.from_bytes(window.read(DRAM_NCRISC_READY, 4), "little") != 1
-      ):
+      while (int.from_bytes(window.read(DRAM_BRISC_READY, 4), "little") != 1 or
+             int.from_bytes(window.read(DRAM_NCRISC_READY, 4), "little") != 1):
         if time.monotonic() >= deadline:
-          raise TimeoutError("command-queue firmware did not start")
+          raise TimeoutError("CQ DRAM engines did not start")
         time.sleep(0)
 
   def alloc_dram(self, size, *, bank=0):
@@ -176,6 +133,12 @@ class Device:
   def _copy_dram(self, buffer, *, write, data=b"", timeout=10.0):
     if self.cq is None:
       raise RuntimeError("boot() must be called first")
+    interleaved = isinstance(buffer, InterleavedDramBuffer)
+    bank_start = buffer.bank_start if interleaved else buffer.bank
+    # The unchanged llama3 descriptor addresses a prefix of banks. Preserve
+    # the raw-buffer API's other bank ranges and small pages through PCIe.
+    if bank_start or buffer.page_size % 64:
+      return self._copy_dram_pcie(buffer, write=write, data=data, timeout=timeout)
     if buffer.physical_size > self.cq.dram_size:
       raise MemoryError("DRAM transfer exceeds the host staging region")
     if write:
@@ -199,6 +162,40 @@ class Device:
     if not write:
       return self.pcie.sysmem.read(self.cq.dram, buffer.size)
 
+  def _copy_dram_pcie(self, buffer, *, write, data, timeout):
+    if write:
+      data = bytes(data)
+      if len(data) != buffer.size:
+        raise ValueError("DRAM write size does not match the allocation")
+      data = data.ljust(buffer.physical_size, b"\0")
+    else:
+      data = bytearray(buffer.physical_size)
+    self.cq.submit((), timeout=timeout)
+    interleaved = isinstance(buffer, InterleavedDramBuffer)
+    banks = buffer.banks if interleaved else 1
+    start = buffer.bank_start if interleaved else buffer.bank
+    with TLBWindow(self.pcie.fd, self.pcie.dram_endpoints[start][0]) as window:
+      for bank in range(banks):
+        pages = range(bank, buffer.page_count, banks)
+        dense = (b"".join(data[page * buffer.page_size:(page + 1) * buffer.page_size]
+          for page in pages) if write else bytearray(len(pages) * buffer.page_size))
+        offset = 0
+        while offset < len(dense):
+          address = buffer.address + offset
+          base = address & -TLBWindow.SIZE
+          size = min(len(dense) - offset, TLBWindow.SIZE - (address - base))
+          window.target(base, self.pcie.dram_endpoints[start + bank][0])
+          if write:
+            window.write(address - base, dense[offset:offset + size])
+          else:
+            dense[offset:offset + size] = window.read(address - base, size)
+          offset += size
+        if not write:
+          for row, page in enumerate(pages):
+            data[page * buffer.page_size:(page + 1) * buffer.page_size] = dense[row * buffer.page_size:(row + 1) * buffer.page_size]
+    if not write:
+      return bytes(data[:buffer.size])
+
   def write_dram(self, buffer, data, timeout=10.0):
     self._copy_dram(buffer, write=True, data=data, timeout=timeout)
 
@@ -221,9 +218,8 @@ class Device:
       with TLBWindow(self.pcie.fd, self.pcie.cores[0]) as window:
         address = TensixMMIO.RISCV_DEBUG_REG_SOFT_RESET_0
         base = address & -TLBWindow.SIZE
-        for start, end in rectangles(self.pcie.cores):
-          window.target(base, start, end)
-          window.write(address - base, TensixMMIO.SOFT_RESET_ALL)
+        window.target(base, (1, 2), (14, 11))
+        window.write(address - base, TensixMMIO.SOFT_RESET_ALL)
     finally:
       if self.cq is not None:
         self.cq.close()

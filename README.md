@@ -6,7 +6,8 @@ tensor runtime, Llama examples, and compiler design drafts have been removed.
 
 Read the code in this order:
 
-1. `fw/c/` and `fw/consts.py`: resident C firmware and its memory/launch ABI.
+1. `fw/llama3/`, `fw/build.py`, and `fw/consts.py`: the unchanged llama3
+   firmware, its isolated assembler, and its memory/launch ABI.
 2. `pcie.py`: device discovery, pinned host memory, TLB windows, allocation.
 3. `cq.py`: host command records, queue submission, completion, diagnostics.
 4. `program.py`: per-core RISC images, parameter tables, L1 initialization.
@@ -39,11 +40,17 @@ device-side synchronization. Repeated launches currently upload images again.
 Host trace capture and resident-kernel caching are not implemented by this
 runtime.
 
-Firmware stays in C: `fw.h` supplies shared MMIO, NoC, and entry helpers;
-`cq.h` defines the service queue ABI. Prefetch moves host records, dispatch
-launches workers, and the DRAM service handles host transfers and completion.
-Worker firmware resets hardware, enters raw kernels, and reports completion.
-The removed trace and parameter-template paths are no longer in firmware.
+Firmware is copied unchanged from `blackhole-py-llama3`. Its original assembler
+and build dependencies live under `fw/llama3/` and run in a separate interpreter;
+the current kernel assembler and experimental TTK remain independent. Prefetch
+moves host records, dispatch launches workers, and the DRAM service handles
+host transfers and completion. Worker firmware resets hardware, enters raw
+kernels, and reports completion. The firmware retains llama3's trace support;
+the byte-buffer runtime does not expose it.
+
+The original DRAM descriptor supports bank prefixes. The host uses direct PCIe
+transfers for other bank ranges and pages that are not multiples of 64 bytes,
+preserving the raw-buffer API without modifying firmware.
 
 Run the tests from this directory:
 
@@ -57,6 +64,6 @@ Hardware tests run sequentially and hold a per-card lock. See
 [tests/README.md](tests/README.md) for the harness and cycle profiler.
 
 Requires `tt-kmd` > 2.9.0 and a supported P100A or P150A/B/C. P100 uses seven
-DRAM banks; P150 uses eight and supports the stock 120-core or restored
-140-core firmware topology. Firmware compilation uses a RISC-V toolchain;
-`fw/c_firmware.py` discovers it and builds the firmware images.
+DRAM banks; P150 uses eight. Both use the 120-core firmware topology.
+Firmware assembly requires only Python. `fw/llama3-manifest.json` records the
+source snapshot and reference image hashes.

@@ -17,8 +17,10 @@ P100_DRAM_ENDPOINTS = (
   ((17, 21), (17, 22)), ((17, 14), (17, 13)), ((17, 17), (17, 16)),
   ((17, 20), (17, 19)),
 )
-# P150 exposes eight DRAM banks and the same 120-core layout as P100A.
-# Each pair selects a worker port for NoC 0/1.
+# An unharvested Blackhole exposes eight DRAM banks in two translated NoC
+# columns.  Each pair selects the firmware-recommended worker port for NoC
+# 0/1.  P150 keeps all eight banks even when current firmware presents its
+# Tensix grid as the same 120-core layout used by P100A.
 P150_DRAM_ENDPOINTS = (
   ((17, 14), (17, 13)), ((17, 15), (17, 16)),
   ((17, 18), (17, 19)), ((17, 21), (17, 22)),
@@ -28,6 +30,10 @@ P150_DRAM_ENDPOINTS = (
 P100_WORKER_CORES = tuple(
   (x, y) for x in (*range(1, 8), *range(10, 15)) for y in range(2, 12)
   if (x, y) not in ((14, 2), (14, 3), (14, 4))
+)
+P150_WORKER_CORES = tuple(
+  (x, y) for x in (*range(1, 8), *range(10, 17)) for y in range(2, 12)
+  if (x, y) not in ((16, 2), (16, 3), (16, 4))
 )
 
 @dataclass(frozen=True)
@@ -52,18 +58,18 @@ def board_config(card_type, tensix_enabled, gddr_enabled):
     cores, endpoints = P100_WORKER_CORES, P100_DRAM_ENDPOINTS
     service_x = 14
   elif card_type in ("p150a", "p150b", "p150c"):
-    if core_count != 120:
+    if core_count not in (120, 140):
       raise RuntimeError(
         f"unsupported {card_type} topology: firmware exposes {core_count} "
-        "Tensix cores; expected the supported 120-core layout",
+        "Tensix cores; expected the stock 120-core or restored 140-core layout",
       )
     if dram_count != 8:
       raise RuntimeError(
         f"unsupported {card_type} topology: expected 8 DRAM banks, "
         f"firmware exposes {dram_count}",
       )
-    cores = P100_WORKER_CORES
-    service_x = 14
+    cores = P100_WORKER_CORES if core_count == 120 else P150_WORKER_CORES
+    service_x = 14 if core_count == 120 else 16
     endpoints = P150_DRAM_ENDPOINTS
   else:
     raise RuntimeError(
@@ -218,6 +224,7 @@ class Sysmem:
 class TLBWindow:
   SIZE = 1 << 21
   USER_ID_LIMIT = 201
+  WORKER_START = (1, 2); WORKER_END = (14, 11)
 
   def __init__(self, fd: int, core: tuple[int, int]):
     tlb = AllocateTlb(fd)
@@ -241,6 +248,10 @@ class TLBWindow:
     data = value.to_bytes(bytes, "little") if isinstance(value, int) else value
     ctypes.memmove(self.addr + offset, data, len(data))
 
+  def mcast(self, addr: int, value, bytes=4):
+    base = addr & -self.SIZE
+    self.target(base, self.WORKER_START, self.WORKER_END)
+    self.write(addr - base, value, bytes)
 
   def close(self):
     if self.addr is not None:
