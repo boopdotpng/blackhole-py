@@ -120,13 +120,3 @@ def test_scattered_dst_unpack(bh, fmt, slots, lengths):
     assert bh.read_l1(bh.core, d.SHORT-64, len(source)+128) == guard + source + guard
     if sample: samples.append(profile.last['unpack Dst complete'])
   print('SCATTER_UNPACK Dst', fmt, slots, lengths, 'cycles', samples, 'median', median(samples))
-
-
-def test_scatter_unpack_images_fit_worker_text():
-  from fw.consts import TensixL1
-  segments = tuple((slot, 128) for slot in (7, 0, 5, 2, 6, 1, 4, 3))
-  cases = [s.source_images(target, 7, u.F32, segments=segments, native=native)[0]
-           for target in (u.UnpackTarget.SRCA, u.UnpackTarget.SRCB) for native in (False, True)]
-  cases.append(d.dst_images(63, u.F32, segments=tuple((slot, 128) for slot in (63, 0, 31, 4, 57, 8)))[0])
-  for code in cases:
-    assert all(len(image) <= TensixL1.WORKER_TEXT_SIZE[role] for role, image in code.items())

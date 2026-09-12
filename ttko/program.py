@@ -109,10 +109,8 @@ class Buffer:
   def from_numpy(self, values) -> bytes:
     if self.dtype is DType.U32:
       return np.asarray(values, dtype="<u4").reshape(self.shape).tobytes()
+    if self.dtype.is_fp8: raise TypeError("FP8 buffers require encoded checkpoint bytes")
     values = np.asarray(values, dtype=np.float32).reshape(self.shape)
-    if self.dtype.is_fp8:
-      from fp8 import encode_hardware
-      return encode_hardware(values).tobytes()
     if self.dtype is DType.F16: return values.astype("<f2").tobytes()
     if self.dtype is DType.F32: return values.astype("<f4", copy=False).tobytes()
     return (values.view(np.uint32) >> 16).astype("<u2").tobytes()
@@ -150,9 +148,7 @@ class Buffer:
   def to_numpy(self, data: bytes):
     if self.dtype is DType.U32:
       return np.frombuffer(data, dtype="<u4").reshape(self.shape).copy()
-    if self.dtype.is_fp8:
-      from fp8 import decode
-      return decode(np.frombuffer(data, dtype=np.uint8)).reshape(self.shape).copy()
+    if self.dtype.is_fp8: raise TypeError("Read FP8 buffers as raw bytes")
     if self.dtype is DType.F16: return np.frombuffer(data, dtype="<f2").astype(np.float32).reshape(self.shape)
     if self.dtype is DType.F32: values = np.frombuffer(data, dtype="<f4")
     else:

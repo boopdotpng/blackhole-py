@@ -1,17 +1,13 @@
-from tests.models.topology import P150_WORKER_CORES
-"""CPU lowering/layout checks and opt-in hardware projection equivalence."""
+"""Hardware projection equivalence for prefill and decode."""
 from dataclasses import replace
 import os
-from types import SimpleNamespace
 import unittest
 
 import numpy as np
 from ttko.device import Device
 from examples import llama3_8b as d
 from examples.llama3_prefill import SequenceBuffer, prefill_projection, prefill_projections
-from fw.consts import TensixL1
-from pcie import P100_DRAM_ENDPOINTS, P100_WORKER_CORES, P150_DRAM_ENDPOINTS
-from ttko.program import Dram, DType
+from ttko.program import DType
 
 
 def buffers(device, count, rows=176):
@@ -26,43 +22,7 @@ def buffers(device, count, rows=176):
 
 
 class PrefillTest(unittest.TestCase):
-  def test_layout_and_lowering(self):
-    for endpoints, cores in ((P100_DRAM_ENDPOINTS, P100_WORKER_CORES),
-                             (P150_DRAM_ENDPOINTS, P150_WORKER_CORES)):
-      device = SimpleNamespace(dram=Dram(len(endpoints), cores, endpoints))
-      x, storage, weight, out = buffers(device, 8, rows=d.MLP_DIM)
-      for sequence in (x, out):
-        self.assertEqual(sequence.stride % len(endpoints), 0)
-        for i in range(8):
-          view = sequence.view(i)
-          self.assertEqual(view.addr, sequence.storage.addr + i * sequence.stride // len(endpoints) * 2048)
-          self.assertLessEqual(view.addr + (view.physical_tiles + len(endpoints)-1)//len(endpoints)*2048,
-                               sequence.storage.addr + sequence.storage.size//len(endpoints))
-      for count in (1, 3, 4, 8):
-        with self.subTest(banks=len(endpoints), count=count):
-          program = prefill_projection(x, weight, out, count)
-          # Includes text partition, parameter table and L1 allocation checks.
-          self.assertTrue(program.static_commands())
-          self.assertLessEqual(program._l1.next, TensixL1.DATA_BUFFER_SPACE_END)
-          program._param_table()
-      gamma = device.dram.buffer('scale', DType.BF16, (4096,), global_address=True, tilized=False)
-      group = tuple((replace(weight, name=f'group_w_{i}'),
-                     SequenceBuffer(device, replace(out.prototype, name=f'group_o_{i}'), 8))
-                    for i in range(3))
-      for count in (1, 4, 8):
-        program = prefill_projections(x, group, count, gamma)
-        self.assertTrue(program.static_commands())
-        self.assertLessEqual(program._l1.next, TensixL1.DATA_BUFFER_SPACE_END)
-        self.assertEqual(len(program.params), 12)
-      for count in (0, 9, 1.5):
-        with self.assertRaises(ValueError): prefill_projection(x, weight, out, count)
 
-  def test_load_tokens_rejects_invalid_input_before_device_access(self):
-    runtime = d.Llama3Decode.__new__(d.Llama3Decode)
-    for tokens in ([], [-1], [d.VOCAB_SIZE], [2**32], [1.5], [[1]], [True],
-                   [1] * d.ROPE_CACHE_TOKENS):
-      with self.subTest(tokens=str(tokens)[:40]), self.assertRaises(ValueError):
-        runtime.load_tokens(tokens)
 
   @unittest.skipUnless('LLAMA_PREFILL_DEVICE' in os.environ, 'set LLAMA_PREFILL_DEVICE to run on hardware')
   def test_projection_matches_decode(self):

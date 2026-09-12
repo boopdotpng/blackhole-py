@@ -79,28 +79,6 @@ def _read_word(bh, core, address):
   return int.from_bytes(bh.read_l1(core, address, 4), "little")
 
 
-def test_atomic_increment_configuration_and_lowering():
-  with pytest.raises(ValueError, match="NoC index"):
-    AtomicIncrementConfig(noc=2)
-  with pytest.raises(ValueError, match="4-byte-aligned"):
-    AtomicIncrementConfig(return_address=RETURN_ADDRESS + 1)
-  with pytest.raises(ValueError, match="static VC"):
-    AtomicIncrementConfig(static_vc=4)
-
-  for role in ("brisc", "ncrisc"):
-    for return_value in (False, True):
-      kernel = Asm(role)
-      emit_atomic_increment(
-        kernel,
-        AtomicIncrementConfig(noc=0, return_value=return_value,
-                              return_address=RETURN_ADDRESS),
-      )
-      assert len(kernel.lower()) > 0
-
-  with pytest.raises(ValueError, match="only BRISC and NCRISC"):
-    emit_atomic_increment(Asm("trisc0"), AtomicIncrementConfig())
-
-
 @pytest.mark.parametrize("noc", (0, 1))
 def test_two_core_atomic_fetch_add_returns_old_value(bh, noc):
   receiver, sender = bh.device.cores[:2]

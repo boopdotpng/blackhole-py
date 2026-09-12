@@ -24,7 +24,7 @@ class Backend:
 
     def fingerprint(self):
         paths=list(ROOT.glob('*.py'))
-        for directory in ('tests','fw','ttk','tools/viewer'):
+        for directory in ('tests','fw','ttko','examples','tools/viewer'):
             paths.extend((ROOT/directory).rglob('*.py'))
         paths.extend((HERE/'data').glob('*.json'))
         return hashlib.sha256(''.join(f'{p}:{p.stat().st_mtime_ns}:{p.stat().st_size}' for p in sorted(paths)).encode()).hexdigest()

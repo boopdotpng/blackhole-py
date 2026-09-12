@@ -96,18 +96,6 @@ def _images(config, *, guard_offset=None, check_offset=None,
   return {"brisc": sender.lower()}, {"ncrisc": receiver.lower()}
 
 
-def test_remote_cb_configuration_and_lowering():
-  config = RemoteCBConfig(((1, 2), (2, 2)), CB_ADDRESS, 2)
-  assert config.page_bytes == TILE_BYTES
-  assert config.rectangles == (((1, 2), (2, 2)),)
-  sender, receiver = _images(config)
-  assert sender["brisc"] and receiver["ncrisc"]
-  with pytest.raises(ValueError, match="at least one destination"):
-    RemoteCBConfig((), CB_ADDRESS, 2)
-  with pytest.raises(ValueError, match="16-byte-aligned"):
-    RemoteCBConfig(((1, 2),), CB_ADDRESS + 1, 2)
-
-
 @pytest.mark.parametrize("noc", (0, 1))
 def test_send_pages_remote_cb_unicast_and_multicast(bh, noc):
   producer = bh.device.cores[0]

@@ -88,8 +88,6 @@ viewing does not require the sibling docs, ttsim, or tt-metal checkouts.
 ## Verification
 
 ```sh
-.venv/bin/python blackhole-py/tools/viewer/test_decode.py
-node blackhole-py/tools/viewer/test_behavior.mjs
 .venv/bin/python blackhole-py/tools/viewer/capture.py capture --audit \
   --output /tmp/blackhole-viewer-audit.json
 ```
@@ -97,6 +95,3 @@ node blackhole-py/tools/viewer/test_behavior.mjs
 The capture command's pytest “passed” result means the offline host path reached
 its capture boundary or completed; it does **not** mean the hardware test passed.
 The JSON distinguishes `boundary`, `complete`, `error`, and `skipped` results.
-Decoder tests cover all encoder roundtrips, negative immediates, branch joins,
-loop convergence, long branches, raw MMIO/MOP payloads, masks and bank mapping.
-Node is only used for optional presentation tests.

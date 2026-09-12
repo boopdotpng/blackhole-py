@@ -1,9 +1,0 @@
-test_all_workers_after_repeated_launches (test_firmware_instruction_cache.FirmwareInstructionCacheTest.test_all_workers_after_repeated_launches) ... launch 0: 117 workers, states=[['0x20000', '0x20000', '0x20000', '0x20000', '0x20000', '0x11f']]
-launch 1: 117 workers, states=[['0x20000', '0x20000', '0x20000', '0x20000', '0x20000', '0x11f']]
-ok
-test_firmware_fits_slots (test_firmware_instruction_cache.FirmwareInstructionCacheTest.test_firmware_fits_slots) ... ok
-
-----------------------------------------------------------------------
-Ran 2 tests in 0.571s
-
-OK

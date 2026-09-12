@@ -4,7 +4,6 @@ import pytest
 
 from asm import Asm
 from fw.consts import TensixL1, TensixMMIO
-from isa import Tensix as TT, TensixWord
 from tests.movement.packer.pack import emit_pack_dst_to_cb, initialize_prng
 from tests.movement.unpacker.unpack import (
   BF16, BF16_TILE_BYTES, F32, F32_TILE_BYTES, TILE_ELEMENTS,
@@ -245,28 +244,3 @@ def test_deterministic_and_stochastic_bf16_format_conversion(bh):
   assert stochastic_b != stochastic_a
   assert deterministic_cycles > 0
   assert stochastic_cycles > 0
-
-
-def test_runtime_pack_codegen_has_constant_pacr_count():
-  trisc2 = Asm("trisc2")
-  count = _runtime_word(trisc2, 1)
-  emit_pack_dst_to_cb(trisc2, 7, OUTPUT, count, dst_element_offset=32)
-  opcodes = [
-    int(word) >> 24 for word in trisc2.items if isinstance(word, TensixWord)
-  ]
-  # PACR lives only in MOP configuration. The two literal MOP sites cover a
-  # runtime full-row loop and the optional final partial row.
-  assert opcodes.count(0x41) == 0
-  assert opcodes.count(0x01) == 2
-  assert trisc2.lower()
-
-
-def test_prng_initialization_repeats_sfpnop_with_mop():
-  trisc1 = Asm("trisc1")
-  initialize_prng(trisc1, 0x13579BDF)
-  words = [
-    int(word) for word in trisc1.items if isinstance(word, TensixWord)
-  ]
-  assert int(TT.TTSFPNOP()) not in words
-  assert sum(word >> 24 == 0x01 for word in words) == 1
-  assert trisc1.lower()

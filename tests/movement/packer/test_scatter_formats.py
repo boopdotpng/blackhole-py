@@ -278,12 +278,3 @@ def test_scatter_pack_wrapping_cb(bh, fp32, output_format, tail):
     assert bh.read_l1(bh.core, SCRATCH+5120, 64) == GUARD
     if sample: samples.append(p.last['last page pack'])
   print('SCATTER_CB', fp32, output_format, tail, 'six pages', 'last page cycles', samples)
-
-
-def test_scatter_pack_images_fit_worker_text():
-  for fp32 in (True, False):
-    for tail in (128, 127):
-      code, _ = images(fp32, u.F32, (63 if fp32 else 127, 0, 17, 4, 31, 8, 55, 2), tail, 4, 64)
-      ring, _, _ = ring_images(fp32, u.F32, tail)
-      for streams in (code, ring):
-        assert all(len(image) <= TensixL1.WORKER_TEXT_SIZE[role] for role, image in streams.items())

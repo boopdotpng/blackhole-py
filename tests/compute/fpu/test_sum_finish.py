@@ -14,8 +14,8 @@ from isa import Tensix as TT
 from tests.compute.fpu.test_mean import INPUT, WEIGHTS, OUTPUT, _add, _reduce_l0
 from tests.movement.packer.pack import emit_pack_dst_to_cb
 from tests.movement.unpacker.unpack import (
-  F32, UnpackCfg, UnpackTarget, Sem, SemWait, Stall, Wait,
-  _engine_cfg, _mop_loop_words, _set_thread_cfg, _unpacr,
+  F32, CFG_BASE, UnpackCfg, UnpackTarget, Sem, SemWait, Stall, Wait,
+  _engine_cfg, _mop_loop_words, _rmw_cfg_byte, _set_thread_cfg, _unpacr,
   configure_unpacker, configure_fp32_dst, configure_mop, load_replay,
   run_mop, pc_sync, publish_dst, sem_get, sem_post, sem_wait, stall,
   UNPACK_CONFIG_SYNC,
@@ -35,6 +35,14 @@ def _finish(k, finish, op):
     k.emit(TT.TTSFPSTORE(0, 3, 3, 0))
     return
 
+  # Explicit TF32 for Dst/source copies and the second reduction. Disable
+  # bank-implied formats so MOVD2B cannot silently narrow to BF16 instead.
+  stall(k, Stall.CFG, Wait.MATH | Wait.SFPU)
+  _rmw_cfg_byte(k, CFG_BASE, 0, 0xff, 0x94)
+  _rmw_cfg_byte(k, CFG_BASE, 1, 0x03, 0x02)
+  _set_thread_cfg(k, 2, 1)
+  _set_thread_cfg(k, 3, 1)
+
   # Transpose: partial row -> scratch B -> transpose -> A column (LLK style).
   # Row dot: partial row -> B[0], preloaded B[16:32] column of ones -> A.
   k.emit(TT.TTSETRWC(0, 0, 0, 0, 0, 0xF))
@@ -53,7 +61,7 @@ def _finish(k, finish, op):
   k.emit(op(0, 0, 6, 0, 0) if op == TT.TTGAPOOL else op(0, 0, 6, 0))
 
 
-def _images(first, finish, *, split=False):
+def _images(first, finish, *, split=False, finish_reduction=True, output_elements=16):
   loader, math, packer = (Asm(role) for role in ("trisc0", "trisc1", "trisc2"))
   for engine, target in ((0, UnpackTarget.SRCA), (1, UnpackTarget.SRCB)):
     configure_unpacker(loader, engine, INPUT if engine == 0 else WEIGHTS,
@@ -117,7 +125,8 @@ def _images(first, finish, *, split=False):
     stall(math, Stall.SYNC, Wait.MATH)
     pc_sync(math)
     profile.record("finish")
-  _finish(math, finish, op)
+  if finish_reduction:
+    _finish(math, finish, op)
   stall(math, Stall.SYNC, Wait.MATH | Wait.SFPU)
   pc_sync(math)
   if split: profile.record("finish")
@@ -128,7 +137,7 @@ def _images(first, finish, *, split=False):
   sem_get(math, Sem.MATH_DONE)
   if not split: profile.record("L1 to L1")
   count = packer.reg()
-  packer.li(count, 16)
+  packer.li(count, output_elements)
   emit_pack_dst_to_cb(packer, 0, OUTPUT, count, output_format=F32)
   sem_post(packer, Sem.MATH_DONE)
   return {k.role: k.lower() for k in (loader, math, packer)}, profile

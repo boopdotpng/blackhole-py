@@ -1,6 +1,0 @@
-test_supported_topologies (test_llama3_lowering.DecodeResidencyTest.test_supported_topologies) ... ok
-
-----------------------------------------------------------------------
-Ran 1 test in 8.457s
-
-OK

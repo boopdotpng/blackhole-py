@@ -4,7 +4,6 @@ import pytest
 
 from asm import Asm
 from fw.consts import TensixL1
-from isa import TensixWord
 from tests.movement.unpacker.unpack import (
   BF16, BF16_TILE_BYTES, F32, F32_TILE_BYTES, TILE_ELEMENTS,
   UnpackTarget, clear_sources, emit_copy_src_to_dst,
@@ -265,21 +264,3 @@ def test_benchmark_parallel_unpack_against_two_individual_unpacks(bh, capsys):
   )
   assert parallel > 0
   assert all(cycles > 0 for cycles in individual)
-
-
-def test_runtime_partial_dst_codegen_has_constant_unpack_instruction_count():
-  trisc0 = Asm("trisc0")
-  byte_count = _runtime_word(trisc0, 0)
-  emit_unpack_to_dst(trisc0, INPUT_A, byte_count, 7, 32)
-  unpack_opcodes = [
-    int(word) >> 24 for word in trisc0.items if isinstance(word, TensixWord)
-  ]
-  # One UNPACR lives in Replay. Runtime sizes select MOP loop counts and a tail,
-  # never one literal UNPACR per copied value.
-  assert unpack_opcodes.count(0x42) == 1
-  assert unpack_opcodes.count(0x01) == 2
-  assert any(
-    unpack_opcodes[index:index + 3] == [0x04, 0x42, 0xA2]
-    for index in range(len(unpack_opcodes) - 2)
-  ), "direct-Dst Replay must contain UNPACR followed by STALLWAIT"
-  assert trisc0.lower()

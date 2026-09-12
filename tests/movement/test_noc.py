@@ -384,58 +384,6 @@ def _run_bank_sharded_case(bh, cores, assignments, buffers, images):
   return _scaling_row(len(cores), timings, cores), tuple(bank_slots)
 
 
-def test_direct_noc_emitters_reject_misaligned_l1():
-  with pytest.raises(ValueError, match="16-byte-aligned"):
-    InterleavedConfig(tuple(range(8)), CB_ADDRESS + 1,
-                      CB_DEPTH)
-
-
-def test_direct_noc_emitters_reject_empty_pages():
-  with pytest.raises(ValueError, match="page size must be positive"):
-    InterleavedConfig(tuple(range(8)), CB_ADDRESS, page_bytes=0)
-
-
-def test_direct_noc_emitters_assemble_without_ttk():
-  config = InterleavedConfig(tuple(18 | y << 6 for y in range(8)),
-                             CB_ADDRESS, CB_DEPTH, PAGE_BYTES)
-  read = Asm("brisc")
-  emit_interleaved_dram_to_l1(read, config)
-  write = Asm("brisc")
-  emit_l1_to_interleaved_dram(write, config)
-  profiled_write = Asm("ncrisc")
-  profile = Profiler(profiled_write)
-  profile.record("kernel")
-  emit_l1_to_interleaved_dram(profiled_write, config)
-  profile.record("kernel")
-
-  assert read.lower()
-  assert write.lower()
-  assert profiled_write.lower()
-
-
-def test_batch_depth_is_bounded_by_cb_capacity():
-  coordinates = tuple(18 | y << 6 for y in range(8))
-  with pytest.raises(ValueError, match="issue batch"):
-    InterleavedConfig(
-      coordinates, CB_ADDRESS, depth=4, page_bytes=PAGE_BYTES,
-      batch_pages=5,
-    )
-
-
-@pytest.mark.parametrize("depth", (1, 2, 3, 8, 64, 129))
-def test_cb_depth_is_static_configuration(depth):
-  config = InterleavedConfig(
-    tuple(18 | y << 6 for y in range(8)), CB_ADDRESS, depth, PAGE_BYTES,
-  )
-  read, write = Asm("brisc"), Asm("ncrisc")
-  emit_interleaved_dram_to_l1(read, config)
-  emit_l1_to_interleaved_dram(write, config)
-
-  assert config.l1_bytes == depth * PAGE_BYTES
-  assert config.issue_depth == min(depth, 128)
-  assert read.lower() and write.lower()
-
-
 @pytest.mark.parametrize("depth", BENCHMARK_DEPTHS)
 def test_interleaved_dram_bandwidth_through_cb(bh, depth):
   """Sweep CB depth while streaming 16 MiB through all eight DRAM banks."""

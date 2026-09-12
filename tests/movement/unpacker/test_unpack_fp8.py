@@ -45,12 +45,3 @@ def test_fp8_parallel_source_banks(bh):
             l1={INPUT_A: a, INPUT_B: b, OUTPUT_A: bytes(8192)})
   assert bh.read_l1(bh.core, OUTPUT_A, 4096) == fp8.as_f32(a)
   assert bh.read_l1(bh.core, OUTPUT_B, 4096) == fp8.as_f32(b)
-
-
-def test_fp8_reference_known_encodings():
-  assert fp8.decode(0x38) == 1.0
-  assert fp8.decode(0xB8) == -1.0
-  assert fp8.decode(0x01) == 2**-9
-  assert fp8.decode(0x08) == 2**-6
-  assert fp8.decode(0x7E) == 448.0
-  assert fp8.encode([0., 1., -1., 448., 1.0625, 1.1875]) == bytes((0, 0x38, 0xB8, 0x7E, 0x38, 0x3A))

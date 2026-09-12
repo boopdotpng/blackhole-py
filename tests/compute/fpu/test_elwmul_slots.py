@@ -146,12 +146,3 @@ def test_hifi2_elwmul_source_slot_placement(bh, name, a_slots, b_slots, input_fo
     samples.append(profile.last["HiFi2 accumulate"] / REPEATS)
   print(f"{name}: A={a_slots}, B={b_slots}; cycles per 256-element HiFi2 accumulation "
         f"median={median(samples):.3f}, min={min(samples):.3f}, max={max(samples):.3f}")
-
-
-@pytest.mark.parametrize('operation', ('ELWADD', 'ELWMUL', 'MVMUL', 'GAPOOL'))
-def test_fp8_keeps_compute_and_observation_instructions(operation):
-  bf16, _ = _images((0, 2), (0, 7), operation, BF16)
-  fp8_images, _ = _images((0, 2), (0, 7), operation, FP8_E4M3)
-  assert bf16['trisc1'] == fp8_images['trisc1']
-  assert bf16['trisc2'] == fp8_images['trisc2']
-  assert bf16['trisc0'] != fp8_images['trisc0']

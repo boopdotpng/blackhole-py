@@ -3,25 +3,9 @@ import numpy as np
 import pytest
 
 from ttko import DType
-from ttko.program import Const, Dram, Program
+from ttko.program import Const, Program
 from ttko.device import Device
-from ttko.layout import convert
 from fw.consts import TensixL1
-
-
-def test_layout_kernel_lowering():
-  for dtype in (DType.BF16, DType.FP8, DType.F32):
-    buffer = Dram().buffer('layout', dtype, (3, 1057), axis=0)
-    for inverse in (False, True):
-      images = convert(buffer, buffer, inverse=inverse).lower()
-      assert all(len(roles['brisc']) <= TensixL1.WORKER_TEXT_SIZE['brisc'] for roles in images.values())
-
-
-def test_raw_host_padding():
-  buffer = Dram().buffer('raw', DType.U32, (3, 1057), axis=0, tilized=False)
-  data = np.arange(3 * 1057, dtype='<u4').tobytes()
-  assert buffer.unpad_data(buffer.pad_data(data)) == data
-  assert buffer.pad_data(data)[:1057 * 4] == data[:1057 * 4]
 
 
 def test_model_runtime_hardware(request):

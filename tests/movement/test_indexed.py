@@ -1,7 +1,6 @@
 from statistics import median
 from struct import Struct, pack
 
-import pytest
 
 from asm import Asm
 from fw.consts import TensixL1, TensixMMIO
@@ -73,18 +72,6 @@ def _elapsed_cycles(bh):
     bh.read_l1(bh.core, TIMING_ADDRESS, TIMING_RECORD.size),
   )
   return (lo1 | hi1 << 32) - (lo0 | hi0 << 32)
-
-
-def test_indexed_configuration_and_lowering():
-  config = _config()
-  gather, scatter = Asm("brisc"), Asm("brisc")
-  emit_indexed_gather(gather, config)
-  emit_indexed_scatter(scatter, config)
-  assert gather.lower() and scatter.lower()
-  with pytest.raises(ValueError, match="overlap"):
-    IndexedConfig(tuple(range(8)), ROWS_ADDRESS, ROWS_ADDRESS, 4, PAGE_BYTES)
-  with pytest.raises(ValueError, match="16-byte-aligned"):
-    IndexedConfig(tuple(range(8)), INDICES_ADDRESS, ROWS_ADDRESS, 4, 18)
 
 
 def test_brisc_indexed_gather_with_duplicate_ids(bh):

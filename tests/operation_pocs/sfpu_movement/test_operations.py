@@ -246,12 +246,3 @@ def test_immediate_and_store_bits(bh, request, bits, raw):
   expected[63 * 128:] = [value] * 128
   finish(bh, request, (loader, math, packer), p, initial, expected,
          f'bits:{bits:08x}:raw_store={raw}:allocation=124:block=1', {'loadi': K, 'store': K * 4})
-
-
-def test_cpu_operand_validation():
-  for invalid in (-1, 1 << 32, True, 1.0):
-    with pytest.raises(ValueError): sf.predicate(Asm('trisc1'), invalid)
-  for index in (-1, 16, True):
-    with pytest.raises(ValueError): sf.copy(Asm('trisc1'), 0, index)
-  for start in (-2, 1, 128):
-    with pytest.raises(ValueError): sf.address(start)

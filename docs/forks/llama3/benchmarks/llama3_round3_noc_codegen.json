@@ -1,8 +1,0 @@
-{
-  "example": "2 KiB read command with register source/target addresses, constant coordinates",
-  "old_instructions": 47,
-  "new_instructions": 20,
-  "old_stores": 12,
-  "new_stores": 12,
-  "scope": "Command construction only; excludes submission, credit waits and completion polling."
-}
