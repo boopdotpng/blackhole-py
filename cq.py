@@ -27,6 +27,10 @@ class Op(IntEnum):
   RUN = 3
   SIGNAL = 5
   DRAM_COPY = 7
+  INDIRECT = 6
+  WAIT = 8
+  TIMESTAMP = 9
+  DMA = 10
 
 class PacketLayout:
   HEADER = Struct("<BxHIII")
@@ -163,7 +167,8 @@ class Signal:
       Op.SIGNAL, 0, ALIGN, self.addr & 0xFFFFFFFF,
       self.addr >> 32,
     )
-    return (header + Struct("<Q").pack(self.value)).ljust(ALIGN, b"\0")
+    stamp = PacketLayout.HEADER.pack(Op.TIMESTAMP, 0, ALIGN, (self.addr + 8) & 0xFFFFFFFF, (self.addr + 8) >> 32)
+    return stamp.ljust(ALIGN, b"\0") + (header + Struct("<Q").pack(self.value)).ljust(ALIGN, b"\0")
 
 @dataclass(frozen=True)
 class DramCopy:
@@ -315,3 +320,35 @@ class CommandQueue:
   def close(self):
     self.prefetch.close()
     self.dispatch.close()
+
+
+@dataclass(frozen=True)
+class Wait:
+  addr: int
+  value: int
+  eq: bool = False
+
+  def lower(self):
+    return (PacketLayout.HEADER.pack(Op.WAIT, 0, ALIGN, self.addr & 0xffffffff, self.addr >> 32) +
+            Struct('<QI').pack(self.value, self.eq)).ljust(ALIGN, b'\0')
+
+@dataclass(frozen=True)
+class Indirect:
+  addr: int
+  size: int
+
+  def lower(self):
+    if self.size <= 0 or self.size % ALIGN: raise ValueError('indirect size must be positive and aligned')
+    if (self.addr >> 32) != ((self.addr + self.size - 1) >> 32): raise ValueError('indirect crosses NoC aperture')
+    return (PacketLayout.HEADER.pack(Op.INDIRECT, 0, ALIGN, self.addr & 0xffffffff, self.addr >> 32) +
+            Struct('<I').pack(self.size)).ljust(ALIGN, b'\0')
+
+@dataclass(frozen=True)
+class Dma:
+  dest: int
+  src: int
+  size: int
+
+  def lower(self):
+    if not 0 < self.size < 1 << 32: raise ValueError('DMA size must fit u32')
+    return (PacketLayout.HEADER.pack(Op.DMA, 0, ALIGN, 0, 0) + Struct('<QQI').pack(self.src, self.dest, self.size)).ljust(ALIGN, b'\0')

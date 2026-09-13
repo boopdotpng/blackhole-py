@@ -53,8 +53,8 @@ class Device:
   def cores(self):
     return tuple(self.pcie.cores)
 
-  def boot(self):
-    images = firmware.build(self.pcie.sysmem.noc_addr >> 32, self.pcie.dram_endpoints)
+  def boot(self, images=None):
+    images = firmware.build() if images is None else images
     resident = b"".join(image.ljust(size, b"\0")
       for (_, size), image in zip(Firmware.TEXT.values(), images.workers))
     firmware_base = Firmware.TEXT["brisc"][0]
@@ -81,6 +81,15 @@ class Device:
           window.write(TensixL1.WORKER_TEXT_BASE[role], image)
       window.target(0, self.pcie.dram_core)
       window.write(DRAM_BRISC_READY, bytes(8))
+      from fw.abi import BOOT_PCIE_MID, BOOT_BANKS, BOOT_COORDS
+      for core in (self.pcie.prefetch_core, self.pcie.dispatch_core, self.pcie.dram_core):
+        window.target(0, core)
+        window.write(BOOT_PCIE_MID, self.pcie.sysmem.noc_addr >> 32)
+        window.write(BOOT_BANKS, len(self.pcie.dram_endpoints))
+        for niu in range(2):
+          for bank, endpoints in enumerate(self.pcie.dram_endpoints):
+            x, y = endpoints[niu]
+            window.write(BOOT_COORDS + niu * 32 + bank * 4, x | y << 6)
       self.cq = self.command_queue_type(self.pcie)
       for core in (self.pcie.prefetch_core, self.pcie.dispatch_core, self.pcie.dram_core):
         window.target(0, core)
