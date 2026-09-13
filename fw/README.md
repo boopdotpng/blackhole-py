@@ -5,10 +5,10 @@
 Build with Python from the repository root:
 
 ```sh
-python -m fw.build build/bh_hcq_v1.bin
+python -m fw.build build/bh_hcq_v2.bin
 ```
 
-The binary contains an 8-byte `BHCQ0001` ABI identifier, nine little-endian u32 image lengths, and the five resident worker images followed by prefetch, dispatch, DMA BRISC, and DMA NCRISC. The loader validates all image boundaries. Build output is independent of the card and pinned-memory address. `build.unpack` accepts a binary for `Device.boot(images=...)`.
+The binary contains an 8-byte `BHCQ0002` ABI identifier, nine little-endian u32 image lengths, and the five resident worker images followed by prefetch, dispatch, DMA BRISC, and DMA NCRISC. The loader validates all image boundaries. Build output is independent of the card and pinned-memory address. `build.unpack` accepts a binary for `Device.boot(images=...)`.
 
 Before GO, the host writes these values on each service core:
 
@@ -19,7 +19,7 @@ Before GO, the host writes these values on each service core:
 | `0x10a0` | eight NoC0 DRAM endpoint coordinates, u32 each |
 | `0x10c0` | eight NoC1 DRAM endpoint coordinates, u32 each |
 
-The original `llama3/` snapshot remains unchanged and supplies the assembler, NoC emitters, and resident workers. `build.py` runs it in an isolated interpreter and loads the new service sources. The existing worker ABI, TRISC fusion/cache policy, and instruction-prefetch settings are preserved. `llama3-manifest.json` describes the original snapshot, not this new binary.
+The original `llama3/` snapshot remains unchanged and supplies the assembler, NoC emitters, and resident workers. `build.py` runs it in an isolated interpreter and loads the new service sources. TRISC fusion/cache policy and instruction-prefetch settings are preserved; worker entry selection is extended as described below. `llama3-manifest.json` describes the original snapshot, not this new binary.
 
 ## Command stream
 
@@ -59,3 +59,5 @@ python -m pytest tests/test_hcq_firmware.py tests/timing/test_firmware_cache.py 
 ```
 
 Hardware checks cover topology-independent builds, indirect execution, 64-bit equality waits, timestamps, unaligned copies above the 4 GiB logical address boundary, and resident worker cache/fusion settings. tinygrad's `test/device/test_tt.py` additionally covers allocation reclamation, byte views, L1 and DRAM copies, parameterized worker dispatch, TinyJit with new input/output addresses, and issue-ring wraparound.
+
+Worker firmware loads its entry PC from the launch-owned five-word table at `TensixL1.WORKER_ENTRY_BASE`. Boot initializes direct-launch slots; `Program` restores those entries, while `GridProgram` supplies common resident entry addresses without trampolines. Grid launches write logical `(ri, ci)` to the aligned `GRID_RANK_BASE` and broadcast common parameters. Rebuild older firmware blobs for this ABI.

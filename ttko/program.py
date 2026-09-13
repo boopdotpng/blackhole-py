@@ -335,6 +335,10 @@ class Program:
 
   def static_commands(self):
     commands, kernels = [], self.lower()
+    entries = b''.join(address.to_bytes(4, 'little') for address in TensixL1.WORKER_TEXT_BASE.values())
+    if self.cores:
+      commands.append(McastWrite(rectangles(self.cores), TensixL1.WORKER_ENTRY_BASE, entries)
+                      if len(self.cores) > 1 else UnicastWrite(self.cores, TensixL1.WORKER_ENTRY_BASE, (entries,)))
     for role in KERNEL_ROLES:
       groups = {}
       for core in self.cores:

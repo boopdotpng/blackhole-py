@@ -8,7 +8,7 @@ def test_firmware_reproducible():
   blob = pack(build())
   assert pack(unpack(blob)) == blob
   assert pack(build(0x12345678, ())) == blob # topology is supplied at boot, not compiled into code
-  for bad in (blob[:20], b'INVALID!'+blob[8:], blob+b'\0'):
+  for bad in (blob[:20], b'INVALID!'+blob[8:], b'BHCQ0001'+blob[8:], blob+b'\0'):
     with pytest.raises(ValueError): unpack(bad)
 
 

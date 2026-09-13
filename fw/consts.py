@@ -14,6 +14,11 @@ class TensixL1:
   # FP8 projections need 24 argument slots; place them before the zero page.
   PARAM_BASE = 0x3280; PARAM_SIZE = 0x60; PARAM_SLOTS = PARAM_SIZE // 4
 
+  # Launch-owned entry addresses and logical grid identity. These are data,
+  # read by firmware and kernels respectively, never per-core instructions.
+  WORKER_ENTRY_BASE = 0x380
+  GRID_RANK_BASE = 0x3A0  # ri, ci (u32 each); 16-byte-aligned NoC destination
+
   # Direct launches overwrite one fixed, independently sized slot per RISC.
   WORKER_TEXT_BASE = {
     "brisc": 0x04000,

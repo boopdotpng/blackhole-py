@@ -69,6 +69,24 @@ options = json.loads(sys.argv[2])
 from fw.consts import TensixL1
 for name, value in options['l1_abi'].items():
     setattr(TensixL1, name, value)
+from fw.consts import Firmware
+Firmware.TEXT = {role: tuple(slot) for role, slot in options['firmware_text'].items()}
+def run_worker(fw, role):
+    index = list(TensixL1.WORKER_TEXT_BASE).index(role)
+    fw.lw(R.T0, R.ZERO, TensixL1.WORKER_ENTRY_BASE + index * 4)
+    fw.jalr(R.ZERO, R.T0)
+    return fw.label('worker_done')
+core._run_worker = run_worker
+reference_enable_clock_gating = core._enable_clock_gating
+def enable_clock_gating(fw):
+    reference_enable_clock_gating(fw)
+    # Initialize direct entries on every tile at boot, including service tiles
+    # and clients that load firmware without using the Python Device wrapper.
+    for index, address in enumerate(TensixL1.WORKER_TEXT_BASE.values()):
+        fw.li(R.T0, address)
+        fw.sw(R.T0, R.ZERO, TensixL1.WORKER_ENTRY_BASE + index * 4)
+    return fw
+core._enable_clock_gating = enable_clock_gating
 images = [build_brisc(), build_ncrisc(), *(build_trisc(i) for i in range(3)),
           build_prefetch(), build_dispatch(), build_dram_brisc(), build_dram_ncrisc()]
 lowered = [image.lower() for image in images]
@@ -81,10 +99,11 @@ print(json.dumps([image.hex() for image in lowered]))
 '''
 
 def build(pcie_mid=None, dram_endpoints=None):
+  from fw.consts import Firmware
   result = subprocess.run([sys.executable, '-I', '-c', _SCRIPT, str(SOURCE),
-    json.dumps({'pcie_mid': pcie_mid, 'endpoints': dram_endpoints,
+    json.dumps({'pcie_mid': pcie_mid, 'endpoints': dram_endpoints, 'firmware_text': Firmware.TEXT,
       'l1_abi': {name: getattr(TensixL1, name) for name in (
-        'PARAM_BASE', 'PARAM_SIZE', 'PARAM_SLOTS', 'KERNEL_CACHE_END',
+        'PARAM_BASE', 'PARAM_SIZE', 'PARAM_SLOTS', 'KERNEL_CACHE_END', 'WORKER_ENTRY_BASE',
         'PARAM_TEMPLATE_STRIDE', 'PARAM_TEMPLATE_MAX_PARAMS',
         'PARAM_TEMPLATE_IDS', 'PARAM_TEMPLATE_KERNELS', 'DATA_BUFFER_SPACE_BASE')}}), str(Path(__file__).resolve().parent)],
     capture_output=True, text=True)
@@ -95,11 +114,11 @@ def build(pcie_mid=None, dram_endpoints=None):
 
 def pack(images):
   blobs = (*images.workers, images.prefetch, images.dispatch, images.dram_brisc, images.dram_ncrisc)
-  return struct.pack('<8s9I', b'BHCQ0001', *map(len, blobs)) + b''.join(blobs)
+  return struct.pack('<8s9I', b'BHCQ0002', *map(len, blobs)) + b''.join(blobs)
 
 
 def unpack(blob):
-  if len(blob) < 44 or blob[:8] != b'BHCQ0001': raise ValueError('invalid Blackhole firmware ABI')
+  if len(blob) < 44 or blob[:8] != b'BHCQ0002': raise ValueError('invalid Blackhole firmware ABI')
   sizes, offset, images = struct.unpack_from('<9I', blob, 8), 44, []
   if 44 + sum(sizes) != len(blob) or not all(sizes): raise ValueError('invalid firmware image sizes')
   for size in sizes:
@@ -109,7 +128,7 @@ def unpack(blob):
 
 if __name__ == '__main__':
   import hashlib
-  output = Path(sys.argv[1] if len(sys.argv) > 1 else 'build/bh_hcq_v1.bin')
+  output = Path(sys.argv[1] if len(sys.argv) > 1 else 'build/bh_hcq_v2.bin')
   output.parent.mkdir(parents=True, exist_ok=True)
   output.write_bytes(blob:=pack(build()))
   print(f'{hashlib.sha256(blob).hexdigest()}  {output} ({len(blob)} bytes)')
