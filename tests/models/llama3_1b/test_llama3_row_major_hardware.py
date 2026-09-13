@@ -10,8 +10,11 @@ import unittest
 import numpy as np
 
 from ttko.device import Device
-from examples.llama3_1b import decode_projection, rmsnorm
 from ttko.program import DType
+from examples.llama3 import Llama3Kernels
+
+llama3 = Llama3Kernels("1b")
+decode_projection, rmsnorm = llama3.decode_projection, llama3.rmsnorm
 
 
 @unittest.skipUnless('LLAMA_TEST_DEVICE' in os.environ,

@@ -5,9 +5,11 @@ import unittest
 
 import numpy as np
 from ttko.device import Device
-from examples import llama3_8b as d
-from examples.llama3_prefill import SequenceBuffer, prefill_projection, prefill_projections
 from ttko.program import DType
+from examples.llama3 import Llama3Kernels, SequenceBuffer
+
+d = Llama3Kernels("8b")
+prefill_projection, prefill_projections = d.prefill_projection, d.prefill_projections
 
 
 def buffers(device, count, rows=176):

@@ -4,8 +4,10 @@ import unittest
 from unittest.mock import patch
 import numpy as np
 from ttko.device import Device
-from examples import llama3_1b as llama3
 from ttko.program import DType
+from examples.llama3 import Llama3Kernels
+
+llama3 = Llama3Kernels("1b")
 
 
 def bf16(values):
