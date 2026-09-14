@@ -184,10 +184,12 @@ class Allocator:
     return offset
 
 class Sysmem:
+  SIZE = 256 << 20
   PAGE_SIZE = os.sysconf("SC_PAGE_SIZE")
 
-  def __init__(self, fd: int, size: int = 1 << 30):
+  def __init__(self, fd: int, size: int | None = None):
     self.fd = fd
+    size = self.SIZE if size is None else size
     self.size = (size + self.PAGE_SIZE - 1) & -self.PAGE_SIZE
     self.allocator = Allocator(0, self.size, self.PAGE_SIZE)
     self.addr = libc.mmap(None, self.size, 3, 0x21, -1, 0)
@@ -256,7 +258,7 @@ class TLBWindow:
   def __exit__(self, exc_type, exc, tb): self.close()
 
 class PCIDevice:
-  def __init__(self, index=0, sysmem_size=1 << 30):
+  def __init__(self, index=0, sysmem_size=None):
     card_type = Path(f"/sys/class/tenstorrent/tenstorrent!{index}/tt_card_type").read_text().strip()
     self.fd = os.open(f"/dev/tenstorrent/{index}", os.O_RDWR | os.O_CLOEXEC | os.O_APPEND)
     self.sysmem = None

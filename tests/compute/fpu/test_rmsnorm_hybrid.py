@@ -171,6 +171,8 @@ def _images(n, *, schedule='queued', diagnostic=False, reuse_unpack=True,
     m.emit(TT.TTSFPNOP())
     # Reconfiguration is deliberately inside the measured compute interval.
     _configure_apply_macro(m)
+  # The shared finalizer consumes partial sums in L0.
+  m.emit(TT.TTSFPMOV(0, 7, 0, 0))
   llama._finalize(m, n)
   stall(m, Stall.SFPU, Wait.MATH)
   for tile in range(tiles):

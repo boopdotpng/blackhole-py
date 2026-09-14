@@ -115,6 +115,8 @@ def emit_rmsnorm(p, x, weight, output_cb, *, tiles, finalize, read_noc=0):
   m.emit(TT.TTSFPLOADI(0, 10, 0x8400))
   m.emit(TT.TTSFPCONFIG(0, 4, 0))
   m.emit(TT.TTSFPCONFIG(3, 8, 1))
+  # The shared finalizer consumes partial sums in L0.
+  m.emit(TT.TTSFPMOV(0, 7, 0, 0))
   for word in finalize.words:
     m.emit(word)
   stall(m, Stall.SFPU, Wait.MATH)

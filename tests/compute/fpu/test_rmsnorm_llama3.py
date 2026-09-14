@@ -1,6 +1,6 @@
 """Raw port of examples/llama3.py's SFPU RMSNorm, at 1024 and 2048 elements.
 
-Keep x and gamma in FP32 Dst, accumulate squares in L7, reduce the lanes,
+Keep x and gamma in FP32 Dst, accumulate squares in L0, reduce the lanes,
 refine reciprocal sqrt, then apply scale with SFPLOADMACRO and multiply gamma.
 The arithmetic/rsqrt/macro match llama3; transport uses the raw test harness.
 Timing includes L1 unpack/copy and BF16 packing, but excludes host/DRAM/NoC.
@@ -50,7 +50,6 @@ def _mul(k, a, b, out, modifier=0):
 
 def _finalize(k, n):
   # Copied from llama3's _rms_finalize_scale; only EMBED_DIM is parameterized.
-  k.emit(TT.TTSFPMOV(0, 7, 0, 0))
   for rotations in (4, 2, 1):
     k.emit(TT.TTSFPMOV(0, 0, 1, 0))
     for _ in range(rotations):
@@ -217,13 +216,13 @@ def _images(n, *, diagnostic=True, reuse_unpack=False, prefetch=False):
   stall(m, Stall.SYNC, Wait.MATH | Wait.SFPU)
   pc_sync(m)
   profile.record('compute')
-  _constant(m, 7, 0)
+  m.emit(TT.TTSFPLOADI(0, 0, 0))  # BF16 immediate zero -> FP32 +0 in all lanes.
   # The production two-instruction accumulation body, replayed per face.
   for tile in range(tiles):
     _set_thread_cfg(m, 1, tile * 64)
     m.emit(TT.TTSETRWC(0, 0, 0, 0, 0, 0xF))
-    _map(m, (TT.TTSFPLOAD(0, 3, 7, 0),
-             TT.TTSFPMAD(0, 0, 7, 7, 0)), iterations=8, initialize=tile == 0)
+    _map(m, (TT.TTSFPLOAD(1, 3, 7, 0),
+             TT.TTSFPMAD(1, 1, 0, 0, 0)), iterations=8, initialize=tile == 0)
   _finalize(m, n)
   # Copy the production load macro / paired gamma multiply sequence.
   for tile in range(tiles):

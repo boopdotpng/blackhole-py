@@ -69,7 +69,7 @@ options = json.loads(sys.argv[2])
 from fw.consts import TensixL1
 for name, value in options['l1_abi'].items():
     setattr(TensixL1, name, value)
-from fw.consts import Firmware
+from fw.consts import Firmware, FirmwareControl
 Firmware.TEXT = {role: tuple(slot) for role, slot in options['firmware_text'].items()}
 def run_worker(fw, role):
     index = list(TensixL1.WORKER_TEXT_BASE).index(role)
@@ -77,6 +77,58 @@ def run_worker(fw, role):
     fw.jalr(R.ZERO, R.T0)
     return fw.label('worker_done')
 core._run_worker = run_worker
+# Cached launches install direct entry addresses, matching run_worker.
+@scoped
+def load_param_template(fw):
+  (
+    go, template, count, values, ids, dst, param_id, value, scratch,
+  ) = fw.reg(9)
+  done = fw._new_label("param_template_done")
+  loop = fw._new_label("param_template_loop")
+  kernels = fw._new_label("param_template_kernels")
+  literal = fw._new_label("param_template_literal")
+  store = fw._new_label("param_template_store")
+
+  fw.read(go, FirmwareControl.GO_SIGNAL & -4)
+  fw.li(scratch, (1 << 24) - 1)
+  fw.and_(template, go, scratch)
+  fw.beq(template, R.ZERO, done)
+  fw.lw(count, template, 0)
+  fw.addi(values, template, TensixL1.PARAM_TEMPLATE_VALUES)
+  fw.addi(ids, template, TensixL1.PARAM_TEMPLATE_IDS)
+  fw.li(dst, TensixL1.PARAM_BASE)
+
+  fw.label(loop)
+  fw.beq(count, R.ZERO, kernels)
+  fw.lbu(param_id, ids, 0)
+  fw.li(scratch, 0xFF)
+  fw.beq(param_id, scratch, literal)
+  fw.slli(param_id, param_id, 2)
+  fw.li(scratch, TensixL1.RUNTIME_PARAM_BASE)
+  fw.add(param_id, param_id, scratch)
+  fw.lw(value, param_id, 0)
+  fw.j(store)
+  fw.label(literal)
+  fw.lw(value, values, 0)
+  fw.label(store)
+  fw.sw(value, dst, 0)
+  fw.addi(values, values, 4)
+  fw.addi(ids, ids, 1)
+  fw.addi(dst, dst, 4)
+  fw.addi(count, count, -1)
+  fw.j(loop)
+  fw.label(kernels)
+  for index, role in enumerate(TensixL1.WORKER_TEXT_BASE):
+    skip = fw._new_label(f"param_template_{role}_skip")
+    fw.lw(value, template, TensixL1.PARAM_TEMPLATE_KERNELS + index * 4)
+    fw.beq(value, R.ZERO, skip)
+    fw.li(dst, TensixL1.WORKER_ENTRY_BASE + index * 4)
+    fw.sw(value, dst, 0)
+    fw.label(skip)
+  fw.label(done)
+  return fw
+
+core._load_param_template = load_param_template
 reference_enable_clock_gating = core._enable_clock_gating
 def enable_clock_gating(fw):
     reference_enable_clock_gating(fw)

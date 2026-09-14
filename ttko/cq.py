@@ -123,8 +123,10 @@ class CommandQueue(RawCommandQueue):
     for record in records:
       offsets.append(cursor)
       cursor += len(record)
-    final_signal_offset = cursor + PacketLayout.SIGNAL_VALUE
-    records = (*records, Signal(self.signal_addr, 0).lower())
+    # Signal lowers to a timestamp record followed by the value record.
+    completion = Signal(self.signal_addr, 0).lower()
+    final_signal_offset = cursor + len(completion) - ALIGN + PacketLayout.SIGNAL_VALUE
+    records = (*records, completion)
     blob = b"".join(records)
     offset = self.trace_allocator.alloc(len(blob), ALIGN)
     self.pcie.sysmem.write(offset, blob)

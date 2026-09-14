@@ -409,16 +409,11 @@ class Device(RawDevice):
         start = TensixL1.PARAM_TEMPLATE_IDS
         payload[start:start + len(ids)] = ids
         if resident is not None:
-          trampolines = tuple(
-            RV32().jal(
-              R.ZERO, address - TensixL1.WORKER_TEXT_BASE[role],
-            )
-            for role, address in zip(KERNEL_ROLES, resident[core])
-          )
+          entries = resident[core]
           start = TensixL1.PARAM_TEMPLATE_KERNELS
-          payload[start:start + 4 * len(trampolines)] = Struct(
-            f"<{len(trampolines)}I",
-          ).pack(*trampolines)
+          payload[start:start + 4 * len(entries)] = Struct(
+            f"<{len(entries)}I",
+          ).pack(*entries)
         payloads.append(bytes(payload))
 
       # Identical core-local tables share one address across trace launches.

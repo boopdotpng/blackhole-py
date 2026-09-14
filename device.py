@@ -43,7 +43,7 @@ class Device:
   DEFAULT_INDEX = 0
   command_queue_type = CommandQueue
 
-  def __init__(self, index=None, sysmem_size=1 << 30):
+  def __init__(self, index=None, sysmem_size=None):
     index = self.DEFAULT_INDEX if index is None else index
     self.pcie = PCIDevice(index, sysmem_size)
     self.cq = None

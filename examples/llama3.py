@@ -185,16 +185,17 @@ class Llama3Kernels:
 
 
   def _rms_square_accumulate(self, *, reset):
-    setup = self._sfpu_float_words(LReg.L7, 0.0) if reset else ()
+    # BF16 immediate zero expands to FP32 +0 in every enabled lane.
+    setup = (TT.TTSFPLOADI(LReg.L0, 0, 0),) if reset else ()
     return SfpuProgram(tuple(setup), (
-      TT.TTSFPLOAD(LReg.L0, SfpuFormat.FP32, 7, 0),
-      TT.TTSFPMAD(LReg.L0, LReg.L0, LReg.L7, LReg.L7, 0),
+      TT.TTSFPLOAD(LReg.L1, SfpuFormat.FP32, 7, 0),
+      TT.TTSFPMAD(LReg.L1, LReg.L1, LReg.L0, LReg.L0, 0),
     ))
 
 
   def _rms_finalize_scale(self):
-    """Reduce 32 accumulator lanes and leave reciprocal RMS in L0."""
-    words = [TT.TTSFPMOV(0, LReg.L7, LReg.L0, 0)]
+    """Reduce the 32 accumulator lanes in L0 and leave reciprocal RMS there."""
+    words = []
     # Butterfly-reduce each independent eight-lane SFPU row. Cyclic rotations
     # make the final sum a broadcast, which the transpose below needs.
     for rotations in (4, 2, 1):
