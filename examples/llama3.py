@@ -20,7 +20,7 @@ from asm import Cond
 from cq import UnicastWrite, mcast_coords, noc_coord
 from device import TensorDevice as Device
 from firmware.consts import CQConfig, TensixL1, TensixMMIO, KERNEL_ROLES
-from pcie import P100_WORKER_CORES
+from pcie import P100_WORKER_CORES, TLBWindow
 from program import Buffer, Const, DType, TensorProgram as Program, rectangles
 from ttko.isa import R, RV32, Tensix as TT
 from ttko import Dst, l1
@@ -880,7 +880,9 @@ class Llama3Kernels:
         p.brisc.srli(tile, position, 10)
         p.brisc.andi(within, position, 1023)
         p.brisc.noc.read_tile(token_history, tile, history_l1)
-        l1.store(p.brisc, history_l1, within, best_id)
+        p.brisc.slli(within, within, 2)
+        self._add_constant(p.brisc, within, history_l1)
+        p.brisc.write(within, best_id)
         target_address, target_coordinate = p.brisc.noc._dram_tile(
           token_history, tile,
         )
@@ -2143,7 +2145,7 @@ class Llama3Kernels:
   ) -> Program:
     """Gather one embedding row on one core.
 
-      token_id          U32[1] or U32[8192]   global; `token_pos` selects the row
+      token_id          flat U32[8192]       global; `token_pos` selects the ID
       embedding_weight  BF16[128256, 4096]    global, 4 tiles per vocabulary row
       output            BF16[1, 4096]         global, 4 tiles
 
@@ -2159,10 +2161,12 @@ class Llama3Kernels:
     with p.brisc.scope():
       position, tile, within, token = p.brisc.reg(4)
       p.brisc.read(position, p.param_addr(token_pos))
-      p.brisc.srli(tile, position, 10)          # 1024 token IDs per tile
+      p.brisc.srli(tile, position, 10)          # 1024 flat token IDs per DRAM page
       p.brisc.andi(within, position, 1023)
       p.brisc.noc.read_tile(token_id, tile, ids_l1)
-      l1.load(p.brisc, ids_l1, within, token)   # token = token_id[token_pos]
+      p.brisc.slli(within, within, 2)
+      self._add_constant(p.brisc, within, ids_l1)
+      p.brisc.read(token, within)
       for row_tile in range(self.EMBEDDING_TILES):
         with p.brisc.scope():
           # weight tile index = token * EMBEDDING_TILES + row_tile
@@ -2607,7 +2611,7 @@ class Llama3Decode:
       return view
 
     self.token_history = global_buffer(
-      "e2e_token_history", DType.U32, (self.kernels.ROPE_CACHE_TOKENS,), None,
+      "e2e_token_history", DType.U32, (self.kernels.ROPE_CACHE_TOKENS,), None, tilized=False,
     )
     self.embedding_weight = global_buffer(
       "e2e_embedding_weight", DType.BF16, (self.kernels.VOCAB_SIZE, self.kernels.EMBED_DIM),
@@ -2944,8 +2948,8 @@ class Llama3Decode:
     ), self._projection_scales(index, ("mlp.gate_proj", "mlp.up_proj")))
     self._queue("down", ((template_weights["down"], weights["down"]),), self._projection_scales(index, ("mlp.down_proj",)))
 
-  def load_tokens(self, tokens):
-    """Upload the initial prompt once into the resident token history."""
+  def load_tokens(self, tokens, *, start=0):
+    """Update token history from start, preserving the cached prefix in DRAM."""
     tokens = np.asarray(tokens)
     if tokens.ndim != 1 or tokens.dtype.kind not in "iu":
       raise ValueError("prompt tokens must be a one-dimensional integer sequence")
@@ -2955,12 +2959,20 @@ class Llama3Decode:
       )
     if np.any(tokens < 0) or np.any(tokens >= self.kernels.VOCAB_SIZE):
       raise ValueError(f"prompt tokens must be in 0..{self.kernels.VOCAB_SIZE - 1}")
-    history = np.zeros(self.kernels.ROPE_CACHE_TOKENS, dtype=np.uint32)
-    history[:len(tokens)] = tokens
-    self.device.write(
-      self.token_history, self.token_history.from_numpy(history),
-    )
+    if not 0 <= start < len(tokens): raise ValueError("start must index a prompt token")
     self.device.run(timeout=30.0)
+    history = self.token_history
+    data = tokens[start:].astype("<u4", copy=False).tobytes()
+    # Token IDs are flat uint32 values in bank-interleaved 4 KiB pages.
+    with TLBWindow(self.device.pcie.fd, self.device.pcie.dram_endpoints[0][0]) as window:
+      for page in range(start // 1024, (len(tokens) + 1023) // 1024):
+        address = history.addr + page // history.banks * history.tile_size
+        base = address & -TLBWindow.SIZE
+        window.target(base, self.device.pcie.dram_endpoints[page % history.banks][0])
+        position, end = max(start, page * 1024), min(len(tokens), (page + 1) * 1024)
+        offset = (position % 1024) * 4
+        window.write(address - base + offset, data[(position - start) * 4:(end - start) * 4])
+
 
   def decode(self, position, *, logits=True, append=True):
     """Consume one token at ``position`` and optionally return greedy next ID."""
