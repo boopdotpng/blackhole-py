@@ -1,5 +1,5 @@
 from __future__ import annotations
-from ttko.asm import Cond
+from asm import Cond
 from firmware.consts import TensixL1
 from ttko.isa import R
 from ttko.cb import CB

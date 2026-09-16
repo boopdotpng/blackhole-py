@@ -1,5 +1,5 @@
 """Bind the recovered fixed-register kernel recipes to today's assembler/boot ABI."""
-from ttko.asm import Asm
+from asm import Asm
 from firmware.consts import Firmware
 from ttko.isa import R, Tensix as TT
 from ttko.registers import BriscMailbox as BM, NcriscMailbox as NM, TriscMailbox
@@ -12,7 +12,7 @@ A_DONE = SEM_BASE + 96
 
 class KernelBase(Asm):
   def __init__(self, *, role):
-    super().__init__(role)
+    super().__init__(role, physical_regs=True)
     self._scope = self.scope()
     self._scope.__enter__()
     self.base = CONTEXT['address']

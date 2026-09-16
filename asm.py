@@ -1,3 +1,9 @@
+"""Shared RISC-V/Tensix assembler with virtual or scoped physical registers."""
+
+from contextlib import contextmanager
+from dataclasses import dataclass
+from functools import wraps
+from typing import ClassVar
 from firmware.consts import Firmware, KernelRole, TensixL1, TensixMMIO
 from ttko.isa import Insn, R, RV32, Reg, TensixWord, VReg, is_reg
 from pcie import Allocator
@@ -15,7 +21,38 @@ def _li_words(rd: Reg, value: int):
   if lo: words.append(Insn("addi", (rd, rd, lo)))
   return words
 
+def scoped(fn):
+  @wraps(fn)
+  def wrapped(asm, *args, **kwargs):
+    with asm.scope(): return fn(asm, *args, **kwargs)
+  return wrapped
+
+@dataclass(frozen=True)
+class Cond:
+  lhs: R
+  op: str
+  rhs: R | int
+  BRANCHES: ClassVar[set[str]] = {"beq", "bne", "blt", "bge", "bltu", "bgeu"}
+  OPS: ClassVar[dict[str, tuple[str, bool]]] = {
+    "==": ("beq", False), "!=": ("bne", False), "<": ("blt", False), ">=": ("bge", False),
+    "<u": ("bltu", False), ">=u": ("bgeu", False), ">": ("blt", True), "<=": ("bge", True),
+    ">u": ("bltu", True), "<=u": ("bgeu", True),
+  }
+
+  def branch(self, invert=False):
+    op, swap = self.OPS[self.op]
+    if invert: op = self.inverse(op)
+    return op, swap
+
+  @classmethod
+  def inverse(cls, op):
+    return {"beq": "bne", "bne": "beq", "blt": "bge", "bge": "blt", "bltu": "bgeu", "bgeu": "bltu"}[op]
+
 class Asm:
+  """Use virtual registers by default; physical_regs preserves fixed schedules.
+
+  Both policies share symbolic instructions, branch relaxation and encoding.
+  """
   _BRANCHES = {"beq": "bne", "bne": "beq", "blt": "bge", "bge": "blt", "bltu": "bgeu", "bgeu": "bltu"}
   _DEFINES = {
     "add", "sub", "mul", "divu", "remu", "sltu", "min", "and_", "or_", "xor",
@@ -23,9 +60,14 @@ class Asm:
     "lw", "lbu", "lhu", "lui", "auipc", "jal", "jalr", "csrrs", "csrrc",
   }
 
-  def __init__(self, role: KernelRole, firmware: bool = False):
+  def __init__(self, role: KernelRole, firmware: bool = False, *,
+               param_slots=None, physical_regs=False):
     self.items, self.labels, self._prologue = [], {}, []
 
+    self.physical_regs = physical_regs
+    self.param_slots = {} if param_slots is None else param_slots
+    self._free = [r for r in R if r not in {R.ZERO, R.RA, R.SP, R.GP}]
+    self._scopes, self._breaks = [], []
     self._vreg_id = self._label_id = 0
     self.role = role
     self.is_firmware = bool(firmware)
@@ -36,6 +78,7 @@ class Asm:
   @classmethod
   def firmware(cls, role: KernelRole): return cls(role, firmware=True)
 
+  @scoped
   def wait(self, addr: int, value: int, bytes=1):
     ptr, actual, expected = self.reg(3)
     self.li(ptr, addr)
@@ -50,19 +93,25 @@ class Asm:
     self.label(done)
     return self.fence()
 
-  def read(self, rd: Reg, addr: int | Reg, bytes=4):
+  @scoped
+  def read(self, rd: R, addr: int | R, bytes=4, *, tmp_addr: R | None = None):
     op = {1: self.lbu, 2: self.lhu, 4: self.lw}[bytes]
     if is_reg(addr): return op(rd, addr)
-    base = self.reg()
+    base = self.reg(exclude=rd) if tmp_addr is None else tmp_addr
     self.li(base, addr)
     return op(rd, base)
 
-  def write(self, addr: int | Reg, value: int | Reg, bytes=4):
+  @scoped
+  def write(self, addr: int | R, value: int | R, bytes=4, *, tmp_addr: R | None = None, tmp_val: R | None = None):
     op = {1: self.sb, 2: self.sh, 4: self.sw}[bytes]
     if not is_reg(addr):
-      self.li(base := self.reg(), addr)
+      excluded = value if is_reg(value) else ()
+      base = self.reg(exclude=excluded) if tmp_addr is None else tmp_addr
+      self.li(base, addr)
     else: base = addr
-    if not is_reg(value): self.li(src := self.reg(), value)
+    if not is_reg(value):
+      src = self.reg(exclude=base) if tmp_val is None else tmp_val
+      self.li(src, value)
     else: src = value
     return op(src, base)
 
@@ -79,16 +128,29 @@ class Asm:
 
   def emit(self, word: int): return self._emit(word)
 
-  def _ins(self, op: str, *args): return self._emit(Insn(op, args))
+  def _ins(self, op: str, *args):
+    # Physical operands are final; avoid building a symbolic node for each
+    # ordinary instruction. Label fixups still use the shared lowering path.
+    return self._emit(getattr(_rv32, op)(*args) if self.physical_regs else Insn(op, args))
 
   def __getattr__(self, op):
     if op not in _SYMBOLIC_OPS: raise AttributeError(op)
     return lambda *args: self._ins(op, *args)
 
-  def reg(self, n: int = 1):
-    if n < 1: raise ValueError("register count must be positive")
-    regs = tuple(VReg(self._vreg_id + i) for i in range(n))
-    self._vreg_id += n
+  def reg(self, n: int = 1, exclude=()):
+    if not self.physical_regs:
+      if n < 1: raise ValueError("register count must be positive")
+      regs = tuple(VReg(self._vreg_id + i) for i in range(n))
+      self._vreg_id += n
+      return regs[0] if n == 1 else tuple(regs)
+    if not self._scopes: raise RuntimeError("reg() requires a register scope")
+    excluded = {exclude} if isinstance(exclude, R) else set(exclude)
+    available = [reg for reg in self._free if reg not in excluded]
+    if n < 1 or n > len(available):
+      raise RuntimeError(f"need {n} registers, {len(available)} available")
+    regs = available[:n]
+    self._free = [reg for reg in self._free if reg not in regs]
+    self._scopes[-1] += regs
     return regs[0] if n == 1 else tuple(regs)
 
   def _new_label(self, prefix="label"):
@@ -116,6 +178,7 @@ class Asm:
     for word in _li_words(rd, value): self._emit(word)
     return self
 
+  @scoped
   def initialize_local(self, addr: int, value: int):
     address, source = self.reg(2)
     self._prologue += _li_words(address, addr)
@@ -129,18 +192,15 @@ class Asm:
     if isinstance(target, str): return self.jal(R.ZERO, target)
     self.items.append(Insn("jal", (R.ZERO,), target)); return self
 
-  def range(self, count: int | Reg):
-    index, limit = self.reg(2)
-    self.li(index, 0)
-    if is_reg(count): self.mv(limit, count)
-    else: self.li(limit, count)
-    start, end = self._new_label("loop"), self._new_label("endloop")
-    self.label(start)
-    self.bgeu(index, limit, end)
-    yield index
-    self.addi(index, index, 1)
-    self.j(start)
-    self.label(end)
+  def range(self, count: int | R):
+    with self.scope():
+      index, limit = self.reg(2, exclude=count if is_reg(count) else ())
+      self.li(index, 0)
+      if is_reg(count): self.mv(limit, count)
+      else: self.li(limit, count)
+      with self.loop(Cond(index, "<u", limit)):
+        yield index
+        self.addi(index, index, 1)
 
   def _allocate_registers(self):
     """Control-flow liveness followed by a no-spill linear scan."""
@@ -218,7 +278,7 @@ class Asm:
       if not changed: return long, targets
 
   def instructions(self):
-    allocation = self._allocate_registers()
+    allocation = {} if self.physical_regs else self._allocate_registers()
     long, targets = self._layout()
     out, pc = [], 0
     for i, item in enumerate(self.items):
@@ -261,3 +321,138 @@ class Asm:
       self._prologue = []
     self._lowered = True
     return self.assemble()
+
+  @contextmanager
+  def scope(self):
+    self._scopes.append([])
+    try: yield self
+    finally: self._free = sorted(self._free + self._scopes.pop(), key=int)
+
+  @scoped
+  def configure_csr(self):
+    value = self.reg()
+    self.li(value, 2)
+    self.csrrs(R.ZERO, value, 0x7C0)
+    self.li(value, 1)
+    self.slli(value, value, 18)
+    self.fence()
+    # DisTriscCache only controls fusion on TRISCs.
+    if self.role.startswith("trisc"):
+      self.csrrc(R.ZERO, value, 0x7C0)
+    else:
+      self.csrrs(R.ZERO, value, 0x7C0)
+    self.li(value, 2)
+    self.csrrc(R.ZERO, value, 0x7C0)
+    self.fence()
+    self.fence()
+    self.li(value, 8)
+    self.csrrs(R.ZERO, value, 0x7C0)
+    return self
+
+  def setup_stack(self, stack_top: int):
+    return self.li(R.SP, stack_top)
+
+  @scoped
+  def zero_words(self, addr: int, count: int):
+    if count == 0: return self
+    ptr, remaining = self.reg(2)
+    self.li(ptr, addr)
+    self.li(remaining, count)
+    loop = self._new_label("zero_words")
+    done = self._new_label("zero_words_done")
+    self.label(loop)
+    self.beq(remaining, R.ZERO, done)
+    self.sw(R.ZERO, ptr, 0)
+    self.addi(ptr, ptr, 4)
+    self.addi(remaining, remaining, -1)
+    self.j(loop)
+    self.label(done)
+    return self
+
+  def invalidate_risc_caches(self):
+    return self.write(TensixMMIO.RISCV_IC_INVALIDATE, TensixMMIO.RISCV_IC_ALL_MASK)
+
+  @scoped
+  def align_up(self, value: R, alignment: int):
+    scratch = self.reg(exclude=value)
+    self.li(scratch, alignment - 1)
+    self.add(value, value, scratch)
+    self.li(scratch, -alignment)
+    return self.and_(value, value, scratch)
+
+  def read32(self, dst, address, *, tmp_addr=R.T0): return self.read(dst, address, tmp_addr=tmp_addr)
+
+  def read8(self, dst, address, *, tmp_addr=R.T0): return self.read(dst, address, bytes=1, tmp_addr=tmp_addr)
+
+  def write32(self, address, value, *, tmp_addr=R.T0, tmp_val=R.T1):
+    return self.write(address, value, tmp_addr=tmp_addr, tmp_val=tmp_val)
+
+  def write8(self, address, value, *, tmp_addr=R.T0, tmp_val=R.T1):
+    return self.write(address, value, bytes=1, tmp_addr=tmp_addr, tmp_val=tmp_val)
+
+  def wait_sync_value(self, address, value_reg, *, ptr=R.T0, actual=R.T1):
+    self.li(ptr, address)
+    loop = self._new_label('sync')
+    self.label(loop); self.fence(); self.lw(actual, ptr, 0); self.bne(actual, value_reg, loop)
+    return self.fence()
+
+  def wait8(self, address, value, *, ptr=R.T0, actual=R.T1, expected=R.T2):
+    self.li(ptr, address); self.li(expected, value)
+    loop = self._new_label('wait8')
+    self.label(loop); self.fence(); self.lbu(actual, ptr, 0); self.bne(actual, expected, loop)
+    return self.fence()
+
+  @property
+  def noc(self):
+    if self.role not in ("brisc", "ncrisc"):
+      raise RuntimeError(f"{self.role} cannot access a NoC")
+    return self.noc_at(0 if self.role == "brisc" else 1)
+
+  def noc_at(self, index: int):
+    if self.role not in ("brisc", "ncrisc"):
+      raise RuntimeError(f"{self.role} cannot access a NoC")
+    from ttko.noc import NoC
+    return NoC(self, index)
+
+  def initialize_tensix(self, *words):
+    if self._lowered: raise RuntimeError("kernel has already been lowered")
+    if self.role not in ("trisc0", "trisc1", "trisc2"):
+      raise RuntimeError(f"{self.role} cannot initialize Tensix instructions")
+    if any(not isinstance(word, TensixWord) for word in words):
+      raise TypeError("Tensix initialization requires Tensix instructions")
+    self._prologue.extend(words)
+    return self
+
+  def _branch_cond(self, c: Cond, label: str, invert=False):
+    op, swap = c.branch(invert)
+    if is_reg(c.rhs):
+      a, b = c.lhs, c.rhs
+      return getattr(self, op)(b, a, label) if swap else getattr(self, op)(a, b, label)
+    if c.rhs == 0: return self._branch_cond(Cond(c.lhs, c.op, R.X0), label, invert)
+    with self.scope():
+      rhs = self.reg()
+      self.li(rhs, c.rhs)
+      return self._branch_cond(Cond(c.lhs, c.op, rhs), label, invert)
+
+  @contextmanager
+  def loop(self, condition: Cond | None = None):
+    start, end = self._new_label("loop"), self._new_label("endloop")
+    self.label(start)
+    if condition is not None: self._branch_cond(condition, end, invert=True)
+    self._breaks.append(end)
+    try: yield
+    finally: self._breaks.pop()
+    self.j(start)
+    self.label(end)
+
+  @scoped
+  def switch(self, value: R, cases: dict[int, str], default: str):
+    expected = self.reg(exclude=value)
+    for literal, label in cases.items():
+      self.li(expected, literal)
+      self.beq(value, expected, label)
+    return self.j(default)
+
+  def break_(self, condition: Cond | None = None):
+    if not self._breaks: raise RuntimeError("break_() used outside loop()")
+    return self.j(self._breaks[-1]) if condition is None else self._branch_cond(condition, self._breaks[-1])

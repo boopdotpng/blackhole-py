@@ -6,8 +6,8 @@ readback uses separate DRAM storage so observing a buffer never changes it.
 from dataclasses import replace
 
 from ttko import DType
-from ttko.program import Buffer, Const, Program
-from ttko.asm import Cond
+from program import Buffer, Const, TensorProgram as Program
+from asm import Cond
 from ttko.isa import R
 
 
@@ -66,7 +66,7 @@ def write_tiled(device, buffer, data):
 
 
 def queue_read_tiled(device, buffer):
-  from ttko.device import Readback
+  from device import Readback
   scratch = getattr(device, '_layout_readback_buffers', None)
   if scratch is None:
     scratch = device._layout_readback_buffers = {}

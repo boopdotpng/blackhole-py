@@ -4,8 +4,8 @@ import random
 import pytest
 
 from ttko import DType
-from ttko.device import Device
-from ttko.program import Dram
+from device import TensorDevice as Device
+from program import Dram
 
 
 @pytest.fixture

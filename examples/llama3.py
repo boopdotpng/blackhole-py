@@ -16,12 +16,12 @@ import numpy as np
 import struct
 import time
 
-from ttko.asm import Cond
-from ttko.cq import UnicastWrite, mcast_coords, noc_coord
-from ttko.device import Device
+from asm import Cond
+from cq import UnicastWrite, mcast_coords, noc_coord
+from device import TensorDevice as Device
 from firmware.consts import CQConfig, TensixL1, TensixMMIO, KERNEL_ROLES
 from pcie import P100_WORKER_CORES
-from ttko.program import Buffer, Const, DType, Program, rectangles
+from program import Buffer, Const, DType, TensorProgram as Program, rectangles
 from ttko.isa import R, RV32, Tensix as TT
 from ttko import Dst, l1
 from ttko.fpu import Fpu
