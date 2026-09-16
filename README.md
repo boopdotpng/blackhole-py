@@ -10,10 +10,12 @@ Use the shared `~/tenstorrent/.venv` and run from this directory:
 ```
 
 Open **http://127.0.0.1:8000** and select **8B FP8** or **8B BF16**.
+The server listens on all interfaces by default; from another machine, open
+`http://<server-ip>:8000`. Use `--host` to choose a different bind address.
 The model loads on the first message; switching models starts a new conversation.
-No prefill: all prompt, conversation history, and response tokens run through
-decode. Responses stream as they are generated, up to 512 tokens per turn,
-within an 8192-token context.
+No prefill: new prompt and response tokens run through decode. Matching
+conversation history reuses the resident KV cache. Responses stream until EOS or the 8192-token context fills. This limit
+includes conversation history, chat formatting, and the generated response.
 
 Requires `tt-kmd` > 2.9.0, Clang, and RISC-V binutils
 (`riscv64-linux-gnu-ld` and `riscv64-linux-gnu-objcopy`). C firmware in
