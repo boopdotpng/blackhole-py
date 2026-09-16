@@ -1,0 +1,371 @@
+UOp(Ops.SINK, arg=(), src=(
+  UOp(Ops.END, arg=(), src=(
+    x3:=UOp(Ops.LOAD, dtype='f32.vec(32)', arg=(3,), src=(
+      UOp(Ops.INDEX, arg=(1,), src=(
+        UOp(Ops.AFTER, arg=(), src=(
+          x7:=UOp(Ops.DEFINE, arg=(StorageSpec(kind='DST', item=16, dtype='f32', identity=3),), src=()),
+          x8:=UOp(Ops.LOAD, dtype='f32.vec(32)', arg=(2,), src=(
+            UOp(Ops.INDEX, arg=(1,), src=(
+              UOp(Ops.AFTER, arg=(), src=(
+                x7,
+                x11:=UOp(Ops.LOAD, dtype='f32.vec(32)', arg=(1,), src=(
+                  UOp(Ops.INDEX, arg=(1,), src=(
+                    UOp(Ops.AFTER, arg=(), src=(
+                      x7,
+                      x14:=UOp(Ops.LOAD, dtype='f32.vec(32)', arg=(0,), src=(
+                        UOp(Ops.INDEX, arg=(1,), src=(
+                          UOp(Ops.AFTER, arg=(), src=(
+                            x7,
+                            UOp(Ops.END, arg=(), src=(
+                              UOp(Ops.UNPACK, arg=(), src=(
+                                UOp(Ops.INDEX, arg=(2048,), src=(
+                                  UOp(Ops.AFTER, arg=(), src=(
+                                    x23:=UOp(Ops.DEFINE, arg=(RingSpec(kind='L1', item=2048, depth=3, dtype='bf16', slot=None, producer='local', storage=None, identity=1, sender=(), receiver_thread=None),), src=()),
+                                    UOp(Ops.NOC_READ, arg=(2048,), src=(
+                                      UOp(Ops.PARAM, dtype='u32', arg=(ParamArg(slot=1, name='weight', dtype='bf16', nbytes=4096, lo=None, hi=None),), src=()),
+                                      x26:=UOp(Ops.MUL, dtype='i32', arg=(), src=(
+                                        x19:=UOp(Ops.RANGE, dtype='i32', arg=(None,), src=(
+                                          UOp(Ops.CONST, dtype='i32', arg=(2,), src=()),
+                                        )),
+                                        UOp(Ops.CONST, dtype='i32', arg=(2048,), src=()),
+                                      )),
+                                      UOp(Ops.INDEX, arg=(2048,), src=(
+                                        x23,
+                                        x19,
+                                      )),
+                                    )),
+                                  )),
+                                  x19,
+                                )),
+                                UOp(Ops.INDEX, arg=(8,), src=(
+                                  x7,
+                                  x30:=UOp(Ops.MUL, dtype='i32', arg=(), src=(
+                                    x19,
+                                    UOp(Ops.CONST, dtype='i32', arg=(8,), src=()),
+                                  )),
+                                )),
+                              )),
+                              x19,
+                            )),
+                          )),
+                          x4:=UOp(Ops.RANGE, dtype='i32', arg=(None,), src=(
+                            x32:=UOp(Ops.CONST, dtype='i32', arg=(16,), src=()),
+                          )),
+                        )),
+                      )),
+                    )),
+                    x4,
+                  )),
+                )),
+              )),
+              x4,
+            )),
+          )),
+        )),
+        x4,
+      )),
+    )),
+    x4,
+  )),
+  UOp(Ops.NOC_WRITE, arg=(4096, 1), src=(
+    UOp(Ops.INDEX, arg=(4096,), src=(
+      UOp(Ops.AFTER, arg=(), src=(
+        x37:=UOp(Ops.DEFINE, arg=(RingSpec(kind='L1', item=4096, depth=1, dtype='bf16', slot=None, producer='local', storage=None, identity=5, sender=(), receiver_thread=None),), src=()),
+        UOp(Ops.PACK, arg=(PackArgs(accumulate=False),), src=(
+          UOp(Ops.INDEX, arg=(16,), src=(
+            UOp(Ops.AFTER, arg=(), src=(
+              x42:=UOp(Ops.DEFINE, arg=(StorageSpec(kind='DST', item=16, dtype='f32', identity=2),), src=()),
+              UOp(Ops.END, arg=(), src=(
+                UOp(Ops.STORE, arg=(3,), src=(
+                  UOp(Ops.MUL, dtype='f32.vec(32)', arg=(), src=(
+                    UOp(Ops.MUL, dtype='f32.vec(32)', arg=(), src=(
+                      x49:=UOp(Ops.LOAD, dtype='f32.vec(32)', arg=(3,), src=(
+                        UOp(Ops.INDEX, arg=(1,), src=(
+                          UOp(Ops.AFTER, arg=(), src=(
+                            x42,
+                            UOp(Ops.STORE, arg=(2,), src=(
+                              UOp(Ops.MUL, dtype='f32.vec(32)', arg=(), src=(
+                                UOp(Ops.MUL, dtype='f32.vec(32)', arg=(), src=(
+                                  x56:=UOp(Ops.LOAD, dtype='f32.vec(32)', arg=(2,), src=(
+                                    UOp(Ops.INDEX, arg=(1,), src=(
+                                      UOp(Ops.AFTER, arg=(), src=(
+                                        x42,
+                                        UOp(Ops.STORE, arg=(1,), src=(
+                                          UOp(Ops.MUL, dtype='f32.vec(32)', arg=(), src=(
+                                            UOp(Ops.MUL, dtype='f32.vec(32)', arg=(), src=(
+                                              x63:=UOp(Ops.LOAD, dtype='f32.vec(32)', arg=(1,), src=(
+                                                UOp(Ops.INDEX, arg=(1,), src=(
+                                                  UOp(Ops.AFTER, arg=(), src=(
+                                                    x42,
+                                                    UOp(Ops.STORE, arg=(0,), src=(
+                                                      UOp(Ops.MUL, dtype='f32.vec(32)', arg=(), src=(
+                                                        UOp(Ops.MUL, dtype='f32.vec(32)', arg=(), src=(
+                                                          x70:=UOp(Ops.LOAD, dtype='f32.vec(32)', arg=(0,), src=(
+                                                            UOp(Ops.INDEX, arg=(1,), src=(
+                                                              UOp(Ops.AFTER, arg=(), src=(
+                                                                x42,
+                                                                UOp(Ops.END, arg=(), src=(
+                                                                  x74:=UOp(Ops.LOAD, dtype='f32.vec(32)', arg=(3,), src=(
+                                                                    UOp(Ops.INDEX, arg=(1,), src=(
+                                                                      UOp(Ops.AFTER, arg=(), src=(
+                                                                        x42,
+                                                                        x78:=UOp(Ops.LOAD, dtype='f32.vec(32)', arg=(2,), src=(
+                                                                          UOp(Ops.INDEX, arg=(1,), src=(
+                                                                            UOp(Ops.AFTER, arg=(), src=(
+                                                                              x42,
+                                                                              x81:=UOp(Ops.LOAD, dtype='f32.vec(32)', arg=(1,), src=(
+                                                                                UOp(Ops.INDEX, arg=(1,), src=(
+                                                                                  UOp(Ops.AFTER, arg=(), src=(
+                                                                                    x42,
+                                                                                    x84:=UOp(Ops.LOAD, dtype='f32.vec(32)', arg=(0,), src=(
+                                                                                      UOp(Ops.INDEX, arg=(1,), src=(
+                                                                                        UOp(Ops.AFTER, arg=(), src=(
+                                                                                          x42,
+                                                                                          UOp(Ops.END, arg=(), src=(
+                                                                                            UOp(Ops.UNPACK, arg=(), src=(
+                                                                                              UOp(Ops.INDEX, arg=(2048,), src=(
+                                                                                                UOp(Ops.AFTER, arg=(), src=(
+                                                                                                  x92:=UOp(Ops.DEFINE, arg=(RingSpec(kind='L1', item=2048, depth=3, dtype='bf16', slot=None, producer='local', storage=None, identity=0, sender=(), receiver_thread=None),), src=()),
+                                                                                                  UOp(Ops.NOC_READ, arg=(2048,), src=(
+                                                                                                    UOp(Ops.PARAM, dtype='u32', arg=(ParamArg(slot=0, name='activations', dtype='bf16', nbytes=4096, lo=None, hi=None),), src=()),
+                                                                                                    x26,
+                                                                                                    UOp(Ops.INDEX, arg=(2048,), src=(
+                                                                                                      x92,
+                                                                                                      x19,
+                                                                                                    )),
+                                                                                                  )),
+                                                                                                )),
+                                                                                                x19,
+                                                                                              )),
+                                                                                              UOp(Ops.INDEX, arg=(8,), src=(
+                                                                                                x42,
+                                                                                                x30,
+                                                                                              )),
+                                                                                            )),
+                                                                                            x19,
+                                                                                          )),
+                                                                                        )),
+                                                                                        x75:=UOp(Ops.RANGE, dtype='i32', arg=(None,), src=(
+                                                                                          x32,
+                                                                                        )),
+                                                                                      )),
+                                                                                    )),
+                                                                                  )),
+                                                                                  x75,
+                                                                                )),
+                                                                              )),
+                                                                            )),
+                                                                            x75,
+                                                                          )),
+                                                                        )),
+                                                                      )),
+                                                                      x75,
+                                                                    )),
+                                                                  )),
+                                                                  x75,
+                                                                )),
+                                                              )),
+                                                              x4,
+                                                            )),
+                                                          )),
+                                                          x14,
+                                                        )),
+                                                        x48:=UOp(Ops.MULACC, dtype='f32.vec(32)', arg=(0,), src=(
+                                                          UOp(Ops.ADD, dtype='f32.vec(32)', arg=(), src=(
+                                                            UOp(Ops.MUL, dtype='f32.vec(32)', arg=(1,), src=(
+                                                              x98:=UOp(Ops.MUL, dtype='f32.vec(32)', arg=(), src=(
+                                                                x102:=UOp(Ops.IADD, dtype='f32.vec(32)', arg=(6,), src=(
+                                                                  UOp(Ops.CONST, dtype='f32', arg=(1.0453030656987365e+19,), src=()),
+                                                                  UOp(Ops.SHFT, dtype='f32.vec(32)', arg=(4095, 1), src=(
+                                                                    x106:=UOp(Ops.ADD, dtype='f32.vec(32)', arg=(), src=(
+                                                                      UOp(Ops.MUL, dtype='f32.vec(32)', arg=(), src=(
+                                                                        UOp(Ops.ADD, dtype='f32.vec(32)', arg=(), src=(
+                                                                          UOp(Ops.ADD, dtype='f32.vec(32)', arg=(), src=(
+                                                                            UOp(Ops.ADD, dtype='f32.vec(32)', arg=(), src=(
+                                                                              UOp(Ops.GEP, dtype='f32.vec(32)', arg=(0,), src=(
+                                                                                x117:=UOp(Ops.TRANSP, dtype='f32.vec(32)', arg=(), src=(
+                                                                                  x118:=UOp(Ops.ADD, dtype='f32.vec(32)', arg=(), src=(
+                                                                                    x119:=UOp(Ops.ADD, dtype='f32.vec(32)', arg=(), src=(
+                                                                                      x121:=UOp(Ops.ADD, dtype='f32.vec(32)', arg=(), src=(
+                                                                                        x123:=UOp(Ops.LOAD, dtype='f32.vec(32)', arg=(), src=(
+                                                                                          UOp(Ops.AFTER, dtype='f32.vec(32)', arg=(), src=(
+                                                                                            x126:=UOp(Ops.DEFINE, dtype='f32.vec(32)', arg=(StorageSpec(kind='REG', item=32, dtype='f32.vec(32)', identity=4),), src=()),
+                                                                                            UOp(Ops.END, arg=(), src=(
+                                                                                              UOp(Ops.STORE, arg=(), src=(
+                                                                                                x126,
+                                                                                                UOp(Ops.MULACC, dtype='f32.vec(32)', arg=(0,), src=(
+                                                                                                  x74,
+                                                                                                  x74,
+                                                                                                  UOp(Ops.MULACC, dtype='f32.vec(32)', arg=(0,), src=(
+                                                                                                    x78,
+                                                                                                    x78,
+                                                                                                    UOp(Ops.MULACC, dtype='f32.vec(32)', arg=(0,), src=(
+                                                                                                      x81,
+                                                                                                      x81,
+                                                                                                      UOp(Ops.MULACC, dtype='f32.vec(32)', arg=(0,), src=(
+                                                                                                        x84,
+                                                                                                        x84,
+                                                                                                        UOp(Ops.LOAD, dtype='f32.vec(32)', arg=(), src=(
+                                                                                                          UOp(Ops.AFTER, dtype='f32.vec(32)', arg=(), src=(
+                                                                                                            x126,
+                                                                                                            UOp(Ops.STORE, arg=(), src=(
+                                                                                                              x126,
+                                                                                                              UOp(Ops.CONST, dtype='f32.vec(32)', arg=(0.0,), src=()),
+                                                                                                            )),
+                                                                                                            x75,
+                                                                                                          )),
+                                                                                                        )),
+                                                                                                      )),
+                                                                                                    )),
+                                                                                                  )),
+                                                                                                )),
+                                                                                              )),
+                                                                                              x75,
+                                                                                            )),
+                                                                                          )),
+                                                                                        )),
+                                                                                        UOp(Ops.SHFT2, dtype='f32.vec(32)', arg=(3,), src=(
+                                                                                          UOp(Ops.SHFT2, dtype='f32.vec(32)', arg=(3,), src=(
+                                                                                            UOp(Ops.SHFT2, dtype='f32.vec(32)', arg=(3,), src=(
+                                                                                              UOp(Ops.SHFT2, dtype='f32.vec(32)', arg=(3,), src=(
+                                                                                                x123,
+                                                                                              )),
+                                                                                            )),
+                                                                                          )),
+                                                                                        )),
+                                                                                      )),
+                                                                                      UOp(Ops.SHFT2, dtype='f32.vec(32)', arg=(3,), src=(
+                                                                                        UOp(Ops.SHFT2, dtype='f32.vec(32)', arg=(3,), src=(
+                                                                                          x121,
+                                                                                        )),
+                                                                                      )),
+                                                                                    )),
+                                                                                    UOp(Ops.SHFT2, dtype='f32.vec(32)', arg=(3,), src=(
+                                                                                      x119,
+                                                                                    )),
+                                                                                  )),
+                                                                                  x118,
+                                                                                  x118,
+                                                                                  x118,
+                                                                                )),
+                                                                              )),
+                                                                              UOp(Ops.GEP, dtype='f32.vec(32)', arg=(1,), src=(
+                                                                                x117,
+                                                                              )),
+                                                                            )),
+                                                                            UOp(Ops.GEP, dtype='f32.vec(32)', arg=(2,), src=(
+                                                                              x117,
+                                                                            )),
+                                                                          )),
+                                                                          UOp(Ops.GEP, dtype='f32.vec(32)', arg=(3,), src=(
+                                                                            x117,
+                                                                          )),
+                                                                        )),
+                                                                        UOp(Ops.CONST, dtype='f32', arg=(0.00048828125,), src=()),
+                                                                      )),
+                                                                      UOp(Ops.CONST, dtype='f32', arg=(1e-05,), src=()),
+                                                                    )),
+                                                                  )),
+                                                                )),
+                                                                UOp(Ops.MULACC, dtype='f32.vec(32)', arg=(0,), src=(
+                                                                  x141:=UOp(Ops.MUL, dtype='f32.vec(32)', arg=(1,), src=(
+                                                                    x102,
+                                                                    UOp(Ops.MUL, dtype='f32.vec(32)', arg=(), src=(
+                                                                      x106,
+                                                                      x102,
+                                                                    )),
+                                                                  )),
+                                                                  UOp(Ops.ADD, dtype='f32.vec(32)', arg=(), src=(
+                                                                    x141,
+                                                                    UOp(Ops.CONST, dtype='f32', arg=(2.2533049,), src=()),
+                                                                  )),
+                                                                  UOp(Ops.CONST, dtype='f32', arg=(2.2825186,), src=()),
+                                                                )),
+                                                              )),
+                                                              UOp(Ops.MUL, dtype='f32.vec(32)', arg=(), src=(
+                                                                x106,
+                                                                x98,
+                                                              )),
+                                                            )),
+                                                            UOp(Ops.CONST, dtype='f32', arg=(1.0,), src=()),
+                                                          )),
+                                                          UOp(Ops.MUL, dtype='f32.vec(32)', arg=(), src=(
+                                                            x98,
+                                                            UOp(Ops.CONST, dtype='f32', arg=(0.5,), src=()),
+                                                          )),
+                                                          x98,
+                                                        )),
+                                                      )),
+                                                      UOp(Ops.INDEX, arg=(1,), src=(
+                                                        UOp(Ops.AFTER, arg=(), src=(
+                                                          x42,
+                                                          x70,
+                                                        )),
+                                                        x4,
+                                                      )),
+                                                    )),
+                                                  )),
+                                                  x4,
+                                                )),
+                                              )),
+                                              x11,
+                                            )),
+                                            x48,
+                                          )),
+                                          UOp(Ops.INDEX, arg=(1,), src=(
+                                            UOp(Ops.AFTER, arg=(), src=(
+                                              x42,
+                                              x63,
+                                            )),
+                                            x4,
+                                          )),
+                                        )),
+                                      )),
+                                      x4,
+                                    )),
+                                  )),
+                                  x8,
+                                )),
+                                x48,
+                              )),
+                              UOp(Ops.INDEX, arg=(1,), src=(
+                                UOp(Ops.AFTER, arg=(), src=(
+                                  x42,
+                                  x56,
+                                )),
+                                x4,
+                              )),
+                            )),
+                          )),
+                          x4,
+                        )),
+                      )),
+                      x3,
+                    )),
+                    x48,
+                  )),
+                  UOp(Ops.INDEX, arg=(1,), src=(
+                    UOp(Ops.AFTER, arg=(), src=(
+                      x42,
+                      x49,
+                    )),
+                    x4,
+                  )),
+                )),
+                x4,
+              )),
+            )),
+            x35:=UOp(Ops.CONST, dtype='i32', arg=(0,), src=()),
+          )),
+          UOp(Ops.INDEX, arg=(4096,), src=(
+            x37,
+            x35,
+          )),
+        )),
+      )),
+      x35,
+    )),
+    UOp(Ops.PARAM, dtype='u32', arg=(ParamArg(slot=2, name='output', dtype='bf16', nbytes=4096, lo=None, hi=None),), src=()),
+    x35,
+  )),
+))
