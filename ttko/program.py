@@ -118,13 +118,15 @@ class Buffer:
 
   def from_safetensor(self, name,
                       path="weights/llama3-1b/model.safetensors") -> bytes:
-    from st import load
+    from st import Safetensor
 
-    info, data = load(name, path)
-    if self.dtype is DType.FP8 and info.dtype == "F8_E4M3":
-      bits = np.frombuffer(data, dtype=np.uint8).copy()
-      bits[(bits & 127) < 8] &= np.uint8(128)
-      data = bits.tobytes()
+    reader = path if isinstance(path, Safetensor) else Safetensor(path)
+    self.check_safetensor(reader.info(name))
+    # Blackhole already flushes FP8 subnormals; preserve checkpoint bytes.
+    return reader.load(name)[1]
+
+  def check_safetensor(self, info):
+    name = info.name
     expected_dtype = {
       DType.FP8: "F8_E4M3",
       DType.F16: "F16",
@@ -142,9 +144,8 @@ class Buffer:
         f"safetensor {name!r} has shape {info.shape}, "
         f"but buffer {self.name!r} requires {self.shape}",
       )
-    if len(data) != prod(self.shape) * self.dtype.itemsize:
+    if info.nbytes != prod(self.shape) * self.dtype.itemsize:
       raise ValueError(f"safetensor {name!r} has an invalid byte length")
-    return data
 
   def to_numpy(self, data: bytes):
     if self.dtype is DType.U32:

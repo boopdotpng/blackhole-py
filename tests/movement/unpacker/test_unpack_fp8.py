@@ -45,3 +45,27 @@ def test_fp8_parallel_source_banks(bh):
             l1={INPUT_A: a, INPUT_B: b, OUTPUT_A: bytes(8192)})
   assert bh.read_l1(bh.core, OUTPUT_A, 4096) == fp8.as_f32(a)
   assert bh.read_l1(bh.core, OUTPUT_B, 4096) == fp8.as_f32(b)
+
+
+@pytest.mark.parametrize('bank', (u.UnpackTarget.SRCA, u.UnpackTarget.SRCB))
+def test_fp8_host_subnormal_cleanup_is_redundant(bh, bank):
+  # Exercise all 256 encodings, including both signs, zeros and NaNs.
+  source = bytes(range(256)) * 4
+  cleaned = bytes(code & 128 if code & 127 < 8 else code for code in source)
+  loader, math, packer = (Asm(role) for role in ('trisc0', 'trisc1', 'trisc2'))
+  u.clear_sources(loader)
+  u.emit_unpack_to_src(loader, INPUT_A, bank, input_format=u.FP8_E4M3)
+  u.emit_copy_src_to_dst(math, bank, 0, input_format=u.FP8_E4M3)
+  u.publish_dst(math)
+  u.emit_pack_dst(packer, 0, OUTPUT_A, u.F32, source_format=u.FP16, dst_fp32=False)
+  u.finish_pack(packer)
+  outputs = []
+  images = {k.role: k.lower() for k in (loader, math, packer)}
+  for data in (source, cleaned):
+    bh.launch(images,
+              l1={INPUT_A: data, OUTPUT_A: bytes(4096)})
+    outputs.append(bh.read_l1(bh.core, OUTPUT_A, 4096))
+  assert outputs[0] == outputs[1]
+  import struct
+  values = struct.unpack('<1024f', outputs[0])
+  assert all(value == 0.0 for code, value in zip(source, values) if code & 127 < 8)

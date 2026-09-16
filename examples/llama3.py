@@ -2332,13 +2332,17 @@ class Llama3Kernels:
         f"  weight prepare       {startup['weight_prepare_s'] * 1e3:9.2f} ms"
       )
       print(
-        f"  host copy/stage      {startup['weight_stage_s'] * 1e3:9.2f} ms"
+        f"  host read/stage      {startup['weight_stage_s'] * 1e3:9.2f} ms"
       )
-      upload_gib = startup["dram_upload_bytes"] / (1 << 30)
-      upload_s = startup["dram_upload_wall_s"]
+      upload_gb = startup["dram_upload_bytes"] / 1e9
+      upload_s = startup["weight_upload_total_s"]
       print(
-        f"  DRAM upload          {upload_s * 1e3:9.2f} ms  "
-        f"({upload_gib:.3f} GiB, {upload_gib / upload_s:.2f} GiB/s)"
+        f"  full weight upload   {upload_s * 1e3:9.2f} ms  "
+        f"({upload_gb:.3f} GB, {upload_gb / upload_s:.2f} GB/s, includes prepare/stage)"
+      )
+      print(
+        f"  upload wait/submit   {startup['upload_wait_s'] * 1e3:9.2f} / "
+        f"{startup['upload_submit_s'] * 1e3:.2f} ms (overlapped transfers)"
       )
       print(
         f"  program build        {startup['program_build_s'] * 1e3:9.2f} ms"
@@ -2540,7 +2544,7 @@ class Llama3Decode:
     if attention_cores not in (8, 16, 32): raise ValueError("attention cores must be 8, 16, or 32")
     self.attention_cores = attention_cores
     from st import Safetensor
-    checkpoint = Safetensor(safetensor_path) if self.kernels.model == "8b" else None
+    checkpoint = self._checkpoint = Safetensor(safetensor_path)
     self.published_fp8 = checkpoint is not None and "model.layers.0.self_attn.q_proj.input_scale" in checkpoint.tensors
     if self.kernels.WEIGHT_DTYPE.is_fp8 and not self.published_fp8:
       raise ValueError("FP8 mode requires an FP8 checkpoint with stored scales")
@@ -2557,7 +2561,8 @@ class Llama3Decode:
       "dram_upload_bytes": 0,
       "weight_prepare_s": 0.0,
       "weight_stage_s": 0.0,
-      "dram_upload_wall_s": 0.0,
+      "upload_wait_s": 0.0,
+      "upload_submit_s": 0.0,
     }
     total_started = time.perf_counter()
     started = time.perf_counter()
@@ -2741,39 +2746,39 @@ class Llama3Decode:
   def _upload(self, buffer, tensor):
     buffer = self._weight_upload_buffers.get(buffer, buffer)
     started = time.perf_counter()
-    data = buffer.from_safetensor(tensor, self.safetensor_path)
+    buffer.check_safetensor(self._checkpoint.info(tensor))
+    if not buffer._raw_global:
+      raise ValueError("model uploads require exact global row-major storage")
     self.profile["weight_prepare_s"] += time.perf_counter() - started
-    self._stage_upload(buffer, data)
+    self._uploads.write_from(
+      buffer, lambda target, offset: self._checkpoint.readinto(tensor, target, offset),
+    )
+    self.profile["dram_upload_bytes"] += buffer.size
 
   def _stage_upload(self, buffer, data, *, physical=False):
-    started = time.perf_counter()
     if not physical and not buffer._raw_global:
       raise ValueError("model uploads require exact global row-major storage")
     if len(data) != buffer.size:
       raise ValueError("model upload byte length does not match its storage")
-    self.device._write_physical(buffer, data)
-    self.profile["weight_stage_s"] += time.perf_counter() - started
+    self._uploads.write(buffer, data)
     self.profile["dram_upload_bytes"] += buffer.size
 
-  def _run_uploads(self, timeout):
-    started = time.perf_counter()
-    result = self.device.run(timeout=timeout)
-    self.profile["dram_upload_wall_s"] += time.perf_counter() - started
-    return result
-
   def _upload_weights(self):
-    started = time.perf_counter()
-    embedding_data = self.embedding_weight.from_safetensor(
-      "model.embed_tokens.weight", self.safetensor_path,
-    )
-    self.profile["weight_prepare_s"] += time.perf_counter() - started
-    self._stage_upload(self.embedding_weight, embedding_data)
-    self._run_uploads(60.0)
-    del embedding_data
+    with self.device.upload_stream() as uploads:
+      self._uploads = uploads
+      try:
+        self._stage_weights()
+      finally:
+        del self._uploads
+    self.profile["weight_stage_s"] = uploads.copy_s
+    self.profile["upload_wait_s"] = uploads.wait_s
+    self.profile["upload_submit_s"] = uploads.submit_s
+
+  def _stage_weights(self):
+    self._upload(self.embedding_weight, "model.embed_tokens.weight")
 
     if self.lm_storage is not self.embedding_weight:
       self._upload(self.lm_storage, "lm_head.weight")
-      self._run_uploads(60.0)
 
     started = time.perf_counter()
     cos_values, sin_values = self.kernels.rope_table()
@@ -2782,7 +2787,6 @@ class Llama3Decode:
     self.profile["weight_prepare_s"] += time.perf_counter() - started
     self._stage_upload(self.cos, cos_data)
     self._stage_upload(self.sin, sin_data)
-    self._run_uploads(30.0)
     del cos_values, sin_values
 
     cache_zeros = bytes(
@@ -2807,9 +2811,7 @@ class Llama3Decode:
       # A cleared cache has identical bytes in every layout.
       self._stage_upload(layer["key_cache"], cache_zeros, physical=True)
       self._stage_upload(layer["value_cache"], cache_zeros, physical=True)
-      self._run_uploads(60.0)
     self._upload(self.final_norm, "model.norm.weight")
-    self._run_uploads(30.0)
 
   def _build_programs(self):
     self._create_programs()

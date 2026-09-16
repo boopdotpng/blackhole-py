@@ -140,6 +140,25 @@ class Safetensor:
       raise ValueError(f"{self.path} ended while reading tensor {name!r}")
     return info, data
 
+  def readinto(self, name, target, offset=0):
+    """Read a bounded tensor range directly into a writable staging buffer."""
+    if self.shards is not None:
+      self.info(name)
+      return self.shards[name].readinto(name, target, offset)
+    info = self.info(name)
+    view = memoryview(target).cast("B")
+    if offset < 0 or offset + len(view) > info.nbytes:
+      raise ValueError(f"read exceeds tensor {name!r}")
+    with self.path.open("rb", buffering=0) as file:
+      file.seek(self.data_start + info.start + offset)
+      done = 0
+      while done < len(view):
+        count = file.readinto(view[done:])
+        if not count:
+          raise ValueError(f"{self.path} ended while reading tensor {name!r}")
+        done += count
+    return done
+
 
 def load(name, path="weights/llama3-1b/model.safetensors"):
   return Safetensor(path).load(name)

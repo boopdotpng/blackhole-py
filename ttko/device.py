@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from struct import Struct
 import time
+import ctypes
 
 from ttko.cq import (
   ALIGN, DRAM_BRISC_READY, DRAM_NCRISC_READY, CommandQueue, DramCopy,
@@ -16,6 +17,101 @@ from ttko.program import (
   PARAM_BASE, RETURN_KERNEL, Buffer, Dram, Program, rectangles,
 )
 from ttko import DType
+
+class PhysicalUploadStream:
+  """Copy physical tensor bytes through two completion-protected host slots.
+
+  Writes publish immediately; finish/context exit waits for the final transfers.
+  A stream owns the device's DRAM staging arena until it exits.
+  """
+  def __init__(self, device, slot_bytes=4 << 20, timeout=60.0):
+    self.device, self.timeout = device, timeout
+    self.slot_bytes = slot_bytes
+    self.events = [0, 0]
+    self.slot = 0
+    self.copy_s = self.wait_s = self.submit_s = 0.0
+    self.active = False
+
+  def __enter__(self):
+    device = self.device
+    if device.cq is None:
+      raise RuntimeError("init_device() must be called before uploading")
+    if (device._upload_stream is not None or device.program_queue or
+        device.read_queue or device._staging_next):
+      raise RuntimeError("flush queued work before starting an upload stream")
+    self.slot_bytes = min(self.slot_bytes, device.cq.dram_size // 2) & -64
+    if self.slot_bytes <= 0:
+      raise ValueError("upload slots must contain at least 64 bytes")
+    device._upload_stream = self
+    self.active = True
+    return self
+
+  def _wait_slot(self, slot):
+    if self.events[slot]:
+      started = time.perf_counter()
+      self.device.cq.wait(self.events[slot], timeout=self.timeout)
+      self.wait_s += time.perf_counter() - started
+      self.events[slot] = 0
+
+  def write(self, buffer, data):
+    if not self.active:
+      raise RuntimeError("upload stream is not active")
+    data = bytes(data)
+    if len(data) != buffer.size:
+      raise ValueError("streamed uploads require exact physical buffer bytes")
+    # Keep data alive through memmove, without copying tensor slices.
+    source = ctypes.cast(ctypes.c_char_p(data), ctypes.c_void_p).value
+    def fill(target, offset):
+      ctypes.memmove(ctypes.addressof(target), source + offset, len(target))
+    self.write_from(buffer, fill)
+
+  def write_from(self, buffer, fill):
+    """Call fill(writable_buffer, tensor_byte_offset) for each host slot."""
+    if not self.active:
+      raise RuntimeError("upload stream is not active")
+    banks, page = buffer.banks, buffer.tile_size
+    endpoints = self.device.pcie.dram_endpoints
+    if (not 0 < banks <= len(endpoints) or
+        tuple(buffer.dram_endpoints) != endpoints[:banks]):
+      raise ValueError("streamed uploads require a prefix of DRAM banks")
+    # Every chunk starts at bank zero in the existing descriptor format.
+    chunk_pages = self.slot_bytes // (banks * page) * banks
+    if not chunk_pages:
+      raise ValueError("upload slot is smaller than one DRAM bank stripe")
+    for first in range(0, buffer.physical_tiles, chunk_pages):
+      count = min(chunk_pages, buffer.physical_tiles - first)
+      slot = self.slot
+      self._wait_slot(slot)
+      offset = self.device.cq.dram + slot * self.slot_bytes
+      started = time.perf_counter()
+      target = (ctypes.c_ubyte * (count * page)).from_address(
+        self.device.pcie.sysmem.addr + offset,
+      )
+      fill(target, first * page)
+      self.copy_s += time.perf_counter() - started
+      command = DramCopy(
+        buffer.addr + (first // banks) * page,
+        self.device.pcie.sysmem.noc_addr + offset, page, count, banks,
+      )
+      started = time.perf_counter()
+      self.events[slot] = self.device.cq.enqueue((command,))
+      self.submit_s += time.perf_counter() - started
+      self.slot ^= 1
+
+  def finish(self):
+    for slot in range(2): self._wait_slot(slot)
+
+  def __exit__(self, exc_type, exc, tb):
+    try:
+      self.finish()
+    except Exception:
+      # A timed-out transfer may still be reading its slot. Keep the arena
+      # reserved; the caller must close/reset the device before reusing it.
+      self.active = False
+      raise
+    self.active = False
+    self.device._upload_stream = None
+
 
 class Readback:
   def __init__(self, device, buffer, offset):
@@ -149,6 +245,7 @@ class Device(RawDevice):
     self.program_queue, self.read_queue = [], []
     self.cq = None
     self._staging_next = 0
+    self._upload_stream = None
     self._cached_static = {}
     self._kernel_cache_buffer = None
     self._resident_programs = {}
@@ -164,7 +261,15 @@ class Device(RawDevice):
   def init_device(self):
     return self.boot()
 
+  def upload_stream(self, slot_bytes=4 << 20, timeout=60.0):
+    return PhysicalUploadStream(self, slot_bytes, timeout)
+
+  def _check_upload_idle(self):
+    if self._upload_stream is not None:
+      raise RuntimeError("exit the upload stream before submitting other work")
+
   def queue(self, program: Program, params=None, report=True):
+    self._check_upload_idle()
     self.program_queue.append((program, params, None, report))
     return program
 
@@ -194,6 +299,7 @@ class Device(RawDevice):
 
   def _write_physical(self, buffer, data: bytes, *, dram_endpoints=None):
     """Upload already-physical tile bytes without applying tensor tilization."""
+    self._check_upload_idle()
     data = bytes(data)
     if len(data) > buffer.size:
       raise ValueError("physical upload exceeds its DRAM buffer")
@@ -594,6 +700,7 @@ class Device(RawDevice):
     return self._write_physical(buffer, buffer.pad_data(data))
 
   def queue_read(self, buffer):
+    self._check_upload_idle()
     if buffer.tilized:
       from ttko.layout import queue_read_tiled
       return queue_read_tiled(self, buffer)
@@ -610,6 +717,7 @@ class Device(RawDevice):
     return readback.result()
 
   def run(self, *programs: Program, params=None, timeout=10.0):
+    self._check_upload_idle()
     if self.cq is None: raise RuntimeError("init_device() must be called before run()")
     if params is not None and len(programs) != 1:
       raise ValueError("parameter overrides require exactly one explicit program")
