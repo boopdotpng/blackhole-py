@@ -3,7 +3,7 @@ import os
 from struct import pack
 import pytest
 from asm import Asm
-from isa import Tensix as TT
+from ttko.isa import Tensix as TT
 from tests.profiler import Profiler
 from tests.operation_pocs.transport.observation import copy_source
 from tests.movement.unpacker import unpack as u

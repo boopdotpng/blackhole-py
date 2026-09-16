@@ -2,7 +2,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from functools import wraps
 from typing import ClassVar
-from fw.consts import Firmware, KernelRole, TensixL1, TensixMMIO
+from firmware.consts import Firmware, KernelRole, TensixL1, TensixMMIO
 from ttko.isa import R, RV32, TensixWord
 from pcie import Allocator
 
@@ -137,42 +137,34 @@ class Asm(RV32):
     return self.fence()
 
   @scoped
-  def read(self, rd: R, addr: int | R, bytes=4):
+  def read(self, rd: R, addr: int | R, bytes=4, *, tmp_addr: R | None = None):
     op = {1: self.lbu, 2: self.lhu, 4: self.lw}[bytes]
     if isinstance(addr, R): return op(rd, addr)
-    base = self.reg(exclude=rd)
+    base = self.reg(exclude=rd) if tmp_addr is None else tmp_addr
     self.li(base, addr)
     return op(rd, base)
 
   @scoped
-  def write(self, addr: int | R, value: int | R, bytes=4):
+  def write(self, addr: int | R, value: int | R, bytes=4, *, tmp_addr: R | None = None, tmp_val: R | None = None):
     op = {1: self.sb, 2: self.sh, 4: self.sw}[bytes]
     if not isinstance(addr, R):
       excluded = value if isinstance(value, R) else ()
-      self.li(base := self.reg(exclude=excluded), addr)
+      base = self.reg(exclude=excluded) if tmp_addr is None else tmp_addr
+      self.li(base, addr)
     else: base = addr
-    if not isinstance(value, R): self.li(src := self.reg(exclude=base), value)
+    if not isinstance(value, R):
+      src = self.reg(exclude=base) if tmp_val is None else tmp_val
+      self.li(src, value)
     else: src = value
     return op(src, base)
 
   # Fixed-register recipes supply scratch registers instead of using reg().
-  def read32(self, dst, address, *, tmp_addr=R.T0):
-    if isinstance(address, R): return self.lw(dst, address, 0)
-    self.li(tmp_addr, int(address)); return self.lw(dst, tmp_addr, 0)
-
+  def read32(self, dst, address, *, tmp_addr=R.T0): return self.read(dst, address, tmp_addr=tmp_addr)
+  def read8(self, dst, address, *, tmp_addr=R.T0): return self.read(dst, address, bytes=1, tmp_addr=tmp_addr)
   def write32(self, address, value, *, tmp_addr=R.T0, tmp_val=R.T1):
-    if not isinstance(address, R): self.li(tmp_addr, int(address)); address = tmp_addr
-    if not isinstance(value, R): self.li(tmp_val, int(value)); value = tmp_val
-    return self.sw(value, address, 0)
-
-  def read8(self, dst, address, *, tmp_addr=R.T0):
-    if not isinstance(address, R): self.li(tmp_addr, int(address)); address = tmp_addr
-    return self.lbu(dst, address, 0)
-
+    return self.write(address, value, tmp_addr=tmp_addr, tmp_val=tmp_val)
   def write8(self, address, value, *, tmp_addr=R.T0, tmp_val=R.T1):
-    if not isinstance(address, R): self.li(tmp_addr, int(address)); address = tmp_addr
-    if not isinstance(value, R): self.li(tmp_val, int(value)); value = tmp_val
-    return self.sb(value, address, 0)
+    return self.write(address, value, bytes=1, tmp_addr=tmp_addr, tmp_val=tmp_val)
 
   def wait_sync_value(self, address, value_reg, *, ptr=R.T0, actual=R.T1):
     self.li(ptr, address)

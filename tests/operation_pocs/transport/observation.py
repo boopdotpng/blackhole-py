@@ -1,5 +1,5 @@
 """Fixture-only full-bank observation after tested Dst guards are captured."""
-from isa import Tensix as TT
+from ttko.isa import Tensix as TT
 from tests.movement.unpacker import unpack as u
 
 

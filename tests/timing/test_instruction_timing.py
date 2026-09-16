@@ -15,7 +15,7 @@ from struct import unpack
 
 import pytest
 from asm import Asm
-from isa import R, RV32, Tensix as TT
+from ttko.isa import R, RV32, Tensix as TT
 from tests.profiler import Profiler
 from tests.operation_pocs.sfpu_math.emit import constant, drain
 

@@ -6,7 +6,7 @@ are automatically interlocked on Blackhole. L9=0 and L10=1 are architectural.
 """
 from math import factorial
 from struct import pack, unpack
-from isa import Tensix as TT
+from ttko.isa import Tensix as TT
 from tests.movement.unpacker.unpack import stall, pc_sync, Stall, Wait
 
 OPS = ('add', 'sub', 'mul', 'mad', 'neg', 'abs', 'exp', 'reciprocal')

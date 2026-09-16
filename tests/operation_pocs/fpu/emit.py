@@ -1,5 +1,5 @@
 """Allocation-scoped FPU recipes; fixture transport is deliberately separate."""
-from isa import Tensix as TT
+from ttko.isa import Tensix as TT
 from tests.movement.unpacker.unpack import (
     _set_thread_cfg, _mop_loop_words, configure_mop, load_replay, run_mop,
     stall, pc_sync, Stall, Wait,

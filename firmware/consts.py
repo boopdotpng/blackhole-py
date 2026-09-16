@@ -165,6 +165,7 @@ class Op(IntEnum):
   DRAM_RECORD = 4
   SIGNAL = 5
   TRACE = 6
+  INDIRECT = TRACE
   DRAM_COPY = 7
   WAIT = 8
   TIMESTAMP = 9

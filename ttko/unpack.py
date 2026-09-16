@@ -1,6 +1,6 @@
 from __future__ import annotations
 from enum import IntEnum
-from fw.consts import TensixMMIO
+from firmware.consts import TensixMMIO
 from ttko.isa import R, Tensix as TT
 from ttko import Dst, DType
 from ttko.cb import CB

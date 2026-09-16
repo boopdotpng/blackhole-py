@@ -28,7 +28,7 @@ from random import Random
 
 import pytest
 from asm import Asm
-from isa import R, Tensix as TT
+from ttko.isa import R, Tensix as TT
 from tests.movement.unpacker.unpack import (
   F32, BF16, UnpackTarget, UnpackCfg, Sem, SemWait, Stall, Wait,
   configure_unpacker, configure_fp32_dst, _engine_cfg, _set_thread_cfg,

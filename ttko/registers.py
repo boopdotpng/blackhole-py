@@ -2,7 +2,7 @@ from enum import IntEnum
 from ttko.isa import R, Tensix as TT
 from ttko import DType
 from ttko.sync import Sem, SemWait, Stall, Wait
-from fw.consts import TensixL1, TensixMMIO
+from firmware.consts import TensixL1, TensixMMIO
 
 _RF = 0xFFE00000
 

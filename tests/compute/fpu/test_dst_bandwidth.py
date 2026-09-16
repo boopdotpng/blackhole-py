@@ -11,7 +11,7 @@ import numpy as np
 import pytest
 
 from asm import Asm
-from isa import R, Tensix as TT
+from ttko.isa import R, Tensix as TT
 from tests.profiler import Profiler
 from tests.compute.fpu import test_rmsnorm_llama3 as rms
 from tests.compute.fpu.test_rmsnorm_reduce import _constant, _read_intervals, _bf16_round, _from_bf16

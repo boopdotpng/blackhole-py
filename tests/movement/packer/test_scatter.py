@@ -4,8 +4,8 @@ from statistics import median
 from struct import pack
 
 from asm import Asm
-from fw.consts import TensixL1, TensixMMIO
-from isa import Tensix as TT
+from firmware.consts import TensixL1, TensixMMIO
+from ttko.isa import Tensix as TT
 from tests.movement.packer.pack import _configure_row_addressing, _set_dst_position
 from tests.movement.unpacker.unpack import (
   BF16, F32_TILE_BYTES, PackCfg, Sem, SemWait, Stall, Wait,

@@ -1,7 +1,7 @@
 from enum import IntEnum
 
 from ttko.isa import R, Tensix as TT
-from fw.consts import TensixMMIO
+from firmware.consts import TensixMMIO
 
 
 class Stall(IntEnum):

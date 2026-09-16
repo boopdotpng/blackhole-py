@@ -4,7 +4,7 @@ from struct import Struct
 import pytest
 
 from asm import Asm
-from fw.consts import TensixL1, TensixMMIO
+from firmware.consts import TensixL1, TensixMMIO
 from tests.movement.atomic import (
   AtomicIncrementConfig, emit_atomic_increment, emit_wait_for_counter,
 )

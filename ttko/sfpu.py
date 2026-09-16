@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from enum import IntEnum
 import struct
 
-from fw.consts import TensixMMIO
+from firmware.consts import TensixMMIO
 from ttko.isa import Tensix as TT
 from ttko import Dst
 from ttko.mop import LoopTemplate, Mop, REPLAY_SIZE, Replay

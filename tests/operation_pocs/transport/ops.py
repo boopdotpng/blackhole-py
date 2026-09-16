@@ -1,6 +1,6 @@
 """Allocation-scoped transport emitters; lengths are runtime element counts."""
 from asm import Asm
-from isa import R, Reg, Tensix as TT, is_reg
+from ttko.isa import R, Reg, Tensix as TT, is_reg
 from tests.movement.unpacker import unpack as u
 from tests.movement.packer.pack import emit_pack_dst_to_cb
 

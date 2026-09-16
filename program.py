@@ -6,8 +6,8 @@ No tensor layouts, graph lowering, or hardware access belong here.
 from struct import Struct
 
 from cq import MAX_WRITE_SIZE, McastWrite, Run, UnicastWrite, rectangles
-from fw.consts import Firmware, KERNEL_ROLES, TensixL1
-from isa import R, RV32
+from firmware.consts import Firmware, KERNEL_ROLES, TensixL1
+from ttko.isa import R, RV32
 
 PARAM_STRUCT = Struct(f"<{TensixL1.PARAM_SLOTS}I")
 RETURN_KERNEL = {

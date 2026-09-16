@@ -5,8 +5,8 @@ from struct import pack
 import pytest
 
 from asm import Asm
-from isa import Tensix as TT
-from fw.consts import TensixL1
+from ttko.isa import Tensix as TT
+from firmware.consts import TensixL1
 from tests.profiler import Profiler
 from tests.movement.unpacker.unpack import (
   BF16, F32, UnpackCfg, _engine_cfg, UnpackTarget, Sem, SemWait, Stall, Wait, _set_thread_cfg,

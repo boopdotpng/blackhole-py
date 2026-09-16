@@ -11,8 +11,8 @@ drain by putting ``UNPACR; STALLWAIT`` in Replay.
 from enum import IntEnum
 
 from asm import Asm
-from fw.consts import TensixMMIO
-from isa import R, Reg, Tensix as TT, is_reg
+from firmware.consts import TensixMMIO
+from ttko.isa import R, Reg, Tensix as TT, is_reg
 
 
 BF16 = 5

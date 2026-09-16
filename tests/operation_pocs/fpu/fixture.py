@@ -1,7 +1,7 @@
 """Broad fixture-only initialization and observation; never part of the emitter."""
 from asm import Asm
-from fw.consts import TensixL1
-from isa import Tensix as TT
+from firmware.consts import TensixL1
+from ttko.isa import Tensix as TT
 from tests.operation_pocs.fpu.observation import emit_pack_dst_to_cb
 from tests.movement.unpacker.unpack import (
   BF16, CFG_BASE, _rmw_cfg_byte, F32, F32_TILE_BYTES, Sem, SemWait, Stall, Wait, UNPACKER0, UNPACKER1,

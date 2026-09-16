@@ -14,7 +14,7 @@ from asm import Asm
 from device import Device
 from pcie import Allocator, PCIDevice, P100_WORKER_CORES, P150_DRAM_ENDPOINTS, TLBWindow
 from tests.harness import RawHarness
-from fw.consts import TensixL1
+from firmware.consts import TensixL1
 from decode import disassemble
 
 

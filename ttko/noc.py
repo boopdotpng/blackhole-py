@@ -1,6 +1,6 @@
 from __future__ import annotations
 from ttko.asm import Cond
-from fw.consts import TensixL1
+from firmware.consts import TensixL1
 from ttko.isa import R
 from ttko.cb import CB
 from ttko.registers import TensixL1, BriscMailbox as BM

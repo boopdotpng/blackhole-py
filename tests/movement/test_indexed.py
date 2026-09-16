@@ -3,7 +3,7 @@ from struct import Struct, pack
 
 
 from asm import Asm
-from fw.consts import TensixL1, TensixMMIO
+from firmware.consts import TensixL1, TensixMMIO
 from tests.movement.indexed import (
   IndexedConfig, emit_indexed_gather, emit_indexed_scatter,
 )

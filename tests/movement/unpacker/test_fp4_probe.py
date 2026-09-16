@@ -11,8 +11,8 @@ import struct
 import pytest
 
 from asm import Asm
-from fw.consts import TensixL1
-from isa import Tensix as TT
+from firmware.consts import TensixL1
+from ttko.isa import Tensix as TT
 from tests.movement.unpacker import unpack as u
 from tests.operation_pocs.fpu.emit import prepare, execute
 from tests.operation_pocs.fpu.observation import emit_pack_dst_to_cb

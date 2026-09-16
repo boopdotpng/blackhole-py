@@ -5,7 +5,7 @@ from struct import Struct
 import pytest
 
 from asm import Asm
-from fw.consts import TensixL1, TensixMMIO
+from firmware.consts import TensixL1, TensixMMIO
 from tests.movement.noc import (
   InterleavedConfig, emit_cb_discard, emit_cb_generate,
   emit_interleaved_dram_to_l1, emit_interleaving_benchmark,

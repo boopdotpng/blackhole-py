@@ -6,7 +6,7 @@ from statistics import median
 from struct import pack, unpack
 import pytest
 from asm import Asm
-from isa import Tensix as TT
+from ttko.isa import Tensix as TT
 from tests.movement.packer.pack import emit_pack_dst_to_cb
 from tests.movement.unpacker.unpack import (
   F32, Sem, SemWait, Stall, Wait, _set_thread_cfg, configure_fp32_dst,

@@ -1,0 +1,69 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Blackhole chat</title>
+<style>
+  body { font: 16px system-ui; max-width: 720px; margin: 40px auto; padding: 0 16px; }
+  header, form { display: flex; gap: 8px; align-items: center; }
+  h1 { font-size: 20px; margin-right: auto; }
+  button, select, textarea { font: inherit; padding: 8px; }
+  textarea { flex: 1; min-width: 0; }
+  article { white-space: pre-wrap; overflow-wrap: anywhere; margin: 24px 0; }
+  small, #status { color: #666; }
+</style>
+<header><h1>Blackhole chat</h1><select id="model" aria-label="Model">
+  <option value="fp8">Llama 3 8B · FP8</option><option value="bf16">Llama 3 8B · BF16</option>
+</select><button id="reset">New chat</button></header>
+<small>No prefill: everything is decode, including conversation history on each turn.</small>
+<main id="chat" aria-live="polite"></main>
+<form><textarea id="prompt" rows="2" placeholder="Message…" aria-label="Message" required></textarea><button>Send</button></form>
+<p id="status" role="status">Ready · model loads on first message</p>
+<script>
+const $ = id => document.getElementById(id);
+const form = document.querySelector('form');
+let messages = [];
+function reset() { messages = []; $('chat').replaceChildren(); $('status').textContent = 'Ready'; $('prompt').focus(); }
+$('reset').onclick = reset;
+$('model').onchange = reset;
+function bubble(role, text) {
+  const article = document.createElement('article'), label = document.createElement('b'), body = document.createElement('div');
+  label.textContent = role; body.textContent = text; article.append(label, body); $('chat').append(article); return body;
+}
+$('prompt').onkeydown = e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); form.requestSubmit(); } };
+form.onsubmit = async e => {
+  e.preventDefault();
+  const content = $('prompt').value.trim();
+  if (!content || $('model').disabled) return;
+  const pending = [...messages, {role: 'user', content}];
+  bubble('You', content);
+  const reply = bubble('Assistant', '');
+  $('prompt').value = '';
+  const controls = [...document.querySelectorAll('button, select, textarea')];
+  controls.forEach(el => el.disabled = true);
+  $('status').textContent = 'Starting…';
+  try {
+    const response = await fetch('/chat', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({model: $('model').value, messages: pending})});
+    if (!response.ok) throw Error(await response.text());
+    const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
+    let buffer = '', complete = false;
+    while (true) {
+      const {value, done} = await reader.read();
+      if (done) break;
+      buffer += value;
+      let end;
+      while ((end = buffer.indexOf('\n')) >= 0) {
+        const event = JSON.parse(buffer.slice(0, end)); buffer = buffer.slice(end + 1);
+        if (event.error) throw Error(event.error);
+        if (event.text !== undefined) { reply.textContent = event.text; $('status').textContent = 'Decoding…'; }
+        if (event.status) $('status').textContent = event.status;
+        if (event.done) complete = true;
+      }
+    }
+    if (!complete) throw Error('Connection closed before generation finished');
+    if (reply.textContent.trim()) messages = [...pending, {role: 'assistant', content: reply.textContent}];
+  } catch (error) {
+    $('status').textContent = `Error: ${error.message}. Message not added to history; retry.`;
+    $('prompt').value = content;
+  } finally { controls.forEach(el => el.disabled = false); $('prompt').focus(); }
+};
+</script>

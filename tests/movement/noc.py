@@ -8,8 +8,8 @@ from the worker RISC.
 from dataclasses import dataclass
 
 from asm import Asm
-from fw.consts import TensixL1
-from isa import R, Reg, is_reg
+from firmware.consts import TensixL1
+from ttko.isa import R, Reg, is_reg
 
 
 NIU0 = 0xFFB20000

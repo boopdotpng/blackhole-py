@@ -6,7 +6,7 @@ from struct import pack, unpack
 import pytest
 
 from asm import Asm
-from fw.consts import TensixL1
+from firmware.consts import TensixL1
 from tests.movement import noc
 from tests.profiler import Profiler
 from tests.operation_pocs.runtime.ops import Transfer, read_from, write_to, cb_action
@@ -119,7 +119,7 @@ def test_cb_primitive(bh, request, action, slot, initial):
 @pytest.mark.parametrize('action', ['post', 'get', 'wait_ready', 'wait_space'])
 @pytest.mark.parametrize('semaphore', [1, 2, 5, 7])
 def test_semaphore_primitive(bh, request, action, semaphore):
-  from isa import Tensix as TT
+  from ttko.isa import Tensix as TT
   from tests.movement.unpacker.unpack import pc_sync, PC_SEMAPHORE_BASE
   from tests.operation_pocs.runtime.ops import semaphore_action
   k = Asm('trisc1'); p = Profiler(k)
@@ -150,7 +150,7 @@ def test_semaphore_primitive(bh, request, action, semaphore):
 
 @pytest.mark.parametrize('action', ['reserve', 'wait'])
 def test_cb_blocking(bh, request, action):
-  from isa import R
+  from ttko.isa import R
   config = noc.InterleavedConfig((0,), BASE + 0x10000, 2, 256, sync_slot=31)
   start, proof, observed = BASE + 0x14000, BASE + 0x14004, BASE + 0x14008
   k, peer = Asm('brisc'), Asm('ncrisc')
@@ -182,7 +182,7 @@ def test_cb_blocking(bh, request, action):
 
 @pytest.mark.parametrize('action', ['wait_ready', 'wait_space'])
 def test_semaphore_blocking(bh, request, action):
-  from isa import R, Tensix as TT
+  from ttko.isa import R, Tensix as TT
   from tests.movement.unpacker.unpack import pc_sync, PC_SEMAPHORE_BASE
   from tests.operation_pocs.runtime.ops import semaphore_action
   start, proof, observed = BASE + 0x15000, BASE + 0x15004, BASE + 0x15008
@@ -255,7 +255,7 @@ def test_source_flags(bh, request, action, bank):
 @pytest.mark.parametrize('action', ['wait_valid'])
 @pytest.mark.parametrize('bank', [0, 1])
 def test_source_flag_blocking(bh, request, action, bank):
-  from isa import R
+  from ttko.isa import R
   from tests.movement.unpacker.unpack import configure_unpacker, UnpackTarget, BF16, pc_sync
   from tests.operation_pocs.runtime.ops import source_flag
   start, proof, observed = BASE + 0x18000, BASE + 0x18004, BASE + 0x18008

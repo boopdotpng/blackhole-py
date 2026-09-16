@@ -1,8 +1,8 @@
 """Handwritten Blackhole row-major packer kernels used by movement tests."""
 
 from asm import Asm
-from fw.consts import TensixMMIO
-from isa import R, Reg, Tensix as TT, is_reg
+from firmware.consts import TensixMMIO
+from ttko.isa import R, Reg, Tensix as TT, is_reg
 from tests.movement.unpacker.unpack import (
   BF16, FP8_E4M3, F32, TILE_ELEMENTS, PackCfg, Sem, SemWait, Stall, Wait,
   _mop_loop_words, _set_pack_destination, _set_thread_cfg,

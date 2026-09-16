@@ -6,7 +6,7 @@ from ttko.cq import (
   ALIGN, DRAM_BRISC_READY, DRAM_NCRISC_READY, CommandQueue, DramCopy,
   DramRecord, McastWrite, Run, Signal, UnicastWrite, noc_coord,
 )
-from fw.consts import (
+from firmware.consts import (
   Firmware, FirmwareControl, KERNEL_ROLES, RunState, TensixL1, TensixMMIO,
 )
 from device import Device as RawDevice

@@ -6,7 +6,7 @@ from struct import pack
 from pathlib import Path
 import pytest
 from asm import Asm
-from fw.consts import TensixL1
+from firmware.consts import TensixL1
 from tests.profiler import Profiler
 from tests.movement.unpacker import unpack as u
 from tests.operation_pocs.transport.ops import pack_exact

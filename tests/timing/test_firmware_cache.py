@@ -4,8 +4,8 @@ import struct
 import pytest
 
 from asm import Asm
-from fw.consts import TensixL1, TensixMMIO
-from isa import R
+from firmware.consts import TensixL1, TensixMMIO
+from ttko.isa import R
 
 
 @pytest.mark.parametrize('role', ('trisc0', 'trisc1', 'trisc2'))

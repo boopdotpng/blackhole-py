@@ -10,7 +10,7 @@ from struct import pack, unpack
 import pytest
 
 from asm import Asm
-from isa import Tensix as TT
+from ttko.isa import Tensix as TT
 from tests.compute.fpu.test_mean import INPUT, WEIGHTS, OUTPUT, _add, _reduce_l0
 from tests.movement.packer.pack import emit_pack_dst_to_cb
 from tests.movement.unpacker.unpack import (

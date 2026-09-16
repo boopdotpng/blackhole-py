@@ -10,8 +10,8 @@ from struct import pack, unpack
 import pytest
 
 from asm import Asm
-from fw.consts import TensixL1
-from isa import Tensix as TT
+from firmware.consts import TensixL1
+from ttko.isa import Tensix as TT
 from tests.movement.packer.pack import emit_pack_dst_to_cb
 from tests.movement.unpacker.unpack import (
   F32, UnpackCfg, UnpackTarget, Sem, SemWait, Stall, Wait,

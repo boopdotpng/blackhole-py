@@ -18,7 +18,7 @@ def main():
     docs=WORKSPACE/'tt-ins-docs'
     subprocess.run([sys.executable,str(docs/'scripts/build_reference.py')],check=True)
     shutil.copyfile(docs/'lib/instructions.json',DATA/'instructions.json')
-    files=[docs/'lib/instructions.json', ROOT/'isa.py']
+    files=[docs/'lib/instructions.json', ROOT/'ttko/isa.py']
     for name in ('tensix_regs.json','tile_regs.json','tensix_isa.json'):
         source=WORKSPACE/'ttsim/data/bh'/name
         shutil.copyfile(source,DATA/name); files.append(source)
@@ -39,7 +39,7 @@ def main():
         registers[group].setdefault(str(fields['ADDR32']),[]).append(dict(name=name,shift=fields['SHAMT'],size=mask.bit_length()))
     (DATA/'registers_full.json').write_text(json.dumps(registers,indent=2)+'\n'); files.append(header)
     symbols={}; enums={}
-    for module_name in ('fw.consts','tests.movement.unpacker.unpack'):
+    for module_name in ('firmware.consts','tests.movement.unpacker.unpack'):
         module=importlib.import_module(module_name)
         for name,value in vars(module).items():
             if name.startswith('_'): continue

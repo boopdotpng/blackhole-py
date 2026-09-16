@@ -3,8 +3,8 @@
 This deliberately avoids direct UNPACR's documented whole-SrcA clobber.
 """
 from asm import Asm
-from isa import R, Reg, Tensix as TT, is_reg
-from fw.consts import TensixMMIO
+from ttko.isa import R, Reg, Tensix as TT, is_reg
+from firmware.consts import TensixMMIO
 from tests.movement.unpacker import unpack as u
 
 

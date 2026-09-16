@@ -5,10 +5,10 @@ import shutil
 import subprocess
 import struct
 import tempfile
-from fw import consts
-from fw.consts import CQConfig, FirmwareControl, TensixMMIO
+from . import consts
+from .consts import CQConfig, FirmwareControl, TensixMMIO
 
-from fw.consts import Firmware, KERNEL_ROLES, TensixL1
+from .consts import Firmware, KERNEL_ROLES, TensixL1
 
 
 SOURCE_DIR = Path(consts.__file__).resolve().parent
@@ -214,7 +214,7 @@ def _compile(
 
 
 def source_files():
-  return (Path(__file__).resolve(),) + tuple(sorted(SOURCE_DIR.glob('*.py'))) + tuple(sorted(SOURCE_DIR.glob('*.c'))) + tuple(sorted(SOURCE_DIR.glob('*.h'))) + (LINKER_SCRIPT,)
+  return tuple(sorted(SOURCE_DIR.glob('*.py'))) + tuple(sorted(SOURCE_DIR.glob('*.c'))) + tuple(sorted(SOURCE_DIR.glob('*.h'))) + (LINKER_SCRIPT,)
 
 
 

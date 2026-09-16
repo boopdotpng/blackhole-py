@@ -1,6 +1,6 @@
 """Bind the recovered fixed-register kernel recipes to today's assembler/boot ABI."""
 from ttko.asm import Asm
-from fw.consts import Firmware
+from firmware.consts import Firmware
 from ttko.isa import R, Tensix as TT
 from ttko.registers import BriscMailbox as BM, NcriscMailbox as NM, TriscMailbox
 

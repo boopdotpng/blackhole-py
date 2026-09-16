@@ -11,7 +11,7 @@ from ttko.isa import R, Tensix as TT
 from ttko.registers import Cfg, DType, Sem, SemWait, Stall, TensixL1, TensixMMIO, TensixRegs, ThreadCfg, TriscMailbox, Wait
 from ttko.registers import BriscMailbox as BM, NcriscMailbox as NM, TriscLocalMem as TLM
 from .asm import KernelBase, A_DONE
-from fw.consts import TensixL1 as LaunchL1
+from firmware.consts import TensixL1 as LaunchL1
 from ttko.noc import NocOps, NOC
 from ttko.cb import CircularBufferOps, CB as CBRegs
 from ttko.tensix import TensixOps

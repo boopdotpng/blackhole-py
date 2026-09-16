@@ -13,8 +13,8 @@ separate reduction and is intentionally not implied here.
 from dataclasses import dataclass
 
 from asm import Asm
-from fw.consts import TensixL1
-from isa import R, Reg
+from firmware.consts import TensixL1
+from ttko.isa import R, Reg
 
 
 NIU0 = 0xFFB20000

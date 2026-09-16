@@ -2,44 +2,14 @@
 from dataclasses import dataclass
 from struct import Struct
 import time
-from cq import (ALIGN, PAGE_SIZE, MAX_RECORD_SIZE, MAX_WRITE_SIZE, HOST_ISSUE_SIZE,
-  DRAM_BRISC_READY, DRAM_NCRISC_READY, McastWrite, UnicastWrite, Signal,
-  DramCopy, Timestamp, noc_coord, mcast_coords, rectangles, PacketLayout as RawPacketLayout,
-  CommandQueue as RawCommandQueue, _align)
+from cq import (McastWrite, UnicastWrite, Signal, Run, DramCopy, Timestamp,
+  noc_coord, mcast_coords, rectangles, CommandQueue as RawCommandQueue, _align)
 from pcie import Allocator
-from fw.consts import Core
-from enum import IntEnum
-HOST_TRACE_SIZE = 256 << 20
-HOST_LIVE_SIZE = 128 << 10
-DISPATCH_RING_PAGES = 320
-PREFETCH_TRACE_ACTIVE = 0x1014
-_rectangles = rectangles
-class Op(IntEnum):
-  RUN = 3
-  DRAM_RECORD = 4
-  TRACE = 6
-class PacketLayout(RawPacketLayout):
-  SIGNAL_VALUE = RawPacketLayout.HEADER.size
-
-@dataclass(frozen=True)
-class Run:
-  cores: tuple[Core, ...]
-  param_template: int = 0
-
-  def lower(self) -> bytes:
-    cores = tuple(self.cores)
-    if not 0 <= self.param_template < 1 << 24:
-      raise ValueError("RUN parameter-template address must fit in 24 bits")
-    rects = _rectangles(cores)
-    targets = b"".join(
-      PacketLayout.MCAST_TARGET.pack(*mcast_coords(rect)) for rect in rects
-    )
-    total_size = _align(PacketLayout.RUN_TARGETS + len(targets))
-    header = PacketLayout.HEADER.pack(
-      Op.RUN, len(rects), total_size, 0, len(cores),
-    )
-    template = self.param_template.to_bytes(4, "little") + bytes(4)
-    return (header + template + targets).ljust(total_size, b"\0")
+from firmware.consts import (
+  ALIGN, PAGE_SIZE, MAX_RECORD_SIZE, MAX_WRITE_SIZE, HOST_ISSUE_SIZE,
+  HOST_TRACE_SIZE, HOST_LIVE_SIZE, DISPATCH_RING_PAGES, PREFETCH_TRACE_ACTIVE,
+  DRAM_BRISC_READY, DRAM_NCRISC_READY, Op, PacketLayout,
+)
 
 @dataclass(frozen=True)
 class DramRecord:

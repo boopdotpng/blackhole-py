@@ -1,43 +1,15 @@
 from dataclasses import dataclass
-from enum import IntEnum
 from struct import Struct
 from typing import ClassVar
 import os, time
-from fw.consts import Core
+from firmware.consts import (
+  Core, Rect, ALIGN, MAX_WRITE_SIZE, MAX_RECORD_SIZE, PAGE_SIZE,
+  CQ_STATE, PREFETCH_DOORBELL, PREFETCH_PCIE_BASE, PREFETCH_READ_PTR,
+  PREFETCH_DISPATCH_READ, DISPATCH_PUBLISHED, DRAM_BRISC_READY, DRAM_NCRISC_READY,
+  HOST_ISSUE_SIZE, HOST_COMPLETION_SIZE, Op, PacketLayout,
+)
 from pcie import TLBWindow
 
-Rect = tuple[Core, Core]
-
-ALIGN = 64; MAX_WRITE_SIZE = 16 * 1024; MAX_RECORD_SIZE = 64 * 1024; PAGE_SIZE = 4096
-
-CQ_STATE = 0x1000
-PREFETCH_DOORBELL = CQ_STATE
-PREFETCH_PCIE_BASE = CQ_STATE + 0x08
-PREFETCH_READ_PTR = CQ_STATE + 0x0C
-PREFETCH_DISPATCH_READ = CQ_STATE + 0x10
-DISPATCH_PUBLISHED = CQ_STATE
-DRAM_BRISC_READY = CQ_STATE + 8
-DRAM_NCRISC_READY = CQ_STATE + 0xC
-HOST_ISSUE_SIZE = 4 << 20
-HOST_COMPLETION_SIZE = PAGE_SIZE
-class Op(IntEnum):
-  PAD = 0
-  UNICAST_WRITE = 1
-  MCAST_WRITE = 2
-  RUN = 3
-  SIGNAL = 5
-  DRAM_COPY = 7
-  INDIRECT = 6
-  WAIT = 8
-  TIMESTAMP = 9
-  DMA = 10
-
-class PacketLayout:
-  HEADER = Struct("<BxHIII")
-  UNICAST_TARGET = Struct("<I")
-  MCAST_TARGET = Struct("<II")
-
-  RUN_TARGETS = HEADER.size + 8
 
 @dataclass(frozen=True)
 class Timestamp:
@@ -139,9 +111,12 @@ class McastWrite:
 @dataclass(frozen=True)
 class Run:
   cores: tuple[Core, ...]
+  param_template: int = 0
 
   def lower(self) -> bytes:
     cores = tuple(self.cores)
+    if not 0 <= self.param_template < 1 << 24:
+      raise ValueError("RUN parameter-template address must fit in 24 bits")
     rects = rectangles(cores)
     targets = b"".join(
       PacketLayout.MCAST_TARGET.pack(*mcast_coords(rect)) for rect in rects
@@ -150,7 +125,8 @@ class Run:
     header = PacketLayout.HEADER.pack(
       Op.RUN, len(rects), total_size, 0, len(cores),
     )
-    return (header + bytes(8) + targets).ljust(total_size, b"\0")
+    template = self.param_template.to_bytes(4, "little") + bytes(4)
+    return (header + template + targets).ljust(total_size, b"\0")
 
 @dataclass(frozen=True)
 class Signal:

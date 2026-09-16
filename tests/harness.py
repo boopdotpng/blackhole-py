@@ -1,6 +1,6 @@
 """Pytest helpers for the byte-buffer runtime in device.py."""
 
-from fw.consts import TensixL1
+from firmware.consts import TensixL1
 from pcie import TLBWindow
 from program import RETURN_KERNEL as _PLACEHOLDER_IMAGES
 

@@ -61,7 +61,7 @@ trusted repository Python, so serve it on your own machine/network.
   branch values and changing loop values become unknown. Loads invalidate their
   destination values; device memory is not evaluated. No constant value is
   claimed merely because it appeared earlier in the linear listing.
-- `isa.py` supplies actual encoder field widths. Reviewed operand descriptions
+- `ttko/isa.py` supplies actual encoder field widths. Reviewed operand descriptions
   are bundled from `tt-ins-docs`. ttsim fields are shown separately where its
   schema differs from the encoder/manual, including ZEROACC.
 - Config fields come from ttsim's Blackhole tables, supplemented by the Blackhole

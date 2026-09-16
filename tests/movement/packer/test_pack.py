@@ -3,7 +3,7 @@ from struct import pack, unpack
 import pytest
 
 from asm import Asm
-from fw.consts import TensixL1, TensixMMIO
+from firmware.consts import TensixL1, TensixMMIO
 from tests.movement.packer.pack import emit_pack_dst_to_cb, initialize_prng
 from tests.movement.unpacker.unpack import (
   BF16, BF16_TILE_BYTES, F32, F32_TILE_BYTES, TILE_ELEMENTS,

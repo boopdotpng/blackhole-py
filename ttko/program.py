@@ -3,8 +3,9 @@ from dataclasses import dataclass
 from math import prod
 import numpy as np
 from ttko.asm import Asm
-from ttko.cq import MAX_WRITE_SIZE, McastWrite, UnicastWrite
-from fw.consts import Firmware, KERNEL_ROLES, TensixL1
+from cq import McastWrite, UnicastWrite, rectangles
+from firmware.consts import MAX_WRITE_SIZE
+from firmware.consts import Firmware, KERNEL_ROLES, TensixL1
 from ttko.isa import R, RV32
 from pcie import Allocator, P100_DRAM_ENDPOINTS, P100_WORKER_CORES
 from ttko import Dst, DType
@@ -380,26 +381,3 @@ class Program:
 
   def commands(self, params=None):
     return (*self.static_commands(), *self.runtime_commands(params))
-
-
-def rectangles(cores):
-  rows = {}
-  for x, y in cores: rows.setdefault(y, []).append(x)
-  active, result, previous_y = {}, [], None
-  for y in sorted(rows):
-    runs = []
-    for x in sorted(rows[y]):
-      if runs and x == runs[-1][1] + 1: runs[-1] = (runs[-1][0], x)
-      else: runs.append((x, x))
-    if previous_y is None or y != previous_y + 1:
-      result.extend(active.values()); active = {}
-    following = {}
-    for run in runs:
-      if run in active:
-        following[run] = (active[run][0], (run[1], y))
-      else:
-        following[run] = ((run[0], y), (run[1], y))
-    result.extend(rect for run, rect in active.items() if run not in following)
-    active, previous_y = following, y
-  result.extend(active.values())
-  return tuple(result)

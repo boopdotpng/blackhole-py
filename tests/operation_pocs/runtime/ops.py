@@ -2,7 +2,7 @@
 from dataclasses import dataclass
 
 from asm import Asm
-from fw.consts import TensixL1
+from firmware.consts import TensixL1
 from tests.movement import noc
 
 
@@ -116,7 +116,7 @@ def semaphore_action(k, semaphore, action):
   post/get when required by the handoff. This adapter blocks SYNC and includes
   a dependent SYNC instruction before the RISC pipeline drain.
   """
-  from isa import Tensix as TT
+  from ttko.isa import Tensix as TT
   from tests.movement.unpacker.unpack import pc_sync, Stall, SemWait
   if k.role not in ('trisc0', 'trisc1', 'trisc2'):
     raise ValueError('Tensix semaphore action requires a TRISC')
@@ -143,7 +143,7 @@ def source_flag(k, bank, action):
   Does not initialize or touch operand storage; whole physical bank ownership
   is required, independently of allocation-scoped payload transfer ownership.
   """
-  from isa import Tensix as TT
+  from ttko.isa import Tensix as TT
   from tests.movement.unpacker.unpack import pc_sync, Stall, Wait, stall
   if k.role not in ('trisc0', 'trisc1', 'trisc2') or bank not in (0, 1):
     raise ValueError('source flags require a TRISC and bank 0=A or 1=B')

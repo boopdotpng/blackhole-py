@@ -3,7 +3,7 @@
 from struct import Struct
 
 from asm import Asm
-from fw.consts import KERNEL_ROLES, TensixL1, TensixMMIO
+from firmware.consts import KERNEL_ROLES, TensixL1, TensixMMIO
 
 
 MAX_SECTIONS = 3

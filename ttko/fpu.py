@@ -1,6 +1,6 @@
 from __future__ import annotations
 from enum import IntEnum
-from fw.consts import TensixMMIO
+from firmware.consts import TensixMMIO
 from ttko.isa import Tensix as TT
 from ttko import Dst
 from ttko.mop import LoopTemplate, Mop, Replay

@@ -35,8 +35,8 @@ import numpy as np
 import pytest
 
 from asm import Asm
-from fw.consts import TensixL1
-from isa import Tensix as TT
+from firmware.consts import TensixL1
+from ttko.isa import Tensix as TT
 from pcie import TLBWindow
 from tests.profiler import PROFILE_L1_BASE, PROFILE_L1_SIZE, Profiler
 from tests.compute.fpu.test_mean import _add, _reduce_l0

@@ -6,7 +6,7 @@ Dst 0 is scratch and Dst 1..tiles hold products, then normalized output.
 """
 import os
 from ttko.isa import Tensix as TT
-from fw.consts import TensixMMIO
+from firmware.consts import TensixMMIO
 from ttko.program import DType
 from ttko.cb import CB
 from ttko.mop import LoopTemplate

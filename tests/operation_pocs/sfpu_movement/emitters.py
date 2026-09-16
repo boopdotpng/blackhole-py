@@ -1,7 +1,7 @@
 """Allocation-scoped raw SFPU movement. No fixture initialization or host oracle."""
 from struct import pack, unpack
 
-from isa import Tensix as TT
+from ttko.isa import Tensix as TT
 from tests.movement.unpacker.unpack import Stall, Wait, stall
 
 

@@ -11,7 +11,7 @@ import numpy as np
 import pytest
 
 from asm import Asm
-from isa import Tensix as TT
+from ttko.isa import Tensix as TT
 from pcie import TLBWindow
 from tests.profiler import Profiler
 from tests.compute.fpu.test_rmsnorm_reduce import (
@@ -29,7 +29,7 @@ from tests.movement.packer.pack import (
   emit_pack_dst_to_cb, _configure_row_addressing, _configure_row_mop,
   _set_dst_position,
 )
-from fw.consts import TensixL1, TensixMMIO
+from firmware.consts import TensixL1, TensixMMIO
 
 INPUT = TensixL1.DATA_BUFFER_SPACE_BASE
 GAMMA = INPUT + 8192

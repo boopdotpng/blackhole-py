@@ -10,8 +10,8 @@ from struct import pack
 import pytest
 
 from asm import Asm
-from fw.consts import TensixL1, TensixMMIO
-from isa import R, Tensix as TT
+from firmware.consts import TensixL1, TensixMMIO
+from ttko.isa import R, Tensix as TT
 from tests.movement import noc
 from tests.movement.packer.pack import _configure_row_addressing
 from tests.movement.unpacker import unpack as u

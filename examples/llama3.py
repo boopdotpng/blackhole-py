@@ -19,7 +19,7 @@ import time
 from ttko.asm import Cond
 from ttko.cq import UnicastWrite, mcast_coords, noc_coord
 from ttko.device import Device
-from fw.consts import CQConfig, TensixL1, TensixMMIO, KERNEL_ROLES
+from firmware.consts import CQConfig, TensixL1, TensixMMIO, KERNEL_ROLES
 from pcie import P100_WORKER_CORES
 from ttko.program import Buffer, Const, DType, Program, rectangles
 from ttko.isa import R, RV32, Tensix as TT

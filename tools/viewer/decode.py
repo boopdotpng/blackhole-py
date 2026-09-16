@@ -23,7 +23,7 @@ def signed(n, bits): return n - (1 << bits) if n & (1 << (bits - 1)) else n
 
 def encoders():
     result = {}
-    for node in ast.walk(ast.parse((ROOT / 'isa.py').read_text())):
+    for node in ast.walk(ast.parse((ROOT / 'ttko/isa.py').read_text())):
         if not isinstance(node, ast.FunctionDef) or not node.name.startswith('TT'): continue
         call = next((n for n in ast.walk(node) if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr == '_tt'), None)
         if call is None: continue
@@ -60,7 +60,7 @@ def tt_decode(word):
     doc = DOC_BY_NAME.get(name, {})
     meanings = {a['name']: a for a in doc.get('args', [])}
     args = [dict(name=n, value=(word >> lo) & ((1 << (hi-lo+1))-1), hi=hi, lo=lo,
-                 meaning=meanings.get(n, {}).get('meaning', 'Raw field from isa.py.')) for n,hi,lo in fields]
+                 meaning=meanings.get(n, {}).get('meaning', 'Raw field from ttko/isa.py.')) for n,hi,lo in fields]
     for arg in args:
         arg['label'] = operand_label(name, arg['name'], arg['value'])
     values = {a['name']: a['value'] for a in args}

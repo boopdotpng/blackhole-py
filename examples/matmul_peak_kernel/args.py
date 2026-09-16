@@ -4,7 +4,7 @@ The host supplies only common buffers/scalars, one topology map, and runtime
 (ri, ci). These scratch tables preserve the existing fixed-register recipes;
 no per-core argument table is uploaded or baked into a kernel image.
 """
-from fw.consts import TensixL1
+from firmware.consts import TensixL1
 from .asm import ARG_BASE, GRID_BASE
 from ttko.isa import R, Tensix as TT
 
