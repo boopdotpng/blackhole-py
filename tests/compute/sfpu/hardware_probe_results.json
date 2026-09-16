@@ -1,0 +1,622 @@
+{
+  "device": 0,
+  "job": "df99c6a6bba443cfa2d0f27f9fadc546",
+  "passed": 76,
+  "records": [
+    {
+      "kind": "ARGMAX_LOCAL",
+      "count": 1024,
+      "samples": {
+        "brisc": [
+          44152,
+          44143,
+          44146,
+          44158,
+          44157,
+          44146,
+          44150,
+          44144
+        ],
+        "sfpu": [
+          2340,
+          2351,
+          2359,
+          2360,
+          2342,
+          2332,
+          2345,
+          2330
+        ]
+      },
+      "median_cycles": {
+        "brisc": 44148.0,
+        "sfpu": 2343.5
+      }
+    },
+    {
+      "kind": "ARGMAX_LOCAL",
+      "count": 2048,
+      "samples": {
+        "brisc": [
+          90332,
+          90331,
+          90333,
+          90328,
+          90331,
+          90338,
+          90333,
+          90328
+        ],
+        "sfpu": [
+          2898,
+          2881,
+          2896,
+          2893,
+          2888,
+          2904,
+          2891,
+          2920
+        ]
+      },
+      "median_cycles": {
+        "brisc": 90331.5,
+        "sfpu": 2894.5
+      }
+    },
+    {
+      "kind": "ARGMAX_LOCAL",
+      "count": 3072,
+      "samples": {
+        "brisc": [
+          135543,
+          135538,
+          135537,
+          135538,
+          135538,
+          135534,
+          135536,
+          135536
+        ],
+        "sfpu": [
+          3436,
+          3449,
+          3474,
+          3438,
+          3448,
+          3459,
+          3452,
+          3456
+        ]
+      },
+      "median_cycles": {
+        "brisc": 135537.5,
+        "sfpu": 3450.5
+      }
+    },
+    {
+      "kind": "ARGMAX_LOCAL",
+      "count": 4096,
+      "samples": {
+        "brisc": [
+          176631,
+          176630,
+          176630,
+          176641,
+          176630,
+          176634,
+          176633,
+          176635
+        ],
+        "sfpu": [
+          4018,
+          4004,
+          4029,
+          4015,
+          4002,
+          3994,
+          4011,
+          4011
+        ]
+      },
+      "median_cycles": {
+        "brisc": 176632.0,
+        "sfpu": 4011.0
+      }
+    },
+    {
+      "kind": "ARGMAX_VOCAB",
+      "case": "random",
+      "count": 250000,
+      "cores": 62,
+      "source": "single-bank DRAM",
+      "samples": {
+        "brisc": [
+          174317,
+          174185,
+          174250,
+          174207
+        ],
+        "sfpu": [
+          16433,
+          16402,
+          16449,
+          16153
+        ]
+      },
+      "median_cycles": {
+        "brisc": 174228.5,
+        "sfpu": 16417.5
+      }
+    },
+    {
+      "kind": "ARGMAX_VOCAB",
+      "case": "last",
+      "count": 250000,
+      "cores": 62,
+      "source": "single-bank DRAM",
+      "samples": {
+        "brisc": [
+          174012,
+          174334,
+          174190,
+          174226
+        ],
+        "sfpu": [
+          16242,
+          16486,
+          16255,
+          16101
+        ]
+      },
+      "median_cycles": {
+        "brisc": 174208.0,
+        "sfpu": 16248.5
+      }
+    },
+    {
+      "kind": "ARGMAX_VOCAB",
+      "case": "ties",
+      "count": 250000,
+      "cores": 62,
+      "source": "single-bank DRAM",
+      "samples": {
+        "brisc": [
+          172316,
+          172594,
+          172491,
+          172145
+        ],
+        "sfpu": [
+          16346,
+          16426,
+          16576,
+          16122
+        ]
+      },
+      "median_cycles": {
+        "brisc": 172403.5,
+        "sfpu": 16386.0
+      }
+    },
+    {
+      "kind": "PACK_L1_ACC",
+      "n": 16,
+      "repeats": 1,
+      "fmt": 0,
+      "median_cycles": {
+        "overwrite": 54.0,
+        "accumulate": 54.0
+      }
+    },
+    {
+      "kind": "PACK_L1_ACC",
+      "n": 16,
+      "repeats": 1,
+      "fmt": 5,
+      "median_cycles": {
+        "overwrite": 53.0,
+        "accumulate": 53.0
+      }
+    },
+    {
+      "kind": "PACK_L1_ACC",
+      "n": 256,
+      "repeats": 1,
+      "fmt": 0,
+      "median_cycles": {
+        "overwrite": 84.0,
+        "accumulate": 84.0
+      }
+    },
+    {
+      "kind": "PACK_L1_ACC",
+      "n": 256,
+      "repeats": 1,
+      "fmt": 5,
+      "median_cycles": {
+        "overwrite": 68.0,
+        "accumulate": 68.0
+      }
+    },
+    {
+      "kind": "PACK_L1_ACC",
+      "n": 1024,
+      "repeats": 1,
+      "fmt": 0,
+      "median_cycles": {
+        "overwrite": 180.0,
+        "accumulate": 180.0
+      }
+    },
+    {
+      "kind": "PACK_L1_ACC",
+      "n": 1024,
+      "repeats": 1,
+      "fmt": 5,
+      "median_cycles": {
+        "overwrite": 116.0,
+        "accumulate": 116.0
+      }
+    },
+    {
+      "kind": "PACK_L1_ACC",
+      "n": 16,
+      "repeats": 4,
+      "fmt": 0,
+      "median_cycles": {
+        "overwrite": 180.0,
+        "accumulate": 180.0
+      }
+    },
+    {
+      "kind": "PACK_L1_ACC",
+      "n": 16,
+      "repeats": 4,
+      "fmt": 5,
+      "median_cycles": {
+        "overwrite": 176.0,
+        "accumulate": 176.0
+      }
+    },
+    {
+      "kind": "PACK_L1_ACC",
+      "n": 256,
+      "repeats": 4,
+      "fmt": 0,
+      "median_cycles": {
+        "overwrite": 300.0,
+        "accumulate": 300.0
+      }
+    },
+    {
+      "kind": "PACK_L1_ACC",
+      "n": 256,
+      "repeats": 4,
+      "fmt": 5,
+      "median_cycles": {
+        "overwrite": 236.0,
+        "accumulate": 236.0
+      }
+    },
+    {
+      "kind": "PACK_L1_ACC",
+      "n": 1024,
+      "repeats": 4,
+      "fmt": 0,
+      "median_cycles": {
+        "overwrite": 684.0,
+        "accumulate": 684.0
+      }
+    },
+    {
+      "kind": "PACK_L1_ACC",
+      "n": 1024,
+      "repeats": 4,
+      "fmt": 5,
+      "median_cycles": {
+        "overwrite": 428.0,
+        "accumulate": 428.0
+      }
+    },
+    {
+      "kind": "SFPU_RESULT",
+      "K": {
+        "scale": 256
+      },
+      "N": 8192,
+      "case": "scale:explicit",
+      "core": [
+        1,
+        2
+      ],
+      "core_index": 0,
+      "device": 0,
+      "dtype": "FP32",
+      "samples": [
+        {
+          "control": 13,
+          "scale": 1173
+        },
+        {
+          "control": 13,
+          "scale": 1054
+        },
+        {
+          "control": 13,
+          "scale": 1054
+        },
+        {
+          "control": 13,
+          "scale": 1054
+        },
+        {
+          "control": 13,
+          "scale": 1054
+        },
+        {
+          "control": 14,
+          "scale": 1173
+        },
+        {
+          "control": 13,
+          "scale": 1054
+        }
+      ],
+      "summary": {
+        "control": {
+          "max": 14,
+          "median": 13,
+          "median_per_op": 13.0,
+          "min": 13
+        },
+        "scale": {
+          "max": 1173,
+          "median": 1054,
+          "median_per_op": 4.1171875,
+          "min": 1054
+        }
+      },
+      "warmup": 1
+    },
+    {
+      "kind": "SFPU_RESULT",
+      "K": {
+        "scale": 256
+      },
+      "N": 8192,
+      "case": "scale:macro_serial",
+      "core": [
+        1,
+        2
+      ],
+      "core_index": 0,
+      "device": 0,
+      "dtype": "FP32",
+      "samples": [
+        {
+          "control": 13,
+          "scale": 1164
+        },
+        {
+          "control": 13,
+          "scale": 1171
+        },
+        {
+          "control": 13,
+          "scale": 1164
+        },
+        {
+          "control": 13,
+          "scale": 1164
+        },
+        {
+          "control": 13,
+          "scale": 1164
+        },
+        {
+          "control": 13,
+          "scale": 1171
+        },
+        {
+          "control": 13,
+          "scale": 1164
+        }
+      ],
+      "summary": {
+        "control": {
+          "max": 13,
+          "median": 13,
+          "median_per_op": 13.0,
+          "min": 13
+        },
+        "scale": {
+          "max": 1171,
+          "median": 1164,
+          "median_per_op": 4.546875,
+          "min": 1164
+        }
+      },
+      "warmup": 1
+    },
+    {
+      "kind": "SFPU_RESULT",
+      "K": {
+        "scale": 256
+      },
+      "N": 8192,
+      "case": "scale:macro_pipeline",
+      "core": [
+        1,
+        2
+      ],
+      "core_index": 0,
+      "device": 0,
+      "dtype": "FP32",
+      "samples": [
+        {
+          "control": 13,
+          "scale": 306
+        },
+        {
+          "control": 13,
+          "scale": 306
+        },
+        {
+          "control": 13,
+          "scale": 306
+        },
+        {
+          "control": 13,
+          "scale": 306
+        },
+        {
+          "control": 13,
+          "scale": 306
+        },
+        {
+          "control": 13,
+          "scale": 307
+        },
+        {
+          "control": 13,
+          "scale": 306
+        }
+      ],
+      "summary": {
+        "control": {
+          "max": 13,
+          "median": 13,
+          "median_per_op": 13.0,
+          "min": 13
+        },
+        "scale": {
+          "max": 307,
+          "median": 306,
+          "median_per_op": 1.1953125,
+          "min": 306
+        }
+      },
+      "warmup": 1
+    },
+    {
+      "kind": "SFPU_RESULT",
+      "K": {
+        "scale": 256
+      },
+      "N": 8192,
+      "case": "scale:explicit_replay",
+      "core": [
+        1,
+        2
+      ],
+      "core_index": 0,
+      "device": 0,
+      "dtype": "FP32",
+      "samples": [
+        {
+          "control": 13,
+          "scale": 1377
+        },
+        {
+          "control": 13,
+          "scale": 1377
+        },
+        {
+          "control": 13,
+          "scale": 1377
+        },
+        {
+          "control": 13,
+          "scale": 1377
+        },
+        {
+          "control": 13,
+          "scale": 1377
+        },
+        {
+          "control": 14,
+          "scale": 1377
+        },
+        {
+          "control": 13,
+          "scale": 1377
+        }
+      ],
+      "summary": {
+        "control": {
+          "max": 14,
+          "median": 13,
+          "median_per_op": 13.0,
+          "min": 13
+        },
+        "scale": {
+          "max": 1377,
+          "median": 1377,
+          "median_per_op": 5.37890625,
+          "min": 1377
+        }
+      },
+      "warmup": 1
+    },
+    {
+      "kind": "SFPU_RESULT",
+      "K": {
+        "scale": 256
+      },
+      "N": 8192,
+      "case": "scale:macro_replay",
+      "core": [
+        1,
+        2
+      ],
+      "core_index": 0,
+      "device": 0,
+      "dtype": "FP32",
+      "samples": [
+        {
+          "control": 13,
+          "scale": 597
+        },
+        {
+          "control": 13,
+          "scale": 597
+        },
+        {
+          "control": 14,
+          "scale": 597
+        },
+        {
+          "control": 13,
+          "scale": 597
+        },
+        {
+          "control": 13,
+          "scale": 597
+        },
+        {
+          "control": 13,
+          "scale": 597
+        },
+        {
+          "control": 13,
+          "scale": 597
+        }
+      ],
+      "summary": {
+        "control": {
+          "max": 14,
+          "median": 13,
+          "median_per_op": 13.0,
+          "min": 13
+        },
+        "scale": {
+          "max": 597,
+          "median": 597,
+          "median_per_op": 2.33203125,
+          "min": 597
+        }
+      },
+      "warmup": 1
+    }
+  ]
+}

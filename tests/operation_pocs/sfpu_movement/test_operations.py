@@ -55,7 +55,7 @@ def fixture(*, accumulated_control=False):
   return loader, math, packer, profiler, values
 
 
-def finish(bh, request, kernels, profiler, initial, expected, case, repetitions):
+def finish(bh, request, kernels, profiler, initial, expected, case, repetitions, *, elements=128):
   loader, math, packer = kernels
   sf.drain(math)
   pc_sync(math)
@@ -76,7 +76,7 @@ def finish(bh, request, kernels, profiler, initial, expected, case, repetitions)
     if iteration:
       samples.append(dict(profiler.last))
   result = dict(case=case, device=request.config.getoption('--bh-device'),
-                core=bh.core, core_index=bh.core_index, dtype='FP32', N=128,
+                core=bh.core, core_index=bh.core_index, dtype='FP32', N=elements,
                 warmup=1, samples=samples, K=repetitions,
                 summary={label: dict(min=min(s[label] for s in samples),
                                     median=median(s[label] for s in samples),

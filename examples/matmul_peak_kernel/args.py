@@ -68,7 +68,7 @@ def emit_args(fw, plan, *, reader):
               plan.in1_num_subblocks, plan.in0_num_subblocks, 0, plan.in1_num_subblocks]
     for index, value in enumerate(values): put(index, value)
     param(1, R.T2); put(0, R.T2)
-    fw.li(R.T1, plan.per_core_n); fw.mul(R.S6, R.S1, R.T1); put(1, R.S6)
+    fw.li(R.T1, plan.per_core_n * plan.n_passes); fw.mul(R.S6, R.S1, R.T1); put(1, R.S6)
     if len(plan.rows) > 1:
       put(9, R.S3); put(11, R.S3)
       fw.read32(R.T2, GRID_BASE + (len(plan.rows) - 1) * 4); put(10, R.T2)

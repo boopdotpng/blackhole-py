@@ -1,0 +1,1282 @@
+[
+  {
+    "bank": 0,
+    "stream": 0,
+    "burst": 16,
+    "size": 16,
+    "depth": 1,
+    "bytes_per_direction": 512,
+    "read_cycles": 6093,
+    "write_cycles": 2976
+  },
+  {
+    "bank": 0,
+    "stream": 1,
+    "burst": 16,
+    "size": 16,
+    "depth": 1,
+    "bytes_per_direction": 512,
+    "read_cycles": 6188,
+    "write_cycles": 3036
+  },
+  {
+    "bank": 0,
+    "stream": 0,
+    "burst": 255,
+    "size": 16,
+    "depth": 1,
+    "bytes_per_direction": 512,
+    "read_cycles": 5975,
+    "write_cycles": 2974
+  },
+  {
+    "bank": 0,
+    "stream": 1,
+    "burst": 255,
+    "size": 16,
+    "depth": 1,
+    "bytes_per_direction": 512,
+    "read_cycles": 6268,
+    "write_cycles": 3039
+  },
+  {
+    "bank": 0,
+    "stream": 0,
+    "burst": 16,
+    "size": 2048,
+    "depth": 1,
+    "bytes_per_direction": 65536,
+    "read_cycles": 7250,
+    "write_cycles": 3936
+  },
+  {
+    "bank": 0,
+    "stream": 1,
+    "burst": 16,
+    "size": 2048,
+    "depth": 1,
+    "bytes_per_direction": 65536,
+    "read_cycles": 7276,
+    "write_cycles": 4060
+  },
+  {
+    "bank": 0,
+    "stream": 0,
+    "burst": 255,
+    "size": 2048,
+    "depth": 1,
+    "bytes_per_direction": 65536,
+    "read_cycles": 7655,
+    "write_cycles": 3934
+  },
+  {
+    "bank": 0,
+    "stream": 1,
+    "burst": 255,
+    "size": 2048,
+    "depth": 1,
+    "bytes_per_direction": 65536,
+    "read_cycles": 7228,
+    "write_cycles": 4063
+  },
+  {
+    "bank": 0,
+    "stream": 0,
+    "burst": 16,
+    "size": 2048,
+    "depth": 4,
+    "bytes_per_direction": 262144,
+    "read_cycles": 11588,
+    "write_cycles": 7850
+  },
+  {
+    "bank": 0,
+    "stream": 1,
+    "burst": 16,
+    "size": 2048,
+    "depth": 4,
+    "bytes_per_direction": 262144,
+    "read_cycles": 11903,
+    "write_cycles": 8192
+  },
+  {
+    "bank": 0,
+    "stream": 0,
+    "burst": 255,
+    "size": 2048,
+    "depth": 4,
+    "bytes_per_direction": 262144,
+    "read_cycles": 11737,
+    "write_cycles": 7746
+  },
+  {
+    "bank": 0,
+    "stream": 1,
+    "burst": 255,
+    "size": 2048,
+    "depth": 4,
+    "bytes_per_direction": 262144,
+    "read_cycles": 11917,
+    "write_cycles": 7954
+  },
+  {
+    "bank": 0,
+    "stream": 0,
+    "burst": 16,
+    "size": 16384,
+    "depth": 4,
+    "bytes_per_direction": 2097152,
+    "read_cycles": 50090,
+    "write_cycles": 46412
+  },
+  {
+    "bank": 0,
+    "stream": 1,
+    "burst": 16,
+    "size": 16384,
+    "depth": 4,
+    "bytes_per_direction": 2097152,
+    "read_cycles": 50235,
+    "write_cycles": 46401
+  },
+  {
+    "bank": 0,
+    "stream": 0,
+    "burst": 255,
+    "size": 16384,
+    "depth": 4,
+    "bytes_per_direction": 2097152,
+    "read_cycles": 50061,
+    "write_cycles": 46399
+  },
+  {
+    "bank": 0,
+    "stream": 1,
+    "burst": 255,
+    "size": 16384,
+    "depth": 4,
+    "bytes_per_direction": 2097152,
+    "read_cycles": 50300,
+    "write_cycles": 46400
+  },
+  {
+    "bank": 1,
+    "stream": 0,
+    "burst": 16,
+    "size": 16,
+    "depth": 1,
+    "bytes_per_direction": 512,
+    "read_cycles": 6005,
+    "write_cycles": 2976
+  },
+  {
+    "bank": 1,
+    "stream": 1,
+    "burst": 16,
+    "size": 16,
+    "depth": 1,
+    "bytes_per_direction": 512,
+    "read_cycles": 5836,
+    "write_cycles": 3036
+  },
+  {
+    "bank": 1,
+    "stream": 0,
+    "burst": 255,
+    "size": 16,
+    "depth": 1,
+    "bytes_per_direction": 512,
+    "read_cycles": 6080,
+    "write_cycles": 2974
+  },
+  {
+    "bank": 1,
+    "stream": 1,
+    "burst": 255,
+    "size": 16,
+    "depth": 1,
+    "bytes_per_direction": 512,
+    "read_cycles": 5996,
+    "write_cycles": 3039
+  },
+  {
+    "bank": 1,
+    "stream": 0,
+    "burst": 16,
+    "size": 2048,
+    "depth": 1,
+    "bytes_per_direction": 65536,
+    "read_cycles": 7295,
+    "write_cycles": 3936
+  },
+  {
+    "bank": 1,
+    "stream": 1,
+    "burst": 16,
+    "size": 2048,
+    "depth": 1,
+    "bytes_per_direction": 65536,
+    "read_cycles": 7276,
+    "write_cycles": 4060
+  },
+  {
+    "bank": 1,
+    "stream": 0,
+    "burst": 255,
+    "size": 2048,
+    "depth": 1,
+    "bytes_per_direction": 65536,
+    "read_cycles": 7325,
+    "write_cycles": 3934
+  },
+  {
+    "bank": 1,
+    "stream": 1,
+    "burst": 255,
+    "size": 2048,
+    "depth": 1,
+    "bytes_per_direction": 65536,
+    "read_cycles": 7404,
+    "write_cycles": 4063
+  },
+  {
+    "bank": 1,
+    "stream": 0,
+    "burst": 16,
+    "size": 2048,
+    "depth": 4,
+    "bytes_per_direction": 262144,
+    "read_cycles": 12158,
+    "write_cycles": 7820
+  },
+  {
+    "bank": 1,
+    "stream": 1,
+    "burst": 16,
+    "size": 2048,
+    "depth": 4,
+    "bytes_per_direction": 262144,
+    "read_cycles": 11741,
+    "write_cycles": 8096
+  },
+  {
+    "bank": 1,
+    "stream": 0,
+    "burst": 255,
+    "size": 2048,
+    "depth": 4,
+    "bytes_per_direction": 262144,
+    "read_cycles": 11482,
+    "write_cycles": 7731
+  },
+  {
+    "bank": 1,
+    "stream": 1,
+    "burst": 255,
+    "size": 2048,
+    "depth": 4,
+    "bytes_per_direction": 262144,
+    "read_cycles": 11788,
+    "write_cycles": 7922
+  },
+  {
+    "bank": 1,
+    "stream": 0,
+    "burst": 16,
+    "size": 16384,
+    "depth": 4,
+    "bytes_per_direction": 2097152,
+    "read_cycles": 50120,
+    "write_cycles": 46412
+  },
+  {
+    "bank": 1,
+    "stream": 1,
+    "burst": 16,
+    "size": 16384,
+    "depth": 4,
+    "bytes_per_direction": 2097152,
+    "read_cycles": 50123,
+    "write_cycles": 46401
+  },
+  {
+    "bank": 1,
+    "stream": 0,
+    "burst": 255,
+    "size": 16384,
+    "depth": 4,
+    "bytes_per_direction": 2097152,
+    "read_cycles": 50076,
+    "write_cycles": 46398
+  },
+  {
+    "bank": 1,
+    "stream": 1,
+    "burst": 255,
+    "size": 16384,
+    "depth": 4,
+    "bytes_per_direction": 2097152,
+    "read_cycles": 50172,
+    "write_cycles": 46400
+  },
+  {
+    "bank": 2,
+    "stream": 0,
+    "burst": 16,
+    "size": 16,
+    "depth": 1,
+    "bytes_per_direction": 512,
+    "read_cycles": 6110,
+    "write_cycles": 2976
+  },
+  {
+    "bank": 2,
+    "stream": 1,
+    "burst": 16,
+    "size": 16,
+    "depth": 1,
+    "bytes_per_direction": 512,
+    "read_cycles": 5884,
+    "write_cycles": 3036
+  },
+  {
+    "bank": 2,
+    "stream": 0,
+    "burst": 255,
+    "size": 16,
+    "depth": 1,
+    "bytes_per_direction": 512,
+    "read_cycles": 6155,
+    "write_cycles": 2974
+  },
+  {
+    "bank": 2,
+    "stream": 1,
+    "burst": 255,
+    "size": 16,
+    "depth": 1,
+    "bytes_per_direction": 512,
+    "read_cycles": 6140,
+    "write_cycles": 3039
+  },
+  {
+    "bank": 2,
+    "stream": 0,
+    "burst": 16,
+    "size": 2048,
+    "depth": 1,
+    "bytes_per_direction": 65536,
+    "read_cycles": 7160,
+    "write_cycles": 3936
+  },
+  {
+    "bank": 2,
+    "stream": 1,
+    "burst": 16,
+    "size": 2048,
+    "depth": 1,
+    "bytes_per_direction": 65536,
+    "read_cycles": 7388,
+    "write_cycles": 4060
+  },
+  {
+    "bank": 2,
+    "stream": 0,
+    "burst": 255,
+    "size": 2048,
+    "depth": 1,
+    "bytes_per_direction": 65536,
+    "read_cycles": 7295,
+    "write_cycles": 3934
+  },
+  {
+    "bank": 2,
+    "stream": 1,
+    "burst": 255,
+    "size": 2048,
+    "depth": 1,
+    "bytes_per_direction": 65536,
+    "read_cycles": 7372,
+    "write_cycles": 4063
+  },
+  {
+    "bank": 2,
+    "stream": 0,
+    "burst": 16,
+    "size": 2048,
+    "depth": 4,
+    "bytes_per_direction": 262144,
+    "read_cycles": 11618,
+    "write_cycles": 7895
+  },
+  {
+    "bank": 2,
+    "stream": 1,
+    "burst": 16,
+    "size": 2048,
+    "depth": 4,
+    "bytes_per_direction": 262144,
+    "read_cycles": 11583,
+    "write_cycles": 8016
+  },
+  {
+    "bank": 2,
+    "stream": 0,
+    "burst": 255,
+    "size": 2048,
+    "depth": 4,
+    "bytes_per_direction": 262144,
+    "read_cycles": 11557,
+    "write_cycles": 7671
+  },
+  {
+    "bank": 2,
+    "stream": 1,
+    "burst": 255,
+    "size": 2048,
+    "depth": 4,
+    "bytes_per_direction": 262144,
+    "read_cycles": 11613,
+    "write_cycles": 7986
+  },
+  {
+    "bank": 2,
+    "stream": 0,
+    "burst": 16,
+    "size": 16384,
+    "depth": 4,
+    "bytes_per_direction": 2097152,
+    "read_cycles": 50120,
+    "write_cycles": 46397
+  },
+  {
+    "bank": 2,
+    "stream": 1,
+    "burst": 16,
+    "size": 16384,
+    "depth": 4,
+    "bytes_per_direction": 2097152,
+    "read_cycles": 50267,
+    "write_cycles": 46417
+  },
+  {
+    "bank": 2,
+    "stream": 0,
+    "burst": 255,
+    "size": 16384,
+    "depth": 4,
+    "bytes_per_direction": 2097152,
+    "read_cycles": 50166,
+    "write_cycles": 46398
+  },
+  {
+    "bank": 2,
+    "stream": 1,
+    "burst": 255,
+    "size": 16384,
+    "depth": 4,
+    "bytes_per_direction": 2097152,
+    "read_cycles": 50268,
+    "write_cycles": 46416
+  },
+  {
+    "bank": 3,
+    "stream": 0,
+    "burst": 16,
+    "size": 16,
+    "depth": 1,
+    "bytes_per_direction": 512,
+    "read_cycles": 5960,
+    "write_cycles": 2976
+  },
+  {
+    "bank": 3,
+    "stream": 1,
+    "burst": 16,
+    "size": 16,
+    "depth": 1,
+    "bytes_per_direction": 512,
+    "read_cycles": 6060,
+    "write_cycles": 3036
+  },
+  {
+    "bank": 3,
+    "stream": 0,
+    "burst": 255,
+    "size": 16,
+    "depth": 1,
+    "bytes_per_direction": 512,
+    "read_cycles": 5945,
+    "write_cycles": 2974
+  },
+  {
+    "bank": 3,
+    "stream": 1,
+    "burst": 255,
+    "size": 16,
+    "depth": 1,
+    "bytes_per_direction": 512,
+    "read_cycles": 5788,
+    "write_cycles": 3039
+  },
+  {
+    "bank": 3,
+    "stream": 0,
+    "burst": 16,
+    "size": 2048,
+    "depth": 1,
+    "bytes_per_direction": 65536,
+    "read_cycles": 7340,
+    "write_cycles": 3936
+  },
+  {
+    "bank": 3,
+    "stream": 1,
+    "burst": 16,
+    "size": 2048,
+    "depth": 1,
+    "bytes_per_direction": 65536,
+    "read_cycles": 7228,
+    "write_cycles": 4060
+  },
+  {
+    "bank": 3,
+    "stream": 0,
+    "burst": 255,
+    "size": 2048,
+    "depth": 1,
+    "bytes_per_direction": 65536,
+    "read_cycles": 7475,
+    "write_cycles": 3934
+  },
+  {
+    "bank": 3,
+    "stream": 1,
+    "burst": 255,
+    "size": 2048,
+    "depth": 1,
+    "bytes_per_direction": 65536,
+    "read_cycles": 7276,
+    "write_cycles": 4063
+  },
+  {
+    "bank": 3,
+    "stream": 0,
+    "burst": 16,
+    "size": 2048,
+    "depth": 4,
+    "bytes_per_direction": 262144,
+    "read_cycles": 11438,
+    "write_cycles": 7805
+  },
+  {
+    "bank": 3,
+    "stream": 1,
+    "burst": 16,
+    "size": 2048,
+    "depth": 4,
+    "bytes_per_direction": 262144,
+    "read_cycles": 11790,
+    "write_cycles": 8000
+  },
+  {
+    "bank": 3,
+    "stream": 0,
+    "burst": 255,
+    "size": 2048,
+    "depth": 4,
+    "bytes_per_direction": 262144,
+    "read_cycles": 11437,
+    "write_cycles": 7746
+  },
+  {
+    "bank": 3,
+    "stream": 1,
+    "burst": 255,
+    "size": 2048,
+    "depth": 4,
+    "bytes_per_direction": 262144,
+    "read_cycles": 11661,
+    "write_cycles": 7986
+  },
+  {
+    "bank": 3,
+    "stream": 0,
+    "burst": 16,
+    "size": 16384,
+    "depth": 4,
+    "bytes_per_direction": 2097152,
+    "read_cycles": 50570,
+    "write_cycles": 46397
+  },
+  {
+    "bank": 3,
+    "stream": 1,
+    "burst": 16,
+    "size": 16384,
+    "depth": 4,
+    "bytes_per_direction": 2097152,
+    "read_cycles": 50027,
+    "write_cycles": 46401
+  },
+  {
+    "bank": 3,
+    "stream": 0,
+    "burst": 255,
+    "size": 16384,
+    "depth": 4,
+    "bytes_per_direction": 2097152,
+    "read_cycles": 50541,
+    "write_cycles": 46413
+  },
+  {
+    "bank": 3,
+    "stream": 1,
+    "burst": 255,
+    "size": 16384,
+    "depth": 4,
+    "bytes_per_direction": 2097152,
+    "read_cycles": 50812,
+    "write_cycles": 46400
+  },
+  {
+    "bank": 4,
+    "stream": 0,
+    "burst": 16,
+    "size": 16,
+    "depth": 1,
+    "bytes_per_direction": 512,
+    "read_cycles": 5975,
+    "write_cycles": 2976
+  },
+  {
+    "bank": 4,
+    "stream": 1,
+    "burst": 16,
+    "size": 16,
+    "depth": 1,
+    "bytes_per_direction": 512,
+    "read_cycles": 5868,
+    "write_cycles": 3036
+  },
+  {
+    "bank": 4,
+    "stream": 0,
+    "burst": 255,
+    "size": 16,
+    "depth": 1,
+    "bytes_per_direction": 512,
+    "read_cycles": 6050,
+    "write_cycles": 2974
+  },
+  {
+    "bank": 4,
+    "stream": 1,
+    "burst": 255,
+    "size": 16,
+    "depth": 1,
+    "bytes_per_direction": 512,
+    "read_cycles": 5772,
+    "write_cycles": 3039
+  },
+  {
+    "bank": 4,
+    "stream": 0,
+    "burst": 16,
+    "size": 2048,
+    "depth": 1,
+    "bytes_per_direction": 65536,
+    "read_cycles": 7235,
+    "write_cycles": 3936
+  },
+  {
+    "bank": 4,
+    "stream": 1,
+    "burst": 16,
+    "size": 2048,
+    "depth": 1,
+    "bytes_per_direction": 65536,
+    "read_cycles": 7404,
+    "write_cycles": 4060
+  },
+  {
+    "bank": 4,
+    "stream": 0,
+    "burst": 255,
+    "size": 2048,
+    "depth": 1,
+    "bytes_per_direction": 65536,
+    "read_cycles": 7280,
+    "write_cycles": 3934
+  },
+  {
+    "bank": 4,
+    "stream": 1,
+    "burst": 255,
+    "size": 2048,
+    "depth": 1,
+    "bytes_per_direction": 65536,
+    "read_cycles": 7644,
+    "write_cycles": 4063
+  },
+  {
+    "bank": 4,
+    "stream": 0,
+    "burst": 16,
+    "size": 2048,
+    "depth": 4,
+    "bytes_per_direction": 262144,
+    "read_cycles": 11558,
+    "write_cycles": 7895
+  },
+  {
+    "bank": 4,
+    "stream": 1,
+    "burst": 16,
+    "size": 2048,
+    "depth": 4,
+    "bytes_per_direction": 262144,
+    "read_cycles": 11631,
+    "write_cycles": 8048
+  },
+  {
+    "bank": 4,
+    "stream": 0,
+    "burst": 255,
+    "size": 2048,
+    "depth": 4,
+    "bytes_per_direction": 262144,
+    "read_cycles": 11542,
+    "write_cycles": 7686
+  },
+  {
+    "bank": 4,
+    "stream": 1,
+    "burst": 255,
+    "size": 2048,
+    "depth": 4,
+    "bytes_per_direction": 262144,
+    "read_cycles": 11564,
+    "write_cycles": 7954
+  },
+  {
+    "bank": 4,
+    "stream": 0,
+    "burst": 16,
+    "size": 16384,
+    "depth": 4,
+    "bytes_per_direction": 2097152,
+    "read_cycles": 50825,
+    "write_cycles": 46397
+  },
+  {
+    "bank": 4,
+    "stream": 1,
+    "burst": 16,
+    "size": 16384,
+    "depth": 4,
+    "bytes_per_direction": 2097152,
+    "read_cycles": 50619,
+    "write_cycles": 46401
+  },
+  {
+    "bank": 4,
+    "stream": 0,
+    "burst": 255,
+    "size": 16384,
+    "depth": 4,
+    "bytes_per_direction": 2097152,
+    "read_cycles": 50196,
+    "write_cycles": 46398
+  },
+  {
+    "bank": 4,
+    "stream": 1,
+    "burst": 255,
+    "size": 16384,
+    "depth": 4,
+    "bytes_per_direction": 2097152,
+    "read_cycles": 50284,
+    "write_cycles": 46400
+  },
+  {
+    "bank": 5,
+    "stream": 0,
+    "burst": 16,
+    "size": 16,
+    "depth": 1,
+    "bytes_per_direction": 512,
+    "read_cycles": 5930,
+    "write_cycles": 2976
+  },
+  {
+    "bank": 5,
+    "stream": 1,
+    "burst": 16,
+    "size": 16,
+    "depth": 1,
+    "bytes_per_direction": 512,
+    "read_cycles": 5884,
+    "write_cycles": 3036
+  },
+  {
+    "bank": 5,
+    "stream": 0,
+    "burst": 255,
+    "size": 16,
+    "depth": 1,
+    "bytes_per_direction": 512,
+    "read_cycles": 6110,
+    "write_cycles": 2974
+  },
+  {
+    "bank": 5,
+    "stream": 1,
+    "burst": 255,
+    "size": 16,
+    "depth": 1,
+    "bytes_per_direction": 512,
+    "read_cycles": 6140,
+    "write_cycles": 3039
+  },
+  {
+    "bank": 5,
+    "stream": 0,
+    "burst": 16,
+    "size": 2048,
+    "depth": 1,
+    "bytes_per_direction": 65536,
+    "read_cycles": 7385,
+    "write_cycles": 3936
+  },
+  {
+    "bank": 5,
+    "stream": 1,
+    "burst": 16,
+    "size": 2048,
+    "depth": 1,
+    "bytes_per_direction": 65536,
+    "read_cycles": 7372,
+    "write_cycles": 4060
+  },
+  {
+    "bank": 5,
+    "stream": 0,
+    "burst": 255,
+    "size": 2048,
+    "depth": 1,
+    "bytes_per_direction": 65536,
+    "read_cycles": 7310,
+    "write_cycles": 3934
+  },
+  {
+    "bank": 5,
+    "stream": 1,
+    "burst": 255,
+    "size": 2048,
+    "depth": 1,
+    "bytes_per_direction": 65536,
+    "read_cycles": 7212,
+    "write_cycles": 4063
+  },
+  {
+    "bank": 5,
+    "stream": 0,
+    "burst": 16,
+    "size": 2048,
+    "depth": 4,
+    "bytes_per_direction": 262144,
+    "read_cycles": 11618,
+    "write_cycles": 7790
+  },
+  {
+    "bank": 5,
+    "stream": 1,
+    "burst": 16,
+    "size": 2048,
+    "depth": 4,
+    "bytes_per_direction": 262144,
+    "read_cycles": 11839,
+    "write_cycles": 8016
+  },
+  {
+    "bank": 5,
+    "stream": 0,
+    "burst": 255,
+    "size": 2048,
+    "depth": 4,
+    "bytes_per_direction": 262144,
+    "read_cycles": 11527,
+    "write_cycles": 7701
+  },
+  {
+    "bank": 5,
+    "stream": 1,
+    "burst": 255,
+    "size": 2048,
+    "depth": 4,
+    "bytes_per_direction": 262144,
+    "read_cycles": 11628,
+    "write_cycles": 7986
+  },
+  {
+    "bank": 5,
+    "stream": 0,
+    "burst": 16,
+    "size": 16384,
+    "depth": 4,
+    "bytes_per_direction": 2097152,
+    "read_cycles": 50135,
+    "write_cycles": 46397
+  },
+  {
+    "bank": 5,
+    "stream": 1,
+    "burst": 16,
+    "size": 16384,
+    "depth": 4,
+    "bytes_per_direction": 2097152,
+    "read_cycles": 50203,
+    "write_cycles": 46401
+  },
+  {
+    "bank": 5,
+    "stream": 0,
+    "burst": 255,
+    "size": 16384,
+    "depth": 4,
+    "bytes_per_direction": 2097152,
+    "read_cycles": 50301,
+    "write_cycles": 46398
+  },
+  {
+    "bank": 5,
+    "stream": 1,
+    "burst": 255,
+    "size": 16384,
+    "depth": 4,
+    "bytes_per_direction": 2097152,
+    "read_cycles": 50284,
+    "write_cycles": 46416
+  },
+  {
+    "bank": 6,
+    "stream": 0,
+    "burst": 16,
+    "size": 16,
+    "depth": 1,
+    "bytes_per_direction": 512,
+    "read_cycles": 5960,
+    "write_cycles": 2976
+  },
+  {
+    "bank": 6,
+    "stream": 1,
+    "burst": 16,
+    "size": 16,
+    "depth": 1,
+    "bytes_per_direction": 512,
+    "read_cycles": 5980,
+    "write_cycles": 3036
+  },
+  {
+    "bank": 6,
+    "stream": 0,
+    "burst": 255,
+    "size": 16,
+    "depth": 1,
+    "bytes_per_direction": 512,
+    "read_cycles": 6095,
+    "write_cycles": 2974
+  },
+  {
+    "bank": 6,
+    "stream": 1,
+    "burst": 255,
+    "size": 16,
+    "depth": 1,
+    "bytes_per_direction": 512,
+    "read_cycles": 5772,
+    "write_cycles": 3039
+  },
+  {
+    "bank": 6,
+    "stream": 0,
+    "burst": 16,
+    "size": 2048,
+    "depth": 1,
+    "bytes_per_direction": 65536,
+    "read_cycles": 7310,
+    "write_cycles": 3936
+  },
+  {
+    "bank": 6,
+    "stream": 1,
+    "burst": 16,
+    "size": 2048,
+    "depth": 1,
+    "bytes_per_direction": 65536,
+    "read_cycles": 7420,
+    "write_cycles": 4060
+  },
+  {
+    "bank": 6,
+    "stream": 0,
+    "burst": 255,
+    "size": 2048,
+    "depth": 1,
+    "bytes_per_direction": 65536,
+    "read_cycles": 7280,
+    "write_cycles": 3934
+  },
+  {
+    "bank": 6,
+    "stream": 1,
+    "burst": 255,
+    "size": 2048,
+    "depth": 1,
+    "bytes_per_direction": 65536,
+    "read_cycles": 7308,
+    "write_cycles": 4063
+  },
+  {
+    "bank": 6,
+    "stream": 0,
+    "burst": 16,
+    "size": 2048,
+    "depth": 4,
+    "bytes_per_direction": 262144,
+    "read_cycles": 11498,
+    "write_cycles": 7835
+  },
+  {
+    "bank": 6,
+    "stream": 1,
+    "burst": 16,
+    "size": 2048,
+    "depth": 4,
+    "bytes_per_direction": 262144,
+    "read_cycles": 11774,
+    "write_cycles": 7952
+  },
+  {
+    "bank": 6,
+    "stream": 0,
+    "burst": 255,
+    "size": 2048,
+    "depth": 4,
+    "bytes_per_direction": 262144,
+    "read_cycles": 11707,
+    "write_cycles": 7671
+  },
+  {
+    "bank": 6,
+    "stream": 1,
+    "burst": 255,
+    "size": 2048,
+    "depth": 4,
+    "bytes_per_direction": 262144,
+    "read_cycles": 11581,
+    "write_cycles": 8002
+  },
+  {
+    "bank": 6,
+    "stream": 0,
+    "burst": 16,
+    "size": 16384,
+    "depth": 4,
+    "bytes_per_direction": 2097152,
+    "read_cycles": 50105,
+    "write_cycles": 46397
+  },
+  {
+    "bank": 6,
+    "stream": 1,
+    "burst": 16,
+    "size": 16384,
+    "depth": 4,
+    "bytes_per_direction": 2097152,
+    "read_cycles": 50091,
+    "write_cycles": 46401
+  },
+  {
+    "bank": 6,
+    "stream": 0,
+    "burst": 255,
+    "size": 16384,
+    "depth": 4,
+    "bytes_per_direction": 2097152,
+    "read_cycles": 50646,
+    "write_cycles": 46398
+  },
+  {
+    "bank": 6,
+    "stream": 1,
+    "burst": 255,
+    "size": 16384,
+    "depth": 4,
+    "bytes_per_direction": 2097152,
+    "read_cycles": 50188,
+    "write_cycles": 46400
+  },
+  {
+    "bank": 7,
+    "stream": 0,
+    "burst": 16,
+    "size": 16,
+    "depth": 1,
+    "bytes_per_direction": 512,
+    "read_cycles": 5885,
+    "write_cycles": 2976
+  },
+  {
+    "bank": 7,
+    "stream": 1,
+    "burst": 16,
+    "size": 16,
+    "depth": 1,
+    "bytes_per_direction": 512,
+    "read_cycles": 5836,
+    "write_cycles": 3036
+  },
+  {
+    "bank": 7,
+    "stream": 0,
+    "burst": 255,
+    "size": 16,
+    "depth": 1,
+    "bytes_per_direction": 512,
+    "read_cycles": 5945,
+    "write_cycles": 2974
+  },
+  {
+    "bank": 7,
+    "stream": 1,
+    "burst": 255,
+    "size": 16,
+    "depth": 1,
+    "bytes_per_direction": 512,
+    "read_cycles": 6108,
+    "write_cycles": 3039
+  },
+  {
+    "bank": 7,
+    "stream": 0,
+    "burst": 16,
+    "size": 2048,
+    "depth": 1,
+    "bytes_per_direction": 65536,
+    "read_cycles": 7445,
+    "write_cycles": 3936
+  },
+  {
+    "bank": 7,
+    "stream": 1,
+    "burst": 16,
+    "size": 2048,
+    "depth": 1,
+    "bytes_per_direction": 65536,
+    "read_cycles": 7324,
+    "write_cycles": 4060
+  },
+  {
+    "bank": 7,
+    "stream": 0,
+    "burst": 255,
+    "size": 2048,
+    "depth": 1,
+    "bytes_per_direction": 65536,
+    "read_cycles": 7295,
+    "write_cycles": 3934
+  },
+  {
+    "bank": 7,
+    "stream": 1,
+    "burst": 255,
+    "size": 2048,
+    "depth": 1,
+    "bytes_per_direction": 65536,
+    "read_cycles": 7196,
+    "write_cycles": 4063
+  },
+  {
+    "bank": 7,
+    "stream": 0,
+    "burst": 16,
+    "size": 2048,
+    "depth": 4,
+    "bytes_per_direction": 262144,
+    "read_cycles": 11678,
+    "write_cycles": 7835
+  },
+  {
+    "bank": 7,
+    "stream": 1,
+    "burst": 16,
+    "size": 2048,
+    "depth": 4,
+    "bytes_per_direction": 262144,
+    "read_cycles": 11758,
+    "write_cycles": 8048
+  },
+  {
+    "bank": 7,
+    "stream": 0,
+    "burst": 255,
+    "size": 2048,
+    "depth": 4,
+    "bytes_per_direction": 262144,
+    "read_cycles": 11782,
+    "write_cycles": 8121
+  },
+  {
+    "bank": 7,
+    "stream": 1,
+    "burst": 255,
+    "size": 2048,
+    "depth": 4,
+    "bytes_per_direction": 262144,
+    "read_cycles": 11629,
+    "write_cycles": 8098
+  },
+  {
+    "bank": 7,
+    "stream": 0,
+    "burst": 16,
+    "size": 16384,
+    "depth": 4,
+    "bytes_per_direction": 2097152,
+    "read_cycles": 50150,
+    "write_cycles": 46412
+  },
+  {
+    "bank": 7,
+    "stream": 1,
+    "burst": 16,
+    "size": 16384,
+    "depth": 4,
+    "bytes_per_direction": 2097152,
+    "read_cycles": 50187,
+    "write_cycles": 46417
+  },
+  {
+    "bank": 7,
+    "stream": 0,
+    "burst": 255,
+    "size": 16384,
+    "depth": 4,
+    "bytes_per_direction": 2097152,
+    "read_cycles": 50181,
+    "write_cycles": 46473
+  },
+  {
+    "bank": 7,
+    "stream": 1,
+    "burst": 255,
+    "size": 16384,
+    "depth": 4,
+    "bytes_per_direction": 2097152,
+    "read_cycles": 50108,
+    "write_cycles": 46400
+  }
+]

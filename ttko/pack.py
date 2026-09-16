@@ -172,10 +172,10 @@ _TILE_NUM_FACES = 4
 _ADDR_MOD_PACK = (260, 10272, 4384)
 
 class BlockedPack:
-  """Pack configuration for fixed-register, blocked matmul kernels."""
+  """Blocked matmul packing; fp32 preserves FP32 Dst and L1 partials."""
 
-  def __init__(self, kernel, *, fp8=False):
-    self.k, self.fp8 = kernel, fp8
+  def __init__(self, kernel, *, fp8=False, fp32=False):
+    self.k, self.fp8, self.fp32 = kernel, fp8, fp32
 
   def _state_formats(self, k, dtype: DType):
     k.write_repeated_bytes(TLM.TRISC2_PACK_TILE_FACE_R_DIM, _TILE_FACE_R_DIM, 8)
@@ -187,9 +187,9 @@ class BlockedPack:
   def _dest_addr_dmaregs(self, k):
     # SETDMAREG block driving the THCON dest-addr config (re-issued after MOP).
     k.emit(TT.TTSETDMAREG(0, 0, 0, 56))
-    k.emit(TT.TTSETDMAREG(0, 32, 0, 57))
-    k.emit(TT.TTSETDMAREG(0, 512, 0, 58))
-    k.emit(TT.TTSETDMAREG(0, 2048, 0, 59))
+    k.emit(TT.TTSETDMAREG(0, 64 if self.fp32 else 32, 0, 57))
+    k.emit(TT.TTSETDMAREG(0, 1024 if self.fp32 else 512, 0, 58))
+    k.emit(TT.TTSETDMAREG(0, 4096 if self.fp32 else 2048, 0, 59))
     k.emit(TT.TTSTALLWAIT(Stall.CFG, Wait.THCON))
     k.emit(TT.TTWRCFG(28, 0, 12))
     k.emit(TT.TTWRCFG(29, 0, 13))
@@ -199,7 +199,7 @@ class BlockedPack:
   def _alu_acc_rmw(self, k):
     k.emit(TT.TTATGETM(0))
     for inst in (
-      TT.TTRMWCIB3(Mask=0x1E, Data=0x02 if self.fp8 else 0x0A, CfgRegAddr=Cfg.ALU.addr32),
+      TT.TTRMWCIB3(Mask=0x1E, Data=0 if self.fp32 else 0x02 if self.fp8 else 0x0A, CfgRegAddr=Cfg.ALU.addr32),
       TT.TTRMWCIB0(Mask=0xFC, Data=0x00, CfgRegAddr=Cfg.ALU_ACC_CTRL_Zero_Flag_disabled_src.addr32),
       TT.TTRMWCIB1(Mask=0xFF, Data=0x00, CfgRegAddr=Cfg.ALU_ACC_CTRL_Zero_Flag_disabled_src.addr32),
       TT.TTRMWCIB2(Mask=0x3F, Data=0x00, CfgRegAddr=Cfg.ALU_ACC_CTRL_Zero_Flag_disabled_src.addr32),
@@ -209,11 +209,11 @@ class BlockedPack:
 
   def _pack_cfg(self, k, dtype: DType, out_cb: int):
     k.write32(Cfg.THCON_SEC0_REG1, _EXP_SECTION_SIZE)
-    k.write32(Cfg.THCON_SEC0_REG1_1, _pack_data_format(dtype, bool(self.fp8)))
-    k.write32(Cfg.PCK_DEST_RD_CTRL, 0)
+    k.write32(Cfg.THCON_SEC0_REG1_1, _pack_data_format(dtype, self.fp8 and not self.fp32))
+    k.write32(Cfg.PCK_DEST_RD_CTRL, int(self.fp32))
     for off in range(4):
       k.write32(GprPack.DEST_OFFSET_LO + off * 4, 0)
-      k.write32(GprPack.DEST_OFFSET_HI + off * 4, _DEST_OFFSET_HI)
+      k.write32(GprPack.DEST_OFFSET_HI + off * 4, 256 if self.fp32 else _DEST_OFFSET_HI)
     k.write32(GprPack.EXP0_SEC_SIZE_BFP, _EXP_SECTION_SIZE)
     for reg in (Cfg.PACK_COUNTERS_SEC0, Cfg.PACK_COUNTERS_SEC1,
                 Cfg.PACK_COUNTERS_SEC2, Cfg.PACK_COUNTERS_SEC3):
@@ -234,6 +234,8 @@ class BlockedPack:
     output address setup. """
     k = self.k
 
+    if self.fp32 and dtype != DType.F32:
+      raise ValueError("blocked FP32 packing currently requires FP32 output")
     self._state_formats(k, dtype)
     self._dest_addr_dmaregs(k)
     self._alu_acc_rmw(k)

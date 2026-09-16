@@ -4,6 +4,7 @@ from ttko.registers import Stall, Wait, DType
 
 
 def emit_subblock(fw, plan):
+  from . import kernel as k
   fw.edge_shapes = set()
   done = fw._new_label('edge_body_done')
 
@@ -16,7 +17,15 @@ def emit_subblock(fw, plan):
         mm = max(0, min(32, m - row*32))
         if not mm:
           continue
-        for col in range(plan.out_subblock_w):
+        full_cols = min(plan.out_subblock_w, n // 32) if k.use_row_mop() and mm == kk == 32 else 0
+        if full_cols:
+          fw.mv(R.T1,R.T3)
+          if row:
+            fw.addi(R.T1,R.T1,row*plan.out_subblock_w*64)
+          fw.write32(0xFFE40000,R.T1)
+          # Blackhole MOP bits 9:0 override the configured inner count.
+          fw.emit(TT.TTMOP(1,0,full_cols))
+        for col in range(full_cols, plan.out_subblock_w):
           nn = max(0, min(32, n - col*32))
           if not nn:
             continue
@@ -27,7 +36,11 @@ def emit_subblock(fw, plan):
           fw.write32(0xFFE40000,R.T1)
           shape = (mm,nn,kk)
           if shape == (32,32,32):
-            fw.emit(TT.TTMOP(1,0,0))
+            if k.use_row_mop():
+              fw.emit(TT.TTREPLAY(16,15))
+              fw.emit(TT.TTMVMUL(clear_dvalid=1,addr_mode=6))
+            else:
+              fw.emit(TT.TTMOP(1,0,0))
           elif 0 in shape:
             fw.jal(R.RA,'edge_empty')
           else:
@@ -37,7 +50,7 @@ def emit_subblock(fw, plan):
     fw.j(done)
 
   axes = ((R.S4,plan.m_extent,plan.out_subblock_h*32,plan.in0_num_subblocks),
-          (R.S5,plan.n_extent,plan.out_subblock_w*32,plan.in1_num_subblocks),
+          (R.S5,plan.n_extent,plan.out_subblock_w*32,plan.in1_num_subblocks*plan.n_passes),
           (R.S6,plan.k_extent,plan.in0_block_w*32,plan.num_blocks))
   def choose(axis, shape):
     if axis == 3:

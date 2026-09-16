@@ -3,14 +3,18 @@
 Port of blackhole-py/tests/compute/fpu/test_rmsnorm_hybrid.py. Math stays on
 TRISC1; TRISC0 prefetches the next pair into the alternate source banks.
 Dst 0 is scratch and Dst 1..tiles hold products, then normalized output.
+Optional elwmul_mop=True issues each HiFi4 tile through a 4x8 math MOP.
+Explicit ELWMUL remains the default: measured MOP setup/dispatch costs more
+than it saves for these short vectors (see tests/compute/fpu/rmsnorm_mop_results.md).
+fidelity=3 omits the low*low BF16 product phase; HiFi4 remains the default.
 """
 import os
 from ttko.isa import Tensix as TT
 from firmware.consts import TensixMMIO
 from program import DType
 from ttko.cb import CB
-from ttko.mop import LoopTemplate
-from ttko.sync import Sem, SemWait, Stall, Wait, sem_get, sem_post, sem_wait, stall, sync
+from ttko.mop import LoopTemplate, MOP_CFG
+from ttko.sync import Sem, SemWait, Stall, Wait, mop_sync, sem_get, sem_post, sem_wait, stall, sync
 from ttko.unpack import UnpackTarget, _BASE, _unpacr
 
 # Diagnostic ablation: identical-sized streams distinguish macro state from
@@ -28,9 +32,43 @@ def enabled():
   return mode == 'hybrid'
 
 
-def emit_rmsnorm(p, x, weight, output_cb, *, tiles, finalize, read_noc=0):
+def _elwmul_template(dst_row, fidelity=4):
+  """Three/four phases over eight blocks, with a reset after each phase.
+
+  MOP last is the final outer/inner iteration; outer_last ends other inner
+  loops. Modifier 0 advances Dst by eight, 1 resets Dst and advances fidelity,
+  and 2 resets both. Source rows advance modulo 64 in all three modifiers.
+  """
+  return LoopTemplate(outer=fidelity, inner=8,
+    loop=TT.TTELWMUL(0, 0, 0, 0, dst_row),
+    outer_last=TT.TTELWMUL(0, 0, 0, 1, dst_row),
+    last=TT.TTELWMUL(0, 0, 0, 2, dst_row))
+
+
+def _run_elwmul_mop(mop, dst_row, *, initialize, fidelity=4):
+  """Reuse the template between tiles; only three destination operands change.
+
+  The caller must not use another math MOP between these invocations.
+  """
+  template = _elwmul_template(dst_row, fidelity)
+  if initialize:
+    mop.configure(template)
+  else:
+    mop_sync(mop.k)
+    words = template.words()
+    for index in (5, 7, 8):  # loop, last outer, last inner
+      mop.k.write(MOP_CFG + index*4, words[index])
+    mop.state.config = words
+  mop.run()
+
+
+def emit_rmsnorm(p, x, weight, output_cb, *, tiles, finalize, read_noc=0,
+                 elwmul_mop=False, fidelity=4):
+  """Emit RMSNorm; fidelity=3 selects HiFi3, elwmul_mop=True uses math MOP."""
   if tiles not in (2, 4):
     raise ValueError("decode RMSNorm supports 2048 or 4096 elements")
+  if fidelity not in (3, 4):
+    raise ValueError('RMSNorm supports HiFi3 or HiFi4')
   if x.dtype != DType.BF16 or weight.dtype != DType.BF16:
     raise ValueError("decode RMSNorm requires BF16")
   if x.tilized != weight.tilized:
@@ -50,6 +88,8 @@ def emit_rmsnorm(p, x, weight, output_cb, *, tiles, finalize, read_noc=0):
   m.emit(TT.TTSFPNOP())
   for mod, step, phase in ((0, 0x808, 0), (1, 0x808, 1 << 13),
                            (2, 0x808, 1 << 15), (3, 0, 0)):
+    if elwmul_mop and mod < 3:
+      phase |= 8 if mod == 0 else 1 << 11
     for register, value in ((12+mod, step), (28+mod, phase), (47+mod, 0)):
       m.emit(TT.TTSETC16(register, value))
   for reg in range(4):
@@ -95,10 +135,13 @@ def emit_rmsnorm(p, x, weight, output_cb, *, tiles, finalize, read_noc=0):
       m.emit(TT.TTMOVA2D(0, row, 3, 2, row))
     stall(m, Stall.SFPU, Wait.MATH)
     m.emit(TT.TTSETRWC(0, 0, 0, 0, 0, 0xF))
-    for phase in range(4):
-      for slot in range(8):
-        mod = 0 if slot < 7 else (1 if phase < 3 else 2)
-        m.emit(TT.TTELWMUL(0, 0, 0, mod, (tile+1)*64 + slot*8))
+    if elwmul_mop:
+      _run_elwmul_mop(p.fpu._mop, (tile+1)*64, initialize=tile == 0, fidelity=fidelity)
+    else:
+      for phase in range(fidelity):
+        for slot in range(8):
+          mod = 0 if slot < 7 else (1 if phase < fidelity-1 else 2)
+          m.emit(TT.TTELWMUL(0, 0, 0, mod, (tile+1)*64 + slot*8))
     for row in range(0, 64, 2):
       reg = (row // 2) % 4
       m.emit(TT.TTSFPLOADMACRO((reg << 2) | reg, 3, 3, row))

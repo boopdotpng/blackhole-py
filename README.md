@@ -22,3 +22,9 @@ Requires `tt-kmd` > 2.9.0, Clang, and RISC-V binutils
 `firmware/` compiles on every device boot. Place local checkpoints and tokenizers
 in `weights/llama3-8b-fp8/` and `weights/llama3-8b-bf16/`.
 Checkpoints are not included in Git. Use `--port` to change the HTTP port.
+
+Optional FP8 decode modes are available with `--lm-head-dtype fp8` and
+`--split-attention` in `examples.llama3`. They can change numerical results;
+the default keeps the BF16 LM head and original attention arithmetic. See
+[FP8 decode optimization results](tools/llama_fp8_speedup.md) for measurements,
+validation, environment switches for chat/API use, and reproduction commands.

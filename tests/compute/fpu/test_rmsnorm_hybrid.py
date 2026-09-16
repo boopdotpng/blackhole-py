@@ -24,6 +24,8 @@ import pytest
 
 from asm import Asm
 from ttko.isa import Tensix as TT
+from ttko.mop import Mop
+from examples.rmsnorm_hybrid import _run_elwmul_mop
 from pcie import TLBWindow
 from tests.profiler import Profiler
 from tests.compute.fpu import test_rmsnorm_llama3 as llama
@@ -53,7 +55,12 @@ def _configure_apply_macro(m):
 
 
 def _images(n, *, schedule='queued', diagnostic=False, reuse_unpack=True,
-            square_macro=None, prefetch=None, trace=None):
+            square_macro=None, prefetch=None, trace=None, elwmul_mop=False, fidelity=4,
+            include_setup=False):
+  if fidelity not in (3, 4):
+    raise ValueError('expected HiFi3 or HiFi4')
+  if fidelity != 4 and schedule == 'interleaved':
+    raise ValueError('interleaved square schedule requires four phases')
   if n not in (1024, 2048, 3072, 4096):
     raise ValueError('expected 1..4 tiles of 1024 elements')
   if prefetch is None:
@@ -62,6 +69,8 @@ def _images(n, *, schedule='queued', diagnostic=False, reuse_unpack=True,
     raise ValueError('prefetch requires reused unpack configuration and TRISC1 math')
   if schedule not in ('queued', 'interleaved', 'serialized', 'split0', 'split2'):
     raise ValueError('unknown schedule')
+  if elwmul_mop and schedule not in ('queued', 'serialized'):
+    raise ValueError('ELWMUL MOP requires batched math on TRISC1')
   if square_macro is None:
     square_macro = schedule in ('queued', 'serialized')
   if square_macro and schedule not in ('queued', 'serialized'):
@@ -71,6 +80,10 @@ def _images(n, *, schedule='queued', diagnostic=False, reuse_unpack=True,
   split = schedule in ('split0', 'split2')
   s = u if schedule == 'split0' else p
   profile = Profiler(m)
+  if include_setup:
+    pc_sync(m)
+    profile.record('L1 to L1')
+  fpu_mop = Mop(m, 1)
   configure_fp32_dst(m, 0)
   _rmw_cfg_byte(m, CFG_BASE + 4, 3, 0x40, 0x40)
   m.emit(TT.TTZEROACC(3, 1, 0, 1, 0))
@@ -81,6 +94,8 @@ def _images(n, *, schedule='queued', diagnostic=False, reuse_unpack=True,
   # advance modulo 64; only the final block advances/resets fidelity.
   for mod, step, phase in ((0, 0x808, 0), (1, 0x808, 1 << 13),
                            (2, 0x808, 1 << 15), (3, 0, 0)):
+    if elwmul_mop and mod < 3:
+      phase |= 8 if mod == 0 else 1 << 11
     _set_thread_cfg(m, 12 + mod, step)
     _set_thread_cfg(m, 28 + mod, phase)
     _set_thread_cfg(m, 47 + mod, 0)
@@ -104,7 +119,8 @@ def _images(n, *, schedule='queued', diagnostic=False, reuse_unpack=True,
   sem_wait(m, Sem.UNPACK_TO_DEST, SemWait.ON_ZERO, Stall.SYNC)
   sem_get(m, Sem.UNPACK_TO_DEST)
   pc_sync(m)
-  profile.record('L1 to L1')
+  if not include_setup:
+    profile.record('L1 to L1')
   for tile in range(tiles):
     if not reuse_unpack:
       _unpack_pair_tile(u, INPUT + tile*2048, GAMMA + tile*2048)
@@ -138,13 +154,16 @@ def _images(n, *, schedule='queued', diagnostic=False, reuse_unpack=True,
       s.write(SPLIT_SYNC+16, tile+1)
       s.fence()
     m.emit(TT.TTSETRWC(0, 0, 0, 0, 0, 0xF))
-    for phase in range(4):
-      for slot in range(8):
-        mod = 0 if slot < 7 else (1 if phase < 3 else 2)
-        m.emit(TT.TTELWMUL(0, 0, 0, mod, (tile+1)*64 + slot*8))
-        if schedule == 'interleaved':
-          m.emit(TT.TTSFPLOAD(0, 3, 3, 2*(phase*8+slot)))
-          m.emit(TT.TTSFPMAD(0, 0, 7, 7, 0))
+    if elwmul_mop:
+      _run_elwmul_mop(fpu_mop, (tile+1)*64, initialize=tile == 0, fidelity=fidelity)
+    else:
+      for phase in range(fidelity):
+        for slot in range(8):
+          mod = 0 if slot < 7 else (1 if phase < fidelity-1 else 2)
+          m.emit(TT.TTELWMUL(0, 0, 0, mod, (tile+1)*64 + slot*8))
+          if schedule == 'interleaved':
+            m.emit(TT.TTSFPLOAD(0, 3, 3, 2*(phase*8+slot)))
+            m.emit(TT.TTSFPMAD(0, 0, 7, 7, 0))
     if not split and schedule != 'interleaved':
       if schedule == 'serialized':
         stall(m, Stall.SFPU, Wait.MATH)
@@ -366,3 +385,145 @@ def test_unpack_prefetch_timeline(bh):
     raw = np.frombuffer(bh.read_l1(bh.core, trace, 64), dtype='<u4').reshape(4,4)
     relative = (raw.astype(np.int64)-int(raw[0,0])) % (1 << 32)
     print(f'prefetch={enabled}: tile [unpack start/end, math start/end] cycles={relative.tolist()}')
+
+
+@pytest.mark.parametrize('n', (2048, 4096))
+def test_elwmul_mop(bh, n):
+  """Only ELWMUL issuance changes; MOP setup is inside the timed interval."""
+  variants = {enabled: _images(n, elwmul_mop=enabled) for enabled in (False, True)}
+  times = {enabled: [] for enabled in variants}
+  rng = np.random.default_rng(42)
+  inputs = {'normal': rng.normal(size=n), 'arange': np.arange(n),
+            'small': rng.normal(size=n)*1e-4, 'zero': np.zeros(n),
+            'outliers': rng.normal(size=n), 'large': rng.normal(size=n)*1e8}
+  for tile in range(n//1024):
+    inputs['normal'][tile*1024:(tile+1)*1024] *= 2**tile
+    inputs['outliers'][tile*1024] = (tile+1)*100
+  gb = _bf16_round(rng.uniform(-2, 2, n))
+  gamma = _from_bf16(gb).astype(np.float64)
+  worst = 0.
+  for kind, values in inputs.items():
+    xb = _bf16_round(values)
+    x = _from_bf16(xb).astype(np.float64)
+    ref = x*gamma / np.sqrt(np.mean(x*x)+EPS)
+    for sample in range(102 if kind == 'normal' else 1):
+      outputs = {}
+      for enabled in (False, True)[::1 if sample % 2 == 0 else -1]:
+        images, profile = variants[enabled]
+        bh.launch(images, l1={INPUT: xb.tobytes(), GAMMA: gb.tobytes(),
+                             OUTPUT: b'\xa5'*(2*n+64), SCALE: b'\xa5'*128})
+        outputs[enabled] = bh.read_l1(bh.core, OUTPUT, 2*n)
+        y = _from_bf16(np.frombuffer(outputs[enabled], dtype='<u2'))
+        np.testing.assert_allclose(y, ref, rtol=0.004, atol=1e-7,
+                                   err_msg=str((n, kind, enabled)))
+        assert bh.read_l1(bh.core, OUTPUT+2*n, 64) == b'\xa5'*64
+        assert bh.read_l1(bh.core, SCALE, 128) == b'\xa5'*128
+        nz = ref != 0
+        if np.any(nz):
+          worst = max(worst, np.max(np.abs(y[nz]/ref[nz]-1)))
+        if kind == 'normal' and sample >= 2:
+          times[enabled].append(_read_intervals(bh, profile.l1_address,
+                                               ('L1 to L1', 'compute', 'pack')))
+      assert outputs[False] == outputs[True], (n, kind, 'MOP changed output bits')
+  for enabled in variants:
+    print(f'N={n} ELWMUL MOP={enabled}: ' + '; '.join(
+      f'{label} median={median(t[label] for t in times[enabled])}, '
+      f'min={min(t[label] for t in times[enabled])}, max={max(t[label] for t in times[enabled])}'
+      for label in ('L1 to L1', 'compute', 'pack')) +
+      f' cycles; worst output relative error={100*worst:.6f}%')
+  before, after = (median(t['L1 to L1'] for t in times[enabled]) for enabled in variants)
+  print(f'N={n}: {before/after:.3f}x speedup; {100*(1-after/before):.2f}% fewer cycles')
+
+
+@pytest.mark.parametrize('n', (2048, 4096))
+@pytest.mark.parametrize('fidelity', (3, 4))
+def test_elwmul_mop_production(bh, n, fidelity):
+  """Exercise the actual emitter, including its DRAM and CB transport."""
+  from examples.llama3 import Llama3Kernels
+  from examples.rmsnorm_hybrid import emit_rmsnorm
+  from program import Buffer, DType, TensorProgram
+
+  rng = np.random.default_rng(91)
+  xb = _bf16_round(rng.normal(size=n))
+  gb = _bf16_round(rng.uniform(-2, 2, n))
+  x, gamma = _from_bf16(xb).astype(np.float64), _from_bf16(gb).astype(np.float64)
+  ref = x*gamma / np.sqrt(np.mean(x*x)+EPS)
+  allocations = [bh.dram_buffer(2*n, initial=data)
+                 for data in (xb.tobytes(), gb.tobytes(), bytes(2*n))]
+  buffers = tuple(Buffer(name, allocation.address, DType.BF16, (n,), None,
+                         (bh.core,), 1, tilized=False,
+                         dram_endpoints=bh.device.pcie.dram_endpoints[:1])
+                  for name, allocation in zip(('x', 'gamma', 'y'), allocations))
+  finalize = Llama3Kernels('1b' if n == 2048 else '8b')._rms_finalize_scale()
+  outputs = {}
+  for enabled in (False, True):
+    p = TensorProgram((bh.core,), *buffers, fp32_dst=True)
+    cb = p.cb(DType.BF16, depth=n//1024)
+    emit_rmsnorm(p, buffers[0], buffers[1], cb, tiles=n//1024,
+                 finalize=finalize, elwmul_mop=enabled, fidelity=fidelity)
+    p.ncrisc.noc.write_tiles_from_cb(cb, buffers[2], tuple(range(n//1024)))
+    params = tuple(np.frombuffer(p._param_table()[0], dtype='<u4').tolist())
+    bh.launch(p.lower()[bh.core], params=params)
+    outputs[enabled] = bh.read(allocations[2])
+    y = _from_bf16(np.frombuffer(outputs[enabled], dtype='<u2'))
+    np.testing.assert_allclose(y, ref, rtol=0.0045, atol=1e-7)
+  assert outputs[False] == outputs[True]
+
+
+@pytest.mark.parametrize('n', (2048, 4096))
+def test_hifi3(bh, n):
+  """Compare three/four explicit phases, including every BF16 mantissa pair."""
+  variants = {f: _images(n, fidelity=f) for f in (4, 3)}
+  times = {f: [] for f in variants}
+  worst = {f: 0. for f in variants}
+  rng = np.random.default_rng(42)
+  cases = []
+  for kind, amplitude in (('normal', 1.), ('small', 1e-4), ('large', 1e8), ('zero', 0.)):
+    cases.append((kind, _bf16_round(rng.normal(size=n)*amplitude),
+                  _bf16_round(rng.uniform(-2, 2, n))))
+  # Exhaust all 128x128 significand pairs in [1, 2). This includes the
+  # largest omitted relative low*low term at A=135/128, B=129/128.
+  pairs = np.arange(128*128, dtype=np.uint16)
+  for offset in range(0, len(pairs), n):
+    chunk = pairs[offset:offset+n]
+    cases.append((f'mantissas{offset//n}', 0x3f80 + chunk//128, 0x3f80 + chunk%128))
+  largest_delta = 0.
+  normal_stats = None
+  for kind, xb, gb in cases:
+    x, gamma = _from_bf16(xb).astype(np.float64), _from_bf16(gb).astype(np.float64)
+    ref = x*gamma / np.sqrt(np.mean(x*x)+EPS)
+    nz = ref != 0
+    for sample in range(102 if kind == 'normal' else 1):
+      outputs = {}
+      for fidelity in (4, 3)[::1 if sample % 2 == 0 else -1]:
+        images, profile = variants[fidelity]
+        bh.launch(images, l1={INPUT: xb.tobytes(), GAMMA: gb.tobytes(),
+                             OUTPUT: b'\xa5'*(2*n+64), SCALE: b'\xa5'*128})
+        y = _from_bf16(np.frombuffer(bh.read_l1(bh.core, OUTPUT, 2*n), dtype='<u2'))
+        outputs[fidelity] = y.astype(np.float64)
+        np.testing.assert_allclose(y, ref, rtol=0.0045, atol=1e-7,
+                                   err_msg=str((n, kind, fidelity)))
+        assert bh.read_l1(bh.core, OUTPUT+2*n, 64) == b'\xa5'*64
+        assert bh.read_l1(bh.core, SCALE, 128) == b'\xa5'*128
+        if np.any(nz):
+          worst[fidelity] = max(worst[fidelity], float(np.max(np.abs(y[nz]/ref[nz]-1))))
+        if kind == 'normal' and sample >= 2:
+          times[fidelity].append(_read_intervals(bh, profile.l1_address,
+                                                ('L1 to L1', 'compute', 'pack')))
+      delta = outputs[3]-outputs[4]
+      if np.any(nz):
+        largest_delta = max(largest_delta, float(np.max(np.abs(delta[nz]/ref[nz]))))
+      if kind == 'normal':
+        normal_stats = (np.count_nonzero(delta), np.linalg.norm(delta)/np.linalg.norm(ref),
+                        {f: np.linalg.norm(outputs[f]-ref)/np.linalg.norm(ref) for f in variants})
+  for fidelity in variants:
+    print(f'N={n} HiFi{fidelity}: ' + '; '.join(
+      f'{label} median={median(t[label] for t in times[fidelity])}, '
+      f'min={min(t[label] for t in times[fidelity])}, max={max(t[label] for t in times[fidelity])}'
+      for label in ('L1 to L1', 'compute', 'pack')) +
+      f' cycles; worst output relative error={100*worst[fidelity]:.6f}%')
+  before, after = (median(t['L1 to L1'] for t in times[f]) for f in (4, 3))
+  changed, relative_l2, errors = normal_stats
+  print(f'N={n} HiFi3: {100*(1-after/before):.2f}% fewer cycles; '
+        f'normal BF16 changes={changed}/{n}; relative L2 change={100*relative_l2:.6f}%; '
+        f'normal relative L2 errors={errors}; largest element delta/ref={100*largest_delta:.6f}%')

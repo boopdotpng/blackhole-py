@@ -1,8 +1,4 @@
-"""Blocked multicast HiFi2 matmul recovered from blackhole-py 079993d.
-
-The specialized kernel recipes use today's assembler and instruction encoders.
-The no-delay MOP schedule is enabled; 2x4 output subblocks reuse source A.
-"""
+"""Blocked multicast matmul, with optional FP8 row-MOP and N-pass schedules."""
 from __future__ import annotations
 import os, sys, struct
 from dataclasses import dataclass
@@ -25,6 +21,8 @@ INPUT_DTYPE = DType.BF16
 
 INPUT_TILE_BYTES = INPUT_DTYPE.tile_size
 OUTPUT_DTYPE = DType.BF16
+# FP32 uses four tiles per Dst half and preserves partials via FP32 L1 packing.
+FP32_ACCUM = False
 
 NUM_SEMAPHORES = 4
 
@@ -32,7 +30,7 @@ RUNS = 5
 
 MAX_IN0_BLOCK_W = 6
 
-INPUT_BUFFER_FACTOR = 2
+INPUT_BUFFER_FACTOR = int(os.environ.get("MATMUL_A_BUFFERS", "2"))
 
 MAX_PER_CORE_M = 0
 
@@ -55,6 +53,41 @@ MATH_FIDELITY = "hifi2"
 SKIP_PADDED_N = False
 
 ENABLE_BREADCRUMBS = os.environ.get("BREADCRUMBS", "") == "1"
+
+# Experiment: skip the RISC-blocking tensix_sync(1) in the math subblock commit
+# so TRISC1 keeps the math FIFO fed across subblock boundaries.
+NO_COMMIT_SYNC = os.environ.get("MATMUL_NO_COMMIT_SYNC", "") == "1"
+FAST_READS = os.environ.get("MATMUL_FAST_READS", "0") == "1"
+FAST_ADDR = os.environ.get("MATMUL_FAST_ADDR", "0") == "1"
+UNPACK_Z = os.environ.get("MATMUL_UNPACK_Z", "0") == "1"
+
+def use_unpack_z():
+  return UNPACK_Z and INPUT_DTYPE == DType.FP8
+
+FINAL_L1_ACC = os.environ.get("MATMUL_FINAL_L1_ACC", "0") == "1"
+
+def final_l1_acc():
+  return FP32_ACCUM or (FINAL_L1_ACC and INPUT_DTYPE == DType.FP8)
+
+OUTPUT_RING = os.environ.get("MATMUL_OUTPUT_RING", "0") == "1"
+OVERLAP_BLOCKS = int(os.environ.get("MATMUL_OVERLAP_BLOCKS", "0"))
+N_PASSES = int(os.environ.get("MATMUL_N_PASSES", "1"))
+B_BUFFER_FACTOR = int(os.environ.get("MATMUL_B_BUFFERS", "2"))
+# Per-controller pass indices and the NCRISC's saved input-reader registers.
+PASS_BASE = 0x179F00
+
+ROW_MOP = os.environ.get("MATMUL_ROW_MOP", "0") == "1"
+
+def use_row_mop():
+  return ROW_MOP and INPUT_DTYPE == DType.FP8 and MATH_BACKEND == "mop"
+
+# Experiment: one fidelity phase for BF16 too (LoFi numerics) to compare the
+# unpacker's byte-rate limit against FP8 at identical MVMUL counts.
+FORCE_LOFI = os.environ.get("MATMUL_LOFI", "") == "1"
+
+# Experiment: pad each tile-op's math issue with NOPs to test whether the math
+# thread's instruction-issue slots (not the unpacker) bound the subblock period.
+EXTRA_MATH_NOPS = int(os.environ.get("MATMUL_EXTRA_NOPS", "0") or 0)
 
 SUPPORTED_IN0_BLOCK_WS = tuple(range(1, MAX_IN0_BLOCK_W + 1))
 
@@ -153,6 +186,12 @@ PROFILE_TMP_TRISC2 = PROFILE_BASE + 0x110
 
 PROFILE_TMP_NCRISC_PHASE = PROFILE_BASE + 0x114
 
+PROFILE_TMP_TRISC0_SUB = PROFILE_BASE + 0x118
+
+# 0: counters compiled out. 1: per-block/per-subblock hooks. 2: also the per-row
+# unpack-context wait on TRISC0 (adds ~20 cycles per 64-cycle row; perturbs).
+PROFILE_LEVEL = int(os.environ.get("MATMUL_PROFILE_COUNTERS", "0") or 0)
+
 PROFILE_COUNTER_BASE = PROFILE_BASE + 0x120
 
 PROFILE_COUNTERS = (
@@ -168,7 +207,9 @@ PROFILE_COUNTERS = (
   ("ncrisc_output_wait", PROFILE_COUNTER_BASE + 0x24),
   ("ncrisc_output_issue", PROFILE_COUNTER_BASE + 0x28),
   ("ncrisc_output_barrier_pop", PROFILE_COUNTER_BASE + 0x2C),
+  ("trisc0_unpack_body", PROFILE_COUNTER_BASE + 0x30),
 )
+PROFILE_COUNTER_BYTES = 0x40
 
 DEBUG_TRISC0 = 0x17A200
 
@@ -275,6 +316,19 @@ MATMUL_UNPACK_SRCB_LOAD = TT.TTUNPACR(
 def _plan_reuses_a(plan: MatmulPlan) -> bool:
   return plan.out_subblock_w >= plan.out_subblock_h
 
+def unpack_mop_cfg():
+  if use_unpack_z():
+    from dataclasses import replace
+    return replace(MATMUL_UNPACK_AB_MOP_CFG, end0=TT.TTREPLAY(0, 1), last=TT.TTREPLAY(6, 1))
+  return MATMUL_UNPACK_AB_MOP_CFG
+
+
+def emit_unpack_z_config(fw):
+  if use_unpack_z():
+    # A Z step is one full 1024-element tile, in either unpack context.
+    fw.write32(int(Cfg.THCON_SEC0_REG0_TileDescriptor) + 4, 0x00010004)
+
+
 def _emit_trisc0_unpack_replay_init(fw: MatmulTrisc, plan: MatmulPlan) -> MatmulTrisc:
   if _plan_reuses_a(plan):
     replay0 = MATMUL_UNPACK_REPLAY0_LOAD
@@ -284,6 +338,8 @@ def _emit_trisc0_unpack_replay_init(fw: MatmulTrisc, plan: MatmulPlan) -> Matmul
     fw.emit(TT.TTMULDMAREG(0, UNPACK_TMP_LO_GPR, UNPACK_TILE_SIZE_B_GPR, UNPACK_KT_DIM_GPR))
     replay0 = MATMUL_UNPACK_REPLAY_SRCB0_LOAD
     replay1 = MATMUL_UNPACK_REPLAY_SRCB1_LOAD
+  if use_unpack_z():
+    replay0 = replay1 = [TT.TTUNPACR(AddrMode=1, OvrdThreadId=1, SetDatValid=1, Last=1)]
   fw.emit(TT.TTREPLAY(0, len(replay0), 0, 1))
   for word in replay0:
     fw.emit(word)
@@ -328,6 +384,7 @@ class MatmulPlan:
   cb1_pages: int
   cb16_pages: int
   cb24_pages: int
+  n_passes: int = 1
   logical_mt: int = 0
   logical_nt: int = 0
   m_extent: int = 0
@@ -382,6 +439,12 @@ class TensorLayout:
 
 
 def plan_matmul(M: int, K: int, N: int, cores: list[Core]) -> MatmulPlan:
+  if N_PASSES not in (1, 2, 4) or min(INPUT_BUFFER_FACTOR, B_BUFFER_FACTOR) < 1 or OVERLAP_BLOCKS < 0:
+    raise ValueError("N passes must be 1, 2, or 4; input buffers must be positive; overlap blocks must be nonnegative")
+  if N_PASSES > 1 and (INPUT_DTYPE != DType.FP8 or FP32_ACCUM or WRITER_WAVE_ROWS):
+    raise ValueError("N passes require FP8/FP16 and no writer waves")
+  if N_PASSES > 1 and FINAL_L1_ACC and OUTPUT_RING:
+    raise ValueError("final L1 accumulation needs a distinct output slice for every pass")
   mt_base = _ceil32(M) // TILE
   kt_base = _ceil32(K) // TILE
   nt_base = _ceil32(N) // TILE
@@ -394,12 +457,18 @@ def plan_matmul(M: int, K: int, N: int, cores: list[Core]) -> MatmulPlan:
   core_set = frozenset(ordered)
   xs = tuple(sorted({x for x, _ in ordered}))
   ys = tuple(sorted({y for _, y in ordered}))
-  l1_data_bytes = TensixL1.SIZE - CB_STORAGE_BASE - SYNC_BYTES
+  if FP32_ACCUM and sbh * sbw > 4:
+    raise ValueError("FP32 double buffering supports at most four Dst tiles per subblock")
+  l1_data_bytes = PASS_BASE - CB_STORAGE_BASE
 
   def fits_l1(pcm: int, pcn: int, bw: int) -> bool:
     cb0 = INPUT_BUFFER_FACTOR * pcm * bw * INPUT_TILE_BYTES
-    cb1 = INPUT_BUFFER_FACTOR * pcn * bw * INPUT_TILE_BYTES
-    cb_out = pcm * pcn * TILE_BYTES
+    if pcn % (sbw * N_PASSES):
+      return False
+    cb1 = B_BUFFER_FACTOR * (pcn // N_PASSES) * bw * INPUT_TILE_BYTES
+    cb_out = pcm * pcn * TILE_BYTES // (N_PASSES if OUTPUT_RING else 1)
+    if N_PASSES > 1 and not FINAL_L1_ACC:
+      cb_out += pcm * (pcn // N_PASSES) * TILE_BYTES
     return cb0 + cb1 + cb_out <= l1_data_bytes
 
   best: tuple | None = None
@@ -423,7 +492,9 @@ def plan_matmul(M: int, K: int, N: int, cores: list[Core]) -> MatmulPlan:
           if nr > _ceil_div(M, 8) or nc > _ceil_div(N, 16):
             continue
           pcm = _align_up(_ceil_div(mt_base, nr), sbh)
-          pcn = _align_up(_ceil_div(nt_base, nc), sbw)
+          pcn = _align_up(_ceil_div(nt_base, nc), sbw * N_PASSES)
+          if N_PASSES > 1 and _ceil_div(N, nc * 16) * 16 <= (N_PASSES - 1) * (pcn // N_PASSES) * TILE:
+            continue  # Every pass must contain at least one logical output tile.
           if MAX_PER_CORE_M and pcm > MAX_PER_CORE_M:
             continue
           if MAX_PER_CORE_N and pcn > MAX_PER_CORE_N:
@@ -450,8 +521,9 @@ def plan_matmul(M: int, K: int, N: int, cores: list[Core]) -> MatmulPlan:
     in0_block_num_tiles=pcm * bw, in0_subblock_num_tiles=sbh * bw,
     in1_block_num_tiles=pcn * bw, in1_per_core_w=pcn,
     out_subblock_num_tiles=sbh * sbw, out_block_num_tiles=out_tiles,
-    cb0_pages=INPUT_BUFFER_FACTOR * pcm * bw, cb1_pages=INPUT_BUFFER_FACTOR * pcn * bw,
-    cb16_pages=out_tiles, cb24_pages=out_tiles,
+    cb0_pages=INPUT_BUFFER_FACTOR * pcm * bw, cb1_pages=B_BUFFER_FACTOR * (pcn // N_PASSES) * bw,
+    cb16_pages=out_tiles // (N_PASSES if OUTPUT_RING else 1), cb24_pages=out_tiles // N_PASSES,
+    n_passes=N_PASSES,
     logical_mt=mt_base, logical_nt=nt_base,
     m_extent=_ceil_div(M, len(rows)*8)*8,
     n_extent=_ceil_div(N, len(cols)*16)*16,
@@ -460,6 +532,24 @@ def plan_matmul(M: int, K: int, N: int, cores: list[Core]) -> MatmulPlan:
 
 class MatmulKernel(KernelBase, NocOps, CircularBufferOps):
   """Shared base for matmul's hand-written dataflow kernels."""
+
+  def dram_tile_addr_from(self, table_base, noc_table_offset=0, *, tile_bytes=2048):
+    from .asm import CONTEXT
+    banks = len(CONTEXT['endpoints'])
+    if not FAST_ADDR or banks != 8:
+      return super().dram_tile_addr_from(table_base, noc_table_offset, tile_bytes=tile_bytes)
+    self.srli(R.T0, R.A1, 3)
+    self.andi(R.A1, R.A1, 7)
+    self.slli(R.T0, R.T0, tile_bytes.bit_length() - 1)
+    self.add(R.A0, R.A0, R.T0)
+    if isinstance(noc_table_offset, R):
+      self.add(R.T1, R.A1, noc_table_offset)
+    else:
+      self.addi(R.T1, R.A1, noc_table_offset)
+    self.slli(R.T1, R.T1, 1)
+    self.li(R.T2, table_base)
+    self.add(R.T2, R.T2, R.T1)
+    return self.lhu(R.A2, R.T2, 0)
 
   def rta_ptr(self, mailbox_addr: int, *, out=R.S11):
     return self.read32(out, mailbox_addr)
@@ -490,7 +580,7 @@ class MatmulTrisc(KernelBase, TensixOps, CircularBufferOps):
     from ttko.unpack import BlockedUnpack
     self.unpack = BlockedUnpack(self)
     self.math = BlockedMath(self)
-    self.pack = BlockedPack(self, fp8=INPUT_DTYPE == DType.FP8)
+    self.pack = BlockedPack(self, fp8=INPUT_DTYPE == DType.FP8, fp32=FP32_ACCUM)
 
   def prologue(self):
     self.addi(R.SP, R.SP, -16)
@@ -650,6 +740,15 @@ def _output_reg(fw, offset, value, tmp=R.T1):
   return fw.sw(value, R.GP, offset)
 
 
+def output_pending(fw, out):
+  if N_PASSES > 1:
+    fw.li(R.T0, 0x1000)
+    fw.sub(R.T0, R.GP, R.T0)
+    fw.lw(out, R.T0, 0x248)
+  else:
+    fw.lw(out, R.GP, 0x248)
+
+
 def emit_output_write_state_setup(fw: MatmulKernel) -> MatmulKernel:
   _output_wait_ready(fw)
   _output_reg(fw, 0x18, 2 << 10)
@@ -665,7 +764,7 @@ def emit_output_write_stateful(fw: MatmulKernel, src, dst_lo, dst_coord) -> Matm
   issue = fw._new_label("output_issue_safe")
   fw.li(R.T6, 129)
   fw.label(issue)
-  fw.lw(R.A5, R.GP, 0x248)
+  output_pending(fw, R.A5)
   fw.bgeu(R.A5, R.T6, issue)
   _output_wait_ready(fw, val=R.A5)
   _output_reg(fw, 0x00, src, tmp=R.A5)
@@ -738,11 +837,57 @@ def emit_output_launch_stagger(fw: KernelBase):
   emit_progress_mark(fw, DEBUG_NCRISC_OUTPUT, 0xB106, block_reg=R.S10, i0_reg=R.S9, i1_reg=R.S1)
   return fw
 
-def emit_profile_accum_start(fw: KernelBase, tmp_addr: int):
-  return fw
+def emit_profile_accum_start(fw: KernelBase, tmp_addr: int, *, level: int = 1):
+  if PROFILE_LEVEL < level:
+    return fw
+  fw.read32(R.T1, TensixMMIO.RISCV_DEBUG_REG_WALL_CLOCK_L, tmp_addr=R.T0)
+  return fw.write32(tmp_addr, R.T1, tmp_addr=R.T0)
 
-def emit_profile_accum_end(fw: KernelBase, counter_addr: int, tmp_addr: int):
-  return fw
+def emit_profile_accum_end(fw: KernelBase, counter_addr: int, tmp_addr: int, *, level: int = 1):
+  if PROFILE_LEVEL < level:
+    return fw
+  fw.read32(R.T1, TensixMMIO.RISCV_DEBUG_REG_WALL_CLOCK_L, tmp_addr=R.T0)
+  fw.read32(R.T2, tmp_addr, tmp_addr=R.T0)
+  fw.sub(R.T1, R.T1, R.T2)
+  fw.read32(R.T2, counter_addr, tmp_addr=R.T0)
+  fw.add(R.T1, R.T1, R.T2)
+  return fw.write32(counter_addr, R.T1, tmp_addr=R.T0)
+
+def pass_address(fw):
+  return PASS_BASE + {'brisc': 0, 'ncrisc': 4, 'trisc0': 8, 'trisc1': 12, 'trisc2': 16}[fw.role]
+
+
+def begin_passes(fw, plan):
+  if plan.n_passes == 1:
+    return None
+  label = fw._new_label('n_pass')
+  fw.write32(pass_address(fw), 0)
+  fw.label(label)
+  if plan.n_passes > 1 and FINAL_L1_ACC and fw.role in ('trisc0','trisc2'):
+    from .asm import CONTEXT
+    base = next(address for index,address,_,_ in CONTEXT['cbs'] if index == 16)
+    fw.read32(R.T1, pass_address(fw))
+    fw.li(R.T2, plan.out_block_num_tiles * TILE_BYTES // 16)
+    fw.mul(R.T1, R.T1, R.T2)
+    fw.li(R.T3, base // 16)
+    fw.add(R.T1, R.T1, R.T3)
+    fw.cb_iface(fw.data['cb_interface'], 24, out=R.T6)
+    fw.sw(R.T1, R.T6, 16)
+    fw.sw(R.T1, R.T6, 20)
+    fw.add(R.T1, R.T1, R.T2)
+    fw.sw(R.T1, R.T6, 4)
+  return label
+
+
+def end_passes(fw, plan, label):
+  if label is None:
+    return
+  fw.read32(R.T1, pass_address(fw))
+  fw.addi(R.T1, R.T1, 1)
+  fw.write32(pass_address(fw), R.T1)
+  fw.li(R.T2, plan.n_passes)
+  fw.blt(R.T1, R.T2, label)
+
 
 def matmul_reader(plan: MatmulPlan) -> MatmulKernel:
   from .args import emit_args
@@ -750,6 +895,7 @@ def matmul_reader(plan: MatmulPlan) -> MatmulKernel:
   emit_profile_stamp(fw, PROFILE_BRISC)
   emit_args(fw, plan, reader=True)
   fw.release_triscs()
+  pass_loop = begin_passes(fw, plan)
   fw.rta_ptr(BM.RTA_L1_BASE_PTR)
   fw.read32(R.T1, LaunchL1.GRID_RANK_BASE + 4)
   sender, done = fw._new_label('a_sender'), fw._new_label('a_done')
@@ -759,6 +905,7 @@ def matmul_reader(plan: MatmulPlan) -> MatmulKernel:
   fw.label(sender)
   emit_reader_sender(fw, plan)
   fw.label(done)
+  end_passes(fw, plan, pass_loop)
   emit_profile_stamp(fw, PROFILE_BRISC + 8)
   fw.write32(A_DONE, 1)
   fw.fence()
@@ -771,6 +918,9 @@ def matmul_writer(plan: MatmulPlan) -> MatmulKernel:
   emit_profile_stamp(fw, PROFILE_NCRISC)
   emit_profile_stamp(fw, PROFILE_NCRISC_INPUT)
   emit_args(fw, plan, reader=False)
+  pass_loop = begin_passes(fw, plan)
+  if plan.n_passes > 1:
+    fw.write32(PASS_BASE + 24, 0)
   fw.rta_ptr(NM.RTA_L1_BASE_PTR)
   fw.read32(R.T1, LaunchL1.GRID_RANK_BASE)
   sender, done = fw._new_label('b_sender'), fw._new_label('b_done')
@@ -781,9 +931,45 @@ def matmul_writer(plan: MatmulPlan) -> MatmulKernel:
   emit_writer_sender(fw, plan)
   fw.label(done)
   emit_profile_stamp(fw, PROFILE_NCRISC_INPUT + 8)
-  emit_output_writer(fw, plan)
+  if plan.n_passes > 1:
+    fw.rta_ptr(NM.RTA_L1_BASE_PTR)
+    fw.arg(R.T1, 1)
+    fw.addi(R.T1, R.T1, plan.per_core_n)
+    fw.sw(R.T1, R.S11, 4)
+  else:
+    emit_output_writer(fw, plan)
+  end_passes(fw, plan, pass_loop)
+  if plan.n_passes > 1:
+    fw.rta_ptr(NM.RTA_L1_BASE_PTR)
+    emit_output_writer(fw, plan)
   emit_profile_stamp(fw, PROFILE_NCRISC + 8)
   return fw.ret()
+
+
+def emit_input_read_setup(fw, noc):
+  if not FAST_READS:
+    return
+  fw.li(R.GP, NOC.REGS_START_ADDR + (noc << 16) + (1 << 11))
+  _output_wait_ready(fw)
+  fw.local_noc0_coord(R.A5, x_addr=BM.MY_X if noc == 0 else NM.MY_X,
+                      y_addr=BM.MY_Y if noc == 0 else NM.MY_Y)
+  for offset, value in ((0x1c,NOC.CMD_RD_FIELD),(0x10,0),(0x14,R.A5),
+                        (0x04,0),(0x20,INPUT_TILE_BYTES),(0x24,0)):
+    _output_reg(fw, offset, value)
+
+
+def emit_input_read(fw, noc):
+  if not FAST_READS:
+    fw.local_noc0_coord(R.A5, x_addr=BM.MY_X if noc == 0 else NM.MY_X,
+                        y_addr=BM.MY_Y if noc == 0 else NM.MY_Y)
+    fw.li(R.T6, INPUT_TILE_BYTES)
+    fw.noc_read(noc, 1, R.A0, 0, R.A2, R.A4, R.T6, ret_coord=R.A5, a=R.T3, v=R.T5)
+  else:
+    _output_wait_ready(fw, val=R.T3)
+    for offset, value in ((0x00,R.A0),(0x08,R.A2),(0x0c,R.A4),(0x40,NOC.CTRL_SEND_REQ)):
+      _output_reg(fw, offset, value)
+    fw.li(R.T6, INPUT_TILE_BYTES)
+  fw.add(R.A4, R.A4, R.T6)
 
 
 def emit_reader_sender(fw: MatmulKernel, plan: MatmulPlan) -> MatmulKernel:
@@ -804,6 +990,7 @@ def emit_reader_sender(fw: MatmulKernel, plan: MatmulPlan) -> MatmulKernel:
   fw.sem_addr(BM.SEM_L1_BASE, R.T0, out=R.T6)
   fw.noc_semaphore_set(R.T6, 1)
 
+  emit_input_read_setup(fw, 0)
   fw.li(R.S6, 0)
   fw.label("reader_sender_block_loop")
   fw.bne(R.S6, R.S8, "reader_sender_block_body")
@@ -826,10 +1013,7 @@ def emit_reader_sender(fw: MatmulKernel, plan: MatmulPlan) -> MatmulKernel:
     _move_plus_imm(fw, R.A1, R.A6, col)
     fw.arg(R.A2, 23)
     fw.dram_tile_addr_from(BM.DRAM_BANK_TO_NOC_XY, 0, tile_bytes=INPUT_TILE_BYTES)
-    fw.local_noc0_coord(R.A5)
-    fw.li(R.T6, INPUT_TILE_BYTES)
-    fw.noc_read(0, 1, R.A0, 0, R.A2, R.A4, R.T6, ret_coord=R.A5, a=R.T3, v=R.T5)
-    fw.add(R.A4, R.A4, R.T6)
+    emit_input_read(fw, 0)
   fw.add(R.A6, R.A6, R.S3)
   fw.addi(R.S5,R.S5,-1)
   fw.bne(R.S5,R.ZERO,'reader_tile_rows')
@@ -940,6 +1124,7 @@ def emit_writer_sender(fw: MatmulKernel, plan: MatmulPlan) -> MatmulKernel:
   fw.sem_addr(NM.SEM_L1_BASE, R.T0, out=R.T6)
   fw.noc_semaphore_set(R.T6, 1)
 
+  emit_input_read_setup(fw, 1)
   fw.li(R.S6, 0)
   fw.label("writer_sender_block_loop")
   fw.bne(R.S6, R.S8, "writer_sender_block_body")
@@ -961,10 +1146,7 @@ def emit_writer_sender(fw: MatmulKernel, plan: MatmulPlan) -> MatmulKernel:
     _move_plus_imm(fw, R.A1, R.A6, col)
     fw.arg(R.A2, 29)
     fw.dram_tile_addr_from(NM.DRAM_BANK_TO_NOC_XY, R.A2, tile_bytes=INPUT_TILE_BYTES)
-    fw.local_noc0_coord(R.A5, x_addr=NM.MY_X, y_addr=NM.MY_Y)
-    fw.li(R.T6, INPUT_TILE_BYTES)
-    fw.noc_read(1, 1, R.A0, 0, R.A2, R.A4, R.T6, ret_coord=R.A5, a=R.T3, v=R.T5)
-    fw.add(R.A4, R.A4, R.T6)
+    emit_input_read(fw, 1)
   fw.add(R.A6, R.A6, R.S3)
   fw.addi(R.S5,R.S5,-1)
   fw.bne(R.S5,R.ZERO,'writer_tile_rows')
@@ -1003,6 +1185,7 @@ def emit_writer_sender(fw: MatmulKernel, plan: MatmulPlan) -> MatmulKernel:
   fw.cb_push_back(NM.CB_INTERFACE, 1, R.S7)
   emit_profile_accum_end(fw, PROFILE_COUNTERS[1][1], PROFILE_TMP_NCRISC)
   fw.add(R.S1, R.S1, R.S4)
+  emit_overlap_output(fw, plan, R.S6)
   fw.addi(R.S6, R.S6, 1)
   fw.j("writer_sender_block_loop")
   fw.label("writer_sender_blocks_done")
@@ -1029,12 +1212,56 @@ def emit_writer_recv(fw: MatmulKernel, plan: MatmulPlan) -> MatmulKernel:
   fw.noc_semaphore_wait(R.S1, 1)
   fw.cb_push_back(NM.CB_INTERFACE, 1, R.S7)
   emit_profile_accum_end(fw, PROFILE_COUNTERS[1][1], PROFILE_TMP_NCRISC)
+  emit_overlap_output(fw, plan, R.S0)
   fw.addi(R.S0, R.S0, 1)
   fw.j("writer_recv_block_loop")
   fw.label("writer_recv_blocks_done")
   return fw
 
-def emit_output_writer(fw: MatmulKernel, plan: MatmulPlan) -> MatmulKernel:
+def emit_overlap_output(fw, plan, block_reg):
+  if plan.n_passes == 1:
+    return
+  from dataclasses import replace
+  from .asm import ARG_BASE
+  done = fw._new_label('overlap_done')
+  fw.read32(R.T1, pass_address(fw))
+  fw.beq(R.T1, R.ZERO, done)
+  # Feed this input block, then retire its share of the previous pass's rows.
+  fw.addi(R.T1, block_reg, 1)
+  fw.li(R.T2, plan.in0_num_subblocks)
+  fw.mul(R.T1, R.T1, R.T2)
+  fw.li(R.T2, OVERLAP_BLOCKS or plan.num_blocks)
+  fw.divu(R.T1, R.T1, R.T2)
+  fw.li(R.T2, plan.in0_num_subblocks)
+  budget_ready = fw._new_label('overlap_budget_ready')
+  fw.blt(R.T1, R.T2, budget_ready)
+  fw.mv(R.T1, R.T2)
+  fw.label(budget_ready)
+  fw.write32(PASS_BASE + 28, R.T1)
+  saved = (R.S0,R.S1,R.S2,R.S3,R.S4,R.S5,R.S6,R.S7,R.S8,R.S9,R.S10,R.S11,R.GP)
+  for i, reg in enumerate(saved):
+    fw.write32(PASS_BASE + 32 + i*4, reg)
+  loop = fw._new_label('overlap_row')
+  restore = fw._new_label('overlap_restore')
+  fw.label(loop)
+  fw.read32(R.T1, PASS_BASE + 24)
+  fw.read32(R.T2, PASS_BASE + 28)
+  fw.bge(R.T1, R.T2, restore)
+  fw.rta_ptr(NM.RTA_L1_BASE_PTR)
+  fw.write32(ARG_BASE + 128 + 28*4, 1)
+  emit_output_writer(fw, replace(plan, in0_num_subblocks=1), row_chunk=True)
+  fw.read32(R.T1, PASS_BASE + 24)
+  fw.addi(R.T1, R.T1, 1)
+  fw.write32(PASS_BASE + 24, R.T1)
+  fw.j(loop)
+  fw.label(restore)
+  fw.write32(ARG_BASE + 128 + 28*4, plan.in0_num_subblocks)
+  for i, reg in enumerate(saved):
+    fw.read32(reg, PASS_BASE + 32 + i*4)
+  fw.label(done)
+
+
+def emit_output_writer(fw: MatmulKernel, plan: MatmulPlan, *, row_chunk=False) -> MatmulKernel:
   from .writers import wait_turn, finish
   # params[4]: 0/1 selects a fixed NoC; 2 selects logical-column parity.
   fw.read32(R.T3, LaunchL1.PARAM_BASE + 16)
@@ -1045,13 +1272,15 @@ def emit_output_writer(fw: MatmulKernel, plan: MatmulPlan) -> MatmulKernel:
   fw.andi(R.T3, R.T3, 1)
   fw.xori(R.T3, R.T3, 1)
   fw.label(selected)
+  fw.mv(R.S8, R.T3)  # Preserve output NoC for its preferred DRAM-port table.
   fw.slli(R.GP, R.T3, 16)
-  fw.li(R.T0, NOC.REGS_START_ADDR)
+  fw.li(R.T0, NOC.REGS_START_ADDR + (0x1000 if plan.n_passes > 1 else 0))
   fw.add(R.GP, R.GP, R.T0)
   ready = fw._new_label('output_noc_ready')
-  fw.bne(R.T3, R.ZERO, ready)
-  fw.li(R.T3, 1)
-  fw.wait_sync_value(A_DONE, R.T3, actual=R.T4)
+  if plan.n_passes == 1:
+    fw.bne(R.T3, R.ZERO, ready)
+    fw.li(R.T3, 1)
+    fw.wait_sync_value(A_DONE, R.T3, actual=R.T4)
   fw.label(ready)
   wait_turn(fw, plan, WRITER_WAVE_ROWS)
   emit_profile_stamp(fw, PROFILE_NCRISC_OUTPUT)
@@ -1068,6 +1297,7 @@ def emit_output_writer(fw: MatmulKernel, plan: MatmulPlan) -> MatmulKernel:
   fw.arg(R.S7, 25)   # subblock H
   fw.arg(R.S10, 28)  # subblock rows remaining
   fw.arg(R.S11, 29)  # DRAM bank count
+  fw.mul(R.S8, R.S8, R.S11)
   emit_output_launch_stagger(fw)
 
   sbh_loop = fw._new_label("output_sbh_loop")
@@ -1113,7 +1343,7 @@ def emit_output_writer(fw: MatmulKernel, plan: MatmulPlan) -> MatmulKernel:
   fw.mv(R.A0, R.S0)
   fw.mv(R.A1, R.T4)
   fw.mv(R.A2, R.S11)
-  fw.dram_tile_addr_from(NM.DRAM_BANK_TO_NOC_XY, 0)
+  fw.dram_tile_addr_from(NM.DRAM_BANK_TO_NOC_XY, R.S8, tile_bytes=TILE_BYTES)
   emit_output_write_stateful(fw, R.T5, R.A0, R.A2)
   emit_progress_mark(fw, DEBUG_NCRISC_OUTPUT, 0xB133, block_reg=R.S10, i0_reg=R.A3, i1_reg=R.A4)
   fw.li(R.T6, TILE_BYTES)
@@ -1131,9 +1361,14 @@ def emit_output_writer(fw: MatmulKernel, plan: MatmulPlan) -> MatmulKernel:
   emit_profile_accum_end(fw, PROFILE_COUNTERS[10][1], PROFILE_TMP_NCRISC_PHASE)
 
   emit_profile_accum_start(fw, PROFILE_TMP_NCRISC_PHASE)
-  # Each output CB page is written once; producers cannot reuse these pages.
-  # Keep writes in flight across subblocks and drain dedicated TID 2 at the end.
+  # Full output storage permits writes to stay in flight across subblocks.
+  # A compact output ring must drain before returning pages to the producer.
   emit_progress_mark(fw, DEBUG_NCRISC_OUTPUT, 0xB140, block_reg=R.S10, i0_reg=R.S9, i1_reg=R.A6)
+  if OUTPUT_RING and plan.n_passes > 1:
+    drain_page = fw._new_label('output_page_drain')
+    fw.label(drain_page)
+    output_pending(fw, R.T4)
+    fw.bne(R.T4, R.ZERO, drain_page)
   fw.cb_pop_front(NM.CB_INTERFACE, 16, plan.out_subblock_num_tiles)
   emit_cb_debug_snapshot(fw, DEBUG_NCRISC_OUTPUT + 0x40, 16, 0xB151)
   emit_progress_mark(fw, DEBUG_NCRISC_OUTPUT, 0xB150, block_reg=R.S10, i0_reg=R.S9, i1_reg=R.A6)
@@ -1148,15 +1383,31 @@ def emit_output_writer(fw: MatmulKernel, plan: MatmulPlan) -> MatmulKernel:
   fw.j(sbh_loop)
   fw.label(sbh_done)
   _output_wait_ready(fw)
-  drain = fw._new_label('output_drain')
-  fw.label(drain)
-  fw.lw(R.T4, R.GP, 0x248)
-  fw.bne(R.T4, R.ZERO, drain)
+  if not row_chunk:
+    drain = fw._new_label('output_drain')
+    fw.label(drain)
+    output_pending(fw, R.T4)
+    fw.bne(R.T4, R.ZERO, drain)
   fw.fence()
   emit_progress_mark(fw, DEBUG_NCRISC_OUTPUT, 0xB1FF, block_reg=R.S10, i0_reg=R.S9, i1_reg=R.S1)
   emit_profile_accum_end(fw, PROFILE_COUNTERS[2][1], PROFILE_TMP_NCRISC)
   emit_profile_stamp(fw, PROFILE_NCRISC_OUTPUT + 8)
   finish(fw, plan, WRITER_WAVE_ROWS)
+  if plan.n_passes > 1:
+    fw.rta_ptr(NM.RTA_L1_BASE_PTR)
+    fw.arg(R.T1, 19)
+    if row_chunk:
+      _move_plus_imm(fw, R.T1, R.T1, plan.out_subblock_h * plan.nt)
+      # Once the previous pass is drained, return to the next N slice's first row.
+      fw.read32(R.T2, PASS_BASE + 24)
+      fw.li(R.T3, plan.per_core_m // plan.out_subblock_h - 1)
+      more = fw._new_label('output_more_rows')
+      fw.bne(R.T2, R.T3, more)
+      _move_plus_imm(fw, R.T1, R.T1, plan.per_core_n - plan.per_core_m * plan.nt)
+      fw.label(more)
+    else:
+      fw.addi(R.T1, R.T1, plan.per_core_n)
+    fw.sw(R.T1, R.S11, 19 * 4)
   return fw
 
 
@@ -1168,7 +1419,7 @@ def emit_trisc0_unpack_row_reg(
   mop_loop_count: int = 1,
   explicit_load=MATMUL_UNPACK_SRCB_LOAD,
 ) -> MatmulTrisc:
-    emit_profile_accum_start(fw, PROFILE_TMP_TRISC0)
+    emit_profile_accum_start(fw, PROFILE_TMP_TRISC0, level=2)
     wait_unp = fw._new_label("wait_unpack_ctx")
     wait_unp_done = fw._new_label("wait_unpack_ctx_done")
     fw.label(wait_unp)
@@ -1178,7 +1429,7 @@ def emit_trisc0_unpack_row_reg(
     fw.fence()
     fw.j(wait_unp)
     fw.label(wait_unp_done)
-    emit_profile_accum_end(fw, PROFILE_COUNTERS[4][1], PROFILE_TMP_TRISC0)
+    emit_profile_accum_end(fw, PROFILE_COUNTERS[4][1], PROFILE_TMP_TRISC0, level=2)
 
     fw.mul(R.A0, in0_tile_index, R.A4)
     fw.add(R.A0, R.A0, R.S0)
@@ -1204,6 +1455,8 @@ def emit_trisc0_unpack_row_reg(
     fw.sw(R.A0, R.T3, 0)
     fw.sw(R.ZERO, R.S7, 0)
 
+    if use_unpack_z():
+      fw.emit(TT.TTSETADCZW(1, 0, 0, 0, 0, 0xF))
     fw.emit(TT.TTSTALLWAIT(Stall.UNPACK, Wait.TRISC_CFG))
     fw.emit(explicit_load)
     ctx1 = fw._new_label("trisc0_mop_ctx1")
@@ -1262,8 +1515,13 @@ def emit_trisc0_unpack_subblock_reg(
       tail_tiles = _ceil_div(tail,32)
       if tail and tail_tiles != plan.out_subblock_w:
         normal = fw._new_label('unpack_full_width')
+        if plan.n_passes > 1:
+          fw.read32(R.T0, pass_address(fw))
+          fw.li(R.T1, plan.in1_num_subblocks)
+          fw.mul(R.T0, R.T0, R.T1)
+          fw.add(R.T2, R.S5, R.T0)
         fw.li(R.T0,full)
-        fw.blt(R.S5,R.T0,normal)
+        fw.blt(R.T2 if plan.n_passes > 1 else R.S5,R.T0,normal)
         emit_trisc0_unpack_row_reg(fw,R.S9,R.S10,mop_loop_count=tail_tiles-1)
         fw.j(skip_row)
         fw.label(normal)
@@ -1335,13 +1593,20 @@ def emit_trisc0_reload_subblock(fw: MatmulTrisc, plan: MatmulPlan) -> MatmulTris
   fw.emit(TT.TTSETADCXX(2, 1023, 0))
   if INPUT_DTYPE == DType.FP8:
     fw.unpack.input_format(INPUT_DTYPE, engines=(0,))
-  fw.write_mop_cfg(MATMUL_UNPACK_AB_MOP_CFG, 0)
+  emit_unpack_z_config(fw)
+  fw.write_mop_cfg(unpack_mop_cfg(), 0)
   return fw
 
 def _math_mop_cfg(plan: MatmulPlan) -> LoopTemplate:
+  if use_row_mop():
+    return LoopTemplate(outer=1, inner=plan.out_subblock_w,
+                        loop=MOP_REPLAY(16, 15),
+                        alternate=TT.TTMVMUL(clear_dvalid=1, addr_mode=5),
+                        last=TT.TTMVMUL(clear_dvalid=1, addr_mode=6),
+                        outer_last=TT.TTMVMUL(clear_dvalid=3, addr_mode=6))
   if EXPERIMENTAL_THROTTLE0:
     config = MATMUL_MATH_MOP_CFG_THROTTLE0 if _plan_reuses_a(plan) else MATMUL_MATH_MOP_CFG_THROTTLE0_REUSE_B
-    if INPUT_DTYPE == DType.FP8:
+    if INPUT_DTYPE == DType.FP8 or FORCE_LOFI:
       from dataclasses import replace
       return replace(config, inner=1)
     return config
@@ -1403,12 +1668,16 @@ def matmul_math_addrmod_init(fw: MatmulTrisc) -> MatmulTrisc:
   fw.setc16(ThreadCfg.ADDR_MOD_AB_SEC6_Src, 49344)
   fw.setc16(ThreadCfg.ADDR_MOD_DST_SEC6, 35840)
   fw.setc16(ThreadCfg.ADDR_MOD_BIAS_SEC6_Bias, 0)
+  if use_row_mop():
+    # Carry tracks the tile base; mode 4 returns to it halfway through a tile.
+    fw.setc16(ThreadCfg.ADDR_MOD_DST_SEC5, 64 | (1 << 10) | (1 << 15))
+    fw.setc16(ThreadCfg.ADDR_MOD_DST_SEC6, (1 << 11) | (1 << 15))
   return fw.emit(TT.TTSETRWC(0, 0, 0, 0, 0, 15))
 
 
 def emit_math_dst_base_addr(fw: MatmulTrisc, out_reg=R.T1) -> MatmulTrisc:
   fw.read32(out_reg, fw.data["dest_offset_id"])
-  fw.slli(out_reg, out_reg, 9)
+  fw.slli(out_reg, out_reg, 8 if FP32_ACCUM else 9)
   fw.li(R.T2, TT.TTSETC16(ThreadCfg.DEST_TARGET_REG_CFG_MATH_Offset, 0))  # base; addr bits added in
   fw.add(out_reg, out_reg, R.T2)
   return fw
@@ -1446,6 +1715,22 @@ def emit_math_subblock_body(fw: MatmulTrisc, plan: MatmulPlan, in0_offset: int, 
     fw.li(R.T0, extent // block)
     fw.bge(reg, R.T0, edge)
   reuse_a = _plan_reuses_a(plan)
+  if use_row_mop():
+    batch_k = plan.out_subblock_h == 1
+    for inner in range(1 if batch_k else plan.in0_block_w):
+      for row in range(plan.out_subblock_h):
+        fw.mv(R.T1, R.T3)
+        if row:
+          fw.addi(R.T1, R.T1, row * plan.out_subblock_w * 64)
+        fw.write32(TensixRegs.INSTRN_BUF_BASE, R.T1)
+        fw.emit(TT.TTMOP(1, 0, plan.in0_block_w << 10 if batch_k else 0))
+        fw.emit(TT.TTSETRWC(2, 0, 0, 0, 0, 15))
+    fw.j(done)
+    fw.label(edge)
+    from .edges import emit_subblock
+    emit_subblock(fw, plan)
+    fw.label(done)
+    return fw
   if reuse_a:
     tile_order = list(range(plan.out_subblock_num_tiles))
   else:
@@ -1468,6 +1753,8 @@ def emit_math_subblock_body(fw: MatmulTrisc, plan: MatmulPlan, in0_offset: int, 
           fw.emit(TT.TTSETRWC(1, 0, 0, 0, 0, 15))
       elif EXPERIMENTAL_THROTTLE0:
         fw.emit(TT.TTMOP(1, 0, 0))
+        for _ in range(EXTRA_MATH_NOPS):
+          fw.emit(TT.TTNOP())
       else:
         fw.emit(TT.TTMOP(1, 0, 0))
         fw.emit(TT.TTMOP(1, 0, 0))
@@ -1494,7 +1781,8 @@ def emit_math_subblock_commit(fw: MatmulTrisc) -> MatmulTrisc:
   emit_profile_accum_start(fw, PROFILE_TMP_TRISC1)
   fw.emit(TT.TTSTALLWAIT(Stall.SYNC, Wait.MATH | Wait.SFPU))
   fw.emit(TT.TTSEMPOST(Sem.mask(Sem.MATH_PACK)))
-  fw.tensix_sync(1)
+  if not NO_COMMIT_SYNC:
+    fw.tensix_sync(1)
   emit_profile_accum_end(fw, PROFILE_COUNTERS[6][1], PROFILE_TMP_TRISC1)
   fw.read32(R.T1, fw.data["dest_offset_id"])
   fw.li(R.T2, 1)
@@ -1506,6 +1794,7 @@ def emit_math_subblock_commit(fw: MatmulTrisc) -> MatmulTrisc:
 def emit_pack_tile_to_cb(fw: MatmulTrisc, plan: MatmulPlan, out_cb: int) -> MatmulTrisc:
   emit_profile_accum_start(fw, PROFILE_TMP_TRISC2)
   fw.cb_reserve_back(fw.data["cb_interface"], out_cb, plan.out_subblock_num_tiles)
+  emit_progress_mark(fw, DEBUG_TRISC2, 0xD132)
   fw.cb_write_ptr(fw.data["cb_interface"], out_cb, out=R.S0)
   fw.mv(R.S3, R.S0)
   fw.cb_iface(fw.data["cb_interface"], out_cb, out=R.T6)
@@ -1514,7 +1803,7 @@ def emit_pack_tile_to_cb(fw: MatmulTrisc, plan: MatmulPlan, out_cb: int) -> Matm
   fw.li(R.T2, 0)
   pack_offset_ready = fw._new_label("pack_offset_ready")
   fw.beq(R.T1, R.ZERO, pack_offset_ready)
-  fw.li(R.T2, 512)
+  fw.li(R.T2, 256 if FP32_ACCUM else 512)
   fw.label(pack_offset_ready)
   fw.write32(Cfg.DEST_TARGET_REG_CFG_PACK_SEC0, R.T2)
   fw.write32(Cfg.DEST_TARGET_REG_CFG_PACK_SEC1, R.T2)
@@ -1551,12 +1840,13 @@ def emit_pack_tile_to_cb(fw: MatmulTrisc, plan: MatmulPlan, out_cb: int) -> Matm
     fw.emit(TT.TTSTALLWAIT(Stall.CFG, Wait.THCON))
     fw.emit(TT.TTMOP(1, 0, 0))
     fw.tensix_sync(2, tmp=R.T1)
+    emit_progress_mark(fw, DEBUG_TRISC2, 0xD133 + tile_index)
     fw.emit(TT.TTSETADCZW(4, 0, 0, 0, 0, 5))
   fw.cb_push_back(fw.data["cb_interface"], out_cb, plan.out_subblock_num_tiles, tensix_received=True)
   fw.emit(TT.TTSTALLWAIT(Stall.THCON, Wait.PACK0))
   fw.read32(R.T1, fw.data["dest_offset_id"])
   fw.andi(R.T2, R.T1, 1)
-  fw.li(R.T3, TT.TTZEROACC(2, 0, 0, 1))  # ZEROACC base; dest-offset parity bit added in
+  fw.li(R.T3, TT.TTZEROACC(2, int(FP32_ACCUM), 0, 1))  # ZEROACC base; dest-offset parity bit added in
   fw.add(R.T2, R.T2, R.T3)
   fw.write32(TensixRegs.INSTRN_BUF_BASE, R.T2)
   fw.emit(TT.TTSEMGET(Sem.mask(Sem.MATH_PACK)))
@@ -1599,14 +1889,18 @@ def emit_pack_reconfig_l1_acc_for_partial_block(fw: MatmulTrisc, block_reg) -> M
 def matmul_trisc0(plan: MatmulPlan) -> MatmulTrisc:
   fw = MatmulTrisc(0)
   fw.prologue()
-  fw.unpack.init(dtype=INPUT_DTYPE, tile_bytes=INPUT_TILE_BYTES, mop_cfg=MATMUL_UNPACK_AB_MOP_CFG)
+  fw.unpack.init(dtype=INPUT_DTYPE, tile_bytes=INPUT_TILE_BYTES, mop_cfg=unpack_mop_cfg())
+  emit_unpack_z_config(fw)
   fw.emit(TT.TTSETADCXX(1, 1023, 0))
   fw.emit(TT.TTSETADCXX(2, 1023, 0))
+  if FP32_ACCUM:
+    fw.push_tensix(TT.TTRMWCIB3(Mask=0x20, Data=0x20, CfgRegAddr=Cfg.ALU.addr32))
   _emit_trisc0_unpack_replay_init(fw, plan)
   fw.emit(TT.TTSEMINIT(sem_sel=Sem.mask(Sem.UNPACK_SYNC), init_value=0, max_value=2))
   fw.init_barrier()
   emit_profile_stamp(fw, PROFILE_TRISC0)
   emit_progress_mark(fw, DEBUG_TRISC0, 0xE000)
+  pass_loop = begin_passes(fw, plan)
   fw.li(R.S6, 0)
   fw.li(R.S8, plan.num_blocks)
   block_loop = fw._new_label("trisc0_block_loop")
@@ -1640,7 +1934,7 @@ def matmul_trisc0(plan: MatmulPlan) -> MatmulTrisc:
   fw.mul(R.S2, R.S4, R.T0)
   fw.li(R.T0, plan.out_subblock_w)
   fw.mul(R.S3, R.S5, R.T0)
-  if plan.num_blocks > 1:
+  if plan.num_blocks > 1 and not final_l1_acc():
     not_reload = fw._new_label("trisc0_not_reload")
     fw.li(R.T0, plan.num_blocks - 1)
     fw.bne(R.S6, R.T0, not_reload)
@@ -1649,7 +1943,9 @@ def matmul_trisc0(plan: MatmulPlan) -> MatmulTrisc:
     emit_progress_mark(fw, DEBUG_TRISC0, 0xE131)
     fw.label(not_reload)
   emit_progress_mark(fw, DEBUG_TRISC0, 0xE140)
+  emit_profile_accum_start(fw, PROFILE_TMP_TRISC0_SUB)
   emit_trisc0_unpack_subblock_reg(fw, plan, R.S2, R.S3)
+  emit_profile_accum_end(fw, PROFILE_COUNTERS[12][1], PROFILE_TMP_TRISC0_SUB)
   emit_progress_mark(fw, DEBUG_TRISC0, 0xE141)
   fw.addi(R.S5, R.S5, 1)
   fw.j(i1_loop)
@@ -1657,9 +1953,11 @@ def matmul_trisc0(plan: MatmulPlan) -> MatmulTrisc:
   fw.addi(R.S4, R.S4, 1)
   fw.j(i0_loop)
   fw.label(i0_done)
-  if plan.num_blocks > 2:
+  # Direct final L1 accumulation releases every intermediate CB24 block.
+  # The reload path retains the penultimate block until its SrcA reload.
+  if plan.num_blocks > (1 if final_l1_acc() else 2):
     skip_partial_pop = fw._new_label("trisc0_skip_partial_pop")
-    fw.li(R.T0, plan.num_blocks - 2)
+    fw.li(R.T0, plan.num_blocks - (1 if final_l1_acc() else 2))
     fw.bge(R.S6, R.T0, skip_partial_pop)
     if SKIP_PADDED_N:
       fw.cb_wait_front(fw.data["cb_interface"], 24, plan.out_block_num_tiles)
@@ -1675,6 +1973,7 @@ def matmul_trisc0(plan: MatmulPlan) -> MatmulTrisc:
   fw.j(block_loop)
   fw.label(block_done)
   emit_progress_mark(fw, DEBUG_TRISC0, 0xE2FF)
+  end_passes(fw, plan, pass_loop)
   emit_profile_stamp(fw, PROFILE_TRISC0 + 8)
   return fw.ret_kernel()
 
@@ -1685,6 +1984,7 @@ def matmul_trisc1(plan: MatmulPlan) -> MatmulTrisc:
   fw.init_barrier()
   emit_profile_stamp(fw, PROFILE_TRISC1)
   emit_progress_mark(fw, DEBUG_TRISC1, 0xF000)
+  pass_loop = begin_passes(fw, plan)
   fw.li(R.S6, 0)
   fw.li(R.S8, plan.num_blocks)
   block_loop = fw._new_label("trisc1_block_loop")
@@ -1717,7 +2017,7 @@ def matmul_trisc1(plan: MatmulPlan) -> MatmulTrisc:
   ))
   emit_progress_mark(fw, DEBUG_TRISC1, 0xF111)
   emit_profile_accum_end(fw, PROFILE_COUNTERS[5][1], PROFILE_TMP_TRISC1)
-  if plan.num_blocks > 1:
+  if plan.num_blocks > 1 and not final_l1_acc():
     not_reload = fw._new_label("trisc1_not_reload")
     fw.li(R.T0, plan.num_blocks - 1)
     fw.bne(R.S6, R.T0, not_reload)
@@ -1726,7 +2026,17 @@ def matmul_trisc1(plan: MatmulPlan) -> MatmulTrisc:
     emit_progress_mark(fw, DEBUG_TRISC1, 0xF131)
     fw.label(not_reload)
   emit_progress_mark(fw, DEBUG_TRISC1, 0xF140)
+  if plan.n_passes > 1:
+    fw.read32(R.T0, pass_address(fw))
+    fw.li(R.T1, plan.in1_num_subblocks)
+    fw.mul(R.T0, R.T0, R.T1)
+    fw.add(R.S5, R.S5, R.T0)
   emit_math_subblock_body(fw, plan, 0, 0)
+  if plan.n_passes > 1:
+    fw.read32(R.T0, pass_address(fw))
+    fw.li(R.T1, plan.in1_num_subblocks)
+    fw.mul(R.T0, R.T0, R.T1)
+    fw.sub(R.S5, R.S5, R.T0)
   emit_progress_mark(fw, DEBUG_TRISC1, 0xF141)
   emit_math_subblock_commit(fw)
   emit_progress_mark(fw, DEBUG_TRISC1, 0xF150)
@@ -1741,6 +2051,7 @@ def matmul_trisc1(plan: MatmulPlan) -> MatmulTrisc:
   fw.j(block_loop)
   fw.label(block_done)
   emit_progress_mark(fw, DEBUG_TRISC1, 0xF2FF)
+  end_passes(fw, plan, pass_loop)
   emit_profile_stamp(fw, PROFILE_TRISC1 + 8)
   finish = fw._new_label('finish_math')
   fw.j(finish)
@@ -1756,6 +2067,7 @@ def matmul_trisc2(plan: MatmulPlan) -> MatmulTrisc:
   fw.init_barrier()
   emit_profile_stamp(fw, PROFILE_TRISC2)
   emit_progress_mark(fw, DEBUG_TRISC2, 0xD000)
+  pass_loop = begin_passes(fw, plan)
   num_subblocks = plan.in0_num_subblocks * plan.in1_num_subblocks
   if plan.num_blocks > 1:
     fw.li(R.S6, 0)
@@ -1817,7 +2129,8 @@ def matmul_trisc2(plan: MatmulPlan) -> MatmulTrisc:
   ))
   emit_progress_mark(fw, DEBUG_TRISC2, 0xD221, block_reg=R.S6, i0_reg=R.S5, i1_reg=R.S5)
   emit_profile_accum_end(fw, PROFILE_COUNTERS[7][1], PROFILE_TMP_TRISC2)
-  emit_pack_reconfig_l1_acc(fw, False)
+  # Optionally include the final block directly in the L1 partials.
+  emit_pack_reconfig_l1_acc(fw, final_l1_acc() and plan.num_blocks > 1)
   emit_progress_mark(fw, DEBUG_TRISC2, 0xD230, block_reg=R.S6, i0_reg=R.S5, i1_reg=R.S5)
   emit_pack_tile_to_cb(fw, plan, 16)
   emit_progress_mark(fw, DEBUG_TRISC2, 0xD231, block_reg=R.S6, i0_reg=R.S5, i1_reg=R.S5)
@@ -1825,6 +2138,7 @@ def matmul_trisc2(plan: MatmulPlan) -> MatmulTrisc:
   fw.j(final_sb_loop)
   fw.label(final_sb_done)
   emit_progress_mark(fw, DEBUG_TRISC2, 0xD2FF, block_reg=R.S6, i0_reg=R.S5, i1_reg=R.S5)
+  end_passes(fw, plan, pass_loop)
   emit_profile_stamp(fw, PROFILE_TRISC2 + 8)
   return fw.ret_kernel()
 
@@ -1868,8 +2182,11 @@ def sample_coords(m: int, n: int) -> tuple[np.ndarray, np.ndarray]:
   flat = np.asarray(chosen, dtype=np.int64)
   return flat // n, flat % n
 
-def validate(a_ref: np.ndarray, b_ref: np.ndarray, c_raw: bytes, M: int, N: int, Mp: int, Np: int) -> tuple[float, float]:
-  c_full = (np.frombuffer(c_raw, dtype="<f2").astype(np.float32).reshape(Mp,Np) if OUTPUT_DTYPE == DType.F16 else from_bf16_device_bytes(c_raw, (Mp, Np)))
+def validate(a_ref: np.ndarray, b_ref: np.ndarray, c_raw: bytes, M: int, N: int, Mp: int, Np: int, *, full=False) -> tuple[float, float]:
+  if OUTPUT_DTYPE == DType.F32:
+    c_full = np.frombuffer(c_raw, dtype="<f4").reshape(Mp, Np)
+  else:
+    c_full = (np.frombuffer(c_raw, dtype="<f2").astype(np.float32).reshape(Mp,Np) if OUTPUT_DTYPE == DType.F16 else from_bf16_device_bytes(c_raw, (Mp, Np)))
   c_got = c_full[:M, :N]
   got_full = c_got.reshape(-1)
   if not np.all(np.isfinite(got_full)):
@@ -1877,7 +2194,7 @@ def validate(a_ref: np.ndarray, b_ref: np.ndarray, c_raw: bytes, M: int, N: int,
     raise AssertionError(f"validation failed: {bad} non-finite outputs")
 
   sample_rows, sample_cols = sample_coords(M, N)
-  if M * N <= 1_000_000:
+  if full or M * N <= 1_000_000 or os.environ.get("MATMUL_VALIDATE_FULL", "0") == "1":
     ref = (a_ref @ b_ref).reshape(-1)
     got = c_got.reshape(-1)
   else:
@@ -1891,7 +2208,8 @@ def validate(a_ref: np.ndarray, b_ref: np.ndarray, c_raw: bytes, M: int, N: int,
     pcc = 1.0 if max_abs < 1e-6 else 0.0
   else:
     pcc = float(np.corrcoef(ref, got)[0, 1])
-  if not np.isfinite(pcc) or not np.isfinite(rel_l2) or pcc < PCC_THRESHOLD or rel_l2 > REL_L2_THRESHOLD:
+  error_limit = 0.001 if FP32_ACCUM else REL_L2_THRESHOLD
+  if not np.isfinite(pcc) or not np.isfinite(rel_l2) or pcc < PCC_THRESHOLD or rel_l2 > error_limit:
     raise AssertionError(f"validation failed: PCC={pcc:.6f}, rel_l2={rel_l2:.6f}")
   return pcc, rel_l2
 

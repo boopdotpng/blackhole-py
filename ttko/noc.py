@@ -574,7 +574,7 @@ class NocCfg:
 class NocOps:
   def noc_coord(self, out: R, x: int | R, y: int | R, *, tmp: R = R.T0):
     if (isinstance(x, int) and not isinstance(x, R)) and (isinstance(y, int) and not isinstance(y, R)):
-      return self.li(out, noc_xy(x, y))
+      return self.li(out, x | (y << 6))
     if (isinstance(y, int) and not isinstance(y, R)):
       self.li(out, y)
     else:
@@ -593,7 +593,7 @@ class NocOps:
       y_start, y_end = y_end, y_start
     self.noc_coord(out, x_end, y_end, tmp=tmp)
     if (isinstance(x_start, int) and not isinstance(x_start, R)) and (isinstance(y_start, int) and not isinstance(y_start, R)):
-      self.li(tmp, noc_xy(x_start, y_start))
+      self.li(tmp, x_start | (y_start << 6))
     else:
       self.noc_coord(tmp, x_start, y_start)
     self.slli(tmp, tmp, 12)

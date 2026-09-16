@@ -1,0 +1,110 @@
+{
+  "device": 0,
+  "baseline": "Pre-existing worktree, saved before this task; not clean Git HEAD.",
+  "baseline_llama3_sha256": "27d0e9378f11b2c82f8214099c24c34efe5dd43a5c0676786fc5d65233b1b9d3",
+  "timing": "Mean decode wall time; excludes initialization, prompt ingestion, and optional final logit readback.",
+  "long_context": "Repeated story-prompt tokens; 4K measurements precede final RoPE read/write batching. 1K comparison replays identical input history; 4K cases generate independently from the same prefix.",
+  "cases": {
+    "fp8_before": {
+      "mean_wall_us": 20788.856953125,
+      "prompt_tokens": 20,
+      "measured_tokens": 64,
+      "tokens_per_s": 48.10269281542577
+    },
+    "fp8_lossless": {
+      "mean_wall_us": 20080.907453125,
+      "mean_device_us": 20056.044984375003,
+      "prediction_agreement": 1.0,
+      "prompt_tokens": 20,
+      "measured_tokens": 64,
+      "tokens_per_s": 49.798546322386414,
+      "final_logits_equal": true,
+      "final_logits_pcc": 1.0,
+      "final_logits_max_abs_error": 0.0
+    },
+    "fp8_lm_head": {
+      "mean_wall_us": 18933.755453125,
+      "mean_device_us": 18906.536421875,
+      "prediction_agreement": 0.984375,
+      "prompt_tokens": 20,
+      "measured_tokens": 64,
+      "tokens_per_s": 52.81572387874857,
+      "final_logits_equal": false,
+      "final_logits_pcc": 0.9995041815985468,
+      "final_logits_max_abs_error": 0.5
+    },
+    "fp8_1024_split": {
+      "mean_wall_us": 21702.351500000004,
+      "prompt_tokens": 1024,
+      "measured_tokens": 8,
+      "tokens_per_s": 46.077956114571265
+    },
+    "fp8_1024_unsplit": {
+      "mean_wall_us": 22924.626874999998,
+      "prediction_agreement": 1.0,
+      "prompt_tokens": 1024,
+      "measured_tokens": 8,
+      "tokens_per_s": 43.62121161023259
+    },
+    "fp8_4096_before": {
+      "mean_wall_us": 38573.243375,
+      "mean_device_us": 38541.110875,
+      "prompt_tokens": 4096,
+      "measured_tokens": 8,
+      "tokens_per_s": 25.924706156499084
+    },
+    "fp8_4096_split_lm": {
+      "mean_wall_us": 22697.372124999998,
+      "mean_device_us": 22670.405,
+      "prompt_tokens": 4096,
+      "measured_tokens": 8,
+      "tokens_per_s": 44.05796382474388
+    },
+    "bf16_before": {
+      "mean_wall_us": 33711.132999999994,
+      "mean_device_us": 33677.88290625,
+      "prediction_agreement": 1.0,
+      "prompt_tokens": 20,
+      "measured_tokens": 32,
+      "tokens_per_s": 29.663790890682915
+    },
+    "bf16_after": {
+      "mean_wall_us": 34099.66775,
+      "mean_device_us": 34047.96484375,
+      "prediction_agreement": 1.0,
+      "prompt_tokens": 20,
+      "measured_tokens": 32,
+      "tokens_per_s": 29.325798929521827,
+      "final_logits_equal": true,
+      "final_logits_pcc": 1.0,
+      "final_logits_max_abs_error": 0.0
+    },
+    "1b_before": {
+      "mean_wall_us": 6481.89884375,
+      "mean_device_us": 6471.53796875,
+      "prediction_agreement": 1.0,
+      "prompt_tokens": 45,
+      "measured_tokens": 32,
+      "tokens_per_s": 154.2757799999029
+    },
+    "1b_after": {
+      "mean_wall_us": 6464.42275,
+      "mean_device_us": 6452.0875,
+      "prompt_tokens": 45,
+      "measured_tokens": 32,
+      "tokens_per_s": 154.6928532791269,
+      "final_logits_equal": true,
+      "final_logits_pcc": 1.0,
+      "final_logits_max_abs_error": 0.0
+    }
+  },
+  "final_llama3_sha256": "9784f031fbc1ec2b276ece5ea688446fe2006c5a6a89c84cffe3f37b7bc0ed75",
+  "final_fp8_recheck": {
+    "mean_wall_us": 18934.746875,
+    "mean_device_us": 18907.820890625,
+    "prediction_agreement": 0.984375,
+    "lm_head_dtype": "fp8",
+    "split_attention": true,
+    "weight_page_tiles": 2
+  }
+}

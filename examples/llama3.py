@@ -5,7 +5,7 @@ BF16/published FP8. Run ``python -m examples.llama3 --help`` for switches.
 """
 
 from pathlib import Path
-from dataclasses import replace
+from dataclasses import dataclass, fields, replace
 from copy import copy
 from examples.rmsnorm_hybrid import emit_rmsnorm, enabled as hybrid_rmsnorm_enabled
 
@@ -24,6 +24,7 @@ from pcie import P100_WORKER_CORES, TLBWindow
 from program import Buffer, Const, DType, TensorProgram as Program, rectangles
 from ttko.isa import R, RV32, Tensix as TT
 from ttko import Dst, l1
+from ttko.argmax import load_bf16, scan_bf16, physical_to_logical
 from ttko.fpu import Fpu
 from ttko.pack import Pack
 from ttko.cb import CB
@@ -34,6 +35,38 @@ from ttko.shard import specialize
 from ttko.mop import LoopTemplate
 from ttko.sync import Sem, SemWait, Stall, Wait, sem_get, sem_wait, stall
 from ttko.unpack import UnpackTarget
+
+
+@dataclass(frozen=True, eq=False)
+class PagedProjectionWeight(Buffer):
+  """Raw FP8 projection storage with multiple logical tiles per DRAM page.
+
+  Tensor row ownership remains in logical 1024-element tiles; only the
+  physical upload and projection reader use the larger pages.
+  """
+  page_tiles: int = 2
+
+  def __post_init__(self):
+    super().__post_init__()
+    if (self.dtype is not DType.FP8 or not self._raw_global or
+        self.page_tiles not in (1, 2, 4) or self.tiles_per_item % self.page_tiles or
+        (self.page_tiles != 1 and self.banks != 8)):
+      raise ValueError("paged weights require whole aligned FP8 projection rows")
+
+  @property
+  def tile_size(self): return super().tile_size * self.page_tiles
+
+  @property
+  def physical_tiles(self): return super().physical_tiles // self.page_tiles
+
+  @classmethod
+  def from_buffer(cls, buffer, page_tiles):
+    if page_tiles not in (1, 2, 4): raise ValueError("page tiles must be 1, 2, or 4")
+    original_extent = math.ceil(buffer.physical_tiles / buffer.banks) * buffer.tile_size
+    new_extent = math.ceil(buffer.tiles / (page_tiles * buffer.banks)) * buffer.dtype.itemsize * 1024 * page_tiles
+    if new_extent > original_extent:
+      raise ValueError("larger pages exceed the allocated per-bank storage")
+    return cls(**{field.name: getattr(buffer, field.name) for field in fields(Buffer)}, page_tiles=page_tiles)
 
 
 class Llama3Kernels:
@@ -55,7 +88,7 @@ class Llama3Kernels:
   ACTIVATION_DTYPE = DType.FP8
 
   def __init__(self, model="1b", dtype="bf16", *, projection_cores=None,
-               attention_dtype=None, fp8_fidelity=None, noc_split_x=None):
+               attention_dtype=None, fp8_fidelity=None, noc_split_x=None, lm_head_dtype=None, split_attention=None):
     if projection_cores is None and model == "8b":
       value = os.environ.get("LLAMA_PROJECTION_CORES")
       projection_cores = None if value is None else int(value)
@@ -72,6 +105,15 @@ class Llama3Kernels:
     if attention_dtype not in ("bf16", "fp8"): raise ValueError("attention dtype must be bf16 or fp8")
     if dtype != "fp8" and attention_dtype == "fp8": raise ValueError("FP8 attention requires FP8 mode")
     if fp8_fidelity not in (1, 2): raise ValueError("FP8 fidelity must be 1 or 2")
+    lm_head_dtype = lm_head_dtype or os.environ.get("LLAMA_LM_HEAD_DTYPE", "bf16")
+    if lm_head_dtype not in ("bf16", "fp8"):
+      raise ValueError("LM head dtype must be bf16 or fp8")
+    if lm_head_dtype == "fp8" and (model != "8b" or dtype != "fp8"):
+      raise ValueError("FP8 LM head requires 8B FP8 mode")
+    self.WEIGHT_PAGE_TILES = int(os.environ.get("LLAMA_FP8_PAGE_TILES", "2"))
+    if self.WEIGHT_PAGE_TILES not in (1, 2, 4):
+      raise ValueError("FP8 page tiles must be 1, 2, or 4")
+    self.LM_HEAD_DTYPE = DType.FP8 if lm_head_dtype == "fp8" else DType.BF16
     self.model, self.dtype = model, dtype
     self.EMBED_DIM = 2048 if model == "1b" else 4096
     self.EMBEDDING_TILES = self.EMBED_DIM // 1024
@@ -94,6 +136,9 @@ class Llama3Kernels:
     self.WEIGHT_DTYPE = DType.FP8 if dtype == "fp8" else DType.BF16
     self.ATTENTION_DTYPE = DType.FP8 if attention_dtype == "fp8" else DType.BF16
     self.FP8_FIDELITY = fp8_fidelity
+    self.SPLIT_ATTENTION = (os.environ.get("LLAMA_SPLIT_ATTENTION", "0") == "1") if split_attention is None else bool(split_attention)
+    if self.SPLIT_ATTENTION and (model != "8b" or attention_dtype != "bf16"):
+      raise ValueError("split attention requires 8B with BF16 attention")
     self.attention_cores = 16 if model == "1b" else 32
     self.checkpoint = "weights/llama3-1b" if model == "1b" else f"weights/llama3-8b-{dtype}"
 
@@ -386,6 +431,8 @@ class Llama3Kernels:
     for (weight, _, local_rows), row_start, rotation in zip(
       projections, row_starts, rotations,
     ):
+      page_tiles = getattr(weight, "page_tiles", 1)
+      row_pages = input_tiles // page_tiles
       if rotation is None:
         for local_row in p.brisc.range(local_rows):
           source_row = local_row
@@ -408,7 +455,7 @@ class Llama3Kernels:
         # Unroll one period so every request's bank is a compile-time constant;
         # only its address within that bank advances at runtime.
         noc = p.brisc.noc_at(read_noc)
-        period = weight.banks // math.gcd(input_tiles, weight.banks)
+        period = weight.banks // math.gcd(row_pages, weight.banks)
         with p.brisc.scope():
           base = p.brisc.reg()
           p.brisc.read(base, p.param_addr(weight))
@@ -417,7 +464,7 @@ class Llama3Kernels:
             with p.brisc.scope():
               start, divisor = p.brisc.reg(2, exclude=base)
               p.brisc.read(start, p.param_addr(row_start))
-              p.brisc.li(divisor, input_tiles)
+              p.brisc.li(divisor, row_pages)
               p.brisc.mul(start, start, divisor)
               p.brisc.li(divisor, weight.banks)
               p.brisc.divu(start, start, divisor)
@@ -427,15 +474,15 @@ class Llama3Kernels:
           def read_row(row, group):
             CB.reserve_back(p.brisc, weight_cb, input_tiles)
             with noc.transaction() as transaction:
-              for index in range(input_tiles):
-                offset = rotation + row * input_tiles + index
+              for index in range(row_pages):
+                offset = rotation + row * row_pages + index
                 with p.brisc.scope():
                   address, target, delta = p.brisc.reg(
                     3, exclude=(base, group) if isinstance(group, R) else base,
                   )
                   if isinstance(group, R):
                     p.brisc.li(
-                      delta, period * input_tiles // weight.banks * weight.tile_size,
+                      delta, period * row_pages // weight.banks * weight.tile_size,
                     )
                     p.brisc.mul(address, group, delta)
                     p.brisc.add(address, address, base)
@@ -481,7 +528,7 @@ class Llama3Kernels:
     for tile in tiles: p.sfpu.map(SfpuProgram((), tuple(words)), tile=tile)
 
 
-  def _projection_dot_math(self, p, projections, input_tiles):
+  def _projection_dot_math(self, p, projections, input_tiles, *, row_scales_l1=None, row_start=None):
     # The FPU and SFPU operate on the same Dst tile throughout this kernel.
     # Keep the multiply MOP resident; issue SFPU replay directly so the two
     # engines do not rewrite their shared MOP configuration for every tile.
@@ -504,7 +551,7 @@ class Llama3Kernels:
     assert replay_start is not None
     finalize = self._dot_finalize()
     for projection_index, (_, _, local_rows) in enumerate(projections):
-      for _ in p.trisc1.range(local_rows):
+      for local_row in p.trisc1.range(local_rows):
         fpu._wait_for_dst()
         for word in self._sfpu_float_words(LReg.L7, 0.0): sfpu._issue(word)
         for input_tile in range(input_tiles):
@@ -524,7 +571,22 @@ class Llama3Kernels:
           stall(p.trisc1, Stall.SYNC, Wait.MATH | Wait.SFPU)
         for word in finalize.words[:-2]: sfpu._issue(word)
         if projections[0][0].dtype.is_fp8:
-          self._load_scale(p, f"output_scale_{projection_index}")
+          if row_scales_l1 is None:
+            self._load_scale(p, f"output_scale_{projection_index}")
+          else:
+            stall(p.trisc1, Stall.SYNC, Wait.MATH | Wait.SFPU)
+            with p.trisc1.scope():
+              address, offset, word = p.trisc1.reg(3)
+              if row_start is None: p.trisc1.li(offset, 0)
+              else: p.trisc1.read(offset, p.param_addr(row_start))
+              p.trisc1.andi(offset, offset, 511)
+              p.trisc1.add(offset, offset, local_row)
+              p.trisc1.slli(offset, offset, 3)
+              p.trisc1.li(address, row_scales_l1)
+              p.trisc1.add(address, address, offset)
+              for part in range(2):
+                p.trisc1.lw(word, address, part * 4)
+                p.trisc1.write(TensixMMIO.INSTRN_BUF_BASE, word)
           words = []
           self._sfpu_mul(words, LReg.L0, LReg.L6, LReg.L0)
           for word in words: sfpu._issue(word)
@@ -534,7 +596,7 @@ class Llama3Kernels:
 
   def _decode_projections_program(self,
     x, projections, read_noc, rotations, *, swiglu_output=None,
-    residual=None, dense_output=None, norm_weight=None, eth_output=None,
+    residual=None, dense_output=None, norm_weight=None, eth_output=None, row_scales=None,
   ):
     """GEMV with optional local RMSNorm and SwiGLU/residual epilogues."""
     dense_output = swiglu_output if swiglu_output is not None else dense_output
@@ -570,11 +632,13 @@ class Llama3Kernels:
         if dense_output is not None else ()),
       *((residual,) if residual is not None else ()),
       *((norm_weight,) if norm_weight is not None else ()),
+      *((row_scales,) if row_scales is not None else ()),
       *((Const("collective_base", 0), Const("collective_offset", 1),
          Const("tp_worker_index", tuple(range(len(projections[0][0].cores)))))
         if eth_output is not None else ()), fp32_dst=True,
     )
-    weight_cb = p.cb(projections[0][0].dtype, depth=2 * input_tiles)
+    weight_dtype = projections[0][0].dtype
+    weight_cb = p.cb(weight_dtype, depth=(16 if weight_dtype.is_fp8 else 2) * input_tiles)
     scalar_dtype = projections[0][1].dtype
     scalar_cb = p.cb(scalar_dtype, depth=2)
     operand_dtype = self.ACTIVATION_DTYPE if weight_cb.dtype.is_fp8 else DType.BF16
@@ -587,22 +651,20 @@ class Llama3Kernels:
     )
     compact_l1 = tuple(cb.addr for cb in compact_cbs)
 
+    input_reads, input_publications = [], []
     if norm_weight is None and convert_input:
-      incoming = p.cb(token.dtype, depth=2)
-      for tile in range(input_tiles):
-        p.brisc.noc_at(read_noc).read_tiles_into_cb(token, (tile,), incoming)
+      incoming = p.cb(token.dtype, depth=input_tiles)
+      CB.reserve_back(p.brisc, incoming, input_tiles)
+      input_reads.extend((token, tile, incoming.addr + tile * token.tile_size) for tile in range(input_tiles))
+      input_publications.append((incoming, input_tiles))
       for _ in p.trisc0.range(input_tiles): p.unpack.move(incoming, UnpackTarget.SRCA)
       for _ in p.trisc1.range(input_tiles):
         p.fpu.copy_a_tiles(dst_tiles=(0,))
         self._scale_input(p, (0,))
         p.sfpu.map(self._round_fp8_program(), tile=0).publish()
       for _ in p.trisc2.range(input_tiles): p.pack.move(normalized_cb, tile=0)
-      CB.wait_front(p.brisc, normalized_cb, input_tiles)
     elif norm_weight is None:
-      p.brisc.noc_at(read_noc).read_tiles(token, tuple(
-        (tile, token_l1 + tile * token.tile_size)
-        for tile in range(input_tiles)
-      ))
+      input_reads.extend((token, tile, token_l1 + tile * token.tile_size) for tile in range(input_tiles))
     else:
       if input_dim != self.EMBED_DIM: raise ValueError(f"fused RMSNorm requires a {self.EMBED_DIM}-element token")
       if not operand_dtype.is_fp8 and hybrid_rmsnorm_enabled():
@@ -610,23 +672,51 @@ class Llama3Kernels:
                      tiles=self.EMBEDDING_TILES, finalize=self._rms_finalize_scale(), read_noc=read_noc)
       else:
         operands = p.cb(DType.BF16, depth=2 * self.EMBEDDING_TILES)
-        for buffer in (token, norm_weight):
-          p.brisc.noc_at(read_noc).read_tiles_into_cb(buffer, tuple(range(self.EMBEDDING_TILES)), operands)
+        CB.reserve_back(p.brisc, operands, 2 * self.EMBEDDING_TILES)
+        for index, buffer in enumerate((token, norm_weight)):
+          input_reads.extend((buffer, tile, operands.addr + (index * self.EMBEDDING_TILES + tile) * operands.tile_size)
+                             for tile in range(self.EMBEDDING_TILES))
+        input_publications.append((operands, 2 * self.EMBEDDING_TILES))
         for _ in range(2 * self.EMBEDDING_TILES): p.unpack.move(operands, UnpackTarget.SRCA)
         self._rms_setup_apply_macro(p.sfpu)
         p.fpu.copy_a_tiles(dst_tiles=range(2 * self.EMBEDDING_TILES))
         self._rmsnorm_one_token(p.sfpu, fp8=operand_dtype.is_fp8,
                            scale=(lambda: self._scale_input(p, range(self.EMBEDDING_TILES))) if operand_dtype.is_fp8 else None)
         p.pack.move_tiles(normalized_cb, tiles=tuple(range(self.EMBEDDING_TILES)))
-      # Keep the rounded BF16 token in local L1 for all projection rows.
-      CB.wait_front(p.brisc, normalized_cb, self.EMBEDDING_TILES)
     if residual is not None:
       residual_l1 = p.l1(residual.tiles * residual.tile_size, alignment=16)
-      p.brisc.noc_at(read_noc).read_tiles(residual, tuple(
-        (tile, residual_l1 + tile * residual.tile_size) for tile in range(residual.tiles)
-      ))
+      input_reads.extend((residual, tile, residual_l1 + tile * residual.tile_size) for tile in range(residual.tiles))
+    # Token, gamma, and residual reads are independent. Publish the input
+    # CBs after a single completion barrier, then stream weights immediately.
+    if input_reads:
+      with p.brisc.noc_at(read_noc).transaction() as transaction:
+        for buffer, tile, target in input_reads:
+          with p.brisc.scope():
+            address, coordinate = p.brisc.noc_at(read_noc)._dram_tile(buffer, tile)
+            transaction.read(address, coordinate, target, buffer.tile_size)
+    for cb, count in input_publications: CB.push_back(p.brisc, cb, count)
+    row_scales_l1 = None
+    if row_scales is not None:
+      if len(projections) != 1: raise ValueError("row scales require one projection")
+      # Two instruction words per row; include the partial first/last pages.
+      pages = (projections[0][2] + 511 + 511) // 512
+      row_scales_l1 = p.l1(pages * row_scales.tile_size, alignment=16)
+      with p.brisc.scope():
+        first = p.brisc.reg()
+        if row_starts[0] is None: p.brisc.li(first, 0)
+        else: p.brisc.read(first, p.param_addr(row_starts[0]))
+        p.brisc.srli(first, first, 9)
+        with p.brisc.noc_at(read_noc).transaction() as transaction:
+          for index in range(pages):
+            with p.brisc.scope():
+              tile = p.brisc.reg()
+              p.brisc.addi(tile, first, index)
+              address, coordinate = p.brisc.noc_at(read_noc)._dram_tile(row_scales, tile)
+              transaction.read(address, coordinate, row_scales_l1 + index * row_scales.tile_size, row_scales.tile_size)
     self._projection_read_weights(p, projections, row_starts, rotations, read_noc, weight_cb, input_tiles)
 
+    # The unpacker needs the converted token; the DRAM reader can run ahead.
+    if normalized_cb is not None: CB.wait_front(p.trisc0, normalized_cb, input_tiles)
     p.unpack.prepare_l1_pair_formats(weight_cb.dtype, operand_dtype)
     for _, _, local_rows in projections:
       for _ in p.trisc0.range(local_rows):
@@ -636,7 +726,7 @@ class Llama3Kernels:
             configure_format=False, source_b_dtype=operand_dtype,
           )
 
-    self._projection_dot_math(p, projections, input_tiles)
+    self._projection_dot_math(p, projections, input_tiles, row_scales_l1=row_scales_l1, row_start=row_starts[0])
 
     p.pack._configure(scalar_cb, True, True)
     for _, _, local_rows in projections:
@@ -710,7 +800,7 @@ class Llama3Kernels:
 
   def _decode_fused_projections(self,
     x, projections, *, swiglu_output=None, residual=None,
-    dense_output=None, norm_weight=None, eth_output=None,
+    dense_output=None, norm_weight=None, eth_output=None, row_scales=None,
   ):
     """Specialize row counts, bank rotations, and read NoC for each core."""
     weights = tuple(weight for weight, _ in projections)
@@ -721,7 +811,7 @@ class Llama3Kernels:
     keys = tuple(
       (tuple(weight.item_counts[index] for weight in weights),
        int(core[0] >= self.PROJECTION_NOC_SPLIT_X),
-       tuple(((weight.item_starts[index] * weight.tiles_per_item)
+       tuple(((weight.item_starts[index] * (weight.tiles_per_item // getattr(weight, "page_tiles", 1)))
               if weight.global_address else weight.tile_starts[index]) % weight.banks
              if weight.banks == 8 else None for weight in weights))
       for index, core in enumerate(weights[0].cores)
@@ -731,7 +821,7 @@ class Llama3Kernels:
         x, tuple((weight, output, count)
                  for (weight, output), count in zip(projections, key[0])),
         key[1], key[2], swiglu_output=swiglu_output,
-        residual=residual, dense_output=dense_output, norm_weight=norm_weight, eth_output=eth_output,
+        residual=residual, dense_output=dense_output, norm_weight=norm_weight, eth_output=eth_output, row_scales=row_scales,
       ),
       weights[0].cores, keys,
     )
@@ -755,7 +845,7 @@ class Llama3Kernels:
   def decode_argmax(self,
     logits: Buffer, token_history: Buffer, host_output: int,
   ) -> Program:
-    """Reduce logits, publish the winner, and append it to token history."""
+    """SFPU-scan logits, reduce 32 candidates/core, and publish the winner."""
     local_counts = self._token_counts(self.VOCAB_SIZE, len(logits.cores))
     local_starts, cursor = [], 0
     for count in local_counts:
@@ -769,10 +859,13 @@ class Llama3Kernels:
     host_address = Const("argmax_host_address", host_output)
     p = Program(
       logits.cores, logits, token_history, host_address,
-      starts, counts, indices, write_pos, write_token,
+      starts, counts, indices, write_pos, write_token, fp32_dst=True,
     )
-    logits_l1 = p.l1(logits.tiles_per_item * logits.tile_size, alignment=16)
-    history_l1 = p.l1(token_history.tile_size, alignment=16)
+    incoming = p.cb(DType.BF16, depth=logits.tiles_per_item)
+    logits_l1 = incoming.addr
+    candidates = p.cb(DType.F32, depth=1)
+    # Keep the full-page NoC transfer cache-line aligned.
+    history_l1 = p.l1(token_history.tile_size, alignment=64)
     local = p.l1(16, alignment=16)
     runtime_l1 = p.l1(32, alignment=16)
     partials = p.l1(len(logits.cores) * 16, alignment=16)
@@ -783,6 +876,7 @@ class Llama3Kernels:
       ),
     )
 
+    CB.reserve_back(p.brisc, incoming, logits.tiles_per_item)
     p.brisc.noc.read_tiles(logits, tuple(
       (tile, logits_l1 + tile * logits.tile_size)
       for tile in range(logits.tiles_per_item)
@@ -792,31 +886,57 @@ class Llama3Kernels:
       p.brisc.read(count, p.param_addr(counts))
       p.brisc.read(start, p.param_addr(starts))
       p.brisc.read(core_index, p.param_addr(indices))
-      best_key, best_id, value, key, token, mask = p.brisc.reg(6)
-      p.brisc.li(best_key, 0)
-      p.brisc.li(best_id, 0)
-      p.brisc.li(mask, 0x8000)
-      for logical in p.brisc.range(count):
-        l1.load(p.brisc, logits_l1, logical, value, DType.BF16)
+      # Projection padding is unspecified (usually zero); exclude it even when
+      # every valid logit is negative. Fill contiguous physical runs in L1.
+      for valid in sorted(set(local_counts)):
+        done = p.brisc._new_label("argmax_padding_done")
         with p.brisc.scope():
-          sign = p.brisc.reg(exclude=(value, key, mask))
-          positive = p.brisc._new_label("argmax_positive")
-          keyed = p.brisc._new_label("argmax_keyed")
-          p.brisc.and_(sign, value, mask)
-          p.brisc.beq(sign, R.ZERO, positive)
-          p.brisc.xori(key, value, -1)
-          p.brisc.slli(key, key, 16)
-          p.brisc.srli(key, key, 16)
-          p.brisc.j(keyed)
-          p.brisc.label(positive)
-          p.brisc.xor(key, value, mask)
-          p.brisc.label(keyed)
+          size, address, value = p.brisc.reg(3)
+          p.brisc.li(size, valid)
+          p.brisc.bne(count, size, done)
+          physical = sorted((i & ~1023) + (i & 512) + ((i & 16) << 4)
+                            + ((i & 480) >> 1) + (i & 15)
+                            for i in range(valid, logits.tiles_per_item * 1024))
+          runs = []
+          for index in physical:
+            if runs and runs[-1][1] == index: runs[-1][1] += 1
+            else: runs.append([index, index + 1])
+          for first, end in runs:
+            p.brisc.li(value, 0xff80ff80)
+            if first & 1:
+              p.brisc.write(logits_l1 + first * 2, value, bytes=2)
+              first += 1
+            p.brisc.li(address, logits_l1 + first * 2)
+            for _ in p.brisc.range((end - first) // 2):
+              p.brisc.sw(value, address)
+              p.brisc.addi(address, address, 4)
+            if end & 1: p.brisc.write(logits_l1 + (end - 1) * 2, value, bytes=2)
+        p.brisc.label(done)
+      p.brisc.fence()
+      CB.push_back(p.brisc, incoming, logits.tiles_per_item)
+      CB.wait_front(p.brisc, candidates)
+      best_key, best_id, key, token, address, physical = p.brisc.reg(6)
+      p.brisc.li(best_key, 0)
+      p.brisc.li(best_id, 0x7fffffff)
+      CB.get_read_ptr(p.brisc, candidates, address)
+      for _ in p.brisc.range(32):
+        p.brisc.lw(key, address)
+        p.brisc.srli(key, key, 15)
+        p.brisc.lw(physical, address, 4)
+        physical_to_logical(p.brisc, physical, token, tilized=True)
+        p.brisc.addi(address, address, 8)
         skip = p.brisc._new_label("argmax_skip")
-        p.brisc.bgeu(best_key, key, skip)
+        replace = p.brisc._new_label("argmax_replace")
+        p.brisc.bgeu(token, count, skip)
+        p.brisc.add(token, start, token)
+        p.brisc.bltu(best_key, key, replace)
+        p.brisc.bne(best_key, key, skip)
+        p.brisc.bgeu(token, best_id, skip)
+        p.brisc.label(replace)
         p.brisc.mv(best_key, key)
-        p.brisc.add(token, start, logical)
         p.brisc.mv(best_id, token)
         p.brisc.label(skip)
+      CB.pop_front(p.brisc, candidates)
 
       p.brisc.write(local, best_key)
       p.brisc.write(local + 4, best_id)
@@ -920,6 +1040,14 @@ class Llama3Kernels:
             runtime_l1, TensixL1.RUNTIME_PARAM_BASE, start, end, 24,
           )
       p.brisc.label(reducer_done)
+    CB.wait_front(p.trisc0, incoming, logits.tiles_per_item)
+    load_bf16(p, logits_l1, logits.tiles_per_item)
+    CB.pop_front(p.trisc0, incoming, logits.tiles_per_item)
+    scan_bf16(p.trisc1, logits.tiles_per_item)
+    p.trisc1.emit(TT.TTSFPSTORE(0, 4, 0, 0))
+    p.trisc1.emit(TT.TTSFPSTORE(4, 4, 0, 2))
+    p.sfpu.publish()
+    p.pack.move(candidates, tile=0)
     return p
 
 
@@ -1135,43 +1263,44 @@ class Llama3Kernels:
           self._dense_offset(k, output, feature, dst)
           self._add_constant(k, dst, dense)
           k.write(dst, value, bytes=size)
-      with k.scope():
-        feature, end = k.reg(2, exclude=start)
-        k.mv(feature, start)
-        k.addi(end, start, count)
-        loop = k._new_label("dense_scatter")
-        k.label(loop)
+      with noc.transaction() as transaction:
         with k.scope():
-          tile, offset, length, limit, src, dst = k.reg(6, exclude=(feature, end))
-          k.srli(tile, feature, 10)
-          if eth_output is None:
-            address, coordinate = noc._dram_tile(output, tile)
-          else:
-            address = k.reg(exclude=(feature, end))
-            k.slli(address, tile, output.tile_size.bit_length() - 1)
-            self._add_constant(k, address, eth_output[2])
-            coordinate = noc.coordinate(*eth_output[:2])
-          self._dense_offset(k, output, feature, offset)
-          k.li(src, dense)
-          k.add(src, src, offset)
-          if output.tile_size <= 2048:
-            k.andi(offset, offset, output.tile_size - 1)
-          else:
-            k.slli(offset, offset, 20)
-            k.srli(offset, offset, 20)
-          k.add(dst, address, offset)
-          k.andi(length, feature, 15)
-          k.li(limit, 16)
-          k.sub(length, limit, length)
-          k.sub(limit, end, feature)
-          enough = k._new_label("dense_chunk")
-          k.bgeu(limit, length, enough)
-          k.mv(length, limit)
-          k.label(enough)
-          k.add(feature, feature, length)
-          k.slli(length, length, shift)
-          noc.write(src, dst, coordinate, length, posted=False)
-        k.bltu(feature, end, loop)
+          feature, end = k.reg(2, exclude=start)
+          k.mv(feature, start)
+          k.addi(end, start, count)
+          loop = k._new_label("dense_scatter")
+          k.label(loop)
+          with k.scope():
+            tile, offset, length, limit, src, dst = k.reg(6, exclude=(feature, end))
+            k.srli(tile, feature, 10)
+            if eth_output is None:
+              address, coordinate = noc._dram_tile(output, tile)
+            else:
+              address = k.reg(exclude=(feature, end))
+              k.slli(address, tile, output.tile_size.bit_length() - 1)
+              self._add_constant(k, address, eth_output[2])
+              coordinate = noc.coordinate(*eth_output[:2])
+            self._dense_offset(k, output, feature, offset)
+            k.li(src, dense)
+            k.add(src, src, offset)
+            if output.tile_size <= 2048:
+              k.andi(offset, offset, output.tile_size - 1)
+            else:
+              k.slli(offset, offset, 20)
+              k.srli(offset, offset, 20)
+            k.add(dst, address, offset)
+            k.andi(length, feature, 15)
+            k.li(limit, 16)
+            k.sub(length, limit, length)
+            k.sub(limit, end, feature)
+            enough = k._new_label("dense_chunk")
+            k.bgeu(limit, length, enough)
+            k.mv(length, limit)
+            k.label(enough)
+            k.add(feature, feature, length)
+            k.slli(length, length, shift)
+            transaction.write(src, dst, coordinate, length, posted=False)
+          k.bltu(feature, end, loop)
     CB.pop_front(k, cb)
     if eth_output is not None:
       flag = p.l1(16, alignment=16)
@@ -1533,13 +1662,13 @@ class Llama3Kernels:
         k.andi(bottom, position, 16)
         k.slli(bottom, bottom, 5 + shift)
         k.add(row, row, bottom)
-      for half in range(self.KV_CACHE_FEATURE_TILES):
-        with k.scope():
-          tile = k.reg(exclude=(block, row))
-          k.addi(tile, block, half)
-          for cache, source in ((key_cache, k_l1), (value_cache, v_l1)):
-            address, coordinate = k.noc._dram_tile(cache, tile)
-            with k.noc.transaction() as transaction:
+      with k.noc.transaction() as transaction:
+        for half in range(self.KV_CACHE_FEATURE_TILES):
+          with k.scope():
+            tile = k.reg(exclude=(block, row))
+            k.addi(tile, block, half)
+            for cache, source in ((key_cache, k_l1), (value_cache, v_l1)):
+              address, coordinate = k.noc._dram_tile(cache, tile)
               for face in range(2):
                 with k.scope():
                   target = k.reg(exclude=(address, row))
@@ -1846,8 +1975,11 @@ class Llama3Kernels:
           p.brisc.add(row, row, upper)
       else:
         p.brisc.slli(row, row, 1)
-      for table, target in ((cos, cos_l1), (sin, sin_l1)):
-        p.brisc.noc.read_tile(table, tile, target)
+      with p.brisc.noc.transaction() as transaction:
+        for table, target in ((cos, cos_l1), (sin, sin_l1)):
+          with p.brisc.scope():
+            address, coordinate = p.brisc.noc._dram_tile(table, tile)
+            transaction.read(address, coordinate, target, table.tile_size)
       for group in range(group_size + 1):
         is_query = group < group_size
         first = ((head * group_size + group) if is_query else head // (4 // group_size)) * self.HEAD_DIM
@@ -1927,20 +2059,29 @@ class Llama3Kernels:
 
   # Streaming grouped-query attention
 
-  def gqa_attention_fused(self, q, key_cache, value_cache, context, *, rope_inputs=None, attention_cores=None):
+  def gqa_attention_fused(self, q, key_cache, value_cache, context, *, rope_inputs=None, attention_cores=None, partial_output=None):
     attention_cores = self.attention_cores if attention_cores is None else attention_cores
     if attention_cores not in (8, 16, 32): raise ValueError("attention cores must be 8, 16, or 32")
-    group_size = self.Q_HEADS // attention_cores
+    if partial_output is not None:
+      if any(buffer.dtype is not DType.BF16 for buffer in (q, key_cache, value_cache, context)):
+        raise ValueError("split attention requires BF16 queries, caches, and context")
+      if (partial_output.dtype is not DType.F32 or partial_output.global_address or partial_output.axis != 0 or
+          partial_output.shape != (32, self.KV_CACHE_FEATURE_TILES + 2, 1024) or
+          partial_output.cores != P100_WORKER_CORES[:32]):
+        raise ValueError("split attention requires one FP32 partial state on each of 32 workers")
+      attention_cores = 32
+    group_size = 4 if partial_output is not None else self.Q_HEADS // attention_cores
     inputs = None if rope_inputs is None else tuple(self._global_tile_view(b, f"attention_{b.name}") for b in rope_inputs[:3]) + tuple(rope_inputs[3:])
     return specialize(
-      lambda head: self._gqa_attention_program(q, key_cache, value_cache, context, rope_inputs=inputs, head_index=head, group_size=group_size),
+      lambda head: self._gqa_attention_program(q, key_cache, value_cache, context, rope_inputs=inputs, head_index=head if partial_output is None else head // 4, group_size=group_size,
+        split_index=None if partial_output is None else head % 4, partial_output=partial_output),
       P100_WORKER_CORES[:attention_cores], tuple(range(attention_cores)),
     )
 
 
   def _gqa_attention_program(self,
     q: Buffer, key_cache: Buffer, value_cache: Buffer, context: Buffer,
-    *, rope_inputs=None, head_index=None, group_size=4,
+    *, rope_inputs=None, head_index=None, group_size=4, split_index=None, partial_output=None,
   ) -> Program:
     """Fused streaming decode GQA: scaled QK, online softmax, and PV."""
     # These chunks span both column faces as well as the live row pairs.
@@ -1949,10 +2090,12 @@ class Llama3Kernels:
     group_shift = group_size.bit_length() - 1
     kv_blocks = Const("kv_blocks", 1)
     valid_columns = Const("valid_columns", 1)
-    kv_head = Const("kv_head", tuple(range(self.Q_HEADS // group_size)))
+    kv_head = Const("kv_head", tuple(head // 4 for head in range(32)) if partial_output is not None
+                    else tuple(range(self.Q_HEADS // group_size)))
     start_pos = Const("start_pos", 0)
     p = Program(
-      P100_WORKER_CORES[:self.Q_HEADS // group_size], q, key_cache, value_cache, context,
+      P100_WORKER_CORES[:32 if partial_output is not None else self.Q_HEADS // group_size], q, key_cache, value_cache, context,
+      *((partial_output,) if partial_output is not None else ()),
       kv_blocks, valid_columns,
       *((kv_head,) if rope_inputs is None else (*rope_inputs, start_pos)), fp32_dst=True,
     )
@@ -1964,7 +2107,8 @@ class Llama3Kernels:
     probability_cb = p.cb(key_cache.dtype, depth=self.KV_CACHE_FEATURE_TILES)
     mask_cb = p.cb(DType.F32, depth=1)
     zero_cb = p.cb(DType.F32, depth=1)
-    context_cb = p.cb(context.dtype, depth=self.KV_CACHE_FEATURE_TILES)
+    context_cb = p.cb(context.dtype if partial_output is None else DType.F32,
+                      depth=self.KV_CACHE_FEATURE_TILES + (2 if partial_output is not None else 0))
     if rope_inputs is not None:
       self._prepare_attention_rope(p, rope_inputs, key_cache, value_cache, start_pos, head_index, query_cb, group_size)
     else:
@@ -1979,11 +2123,28 @@ class Llama3Kernels:
               query_cb.addr + feature * query_cb.tile_size + self._bf16_tile_byte_offset(group_row * 32 + face * 16),
               8, source_offset=self._bf16_tile_byte_offset(feature * 32 + face * 16))
 
+    def split_count(k, count, last=None):
+      if split_index is None: return
+      if last is not None:
+        with k.scope():
+          owner = k.reg()
+          k.andi(owner, last, 3)
+          k.srli(last, last, 2)
+          masked = k._new_label("split_has_tail")
+          k.li(count, split_index)
+          k.beq(owner, count, masked)
+          k.li(last, -1)
+          k.label(masked)
+          k.read(count, p.param_addr(kv_blocks))
+      k.addi(count, count, 3 - split_index)
+      k.srli(count, count, 2)
+
     with p.brisc.scope():
       head, block_count, tail = p.brisc.reg(3)
       if head_index is None: p.brisc.read(head, p.param_addr(kv_head))
       else: p.brisc.li(head, head_index)
       p.brisc.read(block_count, p.param_addr(kv_blocks))
+      split_count(p.brisc, block_count)
       p.brisc.read(tail, p.param_addr(valid_columns))
 
       CB.reserve_back(p.brisc, zero_cb)
@@ -2027,19 +2188,35 @@ class Llama3Kernels:
           first, block_offset = p.brisc.reg(2, exclude=(head, block))
           p.brisc.srli(first, head, 2 - group_shift)
           p.brisc.slli(first, first, self.KV_CACHE_TILES_PER_HEAD.bit_length() - 1)
-          p.brisc.slli(block_offset, block, self.KV_CACHE_FEATURE_TILES.bit_length() - 1)
+          if split_index is None:
+            p.brisc.slli(block_offset, block, self.KV_CACHE_FEATURE_TILES.bit_length() - 1)
+          else:
+            p.brisc.slli(block_offset, block, 2)
+            p.brisc.addi(block_offset, block_offset, split_index)
+            p.brisc.slli(block_offset, block_offset, self.KV_CACHE_FEATURE_TILES.bit_length() - 1)
           p.brisc.add(first, first, block_offset)
-          for cache, cb in ((key_cache, key_cb), (value_cache, value_cb)):
-            for feature in range(self.KV_CACHE_FEATURE_TILES):
-              with p.brisc.scope():
-                tile = p.brisc.reg(exclude=first)
-                p.brisc.addi(tile, first, feature)
-                p.brisc.noc.read_tiles_into_cb(cache, (tile,), cb)
+          with p.brisc.noc.transaction() as transaction:
+            for cache, cb in ((key_cache, key_cb), (value_cache, value_cb)):
+              CB.reserve_back(p.brisc, cb, self.KV_CACHE_FEATURE_TILES)
+              for feature in range(self.KV_CACHE_FEATURE_TILES):
+                with p.brisc.scope():
+                  tile = p.brisc.reg(exclude=first)
+                  p.brisc.addi(tile, first, feature)
+                  source_address, source_coordinate = p.brisc.noc._dram_tile(cache, tile)
+                  target = p.brisc.reg(exclude=(source_address, source_coordinate, first))
+                  CB.get_write_ptr(p.brisc, cb, target)
+                  if feature:
+                    offset = p.brisc.reg(exclude=(source_address, source_coordinate, target, first))
+                    p.brisc.li(offset, feature * cb.tile_size)
+                    p.brisc.add(target, target, offset)
+                  transaction.read(source_address, source_coordinate, target, cb.tile_size)
+          for cb in (key_cb, value_cb): CB.push_back(p.brisc, cb, self.KV_CACHE_FEATURE_TILES)
 
     with p.trisc0.scope():
       block_count, last_block = p.trisc0.reg(2)
       p.trisc0.read(block_count, p.param_addr(kv_blocks))
       p.trisc0.addi(last_block, block_count, -1)
+      split_count(p.trisc0, block_count, last_block)
       for block in p.trisc0.range(block_count):
         for feature in range(self.KV_CACHE_FEATURE_TILES):
           p.unpack.move_matmul(query_cb, key_cb, right_transpose=True)
@@ -2062,6 +2239,7 @@ class Llama3Kernels:
       block_count, last_block = p.trisc1.reg(2)
       p.trisc1.read(block_count, p.param_addr(kv_blocks))
       p.trisc1.addi(last_block, block_count, -1)
+      split_count(p.trisc1, block_count, last_block)
       # Context occupies one Dst tile per feature tile, followed by m, l, alpha.
       for tile in (*range(1, self.KV_CACHE_FEATURE_TILES + 2), self.KV_CACHE_FEATURE_TILES + 3): p.sfpu.map(zero, tile=tile)
       # Keep inactive rows finite when the row mapper traverses the top half.
@@ -2096,13 +2274,14 @@ class Llama3Kernels:
           p.fpu.matmul(dst_tile=tile, accumulate=True, fidelity=self.FP8_FIDELITY if key_cache.dtype.is_fp8 else 2)
 
       self._rms_select_tile(p.sfpu, 0)
-      for output in range(64, (self.KV_CACHE_FEATURE_TILES + 1) * 64, 64):
-        for chunk in row_chunks:
-          self._gqa_issue_program(p.sfpu, self._gqa_normalize_program(
-            output_offset=output + chunk, sum_offset=(self.KV_CACHE_FEATURE_TILES + 2) * 64 + chunk,
-          ))
-      if context.dtype.is_fp8:
-        for tile in range(1, self.KV_CACHE_FEATURE_TILES + 1): p.sfpu.map(self._round_fp8_program(), tile=tile)
+      if partial_output is None:
+        for output in range(64, (self.KV_CACHE_FEATURE_TILES + 1) * 64, 64):
+          for chunk in row_chunks:
+            self._gqa_issue_program(p.sfpu, self._gqa_normalize_program(
+              output_offset=output + chunk, sum_offset=(self.KV_CACHE_FEATURE_TILES + 2) * 64 + chunk,
+            ))
+        if context.dtype.is_fp8:
+          for tile in range(1, self.KV_CACHE_FEATURE_TILES + 1): p.sfpu.map(self._round_fp8_program(), tile=tile)
       p.sfpu.publish()
 
     # Pack one P copy per feature tile while retaining the online state.
@@ -2110,21 +2289,26 @@ class Llama3Kernels:
     with p.trisc2.scope():
       block_count = p.trisc2.reg()
       p.trisc2.read(block_count, p.param_addr(kv_blocks))
+      split_count(p.trisc2, block_count)
       for _ in p.trisc2.range(block_count):
         sem_wait(p.trisc2, Sem.MATH_PACK, SemWait.STALL_ON_ZERO, Stall.TDMA)
         for _ in range(self.KV_CACHE_FEATURE_TILES):
           p.pack._move_acquired(probability_cb, 0, False)
         sem_get(p.trisc2, Sem.MATH_PACK)
-      p.pack.move_tiles(context_cb, tiles=tuple(range(1, self.KV_CACHE_FEATURE_TILES + 1)))
+      p.pack.move_tiles(context_cb, tiles=tuple(range(1, self.KV_CACHE_FEATURE_TILES + (3 if partial_output is not None else 1))))
+
+    if partial_output is not None:
+      p.ncrisc.noc.write_tiles_from_cb(context_cb, partial_output, tuple(range(self.KV_CACHE_FEATURE_TILES + 2)))
+      return p
 
     # Each specialized worker scatters its query heads into dense context.
     CB.wait_front(p.ncrisc, context_cb, self.KV_CACHE_FEATURE_TILES)
-    for group_row in range(group_size):
-      for feature in range(self.KV_CACHE_FEATURE_TILES):
-        first_element = (head_index * group_size + group_row) * self.HEAD_DIM + feature * 32
-        with p.ncrisc.scope():
-          target_address, target_coordinate = p.ncrisc.noc._dram_tile(context, first_element // 1024)
-          with p.ncrisc.noc.transaction() as transaction:
+    with p.ncrisc.noc.transaction() as transaction:
+      for group_row in range(group_size):
+        for feature in range(self.KV_CACHE_FEATURE_TILES):
+          first_element = (head_index * group_size + group_row) * self.HEAD_DIM + feature * 32
+          with p.ncrisc.scope():
+            target_address, target_coordinate = p.ncrisc.noc._dram_tile(context, first_element // 1024)
             for face in range(2):
               with p.ncrisc.scope():
                 target = p.ncrisc.reg(exclude=target_address)
@@ -2136,6 +2320,96 @@ class Llama3Kernels:
                 )
     CB.pop_front(p.ncrisc, context_cb, self.KV_CACHE_FEATURE_TILES)
     return p
+
+
+  def gqa_attention_merge(self, partials, context):
+    """Merge four FP32 (O, m, l) states per KV head with stable rescaling."""
+    source = self._global_tile_view(partials, "attention_partial_tiles")
+    features = self.KV_CACHE_FEATURE_TILES
+    state_tiles = features + 2
+
+    def build(head):
+      p = Program(P100_WORKER_CORES[:8], source, context, fp32_dst=True)
+      incoming = p.cb(DType.F32, depth=2 * state_tiles)
+      output = p.cb(context.dtype, depth=features)
+      for split in range(4):
+        order = tuple(range(state_tiles)) if split == 0 else (features, features + 1, *range(features))
+        tiles = tuple((head * 4 + split) * state_tiles + tile for tile in order)
+        p.brisc.noc.read_tiles_into_cb(source, tiles, incoming)
+        for _ in order: p.unpack.move(incoming, UnpackTarget.SRCA)
+      p.fpu.copy_a_tiles(dst_tiles=range(state_tiles))
+      maximum, total = features * 64, (features + 1) * 64
+      # Only four footprints contain live query rows. Other footprints of
+      # the maximum tile safely hold alpha and beta during each merge.
+      alpha, beta = maximum + 8, maximum + 32
+      for _ in range(3):
+        p.fpu.copy_a_tiles(dst_tiles=(features + 2, features + 3))
+        self._rms_select_tile(p.sfpu, 0)
+        words = []
+        for chunk in self.GQA_ROW_CHUNKS:
+          words.extend((
+            TT.TTSFPLOAD(LReg.L0, SfpuFormat.FP32, 7, maximum + chunk),
+            TT.TTSFPLOAD(LReg.L1, SfpuFormat.FP32, 7, (features + 2) * 64 + chunk),
+            TT.TTSFPMOV(0, LReg.L0, LReg.L2, 0),
+            TT.TTSFPMOV(0, LReg.L1, LReg.L3, 0),
+            TT.TTSFPSWAP(0, LReg.L0, LReg.L1, 1), TT.TTSFPNOP(),
+            TT.TTSFPSTORE(LReg.L0, SfpuFormat.FP32, 7, maximum + chunk),
+            TT.TTSFPMAD(LReg.L0, LReg.NEG_ONE, LReg.L2, LReg.L2, 0), TT.TTSFPNOP(),
+            TT.TTSFPMAD(LReg.L0, LReg.NEG_ONE, LReg.L3, LReg.L3, 0), TT.TTSFPNOP(),
+            TT.TTSFPSTORE(LReg.L2, SfpuFormat.FP32, 7, alpha + chunk),
+            TT.TTSFPSTORE(LReg.L3, SfpuFormat.FP32, 7, beta + chunk),
+          ))
+        for word in words: p.sfpu._issue(word)
+        stall(p.trisc1, Stall.SYNC, Wait.MATH | Wait.SFPU)
+        for chunk in self.GQA_ROW_CHUNKS:
+          for offset in (alpha, beta):
+            self._gqa_issue_program(p.sfpu, self._gqa_exp_program(value_offset=offset + chunk))
+          builder = p.sfpu.program()
+          old = builder.load(format=SfpuFormat.FP32, offset=total + chunk)
+          a = builder.load(format=SfpuFormat.FP32, offset=alpha + chunk)
+          old = builder.mul(old, a, into=old)
+          builder.free(a)
+          new = builder.load(format=SfpuFormat.FP32, offset=(features + 3) * 64 + chunk)
+          b = builder.load(format=SfpuFormat.FP32, offset=beta + chunk)
+          builder.mad(new, b, old, into=old)
+          builder.store(old, format=SfpuFormat.FP32, offset=total + chunk)
+          self._gqa_issue_program(p.sfpu, builder.finish())
+        for feature in range(features):
+          p.fpu.copy_a_tiles(dst_tiles=(features + 2,))
+          for chunk in self.GQA_ROW_CHUNKS:
+            builder = p.sfpu.program()
+            old = builder.load(format=SfpuFormat.FP32, offset=feature * 64 + chunk)
+            a = builder.load(format=SfpuFormat.FP32, offset=alpha + chunk)
+            builder.mul(old, a, into=old)
+            builder.free(a)
+            new = builder.load(format=SfpuFormat.FP32, offset=(features + 2) * 64 + chunk)
+            b = builder.load(format=SfpuFormat.FP32, offset=beta + chunk)
+            builder.mad(new, b, old, into=old)
+            builder.store(old, format=SfpuFormat.FP32, offset=feature * 64 + chunk)
+            self._gqa_issue_program(p.sfpu, builder.finish())
+      for feature in range(features):
+        for chunk in self.GQA_ROW_CHUNKS:
+          self._gqa_issue_program(p.sfpu, self._gqa_normalize_program(
+            output_offset=feature * 64 + chunk, sum_offset=total + chunk))
+      p.sfpu.publish()
+      p.pack.move_tiles(output, tiles=tuple(range(features)))
+      CB.wait_front(p.ncrisc, output, features)
+      with p.ncrisc.noc.transaction() as transaction:
+        for row in range(4):
+          for feature in range(features):
+            first = (head * 4 + row) * self.HEAD_DIM + feature * 32
+            with p.ncrisc.scope():
+              address, coordinate = p.ncrisc.noc._dram_tile(context, first // 1024)
+              for face in range(2):
+                with p.ncrisc.scope():
+                  target = p.ncrisc.reg()
+                  p.ncrisc.mv(target, address)
+                  self._add_constant(p.ncrisc, target, self._dense_byte_offset(context, first % 1024 + face * 16))
+                  transaction.write(output.addr + feature * output.tile_size + self._bf16_tile_byte_offset(row * 32 + face * 16),
+                                    target, coordinate, 32, posted=False)
+      CB.pop_front(p.ncrisc, output, features)
+      return p
+    return specialize(build, P100_WORKER_CORES[:8], tuple(range(8)))
 
 
   # Token embedding and RMSNorm
@@ -2606,6 +2880,8 @@ class Llama3Decode:
     def weight_buffer(name, dtype, shape, *, axis, cores):
       # Row ownership is metadata; storage is the checkpoint byte stream.
       storage = global_buffer(name + "_storage", dtype, shape, axis, tilized=False)
+      if dtype.is_fp8 and storage.banks == 8:
+        storage = PagedProjectionWeight.from_buffer(storage, math.gcd(self.kernels.WEIGHT_PAGE_TILES, storage.tiles_per_item))
       view = replace(storage, name=name, cores=cores)
       self._weight_upload_buffers[view] = storage
       return view
@@ -2619,12 +2895,20 @@ class Llama3Decode:
     )
     # 1B ties the LM head to embeddings; 8B stores an independent projection.
     self.lm_storage = lm_storage = self.embedding_weight if self.kernels.model == "1b" else global_buffer(
-      "e2e_lm_storage", DType.BF16, (self.kernels.VOCAB_SIZE, self.kernels.EMBED_DIM), tilized=False)
+      "e2e_lm_storage", self.kernels.LM_HEAD_DTYPE, (self.kernels.VOCAB_SIZE, self.kernels.EMBED_DIM), tilized=False)
+    if lm_storage.dtype.is_fp8 and lm_storage.banks == 8:
+      self.lm_storage = lm_storage = PagedProjectionWeight.from_buffer(lm_storage, self.kernels.WEIGHT_PAGE_TILES)
     self.lm_weight = Buffer(
       "e2e_lm_weight", lm_storage.addr, lm_storage.dtype, lm_storage.shape,
       0, cores, lm_storage.banks, global_address=True,
       tilized=False, dram_endpoints=lm_storage.dram_endpoints,
     )
+    if isinstance(lm_storage, PagedProjectionWeight):
+      self.lm_weight = PagedProjectionWeight.from_buffer(self.lm_weight, lm_storage.page_tiles)
+    self.lm_row_scales = global_buffer(
+      "e2e_lm_row_scales", DType.U32,
+      (((self.kernels.VOCAB_SIZE * 2 + 1023) // 1024 + 1) * 1024,), None, tilized=False,
+    ) if lm_storage.dtype.is_fp8 else None
     self.cos = global_buffer(
       "e2e_rope_cos", DType.BF16, (self.kernels.ROPE_CACHE_TOKENS, self.kernels.HEAD_DIM), None,
       tilized=False,
@@ -2693,6 +2977,10 @@ class Llama3Decode:
       axis=0, cores=cores,
     )
 
+    self.attention_partials = device.dram.buffer(
+      "e2e_attention_partials", DType.F32, (32, self.kernels.KV_CACHE_FEATURE_TILES + 2, 1024),
+      axis=0, cores=P100_WORKER_CORES[:32],
+    ) if self.kernels.SPLIT_ATTENTION else None
     self.layers = []
     for layer in range(self.kernels.LLAMA_LAYERS):
       prefix = f"e2e_l{layer}"
@@ -2778,11 +3066,36 @@ class Llama3Decode:
     self.profile["upload_wait_s"] = uploads.wait_s
     self.profile["upload_submit_s"] = uploads.submit_s
 
+  def _upload_fp8_lm_head(self):
+    from tools.llama_fp8 import quantize_rows
+    info = self._checkpoint.info("lm_head.weight")
+    if info.dtype != "BF16" or info.shape != self.lm_storage.shape:
+      raise ValueError("LM head quantization requires matching BF16 checkpoint weights")
+    started = time.perf_counter()
+    rows, width = info.shape
+    encoded = np.empty((rows, width), dtype=np.uint8)
+    scales = np.empty(rows, dtype=np.float32)
+    for first in range(0, rows, 1024):
+      count = min(1024, rows - first)
+      raw = bytearray(count * width * 2)
+      self._checkpoint.readinto("lm_head.weight", raw, first * width * 2)
+      values = (np.frombuffer(raw, dtype="<u2").astype(np.uint32) << 16).view(np.float32).reshape(count, width)
+      encoded[first:first + count], scales[first:first + count] = quantize_rows(values)
+    words = np.zeros(self.lm_row_scales.size // 4, dtype="<u4")
+    for row, scale in enumerate(scales):
+      words[2 * row:2 * row + 2] = self.kernels._sfpu_float_words(LReg.L6, scale)
+    self.profile["weight_prepare_s"] += time.perf_counter() - started
+    self._stage_upload(self.lm_storage, memoryview(encoded).cast("B"))
+    self._stage_upload(self.lm_row_scales, memoryview(words).cast("B"))
+
   def _stage_weights(self):
     self._upload(self.embedding_weight, "model.embed_tokens.weight")
 
     if self.lm_storage is not self.embedding_weight:
-      self._upload(self.lm_storage, "lm_head.weight")
+      if self.lm_storage.dtype.is_fp8:
+        self._upload_fp8_lm_head()
+      else:
+        self._upload(self.lm_storage, "lm_head.weight")
 
     started = time.perf_counter()
     cos_values, sin_values = self.kernels.rope_table()
@@ -2853,13 +3166,20 @@ class Llama3Decode:
         residual=self.x_b, dense_output=self.x_a,
       ),
       "lm": self.kernels._decode_fused_projections(
-        self.x_a, ((self.lm_weight, self.logits),), norm_weight=self.final_norm,
+        self.x_a, ((self.lm_weight, self.logits),), norm_weight=self.final_norm, row_scales=self.lm_row_scales,
       ),
       "argmax": self.kernels.decode_argmax(
         self.logits, self.token_history,
         self.device.cq.noc + self.device.cq.live,
       ),
     }
+    if self.attention_partials is not None:
+      self.programs["attention_split"] = self.kernels.gqa_attention_fused(
+        self.q_heads, self.layers[0]["key_cache"], self.layers[0]["value_cache"], self.context,
+        rope_inputs=(self.q_compact, self.k_compact, self.v_compact, self.cos, self.sin),
+        partial_output=self.attention_partials,
+      )
+      self.programs["attention_merge"] = self.kernels.gqa_attention_merge(self.attention_partials, self.context)
     self.o_projection_input = o_projection.param(
       f"{self.context.name}_decode_token",
     )
@@ -2872,16 +3192,21 @@ class Llama3Decode:
 
 
   def _capture_decode_trace(self):
-    self._queue("embedding")
-    for layer in range(self.kernels.LLAMA_LAYERS):
-      self._queue_layer(layer, 0)
-    self._queue("lm")
-    self._queue("argmax")
-    self.decode_launch_count = len(self.device.program_queue)
-    self.decode_trace = self.device.capture_trace((
-      "token_pos", "write_pos", "write_token", "start_pos",
-      "kv_blocks", "valid_columns",
-    ))
+    for split in range(2 if self.attention_partials is not None else 1):
+      self._queue("embedding")
+      for layer in range(self.kernels.LLAMA_LAYERS):
+        self._queue_layer(layer, 0, split_attention=bool(split))
+      self._queue("lm")
+      self._queue("argmax")
+      launch_count = len(self.device.program_queue)
+      trace = self.device.capture_trace((
+        "token_pos", "write_pos", "write_token", "start_pos", "kv_blocks", "valid_columns",
+      ))
+      if split:
+        self.split_decode_trace, self.split_decode_launch_count = trace, launch_count
+      else:
+        self.decode_trace = self.short_decode_trace = trace
+        self.decode_launch_count = self.short_decode_launch_count = launch_count
 
 
   def prefill(self, tokens, *, chunk_size=4, append=True):
@@ -2919,7 +3244,7 @@ class Llama3Decode:
     values.update({f"output_scale_{i}": inputs[0] * self.checkpoint_scales[f"{name}.weight_scale"] for i, name in enumerate(prefixes)})
     return {f"{name}_{part}": word for name, value in values.items() for part, word in enumerate(self.kernels._sfpu_float_words(LReg.L6, value))}
 
-  def _queue_layer(self, index, position):
+  def _queue_layer(self, index, position, *, split_attention=False):
     layer = self.layers[index]
     weights = layer["weights"]
     template = self.layers[0]
@@ -2933,10 +3258,11 @@ class Llama3Decode:
       (template_weights["k"], weights["k"]),
       (template_weights["v"], weights["v"]),
     ), self._projection_scales(index, ("self_attn.q_proj", "self_attn.k_proj", "self_attn.v_proj")))
-    self._queue("attention", (
+    self._queue("attention_split" if split_attention else "attention", (
       (template["key_cache"], layer["key_cache"]),
       (template["value_cache"], layer["value_cache"]),
     ), {"start_pos": position, "kv_blocks": blocks, "valid_columns": tail})
+    if split_attention: self._queue("attention_merge")
     self._queue("o", (
       (self.o_projection_input, self.context_projection_input),
       (template_weights["q"], weights["o"]),
@@ -2981,6 +3307,9 @@ class Llama3Decode:
         f"decode position must be in 0..{self.kernels.ROPE_CACHE_TOKENS - 2}",
       )
     started = time.perf_counter_ns()
+    use_split = self.attention_partials is not None and position >= 511
+    self.decode_trace = self.split_decode_trace if use_split else self.short_decode_trace
+    self.decode_launch_count = self.split_decode_launch_count if use_split else self.short_decode_launch_count
     self.decode_trace.replay({
       "token_pos": position,
       "write_pos": position + 1,
@@ -3146,6 +3475,10 @@ def main(argv=None):
   parser.add_argument('--model', choices=('1b', '8b'), default='1b')
   parser.add_argument('--dtype', choices=('bf16', 'fp8'), default='bf16',
                       help='checkpoint weight format; FP8 supports 8B only')
+  parser.add_argument('--lm-head-dtype', choices=('bf16', 'fp8'),
+                      help='8B FP8 only: optionally quantize the LM head per row (may change greedy tokens)')
+  parser.add_argument('--split-attention', action=argparse.BooleanOptionalAction, default=None,
+                      help='8B BF16 attention: split long sequences across four workers per KV head')
   parser.add_argument('--prompt', default='The capital of France is',
                       help='generate from this prompt (an empty prompt is valid)')
   parser.add_argument('--steps', type=int, help='generation cap; default runs until EOS/context limit')
@@ -3159,7 +3492,7 @@ def main(argv=None):
   parser.add_argument('--profile', action='store_true', help='print startup, upload, device, and host timing')
   args = parser.parse_args(argv)
   try:
-    kernels = Llama3Kernels(args.model, args.dtype)
+    kernels = Llama3Kernels(args.model, args.dtype, lm_head_dtype=args.lm_head_dtype, split_attention=args.split_attention)
     if args.prefill and (args.model != '8b' or args.dtype != 'bf16'):
       raise ValueError('chunked prefill supports 8B BF16 only')
     if args.steps is not None and args.steps < 1:
