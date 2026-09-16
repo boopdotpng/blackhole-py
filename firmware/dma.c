@@ -12,9 +12,70 @@ static u32 coordinate(u32 bank) {
   return mmio_read32(BOOT_COORDS + TT_FW_RISC * 32 + bank * 4);
 }
 
-/* Gather/scatter a bank's strided host pages with multiple requests in flight.
- * Each contiguous DRAM transfer batches up to 64 KiB. */
+/* Each engine owns alternating contiguous host blocks. Read the next block
+ * while scattering this one; separate transaction IDs keep read completion
+ * independent of the preceding DRAM writes. */
+static void upload_pages(u32 dram, u32 size, u32 host, u32 middle, u32 count, u32 banks) {
+  const u32 capacity = DRAM_UPLOAD_BATCH_SIZE;
+  const u32 staging = STAGING;
+  u32 limit = capacity / size;
+  u32 first = TT_FW_RISC * limit;
+  if (first >= count) return;
+  u32 batch = count - first;
+  if (batch > limit) batch = limit;
+  u32 slot = 0;
+  noc_read_start(TT_FW_RISC, 1, host + first * size, middle, PCIE_COORD, staging, batch * size);
+  for (;;) {
+    noc_wait_reads(TT_FW_RISC, 1);
+    noc_wait_writes(TT_FW_RISC, 2, 1);
+    u32 next = first + 2 * limit;
+    u32 following = next < count ? count - next : 0;
+    if (following > limit) following = limit;
+    if (following) {
+      noc_read_start(TT_FW_RISC, 1, host + next * size, middle, PCIE_COORD,
+                     staging + (slot ^ 1) * capacity, following * size);
+    }
+    u32 bank = first % banks, remote = dram + (first / banks) * size;
+    u32 local = staging + slot * capacity;
+    /* Keep invariant scatter registers programmed across the batch. Only
+     * source, destination offset and bank coordinate change for each page. */
+    volatile u32 *command = (volatile u32 *)noc_base(TT_FW_RISC);
+    while (command[16]) {}
+    command[1] = 0;
+    command[2] = noc_local_coordinate(TT_FW_RISC);
+    command[4] = 0;
+    command[6] = 2 << 10;
+    command[7] = 0x2092;
+    command[8] = size;
+    command[9] = 0;
+    command[10] = 0;
+    command[11] = 0;
+    for (u32 i = 0; i < batch; i++) {
+      noc_wait_issue(TT_FW_RISC, 0x88, size);
+      noc_wait_issue(TT_FW_RISC, 0x48, size);
+      while (command[16]) {}
+      command[0] = local;
+      command[3] = remote;
+      command[5] = coordinate(bank);
+      fence();
+      command[16] = 1;
+      fence();
+      local += size;
+      if (++bank == banks) { bank = 0; remote += size; }
+    }
+    /* SEND must be accepted before completion counters can be trusted. */
+    while (command[16]) {}
+    if (!following) break;
+    first = next;
+    batch = following;
+    slot ^= 1;
+  }
+  noc_wait_writes(TT_FW_RISC, 2, 1);
+}
+
+/* Downloads gather contiguous DRAM rows, then scatter to strided host pages. */
 static void copy_pages(u32 dram, u32 size, u32 host_base, u32 middle, u32 count, u32 banks, u32 direction) {
+  if (!direction) { upload_pages(dram, size, host_base, middle, count, banks); return; }
   for (u32 bank = TT_FW_RISC; bank < banks; bank += 2) {
     if (bank >= count) continue;
     u32 rows = (count - bank + banks - 1) / banks;
@@ -25,21 +86,12 @@ static void copy_pages(u32 dram, u32 size, u32 host_base, u32 middle, u32 count,
       u32 remote = dram + row * size;
       u32 host = host_base + (row * banks + bank) * size;
       u32 coord = coordinate(bank);
-      if (direction) {
-        noc_read(TT_FW_RISC, remote, 0, coord, STAGING, batch * size);
-        for (u32 i = 0; i < batch; i++) {
-          noc_write_start(TT_FW_RISC, 1, STAGING + i * size, host, middle, PCIE_COORD, size, 0);
-          host += stride;
-        }
-        noc_wait_writes(TT_FW_RISC, 1, 1);
-      } else {
-        for (u32 i = 0; i < batch; i++) {
-          noc_read_start(TT_FW_RISC, 1, host, middle, PCIE_COORD, STAGING + i * size, size);
-          host += stride;
-        }
-        noc_wait_reads(TT_FW_RISC, 1);
-        noc_write(TT_FW_RISC, STAGING, remote, 0, coord, batch * size, 0);
+      noc_read(TT_FW_RISC, remote, 0, coord, STAGING, batch * size);
+      for (u32 i = 0; i < batch; i++) {
+        noc_write_start(TT_FW_RISC, 1, STAGING + i * size, host, middle, PCIE_COORD, size, 0);
+        host += stride;
       }
+      noc_wait_writes(TT_FW_RISC, 1, 1);
       row += batch;
     }
   }
@@ -152,6 +204,9 @@ void firmware_boot(void) {
     if (TT_FW_RISC) {
       mmio_write32(DRAM_NCRISC_READ, read);
       fence();
+      /* Uploads own blocks; downloads own banks. Both engines must finish
+       * before a later descriptor can read or overwrite the same tensor. */
+      while ((int)(mmio_read32(DRAM_READ_PUBLISH) - read) < 0) fence();
     } else {
       while ((int)(mmio_read32(DRAM_NCRISC_READ) - read) < 0) fence();
       fence();
