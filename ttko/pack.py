@@ -1,11 +1,13 @@
+from __future__ import annotations
 from enum import IntEnum
-
 from fw.consts import TensixMMIO
 from ttko.isa import R, Tensix as TT
 from ttko import Dst, DType
 from ttko.cb import CB
 from ttko.mop import LoopTemplate, Mop
 from ttko.sync import Sem, SemWait, Stall, Wait, sem_get, sem_wait, stall, sync
+from ttko.registers import Cfg, DType, GprPack, Sem, SemWait, Stall, TensixMMIO, ThreadCfg, Wait, TriscLocalMem as TLM
+
 
 class _Cfg(IntEnum):
   ALU_FORMAT = TensixMMIO.CFG_BASE + 4; ACCUMULATION = TensixMMIO.CFG_BASE + 8
@@ -146,3 +148,120 @@ class Pack:
       self._move_acquired(output_cb, tile, False, configure=False)
     self._release_dst()
     return self
+
+
+_PACK_DISABLE_ZERO_COMPRESS = 0x1
+
+def _pack_data_format(dtype: DType, fp8: bool) -> int:
+  return _PACK_DISABLE_ZERO_COMPRESS | (dtype.value << 4) | ((1 if fp8 else dtype.value) << 8)
+
+_EXP_SECTION_SIZE = 0x00040000
+
+_THCON_SEC0_REG1_1_RESERVED = 0x00000000
+
+_PACK_COUNTERS = 0x00001000
+
+_PCK_EDGE = 0x0000FFFF
+
+_DEST_OFFSET_HI = 512
+
+_TILE_FACE_R_DIM = 16
+
+_TILE_NUM_FACES = 4
+
+_ADDR_MOD_PACK = (260, 10272, 4384)
+
+class BlockedPack:
+  """Pack configuration for fixed-register, blocked matmul kernels."""
+
+  def __init__(self, kernel, *, fp8=False):
+    self.k, self.fp8 = kernel, fp8
+
+  def _state_formats(self, k, dtype: DType):
+    k.write_repeated_bytes(TLM.TRISC2_PACK_TILE_FACE_R_DIM, _TILE_FACE_R_DIM, 8)
+    k.write_repeated_bytes(TLM.TRISC2_PACK_TILE_NUM_FACES, _TILE_NUM_FACES, 8)
+    k.write32(TLM.TRISC2_PACK_PARTIAL_FACE_SEC1, 0)
+    k.write_repeated_bytes(TLM.TRISC2_PACK_SRC_FORMAT, dtype.value, 16)
+    k.write_repeated_bytes(TLM.TRISC2_PACK_DST_FORMAT, dtype.value, 16)
+
+  def _dest_addr_dmaregs(self, k):
+    # SETDMAREG block driving the THCON dest-addr config (re-issued after MOP).
+    k.emit(TT.TTSETDMAREG(0, 0, 0, 56))
+    k.emit(TT.TTSETDMAREG(0, 32, 0, 57))
+    k.emit(TT.TTSETDMAREG(0, 512, 0, 58))
+    k.emit(TT.TTSETDMAREG(0, 2048, 0, 59))
+    k.emit(TT.TTSTALLWAIT(Stall.CFG, Wait.THCON))
+    k.emit(TT.TTWRCFG(28, 0, 12))
+    k.emit(TT.TTWRCFG(29, 0, 13))
+    k.emit(TT.TTNOP())
+    k.emit(TT.TTNOP())
+
+  def _alu_acc_rmw(self, k):
+    k.emit(TT.TTATGETM(0))
+    for inst in (
+      TT.TTRMWCIB3(Mask=0x1E, Data=0x02 if self.fp8 else 0x0A, CfgRegAddr=Cfg.ALU.addr32),
+      TT.TTRMWCIB0(Mask=0xFC, Data=0x00, CfgRegAddr=Cfg.ALU_ACC_CTRL_Zero_Flag_disabled_src.addr32),
+      TT.TTRMWCIB1(Mask=0xFF, Data=0x00, CfgRegAddr=Cfg.ALU_ACC_CTRL_Zero_Flag_disabled_src.addr32),
+      TT.TTRMWCIB2(Mask=0x3F, Data=0x00, CfgRegAddr=Cfg.ALU_ACC_CTRL_Zero_Flag_disabled_src.addr32),
+    ):
+      k.push_tensix(inst)
+    k.emit(TT.TTATRELM(0))
+
+  def _pack_cfg(self, k, dtype: DType, out_cb: int):
+    k.write32(Cfg.THCON_SEC0_REG1, _EXP_SECTION_SIZE)
+    k.write32(Cfg.THCON_SEC0_REG1_1, _pack_data_format(dtype, bool(self.fp8)))
+    k.write32(Cfg.PCK_DEST_RD_CTRL, 0)
+    for off in range(4):
+      k.write32(GprPack.DEST_OFFSET_LO + off * 4, 0)
+      k.write32(GprPack.DEST_OFFSET_HI + off * 4, _DEST_OFFSET_HI)
+    k.write32(GprPack.EXP0_SEC_SIZE_BFP, _EXP_SECTION_SIZE)
+    for reg in (Cfg.PACK_COUNTERS_SEC0, Cfg.PACK_COUNTERS_SEC1,
+                Cfg.PACK_COUNTERS_SEC2, Cfg.PACK_COUNTERS_SEC3):
+      k.write32(reg, _PACK_COUNTERS)
+    k.write32(Cfg.PCK_EDGE, _PCK_EDGE)
+    k.write32(Cfg.TILE_ROW_SET_MAPPING_0, 0)
+    # Packer tile/page size comes from TRISC local CB state (16B units).
+    k.cb_iface(k.data["cb_interface"], out_cb, out=R.T6)
+    k.lw(R.T1, R.T6, 8)
+    k.write32(GprPack.TILE_HEADER, R.T1)
+    k.write32(GprPack.TILE_HEADER_1, 0)
+    k.write32(GprPack.TILE_HEADER_2, 0)
+    k.write32(GprPack.TILE_HEADER_3, 0)
+
+  def init(self, *, dtype: DType = DType.BF16, out_cb: int, mop_cfg):
+    """Configure the packer: local format state, ALU-acc RMW, pack cfg regs and
+    tile header for ``dtype``/``out_cb``, the pack MOP template, and the dest /
+    output address setup. """
+    k = self.k
+
+    self._state_formats(k, dtype)
+    self._dest_addr_dmaregs(k)
+    self._alu_acc_rmw(k)
+    self._pack_cfg(k, dtype, out_cb)
+
+    k.emit(TT.TTSETADCXX(4, 15, 0))
+    k.setc16(ThreadCfg.ADDR_MOD_PACK_SEC0, _ADDR_MOD_PACK[0])
+    k.setc16(ThreadCfg.ADDR_MOD_PACK_SEC1, _ADDR_MOD_PACK[1])
+    k.setc16(ThreadCfg.ADDR_MOD_PACK_SEC2, _ADDR_MOD_PACK[2])
+
+    k.mop_sync(2, tmp=R.T1)
+    k.write_mop_cfg(mop_cfg, 2)
+
+    self._dest_addr_dmaregs(k)
+    k.emit(TT.TTSETADCXX(4, 15, 0))
+    k.write32(k.data["dest_offset_id"], 0)
+
+    # Output addr config setup.
+    k.emit(TT.TTSTALLWAIT(Stall.TDMA | Stall.THCON, Wait.PACK0))
+    k.emit(TT.TTSETDMAREG(0, 0, 0, 16))
+    k.emit(TT.TTSETDMAREG(0, 0, 0, 17))
+    k.emit(TT.TTSETDMAREG(0, 512, 0, 18))
+    k.emit(TT.TTSETDMAREG(0, 0, 0, 19))
+    k.emit(TT.TTSTALLWAIT(Stall.CFG, Wait.THCON))
+    k.emit(TT.TTWRCFG(4, 1, 180))
+    k.emit(TT.TTDMANOP())
+    k.emit(TT.TTDMANOP())
+
+    k.emit(TT.TTSETADCXY(4, 0, 0, 0, 0, 0xB))
+    k.emit(TT.TTSETADCZW(4, 0, 0, 0, 0, 0xF))
+    return k

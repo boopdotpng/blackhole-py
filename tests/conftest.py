@@ -55,10 +55,3 @@ def bh(request):
       )
     finally:
       device.close()
-
-
-def pytest_collection_modifyitems(config, items):
-  if config.getoption('--bh-hardware'):
-    # Model integration tests own and close their devices. Finish them before
-    # any raw test boots the session-scoped bh fixture on the same card.
-    items.sort(key=lambda item: 0 if '/tests/models/' in str(item.path) else 1)

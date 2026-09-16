@@ -2539,8 +2539,8 @@ class Llama3Decode:
     attention_cores = self.kernels.attention_cores if attention_cores is None else attention_cores
     if attention_cores not in (8, 16, 32): raise ValueError("attention cores must be 8, 16, or 32")
     self.attention_cores = attention_cores
-    from llama_checkpoint import validate_checkpoint
-    checkpoint = validate_checkpoint(safetensor_path) if self.kernels.model == "8b" else None
+    from st import Safetensor
+    checkpoint = Safetensor(safetensor_path) if self.kernels.model == "8b" else None
     self.published_fp8 = checkpoint is not None and "model.layers.0.self_attn.q_proj.input_scale" in checkpoint.tensors
     if self.kernels.WEIGHT_DTYPE.is_fp8 and not self.published_fp8:
       raise ValueError("FP8 mode requires an FP8 checkpoint with stored scales")

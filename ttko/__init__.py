@@ -12,6 +12,9 @@ class DType(IntEnum):
   def itemsize(self): return 1 if self.is_fp8 else 2 if self in (DType.BF16, DType.F16) else 4
 
   @property
+  def tile_size(self): return 1024 * self.itemsize
+
+  @property
   def hw_format(self): return int(self) & 15
 
   @property

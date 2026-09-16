@@ -1,7 +1,9 @@
+from __future__ import annotations
 from ttko.asm import Cond
 from fw.consts import TensixL1
 from ttko.isa import R
 from ttko.cb import CB
+from ttko.registers import TensixL1, BriscMailbox as BM
 
 # Every tile has two NIUs. NIU 0 drives NoC 0 and NIU 1 drives NoC 1.
 NIU0 = 0xFFB20000
@@ -483,4 +485,269 @@ class NoC:
 
   def atomic_inc(self, *args, **options):
     with self.transaction() as transaction: transaction.atomic_inc(*args, **options)
+    return self
+
+
+L1_ALIGN = 16
+class NOC:
+  REGS_START_ADDR = NIU0
+  STATUS_BASE = NIU0 + TidCounters.STATUS_OFFSET
+  CMD_BUF_OFFSET_BIT = 11
+  INSTANCE_OFFSET_BIT = 16
+  CFG_BASE = REGS_START_ADDR + 0x100
+
+  TARG_ADDR_LO = REGS_START_ADDR + 0x00
+  TARG_ADDR_MID = REGS_START_ADDR + 0x04
+  TARG_ADDR_COORDINATE = REGS_START_ADDR + 0x08
+  RET_ADDR_LO = REGS_START_ADDR + 0x0C
+  RET_ADDR_MID = REGS_START_ADDR + 0x10
+  RET_ADDR_COORDINATE = REGS_START_ADDR + 0x14
+  CTRL = REGS_START_ADDR + 0x1C
+  AT_LEN_BE = REGS_START_ADDR + 0x20
+  AT_LEN_BE_1 = REGS_START_ADDR + 0x24
+  AT_DATA = REGS_START_ADDR + 0x28
+  CMD_CTRL = REGS_START_ADDR + 0x40
+
+  CTRL_SEND_REQ = 1
+  PCIE_MID = 0x10000000
+  COORD_MASK = 0xFFFFFF
+
+  CMD_CPY = 0
+  CMD_AT = 1
+  CMD_WR = 1 << 1
+  CMD_WR_INLINE = 1 << 3
+  CMD_RESP_MARKED = 1 << 4
+  CMD_BRCST_PACKET = 1 << 5
+  CMD_VC_LINKED = 1 << 6
+  CMD_VC_STATIC = 1 << 7
+  CMD_PATH_RESERVE = 1 << 8
+  CMD_STATIC_VC_1 = 1 << 13
+  CMD_STATIC_VC_5 = 5 << 13
+
+  CMD_RD_FIELD = CMD_CPY | CMD_RESP_MARKED | CMD_VC_STATIC | CMD_STATIC_VC_1
+  CMD_WR_FIELD = CMD_CPY | CMD_WR | CMD_RESP_MARKED | CMD_VC_STATIC | CMD_STATIC_VC_1
+  CMD_WR_POSTED_FIELD = CMD_CPY | CMD_WR | CMD_VC_STATIC | CMD_STATIC_VC_1
+  CMD_WR_MCAST_UNLINK_FIELD = (
+    CMD_CPY | CMD_WR | CMD_RESP_MARKED | CMD_VC_STATIC |
+    CMD_STATIC_VC_5 | CMD_BRCST_PACKET | CMD_PATH_RESERVE
+  )
+  CMD_WR_MCAST_LINKED_FIELD = CMD_WR_MCAST_UNLINK_FIELD | CMD_VC_LINKED
+  CMD_INLINE_FIELD = CMD_WR_FIELD | CMD_WR_INLINE
+  CMD_AT_INC_FIELD = CMD_AT | CMD_RESP_MARKED | CMD_VC_STATIC | CMD_STATIC_VC_1
+
+  AT_INS_INCR_GET = 0x1
+  AT_INS_SHIFT = 12
+  AT_WRAP_SHIFT = 2
+  AT_INCR_GET = (AT_INS_INCR_GET << AT_INS_SHIFT) | (31 << AT_WRAP_SHIFT)
+
+  MAX_BURST_SIZE = NiuCommand.MAX_PACKET_BYTES
+
+  NIU_MST_ATOMIC_RESP_RECEIVED = 0x00
+  NIU_MST_WR_ACK_RECEIVED = 0x04
+  NIU_MST_RD_RESP_RECEIVED = 0x08
+  NIU_MST_NONPOSTED_WR_REQ_SENT = 0x28
+  NIU_MST_POSTED_WR_REQ_SENT = 0x2C
+
+class NocCfg:
+  NIU_CFG_0 = 0x0
+  ROUTER_CFG_0 = 0x1
+  ID_LOGICAL = 0x12
+  NODE_ID_MASK = 0x3F
+  ADDR_NODE_ID_BITS = 6
+  ADDR_COORD_SHIFT = 36
+  COORDINATE_MASK = 0xFFFFFF
+  PCIE_MASK = 0x1000000F
+  INLINE_WRITE_POSTED_FIELD = (1 << 7) | (1 << 13) | (1 << 1) | (1 << 3)
+  STREAM_REG_SPACE_SIZE = 0x1000
+  MEM_NOC_ATOMIC_RET_VAL_ADDR = 0x04
+  NCRISC_WR_CMD_BUF = 0
+  NCRISC_RD_CMD_BUF = 1
+  NCRISC_WR_REG_CMD_BUF = 2
+  NCRISC_AT_CMD_BUF = 3
+  RD_CMD_FIELD = (1 << 4) | (1 << 7) | (1 << 13)
+  NIU_MST_ATOMIC_RESP_RECEIVED_WORD = 0x0
+  NIU_MST_WR_ACK_RECEIVED_WORD = 0x1
+  NIU_MST_RD_RESP_RECEIVED_WORD = 0x2
+  NIU_MST_NONPOSTED_WR_REQ_SENT_WORD = 0xA
+  NIU_MST_POSTED_WR_REQ_SENT_WORD = 0xB
+
+class NocOps:
+  def noc_coord(self, out: R, x: int | R, y: int | R, *, tmp: R = R.T0):
+    if (isinstance(x, int) and not isinstance(x, R)) and (isinstance(y, int) and not isinstance(y, R)):
+      return self.li(out, noc_xy(x, y))
+    if (isinstance(y, int) and not isinstance(y, R)):
+      self.li(out, y)
+    else:
+      self.mv(out, y)
+    self.slli(out, out, 6)
+    if (isinstance(x, int) and not isinstance(x, R)):
+      self.li(tmp, x)
+      return self.or_(out, out, tmp)
+    return self.or_(out, out, x)
+
+  def noc_mcast_coord(self, out: R, x_start: int | R, y_start: int | R,
+                      x_end: int | R, y_end: int | R, *, tmp: R = R.T0,
+                      reverse: bool = False):
+    if reverse:
+      x_start, x_end = x_end, x_start
+      y_start, y_end = y_end, y_start
+    self.noc_coord(out, x_end, y_end, tmp=tmp)
+    if (isinstance(x_start, int) and not isinstance(x_start, R)) and (isinstance(y_start, int) and not isinstance(y_start, R)):
+      self.li(tmp, noc_xy(x_start, y_start))
+    else:
+      self.noc_coord(tmp, x_start, y_start)
+    self.slli(tmp, tmp, 12)
+    return self.or_(out, out, tmp)
+
+  def sem_addr(self, sem_l1_base: int, sem_id: int | R, *, out: R = R.T6, tmp: R = R.T0):
+    if (isinstance(sem_id, int) and not isinstance(sem_id, R)):
+      self.read32(out, sem_l1_base, tmp_addr=tmp)
+      return self.addi(out, out, sem_id * L1_ALIGN)
+    off = tmp
+    if int(off) == int(sem_id):
+      off = R.T5 if int(sem_id) != int(R.T5) and int(out) != int(R.T5) else R.T4
+    self.slli(off, sem_id, 4)
+    self.read32(out, sem_l1_base, tmp_addr=out)
+    return self.add(out, out, off)
+
+  def noc_semaphore_set(self, sem_addr: R, value: int | R, *, tmp: R = R.T0):
+    if (isinstance(value, int) and not isinstance(value, R)):
+      self.li(tmp, value)
+      value = tmp
+    self.sw(value, sem_addr, 0)
+    return self.fence()
+
+  def noc_semaphore_wait(self, sem_addr: R, value: int | R, *, actual: R = R.T0, expected: R = R.T1):
+    if (isinstance(value, int) and not isinstance(value, R)):
+      self.li(expected, value)
+      value = expected
+    loop = self._new_label("noc_sem_wait")
+    done = self._new_label("noc_sem_done")
+    self.label(loop)
+    self.fence()
+    self.lw(actual, sem_addr, 0)
+    self.beq(actual, value, done)
+    self.j(loop)
+    self.label(done)
+    return self.fence()
+
+  def local_noc0_coord(self, out: R = R.A5, *, x_addr: int = BM.MY_X, y_addr: int = BM.MY_Y):
+    self.read8(R.T0, x_addr, tmp_addr=R.T2)
+    self.read8(R.T1, y_addr, tmp_addr=R.T2)
+    self.slli(R.T1, R.T1, 6)
+    return self.or_(out, R.T0, R.T1)
+
+  def dram_tile_addr_from(self, table_base: int, noc_table_offset: int | R = 0, *, tile_bytes=2048):
+    self.mv(R.T0, R.A1)
+    self.remu(R.A1, R.T0, R.A2)
+    self.divu(R.T0, R.T0, R.A2)
+    self.slli(R.T0, R.T0, tile_bytes.bit_length() - 1)
+    self.add(R.A0, R.A0, R.T0)
+    if (isinstance(noc_table_offset, int) and not isinstance(noc_table_offset, R)):
+      self.addi(R.T1, R.A1, noc_table_offset)
+    else:
+      self.add(R.T1, R.A1, noc_table_offset)
+    self.slli(R.T1, R.T1, 1)
+    self.li(R.T2, table_base)
+    self.add(R.T2, R.T2, R.T1)
+    return self.lhu(R.A2, R.T2, 0)
+
+
+  def noc_cmd_addr(self, noc: int, buf: int, reg: int) -> int:
+    return reg + (buf << NOC.CMD_BUF_OFFSET_BIT) + (noc << NOC.INSTANCE_OFFSET_BIT)
+
+  def noc_cmd_reg(self, noc: int, buf: int, reg: int, value: int | R, *, addr: R = R.T0, tmp: R = R.T1):
+    return self.write32(self.noc_cmd_addr(noc, buf, reg), value, tmp_addr=addr, tmp_val=tmp)
+
+
+  def noc_wait_cmd_ready(self, noc: int, buf: int, *, addr: R = R.T0, val: R = R.T1):
+    self.li(addr, self.noc_cmd_addr(noc, buf, NOC.CMD_CTRL))
+    loop = self._new_label("noc_ready")
+    self.label(loop)
+    self.lw(val, addr, 0)
+    self.bne(val, R.ZERO, loop)
+    return self
+
+
+  def noc_reads_flushed(self, noc: int, target: R, *, addr: R = R.T0, val: R = R.T1):
+    self.li(addr, NOC.STATUS_BASE + NOC.NIU_MST_RD_RESP_RECEIVED + (noc << NOC.INSTANCE_OFFSET_BIT))
+    loop = self._new_label("rd_flush")
+    self.label(loop)
+    self.lw(val, addr, 0)
+    self.bltu(val, target, loop)
+    return self.fence()
+
+  def noc_nonposted_writes_flushed(self, noc: int, target: R, *, addr: R = R.T0, val: R = R.T1):
+    self.li(addr, NOC.STATUS_BASE + NOC.NIU_MST_NONPOSTED_WR_REQ_SENT + (noc << NOC.INSTANCE_OFFSET_BIT))
+    loop = self._new_label("np_wr_flush")
+    self.label(loop)
+    self.lw(val, addr, 0)
+    self.bltu(val, target, loop)
+    return self.fence()
+
+  def noc_read(self, noc: int, buf: int, src_lo: R, src_mid: int | R, src_coord: int | R,
+               dst: R, length: R, *, ret_coord: int | R = 0, a: R = R.T0, v: R = R.T1):
+    self.noc_wait_cmd_ready(noc, buf, addr=a, val=v)
+    self.noc_cmd_reg(noc, buf, NOC.CTRL, NOC.CMD_RD_FIELD, addr=a, tmp=v)
+    self.noc_cmd_reg(noc, buf, NOC.RET_ADDR_LO, dst, addr=a, tmp=v)
+    self.noc_cmd_reg(noc, buf, NOC.RET_ADDR_MID, 0, addr=a, tmp=v)
+    self.noc_cmd_reg(noc, buf, NOC.RET_ADDR_COORDINATE, ret_coord, addr=a, tmp=v)
+    self.noc_cmd_reg(noc, buf, NOC.TARG_ADDR_LO, src_lo, addr=a, tmp=v)
+    self.noc_cmd_reg(noc, buf, NOC.TARG_ADDR_MID, src_mid, addr=a, tmp=v)
+    self.noc_cmd_reg(noc, buf, NOC.TARG_ADDR_COORDINATE, src_coord, addr=a, tmp=v)
+    self.noc_cmd_reg(noc, buf, NOC.AT_LEN_BE, length, addr=a, tmp=v)
+    self.noc_cmd_reg(noc, buf, NOC.AT_LEN_BE_1, 0, addr=a, tmp=v)
+    self.noc_cmd_reg(noc, buf, NOC.CMD_CTRL, NOC.CTRL_SEND_REQ, addr=a, tmp=v)
+    return self
+
+  def noc_write(self, noc: int, buf: int, src: R, dst_lo: R, dst_mid: int | R, dst_coord: R,
+                length: R, *, mcast: bool = False, mcast_linked: bool = False,
+                num_dests: R | None = None, posted: bool = False, a: R = R.T0, v: R = R.T1):
+    self.noc_wait_cmd_ready(noc, buf, addr=a, val=v)
+    if mcast:
+      ctrl = NOC.CMD_WR_MCAST_LINKED_FIELD if mcast_linked else NOC.CMD_WR_MCAST_UNLINK_FIELD
+    else:
+      ctrl = NOC.CMD_WR_POSTED_FIELD if posted else NOC.CMD_WR_FIELD
+    self.noc_cmd_reg(noc, buf, NOC.CTRL, ctrl, addr=a, tmp=v)
+    self.noc_cmd_reg(noc, buf, NOC.TARG_ADDR_LO, src, addr=a, tmp=v)
+    self.noc_cmd_reg(noc, buf, NOC.RET_ADDR_LO, dst_lo, addr=a, tmp=v)
+    self.noc_cmd_reg(noc, buf, NOC.RET_ADDR_MID, dst_mid, addr=a, tmp=v)
+    self.noc_cmd_reg(noc, buf, NOC.RET_ADDR_COORDINATE, dst_coord, addr=a, tmp=v)
+    self.noc_cmd_reg(noc, buf, NOC.AT_LEN_BE, length, addr=a, tmp=v)
+    self.noc_cmd_reg(noc, buf, NOC.AT_LEN_BE_1, 0, addr=a, tmp=v)
+    self.noc_cmd_reg(noc, buf, NOC.CMD_CTRL, NOC.CTRL_SEND_REQ, addr=a, tmp=v)
+    return self
+
+
+  def noc_atomic_inc(self, noc: int, buf: int, dst_lo: R, dst_coord: int | R,
+                     incr: R | int, ret_coord: int | R, *, a: R = R.T0, v: R = R.T1):
+    self.noc_wait_cmd_ready(noc, buf, addr=a, val=v)
+    self.noc_cmd_reg(noc, buf, NOC.RET_ADDR_LO, 4, addr=a, tmp=v)
+    self.noc_cmd_reg(noc, buf, NOC.RET_ADDR_MID, 0, addr=a, tmp=v)
+    self.noc_cmd_reg(noc, buf, NOC.RET_ADDR_COORDINATE, ret_coord, addr=a, tmp=v)
+    self.noc_cmd_reg(noc, buf, NOC.TARG_ADDR_LO, dst_lo, addr=a, tmp=v)
+    self.noc_cmd_reg(noc, buf, NOC.TARG_ADDR_MID, 0, addr=a, tmp=v)
+    self.noc_cmd_reg(noc, buf, NOC.TARG_ADDR_COORDINATE, dst_coord, addr=a, tmp=v)
+    self.noc_cmd_reg(noc, buf, NOC.CTRL, NOC.CMD_AT_INC_FIELD, addr=a, tmp=v)
+    self.noc_cmd_reg(noc, buf, NOC.AT_LEN_BE, NOC.AT_INCR_GET, addr=a, tmp=v)
+    self.noc_cmd_reg(noc, buf, NOC.AT_LEN_BE_1, 0, addr=a, tmp=v)
+    self.noc_cmd_reg(noc, buf, NOC.AT_DATA, incr, addr=a, tmp=v)
+    self.noc_cmd_reg(noc, buf, NOC.CMD_CTRL, NOC.CTRL_SEND_REQ, addr=a, tmp=v)
+    return self
+
+  def noc_semaphore_inc(self, noc: int, buf: int, sem_addr: R, sem_coord: int | R,
+                        incr: int | R = 1, *, ret_coord: int | R = 0, a: R = R.T0, v: R = R.T1):
+    return self.noc_atomic_inc(noc, buf, sem_addr, sem_coord, incr, ret_coord, a=a, v=v)
+
+  def noc_semaphore_set_multicast(self, noc: int, buf: int, sem_addr: R, sem_coord: R,
+                                  value: int | R, num_dests: int | R, *,
+                                  a: R = R.T0, v: R = R.T1):
+    if not (isinstance(value, int) and not isinstance(value, R)):
+      self.sw(value, sem_addr, 0)
+    else:
+      self.li(v, value)
+      self.sw(v, sem_addr, 0)
+    length = R.T5 if int(v) == int(R.T2) else R.T2
+    self.li(length, L1_ALIGN)
+    self.noc_write(noc, buf, sem_addr, sem_addr, 0, sem_coord, length, mcast=True, a=a, v=v)
     return self

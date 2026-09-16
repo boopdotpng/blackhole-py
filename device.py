@@ -1,4 +1,4 @@
-"""Byte-buffer runtime: llama3 firmware boot, DRAM transfers, and raw program launches."""
+"""Byte-buffer runtime: C firmware boot, DRAM transfers, and raw program launches."""
 
 from dataclasses import dataclass
 import time
@@ -59,7 +59,7 @@ class Device:
       for (_, size), image in zip(Firmware.TEXT.values(), images.workers))
     firmware_base = Firmware.TEXT["brisc"][0]
     with TLBWindow(self.pcie.fd, self.pcie.cores[0]) as window:
-      # Match llama3's boot: resident firmware runs on all 120 tiles,
+      # Resident firmware runs on all 120 tiles,
       # including the three service tiles, and GO enters the service loops.
       def broadcast(address, value):
         base = address & -TLBWindow.SIZE

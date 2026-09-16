@@ -1,11 +1,13 @@
+from __future__ import annotations
 from enum import IntEnum
-
 from fw.consts import TensixMMIO
 from ttko.isa import R, Tensix as TT
 from ttko import Dst, DType
 from ttko.cb import CB
 from ttko.mop import LoopTemplate, MaskTemplate, Mop, NOP, Replay
 from ttko.sync import Sem, SemWait, Stall, Wait, sem_get, sem_post, sem_wait, stall, sync
+from ttko.registers import Cfg, DType, GprUnpack, Sem, SemWait, Stall, TensixMMIO, TensixRegs, ThreadCfg, Wait, TriscLocalMem as TLM
+
 
 class UnpackTarget(IntEnum):
   SRCA, SRCB, DST = range(3)
@@ -500,3 +502,120 @@ class Unpack:
     sem_get(self.k, Sem.UNPACK_SYNC); sync(self.k)
     CB.pop_front(self.k, source_cb)
     return self
+
+
+_DESC_UNCOMPRESSED = 0x10
+
+_DESC_SEC1_X = 0x01000000
+
+_DESC_DIMS = 0x00040001
+
+_DESC_REG2 = 0x00000025
+
+_DESC_REG2_1 = 0x000F000F
+
+_DEST_CNTX = 0x00400040
+
+_TILE_X_DIM = 0x01000100
+
+_FACE_DIM_TABLE = {
+  GprUnpack.FACE_DIM_16x16: 0x01000100,
+  GprUnpack.FACE_DIM_8x16: 0x00800080,
+  GprUnpack.FACE_DIM_4x16: 0x00400040,
+  GprUnpack.FACE_DIM_2x16: 0x00200020,
+  GprUnpack.FACE_DIM_1x16: 0x00100010,
+}
+
+class BlockedUnpack:
+  """Unpack configuration for fixed-register, blocked matmul kernels."""
+
+  def __init__(self, kernel):
+    self.k = kernel
+
+  def input_format(self, dtype, engines=(0, 1)):
+    # See tests/movement/unpacker/unpack.py: E4M3 expands into FP16 registers.
+    k = self.k
+    fp8 = dtype == DType.FP8
+    for engine in engines:
+      base = int(Cfg.THCON_SEC0_REG0_TileDescriptor) + engine * 0xc0
+      k.write32(base, (dtype.value & 15) | 0x10 | (0x01000000 if engine else 0))
+      k.write32(base + 4, _DESC_DIMS)
+      k.write32(base + 0x20, 0x20 | (dtype.value & 15))
+      k.write32(base + 0x24, 3 if fp8 else _DESC_REG2_1)
+      if fp8:
+        k.write32(int(Cfg.UNP0_ADDR_CTRL_XY_REG_1) + engine * 8, 2 | 32 << 16)
+        k.write32(int(Cfg.UNP0_ADDR_CTRL_ZW_REG_1) + engine * 8, 512)
+      k.push_tensix(TT.TTRMWCIB2(0x40, 0x40 if fp8 else 0, 71 + engine * 48))
+
+  def _tile_descriptor(self, k, dtype):
+    self.input_format(dtype)
+
+  def _alu_format_rmw(self, k):
+    # Masked byte RMW of the ALU config regs under the ATGETM/ATRELM mutex.
+    k.emit(TT.TTATGETM(0))
+    for inst in (
+      TT.TTRMWCIB0(Mask=0xFF, Data=0x00, CfgRegAddr=Cfg.ALU_FORMAT_SPEC_REG.addr32),
+      TT.TTRMWCIB1(Mask=0x7F, Data=0x00, CfgRegAddr=Cfg.ALU_FORMAT_SPEC_REG.addr32),
+      TT.TTRMWCIB0(Mask=0x07, Data=0x00, CfgRegAddr=Cfg.ALU.addr32),
+      TT.TTRMWCIB1(Mask=0x80, Data=0x00, CfgRegAddr=Cfg.ALU.addr32),
+      TT.TTRMWCIB2(Mask=0x01, Data=0x00, CfgRegAddr=Cfg.ALU.addr32),
+      TT.TTRMWCIB3(Mask=0x60, Data=0x00, CfgRegAddr=Cfg.ALU.addr32),
+      TT.TTRMWCIB0(Mask=0x01, Data=0x01, CfgRegAddr=Cfg.ALU_ACC_CTRL_Zero_Flag_disabled_src.addr32),
+    ):
+      k.push_tensix(inst)
+    k.emit(TT.TTATRELM(0))
+
+  def init(self, *, dtype: DType = DType.BF16, tile_bytes: int, mop_cfg):
+    """Configure the unpacker: reset cfg context, program the tile descriptor
+    and face-dim table for ``dtype``, then load the unpack MOP template.
+
+    ``dtype`` drives the tile
+    descriptor's data-format field."""
+    k = self.k
+
+    k.write32(k.data["cfg_state_id"], 0)
+    k.setc16(ThreadCfg.CFG_STATE_ID_StateID, 0)
+    k.write32(TLM.TRISC0_UNPACK_CFG_CONTEXT, 0)
+    k.setc16(ThreadCfg.UNPACK_MISC_CFG_CfgContext, 0)
+
+    k.emit(TT.TTZEROSRC(0, 0, 1, 3))
+    k.write32(k.data["cfg_state_id"], 0)
+    k.setc16(ThreadCfg.CFG_STATE_ID_StateID, 0)
+
+    k.wait_mmio_low_byte_zero(TensixRegs.PC_UNPACK_SYNC)
+
+    k.emit(TT.TTSETADCXY(3, 0, 0, 0, 0, 0xB))
+    k.emit(TT.TTSETADCZW(3, 0, 0, 0, 0, 0xF))
+    k.write32(Cfg.UNP0_ADDR_CTRL_ZW_REG_1, 0x00000200)
+    k.write32(Cfg.UNP1_ADDR_CTRL_ZW_REG_1, 0x00000200)
+
+    self._alu_format_rmw(k)
+    self._tile_descriptor(k, dtype)
+
+    k.push_tensix(TT.TTSETADCXX(1, 255, 0))
+    k.push_tensix(TT.TTSETADCXX(2, 255, 0))
+    k.write32(Cfg.THCON_SEC0_REG5_Dest_cntx, _DEST_CNTX)
+    k.write32(Cfg.THCON_SEC0_REG5_Tile_x_dim_cntx, _TILE_X_DIM)
+    k.write32(Cfg.UNP0, 0x00000100)
+
+    for addr, value in _FACE_DIM_TABLE.items():
+      k.write32(addr, value)
+
+    k.setc16(ThreadCfg.SRCA_SET, 4)
+    k.write32(TLM.TRISC0_UNPACK_CFG_CONTEXT, 0)
+    k.setc16(ThreadCfg.UNPACK_MISC_CFG_CfgContext, 0)
+
+    page_size_16b = tile_bytes >> 4
+    for raw in (
+      0x45000048 + (page_size_16b << 8),
+      0x4500004A + (page_size_16b << 8),
+      TT.TTRMWCIB1(Mask=0x01, Data=0x00, CfgRegAddr=Cfg.THCON_SEC0_REG2.addr32),
+    ):
+      k.push_tensix(raw)
+    k.emit(TT.TTSETADCXX(1, 255, 0))
+    k.push_tensix(TT.TTRMWCIB1(Mask=0x01, Data=0x00, CfgRegAddr=Cfg.THCON_SEC0_REG2.addr32))
+    k.emit(TT.TTSETADCXX(1, 255, 0))
+
+    k.write_mop_cfg(mop_cfg, 0)
+    k.tensix_sync(0)
+    return k

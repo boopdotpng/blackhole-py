@@ -56,7 +56,7 @@ def matrix_bytes(data, m, n):
 
 def build(plan, endpoints, a=0, b=0, c=0, *, output_noc="split"):
   cb_configs = []
-  address = k.TensixL1.DATA_BUFFER_SPACE_BASE
+  address = k.CB_STORAGE_BASE
   for index, pages in ((0, plan.cb0_pages), (1, plan.cb1_pages),
                        (16, plan.cb16_pages), (24, plan.cb24_pages)):
     # Final output and accumulated partials intentionally share storage.
@@ -68,7 +68,7 @@ def build(plan, endpoints, a=0, b=0, c=0, *, output_noc="split"):
     cb_configs.append((index, cb_address, pages * (k.INPUT_TILE_BYTES if index < 2 else 2048), pages))
   if address > k.DEBUG_NCRISC_OUTPUT:
     raise ValueError('matmul buffers overlap diagnostics')
-  asm.CONTEXT = {'cbs': cb_configs, 'endpoints': endpoints, 'address': 0x12000, 'fp8': k.INPUT_DTYPE == k.Dtype.Float8_e4m3}
+  asm.CONTEXT = {'cbs': cb_configs, 'endpoints': endpoints, 'address': 0x12000, 'fp8': k.INPUT_DTYPE == k.DType.FP8}
   sources = {}
   constructors = (
     ('brisc', lambda: k.matmul_reader(plan)),
@@ -131,9 +131,9 @@ def run(m, n, inner, *, runs=5, device_index=0, execute=False, profile=False, dt
   k.WRITER_WAVE_ROWS = writer_wave_rows
   k.SUPPORTED_IN0_BLOCK_WS = (block_k,) if block_k else tuple(range(1, 11 if dtype == 'fp8' else 7))
   k.SUPPORTED_OUT_SUBBLOCK_H, k.SUPPORTED_OUT_SUBBLOCK_W = subblock
-  k.INPUT_DTYPE = k.Dtype.Float8_e4m3 if dtype == 'fp8' else k.Dtype.Float16_b
+  k.INPUT_DTYPE = k.DType.FP8 if dtype == 'fp8' else k.DType.BF16
   k.INPUT_TILE_BYTES = k.INPUT_DTYPE.tile_size
-  k.OUTPUT_DTYPE = k.Dtype.Float16 if dtype == "fp8" else k.Dtype.Float16_b
+  k.OUTPUT_DTYPE = k.DType.F16 if dtype == "fp8" else k.DType.BF16
   device = Device(device_index) if execute else None
   program = None
   try:

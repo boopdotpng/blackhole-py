@@ -7,6 +7,7 @@ from cq import (ALIGN, PAGE_SIZE, MAX_RECORD_SIZE, MAX_WRITE_SIZE, HOST_ISSUE_SI
   DramCopy, Timestamp, noc_coord, mcast_coords, rectangles, PacketLayout as RawPacketLayout,
   CommandQueue as RawCommandQueue, _align)
 from pcie import Allocator
+from fw.consts import Core
 from enum import IntEnum
 HOST_TRACE_SIZE = 256 << 20
 HOST_LIVE_SIZE = 128 << 10

@@ -1,0 +1,234 @@
+from enum import IntEnum
+from ttko.isa import R, Tensix as TT
+from ttko import DType
+from ttko.sync import Sem, SemWait, Stall, Wait
+from fw.consts import TensixL1, TensixMMIO
+
+_RF = 0xFFE00000
+
+class Cfg(IntEnum):
+
+  ALU_FORMAT_SPEC_REG = 4293853184
+  ALU = 4293853188
+  ALU_ACC_CTRL_Zero_Flag_disabled_src = 4293853192
+
+
+  PCK_DEST_RD_CTRL = 4293853256
+
+
+  TILE_ROW_SET_MAPPING_0 = 4293853264
+
+
+  PCK_EDGE = 4293853280
+
+
+  PACK_COUNTERS_SEC0 = 4293853296
+  PACK_COUNTERS_SEC1 = 4293853300
+  PACK_COUNTERS_SEC2 = 4293853304
+  PACK_COUNTERS_SEC3 = 4293853308
+
+
+  UNP0 = 4293853384
+
+
+  UNP0_ADDR_CTRL_XY_REG_1 = 4293853408
+  UNP0_ADDR_CTRL_ZW_REG_1 = 4293853412
+
+
+  UNP1_ADDR_CTRL_ZW_REG_1 = 4293853420
+
+
+  THCON_SEC0_REG0_TileDescriptor = 4293853440
+
+
+  THCON_SEC0_REG1 = 4293853456
+  THCON_SEC0_REG1_L1_Dest_addr = 4293853460
+  THCON_SEC0_REG1_1 = 4293853464
+  THCON_SEC0_REG1_2 = 4293853468
+  THCON_SEC0_REG2 = 4293853472
+
+
+  THCON_SEC0_REG3_Base_address = 4293853488
+  THCON_SEC0_REG3_Base_cntx1_address = 4293853492
+
+
+  THCON_SEC0_REG5_Dest_cntx = 4293853520
+
+
+  THCON_SEC0_REG5_Tile_x_dim_cntx = 4293853528
+
+
+  THCON_SEC0_REG8_1 = 4293853576
+  THCON_SEC0_REG8_2 = 4293853580
+
+
+  THCON_SEC1_REG1_1 = 4293853656
+  THCON_SEC1_REG1_2 = 4293853660
+
+
+  THCON_SEC1_REG3_Base_address = 4293853680
+  THCON_SEC1_REG3_Base_cntx1_address = 4293853684
+
+
+  THCON_SEC1_REG8_1 = 4293853768
+  THCON_SEC1_REG8_2 = 4293853772
+
+
+  DEST_TARGET_REG_CFG_PACK_SEC0 = 4293853904
+  DEST_TARGET_REG_CFG_PACK_SEC1 = 4293853908
+  DEST_TARGET_REG_CFG_PACK_SEC2 = 4293853912
+  DEST_TARGET_REG_CFG_PACK_SEC3 = 4293853916
+
+
+  DEST_ACCESS_CFG = 4293854064
+
+
+  @property
+
+  def addr32(self): return (int(self) - 0xFFEF0000) // 4
+
+class ThreadCfg(IntEnum):
+
+  CFG_STATE_ID_StateID = 0
+  DEST_TARGET_REG_CFG_MATH_Offset = 1
+
+
+  SRCA_SET = 5
+
+
+  CLR_DVALID_Src = 7
+
+
+  ADDR_MOD_AB_SEC0_Src = 12
+  ADDR_MOD_AB_SEC1_Src = 13
+  ADDR_MOD_AB_SEC2_Src = 14
+  ADDR_MOD_AB_SEC3_Src = 15
+  ADDR_MOD_AB_SEC4_Src = 16
+  ADDR_MOD_AB_SEC5_Src = 17
+  ADDR_MOD_AB_SEC6_Src = 18
+  ADDR_MOD_AB_SEC7_Src = 19
+
+
+  ADDR_MOD_DST_SEC0 = 28
+  ADDR_MOD_DST_SEC1 = 29
+  ADDR_MOD_DST_SEC2 = 30
+  ADDR_MOD_DST_SEC3 = 31
+  ADDR_MOD_DST_SEC4 = 32
+  ADDR_MOD_DST_SEC5 = 33
+  ADDR_MOD_DST_SEC6 = 34
+  ADDR_MOD_DST_SEC7 = 35
+
+
+  ADDR_MOD_PACK_SEC0 = 37
+  ADDR_MOD_PACK_SEC1 = 38
+  ADDR_MOD_PACK_SEC2 = 39
+
+
+  UNPACK_MISC_CFG_CfgContext = 41
+
+
+  ADDR_MOD_BIAS_SEC0_Bias = 47
+  ADDR_MOD_BIAS_SEC1_Bias = 48
+  ADDR_MOD_BIAS_SEC2_Bias = 49
+  ADDR_MOD_BIAS_SEC3_Bias = 50
+  ADDR_MOD_BIAS_SEC4_Bias = 51
+  ADDR_MOD_BIAS_SEC5_Bias = 52
+  ADDR_MOD_BIAS_SEC6_Bias = 53
+  ADDR_MOD_BIAS_SEC7_Bias = 54
+
+
+class TensixRegs:
+  INSTRN_BUF_BASE = 0xFFE40000
+  REGFILE_BASE = 0xFFE00000
+  PC_BUF_SYNC = 0xFFE80004
+  PC_BUF_MOP_SYNC = 0xFFE80008
+  PC_BUF_SEM_BASE = 0xFFE80020
+  PC_BUF_SEM_STRIDE = 4
+  PC_BUF_SEM_COUNT = 8
+  PC_UNPACK_SYNC = 0xFFE80034
+  MOP_CFG = 0xFFB80000
+  CFG_BASE = 0xFFEF0000
+  RISCV_IC_ALL_MASK = 0x1F
+
+  @staticmethod
+  def pc_buf_sem(sem: int) -> int:
+    if not 0 <= sem < TensixRegs.PC_BUF_SEM_COUNT:
+      raise ValueError(f"Tensix semaphore index out of range: {sem}")
+    return TensixRegs.PC_BUF_SEM_BASE + sem * TensixRegs.PC_BUF_SEM_STRIDE
+
+class GprUnpack(IntEnum):
+  """Unpack-thread regfile GPRs (p_gpr_unpack), as absolute MMIO addresses."""
+
+  FACE_DIM_16x16 = _RF + 40 * 4  # face 16x16 = 256, packed (256 | 256<<16)
+  FACE_DIM_8x16 = _RF + 41 * 4   # 8x16 = 128
+  FACE_DIM_4x16 = _RF + 42 * 4   # 4x16 = 64
+  FACE_DIM_2x16 = _RF + 43 * 4   # 2x16 = 32
+  FACE_DIM_1x16 = _RF + 44 * 4   # 1x16 = 16
+
+class GprMath(IntEnum):
+  """Math-thread regfile GPRs (p_gpr_math), as absolute MMIO addresses."""
+
+
+class GprPack(IntEnum):
+  """Pack-thread regfile GPRs (p_gpr_pack), as absolute MMIO addresses."""
+
+  DEST_OFFSET_LO = _RF + 4 * 4
+  DEST_OFFSET_HI = _RF + 8 * 4
+  TILE_HEADER = _RF + 16 * 4  # 4 words [16..19]: tile ID + tile size
+  TILE_HEADER_1 = _RF + 17 * 4
+  TILE_HEADER_2 = _RF + 18 * 4
+  TILE_HEADER_3 = _RF + 19 * 4
+  EXP0_SEC_SIZE_BFP = _RF + 52 * 4
+
+class BriscMailbox:
+  MY_Y = 0xFFB00004
+  MY_X = 0xFFB00008
+  RTA_L1_BASE_PTR = 0xFFB00018
+  SEM_L1_BASE = 0xFFB0086C
+  CB_INTERFACE = 0xFFB00048
+  DRAM_BANK_TO_NOC_XY = 0xFFB00448
+
+class NcriscMailbox:
+  MY_Y = 0xFFB0002C
+  MY_X = 0xFFB00030
+  RTA_L1_BASE_PTR = 0xFFB00038
+  DRAM_BANK_TO_NOC_XY = 0xFFB00040
+  SEM_L1_BASE = 0xFFB00458
+  CB_INTERFACE = 0xFFB00464
+
+class TriscMailbox:
+  DATA_COMMON = {
+    "dest_offset_id": 0xFFB00000,
+    "op_info_offset": 0xFFB00004,
+    "my_relative_y": 0xFFB0000C,
+    "my_relative_x": 0xFFB0000D,
+    "crta_l1_base": 0xFFB00010,
+    "rta_l1_base": 0xFFB00014,
+    "my_logical_y": 0xFFB00018,
+    "my_logical_x": 0xFFB00019,
+    "cfg_state_id": 0xFFB0001C,
+    "cb_interface": 0xFFB00020,
+  }
+  DATA1 = {
+    "dest_offset_id": 0xFFB00000,
+    "op_info_offset": 0xFFB00004,
+    "my_relative_y": 0xFFB00008,
+    "my_relative_x": 0xFFB00009,
+    "crta_l1_base": 0xFFB0000C,
+    "rta_l1_base": 0xFFB00010,
+    "my_logical_y": 0xFFB00014,
+    "my_logical_x": 0xFFB00015,
+    "cfg_state_id": 0xFFB00018,
+  }
+
+class TriscLocalMem:
+  TRISC0_UNPACK_CFG_CONTEXT = 0xFFB00420
+  TRISC1_UNPACK_TILE_NUM_FACES = 0xFFB00020
+  TRISC1_UNPACK_DST_FORMAT = TRISC1_UNPACK_TILE_NUM_FACES + 0x20
+  TRISC1_UNPACK_SRC_FORMAT = TRISC1_UNPACK_TILE_NUM_FACES + 0xA0
+  TRISC2_PACK_TILE_FACE_R_DIM = 0xFFB00820
+  TRISC2_PACK_TILE_NUM_FACES = TRISC2_PACK_TILE_FACE_R_DIM + 0x20
+  TRISC2_PACK_PARTIAL_FACE = TRISC2_PACK_TILE_FACE_R_DIM + 0x40
+  TRISC2_PACK_PARTIAL_FACE_SEC1 = TRISC2_PACK_PARTIAL_FACE + 0x10
+  TRISC2_PACK_SRC_FORMAT = TRISC2_PACK_TILE_FACE_R_DIM + 0x60
+  TRISC2_PACK_DST_FORMAT = TRISC2_PACK_TILE_FACE_R_DIM + 0x80

@@ -155,6 +155,37 @@ class Asm(RV32):
     else: src = value
     return op(src, base)
 
+  # Fixed-register recipes supply scratch registers instead of using reg().
+  def read32(self, dst, address, *, tmp_addr=R.T0):
+    if isinstance(address, R): return self.lw(dst, address, 0)
+    self.li(tmp_addr, int(address)); return self.lw(dst, tmp_addr, 0)
+
+  def write32(self, address, value, *, tmp_addr=R.T0, tmp_val=R.T1):
+    if not isinstance(address, R): self.li(tmp_addr, int(address)); address = tmp_addr
+    if not isinstance(value, R): self.li(tmp_val, int(value)); value = tmp_val
+    return self.sw(value, address, 0)
+
+  def read8(self, dst, address, *, tmp_addr=R.T0):
+    if not isinstance(address, R): self.li(tmp_addr, int(address)); address = tmp_addr
+    return self.lbu(dst, address, 0)
+
+  def write8(self, address, value, *, tmp_addr=R.T0, tmp_val=R.T1):
+    if not isinstance(address, R): self.li(tmp_addr, int(address)); address = tmp_addr
+    if not isinstance(value, R): self.li(tmp_val, int(value)); value = tmp_val
+    return self.sb(value, address, 0)
+
+  def wait_sync_value(self, address, value_reg, *, ptr=R.T0, actual=R.T1):
+    self.li(ptr, address)
+    loop = self._new_label('sync')
+    self.label(loop); self.fence(); self.lw(actual, ptr, 0); self.bne(actual, value_reg, loop)
+    return self.fence()
+
+  def wait8(self, address, value, *, ptr=R.T0, actual=R.T1, expected=R.T2):
+    self.li(ptr, address); self.li(expected, value)
+    loop = self._new_label('wait8')
+    self.label(loop); self.fence(); self.lbu(actual, ptr, 0); self.bne(actual, expected, loop)
+    return self.fence()
+
   @property
   def noc(self):
     if self.role not in ("brisc", "ncrisc"):

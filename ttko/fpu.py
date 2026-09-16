@@ -1,10 +1,11 @@
+from __future__ import annotations
 from enum import IntEnum
-
 from fw.consts import TensixMMIO
 from ttko.isa import Tensix as TT
 from ttko import Dst
 from ttko.mop import LoopTemplate, Mop, Replay
 from ttko.sync import Sem, SemWait, Stall, Wait, sem_post, sem_wait, stall, sync
+from ttko.registers import Cfg, DType, Sem, SemWait, Stall, TensixMMIO, TensixRegs, ThreadCfg, Wait, TriscLocalMem as TLM
 
 
 _CFG_STATE_ID = 0
@@ -405,3 +406,58 @@ class Fpu:
       self._issue(TT.TTELWSUB(3, 0, 0, 0, 0))
     self._issue(TT.TTSETRWC(0, 0, 0, 0, 0, 0xF))
     return self
+
+
+_TILE_NUM_FACES = 4
+
+class BlockedMath:
+  """Math configuration for fixed-register, blocked matmul kernels."""
+
+  def __init__(self, kernel):
+    self.k = kernel
+
+  def _local_state(self, k, dtype: DType):
+    # Make initial context writes visible, publish operand formats, then wait
+    # until the unpack side reports its context is idle.
+    k.tensix_sync(1)
+    k.write_repeated_bytes(TLM.TRISC1_UNPACK_TILE_NUM_FACES, _TILE_NUM_FACES, 8)
+    k.write32(TLM.TRISC1_UNPACK_DST_FORMAT, dtype.value)
+    k.write32(TLM.TRISC1_UNPACK_SRC_FORMAT, dtype.value)
+    k.setc16(ThreadCfg.ADDR_MOD_AB_SEC1_Src, 0)
+    k.setc16(ThreadCfg.ADDR_MOD_DST_SEC1, 0)
+    k.setc16(ThreadCfg.ADDR_MOD_BIAS_SEC1_Bias, 0)
+    k.emit(TT.TTZEROACC(3, 0, 0, 1, 0))
+    k.wait_mmio_low_byte_zero(TensixRegs.PC_UNPACK_SYNC)
+
+  def _sfpu_init(self, k):
+    k.emit(TT.TTSFPLOADI(0, 0, 10))
+    k.emit(TT.TTSFPLOADI(0, 0, 8))
+    k.emit(TT.TTSFPCONFIG(0, 15, 1))
+    k.setc16(ThreadCfg.ADDR_MOD_AB_SEC7_Src, 0)
+    k.setc16(ThreadCfg.ADDR_MOD_DST_SEC7, 0)
+    k.setc16(ThreadCfg.ADDR_MOD_BIAS_SEC7_Bias, 0)
+    k.emit(TT.TTSETRWC(0, 0, 0, 0, 0, 15))
+
+  def init(self, *, dtype: DType = DType.BF16, mop_cfg):
+    """Configure the math thread: operand formats, mova2d addr modes, the math
+    MOP template, the MATH_PACK semaphore, dest-access config and SFPU setup.
+    """
+    k = self.k
+
+    self._local_state(k, dtype)
+    k.math_direct_mova2d_init()
+    k.write_mop_cfg(mop_cfg, 1)
+    k.tensix_sync(1)
+
+    k.wait_mmio_low_byte_zero(TensixRegs.pc_buf_sem(Sem.MATH_PACK))
+    k.emit(TT.TTSEMINIT(sem_sel=Sem.mask(Sem.MATH_PACK), init_value=0, max_value=1))
+    k.push_tensix(TT.TTSETC16(ThreadCfg.DEST_TARGET_REG_CFG_MATH_Offset, 0))
+    k.push_tensix(TT.TTRMWCIB0(Mask=0x08, Data=0x08, CfgRegAddr=Cfg.DEST_ACCESS_CFG.addr32))
+    k.write32(k.data["dest_offset_id"], 0)
+    k.emit(TT.TTSTALLWAIT(Stall.CFG, Wait.MATH))
+    k.push_tensix(TT.TTRMWCIB3(Mask=0x80, Data=0x00, CfgRegAddr=Cfg.ALU.addr32))
+
+    k.math_direct_mova2d_init()
+    k.write_mop_cfg(mop_cfg, 1)
+    self._sfpu_init(k)
+    return k
