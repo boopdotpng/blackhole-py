@@ -197,7 +197,7 @@ def test_sfpu_timing(bh, request, case):
 @pytest.mark.parametrize('role', ROLES)
 def test_timing_context(bh, request, role):
     """Capture CSR chicken bits and measure a real local-RAM dependency chain."""
-    from fw.build import build as build_firmware
+    from firmware import build as build_firmware
     k = Asm(role)
     value, ptr, count = k.reg(3)
     for i, csr in enumerate((0x7c0, 0x7c1, 0x7c2)):

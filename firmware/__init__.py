@@ -5,14 +5,13 @@ import shutil
 import subprocess
 import struct
 import tempfile
-import sys
-from fw import abi
+from fw import consts
 from fw.consts import CQConfig, FirmwareControl, TensixMMIO
 
 from fw.consts import Firmware, KERNEL_ROLES, TensixL1
 
 
-SOURCE_DIR = Path(__file__).resolve().parent
+SOURCE_DIR = Path(consts.__file__).resolve().parent
 LINKER_SCRIPT = SOURCE_DIR / "firmware.ld"
 
 
@@ -215,14 +214,14 @@ def _compile(
 
 
 def source_files():
-  return tuple(sorted(SOURCE_DIR.glob('*.py'))) + tuple(sorted(SOURCE_DIR.glob('*.c'))) + tuple(sorted(SOURCE_DIR.glob('*.h'))) + (LINKER_SCRIPT,)
+  return (Path(__file__).resolve(),) + tuple(sorted(SOURCE_DIR.glob('*.py'))) + tuple(sorted(SOURCE_DIR.glob('*.c'))) + tuple(sorted(SOURCE_DIR.glob('*.h'))) + (LINKER_SCRIPT,)
 
 
 
 def _abi_header():
   """Generate firmware constants from the host's packet and memory ABI."""
-  values = {name: value for name, value in vars(abi).items() if name.isupper() and isinstance(value, int)}
-  for cls, prefix in ((abi.Op, 'OP_'), (abi.PacketLayout, 'PACKET_'),
+  values = {name: value for name, value in vars(consts).items() if name.isupper() and isinstance(value, int)}
+  for cls, prefix in ((consts.Op, 'OP_'), (consts.PacketLayout, 'PACKET_'),
                       (TensixL1, 'L1_'), (FirmwareControl, ''), (CQConfig, ''), (TensixMMIO, 'MMIO_')):
     values.update({prefix + name: int(value) for name, value in vars(cls).items() if name.isupper() and isinstance(value, int)})
   for role, (base, _) in Firmware.TEXT.items(): values['FW_' + role.upper()] = base
@@ -258,11 +257,3 @@ def unpack(blob):
   for size in sizes:
     images.append(blob[offset:offset+size]); offset += size
   return FirmwareImages(tuple(images[:5]), *images[5:])
-
-
-if __name__ == '__main__':
-  import hashlib
-  output = Path(sys.argv[1] if len(sys.argv) > 1 else 'build/bh_hcq_v2.bin')
-  output.parent.mkdir(parents=True, exist_ok=True)
-  output.write_bytes(blob:=pack(build()))
-  print(f'{hashlib.sha256(blob).hexdigest()}  {output} ({len(blob)} bytes)')

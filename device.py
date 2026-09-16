@@ -4,7 +4,7 @@ from dataclasses import dataclass
 import time
 
 from cq import DRAM_BRISC_READY, DRAM_NCRISC_READY, CommandQueue, DramCopy
-from fw import build as firmware
+import firmware
 from fw.consts import Firmware, FirmwareControl, RunState, TensixL1, TensixMMIO
 from isa import R, RV32
 from pcie import Allocator, PCIDevice, TLBWindow
@@ -81,7 +81,7 @@ class Device:
           window.write(TensixL1.WORKER_TEXT_BASE[role], image)
       window.target(0, self.pcie.dram_core)
       window.write(DRAM_BRISC_READY, bytes(8))
-      from fw.abi import BOOT_PCIE_MID, BOOT_BANKS, BOOT_COORDS
+      from fw.consts import BOOT_PCIE_MID, BOOT_BANKS, BOOT_COORDS
       for core in (self.pcie.prefetch_core, self.pcie.dispatch_core, self.pcie.dram_core):
         window.target(0, core)
         window.write(BOOT_PCIE_MID, self.pcie.sysmem.noc_addr >> 32)

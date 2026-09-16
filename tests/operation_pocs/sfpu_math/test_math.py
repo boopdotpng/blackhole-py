@@ -21,7 +21,7 @@ SIZE = 8192
 
 @pytest.fixture(scope='module', autouse=True)
 def hardware_context(bh, request):
-  from fw.build import build
+  from firmware import build
   firmware=build(bh.device.pcie.sysmem.noc_addr >> 32,bh.device.pcie.dram_endpoints)
   print('SFPU_CONTEXT '+json.dumps(dict(device=request.config.getoption('--bh-device'),
     core_index=bh.core_index,core=bh.core,firmware_worker_sha256=[sha256(image).hexdigest() for image in firmware.workers],

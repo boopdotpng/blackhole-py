@@ -65,7 +65,7 @@ recipe tables, or entry trampolines. Shape-specific math is still compiled once
 per controller; the experimental `ttk` effect-region/frontend work is separate.
 
 Worker firmware enters the shared images through a common address table.
-Rebuild serialized firmware with `python -m fw.build` (ABI `BHCQ0002`); old blobs
+Rebuild serialized firmware with `../.venv/bin/python -m firmware` (ABI `BHCQ0002`); old blobs
 are rejected. Direct `Program` launches still work and restore their fixed entry
 addresses when switching from a grid program.
 

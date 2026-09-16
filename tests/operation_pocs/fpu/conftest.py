@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 import pytest
-from fw.build import source_files
+from firmware import source_files
 
 
 @pytest.fixture(scope='session', autouse=True)
