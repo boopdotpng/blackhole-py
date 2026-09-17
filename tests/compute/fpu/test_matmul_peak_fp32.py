@@ -1,4 +1,4 @@
-"""FP8 matmul: FP32 Dst and L1 partials, including cancellation across K blocks."""
+"""FP8 and BF16 matmul: FP32 Dst and L1 partials, including cancellation across K blocks."""
 import numpy as np
 import pytest
 
@@ -6,9 +6,10 @@ from examples import matmul_peak as m
 from cq import McastWrite, Run, rectangles
 
 
-def run_case(bh, monkeypatch, a, b, *, fp32=True, block_k=1, subblock=(1, 4)):
+def run_case(bh, monkeypatch, a, b, *, fp32=True, block_k=1, subblock=(1, 4), dtype="fp8"):
   k = m.k
-  for name, value in dict(INPUT_DTYPE=k.DType.FP8, INPUT_TILE_BYTES=1024,
+  for name, value in dict(INPUT_DTYPE=k.DType.FP8 if dtype == "fp8" else k.DType.BF16,
+                          INPUT_TILE_BYTES=1024 if dtype == "fp8" else 2048,
                           OUTPUT_DTYPE=k.DType.F32 if fp32 else k.DType.F16,
                           TILE_BYTES=4096 if fp32 else 2048, FP32_ACCUM=fp32,
                           SUPPORTED_IN0_BLOCK_WS=(block_k,),
@@ -21,11 +22,16 @@ def run_case(bh, monkeypatch, a, b, *, fp32=True, block_k=1, subblock=(1, 4)):
   shape = (plan.mt*32, plan.kt*32, plan.nt*32)
   buffers, quantized = [], []
   for values, padded_shape in ((a, shape[:2]), (b, shape[1:])):
-    codes = m.fp8_encode(values)
-    quantized.append(m.fp8_decode(codes))
-    padded = np.zeros(padded_shape, dtype=np.uint8)
+    if dtype == "fp8":
+      codes = m.fp8_encode(values)
+      quantized.append(m.fp8_decode(codes))
+    else:
+      codes = (values.view(np.uint32) >> 16).astype(np.uint16)
+      quantized.append((codes.astype(np.uint32) << 16).view(np.float32))
+    padded_shape = (padded_shape[0], k.input_dram_columns(padded_shape[1]))
+    padded = np.zeros(padded_shape, dtype=codes.dtype)
     padded[:values.shape[0], :values.shape[1]] = codes
-    buffer = bh.device.alloc_interleaved_dram(padded.size, page_size=1024)
+    buffer = bh.device.alloc_interleaved_dram(padded.nbytes, page_size=k.INPUT_TILE_BYTES)
     bh.device.write_dram(buffer, padded.tobytes())
     buffers.append(buffer)
   output = bh.device.alloc_interleaved_dram(shape[0]*shape[2]*(4 if fp32 else 2), page_size=k.TILE_BYTES)
@@ -42,19 +48,21 @@ def run_case(bh, monkeypatch, a, b, *, fp32=True, block_k=1, subblock=(1, 4)):
     yield actual.copy(), quantized[0] @ quantized[1]
 
 
+@pytest.mark.parametrize('dtype', ('fp8', 'bf16'))
 @pytest.mark.parametrize('inner', (32, 64, 96, 257))
 @pytest.mark.parametrize('subblock', ((1, 4), (2, 2)))
-def test_fp32_matmul_blocks_and_edges(bh, monkeypatch, inner, subblock):
+def test_fp32_matmul_blocks_and_edges(bh, monkeypatch, inner, subblock, dtype):
   rng = np.random.default_rng(123)
   a = rng.uniform(-1, 1, (65, inner)).astype(np.float32)
   b = rng.uniform(-1, 1, (inner, 129)).astype(np.float32)
-  for actual, reference in run_case(bh, monkeypatch, a, b, subblock=subblock):
+  for actual, reference in run_case(bh, monkeypatch, a, b, subblock=subblock, dtype=dtype):
     assert np.isfinite(actual).all()
     relative_error = np.linalg.norm(actual-reference) / np.linalg.norm(reference)
     assert relative_error < 0.0003, relative_error
 
 
-def test_fp32_preserves_small_partials(bh, monkeypatch):
+@pytest.mark.parametrize('dtype', ('fp8', 'bf16'))
+def test_fp32_preserves_small_partials(bh, monkeypatch, dtype):
   # Exact E4M3 inputs: 2048 + 2048*(1/64)^2 - 2048 = 0.5.
   # FP16 partial accumulation loses the small term while the running sum is 2048.
   a = np.ones((32, 6144), dtype=np.float32)
@@ -62,8 +70,9 @@ def test_fp32_preserves_small_partials(bh, monkeypatch):
   a[:, 2048:4096] = 1/64
   b[2048:4096] = 1/64
   b[4096:] = -1
-  for actual, _ in run_case(bh, monkeypatch, a, b, fp32=True, block_k=8):
+  for actual, _ in run_case(bh, monkeypatch, a, b, fp32=True, block_k=8, dtype=dtype):
     np.testing.assert_array_equal(actual, np.full_like(actual, .5))
+  if dtype != "fp8": return
   for actual, _ in run_case(bh, monkeypatch, a, b, fp32=False, block_k=8):
     assert np.max(np.abs(actual-.5)) >= .25
 

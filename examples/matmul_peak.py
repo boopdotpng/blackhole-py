@@ -1,8 +1,5 @@
-"""Row-major input BF16 HiFi2 / FP8 matmul with 8x16 edge arithmetic.
-
-Device timing includes row reads and L1 panel preparation, so throughput is
-not directly comparable to the older benchmark with host-tilized inputs.
-"""
+"""Row-major BF16 / FP8 matmul. Timing includes FP8 hardware tilization."""
+import os
 import argparse
 import struct
 import sys
@@ -54,6 +51,7 @@ def build(plan, endpoints, a=0, b=0, c=0, *, output_noc="split"):
   """Build for padded row-major A/B inputs and face-major output tiles."""
   cb_configs = []
   address = k.CB_STORAGE_BASE
+  sizes = (k.input_page_bytes(plan.in0_block_w), k.input_page_bytes(plan.per_core_n // plan.n_passes))
   for index, pages in ((0, plan.cb0_pages), (1, plan.cb1_pages),
                        (16, plan.cb16_pages), (24, plan.cb24_pages)):
     # Direct final accumulation aliases each pass's partials with its output
@@ -62,12 +60,12 @@ def build(plan, endpoints, a=0, b=0, c=0, *, output_noc="split"):
       cb_address = cb_configs[-1][1]
     else:
       cb_address = address
-      address += pages * (k.INPUT_TILE_BYTES if index < 2 else k.TILE_BYTES)
-    cb_configs.append((index, cb_address, pages * (k.INPUT_TILE_BYTES if index < 2 else k.TILE_BYTES), pages))
+      address += pages * (sizes[index] if index < 2 else k.TILE_BYTES)
+    cb_configs.append((index, cb_address, pages * (sizes[index] if index < 2 else k.TILE_BYTES), pages))
   input_staging = []
   for width in (plan.in0_block_w, plan.per_core_n // plan.n_passes):
     input_staging.append(address)
-    address += 32 * k.input_row_pitch(width)
+    if not k.row_major_unpack(): address += 32 * k.input_row_pitch(width)
   if address > k.PASS_BASE:
     raise ValueError('matmul buffers overlap diagnostics')
   asm.CONTEXT = {'input_staging': input_staging, 'cbs': cb_configs, 'endpoints': endpoints, 'address': 0x12000, 'fp8': k.INPUT_DTYPE == k.DType.FP8}
@@ -107,7 +105,8 @@ def read_profile(window, cores):
   for core in cores:
     window.target(0, core)
     starts.append(struct.unpack('<Q', window.read(k.PROFILE_BRISC, 8))[0])
-    ends.append(struct.unpack('<Q', window.read(k.PROFILE_NCRISC + 8, 8))[0])
+    ends.append(max(struct.unpack('<Q', window.read(address + 8, 8))[0]
+                    for address in (k.PROFILE_BRISC, k.PROFILE_NCRISC)))
     for name, address in k.PROFILE_NAMES:
       begin, end = struct.unpack('<QQ', window.read(address, 16))
       durations[name].append((end - begin) / 1350)
@@ -150,17 +149,20 @@ def run(m, n, inner, *, runs=5, device_index=0, execute=False, profile=False, dt
     if accumulation not in (None, 'fp16'):
       raise ValueError('--fp8-fast uses FP16 accumulation')
     dtype, accumulation = 'fp8', 'fp16'
-    subblock, block_k, output_noc = subblock or (1, 8), block_k or 10, '1'
+    subblock, block_k = subblock or (1, 8), block_k or 10
     k.ROW_MOP = k.NO_COMMIT_SYNC = k.FAST_READS = k.FAST_ADDR = True
-    k.FINAL_L1_ACC, k.OUTPUT_RING, k.UNPACK_Z = True, False, False
-    k.N_PASSES, k.INPUT_BUFFER_FACTOR, k.B_BUFFER_FACTOR, k.OVERLAP_BLOCKS = 2, 2, 4, 0
+    k.FINAL_L1_ACC, k.OUTPUT_RING = True, False
+    k.N_PASSES = int(os.environ.get("MATMUL_N_PASSES", "1"))
+    k.INPUT_BUFFER_FACTOR = int(os.environ.get("MATMUL_A_BUFFERS", "2"))
+    k.B_BUFFER_FACTOR = int(os.environ.get("MATMUL_B_BUFFERS", "2"))
+    k.OVERLAP_BLOCKS = 0
   if min(m, n, inner, runs) <= 0:
     raise ValueError('dimensions and runs must be positive')
   if dtype not in ('bf16', 'fp8') or output_noc not in ('0', '1', 'split'):
     raise ValueError('unsupported dtype or output NoC')
-  accumulation = accumulation or ("fp16" if dtype == "fp8" else "bf16")
-  if accumulation not in (("fp16", "fp32") if dtype == "fp8" else ("bf16",)):
-    raise ValueError("BF16 inputs require BF16 accumulation; FP8 supports FP16 or FP32")
+  accumulation = accumulation or ("fp16" if dtype == "fp8" else "fp32")
+  if accumulation not in (("fp16", "fp32") if dtype == "fp8" else ("bf16", "fp32")):
+    raise ValueError("BF16 inputs support BF16 or FP32 accumulation; FP8 supports FP16 or FP32")
   subblock = subblock or ((1, 4) if accumulation == "fp32" else (2, 4))
   h, w = subblock
   if accumulation == "fp32" and h*w > 4:
@@ -174,6 +176,8 @@ def run(m, n, inner, *, runs=5, device_index=0, execute=False, profile=False, dt
   if k.N_PASSES > 1:
     if dtype != 'fp8' or accumulation != 'fp16' or writer_wave_rows:
       raise ValueError('N passes currently require FP8/FP16 and no writer waves')
+  k.DUAL_WRITER = bool(fp8_fast and k.N_PASSES == 1 and subblock == (1, 8)
+                       and output_noc == 'split' and not writer_wave_rows)
   k.WRITER_WAVE_ROWS = writer_wave_rows
   k.SUPPORTED_IN0_BLOCK_WS = (block_k,) if block_k else tuple(range(1, 11 if dtype == 'fp8' else 7))
   k.SUPPORTED_OUT_SUBBLOCK_H, k.SUPPORTED_OUT_SUBBLOCK_W = subblock
@@ -206,6 +210,7 @@ def run(m, n, inner, *, runs=5, device_index=0, execute=False, profile=False, dt
       a_ref, b_ref = (fp8_decode(words) for words in (a_storage, b_storage))
     buffers = []
     for operand, (values, shape) in enumerate(((a_storage, (mp, kp)), (b_storage, (kp, npad)))):
+      shape = (shape[0], k.input_dram_columns(shape[1]))
       padded = np.zeros(shape, dtype=np.uint8 if dtype == 'fp8' else np.float32)
       if operand == 0:
         for i in range(len(plan.rows)):
@@ -224,6 +229,7 @@ def run(m, n, inner, *, runs=5, device_index=0, execute=False, profile=False, dt
       buffers.append(buffer)
     output_itemsize = 4 if k.FP32_ACCUM else 2
     output = device.alloc_interleaved_dram(mp*npad*output_itemsize, page_size=k.TILE_BYTES)
+    device.write_dram(output, b'\xa5' * output.size)
     program, commands, _ = build(plan, endpoints, buffers[0].address, buffers[1].address, output.address, output_noc=output_noc)
     device.cq.submit(commands, timeout=10)  # Upload and warm up.
     timings = []
@@ -274,7 +280,7 @@ def main():
   parser.add_argument('--device', type=int, default=0)
   parser.add_argument('--profile', action='store_true')
   parser.add_argument('--fp8-fast', action='store_true',
-                      help='large FP8/FP16 throughput preset: row MOP, two N passes, final L1 accumulation, faster readers')
+                      help='large FP8/FP16 throughput preset: native row-major unpack, row MOP, final L1 accumulation')
   parser.add_argument('--full-validation', action='store_true',
                       help='compare every output element against the CPU reference')
   parser.add_argument('--writer-wave-rows', type=int, default=0)
@@ -282,7 +288,7 @@ def main():
   parser.add_argument('--output-noc', choices=('0','1','split'), default='split')
   parser.add_argument('--subblock', type=int, nargs=2)
   parser.add_argument('--accumulation', choices=('bf16', 'fp16', 'fp32'),
-                      help='default: BF16 for BF16 inputs, FP16 for FP8; FP32 requires FP8 and produces FP32 output')
+                      help='default: FP32 for BF16 inputs, FP16 for FP8; FP32 accumulation produces FP32 output')
   parser.add_argument('--dtype', choices=('bf16', 'fp8'), default='bf16')
   args = parser.parse_args()
   if min(args.M, args.N, args.K, args.runs) <= 0:

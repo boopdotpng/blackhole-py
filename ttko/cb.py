@@ -275,7 +275,9 @@ class CircularBufferOps:
     self.label(done)
     return self.fence()
 
-  def cb_pop_front(self, interface_base: int, cb_index: int, count: int | R = 1, *, tensix_ack: bool = False):
+  def cb_pop_front(self, interface_base: int, cb_index: int, count: int | R = 1, *, tensix_ack: bool = False, publish_ack: bool = True):
+    if tensix_ack and not publish_ack:
+      raise ValueError("a CB observer cannot publish a Tensix acknowledgement")
     iface, ptr, tmp, counter, acked, received = R.T6, R.T5, R.T4, R.T3, R.T2, R.T1
     self.cb_iface(interface_base, cb_index, out=iface)
     self.lw(counter, iface, 24)
@@ -290,8 +292,11 @@ class CircularBufferOps:
     self.slli(received, received, 16)
     self.or_(counter, received, acked)
     self.sw(counter, iface, 24)
-    self.li(tmp, CB.SYNC_TILES_ACKED_BASE + cb_index * CB.SYNC_STRIDE)
-    self.sw(acked, tmp, 0)
+    # A read-only observer can advance its local cursor without releasing
+    # storage that is still owned by the primary consumer.
+    if publish_ack:
+      self.li(tmp, CB.SYNC_TILES_ACKED_BASE + cb_index * CB.SYNC_STRIDE)
+      self.sw(acked, tmp, 0)
     if tensix_ack:
       self.slli(tmp, acked, 8)
       self.li(ptr, int(TT.TTSETDMAREG(0, 0, 0, 8)))

@@ -105,7 +105,8 @@ def emit_functions(fw, plan):
               fw.emit(TT.TTINCRWC(0,0,sb,sa))
               da -= sa; db -= sb
             if k.INPUT_DTYPE != DType.FP8:
-              fw.emit(TT.TTMVMUL(addr_mode=3,dst=dst))
+              for _ in range(3 if k.FP32_ACCUM else 1):
+                fw.emit(TT.TTMVMUL(addr_mode=3,dst=dst))
             fw.emit(TT.TTMVMUL(addr_mode=7,dst=dst))
             current_a,current_b = a,b+8
       fw.emit(TT.TTSETRWC(1, 0, 0, 0, 0, 15))
