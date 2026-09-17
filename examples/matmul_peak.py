@@ -40,12 +40,17 @@ def fp8_encode(values):
   return (codes | (np.signbit(values).astype(np.uint8) << 7)).astype(np.uint8)
 
 
+def tile_storage_bytes(words):
+  """Tile row-major storage words without interpreting or converting them."""
+  m, n = words.shape
+  return words.reshape(m//32, 2, 16, n//32, 2, 16).transpose(0, 3, 1, 4, 2, 5).tobytes()
+
+
 def tile_bytes(values, dtype="bf16"):
   """Row-major float32 -> BF16 or FP8 storage tiles with four 16x16 faces."""
-  m, n = values.shape
   words = (fp8_encode(values) if dtype == 'fp8' else
            (np.ascontiguousarray(values, dtype=np.float32).view(np.uint32) >> 16).astype('<u2'))
-  return words.reshape(m//32, 2, 16, n//32, 2, 16).transpose(0, 3, 1, 4, 2, 5).tobytes()
+  return tile_storage_bytes(words)
 
 
 def matrix_bytes(data, m, n, *, fp32=False):
@@ -198,11 +203,14 @@ def run(m, n, inner, *, runs=5, device_index=0, execute=False, profile=False, dt
       print(f'grid {program.global_size}, {len(sources)} shared controller images, {len(program.binary)} bundle bytes, output NoC {output_noc}')
       return
     a_ref, b_ref = k.make_inputs(m, inner, n)
+    a_storage, b_storage = a_ref, b_ref
     if dtype == 'fp8':
-      a_ref, b_ref = (fp8_decode(fp8_encode(values)) for values in (a_ref, b_ref))
+      a_storage, b_storage = (fp8_encode(values) for values in (a_ref, b_ref))
+      # Decode only for CPU validation; pad and tile the encoded bytes directly.
+      a_ref, b_ref = (fp8_decode(words) for words in (a_storage, b_storage))
     buffers = []
-    for operand, (values, shape) in enumerate(((a_ref, (mp, kp)), (b_ref, (kp, npad)))):
-      padded = np.zeros(shape, dtype=np.float32)
+    for operand, (values, shape) in enumerate(((a_storage, (mp, kp)), (b_storage, (kp, npad)))):
+      padded = np.zeros(shape, dtype=np.uint8 if dtype == 'fp8' else np.float32)
       if operand == 0:
         for i in range(len(plan.rows)):
           start = i * plan.m_extent
@@ -214,7 +222,7 @@ def run(m, n, inner, *, runs=5, device_index=0, execute=False, profile=False, dt
           count = min(plan.n_extent, max(0, n - start))
           padded[:inner, i*plan.per_core_n*32:i*plan.per_core_n*32+count] = values[:, start:start+count]
       buffer = device.alloc_interleaved_dram(padded.size * (1 if dtype == "fp8" else 2), page_size=k.INPUT_TILE_BYTES)
-      device.write_dram(buffer, tile_bytes(padded, dtype))
+      device.write_dram(buffer, tile_storage_bytes(padded) if dtype == 'fp8' else tile_bytes(padded, dtype))
       buffers.append(buffer)
     output_itemsize = 4 if k.FP32_ACCUM else 2
     output = device.alloc_interleaved_dram(mp*npad*output_itemsize, page_size=k.TILE_BYTES)
