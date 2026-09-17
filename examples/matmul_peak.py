@@ -1,4 +1,8 @@
-"""Multicast BF16 HiFi2 / FP8 matmul with 8x16 edge arithmetic."""
+"""Row-major input BF16 HiFi2 / FP8 matmul with 8x16 edge arithmetic.
+
+Device timing includes row reads and L1 panel preparation, so throughput is
+not directly comparable to the older benchmark with host-tilized inputs.
+"""
 import argparse
 import struct
 import sys
@@ -40,19 +44,6 @@ def fp8_encode(values):
   return (codes | (np.signbit(values).astype(np.uint8) << 7)).astype(np.uint8)
 
 
-def tile_storage_bytes(words):
-  """Tile row-major storage words without interpreting or converting them."""
-  m, n = words.shape
-  return words.reshape(m//32, 2, 16, n//32, 2, 16).transpose(0, 3, 1, 4, 2, 5).tobytes()
-
-
-def tile_bytes(values, dtype="bf16"):
-  """Row-major float32 -> BF16 or FP8 storage tiles with four 16x16 faces."""
-  words = (fp8_encode(values) if dtype == 'fp8' else
-           (np.ascontiguousarray(values, dtype=np.float32).view(np.uint32) >> 16).astype('<u2'))
-  return tile_storage_bytes(words)
-
-
 def matrix_bytes(data, m, n, *, fp32=False):
   """Physical storage tiles -> row-major bytes, preserving 16/32-bit words."""
   words = np.frombuffer(data, dtype='<u4' if fp32 else '<u2').reshape(m//32, n//32, 2, 2, 16, 16)
@@ -60,6 +51,7 @@ def matrix_bytes(data, m, n, *, fp32=False):
 
 
 def build(plan, endpoints, a=0, b=0, c=0, *, output_noc="split"):
+  """Build for padded row-major A/B inputs and face-major output tiles."""
   cb_configs = []
   address = k.CB_STORAGE_BASE
   for index, pages in ((0, plan.cb0_pages), (1, plan.cb1_pages),
@@ -72,9 +64,13 @@ def build(plan, endpoints, a=0, b=0, c=0, *, output_noc="split"):
       cb_address = address
       address += pages * (k.INPUT_TILE_BYTES if index < 2 else k.TILE_BYTES)
     cb_configs.append((index, cb_address, pages * (k.INPUT_TILE_BYTES if index < 2 else k.TILE_BYTES), pages))
+  input_staging = []
+  for width in (plan.in0_block_w, plan.per_core_n // plan.n_passes):
+    input_staging.append(address)
+    address += 32 * k.input_row_pitch(width)
   if address > k.PASS_BASE:
     raise ValueError('matmul buffers overlap diagnostics')
-  asm.CONTEXT = {'cbs': cb_configs, 'endpoints': endpoints, 'address': 0x12000, 'fp8': k.INPUT_DTYPE == k.DType.FP8}
+  asm.CONTEXT = {'input_staging': input_staging, 'cbs': cb_configs, 'endpoints': endpoints, 'address': 0x12000, 'fp8': k.INPUT_DTYPE == k.DType.FP8}
   if plan.n_passes > 1:
     from dataclasses import replace
     plan = replace(plan, per_core_n=plan.per_core_n // plan.n_passes,
@@ -206,7 +202,7 @@ def run(m, n, inner, *, runs=5, device_index=0, execute=False, profile=False, dt
     a_storage, b_storage = a_ref, b_ref
     if dtype == 'fp8':
       a_storage, b_storage = (fp8_encode(values) for values in (a_ref, b_ref))
-      # Decode only for CPU validation; pad and tile the encoded bytes directly.
+      # Decode only for CPU validation; upload the padded encoded bytes in row-major order.
       a_ref, b_ref = (fp8_decode(words) for words in (a_storage, b_storage))
     buffers = []
     for operand, (values, shape) in enumerate(((a_storage, (mp, kp)), (b_storage, (kp, npad)))):
@@ -222,7 +218,9 @@ def run(m, n, inner, *, runs=5, device_index=0, execute=False, profile=False, dt
           count = min(plan.n_extent, max(0, n - start))
           padded[:inner, i*plan.per_core_n*32:i*plan.per_core_n*32+count] = values[:, start:start+count]
       buffer = device.alloc_interleaved_dram(padded.size * (1 if dtype == "fp8" else 2), page_size=k.INPUT_TILE_BYTES)
-      device.write_dram(buffer, tile_storage_bytes(padded) if dtype == 'fp8' else tile_bytes(padded, dtype))
+      data = (padded.tobytes() if dtype == 'fp8' else
+              (padded.view(np.uint32) >> 16).astype('<u2').tobytes())
+      device.write_dram(buffer, data)
       buffers.append(buffer)
     output_itemsize = 4 if k.FP32_ACCUM else 2
     output = device.alloc_interleaved_dram(mp*npad*output_itemsize, page_size=k.TILE_BYTES)

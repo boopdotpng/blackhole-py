@@ -1,4 +1,4 @@
-"""8x16 MVMUL fringes; source banks retain their four-face storage layout."""
+"""8x16 MVMUL fringes; source banks contain contiguous 32x16 column panels."""
 from ttko.isa import R, Tensix as TT
 from ttko.registers import Stall, Wait, DType
 
@@ -91,8 +91,8 @@ def emit_functions(fw, plan):
       for kk in range(0,inner,16):
         for nn in range(0,n,16):
           for mm in range(0,m,8):
-            a = (kk//16)*32 + (nn//16)*16
-            b = (mm//16)*32 + (kk//16)*16 + mm%16
+            a = (nn//16)*32 + kk
+            b = (kk//16)*32 + mm
             dst = (mm//16)*32 + (nn//16)*16 + mm%16
             reset_a, reset_b = a < current_a, b < current_b
             if reset_a or reset_b:

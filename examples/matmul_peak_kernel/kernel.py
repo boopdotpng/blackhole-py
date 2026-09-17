@@ -438,6 +438,11 @@ class TensorLayout:
   c_row_stride: int
 
 
+def input_row_pitch(width):
+  # FP8 rows can start halfway through an aligned 64-byte NoC read.
+  return _align_up(width * 32 * INPUT_DTYPE.itemsize + (32 if INPUT_DTYPE == DType.FP8 else 0), 64)
+
+
 def plan_matmul(M: int, K: int, N: int, cores: list[Core]) -> MatmulPlan:
   if N_PASSES not in (1, 2, 4) or min(INPUT_BUFFER_FACTOR, B_BUFFER_FACTOR) < 1 or OVERLAP_BLOCKS < 0:
     raise ValueError("N passes must be 1, 2, or 4; input buffers must be positive; overlap blocks must be nonnegative")
@@ -469,7 +474,8 @@ def plan_matmul(M: int, K: int, N: int, cores: list[Core]) -> MatmulPlan:
     cb_out = pcm * pcn * TILE_BYTES // (N_PASSES if OUTPUT_RING else 1)
     if N_PASSES > 1 and not FINAL_L1_ACC:
       cb_out += pcm * (pcn // N_PASSES) * TILE_BYTES
-    return cb0 + cb1 + cb_out <= l1_data_bytes
+    staging = 32 * (input_row_pitch(bw) + input_row_pitch(pcn // N_PASSES))
+    return cb0 + cb1 + cb_out + staging <= l1_data_bytes
 
   best: tuple | None = None
   best_score: tuple[int, ...] | None = None
@@ -954,7 +960,7 @@ def emit_input_read_setup(fw, noc):
   fw.local_noc0_coord(R.A5, x_addr=BM.MY_X if noc == 0 else NM.MY_X,
                       y_addr=BM.MY_Y if noc == 0 else NM.MY_Y)
   for offset, value in ((0x1c,NOC.CMD_RD_FIELD),(0x10,0),(0x14,R.A5),
-                        (0x04,0),(0x20,INPUT_TILE_BYTES),(0x24,0)):
+                        (0x04,0),(0x24,0)):
     _output_reg(fw, offset, value)
 
 
@@ -962,20 +968,108 @@ def emit_input_read(fw, noc):
   if not FAST_READS:
     fw.local_noc0_coord(R.A5, x_addr=BM.MY_X if noc == 0 else NM.MY_X,
                         y_addr=BM.MY_Y if noc == 0 else NM.MY_Y)
-    fw.li(R.T6, INPUT_TILE_BYTES)
     fw.noc_read(noc, 1, R.A0, 0, R.A2, R.A4, R.T6, ret_coord=R.A5, a=R.T3, v=R.T5)
   else:
     _output_wait_ready(fw, val=R.T3)
-    for offset, value in ((0x00,R.A0),(0x08,R.A2),(0x0c,R.A4),(0x40,NOC.CTRL_SEND_REQ)):
+    for offset, value in ((0x00,R.A0),(0x08,R.A2),(0x0c,R.A4),(0x20,R.T6),(0x40,NOC.CTRL_SEND_REQ)):
       _output_reg(fw, offset, value)
-    fw.li(R.T6, INPUT_TILE_BYTES)
   fw.add(R.A4, R.A4, R.T6)
+
+
+def emit_row_major_block_read(fw, noc, width):
+  """Fetch full block rows, then form contiguous 32x16 source panels.
+
+  The staging rows keep NoC alignment and coalesce neighboring tiles. Only
+  interleaved DRAM page boundaries split a row into separate reads.
+  """
+  from .asm import CONTEXT
+  mailbox = BM if noc == 0 else NM
+  banks_arg = 23 if noc == 0 else 29
+  scratch = CONTEXT['input_staging'][noc]
+  pitch = input_row_pitch(width)
+  item_shift = INPUT_DTYPE.itemsize.bit_length() - 1
+  half_bytes = 16 * INPUT_DTYPE.itemsize
+  fw.divu(R.T1, R.A6, R.S3)
+  fw.remu(R.T2, R.A6, R.S3)
+  fw.slli(R.T1, R.T1, 5)
+  fw.mul(R.T1, R.T1, R.S3)
+  fw.add(R.T1, R.T1, R.T2)
+  fw.slli(R.T4, R.T1, 5 + item_shift)
+  fw.mv(R.S2, R.A4)
+  fw.li(R.A4, scratch)
+  fw.li(R.A3, 32)
+  row, chunk = fw._new_label('input_row'), fw._new_label('input_page')
+  fw.label(row)
+  fw.li(R.TP, 0)
+  fw.label(chunk)
+  fw.andi(R.T0, R.T4, -64)
+  fw.add(R.T0, R.T0, R.TP)
+  fw.andi(R.T5, R.T0, INPUT_TILE_BYTES - 1)
+  fw.li(R.T6, INPUT_TILE_BYTES)
+  fw.sub(R.T6, R.T6, R.T5)
+  fw.andi(R.T2, R.T4, 63)
+  fw.li(R.T1, width * 32 * INPUT_DTYPE.itemsize + 63)
+  fw.add(R.T1, R.T1, R.T2)
+  fw.andi(R.T1, R.T1, -64)
+  fw.sub(R.T1, R.T1, R.TP)
+  full = fw._new_label('input_full_page')
+  fw.bgeu(R.T1, R.T6, full)
+  fw.mv(R.T6, R.T1)
+  fw.label(full)
+  fw.srli(R.A1, R.T0, INPUT_TILE_BYTES.bit_length() - 1)
+  fw.mv(R.A0, R.S0)
+  fw.arg(R.A2, banks_arg)
+  fw.dram_tile_addr_from(mailbox.DRAM_BANK_TO_NOC_XY,
+                         R.A2 if noc else 0, tile_bytes=INPUT_TILE_BYTES)
+  fw.add(R.A0, R.A0, R.T5)
+  emit_input_read(fw, noc)
+  fw.addi(R.A7, R.A7, 1)
+  fw.add(R.TP, R.TP, R.T6)
+  fw.andi(R.T0, R.T4, 63)
+  fw.li(R.T1, width * 32 * INPUT_DTYPE.itemsize + 63)
+  fw.add(R.T0, R.T0, R.T1)
+  fw.andi(R.T0, R.T0, -64)
+  fw.bltu(R.TP, R.T0, chunk)
+  fw.li(R.T1, pitch)
+  fw.sub(R.T1, R.T1, R.T0)
+  fw.add(R.A4, R.A4, R.T1)
+  fw.slli(R.T0, R.S3, 5 + item_shift)
+  fw.add(R.T4, R.T4, R.T0)
+  fw.addi(R.A3, R.A3, -1)
+  fw.bne(R.A3, R.ZERO, row)
+  fw.noc_reads_flushed(noc, R.A7)
+  fw.slli(R.T0, R.S3, 10 + item_shift)
+  fw.sub(R.T4, R.T4, R.T0)
+  # Every tile uses the same row alignment pattern. Only its column offset
+  # within the staged row changes; no extra DRAM reads are needed.
+  for col in range(width):
+    fw.li(R.T2, scratch + col * 32 * INPUT_DTYPE.itemsize)
+    fw.li(R.A3, 32)
+    loop = fw._new_label('input_panel')
+    fw.label(loop)
+    fw.andi(R.T0, R.T4, 63)
+    fw.add(R.T6, R.T2, R.T0)
+    for offset in range(0, half_bytes, 4):
+      fw.lw(R.T1, R.T6, offset)
+      fw.sw(R.T1, R.S2, offset)
+      fw.lw(R.T1, R.T6, half_bytes + offset)
+      fw.sw(R.T1, R.S2, 32 * half_bytes + offset)
+    fw.addi(R.S2, R.S2, half_bytes)
+    _move_plus_imm(fw, R.T2, R.T2, pitch, tmp=R.T0)
+    fw.slli(R.T0, R.S3, 5 + item_shift)
+    fw.add(R.T4, R.T4, R.T0)
+    fw.addi(R.A3, R.A3, -1)
+    fw.bne(R.A3, R.ZERO, loop)
+    fw.addi(R.S2, R.S2, 32 * half_bytes)
+    fw.slli(R.T0, R.S3, 10 + item_shift)
+    fw.sub(R.T4, R.T4, R.T0)
+  fw.mv(R.A4, R.S2)
+  fw.fence()
 
 
 def emit_reader_sender(fw: MatmulKernel, plan: MatmulPlan) -> MatmulKernel:
   fw.arg(R.S0, 0)   # A base
   fw.arg(R.S1, 1)   # current first tile
-  fw.arg(R.S2, 2)   # inner tile stride
   fw.arg(R.S3, 3)   # row tile stride
   fw.arg(R.S4, 4)   # next K-block offset
   fw.arg(R.S6, 6)   # block_h
@@ -1008,17 +1102,11 @@ def emit_reader_sender(fw: MatmulKernel, plan: MatmulPlan) -> MatmulKernel:
   fw.mv(R.A6, R.S1)
   fw.li(R.S5, plan.per_core_m)
   fw.label('reader_tile_rows')
-  for col in range(plan.in0_block_w):
-    fw.mv(R.A0, R.S0)
-    _move_plus_imm(fw, R.A1, R.A6, col)
-    fw.arg(R.A2, 23)
-    fw.dram_tile_addr_from(BM.DRAM_BANK_TO_NOC_XY, 0, tile_bytes=INPUT_TILE_BYTES)
-    emit_input_read(fw, 0)
+  emit_row_major_block_read(fw, 0, plan.in0_block_w)
   fw.add(R.A6, R.A6, R.S3)
   fw.addi(R.S5,R.S5,-1)
   fw.bne(R.S5,R.ZERO,'reader_tile_rows')
 
-  fw.add(R.A7, R.A7, R.S7)
   fw.noc_reads_flushed(0, R.A7)
   fw.arg(R.T0, 21)
   fw.sem_addr(BM.SEM_L1_BASE, R.T0, out=R.A3)
@@ -1111,7 +1199,6 @@ def emit_reader_recv(fw: MatmulKernel) -> MatmulKernel:
 def emit_writer_sender(fw: MatmulKernel, plan: MatmulPlan) -> MatmulKernel:
   fw.arg(R.S0, 0)   # B base
   fw.arg(R.S1, 1)   # current first tile
-  fw.arg(R.S2, 2)   # inner tile stride
   fw.arg(R.S3, 3)   # row tile stride
   fw.arg(R.S4, 4)   # next K-block offset
   fw.arg(R.S5, 5)   # block_w
@@ -1141,17 +1228,11 @@ def emit_writer_sender(fw: MatmulKernel, plan: MatmulPlan) -> MatmulKernel:
   fw.mv(R.A6, R.S1)
   fw.li(R.S5, plan.in0_block_w)
   fw.label('writer_tile_rows')
-  for col in range(plan.per_core_n):
-    fw.mv(R.A0, R.S0)
-    _move_plus_imm(fw, R.A1, R.A6, col)
-    fw.arg(R.A2, 29)
-    fw.dram_tile_addr_from(NM.DRAM_BANK_TO_NOC_XY, R.A2, tile_bytes=INPUT_TILE_BYTES)
-    emit_input_read(fw, 1)
+  emit_row_major_block_read(fw, 1, plan.per_core_n)
   fw.add(R.A6, R.A6, R.S3)
   fw.addi(R.S5,R.S5,-1)
   fw.bne(R.S5,R.ZERO,'writer_tile_rows')
 
-  fw.add(R.A7, R.A7, R.S7)
   fw.noc_reads_flushed(1, R.A7)
   fw.arg(R.T0, 16)
   fw.sem_addr(NM.SEM_L1_BASE, R.T0, out=R.A3)
@@ -1649,17 +1730,19 @@ def matmul_math_addrmod_init(fw: MatmulTrisc) -> MatmulTrisc:
     fw.setc16(12 + slot, 8 << 8 if slot == 7 else 0)
     fw.setc16(28 + slot, fidelity)
     fw.setc16(47 + slot, 0)
-  # Full 32x32 bf16 matmul, HiFi2.
+  # Sources contain consecutive 32x16 column panels; Dst retains four faces.
+  # SrcA (B): N advances 32 rows, K advances 16. SrcB (A): M advances
+  # 16 rows between output faces, then K advances to the next 32-row panel.
   fw.setc16(ThreadCfg.ADDR_MOD_AB_SEC0_Src, 2048)
   fw.setc16(ThreadCfg.ADDR_MOD_DST_SEC0, 8)
   fw.setc16(ThreadCfg.ADDR_MOD_BIAS_SEC0_Bias, 0)
-  fw.setc16(ThreadCfg.ADDR_MOD_AB_SEC1_Src, 16400)
+  fw.setc16(ThreadCfg.ADDR_MOD_AB_SEC1_Src, 32 | (1 << 14))
   fw.setc16(ThreadCfg.ADDR_MOD_DST_SEC1, 8)
   fw.setc16(ThreadCfg.ADDR_MOD_BIAS_SEC1_Bias, 0)
-  fw.setc16(ThreadCfg.ADDR_MOD_AB_SEC2_Src, 24640)
+  fw.setc16(ThreadCfg.ADDR_MOD_AB_SEC2_Src, (1 << 6) | (16 << 8) | (1 << 14))
   fw.setc16(ThreadCfg.ADDR_MOD_DST_SEC2, 8)
   fw.setc16(ThreadCfg.ADDR_MOD_BIAS_SEC2_Bias, 0)
-  fw.setc16(ThreadCfg.ADDR_MOD_AB_SEC4_Src, 28768)
+  fw.setc16(ThreadCfg.ADDR_MOD_AB_SEC4_Src, 16 | (1 << 6) | (16 << 8) | (1 << 14))
   fw.setc16(ThreadCfg.ADDR_MOD_DST_SEC4, 1024)
   fw.setc16(ThreadCfg.ADDR_MOD_BIAS_SEC4_Bias, 0)
   fw.setc16(ThreadCfg.ADDR_MOD_AB_SEC5_Src, 49344)

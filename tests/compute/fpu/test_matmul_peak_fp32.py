@@ -26,7 +26,7 @@ def run_case(bh, monkeypatch, a, b, *, fp32=True, block_k=1, subblock=(1, 4)):
     padded = np.zeros(padded_shape, dtype=np.uint8)
     padded[:values.shape[0], :values.shape[1]] = codes
     buffer = bh.device.alloc_interleaved_dram(padded.size, page_size=1024)
-    bh.device.write_dram(buffer, m.tile_storage_bytes(padded))
+    bh.device.write_dram(buffer, padded.tobytes())
     buffers.append(buffer)
   output = bh.device.alloc_interleaved_dram(shape[0]*shape[2]*(4 if fp32 else 2), page_size=k.TILE_BYTES)
   bh.device.write_dram(output, b'\xa5'*output.size)
