@@ -14,7 +14,7 @@ from dataclasses import replace
 
 REWRITE = pathlib.Path(__file__).resolve().parents[2]
 sys.path.append(str(REWRITE))  # after blackhole-py, which owns pcie.py
-from config import PackerContext, UnpackerContext, DataFormat, Space, l1_addr
+from config import PackerContext, PackCommonCfg, UnpackerContext, DataFormat, Space, l1_addr
 sys.path.append(str(pathlib.Path(__file__).resolve().parent)); from cfg_apply import apply
 import tests.movement.unpacker.unpack as U
 
@@ -37,12 +37,12 @@ def _context(n):
   return PackerContext(
     context=n, l1_dest=l1_addr(OUTPUTS[n]) | 1 << 31, row_start_section_size=0, exp_section_size=4,
     disable_zero_compress=True, dst_format=DataFormat.FLOAT16_B, src_format=DataFormat.FLOAT16_B,  # packer input format is BF16 even for fp32 Dest (configure_packer)
-    edge_mask=0xFFFF, reads_per_xy_plane=1, dest_row_offset=0)
+    reads_per_xy_plane=1, dest_row_offset=0)
 
 def _pacr(ctx, *, close=False):
   return TT.TTPACR(ctx, 0, 0, int(close), 0, 0, 1, 0, 0, 0, 0, int(close))
 
-def _images(ctx, write_contexts=True, *, trisc0=None, edit=None):
+def _images(ctx, write_contexts=True, *, trisc0=None, edit=None, extra=()):
   if trisc0 is None:
     trisc0 = Asm("trisc0")
     size = trisc0.reg(); trisc0.li(size, F32_TILE_BYTES)
@@ -62,7 +62,8 @@ def _images(ctx, write_contexts=True, *, trisc0=None, edit=None):
     for (space, _, addr), (value, _) in c.writes().items():
       assert space is Space.SHARED
       k.write(TensixMMIO.CFG_BASE + 4 * addr, value)
-  _set_dst_position(k, 0, 0)
+  if extra: apply(k, *extra)
+  _set_dst_position(k, 0, 0)  # (pack counters had no observable effect in this row-pack mode, either section)
   k.emit(TT.TTSETADCXX(4, 15, 0))
   configure_mop(k, _mop_loop_words(1, ROWS, loop=_pacr(ctx), last=_pacr(ctx, close=True)))
   stall(k, Stall.CFG, Wait.PACK0)
@@ -100,45 +101,84 @@ SOURCES = tuple(TensixL1.DATA_BUFFER_SPACE_BASE + 0x10000 + c * 0x1000 for c in 
 
 def _source_words(c): return [0x3F800000 + ((c * TILE_ELEMENTS + i) << 16) for i in range(TILE_ELEMENTS)]
 
-def _unpack_with_context(ctx):
+def _unpack_with_context(ctx, step="full", base=None):
   """blackhole-py's unpack-to-Dest, but context ctx gets its own L1 base and the UNPACR selects ctx."""
   original_cfg, original_unpacr = U.configure_unpacker, U._unpacr
   def configure(k, *a, **kw):
     original_cfg(k, *a, **kw)
+    if step == "plain": return
     apply(k, UnpackerContext(unpacker=0, context=ctx, l1_base=l1_addr(SOURCES[ctx]), dest_address=64, tile_x_dim=256,
                              offset_address=0, shift_amount=0, disable_zero_compress=True, to_dest=True))
-    observed = k.reg(); k.read(observed, U._engine_cfg(U.UnpackCfg.BASE, 0)); k.write(U.UNPACK_CONFIG_SYNC, 0)
+    # no second PC_UNPACK_SYNC commit here: a kernel that commits twice hangs the next launch on this core.
+    # Blackhole Auto TTSync already orders these RISC config writes before the UNPACR.
   def unpacr(engine, *, to_dst=False):  # blackhole-py already sets multi-context mode (OvrdThreadId) with context 0
-    return int(original_unpacr(engine, to_dst=to_dst)) | ctx << 10
+    word = original_unpacr(engine, to_dst=to_dst)  # keep ttko's TensixWord type: Asm.emit treats plain ints as RISC-V
+    return type(word)(int(word) | (ctx << 10 if step == "full" else 0))
   U.configure_unpacker, U._unpacr = configure, unpacr
   try:
     k = Asm("trisc0"); size = k.reg(); k.li(size, F32_TILE_BYTES)
-    U.emit_unpack_to_dst(k, SOURCES[0], size, 0, 0)  # context 0 keeps SOURCES[0]
+    U.emit_unpack_to_dst(k, SOURCES[0] if base is None else base, size, 0, 0)  # context 0 keeps SOURCES[0]
   finally:
     U.configure_unpacker, U._unpacr = original_cfg, original_unpacr
   return k
 
-@pytest.mark.skip(reason="probe bug: context 0 returns zeros, and context 2 hung the card; fix before running")
-@pytest.mark.parametrize("ctx", [0, 1, 2, 5, 7])
+@pytest.mark.parametrize("ctx", range(8))
 def test_unpacr_cfg_ctx_selects_unpacker_context(bh, ctx):
   l1 = {SOURCES[c]: pack(f"<{TILE_ELEMENTS}I", *_source_words(c)) for c in range(8)}
   bh.launch(_images(0, write_contexts=False, trisc0=_unpack_with_context(ctx)), l1={**l1, OUTPUTS[0]: b"\xA5" * BF16_TILE})
   got = unpack(f"<{TILE_ELEMENTS}H", bh.read_l1(bh.core, OUTPUTS[0], BF16_TILE))
   source = (got[0] - 0x3F80) // TILE_ELEMENTS
-  print(f"unpacker cfg_ctx={ctx}: data came from source {source}")
+  print(f"unpacker cfg_ctx={ctx}: data came from source {source}")  # every context has its own L1 base
   assert got == tuple(w >> 16 for w in _source_words(ctx))
+
+@pytest.mark.parametrize("ctx,step", [(c, s) for c in range(8) for s in ("plain", "apply", "full")])
+def test_unpack_context_steps(bh, ctx, step):
+  l1 = {SOURCES[c]: pack(f"<{TILE_ELEMENTS}I", *_source_words(c)) for c in range(8)}
+  bh.launch(_images(0, write_contexts=False, trisc0=_unpack_with_context(ctx, step)), l1={**l1, OUTPUTS[0]: b"\xA5" * BF16_TILE})
+  got = unpack(f"<{TILE_ELEMENTS}H", bh.read_l1(bh.core, OUTPUTS[0], BF16_TILE))
+  sources = [c for c in range(8) if got == tuple(w >> 16 for w in _source_words(c))]
+  print(f"\nSTEP ctx{ctx}/{step}: {sources or hex(got[0])}", flush=True)
+
+@pytest.mark.parametrize("uploads", ["one", "all"])
+def test_unpack_plain_uploads(bh, uploads):
+  srcs = range(1) if uploads == "one" else range(8)
+  l1 = {SOURCES[c]: pack(f"<{TILE_ELEMENTS}I", *_source_words(c)) for c in srcs}
+  bh.launch(_images(0, write_contexts=False, trisc0=_unpack_with_context(0, "plain")), l1={**l1, OUTPUTS[0]: b"\xA5" * BF16_TILE})
+  got = unpack(f"<{TILE_ELEMENTS}H", bh.read_l1(bh.core, OUTPUTS[0], BF16_TILE))
+  assert got == tuple(w >> 16 for w in _source_words(0))
+
+def test_unpack_source_address(bh):
+  """Which L1 addresses work as an unpack source with blackhole-py's unpack-to-Dest (no context changes)?"""
+  report = []
+  for base in (INPUT, INPUT + 0x8000, INPUT + 0x10000, INPUT + 0x20000):
+    words = _source_words(1)
+    bh.launch(_images(0, write_contexts=False, trisc0=_unpack_with_context(0, "plain", base)),
+              l1={base: pack(f"<{TILE_ELEMENTS}I", *words), OUTPUTS[0]: b"\xA5" * BF16_TILE})
+    got = unpack(f"<{TILE_ELEMENTS}H", bh.read_l1(bh.core, OUTPUTS[0], BF16_TILE))
+    report.append(f"{base:#x}: {'ok' if got == tuple(w >> 16 for w in words) else f'first={got[0]:#x}'}")
+  print("SOURCE " + " | ".join(report))
 
 # ***** which packer section registers follow cfg_ctx *****
 
-VARIANTS = {"control": lambda c: c, "dest_row_offset=32": lambda c: replace(c, dest_row_offset=32),
-            "counters=0": lambda c: replace(c, reads_per_xy_plane=0), "edge_mask=0": lambda c: replace(c, edge_mask=0)}
+# name: (edit applied to context 1, extra configs). Packing uses cfg_ctx=1; row-set mapping 0 sends every row to mask 0.
+VARIANTS = {"control": (None, ()),
+            "ctx1 dest_row_offset=32": (lambda c: replace(c, dest_row_offset=32), ()),
+            "ctx1 counters=0": (lambda c: replace(c, reads_per_xy_plane=0), ()),
+            "ctx1 counters=16": (lambda c: replace(c, reads_per_xy_plane=16), ()),
+            "ctx0 counters=0": (None, (PackerContext(context=0, reads_per_xy_plane=0),)),
+            "ctx0 counters=16": (None, (PackerContext(context=0, reads_per_xy_plane=16),)),
+            "edge mask 1 = 0": (None, (PackCommonCfg(edge_mask_1=0),)),
+            "edge mask 0 = 0": (None, (PackCommonCfg(edge_mask_0=0),))}
 
-@pytest.mark.skip(reason="not run yet: queued behind the unpacker probe fix")
 @pytest.mark.parametrize("variant", VARIANTS)
 def test_packer_section_fields_follow_cfg_ctx(bh, variant):
   words = [0x3F800000 + (i << 16) for i in range(TILE_ELEMENTS)]
-  bh.launch(_images(1, edit=VARIANTS[variant]), l1={INPUT: pack(f"<{TILE_ELEMENTS}I", *words), **{o: b"\xA5" * BF16_TILE for o in OUTPUTS}})
+  edit, extra = VARIANTS[variant]
+  bh.launch(_images(1, edit=edit, extra=extra), l1={INPUT: pack(f"<{TILE_ELEMENTS}I", *words), **{o: b"\xA5" * BF16_TILE for o in OUTPUTS}})
   raw = bh.read_l1(bh.core, OUTPUTS[1], BF16_TILE)
   got = unpack(f"<{TILE_ELEMENTS}H", raw)
   rows = [None if got[r * 16] == 0xA5A5 else (got[r * 16] - 0x3F80) // 16 if got[r * 16] else 0 for r in range(ROWS)]
   print(f"packer variant {variant}: first rows {rows[:6]} last {rows[-3:]} intact={got == tuple(w >> 16 for w in words)}")
+  expected_rows = {"ctx1 dest_row_offset=32": list(range(32, 64)) + [0] * 32,  # per context, in Dest rows (rows past the tile are zero)
+                   "edge mask 0 = 0": [0] * ROWS}.get(variant, list(range(ROWS)))  # edge masks follow the row set, not cfg_ctx
+  assert rows == expected_rows

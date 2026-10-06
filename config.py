@@ -116,7 +116,8 @@ class Config:
 # Registers at addr32 >= GLOBAL_CFG_BASE have one copy. On top of that the unpacker has config *contexts*: an UNPACR
 # picks one (its cfg_ctx operand + ThreadCfg.unpack{n}_context, or the auto-incrementing context counter), so a kernel
 # can rewrite context k+1 while the unpacker is still running on context k and then switch with no stall.
-# Unpacker 0 has 8 contexts, unpacker 1 has 2. Some per-context registers only have 4 copies: contexts 4-7 share them
+# blackhole-py's UNPACR already sets multi_context with cfg_ctx 0.
+# Unpacker 0 has 8 contexts (each with its own L1 base, confirmed on hardware for 0-7), unpacker 1 has 2. Some per-context registers only have 4 copies: contexts 4-7 share them
 # with contexts 0-3 (noted per field).
 
 GLOBAL_CFG_BASE = 180  # cfg_defines GLOBAL_CFGREG_BASE_ADDR32
@@ -227,13 +228,14 @@ class PackerContext(Config):
   l1_accumulate: bool | None = _pk("Pack_L1_Acc")  # add into L1 instead of overwrite
   exp_threshold_enable: bool | None = _pk("Exp_threshold_en")
   exp_threshold: int | None = _pk("Exp_threshold")
-  # per-section counters / Dest offset. Whether these follow cfg_ctx is not yet confirmed on hardware.
+  # dest_row_offset follows cfg_ctx (hardware-confirmed). The counters are per section by name and by PACR's auto-context
+  # description, but changing them had no observable effect in row-pack mode, so that is not confirmed.
   packs_per_xy_plane: int | None = F(*per("PACK_COUNTERS_SEC{i}_pack_per_xy_plane", 4))
   reads_per_xy_plane: int | None = F(*per("PACK_COUNTERS_SEC{i}_pack_reads_per_xy_plane", 4))  # 16 tile pack, 1 row pack
   xys_per_tile: int | None = F(*per("PACK_COUNTERS_SEC{i}_pack_xys_per_tile", 4))
   yz_transposed: bool | None = F(*per("PACK_COUNTERS_SEC{i}_pack_yz_transposed", 4))
   auto_context_inc_xys: int | None = F(*per("PACK_COUNTERS_SEC{i}_auto_ctxt_inc_xys_cnt", 4))
-  dest_row_offset: int | None = F(*per("DEST_TARGET_REG_CFG_PACK_SEC{i}_Offset", 4))  # first Dest row this context reads
+  dest_row_offset: int | None = F(*per("DEST_TARGET_REG_CFG_PACK_SEC{i}_Offset", 4))  # first Dest row this context reads (in rows)
   dest_z_offset: int | None = F(*per("DEST_TARGET_REG_CFG_PACK_SEC{i}_ZOffset", 4))
 
 @dataclass(frozen=True)
