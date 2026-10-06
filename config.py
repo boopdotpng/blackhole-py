@@ -228,8 +228,8 @@ class PackerContext(Config):
   l1_accumulate: bool | None = _pk("Pack_L1_Acc")  # add into L1 instead of overwrite
   exp_threshold_enable: bool | None = _pk("Exp_threshold_en")
   exp_threshold: int | None = _pk("Exp_threshold")
-  # dest_row_offset follows cfg_ctx (hardware-confirmed). The counters are per section by name and by PACR's auto-context
-  # description, but changing them had no observable effect in row-pack mode, so that is not confirmed.
+  # dest_row_offset and reads_per_xy_plane follow cfg_ctx (hardware-confirmed). reads_per_xy_plane is where the edge-mask
+  # row position wraps (Y -> row-set mapping -> edge mask), so it only shows when the row-set mapping is not uniform.
   packs_per_xy_plane: int | None = F(*per("PACK_COUNTERS_SEC{i}_pack_per_xy_plane", 4))
   reads_per_xy_plane: int | None = F(*per("PACK_COUNTERS_SEC{i}_pack_reads_per_xy_plane", 4))  # 16 tile pack, 1 row pack
   xys_per_tile: int | None = F(*per("PACK_COUNTERS_SEC{i}_pack_xys_per_tile", 4))

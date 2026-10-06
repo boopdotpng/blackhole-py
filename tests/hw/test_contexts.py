@@ -63,7 +63,7 @@ def _images(ctx, write_contexts=True, *, trisc0=None, edit=None, extra=()):
       assert space is Space.SHARED
       k.write(TensixMMIO.CFG_BASE + 4 * addr, value)
   if extra: apply(k, *extra)
-  _set_dst_position(k, 0, 0)  # (pack counters had no observable effect in this row-pack mode, either section)
+  _set_dst_position(k, 0, 0)
   k.emit(TT.TTSETADCXX(4, 15, 0))
   configure_mop(k, _mop_loop_words(1, ROWS, loop=_pacr(ctx), last=_pacr(ctx, close=True)))
   stall(k, Stall.CFG, Wait.PACK0)
@@ -182,3 +182,37 @@ def test_packer_section_fields_follow_cfg_ctx(bh, variant):
   expected_rows = {"ctx1 dest_row_offset=32": list(range(32, 64)) + [0] * 32,  # per context, in Dest rows (rows past the tile are zero)
                    "edge mask 0 = 0": [0] * ROWS}.get(variant, list(range(ROWS)))  # edge masks follow the row set, not cfg_ctx
   assert rows == expected_rows
+
+# ***** do the pack counters follow cfg_ctx? *****
+#
+# reads_per_xy_plane is the wrap point of the packer's tile position generator (ISA doc Packers/EdgeMasking.md), whose Y
+# picks each row's entry in the row-set mapping, which picks the edge mask. The probes above map every row to mask 0, so
+# the counter was invisible. Here row Y=0 gets mask 0 (keep) and Y=1..15 get mask 1 (zero): the surviving rows are spaced
+# reads_per_xy_plane apart, which tells us whose counter the packer used.
+
+EDGE_PROBE = PackCommonCfg(edge_mask_0=0xFFFF, edge_mask_1=0, edge_mask_2=0, edge_mask_3=0, row_set_select_0=0,
+                           row_set_mapping_0=0x55555554)  # 2 bits per Y: Y=0 -> mask 0, Y=1..15 -> mask 1
+
+COUNTER_CASES = {  # name: (PACR cfg_ctx, ctx0 reads_per_xy_plane, ctx1 reads_per_xy_plane)
+  "pack ctx0, ctx0=4 ctx1=2": (0, 4, 2),
+  "pack ctx1, ctx0=1 ctx1=1": (1, 1, 1),
+  "pack ctx1, ctx0=4 ctx1=2": (1, 4, 2),
+  "pack ctx1, ctx0=2 ctx1=4": (1, 2, 4),
+  "pack ctx1, ctx0=8 ctx1=1": (1, 8, 1),
+  "pack ctx1, ctx0=1 ctx1=8": (1, 1, 8),
+}
+
+@pytest.mark.parametrize("case", COUNTER_CASES)
+def test_pack_counters_follow_cfg_ctx(bh, case):
+  ctx, r0, r1 = COUNTER_CASES[case]
+  words = [0x3F800000 + (i << 16) for i in range(TILE_ELEMENTS)]
+  extra = (PackerContext(context=0, reads_per_xy_plane=r0), PackerContext(context=1, reads_per_xy_plane=r1), EDGE_PROBE)
+  bh.launch(_images(ctx, extra=extra), l1={INPUT: pack(f"<{TILE_ELEMENTS}I", *words), **{o: b"\xA5" * BF16_TILE for o in OUTPUTS}})
+  got = unpack(f"<{TILE_ELEMENTS}H", bh.read_l1(bh.core, OUTPUTS[ctx], BF16_TILE))
+  kept = [r for r in range(ROWS) if got[r * 16: r * 16 + 16] == tuple(w >> 16 for w in words[r * 16: r * 16 + 16])]
+  zeroed = [r for r in range(ROWS) if not any(got[r * 16: r * 16 + 16])]
+  print(f"\nCOUNTERS {case}: kept rows {kept[:10]}{'...' if len(kept) > 10 else ''} ({len(kept)} kept, {len(zeroed)} zeroed)", flush=True)
+  assert len(kept) + len(zeroed) == ROWS, "rows neither intact nor zeroed"
+  period = {tuple(range(0, ROWS, p)): p for p in (1, 2, 4, 8, 16)}.get(tuple(kept))
+  print(f"COUNTERS {case}: period {period}  (ctx0 says {r0}, ctx1 says {r1})", flush=True)
+  assert period == (r0, r1)[ctx]  # hardware: the counters PACR uses are those of its cfg_ctx
