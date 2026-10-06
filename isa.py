@@ -218,6 +218,27 @@ TENSIX = {
   T.CFGSHIFTMASK: (0xB8, (("mask_mode", 23, 1), ("op", 20, 3), ("mask_width", 15, 5), ("rotate", 10, 5), ("scratch", 8, 2), ("cfg_reg", 0, 8))),
 }
 
+# instruction groups, for passes that care about a property rather than one op (like tinygrad's GroupOp)
+class TensixGroup:
+  # writes config state: the config dedup pass forgets what it knows about the target when it sees one it did not emit
+  WritesCfg = {T.WRCFG, T.RMWCIB0, T.RMWCIB1, T.RMWCIB2, T.RMWCIB3, T.SETC16, T.CFGSHIFTMASK, T.STREAMWRCFG, T.SFPCONFIG}
+  # read config, so a config write must STALLWAIT until earlier ones of these drain
+  ReadsUnpackCfg = {T.UNPACR, T.UNPACR_NOP}
+  ReadsPackCfg = {T.PACR, T.PACR_SETREG}
+  Fpu = {T.MVMUL, T.ELWMUL, T.ELWADD, T.ELWSUB, T.DOTPV, T.GMPOOL, T.GAPOOL, T.MPOOL3S1, T.APOOL3S1, T.MPOOL3S2, T.APOOL3S2,
+         T.CONV3S1, T.CONV3S2, T.MFCONV3S1}
+  Move = {T.MOVD2A, T.MOVD2B, T.MOVA2D, T.MOVB2A, T.MOVB2D, T.MOVDBGA2D, T.MOVDBGB2D, T.ZEROACC, T.ZEROSRC}
+  ReadsAluCfg = Fpu | Move
+  Sfpu = {op for op in TensixOps if op.name.startswith("SFP")}
+  # address counters: SET* are absolute (dedupable), INC*/ADDRCR* and every FPU/pack/unpack op advance them
+  CounterSet = {T.SETRWC, T.SETIBRWC, T.SETADC, T.SETADCXY, T.SETADCZW, T.SETADCXX}
+  CounterInc = {T.INCRWC, T.INCADCXY, T.INCADCZW, T.ADDRCRXY, T.ADDRCRZW}
+  # ordering barriers: never reordered across, never deduped
+  Semaphore = {T.SEMINIT, T.SEMPOST, T.SEMGET, T.SEMWAIT}
+  Sync = Semaphore | {T.STALLWAIT, T.STREAMWAIT, T.ATGETM, T.ATRELM}
+  # change the instruction stream itself
+  Stream = {T.MOP, T.MOP_CFG, T.REPLAY}
+
 # SFPU immediates that are signed 12-bit (two's complement accepted)
 SIGNED_IMM = {T.SFPIADD, T.SFPSHFT, T.SFPSHFT2}
 
@@ -253,6 +274,12 @@ RV32 = {
   V.ECALL: (0x00000073, ()), V.EBREAK: (0x00100073, ()),
 }
 
+class RV32Group:
+  Branch = {V.BEQ, V.BNE, V.BLT, V.BGE, V.BLTU, V.BGEU}
+  Jump = {V.JAL, V.JALR}
+  Load = {V.LB, V.LH, V.LW, V.LBU, V.LHU}
+  Store = {V.SB, V.SH, V.SW}
+
 OPS = RV32 | {op: (opcode << 24, layout) for op, (opcode, layout) in TENSIX.items()}
 
 def encode(op: TensixOps | RV32Ops, **fields) -> int:
@@ -262,7 +289,7 @@ def encode(op: TensixOps | RV32Ops, **fields) -> int:
     assert pieces, f"{op.name} has no field {name}, fields are {[f[0] for f in layout]}"
     covered = sum(((1 << w) - 1) << s for _, w, s in pieces)
     bits = covered.bit_length()
-    if name == "imm" and isinstance(op, RV32Ops): ok = -(1 << (bits - 1)) <= v < 1 << (bits - 1) and not v & ~covered & (1 << bits) - 1
+    if name == "imm" and isinstance(op, RV32Ops): ok = v & covered == v or v - (v & covered) == -(1 << bits) and v >> (bits - 1) == -1
     elif name == "imm" and op in SIGNED_IMM: ok = -(1 << (bits - 1)) <= v <= covered
     else: ok = 0 <= v <= covered and v & covered == v
     assert ok, f"{op.name}.{name}={v} does not fit"
