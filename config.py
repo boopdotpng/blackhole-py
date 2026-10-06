@@ -227,8 +227,7 @@ class PackerContext(Config):
   l1_accumulate: bool | None = _pk("Pack_L1_Acc")  # add into L1 instead of overwrite
   exp_threshold_enable: bool | None = _pk("Exp_threshold_en")
   exp_threshold: int | None = _pk("Exp_threshold")
-  # per-packer counters / edge / Dest offset
-  edge_mask: int | None = F(*per("PCK_EDGE_OFFSET_SEC{i}_mask", 4))  # 16-bit per-datum row mask; 0xFFFF = whole row
+  # per-section counters / Dest offset. Whether these follow cfg_ctx is not yet confirmed on hardware.
   packs_per_xy_plane: int | None = F(*per("PACK_COUNTERS_SEC{i}_pack_per_xy_plane", 4))
   reads_per_xy_plane: int | None = F(*per("PACK_COUNTERS_SEC{i}_pack_reads_per_xy_plane", 4))  # 16 tile pack, 1 row pack
   xys_per_tile: int | None = F(*per("PACK_COUNTERS_SEC{i}_pack_xys_per_tile", 4))
@@ -255,8 +254,22 @@ class PackCommonCfg(Config):  # shared by all packers
   out_w_stride: int | None = F("PCK0_ADDR_CTRL_ZW_REG_1_Wstride")
   in_counter_base: int | None = F("PCK0_ADDR_BASE_REG_0_Base")
   out_counter_base: int | None = F("PCK0_ADDR_BASE_REG_1_Base")
-  row_set_mapping_0: int | None = F("TILE_ROW_SET_MAPPING_0")  # 16 x 2-bit: which row set each Dest row group uses
+  # edge masks: each packed row is ANDed with one of four 16-datum masks. A row-set mapping register gives every row of a
+  # face a 2-bit mask index; row_set_select_N picks which mapping register read interface N uses. (tt-llk cpack_common.h
+  # pck_edge_offset_t; only the SEC0 word carries mode/select.) Scalar pack: select 1, mapping_1 = 1, mask_0 = 0, mask_1 = 1.
+  edge_mask_0: int | None = F("PCK_EDGE_OFFSET_SEC0_mask")  # 0xFFFF = whole row
+  edge_mask_1: int | None = F("PCK_EDGE_OFFSET_SEC1_mask")
+  edge_mask_2: int | None = F("PCK_EDGE_OFFSET_SEC2_mask")
+  edge_mask_3: int | None = F("PCK_EDGE_OFFSET_SEC3_mask")
+  edge_mode: bool | None = F("PCK_EDGE_mode")
+  row_set_select_0: int | None = F("PCK_EDGE_tile_row_set_select_0")
+  row_set_select_1: int | None = F("PCK_EDGE_tile_row_set_select_1")
+  row_set_select_2: int | None = F("PCK_EDGE_tile_row_set_select_2")
+  row_set_select_3: int | None = F("PCK_EDGE_tile_row_set_select_3")
+  row_set_mapping_0: int | None = F("TILE_ROW_SET_MAPPING_0")  # 16 x 2-bit mask index, one per row of a face
   row_set_mapping_1: int | None = F("TILE_ROW_SET_MAPPING_1")
+  row_set_mapping_2: int | None = F("TILE_ROW_SET_MAPPING_2")
+  row_set_mapping_3: int | None = F("TILE_ROW_SET_MAPPING_3")
   face_set_select: int | None = F("PCK_EDGE_TILE_FACE_SET_SELECT_select")
   face_set_select_enable: bool | None = F("PCK_EDGE_TILE_FACE_SET_SELECT_enable")
 
@@ -356,23 +369,25 @@ class PackAddrMod(Config):
 
 @dataclass(frozen=True)
 class MopLoop(Config):
-  """MOP template 1 (MOP template=1): a double loop. Slots are Tensix instruction words (TTREPLAY to run a replay range)."""
+  """MOP template 1: a double loop of Tensix instruction words (TTREPLAY to run a replay range). Plain NOP slots are skipped.
+  Semantics checked on hardware against the ISA doc model by tests/hw/test_mop.py."""
   thread: Thread = K()
-  outer_count: int | None = F("MOP_CFG_0")
-  inner_count: int | None = F("MOP_CFG_1")
-  start: int | None = F("MOP_CFG_2")       # once, before the loops
-  end_inner_0: int | None = F("MOP_CFG_3")  # after each inner loop
-  end_inner_1: int | None = F("MOP_CFG_4")
+  outer_count: int | None = F("MOP_CFG_0")  # 10 bits on Blackhole
+  inner_count: int | None = F("MOP_CFG_1")  # 10 bits; doubled when body_alt is set
+  start: int | None = F("MOP_CFG_2")        # at the top of every outer iteration
+  end_0: int | None = F("MOP_CFG_3")        # after every inner loop
+  end_1: int | None = F("MOP_CFG_4")        # after end_0 (ignored if end_0 is NOP)
   body: int | None = F("MOP_CFG_5")         # inner loop body
-  body_alt: int | None = F("MOP_CFG_6")     # alternates with body on odd iterations
-  last_inner: int | None = F("MOP_CFG_7")   # replaces body on the last inner iteration
-  last_outer: int | None = F("MOP_CFG_8")   # replaces body on the very last iteration
+  body_alt: int | None = F("MOP_CFG_6")     # if set: alternates with body, inner loop runs twice as many steps
+  last_body: int | None = F("MOP_CFG_7")    # replaces the body on the very last step (last inner of the last outer)
+  outer_last_body: int | None = F("MOP_CFG_8")  # replaces the body on the last inner step of every other outer iteration
 
 @dataclass(frozen=True)
 class MopMask(Config):
   """MOP template 0: unpack loop driven by a 32-bit zmask (MOP mask_lo / MOP_CFG mask_hi). Each bit runs the a slots or the skip slot."""
   thread: Thread = K()
-  flags: int | None = F("MOP_CFG_1")    # bit 0: run b after a; bit 1: run a1..a3 too (ttko MaskTemplate derives this)
+  has_b: bool | None = F("MOP_CFG_1_has_b")        # also run b after the a slots (and skip_b after skip_a0)
+  has_a123: bool | None = F("MOP_CFG_1_has_a123")  # run a1, a2, a3 after a0
   b: int | None = F("MOP_CFG_2")
   a0: int | None = F("MOP_CFG_3")
   a1: int | None = F("MOP_CFG_4")
@@ -509,8 +524,11 @@ _NOC_REGS = {"NOC_TARG_ADDR_LO": 0x0, "NOC_TARG_ADDR_MID": 0x4, "NOC_TARG_ADDR_H
 
 MANUAL_REGS = {
   **_tile_desc(0, 64), **_tile_desc(1, 112),
-  "TILE_ROW_SET_MAPPING_0": Loc(Space.SHARED, 20, 0, 32), "TILE_ROW_SET_MAPPING_1": Loc(Space.SHARED, 21, 0, 32),
+  **{f"TILE_ROW_SET_MAPPING_{i}": Loc(Space.SHARED, 20 + i, 0, 32) for i in range(4)},
+  "PCK_EDGE_mode": Loc(Space.SHARED, 24, 16, 1),
+  **{f"PCK_EDGE_tile_row_set_select_{i}": Loc(Space.SHARED, 24, 17 + 2 * i, 2) for i in range(4)},
   **{f"MOP_CFG_{i}": Loc(Space.MMIO, 0xFFB80000 + 4 * i, 0, 32) for i in range(9)},
+  "MOP_CFG_1_has_b": Loc(Space.MMIO, 0xFFB80004, 0, 1), "MOP_CFG_1_has_a123": Loc(Space.MMIO, 0xFFB80004, 1, 1),
   **{f"SFPU_LANE_{n}": Loc(Space.SFPU, 15, i, 1) for i, n in enumerate(_LANE)},
   "SFPU_LANE_block_destination_move": Loc(Space.SFPU, 15, 9, 2), "SFPU_LANE_row_mask": Loc(Space.SFPU, 15, 12, 4),
   **{f"NOC_CTRL_{n}": Loc(Space.MMIO, 0x1C, s, w) for n, (s, w) in _NOC_CTRL.items()},

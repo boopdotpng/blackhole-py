@@ -85,7 +85,6 @@ def test_pack():
     def __init__(self, dtype): self.dtype, self.tile_size = dtype, dtype.tile_size
   n = 0
   for dtype, fp32_dest, scalar in itertools.product((DType.BF16, DType.F32, DType.FP8), (False, True), (False, True)):
-    if scalar: continue  # scalar writes bit 17 of the 16-bit PCK_EDGE_OFFSET mask field; see report
     rec = Recorder("trisc2", Thread.PACK)
     Pack(rec, Dst(fp32=fp32_dest))._configure(CB(dtype), fp32_dest, scalar)
     src = DType.F32 if fp32_dest else dtype
@@ -95,14 +94,14 @@ def test_pack():
       ThreadCfg(thread=Thread.PACK, state_id=0),
       PackerContext(context=0, fp8_e4m3=dtype is DType.FP8, exp_section_size=0 if dtype.is_fp8 else 4, row_start_section_size=0,
                 disable_zero_compress=True, dst_format=FORMATS[dtype], src_format=FORMATS[src], disable_zero_flags=False,
-                add_l1_dest_offset=False, edge_mask=0xFFFF, packs_per_xy_plane=0, reads_per_xy_plane=16, xys_per_tile=0,
+                add_l1_dest_offset=False, packs_per_xy_plane=0, reads_per_xy_plane=16, xys_per_tile=0,
                 **{k: False for k in ("disable_shared_exp_assembler", "enable_out_fifo", "sub_tile_header_size", "add_tile_header_size")},
                 source_interface=0, l1_source_addr=0, yz_transposed=False, auto_context_inc_xys=0),
-      PackerContext(context=1, edge_mask=0),
       AluCfg(dest_format=FORMATS[src], relu_mode=0, relu_threshold=0),
       PackCommonCfg(read_32b_dest=fp32_dest or src == DType.F32, read_unsigned=False, read_int8=False, round_10b_mantissa=dtype.is_fp8,
                     in_x_stride=0, in_y_stride=16 * size, in_z_stride=256 * size, in_w_stride=1024 * size,
-                    row_set_mapping_0=0, row_set_mapping_1=0),
+                    row_set_mapping_0=0, row_set_mapping_1=int(scalar), edge_mask_0=0 if scalar else 0xFFFF, edge_mask_1=int(scalar),
+                    edge_mode=False, row_set_select_0=int(scalar), row_set_select_1=0, row_set_select_2=0, row_set_select_3=0),
       Gpr(thread=Thread.PACK, index=16, value=dtype.tile_size >> 4), Gpr(thread=Thread.PACK, index=52, value=0x40000),
       PackAddrMod(slot=0, y_src_incr=4, y_dst_incr=4),
       PackAddrMod(slot=1, **decode_pack_addr_mod(0x2820)),

@@ -137,8 +137,9 @@ TENSIX = {
   T.PACR_SETREG: (0x4A, (("push", 23, 1), ("mode_sel", 22, 1), ("disable_stall", 10, 2), ("addr_sel", 8, 2), ("stream_id", 2, 6),
                          ("flush", 1, 1), ("last", 0, 1))),
   # addr_mod bits: 0 cr, 1-2 ch0 z inc, 3-4 ch0 y inc, 5-6 ch1 z inc, 7 ch1 y inc. srcb_bcast: copy the first row into 8 rows of SrcB
+  # multi_context: read config from context cfg_ctx (+ ThreadCfg.unpack{n}_context), or the context counter if use_context_counter
   T.UNPACR: (0x42, (("unpacker", 23, 1), ("addr_mod", 15, 8), ("cfg_ctx_inc", 13, 2), ("cfg_ctx", 10, 3), ("addr_cnt_ctx", 8, 2),
-                    ("ovrd_thread", 7, 1), ("set_dvalid", 6, 1), ("srcb_bcast", 5, 1), ("zero_write", 4, 1), ("auto_inc_ctx", 3, 1),
+                    ("multi_context", 7, 1), ("set_dvalid", 6, 1), ("srcb_bcast", 5, 1), ("zero_write", 4, 1), ("use_context_counter", 3, 1),
                     ("row_search", 2, 1), ("search_cache_flush", 1, 1), ("last", 0, 1))),
   # op: 0 pop the overlay buffer, 1 clear a source bank, 3 pop for stream. the clr_* fields apply when op is 1
   T.UNPACR_NOP: (0x43, (("unpacker", 23, 1), ("stream", 16, 7), ("msg_clr_cnt", 12, 4), ("set_dvalid", 8, 4), ("clr_fmt", 6, 2),
