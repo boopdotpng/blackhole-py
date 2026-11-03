@@ -9,6 +9,7 @@ from ttko.isa import Insn, R, RV32, Reg, TensixWord, VReg, is_reg
 from pcie import Allocator
 
 _rv32 = RV32()
+_MOP_CFG = 0xFFB80000
 _SYMBOLIC_OPS = """add sub mul divu remu sltu min and_ or_ xor addi sltiu andi ori xori
   slli srli srai lw lbu lhu sb sh sw lui auipc jalr csrrs csrrc fence""".split()
 
@@ -73,6 +74,9 @@ class Asm:
     self.is_firmware = bool(firmware)
     self.base = Firmware.TEXT[role][0] if firmware else TensixL1.WORKER_TEXT_BASE[role]
     self._lowered = False
+    # Build-time view of this TRISC's MOP_CFG words and SETC16 thread config
+    # on the current straight-line path; labels reset both.
+    self.mop_words, self.thread_cfg = None, {}
     self.local = Allocator(*Firmware.LOCAL_MEMORY.get(role, (0, 0)), 4)
 
   @classmethod
@@ -85,12 +89,12 @@ class Asm:
     self.li(expected, int(value))
     loop = self._new_label("wait")
     done = self._new_label("wait_done")
-    self.label(loop)
+    self.label(loop, local=True)
     self.read(actual, ptr, bytes=bytes)
     self.beq(actual, expected, done)
     self.fence()
     self.j(loop)
-    self.label(done)
+    self.label(done, local=True)
     return self.fence()
 
   @scoped
@@ -113,11 +117,39 @@ class Asm:
       src = self.reg(exclude=base) if tmp_val is None else tmp_val
       self.li(src, value)
     else: src = value
+    if not is_reg(addr) and _MOP_CFG <= addr < _MOP_CFG + 9 * 4: self.mop_words = None
+    # A runtime-built instruction may be a SETC16 of any thread register.
+    if is_reg(value) and (is_reg(addr) or addr == TensixMMIO.INSTRN_BUF_BASE): self.thread_cfg = {}
     return op(src, base)
+
+  @scoped
+  def write_block(self, writes, bytes=4):
+    """Store constant words to constant addresses, reusing one base register.
+
+    Each base load covers every following address within the 12-bit store
+    offset; zero is stored from x0 and repeated values reuse their register.
+    """
+    op = {1: self.sb, 2: self.sh, 4: self.sw}[bytes]
+    writes = [(int(addr), int(value) & 0xFFFFFFFF) for addr, value in writes]
+    if not writes: return self
+    if any(_MOP_CFG <= addr < _MOP_CFG + 9 * 4 for addr, _ in writes): self.mop_words = None
+    base_reg, value_reg = self.reg(2)
+    base = value = None
+    for addr, word in writes:
+      if base is None or not -2048 <= addr - base <= 2047:
+        base = addr
+        self.li(base_reg, base)
+      if word == 0: src = R.ZERO
+      else:
+        if word != value: self.li(value_reg, word); value = word
+        src = value_reg
+      op(src, base_reg, addr - base)
+    return self
 
   def _emit(self, word: int):
     if self._lowered: raise RuntimeError("kernel has already been lowered")
     if isinstance(word, TensixWord):
+      if word >> 24 == 0xB2: self.thread_cfg[(word >> 16) & 0xFF] = word & 0xFFFF
       if self.role == "brisc":
         return self.write(TensixMMIO.INSTRN_BUF_BASE, int(word))
       if self.role == "ncrisc": raise RuntimeError("ncrisc cannot emit Tensix instructions")
@@ -153,12 +185,23 @@ class Asm:
     self._scopes[-1] += regs
     return regs[0] if n == 1 else tuple(regs)
 
+  def forget_tensix_state(self):
+    self.mop_words = None
+    self.thread_cfg = {}
+
   def _new_label(self, prefix="label"):
     self._label_id += 1
     return f".{prefix}_{self._label_id}"
 
-  def label(self, name: str):
+  def label(self, name: str, *, local=False):
+    """Define a branch target.
+
+    Control may join here from another path, so build-time Tensix state is
+    forgotten. ``local`` marks targets reached only by local spin/skip
+    branches whose bodies change no MOP or thread configuration.
+    """
     if name in self.labels: raise ValueError(f"duplicate label {name!r}")
+    if not local: self.forget_tensix_state()
     self.labels[name] = len(self.items)
     return self
 
@@ -393,13 +436,13 @@ class Asm:
   def wait_sync_value(self, address, value_reg, *, ptr=R.T0, actual=R.T1):
     self.li(ptr, address)
     loop = self._new_label('sync')
-    self.label(loop); self.fence(); self.lw(actual, ptr, 0); self.bne(actual, value_reg, loop)
+    self.label(loop, local=True); self.fence(); self.lw(actual, ptr, 0); self.bne(actual, value_reg, loop)
     return self.fence()
 
   def wait8(self, address, value, *, ptr=R.T0, actual=R.T1, expected=R.T2):
     self.li(ptr, address); self.li(expected, value)
     loop = self._new_label('wait8')
-    self.label(loop); self.fence(); self.lbu(actual, ptr, 0); self.bne(actual, expected, loop)
+    self.label(loop, local=True); self.fence(); self.lbu(actual, ptr, 0); self.bne(actual, expected, loop)
     return self.fence()
 
   @property

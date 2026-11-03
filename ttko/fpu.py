@@ -57,6 +57,8 @@ class Fpu:
     return self
 
   def _set_thread_cfg(self, register, value):
+    # SETC16 state is static; skip writes this straight-line path already made.
+    if getattr(self.k, "thread_cfg", {}).get(int(register)) == int(value): return self
     return self._issue(TT.TTSETC16(int(register), int(value)))
 
   def _set_addr_mod(self, slot, *, srca=0, srcb=0,

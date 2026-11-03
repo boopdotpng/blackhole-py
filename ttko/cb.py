@@ -80,7 +80,7 @@ class CB:
       kernel.li(acked, CB.SYNC_TILES_ACKED_BASE)
       kernel.li(remaining, 32); kernel.li(stride, CB.SYNC_STRIDE)
       loop = kernel._new_label("reset_cb_sync")
-      kernel.label(loop); kernel.sw(R.ZERO, acked); kernel.sw(R.ZERO, acked, 8)
+      kernel.label(loop, local=True); kernel.sw(R.ZERO, acked); kernel.sw(R.ZERO, acked, 8)
       kernel.add(acked, acked, stride)
       kernel.addi(remaining, remaining, -1); kernel.bne(remaining, R.ZERO, loop)
     return kernel
@@ -111,7 +111,7 @@ class CB:
       no_wrap = kernel._new_label("cb_no_wrap")
       kernel.bltu(pointer, limit, no_wrap)
       kernel.li(size, config.size); kernel.sub(pointer, pointer, size)
-      kernel.label(no_wrap); kernel.write(state, pointer)
+      kernel.label(no_wrap, local=True); kernel.write(state, pointer)
 
   @staticmethod
   def reserve_back(kernel, config, count=1):
@@ -120,11 +120,11 @@ class CB:
       received, acked, used, free, need = kernel.reg(5)
       kernel.read(received, state + 4)
       loop, done = kernel._new_label("cb_reserve"), kernel._new_label("cb_reserved")
-      kernel.label(loop)
+      kernel.label(loop, local=True)
       kernel.read(acked, CB._sync(config, CB.SYNC_TILES_ACKED_BASE), bytes=2)
       kernel.sub(used, received, acked); kernel.slli(used, used, 16); kernel.srli(used, used, 16)
       kernel.li(free, config.depth); kernel.sub(free, free, used); kernel.li(need, count)
-      kernel.bgeu(free, need, done); kernel.fence(); kernel.j(loop); kernel.label(done); kernel.fence()
+      kernel.bgeu(free, need, done); kernel.fence(); kernel.j(loop); kernel.label(done, local=True); kernel.fence()
     return config
 
   @staticmethod
@@ -146,11 +146,11 @@ class CB:
       acked, received, available, need = kernel.reg(4)
       kernel.read(acked, state + 4); kernel.li(need, count)
       loop, done = kernel._new_label("cb_wait"), kernel._new_label("cb_ready")
-      kernel.label(loop)
+      kernel.label(loop, local=True)
       kernel.read(received, CB._sync(config, CB.SYNC_TILES_RECEIVED_BASE), bytes=2)
       kernel.sub(available, received, acked)
       kernel.slli(available, available, 16); kernel.srli(available, available, 16)
-      kernel.bgeu(available, need, done); kernel.fence(); kernel.j(loop); kernel.label(done); kernel.fence()
+      kernel.bgeu(available, need, done); kernel.fence(); kernel.j(loop); kernel.label(done, local=True); kernel.fence()
     return config
 
   @staticmethod
@@ -199,7 +199,7 @@ class CircularBufferOps:
     self.cb_counter_high(received, received)
     loop = self._new_label("cb_reserve")
     done = self._new_label("cb_reserve_done")
-    self.label(loop)
+    self.label(loop, local=True)
     self.li(acked, CB.SYNC_TILES_ACKED_BASE + cb_index * CB.SYNC_STRIDE)
     self.lhu(acked, acked, 0)
     self.sub(free_pages, received, acked)
@@ -209,7 +209,7 @@ class CircularBufferOps:
     self.bge(free_pages, need, done)
     self.fence()
     self.j(loop)
-    self.label(done)
+    self.label(done, local=True)
     return self.fence()
 
   def cb_push_back(self, interface_base: int, cb_index: int, count: int | R = 1, *, tensix_received: bool = False):
@@ -228,7 +228,7 @@ class CircularBufferOps:
     self.bltu(ptr, tmp, no_wrap)
     self.lw(tmp, iface, 0)
     self.sub(ptr, ptr, tmp)
-    self.label(no_wrap)
+    self.label(no_wrap, local=True)
     self.sw(ptr, iface, 20)
 
     self.lw(counter, iface, 24)
@@ -243,9 +243,12 @@ class CircularBufferOps:
     self.or_(counter, received, acked)
     self.sw(counter, iface, 24)
     self.srli(received, received, 16)
-    self.li(tmp, CB.SYNC_TILES_RECEIVED_BASE + cb_index * CB.SYNC_STRIDE)
-    self.sw(received, tmp, 0)
-    if tensix_received:
+    if not tensix_received:
+      self.li(tmp, CB.SYNC_TILES_RECEIVED_BASE + cb_index * CB.SYNC_STRIDE)
+      self.sw(received, tmp, 0)
+    else:
+      # Publish only through the Tensix thread, after the packer drains: a
+      # RISC store here would expose tiles that are still being packed.
       self.slli(tmp, received, 8)
       self.li(ptr, int(TT.TTSETDMAREG(0, 0, 0, 48)))
       self.add(tmp, tmp, ptr)
@@ -264,7 +267,7 @@ class CircularBufferOps:
     self._load_count(count, need)
     loop = self._new_label("cb_wait_front")
     done = self._new_label("cb_wait_front_done")
-    self.label(loop)
+    self.label(loop, local=True)
     self.li(received, CB.SYNC_TILES_RECEIVED_BASE + cb_index * CB.SYNC_STRIDE)
     self.lhu(received, received, 0)
     self.sub(available, received, acked)
@@ -272,7 +275,7 @@ class CircularBufferOps:
     self.bgeu(available, need, done)
     self.fence()
     self.j(loop)
-    self.label(done)
+    self.label(done, local=True)
     return self.fence()
 
   def cb_pop_front(self, interface_base: int, cb_index: int, count: int | R = 1, *, tensix_ack: bool = False, publish_ack: bool = True):
@@ -320,7 +323,7 @@ class CircularBufferOps:
     self.bltu(ptr, tmp, no_wrap)
     self.lw(tmp, iface, 0)
     self.sub(ptr, ptr, tmp)
-    self.label(no_wrap)
+    self.label(no_wrap, local=True)
     self.sw(ptr, iface, 16)
     return self.fence()
 

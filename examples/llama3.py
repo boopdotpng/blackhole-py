@@ -677,7 +677,7 @@ class Llama3Kernels:
           input_reads.extend((buffer, tile, operands.addr + (index * self.EMBEDDING_TILES + tile) * operands.tile_size)
                              for tile in range(self.EMBEDDING_TILES))
         input_publications.append((operands, 2 * self.EMBEDDING_TILES))
-        for _ in range(2 * self.EMBEDDING_TILES): p.unpack.move(operands, UnpackTarget.SRCA)
+        for tile in range(2 * self.EMBEDDING_TILES): p.unpack.move(operands, UnpackTarget.SRCA, configure_format=tile == 0)
         self._rms_setup_apply_macro(p.sfpu)
         p.fpu.copy_a_tiles(dst_tiles=range(2 * self.EMBEDDING_TILES))
         self._rmsnorm_one_token(p.sfpu, fp8=operand_dtype.is_fp8,
@@ -2217,15 +2217,19 @@ class Llama3Kernels:
       p.trisc0.read(block_count, p.param_addr(kv_blocks))
       p.trisc0.addi(last_block, block_count, -1)
       split_count(p.trisc0, block_count, last_block)
+      # Each phase writes its invariant unpack modes once; per-tile moves
+      # then update only CB addresses.
       for block in p.trisc0.range(block_count):
+        p.unpack.prepare_matmul_formats(key_cache.dtype, right_transpose=True)
         for feature in range(self.KV_CACHE_FEATURE_TILES):
-          p.unpack.move_matmul(query_cb, key_cb, right_transpose=True)
+          p.unpack.move_matmul(query_cb, key_cb, right_transpose=True, configure_format=False)
         no_mask = p.trisc0._new_label("gqa_unpack_no_mask")
         p.trisc0.bne(block, last_block, no_mask)
         p.unpack.move_pair(zero_cb, mask_cb)
         p.trisc0.label(no_mask)
+        p.unpack.prepare_matmul_formats(key_cache.dtype)
         for feature in range(self.KV_CACHE_FEATURE_TILES):
-          p.unpack.move_matmul(probability_cb, value_cb)
+          p.unpack.move_matmul(probability_cb, value_cb, configure_format=False)
 
     zero = p.sfpu.program()
     value = zero.load_float(0.0)
@@ -2475,8 +2479,8 @@ class Llama3Kernels:
         for tile in range(self.EMBEDDING_TILES)
       ))
       p.brisc.noc.read_tiles_into_cb(x, tuple(range(self.EMBEDDING_TILES)), x_cb)
-      for _ in range(self.EMBEDDING_TILES):
-        p.unpack.move(x_cb, UnpackTarget.SRCA)
+      for tile in range(self.EMBEDDING_TILES):
+        p.unpack.move(x_cb, UnpackTarget.SRCA, configure_format=tile == 0)
       for tile in range(self.EMBEDDING_TILES):
         p.unpack.move_l1(weight.dtype, gamma_l1 + tile * weight.tile_size)
       self._rms_setup_apply_macro(p.sfpu)

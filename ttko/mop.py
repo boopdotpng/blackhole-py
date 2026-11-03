@@ -94,10 +94,30 @@ class Mop:
 
   def configure(self, template):
     for replay in template.replays(): self.load(replay)
-    words = template.words()
-    mop_sync(self.k)
-    for index, word in enumerate(words): self.k.write(MOP_CFG + index * 4, word)
+    words = tuple(int(word) & 0xFFFFFFFF for word in template.words())
+    self.write_words(words)
     self.state.config, self.state.masked = words, isinstance(template, MaskTemplate)
+    return self
+
+  def write_words(self, words, indices=None):
+    """Write MOP_CFG words, skipping those this straight-line path already holds.
+
+    The kernel tracks the TRISC's MOP registers at build time (shared by FPU
+    and SFPU on TRISC1); labels reset that knowledge, so loop heads and branch
+    joins always rewrite every requested word.
+    """
+    indices = range(len(words)) if indices is None else indices
+    known = getattr(self.k, "mop_words", None)
+    changed = [i for i in indices if known is None or known[i] != words[i]]
+    if changed:
+      mop_sync(self.k)
+      self.k.write_block((MOP_CFG + i * 4, words[i]) for i in changed)
+    if hasattr(self.k, "mop_words"):
+      if known is None and len(indices) != len(words): self.k.mop_words = None
+      else:
+        updated = list(known if known is not None else words)
+        for i in indices: updated[i] = words[i]
+        self.k.mop_words = tuple(updated)
     return self
 
   def run(self, count=None, mask=0):

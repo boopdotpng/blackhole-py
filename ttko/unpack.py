@@ -112,8 +112,14 @@ class Unpack:
     with k.scope():
       pointer, value = k.reg(2); k.li(pointer, _CONFIG_SYNC)
       again, done = k._new_label("unpack_cfg_idle"), k._new_label("unpack_cfg_ready")
-      k.label(again); k.lw(value, pointer, 0); k.andi(value, value, 0xFE)
-      k.beq(value, R.ZERO, done); k.fence(); k.j(again); k.label(done)
+      k.label(again, local=True); k.lw(value, pointer, 0); k.andi(value, value, 0xFE)
+      k.beq(value, R.ZERO, done); k.fence(); k.j(again); k.label(done, local=True)
+
+  def _write_base(self, engine, value):
+    with self.k.scope():
+      pointer = self.k.reg(exclude=value)
+      self.k.li(pointer, int(_BASE[engine]))
+      self.k.sw(value, pointer, 0); self.k.sw(value, pointer, 4)
 
   def _commit_config(self, register):
     with self.k.scope():
@@ -140,8 +146,9 @@ class Unpack:
     if tilize: word0 |= 1 << 9 | shift << 16 | shift << 20
     if transpose: word0 |= 1 << 8
     options = (word0, 0x03 | (0x30 if target == UnpackTarget.DST else 0), 0, 0)
-    for base, words in ((_TILE_DESCRIPTOR[engine], descriptor), (_OPTIONS[engine], options)):
-      for index, word in enumerate(words): k.write(int(base) + index * 4, word)
+    writes = [(int(base) + index * 4, word)
+              for base, words in ((_TILE_DESCRIPTOR[engine], descriptor), (_OPTIONS[engine], options))
+              for index, word in enumerate(words)]
 
     size = output_format.itemsize
     for register, value in (
@@ -151,7 +158,7 @@ class Unpack:
       (_ADDR_BASE0[engine], 0), (_ADDR_BASE1[engine], 0),
       (_ADDR_MISC[engine], 0x100 if engine == UNPACKER0 else 0),
       (_NOP_CLEAR[engine], 0),
-    ): k.write(int(register), value)
+    ): writes.append((register, value))
 
     destination = 64 if engine == UNPACKER0 else 0
     if target == UnpackTarget.DST:
@@ -161,7 +168,8 @@ class Unpack:
       (_DEST[engine], destination | destination << 16),
       (_X_DIM[engine], x_dim | x_dim << 16),
       (_OFFSET[engine], 0), (int(_OFFSET[engine]) + 4, 0),
-    ): k.write(int(register), value)
+    ): writes.append((register, value))
+    k.write_block(writes)
 
   def _configure(self, cb, target, tilize, tile, mop=None, *,
                  commit=True, configure_mop=True, transpose=False,
@@ -180,8 +188,7 @@ class Unpack:
       address = self.k.reg()
       CB.get_read_ptr(self.k, cb, address)
       self.k.srli(address, address, 4); self.k.addi(address, address, -1)
-      self.k.write(int(_BASE[engine]), address)
-      self.k.write(int(_BASE[engine]) + 4, address)
+      self._write_base(engine, address)
     # This stateless path fully drains each move, so context 0 is always free.
     self._issue(TT.TTSETC16(_MISC_CONFIG, 0))
     if engine == UNPACKER0:
@@ -207,12 +214,9 @@ class Unpack:
         base = self.k.reg(exclude=address)
         self.k.srli(base, address, 4)
         self.k.addi(base, base, -1)
-        self.k.write(int(_BASE[engine]), base)
-        self.k.write(int(_BASE[engine]) + 4, base)
+        self._write_base(engine, base)
     else:
-      base = (address >> 4) - 1
-      self.k.write(int(_BASE[engine]), base)
-      self.k.write(int(_BASE[engine]) + 4, base)
+      self.k.write_block(((_BASE[engine], (address >> 4) - 1), (int(_BASE[engine]) + 4, (address >> 4) - 1)))
     self._issue(TT.TTSETC16(_MISC_CONFIG, 0))
     if engine == UNPACKER0:
       self._issue(TT.TTSETC16(_SRCA_SET, 4))
@@ -221,8 +225,8 @@ class Unpack:
       self._mop.configure(_select_mop(target, False))
     return engine
 
-  def _run(self, cb, target, tilize, tile, mop=None):
-    engine = self._configure(cb, target, tilize, tile, mop)
+  def _run(self, cb, target, tilize, tile, mop=None, engine=None):
+    if engine is None: engine = self._configure(cb, target, tilize, tile, mop)
     self._issue(TT.TTSETADCXX(engine + 1, 1023 if tilize else 255, 0))
     self._issue(TT.TTSETADCZW(3, 0, 0, 0, 0, 0xF))
     if target == UnpackTarget.DST:
@@ -243,18 +247,24 @@ class Unpack:
       self._issue(TT.TTSETC16(_SRCA_SET, 4))
       sem_post(self.k, Sem.UNPACK_TO_DEST)
 
-  def _move(self, source_cb, target, tilize, tile, mop=None):
+  def _move(self, source_cb, target, tilize, tile, mop=None, configure_format=True):
     if target == UnpackTarget.DST: self.dst.check(tile)
     _select_mop(target, tilize)  # Validate before emitting CB operations.
+    # The previous move drained the unpacker and the read pointer is local,
+    # so configure while the producer may still be filling the CB.
+    engine = self._configure(source_cb, target, tilize, tile, mop,
+                             configure_format=configure_format)
     CB.wait_front(self.k, source_cb)
     if target != UnpackTarget.DST:
       stall(self.k, Stall.UNPACK, Wait.SRCB_CLR if target == UnpackTarget.SRCB else Wait.SRCA_CLR)
-    self._run(source_cb, target, tilize, tile, mop)
+    self._run(source_cb, target, tilize, tile, mop, engine)
     CB.pop_front(self.k, source_cb)
     return self
 
-  def move(self, source_cb, target, tilize=False, *, tile=None):
-    return self._move(source_cb, target, tilize, tile)
+  def move(self, source_cb, target, tilize=False, *, tile=None, configure_format=True):
+    """Unpack one CB tile. configure_format=False keeps the previous move's
+    modes, which must have used the same CB dtype, target and tilize."""
+    return self._move(source_cb, target, tilize, tile, configure_format=configure_format)
 
   def move_l1(self, dtype, address, target=UnpackTarget.SRCA):
     """Present one face-tilized tile from a persistent L1 address."""
@@ -277,25 +287,41 @@ class Unpack:
   def move_pair(self, source_a_cb, source_b_cb):
     return self._move_pair(source_a_cb, source_b_cb, _PAIR_MOP)
 
-  def move_matmul(self, left_cb, right_cb, *, right_transpose=False):
+  def prepare_matmul_formats(self, dtype, *, right_transpose=False):
+    """Write invariant matmul unpack modes before a move_matmul loop.
+
+    Subsequent move_matmul(configure_format=False) calls then update only CB
+    addresses. Any other unpack between them must be followed by a new prepare.
+    """
+    if dtype not in (DType.BF16, DType.FP8):
+      raise ValueError("matmul unpack requires BF16 or FP8 inputs")
+    self._wait_config_idle()
+    self._set_thread_cfg(0, 0)
+    for engine, target in ((UNPACKER0, UnpackTarget.SRCA), (UNPACKER1, UnpackTarget.SRCB)):
+      self._write_mode(engine, dtype, dtype, target, False, None,
+                       transpose=right_transpose and engine == UNPACKER0)
+    return self
+
+  def move_matmul(self, left_cb, right_cb, *, right_transpose=False, configure_format=True):
     self.dst.require_fp32()
     if left_cb.dtype != right_cb.dtype or left_cb.dtype not in (DType.BF16, DType.FP8):
       raise ValueError("matmul unpack requires matching BF16 or FP8 inputs")
-    CB.wait_front(self.k, left_cb)
-    CB.wait_front(self.k, right_cb)
-    stall(self.k, Stall.UNPACK, Wait.SRCA_CLR | Wait.SRCB_CLR)
-
     # MVMUL computes SrcB @ SrcA. Unlike elementwise pair unpack, matmul
-    # presents all four faces of each tile in one UNPACR operation.
+    # presents all four faces of each tile in one UNPACR operation. Read
+    # pointers are local and the previous move drained, so configure first.
     self._configure(
       right_cb, UnpackTarget.SRCA, False, None,
       commit=False, configure_mop=False, transpose=right_transpose,
+      configure_format=configure_format,
     )
     self._configure(
       left_cb, UnpackTarget.SRCB, False, None,
-      commit=False, configure_mop=False,
+      commit=False, configure_mop=False, configure_format=configure_format,
     )
     self._commit_config(_BASE[UNPACKER0])
+    CB.wait_front(self.k, left_cb)
+    CB.wait_front(self.k, right_cb)
+    stall(self.k, Stall.UNPACK, Wait.SRCA_CLR | Wait.SRCB_CLR)
     self._issue(TT.TTSETADCXX(1, 1023, 0))
     self._issue(TT.TTSETADCXX(2, 1023, 0))
     self._issue(TT.TTSETADCZW(3, 0, 0, 0, 0, 0xF))
@@ -345,9 +371,6 @@ class Unpack:
     return self
 
   def _move_pair(self, source_a_cb, source_b_cb, mop):
-    CB.wait_front(self.k, source_a_cb)
-    CB.wait_front(self.k, source_b_cb)
-    stall(self.k, Stall.UNPACK, Wait.SRCA_CLR | Wait.SRCB_CLR)
     self._configure(
       source_a_cb, UnpackTarget.SRCA, False, None,
       commit=False, configure_mop=False,
@@ -358,6 +381,9 @@ class Unpack:
     )
     self._commit_config(_BASE[UNPACKER0])
     self._mop.configure(mop)
+    CB.wait_front(self.k, source_a_cb)
+    CB.wait_front(self.k, source_b_cb)
+    stall(self.k, Stall.UNPACK, Wait.SRCA_CLR | Wait.SRCB_CLR)
     self._issue(TT.TTSETADCXX(1, 255, 0))
     self._issue(TT.TTSETADCXX(2, 255, 0))
     self._issue(TT.TTSETADCZW(3, 0, 0, 0, 0, 0xF))
@@ -398,8 +424,6 @@ class Unpack:
       raise ValueError("tile offset is outside the circular buffer")
     if pop and tile_offset:
       raise ValueError("offset unpack requires explicit row release")
-    CB.wait_front(self.k, source_cb, tile_offset + 1)
-    stall(self.k, Stall.UNPACK, Wait.SRCA_CLR | Wait.SRCB_CLR)
     if tile_offset:
       with self.k.scope():
         address, delta, limit = self.k.reg(3)
@@ -411,7 +435,7 @@ class Unpack:
         self.k.bltu(address, limit, ready)
         self.k.li(delta, source_cb.size)
         self.k.sub(address, address, delta)
-        self.k.label(ready)
+        self.k.label(ready, local=True)
         self._configure_l1(source_cb.dtype, UnpackTarget.SRCA, address, 256,
           commit=False, configure_mop=False, configure_format=configure_format)
     else:
@@ -426,6 +450,10 @@ class Unpack:
     self._commit_config(_BASE[UNPACKER0])
     if configure_format:
       self._mop.configure(_PAIR_MOP)
+    # Addresses come from local CB state; only the unpack itself needs data.
+    CB.wait_front(self.k, source_cb, tile_offset + 1)
+    stall(self.k, Stall.UNPACK, Wait.SRCA_CLR | Wait.SRCB_CLR)
+    if configure_format:
       self._issue(TT.TTSETADCXX(1, 255, 0))
       self._issue(TT.TTSETADCXX(2, 255, 0))
     self._issue(TT.TTSETADCZW(3, 0, 0, 0, 0, 0xF))

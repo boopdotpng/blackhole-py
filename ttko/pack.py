@@ -75,15 +75,17 @@ class Pack:
       self._rmw_cfg_byte(_Cfg.ACCUMULATION, byte, mask, 0)
     xy, zw = self._strides(src)
     edge = 1 << 17 if scalar else 0xFFFF
-    for reg, value in (
+    self.k.write_block((
       (_Cfg.SECTION_SIZES, 0 if fp8 else 0x00040000), (_Cfg.DATA_FORMAT, 1 | dst.hw_format << 4 | src << 8),
       (_Cfg.DESTINATION_READ, int(fp32_dest or src == DType.F32) | (8 if fp8 else 0)), (_Cfg.ADDRESS_XY, xy),
       (_Cfg.ADDRESS_ZW, zw), (_Cfg.COUNTERS, 0x1000),
       (_Cfg.EDGE, edge), (_Cfg.EDGE1, int(scalar)),
       (_Cfg.TILE_ROW_MAPPING, 0), (_Cfg.TILE_ROW_MAPPING1, int(scalar)),
-    ): self._write_cfg(reg, value)
-    self.k.write(TensixMMIO.REGFILE_BASE + 16 * 4, output_cb.tile_size >> 4)
-    self.k.write(TensixMMIO.REGFILE_BASE + 52 * 4, 0x40000)
+    ))
+    self.k.write_block((
+      (TensixMMIO.REGFILE_BASE + 16 * 4, output_cb.tile_size >> 4),
+      (TensixMMIO.REGFILE_BASE + 52 * 4, 0x40000),
+    ))
     for section, value in enumerate((0x0104, 0x2820, 0x1120)):
       self._set_thread_cfg(_ADDRESS_MODIFIER + section, value)
     self._issue(TT.TTSETADCXY(4, 0, 0, 0, 0, 0xB))
@@ -108,7 +110,10 @@ class Pack:
       self._set_dma_reg16(25, high); self._issue(TT.TTDMANOP())
 
   def _move_acquired(self, output_cb, tile, scalar, *, configure=True):
-    tile = self.dst.check(tile)
+    # Runtime tile indices are used by bounded RISC-V loops. Their caller
+    # guarantees the Dst bounds; _destination already encodes register indices.
+    if not isinstance(tile, R):
+      tile = self.dst.check(tile)
     CB.reserve_back(self.k, output_cb)
     if configure: self._configure(output_cb, self.dst.fp32, scalar)
     self._destination(tile, output_cb)
@@ -127,6 +132,7 @@ class Pack:
     return self
 
   def _move(self, output_cb, tile, scalar):
+    tile = self.dst.check(tile)
     sem_wait(self.k, Sem.MATH_PACK, SemWait.STALL_ON_ZERO, Stall.TDMA)
     self._move_acquired(output_cb, tile, scalar)
     self._release_dst()

@@ -1,15 +1,17 @@
 from ttko.mop import LoopTemplate
-from ttko.isa import R, Tensix as TT
+from ttko.isa import R, Tensix as TT, TensixWord
 from ttko.registers import TensixRegs, ThreadCfg
 class TensixOps:
   def tt_raw(self, inst) -> int:
     return inst.raw_word() if hasattr(inst, "raw_word") else int(inst) & 0xFFFFFFFF
 
   def push_tensix(self, word: int | object, *, tmp_addr: R = R.T0, tmp_val: R = R.T1):
-    # Push a Tensix instruction to the instruction buffer at runtime via MMIO.
-    # Takes a raw Tensix word; needed when the word is built at runtime. For a
-    # word known at build time, prefer emit() which embeds it inline (rotated).
-    return self.write32(TensixRegs.INSTRN_BUF_BASE, self.tt_raw(word), tmp_addr=tmp_addr, tmp_val=tmp_val)
+    # A register holds a word built at runtime and must be pushed via MMIO.
+    # TRISCs embed build-time words inline (rotated), saving the li/li/sw.
+    if isinstance(word, R) or not self.role.startswith("trisc"):
+      value = word if isinstance(word, R) else self.tt_raw(word)
+      return self.write32(TensixRegs.INSTRN_BUF_BASE, value, tmp_addr=tmp_addr, tmp_val=tmp_val)
+    return self.emit(TensixWord(self.tt_raw(word)))
 
   def setc16(self, reg: int, value: int):
     # Set a thread-cfg register (ThreadCfg.*). SETC16 is the ONLY way to write
@@ -20,11 +22,12 @@ class TensixOps:
   def mop_sync(self, trisc_id: int = 0, *, tmp: R = R.T0):
     self.write32(TensixRegs.PC_BUF_MOP_SYNC, 0, tmp_addr=R.T0, tmp_val=R.T1)
     self.read32(tmp, TensixRegs.PC_BUF_MOP_SYNC, tmp_addr=R.T1)
-    return self.and_(R.ZERO, R.ZERO, tmp)
+    return self.andi(tmp, tmp, 0)
 
   def write_mop_cfg(self, cfg: LoopTemplate | list[int] | tuple[int, ...], trisc_id: int = 0, *, ptr: R = R.T0, tmp: R = R.T1):
     words = cfg.words() if isinstance(cfg, LoopTemplate) else list(cfg)
     self.mop_sync(trisc_id, tmp=tmp)
+    self.mop_words = None
     self.li(ptr, TensixRegs.MOP_CFG)
     for i, word in enumerate(words):
       self.li(tmp, word)
@@ -34,7 +37,7 @@ class TensixOps:
   def tensix_sync(self, trisc_id: int = 0, *, tmp: R = R.T0):
     self.write32(TensixRegs.PC_BUF_SYNC, 0, tmp_addr=R.T0, tmp_val=R.T1)
     self.read32(tmp, TensixRegs.PC_BUF_SYNC, tmp_addr=R.T1)
-    return self.and_(R.ZERO, R.ZERO, tmp)
+    return self.andi(tmp, tmp, 0)
 
   def write_repeated_bytes(self, addr: int, value: int, count_words: int, *, ptr: R = R.T0, tmp: R = R.T1):
     byte = value & 0xFF
@@ -48,13 +51,13 @@ class TensixOps:
     done = self._new_label("wait_mmio_zero_done")
     loop = self._new_label("wait_mmio_zero")
     self.li(ptr, addr)
-    self.label(loop)
+    self.label(loop, local=True)
     self.lw(tmp, ptr, 0)
     self.andi(tmp, tmp, 0xFF)
     self.beq(tmp, R.ZERO, done)
     self.fence()
     self.j(loop)
-    self.label(done)
+    self.label(done, local=True)
     return self
 
   def math_direct_mova2d_init(self):
