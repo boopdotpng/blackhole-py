@@ -4,6 +4,12 @@ const h = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<
 const hex = (n, width = 8) => '0x' + (n >>> 0).toString(16).padStart(width, '0');
 let catalog = [], docs = [], capture = null, currentImage = null, pending = null, matchIndex = -1, matches = [], selectedRow = null;
 let revision = 0;
+let timings = new Map();
+function timingHTML(name) {
+  const timing = timings.get((name || '').replace(/^TT/, ''));
+  if (!timing) return '';
+  return `<h3>Tensix backend timing</h3><p><strong>Latency: ${h(timing.latency_cycles)} cycles</strong><br>Issue interval: ${h(timing.issue_interval_cycles)} cycles · ${h(timing.unit)}</p><p>${h(timing.notes)}</p><p class="note">${h(timing.basis)}. Independent issue spacing differs from result latency. Kernel duration also depends on overlap, waits and data movement; do not sum instruction latencies.</p><a href="${h(timing.source_url)}" target="_blank" rel="noreferrer">Timing source ↗</a>`;
+}
 let visibleIndices = [];
 $('show-setup').checked = localStorage.getItem('bh-viewer-show-setup') === 'true';
 const theme = localStorage.getItem('bh-viewer-theme');
@@ -137,6 +143,7 @@ function selectRow(index) {
   let body = `<div class="detail-header"><div><h2>${h(row.op)}</h2><span class="bits">${hex(row.pc)} · ${h(currentImage.role)} · ↑ ↓ to step</span></div><button id="close-detail" class="plain" aria-label="Close instruction details">×</button></div>`;
   body += `<pre class="raw-operands">${h(row.op)} ${h(row.operands)}</pre>`;
   if (doc) body += `<p class="detail-summary">${h(doc.summary)}</p>`;
+  if (info.kind === 'tensix') body += timingHTML(info.op);
   body += `<div class="raw-values">Emitted word &nbsp;${hex(row.word)}<br>Little endian &nbsp;${h(row.bytes)}${info.tensixWord === undefined ? '' : `<br>Tensix word &nbsp; ${hex(info.tensixWord)}`}<br>${h(row.encoding || (row.embedded ? 'Unrotated instruction written through MMIO' : 'RISC-V RV32'))}</div>`;
   if (row.address !== undefined && row.address !== null) body += `<div class="raw-values">Memory address ${hex(row.address)}${row.addressLabel ? `<br>${h(row.addressLabel)}` : ''}</div>`;
   if (info.args.length) body += '<h3>Every encoded operand</h3>' + argsHTML(info.args);
@@ -226,6 +233,7 @@ function openDoc(name, keepHash = false) {
   showView(true); $('instruction-select').value = doc.name; renderInstructions();
   $('instruction-article').innerHTML = `<span class="dim">${h(doc.group)} · ${h(doc.manualArch)}</span><h1>${h(doc.name)}</h1><h2>${h(doc.title)}</h2><p>${h(doc.summary)}</p><h2>Arguments</h2>${doc.args.length ? doc.args.map(a => `<div class="argument"><div class="argument-head"><span>${h(a.name)}</span><span>bits ${a.hi}:${a.lo} · default ${h(a.default)}</span></div><p>${h(a.meaning)}</p></div>`).join('') : '<p>No arguments.</p>'}<h2>Notes</h2>${doc.notes.map(n => `<p>${h(n)}</p>`).join('')}${doc.constants.length ? `<h2>Named constants</h2><pre class="sim-fields">${h(doc.constants.join('\n'))}</pre>` : ''}<p class="note">${h(doc.evidence)}</p><a href="${h(doc.manualUrl)}" target="_blank" rel="noreferrer">Open the pinned ISA manual ↗</a>`;
   if (!keepHash) setHash({case:$('case').value,doc:doc.name});
+  $('instruction-article').insertAdjacentHTML('beforeend', timingHTML(doc.name));
   document.title = `${doc.name} · Blackhole`;
 }
 function route() {
@@ -247,7 +255,7 @@ $('reference-view').onclick = () => openDoc($('instruction-select').value);
 $('assembly-view').onclick = () => { showView(false); setHash({case:$('case').value,...(currentImage ? {image:currentImage.id} : {})}); document.title = 'Blackhole · Test assembly'; };
 window.addEventListener('popstate', route);
 window.addEventListener('hashchange', route);
-Promise.all([api('/api/reference').then(data => { docs = data.instructions; $('doc-count').textContent = docs.length; setOptions($('instruction-select'),docs.map(d => [d.name,`${d.name} — ${d.title}`])); renderInstructions(); }),collect()]).then(route).catch(error => status(error.message,true));
+Promise.all([api('/api/tensix-timing').then(data => { timings = new Map(data.instructions.map(row => [row.instruction, row])); if (selectedRow !== null) selectRow(selectedRow); }),api('/api/reference').then(data => { docs = data.instructions; $('doc-count').textContent = docs.length; setOptions($('instruction-select'),docs.map(d => [d.name,`${d.name} — ${d.title}`])); renderInstructions(); }),collect()]).then(route).catch(error => status(error.message,true));
 
 function renderTests() {
   const tokens = $('test-search').value.toLowerCase().trim().split(/\s+/).filter(Boolean);

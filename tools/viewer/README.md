@@ -5,6 +5,10 @@ RISC. The main listing combines decoded operations with named config assignments
 Select a row for raw RISC-V/Tensix words, every encoded operand, bit positions,
 manual explanations, simulator field names, and Python emission locations.
 The Instructions view provides a searchable, categorized reference.
+Instruction details and reference pages also show Tensix result latency, issue
+spacing, scheduling conditions and the source/confidence of each estimate.
+See the [kernel timing guide](../../tests/timing/README.md) for combining streams
+and per-core completion times. These costs are not summed into a kernel total.
 
 From the workspace directory containing `blackhole-py` and `.venv`:
 

@@ -1,0 +1,1380 @@
+{
+  "schema_version": 1,
+  "units": "Tensix backend cycles",
+  "revisions": {
+    "manual": "82f600dca3ec664b721bcb0effc087f0c3fd7c11",
+    "llk": "36b092e8e195f706a081e1be92e2fd75e98e50b4"
+  },
+  "instructions": [
+    {
+      "instruction": "ADDDMAREG",
+      "unit": "scalar",
+      "latency_cycles": "3 or 4",
+      "issue_interval_cycles": "3 or 4",
+      "basis": "Wormhole estimate; Blackhole measured",
+      "notes": "3 for immediate or operands in same aligned group of 4 GPRs; 4 across groups. Nonpipelined, blocks issuing thread.",
+      "source": "WormholeB0/TensixTile/TensixCoprocessor/ScalarUnit.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/WormholeB0/TensixTile/TensixCoprocessor/ScalarUnit.md"
+    },
+    {
+      "instruction": "ADDRCRXY",
+      "unit": "misc",
+      "latency_cycles": "1",
+      "issue_interval_cycles": "1 per thread",
+      "basis": "Wormhole estimate",
+      "notes": "Misc unit accepts one instruction per thread per cycle; NOP additionally measured on Blackhole.",
+      "source": "WormholeB0/TensixTile/TensixCoprocessor/MiscellaneousUnit.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/WormholeB0/TensixTile/TensixCoprocessor/MiscellaneousUnit.md"
+    },
+    {
+      "instruction": "ADDRCRZW",
+      "unit": "misc",
+      "latency_cycles": "1",
+      "issue_interval_cycles": "1 per thread",
+      "basis": "Wormhole estimate",
+      "notes": "Misc unit accepts one instruction per thread per cycle; NOP additionally measured on Blackhole.",
+      "source": "WormholeB0/TensixTile/TensixCoprocessor/MiscellaneousUnit.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/WormholeB0/TensixTile/TensixCoprocessor/MiscellaneousUnit.md"
+    },
+    {
+      "instruction": "APOOL3S1",
+      "unit": "FPU legacy",
+      "latency_cycles": "~5",
+      "issue_interval_cycles": "~1",
+      "basis": "legacy analogy estimate",
+      "notes": "Noncontractual legacy operations; estimate only from FPU pipeline. Not a supported convolution/pooling timing guarantee.",
+      "source": "BlackholeA0/TensixTile/TensixCoprocessor/MatrixUnit.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/BlackholeA0/TensixTile/TensixCoprocessor/MatrixUnit.md"
+    },
+    {
+      "instruction": "APOOL3S2",
+      "unit": "FPU legacy",
+      "latency_cycles": "~5",
+      "issue_interval_cycles": "~1",
+      "basis": "legacy analogy estimate",
+      "notes": "Noncontractual legacy operations; estimate only from FPU pipeline. Not a supported convolution/pooling timing guarantee.",
+      "source": "BlackholeA0/TensixTile/TensixCoprocessor/MatrixUnit.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/BlackholeA0/TensixTile/TensixCoprocessor/MatrixUnit.md"
+    },
+    {
+      "instruction": "ATCAS",
+      "unit": "scalar/memory",
+      "latency_cycles": ">=15 per attempt",
+      "issue_interval_cycles": ">=15 + retries",
+      "basis": "Wormhole estimate",
+      "notes": "Retries until comparison/FIFO condition succeeds; can block indefinitely, plus L1 contention.",
+      "source": "WormholeB0/TensixTile/TensixCoprocessor/ScalarUnit.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/WormholeB0/TensixTile/TensixCoprocessor/ScalarUnit.md"
+    },
+    {
+      "instruction": "ATGETM",
+      "unit": "sync",
+      "latency_cycles": "1 + acquisition wait",
+      "issue_interval_cycles": "1 per distinct mutex",
+      "basis": "Blackhole manual",
+      "notes": "ATGETM waits until available; ATRELM has no acquisition wait. Up to 3 distinct mutex operations across threads/cycle.",
+      "source": "BlackholeA0/TensixTile/TensixCoprocessor/SyncUnit.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/BlackholeA0/TensixTile/TensixCoprocessor/SyncUnit.md"
+    },
+    {
+      "instruction": "ATINCGET",
+      "unit": "scalar/memory",
+      "latency_cycles": ">=3 issue; result later",
+      "issue_interval_cycles": ">=3",
+      "basis": "Wormhole estimate",
+      "notes": "Load result is asynchronous; do not use 3 as result-ready latency. Wait for completion before consuming GPR.",
+      "source": "WormholeB0/TensixTile/TensixCoprocessor/ScalarUnit.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/WormholeB0/TensixTile/TensixCoprocessor/ScalarUnit.md"
+    },
+    {
+      "instruction": "ATINCGETPTR",
+      "unit": "scalar/memory",
+      "latency_cycles": ">=15 per attempt",
+      "issue_interval_cycles": ">=15 + retries",
+      "basis": "Wormhole estimate",
+      "notes": "Retries until comparison/FIFO condition succeeds; can block indefinitely, plus L1 contention.",
+      "source": "WormholeB0/TensixTile/TensixCoprocessor/ScalarUnit.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/WormholeB0/TensixTile/TensixCoprocessor/ScalarUnit.md"
+    },
+    {
+      "instruction": "ATRELM",
+      "unit": "sync",
+      "latency_cycles": "1 + acquisition wait",
+      "issue_interval_cycles": "1 per distinct mutex",
+      "basis": "Blackhole manual",
+      "notes": "ATGETM waits until available; ATRELM has no acquisition wait. Up to 3 distinct mutex operations across threads/cycle.",
+      "source": "BlackholeA0/TensixTile/TensixCoprocessor/SyncUnit.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/BlackholeA0/TensixTile/TensixCoprocessor/SyncUnit.md"
+    },
+    {
+      "instruction": "ATSWAP",
+      "unit": "scalar/memory",
+      "latency_cycles": ">=3 issue; completion variable",
+      "issue_interval_cycles": ">=3",
+      "basis": "Wormhole estimate",
+      "notes": "At least 3 scalar occupancy cycles; memory service/visibility and contention need separate completion dependencies.",
+      "source": "WormholeB0/TensixTile/TensixCoprocessor/ScalarUnit.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/WormholeB0/TensixTile/TensixCoprocessor/ScalarUnit.md"
+    },
+    {
+      "instruction": "BITWOPDMAREG",
+      "unit": "scalar",
+      "latency_cycles": "3 or 4",
+      "issue_interval_cycles": "3 or 4",
+      "basis": "Wormhole estimate; Blackhole measured",
+      "notes": "3 for immediate or operands in same aligned group of 4 GPRs; 4 across groups. Nonpipelined, blocks issuing thread.",
+      "source": "WormholeB0/TensixTile/TensixCoprocessor/ScalarUnit.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/WormholeB0/TensixTile/TensixCoprocessor/ScalarUnit.md"
+    },
+    {
+      "instruction": "CFGSHIFTMASK",
+      "unit": "config",
+      "latency_cycles": "2",
+      "issue_interval_cycles": "2",
+      "basis": "Blackhole manual",
+      "notes": "Not pipelined; next non-config consumer needs an intervening slot.",
+      "source": "BlackholeA0/TensixTile/TensixCoprocessor/CFGSHIFTMASK.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/BlackholeA0/TensixTile/TensixCoprocessor/CFGSHIFTMASK.md"
+    },
+    {
+      "instruction": "CLEARDVALID",
+      "unit": "FPU",
+      "latency_cycles": "1",
+      "issue_interval_cycles": "1",
+      "basis": "shared manual",
+      "notes": "Subject to source ownership and backend resource readiness.",
+      "source": "BlackholeA0/TensixTile/TensixCoprocessor/MatrixUnit.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/BlackholeA0/TensixTile/TensixCoprocessor/MatrixUnit.md"
+    },
+    {
+      "instruction": "CLREXPHIST",
+      "unit": "FPU",
+      "latency_cycles": "1",
+      "issue_interval_cycles": "1",
+      "basis": "shared manual",
+      "notes": "Subject to source ownership and backend resource readiness.",
+      "source": "BlackholeA0/TensixTile/TensixCoprocessor/MatrixUnit.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/BlackholeA0/TensixTile/TensixCoprocessor/MatrixUnit.md"
+    },
+    {
+      "instruction": "CMPDMAREG",
+      "unit": "scalar",
+      "latency_cycles": "3 or 4",
+      "issue_interval_cycles": "3 or 4",
+      "basis": "Wormhole estimate; Blackhole measured",
+      "notes": "3 for immediate or operands in same aligned group of 4 GPRs; 4 across groups. Nonpipelined, blocks issuing thread.",
+      "source": "WormholeB0/TensixTile/TensixCoprocessor/ScalarUnit.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/WormholeB0/TensixTile/TensixCoprocessor/ScalarUnit.md"
+    },
+    {
+      "instruction": "CONV3S1",
+      "unit": "FPU legacy",
+      "latency_cycles": "~5",
+      "issue_interval_cycles": "~1",
+      "basis": "legacy analogy estimate",
+      "notes": "Noncontractual legacy operations; estimate only from FPU pipeline. Not a supported convolution/pooling timing guarantee.",
+      "source": "BlackholeA0/TensixTile/TensixCoprocessor/MatrixUnit.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/BlackholeA0/TensixTile/TensixCoprocessor/MatrixUnit.md"
+    },
+    {
+      "instruction": "CONV3S2",
+      "unit": "FPU legacy",
+      "latency_cycles": "~5",
+      "issue_interval_cycles": "~1",
+      "basis": "legacy analogy estimate",
+      "notes": "Noncontractual legacy operations; estimate only from FPU pipeline. Not a supported convolution/pooling timing guarantee.",
+      "source": "BlackholeA0/TensixTile/TensixCoprocessor/MatrixUnit.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/BlackholeA0/TensixTile/TensixCoprocessor/MatrixUnit.md"
+    },
+    {
+      "instruction": "DMANOP",
+      "unit": "scalar",
+      "latency_cycles": "1",
+      "issue_interval_cycles": "1",
+      "basis": "shared/manual + measured",
+      "notes": "SETDMAREG immediate mode. Nonpipelined scalar unit; resource contention can add issue gaps.",
+      "source": "WormholeB0/TensixTile/TensixCoprocessor/ScalarUnit.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/WormholeB0/TensixTile/TensixCoprocessor/ScalarUnit.md"
+    },
+    {
+      "instruction": "DOTPV",
+      "unit": "FPU",
+      "latency_cycles": "5",
+      "issue_interval_cycles": "1",
+      "basis": "shared manual",
+      "notes": "Rotate through >=5 independent aligned 8x16 Dst blocks for accumulating ops. Reusing a dependent block costs about 5 cycles/op. Count each fidelity phase separately.",
+      "source": "BlackholeA0/TensixTile/TensixCoprocessor/MatrixUnit.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/BlackholeA0/TensixTile/TensixCoprocessor/MatrixUnit.md"
+    },
+    {
+      "instruction": "ELWADD",
+      "unit": "FPU",
+      "latency_cycles": "5",
+      "issue_interval_cycles": "1",
+      "basis": "shared manual",
+      "notes": "Rotate through >=5 independent aligned 8x16 Dst blocks for accumulating ops. Reusing a dependent block costs about 5 cycles/op. Count each fidelity phase separately.",
+      "source": "BlackholeA0/TensixTile/TensixCoprocessor/MatrixUnit.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/BlackholeA0/TensixTile/TensixCoprocessor/MatrixUnit.md"
+    },
+    {
+      "instruction": "ELWMUL",
+      "unit": "FPU",
+      "latency_cycles": "5",
+      "issue_interval_cycles": "1",
+      "basis": "shared manual",
+      "notes": "Rotate through >=5 independent aligned 8x16 Dst blocks for accumulating ops. Reusing a dependent block costs about 5 cycles/op. Count each fidelity phase separately. Measured FP32 Dst: alternating FPU and SFPU memory operations in the same Dst half adds burst-dependent stalls; opposite halves avoid the penalty. Separate threads alone do not remove same-half contention. See tests/timing/fpu_sfpu_interleave.md.",
+      "source": "BlackholeA0/TensixTile/TensixCoprocessor/MatrixUnit.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/BlackholeA0/TensixTile/TensixCoprocessor/MatrixUnit.md"
+    },
+    {
+      "instruction": "ELWSUB",
+      "unit": "FPU",
+      "latency_cycles": "5",
+      "issue_interval_cycles": "1",
+      "basis": "shared manual",
+      "notes": "Rotate through >=5 independent aligned 8x16 Dst blocks for accumulating ops. Reusing a dependent block costs about 5 cycles/op. Count each fidelity phase separately.",
+      "source": "BlackholeA0/TensixTile/TensixCoprocessor/MatrixUnit.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/BlackholeA0/TensixTile/TensixCoprocessor/MatrixUnit.md"
+    },
+    {
+      "instruction": "FLUSHDMA",
+      "unit": "scalar",
+      "latency_cycles": ">=2 + wait",
+      "issue_interval_cycles": ">=2 + wait",
+      "basis": "Wormhole estimate",
+      "notes": "Blocks scalar unit and issuing thread until selected work completes.",
+      "source": "WormholeB0/TensixTile/TensixCoprocessor/FLUSHDMA.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/WormholeB0/TensixTile/TensixCoprocessor/FLUSHDMA.md"
+    },
+    {
+      "instruction": "GAPOOL",
+      "unit": "FPU",
+      "latency_cycles": "5",
+      "issue_interval_cycles": "1",
+      "basis": "shared manual",
+      "notes": "Rotate through >=5 independent aligned 8x16 Dst blocks for accumulating ops. Reusing a dependent block costs about 5 cycles/op. Count each fidelity phase separately.",
+      "source": "BlackholeA0/TensixTile/TensixCoprocessor/MatrixUnit.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/BlackholeA0/TensixTile/TensixCoprocessor/MatrixUnit.md"
+    },
+    {
+      "instruction": "GATESRCRST",
+      "unit": "FPU",
+      "latency_cycles": "1",
+      "issue_interval_cycles": "1",
+      "basis": "shared manual",
+      "notes": "Subject to source ownership and backend resource readiness.",
+      "source": "BlackholeA0/TensixTile/TensixCoprocessor/MatrixUnit.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/BlackholeA0/TensixTile/TensixCoprocessor/MatrixUnit.md"
+    },
+    {
+      "instruction": "GMPOOL",
+      "unit": "FPU",
+      "latency_cycles": "5",
+      "issue_interval_cycles": "1",
+      "basis": "shared manual",
+      "notes": "Rotate through >=5 independent aligned 8x16 Dst blocks for accumulating ops. Reusing a dependent block costs about 5 cycles/op. Count each fidelity phase separately.",
+      "source": "BlackholeA0/TensixTile/TensixCoprocessor/MatrixUnit.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/BlackholeA0/TensixTile/TensixCoprocessor/MatrixUnit.md"
+    },
+    {
+      "instruction": "INCADCXY",
+      "unit": "misc",
+      "latency_cycles": "1",
+      "issue_interval_cycles": "1 per thread",
+      "basis": "Wormhole estimate",
+      "notes": "Misc unit accepts one instruction per thread per cycle; NOP additionally measured on Blackhole.",
+      "source": "WormholeB0/TensixTile/TensixCoprocessor/MiscellaneousUnit.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/WormholeB0/TensixTile/TensixCoprocessor/MiscellaneousUnit.md"
+    },
+    {
+      "instruction": "INCADCZW",
+      "unit": "misc",
+      "latency_cycles": "1",
+      "issue_interval_cycles": "1 per thread",
+      "basis": "Wormhole estimate",
+      "notes": "Misc unit accepts one instruction per thread per cycle; NOP additionally measured on Blackhole.",
+      "source": "WormholeB0/TensixTile/TensixCoprocessor/MiscellaneousUnit.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/WormholeB0/TensixTile/TensixCoprocessor/MiscellaneousUnit.md"
+    },
+    {
+      "instruction": "INCRWC",
+      "unit": "FPU",
+      "latency_cycles": "1",
+      "issue_interval_cycles": "1",
+      "basis": "shared manual",
+      "notes": "Subject to source ownership and backend resource readiness.",
+      "source": "BlackholeA0/TensixTile/TensixCoprocessor/MatrixUnit.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/BlackholeA0/TensixTile/TensixCoprocessor/MatrixUnit.md"
+    },
+    {
+      "instruction": "LOADIND",
+      "unit": "scalar/memory",
+      "latency_cycles": ">=3 issue; result later",
+      "issue_interval_cycles": ">=3",
+      "basis": "Wormhole estimate",
+      "notes": "Load result is asynchronous; do not use 3 as result-ready latency. Wait for completion before consuming GPR.",
+      "source": "WormholeB0/TensixTile/TensixCoprocessor/ScalarUnit.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/WormholeB0/TensixTile/TensixCoprocessor/ScalarUnit.md"
+    },
+    {
+      "instruction": "LOADREG",
+      "unit": "scalar/memory",
+      "latency_cycles": ">=3 issue; result later",
+      "issue_interval_cycles": ">=3",
+      "basis": "Wormhole estimate",
+      "notes": "Load result is asynchronous; do not use 3 as result-ready latency. Wait for completion before consuming GPR.",
+      "source": "WormholeB0/TensixTile/TensixCoprocessor/ScalarUnit.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/WormholeB0/TensixTile/TensixCoprocessor/ScalarUnit.md"
+    },
+    {
+      "instruction": "MFCONV3S1",
+      "unit": "FPU legacy",
+      "latency_cycles": "~5",
+      "issue_interval_cycles": "~1",
+      "basis": "legacy analogy estimate",
+      "notes": "Noncontractual legacy operations; estimate only from FPU pipeline. Not a supported convolution/pooling timing guarantee.",
+      "source": "BlackholeA0/TensixTile/TensixCoprocessor/MatrixUnit.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/BlackholeA0/TensixTile/TensixCoprocessor/MatrixUnit.md"
+    },
+    {
+      "instruction": "MOP",
+      "unit": "frontend",
+      "latency_cycles": "expanded body + transition",
+      "issue_interval_cycles": "1 emitted op/cycle",
+      "basis": "shared manual",
+      "notes": "Expand actual loop/template/replay counts; downstream stalls apply. MOP to non-MOP transition adds 1 cycle unless hidden.",
+      "source": "BlackholeA0/TensixTile/TensixCoprocessor/MOPExpander.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/BlackholeA0/TensixTile/TensixCoprocessor/MOPExpander.md"
+    },
+    {
+      "instruction": "MOP_CFG",
+      "unit": "frontend",
+      "latency_cycles": "payload-dependent",
+      "issue_interval_cycles": "1 word/cycle estimate",
+      "basis": "shared model estimate",
+      "notes": "Configuration plus payload ingestion, not one arithmetic operation. Account for emitted setup words.",
+      "source": "BlackholeA0/TensixTile/TensixCoprocessor/MOPExpander.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/BlackholeA0/TensixTile/TensixCoprocessor/MOPExpander.md"
+    },
+    {
+      "instruction": "MOVA2D",
+      "unit": "FPU",
+      "latency_cycles": "4",
+      "issue_interval_cycles": "1",
+      "basis": "shared manual",
+      "notes": "Only selected instructions hide latency; avoid consuming the written Dst region for the next 3 cycles.",
+      "source": "BlackholeA0/TensixTile/TensixCoprocessor/MatrixUnit.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/BlackholeA0/TensixTile/TensixCoprocessor/MatrixUnit.md"
+    },
+    {
+      "instruction": "MOVB2A",
+      "unit": "FPU",
+      "latency_cycles": "4",
+      "issue_interval_cycles": "1",
+      "basis": "shared manual",
+      "notes": "Table gives 4-cycle latency; next FPU cycle accepts only MOVD2A or MOVB2A. Do not model as unrestricted pipelining.",
+      "source": "WormholeB0/TensixTile/TensixCoprocessor/MOVB2A.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/WormholeB0/TensixTile/TensixCoprocessor/MOVB2A.md"
+    },
+    {
+      "instruction": "MOVB2D",
+      "unit": "FPU",
+      "latency_cycles": "4",
+      "issue_interval_cycles": "1",
+      "basis": "shared manual",
+      "notes": "Only selected instructions hide latency; avoid consuming the written Dst region for the next 3 cycles.",
+      "source": "BlackholeA0/TensixTile/TensixCoprocessor/MatrixUnit.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/BlackholeA0/TensixTile/TensixCoprocessor/MatrixUnit.md"
+    },
+    {
+      "instruction": "MOVD2A",
+      "unit": "FPU",
+      "latency_cycles": "2",
+      "issue_interval_cycles": "1",
+      "basis": "shared manual",
+      "notes": "Next FPU cycle accepts only MOVD2A or MOVB2A.",
+      "source": "WormholeB0/TensixTile/TensixCoprocessor/MOVD2A.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/WormholeB0/TensixTile/TensixCoprocessor/MOVD2A.md"
+    },
+    {
+      "instruction": "MOVD2B",
+      "unit": "FPU",
+      "latency_cycles": "~4",
+      "issue_interval_cycles": "1 (same op)",
+      "basis": "scheduling inference",
+      "notes": "Next 3 cycles accept only MOVD2B in FPU; allow 4 cycles before a different FPU instruction.",
+      "source": "WormholeB0/TensixTile/TensixCoprocessor/MOVD2B.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/WormholeB0/TensixTile/TensixCoprocessor/MOVD2B.md"
+    },
+    {
+      "instruction": "MOVDBGA2D",
+      "unit": "FPU",
+      "latency_cycles": "4",
+      "issue_interval_cycles": "1",
+      "basis": "shared manual",
+      "notes": "Only selected instructions hide latency; avoid consuming the written Dst region for the next 3 cycles.",
+      "source": "BlackholeA0/TensixTile/TensixCoprocessor/MatrixUnit.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/BlackholeA0/TensixTile/TensixCoprocessor/MatrixUnit.md"
+    },
+    {
+      "instruction": "MOVDBGB2D",
+      "unit": "FPU",
+      "latency_cycles": "~4",
+      "issue_interval_cycles": "~1",
+      "basis": "analogy estimate",
+      "notes": "Debug SrcB-to-Dst move: estimate from MOVB2D, unmeasured; debug bypasses ready signals.",
+      "source": "tt_llk_blackhole/instructions/assembly.yaml",
+      "source_url": "https://github.com/tenstorrent/tt-llk/blob/36b092e8e195f706a081e1be92e2fd75e98e50b4/tt_llk_blackhole/instructions/assembly.yaml"
+    },
+    {
+      "instruction": "MPOOL3S1",
+      "unit": "FPU legacy",
+      "latency_cycles": "~5",
+      "issue_interval_cycles": "~1",
+      "basis": "legacy analogy estimate",
+      "notes": "Noncontractual legacy operations; estimate only from FPU pipeline. Not a supported convolution/pooling timing guarantee.",
+      "source": "BlackholeA0/TensixTile/TensixCoprocessor/MatrixUnit.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/BlackholeA0/TensixTile/TensixCoprocessor/MatrixUnit.md"
+    },
+    {
+      "instruction": "MPOOL3S2",
+      "unit": "FPU legacy",
+      "latency_cycles": "~5",
+      "issue_interval_cycles": "~1",
+      "basis": "legacy analogy estimate",
+      "notes": "Noncontractual legacy operations; estimate only from FPU pipeline. Not a supported convolution/pooling timing guarantee.",
+      "source": "BlackholeA0/TensixTile/TensixCoprocessor/MatrixUnit.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/BlackholeA0/TensixTile/TensixCoprocessor/MatrixUnit.md"
+    },
+    {
+      "instruction": "MULDMAREG",
+      "unit": "scalar",
+      "latency_cycles": "3 or 4",
+      "issue_interval_cycles": "3 or 4",
+      "basis": "Wormhole estimate; Blackhole measured",
+      "notes": "3 for immediate or operands in same aligned group of 4 GPRs; 4 across groups. Nonpipelined, blocks issuing thread.",
+      "source": "WormholeB0/TensixTile/TensixCoprocessor/ScalarUnit.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/WormholeB0/TensixTile/TensixCoprocessor/ScalarUnit.md"
+    },
+    {
+      "instruction": "MVMUL",
+      "unit": "FPU",
+      "latency_cycles": "5",
+      "issue_interval_cycles": "1",
+      "basis": "shared manual",
+      "notes": "Rotate through >=5 independent aligned 8x16 Dst blocks for accumulating ops. Reusing a dependent block costs about 5 cycles/op. Count each fidelity phase separately. Measured FP32 Dst: alternating FPU and SFPU memory operations in the same Dst half adds burst-dependent stalls; opposite halves avoid the penalty. Separate threads alone do not remove same-half contention. See tests/timing/fpu_sfpu_interleave.md.",
+      "source": "BlackholeA0/TensixTile/TensixCoprocessor/MatrixUnit.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/BlackholeA0/TensixTile/TensixCoprocessor/MatrixUnit.md"
+    },
+    {
+      "instruction": "NOP",
+      "unit": "misc",
+      "latency_cycles": "1",
+      "issue_interval_cycles": "1 per thread",
+      "basis": "Wormhole estimate",
+      "notes": "Misc unit accepts one instruction per thread per cycle; NOP additionally measured on Blackhole.",
+      "source": "WormholeB0/TensixTile/TensixCoprocessor/MiscellaneousUnit.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/WormholeB0/TensixTile/TensixCoprocessor/MiscellaneousUnit.md"
+    },
+    {
+      "instruction": "PACR",
+      "unit": "pack",
+      "latency_cycles": "workload-dependent",
+      "issue_interval_cycles": ">=1 acceptance",
+      "basis": "shared model estimate",
+      "notes": "At most 1 command accepted/cycle; issue can wait for packers. PACR completion scales with data, format, masks and L1. SETREG waits behind prior pack conversions.",
+      "source": "WormholeB0/TensixTile/TensixCoprocessor/Packers/README.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/WormholeB0/TensixTile/TensixCoprocessor/Packers/README.md"
+    },
+    {
+      "instruction": "PACR_SETREG",
+      "unit": "pack",
+      "latency_cycles": "workload-dependent",
+      "issue_interval_cycles": ">=1 acceptance",
+      "basis": "shared model estimate",
+      "notes": "At most 1 command accepted/cycle; issue can wait for packers. PACR completion scales with data, format, masks and L1. SETREG waits behind prior pack conversions.",
+      "source": "WormholeB0/TensixTile/TensixCoprocessor/Packers/README.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/WormholeB0/TensixTile/TensixCoprocessor/Packers/README.md"
+    },
+    {
+      "instruction": "RAREB",
+      "unit": "FPU legacy",
+      "latency_cycles": "unknown",
+      "issue_interval_cycles": "unknown",
+      "basis": "unknown",
+      "notes": "LLK names the operation but supplies no dependable timing. Requires a dedicated behavior/timing probe.",
+      "source": "tt_llk_blackhole/instructions/assembly.yaml",
+      "source_url": "https://github.com/tenstorrent/tt-llk/blob/36b092e8e195f706a081e1be92e2fd75e98e50b4/tt_llk_blackhole/instructions/assembly.yaml"
+    },
+    {
+      "instruction": "RDCFG",
+      "unit": "config",
+      "latency_cycles": ">=2",
+      "issue_interval_cycles": "1",
+      "basis": "Blackhole manual",
+      "notes": "GPR write contention can delay completion.",
+      "source": "BlackholeA0/TensixTile/TensixCoprocessor/ConfigurationUnit.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/BlackholeA0/TensixTile/TensixCoprocessor/ConfigurationUnit.md"
+    },
+    {
+      "instruction": "REG2FLOP",
+      "unit": "scalar",
+      "latency_cycles": ">=2",
+      "issue_interval_cycles": ">=2",
+      "basis": "Wormhole estimate",
+      "notes": "Usually 2; config contention extends occupancy and blocks issuing thread.",
+      "source": "WormholeB0/TensixTile/TensixCoprocessor/REG2FLOP_ADC.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/WormholeB0/TensixTile/TensixCoprocessor/REG2FLOP_ADC.md"
+    },
+    {
+      "instruction": "REPLAY",
+      "unit": "frontend",
+      "latency_cycles": "Count emitted slots",
+      "issue_interval_cycles": "1 emitted op/cycle",
+      "basis": "shared manual",
+      "notes": "Execute replaces command with first replay op; do not charge an extra command slot. Load-only costs 1+Count ingestion slots. Downstream stalls still apply.",
+      "source": "WormholeB0/TensixTile/TensixCoprocessor/REPLAY.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/WormholeB0/TensixTile/TensixCoprocessor/REPLAY.md"
+    },
+    {
+      "instruction": "RESOURCEDECL",
+      "unit": "frontend",
+      "latency_cycles": "~1",
+      "issue_interval_cycles": "~1",
+      "basis": "analogy estimate",
+      "notes": "Resource declaration changes later hazard tracking; one slot estimate, unmeasured.",
+      "source": "tt_llk_blackhole/instructions/assembly.yaml",
+      "source_url": "https://github.com/tenstorrent/tt-llk/blob/36b092e8e195f706a081e1be92e2fd75e98e50b4/tt_llk_blackhole/instructions/assembly.yaml"
+    },
+    {
+      "instruction": "RMWCIB0",
+      "unit": "config",
+      "latency_cycles": "1",
+      "issue_interval_cycles": "1",
+      "basis": "Blackhole manual",
+      "notes": "Shared configuration pipeline across threads.",
+      "source": "BlackholeA0/TensixTile/TensixCoprocessor/ConfigurationUnit.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/BlackholeA0/TensixTile/TensixCoprocessor/ConfigurationUnit.md"
+    },
+    {
+      "instruction": "RMWCIB1",
+      "unit": "config",
+      "latency_cycles": "1",
+      "issue_interval_cycles": "1",
+      "basis": "Blackhole manual",
+      "notes": "Shared configuration pipeline across threads.",
+      "source": "BlackholeA0/TensixTile/TensixCoprocessor/ConfigurationUnit.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/BlackholeA0/TensixTile/TensixCoprocessor/ConfigurationUnit.md"
+    },
+    {
+      "instruction": "RMWCIB2",
+      "unit": "config",
+      "latency_cycles": "1",
+      "issue_interval_cycles": "1",
+      "basis": "Blackhole manual",
+      "notes": "Shared configuration pipeline across threads.",
+      "source": "BlackholeA0/TensixTile/TensixCoprocessor/ConfigurationUnit.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/BlackholeA0/TensixTile/TensixCoprocessor/ConfigurationUnit.md"
+    },
+    {
+      "instruction": "RMWCIB3",
+      "unit": "config",
+      "latency_cycles": "1",
+      "issue_interval_cycles": "1",
+      "basis": "Blackhole manual",
+      "notes": "Shared configuration pipeline across threads.",
+      "source": "BlackholeA0/TensixTile/TensixCoprocessor/ConfigurationUnit.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/BlackholeA0/TensixTile/TensixCoprocessor/ConfigurationUnit.md"
+    },
+    {
+      "instruction": "RSTDMA",
+      "unit": "scalar legacy",
+      "latency_cycles": "unknown",
+      "issue_interval_cycles": "unknown",
+      "basis": "unknown",
+      "notes": "Legacy TDMA reset encoder; no defensible completion bound.",
+      "source": "tt_llk_blackhole/instructions/assembly.yaml",
+      "source_url": "https://github.com/tenstorrent/tt-llk/blob/36b092e8e195f706a081e1be92e2fd75e98e50b4/tt_llk_blackhole/instructions/assembly.yaml"
+    },
+    {
+      "instruction": "SEMGET",
+      "unit": "sync",
+      "latency_cycles": "1",
+      "issue_interval_cycles": "1 shared",
+      "basis": "Blackhole manual",
+      "notes": "Shared with wait instructions and RISC semaphore writes.",
+      "source": "BlackholeA0/TensixTile/TensixCoprocessor/SyncUnit.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/BlackholeA0/TensixTile/TensixCoprocessor/SyncUnit.md"
+    },
+    {
+      "instruction": "SEMINIT",
+      "unit": "sync",
+      "latency_cycles": "1",
+      "issue_interval_cycles": "1 shared",
+      "basis": "Blackhole manual",
+      "notes": "Shared with wait instructions and RISC semaphore writes.",
+      "source": "BlackholeA0/TensixTile/TensixCoprocessor/SyncUnit.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/BlackholeA0/TensixTile/TensixCoprocessor/SyncUnit.md"
+    },
+    {
+      "instruction": "SEMPOST",
+      "unit": "sync",
+      "latency_cycles": "1",
+      "issue_interval_cycles": "1 shared",
+      "basis": "Blackhole manual",
+      "notes": "Shared with wait instructions and RISC semaphore writes.",
+      "source": "BlackholeA0/TensixTile/TensixCoprocessor/SyncUnit.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/BlackholeA0/TensixTile/TensixCoprocessor/SyncUnit.md"
+    },
+    {
+      "instruction": "SEMWAIT",
+      "unit": "sync",
+      "latency_cycles": "1 latch + condition wait",
+      "issue_interval_cycles": "1 shared",
+      "basis": "Blackhole manual",
+      "notes": "Blocks selected instruction classes; unblock has 1-cycle lag even if condition is already met. Condition may never occur.",
+      "source": "BlackholeA0/TensixTile/TensixCoprocessor/SyncUnit.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/BlackholeA0/TensixTile/TensixCoprocessor/SyncUnit.md"
+    },
+    {
+      "instruction": "SETADC",
+      "unit": "misc",
+      "latency_cycles": "1",
+      "issue_interval_cycles": "1 per thread",
+      "basis": "Wormhole estimate",
+      "notes": "Misc unit accepts one instruction per thread per cycle; NOP additionally measured on Blackhole.",
+      "source": "WormholeB0/TensixTile/TensixCoprocessor/MiscellaneousUnit.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/WormholeB0/TensixTile/TensixCoprocessor/MiscellaneousUnit.md"
+    },
+    {
+      "instruction": "SETADCXX",
+      "unit": "misc",
+      "latency_cycles": "1",
+      "issue_interval_cycles": "1 per thread",
+      "basis": "Wormhole estimate",
+      "notes": "Misc unit accepts one instruction per thread per cycle; NOP additionally measured on Blackhole.",
+      "source": "WormholeB0/TensixTile/TensixCoprocessor/MiscellaneousUnit.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/WormholeB0/TensixTile/TensixCoprocessor/MiscellaneousUnit.md"
+    },
+    {
+      "instruction": "SETADCXY",
+      "unit": "misc",
+      "latency_cycles": "1",
+      "issue_interval_cycles": "1 per thread",
+      "basis": "Wormhole estimate",
+      "notes": "Misc unit accepts one instruction per thread per cycle; NOP additionally measured on Blackhole.",
+      "source": "WormholeB0/TensixTile/TensixCoprocessor/MiscellaneousUnit.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/WormholeB0/TensixTile/TensixCoprocessor/MiscellaneousUnit.md"
+    },
+    {
+      "instruction": "SETADCZW",
+      "unit": "misc",
+      "latency_cycles": "1",
+      "issue_interval_cycles": "1 per thread",
+      "basis": "Wormhole estimate",
+      "notes": "Misc unit accepts one instruction per thread per cycle; NOP additionally measured on Blackhole.",
+      "source": "WormholeB0/TensixTile/TensixCoprocessor/MiscellaneousUnit.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/WormholeB0/TensixTile/TensixCoprocessor/MiscellaneousUnit.md"
+    },
+    {
+      "instruction": "SETASHRMH",
+      "unit": "FPU control",
+      "latency_cycles": "~1",
+      "issue_interval_cycles": "~1",
+      "basis": "analogy estimate",
+      "notes": "LLK describes mask/counter/control writes; assume one backend slot for rough budgeting only. Not measured.",
+      "source": "tt_llk_blackhole/instructions/assembly.yaml",
+      "source_url": "https://github.com/tenstorrent/tt-llk/blob/36b092e8e195f706a081e1be92e2fd75e98e50b4/tt_llk_blackhole/instructions/assembly.yaml"
+    },
+    {
+      "instruction": "SETASHRMH0",
+      "unit": "FPU control",
+      "latency_cycles": "~1",
+      "issue_interval_cycles": "~1",
+      "basis": "analogy estimate",
+      "notes": "LLK describes mask/counter/control writes; assume one backend slot for rough budgeting only. Not measured.",
+      "source": "tt_llk_blackhole/instructions/assembly.yaml",
+      "source_url": "https://github.com/tenstorrent/tt-llk/blob/36b092e8e195f706a081e1be92e2fd75e98e50b4/tt_llk_blackhole/instructions/assembly.yaml"
+    },
+    {
+      "instruction": "SETASHRMH1",
+      "unit": "FPU control",
+      "latency_cycles": "~1",
+      "issue_interval_cycles": "~1",
+      "basis": "analogy estimate",
+      "notes": "LLK describes mask/counter/control writes; assume one backend slot for rough budgeting only. Not measured.",
+      "source": "tt_llk_blackhole/instructions/assembly.yaml",
+      "source_url": "https://github.com/tenstorrent/tt-llk/blob/36b092e8e195f706a081e1be92e2fd75e98e50b4/tt_llk_blackhole/instructions/assembly.yaml"
+    },
+    {
+      "instruction": "SETASHRMV",
+      "unit": "FPU control",
+      "latency_cycles": "~1",
+      "issue_interval_cycles": "~1",
+      "basis": "analogy estimate",
+      "notes": "LLK describes mask/counter/control writes; assume one backend slot for rough budgeting only. Not measured.",
+      "source": "tt_llk_blackhole/instructions/assembly.yaml",
+      "source_url": "https://github.com/tenstorrent/tt-llk/blob/36b092e8e195f706a081e1be92e2fd75e98e50b4/tt_llk_blackhole/instructions/assembly.yaml"
+    },
+    {
+      "instruction": "SETC16",
+      "unit": "config",
+      "latency_cycles": "1",
+      "issue_interval_cycles": "1 per thread",
+      "basis": "Blackhole manual",
+      "notes": "Up to 3 across threads; separate from shared config pipeline. StateID writes have fusion ordering restrictions.",
+      "source": "BlackholeA0/TensixTile/TensixCoprocessor/ConfigurationUnit.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/BlackholeA0/TensixTile/TensixCoprocessor/ConfigurationUnit.md"
+    },
+    {
+      "instruction": "SETDMAREG",
+      "unit": "scalar",
+      "latency_cycles": "1",
+      "issue_interval_cycles": "1",
+      "basis": "shared/manual + measured",
+      "notes": "SETDMAREG immediate mode. Nonpipelined scalar unit; resource contention can add issue gaps.",
+      "source": "WormholeB0/TensixTile/TensixCoprocessor/ScalarUnit.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/WormholeB0/TensixTile/TensixCoprocessor/ScalarUnit.md"
+    },
+    {
+      "instruction": "SETDVALID",
+      "unit": "misc",
+      "latency_cycles": "1",
+      "issue_interval_cycles": "1 per thread",
+      "basis": "Wormhole estimate",
+      "notes": "Misc unit accepts one instruction per thread per cycle; NOP additionally measured on Blackhole.",
+      "source": "WormholeB0/TensixTile/TensixCoprocessor/MiscellaneousUnit.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/WormholeB0/TensixTile/TensixCoprocessor/MiscellaneousUnit.md"
+    },
+    {
+      "instruction": "SETIBRWC",
+      "unit": "FPU control",
+      "latency_cycles": "~1",
+      "issue_interval_cycles": "~1",
+      "basis": "analogy estimate",
+      "notes": "LLK describes mask/counter/control writes; assume one backend slot for rough budgeting only. Not measured.",
+      "source": "tt_llk_blackhole/instructions/assembly.yaml",
+      "source_url": "https://github.com/tenstorrent/tt-llk/blob/36b092e8e195f706a081e1be92e2fd75e98e50b4/tt_llk_blackhole/instructions/assembly.yaml"
+    },
+    {
+      "instruction": "SETPKEDGOF",
+      "unit": "FPU control",
+      "latency_cycles": "~1",
+      "issue_interval_cycles": "~1",
+      "basis": "analogy estimate",
+      "notes": "LLK describes mask/counter/control writes; assume one backend slot for rough budgeting only. Not measured.",
+      "source": "tt_llk_blackhole/instructions/assembly.yaml",
+      "source_url": "https://github.com/tenstorrent/tt-llk/blob/36b092e8e195f706a081e1be92e2fd75e98e50b4/tt_llk_blackhole/instructions/assembly.yaml"
+    },
+    {
+      "instruction": "SETRWC",
+      "unit": "FPU",
+      "latency_cycles": "1",
+      "issue_interval_cycles": "1",
+      "basis": "shared manual",
+      "notes": "Subject to source ownership and backend resource readiness.",
+      "source": "BlackholeA0/TensixTile/TensixCoprocessor/MatrixUnit.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/BlackholeA0/TensixTile/TensixCoprocessor/MatrixUnit.md"
+    },
+    {
+      "instruction": "SFPABS",
+      "unit": "SFPU",
+      "latency_cycles": "1",
+      "issue_interval_cycles": "1",
+      "basis": "Blackhole manual",
+      "notes": "Ordinary direct mode; 32 lanes per instruction. Dst access, resource conflicts and macros can add stalls.",
+      "source": "BlackholeA0/TensixTile/TensixCoprocessor/VectorUnit.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/BlackholeA0/TensixTile/TensixCoprocessor/VectorUnit.md"
+    },
+    {
+      "instruction": "SFPADD",
+      "unit": "SFPU",
+      "latency_cycles": "2",
+      "issue_interval_cycles": "1",
+      "basis": "Blackhole manual",
+      "notes": "Dependent consumer needs a 2-cycle separation; independent instructions can issue each cycle. Indirect operands and macro hazards require additional care.",
+      "source": "BlackholeA0/TensixTile/TensixCoprocessor/VectorUnit.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/BlackholeA0/TensixTile/TensixCoprocessor/VectorUnit.md"
+    },
+    {
+      "instruction": "SFPADDI",
+      "unit": "SFPU",
+      "latency_cycles": "2",
+      "issue_interval_cycles": "1",
+      "basis": "Blackhole manual",
+      "notes": "Dependent consumer needs a 2-cycle separation; independent instructions can issue each cycle. Indirect operands and macro hazards require additional care.",
+      "source": "BlackholeA0/TensixTile/TensixCoprocessor/VectorUnit.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/BlackholeA0/TensixTile/TensixCoprocessor/VectorUnit.md"
+    },
+    {
+      "instruction": "SFPAND",
+      "unit": "SFPU",
+      "latency_cycles": "1",
+      "issue_interval_cycles": "1",
+      "basis": "Blackhole manual",
+      "notes": "Ordinary direct mode; 32 lanes per instruction. Dst access, resource conflicts and macros can add stalls.",
+      "source": "BlackholeA0/TensixTile/TensixCoprocessor/VectorUnit.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/BlackholeA0/TensixTile/TensixCoprocessor/VectorUnit.md"
+    },
+    {
+      "instruction": "SFPARECIP",
+      "unit": "SFPU",
+      "latency_cycles": "1",
+      "issue_interval_cycles": "1",
+      "basis": "Blackhole manual",
+      "notes": "Ordinary direct mode; 32 lanes per instruction. Dst access, resource conflicts and macros can add stalls.",
+      "source": "BlackholeA0/TensixTile/TensixCoprocessor/VectorUnit.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/BlackholeA0/TensixTile/TensixCoprocessor/VectorUnit.md"
+    },
+    {
+      "instruction": "SFPCAST",
+      "unit": "SFPU",
+      "latency_cycles": "1",
+      "issue_interval_cycles": "1",
+      "basis": "Blackhole manual",
+      "notes": "Ordinary direct mode; 32 lanes per instruction. Dst access, resource conflicts and macros can add stalls.",
+      "source": "BlackholeA0/TensixTile/TensixCoprocessor/VectorUnit.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/BlackholeA0/TensixTile/TensixCoprocessor/VectorUnit.md"
+    },
+    {
+      "instruction": "SFPCOMPC",
+      "unit": "SFPU",
+      "latency_cycles": "1",
+      "issue_interval_cycles": "1",
+      "basis": "Blackhole manual",
+      "notes": "Ordinary direct mode; 32 lanes per instruction. Dst access, resource conflicts and macros can add stalls.",
+      "source": "BlackholeA0/TensixTile/TensixCoprocessor/VectorUnit.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/BlackholeA0/TensixTile/TensixCoprocessor/VectorUnit.md"
+    },
+    {
+      "instruction": "SFPCONFIG",
+      "unit": "SFPU",
+      "latency_cycles": "1",
+      "issue_interval_cycles": "1",
+      "basis": "Blackhole manual",
+      "notes": "Ordinary direct mode; 32 lanes per instruction. Dst access, resource conflicts and macros can add stalls.",
+      "source": "BlackholeA0/TensixTile/TensixCoprocessor/VectorUnit.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/BlackholeA0/TensixTile/TensixCoprocessor/VectorUnit.md"
+    },
+    {
+      "instruction": "SFPDIVP2",
+      "unit": "SFPU",
+      "latency_cycles": "1",
+      "issue_interval_cycles": "1",
+      "basis": "Blackhole manual",
+      "notes": "Ordinary direct mode; 32 lanes per instruction. Dst access, resource conflicts and macros can add stalls.",
+      "source": "BlackholeA0/TensixTile/TensixCoprocessor/VectorUnit.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/BlackholeA0/TensixTile/TensixCoprocessor/VectorUnit.md"
+    },
+    {
+      "instruction": "SFPENCC",
+      "unit": "SFPU",
+      "latency_cycles": "1",
+      "issue_interval_cycles": "1",
+      "basis": "Blackhole manual",
+      "notes": "Ordinary direct mode; 32 lanes per instruction. Dst access, resource conflicts and macros can add stalls.",
+      "source": "BlackholeA0/TensixTile/TensixCoprocessor/VectorUnit.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/BlackholeA0/TensixTile/TensixCoprocessor/VectorUnit.md"
+    },
+    {
+      "instruction": "SFPEXEXP",
+      "unit": "SFPU",
+      "latency_cycles": "1",
+      "issue_interval_cycles": "1",
+      "basis": "Blackhole manual",
+      "notes": "Ordinary direct mode; 32 lanes per instruction. Dst access, resource conflicts and macros can add stalls.",
+      "source": "BlackholeA0/TensixTile/TensixCoprocessor/VectorUnit.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/BlackholeA0/TensixTile/TensixCoprocessor/VectorUnit.md"
+    },
+    {
+      "instruction": "SFPEXMAN",
+      "unit": "SFPU",
+      "latency_cycles": "1",
+      "issue_interval_cycles": "1",
+      "basis": "Blackhole manual",
+      "notes": "Ordinary direct mode; 32 lanes per instruction. Dst access, resource conflicts and macros can add stalls.",
+      "source": "BlackholeA0/TensixTile/TensixCoprocessor/VectorUnit.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/BlackholeA0/TensixTile/TensixCoprocessor/VectorUnit.md"
+    },
+    {
+      "instruction": "SFPGT",
+      "unit": "SFPU",
+      "latency_cycles": "1",
+      "issue_interval_cycles": "1",
+      "basis": "Blackhole manual",
+      "notes": "Ordinary direct mode; 32 lanes per instruction. Dst access, resource conflicts and macros can add stalls.",
+      "source": "BlackholeA0/TensixTile/TensixCoprocessor/VectorUnit.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/BlackholeA0/TensixTile/TensixCoprocessor/VectorUnit.md"
+    },
+    {
+      "instruction": "SFPIADD",
+      "unit": "SFPU",
+      "latency_cycles": "1",
+      "issue_interval_cycles": "1",
+      "basis": "Blackhole manual",
+      "notes": "Ordinary direct mode; 32 lanes per instruction. Dst access, resource conflicts and macros can add stalls.",
+      "source": "BlackholeA0/TensixTile/TensixCoprocessor/VectorUnit.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/BlackholeA0/TensixTile/TensixCoprocessor/VectorUnit.md"
+    },
+    {
+      "instruction": "SFPLE",
+      "unit": "SFPU",
+      "latency_cycles": "1",
+      "issue_interval_cycles": "1",
+      "basis": "Blackhole manual",
+      "notes": "Ordinary direct mode; 32 lanes per instruction. Dst access, resource conflicts and macros can add stalls.",
+      "source": "BlackholeA0/TensixTile/TensixCoprocessor/VectorUnit.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/BlackholeA0/TensixTile/TensixCoprocessor/VectorUnit.md"
+    },
+    {
+      "instruction": "SFPLOAD",
+      "unit": "SFPU",
+      "latency_cycles": "1",
+      "issue_interval_cycles": "1",
+      "basis": "Blackhole manual",
+      "notes": "Ordinary direct mode; 32 lanes per instruction. Dst access, resource conflicts and macros can add stalls. Measured FP32 Dst: alternating FPU and SFPU memory operations in the same Dst half adds burst-dependent stalls; opposite halves avoid the penalty. Separate threads alone do not remove same-half contention. See tests/timing/fpu_sfpu_interleave.md.",
+      "source": "BlackholeA0/TensixTile/TensixCoprocessor/VectorUnit.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/BlackholeA0/TensixTile/TensixCoprocessor/VectorUnit.md"
+    },
+    {
+      "instruction": "SFPLOADI",
+      "unit": "SFPU",
+      "latency_cycles": "1",
+      "issue_interval_cycles": "1",
+      "basis": "Blackhole manual",
+      "notes": "Ordinary direct mode; 32 lanes per instruction. Dst access, resource conflicts and macros can add stalls.",
+      "source": "BlackholeA0/TensixTile/TensixCoprocessor/VectorUnit.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/BlackholeA0/TensixTile/TensixCoprocessor/VectorUnit.md"
+    },
+    {
+      "instruction": "SFPLOADMACRO",
+      "unit": "SFPU",
+      "latency_cycles": "1 load; scheduled tail",
+      "issue_interval_cycles": ">=1",
+      "basis": "Blackhole manual",
+      "notes": "Expand configured sub-ops and delays. Cycle-delay tail ends at max(1+delay+op_latency); instruction-count delays need the actual stream. Internal hazards are not automatically interlocked.",
+      "source": "BlackholeA0/TensixTile/TensixCoprocessor/SFPLOADMACRO.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/BlackholeA0/TensixTile/TensixCoprocessor/SFPLOADMACRO.md"
+    },
+    {
+      "instruction": "SFPLUT",
+      "unit": "SFPU",
+      "latency_cycles": "2",
+      "issue_interval_cycles": "1",
+      "basis": "Blackhole manual",
+      "notes": "Dependent consumer needs a 2-cycle separation; independent instructions can issue each cycle. Indirect operands and macro hazards require additional care.",
+      "source": "BlackholeA0/TensixTile/TensixCoprocessor/VectorUnit.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/BlackholeA0/TensixTile/TensixCoprocessor/VectorUnit.md"
+    },
+    {
+      "instruction": "SFPLUTFP32",
+      "unit": "SFPU",
+      "latency_cycles": "2",
+      "issue_interval_cycles": "1",
+      "basis": "Blackhole manual",
+      "notes": "Dependent consumer needs a 2-cycle separation; independent instructions can issue each cycle. Indirect operands and macro hazards require additional care.",
+      "source": "BlackholeA0/TensixTile/TensixCoprocessor/VectorUnit.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/BlackholeA0/TensixTile/TensixCoprocessor/VectorUnit.md"
+    },
+    {
+      "instruction": "SFPLZ",
+      "unit": "SFPU",
+      "latency_cycles": "1",
+      "issue_interval_cycles": "1",
+      "basis": "Blackhole manual",
+      "notes": "Ordinary direct mode; 32 lanes per instruction. Dst access, resource conflicts and macros can add stalls.",
+      "source": "BlackholeA0/TensixTile/TensixCoprocessor/VectorUnit.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/BlackholeA0/TensixTile/TensixCoprocessor/VectorUnit.md"
+    },
+    {
+      "instruction": "SFPMAD",
+      "unit": "SFPU",
+      "latency_cycles": "2",
+      "issue_interval_cycles": "1",
+      "basis": "Blackhole manual",
+      "notes": "Dependent consumer needs a 2-cycle separation; independent instructions can issue each cycle. Indirect operands and macro hazards require additional care.",
+      "source": "BlackholeA0/TensixTile/TensixCoprocessor/VectorUnit.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/BlackholeA0/TensixTile/TensixCoprocessor/VectorUnit.md"
+    },
+    {
+      "instruction": "SFPMOV",
+      "unit": "SFPU",
+      "latency_cycles": "1",
+      "issue_interval_cycles": "1",
+      "basis": "Blackhole manual",
+      "notes": "Ordinary direct mode; 32 lanes per instruction. Dst access, resource conflicts and macros can add stalls.",
+      "source": "BlackholeA0/TensixTile/TensixCoprocessor/VectorUnit.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/BlackholeA0/TensixTile/TensixCoprocessor/VectorUnit.md"
+    },
+    {
+      "instruction": "SFPMUL",
+      "unit": "SFPU",
+      "latency_cycles": "2",
+      "issue_interval_cycles": "1",
+      "basis": "Blackhole manual",
+      "notes": "Dependent consumer needs a 2-cycle separation; independent instructions can issue each cycle. Indirect operands and macro hazards require additional care.",
+      "source": "BlackholeA0/TensixTile/TensixCoprocessor/VectorUnit.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/BlackholeA0/TensixTile/TensixCoprocessor/VectorUnit.md"
+    },
+    {
+      "instruction": "SFPMUL24",
+      "unit": "SFPU",
+      "latency_cycles": "2",
+      "issue_interval_cycles": "1",
+      "basis": "Blackhole manual",
+      "notes": "Dependent consumer needs a 2-cycle separation; independent instructions can issue each cycle. Indirect operands and macro hazards require additional care.",
+      "source": "BlackholeA0/TensixTile/TensixCoprocessor/VectorUnit.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/BlackholeA0/TensixTile/TensixCoprocessor/VectorUnit.md"
+    },
+    {
+      "instruction": "SFPMULI",
+      "unit": "SFPU",
+      "latency_cycles": "2",
+      "issue_interval_cycles": "1",
+      "basis": "Blackhole manual",
+      "notes": "Dependent consumer needs a 2-cycle separation; independent instructions can issue each cycle. Indirect operands and macro hazards require additional care.",
+      "source": "BlackholeA0/TensixTile/TensixCoprocessor/VectorUnit.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/BlackholeA0/TensixTile/TensixCoprocessor/VectorUnit.md"
+    },
+    {
+      "instruction": "SFPNOP",
+      "unit": "SFPU",
+      "latency_cycles": "1",
+      "issue_interval_cycles": "1",
+      "basis": "Blackhole manual",
+      "notes": "Ordinary direct mode; 32 lanes per instruction. Dst access, resource conflicts and macros can add stalls.",
+      "source": "BlackholeA0/TensixTile/TensixCoprocessor/VectorUnit.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/BlackholeA0/TensixTile/TensixCoprocessor/VectorUnit.md"
+    },
+    {
+      "instruction": "SFPNOT",
+      "unit": "SFPU",
+      "latency_cycles": "1",
+      "issue_interval_cycles": "1",
+      "basis": "Blackhole manual",
+      "notes": "Ordinary direct mode; 32 lanes per instruction. Dst access, resource conflicts and macros can add stalls.",
+      "source": "BlackholeA0/TensixTile/TensixCoprocessor/VectorUnit.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/BlackholeA0/TensixTile/TensixCoprocessor/VectorUnit.md"
+    },
+    {
+      "instruction": "SFPOR",
+      "unit": "SFPU",
+      "latency_cycles": "1",
+      "issue_interval_cycles": "1",
+      "basis": "Blackhole manual",
+      "notes": "Ordinary direct mode; 32 lanes per instruction. Dst access, resource conflicts and macros can add stalls.",
+      "source": "BlackholeA0/TensixTile/TensixCoprocessor/VectorUnit.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/BlackholeA0/TensixTile/TensixCoprocessor/VectorUnit.md"
+    },
+    {
+      "instruction": "SFPPOPC",
+      "unit": "SFPU",
+      "latency_cycles": "1",
+      "issue_interval_cycles": "1",
+      "basis": "Blackhole manual",
+      "notes": "Ordinary direct mode; 32 lanes per instruction. Dst access, resource conflicts and macros can add stalls.",
+      "source": "BlackholeA0/TensixTile/TensixCoprocessor/VectorUnit.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/BlackholeA0/TensixTile/TensixCoprocessor/VectorUnit.md"
+    },
+    {
+      "instruction": "SFPPUSHC",
+      "unit": "SFPU",
+      "latency_cycles": "1",
+      "issue_interval_cycles": "1",
+      "basis": "Blackhole manual",
+      "notes": "Ordinary direct mode; 32 lanes per instruction. Dst access, resource conflicts and macros can add stalls.",
+      "source": "BlackholeA0/TensixTile/TensixCoprocessor/VectorUnit.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/BlackholeA0/TensixTile/TensixCoprocessor/VectorUnit.md"
+    },
+    {
+      "instruction": "SFPSETCC",
+      "unit": "SFPU",
+      "latency_cycles": "1",
+      "issue_interval_cycles": "1",
+      "basis": "Blackhole manual",
+      "notes": "Ordinary direct mode; 32 lanes per instruction. Dst access, resource conflicts and macros can add stalls.",
+      "source": "BlackholeA0/TensixTile/TensixCoprocessor/VectorUnit.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/BlackholeA0/TensixTile/TensixCoprocessor/VectorUnit.md"
+    },
+    {
+      "instruction": "SFPSETEXP",
+      "unit": "SFPU",
+      "latency_cycles": "1",
+      "issue_interval_cycles": "1",
+      "basis": "Blackhole manual",
+      "notes": "Ordinary direct mode; 32 lanes per instruction. Dst access, resource conflicts and macros can add stalls.",
+      "source": "BlackholeA0/TensixTile/TensixCoprocessor/VectorUnit.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/BlackholeA0/TensixTile/TensixCoprocessor/VectorUnit.md"
+    },
+    {
+      "instruction": "SFPSETMAN",
+      "unit": "SFPU",
+      "latency_cycles": "1",
+      "issue_interval_cycles": "1",
+      "basis": "Blackhole manual",
+      "notes": "Ordinary direct mode; 32 lanes per instruction. Dst access, resource conflicts and macros can add stalls.",
+      "source": "BlackholeA0/TensixTile/TensixCoprocessor/VectorUnit.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/BlackholeA0/TensixTile/TensixCoprocessor/VectorUnit.md"
+    },
+    {
+      "instruction": "SFPSETSGN",
+      "unit": "SFPU",
+      "latency_cycles": "1",
+      "issue_interval_cycles": "1",
+      "basis": "Blackhole manual",
+      "notes": "Ordinary direct mode; 32 lanes per instruction. Dst access, resource conflicts and macros can add stalls.",
+      "source": "BlackholeA0/TensixTile/TensixCoprocessor/VectorUnit.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/BlackholeA0/TensixTile/TensixCoprocessor/VectorUnit.md"
+    },
+    {
+      "instruction": "SFPSHFT",
+      "unit": "SFPU",
+      "latency_cycles": "1",
+      "issue_interval_cycles": "1",
+      "basis": "Blackhole manual",
+      "notes": "Ordinary direct mode; 32 lanes per instruction. Dst access, resource conflicts and macros can add stalls.",
+      "source": "BlackholeA0/TensixTile/TensixCoprocessor/VectorUnit.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/BlackholeA0/TensixTile/TensixCoprocessor/VectorUnit.md"
+    },
+    {
+      "instruction": "SFPSHFT2",
+      "unit": "SFPU",
+      "latency_cycles": "1 or 2",
+      "issue_interval_cycles": "1 or 2",
+      "basis": "Blackhole manual",
+      "notes": "Bit shifts: 1. Lane shuffle modes 2/3/4: 2; next SFPU slot permits only SFPNOP.",
+      "source": "BlackholeA0/TensixTile/TensixCoprocessor/SFPSHFT2.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/BlackholeA0/TensixTile/TensixCoprocessor/SFPSHFT2.md"
+    },
+    {
+      "instruction": "SFPSTOCHRND",
+      "unit": "SFPU",
+      "latency_cycles": "1",
+      "issue_interval_cycles": "1",
+      "basis": "Blackhole manual",
+      "notes": "Ordinary direct mode; 32 lanes per instruction. Dst access, resource conflicts and macros can add stalls.",
+      "source": "BlackholeA0/TensixTile/TensixCoprocessor/VectorUnit.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/BlackholeA0/TensixTile/TensixCoprocessor/VectorUnit.md"
+    },
+    {
+      "instruction": "SFPSTORE",
+      "unit": "SFPU",
+      "latency_cycles": "1",
+      "issue_interval_cycles": "1",
+      "basis": "Blackhole manual",
+      "notes": "Ordinary direct mode; 32 lanes per instruction. Dst access, resource conflicts and macros can add stalls. Measured FP32 Dst: alternating FPU and SFPU memory operations in the same Dst half adds burst-dependent stalls; opposite halves avoid the penalty. Separate threads alone do not remove same-half contention. See tests/timing/fpu_sfpu_interleave.md.",
+      "source": "BlackholeA0/TensixTile/TensixCoprocessor/VectorUnit.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/BlackholeA0/TensixTile/TensixCoprocessor/VectorUnit.md"
+    },
+    {
+      "instruction": "SFPSWAP",
+      "unit": "SFPU",
+      "latency_cycles": "2",
+      "issue_interval_cycles": "2 useful ops",
+      "basis": "Blackhole manual",
+      "notes": "Next SFPU slot permits only SFPNOP; SWAP+SFPNOP costs 2 cycles total, not 3.",
+      "source": "BlackholeA0/TensixTile/TensixCoprocessor/SFPSWAP.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/BlackholeA0/TensixTile/TensixCoprocessor/SFPSWAP.md"
+    },
+    {
+      "instruction": "SFPTRANSP",
+      "unit": "SFPU",
+      "latency_cycles": "1",
+      "issue_interval_cycles": "1",
+      "basis": "Blackhole manual",
+      "notes": "Ordinary direct mode; 32 lanes per instruction. Dst access, resource conflicts and macros can add stalls.",
+      "source": "BlackholeA0/TensixTile/TensixCoprocessor/VectorUnit.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/BlackholeA0/TensixTile/TensixCoprocessor/VectorUnit.md"
+    },
+    {
+      "instruction": "SFPXOR",
+      "unit": "SFPU",
+      "latency_cycles": "1",
+      "issue_interval_cycles": "1",
+      "basis": "Blackhole manual",
+      "notes": "Ordinary direct mode; 32 lanes per instruction. Dst access, resource conflicts and macros can add stalls.",
+      "source": "BlackholeA0/TensixTile/TensixCoprocessor/VectorUnit.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/BlackholeA0/TensixTile/TensixCoprocessor/VectorUnit.md"
+    },
+    {
+      "instruction": "SHIFTDMAREG",
+      "unit": "scalar",
+      "latency_cycles": "3 or 4",
+      "issue_interval_cycles": "3 or 4",
+      "basis": "Wormhole estimate; Blackhole measured",
+      "notes": "3 for immediate or operands in same aligned group of 4 GPRs; 4 across groups. Nonpipelined, blocks issuing thread.",
+      "source": "WormholeB0/TensixTile/TensixCoprocessor/ScalarUnit.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/WormholeB0/TensixTile/TensixCoprocessor/ScalarUnit.md"
+    },
+    {
+      "instruction": "SHIFTXA",
+      "unit": "FPU",
+      "latency_cycles": "1",
+      "issue_interval_cycles": "1",
+      "basis": "shared manual",
+      "notes": "Subject to source ownership and backend resource readiness.",
+      "source": "BlackholeA0/TensixTile/TensixCoprocessor/MatrixUnit.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/BlackholeA0/TensixTile/TensixCoprocessor/MatrixUnit.md"
+    },
+    {
+      "instruction": "SHIFTXB",
+      "unit": "FPU",
+      "latency_cycles": "2",
+      "issue_interval_cycles": "2",
+      "basis": "shared manual",
+      "notes": "Not a one-cycle source shift.",
+      "source": "BlackholeA0/TensixTile/TensixCoprocessor/MatrixUnit.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/BlackholeA0/TensixTile/TensixCoprocessor/MatrixUnit.md"
+    },
+    {
+      "instruction": "STALLWAIT",
+      "unit": "sync",
+      "latency_cycles": "1 latch + condition wait",
+      "issue_interval_cycles": "1 shared",
+      "basis": "Blackhole manual",
+      "notes": "Blocks selected instruction classes; unblock has 1-cycle lag even if condition is already met. Condition may never occur.",
+      "source": "BlackholeA0/TensixTile/TensixCoprocessor/SyncUnit.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/BlackholeA0/TensixTile/TensixCoprocessor/SyncUnit.md"
+    },
+    {
+      "instruction": "STOREIND",
+      "unit": "scalar/memory",
+      "latency_cycles": ">=3 issue; completion variable",
+      "issue_interval_cycles": ">=3",
+      "basis": "Wormhole estimate",
+      "notes": "At least 3 scalar occupancy cycles; memory service/visibility and contention need separate completion dependencies.",
+      "source": "WormholeB0/TensixTile/TensixCoprocessor/ScalarUnit.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/WormholeB0/TensixTile/TensixCoprocessor/ScalarUnit.md"
+    },
+    {
+      "instruction": "STOREREG",
+      "unit": "scalar/memory",
+      "latency_cycles": ">=3 issue; completion variable",
+      "issue_interval_cycles": ">=3",
+      "basis": "Wormhole estimate",
+      "notes": "At least 3 scalar occupancy cycles; memory service/visibility and contention need separate completion dependencies.",
+      "source": "WormholeB0/TensixTile/TensixCoprocessor/ScalarUnit.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/WormholeB0/TensixTile/TensixCoprocessor/ScalarUnit.md"
+    },
+    {
+      "instruction": "STREAMWAIT",
+      "unit": "sync",
+      "latency_cycles": "1 latch + condition wait",
+      "issue_interval_cycles": "1 shared",
+      "basis": "Blackhole manual",
+      "notes": "Blocks selected instruction classes; unblock has 1-cycle lag even if condition is already met. Condition may never occur.",
+      "source": "BlackholeA0/TensixTile/TensixCoprocessor/SyncUnit.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/BlackholeA0/TensixTile/TensixCoprocessor/SyncUnit.md"
+    },
+    {
+      "instruction": "STREAMWRCFG",
+      "unit": "config",
+      "latency_cycles": ">=5",
+      "issue_interval_cycles": "1",
+      "basis": "Blackhole manual",
+      "notes": "Overlay read contention and pipeline ordering/starvation can add stalls.",
+      "source": "BlackholeA0/TensixTile/TensixCoprocessor/STREAMWRCFG.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/BlackholeA0/TensixTile/TensixCoprocessor/STREAMWRCFG.md"
+    },
+    {
+      "instruction": "SUBDMAREG",
+      "unit": "scalar",
+      "latency_cycles": "3 or 4",
+      "issue_interval_cycles": "3 or 4",
+      "basis": "Wormhole estimate; Blackhole measured",
+      "notes": "3 for immediate or operands in same aligned group of 4 GPRs; 4 across groups. Nonpipelined, blocks issuing thread.",
+      "source": "WormholeB0/TensixTile/TensixCoprocessor/ScalarUnit.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/WormholeB0/TensixTile/TensixCoprocessor/ScalarUnit.md"
+    },
+    {
+      "instruction": "TBUFCMD",
+      "unit": "reserved",
+      "latency_cycles": "unknown",
+      "issue_interval_cycles": "unknown",
+      "basis": "reserved",
+      "notes": "LLK explicitly reserves this opcode for future use; do not execute to estimate timing.",
+      "source": "tt_llk_blackhole/instructions/assembly.yaml",
+      "source_url": "https://github.com/tenstorrent/tt-llk/blob/36b092e8e195f706a081e1be92e2fd75e98e50b4/tt_llk_blackhole/instructions/assembly.yaml"
+    },
+    {
+      "instruction": "TRNSPSRCA",
+      "unit": "FPU legacy",
+      "latency_cycles": "unknown",
+      "issue_interval_cycles": "unknown",
+      "basis": "unknown",
+      "notes": "LLK names the operation but supplies no dependable timing. Requires a dedicated behavior/timing probe.",
+      "source": "tt_llk_blackhole/instructions/assembly.yaml",
+      "source_url": "https://github.com/tenstorrent/tt-llk/blob/36b092e8e195f706a081e1be92e2fd75e98e50b4/tt_llk_blackhole/instructions/assembly.yaml"
+    },
+    {
+      "instruction": "TRNSPSRCB",
+      "unit": "FPU",
+      "latency_cycles": "1",
+      "issue_interval_cycles": "1",
+      "basis": "shared manual",
+      "notes": "Subject to source ownership and backend resource readiness.",
+      "source": "BlackholeA0/TensixTile/TensixCoprocessor/MatrixUnit.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/BlackholeA0/TensixTile/TensixCoprocessor/MatrixUnit.md"
+    },
+    {
+      "instruction": "UNPACR",
+      "unit": "unpack",
+      "latency_cycles": ">=2 setup + transfer + drain",
+      "issue_interval_cycles": "workload-dependent",
+      "basis": "shared manual",
+      "notes": "Uncompressed setup 2 cycles; L1 rate at most 16/32/64 bytes/cycle at x1/x2/x4. Approx 2+ceil(bytes/rate)+pipeline tail; compression, format, ownership and contention add time.",
+      "source": "BlackholeA0/TensixTile/TensixCoprocessor/UNPACR_Regular.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/BlackholeA0/TensixTile/TensixCoprocessor/UNPACR_Regular.md"
+    },
+    {
+      "instruction": "UNPACR_NOP",
+      "unit": "unpack",
+      "latency_cycles": "1 in NOP mode; other modes vary",
+      "issue_interval_cycles": ">=1",
+      "basis": "mode-dependent estimate",
+      "notes": "Sequenced after prior unpack work; set-valid/zero/context modes need their own dependencies, not a blanket 1-cycle completion.",
+      "source": "WormholeB0/TensixTile/TensixCoprocessor/UNPACR_NOP.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/WormholeB0/TensixTile/TensixCoprocessor/UNPACR_NOP.md"
+    },
+    {
+      "instruction": "WRCFG",
+      "unit": "config",
+      "latency_cycles": "2",
+      "issue_interval_cycles": "1",
+      "basis": "Blackhole manual",
+      "notes": "Pipelined; configuration consumers need correct ordering.",
+      "source": "BlackholeA0/TensixTile/TensixCoprocessor/ConfigurationUnit.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/BlackholeA0/TensixTile/TensixCoprocessor/ConfigurationUnit.md"
+    },
+    {
+      "instruction": "XMOV",
+      "unit": "mover",
+      "latency_cycles": "1 launch + transfer",
+      "issue_interval_cycles": "wait for mover availability",
+      "basis": "Wormhole estimate",
+      "notes": "1-cycle launch once mover ready; model bytes/bandwidth plus tail separately. Launch is not completion.",
+      "source": "WormholeB0/TensixTile/TensixCoprocessor/XMOV.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/WormholeB0/TensixTile/TensixCoprocessor/XMOV.md"
+    },
+    {
+      "instruction": "ZEROACC",
+      "unit": "FPU",
+      "latency_cycles": "1",
+      "issue_interval_cycles": "1",
+      "basis": "shared manual",
+      "notes": "Subject to source ownership and backend resource readiness.",
+      "source": "BlackholeA0/TensixTile/TensixCoprocessor/MatrixUnit.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/BlackholeA0/TensixTile/TensixCoprocessor/MatrixUnit.md"
+    },
+    {
+      "instruction": "ZEROSRC",
+      "unit": "FPU",
+      "latency_cycles": "1",
+      "issue_interval_cycles": "1",
+      "basis": "shared manual",
+      "notes": "Subject to source ownership and backend resource readiness.",
+      "source": "BlackholeA0/TensixTile/TensixCoprocessor/MatrixUnit.md",
+      "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/BlackholeA0/TensixTile/TensixCoprocessor/MatrixUnit.md"
+    }
+  ]
+}

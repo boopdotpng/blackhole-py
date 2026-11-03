@@ -68,6 +68,7 @@ class Handler(BaseHTTPRequestHandler):
             if url.path=='/api/catalog': return self.send_json(BACKEND.get_catalog())
             if url.path=='/api/case': return self.send_json(BACKEND.get_case(parse_qs(url.query).get('id',[''])[0],parse_qs(url.query).get('refresh')==['1']))
             if url.path=='/api/reference': return self.send_file(HERE/'data/instructions.json','application/json')
+            if url.path=='/api/tensix-timing': return self.send_file(ROOT/'tests/timing/tensix_timing.json','application/json')
             files={'/':('index.html','text/html; charset=utf-8'),'/app.js':('app.js','text/javascript; charset=utf-8'),'/behavior.mjs':('behavior.mjs','text/javascript; charset=utf-8'),'/style.css':('style.css','text/css; charset=utf-8')}
             if url.path in files:
                 file,mime=files[url.path]; return self.send_file(STATIC/file,mime)

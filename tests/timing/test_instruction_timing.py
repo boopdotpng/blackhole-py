@@ -91,7 +91,7 @@ def sf_body(k, case):
         elif case == 'dma_nop': word = TT.TTDMANOP()
         else: raise ValueError(case)
         k.emit(word)
-        if case.endswith('_nop'): k.emit(TT.TTSFPNOP())
+        if case in ('swap_nop', 'shuffle_nop'): k.emit(TT.TTSFPNOP())
 
 
 def build(role, family, case, count):
@@ -190,8 +190,9 @@ def test_riscv_timing(bh, request, role, case):
 
 
 @pytest.mark.parametrize('case', SF_CASES)
-def test_sfpu_timing(bh, request, case):
-    measure(bh, request, 'trisc1', 'sfpu', case)
+@pytest.mark.parametrize('role', ('trisc0', 'trisc1', 'trisc2'))
+def test_sfpu_timing(bh, request, case, role):
+    measure(bh, request, role, 'sfpu', case)
 
 
 @pytest.mark.parametrize('role', ROLES)
