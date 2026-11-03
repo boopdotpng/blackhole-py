@@ -138,6 +138,7 @@ def _run(command, action, source):
 
 def _compile(
   source, base, capacity, defines=(), text_capacity=None, data_capacity=None,
+  service_x=14,
 ):
   compiler = _tool(
     "CC",
@@ -157,7 +158,7 @@ def _compile(
   if data_capacity is None: data_capacity = capacity
   with tempfile.TemporaryDirectory(prefix="blackhole-fw-") as out_dir:
     header = Path(out_dir) / "abi.h"
-    header.write_text(_abi_header())
+    header.write_text(_abi_header(service_x))
     obj = Path(out_dir) / f"{source.stem}.o"
     elf = Path(out_dir) / f"{source.stem}.elf"
     binary = Path(out_dir) / f"{source.stem}.bin"
@@ -218,30 +219,32 @@ def source_files():
 
 
 
-def _abi_header():
+def _abi_header(service_x):
   """Generate firmware constants from the host's packet and memory ABI."""
   values = {name: value for name, value in vars(consts).items() if name.isupper() and isinstance(value, int)}
   for cls, prefix in ((consts.Op, 'OP_'), (consts.PacketLayout, 'PACKET_'),
                       (TensixL1, 'L1_'), (FirmwareControl, ''), (CQConfig, ''), (TensixMMIO, 'MMIO_')):
     values.update({prefix + name: int(value) for name, value in vars(cls).items() if name.isupper() and isinstance(value, int)})
+  values.update(PREFETCH_COORD=2 << 6 | service_x, DISPATCH_COORD=3 << 6 | service_x, DRAM_COORD=4 << 6 | service_x)
   for role, (base, _) in Firmware.TEXT.items(): values['FW_' + role.upper()] = base
   for role, base in TensixL1.WORKER_TEXT_BASE.items(): values['WORKER_' + role.upper()] = base
   return ''.join(f'#define {name} {value:#x}u\n' for name, value in sorted(values.items()))
 
 
-def build(pcie_mid=None, dram_endpoints=None):
+def build(pcie_mid=None, dram_endpoints=None, service_x=14):
   # Legacy arguments are accepted; topology comes from the host at boot.
+  # service_x is compiled in because workers reach the dispatcher without host help.
   workers = []
   for index, role in enumerate(KERNEL_ROLES):
     trisc = role.startswith('trisc')
     defines = [('TT_FW_RESIDENT', 1), ('TT_FW_STACK_TOP', Firmware.TRISC_STACK_TOP if trisc else Firmware.BRISC_STACK_TOP),
                ('TT_WORKER_INDEX', index)]
     if trisc: defines += [('TT_TRISC_ID', int(role[-1])), ('TT_FW_GLOBAL_POINTER', Firmware.TRISC_GLOBAL_POINTER)]
-    workers.append(_compile(SOURCE_DIR / ('trisc.c' if trisc else role + '.c'), *Firmware.TEXT[role], defines))
+    workers.append(_compile(SOURCE_DIR / ('trisc.c' if trisc else role + '.c'), *Firmware.TEXT[role], defines, service_x=service_x))
   services = []
   for name, role, risc in (('prefetch', 'brisc', 0), ('dispatch', 'brisc', 0), ('dma', 'brisc', 0), ('dma', 'ncrisc', 1)):
     services.append(_compile(SOURCE_DIR / (name + '.c'), TensixL1.WORKER_TEXT_BASE[role], TensixL1.WORKER_TEXT_SIZE[role],
-                             [('TT_FW_STACK_TOP', Firmware.BRISC_STACK_TOP), ('TT_FW_RISC', risc)]))
+                             [('TT_FW_STACK_TOP', Firmware.BRISC_STACK_TOP), ('TT_FW_RISC', risc)], service_x=service_x))
   return FirmwareImages(tuple(workers), *services)
 
 

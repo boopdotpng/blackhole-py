@@ -52,10 +52,10 @@ def board_config(card_type, tensix_enabled, gddr_enabled):
     cores, endpoints = P100_WORKER_CORES, P100_DRAM_ENDPOINTS
     service_x = 14
   elif card_type in ("p150a", "p150b", "p150c"):
-    if core_count != 120:
+    if core_count not in (120, 140):
       raise RuntimeError(
         f"unsupported {card_type} topology: firmware exposes {core_count} "
-        "Tensix cores; expected the supported 120-core layout",
+        "Tensix cores; expected the supported 120- or 140-core layout",
       )
     if dram_count != 8:
       raise RuntimeError(
@@ -63,7 +63,9 @@ def board_config(card_type, tensix_enabled, gddr_enabled):
         f"firmware exposes {dram_count}",
       )
     cores = P100_WORKER_CORES
-    service_x = 14
+    # Firmware translates good columns left to right, so the physical rightmost
+    # column is x=14 with 120 cores and x=16 with 140. The extra tiles stay idle.
+    service_x = 16 if core_count == 140 else 14
     endpoints = P150_DRAM_ENDPOINTS
   else:
     raise RuntimeError(
@@ -72,6 +74,7 @@ def board_config(card_type, tensix_enabled, gddr_enabled):
   return BoardConfig(
     card_type, cores, endpoints,
     (service_x, 2), (service_x, 3), (service_x, 4),
+    (service_x, 11),
   )
 
 def _TT_IOCTL(nr, payload_type, result=None, **defaults):
@@ -274,6 +277,7 @@ class PCIDevice:
       self.prefetch_core = config.prefetch_core
       self.dispatch_core = config.dispatch_core
       self.dram_core = config.dram_core
+      self.tensix_end = config.tensix_end
       SetPowerState(self.fd, power_flags=0b1111)
       self.powered = True
       self.sysmem = Sysmem(self.fd, sysmem_size)

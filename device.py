@@ -66,16 +66,16 @@ class Device:
     return tuple(self.pcie.cores)
 
   def boot(self, images=None):
-    images = firmware.build() if images is None else images
+    images = firmware.build(service_x=self.pcie.dispatch_core[0]) if images is None else images
     resident = b"".join(image.ljust(size, b"\0")
       for (_, size), image in zip(Firmware.TEXT.values(), images.workers))
     firmware_base = Firmware.TEXT["brisc"][0]
     with TLBWindow(self.pcie.fd, self.pcie.cores[0]) as window:
-      # Resident firmware runs on all 120 tiles,
+      # Resident firmware runs on every tile,
       # including the three service tiles, and GO enters the service loops.
       def broadcast(address, value):
         base = address & -TLBWindow.SIZE
-        window.target(base, (1, 2), (14, 11))
+        window.target(base, (1, 2), self.pcie.tensix_end)
         window.write(address - base, value)
 
       broadcast(TensixMMIO.RISCV_DEBUG_REG_SOFT_RESET_0, TensixMMIO.SOFT_RESET_ALL)
@@ -240,7 +240,7 @@ class Device:
       with TLBWindow(self.pcie.fd, self.pcie.cores[0]) as window:
         address = TensixMMIO.RISCV_DEBUG_REG_SOFT_RESET_0
         base = address & -TLBWindow.SIZE
-        window.target(base, (1, 2), (14, 11))
+        window.target(base, (1, 2), self.pcie.tensix_end)
         window.write(address - base, TensixMMIO.SOFT_RESET_ALL)
     finally:
       if self.cq is not None:
@@ -487,7 +487,7 @@ class TensorDevice(Device):
   def reset_cores(self):
     with TLBWindow(self.pcie.fd, self.pcie.cores[0]) as win:
       address = TensixMMIO.RISCV_DEBUG_REG_SOFT_RESET_0
-      win.target(address & -TLBWindow.SIZE, (1, 2), (14, 11))
+      win.target(address & -TLBWindow.SIZE, (1, 2), self.pcie.tensix_end)
       win.write(address % TLBWindow.SIZE, TensixMMIO.SOFT_RESET_ALL)
 
   def init_device(self):
