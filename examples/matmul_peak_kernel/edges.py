@@ -24,7 +24,7 @@ def emit_subblock(fw, plan):
             fw.addi(R.T1,R.T1,row*plan.out_subblock_w*64)
           fw.write32(0xFFE40000,R.T1)
           # Blackhole MOP bits 9:0 override the configured inner count.
-          fw.emit(TT.TTMOP(1,0,full_cols))
+          fw.emit(TT.TTMOP(1,0,full_cols << 10 if k.INPUT_DTYPE == DType.BF16 else full_cols))
         for col in range(full_cols, plan.out_subblock_w):
           nn = max(0, min(32, n - col*32))
           if not nn:
@@ -36,7 +36,9 @@ def emit_subblock(fw, plan):
           fw.write32(0xFFE40000,R.T1)
           shape = (mm,nn,kk)
           if shape == (32,32,32):
-            if k.use_row_mop():
+            if k.use_row_mop() and k.INPUT_DTYPE == DType.BF16:
+              fw.emit(TT.TTMOP(1,0,1 << 10))
+            elif k.use_row_mop():
               fw.emit(TT.TTREPLAY(16,15))
               fw.emit(TT.TTMVMUL(clear_dvalid=1,addr_mode=6))
             else:
@@ -49,8 +51,9 @@ def emit_subblock(fw, plan):
         fw.emit(TT.TTSETRWC(2,0,0,0,0,15))
     fw.j(done)
 
-  axes = ((R.S4,plan.m_extent,plan.out_subblock_h*32,plan.in0_num_subblocks),
-          (R.S5,plan.n_extent,plan.out_subblock_w*32,plan.in1_num_subblocks*plan.n_passes),
+  m_passes, n_passes = (plan.n_passes, 1) if plan.pass_axis == 'm' else (1, plan.n_passes)
+  axes = ((R.S4,plan.m_extent,plan.out_subblock_h*32,plan.in0_num_subblocks*m_passes),
+          (R.S5,plan.n_extent,plan.out_subblock_w*32,plan.in1_num_subblocks*n_passes),
           (R.S6,plan.k_extent,plan.in0_block_w*32,plan.num_blocks))
   def choose(axis, shape):
     if axis == 3:
@@ -105,7 +108,7 @@ def emit_functions(fw, plan):
               fw.emit(TT.TTINCRWC(0,0,sb,sa))
               da -= sa; db -= sb
             if k.INPUT_DTYPE != DType.FP8:
-              for _ in range(3 if k.FP32_ACCUM else 1):
+              for _ in range(3):
                 fw.emit(TT.TTMVMUL(addr_mode=3,dst=dst))
             fw.emit(TT.TTMVMUL(addr_mode=7,dst=dst))
             current_a,current_b = a,b+8

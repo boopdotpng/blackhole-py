@@ -5,9 +5,11 @@ from ttko.isa import R, Tensix as TT
 from ttko.registers import BriscMailbox as BM, NcriscMailbox as NM, TriscMailbox
 
 CONTEXT = None
-ARG_BASE = 0x30000
-GRID_BASE = 0x30300  # 64 physical row coords, then 64 column coords (common u32s)
-SEM_BASE = 0x30200
+# Launch tables live at the top of L1 beside the diagnostics; resident images
+# get a fixed arena below CB storage (checked in matmul_peak.build).
+ARG_BASE = 0x17D000
+GRID_BASE = ARG_BASE + 0x300  # 64 physical row coords, then 64 column coords (common u32s)
+SEM_BASE = ARG_BASE + 0x200
 A_DONE = SEM_BASE + 96
 
 class KernelBase(Asm):

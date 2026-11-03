@@ -58,7 +58,7 @@ def main():
 
   with patch.object(m, 'read_profile', profile):
     m.run(5000, 5000, 5000, runs=args.runs, device_index=args.device,
-          execute=True, profile=True, dtype='fp8', accumulation='fp16')
+          execute=True, profile=True, dtype='fp8')
   summary = {key: mean(s[key] for s in samples) for key in
              ('total_us', 'math_finished_us', 'pack_finished_us', 'output_tail_us')}
   summary['logical_tflops'] = 250e3 / summary['total_us']

@@ -31,7 +31,8 @@ def emit_args(fw, plan, *, reader):
               *([0] * 10), 0, 0, 0, 1, 0]
     for index, value in enumerate(values): put(index, value)
     param(0, R.T2); put(0, R.T2)
-    fw.li(R.T1, plan.per_core_m * plan.kt)
+    m_passes = plan.n_passes if plan.pass_axis == 'm' else 1
+    fw.li(R.T1, plan.per_core_m * m_passes * plan.kt)
     fw.mul(R.T2, R.S0, R.T1); put(1, R.T2)
     put(19, R.S4); put(20, R.S2)
     param(3, R.T2); put(23, R.T2)
@@ -68,7 +69,8 @@ def emit_args(fw, plan, *, reader):
               plan.in1_num_subblocks, plan.in0_num_subblocks, 0, plan.in1_num_subblocks]
     for index, value in enumerate(values): put(index, value)
     param(1, R.T2); put(0, R.T2)
-    fw.li(R.T1, plan.per_core_n * plan.n_passes); fw.mul(R.S6, R.S1, R.T1); put(1, R.S6)
+    m_passes, n_passes = (plan.n_passes, 1) if plan.pass_axis == 'm' else (1, plan.n_passes)
+    fw.li(R.T1, plan.per_core_n * n_passes); fw.mul(R.S6, R.S1, R.T1); put(1, R.S6)
     if len(plan.rows) > 1:
       put(9, R.S3); put(11, R.S3)
       fw.read32(R.T2, GRID_BASE + (len(plan.rows) - 1) * 4); put(10, R.T2)
@@ -76,7 +78,7 @@ def emit_args(fw, plan, *, reader):
       put(13, len(plan.rows) - 1)
     put(14, R.S3); put(15, R.S5)
     param(2, R.T2); put(18, R.T2)
-    fw.li(R.T1, plan.per_core_m * plan.nt)
+    fw.li(R.T1, plan.per_core_m * m_passes * plan.nt)
     fw.mul(R.T2, R.S0, R.T1); fw.add(R.T2, R.T2, R.S6); put(19, R.T2)
     param(3, R.T2); put(29, R.T2)
   return fw.fence()
