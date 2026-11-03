@@ -1,7 +1,10 @@
 # Tests
 
 Low-level Blackhole hardware tests: instruction behavior, compute, data movement,
-synchronization, and timing. Model/runtime integration and CPU-only tests are removed.
+synchronization, and timing. Model/runtime integration tests are removed.
+The [ISA conformance suite](isa/README.md) additionally has offline checks for
+all Tensix encoders and hardware tests with a documented coverage inventory.
+Its encoding checks do not establish full functional ISA coverage.
 The `operation_pocs/runtime` tests cover hardware primitives such as circular
 buffers, semaphores, and NoC transfers.
 
@@ -12,7 +15,8 @@ Run from the repository using the shared workspace virtualenv:
 ```
 
 Reserve the card with `tt-device-queue` when sharing it. Tests run sequentially;
-do not use xdist. Without `--bh-hardware`, the suite skips all tests.
+do not use xdist. Without `--bh-hardware`, hardware tests skip; ISA encoding
+checks run offline.
 
 The `bh` fixture provides raw DRAM/L1 access and kernel launches. Kernels use
 `Asm` directly; `bh.launch` fills missing RISC roles with firmware-return stubs.

@@ -1,0 +1,12 @@
+{
+  "COREDUMP_PID": "2620734",
+  "COREDUMP_SIGNAL": "11",
+  "COREDUMP_SIGNAL_NAME": "SIGSEGV",
+  "COREDUMP_EXE": "/home/boop/.local/share/uv/python/cpython-3.13.11-linux-x86_64-gnu/bin/python3.13",
+  "COREDUMP_TIMESTAMP": "1789659996000000",
+  "MESSAGE": "Process 2620734 (python) of user 1000 dumped core.\n\nModule libz.so.1 from rpm zlib-ng-2.3.3-2.fc43.x86_64\nModule python3.13 without build-id.\nStack trace of thread 2620734:\n#0  0x00007ff769e87a2c __pthread_kill_implementation (libc.so.6 + 0x73a2c)\n#1  0x00007ff769e2dbde raise (libc.so.6 + 0x19bde)\n#2  0x0000000000547ebb faulthandler_fatal_error (python3.13 + 0x148ebb)\n#3  0x00007ff769e2dd10 __restore_rt (libc.so.6 + 0x19d10)\n#4  0x00007ff76a1153c8 n/a (n/a + 0x0)\nELF object binary architecture: AMD x86-64\n",
+  "last_native_frame_pc": "0x7ff76a1153c8",
+  "last_native_frame_mapping": [
+    "7ff76a114000-7ff76a118000 rw-p 00000000 00:00 0 "
+  ]
+}
