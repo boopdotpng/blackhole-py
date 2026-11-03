@@ -1,8 +1,11 @@
 """Batch-one BF16 RMSNorm: HiFi4 x*gamma and macro FP32 square sums.
 
-Port of blackhole-py/tests/compute/fpu/test_rmsnorm_hybrid.py. Math stays on
-TRISC1; TRISC0 prefetches the next pair into the alternate source banks.
-Dst 0 is scratch and Dst 1..tiles hold products, then normalized output.
+Port of blackhole-py/tests/compute/fpu/test_rmsnorm_hybrid.py. With half_sync=True,
+TRISC1 issues
+FPU products in lower-half Dst; TRISC2 squares upper-half scratch under
+semaphore ownership, then packs after TRISC1 normalizes the products.
+TRISC0 prefetches the next pair into the alternate source banks.
+half_sync=False retains the queued Dst-0 scratch baseline.
 Optional elwmul_mop=True issues each HiFi4 tile through a 4x8 math MOP.
 Explicit ELWMUL remains the default: measured MOP setup/dispatch costs more
 than it saves for these short vectors (see tests/compute/fpu/rmsnorm_mop_results.md).
@@ -13,8 +16,8 @@ from ttko.isa import Tensix as TT
 from firmware.consts import TensixMMIO
 from program import DType
 from ttko.cb import CB
-from ttko.mop import LoopTemplate, MOP_CFG
-from ttko.sync import Sem, SemWait, Stall, Wait, mop_sync, sem_get, sem_post, sem_wait, stall, sync
+from ttko.mop import LoopTemplate
+from ttko.sync import Sem, SemWait, Stall, Wait, sem_get, sem_post, sem_wait, stall, sync
 from ttko.unpack import UnpackTarget, _BASE, _unpacr
 
 # Diagnostic ablation: identical-sized streams distinguish macro state from
@@ -54,17 +57,31 @@ def _run_elwmul_mop(mop, dst_row, *, initialize, fidelity=4):
   if initialize:
     mop.configure(template)
   else:
-    mop_sync(mop.k)
     words = template.words()
-    for index in (5, 7, 8):  # loop, last outer, last inner
-      mop.k.write(MOP_CFG + index*4, words[index])
+    mop.write_words(words, (5, 7, 8))  # loop, last outer, last inner
     mop.state.config = words
   mop.run()
 
 
+def _square_tile(k, scratch_base):
+  for row in range(0, 64, 2):
+    reg = (row // 2) % 4
+    k.emit(TT.TTSFPLOADMACRO((reg << 2) | reg, 3, 3, scratch_base + row))
+  for _ in range(3):
+    k.emit(TT.TTSFPNOP())
+
+
 def emit_rmsnorm(p, x, weight, output_cb, *, tiles, finalize, read_noc=0,
-                 elwmul_mop=False, fidelity=4):
-  """Emit RMSNorm; fidelity=3 selects HiFi3, elwmul_mop=True uses math MOP."""
+                 elwmul_mop=False, fidelity=4, half_sync=False, profile=None):
+  """Emit RMSNorm; half_sync=True overlaps FPU/SFPU on opposite Dst halves.
+
+  The default retains the queued baseline. The overlap option uses RISC-V
+  tile loops for square accumulation and packing to keep TRISC2 code compact.
+  TRISC2 consumes scratch tile 7
+  under semaphore ownership; products stay in lower-half tiles 0..tiles-1.
+  One scratch section suffices: FPU products overlap SFPU square accumulation,
+  and the next scratch copy waits until its previous consumer has finished.
+  """
   if tiles not in (2, 4):
     raise ValueError("decode RMSNorm supports 2048 or 4096 elements")
   if fidelity not in (3, 4):
@@ -77,7 +94,9 @@ def emit_rmsnorm(p, x, weight, output_cb, *, tiles, finalize, read_noc=0,
   for buffer in (x, weight):
     p.brisc.noc_at(read_noc).read_tiles_into_cb(buffer, tuple(range(tiles)), operands)
   input_bases = (operands.addr, operands.addr + tiles*operands.tile_size)
-  u, m = p.trisc0, p.trisc1
+  u, m, s = p.trisc0, p.trisc1, p.trisc2
+  scratch_base = 7*64 if half_sync else 0
+  product_first = 0 if half_sync else 1
   sem_wait(m, Sem.MATH_PACK, SemWait.STALL_ON_MAX,
            Stall.SYNC | Stall.MATH | Stall.SFPU)
   p.fpu._configure_dst(0)
@@ -102,9 +121,9 @@ def emit_rmsnorm(p, x, weight, output_cb, *, tiles, finalize, read_noc=0,
   sem_post(m, Sem.MATH_DONE)
   sem_wait(u, Sem.MATH_DONE, SemWait.STALL_ON_ZERO, Stall.UNPACK | Stall.SYNC)
   sem_get(u, Sem.MATH_DONE)
-  # The input CB is filled once per launch; its fixed bases are safe to use
-  # after the producer credit. No host-generated constants or extra NoC reads.
-  CB.wait_front(u, operands, 2*tiles)
+  # The input CB is filled once per launch at fixed bases, so the unpacker
+  # can be configured while the reader is still in flight; only the data
+  # itself waits for the producer credit.
   for address, target in zip(input_bases, (UnpackTarget.SRCA, UnpackTarget.SRCB)):
     p.unpack._configure_l1(DType.BF16, target, address, 256,
                            commit=False, configure_mop=False)
@@ -113,6 +132,21 @@ def emit_rmsnorm(p, x, weight, output_cb, *, tiles, finalize, read_noc=0,
   p.unpack._mop.configure(LoopTemplate(
     outer=1, inner=1, start=_unpacr(0), loop=_unpacr(1),
     last=_unpacr(1), outer_last=_unpacr(1)))
+  CB.wait_front(u, operands, 2*tiles)
+  if profile is not None:
+    sync(u)
+    profile.kernel = u
+    profile.record('L1 to L1')
+  if half_sync:
+    m.emit(TT.TTSEMINIT(1, 0, (1 << Sem.FPU_SFPU) | (1 << Sem.UNPACK_OPERAND_SYNC)))
+    for register in (1, 15, 31, 50): s.emit(TT.TTSETC16(register, 0))
+    s.emit(TT.TTSETRWC(0, 0, 0, 0, 0, 0xf))
+    # Scratch stays at one address; retain the wait/release on every iteration.
+    for _ in s.range(tiles):
+      sem_wait(s, Sem.FPU_SFPU, SemWait.STALL_ON_ZERO, Stall.SFPU | Stall.SYNC)
+      _square_tile(s, scratch_base)
+      stall(s, Stall.SYNC, Wait.SFPU)
+      sem_get(s, Sem.FPU_SFPU)
   for tile in range(tiles):
     if tile:
       for engine, address in enumerate(input_bases):
@@ -131,24 +165,34 @@ def emit_rmsnorm(p, x, weight, output_cb, *, tiles, finalize, read_noc=0,
     sem_wait(m, Sem.UNPACK_TO_DEST, SemWait.STALL_ON_ZERO, Stall.SYNC)
     sem_get(m, Sem.UNPACK_TO_DEST)
     stall(m, Stall.MATH, Wait.SRCA_VLD | Wait.SRCB_VLD)
+    if half_sync:
+      sem_wait(m, Sem.FPU_SFPU, SemWait.STALL_ON_MAX, Stall.MATH | Stall.SYNC)
     for row in range(0, 64, 8):
-      m.emit(TT.TTMOVA2D(0, row, 3, 2, row))
+      m.emit(TT.TTMOVA2D(0, row, 3, 2, scratch_base + row))
     stall(m, Stall.SFPU, Wait.MATH)
+    if profile is not None and tile == 0:
+      sync(m)
+      profile.kernel = m
+      profile.record('compute')
+    if half_sync:
+      stall(m, Stall.SYNC, Wait.MATH)
+      sem_post(m, Sem.FPU_SFPU)
     m.emit(TT.TTSETRWC(0, 0, 0, 0, 0, 0xF))
     if elwmul_mop:
-      _run_elwmul_mop(p.fpu._mop, (tile+1)*64, initialize=tile == 0, fidelity=fidelity)
+      _run_elwmul_mop(p.fpu._mop, (tile+product_first)*64, initialize=tile == 0, fidelity=fidelity)
     else:
       for phase in range(fidelity):
         for slot in range(8):
           mod = 0 if slot < 7 else (1 if phase < fidelity-1 else 2)
-          m.emit(TT.TTELWMUL(0, 0, 0, mod, (tile+1)*64 + slot*8))
-    for row in range(0, 64, 2):
-      reg = (row // 2) % 4
-      m.emit(TT.TTSFPLOADMACRO((reg << 2) | reg, 3, 3, row))
-    for _ in range(3):
-      m.emit(TT.TTSFPNOP())
-    stall(m, Stall.SYNC, Wait.MATH | Wait.SFPU)
+          m.emit(TT.TTELWMUL(0, 0, 0, mod, (tile+product_first)*64 + slot*8))
+    if not half_sync:
+      _square_tile(m, scratch_base)
+    stall(m, Stall.SYNC, Wait.MATH if half_sync else Wait.MATH | Wait.SFPU)
     m.emit(TT.TTSETRWC(3, 0, 0, 0, 0, 0xF))
+  if half_sync:
+    sem_post(s, Sem.UNPACK_OPERAND_SYNC)
+    sem_wait(m, Sem.UNPACK_OPERAND_SYNC, SemWait.STALL_ON_ZERO, Stall.SFPU | Stall.SYNC)
+    sem_get(m, Sem.UNPACK_OPERAND_SYNC)
   CB.pop_front(u, operands, 2*tiles)
   m.emit(TT.TTSFPADD(10, 2, 3, 7, 0))
   m.emit(TT.TTSFPNOP())
@@ -166,10 +210,16 @@ def emit_rmsnorm(p, x, weight, output_cb, *, tiles, finalize, read_noc=0,
   for tile in range(tiles):
     for vector in range(32):
       reg = 1 + vector % 4
-      row = (tile+1)*64 + vector*2
+      row = (tile+product_first)*64 + vector*2
       m.emit(TT.TTSFPLOADMACRO(reg & 3, 3, 3, row | (reg >> 2)))
   for _ in range(4):
     m.emit(TT.TTSFPNOP())
+  if profile is not None:
+    stall(m, Stall.SYNC, Wait.MATH | Wait.SFPU)
+    sync(m)
+    profile.kernel = m
+    profile.record('compute')
+    profile.record('pack')
   p.sfpu.publish()
   # Match the raw kernel's BF16 gasket rounding from FP32 Dst. Sending
   # FP32 directly to the packer instead truncates and nearly doubles error.
@@ -177,9 +227,20 @@ def emit_rmsnorm(p, x, weight, output_cb, *, tiles, finalize, read_noc=0,
   p.pack._configure(output_cb, False, False)
   p.pack._rmw_cfg_byte(TensixMMIO.CFG_BASE + 4, 0, 0x07, 0)
   p.trisc2.write(TensixMMIO.CFG_BASE + 0x48, 1)
-  for tile in range(1, tiles+1):
-    p.pack._move_acquired(output_cb, tile, False, configure=False)
+  if half_sync:
+    # Products start at tile zero. Pack accepts a RISC-V register as its source
+    # tile, and each iteration retains CB reservation/publication and drains.
+    for tile in s.range(tiles):
+      p.pack._move_acquired(output_cb, tile, False, configure=False)
+  else:
+    for tile in range(product_first, product_first+tiles):
+      p.pack._move_acquired(output_cb, tile, False, configure=False)
   p.pack._release_dst()
+  if profile is not None:
+    sync(s)
+    profile.kernel = s
+    profile.record('pack')
+    profile.record('L1 to L1')
   if BOUNDARY_MODE is not None:
     words = (TT.TTSFPCONFIG(0, 15, 1), TT.TTSFPNOP(),
              TT.TTSFPMUL(0, 0, 9, 12, 0),

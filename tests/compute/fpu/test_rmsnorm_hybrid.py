@@ -4,7 +4,8 @@ Run on card 1:
   PYTHONPATH=. python3 -m pytest -q -s tests/compute/fpu/test_rmsnorm_hybrid.py \
     --bh-hardware --bh-device=1 --bh-core=2
 
-Dst tile 0 preserves x; tiles 1..T hold FP32 x*gamma, then normalized output.
+Dst scratch_tile (default 0) preserves x; tiles 1..T hold FP32 x*gamma,
+then normalized output. Scratch tile 7 permits a Dst-half contention ablation.
 Both sources are unpacked once per tile. No reduction weights or TF32 moves.
 Compare queued, instruction-interleaved, and explicitly serialized schedules.
 Queued allows independent engines to proceed without promising actual overlap.
@@ -56,7 +57,7 @@ def _configure_apply_macro(m):
 
 def _images(n, *, schedule='queued', diagnostic=False, reuse_unpack=True,
             square_macro=None, prefetch=None, trace=None, elwmul_mop=False, fidelity=4,
-            include_setup=False):
+            include_setup=False, scratch_tile=0, scratch_tiles=None, product_first_tile=1):
   if fidelity not in (3, 4):
     raise ValueError('expected HiFi3 or HiFi4')
   if fidelity != 4 and schedule == 'interleaved':
@@ -64,20 +65,34 @@ def _images(n, *, schedule='queued', diagnostic=False, reuse_unpack=True,
   if n not in (1024, 2048, 3072, 4096):
     raise ValueError('expected 1..4 tiles of 1024 elements')
   if prefetch is None:
-    prefetch = reuse_unpack and schedule in ('queued', 'serialized')
-  if prefetch and (not reuse_unpack or schedule not in ('queued', 'serialized')):
+    prefetch = reuse_unpack and schedule in ('queued', 'serialized', 'half2')
+  if prefetch and (not reuse_unpack or schedule not in ('queued', 'serialized', 'half2')):
     raise ValueError('prefetch requires reused unpack configuration and TRISC1 math')
-  if schedule not in ('queued', 'interleaved', 'serialized', 'split0', 'split2'):
+  if schedule not in ('queued', 'interleaved', 'serialized', 'split0', 'split2', 'half2'):
     raise ValueError('unknown schedule')
-  if elwmul_mop and schedule not in ('queued', 'serialized'):
+  if elwmul_mop and schedule not in ('queued', 'serialized', 'half2'):
     raise ValueError('ELWMUL MOP requires batched math on TRISC1')
   if square_macro is None:
-    square_macro = schedule in ('queued', 'serialized')
-  if square_macro and schedule not in ('queued', 'serialized'):
+    square_macro = schedule in ('queued', 'serialized', 'half2')
+  if square_macro and schedule not in ('queued', 'serialized', 'half2'):
     raise ValueError('square macros require batched math on TRISC1')
   tiles = n // 1024
+  if product_first_tile not in (0, 1):
+    raise ValueError('product_first_tile must be 0 or 1')
+  products = range(product_first_tile, product_first_tile + tiles)
+  if not 0 <= scratch_tile < 8 or scratch_tile in products:
+    raise ValueError('scratch tile must be in Dst and disjoint from product tiles')
+  half = schedule == 'half2'
+  if scratch_tiles is not None and not half:
+    raise ValueError('scratch_tiles requires half2')
+  buffers = tuple(scratch_tiles or (0, 7)) if half else (scratch_tile,)
+  if not 1 <= len(buffers) <= 2 or len(set(buffers)) != len(buffers):
+    raise ValueError('expected one or two distinct scratch buffers')
+  if any(not 0 <= t < 8 or t in products for t in buffers):
+    raise ValueError('scratch buffers overlap products or exceed Dst')
+  scratch_base = scratch_tile * 64
   u, m, p = (Asm(role) for role in ('trisc0', 'trisc1', 'trisc2'))
-  split = schedule in ('split0', 'split2')
+  split = schedule in ('split0', 'split2') or half
   s = u if schedule == 'split0' else p
   profile = Profiler(m)
   if include_setup:
@@ -121,14 +136,23 @@ def _images(n, *, schedule='queued', diagnostic=False, reuse_unpack=True,
   pc_sync(m)
   if not include_setup:
     profile.record('L1 to L1')
+  if half:
+    m.emit(TT.TTSEMINIT(len(buffers), 0, 1 << 0))
+    m.emit(TT.TTSEMINIT(1, 0, 1 << 3))
+    for register in (1, 15, 31, 50):
+      _set_thread_cfg(s, register, 0)
+    s.emit(TT.TTSETRWC(0, 0, 0, 0, 0, 0xf))
   for tile in range(tiles):
+    scratch_base = buffers[tile % len(buffers)] * 64
     if not reuse_unpack:
       _unpack_pair_tile(u, INPUT + tile*2048, GAMMA + tile*2048)
     else:
       llama._unpack_reused(u, tile, prefetch=prefetch, trace=trace)
     llama._await_unpacked(m, tile, prefetch=prefetch)
+    if half:
+      sem_wait(m, 0, SemWait.ON_MAX, Stall.MATH | Stall.SYNC)
     for row in range(0, 64, 8):
-      m.emit(TT.TTMOVA2D(0, row, 3, 2, row))
+      m.emit(TT.TTMOVA2D(0, row, 3, 2, scratch_base + row))
     stall(m, Stall.SFPU, Wait.MATH)
     if trace is not None:
       pc_sync(m)
@@ -136,7 +160,22 @@ def _images(n, *, schedule='queued', diagnostic=False, reuse_unpack=True,
     if tile == 0:
       pc_sync(m)
       profile.record('compute')
-    if split:
+    if half:
+      stall(m, Stall.SYNC, Wait.MATH)
+      sem_post(m, 0)
+      sem_wait(s, 0, SemWait.ON_ZERO, Stall.SFPU | Stall.SYNC)
+      for row in range(0, 64, 2):
+        if square_macro:
+          reg = (row // 2) % 4
+          s.emit(TT.TTSFPLOADMACRO((reg << 2) | reg, 3, 3, scratch_base + row))
+        else:
+          s.emit(TT.TTSFPLOAD(0, 3, 3, scratch_base + row))
+          s.emit(TT.TTSFPMAD(0, 0, 7, 7, 0))
+      if square_macro:
+        for _ in range(3): s.emit(TT.TTSFPNOP())
+      stall(s, Stall.SYNC, Wait.SFPU)
+      sem_get(s, 0)
+    elif split:
       # Dst scratch is ready; a different Tensix thread owns its own RWCs.
       stall(m, Stall.SYNC, Wait.MATH)
       pc_sync(m)
@@ -147,7 +186,7 @@ def _images(n, *, schedule='queued', diagnostic=False, reuse_unpack=True,
       s.emit(TT.TTSETRWC(0, 0, 0, 0, 0, 0xf))
       s.wait(SPLIT_SYNC, tile+1, bytes=4)
       for row in range(0, 64, 2):
-        s.emit(TT.TTSFPLOAD(0, 3, 3, row))
+        s.emit(TT.TTSFPLOAD(0, 3, 3, scratch_base + row))
         s.emit(TT.TTSFPMAD(0, 0, 7, 7, 0))
       stall(s, Stall.SYNC, Wait.SFPU)
       pc_sync(s)
@@ -155,14 +194,14 @@ def _images(n, *, schedule='queued', diagnostic=False, reuse_unpack=True,
       s.fence()
     m.emit(TT.TTSETRWC(0, 0, 0, 0, 0, 0xF))
     if elwmul_mop:
-      _run_elwmul_mop(fpu_mop, (tile+1)*64, initialize=tile == 0, fidelity=fidelity)
+      _run_elwmul_mop(fpu_mop, (tile+product_first_tile)*64, initialize=tile == 0, fidelity=fidelity)
     else:
       for phase in range(fidelity):
         for slot in range(8):
           mod = 0 if slot < 7 else (1 if phase < fidelity-1 else 2)
-          m.emit(TT.TTELWMUL(0, 0, 0, mod, (tile+1)*64 + slot*8))
+          m.emit(TT.TTELWMUL(0, 0, 0, mod, (tile+product_first_tile)*64 + slot*8))
           if schedule == 'interleaved':
-            m.emit(TT.TTSFPLOAD(0, 3, 3, 2*(phase*8+slot)))
+            m.emit(TT.TTSFPLOAD(0, 3, 3, scratch_base + 2*(phase*8+slot)))
             m.emit(TT.TTSFPMAD(0, 0, 7, 7, 0))
     if not split and schedule != 'interleaved':
       if schedule == 'serialized':
@@ -170,21 +209,25 @@ def _images(n, *, schedule='queued', diagnostic=False, reuse_unpack=True,
       for row in range(0, 64, 2):
         if square_macro:
           reg = (row // 2) % 4
-          m.emit(TT.TTSFPLOADMACRO((reg << 2) | reg, 3, 3, row))
+          m.emit(TT.TTSFPLOADMACRO((reg << 2) | reg, 3, 3, scratch_base + row))
         else:
-          m.emit(TT.TTSFPLOAD(0, 3, 3, row))
+          m.emit(TT.TTSFPLOAD(0, 3, 3, scratch_base + row))
           m.emit(TT.TTSFPMAD(0, 0, 7, 7, 0))
       if square_macro:
         for _ in range(3):
           m.emit(TT.TTSFPNOP())
-    stall(m, Stall.SYNC, Wait.MATH | Wait.SFPU)
+    stall(m, Stall.SYNC, Wait.MATH if half else Wait.MATH | Wait.SFPU)
     if trace is not None:
       pc_sync(m)
       llama._timestamp(m, trace + tile*16+12)
-    if split:
+    if split and not half:
       pc_sync(m)
       m.wait(SPLIT_SYNC+16, tile+1, bytes=4)
     m.emit(TT.TTSETRWC(3, 0, 0, 0, 0, 0xF))
+  if half:
+    sem_post(s, 3)
+    sem_wait(m, 3, SemWait.ON_ZERO, Stall.SFPU | Stall.SYNC)
+    sem_get(m, 3)
   if square_macro:
     m.emit(TT.TTSFPADD(10, 2, 3, 7, 0))
     m.emit(TT.TTSFPNOP())
@@ -198,7 +241,7 @@ def _images(n, *, schedule='queued', diagnostic=False, reuse_unpack=True,
     for vector in range(32):
       # Four rotating LRegs leave each vector live through its delayed store.
       reg = 1 + vector % 4
-      row = (tile+1)*64 + vector*2
+      row = (tile+product_first_tile)*64 + vector*2
       m.emit(TT.TTSFPLOADMACRO(reg & 3, 3, 3, row | (reg >> 2)))
   for _ in range(4):
     m.emit(TT.TTSFPNOP())
@@ -207,13 +250,13 @@ def _images(n, *, schedule='queued', diagnostic=False, reuse_unpack=True,
   profile.record('compute')
   profile.record('pack')
   if diagnostic:
-    m.emit(TT.TTSFPSTORE(0, 3, 3, 0))
+    m.emit(TT.TTSFPSTORE(0, 3, 3, scratch_tile * 64))
   publish_dst(m)
   if diagnostic:
     count = p.reg()
     p.li(count, 16)
-    emit_pack_dst_to_cb(p, 0, SCALE, count, output_format=F32)
-  llama._pack_output(p, tiles, 1, wait=not diagnostic)
+    emit_pack_dst_to_cb(p, scratch_tile, SCALE, count, output_format=F32)
+  llama._pack_output(p, tiles, product_first_tile, wait=not diagnostic)
   profile.kernel = p
   profile.record('pack')
   profile.record('L1 to L1')
@@ -437,7 +480,8 @@ def test_elwmul_mop(bh, n):
 
 @pytest.mark.parametrize('n', (2048, 4096))
 @pytest.mark.parametrize('fidelity', (3, 4))
-def test_elwmul_mop_production(bh, n, fidelity):
+@pytest.mark.parametrize('half_sync', (False, True))
+def test_elwmul_mop_production(bh, n, fidelity, half_sync):
   """Exercise the actual emitter, including its DRAM and CB transport."""
   from examples.llama3 import Llama3Kernels
   from examples.rmsnorm_hybrid import emit_rmsnorm
@@ -460,7 +504,7 @@ def test_elwmul_mop_production(bh, n, fidelity):
     p = TensorProgram((bh.core,), *buffers, fp32_dst=True)
     cb = p.cb(DType.BF16, depth=n//1024)
     emit_rmsnorm(p, buffers[0], buffers[1], cb, tiles=n//1024,
-                 finalize=finalize, elwmul_mop=enabled, fidelity=fidelity)
+                 finalize=finalize, elwmul_mop=enabled, fidelity=fidelity, half_sync=half_sync)
     p.ncrisc.noc.write_tiles_from_cb(cb, buffers[2], tuple(range(n//1024)))
     params = tuple(np.frombuffer(p._param_table()[0], dtype='<u4').tolist())
     bh.launch(p.lower()[bh.core], params=params)
