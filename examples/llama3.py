@@ -89,7 +89,7 @@ class Llama3Kernels:
 
   def __init__(self, model="1b", dtype="bf16", *, projection_cores=None,
                attention_dtype=None, fp8_fidelity=None, noc_split_x=None, lm_head_dtype=None, split_attention=None):
-    if projection_cores is None and model == "8b":
+    if projection_cores is None:
       value = os.environ.get("LLAMA_PROJECTION_CORES")
       projection_cores = None if value is None else int(value)
     if attention_dtype is None:
@@ -129,7 +129,7 @@ class Llama3Kernels:
     self.KV_CACHE_TILES_PER_HEAD = self.KV_CACHE_TIME_BLOCKS * self.KV_CACHE_FEATURE_TILES
     self.KV_CACHE_STORAGE_SHAPE = (self.KV_HEADS, self.KV_CACHE_TILES_PER_HEAD, 1024)
     self.GQA_CONTEXT_SHAPE = (1, self.EMBED_DIM)
-    self.LLAMA_CORES = (117 if model == "1b" else 96 if dtype == "fp8" else 88) if projection_cores is None else projection_cores
+    self.LLAMA_CORES = (88 if model == "1b" else 96 if dtype == "fp8" else 88) if projection_cores is None else projection_cores
     if self.LLAMA_CORES not in (80, 88, 96, 104, 112, 117):
       raise ValueError("projection cores must be 80, 88, 96, 104, 112, or 117")
     self.PROJECTION_NOC_SPLIT_X = (10 if dtype == "fp8" else 7) if noc_split_x is None else noc_split_x
