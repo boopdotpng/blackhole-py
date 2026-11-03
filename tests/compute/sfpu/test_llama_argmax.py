@@ -1,11 +1,8 @@
 """Exercise the actual Llama argmax, publication, history and resident replay."""
-import fcntl
-from pathlib import Path
 
 import numpy as np
 import pytest
 
-from device import TensorDevice
 from examples.llama3 import Llama3Kernels
 from firmware.consts import TensixL1
 from pcie import TLBWindow
@@ -13,20 +10,9 @@ from program import DType
 
 
 @pytest.fixture
-def llama_device(request):
-    if not request.config.getoption('--bh-hardware'):
-        pytest.skip('pass --bh-hardware to run Llama argmax')
-    index = request.config.getoption('--bh-device')
-    if not Path(f'/dev/tenstorrent/{index}').exists():
-        pytest.skip('device is absent')
-    with open(f'/tmp/blackhole-py-raw-device-{index}.lock', 'w') as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
-        device = TensorDevice(index)
-        try:
-            device.boot()
-            yield device
-        finally:
-            device.close()
+def llama_device(tensor_device):
+    # The shared conftest owner holds the card lock; see CardOwner.
+    return tensor_device
 
 
 @pytest.mark.parametrize('model,dtype', [('1b', 'bf16'), ('8b', 'bf16'), ('8b', 'fp8')])

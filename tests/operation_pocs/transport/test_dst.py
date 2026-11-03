@@ -3,6 +3,7 @@ import os
 from struct import pack
 import pytest
 from asm import Asm
+from ttko.isa import Tensix as TT
 from tests.profiler import Profiler
 from tests.operation_pocs.transport.observation import copy_source
 from tests.movement.unpacker import unpack as u
@@ -26,7 +27,7 @@ def dst_images(slot,fmt, *, segments=None):
     u.sem_wait(math,u.Sem.UNPACK_TO_DEST,u.SemWait.ON_ZERO,u.Stall.SYNC)
     u.sem_get(math,u.Sem.UNPACK_TO_DEST)
   u.configure_unpack_pair(loader,A,B)
-  loader.emit(__import__('isa').Tensix.TTSETADCXX(3,1023,0))
+  loader.emit(TT.TTSETADCXX(3,1023,0))
   u.configure_mop(loader,u._mop_loop_words(1,1,start=u._unpacr(0),loop=u._unpacr(1),last=u._unpacr(1),outer_last=u._unpacr(1)))
   u.run_mop(loader)
   u.stall(loader,u.Stall.UNPACK,u.Wait.UNPACK0|u.Wait.UNPACK1)
@@ -53,7 +54,7 @@ def dst_images(slot,fmt, *, segments=None):
   u.sem_get(math,u.Sem.MATH_DONE)
   copy_source(math,u.UnpackTarget.SRCA,0)
   copy_source(math,u.UnpackTarget.SRCB,1)
-  math.emit(__import__('isa').Tensix.TTSETRWC(3,0,0,0,0,0xF))
+  math.emit(TT.TTSETRWC(3,0,0,0,0,0xF))
   u.publish_dst(math)
   for tile in range(8):
     u.emit_pack_dst(packer,tile,OUTPUT+tile*4096,u.F32,configure=(tile==0),wait_for_dst=(tile==0))

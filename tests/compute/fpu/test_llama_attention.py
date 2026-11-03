@@ -1,6 +1,4 @@
 """Validate split GQA, tail masking, and stable merge against NumPy."""
-import fcntl
-from pathlib import Path
 
 import numpy as np
 import pytest
@@ -8,24 +6,12 @@ import pytest
 from examples.llama3 import Llama3Kernels
 from pcie import P100_WORKER_CORES
 from program import DType
-from device import TensorDevice
 
 
 @pytest.fixture
-def llama_device(request):
-  if not request.config.getoption('--bh-hardware'):
-    pytest.skip('pass --bh-hardware to run Llama attention')
-  index = request.config.getoption('--bh-device')
-  if not Path(f'/dev/tenstorrent/{index}').exists():
-    pytest.skip('device is absent')
-  with open(f'/tmp/blackhole-py-raw-device-{index}.lock', 'w') as lock:
-    fcntl.flock(lock, fcntl.LOCK_EX)
-    device = TensorDevice(index)
-    try:
-      device.boot()
-      yield device
-    finally:
-      device.close()
+def llama_device(tensor_device):
+    # The shared conftest owner holds the card lock; see CardOwner.
+    return tensor_device
 
 
 def bf16(values):

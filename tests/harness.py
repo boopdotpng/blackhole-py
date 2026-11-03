@@ -8,10 +8,15 @@ from program import RETURN_KERNEL as _PLACEHOLDER_IMAGES
 class RawHarness:
   """Small pytest-facing facade; execution remains sequential by design."""
 
-  def __init__(self, device, timeout=10.0, core_index=0):
-    self.device = device
+  def __init__(self, card, timeout=10.0, core_index=0):
+    self._card = card
     self.timeout = timeout
     self.core_index = core_index
+
+  @property
+  def device(self):
+    # Re-boots if a TensorDevice test took the card since the last use.
+    return self._card.raw()
 
   @property
   def core(self):
