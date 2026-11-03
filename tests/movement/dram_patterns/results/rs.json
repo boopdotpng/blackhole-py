@@ -1,0 +1,11 @@
+[
+ {
+  "label": "rotate S=64KiB",
+  "mode": "rotate",
+  "S": 65536,
+  "cycles": 8,
+  "gb_s": 370.1,
+  "reads_done_us": 2652.1,
+  "writes_done_us": 2489.8
+ }
+]

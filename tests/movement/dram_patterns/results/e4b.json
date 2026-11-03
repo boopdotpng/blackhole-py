@@ -1,0 +1,271 @@
+[
+ {
+  "label": "write W1 spread cores=16",
+  "gb_s": 153.1,
+  "read_bytes": 0,
+  "write_bytes": 67108864,
+  "read_gb_s": 0.0,
+  "write_gb_s": 153.1,
+  "tags": {
+   "write": 153.1
+  },
+  "mhz": 1350,
+  "us": 438.4
+ },
+ {
+  "label": "write W1 spread cores=32",
+  "gb_s": 286.7,
+  "read_bytes": 0,
+  "write_bytes": 134217728,
+  "read_gb_s": 0.0,
+  "write_gb_s": 286.7,
+  "tags": {
+   "write": 286.7
+  },
+  "mhz": 1350,
+  "us": 468.2
+ },
+ {
+  "label": "write W1 spread cores=48",
+  "gb_s": 397.1,
+  "read_bytes": 0,
+  "write_bytes": 201326592,
+  "read_gb_s": 0.0,
+  "write_gb_s": 397.1,
+  "tags": {
+   "write": 397.1
+  },
+  "mhz": 1350,
+  "us": 507.0
+ },
+ {
+  "label": "write W1 spread cores=64",
+  "gb_s": 452.2,
+  "read_bytes": 0,
+  "write_bytes": 268435456,
+  "read_gb_s": 0.0,
+  "write_gb_s": 452.2,
+  "tags": {
+   "write": 452.2
+  },
+  "mhz": 1350,
+  "us": 593.7
+ },
+ {
+  "label": "write W1 spread cores=80",
+  "gb_s": 472.8,
+  "read_bytes": 0,
+  "write_bytes": 335544320,
+  "read_gb_s": 0.0,
+  "write_gb_s": 472.8,
+  "tags": {
+   "write": 472.8
+  },
+  "mhz": 1350,
+  "us": 709.7
+ },
+ {
+  "label": "write W1 spread cores=96",
+  "gb_s": 481.8,
+  "read_bytes": 0,
+  "write_bytes": 402653184,
+  "read_gb_s": 0.0,
+  "write_gb_s": 481.8,
+  "tags": {
+   "write": 481.8
+  },
+  "mhz": 1350,
+  "us": 835.7
+ },
+ {
+  "label": "write W1 spread cores=117",
+  "gb_s": 472.7,
+  "read_bytes": 0,
+  "write_bytes": 490733568,
+  "read_gb_s": 0.0,
+  "write_gb_s": 472.7,
+  "tags": {
+   "write": 472.7
+  },
+  "mhz": 1350,
+  "us": 1038.1
+ },
+ {
+  "label": "mix baseline cores=16",
+  "gb_s": 389.9,
+  "read_bytes": 33554432,
+  "write_bytes": 33554432,
+  "read_gb_s": 194.9,
+  "write_gb_s": 194.9,
+  "tags": {
+   "read": 194.9,
+   "write": 201.5
+  },
+  "mhz": 1350,
+  "us": 172.1
+ },
+ {
+  "label": "mix baseline cores=32",
+  "gb_s": 374.2,
+  "read_bytes": 67108864,
+  "write_bytes": 67108864,
+  "read_gb_s": 187.1,
+  "write_gb_s": 187.1,
+  "tags": {
+   "read": 220.2,
+   "write": 187.1
+  },
+  "mhz": 1350,
+  "us": 358.6
+ },
+ {
+  "label": "mix baseline cores=48",
+  "gb_s": 385.9,
+  "read_bytes": 100663296,
+  "write_bytes": 100663296,
+  "read_gb_s": 193.0,
+  "write_gb_s": 193.0,
+  "tags": {
+   "read": 227.4,
+   "write": 193.0
+  },
+  "mhz": 1350,
+  "us": 521.7
+ },
+ {
+  "label": "mix baseline cores=64",
+  "gb_s": 384.9,
+  "read_bytes": 134217728,
+  "write_bytes": 134217728,
+  "read_gb_s": 192.5,
+  "write_gb_s": 192.5,
+  "tags": {
+   "read": 232.6,
+   "write": 192.5
+  },
+  "mhz": 1350,
+  "us": 697.4
+ },
+ {
+  "label": "mix baseline cores=80",
+  "gb_s": 383.7,
+  "read_bytes": 167772160,
+  "write_bytes": 167772160,
+  "read_gb_s": 191.8,
+  "write_gb_s": 191.8,
+  "tags": {
+   "read": 235.3,
+   "write": 191.8
+  },
+  "mhz": 1350,
+  "us": 874.6
+ },
+ {
+  "label": "mix baseline cores=96",
+  "gb_s": 377.5,
+  "read_bytes": 201326592,
+  "write_bytes": 201326592,
+  "read_gb_s": 188.7,
+  "write_gb_s": 188.7,
+  "tags": {
+   "read": 236.9,
+   "write": 188.7
+  },
+  "mhz": 1350,
+  "us": 1066.6
+ },
+ {
+  "label": "mix baseline cores=117",
+  "gb_s": 384.4,
+  "read_bytes": 245366784,
+  "write_bytes": 245366784,
+  "read_gb_s": 192.2,
+  "write_gb_s": 192.2,
+  "tags": {
+   "read": 235.1,
+   "write": 192.2
+  },
+  "mhz": 1350,
+  "us": 1276.5
+ },
+ {
+  "label": "write W1 spread page=4096",
+  "gb_s": 438.4,
+  "read_bytes": 0,
+  "write_bytes": 490733568,
+  "read_gb_s": 0.0,
+  "write_gb_s": 438.4,
+  "tags": {
+   "write": 438.4
+  },
+  "mhz": 1350,
+  "us": 1119.4
+ },
+ {
+  "label": "read R0 spread page=4096",
+  "gb_s": 495.8,
+  "read_bytes": 490733568,
+  "write_bytes": 0,
+  "read_gb_s": 495.8,
+  "write_gb_s": 0.0,
+  "tags": {
+   "read": 495.8
+  },
+  "mhz": 1350,
+  "us": 989.7
+ },
+ {
+  "label": "seg R0 0-3 / W1 4-7 page=4096",
+  "gb_s": 498.1,
+  "read_bytes": 245366784,
+  "write_bytes": 245366784,
+  "read_gb_s": 249.0,
+  "write_gb_s": 249.0,
+  "tags": {
+   "read": 251.8,
+   "write": 249.0
+  },
+  "mhz": 1350,
+  "us": 985.3
+ },
+ {
+  "label": "write W1 spread page=8192",
+  "gb_s": 402.1,
+  "read_bytes": 0,
+  "write_bytes": 490733568,
+  "read_gb_s": 0.0,
+  "write_gb_s": 402.1,
+  "tags": {
+   "write": 402.1
+  },
+  "mhz": 1350,
+  "us": 1220.4
+ },
+ {
+  "label": "read R0 spread page=8192",
+  "gb_s": 495.2,
+  "read_bytes": 490733568,
+  "write_bytes": 0,
+  "read_gb_s": 495.2,
+  "write_gb_s": 0.0,
+  "tags": {
+   "read": 495.2
+  },
+  "mhz": 1350,
+  "us": 990.9
+ },
+ {
+  "label": "seg R0 0-3 / W1 4-7 page=8192",
+  "gb_s": 489.7,
+  "read_bytes": 245366784,
+  "write_bytes": 245366784,
+  "read_gb_s": 244.8,
+  "write_gb_s": 244.8,
+  "tags": {
+   "read": 249.8,
+   "write": 244.8
+  },
+  "mhz": 1350,
+  "us": 1002.1
+ }
+]

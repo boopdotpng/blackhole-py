@@ -1,0 +1,66 @@
+[
+ {
+  "label": "static f=0.125 k=1 margin=0",
+  "gb_s": 508.4,
+  "cycles": 73,
+  "T_us": 0.0,
+  "min": 507.3,
+  "max": 508.8
+ },
+ {
+  "label": "inter f=0.125 k=1 margin=0",
+  "gb_s": 486.4,
+  "cycles": 73,
+  "T_us": 0.0,
+  "min": 486.3,
+  "max": 486.7
+ },
+ {
+  "label": "static f=0.250 k=2 margin=0",
+  "gb_s": 506.5,
+  "cycles": 68,
+  "T_us": 0.0,
+  "min": 506.1,
+  "max": 508.1
+ },
+ {
+  "label": "inter f=0.250 k=2 margin=0",
+  "gb_s": 471.8,
+  "cycles": 68,
+  "T_us": 0.0,
+  "min": 471.8,
+  "max": 472.3
+ },
+ {
+  "label": "static f=0.375 k=3 margin=0",
+  "gb_s": 507.6,
+  "cycles": 68,
+  "T_us": 0.0,
+  "min": 506.9,
+  "max": 508.3
+ },
+ {
+  "label": "inter f=0.375 k=3 margin=0",
+  "gb_s": 457.6,
+  "cycles": 68,
+  "T_us": 0.0,
+  "min": 456.4,
+  "max": 457.7
+ },
+ {
+  "label": "static f=0.500 k=4 margin=0",
+  "gb_s": 505.9,
+  "cycles": 64,
+  "T_us": 0.0,
+  "min": 502.1,
+  "max": 506.8
+ },
+ {
+  "label": "inter f=0.500 k=4 margin=0",
+  "gb_s": 447.5,
+  "cycles": 64,
+  "T_us": 0.0,
+  "min": 437.3,
+  "max": 450.8
+ }
+]

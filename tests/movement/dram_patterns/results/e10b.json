@@ -1,0 +1,74 @@
+[
+ {
+  "label": "static S=8KiB f=0.5 margin=0.97",
+  "gb_s": 507.4,
+  "pairs": 256,
+  "T_us": 3.75,
+  "min": 506.7,
+  "max": 508.2
+ },
+ {
+  "label": "static S=8KiB f=0.5 margin=0.98",
+  "gb_s": 506.2,
+  "pairs": 256,
+  "T_us": 3.79,
+  "min": 506.2,
+  "max": 506.2
+ },
+ {
+  "label": "static S=8KiB f=0.5 margin=0.99",
+  "gb_s": 501.1,
+  "pairs": 256,
+  "T_us": 3.83,
+  "min": 501.1,
+  "max": 501.1
+ },
+ {
+  "label": "static S=32KiB f=0.5 margin=0.97",
+  "gb_s": 510.5,
+  "pairs": 64,
+  "T_us": 14.99,
+  "min": 510.5,
+  "max": 510.5
+ },
+ {
+  "label": "static S=32KiB f=0.5 margin=0.98",
+  "gb_s": 506.1,
+  "pairs": 64,
+  "T_us": 15.15,
+  "min": 506.0,
+  "max": 506.1
+ },
+ {
+  "label": "static S=32KiB f=0.5 margin=0.99",
+  "gb_s": 501.0,
+  "pairs": 64,
+  "T_us": 15.3,
+  "min": 501.0,
+  "max": 501.1
+ },
+ {
+  "label": "static S=128KiB f=0.5 margin=0.97",
+  "gb_s": 510.1,
+  "pairs": 16,
+  "T_us": 59.98,
+  "min": 510.1,
+  "max": 510.8
+ },
+ {
+  "label": "static S=128KiB f=0.5 margin=0.98",
+  "gb_s": 506.1,
+  "pairs": 16,
+  "T_us": 60.6,
+  "min": 506.1,
+  "max": 506.2
+ },
+ {
+  "label": "static S=128KiB f=0.5 margin=0.99",
+  "gb_s": 501.2,
+  "pairs": 16,
+  "T_us": 61.22,
+  "min": 501.2,
+  "max": 501.2
+ }
+]

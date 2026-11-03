@@ -1,0 +1,15 @@
+[
+ {
+  "label": "smoke 137",
+  "gb_s": 494.8,
+  "read_bytes": 35913728,
+  "write_bytes": 0,
+  "read_gb_s": 494.8,
+  "write_gb_s": 0.0,
+  "tags": {
+   "read": 494.8
+  },
+  "mhz": 1350,
+  "us": 72.6
+ }
+]

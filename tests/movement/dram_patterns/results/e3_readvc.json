@@ -1,0 +1,364 @@
+[
+ {
+  "label": "read alt/table (baseline)",
+  "gb_s": 470.5,
+  "read_bytes": 490733568,
+  "write_bytes": 0,
+  "read_gb_s": 470.5,
+  "write_gb_s": 0.0,
+  "tags": {
+   "read": 470.5
+  },
+  "mhz": 1350,
+  "us": 1043.0
+ },
+ {
+  "label": "read slot/table",
+  "gb_s": 471.7,
+  "read_bytes": 490733568,
+  "write_bytes": 0,
+  "read_gb_s": 471.7,
+  "write_gb_s": 0.0,
+  "tags": {
+   "read": 471.7
+  },
+  "mhz": 1350,
+  "us": 1040.4
+ },
+ {
+  "label": "read both NoC0 table",
+  "gb_s": 395.4,
+  "read_bytes": 490733568,
+  "write_bytes": 0,
+  "read_gb_s": 395.4,
+  "write_gb_s": 0.0,
+  "tags": {
+   "read": 395.4
+  },
+  "mhz": 1350,
+  "us": 1241.1
+ },
+ {
+  "label": "read both NoC0 spread",
+  "gb_s": 490.0,
+  "read_bytes": 490733568,
+  "write_bytes": 0,
+  "read_gb_s": 490.0,
+  "write_gb_s": 0.0,
+  "tags": {
+   "read": 490.0
+  },
+  "mhz": 1350,
+  "us": 1001.6
+ },
+ {
+  "label": "read both NoC0 p0",
+  "gb_s": 390.4,
+  "read_bytes": 490733568,
+  "write_bytes": 0,
+  "read_gb_s": 390.4,
+  "write_gb_s": 0.0,
+  "tags": {
+   "read": 390.4
+  },
+  "mhz": 1350,
+  "us": 1257.1
+ },
+ {
+  "label": "read both NoC0 p1",
+  "gb_s": 389.0,
+  "read_bytes": 490733568,
+  "write_bytes": 0,
+  "read_gb_s": 389.0,
+  "write_gb_s": 0.0,
+  "tags": {
+   "read": 389.0
+  },
+  "mhz": 1350,
+  "us": 1261.6
+ },
+ {
+  "label": "read both NoC0 p2",
+  "gb_s": 389.0,
+  "read_bytes": 490733568,
+  "write_bytes": 0,
+  "read_gb_s": 389.0,
+  "write_gb_s": 0.0,
+  "tags": {
+   "read": 389.0
+  },
+  "mhz": 1350,
+  "us": 1261.6
+ },
+ {
+  "label": "read both NoC1 spread",
+  "gb_s": 232.0,
+  "read_bytes": 490733568,
+  "write_bytes": 0,
+  "read_gb_s": 232.0,
+  "write_gb_s": 0.0,
+  "tags": {
+   "read": 232.0
+  },
+  "mhz": 1350,
+  "us": 2115.2
+ },
+ {
+  "label": "read NoC0 p? / NoC1 table",
+  "gb_s": 347.3,
+  "read_bytes": 490733568,
+  "write_bytes": 0,
+  "read_gb_s": 347.3,
+  "write_gb_s": 0.0,
+  "tags": {
+   "read": 347.3
+  },
+  "mhz": 1350,
+  "us": 1413.0
+ },
+ {
+  "label": "read single NoC0 spread",
+  "gb_s": 492.1,
+  "read_bytes": 245366784,
+  "write_bytes": 0,
+  "read_gb_s": 492.1,
+  "write_gb_s": 0.0,
+  "tags": {
+   "read": 492.1
+  },
+  "mhz": 1350,
+  "us": 498.6
+ },
+ {
+  "label": "read single NoC0 table",
+  "gb_s": 399.9,
+  "read_bytes": 245366784,
+  "write_bytes": 0,
+  "read_gb_s": 399.9,
+  "write_gb_s": 0.0,
+  "tags": {
+   "read": 399.9
+  },
+  "mhz": 1350,
+  "us": 613.6
+ },
+ {
+  "label": "write W1 spread vc=None",
+  "gb_s": 242.9,
+  "read_bytes": 0,
+  "write_bytes": 490733568,
+  "read_gb_s": 0.0,
+  "write_gb_s": 242.9,
+  "tags": {
+   "write": 242.9
+  },
+  "mhz": 1350,
+  "us": 2020.7
+ },
+ {
+  "label": "mix R0/W1 spread vc=None",
+  "gb_s": 412.1,
+  "read_bytes": 245366784,
+  "write_bytes": 245366784,
+  "read_gb_s": 206.0,
+  "write_gb_s": 206.0,
+  "tags": {
+   "read": 239.2,
+   "write": 206.1
+  },
+  "mhz": 1350,
+  "us": 1190.8
+ },
+ {
+  "label": "write W1 spread vc=0",
+  "gb_s": 473.9,
+  "read_bytes": 0,
+  "write_bytes": 490733568,
+  "read_gb_s": 0.0,
+  "write_gb_s": 473.9,
+  "tags": {
+   "write": 473.9
+  },
+  "mhz": 1350,
+  "us": 1035.5
+ },
+ {
+  "label": "mix R0/W1 spread vc=0",
+  "gb_s": 435.0,
+  "read_bytes": 245366784,
+  "write_bytes": 245366784,
+  "read_gb_s": 217.5,
+  "write_gb_s": 217.5,
+  "tags": {
+   "read": 245.5,
+   "write": 217.5
+  },
+  "mhz": 1350,
+  "us": 1128.1
+ },
+ {
+  "label": "write W1 spread vc=1",
+  "gb_s": 472.9,
+  "read_bytes": 0,
+  "write_bytes": 490733568,
+  "read_gb_s": 0.0,
+  "write_gb_s": 472.9,
+  "tags": {
+   "write": 472.9
+  },
+  "mhz": 1350,
+  "us": 1037.8
+ },
+ {
+  "label": "mix R0/W1 spread vc=1",
+  "gb_s": 430.6,
+  "read_bytes": 245366784,
+  "write_bytes": 245366784,
+  "read_gb_s": 215.3,
+  "write_gb_s": 215.3,
+  "tags": {
+   "read": 246.0,
+   "write": 215.3
+  },
+  "mhz": 1350,
+  "us": 1139.7
+ },
+ {
+  "label": "write W1 spread vc=2",
+  "gb_s": 475.7,
+  "read_bytes": 0,
+  "write_bytes": 490733568,
+  "read_gb_s": 0.0,
+  "write_gb_s": 475.7,
+  "tags": {
+   "write": 475.7
+  },
+  "mhz": 1350,
+  "us": 1031.6
+ },
+ {
+  "label": "mix R0/W1 spread vc=2",
+  "gb_s": 433.5,
+  "read_bytes": 245366784,
+  "write_bytes": 245366784,
+  "read_gb_s": 216.8,
+  "write_gb_s": 216.8,
+  "tags": {
+   "read": 245.9,
+   "write": 216.8
+  },
+  "mhz": 1350,
+  "us": 1131.9
+ },
+ {
+  "label": "write W1 spread vc=3",
+  "gb_s": 476.4,
+  "read_bytes": 0,
+  "write_bytes": 490733568,
+  "read_gb_s": 0.0,
+  "write_gb_s": 476.4,
+  "tags": {
+   "write": 476.4
+  },
+  "mhz": 1350,
+  "us": 1030.0
+ },
+ {
+  "label": "mix R0/W1 spread vc=3",
+  "gb_s": 434.2,
+  "read_bytes": 245366784,
+  "write_bytes": 245366784,
+  "read_gb_s": 217.1,
+  "write_gb_s": 217.1,
+  "tags": {
+   "read": 246.8,
+   "write": 217.1
+  },
+  "mhz": 1350,
+  "us": 1130.2
+ },
+ {
+  "label": "mix R0/W1 spread prio R1W0",
+  "gb_s": 433.3,
+  "read_bytes": 245366784,
+  "write_bytes": 245366784,
+  "read_gb_s": 216.7,
+  "write_gb_s": 216.7,
+  "tags": {
+   "read": 246.8,
+   "write": 216.7
+  },
+  "mhz": 1350,
+  "us": 1132.5
+ },
+ {
+  "label": "mix R0/W1 spread prio R0W1",
+  "gb_s": 434.7,
+  "read_bytes": 245366784,
+  "write_bytes": 245366784,
+  "read_gb_s": 217.4,
+  "write_gb_s": 217.4,
+  "tags": {
+   "read": 246.3,
+   "write": 217.4
+  },
+  "mhz": 1350,
+  "us": 1128.9
+ },
+ {
+  "label": "mix R0/W1 spread prio R8W0",
+  "gb_s": 431.2,
+  "read_bytes": 245366784,
+  "write_bytes": 245366784,
+  "read_gb_s": 215.6,
+  "write_gb_s": 215.6,
+  "tags": {
+   "read": 245.9,
+   "write": 215.6
+  },
+  "mhz": 1350,
+  "us": 1138.1
+ },
+ {
+  "label": "mix R0/W1 spread prio R0W8",
+  "gb_s": 432.1,
+  "read_bytes": 245366784,
+  "write_bytes": 245366784,
+  "read_gb_s": 216.1,
+  "write_gb_s": 216.1,
+  "tags": {
+   "read": 245.5,
+   "write": 216.1
+  },
+  "mhz": 1350,
+  "us": 1135.6
+ },
+ {
+  "label": "mix R0/W1 spread prio R15W0",
+  "gb_s": 432.4,
+  "read_bytes": 245366784,
+  "write_bytes": 245366784,
+  "read_gb_s": 216.2,
+  "write_gb_s": 216.2,
+  "tags": {
+   "read": 245.2,
+   "write": 216.2
+  },
+  "mhz": 1350,
+  "us": 1134.9
+ },
+ {
+  "label": "mix R0/W1 spread prio R0W15",
+  "gb_s": 435.7,
+  "read_bytes": 245366784,
+  "write_bytes": 245366784,
+  "read_gb_s": 217.9,
+  "write_gb_s": 217.9,
+  "tags": {
+   "read": 247.1,
+   "write": 217.9
+  },
+  "mhz": 1350,
+  "us": 1126.2
+ }
+]

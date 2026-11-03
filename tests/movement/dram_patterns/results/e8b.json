@@ -1,0 +1,47 @@
+[
+ {
+  "label": "mixed adj S=2KiB",
+  "mode": "mixed",
+  "S": 2048,
+  "cycles": 256,
+  "gb_s": 420.3,
+  "reads_done_us": 2020.8,
+  "writes_done_us": 2335.0
+ },
+ {
+  "label": "mixed adj S=8KiB",
+  "mode": "mixed",
+  "S": 8192,
+  "cycles": 64,
+  "gb_s": 426.6,
+  "reads_done_us": 1937.1,
+  "writes_done_us": 2300.5
+ },
+ {
+  "label": "mixed adj S=32KiB",
+  "mode": "mixed",
+  "S": 32768,
+  "cycles": 16,
+  "gb_s": 392.3,
+  "reads_done_us": 2430.3,
+  "writes_done_us": 2501.7
+ },
+ {
+  "label": "mixed adj S=128KiB",
+  "mode": "mixed",
+  "S": 131072,
+  "cycles": 4,
+  "gb_s": 371.6,
+  "reads_done_us": 2641.5,
+  "writes_done_us": 2419.9
+ },
+ {
+  "label": "mixed adj S=256KiB",
+  "mode": "mixed",
+  "S": 262144,
+  "cycles": 2,
+  "gb_s": 369.5,
+  "reads_done_us": 2655.9,
+  "writes_done_us": 2442.9
+ }
+]

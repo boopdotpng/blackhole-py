@@ -1,0 +1,270 @@
+[
+ {
+  "label": "write baseline cores=96",
+  "gb_s": 344.6,
+  "read_bytes": 0,
+  "write_bytes": 402653184,
+  "read_gb_s": 0.0,
+  "write_gb_s": 344.6,
+  "tags": {
+   "write": 344.6
+  },
+  "mhz": 1350,
+  "us": 1168.3
+ },
+ {
+  "label": "write baseline cores=117",
+  "gb_s": 345.6,
+  "read_bytes": 0,
+  "write_bytes": 490733568,
+  "read_gb_s": 0.0,
+  "write_gb_s": 345.6,
+  "tags": {
+   "write": 345.6
+  },
+  "mhz": 1350,
+  "us": 1420.0
+ },
+ {
+  "label": "write baseline cores=128",
+  "gb_s": 342.8,
+  "read_bytes": 0,
+  "write_bytes": 536870912,
+  "read_gb_s": 0.0,
+  "write_gb_s": 342.8,
+  "tags": {
+   "write": 342.8
+  },
+  "mhz": 1350,
+  "us": 1566.1
+ },
+ {
+  "label": "write baseline cores=137",
+  "gb_s": 345.5,
+  "read_bytes": 0,
+  "write_bytes": 574619648,
+  "read_gb_s": 0.0,
+  "write_gb_s": 345.5,
+  "tags": {
+   "write": 345.5
+  },
+  "mhz": 1350,
+  "us": 1663.0
+ },
+ {
+  "label": "write W1 spread cores=96",
+  "gb_s": 480.9,
+  "read_bytes": 0,
+  "write_bytes": 402653184,
+  "read_gb_s": 0.0,
+  "write_gb_s": 480.9,
+  "tags": {
+   "write": 480.9
+  },
+  "mhz": 1350,
+  "us": 837.3
+ },
+ {
+  "label": "write W1 spread cores=117",
+  "gb_s": 474.2,
+  "read_bytes": 0,
+  "write_bytes": 490733568,
+  "read_gb_s": 0.0,
+  "write_gb_s": 474.2,
+  "tags": {
+   "write": 474.2
+  },
+  "mhz": 1350,
+  "us": 1034.9
+ },
+ {
+  "label": "write W1 spread cores=128",
+  "gb_s": 470.4,
+  "read_bytes": 0,
+  "write_bytes": 536870912,
+  "read_gb_s": 0.0,
+  "write_gb_s": 470.4,
+  "tags": {
+   "write": 470.4
+  },
+  "mhz": 1350,
+  "us": 1141.4
+ },
+ {
+  "label": "write W1 spread cores=137",
+  "gb_s": 477.0,
+  "read_bytes": 0,
+  "write_bytes": 574619648,
+  "read_gb_s": 0.0,
+  "write_gb_s": 477.0,
+  "tags": {
+   "write": 477.0
+  },
+  "mhz": 1350,
+  "us": 1204.7
+ },
+ {
+  "label": "read R0 spread cores=96",
+  "gb_s": 481.1,
+  "read_bytes": 402653184,
+  "write_bytes": 0,
+  "read_gb_s": 481.1,
+  "write_gb_s": 0.0,
+  "tags": {
+   "read": 481.1
+  },
+  "mhz": 1350,
+  "us": 836.9
+ },
+ {
+  "label": "read R0 spread cores=117",
+  "gb_s": 488.9,
+  "read_bytes": 490733568,
+  "write_bytes": 0,
+  "read_gb_s": 488.9,
+  "write_gb_s": 0.0,
+  "tags": {
+   "read": 488.9
+  },
+  "mhz": 1350,
+  "us": 1003.7
+ },
+ {
+  "label": "read R0 spread cores=128",
+  "gb_s": 494.1,
+  "read_bytes": 536870912,
+  "write_bytes": 0,
+  "read_gb_s": 494.1,
+  "write_gb_s": 0.0,
+  "tags": {
+   "read": 494.1
+  },
+  "mhz": 1350,
+  "us": 1086.5
+ },
+ {
+  "label": "read R0 spread cores=137",
+  "gb_s": 496.7,
+  "read_bytes": 574619648,
+  "write_bytes": 0,
+  "read_gb_s": 496.7,
+  "write_gb_s": 0.0,
+  "tags": {
+   "read": 496.7
+  },
+  "mhz": 1350,
+  "us": 1156.9
+ },
+ {
+  "label": "mix baseline cores=96",
+  "gb_s": 380.7,
+  "read_bytes": 201326592,
+  "write_bytes": 201326592,
+  "read_gb_s": 190.4,
+  "write_gb_s": 190.4,
+  "tags": {
+   "read": 233.8,
+   "write": 190.4
+  },
+  "mhz": 1350,
+  "us": 1057.6
+ },
+ {
+  "label": "mix baseline cores=117",
+  "gb_s": 383.2,
+  "read_bytes": 245366784,
+  "write_bytes": 245366784,
+  "read_gb_s": 191.6,
+  "write_gb_s": 191.6,
+  "tags": {
+   "read": 236.7,
+   "write": 191.6
+  },
+  "mhz": 1350,
+  "us": 1280.6
+ },
+ {
+  "label": "mix baseline cores=128",
+  "gb_s": 383.5,
+  "read_bytes": 268435456,
+  "write_bytes": 268435456,
+  "read_gb_s": 191.8,
+  "write_gb_s": 191.8,
+  "tags": {
+   "read": 237.0,
+   "write": 191.8
+  },
+  "mhz": 1350,
+  "us": 1399.9
+ },
+ {
+  "label": "mix baseline cores=137",
+  "gb_s": 387.1,
+  "read_bytes": 287309824,
+  "write_bytes": 287309824,
+  "read_gb_s": 193.6,
+  "write_gb_s": 193.6,
+  "tags": {
+   "read": 237.4,
+   "write": 193.6
+  },
+  "mhz": 1350,
+  "us": 1484.2
+ },
+ {
+  "label": "seg R0 0-3 / W1 4-7 cores=96",
+  "gb_s": 496.2,
+  "read_bytes": 201326592,
+  "write_bytes": 201326592,
+  "read_gb_s": 248.1,
+  "write_gb_s": 248.1,
+  "tags": {
+   "read": 250.8,
+   "write": 248.1
+  },
+  "mhz": 1350,
+  "us": 811.5
+ },
+ {
+  "label": "seg R0 0-3 / W1 4-7 cores=117",
+  "gb_s": 495.0,
+  "read_bytes": 245366784,
+  "write_bytes": 245366784,
+  "read_gb_s": 247.5,
+  "write_gb_s": 247.5,
+  "tags": {
+   "read": 251.4,
+   "write": 247.5
+  },
+  "mhz": 1350,
+  "us": 991.4
+ },
+ {
+  "label": "seg R0 0-3 / W1 4-7 cores=128",
+  "gb_s": 495.5,
+  "read_bytes": 268435456,
+  "write_bytes": 268435456,
+  "read_gb_s": 247.7,
+  "write_gb_s": 247.7,
+  "tags": {
+   "read": 251.8,
+   "write": 247.7
+  },
+  "mhz": 1350,
+  "us": 1083.5
+ },
+ {
+  "label": "seg R0 0-3 / W1 4-7 cores=137",
+  "gb_s": 498.7,
+  "read_bytes": 287309824,
+  "write_bytes": 287309824,
+  "read_gb_s": 249.3,
+  "write_gb_s": 249.3,
+  "tags": {
+   "read": 251.8,
+   "write": 249.3
+  },
+  "mhz": 1350,
+  "us": 1152.3
+ }
+]

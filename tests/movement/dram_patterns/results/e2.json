@@ -1,0 +1,98 @@
+[
+ {
+  "label": {
+   "dir": "read",
+   "noc": "alt",
+   "ports": "table",
+   "posted": false,
+   "cores": 117
+  },
+  "gb_s": 469.9,
+  "read_bytes": 490733568,
+  "write_bytes": 0,
+  "read_gb_s": 469.9,
+  "write_gb_s": 0.0,
+  "tags": {
+   "read": 469.9
+  },
+  "mhz": 1350,
+  "us": 1044.2
+ },
+ {
+  "label": {
+   "dir": "write",
+   "noc": "alt",
+   "ports": "table",
+   "posted": false,
+   "cores": 117
+  },
+  "gb_s": 344.9,
+  "read_bytes": 0,
+  "write_bytes": 490733568,
+  "read_gb_s": 0.0,
+  "write_gb_s": 344.9,
+  "tags": {
+   "write": 344.9
+  },
+  "mhz": 1350,
+  "us": 1423.0
+ },
+ {
+  "label": {
+   "dir": "mixed",
+   "noc": "alt",
+   "ports": "table",
+   "posted": false,
+   "cores": 117
+  },
+  "gb_s": 383.1,
+  "read_bytes": 245366784,
+  "write_bytes": 245366784,
+  "read_gb_s": 191.5,
+  "write_gb_s": 191.5,
+  "tags": {
+   "read": 237.1,
+   "write": 191.5
+  },
+  "mhz": 1350,
+  "us": 1281.1
+ },
+ {
+  "label": {
+   "dir": "read",
+   "noc": "slot",
+   "ports": "table",
+   "posted": false,
+   "cores": 117
+  },
+  "gb_s": 472.1,
+  "read_bytes": 490733568,
+  "write_bytes": 0,
+  "read_gb_s": 472.1,
+  "write_gb_s": 0.0,
+  "tags": {
+   "read": 472.1
+  },
+  "mhz": 1350,
+  "us": 1039.6
+ },
+ {
+  "label": {
+   "dir": "read",
+   "noc": "slot",
+   "ports": "spread",
+   "posted": false,
+   "cores": 117
+  },
+  "gb_s": 391.4,
+  "read_bytes": 490733568,
+  "write_bytes": 0,
+  "read_gb_s": 391.4,
+  "write_gb_s": 0.0,
+  "tags": {
+   "read": 391.4
+  },
+  "mhz": 1350,
+  "us": 1253.6
+ }
+]

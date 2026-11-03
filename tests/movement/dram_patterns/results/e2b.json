@@ -1,0 +1,195 @@
+[
+ {
+  "label": {
+   "dir": "write",
+   "noc": "r0w1",
+   "ports": "spread",
+   "posted": false,
+   "cores": 117
+  },
+  "gb_s": 474.7,
+  "read_bytes": 0,
+  "write_bytes": 490733568,
+  "read_gb_s": 0.0,
+  "write_gb_s": 474.7,
+  "tags": {
+   "write": 474.7
+  },
+  "mhz": 1350,
+  "us": 1033.7
+ },
+ {
+  "label": {
+   "dir": "write",
+   "noc": "r1w0",
+   "ports": "spread",
+   "posted": false,
+   "cores": 117
+  },
+  "gb_s": 179.4,
+  "read_bytes": 0,
+  "write_bytes": 490733568,
+  "read_gb_s": 0.0,
+  "write_gb_s": 179.4,
+  "tags": {
+   "write": 179.4
+  },
+  "mhz": 1350,
+  "us": 2735.7
+ },
+ {
+  "label": {
+   "dir": "write",
+   "noc": "r0w1",
+   "ports": "table",
+   "posted": false,
+   "cores": 117
+  },
+  "gb_s": 298.6,
+  "read_bytes": 0,
+  "write_bytes": 490733568,
+  "read_gb_s": 0.0,
+  "write_gb_s": 298.6,
+  "tags": {
+   "write": 298.6
+  },
+  "mhz": 1350,
+  "us": 1643.3
+ },
+ {
+  "label": {
+   "dir": "write",
+   "noc": "r0w1",
+   "ports": "p0",
+   "posted": false,
+   "cores": 117
+  },
+  "gb_s": 300.3,
+  "read_bytes": 0,
+  "write_bytes": 490733568,
+  "read_gb_s": 0.0,
+  "write_gb_s": 300.3,
+  "tags": {
+   "write": 300.3
+  },
+  "mhz": 1350,
+  "us": 1634.3
+ },
+ {
+  "label": {
+   "dir": "write",
+   "noc": "r0w1",
+   "ports": "p1",
+   "posted": false,
+   "cores": 117
+  },
+  "gb_s": 299.4,
+  "read_bytes": 0,
+  "write_bytes": 490733568,
+  "read_gb_s": 0.0,
+  "write_gb_s": 299.4,
+  "tags": {
+   "write": 299.4
+  },
+  "mhz": 1350,
+  "us": 1639.1
+ },
+ {
+  "label": {
+   "dir": "write",
+   "noc": "r0w1",
+   "ports": "p2",
+   "posted": false,
+   "cores": 117
+  },
+  "gb_s": 301.0,
+  "read_bytes": 0,
+  "write_bytes": 490733568,
+  "read_gb_s": 0.0,
+  "write_gb_s": 301.0,
+  "tags": {
+   "write": 301.0
+  },
+  "mhz": 1350,
+  "us": 1630.2
+ },
+ {
+  "label": {
+   "dir": "write",
+   "noc": "r0w1",
+   "ports": "spread",
+   "posted": true,
+   "cores": 117
+  },
+  "gb_s": 474.6,
+  "read_bytes": 0,
+  "write_bytes": 490733568,
+  "read_gb_s": 0.0,
+  "write_gb_s": 474.6,
+  "tags": {
+   "write": 474.6
+  },
+  "mhz": 1350,
+  "us": 1033.9
+ },
+ {
+  "label": {
+   "dir": "mixed",
+   "noc": "r0w1",
+   "ports": "table",
+   "posted": false,
+   "cores": 117
+  },
+  "gb_s": 407.6,
+  "read_bytes": 245366784,
+  "write_bytes": 245366784,
+  "read_gb_s": 203.8,
+  "write_gb_s": 203.8,
+  "tags": {
+   "read": 249.9,
+   "write": 203.8
+  },
+  "mhz": 1350,
+  "us": 1203.9
+ },
+ {
+  "label": {
+   "dir": "mixed",
+   "noc": "r0w1",
+   "ports": "spread",
+   "posted": false,
+   "cores": 117
+  },
+  "gb_s": 433.2,
+  "read_bytes": 245366784,
+  "write_bytes": 245366784,
+  "read_gb_s": 216.6,
+  "write_gb_s": 216.6,
+  "tags": {
+   "read": 244.4,
+   "write": 216.6
+  },
+  "mhz": 1350,
+  "us": 1132.9
+ },
+ {
+  "label": {
+   "dir": "mixed",
+   "noc": "r1w0",
+   "ports": "spread",
+   "posted": false,
+   "cores": 117
+  },
+  "gb_s": 306.9,
+  "read_bytes": 245366784,
+  "write_bytes": 245366784,
+  "read_gb_s": 153.5,
+  "write_gb_s": 153.5,
+  "tags": {
+   "read": 226.5,
+   "write": 153.5
+  },
+  "mhz": 1350,
+  "us": 1598.9
+ }
+]

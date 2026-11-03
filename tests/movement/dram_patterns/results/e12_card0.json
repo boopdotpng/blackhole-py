@@ -1,0 +1,74 @@
+[
+ {
+  "label": "rot f=0.500 k=4 margin=0.97",
+  "gb_s": 461.0,
+  "cycles": 8,
+  "T_us": 35.12,
+  "min": 459.3,
+  "max": 465.0
+ },
+ {
+  "label": "rot f=0.500 k=4 margin=0.98",
+  "gb_s": 506.1,
+  "cycles": 8,
+  "T_us": 35.48,
+  "min": 506.1,
+  "max": 506.1
+ },
+ {
+  "label": "rot f=0.500 k=4 margin=0.975",
+  "gb_s": 485.2,
+  "cycles": 2,
+  "T_us": 141.19,
+  "min": 482.9,
+  "max": 493.6
+ },
+ {
+  "label": "static f=0.500 k=4 margin=0",
+  "gb_s": 505.2,
+  "cycles": 64,
+  "T_us": 0.0,
+  "min": 494.9,
+  "max": 506.6
+ },
+ {
+  "label": "static f=0.500 k=4 margin=0.97",
+  "gb_s": 510.6,
+  "cycles": 64,
+  "T_us": 35.12,
+  "min": 510.3,
+  "max": 510.9
+ },
+ {
+  "label": "static f=0.500 k=4 margin=0",
+  "gb_s": 503.6,
+  "cycles": 16,
+  "T_us": 0.0,
+  "min": 501.3,
+  "max": 508.9
+ },
+ {
+  "label": "inter f=0.500 k=4 margin=0",
+  "gb_s": 449.2,
+  "cycles": 64,
+  "T_us": 0.0,
+  "min": 447.8,
+  "max": 450.6
+ },
+ {
+  "label": "rot f=0.125 k=1 margin=0.98",
+  "gb_s": 506.0,
+  "cycles": 9,
+  "T_us": 17.74,
+  "min": 505.9,
+  "max": 506.0
+ },
+ {
+  "label": "rot f=0.250 k=2 margin=0.98",
+  "gb_s": 506.1,
+  "cycles": 8,
+  "T_us": 22.17,
+  "min": 506.1,
+  "max": 506.1
+ }
+]

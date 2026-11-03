@@ -1,0 +1,74 @@
+[
+ {
+  "label": "f=0.031 rounds=1 anti",
+  "gb_s": 488.2,
+  "write_frac": 0.031,
+  "chunk_kib": 479232
+ },
+ {
+  "label": "f=0.031 rounds=4 anti",
+  "gb_s": 484.0,
+  "write_frac": 0.031,
+  "chunk_kib": 119808
+ },
+ {
+  "label": "f=0.031 rounds=16 anti",
+  "gb_s": 461.2,
+  "write_frac": 0.125,
+  "chunk_kib": 29952
+ },
+ {
+  "label": "f=0.125 rounds=1 anti",
+  "gb_s": 473.1,
+  "write_frac": 0.125,
+  "chunk_kib": 479232
+ },
+ {
+  "label": "f=0.125 rounds=4 anti",
+  "gb_s": 462.2,
+  "write_frac": 0.125,
+  "chunk_kib": 119808
+ },
+ {
+  "label": "f=0.125 rounds=16 anti",
+  "gb_s": 457.3,
+  "write_frac": 0.125,
+  "chunk_kib": 29952
+ },
+ {
+  "label": "f=0.250 rounds=1 anti",
+  "gb_s": 454.5,
+  "write_frac": 0.25,
+  "chunk_kib": 479232
+ },
+ {
+  "label": "f=0.250 rounds=4 anti",
+  "gb_s": 449.3,
+  "write_frac": 0.25,
+  "chunk_kib": 119808
+ },
+ {
+  "label": "f=0.250 rounds=16 anti",
+  "gb_s": 439.2,
+  "write_frac": 0.25,
+  "chunk_kib": 29952
+ },
+ {
+  "label": "f=0.500 rounds=1 anti",
+  "gb_s": 437.1,
+  "write_frac": 0.5,
+  "chunk_kib": 479232
+ },
+ {
+  "label": "f=0.500 rounds=4 anti",
+  "gb_s": 433.1,
+  "write_frac": 0.5,
+  "chunk_kib": 119808
+ },
+ {
+  "label": "f=0.500 rounds=16 anti",
+  "gb_s": 396.6,
+  "write_frac": 0.5,
+  "chunk_kib": 29952
+ }
+]
