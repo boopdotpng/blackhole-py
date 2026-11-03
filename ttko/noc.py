@@ -170,8 +170,10 @@ class NoC:
   multicast_include_sender = False
   arbitration_priority = 0
 
-  def __init__(self, k, index: int):
-    self.index, self.k, self.local_coordinate = index, k, None
+  def __init__(self, k, index: int, port: int | None = None):
+    # port=None keeps each bank's default endpoint for this NoC; an integer
+    # spreads banks over their ports as (port + bank) % ports (see pcie.dram_port).
+    self.index, self.k, self.local_coordinate, self.port = index, k, None, port
     states = getattr(k, "_noc_tid_allocators", None)
     if states is None:
       states = {}
@@ -348,6 +350,10 @@ class NoC:
     with self.transaction() as transaction: transaction.write(*args, **options)
     return self
 
+  def dram_endpoint(self, endpoints, bank):
+    from pcie import dram_port
+    return dram_port(endpoints[bank], self.index, self.port, bank)
+
   def _dram_tile(self, param, tile):
     k, buffer = self.k, param
     endpoints = buffer.dram_endpoints
@@ -374,7 +380,7 @@ class NoC:
     labels = {index: k._new_label(f"dram_bank_{index}") for index in range(len(endpoints))}
     k.switch(bank, labels, invalid)
     for index, label in labels.items():
-      k.label(label); k.li(coordinate, self.coordinate(*endpoints[index][self.index])); k.j(selected)
+      k.label(label); k.li(coordinate, self.coordinate(*self.dram_endpoint(endpoints, index))); k.j(selected)
     k.label(invalid); k.j(invalid); k.label(selected)
     return address, coordinate
 

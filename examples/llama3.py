@@ -96,7 +96,7 @@ class Llama3Kernels:
       attention_dtype = os.environ.get("LLAMA_ATTENTION_DTYPE", "bf16") if dtype == "fp8" else "bf16"
     if fp8_fidelity is None:
       fp8_fidelity = int(os.environ.get("LLAMA_FP8_FIDELITY", "1")) if dtype == "fp8" else 1
-    if noc_split_x is None and dtype == "fp8":
+    if noc_split_x is None:
       value = os.environ.get("LLAMA_NOC_SPLIT_X")
       noc_split_x = None if value is None else int(value)
     if model not in ("1b", "8b"): raise ValueError("model must be 1b or 8b")
@@ -133,6 +133,10 @@ class Llama3Kernels:
     if self.LLAMA_CORES not in (80, 88, 96, 104, 112, 117):
       raise ValueError("projection cores must be 80, 88, 96, 104, 112, or 117")
     self.PROJECTION_NOC_SPLIT_X = (10 if dtype == "fp8" else 7) if noc_split_x is None else noc_split_x
+    # With three ports per DRAM bank, read weights on NoC0 and write on NoC1
+    # (the routes whose vertical leg avoids the DRAM column), rotating each
+    # core's bank->port map. Otherwise fall back to the spatial NoC split.
+    self.DRAM_PORT_ROTATION = os.environ.get("LLAMA_DRAM_PORTS", "1") != "0"
     self.WEIGHT_DTYPE = DType.FP8 if dtype == "fp8" else DType.BF16
     self.ATTENTION_DTYPE = DType.FP8 if attention_dtype == "fp8" else DType.BF16
     self.FP8_FIDELITY = fp8_fidelity
@@ -427,7 +431,8 @@ class Llama3Kernels:
 
   # Linear projections: generic GEMV and fused Q/K/V
 
-  def _projection_read_weights(self, p, projections, row_starts, rotations, read_noc, weight_cb, input_tiles):
+  def _projection_read_weights(self, p, projections, row_starts, rotations, route, weight_cb, input_tiles):
+    read_noc, port = route
     for (weight, _, local_rows), row_start, rotation in zip(
       projections, row_starts, rotations,
     ):
@@ -449,12 +454,12 @@ class Llama3Kernels:
               with p.brisc.scope():
                 tile = p.brisc.reg(exclude=first)
                 p.brisc.addi(tile, first, index)
-                p.brisc.noc_at(read_noc).read_tiles_into_cb(weight, (tile,), weight_cb)
+                p.brisc.noc_at(read_noc, port).read_tiles_into_cb(weight, (tile,), weight_cb)
       else:
         # Consecutive rows repeat their bank pattern after this many rows.
         # Unroll one period so every request's bank is a compile-time constant;
         # only its address within that bank advances at runtime.
-        noc = p.brisc.noc_at(read_noc)
+        noc = p.brisc.noc_at(read_noc, port)
         period = weight.banks // math.gcd(row_pages, weight.banks)
         with p.brisc.scope():
           base = p.brisc.reg()
@@ -495,7 +500,7 @@ class Llama3Kernels:
                     p.brisc.li(delta, index * weight.tile_size)
                     p.brisc.add(target, target, delta)
                   coordinate = noc.coordinate(
-                    *weight.dram_endpoints[offset % weight.banks][read_noc],
+                    *noc.dram_endpoint(weight.dram_endpoints, offset % weight.banks),
                   )
                   transaction.read(address, coordinate, target, weight.tile_size)
             CB.push_back(p.brisc, weight_cb, input_tiles)
@@ -595,10 +600,11 @@ class Llama3Kernels:
 
 
   def _decode_projections_program(self,
-    x, projections, read_noc, rotations, *, swiglu_output=None,
+    x, projections, route, rotations, *, swiglu_output=None,
     residual=None, dense_output=None, norm_weight=None, eth_output=None, row_scales=None,
   ):
     """GEMV with optional local RMSNorm and SwiGLU/residual epilogues."""
+    read_noc, port = route
     dense_output = swiglu_output if swiglu_output is not None else dense_output
     if any(weight.tilized != x.tilized for weight, _, _ in projections):
       raise ValueError("projection weights and activation must have the same element order")
@@ -669,7 +675,7 @@ class Llama3Kernels:
       if input_dim != self.EMBED_DIM: raise ValueError(f"fused RMSNorm requires a {self.EMBED_DIM}-element token")
       if not operand_dtype.is_fp8 and hybrid_rmsnorm_enabled():
         emit_rmsnorm(p, token, norm_weight, normalized_cb,
-                     tiles=self.EMBEDDING_TILES, finalize=self._rms_finalize_scale(), read_noc=read_noc)
+                     tiles=self.EMBEDDING_TILES, finalize=self._rms_finalize_scale(), read_noc=read_noc, port=port)
       else:
         operands = p.cb(DType.BF16, depth=2 * self.EMBEDDING_TILES)
         CB.reserve_back(p.brisc, operands, 2 * self.EMBEDDING_TILES)
@@ -689,10 +695,10 @@ class Llama3Kernels:
     # Token, gamma, and residual reads are independent. Publish the input
     # CBs after a single completion barrier, then stream weights immediately.
     if input_reads:
-      with p.brisc.noc_at(read_noc).transaction() as transaction:
+      with p.brisc.noc_at(read_noc, port).transaction() as transaction:
         for buffer, tile, target in input_reads:
           with p.brisc.scope():
-            address, coordinate = p.brisc.noc_at(read_noc)._dram_tile(buffer, tile)
+            address, coordinate = p.brisc.noc_at(read_noc, port)._dram_tile(buffer, tile)
             transaction.read(address, coordinate, target, buffer.tile_size)
     for cb, count in input_publications: CB.push_back(p.brisc, cb, count)
     row_scales_l1 = None
@@ -706,14 +712,14 @@ class Llama3Kernels:
         if row_starts[0] is None: p.brisc.li(first, 0)
         else: p.brisc.read(first, p.param_addr(row_starts[0]))
         p.brisc.srli(first, first, 9)
-        with p.brisc.noc_at(read_noc).transaction() as transaction:
+        with p.brisc.noc_at(read_noc, port).transaction() as transaction:
           for index in range(pages):
             with p.brisc.scope():
               tile = p.brisc.reg()
               p.brisc.addi(tile, first, index)
-              address, coordinate = p.brisc.noc_at(read_noc)._dram_tile(row_scales, tile)
+              address, coordinate = p.brisc.noc_at(read_noc, port)._dram_tile(row_scales, tile)
               transaction.read(address, coordinate, row_scales_l1 + index * row_scales.tile_size, row_scales.tile_size)
-    self._projection_read_weights(p, projections, row_starts, rotations, read_noc, weight_cb, input_tiles)
+    self._projection_read_weights(p, projections, row_starts, rotations, route, weight_cb, input_tiles)
 
     # The unpacker needs the converted token; the DRAM reader can run ahead.
     if normalized_cb is not None: CB.wait_front(p.trisc0, normalized_cb, input_tiles)
@@ -755,10 +761,10 @@ class Llama3Kernels:
         continue
       for tile in range(output.tiles_per_item):
         with p.ncrisc.scope():
-          target_address, target_coordinate = p.ncrisc.noc_at(1-read_noc)._dram_tile(
+          target_address, target_coordinate = p.ncrisc.noc_at(1-read_noc, port)._dram_tile(
             output, tile,
           )
-          p.ncrisc.noc_at(1-read_noc).write(
+          p.ncrisc.noc_at(1-read_noc, port).write(
             target_l1 + tile * output.tile_size,
             target_address, target_coordinate,
             output.tile_size, posted=False,
@@ -768,7 +774,7 @@ class Llama3Kernels:
       for cb in compact_cbs: p.unpack.move(cb, UnpackTarget.SRCA)
       self._swiglu_math(p, fp8=swiglu_output.dtype.is_fp8)
       p.pack.move(output_cb, tile=0)
-      self._scatter_dense(p, output_cb, swiglu_output, projections[0][2], read_noc=1-read_noc)
+      self._scatter_dense(p, output_cb, swiglu_output, projections[0][2], read_noc=1-read_noc, port=port)
     elif residual is not None:
       residual_cb = p.cb(DType.BF16, depth=1)
       output_cb = p.cb(DType.BF16, depth=1)
@@ -792,15 +798,28 @@ class Llama3Kernels:
       # Match the original residual kernel's BF16 destination arithmetic.
       Fpu(p.trisc1, Dst(False)).binary("add", dst_tile=0).publish()
       Pack(p.trisc2, Dst(False)).move(output_cb, tile=0)
-      self._scatter_dense(p, output_cb, dense_output, projections[0][2], read_noc=1-read_noc)
+      self._scatter_dense(p, output_cb, dense_output, projections[0][2], read_noc=1-read_noc, port=port)
     elif dense_output is not None:
-      self._scatter_dense(p, compact_cbs[0], dense_output, projections[0][2], read_noc=1-read_noc, eth_output=eth_output)
+      self._scatter_dense(p, compact_cbs[0], dense_output, projections[0][2], read_noc=1-read_noc, port=port, eth_output=eth_output)
     return p
 
+
+  def _projection_route(self, index, core, weights, rotate_ports=True):
+    """(read NoC, DRAM port phase) for one projection core; writes use the other NoC.
+
+    Never mix the two policies inside one program: spatially split NoCs with
+    rotated ports hung both p150a cards. Programs run one after another, so
+    mixing policies across programs is fine.
+    """
+    if rotate_ports and self.DRAM_PORT_ROTATION and all(
+        len(endpoints) >= 3 for weight in weights for endpoints in weight.dram_endpoints):
+      return 0, index % 3
+    return int(core[0] >= self.PROJECTION_NOC_SPLIT_X), None
 
   def _decode_fused_projections(self,
     x, projections, *, swiglu_output=None, residual=None,
     dense_output=None, norm_weight=None, eth_output=None, row_scales=None,
+    rotate_ports=True,
   ):
     """Specialize row counts, bank rotations, and read NoC for each core."""
     weights = tuple(weight for weight, _ in projections)
@@ -810,7 +829,7 @@ class Llama3Kernels:
     # longer bank period would overflow the resident kernel arena.
     keys = tuple(
       (tuple(weight.item_counts[index] for weight in weights),
-       int(core[0] >= self.PROJECTION_NOC_SPLIT_X),
+       self._projection_route(index, core, weights, rotate_ports),
        tuple(((weight.item_starts[index] * (weight.tiles_per_item // getattr(weight, "page_tiles", 1)))
               if weight.global_address else weight.tile_starts[index]) % weight.banks
              if weight.banks == 8 else None for weight in weights))
@@ -1241,12 +1260,12 @@ class Llama3Kernels:
       k.bne(remaining, R.ZERO, loop)
 
 
-  def _scatter_dense(self, p, cb, output, count, *, read_noc=0, eth_output=None):
+  def _scatter_dense(self, p, cb, output, count, *, read_noc=0, port=None, eth_output=None):
     """Scatter disjoint feature shards with matching L1/DRAM byte alignment."""
     k = p.ncrisc
     size = output.dtype.itemsize
     shift = size.bit_length() - 1
-    noc = k.noc_at(read_noc)
+    noc = k.noc_at(read_noc, port)
     dense = p.l1(output.tiles * output.tile_size, alignment=16)
     CB.wait_front(k, cb)
     with k.scope():
@@ -2699,7 +2718,8 @@ class Llama3Kernels:
         norm_weight.dtype is not DType.BF16 or norm_weight.tilized):
       raise ValueError("prefill RMSNorm requires a row-major BF16 scale vector")
     keys = tuple((tuple(weight.item_counts[i] for weight in weights),
-                  int(core[0] >= self.PROJECTION_NOC_SPLIT_X),
+                  # Prefill measured slower with rotated ports; keep the split.
+                  self._projection_route(i, core, weights, rotate_ports=False),
                   tuple((weight.item_starts[i] * weight.tiles_per_item) % weight.banks
                         if weight.banks == 8 else None for weight in weights))
                  for i, core in enumerate(weights[0].cores))
@@ -2707,7 +2727,8 @@ class Llama3Kernels:
                       weights[0].cores, keys)
 
 
-  def _projection_program(self, x, projections, count, norm_weight, rows, read_noc, rotations):
+  def _projection_program(self, x, projections, count, norm_weight, rows, route, rotations):
+    read_noc, port = route
     input_tiles = projections[0][0].shape[1] // 1024
     row_starts = tuple(Const(weight.name + "_prefill_row_start", weight.item_starts)
                        for weight, _ in projections)
@@ -2729,9 +2750,9 @@ class Llama3Kernels:
           p.brisc.li(stride, x.stride)
           p.brisc.mul(index, token, stride)
           if tile: p.brisc.addi(index, index, tile)
-          p.brisc.noc_at(read_noc).read_into_cb(x.storage, index, operands)
+          p.brisc.noc_at(read_noc, port).read_into_cb(x.storage, index, operands)
       if norm_weight is not None:
-        p.brisc.noc_at(read_noc).read_tiles_into_cb(norm_weight, tuple(range(input_tiles)), operands)
+        p.brisc.noc_at(read_noc, port).read_tiles_into_cb(norm_weight, tuple(range(input_tiles)), operands)
     if norm_weight is not None:
       if input_tiles != self.EMBEDDING_TILES: raise ValueError(f"fused RMSNorm requires {self.EMBED_DIM} features")
       for _ in p.trisc0.range(count):
@@ -2744,7 +2765,7 @@ class Llama3Kernels:
         p.pack.move_tiles(inputs, tiles=tuple(range(input_tiles)))
     expanded = tuple((weight, output.prototype, size)
                      for (weight, output), size in zip(projections, rows))
-    self._projection_read_weights(p, expanded, row_starts, rotations, read_noc, weights, input_tiles)
+    self._projection_read_weights(p, expanded, row_starts, rotations, route, weights, input_tiles)
     CB.wait_front(p.trisc0, inputs, count * input_tiles)
     p.unpack.prepare_l1_pair_formats(DType.BF16)
     for _ in p.trisc0.range(sum(rows)):
@@ -2789,8 +2810,8 @@ class Llama3Kernels:
           p.ncrisc.add(tile, tile, offset)
           p.ncrisc.slli(source, token, 11)
           self._add_constant(p.ncrisc, source, compact)
-          address, coordinate = p.ncrisc.noc_at(1-read_noc)._dram_tile(output.storage, tile)
-          p.ncrisc.noc_at(1-read_noc).write(source, address, coordinate, 2048, posted=False)
+          address, coordinate = p.ncrisc.noc_at(1-read_noc, port)._dram_tile(output.storage, tile)
+          p.ncrisc.noc_at(1-read_noc, port).write(source, address, coordinate, 2048, posted=False)
     return p
 
 
@@ -3165,9 +3186,12 @@ class Llama3Decode:
       "gate": self.kernels._decode_fused_projections(self.x_b, (
         (weights["gate"], self.gate), (weights["up"], self.up),
       ), swiglu_output=self.hidden_dense, norm_weight=weights["post_norm"]),
+      # Down keeps the spatial NoC split: measured on p150a, it is 3-4%
+      # faster than rotated NoC0 ports for this projection (8B 252 vs 260 us,
+      # 1B 80 vs 83 us); every other projection is faster rotated.
       "down": self.kernels._decode_fused_projections(
         self.hidden_dense, ((weights["down"], self.q_compact),),
-        residual=self.x_b, dense_output=self.x_a,
+        residual=self.x_b, dense_output=self.x_a, rotate_ports=False,
       ),
       "lm": self.kernels._decode_fused_projections(
         self.x_a, ((self.lm_weight, self.logits),), norm_weight=self.final_norm, row_scales=self.lm_row_scales,

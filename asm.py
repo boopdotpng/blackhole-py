@@ -451,11 +451,11 @@ class Asm:
       raise RuntimeError(f"{self.role} cannot access a NoC")
     return self.noc_at(0 if self.role == "brisc" else 1)
 
-  def noc_at(self, index: int):
+  def noc_at(self, index: int, port: int | None = None):
     if self.role not in ("brisc", "ncrisc"):
       raise RuntimeError(f"{self.role} cannot access a NoC")
     from ttko.noc import NoC
-    return NoC(self, index)
+    return NoC(self, index, port)
 
   def initialize_tensix(self, *words):
     if self._lowered: raise RuntimeError("kernel has already been lowered")

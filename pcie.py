@@ -18,26 +18,39 @@ P100_DRAM_ENDPOINTS = (
   ((17, 20), (17, 19)),
 )
 # P150 exposes eight DRAM banks and the same 120-core layout as P100A.
-# Each pair selects a worker port for NoC 0/1.
+# Every controller has three NoC ports; any port reaches the whole bank. Entry
+# [0]/[1] is the default NoC 0/1 port (firmware, host TLB); [2] is the third
+# port. Bank b's ports are (17 + b // 4, 12 + 3 * (b % 4) + p).
+# Kernels that stream DRAM can spread one bank's load over all ports with
+# dram_port(); a single port caps the chip at ~390 GB/s reads, ~300 writes
+# (docs/dram-traffic-patterns.md).
 P150_DRAM_ENDPOINTS = (
-  ((17, 14), (17, 13)), ((17, 15), (17, 16)),
-  ((17, 18), (17, 19)), ((17, 21), (17, 22)),
-  ((18, 14), (18, 13)), ((18, 17), (18, 16)),
-  ((18, 20), (18, 19)), ((18, 23), (18, 22)),
+  ((17, 14), (17, 13), (17, 12)), ((17, 15), (17, 16), (17, 17)),
+  ((17, 18), (17, 19), (17, 20)), ((17, 21), (17, 22), (17, 23)),
+  ((18, 14), (18, 13), (18, 12)), ((18, 17), (18, 16), (18, 15)),
+  ((18, 20), (18, 19), (18, 18)), ((18, 23), (18, 22), (18, 21)),
 )
+# Per bank: [0] NoC 0 default, [1] NoC 1 default, then optional extra ports.
+DramEndpoints = tuple[tuple[tuple[int, int], ...], ...]
+
+
+def dram_port(bank_endpoints, noc, port, bank):
+  """Endpoint for one bank: the NoC default, or port (port + bank) mod count."""
+  if port is None: return bank_endpoints[noc]
+  return bank_endpoints[(port + bank) % len(bank_endpoints)]
 P100_WORKER_CORES = tuple(
   (x, y) for x in (*range(1, 8), *range(10, 15)) for y in range(2, 12)
   if (x, y) not in ((14, 2), (14, 3), (14, 4))
 )
-
 @dataclass(frozen=True)
 class BoardConfig:
   card_type: str
   cores: tuple[tuple[int, int], ...]
-  dram_endpoints: tuple[tuple[tuple[int, int], tuple[int, int]], ...]
+  dram_endpoints: DramEndpoints
   prefetch_core: tuple[int, int]
   dispatch_core: tuple[int, int]
   dram_core: tuple[int, int]
+  tensix_end: tuple[int, int]  # last tile of a broadcast from (1, 2)
 
 def board_config(card_type, tensix_enabled, gddr_enabled):
   """Select the supported runtime topology from sysfs and ARC telemetry."""

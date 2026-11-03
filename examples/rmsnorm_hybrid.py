@@ -71,7 +71,7 @@ def _square_tile(k, scratch_base):
     k.emit(TT.TTSFPNOP())
 
 
-def emit_rmsnorm(p, x, weight, output_cb, *, tiles, finalize, read_noc=0,
+def emit_rmsnorm(p, x, weight, output_cb, *, tiles, finalize, read_noc=0, port=None,
                  elwmul_mop=False, fidelity=4, half_sync=False, profile=None):
   """Emit RMSNorm; half_sync=True overlaps FPU/SFPU on opposite Dst halves.
 
@@ -92,7 +92,7 @@ def emit_rmsnorm(p, x, weight, output_cb, *, tiles, finalize, read_noc=0,
     raise ValueError("RMSNorm operands must have the same element order")
   operands = p.cb(DType.BF16, depth=2*tiles)
   for buffer in (x, weight):
-    p.brisc.noc_at(read_noc).read_tiles_into_cb(buffer, tuple(range(tiles)), operands)
+    p.brisc.noc_at(read_noc, port).read_tiles_into_cb(buffer, tuple(range(tiles)), operands)
   input_bases = (operands.addr, operands.addr + tiles*operands.tile_size)
   u, m, s = p.trisc0, p.trisc1, p.trisc2
   scratch_base = 7*64 if half_sync else 0

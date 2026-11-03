@@ -151,7 +151,7 @@ class Buffer:
   # reductions can consume raw pages directly when both operands agree on
   # element order; matrix/spatial operations must match their source layout.
   tilized: bool = True
-  dram_endpoints: tuple[tuple[tuple[int, int], tuple[int, int]], ...] = ()
+  dram_endpoints: tuple[tuple[tuple[int, int], ...], ...] = ()
 
   def __post_init__(self):
     shape, axis, cores = tuple(self.shape), self.axis, tuple(self.cores)
