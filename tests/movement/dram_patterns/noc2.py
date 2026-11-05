@@ -1,6 +1,6 @@
 """Direct RISC-V emitters for the movement NoC proofs.
 
-This is deliberately test-local and deliberately does not import ``ttk``.
+This is deliberately test-local.
 Every NoC request below is built by writing the Blackhole NIU command buffer
 from the worker RISC.
 """

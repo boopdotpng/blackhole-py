@@ -4386,7 +4386,7 @@
       "constants": [],
       "usage": [
         {
-          "path": "fw/llama3/ttk/sync.py",
+          "path": "ttko/sync.py",
           "line": 34,
           "function": "stall",
           "code": "TT.TTSTALLWAIT(int(resources), int(wait_for))"
@@ -4443,7 +4443,7 @@
       "constants": [],
       "usage": [
         {
-          "path": "fw/llama3/ttk/sync.py",
+          "path": "ttko/sync.py",
           "line": 49,
           "function": "sem_get",
           "code": "TT.TTSEMGET(Sem.mask(semaphore))"
@@ -4488,7 +4488,7 @@
       "constants": [],
       "usage": [
         {
-          "path": "fw/llama3/ttk/sync.py",
+          "path": "ttko/sync.py",
           "line": 44,
           "function": "sem_post",
           "code": "TT.TTSEMPOST(Sem.mask(semaphore))"
@@ -4559,7 +4559,7 @@
       "constants": [],
       "usage": [
         {
-          "path": "fw/llama3/ttk/sync.py",
+          "path": "ttko/sync.py",
           "line": 39,
           "function": "sem_wait",
           "code": "TT.TTSEMWAIT(int(resources), Sem.mask(semaphore), int(condition))"

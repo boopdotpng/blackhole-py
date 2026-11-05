@@ -7,7 +7,7 @@ tile's scratch word is cleared at launch, then read back to see who got it.
 
 Two candidate bit layouts are tested because the sources disagree:
   quad: stride_x[3:0] stride_y[7:4] x[13:8] y[19:14] dir_x[20] dir_y[21] en[22]
-        (old ttk NOC.mcast_exclude_quad)
+        (older NOC.mcast_exclude_quad)
   spec: x[7:0] y[13:8] dir_x[20] dir_y[21] en[22]  (boop-docs emulator spec)
 
 Run: pytest tests/probes/test_mcast_exclude.py --bh-hardware -s

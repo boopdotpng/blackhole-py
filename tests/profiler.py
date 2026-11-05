@@ -13,7 +13,7 @@ PROFILE_L1_BASE = TensixL1.DATA_BUFFER_SPACE_END - PROFILE_L1_SIZE
 _SAMPLES = Struct(f"<{MAX_SECTIONS * 2}I")
 
 # Minimal NoC-0 command-buffer map used only by the post-kernel L1 -> DRAM
-# sample copy. Keeping it here avoids making raw component tests depend on ttk.
+# sample copy, kept local to raw component tests.
 _NOC_BASE = 0xFFB20000
 _NOC_LOGICAL_NODE_ID = _NOC_BASE + 0x148
 _NOC_COMMAND_SEND = _NOC_BASE + 0x40

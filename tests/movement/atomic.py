@@ -1,6 +1,6 @@
 """Direct RISC-V NoC atomic-increment proof for Blackhole.
 
-This module is intentionally test-local and does not import ``ttk``.  The
+This module is intentionally test-local.  The
 worker RISC programs one NIU command buffer directly.  The destination is a
 32-bit word in another Tensix tile's L1; DRAM is not an atomic target.
 
