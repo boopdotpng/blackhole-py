@@ -5,3 +5,4 @@ weights/
 .venv/
 .pytest_cache/
 weights-*/
+.zed/
