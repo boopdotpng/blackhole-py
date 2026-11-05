@@ -22,7 +22,7 @@
   main { flex: 1; padding-top: 24px; padding-bottom: 32px; }
   #chat:empty { display: grid; align-content: center; text-align: center; }
   #chat:empty::before { content: "What’s on your mind?"; font-size: clamp(26px, 5vw, 34px); font-weight: 500; letter-spacing: -1px; }
-  #chat:empty::after { content: "Llama 3 · 8B · running on Blackhole"; color: var(--muted); margin-top: 8px; font-size: 14px; }
+  #chat:empty::after { content: "Llama 3 · running on Blackhole"; color: var(--muted); margin-top: 8px; font-size: 14px; }
   article { margin: 0 0 32px; overflow-wrap: anywhere; }
   article > b { display: block; font-size: 12px; font-weight: 500; color: var(--muted); margin-bottom: 8px; }
   article div { white-space: pre-wrap; }
@@ -70,7 +70,7 @@
 <footer>
 <form><textarea id="prompt" rows="1" placeholder="Message Blackhole" aria-label="Message" required></textarea>
 <select id="model" aria-label="Model">
-  <option value="fp8">Llama 3 8B · FP8</option><option value="bf16">Llama 3 8B · BF16</option>
+  <option value="fp8">Llama 3 8B · FP8</option><option value="bf16">Llama 3 8B · BF16</option><option value="1b">Llama 3.2 1B · BF16</option>
 </select><button aria-label="Send message" title="Send message">↑</button></form>
 <span id="context" title="Tokens in the current request, including conversation history, chat formatting, and generated output">Context · 0 / 8,192</span>
 <p id="status" role="status">Ready · model loads on first message</p>

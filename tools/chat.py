@@ -1,4 +1,4 @@
-"""Minimal, decode-only Llama 3 8B web chat: python -m tools.chat."""
+"""Minimal, decode-only Llama 3 web chat: python -m tools.chat."""
 import argparse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
@@ -9,10 +9,12 @@ from tokenizers.decoders import DecodeStream
 from transformers import AutoTokenizer
 from examples.llama3 import Llama3Config, Llama3Decode
 
+MODELS = {'fp8': ('8b', 'fp8', '8B FP8'), 'bf16': ('8b', 'bf16', '8B BF16'), '1b': ('1b', 'bf16', '1B BF16')}
+
 
 class Chat:
   def __init__(self, device):
-    self.device, self.runtime, self.tokenizer = device, None, None
+    self.device, self.runtime, self.tokenizer, self.model = device, None, None, None
     self.lock = Lock()
     self.cached_tokens = []
 
@@ -22,20 +24,22 @@ class Chat:
       self.runtime.close()
       self.runtime = None
 
-  def generate(self, dtype, messages):
-    if dtype not in ('fp8', 'bf16'): raise ValueError('Choose 8B FP8 or BF16')
+  def generate(self, model, messages):
+    if model not in MODELS: raise ValueError('Choose 8B FP8, 8B BF16, or 1B BF16')
+    size, dtype, name = MODELS[model]
     if not isinstance(messages, list) or not messages: raise ValueError('Messages are required')
     for i, message in enumerate(messages):
       if (not isinstance(message, dict) or message.get('role') != ('user' if i % 2 == 0 else 'assistant')
           or not isinstance(message.get('content'), str) or not message['content'].strip()):
         raise ValueError('Expected alternating user and assistant messages')
     if len(messages) % 2 != 1: raise ValueError('The last message must be from the user')
-    if self.runtime is None or self.runtime.cfg.dtype != dtype:
-      yield {'status': f'Loading Llama 3 8B {dtype.upper()} into DRAM…'}
+    if self.runtime is None or self.model != model:
+      yield {'status': f'Loading Llama 3 {name} into DRAM…'}
       self.close()
-      cfg = Llama3Config.create('8b', dtype)
+      cfg = Llama3Config.create(size, dtype)
       self.tokenizer = AutoTokenizer.from_pretrained(cfg.checkpoint, local_files_only=True)
       self.runtime = Llama3Decode(cfg, self.device)
+      self.model = model
     runtime, tokenizer = self.runtime, self.tokenizer
     tokens = tokenizer.apply_chat_template(messages, tokenize=True, add_generation_prompt=True)
     if not isinstance(tokens, list): tokens = tokens['input_ids']

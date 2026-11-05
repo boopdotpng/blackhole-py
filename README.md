@@ -1,12 +1,12 @@
 # blackhole-py
 
-Llama 3 8B chat on a single Tenstorrent Blackhole card.
+Llama 3 chat (1B and 8B) on a single Tenstorrent Blackhole card.
 
 ## Requirements
 
 - `tt-kmd` > 2.9.0
 - Clang, `riscv64-linux-gnu-ld`, `riscv64-linux-gnu-objcopy`
-- Checkpoints and tokenizers in `weights/llama3-8b-fp8/` and `weights/llama3-8b-bf16/` (not in Git)
+- Checkpoints and tokenizers in `weights/llama3-1b/`, `weights/llama3-8b-fp8/`, and `weights/llama3-8b-bf16/` (not in Git)
 
 ## Chat
 
@@ -19,10 +19,11 @@ Open **http://127.0.0.1:8000** (or `http://<server-ip>:8000`). Use `--host` and 
 
 | | Supported |
 | --- | --- |
-| Models | Llama 3 8B FP8, Llama 3 8B BF16 |
+| Models | Llama 3.2 1B BF16, Llama 3 8B FP8, Llama 3 8B BF16 |
 | Context | 8192 tokens (history + template + response) |
 | Prompt ingestion | Decode only; no prefill |
 | KV cache | Reused across turns when history matches |
+| Sampling | Greedy (argmax), no temperature or top-p |
 | Streaming | Yes, until EOS or full context |
 | Batch size | 1 |
 
@@ -32,6 +33,8 @@ Decode on a p150a (card 0), 2026-11-05, `tools.bench_llama_decode`. Roofline: we
 
 | Model | Context | ms/token | tok/s | DRAM roofline |
 | --- | ---: | ---: | ---: | ---: |
+| 1B BF16 | short | 6.23 | 160.4 | 77% (of 207.0 tok/s) |
+| 1B BF16 | 4096 | 8.64 | 115.7 | 59% (of 196.5 tok/s) |
 | 8B FP8 | short | 19.27 | 51.9 | 81% (of 63.7 tok/s) |
 | 8B FP8 | 4096 | 28.07 | 35.6 | 60% (of 59.8 tok/s) |
 | 8B BF16 | short | 33.11 | 30.2 | 89% (of 34.1 tok/s) |
