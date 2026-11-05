@@ -483,7 +483,7 @@ def test_elwmul_mop(bh, n):
 @pytest.mark.parametrize('half_sync', (False, True))
 def test_elwmul_mop_production(bh, n, fidelity, half_sync):
   """Exercise the actual emitter, including its DRAM and CB transport."""
-  from examples.llama3 import Llama3Kernels
+  from examples.llama3 import Llama3Config, kernels as llama
   from examples.rmsnorm_hybrid import emit_rmsnorm
   from program import Buffer, DType, TensorProgram
 
@@ -498,7 +498,7 @@ def test_elwmul_mop_production(bh, n, fidelity, half_sync):
                          (bh.core,), 1, tilized=False,
                          dram_endpoints=bh.device.pcie.dram_endpoints[:1])
                   for name, allocation in zip(('x', 'gamma', 'y'), allocations))
-  finalize = Llama3Kernels('1b' if n == 2048 else '8b')._rms_finalize_scale()
+  finalize = llama._rms_finalize_scale(Llama3Config.create('1b' if n == 2048 else '8b'))
   outputs = {}
   for enabled in (False, True):
     p = TensorProgram((bh.core,), *buffers, fp32_dst=True)

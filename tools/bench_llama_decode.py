@@ -41,8 +41,19 @@ def main():
     spec.loader.exec_module(module)
   else:
     import examples.llama3 as module
-  kernels = module.Llama3Kernels(args.model, args.dtype)
-  tokenizer = AutoTokenizer.from_pretrained(kernels.checkpoint, local_files_only=True)
+  if hasattr(module, 'Llama3Config'):
+    cfg = module.Llama3Config.create(args.model, args.dtype)
+    make_runtime = lambda: module.Llama3Decode(cfg, args.device)
+    max_tokens, info = cfg.max_tokens, dict(lm_head_dtype=cfg.lm_head_dtype.name.lower(),
+                                            split_attention=cfg.split_attention, weight_page_tiles=cfg.fp8_page_tiles)
+  else:  # pre-package examples/llama3.py, for --source comparisons
+    kernels = cfg = module.Llama3Kernels(args.model, args.dtype)
+    make_runtime = lambda: module.Llama3Decode(device_index=args.device, kernels=kernels)
+    max_tokens, info = kernels.ROPE_CACHE_TOKENS, dict(
+      lm_head_dtype=getattr(kernels, 'LM_HEAD_DTYPE', module.DType.BF16).name.lower(),
+      split_attention=getattr(kernels, 'SPLIT_ATTENTION', False),
+      weight_page_tiles=getattr(kernels, 'WEIGHT_PAGE_TILES', 1))
+  tokenizer = AutoTokenizer.from_pretrained(cfg.checkpoint, local_files_only=True)
   baseline = json.loads(args.replay.read_text()) if args.replay else None
   if baseline:
     if baseline['model'] != args.model or baseline['dtype'] != args.dtype:
@@ -56,9 +67,9 @@ def main():
       if args.context < 1: parser.error('context must be positive')
       prompt = (prompt * ((args.context + len(prompt) - 1) // len(prompt)))[:args.context]
     history = prompt
-  if len(prompt) + args.steps >= kernels.ROPE_CACHE_TOKENS: parser.error('context exceeds cache')
+  if len(prompt) + args.steps >= max_tokens: parser.error('context exceeds cache')
   started = time.perf_counter()
-  runtime = module.Llama3Decode(device_index=args.device, kernels=kernels)
+  runtime = make_runtime()
   try:
     runtime.load_tokens(history)
     for position in range(len(prompt) - 1): runtime.decode(position, logits=False, append=False)
@@ -69,10 +80,8 @@ def main():
       wall_us.append(float(elapsed))
       device_us.append(float(runtime.decode_trace.last_profile['device_us']) if 'device_us' in runtime.decode_trace.last_profile else None)
     result = dict(model=args.model, dtype=args.dtype, device=args.device,
-                  source=str(args.source) if args.source else 'examples/llama3.py',
-                  lm_head_dtype=getattr(kernels, 'LM_HEAD_DTYPE', module.DType.BF16).name.lower(),
-                  split_attention=getattr(kernels, 'SPLIT_ATTENTION', False),
-                  weight_page_tiles=getattr(kernels, 'WEIGHT_PAGE_TILES', 1),
+                  source=str(args.source) if args.source else 'examples/llama3',
+                  **info,
                   prompt_ids=prompt, generated_ids=predictions,
                   input_ids=history if baseline else prompt + predictions,
                   mean_wall_us=float(np.mean(wall_us)), wall_us=wall_us,

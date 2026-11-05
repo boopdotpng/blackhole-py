@@ -1,4 +1,4 @@
-"""Raw port of examples/llama3.py's SFPU RMSNorm, at 1024 and 2048 elements.
+"""Raw port of examples/llama3/kernels.py's SFPU RMSNorm, at 1024 and 2048 elements.
 
 Keep x and gamma in FP32 Dst, accumulate squares in L0, reduce the lanes,
 refine reciprocal sqrt, then apply scale with SFPLOADMACRO and multiply gamma.

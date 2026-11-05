@@ -66,7 +66,7 @@ def test_rmsnorm_half_pipeline(bh, request, n, macro):
 @pytest.mark.parametrize('n, calls', ((2048, 2), (4096, 2)))
 def test_half_pipeline_production_sequence(bh, n, calls):
     """Compare the real emitters, including repeated calls and CB/DRAM transport."""
-    from examples.llama3 import Llama3Kernels
+    from examples.llama3 import Llama3Config, kernels as llama
     from examples.rmsnorm_hybrid import emit_rmsnorm
     from program import Buffer, DType, TensorProgram
     rng = np.random.default_rng(191)
@@ -80,7 +80,7 @@ def test_half_pipeline_production_sequence(bh, n, calls):
     buffers = tuple(Buffer(name, allocation.address, DType.BF16, (n,), None,
                     (bh.core,), 1, tilized=False, dram_endpoints=bh.device.pcie.dram_endpoints[:1])
                     for name, allocation in zip(('x', 'gamma', 'y0', 'y1'), allocations))
-    finalize = Llama3Kernels('1b' if n == 2048 else '8b')._rms_finalize_scale()
+    finalize = llama._rms_finalize_scale(Llama3Config.create('1b' if n == 2048 else '8b'))
     outputs = {}
     for half_sync in (False, True):
         p = TensorProgram((bh.core,), *buffers, fp32_dst=True)

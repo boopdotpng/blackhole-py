@@ -12,7 +12,7 @@ from tests.profiler import Profiler
 
 @pytest.mark.parametrize('n', (2048, 4096))
 def test_rmsnorm_production_timing(bh, request, n):
-    from examples.llama3 import Llama3Kernels
+    from examples.llama3 import Llama3Config, kernels as llama
     from examples import rmsnorm_hybrid as emitter
     from program import Buffer, DType, TensorProgram
     rng = np.random.default_rng(192)
@@ -25,7 +25,7 @@ def test_rmsnorm_production_timing(bh, request, n):
     buffers = tuple(Buffer(name, a.address, DType.BF16, (n,), None, (bh.core,), 1,
                     tilized=False, dram_endpoints=bh.device.pcie.dram_endpoints[:1])
                     for name, a in zip(('x','gamma','y'), allocations))
-    finalize = Llama3Kernels('1b' if n == 2048 else '8b')._rms_finalize_scale()
+    finalize = llama._rms_finalize_scale(Llama3Config.create('1b' if n == 2048 else '8b'))
     variants = {}
     samples = {False: [], True: []}
     for half in (False, True):

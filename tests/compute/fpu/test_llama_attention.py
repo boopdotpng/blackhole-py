@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from examples.llama3 import Llama3Kernels
+from examples.llama3 import Llama3Config, kernels as llama
 from pcie import P100_WORKER_CORES
 from program import DType
 
@@ -22,7 +22,7 @@ def bf16(values):
 @pytest.mark.parametrize('length', [1, 31, 32, 33, 129, 512, 1025, 4096])
 def test_split_gqa_against_numpy(llama_device, length):
   device = llama_device
-  kernels = Llama3Kernels('8b', 'fp8')
+  cfg = Llama3Config.create('8b', 'fp8')
   rng = np.random.default_rng(17)
   q = bf16(rng.normal(size=(32, 128)))
   k = bf16(rng.normal(size=(8, length, 128)))
@@ -32,7 +32,7 @@ def test_split_gqa_against_numpy(llama_device, length):
   cache_shape = (8, 256, 4, 32, 32)
   caches = []
   for name, values in (('keys', k), ('values', v)):
-    cache = device.dram.buffer(name, DType.BF16, kernels.KV_CACHE_STORAGE_SHAPE,
+    cache = device.dram.buffer(name, DType.BF16, cfg.kv_cache_shape,
                                axis=0, global_address=True)
     packed = np.zeros(cache_shape, dtype=np.float32)
     live = np.full((8, blocks * 32, 128), 20., dtype=np.float32)
@@ -46,9 +46,9 @@ def test_split_gqa_against_numpy(llama_device, length):
   device.write(query, query.from_numpy(values))
   output = device.dram.buffer('context', DType.BF16, (1, 4096), axis=0, global_address=True, tilized=False)
   partials = device.dram.buffer('partials', DType.F32, (32, 6, 1024), axis=0, cores=P100_WORKER_CORES[:32])
-  split = kernels.gqa_attention_fused(query, *caches, output, partial_output=partials)
-  merge = kernels.gqa_attention_merge(partials, output)
-  single = kernels.gqa_attention_fused(query, *caches, output)
+  split = llama.attention(cfg, query, *caches, output, partial_output=partials)
+  merge = llama.attention_merge(cfg, partials, output)
+  single = llama.attention(cfg, query, *caches, output)
   params = {'kv_blocks': blocks, 'valid_columns': (length - 1) % 32 + 1}
   device.run()
   device.cache_kernels((single, split, merge))

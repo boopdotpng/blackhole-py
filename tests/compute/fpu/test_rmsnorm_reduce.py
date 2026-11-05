@@ -14,7 +14,7 @@ Normalize has two lowerings, selected by ``normalize``:
         broadcast scale in place.
   sfpu  x -> SrcA -> MOVA2D -> Dst tile t+1 and gamma -> SrcB -> MOVB2D ->
         Dst tile 5; the SFPU does both multiplies.  The FPU only moves data.
-        This is what examples/llama3.py ships.
+        This is what examples/llama3/kernels.py ships.
 The packer then converts FP32 Dst to BF16 (round to nearest, ties away) into
 a dense row-major L1 buffer.
 

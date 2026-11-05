@@ -7,7 +7,7 @@ from threading import Lock
 
 from tokenizers.decoders import DecodeStream
 from transformers import AutoTokenizer
-from examples.llama3 import Llama3Decode, Llama3Kernels
+from examples.llama3 import Llama3Config, Llama3Decode
 
 
 class Chat:
@@ -30,18 +30,18 @@ class Chat:
           or not isinstance(message.get('content'), str) or not message['content'].strip()):
         raise ValueError('Expected alternating user and assistant messages')
     if len(messages) % 2 != 1: raise ValueError('The last message must be from the user')
-    if self.runtime is None or self.runtime.kernels.dtype != dtype:
+    if self.runtime is None or self.runtime.cfg.dtype != dtype:
       yield {'status': f'Loading Llama 3 8B {dtype.upper()} into DRAM…'}
       self.close()
-      kernels = Llama3Kernels('8b', dtype)
-      self.tokenizer = AutoTokenizer.from_pretrained(kernels.checkpoint, local_files_only=True)
-      self.runtime = Llama3Decode(device_index=self.device, kernels=kernels)
+      cfg = Llama3Config.create('8b', dtype)
+      self.tokenizer = AutoTokenizer.from_pretrained(cfg.checkpoint, local_files_only=True)
+      self.runtime = Llama3Decode(cfg, self.device)
     runtime, tokenizer = self.runtime, self.tokenizer
     tokens = tokenizer.apply_chat_template(messages, tokenize=True, add_generation_prompt=True)
     if not isinstance(tokens, list): tokens = tokens['input_ids']
     if tokens and isinstance(tokens[0], list): tokens = tokens[0]
-    room = runtime.kernels.ROPE_CACHE_TOKENS - len(tokens)
-    yield {'context': len(tokens), 'context_limit': runtime.kernels.ROPE_CACHE_TOKENS}
+    room = runtime.cfg.max_tokens - len(tokens)
+    yield {'context': len(tokens), 'context_limit': runtime.cfg.max_tokens}
     if not tokens or room < 1: raise ValueError('Conversation exceeds the 8192-token context. Start a new chat.')
     # Cache only tokens actually consumed by decode, not its predicted next token.
     start = 0
@@ -60,7 +60,7 @@ class Chat:
       decoder = DecodeStream(skip_special_tokens=True)
       status = 'Context full — start a new chat'
       for step in range(room):
-        if token in runtime.kernels.EOS_TOKEN_IDS:
+        if token in runtime.cfg.eos_token_ids:
           status = 'Ready'
           break
         generated.append(token)

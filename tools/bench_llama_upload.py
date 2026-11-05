@@ -8,7 +8,7 @@ import argparse
 import json
 from statistics import median
 
-from examples.llama3 import Llama3Decode, Llama3Kernels
+from examples.llama3 import Llama3Config, Llama3Decode
 
 
 class UploadOnly(Llama3Decode):
@@ -24,7 +24,7 @@ def main():
   if args.repeats < 1: parser.error('--repeats must be positive')
   durations = []
   for repeat in range(args.repeats):
-    model = UploadOnly(device_index=args.device, kernels=Llama3Kernels('8b', args.dtype))
+    model = UploadOnly(Llama3Config.create('8b', args.dtype), args.device)
     try:
       profile = model.profile
       size = profile['dram_upload_bytes']

@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from examples.llama3 import Llama3Kernels
+from examples.llama3 import Llama3Config, kernels as llama
 from firmware.consts import TensixL1
 from pcie import TLBWindow
 from program import DType
@@ -19,22 +19,22 @@ def llama_device(tensor_device):
 @pytest.mark.parametrize('core_count', [80, 88, 96, 104, 112, 117])
 def test_llama_argmax(llama_device, model, dtype, core_count):
     d = llama_device
-    k = Llama3Kernels(model, dtype, projection_cores=core_count)
+    cfg = Llama3Config.create(model, dtype, projection_cores=core_count)
     cores = tuple(d.cores[i] for i in np.linspace(0, len(d.cores) - 1, core_count, dtype=int))
-    counts = k._token_counts(k.VOCAB_SIZE, core_count)
+    counts = llama._token_counts(cfg.vocab_size, core_count)
     logits = d.dram.buffer('logits', DType.BF16, (core_count, max(counts)), axis=0, cores=cores)
     history = d.dram.buffer('history', DType.U32, (2048,), axis=None,
                             cores=cores, global_address=True, tilized=False)
-    program = k.decode_argmax(logits, history, d.cq.noc + d.cq.live)
+    program = llama.argmax(cfg, logits, history, d.cq.noc + d.cq.live)
     d.cache_kernels([program])
     d.queue(program, report=False)
     trace = d.capture_trace(('write_pos', 'write_token'))
     for case in ('random', 'negative_ties', 'positive_ties', 'last', 'zeros',
                  'infinities', 'all_negative_infinity', 'subnormals'):
-        values = np.random.default_rng(61).normal(size=k.VOCAB_SIZE).astype('<f4')
+        values = np.random.default_rng(61).normal(size=cfg.vocab_size).astype('<f4')
         if case.endswith('ties'):
             values[:] = -9
-            values[[17, 64, counts[0] + 3, k.VOCAB_SIZE - 1]] = -1 if case == 'negative_ties' else 7
+            values[[17, 64, counts[0] + 3, cfg.vocab_size - 1]] = -1 if case == 'negative_ties' else 7
         elif case == 'last':
             values[:] = -9
             values[-1] = -1
