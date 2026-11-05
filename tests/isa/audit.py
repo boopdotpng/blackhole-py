@@ -179,58 +179,12 @@ def build(evidence_paths=()):
           'dynamic_dispatch_sites': dynamic, 'runs': evidence}
 
 
-def render(data):
-  partial = sum(bool(i['reviewed_requirements']) for i in data['instructions'])
-  rows = ['# Tensix behavioral coverage audit', '',
-    f'{partial} / {len(data["instructions"])} instructions have a reviewed **partial** behavioral claim.',
-    'This is not a percentage of ISA functionality. No instruction is declared exhaustively covered.',
-    'A test passing supports only its stated assertion and exercised parameters.', '',
-    'Source sightings include fixture setup and helper code. They are navigation aids, not coverage.',
-    'Dynamic dispatch sites are retained separately in audit.json, so static absence is not proof of absence.', '',
-    '## Instruction map', '', '| Instruction | Reviewed behavioral requirements | Source sightings |', '|---|---|---|']
-  for item in data['instructions']:
-    claims = ', '.join(f'[{r}](#{r.replace(".", "")})' for r in item['reviewed_requirements']) or '**gap: no reviewed claim**'
-    sites = ', '.join(f'[{p}:{line}](../../{p.removeprefix("tests/")}#L{line})' for p, line in item['source_sightings'][:3]) or 'none found'
-    # Markdown path is relative to tests/isa, hence one parent reaches tests.
-    sites = sites.replace('](../../', '](../')
-    rows.append(f'| {item["instruction"]} | {claims} | {sites} |')
-  rows.extend(['', '## Reviewed requirements', ''])
-  for req in data['requirements']:
-    rows.extend([f'### {req["id"]}', '', f'Instructions: {", ".join(req["instructions"])}.', '',
-                 f'**Checked:** {req["assertion"]}', '', f'**Remaining:** {req["gaps"]}', '',
-                 f'**Recorded outcomes:** {req["evidence"] or "not run in the supplied evidence"}.', ''])
-    for test in req['tests']:
-      path, function = test.split('::')
-      line = data['test_functions'][test]['line']
-      rows.append(f'- [{function}](../{path.removeprefix("tests/")}#L{line}) — `{path}`')
-    rows.append('')
-  rows.extend(['## Runs', ''])
-  for run in data['runs']:
-    rows.append(f'- Device {run["device"]}, core {run["core"]}, complete={run["complete"]}, exit={run["exitstatus"]}: {run["outcomes"]}; changed sources: {run["changed_sources"]}.')
-  return '\n'.join(rows) + '\n'
-
-
 def main():
   parser = argparse.ArgumentParser(description=__doc__)
   parser.add_argument('--evidence', action='append', default=[])
   args = parser.parse_args()
   data = build(args.evidence)
   (HERE / 'audit.json').write_text(json.dumps(data, indent=2) + '\n')
-  (HERE / 'audit.md').write_text(render(data))
-  rows = ['# Documented modifier checklist', '',
-          'Every named MOD/IMM definition found in Blackhole Tensix pages, including',
-          'explicitly shared pages and specialized cast/rounding subpages. Constants',
-          'are not a complete list of behavior: configuration bits, operand ranges,',
-          'interactions and prose-only modes still require review.', '',
-          'Candidate requirements point to reviewed test groups. They do **not** prove',
-          'every effect of the modifier. Each row remains a modifier-level review obligation.', '',
-          '| Instruction | Definition | Value / comment | Source | Candidate requirements |',
-          '|---|---|---|---|---|']
-  for modifier in data['modifier_obligations']:
-    candidates = ', '.join(f'[{r}](audit.md#{r.replace(".", "")})' for r in modifier['candidate_requirements']) or '**gap**'
-    value = modifier['value'].replace('|', '&#124;')
-    rows.append(f'| {modifier["instruction"]} | `{modifier["name"]}` | `{value}` | [manual](../../../../tt-isa-documentation/{modifier["source"]}) | {candidates} |')
-  (HERE / 'modifiers.md').write_text('\n'.join(rows) + '\n')
   counts = Counter(i['status'] for i in data['instructions'])
   print(dict(counts))
 

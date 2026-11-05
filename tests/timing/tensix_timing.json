@@ -222,7 +222,7 @@
       "latency_cycles": "5",
       "issue_interval_cycles": "1",
       "basis": "shared manual",
-      "notes": "Rotate through >=5 independent aligned 8x16 Dst blocks for accumulating ops. Reusing a dependent block costs about 5 cycles/op. Count each fidelity phase separately. Measured FP32 Dst: alternating FPU and SFPU memory operations in the same Dst half adds burst-dependent stalls; opposite halves avoid the penalty. Separate threads alone do not remove same-half contention. See tests/timing/fpu_sfpu_interleave.md.",
+      "notes": "Rotate through >=5 independent aligned 8x16 Dst blocks for accumulating ops. Reusing a dependent block costs about 5 cycles/op. Count each fidelity phase separately. Measured FP32 Dst: alternating FPU and SFPU memory operations in the same Dst half adds burst-dependent stalls; opposite halves avoid the penalty. Separate threads alone do not remove same-half contention. See boop-docs timing/fpu-sfpu-interleave.md.",
       "source": "BlackholeA0/TensixTile/TensixCoprocessor/MatrixUnit.md",
       "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/BlackholeA0/TensixTile/TensixCoprocessor/MatrixUnit.md"
     },
@@ -462,7 +462,7 @@
       "latency_cycles": "5",
       "issue_interval_cycles": "1",
       "basis": "shared manual",
-      "notes": "Rotate through >=5 independent aligned 8x16 Dst blocks for accumulating ops. Reusing a dependent block costs about 5 cycles/op. Count each fidelity phase separately. Measured FP32 Dst: alternating FPU and SFPU memory operations in the same Dst half adds burst-dependent stalls; opposite halves avoid the penalty. Separate threads alone do not remove same-half contention. See tests/timing/fpu_sfpu_interleave.md.",
+      "notes": "Rotate through >=5 independent aligned 8x16 Dst blocks for accumulating ops. Reusing a dependent block costs about 5 cycles/op. Count each fidelity phase separately. Measured FP32 Dst: alternating FPU and SFPU memory operations in the same Dst half adds burst-dependent stalls; opposite halves avoid the penalty. Separate threads alone do not remove same-half contention. See boop-docs timing/fpu-sfpu-interleave.md.",
       "source": "BlackholeA0/TensixTile/TensixCoprocessor/MatrixUnit.md",
       "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/BlackholeA0/TensixTile/TensixCoprocessor/MatrixUnit.md"
     },
@@ -932,7 +932,7 @@
       "latency_cycles": "1",
       "issue_interval_cycles": "1",
       "basis": "Blackhole manual",
-      "notes": "Ordinary direct mode; 32 lanes per instruction. Dst access, resource conflicts and macros can add stalls. Measured FP32 Dst: alternating FPU and SFPU memory operations in the same Dst half adds burst-dependent stalls; opposite halves avoid the penalty. Separate threads alone do not remove same-half contention. See tests/timing/fpu_sfpu_interleave.md.",
+      "notes": "Ordinary direct mode; 32 lanes per instruction. Dst access, resource conflicts and macros can add stalls. Measured FP32 Dst: alternating FPU and SFPU memory operations in the same Dst half adds burst-dependent stalls; opposite halves avoid the penalty. Separate threads alone do not remove same-half contention. See boop-docs timing/fpu-sfpu-interleave.md.",
       "source": "BlackholeA0/TensixTile/TensixCoprocessor/VectorUnit.md",
       "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/BlackholeA0/TensixTile/TensixCoprocessor/VectorUnit.md"
     },
@@ -1162,7 +1162,7 @@
       "latency_cycles": "1",
       "issue_interval_cycles": "1",
       "basis": "Blackhole manual",
-      "notes": "Ordinary direct mode; 32 lanes per instruction. Dst access, resource conflicts and macros can add stalls. Measured FP32 Dst: alternating FPU and SFPU memory operations in the same Dst half adds burst-dependent stalls; opposite halves avoid the penalty. Separate threads alone do not remove same-half contention. See tests/timing/fpu_sfpu_interleave.md.",
+      "notes": "Ordinary direct mode; 32 lanes per instruction. Dst access, resource conflicts and macros can add stalls. Measured FP32 Dst: alternating FPU and SFPU memory operations in the same Dst half adds burst-dependent stalls; opposite halves avoid the penalty. Separate threads alone do not remove same-half contention. See boop-docs timing/fpu-sfpu-interleave.md.",
       "source": "BlackholeA0/TensixTile/TensixCoprocessor/VectorUnit.md",
       "source_url": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/BlackholeA0/TensixTile/TensixCoprocessor/VectorUnit.md"
     },

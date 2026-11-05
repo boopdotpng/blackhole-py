@@ -162,32 +162,6 @@ def build():
 def main():
   data = build()
   (HERE / 'inventory.json').write_text(json.dumps(data, indent=2) + '\n')
-  rows = ['# ISA coverage inventory', '',
-          'Generated from local manuals with `python -m tests.isa.inventory`.',
-          'Encoding checks do not establish hardware behavior. “Not audited” is an open gap,',
-          'not a skip or a passing behavioral test. See [audit.md](audit.md) for reviewed',
-          'existing-test assertions, limitations and recorded outcomes. Blackhole pages forwarding to Wormhole',
-          'are resolved; no other Wormhole behavior is assumed to apply.', '',
-          f'Manual commit: `{data["manual_commit"]}`.', '',
-          'Encoding field counts below come from the Blackhole LLK header. Manual diagrams',
-          'provide additional checks only where a Blackhole contract is explicit. The full',
-          'JSON also inventories modifiers in specialized subpages (casts, rounding, etc.).', '',
-          '| Instruction | Source | Documented constants | Encoding fields checked | Behavior |',
-          '|---|---|---|---|---|']
-  for item in data['instructions']:
-    source = item.get('source')
-    link = f'[manual](../../../../tt-isa-documentation/{source})' if source else 'missing'
-    constants = ', '.join(f'`{c["name"]}={c["value"]}`' for c in item.get('modifiers', [])) or '—'
-    count = len(item['llk_encoding']['arguments']) if item.get('llk_encoding') else 0
-    behavior = ', '.join(f'[partial]({test})' for test in item.get('behavior_tests', [])) or item['behavior']
-    if item['reviewed_requirements']:
-      behavior += ' / [reviewed claims](audit.md)'
-    rows.append(f'| {item["instruction"]} | {link} | {constants} | {count} | {behavior} |')
-  rows.extend(['', '## Architecture pages', '',
-               'These pages include non-opcode functionality (configuration, memory, NoC,',
-               'PCIe, Ethernet, and L2CPU). All require separate behavioral coverage review.', ''])
-  rows.extend(f'- `{p["source"]}`: {p["status"]}' for p in data['pages'])
-  (HERE / 'coverage.md').write_text('\n'.join(rows) + '\n')
 
 
 if __name__ == '__main__': main()

@@ -23,7 +23,7 @@ P100_DRAM_ENDPOINTS = (
 # port. Bank b's ports are (17 + b // 4, 12 + 3 * (b % 4) + p).
 # Kernels that stream DRAM can spread one bank's load over all ports with
 # dram_port(); a single port caps the chip at ~390 GB/s reads, ~300 writes
-# (docs/dram-traffic-patterns.md).
+# (boop-docs measurements/dram-traffic-patterns.md).
 P150_DRAM_ENDPOINTS = (
   ((17, 14), (17, 13), (17, 12)), ((17, 15), (17, 16), (17, 17)),
   ((17, 18), (17, 19), (17, 20)), ((17, 21), (17, 22), (17, 23)),

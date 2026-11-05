@@ -8,7 +8,7 @@ TRISC0 prefetches the next pair into the alternate source banks.
 half_sync=False retains the queued Dst-0 scratch baseline.
 Optional elwmul_mop=True issues each HiFi4 tile through a 4x8 math MOP.
 Explicit ELWMUL remains the default: measured MOP setup/dispatch costs more
-than it saves for these short vectors (see tests/compute/fpu/rmsnorm_mop_results.md).
+than it saves for these short vectors (see boop-docs measurements/rmsnorm/elwmul-vs-mop.md).
 fidelity=3 omits the low*low BF16 product phase; HiFi4 remains the default.
 """
 import os

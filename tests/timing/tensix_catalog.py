@@ -121,7 +121,7 @@ def build():
     add('TBUFCMD', 'reserved', 'unknown', 'unknown', 'reserved', 'LLK explicitly reserves this opcode for future use; do not execute to estimate timing.', LLK)
 
     for name in ('MVMUL', 'ELWMUL', 'SFPLOAD', 'SFPSTORE'):
-        records[name]['notes'] += (' Measured FP32 Dst: alternating FPU and SFPU memory operations in the same Dst half adds burst-dependent stalls; opposite halves avoid the penalty. Separate threads alone do not remove same-half contention. See tests/timing/fpu_sfpu_interleave.md.')
+        records[name]['notes'] += (' Measured FP32 Dst: alternating FPU and SFPU memory operations in the same Dst half adds burst-dependent stalls; opposite halves avoid the penalty. Separate threads alone do not remove same-half contention. See boop-docs timing/fpu-sfpu-interleave.md.')
 
     names = {n[2:] for n in dir(Tensix) if n.startswith('TT')}
     assert names == records.keys(), (names - records.keys(), records.keys() - names)
@@ -143,20 +143,9 @@ def build():
 def main():
     data = build()
     (HERE/'tensix_timing.json').write_text(json.dumps(data, indent=2)+'\n')
-    lines = ['# Tensix instruction cycle reference', '',
-             'Generated with `python -m tests.timing.tensix_catalog`. All 137 public encoders are classified.',
-             'See [the kernel timing guide](README.md) before summing these numbers.',
-             'Issue interval means spacing between independent operations on the same unit; latency means result readiness.',
-             'A `~` is an unmeasured analogy, `>=` is a lower bound, and unknown is not zero.',
-             'Wormhole-only references are estimates for Blackhole, not Blackhole contracts.', '',
-             '| Instruction | Unit | Latency (cycles) | Issue interval (cycles) | Basis | Conditions |',
-             '|---|---|---|---|---|---|']
-    for r in data['instructions']:
-        lines.append(f'| [{r["instruction"]}]({r["source_url"]}) | {r["unit"]} | {r["latency_cycles"]} | {r["issue_interval_cycles"]} | {r["basis"]} | {r["notes"]} |')
-    (HERE/'tensix_timing.md').write_text('\n'.join(lines)+'\n')
     samples = [json.loads(line) for line in (HERE/'tensix_measured.jsonl').read_text().splitlines()]
     lines = ['# Blackhole Tensix measured timing', '',
-             'Card 0, physical core index 0, T0/T1/T2; 2026-09-17. See [method and limitations](README.md).',
+             'Card 0, physical core index 0, T0/T1/T2; 2026-09-17. See [method and limitations](kernel-estimation.md).',
              'These are completed-loop median slopes, not isolated result latencies.',
              'Two slopes use successive 1,024 / 2,048 / 4,096-operation points.',
              '`empty` counts empty body slots; `swap_nop`/`shuffle_nop` include a padding SFPNOP in each body operation.', '',
@@ -171,9 +160,11 @@ def main():
             slopes = roles[role]
             values.append(f'{min(slopes):.3f}–{max(slopes):.3f}')
         lines.append(f'| {case} | ' + ' | '.join(values) + ' |')
-    lines.extend(['', 'Raw samples and image/source SHA-256 hashes are in [tensix_measured.jsonl](tensix_measured.jsonl).',
+    lines.extend(['', 'Raw samples and image/source SHA-256 hashes are in [tensix_measured.jsonl](../../blackhole-py/tests/timing/tensix_measured.jsonl).',
                   'Only `swap_nop`/`shuffle_nop` contain padding instructions; `dma_nop` is one DMANOP per body operation.', ''])
-    (HERE/'tensix_measured.md').write_text('\n'.join(lines))
+    # The summary page lives in the sibling boop-docs checkout.
+    docs = HERE.parents[2].parent/'boop-docs/timing'
+    if docs.is_dir(): (docs/'measured-slopes.md').write_text('\n'.join(lines))
 
 
 if __name__ == '__main__': main()

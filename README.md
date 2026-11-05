@@ -26,5 +26,12 @@ Checkpoints are not included in Git. Use `--port` to change the HTTP port.
 Optional FP8 decode modes are available with `--lm-head-dtype fp8` and
 `--split-attention` in `examples.llama3`. They can change numerical results;
 the default keeps the BF16 LM head and original attention arithmetic. See
-[FP8 decode optimization results](tools/llama_fp8_speedup.md) for measurements,
+[FP8 decode optimization results](../boop-docs/measurements/llama/fp8-decode.md) for measurements,
 validation, environment switches for chat/API use, and reproduction commands.
+
+## Documentation
+
+All prose docs (runtime map, test guide, ISA conformance suite, timing,
+measurements, ttk design) live in the sibling
+[boop-docs](../boop-docs/blackhole-py/README.md) checkout. Do not add Markdown
+reports to this repo.
