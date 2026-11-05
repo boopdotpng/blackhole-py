@@ -44,7 +44,6 @@ import struct
 
 from asm import Cond
 from cq import UnicastWrite, mcast_coords, noc_coord
-from examples.rmsnorm_hybrid import emit_rmsnorm, enabled as hybrid_rmsnorm_enabled
 from firmware.consts import CQConfig, TensixL1, TensixMMIO
 from pcie import P100_WORKER_CORES
 from program import Buffer, Const, DType, TensorProgram as Program, rectangles
@@ -124,7 +123,7 @@ def embedding(cfg, token_id: Buffer, embedding_weight: Buffer, output: Buffer) -
 #            (o/down after the residual add, gate/up after SwiGLU).
 
 def projection(cfg, x, projections, *, norm_weight=None, swiglu_output=None,
-               residual=None, dense_output=None, row_scales=None, rotate_ports=True):
+               residual=None, dense_output=None, rotate_ports=True):
   """Build y_i = W_i @ x for 1-3 weights that share one input (Q/K/V, gate/up).
 
     x               dense input vector [input_dim]
@@ -132,7 +131,6 @@ def projection(cfg, x, projections, *, norm_weight=None, swiglu_output=None,
     norm_weight     RMSNorm gamma: x is normalized first (qkv, gate, lm)
     swiglu_output   dense silu(y_0) * y_1 (gate/up)
     residual        with dense_output: dense_output = residual + y_0 (o, down)
-    row_scales      FP8 LM head: one scale per weight row
     rotate_ports    read weights over all three DRAM ports per bank
   """
   if dense_output is not None and residual is None:
@@ -152,7 +150,7 @@ def projection(cfg, x, projections, *, norm_weight=None, swiglu_output=None,
     lambda key: _projection_program(
       cfg, x, tuple((weight, output, count) for (weight, output), count in zip(projections, key[0])),
       key[1], key[2], norm_weight=norm_weight, swiglu_output=swiglu_output,
-      residual=residual, dense_output=dense_output, row_scales=row_scales,
+      residual=residual, dense_output=dense_output,
     ),
     weights[0].cores, keys,
   )
@@ -166,14 +164,14 @@ def _projection_route(cfg, index, core, weights, rotate_ports=True):
   split NoCs with rotated ports hung both p150a cards. Programs run one
   after another, so mixing policies across programs is fine.
   """
-  if rotate_ports and cfg.rotate_dram_ports and all(
+  if rotate_ports and all(
       len(endpoints) >= 3 for weight in weights for endpoints in weight.dram_endpoints):
     return 0, index % 3
   return int(core[0] >= cfg.noc_split_x), None
 
 
 def _projection_program(cfg, x, projections, route, rotations, *, norm_weight,
-                        swiglu_output, residual, dense_output, row_scales):
+                        swiglu_output, residual, dense_output):
   """One core's projection program. ``projections`` is ((weight, output, rows), ...)."""
   read_noc, port = route
   write_noc = 1 - read_noc
@@ -210,7 +208,6 @@ def _projection_program(cfg, x, projections, route, rotations, *, norm_weight,
     *((scatter_output, Const("dense_start", projections[0][0].item_starts)) if scatter_output is not None else ()),
     *((residual,) if residual is not None else ()),
     *((norm_weight,) if norm_weight is not None else ()),
-    *((row_scales,) if row_scales is not None else ()),
     fp32_dst=True,
   )
 
@@ -247,23 +244,18 @@ def _projection_program(cfg, x, projections, route, rotations, *, norm_weight,
   else:
     # RMSNorm: x and gamma -> Dst, normalized on the SFPU, packed to normalized_cb.
     if input_dim != cfg.embed_dim: raise ValueError(f"fused RMSNorm requires a {cfg.embed_dim}-element token")
-    if not operand_dtype.is_fp8 and hybrid_rmsnorm_enabled():
-      # Experimental alternative (LLAMA_RMSNORM=hybrid), see examples/rmsnorm_hybrid.py.
-      emit_rmsnorm(p, token, norm_weight, normalized_cb,
-                   tiles=cfg.embed_tiles, finalize=_rms_finalize_scale(cfg), read_noc=read_noc, port=port)
-    else:
-      operands = p.cb(DType.BF16, depth=2 * cfg.embed_tiles)   # x tiles, then gamma tiles
-      CB.reserve_back(p.brisc, operands, 2 * cfg.embed_tiles)
-      for index, buffer in enumerate((token, norm_weight)):
-        input_reads.extend((buffer, tile, operands.addr + (index * cfg.embed_tiles + tile) * operands.tile_size)
-                           for tile in range(cfg.embed_tiles))
-      input_publications.append((operands, 2 * cfg.embed_tiles))
-      for tile in range(2 * cfg.embed_tiles): p.unpack.move(operands, UnpackTarget.SRCA, configure_format=tile == 0)
-      _rms_setup_apply_macro(p.sfpu)
-      p.fpu.copy_a_tiles(dst_tiles=range(2 * cfg.embed_tiles))
-      _rmsnorm(cfg, p.sfpu, fp8=operand_dtype.is_fp8,
-               scale=(lambda: _scale_input(p, range(cfg.embed_tiles))) if operand_dtype.is_fp8 else None)
-      p.pack.move_tiles(normalized_cb, tiles=tuple(range(cfg.embed_tiles)))
+    operands = p.cb(DType.BF16, depth=2 * cfg.embed_tiles)   # x tiles, then gamma tiles
+    CB.reserve_back(p.brisc, operands, 2 * cfg.embed_tiles)
+    for index, buffer in enumerate((token, norm_weight)):
+      input_reads.extend((buffer, tile, operands.addr + (index * cfg.embed_tiles + tile) * operands.tile_size)
+                         for tile in range(cfg.embed_tiles))
+    input_publications.append((operands, 2 * cfg.embed_tiles))
+    for tile in range(2 * cfg.embed_tiles): p.unpack.move(operands, UnpackTarget.SRCA, configure_format=tile == 0)
+    _rms_setup_apply_macro(p.sfpu)
+    p.fpu.copy_a_tiles(dst_tiles=range(2 * cfg.embed_tiles))
+    _rmsnorm(cfg, p.sfpu, fp8=operand_dtype.is_fp8,
+             scale=(lambda: _scale_input(p, range(cfg.embed_tiles))) if operand_dtype.is_fp8 else None)
+    p.pack.move_tiles(normalized_cb, tiles=tuple(range(cfg.embed_tiles)))
   if residual is not None:
     residual_l1 = p.l1(residual.tiles * residual.tile_size, alignment=16)
     input_reads.extend((residual, tile, residual_l1 + tile * residual.tile_size) for tile in range(residual.tiles))
@@ -276,26 +268,6 @@ def _projection_program(cfg, x, projections, route, rotations, *, norm_weight,
           address, coordinate = p.brisc.noc_at(read_noc, port)._dram_tile(buffer, tile)
           transaction.read(address, coordinate, target, buffer.tile_size)
   for cb, count in input_publications: CB.push_back(p.brisc, cb, count)
-
-  # Step 2 (BRISC, FP8 LM head only): this core's per-row scales -> L1.
-  row_scales_l1 = None
-  if row_scales is not None:
-    if len(projections) != 1: raise ValueError("row scales require one projection")
-    # Two instruction words per row; include the partial first/last pages.
-    pages = (first_rows + 511 + 511) // 512
-    row_scales_l1 = p.l1(pages * row_scales.tile_size, alignment=16)
-    with p.brisc.scope():
-      first = p.brisc.reg()
-      if row_starts[0] is None: p.brisc.li(first, 0)
-      else: p.brisc.read(first, p.param_addr(row_starts[0]))
-      p.brisc.srli(first, first, 9)
-      with p.brisc.noc_at(read_noc, port).transaction() as transaction:
-        for index in range(pages):
-          with p.brisc.scope():
-            tile = p.brisc.reg()
-            p.brisc.addi(tile, first, index)
-            address, coordinate = p.brisc.noc_at(read_noc, port)._dram_tile(row_scales, tile)
-            transaction.read(address, coordinate, row_scales_l1 + index * row_scales.tile_size, row_scales.tile_size)
 
   # Step 3 (BRISC): stream this core's weight rows into weight_cb.
   _projection_read_weights(p, projections, row_starts, rotations, route, weight_cb, input_tiles)
@@ -313,7 +285,7 @@ def _projection_program(cfg, x, projections, route, rotations, *, norm_weight,
         )
 
   # Step 5 (TRISC1): elementwise multiply on the FPU, sum on the SFPU -> one scalar per row.
-  _projection_dot_math(cfg, p, projections, input_tiles, row_scales_l1=row_scales_l1, row_start=row_starts[0])
+  _projection_dot_math(cfg, p, projections, input_tiles)
 
   # Step 6 (TRISC2): pack each row's scalar into scalar_cb.
   p.pack._configure(scalar_cb, True, True)
@@ -473,7 +445,7 @@ def _projection_read_weights(p, projections, row_starts, rotations, route, weigh
           read_row(row, None)
 
 
-def _projection_dot_math(cfg, p, projections, input_tiles, *, row_scales_l1=None, row_start=None):
+def _projection_dot_math(cfg, p, projections, input_tiles):
   """TRISC1: for each row, multiply weight and x tiles, then sum all products.
 
   The FPU multiplies a (weight, x) tile pair elementwise into Dst tile 0. The
@@ -494,7 +466,7 @@ def _projection_dot_math(cfg, p, projections, input_tiles, *, row_scales_l1=None
                     dest_carry_to_carry=True, fidelity_clear=True)
   # One MOP run multiplies one 16x16 face (BF16: 2 fidelity phases).
   fpu._mop.configure(LoopTemplate(
-    outer=cfg.fp8_fidelity if projections[0][0].dtype is DType.FP8 else 2, inner=2, loop=TT.TTELWMUL(0, 0, 0, 0, 0),
+    outer=1 if projections[0][0].dtype is DType.FP8 else 2, inner=2, loop=TT.TTELWMUL(0, 0, 0, 0, 0),
     last=TT.TTELWMUL(3, 0, 0, 3, 0),
     outer_last=TT.TTELWMUL(0, 0, 0, 2, 0),
   ))
@@ -526,23 +498,8 @@ def _projection_dot_math(cfg, p, projections, input_tiles, *, row_scales_l1=None
       # Reduce the 32 lane sums to one value (stored last, after FP8 scaling).
       for word in finalize.words[:-2]: sfpu._issue(word)
       if projections[0][0].dtype.is_fp8:
-        # FP8: undo the weight/input quantization, y *= scale (per tensor, or per row for the LM head).
-        if row_scales_l1 is None:
-          _load_scale(p, f"output_scale_{projection_index}")
-        else:
-          stall(p.trisc1, Stall.SYNC, Wait.MATH | Wait.SFPU)
-          with p.trisc1.scope():
-            address, offset, word = p.trisc1.reg(3)
-            if row_start is None: p.trisc1.li(offset, 0)
-            else: p.trisc1.read(offset, p.param_addr(row_start))
-            p.trisc1.andi(offset, offset, 511)
-            p.trisc1.add(offset, offset, local_row)
-            p.trisc1.slli(offset, offset, 3)
-            p.trisc1.li(address, row_scales_l1)
-            p.trisc1.add(address, address, offset)
-            for part in range(2):
-              p.trisc1.lw(word, address, part * 4)
-              p.trisc1.write(TensixMMIO.INSTRN_BUF_BASE, word)
+        # FP8: undo the per-tensor weight/input quantization, y *= scale.
+        _load_scale(p, f"output_scale_{projection_index}")
         words = []
         _sfpu_mul(words, LReg.L0, LReg.L6, LReg.L0)
         for word in words: sfpu._issue(word)
@@ -867,7 +824,7 @@ def _scale_input(p, tiles):
 GQA_ROW_CHUNKS = (0, 2, 16, 18)
 
 
-def attention(cfg, q, key_cache, value_cache, context, *, rope_inputs=None, attention_cores=None, partial_output=None):
+def attention(cfg, q, key_cache, value_cache, context, *, rope_inputs=None, partial_output=None):
   """Build the fused attention launch, one program variant per attention core.
 
     rope_inputs     (q_compact, k_compact, v_compact, cos, sin): rotate the new
@@ -877,8 +834,7 @@ def attention(cfg, q, key_cache, value_cache, context, *, rope_inputs=None, atte
                     every fourth cache block and write FP32 (O, m, l) state for
                     attention_merge instead of the final context.
   """
-  attention_cores = cfg.attention_cores if attention_cores is None else attention_cores
-  if attention_cores not in (8, 16, 32): raise ValueError("attention cores must be 8, 16, or 32")
+  attention_cores = cfg.attention_cores
   if partial_output is not None:
     if any(buffer.dtype is not DType.BF16 for buffer in (q, key_cache, value_cache, context)):
       raise ValueError("split attention requires BF16 queries, caches, and context")
@@ -1091,17 +1047,16 @@ def _attention_program(cfg, q: Buffer, key_cache: Buffer, value_cache: Buffer, c
 
     for block in p.trisc1.range(block_count):
       for feature in range(cfg.head_tiles):
-        p.fpu.matmul(dst_tile=0, accumulate=feature != 0, right_transpose=True, fidelity=cfg.fp8_fidelity if key_cache.dtype.is_fp8 else 2)
+        p.fpu.matmul(dst_tile=0, accumulate=feature != 0, right_transpose=True, fidelity=2)
       unmasked = p.trisc1._new_label("gqa_score_unmasked")
       p.trisc1.bne(block, last_block, unmasked)
       p.fpu.binary("add", dst_tile=0, accumulate=True)
       p.trisc1.label(unmasked)
       _select_dst_tile(p.sfpu, 0)
       _softmax_online_update(cfg, p.sfpu, row_chunks)
-      if key_cache.dtype.is_fp8: p.sfpu.map(_round_fp8_program(), tile=0)
       p.sfpu.publish()
       for tile in range(1, cfg.head_tiles + 1):
-        p.fpu.matmul(dst_tile=tile, accumulate=True, fidelity=cfg.fp8_fidelity if key_cache.dtype.is_fp8 else 2)
+        p.fpu.matmul(dst_tile=tile, accumulate=True, fidelity=2)
 
     # c. O = O / l (split attention leaves this to attention_merge).
     _select_dst_tile(p.sfpu, 0)
@@ -1111,8 +1066,6 @@ def _attention_program(cfg, q: Buffer, key_cache: Buffer, value_cache: Buffer, c
           _issue_sfpu_program(p.sfpu, _softmax_normalize_program(
             output_offset=output + chunk, sum_offset=(cfg.head_tiles + 2) * 64 + chunk,
           ))
-      if context.dtype.is_fp8:
-        for tile in range(1, cfg.head_tiles + 1): p.sfpu.map(_round_fp8_program(), tile=tile)
     p.sfpu.publish()
 
   # TRISC2: per block, pack the probabilities for the P V matmul; at the end, pack O.
@@ -1168,10 +1121,7 @@ def _attention_rope(cfg, p, inputs, key_cache, value_cache, start_pos, head, que
   """
   q, k, v, cos, sin = inputs
   operands = p.cb(DType.BF16, depth=4)
-  fp8 = query_cb.dtype.is_fp8
-  result = p.cb(query_cb.dtype, depth=2 if fp8 else 1)
-  value_operand = p.cb(DType.BF16, depth=1) if fp8 else None
-  packed_offset = lambda index: _bf16_tile_byte_offset(index) // (2 if fp8 else 1)
+  result = p.cb(DType.BF16, depth=1)
   ready = p.cb(DType.BF16, depth=1)
   # Fixed allocation sizes make CB addresses identical in all head variants.
   # A TP shard has fewer KV rows per worker, so one head spans more tiles.
@@ -1241,13 +1191,9 @@ def _attention_rope(cfg, p, inputs, key_cache, value_cache, start_pos, head, que
             l1.copy_words(p.brisc, table,
                           operands.addr + operand * operands.tile_size + _bf16_tile_byte_offset(group * cfg.head_dim + i),
                           8, source_offset=offset, unroll=8)
-  if fp8:
-    l1.copy_words(p.brisc, v_head, value_operand.addr, v.tile_size // 4)
-    CB.push_back(p.brisc, value_operand)
   CB.push_back(p.brisc, operands, 4)
   for _ in range(4): p.unpack.move(operands, UnpackTarget.SRCA)
-  if fp8: p.unpack.move(value_operand, UnpackTarget.SRCA)
-  p.fpu.copy_a_tiles(dst_tiles=range(5 if fp8 else 4))
+  p.fpu.copy_a_tiles(dst_tiles=range(4))
   sfpu = p.sfpu.program()
   x = sfpu.load(offset=0)
   rotated = sfpu.load(offset=64)
@@ -1258,22 +1204,20 @@ def _attention_rope(cfg, p, inputs, key_cache, value_cache, start_pos, head, que
   sfpu.round_bf16(value, into=value)
   sfpu.store(value, offset=0)
   p.sfpu.map(sfpu.finish(), tile=0)
-  if fp8:
-    for tile in (0, 4): p.sfpu.map(_round_fp8_program(), tile=tile)
   p.sfpu.publish()
-  p.pack.move_tiles(result, tiles=(0, 4) if fp8 else (0,))
-  CB.wait_front(p.ncrisc, result, 2 if fp8 else 1)
+  p.pack.move_tiles(result, tiles=(0,))
+  CB.wait_front(p.ncrisc, result)
   _zero_l1_words(p.ncrisc, query_cb.addr, query_cb.size // 4)
   for group in range(group_size):
     for half in range(cfg.head_tiles):
       for face in range(2):
         l1.copy_words(p.ncrisc,
-                      result.addr + packed_offset(group * cfg.head_dim + half * 32 + face * 16),
-                      query_cb.addr + half * query_cb.tile_size + packed_offset(group * 32 + face * 16),
-                      4 if fp8 else 8, unroll=4 if fp8 else 8)
-  _append_cache_rows(cfg, p, result.addr + packed_offset(group_size * cfg.head_dim), result.addr + result.tile_size if fp8 else v_head,
+                      result.addr + _bf16_tile_byte_offset(group * cfg.head_dim + half * 32 + face * 16),
+                      query_cb.addr + half * query_cb.tile_size + _bf16_tile_byte_offset(group * 32 + face * 16),
+                      8, unroll=8)
+  _append_cache_rows(cfg, p, result.addr + _bf16_tile_byte_offset(group_size * cfg.head_dim), v_head,
                      key_cache, value_cache, start_pos, head // (4 // group_size))
-  CB.pop_front(p.ncrisc, result, 2 if fp8 else 1)
+  CB.pop_front(p.ncrisc, result)
   CB.push_back(p.ncrisc, ready)
   # All dependencies are within this KV group; there is no global barrier.
   CB.wait_front(p.brisc, ready)

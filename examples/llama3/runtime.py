@@ -79,12 +79,9 @@ LAYER_PROJECTIONS = {               # name: (checkpoint tensor, (rows, columns) 
 class Llama3Decode:
   """Resident-weight, batch-1 decode runtime for one Llama3Config."""
 
-  def __init__(self, cfg: Llama3Config, device_index=0, *, safetensor_path=None, attention_cores=None):
+  def __init__(self, cfg: Llama3Config, device_index=0, *, safetensor_path=None):
     self.cfg = cfg
     safetensor_path = cfg.checkpoint if safetensor_path is None else safetensor_path
-    attention_cores = cfg.attention_cores if attention_cores is None else attention_cores
-    if attention_cores not in (8, 16, 32): raise ValueError("attention cores must be 8, 16, or 32")
-    self.attention_cores = attention_cores
     from st import Safetensor
     checkpoint = self._checkpoint = Safetensor(safetensor_path)
     # FP8: the published checkpoint stores one input and one weight scale per projection.
@@ -160,22 +157,14 @@ class Llama3Decode:
     self.embedding_weight = global_buffer("e2e_embedding_weight", DType.BF16, (cfg.vocab_size, cfg.embed_dim), tilized=False)
 
     # LM head. 1B ties it to the embedding table; 8B stores its own projection.
+    # The LM head stays BF16 in FP8 mode: the checkpoint stores it in BF16.
     self.lm_storage = lm_storage = self.embedding_weight if cfg.model == "1b" else global_buffer(
-      "e2e_lm_storage", cfg.lm_head_dtype, (cfg.vocab_size, cfg.embed_dim), tilized=False)
-    if lm_storage.dtype.is_fp8 and lm_storage.banks == 8:
-      self.lm_storage = lm_storage = PagedProjectionWeight.from_buffer(lm_storage, cfg.fp8_page_tiles)
+      "e2e_lm_storage", DType.BF16, (cfg.vocab_size, cfg.embed_dim), tilized=False)
     self.lm_weight = Buffer(
       "e2e_lm_weight", lm_storage.addr, lm_storage.dtype, lm_storage.shape,
       0, cores, lm_storage.banks, global_address=True,
       tilized=False, dram_endpoints=lm_storage.dram_endpoints,
     )
-    if isinstance(lm_storage, PagedProjectionWeight):
-      self.lm_weight = PagedProjectionWeight.from_buffer(self.lm_weight, lm_storage.page_tiles)
-    # FP8 LM head: two SFPLOADI instruction words per vocabulary row (its scale).
-    self.lm_row_scales = global_buffer(
-      "e2e_lm_row_scales", DType.U32,
-      (((cfg.vocab_size * 2 + 1023) // 1024 + 1) * 1024,), None, tilized=False,
-    ) if lm_storage.dtype.is_fp8 else None
 
     # RoPE tables, one row of head_dim values per position.
     self.cos = global_buffer("e2e_rope_cos", DType.BF16, (cfg.max_tokens, cfg.head_dim), None, tilized=False)
@@ -216,8 +205,8 @@ class Llama3Decode:
         weights[name] = weight_buffer(f"{prefix}_{name}", cfg.weight_dtype, (getattr(cfg, rows), getattr(cfg, columns)))
       self.layers.append({
         "weights": weights,
-        "key_cache": global_buffer(f"{prefix}_key_cache", cfg.attention_dtype, cfg.kv_cache_shape),
-        "value_cache": global_buffer(f"{prefix}_value_cache", cfg.attention_dtype, cfg.kv_cache_shape),
+        "key_cache": global_buffer(f"{prefix}_key_cache", DType.BF16, cfg.kv_cache_shape),
+        "value_cache": global_buffer(f"{prefix}_value_cache", DType.BF16, cfg.kv_cache_shape),
       })
     self.final_norm = global_buffer("e2e_final_norm", DType.BF16, (cfg.embed_dim,), None, tilized=False)
 
@@ -228,10 +217,7 @@ class Llama3Decode:
     self._upload(self.embedding_weight, "model.embed_tokens.weight")
 
     if self.lm_storage is not self.embedding_weight:
-      if self.lm_storage.dtype.is_fp8:
-        self._upload_fp8_lm_head()
-      else:
-        self._upload(self.lm_storage, "lm_head.weight")
+      self._upload(self.lm_storage, "lm_head.weight")
 
     started = time.perf_counter()
     cos_values, sin_values = rope_table(cfg)
@@ -242,7 +228,7 @@ class Llama3Decode:
     self._stage_upload(self.sin, sin_data)
     del cos_values, sin_values
 
-    cache_zeros = bytes(math.prod(cfg.kv_cache_shape) * cfg.attention_dtype.itemsize)
+    cache_zeros = bytes(math.prod(cfg.kv_cache_shape) * DType.BF16.itemsize)
     for index, layer in enumerate(self.layers):
       weights = layer["weights"]
       prefix = f"model.layers.{index}"
@@ -286,29 +272,6 @@ class Llama3Decode:
     self._uploads.write(buffer, data)
     self.profile["dram_upload_bytes"] += buffer.size
 
-  def _upload_fp8_lm_head(self):
-    """FP8 LM head: quantize the BF16 checkpoint rows with one scale per row."""
-    from tools.llama_fp8 import quantize_rows
-    info = self._checkpoint.info("lm_head.weight")
-    if info.dtype != "BF16" or info.shape != self.lm_storage.shape:
-      raise ValueError("LM head quantization requires matching BF16 checkpoint weights")
-    started = time.perf_counter()
-    rows, width = info.shape
-    encoded = np.empty((rows, width), dtype=np.uint8)
-    scales = np.empty(rows, dtype=np.float32)
-    for first in range(0, rows, 1024):
-      count = min(1024, rows - first)
-      raw = bytearray(count * width * 2)
-      self._checkpoint.readinto("lm_head.weight", raw, first * width * 2)
-      values = (np.frombuffer(raw, dtype="<u2").astype(np.uint32) << 16).view(np.float32).reshape(count, width)
-      encoded[first:first + count], scales[first:first + count] = quantize_rows(values)
-    words = np.zeros(self.lm_row_scales.size // 4, dtype="<u4")
-    for row, scale in enumerate(scales):
-      words[2 * row:2 * row + 2] = kernels._sfpu_float_words(LReg.L6, scale)
-    self.profile["weight_prepare_s"] += time.perf_counter() - started
-    self._stage_upload(self.lm_storage, memoryview(encoded).cast("B"))
-    self._stage_upload(self.lm_row_scales, memoryview(words).cast("B"))
-
   # 3. Programs: one per kernel, compiled once against layer 0's buffers
 
   def _build_programs(self):
@@ -342,7 +305,6 @@ class Llama3Decode:
         cfg, self.q_heads, self.layers[0]["key_cache"],
         self.layers[0]["value_cache"], self.context,
         rope_inputs=(self.q_compact, self.k_compact, self.v_compact, self.cos, self.sin),
-        attention_cores=self.attention_cores,
       ),
       # hidden = silu(rmsnorm(x_b) @ Wgate) * (rmsnorm(x_b) @ Wup)
       "gate": kernels.projection(cfg, self.x_b, (
@@ -359,7 +321,7 @@ class Llama3Decode:
       ),
       # logits = rmsnorm(x_a) @ Wlm
       "lm": kernels.projection(
-        cfg, self.x_a, ((self.lm_weight, self.logits),), norm_weight=self.final_norm, row_scales=self.lm_row_scales,
+        cfg, self.x_a, ((self.lm_weight, self.logits),), norm_weight=self.final_norm,
       ),
       # next token = argmax(logits), appended to token_history
       "argmax": kernels.argmax(
@@ -424,7 +386,7 @@ class Llama3Decode:
 
   def _projection_scales(self, layer, names):
     """FP8: per-layer scale parameters for a fused projection launch (BF16: none)."""
-    if not getattr(self, "published_fp8", False): return {}
+    if not self.published_fp8: return {}
     prefixes = [f"model.layers.{layer}.{name}" for name in names]
     inputs = [self.checkpoint_scales[f"{name}.input_scale"] for name in prefixes]
     if any(value != inputs[0] for value in inputs):
@@ -458,7 +420,7 @@ class Llama3Decode:
     if not 0 <= position < cfg.max_tokens - 1:
       raise ValueError(f"decode position must be in 0..{cfg.max_tokens - 2}")
     started = time.perf_counter_ns()
-    use_split = self.attention_partials is not None and position >= 511
+    use_split = self.attention_partials is not None and position >= cfg.split_attention_from
     self.decode_trace = self.split_decode_trace if use_split else self.short_decode_trace
     self.decode_launch_count = self.split_decode_launch_count if use_split else self.short_decode_launch_count
     self.decode_trace.replay({

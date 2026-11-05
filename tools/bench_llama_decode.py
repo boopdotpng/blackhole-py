@@ -7,7 +7,6 @@ Run via tt-device-queue run --device 0 -- ../.venv/bin/python -m
 import argparse
 import importlib.util
 import json
-import os
 from pathlib import Path
 import sys
 import time
@@ -21,8 +20,6 @@ def main():
   parser.add_argument('--source', type=Path)
   parser.add_argument('--model', default='8b', choices=('1b', '8b'))
   parser.add_argument('--dtype', default='fp8', choices=('bf16', 'fp8'))
-  parser.add_argument('--lm-head-dtype', choices=('bf16', 'fp8'))
-  parser.add_argument('--split-attention', action=argparse.BooleanOptionalAction, default=None)
   parser.add_argument('--device', type=int, default=0)
   parser.add_argument('--prompt', default='Write a story about a robot learning to paint.')
   parser.add_argument('--context', type=int, help='repeat prompt tokens to this prefix length')
@@ -31,8 +28,6 @@ def main():
   parser.add_argument('--logits', action='store_true', help='save final-position logits beside JSON')
   parser.add_argument('--output', required=True, type=Path)
   args = parser.parse_args()
-  if args.lm_head_dtype is not None: os.environ['LLAMA_LM_HEAD_DTYPE'] = args.lm_head_dtype
-  if args.split_attention is not None: os.environ['LLAMA_SPLIT_ATTENTION'] = str(int(args.split_attention))
   if args.steps < 1: parser.error('steps must be positive')
   if args.source:
     spec = importlib.util.spec_from_file_location('llama_benchmark_source', args.source)
@@ -44,8 +39,7 @@ def main():
   if hasattr(module, 'Llama3Config'):
     cfg = module.Llama3Config.create(args.model, args.dtype)
     make_runtime = lambda: module.Llama3Decode(cfg, args.device)
-    max_tokens, info = cfg.max_tokens, dict(lm_head_dtype=cfg.lm_head_dtype.name.lower(),
-                                            split_attention=cfg.split_attention, weight_page_tiles=cfg.fp8_page_tiles)
+    max_tokens, info = cfg.max_tokens, dict(split_attention=cfg.split_attention, weight_page_tiles=cfg.fp8_page_tiles)
   else:  # pre-package examples/llama3.py, for --source comparisons
     kernels = cfg = module.Llama3Kernels(args.model, args.dtype)
     make_runtime = lambda: module.Llama3Decode(device_index=args.device, kernels=kernels)

@@ -10,19 +10,21 @@ steps marked ``# FP8`` in kernels.py.
   layers              16             32             32
   mlp_dim             8192           14336          14336
   rope_factor         32.0           1.0            1.0
-  LM head             = embedding    own weight     own weight (BF16, or FP8 per-row)
+  LM head             = embedding    own weight     own weight (BF16)
   projection_cores    88             88             96
   attention_cores     16             32             32
   weight_dtype        BF16           BF16           FP8 (E4M3, per-tensor scales)
-  8B-only options     -              split          FP8 KV cache, FP8 LM head
-                                     attention
+  split attention     -              from 511       from 511
+
+Split attention (8B): from position 511 on, four workers per KV head each
+attend to every fourth cache block, then a merge launch combines their FP32
+(O, m, l) states. Shorter positions replay the unsplit trace.
 
 Shared by all: 32 query heads, 8 KV heads (GQA groups of 4), 128256-token
-vocabulary, 8192-token context, KV cache in 32-token blocks.
+vocabulary, 8192-token context, BF16 KV cache in 32-token blocks.
 """
 
 from dataclasses import dataclass
-import os
 
 from program import DType
 
@@ -44,16 +46,8 @@ class Llama3Config:
   # Placement on the chip
   projection_cores: int        # workers that split every projection's output rows
   attention_cores: int         # 8/16/32 workers; each owns 32/cores query heads
-  noc_split_x: int             # without port rotation: columns >= x read on NoC 1
-  rotate_dram_ports: bool      # read weights on NoC 0 over all 3 ports per DRAM bank
 
-  # Formats (all BF16 except in 8B FP8 mode)
-  weight_dtype: DType
-  attention_dtype: DType       # KV cache and attention operands
-  lm_head_dtype: DType
-  fp8_fidelity: int            # FPU fidelity phases for FP8 operands
-  fp8_page_tiles: int          # FP8 weights: 1024-element tiles per DRAM page
-  split_attention: bool        # 8B BF16: four workers per KV head for long contexts
+  weight_dtype: DType          # BF16, or FP8 (E4M3, per-tensor scales) in 8B FP8 mode
 
   vocab_size = 128256
   q_heads = 32
@@ -64,46 +58,27 @@ class Llama3Config:
   rope_low_freq_factor = 1.0
   rope_high_freq_factor = 4.0
   rope_original_max_position_embeddings = 8192
+  # Projections read weights on NoC 0 and rotate across all three ports of
+  # each DRAM bank (~483 -> 498 GB/s). The down projection instead splits
+  # cores spatially: columns >= 7 read on NoC 1, about half the workers,
+  # which measured fastest for it (8B FP8 down: 40% on NoC 1 154 us,
+  # 47% 142 us, 56% 158 us).
+  noc_split_x = 7
+  fp8_page_tiles = 2           # FP8 weights: 1024-element tiles per 2 KiB DRAM page
+  split_attention_from = 511   # first position decoded with split attention
 
   @classmethod
-  def create(cls, model="1b", dtype="bf16", *, projection_cores=None, attention_dtype=None,
-             fp8_fidelity=None, noc_split_x=None, lm_head_dtype=None, split_attention=None):
-    """Build a config; unset switches come from LLAMA_* environment variables."""
-    env = os.environ.get
+  def create(cls, model="1b", dtype="bf16", *, projection_cores=None):
     if model not in ("1b", "8b"): raise ValueError("model must be 1b or 8b")
     if dtype not in ("bf16", "fp8"): raise ValueError("dtype must be bf16 or fp8")
     if model == "1b" and dtype == "fp8": raise ValueError("FP8 requires the published 8B checkpoint")
-    fp8 = dtype == "fp8"
-
-    if projection_cores is None and env("LLAMA_PROJECTION_CORES") is not None:
-      projection_cores = int(env("LLAMA_PROJECTION_CORES"))
-    if projection_cores is None: projection_cores = 96 if fp8 else 88
+    # DRAM bandwidth saturates around 88 cores; each extra core re-reads the
+    # activation. 104 and 117 measured slower on both models.
+    if projection_cores is None: projection_cores = 96 if dtype == "fp8" else 88
     if projection_cores not in (80, 88, 96, 104, 112, 117):
       raise ValueError("projection cores must be 80, 88, 96, 104, 112, or 117")
-    if noc_split_x is None and env("LLAMA_NOC_SPLIT_X") is not None:
-      noc_split_x = int(env("LLAMA_NOC_SPLIT_X"))
-    # Columns 1-7 and 10-14 hold the workers, so x >= 7 puts about half the
-    # cores on each NoC. Down is fastest when the split is even, for both dtypes
-    # (8B FP8 down: 40% on NoC 1 154 us, 47% 142 us, 56% 158 us).
-    if noc_split_x is None: noc_split_x = 7
-
-    if attention_dtype is None: attention_dtype = env("LLAMA_ATTENTION_DTYPE", "bf16") if fp8 else "bf16"
-    if attention_dtype not in ("bf16", "fp8"): raise ValueError("attention dtype must be bf16 or fp8")
-    if not fp8 and attention_dtype == "fp8": raise ValueError("FP8 attention requires FP8 mode")
-    if fp8_fidelity is None: fp8_fidelity = int(env("LLAMA_FP8_FIDELITY", "1")) if fp8 else 1
-    if fp8_fidelity not in (1, 2): raise ValueError("FP8 fidelity must be 1 or 2")
-    lm_head_dtype = lm_head_dtype or env("LLAMA_LM_HEAD_DTYPE", "bf16")
-    if lm_head_dtype not in ("bf16", "fp8"): raise ValueError("LM head dtype must be bf16 or fp8")
-    if lm_head_dtype == "fp8" and (model != "8b" or not fp8):
-      raise ValueError("FP8 LM head requires 8B FP8 mode")
-    fp8_page_tiles = int(env("LLAMA_FP8_PAGE_TILES", "2"))
-    if fp8_page_tiles not in (1, 2, 4): raise ValueError("FP8 page tiles must be 1, 2, or 4")
-    if split_attention is None: split_attention = env("LLAMA_SPLIT_ATTENTION", "0") == "1"
-    if split_attention and (model != "8b" or attention_dtype != "bf16"):
-      raise ValueError("split attention requires 8B with BF16 attention")
 
     small = model == "1b"
-    as_dtype = lambda name: DType.FP8 if name == "fp8" else DType.BF16
     return cls(
       model=model, dtype=dtype,
       checkpoint="weights/llama3-1b" if small else f"weights/llama3-8b-{dtype}",
@@ -115,15 +90,11 @@ class Llama3Config:
       eos_token_ids=frozenset((128001, 128008, 128009) if small else (128001, 128009)),
       projection_cores=projection_cores,
       attention_cores=16 if small else 32,
-      noc_split_x=noc_split_x,
-      rotate_dram_ports=env("LLAMA_DRAM_PORTS", "1") != "0",
-      weight_dtype=as_dtype(dtype),
-      attention_dtype=as_dtype(attention_dtype),
-      lm_head_dtype=as_dtype(lm_head_dtype),
-      fp8_fidelity=fp8_fidelity,
-      fp8_page_tiles=fp8_page_tiles,
-      split_attention=bool(split_attention),
+      weight_dtype=DType.FP8 if dtype == "fp8" else DType.BF16,
     )
+
+  @property
+  def split_attention(self): return self.model == "8b"   # long contexts: four workers per KV head
 
   # Derived sizes. A "tile" is 1024 elements (32x32), the unit of every DRAM
   # page, circular buffer slot, and FPU operation.

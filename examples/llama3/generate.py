@@ -11,7 +11,7 @@ from examples.llama3.runtime import Llama3Decode
 
 
 def generate(cfg, prompt="The capital of France is", steps=None, *, safetensor_path=None,
-             tokenizer_path=None, profile=False, device_index=0, attention_cores=None):
+             tokenizer_path=None, profile=False, device_index=0):
   """Stream a greedy chat reply. The prompt runs through decode one token at a time."""
   safetensor_path = cfg.checkpoint if safetensor_path is None else safetensor_path
   if tokenizer_path is None:
@@ -42,7 +42,7 @@ def generate(cfg, prompt="The capital of France is", steps=None, *, safetensor_p
   elif steps > max_steps:
     raise ValueError("prompt plus generation exceeds the 8192-token cache")
 
-  runtime = Llama3Decode(cfg, device_index, safetensor_path=safetensor_path, attention_cores=attention_cores)
+  runtime = Llama3Decode(cfg, device_index, safetensor_path=safetensor_path)
   generation_seconds = 0.0
   generation_profiles = []
   generated = []
@@ -128,26 +128,18 @@ def main(argv=None):
   parser.add_argument('--model', choices=('1b', '8b'), default='1b')
   parser.add_argument('--dtype', choices=('bf16', 'fp8'), default='bf16',
                       help='checkpoint weight format; FP8 supports 8B only')
-  parser.add_argument('--lm-head-dtype', choices=('bf16', 'fp8'),
-                      help='8B FP8 only: optionally quantize the LM head per row (may change greedy tokens)')
-  parser.add_argument('--split-attention', action=argparse.BooleanOptionalAction, default=None,
-                      help='8B BF16 attention: split long sequences across four workers per KV head')
   parser.add_argument('--prompt', default='The capital of France is',
                       help='generate from this prompt (an empty prompt is valid)')
   parser.add_argument('--steps', type=int, help='generation cap; default runs until EOS/context limit')
   parser.add_argument('--safetensor', help='checkpoint file/directory; defaults to weights/llama3-<model>[-<dtype>]')
   parser.add_argument('--tokenizer', help='tokenizer directory; defaults to the checkpoint path')
   parser.add_argument('--device', type=int, default=0, help='Tenstorrent device index (default: 0)')
-  parser.add_argument('--attention-cores', type=int, choices=(8, 16, 32),
-                      help='default: 16 for 1B, 32 for 8B')
   parser.add_argument('--profile', action='store_true', help='print startup, upload, device, and host timing')
   args = parser.parse_args(argv)
   try:
-    cfg = Llama3Config.create(args.model, args.dtype, lm_head_dtype=args.lm_head_dtype,
-                              split_attention=args.split_attention)
-    if args.steps is not None and args.steps < 1:
-      raise ValueError('steps must be positive')
+    cfg = Llama3Config.create(args.model, args.dtype)
   except ValueError as error:
     parser.error(str(error))
+  if args.steps is not None and args.steps < 1: parser.error('steps must be positive')
   generate(cfg, args.prompt, args.steps, safetensor_path=args.safetensor, tokenizer_path=args.tokenizer,
-           profile=args.profile, device_index=args.device, attention_cores=args.attention_cores)
+           profile=args.profile, device_index=args.device)

@@ -11,7 +11,6 @@ Explicit ELWMUL remains the default: measured MOP setup/dispatch costs more
 than it saves for these short vectors (see boop-docs measurements/rmsnorm/elwmul-vs-mop.md).
 fidelity=3 omits the low*low BF16 product phase; HiFi4 remains the default.
 """
-import os
 from ttko.isa import Tensix as TT
 from firmware.consts import TensixMMIO
 from program import DType
@@ -25,14 +24,6 @@ from ttko.unpack import UnpackTarget, _BASE, _unpacr
 BOUNDARY_MODE = None
 REPLAY_PREFIX = 0
 BOUNDARY_PADDING = 0
-
-
-def enabled():
-  """Keep the faster measured decode default until the boundary regression is fixed."""
-  mode = os.environ.get('LLAMA_RMSNORM', 'reference')
-  if mode not in ('reference', 'hybrid'):
-    raise ValueError('LLAMA_RMSNORM must be reference or hybrid')
-  return mode == 'hybrid'
 
 
 def _elwmul_template(dst_row, fidelity=4):

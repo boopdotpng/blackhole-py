@@ -29,18 +29,18 @@ Open **http://127.0.0.1:8000** (or `http://<server-ip>:8000`). Use `--host` and 
 
 ## Performance
 
-Decode on a p150a (card 0), 2026-11-05, `tools.bench_llama_decode`. Roofline: weights + LM head + KV cache read once per token at 512 GB/s.
+Decode on a p150a (card 0), 2026-11-05, `tools.bench_llama_decode`, mean of 64 tokens. "Short" is the default
+story prompt (20 tokens on 8B, 45 on 1B's chat template); "4K" decodes after a 4096-token prefix. Each cell is ms/token · tok/s · share of the DRAM roofline
+(weights + LM head + KV cache read once per token at 512 GB/s).
 
-| Model | Context | ms/token | tok/s | DRAM roofline |
-| --- | ---: | ---: | ---: | ---: |
-| 1B BF16 | short | 6.23 | 160.4 | 77% (of 207.0 tok/s) |
-| 1B BF16 | 4096 | 8.64 | 115.7 | 59% (of 196.5 tok/s) |
-| 8B FP8 | short | 19.27 | 51.9 | 81% (of 63.7 tok/s) |
-| 8B FP8 | 4096 | 28.07 | 35.6 | 60% (of 59.8 tok/s) |
-| 8B BF16 | short | 33.11 | 30.2 | 89% (of 34.1 tok/s) |
-| 8B BF16 | 4096 | 41.91 | 23.9 | 73% (of 32.9 tok/s) |
+| Model | Short | 4K context |
+| --- | ---: | ---: |
+| 1B BF16 | 6.23 ms · 160.4 tok/s · 78% | 8.65 ms · 115.6 tok/s · 59% |
+| 8B FP8 | 19.27 ms · 51.9 tok/s · 81% | 22.20 ms · 45.1 tok/s · 75% |
+| 8B BF16 | 33.11 ms · 30.2 tok/s · 89% | 36.06 ms · 27.7 tok/s · 84% |
 
-Opt-in FP8 modes (`--lm-head-dtype fp8`, `--split-attention`) are faster but change numerics; see [fp8-decode](../boop-docs/measurements/llama/fp8-decode.md).
+From position 511, 8B splits each KV head's cache across four workers and merges the partial softmax states
+(split-KV / Flash-Decoding). Shorter positions use one worker per query head.
 
 ## Docs
 
