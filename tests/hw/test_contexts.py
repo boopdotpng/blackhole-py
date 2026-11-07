@@ -60,8 +60,8 @@ def _images(ctx, write_contexts=True, *, trisc0=None, edit=None, extra=()):
   for n in range(4 if write_contexts else 0):
     c = _context(n) if edit is None or n != 1 else edit(_context(n))
     for (space, _, addr), (value, _) in c.writes().items():
-      assert space is Space.SHARED
-      k.write(TensixMMIO.CFG_BASE + 4 * addr, value)
+      assert space is Space.MMIO
+      k.write(addr, value)
   if extra: apply(k, *extra)
   _set_dst_position(k, 0, 0)
   k.emit(TT.TTSETADCXX(4, 15, 0))
@@ -110,7 +110,7 @@ def _unpack_with_context(ctx, step="full", base=None):
     apply(k, UnpackerContext(unpacker=0, context=ctx, l1_base=l1_addr(SOURCES[ctx]), dest_address=64, tile_x_dim=256,
                              offset_address=0, shift_amount=0, disable_zero_compress=True, to_dest=True))
     # no second PC_UNPACK_SYNC commit here: a kernel that commits twice hangs the next launch on this core.
-    # Blackhole Auto TTSync already orders these RISC config writes before the UNPACR.
+    # ordered before the UNPACR by emit_unpack_to_dst's STALLWAIT(UNPACK, TRISC_CFG) (Auto TTSync is off)
   def unpacr(engine, *, to_dst=False):  # blackhole-py already sets multi-context mode (OvrdThreadId) with context 0
     word = original_unpacr(engine, to_dst=to_dst)  # keep ttko's TensixWord type: Asm.emit treats plain ints as RISC-V
     return type(word)(int(word) | (ctx << 10 if step == "full" else 0))

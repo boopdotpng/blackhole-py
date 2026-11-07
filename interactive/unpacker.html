@@ -1,0 +1,371 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Unpacker Explorer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans+Condensed:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="common.css">
+<style>
+  .banks { display: flex; gap: 14px; flex-wrap: wrap; align-items: flex-start; }
+  .bank h3 { font-size: 12.5px; margin-bottom: 4px; display: flex; gap: 6px; align-items: center; }
+  .owner { font: 10.5px var(--font-mono); padding: 0 6px; border-radius: 3px; }
+  .owner.unpacker { background: color-mix(in oklab, var(--ok) 18%, var(--panel)); color: var(--ok); }
+  .owner.math { background: var(--warn-soft); color: var(--warn); }
+  .owner.next { background: var(--hot-soft); color: var(--hot); }
+  .tabs { display: flex; gap: 2px; background: var(--sunk); border-radius: var(--r); padding: 2px; }
+  .tabs button { border: 0; background: transparent; padding: 2px 10px; border-radius: 4px; cursor: pointer; color: var(--muted); font-family: var(--font-head); font-weight: 600; }
+  .tabs button[aria-selected=true] { background: var(--panel); color: var(--ink); box-shadow: 0 0 0 1px var(--line); }
+</style>
+</head>
+<body>
+<div class="topbar">
+  <div class="title"><h1>Unpacker Explorer</h1><span class="hint">Blackhole · L1 → SrcA / SrcB / Dest · UNPACR</span></div>
+  <nav aria-label="Pages"><a href="index.html">Guide</a><a href="unpacker.html" aria-current="page">Unpacker</a><a href="packer.html">Packer</a></nav>
+  <div class="stepper" id="stepper"></div>
+</div>
+
+<main class="bench">
+  <section class="col col-prog">
+    <div class="panel">
+      <header><h2>Program</h2><select id="preset" aria-label="Example programs"></select></header>
+      <p class="hint" id="preset-desc"></p>
+      <textarea class="prog" id="prog" spellcheck="false" aria-label="Program"></textarea>
+      <div class="errors" id="errors"></div>
+      <details class="hint" style="margin-top:6px"><summary>Instruction reference</summary><div id="opref"></div></details>
+    </div>
+    <div class="panel"><header><h2>Instructions</h2><span class="hint">click to jump</span></header><div class="steplist" id="steps"></div></div>
+    <div class="panel">
+      <header><h2>Counters after this step</h2></header>
+      <div id="counters"></div>
+      <dl class="kv" id="unpstate" style="margin-top:8px"></dl>
+    </div>
+    <div class="panel"><header><h2>What this step did</h2></header><div class="trace" id="trace"></div></div>
+  </section>
+
+  <section class="col col-view">
+    <div class="panel">
+      <header><h2>Data path</h2></header>
+      <div class="stage-strip" id="stages"></div>
+    </div>
+    <div class="panel">
+      <header><h2>L1 input</h2><div class="toolbar"><label>bytes as <select id="l1-mode"><option value="hex">hex</option><option value="row">source row</option><option value="none">colour only</option></select></label></div></header>
+      <div class="legend"><span><i style="background:oklch(var(--dl) var(--dc) 40deg)"></i>datum bytes (colour = position in its tile)</span><span><i style="background:color-mix(in oklab, var(--accent) 22%, var(--panel))"></i>exponent / row start index</span><span><i style="background:color-mix(in oklab, var(--warn) 28%, var(--panel))"></i>zero counts</span><span><i style="box-shadow:inset 0 0 0 2px var(--hot)"></i>read by this step</span></div>
+      <div class="grid-wrap" id="l1" style="margin-top:6px;max-height:560px;overflow:auto"></div>
+    </div>
+    <div class="panel">
+      <header>
+        <h2>Register files</h2>
+        <div class="toolbar">
+          <div class="tabs" role="tablist" id="regtabs"><button role="tab" data-r="A" aria-selected="true">SrcA</button><button role="tab" data-r="B" aria-selected="false">SrcB</button><button role="tab" data-r="D" aria-selected="false">Dest</button></div>
+          <label id="dest-start-l" hidden>rows from <input type="number" id="dest-start" min="0" max="1008" step="16" value="0"></label>
+          <label>label <select id="label-mode"><option value="row">source row</option><option value="col">source col</option><option value="value">value</option><option value="buf">buffer</option><option value="none">none</option></select></label>
+        </div>
+      </header>
+      <div class="legend"><span><i style="box-shadow:inset 0 0 0 2px var(--hot)"></i>written by this step</span><span><i style="background:repeating-linear-gradient(135deg, var(--zero) 0 3px, var(--panel) 3px 5px)"></i>zero</span><span><i style="background:repeating-linear-gradient(45deg, var(--warn-soft) 0 4px, var(--panel) 4px 7px)"></i>scrambled (unpack to Dest clobbers SrcA)</span><span><i style="background:var(--sunk)"></i>never written</span></div>
+      <div class="banks" id="regs" style="margin-top:6px"></div>
+    </div>
+    <div class="panel">
+      <header><h2>Selected datum</h2><span class="hint">click a register cell or an L1 byte</span></header>
+      <div class="journey" id="journey"></div>
+    </div>
+  </section>
+
+  <section class="col col-config">
+    <div class="panel cfg">
+      <header><h2>Configuration</h2><button class="btn" type="button" id="reset-cfg">Reset to preset</button></header>
+      <p class="hint">Values before the program runs. <code>CFG</code> lines change them part-way through. Changed fields are orange. Every context whose L1 address is different gets its own generated input tile.</p>
+      <div id="cfg"></div>
+    </div>
+    <div class="panel notes">
+      <h2>How sure is this?</h2>
+      <ul class="hint">
+        <li><span class="tag hw">on hw</span> confirmed on card 0 by <code>tests/hw/test_contexts.py</code>: <code>UNPACR cfg_ctx</code> = N reads context N's own L1 base, for N = 0…7.</li>
+        <li>The rest follows the ISA doc's <code>UNPACR</code> functional model, including its Blackhole branches: rows of 32 datums for 16/32-bit formats (16 for 8-bit), SrcA row &amp; 63 with <code>SetOvrdWithAddr</code>, the FP8 E4M3 decode.</li>
+        <li>The ISA doc marks some of what it describes as "no known usage, weak confidence": single-context mode, context counter, upsampling, column shift, compressed input. They are modeled as written there.</li>
+        <li>The L1 address uses the tile descriptor's dimensions (X, Y, Z, W counters), not the channel 0 strides. Channel 1 strides place the output.</li>
+        <li>Not modeled: <code>RowSearch</code> / blobs, the decompression row-start cache and <code>FlushCache</code>, <code>OverlayClear</code>, <code>UNPACR_NOP SETREG</code>, timing and throttling (the SrcA burst check is reported as a warning).</li>
+      </ul>
+    </div>
+  </section>
+</main>
+
+<script src="common.js"></script>
+<script src="unpacker_model.js"></script>
+<script src="ui.js"></script>
+<script>
+"use strict";
+const {el, esc, store} = UI;
+const M = UnpackerModel;
+const l1base = byte => (byte >> 4) - 1;
+
+const FACES = `# blackhole-py configure_unpacker + MOP: four faces of a BF16 tile into SrcA
+SETADCXX U0 x1=255 x0=0           # 256 datums (one face) per UNPACR
+SETADCXY U0 x0=0 y0=0 y1=0
+SETADCZW U0 z0=0 w0=0 z1=0 w1=0
+UNPACR u=0 z0=1 z1=1 x3           # next face in L1 (Z0) and in SrcA (Z1)
+UNPACR u=0 z0=1 z1=1 flip=1       # last face; hand the bank to math
+`;
+const PRESETS = [
+  {name: "Tile → SrcA, face by face", desc: "What blackhole-py's unpacker does for a BF16 tile: four UNPACRs of 256 datums. Z0 moves to the next face in L1 (x_dim × y_dim datums), Z1 to the next face in SrcA (out_z_stride bytes). The last one sets dvalid: the bank goes to math.",
+    cfg: {}, prog: FACES},
+  {name: "SrcA and SrcB (two operands)", desc: "Unpacker 0 fills SrcA from one tile, unpacker 1 fills SrcB from another. Unpacker 1 takes x_dim from the tile descriptor (it has no per-context tile_x_dim) and has only 2 contexts.",
+    cfg: {}, prog: FACES.replace("# blackhole-py configure_unpacker + MOP: four faces of a BF16 tile into SrcA", "# operand A") + `
+# operand B
+SETADCXX U1 x1=255 x0=0
+SETADCZW U1 z0=0 w0=0 z1=0 w1=0
+UNPACR u=1 z0=1 z1=1 x3
+UNPACR u=1 z0=1 z1=1 flip=1
+`},
+  {name: "FP32 tile → Dest (emit_unpack_to_dst)", desc: "blackhole-py's direct path: FP32 in L1, unpacker 0 with Unpack_if_sel (to_dest) writes Dest without going through SrcA. SetOvrdWithAddr must be off. Unpacking to Dest scrambles the current SrcA bank.",
+    cfg: {"u0.src_format": 0, "u0.dst_format": 0, "u0c0.to_dest": true, "srca_override": false, "u0.out_y_stride": 64, "u0.out_z_stride": 1024},
+    prog: `# tests/movement/unpacker/unpack.py emit_unpack_to_dst
+SETADCXX U0 x1=255 x0=0
+SETADCZW U0 z0=0 w0=0 z1=0 w1=0
+UNPACR u=0 z0=1 z1=1 x4
+`},
+  {name: "Eight contexts, eight tiles (hw probe)", desc: "tests/hw/test_contexts.py: every context of unpacker 0 has its own L1 base. UNPACR ctx=k reads tile k. Here each one goes to its own Dest tile (W1 × out_w_stride).",
+    cfg: Object.assign({"u0.src_format": 0, "u0.dst_format": 0, "srca_override": false, "u0.out_y_stride": 64, "u0.out_z_stride": 1024, "u0.out_w_stride": 4096, "pattern": "index"},
+      ...Array.from({length: 8}, (_, k) => ({[`u0c${k}.l1_base`]: l1base(0x10000 + k * 0x1000), [`u0c${k}.to_dest`]: true}))),
+    prog: `SETADCXX U0 x1=255 x0=0
+` + Array.from({length: 8}, (_, k) => `SETADCZW U0 z0=0 z1=0 w1=${k}
+UNPACR u=0 ctx=${k} z0=1 z1=1 x4`).join("\n") + "\n"},
+  {name: "Context counter", desc: "Context_count = 2 (four contexts). UNPACR ctr=1 takes the context from the counter and advances it, so a fixed MOP walks contexts 0, 1, 2, 3, 0 … The bank goes to math after each tile; MATH_RELEASE stands in for the math thread giving it back.",
+    cfg: Object.assign({"u0.context_count": 2, "pattern": "index"}, ...Array.from({length: 4}, (_, k) => ({[`u0c${k}.l1_base`]: l1base(0x10000 + k * 0x1000)}))),
+    prog: `SETADCXX U0 x1=255 x0=0
+SETADCZW U0 z0=0 w0=0 z1=0 w1=0
+UNPACR u=0 ctr=1 z0=1 z1=1 x3
+UNPACR u=0 ctr=1 z0=1 z1=1 flip=1
+MATH_RELEASE u=0
+SETADCZW U0 z0=0 z1=0
+UNPACR_INC_CTX u=0 x2        # the counter wrapped to 0; skip contexts 0 and 1
+UNPACR u=0 ctr=1 z0=1 z1=1 x3
+UNPACR u=0 ctr=1 z0=1 z1=1 flip=1
+`},
+  {name: "Double buffering with CFG", desc: "Unpack tile A with context 0. Meanwhile rewrite context 1's base to tile B (a CFG line here; a RISC-V store in a kernel), then switch with ctx=1. No stall needed between them.",
+    cfg: {"u0c1.l1_base": l1base(0x11000), "pattern": "index"},
+    prog: FACES + `MATH_RELEASE u=0
+CFG u0c1.l1_base=${"0x" + l1base(0x12000).toString(16)}   # point context 1 at a third tile
+SETADCZW U0 z0=0 z1=0
+UNPACR u=0 ctx=1 z0=1 z1=1 x3
+UNPACR u=0 ctx=1 z0=1 z1=1 flip=1
+`},
+  {name: "BFP8 input", desc: "BFP8_B in L1: the unpacker skips the exponent section (one byte per 16 datums), then reads one byte per datum and the exponent for each group of 16. BFP output keeps one byte per datum in the register address math, so the strides are 16 and 256.",
+    cfg: {"u0.src_format": 6, "u0.dst_format": 6, "u0.out_y_stride": 16, "u0.out_z_stride": 256, "pattern": "random"}, prog: FACES},
+  {name: "BFP4 input", desc: "BFP4_B: two datums per byte. The exponent section is still there (no_bfp_exp_section off).",
+    cfg: {"u0.src_format": 7, "u0.dst_format": 7, "u0.out_y_stride": 16, "u0.out_z_stride": 256, "pattern": "random"}, prog: FACES},
+  {name: "FP32 → BF16 into SrcA", desc: "FP32 is the only input that converts: here to BF16 (truncate, flush denormals). SrcA can't hold 32-bit datums.",
+    cfg: {"u0.src_format": 0, "u0.dst_format": 5, "pattern": "wide"}, prog: FACES},
+  {name: "Tilize (Blackhole 16-bit)", desc: "Row-major BF16 block, 64 datums wide. Tileize_mode: read 32 datums (Blackhole's row width for 16-bit formats), then jump RowStride = 128 bytes (shift_amount 8 << 4) to the next L1 row. One UNPACR covers the tile's 32 rows. SrcA rows alternate between the left and right 16 columns: tt-llk calls this the Blackhole tilize workaround and fixes the order later. (Labels count 16-datum chunks of L1: the 64-wide block has 4 per matrix row.)",
+    cfg: {"u0.tilize": true, "u0c0.shift_amount": 8, "u0c0.tile_x_dim": 1024, "u0.z_dim": 1, "count": 2048, "pattern": "rows"},
+    prog: `# tt-llk llk_unpack_tilize.h (non-8-bit path)
+SETADCXX U0 x1=1023 x0=0
+SETADCZW U0 z0=0 w0=0 z1=0 w1=0
+UNPACR u=0 flip=1
+`},
+  {name: "Transpose (haloize)", desc: "Haloize_mode swaps row and column inside each 16×16 block of SrcA as it writes.",
+    cfg: {"u0.transpose_xy": true}, prog: FACES},
+  {name: "Partial rows (X counters)", desc: "X0 = 4 and X1 = 11: each UNPACR reads datums 4…11 of the row (8 datums) and writes them starting at the register position. Y0 steps through 16 rows of 16 (x_dim 16, y_dim 16).",
+    cfg: {"u0c0.tile_x_dim": 16, "u0.y_dim": 16, "u0.z_dim": 1},
+    prog: `SETADCXX U0 x1=11 x0=4
+SETADCXY U0 y0=0 y1=0
+SETADCZW U0 z0=0 w0=0 z1=0 w1=0
+UNPACR u=0 y0=1 y1=1 x16
+`},
+  {name: "Upsample (insert zeros)", desc: "Upsample_rate 1 writes one zero after every datum: 128 datums fill 256 slots. Turn on upsample_interleave to skip the slot instead of zeroing it.",
+    cfg: {"u0.upsample_rate": 1},
+    prog: `SETADCXX U0 x1=127 x0=0
+SETADCZW U0 z0=0 w0=0 z1=0 w1=0
+UNPACR u=0 z1=1 x2
+`},
+  {name: "Zero-compressed input", desc: "The tile in L1 is zero-compressed (context disable_zero_compress = 0): a row start index, then groups of 32 stored datums + 32 four-bit zero counts. Each UNPACR expands one 16-datum row (x_dim 16, y_dim 16, 4 faces).",
+    cfg: {"u0c0.disable_zero_compress": false, "u0c0.tile_x_dim": 16, "u0.y_dim": 16, "u0.z_dim": 4, "pattern": "sparse"},
+    prog: `SETADCXX U0 x1=15 x0=0
+SETADCXY U0 y0=0 y1=0
+SETADCZW U0 z0=0 w0=0 z1=0 w1=0
+UNPACR u=0 y0=1 y1=1 x64
+`},
+  {name: "FP8 E4M3 input", desc: "FP8 with Unp_LF8_4b_exp (E4M3). It is widened to FP16 for SrcA (the in and out formats stay FP8's code; the register holds FP16 bits).",
+    cfg: {"u0.src_format": 10, "u0.dst_format": 10, "u0.fp8_e4m3": true, "u0.out_y_stride": 16, "u0.out_z_stride": 256, "pattern": "random"}, prog: FACES},
+  {name: "ZEROSRC and zero UNPACR", desc: "UNPACR_NOP ZEROSRC clears the current SrcA bank (here to −inf). UNPACR zero=1 (AllDatumsAreZero) walks the addresses but writes zeros.",
+    cfg: {},
+    prog: `ZEROSRC u=0 neginf=1
+SETADCXX U0 x1=255 x0=0
+SETADCZW U0 z0=0 w0=0 z1=0 w1=0
+UNPACR u=0 z0=1 z1=1
+UNPACR u=0 z0=1 z1=1 zero=1
+`},
+];
+
+// ***** state *****
+const KEY = "unpacker-explorer:v1";
+const saved = store(KEY) || {};
+let presetIdx = saved.preset ?? 0;
+let cfgBase, cfg, progText = "", selection = null, result = null, program = [];
+let regView = saved.reg || "A";
+const $ = id => document.getElementById(id);
+
+function presetConfig(p) { const c = M.defaultConfig(); for (const [k, v] of Object.entries(p.cfg)) M.setKey(c, k, v); return c; }
+function loadPreset(i, keepEdits) {
+  presetIdx = i; const p = PRESETS[i];
+  cfgBase = presetConfig(p);
+  cfg = keepEdits && saved.cfg ? saved.cfg : M.cloneConfig(cfgBase);
+  progText = keepEdits && saved.prog != null ? saved.prog : p.prog;
+  $("prog").value = progText; $("preset-desc").textContent = p.desc; selection = null;
+}
+$("preset").append(...PRESETS.map((p, i) => el("option", {value: i}, p.name)));
+$("opref").innerHTML = Object.entries(M.OPS).map(([k, o]) => `<p><code>${k}</code> ${o.args.length ? `<code>${o.args.join(" ")}</code>` : ""}<br>${esc(o.doc)}</p>`).join("") +
+  `<p>Append <code>xN</code> to repeat a line. <code>#</code> starts a comment. Config keys: <code>u0.field</code> (per unpacker), <code>u0c3.field</code> (unpacker 0, context 3), or a thread field like <code>srca_override</code>.</p>`;
+
+let panel;
+const step = UI.stepper($("stepper"), {onStep: k => render(k)});
+function persist() { store(KEY, {preset: presetIdx, cfg, prog: progText, reg: regView}); }
+function rerun(keep) {
+  const r = TT.parseProgram(progText, M.OPS);
+  $("errors").innerHTML = r.errors.map(e => `line ${e.line}: ${esc(e.msg)}`).join("<br>");
+  program = r.program; step.setMax(program.length, keep); persist();
+}
+
+function hueOf(src) { if (src == null) return 0; const k = Math.floor(src / 65536), i = src % 65536; return ((i >> 4) % 64 * 5.55 + (i & 15) * 0.35 + k * 47) % 360; }
+function srcName(src) { const k = Math.floor(src / 65536), i = src % 65536; return `buffer ${k} datum ${i} (row ${i >> 4}, col ${i & 15})`; }
+
+function render(k) {
+  result = M.simulate(cfg, program, k);
+  const cur = result.steps[k - 1], prev = result.steps[k - 2];
+  UI.stepList($("steps"), program, k, result.steps, kk => step.go(kk));
+  UI.renderTrace($("trace"), cur);
+  const zero = () => ({X: 0, Y: 0, Z: 0, W: 0});
+  const A = cur ? cur.adc : [{ch: [zero(), zero()]}, {ch: [zero(), zero()]}], PA = prev ? prev.adc : A;
+  UI.counterTable($("counters"), [0, 1].flatMap(u => [
+    {label: `U${u} ch0 · L1`, v: A[u].ch[0], p: k ? PA[u].ch[0] : A[u].ch[0], tip: "Channel 0: X is the first datum; Y, Z, W pick the row / plane in the tile descriptor's shape."},
+    {label: `U${u} ch1 · ${u ? "SrcB" : "SrcA/Dest"}`, v: A[u].ch[1], p: k ? PA[u].ch[1] : A[u].ch[1], tip: "Channel 1: X is the last datum; Y, Z, W × the output strides place the result."},
+  ]));
+  const st = cur ? cur.unpk : result.unpk, ow = cur ? cur.owner : result.bankOwner;
+  $("unpstate").innerHTML = [0, 1].map(u => `<dt>unpacker ${u}</dt><dd>writes Src${u ? "B" : "A"} bank ${st[u].bank}, row pointer ${st[u].row}, context counter ${st[u].ctr}</dd>`).join("") +
+    `<dt>SrcA banks</dt><dd>0: ${ow.A[0]} · 1: ${ow.A[1]}</dd><dt>SrcB banks</dt><dd>0: ${ow.B[0]} · 1: ${ow.B[1]}</dd>`;
+  // stages for the unpacker of the current step
+  const u = cur && cur.ins.op === "UNPACR" ? (cur.ins.args.u ?? 0) : 0, U = result.cfg.unp[u];
+  const ctx = cur && cur.ins.op === "UNPACR" ? (cur.ins.args.ctx ?? 0) & (u ? 1 : 7) : 0, C = result.cfg["c" + u][ctx];
+  const inF = TT.FORMATS[U.per_context_formats ? C.src_format : U.src_format], outF = TT.FORMATS[U.per_context_formats ? C.dst_format : U.dst_format];
+  const stages = [
+    [`L1 @ ${TT.hex(M.tileStart(result.cfg, u, ctx))} (unpacker ${u}, context ${ctx})`, true],
+    ["skip row starts", !C.disable_zero_compress], ["skip exponents", inF?.kind === "bfp"],
+    [U.tilize ? "tilize: row stride" : "contiguous rows", true],
+    [`${inF?.name} → ${outF?.name}`, true], ["decompress", !C.disable_zero_compress], ["upsample", U.upsample_rate > 0],
+    ["transpose", U.transpose_xy && u === 0], [u ? "SrcB" : C.to_dest ? "Dest" : "SrcA", true]];
+  $("stages").innerHTML = stages.map(([n, on], i) => `${i ? '<span class="arrow">→</span>' : ""}<span class="stage${on ? " on" : ""}">${esc(n)}</span>`).join("");
+  renderL1(cur); renderRegs(cur); renderJourney();
+}
+
+function byteInfo(a, mode) {
+  const parts = result.l1.parts(a), byte = result.l1.get(a);
+  if (!parts.length) return {cls: "empty", label: ""};
+  const lab = p => mode === "hex" ? (p.n === 8 ? byte.toString(16).toUpperCase().padStart(2, "0") : ((byte >> p.lo) & ((1 << p.n) - 1)).toString(16).toUpperCase()) : mode === "row" && p.tag && p.tag.src != null ? String((p.tag.src % 65536) >> 4) : "";
+  const cls = t => !t ? "pad" : t.kind === "data" ? "d" : t.kind === "exp" || t.kind === "rsi" ? "meta" : t.kind === "rle" ? "rle" : t.kind === "header" ? "meta" : "pad";
+  if (parts.length === 1) return {cls: cls(parts[0].tag), h: hueOf(parts[0].tag && parts[0].tag.src), label: lab(parts[0])};
+  return {parts: parts.map(p => ({cls: p.tag && p.tag.kind === "rle" ? "rle" : "", h: hueOf(p.tag && p.tag.src), label: lab(p)}))};
+}
+function renderL1(cur) {
+  const sections = result.buffers.flatMap(b => b.sections);
+  UI.l1View($("l1"), [...result.l1.bytes.keys()], a => byteInfo(a, $("l1-mode").value), {sections, hot: cur ? cur.hotL1 : new Set(), sel: selection && selection.kind === "l1" ? selection.a : null, maxRows: 1200});
+}
+
+function regCell(file, idx, hot, key) {
+  const v = file.v[idx], m = file.meta[idx], mode = $("label-mode").value;
+  let cls;
+  if (m && m.clobbered) cls = "unk"; else if (v === null || v === undefined) cls = ""; else if (v === -Infinity) cls = "ninf"; else if (v === 0) cls = "z"; else cls = "d";
+  if (hot.has(key)) cls += " hot";
+  if (selection && selection.kind === "reg" && selection.key === key) cls += " sel";
+  let label = "";
+  if (m && !m.clobbered && v != null) {
+    if (mode === "value") label = UI.labelOf("value", v);
+    else if (m.src != null) label = mode === "row" ? String((m.src % 65536) >> 4) : mode === "col" ? String(m.src % 16) : mode === "buf" ? "b" + Math.floor(m.src / 65536) : "";
+  }
+  return {cls, h: hueOf(m && m.src), label, i: key};
+}
+function renderRegs(cur) {
+  const hot = cur ? cur.hotReg : new Set(), box = $("regs");
+  document.querySelectorAll("#regtabs button").forEach(b => b.setAttribute("aria-selected", String(b.dataset.r === regView)));
+  $("dest-start-l").hidden = regView !== "D";
+  box.replaceChildren();
+  if (regView === "D") {
+    const start = Math.max(0, Math.min(960, Number($("dest-start").value) || 0));
+    const w = el("div", {class: "bank"}, el("h3", {}, `Dest rows ${start}–${start + 63}`));
+    const g = el("div", {class: "grid-wrap"}); w.append(g); box.append(w);
+    UI.datumGrid(g, {rowStart: start, rowCount: 64, groupEvery: 16, colLabel: c => c.toString(16).toUpperCase(), cell: (r, c) => regCell(result.dest, r * 16 + c, hot, `D0:${r * 16 + c}`)});
+    return;
+  }
+  const files = regView === "A" ? result.srcA : result.srcB, u = regView === "A" ? 0 : 1;
+  const st = cur ? cur.unpk : result.unpk, ow = cur ? cur.owner : result.bankOwner;
+  for (const b of [0, 1]) {
+    const w = el("div", {class: "bank"}, el("h3", {}, `Src${regView} bank ${b}`, el("span", {class: "owner " + ow[regView][b]}, ow[regView][b]), st[u].bank === b ? el("span", {class: "owner next"}, "unpacker writes here next") : null));
+    const g = el("div", {class: "grid-wrap"}); w.append(g); box.append(w);
+    UI.datumGrid(g, {rowStart: 0, rowCount: 64, groupEvery: 16, colLabel: c => c.toString(16).toUpperCase(), cell: (r, c) => regCell(files[b], r * 16 + c, hot, `${regView}${b}:${r * 16 + c}`)});
+  }
+}
+function fileOf(key) { const [w, idx] = key.split(":"); const R = w[0], b = +w[1]; return {file: R === "D" ? result.dest : (R === "A" ? result.srcA : result.srcB)[b], idx: +idx, R, b}; }
+function regName(R, b, idx) { return R === "D" ? `Dest row ${idx >> 4} col ${idx & 15}` : `Src${R} bank ${b} row ${idx >> 4} col ${idx & 15}`; }
+
+function renderJourney() {
+  const box = $("journey");
+  if (!selection) { box.innerHTML = `<span class="stage-l">Click a register cell to see where it came from and how its address was formed, or an L1 byte to see where it went.</span>`; return; }
+  if (selection.kind === "reg") {
+    const {file, idx, R, b} = fileOf(selection.key), m = file.meta[idx];
+    let h = `<b>${regName(R, b, idx)}</b>\n`;
+    if (!m) h += `<span class="stage-l">Never written.</span>`;
+    else if (m.clobbered) h += `<span class="stage-l">Scrambled: an unpack to Dest used this SrcA bank.</span>`;
+    else {
+      h += `<span class="stage-l">step ${m.step + 1} · unpacker ${m.u} · context ${m.ctx}</span>\n`;
+      if (m.fill) h += `  ${m.fill}\n`;
+      else {
+        h += `  read L1 ${TT.hex(Math.floor(m.readAt), 5)}${m.readAt % 1 ? ` bit ${Math.round((m.readAt % 1) * 8)}` : ""}: ${m.inF} bits ${TT.hex(m.bits)}${m.expBits != null ? `, shared exponent ${m.expBits}` : ""}\n`;
+        h += `  = ${TT.fmtNum(m.raw)}${m.src != null ? ` (${srcName(m.src)})` : ""}\n`;
+        if (m.note) h += `  ${m.note}\n`;
+        h += `  → ${m.outF} ${TT.fmtNum(m.v)}\n`;
+      }
+    }
+    box.innerHTML = h; return;
+  }
+  const parts = result.l1.parts(selection.a);
+  let h = `<b>L1 ${TT.hex(selection.a, 5)}</b> = ${TT.hex(result.l1.get(selection.a), 2)}\n`;
+  for (const p of parts) {
+    const t = p.tag; if (!t) { h += "  padding\n"; continue; }
+    if (t.kind === "data") {
+      h += `  ${srcName(t.src)}${t.zeros ? `, followed by ${t.zeros} zeros` : ""}\n`;
+      const fw = result.forward.get(t.src) || [];
+      h += fw.length ? fw.map(w => `    → step ${w.step + 1}: ${regName(w.R, w.b, w.idx)}`).join("\n") + "\n" : "    not unpacked yet\n";
+    } else if (t.kind === "exp") h += `  shared exponent for datums ${t.srcs[0] % 65536}…${t.srcs[t.srcs.length - 1] % 65536}\n`;
+    else if (t.kind === "rsi") h += `  row start index entry ${t.k}\n`;
+    else if (t.kind === "rle") h += `  zero count ${t.zeros} after ${srcName(t.src)}\n`;
+    else h += `  ${t.kind}\n`;
+  }
+  box.innerHTML = h;
+}
+
+UI.setTipSource(t => {
+  if (!result) return "";
+  if (t.dataset.a != null) { const a = +t.dataset.a; return `L1 ${TT.hex(a, 5)} = ${TT.hex(result.l1.get(a), 2)}\n` + result.l1.parts(a).map(p => !p.tag ? "padding" : p.tag.kind === "data" ? srcName(p.tag.src) : p.tag.kind).join("\n"); }
+  if (t.dataset.i != null && t.closest("#regs")) { const {file, idx, R, b} = fileOf(t.dataset.i), m = file.meta[idx]; return `${regName(R, b, idx)}\n` + (m && !m.clobbered ? `value ${TT.fmtNum(file.v[idx])}${m.src != null ? "\nfrom " + srcName(m.src) : m.fill ? "\n" + m.fill : ""}\nstep ${m.step + 1}` : m ? "scrambled" : "never written"); }
+  return "";
+});
+
+$("prog").addEventListener("input", e => { progText = e.target.value; rerun(true); });
+$("preset").addEventListener("change", e => { loadPreset(Number(e.target.value)); panel.render(); rerun(false); });
+$("reset-cfg").addEventListener("click", () => { cfg = M.cloneConfig(cfgBase); panel.render(); rerun(true); });
+for (const id of ["l1-mode", "label-mode", "dest-start"]) $(id).addEventListener("change", () => render(step.cur));
+$("regtabs").addEventListener("click", e => { const b = e.target.closest("[data-r]"); if (!b) return; regView = b.dataset.r; persist(); render(step.cur); });
+$("regs").addEventListener("click", e => { const c = e.target.closest("[data-i]"); if (!c) return; selection = {kind: "reg", key: c.dataset.i}; render(step.cur); });
+$("l1").addEventListener("click", e => { const c = e.target.closest("[data-a]"); if (!c) return; selection = {kind: "l1", a: +c.dataset.a}; render(step.cur); });
+
+loadPreset(presetIdx, true);
+$("preset").value = presetIdx;
+panel = UI.configPanel($("cfg"), M.FIELDS, () => cfg, () => cfgBase, {
+  scopes: {unp: {count: 2, label: "unpacker", short: "U", note: "Unpacker 0 writes SrcA or Dest, unpacker 1 writes SrcB."},
+    c0: {count: 8, label: "context", short: "ctx", note: "UNPACR u=0 ctx=N (plus CfgContextOffset, or the context counter) picks one. Each has its own L1 base."},
+    c1: {count: 2, label: "context", short: "ctx", note: "Unpacker 1 has two contexts."}},
+  rawName: M.rawName, onChange: () => { panel.render(); rerun(true); }, open: ["Tile descriptor (what is in L1)", "Unpacker 0 contexts"]});
+rerun(false);
+</script>
+</body>
+</html>

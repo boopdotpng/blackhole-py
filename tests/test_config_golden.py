@@ -13,19 +13,23 @@ class Recorder:
   """Stands in for a kernel builder: records register state instead of emitting code."""
   def __init__(self, role, thread):
     self.role, self.thread, self.state = role, thread, {}
+    self.mop_words, self.thread_cfg = None, {}  # build-time shadows a fresh Asm starts with
   def put(self, key, value, mask=0xFFFFFFFF):
     old = self.state.get(key, 0)
     self.state[key] = (old & ~mask) | (value & mask)
   def write(self, addr, value, *a, **k):
-    if CFG <= addr < CFG + 0x10000: self.put((Space.SHARED, None, (addr - CFG) // 4), value)
-    elif REGFILE <= addr < REGFILE + 0x1000: self.put((Space.GPR, self.thread, (addr - REGFILE) // 4), value)
+    if CFG <= addr < CFG + 0x10000:
+      self.put((Space.MMIO, None, addr), value)
+    elif REGFILE <= addr < REGFILE + 0x1000: self.put((Space.MMIO, None, REGFILE_BASE + REGFILE_STRIDE * self.thread + addr - REGFILE), value)
     elif MOP <= addr < MOP + 64: self.put((Space.MMIO, self.thread, addr), value)
+  def write_block(self, writes, *a, **k):
+    for addr, value in writes: self.write(int(addr), int(value) & 0xFFFFFFFF)
   def emit(self, word, *a, **k):
     word = int(word); op = word >> 24
-    if op == 0xB2: self.put((Space.THREAD, self.thread, word >> 16 & 0xFF), word & 0xFFFF, 0xFFFF)  # SETC16
+    if op == 0xB2: self.put((Space.MMIO, None, thread_cfg_address(self.thread, word >> 16 & 0xFF)), word & 0xFFFF, 0xFFFF)  # SETC16
     elif 0xB3 <= op <= 0xB6:  # RMWCIBn: mask[23:16] data[15:8] addr32[7:0]
       byte = op - 0xB3; mask, data, a32 = word >> 16 & 0xFF, word >> 8 & 0xFF, word & 0xFF
-      self.put((Space.SHARED, None, a32), data << 8 * byte, mask << 8 * byte)
+      self.put((Space.MMIO, None, cfg_address(a32)), data << 8 * byte, mask << 8 * byte)
   def reg(self, n=1, *a, **k): return tuple(_Null() for _ in range(n)) if n > 1 else _Null()
   def __getattr__(self, name):  # scope(), li(), fence(), ... are code-emission details
     return lambda *a, **k: _Null()
@@ -102,7 +106,7 @@ def test_pack():
                     in_x_stride=0, in_y_stride=16 * size, in_z_stride=256 * size, in_w_stride=1024 * size,
                     row_set_mapping_0=0, row_set_mapping_1=int(scalar), edge_mask_0=0 if scalar else 0xFFFF, edge_mask_1=int(scalar),
                     edge_mode=False, row_set_select_0=int(scalar), row_set_select_1=0, row_set_select_2=0, row_set_select_3=0),
-      Gpr(thread=Thread.PACK, index=16, value=dtype.tile_size >> 4), Gpr(thread=Thread.PACK, index=52, value=0x40000),
+      Gpr(thread=Thread.PACK, reg=16, value=dtype.tile_size >> 4), Gpr(thread=Thread.PACK, reg=52, value=0x40000),
       PackAddrMod(slot=0, y_src_incr=4, y_dst_incr=4),
       PackAddrMod(slot=1, **decode_pack_addr_mod(0x2820)),
       PackAddrMod(slot=2, **decode_pack_addr_mod(0x1120)),
@@ -113,14 +117,14 @@ def test_pack():
 def decode_pack_addr_mod(word):
   out = {}
   for f in dataclasses.fields(PackAddrMod):
-    if "locs" in f.metadata:
-      loc = REGS[f.metadata["locs"][0]]
-      v = word >> loc.shift & (1 << loc.width) - 1
+    if "at" in f.metadata:
+      _, shift, width = PackAddrMod(slot=0).where(f.name)
+      v = word >> shift & (1 << width) - 1
       out[f.name] = bool(v) if f.type == "bool" else v
   return out
 
 def mop_fields(rec):
-  names = [f.name for f in dataclasses.fields(MopLoop) if "locs" in f.metadata]
+  names = [f.name for f in dataclasses.fields(MopLoop) if "at" in f.metadata]
   return {n: rec.state[(Space.MMIO, Thread.PACK, MOP + 4 * i)] for i, n in enumerate(names)}
 
 import dataclasses, random
@@ -155,15 +159,15 @@ def test_sfpu_lane():
     kw = {k: (rng.randrange(4) if k == "block_destination_move" else rng.randrange(16) if k == "row_mask" else rng.random() < .5) for k in names}
     want = LaneConfig(**kw).word()
     (k, (v, m)), = SfpuLaneCfg(**{names[a]: b for a, b in kw.items()}).writes().items()
-    assert k == (Space.SFPU, Thread.MATH, 15) and v == want, (hex(v), hex(want)); n += 1
+    assert k == (Space.SFPU, None, 15) and v == want, (hex(v), hex(want)); n += 1
   return n
 
 def test_noc_ctrl():
   """NOC_CTRL word vs both blackhole-py NoC paths."""
   from ttko.noc import NoC, NOC
   def ctrl(**kw):
-    w = NocCmdBuf(thread=Thread.READ, noc=0, buf=0, **kw).writes()
-    return w[(Space.MMIO, Thread.READ, 0xFFB20000 + 0x1C)][0]
+    w = NocCmdBuf(noc=0, buf=0, **kw).writes()
+    return w[(Space.MMIO, None, 0xFFB20000 + 0x1C)][0]
   policy = NoC.__new__(NoC)  # path A: the hardcoded request policy
   cases = [("read", {}, dict(cmd=NocCmd.READ)), ("atomic", {}, dict(cmd=NocCmd.ATOMIC)),
            ("write", dict(posted=True), dict(cmd=NocCmd.WRITE, posted=True)), ("write", dict(posted=False), dict(cmd=NocCmd.WRITE, posted=False)),
