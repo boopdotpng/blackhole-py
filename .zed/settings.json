@@ -1,7 +1,0 @@
-{
-  "lsp": {
-    // keep real errors (syntax, undefined names) + ruff lints, drop type-checker complaints
-    "basedpyright": { "settings": { "basedpyright.analysis": { "typeCheckingMode": "off" } } },
-    "pyright": { "settings": { "python.analysis": { "typeCheckingMode": "off" } } }
-  }
-}
