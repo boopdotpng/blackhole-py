@@ -61,7 +61,11 @@ class Graph:
   def __init__(self, addr:int, size:int, execs:int): self.addr, self.size, self.execs = addr, size, execs
 
 class CopyQueue(HWQueue):
-  def copy(self, dst:int, src:int, size:int): return self.q(Op.COPY, dst, src, size)
+  def copy(self, dst:int, src:int, size:int):
+    """Copy between 64-byte aligned addresses; the byte count need not be aligned."""
+    assert dst % 64 == src % 64 == 0, "DMA source and destination must be 64-byte aligned"
+    assert 0 <= size < 1 << 32, "DMA byte count must fit u32"
+    return self.q(Op.COPY, dst, src, size)
 
 class Ring:
   def __init__(self, dev:PCIDevice, core, sysmem:Sysmem, offset:int, cmdbuf:int=0, cmdbuf_size:int=0):
@@ -101,7 +105,9 @@ class Ring:
     assert n <= size, f"command buffer of {len(blob)} bytes is larger than the area"
     if (at := self.cmdbuf_put % size) + n > size: self.cmdbuf_put, at = self.cmdbuf_put + size - at, 0
     deadline = time.monotonic() + timeout
-    while self.inflight and self.inflight[0][0] < self.cmdbuf_put + n - size: self._wait_rptr(self.inflight.popleft()[1], deadline)
+    while self.inflight and self.inflight[0][0] < self.cmdbuf_put + n - size:
+      self._wait_rptr(self.inflight[0][1], deadline)
+      self.inflight.popleft()
     self.sysmem.mem[self.cmdbuf + at:self.cmdbuf + at + len(blob)] = blob
     self.call(self.sysmem.noc_addr + self.cmdbuf + at, len(blob))
     self.inflight.append((self.cmdbuf_put, self.put))

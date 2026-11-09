@@ -86,8 +86,12 @@ class Sysmem:
   def __init__(self, fd, size):
     assert size % PAGE == 0
     self.fd, self.size, self.addr = fd, size, libc_mmap(size, flags=mmap.MAP_PRIVATE)
-    self.mem = view_at(self.addr, size)
-    self.noc_addr = _pin(fd, self.addr, size)
+    try:
+      self.mem = view_at(self.addr, size)
+      self.noc_addr = _pin(fd, self.addr, size)
+    except BaseException:
+      libc_munmap(self.addr, size)
+      raise
 
   def close(self):
     _unpin(self.fd, self.addr, self.size)
@@ -101,14 +105,14 @@ class PCIDevice:
     self.card = Path(f"/sys/class/tenstorrent/tenstorrent!{index}/tt_card_type").read_text().strip()
     if self.card not in ("p150a", "p150b"): raise RuntimeError(f"unsupported card {self.card}, only p150 for now")
     self.fd = os.open(f"/dev/tenstorrent/{index}", os.O_RDWR | os.O_CLOEXEC | os.O_APPEND)
-    SET_POWER_STATE(self.fd, power_flags=TT_POWER_FLAG_MAX_AI_CLK |
-                    TT_POWER_FLAG_MRISC_PHY_WAKEUP | TT_POWER_FLAG_TENSIX_ENABLE)
     try:
+      SET_POWER_STATE(self.fd, power_flags=TT_POWER_FLAG_MAX_AI_CLK |
+                      TT_POWER_FLAG_MRISC_PHY_WAKEUP | TT_POWER_FLAG_TENSIX_ENABLE)
       tlb = ALLOCATE_TLB(self.fd)
       self.tlb_id, self.tlb_cfg, self.tlb_addr = tlb.id, None, libc_mmap(TLB_SIZE, self.fd, tlb.mmap_offset_uc)
     except BaseException:
-      self.power_off()
-      os.close(self.fd)
+      try: self.power_off()
+      finally: os.close(self.fd)
       raise
     self.tlb = view_at(self.tlb_addr, TLB_SIZE)
     self.tlb32 = self.tlb.cast("I")
@@ -117,8 +121,8 @@ class PCIDevice:
   def close(self):
     for addr in self.windows: libc_munmap(addr, TLB_SIZE)
     libc_munmap(self.tlb_addr, TLB_SIZE)
-    self.power_off()
-    os.close(self.fd)
+    try: self.power_off()
+    finally: os.close(self.fd)
 
   def power_off(self): SET_POWER_STATE(self.fd, power_flags=0)
 

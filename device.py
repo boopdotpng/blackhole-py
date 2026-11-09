@@ -1,5 +1,5 @@
 import os, struct, time, fw
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, wait
 from cq import ComputeQueue, CopyQueue, Graph, HWQueue, Ring, Launch, dram, rects
 from helpers import PAGE, round_up
 from system import PCIDevice, Sysmem
@@ -7,7 +7,7 @@ from system import PCIDevice, Sysmem
 class Device:
   def __init__(self, index:int=0):
     self.pci_dev = PCIDevice(index)
-    self.sysmem = None
+    self.sysmem, self.readers, self.all = None, None, None
     try:
       cols = (self._telemetry(fw.TAG_ENABLED_TENSIX_COL) & 0x3FFF).bit_count()
       if cols not in (12, 14): raise RuntimeError(f"unsupported {self.pci_dev.card}: {cols} Tensix columns enabled")
@@ -20,29 +20,32 @@ class Device:
       # one pinned buffer: [arena (rings, signals, heap) | stage 0 | stage 1]
       self.arena_size, self.stage_size = 16 << 20, 8 << 20
       self.sysmem = Sysmem(self.pci_dev.fd, self.arena_size + 2 * self.stage_size)
+      self.signals = 2 * fw.RING_SIZE
+      self.heap, self.transfers, self.dram_top = self.signals + PAGE, 0, 0
+      self.transfer_signal = 255  # copied: transfers the copy queue has finished (copyin, copyout, load, zero)
+      self.readers, self.zeros = ThreadPoolExecutor(4), 0  # load's file readers; zero's source region
+      self.stage_done, self.stage_next = [0, 0], 0 # transfer count that frees each buffer, the one to fill next
+      self.sysmem.mem[self.signals:self.heap] = bytes(self.heap - self.signals)
+      self.compute = self._create_queue(self.cq_core, 0, "dispatch", cmdbuf_size=1 << 20)
+      self.copy = self._create_queue(self.dma_core, fw.RING_SIZE, "dma")
+      self.descriptor_top = fw.DESCRIPTOR_L1
+      self.run(fw.images()["init"], self.workers)
     except BaseException:
-      self._free()
+      self.close()
       raise
-    self.signals = 2 * fw.RING_SIZE
-    self.heap, self.transfers, self.dram_top = self.signals + PAGE, 0, 0
-    self.transfer_signal = 255  # copied: transfers the copy queue has finished (copyin, copyout, load, zero)
-    self.fill_signal = 251  # filled: the host has written the staging slot of every transfer up to this one
-    self.readers, self.zeros = ThreadPoolExecutor(4), 0  # load's file readers; zero's source region
-    self.stage_done, self.stage_next = [0, 0], 0 # transfer count that frees each buffer, the one to fill next
-    self.sysmem.mem[self.signals:self.heap] = bytes(self.heap - self.signals)
-    self.compute = self._create_queue(self.cq_core, 0, "dispatch", cmdbuf_size=1 << 20)
-    self.copy = self._create_queue(self.dma_core, fw.RING_SIZE, "dma")
-    self.descriptor_top = fw.DESCRIPTOR_L1
-    self.run(fw.images()["init"], self.workers)
 
   def close(self):
-    self._reset()  # stop the queue loops before their rings in sysmem are unpinned
+    if self.pci_dev is None: return
+    if self.all is not None: self._reset()  # stop service loops before unpinning their rings
     self._free()
 
   def _free(self):
-    if getattr(self, "readers", None): self.readers.shutdown()
-    if self.sysmem is not None: self.sysmem.close()
-    self.pci_dev.close()
+    if self.readers is not None: self.readers.shutdown()
+    try:
+      if self.sysmem is not None: self.sysmem.close()
+    finally:
+      self.pci_dev.close()
+      self.pci_dev = None
 
   def _telemetry(self, tag:int) -> int:
     dev = self.pci_dev
@@ -149,7 +152,9 @@ class Device:
     """Push [before's packets, CALL graph, signal 253] to the CQ ring. Returns the replay number to wait() on."""
     assert before is None or type(before) is HWQueue, "before must be a plain HWQueue: STORE, WAIT, TIMESTAMP"
     self.replays = getattr(self, "replays", 0) + 1
-    (before or HWQueue()).call(graph).signal(self.signal(253), self.replays).submit(self.compute)
+    q = HWQueue()
+    if before is not None: q.blob.extend(before.blob)
+    q.call(graph).signal(self.signal(253), self.replays).submit(self.compute)
     if wait: self.wait(253, self.replays, timeout)
     return self.replays
 
@@ -161,24 +166,27 @@ class Device:
 
   def _stage(self, timeout:float) -> int:
     """Wait for the next staging slot to be free; returns its sysmem offset."""
-    i, self.stage_next = self.stage_next, self.stage_next ^ 1
+    i = self.stage_next
     self.wait(self.transfer_signal, self.stage_done[i], timeout)
+    self.stage_next ^= 1
     return self.arena_size + i * self.stage_size
   def _submit(self, q:CopyQueue, buf:int):
     self.transfers += 1
-    q.signal(self.signal(self.transfer_signal), self.transfers).submit(self.copy)
+    try:
+      q.signal(self.signal(self.transfer_signal), self.transfers).submit(self.copy)
+    except BaseException:
+      self.close()  # a partial submission may still reference this staging slot
+      raise
     self.stage_done[(buf - self.arena_size) // self.stage_size] = self.transfers
 
   def _put(self, copies:list[tuple[int, int, int]], fill, timeout:float):
-    """One host -> device transfer through the next staging slot, as tinygrad's disk_read does it: the copy queue gets
-    WAIT(filled >= t), the copies [(dst, slot offset, bytes)] and STORE(copied = t) before the host writes the slot, so
-    it starts the moment fill(slot) returns. Sources must sit at 64-byte aligned slot offsets, as the NoC needs."""
-    buf, t = self._stage(timeout), self.transfers + 1
-    q = CopyQueue().wait(self.signal(self.fill_signal), t)
+    """Fill a free staging slot, then publish copies [(dst, slot offset, bytes)].
+    DMA of the previous slot can overlap the fill; a failed fill publishes nothing."""
+    buf = self._stage(timeout)
+    q = CopyQueue()
     for dst, at, n in copies: q.copy(dst, self.addr(buf + at), n)
+    fill(buf)
     self._submit(q, buf)
-    try: fill(buf)
-    finally: struct.pack_into("<Q", self.sysmem.mem, self.signals + 16 * self.fill_signal, t)  # even on error, so the queue drains
 
   def copyin(self, dev:int, host, timeout=60.0):
     host = memoryview(host).cast("B")
@@ -226,7 +234,13 @@ class Device:
           for _, path, offset, n, at in slot:
             fd = fds[path] if path in fds else fds.setdefault(path, os.open(path, os.O_RDONLY))
             pieces += [(mem[buf + at + o:buf + at + min(n, o + (1 << 20))], fd, offset + o) for o in range(0, n, 1 << 20)]
-          list(self.readers.map(read, pieces))
+          futures = []
+          try:
+            for piece in pieces: futures.append(self.readers.submit(read, piece))
+            for future in futures: future.result()
+          finally:
+            for future in futures: future.cancel()
+            wait(futures)  # readers must release the slot and fds even when one read fails
         self._put([(dst, at, n) for dst, _, _, n, at in slot], fill, timeout)
     finally:
       for fd in fds.values(): os.close(fd)
