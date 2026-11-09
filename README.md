@@ -16,4 +16,18 @@ python llama3.py --model 8b-fp8 --chat --port 8000   # web chat on http://<host>
 python llama3.py --model 1b --prompt "Hello"         # one prompt in the terminal
 ```
 
-Models: `1b` (161 tok/s), `8b-fp8` (52 tok/s), `8b-bf16` (30 tok/s) on a p150a.
+Models: `1b`, `8b-fp8`, `8b-bf16`.
+
+## Performance
+
+Decode on a p150a, 64 tokens. Short is the default story prompt (20 tokens on 8B, 45 on 1B); 4K is after a
+4096-token context. % DRAM is the share of 512 GB/s needed to read the weights, LM head and KV cache once per token.
+
+| Model | Context | ms/token | tok/s | % DRAM |
+| --- | --- | ---: | ---: | ---: |
+| 1B BF16 | short | 6.21 | 161.0 | 78% |
+| 1B BF16 | 4K | 8.54 | 117.1 | 60% |
+| 8B FP8 | short | 19.39 | 51.6 | 81% |
+| 8B FP8 | 4K | 28.03 | 35.7 | 60% |
+| 8B BF16 | short | 32.99 | 30.3 | 89% |
+| 8B BF16 | 4K | 41.61 | 24.0 | 73% |
