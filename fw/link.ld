@@ -1,5 +1,5 @@
 OUTPUT_ARCH(riscv)
-
+_start = BASE;
 SECTIONS
 {
   . = BASE;
@@ -12,6 +12,6 @@ SECTIONS
     *(.data .data.* .sdata .sdata.*)
     *(.bss .bss.* .sbss .sbss.* COMMON)
   }
-  ASSERT(. <= BASE + CAPACITY, "image exceeds its slot")
+  ASSERT(. <= BASE + SIZE, "image exceeds its slot")
   /DISCARD/ : { *(.comment) *(.note*) *(.eh_frame*) *(.riscv.attributes) }
 }
