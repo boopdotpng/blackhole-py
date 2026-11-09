@@ -1,4 +1,4 @@
-# llama3 1B decode: embedding, ncrisc. Exported from blackhole-py/examples/llama3/kernels.py by tools/export_llama1b.py.
+# llama3 1B decode: embedding, ncrisc. Exported from blackhole-py/examples/llama3/kernels.py by tools/rewrite_export/export_llama1b.py.
 # cores (1): 1,2
 # params: 0x7c0=e2e_token_history, 0x7c4=e2e_embedding_weight, 0x7c8=e2e_x_a, 0x7cc=token_pos
 #   0x7c0.. uniform, sent with every EXEC; 0x8000.. this core's resident per-core table
