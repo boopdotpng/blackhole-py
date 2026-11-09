@@ -1,6 +1,6 @@
 {
- "source": "/home/boop/tenstorrent/blackhole-py/examples/llama3",
- "checkpoint": "/home/boop/tenstorrent/blackhole-py/weights/llama3-8b-fp8",
+ "source": "blackhole-py/examples/llama3",
+ "checkpoint": "weights/llama3-8b-fp8",
  "roles": [
   "brisc",
   "ncrisc",

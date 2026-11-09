@@ -6,7 +6,8 @@ from cq import ComputeQueue, HWQueue, dram, rects
 from device import Device
 from helpers import round_up, safe_load
 
-KERNELS = Path(__file__).resolve().parent / "kernels"
+ROOT = Path(__file__).resolve().parent
+KERNELS = ROOT / "kernels"
 MODELS = {"1b": "Llama 3.2 1B", "8b-bf16": "Llama 3 8B BF16", "8b-fp8": "Llama 3 8B FP8"}
 ARGS = 64  # up to 16 dynamic words per launch
 
@@ -45,12 +46,13 @@ class Llama3:
   def __init__(self, model="1b", device=0, weights=None, *, profile=False):
     self.profile, self.kdir = profile, KERNELS / f"llama3-{model}"
     self.m = m = json.loads((self.kdir / "manifest.json").read_text())
+    self.checkpoint = Path(weights) if weights else ROOT / m["checkpoint"]  # weights/llama3-<model> by default
     self.launches = m["launches"]
     self.dev = dev = Device(device)
     try:
       dev.dram_top = round_up(fw.DRAM_BANKS * m["dram_top"], 1 << 30)  # our heap goes above the old layout
       t = time.perf_counter()
-      self._upload_weights(weights or m["checkpoint"])
+      self._upload_weights(self.checkpoint)
       self.t_weights = time.perf_counter() - t
       t = time.perf_counter()
       self._install()
@@ -271,7 +273,7 @@ def main():
   model = Llama3(a.model, a.device, a.weights, profile=a.profile)
   try:
     m = model.m
-    tok = ChatTokenizer(a.weights or m["checkpoint"])
+    tok = ChatTokenizer(model.checkpoint)
     if a.chat:
       import chat.server
       generate = lambda ids, start, on_token: model.generate(ids, a.tokens, start=start, on_token=on_token)[0]
