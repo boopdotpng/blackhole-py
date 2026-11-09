@@ -195,10 +195,13 @@ class Llama3:
 
   def _ring_ops(self): return {"compute": self.dev.compute.ops.copy(), "copy": self.dev.copy.ops.copy()}
 
-  def generate(self, ids, tokens=None):
-    """Generate until EOS, the optional new-token limit, or the context limit. Returns (generated ids, stats)."""
+  def generate(self, ids, tokens=None, *, start=0, on_token=None):
+    """Generate until EOS, the optional new-token limit, or the context limit. Returns (generated ids, stats).
+    Positions before start reuse the KV cache of the previous request, which must have consumed the same ids there.
+    on_token(id) is called as each token arrives."""
     P = len(ids)
     assert 0 < P <= self.npos, "prompt must leave room for generation"
+    assert 0 <= start < P, "start must index a prompt token"
     assert tokens is None or tokens > 0, "tokens must be positive"
     n = self.npos if tokens is None else min(self.npos, P - 1 + tokens)
     ops0 = self._ring_ops()
@@ -212,19 +215,20 @@ class Llama3:
     gen, submit = [], 0
     t = time.perf_counter_ns()
     for p in range(P - 1, n):
-      # Batch the prompt; thereafter wait for each token before submitting the next position.
-      base = self.graph_base if p == P - 1 else self.graph_base + p * self.graph_stride
-      elapsed, _ = self._run(base, self.graph_size, self.graph_stride, P if p == P - 1 else 1)
+      # Batch the uncached prompt; thereafter wait for each token before submitting the next position.
+      first = start if p == P - 1 else p
+      elapsed, _ = self._run(self.graph_base + first * self.graph_stride, self.graph_size, self.graph_stride, p + 1 - first)
       submit += elapsed
       token = struct.unpack_from("<I", self.dev.sysmem.mem, self.host + 16 * (p + 1))[0]
       gen.append(token)
+      if on_token: on_token(token)
       if token in self.m["eos"]: break
     wall, n = time.perf_counter_ns() - t, P - 1 + len(gen)
     request_ops = {q: c - ops0[q] for q, c in self._ring_ops().items()}  # timestamp readback below not included
-    ts = self._timestamps(self.ts_base, n)
+    ts = self._timestamps(self.ts_base, n)[start:]  # the positions run by this request
     tick = self.ns_per_tick
-    g = ts[P - 1:]  # the positions that generate a token
-    stats = dict(ops=request_ops, positions=n, tokens=len(gen), args_upload_us=t_args / 1e3, submit_us=submit / 1e3, wall_us=wall / 1e3,
+    g = ts[P - 1 - start:]  # the positions that generate a token
+    stats = dict(ops=request_ops, positions=n - start, tokens=len(gen), args_upload_us=t_args / 1e3, submit_us=submit / 1e3, wall_us=wall / 1e3,
                  period_us=(g[-1, -1] - g[0, 0]) * tick / 1e3 / len(g),            # start of first to end of last
                  busy_us=mean((g[:, -1] - g[:, 0]).tolist()) * tick / 1e3,         # inside one position's graph
                  gap_us=mean((g[1:, 0] - g[:-1, -1]).tolist()) * tick / 1e3 if len(g) > 1 else 0.0,
@@ -258,6 +262,9 @@ def main():
   ap.add_argument("--tokens", type=int, help="maximum new tokens (default: generate until EOS or context limit)")
   ap.add_argument("--weights", help="checkpoint directory (default: the one the kernels were exported with)")
   ap.add_argument("--profile", action="store_true", help="record per-launch timestamps and report kernel/dispatch timings")
+  ap.add_argument("--chat", action="store_true", help="serve the web chat (chat/) instead of running --prompt")
+  ap.add_argument("--host", default="0.0.0.0", help="--chat: address to listen on")
+  ap.add_argument("--port", type=int, default=8000, help="--chat: port to listen on")
   a = ap.parse_args()
   if a.tokens is not None and a.tokens < 1: ap.error("--tokens must be positive")
   t0 = time.perf_counter()
@@ -265,6 +272,10 @@ def main():
   try:
     m = model.m
     tok = ChatTokenizer(a.weights or m["checkpoint"])
+    if a.chat:
+      import chat.server
+      generate = lambda ids, start, on_token: model.generate(ids, a.tokens, start=start, on_token=on_token)[0]
+      return chat.server.serve(MODELS[a.model], tok, generate, model.npos, m["eos"], a.host, a.port)
     ids = tok.chat([{"role": "user", "content": a.prompt}])
     ref = json.loads((model.kdir / "reference.json").read_text()) if (model.kdir / "reference.json").exists() else None
     if ref and ref["prompt"] == a.prompt: ids = ref["prompt_ids"]  # 1B's chat template embeds today's date

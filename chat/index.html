@@ -1,0 +1,189 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Blackhole chat</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@highlightjs/cdn-assets@11.12.0/styles/github-dark.min.css" integrity="sha384-wH75j6z1lH97ZOpMOInqhgKzFkAInZPPSPlZpYKYTOqsaizPvhQZmAtLcPKXpLyH" crossorigin="anonymous">
+<style>
+  :root { color-scheme: dark; --bg: #212121; --panel: #303030; --text: #ececec; --muted: #aaa; --line: #424242; --accent: #f0f0f0; --ink: #202020; }
+  :root[data-theme="light"] { color-scheme: light; --bg: #fff; --panel: #f4f4f4; --text: #242424; --muted: #686868; --line: #dedede; --accent: #242424; --ink: #fff; }
+  * { box-sizing: border-box; }
+  body { display: flex; flex-direction: column; min-height: 100dvh; margin: 0; background: var(--bg); color: var(--text); font: 15px/1.65 system-ui, sans-serif; }
+  header { position: sticky; top: 0; z-index: 1; display: flex; align-items: center; gap: 12px; padding: 16px 24px; background: var(--bg); }
+  header h1 { font-size: 18px; font-weight: 600; letter-spacing: -.5px; margin: 0 8px 0 0; }
+  #name { color: var(--muted); font-size: 14px; }
+  button, textarea { font: inherit; color: inherit; }
+  button { border: 1px solid transparent; border-radius: 10px; padding: 7px 12px; background: transparent; cursor: pointer; }
+  button:hover { background: var(--panel); }
+  button:disabled, textarea:disabled { opacity: .45; cursor: default; }
+  :focus-visible { outline: 2px solid var(--muted); outline-offset: 3px; }
+  #theme { margin-left: auto; }
+  #reset { border-color: var(--line); }
+  main, footer { width: min(100%, 800px); margin: auto; padding: 0 24px; }
+  main { flex: 1; padding-top: 24px; padding-bottom: 32px; }
+  #chat:empty { display: grid; align-content: center; text-align: center; }
+  #chat:empty::before { content: "What’s on your mind?"; font-size: clamp(26px, 5vw, 34px); font-weight: 500; letter-spacing: -1px; }
+  #chat:empty::after { content: attr(data-model) " · running on Blackhole"; color: var(--muted); margin-top: 8px; font-size: 14px; }
+  article { margin: 0 0 32px; overflow-wrap: anywhere; }
+  article > b { display: block; font-size: 12px; font-weight: 500; color: var(--muted); margin-bottom: 8px; }
+  article div { white-space: pre-wrap; }
+  article.user { margin-left: auto; max-width: 85%; width: fit-content; padding: 12px 20px; border-radius: 24px; background: var(--panel); }
+  article.user b { display: none; }
+  article.assistant { width: fit-content; max-width: 95%; padding: 16px 20px; border: 1px solid var(--line); border-radius: 24px; }
+  article.assistant div:empty::after { content: "●"; color: var(--muted); }
+  article.assistant .pending { color: var(--muted); }
+  article .stats { display: block; margin: 10px 0 0; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  article .markdown { white-space: normal; }
+  .markdown > :first-child { margin-top: 0; }
+  .markdown > :last-child { margin-bottom: 0; }
+  .markdown p, .markdown ul, .markdown ol { margin: 12px 0; }
+  .markdown h1, .markdown h2, .markdown h3 { line-height: 1.3; margin: 20px 0 12px; }
+  .markdown a { color: inherit; text-underline-offset: 3px; }
+  .markdown blockquote { border-left: 3px solid var(--line); margin: 12px 0; padding-left: 16px; color: var(--muted); }
+  .markdown code { font: .9em ui-monospace, monospace; background: var(--panel); padding: 2px 5px; border-radius: 4px; }
+  .markdown pre { background: #0d1117; color: #c9d1d9; border-radius: 12px; padding: 16px; overflow-x: auto; }
+  .markdown pre code { display: block; white-space: pre; background: transparent; padding: 0; }
+  .markdown table { display: block; overflow-x: auto; border-collapse: collapse; }
+  .markdown th, .markdown td { padding: 8px 12px; border: 1px solid var(--line); }
+  .markdown img { max-width: 100%; }
+  footer { position: sticky; bottom: 0; background: var(--bg); padding-top: 12px; padding-bottom: 16px; }
+  form { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: end; padding: 12px; border: 1px solid var(--line); border-radius: 26px; background: var(--panel); box-shadow: 0 6px 24px #0000000a; }
+  textarea { width: 100%; min-width: 0; min-height: 38px; line-height: 24px; resize: none; background: transparent; border: 0; padding: 7px 8px; max-height: 180px; }
+  textarea:focus { outline: none; }
+  form:focus-within { border-color: var(--muted); }
+  textarea::placeholder { color: var(--muted); }
+  form button { flex-shrink: 0; width: 38px; height: 38px; padding: 0; border-radius: 50%; background: var(--accent); color: var(--ink); font-size: 24px; line-height: 1; }
+  form button:hover { background: var(--accent); opacity: .8; }
+  #status { color: var(--muted); font-size: 12px; margin: 8px 0 2px; text-align: center; }
+  #context { display: block; color: var(--muted); font-size: 11px; text-align: right; margin-top: 6px; font-variant-numeric: tabular-nums; }
+  small { display: block; color: var(--muted); font-size: 11px; text-align: center; }
+  @media (max-width: 540px) {
+    header { gap: 6px; padding: 12px; flex-wrap: wrap; }
+    header h1 { font-size: 16px; }
+    button { padding: 6px 8px; font-size: 13px; }
+    main, footer { padding-left: 16px; padding-right: 16px; }
+    textarea { grid-column: 1 / -1; }
+  }
+</style>
+<header><h1>Blackhole</h1><span id="name"></span><button id="theme" type="button" aria-label="Switch to light mode">Light mode</button><button id="reset">New chat</button></header>
+<main id="chat" aria-live="polite" aria-label="Conversation" data-model="Llama 3"></main>
+<footer>
+<form><textarea id="prompt" rows="1" placeholder="Message Blackhole" aria-label="Message" required></textarea>
+<button aria-label="Send message" title="Send message">↑</button></form>
+<span id="context" title="Tokens in the current request, including conversation history, chat formatting, and generated output">Context · 0 / 8,192</span>
+<p id="status" role="status">Ready</p>
+<small>Prompts run through the decode kernels a token at a time; conversation history stays in the KV cache.</small>
+</footer>
+<script src="https://cdn.jsdelivr.net/npm/marked@18.0.13/lib/marked.umd.js" integrity="sha384-Jy8qDMspJASzATgFngF2ompIKy0StbCcvuTE65mxDm/E0/YSIF6Ndc+5V7bbwRcw" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/dompurify@3.4.15/dist/purify.min.js" integrity="sha384-uUMu9JDY09vBzRf9SPcK2VgUj+W/70J6Soc+Dded5P474ElQ63iv9j5N3DE7Kp3N" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@highlightjs/cdn-assets@11.12.0/highlight.min.js" integrity="sha384-wjfDDhOPPdjtva8vWBhWeVprSpmxisEu5aYT3q1JyACqXpdKpo3PWZTMVq24MBix" crossorigin="anonymous"></script>
+<script>
+const $ = id => document.getElementById(id);
+const form = document.querySelector('form');
+let messages = [];
+let contextLimit = 8192;
+fetch('/info').then(r => r.json()).then(info => {
+  $('name').textContent = info.name; $('chat').dataset.model = info.name; document.title = `${info.name} · Blackhole`;
+  contextLimit = info.context; context(0);
+}).catch(() => {});
+function context(used) { $('context').textContent = `Context · ${used.toLocaleString()} / ${contextLimit.toLocaleString()}`; }
+function theme(value) {
+  document.documentElement.dataset.theme = value;
+  $('theme').textContent = value === 'dark' ? 'Light mode' : 'Dark mode';
+  $('theme').setAttribute('aria-label', `Switch to ${value === 'dark' ? 'light' : 'dark'} mode`);
+  try { localStorage.setItem('theme', value); } catch {}
+}
+let savedTheme = 'dark';
+try { savedTheme = localStorage.getItem('theme') || 'dark'; } catch {}
+theme(savedTheme);
+$('theme').onclick = () => theme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark');
+function resize() { $('prompt').style.height = 'auto'; $('prompt').style.height = Math.min($('prompt').scrollHeight, 180) + 'px'; }
+$('prompt').oninput = resize;
+function reset() { messages = []; context(0); $('chat').replaceChildren(); $('status').textContent = 'Ready'; $('prompt').focus(); }
+$('reset').onclick = reset;
+function renderReply(reply, text) {
+  reply.className = '';
+  reply.textContent = text;
+  if (!window.marked || !window.DOMPurify) return;
+  reply.className = 'markdown';
+  reply.innerHTML = DOMPurify.sanitize(marked.parse(text), {USE_PROFILES: {html: true}});
+  const previous = reply.highlights || new Map(), current = new Map();
+  if (window.hljs) reply.querySelectorAll('pre code').forEach(code => {
+    const key = code.className + '\0' + code.textContent, cached = previous.get(key);
+    if (cached) { code.innerHTML = cached.html; code.className = cached.className; }
+    else hljs.highlightElement(code);
+    current.set(key, {html: code.innerHTML, className: code.className});
+  });
+  reply.highlights = current;
+}
+function bubble(role, text) {
+  const article = document.createElement('article'), label = document.createElement('b'), body = document.createElement('div');
+  article.className = role === 'You' ? 'user' : 'assistant';
+  label.textContent = role; body.textContent = text; article.append(label, body); $('chat').append(article); return body;
+}
+$('prompt').onkeydown = e => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); form.requestSubmit(); } };
+form.onsubmit = async e => {
+  e.preventDefault();
+  const content = $('prompt').value.trim();
+  if (!content || $('prompt').disabled) return;
+  const pending = [...messages, {role: 'user', content}];
+  bubble('You', content);
+  const reply = bubble('Assistant', 'Starting…');
+  reply.className = 'pending';
+  let generated = '', rendered = null, renderTimer;
+  function flushRender() {
+    clearTimeout(renderTimer); renderTimer = null;
+    if (generated === rendered) return;
+    const follow = window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 100;
+    renderReply(reply, generated || 'Model ended the turn without a response.');
+    rendered = generated;
+    if (follow) window.scrollTo(0, document.documentElement.scrollHeight);
+  }
+  $('prompt').value = ''; resize();
+  reply.scrollIntoView({block: 'nearest'});
+  const controls = [...document.querySelectorAll('button:not(#theme), textarea')];
+  controls.forEach(el => el.disabled = true);
+  $('status').textContent = '';
+  try {
+    const response = await fetch('/chat', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({messages: pending})});
+    if (!response.ok) throw Error(await response.text());
+    const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
+    let buffer = '', complete = false;
+    while (true) {
+      const {value, done} = await reader.read();
+      if (done) break;
+      buffer += value;
+      let end;
+      while ((end = buffer.indexOf('\n')) >= 0) {
+        const event = JSON.parse(buffer.slice(0, end)); buffer = buffer.slice(end + 1);
+        if (event.error) throw Error(event.error);
+        if (event.context_limit !== undefined) contextLimit = event.context_limit;
+        if (event.context !== undefined) context(event.context);
+        if (event.delta) {
+          generated += event.delta;
+          if (!renderTimer) renderTimer = setTimeout(flushRender, 80);
+        }
+        if (event.cached !== undefined && !generated)
+          reply.textContent = `Reading ${(event.context - event.cached).toLocaleString()} new tokens (${event.cached.toLocaleString()} cached)…`;
+        if (event.done) {
+          complete = true;
+          flushRender();
+          const s = event.stats, stats = document.createElement('span');
+          stats.className = 'stats';
+          stats.textContent = [s.tok_s && `${s.tok_s.toFixed(1)} tok/s`, `${s.tokens} tokens`,
+            `${(s.prefill_ms / 1000).toFixed(2)} s to first token`, `${s.cached.toLocaleString()} cached`].filter(Boolean).join(' · ');
+          reply.parentElement.append(stats);
+          $('status').textContent = s.stop === 'context' ? 'Context full · start a new chat' : 'Ready';
+        }
+      }
+    }
+    if (!complete) throw Error('Connection closed before generation finished');
+    if (generated.trim()) messages = [...pending, {role: 'assistant', content: generated}];
+  } catch (error) {
+    clearTimeout(renderTimer);
+    if (generated) flushRender();
+    else reply.textContent = `Error: ${error.message}`;
+    $('status').textContent = `Error: ${error.message}. Message not added to history; retry.`;
+    $('prompt').value = content;
+  } finally { controls.forEach(el => el.disabled = false); resize(); $('prompt').focus({preventScroll: true}); }
+};
+</script>
