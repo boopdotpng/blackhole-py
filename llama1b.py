@@ -11,6 +11,34 @@ ARGS = 64  # up to 16 dynamic words per launch
 
 def mean(xs): return sum(xs) / len(xs) if xs else float("nan")
 
+class ChatTokenizer:
+  """The checkpoint's tokenizer.json and chat template, read with tokenizers and jinja2 rather than transformers,
+  whose import and AutoTokenizer load cost ~1.8 s of startup. Same ids and text as transformers for this model."""
+  def __init__(self, path):
+    import datetime, tokenizers
+    from jinja2.sandbox import ImmutableSandboxedEnvironment
+    path = Path(path)
+    cfg = json.loads((path / "tokenizer_config.json").read_text())
+    self.tok = tokenizers.Tokenizer.from_file(str(path / "tokenizer.json"))
+    special = {k: v if isinstance(v, str) else v["content"] for k, v in cfg.items() if k.endswith("_token") and isinstance(v, (str, dict))}
+    jinja = path / "chat_template.jinja"
+    env = ImmutableSandboxedEnvironment(trim_blocks=True, lstrip_blocks=True, extensions=["jinja2.ext.loopcontrols"])
+    def raise_exception(msg): raise ValueError(msg)
+    env.globals.update(raise_exception=raise_exception, strftime_now=lambda fmt: datetime.datetime.now().strftime(fmt))
+    self.template = env.from_string(jinja.read_text() if jinja.exists() else cfg["chat_template"])
+    self.special, self.cleanup = special, cfg.get("clean_up_tokenization_spaces", False)
+
+  def chat(self, messages) -> list[int]:
+    text = self.template.render(messages=messages, add_generation_prompt=True, **self.special)
+    return self.tok.encode(text, add_special_tokens=False).ids
+
+  def decode(self, ids) -> str:
+    text = self.tok.decode(list(ids), skip_special_tokens=False)
+    if self.cleanup:  # what transformers' clean_up_tokenization does
+      for a, b in ((" .", "."), (" ?", "?"), (" !", "!"), (" ,", ","), (" ' ", "'"), (" n't", "n't"), (" 'm", "'m"),
+                   (" 's", "'s"), (" 've", "'ve"), (" 're", "'re")): text = text.replace(a, b)
+    return text
+
 class Llama1B:
   def __init__(self, device=0, weights=None, *, profile=False):
     self.profile = profile
@@ -26,7 +54,7 @@ class Llama1B:
       self._install()
       self._build()
       self.t_build = time.perf_counter() - t
-      self.ns_per_tick = self._calibrate()
+      self.ns_per_tick = 1e3 / fw.AICLK_MHZ  # device timestamps count AICLK cycles
       self.startup_ops = self._ring_ops()
     except BaseException:
       dev.close()
@@ -132,16 +160,6 @@ class Llama1B:
     self.dev.copyin(base, g)
     return base, size, stride
 
-  def _calibrate(self) -> float:
-    """Device wall clock ticks -> ns, against the host clock."""
-    dev, sig = self.dev, 250
-    def stamp(n):
-      HWQueue().timestamp(dev.signal(sig)).signal(dev.signal(sig), n).submit(dev.compute)
-      return dev.wait(sig, n), time.perf_counter_ns()
-    (d0, h0), _ = stamp(1), time.sleep(0.2)
-    d1, h1 = stamp(2)
-    return (h1 - h0) / (d1 - d0)
-
   # ---- a request
   def _upload_args(self, n, prompt_len):
     pos = np.arange(n, dtype=np.uint32)
@@ -174,11 +192,13 @@ class Llama1B:
 
   def _ring_ops(self): return {"compute": self.dev.compute.ops.copy(), "copy": self.dev.copy.ops.copy()}
 
-  def generate(self, ids, steps):
-    """Decode the prompt and steps more positions in one go. Returns (generated ids, stats)."""
-    P, n = len(ids), len(ids) - 1 + steps
+  def generate(self, ids, tokens=None):
+    """Generate until EOS, the optional new-token limit, or the context limit. Returns (generated ids, stats)."""
+    P = len(ids)
+    assert 0 < P <= self.npos, "prompt must leave room for generation"
+    assert tokens is None or tokens > 0, "tokens must be positive"
+    n = self.npos if tokens is None else min(self.npos, P - 1 + tokens)
     ops0 = self._ring_ops()
-    assert steps > 0 and 0 < P and n <= self.npos, "steps must be positive and prompt + steps must fit the context"
     hist = np.zeros(self.m["max_tokens"], "<u4")
     hist[:P] = ids
     self.dev.copyin(self.buffer(self.m["history"]), hist)
@@ -186,13 +206,22 @@ class Llama1B:
     t = time.perf_counter_ns()
     self._upload_args(n, P)
     t_args = time.perf_counter_ns() - t
-    submit, wall = self._run(self.graph_base, self.graph_size, self.graph_stride, n)
+    gen, submit = [], 0
+    t = time.perf_counter_ns()
+    for p in range(P - 1, n):
+      # Batch the prompt; thereafter wait for each token before submitting the next position.
+      base = self.graph_base if p == P - 1 else self.graph_base + p * self.graph_stride
+      elapsed, _ = self._run(base, self.graph_size, self.graph_stride, P if p == P - 1 else 1)
+      submit += elapsed
+      token = struct.unpack_from("<I", self.dev.sysmem.mem, self.host + 16 * (p + 1))[0]
+      gen.append(token)
+      if token in self.m["eos"]: break
+    wall, n = time.perf_counter_ns() - t, P - 1 + len(gen)
     request_ops = {q: c - ops0[q] for q, c in self._ring_ops().items()}  # timestamp readback below not included
     ts = self._timestamps(self.ts_base, n)
-    gen = [struct.unpack_from("<I", self.dev.sysmem.mem, self.host + 16 * (p + 1))[0] for p in range(P - 1, n)]
     tick = self.ns_per_tick
     g = ts[P - 1:]  # the positions that generate a token
-    stats = dict(ops=request_ops, positions=n, steps=steps, args_upload_us=t_args / 1e3, submit_us=submit / 1e3, wall_us=wall / 1e3,
+    stats = dict(ops=request_ops, positions=n, tokens=len(gen), args_upload_us=t_args / 1e3, submit_us=submit / 1e3, wall_us=wall / 1e3,
                  period_us=(g[-1, -1] - g[0, 0]) * tick / 1e3 / len(g),            # start of first to end of last
                  busy_us=mean((g[:, -1] - g[:, 0]).tolist()) * tick / 1e3,         # inside one position's graph
                  gap_us=mean((g[1:, 0] - g[:-1, -1]).tolist()) * tick / 1e3 if len(g) > 1 else 0.0,
@@ -222,21 +251,19 @@ def main():
   ap = argparse.ArgumentParser()
   ap.add_argument("--device", type=int, default=0)
   ap.add_argument("--prompt", default="Write a story about a robot learning to paint.")
-  ap.add_argument("--steps", type=int, default=64)
+  ap.add_argument("--tokens", type=int, help="maximum new tokens (default: generate until EOS or context limit)")
   ap.add_argument("--weights", help="checkpoint directory (default: the one the kernels were exported with)")
   ap.add_argument("--profile", action="store_true", help="record per-launch timestamps and report kernel/dispatch timings")
   a = ap.parse_args()
-  if a.steps < 1: ap.error("--steps must be positive")
-  from transformers import AutoTokenizer
+  if a.tokens is not None and a.tokens < 1: ap.error("--tokens must be positive")
   t0 = time.perf_counter()
   model = Llama1B(a.device, a.weights, profile=a.profile)
   try:
     m = model.m
-    tok = AutoTokenizer.from_pretrained(a.weights or m["checkpoint"], local_files_only=True)
-    ids = tok.apply_chat_template([{"role": "user", "content": a.prompt}], add_generation_prompt=True)
-    if not isinstance(ids, list): ids = ids["input_ids"]
+    tok = ChatTokenizer(a.weights or m["checkpoint"])
+    ids = tok.chat([{"role": "user", "content": a.prompt}])
     t_start = time.perf_counter() - t0
-    gen, s = model.generate(ids, a.steps)
+    gen, s = model.generate(ids, a.tokens)
     if a.profile: per_exec, noop_token = model.dispatch_baseline()
     row = lambda label, text: print(f"{label:<12}{text}")
     gb = model.weight_bytes / 1e9
@@ -251,7 +278,9 @@ def main():
     print()
     row("prompt", f"{a.prompt!r} ({len(ids)} tokens with the chat template)")
     row("output", tok.decode(gen[:eos]).strip())
-    if eos < len(gen): row("", f"(EOS after {eos} tokens; the device kept going, timing covers all {len(gen)})")
+    if eos < len(gen): row("", "(stopped at EOS; timing includes the EOS token)")
+    elif s["positions"] == model.npos: row("", "(stopped at context limit)")
+    else: row("", "(stopped at token limit)")
     ref = json.loads((KDIR / "reference.json").read_text()) if (KDIR / "reference.json").exists() else None
     if ref and ref["prompt_ids"] == ids:
       want = ref["generated_ids"]
@@ -262,7 +291,7 @@ def main():
 
     print()
     row("decode", f"{1e6 / s['period_us']:.1f} tok/s, {s['period_us'] / 1e3:.3f} ms/token "
-                  f"({s['steps']} tokens, device clock, {model.nts} timestamps per token)")
+                  f"({s['tokens']} tokens, device clock, {model.nts} timestamps per token)")
     row("  device", f"{s['busy_us']:.1f} us per token in the graph, {s['gap_us']:.2f} us between graphs")
     row("  host", f"{(s['wall_us'] - s['device_us']) / s['positions']:.1f} us per position on top of the device "
                   f"(submit {s['submit_us'] / s['positions']:.1f} us/position, args upload {s['args_upload_us']:.0f} us once)")
@@ -276,13 +305,13 @@ def main():
     if not a.profile:
       print("\nUse --profile for per-kernel and dispatch timings.")
       return
-    ks, steps = s["kernels"], s["steps"]
-    tot = sum(v.sum() for v in ks.values()) / steps
+    ks, tokens = s["kernels"], s["tokens"]
+    tot = sum(v.sum() for v in ks.values()) / tokens
     print(f"\n{'kernel':<12}{'launches':>9}{'us/launch':>11}{'min':>9}{'max':>9}{'us/token':>11}{'share':>8}")
     for name, v in sorted(ks.items(), key=lambda kv: -kv[1].sum()):
-      per_tok = v.sum() / steps
-      print(f"{name:<12}{len(v) // steps:>9}{v.mean():>11.1f}{v.min():>9.1f}{v.max():>9.1f}{per_tok:>11.1f}{per_tok / tot:>8.1%}")
-    print(f"{'total':<12}{sum(len(v) for v in ks.values()) // steps:>9}{'':>29}{tot:>11.1f}")
+      per_tok = v.sum() / tokens
+      print(f"{name:<12}{len(v) // tokens:>9}{v.mean():>11.1f}{v.min():>9.1f}{v.max():>9.1f}{per_tok:>11.1f}{per_tok / tot:>8.1%}")
+    print(f"{'total':<12}{sum(len(v) for v in ks.values()) // tokens:>9}{'':>29}{tot:>11.1f}")
     print(f"{'dispatch':<12}{len(model.launches):>9}{per_exec:>11.1f}{'':>18}{noop_token:>11.1f}{noop_token / tot:>8.1%}"
           f"   no-op kernels: already inside each row above")
   finally:

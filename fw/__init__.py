@@ -25,6 +25,7 @@ WPTR, RPTR, RING_LO = STATE, STATE + 4, STATE + 8
 
 DRAM_BANKS, DRAM_BANK_SIZE, DRAM_PAGE_MAX = 8, 4 << 30, 4096
 ARC = (8, 0)
+AICLK_MHZ = 1350  # set at boot and never changed; the Tensix wall clock counts these cycles
 TELEMETRY_PTR, TAG_ENABLED_TENSIX_COL = 0x80030434, 34
 SOFT_RESET, RESET_BRISC, RESET_ALL = 0xFFB121B0, 1 << 11, 0x47800  # brisc 11, trisc0-2 12-14, ncrisc 18
 
