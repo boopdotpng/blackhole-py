@@ -187,7 +187,7 @@ class Llama3:
         self.done += 1
         HWQueue().signal(dev.signal(252), self.done).submit(ring)
       submit += time.perf_counter_ns() - s
-    dev.wait(252, self.done, timeout=60.0)
+    dev.wait(252, self.done, timeout=10.0 + 0.1 * n)  # a batched prompt runs n positions: ~33 ms each on 8B BF16
     return submit, time.perf_counter_ns() - t0
 
   def _timestamps(self, base, n):
