@@ -6,7 +6,8 @@ from cq import ComputeQueue, HWQueue, dram, rects
 from device import Device
 from helpers import round_up, safe_load
 
-KDIR = Path(__file__).resolve().parent / "kernels" / "llama1b"
+KERNELS = Path(__file__).resolve().parent / "kernels"
+MODELS = {"1b": "Llama 3.2 1B", "8b-bf16": "Llama 3 8B BF16", "8b-fp8": "Llama 3 8B FP8"}
 ARGS = 64  # up to 16 dynamic words per launch
 
 def mean(xs): return sum(xs) / len(xs) if xs else float("nan")
@@ -20,6 +21,7 @@ class ChatTokenizer:
     path = Path(path)
     cfg = json.loads((path / "tokenizer_config.json").read_text())
     self.tok = tokenizers.Tokenizer.from_file(str(path / "tokenizer.json"))
+    self.tok.no_padding(); self.tok.no_truncation()  # 8B FP8's tokenizer.json pads to 512; transformers ignores that
     special = {k: v if isinstance(v, str) else v["content"] for k, v in cfg.items() if k.endswith("_token") and isinstance(v, (str, dict))}
     jinja = path / "chat_template.jinja"
     env = ImmutableSandboxedEnvironment(trim_blocks=True, lstrip_blocks=True, extensions=["jinja2.ext.loopcontrols"])
@@ -39,10 +41,10 @@ class ChatTokenizer:
                    (" 's", "'s"), (" 've", "'ve"), (" 're", "'re")): text = text.replace(a, b)
     return text
 
-class Llama1B:
-  def __init__(self, device=0, weights=None, *, profile=False):
-    self.profile = profile
-    self.m = m = json.loads((KDIR / "manifest.json").read_text())
+class Llama3:
+  def __init__(self, model="1b", device=0, weights=None, *, profile=False):
+    self.profile, self.kdir = profile, KERNELS / f"llama3-{model}"
+    self.m = m = json.loads((self.kdir / "manifest.json").read_text())
     self.launches = m["launches"]
     self.dev = dev = Device(device)
     try:
@@ -68,14 +70,15 @@ class Llama1B:
 
   def _upload_weights(self, checkpoint):
     path = Path(checkpoint)
-    tensors = safe_load(path if path.is_file() else path / "model.safetensors")
+    if path.is_dir(): path = next(f for f in (path / "model.safetensors.index.json", path / "model.safetensors") if f.exists())
+    tensors = safe_load(path)
     sources, zeros, self.weight_bytes = [], [], 0
     for b in self.m["uploads"]:
       if b["kind"] == "tensor":
         t = tensors[b["src"]]
         assert t.nbytes <= b["size"], (b["name"], t.nbytes, b["size"])
         sources.append((self.buffer(b), t.path, t.offset, t.nbytes))
-      elif b["kind"] == "file": sources.append((self.buffer(b), KDIR / b["src"], 0, (KDIR / b["src"]).stat().st_size))
+      elif b["kind"] == "file": sources.append((self.buffer(b), self.kdir / b["src"], 0, (self.kdir / b["src"]).stat().st_size))
       else: zeros.append(b)  # KV caches start zeroed
       self.weight_bytes += b["size"]
     self.dev.load(sources)
@@ -87,7 +90,7 @@ class Llama1B:
     self.prog, self.noop = {}, {}
     tables_end = max(m['static_base'] + 0x40 * (p['k'] + 1) for p in m['programs'].values())
     for name, p in m['programs'].items():
-      files = {role: [(KDIR / f).read_bytes() for f in fs] for role, fs in p['files'].items()}
+      files = {role: [(self.kdir / f).read_bytes() for f in fs] for role, fs in p['files'].items()}
       images = {}
       for c in p['per_core']:
         core = tuple(c['core'])
@@ -249,6 +252,7 @@ class Llama1B:
 
 def main():
   ap = argparse.ArgumentParser()
+  ap.add_argument("--model", choices=MODELS, default="1b")
   ap.add_argument("--device", type=int, default=0)
   ap.add_argument("--prompt", default="Write a story about a robot learning to paint.")
   ap.add_argument("--tokens", type=int, help="maximum new tokens (default: generate until EOS or context limit)")
@@ -257,18 +261,20 @@ def main():
   a = ap.parse_args()
   if a.tokens is not None and a.tokens < 1: ap.error("--tokens must be positive")
   t0 = time.perf_counter()
-  model = Llama1B(a.device, a.weights, profile=a.profile)
+  model = Llama3(a.model, a.device, a.weights, profile=a.profile)
   try:
     m = model.m
     tok = ChatTokenizer(a.weights or m["checkpoint"])
     ids = tok.chat([{"role": "user", "content": a.prompt}])
+    ref = json.loads((model.kdir / "reference.json").read_text()) if (model.kdir / "reference.json").exists() else None
+    if ref and ref["prompt"] == a.prompt: ids = ref["prompt_ids"]  # 1B's chat template embeds today's date
     t_start = time.perf_counter() - t0
     gen, s = model.generate(ids, a.tokens)
     if a.profile: per_exec, noop_token = model.dispatch_baseline()
     row = lambda label, text: print(f"{label:<12}{text}")
     gb = model.weight_bytes / 1e9
 
-    print(f"\nLlama 3.2 1B on {model.dev.pci_dev.card}, device {a.device}\n")
+    print(f"\n{MODELS[a.model]} on {model.dev.pci_dev.card}, device {a.device}\n")
     row("startup", f"{t_start:.2f} s")
     row("  weights", f"{gb:.2f} GB in {model.t_weights:.2f} s ({gb / model.t_weights:.1f} GB/s)")
     row("  kernels", f"{len(m['programs'])} programs, {model.code_slot_bytes / 1024:.1f} KB of double-buffered code slots per core, "
@@ -281,7 +287,6 @@ def main():
     if eos < len(gen): row("", "(stopped at EOS; timing includes the EOS token)")
     elif s["positions"] == model.npos: row("", "(stopped at context limit)")
     else: row("", "(stopped at token limit)")
-    ref = json.loads((KDIR / "reference.json").read_text()) if (KDIR / "reference.json").exists() else None
     if ref and ref["prompt_ids"] == ids:
       want = ref["generated_ids"]
       n = min(len(gen), len(want))
