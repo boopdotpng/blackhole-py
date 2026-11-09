@@ -99,6 +99,15 @@ def _select_mop(target, tilize):
 class Unpack:
   def __init__(self, kernel, dst: Dst):
     self.k, self.dst, self._mop = kernel, dst, Mop(kernel, 0)
+    self._masked_after = {}
+
+  def _outlined(self, key, fn, *args):
+    """Share one body per distinct move; replay its build-time MOP mode after each call."""
+    key = ("unpack", *key, self._mop.state.masked)
+    self.k.outline(key, fn, *args)
+    self._masked_after.setdefault(key, self._mop.state.masked)
+    self._mop.state.masked = self._masked_after[key]
+    return self
 
   def _issue(self, word):
     self.k.emit(word)
@@ -264,7 +273,8 @@ class Unpack:
   def move(self, source_cb, target, tilize=False, *, tile=None, configure_format=True):
     """Unpack one CB tile. configure_format=False keeps the previous move's
     modes, which must have used the same CB dtype, target and tilize."""
-    return self._move(source_cb, target, tilize, tile, configure_format=configure_format)
+    return self._outlined(("move", source_cb, target, tilize, tile, configure_format),
+                          lambda: self._move(source_cb, target, tilize, tile, configure_format=configure_format))
 
   def move_l1(self, dtype, address, target=UnpackTarget.SRCA):
     """Present one face-tilized tile from a persistent L1 address."""
@@ -303,6 +313,11 @@ class Unpack:
     return self
 
   def move_matmul(self, left_cb, right_cb, *, right_transpose=False, configure_format=True):
+    return self._outlined(("move_matmul", left_cb, right_cb, right_transpose, configure_format),
+                          lambda: self._move_matmul(left_cb, right_cb, right_transpose=right_transpose,
+                                                    configure_format=configure_format))
+
+  def _move_matmul(self, left_cb, right_cb, *, right_transpose=False, configure_format=True):
     self.dst.require_fp32()
     if left_cb.dtype != right_cb.dtype or left_cb.dtype not in (DType.BF16, DType.FP8):
       raise ValueError("matmul unpack requires matching BF16 or FP8 inputs")
@@ -371,6 +386,10 @@ class Unpack:
     return self
 
   def _move_pair(self, source_a_cb, source_b_cb, mop):
+    return self._outlined(("move_pair", source_a_cb, source_b_cb, mop),
+                          lambda: self._move_pair_inline(source_a_cb, source_b_cb, mop))
+
+  def _move_pair_inline(self, source_a_cb, source_b_cb, mop):
     self._configure(
       source_a_cb, UnpackTarget.SRCA, False, None,
       commit=False, configure_mop=False,
@@ -424,6 +443,13 @@ class Unpack:
       raise ValueError("tile offset is outside the circular buffer")
     if pop and tile_offset:
       raise ValueError("offset unpack requires explicit row release")
+    return self._outlined(
+      ("move_l1_pair", source_cb, configure_format, tile_offset, pop, source_b_dtype),
+      lambda address: self._move_l1_pair(source_cb, address, configure_format=configure_format,
+                                         tile_offset=tile_offset, pop=pop, source_b_dtype=source_b_dtype),
+      l1_address)
+
+  def _move_l1_pair(self, source_cb, l1_address, *, configure_format, tile_offset, pop, source_b_dtype):
     if tile_offset:
       with self.k.scope():
         address, delta, limit = self.k.reg(3)

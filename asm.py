@@ -28,6 +28,39 @@ def scoped(fn):
     with asm.scope(): return fn(asm, *args, **kwargs)
   return wrapped
 
+# Out-of-line bodies allocate from the top of the register file, where the
+# scoped kernel allocator (lowest free register first) rarely reaches. The
+# first entries carry arguments and results.
+SUBROUTINE_REGS = (R.T6, R.T5, R.T4, R.T3, R.S11, R.S10, R.S9, R.S8, R.S7, R.S6, R.S5, R.S4)
+_WRITES_RD = {0x33, 0x13, 0x03, 0x37, 0x17, 0x6F, 0x67, 0x73}
+
+class DataWord(int):
+  """A constant embedded in the text after a body's return; never executed."""
+
+def _written_register(item):
+  """Destination register of one physical-mode item, if it writes one."""
+  if isinstance(item, (TensixWord, DataWord)): return None
+  if isinstance(item, Insn):
+    if item.op in ("la_hi", "la_lo"): return item.args[0]
+    if item.op == "jal" or item.op in Asm._DEFINES: return item.args[0] if item.args and is_reg(item.args[0]) else None
+    return None
+  if isinstance(item, int) and item & 0x7F in _WRITES_RD: return R((item >> 7) & 31)
+  return None
+
+@dataclass
+class Subroutine:
+  """A shared out-of-line body, reached with ``jal ra`` and left with ``ret``."""
+  key: object
+  label: str
+  args: tuple
+  results: tuple
+  clobbers: frozenset
+  items: list
+  labels: dict
+  dirty: bool = True      # body changes MOP or thread configuration
+  data: bool = False      # constants follow the return; never spliced inline
+  calls: int = 0
+
 @dataclass(frozen=True)
 class Cond:
   lhs: R
@@ -77,7 +110,10 @@ class Asm:
     # Build-time view of this TRISC's MOP_CFG words and SETC16 thread config
     # on the current straight-line path; labels reset both.
     self.mop_words, self.thread_cfg = None, {}
+    self._tensix_dirty = False
     self.local = Allocator(*Firmware.LOCAL_MEMORY.get(role, (0, 0)), 4)
+    self.subroutines: dict = {}
+    self._sub_stack: list = []
 
   @classmethod
   def firmware(cls, role: KernelRole): return cls(role, firmware=True)
@@ -117,9 +153,9 @@ class Asm:
       src = self.reg(exclude=base) if tmp_val is None else tmp_val
       self.li(src, value)
     else: src = value
-    if not is_reg(addr) and _MOP_CFG <= addr < _MOP_CFG + 9 * 4: self.mop_words = None
+    if not is_reg(addr) and _MOP_CFG <= addr < _MOP_CFG + 9 * 4: self.mop_words, self._tensix_dirty = None, True
     # A runtime-built instruction may be a SETC16 of any thread register.
-    if is_reg(value) and (is_reg(addr) or addr == TensixMMIO.INSTRN_BUF_BASE): self.thread_cfg = {}
+    if is_reg(value) and (is_reg(addr) or addr == TensixMMIO.INSTRN_BUF_BASE): self.thread_cfg, self._tensix_dirty = {}, True
     return op(src, base)
 
   @scoped
@@ -132,7 +168,7 @@ class Asm:
     op = {1: self.sb, 2: self.sh, 4: self.sw}[bytes]
     writes = [(int(addr), int(value) & 0xFFFFFFFF) for addr, value in writes]
     if not writes: return self
-    if any(_MOP_CFG <= addr < _MOP_CFG + 9 * 4 for addr, _ in writes): self.mop_words = None
+    if any(_MOP_CFG <= addr < _MOP_CFG + 9 * 4 for addr, _ in writes): self.mop_words, self._tensix_dirty = None, True
     base_reg, value_reg = self.reg(2)
     base = value = None
     for addr, word in writes:
@@ -149,7 +185,7 @@ class Asm:
   def _emit(self, word: int):
     if self._lowered: raise RuntimeError("kernel has already been lowered")
     if isinstance(word, TensixWord):
-      if word >> 24 == 0xB2: self.thread_cfg[(word >> 16) & 0xFF] = word & 0xFFFF
+      if word >> 24 == 0xB2: self.thread_cfg[(word >> 16) & 0xFF] = word & 0xFFFF; self._tensix_dirty = True
       if self.role == "brisc":
         return self.write(TensixMMIO.INSTRN_BUF_BASE, int(word))
       if self.role == "ncrisc": raise RuntimeError("ncrisc cannot emit Tensix instructions")
@@ -337,6 +373,12 @@ class Asm:
         if item.target not in targets: raise ValueError(f"undefined label {item.target!r}")
         offset = targets[item.target] - pc
       else: offset = item.target - (self.base + pc)
+      if item.op in ("la_hi", "la_lo"):
+        if item.op == "la_lo": offset += 4      # relative to the preceding auipc
+        high = ((offset + 0x800) >> 12) & 0xFFFFF
+        low = offset - ((((offset + 0x800) >> 12)) << 12)
+        out.append(_rv32.auipc(args[0], high << 12) if item.op == "la_hi" else _rv32.addi(args[0], args[0], low))
+        pc += 4; continue
       if offset & 1: raise ValueError(f"misaligned target {item.target!r}")
       if i in long:
         out.append(getattr(_rv32, self._BRANCHES[item.op])(*args, 8))
@@ -353,6 +395,20 @@ class Asm:
 
   def lower(self):
     if self._lowered: raise RuntimeError("kernel has already been lowered")
+    if self._sub_stack: raise RuntimeError("subroutine body is still open")
+    self._inline_single_calls()
+    if self.subroutines:
+      # Resident installation patches the image's final word as the return
+      # jump, so bodies go between the kernel and that word.
+      exit_label = self._new_label("kernel_exit")
+      self.j(exit_label)
+      for sub in self.subroutines.values():
+        offset = len(self.items)
+        for name, index in sub.labels.items():
+          if name in self.labels: raise ValueError(f"duplicate label {name!r}")
+          self.labels[name] = index + offset
+        self.items.extend(sub.items)
+      self.labels[exit_label] = len(self.items)
     if not self.is_firmware: self.j(Firmware.TEXT[self.role][0])
     if self._prologue:
       count = len(self._prologue)
@@ -364,6 +420,132 @@ class Asm:
       self._prologue = []
     self._lowered = True
     return self.assemble()
+
+  def subroutine(self, key, build, nargs=0):
+    """Return the shared body for ``key``, building it on first use.
+
+    ``build(*args)`` emits the body with physical registers from
+    SUBROUTINE_REGS; ``args`` hold the call's arguments. It may return
+    registers holding results. The body must not depend on build-time Tensix
+    state, and callers forget theirs after the call.
+    """
+    sub = self.subroutines.get(key)
+    if sub is not None: return sub
+    if not self.physical_regs: raise RuntimeError("subroutines require physical registers")
+    if any(entry[0] == key for entry in self._sub_stack): raise RecursionError(f"recursive subroutine {key!r}")
+    args = SUBROUTINE_REGS[:nargs]
+    label = self._new_label("sub")
+    saved = (self.items, self.labels, self._free, self._scopes, self._breaks, self.mop_words, self.thread_cfg, self._tensix_dirty)
+    self.items, self.labels, self._scopes, self._breaks = [], {}, [list(args)], []
+    self._tensix_dirty = False
+    self._free = sorted((reg for reg in SUBROUTINE_REGS if reg not in args), key=int)
+    self.forget_tensix_state()
+    self._sub_stack.append((key, set()))
+    saved_data, self._sub_data = getattr(self, "_sub_data", None), []
+    try:
+      self.label(label)
+      results = build(*args)
+      if results is None: results = ()
+      elif is_reg(results): results = (results,)
+      results = tuple(results)
+      self.jalr(R.ZERO, R.RA, 0)
+      for name, words in self._sub_data:
+        self.labels[name] = len(self.items)
+        self.items.extend(DataWord(word & 0xFFFFFFFF) for word in words)
+      items, labels, dirty, data = self.items, self.labels, self._tensix_dirty, bool(self._sub_data)
+    finally:
+      self._sub_data = saved_data
+      _, nested = self._sub_stack.pop()
+      self.items, self.labels, self._free, self._scopes, self._breaks, self.mop_words, self.thread_cfg, self._tensix_dirty = saved
+    clobbers = {reg for reg in map(_written_register, items) if reg is not None} | nested | set(args)
+    clobbers.discard(R.ZERO)
+    sub = Subroutine(key, label, args, results, frozenset(clobbers), items, labels, dirty, data)
+    self.subroutines[key] = sub
+    return sub
+
+  def embed(self, words):
+    """Label for constant words placed after the current body's return."""
+    if not self._sub_stack: raise RuntimeError("embedded constants are only supported inside subroutines")
+    name = self._new_label("data")
+    self._sub_data.append((name, tuple(words)))
+    return name
+
+  def la(self, rd: R, label: str):
+    """rd = runtime address of ``label`` (PC-relative, so relocation-safe)."""
+    self.items.append(Insn("la_hi", (rd,), label))
+    self.items.append(Insn("la_lo", (rd,), label))
+    return self
+
+  def _inline_single_calls(self):
+    """Splice bodies with one static call site back in place of their call."""
+    changed = True
+    while changed:
+      changed = False
+      for key, sub in list(self.subroutines.items()):
+        if sub.calls != 1 or sub.data: continue
+        containers = [(self.items, self.labels)] + [(other.items, other.labels)
+                                                    for other in self.subroutines.values() if other is not sub]
+        for items, labels in containers:
+          site = next((index for index, item in enumerate(items) if isinstance(item, Insn) and item.op == "jal"
+                       and item.target == sub.label and item.args[0] == R.RA), None)
+          if site is None: continue
+          body = sub.items[:-1]          # drop the trailing return
+          items[site:site + 1] = body
+          for name, index in list(labels.items()):
+            if index > site: labels[name] = index + len(body) - 1
+          for name, index in sub.labels.items(): labels[name] = site + index
+          del self.subroutines[key]
+          changed = True
+          break
+        if changed: break
+
+  def outline(self, key, fn, *args, nest=True):
+    """Emit ``fn(*argument_registers)`` once as a shared body and call it.
+
+    ``args`` (registers or integers) travel in argument registers. Without
+    subroutine support (firmware, virtual registers) ``fn`` runs inline, as it
+    does inside another body when ``nest`` is false (small helpers whose call
+    would cost a return-address spill).
+    """
+    if not self.physical_regs or self.is_firmware or (self._sub_stack and not nest): return fn(*args)
+    def body(*regs): fn(*regs)
+    self.call(self.subroutine(key, body, len(args)), *args)
+    return None
+
+  def _parallel_move(self, moves):
+    """Move every (destination, source) pair as if simultaneously."""
+    pending = [(dst, src) for dst, src in moves if not (is_reg(src) and src == dst)]
+    while pending:
+      for index, (dst, src) in enumerate(pending):
+        if not any(is_reg(other) and other == dst for position, (_, other) in enumerate(pending) if position != index):
+          self.mv(dst, src) if is_reg(src) else self.li(dst, src)
+          del pending[index]
+          break
+      else: raise RuntimeError(f"cyclic register moves {pending}")
+
+  def call(self, sub: Subroutine, *args, results=()):
+    """Call ``sub``; registers live in the caller survive, ``results`` receive its results."""
+    if len(args) != len(sub.args): raise ValueError(f"{sub.key!r} takes {len(sub.args)} arguments")
+    if len(results) > len(sub.results): raise ValueError(f"{sub.key!r} returns {len(sub.results)} results")
+    live = {reg for scope in self._scopes for reg in scope}
+    spill = sorted((sub.clobbers & live) - set(results), key=int)
+    if self._sub_stack:
+      spill.append(R.RA)
+      self._sub_stack[-1][1].update(sub.clobbers | {R.RA})
+    if spill:
+      self.addi(R.SP, R.SP, -4 * len(spill))
+      for index, reg in enumerate(spill): self.sw(reg, R.SP, 4 * index)
+    self._parallel_move(tuple(zip(sub.args, args)))
+    self.jal(R.RA, sub.label)
+    self._parallel_move(tuple(zip(results, sub.results)))
+    if spill:
+      for index, reg in enumerate(spill): self.lw(reg, R.SP, 4 * index)
+      self.addi(R.SP, R.SP, 4 * len(spill))
+    sub.calls += 1
+    if sub.dirty:
+      self.forget_tensix_state()
+      self._tensix_dirty = True
+    return results
 
   @contextmanager
   def scope(self):

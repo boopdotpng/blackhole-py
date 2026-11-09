@@ -65,6 +65,10 @@ class Pack:
     return 16 * size << 16, 256 * size | 1024 * size << 16
 
   def _configure(self, output_cb, fp32_dest, scalar):
+    self.k.outline(("pack.configure", output_cb, fp32_dest, scalar),
+                   lambda: self._configure_inline(output_cb, fp32_dest, scalar), nest=False)
+
+  def _configure_inline(self, output_cb, fp32_dest, scalar):
     dst, src = output_cb.dtype, DType.F32 if fp32_dest else output_cb.dtype
     fp8 = dst.is_fp8
     src = DType.F16 if fp8 else src
@@ -114,6 +118,12 @@ class Pack:
     # guarantees the Dst bounds; _destination already encodes register indices.
     if not isinstance(tile, R):
       tile = self.dst.check(tile)
+    # One shared body per (CB, mode); the Dst tile index travels in a register.
+    self.k.outline(("pack.move_acquired", output_cb, scalar, configure, self.dst.fp32),
+                   lambda index: self._move_acquired_inline(output_cb, index, scalar, configure=configure), tile)
+    return self
+
+  def _move_acquired_inline(self, output_cb, tile, scalar, *, configure=True):
     CB.reserve_back(self.k, output_cb)
     if configure: self._configure(output_cb, self.dst.fp32, scalar)
     self._destination(tile, output_cb)

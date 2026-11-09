@@ -71,11 +71,40 @@ def store(kernel, base, index, value, dtype=DType.U32):
   return kernel
 
 
+def _shared(kernel):
+  return kernel.physical_regs and not kernel.is_firmware
+
+
 def copy_words(kernel, source_base, target_base, words, *,
                source_offset=None, unroll=1):
   """Copy L1 words forward, optionally amortizing loop overhead across words."""
   if type(unroll) is not int or unroll < 1 or words % unroll:
     raise ValueError("copy unroll must evenly divide its word count")
+  if _shared(kernel) and type(words) is int and words > 0:
+    def body(source, target, remaining):
+      loop = kernel._new_label("l1_copy")
+      kernel.label(loop, local=True)
+      with kernel.scope():
+        value = kernel.reg()
+        for index in range(unroll):
+          kernel.lw(value, source, index * 4)
+          kernel.sw(value, target, index * 4)
+      kernel.addi(source, source, unroll * 4)
+      kernel.addi(target, target, unroll * 4)
+      kernel.addi(remaining, remaining, -unroll)
+      kernel.bne(remaining, R.ZERO, loop)
+    sub = kernel.subroutine(("l1.copy_words", unroll), body, 3)
+    with kernel.scope():
+      source = source_base
+      if source_offset is not None and (isinstance(source_base, R) or isinstance(source_offset, R)):
+        source = kernel.reg(exclude=tuple(x for x in (source_base, source_offset, target_base) if isinstance(x, R)))
+        if isinstance(source_base, R): kernel.mv(source, source_base)
+        else: kernel.li(source, source_base)
+        if isinstance(source_offset, R): kernel.add(source, source, source_offset)
+        else: kernel.addi(source, source, source_offset)
+      elif source_offset: source = source_base + source_offset
+      kernel.call(sub, source, target_base, words)
+    return kernel
   with kernel.scope():
     source, target, remaining, value = kernel.reg(4)
     if isinstance(source_base, R): kernel.mv(source, source_base)

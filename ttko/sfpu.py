@@ -3,7 +3,7 @@ from enum import IntEnum
 import struct
 
 from firmware.consts import TensixMMIO
-from ttko.isa import Tensix as TT
+from ttko.isa import R, Tensix as TT
 from ttko import Dst
 from ttko.mop import LoopTemplate, Mop, REPLAY_SIZE, Replay
 from ttko.sync import Sem, SemWait, Stall, Wait, sem_get, sem_post, sem_wait, stall
@@ -612,6 +612,28 @@ class Sfpu:
     return self.prepared[program]
 
   def _inline_faces(self, body, faces, iterations=8):
+    k = self.k
+    if k.physical_regs and not k.is_firmware and faces * iterations > 1:
+      # Too long for the replay buffer: loop over the body on the TRISC rather
+      # than unrolling every face and row group.
+      def run():
+        with k.scope():
+          face_count, count = k.reg(2)
+          k.li(face_count, faces)
+          outer = k._new_label("sfpu_faces")
+          k.label(outer, local=True)
+          k.li(count, iterations)
+          inner = k._new_label("sfpu_rows")
+          k.label(inner, local=True)
+          for word in body: self._issue(word)
+          k.addi(count, count, -1)
+          k.bne(count, R.ZERO, inner)
+          self._issue(_FACE_STEP)
+          self._issue(_FACE_STEP)
+          k.addi(face_count, face_count, -1)
+          k.bne(face_count, R.ZERO, outer)
+      k.outline(("sfpu.faces", tuple(map(int, body)), faces, iterations), run, nest=False)
+      return
     for _ in range(faces):
       for _ in range(iterations):
         for word in body: self._issue(word)
@@ -643,6 +665,11 @@ class Sfpu:
       Stall.SYNC | Stall.MATH | Stall.SFPU,
     )
     self._configure_dst(tile, lane_config)
+    self.k.outline(("sfpu.map", program, faces, column),
+                   lambda: self._map_body(program, start, body, faces, column))
+    return self
+
+  def _map_body(self, program, start, body, faces, column):
     stall(self.k, Stall.SFPU, Wait.MATH)
     for word in program.setup_words: self._issue(word)
     if start is not None: self._configure_replay_mop(start, len(body))

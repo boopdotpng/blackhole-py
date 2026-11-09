@@ -1,7 +1,7 @@
 from __future__ import annotations
 from asm import Cond
 from firmware.consts import TensixL1
-from ttko.isa import R
+from ttko.isa import R, is_reg
 from ttko.cb import CB
 from ttko.registers import TensixL1, BriscMailbox as BM
 
@@ -240,7 +240,34 @@ class NoC:
     options |= self.arbitration_priority << 27
     return options
 
+  _PASSED = object()
+
+  def _outlined(self, name, inline, shared=(), config=()):
+    """Emit ``inline(*shared, *config)`` once as a shared body and call it.
+
+    ``shared`` values always travel in argument registers, so call sites that
+    differ only in addresses share one body. Integer ``config`` values are
+    baked into the body (and its key); register ``config`` values are passed.
+    A register-held local coordinate cannot cross the call, so it stays inline.
+    """
+    k = self.k
+    if isinstance(self.local_coordinate, R) or not k.physical_regs or k.is_firmware:
+      return inline(*shared, *config)
+    pattern = tuple(self._PASSED if is_reg(value) else value for value in config)
+    passed = (*shared, *(value for value in config if is_reg(value)))
+    key = ("noc", name, self.index, self.port, self.local_coordinate,
+           tuple("reg" if value is self._PASSED else value for value in pattern), len(shared))
+    def build(*regs):
+      rest = iter(regs[len(shared):])
+      inline(*regs[:len(shared)], *(next(rest) if value is self._PASSED else value for value in pattern))
+    sub = k.subroutine(key, build, len(passed))
+    k.call(sub, *passed)
+    return self
+
   def _wait_counter(self, register, expected):
+    return self._outlined("wait_counter", self._wait_counter_inline, (), (register, expected))
+
+  def _wait_counter_inline(self, register, expected):
     k = self.k
     with k.scope():
       current = k.reg(exclude=expected if isinstance(expected, R) else ())
@@ -284,6 +311,11 @@ class NoC:
 
   def _read(self, tid, source_address, source_coordinate, target_address,
             packet_bytes, source_middle_address=0):
+    return self._outlined("read", lambda sa, sc, ta, tid, pb, mid: self._read_inline(tid, sa, sc, ta, pb, mid),
+                         (source_address, source_coordinate, target_address), (tid, packet_bytes, source_middle_address))
+
+  def _read_inline(self, tid, source_address, source_coordinate, target_address,
+            packet_bytes, source_middle_address=0):
     self._wait_issue_safe(TidCounters.requests_outstanding(tid), packet_bytes)
     with self.k.scope():
       local = self._local_coordinate(self.k.reg())
@@ -295,6 +327,11 @@ class NoC:
     return self
 
   def _write(self, tid, source_address, target_address, target_coordinate,
+             packet_bytes, target_middle_address=0, posted=True):
+    return self._outlined("write", lambda sa, ta, tc, tid, pb, mid, posted: self._write_inline(tid, sa, ta, tc, pb, mid, posted),
+                         (source_address, target_address, target_coordinate), (tid, packet_bytes, target_middle_address, posted))
+
+  def _write_inline(self, tid, source_address, target_address, target_coordinate,
              packet_bytes, target_middle_address=0, posted=True):
     self._wait_issue_safe(TidCounters.writes_outgoing(tid), packet_bytes)
     if not posted: self._wait_issue_safe(TidCounters.requests_outstanding(tid), packet_bytes)
@@ -309,6 +346,11 @@ class NoC:
 
   def _multicast_write(self, tid, source_address, target_address, target_start,
                        target_end, packet_bytes):
+    return self._outlined("multicast_write", lambda sa, ta, ts, te, tid, pb: self._multicast_write_inline(tid, sa, ta, ts, te, pb),
+                         (source_address, target_address), (target_start, target_end, tid, packet_bytes))
+
+  def _multicast_write_inline(self, tid, source_address, target_address, target_start,
+                       target_end, packet_bytes):
     self._wait_issue_safe(TidCounters.writes_outgoing(tid), packet_bytes)
     with self.k.scope():
       local, targets = self.k.reg(2)
@@ -322,6 +364,11 @@ class NoC:
 
   def _inline_write(self, tid, value, target_address, target_coordinate,
                     posted=True):
+    return self._outlined("inline_write", lambda ta, tc, tid, value, posted: self._inline_write_inline(tid, value, ta, tc, posted),
+                         (target_address, target_coordinate), (tid, value, posted))
+
+  def _inline_write_inline(self, tid, value, target_address, target_coordinate,
+                    posted=True):
     if not posted: self._wait_issue_safe(TidCounters.requests_outstanding(tid))
     # Inline destinations occupy the hardware source endpoint group.
     return self._submit(
@@ -331,6 +378,11 @@ class NoC:
     )
 
   def _atomic_inc(self, tid, target_address, target_coordinate, value=1,
+                  return_address=4, posted=False):
+    return self._outlined("atomic_inc", lambda ta, tc, tid, value, ret, posted: self._atomic_inc_inline(tid, ta, tc, value, ret, posted),
+                         (target_address, target_coordinate), (tid, value, return_address, posted))
+
+  def _atomic_inc_inline(self, tid, target_address, target_coordinate, value=1,
                   return_address=4, posted=False):
     if not posted: self._wait_issue_safe(TidCounters.requests_outstanding(tid))
     with self.k.scope():
@@ -355,6 +407,18 @@ class NoC:
     return dram_port(endpoints[bank], self.index, self.port, bank)
 
   def _dram_tile(self, param, tile):
+    """(address, coordinate) registers for tile ``tile`` (register or int) of a DRAM buffer."""
+    k = self.k
+    if isinstance(self.local_coordinate, R) or not k.physical_regs or k.is_firmware:
+      return self._dram_tile_inline(param, tile)
+    key = ("noc", "dram_tile", self.index, self.port, k.param_slots[param], param.banks,
+           tuple(param.dram_endpoints), param.tile_size)
+    sub = k.subroutine(key, lambda index: self._dram_tile_inline(param, index), 1)
+    address, coordinate = k.reg(2, exclude=tile if is_reg(tile) else ())
+    k.call(sub, tile, results=(address, coordinate))
+    return address, coordinate
+
+  def _dram_tile_inline(self, param, tile):
     k, buffer = self.k, param
     endpoints = buffer.dram_endpoints
     if len(endpoints) != buffer.banks:
@@ -372,15 +436,31 @@ class NoC:
     k.andi(rotation, base, 7); k.andi(base, base, -8)
     if isinstance(tile, R): k.add(address, tile, rotation)
     else: k.li(address, tile); k.add(address, address, rotation)
-    k.li(banks, len(endpoints))
-    k.remu(bank, address, banks); k.divu(address, address, banks)
-    k.li(scale, buffer.tile_size); k.mul(address, address, scale); k.add(address, address, base)
+    count = len(endpoints)
+    if count & (count - 1) == 0:
+      k.andi(bank, address, count - 1); k.srli(address, address, count.bit_length() - 1)
+    else:
+      k.li(banks, count)
+      k.remu(bank, address, banks); k.divu(address, address, banks)
+    if buffer.tile_size & (buffer.tile_size - 1) == 0:
+      k.slli(address, address, buffer.tile_size.bit_length() - 1)
+    else:
+      k.li(scale, buffer.tile_size); k.mul(address, address, scale)
+    k.add(address, address, base)
+    coordinates = [self.coordinate(*self.dram_endpoint(endpoints, index)) for index in range(count)]
+    if k._sub_stack:
+      # Bank -> NoC coordinate from a halfword table embedded after the body.
+      table = k.embed(coordinates[index] | (coordinates[index + 1] if index + 1 < count else 0) << 16
+                     for index in range(0, count, 2))
+      k.la(coordinate, table)
+      k.slli(bank, bank, 1); k.add(coordinate, coordinate, bank); k.lhu(coordinate, coordinate)
+      return address, coordinate
     selected = k._new_label("dram_bank_selected")
     invalid = k._new_label("dram_bank_invalid")
-    labels = {index: k._new_label(f"dram_bank_{index}") for index in range(len(endpoints))}
+    labels = {index: k._new_label(f"dram_bank_{index}") for index in range(count)}
     k.switch(bank, labels, invalid)
     for index, label in labels.items():
-      k.label(label); k.li(coordinate, self.coordinate(*self.dram_endpoint(endpoints, index))); k.j(selected)
+      k.label(label); k.li(coordinate, coordinates[index]); k.j(selected)
     k.label(invalid); k.j(invalid); k.label(selected)
     return address, coordinate
 

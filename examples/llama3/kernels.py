@@ -30,8 +30,12 @@ Hardware model, enough to read the kernels:
 
   Kernels are Python functions that *generate* these instruction streams; a
   Python ``for`` unrolls at build time, ``k.range(n)`` emits a device loop.
-  ``specialize`` builds one program variant per distinct per-core shape (row
-  count, head index, ...) and launches them together.
+  Keep code size down: loop on the device rather than in Python, and let
+  repeated helpers become shared bodies (``k.outline``/``k.subroutine``,
+  reached with jal/ret; NoC transfers, unpack/pack moves and SFPU programs
+  already are). ``specialize`` builds one program variant per distinct
+  per-core shape (projection row counts and DRAM ports); attention derives
+  its heads from a per-core index so every core runs one image.
 
   Constants (``Const``) and buffers are launch parameters: the runtime can
   rebind them per launch (layer weights, token position) without rebuilding.
@@ -39,6 +43,7 @@ Hardware model, enough to read the kernels:
 FP8-only code (8B FP8 mode) is marked ``# FP8``; the BF16 path skips it.
 """
 
+import dataclasses
 import math
 import struct
 
@@ -51,7 +56,7 @@ from ttko import Dst, l1
 from ttko.argmax import load_bf16, scan_bf16, physical_to_logical
 from ttko.cb import CB
 from ttko.fpu import Fpu
-from ttko.isa import R, Tensix as TT
+from ttko.isa import R, Tensix as TT, TensixWord
 from ttko.mop import LoopTemplate
 from ttko.pack import Pack
 from ttko.sfpu import LaneConfig, LReg, SfpuFormat, SfpuProgram, SfpuProgramBuilder
@@ -250,7 +255,8 @@ def _projection_program(cfg, x, projections, route, rotations, *, norm_weight,
       input_reads.extend((buffer, tile, operands.addr + (index * cfg.embed_tiles + tile) * operands.tile_size)
                          for tile in range(cfg.embed_tiles))
     input_publications.append((operands, 2 * cfg.embed_tiles))
-    for tile in range(2 * cfg.embed_tiles): p.unpack.move(operands, UnpackTarget.SRCA, configure_format=tile == 0)
+    p.unpack.move(operands, UnpackTarget.SRCA)
+    for _ in p.trisc0.range(2 * cfg.embed_tiles - 1): p.unpack.move(operands, UnpackTarget.SRCA, configure_format=False)
     _rms_setup_apply_macro(p.sfpu)
     p.fpu.copy_a_tiles(dst_tiles=range(2 * cfg.embed_tiles))
     _rmsnorm(cfg, p.sfpu, fp8=operand_dtype.is_fp8,
@@ -276,24 +282,25 @@ def _projection_program(cfg, x, projections, route, rotations, *, norm_weight,
   # The unpacker needs the converted x; the DRAM reader can run ahead.
   if normalized_cb is not None: CB.wait_front(p.trisc0, normalized_cb, input_tiles)
   p.unpack.prepare_l1_pair_formats(weight_cb.dtype, operand_dtype)
-  for _, _, local_rows in projections:
-    for _ in p.trisc0.range(local_rows):
-      for input_tile in range(input_tiles):
-        p.unpack.move_l1_pair(
-          weight_cb, token_l1 + input_tile * (1024 * operand_dtype.itemsize),
-          configure_format=False, source_b_dtype=operand_dtype,
-        )
+  # Every row of every projection unpacks the same way: one loop over all rows.
+  for _ in p.trisc0.range(sum(rows for _, _, rows in projections)):
+    with p.trisc0.scope():
+      address, step = p.trisc0.reg(2)
+      p.trisc0.li(address, token_l1)
+      p.trisc0.li(step, 1024 * operand_dtype.itemsize)
+      for _ in p.trisc0.range(input_tiles):
+        p.unpack.move_l1_pair(weight_cb, address, configure_format=False, source_b_dtype=operand_dtype)
+        p.trisc0.add(address, address, step)
 
   # Step 5 (TRISC1): elementwise multiply on the FPU, sum on the SFPU -> one scalar per row.
   _projection_dot_math(cfg, p, projections, input_tiles)
 
   # Step 6 (TRISC2): pack each row's scalar into scalar_cb.
   p.pack._configure(scalar_cb, True, True)
-  for _, _, local_rows in projections:
-    for _ in p.trisc2.range(local_rows):
-      sem_wait(p.trisc2, Sem.MATH_PACK, SemWait.STALL_ON_ZERO, Stall.TDMA)
-      p.pack._move_acquired(scalar_cb, 0, True, configure=False)
-      p.pack._release_dst()
+  for _ in p.trisc2.range(sum(rows for _, _, rows in projections)):
+    sem_wait(p.trisc2, Sem.MATH_PACK, SemWait.STALL_ON_ZERO, Stall.TDMA)
+    p.pack._move_acquired(scalar_cb, 0, True, configure=False)
+    p.pack._release_dst()
 
   # Step 7 (NCRISC): place each scalar at its row's slot in the compact tile.
   # Without an epilogue, write the compact tile to this core's DRAM shard.
@@ -390,59 +397,68 @@ def _projection_read_weights(p, projections, row_starts, rotations, route, weigh
               p.brisc.addi(tile, first, index)
               p.brisc.noc_at(read_noc, port).read_tiles_into_cb(weight, (tile,), weight_cb)
     else:
-      # Consecutive rows repeat their bank pattern after this many rows.
-      # Unroll one period so every request's bank is a compile-time constant;
-      # only its address within that bank advances at runtime.
+      # This core's weight pages are consecutive interleaved pages: walk
+      # (address within bank, bank) at runtime and look the bank's NoC
+      # coordinate up in a table, one shared loop for every row.
       noc = p.brisc.noc_at(read_noc, port)
-      period = weight.banks // math.gcd(row_pages, weight.banks)
+      banks, page = weight.banks, weight.tile_size
       with p.brisc.scope():
-        base = p.brisc.reg()
+        base, bank = p.brisc.reg(2)
         p.brisc.read(base, p.param_addr(weight))
         p.brisc.andi(base, base, -8)
         if row_start is not None:
           with p.brisc.scope():
-            start, divisor = p.brisc.reg(2, exclude=base)
+            start, divisor = p.brisc.reg(2, exclude=(base, bank))
             p.brisc.read(start, p.param_addr(row_start))
             p.brisc.li(divisor, row_pages)
-            p.brisc.mul(start, start, divisor)
-            p.brisc.li(divisor, weight.banks)
-            p.brisc.divu(start, start, divisor)
-            p.brisc.slli(start, start, weight.tile_size.bit_length() - 1)
+            p.brisc.mul(start, start, divisor)          # first global page
+            p.brisc.andi(bank, start, banks - 1)
+            p.brisc.srli(start, start, banks.bit_length() - 1)
+            p.brisc.slli(start, start, page.bit_length() - 1)
             p.brisc.add(base, base, start)
-
-        def read_row(row, group):
+        else:
+          p.brisc.li(bank, rotation)
+        for _ in p.brisc.range(local_rows):
           CB.reserve_back(p.brisc, weight_cb, input_tiles)
-          with noc.transaction() as transaction:
-            for index in range(row_pages):
-              offset = rotation + row * row_pages + index
-              with p.brisc.scope():
-                address, target, delta = p.brisc.reg(
-                  3, exclude=(base, group) if isinstance(group, R) else base,
-                )
-                if isinstance(group, R):
-                  p.brisc.li(
-                    delta, period * row_pages // weight.banks * weight.tile_size,
-                  )
-                  p.brisc.mul(address, group, delta)
-                  p.brisc.add(address, address, base)
-                else:
-                  p.brisc.mv(address, base)
-                p.brisc.li(delta, (offset // weight.banks) * weight.tile_size)
-                p.brisc.add(address, address, delta)
-                CB.get_write_ptr(p.brisc, weight_cb, target)
-                if index:
-                  p.brisc.li(delta, index * weight.tile_size)
-                  p.brisc.add(target, target, delta)
-                coordinate = noc.coordinate(
-                  *noc.dram_endpoint(weight.dram_endpoints, offset % weight.banks),
-                )
-                transaction.read(address, coordinate, target, weight.tile_size)
+          with noc.transaction() as transaction, p.brisc.scope():
+            target = p.brisc.reg(exclude=(base, bank))
+            CB.get_write_ptr(p.brisc, weight_cb, target)
+            body = _read_pages_body(noc, transaction.tid, weight.dram_endpoints, page)
+            transaction._remote_pending = True
+            p.brisc.call(p.brisc.subroutine(
+              ("read_pages", noc.index, noc.port, transaction.tid, tuple(weight.dram_endpoints), page),
+              body, 4), base, bank, target, row_pages, results=(base, bank))
           CB.push_back(p.brisc, weight_cb, input_tiles)
 
-        for group in p.brisc.range(local_rows // period):
-          for row in range(period): read_row(row, group)
-        for row in range(local_rows // period * period, local_rows):
-          read_row(row, None)
+
+def _read_pages_body(noc, tid, endpoints, page):
+  """Shared BRISC loop: read ``count`` consecutive interleaved DRAM pages into
+  consecutive L1 pages; returns the advanced (address, bank)."""
+  k, banks = noc.k, len(endpoints)
+  coordinates = [noc.coordinate(*noc.dram_endpoint(endpoints, index)) for index in range(banks)]
+  def body(address, bank, target, count):
+    table = k.embed(coordinates[i] | (coordinates[i + 1] if i + 1 < banks else 0) << 16 for i in range(0, banks, 2))
+    with k.scope():
+      pointer, coordinate, step = k.reg(3)
+      k.la(pointer, table)
+      loop, same_bank = k._new_label("read_pages"), k._new_label("read_pages_bank")
+      k.label(loop)
+      k.slli(coordinate, bank, 1)
+      k.add(coordinate, coordinate, pointer)
+      k.lhu(coordinate, coordinate)
+      noc._read_inline(tid, address, coordinate, target, page, 0)
+      k.li(step, page)
+      k.add(target, target, step)
+      k.addi(bank, bank, 1)
+      k.li(coordinate, banks)
+      k.bne(bank, coordinate, same_bank)
+      k.li(bank, 0)
+      k.add(address, address, step)
+      k.label(same_bank)
+      k.addi(count, count, -1)
+      k.bne(count, R.ZERO, loop)
+    return address, bank
+  return body
 
 
 def _projection_dot_math(cfg, p, projections, input_tiles):
@@ -476,27 +492,9 @@ def _projection_dot_math(cfg, p, projections, input_tiles):
   finalize = _dot_finalize()
   for projection_index, (_, _, local_rows) in enumerate(projections):
     for local_row in p.trisc1.range(local_rows):
-      fpu._wait_for_dst()
-      for word in _sfpu_float_words(LReg.L7, 0.0): sfpu._issue(word)       # lane sums = 0
-      for input_tile in range(input_tiles):
-        # FPU: Dst[0] = weight_tile * x_tile, one face at a time.
-        for face in range(4):
-          fpu._issue(TT.TTZEROACC(1, 1, 0, 1, face))
-        fpu._issue(TT.TTSETRWC(0, 0, 0, 0, 0, 0xF))
-        stall(p.trisc1, Stall.MATH, Wait.SRCA_VLD | Wait.SRCB_VLD)
-        for _ in range(4): fpu._mop.run()
-        fpu._issue(TT.TTSETRWC(0, 0, 0, 0, 0, 0xF))
-        # SFPU: lane sums += Dst[0], 8 rows of 32 lanes per face.
-        stall(p.trisc1, Stall.SFPU, Wait.MATH)
-        for _ in range(4):
-          for _ in range(8):
-            sfpu._issue(TT.TTREPLAY(replay_start, len(replay_body), 0, 0))
-          sfpu._issue(TT.TTSETRWC(0, 4, 8, 0, 0, 4))
-          sfpu._issue(TT.TTSETRWC(0, 4, 8, 0, 0, 4))
-        sfpu._issue(TT.TTSETRWC(0, 0, 0, 0, 0, 4))
-        stall(p.trisc1, Stall.SYNC, Wait.MATH | Wait.SFPU)
-      # Reduce the 32 lane sums to one value (stored last, after FP8 scaling).
-      for word in finalize.words[:-2]: sfpu._issue(word)
+      # One shared body per row: every projection and row runs the same code.
+      p.trisc1.outline(("projection_dot_row", input_tiles, replay_start, len(replay_body), finalize.words),
+                       lambda: _dot_row(p, input_tiles, replay_start, len(replay_body), finalize))
       if projections[0][0].dtype.is_fp8:
         # FP8: undo the per-tensor weight/input quantization, y *= scale.
         _load_scale(p, f"output_scale_{projection_index}")
@@ -505,6 +503,32 @@ def _projection_dot_math(cfg, p, projections, input_tiles):
         for word in words: sfpu._issue(word)
       for word in finalize.words[-2:]: sfpu._issue(word)
       sfpu.publish()
+
+
+def _dot_row(p, input_tiles, replay_start, replay_length, finalize):
+  """TRISC1: one row's dot product, leaving it in SFPU L0 (stored by the caller)."""
+  fpu, sfpu = p.fpu, p.sfpu
+  fpu._wait_for_dst()
+  for word in _sfpu_float_words(LReg.L7, 0.0): sfpu._issue(word)       # lane sums = 0
+  for _ in p.trisc1.range(input_tiles):
+    # FPU: Dst[0] = weight_tile * x_tile, one face at a time.
+    for face in range(4):
+      fpu._issue(TT.TTZEROACC(1, 1, 0, 1, face))
+    fpu._issue(TT.TTSETRWC(0, 0, 0, 0, 0, 0xF))
+    stall(p.trisc1, Stall.MATH, Wait.SRCA_VLD | Wait.SRCB_VLD)
+    for _ in range(4): fpu._mop.run()
+    fpu._issue(TT.TTSETRWC(0, 0, 0, 0, 0, 0xF))
+    # SFPU: lane sums += Dst[0], 8 rows of 32 lanes per face.
+    stall(p.trisc1, Stall.SFPU, Wait.MATH)
+    for _ in range(4):
+      for _ in range(8):
+        sfpu._issue(TT.TTREPLAY(replay_start, replay_length, 0, 0))
+      sfpu._issue(TT.TTSETRWC(0, 4, 8, 0, 0, 4))
+      sfpu._issue(TT.TTSETRWC(0, 4, 8, 0, 0, 4))
+    sfpu._issue(TT.TTSETRWC(0, 0, 0, 0, 0, 4))
+    stall(p.trisc1, Stall.SYNC, Wait.MATH | Wait.SFPU)
+  # Reduce the 32 lane sums to one value (stored last, after FP8 scaling).
+  for word in finalize.words[:-2]: sfpu._issue(word)
 
 
 def _dot_accumulate(*, reset):
@@ -845,32 +869,42 @@ def attention(cfg, q, key_cache, value_cache, context, *, rope_inputs=None, part
     attention_cores = 32
   group_size = 4 if partial_output is not None else cfg.q_heads // attention_cores
   inputs = None if rope_inputs is None else tuple(_global_tile_view(b, f"attention_{b.name}") for b in rope_inputs[:3]) + tuple(rope_inputs[3:])
-  return specialize(
-    lambda head: _attention_program(cfg, q, key_cache, value_cache, context, rope_inputs=inputs, head_index=head if partial_output is None else head // 4, group_size=group_size,
-      split_index=None if partial_output is None else head % 4, partial_output=partial_output),
-    P100_WORKER_CORES[:attention_cores], tuple(range(attention_cores)),
-  )
+  # One image for every core: heads and split phases come from the core index.
+  return _attention_program(cfg, q, key_cache, value_cache, context, rope_inputs=inputs,
+                            group_size=group_size, partial_output=partial_output)
 
 
 def _attention_program(cfg, q: Buffer, key_cache: Buffer, value_cache: Buffer, context: Buffer,
-  *, rope_inputs=None, head_index=None, group_size=4, split_index=None, partial_output=None,
+  *, rope_inputs=None, group_size=4, partial_output=None,
 ) -> Program:
-  """One attention core: query heads [head_index * group_size, +group_size) of one KV head."""
+  """Attention core c: query heads [h * group_size, +group_size) of one KV head, where
+  h = c (or c // 4 with split attention, whose core also visits every fourth block
+  from c % 4). Every core runs the same image; h and the split come from c."""
   # These chunks span both column faces as well as the live row pairs.
   # Retain the complete footprint even when fewer query rows are active.
   row_chunks = GQA_ROW_CHUNKS
   group_shift = group_size.bit_length() - 1
   kv_blocks = Const("kv_blocks", 1)
   valid_columns = Const("valid_columns", 1)
-  kv_head = Const("kv_head", tuple(head // 4 for head in range(32)) if partial_output is not None
-                  else tuple(range(cfg.q_heads // group_size)))
+  split = partial_output is not None
+  cores = 32 if split else cfg.q_heads // group_size
+  core_index = Const("attention_core", tuple(range(cores)))
   start_pos = Const("start_pos", 0)
   p = Program(
-    P100_WORKER_CORES[:32 if partial_output is not None else cfg.q_heads // group_size], q, key_cache, value_cache, context,
+    P100_WORKER_CORES[:cores], q, key_cache, value_cache, context,
     *((partial_output,) if partial_output is not None else ()),
-    kv_blocks, valid_columns,
-    *((kv_head,) if rope_inputs is None else (*rope_inputs, start_pos)), fp32_dst=True,
+    kv_blocks, valid_columns, core_index,
+    *(() if rope_inputs is None else (*rope_inputs, start_pos)), fp32_dst=True,
   )
+
+  def load_head(k, out):
+    """out = h, the group's first query head // group_size."""
+    k.read(out, p.param_addr(core_index))
+    if split: k.srli(out, out, 2)
+
+  def load_split(k, out):
+    k.read(out, p.param_addr(core_index))
+    k.andi(out, out, 3)
   # FPU matmul owns replay slots 16..31; SFPU shares the physical replay RAM.
   p.sfpu._mop.state.replay.used.update(range(16, 32))
   # L1 working memory. The query stays resident; K and V blocks stream through.
@@ -884,13 +918,18 @@ def _attention_program(cfg, q: Buffer, key_cache: Buffer, value_cache: Buffer, c
                     depth=cfg.head_tiles + (2 if partial_output is not None else 0))
   # a. Query (and, on the decode path, RoPE + KV-cache append).
   if rope_inputs is not None:
-    _attention_rope(cfg, p, rope_inputs, key_cache, value_cache, start_pos, head_index, query_cb, group_size)
+    _attention_rope(cfg, p, rope_inputs, key_cache, value_cache, start_pos, load_head, query_cb, group_size)
   else:
     query_heads_l1 = p.l1(group_size * q.tile_size, alignment=16)
     _zero_l1_words(p.brisc, query_cb.addr, query_cb.size // 4)
     for group_row in range(group_size):
       source = query_heads_l1 + group_row * q.tile_size
-      p.brisc.noc.read_tile(q, head_index * group_size + group_row, source)
+      with p.brisc.scope():
+        tile = p.brisc.reg()
+        load_head(p.brisc, tile)
+        p.brisc.slli(tile, tile, group_size.bit_length() - 1)
+        if group_row: p.brisc.addi(tile, tile, group_row)
+        p.brisc.noc.read_tile(q, tile, source)
       for feature in range(cfg.head_tiles):
         for face in range(2):
           l1.copy_words(p.brisc, source,
@@ -898,28 +937,29 @@ def _attention_program(cfg, q: Buffer, key_cache: Buffer, value_cache: Buffer, c
             8, source_offset=_bf16_tile_byte_offset(feature * 32 + face * 16))
 
   def split_count(k, count, last=None):
-    """Split attention: this core visits blocks split_index, split_index + 4, ..."""
-    if split_index is None: return
-    if last is not None:
-      with k.scope():
-        owner = k.reg()
-        k.andi(owner, last, 3)
-        k.srli(last, last, 2)
-        masked = k._new_label("split_has_tail")
-        k.li(count, split_index)
-        k.beq(owner, count, masked)
-        k.li(last, -1)
-        k.label(masked)
-        k.read(count, p.param_addr(kv_blocks))
-    k.addi(count, count, 3 - split_index)
-    k.srli(count, count, 2)
+    """Split attention: this core visits blocks s, s + 4, ... for its split s."""
+    if not split: return
+    with k.scope():
+      phase = k.reg(exclude=(count, last) if last is not None else count)
+      load_split(k, phase)
+      if last is not None:
+        with k.scope():
+          owner = k.reg(exclude=(count, last, phase))
+          k.andi(owner, last, 3)
+          k.srli(last, last, 2)
+          masked = k._new_label("split_has_tail")
+          k.beq(owner, phase, masked)
+          k.li(last, -1)
+          k.label(masked)
+      k.addi(count, count, 3)
+      k.sub(count, count, phase)
+      k.srli(count, count, 2)
 
   # b. BRISC: a zero tile and the causal mask for the last block, then every
   #    32-token K and V block of this KV head's cache.
   with p.brisc.scope():
     head, block_count, tail = p.brisc.reg(3)
-    if head_index is None: p.brisc.read(head, p.param_addr(kv_head))
-    else: p.brisc.li(head, head_index)
+    load_head(p.brisc, head)
     p.brisc.read(block_count, p.param_addr(kv_blocks))
     split_count(p.brisc, block_count)
     p.brisc.read(tail, p.param_addr(valid_columns))
@@ -966,11 +1006,14 @@ def _attention_program(cfg, q: Buffer, key_cache: Buffer, value_cache: Buffer, c
         first, block_offset = p.brisc.reg(2, exclude=(head, block))
         p.brisc.srli(first, head, 2 - group_shift)
         p.brisc.slli(first, first, cfg.cache_tiles_per_head.bit_length() - 1)
-        if split_index is None:
+        if not split:
           p.brisc.slli(block_offset, block, cfg.head_tiles.bit_length() - 1)
         else:
           p.brisc.slli(block_offset, block, 2)
-          p.brisc.addi(block_offset, block_offset, split_index)
+          with p.brisc.scope():
+            phase = p.brisc.reg(exclude=(first, block_offset, head, block))
+            load_split(p.brisc, phase)
+            p.brisc.add(block_offset, block_offset, phase)
           p.brisc.slli(block_offset, block_offset, cfg.head_tiles.bit_length() - 1)
         p.brisc.add(first, first, block_offset)
         with p.brisc.noc.transaction() as transaction:
@@ -1062,10 +1105,8 @@ def _attention_program(cfg, q: Buffer, key_cache: Buffer, value_cache: Buffer, c
     _select_dst_tile(p.sfpu, 0)
     if partial_output is None:
       for output in range(64, (cfg.head_tiles + 1) * 64, 64):
-        for chunk in row_chunks:
-          _issue_sfpu_program(p.sfpu, _softmax_normalize_program(
-            output_offset=output + chunk, sum_offset=(cfg.head_tiles + 2) * 64 + chunk,
-          ))
+        _issue_sfpu_chunks(p.sfpu, lambda chunk: _softmax_normalize_program(
+          output_offset=output + chunk, sum_offset=(cfg.head_tiles + 2) * 64 + chunk), row_chunks)
     p.sfpu.publish()
 
   # TRISC2: per block, pack the probabilities for the P V matmul; at the end, pack O.
@@ -1086,19 +1127,27 @@ def _attention_program(cfg, q: Buffer, key_cache: Buffer, value_cache: Buffer, c
     p.ncrisc.noc.write_tiles_from_cb(context_cb, partial_output, tuple(range(cfg.head_tiles + 2)))
     return p
 
-  # c. NCRISC: each specialized worker scatters its query heads into the dense context.
+  # c. NCRISC: each worker scatters its query heads into the dense context.
   CB.wait_front(p.ncrisc, context_cb, cfg.head_tiles)
-  with p.ncrisc.noc.transaction() as transaction:
+  k = p.ncrisc
+  with k.noc.transaction() as transaction, k.scope():
+    base = k.reg()           # first context element of this core's query heads
+    load_head(k, base)
+    k.slli(base, base, (group_size * cfg.head_dim).bit_length() - 1)
     for group_row in range(group_size):
       for feature in range(cfg.head_tiles):
-        first_element = (head_index * group_size + group_row) * cfg.head_dim + feature * 32
-        with p.ncrisc.scope():
-          target_address, target_coordinate = p.ncrisc.noc._dram_tile(context, first_element // 1024)
+        with k.scope():
+          element, tile = k.reg(2, exclude=base)
+          k.addi(element, base, group_row * cfg.head_dim + feature * 32)
+          k.srli(tile, element, 10)
+          target_address, target_coordinate = k.noc._dram_tile(context, tile)
+          k.andi(element, element, 1023)
           for face in range(2):
-            with p.ncrisc.scope():
-              target = p.ncrisc.reg(exclude=target_address)
-              p.ncrisc.mv(target, target_address)
-              _add_constant(p.ncrisc, target, _dense_byte_offset(context, first_element % 1024 + face * 16))
+            with k.scope():
+              target = k.reg(exclude=(target_address, target_coordinate, element, base))
+              if face: k.addi(element, element, 16)
+              _dense_offset(k, context, element, target)
+              k.add(target, target, target_address)
               transaction.write(
                 context_cb.addr + feature * context_cb.tile_size + _bf16_tile_byte_offset(group_row * 32 + face * 16) * context.dtype.itemsize // 2,
                 target, target_coordinate, 16 * context.dtype.itemsize, posted=False,
@@ -1107,7 +1156,7 @@ def _attention_program(cfg, q: Buffer, key_cache: Buffer, value_cache: Buffer, c
   return p
 
 
-def _attention_rope(cfg, p, inputs, key_cache, value_cache, start_pos, head, query_cb, group_size):
+def _attention_rope(cfg, p, inputs, key_cache, value_cache, start_pos, load_head, query_cb, group_size):
   """Rotate a worker's Q heads and their K in one tile; retain Q in L1.
 
   RoPE: x * cos + rotate_half(x) * sin, where rotate_half(x) = [-x2, x1]
@@ -1119,7 +1168,7 @@ def _attention_rope(cfg, p, inputs, key_cache, value_cache, start_pos, head, que
   At 16/32 workers, workers sharing a KV head write identical cache bytes.
   Each waits for its own acknowledged writes before reading that cache row.
   """
-  q, k, v, cos, sin = inputs
+  q, k_inputs, v, cos, sin = inputs
   operands = p.cb(DType.BF16, depth=4)
   result = p.cb(DType.BF16, depth=1)
   ready = p.cb(DType.BF16, depth=1)
@@ -1152,45 +1201,49 @@ def _attention_rope(cfg, p, inputs, key_cache, value_cache, start_pos, head, que
         with p.brisc.scope():
           address, coordinate = p.brisc.noc._dram_tile(table, tile)
           transaction.read(address, coordinate, target, table.tile_size)
-    for group in range(group_size + 1):
-      is_query = group < group_size
-      first = ((head * group_size + group) if is_query else head // (4 // group_size)) * cfg.head_dim
-      locations = tuple(_compact_projection_location(cfg, first + i, query=is_query)
-                        for i in range(cfg.head_dim))
-      tiles = tuple(dict.fromkeys(t for t, _ in locations))
-      source = q if is_query else k
-      with p.brisc.noc.transaction() as transaction:
-        for i, source_tile in enumerate(tiles):
-          with p.brisc.scope():
-            address, coordinate = p.brisc.noc._dram_tile(source, source_tile)
-            transaction.read(address, coordinate, source_l1 + i * source.tile_size, source.tile_size)
-          if not is_query:
-            with p.brisc.scope():
-              address, coordinate = p.brisc.noc._dram_tile(v, source_tile)
-              transaction.read(address, coordinate, v_l1 + i * v.tile_size, v.tile_size)
-      with p.brisc.scope():
-        sign = p.brisc.reg()
-        p.brisc.li(sign, 0x8000)
-        for i, (source_tile, slot) in enumerate(locations):
-          source_offset = tiles.index(source_tile) * source.tile_size + _compact_slot_byte_offset(slot)
-          with p.brisc.scope():
-            value = p.brisc.reg(exclude=sign)
-            p.brisc.read(value, source_l1 + source_offset, bytes=2)
-            p.brisc.write(operands.addr + _bf16_tile_byte_offset(group * cfg.head_dim + i), value, bytes=2)
-            if i >= cfg.head_dim // 2: p.brisc.xor(value, value, sign)
-            rotated = group * cfg.head_dim + (i + cfg.head_dim // 2 if i < cfg.head_dim // 2 else i - cfg.head_dim // 2)
-            p.brisc.write(operands.addr + operands.tile_size + _bf16_tile_byte_offset(rotated), value, bytes=2)
-            if not is_query:
-              p.brisc.read(value, v_l1 + source_offset, bytes=2)
-              p.brisc.write(v_head + _bf16_tile_byte_offset(i), value, bytes=2)
-      for table, operand in ((cos_l1, 2), (sin_l1, 3)):
-        for i in range(0, cfg.head_dim, 16):
-          with p.brisc.scope():
-            offset = p.brisc.reg(exclude=row)
-            p.brisc.addi(offset, row, _dense_byte_offset(cos, i))
-            l1.copy_words(p.brisc, table,
-                          operands.addr + operand * operands.tile_size + _bf16_tile_byte_offset(group * cfg.head_dim + i),
-                          8, source_offset=offset, unroll=8)
+    k = p.brisc
+    hd = cfg.head_dim
+    for is_query in (True, False):
+      with k.scope():
+        group, feature = k.reg(2, exclude=row)
+        load_head(k, feature)
+        if is_query:
+          # Query group g holds head h * group_size + g.
+          k.slli(feature, feature, (group_size * hd).bit_length() - 1)
+          k.li(group, 0)
+          loop = k._new_label("rope_queries")
+          k.label(loop)
+        else:
+          # The key group holds KV head h // (4 // group_size).
+          k.srli(feature, feature, 2 - (group_size.bit_length() - 1))
+          k.slli(feature, feature, hd.bit_length() - 1)
+          k.li(group, group_size)
+        _rope_gather_group(cfg, p, q if is_query else k_inputs, v, group, feature, is_query,
+                           source_l1, v_l1, v_head, operands)
+        if is_query:
+          k.addi(feature, feature, hd)
+          k.addi(group, group, 1)
+          with k.scope():
+            limit = k.reg(exclude=(group, feature, row))
+            k.li(limit, group_size)
+            k.bne(group, limit, loop)
+    # cos/sin rows are the same for every group: gather them once, then copy.
+    for table, operand in ((cos_l1, 2), (sin_l1, 3)):
+      row_address = operands.addr + operand * operands.tile_size
+      # Copy 16-value chunks, merging chunks that are contiguous in the table.
+      chunks = []
+      for i in range(0, hd, 16):
+        if chunks and chunks[-1][0] + 32 * chunks[-1][2] == _dense_byte_offset(cos, i): chunks[-1][2] += 1
+        else: chunks.append([_dense_byte_offset(cos, i), i, 1])
+      for source_offset, i, count in chunks:
+        with k.scope():
+          offset = row
+          if source_offset:
+            offset = k.reg(exclude=row)
+            k.addi(offset, row, source_offset)
+          l1.copy_words(k, table, row_address + 2 * i, 8 * count, source_offset=offset, unroll=8)
+      for group in range(1, group_size + 1):
+        l1.copy_words(k, row_address, row_address + 2 * group * hd, hd // 2)
   CB.push_back(p.brisc, operands, 4)
   for _ in range(4): p.unpack.move(operands, UnpackTarget.SRCA)
   p.fpu.copy_a_tiles(dst_tiles=range(4))
@@ -1212,18 +1265,18 @@ def _attention_rope(cfg, p, inputs, key_cache, value_cache, start_pos, head, que
     for half in range(cfg.head_tiles):
       for face in range(2):
         l1.copy_words(p.ncrisc,
-                      result.addr + _bf16_tile_byte_offset(group * cfg.head_dim + half * 32 + face * 16),
+                      result.addr + 2 * (group * cfg.head_dim + half * 32 + face * 16),
                       query_cb.addr + half * query_cb.tile_size + _bf16_tile_byte_offset(group * 32 + face * 16),
                       8, unroll=8)
-  _append_cache_rows(cfg, p, result.addr + _bf16_tile_byte_offset(group_size * cfg.head_dim), v_head,
-                     key_cache, value_cache, start_pos, head // (4 // group_size))
+  _append_cache_rows(cfg, p, result.addr + 2 * group_size * cfg.head_dim, v_head,
+                     key_cache, value_cache, start_pos, load_head, group_size)
   CB.pop_front(p.ncrisc, result)
   CB.push_back(p.ncrisc, ready)
   # All dependencies are within this KV group; there is no global barrier.
   CB.wait_front(p.brisc, ready)
 
 
-def _append_cache_rows(cfg, p, k_l1, v_l1, key_cache, value_cache, start_pos, head):
+def _append_cache_rows(cfg, p, k_l1, v_l1, key_cache, value_cache, start_pos, load_head, group_size):
   """NCRISC: write this head's new K/V row into the caches at start_pos.
 
   Cache layout per KV head: [max_tokens / 32 blocks][head_tiles feature tiles],
@@ -1237,7 +1290,12 @@ def _append_cache_rows(cfg, p, k_l1, v_l1, key_cache, value_cache, start_pos, he
     k.read(position, p.param_addr(start_pos))
     k.srli(block, position, 5)
     k.slli(block, block, (cfg.head_tiles.bit_length() - 1))
-    _add_constant(k, block, head * cfg.cache_tiles_per_head)
+    with k.scope():
+      head = k.reg(exclude=(position, block, row))
+      load_head(k, head)          # KV head = h // (4 // group_size)
+      k.srli(head, head, 2 - (group_size.bit_length() - 1))
+      k.slli(head, head, cfg.cache_tiles_per_head.bit_length() - 1)
+      k.add(block, block, head)
     k.andi(row, position, 15)
     k.slli(row, row, 4 + shift)
     with k.scope():
@@ -1257,8 +1315,175 @@ def _append_cache_rows(cfg, p, k_l1, v_l1, key_cache, value_cache, start_pos, he
                 target = k.reg(exclude=(address, row))
                 k.add(target, address, row)
                 if face: k.addi(target, target, 256 * size)
-                transaction.write(source + half * 16 * size + face * 256 * size,
+                # Sources are row-major: feature tile ``half`` holds features half*32...
+                transaction.write(source + (half * 32 + face * 16) * size,
                                   target, coordinate, 16 * size, posted=False)
+
+
+def _compact_locate(cfg, k, feature, core, slot, *, query):
+  """(core, slot) holding compact projection output ``feature`` (registers)."""
+  per, extra = divmod(cfg.q_dim if query else cfg.kv_dim, cfg.projection_cores)
+  with k.scope():
+    divisor, rest = k.reg(2, exclude=(feature, core, slot))
+    done = k._new_label("compact_located")
+    if extra:
+      # The first ``extra`` cores hold one more row.
+      small = k._new_label("compact_small")
+      k.li(rest, extra * (per + 1))
+      k.bgeu(feature, rest, small)
+      k.li(divisor, per + 1)
+      k.divu(core, feature, divisor)
+      k.mul(slot, core, divisor)
+      k.sub(slot, feature, slot)
+      k.j(done)
+      k.label(small)
+      k.sub(rest, feature, rest)
+    else:
+      k.mv(rest, feature)
+    k.li(divisor, per)
+    k.divu(core, rest, divisor)
+    k.mul(slot, core, divisor)
+    k.sub(slot, rest, slot)
+    if extra: k.addi(core, core, extra)
+    k.label(done)
+
+
+def _rope_gather_group(cfg, p, source, v, group, feature, is_query, source_l1, v_l1, v_head, operands):
+  """BRISC: gather head features [feature, feature + head_dim) from the compact
+  projection shards into operand row group ``group`` (registers): x, its
+  rotated half (sign-flipped), and for the key group also V.
+
+  Runs that are contiguous on both sides are found at runtime: they end at a
+  projection core boundary, a 16-value face row of the source tile, or the
+  head's half."""
+  k, hd = p.brisc, cfg.head_dim
+  per, extra = divmod(cfg.q_dim if is_query else cfg.kv_dim, cfg.projection_cores)
+  with k.scope():
+    first_core, core, slot = k.reg(3, exclude=(group, feature))
+    _compact_locate(cfg, k, feature, first_core, slot, query=is_query)
+    # Read the source tiles of cores first_core..last_core.
+    with k.scope():
+      last, unused = k.reg(2, exclude=(group, feature, first_core, slot))
+      k.addi(core, feature, hd - 1)
+      _compact_locate(cfg, k, core, last, unused, query=is_query)
+      k.mv(core, first_core)
+      with k.noc.transaction() as transaction:
+        with k.scope():
+          target = k.reg(exclude=(group, feature, first_core, core, slot, last))
+          k.li(target, source_l1)
+          loop = k._new_label("rope_tiles")
+          k.label(loop)
+          for buffer, delta in ((source, 0), *(((v, v_l1 - source_l1),) if not is_query else ())):
+            with k.scope():
+              address, coordinate = k.noc._dram_tile(buffer, core)
+              if delta:
+                destination = k.reg(exclude=(address, coordinate, target))
+                k.li(destination, delta)
+                k.add(destination, destination, target)
+                transaction.read(address, coordinate, destination, buffer.tile_size)
+              else:
+                transaction.read(address, coordinate, target, buffer.tile_size)
+          with k.scope():
+            step = k.reg(exclude=(target, core, last))
+            k.li(step, source.tile_size)
+            k.add(target, target, step)
+          k.addi(core, core, 1)
+          k.bgeu(last, core, loop)
+    k.mv(core, first_core)
+    gather = k.subroutine(("rope_gather", is_query), _rope_gather_body(k, is_query), 5 if is_query else 7)
+    with k.scope():
+      index, row_base = k.reg(2, exclude=(group, feature, first_core, core, slot))
+      k.li(index, 0)
+      # Operand row base: operands + 2 * group * head_dim (row-major layout).
+      k.slli(row_base, group, hd.bit_length())
+      _add_constant(k, row_base, operands.addr)
+      loop = k._new_label("rope_runs")
+      k.label(loop)
+      with k.scope():
+        live = (group, feature, first_core, core, slot, index, row_base)
+        count, limit, src, dst, rot, sign = k.reg(6, exclude=live)
+        # count = min(rows left on this core, face-row remainder, half-head remainder)
+        k.li(count, per)
+        if extra:
+          more = k._new_label("rope_core_rows")
+          k.li(limit, extra)
+          k.bgeu(core, limit, more)
+          k.addi(count, count, 1)
+          k.label(more)
+        k.sub(count, count, slot)
+        for bound, mask in ((16, 15), (hd // 2, hd // 2 - 1)):
+          k.andi(limit, slot if bound == 16 else index, mask)
+          k.sub(limit, R.ZERO, limit)
+          k.addi(limit, limit, bound)
+          # count = min(count, limit)
+          fine = k._new_label("rope_run_min")
+          k.bgeu(limit, count, fine)
+          k.mv(count, limit)
+          k.label(fine)
+        # src = source_l1 + (core - first_core) * tile_size + tile offset of slot
+        k.sub(src, core, first_core)
+        k.slli(src, src, source.tile_size.bit_length() - 1)
+        _tile_offset(k, slot, limit)
+        k.add(src, src, limit)
+        _add_constant(k, src, source_l1)
+        k.slli(dst, index, 1)
+        k.add(dst, dst, row_base)
+        k.xori(rot, index, hd // 2)
+        k.slli(rot, rot, 1)
+        k.add(rot, rot, row_base)
+        _add_constant(k, rot, operands.tile_size)
+        k.andi(sign, index, hd // 2)
+        k.slli(sign, sign, 15 - (hd // 2).bit_length() + 1)
+        if is_query:
+          k.call(gather, src, dst, rot, count, sign)
+        else:
+          with k.scope():
+            value_source, value_target = k.reg(2, exclude=(*live, count, src, dst, rot, sign))
+            k.li(value_source, v_l1 - source_l1)
+            k.add(value_source, value_source, src)
+            k.slli(value_target, index, 1)
+            _add_constant(k, value_target, v_head)
+            k.call(gather, src, dst, rot, count, sign, value_source, value_target)
+        k.add(index, index, count)
+        k.add(slot, slot, count)
+        # Next core once this one's rows are used up.
+        same = k._new_label("rope_same_core")
+        k.li(limit, per)
+        if extra:
+          more = k._new_label("rope_core_rows2")
+          k.li(sign, extra)
+          k.bgeu(core, sign, more)
+          k.addi(limit, limit, 1)
+          k.label(more)
+        k.bne(slot, limit, same)
+        k.li(slot, 0)
+        k.addi(core, core, 1)
+        k.label(same)
+        k.li(limit, hd)
+        k.bltu(index, limit, loop)
+
+
+def _rope_gather_body(k, is_query):
+  """Shared BRISC loop: copy one contiguous run of RoPE values, its rotated
+  (sign-flipped) copy, and for the key group also the matching V values."""
+  def body(source, target, rotated, count, sign, value_source=None, value_target=None):
+    loop = k._new_label("rope_gather")
+    k.label(loop, local=True)
+    with k.scope():
+      value = k.reg()
+      k.lhu(value, source)
+      k.sh(value, target)
+      k.xor(value, value, sign)
+      k.sh(value, rotated)
+      if not is_query:
+        k.lhu(value, value_source)
+        k.sh(value, value_target)
+        k.addi(value_source, value_source, 2)
+        k.addi(value_target, value_target, 2)
+    for pointer in (source, target, rotated): k.addi(pointer, pointer, 2)
+    k.addi(count, count, -1)
+    k.bne(count, R.ZERO, loop)
+  return body
 
 
 def _softmax_online_update(cfg, sfpu, row_chunks=GQA_ROW_CHUNKS):
@@ -1327,10 +1552,8 @@ def _softmax_online_update(cfg, sfpu, row_chunks=GQA_ROW_CHUNKS):
 
   # alpha = exp(m_old - m_new), and P = exp(score - m_new).
   stall(sfpu.k, Stall.SYNC, Wait.MATH | Wait.SFPU)
-  for chunk in row_chunks:
-    _issue_sfpu_program(sfpu, _softmax_exp_program(value_offset=alpha + chunk))
-  for chunk in row_chunks:
-    _issue_sfpu_program(sfpu, _softmax_exp_program(value_offset=score + chunk))
+  _issue_sfpu_chunks(sfpu, lambda chunk: _softmax_exp_program(value_offset=alpha + chunk), row_chunks)
+  _issue_sfpu_chunks(sfpu, lambda chunk: _softmax_exp_program(value_offset=score + chunk), row_chunks)
 
   # l_new = l_old * alpha + sum(P).  Horizontal reduction is independent in
   # each eight-lane subgroup, one subgroup per live query row.
@@ -1384,6 +1607,20 @@ def _softmax_exp_program(*, value_offset):
   return builder.finish()
 
 
+def _merge_state_program(old_offset, alpha_offset, new_offset, beta_offset):
+  """old = old * alpha + new * beta, all FP32 in Dst."""
+  builder = SfpuProgramBuilder()
+  old = builder.load(format=SfpuFormat.FP32, offset=old_offset)
+  a = builder.load(format=SfpuFormat.FP32, offset=alpha_offset)
+  old = builder.mul(old, a, into=old)
+  builder.free(a)
+  new = builder.load(format=SfpuFormat.FP32, offset=new_offset)
+  b = builder.load(format=SfpuFormat.FP32, offset=beta_offset)
+  builder.mad(new, b, old, into=old)
+  builder.store(old, format=SfpuFormat.FP32, offset=old_offset)
+  return builder.finish()
+
+
 def _softmax_normalize_program(*, output_offset, sum_offset):
   builder = SfpuProgramBuilder()
   output = builder.load(format=SfpuFormat.FP32, offset=output_offset)
@@ -1394,11 +1631,42 @@ def _softmax_normalize_program(*, output_offset, sum_offset):
   return builder.finish()
 
 
-def _issue_sfpu_program(sfpu, program):
-  """Run one explicitly addressed 4x8 SFPU footprint."""
+def _shift_sfpu_addresses(words, delta):
+  """The words with every SFPLOAD/SFPSTORE Dst address moved by ``delta`` rows."""
+  return tuple(TensixWord(word + delta) if word >> 24 in (0x70, 0x72) else word for word in words)
+
+
+def _issue_sfpu_chunks(sfpu, make, chunks=GQA_ROW_CHUNKS):
+  """Run ``make(chunk)`` for every row chunk with one shared program.
+
+  The programs differ only in their Dst addresses, so the chunk-0 program runs
+  once per chunk while INCRWC advances the Dst row counter that the SFPU adds
+  to every load and store address (as SFPU map's row step does).
+  """
+  programs = [make(chunk) for chunk in chunks]
+  base = (*programs[0].setup_words, *programs[0].words)
+  if any(_shift_sfpu_addresses(base, chunk - chunks[0]) != (*program.setup_words, *program.words)
+         for chunk, program in zip(chunks, programs)) or any(
+         later - earlier > 15 for earlier, later in zip(chunks, chunks[1:])):
+    for program in programs: _issue_sfpu_program(sfpu, program)
+    return
+  def body():
+    for word in base: sfpu._issue(word)
+    stall(sfpu.k, Stall.SYNC, Wait.MATH | Wait.SFPU)
   _select_dst_tile(sfpu, 0)
-  for word in (*program.setup_words, *program.words): sfpu._issue(word)
-  stall(sfpu.k, Stall.SYNC, Wait.MATH | Wait.SFPU)
+  for index, chunk in enumerate(chunks):
+    if index: sfpu._issue(TT.TTINCRWC(0, chunk - chunks[index - 1], 0, 0))
+    sfpu.k.outline(("sfpu_chunk_program", tuple(map(int, base))), body)
+  sfpu._issue(TT.TTSETRWC(0, 0, 0, 0, 0, 4))
+
+
+def _issue_sfpu_program(sfpu, program):
+  """Run one explicitly addressed 4x8 SFPU footprint (one shared body per program)."""
+  def body():
+    _select_dst_tile(sfpu, 0)
+    for word in (*program.setup_words, *program.words): sfpu._issue(word)
+    stall(sfpu.k, Stall.SYNC, Wait.MATH | Wait.SFPU)
+  sfpu.k.outline(("sfpu_program", tuple(map(int, (*program.setup_words, *program.words)))), body)
 
 
 # ---------------------------------------------------------------------------
@@ -1417,21 +1685,44 @@ def attention_merge(cfg, partials, context):
   features = cfg.head_tiles
   state_tiles = features + 2
 
-  def build(head):
-    p = Program(P100_WORKER_CORES[:8], source, context, fp32_dst=True)
+  # One image: core c merges KV head c.
+  head = Const("merge_head", tuple(range(8)))
+
+  def build():
+    p = Program(P100_WORKER_CORES[:8], source, context, head, fp32_dst=True)
     incoming = p.cb(DType.F32, depth=2 * state_tiles)
     output = p.cb(context.dtype, depth=features)
+    k = p.brisc
+    with k.scope():
+      first = k.reg()               # first partial-state tile of this head
+      k.read(first, p.param_addr(head))
+      with k.scope():
+        scale = k.reg(exclude=first)
+        k.li(scale, 4 * state_tiles)
+        k.mul(first, first, scale)
+      for split in range(4):
+        order = tuple(range(state_tiles)) if split == 0 else (features, features + 1, *range(features))
+        CB.reserve_back(k, incoming, len(order))
+        with k.noc.transaction() as transaction:
+          for index, tile in enumerate(order):
+            with k.scope():
+              number = k.reg(exclude=first)
+              k.addi(number, first, split * state_tiles + tile)
+              address, coordinate = k.noc._dram_tile(source, number)
+              target = k.reg(exclude=(first, address, coordinate))
+              CB.get_write_ptr(k, incoming, target)
+              if index: _add_constant(k, target, index * incoming.tile_size)
+              transaction.read(address, coordinate, target, incoming.tile_size)
+        CB.push_back(k, incoming, len(order))
     for split in range(4):
       order = tuple(range(state_tiles)) if split == 0 else (features, features + 1, *range(features))
-      tiles = tuple((head * 4 + split) * state_tiles + tile for tile in order)
-      p.brisc.noc.read_tiles_into_cb(source, tiles, incoming)
       for _ in order: p.unpack.move(incoming, UnpackTarget.SRCA)
     p.fpu.copy_a_tiles(dst_tiles=range(state_tiles))
     maximum, total = features * 64, (features + 1) * 64
     # Only four footprints contain live query rows. Other footprints of
     # the maximum tile safely hold alpha and beta during each merge.
     alpha, beta = maximum + 8, maximum + 32
-    for _ in range(3):
+    for _ in p.trisc1.range(3):
       p.fpu.copy_a_tiles(dst_tiles=(features + 2, features + 3))
       _select_dst_tile(p.sfpu, 0)
       words = []
@@ -1450,55 +1741,46 @@ def attention_merge(cfg, partials, context):
         ))
       for word in words: p.sfpu._issue(word)
       stall(p.trisc1, Stall.SYNC, Wait.MATH | Wait.SFPU)
-      for chunk in GQA_ROW_CHUNKS:
-        for offset in (alpha, beta):
-          _issue_sfpu_program(p.sfpu, _softmax_exp_program(value_offset=offset + chunk))
-        builder = p.sfpu.program()
-        old = builder.load(format=SfpuFormat.FP32, offset=total + chunk)
-        a = builder.load(format=SfpuFormat.FP32, offset=alpha + chunk)
-        old = builder.mul(old, a, into=old)
-        builder.free(a)
-        new = builder.load(format=SfpuFormat.FP32, offset=(features + 3) * 64 + chunk)
-        b = builder.load(format=SfpuFormat.FP32, offset=beta + chunk)
-        builder.mad(new, b, old, into=old)
-        builder.store(old, format=SfpuFormat.FP32, offset=total + chunk)
-        _issue_sfpu_program(p.sfpu, builder.finish())
+      # Each chunk's merge only reads that chunk's alpha and beta, so the
+      # chunks can run phase by phase.
+      for offset in (alpha, beta):
+        _issue_sfpu_chunks(p.sfpu, lambda chunk: _softmax_exp_program(value_offset=offset + chunk))
+      _issue_sfpu_chunks(p.sfpu, lambda chunk: _merge_state_program(
+        total + chunk, alpha + chunk, (features + 3) * 64 + chunk, beta + chunk))
       for feature in range(features):
         p.fpu.copy_a_tiles(dst_tiles=(features + 2,))
-        for chunk in GQA_ROW_CHUNKS:
-          builder = p.sfpu.program()
-          old = builder.load(format=SfpuFormat.FP32, offset=feature * 64 + chunk)
-          a = builder.load(format=SfpuFormat.FP32, offset=alpha + chunk)
-          builder.mul(old, a, into=old)
-          builder.free(a)
-          new = builder.load(format=SfpuFormat.FP32, offset=(features + 2) * 64 + chunk)
-          b = builder.load(format=SfpuFormat.FP32, offset=beta + chunk)
-          builder.mad(new, b, old, into=old)
-          builder.store(old, format=SfpuFormat.FP32, offset=feature * 64 + chunk)
-          _issue_sfpu_program(p.sfpu, builder.finish())
+        _issue_sfpu_chunks(p.sfpu, lambda chunk: _merge_state_program(
+          feature * 64 + chunk, alpha + chunk, (features + 2) * 64 + chunk, beta + chunk))
     for feature in range(features):
-      for chunk in GQA_ROW_CHUNKS:
-        _issue_sfpu_program(p.sfpu, _softmax_normalize_program(
-          output_offset=feature * 64 + chunk, sum_offset=total + chunk))
+      _issue_sfpu_chunks(p.sfpu, lambda chunk: _softmax_normalize_program(
+        output_offset=feature * 64 + chunk, sum_offset=total + chunk))
     p.sfpu.publish()
     p.pack.move_tiles(output, tiles=tuple(range(features)))
     CB.wait_front(p.ncrisc, output, features)
-    with p.ncrisc.noc.transaction() as transaction:
+    n = p.ncrisc
+    with n.noc.transaction() as transaction, n.scope():
+      base = n.reg()                # first context element of this KV head's queries
+      n.read(base, p.param_addr(head))
+      n.slli(base, base, (4 * cfg.head_dim).bit_length() - 1)
       for row in range(4):
         for feature in range(features):
-          first = (head * 4 + row) * cfg.head_dim + feature * 32
-          with p.ncrisc.scope():
-            address, coordinate = p.ncrisc.noc._dram_tile(context, first // 1024)
+          with n.scope():
+            element, tile = n.reg(2, exclude=base)
+            n.addi(element, base, row * cfg.head_dim + feature * 32)
+            n.srli(tile, element, 10)
+            address, coordinate = n.noc._dram_tile(context, tile)
+            n.andi(element, element, 1023)
             for face in range(2):
-              with p.ncrisc.scope():
-                target = p.ncrisc.reg()
-                p.ncrisc.mv(target, address)
-                _add_constant(p.ncrisc, target, _dense_byte_offset(context, first % 1024 + face * 16))
+              with n.scope():
+                target = n.reg(exclude=(address, coordinate, element, base))
+                if face: n.addi(element, element, 16)
+                _dense_offset(n, context, element, target)
+                n.add(target, target, address)
                 transaction.write(output.addr + feature * output.tile_size + _bf16_tile_byte_offset(row * 32 + face * 16),
                                   target, coordinate, 32, posted=False)
     CB.pop_front(p.ncrisc, output, features)
     return p
-  return specialize(build, P100_WORKER_CORES[:8], tuple(range(8)))
+  return build()
 
 
 # ---------------------------------------------------------------------------
@@ -1517,6 +1799,10 @@ def argmax(cfg, logits: Buffer, token_history: Buffer, host_output: int,
     - multicasts next-token runtime parameters for autonomous replay.
   Ties resolve to the lowest token ID.
   """
+  # Projection cores are spread over the chip; argmax instead runs on the
+  # first N workers in column-major order (a few multicast rectangles). Core i
+  # still scans projection core i's logits shard.
+  logits = dataclasses.replace(logits, cores=P100_WORKER_CORES[:len(logits.cores)])
   local_counts = _token_counts(cfg.vocab_size, len(logits.cores))
   local_starts, cursor = [], 0
   for count in local_counts:
@@ -1856,26 +2142,6 @@ def _bf16_tile_byte_offset(index):
 def _dense_byte_offset(buffer, index):
   """Address dense vectors independently of transient packed compute tiles."""
   return (_bf16_tile_byte_offset(index) // 2 if buffer.tilized else index) * buffer.dtype.itemsize
-
-
-def _compact_feature_location(cfg, feature, total_features):
-  """(projection core, slot) that holds output ``feature`` in a compact buffer."""
-  counts = _token_counts(total_features, cfg.projection_cores)
-  cursor = 0
-  for core, count in enumerate(counts):
-    if feature < cursor + count: return core, feature - cursor
-    cursor += count
-  raise ValueError("compact feature index is out of range")
-
-
-def _compact_projection_location(cfg, feature, *, query):
-  return _compact_feature_location(cfg, 
-    feature, cfg.q_dim if query else cfg.kv_dim,
-  )
-
-
-def _compact_slot_byte_offset(slot):
-  return _bf16_tile_byte_offset(slot)
 
 
 def _global_tile_view(buffer, name):
