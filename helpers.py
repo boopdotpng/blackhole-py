@@ -11,8 +11,6 @@ PAGE = mmap.PAGESIZE
 def round_up(x:int, n:int) -> int: return -(-x // n) * n
 def view_at(addr:int, n:int) -> memoryview:  # n bytes of raw memory at addr, as a writable memoryview
   return memoryview((ctypes.c_uint8 * n).from_address(addr)).cast("B")
-def mv_address(buf) -> int:
-  return ctypes.addressof(ctypes.c_char.from_buffer(memoryview(buf).cast("B")))
 def libc_mmap(size:int, fd:int=-1, offset:int=0, flags:int=mmap.MAP_SHARED, prot:int=mmap.PROT_READ | mmap.PROT_WRITE) -> int:
   if fd == -1: flags |= mmap.MAP_ANONYMOUS
   if (addr := libc.mmap(None, size, prot, flags, fd, offset)) in (None, 2**64 - 1):

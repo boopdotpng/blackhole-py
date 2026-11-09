@@ -1,6 +1,7 @@
 import os, struct, time, fw
+from concurrent.futures import ThreadPoolExecutor
 from cq import ComputeQueue, CopyQueue, Graph, HWQueue, Ring, Launch, dram, rects
-from helpers import PAGE, Tensor, mv_address, round_up
+from helpers import PAGE, round_up
 from system import PCIDevice, Sysmem
 
 class Device:
@@ -24,7 +25,9 @@ class Device:
       raise
     self.signals = 2 * fw.RING_SIZE
     self.heap, self.transfers, self.dram_top = self.signals + PAGE, 0, 0
-    self.transfer_signal = 255  # the last slot is copyin/copyout/load's
+    self.transfer_signal = 255  # copied: transfers the copy queue has finished (copyin, copyout, load, zero)
+    self.fill_signal = 251  # filled: the host has written the staging slot of every transfer up to this one
+    self.readers, self.zeros = ThreadPoolExecutor(4), 0  # load's file readers; zero's source region
     self.stage_done, self.stage_next = [0, 0], 0 # transfer count that frees each buffer, the one to fill next
     self.sysmem.mem[self.signals:self.heap] = bytes(self.heap - self.signals)
     self.compute = self._create_queue(self.cq_core, 0, "dispatch", cmdbuf_size=1 << 20)
@@ -37,6 +40,7 @@ class Device:
     self._free()
 
   def _free(self):
+    if getattr(self, "readers", None): self.readers.shutdown()
     if self.sysmem is not None: self.sysmem.close()
     self.pci_dev.close()
 
@@ -156,7 +160,7 @@ class Device:
     return addr
 
   def _stage(self, timeout:float) -> int:
-    """Wait for the next staging buffer to be free; returns its sysmem offset."""
+    """Wait for the next staging slot to be free; returns its sysmem offset."""
     i, self.stage_next = self.stage_next, self.stage_next ^ 1
     self.wait(self.transfer_signal, self.stage_done[i], timeout)
     return self.arena_size + i * self.stage_size
@@ -165,39 +169,27 @@ class Device:
     q.signal(self.signal(self.transfer_signal), self.transfers).submit(self.copy)
     self.stage_done[(buf - self.arena_size) // self.stage_size] = self.transfers
 
-  def _zero_copy(self, host:memoryview, copy, timeout:float) -> bool:
-    chunk, windows = 8 << 20, 4
-    if host.readonly or len(host) < 1 << 20 or (addr := mv_address(host)) % 64: return False
-    start, end, pins = addr & -PAGE, round_up(addr + len(host), PAGE), []
-    def release(s, n, value):
-      try: self.wait(self.transfer_signal, value, timeout)
-      finally: self.pci_dev.unpin(s, n)
-    try:
-      for s in range(start, end, chunk):
-        if len(pins) == windows: release(*pins.pop(0))
-        n = min(chunk, end - s)
-        noc = self.pci_dev.pin(s, n)
-        lo, hi = max(s, addr), min(s + n, addr + len(host))
-        copy(q := CopyQueue(), noc + lo - s, lo - addr, hi - lo)
-        self.transfers += 1
-        q.signal(self.signal(self.transfer_signal), self.transfers).submit(self.copy)
-        pins.append((s, n, self.transfers))
-    finally:
-      while pins: release(*pins.pop(0))
-    return True
+  def _put(self, copies:list[tuple[int, int, int]], fill, timeout:float):
+    """One host -> device transfer through the next staging slot, as tinygrad's disk_read does it: the copy queue gets
+    WAIT(filled >= t), the copies [(dst, slot offset, bytes)] and STORE(copied = t) before the host writes the slot, so
+    it starts the moment fill(slot) returns. Sources must sit at 64-byte aligned slot offsets, as the NoC needs."""
+    buf, t = self._stage(timeout), self.transfers + 1
+    q = CopyQueue().wait(self.signal(self.fill_signal), t)
+    for dst, at, n in copies: q.copy(dst, self.addr(buf + at), n)
+    self._submit(q, buf)
+    try: fill(buf)
+    finally: struct.pack_into("<Q", self.sysmem.mem, self.signals + 16 * self.fill_signal, t)  # even on error, so the queue drains
 
   def copyin(self, dev:int, host, timeout=60.0):
     host = memoryview(host).cast("B")
-    if self._zero_copy(host, lambda q, noc, off, n: q.copy(dev + off, noc, n), timeout): return
     for off in range(0, len(host), self.stage_size):
-      buf, n = self._stage(timeout), min(self.stage_size, len(host) - off)
-      self.sysmem.mem[buf:buf + n] = host[off:off + n]
-      self._submit(CopyQueue().copy(dev + off, self.addr(buf), n), buf)
+      n = min(self.stage_size, len(host) - off)
+      def fill(buf): self.sysmem.mem[buf:buf + n] = host[off:off + n]
+      self._put([(dev + off, 0, n)], fill, timeout)
     self.wait(self.transfer_signal, self.transfers, timeout)
 
   def copyout(self, host, dev:int, timeout=60.0):
     host, pending = memoryview(host).cast("B"), []
-    if self._zero_copy(host, lambda q, noc, off, n: q.copy(noc, dev + off, n), timeout): return
     def drain(buf, off, n, value):
       self.wait(self.transfer_signal, value, timeout)
       host[off:off + n] = self.sysmem.mem[buf:buf + n]
@@ -208,24 +200,45 @@ class Device:
       if len(pending) == 2: drain(*pending.pop(0))
     for p in pending: drain(*p)
 
-  def load(self, tensors:list[Tensor], page:int=2048, timeout=60.0) -> dict[str, int]:
-    addr = {t.name: dram(self.alloc_dram(t.nbytes), page) for t in tensors}
-    for path in dict.fromkeys(t.path for t in tensors):
-      ts = sorted((t for t in tensors if t.path == path), key=lambda t: t.offset)
-      lo, hi = ts[0].offset, max(t.end for t in ts)
-      assert all((t.offset - lo) % 64 == 0 for t in ts)
-      fd = os.open(path, os.O_RDONLY)
-      try:
-        for off in range(lo, hi, self.stage_size):
-          buf, n, q = self._stage(timeout), min(self.stage_size, hi - off), CopyQueue()
-          view, done = self.sysmem.mem[buf:buf + n], 0
-          while done < n:
-            if not (r := os.preadv(fd, [view[done:]], off + done)): raise ValueError(f"{path} ended at {off + done}")
-            done += r
-          for t in ts:
-            a, b = max(t.offset, off), min(t.end, off + n)
-            if a < b: q.copy(addr[t.name] + a - t.offset, self.addr(buf) + a - off, b - a)
-          self._submit(q, buf)
-      finally: os.close(fd)
+  def load(self, sources:list[tuple[int, str|os.PathLike, int, int]], timeout=60.0):
+    """Stream file ranges [(dst, path, file offset, bytes)] into the device. Ranges are packed back to back into the
+    staging slots, each at a 64-byte aligned slot offset whatever its file offset (safetensors data is not aligned),
+    and read in place with buffered preads on a few threads. No copy of the file and no pinning beyond sysmem."""
+    S, slots, slot, pos = self.stage_size, [], [], 0
+    for dst, path, offset, n in sources:
+      done = 0
+      while done < n:  # a range is split where it crosses a slot
+        if pos == S: slots.append(slot); slot, pos = [], 0
+        k = min(n - done, S - pos)
+        slot.append((dst + done, path, offset + done, k, pos))
+        pos, done = round_up(pos + k, 64), done + k
+    if slot: slots.append(slot)
+    fds = {}
+    def read(piece):
+      view, fd, offset = piece
+      while len(view):
+        if not (r := os.preadv(fd, [view], offset)): raise ValueError(f"file ended at {offset}")
+        view, offset = view[r:], offset + r
+    try:
+      for slot in slots:
+        def fill(buf, slot=slot):
+          mem, pieces = self.sysmem.mem, []
+          for _, path, offset, n, at in slot:
+            fd = fds[path] if path in fds else fds.setdefault(path, os.open(path, os.O_RDONLY))
+            pieces += [(mem[buf + at + o:buf + at + min(n, o + (1 << 20))], fd, offset + o) for o in range(0, n, 1 << 20)]
+          list(self.readers.map(read, pieces))
+        self._put([(dst, at, n) for dst, _, _, n, at in slot], fill, timeout)
+    finally:
+      for fd in fds.values(): os.close(fd)
     self.wait(self.transfer_signal, self.transfers, timeout)
-    return addr
+
+  def zero(self, dst:int, size:int, timeout=60.0):
+    """Zero DRAM on the device: DRAM -> DRAM copies from a zeroed region, nothing over PCIe."""
+    if not self.zeros:
+      self.zeros = dram(self.alloc_dram(self.stage_size), fw.DRAM_PAGE_MAX)
+      self.copyin(self.zeros, bytes(self.stage_size))
+    q = CopyQueue()
+    for off in range(0, size, self.stage_size): q.copy(dst + off, self.zeros, min(self.stage_size, size - off))
+    self.transfers += 1
+    q.signal(self.signal(self.transfer_signal), self.transfers).submit(self.copy)
+    self.wait(self.transfer_signal, self.transfers, timeout)

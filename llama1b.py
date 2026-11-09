@@ -41,20 +41,17 @@ class Llama1B:
   def _upload_weights(self, checkpoint):
     path = Path(checkpoint)
     tensors = safe_load(path if path.is_file() else path / "model.safetensors")
-    self.weight_bytes, self.upload_times = 0, dict(read=0.0, copy=0.0)
+    sources, zeros, self.weight_bytes = [], [], 0
     for b in self.m["uploads"]:
-      t0 = time.perf_counter()
       if b["kind"] == "tensor":
         t = tensors[b["src"]]
         assert t.nbytes <= b["size"], (b["name"], t.nbytes, b["size"])
-        data = np.fromfile(t.path, np.uint8, t.nbytes, offset=t.offset)
-      elif b["kind"] == "file": data = (KDIR / b["src"]).read_bytes()
-      else: data = np.zeros(b["size"], np.uint8)  # KV caches start zeroed
-      t1 = time.perf_counter()
-      self.dev.copyin(self.buffer(b), data)
-      self.upload_times["read"] += t1 - t0
-      self.upload_times["copy"] += time.perf_counter() - t1
+        sources.append((self.buffer(b), t.path, t.offset, t.nbytes))
+      elif b["kind"] == "file": sources.append((self.buffer(b), KDIR / b["src"], 0, (KDIR / b["src"]).stat().st_size))
+      else: zeros.append(b)  # KV caches start zeroed
       self.weight_bytes += b["size"]
+    self.dev.load(sources)
+    for b in zeros: self.dev.zero(self.buffer(b), b["size"])
 
   # ---- fixed execution slots, immutable descriptors and per-core parameter tables
   def _install(self):
@@ -242,12 +239,11 @@ def main():
     gen, s = model.generate(ids, a.steps)
     if a.profile: per_exec, noop_token = model.dispatch_baseline()
     row = lambda label, text: print(f"{label:<12}{text}")
-    gb, u = model.weight_bytes / 1e9, model.upload_times
+    gb = model.weight_bytes / 1e9
 
     print(f"\nLlama 3.2 1B on {model.dev.pci_dev.card}, device {a.device}\n")
     row("startup", f"{t_start:.2f} s")
-    row("  weights", f"{gb:.2f} GB in {model.t_weights:.2f} s ({gb / model.t_weights:.1f} GB/s): "
-                     f"file read {u['read']:.2f} s, copy to device {u['copy']:.2f} s ({gb / u['copy']:.1f} GB/s)")
+    row("  weights", f"{gb:.2f} GB in {model.t_weights:.2f} s ({gb / model.t_weights:.1f} GB/s)")
     row("  kernels", f"{len(m['programs'])} programs, {model.code_slot_bytes / 1024:.1f} KB of double-buffered code slots per core, "
                      f"{model.npos} position graphs built in {model.t_build:.2f} s")
 
