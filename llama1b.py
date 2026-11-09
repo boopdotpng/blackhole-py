@@ -72,14 +72,14 @@ class Llama1B:
         for role, v in zip(m['roles'], c['variants']):
           if v < 0: continue
           img = files[role][v]
-          images[core][role] = img + fw.jal(fw.RETURN[role] - (fw.CODE[role] + len(img))).to_bytes(4, 'little')
+          images[core][role] = img + fw.ret(role)  # PC-relative code: runs from either slot
       args_size = round_up(4 * len(p['uniform']), 16)
       self.prog[name] = dev.bind(images, args_size)
       self.noop[name] = dev.bind({c: {} for c in images}, args_size)
     for state in m.get('persistent', ()):
       assert tables_end <= state['addr'] and state['addr'] + state['size'] <= 0x9000, state
       dev.pci_dev.write(tuple(state['core']), state['addr'], bytes(state['size']))
-    self.code_slot_bytes = sum(fw.CODE_SIZE.values())
+    self.code_slot_bytes = 2 * sum(fw.CODE_SIZE.values())  # double buffered
 
   # ---- per-position args and graphs
   def _build(self):
@@ -248,7 +248,7 @@ def main():
     row("startup", f"{t_start:.2f} s")
     row("  weights", f"{gb:.2f} GB in {model.t_weights:.2f} s ({gb / model.t_weights:.1f} GB/s): "
                      f"file read {u['read']:.2f} s, copy to device {u['copy']:.2f} s ({gb / u['copy']:.1f} GB/s)")
-    row("  kernels", f"{len(m['programs'])} programs, {model.code_slot_bytes / 1024:.1f} KB fixed code slots per core, "
+    row("  kernels", f"{len(m['programs'])} programs, {model.code_slot_bytes / 1024:.1f} KB of double-buffered code slots per core, "
                      f"{model.npos} position graphs built in {model.t_build:.2f} s")
 
     eos = next((i for i, t in enumerate(gen) if t in m["eos"]), len(gen))

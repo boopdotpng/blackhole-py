@@ -95,7 +95,8 @@ class Device:
 
   def bind(self, images:dict, args_size:int=0) -> Launch:
     """Upload packed code once to DRAM and bind immutable transfer geometry in dispatcher L1.
-    images maps worker coordinates to {role: bytes}; every image must be linked at fw.CODE[role]."""
+    images maps worker coordinates to {role: bytes}. Dispatch installs each launch into whichever of the two slots is
+    free, fw.CODE[role] or fw.CODE[role] + fw.SLOT_STRIDE, so images must be position-independent (fw.program, fw.ret)."""
     assert images and set(images) <= set(self.workers)
     assert 0 <= args_size <= fw.PARAM_SIZE and args_size % 16 == 0
     groups = {}

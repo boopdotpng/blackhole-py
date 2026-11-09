@@ -16,6 +16,8 @@ assert all(a + n <= b for (a, n), (b, _) in zip(FW.values(), [*list(FW.values())
 LAUNCH, L1_PARAM_BASE, PARAM_SIZE, DATA_BASE = 0x780, 0x7C0, 0x40, 0x8000
 CODE = dict(zip(ROLES, (0x800, 0x2800, 0x4800, 0x5800, 0x6800)))
 CODE_SIZE = dict(zip(ROLES, (0x2000, 0x2000, 0x1000, 0x1000, 0x1000)))
+SLOT_STRIDE, GO_SLOT_BIT = 0x10000, 20  # slot 1 = slot 0 + SLOT_STRIDE; GO_SIGNAL bit GO_SLOT_BIT picks the slot
+assert CODE["trisc2"] + CODE_SIZE["trisc2"] <= 0x7800 and DATA_BASE + 0x1000 <= LAUNCH + SLOT_STRIDE
 DESCRIPTOR_L1, DESCRIPTOR_END, STAGE_SIZE = 0x40000, 0x80000, 0x10000
 PACKET, RING_SIZE = 32, 64 << 10
 STATE, STATE_SIZE = DATA_BASE, 0x140
@@ -64,13 +66,24 @@ def compile(srcs:list, slot:tuple[int, int], flags:list[str]=["-Os"]) -> bytes:
   return out.read_bytes()
 
 def program(kernels:dict[str, tuple[list, list[str]]]) -> dict[str, bytes]:
-  """Compile each role at its fixed execution address. Missing roles return immediately."""
-  return {role: compile(srcs, (CODE[role], CODE_SIZE[role]), flags) for role, (srcs, flags) in kernels.items()}
+  """Compile each role for its execution slot. A launch may run from either slot, so the image must be
+  position-independent: it is linked at both and the two must match. Missing roles return immediately."""
+  out = {}
+  for role, (srcs, flags) in kernels.items():
+    a, b = (compile(srcs, (CODE[role] + s, CODE_SIZE[role]), ["-mcmodel=medany", *flags]) for s in (0, SLOT_STRIDE))
+    if a != b: raise RuntimeError(f"{role} kernel {srcs} is not position-independent")
+    out[role] = a
+  return out
 
 @functools.cache
 def images() -> dict:
   with ThreadPoolExecutor(len(WORKERS)) as ex: out = dict(zip(WORKERS, ex.map(lambda a: compile(*a), WORKERS.values())))
   return out | {name: program(k) for name, k in PROGRAMS.items()}
+
+def ret(role:str) -> bytes:
+  """jalr x0, RETURN[role](x0): back to the firmware from either slot. Append it to kernels that just fall off the end."""
+  assert RETURN[role] < 0x800
+  return (RETURN[role] << 20 | 0x67).to_bytes(4, "little")
 
 def jal(offset:int) -> int:  # RISC-V jal x0, offset
   return (offset >> 20 & 1) << 31 | (offset >> 1 & 0x3FF) << 21 | (offset >> 11 & 1) << 20 | (offset >> 12 & 0xFF) << 12 | 0x6F

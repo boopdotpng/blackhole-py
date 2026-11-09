@@ -5,11 +5,12 @@ FIRMWARE_ENTRY(SET_SP(STACK_TOP))
 
 static NORETURN launch(void) {
   wait8(GO_SIGNAL, 0x80);
+  u32 slot = SLOT_OFFSET(read32(GO_SIGNAL));
   reset_tensix();
-  invalidate_icache();
+  invalidate_icache();  /* every RISC: the slot may hold lines from the launch before last */
   for (u32 i = 0; i < 4; i++) write8(SUBORDINATE_SYNC + i, 0x80);
   fence();
-  if (read32(LAUNCH) & 1) JUMP(CODE_BRISC);
+  if (read32(LAUNCH + slot) & 1) JUMP(CODE_BRISC + slot);
   JUMP(FW_BRISC + 4);
 }
 

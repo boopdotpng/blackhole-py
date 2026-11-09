@@ -3,7 +3,9 @@
 #define ABI_H
 
 /* ---- L1, every Tensix core ---- */
-#define GO_SIGNAL         0x10     /* u32. byte 0: 0x80 = launch, cleared when every RISC returns. bits 8-19: dispatch's NoC coordinate */
+#define GO_SIGNAL         0x10     /* u32. byte 0: 0x80 = launch, cleared when every RISC returns. bits 8-19: dispatch's NoC coordinate,
+                                    * bit 20: which execution slot to run (GO_SLOT) */
+#define GO_SLOT_BIT       20
 #define SUBORDINATE_SYNC  0x14     /* u8 each for ncrisc, trisc0-2. 2 = booted, 0x80 = go, 0 = returned */
 
 /* Resident firmware, one image per RISC. FW_x + 0 boots, FW_x + 4 is where a kernel jumps when it is done. */
@@ -18,7 +20,12 @@
 #define FW_TRISC2         0x680
 #define FW_TRISC2_SIZE    0x100
 
-/* Fixed execution slots: every launch replaces code here. LAUNCH is an active-role bitmask. */
+/* Two execution slots, double buffered: while one launch runs from slot b, dispatch installs the next one into slot b ^ 1.
+ * Slot 1 is slot 0 moved up by SLOT_STRIDE, LAUNCH mask included; the GO word says which one to run. Kernels must
+ * therefore be position-independent and return through an absolute jump (see fw.ret). L1_PARAM_BASE is shared: it is
+ * only written when the launch that reads it is released. LAUNCH is an active-role bitmask. */
+#define SLOT_STRIDE       0x10000  /* slot 1 = [LAUNCH, CODE_END) + SLOT_STRIDE, reserved on worker cores */
+#define SLOT_OFFSET(go)   (((go) >> GO_SLOT_BIT & 1) * SLOT_STRIDE)
 #define LAUNCH            0x780
 #define L1_PARAM_BASE     0x7C0
 #define PARAM_SIZE        0x40     /* 16 words: DRAM addresses of the kernel's inputs and outputs, everything else is compiled in */
@@ -28,7 +35,7 @@
 #define CODE_TRISC1       0x5800
 #define CODE_TRISC2       0x6800
 #define CODE_END          0x7800
-#define DATA_BASE         0x8000   /* everything from here up is free for kernels */
+#define DATA_BASE         0x8000   /* everything from here up is free for kernels, except slot 1 on worker cores */
 
 /* Stacks live in each RISC's private local memory, not L1 */
 #define STACK_TOP         0xFFB01FF0
