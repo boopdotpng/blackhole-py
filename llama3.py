@@ -90,6 +90,7 @@ class Llama3:
   def _install(self):
     m, dev = self.m, self.dev
     self.prog, self.noop = {}, {}
+    assert m['static_base'] == fw.DATA_BASE and m['l1_param_base'] == fw.L1_PARAM_BASE, "kernels exported for another L1 layout"
     tables_end = max(m['static_base'] + 0x40 * (p['k'] + 1) for p in m['programs'].values())
     for name, p in m['programs'].items():
       files = {role: [(self.kdir / f).read_bytes() for f in fs] for role, fs in p['files'].items()}
@@ -107,7 +108,7 @@ class Llama3:
       self.prog[name] = dev.bind(images, args_size)
       self.noop[name] = dev.bind({c: {} for c in images}, args_size)
     for state in m.get('persistent', ()):
-      assert tables_end <= state['addr'] and state['addr'] + state['size'] <= 0x9000, state
+      assert tables_end <= state['addr'] and state['addr'] + state['size'] <= m['l1_data_base'], state
       dev.pci_dev.write(tuple(state['core']), state['addr'], bytes(state['size']))
     self.code_slot_bytes = 2 * sum(fw.CODE_SIZE.values())  # double buffered
 

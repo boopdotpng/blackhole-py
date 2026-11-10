@@ -1,8 +1,8 @@
 # llama3 8b-bf16 decode: attention, trisc1. Exported from blackhole-py/examples/llama3/kernels.py by tools/rewrite_export/export_llama3.py.
 # cores (32): 1,2 1,3 1,4 1,5 1,6 1,7 1,8 1,9 1,10 1,11 2,2 2,3 2,4 2,5 2,6 2,7 2,8 2,9 2,10 2,11 3,2 3,3 3,4 3,5 3,6 3,7 3,8 3,9 3,10 3,11 4,2 4,3
-# params: 0x7c0=e2e_q_heads, 0x7c4=e2e_l0_key_cache, 0x7c8=e2e_l0_value_cache, 0x7cc=e2e_context, 0x7d0=kv_blocks, 0x7d4=valid_columns, 0x7d8=attention_e2e_q_compact, 0x7dc=attention_e2e_k_compact, 0x7e0=attention_e2e_v_compact, 0x7e4=e2e_rope_cos, 0x7e8=e2e_rope_sin, 0x7ec=start_pos, 0x80c0=attention_core
-#   0x7c0.. uniform, sent with every EXEC; 0x8000.. this core's resident per-core table
-# pcs are offsets from the image start; llama3.py installs it resident in L1 at 0x12000+ per core.
+# params: 0x780=e2e_q_heads, 0x784=e2e_l0_key_cache, 0x788=e2e_l0_value_cache, 0x78c=e2e_context, 0x790=kv_blocks, 0x794=valid_columns, 0x798=attention_e2e_q_compact, 0x79c=attention_e2e_k_compact, 0x7a0=attention_e2e_v_compact, 0x7a4=e2e_rope_cos, 0x7a8=e2e_rope_sin, 0x7ac=start_pos, 0xe900=attention_core
+#   0x780.. uniform, sent with every EXEC; 0xe840.. this core's resident per-core table
+# pcs are offsets from the image start; position-independent, llama3.py runs it from either code slot.
 
       0: 100002c4  REPLAY       start_idx=0, len=11, execute_while_loading=0, load_mode=1
       4: c0038001  SFPLOAD      lreg_ind=0, instr_mod0=0, sfpu_addr_mode=7, dest_reg_addr=0  # lreg_ind: L0; Record replay[0]; not executed here
@@ -119,8 +119,8 @@
     1c0: 88042042  STALLWAIT    stall_res=2, wait_res=2064  # stall_res: Stall.SYNC; wait_res: Wait.MATH | Wait.SFPU
     1c4: 88042042  STALLWAIT    stall_res=2, wait_res=2064  # stall_res: Stall.SYNC; wait_res: Wait.MATH | Wait.SFPU
     1c8: 90000022  SEMPOST      sem_sel=2  # sem_sel: Sem.MATH_PACK
-    1cc: 7d000313  addi         x6, x0, 2000  # x6 = 0x000007d0
-    1d0: 00032203  lw           x4, 0(x6)  # param kv_blocks; 0x000007d0
+    1cc: 79000313  addi         x6, x0, 1936  # x6 = 0x00000790
+    1d0: 00032203  lw           x4, 0(x6)  # param kv_blocks; 0x00000790
     1d4: fff20293  addi         x5, x4, -1
     1d8: 9a84002a  SEMWAIT      stall_res=322, sem_sel=2, wait_sem_cond=2  # stall_res: Stall.SYNC | Stall.MATH | Stall.SFPU; sem_sel: Sem.MATH_PACK; wait_sem_cond: SemWait.ON_MAX
     1dc: c8000002  SETC16       setc16_reg=0, setc16_value=0  # thread_cfg[0] (current thread); CFG_STATE_ID_StateID = 0

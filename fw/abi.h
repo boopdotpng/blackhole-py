@@ -21,21 +21,22 @@
 #define FW_TRISC2_SIZE    0x100
 
 /* Two execution slots, double buffered: while one launch runs from slot b, dispatch installs the next one into slot b ^ 1.
- * Slot 1 is slot 0 moved up by SLOT_STRIDE, LAUNCH mask included; the GO word says which one to run. Kernels must
- * therefore be position-independent and return through an absolute jump (see fw.ret). L1_PARAM_BASE is shared: it is
- * only written when the launch that reads it is released. LAUNCH is an active-role bitmask. */
-#define SLOT_STRIDE       0x10000  /* slot 1 = [LAUNCH, CODE_END) + SLOT_STRIDE, reserved on worker cores */
-#define SLOT_OFFSET(go)   (((go) >> GO_SLOT_BIT & 1) * SLOT_STRIDE)
-#define LAUNCH            0x780
-#define L1_PARAM_BASE     0x7C0
+ * Slot 1 is slot 0 moved up by SLOT_STRIDE, LAUNCH mask included, and starts where slot 0 ends; the GO word says which
+ * one to run. Kernels must therefore be position-independent and return through an absolute jump (see fw.ret).
+ * L1_PARAM_BASE is shared, below both slots: it is only written when the launch that reads it is released. LAUNCH is an
+ * active-role bitmask. Worker L1: firmware, params, slot 0, slot 1, then DATA_BASE.. for kernels. */
+#define L1_PARAM_BASE     0x780
 #define PARAM_SIZE        0x40     /* 16 words: DRAM addresses of the kernel's inputs and outputs, everything else is compiled in */
+#define LAUNCH            0x7C0
 #define CODE_BRISC        0x800
 #define CODE_NCRISC       0x2800
 #define CODE_TRISC0       0x4800
 #define CODE_TRISC1       0x5800
 #define CODE_TRISC2       0x6800
 #define CODE_END          0x7800
-#define DATA_BASE         0x8000   /* everything from here up is free for kernels, except slot 1 on worker cores */
+#define SLOT_STRIDE       (CODE_END - LAUNCH)  /* 0x7040: slot 1 = [LAUNCH, CODE_END) + SLOT_STRIDE = [0x7800, 0xE840) */
+#define SLOT_OFFSET(go)   ((go) >> GO_SLOT_BIT & 1 ? SLOT_STRIDE : 0)
+#define DATA_BASE         (CODE_END + SLOT_STRIDE)  /* 0xE840: everything from here up is free for kernels */
 
 /* Stacks live in each RISC's private local memory, not L1 */
 #define STACK_TOP         0xFFB01FF0

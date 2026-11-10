@@ -1,8 +1,8 @@
 # llama3 8b-fp8 decode: gate, trisc1. Exported from blackhole-py/examples/llama3/kernels.py by tools/rewrite_export/export_llama3.py.
 # cores (96): 1,4 2,4 3,4 4,4 5,4 6,4 7,4 10,4 11,4 12,4 13,4 14,4 1,5 2,5 3,5 4,5 5,5 6,5 7,5 10,5 11,5 12,5 13,5 14,5 1,6 2,6 3,6 4,6 5,6 6,6 7,6 10,6 11,6 12,6 13,6 14,6 1,7 2,7 3,7 4,7 5,7 6,7 7,7 10,7 11,7 12,7 13,7 14,7 1,8 2,8 3,8 4,8 5,8 6,8 7,8 10,8 11,8 12,8 13,8 14,8 1,9 2,9 3,9 4,9 5,9 6,9 7,9 10,9 11,9 12,9 13,9 14,9 1,10 2,10 3,10 4,10 5,10 6,10 7,10 10,10 11,10 12,10 13,10 14,10 1,11 2,11 3,11 4,11 5,11 6,11 7,11 10,11 11,11 12,11 13,11 14,11
-# params: 0x7c0=e2e_x_b_decode_token, 0x7c4=e2e_l0_gate, 0x7c8=e2e_l0_up, 0x7cc=input_scale_0, 0x7d0=input_scale_1, 0x7d4=output_scale_0_0, 0x7d8=output_scale_0_1, 0x7dc=output_scale_1_0, 0x7e0=output_scale_1_1, 0x7e4=e2e_hidden_dense, 0x7e8=e2e_l0_post_norm, 0x8100=e2e_gate, 0x8104=e2e_l0_gate_row_start, 0x8108=e2e_up, 0x810c=e2e_l0_up_row_start, 0x8110=dense_start, 0x8114=e2e_l0_gate_rows, 0x8118=e2e_l0_up_rows, 0x811c=dram_port
-#   0x7c0.. uniform, sent with every EXEC; 0x8000.. this core's resident per-core table
-# pcs are offsets from the image start; llama3.py installs it resident in L1 at 0x12000+ per core.
+# params: 0x780=e2e_x_b_decode_token, 0x784=e2e_l0_gate, 0x788=e2e_l0_up, 0x78c=input_scale_0, 0x790=input_scale_1, 0x794=output_scale_0_0, 0x798=output_scale_0_1, 0x79c=output_scale_1_0, 0x7a0=output_scale_1_1, 0x7a4=e2e_hidden_dense, 0x7a8=e2e_l0_post_norm, 0xe940=e2e_gate, 0xe944=e2e_l0_gate_row_start, 0xe948=e2e_up, 0xe94c=e2e_l0_up_row_start, 0xe950=dense_start, 0xe954=e2e_l0_gate_rows, 0xe958=e2e_l0_up_rows, 0xe95c=dram_port
+#   0x780.. uniform, sent with every EXEC; 0xe840.. this core's resident per-core table
+# pcs are offsets from the image start; position-independent, llama3.py runs it from either code slot.
 
       0: 100000c4  REPLAY       start_idx=0, len=3, execute_while_loading=0, load_mode=1
       4: c04f8001  SFPLOAD      lreg_ind=1, instr_mod0=3, sfpu_addr_mode=7, dest_reg_addr=0  # lreg_ind: L1; Record replay[0]; not executed here
@@ -345,12 +345,12 @@
     548: dc000010  SETRWC       clear_ab_vld=0, rwc_cr=0, rwc_d=0, rwc_b=0, rwc_a=0, BitMask=4
     54c: 88042042  STALLWAIT    stall_res=2, wait_res=2064  # stall_res: Stall.SYNC; wait_res: Wait.MATH | Wait.SFPU
     550: 88042042  STALLWAIT    stall_res=2, wait_res=2064  # stall_res: Stall.SYNC; wait_res: Wait.MATH | Wait.SFPU
-    554: 7cc00293  addi         x5, x0, 1996  # x5 = 0x000007cc
-    558: 0002a203  lw           x4, 0(x5)  # param input_scale_0; 0x000007cc
+    554: 78c00293  addi         x5, x0, 1932  # x5 = 0x0000078c
+    558: 0002a203  lw           x4, 0(x5)  # param input_scale_0; 0x0000078c
     55c: ffe402b7  lui          x5, 0xffe40  # x5 = 0xffe40000 · TensixMMIO.INSTRN_BUF_BASE
     560: 0042a023  sw           x4, 0(x5)  # TensixMMIO.INSTRN_BUF_BASE · 0xffe40000; write runtime value
-    564: 7d000293  addi         x5, x0, 2000  # x5 = 0x000007d0
-    568: 0002a203  lw           x4, 0(x5)  # param input_scale_1; 0x000007d0
+    564: 79000293  addi         x5, x0, 1936  # x5 = 0x00000790
+    568: 0002a203  lw           x4, 0(x5)  # param input_scale_1; 0x00000790
     56c: ffe402b7  lui          x5, 0xffe40  # x5 = 0xffe40000 · TensixMMIO.INSTRN_BUF_BASE
     570: 0042a023  sw           x4, 0(x5)  # TensixMMIO.INSTRN_BUF_BASE · 0xffe40000; write runtime value
     574: 9a84002a  SEMWAIT      stall_res=322, sem_sel=2, wait_sem_cond=2  # stall_res: Stall.SYNC | Stall.MATH | Stall.SFPU; sem_sel: Sem.MATH_PACK; wait_sem_cond: SemWait.ON_MAX
@@ -466,21 +466,21 @@
     72c: 00522e23  sw           x5, 28(x4)  # MopCfg[7] · Loop0Last / SkipA0 · 0xffb8001c; write 0x27c0c000; MOP template instruction · ELWMUL clear_dvalid=3, dest_accum_en=0, instr_mod19=0, addr_mode=3, dst=0
     730: 270082b7  lui          x5, 0x27008  # x5 = 0x27008000
     734: 02522023  sw           x5, 32(x4)  # MopCfg[8] · Loop1Last / SkipB · 0xffb80020; write 0x27008000; MOP template instruction · ELWMUL clear_dvalid=0, dest_accum_en=0, instr_mod19=0, addr_mode=2, dst=0
-    738: 000082b7  lui          x5, 0x00008  # x5 = 0x00008000
-    73c: 11428293  addi         x5, x5, 276  # x5 = 0x00008114
-    740: 0002a203  lw           x4, 0(x5)  # param e2e_l0_gate_rows; 0x00008114
+    738: 0000f2b7  lui          x5, 0x0000f  # x5 = 0x0000f000
+    73c: 95428293  addi         x5, x5, -1708  # x5 = 0x0000e954
+    740: 0002a203  lw           x4, 0(x5)  # param e2e_l0_gate_rows; 0x0000e954
     744: 00000293  addi         x5, x0, 0  # x5 = 0x00000000
     748: 00020313  addi         x6, x4, 0
 loc_74c:
     74c: 0462f663  bgeu         x5, x6, 0x00000798  # target 0x00000798
     750: 3f4000ef  jal          x1, 0x00000b44  # target 0x00000b44; x1 = 0x00000754
     754: 88042042  STALLWAIT    stall_res=2, wait_res=2064  # stall_res: Stall.SYNC; wait_res: Wait.MATH | Wait.SFPU
-    758: 7d400413  addi         x8, x0, 2004  # x8 = 0x000007d4
-    75c: 00042383  lw           x7, 0(x8)  # param output_scale_0_0; 0x000007d4
+    758: 79400413  addi         x8, x0, 1940  # x8 = 0x00000794
+    75c: 00042383  lw           x7, 0(x8)  # param output_scale_0_0; 0x00000794
     760: ffe40437  lui          x8, 0xffe40  # x8 = 0xffe40000 · TensixMMIO.INSTRN_BUF_BASE
     764: 00742023  sw           x7, 0(x8)  # TensixMMIO.INSTRN_BUF_BASE · 0xffe40000; write runtime value
-    768: 7d800413  addi         x8, x0, 2008  # x8 = 0x000007d8
-    76c: 00042383  lw           x7, 0(x8)  # param output_scale_0_1; 0x000007d8
+    768: 79800413  addi         x8, x0, 1944  # x8 = 0x00000798
+    76c: 00042383  lw           x7, 0(x8)  # param output_scale_0_1; 0x00000798
     770: ffe40437  lui          x8, 0xffe40  # x8 = 0xffe40000 · TensixMMIO.INSTRN_BUF_BASE
     774: 00742023  sw           x7, 0(x8)  # TensixMMIO.INSTRN_BUF_BASE · 0xffe40000; write runtime value
     778: 1801a402  SFPMUL       lreg_src_a=0, lreg_src_b=6, lreg_src_c=9, lreg_dest=0, instr_mod1=0  # lreg_src_a: L0; lreg_src_b: L6; lreg_src_c: L9 · constant 0 (0x00000000); lreg_dest: L0
@@ -492,21 +492,21 @@ loc_74c:
     790: 00128293  addi         x5, x5, 1
     794: fb9ff06f  jal          x0, 0x0000074c  # target 0x0000074c
 loc_798:
-    798: 000082b7  lui          x5, 0x00008  # x5 = 0x00008000
-    79c: 11828293  addi         x5, x5, 280  # x5 = 0x00008118
-    7a0: 0002a203  lw           x4, 0(x5)  # param e2e_l0_up_rows; 0x00008118
+    798: 0000f2b7  lui          x5, 0x0000f  # x5 = 0x0000f000
+    79c: 95828293  addi         x5, x5, -1704  # x5 = 0x0000e958
+    7a0: 0002a203  lw           x4, 0(x5)  # param e2e_l0_up_rows; 0x0000e958
     7a4: 00000293  addi         x5, x0, 0  # x5 = 0x00000000
     7a8: 00020313  addi         x6, x4, 0
 loc_7ac:
     7ac: 0462f663  bgeu         x5, x6, 0x000007f8  # target 0x000007f8
     7b0: 394000ef  jal          x1, 0x00000b44  # target 0x00000b44; x1 = 0x000007b4
     7b4: 88042042  STALLWAIT    stall_res=2, wait_res=2064  # stall_res: Stall.SYNC; wait_res: Wait.MATH | Wait.SFPU
-    7b8: 7dc00413  addi         x8, x0, 2012  # x8 = 0x000007dc
-    7bc: 00042383  lw           x7, 0(x8)  # param output_scale_1_0; 0x000007dc
+    7b8: 79c00413  addi         x8, x0, 1948  # x8 = 0x0000079c
+    7bc: 00042383  lw           x7, 0(x8)  # param output_scale_1_0; 0x0000079c
     7c0: ffe40437  lui          x8, 0xffe40  # x8 = 0xffe40000 · TensixMMIO.INSTRN_BUF_BASE
     7c4: 00742023  sw           x7, 0(x8)  # TensixMMIO.INSTRN_BUF_BASE · 0xffe40000; write runtime value
-    7c8: 7e000413  addi         x8, x0, 2016  # x8 = 0x000007e0
-    7cc: 00042383  lw           x7, 0(x8)  # param output_scale_1_1; 0x000007e0
+    7c8: 7a000413  addi         x8, x0, 1952  # x8 = 0x000007a0
+    7cc: 00042383  lw           x7, 0(x8)  # param output_scale_1_1; 0x000007a0
     7d0: ffe40437  lui          x8, 0xffe40  # x8 = 0xffe40000 · TensixMMIO.INSTRN_BUF_BASE
     7d4: 00742023  sw           x7, 0(x8)  # TensixMMIO.INSTRN_BUF_BASE · 0xffe40000; write runtime value
     7d8: 1801a402  SFPMUL       lreg_src_a=0, lreg_src_b=6, lreg_src_c=9, lreg_dest=0, instr_mod1=0  # lreg_src_a: L0; lreg_src_b: L6; lreg_src_c: L9 · constant 0 (0x00000000); lreg_dest: L0

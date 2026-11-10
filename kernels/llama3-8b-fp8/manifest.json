@@ -8,9 +8,9 @@
   "trisc1",
   "trisc2"
  ],
- "static_base": 32768,
- "entry_base": 33792,
- "l1_param_base": 1984,
+ "static_base": 59456,
+ "l1_param_base": 1920,
+ "l1_data_base": 61504,
  "dram_top": 1270331392,
  "kv_block": 32,
  "max_tokens": 8192,
@@ -20482,7 +20482,7 @@
     1,
     2
    ],
-   "addr": 34816,
+   "addr": 59968,
    "size": 1536
   }
  ],

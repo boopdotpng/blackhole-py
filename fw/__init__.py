@@ -12,12 +12,14 @@ GO_SIGNAL = 0x10
 FW = {"brisc": (0x20, 0x360), "ncrisc": (0x380, 0x100), "trisc0": (0x480, 0x100), "trisc1": (0x580, 0x100),
       "trisc2": (0x680, 0x100)}
 RETURN = {r: base + 4 for r, (base, _) in FW.items()}
-assert all(a + n <= b for (a, n), (b, _) in zip(FW.values(), [*list(FW.values())[1:], (0x780, 0)])), "firmware slots overlap"
-LAUNCH, L1_PARAM_BASE, PARAM_SIZE, DATA_BASE = 0x780, 0x7C0, 0x40, 0x8000
+L1_PARAM_BASE, PARAM_SIZE, LAUNCH = 0x780, 0x40, 0x7C0
+assert all(a + n <= b for (a, n), (b, _) in zip(FW.values(), [*list(FW.values())[1:], (L1_PARAM_BASE, 0)])), "firmware slots overlap"
 CODE = dict(zip(ROLES, (0x800, 0x2800, 0x4800, 0x5800, 0x6800)))
 CODE_SIZE = dict(zip(ROLES, (0x2000, 0x2000, 0x1000, 0x1000, 0x1000)))
-SLOT_STRIDE, GO_SLOT_BIT = 0x10000, 20  # slot 1 = slot 0 + SLOT_STRIDE; GO_SIGNAL bit GO_SLOT_BIT picks the slot
-assert CODE["trisc2"] + CODE_SIZE["trisc2"] <= 0x7800 and DATA_BASE + 0x1000 <= LAUNCH + SLOT_STRIDE
+CODE_END = CODE["trisc2"] + CODE_SIZE["trisc2"]
+SLOT_STRIDE, GO_SLOT_BIT = CODE_END - LAUNCH, 20  # slot 1 = slot 0 + SLOT_STRIDE, right after it; GO_SIGNAL bit GO_SLOT_BIT picks
+DATA_BASE = CODE_END + SLOT_STRIDE  # worker L1 from here up belongs to kernels
+assert L1_PARAM_BASE + PARAM_SIZE <= LAUNCH < CODE["brisc"] and (CODE_END, SLOT_STRIDE, DATA_BASE) == (0x7800, 0x7040, 0xE840)
 DESCRIPTOR_L1, DESCRIPTOR_END, STAGE_SIZE = 0x40000, 0x80000, 0x10000
 PACKET, RING_SIZE = 32, 64 << 10
 STATE, STATE_SIZE = DATA_BASE, 0x140

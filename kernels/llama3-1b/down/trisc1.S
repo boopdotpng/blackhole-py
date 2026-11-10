@@ -1,8 +1,8 @@
 # llama3 1b decode: down, trisc1. Exported from blackhole-py/examples/llama3/kernels.py by tools/rewrite_export/export_llama3.py.
 # cores (88): 1,2 2,2 3,2 4,2 5,2 6,2 7,2 10,2 11,2 12,2 13,2 1,3 2,3 3,3 4,3 5,3 6,3 7,3 10,3 11,3 12,3 13,3 1,4 2,4 3,4 4,4 5,4 6,4 7,4 10,4 11,4 12,4 13,4 1,5 2,5 3,5 4,5 5,5 6,5 7,5 10,5 11,5 12,5 13,5 1,6 2,6 3,6 4,6 5,6 6,6 7,6 10,6 11,6 12,6 13,6 1,7 2,7 3,7 4,7 5,7 6,7 7,7 10,7 11,7 12,7 13,7 1,8 2,8 3,8 4,8 5,8 6,8 7,8 10,8 11,8 12,8 13,8 1,9 2,9 3,9 4,9 5,9 6,9 7,9 10,9 11,9 12,9 13,9
-# params: 0x7c0=e2e_hidden_dense_decode_token, 0x7c4=e2e_l0_down, 0x7c8=e2e_x_a, 0x7cc=e2e_x_b, 0x8140=e2e_q_compact, 0x8144=e2e_l0_down_row_start, 0x8148=dense_start, 0x814c=e2e_l0_down_rows
-#   0x7c0.. uniform, sent with every EXEC; 0x8000.. this core's resident per-core table
-# pcs are offsets from the image start; llama3.py installs it resident in L1 at 0x12000+ per core.
+# params: 0x780=e2e_hidden_dense_decode_token, 0x784=e2e_l0_down, 0x788=e2e_x_a, 0x78c=e2e_x_b, 0xe980=e2e_q_compact, 0xe984=e2e_l0_down_row_start, 0xe988=dense_start, 0xe98c=e2e_l0_down_rows
+#   0x780.. uniform, sent with every EXEC; 0xe840.. this core's resident per-core table
+# pcs are offsets from the image start; position-independent, llama3.py runs it from either code slot.
 
       0: 100000c4  REPLAY       start_idx=0, len=3, execute_while_loading=0, load_mode=1
       4: c00f8001  SFPLOAD      lreg_ind=0, instr_mod0=3, sfpu_addr_mode=7, dest_reg_addr=0  # lreg_ind: L0; Record replay[0]; not executed here
@@ -50,9 +50,9 @@
      ac: 00522e23  sw           x5, 28(x4)  # MopCfg[7] · Loop0Last / SkipA0 · 0xffb8001c; write 0x27c0c000; MOP template instruction · ELWMUL clear_dvalid=3, dest_accum_en=0, instr_mod19=0, addr_mode=3, dst=0
      b0: 270082b7  lui          x5, 0x27008  # x5 = 0x27008000
      b4: 02522023  sw           x5, 32(x4)  # MopCfg[8] · Loop1Last / SkipB · 0xffb80020; write 0x27008000; MOP template instruction · ELWMUL clear_dvalid=0, dest_accum_en=0, instr_mod19=0, addr_mode=2, dst=0
-     b8: 000082b7  lui          x5, 0x00008  # x5 = 0x00008000
-     bc: 14c28293  addi         x5, x5, 332  # x5 = 0x0000814c
-     c0: 0002a203  lw           x4, 0(x5)  # param e2e_l0_down_rows; 0x0000814c
+     b8: 0000f2b7  lui          x5, 0x0000f  # x5 = 0x0000f000
+     bc: 98c28293  addi         x5, x5, -1652  # x5 = 0x0000e98c
+     c0: 0002a203  lw           x4, 0(x5)  # param e2e_l0_down_rows; 0x0000e98c
      c4: 00000293  addi         x5, x0, 0  # x5 = 0x00000000
      c8: 00020313  addi         x6, x4, 0
 loc_cc:
