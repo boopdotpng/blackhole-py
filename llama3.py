@@ -259,7 +259,7 @@ class Llama3:
 
 def main():
   ap = argparse.ArgumentParser()
-  ap.add_argument("--model", choices=MODELS, default="1b")
+  ap.add_argument("--model", choices=MODELS, default="1b", help="model for --prompt (--chat picks one in the page)")
   ap.add_argument("--device", type=int, default=0)
   ap.add_argument("--prompt", default="Write a story about a robot learning to paint.")
   ap.add_argument("--tokens", type=int, help="maximum new tokens (default: generate until EOS or context limit)")
@@ -270,15 +270,22 @@ def main():
   ap.add_argument("--port", type=int, default=8000, help="--chat: port to listen on")
   a = ap.parse_args()
   if a.tokens is not None and a.tokens < 1: ap.error("--tokens must be positive")
+  if a.chat:
+    import chat.server
+    def load(key):  # the page picks the model; --weights replaces the checkpoint of --model only
+      model = Llama3(key, a.device, a.weights if key == a.model else None, profile=a.profile)
+      try: tok = ChatTokenizer(model.checkpoint)
+      except BaseException:
+        model.close()
+        raise
+      generate = lambda ids, start, on_token: model.generate(ids, a.tokens, start=start, on_token=on_token)[0]
+      return tok, generate, model.npos, model.m["eos"], model.close
+    return chat.server.serve(MODELS, load, a.host, a.port)
   t0 = time.perf_counter()
   model = Llama3(a.model, a.device, a.weights, profile=a.profile)
   try:
     m = model.m
     tok = ChatTokenizer(model.checkpoint)
-    if a.chat:
-      import chat.server
-      generate = lambda ids, start, on_token: model.generate(ids, a.tokens, start=start, on_token=on_token)[0]
-      return chat.server.serve(MODELS[a.model], tok, generate, model.npos, m["eos"], a.host, a.port)
     ids = tok.chat([{"role": "user", "content": a.prompt}])
     ref = json.loads((model.kdir / "reference.json").read_text()) if (model.kdir / "reference.json").exists() else None
     if ref and ref["prompt"] == a.prompt: ids = ref["prompt_ids"]  # 1B's chat template embeds today's date

@@ -12,11 +12,12 @@ Llama 3 on a Tenstorrent Blackhole card, from Python.
 ## Run
 
 ```sh
-python llama3.py --model 8b-fp8 --chat --port 8000   # web chat on http://<host>:8000
+python llama3.py --chat --port 8000                  # web chat on http://<host>:8000
 python llama3.py --model 1b --prompt "Hello"         # one prompt in the terminal
 ```
 
-Models: `1b`, `8b-fp8`, `8b-bf16`.
+Models: `1b`, `8b-fp8`, `8b-bf16`. The chat page has a model selector: nothing is loaded until you pick one, picking
+another on a new chat unloads the current one and loads it, and a chat stays on the model it started with.
 
 ## Performance
 

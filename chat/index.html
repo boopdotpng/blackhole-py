@@ -10,11 +10,11 @@
   body { display: flex; flex-direction: column; min-height: 100dvh; margin: 0; background: var(--bg); color: var(--text); font: 15px/1.65 system-ui, sans-serif; }
   header { position: sticky; top: 0; z-index: 1; display: flex; align-items: center; gap: 12px; padding: 16px 24px; background: var(--bg); }
   header h1 { font-size: 18px; font-weight: 600; letter-spacing: -.5px; margin: 0 8px 0 0; }
-  #name { color: var(--muted); font-size: 14px; }
-  button, textarea { font: inherit; color: inherit; }
+  button, textarea, select { font: inherit; color: inherit; }
+  select { border: 1px solid var(--line); border-radius: 10px; padding: 7px 8px; background: var(--bg); font-size: 14px; }
   button { border: 1px solid transparent; border-radius: 10px; padding: 7px 12px; background: transparent; cursor: pointer; }
   button:hover { background: var(--panel); }
-  button:disabled, textarea:disabled { opacity: .45; cursor: default; }
+  button:disabled, textarea:disabled, select:disabled { opacity: .45; cursor: default; }
   :focus-visible { outline: 2px solid var(--muted); outline-offset: 3px; }
   #theme { margin-left: auto; }
   #reset { border-color: var(--line); }
@@ -22,7 +22,7 @@
   main { flex: 1; padding-top: 24px; padding-bottom: 32px; }
   #chat:empty { display: grid; align-content: center; text-align: center; }
   #chat:empty::before { content: "What’s on your mind?"; font-size: clamp(26px, 5vw, 34px); font-weight: 500; letter-spacing: -1px; }
-  #chat:empty::after { content: attr(data-model) " · running on Blackhole"; color: var(--muted); margin-top: 8px; font-size: 14px; }
+  #chat:empty::after { content: attr(data-model); color: var(--muted); margin-top: 8px; font-size: 14px; }
   article { margin: 0 0 32px; overflow-wrap: anywhere; }
   article > b { display: block; font-size: 12px; font-weight: 500; color: var(--muted); margin-bottom: 8px; }
   article div { white-space: pre-wrap; }
@@ -64,8 +64,8 @@
     textarea { grid-column: 1 / -1; }
   }
 </style>
-<header><h1>Blackhole</h1><span id="name"></span><button id="theme" type="button" aria-label="Switch to light mode">Light mode</button><button id="reset">New chat</button></header>
-<main id="chat" aria-live="polite" aria-label="Conversation" data-model="Llama 3"></main>
+<header><h1>Blackhole</h1><select id="model" aria-label="Model" title="Start a new chat to change model" disabled></select><button id="theme" type="button" aria-label="Switch to light mode">Light mode</button><button id="reset">New chat</button></header>
+<main id="chat" aria-live="polite" aria-label="Conversation" data-model=""></main>
 <footer>
 <form><textarea id="prompt" rows="1" placeholder="Message Blackhole" aria-label="Message" required></textarea>
 <button aria-label="Send message" title="Send message">↑</button></form>
@@ -80,11 +80,40 @@
 const $ = id => document.getElementById(id);
 const form = document.querySelector('form');
 let messages = [];
-let contextLimit = 8192;
-fetch('/info').then(r => r.json()).then(info => {
-  $('name').textContent = info.name; $('chat').dataset.model = info.name; document.title = `${info.name} · Blackhole`;
-  contextLimit = info.context; context(0);
-}).catch(() => {});
+let contextLimit = 8192, model = null, models = {}, busy = false;
+function lock() {  // one model per chat: the selector only works on an empty chat
+  $('model').disabled = busy || messages.length > 0;
+  $('prompt').disabled = form.querySelector('button').disabled = busy || !model;
+  $('reset').disabled = busy;
+}
+function info(i) {
+  models = i.models; model = i.model;
+  $('model').replaceChildren(...Object.entries(models).map(([key, name]) => new Option(name, key)));
+  if (!model) { $('model').prepend(new Option('Select a model', '')); $('model').options[0].hidden = true; }
+  $('model').value = model ?? '';
+  $('chat').dataset.model = model ? `${models[model]} · running on Blackhole` : 'Select a model to start';
+  document.title = model ? `${models[model]} · Blackhole` : 'Blackhole chat';
+  if (!model) $('status').textContent = 'No model loaded';
+  if (i.context) contextLimit = i.context;
+  context(0); lock();
+}
+fetch('/info').then(r => r.json()).then(info).catch(() => {});
+$('model').onchange = async () => {
+  const name = models[$('model').value];
+  busy = true; lock();
+  $('status').textContent = `Loading ${name}…`;
+  try {
+    const response = await fetch('/load', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({model: $('model').value})});
+    if (!response.ok) throw Error(await response.text());
+    const i = await response.json();
+    if (i.models) info(i);
+    if (i.error) throw Error(i.error);
+    $('status').textContent = 'Ready';
+  } catch (error) {
+    $('model').value = model ?? '';
+    $('status').textContent = `Error: ${error.message}`;
+  } finally { busy = false; lock(); $('prompt').focus(); }
+};
 function context(used) { $('context').textContent = `Context · ${used.toLocaleString()} / ${contextLimit.toLocaleString()}`; }
 function theme(value) {
   document.documentElement.dataset.theme = value;
@@ -98,7 +127,10 @@ theme(savedTheme);
 $('theme').onclick = () => theme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark');
 function resize() { $('prompt').style.height = 'auto'; $('prompt').style.height = Math.min($('prompt').scrollHeight, 180) + 'px'; }
 $('prompt').oninput = resize;
-function reset() { messages = []; context(0); $('chat').replaceChildren(); $('status').textContent = 'Ready'; $('prompt').focus(); }
+function reset() {  // a new chat runs on whichever model is loaded now, and may pick another
+  messages = []; $('chat').replaceChildren(); $('status').textContent = 'Ready';
+  fetch('/info').then(r => r.json()).then(info).catch(() => { context(0); lock(); }).finally(() => $('prompt').focus());
+}
 $('reset').onclick = reset;
 function renderReply(reply, text) {
   reply.className = '';
@@ -140,12 +172,12 @@ form.onsubmit = async e => {
   }
   $('prompt').value = ''; resize();
   reply.scrollIntoView({block: 'nearest'});
-  const controls = [...document.querySelectorAll('button:not(#theme), textarea')];
-  controls.forEach(el => el.disabled = true);
+  busy = true; lock();
   $('status').textContent = '';
   try {
-    const response = await fetch('/chat', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({messages: pending})});
+    const response = await fetch('/chat', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({model, messages: pending})});
     if (!response.ok) throw Error(await response.text());
+    if (!response.headers.get('Content-Type').includes('ndjson')) throw Error((await response.json()).error);
     const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
     let buffer = '', complete = false;
     while (true) {
@@ -184,6 +216,6 @@ form.onsubmit = async e => {
     else reply.textContent = `Error: ${error.message}`;
     $('status').textContent = `Error: ${error.message}. Message not added to history; retry.`;
     $('prompt').value = content;
-  } finally { controls.forEach(el => el.disabled = false); resize(); $('prompt').focus({preventScroll: true}); }
+  } finally { busy = false; lock(); resize(); $('prompt').focus({preventScroll: true}); }
 };
 </script>
