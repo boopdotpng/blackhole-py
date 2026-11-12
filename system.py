@@ -38,16 +38,14 @@ class PCIIface:
     except BaseException:
       os.close(self.fd)
       raise
+    self.windows, self.tlb_cfg = [], None
     try:
       self.power(7)  # max AI clock, DRAM PHY awake, Tensix enabled
-      self.windows = []
-      self.tlb_id, self.tlb_addr = self._window()
-      self.tlb_cfg = None
+      self.tlb_id, tlb_addr = self._window()
     except BaseException:
-      try: self.power(0)
-      finally: os.close(self.fd)
+      self.close()
       raise
-    self.tlb = view_at(self.tlb_addr, TLB_SIZE)
+    self.tlb = view_at(tlb_addr, TLB_SIZE)
     self.tlb32 = self.tlb.cast("I")
 
   def close(self):

@@ -21,15 +21,16 @@ another on a new chat unloads the current one and loads it, and a chat stays on 
 
 ## Runtime
 
-`ops_blackhole.py` follows tinygrad's `ops_amd.py` ownership and naming: `BlackholeDevice` owns the
-`PCIIface`, `BlackholeAllocator` and `BlackholeQueueDesc`s; `blackhole_build_program` returns immutable
-`BlackholeProgramData`. `BlackholeComputeQueue` and `BlackholeDMAQueue` encode the HCQ2 operations
-(`exec`, `copy`, `wait`, `signal`, `timestamp`, barriers and `submit`). Addresses and packets are concrete
-Python values here; the tinygrad port will still need HCQ2's UOp encoding and buffer integration.
+`ops_blackhole.py` follows tinygrad's HCQ naming: `BlackholeDevice` owns the `PCIIface`, the `BlackholeAllocator`
+(`_alloc`, `_copyin`, `_copyout`), a `compute_queue` and a `dma_queue` (`BlackholeQueueDesc`s), and one
+`timeline_signal` (`next_timeline`, `synchronize`). `BlackholeComputeQueue` (`exec`, `call`) and `BlackholeDMAQueue`
+(`copy`) encode packets on top of `HWQueue` (`wait`, `signal`, `timestamp`), and `.submit(dev)` them.
+`blackhole_build_program` returns immutable `BlackholeProgramData`. A `BlackholeGraph` is a compute queue stored in
+DRAM, `count` times with patched args, run with CALL.
 
 `system.py` contains the tt-kmd ioctl layouts, pinned host memory and NoC windows. Weights stream from
 file mappings through two pinned staging slots. Allocations live until device close. The CQ firmware
-and packet ABI are in `fw/`; position graphs are ordinary command buffers submitted with CALL.
+and packet ABI are in `fw/`.
 
 ## Performance
 

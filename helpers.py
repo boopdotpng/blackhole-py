@@ -26,8 +26,6 @@ class Tensor:
   path: Path
   offset: int
   nbytes: int
-  @property
-  def end(self) -> int: return self.offset + self.nbytes
 
 def safe_load(path) -> dict[str, Tensor]:
   path = Path(path)
