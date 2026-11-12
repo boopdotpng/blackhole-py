@@ -1,4 +1,4 @@
-# Decode benchmarks for the README: 64 tokens after the default prompt, and 64 tokens after a 4096-token context.
+# Decode benchmarks: 64 tokens after the default prompt, and 64 tokens after a 4096-token context.
 # The long context skips prefill: the KV caches get random bf16 and decode starts at position 4096 (timing does not
 # depend on the cached values). % DRAM is the share of 512 GB/s needed to read weights, LM head and KV once per token.
 import json, sys
@@ -36,8 +36,5 @@ def bench(key):
     model.close()
 
 if __name__ == "__main__":
-  names = {"1b": "1B BF16", "8b-fp8": "8B FP8", "8b-bf16": "8B BF16"}
-  rows = {k: bench(k) for k in (sys.argv[1:] or names)}
-  print("| Model | Context | ms/token | tok/s | % DRAM |\n| --- | --- | ---: | ---: | ---: |")
-  for k, rs in rows.items():
-    for ctx, us, frac in rs: print(f"| {names[k]} | {ctx} | {us / 1e3:.2f} | {1e6 / us:.1f} | {frac:.0%} |")
+  for key in sys.argv[1:] or ("1b", "8b-fp8", "8b-bf16"):
+    for ctx, us, frac in bench(key): print(f"{key:<8} {ctx:<6} {us / 1e3:6.2f} ms/token {1e6 / us:6.1f} tok/s {frac:4.0%} DRAM")

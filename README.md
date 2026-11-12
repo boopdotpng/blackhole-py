@@ -34,7 +34,7 @@ and packet ABI are in `fw/`.
 
 ## Performance
 
-Decode on a p150a, 64 tokens (`python bench.py`). Short is the default story prompt (20 tokens on 8B, 45 on 1B); 4K is
+Decode on a p150a, 64 tokens (from `python bench.py`). Short is the default story prompt (20 tokens on 8B, 45 on 1B); 4K is
 after a 4096-token context, filled with random KV instead of a prefill. % DRAM is the share of 512 GB/s needed to read
 the weights, LM head and KV cache once per token.
 
