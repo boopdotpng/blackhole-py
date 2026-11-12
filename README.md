@@ -19,6 +19,18 @@ python llama3.py --model 1b --prompt "Hello"         # one prompt in the termina
 Models: `1b`, `8b-fp8`, `8b-bf16`. The chat page has a model selector: nothing is loaded until you pick one, picking
 another on a new chat unloads the current one and loads it, and a chat stays on the model it started with.
 
+## Runtime
+
+`ops_blackhole.py` follows tinygrad's `ops_amd.py` ownership and naming: `BlackholeDevice` owns the
+`PCIIface`, `BlackholeAllocator` and `BlackholeQueueDesc`s; `blackhole_build_program` returns immutable
+`BlackholeProgramData`. `BlackholeComputeQueue` and `BlackholeDMAQueue` encode the HCQ2 operations
+(`exec`, `copy`, `wait`, `signal`, `timestamp`, barriers and `submit`). Addresses and packets are concrete
+Python values here; the tinygrad port will still need HCQ2's UOp encoding and buffer integration.
+
+`system.py` contains the tt-kmd ioctl layouts, pinned host memory and NoC windows. Weights stream from
+file mappings through two pinned staging slots. Allocations live until device close. The CQ firmware
+and packet ABI are in `fw/`; position graphs are ordinary command buffers submitted with CALL.
+
 ## Performance
 
 Decode on a p150a, 64 tokens. Short is the default story prompt (20 tokens on 8B, 45 on 1B); 4K is after a

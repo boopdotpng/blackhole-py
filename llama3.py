@@ -2,8 +2,7 @@ import argparse, collections, json, struct, time
 from pathlib import Path
 import numpy as np
 import fw
-from cq import ComputeQueue, HWQueue, dram, rects
-from device import Device
+from ops_blackhole import BlackholeDevice, BlackholeComputeQueue, HWQueue, blackhole_build_program, dram
 from helpers import round_up, safe_load
 
 ROOT = Path(__file__).resolve().parent
@@ -48,9 +47,9 @@ class Llama3:
     self.m = m = json.loads((self.kdir / "manifest.json").read_text())
     self.checkpoint = Path(weights) if weights else ROOT / m["checkpoint"]  # weights/llama3-<model> by default
     self.launches = m["launches"]
-    self.dev = dev = Device(device)
+    self.dev = dev = BlackholeDevice(f"BLACKHOLE:{device}")
     try:
-      dev.dram_top = round_up(fw.DRAM_BANKS * m["dram_top"], 1 << 30)  # our heap goes above the old layout
+      dev.allocator.dram_top = round_up(fw.DRAM_BANKS * m["dram_top"], 1 << 30)  # our heap goes above the old layout
       t = time.perf_counter()
       self._upload_weights(self.checkpoint)
       self.t_weights = time.perf_counter() - t
@@ -83,8 +82,8 @@ class Llama3:
       elif b["kind"] == "file": sources.append((self.buffer(b), self.kdir / b["src"], 0, (self.kdir / b["src"]).stat().st_size))
       else: zeros.append(b)  # KV caches start zeroed
       self.weight_bytes += b["size"]
-    self.dev.load(sources)
-    for b in zeros: self.dev.zero(self.buffer(b), b["size"])
+    self.dev.allocator.load(sources)
+    for b in zeros: self.dev.allocator.zero(self.buffer(b), b["size"])
 
   # ---- fixed execution slots, immutable descriptors and per-core parameter tables
   def _install(self):
@@ -98,18 +97,18 @@ class Llama3:
       for c in p['per_core']:
         core = tuple(c['core'])
         if c['params']:
-          dev.pci_dev.write(core, m['static_base'] + 0x40 * p['k'], struct.pack(f"<{len(c['params'])}I", *c['params']))
+          dev.iface.write(core, m['static_base'] + 0x40 * p['k'], struct.pack(f"<{len(c['params'])}I", *c['params']))
         images[core] = {}
         for role, v in zip(m['roles'], c['variants']):
           if v < 0: continue
           img = files[role][v]
           images[core][role] = img + fw.ret(role)  # PC-relative code: runs from either slot
       args_size = round_up(4 * len(p['uniform']), 16)
-      self.prog[name] = dev.bind(images, args_size)
-      self.noop[name] = dev.bind({c: {} for c in images}, args_size)
+      self.prog[name] = blackhole_build_program(dev, images, args_size)
+      self.noop[name] = blackhole_build_program(dev, {c: {} for c in images}, args_size)
     for state in m.get('persistent', ()):
       assert tables_end <= state['addr'] and state['addr'] + state['size'] <= m['l1_data_base'], state
-      dev.pci_dev.write(tuple(state['core']), state['addr'], bytes(state['size']))
+      dev.iface.write(tuple(state['core']), state['addr'], bytes(state['size']))
     self.code_slot_bytes = 2 * sum(fw.CODE_SIZE.values())  # double buffered
 
   # ---- per-position args and graphs
@@ -132,16 +131,16 @@ class Llama3:
         else: struct.pack_into("<I", tpl, at, w)
     self.args_tpl = np.frombuffer(bytes(tpl), np.uint32)
     self.args_stride = len(tpl)
-    self.args_base = dram(dev.alloc_dram(self.npos * self.args_stride), fw.DRAM_PAGE_MAX)
+    self.args_base = dram(dev.allocator._alloc(self.npos * self.args_stride), fw.DRAM_PAGE_MAX)
     # one position: boundary timestamps and optional paired timestamps fused into EXEC
     self.nts = 2 * len(self.launches) + 2 if self.profile else 2
     self.ts_stride = round_up(16 * self.nts, 64)
-    self.ts_base = dram(dev.alloc_dram(self.npos * self.ts_stride), fw.DRAM_PAGE_MAX)
+    self.ts_base = dram(dev.allocator._alloc(self.npos * self.ts_stride), fw.DRAM_PAGE_MAX)
     self.graph_base, self.graph_size, self.graph_stride = self._graphs(self.prog, self.ts_base, self.npos, stores=True)
 
   def _graphs(self, prog, ts_base, npos, stores):
     """Upload npos graphs, graph p using position p's args and timestamp slots. Returns (base, size, stride)."""
-    m, q = self.m, ComputeQueue()
+    m, q = self.m, BlackholeComputeQueue()
     stamp = lambda j: q.timestamp(ts_base + 16 * j)
     stamp(0)
     for i, (name, words) in enumerate(self.launches):
@@ -162,8 +161,8 @@ class Llama3:
     size, stride = len(q.blob), round_up(len(q.blob), 64)                   # CALL fetches need 64-byte alignment
     g = np.zeros((npos, stride), np.uint8)
     g[:, :size] = rows.reshape(npos, -1).view(np.uint8)
-    base = dram(self.dev.alloc_dram(npos * stride), fw.DRAM_PAGE_MAX)
-    self.dev.copyin(base, g)
+    base = dram(self.dev.allocator._alloc(npos * stride), fw.DRAM_PAGE_MAX)
+    self.dev.allocator._copyin(base, g)
     return base, size, stride
 
   # ---- a request
@@ -174,11 +173,11 @@ class Llama3:
                kv_blocks=pos // kvb + 1, valid_columns=pos % kvb + 1, argmax_host_address=np.full(n, self.host_lo, np.uint32))
     a = np.tile(self.args_tpl, (n, 1))
     for col, name in self.dyn: a[:, col] = val[name]
-    self.dev.copyin(self.args_base, a.view(np.uint8))
+    self.dev.allocator._copyin(self.args_base, a.view(np.uint8))
 
   def _run(self, base, size, stride, n):
     """Push n position graphs back to back and wait once; returns (host submit ns, wall ns)."""
-    dev, ring = self.dev, self.dev.compute
+    dev, ring = self.dev, self.dev.compute_queue
     self.done = getattr(self, "done", 0)
     t0, submit = time.perf_counter_ns(), 0
     for p in range(n):
@@ -193,10 +192,10 @@ class Llama3:
 
   def _timestamps(self, base, n):
     raw = bytearray(n * self.ts_stride)
-    self.dev.copyout(raw, base)
+    self.dev.allocator._copyout(raw, base)
     return np.frombuffer(bytes(raw), np.uint64).reshape(n, -1)[:, 1:2 * self.nts:2].astype(np.int64)
 
-  def _ring_ops(self): return {"compute": self.dev.compute.ops.copy(), "copy": self.dev.copy.ops.copy()}
+  def _ring_ops(self): return {"compute": self.dev.compute_queue.ops.copy(), "copy": self.dev.dma_queue.ops.copy()}
 
   def generate(self, ids, tokens=None, *, start=0, on_token=None):
     """Generate until EOS, the optional new-token limit, or the context limit. Returns (generated ids, stats).
@@ -210,7 +209,7 @@ class Llama3:
     ops0 = self._ring_ops()
     hist = np.zeros(self.m["max_tokens"], "<u4")
     hist[:P] = ids
-    self.dev.copyin(self.buffer(self.m["history"]), hist)
+    self.dev.allocator._copyin(self.buffer(self.m["history"]), hist)
     self.dev.sysmem.mem[self.host:self.host + 16 * (n + 1)] = bytes(16 * (n + 1))
     t = time.perf_counter_ns()
     self._upload_args(n, P)
@@ -247,7 +246,7 @@ class Llama3:
     """us per EXEC for the same launch list with no-op kernels (no STOREs): the cost of dispatch alone."""
     self._upload_args(1, 1)
     if not hasattr(self, "_noop_graph"):
-      ts = dram(self.dev.alloc_dram(self.ts_stride), fw.DRAM_PAGE_MAX)
+      ts = dram(self.dev.allocator._alloc(self.ts_stride), fw.DRAM_PAGE_MAX)
       self._noop_graph = (*self._graphs(self.noop, ts, 1, stores=False), ts)
     base, size, stride, ts = self._noop_graph
     per = []
@@ -295,7 +294,7 @@ def main():
     row = lambda label, text: print(f"{label:<12}{text}")
     gb = model.weight_bytes / 1e9
 
-    print(f"\n{MODELS[a.model]} on {model.dev.pci_dev.card}, device {a.device}\n")
+    print(f"\n{MODELS[a.model]} on {model.dev.iface.card}, device {a.device}\n")
     row("startup", f"{t_start:.2f} s")
     row("  weights", f"{gb:.2f} GB in {model.t_weights:.2f} s ({gb / model.t_weights:.1f} GB/s)")
     row("  kernels", f"{len(m['programs'])} programs, {model.code_slot_bytes / 1024:.1f} KB of double-buffered code slots per core, "
