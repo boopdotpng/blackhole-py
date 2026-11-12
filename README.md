@@ -6,7 +6,7 @@ Llama 3 on a Tenstorrent Blackhole card, from Python.
 
 - `tt-kmd` > 2.9.0
 - Python with `numpy` and `tiktoken`
-- `clang` and `llvm-objcopy` (the firmware builds at startup)
+- `clang` and `llvm-objcopy` (the firmware builds on first run and is cached in `~/.cache/blackhole-py`)
 - Weights in `weights/llama3-1b/`, `weights/llama3-8b-bf16/` or `weights/llama3-8b-fp8/`
 
 ## Run
