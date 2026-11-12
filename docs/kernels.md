@@ -1,4 +1,4 @@
-# Llama decode core usage and attention scaling
+# Llama kernels: core usage, attention scaling, and remaining work
 
 Counts come from the exported manifests. A core here means one Tensix worker,
 not each of its five RISC-V instruction streams. Launches reuse workers
@@ -128,3 +128,49 @@ more workers without evidence from profiling.
 Sources: `kernels/llama3-{1b,8b-bf16,8b-fp8}/manifest.json`, and
 `../blackhole-py-old/examples/llama3/{config,runtime,kernels}.py` plus
 `../blackhole-py-old/tools/rewrite_export/export_llama3.py`.
+
+## Completed attention cleanup
+
+The earlier kernel audit identified repeated work that the implementation above now removes:
+
+- Publish Q once and retain it across cache blocks, instead of republishing it to accommodate an operand-consuming matmul helper.
+- Pack each probability tile once and retain it across V feature tiles. The old path packed identical data twice for 1B and four times for 8B.
+- Mask invalid score columns during the SFPU pass, removing the BRISC mask/zero tiles and their unpack/FPU handoffs.
+- Compute the normalization reciprocal once per query row and reuse it across output features.
+- Use partial attention plus merge for long contexts, with exact-zero rescaling and the validation described above.
+
+The old audit's warning about an unsplit-only exporter and relaxed 4K checks describes the previous implementation;
+it is superseded by the exported partitioned path and 84-case validation above. The intermittent FP8 runtime
+timeouts remain unresolved, as noted in the measurements.
+
+Attention still needs the pack → L1 → unpack handoff to feed probabilities into FPU matmul, and Dst contents must
+survive that handoff. The old `Pack._release_dst` helper invalidates Dst, while attention releases the semaphore
+directly to preserve its state. The assembler should distinguish releasing ownership from clearing accumulators.
+
+Separating Q gathering, RoPE, cache append, attention, and output rearrangement into clearer internal stages is
+still useful. They can remain fused in one launch; clearer source boundaries do not require extra dispatches.
+
+## Kernel review and remaining work
+
+| Family | Assessment | What I would change |
+|---|---|---|
+| **Embedding** | Straightforward indexed read followed by write. | Keep. It establishes scalar indexing and reader-to-writer handoff requirements. |
+| **QKV / gate-up / O / down / LM** | Sensible basic structure: retain X, stream weight rows, reduce each dot product. | Clean up output assembly and ownership; don’t replace the algorithm merely because its code is verbose. |
+| **Fused RMSNorm** | Understandable baseline, but stores X and gamma together in Dst and uses all-SFPU math. | Compare with the existing hybrid implementation before choosing the canonical kernel. Arithmetic order and rounding must remain explicit. |
+| **SwiGLU / residual epilogues** | Ordinary compute with considerable layout-conversion plumbing. | Simplify compact/dense layout boundaries. Keep byte addressing and explicit conversion. |
+| **Attention merge** | Streaming reduction of the active partial states. | Keep the algorithm; express its repeated operations and persistent state more clearly. |
+| **Argmax** | More complexity is justified than its appearance suggests. | Preserve tie-breaking, padding, ordered keys, and mailbox ordering. Keep runtime publication separate from the numerical reduction. |
+| **Blocked matmul** | Complex for substantive reasons: multicast, operand reuse, partial accumulation, layout conversion, overlapping transfers. | Use a simpler matmul as the first compiler target; retain this as an advanced scheduling benchmark. |
+| **Q6, reduction experiments, ISA/movement probes** | Experiments and hardware evidence, not canonical application kernels. | Preserve their checks without making every experimental schedule a v1 requirement. |
+
+Two broader observations:
+
+- **Projection output movement deserves a separate cleanup.** Each dot result is packed into a tile-sized CB slot, read by NCRISC, and placed into a compact buffer; dense output then requires another rearrangement. The packer uses scalar mode, so this is not necessarily a full tile of payload per scalar. Still, it is substantial bookkeeping. A measured experiment with grouped results or direct placement would be worthwhile. [Output assembly](/home/boop/tenstorrent/blackhole-py-old/examples/llama3/kernels.py:299).
+
+- **Some matmul complexity really cannot be wished away.** Its prepared operand buffers are read both by local compute and by multicast. Storage must remain alive until both finish. The implementation tracks local consumption and transmission separately. Retained SPSC CBs alone don’t express that concurrent lifetime. We can defer it in v1, but should not call it a bad kernel pattern. [Multicast sender](/home/boop/tenstorrent/blackhole-py-old/examples/matmul_peak_kernel/kernel.py:1103).
+
+## Implications for the assembler
+
+I would keep the current core: byte buffers, retained/consumed CB blocks, explicit copies, source-bank handoffs, persistent Dst, and explicit math.
+
+I would avoid adding features specifically to reproduce repeated Q publication, duplicated P packing, dummy mask/zero queues, or instruction-word patching in the Python helpers.

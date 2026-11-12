@@ -141,6 +141,6 @@ this is forward dataflow over the control-flow graph, the same shape as constant
 
 ## tooling
 
-- a ptxas-style assembler (already in runtime-spec.md)
+- a ptxas-style assembler
 - a disassembler, so the five lowered kernels can be read back
 - a reference interpreter, so kernels can be tested off-device
