@@ -13,29 +13,35 @@ ARGS = 64  # up to 16 dynamic words per launch
 def mean(xs): return sum(xs) / len(xs) if xs else float("nan")
 
 class ChatTokenizer:
-  """The checkpoint's tokenizer.json and chat template, read with tokenizers and jinja2 rather than transformers,
-  whose import and AutoTokenizer load cost ~1.8 s of startup. Same ids and text as transformers for this model."""
+  """The checkpoint's tokenizer.json as a tiktoken BPE (cached in ~/.cache/blackhole-py) and Llama 3's chat format."""
   def __init__(self, path):
-    import datetime, tokenizers
-    from jinja2.sandbox import ImmutableSandboxedEnvironment
-    path = Path(path)
+    import datetime, hashlib, pickle, tiktoken
+    path, raw = Path(path), (Path(path) / "tokenizer.json").read_bytes()
+    if (cache := fw.CACHE / f"tokenizer-{hashlib.sha256(raw).hexdigest()[:24]}.pkl").exists(): pat, ranks, special = pickle.loads(cache.read_bytes())
+    else:
+      tok = json.loads(raw)
+      bs = [*range(33, 127), *range(161, 173), *range(174, 256)]  # GPT-2's byte-level BPE writes bytes as these characters
+      byte = {chr(b): b for b in bs} | {chr(256 + i): b for i, b in enumerate(b for b in range(256) if b not in bs)}
+      ranks = {bytes(byte[c] for c in k): v for k, v in tok["model"]["vocab"].items()}
+      special = {t["content"]: t["id"] for t in tok["added_tokens"]}
+      pat = tok["pre_tokenizer"]["pretokenizers"][0]["pattern"]["Regex"]
+      cache.parent.mkdir(parents=True, exist_ok=True)
+      cache.write_bytes(pickle.dumps((pat, ranks, special)))
+    self.enc = tiktoken.Encoding("llama3", pat_str=pat, mergeable_ranks=ranks, special_tokens=special)
     cfg = json.loads((path / "tokenizer_config.json").read_text())
-    self.tok = tokenizers.Tokenizer.from_file(str(path / "tokenizer.json"))
-    self.tok.no_padding(); self.tok.no_truncation()  # 8B FP8's tokenizer.json pads to 512; transformers ignores that
-    special = {k: v if isinstance(v, str) else v["content"] for k, v in cfg.items() if k.endswith("_token") and isinstance(v, (str, dict))}
-    jinja = path / "chat_template.jinja"
-    env = ImmutableSandboxedEnvironment(trim_blocks=True, lstrip_blocks=True, extensions=["jinja2.ext.loopcontrols"])
-    def raise_exception(msg): raise ValueError(msg)
-    env.globals.update(raise_exception=raise_exception, strftime_now=lambda fmt: datetime.datetime.now().strftime(fmt))
-    self.template = env.from_string(jinja.read_text() if jinja.exists() else cfg["chat_template"])
-    self.special, self.cleanup = special, cfg.get("clean_up_tokenization_spaces", False)
+    template = (path / "chat_template.jinja").read_text() if (path / "chat_template.jinja").exists() else cfg["chat_template"]
+    # Llama 3.1+ templates open with a system header carrying today's date
+    self.system = f"Cutting Knowledge Date: December 2023\nToday Date: {datetime.date.today():%d %b %Y}\n\n" if "Today Date" in template else None
+    self.cleanup = cfg.get("clean_up_tokenization_spaces", False)
 
   def chat(self, messages) -> list[int]:
-    text = self.template.render(messages=messages, add_generation_prompt=True, **self.special)
-    return self.tok.encode(text, add_special_tokens=False).ids
+    msgs = ([{"role": "system", "content": self.system}] if self.system is not None else []) + list(messages)
+    text = "<|begin_of_text|>" + "".join(f"<|start_header_id|>{m['role']}<|end_header_id|>\n\n"
+      + (m["content"] if m["role"] == "system" else m["content"].strip()) + "<|eot_id|>" for m in msgs)
+    return self.enc.encode(text + "<|start_header_id|>assistant<|end_header_id|>\n\n", allowed_special="all")
 
   def decode(self, ids) -> str:
-    text = self.tok.decode(list(ids), skip_special_tokens=False)
+    text = self.enc.decode(list(ids))
     if self.cleanup:  # what transformers' clean_up_tokenization does
       for a, b in ((" .", "."), (" ?", "?"), (" !", "!"), (" ,", ","), (" ' ", "'"), (" n't", "n't"), (" 'm", "'m"),
                    (" 's", "'s"), (" 've", "'ve"), (" 're", "'re")): text = text.replace(a, b)
