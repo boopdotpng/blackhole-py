@@ -7,37 +7,37 @@
       0: ffb013b7  lui          x7, 0xffb01  # x7 = 0xffb01000
       4: 86438393  addi         x7, x7, -1948  # x7 = 0xffb00864 · riscv_local_mem + 0x864
       8: 00047437  lui          x8, 0x00047  # x8 = 0x00047000 · TensixMMIO.SOFT_RESET_BRISC_ONLY_RUN
-      c: 04040413  addi         x8, x8, 64  # x8 = 0x00047040
-     10: 0083a023  sw           x8, 0(x7)  # riscv_local_mem + 0x864 · 0xffb00864; write 0x00047040
+      c: 08040413  addi         x8, x8, 128  # x8 = 0x00047080
+     10: 0083a023  sw           x8, 0(x7)  # riscv_local_mem + 0x864 · 0xffb00864; write 0x00047080
      14: ffb013b7  lui          x7, 0xffb01  # x7 = 0xffb01000
      18: 86838393  addi         x7, x7, -1944  # x7 = 0xffb00868 · riscv_local_mem + 0x868
      1c: 0003a023  sw           x0, 0(x7)  # riscv_local_mem + 0x868 · 0xffb00868; write 0x00000000
      20: ffb01237  lui          x4, 0xffb01  # x4 = 0xffb01000
      24: 86c20213  addi         x4, x4, -1940  # x4 = 0xffb0086c · riscv_local_mem + 0x86c
      28: 0004c2b7  lui          x5, 0x0004c  # x5 = 0x0004c000
-     2c: 84028293  addi         x5, x5, -1984  # x5 = 0x0004b840
-     30: 00522023  sw           x5, 0(x4)  # riscv_local_mem + 0x86c · 0xffb0086c; write 0x0004b840
+     2c: 88028293  addi         x5, x5, -1920  # x5 = 0x0004b880
+     30: 00522023  sw           x5, 0(x4)  # riscv_local_mem + 0x86c · 0xffb0086c; write 0x0004b880
      34: ffb01237  lui          x4, 0xffb01  # x4 = 0xffb01000
      38: 87020213  addi         x4, x4, -1936  # x4 = 0xffb00870 · riscv_local_mem + 0x870
      3c: 00022023  sw           x0, 0(x4)  # riscv_local_mem + 0x870 · 0xffb00870; write 0x00000000
      40: ffb01237  lui          x4, 0xffb01  # x4 = 0xffb01000
      44: 87420213  addi         x4, x4, -1932  # x4 = 0xffb00874 · riscv_local_mem + 0x874
      48: 000552b7  lui          x5, 0x00055  # x5 = 0x00055000
-     4c: 04028293  addi         x5, x5, 64  # x5 = 0x00055040
-     50: 00522023  sw           x5, 0(x4)  # riscv_local_mem + 0x874 · 0xffb00874; write 0x00055040
+     4c: 08028293  addi         x5, x5, 128  # x5 = 0x00055080
+     50: 00522023  sw           x5, 0(x4)  # riscv_local_mem + 0x874 · 0xffb00874; write 0x00055080
      54: ffb01237  lui          x4, 0xffb01  # x4 = 0xffb01000
      58: 87820213  addi         x4, x4, -1928  # x4 = 0xffb00878 · riscv_local_mem + 0x878
      5c: 00022023  sw           x0, 0(x4)  # riscv_local_mem + 0x878 · 0xffb00878; write 0x00000000
      60: ffb01237  lui          x4, 0xffb01  # x4 = 0xffb01000
      64: 87c20213  addi         x4, x4, -1924  # x4 = 0xffb0087c · riscv_local_mem + 0x87c
      68: 000562b7  lui          x5, 0x00056  # x5 = 0x00056000
-     6c: 84028293  addi         x5, x5, -1984  # x5 = 0x00055840
-     70: 00522023  sw           x5, 0(x4)  # riscv_local_mem + 0x87c · 0xffb0087c; write 0x00055840
+     6c: 88028293  addi         x5, x5, -1920  # x5 = 0x00055880
+     70: 00522023  sw           x5, 0(x4)  # riscv_local_mem + 0x87c · 0xffb0087c; write 0x00055880
      74: ffb01237  lui          x4, 0xffb01  # x4 = 0xffb01000
      78: 88020213  addi         x4, x4, -1920  # x4 = 0xffb00880 · riscv_local_mem + 0x880
      7c: 00022023  sw           x0, 0(x4)  # riscv_local_mem + 0x880 · 0xffb00880; write 0x00000000
      80: 0004c237  lui          x4, 0x0004c  # x4 = 0x0004c000
-     84: 84020213  addi         x4, x4, -1984  # x4 = 0x0004b840
+     84: 88020213  addi         x4, x4, -1920  # x4 = 0x0004b880
      88: 20000293  addi         x5, x0, 512  # x5 = 0x00000200
 loc_8c:
      8c: 00022023  sw           x0, 0(x4)  # Address depends on runtime register values
@@ -89,7 +89,7 @@ loc_104:
     138: 00a59593  slli         x11, x11, 10
     13c: 00b4e4b3  or           x9, x9, x11
     140: 0004c537  lui          x10, 0x0004c  # x10 = 0x0004c000
-    144: 84050513  addi         x10, x10, -1984  # x10 = 0x0004b840
+    144: 88050513  addi         x10, x10, -1920  # x10 = 0x0004b880
     148: 00950533  add          x10, x10, x9
     14c: 00851023  sh           x8, 0(x10)  # Address depends on runtime register values
     150: ffb01437  lui          x8, 0xffb01  # x8 = 0xffb01000
@@ -112,7 +112,7 @@ loc_104:
     194: 80040413  addi         x8, x8, -2048  # x8 = 0x00000800
     198: 008383b3  add          x7, x7, x8
     19c: 000484b7  lui          x9, 0x00048  # x9 = 0x00048000
-    1a0: 04048493  addi         x9, x9, 64  # x9 = 0x00048040
+    1a0: 08048493  addi         x9, x9, 128  # x9 = 0x00048080
     1a4: 0093e663  bltu         x7, x9, 0x000001b0  # target 0x000001b0
     1a8: 00001537  lui          x10, 0x00001  # x10 = 0x00001000 · F32_TILE_BYTES · Wait.CFGEXU
     1ac: 40a383b3  sub          x7, x7, x10
@@ -130,7 +130,7 @@ loc_1c4:
     1d4: 80028293  addi         x5, x5, -2048  # x5 = 0x00000800
     1d8: 00520233  add          x4, x4, x5
     1dc: 0004c337  lui          x6, 0x0004c  # x6 = 0x0004c000
-    1e0: 04030313  addi         x6, x6, 64  # x6 = 0x0004c040
+    1e0: 08030313  addi         x6, x6, 128  # x6 = 0x0004c080
     1e4: 00626863  bltu         x4, x6, 0x000001f4  # target 0x000001f4
     1e8: 000013b7  lui          x7, 0x00001  # x7 = 0x00001000 · F32_TILE_BYTES · Wait.CFGEXU
     1ec: 80038393  addi         x7, x7, -2048  # x7 = 0x00000800
@@ -165,7 +165,7 @@ loc_254:
     258: 00620433  add          x8, x4, x6
     25c: 00141493  slli         x9, x8, 1
     260: 00053637  lui          x12, 0x00053  # x12 = 0x00053000
-    264: 04060613  addi         x12, x12, 64  # x12 = 0x00053040
+    264: 08060613  addi         x12, x12, 128  # x12 = 0x00053080
     268: 00c484b3  add          x9, x9, x12
     26c: 0004d583  lhu          x11, 0(x9)  # Address depends on runtime register values
     270: 00f37513  andi         x10, x6, 15
@@ -179,7 +179,7 @@ loc_254:
     290: 00a61613  slli         x12, x12, 10
     294: 00c56533  or           x10, x10, x12
     298: 00055637  lui          x12, 0x00055  # x12 = 0x00055000
-    29c: 04060613  addi         x12, x12, 64  # x12 = 0x00055040
+    29c: 08060613  addi         x12, x12, 128  # x12 = 0x00055080
     2a0: 00c50533  add          x10, x10, x12
     2a4: 00b51023  sh           x11, 0(x10)  # Address depends on runtime register values
     2a8: 00130313  addi         x6, x6, 1
@@ -192,7 +192,7 @@ loc_2b0:
     2c0: 80028293  addi         x5, x5, -2048  # x5 = 0x00000800
     2c4: 00520233  add          x4, x4, x5
     2c8: 00056337  lui          x6, 0x00056  # x6 = 0x00056000
-    2cc: 84030313  addi         x6, x6, -1984  # x6 = 0x00055840
+    2cc: 88030313  addi         x6, x6, -1920  # x6 = 0x00055880
     2d0: 00626863  bltu         x4, x6, 0x000002e0  # target 0x000002e0
     2d4: 000013b7  lui          x7, 0x00001  # x7 = 0x00001000 · F32_TILE_BYTES · Wait.CFGEXU
     2d8: 80038393  addi         x7, x7, -2048  # x7 = 0x00000800
@@ -258,7 +258,7 @@ loc_384:
     3b8: 00055603  lhu          x12, 0(x10)  # Address depends on runtime register values
     3bc: 00149593  slli         x11, x9, 1
     3c0: 000566b7  lui          x13, 0x00056  # x13 = 0x00056000
-    3c4: 04068693  addi         x13, x13, 64  # x13 = 0x00056040
+    3c4: 08068693  addi         x13, x13, 128  # x13 = 0x00056080
     3c8: 00d585b3  add          x11, x11, x13
     3cc: 00c59023  sh           x12, 0(x11)  # Address depends on runtime register values
     3d0: 00138393  addi         x7, x7, 1
@@ -279,7 +279,7 @@ loc_3f4:
     404: 000b0813  addi         x16, x22, 0
     408: 00139513  slli         x10, x7, 1
     40c: 000566b7  lui          x13, 0x00056  # x13 = 0x00056000
-    410: 04068693  addi         x13, x13, 64  # x13 = 0x00056040
+    410: 08068693  addi         x13, x13, 128  # x13 = 0x00056080
     414: 00a686b3  add          x13, x13, x10
     418: 7ff57513  andi         x10, x10, 2047
     41c: 00a78733  add          x14, x15, x10
@@ -370,7 +370,7 @@ loc_500:
     550: 80028293  addi         x5, x5, -2048  # x5 = 0x00000800
     554: 00520233  add          x4, x4, x5
     558: 00056337  lui          x6, 0x00056  # x6 = 0x00056000
-    55c: 04030313  addi         x6, x6, 64  # x6 = 0x00056040
+    55c: 08030313  addi         x6, x6, 128  # x6 = 0x00056080
     560: 00626863  bltu         x4, x6, 0x00000570  # target 0x00000570
     564: 000013b7  lui          x7, 0x00001  # x7 = 0x00001000 · F32_TILE_BYTES · Wait.CFGEXU
     568: 80038393  addi         x7, x7, -2048  # x7 = 0x00000800

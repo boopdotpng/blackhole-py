@@ -7,487 +7,477 @@
       0: ffb013b7  lui          x7, 0xffb01  # x7 = 0xffb01000
       4: 86438393  addi         x7, x7, -1948  # x7 = 0xffb00864 · riscv_local_mem + 0x864
       8: 00013437  lui          x8, 0x00013  # x8 = 0x00013000
-      c: fc040413  addi         x8, x8, -64  # x8 = 0x00012fc0
-     10: 0083a023  sw           x8, 0(x7)  # riscv_local_mem + 0x864 · 0xffb00864; write 0x00012fc0
-     14: ffb013b7  lui          x7, 0xffb01  # x7 = 0xffb01000
-     18: 86838393  addi         x7, x7, -1944  # x7 = 0xffb00868 · riscv_local_mem + 0x868
-     1c: 0003a023  sw           x0, 0(x7)  # riscv_local_mem + 0x868 · 0xffb00868; write 0x00000000
-     20: 00016237  lui          x4, 0x00016  # x4 = 0x00016000
-     24: fc020213  addi         x4, x4, -64  # x4 = 0x00015fc0
-     28: 20000293  addi         x5, x0, 512  # x5 = 0x00000200
-loc_2c:
-     2c: 00022023  sw           x0, 0(x4)  # Address depends on runtime register values
-     30: 00022223  sw           x0, 4(x4)  # Address depends on runtime register values
-     34: 00022423  sw           x0, 8(x4)  # Address depends on runtime register values
-     38: 00022623  sw           x0, 12(x4)  # Address depends on runtime register values
-     3c: 00022823  sw           x0, 16(x4)  # Address depends on runtime register values
-     40: 00022a23  sw           x0, 20(x4)  # Address depends on runtime register values
-     44: 00022c23  sw           x0, 24(x4)  # Address depends on runtime register values
-     48: 00022e23  sw           x0, 28(x4)  # Address depends on runtime register values
-     4c: 02020213  addi         x4, x4, 32
-     50: ff828293  addi         x5, x5, -8
-     54: fc029ce3  bne          x5, x0, 0x0000002c  # target 0x0000002c
-     58: 0000f2b7  lui          x5, 0x0000f  # x5 = 0x0000f000
-     5c: 8d828293  addi         x5, x5, -1832  # x5 = 0x0000e8d8
-     60: 0002a203  lw           x4, 0(x5)  # param e2e_l0_q_rows; 0x0000e8d8
-     64: 00000293  addi         x5, x0, 0  # x5 = 0x00000000
-     68: 00020313  addi         x6, x4, 0
-loc_6c:
-     6c: 0e62fc63  bgeu         x5, x6, 0x00000164  # target 0x00000164
-     70: ffb015b7  lui          x11, 0xffb01  # x11 = 0xffb01000
-     74: 86858593  addi         x11, x11, -1944  # x11 = 0xffb00868 · riscv_local_mem + 0x868
-     78: 0005a383  lw           x7, 0(x11)  # riscv_local_mem + 0x868 · 0xffb00868
-     7c: 00100513  addi         x10, x0, 1  # x10 = 0x00000001
-loc_80:
-     80: ffb495b7  lui          x11, 0xffb49  # x11 = 0xffb49000
-     84: 02858593  addi         x11, x11, 40  # x11 = 0xffb49028
-     88: 0005d403  lhu          x8, 0(x11)  # 0xffb49028
-     8c: 407404b3  sub          x9, x8, x7
-     90: 01049493  slli         x9, x9, 16
-     94: 0104d493  srli         x9, x9, 16
-     98: 00a4f663  bgeu         x9, x10, 0x000000a4  # target 0x000000a4
+      c: 0083a023  sw           x8, 0(x7)  # riscv_local_mem + 0x864 · 0xffb00864; write 0x00013000
+     10: ffb013b7  lui          x7, 0xffb01  # x7 = 0xffb01000
+     14: 86838393  addi         x7, x7, -1944  # x7 = 0xffb00868 · riscv_local_mem + 0x868
+     18: 0003a023  sw           x0, 0(x7)  # riscv_local_mem + 0x868 · 0xffb00868; write 0x00000000
+     1c: 00016237  lui          x4, 0x00016  # x4 = 0x00016000
+     20: 20000293  addi         x5, x0, 512  # x5 = 0x00000200
+loc_24:
+     24: 00022023  sw           x0, 0(x4)  # Address depends on runtime register values
+     28: 00022223  sw           x0, 4(x4)  # Address depends on runtime register values
+     2c: 00022423  sw           x0, 8(x4)  # Address depends on runtime register values
+     30: 00022623  sw           x0, 12(x4)  # Address depends on runtime register values
+     34: 00022823  sw           x0, 16(x4)  # Address depends on runtime register values
+     38: 00022a23  sw           x0, 20(x4)  # Address depends on runtime register values
+     3c: 00022c23  sw           x0, 24(x4)  # Address depends on runtime register values
+     40: 00022e23  sw           x0, 28(x4)  # Address depends on runtime register values
+     44: 02020213  addi         x4, x4, 32
+     48: ff828293  addi         x5, x5, -8
+     4c: fc029ce3  bne          x5, x0, 0x00000024  # target 0x00000024
+     50: 0000f2b7  lui          x5, 0x0000f  # x5 = 0x0000f000
+     54: 8d828293  addi         x5, x5, -1832  # x5 = 0x0000e8d8
+     58: 0002a203  lw           x4, 0(x5)  # param e2e_l0_q_rows; 0x0000e8d8
+     5c: 00000293  addi         x5, x0, 0  # x5 = 0x00000000
+     60: 00020313  addi         x6, x4, 0
+loc_64:
+     64: 0e62f863  bgeu         x5, x6, 0x00000154  # target 0x00000154
+     68: ffb015b7  lui          x11, 0xffb01  # x11 = 0xffb01000
+     6c: 86858593  addi         x11, x11, -1944  # x11 = 0xffb00868 · riscv_local_mem + 0x868
+     70: 0005a383  lw           x7, 0(x11)  # riscv_local_mem + 0x868 · 0xffb00868
+     74: 00100513  addi         x10, x0, 1  # x10 = 0x00000001
+loc_78:
+     78: ffb495b7  lui          x11, 0xffb49  # x11 = 0xffb49000
+     7c: 02858593  addi         x11, x11, 40  # x11 = 0xffb49028
+     80: 0005d403  lhu          x8, 0(x11)  # 0xffb49028
+     84: 407404b3  sub          x9, x8, x7
+     88: 01049493  slli         x9, x9, 16
+     8c: 0104d493  srli         x9, x9, 16
+     90: 00a4f663  bgeu         x9, x10, 0x0000009c  # target 0x0000009c
+     94: 0ff0000f  fence        0xf, 0xf
+     98: fe1ff06f  jal          x0, 0x00000078  # target 0x00000078
+loc_9c:
      9c: 0ff0000f  fence        0xf, 0xf
-     a0: fe1ff06f  jal          x0, 0x00000080  # target 0x00000080
-loc_a4:
-     a4: 0ff0000f  fence        0xf, 0xf
-     a8: ffb015b7  lui          x11, 0xffb01  # x11 = 0xffb01000
-     ac: 86458593  addi         x11, x11, -1948  # x11 = 0xffb00864 · riscv_local_mem + 0x864
-     b0: 0005a383  lw           x7, 0(x11)  # riscv_local_mem + 0x864 · 0xffb00864
-     b4: 0003d403  lhu          x8, 0(x7)  # Address depends on runtime register values
-     b8: 00f2f493  andi         x9, x5, 15
-     bc: 00149493  slli         x9, x9, 1
-     c0: 0102f593  andi         x11, x5, 16
-     c4: 00559593  slli         x11, x11, 5
+     a0: ffb015b7  lui          x11, 0xffb01  # x11 = 0xffb01000
+     a4: 86458593  addi         x11, x11, -1948  # x11 = 0xffb00864 · riscv_local_mem + 0x864
+     a8: 0005a383  lw           x7, 0(x11)  # riscv_local_mem + 0x864 · 0xffb00864
+     ac: 0003d403  lhu          x8, 0(x7)  # Address depends on runtime register values
+     b0: 00f2f493  andi         x9, x5, 15
+     b4: 00149493  slli         x9, x9, 1
+     b8: 0102f593  andi         x11, x5, 16
+     bc: 00559593  slli         x11, x11, 5
+     c0: 00b4e4b3  or           x9, x9, x11
+     c4: 1e02f593  andi         x11, x5, 480
      c8: 00b4e4b3  or           x9, x9, x11
-     cc: 1e02f593  andi         x11, x5, 480
-     d0: 00b4e4b3  or           x9, x9, x11
-     d4: 0092d593  srli         x11, x5, 9
-     d8: 00a59593  slli         x11, x11, 10
-     dc: 00b4e4b3  or           x9, x9, x11
-     e0: 00016537  lui          x10, 0x00016  # x10 = 0x00016000
-     e4: fc050513  addi         x10, x10, -64  # x10 = 0x00015fc0
-     e8: 00950533  add          x10, x10, x9
-     ec: 00851023  sh           x8, 0(x10)  # Address depends on runtime register values
-     f0: ffb01437  lui          x8, 0xffb01  # x8 = 0xffb01000
-     f4: 86840413  addi         x8, x8, -1944  # x8 = 0xffb00868 · riscv_local_mem + 0x868
-     f8: 00042383  lw           x7, 0(x8)  # riscv_local_mem + 0x868 · 0xffb00868
-     fc: 00138393  addi         x7, x7, 1
-    100: 01039393  slli         x7, x7, 16
-    104: 0103d393  srli         x7, x7, 16
-    108: ffb01437  lui          x8, 0xffb01  # x8 = 0xffb01000
-    10c: 86840413  addi         x8, x8, -1944  # x8 = 0xffb00868 · riscv_local_mem + 0x868
-    110: 00742023  sw           x7, 0(x8)  # riscv_local_mem + 0x868 · 0xffb00868; write runtime value
-    114: ffb49437  lui          x8, 0xffb49  # x8 = 0xffb49000
-    118: 02040413  addi         x8, x8, 32  # x8 = 0xffb49020
-    11c: 00742023  sw           x7, 0(x8)  # 0xffb49020; write runtime value
-    120: 0ff0000f  fence        0xf, 0xf
-    124: ffb015b7  lui          x11, 0xffb01  # x11 = 0xffb01000
-    128: 86458593  addi         x11, x11, -1948  # x11 = 0xffb00864 · riscv_local_mem + 0x864
-    12c: 0005a383  lw           x7, 0(x11)  # riscv_local_mem + 0x864 · 0xffb00864
-    130: 00001437  lui          x8, 0x00001  # x8 = 0x00001000 · F32_TILE_BYTES · Wait.CFGEXU
-    134: 80040413  addi         x8, x8, -2048  # x8 = 0x00000800
-    138: 008383b3  add          x7, x7, x8
-    13c: 000144b7  lui          x9, 0x00014  # x9 = 0x00014000
-    140: fc048493  addi         x9, x9, -64  # x9 = 0x00013fc0
-    144: 0093e663  bltu         x7, x9, 0x00000150  # target 0x00000150
-    148: 00001537  lui          x10, 0x00001  # x10 = 0x00001000 · F32_TILE_BYTES · Wait.CFGEXU
-    14c: 40a383b3  sub          x7, x7, x10
-loc_150:
-    150: ffb015b7  lui          x11, 0xffb01  # x11 = 0xffb01000
-    154: 86458593  addi         x11, x11, -1948  # x11 = 0xffb00864 · riscv_local_mem + 0x864
-    158: 0075a023  sw           x7, 0(x11)  # riscv_local_mem + 0x864 · 0xffb00864; write runtime value
-    15c: 00128293  addi         x5, x5, 1
-    160: f0dff06f  jal          x0, 0x0000006c  # target 0x0000006c
-loc_164:
-    164: 00000f93  addi         x31, x0, 0  # x31 = 0x00000000
-    168: 324000ef  jal          x1, 0x0000048c  # target 0x0000048c; x1 = 0x0000016c
-    16c: 000a8213  addi         x4, x21, 0
-    170: 000b0293  addi         x5, x22, 0
-    174: 3a0000ef  jal          x1, 0x00000514  # target 0x00000514; x1 = 0x00000178
-    178: 3b8000ef  jal          x1, 0x00000530  # target 0x00000530; x1 = 0x0000017c
-    17c: 00016fb7  lui          x31, 0x00016  # x31 = 0x00016000
-    180: fc0f8f93  addi         x31, x31, -64  # x31 = 0x00015fc0
-    184: 00020f13  addi         x30, x4, 0
-    188: 00028e93  addi         x29, x5, 0
-    18c: 3c0000ef  jal          x1, 0x0000054c  # target 0x0000054c; x1 = 0x00000190
-    190: 384000ef  jal          x1, 0x00000514  # target 0x00000514; x1 = 0x00000194
-    194: 39c000ef  jal          x1, 0x00000530  # target 0x00000530; x1 = 0x00000198
-    198: 00016237  lui          x4, 0x00016  # x4 = 0x00016000
-    19c: 7c020213  addi         x4, x4, 1984  # x4 = 0x000167c0
-    1a0: 20000293  addi         x5, x0, 512  # x5 = 0x00000200
-loc_1a4:
-    1a4: 00022023  sw           x0, 0(x4)  # Address depends on runtime register values
-    1a8: 00022223  sw           x0, 4(x4)  # Address depends on runtime register values
-    1ac: 00022423  sw           x0, 8(x4)  # Address depends on runtime register values
-    1b0: 00022623  sw           x0, 12(x4)  # Address depends on runtime register values
-    1b4: 00022823  sw           x0, 16(x4)  # Address depends on runtime register values
-    1b8: 00022a23  sw           x0, 20(x4)  # Address depends on runtime register values
-    1bc: 00022c23  sw           x0, 24(x4)  # Address depends on runtime register values
-    1c0: 00022e23  sw           x0, 28(x4)  # Address depends on runtime register values
-    1c4: 02020213  addi         x4, x4, 32
-    1c8: ff828293  addi         x5, x5, -8
-    1cc: fc029ce3  bne          x5, x0, 0x000001a4  # target 0x000001a4
-    1d0: 0000f2b7  lui          x5, 0x0000f  # x5 = 0x0000f000
-    1d4: 8dc28293  addi         x5, x5, -1828  # x5 = 0x0000e8dc
-    1d8: 0002a203  lw           x4, 0(x5)  # param e2e_l0_k_rows; 0x0000e8dc
-    1dc: 00000293  addi         x5, x0, 0  # x5 = 0x00000000
-    1e0: 00020313  addi         x6, x4, 0
+     cc: 0092d593  srli         x11, x5, 9
+     d0: 00a59593  slli         x11, x11, 10
+     d4: 00b4e4b3  or           x9, x9, x11
+     d8: 00016537  lui          x10, 0x00016  # x10 = 0x00016000
+     dc: 00950533  add          x10, x10, x9
+     e0: 00851023  sh           x8, 0(x10)  # Address depends on runtime register values
+     e4: ffb01437  lui          x8, 0xffb01  # x8 = 0xffb01000
+     e8: 86840413  addi         x8, x8, -1944  # x8 = 0xffb00868 · riscv_local_mem + 0x868
+     ec: 00042383  lw           x7, 0(x8)  # riscv_local_mem + 0x868 · 0xffb00868
+     f0: 00138393  addi         x7, x7, 1
+     f4: 01039393  slli         x7, x7, 16
+     f8: 0103d393  srli         x7, x7, 16
+     fc: ffb01437  lui          x8, 0xffb01  # x8 = 0xffb01000
+    100: 86840413  addi         x8, x8, -1944  # x8 = 0xffb00868 · riscv_local_mem + 0x868
+    104: 00742023  sw           x7, 0(x8)  # riscv_local_mem + 0x868 · 0xffb00868; write runtime value
+    108: ffb49437  lui          x8, 0xffb49  # x8 = 0xffb49000
+    10c: 02040413  addi         x8, x8, 32  # x8 = 0xffb49020
+    110: 00742023  sw           x7, 0(x8)  # 0xffb49020; write runtime value
+    114: 0ff0000f  fence        0xf, 0xf
+    118: ffb015b7  lui          x11, 0xffb01  # x11 = 0xffb01000
+    11c: 86458593  addi         x11, x11, -1948  # x11 = 0xffb00864 · riscv_local_mem + 0x864
+    120: 0005a383  lw           x7, 0(x11)  # riscv_local_mem + 0x864 · 0xffb00864
+    124: 00001437  lui          x8, 0x00001  # x8 = 0x00001000 · F32_TILE_BYTES · Wait.CFGEXU
+    128: 80040413  addi         x8, x8, -2048  # x8 = 0x00000800
+    12c: 008383b3  add          x7, x7, x8
+    130: 000144b7  lui          x9, 0x00014  # x9 = 0x00014000
+    134: 0093e663  bltu         x7, x9, 0x00000140  # target 0x00000140
+    138: 00001537  lui          x10, 0x00001  # x10 = 0x00001000 · F32_TILE_BYTES · Wait.CFGEXU
+    13c: 40a383b3  sub          x7, x7, x10
+loc_140:
+    140: ffb015b7  lui          x11, 0xffb01  # x11 = 0xffb01000
+    144: 86458593  addi         x11, x11, -1948  # x11 = 0xffb00864 · riscv_local_mem + 0x864
+    148: 0075a023  sw           x7, 0(x11)  # riscv_local_mem + 0x864 · 0xffb00864; write runtime value
+    14c: 00128293  addi         x5, x5, 1
+    150: f15ff06f  jal          x0, 0x00000064  # target 0x00000064
+loc_154:
+    154: 00000f93  addi         x31, x0, 0  # x31 = 0x00000000
+    158: 30c000ef  jal          x1, 0x00000464  # target 0x00000464; x1 = 0x0000015c
+    15c: 000a8213  addi         x4, x21, 0
+    160: 000b0293  addi         x5, x22, 0
+    164: 388000ef  jal          x1, 0x000004ec  # target 0x000004ec; x1 = 0x00000168
+    168: 3a0000ef  jal          x1, 0x00000508  # target 0x00000508; x1 = 0x0000016c
+    16c: 00016fb7  lui          x31, 0x00016  # x31 = 0x00016000
+    170: 00020f13  addi         x30, x4, 0
+    174: 00028e93  addi         x29, x5, 0
+    178: 3ac000ef  jal          x1, 0x00000524  # target 0x00000524; x1 = 0x0000017c
+    17c: 370000ef  jal          x1, 0x000004ec  # target 0x000004ec; x1 = 0x00000180
+    180: 388000ef  jal          x1, 0x00000508  # target 0x00000508; x1 = 0x00000184
+    184: 00017237  lui          x4, 0x00017  # x4 = 0x00017000
+    188: 80020213  addi         x4, x4, -2048  # x4 = 0x00016800
+    18c: 20000293  addi         x5, x0, 512  # x5 = 0x00000200
+loc_190:
+    190: 00022023  sw           x0, 0(x4)  # Address depends on runtime register values
+    194: 00022223  sw           x0, 4(x4)  # Address depends on runtime register values
+    198: 00022423  sw           x0, 8(x4)  # Address depends on runtime register values
+    19c: 00022623  sw           x0, 12(x4)  # Address depends on runtime register values
+    1a0: 00022823  sw           x0, 16(x4)  # Address depends on runtime register values
+    1a4: 00022a23  sw           x0, 20(x4)  # Address depends on runtime register values
+    1a8: 00022c23  sw           x0, 24(x4)  # Address depends on runtime register values
+    1ac: 00022e23  sw           x0, 28(x4)  # Address depends on runtime register values
+    1b0: 02020213  addi         x4, x4, 32
+    1b4: ff828293  addi         x5, x5, -8
+    1b8: fc029ce3  bne          x5, x0, 0x00000190  # target 0x00000190
+    1bc: 0000f2b7  lui          x5, 0x0000f  # x5 = 0x0000f000
+    1c0: 8dc28293  addi         x5, x5, -1828  # x5 = 0x0000e8dc
+    1c4: 0002a203  lw           x4, 0(x5)  # param e2e_l0_k_rows; 0x0000e8dc
+    1c8: 00000293  addi         x5, x0, 0  # x5 = 0x00000000
+    1cc: 00020313  addi         x6, x4, 0
+loc_1d0:
+    1d0: 0e62fa63  bgeu         x5, x6, 0x000002c4  # target 0x000002c4
+    1d4: ffb015b7  lui          x11, 0xffb01  # x11 = 0xffb01000
+    1d8: 86858593  addi         x11, x11, -1944  # x11 = 0xffb00868 · riscv_local_mem + 0x868
+    1dc: 0005a383  lw           x7, 0(x11)  # riscv_local_mem + 0x868 · 0xffb00868
+    1e0: 00100513  addi         x10, x0, 1  # x10 = 0x00000001
 loc_1e4:
-    1e4: 0e62fc63  bgeu         x5, x6, 0x000002dc  # target 0x000002dc
-    1e8: ffb015b7  lui          x11, 0xffb01  # x11 = 0xffb01000
-    1ec: 86858593  addi         x11, x11, -1944  # x11 = 0xffb00868 · riscv_local_mem + 0x868
-    1f0: 0005a383  lw           x7, 0(x11)  # riscv_local_mem + 0x868 · 0xffb00868
-    1f4: 00100513  addi         x10, x0, 1  # x10 = 0x00000001
-loc_1f8:
-    1f8: ffb495b7  lui          x11, 0xffb49  # x11 = 0xffb49000
-    1fc: 02858593  addi         x11, x11, 40  # x11 = 0xffb49028
-    200: 0005d403  lhu          x8, 0(x11)  # 0xffb49028
-    204: 407404b3  sub          x9, x8, x7
-    208: 01049493  slli         x9, x9, 16
-    20c: 0104d493  srli         x9, x9, 16
-    210: 00a4f663  bgeu         x9, x10, 0x0000021c  # target 0x0000021c
-    214: 0ff0000f  fence        0xf, 0xf
-    218: fe1ff06f  jal          x0, 0x000001f8  # target 0x000001f8
-loc_21c:
-    21c: 0ff0000f  fence        0xf, 0xf
-    220: ffb015b7  lui          x11, 0xffb01  # x11 = 0xffb01000
-    224: 86458593  addi         x11, x11, -1948  # x11 = 0xffb00864 · riscv_local_mem + 0x864
-    228: 0005a383  lw           x7, 0(x11)  # riscv_local_mem + 0x864 · 0xffb00864
-    22c: 0003d403  lhu          x8, 0(x7)  # Address depends on runtime register values
-    230: 00f2f493  andi         x9, x5, 15
-    234: 00149493  slli         x9, x9, 1
-    238: 0102f593  andi         x11, x5, 16
-    23c: 00559593  slli         x11, x11, 5
+    1e4: ffb495b7  lui          x11, 0xffb49  # x11 = 0xffb49000
+    1e8: 02858593  addi         x11, x11, 40  # x11 = 0xffb49028
+    1ec: 0005d403  lhu          x8, 0(x11)  # 0xffb49028
+    1f0: 407404b3  sub          x9, x8, x7
+    1f4: 01049493  slli         x9, x9, 16
+    1f8: 0104d493  srli         x9, x9, 16
+    1fc: 00a4f663  bgeu         x9, x10, 0x00000208  # target 0x00000208
+    200: 0ff0000f  fence        0xf, 0xf
+    204: fe1ff06f  jal          x0, 0x000001e4  # target 0x000001e4
+loc_208:
+    208: 0ff0000f  fence        0xf, 0xf
+    20c: ffb015b7  lui          x11, 0xffb01  # x11 = 0xffb01000
+    210: 86458593  addi         x11, x11, -1948  # x11 = 0xffb00864 · riscv_local_mem + 0x864
+    214: 0005a383  lw           x7, 0(x11)  # riscv_local_mem + 0x864 · 0xffb00864
+    218: 0003d403  lhu          x8, 0(x7)  # Address depends on runtime register values
+    21c: 00f2f493  andi         x9, x5, 15
+    220: 00149493  slli         x9, x9, 1
+    224: 0102f593  andi         x11, x5, 16
+    228: 00559593  slli         x11, x11, 5
+    22c: 00b4e4b3  or           x9, x9, x11
+    230: 1e02f593  andi         x11, x5, 480
+    234: 00b4e4b3  or           x9, x9, x11
+    238: 0092d593  srli         x11, x5, 9
+    23c: 00a59593  slli         x11, x11, 10
     240: 00b4e4b3  or           x9, x9, x11
-    244: 1e02f593  andi         x11, x5, 480
-    248: 00b4e4b3  or           x9, x9, x11
-    24c: 0092d593  srli         x11, x5, 9
-    250: 00a59593  slli         x11, x11, 10
-    254: 00b4e4b3  or           x9, x9, x11
-    258: 00016537  lui          x10, 0x00016  # x10 = 0x00016000
-    25c: 7c050513  addi         x10, x10, 1984  # x10 = 0x000167c0
-    260: 00950533  add          x10, x10, x9
-    264: 00851023  sh           x8, 0(x10)  # Address depends on runtime register values
-    268: ffb01437  lui          x8, 0xffb01  # x8 = 0xffb01000
-    26c: 86840413  addi         x8, x8, -1944  # x8 = 0xffb00868 · riscv_local_mem + 0x868
-    270: 00042383  lw           x7, 0(x8)  # riscv_local_mem + 0x868 · 0xffb00868
-    274: 00138393  addi         x7, x7, 1
-    278: 01039393  slli         x7, x7, 16
-    27c: 0103d393  srli         x7, x7, 16
-    280: ffb01437  lui          x8, 0xffb01  # x8 = 0xffb01000
-    284: 86840413  addi         x8, x8, -1944  # x8 = 0xffb00868 · riscv_local_mem + 0x868
-    288: 00742023  sw           x7, 0(x8)  # riscv_local_mem + 0x868 · 0xffb00868; write runtime value
-    28c: ffb49437  lui          x8, 0xffb49  # x8 = 0xffb49000
-    290: 02040413  addi         x8, x8, 32  # x8 = 0xffb49020
-    294: 00742023  sw           x7, 0(x8)  # 0xffb49020; write runtime value
-    298: 0ff0000f  fence        0xf, 0xf
-    29c: ffb015b7  lui          x11, 0xffb01  # x11 = 0xffb01000
-    2a0: 86458593  addi         x11, x11, -1948  # x11 = 0xffb00864 · riscv_local_mem + 0x864
-    2a4: 0005a383  lw           x7, 0(x11)  # riscv_local_mem + 0x864 · 0xffb00864
-    2a8: 00001437  lui          x8, 0x00001  # x8 = 0x00001000 · F32_TILE_BYTES · Wait.CFGEXU
-    2ac: 80040413  addi         x8, x8, -2048  # x8 = 0x00000800
-    2b0: 008383b3  add          x7, x7, x8
-    2b4: 000144b7  lui          x9, 0x00014  # x9 = 0x00014000
-    2b8: fc048493  addi         x9, x9, -64  # x9 = 0x00013fc0
-    2bc: 0093e663  bltu         x7, x9, 0x000002c8  # target 0x000002c8
-    2c0: 00001537  lui          x10, 0x00001  # x10 = 0x00001000 · F32_TILE_BYTES · Wait.CFGEXU
-    2c4: 40a383b3  sub          x7, x7, x10
-loc_2c8:
-    2c8: ffb015b7  lui          x11, 0xffb01  # x11 = 0xffb01000
-    2cc: 86458593  addi         x11, x11, -1948  # x11 = 0xffb00864 · riscv_local_mem + 0x864
-    2d0: 0075a023  sw           x7, 0(x11)  # riscv_local_mem + 0x864 · 0xffb00864; write runtime value
-    2d4: 00128293  addi         x5, x5, 1
-    2d8: f0dff06f  jal          x0, 0x000001e4  # target 0x000001e4
-loc_2dc:
-    2dc: 00000f93  addi         x31, x0, 0  # x31 = 0x00000000
-    2e0: 328000ef  jal          x1, 0x00000608  # target 0x00000608; x1 = 0x000002e4
-    2e4: 000a8213  addi         x4, x21, 0
-    2e8: 000b0293  addi         x5, x22, 0
-    2ec: 228000ef  jal          x1, 0x00000514  # target 0x00000514; x1 = 0x000002f0
-    2f0: 240000ef  jal          x1, 0x00000530  # target 0x00000530; x1 = 0x000002f4
-    2f4: 00016fb7  lui          x31, 0x00016  # x31 = 0x00016000
-    2f8: 7c0f8f93  addi         x31, x31, 1984  # x31 = 0x000167c0
-    2fc: 00020f13  addi         x30, x4, 0
-    300: 00028e93  addi         x29, x5, 0
-    304: 248000ef  jal          x1, 0x0000054c  # target 0x0000054c; x1 = 0x00000308
-    308: 20c000ef  jal          x1, 0x00000514  # target 0x00000514; x1 = 0x0000030c
-    30c: 224000ef  jal          x1, 0x00000530  # target 0x00000530; x1 = 0x00000310
-    310: 00017237  lui          x4, 0x00017  # x4 = 0x00017000
-    314: fc020213  addi         x4, x4, -64  # x4 = 0x00016fc0
-    318: 20000293  addi         x5, x0, 512  # x5 = 0x00000200
-loc_31c:
-    31c: 00022023  sw           x0, 0(x4)  # Address depends on runtime register values
-    320: 00022223  sw           x0, 4(x4)  # Address depends on runtime register values
-    324: 00022423  sw           x0, 8(x4)  # Address depends on runtime register values
-    328: 00022623  sw           x0, 12(x4)  # Address depends on runtime register values
-    32c: 00022823  sw           x0, 16(x4)  # Address depends on runtime register values
-    330: 00022a23  sw           x0, 20(x4)  # Address depends on runtime register values
-    334: 00022c23  sw           x0, 24(x4)  # Address depends on runtime register values
-    338: 00022e23  sw           x0, 28(x4)  # Address depends on runtime register values
-    33c: 02020213  addi         x4, x4, 32
-    340: ff828293  addi         x5, x5, -8
-    344: fc029ce3  bne          x5, x0, 0x0000031c  # target 0x0000031c
-    348: 0000f2b7  lui          x5, 0x0000f  # x5 = 0x0000f000
-    34c: 8e028293  addi         x5, x5, -1824  # x5 = 0x0000e8e0
-    350: 0002a203  lw           x4, 0(x5)  # param e2e_l0_v_rows; 0x0000e8e0
-    354: 00000293  addi         x5, x0, 0  # x5 = 0x00000000
-    358: 00020313  addi         x6, x4, 0
-loc_35c:
-    35c: 0e62fc63  bgeu         x5, x6, 0x00000454  # target 0x00000454
-    360: ffb015b7  lui          x11, 0xffb01  # x11 = 0xffb01000
-    364: 86858593  addi         x11, x11, -1944  # x11 = 0xffb00868 · riscv_local_mem + 0x868
-    368: 0005a383  lw           x7, 0(x11)  # riscv_local_mem + 0x868 · 0xffb00868
-    36c: 00100513  addi         x10, x0, 1  # x10 = 0x00000001
-loc_370:
-    370: ffb495b7  lui          x11, 0xffb49  # x11 = 0xffb49000
-    374: 02858593  addi         x11, x11, 40  # x11 = 0xffb49028
-    378: 0005d403  lhu          x8, 0(x11)  # 0xffb49028
-    37c: 407404b3  sub          x9, x8, x7
-    380: 01049493  slli         x9, x9, 16
-    384: 0104d493  srli         x9, x9, 16
-    388: 00a4f663  bgeu         x9, x10, 0x00000394  # target 0x00000394
-    38c: 0ff0000f  fence        0xf, 0xf
-    390: fe1ff06f  jal          x0, 0x00000370  # target 0x00000370
-loc_394:
-    394: 0ff0000f  fence        0xf, 0xf
-    398: ffb015b7  lui          x11, 0xffb01  # x11 = 0xffb01000
-    39c: 86458593  addi         x11, x11, -1948  # x11 = 0xffb00864 · riscv_local_mem + 0x864
-    3a0: 0005a383  lw           x7, 0(x11)  # riscv_local_mem + 0x864 · 0xffb00864
-    3a4: 0003d403  lhu          x8, 0(x7)  # Address depends on runtime register values
-    3a8: 00f2f493  andi         x9, x5, 15
-    3ac: 00149493  slli         x9, x9, 1
-    3b0: 0102f593  andi         x11, x5, 16
-    3b4: 00559593  slli         x11, x11, 5
-    3b8: 00b4e4b3  or           x9, x9, x11
-    3bc: 1e02f593  andi         x11, x5, 480
-    3c0: 00b4e4b3  or           x9, x9, x11
-    3c4: 0092d593  srli         x11, x5, 9
-    3c8: 00a59593  slli         x11, x11, 10
-    3cc: 00b4e4b3  or           x9, x9, x11
-    3d0: 00017537  lui          x10, 0x00017  # x10 = 0x00017000
-    3d4: fc050513  addi         x10, x10, -64  # x10 = 0x00016fc0
-    3d8: 00950533  add          x10, x10, x9
-    3dc: 00851023  sh           x8, 0(x10)  # Address depends on runtime register values
-    3e0: ffb01437  lui          x8, 0xffb01  # x8 = 0xffb01000
-    3e4: 86840413  addi         x8, x8, -1944  # x8 = 0xffb00868 · riscv_local_mem + 0x868
-    3e8: 00042383  lw           x7, 0(x8)  # riscv_local_mem + 0x868 · 0xffb00868
-    3ec: 00138393  addi         x7, x7, 1
-    3f0: 01039393  slli         x7, x7, 16
-    3f4: 0103d393  srli         x7, x7, 16
-    3f8: ffb01437  lui          x8, 0xffb01  # x8 = 0xffb01000
-    3fc: 86840413  addi         x8, x8, -1944  # x8 = 0xffb00868 · riscv_local_mem + 0x868
-    400: 00742023  sw           x7, 0(x8)  # riscv_local_mem + 0x868 · 0xffb00868; write runtime value
-    404: ffb49437  lui          x8, 0xffb49  # x8 = 0xffb49000
-    408: 02040413  addi         x8, x8, 32  # x8 = 0xffb49020
-    40c: 00742023  sw           x7, 0(x8)  # 0xffb49020; write runtime value
-    410: 0ff0000f  fence        0xf, 0xf
-    414: ffb015b7  lui          x11, 0xffb01  # x11 = 0xffb01000
-    418: 86458593  addi         x11, x11, -1948  # x11 = 0xffb00864 · riscv_local_mem + 0x864
-    41c: 0005a383  lw           x7, 0(x11)  # riscv_local_mem + 0x864 · 0xffb00864
-    420: 00001437  lui          x8, 0x00001  # x8 = 0x00001000 · F32_TILE_BYTES · Wait.CFGEXU
-    424: 80040413  addi         x8, x8, -2048  # x8 = 0x00000800
-    428: 008383b3  add          x7, x7, x8
-    42c: 000144b7  lui          x9, 0x00014  # x9 = 0x00014000
-    430: fc048493  addi         x9, x9, -64  # x9 = 0x00013fc0
-    434: 0093e663  bltu         x7, x9, 0x00000440  # target 0x00000440
-    438: 00001537  lui          x10, 0x00001  # x10 = 0x00001000 · F32_TILE_BYTES · Wait.CFGEXU
-    43c: 40a383b3  sub          x7, x7, x10
-loc_440:
-    440: ffb015b7  lui          x11, 0xffb01  # x11 = 0xffb01000
-    444: 86458593  addi         x11, x11, -1948  # x11 = 0xffb00864 · riscv_local_mem + 0x864
-    448: 0075a023  sw           x7, 0(x11)  # riscv_local_mem + 0x864 · 0xffb00864; write runtime value
-    44c: 00128293  addi         x5, x5, 1
-    450: f0dff06f  jal          x0, 0x0000035c  # target 0x0000035c
-loc_454:
-    454: 00000f93  addi         x31, x0, 0  # x31 = 0x00000000
-    458: 238000ef  jal          x1, 0x00000690  # target 0x00000690; x1 = 0x0000045c
-    45c: 000a8213  addi         x4, x21, 0
-    460: 000b0293  addi         x5, x22, 0
-    464: 0b0000ef  jal          x1, 0x00000514  # target 0x00000514; x1 = 0x00000468
-    468: 0c8000ef  jal          x1, 0x00000530  # target 0x00000530; x1 = 0x0000046c
-    46c: 00017fb7  lui          x31, 0x00017  # x31 = 0x00017000
-    470: fc0f8f93  addi         x31, x31, -64  # x31 = 0x00016fc0
-    474: 00020f13  addi         x30, x4, 0
-    478: 00028e93  addi         x29, x5, 0
-    47c: 0d0000ef  jal          x1, 0x0000054c  # target 0x0000054c; x1 = 0x00000480
-    480: 094000ef  jal          x1, 0x00000514  # target 0x00000514; x1 = 0x00000484
-    484: 0ac000ef  jal          x1, 0x00000530  # target 0x00000530; x1 = 0x00000488
-    488: 2900006f  jal          x0, 0x00000718  # target 0x00000718
-loc_48c:
-    48c: 0000fab7  lui          x21, 0x0000f  # x21 = 0x0000f000
-    490: 8c0a8a93  addi         x21, x21, -1856  # x21 = 0x0000e8c0
-    494: 000aaa03  lw           x20, 0(x21)  # param e2e_q_compact; 0x0000e8c0
-    498: 007a7d13  andi         x26, x20, 7
-    49c: ff8a7a13  andi         x20, x20, -8
-    4a0: 01af8ab3  add          x21, x31, x26
-    4a4: 007afb93  andi         x23, x21, 7
-    4a8: 003ada93  srli         x21, x21, 3
-    4ac: 00ba9a93  slli         x21, x21, 11
-    4b0: 014a8ab3  add          x21, x21, x20
-    4b4: 00000b17  auipc        x22, 0x00000  # x22 = 0x000004b4
-    4b8: 030b0b13  addi         x22, x22, 48  # x22 = 0x000004e4
-    4bc: 0000feb7  lui          x29, 0x0000f  # x29 = 0x0000f000
-    4c0: 8e4e8e93  addi         x29, x29, -1820  # x29 = 0x0000e8e4
-    4c4: 000ead83  lw           x27, 0(x29)  # param dram_port; 0x0000e8e4
-    4c8: 01000e13  addi         x28, x0, 16  # x28 = 0x00000010
-    4cc: 03cd8db3  mul          x27, x27, x28
-    4d0: 01bb0b33  add          x22, x22, x27
-    4d4: 001b9b93  slli         x23, x23, 1
-    4d8: 017b0b33  add          x22, x22, x23
-    4dc: 000b5b03  lhu          x22, 0(x22)  # Address depends on runtime register values
-    4e0: 00008067  jalr         x0, 0(x1)
-    4e4: 04110391  PACR         CfgContext=0, RowPadZero=1, DstAccessMode=0, AddrMode=0, AddrCntContext=2, ZeroWrite=0, ReadIntfSel=0, OvrdThreadId=1, Concat=6, CtxtCtrl=1, Flush=0, Last=0  # Unreachable by statically known control flow
-    4e8: 05510511  PACR         CfgContext=2, RowPadZero=5, DstAccessMode=0, AddrMode=0, AddrCntContext=2, ZeroWrite=0, ReadIntfSel=1, OvrdThreadId=0, Concat=4, CtxtCtrl=1, Flush=0, Last=0  # Unreachable by statically known control flow
-    4ec: 03d20352  SFPNOT       imm12_math=3912, lreg_c=0, lreg_dest=13, instr_mod1=4  # lreg_c: L0; lreg_dest: L13; Unreachable by statically known control flow
-    4f0: 05920512  SFPLZ        imm12_math=1608, lreg_c=1, lreg_dest=4, instr_mod1=4  # lreg_c: L1; lreg_dest: L4; Unreachable by statically known control flow
-    4f4: 04510351  PACR         CfgContext=0, RowPadZero=5, DstAccessMode=0, AddrMode=0, AddrCntContext=2, ZeroWrite=0, ReadIntfSel=0, OvrdThreadId=1, Concat=5, CtxtCtrl=1, Flush=0, Last=0  # Unreachable by statically known control flow
-    4f8: 05910491  PACR         CfgContext=3, RowPadZero=1, DstAccessMode=0, AddrMode=0, AddrCntContext=2, ZeroWrite=0, ReadIntfSel=1, OvrdThreadId=0, Concat=2, CtxtCtrl=1, Flush=0, Last=0  # Unreachable by statically known control flow
-    4fc: 04520312  SFPLZ        imm12_math=328, lreg_c=0, lreg_dest=12, instr_mod1=4  # lreg_c: L0; lreg_dest: L12; Unreachable by statically known control flow
-    500: 055204d2  SFPLZ        imm12_math=1352, lreg_c=1, lreg_dest=3, instr_mod1=4  # lreg_c: L1; lreg_dest: L3; Unreachable by statically known control flow
-    504: 03d10311  XMOV         Mov_block_selection=1, Last=7618756  # Unreachable by statically known control flow
-    508: 05d104d1  PACR         CfgContext=3, RowPadZero=5, DstAccessMode=0, AddrMode=0, AddrCntContext=2, ZeroWrite=0, ReadIntfSel=1, OvrdThreadId=0, Concat=3, CtxtCtrl=1, Flush=0, Last=0  # Unreachable by statically known control flow
-    50c: 04120392  SFPLZ        imm12_math=72, lreg_c=0, lreg_dest=14, instr_mod1=4  # lreg_c: L0; lreg_dest: L14; Unreachable by statically known control flow
-    510: 05d20492  SFPLZ        imm12_math=1864, lreg_c=1, lreg_dest=2, instr_mod1=4  # lreg_c: L1; lreg_dest: L2; Unreachable by statically known control flow
-loc_514:
-    514: ffb30ab7  lui          x21, 0xffb30  # x21 = 0xffb30000 · noc1_regs + 0x0
-    518: 284a8a93  addi         x21, x21, 644  # x21 = 0xffb30284 · noc1_regs + 0x284
-    51c: 000aaa03  lw           x20, 0(x21)  # noc1_regs + 0x284 · 0xffb30284
-    520: 000a0463  beq          x20, x0, 0x00000528  # target 0x00000528
-    524: ff1ff06f  jal          x0, 0x00000514  # target 0x00000514
-loc_528:
-    528: 0ff0000f  fence        0xf, 0xf
-    52c: 00008067  jalr         x0, 0(x1)
-loc_530:
-    530: ffb30ab7  lui          x21, 0xffb30  # x21 = 0xffb30000 · noc1_regs + 0x0
-    534: 244a8a93  addi         x21, x21, 580  # x21 = 0xffb30244 · noc1_regs + 0x244
-    538: 000aaa03  lw           x20, 0(x21)  # noc1_regs + 0x244 · 0xffb30244
-    53c: 000a0463  beq          x20, x0, 0x00000544  # target 0x00000544
-    540: ff1ff06f  jal          x0, 0x00000530  # target 0x00000530
-loc_544:
-    544: 0ff0000f  fence        0xf, 0xf
-    548: 00008067  jalr         x0, 0(x1)
-loc_54c:
-    54c: ffb30ab7  lui          x21, 0xffb30  # x21 = 0xffb30000 · noc1_regs + 0x0
-    550: 284a8a93  addi         x21, x21, 644  # x21 = 0xffb30284 · noc1_regs + 0x284
-    554: 000aaa03  lw           x20, 0(x21)  # noc1_regs + 0x284 · 0xffb30284
-    558: 08100a93  addi         x21, x0, 129  # x21 = 0x00000081
-    55c: 015a6463  bltu         x20, x21, 0x00000564  # target 0x00000564
-    560: fedff06f  jal          x0, 0x0000054c  # target 0x0000054c
-loc_564:
-    564: ffb30ab7  lui          x21, 0xffb30  # x21 = 0xffb30000 · noc1_regs + 0x0
-    568: 244a8a93  addi         x21, x21, 580  # x21 = 0xffb30244 · noc1_regs + 0x244
-    56c: 000aaa03  lw           x20, 0(x21)  # noc1_regs + 0x244 · 0xffb30244
-    570: 08100a93  addi         x21, x0, 129  # x21 = 0x00000081
-    574: 015a6463  bltu         x20, x21, 0x0000057c  # target 0x0000057c
-    578: fedff06f  jal          x0, 0x00000564  # target 0x00000564
-loc_57c:
-    57c: ffb30ab7  lui          x21, 0xffb30  # x21 = 0xffb30000 · noc1_regs + 0x0
-    580: 148a8a93  addi         x21, x21, 328  # x21 = 0xffb30148 · noc1_regs + 0x148
-    584: 000aaa03  lw           x20, 0(x21)  # noc1_regs + 0x148 · 0xffb30148
-    588: 014a1a13  slli         x20, x20, 20
-    58c: 014a5a13  srli         x20, x20, 20
-    590: ffb30ab7  lui          x21, 0xffb30  # x21 = 0xffb30000 · noc1_regs + 0x0
-loc_594:
-    594: 040aab03  lw           x22, 64(x21)  # noc1_regs + 0x40 · 0xffb30040
-    598: 000b0463  beq          x22, x0, 0x000005a0  # target 0x000005a0
-    59c: ff9ff06f  jal          x0, 0x00000594  # target 0x00000594
-loc_5a0:
-    5a0: ffb30bb7  lui          x23, 0xffb30  # x23 = 0xffb30000 · noc1_regs + 0x0
-    5a4: 01fba023  sw           x31, 0(x23)  # noc1_regs + 0x0 · 0xffb30000; write runtime value
-    5a8: 000ba223  sw           x0, 4(x23)  # noc1_regs + 0x4 · 0xffb30004; write 0x00000000
-    5ac: 014ba423  sw           x20, 8(x23)  # noc1_regs + 0x8 · 0xffb30008; write runtime value
-    5b0: 01eba623  sw           x30, 12(x23)  # noc1_regs + 0xc · 0xffb3000c; write runtime value
-    5b4: 000ba823  sw           x0, 16(x23)  # noc1_regs + 0x10 · 0xffb30010; write 0x00000000
-    5b8: 01dbaa23  sw           x29, 20(x23)  # noc1_regs + 0x14 · 0xffb30014; write runtime value
-    5bc: 40000c13  addi         x24, x0, 1024  # x24 = 0x00000400
-    5c0: 018bac23  sw           x24, 24(x23)  # noc1_regs + 0x18 · 0xffb30018; write 0x00000400
-    5c4: 00002c37  lui          x24, 0x00002  # x24 = 0x00002000
-    5c8: 092c0c13  addi         x24, x24, 146  # x24 = 0x00002092
-    5cc: 018bae23  sw           x24, 28(x23)  # noc1_regs + 0x1c · 0xffb3001c; write 0x00002092
-    5d0: 00001c37  lui          x24, 0x00001  # x24 = 0x00001000 · F32_TILE_BYTES · Wait.CFGEXU
-    5d4: 800c0c13  addi         x24, x24, -2048  # x24 = 0x00000800
-    5d8: 038ba023  sw           x24, 32(x23)  # noc1_regs + 0x20 · 0xffb30020; write 0x00000800
-    5dc: 020ba223  sw           x0, 36(x23)  # noc1_regs + 0x24 · 0xffb30024; write 0x00000000
-    5e0: 020ba423  sw           x0, 40(x23)  # noc1_regs + 0x28 · 0xffb30028; write 0x00000000
-    5e4: 020ba623  sw           x0, 44(x23)  # noc1_regs + 0x2c · 0xffb3002c; write 0x00000000
-    5e8: ffb30bb7  lui          x23, 0xffb30  # x23 = 0xffb30000 · noc1_regs + 0x0
-    5ec: 040b8b93  addi         x23, x23, 64  # x23 = 0xffb30040 · noc1_regs + 0x40
-    5f0: 00100c13  addi         x24, x0, 1  # x24 = 0x00000001
-    5f4: 018ba023  sw           x24, 0(x23)  # noc1_regs + 0x40 · 0xffb30040; write 0x00000001
-loc_5f8:
-    5f8: 040aab03  lw           x22, 64(x21)  # noc1_regs + 0x40 · 0xffb30040
-    5fc: 000b0463  beq          x22, x0, 0x00000604  # target 0x00000604
-    600: ff9ff06f  jal          x0, 0x000005f8  # target 0x000005f8
-loc_604:
-    604: 00008067  jalr         x0, 0(x1)
-loc_608:
-    608: 0000fab7  lui          x21, 0x0000f  # x21 = 0x0000f000
-    60c: 8c8a8a93  addi         x21, x21, -1848  # x21 = 0x0000e8c8
-    610: 000aaa03  lw           x20, 0(x21)  # param e2e_k_compact; 0x0000e8c8
-    614: 007a7d13  andi         x26, x20, 7
-    618: ff8a7a13  andi         x20, x20, -8
-    61c: 01af8ab3  add          x21, x31, x26
-    620: 007afb93  andi         x23, x21, 7
-    624: 003ada93  srli         x21, x21, 3
-    628: 00ba9a93  slli         x21, x21, 11
-    62c: 014a8ab3  add          x21, x21, x20
-    630: 00000b17  auipc        x22, 0x00000  # x22 = 0x00000630
-    634: 030b0b13  addi         x22, x22, 48  # x22 = 0x00000660
-    638: 0000feb7  lui          x29, 0x0000f  # x29 = 0x0000f000
-    63c: 8e4e8e93  addi         x29, x29, -1820  # x29 = 0x0000e8e4
-    640: 000ead83  lw           x27, 0(x29)  # param dram_port; 0x0000e8e4
-    644: 01000e13  addi         x28, x0, 16  # x28 = 0x00000010
-    648: 03cd8db3  mul          x27, x27, x28
-    64c: 01bb0b33  add          x22, x22, x27
-    650: 001b9b93  slli         x23, x23, 1
-    654: 017b0b33  add          x22, x22, x23
-    658: 000b5b03  lhu          x22, 0(x22)  # Address depends on runtime register values
-    65c: 00008067  jalr         x0, 0(x1)
-    660: 04110391  PACR         CfgContext=0, RowPadZero=1, DstAccessMode=0, AddrMode=0, AddrCntContext=2, ZeroWrite=0, ReadIntfSel=0, OvrdThreadId=1, Concat=6, CtxtCtrl=1, Flush=0, Last=0  # Unreachable by statically known control flow
-    664: 05510511  PACR         CfgContext=2, RowPadZero=5, DstAccessMode=0, AddrMode=0, AddrCntContext=2, ZeroWrite=0, ReadIntfSel=1, OvrdThreadId=0, Concat=4, CtxtCtrl=1, Flush=0, Last=0  # Unreachable by statically known control flow
-    668: 03d20352  SFPNOT       imm12_math=3912, lreg_c=0, lreg_dest=13, instr_mod1=4  # lreg_c: L0; lreg_dest: L13; Unreachable by statically known control flow
-    66c: 05920512  SFPLZ        imm12_math=1608, lreg_c=1, lreg_dest=4, instr_mod1=4  # lreg_c: L1; lreg_dest: L4; Unreachable by statically known control flow
-    670: 04510351  PACR         CfgContext=0, RowPadZero=5, DstAccessMode=0, AddrMode=0, AddrCntContext=2, ZeroWrite=0, ReadIntfSel=0, OvrdThreadId=1, Concat=5, CtxtCtrl=1, Flush=0, Last=0  # Unreachable by statically known control flow
-    674: 05910491  PACR         CfgContext=3, RowPadZero=1, DstAccessMode=0, AddrMode=0, AddrCntContext=2, ZeroWrite=0, ReadIntfSel=1, OvrdThreadId=0, Concat=2, CtxtCtrl=1, Flush=0, Last=0  # Unreachable by statically known control flow
-    678: 04520312  SFPLZ        imm12_math=328, lreg_c=0, lreg_dest=12, instr_mod1=4  # lreg_c: L0; lreg_dest: L12; Unreachable by statically known control flow
-    67c: 055204d2  SFPLZ        imm12_math=1352, lreg_c=1, lreg_dest=3, instr_mod1=4  # lreg_c: L1; lreg_dest: L3; Unreachable by statically known control flow
-    680: 03d10311  XMOV         Mov_block_selection=1, Last=7618756  # Unreachable by statically known control flow
-    684: 05d104d1  PACR         CfgContext=3, RowPadZero=5, DstAccessMode=0, AddrMode=0, AddrCntContext=2, ZeroWrite=0, ReadIntfSel=1, OvrdThreadId=0, Concat=3, CtxtCtrl=1, Flush=0, Last=0  # Unreachable by statically known control flow
-    688: 04120392  SFPLZ        imm12_math=72, lreg_c=0, lreg_dest=14, instr_mod1=4  # lreg_c: L0; lreg_dest: L14; Unreachable by statically known control flow
-    68c: 05d20492  SFPLZ        imm12_math=1864, lreg_c=1, lreg_dest=2, instr_mod1=4  # lreg_c: L1; lreg_dest: L2; Unreachable by statically known control flow
-loc_690:
-    690: 0000fab7  lui          x21, 0x0000f  # x21 = 0x0000f000
-    694: 8d0a8a93  addi         x21, x21, -1840  # x21 = 0x0000e8d0
-    698: 000aaa03  lw           x20, 0(x21)  # param e2e_v_compact; 0x0000e8d0
-    69c: 007a7d13  andi         x26, x20, 7
-    6a0: ff8a7a13  andi         x20, x20, -8
-    6a4: 01af8ab3  add          x21, x31, x26
-    6a8: 007afb93  andi         x23, x21, 7
-    6ac: 003ada93  srli         x21, x21, 3
-    6b0: 00ba9a93  slli         x21, x21, 11
-    6b4: 014a8ab3  add          x21, x21, x20
-    6b8: 00000b17  auipc        x22, 0x00000  # x22 = 0x000006b8
-    6bc: 030b0b13  addi         x22, x22, 48  # x22 = 0x000006e8
-    6c0: 0000feb7  lui          x29, 0x0000f  # x29 = 0x0000f000
-    6c4: 8e4e8e93  addi         x29, x29, -1820  # x29 = 0x0000e8e4
-    6c8: 000ead83  lw           x27, 0(x29)  # param dram_port; 0x0000e8e4
-    6cc: 01000e13  addi         x28, x0, 16  # x28 = 0x00000010
-    6d0: 03cd8db3  mul          x27, x27, x28
-    6d4: 01bb0b33  add          x22, x22, x27
-    6d8: 001b9b93  slli         x23, x23, 1
-    6dc: 017b0b33  add          x22, x22, x23
-    6e0: 000b5b03  lhu          x22, 0(x22)  # Address depends on runtime register values
-    6e4: 00008067  jalr         x0, 0(x1)
-    6e8: 04110391  PACR         CfgContext=0, RowPadZero=1, DstAccessMode=0, AddrMode=0, AddrCntContext=2, ZeroWrite=0, ReadIntfSel=0, OvrdThreadId=1, Concat=6, CtxtCtrl=1, Flush=0, Last=0  # Unreachable by statically known control flow
-    6ec: 05510511  PACR         CfgContext=2, RowPadZero=5, DstAccessMode=0, AddrMode=0, AddrCntContext=2, ZeroWrite=0, ReadIntfSel=1, OvrdThreadId=0, Concat=4, CtxtCtrl=1, Flush=0, Last=0  # Unreachable by statically known control flow
-    6f0: 03d20352  SFPNOT       imm12_math=3912, lreg_c=0, lreg_dest=13, instr_mod1=4  # lreg_c: L0; lreg_dest: L13; Unreachable by statically known control flow
-    6f4: 05920512  SFPLZ        imm12_math=1608, lreg_c=1, lreg_dest=4, instr_mod1=4  # lreg_c: L1; lreg_dest: L4; Unreachable by statically known control flow
-    6f8: 04510351  PACR         CfgContext=0, RowPadZero=5, DstAccessMode=0, AddrMode=0, AddrCntContext=2, ZeroWrite=0, ReadIntfSel=0, OvrdThreadId=1, Concat=5, CtxtCtrl=1, Flush=0, Last=0  # Unreachable by statically known control flow
-    6fc: 05910491  PACR         CfgContext=3, RowPadZero=1, DstAccessMode=0, AddrMode=0, AddrCntContext=2, ZeroWrite=0, ReadIntfSel=1, OvrdThreadId=0, Concat=2, CtxtCtrl=1, Flush=0, Last=0  # Unreachable by statically known control flow
-    700: 04520312  SFPLZ        imm12_math=328, lreg_c=0, lreg_dest=12, instr_mod1=4  # lreg_c: L0; lreg_dest: L12; Unreachable by statically known control flow
-    704: 055204d2  SFPLZ        imm12_math=1352, lreg_c=1, lreg_dest=3, instr_mod1=4  # lreg_c: L1; lreg_dest: L3; Unreachable by statically known control flow
-    708: 03d10311  XMOV         Mov_block_selection=1, Last=7618756  # Unreachable by statically known control flow
-    70c: 05d104d1  PACR         CfgContext=3, RowPadZero=5, DstAccessMode=0, AddrMode=0, AddrCntContext=2, ZeroWrite=0, ReadIntfSel=1, OvrdThreadId=0, Concat=3, CtxtCtrl=1, Flush=0, Last=0  # Unreachable by statically known control flow
-    710: 04120392  SFPLZ        imm12_math=72, lreg_c=0, lreg_dest=14, instr_mod1=4  # lreg_c: L0; lreg_dest: L14; Unreachable by statically known control flow
-    714: 05d20492  SFPLZ        imm12_math=1864, lreg_c=1, lreg_dest=2, instr_mod1=4  # lreg_c: L1; lreg_dest: L2; Unreachable by statically known control flow
-    718:           j FW_NCRISC+4   # return to firmware, linked at install
+    244: 00017537  lui          x10, 0x00017  # x10 = 0x00017000
+    248: 80050513  addi         x10, x10, -2048  # x10 = 0x00016800
+    24c: 00950533  add          x10, x10, x9
+    250: 00851023  sh           x8, 0(x10)  # Address depends on runtime register values
+    254: ffb01437  lui          x8, 0xffb01  # x8 = 0xffb01000
+    258: 86840413  addi         x8, x8, -1944  # x8 = 0xffb00868 · riscv_local_mem + 0x868
+    25c: 00042383  lw           x7, 0(x8)  # riscv_local_mem + 0x868 · 0xffb00868
+    260: 00138393  addi         x7, x7, 1
+    264: 01039393  slli         x7, x7, 16
+    268: 0103d393  srli         x7, x7, 16
+    26c: ffb01437  lui          x8, 0xffb01  # x8 = 0xffb01000
+    270: 86840413  addi         x8, x8, -1944  # x8 = 0xffb00868 · riscv_local_mem + 0x868
+    274: 00742023  sw           x7, 0(x8)  # riscv_local_mem + 0x868 · 0xffb00868; write runtime value
+    278: ffb49437  lui          x8, 0xffb49  # x8 = 0xffb49000
+    27c: 02040413  addi         x8, x8, 32  # x8 = 0xffb49020
+    280: 00742023  sw           x7, 0(x8)  # 0xffb49020; write runtime value
+    284: 0ff0000f  fence        0xf, 0xf
+    288: ffb015b7  lui          x11, 0xffb01  # x11 = 0xffb01000
+    28c: 86458593  addi         x11, x11, -1948  # x11 = 0xffb00864 · riscv_local_mem + 0x864
+    290: 0005a383  lw           x7, 0(x11)  # riscv_local_mem + 0x864 · 0xffb00864
+    294: 00001437  lui          x8, 0x00001  # x8 = 0x00001000 · F32_TILE_BYTES · Wait.CFGEXU
+    298: 80040413  addi         x8, x8, -2048  # x8 = 0x00000800
+    29c: 008383b3  add          x7, x7, x8
+    2a0: 000144b7  lui          x9, 0x00014  # x9 = 0x00014000
+    2a4: 0093e663  bltu         x7, x9, 0x000002b0  # target 0x000002b0
+    2a8: 00001537  lui          x10, 0x00001  # x10 = 0x00001000 · F32_TILE_BYTES · Wait.CFGEXU
+    2ac: 40a383b3  sub          x7, x7, x10
+loc_2b0:
+    2b0: ffb015b7  lui          x11, 0xffb01  # x11 = 0xffb01000
+    2b4: 86458593  addi         x11, x11, -1948  # x11 = 0xffb00864 · riscv_local_mem + 0x864
+    2b8: 0075a023  sw           x7, 0(x11)  # riscv_local_mem + 0x864 · 0xffb00864; write runtime value
+    2bc: 00128293  addi         x5, x5, 1
+    2c0: f11ff06f  jal          x0, 0x000001d0  # target 0x000001d0
+loc_2c4:
+    2c4: 00000f93  addi         x31, x0, 0  # x31 = 0x00000000
+    2c8: 318000ef  jal          x1, 0x000005e0  # target 0x000005e0; x1 = 0x000002cc
+    2cc: 000a8213  addi         x4, x21, 0
+    2d0: 000b0293  addi         x5, x22, 0
+    2d4: 218000ef  jal          x1, 0x000004ec  # target 0x000004ec; x1 = 0x000002d8
+    2d8: 230000ef  jal          x1, 0x00000508  # target 0x00000508; x1 = 0x000002dc
+    2dc: 00017fb7  lui          x31, 0x00017  # x31 = 0x00017000
+    2e0: 800f8f93  addi         x31, x31, -2048  # x31 = 0x00016800
+    2e4: 00020f13  addi         x30, x4, 0
+    2e8: 00028e93  addi         x29, x5, 0
+    2ec: 238000ef  jal          x1, 0x00000524  # target 0x00000524; x1 = 0x000002f0
+    2f0: 1fc000ef  jal          x1, 0x000004ec  # target 0x000004ec; x1 = 0x000002f4
+    2f4: 214000ef  jal          x1, 0x00000508  # target 0x00000508; x1 = 0x000002f8
+    2f8: 00017237  lui          x4, 0x00017  # x4 = 0x00017000
+    2fc: 20000293  addi         x5, x0, 512  # x5 = 0x00000200
+loc_300:
+    300: 00022023  sw           x0, 0(x4)  # Address depends on runtime register values
+    304: 00022223  sw           x0, 4(x4)  # Address depends on runtime register values
+    308: 00022423  sw           x0, 8(x4)  # Address depends on runtime register values
+    30c: 00022623  sw           x0, 12(x4)  # Address depends on runtime register values
+    310: 00022823  sw           x0, 16(x4)  # Address depends on runtime register values
+    314: 00022a23  sw           x0, 20(x4)  # Address depends on runtime register values
+    318: 00022c23  sw           x0, 24(x4)  # Address depends on runtime register values
+    31c: 00022e23  sw           x0, 28(x4)  # Address depends on runtime register values
+    320: 02020213  addi         x4, x4, 32
+    324: ff828293  addi         x5, x5, -8
+    328: fc029ce3  bne          x5, x0, 0x00000300  # target 0x00000300
+    32c: 0000f2b7  lui          x5, 0x0000f  # x5 = 0x0000f000
+    330: 8e028293  addi         x5, x5, -1824  # x5 = 0x0000e8e0
+    334: 0002a203  lw           x4, 0(x5)  # param e2e_l0_v_rows; 0x0000e8e0
+    338: 00000293  addi         x5, x0, 0  # x5 = 0x00000000
+    33c: 00020313  addi         x6, x4, 0
+loc_340:
+    340: 0e62f863  bgeu         x5, x6, 0x00000430  # target 0x00000430
+    344: ffb015b7  lui          x11, 0xffb01  # x11 = 0xffb01000
+    348: 86858593  addi         x11, x11, -1944  # x11 = 0xffb00868 · riscv_local_mem + 0x868
+    34c: 0005a383  lw           x7, 0(x11)  # riscv_local_mem + 0x868 · 0xffb00868
+    350: 00100513  addi         x10, x0, 1  # x10 = 0x00000001
+loc_354:
+    354: ffb495b7  lui          x11, 0xffb49  # x11 = 0xffb49000
+    358: 02858593  addi         x11, x11, 40  # x11 = 0xffb49028
+    35c: 0005d403  lhu          x8, 0(x11)  # 0xffb49028
+    360: 407404b3  sub          x9, x8, x7
+    364: 01049493  slli         x9, x9, 16
+    368: 0104d493  srli         x9, x9, 16
+    36c: 00a4f663  bgeu         x9, x10, 0x00000378  # target 0x00000378
+    370: 0ff0000f  fence        0xf, 0xf
+    374: fe1ff06f  jal          x0, 0x00000354  # target 0x00000354
+loc_378:
+    378: 0ff0000f  fence        0xf, 0xf
+    37c: ffb015b7  lui          x11, 0xffb01  # x11 = 0xffb01000
+    380: 86458593  addi         x11, x11, -1948  # x11 = 0xffb00864 · riscv_local_mem + 0x864
+    384: 0005a383  lw           x7, 0(x11)  # riscv_local_mem + 0x864 · 0xffb00864
+    388: 0003d403  lhu          x8, 0(x7)  # Address depends on runtime register values
+    38c: 00f2f493  andi         x9, x5, 15
+    390: 00149493  slli         x9, x9, 1
+    394: 0102f593  andi         x11, x5, 16
+    398: 00559593  slli         x11, x11, 5
+    39c: 00b4e4b3  or           x9, x9, x11
+    3a0: 1e02f593  andi         x11, x5, 480
+    3a4: 00b4e4b3  or           x9, x9, x11
+    3a8: 0092d593  srli         x11, x5, 9
+    3ac: 00a59593  slli         x11, x11, 10
+    3b0: 00b4e4b3  or           x9, x9, x11
+    3b4: 00017537  lui          x10, 0x00017  # x10 = 0x00017000
+    3b8: 00950533  add          x10, x10, x9
+    3bc: 00851023  sh           x8, 0(x10)  # Address depends on runtime register values
+    3c0: ffb01437  lui          x8, 0xffb01  # x8 = 0xffb01000
+    3c4: 86840413  addi         x8, x8, -1944  # x8 = 0xffb00868 · riscv_local_mem + 0x868
+    3c8: 00042383  lw           x7, 0(x8)  # riscv_local_mem + 0x868 · 0xffb00868
+    3cc: 00138393  addi         x7, x7, 1
+    3d0: 01039393  slli         x7, x7, 16
+    3d4: 0103d393  srli         x7, x7, 16
+    3d8: ffb01437  lui          x8, 0xffb01  # x8 = 0xffb01000
+    3dc: 86840413  addi         x8, x8, -1944  # x8 = 0xffb00868 · riscv_local_mem + 0x868
+    3e0: 00742023  sw           x7, 0(x8)  # riscv_local_mem + 0x868 · 0xffb00868; write runtime value
+    3e4: ffb49437  lui          x8, 0xffb49  # x8 = 0xffb49000
+    3e8: 02040413  addi         x8, x8, 32  # x8 = 0xffb49020
+    3ec: 00742023  sw           x7, 0(x8)  # 0xffb49020; write runtime value
+    3f0: 0ff0000f  fence        0xf, 0xf
+    3f4: ffb015b7  lui          x11, 0xffb01  # x11 = 0xffb01000
+    3f8: 86458593  addi         x11, x11, -1948  # x11 = 0xffb00864 · riscv_local_mem + 0x864
+    3fc: 0005a383  lw           x7, 0(x11)  # riscv_local_mem + 0x864 · 0xffb00864
+    400: 00001437  lui          x8, 0x00001  # x8 = 0x00001000 · F32_TILE_BYTES · Wait.CFGEXU
+    404: 80040413  addi         x8, x8, -2048  # x8 = 0x00000800
+    408: 008383b3  add          x7, x7, x8
+    40c: 000144b7  lui          x9, 0x00014  # x9 = 0x00014000
+    410: 0093e663  bltu         x7, x9, 0x0000041c  # target 0x0000041c
+    414: 00001537  lui          x10, 0x00001  # x10 = 0x00001000 · F32_TILE_BYTES · Wait.CFGEXU
+    418: 40a383b3  sub          x7, x7, x10
+loc_41c:
+    41c: ffb015b7  lui          x11, 0xffb01  # x11 = 0xffb01000
+    420: 86458593  addi         x11, x11, -1948  # x11 = 0xffb00864 · riscv_local_mem + 0x864
+    424: 0075a023  sw           x7, 0(x11)  # riscv_local_mem + 0x864 · 0xffb00864; write runtime value
+    428: 00128293  addi         x5, x5, 1
+    42c: f15ff06f  jal          x0, 0x00000340  # target 0x00000340
+loc_430:
+    430: 00000f93  addi         x31, x0, 0  # x31 = 0x00000000
+    434: 234000ef  jal          x1, 0x00000668  # target 0x00000668; x1 = 0x00000438
+    438: 000a8213  addi         x4, x21, 0
+    43c: 000b0293  addi         x5, x22, 0
+    440: 0ac000ef  jal          x1, 0x000004ec  # target 0x000004ec; x1 = 0x00000444
+    444: 0c4000ef  jal          x1, 0x00000508  # target 0x00000508; x1 = 0x00000448
+    448: 00017fb7  lui          x31, 0x00017  # x31 = 0x00017000
+    44c: 00020f13  addi         x30, x4, 0
+    450: 00028e93  addi         x29, x5, 0
+    454: 0d0000ef  jal          x1, 0x00000524  # target 0x00000524; x1 = 0x00000458
+    458: 094000ef  jal          x1, 0x000004ec  # target 0x000004ec; x1 = 0x0000045c
+    45c: 0ac000ef  jal          x1, 0x00000508  # target 0x00000508; x1 = 0x00000460
+    460: 2900006f  jal          x0, 0x000006f0  # target 0x000006f0
+loc_464:
+    464: 0000fab7  lui          x21, 0x0000f  # x21 = 0x0000f000
+    468: 8c0a8a93  addi         x21, x21, -1856  # x21 = 0x0000e8c0
+    46c: 000aaa03  lw           x20, 0(x21)  # param e2e_q_compact; 0x0000e8c0
+    470: 007a7d13  andi         x26, x20, 7
+    474: ff8a7a13  andi         x20, x20, -8
+    478: 01af8ab3  add          x21, x31, x26
+    47c: 007afb93  andi         x23, x21, 7
+    480: 003ada93  srli         x21, x21, 3
+    484: 00ba9a93  slli         x21, x21, 11
+    488: 014a8ab3  add          x21, x21, x20
+    48c: 00000b17  auipc        x22, 0x00000  # x22 = 0x0000048c
+    490: 030b0b13  addi         x22, x22, 48  # x22 = 0x000004bc
+    494: 0000feb7  lui          x29, 0x0000f  # x29 = 0x0000f000
+    498: 8e4e8e93  addi         x29, x29, -1820  # x29 = 0x0000e8e4
+    49c: 000ead83  lw           x27, 0(x29)  # param dram_port; 0x0000e8e4
+    4a0: 01000e13  addi         x28, x0, 16  # x28 = 0x00000010
+    4a4: 03cd8db3  mul          x27, x27, x28
+    4a8: 01bb0b33  add          x22, x22, x27
+    4ac: 001b9b93  slli         x23, x23, 1
+    4b0: 017b0b33  add          x22, x22, x23
+    4b4: 000b5b03  lhu          x22, 0(x22)  # Address depends on runtime register values
+    4b8: 00008067  jalr         x0, 0(x1)
+    4bc: 04110391  PACR         CfgContext=0, RowPadZero=1, DstAccessMode=0, AddrMode=0, AddrCntContext=2, ZeroWrite=0, ReadIntfSel=0, OvrdThreadId=1, Concat=6, CtxtCtrl=1, Flush=0, Last=0  # Unreachable by statically known control flow
+    4c0: 05510511  PACR         CfgContext=2, RowPadZero=5, DstAccessMode=0, AddrMode=0, AddrCntContext=2, ZeroWrite=0, ReadIntfSel=1, OvrdThreadId=0, Concat=4, CtxtCtrl=1, Flush=0, Last=0  # Unreachable by statically known control flow
+    4c4: 03d20352  SFPNOT       imm12_math=3912, lreg_c=0, lreg_dest=13, instr_mod1=4  # lreg_c: L0; lreg_dest: L13; Unreachable by statically known control flow
+    4c8: 05920512  SFPLZ        imm12_math=1608, lreg_c=1, lreg_dest=4, instr_mod1=4  # lreg_c: L1; lreg_dest: L4; Unreachable by statically known control flow
+    4cc: 04510351  PACR         CfgContext=0, RowPadZero=5, DstAccessMode=0, AddrMode=0, AddrCntContext=2, ZeroWrite=0, ReadIntfSel=0, OvrdThreadId=1, Concat=5, CtxtCtrl=1, Flush=0, Last=0  # Unreachable by statically known control flow
+    4d0: 05910491  PACR         CfgContext=3, RowPadZero=1, DstAccessMode=0, AddrMode=0, AddrCntContext=2, ZeroWrite=0, ReadIntfSel=1, OvrdThreadId=0, Concat=2, CtxtCtrl=1, Flush=0, Last=0  # Unreachable by statically known control flow
+    4d4: 04520312  SFPLZ        imm12_math=328, lreg_c=0, lreg_dest=12, instr_mod1=4  # lreg_c: L0; lreg_dest: L12; Unreachable by statically known control flow
+    4d8: 055204d2  SFPLZ        imm12_math=1352, lreg_c=1, lreg_dest=3, instr_mod1=4  # lreg_c: L1; lreg_dest: L3; Unreachable by statically known control flow
+    4dc: 03d10311  XMOV         Mov_block_selection=1, Last=7618756  # Unreachable by statically known control flow
+    4e0: 05d104d1  PACR         CfgContext=3, RowPadZero=5, DstAccessMode=0, AddrMode=0, AddrCntContext=2, ZeroWrite=0, ReadIntfSel=1, OvrdThreadId=0, Concat=3, CtxtCtrl=1, Flush=0, Last=0  # Unreachable by statically known control flow
+    4e4: 04120392  SFPLZ        imm12_math=72, lreg_c=0, lreg_dest=14, instr_mod1=4  # lreg_c: L0; lreg_dest: L14; Unreachable by statically known control flow
+    4e8: 05d20492  SFPLZ        imm12_math=1864, lreg_c=1, lreg_dest=2, instr_mod1=4  # lreg_c: L1; lreg_dest: L2; Unreachable by statically known control flow
+loc_4ec:
+    4ec: ffb30ab7  lui          x21, 0xffb30  # x21 = 0xffb30000 · noc1_regs + 0x0
+    4f0: 284a8a93  addi         x21, x21, 644  # x21 = 0xffb30284 · noc1_regs + 0x284
+    4f4: 000aaa03  lw           x20, 0(x21)  # noc1_regs + 0x284 · 0xffb30284
+    4f8: 000a0463  beq          x20, x0, 0x00000500  # target 0x00000500
+    4fc: ff1ff06f  jal          x0, 0x000004ec  # target 0x000004ec
+loc_500:
+    500: 0ff0000f  fence        0xf, 0xf
+    504: 00008067  jalr         x0, 0(x1)
+loc_508:
+    508: ffb30ab7  lui          x21, 0xffb30  # x21 = 0xffb30000 · noc1_regs + 0x0
+    50c: 244a8a93  addi         x21, x21, 580  # x21 = 0xffb30244 · noc1_regs + 0x244
+    510: 000aaa03  lw           x20, 0(x21)  # noc1_regs + 0x244 · 0xffb30244
+    514: 000a0463  beq          x20, x0, 0x0000051c  # target 0x0000051c
+    518: ff1ff06f  jal          x0, 0x00000508  # target 0x00000508
+loc_51c:
+    51c: 0ff0000f  fence        0xf, 0xf
+    520: 00008067  jalr         x0, 0(x1)
+loc_524:
+    524: ffb30ab7  lui          x21, 0xffb30  # x21 = 0xffb30000 · noc1_regs + 0x0
+    528: 284a8a93  addi         x21, x21, 644  # x21 = 0xffb30284 · noc1_regs + 0x284
+    52c: 000aaa03  lw           x20, 0(x21)  # noc1_regs + 0x284 · 0xffb30284
+    530: 08100a93  addi         x21, x0, 129  # x21 = 0x00000081
+    534: 015a6463  bltu         x20, x21, 0x0000053c  # target 0x0000053c
+    538: fedff06f  jal          x0, 0x00000524  # target 0x00000524
+loc_53c:
+    53c: ffb30ab7  lui          x21, 0xffb30  # x21 = 0xffb30000 · noc1_regs + 0x0
+    540: 244a8a93  addi         x21, x21, 580  # x21 = 0xffb30244 · noc1_regs + 0x244
+    544: 000aaa03  lw           x20, 0(x21)  # noc1_regs + 0x244 · 0xffb30244
+    548: 08100a93  addi         x21, x0, 129  # x21 = 0x00000081
+    54c: 015a6463  bltu         x20, x21, 0x00000554  # target 0x00000554
+    550: fedff06f  jal          x0, 0x0000053c  # target 0x0000053c
+loc_554:
+    554: ffb30ab7  lui          x21, 0xffb30  # x21 = 0xffb30000 · noc1_regs + 0x0
+    558: 148a8a93  addi         x21, x21, 328  # x21 = 0xffb30148 · noc1_regs + 0x148
+    55c: 000aaa03  lw           x20, 0(x21)  # noc1_regs + 0x148 · 0xffb30148
+    560: 014a1a13  slli         x20, x20, 20
+    564: 014a5a13  srli         x20, x20, 20
+    568: ffb30ab7  lui          x21, 0xffb30  # x21 = 0xffb30000 · noc1_regs + 0x0
+loc_56c:
+    56c: 040aab03  lw           x22, 64(x21)  # noc1_regs + 0x40 · 0xffb30040
+    570: 000b0463  beq          x22, x0, 0x00000578  # target 0x00000578
+    574: ff9ff06f  jal          x0, 0x0000056c  # target 0x0000056c
+loc_578:
+    578: ffb30bb7  lui          x23, 0xffb30  # x23 = 0xffb30000 · noc1_regs + 0x0
+    57c: 01fba023  sw           x31, 0(x23)  # noc1_regs + 0x0 · 0xffb30000; write runtime value
+    580: 000ba223  sw           x0, 4(x23)  # noc1_regs + 0x4 · 0xffb30004; write 0x00000000
+    584: 014ba423  sw           x20, 8(x23)  # noc1_regs + 0x8 · 0xffb30008; write runtime value
+    588: 01eba623  sw           x30, 12(x23)  # noc1_regs + 0xc · 0xffb3000c; write runtime value
+    58c: 000ba823  sw           x0, 16(x23)  # noc1_regs + 0x10 · 0xffb30010; write 0x00000000
+    590: 01dbaa23  sw           x29, 20(x23)  # noc1_regs + 0x14 · 0xffb30014; write runtime value
+    594: 40000c13  addi         x24, x0, 1024  # x24 = 0x00000400
+    598: 018bac23  sw           x24, 24(x23)  # noc1_regs + 0x18 · 0xffb30018; write 0x00000400
+    59c: 00002c37  lui          x24, 0x00002  # x24 = 0x00002000
+    5a0: 092c0c13  addi         x24, x24, 146  # x24 = 0x00002092
+    5a4: 018bae23  sw           x24, 28(x23)  # noc1_regs + 0x1c · 0xffb3001c; write 0x00002092
+    5a8: 00001c37  lui          x24, 0x00001  # x24 = 0x00001000 · F32_TILE_BYTES · Wait.CFGEXU
+    5ac: 800c0c13  addi         x24, x24, -2048  # x24 = 0x00000800
+    5b0: 038ba023  sw           x24, 32(x23)  # noc1_regs + 0x20 · 0xffb30020; write 0x00000800
+    5b4: 020ba223  sw           x0, 36(x23)  # noc1_regs + 0x24 · 0xffb30024; write 0x00000000
+    5b8: 020ba423  sw           x0, 40(x23)  # noc1_regs + 0x28 · 0xffb30028; write 0x00000000
+    5bc: 020ba623  sw           x0, 44(x23)  # noc1_regs + 0x2c · 0xffb3002c; write 0x00000000
+    5c0: ffb30bb7  lui          x23, 0xffb30  # x23 = 0xffb30000 · noc1_regs + 0x0
+    5c4: 040b8b93  addi         x23, x23, 64  # x23 = 0xffb30040 · noc1_regs + 0x40
+    5c8: 00100c13  addi         x24, x0, 1  # x24 = 0x00000001
+    5cc: 018ba023  sw           x24, 0(x23)  # noc1_regs + 0x40 · 0xffb30040; write 0x00000001
+loc_5d0:
+    5d0: 040aab03  lw           x22, 64(x21)  # noc1_regs + 0x40 · 0xffb30040
+    5d4: 000b0463  beq          x22, x0, 0x000005dc  # target 0x000005dc
+    5d8: ff9ff06f  jal          x0, 0x000005d0  # target 0x000005d0
+loc_5dc:
+    5dc: 00008067  jalr         x0, 0(x1)
+loc_5e0:
+    5e0: 0000fab7  lui          x21, 0x0000f  # x21 = 0x0000f000
+    5e4: 8c8a8a93  addi         x21, x21, -1848  # x21 = 0x0000e8c8
+    5e8: 000aaa03  lw           x20, 0(x21)  # param e2e_k_compact; 0x0000e8c8
+    5ec: 007a7d13  andi         x26, x20, 7
+    5f0: ff8a7a13  andi         x20, x20, -8
+    5f4: 01af8ab3  add          x21, x31, x26
+    5f8: 007afb93  andi         x23, x21, 7
+    5fc: 003ada93  srli         x21, x21, 3
+    600: 00ba9a93  slli         x21, x21, 11
+    604: 014a8ab3  add          x21, x21, x20
+    608: 00000b17  auipc        x22, 0x00000  # x22 = 0x00000608
+    60c: 030b0b13  addi         x22, x22, 48  # x22 = 0x00000638
+    610: 0000feb7  lui          x29, 0x0000f  # x29 = 0x0000f000
+    614: 8e4e8e93  addi         x29, x29, -1820  # x29 = 0x0000e8e4
+    618: 000ead83  lw           x27, 0(x29)  # param dram_port; 0x0000e8e4
+    61c: 01000e13  addi         x28, x0, 16  # x28 = 0x00000010
+    620: 03cd8db3  mul          x27, x27, x28
+    624: 01bb0b33  add          x22, x22, x27
+    628: 001b9b93  slli         x23, x23, 1
+    62c: 017b0b33  add          x22, x22, x23
+    630: 000b5b03  lhu          x22, 0(x22)  # Address depends on runtime register values
+    634: 00008067  jalr         x0, 0(x1)
+    638: 04110391  PACR         CfgContext=0, RowPadZero=1, DstAccessMode=0, AddrMode=0, AddrCntContext=2, ZeroWrite=0, ReadIntfSel=0, OvrdThreadId=1, Concat=6, CtxtCtrl=1, Flush=0, Last=0  # Unreachable by statically known control flow
+    63c: 05510511  PACR         CfgContext=2, RowPadZero=5, DstAccessMode=0, AddrMode=0, AddrCntContext=2, ZeroWrite=0, ReadIntfSel=1, OvrdThreadId=0, Concat=4, CtxtCtrl=1, Flush=0, Last=0  # Unreachable by statically known control flow
+    640: 03d20352  SFPNOT       imm12_math=3912, lreg_c=0, lreg_dest=13, instr_mod1=4  # lreg_c: L0; lreg_dest: L13; Unreachable by statically known control flow
+    644: 05920512  SFPLZ        imm12_math=1608, lreg_c=1, lreg_dest=4, instr_mod1=4  # lreg_c: L1; lreg_dest: L4; Unreachable by statically known control flow
+    648: 04510351  PACR         CfgContext=0, RowPadZero=5, DstAccessMode=0, AddrMode=0, AddrCntContext=2, ZeroWrite=0, ReadIntfSel=0, OvrdThreadId=1, Concat=5, CtxtCtrl=1, Flush=0, Last=0  # Unreachable by statically known control flow
+    64c: 05910491  PACR         CfgContext=3, RowPadZero=1, DstAccessMode=0, AddrMode=0, AddrCntContext=2, ZeroWrite=0, ReadIntfSel=1, OvrdThreadId=0, Concat=2, CtxtCtrl=1, Flush=0, Last=0  # Unreachable by statically known control flow
+    650: 04520312  SFPLZ        imm12_math=328, lreg_c=0, lreg_dest=12, instr_mod1=4  # lreg_c: L0; lreg_dest: L12; Unreachable by statically known control flow
+    654: 055204d2  SFPLZ        imm12_math=1352, lreg_c=1, lreg_dest=3, instr_mod1=4  # lreg_c: L1; lreg_dest: L3; Unreachable by statically known control flow
+    658: 03d10311  XMOV         Mov_block_selection=1, Last=7618756  # Unreachable by statically known control flow
+    65c: 05d104d1  PACR         CfgContext=3, RowPadZero=5, DstAccessMode=0, AddrMode=0, AddrCntContext=2, ZeroWrite=0, ReadIntfSel=1, OvrdThreadId=0, Concat=3, CtxtCtrl=1, Flush=0, Last=0  # Unreachable by statically known control flow
+    660: 04120392  SFPLZ        imm12_math=72, lreg_c=0, lreg_dest=14, instr_mod1=4  # lreg_c: L0; lreg_dest: L14; Unreachable by statically known control flow
+    664: 05d20492  SFPLZ        imm12_math=1864, lreg_c=1, lreg_dest=2, instr_mod1=4  # lreg_c: L1; lreg_dest: L2; Unreachable by statically known control flow
+loc_668:
+    668: 0000fab7  lui          x21, 0x0000f  # x21 = 0x0000f000
+    66c: 8d0a8a93  addi         x21, x21, -1840  # x21 = 0x0000e8d0
+    670: 000aaa03  lw           x20, 0(x21)  # param e2e_v_compact; 0x0000e8d0
+    674: 007a7d13  andi         x26, x20, 7
+    678: ff8a7a13  andi         x20, x20, -8
+    67c: 01af8ab3  add          x21, x31, x26
+    680: 007afb93  andi         x23, x21, 7
+    684: 003ada93  srli         x21, x21, 3
+    688: 00ba9a93  slli         x21, x21, 11
+    68c: 014a8ab3  add          x21, x21, x20
+    690: 00000b17  auipc        x22, 0x00000  # x22 = 0x00000690
+    694: 030b0b13  addi         x22, x22, 48  # x22 = 0x000006c0
+    698: 0000feb7  lui          x29, 0x0000f  # x29 = 0x0000f000
+    69c: 8e4e8e93  addi         x29, x29, -1820  # x29 = 0x0000e8e4
+    6a0: 000ead83  lw           x27, 0(x29)  # param dram_port; 0x0000e8e4
+    6a4: 01000e13  addi         x28, x0, 16  # x28 = 0x00000010
+    6a8: 03cd8db3  mul          x27, x27, x28
+    6ac: 01bb0b33  add          x22, x22, x27
+    6b0: 001b9b93  slli         x23, x23, 1
+    6b4: 017b0b33  add          x22, x22, x23
+    6b8: 000b5b03  lhu          x22, 0(x22)  # Address depends on runtime register values
+    6bc: 00008067  jalr         x0, 0(x1)
+    6c0: 04110391  PACR         CfgContext=0, RowPadZero=1, DstAccessMode=0, AddrMode=0, AddrCntContext=2, ZeroWrite=0, ReadIntfSel=0, OvrdThreadId=1, Concat=6, CtxtCtrl=1, Flush=0, Last=0  # Unreachable by statically known control flow
+    6c4: 05510511  PACR         CfgContext=2, RowPadZero=5, DstAccessMode=0, AddrMode=0, AddrCntContext=2, ZeroWrite=0, ReadIntfSel=1, OvrdThreadId=0, Concat=4, CtxtCtrl=1, Flush=0, Last=0  # Unreachable by statically known control flow
+    6c8: 03d20352  SFPNOT       imm12_math=3912, lreg_c=0, lreg_dest=13, instr_mod1=4  # lreg_c: L0; lreg_dest: L13; Unreachable by statically known control flow
+    6cc: 05920512  SFPLZ        imm12_math=1608, lreg_c=1, lreg_dest=4, instr_mod1=4  # lreg_c: L1; lreg_dest: L4; Unreachable by statically known control flow
+    6d0: 04510351  PACR         CfgContext=0, RowPadZero=5, DstAccessMode=0, AddrMode=0, AddrCntContext=2, ZeroWrite=0, ReadIntfSel=0, OvrdThreadId=1, Concat=5, CtxtCtrl=1, Flush=0, Last=0  # Unreachable by statically known control flow
+    6d4: 05910491  PACR         CfgContext=3, RowPadZero=1, DstAccessMode=0, AddrMode=0, AddrCntContext=2, ZeroWrite=0, ReadIntfSel=1, OvrdThreadId=0, Concat=2, CtxtCtrl=1, Flush=0, Last=0  # Unreachable by statically known control flow
+    6d8: 04520312  SFPLZ        imm12_math=328, lreg_c=0, lreg_dest=12, instr_mod1=4  # lreg_c: L0; lreg_dest: L12; Unreachable by statically known control flow
+    6dc: 055204d2  SFPLZ        imm12_math=1352, lreg_c=1, lreg_dest=3, instr_mod1=4  # lreg_c: L1; lreg_dest: L3; Unreachable by statically known control flow
+    6e0: 03d10311  XMOV         Mov_block_selection=1, Last=7618756  # Unreachable by statically known control flow
+    6e4: 05d104d1  PACR         CfgContext=3, RowPadZero=5, DstAccessMode=0, AddrMode=0, AddrCntContext=2, ZeroWrite=0, ReadIntfSel=1, OvrdThreadId=0, Concat=3, CtxtCtrl=1, Flush=0, Last=0  # Unreachable by statically known control flow
+    6e8: 04120392  SFPLZ        imm12_math=72, lreg_c=0, lreg_dest=14, instr_mod1=4  # lreg_c: L0; lreg_dest: L14; Unreachable by statically known control flow
+    6ec: 05d20492  SFPLZ        imm12_math=1864, lreg_c=1, lreg_dest=2, instr_mod1=4  # lreg_c: L1; lreg_dest: L2; Unreachable by statically known control flow
+    6f0:           j FW_NCRISC+4   # return to firmware, linked at install

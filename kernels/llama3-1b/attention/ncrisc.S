@@ -1,533 +1,534 @@
 # llama3 1b decode: attention, ncrisc. Exported from blackhole-py/examples/llama3/kernels.py by tools/rewrite_export/export_llama3.py.
-# cores (16): 1,2 1,3 1,4 1,5 1,6 1,7 1,8 1,9 1,10 1,11 2,2 2,3 2,4 2,5 2,6 2,7
-# params: 0x780=e2e_q_heads, 0x784=e2e_l0_key_cache, 0x788=e2e_l0_value_cache, 0x78c=e2e_context, 0x790=kv_blocks, 0x794=valid_columns, 0x798=attention_e2e_q_compact, 0x79c=attention_e2e_k_compact, 0x7a0=attention_e2e_v_compact, 0x7a4=e2e_rope_cos, 0x7a8=e2e_rope_sin, 0x7ac=start_pos, 0xe900=attention_core
+# cores (96): 1,2 1,3 1,4 1,5 1,6 1,7 1,8 1,9 1,10 1,11 2,2 2,3 2,4 2,5 2,6 2,7 2,8 2,9 2,10 2,11 3,2 3,3 3,4 3,5 3,6 3,7 3,8 3,9 3,10 3,11 4,2 4,3 4,4 4,5 4,6 4,7 4,8 4,9 4,10 4,11 5,2 5,3 5,4 5,5 5,6 5,7 5,8 5,9 5,10 5,11 6,2 6,3 6,4 6,5 6,6 6,7 6,8 6,9 6,10 6,11 7,2 7,3 7,4 7,5 7,6 7,7 7,8 7,9 7,10 7,11 10,2 10,3 10,4 10,5 10,6 10,7 10,8 10,9 10,10 10,11 11,2 11,3 11,4 11,5 11,6 11,7 11,8 11,9 11,10 11,11 12,2 12,3 12,4 12,5 12,6 12,7
+# params: 0x780=e2e_q_heads, 0x784=e2e_l0_key_cache, 0x788=e2e_l0_value_cache, 0x78c=e2e_context, 0x790=kv_blocks, 0x794=valid_columns, 0x798=attention_e2e_q_compact, 0x79c=attention_e2e_k_compact, 0x7a0=attention_e2e_v_compact, 0x7a4=e2e_rope_cos, 0x7a8=e2e_rope_sin, 0x7ac=start_pos, 0xe900=e2e_attention_partials, 0xe904=attention_core, 0xe908=attention_phase
 #   0x780.. uniform, sent with every EXEC; 0xe840.. this core's resident per-core table
 # pcs are offsets from the image start; position-independent, llama3.py runs it from either code slot.
 
       0: ffb01237  lui          x4, 0xffb01  # x4 = 0xffb01000
       4: 86420213  addi         x4, x4, -1948  # x4 = 0xffb00864 · riscv_local_mem + 0x864
-      8: 0001a2b7  lui          x5, 0x0001a  # x5 = 0x0001a000
-      c: fc028293  addi         x5, x5, -64  # x5 = 0x00019fc0
-     10: 00522023  sw           x5, 0(x4)  # riscv_local_mem + 0x864 · 0xffb00864; write 0x00019fc0
+      8: 0001b2b7  lui          x5, 0x0001b  # x5 = 0x0001b000
+      c: 80028293  addi         x5, x5, -2048  # x5 = 0x0001a800
+     10: 00522023  sw           x5, 0(x4)  # riscv_local_mem + 0x864 · 0xffb00864; write 0x0001a800
      14: ffb01237  lui          x4, 0xffb01  # x4 = 0xffb01000
      18: 86820213  addi         x4, x4, -1944  # x4 = 0xffb00868 · riscv_local_mem + 0x868
      1c: 00022023  sw           x0, 0(x4)  # riscv_local_mem + 0x868 · 0xffb00868; write 0x00000000
      20: ffb01237  lui          x4, 0xffb01  # x4 = 0xffb01000
      24: 86c20213  addi         x4, x4, -1940  # x4 = 0xffb0086c · riscv_local_mem + 0x86c
-     28: 0001a2b7  lui          x5, 0x0001a  # x5 = 0x0001a000
-     2c: 7c028293  addi         x5, x5, 1984  # x5 = 0x0001a7c0
-     30: 00522023  sw           x5, 0(x4)  # riscv_local_mem + 0x86c · 0xffb0086c; write 0x0001a7c0
-     34: ffb01237  lui          x4, 0xffb01  # x4 = 0xffb01000
-     38: 87020213  addi         x4, x4, -1936  # x4 = 0xffb00870 · riscv_local_mem + 0x870
-     3c: 00022023  sw           x0, 0(x4)  # riscv_local_mem + 0x870 · 0xffb00870; write 0x00000000
-     40: ffb01237  lui          x4, 0xffb01  # x4 = 0xffb01000
-     44: 87420213  addi         x4, x4, -1932  # x4 = 0xffb00874 · riscv_local_mem + 0x874
-     48: 000172b7  lui          x5, 0x00017  # x5 = 0x00017000
-     4c: fc028293  addi         x5, x5, -64  # x5 = 0x00016fc0
-     50: 00522023  sw           x5, 0(x4)  # riscv_local_mem + 0x874 · 0xffb00874; write 0x00016fc0
-     54: ffb01237  lui          x4, 0xffb01  # x4 = 0xffb01000
-     58: 87820213  addi         x4, x4, -1928  # x4 = 0xffb00878 · riscv_local_mem + 0x878
-     5c: 00022023  sw           x0, 0(x4)  # riscv_local_mem + 0x878 · 0xffb00878; write 0x00000000
-     60: ffb01437  lui          x8, 0xffb01  # x8 = 0xffb01000
-     64: 86840413  addi         x8, x8, -1944  # x8 = 0xffb00868 · riscv_local_mem + 0x868
-     68: 00042203  lw           x4, 0(x8)  # riscv_local_mem + 0x868 · 0xffb00868
-     6c: 00100393  addi         x7, x0, 1  # x7 = 0x00000001
-loc_70:
-     70: ffb50437  lui          x8, 0xffb50  # x8 = 0xffb50000
-     74: 02840413  addi         x8, x8, 40  # x8 = 0xffb50028
-     78: 00045283  lhu          x5, 0(x8)  # 0xffb50028
-     7c: 40428333  sub          x6, x5, x4
-     80: 01031313  slli         x6, x6, 16
-     84: 01035313  srli         x6, x6, 16
-     88: 00737663  bgeu         x6, x7, 0x00000094  # target 0x00000094
-     8c: 0ff0000f  fence        0xf, 0xf
-     90: fe1ff06f  jal          x0, 0x00000070  # target 0x00000070
-loc_94:
-     94: 0ff0000f  fence        0xf, 0xf
-     98: 0000f237  lui          x4, 0x0000f  # x4 = 0x0000f000
-     9c: fc020213  addi         x4, x4, -64  # x4 = 0x0000efc0
-     a0: 40000293  addi         x5, x0, 1024  # x5 = 0x00000400
-loc_a4:
-     a4: 00022023  sw           x0, 0(x4)  # Address depends on runtime register values
-     a8: 00022223  sw           x0, 4(x4)  # Address depends on runtime register values
-     ac: 00022423  sw           x0, 8(x4)  # Address depends on runtime register values
-     b0: 00022623  sw           x0, 12(x4)  # Address depends on runtime register values
-     b4: 00022823  sw           x0, 16(x4)  # Address depends on runtime register values
-     b8: 00022a23  sw           x0, 20(x4)  # Address depends on runtime register values
-     bc: 00022c23  sw           x0, 24(x4)  # Address depends on runtime register values
-     c0: 00022e23  sw           x0, 28(x4)  # Address depends on runtime register values
-     c4: 02020213  addi         x4, x4, 32
-     c8: ff828293  addi         x5, x5, -8
-     cc: fc029ce3  bne          x5, x0, 0x000000a4  # target 0x000000a4
-     d0: 0001afb7  lui          x31, 0x0001a  # x31 = 0x0001a000
-     d4: fc0f8f93  addi         x31, x31, -64  # x31 = 0x00019fc0
-     d8: 0000ff37  lui          x30, 0x0000f  # x30 = 0x0000f000
-     dc: fc0f0f13  addi         x30, x30, -64  # x30 = 0x0000efc0
-     e0: 00800e93  addi         x29, x0, 8  # x29 = 0x00000008
-     e4: 50c000ef  jal          x1, 0x000005f0  # target 0x000005f0; x1 = 0x000000e8
-     e8: 0001afb7  lui          x31, 0x0001a  # x31 = 0x0001a000
-     ec: fe0f8f93  addi         x31, x31, -32  # x31 = 0x00019fe0
-     f0: 0000ff37  lui          x30, 0x0000f  # x30 = 0x0000f000
-     f4: 1c0f0f13  addi         x30, x30, 448  # x30 = 0x0000f1c0
-     f8: 00800e93  addi         x29, x0, 8  # x29 = 0x00000008
-     fc: 4f4000ef  jal          x1, 0x000005f0  # target 0x000005f0; x1 = 0x00000100
-    100: 0001afb7  lui          x31, 0x0001a  # x31 = 0x0001a000
+     28: 0001b2b7  lui          x5, 0x0001b  # x5 = 0x0001b000
+     2c: 00522023  sw           x5, 0(x4)  # riscv_local_mem + 0x86c · 0xffb0086c; write 0x0001b000
+     30: ffb01237  lui          x4, 0xffb01  # x4 = 0xffb01000
+     34: 87020213  addi         x4, x4, -1936  # x4 = 0xffb00870 · riscv_local_mem + 0x870
+     38: 00022023  sw           x0, 0(x4)  # riscv_local_mem + 0x870 · 0xffb00870; write 0x00000000
+     3c: ffb01237  lui          x4, 0xffb01  # x4 = 0xffb01000
+     40: 87420213  addi         x4, x4, -1932  # x4 = 0xffb00874 · riscv_local_mem + 0x874
+     44: 000152b7  lui          x5, 0x00015  # x5 = 0x00015000
+     48: 80028293  addi         x5, x5, -2048  # x5 = 0x00014800
+     4c: 00522023  sw           x5, 0(x4)  # riscv_local_mem + 0x874 · 0xffb00874; write 0x00014800
+     50: ffb01237  lui          x4, 0xffb01  # x4 = 0xffb01000
+     54: 87820213  addi         x4, x4, -1928  # x4 = 0xffb00878 · riscv_local_mem + 0x878
+     58: 00022023  sw           x0, 0(x4)  # riscv_local_mem + 0x878 · 0xffb00878; write 0x00000000
+     5c: 0000f337  lui          x6, 0x0000f  # x6 = 0x0000f000
+     60: 90830313  addi         x6, x6, -1784  # x6 = 0x0000e908
+     64: 00032203  lw           x4, 0(x6)  # param attention_phase; 0x0000e908
+     68: 79000413  addi         x8, x0, 1936  # x8 = 0x00000790
+     6c: 00042303  lw           x6, 0(x8)  # param kv_blocks; 0x00000790
+     70: 00100293  addi         x5, x0, 1  # x5 = 0x00000001
+     74: 00400393  addi         x7, x0, 4  # x7 = 0x00000004
+     78: 0063fa63  bgeu         x7, x6, 0x0000008c  # target 0x0000008c
+     7c: 00400293  addi         x5, x0, 4  # x5 = 0x00000004
+     80: 08000393  addi         x7, x0, 128  # x7 = 0x00000080
+     84: 0063f463  bgeu         x7, x6, 0x0000008c  # target 0x0000008c
+     88: 00c00293  addi         x5, x0, 12  # x5 = 0x0000000c
+loc_8c:
+     8c: 5a527663  bgeu         x4, x5, 0x00000638  # target 0x00000638
+     90: ffb01437  lui          x8, 0xffb01  # x8 = 0xffb01000
+     94: 86840413  addi         x8, x8, -1944  # x8 = 0xffb00868 · riscv_local_mem + 0x868
+     98: 00042203  lw           x4, 0(x8)  # riscv_local_mem + 0x868 · 0xffb00868
+     9c: 00100393  addi         x7, x0, 1  # x7 = 0x00000001
+loc_a0:
+     a0: ffb4e437  lui          x8, 0xffb4e  # x8 = 0xffb4e000
+     a4: 02840413  addi         x8, x8, 40  # x8 = 0xffb4e028
+     a8: 00045283  lhu          x5, 0(x8)  # 0xffb4e028
+     ac: 40428333  sub          x6, x5, x4
+     b0: 01031313  slli         x6, x6, 16
+     b4: 01035313  srli         x6, x6, 16
+     b8: 00737663  bgeu         x6, x7, 0x000000c4  # target 0x000000c4
+     bc: 0ff0000f  fence        0xf, 0xf
+     c0: fe1ff06f  jal          x0, 0x000000a0  # target 0x000000a0
+loc_c4:
+     c4: 0ff0000f  fence        0xf, 0xf
+     c8: 0000f237  lui          x4, 0x0000f  # x4 = 0x0000f000
+     cc: 40000293  addi         x5, x0, 1024  # x5 = 0x00000400
+loc_d0:
+     d0: 00022023  sw           x0, 0(x4)  # Address depends on runtime register values
+     d4: 00022223  sw           x0, 4(x4)  # Address depends on runtime register values
+     d8: 00022423  sw           x0, 8(x4)  # Address depends on runtime register values
+     dc: 00022623  sw           x0, 12(x4)  # Address depends on runtime register values
+     e0: 00022823  sw           x0, 16(x4)  # Address depends on runtime register values
+     e4: 00022a23  sw           x0, 20(x4)  # Address depends on runtime register values
+     e8: 00022c23  sw           x0, 24(x4)  # Address depends on runtime register values
+     ec: 00022e23  sw           x0, 28(x4)  # Address depends on runtime register values
+     f0: 02020213  addi         x4, x4, 32
+     f4: ff828293  addi         x5, x5, -8
+     f8: fc029ce3  bne          x5, x0, 0x000000d0  # target 0x000000d0
+     fc: 0001bfb7  lui          x31, 0x0001b  # x31 = 0x0001b000
+    100: 800f8f93  addi         x31, x31, -2048  # x31 = 0x0001a800
     104: 0000ff37  lui          x30, 0x0000f  # x30 = 0x0000f000
-    108: 7c0f0f13  addi         x30, x30, 1984  # x30 = 0x0000f7c0
-    10c: 00800e93  addi         x29, x0, 8  # x29 = 0x00000008
-    110: 4e0000ef  jal          x1, 0x000005f0  # target 0x000005f0; x1 = 0x00000114
-    114: 0001afb7  lui          x31, 0x0001a  # x31 = 0x0001a000
-    118: 020f8f93  addi         x31, x31, 32  # x31 = 0x0001a020
-    11c: 00010f37  lui          x30, 0x00010  # x30 = 0x00010000
-    120: 9c0f0f13  addi         x30, x30, -1600  # x30 = 0x0000f9c0
-    124: 00800e93  addi         x29, x0, 8  # x29 = 0x00000008
-    128: 4c8000ef  jal          x1, 0x000005f0  # target 0x000005f0; x1 = 0x0000012c
-    12c: 0001afb7  lui          x31, 0x0001a  # x31 = 0x0001a000
-    130: 040f8f93  addi         x31, x31, 64  # x31 = 0x0001a040
-    134: 0000ff37  lui          x30, 0x0000f  # x30 = 0x0000f000
-    138: fe0f0f13  addi         x30, x30, -32  # x30 = 0x0000efe0
-    13c: 00800e93  addi         x29, x0, 8  # x29 = 0x00000008
-    140: 4b0000ef  jal          x1, 0x000005f0  # target 0x000005f0; x1 = 0x00000144
-    144: 0001afb7  lui          x31, 0x0001a  # x31 = 0x0001a000
-    148: 060f8f93  addi         x31, x31, 96  # x31 = 0x0001a060
-    14c: 0000ff37  lui          x30, 0x0000f  # x30 = 0x0000f000
-    150: 1e0f0f13  addi         x30, x30, 480  # x30 = 0x0000f1e0
-    154: 00800e93  addi         x29, x0, 8  # x29 = 0x00000008
-    158: 498000ef  jal          x1, 0x000005f0  # target 0x000005f0; x1 = 0x0000015c
-    15c: 0001afb7  lui          x31, 0x0001a  # x31 = 0x0001a000
-    160: 080f8f93  addi         x31, x31, 128  # x31 = 0x0001a080
-    164: 0000ff37  lui          x30, 0x0000f  # x30 = 0x0000f000
-    168: 7e0f0f13  addi         x30, x30, 2016  # x30 = 0x0000f7e0
-    16c: 00800e93  addi         x29, x0, 8  # x29 = 0x00000008
-    170: 480000ef  jal          x1, 0x000005f0  # target 0x000005f0; x1 = 0x00000174
-    174: 0001afb7  lui          x31, 0x0001a  # x31 = 0x0001a000
-    178: 0a0f8f93  addi         x31, x31, 160  # x31 = 0x0001a0a0
-    17c: 00010f37  lui          x30, 0x00010  # x30 = 0x00010000
-    180: 9e0f0f13  addi         x30, x30, -1568  # x30 = 0x0000f9e0
-    184: 00800e93  addi         x29, x0, 8  # x29 = 0x00000008
-    188: 468000ef  jal          x1, 0x000005f0  # target 0x000005f0; x1 = 0x0000018c
-    18c: 7ac00393  addi         x7, x0, 1964  # x7 = 0x000007ac
-    190: 0003a203  lw           x4, 0(x7)  # param start_pos; 0x000007ac
-    194: 00525293  srli         x5, x4, 5
-    198: 00129293  slli         x5, x5, 1
-    19c: 0000f437  lui          x8, 0x0000f  # x8 = 0x0000f000
-    1a0: 90040413  addi         x8, x8, -1792  # x8 = 0x0000e900
-    1a4: 00042383  lw           x7, 0(x8)  # param attention_core; 0x0000e900
-    1a8: 0013d393  srli         x7, x7, 1
-    1ac: 00939393  slli         x7, x7, 9
-    1b0: 007282b3  add          x5, x5, x7
-    1b4: 00f27313  andi         x6, x4, 15
-    1b8: 00531313  slli         x6, x6, 5
-    1bc: 01027393  andi         x7, x4, 16
-    1c0: 00639393  slli         x7, x7, 6
-    1c4: 00730333  add          x6, x6, x7
-    1c8: 47c000ef  jal          x1, 0x00000644  # target 0x00000644; x1 = 0x000001cc
-    1cc: 494000ef  jal          x1, 0x00000660  # target 0x00000660; x1 = 0x000001d0
-    1d0: 00028393  addi         x7, x5, 0
-    1d4: 00038f93  addi         x31, x7, 0
-    1d8: 4a4000ef  jal          x1, 0x0000067c  # target 0x0000067c; x1 = 0x000001dc
-    1dc: 000a8413  addi         x8, x21, 0
-    1e0: 000b0493  addi         x9, x22, 0
-    1e4: 00640533  add          x10, x8, x6
-    1e8: 0001afb7  lui          x31, 0x0001a  # x31 = 0x0001a000
-    1ec: 0c0f8f93  addi         x31, x31, 192  # x31 = 0x0001a0c0
-    1f0: 00050f13  addi         x30, x10, 0
-    1f4: 00048e93  addi         x29, x9, 0
-    1f8: 4d0000ef  jal          x1, 0x000006c8  # target 0x000006c8; x1 = 0x000001fc
-    1fc: 00640533  add          x10, x8, x6
-    200: 20050513  addi         x10, x10, 512
-    204: 0001afb7  lui          x31, 0x0001a  # x31 = 0x0001a000
-    208: 0e0f8f93  addi         x31, x31, 224  # x31 = 0x0001a0e0
-    20c: 00050f13  addi         x30, x10, 0
-    210: 00048e93  addi         x29, x9, 0
-    214: 4b4000ef  jal          x1, 0x000006c8  # target 0x000006c8; x1 = 0x00000218
-    218: 00038f93  addi         x31, x7, 0
-    21c: 564000ef  jal          x1, 0x00000780  # target 0x00000780; x1 = 0x00000220
-    220: 000a8513  addi         x10, x21, 0
-    224: 000b0593  addi         x11, x22, 0
-    228: 00650633  add          x12, x10, x6
-    22c: 0002ffb7  lui          x31, 0x0002f  # x31 = 0x0002f000
-    230: fc0f8f93  addi         x31, x31, -64  # x31 = 0x0002efc0
-    234: 00060f13  addi         x30, x12, 0
-    238: 00058e93  addi         x29, x11, 0
-    23c: 48c000ef  jal          x1, 0x000006c8  # target 0x000006c8; x1 = 0x00000240
-    240: 00650633  add          x12, x10, x6
-    244: 20060613  addi         x12, x12, 512
-    248: 0002ffb7  lui          x31, 0x0002f  # x31 = 0x0002f000
-    24c: fe0f8f93  addi         x31, x31, -32  # x31 = 0x0002efe0
-    250: 00060f13  addi         x30, x12, 0
-    254: 00058e93  addi         x29, x11, 0
-    258: 470000ef  jal          x1, 0x000006c8  # target 0x000006c8; x1 = 0x0000025c
-    25c: 00128393  addi         x7, x5, 1
-    260: 00038f93  addi         x31, x7, 0
-    264: 418000ef  jal          x1, 0x0000067c  # target 0x0000067c; x1 = 0x00000268
-    268: 000a8413  addi         x8, x21, 0
-    26c: 000b0493  addi         x9, x22, 0
-    270: 00640533  add          x10, x8, x6
-    274: 0001afb7  lui          x31, 0x0001a  # x31 = 0x0001a000
-    278: 100f8f93  addi         x31, x31, 256  # x31 = 0x0001a100
-    27c: 00050f13  addi         x30, x10, 0
-    280: 00048e93  addi         x29, x9, 0
-    284: 444000ef  jal          x1, 0x000006c8  # target 0x000006c8; x1 = 0x00000288
-    288: 00640533  add          x10, x8, x6
-    28c: 20050513  addi         x10, x10, 512
-    290: 0001afb7  lui          x31, 0x0001a  # x31 = 0x0001a000
-    294: 120f8f93  addi         x31, x31, 288  # x31 = 0x0001a120
-    298: 00050f13  addi         x30, x10, 0
-    29c: 00048e93  addi         x29, x9, 0
-    2a0: 428000ef  jal          x1, 0x000006c8  # target 0x000006c8; x1 = 0x000002a4
-    2a4: 00038f93  addi         x31, x7, 0
-    2a8: 4d8000ef  jal          x1, 0x00000780  # target 0x00000780; x1 = 0x000002ac
-    2ac: 000a8513  addi         x10, x21, 0
-    2b0: 000b0593  addi         x11, x22, 0
-    2b4: 00650633  add          x12, x10, x6
-    2b8: 0002ffb7  lui          x31, 0x0002f  # x31 = 0x0002f000
-    2bc: 00060f13  addi         x30, x12, 0
-    2c0: 00058e93  addi         x29, x11, 0
-    2c4: 404000ef  jal          x1, 0x000006c8  # target 0x000006c8; x1 = 0x000002c8
-    2c8: 00650633  add          x12, x10, x6
-    2cc: 20060613  addi         x12, x12, 512
-    2d0: 0002ffb7  lui          x31, 0x0002f  # x31 = 0x0002f000
-    2d4: 020f8f93  addi         x31, x31, 32  # x31 = 0x0002f020
-    2d8: 00060f13  addi         x30, x12, 0
-    2dc: 00058e93  addi         x29, x11, 0
-    2e0: 3e8000ef  jal          x1, 0x000006c8  # target 0x000006c8; x1 = 0x000002e4
-    2e4: 360000ef  jal          x1, 0x00000644  # target 0x00000644; x1 = 0x000002e8
-    2e8: 378000ef  jal          x1, 0x00000660  # target 0x00000660; x1 = 0x000002ec
-    2ec: ffb012b7  lui          x5, 0xffb01  # x5 = 0xffb01000
-    2f0: 86828293  addi         x5, x5, -1944  # x5 = 0xffb00868 · riscv_local_mem + 0x868
-    2f4: 0002a203  lw           x4, 0(x5)  # riscv_local_mem + 0x868 · 0xffb00868
-    2f8: 00120213  addi         x4, x4, 1
-    2fc: 01021213  slli         x4, x4, 16
-    300: 01025213  srli         x4, x4, 16
-    304: ffb012b7  lui          x5, 0xffb01  # x5 = 0xffb01000
-    308: 86828293  addi         x5, x5, -1944  # x5 = 0xffb00868 · riscv_local_mem + 0x868
-    30c: 0042a023  sw           x4, 0(x5)  # riscv_local_mem + 0x868 · 0xffb00868; write runtime value
-    310: ffb502b7  lui          x5, 0xffb50  # x5 = 0xffb50000
-    314: 02028293  addi         x5, x5, 32  # x5 = 0xffb50020
-    318: 0042a023  sw           x4, 0(x5)  # 0xffb50020; write runtime value
-    31c: 0ff0000f  fence        0xf, 0xf
-    320: ffb01437  lui          x8, 0xffb01  # x8 = 0xffb01000
-    324: 86440413  addi         x8, x8, -1948  # x8 = 0xffb00864 · riscv_local_mem + 0x864
-    328: 00042203  lw           x4, 0(x8)  # riscv_local_mem + 0x864 · 0xffb00864
-    32c: 000012b7  lui          x5, 0x00001  # x5 = 0x00001000 · F32_TILE_BYTES · Wait.CFGEXU
-    330: 80028293  addi         x5, x5, -2048  # x5 = 0x00000800
-    334: 00520233  add          x4, x4, x5
-    338: 0001a337  lui          x6, 0x0001a  # x6 = 0x0001a000
-    33c: 7c030313  addi         x6, x6, 1984  # x6 = 0x0001a7c0
-    340: 00626863  bltu         x4, x6, 0x00000350  # target 0x00000350
-    344: 000013b7  lui          x7, 0x00001  # x7 = 0x00001000 · F32_TILE_BYTES · Wait.CFGEXU
-    348: 80038393  addi         x7, x7, -2048  # x7 = 0x00000800
-    34c: 40720233  sub          x4, x4, x7
-loc_350:
-    350: ffb01437  lui          x8, 0xffb01  # x8 = 0xffb01000
-    354: 86440413  addi         x8, x8, -1948  # x8 = 0xffb00864 · riscv_local_mem + 0x864
-    358: 00442023  sw           x4, 0(x8)  # riscv_local_mem + 0x864 · 0xffb00864; write runtime value
-    35c: ffb01437  lui          x8, 0xffb01  # x8 = 0xffb01000
-    360: 86c40413  addi         x8, x8, -1940  # x8 = 0xffb0086c · riscv_local_mem + 0x86c
-    364: 00042203  lw           x4, 0(x8)  # riscv_local_mem + 0x86c · 0xffb0086c
-    368: 000012b7  lui          x5, 0x00001  # x5 = 0x00001000 · F32_TILE_BYTES · Wait.CFGEXU
-    36c: 80028293  addi         x5, x5, -2048  # x5 = 0x00000800
-    370: 00520233  add          x4, x4, x5
-    374: 0001b337  lui          x6, 0x0001b  # x6 = 0x0001b000
-    378: fc030313  addi         x6, x6, -64  # x6 = 0x0001afc0
-    37c: 00626863  bltu         x4, x6, 0x0000038c  # target 0x0000038c
-    380: 000013b7  lui          x7, 0x00001  # x7 = 0x00001000 · F32_TILE_BYTES · Wait.CFGEXU
-    384: 80038393  addi         x7, x7, -2048  # x7 = 0x00000800
-    388: 40720233  sub          x4, x4, x7
-loc_38c:
-    38c: ffb01437  lui          x8, 0xffb01  # x8 = 0xffb01000
-    390: 86c40413  addi         x8, x8, -1940  # x8 = 0xffb0086c · riscv_local_mem + 0x86c
-    394: 00442023  sw           x4, 0(x8)  # riscv_local_mem + 0x86c · 0xffb0086c; write runtime value
-    398: ffb012b7  lui          x5, 0xffb01  # x5 = 0xffb01000
-    39c: 87028293  addi         x5, x5, -1936  # x5 = 0xffb00870 · riscv_local_mem + 0x870
-    3a0: 0002a203  lw           x4, 0(x5)  # riscv_local_mem + 0x870 · 0xffb00870
-    3a4: 00120213  addi         x4, x4, 1
-    3a8: 01021213  slli         x4, x4, 16
-    3ac: 01025213  srli         x4, x4, 16
-    3b0: ffb012b7  lui          x5, 0xffb01  # x5 = 0xffb01000
-    3b4: 87028293  addi         x5, x5, -1936  # x5 = 0xffb00870 · riscv_local_mem + 0x870
-    3b8: 0042a023  sw           x4, 0(x5)  # riscv_local_mem + 0x870 · 0xffb00870; write runtime value
-    3bc: ffb512b7  lui          x5, 0xffb51  # x5 = 0xffb51000
-    3c0: 02828293  addi         x5, x5, 40  # x5 = 0xffb51028
-    3c4: 0042a023  sw           x4, 0(x5)  # 0xffb51028; write runtime value
-    3c8: 0ff0000f  fence        0xf, 0xf
-    3cc: ffb01437  lui          x8, 0xffb01  # x8 = 0xffb01000
-    3d0: 87840413  addi         x8, x8, -1928  # x8 = 0xffb00878 · riscv_local_mem + 0x878
-    3d4: 00042203  lw           x4, 0(x8)  # riscv_local_mem + 0x878 · 0xffb00878
-    3d8: 00200393  addi         x7, x0, 2  # x7 = 0x00000002
-loc_3dc:
-    3dc: ffb4e437  lui          x8, 0xffb4e  # x8 = 0xffb4e000
-    3e0: 02840413  addi         x8, x8, 40  # x8 = 0xffb4e028
-    3e4: 00045283  lhu          x5, 0(x8)  # 0xffb4e028
-    3e8: 40428333  sub          x6, x5, x4
-    3ec: 01031313  slli         x6, x6, 16
-    3f0: 01035313  srli         x6, x6, 16
-    3f4: 00737663  bgeu         x6, x7, 0x00000400  # target 0x00000400
-    3f8: 0ff0000f  fence        0xf, 0xf
-    3fc: fe1ff06f  jal          x0, 0x000003dc  # target 0x000003dc
-loc_400:
-    400: 0ff0000f  fence        0xf, 0xf
-    404: 240000ef  jal          x1, 0x00000644  # target 0x00000644; x1 = 0x00000408
-    408: 258000ef  jal          x1, 0x00000660  # target 0x00000660; x1 = 0x0000040c
-    40c: 0000f2b7  lui          x5, 0x0000f  # x5 = 0x0000f000
-    410: 90028293  addi         x5, x5, -1792  # x5 = 0x0000e900
-    414: 0002a203  lw           x4, 0(x5)  # param attention_core; 0x0000e900
-    418: 00721213  slli         x4, x4, 7
-    41c: 00020293  addi         x5, x4, 0
-    420: 00a2d313  srli         x6, x5, 10
-    424: 00030f93  addi         x31, x6, 0
-    428: 3a4000ef  jal          x1, 0x000007cc  # target 0x000007cc; x1 = 0x0000042c
-    42c: 000a8393  addi         x7, x21, 0
-    430: 000b0413  addi         x8, x22, 0
-    434: 3ff2f293  andi         x5, x5, 1023
-    438: 00129493  slli         x9, x5, 1
-    43c: 007484b3  add          x9, x9, x7
-    440: 00017fb7  lui          x31, 0x00017  # x31 = 0x00017000
-    444: fc0f8f93  addi         x31, x31, -64  # x31 = 0x00016fc0
-    448: 00048f13  addi         x30, x9, 0
-    44c: 00040e93  addi         x29, x8, 0
-    450: 278000ef  jal          x1, 0x000006c8  # target 0x000006c8; x1 = 0x00000454
-    454: 01028293  addi         x5, x5, 16
-    458: 00129493  slli         x9, x5, 1
-    45c: 007484b3  add          x9, x9, x7
-    460: 00017fb7  lui          x31, 0x00017  # x31 = 0x00017000
-    464: 1c0f8f93  addi         x31, x31, 448  # x31 = 0x000171c0
-    468: 00048f13  addi         x30, x9, 0
-    46c: 00040e93  addi         x29, x8, 0
-    470: 258000ef  jal          x1, 0x000006c8  # target 0x000006c8; x1 = 0x00000474
-    474: 02020293  addi         x5, x4, 32
-    478: 00a2d313  srli         x6, x5, 10
-    47c: 00030f93  addi         x31, x6, 0
-    480: 34c000ef  jal          x1, 0x000007cc  # target 0x000007cc; x1 = 0x00000484
-    484: 000a8393  addi         x7, x21, 0
-    488: 000b0413  addi         x8, x22, 0
-    48c: 3ff2f293  andi         x5, x5, 1023
-    490: 00129493  slli         x9, x5, 1
-    494: 007484b3  add          x9, x9, x7
-    498: 00017fb7  lui          x31, 0x00017  # x31 = 0x00017000
-    49c: 7c0f8f93  addi         x31, x31, 1984  # x31 = 0x000177c0
-    4a0: 00048f13  addi         x30, x9, 0
-    4a4: 00040e93  addi         x29, x8, 0
-    4a8: 220000ef  jal          x1, 0x000006c8  # target 0x000006c8; x1 = 0x000004ac
-    4ac: 01028293  addi         x5, x5, 16
-    4b0: 00129493  slli         x9, x5, 1
-    4b4: 007484b3  add          x9, x9, x7
-    4b8: 00018fb7  lui          x31, 0x00018  # x31 = 0x00018000
-    4bc: 9c0f8f93  addi         x31, x31, -1600  # x31 = 0x000179c0
-    4c0: 00048f13  addi         x30, x9, 0
-    4c4: 00040e93  addi         x29, x8, 0
-    4c8: 200000ef  jal          x1, 0x000006c8  # target 0x000006c8; x1 = 0x000004cc
-    4cc: 04020293  addi         x5, x4, 64
-    4d0: 00a2d313  srli         x6, x5, 10
-    4d4: 00030f93  addi         x31, x6, 0
-    4d8: 2f4000ef  jal          x1, 0x000007cc  # target 0x000007cc; x1 = 0x000004dc
-    4dc: 000a8393  addi         x7, x21, 0
-    4e0: 000b0413  addi         x8, x22, 0
-    4e4: 3ff2f293  andi         x5, x5, 1023
-    4e8: 00129493  slli         x9, x5, 1
-    4ec: 007484b3  add          x9, x9, x7
-    4f0: 00017fb7  lui          x31, 0x00017  # x31 = 0x00017000
-    4f4: fe0f8f93  addi         x31, x31, -32  # x31 = 0x00016fe0
-    4f8: 00048f13  addi         x30, x9, 0
-    4fc: 00040e93  addi         x29, x8, 0
-    500: 1c8000ef  jal          x1, 0x000006c8  # target 0x000006c8; x1 = 0x00000504
-    504: 01028293  addi         x5, x5, 16
-    508: 00129493  slli         x9, x5, 1
-    50c: 007484b3  add          x9, x9, x7
-    510: 00017fb7  lui          x31, 0x00017  # x31 = 0x00017000
-    514: 1e0f8f93  addi         x31, x31, 480  # x31 = 0x000171e0
-    518: 00048f13  addi         x30, x9, 0
-    51c: 00040e93  addi         x29, x8, 0
-    520: 1a8000ef  jal          x1, 0x000006c8  # target 0x000006c8; x1 = 0x00000524
-    524: 06020293  addi         x5, x4, 96
-    528: 00a2d313  srli         x6, x5, 10
-    52c: 00030f93  addi         x31, x6, 0
-    530: 29c000ef  jal          x1, 0x000007cc  # target 0x000007cc; x1 = 0x00000534
-    534: 000a8393  addi         x7, x21, 0
-    538: 000b0413  addi         x8, x22, 0
-    53c: 3ff2f293  andi         x5, x5, 1023
-    540: 00129493  slli         x9, x5, 1
-    544: 007484b3  add          x9, x9, x7
-    548: 00017fb7  lui          x31, 0x00017  # x31 = 0x00017000
-    54c: 7e0f8f93  addi         x31, x31, 2016  # x31 = 0x000177e0
-    550: 00048f13  addi         x30, x9, 0
-    554: 00040e93  addi         x29, x8, 0
-    558: 170000ef  jal          x1, 0x000006c8  # target 0x000006c8; x1 = 0x0000055c
-    55c: 01028293  addi         x5, x5, 16
-    560: 00129493  slli         x9, x5, 1
-    564: 007484b3  add          x9, x9, x7
-    568: 00018fb7  lui          x31, 0x00018  # x31 = 0x00018000
-    56c: 9e0f8f93  addi         x31, x31, -1568  # x31 = 0x000179e0
-    570: 00048f13  addi         x30, x9, 0
-    574: 00040e93  addi         x29, x8, 0
-    578: 150000ef  jal          x1, 0x000006c8  # target 0x000006c8; x1 = 0x0000057c
-    57c: 0c8000ef  jal          x1, 0x00000644  # target 0x00000644; x1 = 0x00000580
-    580: 0e0000ef  jal          x1, 0x00000660  # target 0x00000660; x1 = 0x00000584
-    584: ffb012b7  lui          x5, 0xffb01  # x5 = 0xffb01000
-    588: 87828293  addi         x5, x5, -1928  # x5 = 0xffb00878 · riscv_local_mem + 0x878
-    58c: 0002a203  lw           x4, 0(x5)  # riscv_local_mem + 0x878 · 0xffb00878
-    590: 00220213  addi         x4, x4, 2
-    594: 01021213  slli         x4, x4, 16
-    598: 01025213  srli         x4, x4, 16
-    59c: ffb012b7  lui          x5, 0xffb01  # x5 = 0xffb01000
-    5a0: 87828293  addi         x5, x5, -1928  # x5 = 0xffb00878 · riscv_local_mem + 0x878
-    5a4: 0042a023  sw           x4, 0(x5)  # riscv_local_mem + 0x878 · 0xffb00878; write runtime value
-    5a8: ffb4e2b7  lui          x5, 0xffb4e  # x5 = 0xffb4e000
-    5ac: 02028293  addi         x5, x5, 32  # x5 = 0xffb4e020
-    5b0: 0042a023  sw           x4, 0(x5)  # 0xffb4e020; write runtime value
-    5b4: 0ff0000f  fence        0xf, 0xf
-    5b8: ffb01437  lui          x8, 0xffb01  # x8 = 0xffb01000
-    5bc: 87440413  addi         x8, x8, -1932  # x8 = 0xffb00874 · riscv_local_mem + 0x874
-    5c0: 00042203  lw           x4, 0(x8)  # riscv_local_mem + 0x874 · 0xffb00874
-    5c4: 000012b7  lui          x5, 0x00001  # x5 = 0x00001000 · F32_TILE_BYTES · Wait.CFGEXU
-    5c8: 00520233  add          x4, x4, x5
-    5cc: 00018337  lui          x6, 0x00018  # x6 = 0x00018000
-    5d0: fc030313  addi         x6, x6, -64  # x6 = 0x00017fc0
-    5d4: 00626663  bltu         x4, x6, 0x000005e0  # target 0x000005e0
-    5d8: 000013b7  lui          x7, 0x00001  # x7 = 0x00001000 · F32_TILE_BYTES · Wait.CFGEXU
-    5dc: 40720233  sub          x4, x4, x7
-loc_5e0:
-    5e0: ffb01437  lui          x8, 0xffb01  # x8 = 0xffb01000
-    5e4: 87440413  addi         x8, x8, -1932  # x8 = 0xffb00874 · riscv_local_mem + 0x874
-    5e8: 00442023  sw           x4, 0(x8)  # riscv_local_mem + 0x874 · 0xffb00874; write runtime value
-    5ec: 22c0006f  jal          x0, 0x00000818  # target 0x00000818
-loc_5f0:
-    5f0: 000faa03  lw           x20, 0(x31)  # Address depends on runtime register values
-    5f4: 014f2023  sw           x20, 0(x30)  # Address depends on runtime register values
-    5f8: 004faa03  lw           x20, 4(x31)  # Address depends on runtime register values
-    5fc: 014f2223  sw           x20, 4(x30)  # Address depends on runtime register values
-    600: 008faa03  lw           x20, 8(x31)  # Address depends on runtime register values
-    604: 014f2423  sw           x20, 8(x30)  # Address depends on runtime register values
-    608: 00cfaa03  lw           x20, 12(x31)  # Address depends on runtime register values
-    60c: 014f2623  sw           x20, 12(x30)  # Address depends on runtime register values
-    610: 010faa03  lw           x20, 16(x31)  # Address depends on runtime register values
-    614: 014f2823  sw           x20, 16(x30)  # Address depends on runtime register values
-    618: 014faa03  lw           x20, 20(x31)  # Address depends on runtime register values
-    61c: 014f2a23  sw           x20, 20(x30)  # Address depends on runtime register values
-    620: 018faa03  lw           x20, 24(x31)  # Address depends on runtime register values
-    624: 014f2c23  sw           x20, 24(x30)  # Address depends on runtime register values
-    628: 01cfaa03  lw           x20, 28(x31)  # Address depends on runtime register values
-    62c: 014f2e23  sw           x20, 28(x30)  # Address depends on runtime register values
-    630: 020f8f93  addi         x31, x31, 32
-    634: 020f0f13  addi         x30, x30, 32
-    638: ff8e8e93  addi         x29, x29, -8
-    63c: fa0e9ae3  bne          x29, x0, 0x000005f0  # target 0x000005f0
-    640: 00008067  jalr         x0, 0(x1)
-loc_644:
-    644: ffb30ab7  lui          x21, 0xffb30  # x21 = 0xffb30000 · noc1_regs + 0x0
-    648: 284a8a93  addi         x21, x21, 644  # x21 = 0xffb30284 · noc1_regs + 0x284
-    64c: 000aaa03  lw           x20, 0(x21)  # noc1_regs + 0x284 · 0xffb30284
-    650: 000a0463  beq          x20, x0, 0x00000658  # target 0x00000658
-    654: ff1ff06f  jal          x0, 0x00000644  # target 0x00000644
-loc_658:
-    658: 0ff0000f  fence        0xf, 0xf
-    65c: 00008067  jalr         x0, 0(x1)
-loc_660:
-    660: ffb30ab7  lui          x21, 0xffb30  # x21 = 0xffb30000 · noc1_regs + 0x0
-    664: 244a8a93  addi         x21, x21, 580  # x21 = 0xffb30244 · noc1_regs + 0x244
-    668: 000aaa03  lw           x20, 0(x21)  # noc1_regs + 0x244 · 0xffb30244
-    66c: 000a0463  beq          x20, x0, 0x00000674  # target 0x00000674
-    670: ff1ff06f  jal          x0, 0x00000660  # target 0x00000660
-loc_674:
-    674: 0ff0000f  fence        0xf, 0xf
-    678: 00008067  jalr         x0, 0(x1)
-loc_67c:
-    67c: 78400a93  addi         x21, x0, 1924  # x21 = 0x00000784
-    680: 000aaa03  lw           x20, 0(x21)  # param e2e_l0_key_cache; 0x00000784
-    684: 007a7d13  andi         x26, x20, 7
-    688: ff8a7a13  andi         x20, x20, -8
-    68c: 01af8ab3  add          x21, x31, x26
-    690: 007afb93  andi         x23, x21, 7
-    694: 003ada93  srli         x21, x21, 3
-    698: 00ba9a93  slli         x21, x21, 11
-    69c: 014a8ab3  add          x21, x21, x20
-    6a0: 00000b17  auipc        x22, 0x00000  # x22 = 0x000006a0
-    6a4: 018b0b13  addi         x22, x22, 24  # x22 = 0x000006b8
-    6a8: 001b9b93  slli         x23, x23, 1
-    6ac: 017b0b33  add          x22, x22, x23
-    6b0: 000b5b03  lhu          x22, 0(x22)  # Address depends on runtime register values
-    6b4: 00008067  jalr         x0, 0(x1)
-    6b8: 04110351  PACR         CfgContext=0, RowPadZero=1, DstAccessMode=0, AddrMode=0, AddrCntContext=2, ZeroWrite=0, ReadIntfSel=0, OvrdThreadId=1, Concat=5, CtxtCtrl=1, Flush=0, Last=0  # Unreachable by statically known control flow
-    6bc: 059104d1  PACR         CfgContext=3, RowPadZero=1, DstAccessMode=0, AddrMode=0, AddrCntContext=2, ZeroWrite=0, ReadIntfSel=1, OvrdThreadId=0, Concat=3, CtxtCtrl=1, Flush=0, Last=0  # Unreachable by statically known control flow
-    6c0: 04120352  SFPLZ        imm12_math=72, lreg_c=0, lreg_dest=13, instr_mod1=4  # lreg_c: L0; lreg_dest: L13; Unreachable by statically known control flow
-    6c4: 059204d2  SFPLZ        imm12_math=1608, lreg_c=1, lreg_dest=3, instr_mod1=4  # lreg_c: L1; lreg_dest: L3; Unreachable by statically known control flow
+    108: 00800e93  addi         x29, x0, 8  # x29 = 0x00000008
+    10c: 530000ef  jal          x1, 0x0000063c  # target 0x0000063c; x1 = 0x00000110
+    110: 0001bfb7  lui          x31, 0x0001b  # x31 = 0x0001b000
+    114: 820f8f93  addi         x31, x31, -2016  # x31 = 0x0001a820
+    118: 0000ff37  lui          x30, 0x0000f  # x30 = 0x0000f000
+    11c: 200f0f13  addi         x30, x30, 512  # x30 = 0x0000f200
+    120: 00800e93  addi         x29, x0, 8  # x29 = 0x00000008
+    124: 518000ef  jal          x1, 0x0000063c  # target 0x0000063c; x1 = 0x00000128
+    128: 0001bfb7  lui          x31, 0x0001b  # x31 = 0x0001b000
+    12c: 840f8f93  addi         x31, x31, -1984  # x31 = 0x0001a840
+    130: 00010f37  lui          x30, 0x00010  # x30 = 0x00010000
+    134: 800f0f13  addi         x30, x30, -2048  # x30 = 0x0000f800
+    138: 00800e93  addi         x29, x0, 8  # x29 = 0x00000008
+    13c: 500000ef  jal          x1, 0x0000063c  # target 0x0000063c; x1 = 0x00000140
+    140: 0001bfb7  lui          x31, 0x0001b  # x31 = 0x0001b000
+    144: 860f8f93  addi         x31, x31, -1952  # x31 = 0x0001a860
+    148: 00010f37  lui          x30, 0x00010  # x30 = 0x00010000
+    14c: a00f0f13  addi         x30, x30, -1536  # x30 = 0x0000fa00
+    150: 00800e93  addi         x29, x0, 8  # x29 = 0x00000008
+    154: 4e8000ef  jal          x1, 0x0000063c  # target 0x0000063c; x1 = 0x00000158
+    158: 0001bfb7  lui          x31, 0x0001b  # x31 = 0x0001b000
+    15c: 880f8f93  addi         x31, x31, -1920  # x31 = 0x0001a880
+    160: 0000ff37  lui          x30, 0x0000f  # x30 = 0x0000f000
+    164: 020f0f13  addi         x30, x30, 32  # x30 = 0x0000f020
+    168: 00800e93  addi         x29, x0, 8  # x29 = 0x00000008
+    16c: 4d0000ef  jal          x1, 0x0000063c  # target 0x0000063c; x1 = 0x00000170
+    170: 0001bfb7  lui          x31, 0x0001b  # x31 = 0x0001b000
+    174: 8a0f8f93  addi         x31, x31, -1888  # x31 = 0x0001a8a0
+    178: 0000ff37  lui          x30, 0x0000f  # x30 = 0x0000f000
+    17c: 220f0f13  addi         x30, x30, 544  # x30 = 0x0000f220
+    180: 00800e93  addi         x29, x0, 8  # x29 = 0x00000008
+    184: 4b8000ef  jal          x1, 0x0000063c  # target 0x0000063c; x1 = 0x00000188
+    188: 0001bfb7  lui          x31, 0x0001b  # x31 = 0x0001b000
+    18c: 8c0f8f93  addi         x31, x31, -1856  # x31 = 0x0001a8c0
+    190: 00010f37  lui          x30, 0x00010  # x30 = 0x00010000
+    194: 820f0f13  addi         x30, x30, -2016  # x30 = 0x0000f820
+    198: 00800e93  addi         x29, x0, 8  # x29 = 0x00000008
+    19c: 4a0000ef  jal          x1, 0x0000063c  # target 0x0000063c; x1 = 0x000001a0
+    1a0: 0001bfb7  lui          x31, 0x0001b  # x31 = 0x0001b000
+    1a4: 8e0f8f93  addi         x31, x31, -1824  # x31 = 0x0001a8e0
+    1a8: 00010f37  lui          x30, 0x00010  # x30 = 0x00010000
+    1ac: a20f0f13  addi         x30, x30, -1504  # x30 = 0x0000fa20
+    1b0: 00800e93  addi         x29, x0, 8  # x29 = 0x00000008
+    1b4: 488000ef  jal          x1, 0x0000063c  # target 0x0000063c; x1 = 0x000001b8
+    1b8: 0001bfb7  lui          x31, 0x0001b  # x31 = 0x0001b000
+    1bc: 900f8f93  addi         x31, x31, -1792  # x31 = 0x0001a900
+    1c0: 0000ff37  lui          x30, 0x0000f  # x30 = 0x0000f000
+    1c4: 040f0f13  addi         x30, x30, 64  # x30 = 0x0000f040
+    1c8: 00800e93  addi         x29, x0, 8  # x29 = 0x00000008
+    1cc: 470000ef  jal          x1, 0x0000063c  # target 0x0000063c; x1 = 0x000001d0
+    1d0: 0001bfb7  lui          x31, 0x0001b  # x31 = 0x0001b000
+    1d4: 920f8f93  addi         x31, x31, -1760  # x31 = 0x0001a920
+    1d8: 0000ff37  lui          x30, 0x0000f  # x30 = 0x0000f000
+    1dc: 240f0f13  addi         x30, x30, 576  # x30 = 0x0000f240
+    1e0: 00800e93  addi         x29, x0, 8  # x29 = 0x00000008
+    1e4: 458000ef  jal          x1, 0x0000063c  # target 0x0000063c; x1 = 0x000001e8
+    1e8: 0001bfb7  lui          x31, 0x0001b  # x31 = 0x0001b000
+    1ec: 940f8f93  addi         x31, x31, -1728  # x31 = 0x0001a940
+    1f0: 00010f37  lui          x30, 0x00010  # x30 = 0x00010000
+    1f4: 840f0f13  addi         x30, x30, -1984  # x30 = 0x0000f840
+    1f8: 00800e93  addi         x29, x0, 8  # x29 = 0x00000008
+    1fc: 440000ef  jal          x1, 0x0000063c  # target 0x0000063c; x1 = 0x00000200
+    200: 0001bfb7  lui          x31, 0x0001b  # x31 = 0x0001b000
+    204: 960f8f93  addi         x31, x31, -1696  # x31 = 0x0001a960
+    208: 00010f37  lui          x30, 0x00010  # x30 = 0x00010000
+    20c: a40f0f13  addi         x30, x30, -1472  # x30 = 0x0000fa40
+    210: 00800e93  addi         x29, x0, 8  # x29 = 0x00000008
+    214: 428000ef  jal          x1, 0x0000063c  # target 0x0000063c; x1 = 0x00000218
+    218: 0001bfb7  lui          x31, 0x0001b  # x31 = 0x0001b000
+    21c: 980f8f93  addi         x31, x31, -1664  # x31 = 0x0001a980
+    220: 0000ff37  lui          x30, 0x0000f  # x30 = 0x0000f000
+    224: 060f0f13  addi         x30, x30, 96  # x30 = 0x0000f060
+    228: 00800e93  addi         x29, x0, 8  # x29 = 0x00000008
+    22c: 410000ef  jal          x1, 0x0000063c  # target 0x0000063c; x1 = 0x00000230
+    230: 0001bfb7  lui          x31, 0x0001b  # x31 = 0x0001b000
+    234: 9a0f8f93  addi         x31, x31, -1632  # x31 = 0x0001a9a0
+    238: 0000ff37  lui          x30, 0x0000f  # x30 = 0x0000f000
+    23c: 260f0f13  addi         x30, x30, 608  # x30 = 0x0000f260
+    240: 00800e93  addi         x29, x0, 8  # x29 = 0x00000008
+    244: 3f8000ef  jal          x1, 0x0000063c  # target 0x0000063c; x1 = 0x00000248
+    248: 0001bfb7  lui          x31, 0x0001b  # x31 = 0x0001b000
+    24c: 9c0f8f93  addi         x31, x31, -1600  # x31 = 0x0001a9c0
+    250: 00010f37  lui          x30, 0x00010  # x30 = 0x00010000
+    254: 860f0f13  addi         x30, x30, -1952  # x30 = 0x0000f860
+    258: 00800e93  addi         x29, x0, 8  # x29 = 0x00000008
+    25c: 3e0000ef  jal          x1, 0x0000063c  # target 0x0000063c; x1 = 0x00000260
+    260: 0001bfb7  lui          x31, 0x0001b  # x31 = 0x0001b000
+    264: 9e0f8f93  addi         x31, x31, -1568  # x31 = 0x0001a9e0
+    268: 00010f37  lui          x30, 0x00010  # x30 = 0x00010000
+    26c: a60f0f13  addi         x30, x30, -1440  # x30 = 0x0000fa60
+    270: 00800e93  addi         x29, x0, 8  # x29 = 0x00000008
+    274: 3c8000ef  jal          x1, 0x0000063c  # target 0x0000063c; x1 = 0x00000278
+    278: 7ac00393  addi         x7, x0, 1964  # x7 = 0x000007ac
+    27c: 0003a203  lw           x4, 0(x7)  # param start_pos; 0x000007ac
+    280: 00525293  srli         x5, x4, 5
+    284: 00129293  slli         x5, x5, 1
+    288: 0000f437  lui          x8, 0x0000f  # x8 = 0x0000f000
+    28c: 90440413  addi         x8, x8, -1788  # x8 = 0x0000e904
+    290: 00042383  lw           x7, 0(x8)  # param attention_core; 0x0000e904
+    294: 00c00413  addi         x8, x0, 12  # x8 = 0x0000000c
+    298: 0283d3b3  divu         x7, x7, x8
+    29c: 0003d393  srli         x7, x7, 0
+    2a0: 00939393  slli         x7, x7, 9
+    2a4: 007282b3  add          x5, x5, x7
+    2a8: 00f27313  andi         x6, x4, 15
+    2ac: 00531313  slli         x6, x6, 5
+    2b0: 01027393  andi         x7, x4, 16
+    2b4: 00639393  slli         x7, x7, 6
+    2b8: 00730333  add          x6, x6, x7
+    2bc: 3d4000ef  jal          x1, 0x00000690  # target 0x00000690; x1 = 0x000002c0
+    2c0: 3ec000ef  jal          x1, 0x000006ac  # target 0x000006ac; x1 = 0x000002c4
+    2c4: 00028393  addi         x7, x5, 0
+    2c8: 00038f93  addi         x31, x7, 0
+    2cc: 3fc000ef  jal          x1, 0x000006c8  # target 0x000006c8; x1 = 0x000002d0
+    2d0: 000a8413  addi         x8, x21, 0
+    2d4: 000b0493  addi         x9, x22, 0
+    2d8: 00640533  add          x10, x8, x6
+    2dc: 0001bfb7  lui          x31, 0x0001b  # x31 = 0x0001b000
+    2e0: a00f8f93  addi         x31, x31, -1536  # x31 = 0x0001aa00
+    2e4: 00050f13  addi         x30, x10, 0
+    2e8: 00048e93  addi         x29, x9, 0
+    2ec: 428000ef  jal          x1, 0x00000714  # target 0x00000714; x1 = 0x000002f0
+    2f0: 00640533  add          x10, x8, x6
+    2f4: 20050513  addi         x10, x10, 512
+    2f8: 0001bfb7  lui          x31, 0x0001b  # x31 = 0x0001b000
+    2fc: a20f8f93  addi         x31, x31, -1504  # x31 = 0x0001aa20
+    300: 00050f13  addi         x30, x10, 0
+    304: 00048e93  addi         x29, x9, 0
+    308: 40c000ef  jal          x1, 0x00000714  # target 0x00000714; x1 = 0x0000030c
+    30c: 00038f93  addi         x31, x7, 0
+    310: 4bc000ef  jal          x1, 0x000007cc  # target 0x000007cc; x1 = 0x00000314
+    314: 000a8513  addi         x10, x21, 0
+    318: 000b0593  addi         x11, x22, 0
+    31c: 00650633  add          x12, x10, x6
+    320: 00030fb7  lui          x31, 0x00030  # x31 = 0x00030000 · arc_apb_reset_unit + 0x0
+    324: 800f8f93  addi         x31, x31, -2048  # x31 = 0x0002f800
+    328: 00060f13  addi         x30, x12, 0
+    32c: 00058e93  addi         x29, x11, 0
+    330: 3e4000ef  jal          x1, 0x00000714  # target 0x00000714; x1 = 0x00000334
+    334: 00650633  add          x12, x10, x6
+    338: 20060613  addi         x12, x12, 512
+    33c: 00030fb7  lui          x31, 0x00030  # x31 = 0x00030000 · arc_apb_reset_unit + 0x0
+    340: 820f8f93  addi         x31, x31, -2016  # x31 = 0x0002f820
+    344: 00060f13  addi         x30, x12, 0
+    348: 00058e93  addi         x29, x11, 0
+    34c: 3c8000ef  jal          x1, 0x00000714  # target 0x00000714; x1 = 0x00000350
+    350: 00128393  addi         x7, x5, 1
+    354: 00038f93  addi         x31, x7, 0
+    358: 370000ef  jal          x1, 0x000006c8  # target 0x000006c8; x1 = 0x0000035c
+    35c: 000a8413  addi         x8, x21, 0
+    360: 000b0493  addi         x9, x22, 0
+    364: 00640533  add          x10, x8, x6
+    368: 0001bfb7  lui          x31, 0x0001b  # x31 = 0x0001b000
+    36c: a40f8f93  addi         x31, x31, -1472  # x31 = 0x0001aa40
+    370: 00050f13  addi         x30, x10, 0
+    374: 00048e93  addi         x29, x9, 0
+    378: 39c000ef  jal          x1, 0x00000714  # target 0x00000714; x1 = 0x0000037c
+    37c: 00640533  add          x10, x8, x6
+    380: 20050513  addi         x10, x10, 512
+    384: 0001bfb7  lui          x31, 0x0001b  # x31 = 0x0001b000
+    388: a60f8f93  addi         x31, x31, -1440  # x31 = 0x0001aa60
+    38c: 00050f13  addi         x30, x10, 0
+    390: 00048e93  addi         x29, x9, 0
+    394: 380000ef  jal          x1, 0x00000714  # target 0x00000714; x1 = 0x00000398
+    398: 00038f93  addi         x31, x7, 0
+    39c: 430000ef  jal          x1, 0x000007cc  # target 0x000007cc; x1 = 0x000003a0
+    3a0: 000a8513  addi         x10, x21, 0
+    3a4: 000b0593  addi         x11, x22, 0
+    3a8: 00650633  add          x12, x10, x6
+    3ac: 00030fb7  lui          x31, 0x00030  # x31 = 0x00030000 · arc_apb_reset_unit + 0x0
+    3b0: 840f8f93  addi         x31, x31, -1984  # x31 = 0x0002f840
+    3b4: 00060f13  addi         x30, x12, 0
+    3b8: 00058e93  addi         x29, x11, 0
+    3bc: 358000ef  jal          x1, 0x00000714  # target 0x00000714; x1 = 0x000003c0
+    3c0: 00650633  add          x12, x10, x6
+    3c4: 20060613  addi         x12, x12, 512
+    3c8: 00030fb7  lui          x31, 0x00030  # x31 = 0x00030000 · arc_apb_reset_unit + 0x0
+    3cc: 860f8f93  addi         x31, x31, -1952  # x31 = 0x0002f860
+    3d0: 00060f13  addi         x30, x12, 0
+    3d4: 00058e93  addi         x29, x11, 0
+    3d8: 33c000ef  jal          x1, 0x00000714  # target 0x00000714; x1 = 0x000003dc
+    3dc: 2b4000ef  jal          x1, 0x00000690  # target 0x00000690; x1 = 0x000003e0
+    3e0: 2cc000ef  jal          x1, 0x000006ac  # target 0x000006ac; x1 = 0x000003e4
+    3e4: ffb012b7  lui          x5, 0xffb01  # x5 = 0xffb01000
+    3e8: 86828293  addi         x5, x5, -1944  # x5 = 0xffb00868 · riscv_local_mem + 0x868
+    3ec: 0002a203  lw           x4, 0(x5)  # riscv_local_mem + 0x868 · 0xffb00868
+    3f0: 00120213  addi         x4, x4, 1
+    3f4: 01021213  slli         x4, x4, 16
+    3f8: 01025213  srli         x4, x4, 16
+    3fc: ffb012b7  lui          x5, 0xffb01  # x5 = 0xffb01000
+    400: 86828293  addi         x5, x5, -1944  # x5 = 0xffb00868 · riscv_local_mem + 0x868
+    404: 0042a023  sw           x4, 0(x5)  # riscv_local_mem + 0x868 · 0xffb00868; write runtime value
+    408: ffb4e2b7  lui          x5, 0xffb4e  # x5 = 0xffb4e000
+    40c: 02028293  addi         x5, x5, 32  # x5 = 0xffb4e020
+    410: 0042a023  sw           x4, 0(x5)  # 0xffb4e020; write runtime value
+    414: 0ff0000f  fence        0xf, 0xf
+    418: ffb01437  lui          x8, 0xffb01  # x8 = 0xffb01000
+    41c: 86440413  addi         x8, x8, -1948  # x8 = 0xffb00864 · riscv_local_mem + 0x864
+    420: 00042203  lw           x4, 0(x8)  # riscv_local_mem + 0x864 · 0xffb00864
+    424: 000012b7  lui          x5, 0x00001  # x5 = 0x00001000 · F32_TILE_BYTES · Wait.CFGEXU
+    428: 80028293  addi         x5, x5, -2048  # x5 = 0x00000800
+    42c: 00520233  add          x4, x4, x5
+    430: 0001b337  lui          x6, 0x0001b  # x6 = 0x0001b000
+    434: 00626863  bltu         x4, x6, 0x00000444  # target 0x00000444
+    438: 000013b7  lui          x7, 0x00001  # x7 = 0x00001000 · F32_TILE_BYTES · Wait.CFGEXU
+    43c: 80038393  addi         x7, x7, -2048  # x7 = 0x00000800
+    440: 40720233  sub          x4, x4, x7
+loc_444:
+    444: ffb01437  lui          x8, 0xffb01  # x8 = 0xffb01000
+    448: 86440413  addi         x8, x8, -1948  # x8 = 0xffb00864 · riscv_local_mem + 0x864
+    44c: 00442023  sw           x4, 0(x8)  # riscv_local_mem + 0x864 · 0xffb00864; write runtime value
+    450: ffb01437  lui          x8, 0xffb01  # x8 = 0xffb01000
+    454: 86c40413  addi         x8, x8, -1940  # x8 = 0xffb0086c · riscv_local_mem + 0x86c
+    458: 00042203  lw           x4, 0(x8)  # riscv_local_mem + 0x86c · 0xffb0086c
+    45c: 000012b7  lui          x5, 0x00001  # x5 = 0x00001000 · F32_TILE_BYTES · Wait.CFGEXU
+    460: 80028293  addi         x5, x5, -2048  # x5 = 0x00000800
+    464: 00520233  add          x4, x4, x5
+    468: 0001c337  lui          x6, 0x0001c  # x6 = 0x0001c000
+    46c: 80030313  addi         x6, x6, -2048  # x6 = 0x0001b800
+    470: 00626863  bltu         x4, x6, 0x00000480  # target 0x00000480
+    474: 000013b7  lui          x7, 0x00001  # x7 = 0x00001000 · F32_TILE_BYTES · Wait.CFGEXU
+    478: 80038393  addi         x7, x7, -2048  # x7 = 0x00000800
+    47c: 40720233  sub          x4, x4, x7
+loc_480:
+    480: ffb01437  lui          x8, 0xffb01  # x8 = 0xffb01000
+    484: 86c40413  addi         x8, x8, -1940  # x8 = 0xffb0086c · riscv_local_mem + 0x86c
+    488: 00442023  sw           x4, 0(x8)  # riscv_local_mem + 0x86c · 0xffb0086c; write runtime value
+    48c: ffb012b7  lui          x5, 0xffb01  # x5 = 0xffb01000
+    490: 87028293  addi         x5, x5, -1936  # x5 = 0xffb00870 · riscv_local_mem + 0x870
+    494: 0002a203  lw           x4, 0(x5)  # riscv_local_mem + 0x870 · 0xffb00870
+    498: 00120213  addi         x4, x4, 1
+    49c: 01021213  slli         x4, x4, 16
+    4a0: 01025213  srli         x4, x4, 16
+    4a4: ffb012b7  lui          x5, 0xffb01  # x5 = 0xffb01000
+    4a8: 87028293  addi         x5, x5, -1936  # x5 = 0xffb00870 · riscv_local_mem + 0x870
+    4ac: 0042a023  sw           x4, 0(x5)  # riscv_local_mem + 0x870 · 0xffb00870; write runtime value
+    4b0: ffb4f2b7  lui          x5, 0xffb4f  # x5 = 0xffb4f000
+    4b4: 02828293  addi         x5, x5, 40  # x5 = 0xffb4f028
+    4b8: 0042a023  sw           x4, 0(x5)  # 0xffb4f028; write runtime value
+    4bc: 0ff0000f  fence        0xf, 0xf
+    4c0: ffb01437  lui          x8, 0xffb01  # x8 = 0xffb01000
+    4c4: 87840413  addi         x8, x8, -1928  # x8 = 0xffb00878 · riscv_local_mem + 0x878
+    4c8: 00042203  lw           x4, 0(x8)  # riscv_local_mem + 0x878 · 0xffb00878
+    4cc: 00400393  addi         x7, x0, 4  # x7 = 0x00000004
+loc_4d0:
+    4d0: ffb4c437  lui          x8, 0xffb4c  # x8 = 0xffb4c000
+    4d4: 02840413  addi         x8, x8, 40  # x8 = 0xffb4c028
+    4d8: 00045283  lhu          x5, 0(x8)  # 0xffb4c028
+    4dc: 40428333  sub          x6, x5, x4
+    4e0: 01031313  slli         x6, x6, 16
+    4e4: 01035313  srli         x6, x6, 16
+    4e8: 00737663  bgeu         x6, x7, 0x000004f4  # target 0x000004f4
+    4ec: 0ff0000f  fence        0xf, 0xf
+    4f0: fe1ff06f  jal          x0, 0x000004d0  # target 0x000004d0
+loc_4f4:
+    4f4: 0ff0000f  fence        0xf, 0xf
+    4f8: 198000ef  jal          x1, 0x00000690  # target 0x00000690; x1 = 0x000004fc
+    4fc: 1b0000ef  jal          x1, 0x000006ac  # target 0x000006ac; x1 = 0x00000500
+    500: 00000f93  addi         x31, x0, 0  # x31 = 0x00000000
+    504: 314000ef  jal          x1, 0x00000818  # target 0x00000818; x1 = 0x00000508
+    508: 000a8213  addi         x4, x21, 0
+    50c: 000b0293  addi         x5, x22, 0
+    510: ffb013b7  lui          x7, 0xffb01  # x7 = 0xffb01000
+    514: 87438393  addi         x7, x7, -1932  # x7 = 0xffb00874 · riscv_local_mem + 0x874
+    518: 0003a303  lw           x6, 0(x7)  # riscv_local_mem + 0x874 · 0xffb00874
+    51c: 00030f93  addi         x31, x6, 0
+    520: 00020f13  addi         x30, x4, 0
+    524: 00028e93  addi         x29, x5, 0
+    528: 340000ef  jal          x1, 0x00000868  # target 0x00000868; x1 = 0x0000052c
+    52c: 00100f93  addi         x31, x0, 1  # x31 = 0x00000001
+    530: 2e8000ef  jal          x1, 0x00000818  # target 0x00000818; x1 = 0x00000534
+    534: 000a8213  addi         x4, x21, 0
+    538: 000b0293  addi         x5, x22, 0
+    53c: ffb013b7  lui          x7, 0xffb01  # x7 = 0xffb01000
+    540: 87438393  addi         x7, x7, -1932  # x7 = 0xffb00874 · riscv_local_mem + 0x874
+    544: 0003a303  lw           x6, 0(x7)  # riscv_local_mem + 0x874 · 0xffb00874
+    548: 000013b7  lui          x7, 0x00001  # x7 = 0x00001000 · F32_TILE_BYTES · Wait.CFGEXU
+    54c: 00730333  add          x6, x6, x7
+    550: 00030f93  addi         x31, x6, 0
+    554: 00020f13  addi         x30, x4, 0
+    558: 00028e93  addi         x29, x5, 0
+    55c: 30c000ef  jal          x1, 0x00000868  # target 0x00000868; x1 = 0x00000560
+    560: 00200f93  addi         x31, x0, 2  # x31 = 0x00000002
+    564: 2b4000ef  jal          x1, 0x00000818  # target 0x00000818; x1 = 0x00000568
+    568: 000a8213  addi         x4, x21, 0
+    56c: 000b0293  addi         x5, x22, 0
+    570: ffb013b7  lui          x7, 0xffb01  # x7 = 0xffb01000
+    574: 87438393  addi         x7, x7, -1932  # x7 = 0xffb00874 · riscv_local_mem + 0x874
+    578: 0003a303  lw           x6, 0(x7)  # riscv_local_mem + 0x874 · 0xffb00874
+    57c: 000023b7  lui          x7, 0x00002  # x7 = 0x00002000
+    580: 00730333  add          x6, x6, x7
+    584: 00030f93  addi         x31, x6, 0
+    588: 00020f13  addi         x30, x4, 0
+    58c: 00028e93  addi         x29, x5, 0
+    590: 2d8000ef  jal          x1, 0x00000868  # target 0x00000868; x1 = 0x00000594
+    594: 00300f93  addi         x31, x0, 3  # x31 = 0x00000003
+    598: 280000ef  jal          x1, 0x00000818  # target 0x00000818; x1 = 0x0000059c
+    59c: 000a8213  addi         x4, x21, 0
+    5a0: 000b0293  addi         x5, x22, 0
+    5a4: ffb013b7  lui          x7, 0xffb01  # x7 = 0xffb01000
+    5a8: 87438393  addi         x7, x7, -1932  # x7 = 0xffb00874 · riscv_local_mem + 0x874
+    5ac: 0003a303  lw           x6, 0(x7)  # riscv_local_mem + 0x874 · 0xffb00874
+    5b0: 000033b7  lui          x7, 0x00003  # x7 = 0x00003000
+    5b4: 00730333  add          x6, x6, x7
+    5b8: 00030f93  addi         x31, x6, 0
+    5bc: 00020f13  addi         x30, x4, 0
+    5c0: 00028e93  addi         x29, x5, 0
+    5c4: 2a4000ef  jal          x1, 0x00000868  # target 0x00000868; x1 = 0x000005c8
+    5c8: 0c8000ef  jal          x1, 0x00000690  # target 0x00000690; x1 = 0x000005cc
+    5cc: 0e0000ef  jal          x1, 0x000006ac  # target 0x000006ac; x1 = 0x000005d0
+    5d0: ffb012b7  lui          x5, 0xffb01  # x5 = 0xffb01000
+    5d4: 87828293  addi         x5, x5, -1928  # x5 = 0xffb00878 · riscv_local_mem + 0x878
+    5d8: 0002a203  lw           x4, 0(x5)  # riscv_local_mem + 0x878 · 0xffb00878
+    5dc: 00420213  addi         x4, x4, 4
+    5e0: 01021213  slli         x4, x4, 16
+    5e4: 01025213  srli         x4, x4, 16
+    5e8: ffb012b7  lui          x5, 0xffb01  # x5 = 0xffb01000
+    5ec: 87828293  addi         x5, x5, -1928  # x5 = 0xffb00878 · riscv_local_mem + 0x878
+    5f0: 0042a023  sw           x4, 0(x5)  # riscv_local_mem + 0x878 · 0xffb00878; write runtime value
+    5f4: ffb4c2b7  lui          x5, 0xffb4c  # x5 = 0xffb4c000
+    5f8: 02028293  addi         x5, x5, 32  # x5 = 0xffb4c020
+    5fc: 0042a023  sw           x4, 0(x5)  # 0xffb4c020; write runtime value
+    600: 0ff0000f  fence        0xf, 0xf
+    604: ffb01437  lui          x8, 0xffb01  # x8 = 0xffb01000
+    608: 87440413  addi         x8, x8, -1932  # x8 = 0xffb00874 · riscv_local_mem + 0x874
+    60c: 00042203  lw           x4, 0(x8)  # riscv_local_mem + 0x874 · 0xffb00874
+    610: 000042b7  lui          x5, 0x00004  # x5 = 0x00004000
+    614: 00520233  add          x4, x4, x5
+    618: 00019337  lui          x6, 0x00019  # x6 = 0x00019000
+    61c: 80030313  addi         x6, x6, -2048  # x6 = 0x00018800
+    620: 00626663  bltu         x4, x6, 0x0000062c  # target 0x0000062c
+    624: 000043b7  lui          x7, 0x00004  # x7 = 0x00004000
+    628: 40720233  sub          x4, x4, x7
+loc_62c:
+    62c: ffb01437  lui          x8, 0xffb01  # x8 = 0xffb01000
+    630: 87440413  addi         x8, x8, -1932  # x8 = 0xffb00874 · riscv_local_mem + 0x874
+    634: 00442023  sw           x4, 0(x8)  # riscv_local_mem + 0x874 · 0xffb00874; write runtime value
+loc_638:
+    638: 2e80006f  jal          x0, 0x00000920  # target 0x00000920
+loc_63c:
+    63c: 000faa03  lw           x20, 0(x31)  # Address depends on runtime register values
+    640: 014f2023  sw           x20, 0(x30)  # Address depends on runtime register values
+    644: 004faa03  lw           x20, 4(x31)  # Address depends on runtime register values
+    648: 014f2223  sw           x20, 4(x30)  # Address depends on runtime register values
+    64c: 008faa03  lw           x20, 8(x31)  # Address depends on runtime register values
+    650: 014f2423  sw           x20, 8(x30)  # Address depends on runtime register values
+    654: 00cfaa03  lw           x20, 12(x31)  # Address depends on runtime register values
+    658: 014f2623  sw           x20, 12(x30)  # Address depends on runtime register values
+    65c: 010faa03  lw           x20, 16(x31)  # Address depends on runtime register values
+    660: 014f2823  sw           x20, 16(x30)  # Address depends on runtime register values
+    664: 014faa03  lw           x20, 20(x31)  # Address depends on runtime register values
+    668: 014f2a23  sw           x20, 20(x30)  # Address depends on runtime register values
+    66c: 018faa03  lw           x20, 24(x31)  # Address depends on runtime register values
+    670: 014f2c23  sw           x20, 24(x30)  # Address depends on runtime register values
+    674: 01cfaa03  lw           x20, 28(x31)  # Address depends on runtime register values
+    678: 014f2e23  sw           x20, 28(x30)  # Address depends on runtime register values
+    67c: 020f8f93  addi         x31, x31, 32
+    680: 020f0f13  addi         x30, x30, 32
+    684: ff8e8e93  addi         x29, x29, -8
+    688: fa0e9ae3  bne          x29, x0, 0x0000063c  # target 0x0000063c
+    68c: 00008067  jalr         x0, 0(x1)
+loc_690:
+    690: ffb30ab7  lui          x21, 0xffb30  # x21 = 0xffb30000 · noc1_regs + 0x0
+    694: 284a8a93  addi         x21, x21, 644  # x21 = 0xffb30284 · noc1_regs + 0x284
+    698: 000aaa03  lw           x20, 0(x21)  # noc1_regs + 0x284 · 0xffb30284
+    69c: 000a0463  beq          x20, x0, 0x000006a4  # target 0x000006a4
+    6a0: ff1ff06f  jal          x0, 0x00000690  # target 0x00000690
+loc_6a4:
+    6a4: 0ff0000f  fence        0xf, 0xf
+    6a8: 00008067  jalr         x0, 0(x1)
+loc_6ac:
+    6ac: ffb30ab7  lui          x21, 0xffb30  # x21 = 0xffb30000 · noc1_regs + 0x0
+    6b0: 244a8a93  addi         x21, x21, 580  # x21 = 0xffb30244 · noc1_regs + 0x244
+    6b4: 000aaa03  lw           x20, 0(x21)  # noc1_regs + 0x244 · 0xffb30244
+    6b8: 000a0463  beq          x20, x0, 0x000006c0  # target 0x000006c0
+    6bc: ff1ff06f  jal          x0, 0x000006ac  # target 0x000006ac
+loc_6c0:
+    6c0: 0ff0000f  fence        0xf, 0xf
+    6c4: 00008067  jalr         x0, 0(x1)
 loc_6c8:
-    6c8: ffb30ab7  lui          x21, 0xffb30  # x21 = 0xffb30000 · noc1_regs + 0x0
-    6cc: 284a8a93  addi         x21, x21, 644  # x21 = 0xffb30284 · noc1_regs + 0x284
-    6d0: 000aaa03  lw           x20, 0(x21)  # noc1_regs + 0x284 · 0xffb30284
-    6d4: 08100a93  addi         x21, x0, 129  # x21 = 0x00000081
-    6d8: 015a6463  bltu         x20, x21, 0x000006e0  # target 0x000006e0
-    6dc: fedff06f  jal          x0, 0x000006c8  # target 0x000006c8
-loc_6e0:
-    6e0: ffb30ab7  lui          x21, 0xffb30  # x21 = 0xffb30000 · noc1_regs + 0x0
-    6e4: 244a8a93  addi         x21, x21, 580  # x21 = 0xffb30244 · noc1_regs + 0x244
-    6e8: 000aaa03  lw           x20, 0(x21)  # noc1_regs + 0x244 · 0xffb30244
-    6ec: 08100a93  addi         x21, x0, 129  # x21 = 0x00000081
-    6f0: 015a6463  bltu         x20, x21, 0x000006f8  # target 0x000006f8
-    6f4: fedff06f  jal          x0, 0x000006e0  # target 0x000006e0
-loc_6f8:
-    6f8: ffb30ab7  lui          x21, 0xffb30  # x21 = 0xffb30000 · noc1_regs + 0x0
-    6fc: 148a8a93  addi         x21, x21, 328  # x21 = 0xffb30148 · noc1_regs + 0x148
-    700: 000aaa03  lw           x20, 0(x21)  # noc1_regs + 0x148 · 0xffb30148
-    704: 014a1a13  slli         x20, x20, 20
-    708: 014a5a13  srli         x20, x20, 20
-    70c: ffb30ab7  lui          x21, 0xffb30  # x21 = 0xffb30000 · noc1_regs + 0x0
-loc_710:
-    710: 040aab03  lw           x22, 64(x21)  # noc1_regs + 0x40 · 0xffb30040
-    714: 000b0463  beq          x22, x0, 0x0000071c  # target 0x0000071c
-    718: ff9ff06f  jal          x0, 0x00000710  # target 0x00000710
-loc_71c:
-    71c: ffb30bb7  lui          x23, 0xffb30  # x23 = 0xffb30000 · noc1_regs + 0x0
-    720: 01fba023  sw           x31, 0(x23)  # noc1_regs + 0x0 · 0xffb30000; write runtime value
-    724: 000ba223  sw           x0, 4(x23)  # noc1_regs + 0x4 · 0xffb30004; write 0x00000000
-    728: 014ba423  sw           x20, 8(x23)  # noc1_regs + 0x8 · 0xffb30008; write runtime value
-    72c: 01eba623  sw           x30, 12(x23)  # noc1_regs + 0xc · 0xffb3000c; write runtime value
-    730: 000ba823  sw           x0, 16(x23)  # noc1_regs + 0x10 · 0xffb30010; write 0x00000000
-    734: 01dbaa23  sw           x29, 20(x23)  # noc1_regs + 0x14 · 0xffb30014; write runtime value
-    738: 40000c13  addi         x24, x0, 1024  # x24 = 0x00000400
-    73c: 018bac23  sw           x24, 24(x23)  # noc1_regs + 0x18 · 0xffb30018; write 0x00000400
-    740: 00002c37  lui          x24, 0x00002  # x24 = 0x00002000
-    744: 092c0c13  addi         x24, x24, 146  # x24 = 0x00002092
-    748: 018bae23  sw           x24, 28(x23)  # noc1_regs + 0x1c · 0xffb3001c; write 0x00002092
-    74c: 02000c13  addi         x24, x0, 32  # x24 = 0x00000020
-    750: 038ba023  sw           x24, 32(x23)  # noc1_regs + 0x20 · 0xffb30020; write 0x00000020
-    754: 020ba223  sw           x0, 36(x23)  # noc1_regs + 0x24 · 0xffb30024; write 0x00000000
-    758: 020ba423  sw           x0, 40(x23)  # noc1_regs + 0x28 · 0xffb30028; write 0x00000000
-    75c: 020ba623  sw           x0, 44(x23)  # noc1_regs + 0x2c · 0xffb3002c; write 0x00000000
-    760: ffb30bb7  lui          x23, 0xffb30  # x23 = 0xffb30000 · noc1_regs + 0x0
-    764: 040b8b93  addi         x23, x23, 64  # x23 = 0xffb30040 · noc1_regs + 0x40
-    768: 00100c13  addi         x24, x0, 1  # x24 = 0x00000001
-    76c: 018ba023  sw           x24, 0(x23)  # noc1_regs + 0x40 · 0xffb30040; write 0x00000001
-loc_770:
-    770: 040aab03  lw           x22, 64(x21)  # noc1_regs + 0x40 · 0xffb30040
-    774: 000b0463  beq          x22, x0, 0x0000077c  # target 0x0000077c
-    778: ff9ff06f  jal          x0, 0x00000770  # target 0x00000770
-loc_77c:
-    77c: 00008067  jalr         x0, 0(x1)
-loc_780:
-    780: 78800a93  addi         x21, x0, 1928  # x21 = 0x00000788
-    784: 000aaa03  lw           x20, 0(x21)  # param e2e_l0_value_cache; 0x00000788
-    788: 007a7d13  andi         x26, x20, 7
-    78c: ff8a7a13  andi         x20, x20, -8
-    790: 01af8ab3  add          x21, x31, x26
-    794: 007afb93  andi         x23, x21, 7
-    798: 003ada93  srli         x21, x21, 3
-    79c: 00ba9a93  slli         x21, x21, 11
-    7a0: 014a8ab3  add          x21, x21, x20
-    7a4: 00000b17  auipc        x22, 0x00000  # x22 = 0x000007a4
-    7a8: 018b0b13  addi         x22, x22, 24  # x22 = 0x000007bc
-    7ac: 001b9b93  slli         x23, x23, 1
-    7b0: 017b0b33  add          x22, x22, x23
-    7b4: 000b5b03  lhu          x22, 0(x22)  # Address depends on runtime register values
-    7b8: 00008067  jalr         x0, 0(x1)
-    7bc: 04110351  PACR         CfgContext=0, RowPadZero=1, DstAccessMode=0, AddrMode=0, AddrCntContext=2, ZeroWrite=0, ReadIntfSel=0, OvrdThreadId=1, Concat=5, CtxtCtrl=1, Flush=0, Last=0  # Unreachable by statically known control flow
-    7c0: 059104d1  PACR         CfgContext=3, RowPadZero=1, DstAccessMode=0, AddrMode=0, AddrCntContext=2, ZeroWrite=0, ReadIntfSel=1, OvrdThreadId=0, Concat=3, CtxtCtrl=1, Flush=0, Last=0  # Unreachable by statically known control flow
-    7c4: 04120352  SFPLZ        imm12_math=72, lreg_c=0, lreg_dest=13, instr_mod1=4  # lreg_c: L0; lreg_dest: L13; Unreachable by statically known control flow
-    7c8: 059204d2  SFPLZ        imm12_math=1608, lreg_c=1, lreg_dest=3, instr_mod1=4  # lreg_c: L1; lreg_dest: L3; Unreachable by statically known control flow
+    6c8: 78400a93  addi         x21, x0, 1924  # x21 = 0x00000784
+    6cc: 000aaa03  lw           x20, 0(x21)  # param e2e_l0_key_cache; 0x00000784
+    6d0: 007a7d13  andi         x26, x20, 7
+    6d4: ff8a7a13  andi         x20, x20, -8
+    6d8: 01af8ab3  add          x21, x31, x26
+    6dc: 007afb93  andi         x23, x21, 7
+    6e0: 003ada93  srli         x21, x21, 3
+    6e4: 00ba9a93  slli         x21, x21, 11
+    6e8: 014a8ab3  add          x21, x21, x20
+    6ec: 00000b17  auipc        x22, 0x00000  # x22 = 0x000006ec
+    6f0: 018b0b13  addi         x22, x22, 24  # x22 = 0x00000704
+    6f4: 001b9b93  slli         x23, x23, 1
+    6f8: 017b0b33  add          x22, x22, x23
+    6fc: 000b5b03  lhu          x22, 0(x22)  # Address depends on runtime register values
+    700: 00008067  jalr         x0, 0(x1)
+    704: 04110351  PACR         CfgContext=0, RowPadZero=1, DstAccessMode=0, AddrMode=0, AddrCntContext=2, ZeroWrite=0, ReadIntfSel=0, OvrdThreadId=1, Concat=5, CtxtCtrl=1, Flush=0, Last=0  # Unreachable by statically known control flow
+    708: 059104d1  PACR         CfgContext=3, RowPadZero=1, DstAccessMode=0, AddrMode=0, AddrCntContext=2, ZeroWrite=0, ReadIntfSel=1, OvrdThreadId=0, Concat=3, CtxtCtrl=1, Flush=0, Last=0  # Unreachable by statically known control flow
+    70c: 04120352  SFPLZ        imm12_math=72, lreg_c=0, lreg_dest=13, instr_mod1=4  # lreg_c: L0; lreg_dest: L13; Unreachable by statically known control flow
+    710: 059204d2  SFPLZ        imm12_math=1608, lreg_c=1, lreg_dest=3, instr_mod1=4  # lreg_c: L1; lreg_dest: L3; Unreachable by statically known control flow
+loc_714:
+    714: ffb30ab7  lui          x21, 0xffb30  # x21 = 0xffb30000 · noc1_regs + 0x0
+    718: 284a8a93  addi         x21, x21, 644  # x21 = 0xffb30284 · noc1_regs + 0x284
+    71c: 000aaa03  lw           x20, 0(x21)  # noc1_regs + 0x284 · 0xffb30284
+    720: 08100a93  addi         x21, x0, 129  # x21 = 0x00000081
+    724: 015a6463  bltu         x20, x21, 0x0000072c  # target 0x0000072c
+    728: fedff06f  jal          x0, 0x00000714  # target 0x00000714
+loc_72c:
+    72c: ffb30ab7  lui          x21, 0xffb30  # x21 = 0xffb30000 · noc1_regs + 0x0
+    730: 244a8a93  addi         x21, x21, 580  # x21 = 0xffb30244 · noc1_regs + 0x244
+    734: 000aaa03  lw           x20, 0(x21)  # noc1_regs + 0x244 · 0xffb30244
+    738: 08100a93  addi         x21, x0, 129  # x21 = 0x00000081
+    73c: 015a6463  bltu         x20, x21, 0x00000744  # target 0x00000744
+    740: fedff06f  jal          x0, 0x0000072c  # target 0x0000072c
+loc_744:
+    744: ffb30ab7  lui          x21, 0xffb30  # x21 = 0xffb30000 · noc1_regs + 0x0
+    748: 148a8a93  addi         x21, x21, 328  # x21 = 0xffb30148 · noc1_regs + 0x148
+    74c: 000aaa03  lw           x20, 0(x21)  # noc1_regs + 0x148 · 0xffb30148
+    750: 014a1a13  slli         x20, x20, 20
+    754: 014a5a13  srli         x20, x20, 20
+    758: ffb30ab7  lui          x21, 0xffb30  # x21 = 0xffb30000 · noc1_regs + 0x0
+loc_75c:
+    75c: 040aab03  lw           x22, 64(x21)  # noc1_regs + 0x40 · 0xffb30040
+    760: 000b0463  beq          x22, x0, 0x00000768  # target 0x00000768
+    764: ff9ff06f  jal          x0, 0x0000075c  # target 0x0000075c
+loc_768:
+    768: ffb30bb7  lui          x23, 0xffb30  # x23 = 0xffb30000 · noc1_regs + 0x0
+    76c: 01fba023  sw           x31, 0(x23)  # noc1_regs + 0x0 · 0xffb30000; write runtime value
+    770: 000ba223  sw           x0, 4(x23)  # noc1_regs + 0x4 · 0xffb30004; write 0x00000000
+    774: 014ba423  sw           x20, 8(x23)  # noc1_regs + 0x8 · 0xffb30008; write runtime value
+    778: 01eba623  sw           x30, 12(x23)  # noc1_regs + 0xc · 0xffb3000c; write runtime value
+    77c: 000ba823  sw           x0, 16(x23)  # noc1_regs + 0x10 · 0xffb30010; write 0x00000000
+    780: 01dbaa23  sw           x29, 20(x23)  # noc1_regs + 0x14 · 0xffb30014; write runtime value
+    784: 40000c13  addi         x24, x0, 1024  # x24 = 0x00000400
+    788: 018bac23  sw           x24, 24(x23)  # noc1_regs + 0x18 · 0xffb30018; write 0x00000400
+    78c: 00002c37  lui          x24, 0x00002  # x24 = 0x00002000
+    790: 092c0c13  addi         x24, x24, 146  # x24 = 0x00002092
+    794: 018bae23  sw           x24, 28(x23)  # noc1_regs + 0x1c · 0xffb3001c; write 0x00002092
+    798: 02000c13  addi         x24, x0, 32  # x24 = 0x00000020
+    79c: 038ba023  sw           x24, 32(x23)  # noc1_regs + 0x20 · 0xffb30020; write 0x00000020
+    7a0: 020ba223  sw           x0, 36(x23)  # noc1_regs + 0x24 · 0xffb30024; write 0x00000000
+    7a4: 020ba423  sw           x0, 40(x23)  # noc1_regs + 0x28 · 0xffb30028; write 0x00000000
+    7a8: 020ba623  sw           x0, 44(x23)  # noc1_regs + 0x2c · 0xffb3002c; write 0x00000000
+    7ac: ffb30bb7  lui          x23, 0xffb30  # x23 = 0xffb30000 · noc1_regs + 0x0
+    7b0: 040b8b93  addi         x23, x23, 64  # x23 = 0xffb30040 · noc1_regs + 0x40
+    7b4: 00100c13  addi         x24, x0, 1  # x24 = 0x00000001
+    7b8: 018ba023  sw           x24, 0(x23)  # noc1_regs + 0x40 · 0xffb30040; write 0x00000001
+loc_7bc:
+    7bc: 040aab03  lw           x22, 64(x21)  # noc1_regs + 0x40 · 0xffb30040
+    7c0: 000b0463  beq          x22, x0, 0x000007c8  # target 0x000007c8
+    7c4: ff9ff06f  jal          x0, 0x000007bc  # target 0x000007bc
+loc_7c8:
+    7c8: 00008067  jalr         x0, 0(x1)
 loc_7cc:
-    7cc: 78c00a93  addi         x21, x0, 1932  # x21 = 0x0000078c
-    7d0: 000aaa03  lw           x20, 0(x21)  # param e2e_context; 0x0000078c
+    7cc: 78800a93  addi         x21, x0, 1928  # x21 = 0x00000788
+    7d0: 000aaa03  lw           x20, 0(x21)  # param e2e_l0_value_cache; 0x00000788
     7d4: 007a7d13  andi         x26, x20, 7
     7d8: ff8a7a13  andi         x20, x20, -8
     7dc: 01af8ab3  add          x21, x31, x26
@@ -545,4 +546,78 @@ loc_7cc:
     80c: 059104d1  PACR         CfgContext=3, RowPadZero=1, DstAccessMode=0, AddrMode=0, AddrCntContext=2, ZeroWrite=0, ReadIntfSel=1, OvrdThreadId=0, Concat=3, CtxtCtrl=1, Flush=0, Last=0  # Unreachable by statically known control flow
     810: 04120352  SFPLZ        imm12_math=72, lreg_c=0, lreg_dest=13, instr_mod1=4  # lreg_c: L0; lreg_dest: L13; Unreachable by statically known control flow
     814: 059204d2  SFPLZ        imm12_math=1608, lreg_c=1, lreg_dest=3, instr_mod1=4  # lreg_c: L1; lreg_dest: L3; Unreachable by statically known control flow
-    818:           j FW_NCRISC+4   # return to firmware, linked at install
+loc_818:
+    818: 0000fab7  lui          x21, 0x0000f  # x21 = 0x0000f000
+    81c: 900a8a93  addi         x21, x21, -1792  # x21 = 0x0000e900
+    820: 000aaa03  lw           x20, 0(x21)  # param e2e_attention_partials; 0x0000e900
+    824: 007a7d13  andi         x26, x20, 7
+    828: ff8a7a13  andi         x20, x20, -8
+    82c: 01af8ab3  add          x21, x31, x26
+    830: 007afb93  andi         x23, x21, 7
+    834: 003ada93  srli         x21, x21, 3
+    838: 00ca9a93  slli         x21, x21, 12
+    83c: 014a8ab3  add          x21, x21, x20
+    840: 00000b17  auipc        x22, 0x00000  # x22 = 0x00000840
+    844: 018b0b13  addi         x22, x22, 24  # x22 = 0x00000858
+    848: 001b9b93  slli         x23, x23, 1
+    84c: 017b0b33  add          x22, x22, x23
+    850: 000b5b03  lhu          x22, 0(x22)  # Address depends on runtime register values
+    854: 00008067  jalr         x0, 0(x1)
+    858: 04110351  PACR         CfgContext=0, RowPadZero=1, DstAccessMode=0, AddrMode=0, AddrCntContext=2, ZeroWrite=0, ReadIntfSel=0, OvrdThreadId=1, Concat=5, CtxtCtrl=1, Flush=0, Last=0  # Unreachable by statically known control flow
+    85c: 059104d1  PACR         CfgContext=3, RowPadZero=1, DstAccessMode=0, AddrMode=0, AddrCntContext=2, ZeroWrite=0, ReadIntfSel=1, OvrdThreadId=0, Concat=3, CtxtCtrl=1, Flush=0, Last=0  # Unreachable by statically known control flow
+    860: 04120352  SFPLZ        imm12_math=72, lreg_c=0, lreg_dest=13, instr_mod1=4  # lreg_c: L0; lreg_dest: L13; Unreachable by statically known control flow
+    864: 059204d2  SFPLZ        imm12_math=1608, lreg_c=1, lreg_dest=3, instr_mod1=4  # lreg_c: L1; lreg_dest: L3; Unreachable by statically known control flow
+loc_868:
+    868: ffb30ab7  lui          x21, 0xffb30  # x21 = 0xffb30000 · noc1_regs + 0x0
+    86c: 284a8a93  addi         x21, x21, 644  # x21 = 0xffb30284 · noc1_regs + 0x284
+    870: 000aaa03  lw           x20, 0(x21)  # noc1_regs + 0x284 · 0xffb30284
+    874: 08100a93  addi         x21, x0, 129  # x21 = 0x00000081
+    878: 015a6463  bltu         x20, x21, 0x00000880  # target 0x00000880
+    87c: fedff06f  jal          x0, 0x00000868  # target 0x00000868
+loc_880:
+    880: ffb30ab7  lui          x21, 0xffb30  # x21 = 0xffb30000 · noc1_regs + 0x0
+    884: 244a8a93  addi         x21, x21, 580  # x21 = 0xffb30244 · noc1_regs + 0x244
+    888: 000aaa03  lw           x20, 0(x21)  # noc1_regs + 0x244 · 0xffb30244
+    88c: 08100a93  addi         x21, x0, 129  # x21 = 0x00000081
+    890: 015a6463  bltu         x20, x21, 0x00000898  # target 0x00000898
+    894: fedff06f  jal          x0, 0x00000880  # target 0x00000880
+loc_898:
+    898: ffb30ab7  lui          x21, 0xffb30  # x21 = 0xffb30000 · noc1_regs + 0x0
+    89c: 148a8a93  addi         x21, x21, 328  # x21 = 0xffb30148 · noc1_regs + 0x148
+    8a0: 000aaa03  lw           x20, 0(x21)  # noc1_regs + 0x148 · 0xffb30148
+    8a4: 014a1a13  slli         x20, x20, 20
+    8a8: 014a5a13  srli         x20, x20, 20
+    8ac: ffb30ab7  lui          x21, 0xffb30  # x21 = 0xffb30000 · noc1_regs + 0x0
+loc_8b0:
+    8b0: 040aab03  lw           x22, 64(x21)  # noc1_regs + 0x40 · 0xffb30040
+    8b4: 000b0463  beq          x22, x0, 0x000008bc  # target 0x000008bc
+    8b8: ff9ff06f  jal          x0, 0x000008b0  # target 0x000008b0
+loc_8bc:
+    8bc: ffb30bb7  lui          x23, 0xffb30  # x23 = 0xffb30000 · noc1_regs + 0x0
+    8c0: 01fba023  sw           x31, 0(x23)  # noc1_regs + 0x0 · 0xffb30000; write runtime value
+    8c4: 000ba223  sw           x0, 4(x23)  # noc1_regs + 0x4 · 0xffb30004; write 0x00000000
+    8c8: 014ba423  sw           x20, 8(x23)  # noc1_regs + 0x8 · 0xffb30008; write runtime value
+    8cc: 01eba623  sw           x30, 12(x23)  # noc1_regs + 0xc · 0xffb3000c; write runtime value
+    8d0: 000ba823  sw           x0, 16(x23)  # noc1_regs + 0x10 · 0xffb30010; write 0x00000000
+    8d4: 01dbaa23  sw           x29, 20(x23)  # noc1_regs + 0x14 · 0xffb30014; write runtime value
+    8d8: 40000c13  addi         x24, x0, 1024  # x24 = 0x00000400
+    8dc: 018bac23  sw           x24, 24(x23)  # noc1_regs + 0x18 · 0xffb30018; write 0x00000400
+    8e0: 00002c37  lui          x24, 0x00002  # x24 = 0x00002000
+    8e4: 092c0c13  addi         x24, x24, 146  # x24 = 0x00002092
+    8e8: 018bae23  sw           x24, 28(x23)  # noc1_regs + 0x1c · 0xffb3001c; write 0x00002092
+    8ec: 00001c37  lui          x24, 0x00001  # x24 = 0x00001000 · F32_TILE_BYTES · Wait.CFGEXU
+    8f0: 038ba023  sw           x24, 32(x23)  # noc1_regs + 0x20 · 0xffb30020; write 0x00001000
+    8f4: 020ba223  sw           x0, 36(x23)  # noc1_regs + 0x24 · 0xffb30024; write 0x00000000
+    8f8: 020ba423  sw           x0, 40(x23)  # noc1_regs + 0x28 · 0xffb30028; write 0x00000000
+    8fc: 020ba623  sw           x0, 44(x23)  # noc1_regs + 0x2c · 0xffb3002c; write 0x00000000
+    900: ffb30bb7  lui          x23, 0xffb30  # x23 = 0xffb30000 · noc1_regs + 0x0
+    904: 040b8b93  addi         x23, x23, 64  # x23 = 0xffb30040 · noc1_regs + 0x40
+    908: 00100c13  addi         x24, x0, 1  # x24 = 0x00000001
+    90c: 018ba023  sw           x24, 0(x23)  # noc1_regs + 0x40 · 0xffb30040; write 0x00000001
+loc_910:
+    910: 040aab03  lw           x22, 64(x21)  # noc1_regs + 0x40 · 0xffb30040
+    914: 000b0463  beq          x22, x0, 0x0000091c  # target 0x0000091c
+    918: ff9ff06f  jal          x0, 0x00000910  # target 0x00000910
+loc_91c:
+    91c: 00008067  jalr         x0, 0(x1)
+    920:           j FW_NCRISC+4   # return to firmware, linked at install

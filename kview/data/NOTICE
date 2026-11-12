@@ -1,0 +1,5 @@
+isa.json merges the Tensix encoders of blackhole-py's ttko/isa.py with the instruction reference adapted from the
+sibling tt-ins-docs project. tensix_regs.json and tile_regs.json are copied from Tenstorrent ttsim (data/bh), and
+sfpu_registers.json holds ttsim's SFPU reset constants. registers_full.json adds register fields from Tenstorrent
+tt-metal's Blackhole cfg_defines.h. Tenstorrent source data: Copyright Tenstorrent USA, Inc., Apache-2.0
+(see LICENSE-APACHE-2.0).

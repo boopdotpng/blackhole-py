@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>kview</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app">
+  <nav id="rail" aria-label="Kernels">
+    <div class="grip" data-panel="rail" title="Drag to resize, double-click to hide"></div>
+    <header>
+      <h1>kview</h1>
+      <button id="theme" title="Switch between dark and light">theme</button>
+    </header>
+    <div id="models" role="tablist"></div>
+    <div id="pipeline"></div>
+    <div id="outline-wrap">
+      <h2>In this kernel</h2>
+      <div id="outline"></div>
+    </div>
+  </nav>
+
+  <main id="center">
+    <header id="bar">
+      <div class="line">
+        <button id="toggle-rail" class="icon" title="Show or hide the kernel list (b)"><svg viewBox="0 0 16 16"><rect x="1.5" y="2.5" width="13" height="11" rx="1.5"/><path d="M6 2.5v11"/></svg></button>
+        <div id="crumbs"></div>
+        <button id="toggle-side" class="icon" title="Show or hide the details panel (i)"><svg viewBox="0 0 16 16"><rect x="1.5" y="2.5" width="13" height="11" rx="1.5"/><path d="M10 2.5v11"/></svg></button>
+      </div>
+      <div id="tools">
+        <input id="find" type="search" placeholder="Find in kernel   /" autocomplete="off" spellcheck="false">
+        <span id="find-count"></span>
+        <label title="Also search every other kernel of this model"><input id="find-all" type="checkbox"> all kernels</label>
+        <label title="Collapse repeated instruction runs"><input id="fold" type="checkbox" checked> fold repeats</label>
+        <label title="Show the raw 32-bit words"><input id="words" type="checkbox"> words</label>
+        <button id="open-palette" title="Jump to a kernel, subroutine, label or pc (Ctrl+K)">Jump to…</button>
+      </div>
+    </header>
+    <div id="view" tabindex="0"></div>
+  </main>
+
+  <aside id="side" aria-label="Details">
+    <div class="grip" data-panel="side" title="Drag to resize, double-click to hide"></div>
+    <div id="side-body"></div>
+  </aside>
+</div>
+
+<div id="palette" hidden>
+  <div class="box">
+    <input id="palette-in" type="text" placeholder="Kernel, subroutine, label, param, or a pc like 1c4" autocomplete="off" spellcheck="false">
+    <div id="palette-list"></div>
+    <footer>↑ ↓ to choose, Enter to go, Esc to close</footer>
+  </div>
+</div>
+<script src="app.js"></script>
+</body>
+</html>

@@ -7,16 +7,16 @@
       0: ffb01237  lui          x4, 0xffb01  # x4 = 0xffb01000
       4: 87820213  addi         x4, x4, -1928  # x4 = 0xffb00878 · riscv_local_mem + 0x878
       8: 000172b7  lui          x5, 0x00017  # x5 = 0x00017000
-      c: 04028293  addi         x5, x5, 64  # x5 = 0x00017040
-     10: 00522023  sw           x5, 0(x4)  # riscv_local_mem + 0x878 · 0xffb00878; write 0x00017040
+      c: 08028293  addi         x5, x5, 128  # x5 = 0x00017080
+     10: 00522023  sw           x5, 0(x4)  # riscv_local_mem + 0x878 · 0xffb00878; write 0x00017080
      14: ffb01237  lui          x4, 0xffb01  # x4 = 0xffb01000
      18: 87c20213  addi         x4, x4, -1924  # x4 = 0xffb0087c · riscv_local_mem + 0x87c
      1c: 00022023  sw           x0, 0(x4)  # riscv_local_mem + 0x87c · 0xffb0087c; write 0x00000000
      20: ffb014b7  lui          x9, 0xffb01  # x9 = 0xffb01000
      24: 88048493  addi         x9, x9, -1920  # x9 = 0xffb00880 · riscv_local_mem + 0x880
      28: 0000f537  lui          x10, 0x0000f  # x10 = 0x0000f000
-     2c: 04050513  addi         x10, x10, 64  # x10 = 0x0000f040
-     30: 00a4a023  sw           x10, 0(x9)  # riscv_local_mem + 0x880 · 0xffb00880; write 0x0000f040
+     2c: 08050513  addi         x10, x10, 128  # x10 = 0x0000f080
+     30: 00a4a023  sw           x10, 0(x9)  # riscv_local_mem + 0x880 · 0xffb00880; write 0x0000f080
      34: ffb014b7  lui          x9, 0xffb01  # x9 = 0xffb01000
      38: 88448493  addi         x9, x9, -1916  # x9 = 0xffb00884 · riscv_local_mem + 0x884
      3c: 0004a023  sw           x0, 0(x9)  # riscv_local_mem + 0x884 · 0xffb00884; write 0x00000000
@@ -47,7 +47,7 @@ loc_7c:
      98: 00020f93  addi         x31, x4, 0
      9c: 00028f13  addi         x30, x5, 0
      a0: 00017eb7  lui          x29, 0x00017  # x29 = 0x00017000
-     a4: 040e8e93  addi         x29, x29, 64  # x29 = 0x00017040
+     a4: 080e8e93  addi         x29, x29, 128  # x29 = 0x00017080
      a8: 354000ef  jal          x1, 0x000003fc  # target 0x000003fc; x1 = 0x000000ac
      ac: 00100f93  addi         x31, x0, 1  # x31 = 0x00000001
      b0: 2c8000ef  jal          x1, 0x00000378  # target 0x00000378; x1 = 0x000000b4
@@ -56,7 +56,7 @@ loc_7c:
      bc: 00020f93  addi         x31, x4, 0
      c0: 00028f13  addi         x30, x5, 0
      c4: 00018eb7  lui          x29, 0x00018  # x29 = 0x00018000
-     c8: 840e8e93  addi         x29, x29, -1984  # x29 = 0x00017840
+     c8: 880e8e93  addi         x29, x29, -1920  # x29 = 0x00017880
      cc: 330000ef  jal          x1, 0x000003fc  # target 0x000003fc; x1 = 0x000000d0
      d0: 00200f93  addi         x31, x0, 2  # x31 = 0x00000002
      d4: 2a4000ef  jal          x1, 0x00000378  # target 0x00000378; x1 = 0x000000d8
@@ -65,7 +65,7 @@ loc_7c:
      e0: 00020f93  addi         x31, x4, 0
      e4: 00028f13  addi         x30, x5, 0
      e8: 00018eb7  lui          x29, 0x00018  # x29 = 0x00018000
-     ec: 040e8e93  addi         x29, x29, 64  # x29 = 0x00018040
+     ec: 080e8e93  addi         x29, x29, 128  # x29 = 0x00018080
      f0: 30c000ef  jal          x1, 0x000003fc  # target 0x000003fc; x1 = 0x000000f4
      f4: 00300f93  addi         x31, x0, 3  # x31 = 0x00000003
      f8: 280000ef  jal          x1, 0x00000378  # target 0x00000378; x1 = 0x000000fc
@@ -74,7 +74,7 @@ loc_7c:
     104: 00020f93  addi         x31, x4, 0
     108: 00028f13  addi         x30, x5, 0
     10c: 00019eb7  lui          x29, 0x00019  # x29 = 0x00019000
-    110: 840e8e93  addi         x29, x29, -1984  # x29 = 0x00018840
+    110: 880e8e93  addi         x29, x29, -1920  # x29 = 0x00018880
     114: 2e8000ef  jal          x1, 0x000003fc  # target 0x000003fc; x1 = 0x00000118
     118: 00000f93  addi         x31, x0, 0  # x31 = 0x00000000
     11c: 384000ef  jal          x1, 0x000004a0  # target 0x000004a0; x1 = 0x00000120
@@ -83,7 +83,7 @@ loc_7c:
     128: 00020f93  addi         x31, x4, 0
     12c: 00028f13  addi         x30, x5, 0
     130: 00019eb7  lui          x29, 0x00019  # x29 = 0x00019000
-    134: 040e8e93  addi         x29, x29, 64  # x29 = 0x00019040
+    134: 080e8e93  addi         x29, x29, 128  # x29 = 0x00019080
     138: 2c4000ef  jal          x1, 0x000003fc  # target 0x000003fc; x1 = 0x0000013c
     13c: 00100f93  addi         x31, x0, 1  # x31 = 0x00000001
     140: 360000ef  jal          x1, 0x000004a0  # target 0x000004a0; x1 = 0x00000144
@@ -92,7 +92,7 @@ loc_7c:
     14c: 00020f93  addi         x31, x4, 0
     150: 00028f13  addi         x30, x5, 0
     154: 0001aeb7  lui          x29, 0x0001a  # x29 = 0x0001a000
-    158: 840e8e93  addi         x29, x29, -1984  # x29 = 0x00019840
+    158: 880e8e93  addi         x29, x29, -1920  # x29 = 0x00019880
     15c: 2a0000ef  jal          x1, 0x000003fc  # target 0x000003fc; x1 = 0x00000160
     160: 00200f93  addi         x31, x0, 2  # x31 = 0x00000002
     164: 33c000ef  jal          x1, 0x000004a0  # target 0x000004a0; x1 = 0x00000168
@@ -101,7 +101,7 @@ loc_7c:
     170: 00020f93  addi         x31, x4, 0
     174: 00028f13  addi         x30, x5, 0
     178: 0001aeb7  lui          x29, 0x0001a  # x29 = 0x0001a000
-    17c: 040e8e93  addi         x29, x29, 64  # x29 = 0x0001a040
+    17c: 080e8e93  addi         x29, x29, 128  # x29 = 0x0001a080
     180: 27c000ef  jal          x1, 0x000003fc  # target 0x000003fc; x1 = 0x00000184
     184: 00300f93  addi         x31, x0, 3  # x31 = 0x00000003
     188: 318000ef  jal          x1, 0x000004a0  # target 0x000004a0; x1 = 0x0000018c
@@ -110,7 +110,7 @@ loc_7c:
     194: 00020f93  addi         x31, x4, 0
     198: 00028f13  addi         x30, x5, 0
     19c: 0001beb7  lui          x29, 0x0001b  # x29 = 0x0001b000
-    1a0: 840e8e93  addi         x29, x29, -1984  # x29 = 0x0001a840
+    1a0: 880e8e93  addi         x29, x29, -1920  # x29 = 0x0001a880
     1a4: 258000ef  jal          x1, 0x000003fc  # target 0x000003fc; x1 = 0x000001a8
     1a8: 1b4000ef  jal          x1, 0x0000035c  # target 0x0000035c; x1 = 0x000001ac
     1ac: ffb01437  lui          x8, 0xffb01  # x8 = 0xffb01000
@@ -119,7 +119,7 @@ loc_7c:
     1b8: 000042b7  lui          x5, 0x00004  # x5 = 0x00004000
     1bc: 00520233  add          x4, x4, x5
     1c0: 0001b337  lui          x6, 0x0001b  # x6 = 0x0001b000
-    1c4: 04030313  addi         x6, x6, 64  # x6 = 0x0001b040
+    1c4: 08030313  addi         x6, x6, 128  # x6 = 0x0001b080
     1c8: 00626663  bltu         x4, x6, 0x000001d4  # target 0x000001d4
     1cc: 000043b7  lui          x7, 0x00004  # x7 = 0x00004000
     1d0: 40720233  sub          x4, x4, x7
@@ -195,7 +195,7 @@ loc_294:
     2d8: 00002537  lui          x10, 0x00002  # x10 = 0x00002000
     2dc: 00a484b3  add          x9, x9, x10
     2e0: 000135b7  lui          x11, 0x00013  # x11 = 0x00013000
-    2e4: 04058593  addi         x11, x11, 64  # x11 = 0x00013040
+    2e4: 08058593  addi         x11, x11, 128  # x11 = 0x00013080
     2e8: 00b4e663  bltu         x9, x11, 0x000002f4  # target 0x000002f4
     2ec: 00004637  lui          x12, 0x00004  # x12 = 0x00004000
     2f0: 40c484b3  sub          x9, x9, x12

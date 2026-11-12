@@ -1,5 +1,5 @@
 # llama3 8b-fp8 decode: embedding, ncrisc. Exported from blackhole-py/examples/llama3/kernels.py by tools/rewrite_export/export_llama3.py.
-# cores (1): 1,4
+# cores (1): 1,2
 # params: 0x780=e2e_token_history, 0x784=e2e_embedding_weight, 0x788=e2e_x_a, 0x78c=token_pos
 #   0x780.. uniform, sent with every EXEC; 0xe840.. this core's resident per-core table
 # pcs are offsets from the image start; position-independent, llama3.py runs it from either code slot.
@@ -7,8 +7,8 @@
       0: ffb01237  lui          x4, 0xffb01  # x4 = 0xffb01000
       4: 86420213  addi         x4, x4, -1948  # x4 = 0xffb00864 · riscv_local_mem + 0x864
       8: 000102b7  lui          x5, 0x00010  # x5 = 0x00010000
-      c: 04028293  addi         x5, x5, 64  # x5 = 0x00010040
-     10: 00522023  sw           x5, 0(x4)  # riscv_local_mem + 0x864 · 0xffb00864; write 0x00010040
+      c: 08028293  addi         x5, x5, 128  # x5 = 0x00010080
+     10: 00522023  sw           x5, 0(x4)  # riscv_local_mem + 0x864 · 0xffb00864; write 0x00010080
      14: ffb01237  lui          x4, 0xffb01  # x4 = 0xffb01000
      18: 86820213  addi         x4, x4, -1944  # x4 = 0xffb00868 · riscv_local_mem + 0x868
      1c: 00022023  sw           x0, 0(x4)  # riscv_local_mem + 0x868 · 0xffb00868; write 0x00000000
@@ -103,7 +103,7 @@ loc_54:
     178: 000022b7  lui          x5, 0x00002  # x5 = 0x00002000
     17c: 00520233  add          x4, x4, x5
     180: 00012337  lui          x6, 0x00012  # x6 = 0x00012000 · TensixL1.KERNEL_CACHE_BASE
-    184: 04030313  addi         x6, x6, 64  # x6 = 0x00012040
+    184: 08030313  addi         x6, x6, 128  # x6 = 0x00012080
     188: 00626663  bltu         x4, x6, 0x00000194  # target 0x00000194
     18c: 000023b7  lui          x7, 0x00002  # x7 = 0x00002000
     190: 40720233  sub          x4, x4, x7

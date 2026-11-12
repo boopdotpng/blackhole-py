@@ -1,0 +1,50 @@
+// embedding, one token:  x = table[history[pos]]
+// history: u32 token ids in dram. table: bf16 [vocab][DIM], one row = DIM*2 bytes, contiguous.
+// pure data movement: no unpack, math or pack, so the compiler emits only brisc (reads) and ncrisc (writes).
+
+.version 0
+.target blackhole
+
+.define ROW_TILES 2                // 1B: 2048 bf16 = 4096 bytes = 2 tiles. 8B: 4
+.define ROW_BYTES 4096
+
+.visible .entry embedding (
+    .param .dram history,
+    .param .dram table,
+    .param .dram x,
+    .param .u32  pos
+) .cores (1,2)
+{
+    .reg .tile.u32  %ids;                  // only the first 16 bytes are used
+    .reg .tile.bf16 %row<ROW_TILES>;
+    .reg .u32       %off, %lo, %tok, %src, %t;
+
+    // token id. noc reads are 16-byte aligned, so fetch the aligned 16 bytes holding history[pos]
+    shl.b32     %off, pos, 2;
+    and.b32     %lo, %off, 15;
+    sub.u32     %off, %off, %lo;
+    cp.async    %ids, [history + %off], 16;
+    ld.l1.u32   %tok, [%ids + %lo];        // waits for the read (inferred)
+
+    // the row: read tile by tile into l1, write each tile out as it lands
+    mul.lo.u32  %src, %tok, ROW_BYTES;
+    loop %t = 0, ROW_TILES {
+        cp.async    %row[%t], [table + %src];
+        shl.b32     %off, %t, 11;
+        cp.async    [x + %off], %row[%t];
+        add.u32     %src, %src, 2048;
+    }
+    exit;
+}
+
+// notes from writing this
+//
+// - 20 lines. the old python version is about the same length but names brisc / ncrisc, a cb, and calls
+//   noc helpers; this one names none of those.
+// - %tok is produced by a load on brisc (where the read landed) and used for addresses on brisc only, so no
+//   cross-risc channel is needed. ncrisc only needs %t and the tiles. the compiler has to see that the
+//   write side doesn't depend on %tok; if it got that wrong it would add a scalar channel brisc -> ncrisc.
+// - "the first 16 bytes of a tile register" is awkward. a `.buf.u32 [4]` class (ttptx_isa.md section 13,
+//   question 5) would say what is meant.
+// - the 1B / 8B difference is two .defines. a .param tile count would need a register-indexed tile array with
+//   a runtime bound, which is fine for cp.async but caps l1 allocation at the declared maximum.

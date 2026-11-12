@@ -1,0 +1,51 @@
+// ttptx standard library: functions that are not instructions (ttptx_isa.md section 8.7).
+// SFPU vectors are 32 lanes laid out as 4 rows x 8 lanes.
+
+// sum of all 32 lanes of %x, broadcast to every lane.
+// 6 rot.lane steps (12 cycles) + 3 adds for the rows, 4 movs + transp4 + 3 adds across rows.
+.func (.reg .v %s) hsum (.reg .v %x)
+{
+    .reg .v %t, %r0, %r1, %r2, %r3;
+
+    // each 8-lane row: rotate-and-add by 4, 2, 1. afterwards every lane holds its row's sum
+    rot.lane  %t, %x, 4;
+    add.f32   %x, %x, %t;
+    rot.lane  %t, %x, 2;
+    add.f32   %x, %x, %t;
+    rot.lane  %t, %x, 1;
+    add.f32   %x, %x, %t;
+
+    // across the 4 rows: transpose 4 copies, so %rj holds row j's sum in every lane, then add
+    mov       %r0, %x;
+    mov       %r1, %x;
+    mov       %r2, %x;
+    mov       %r3, %x;
+    transp4   %r0, %r1, %r2, %r3;
+    add.f32   %s, %r0, %r1;
+    add.f32   %s, %s, %r2;
+    add.f32   %s, %s, %r3;
+    ret;
+}
+
+// 1/sqrt(x) for finite x > 0: integer seed, then two newton steps y = y * (1.5 - 0.5 x y^2).
+// the old kernel (_rms_finalize_scale) uses a tuned seed 0x5f1110a0 and a 2-constant refinement instead;
+// either fits here.
+.func (.reg .v %y) rsqrt (.reg .v %x)
+{
+    .reg .v %t, %h, %c;
+
+    shr.u32   %y, %x, 1;
+    mov.u32   %t, 0x5f3759df;
+    sub.s32   %y, %t, %y;              // seed
+    mul.f32   %h, %x, -0.5;            // -x/2
+    mov.f32   %c, 1.5;
+
+    mul.f32   %t, %y, %y;
+    fma.f32   %t, %h, %t, %c;          // 1.5 - x/2 * y^2
+    mul.f32   %y, %y, %t;
+
+    mul.f32   %t, %y, %y;
+    fma.f32   %t, %h, %t, %c;
+    mul.f32   %y, %y, %t;
+    ret;
+}

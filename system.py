@@ -34,6 +34,19 @@ class PIN_PAGES:
   physical_address: u64
   noc_address: u64
 
+TENSTORRENT_LOCK_CTL_ACQUIRE = 0  # non-blocking, out value 1 = acquired
+CHIP_IN_USE = 20  # UMD's per-card lock index, held while tt-metal has the chip started; kmd drops it on fd close
+
+@ioctl(8)
+class LOCK_CTL:
+  output_size_bytes: u32 = 4
+  flags: u32 = TENSTORRENT_LOCK_CTL_ACQUIRE
+  index: u8
+  reserved: u8 * 3
+  # out
+  value: u8
+  out_reserved: u8 * 3
+
 @ioctl(10)
 class UNPIN_PAGES:
   virtual_address: u64
@@ -105,6 +118,12 @@ class PCIDevice:
     self.card = Path(f"/sys/class/tenstorrent/tenstorrent!{index}/tt_card_type").read_text().strip()
     if self.card not in ("p150a", "p150b"): raise RuntimeError(f"unsupported card {self.card}, only p150 for now")
     self.fd = os.open(f"/dev/tenstorrent/{index}", os.O_RDWR | os.O_CLOEXEC | os.O_APPEND)
+    try:
+      if not LOCK_CTL(self.fd, index=CHIP_IN_USE).value:
+        raise RuntimeError(f"/dev/tenstorrent/{index} is in use by another process (tt-metal or another blackhole-py)")
+    except BaseException:
+      os.close(self.fd)
+      raise
     try:
       SET_POWER_STATE(self.fd, power_flags=TT_POWER_FLAG_MAX_AI_CLK |
                       TT_POWER_FLAG_MRISC_PHY_WAKEUP | TT_POWER_FLAG_TENSIX_ENABLE)

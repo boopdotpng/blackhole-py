@@ -1,0 +1,4895 @@
+{
+"1": {
+"name": "MOP",
+"fields": [
+{
+"name": "mop_type",
+"hi": 23,
+"lo": 23,
+"meaning": "Template selector: 0 uses instruction count/mask fields with configuration; 1 takes the loop structure from configuration."
+},
+{
+"name": "loop_count",
+"hi": 22,
+"lo": 16,
+"meaning": "Template-0 Count1 field; ignored by the template-1 repository usage."
+},
+{
+"name": "zmask_lo16_or_loop_count",
+"hi": 15,
+"lo": 0,
+"meaning": "Template-0 low zero-mask/count payload, depending on template configuration. Ordinary template-1 calls pass zero."
+}
+],
+"title": "Execute a configured macro-op",
+"group": "Control",
+"summary": "Expand a configured macro-op template into ordinary Tensix instructions.",
+"notes": [
+"The repository programs template words first, then executes TTMOP(1, 0, 0). MOP, REPLAY and SFPLOADMACRO are three different mechanisms."
+],
+"constants": [],
+"manual": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/WormholeB0/TensixTile/TensixCoprocessor/MOP.md"
+},
+"2": {
+"name": "NOP",
+"fields": [],
+"title": "Tensix no operation",
+"group": "Control",
+"summary": "Issue a frontend no-op, useful as a harmless instruction in MOP/replay templates or as spacing.",
+"notes": [
+"TTNOP, TTSFPNOP and TTDMANOP target different instruction paths. None is a universal completion barrier."
+],
+"constants": [],
+"manual": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/WormholeB0/TensixTile/TensixCoprocessor/NOP.md"
+},
+"3": {
+"name": "MOP_CFG",
+"fields": [
+{
+"name": "zmask_hi16",
+"hi": 23,
+"lo": 0,
+"meaning": ""
+}
+],
+"title": "",
+"group": "",
+"summary": "",
+"notes": [],
+"constants": [],
+"manual": ""
+},
+"4": {
+"name": "REPLAY",
+"fields": [
+{
+"name": "start_idx",
+"hi": 23,
+"lo": 14,
+"meaning": "First replay-buffer slot. The Python encoder exposes ten bits; actual buffer capacity is architecture-specific."
+},
+{
+"name": "len",
+"hi": 13,
+"lo": 4,
+"meaning": "Number of instructions to record or replay. This is a sequence length, not a repeat count."
+},
+{
+"name": "execute_while_loading",
+"hi": 3,
+"lo": 1,
+"meaning": "0 records without execution; 1 also executes during recording. Other values in the wider encoder field are not documented ordinary modes."
+},
+{
+"name": "load_mode",
+"hi": 0,
+"lo": 0,
+"meaning": "1 records incoming instructions; 0 replays stored instructions."
+}
+],
+"title": "Record or replay instructions",
+"group": "Control",
+"summary": "Store a sequence in the thread's replay buffer, optionally executing while recording, or expand a previously recorded sequence.",
+"notes": [
+"Recording consumes the next len Tensix words. A later replay expands the stored words once; repetition comes from a MOP or software loop.",
+"The available shared manual describes the Wormhole buffer size and field widths. Do not carry its 32-slot capacity or count-zero behavior over to Blackhole. Use the Blackhole replay helper limits and the retained replay_fifo_probe when exploring capacity."
+],
+"constants": [],
+"manual": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/WormholeB0/TensixTile/TensixCoprocessor/REPLAY.md"
+},
+"5": {
+"name": "RESOURCEDECL",
+"fields": [
+{
+"name": "linger_time",
+"hi": 23,
+"lo": 13,
+"meaning": ""
+},
+{
+"name": "resources",
+"hi": 12,
+"lo": 4,
+"meaning": ""
+},
+{
+"name": "op_class",
+"hi": 3,
+"lo": 0,
+"meaning": ""
+}
+],
+"title": "",
+"group": "",
+"summary": "",
+"notes": [],
+"constants": [],
+"manual": ""
+},
+"8": {
+"name": "MOVD2A",
+"fields": [
+{
+"name": "dest_32b_lo",
+"hi": 23,
+"lo": 23,
+"meaning": "Select the low half of a 32-bit Dst datum before conversion; normally zero."
+},
+{
+"name": "src",
+"hi": 22,
+"lo": 17,
+"meaning": "SrcA destination row offset added to its RWC."
+},
+{
+"name": "addr_mode",
+"hi": 16,
+"lo": 14,
+"meaning": "Raw address-modifier field. Selects preconfigured counter updates after the instruction, not a byte stride. The Python bit field is wider than the semantic selector; do not assume every encodable value is valid."
+},
+{
+"name": "instr_mod",
+"hi": 13,
+"lo": 12,
+"meaning": "0 moves one row; 2 moves four rows, rounding both row addresses down to multiples of four."
+},
+{
+"name": "dst",
+"hi": 11,
+"lo": 0,
+"meaning": "Dst row offset added to the math target offset, Dst RWC and configured Dst base, then aligned for the instruction footprint. This is not an L1 byte address."
+}
+],
+"title": "Move Dst to SrcA",
+"group": "FPU",
+"summary": "Move one row or an aligned four-row block from Dst to SrcA, with configured format conversion.",
+"notes": [
+"Dst is the source despite the Python dst argument name. Src row is the destination.",
+"MOVD2B uses the SrcA format configuration to derive SrcB style; the shared manual explicitly calls out this behavior."
+],
+"constants": [],
+"manual": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/WormholeB0/TensixTile/TensixCoprocessor/MOVD2A.md"
+},
+"9": {
+"name": "MOVDBGA2D",
+"fields": [
+{
+"name": "dest_32b_lo",
+"hi": 23,
+"lo": 23,
+"meaning": ""
+},
+{
+"name": "src",
+"hi": 22,
+"lo": 17,
+"meaning": ""
+},
+{
+"name": "addr_mode",
+"hi": 16,
+"lo": 14,
+"meaning": ""
+},
+{
+"name": "instr_mod",
+"hi": 13,
+"lo": 12,
+"meaning": ""
+},
+{
+"name": "dst",
+"hi": 11,
+"lo": 0,
+"meaning": ""
+}
+],
+"title": "",
+"group": "",
+"summary": "",
+"notes": [],
+"constants": [],
+"manual": ""
+},
+"10": {
+"name": "MOVD2B",
+"fields": [
+{
+"name": "dest_32b_lo",
+"hi": 23,
+"lo": 23,
+"meaning": "Select the low half of a 32-bit Dst datum before conversion; normally zero."
+},
+{
+"name": "src",
+"hi": 22,
+"lo": 17,
+"meaning": "SrcB destination row offset added to its RWC."
+},
+{
+"name": "addr_mode",
+"hi": 16,
+"lo": 14,
+"meaning": "Raw address-modifier field. Selects preconfigured counter updates after the instruction, not a byte stride. The Python bit field is wider than the semantic selector; do not assume every encodable value is valid."
+},
+{
+"name": "instr_mod",
+"hi": 13,
+"lo": 12,
+"meaning": "0 moves one row; 2 moves four rows, rounding both row addresses down to multiples of four."
+},
+{
+"name": "dst",
+"hi": 11,
+"lo": 0,
+"meaning": "Dst row offset added to the math target offset, Dst RWC and configured Dst base, then aligned for the instruction footprint. This is not an L1 byte address."
+}
+],
+"title": "Move Dst to SrcB",
+"group": "FPU",
+"summary": "Move one row or an aligned four-row block from Dst to SrcB, with configured format conversion.",
+"notes": [
+"Dst is the source despite the Python dst argument name. Src row is the destination.",
+"MOVD2B uses the SrcA format configuration to derive SrcB style; the shared manual explicitly calls out this behavior."
+],
+"constants": [],
+"manual": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/WormholeB0/TensixTile/TensixCoprocessor/MOVD2B.md"
+},
+"11": {
+"name": "MOVB2A",
+"fields": [
+{
+"name": "srca",
+"hi": 23,
+"lo": 17,
+"meaning": "SrcA destination row offset added to its RWC."
+},
+{
+"name": "addr_mode",
+"hi": 16,
+"lo": 14,
+"meaning": "Raw address-modifier field. Selects preconfigured counter updates after the instruction, not a byte stride. The Python bit field is wider than the semantic selector; do not assume every encodable value is valid."
+},
+{
+"name": "instr_mod",
+"hi": 13,
+"lo": 12,
+"meaning": "0 moves one row; 2 moves four rows aligned to multiples of four."
+},
+{
+"name": "srcb",
+"hi": 11,
+"lo": 0,
+"meaning": "SrcB source row offset added to its RWC."
+}
+],
+"title": "Move SrcB to SrcA",
+"group": "FPU",
+"summary": "Copy one row or an aligned four-row block from SrcB to SrcA.",
+"notes": [
+"Automatically waits for SrcB ownership, but does not automatically wait for SrcA ownership."
+],
+"constants": [],
+"manual": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/WormholeB0/TensixTile/TensixCoprocessor/MOVB2A.md"
+},
+"12": {
+"name": "MOVDBGB2D",
+"fields": [
+{
+"name": "dest_32b_lo",
+"hi": 23,
+"lo": 23,
+"meaning": ""
+},
+{
+"name": "src",
+"hi": 22,
+"lo": 17,
+"meaning": ""
+},
+{
+"name": "addr_mode",
+"hi": 16,
+"lo": 14,
+"meaning": ""
+},
+{
+"name": "movb2d_instr_mod",
+"hi": 13,
+"lo": 11,
+"meaning": ""
+},
+{
+"name": "dst",
+"hi": 10,
+"lo": 0,
+"meaning": ""
+}
+],
+"title": "",
+"group": "",
+"summary": "",
+"notes": [],
+"constants": [],
+"manual": ""
+},
+"16": {
+"name": "ZEROACC",
+"fields": [
+{
+"name": "clear_mode",
+"hi": 23,
+"lo": 19,
+"meaning": "Raw five-bit field in isa.py. The shared manual places Mode in bits 20:19 and UseDst32b in bit 21, so these semantic fields fall within this Python argument."
+},
+{
+"name": "use_32_bit_mode",
+"hi": 18,
+"lo": 18,
+"meaning": "Encoder bit 18. Despite this name, the shared manual labels bit 18 Revert, not UseDst32b. Treat nonzero use as an unresolved encoder/manual discrepancy."
+},
+{
+"name": "clear_zero_flags",
+"hi": 17,
+"lo": 17,
+"meaning": "Encoder bit 17; not documented as a public operand in the shared ZEROACC syntax. Keep zero unless separately verified."
+},
+{
+"name": "addr_mode",
+"hi": 16,
+"lo": 14,
+"meaning": "Raw address-modifier field. Selects preconfigured counter updates after the instruction, not a byte stride. The Python bit field is wider than the semantic selector; do not assume every encodable value is valid."
+},
+{
+"name": "where",
+"hi": 13,
+"lo": 0,
+"meaning": "Mode-dependent row/block selection. In the shared model: mode 0 selects an offset row, 1 selects a 16-row block, 2 a Dst half, 3 all Dst. Do not translate existing Python calls using argument names alone."
+}
+],
+"title": "Invalidate accumulator rows",
+"group": "FPU",
+"summary": "Mark Dst rows undefined so later FPU accumulation reads an identity value, and packer reads produce zeros.",
+"notes": [
+"Important source mismatch: the Python wrapper and shared ISA diagram disagree on operand naming and placement. Existing calls use TTZEROACC(3, 1, 0, 1, ...); this page preserves them without claiming the shared model explains that combination. A focused hardware probe is required before changing this encoding.",
+"ZEROACC does not physically fill Dst with zeros. SFPU loads from undefined rows are undefined, and partial SFPU/unpacker writes to such rows are also unsafe."
+],
+"constants": [
+"ZEROACC_MODE_ONE_ROW     0",
+"ZEROACC_MODE_16_ROWS     1",
+"ZEROACC_MODE_HALF_OF_DST 2",
+"ZEROACC_MODE_ALL_OF_DST  3"
+],
+"manual": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/WormholeB0/TensixTile/TensixCoprocessor/ZEROACC.md"
+},
+"17": {
+"name": "ZEROSRC",
+"fields": [
+{
+"name": "zero_val",
+"hi": 23,
+"lo": 4,
+"meaning": "0 writes zero; the documented low-bit option writes negative infinity to SrcA. The wider encoder field is not a general fill immediate."
+},
+{
+"name": "write_mode",
+"hi": 3,
+"lo": 3,
+"meaning": "For a single-bank clear: 1 selects the math-owned bank; 0 selects the unpacker-owned bank."
+},
+{
+"name": "bank_mask",
+"hi": 2,
+"lo": 2,
+"meaning": "1 clears both banks; 0 clears one bank selected by write_mode."
+},
+{
+"name": "src_mask",
+"hi": 1,
+"lo": 0,
+"meaning": "Bitmask: 1 SrcA, 2 SrcB, 3 both."
+}
+],
+"title": "Clear source register banks",
+"group": "FPU",
+"summary": "Clear all rows of selected SrcA/SrcB banks to zero, with an optional negative-infinity value for SrcA.",
+"notes": [
+"Clearing source storage and transferring source-bank ownership are separate actions. Synchronize before clearing a bank still used by another unit."
+],
+"constants": [],
+"manual": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/WormholeB0/TensixTile/TensixCoprocessor/ZEROSRC.md"
+},
+"18": {
+"name": "MOVA2D",
+"fields": [
+{
+"name": "dest_32b_lo",
+"hi": 23,
+"lo": 23,
+"meaning": "Low-half Dst write selector. Keep 0 for the normal FP32 path. UseDst32bLo with a TF32-style move can corrupt data on Blackhole (TEN-4245)."
+},
+{
+"name": "src",
+"hi": 22,
+"lo": 17,
+"meaning": "SrcA row offset added to its RWC."
+},
+{
+"name": "addr_mode",
+"hi": 16,
+"lo": 14,
+"meaning": "Raw address-modifier field. Selects preconfigured counter updates after the instruction, not a byte stride. The Python bit field is wider than the semantic selector; do not assume every encodable value is valid."
+},
+{
+"name": "instr_mod",
+"hi": 13,
+"lo": 12,
+"meaning": "0 moves one row; 2 moves an aligned eight-row block."
+},
+{
+"name": "dst",
+"hi": 11,
+"lo": 0,
+"meaning": "Dst row offset added to the math target offset, Dst RWC and configured Dst base, then aligned for the instruction footprint. This is not an L1 byte address."
+}
+],
+"title": "Move SrcA to Dst",
+"group": "FPU",
+"summary": "Transfer rows from SrcA into Dst, with format handling determined by the math configuration.",
+"notes": [
+"Blackhole FP32 accumulation causes source-to-Dst moves to write FP32 Dst values. Wait before consuming the affected Dst rows with SFPU."
+],
+"constants": [],
+"manual": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/WormholeB0/TensixTile/TensixCoprocessor/MOVA2D.md"
+},
+"19": {
+"name": "MOVB2D",
+"fields": [
+{
+"name": "dest_32b_lo",
+"hi": 23,
+"lo": 23,
+"meaning": "Low-half Dst write selector. Keep 0 for the normal FP32 path. UseDst32bLo with a TF32-style move can corrupt data on Blackhole (TEN-4245)."
+},
+{
+"name": "src",
+"hi": 22,
+"lo": 17,
+"meaning": "SrcB row offset added to its RWC."
+},
+{
+"name": "addr_mode",
+"hi": 16,
+"lo": 14,
+"meaning": "Raw address-modifier field. Selects preconfigured counter updates after the instruction, not a byte stride. The Python bit field is wider than the semantic selector; do not assume every encodable value is valid."
+},
+{
+"name": "movb2d_instr_mod",
+"hi": 13,
+"lo": 11,
+"meaning": "Bit flags: 1 broadcasts column 0; 2 broadcasts one row to eight Dst rows; 4 moves an aligned four-row block."
+},
+{
+"name": "dst",
+"hi": 10,
+"lo": 0,
+"meaning": "Dst row offset added to the math target offset, Dst RWC and configured Dst base, then aligned for the instruction footprint. This is not an L1 byte address."
+}
+],
+"title": "Move SrcB to Dst",
+"group": "FPU",
+"summary": "Transfer rows from SrcB into Dst, with format handling determined by the math configuration.",
+"notes": [
+"Blackhole FP32 accumulation causes source-to-Dst moves to write FP32 Dst values. Wait before consuming the affected Dst rows with SFPU."
+],
+"constants": [],
+"manual": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/WormholeB0/TensixTile/TensixCoprocessor/MOVB2D.md"
+},
+"20": {
+"name": "TRNSPSRCA",
+"fields": [],
+"title": "",
+"group": "",
+"summary": "",
+"notes": [],
+"constants": [],
+"manual": ""
+},
+"21": {
+"name": "RAREB",
+"fields": [],
+"title": "",
+"group": "",
+"summary": "",
+"notes": [],
+"constants": [],
+"manual": ""
+},
+"22": {
+"name": "TRNSPSRCB",
+"fields": [],
+"title": "Transpose SrcB rows 16\u201331",
+"group": "FPU",
+"summary": "Transpose the 16 \u00d7 16 matrix in rows 16 through 31 of the current SrcB bank.",
+"notes": [
+"Waits for the FPU to own SrcB. No row or tile selector is encoded."
+],
+"constants": [],
+"manual": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/WormholeB0/TensixTile/TensixCoprocessor/TRNSPSRCB.md"
+},
+"23": {
+"name": "SHIFTXA",
+"fields": [
+{
+"name": "log2_amount2",
+"hi": 23,
+"lo": 2,
+"meaning": ""
+},
+{
+"name": "shift_mode",
+"hi": 1,
+"lo": 0,
+"meaning": ""
+}
+],
+"title": "",
+"group": "",
+"summary": "",
+"notes": [],
+"constants": [],
+"manual": ""
+},
+"24": {
+"name": "SHIFTXB",
+"fields": [
+{
+"name": "addr_mode",
+"hi": 23,
+"lo": 14,
+"meaning": ""
+},
+{
+"name": "rot_shift",
+"hi": 13,
+"lo": 10,
+"meaning": ""
+},
+{
+"name": "shift_row",
+"hi": 9,
+"lo": 0,
+"meaning": ""
+}
+],
+"title": "",
+"group": "",
+"summary": "",
+"notes": [],
+"constants": [],
+"manual": ""
+},
+"26": {
+"name": "SETASHRMH0",
+"fields": [
+{
+"name": "reg_mask",
+"hi": 23,
+"lo": 1,
+"meaning": ""
+},
+{
+"name": "halo_mask",
+"hi": 0,
+"lo": 0,
+"meaning": ""
+}
+],
+"title": "",
+"group": "",
+"summary": "",
+"notes": [],
+"constants": [],
+"manual": ""
+},
+"27": {
+"name": "SETASHRMH1",
+"fields": [
+{
+"name": "reg_mask",
+"hi": 23,
+"lo": 1,
+"meaning": ""
+},
+{
+"name": "halo_mask",
+"hi": 0,
+"lo": 0,
+"meaning": ""
+}
+],
+"title": "",
+"group": "",
+"summary": "",
+"notes": [],
+"constants": [],
+"manual": ""
+},
+"28": {
+"name": "SETASHRMV",
+"fields": [
+{
+"name": "reg_mask2",
+"hi": 23,
+"lo": 0,
+"meaning": ""
+}
+],
+"title": "",
+"group": "",
+"summary": "",
+"notes": [],
+"constants": [],
+"manual": ""
+},
+"29": {
+"name": "SETPKEDGOF",
+"fields": [
+{
+"name": "y_end",
+"hi": 23,
+"lo": 12,
+"meaning": ""
+},
+{
+"name": "y_start",
+"hi": 11,
+"lo": 8,
+"meaning": ""
+},
+{
+"name": "x_end",
+"hi": 7,
+"lo": 4,
+"meaning": ""
+},
+{
+"name": "x_start",
+"hi": 3,
+"lo": 0,
+"meaning": ""
+}
+],
+"title": "",
+"group": "",
+"summary": "",
+"notes": [],
+"constants": [],
+"manual": ""
+},
+"30": {
+"name": "SETASHRMH",
+"fields": [
+{
+"name": "reg_mask",
+"hi": 23,
+"lo": 1,
+"meaning": ""
+},
+{
+"name": "halo_mask",
+"hi": 0,
+"lo": 0,
+"meaning": ""
+}
+],
+"title": "",
+"group": "",
+"summary": "",
+"notes": [],
+"constants": [],
+"manual": ""
+},
+"33": {
+"name": "CLREXPHIST",
+"fields": [],
+"title": "",
+"group": "",
+"summary": "",
+"notes": [],
+"constants": [],
+"manual": ""
+},
+"34": {
+"name": "CONV3S1",
+"fields": [
+{
+"name": "clear_dvalid",
+"hi": 23,
+"lo": 22,
+"meaning": ""
+},
+{
+"name": "rotate_weights",
+"hi": 21,
+"lo": 17,
+"meaning": ""
+},
+{
+"name": "addr_mode",
+"hi": 16,
+"lo": 14,
+"meaning": ""
+},
+{
+"name": "dst",
+"hi": 13,
+"lo": 0,
+"meaning": ""
+}
+],
+"title": "",
+"group": "",
+"summary": "",
+"notes": [],
+"constants": [],
+"manual": ""
+},
+"35": {
+"name": "CONV3S2",
+"fields": [
+{
+"name": "clear_dvalid",
+"hi": 23,
+"lo": 22,
+"meaning": ""
+},
+{
+"name": "rotate_weights",
+"hi": 21,
+"lo": 17,
+"meaning": ""
+},
+{
+"name": "addr_mode",
+"hi": 16,
+"lo": 14,
+"meaning": ""
+},
+{
+"name": "dst",
+"hi": 13,
+"lo": 0,
+"meaning": ""
+}
+],
+"title": "",
+"group": "",
+"summary": "",
+"notes": [],
+"constants": [],
+"manual": ""
+},
+"36": {
+"name": "MPOOL3S1",
+"fields": [
+{
+"name": "clear_dvalid",
+"hi": 23,
+"lo": 22,
+"meaning": ""
+},
+{
+"name": "pool_addr_mode",
+"hi": 21,
+"lo": 15,
+"meaning": ""
+},
+{
+"name": "index_en",
+"hi": 14,
+"lo": 14,
+"meaning": ""
+},
+{
+"name": "dst",
+"hi": 13,
+"lo": 0,
+"meaning": ""
+}
+],
+"title": "",
+"group": "",
+"summary": "",
+"notes": [],
+"constants": [],
+"manual": ""
+},
+"37": {
+"name": "APOOL3S1",
+"fields": [
+{
+"name": "clear_dvalid",
+"hi": 23,
+"lo": 22,
+"meaning": ""
+},
+{
+"name": "pool_addr_mode",
+"hi": 21,
+"lo": 15,
+"meaning": ""
+},
+{
+"name": "index_en",
+"hi": 14,
+"lo": 14,
+"meaning": ""
+},
+{
+"name": "dst",
+"hi": 13,
+"lo": 0,
+"meaning": ""
+}
+],
+"title": "",
+"group": "",
+"summary": "",
+"notes": [],
+"constants": [],
+"manual": ""
+},
+"38": {
+"name": "MVMUL",
+"fields": [
+{
+"name": "clear_dvalid",
+"hi": 23,
+"lo": 22,
+"meaning": "Source-bank release mask: 0 keeps both, 1 flips/releases SrcA, 2 SrcB, 3 both. Release hands the consumed bank back to the unpacker unless clearing is disabled in configuration."
+},
+{
+"name": "instr_mod19",
+"hi": 21,
+"lo": 19,
+"meaning": "Normal mode is 0. The documented low-bit mode broadcasts one SrcB row to alternating output rows; this is not ordinary eight-row broadcast."
+},
+{
+"name": "addr_mode",
+"hi": 18,
+"lo": 14,
+"meaning": "Raw address-modifier field. Selects preconfigured counter updates after the instruction, not a byte stride. The Python bit field is wider than the semantic selector; do not assume every encodable value is valid."
+},
+{
+"name": "dst",
+"hi": 13,
+"lo": 0,
+"meaning": "Dst row offset added to the math target offset, Dst RWC and configured Dst base, then aligned for the instruction footprint. This is not an L1 byte address."
+}
+],
+"title": "Matrix multiply-accumulate",
+"group": "FPU",
+"summary": "Compute Dst[8 x 16] += SrcB[8 x 16] @ SrcA[16 x 16]. A full 32 x 32 tile operation is a sequence of these instructions.",
+"notes": [
+"Always accumulates. Initialize Dst first if an assignment is intended. Multipliers consume partial mantissas; choose and schedule the required fidelity phases.",
+"The retained Blackhole FPU test report observes that SrcA starts round down to an even 128-element slot. Use aligned 16-row A pairs. This is stricter than the current shared manual's A-row mask; tests/compute/fpu/README.md records the discrepancy."
+],
+"constants": [],
+"manual": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/WormholeB0/TensixTile/TensixCoprocessor/MVMUL.md"
+},
+"39": {
+"name": "ELWMUL",
+"fields": [
+{
+"name": "clear_dvalid",
+"hi": 23,
+"lo": 22,
+"meaning": "Source-bank release mask: 0 keeps both, 1 flips/releases SrcA, 2 SrcB, 3 both. Release hands the consumed bank back to the unpacker unless clearing is disabled in configuration."
+},
+{
+"name": "dest_accum_en",
+"hi": 21,
+"lo": 21,
+"meaning": "0 overwrites Dst with the result; 1 adds the result to existing Dst."
+},
+{
+"name": "instr_mod19",
+"hi": 20,
+"lo": 19,
+"meaning": "SrcB broadcast: 0 none; 1 column 0; 2 one row; 3 one scalar (row plus column broadcast)."
+},
+{
+"name": "addr_mode",
+"hi": 18,
+"lo": 14,
+"meaning": "Raw address-modifier field. Selects preconfigured counter updates after the instruction, not a byte stride. The Python bit field is wider than the semantic selector; do not assume every encodable value is valid."
+},
+{
+"name": "dst",
+"hi": 13,
+"lo": 0,
+"meaning": "Dst row offset added to the math target offset, Dst RWC and configured Dst base, then aligned for the instruction footprint. This is not an L1 byte address."
+}
+],
+"title": "Elementwise multiplication",
+"group": "FPU",
+"summary": "Multiply aligned 8 x 16 blocks from SrcA and SrcB, optionally accumulating into Dst over fidelity phases.",
+"notes": [
+"Data formats and FP32 accumulation are configured separately. Source-bank ownership must permit math to read both sources.",
+"Multiplication precision depends on fidelity phases. The retained HiFi2 tests issue phase 0 for all output blocks, then phase 1. ELWADD/ELWSUB require fidelity phase zero."
+],
+"constants": [],
+"manual": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/WormholeB0/TensixTile/TensixCoprocessor/ELWMUL.md"
+},
+"40": {
+"name": "ELWADD",
+"fields": [
+{
+"name": "clear_dvalid",
+"hi": 23,
+"lo": 22,
+"meaning": "Source-bank release mask: 0 keeps both, 1 flips/releases SrcA, 2 SrcB, 3 both. Release hands the consumed bank back to the unpacker unless clearing is disabled in configuration."
+},
+{
+"name": "dest_accum_en",
+"hi": 21,
+"lo": 21,
+"meaning": "0 overwrites Dst with the result; 1 adds the result to existing Dst."
+},
+{
+"name": "instr_mod19",
+"hi": 20,
+"lo": 19,
+"meaning": "SrcB broadcast: 0 none; 1 column 0; 2 one row; 3 one scalar (row plus column broadcast)."
+},
+{
+"name": "addr_mode",
+"hi": 18,
+"lo": 14,
+"meaning": "Raw address-modifier field. Selects preconfigured counter updates after the instruction, not a byte stride. The Python bit field is wider than the semantic selector; do not assume every encodable value is valid."
+},
+{
+"name": "dst",
+"hi": 13,
+"lo": 0,
+"meaning": "Dst row offset added to the math target offset, Dst RWC and configured Dst base, then aligned for the instruction footprint. This is not an L1 byte address."
+}
+],
+"title": "Elementwise addition",
+"group": "FPU",
+"summary": "Add aligned 8 x 16 blocks from SrcA and SrcB, optionally accumulating into Dst.",
+"notes": [
+"Data formats and FP32 accumulation are configured separately. Source-bank ownership must permit math to read both sources.",
+"Multiplication precision depends on fidelity phases. The retained HiFi2 tests issue phase 0 for all output blocks, then phase 1. ELWADD/ELWSUB require fidelity phase zero."
+],
+"constants": [],
+"manual": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/WormholeB0/TensixTile/TensixCoprocessor/ELWADD.md"
+},
+"41": {
+"name": "DOTPV",
+"fields": [
+{
+"name": "clear_dvalid",
+"hi": 23,
+"lo": 22,
+"meaning": ""
+},
+{
+"name": "dest_accum_en",
+"hi": 21,
+"lo": 21,
+"meaning": ""
+},
+{
+"name": "instr_mod19",
+"hi": 20,
+"lo": 19,
+"meaning": ""
+},
+{
+"name": "addr_mode",
+"hi": 18,
+"lo": 14,
+"meaning": ""
+},
+{
+"name": "dst",
+"hi": 13,
+"lo": 0,
+"meaning": ""
+}
+],
+"title": "",
+"group": "",
+"summary": "",
+"notes": [],
+"constants": [],
+"manual": ""
+},
+"48": {
+"name": "ELWSUB",
+"fields": [
+{
+"name": "clear_dvalid",
+"hi": 23,
+"lo": 22,
+"meaning": "Source-bank release mask: 0 keeps both, 1 flips/releases SrcA, 2 SrcB, 3 both. Release hands the consumed bank back to the unpacker unless clearing is disabled in configuration."
+},
+{
+"name": "dest_accum_en",
+"hi": 21,
+"lo": 21,
+"meaning": "0 overwrites Dst with the result; 1 adds the result to existing Dst."
+},
+{
+"name": "instr_mod19",
+"hi": 20,
+"lo": 19,
+"meaning": "SrcB broadcast: 0 none; 1 column 0; 2 one row; 3 one scalar (row plus column broadcast)."
+},
+{
+"name": "addr_mode",
+"hi": 18,
+"lo": 14,
+"meaning": "Raw address-modifier field. Selects preconfigured counter updates after the instruction, not a byte stride. The Python bit field is wider than the semantic selector; do not assume every encodable value is valid."
+},
+{
+"name": "dst",
+"hi": 13,
+"lo": 0,
+"meaning": "Dst row offset added to the math target offset, Dst RWC and configured Dst base, then aligned for the instruction footprint. This is not an L1 byte address."
+}
+],
+"title": "Elementwise subtraction",
+"group": "FPU",
+"summary": "Subtract aligned SrcB values from SrcA, optionally accumulating into Dst.",
+"notes": [
+"Data formats and FP32 accumulation are configured separately. Source-bank ownership must permit math to read both sources.",
+"Multiplication precision depends on fidelity phases. The retained HiFi2 tests issue phase 0 for all output blocks, then phase 1. ELWADD/ELWSUB require fidelity phase zero."
+],
+"constants": [],
+"manual": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/WormholeB0/TensixTile/TensixCoprocessor/ELWSUB.md"
+},
+"49": {
+"name": "MPOOL3S2",
+"fields": [
+{
+"name": "clear_dvalid",
+"hi": 23,
+"lo": 22,
+"meaning": ""
+},
+{
+"name": "pool_addr_mode",
+"hi": 21,
+"lo": 15,
+"meaning": ""
+},
+{
+"name": "index_en",
+"hi": 14,
+"lo": 14,
+"meaning": ""
+},
+{
+"name": "dst",
+"hi": 13,
+"lo": 0,
+"meaning": ""
+}
+],
+"title": "",
+"group": "",
+"summary": "",
+"notes": [],
+"constants": [],
+"manual": ""
+},
+"50": {
+"name": "APOOL3S2",
+"fields": [
+{
+"name": "clear_dvalid",
+"hi": 23,
+"lo": 22,
+"meaning": ""
+},
+{
+"name": "pool_addr_mode",
+"hi": 21,
+"lo": 15,
+"meaning": ""
+},
+{
+"name": "index_en",
+"hi": 14,
+"lo": 14,
+"meaning": ""
+},
+{
+"name": "dst",
+"hi": 13,
+"lo": 0,
+"meaning": ""
+}
+],
+"title": "",
+"group": "",
+"summary": "",
+"notes": [],
+"constants": [],
+"manual": ""
+},
+"51": {
+"name": "GMPOOL",
+"fields": [
+{
+"name": "clear_dvalid",
+"hi": 23,
+"lo": 22,
+"meaning": "Source-bank release mask: 0 keeps both, 1 flips/releases SrcA, 2 SrcB, 3 both. Release hands the consumed bank back to the unpacker unless clearing is disabled in configuration."
+},
+{
+"name": "instr_mod19",
+"hi": 21,
+"lo": 19,
+"meaning": "Keep zero for the documented operation. The Python encoder exposes these bits, but they are not an independent supported operand in the reference syntax."
+},
+{
+"name": "pool_addr_mode",
+"hi": 18,
+"lo": 15,
+"meaning": "Raw address-modifier field. Selects preconfigured counter updates after the instruction, not a byte stride. The Python bit field is wider than the semantic selector; do not assume every encodable value is valid."
+},
+{
+"name": "max_pool_index_en",
+"hi": 14,
+"lo": 14,
+"meaning": "Keep 0 for the repository's non-index reduction. Index output is a separate mode requiring additional configuration."
+},
+{
+"name": "dst",
+"hi": 13,
+"lo": 0,
+"meaning": "Dst row offset added to the math target offset, Dst RWC and configured Dst base, then aligned for the instruction footprint. This is not an L1 byte address."
+}
+],
+"title": "Column-wise maximum reduction",
+"group": "FPU",
+"summary": "Reduce SrcA rows to a maximum per column, combine with the first Dst row, and clear the next three Dst rows in the normal non-index mode.",
+"notes": [
+"SrcA uses an aligned 16 x 16 footprint. SrcB begins at an eight-row boundary. GAPOOL reads four SrcB rows; GMPOOL uses one row for exponent scaling (the tests use B=1).",
+"The allocator reserves a 128-element Dst slot even though these instructions write fewer rows. Do not assume the unused rows are overwritten."
+],
+"constants": [],
+"manual": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/WormholeB0/TensixTile/TensixCoprocessor/GMPOOL.md"
+},
+"52": {
+"name": "GAPOOL",
+"fields": [
+{
+"name": "clear_dvalid",
+"hi": 23,
+"lo": 22,
+"meaning": "Source-bank release mask: 0 keeps both, 1 flips/releases SrcA, 2 SrcB, 3 both. Release hands the consumed bank back to the unpacker unless clearing is disabled in configuration."
+},
+{
+"name": "instr_mod19",
+"hi": 21,
+"lo": 19,
+"meaning": "Keep zero for the documented operation. The Python encoder exposes these bits, but they are not an independent supported operand in the reference syntax."
+},
+{
+"name": "pool_addr_mode",
+"hi": 18,
+"lo": 15,
+"meaning": "Raw address-modifier field. Selects preconfigured counter updates after the instruction, not a byte stride. The Python bit field is wider than the semantic selector; do not assume every encodable value is valid."
+},
+{
+"name": "max_pool_index_en",
+"hi": 14,
+"lo": 14,
+"meaning": "Keep 0 for the repository's non-index reduction. Index output is a separate mode requiring additional configuration."
+},
+{
+"name": "dst",
+"hi": 13,
+"lo": 0,
+"meaning": "Dst row offset added to the math target offset, Dst RWC and configured Dst base, then aligned for the instruction footprint. This is not an L1 byte address."
+}
+],
+"title": "Four-row weighted reduction",
+"group": "FPU",
+"summary": "Compute Dst[4 x 16] += SrcB[4 x 16] @ SrcA[16 x 16]. This is weighted summation, not an automatic mean.",
+"notes": [
+"SrcA uses an aligned 16 x 16 footprint. SrcB begins at an eight-row boundary. GAPOOL reads four SrcB rows; GMPOOL uses one row for exponent scaling (the tests use B=1).",
+"The allocator reserves a 128-element Dst slot even though these instructions write fewer rows. Do not assume the unused rows are overwritten."
+],
+"constants": [],
+"manual": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/WormholeB0/TensixTile/TensixCoprocessor/GAPOOL.md"
+},
+"53": {
+"name": "GATESRCRST",
+"fields": [
+{
+"name": "reset_srcb_gate_control",
+"hi": 23,
+"lo": 1,
+"meaning": "1 invalidates the SrcB operand cache."
+},
+{
+"name": "reset_srca_gate_control",
+"hi": 0,
+"lo": 0,
+"meaning": "Keep zero for the documented operation. The Python encoder exposes these bits, but they are not an independent supported operand in the reference syntax."
+}
+],
+"title": "Invalidate the SrcB operand cache",
+"group": "Control",
+"summary": "Forcibly invalidate the one-slot SrcB operand cache feeding the FPU.",
+"notes": [
+"This is cache invalidation, not source-bank ownership transfer."
+],
+"constants": [],
+"manual": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/WormholeB0/TensixTile/TensixCoprocessor/GATESRCRST.md"
+},
+"54": {
+"name": "CLEARDVALID",
+"fields": [
+{
+"name": "cleardvalid",
+"hi": 23,
+"lo": 22,
+"meaning": "Source-bank release mask: 0 keeps both, 1 flips/releases SrcA, 2 SrcB, 3 both. Release hands the consumed bank back to the unpacker unless clearing is disabled in configuration."
+},
+{
+"name": "reset",
+"hi": 21,
+"lo": 0,
+"meaning": "Packed low bits: bit 0 resets source synchronization; bit 1 keeps reading the same bank after release. The remaining encoder bits are not public operands."
+}
+],
+"title": "Release source banks to unpackers",
+"group": "Control",
+"summary": "Release the selected SrcA/SrcB banks and optionally switch which banks the FPU reads.",
+"notes": [
+"Reset mode is discouraged by the manual and unsupported by ttsim; it may produce nondeterministic hangs."
+],
+"constants": [],
+"manual": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/WormholeB0/TensixTile/TensixCoprocessor/CLEARDVALID.md"
+},
+"55": {
+"name": "SETRWC",
+"fields": [
+{
+"name": "clear_ab_vld",
+"hi": 23,
+"lo": 22,
+"meaning": "Source-bank release mask: 0 keeps both, 1 flips/releases SrcA, 2 SrcB, 3 both. Release hands the consumed bank back to the unpacker unless clearing is disabled in configuration."
+},
+{
+"name": "rwc_cr",
+"hi": 21,
+"lo": 18,
+"meaning": "Carry/reset controls: 1 SrcA, 2 SrcB, 4 Dst; 8 adds the current Dst counter rather than its carry/reset copy when setting Dst."
+},
+{
+"name": "rwc_d",
+"hi": 17,
+"lo": 14,
+"meaning": "New Dst counter contribution (four bits)."
+},
+{
+"name": "rwc_b",
+"hi": 13,
+"lo": 10,
+"meaning": "New SrcB counter contribution (four bits)."
+},
+{
+"name": "rwc_a",
+"hi": 9,
+"lo": 6,
+"meaning": "New SrcA counter contribution (four bits)."
+},
+{
+"name": "BitMask",
+"hi": 5,
+"lo": 0,
+"meaning": "Update mask: 1 SrcA, 2 SrcB, 4 Dst, 8 reset fidelity to zero. 15 resets all with zero counter operands."
+}
+],
+"title": "Set math read/write counters",
+"group": "Addressing",
+"summary": "Set selected SrcA, SrcB and Dst counters, optionally reset fidelity, and optionally release source banks.",
+"notes": [
+"rwc_cr changes whether values are relative to saved carry/reset counters. BitMask determines which counters actually change. Zero-valued arguments do not reset a counter whose mask bit is clear."
+],
+"constants": [],
+"manual": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/WormholeB0/TensixTile/TensixCoprocessor/SETRWC.md"
+},
+"56": {
+"name": "INCRWC",
+"fields": [
+{
+"name": "rwc_cr",
+"hi": 23,
+"lo": 18,
+"meaning": "1 increments SrcA carry/reset then copies to SrcA; 2 similarly for SrcB; 4 similarly for Dst. With a bit clear only the running counter advances. Keep unsupported high bits zero."
+},
+{
+"name": "rwc_d",
+"hi": 17,
+"lo": 14,
+"meaning": "Unsigned four-bit Dst increment."
+},
+{
+"name": "rwc_b",
+"hi": 13,
+"lo": 10,
+"meaning": "Unsigned four-bit SrcB increment."
+},
+{
+"name": "rwc_a",
+"hi": 9,
+"lo": 6,
+"meaning": "Unsigned four-bit SrcA increment."
+}
+],
+"title": "Increment math read/write counters",
+"group": "Addressing",
+"summary": "Advance SrcA, SrcB and Dst read/write counters without issuing arithmetic.",
+"notes": [
+"Llama uses TTINCRWC(0, 2, 0, 0) to advance the Dst selection between even/odd vector chunks. This is a row-address counter operation, not a byte-pointer increment."
+],
+"constants": [],
+"manual": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/WormholeB0/TensixTile/TensixCoprocessor/INCRWC.md"
+},
+"57": {
+"name": "SETIBRWC",
+"fields": [
+{
+"name": "rwc_cr",
+"hi": 23,
+"lo": 18,
+"meaning": ""
+},
+{
+"name": "rwc_bias",
+"hi": 17,
+"lo": 6,
+"meaning": ""
+},
+{
+"name": "set_inc_ctrl",
+"hi": 5,
+"lo": 0,
+"meaning": ""
+}
+],
+"title": "",
+"group": "",
+"summary": "",
+"notes": [],
+"constants": [],
+"manual": ""
+},
+"58": {
+"name": "MFCONV3S1",
+"fields": [
+{
+"name": "clear_dvalid",
+"hi": 23,
+"lo": 22,
+"meaning": ""
+},
+{
+"name": "rotate_weights",
+"hi": 21,
+"lo": 17,
+"meaning": ""
+},
+{
+"name": "addr_mode",
+"hi": 16,
+"lo": 14,
+"meaning": ""
+},
+{
+"name": "dst",
+"hi": 13,
+"lo": 0,
+"meaning": ""
+}
+],
+"title": "",
+"group": "",
+"summary": "",
+"notes": [],
+"constants": [],
+"manual": ""
+},
+"64": {
+"name": "XMOV",
+"fields": [
+{
+"name": "Mov_block_selection",
+"hi": 23,
+"lo": 23,
+"meaning": ""
+},
+{
+"name": "Last",
+"hi": 22,
+"lo": 0,
+"meaning": ""
+}
+],
+"title": "",
+"group": "",
+"summary": "",
+"notes": [],
+"constants": [],
+"manual": ""
+},
+"65": {
+"name": "PACR",
+"fields": [
+{
+"name": "CfgContext",
+"hi": 23,
+"lo": 21,
+"meaning": "Keep zero for the documented operation. The Python encoder exposes these bits, but they are not an independent supported operand in the reference syntax."
+},
+{
+"name": "RowPadZero",
+"hi": 20,
+"lo": 18,
+"meaning": "Keep zero for the documented operation. The Python encoder exposes these bits, but they are not an independent supported operand in the reference syntax."
+},
+{
+"name": "DstAccessMode",
+"hi": 17,
+"lo": 17,
+"meaning": "Keep zero for the documented operation. The Python encoder exposes these bits, but they are not an independent supported operand in the reference syntax."
+},
+{
+"name": "AddrMode",
+"hi": 16,
+"lo": 15,
+"meaning": "Select a configured packer ADC address-modifier slot (0-3) for the following pack operation."
+},
+{
+"name": "AddrCntContext",
+"hi": 14,
+"lo": 13,
+"meaning": "Keep zero for the documented operation. The Python encoder exposes these bits, but they are not an independent supported operand in the reference syntax."
+},
+{
+"name": "ZeroWrite",
+"hi": 12,
+"lo": 12,
+"meaning": "1 uses zero input instead of reading Dst."
+},
+{
+"name": "ReadIntfSel",
+"hi": 11,
+"lo": 8,
+"meaning": "Packer mask: 0 or 1 selects packer 0; 2, 4, 8 select one other packer; 3 selects 0+1; 12 selects 2+3; 15 selects all. Other combinations are not generally supported."
+},
+{
+"name": "OvrdThreadId",
+"hi": 7,
+"lo": 7,
+"meaning": "Overrides the ADC thread selection; leave 0 for the ordinary current-thread path."
+},
+{
+"name": "Concat",
+"hi": 6,
+"lo": 4,
+"meaning": "Compression-row continuation control. Only the documented Concat bit is meaningful; normal uncompressed packing uses 0."
+},
+{
+"name": "CtxtCtrl",
+"hi": 3,
+"lo": 2,
+"meaning": "Keep zero for the documented operation. The Python encoder exposes these bits, but they are not an independent supported operand in the reference syntax."
+},
+{
+"name": "Flush",
+"hi": 1,
+"lo": 1,
+"meaning": "Flush output buffers without fetching new input datums; reset output-address state for the next command."
+},
+{
+"name": "Last",
+"hi": 0,
+"lo": 0,
+"meaning": "Flush the output after this pack and start fresh output addresses on the next PACR."
+}
+],
+"title": "Pack Dst into L1",
+"group": "Unpack / pack",
+"summary": "Issue work to the configured packers, converting Dst values to an output format and writing the result to L1.",
+"notes": [
+"Output address, format, count, strides, activation and rounding come from configuration and ADC state, not these instruction arguments.",
+"Several legacy fields in the Python signature are absent from the shared public syntax. Repository calls keep them zero. Do not infer supported padding or context functionality from their names.",
+"The Last bit finalizes the packer stream; it is not a cross-unit memory barrier. Use the repository's completion synchronization before publishing or reusing buffers."
+],
+"constants": [],
+"manual": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/WormholeB0/TensixTile/TensixCoprocessor/PACR.md"
+},
+"66": {
+"name": "UNPACR",
+"fields": [
+{
+"name": "Unpack_block_selection",
+"hi": 23,
+"lo": 23,
+"meaning": "0 selects unpacker 0 (SrcA or direct Dst); 1 selects unpacker 1 (SrcB)."
+},
+{
+"name": "AddrMode",
+"hi": 22,
+"lo": 15,
+"meaning": "Four two-bit increments: bits 7:6 Ch1 Y, 5:4 Ch1 Z, 3:2 Ch0 Y, 1:0 Ch0 Z. Applied for the next unpack operation."
+},
+{
+"name": "CfgContextCntInc",
+"hi": 14,
+"lo": 13,
+"meaning": "Keep 0 for a regular unpack. Nonzero values select the separate context-counter command form."
+},
+{
+"name": "CfgContextId",
+"hi": 12,
+"lo": 10,
+"meaning": "Configuration context number when explicit multi-context selection is active."
+},
+{
+"name": "AddrCntContextId",
+"hi": 9,
+"lo": 8,
+"meaning": "Address-counter context selector in multi-context mode. Regular repository calls use 0."
+},
+{
+"name": "OvrdThreadId",
+"hi": 7,
+"lo": 7,
+"meaning": "Selects multi-context behavior in the reference model; the legacy argument name is misleading. Repository regular calls use 1."
+},
+{
+"name": "SetDatValid",
+"hi": 6,
+"lo": 6,
+"meaning": "1 gives the filled source bank to math and flips the unpacker bank. Direct-to-Dst calls handle synchronization separately."
+},
+{
+"name": "srcb_bcast",
+"hi": 5,
+"lo": 5,
+"meaning": "Keep 0 for the regular unpack form. This bit is not ordinary FPU SrcB broadcasting."
+},
+{
+"name": "ZeroWrite2",
+"hi": 4,
+"lo": 4,
+"meaning": "1 replaces unpacked datums with zero."
+},
+{
+"name": "AutoIncContextID",
+"hi": 3,
+"lo": 3,
+"meaning": "Use/increment the configured context counter rather than only the immediate context selector."
+},
+{
+"name": "RowSearch",
+"hi": 2,
+"lo": 2,
+"meaning": "Select row-search addressing. Repository regular calls keep 0."
+},
+{
+"name": "SearchCacheFlush",
+"hi": 1,
+"lo": 1,
+"meaning": "Selects the separate decompression-cache flush command. Keep 0 for ordinary unpack."
+},
+{
+"name": "Last",
+"hi": 0,
+"lo": 0,
+"meaning": "Keep 0 for the regular unpack form; this is not the packer Last bit."
+}
+],
+"title": "Unpack L1 into source or destination registers",
+"group": "Unpack / pack",
+"summary": "Issue work to unpacker 0 or 1. Configuration supplies formats, base addresses, tensor dimensions and the output interface.",
+"notes": [
+"Unpacker 0 can write Dst directly, but doing so clobbers its SrcA bank. It still waits on SrcA ownership. Unpacker 1 cannot perform this direct-to-Dst path.",
+"ADC counters and format configuration determine actual data movement. A bare TTUNPACR does not include a pointer or byte count.",
+"The shared manual includes explicit Blackhole branches for 32-element unpack rows and throttle behavior. Some multi-context and compressed modes are not fully characterized."
+],
+"constants": [],
+"manual": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/WormholeB0/TensixTile/TensixCoprocessor/UNPACR_Regular.md"
+},
+"67": {
+"name": "UNPACR_NOP",
+"fields": [
+{
+"name": "Unpacker_Select",
+"hi": 23,
+"lo": 23,
+"meaning": "0 selects unpacker 0; 1 selects unpacker 1."
+},
+{
+"name": "Stream_Id",
+"hi": 22,
+"lo": 16,
+"meaning": "Stream identifier for the overlay-clear variant; zero for bank publication."
+},
+{
+"name": "Msg_Clr_Cnt",
+"hi": 15,
+"lo": 12,
+"meaning": "Message clear count for the overlay-clear variant; zero for bank publication."
+},
+{
+"name": "Set_Dvalid",
+"hi": 11,
+"lo": 8,
+"meaning": "Dvalid control. Repository SrcB publication uses 1 with Unpack_Pop=1."
+},
+{
+"name": "Clr_to1_fmt_Ctrl",
+"hi": 7,
+"lo": 6,
+"meaning": "Format control for the source-clear variant; keep 0 for bank publication."
+},
+{
+"name": "Stall_Clr_Cntrl",
+"hi": 5,
+"lo": 5,
+"meaning": "Stall-clear control for variant-specific behavior; keep 0 for bank publication."
+},
+{
+"name": "Bank_Clr_Ctrl",
+"hi": 4,
+"lo": 4,
+"meaning": "Bank-clear control for source clearing; keep 0 for bank publication."
+},
+{
+"name": "Src_ClrVal_Ctrl",
+"hi": 3,
+"lo": 2,
+"meaning": "Source fill selector for the source-clear variant; keep 0 for bank publication."
+},
+{
+"name": "Unpack_Pop",
+"hi": 1,
+"lo": 0,
+"meaning": "Selects command behavior together with the other control bits. Repository publication uses 1."
+}
+],
+"title": "Unpacker-sequenced control",
+"group": "Unpack / pack",
+"summary": "Perform an action ordered with unpacking: publish a source bank, clear sources, write selected registers, or occupy an unpacker cycle.",
+"notes": [
+"This is not necessarily a no-op: the repository uses TTUNPACR_NOP(1, 0, 0, 1, 0, 0, 0, 0, 1) to give SrcB to math.",
+"The public reference defines separate command forms. The full cross-product of legacy field values is not documented; consult the specific form before changing the publication recipe."
+],
+"constants": [],
+"manual": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/WormholeB0/TensixTile/TensixCoprocessor/UNPACR_NOP_SETDVALID.md"
+},
+"68": {
+"name": "RSTDMA",
+"fields": [],
+"title": "",
+"group": "",
+"summary": "",
+"notes": [],
+"constants": [],
+"manual": ""
+},
+"69": {
+"name": "SETDMAREG",
+"fields": [
+{
+"name": "Payload_SigSelSize",
+"hi": 23,
+"lo": 22,
+"meaning": "For immediate writes, this field carries the high two payload bits in the legacy split encoding. Zero with a small immediate."
+},
+{
+"name": "Payload_SigSel",
+"hi": 21,
+"lo": 8,
+"meaning": "Low 14 bits of the immediate payload. The complete immediate spans encoder bits 23:8 together with Payload_SigSelSize."
+},
+{
+"name": "SetSignalsMode",
+"hi": 7,
+"lo": 7,
+"meaning": "0 selects immediate half-register writes. Special signal reads use a different command mode."
+},
+{
+"name": "RegIndex16b",
+"hi": 6,
+"lo": 0,
+"meaning": "Half-register index: even selects low 16 bits, odd selects high 16 bits of GPR[index // 2]."
+}
+],
+"title": "Set a Tensix GPR half-word",
+"group": "Control",
+"summary": "Write 16 immediate bits into one half of a Tensix GPR, preserving the other half.",
+"notes": [
+"This is the scalar Tensix GPR file, not the SFPU LRegs and not RV32 registers. The repository can fill the immediate field dynamically by combining a base word with shifted bits."
+],
+"constants": [],
+"manual": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/WormholeB0/TensixTile/TensixCoprocessor/SETDMAREG_Immediate.md"
+},
+"70": {
+"name": "FLUSHDMA",
+"fields": [
+{
+"name": "FlushSpec",
+"hi": 23,
+"lo": 0,
+"meaning": ""
+}
+],
+"title": "",
+"group": "",
+"summary": "",
+"notes": [],
+"constants": [],
+"manual": ""
+},
+"72": {
+"name": "REG2FLOP",
+"fields": [
+{
+"name": "SizeSel",
+"hi": 23,
+"lo": 22,
+"meaning": ""
+},
+{
+"name": "TargetSel",
+"hi": 21,
+"lo": 20,
+"meaning": ""
+},
+{
+"name": "ByteOffset",
+"hi": 19,
+"lo": 18,
+"meaning": ""
+},
+{
+"name": "ContextId_2",
+"hi": 17,
+"lo": 16,
+"meaning": ""
+},
+{
+"name": "FlopIndex",
+"hi": 15,
+"lo": 6,
+"meaning": ""
+},
+{
+"name": "RegIndex",
+"hi": 5,
+"lo": 0,
+"meaning": ""
+}
+],
+"title": "",
+"group": "",
+"summary": "",
+"notes": [],
+"constants": [],
+"manual": ""
+},
+"73": {
+"name": "LOADIND",
+"fields": [
+{
+"name": "SizeSel",
+"hi": 23,
+"lo": 22,
+"meaning": ""
+},
+{
+"name": "OffsetIndex",
+"hi": 21,
+"lo": 14,
+"meaning": ""
+},
+{
+"name": "AutoIncSpec",
+"hi": 13,
+"lo": 12,
+"meaning": ""
+},
+{
+"name": "DataRegIndex",
+"hi": 11,
+"lo": 6,
+"meaning": ""
+},
+{
+"name": "AddrRegIndex",
+"hi": 5,
+"lo": 0,
+"meaning": ""
+}
+],
+"title": "",
+"group": "",
+"summary": "",
+"notes": [],
+"constants": [],
+"manual": ""
+},
+"74": {
+"name": "PACR_SETREG",
+"fields": [
+{
+"name": "Push",
+"hi": 23,
+"lo": 23,
+"meaning": ""
+},
+{
+"name": "ModeSel",
+"hi": 22,
+"lo": 22,
+"meaning": ""
+},
+{
+"name": "Unused",
+"hi": 21,
+"lo": 12,
+"meaning": ""
+},
+{
+"name": "DisableStall",
+"hi": 11,
+"lo": 10,
+"meaning": ""
+},
+{
+"name": "AddrSel",
+"hi": 9,
+"lo": 8,
+"meaning": ""
+},
+{
+"name": "StreamId",
+"hi": 7,
+"lo": 2,
+"meaning": ""
+},
+{
+"name": "Flush",
+"hi": 1,
+"lo": 1,
+"meaning": ""
+},
+{
+"name": "Last",
+"hi": 0,
+"lo": 0,
+"meaning": ""
+}
+],
+"title": "",
+"group": "",
+"summary": "",
+"notes": [],
+"constants": [],
+"manual": ""
+},
+"75": {
+"name": "TBUFCMD",
+"fields": [],
+"title": "",
+"group": "",
+"summary": "",
+"notes": [],
+"constants": [],
+"manual": ""
+},
+"80": {
+"name": "SETADC",
+"fields": [
+{
+"name": "CntSetMask",
+"hi": 23,
+"lo": 21,
+"meaning": "Unit mask: 1 unpacker 0, 2 unpacker 1, 4 packers; OR bits to update multiple units."
+},
+{
+"name": "ChannelIndex",
+"hi": 20,
+"lo": 20,
+"meaning": "Address-generator channel: 0 or 1."
+},
+{
+"name": "DimensionIndex",
+"hi": 19,
+"lo": 18,
+"meaning": "Dimension selector: 0 X, 1 Y, 2 Z, 3 W."
+},
+{
+"name": "Value",
+"hi": 17,
+"lo": 0,
+"meaning": "New counter value. The high bits can encode a thread override; ordinary use keeps those zero."
+}
+],
+"title": "Set an address counter",
+"group": "Addressing",
+"summary": "Assign one selected X/Y/Z/W counter and its carry/reset value for the chosen unit(s).",
+"notes": [
+"Counter units depend on the configured address generator. They are not universally bytes: packer Y/Z/W can address rows, faces and tiles."
+],
+"constants": [],
+"manual": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/WormholeB0/TensixTile/TensixCoprocessor/SETADC.md"
+},
+"81": {
+"name": "SETADCXY",
+"fields": [
+{
+"name": "CntSetMask",
+"hi": 23,
+"lo": 21,
+"meaning": "Unit mask: 1 unpacker 0, 2 unpacker 1, 4 packers; OR bits to update multiple units."
+},
+{
+"name": "Ch1_Y",
+"hi": 20,
+"lo": 15,
+"meaning": "New channel 1 Y value; documented semantic value is three bits. Upper encoder bits are not ordinary counter payload."
+},
+{
+"name": "Ch1_X",
+"hi": 14,
+"lo": 12,
+"meaning": "New channel 1 X value (three bits)."
+},
+{
+"name": "Ch0_Y",
+"hi": 11,
+"lo": 9,
+"meaning": "New channel 0 Y value (three bits)."
+},
+{
+"name": "Ch0_X",
+"hi": 8,
+"lo": 6,
+"meaning": "New channel 0 X value (three bits)."
+},
+{
+"name": "BitMask",
+"hi": 5,
+"lo": 0,
+"meaning": "Update mask: 1 Ch0 X, 2 Ch0 Y, 4 Ch1 X, 8 Ch1 Y; 15 updates all four. Upper encoder bits are not ordinary mask bits."
+}
+],
+"title": "Set X/Y address counters",
+"group": "Addressing",
+"summary": "Assign selected channel 0 and 1 X/Y counters and their carry/reset copies.",
+"notes": [],
+"constants": [],
+"manual": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/WormholeB0/TensixTile/TensixCoprocessor/SETADCXY.md"
+},
+"82": {
+"name": "INCADCXY",
+"fields": [
+{
+"name": "CntSetMask",
+"hi": 23,
+"lo": 21,
+"meaning": ""
+},
+{
+"name": "Ch1_Y",
+"hi": 20,
+"lo": 15,
+"meaning": ""
+},
+{
+"name": "Ch1_X",
+"hi": 14,
+"lo": 12,
+"meaning": ""
+},
+{
+"name": "Ch0_Y",
+"hi": 11,
+"lo": 9,
+"meaning": ""
+},
+{
+"name": "Ch0_X",
+"hi": 8,
+"lo": 6,
+"meaning": ""
+}
+],
+"title": "",
+"group": "",
+"summary": "",
+"notes": [],
+"constants": [],
+"manual": ""
+},
+"83": {
+"name": "ADDRCRXY",
+"fields": [
+{
+"name": "CntSetMask",
+"hi": 23,
+"lo": 21,
+"meaning": ""
+},
+{
+"name": "Ch1_Y",
+"hi": 20,
+"lo": 15,
+"meaning": ""
+},
+{
+"name": "Ch1_X",
+"hi": 14,
+"lo": 12,
+"meaning": ""
+},
+{
+"name": "Ch0_Y",
+"hi": 11,
+"lo": 9,
+"meaning": ""
+},
+{
+"name": "Ch0_X",
+"hi": 8,
+"lo": 6,
+"meaning": ""
+},
+{
+"name": "BitMask",
+"hi": 5,
+"lo": 0,
+"meaning": ""
+}
+],
+"title": "",
+"group": "",
+"summary": "",
+"notes": [],
+"constants": [],
+"manual": ""
+},
+"84": {
+"name": "SETADCZW",
+"fields": [
+{
+"name": "CntSetMask",
+"hi": 23,
+"lo": 21,
+"meaning": "Unit mask: 1 unpacker 0, 2 unpacker 1, 4 packers; OR bits to update multiple units."
+},
+{
+"name": "Ch1_W",
+"hi": 20,
+"lo": 15,
+"meaning": "New channel 1 W value; documented semantic value is three bits. Upper encoder bits are not ordinary counter payload."
+},
+{
+"name": "Ch1_Z",
+"hi": 14,
+"lo": 12,
+"meaning": "New channel 1 Z value (three bits)."
+},
+{
+"name": "Ch0_W",
+"hi": 11,
+"lo": 9,
+"meaning": "New channel 0 W value (three bits)."
+},
+{
+"name": "Ch0_Z",
+"hi": 8,
+"lo": 6,
+"meaning": "New channel 0 Z value (three bits)."
+},
+{
+"name": "BitMask",
+"hi": 5,
+"lo": 0,
+"meaning": "Update mask: 1 Ch0 Z, 2 Ch0 W, 4 Ch1 Z, 8 Ch1 W; 15 updates all four. Upper encoder bits are not ordinary mask bits."
+}
+],
+"title": "Set Z/W address counters",
+"group": "Addressing",
+"summary": "Assign selected channel 0 and 1 Z/W counters and their carry/reset copies.",
+"notes": [],
+"constants": [],
+"manual": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/WormholeB0/TensixTile/TensixCoprocessor/SETADCZW.md"
+},
+"85": {
+"name": "INCADCZW",
+"fields": [
+{
+"name": "CntSetMask",
+"hi": 23,
+"lo": 21,
+"meaning": ""
+},
+{
+"name": "Ch1_W",
+"hi": 20,
+"lo": 15,
+"meaning": ""
+},
+{
+"name": "Ch1_Z",
+"hi": 14,
+"lo": 12,
+"meaning": ""
+},
+{
+"name": "Ch0_W",
+"hi": 11,
+"lo": 9,
+"meaning": ""
+},
+{
+"name": "Ch0_Z",
+"hi": 8,
+"lo": 6,
+"meaning": ""
+}
+],
+"title": "",
+"group": "",
+"summary": "",
+"notes": [],
+"constants": [],
+"manual": ""
+},
+"86": {
+"name": "ADDRCRZW",
+"fields": [
+{
+"name": "CntSetMask",
+"hi": 23,
+"lo": 21,
+"meaning": ""
+},
+{
+"name": "Ch1_W",
+"hi": 20,
+"lo": 15,
+"meaning": ""
+},
+{
+"name": "Ch1_Z",
+"hi": 14,
+"lo": 12,
+"meaning": ""
+},
+{
+"name": "Ch0_W",
+"hi": 11,
+"lo": 9,
+"meaning": ""
+},
+{
+"name": "Ch0_Z",
+"hi": 8,
+"lo": 6,
+"meaning": ""
+},
+{
+"name": "BitMask",
+"hi": 5,
+"lo": 0,
+"meaning": ""
+}
+],
+"title": "",
+"group": "",
+"summary": "",
+"notes": [],
+"constants": [],
+"manual": ""
+},
+"87": {
+"name": "SETDVALID",
+"fields": [
+{
+"name": "setvalid",
+"hi": 23,
+"lo": 0,
+"meaning": ""
+}
+],
+"title": "",
+"group": "",
+"summary": "",
+"notes": [],
+"constants": [],
+"manual": ""
+},
+"88": {
+"name": "ADDDMAREG",
+"fields": [
+{
+"name": "OpBisConst",
+"hi": 23,
+"lo": 23,
+"meaning": ""
+},
+{
+"name": "ResultRegIndex",
+"hi": 22,
+"lo": 12,
+"meaning": ""
+},
+{
+"name": "OpBRegIndex",
+"hi": 11,
+"lo": 6,
+"meaning": ""
+},
+{
+"name": "OpARegIndex",
+"hi": 5,
+"lo": 0,
+"meaning": ""
+}
+],
+"title": "",
+"group": "",
+"summary": "",
+"notes": [],
+"constants": [],
+"manual": ""
+},
+"89": {
+"name": "SUBDMAREG",
+"fields": [
+{
+"name": "OpBisConst",
+"hi": 23,
+"lo": 23,
+"meaning": ""
+},
+{
+"name": "ResultRegIndex",
+"hi": 22,
+"lo": 12,
+"meaning": ""
+},
+{
+"name": "OpBRegIndex",
+"hi": 11,
+"lo": 6,
+"meaning": ""
+},
+{
+"name": "OpARegIndex",
+"hi": 5,
+"lo": 0,
+"meaning": ""
+}
+],
+"title": "",
+"group": "",
+"summary": "",
+"notes": [],
+"constants": [],
+"manual": ""
+},
+"90": {
+"name": "MULDMAREG",
+"fields": [
+{
+"name": "OpBisConst",
+"hi": 23,
+"lo": 23,
+"meaning": ""
+},
+{
+"name": "ResultRegIndex",
+"hi": 22,
+"lo": 12,
+"meaning": ""
+},
+{
+"name": "OpBRegIndex",
+"hi": 11,
+"lo": 6,
+"meaning": ""
+},
+{
+"name": "OpARegIndex",
+"hi": 5,
+"lo": 0,
+"meaning": ""
+}
+],
+"title": "",
+"group": "",
+"summary": "",
+"notes": [],
+"constants": [],
+"manual": ""
+},
+"91": {
+"name": "BITWOPDMAREG",
+"fields": [
+{
+"name": "OpBisConst",
+"hi": 23,
+"lo": 23,
+"meaning": ""
+},
+{
+"name": "OpSel",
+"hi": 22,
+"lo": 18,
+"meaning": ""
+},
+{
+"name": "ResultRegIndex",
+"hi": 17,
+"lo": 12,
+"meaning": ""
+},
+{
+"name": "OpBRegIndex",
+"hi": 11,
+"lo": 6,
+"meaning": ""
+},
+{
+"name": "OpARegIndex",
+"hi": 5,
+"lo": 0,
+"meaning": ""
+}
+],
+"title": "",
+"group": "",
+"summary": "",
+"notes": [],
+"constants": [],
+"manual": ""
+},
+"92": {
+"name": "SHIFTDMAREG",
+"fields": [
+{
+"name": "OpBisConst",
+"hi": 23,
+"lo": 23,
+"meaning": ""
+},
+{
+"name": "OpSel",
+"hi": 22,
+"lo": 18,
+"meaning": ""
+},
+{
+"name": "ResultRegIndex",
+"hi": 17,
+"lo": 12,
+"meaning": ""
+},
+{
+"name": "OpBRegIndex",
+"hi": 11,
+"lo": 6,
+"meaning": ""
+},
+{
+"name": "OpARegIndex",
+"hi": 5,
+"lo": 0,
+"meaning": ""
+}
+],
+"title": "",
+"group": "",
+"summary": "",
+"notes": [],
+"constants": [],
+"manual": ""
+},
+"93": {
+"name": "CMPDMAREG",
+"fields": [
+{
+"name": "OpBisConst",
+"hi": 23,
+"lo": 23,
+"meaning": ""
+},
+{
+"name": "OpSel",
+"hi": 22,
+"lo": 18,
+"meaning": ""
+},
+{
+"name": "ResultRegIndex",
+"hi": 17,
+"lo": 12,
+"meaning": ""
+},
+{
+"name": "OpBRegIndex",
+"hi": 11,
+"lo": 6,
+"meaning": ""
+},
+{
+"name": "OpARegIndex",
+"hi": 5,
+"lo": 0,
+"meaning": ""
+}
+],
+"title": "",
+"group": "",
+"summary": "",
+"notes": [],
+"constants": [],
+"manual": ""
+},
+"94": {
+"name": "SETADCXX",
+"fields": [
+{
+"name": "CntSetMask",
+"hi": 23,
+"lo": 21,
+"meaning": "Unit mask: 1 unpacker 0, 2 unpacker 1, 4 packers; OR bits to update multiple units."
+},
+{
+"name": "x_end2",
+"hi": 20,
+"lo": 10,
+"meaning": "Channel 1 X. In the repository's regular unpack/pack setup this is the inclusive end (element count minus one). The semantic value is 10 bits despite the wider Python field."
+},
+{
+"name": "x_start",
+"hi": 9,
+"lo": 0,
+"meaning": "Channel 0 X start value (10 bits)."
+}
+],
+"title": "Set both X counters",
+"group": "Addressing",
+"summary": "Set channel 0 X and channel 1 X for selected unpackers or packers.",
+"notes": [
+"For 16 datums starting at zero, the repository uses x_end2=15 and x_start=0. Both counters' carry/reset copies are updated."
+],
+"constants": [],
+"manual": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/WormholeB0/TensixTile/TensixCoprocessor/SETADCXX.md"
+},
+"96": {
+"name": "DMANOP",
+"fields": [],
+"title": "Scalar/DMA no operation",
+"group": "Control",
+"summary": "Issue a no-op on the scalar/DMA path.",
+"notes": [
+"Used near configuration and packing setup. A no-op is not a replacement for waiting for outstanding DMA or pack work."
+],
+"constants": [],
+"manual": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/WormholeB0/TensixTile/TensixCoprocessor/DMANOP.md"
+},
+"97": {
+"name": "ATINCGET",
+"fields": [
+{
+"name": "MemHierSel",
+"hi": 23,
+"lo": 23,
+"meaning": ""
+},
+{
+"name": "WrapVal",
+"hi": 22,
+"lo": 14,
+"meaning": ""
+},
+{
+"name": "Sel32b",
+"hi": 13,
+"lo": 12,
+"meaning": ""
+},
+{
+"name": "DataRegIndex",
+"hi": 11,
+"lo": 6,
+"meaning": ""
+},
+{
+"name": "AddrRegIndex",
+"hi": 5,
+"lo": 0,
+"meaning": ""
+}
+],
+"title": "",
+"group": "",
+"summary": "",
+"notes": [],
+"constants": [],
+"manual": ""
+},
+"98": {
+"name": "ATINCGETPTR",
+"fields": [
+{
+"name": "MemHierSel",
+"hi": 23,
+"lo": 23,
+"meaning": ""
+},
+{
+"name": "NoIncr",
+"hi": 22,
+"lo": 22,
+"meaning": ""
+},
+{
+"name": "IncrVal",
+"hi": 21,
+"lo": 18,
+"meaning": ""
+},
+{
+"name": "WrapVal",
+"hi": 17,
+"lo": 14,
+"meaning": ""
+},
+{
+"name": "Sel32b",
+"hi": 13,
+"lo": 12,
+"meaning": ""
+},
+{
+"name": "DataRegIndex",
+"hi": 11,
+"lo": 6,
+"meaning": ""
+},
+{
+"name": "AddrRegIndex",
+"hi": 5,
+"lo": 0,
+"meaning": ""
+}
+],
+"title": "",
+"group": "",
+"summary": "",
+"notes": [],
+"constants": [],
+"manual": ""
+},
+"99": {
+"name": "ATSWAP",
+"fields": [
+{
+"name": "MemHierSel",
+"hi": 23,
+"lo": 23,
+"meaning": ""
+},
+{
+"name": "SwapMask",
+"hi": 22,
+"lo": 14,
+"meaning": ""
+},
+{
+"name": "DataRegIndex",
+"hi": 13,
+"lo": 6,
+"meaning": ""
+},
+{
+"name": "AddrRegIndex",
+"hi": 5,
+"lo": 0,
+"meaning": ""
+}
+],
+"title": "",
+"group": "",
+"summary": "",
+"notes": [],
+"constants": [],
+"manual": ""
+},
+"100": {
+"name": "ATCAS",
+"fields": [
+{
+"name": "MemHierSel",
+"hi": 23,
+"lo": 23,
+"meaning": ""
+},
+{
+"name": "SwapVal",
+"hi": 22,
+"lo": 18,
+"meaning": ""
+},
+{
+"name": "CmpVal",
+"hi": 17,
+"lo": 14,
+"meaning": ""
+},
+{
+"name": "Sel32b",
+"hi": 13,
+"lo": 12,
+"meaning": ""
+},
+{
+"name": "DataRegIndex",
+"hi": 11,
+"lo": 6,
+"meaning": ""
+},
+{
+"name": "AddrRegIndex",
+"hi": 5,
+"lo": 0,
+"meaning": ""
+}
+],
+"title": "",
+"group": "",
+"summary": "",
+"notes": [],
+"constants": [],
+"manual": ""
+},
+"102": {
+"name": "STOREIND",
+"fields": [
+{
+"name": "MemHierSel",
+"hi": 23,
+"lo": 23,
+"meaning": ""
+},
+{
+"name": "SizeSel",
+"hi": 22,
+"lo": 22,
+"meaning": ""
+},
+{
+"name": "RegSizeSel",
+"hi": 21,
+"lo": 21,
+"meaning": ""
+},
+{
+"name": "OffsetIndex",
+"hi": 20,
+"lo": 14,
+"meaning": ""
+},
+{
+"name": "AutoIncSpec",
+"hi": 13,
+"lo": 12,
+"meaning": ""
+},
+{
+"name": "DataRegIndex",
+"hi": 11,
+"lo": 6,
+"meaning": ""
+},
+{
+"name": "AddrRegIndex",
+"hi": 5,
+"lo": 0,
+"meaning": ""
+}
+],
+"title": "",
+"group": "",
+"summary": "",
+"notes": [],
+"constants": [],
+"manual": ""
+},
+"103": {
+"name": "STOREREG",
+"fields": [
+{
+"name": "TdmaDataRegIndex",
+"hi": 23,
+"lo": 18,
+"meaning": ""
+},
+{
+"name": "RegAddr",
+"hi": 17,
+"lo": 0,
+"meaning": ""
+}
+],
+"title": "",
+"group": "",
+"summary": "",
+"notes": [],
+"constants": [],
+"manual": ""
+},
+"104": {
+"name": "LOADREG",
+"fields": [
+{
+"name": "TdmaDataRegIndex",
+"hi": 23,
+"lo": 18,
+"meaning": ""
+},
+{
+"name": "RegAddr",
+"hi": 17,
+"lo": 0,
+"meaning": ""
+}
+],
+"title": "",
+"group": "",
+"summary": "",
+"notes": [],
+"constants": [],
+"manual": ""
+},
+"112": {
+"name": "SFPLOAD",
+"fields": [
+{
+"name": "lreg_ind",
+"hi": 23,
+"lo": 20,
+"meaning": "Destination LReg index. Loads write L0-L7."
+},
+{
+"name": "instr_mod0",
+"hi": 19,
+"lo": 16,
+"meaning": "Transfer format: 0 follows configured format, 1 FP16, 2 BF16, 3 FP32. Integer and partial-word modes have distinct meanings; see the mode constants and ISA reference. This is not the same mode numbering as SFPLOADI."
+},
+{
+"name": "sfpu_addr_mode",
+"hi": 15,
+"lo": 13,
+"meaning": "Raw SFPU address-modifier field, applied after the transfer. It advances SrcA/SrcB/Dst counters, not fidelity. Llama uses 7 with its configured counters. Do not interpret this as a byte increment."
+},
+{
+"name": "dest_reg_addr",
+"hi": 12,
+"lo": 0,
+"meaning": "Dst address immediate plus configured offsets and RWCs. For normal addressing, the effective low 10 bits select four rows (bits 9:2) and even/odd columns (bit 1); bit 0 is unused. Keep reserved upper bits zero."
+}
+],
+"title": "Load Dst into a vector register",
+"group": "SFPU",
+"summary": "Read up to 32 values from Dst into one SFPU register, converting from the selected Dst storage format.",
+"notes": [
+"One vector covers even or odd columns of four consecutive 16-column Dst rows. Lane n reads row (address & ~3) + n//8 and column 2*(n%8), plus the odd-column selection. Lane configuration can block or exchange columns.",
+"An FPU write to the same Dst region needs at least three unrelated Tensix instructions before SFPLOAD. ZEROACC alone does not establish valid values for an SFPU load."
+],
+"constants": [
+"MOD0_FMT_SRCB      0",
+"MOD0_FMT_FP16      1",
+"MOD0_FMT_BF16      2",
+"MOD0_FMT_FP32      3",
+"MOD0_FMT_INT32     4",
+"MOD0_FMT_INT8      5",
+"MOD0_FMT_UINT16    6",
+"MOD0_FMT_HI16      7",
+"MOD0_FMT_INT16     8",
+"MOD0_FMT_LO16      9",
+"MOD0_FMT_INT32_ALL 10",
+"MOD0_FMT_ZERO      11",
+"MOD0_FMT_INT32_SM  12",
+"MOD0_FMT_INT8_COMP 13",
+"MOD0_FMT_LO16_ONLY 14",
+"MOD0_FMT_HI16_ONLY 15"
+],
+"manual": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/BlackholeA0/TensixTile/TensixCoprocessor/SFPLOAD.md"
+},
+"113": {
+"name": "SFPLOADI",
+"fields": [
+{
+"name": "lreg_ind",
+"hi": 23,
+"lo": 20,
+"meaning": "Destination register L0-L7."
+},
+{
+"name": "instr_mod0",
+"hi": 19,
+"lo": 16,
+"meaning": "0: BF16 bits shifted into the high half; 1: FP16-like conversion; 2: zero-extended uint16; 4: sign-extended int16; 8: replace upper 16 bits; 10: replace lower 16 bits."
+},
+{
+"name": "imm16",
+"hi": 15,
+"lo": 0,
+"meaning": "16-bit bit pattern, not a Python float. Modes 8 and 10 preserve the opposite half."
+}
+],
+"title": "Load an immediate into a vector register",
+"group": "SFPU",
+"summary": "Broadcast a 16-bit immediate to active lanes, either converting it to 32 bits or replacing half of each register value.",
+"notes": [
+"Llama installs exact FP32 constants with LOWER (10) followed by UPPER (8). For pi, the two immediates are 0x0fdb and 0x4049. Both writes obey lane predication."
+],
+"constants": [
+"SFPLOADI_MOD0_FLOATB 0 // Immediate is BF16",
+"SFPLOADI_MOD0_FLOATA 1 // Immediate is FP16 (ish)",
+"SFPLOADI_MOD0_USHORT 2 // Immediate is UINT16",
+"SFPLOADI_MOD0_SHORT  4 // Immediate is INT16",
+"SFPLOADI_MOD0_UPPER  8 // Immediate overwrites upper 16 bits",
+"SFPLOADI_MOD0_LOWER 10 // Immediate overwrites lower 16 bits"
+],
+"manual": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/WormholeB0/TensixTile/TensixCoprocessor/SFPLOADI.md"
+},
+"114": {
+"name": "SFPSTORE",
+"fields": [
+{
+"name": "lreg_ind",
+"hi": 23,
+"lo": 20,
+"meaning": "Source LReg index. Normal data registers are L0-L7; constants can also be read."
+},
+{
+"name": "instr_mod0",
+"hi": 19,
+"lo": 16,
+"meaning": "Transfer format: 0 follows configured format, 1 FP16, 2 BF16, 3 FP32. Integer and partial-word modes have distinct meanings; see the mode constants and ISA reference. This is not the same mode numbering as SFPLOADI."
+},
+{
+"name": "sfpu_addr_mode",
+"hi": 15,
+"lo": 13,
+"meaning": "Raw SFPU address-modifier field, applied after the transfer. It advances SrcA/SrcB/Dst counters, not fidelity. Llama uses 7 with its configured counters. Do not interpret this as a byte increment."
+},
+{
+"name": "dest_reg_addr",
+"hi": 12,
+"lo": 0,
+"meaning": "Dst address immediate plus configured offsets and RWCs. For normal addressing, the effective low 10 bits select four rows (bits 9:2) and even/odd columns (bit 1); bit 0 is unused. Keep reserved upper bits zero."
+}
+],
+"title": "Store a vector register into Dst",
+"group": "SFPU",
+"summary": "Write active SFPU lanes into Dst with the selected format conversion. This does not write L1; packing is a separate step.",
+"notes": [
+"Normal lane mapping is the inverse of SFPLOAD. An SFPU register is 32 lanes arranged as four groups of eight, not one contiguous tensor row.",
+"Writing only part of an undefined Dst row is not a valid way to initialize it. Initialize the row before a partial or predicated store."
+],
+"constants": [
+"MOD0_FMT_SRCB      0",
+"MOD0_FMT_FP16      1",
+"MOD0_FMT_BF16      2",
+"MOD0_FMT_FP32      3",
+"MOD0_FMT_INT32     4",
+"MOD0_FMT_INT8      5",
+"MOD0_FMT_UINT16    6",
+"MOD0_FMT_HI16      7",
+"MOD0_FMT_INT16     8",
+"MOD0_FMT_LO16      9",
+"MOD0_FMT_INT32_ALL 10",
+"MOD0_FMT_ZERO      11",
+"MOD0_FMT_INT32_SM  12",
+"MOD0_FMT_INT8_COMP 13",
+"MOD0_FMT_LO16_ONLY 14",
+"MOD0_FMT_HI16_ONLY 15"
+],
+"manual": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/BlackholeA0/TensixTile/TensixCoprocessor/SFPSTORE.md"
+},
+"115": {
+"name": "SFPLUT",
+"fields": [
+{
+"name": "lreg_ind",
+"hi": 23,
+"lo": 20,
+"meaning": ""
+},
+{
+"name": "instr_mod0",
+"hi": 19,
+"lo": 16,
+"meaning": ""
+},
+{
+"name": "dest_reg_addr",
+"hi": 15,
+"lo": 0,
+"meaning": ""
+}
+],
+"title": "",
+"group": "",
+"summary": "",
+"notes": [],
+"constants": [],
+"manual": ""
+},
+"116": {
+"name": "SFPMULI",
+"fields": [
+{
+"name": "imm16_math",
+"hi": 23,
+"lo": 8,
+"meaning": "BF16 immediate bit pattern, widened to FP32 by shifting left 16 bits. Not an integer numerical value."
+},
+{
+"name": "lreg_dest",
+"hi": 7,
+"lo": 4,
+"meaning": "LReg index used as both input and output."
+},
+{
+"name": "instr_mod1",
+"hi": 3,
+"lo": 0,
+"meaning": "Blackhole flags: 1 negates A, 2 negates C, 4 takes A index from L7 low four bits, 8 takes destination index from L7. Combine flags with bitwise OR; 0 is ordinary arithmetic."
+}
+],
+"title": "Floating-point multiply with an immediate",
+"group": "SFPU",
+"summary": "Convert a BF16 immediate to FP32 and multiply it with the old destination in each active lane.",
+"notes": [
+"Blackhole MAD has a two-cycle result latency and usually stalls direct dependencies automatically. Load-macro sequences and some consumers (including SFPIADD, SFPSHFT, SFPSWAP and SFPSHFT2 modes) need explicit spacing. Llama commonly inserts TTSFPNOP."
+],
+"constants": [
+"SFPMAD_MOD1_NEGATE_VC 2",
+"SFPMAD_MOD1_INDIRECT_VD 8"
+],
+"manual": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/BlackholeA0/TensixTile/TensixCoprocessor/SFPMULI.md"
+},
+"117": {
+"name": "SFPADDI",
+"fields": [
+{
+"name": "imm16_math",
+"hi": 23,
+"lo": 8,
+"meaning": "BF16 immediate bit pattern, widened to FP32 by shifting left 16 bits. Not an integer numerical value."
+},
+{
+"name": "lreg_dest",
+"hi": 7,
+"lo": 4,
+"meaning": "LReg index used as both input and output."
+},
+{
+"name": "instr_mod1",
+"hi": 3,
+"lo": 0,
+"meaning": "Blackhole flags: 1 negates A, 2 negates C, 4 takes A index from L7 low four bits, 8 takes destination index from L7. Combine flags with bitwise OR; 0 is ordinary arithmetic."
+}
+],
+"title": "Floating-point add with an immediate",
+"group": "SFPU",
+"summary": "Convert a BF16 immediate to FP32 and add it with the old destination in each active lane.",
+"notes": [
+"Blackhole MAD has a two-cycle result latency and usually stalls direct dependencies automatically. Load-macro sequences and some consumers (including SFPIADD, SFPSHFT, SFPSWAP and SFPSHFT2 modes) need explicit spacing. Llama commonly inserts TTSFPNOP."
+],
+"constants": [
+"SFPMAD_MOD1_NEGATE_VC 2",
+"SFPMAD_MOD1_INDIRECT_VD 8"
+],
+"manual": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/BlackholeA0/TensixTile/TensixCoprocessor/SFPADDI.md"
+},
+"118": {
+"name": "SFPDIVP2",
+"fields": [
+{
+"name": "imm12_math",
+"hi": 23,
+"lo": 12,
+"meaning": ""
+},
+{
+"name": "lreg_c",
+"hi": 11,
+"lo": 8,
+"meaning": ""
+},
+{
+"name": "lreg_dest",
+"hi": 7,
+"lo": 4,
+"meaning": ""
+},
+{
+"name": "instr_mod1",
+"hi": 3,
+"lo": 0,
+"meaning": ""
+}
+],
+"title": "",
+"group": "",
+"summary": "",
+"notes": [],
+"constants": [],
+"manual": ""
+},
+"119": {
+"name": "SFPEXEXP",
+"fields": [
+{
+"name": "imm12_math",
+"hi": 23,
+"lo": 12,
+"meaning": "Keep zero for the documented operation. The Python encoder exposes these bits, but they are not an independent supported operand in the reference syntax."
+},
+{
+"name": "lreg_c",
+"hi": 11,
+"lo": 8,
+"meaning": "Source vector register index (VC). L0-L7 are writable vectors; higher indices select constants or special registers."
+},
+{
+"name": "lreg_dest",
+"hi": 7,
+"lo": 4,
+"meaning": "Destination vector register index (VD). Normal arithmetic writes L0-L7. Destinations 12-15 can record instruction templates when backdoor loading is enabled."
+},
+{
+"name": "instr_mod1",
+"hi": 3,
+"lo": 0,
+"meaning": "0 extracts exponent minus 127; OR 1 to keep the bias; OR 2 to set flags from the result sign; OR 8 to invert that condition."
+}
+],
+"title": "Extract a floating-point exponent",
+"group": "SFPU",
+"summary": "Extract the FP32 exponent bits into an integer vector, optionally removing the exponent bias.",
+"notes": [
+"This manipulates the representation rather than evaluating log, exp or a general transcendental function. Exact modifiers are listed in the source reference."
+],
+"constants": [
+"SFPEXEXP_MOD1_NODEBIAS        1",
+"SFPEXEXP_MOD1_SET_CC_SGN_EXP  2",
+"SFPEXEXP_MOD1_SET_CC_COMP_EXP 8"
+],
+"manual": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/WormholeB0/TensixTile/TensixCoprocessor/SFPEXEXP.md"
+},
+"120": {
+"name": "SFPEXMAN",
+"fields": [
+{
+"name": "imm12_math",
+"hi": 23,
+"lo": 12,
+"meaning": "Keep zero for the documented operation. The Python encoder exposes these bits, but they are not an independent supported operand in the reference syntax."
+},
+{
+"name": "lreg_c",
+"hi": 11,
+"lo": 8,
+"meaning": "Source vector register index (VC). L0-L7 are writable vectors; higher indices select constants or special registers."
+},
+{
+"name": "lreg_dest",
+"hi": 7,
+"lo": 4,
+"meaning": "Destination vector register index (VD). Normal arithmetic writes L0-L7. Destinations 12-15 can record instruction templates when backdoor loading is enabled."
+},
+{
+"name": "instr_mod1",
+"hi": 3,
+"lo": 0,
+"meaning": "0 includes a 1 in bit 23 (hidden leading bit); 1 leaves bit 23 zero. The upper eight output bits are zero."
+}
+],
+"title": "Extract a floating-point mantissa",
+"group": "SFPU",
+"summary": "Extract the low 23 mantissa bits into an integer, optionally setting bit 23 to represent the hidden leading bit.",
+"notes": [
+"This manipulates the representation rather than evaluating log, exp or a general transcendental function. Exact modifiers are listed in the source reference."
+],
+"constants": [
+"SFPEXMAN_MOD1_PAD9 1"
+],
+"manual": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/WormholeB0/TensixTile/TensixCoprocessor/SFPEXMAN.md"
+},
+"121": {
+"name": "SFPIADD",
+"fields": [
+{
+"name": "imm12_math",
+"hi": 23,
+"lo": 12,
+"meaning": "Signed 12-bit immediate encoded as value & 0xfff, used when modifier bit 0 is set."
+},
+{
+"name": "lreg_c",
+"hi": 11,
+"lo": 8,
+"meaning": "Source vector register index (VC). L0-L7 are writable vectors; higher indices select constants or special registers."
+},
+{
+"name": "lreg_dest",
+"hi": 7,
+"lo": 4,
+"meaning": "Destination and, in register mode, the second source operand. Subtraction is VC - old VD."
+},
+{
+"name": "instr_mod1",
+"hi": 3,
+"lo": 0,
+"meaning": "1 selects immediate addition; 2 selects VC - VD; otherwise VC + VD. OR 4 to preserve condition flags. Without 4, flags reflect a negative result; 8 inverts the condition."
+}
+],
+"title": "Integer add or subtract",
+"group": "SFPU",
+"summary": "Perform 32-bit integer arithmetic on register bit patterns, optionally updating per-lane condition flags.",
+"notes": [
+"Llama uses modifier 6 (2 | 4) to subtract the shifted FP32 bit pattern from an inverse-square-root seed without changing lane flags.",
+"Blackhole MAD has a two-cycle result latency and usually stalls direct dependencies automatically. Load-macro sequences and some consumers (including SFPIADD, SFPSHFT, SFPSWAP and SFPSHFT2 modes) need explicit spacing. Llama commonly inserts TTSFPNOP."
+],
+"constants": [
+"SFPIADD_MOD1_ARG_LREG_DST        0",
+"SFPIADD_MOD1_ARG_IMM             1",
+"SFPIADD_MOD1_ARG_2SCOMP_LREG_DST 2",
+"SFPIADD_MOD1_CC_LT0  0",
+"SFPIADD_MOD1_CC_NONE 4",
+"SFPIADD_MOD1_CC_GTE0 8"
+],
+"manual": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/WormholeB0/TensixTile/TensixCoprocessor/SFPIADD.md"
+},
+"122": {
+"name": "SFPSHFT",
+"fields": [
+{
+"name": "imm12_math",
+"hi": 23,
+"lo": 12,
+"meaning": "Signed shift amount encoded in 12 bits when modifier 1 is used. Positive shifts left; negative shifts right."
+},
+{
+"name": "lreg_c",
+"hi": 11,
+"lo": 8,
+"meaning": "Register supplying the shift amount when immediate mode is disabled."
+},
+{
+"name": "lreg_dest",
+"hi": 7,
+"lo": 4,
+"meaning": "Register holding the data to shift, overwritten with the result."
+},
+{
+"name": "instr_mod1",
+"hi": 3,
+"lo": 0,
+"meaning": "1 selects immediate shift amount; 0 selects the register shift amount."
+}
+],
+"title": "Shift integer bits within each lane",
+"group": "SFPU",
+"summary": "Shift the old destination left or logically right. This changes bits inside each lane; it does not move data between lanes.",
+"notes": [
+"Llama uses imm12_math=0xfff (-1), modifier 1 to shift a positive FP32 bit representation right by one for rsqrt estimation."
+],
+"constants": [
+"SFPSHFT_MOD1_ARG_IMM        1",
+"SFPSHFT_MOD1_ARITHMETIC     2",
+"SFPSHFT_MOD1_ARG_IMM_USE_VC 4"
+],
+"manual": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/BlackholeA0/TensixTile/TensixCoprocessor/SFPSHFT.md"
+},
+"123": {
+"name": "SFPSETCC",
+"fields": [
+{
+"name": "imm12_math",
+"hi": 23,
+"lo": 12,
+"meaning": "Low immediate bit supplies the condition in immediate mode; zero for register comparisons."
+},
+{
+"name": "lreg_c",
+"hi": 11,
+"lo": 8,
+"meaning": "Source vector register index (VC). L0-L7 are writable vectors; higher indices select constants or special registers."
+},
+{
+"name": "lreg_dest",
+"hi": 7,
+"lo": 4,
+"meaning": "Normally zero; not the destination of a vector arithmetic result."
+},
+{
+"name": "instr_mod1",
+"hi": 3,
+"lo": 0,
+"meaning": "0 tests sign/negative, 2 nonzero, 4 nonnegative, 6 zero; 1 selects immediate bit 0; 8 clears flags. Conditions update lane flags as specified by the functional model."
+}
+],
+"title": "Set per-lane condition flags",
+"group": "SFPU",
+"summary": "Update per-lane flags from the sign or zero status of a register or an immediate condition.",
+"notes": [
+"SFPENCC controls whether these flags gate instruction execution. This writes predication state, not a vector of integer booleans."
+],
+"constants": [
+"SFPSETCC_MOD1_IMM_BIT0  1",
+"SFPSETCC_MOD1_CLEAR     8",
+"SFPSETCC_MOD1_LREG_LT0  0",
+"SFPSETCC_MOD1_LREG_NE0  2",
+"SFPSETCC_MOD1_LREG_GTE0 4",
+"SFPSETCC_MOD1_LREG_EQ0  6"
+],
+"manual": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/WormholeB0/TensixTile/TensixCoprocessor/SFPSETCC.md"
+},
+"124": {
+"name": "SFPMOV",
+"fields": [
+{
+"name": "imm12_math",
+"hi": 23,
+"lo": 12,
+"meaning": "Keep zero for the documented operation. The Python encoder exposes these bits, but they are not an independent supported operand in the reference syntax."
+},
+{
+"name": "lreg_c",
+"hi": 11,
+"lo": 8,
+"meaning": "Source vector register index (VC). L0-L7 are writable vectors; higher indices select constants or special registers."
+},
+{
+"name": "lreg_dest",
+"hi": 7,
+"lo": 4,
+"meaning": "Destination vector register index (VD). Normal arithmetic writes L0-L7. Destinations 12-15 can record instruction templates when backdoor loading is enabled."
+},
+{
+"name": "instr_mod1",
+"hi": 3,
+"lo": 0,
+"meaning": "0 copies VC to VD; 1 toggles the FP32/sign-magnitude sign bit; 2 copies with all lanes enabled; 8 reads special state selected by VC."
+}
+],
+"title": "Copy or negate a vector",
+"group": "SFPU",
+"summary": "Copy a register, toggle its sign bit, bypass predication, or read special SFPU state.",
+"notes": [
+"Negation flips bit 31. It is not two's-complement integer negation. In special mode, VC=9 advances the hardware PRNG."
+],
+"constants": [
+"SFPMOV_MOD1_NEGATE            1",
+"SFPMOV_MOD1_ALL_LANES_ENABLED 2",
+"SFPMOV_MOD1_FROM_SPECIAL      8"
+],
+"manual": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/WormholeB0/TensixTile/TensixCoprocessor/SFPMOV.md"
+},
+"125": {
+"name": "SFPABS",
+"fields": [
+{
+"name": "imm12_math",
+"hi": 23,
+"lo": 12,
+"meaning": "Keep zero for the documented operation. The Python encoder exposes these bits, but they are not an independent supported operand in the reference syntax."
+},
+{
+"name": "lreg_c",
+"hi": 11,
+"lo": 8,
+"meaning": "Source vector register index (VC). L0-L7 are writable vectors; higher indices select constants or special registers."
+},
+{
+"name": "lreg_dest",
+"hi": 7,
+"lo": 4,
+"meaning": "Destination vector register index (VD). Normal arithmetic writes L0-L7. Destinations 12-15 can record instruction templates when backdoor loading is enabled."
+},
+{
+"name": "instr_mod1",
+"hi": 3,
+"lo": 0,
+"meaning": "0 selects two\u2019s-complement integer absolute value; 1 selects FP32."
+}
+],
+"title": "Vector absolute value",
+"group": "SFPU",
+"summary": "Take the lanewise absolute value of two\u2019s-complement integers or FP32 values.",
+"notes": [
+"FP32 negative NaNs retain their sign. Integer -2147483648 is unchanged."
+],
+"constants": [
+"SFPABS_MOD1_INT 0",
+"SFPABS_MOD1_FLOAT 1"
+],
+"manual": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/WormholeB0/TensixTile/TensixCoprocessor/SFPABS.md"
+},
+"126": {
+"name": "SFPAND",
+"fields": [
+{
+"name": "imm12_math",
+"hi": 23,
+"lo": 12,
+"meaning": "Blackhole VB selector occupies the low four bits of this raw 12-bit encoder field; keep the upper bits zero."
+},
+{
+"name": "lreg_c",
+"hi": 11,
+"lo": 8,
+"meaning": "Source vector register index (VC). L0-L7 are writable vectors; higher indices select constants or special registers."
+},
+{
+"name": "lreg_dest",
+"hi": 7,
+"lo": 4,
+"meaning": "Destination vector register index (VD). Normal arithmetic writes L0-L7. Destinations 12-15 can record instruction templates when backdoor loading is enabled."
+},
+{
+"name": "instr_mod1",
+"hi": 3,
+"lo": 0,
+"meaning": "Bit 0 selects VB as the first input. When clear, the destination register is also the first input."
+}
+],
+"title": "Vector bitwise AND",
+"group": "SFPU",
+"summary": "Apply bitwise AND to each pair of 32-bit lanes.",
+"notes": [
+"VB selection is a Blackhole extension; the Wormhole two-input form always reuses VD."
+],
+"constants": [
+"SFPAND_MOD1_USE_VB 1"
+],
+"manual": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/BlackholeA0/TensixTile/TensixCoprocessor/SFPAND.md"
+},
+"127": {
+"name": "SFPOR",
+"fields": [
+{
+"name": "imm12_math",
+"hi": 23,
+"lo": 12,
+"meaning": "Blackhole VB selector occupies the low four bits of this raw 12-bit encoder field; keep the upper bits zero."
+},
+{
+"name": "lreg_c",
+"hi": 11,
+"lo": 8,
+"meaning": "Source vector register index (VC). L0-L7 are writable vectors; higher indices select constants or special registers."
+},
+{
+"name": "lreg_dest",
+"hi": 7,
+"lo": 4,
+"meaning": "Destination vector register index (VD). Normal arithmetic writes L0-L7. Destinations 12-15 can record instruction templates when backdoor loading is enabled."
+},
+{
+"name": "instr_mod1",
+"hi": 3,
+"lo": 0,
+"meaning": "Bit 0 selects VB as the first input. When clear, the destination register is also the first input."
+}
+],
+"title": "Vector bitwise OR",
+"group": "SFPU",
+"summary": "Apply bitwise OR to each pair of 32-bit lanes.",
+"notes": [
+"VB selection is a Blackhole extension; the Wormhole two-input form always reuses VD."
+],
+"constants": [
+"SFPOR_MOD1_USE_VB 1"
+],
+"manual": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/BlackholeA0/TensixTile/TensixCoprocessor/SFPOR.md"
+},
+"128": {
+"name": "SFPNOT",
+"fields": [
+{
+"name": "imm12_math",
+"hi": 23,
+"lo": 12,
+"meaning": ""
+},
+{
+"name": "lreg_c",
+"hi": 11,
+"lo": 8,
+"meaning": ""
+},
+{
+"name": "lreg_dest",
+"hi": 7,
+"lo": 4,
+"meaning": ""
+},
+{
+"name": "instr_mod1",
+"hi": 3,
+"lo": 0,
+"meaning": ""
+}
+],
+"title": "",
+"group": "",
+"summary": "",
+"notes": [],
+"constants": [],
+"manual": ""
+},
+"129": {
+"name": "SFPLZ",
+"fields": [
+{
+"name": "imm12_math",
+"hi": 23,
+"lo": 12,
+"meaning": ""
+},
+{
+"name": "lreg_c",
+"hi": 11,
+"lo": 8,
+"meaning": ""
+},
+{
+"name": "lreg_dest",
+"hi": 7,
+"lo": 4,
+"meaning": ""
+},
+{
+"name": "instr_mod1",
+"hi": 3,
+"lo": 0,
+"meaning": ""
+}
+],
+"title": "",
+"group": "",
+"summary": "",
+"notes": [],
+"constants": [],
+"manual": ""
+},
+"130": {
+"name": "SFPSETEXP",
+"fields": [
+{
+"name": "imm12_math",
+"hi": 23,
+"lo": 12,
+"meaning": "Unsigned eight-bit biased exponent in immediate mode. Keep the remaining encoder bits zero."
+},
+{
+"name": "lreg_c",
+"hi": 11,
+"lo": 8,
+"meaning": "Source vector register index (VC). L0-L7 are writable vectors; higher indices select constants or special registers."
+},
+{
+"name": "lreg_dest",
+"hi": 7,
+"lo": 4,
+"meaning": "Destination vector register index (VD). Normal arithmetic writes L0-L7. Destinations 12-15 can record instruction templates when backdoor loading is enabled."
+},
+{
+"name": "instr_mod1",
+"hi": 3,
+"lo": 0,
+"meaning": "1 selects the immediate exponent; otherwise take bits from old VD. With register input, OR 2 takes VD exponent bits 30:23 instead of its low eight integer bits."
+}
+],
+"title": "Replace a floating-point exponent",
+"group": "SFPU",
+"summary": "Replace the source exponent using immediate or destination-register bits, preserving source sign and mantissa.",
+"notes": [
+"This manipulates the representation rather than evaluating log, exp or a general transcendental function. Exact modifiers are listed in the source reference."
+],
+"constants": [
+"SFPSETEXP_MOD1_ARG_IMM      1",
+"SFPSETEXP_MOD1_ARG_EXPONENT 2"
+],
+"manual": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/WormholeB0/TensixTile/TensixCoprocessor/SFPSETEXP.md"
+},
+"131": {
+"name": "SFPSETMAN",
+"fields": [
+{
+"name": "imm12_math",
+"hi": 23,
+"lo": 12,
+"meaning": ""
+},
+{
+"name": "lreg_c",
+"hi": 11,
+"lo": 8,
+"meaning": ""
+},
+{
+"name": "lreg_dest",
+"hi": 7,
+"lo": 4,
+"meaning": ""
+},
+{
+"name": "instr_mod1",
+"hi": 3,
+"lo": 0,
+"meaning": ""
+}
+],
+"title": "",
+"group": "",
+"summary": "",
+"notes": [],
+"constants": [],
+"manual": ""
+},
+"132": {
+"name": "SFPMAD",
+"fields": [
+{
+"name": "lreg_src_a",
+"hi": 23,
+"lo": 16,
+"meaning": "A register index. For SFPADD use L10, the 1.0 constant; ordinary register indices are four bits despite this eight-bit encoder field."
+},
+{
+"name": "lreg_src_b",
+"hi": 15,
+"lo": 12,
+"meaning": "B register index."
+},
+{
+"name": "lreg_src_c",
+"hi": 11,
+"lo": 8,
+"meaning": "C register index. For SFPMUL use L9, the 0.0 constant."
+},
+{
+"name": "lreg_dest",
+"hi": 7,
+"lo": 4,
+"meaning": "Destination vector register index (VD). Normal arithmetic writes L0-L7. Destinations 12-15 can record instruction templates when backdoor loading is enabled."
+},
+{
+"name": "instr_mod1",
+"hi": 3,
+"lo": 0,
+"meaning": "Blackhole flags: 1 negates A, 2 negates C, 4 takes A index from L7 low four bits, 8 takes destination index from L7. Combine flags with bitwise OR; 0 is ordinary arithmetic."
+}
+],
+"title": "Multiply then add",
+"group": "SFPU",
+"summary": "Compute VD = A * B + C independently in each active FP32 lane, with optional sign and indirect-register modifiers.",
+"notes": [
+"Blackhole MAD has a two-cycle result latency and usually stalls direct dependencies automatically. Load-macro sequences and some consumers (including SFPIADD, SFPSHFT, SFPSWAP and SFPSHFT2 modes) need explicit spacing. Llama commonly inserts TTSFPNOP.",
+"Multiply-add is partially fused, not an exact IEEE fused multiply-add. Denormal inputs are treated as zero and denormal outputs flush to signed zero; Blackhole uses round-to-nearest, ties-to-even."
+],
+"constants": [
+"SFPMAD_MOD1_NEGATE_VA 1",
+"SFPMAD_MOD1_NEGATE_VC 2",
+"SFPMAD_MOD1_INDIRECT_VA 4",
+"SFPMAD_MOD1_INDIRECT_VD 8"
+],
+"manual": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/BlackholeA0/TensixTile/TensixCoprocessor/SFPMAD.md"
+},
+"133": {
+"name": "SFPADD",
+"fields": [
+{
+"name": "lreg_src_a",
+"hi": 23,
+"lo": 16,
+"meaning": "A register index. For SFPADD use L10, the 1.0 constant; ordinary register indices are four bits despite this eight-bit encoder field."
+},
+{
+"name": "lreg_src_b",
+"hi": 15,
+"lo": 12,
+"meaning": "B register index."
+},
+{
+"name": "lreg_src_c",
+"hi": 11,
+"lo": 8,
+"meaning": "C register index. For SFPMUL use L9, the 0.0 constant."
+},
+{
+"name": "lreg_dest",
+"hi": 7,
+"lo": 4,
+"meaning": "Destination vector register index (VD). Normal arithmetic writes L0-L7. Destinations 12-15 can record instruction templates when backdoor loading is enabled."
+},
+{
+"name": "instr_mod1",
+"hi": 3,
+"lo": 0,
+"meaning": "Blackhole flags: 1 negates A, 2 negates C, 4 takes A index from L7 low four bits, 8 takes destination index from L7. Combine flags with bitwise OR; 0 is ordinary arithmetic."
+}
+],
+"title": "Floating-point add or subtract",
+"group": "SFPU",
+"summary": "Compute VD = B + C using the MAD datapath with A fixed to L10 (1.0).",
+"notes": [
+"Blackhole MAD has a two-cycle result latency and usually stalls direct dependencies automatically. Load-macro sequences and some consumers (including SFPIADD, SFPSHFT, SFPSWAP and SFPSHFT2 modes) need explicit spacing. Llama commonly inserts TTSFPNOP.",
+"Multiply-add is partially fused, not an exact IEEE fused multiply-add. Denormal inputs are treated as zero and denormal outputs flush to signed zero; Blackhole uses round-to-nearest, ties-to-even."
+],
+"constants": [],
+"manual": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/BlackholeA0/TensixTile/TensixCoprocessor/SFPADD.md"
+},
+"134": {
+"name": "SFPMUL",
+"fields": [
+{
+"name": "lreg_src_a",
+"hi": 23,
+"lo": 16,
+"meaning": "A register index. For SFPADD use L10, the 1.0 constant; ordinary register indices are four bits despite this eight-bit encoder field."
+},
+{
+"name": "lreg_src_b",
+"hi": 15,
+"lo": 12,
+"meaning": "B register index."
+},
+{
+"name": "lreg_src_c",
+"hi": 11,
+"lo": 8,
+"meaning": "C register index. For SFPMUL use L9, the 0.0 constant."
+},
+{
+"name": "lreg_dest",
+"hi": 7,
+"lo": 4,
+"meaning": "Destination vector register index (VD). Normal arithmetic writes L0-L7. Destinations 12-15 can record instruction templates when backdoor loading is enabled."
+},
+{
+"name": "instr_mod1",
+"hi": 3,
+"lo": 0,
+"meaning": "Blackhole flags: 1 negates A, 2 negates C, 4 takes A index from L7 low four bits, 8 takes destination index from L7. Combine flags with bitwise OR; 0 is ordinary arithmetic."
+}
+],
+"title": "Floating-point multiply",
+"group": "SFPU",
+"summary": "Compute VD = A * B using the MAD datapath with C fixed to L9 (0.0).",
+"notes": [
+"Blackhole MAD has a two-cycle result latency and usually stalls direct dependencies automatically. Load-macro sequences and some consumers (including SFPIADD, SFPSHFT, SFPSWAP and SFPSHFT2 modes) need explicit spacing. Llama commonly inserts TTSFPNOP.",
+"Multiply-add is partially fused, not an exact IEEE fused multiply-add. Denormal inputs are treated as zero and denormal outputs flush to signed zero; Blackhole uses round-to-nearest, ties-to-even."
+],
+"constants": [],
+"manual": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/BlackholeA0/TensixTile/TensixCoprocessor/SFPMUL.md"
+},
+"135": {
+"name": "SFPPUSHC",
+"fields": [
+{
+"name": "imm12_math",
+"hi": 23,
+"lo": 12,
+"meaning": "Keep zero for the documented operation. The Python encoder exposes these bits, but they are not an independent supported operand in the reference syntax."
+},
+{
+"name": "lreg_c",
+"hi": 11,
+"lo": 8,
+"meaning": "Keep zero for the documented operation. The Python encoder exposes these bits, but they are not an independent supported operand in the reference syntax."
+},
+{
+"name": "lreg_dest",
+"hi": 7,
+"lo": 4,
+"meaning": "Normally zero; not a data-register output."
+},
+{
+"name": "instr_mod1",
+"hi": 3,
+"lo": 0,
+"meaning": "Keep zero. Pushes lane flags and the predicate-enable state onto the eight-entry conditional stack; do not overflow it."
+}
+],
+"title": "Push conditional state",
+"group": "SFPU",
+"summary": "Save or restore the SFPU per-lane conditional-execution state using the predicate stack.",
+"notes": [
+"Useful for nested predication. This is a predicate stack, not a Dst data spill or the RV32 call stack."
+],
+"constants": [],
+"manual": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/BlackholeA0/TensixTile/TensixCoprocessor/SFPPUSHC.md"
+},
+"136": {
+"name": "SFPPOPC",
+"fields": [
+{
+"name": "imm12_math",
+"hi": 23,
+"lo": 12,
+"meaning": "Keep zero for the documented operation. The Python encoder exposes these bits, but they are not an independent supported operand in the reference syntax."
+},
+{
+"name": "lreg_c",
+"hi": 11,
+"lo": 8,
+"meaning": "Keep zero for the documented operation. The Python encoder exposes these bits, but they are not an independent supported operand in the reference syntax."
+},
+{
+"name": "lreg_dest",
+"hi": 7,
+"lo": 4,
+"meaning": "Normally zero; not a data-register output."
+},
+{
+"name": "instr_mod1",
+"hi": 3,
+"lo": 0,
+"meaning": "0 pops and restores both flags and predicate enable; 1-12 peek and combine flags with stack-top flags; 13 inverts flags; 14 enables predication with true flags; 15 enables it with false flags. Do not pop an empty stack or use peek modes on a full stack."
+}
+],
+"title": "Pop conditional state",
+"group": "SFPU",
+"summary": "Save or restore the SFPU per-lane conditional-execution state using the predicate stack.",
+"notes": [
+"Useful for nested predication. This is a predicate stack, not a Dst data spill or the RV32 call stack."
+],
+"constants": [],
+"manual": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/BlackholeA0/TensixTile/TensixCoprocessor/SFPPOPC.md"
+},
+"137": {
+"name": "SFPSETSGN",
+"fields": [
+{
+"name": "imm12_math",
+"hi": 23,
+"lo": 12,
+"meaning": ""
+},
+{
+"name": "lreg_c",
+"hi": 11,
+"lo": 8,
+"meaning": ""
+},
+{
+"name": "lreg_dest",
+"hi": 7,
+"lo": 4,
+"meaning": ""
+},
+{
+"name": "instr_mod1",
+"hi": 3,
+"lo": 0,
+"meaning": ""
+}
+],
+"title": "",
+"group": "",
+"summary": "",
+"notes": [],
+"constants": [],
+"manual": ""
+},
+"138": {
+"name": "SFPENCC",
+"fields": [
+{
+"name": "imm12_math",
+"hi": 23,
+"lo": 12,
+"meaning": "Low bit selects whether lane flags are used for enable; bit 1 supplies a new flag value when requested by Mod1."
+},
+{
+"name": "lreg_c",
+"hi": 11,
+"lo": 8,
+"meaning": "Keep zero for the documented operation. The Python encoder exposes these bits, but they are not an independent supported operand in the reference syntax."
+},
+{
+"name": "lreg_dest",
+"hi": 7,
+"lo": 4,
+"meaning": "Normally zero; only relevant to backdoor instruction recording."
+},
+{
+"name": "instr_mod1",
+"hi": 3,
+"lo": 0,
+"meaning": "1 toggles predicate use; 2 assigns predicate use from immediate bit 0; 8 assigns flags from immediate bit 1. If 8 is absent, flags become true."
+}
+],
+"title": "Enable or reset lane predication",
+"group": "SFPU",
+"summary": "Control whether per-lane flags gate subsequent SFPU instructions, and reset the flags.",
+"notes": [
+"This configures predication, not a floating-point comparison. Restore all-lane behavior explicitly after a predicated region."
+],
+"constants": [
+"SFPENCC_MOD1_EC 1 // Invert UseLaneFlagsForLaneEnable",
+"SFPENCC_MOD1_EI 2 // Set UseLaneFlagsForLaneEnable from SFPENCC_IMM2_E",
+"SFPENCC_MOD1_RI 8 // Set LaneFlags from SFPENCC_IMM2_R",
+"SFPENCC_IMM2_E 1 // Immediate bit for UseLaneFlagsForLaneEnable",
+"SFPENCC_IMM2_R 2 // Immediate bit for LaneFlags"
+],
+"manual": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/WormholeB0/TensixTile/TensixCoprocessor/SFPENCC.md"
+},
+"139": {
+"name": "SFPCOMPC",
+"fields": [
+{
+"name": "imm12_math",
+"hi": 23,
+"lo": 12,
+"meaning": ""
+},
+{
+"name": "lreg_c",
+"hi": 11,
+"lo": 8,
+"meaning": ""
+},
+{
+"name": "lreg_dest",
+"hi": 7,
+"lo": 4,
+"meaning": ""
+},
+{
+"name": "instr_mod1",
+"hi": 3,
+"lo": 0,
+"meaning": ""
+}
+],
+"title": "",
+"group": "",
+"summary": "",
+"notes": [],
+"constants": [],
+"manual": ""
+},
+"140": {
+"name": "SFPTRANSP",
+"fields": [
+{
+"name": "imm12_math",
+"hi": 23,
+"lo": 12,
+"meaning": "Keep zero for the documented operation. The Python encoder exposes these bits, but they are not an independent supported operand in the reference syntax."
+},
+{
+"name": "lreg_c",
+"hi": 11,
+"lo": 8,
+"meaning": "Keep zero for the documented operation. The Python encoder exposes these bits, but they are not an independent supported operand in the reference syntax."
+},
+{
+"name": "lreg_dest",
+"hi": 7,
+"lo": 4,
+"meaning": "Normally zero. This field gates backdoor-template behavior; it does not select a single output register."
+},
+{
+"name": "instr_mod1",
+"hi": 3,
+"lo": 0,
+"meaning": "Keep zero for the documented operation. The Python encoder exposes these bits, but they are not an independent supported operand in the reference syntax."
+}
+],
+"title": "Transpose between vector registers",
+"group": "SFPU",
+"summary": "Transpose the register axis and four-row lane-group axis for both L0-L3 and L4-L7.",
+"notes": [
+"Treat each group of four registers as a 4 x 4 x 8 array. This swaps the first two axes, preserving the eight-column axis. It is not a 4 x 8 tensor transpose. Both register groups are affected."
+],
+"constants": [],
+"manual": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/WormholeB0/TensixTile/TensixCoprocessor/SFPTRANSP.md"
+},
+"141": {
+"name": "SFPXOR",
+"fields": [
+{
+"name": "imm12_math",
+"hi": 23,
+"lo": 12,
+"meaning": "Keep zero for the documented operation. The Python encoder exposes these bits, but they are not an independent supported operand in the reference syntax."
+},
+{
+"name": "lreg_c",
+"hi": 11,
+"lo": 8,
+"meaning": "Source vector register index (VC). L0-L7 are writable vectors; higher indices select constants or special registers."
+},
+{
+"name": "lreg_dest",
+"hi": 7,
+"lo": 4,
+"meaning": "Destination vector register index (VD). Normal arithmetic writes L0-L7. Destinations 12-15 can record instruction templates when backdoor loading is enabled."
+},
+{
+"name": "instr_mod1",
+"hi": 3,
+"lo": 0,
+"meaning": "Keep zero for the documented operation. The Python encoder exposes these bits, but they are not an independent supported operand in the reference syntax."
+}
+],
+"title": "Vector bitwise XOR",
+"group": "SFPU",
+"summary": "XOR each destination lane with the corresponding VC lane.",
+"notes": [
+"The destination is both input and output."
+],
+"constants": [],
+"manual": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/WormholeB0/TensixTile/TensixCoprocessor/SFPXOR.md"
+},
+"142": {
+"name": "SFPSTOCHRND",
+"fields": [
+{
+"name": "rnd_mode",
+"hi": 23,
+"lo": 21,
+"meaning": ""
+},
+{
+"name": "imm8_math",
+"hi": 20,
+"lo": 16,
+"meaning": ""
+},
+{
+"name": "lreg_src_b",
+"hi": 15,
+"lo": 12,
+"meaning": ""
+},
+{
+"name": "lreg_src_c",
+"hi": 11,
+"lo": 8,
+"meaning": ""
+},
+{
+"name": "lreg_dest",
+"hi": 7,
+"lo": 4,
+"meaning": ""
+},
+{
+"name": "instr_mod1",
+"hi": 3,
+"lo": 0,
+"meaning": ""
+}
+],
+"title": "",
+"group": "",
+"summary": "",
+"notes": [],
+"constants": [],
+"manual": ""
+},
+"143": {
+"name": "SFPNOP",
+"fields": [],
+"title": "SFPU no operation",
+"group": "SFPU",
+"summary": "Occupy an SFPU instruction slot without changing arithmetic data.",
+"notes": [
+"Useful for explicit SFPU dependency spacing, including cases missed by Blackhole automatic stalls. It is not a global completion barrier."
+],
+"constants": [],
+"manual": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/WormholeB0/TensixTile/TensixCoprocessor/SFPNOP.md"
+},
+"144": {
+"name": "SFPCAST",
+"fields": [
+{
+"name": "lreg_src_c",
+"hi": 23,
+"lo": 8,
+"meaning": "Source vector register index (VC). L0-L7 are writable vectors; higher indices select constants or special registers."
+},
+{
+"name": "lreg_dest",
+"hi": 7,
+"lo": 4,
+"meaning": "Destination vector register index (VD). Normal arithmetic writes L0-L7. Destinations 12-15 can record instruction templates when backdoor loading is enabled."
+},
+{
+"name": "instr_mod1",
+"hi": 3,
+"lo": 0,
+"meaning": "0 converts sign-magnitude int32 to FP32 with nearest-even rounding; 1 uses stochastic rounding; 2 computes two's-complement absolute value (prefer SFPABS); 3 converts between two's-complement and sign-magnitude."
+}
+],
+"title": "Convert integer representations",
+"group": "SFPU",
+"summary": "Convert sign-magnitude integers to FP32, convert between integer representations, or take integer absolute values.",
+"notes": [
+"Some integer paths use sign-magnitude, others two's complement. A register bit-copy is not a numerical cast."
+],
+"constants": [],
+"manual": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/BlackholeA0/TensixTile/TensixCoprocessor/SFPCAST.md"
+},
+"145": {
+"name": "SFPCONFIG",
+"fields": [
+{
+"name": "imm16_math",
+"hi": 23,
+"lo": 8,
+"meaning": "Immediate value when modifier bit 0 is set, otherwise input normally comes from the first eight lanes of L0. With modifier bit 3 this supplies a lane mask."
+},
+{
+"name": "config_dest",
+"hi": 7,
+"lo": 4,
+"meaning": "0-3 instruction templates; 4-7 sequences; 8 miscellaneous macro control; 9 PRNG state; 11-14 programmable constants; 15 lane configuration. Consult the reference for destination-specific handling."
+},
+{
+"name": "instr_mod1",
+"hi": 3,
+"lo": 0,
+"meaning": "1 selects immediate input; 2 ORs, 4 ANDs, 6 XORs where supported; 8 applies the immediate lane mask. Templates require L0 because the instruction is 32 bits."
+}
+],
+"title": "Configure SFPU lanes and load macros",
+"group": "SFPU",
+"summary": "Write SFPU constant registers, lane configuration, instruction templates or load-macro sequences.",
+"notes": [
+"Configuration input is sampled from the first eight lanes and replicated across four lane groups. Destination selection changes which operations and immediate forms are legal.",
+"Llama records an arithmetic instruction with destination CONFIG0, then sets sequence 0 with config_dest=4 and miscellaneous control with config_dest=8."
+],
+"constants": [
+"MOD1_IMM16_IS_VALUE     1",
+"MOD1_BITWISE_OR         2",
+"MOD1_BITWISE_AND        4",
+"MOD1_BITWISE_XOR        6",
+"MOD1_IMM16_IS_LANE_MASK 8"
+],
+"manual": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/WormholeB0/TensixTile/TensixCoprocessor/SFPCONFIG.md"
+},
+"146": {
+"name": "SFPSWAP",
+"fields": [
+{
+"name": "imm12_math",
+"hi": 23,
+"lo": 12,
+"meaning": "Keep zero for the documented operation. The Python encoder exposes these bits, but they are not an independent supported operand in the reference syntax."
+},
+{
+"name": "lreg_src_c",
+"hi": 11,
+"lo": 8,
+"meaning": "VC is both an input and an output. In mode 1 it receives the maximum."
+},
+{
+"name": "lreg_dest",
+"hi": 7,
+"lo": 4,
+"meaning": "VD is both an input and an output. In mode 1 it receives the minimum."
+},
+{
+"name": "instr_mod1",
+"hi": 3,
+"lo": 0,
+"meaning": "0 swaps unconditionally; 1 gives VD=min, VC=max; 2-8 choose opposite min/max placement for different eight-lane subgroups; 9 gives VD=max, VC=min."
+}
+],
+"title": "Swap or compare-exchange vectors",
+"group": "SFPU",
+"summary": "Swap two registers, or compute a minimum and maximum simultaneously in each lane.",
+"notes": [
+"Comparison ordering and special floating-point values follow the hardware model, not Python min/max. Both operands are modified. Additional argmin/argmax behavior depends on lane configuration."
+],
+"constants": [
+"SFPSWAP_MOD1_SWAP               0",
+"SFPSWAP_MOD1_VEC_MIN_MAX        1",
+"SFPSWAP_MOD1_SUBVEC_MIN01_MAX23 2",
+"SFPSWAP_MOD1_SUBVEC_MIN02_MAX13 3",
+"SFPSWAP_MOD1_SUBVEC_MIN03_MAX12 4",
+"SFPSWAP_MOD1_SUBVEC_MIN0_MAX123 5",
+"SFPSWAP_MOD1_SUBVEC_MIN1_MAX023 6",
+"SFPSWAP_MOD1_SUBVEC_MIN2_MAX013 7",
+"SFPSWAP_MOD1_SUBVEC_MIN3_MAX012 8"
+],
+"manual": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/BlackholeA0/TensixTile/TensixCoprocessor/SFPSWAP.md"
+},
+"147": {
+"name": "SFPLOADMACRO",
+"fields": [
+{
+"name": "lreg_ind",
+"hi": 23,
+"lo": 20,
+"meaning": "Packed selector: high two bits select macro sequence 0-3; low two bits supply the low destination-register bits."
+},
+{
+"name": "instr_mod0",
+"hi": 19,
+"lo": 16,
+"meaning": "Transfer format: 0 follows configured format, 1 FP16, 2 BF16, 3 FP32. Integer and partial-word modes have distinct meanings; see the mode constants and ISA reference. This is not the same mode numbering as SFPLOADI."
+},
+{
+"name": "sfpu_addr_mode",
+"hi": 15,
+"lo": 13,
+"meaning": "Raw SFPU address-modifier field, applied after the transfer. It advances SrcA/SrcB/Dst counters, not fidelity. Llama uses 7 with its configured counters. Do not interpret this as a byte increment."
+},
+{
+"name": "dest_reg_addr",
+"hi": 12,
+"lo": 0,
+"meaning": "Load address field. Its low bit participates in the macro destination selection; other address bits follow the load encoding. Use the SFPLOADMACRO-specific syntax, not an arbitrary SFPLOAD address."
+}
+],
+"title": "Load and launch an SFPU sequence",
+"group": "SFPU",
+"summary": "Perform a Dst load and schedule preconfigured simple, MAD, round and store operations behind it.",
+"notes": [
+"Requires prior template, sequence and delay configuration. It can overlap SFPU subunits, unlike issuing one ordinary instruction per cycle.",
+"Automatic dependency stalls do not protect instructions inside a macro. Program delays explicitly, including the two-cycle MAD result dependency."
+],
+"constants": [],
+"manual": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/BlackholeA0/TensixTile/TensixCoprocessor/SFPLOADMACRO.md"
+},
+"148": {
+"name": "SFPSHFT2",
+"fields": [
+{
+"name": "imm12_math",
+"hi": 23,
+"lo": 12,
+"meaning": "Mode-dependent VB register index or signed 12-bit immediate. Zero in Llama's lane-rotation mode."
+},
+{
+"name": "lreg_src_c",
+"hi": 11,
+"lo": 8,
+"meaning": "Source vector VC for the single-vector shuffle modes."
+},
+{
+"name": "lreg_dest",
+"hi": 7,
+"lo": 4,
+"meaning": "Destination vector register index (VD). Normal arithmetic writes L0-L7. Destinations 12-15 can record instruction templates when backdoor loading is enabled."
+},
+{
+"name": "instr_mod1",
+"hi": 3,
+"lo": 0,
+"meaning": "0 shifts L0-L3 register contents; 1 chained copy; 2 rotate-and-copy; 3 rotates right within each eight-lane group; 4 shifts right within each group with zero fill; 5 register-controlled bit shift; 6 immediate bit shift."
+}
+],
+"title": "Shuffle lanes or shift bits",
+"group": "SFPU",
+"summary": "Move values between lanes or perform per-lane shifts, depending on the selected mode.",
+"notes": [
+"Mode 3 wraps lane 7 into lane 0 independently in each eight-lane group. Llama composes rotations, addition and SFPTRANSP to reduce across 32 lanes.",
+"Blackhole fixes the zero-fill shuffle bug present in Wormhole. Some modes have dependency-stall exceptions; keep the explicit delay used in the kernels."
+],
+"constants": [
+"SFPSHFT2_MOD1_COPY4 0",
+"SFPSHFT2_MOD1_SUBVEC_CHAINED_COPY4 1",
+"SFPSHFT2_MOD1_SUBVEC_SHFLROR1_AND_COPY4 2",
+"SFPSHFT2_MOD1_SUBVEC_SHFLROR1 3",
+"SFPSHFT2_MOD1_SUBVEC_SHFLSHR1 4",
+"SFPSHFT2_MOD1_SHFT_LREG 5",
+"SFPSHFT2_MOD1_SHFT_IMM 6"
+],
+"manual": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/BlackholeA0/TensixTile/TensixCoprocessor/SFPSHFT2.md"
+},
+"149": {
+"name": "SFPLUTFP32",
+"fields": [
+{
+"name": "lreg_dest",
+"hi": 23,
+"lo": 4,
+"meaning": ""
+},
+{
+"name": "instr_mod1",
+"hi": 3,
+"lo": 0,
+"meaning": ""
+}
+],
+"title": "",
+"group": "",
+"summary": "",
+"notes": [],
+"constants": [],
+"manual": ""
+},
+"150": {
+"name": "SFPLE",
+"fields": [
+{
+"name": "imm12_math",
+"hi": 23,
+"lo": 12,
+"meaning": ""
+},
+{
+"name": "lreg_c",
+"hi": 11,
+"lo": 8,
+"meaning": ""
+},
+{
+"name": "lreg_dest",
+"hi": 7,
+"lo": 4,
+"meaning": ""
+},
+{
+"name": "instr_mod1",
+"hi": 3,
+"lo": 0,
+"meaning": ""
+}
+],
+"title": "",
+"group": "",
+"summary": "",
+"notes": [],
+"constants": [],
+"manual": ""
+},
+"151": {
+"name": "SFPGT",
+"fields": [
+{
+"name": "imm12_math",
+"hi": 23,
+"lo": 12,
+"meaning": ""
+},
+{
+"name": "lreg_c",
+"hi": 11,
+"lo": 8,
+"meaning": ""
+},
+{
+"name": "lreg_dest",
+"hi": 7,
+"lo": 4,
+"meaning": ""
+},
+{
+"name": "instr_mod1",
+"hi": 3,
+"lo": 0,
+"meaning": ""
+}
+],
+"title": "",
+"group": "",
+"summary": "",
+"notes": [],
+"constants": [],
+"manual": ""
+},
+"152": {
+"name": "SFPMUL24",
+"fields": [
+{
+"name": "lreg_src_a",
+"hi": 23,
+"lo": 16,
+"meaning": ""
+},
+{
+"name": "lreg_src_b",
+"hi": 15,
+"lo": 12,
+"meaning": ""
+},
+{
+"name": "lreg_src_c",
+"hi": 11,
+"lo": 8,
+"meaning": ""
+},
+{
+"name": "lreg_dest",
+"hi": 7,
+"lo": 4,
+"meaning": ""
+},
+{
+"name": "instr_mod1",
+"hi": 3,
+"lo": 0,
+"meaning": ""
+}
+],
+"title": "",
+"group": "",
+"summary": "",
+"notes": [],
+"constants": [],
+"manual": ""
+},
+"153": {
+"name": "SFPARECIP",
+"fields": [
+{
+"name": "imm12_math",
+"hi": 23,
+"lo": 12,
+"meaning": "VB register index for conditional reciprocal; its signed integer sign decides whether to apply the reciprocal. Zero is sufficient in unconditional mode."
+},
+{
+"name": "lreg_c",
+"hi": 11,
+"lo": 8,
+"meaning": "Source vector register index (VC). L0-L7 are writable vectors; higher indices select constants or special registers."
+},
+{
+"name": "lreg_dest",
+"hi": 7,
+"lo": 4,
+"meaning": "Destination vector register index (VD). Normal arithmetic writes L0-L7. Destinations 12-15 can record instruction templates when backdoor loading is enabled."
+},
+{
+"name": "instr_mod1",
+"hi": 3,
+"lo": 0,
+"meaning": "0 reciprocal with sign preserved; 1 conditional reciprocal of the magnitude when VB is negative; 2 approximate exponential of the magnitude with the original sign reattached."
+}
+],
+"title": "Approximate reciprocal or exponential",
+"group": "SFPU",
+"summary": "Compute a Blackhole hardware reciprocal or restricted-range exponential estimate in each active lane.",
+"notes": [
+"An estimate is a building block for refinement, not full-accuracy division. The reciprocal estimate of 1.0 is 0.99609375.",
+"Exponential mode is useful for input magnitudes below 2. For negative inputs it returns a negative estimate of exp(abs(x)), not exp(x); a subsequent conditional reciprocal can be part of a composed exp sequence."
+],
+"constants": [
+"SFPARECIP_MOD1_RECIP 0",
+"SFPARECIP_MOD1_COND_RECIP 1",
+"SFPARECIP_MOD1_EXP 2"
+],
+"manual": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/BlackholeA0/TensixTile/TensixCoprocessor/SFPARECIP.md"
+},
+"160": {
+"name": "ATGETM",
+"fields": [
+{
+"name": "mutex_index",
+"hi": 23,
+"lo": 0,
+"meaning": ""
+}
+],
+"title": "",
+"group": "",
+"summary": "",
+"notes": [],
+"constants": [],
+"manual": ""
+},
+"161": {
+"name": "ATRELM",
+"fields": [
+{
+"name": "mutex_index",
+"hi": 23,
+"lo": 0,
+"meaning": ""
+}
+],
+"title": "",
+"group": "",
+"summary": "",
+"notes": [],
+"constants": [],
+"manual": ""
+},
+"162": {
+"name": "STALLWAIT",
+"fields": [
+{
+"name": "stall_res",
+"hi": 23,
+"lo": 15,
+"meaning": "Instruction-class bitmask. Repository bit numbers: 0 TDMA, 1 SYNC, 2 PACK, 3 UNPACK, 4 XMOV, 5 THCON, 6 MATH, 7 CFG, 8 SFPU. Set a bit using 1 << bit_number."
+},
+{
+"name": "wait_res",
+"hi": 14,
+"lo": 0,
+"meaning": "Blackhole condition bitmask. Repository bit numbers: 0 THCON, 1 UNPACK0, 2 UNPACK1, 3 PACK0, 4 MATH, 5 SRCA_CLR, 6 SRCB_CLR, 7 SRCA_VLD, 8 SRCB_VLD, 9 XMOV, 10 TRISC_CFG, 11 SFPU, 12 CFGEXU. See the source condition table for the precise wait predicate."
+}
+],
+"title": "Wait for selected hardware resources",
+"group": "Control",
+"summary": "Latch conditions that block selected classes of subsequent instructions until the conditions clear.",
+"notes": [
+"The issuing thread can continue until it reaches a blocked instruction class. This is not equivalent to immediately stopping every unit.",
+"Resource-completion waits and semaphore waits have different conditions; do not substitute one for the other."
+],
+"constants": [],
+"manual": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/BlackholeA0/TensixTile/TensixCoprocessor/STALLWAIT.md"
+},
+"163": {
+"name": "SEMINIT",
+"fields": [
+{
+"name": "max_value",
+"hi": 23,
+"lo": 20,
+"meaning": "Maximum semaphore value (four bits)."
+},
+{
+"name": "init_value",
+"hi": 19,
+"lo": 16,
+"meaning": "Initial semaphore value (four bits); choose a value within the configured maximum."
+},
+{
+"name": "sem_sel",
+"hi": 15,
+"lo": 2,
+"meaning": "Semaphore bitmask, not an index."
+}
+],
+"title": "Initialize semaphores",
+"group": "Control",
+"summary": "Set the maximum and initial value of selected Tensix semaphores.",
+"notes": [
+"Included as supporting reference even when initialization is emitted through other setup mechanisms."
+],
+"constants": [],
+"manual": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/WormholeB0/TensixTile/TensixCoprocessor/SEMINIT.md"
+},
+"164": {
+"name": "SEMPOST",
+"fields": [
+{
+"name": "sem_sel",
+"hi": 23,
+"lo": 2,
+"meaning": "Semaphore bitmask, not index: use 1 << semaphore_number. The architecture has eight semaphore selectors despite the wider Python field."
+}
+],
+"title": "Increment semaphore values",
+"group": "Control",
+"summary": "Increment each selected Tensix semaphore value.",
+"notes": [
+"Use SEMWAIT to test availability separately. Do not assume the GET/POST name implies a blocking wait or source-bank transfer."
+],
+"constants": [],
+"manual": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/WormholeB0/TensixTile/TensixCoprocessor/SEMPOST.md"
+},
+"165": {
+"name": "SEMGET",
+"fields": [
+{
+"name": "sem_sel",
+"hi": 23,
+"lo": 2,
+"meaning": "Semaphore bitmask, not index: use 1 << semaphore_number. The architecture has eight semaphore selectors despite the wider Python field."
+}
+],
+"title": "Decrement semaphore values",
+"group": "Control",
+"summary": "Decrement each selected Tensix semaphore value.",
+"notes": [
+"Use SEMWAIT to test availability separately. Do not assume the GET/POST name implies a blocking wait or source-bank transfer."
+],
+"constants": [],
+"manual": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/WormholeB0/TensixTile/TensixCoprocessor/SEMGET.md"
+},
+"166": {
+"name": "SEMWAIT",
+"fields": [
+{
+"name": "stall_res",
+"hi": 23,
+"lo": 15,
+"meaning": "Same instruction-class block mask as Blackhole STALLWAIT."
+},
+{
+"name": "sem_sel",
+"hi": 14,
+"lo": 2,
+"meaning": "Semaphore bitmask: 1 << semaphore_number, or OR several bits."
+},
+{
+"name": "wait_sem_cond",
+"hi": 1,
+"lo": 0,
+"meaning": "1 waits while any selected semaphore is zero; 2 waits while any selected semaphore is at its maximum; 3 requires neither empty nor full. Zero is not a valid wait condition."
+}
+],
+"title": "Wait on semaphore conditions",
+"group": "Control",
+"summary": "Block selected instruction classes while selected semaphores are empty and/or full.",
+"notes": [
+"This does not increment or decrement the semaphore. Combine it with GET or POST as required by the ownership protocol."
+],
+"constants": [],
+"manual": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/BlackholeA0/TensixTile/TensixCoprocessor/SEMWAIT.md"
+},
+"167": {
+"name": "STREAMWAIT",
+"fields": [
+{
+"name": "stall_res",
+"hi": 23,
+"lo": 15,
+"meaning": ""
+},
+{
+"name": "target_value",
+"hi": 14,
+"lo": 4,
+"meaning": ""
+},
+{
+"name": "target_sel",
+"hi": 3,
+"lo": 3,
+"meaning": ""
+},
+{
+"name": "wait_stream_sel",
+"hi": 2,
+"lo": 0,
+"meaning": ""
+}
+],
+"title": "",
+"group": "",
+"summary": "",
+"notes": [],
+"constants": [],
+"manual": ""
+},
+"176": {
+"name": "WRCFG",
+"fields": [
+{
+"name": "GprAddress",
+"hi": 23,
+"lo": 16,
+"meaning": "Source Tensix GPR index, not an RV32 register number."
+},
+{
+"name": "wr128b",
+"hi": 15,
+"lo": 15,
+"meaning": "0 writes one 32-bit word; 1 writes a 128-bit group. Respect group alignment for the wide form."
+},
+{
+"name": "CfgReg",
+"hi": 14,
+"lo": 0,
+"meaning": "Backend configuration word index, not its byte address."
+}
+],
+"title": "Write backend configuration from GPRs",
+"group": "Control",
+"summary": "Copy Tensix GPR data into backend configuration registers.",
+"notes": [
+"The packer setup uses TTWRCFG after writing the output destination into a Tensix GPR. Synchronize CPU-to-configuration visibility as required by the surrounding sequence."
+],
+"constants": [],
+"manual": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/WormholeB0/TensixTile/TensixCoprocessor/WRCFG.md"
+},
+"177": {
+"name": "RDCFG",
+"fields": [
+{
+"name": "GprAddress",
+"hi": 23,
+"lo": 16,
+"meaning": "Destination Tensix GPR index."
+},
+{
+"name": "CfgReg",
+"hi": 15,
+"lo": 0,
+"meaning": "Backend configuration word index, not a byte address."
+}
+],
+"title": "Read backend configuration into a GPR",
+"group": "Control",
+"summary": "Copy a backend configuration value into a Tensix GPR.",
+"notes": [],
+"constants": [],
+"manual": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/BlackholeA0/TensixTile/TensixCoprocessor/RDCFG.md"
+},
+"178": {
+"name": "SETC16",
+"fields": [
+{
+"name": "setc16_reg",
+"hi": 23,
+"lo": 16,
+"meaning": "Thread-configuration register index, not its byte MMIO address."
+},
+{
+"name": "setc16_value",
+"hi": 15,
+"lo": 0,
+"meaning": "16-bit immediate configuration value."
+}
+],
+"title": "Write thread configuration",
+"group": "Control",
+"summary": "Write a 16-bit immediate to a thread configuration register.",
+"notes": [
+"SETC16 targets thread configuration. WRCFG and RMWCIB operate on a different configuration address space. The same integer index does not mean the same register across these instructions."
+],
+"constants": [],
+"manual": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/BlackholeA0/TensixTile/TensixCoprocessor/SETC16.md"
+},
+"179": {
+"name": "RMWCIB0",
+"fields": [
+{
+"name": "Mask",
+"hi": 23,
+"lo": 16,
+"meaning": "Eight-bit update mask for the selected byte; 1 bits select the bits to change."
+},
+{
+"name": "Data",
+"hi": 15,
+"lo": 8,
+"meaning": "New bits for the selected byte. Use values consistent with the mask."
+},
+{
+"name": "CfgRegAddr",
+"hi": 7,
+"lo": 0,
+"meaning": "Backend configuration register index in the byte-immediate instruction's addressable range."
+}
+],
+"title": "Update configuration byte 0",
+"group": "Control",
+"summary": "Read-modify-write byte 0 of a backend configuration register using an immediate mask and data.",
+"notes": [
+"These four opcodes choose which byte is changed. They do not take an additional byte-selector argument."
+],
+"constants": [],
+"manual": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/BlackholeA0/TensixTile/TensixCoprocessor/RMWCIB.md"
+},
+"180": {
+"name": "RMWCIB1",
+"fields": [
+{
+"name": "Mask",
+"hi": 23,
+"lo": 16,
+"meaning": "Eight-bit update mask for the selected byte; 1 bits select the bits to change."
+},
+{
+"name": "Data",
+"hi": 15,
+"lo": 8,
+"meaning": "New bits for the selected byte. Use values consistent with the mask."
+},
+{
+"name": "CfgRegAddr",
+"hi": 7,
+"lo": 0,
+"meaning": "Backend configuration register index in the byte-immediate instruction's addressable range."
+}
+],
+"title": "Update configuration byte 1",
+"group": "Control",
+"summary": "Read-modify-write byte 1 of a backend configuration register using an immediate mask and data.",
+"notes": [
+"These four opcodes choose which byte is changed. They do not take an additional byte-selector argument."
+],
+"constants": [],
+"manual": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/BlackholeA0/TensixTile/TensixCoprocessor/RMWCIB.md"
+},
+"181": {
+"name": "RMWCIB2",
+"fields": [
+{
+"name": "Mask",
+"hi": 23,
+"lo": 16,
+"meaning": "Eight-bit update mask for the selected byte; 1 bits select the bits to change."
+},
+{
+"name": "Data",
+"hi": 15,
+"lo": 8,
+"meaning": "New bits for the selected byte. Use values consistent with the mask."
+},
+{
+"name": "CfgRegAddr",
+"hi": 7,
+"lo": 0,
+"meaning": "Backend configuration register index in the byte-immediate instruction's addressable range."
+}
+],
+"title": "Update configuration byte 2",
+"group": "Control",
+"summary": "Read-modify-write byte 2 of a backend configuration register using an immediate mask and data.",
+"notes": [
+"These four opcodes choose which byte is changed. They do not take an additional byte-selector argument."
+],
+"constants": [],
+"manual": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/BlackholeA0/TensixTile/TensixCoprocessor/RMWCIB.md"
+},
+"182": {
+"name": "RMWCIB3",
+"fields": [
+{
+"name": "Mask",
+"hi": 23,
+"lo": 16,
+"meaning": "Eight-bit update mask for the selected byte; 1 bits select the bits to change."
+},
+{
+"name": "Data",
+"hi": 15,
+"lo": 8,
+"meaning": "New bits for the selected byte. Use values consistent with the mask."
+},
+{
+"name": "CfgRegAddr",
+"hi": 7,
+"lo": 0,
+"meaning": "Backend configuration register index in the byte-immediate instruction's addressable range."
+}
+],
+"title": "Update configuration byte 3",
+"group": "Control",
+"summary": "Read-modify-write byte 3 of a backend configuration register using an immediate mask and data.",
+"notes": [
+"These four opcodes choose which byte is changed. They do not take an additional byte-selector argument."
+],
+"constants": [],
+"manual": "https://github.com/tenstorrent/tt-isa-documentation/blob/82f600dca3ec664b721bcb0effc087f0c3fd7c11/BlackholeA0/TensixTile/TensixCoprocessor/RMWCIB.md"
+},
+"183": {
+"name": "STREAMWRCFG",
+"fields": [
+{
+"name": "stream_id_sel",
+"hi": 23,
+"lo": 21,
+"meaning": ""
+},
+{
+"name": "StreamRegAddr",
+"hi": 20,
+"lo": 11,
+"meaning": ""
+},
+{
+"name": "CfgReg",
+"hi": 10,
+"lo": 0,
+"meaning": ""
+}
+],
+"title": "",
+"group": "",
+"summary": "",
+"notes": [],
+"constants": [],
+"manual": ""
+},
+"184": {
+"name": "CFGSHIFTMASK",
+"fields": [
+{
+"name": "disable_mask_on_old_val",
+"hi": 23,
+"lo": 23,
+"meaning": ""
+},
+{
+"name": "operation",
+"hi": 22,
+"lo": 20,
+"meaning": ""
+},
+{
+"name": "mask_width",
+"hi": 19,
+"lo": 15,
+"meaning": ""
+},
+{
+"name": "right_cshift_amt",
+"hi": 14,
+"lo": 10,
+"meaning": ""
+},
+{
+"name": "scratch_sel",
+"hi": 9,
+"lo": 8,
+"meaning": ""
+},
+{
+"name": "CfgReg",
+"hi": 7,
+"lo": 0,
+"meaning": ""
+}
+],
+"title": "",
+"group": "",
+"summary": "",
+"notes": [],
+"constants": [],
+"manual": ""
+}
+}

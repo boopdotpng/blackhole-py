@@ -7,16 +7,16 @@
       0: ffb01a37  lui          x20, 0xffb01  # x20 = 0xffb01000
       4: 8c0a0a13  addi         x20, x20, -1856  # x20 = 0xffb008c0 · riscv_local_mem + 0x8c0
       8: 00014ab7  lui          x21, 0x00014  # x21 = 0x00014000
-      c: 040a8a93  addi         x21, x21, 64  # x21 = 0x00014040
-     10: 015a2023  sw           x21, 0(x20)  # riscv_local_mem + 0x8c0 · 0xffb008c0; write 0x00014040
+      c: 080a8a93  addi         x21, x21, 128  # x21 = 0x00014080
+     10: 015a2023  sw           x21, 0(x20)  # riscv_local_mem + 0x8c0 · 0xffb008c0; write 0x00014080
      14: ffb01a37  lui          x20, 0xffb01  # x20 = 0xffb01000
      18: 8c4a0a13  addi         x20, x20, -1852  # x20 = 0xffb008c4 · riscv_local_mem + 0x8c4
      1c: 000a2023  sw           x0, 0(x20)  # riscv_local_mem + 0x8c4 · 0xffb008c4; write 0x00000000
      20: ffb01a37  lui          x20, 0xffb01  # x20 = 0xffb01000
      24: 8c8a0a13  addi         x20, x20, -1848  # x20 = 0xffb008c8 · riscv_local_mem + 0x8c8
      28: 00013ab7  lui          x21, 0x00013  # x21 = 0x00013000
-     2c: 040a8a93  addi         x21, x21, 64  # x21 = 0x00013040
-     30: 015a2023  sw           x21, 0(x20)  # riscv_local_mem + 0x8c8 · 0xffb008c8; write 0x00013040
+     2c: 080a8a93  addi         x21, x21, 128  # x21 = 0x00013080
+     30: 015a2023  sw           x21, 0(x20)  # riscv_local_mem + 0x8c8 · 0xffb008c8; write 0x00013080
      34: ffb01a37  lui          x20, 0xffb01  # x20 = 0xffb01000
      38: 8cca0a13  addi         x20, x20, -1844  # x20 = 0xffb008cc · riscv_local_mem + 0x8cc
      3c: 000a2023  sw           x0, 0(x20)  # riscv_local_mem + 0x8cc · 0xffb008cc; write 0x00000000
@@ -69,13 +69,13 @@
      f8: 015a2023  sw           x21, 0(x20)  # MOP_CFG · 0xffb80000; write 0x00000004
      fc: 015a2223  sw           x21, 4(x20)  # MopCfg[1] · InnerCount / Flags · 0xffb80004; write 0x00000004
     100: 02000ab7  lui          x21, 0x02000  # x21 = 0x02000000
-    104: 015a2423  sw           x21, 8(x20)  # MopCfg[2] · StartOp / InsnB · 0xffb80008; write 0x02000000; MOP template instruction · NOP 
-    108: 015a2623  sw           x21, 12(x20)  # MopCfg[3] · EndOp0 / InsnA0 · 0xffb8000c; write 0x02000000; MOP template instruction · NOP 
-    10c: 015a2823  sw           x21, 16(x20)  # MopCfg[4] · EndOp1 / InsnA1 · 0xffb80010; write 0x02000000; MOP template instruction · NOP 
+    104: 015a2423  sw           x21, 8(x20)  # MopCfg[2] · StartOp / InsnB · 0xffb80008; write 0x02000000; MOP template instruction · NOP
+    108: 015a2623  sw           x21, 12(x20)  # MopCfg[3] · EndOp0 / InsnA0 · 0xffb8000c; write 0x02000000; MOP template instruction · NOP
+    10c: 015a2823  sw           x21, 16(x20)  # MopCfg[4] · EndOp1 / InsnA1 · 0xffb80010; write 0x02000000; MOP template instruction · NOP
     110: 41000ab7  lui          x21, 0x41000  # x21 = 0x41000000
     114: 015a2a23  sw           x21, 20(x20)  # MopCfg[5] · LoopOp / InsnA2 · 0xffb80014; write 0x41000000; MOP template instruction · PACR CfgContext=0, RowPadZero=0, DstAccessMode=0, AddrMode=0, AddrCntContext=0, ZeroWrite=0, ReadIntfSel=0, OvrdThreadId=0, Concat=0, CtxtCtrl=0, Flush=0, Last=0
     118: 02000ab7  lui          x21, 0x02000  # x21 = 0x02000000
-    11c: 015a2c23  sw           x21, 24(x20)  # MopCfg[6] · LoopOp1 / InsnA3 · 0xffb80018; write 0x02000000; MOP template instruction · NOP 
+    11c: 015a2c23  sw           x21, 24(x20)  # MopCfg[6] · LoopOp1 / InsnA3 · 0xffb80018; write 0x02000000; MOP template instruction · NOP
     120: 41008ab7  lui          x21, 0x41008  # x21 = 0x41008000
     124: 001a8a93  addi         x21, x21, 1  # x21 = 0x41008001
     128: 015a2e23  sw           x21, 28(x20)  # MopCfg[7] · Loop0Last / SkipA0 · 0xffb8001c; write 0x41008001; MOP template instruction · PACR CfgContext=0, RowPadZero=0, DstAccessMode=0, AddrMode=1, AddrCntContext=0, ZeroWrite=0, ReadIntfSel=0, OvrdThreadId=0, Concat=0, CtxtCtrl=0, Flush=0, Last=1
@@ -144,13 +144,13 @@
     224: 015a2023  sw           x21, 0(x20)  # MOP_CFG · 0xffb80000; write 0x00000004
     228: 015a2223  sw           x21, 4(x20)  # MopCfg[1] · InnerCount / Flags · 0xffb80004; write 0x00000004
     22c: 02000ab7  lui          x21, 0x02000  # x21 = 0x02000000
-    230: 015a2423  sw           x21, 8(x20)  # MopCfg[2] · StartOp / InsnB · 0xffb80008; write 0x02000000; MOP template instruction · NOP 
-    234: 015a2623  sw           x21, 12(x20)  # MopCfg[3] · EndOp0 / InsnA0 · 0xffb8000c; write 0x02000000; MOP template instruction · NOP 
-    238: 015a2823  sw           x21, 16(x20)  # MopCfg[4] · EndOp1 / InsnA1 · 0xffb80010; write 0x02000000; MOP template instruction · NOP 
+    230: 015a2423  sw           x21, 8(x20)  # MopCfg[2] · StartOp / InsnB · 0xffb80008; write 0x02000000; MOP template instruction · NOP
+    234: 015a2623  sw           x21, 12(x20)  # MopCfg[3] · EndOp0 / InsnA0 · 0xffb8000c; write 0x02000000; MOP template instruction · NOP
+    238: 015a2823  sw           x21, 16(x20)  # MopCfg[4] · EndOp1 / InsnA1 · 0xffb80010; write 0x02000000; MOP template instruction · NOP
     23c: 41000ab7  lui          x21, 0x41000  # x21 = 0x41000000
     240: 015a2a23  sw           x21, 20(x20)  # MopCfg[5] · LoopOp / InsnA2 · 0xffb80014; write 0x41000000; MOP template instruction · PACR CfgContext=0, RowPadZero=0, DstAccessMode=0, AddrMode=0, AddrCntContext=0, ZeroWrite=0, ReadIntfSel=0, OvrdThreadId=0, Concat=0, CtxtCtrl=0, Flush=0, Last=0
     244: 02000ab7  lui          x21, 0x02000  # x21 = 0x02000000
-    248: 015a2c23  sw           x21, 24(x20)  # MopCfg[6] · LoopOp1 / InsnA3 · 0xffb80018; write 0x02000000; MOP template instruction · NOP 
+    248: 015a2c23  sw           x21, 24(x20)  # MopCfg[6] · LoopOp1 / InsnA3 · 0xffb80018; write 0x02000000; MOP template instruction · NOP
     24c: 41008ab7  lui          x21, 0x41008  # x21 = 0x41008000
     250: 001a8a93  addi         x21, x21, 1  # x21 = 0x41008001
     254: 015a2e23  sw           x21, 28(x20)  # MopCfg[7] · Loop0Last / SkipA0 · 0xffb8001c; write 0x41008001; MOP template instruction · PACR CfgContext=0, RowPadZero=0, DstAccessMode=0, AddrMode=1, AddrCntContext=0, ZeroWrite=0, ReadIntfSel=0, OvrdThreadId=0, Concat=0, CtxtCtrl=0, Flush=0, Last=1
@@ -228,7 +228,7 @@ loc_2cc:
     368: 01ac6c33  or           x24, x24, x26
     36c: ffe40db7  lui          x27, 0xffe40  # x27 = 0xffe40000 · TensixMMIO.INSTRN_BUF_BASE
     370: 018da023  sw           x24, 0(x27)  # TensixMMIO.INSTRN_BUF_BASE · 0xffe40000; write runtime value
-    374: 80000001  DMANOP       
+    374: 80000001  DMANOP
     378: 7a00f001  SETADCXX     CntSetMask=4, x_end2=15, x_start=0
     37c: 52000015  SETADCZW     CntSetMask=4, Ch1_W=0, Ch1_Z=0, Ch0_W=0, Ch0_Z=0, BitMask=5
     380: ffef0a37  lui          x20, 0xffef0  # x20 = 0xffef0000 · cfg[0] (bank 0) · ALU_FORMAT_SPEC_REG_SrcA_val, ALU_FORMAT_SPEC_REG_SrcA_override, ALU_FORMAT_SPEC_REG_SrcB_val, ALU_FORMAT_SPEC_REG_SrcB_override, ALU_FORMAT_SPEC_REG_Dstacc_val, ALU_FORMAT_SPEC_REG_Dstacc_override
@@ -250,7 +250,7 @@ loc_2cc:
     3c0: 800a8a93  addi         x21, x21, -2048  # x21 = 0x00000800
     3c4: 015a0a33  add          x20, x20, x21
     3c8: 00014b37  lui          x22, 0x00014  # x22 = 0x00014000
-    3cc: 040b0b13  addi         x22, x22, 64  # x22 = 0x00014040
+    3cc: 080b0b13  addi         x22, x22, 128  # x22 = 0x00014080
     3d0: 016a6663  bltu         x20, x22, 0x000003dc  # target 0x000003dc
     3d4: 00001bb7  lui          x23, 0x00001  # x23 = 0x00001000 · F32_TILE_BYTES · Wait.CFGEXU
     3d8: 417a0a33  sub          x20, x20, x23
@@ -337,7 +337,7 @@ loc_46c:
     508: 01ac6c33  or           x24, x24, x26
     50c: ffe40db7  lui          x27, 0xffe40  # x27 = 0xffe40000 · TensixMMIO.INSTRN_BUF_BASE
     510: 018da023  sw           x24, 0(x27)  # TensixMMIO.INSTRN_BUF_BASE · 0xffe40000; write runtime value
-    514: 80000001  DMANOP       
+    514: 80000001  DMANOP
     518: 7a00f001  SETADCXX     CntSetMask=4, x_end2=15, x_start=0
     51c: 52000015  SETADCZW     CntSetMask=4, Ch1_W=0, Ch1_Z=0, Ch0_W=0, Ch0_Z=0, BitMask=5
     520: ffef0a37  lui          x20, 0xffef0  # x20 = 0xffef0000 · cfg[0] (bank 0) · ALU_FORMAT_SPEC_REG_SrcA_val, ALU_FORMAT_SPEC_REG_SrcA_override, ALU_FORMAT_SPEC_REG_SrcB_val, ALU_FORMAT_SPEC_REG_SrcB_override, ALU_FORMAT_SPEC_REG_Dstacc_val, ALU_FORMAT_SPEC_REG_Dstacc_override
@@ -359,7 +359,7 @@ loc_46c:
     560: 800a8a93  addi         x21, x21, -2048  # x21 = 0x00000800
     564: 015a0a33  add          x20, x20, x21
     568: 00016b37  lui          x22, 0x00016  # x22 = 0x00016000
-    56c: 040b0b13  addi         x22, x22, 64  # x22 = 0x00016040
+    56c: 080b0b13  addi         x22, x22, 128  # x22 = 0x00016080
     570: 016a6663  bltu         x20, x22, 0x0000057c  # target 0x0000057c
     574: 00002bb7  lui          x23, 0x00002  # x23 = 0x00002000
     578: 417a0a33  sub          x20, x20, x23

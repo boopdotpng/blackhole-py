@@ -7,24 +7,24 @@
       0: ffb01ab7  lui          x21, 0xffb01  # x21 = 0xffb01000
       4: 820a8a93  addi         x21, x21, -2016  # x21 = 0xffb00820 · riscv_local_mem + 0x820
       8: 00023b37  lui          x22, 0x00023  # x22 = 0x00023000
-      c: 840b0b13  addi         x22, x22, -1984  # x22 = 0x00022840
-     10: 016aa023  sw           x22, 0(x21)  # riscv_local_mem + 0x820 · 0xffb00820; write 0x00022840
+      c: 880b0b13  addi         x22, x22, -1920  # x22 = 0x00022880
+     10: 016aa023  sw           x22, 0(x21)  # riscv_local_mem + 0x820 · 0xffb00820; write 0x00022880
      14: ffb01ab7  lui          x21, 0xffb01  # x21 = 0xffb01000
      18: 824a8a93  addi         x21, x21, -2012  # x21 = 0xffb00824 · riscv_local_mem + 0x824
      1c: 000aa023  sw           x0, 0(x21)  # riscv_local_mem + 0x824 · 0xffb00824; write 0x00000000
      20: ffb01237  lui          x4, 0xffb01  # x4 = 0xffb01000
      24: 82820213  addi         x4, x4, -2008  # x4 = 0xffb00828 · riscv_local_mem + 0x828
      28: 000202b7  lui          x5, 0x00020  # x5 = 0x00020000
-     2c: 04028293  addi         x5, x5, 64  # x5 = 0x00020040
-     30: 00522023  sw           x5, 0(x4)  # riscv_local_mem + 0x828 · 0xffb00828; write 0x00020040
+     2c: 08028293  addi         x5, x5, 128  # x5 = 0x00020080
+     30: 00522023  sw           x5, 0(x4)  # riscv_local_mem + 0x828 · 0xffb00828; write 0x00020080
      34: ffb01237  lui          x4, 0xffb01  # x4 = 0xffb01000
      38: 82c20213  addi         x4, x4, -2004  # x4 = 0xffb0082c · riscv_local_mem + 0x82c
      3c: 00022023  sw           x0, 0(x4)  # riscv_local_mem + 0x82c · 0xffb0082c; write 0x00000000
      40: ffb01ab7  lui          x21, 0xffb01  # x21 = 0xffb01000
      44: 830a8a93  addi         x21, x21, -2000  # x21 = 0xffb00830 · riscv_local_mem + 0x830
      48: 0000fb37  lui          x22, 0x0000f  # x22 = 0x0000f000
-     4c: 040b0b13  addi         x22, x22, 64  # x22 = 0x0000f040
-     50: 016aa023  sw           x22, 0(x21)  # riscv_local_mem + 0x830 · 0xffb00830; write 0x0000f040
+     4c: 080b0b13  addi         x22, x22, 128  # x22 = 0x0000f080
+     50: 016aa023  sw           x22, 0(x21)  # riscv_local_mem + 0x830 · 0xffb00830; write 0x0000f080
      54: ffb01ab7  lui          x21, 0xffb01  # x21 = 0xffb01000
      58: 834a8a93  addi         x21, x21, -1996  # x21 = 0xffb00834 · riscv_local_mem + 0x834
      5c: 000aa023  sw           x0, 0(x21)  # riscv_local_mem + 0x834 · 0xffb00834; write 0x00000000
@@ -106,13 +106,13 @@ loc_7c:
     184: 0c1a8a93  addi         x21, x21, 193  # x21 = 0x420080c1
     188: 015a2423  sw           x21, 8(x20)  # MopCfg[2] · StartOp / InsnB · 0xffb80008; write 0x420080c1; MOP template instruction · UNPACR Unpack_block_selection=0, AddrMode=1, CfgContextCntInc=0, CfgContextId=0, AddrCntContextId=0, OvrdThreadId=1, SetDatValid=1, srcb_bcast=0, ZeroWrite2=0, AutoIncContextID=0, RowSearch=0, SearchCacheFlush=0, Last=1
     18c: 02000ab7  lui          x21, 0x02000  # x21 = 0x02000000
-    190: 015a2623  sw           x21, 12(x20)  # MopCfg[3] · EndOp0 / InsnA0 · 0xffb8000c; write 0x02000000; MOP template instruction · NOP 
-    194: 015a2823  sw           x21, 16(x20)  # MopCfg[4] · EndOp1 / InsnA1 · 0xffb80010; write 0x02000000; MOP template instruction · NOP 
+    190: 015a2623  sw           x21, 12(x20)  # MopCfg[3] · EndOp0 / InsnA0 · 0xffb8000c; write 0x02000000; MOP template instruction · NOP
+    194: 015a2823  sw           x21, 16(x20)  # MopCfg[4] · EndOp1 / InsnA1 · 0xffb80010; write 0x02000000; MOP template instruction · NOP
     198: 43800ab7  lui          x21, 0x43800  # x21 = 0x43800000
     19c: 101a8a93  addi         x21, x21, 257  # x21 = 0x43800101
     1a0: 015a2a23  sw           x21, 20(x20)  # MopCfg[5] · LoopOp / InsnA2 · 0xffb80014; write 0x43800101; MOP template instruction · UNPACR_NOP Unpacker_Select=1, Stream_Id=0, Msg_Clr_Cnt=0, Set_Dvalid=1, Clr_to1_fmt_Ctrl=0, Stall_Clr_Cntrl=0, Bank_Clr_Ctrl=0, Src_ClrVal_Ctrl=0, Unpack_Pop=1
     1a4: 02000ab7  lui          x21, 0x02000  # x21 = 0x02000000
-    1a8: 015a2c23  sw           x21, 24(x20)  # MopCfg[6] · LoopOp1 / InsnA3 · 0xffb80018; write 0x02000000; MOP template instruction · NOP 
+    1a8: 015a2c23  sw           x21, 24(x20)  # MopCfg[6] · LoopOp1 / InsnA3 · 0xffb80018; write 0x02000000; MOP template instruction · NOP
     1ac: 43800ab7  lui          x21, 0x43800  # x21 = 0x43800000
     1b0: 101a8a93  addi         x21, x21, 257  # x21 = 0x43800101
     1b4: 015a2e23  sw           x21, 28(x20)  # MopCfg[7] · Loop0Last / SkipA0 · 0xffb8001c; write 0x43800101; MOP template instruction · UNPACR_NOP Unpacker_Select=1, Stream_Id=0, Msg_Clr_Cnt=0, Set_Dvalid=1, Clr_to1_fmt_Ctrl=0, Stall_Clr_Cntrl=0, Bank_Clr_Ctrl=0, Src_ClrVal_Ctrl=0, Unpack_Pop=1
@@ -165,7 +165,7 @@ loc_1f0:
     268: 800a8a93  addi         x21, x21, -2048  # x21 = 0x00000800
     26c: 015a0a33  add          x20, x20, x21
     270: 00027b37  lui          x22, 0x00027  # x22 = 0x00027000
-    274: 840b0b13  addi         x22, x22, -1984  # x22 = 0x00026840
+    274: 880b0b13  addi         x22, x22, -1920  # x22 = 0x00026880
     278: 016a6663  bltu         x20, x22, 0x00000284  # target 0x00000284
     27c: 00004bb7  lui          x23, 0x00004  # x23 = 0x00004000
     280: 417a0a33  sub          x20, x20, x23
@@ -219,13 +219,13 @@ loc_2b8:
     330: 0c1a8a93  addi         x21, x21, 193  # x21 = 0x420080c1
     334: 015a2423  sw           x21, 8(x20)  # MopCfg[2] · StartOp / InsnB · 0xffb80008; write 0x420080c1; MOP template instruction · UNPACR Unpack_block_selection=0, AddrMode=1, CfgContextCntInc=0, CfgContextId=0, AddrCntContextId=0, OvrdThreadId=1, SetDatValid=1, srcb_bcast=0, ZeroWrite2=0, AutoIncContextID=0, RowSearch=0, SearchCacheFlush=0, Last=1
     338: 02000ab7  lui          x21, 0x02000  # x21 = 0x02000000
-    33c: 015a2623  sw           x21, 12(x20)  # MopCfg[3] · EndOp0 / InsnA0 · 0xffb8000c; write 0x02000000; MOP template instruction · NOP 
-    340: 015a2823  sw           x21, 16(x20)  # MopCfg[4] · EndOp1 / InsnA1 · 0xffb80010; write 0x02000000; MOP template instruction · NOP 
+    33c: 015a2623  sw           x21, 12(x20)  # MopCfg[3] · EndOp0 / InsnA0 · 0xffb8000c; write 0x02000000; MOP template instruction · NOP
+    340: 015a2823  sw           x21, 16(x20)  # MopCfg[4] · EndOp1 / InsnA1 · 0xffb80010; write 0x02000000; MOP template instruction · NOP
     344: 43800ab7  lui          x21, 0x43800  # x21 = 0x43800000
     348: 101a8a93  addi         x21, x21, 257  # x21 = 0x43800101
     34c: 015a2a23  sw           x21, 20(x20)  # MopCfg[5] · LoopOp / InsnA2 · 0xffb80014; write 0x43800101; MOP template instruction · UNPACR_NOP Unpacker_Select=1, Stream_Id=0, Msg_Clr_Cnt=0, Set_Dvalid=1, Clr_to1_fmt_Ctrl=0, Stall_Clr_Cntrl=0, Bank_Clr_Ctrl=0, Src_ClrVal_Ctrl=0, Unpack_Pop=1
     350: 02000ab7  lui          x21, 0x02000  # x21 = 0x02000000
-    354: 015a2c23  sw           x21, 24(x20)  # MopCfg[6] · LoopOp1 / InsnA3 · 0xffb80018; write 0x02000000; MOP template instruction · NOP 
+    354: 015a2c23  sw           x21, 24(x20)  # MopCfg[6] · LoopOp1 / InsnA3 · 0xffb80018; write 0x02000000; MOP template instruction · NOP
     358: 43800ab7  lui          x21, 0x43800  # x21 = 0x43800000
     35c: 101a8a93  addi         x21, x21, 257  # x21 = 0x43800101
     360: 015a2e23  sw           x21, 28(x20)  # MopCfg[7] · Loop0Last / SkipA0 · 0xffb8001c; write 0x43800101; MOP template instruction · UNPACR_NOP Unpacker_Select=1, Stream_Id=0, Msg_Clr_Cnt=0, Set_Dvalid=1, Clr_to1_fmt_Ctrl=0, Stall_Clr_Cntrl=0, Bank_Clr_Ctrl=0, Src_ClrVal_Ctrl=0, Unpack_Pop=1
@@ -278,7 +278,7 @@ loc_39c:
     414: 800a8a93  addi         x21, x21, -2048  # x21 = 0x00000800
     418: 015a0a33  add          x20, x20, x21
     41c: 00027b37  lui          x22, 0x00027  # x22 = 0x00027000
-    420: 840b0b13  addi         x22, x22, -1984  # x22 = 0x00026840
+    420: 880b0b13  addi         x22, x22, -1920  # x22 = 0x00026880
     424: 016a6663  bltu         x20, x22, 0x00000430  # target 0x00000430
     428: 00004bb7  lui          x23, 0x00004  # x23 = 0x00004000
     42c: 417a0a33  sub          x20, x20, x23
@@ -399,13 +399,13 @@ loc_498:
     5e0: 0c128293  addi         x5, x5, 193  # x5 = 0x420080c1
     5e4: 00522423  sw           x5, 8(x4)  # MopCfg[2] · StartOp / InsnB · 0xffb80008; write 0x420080c1; MOP template instruction · UNPACR Unpack_block_selection=0, AddrMode=1, CfgContextCntInc=0, CfgContextId=0, AddrCntContextId=0, OvrdThreadId=1, SetDatValid=1, srcb_bcast=0, ZeroWrite2=0, AutoIncContextID=0, RowSearch=0, SearchCacheFlush=0, Last=1
     5e8: 020002b7  lui          x5, 0x02000  # x5 = 0x02000000
-    5ec: 00522623  sw           x5, 12(x4)  # MopCfg[3] · EndOp0 / InsnA0 · 0xffb8000c; write 0x02000000; MOP template instruction · NOP 
-    5f0: 00522823  sw           x5, 16(x4)  # MopCfg[4] · EndOp1 / InsnA1 · 0xffb80010; write 0x02000000; MOP template instruction · NOP 
+    5ec: 00522623  sw           x5, 12(x4)  # MopCfg[3] · EndOp0 / InsnA0 · 0xffb8000c; write 0x02000000; MOP template instruction · NOP
+    5f0: 00522823  sw           x5, 16(x4)  # MopCfg[4] · EndOp1 / InsnA1 · 0xffb80010; write 0x02000000; MOP template instruction · NOP
     5f4: 428082b7  lui          x5, 0x42808  # x5 = 0x42808000
     5f8: 0c128293  addi         x5, x5, 193  # x5 = 0x428080c1
     5fc: 00522a23  sw           x5, 20(x4)  # MopCfg[5] · LoopOp / InsnA2 · 0xffb80014; write 0x428080c1; MOP template instruction · UNPACR Unpack_block_selection=1, AddrMode=1, CfgContextCntInc=0, CfgContextId=0, AddrCntContextId=0, OvrdThreadId=1, SetDatValid=1, srcb_bcast=0, ZeroWrite2=0, AutoIncContextID=0, RowSearch=0, SearchCacheFlush=0, Last=1
     600: 020002b7  lui          x5, 0x02000  # x5 = 0x02000000
-    604: 00522c23  sw           x5, 24(x4)  # MopCfg[6] · LoopOp1 / InsnA3 · 0xffb80018; write 0x02000000; MOP template instruction · NOP 
+    604: 00522c23  sw           x5, 24(x4)  # MopCfg[6] · LoopOp1 / InsnA3 · 0xffb80018; write 0x02000000; MOP template instruction · NOP
     608: 428082b7  lui          x5, 0x42808  # x5 = 0x42808000
     60c: 0c128293  addi         x5, x5, 193  # x5 = 0x428080c1
     610: 00522e23  sw           x5, 28(x4)  # MopCfg[7] · Loop0Last / SkipA0 · 0xffb8001c; write 0x428080c1; MOP template instruction · UNPACR Unpack_block_selection=1, AddrMode=1, CfgContextCntInc=0, CfgContextId=0, AddrCntContextId=0, OvrdThreadId=1, SetDatValid=1, srcb_bcast=0, ZeroWrite2=0, AutoIncContextID=0, RowSearch=0, SearchCacheFlush=0, Last=1
@@ -428,7 +428,7 @@ loc_498:
 loc_654:
     654: 1a62f263  bgeu         x5, x6, 0x000007f8  # target 0x000007f8
     658: 000203b7  lui          x7, 0x00020  # x7 = 0x00020000
-    65c: 04038393  addi         x7, x7, 64  # x7 = 0x00020040
+    65c: 08038393  addi         x7, x7, 128  # x7 = 0x00020080
     660: 40000413  addi         x8, x0, 1024  # x8 = 0x00000400
     664: 00000493  addi         x9, x0, 0  # x9 = 0x00000000
     668: 00400513  addi         x10, x0, 4  # x10 = 0x00000004
@@ -526,7 +526,7 @@ loc_74c:
     7bc: 40000a93  addi         x21, x0, 1024  # x21 = 0x00000400
     7c0: 015a0a33  add          x20, x20, x21
     7c4: 0001fb37  lui          x22, 0x0001f  # x22 = 0x0001f000
-    7c8: 040b0b13  addi         x22, x22, 64  # x22 = 0x0001f040
+    7c8: 080b0b13  addi         x22, x22, 128  # x22 = 0x0001f080
     7cc: 016a6663  bltu         x20, x22, 0x000007d8  # target 0x000007d8
     7d0: 00010bb7  lui          x23, 0x00010  # x23 = 0x00010000
     7d4: 417a0a33  sub          x20, x20, x23

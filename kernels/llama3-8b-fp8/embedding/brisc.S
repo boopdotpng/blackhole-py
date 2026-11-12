@@ -1,5 +1,5 @@
 # llama3 8b-fp8 decode: embedding, brisc. Exported from blackhole-py/examples/llama3/kernels.py by tools/rewrite_export/export_llama3.py.
-# cores (1): 1,4
+# cores (1): 1,2
 # params: 0x780=e2e_token_history, 0x784=e2e_embedding_weight, 0x788=e2e_x_a, 0x78c=token_pos
 #   0x780.. uniform, sent with every EXEC; 0xe840.. this core's resident per-core table
 # pcs are offsets from the image start; position-independent, llama3.py runs it from either code slot.
@@ -7,8 +7,8 @@
       0: ffb014b7  lui          x9, 0xffb01  # x9 = 0xffb01000
       4: 87848493  addi         x9, x9, -1928  # x9 = 0xffb00878 · riscv_local_mem + 0x878
       8: 00010537  lui          x10, 0x00010  # x10 = 0x00010000
-      c: 04050513  addi         x10, x10, 64  # x10 = 0x00010040
-     10: 00a4a023  sw           x10, 0(x9)  # riscv_local_mem + 0x878 · 0xffb00878; write 0x00010040
+      c: 08050513  addi         x10, x10, 128  # x10 = 0x00010080
+     10: 00a4a023  sw           x10, 0(x9)  # riscv_local_mem + 0x878 · 0xffb00878; write 0x00010080
      14: ffb014b7  lui          x9, 0xffb01  # x9 = 0xffb01000
      18: 87c48493  addi         x9, x9, -1924  # x9 = 0xffb0087c · riscv_local_mem + 0x87c
      1c: 0004a023  sw           x0, 0(x9)  # riscv_local_mem + 0x87c · 0xffb0087c; write 0x00000000
@@ -25,7 +25,7 @@
      48: 00040f93  addi         x31, x8, 0
      4c: 00048f13  addi         x30, x9, 0
      50: 0000feb7  lui          x29, 0x0000f  # x29 = 0x0000f000
-     54: 040e8e93  addi         x29, x29, 64  # x29 = 0x0000f040
+     54: 080e8e93  addi         x29, x29, 128  # x29 = 0x0000f080
 loc_58:
      58: ffb20ab7  lui          x21, 0xffb20  # x21 = 0xffb20000 · noc0_regs + 0x0
      5c: 244a8a93  addi         x21, x21, 580  # x21 = 0xffb20244 · noc0_regs + 0x244
@@ -49,7 +49,7 @@ loc_94:
      98: 01fba023  sw           x31, 0(x23)  # noc0_regs + 0x0 · 0xffb20000; write runtime value
      9c: 000ba223  sw           x0, 4(x23)  # noc0_regs + 0x4 · 0xffb20004; write 0x00000000
      a0: 01eba423  sw           x30, 8(x23)  # noc0_regs + 0x8 · 0xffb20008; write runtime value
-     a4: 01dba623  sw           x29, 12(x23)  # noc0_regs + 0xc · 0xffb2000c; write 0x0000f040
+     a4: 01dba623  sw           x29, 12(x23)  # noc0_regs + 0xc · 0xffb2000c; write 0x0000f080
      a8: 000ba823  sw           x0, 16(x23)  # noc0_regs + 0x10 · 0xffb20010; write 0x00000000
      ac: 014baa23  sw           x20, 20(x23)  # noc0_regs + 0x14 · 0xffb20014; write runtime value
      b0: 40000c13  addi         x24, x0, 1024  # x24 = 0x00000400
@@ -74,7 +74,7 @@ loc_f4:
      f4: 430000ef  jal          x1, 0x00000524  # target 0x00000524; x1 = 0x000000f8
      f8: 00231313  slli         x6, x6, 2
      fc: 0000f437  lui          x8, 0x0000f  # x8 = 0x0000f000
-    100: 04040413  addi         x8, x8, 64  # x8 = 0x0000f040
+    100: 08040413  addi         x8, x8, 128  # x8 = 0x0000f080
     104: 00830333  add          x6, x6, x8
     108: 00032383  lw           x7, 0(x6)  # Address depends on runtime register values
     10c: 00239413  slli         x8, x7, 2
@@ -117,7 +117,7 @@ loc_14c:
     198: 80050513  addi         x10, x10, -2048  # x10 = 0x00000800
     19c: 00a484b3  add          x9, x9, x10
     1a0: 000125b7  lui          x11, 0x00012  # x11 = 0x00012000 · TensixL1.KERNEL_CACHE_BASE
-    1a4: 04058593  addi         x11, x11, 64  # x11 = 0x00012040
+    1a4: 08058593  addi         x11, x11, 128  # x11 = 0x00012080
     1a8: 00b4e663  bltu         x9, x11, 0x000001b4  # target 0x000001b4
     1ac: 00002637  lui          x12, 0x00002  # x12 = 0x00002000
     1b0: 40c484b3  sub          x9, x9, x12
@@ -179,7 +179,7 @@ loc_238:
     284: 80050513  addi         x10, x10, -2048  # x10 = 0x00000800
     288: 00a484b3  add          x9, x9, x10
     28c: 000125b7  lui          x11, 0x00012  # x11 = 0x00012000 · TensixL1.KERNEL_CACHE_BASE
-    290: 04058593  addi         x11, x11, 64  # x11 = 0x00012040
+    290: 08058593  addi         x11, x11, 128  # x11 = 0x00012080
     294: 00b4e663  bltu         x9, x11, 0x000002a0  # target 0x000002a0
     298: 00002637  lui          x12, 0x00002  # x12 = 0x00002000
     29c: 40c484b3  sub          x9, x9, x12
@@ -241,7 +241,7 @@ loc_324:
     370: 80050513  addi         x10, x10, -2048  # x10 = 0x00000800
     374: 00a484b3  add          x9, x9, x10
     378: 000125b7  lui          x11, 0x00012  # x11 = 0x00012000 · TensixL1.KERNEL_CACHE_BASE
-    37c: 04058593  addi         x11, x11, 64  # x11 = 0x00012040
+    37c: 08058593  addi         x11, x11, 128  # x11 = 0x00012080
     380: 00b4e663  bltu         x9, x11, 0x0000038c  # target 0x0000038c
     384: 00002637  lui          x12, 0x00002  # x12 = 0x00002000
     388: 40c484b3  sub          x9, x9, x12
@@ -303,7 +303,7 @@ loc_410:
     45c: 80050513  addi         x10, x10, -2048  # x10 = 0x00000800
     460: 00a484b3  add          x9, x9, x10
     464: 000125b7  lui          x11, 0x00012  # x11 = 0x00012000 · TensixL1.KERNEL_CACHE_BASE
-    468: 04058593  addi         x11, x11, 64  # x11 = 0x00012040
+    468: 08058593  addi         x11, x11, 128  # x11 = 0x00012080
     46c: 00b4e663  bltu         x9, x11, 0x00000478  # target 0x00000478
     470: 00002637  lui          x12, 0x00002  # x12 = 0x00002000
     474: 40c484b3  sub          x9, x9, x12
