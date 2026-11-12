@@ -63,21 +63,13 @@ static void exec(packet *p, packet *next) {
   profile(p, 24);
 }
 
-/* The next EXEC after p, looking past STOREs and TIMESTAMPs so they don't stop its load from overlapping p's run.
- * Anything else (WAIT, CALL) may gate what the EXEC reads, so the search stops there. *stop = where it stopped: every
- * packet before it has the same answer, so callers rescan only on reaching it. */
-static packet *next_exec(packet *p, packet *end, packet **stop) {
-  for (p++; p < end; p++) {
-    if (p->op == OP_EXEC) break;
-    if (p->op != OP_STORE && p->op != OP_TIMESTAMP) break;
-  }
-  *stop = p;
-  return p < end && p->op == OP_EXEC ? p : 0;
-}
-
-static void run(packet *p, packet *next) {
-  if (p->op == OP_EXEC) exec(p, next);
-  else queue_signal_op(0, p);
+/* Only EXEC needs lookahead. Each EXEC scans its following STOREs/TIMESTAMPs once;
+ * WAIT and CALL stop prefetch because they may gate what the next EXEC reads. */
+static void run(packet *p, packet *end) {
+  if (p->op != OP_EXEC) { queue_signal_op(0, p); return; }
+  packet *next = p + 1;
+  while (next < end && (next->op == OP_STORE || next->op == OP_TIMESTAMP)) next++;
+  exec(p, next < end && next->op == OP_EXEC ? next : 0);
 }
 
 static void call(packet *p) {
@@ -87,11 +79,8 @@ static void call(packet *p) {
     noc_wait(0, 2, 1);
     u32 next = at + GRAPH_CHUNK, chunk = GRAPH_L1 + b * GRAPH_CHUNK, n = MIN(size - at, GRAPH_CHUNK);
     if (next < size) noc_move(0, 0, lo, hi, next, MIN(size - next, GRAPH_CHUNK), GRAPH_L1 + (b ^ 1) * GRAPH_CHUNK, 2);
-    packet *end = (packet *)(chunk + n), *stop = 0, *ahead = 0;
-    for (packet *q = (packet *)chunk; q < end; q++) {
-      if (q >= stop) ahead = next_exec(q, end, &stop);
-      run(q, ahead);
-    }
+    packet *end = (packet *)(chunk + n);
+    for (packet *q = (packet *)chunk; q < end; q++) run(q, end);
   }
 }
 
@@ -105,12 +94,11 @@ KERNEL kernel_main(void) {
     u32 packets = CQ_PACKETS + (read & 63);
     u32 bytes = queue_fetch(0, read, packets, CQ_PACKETS_MAX);
     if (!bytes) queue_idle(0);
-    packet *end = (packet *)(packets + bytes), *stop = 0, *ahead = 0;
+    packet *end = (packet *)(packets + bytes);
     for (u32 offset = 0; offset < bytes; offset += PACKET) {
       packet *p = (packet *)(packets + offset);
-      if (p >= stop) ahead = next_exec(p, end, &stop);
       if (p->op == OP_CALL) call(p);
-      else run(p, ahead);
+      else run(p, end);
       write32(RPTR, read + offset + PACKET);
     }
     read += bytes;

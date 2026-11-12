@@ -4,5 +4,4 @@ __pycache__/
 *.o
 /weights
 .zed/
-attention_scaling_results.json
 ir-proposal-*.md

@@ -9,6 +9,5 @@ KERNEL kernel_main(void) {
     write32(cfg, read32(cfg) | 1);
     write32(cfg + 4, read32(cfg + 4) | 1);
   }
-  reset_tensix();
   JUMP(FW_BRISC + 4);
 }

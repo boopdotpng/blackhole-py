@@ -51,6 +51,34 @@ class BlackholeComputeQueue(HWQueue):
     ring.call_host(bytes(self.blob))
     return self
 
+class Graph:
+  """Immutable command buffers in DRAM. Patches are (u64 byte offset, increment per instance)."""
+  def __init__(self, dev, queue:BlackholeComputeQueue, count:int=1, patches=()):
+    import numpy as np
+    assert count > 0 and queue.blob and len(queue.blob) % fw.PACKET == 0
+    self.dev, self.count, self.size = dev, count, len(queue.blob)
+    self.stride = round_up(self.size, 64)
+    self.ops = collections.Counter(Op(op).name for op, *_ in struct.iter_unpack("<4Q", queue.blob))
+    assert not (self.ops.keys() & {"CALL", "COPY"}), "compute graphs cannot nest or run DMA packets"
+    rows = np.zeros((count, self.stride // 8), dtype="<u8")
+    rows[:, :self.size // 8] = np.frombuffer(queue.blob, dtype="<u8")
+    for offset, step in patches:
+      assert offset % 8 == 0 and 0 <= offset < self.size and offset % fw.PACKET != 0
+      rows[:, offset // 8] += np.arange(count, dtype=np.uint64) * np.uint64(step)
+    self.addr = dev.upload(rows.tobytes())
+
+  def replay(self, start:int=0, count:int=1, timeout=10.0) -> int:
+    """Submit consecutive instances and wait once. Return host submission time in ns."""
+    assert 0 <= start < self.count and 0 < count <= self.count - start
+    t = time.perf_counter_ns()
+    q = HWQueue()
+    for i in range(start, start + count): q.q(Op.CALL, self.addr + i * self.stride, 0, self.size)
+    self.dev.graph_timeline += 1
+    q.signal(self.dev.signal(253), self.dev.graph_timeline).submit(self.dev.compute_queue)
+    elapsed = time.perf_counter_ns() - t
+    self.dev.wait(253, self.dev.graph_timeline, timeout)
+    return elapsed
+
 class BlackholeDMAQueue(HWQueue):
   def copy(self, dst:int, src:int, size:int):
     """Copy between 64-byte aligned addresses; the byte count need not be aligned."""
@@ -136,7 +164,7 @@ def blackhole_build_program(dev, images:dict, args_size:int=0) -> BlackholeProgr
 
 class BlackholeAllocator:
   def __init__(self, dev):
-    self.dev, self.dram_top, self.zeros = dev, 0, 0
+    self.dev, self.dram_top = dev, 0
     self.transfers, self.stage_next, self.stage_done = 0, 0, [0, 0]
 
   def _alloc(self, size:int) -> int:
@@ -185,16 +213,6 @@ class BlackholeAllocator:
           if len(data) != size: raise ValueError(f"file ended before {offset + size}: {path}")
           self._copyin(dst, data)
 
-  def zero(self, dst:int, size:int, timeout=60.0):
-    if not self.zeros:
-      self.zeros = dram(self._alloc(self.dev.stage_size), fw.DRAM_PAGE_MAX)
-      self._copyin(self.zeros, bytes(self.dev.stage_size))
-    q = BlackholeDMAQueue()
-    for off in range(0, size, self.dev.stage_size): q.copy(dst + off, self.zeros, min(self.dev.stage_size, size - off))
-    self.transfers += 1
-    q.signal(self.dev.signal(255), self.transfers).submit(self.dev.dma_queue)
-    self.dev.wait(255, self.transfers, timeout)
-
 class BlackholeDevice:
   def __init__(self, device:str="BLACKHOLE"):
     self.device = device
@@ -218,7 +236,7 @@ class BlackholeDevice:
       self.sysmem.mem[self.signals:self.heap] = bytes(self.heap - self.signals)
       self.compute_queue = self.create_queue(self.cq_core, 0, "dispatch", cmdbuf_size=1 << 20)
       self.dma_queue = self.create_queue(self.dma_core, fw.RING_SIZE, "dma")
-      self.descriptor_top = fw.DESCRIPTOR_L1
+      self.descriptor_top, self.graph_timeline = fw.DESCRIPTOR_L1, 0
       self.run(fw.images()["init"], self.workers)
     except BaseException:
       self.close()
