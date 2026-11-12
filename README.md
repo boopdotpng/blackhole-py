@@ -34,14 +34,15 @@ and packet ABI are in `fw/`.
 
 ## Performance
 
-Decode on a p150a, 64 tokens. Short is the default story prompt (20 tokens on 8B, 45 on 1B); 4K is after a
-4096-token context. % DRAM is the share of 512 GB/s needed to read the weights, LM head and KV cache once per token.
+Decode on a p150a, 64 tokens (`python bench.py`). Short is the default story prompt (20 tokens on 8B, 45 on 1B); 4K is
+after a 4096-token context, filled with random KV instead of a prefill. % DRAM is the share of 512 GB/s needed to read
+the weights, LM head and KV cache once per token.
 
 | Model | Context | ms/token | tok/s | % DRAM |
 | --- | --- | ---: | ---: | ---: |
-| 1B BF16 | short | 6.21 | 161.0 | 78% |
-| 1B BF16 | 4K | 8.54 | 117.1 | 60% |
-| 8B FP8 | short | 19.39 | 51.6 | 81% |
-| 8B FP8 | 4K | 28.03 | 35.7 | 60% |
-| 8B BF16 | short | 32.99 | 30.3 | 89% |
-| 8B BF16 | 4K | 41.61 | 24.0 | 73% |
+| 1B BF16 | short | 6.27 | 159.4 | 77% |
+| 1B BF16 | 4K | 7.02 | 142.5 | 73% |
+| 8B FP8 | short | 19.79 | 50.5 | 79% |
+| 8B FP8 | 4K | 22.12 | 45.2 | 76% |
+| 8B BF16 | short | 33.38 | 30.0 | 88% |
+| 8B BF16 | 4K | 35.67 | 28.0 | 85% |
