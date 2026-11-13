@@ -1,7 +1,6 @@
 # blackhole-py
 
-Llama 3 on a Tenstorrent Blackhole card, from Python. The kernels in `kernels/` are prebuilt RISC-V images for now;
-on the roadmap is writing them in ttptx, a PTX-like ISA for Tensix (see `docs/ttptx.md`).
+Llama 3 on a Tenstorrent Blackhole card, from Python. The kernels in `kernels/` are prebuilt RISC-V images.
 
 ## Requirements
 
