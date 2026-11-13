@@ -4,4 +4,3 @@ __pycache__/
 *.o
 /weights
 .zed/
-ir-proposal-*.md
