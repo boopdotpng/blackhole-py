@@ -7,9 +7,8 @@ sequentially; assigned core counts are not arithmetic-utilization measurements.
 | Exported program | 1B BF16 | 8B BF16 | 8B FP8 | Work |
 |---|---:|---:|---:|---|
 | `embedding` | 1 | 1 | 1 | Gather one token's embedding |
-| `qkv` | 88 | 88 | 96 | Replicated RMSNorm; shards of Q/K/V output rows |
-| `attention` | 96 | 96 | 96 | Up to 96 active context partitions, with fused RoPE/cache append |
-| `attention_merge` | 8 | 8 | 8 | One merger per KV head |
+| `qkv` | 88 | 88 | 96 | Replicated RMSNorm; rows of dense Q/K/V vectors |
+| `attention` | 64 | 64 | 64 | Up to 64 active context partitions, fused RoPE/cache append and merge |
 | `o` | 88 | 88 | 96 | Output projection and residual |
 | `gate` | 88 | 88 | 96 | RMSNorm, gate/up projections, SwiGLU |
 | `down` | 88 | 88 | 96 | Down projection and residual |
@@ -19,8 +18,8 @@ sequentially; assigned core counts are not arithmetic-utilization measurements.
 RMSNorm, SwiGLU, residual additions, RoPE, and cache append are fused work,
 not additional launches. RMSNorm is replicated on projection workers rather
 than distributed as a cross-core reduction. Embedding, LM, and argmax run
-once per token; the other six launches run per layer. There are 99 launches
-per token for 1B and 195 for 8B.
+once per token; the other five launches run per layer. There are 83 launches
+per token for 1B and 163 for 8B.
 
 The exporter's placement pool contains 118 workers: a 12-by-10 grid minus
 its two service cores. It targets the smallest supported layout rather than
@@ -30,92 +29,98 @@ outside this decode graph have caller-selected shapes and core counts.
 
 ## Attention implementation
 
-Previously, unsplit attention used 16 workers for 1B and 32 for 8B. Each
-worker scanned a KV head's entire history for two queries (1B) or one (8B),
-reading the same KV head twice or four times across workers.
+Each worker handles all four queries that share a KV head and a disjoint,
+interleaved subset of that head's 32-token cache blocks. One launch does
+everything; there is no separate merge program.
 
-The new kernel groups all four queries that share a KV head on each worker,
-and distributes cache blocks across that head's context partitions. Cache
-streaming collectively reads each KV head once. Preparation still repeats
-Q gathering and RoPE on active partitions; each worker waits for its own
-acknowledged current-token cache writes before streaming.
+1. **Gather.** qkv writes dense row-major `q`, `k`, `v` vectors. BRISC builds
+   the four RoPE operand rows (x, swapped halves, cos, sin) with about 23 NoC
+   reads in one transaction: a KV head's four query heads are contiguous, and
+   `rotate_half`'s sign lives in the sin table (first half negated). No scalar
+   copy loops.
+2. **Stream.** BRISC starts reading cache blocks as soon as the gather is
+   issued; it no longer waits for RoPE or the cache append. Each tile's reads
+   rotate over all three NoC 0 ports of its DRAM bank: one port per bank
+   capped the stream near 330 GB/s, three reach the DRAM peak (~500 GB/s
+   between 4K and 8K).
+3. **Current token.** Only the partition that owns the current block appends
+   the new K/V row to DRAM (others used to write identical bytes). That block
+   is read like any other and the rotated K/V rows are patched into it in L1,
+   so nothing reads its own append back from DRAM.
+4. **Merge.** Every live partition NoC-writes its FP32 (O, m, l) state into its
+   slot of the head's first worker's L1 (a 48-tile, 192 KiB CB on 8B), then
+   bumps that worker's counter with a non-posted atomic increment. The merger
+   waits for the count, re-arms it, and runs the stable merge (rescale to the
+   common maximum, combine, normalize once) on the states in place.
 
-The exported graph always launches **partial attention, then merge**. The
-same binaries and same core lists run at every position. A small device-side
-work-assignment policy selects how many of the 12 partitions per KV head
-are active:
+The merge counter is a persistent L1 word below the kernel data region, listed
+under `persistent` in the manifest and zeroed at install. It cannot be cleared
+per launch: dispatch does not order unicast writes before GO, so a late clear
+erased early increments and hung the merger. A posted atomic increment also
+hung intermittently; the non-posted form (response to a scratch word) does not.
 
-| Context length | Partitions per KV head | Active partial workers | Subsequent merge workers |
-|---|---:|---:|---:|
-| 1–128 | 1 | 8 | 8 |
-| 129–4096 | 4 | 32 | 8 |
-| 4097–8192 | 12 | 96 | 8 |
+The same binaries and core lists run at every position. A device-side policy
+picks how many of the 8 partitions per KV head are active:
 
-All five RISCs return early on inactive partitions. Active phase `s` visits
-blocks `s, s + active_partitions, ...`; tail masking follows the partition
-that owns the final block. The merge reads only active states, so stale or
-empty states cannot contaminate the result. Each state contains FP32 weighted
-output, maximum, and denominator. Merge rescales states to their common
-maximum, combines them, and normalizes once; it does not average independently
-normalized outputs.
+| Context length | Partitions per KV head | Active workers |
+|---|---:|---:|
+| 1–128 | 1 | 8 |
+| 129–2560 | 4 | 32 |
+| 2561–8192 | 8 | 64 |
 
-The thresholds reflect the measured tradeoff: four partitions were competitive
-at 4K and faster at 512/1024, whereas twelve were fastest at 8K. There is no
-host-side kernel or graph switch. The default capacity is configurable as
+Each extra partition adds a state the merger combines serially. Measured on a
+p150a, 4 partitions win below about 2.5K tokens (8B) to 3.5K (1B), and a
+capacity of 8 beat 12 at every length (8B, 8K: 99 vs 107 us). The capacity is
 `attention_partitions` in the old runtime and `--attention-partitions` in the
-exporter (0 selects the unsplit baseline; 4/8/12 select capacities).
+exporter (0 selects the unsplit baseline; 4/8/12 select capacities). With the
+same policy, the kernels reproduce the previous implementation's outputs bit for
+bit; changing the policy changes the summation order of long prefills.
 
-The retained Q block is waited on once before its loop; subsequent unpack
-moves omit redundant Q waits. P remains retained across V feature tiles.
-Merge computes each row's reciprocal once and retains exact `exp(0) = 1`
-for rescaling. The binaries fit the existing instruction slots; export now
-checks image size including the runtime return instruction.
+Fused attention exceeds 4 KiB on TRISC0/1, so `fw/abi.h` gives each TRISC a
+6 KiB slot; `DATA_BASE` moved from 0xE840 to 0x11840.
 
 ## Measurements and validation
 
-Final hardware validation: **84 cases passed**, each comparing unsplit,
-32-, 64-, and 96-worker variants against NumPy and checking identical repeated
-replay. Cases cover both model shapes, random and unchanged maxima, poisoned
-tails, partition-count boundaries, and eight fused RoPE/cache-append cases
-whose current cache rows are poisoned before each variant. The maximum tested
-length is 8192. All three models' short 64-token generations match their stored
-references exactly.
+Per-layer attention time on device (us, `--profile`), before and after this
+change; "before" includes the separate merge launch:
 
-End-to-end device-clock throughput, 64 generated tokens (earlier unsplit run
-versus the scaled implementation):
+| Context | 1B before | 1B after | 8B BF16 before | 8B BF16 after |
+|---:|---:|---:|---:|---:|
+| 16 | 32.2 | 11.2 | 47.9 | 16.0 |
+| 512 | 43.2 | 24.0 | 63.8 | 30.5 |
+| 2048 | 56.1 | 36.4 | 84.8 | 49.3 |
+| 4096 | 80.0 | 50.9 | 122.1 | 67.2 |
+| 8000 | 97.5 | 61.8 | 167.6 | 99.0 |
 
-| Model | Short, before | Short, after | 4K, before | 4K, after |
-|---|---:|---:|---:|---:|
-| 1B BF16 | 162.9 | 159.3 | 120.3 | 142.5 |
-| 8B BF16 | 30.5 | 30.0 | 24.7 | 28.0 |
-| 8B FP8 | 52.0 | 50.5 | 37.4 (only 5 tokens) | 45.2 |
+qkv costs 0.7 us (1B) to 2.2 us (8B) more for its dense outputs. Where the rest
+goes, from in-kernel timestamps and ablations on the old kernel (8B, 16 tokens,
+~39 us): about 25 us was BRISC gathering heads from per-core compact shards
+with scalar copies, 4 us NCRISC re-tiling Q, 2 us the append acknowledgement
+before the first read, 8.5 us the merge launch. At 8K the cache stream was
+DRAM-port bound; deeper read pipelining (whole loop in one transaction) and
+contiguous 8 KiB reads did not help.
 
-Units: tokens/second. The 4K run starts with 4096 prompt tokens; most of its
-64 decode steps therefore use the long-context partition count. Short-context
-throughput loses roughly 2–3% to the extra launch/merge. The earlier and scaled
-FP8 prompt benchmarks both experienced intermittent device/runtime timeouts;
-the final scaled FP8 run completed on retry. The five-token baseline is not
-a comparable fixed-length measurement. The timeout cause remains unresolved;
-no unrelated runtime or reset fix is included in this change.
+What still costs: the merger combines states one at a time (about 1 us each on
+8B), and with 4 partitions each worker's QK/softmax/PV pipeline (about 2 us
+per block on 8B) rather than DRAM sets the time.
 
-The isolated pre-RoPE benchmark includes partial + merge and host replay
-latency. The final 1B build measured 163 → 77 microseconds at exactly 4K and
-298 → 104 microseconds at 8K. Before the final redundant-Q-wait removal, 8B
-measured 281 → 112 microseconds at 4K and 514 → 165 microseconds at 8K. These
-are kernel-path timings, not total decode speedups. A later benchmark attempt
-failed during 8B's initial upload, before attention ran.
+Hardware validation: 84 cases pass, comparing unsplit, 32-, 64-, and 96-worker
+variants against NumPy and checking identical repeated replay; the fused cases
+also check that exactly one partition's append reaches both caches. All three
+models' 64-token references match, and 24-token generations after real
+2K/3K/5K/6K-token prompts match the previous kernels.
 
 Reproduce from `blackhole-py-old`:
 
 ```sh
 ../.venv/bin/python -m pytest tests/compute/fpu/test_llama_attention.py --bh-hardware --bh-device 0 -q
 ../.venv/bin/python tools/bench_llama_attention.py --device 0 --lengths 32 512 4096 8192 33 --json /tmp/attention.json
-../.venv/bin/python tools/rewrite_export/export_llama3.py --model all --attention-partitions 12 --rewrite ../blackhole-py
+../.venv/bin/python tools/rewrite_export/export_llama3.py --model all --rewrite ../blackhole-py
 ```
 
-Export complete model artifact sets together: the extra merge program changes
-parameter-table and data addresses, so replacing only attention binaries would
-leave inconsistent layouts. Runtime code and firmware need no changes.
+Export complete model artifact sets together: parameter tables, the merge
+counter and data addresses move with the programs, and the firmware slot sizes
+in `fw/abi.h` must match the exporter's.
 
 ## Other kernels
 
@@ -140,8 +145,14 @@ The earlier kernel audit identified repeated work that the implementation above 
 - Use partial attention plus merge for long contexts, with exact-zero rescaling and the validation described above.
 
 The old audit's warning about an unsplit-only exporter and relaxed 4K checks describes the previous implementation;
-it is superseded by the exported partitioned path and 84-case validation above. The intermittent FP8 runtime
-timeouts remain unresolved, as noted in the measurements.
+it is superseded by the exported partitioned path and 84-case validation above. The long-prefill ring timeout was
+caused by submitting one CALL per token with a fixed 10-second ring wait, although retiring 1024 8B BF16 tokens
+takes about 34 seconds. Prefill now submits one ranged CALL over the existing DRAM graphs, followed by a completion
+signal; graph timeouts also propagate to ring submission. On card 1, a real 4097-token prefill plus 64 decode tokens
+completed in 138.75 seconds. Reproduce with `python bench.py --device 1 --prefill 4097 8b-bf16`;
+`python test_graph.py --device 1` checks range, stride, chunk boundaries, and address rollover. Decode remains
+host-driven one token at a time, including its EOS check. The earlier 150-token signal timeout was not reproduced
+after a clean reset, so its cause remains unconfirmed.
 
 Attention still needs the pack → L1 → unpack handoff to feed probabilities into FPU matmul, and Dst contents must
 survive that handoff. The old `Pack._release_dst` helper invalidates Dst, while attention releases the semaphore
@@ -158,7 +169,7 @@ still useful. They can remain fused in one launch; clearer source boundaries do 
 | **QKV / gate-up / O / down / LM** | Sensible basic structure: retain X, stream weight rows, reduce each dot product. | Clean up output assembly and ownership; don’t replace the algorithm merely because its code is verbose. |
 | **Fused RMSNorm** | Understandable baseline, but stores X and gamma together in Dst and uses all-SFPU math. | Compare with the existing hybrid implementation before choosing the canonical kernel. Arithmetic order and rounding must remain explicit. |
 | **SwiGLU / residual epilogues** | Ordinary compute with considerable layout-conversion plumbing. | Simplify compact/dense layout boundaries. Keep byte addressing and explicit conversion. |
-| **Attention merge** | Streaming reduction of the active partial states. | Keep the algorithm; express its repeated operations and persistent state more clearly. |
+| **Attention merge** | Serial reduction of the live partition states on each head's first worker, in L1. | Merge in a tree or merge several states per SFPU pass; it is the main cost of more partitions. |
 | **Argmax** | More complexity is justified than its appearance suggests. | Preserve tie-breaking, padding, ordered keys, and mailbox ordering. Keep runtime publication separate from the numerical reduction. |
 | **Blocked matmul** | Complex for substantive reasons: multicast, operand reuse, partial accumulation, layout conversion, overlapping transfers. | Use a simpler matmul as the first compiler target; retain this as an advanced scheduling benchmark. |
 | **Q6, reduction experiments, ISA/movement probes** | Experiments and hardware evidence, not canonical application kernels. | Preserve their checks without making every experimental schedule a v1 requirement. |

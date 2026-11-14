@@ -1,39 +1,39 @@
 # llama3 8b-bf16 decode: down, ncrisc. Exported from blackhole-py/examples/llama3/kernels.py by tools/rewrite_export/export_llama3.py.
 # cores (40): 7,2 10,2 11,2 12,2 13,2 7,3 10,3 11,3 12,3 13,3 7,4 10,4 11,4 12,4 13,4 7,5 10,5 11,5 12,5 13,5 7,6 10,6 11,6 12,6 13,6 7,7 10,7 11,7 12,7 13,7 7,8 10,8 11,8 12,8 13,8 7,9 10,9 11,9 12,9 13,9
-# params: 0x780=e2e_hidden_dense_decode_token, 0x784=e2e_l0_down, 0x788=e2e_x_a, 0x78c=e2e_x_b, 0xe980=e2e_q_compact, 0xe984=e2e_l0_down_row_start, 0xe988=dense_start, 0xe98c=e2e_l0_down_rows
-#   0x780.. uniform, sent with every EXEC; 0xe840.. this core's resident per-core table
+# params: 0x780=e2e_hidden_dense_decode_token, 0x784=e2e_l0_down, 0x788=e2e_x_a, 0x78c=e2e_x_b, 0x11980=e2e_q_compact, 0x11984=e2e_l0_down_row_start, 0x11988=dense_start, 0x1198c=e2e_l0_down_rows
+#   0x780.. uniform, sent with every EXEC; 0x11840.. this core's resident per-core table
 # pcs are offsets from the image start; position-independent, llama3.py runs it from either code slot.
 
       0: ffb013b7  lui          x7, 0xffb01  # x7 = 0xffb01000
       4: 86438393  addi         x7, x7, -1948  # x7 = 0xffb00864 · riscv_local_mem + 0x864
-      8: 0001d437  lui          x8, 0x0001d  # x8 = 0x0001d000
-      c: 0083a023  sw           x8, 0(x7)  # riscv_local_mem + 0x864 · 0xffb00864; write 0x0001d000
+      8: 00020437  lui          x8, 0x00020  # x8 = 0x00020000
+      c: 0083a023  sw           x8, 0(x7)  # riscv_local_mem + 0x864 · 0xffb00864; write 0x00020000
      10: ffb013b7  lui          x7, 0xffb01  # x7 = 0xffb01000
      14: 86838393  addi         x7, x7, -1944  # x7 = 0xffb00868 · riscv_local_mem + 0x868
      18: 0003a023  sw           x0, 0(x7)  # riscv_local_mem + 0x868 · 0xffb00868; write 0x00000000
      1c: ffb01237  lui          x4, 0xffb01  # x4 = 0xffb01000
      20: 86c20213  addi         x4, x4, -1940  # x4 = 0xffb0086c · riscv_local_mem + 0x86c
-     24: 000252b7  lui          x5, 0x00025  # x5 = 0x00025000
-     28: 00522023  sw           x5, 0(x4)  # riscv_local_mem + 0x86c · 0xffb0086c; write 0x00025000
+     24: 000282b7  lui          x5, 0x00028  # x5 = 0x00028000
+     28: 00522023  sw           x5, 0(x4)  # riscv_local_mem + 0x86c · 0xffb0086c; write 0x00028000
      2c: ffb01237  lui          x4, 0xffb01  # x4 = 0xffb01000
      30: 87020213  addi         x4, x4, -1936  # x4 = 0xffb00870 · riscv_local_mem + 0x870
      34: 00022023  sw           x0, 0(x4)  # riscv_local_mem + 0x870 · 0xffb00870; write 0x00000000
      38: ffb01237  lui          x4, 0xffb01  # x4 = 0xffb01000
      3c: 87420213  addi         x4, x4, -1932  # x4 = 0xffb00874 · riscv_local_mem + 0x874
-     40: 000282b7  lui          x5, 0x00028  # x5 = 0x00028000
-     44: 80028293  addi         x5, x5, -2048  # x5 = 0x00027800
-     48: 00522023  sw           x5, 0(x4)  # riscv_local_mem + 0x874 · 0xffb00874; write 0x00027800
+     40: 0002b2b7  lui          x5, 0x0002b  # x5 = 0x0002b000
+     44: 80028293  addi         x5, x5, -2048  # x5 = 0x0002a800
+     48: 00522023  sw           x5, 0(x4)  # riscv_local_mem + 0x874 · 0xffb00874; write 0x0002a800
      4c: ffb01237  lui          x4, 0xffb01  # x4 = 0xffb01000
      50: 87820213  addi         x4, x4, -1928  # x4 = 0xffb00878 · riscv_local_mem + 0x878
      54: 00022023  sw           x0, 0(x4)  # riscv_local_mem + 0x878 · 0xffb00878; write 0x00000000
      58: ffb01237  lui          x4, 0xffb01  # x4 = 0xffb01000
      5c: 87c20213  addi         x4, x4, -1924  # x4 = 0xffb0087c · riscv_local_mem + 0x87c
-     60: 000282b7  lui          x5, 0x00028  # x5 = 0x00028000
-     64: 00522023  sw           x5, 0(x4)  # riscv_local_mem + 0x87c · 0xffb0087c; write 0x00028000
+     60: 0002b2b7  lui          x5, 0x0002b  # x5 = 0x0002b000
+     64: 00522023  sw           x5, 0(x4)  # riscv_local_mem + 0x87c · 0xffb0087c; write 0x0002b000
      68: ffb01237  lui          x4, 0xffb01  # x4 = 0xffb01000
      6c: 88020213  addi         x4, x4, -1920  # x4 = 0xffb00880 · riscv_local_mem + 0x880
      70: 00022023  sw           x0, 0(x4)  # riscv_local_mem + 0x880 · 0xffb00880; write 0x00000000
-     74: 00025237  lui          x4, 0x00025  # x4 = 0x00025000
+     74: 00028237  lui          x4, 0x00028  # x4 = 0x00028000
      78: 20000293  addi         x5, x0, 512  # x5 = 0x00000200
 loc_7c:
      7c: 00022023  sw           x0, 0(x4)  # Address depends on runtime register values
@@ -47,9 +47,9 @@ loc_7c:
      9c: 02020213  addi         x4, x4, 32
      a0: ff828293  addi         x5, x5, -8
      a4: fc029ce3  bne          x5, x0, 0x0000007c  # target 0x0000007c
-     a8: 0000f2b7  lui          x5, 0x0000f  # x5 = 0x0000f000
-     ac: 98c28293  addi         x5, x5, -1652  # x5 = 0x0000e98c
-     b0: 0002a203  lw           x4, 0(x5)  # param e2e_l0_down_rows; 0x0000e98c
+     a8: 000122b7  lui          x5, 0x00012  # x5 = 0x00012000 · TensixL1.KERNEL_CACHE_BASE
+     ac: 98c28293  addi         x5, x5, -1652  # x5 = 0x0001198c
+     b0: 0002a203  lw           x4, 0(x5)  # param e2e_l0_down_rows; 0x0001198c
      b4: 00000293  addi         x5, x0, 0  # x5 = 0x00000000
      b8: 00020313  addi         x6, x4, 0
 loc_bc:
@@ -84,7 +84,7 @@ loc_f4:
     124: 0092d593  srli         x11, x5, 9
     128: 00a59593  slli         x11, x11, 10
     12c: 00b4e4b3  or           x9, x9, x11
-    130: 00025537  lui          x10, 0x00025  # x10 = 0x00025000
+    130: 00028537  lui          x10, 0x00028  # x10 = 0x00028000
     134: 00950533  add          x10, x10, x9
     138: 00851023  sh           x8, 0(x10)  # Address depends on runtime register values
     13c: ffb01437  lui          x8, 0xffb01  # x8 = 0xffb01000
@@ -106,7 +106,7 @@ loc_f4:
     17c: 00001437  lui          x8, 0x00001  # x8 = 0x00001000 · F32_TILE_BYTES · Wait.CFGEXU
     180: 80040413  addi         x8, x8, -2048  # x8 = 0x00000800
     184: 008383b3  add          x7, x7, x8
-    188: 0001e4b7  lui          x9, 0x0001e  # x9 = 0x0001e000
+    188: 000214b7  lui          x9, 0x00021  # x9 = 0x00021000
     18c: 0093e663  bltu         x7, x9, 0x00000198  # target 0x00000198
     190: 00001537  lui          x10, 0x00001  # x10 = 0x00001000 · F32_TILE_BYTES · Wait.CFGEXU
     194: 40a383b3  sub          x7, x7, x10
@@ -123,8 +123,8 @@ loc_1ac:
     1b8: 000012b7  lui          x5, 0x00001  # x5 = 0x00001000 · F32_TILE_BYTES · Wait.CFGEXU
     1bc: 80028293  addi         x5, x5, -2048  # x5 = 0x00000800
     1c0: 00520233  add          x4, x4, x5
-    1c4: 00026337  lui          x6, 0x00026  # x6 = 0x00026000
-    1c8: 80030313  addi         x6, x6, -2048  # x6 = 0x00025800
+    1c4: 00029337  lui          x6, 0x00029  # x6 = 0x00029000
+    1c8: 80030313  addi         x6, x6, -2048  # x6 = 0x00028800
     1cc: 00626863  bltu         x4, x6, 0x000001dc  # target 0x000001dc
     1d0: 000013b7  lui          x7, 0x00001  # x7 = 0x00001000 · F32_TILE_BYTES · Wait.CFGEXU
     1d4: 80038393  addi         x7, x7, -2048  # x7 = 0x00000800
@@ -146,20 +146,20 @@ loc_1dc:
     210: 02828293  addi         x5, x5, 40  # x5 = 0xffb4a028
     214: 0042a023  sw           x4, 0(x5)  # 0xffb4a028; write runtime value
     218: 0ff0000f  fence        0xf, 0xf
-    21c: 0000f337  lui          x6, 0x0000f  # x6 = 0x0000f000
-    220: 98830313  addi         x6, x6, -1656  # x6 = 0x0000e988
-    224: 00032203  lw           x4, 0(x6)  # param dense_start; 0x0000e988
-    228: 0000f337  lui          x6, 0x0000f  # x6 = 0x0000f000
-    22c: 98c30313  addi         x6, x6, -1652  # x6 = 0x0000e98c
-    230: 00032283  lw           x5, 0(x6)  # param e2e_l0_down_rows; 0x0000e98c
+    21c: 00012337  lui          x6, 0x00012  # x6 = 0x00012000 · TensixL1.KERNEL_CACHE_BASE
+    220: 98830313  addi         x6, x6, -1656  # x6 = 0x00011988
+    224: 00032203  lw           x4, 0(x6)  # param dense_start; 0x00011988
+    228: 00012337  lui          x6, 0x00012  # x6 = 0x00012000 · TensixL1.KERNEL_CACHE_BASE
+    22c: 98c30313  addi         x6, x6, -1652  # x6 = 0x0001198c
+    230: 00032283  lw           x5, 0(x6)  # param e2e_l0_down_rows; 0x0001198c
     234: 00000313  addi         x6, x0, 0  # x6 = 0x00000000
     238: 00028393  addi         x7, x5, 0
 loc_23c:
     23c: 04737e63  bgeu         x6, x7, 0x00000298  # target 0x00000298
     240: 00620433  add          x8, x4, x6
     244: 00141493  slli         x9, x8, 1
-    248: 00026637  lui          x12, 0x00026  # x12 = 0x00026000
-    24c: 80060613  addi         x12, x12, -2048  # x12 = 0x00025800
+    248: 00029637  lui          x12, 0x00029  # x12 = 0x00029000
+    24c: 80060613  addi         x12, x12, -2048  # x12 = 0x00028800
     250: 00c484b3  add          x9, x9, x12
     254: 0004d583  lhu          x11, 0(x9)  # Address depends on runtime register values
     258: 00f37513  andi         x10, x6, 15
@@ -172,8 +172,8 @@ loc_23c:
     274: 00935613  srli         x12, x6, 9
     278: 00a61613  slli         x12, x12, 10
     27c: 00c56533  or           x10, x10, x12
-    280: 00028637  lui          x12, 0x00028  # x12 = 0x00028000
-    284: 80060613  addi         x12, x12, -2048  # x12 = 0x00027800
+    280: 0002b637  lui          x12, 0x0002b  # x12 = 0x0002b000
+    284: 80060613  addi         x12, x12, -2048  # x12 = 0x0002a800
     288: 00c50533  add          x10, x10, x12
     28c: 00b51023  sh           x11, 0(x10)  # Address depends on runtime register values
     290: 00130313  addi         x6, x6, 1
@@ -185,7 +185,7 @@ loc_298:
     2a4: 000012b7  lui          x5, 0x00001  # x5 = 0x00001000 · F32_TILE_BYTES · Wait.CFGEXU
     2a8: 80028293  addi         x5, x5, -2048  # x5 = 0x00000800
     2ac: 00520233  add          x4, x4, x5
-    2b0: 00028337  lui          x6, 0x00028  # x6 = 0x00028000
+    2b0: 0002b337  lui          x6, 0x0002b  # x6 = 0x0002b000
     2b4: 00626863  bltu         x4, x6, 0x000002c4  # target 0x000002c4
     2b8: 000013b7  lui          x7, 0x00001  # x7 = 0x00001000 · F32_TILE_BYTES · Wait.CFGEXU
     2bc: 80038393  addi         x7, x7, -2048  # x7 = 0x00000800
@@ -223,12 +223,12 @@ loc_314:
     334: fe1ff06f  jal          x0, 0x00000314  # target 0x00000314
 loc_338:
     338: 0ff0000f  fence        0xf, 0xf
-    33c: 0000f3b7  lui          x7, 0x0000f  # x7 = 0x0000f000
-    340: 98838393  addi         x7, x7, -1656  # x7 = 0x0000e988
-    344: 0003a203  lw           x4, 0(x7)  # param dense_start; 0x0000e988
-    348: 0000f3b7  lui          x7, 0x0000f  # x7 = 0x0000f000
-    34c: 98c38393  addi         x7, x7, -1652  # x7 = 0x0000e98c
-    350: 0003a303  lw           x6, 0(x7)  # param e2e_l0_down_rows; 0x0000e98c
+    33c: 000123b7  lui          x7, 0x00012  # x7 = 0x00012000 · TensixL1.KERNEL_CACHE_BASE
+    340: 98838393  addi         x7, x7, -1656  # x7 = 0x00011988
+    344: 0003a203  lw           x4, 0(x7)  # param dense_start; 0x00011988
+    348: 000123b7  lui          x7, 0x00012  # x7 = 0x00012000 · TensixL1.KERNEL_CACHE_BASE
+    34c: 98c38393  addi         x7, x7, -1652  # x7 = 0x0001198c
+    350: 0003a303  lw           x6, 0(x7)  # param e2e_l0_down_rows; 0x0001198c
     354: ffb013b7  lui          x7, 0xffb01  # x7 = 0xffb01000
     358: 87c38393  addi         x7, x7, -1924  # x7 = 0xffb0087c · riscv_local_mem + 0x87c
     35c: 0003a283  lw           x5, 0(x7)  # riscv_local_mem + 0x87c · 0xffb0087c
@@ -250,8 +250,8 @@ loc_368:
     398: 00a28533  add          x10, x5, x10
     39c: 00055603  lhu          x12, 0(x10)  # Address depends on runtime register values
     3a0: 00149593  slli         x11, x9, 1
-    3a4: 000296b7  lui          x13, 0x00029  # x13 = 0x00029000
-    3a8: 80068693  addi         x13, x13, -2048  # x13 = 0x00028800
+    3a4: 0002c6b7  lui          x13, 0x0002c  # x13 = 0x0002c000
+    3a8: 80068693  addi         x13, x13, -2048  # x13 = 0x0002b800
     3ac: 00d585b3  add          x11, x11, x13
     3b0: 00c59023  sh           x12, 0(x11)  # Address depends on runtime register values
     3b4: 00138393  addi         x7, x7, 1
@@ -260,9 +260,9 @@ loc_3bc:
     3bc: 1a8000ef  jal          x1, 0x00000564  # target 0x00000564; x1 = 0x000003c0
     3c0: 1c0000ef  jal          x1, 0x00000580  # target 0x00000580; x1 = 0x000003c4
     3c4: 00020393  addi         x7, x4, 0
-    3c8: 0000f4b7  lui          x9, 0x0000f  # x9 = 0x0000f000
-    3cc: 98c48493  addi         x9, x9, -1652  # x9 = 0x0000e98c
-    3d0: 0004a403  lw           x8, 0(x9)  # param e2e_l0_down_rows; 0x0000e98c
+    3c8: 000124b7  lui          x9, 0x00012  # x9 = 0x00012000 · TensixL1.KERNEL_CACHE_BASE
+    3cc: 98c48493  addi         x9, x9, -1652  # x9 = 0x0001198c
+    3d0: 0004a403  lw           x8, 0(x9)  # param e2e_l0_down_rows; 0x0001198c
     3d4: 00440433  add          x8, x8, x4
 loc_3d8:
     3d8: 00a3d493  srli         x9, x7, 10
@@ -271,8 +271,8 @@ loc_3d8:
     3e4: 000a8793  addi         x15, x21, 0
     3e8: 000b0813  addi         x16, x22, 0
     3ec: 00139513  slli         x10, x7, 1
-    3f0: 000296b7  lui          x13, 0x00029  # x13 = 0x00029000
-    3f4: 80068693  addi         x13, x13, -2048  # x13 = 0x00028800
+    3f0: 0002c6b7  lui          x13, 0x0002c  # x13 = 0x0002c000
+    3f4: 80068693  addi         x13, x13, -2048  # x13 = 0x0002b800
     3f8: 00a686b3  add          x13, x13, x10
     3fc: 7ff57513  andi         x10, x10, 2047
     400: 00a78733  add          x14, x15, x10
@@ -362,8 +362,8 @@ loc_4e4:
     530: 000012b7  lui          x5, 0x00001  # x5 = 0x00001000 · F32_TILE_BYTES · Wait.CFGEXU
     534: 80028293  addi         x5, x5, -2048  # x5 = 0x00000800
     538: 00520233  add          x4, x4, x5
-    53c: 00029337  lui          x6, 0x00029  # x6 = 0x00029000
-    540: 80030313  addi         x6, x6, -2048  # x6 = 0x00028800
+    53c: 0002c337  lui          x6, 0x0002c  # x6 = 0x0002c000
+    540: 80030313  addi         x6, x6, -2048  # x6 = 0x0002b800
     544: 00626863  bltu         x4, x6, 0x00000554  # target 0x00000554
     548: 000013b7  lui          x7, 0x00001  # x7 = 0x00001000 · F32_TILE_BYTES · Wait.CFGEXU
     54c: 80038393  addi         x7, x7, -2048  # x7 = 0x00000800

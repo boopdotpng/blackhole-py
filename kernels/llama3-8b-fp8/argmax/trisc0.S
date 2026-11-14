@@ -1,14 +1,14 @@
 # llama3 8b-fp8 decode: argmax, trisc0. Exported from blackhole-py/examples/llama3/kernels.py by tools/rewrite_export/export_llama3.py.
 # cores (96): 1,2 1,3 1,4 1,5 1,6 1,7 1,8 1,9 1,10 1,11 2,2 2,3 2,4 2,5 2,6 2,7 2,8 2,9 2,10 2,11 3,2 3,3 3,4 3,5 3,6 3,7 3,8 3,9 3,10 3,11 4,2 4,3 4,4 4,5 4,6 4,7 4,8 4,9 4,10 4,11 5,2 5,3 5,4 5,5 5,6 5,7 5,8 5,9 5,10 5,11 6,2 6,3 6,4 6,5 6,6 6,7 6,8 6,9 6,10 6,11 7,2 7,3 7,4 7,5 7,6 7,7 7,8 7,9 7,10 7,11 10,2 10,3 10,4 10,5 10,6 10,7 10,8 10,9 10,10 10,11 11,2 11,3 11,4 11,5 11,6 11,7 11,8 11,9 11,10 11,11 12,2 12,3 12,4 12,5 12,6 12,7
-# params: 0x780=e2e_token_history, 0x784=argmax_host_address, 0x788=argmax_count, 0x78c=write_pos, 0x790=write_token, 0xea00=e2e_logits, 0xea04=argmax_start, 0xea08=argmax_core
-#   0x780.. uniform, sent with every EXEC; 0xe840.. this core's resident per-core table
+# params: 0x780=e2e_token_history, 0x784=argmax_host_address, 0x788=argmax_count, 0x78c=write_pos, 0x790=write_token, 0x11a00=e2e_logits, 0x11a04=argmax_start, 0x11a08=argmax_core
+#   0x780.. uniform, sent with every EXEC; 0x11840.. this core's resident per-core table
 # pcs are offsets from the image start; position-independent, llama3.py runs it from either code slot.
 
       0: ffb01237  lui          x4, 0xffb01  # x4 = 0xffb01000
       4: 82020213  addi         x4, x4, -2016  # x4 = 0xffb00820 · riscv_local_mem + 0x820
-      8: 0000f2b7  lui          x5, 0x0000f  # x5 = 0x0000f000
-      c: 08028293  addi         x5, x5, 128  # x5 = 0x0000f080
-     10: 00522023  sw           x5, 0(x4)  # riscv_local_mem + 0x820 · 0xffb00820; write 0x0000f080
+      8: 000122b7  lui          x5, 0x00012  # x5 = 0x00012000 · TensixL1.KERNEL_CACHE_BASE
+      c: 08028293  addi         x5, x5, 128  # x5 = 0x00012080
+     10: 00522023  sw           x5, 0(x4)  # riscv_local_mem + 0x820 · 0xffb00820; write 0x00012080
      14: ffb01237  lui          x4, 0xffb01  # x4 = 0xffb01000
      18: 82420213  addi         x4, x4, -2012  # x4 = 0xffb00824 · riscv_local_mem + 0x824
      1c: 00022023  sw           x0, 0(x4)  # riscv_local_mem + 0x824 · 0xffb00824; write 0x00000000
@@ -79,9 +79,9 @@ loc_7c:
     110: ffef0237  lui          x4, 0xffef0  # x4 = 0xffef0000 · cfg[0] (bank 0) · ALU_FORMAT_SPEC_REG_SrcA_val, ALU_FORMAT_SPEC_REG_SrcA_override, ALU_FORMAT_SPEC_REG_SrcB_val, ALU_FORMAT_SPEC_REG_SrcB_override, ALU_FORMAT_SPEC_REG_Dstacc_val, ALU_FORMAT_SPEC_REG_Dstacc_override
     114: 13020213  addi         x4, x4, 304  # x4 = 0xffef0130 · cfg[76] (bank 0) · THCON_SEC0_REG3_Base_address
     118: 000012b7  lui          x5, 0x00001  # x5 = 0x00001000 · F32_TILE_BYTES · Wait.CFGEXU
-    11c: f0728293  addi         x5, x5, -249  # x5 = 0x00000f07
-    120: 00522023  sw           x5, 0(x4)  # cfg[76] (bank 0) · THCON_SEC0_REG3_Base_address · 0xffef0130; write 0x00000f07; cfg[76] (bank 0); THCON_SEC0_REG3_Base_address = 3847
-    124: 00522223  sw           x5, 4(x4)  # cfg[77] (bank 0) · THCON_SEC0_REG3_Base_cntx1_address · 0xffef0134; write 0x00000f07; cfg[77] (bank 0); THCON_SEC0_REG3_Base_cntx1_address = 3847
+    11c: 20728293  addi         x5, x5, 519  # x5 = 0x00001207
+    120: 00522023  sw           x5, 0(x4)  # cfg[76] (bank 0) · THCON_SEC0_REG3_Base_address · 0xffef0130; write 0x00001207; cfg[76] (bank 0); THCON_SEC0_REG3_Base_address = 4615
+    124: 00522223  sw           x5, 4(x4)  # cfg[77] (bank 0) · THCON_SEC0_REG3_Base_cntx1_address · 0xffef0134; write 0x00001207; cfg[77] (bank 0); THCON_SEC0_REG3_Base_cntx1_address = 4615
     128: c8a40002  SETC16       setc16_reg=41, setc16_value=0  # thread_cfg[41] (current thread); UNPACK_MISC_CFG_CfgContextOffset_0 = 0; UNPACK_MISC_CFG_CfgContextCntReset_0 = 0; UNPACK_MISC_CFG_CfgContextCntInc_0 = 0; UNPACK_MISC_CFG_CfgContextOffset_1 = 0; UNPACK_MISC_CFG_CfgContextCntReset_1 = 0; UNPACK_MISC_CFG_CfgContextCntInc_1 = 0; UNPACK_MISC_CFG_CfgContextCntReset_metadata = 0; UNPACK_MISC_CFG_CfgContextCntReset_metadata_zstart = 0
     12c: c8140012  SETC16       setc16_reg=5, setc16_value=4  # thread_cfg[5] (current thread); SRCA_SET_Base = 0; SRCA_SET_SetOvrdWithAddr = 1
     130: ffe80237  lui          x4, 0xffe80  # x4 = 0xffe80000 · tensix_pc_buf + 0x0
@@ -131,9 +131,9 @@ loc_14c:
     1d8: ffef0237  lui          x4, 0xffef0  # x4 = 0xffef0000 · cfg[0] (bank 0) · ALU_FORMAT_SPEC_REG_SrcA_val, ALU_FORMAT_SPEC_REG_SrcA_override, ALU_FORMAT_SPEC_REG_SrcB_val, ALU_FORMAT_SPEC_REG_SrcB_override, ALU_FORMAT_SPEC_REG_Dstacc_val, ALU_FORMAT_SPEC_REG_Dstacc_override
     1dc: 1f020213  addi         x4, x4, 496  # x4 = 0xffef01f0 · cfg[124] (bank 0) · THCON_SEC1_REG3_Base_address
     1e0: 000012b7  lui          x5, 0x00001  # x5 = 0x00001000 · F32_TILE_BYTES · Wait.CFGEXU
-    1e4: f0728293  addi         x5, x5, -249  # x5 = 0x00000f07
-    1e8: 00522023  sw           x5, 0(x4)  # cfg[124] (bank 0) · THCON_SEC1_REG3_Base_address · 0xffef01f0; write 0x00000f07; cfg[124] (bank 0); THCON_SEC1_REG3_Base_address = 3847
-    1ec: 00522223  sw           x5, 4(x4)  # cfg[125] (bank 0) · THCON_SEC1_REG3_Base_cntx1_address · 0xffef01f4; write 0x00000f07; cfg[125] (bank 0); THCON_SEC1_REG3_Base_cntx1_address = 3847
+    1e4: 20728293  addi         x5, x5, 519  # x5 = 0x00001207
+    1e8: 00522023  sw           x5, 0(x4)  # cfg[124] (bank 0) · THCON_SEC1_REG3_Base_address · 0xffef01f0; write 0x00001207; cfg[124] (bank 0); THCON_SEC1_REG3_Base_address = 4615
+    1ec: 00522223  sw           x5, 4(x4)  # cfg[125] (bank 0) · THCON_SEC1_REG3_Base_cntx1_address · 0xffef01f4; write 0x00001207; cfg[125] (bank 0); THCON_SEC1_REG3_Base_cntx1_address = 4615
     1f0: c8a40002  SETC16       setc16_reg=41, setc16_value=0  # thread_cfg[41] (current thread); UNPACK_MISC_CFG_CfgContextOffset_0 = 0; UNPACK_MISC_CFG_CfgContextCntReset_0 = 0; UNPACK_MISC_CFG_CfgContextCntInc_0 = 0; UNPACK_MISC_CFG_CfgContextOffset_1 = 0; UNPACK_MISC_CFG_CfgContextCntReset_1 = 0; UNPACK_MISC_CFG_CfgContextCntInc_1 = 0; UNPACK_MISC_CFG_CfgContextCntReset_metadata = 0; UNPACK_MISC_CFG_CfgContextCntReset_metadata_zstart = 0
     1f4: ffef02b7  lui          x5, 0xffef0  # x5 = 0xffef0000 · cfg[0] (bank 0) · ALU_FORMAT_SPEC_REG_SrcA_val, ALU_FORMAT_SPEC_REG_SrcA_override, ALU_FORMAT_SPEC_REG_SrcB_val, ALU_FORMAT_SPEC_REG_SrcB_override, ALU_FORMAT_SPEC_REG_Dstacc_val, ALU_FORMAT_SPEC_REG_Dstacc_override
     1f8: 13028293  addi         x5, x5, 304  # x5 = 0xffef0130 · cfg[76] (bank 0) · THCON_SEC0_REG3_Base_address
@@ -229,9 +229,9 @@ loc_2c4:
     358: ffef0237  lui          x4, 0xffef0  # x4 = 0xffef0000 · cfg[0] (bank 0) · ALU_FORMAT_SPEC_REG_SrcA_val, ALU_FORMAT_SPEC_REG_SrcA_override, ALU_FORMAT_SPEC_REG_SrcB_val, ALU_FORMAT_SPEC_REG_SrcB_override, ALU_FORMAT_SPEC_REG_Dstacc_val, ALU_FORMAT_SPEC_REG_Dstacc_override
     35c: 13020213  addi         x4, x4, 304  # x4 = 0xffef0130 · cfg[76] (bank 0) · THCON_SEC0_REG3_Base_address
     360: 000012b7  lui          x5, 0x00001  # x5 = 0x00001000 · F32_TILE_BYTES · Wait.CFGEXU
-    364: f8728293  addi         x5, x5, -121  # x5 = 0x00000f87
-    368: 00522023  sw           x5, 0(x4)  # cfg[76] (bank 0) · THCON_SEC0_REG3_Base_address · 0xffef0130; write 0x00000f87; cfg[76] (bank 0); THCON_SEC0_REG3_Base_address = 3975
-    36c: 00522223  sw           x5, 4(x4)  # cfg[77] (bank 0) · THCON_SEC0_REG3_Base_cntx1_address · 0xffef0134; write 0x00000f87; cfg[77] (bank 0); THCON_SEC0_REG3_Base_cntx1_address = 3975
+    364: 28728293  addi         x5, x5, 647  # x5 = 0x00001287
+    368: 00522023  sw           x5, 0(x4)  # cfg[76] (bank 0) · THCON_SEC0_REG3_Base_address · 0xffef0130; write 0x00001287; cfg[76] (bank 0); THCON_SEC0_REG3_Base_address = 4743
+    36c: 00522223  sw           x5, 4(x4)  # cfg[77] (bank 0) · THCON_SEC0_REG3_Base_cntx1_address · 0xffef0134; write 0x00001287; cfg[77] (bank 0); THCON_SEC0_REG3_Base_cntx1_address = 4743
     370: c8a40002  SETC16       setc16_reg=41, setc16_value=0  # thread_cfg[41] (current thread); UNPACK_MISC_CFG_CfgContextOffset_0 = 0; UNPACK_MISC_CFG_CfgContextCntReset_0 = 0; UNPACK_MISC_CFG_CfgContextCntInc_0 = 0; UNPACK_MISC_CFG_CfgContextOffset_1 = 0; UNPACK_MISC_CFG_CfgContextCntReset_1 = 0; UNPACK_MISC_CFG_CfgContextCntInc_1 = 0; UNPACK_MISC_CFG_CfgContextCntReset_metadata = 0; UNPACK_MISC_CFG_CfgContextCntReset_metadata_zstart = 0
     374: c8140012  SETC16       setc16_reg=5, setc16_value=4  # thread_cfg[5] (current thread); SRCA_SET_Base = 0; SRCA_SET_SetOvrdWithAddr = 1
     378: ffe80237  lui          x4, 0xffe80  # x4 = 0xffe80000 · tensix_pc_buf + 0x0
@@ -281,9 +281,9 @@ loc_394:
     420: ffef0237  lui          x4, 0xffef0  # x4 = 0xffef0000 · cfg[0] (bank 0) · ALU_FORMAT_SPEC_REG_SrcA_val, ALU_FORMAT_SPEC_REG_SrcA_override, ALU_FORMAT_SPEC_REG_SrcB_val, ALU_FORMAT_SPEC_REG_SrcB_override, ALU_FORMAT_SPEC_REG_Dstacc_val, ALU_FORMAT_SPEC_REG_Dstacc_override
     424: 1f020213  addi         x4, x4, 496  # x4 = 0xffef01f0 · cfg[124] (bank 0) · THCON_SEC1_REG3_Base_address
     428: 000012b7  lui          x5, 0x00001  # x5 = 0x00001000 · F32_TILE_BYTES · Wait.CFGEXU
-    42c: f8728293  addi         x5, x5, -121  # x5 = 0x00000f87
-    430: 00522023  sw           x5, 0(x4)  # cfg[124] (bank 0) · THCON_SEC1_REG3_Base_address · 0xffef01f0; write 0x00000f87; cfg[124] (bank 0); THCON_SEC1_REG3_Base_address = 3975
-    434: 00522223  sw           x5, 4(x4)  # cfg[125] (bank 0) · THCON_SEC1_REG3_Base_cntx1_address · 0xffef01f4; write 0x00000f87; cfg[125] (bank 0); THCON_SEC1_REG3_Base_cntx1_address = 3975
+    42c: 28728293  addi         x5, x5, 647  # x5 = 0x00001287
+    430: 00522023  sw           x5, 0(x4)  # cfg[124] (bank 0) · THCON_SEC1_REG3_Base_address · 0xffef01f0; write 0x00001287; cfg[124] (bank 0); THCON_SEC1_REG3_Base_address = 4743
+    434: 00522223  sw           x5, 4(x4)  # cfg[125] (bank 0) · THCON_SEC1_REG3_Base_cntx1_address · 0xffef01f4; write 0x00001287; cfg[125] (bank 0); THCON_SEC1_REG3_Base_cntx1_address = 4743
     438: c8a40002  SETC16       setc16_reg=41, setc16_value=0  # thread_cfg[41] (current thread); UNPACK_MISC_CFG_CfgContextOffset_0 = 0; UNPACK_MISC_CFG_CfgContextCntReset_0 = 0; UNPACK_MISC_CFG_CfgContextCntInc_0 = 0; UNPACK_MISC_CFG_CfgContextOffset_1 = 0; UNPACK_MISC_CFG_CfgContextCntReset_1 = 0; UNPACK_MISC_CFG_CfgContextCntInc_1 = 0; UNPACK_MISC_CFG_CfgContextCntReset_metadata = 0; UNPACK_MISC_CFG_CfgContextCntReset_metadata_zstart = 0
     43c: ffef02b7  lui          x5, 0xffef0  # x5 = 0xffef0000 · cfg[0] (bank 0) · ALU_FORMAT_SPEC_REG_SrcA_val, ALU_FORMAT_SPEC_REG_SrcA_override, ALU_FORMAT_SPEC_REG_SrcB_val, ALU_FORMAT_SPEC_REG_SrcB_override, ALU_FORMAT_SPEC_REG_Dstacc_val, ALU_FORMAT_SPEC_REG_Dstacc_override
     440: 13028293  addi         x5, x5, 304  # x5 = 0xffef0130 · cfg[76] (bank 0) · THCON_SEC0_REG3_Base_address
@@ -322,8 +322,8 @@ loc_394:
     4c4: 00042203  lw           x4, 0(x8)  # riscv_local_mem + 0x820 · 0xffb00820
     4c8: 000012b7  lui          x5, 0x00001  # x5 = 0x00001000 · F32_TILE_BYTES · Wait.CFGEXU
     4cc: 00520233  add          x4, x4, x5
-    4d0: 00010337  lui          x6, 0x00010  # x6 = 0x00010000
-    4d4: 08030313  addi         x6, x6, 128  # x6 = 0x00010080
+    4d0: 00013337  lui          x6, 0x00013  # x6 = 0x00013000
+    4d4: 08030313  addi         x6, x6, 128  # x6 = 0x00013080
     4d8: 00626663  bltu         x4, x6, 0x000004e4  # target 0x000004e4
     4dc: 000013b7  lui          x7, 0x00001  # x7 = 0x00001000 · F32_TILE_BYTES · Wait.CFGEXU
     4e0: 40720233  sub          x4, x4, x7

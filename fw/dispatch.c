@@ -72,8 +72,7 @@ static void run(packet *p, packet *end) {
   exec(p, next < end && next->op == OP_EXEC ? next : 0);
 }
 
-static void call(packet *p) {
-  u32 lo = p->a_lo, hi = p->a_hi, size = p->c;
+static void call_buffer(u32 lo, u32 hi, u32 size) {
   if (size) noc_move(0, 0, lo, hi, 0, MIN(size, GRAPH_CHUNK), GRAPH_L1, 2);
   for (u32 at = 0, b = 0; at < size; at += GRAPH_CHUNK, b ^= 1) {
     noc_wait(0, 2, 1);
@@ -81,6 +80,15 @@ static void call(packet *p) {
     if (next < size) noc_move(0, 0, lo, hi, next, MIN(size - next, GRAPH_CHUNK), GRAPH_L1 + (b ^ 1) * GRAPH_CHUNK, 2);
     packet *end = (packet *)(chunk + n);
     for (packet *q = (packet *)chunk; q < end; q++) run(q, end);
+  }
+}
+
+static void call(packet *p) {
+  u32 lo = p->a_lo, hi = p->a_hi, size = p->c, count = p->b_lo ? p->b_lo : 1, stride = p->b_hi;
+  for (u32 i = 0; i < count; i++) {
+    call_buffer(lo, hi, size);
+    lo += stride;
+    hi += lo < stride;
   }
 }
 

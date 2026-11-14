@@ -1,0 +1,69 @@
+{
+ "model": "8b-fp8",
+ "variant": "nodram+t1halfsfpu",
+ "device": 1,
+ "tokens": 24,
+ "period_us": 14229.304598765431,
+ "tokens_match": "0/24",
+ "patches": [
+  "down/brisc.v0: read length 0x00000800 -> 64 B at 0x6a8",
+  "down/brisc.v1: read length 0x00000800 -> 64 B at 0x6a8",
+  "gate/brisc: read length 0x00000800 -> 64 B at 0x6f0",
+  "lm/brisc: read length 0x00000800 -> 64 B at 0x5c0",
+  "o/brisc: read length 0x00000800 -> 64 B at 0x5c4",
+  "qkv/brisc: read length 0x00000800 -> 64 B at 0x81c",
+  "down/trisc1: 16 dot-loop SFPU REPLAYs -> NOP",
+  "gate/trisc1: 16 dot-loop SFPU REPLAYs -> NOP",
+  "lm/trisc1: 16 dot-loop SFPU REPLAYs -> NOP",
+  "o/trisc1: 16 dot-loop SFPU REPLAYs -> NOP",
+  "qkv/trisc1: 16 dot-loop SFPU REPLAYs -> NOP"
+ ],
+ "kernels": {
+  "embedding": {
+   "us_per_launch": 5.210308641975309,
+   "launches_per_token": 1,
+   "us_per_token": 5.210308641975309
+  },
+  "qkv": {
+   "us_per_launch": 50.33983989197531,
+   "launches_per_token": 32,
+   "us_per_token": 1610.87487654321
+  },
+  "attention": {
+   "us_per_launch": 40.02100405092592,
+   "launches_per_token": 32,
+   "us_per_token": 1280.6721296296294
+  },
+  "attention_merge": {
+   "us_per_launch": 8.54862461419753,
+   "launches_per_token": 32,
+   "us_per_token": 273.555987654321
+  },
+  "o": {
+   "us_per_launch": 39.160563271604936,
+   "launches_per_token": 32,
+   "us_per_token": 1253.138024691358
+  },
+  "gate": {
+   "us_per_launch": 180.1184693287037,
+   "launches_per_token": 32,
+   "us_per_token": 5763.791018518518
+  },
+  "down": {
+   "us_per_launch": 96.32483314043209,
+   "launches_per_token": 32,
+   "us_per_token": 3082.394660493827
+  },
+  "lm": {
+   "us_per_launch": 919.8362962962962,
+   "launches_per_token": 1,
+   "us_per_token": 919.8362962962962
+  },
+  "argmax": {
+   "us_per_launch": 9.229506172839505,
+   "launches_per_token": 1,
+   "us_per_token": 9.229506172839505
+  }
+ },
+ "when": "2026-11-13 02:29:27"
+}

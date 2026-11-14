@@ -1,0 +1,74 @@
+{
+ "model": "8b-bf16",
+ "variant": "nodram+t0semfix+t1nosync",
+ "device": 1,
+ "tokens": 24,
+ "period_us": 16704.810709876543,
+ "tokens_match": "0/24",
+ "patches": [
+  "down/brisc.v0: read length 0x00000800 -> 64 B at 0x5b0",
+  "down/brisc.v1: read length 0x00000800 -> 64 B at 0x5b0",
+  "gate/brisc: read length 0x00000800 -> 64 B at 0x6cc",
+  "lm/brisc: read length 0x00000800 -> 64 B at 0x5a4",
+  "o/brisc: read length 0x00000800 -> 64 B at 0x4e4",
+  "qkv/brisc: read length 0x00000800 -> 64 B at 0x7fc",
+  "down/trisc0: hot loop 0x228-0x3a8, 5 words patched (strict)",
+  "gate/trisc0: hot loop 0x684-0x804, 5 words patched (strict)",
+  "lm/trisc0: hot loop 0x638-0x7b8, 5 words patched (strict)",
+  "o/trisc0: hot loop 0x228-0x3a8, 5 words patched (strict)",
+  "qkv/trisc0: hot loop 0x664-0x7e4, 5 words patched (strict)",
+  "down/trisc1: 1 per-tile STALLWAIT[SYNC<-MATH|SFPU] -> NOP",
+  "gate/trisc1: 1 per-tile STALLWAIT[SYNC<-MATH|SFPU] -> NOP",
+  "lm/trisc1: 1 per-tile STALLWAIT[SYNC<-MATH|SFPU] -> NOP",
+  "o/trisc1: 1 per-tile STALLWAIT[SYNC<-MATH|SFPU] -> NOP",
+  "qkv/trisc1: 1 per-tile STALLWAIT[SYNC<-MATH|SFPU] -> NOP"
+ ],
+ "kernels": {
+  "embedding": {
+   "us_per_launch": 5.306018518518518,
+   "launches_per_token": 1,
+   "us_per_token": 5.306018518518518
+  },
+  "qkv": {
+   "us_per_launch": 60.91317226080247,
+   "launches_per_token": 32,
+   "us_per_token": 1949.221512345679
+  },
+  "attention": {
+   "us_per_launch": 39.63773630401234,
+   "launches_per_token": 32,
+   "us_per_token": 1268.407561728395
+  },
+  "attention_merge": {
+   "us_per_launch": 8.507674575617283,
+   "launches_per_token": 32,
+   "us_per_token": 272.24558641975307
+  },
+  "o": {
+   "us_per_launch": 45.45343846450618,
+   "launches_per_token": 32,
+   "us_per_token": 1454.5100308641977
+  },
+  "gate": {
+   "us_per_launch": 238.40557773919753,
+   "launches_per_token": 32,
+   "us_per_token": 7628.978487654321
+  },
+  "down": {
+   "us_per_launch": 96.54474247685182,
+   "launches_per_token": 32,
+   "us_per_token": 3089.4317592592583
+  },
+  "lm": {
+   "us_per_launch": 996.2872839506172,
+   "launches_per_token": 1,
+   "us_per_token": 996.2872839506172
+  },
+  "argmax": {
+   "us_per_launch": 8.939012345679012,
+   "launches_per_token": 1,
+   "us_per_token": 8.939012345679012
+  }
+ },
+ "when": "2026-11-13 02:36:40"
+}

@@ -9,7 +9,7 @@ static NORETURN launch(void) {
   wait8(SYNC, 0x80);
   for (u32 i = 0; i < 64; i++) write32(REGFILE + 4 * i, 0);  /* kernels assume zeroed Tensix GPRs */
   u32 slot = SLOT_OFFSET(read32(GO_SIGNAL));  /* stays put until every RISC has returned */
-  if (read32(LAUNCH + slot) & (4 << TRISC)) JUMP(CODE_TRISC0 + TRISC * 0x1000 + slot);
+  if (read32(LAUNCH + slot) & (4 << TRISC)) JUMP(CODE_TRISC0 + TRISC * CODE_TRISC_SIZE + slot);
   JUMP(FW + 4);
 }
 

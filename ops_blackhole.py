@@ -45,8 +45,11 @@ class BlackholeComputeQueue(HWQueue):
     """Copy code to the workers, launch, and wait for all of them. profile names two 16-byte timestamp slots."""
     assert args % 64 == 0 and (args or not prg.args_size) and profile % 16 == 0
     return self.q(Op.EXEC, prg.addr, args, profile)
-  def call(self, addr:int, size:int): return self.q(Op.CALL, addr, 0, size)  # AMD's indirect buffer: run packets in DRAM
-  def submit(self, dev): dev.compute_queue.push(bytes(self._q))
+  def call(self, addr:int, size:int, count:int=1, stride:int=0):
+    """Run count command buffers at addr + i * stride. Each buffer contains size bytes of packets."""
+    assert 0 < count < 1 << 32 and 0 <= stride < 1 << 32 and (count == 1 or stride >= size and stride % 64 == 0)
+    return self.q(Op.CALL, addr, count | stride << 32, size)
+  def submit(self, dev, timeout=10.0): dev.compute_queue.push(bytes(self._q), timeout=timeout)
 
 class BlackholeDMAQueue(HWQueue):
   def copy(self, dst:int, src:int, size:int):
@@ -67,9 +70,10 @@ class BlackholeGraph:
   def __call__(self, start:int=0, count:int=1, timeout=10.0) -> int:
     """Run instances start..start+count and wait. Returns the host submission time in ns."""
     assert 0 <= start and 0 < count and start + count <= self.count
-    t, q = time.perf_counter_ns(), BlackholeComputeQueue()
-    for i in range(start, start + count): q.call(self.addr + i * self.stride, self.size)
-    q.signal(self.dev.timeline_signal, self.dev.next_timeline()).submit(self.dev)
+    t = time.perf_counter_ns()
+    q = BlackholeComputeQueue().call(self.addr + start * self.stride, self.size, count, self.stride)
+    # Honor the execution timeout if earlier work is still occupying the ring.
+    q.signal(self.dev.timeline_signal, self.dev.next_timeline()).submit(self.dev, timeout=timeout)
     elapsed = time.perf_counter_ns() - t
     self.dev.synchronize(timeout)
     return elapsed

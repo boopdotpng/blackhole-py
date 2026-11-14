@@ -1,7 +1,7 @@
 # llama3 1b decode: gate, trisc1. Exported from blackhole-py/examples/llama3/kernels.py by tools/rewrite_export/export_llama3.py.
 # cores (88): 1,2 2,2 3,2 4,2 5,2 6,2 7,2 10,2 11,2 12,2 13,2 1,3 2,3 3,3 4,3 5,3 6,3 7,3 10,3 11,3 12,3 13,3 1,4 2,4 3,4 4,4 5,4 6,4 7,4 10,4 11,4 12,4 13,4 1,5 2,5 3,5 4,5 5,5 6,5 7,5 10,5 11,5 12,5 13,5 1,6 2,6 3,6 4,6 5,6 6,6 7,6 10,6 11,6 12,6 13,6 1,7 2,7 3,7 4,7 5,7 6,7 7,7 10,7 11,7 12,7 13,7 1,8 2,8 3,8 4,8 5,8 6,8 7,8 10,8 11,8 12,8 13,8 1,9 2,9 3,9 4,9 5,9 6,9 7,9 10,9 11,9 12,9 13,9
-# params: 0x780=e2e_x_b_decode_token, 0x784=e2e_l0_gate, 0x788=e2e_l0_up, 0x78c=e2e_hidden_dense, 0x790=e2e_l0_post_norm, 0xe940=e2e_gate, 0xe944=e2e_l0_gate_row_start, 0xe948=e2e_up, 0xe94c=e2e_l0_up_row_start, 0xe950=dense_start, 0xe954=e2e_l0_gate_rows, 0xe958=e2e_l0_up_rows, 0xe95c=dram_port
-#   0x780.. uniform, sent with every EXEC; 0xe840.. this core's resident per-core table
+# params: 0x780=e2e_x_b_decode_token, 0x784=e2e_l0_gate, 0x788=e2e_l0_up, 0x78c=e2e_hidden_dense, 0x790=e2e_l0_post_norm, 0x11940=e2e_gate, 0x11944=e2e_l0_gate_row_start, 0x11948=e2e_up, 0x1194c=e2e_l0_up_row_start, 0x11950=dense_start, 0x11954=e2e_l0_gate_rows, 0x11958=e2e_l0_up_rows, 0x1195c=dram_port
+#   0x780.. uniform, sent with every EXEC; 0x11840.. this core's resident per-core table
 # pcs are offsets from the image start; position-independent, llama3.py runs it from either code slot.
 
       0: 100000c4  REPLAY       start_idx=0, len=3, execute_while_loading=0, load_mode=1
@@ -297,9 +297,9 @@
     488: 00522e23  sw           x5, 28(x4)  # MopCfg[7] · Loop0Last / SkipA0 · 0xffb8001c; write 0x27c0c000; MOP template instruction · ELWMUL clear_dvalid=3, dest_accum_en=0, instr_mod19=0, addr_mode=3, dst=0
     48c: 270082b7  lui          x5, 0x27008  # x5 = 0x27008000
     490: 02522023  sw           x5, 32(x4)  # MopCfg[8] · Loop1Last / SkipB · 0xffb80020; write 0x27008000; MOP template instruction · ELWMUL clear_dvalid=0, dest_accum_en=0, instr_mod19=0, addr_mode=2, dst=0
-    494: 0000f2b7  lui          x5, 0x0000f  # x5 = 0x0000f000
-    498: 95428293  addi         x5, x5, -1708  # x5 = 0x0000e954
-    49c: 0002a203  lw           x4, 0(x5)  # param e2e_l0_gate_rows; 0x0000e954
+    494: 000122b7  lui          x5, 0x00012  # x5 = 0x00012000 · TensixL1.KERNEL_CACHE_BASE
+    498: 95428293  addi         x5, x5, -1708  # x5 = 0x00011954
+    49c: 0002a203  lw           x4, 0(x5)  # param e2e_l0_gate_rows; 0x00011954
     4a0: 00000293  addi         x5, x0, 0  # x5 = 0x00000000
     4a4: 00020313  addi         x6, x4, 0
 loc_4a8:
@@ -312,9 +312,9 @@ loc_4a8:
     4c0: 00128293  addi         x5, x5, 1
     4c4: fe5ff06f  jal          x0, 0x000004a8  # target 0x000004a8
 loc_4c8:
-    4c8: 0000f2b7  lui          x5, 0x0000f  # x5 = 0x0000f000
-    4cc: 95828293  addi         x5, x5, -1704  # x5 = 0x0000e958
-    4d0: 0002a203  lw           x4, 0(x5)  # param e2e_l0_up_rows; 0x0000e958
+    4c8: 000122b7  lui          x5, 0x00012  # x5 = 0x00012000 · TensixL1.KERNEL_CACHE_BASE
+    4cc: 95828293  addi         x5, x5, -1704  # x5 = 0x00011958
+    4d0: 0002a203  lw           x4, 0(x5)  # param e2e_l0_up_rows; 0x00011958
     4d4: 00000293  addi         x5, x0, 0  # x5 = 0x00000000
     4d8: 00020313  addi         x6, x4, 0
 loc_4dc:

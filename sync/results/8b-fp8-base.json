@@ -1,0 +1,57 @@
+{
+ "model": "8b-fp8",
+ "variant": "base",
+ "device": 0,
+ "tokens": 24,
+ "period_us": 19774.39648148148,
+ "tokens_match": "24/24",
+ "patches": [],
+ "kernels": {
+  "embedding": {
+   "us_per_launch": 5.236574074074073,
+   "launches_per_token": 1,
+   "us_per_token": 5.236574074074073
+  },
+  "qkv": {
+   "us_per_launch": 63.316644483024696,
+   "launches_per_token": 32,
+   "us_per_token": 2026.1326234567903
+  },
+  "attention": {
+   "us_per_launch": 40.020504436728395,
+   "launches_per_token": 32,
+   "us_per_token": 1280.6561419753086
+  },
+  "attention_merge": {
+   "us_per_launch": 8.545326003086418,
+   "launches_per_token": 32,
+   "us_per_token": 273.45043209876536
+  },
+  "o": {
+   "us_per_launch": 47.28140914351851,
+   "launches_per_token": 32,
+   "us_per_token": 1513.0050925925923
+  },
+  "gate": {
+   "us_per_launch": 248.25113715277777,
+   "launches_per_token": 32,
+   "us_per_token": 7944.036388888889
+  },
+  "down": {
+   "us_per_launch": 144.3274151234568,
+   "launches_per_token": 32,
+   "us_per_token": 4618.477283950618
+  },
+  "lm": {
+   "us_per_launch": 2074.9426851851854,
+   "launches_per_token": 1,
+   "us_per_token": 2074.9426851851854
+  },
+  "argmax": {
+   "us_per_launch": 9.196882716049382,
+   "launches_per_token": 1,
+   "us_per_token": 9.196882716049382
+  }
+ },
+ "when": "2026-11-13 02:26:49"
+}

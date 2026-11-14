@@ -1,13 +1,13 @@
 # llama3 1b decode: embedding, brisc. Exported from blackhole-py/examples/llama3/kernels.py by tools/rewrite_export/export_llama3.py.
 # cores (1): 1,2
 # params: 0x780=e2e_token_history, 0x784=e2e_embedding_weight, 0x788=e2e_x_a, 0x78c=token_pos
-#   0x780.. uniform, sent with every EXEC; 0xe840.. this core's resident per-core table
+#   0x780.. uniform, sent with every EXEC; 0x11840.. this core's resident per-core table
 # pcs are offsets from the image start; position-independent, llama3.py runs it from either code slot.
 
       0: ffb014b7  lui          x9, 0xffb01  # x9 = 0xffb01000
       4: 87848493  addi         x9, x9, -1928  # x9 = 0xffb00878 · riscv_local_mem + 0x878
-      8: 00010537  lui          x10, 0x00010  # x10 = 0x00010000
-      c: 00a4a023  sw           x10, 0(x9)  # riscv_local_mem + 0x878 · 0xffb00878; write 0x00010000
+      8: 00013537  lui          x10, 0x00013  # x10 = 0x00013000
+      c: 00a4a023  sw           x10, 0(x9)  # riscv_local_mem + 0x878 · 0xffb00878; write 0x00013000
      10: ffb014b7  lui          x9, 0xffb01  # x9 = 0xffb01000
      14: 87c48493  addi         x9, x9, -1924  # x9 = 0xffb0087c · riscv_local_mem + 0x87c
      18: 0004a023  sw           x0, 0(x9)  # riscv_local_mem + 0x87c · 0xffb0087c; write 0x00000000
@@ -23,7 +23,7 @@
      40: 2f8000ef  jal          x1, 0x00000338  # target 0x00000338; x1 = 0x00000044
      44: 00040f93  addi         x31, x8, 0
      48: 00048f13  addi         x30, x9, 0
-     4c: 0000feb7  lui          x29, 0x0000f  # x29 = 0x0000f000
+     4c: 00012eb7  lui          x29, 0x00012  # x29 = 0x00012000 · TensixL1.KERNEL_CACHE_BASE
 loc_50:
      50: ffb20ab7  lui          x21, 0xffb20  # x21 = 0xffb20000 · noc0_regs + 0x0
      54: 244a8a93  addi         x21, x21, 580  # x21 = 0xffb20244 · noc0_regs + 0x244
@@ -47,7 +47,7 @@ loc_8c:
      90: 01fba023  sw           x31, 0(x23)  # noc0_regs + 0x0 · 0xffb20000; write runtime value
      94: 000ba223  sw           x0, 4(x23)  # noc0_regs + 0x4 · 0xffb20004; write 0x00000000
      98: 01eba423  sw           x30, 8(x23)  # noc0_regs + 0x8 · 0xffb20008; write runtime value
-     9c: 01dba623  sw           x29, 12(x23)  # noc0_regs + 0xc · 0xffb2000c; write 0x0000f000
+     9c: 01dba623  sw           x29, 12(x23)  # noc0_regs + 0xc · 0xffb2000c; write 0x00012000
      a0: 000ba823  sw           x0, 16(x23)  # noc0_regs + 0x10 · 0xffb20010; write 0x00000000
      a4: 014baa23  sw           x20, 20(x23)  # noc0_regs + 0x14 · 0xffb20014; write runtime value
      a8: 40000c13  addi         x24, x0, 1024  # x24 = 0x00000400
@@ -71,7 +71,7 @@ loc_e0:
 loc_ec:
      ec: 24c000ef  jal          x1, 0x00000338  # target 0x00000338; x1 = 0x000000f0
      f0: 00231313  slli         x6, x6, 2
-     f4: 0000f437  lui          x8, 0x0000f  # x8 = 0x0000f000
+     f4: 00012437  lui          x8, 0x00012  # x8 = 0x00012000 · TensixL1.KERNEL_CACHE_BASE
      f8: 00830333  add          x6, x6, x8
      fc: 00032383  lw           x7, 0(x6)  # Address depends on runtime register values
     100: 00139413  slli         x8, x7, 1
@@ -113,7 +113,7 @@ loc_140:
     188: 00001537  lui          x10, 0x00001  # x10 = 0x00001000 · F32_TILE_BYTES · Wait.CFGEXU
     18c: 80050513  addi         x10, x10, -2048  # x10 = 0x00000800
     190: 00a484b3  add          x9, x9, x10
-    194: 000115b7  lui          x11, 0x00011  # x11 = 0x00011000
+    194: 000145b7  lui          x11, 0x00014  # x11 = 0x00014000
     198: 00b4e663  bltu         x9, x11, 0x000001a4  # target 0x000001a4
     19c: 00001637  lui          x12, 0x00001  # x12 = 0x00001000 · F32_TILE_BYTES · Wait.CFGEXU
     1a0: 40c484b3  sub          x9, x9, x12
@@ -174,7 +174,7 @@ loc_228:
     270: 00001537  lui          x10, 0x00001  # x10 = 0x00001000 · F32_TILE_BYTES · Wait.CFGEXU
     274: 80050513  addi         x10, x10, -2048  # x10 = 0x00000800
     278: 00a484b3  add          x9, x9, x10
-    27c: 000115b7  lui          x11, 0x00011  # x11 = 0x00011000
+    27c: 000145b7  lui          x11, 0x00014  # x11 = 0x00014000
     280: 00b4e663  bltu         x9, x11, 0x0000028c  # target 0x0000028c
     284: 00001637  lui          x12, 0x00001  # x12 = 0x00001000 · F32_TILE_BYTES · Wait.CFGEXU
     288: 40c484b3  sub          x9, x9, x12

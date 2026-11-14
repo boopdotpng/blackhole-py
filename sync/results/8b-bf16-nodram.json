@@ -1,0 +1,64 @@
+{
+ "model": "8b-bf16",
+ "variant": "nodram",
+ "device": 1,
+ "tokens": 24,
+ "period_us": 16805.362283950617,
+ "tokens_match": "0/24",
+ "patches": [
+  "down/brisc.v0: read length 0x00000800 -> 64 B at 0x5b0",
+  "down/brisc.v1: read length 0x00000800 -> 64 B at 0x5b0",
+  "gate/brisc: read length 0x00000800 -> 64 B at 0x6cc",
+  "lm/brisc: read length 0x00000800 -> 64 B at 0x5a4",
+  "o/brisc: read length 0x00000800 -> 64 B at 0x4e4",
+  "qkv/brisc: read length 0x00000800 -> 64 B at 0x7fc"
+ ],
+ "kernels": {
+  "embedding": {
+   "us_per_launch": 5.29037037037037,
+   "launches_per_token": 1,
+   "us_per_token": 5.29037037037037
+  },
+  "qkv": {
+   "us_per_launch": 61.01992766203703,
+   "launches_per_token": 32,
+   "us_per_token": 1952.6376851851849
+  },
+  "attention": {
+   "us_per_launch": 39.638836805555556,
+   "launches_per_token": 32,
+   "us_per_token": 1268.4427777777778
+  },
+  "attention_merge": {
+   "us_per_launch": 8.510559413580246,
+   "launches_per_token": 32,
+   "us_per_token": 272.3379012345679
+  },
+  "o": {
+   "us_per_launch": 45.47220679012346,
+   "launches_per_token": 32,
+   "us_per_token": 1455.1106172839507
+  },
+  "gate": {
+   "us_per_launch": 238.55468653549383,
+   "launches_per_token": 32,
+   "us_per_token": 7633.7499691358025
+  },
+  "down": {
+   "us_per_launch": 99.4295023148148,
+   "launches_per_token": 32,
+   "us_per_token": 3181.7440740740735
+  },
+  "lm": {
+   "us_per_launch": 996.8617592592592,
+   "launches_per_token": 1,
+   "us_per_token": 996.8617592592592
+  },
+  "argmax": {
+   "us_per_launch": 8.940154320987654,
+   "launches_per_token": 1,
+   "us_per_token": 8.940154320987654
+  }
+ },
+ "when": "2026-11-13 02:31:38"
+}

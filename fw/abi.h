@@ -31,12 +31,13 @@
 #define CODE_BRISC        0x800
 #define CODE_NCRISC       0x2800
 #define CODE_TRISC0       0x4800
-#define CODE_TRISC1       0x5800
-#define CODE_TRISC2       0x6800
-#define CODE_END          0x7800
-#define SLOT_STRIDE       (CODE_END - LAUNCH)  /* 0x7040: slot 1 = [LAUNCH, CODE_END) + SLOT_STRIDE = [0x7800, 0xE840) */
+#define CODE_TRISC1       0x6000
+#define CODE_TRISC2       0x7800
+#define CODE_TRISC_SIZE   0x1800   /* each TRISC slot; fused attention (RoPE, split KV, merge) needs more than 4 KiB */
+#define CODE_END          0x9000
+#define SLOT_STRIDE       (CODE_END - LAUNCH)  /* 0x8840: slot 1 = [LAUNCH, CODE_END) + SLOT_STRIDE = [0x9000, 0x11840) */
 #define SLOT_OFFSET(go)   ((go) >> GO_SLOT_BIT & 1 ? SLOT_STRIDE : 0)
-#define DATA_BASE         (CODE_END + SLOT_STRIDE)  /* 0xE840: everything from here up is free for kernels */
+#define DATA_BASE         (CODE_END + SLOT_STRIDE)  /* 0x11840: everything from here up is free for kernels */
 
 /* Stacks live in each RISC's private local memory, not L1 */
 #define STACK_TOP         0xFFB01FF0
@@ -55,7 +56,8 @@
 #define OP_WAIT           2  /* until *a >= b, or *a == b if c */
 #define OP_STORE          3  /* *a = b */
 #define OP_TIMESTAMP      4  /* *a = wall clock */
-#define OP_CALL           5  /* run c bytes of packets at a (DRAM or host), then continue. CQ only, not nested */
+#define OP_CALL           5  /* run c bytes of packets at a (DRAM or host), b_lo times (0 = 1), advancing by b_hi bytes.
+                             * Each buffer finishes before the next starts. CQ only, not nested. */
 
 /* Addresses in packets are 64-bit: bit 63 set = DRAM, bits 56-61 log2(page), banks interleaved by page.
  * Otherwise bits 32-43 are a NoC coordinate (bits 60+ set = PCIe/host) and 0-31 the address there. */
@@ -70,6 +72,7 @@
 #define DONE_COUNT        (STATE + 0x30)  /* CQ: each worker core increments this when its kernels return */
 #define SCRATCH           (STATE + 0x40)  /* 0x80 per RISC, staging for 8-byte signal reads and writes */
 #define STATE_SIZE        0x140
+_Static_assert(STATE + STATE_SIZE <= 0x12000, "service-core state must end below GRAPH_L1");
 
 /* CQ descriptor: 8 u32 header words {cores, go_rects, args_bytes, payload_bytes,
  * payload_lo, payload_hi, transfers, reserved}, followed by GO rectangles, then transfers.

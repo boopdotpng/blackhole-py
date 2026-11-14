@@ -1,17 +1,17 @@
 # llama3 8b-bf16 decode: lm, ncrisc. Exported from blackhole-py/examples/llama3/kernels.py by tools/rewrite_export/export_llama3.py.
 # cores (88): 1,2 2,2 3,2 4,2 5,2 6,2 7,2 10,2 11,2 12,2 13,2 1,3 2,3 3,3 4,3 5,3 6,3 7,3 10,3 11,3 12,3 13,3 1,4 2,4 3,4 4,4 5,4 6,4 7,4 10,4 11,4 12,4 13,4 1,5 2,5 3,5 4,5 5,5 6,5 7,5 10,5 11,5 12,5 13,5 1,6 2,6 3,6 4,6 5,6 6,6 7,6 10,6 11,6 12,6 13,6 1,7 2,7 3,7 4,7 5,7 6,7 7,7 10,7 11,7 12,7 13,7 1,8 2,8 3,8 4,8 5,8 6,8 7,8 10,8 11,8 12,8 13,8 1,9 2,9 3,9 4,9 5,9 6,9 7,9 10,9 11,9 12,9 13,9
-# params: 0x780=e2e_x_a_decode_token, 0x784=e2e_lm_weight, 0x788=e2e_final_norm, 0xe9c0=e2e_logits, 0xe9c4=e2e_lm_weight_row_start, 0xe9c8=e2e_lm_weight_rows, 0xe9cc=dram_port
-#   0x780.. uniform, sent with every EXEC; 0xe840.. this core's resident per-core table
+# params: 0x780=e2e_x_a_decode_token, 0x784=e2e_lm_weight, 0x788=e2e_final_norm, 0x119c0=e2e_logits, 0x119c4=e2e_lm_weight_row_start, 0x119c8=e2e_lm_weight_rows, 0x119cc=dram_port
+#   0x780.. uniform, sent with every EXEC; 0x11840.. this core's resident per-core table
 # pcs are offsets from the image start; position-independent, llama3.py runs it from either code slot.
 
       0: ffb013b7  lui          x7, 0xffb01  # x7 = 0xffb01000
       4: 86438393  addi         x7, x7, -1948  # x7 = 0xffb00864 · riscv_local_mem + 0x864
-      8: 00013437  lui          x8, 0x00013  # x8 = 0x00013000
-      c: 0083a023  sw           x8, 0(x7)  # riscv_local_mem + 0x864 · 0xffb00864; write 0x00013000
+      8: 00016437  lui          x8, 0x00016  # x8 = 0x00016000
+      c: 0083a023  sw           x8, 0(x7)  # riscv_local_mem + 0x864 · 0xffb00864; write 0x00016000
      10: ffb013b7  lui          x7, 0xffb01  # x7 = 0xffb01000
      14: 86838393  addi         x7, x7, -1944  # x7 = 0xffb00868 · riscv_local_mem + 0x868
      18: 0003a023  sw           x0, 0(x7)  # riscv_local_mem + 0x868 · 0xffb00868; write 0x00000000
-     1c: 00016237  lui          x4, 0x00016  # x4 = 0x00016000
+     1c: 00019237  lui          x4, 0x00019  # x4 = 0x00019000
      20: 40000293  addi         x5, x0, 1024  # x5 = 0x00000400
 loc_24:
      24: 00022023  sw           x0, 0(x4)  # Address depends on runtime register values
@@ -25,9 +25,9 @@ loc_24:
      44: 02020213  addi         x4, x4, 32
      48: ff828293  addi         x5, x5, -8
      4c: fc029ce3  bne          x5, x0, 0x00000024  # target 0x00000024
-     50: 0000f2b7  lui          x5, 0x0000f  # x5 = 0x0000f000
-     54: 9c828293  addi         x5, x5, -1592  # x5 = 0x0000e9c8
-     58: 0002a203  lw           x4, 0(x5)  # param e2e_lm_weight_rows; 0x0000e9c8
+     50: 000122b7  lui          x5, 0x00012  # x5 = 0x00012000 · TensixL1.KERNEL_CACHE_BASE
+     54: 9c828293  addi         x5, x5, -1592  # x5 = 0x000119c8
+     58: 0002a203  lw           x4, 0(x5)  # param e2e_lm_weight_rows; 0x000119c8
      5c: 00000293  addi         x5, x0, 0  # x5 = 0x00000000
      60: 00020313  addi         x6, x4, 0
 loc_64:
@@ -62,7 +62,7 @@ loc_9c:
      cc: 0092d593  srli         x11, x5, 9
      d0: 00a59593  slli         x11, x11, 10
      d4: 00b4e4b3  or           x9, x9, x11
-     d8: 00016537  lui          x10, 0x00016  # x10 = 0x00016000
+     d8: 00019537  lui          x10, 0x00019  # x10 = 0x00019000
      dc: 00950533  add          x10, x10, x9
      e0: 00851023  sh           x8, 0(x10)  # Address depends on runtime register values
      e4: ffb01437  lui          x8, 0xffb01  # x8 = 0xffb01000
@@ -84,7 +84,7 @@ loc_9c:
     124: 00001437  lui          x8, 0x00001  # x8 = 0x00001000 · F32_TILE_BYTES · Wait.CFGEXU
     128: 80040413  addi         x8, x8, -2048  # x8 = 0x00000800
     12c: 008383b3  add          x7, x7, x8
-    130: 000144b7  lui          x9, 0x00014  # x9 = 0x00014000
+    130: 000174b7  lui          x9, 0x00017  # x9 = 0x00017000
     134: 0093e663  bltu         x7, x9, 0x00000140  # target 0x00000140
     138: 00001537  lui          x10, 0x00001  # x10 = 0x00001000 · F32_TILE_BYTES · Wait.CFGEXU
     13c: 40a383b3  sub          x7, x7, x10
@@ -101,7 +101,7 @@ loc_154:
     160: 000b0293  addi         x5, x22, 0
     164: 0e0000ef  jal          x1, 0x00000244  # target 0x00000244; x1 = 0x00000168
     168: 0f8000ef  jal          x1, 0x00000260  # target 0x00000260; x1 = 0x0000016c
-    16c: 00016fb7  lui          x31, 0x00016  # x31 = 0x00016000
+    16c: 00019fb7  lui          x31, 0x00019  # x31 = 0x00019000
     170: 00020f13  addi         x30, x4, 0
     174: 00028e93  addi         x29, x5, 0
     178: 104000ef  jal          x1, 0x0000027c  # target 0x0000027c; x1 = 0x0000017c
@@ -113,8 +113,8 @@ loc_154:
     190: 000b0293  addi         x5, x22, 0
     194: 0b0000ef  jal          x1, 0x00000244  # target 0x00000244; x1 = 0x00000198
     198: 0c8000ef  jal          x1, 0x00000260  # target 0x00000260; x1 = 0x0000019c
-    19c: 00017fb7  lui          x31, 0x00017  # x31 = 0x00017000
-    1a0: 800f8f93  addi         x31, x31, -2048  # x31 = 0x00016800
+    19c: 0001afb7  lui          x31, 0x0001a  # x31 = 0x0001a000
+    1a0: 800f8f93  addi         x31, x31, -2048  # x31 = 0x00019800
     1a4: 00020f13  addi         x30, x4, 0
     1a8: 00028e93  addi         x29, x5, 0
     1ac: 0d0000ef  jal          x1, 0x0000027c  # target 0x0000027c; x1 = 0x000001b0
@@ -122,9 +122,9 @@ loc_154:
     1b4: 0ac000ef  jal          x1, 0x00000260  # target 0x00000260; x1 = 0x000001b8
     1b8: 1800006f  jal          x0, 0x00000338  # target 0x00000338
 loc_1bc:
-    1bc: 0000fab7  lui          x21, 0x0000f  # x21 = 0x0000f000
-    1c0: 9c0a8a93  addi         x21, x21, -1600  # x21 = 0x0000e9c0
-    1c4: 000aaa03  lw           x20, 0(x21)  # param e2e_logits; 0x0000e9c0
+    1bc: 00012ab7  lui          x21, 0x00012  # x21 = 0x00012000 · TensixL1.KERNEL_CACHE_BASE
+    1c0: 9c0a8a93  addi         x21, x21, -1600  # x21 = 0x000119c0
+    1c4: 000aaa03  lw           x20, 0(x21)  # param e2e_logits; 0x000119c0
     1c8: 007a7d13  andi         x26, x20, 7
     1cc: ff8a7a13  andi         x20, x20, -8
     1d0: 01af8ab3  add          x21, x31, x26
@@ -134,9 +134,9 @@ loc_1bc:
     1e0: 014a8ab3  add          x21, x21, x20
     1e4: 00000b17  auipc        x22, 0x00000  # x22 = 0x000001e4
     1e8: 030b0b13  addi         x22, x22, 48  # x22 = 0x00000214
-    1ec: 0000feb7  lui          x29, 0x0000f  # x29 = 0x0000f000
-    1f0: 9cce8e93  addi         x29, x29, -1588  # x29 = 0x0000e9cc
-    1f4: 000ead83  lw           x27, 0(x29)  # param dram_port; 0x0000e9cc
+    1ec: 00012eb7  lui          x29, 0x00012  # x29 = 0x00012000 · TensixL1.KERNEL_CACHE_BASE
+    1f0: 9cce8e93  addi         x29, x29, -1588  # x29 = 0x000119cc
+    1f4: 000ead83  lw           x27, 0(x29)  # param dram_port; 0x000119cc
     1f8: 01000e13  addi         x28, x0, 16  # x28 = 0x00000010
     1fc: 03cd8db3  mul          x27, x27, x28
     200: 01bb0b33  add          x22, x22, x27

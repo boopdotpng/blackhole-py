@@ -1,20 +1,20 @@
 # llama3 1b decode: down, trisc2. Exported from blackhole-py/examples/llama3/kernels.py by tools/rewrite_export/export_llama3.py.
 # cores (88): 1,2 2,2 3,2 4,2 5,2 6,2 7,2 10,2 11,2 12,2 13,2 1,3 2,3 3,3 4,3 5,3 6,3 7,3 10,3 11,3 12,3 13,3 1,4 2,4 3,4 4,4 5,4 6,4 7,4 10,4 11,4 12,4 13,4 1,5 2,5 3,5 4,5 5,5 6,5 7,5 10,5 11,5 12,5 13,5 1,6 2,6 3,6 4,6 5,6 6,6 7,6 10,6 11,6 12,6 13,6 1,7 2,7 3,7 4,7 5,7 6,7 7,7 10,7 11,7 12,7 13,7 1,8 2,8 3,8 4,8 5,8 6,8 7,8 10,8 11,8 12,8 13,8 1,9 2,9 3,9 4,9 5,9 6,9 7,9 10,9 11,9 12,9 13,9
-# params: 0x780=e2e_hidden_dense_decode_token, 0x784=e2e_l0_down, 0x788=e2e_x_a, 0x78c=e2e_x_b, 0xe980=e2e_q_compact, 0xe984=e2e_l0_down_row_start, 0xe988=dense_start, 0xe98c=e2e_l0_down_rows
-#   0x780.. uniform, sent with every EXEC; 0xe840.. this core's resident per-core table
+# params: 0x780=e2e_hidden_dense_decode_token, 0x784=e2e_l0_down, 0x788=e2e_x_a, 0x78c=e2e_x_b, 0x11980=e2e_q_compact, 0x11984=e2e_l0_down_row_start, 0x11988=dense_start, 0x1198c=e2e_l0_down_rows
+#   0x780.. uniform, sent with every EXEC; 0x11840.. this core's resident per-core table
 # pcs are offsets from the image start; position-independent, llama3.py runs it from either code slot.
 
       0: ffb01a37  lui          x20, 0xffb01  # x20 = 0xffb01000
       4: 8c0a0a13  addi         x20, x20, -1856  # x20 = 0xffb008c0 · riscv_local_mem + 0x8c0
-      8: 00017ab7  lui          x21, 0x00017  # x21 = 0x00017000
-      c: 015a2023  sw           x21, 0(x20)  # riscv_local_mem + 0x8c0 · 0xffb008c0; write 0x00017000
+      8: 0001aab7  lui          x21, 0x0001a  # x21 = 0x0001a000
+      c: 015a2023  sw           x21, 0(x20)  # riscv_local_mem + 0x8c0 · 0xffb008c0; write 0x0001a000
      10: ffb01a37  lui          x20, 0xffb01  # x20 = 0xffb01000
      14: 8c4a0a13  addi         x20, x20, -1852  # x20 = 0xffb008c4 · riscv_local_mem + 0x8c4
      18: 000a2023  sw           x0, 0(x20)  # riscv_local_mem + 0x8c4 · 0xffb008c4; write 0x00000000
      1c: ffb01a37  lui          x20, 0xffb01  # x20 = 0xffb01000
      20: 8c8a0a13  addi         x20, x20, -1848  # x20 = 0xffb008c8 · riscv_local_mem + 0x8c8
-     24: 0001eab7  lui          x21, 0x0001e  # x21 = 0x0001e000
-     28: 015a2023  sw           x21, 0(x20)  # riscv_local_mem + 0x8c8 · 0xffb008c8; write 0x0001e000
+     24: 00021ab7  lui          x21, 0x00021  # x21 = 0x00021000
+     28: 015a2023  sw           x21, 0(x20)  # riscv_local_mem + 0x8c8 · 0xffb008c8; write 0x00021000
      2c: ffb01a37  lui          x20, 0xffb01  # x20 = 0xffb01000
      30: 8cca0a13  addi         x20, x20, -1844  # x20 = 0xffb008cc · riscv_local_mem + 0x8cc
      34: 000a2023  sw           x0, 0(x20)  # riscv_local_mem + 0x8cc · 0xffb008cc; write 0x00000000
@@ -83,9 +83,9 @@
     130: 000a2023  sw           x0, 0(x20)  # TensixMMIO.PC_BUF_SYNC · 0xffe80004; write 0x00000000
     134: 000a2a83  lw           x21, 0(x20)  # TensixMMIO.PC_BUF_SYNC · 0xffe80004
     138: 01507033  and          x0, x0, x21
-    13c: 0000f2b7  lui          x5, 0x0000f  # x5 = 0x0000f000
-    140: 98c28293  addi         x5, x5, -1652  # x5 = 0x0000e98c
-    144: 0002a203  lw           x4, 0(x5)  # param e2e_l0_down_rows; 0x0000e98c
+    13c: 000122b7  lui          x5, 0x00012  # x5 = 0x00012000 · TensixL1.KERNEL_CACHE_BASE
+    140: 98c28293  addi         x5, x5, -1652  # x5 = 0x0001198c
+    144: 0002a203  lw           x4, 0(x5)  # param e2e_l0_down_rows; 0x0001198c
     148: 00000293  addi         x5, x0, 0  # x5 = 0x00000000
     14c: 00020313  addi         x6, x4, 0
 loc_150:
@@ -172,7 +172,7 @@ loc_198:
     288: 00001ab7  lui          x21, 0x00001  # x21 = 0x00001000 · F32_TILE_BYTES · Wait.CFGEXU
     28c: 800a8a93  addi         x21, x21, -2048  # x21 = 0x00000800
     290: 015a0a33  add          x20, x20, x21
-    294: 00018b37  lui          x22, 0x00018  # x22 = 0x00018000
+    294: 0001bb37  lui          x22, 0x0001b  # x22 = 0x0001b000
     298: 016a6663  bltu         x20, x22, 0x000002a4  # target 0x000002a4
     29c: 00001bb7  lui          x23, 0x00001  # x23 = 0x00001000 · F32_TILE_BYTES · Wait.CFGEXU
     2a0: 417a0a33  sub          x20, x20, x23
@@ -344,8 +344,8 @@ loc_338:
     528: 00001ab7  lui          x21, 0x00001  # x21 = 0x00001000 · F32_TILE_BYTES · Wait.CFGEXU
     52c: 800a8a93  addi         x21, x21, -2048  # x21 = 0x00000800
     530: 015a0a33  add          x20, x20, x21
-    534: 0001fb37  lui          x22, 0x0001f  # x22 = 0x0001f000
-    538: 800b0b13  addi         x22, x22, -2048  # x22 = 0x0001e800
+    534: 00022b37  lui          x22, 0x00022  # x22 = 0x00022000
+    538: 800b0b13  addi         x22, x22, -2048  # x22 = 0x00021800
     53c: 016a6863  bltu         x20, x22, 0x0000054c  # target 0x0000054c
     540: 00001bb7  lui          x23, 0x00001  # x23 = 0x00001000 · F32_TILE_BYTES · Wait.CFGEXU
     544: 800b8b93  addi         x23, x23, -2048  # x23 = 0x00000800

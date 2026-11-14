@@ -1,0 +1,69 @@
+{
+ "model": "8b-fp8",
+ "variant": "nodram+t1nosfpu",
+ "device": 1,
+ "tokens": 24,
+ "period_us": 13924.483703703705,
+ "tokens_match": "0/24",
+ "patches": [
+  "down/brisc.v0: read length 0x00000800 -> 64 B at 0x6a8",
+  "down/brisc.v1: read length 0x00000800 -> 64 B at 0x6a8",
+  "gate/brisc: read length 0x00000800 -> 64 B at 0x6f0",
+  "lm/brisc: read length 0x00000800 -> 64 B at 0x5c0",
+  "o/brisc: read length 0x00000800 -> 64 B at 0x5c4",
+  "qkv/brisc: read length 0x00000800 -> 64 B at 0x81c",
+  "down/trisc1: 32 dot-loop SFPU REPLAYs -> NOP",
+  "gate/trisc1: 32 dot-loop SFPU REPLAYs -> NOP",
+  "lm/trisc1: 32 dot-loop SFPU REPLAYs -> NOP",
+  "o/trisc1: 32 dot-loop SFPU REPLAYs -> NOP",
+  "qkv/trisc1: 32 dot-loop SFPU REPLAYs -> NOP"
+ ],
+ "kernels": {
+  "embedding": {
+   "us_per_launch": 5.2034259259259255,
+   "launches_per_token": 1,
+   "us_per_token": 5.2034259259259255
+  },
+  "qkv": {
+   "us_per_launch": 48.65457754629629,
+   "launches_per_token": 32,
+   "us_per_token": 1556.9464814814812
+  },
+  "attention": {
+   "us_per_launch": 40.02292920524691,
+   "launches_per_token": 32,
+   "us_per_token": 1280.7337345679011
+  },
+  "attention_merge": {
+   "us_per_launch": 8.546445794753085,
+   "launches_per_token": 32,
+   "us_per_token": 273.4862654320987
+  },
+  "o": {
+   "us_per_launch": 38.048483796296296,
+   "launches_per_token": 32,
+   "us_per_token": 1217.5514814814815
+  },
+  "gate": {
+   "us_per_launch": 174.56388695987653,
+   "launches_per_token": 32,
+   "us_per_token": 5586.044382716049
+  },
+  "down": {
+   "us_per_launch": 95.19787229938271,
+   "launches_per_token": 32,
+   "us_per_token": 3046.3319135802467
+  },
+  "lm": {
+   "us_per_launch": 919.0910493827159,
+   "launches_per_token": 1,
+   "us_per_token": 919.0910493827159
+  },
+  "argmax": {
+   "us_per_launch": 9.227623456790122,
+   "launches_per_token": 1,
+   "us_per_token": 9.227623456790122
+  }
+ },
+ "when": "2026-11-13 02:32:10"
+}

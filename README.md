@@ -11,13 +11,13 @@ Llama 3 on a Tenstorrent Blackhole card, from Python. The kernels in `kernels/` 
 
 ## Performance
 
-Decode on a p150a, 64 tokens after a short prompt and after a 4096-token context.
+Decode on a p150a, 64 tokens after a short prompt and after a 4096-token context (`python bench.py`).
 
 | Model | Context | ms/token | tok/s | % DRAM |
 | --- | --- | ---: | ---: | ---: |
-| 1B BF16 | short | 6.27 | 159.4 | 77% |
-| 1B BF16 | 4K | 7.02 | 142.5 | 73% |
-| 8B FP8 | short | 19.79 | 50.5 | 79% |
-| 8B FP8 | 4K | 22.12 | 45.2 | 76% |
-| 8B BF16 | short | 33.38 | 30.0 | 88% |
-| 8B BF16 | 4K | 35.67 | 28.0 | 85% |
+| 1B BF16 | short | 5.96 | 167.9 | 81% |
+| 1B BF16 | 4K | 6.50 | 153.9 | 78% |
+| 8B FP8 | short | 18.81 | 53.2 | 83% |
+| 8B FP8 | 4K | 20.48 | 48.8 | 82% |
+| 8B BF16 | short | 32.43 | 30.8 | 90% |
+| 8B BF16 | 4K | 33.99 | 29.4 | 89% |

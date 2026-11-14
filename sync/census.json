@@ -1,0 +1,2192 @@
+{
+ "1b": [
+  {
+   "kernel": "argmax",
+   "risc": "brisc",
+   "insns": 570,
+   "tensix_sync": 0,
+   "risc_sync": 30,
+   "kinds": {
+    "risc:cb_reserve_back(acked)": 1,
+    "risc:fence": 7,
+    "risc:cb_poll": 1,
+    "risc:noc_poll": 20,
+    "risc:l1_flag_spin": 1
+   }
+  },
+  {
+   "kernel": "argmax",
+   "risc": "trisc0",
+   "insns": 314,
+   "tensix_sync": 16,
+   "risc_sync": 12,
+   "kinds": {
+    "risc:cb_wait_front(received)": 1,
+    "risc:fence": 2,
+    "tt:SEMWAIT[MATH_DONE]": 2,
+    "tt:SEMGET[MATH_DONE]": 2,
+    "risc:sem_poll(UNPACK_SYNC)": 4,
+    "risc:sem_post(UNPACK_SYNC)": 2,
+    "tt:STALLWAIT[UNPACK<-SRCA_CLR|SRCB_CLR]": 2,
+    "risc:mop_drain(PC_BUF_MOP_SYNC)": 1,
+    "tpl:UNPACR.set_dvalid": 4,
+    "tt:STALLWAIT[UNPACK<-UNPACK0|UNPACK1]": 2,
+    "tt:SEMGET[UNPACK_SYNC]": 2,
+    "risc:tensix_drain(PC_BUF_SYNC)": 2,
+    "tt:SEMPOST[UNPACK_TO_DEST]": 2
+   }
+  },
+  {
+   "kernel": "argmax",
+   "risc": "trisc1",
+   "insns": 500,
+   "tensix_sync": 19,
+   "risc_sync": 0,
+   "kinds": {
+    "tt:SEMWAIT[MATH_PACK]": 1,
+    "tt:STALLWAIT[CFG<-MATH|SFPU]": 1,
+    "tt:STALLWAIT[SYNC<-MATH|SFPU]": 3,
+    "tt:SEMPOST[MATH_DONE]": 2,
+    "tt:SEMWAIT[UNPACK_TO_DEST]": 2,
+    "tt:SEMGET[UNPACK_TO_DEST]": 2,
+    "tt:STALLWAIT[MATH<-SRCA_VLD|SRCB_VLD]": 2,
+    "tt:SETRWC.clear_ab_vld": 2,
+    "tt:STALLWAIT[SYNC<-MATH]": 2,
+    "tt:STALLWAIT[SFPU<-MATH]": 1,
+    "tt:SEMPOST[MATH_PACK]": 1
+   }
+  },
+  {
+   "kernel": "argmax",
+   "risc": "trisc2",
+   "insns": 172,
+   "tensix_sync": 6,
+   "risc_sync": 6,
+   "kinds": {
+    "tt:SEMWAIT[MATH_PACK]": 1,
+    "risc:cb_poll": 1,
+    "risc:fence": 2,
+    "risc:mop_drain(PC_BUF_MOP_SYNC)": 1,
+    "risc:tensix_drain(PC_BUF_SYNC)": 2,
+    "tt:STALLWAIT[CFG<-THCON|PACK0]": 1,
+    "tt:STALLWAIT[CFG<-PACK0]": 1,
+    "tt:STALLWAIT[SYNC<-PACK0]": 1,
+    "tt:ZEROACC": 1,
+    "tt:SEMGET[MATH_PACK]": 1
+   }
+  },
+  {
+   "kernel": "attention",
+   "risc": "brisc",
+   "insns": 881,
+   "tensix_sync": 0,
+   "risc_sync": 19,
+   "kinds": {
+    "risc:l1_flag_spin": 2,
+    "risc:fence": 9,
+    "risc:cb_poll": 3,
+    "risc:noc_poll": 5
+   }
+  },
+  {
+   "kernel": "attention",
+   "risc": "ncrisc",
+   "insns": 584,
+   "tensix_sync": 0,
+   "risc_sync": 19,
+   "kinds": {
+    "risc:cb_poll": 2,
+    "risc:fence": 7,
+    "risc:noc_poll": 10
+   }
+  },
+  {
+   "kernel": "attention",
+   "risc": "trisc0",
+   "insns": 759,
+   "tensix_sync": 20,
+   "risc_sync": 36,
+   "kinds": {
+    "risc:cb_wait_front(received)": 1,
+    "risc:fence": 12,
+    "risc:sem_poll(UNPACK_SYNC)": 9,
+    "risc:sem_post(UNPACK_SYNC)": 4,
+    "risc:cb_poll": 5,
+    "tt:STALLWAIT[UNPACK<-SRCA_CLR|SRCB_CLR]": 3,
+    "tt:STALLWAIT[UNPACK<-TRISC_CFG]": 4,
+    "tt:STALLWAIT[UNPACK<-UNPACK0|UNPACK1]": 3,
+    "tt:SEMGET[UNPACK_SYNC]": 4,
+    "risc:tensix_drain(PC_BUF_SYNC)": 4,
+    "risc:mop_drain(PC_BUF_MOP_SYNC)": 1,
+    "tpl:UNPACR.set_dvalid": 4,
+    "tt:STALLWAIT[UNPACK<-SRCA_CLR]": 1,
+    "tt:STALLWAIT[UNPACK<-UNPACK0]": 1
+   }
+  },
+  {
+   "kernel": "attention",
+   "risc": "trisc1",
+   "insns": 730,
+   "tensix_sync": 68,
+   "risc_sync": 6,
+   "kinds": {
+    "tt:SEMWAIT[MATH_PACK]": 11,
+    "risc:mop_drain(PC_BUF_MOP_SYNC)": 5,
+    "tpl:SETRWC.clear_ab_vld": 3,
+    "tt:STALLWAIT[CFG<-MATH|SFPU]": 8,
+    "tt:STALLWAIT[MATH<-SRCA_VLD]": 4,
+    "tt:STALLWAIT[CFG<-SFPU]": 12,
+    "tt:STALLWAIT[SFPU<-MATH]": 9,
+    "tt:STALLWAIT[SYNC<-MATH|SFPU]": 12,
+    "tt:SEMPOST[MATH_PACK]": 3,
+    "tt:ZEROACC": 1,
+    "risc:tensix_drain(PC_BUF_SYNC)": 1,
+    "tt:SETRWC.clear_ab_vld": 4,
+    "tt:STALLWAIT[SYNC<-SFPU]": 1
+   }
+  },
+  {
+   "kernel": "attention",
+   "risc": "trisc2",
+   "insns": 570,
+   "tensix_sync": 17,
+   "risc_sync": 18,
+   "kinds": {
+    "tt:SEMWAIT[MATH_PACK]": 3,
+    "risc:mop_drain(PC_BUF_MOP_SYNC)": 3,
+    "risc:tensix_drain(PC_BUF_SYNC)": 6,
+    "risc:cb_poll": 3,
+    "risc:fence": 6,
+    "tt:STALLWAIT[CFG<-THCON|PACK0]": 3,
+    "tt:STALLWAIT[CFG<-PACK0]": 3,
+    "tt:STALLWAIT[SYNC<-PACK0]": 3,
+    "tt:ZEROACC": 2,
+    "tt:SEMGET[MATH_PACK]": 3
+   }
+  },
+  {
+   "kernel": "attention_merge",
+   "risc": "brisc",
+   "insns": 299,
+   "tensix_sync": 0,
+   "risc_sync": 13,
+   "kinds": {
+    "risc:cb_reserve_back(acked)": 2,
+    "risc:fence": 6,
+    "risc:noc_poll": 5
+   }
+  },
+  {
+   "kernel": "attention_merge",
+   "risc": "ncrisc",
+   "insns": 309,
+   "tensix_sync": 0,
+   "risc_sync": 11,
+   "kinds": {
+    "risc:cb_poll": 1,
+    "risc:fence": 4,
+    "risc:noc_poll": 6
+   }
+  },
+  {
+   "kernel": "attention_merge",
+   "risc": "trisc0",
+   "insns": 165,
+   "tensix_sync": 8,
+   "risc_sync": 7,
+   "kinds": {
+    "risc:sem_poll(UNPACK_SYNC)": 1,
+    "risc:sem_post(UNPACK_SYNC)": 1,
+    "risc:mop_drain(PC_BUF_MOP_SYNC)": 1,
+    "tpl:UNPACR.set_dvalid": 4,
+    "risc:cb_wait_front(received)": 1,
+    "risc:fence": 2,
+    "tt:STALLWAIT[UNPACK<-SRCA_CLR]": 1,
+    "tt:STALLWAIT[UNPACK<-TRISC_CFG]": 1,
+    "tt:STALLWAIT[UNPACK<-UNPACK0]": 1,
+    "tt:SEMGET[UNPACK_SYNC]": 1,
+    "risc:tensix_drain(PC_BUF_SYNC)": 1
+   }
+  },
+  {
+   "kernel": "attention_merge",
+   "risc": "trisc1",
+   "insns": 443,
+   "tensix_sync": 51,
+   "risc_sync": 2,
+   "kinds": {
+    "tt:SEMWAIT[MATH_PACK]": 4,
+    "risc:mop_drain(PC_BUF_MOP_SYNC)": 2,
+    "tpl:SETRWC.clear_ab_vld": 2,
+    "tt:STALLWAIT[CFG<-MATH|SFPU]": 8,
+    "tt:STALLWAIT[MATH<-SRCA_VLD]": 8,
+    "tt:STALLWAIT[CFG<-SFPU]": 9,
+    "tt:STALLWAIT[SFPU<-MATH]": 9,
+    "tt:STALLWAIT[SYNC<-MATH|SFPU]": 10,
+    "tt:SEMPOST[MATH_PACK]": 1
+   }
+  },
+  {
+   "kernel": "attention_merge",
+   "risc": "trisc2",
+   "insns": 179,
+   "tensix_sync": 6,
+   "risc_sync": 6,
+   "kinds": {
+    "tt:SEMWAIT[MATH_PACK]": 1,
+    "risc:mop_drain(PC_BUF_MOP_SYNC)": 1,
+    "risc:tensix_drain(PC_BUF_SYNC)": 2,
+    "tt:ZEROACC": 1,
+    "tt:SEMGET[MATH_PACK]": 1,
+    "risc:cb_poll": 1,
+    "risc:fence": 2,
+    "tt:STALLWAIT[CFG<-THCON|PACK0]": 1,
+    "tt:STALLWAIT[CFG<-PACK0]": 1,
+    "tt:STALLWAIT[SYNC<-PACK0]": 1
+   }
+  },
+  {
+   "kernel": "down",
+   "risc": "brisc.v0",
+   "insns": 323,
+   "tensix_sync": 0,
+   "risc_sync": 13,
+   "kinds": {
+    "risc:cb_reserve_back(acked)": 1,
+    "risc:fence": 4,
+    "risc:noc_poll": 8
+   }
+  },
+  {
+   "kernel": "down",
+   "risc": "brisc.v1",
+   "insns": 323,
+   "tensix_sync": 0,
+   "risc_sync": 13,
+   "kinds": {
+    "risc:cb_reserve_back(acked)": 1,
+    "risc:fence": 4,
+    "risc:noc_poll": 8
+   }
+  },
+  {
+   "kernel": "down",
+   "risc": "ncrisc.v0",
+   "insns": 378,
+   "tensix_sync": 0,
+   "risc_sync": 16,
+   "kinds": {
+    "risc:cb_poll": 2,
+    "risc:fence": 8,
+    "risc:noc_poll": 6
+   }
+  },
+  {
+   "kernel": "down",
+   "risc": "ncrisc.v1",
+   "insns": 378,
+   "tensix_sync": 0,
+   "risc_sync": 16,
+   "kinds": {
+    "risc:cb_poll": 2,
+    "risc:fence": 8,
+    "risc:noc_poll": 6
+   }
+  },
+  {
+   "kernel": "down",
+   "risc": "trisc0",
+   "insns": 472,
+   "tensix_sync": 16,
+   "risc_sync": 20,
+   "kinds": {
+    "risc:sem_poll(UNPACK_SYNC)": 5,
+    "risc:mop_drain(PC_BUF_MOP_SYNC)": 2,
+    "tpl:UNPACR.set_dvalid": 8,
+    "risc:sem_post(UNPACK_SYNC)": 2,
+    "risc:cb_wait_front(received)": 1,
+    "risc:fence": 6,
+    "tt:STALLWAIT[UNPACK<-SRCA_CLR|SRCB_CLR]": 2,
+    "tt:STALLWAIT[UNPACK<-TRISC_CFG]": 2,
+    "tt:STALLWAIT[UNPACK<-UNPACK0|UNPACK1]": 2,
+    "tt:SEMGET[UNPACK_SYNC]": 2,
+    "risc:tensix_drain(PC_BUF_SYNC)": 2,
+    "risc:cb_poll": 2
+   }
+  },
+  {
+   "kernel": "down",
+   "risc": "trisc1",
+   "insns": 192,
+   "tensix_sync": 19,
+   "risc_sync": 2,
+   "kinds": {
+    "tt:STALLWAIT[CFG<-MATH|SFPU]": 2,
+    "tt:STALLWAIT[CFG<-SFPU]": 1,
+    "risc:mop_drain(PC_BUF_MOP_SYNC)": 2,
+    "tpl:FPU.clear_dvalid": 1,
+    "tt:SEMWAIT[MATH_PACK]": 2,
+    "tt:ZEROACC": 4,
+    "tt:STALLWAIT[MATH<-SRCA_VLD|SRCB_VLD]": 2,
+    "tt:STALLWAIT[SFPU<-MATH]": 1,
+    "tt:STALLWAIT[SYNC<-MATH|SFPU]": 3,
+    "tt:SEMPOST[MATH_PACK]": 2,
+    "tpl:SETRWC.clear_ab_vld": 1
+   }
+  },
+  {
+   "kernel": "down",
+   "risc": "trisc2",
+   "insns": 357,
+   "tensix_sync": 12,
+   "risc_sync": 12,
+   "kinds": {
+    "risc:mop_drain(PC_BUF_MOP_SYNC)": 2,
+    "risc:tensix_drain(PC_BUF_SYNC)": 4,
+    "tt:SEMWAIT[MATH_PACK]": 2,
+    "risc:cb_poll": 2,
+    "risc:fence": 4,
+    "tt:STALLWAIT[CFG<-THCON|PACK0]": 2,
+    "tt:STALLWAIT[CFG<-PACK0]": 2,
+    "tt:STALLWAIT[SYNC<-PACK0]": 2,
+    "tt:ZEROACC": 2,
+    "tt:SEMGET[MATH_PACK]": 2
+   }
+  },
+  {
+   "kernel": "embedding",
+   "risc": "brisc",
+   "insns": 273,
+   "tensix_sync": 0,
+   "risc_sync": 16,
+   "kinds": {
+    "risc:noc_poll": 8,
+    "risc:cb_reserve_back(acked)": 2,
+    "risc:fence": 6
+   }
+  },
+  {
+   "kernel": "embedding",
+   "risc": "ncrisc",
+   "insns": 156,
+   "tensix_sync": 0,
+   "risc_sync": 11,
+   "kinds": {
+    "risc:cb_wait_front(received)": 1,
+    "risc:fence": 4,
+    "risc:noc_poll": 6
+   }
+  },
+  {
+   "kernel": "gate",
+   "risc": "brisc",
+   "insns": 436,
+   "tensix_sync": 0,
+   "risc_sync": 19,
+   "kinds": {
+    "risc:cb_poll": 1,
+    "risc:fence": 8,
+    "risc:cb_reserve_back(acked)": 2,
+    "risc:noc_poll": 8
+   }
+  },
+  {
+   "kernel": "gate",
+   "risc": "ncrisc",
+   "insns": 441,
+   "tensix_sync": 0,
+   "risc_sync": 19,
+   "kinds": {
+    "risc:cb_poll": 3,
+    "risc:fence": 10,
+    "risc:noc_poll": 6
+   }
+  },
+  {
+   "kernel": "gate",
+   "risc": "trisc0",
+   "insns": 797,
+   "tensix_sync": 40,
+   "risc_sync": 39,
+   "kinds": {
+    "risc:sem_poll(UNPACK_SYNC)": 7,
+    "risc:sem_post(UNPACK_SYNC)": 5,
+    "risc:mop_drain(PC_BUF_MOP_SYNC)": 5,
+    "tpl:UNPACR.set_dvalid": 20,
+    "risc:cb_poll": 5,
+    "risc:fence": 11,
+    "tt:STALLWAIT[UNPACK<-SRCA_CLR]": 4,
+    "tt:STALLWAIT[UNPACK<-TRISC_CFG]": 5,
+    "tt:STALLWAIT[UNPACK<-UNPACK0]": 4,
+    "tt:SEMGET[UNPACK_SYNC]": 5,
+    "risc:tensix_drain(PC_BUF_SYNC)": 5,
+    "risc:cb_wait_front(received)": 1,
+    "tt:STALLWAIT[UNPACK<-SRCA_CLR|SRCB_CLR]": 1,
+    "tt:STALLWAIT[UNPACK<-UNPACK0|UNPACK1]": 1
+   }
+  },
+  {
+   "kernel": "gate",
+   "risc": "trisc1",
+   "insns": 550,
+   "tensix_sync": 57,
+   "risc_sync": 6,
+   "kinds": {
+    "tt:SEMWAIT[MATH_PACK]": 6,
+    "risc:mop_drain(PC_BUF_MOP_SYNC)": 6,
+    "tpl:SETRWC.clear_ab_vld": 2,
+    "tt:STALLWAIT[CFG<-MATH|SFPU]": 7,
+    "tt:STALLWAIT[MATH<-SRCA_VLD]": 6,
+    "tt:STALLWAIT[CFG<-SFPU]": 7,
+    "tt:STALLWAIT[SFPU<-MATH]": 7,
+    "tt:STALLWAIT[SYNC<-MATH|SFPU]": 12,
+    "tt:SEMPOST[MATH_PACK]": 4,
+    "tpl:FPU.clear_dvalid": 1,
+    "tt:ZEROACC": 4,
+    "tt:STALLWAIT[MATH<-SRCA_VLD|SRCB_VLD]": 1
+   }
+  },
+  {
+   "kernel": "gate",
+   "risc": "trisc2",
+   "insns": 541,
+   "tensix_sync": 18,
+   "risc_sync": 18,
+   "kinds": {
+    "tt:SEMWAIT[MATH_PACK]": 3,
+    "risc:mop_drain(PC_BUF_MOP_SYNC)": 3,
+    "risc:tensix_drain(PC_BUF_SYNC)": 6,
+    "tt:ZEROACC": 3,
+    "tt:SEMGET[MATH_PACK]": 3,
+    "risc:cb_poll": 3,
+    "risc:fence": 6,
+    "tt:STALLWAIT[CFG<-THCON|PACK0]": 3,
+    "tt:STALLWAIT[CFG<-PACK0]": 3,
+    "tt:STALLWAIT[SYNC<-PACK0]": 3
+   }
+  },
+  {
+   "kernel": "lm",
+   "risc": "brisc",
+   "insns": 362,
+   "tensix_sync": 0,
+   "risc_sync": 16,
+   "kinds": {
+    "risc:cb_poll": 1,
+    "risc:fence": 6,
+    "risc:cb_reserve_back(acked)": 1,
+    "risc:noc_poll": 8
+   }
+  },
+  {
+   "kernel": "lm",
+   "risc": "ncrisc",
+   "insns": 206,
+   "tensix_sync": 0,
+   "risc_sync": 11,
+   "kinds": {
+    "risc:cb_poll": 1,
+    "risc:fence": 4,
+    "risc:noc_poll": 6
+   }
+  },
+  {
+   "kernel": "lm",
+   "risc": "trisc0",
+   "insns": 497,
+   "tensix_sync": 24,
+   "risc_sync": 25,
+   "kinds": {
+    "risc:sem_poll(UNPACK_SYNC)": 5,
+    "risc:sem_post(UNPACK_SYNC)": 3,
+    "risc:mop_drain(PC_BUF_MOP_SYNC)": 3,
+    "tpl:UNPACR.set_dvalid": 12,
+    "risc:cb_poll": 3,
+    "risc:fence": 7,
+    "tt:STALLWAIT[UNPACK<-SRCA_CLR]": 2,
+    "tt:STALLWAIT[UNPACK<-TRISC_CFG]": 3,
+    "tt:STALLWAIT[UNPACK<-UNPACK0]": 2,
+    "tt:SEMGET[UNPACK_SYNC]": 3,
+    "risc:tensix_drain(PC_BUF_SYNC)": 3,
+    "risc:cb_wait_front(received)": 1,
+    "tt:STALLWAIT[UNPACK<-SRCA_CLR|SRCB_CLR]": 1,
+    "tt:STALLWAIT[UNPACK<-UNPACK0|UNPACK1]": 1
+   }
+  },
+  {
+   "kernel": "lm",
+   "risc": "trisc1",
+   "insns": 401,
+   "tensix_sync": 39,
+   "risc_sync": 5,
+   "kinds": {
+    "tt:SEMWAIT[MATH_PACK]": 3,
+    "risc:mop_drain(PC_BUF_MOP_SYNC)": 5,
+    "tpl:SETRWC.clear_ab_vld": 1,
+    "tt:STALLWAIT[CFG<-MATH|SFPU]": 5,
+    "tt:STALLWAIT[MATH<-SRCA_VLD]": 4,
+    "tt:STALLWAIT[CFG<-SFPU]": 5,
+    "tt:STALLWAIT[SFPU<-MATH]": 5,
+    "tt:STALLWAIT[SYNC<-MATH|SFPU]": 8,
+    "tt:SEMPOST[MATH_PACK]": 2,
+    "tpl:FPU.clear_dvalid": 1,
+    "tt:ZEROACC": 4,
+    "tt:STALLWAIT[MATH<-SRCA_VLD|SRCB_VLD]": 1
+   }
+  },
+  {
+   "kernel": "lm",
+   "risc": "trisc2",
+   "insns": 361,
+   "tensix_sync": 12,
+   "risc_sync": 12,
+   "kinds": {
+    "tt:SEMWAIT[MATH_PACK]": 2,
+    "risc:mop_drain(PC_BUF_MOP_SYNC)": 2,
+    "risc:tensix_drain(PC_BUF_SYNC)": 4,
+    "tt:ZEROACC": 2,
+    "tt:SEMGET[MATH_PACK]": 2,
+    "risc:cb_poll": 2,
+    "risc:fence": 4,
+    "tt:STALLWAIT[CFG<-THCON|PACK0]": 2,
+    "tt:STALLWAIT[CFG<-PACK0]": 2,
+    "tt:STALLWAIT[SYNC<-PACK0]": 2
+   }
+  },
+  {
+   "kernel": "o",
+   "risc": "brisc",
+   "insns": 314,
+   "tensix_sync": 0,
+   "risc_sync": 13,
+   "kinds": {
+    "risc:cb_reserve_back(acked)": 1,
+    "risc:fence": 4,
+    "risc:noc_poll": 8
+   }
+  },
+  {
+   "kernel": "o",
+   "risc": "ncrisc",
+   "insns": 392,
+   "tensix_sync": 0,
+   "risc_sync": 16,
+   "kinds": {
+    "risc:cb_poll": 2,
+    "risc:fence": 8,
+    "risc:noc_poll": 6
+   }
+  },
+  {
+   "kernel": "o",
+   "risc": "trisc0",
+   "insns": 472,
+   "tensix_sync": 16,
+   "risc_sync": 20,
+   "kinds": {
+    "risc:sem_poll(UNPACK_SYNC)": 5,
+    "risc:mop_drain(PC_BUF_MOP_SYNC)": 2,
+    "tpl:UNPACR.set_dvalid": 8,
+    "risc:sem_post(UNPACK_SYNC)": 2,
+    "risc:cb_wait_front(received)": 1,
+    "risc:fence": 6,
+    "tt:STALLWAIT[UNPACK<-SRCA_CLR|SRCB_CLR]": 2,
+    "tt:STALLWAIT[UNPACK<-TRISC_CFG]": 2,
+    "tt:STALLWAIT[UNPACK<-UNPACK0|UNPACK1]": 2,
+    "tt:SEMGET[UNPACK_SYNC]": 2,
+    "risc:tensix_drain(PC_BUF_SYNC)": 2,
+    "risc:cb_poll": 2
+   }
+  },
+  {
+   "kernel": "o",
+   "risc": "trisc1",
+   "insns": 192,
+   "tensix_sync": 19,
+   "risc_sync": 2,
+   "kinds": {
+    "tt:STALLWAIT[CFG<-MATH|SFPU]": 2,
+    "tt:STALLWAIT[CFG<-SFPU]": 1,
+    "risc:mop_drain(PC_BUF_MOP_SYNC)": 2,
+    "tpl:FPU.clear_dvalid": 1,
+    "tt:SEMWAIT[MATH_PACK]": 2,
+    "tt:ZEROACC": 4,
+    "tt:STALLWAIT[MATH<-SRCA_VLD|SRCB_VLD]": 2,
+    "tt:STALLWAIT[SFPU<-MATH]": 1,
+    "tt:STALLWAIT[SYNC<-MATH|SFPU]": 3,
+    "tt:SEMPOST[MATH_PACK]": 2,
+    "tpl:SETRWC.clear_ab_vld": 1
+   }
+  },
+  {
+   "kernel": "o",
+   "risc": "trisc2",
+   "insns": 357,
+   "tensix_sync": 12,
+   "risc_sync": 12,
+   "kinds": {
+    "risc:mop_drain(PC_BUF_MOP_SYNC)": 2,
+    "risc:tensix_drain(PC_BUF_SYNC)": 4,
+    "tt:SEMWAIT[MATH_PACK]": 2,
+    "risc:cb_poll": 2,
+    "risc:fence": 4,
+    "tt:STALLWAIT[CFG<-THCON|PACK0]": 2,
+    "tt:STALLWAIT[CFG<-PACK0]": 2,
+    "tt:STALLWAIT[SYNC<-PACK0]": 2,
+    "tt:ZEROACC": 2,
+    "tt:SEMGET[MATH_PACK]": 2
+   }
+  },
+  {
+   "kernel": "qkv",
+   "risc": "brisc",
+   "insns": 512,
+   "tensix_sync": 0,
+   "risc_sync": 22,
+   "kinds": {
+    "risc:cb_poll": 1,
+    "risc:fence": 10,
+    "risc:cb_reserve_back(acked)": 3,
+    "risc:noc_poll": 8
+   }
+  },
+  {
+   "kernel": "qkv",
+   "risc": "ncrisc",
+   "insns": 444,
+   "tensix_sync": 0,
+   "risc_sync": 17,
+   "kinds": {
+    "risc:cb_poll": 3,
+    "risc:fence": 8,
+    "risc:noc_poll": 6
+   }
+  },
+  {
+   "kernel": "qkv",
+   "risc": "trisc0",
+   "insns": 508,
+   "tensix_sync": 24,
+   "risc_sync": 25,
+   "kinds": {
+    "risc:sem_poll(UNPACK_SYNC)": 5,
+    "risc:sem_post(UNPACK_SYNC)": 3,
+    "risc:mop_drain(PC_BUF_MOP_SYNC)": 3,
+    "tpl:UNPACR.set_dvalid": 12,
+    "risc:cb_poll": 3,
+    "risc:fence": 7,
+    "tt:STALLWAIT[UNPACK<-SRCA_CLR]": 2,
+    "tt:STALLWAIT[UNPACK<-TRISC_CFG]": 3,
+    "tt:STALLWAIT[UNPACK<-UNPACK0]": 2,
+    "tt:SEMGET[UNPACK_SYNC]": 3,
+    "risc:tensix_drain(PC_BUF_SYNC)": 3,
+    "risc:cb_wait_front(received)": 1,
+    "tt:STALLWAIT[UNPACK<-SRCA_CLR|SRCB_CLR]": 1,
+    "tt:STALLWAIT[UNPACK<-UNPACK0|UNPACK1]": 1
+   }
+  },
+  {
+   "kernel": "qkv",
+   "risc": "trisc1",
+   "insns": 430,
+   "tensix_sync": 43,
+   "risc_sync": 5,
+   "kinds": {
+    "tt:SEMWAIT[MATH_PACK]": 3,
+    "risc:mop_drain(PC_BUF_MOP_SYNC)": 5,
+    "tpl:SETRWC.clear_ab_vld": 1,
+    "tt:STALLWAIT[CFG<-MATH|SFPU]": 5,
+    "tt:STALLWAIT[MATH<-SRCA_VLD]": 4,
+    "tt:STALLWAIT[CFG<-SFPU]": 5,
+    "tt:STALLWAIT[SFPU<-MATH]": 5,
+    "tt:STALLWAIT[SYNC<-MATH|SFPU]": 10,
+    "tt:SEMPOST[MATH_PACK]": 4,
+    "tpl:FPU.clear_dvalid": 1,
+    "tt:ZEROACC": 4,
+    "tt:STALLWAIT[MATH<-SRCA_VLD|SRCB_VLD]": 1
+   }
+  },
+  {
+   "kernel": "qkv",
+   "risc": "trisc2",
+   "insns": 369,
+   "tensix_sync": 12,
+   "risc_sync": 12,
+   "kinds": {
+    "tt:SEMWAIT[MATH_PACK]": 2,
+    "risc:mop_drain(PC_BUF_MOP_SYNC)": 2,
+    "risc:tensix_drain(PC_BUF_SYNC)": 4,
+    "tt:ZEROACC": 2,
+    "tt:SEMGET[MATH_PACK]": 2,
+    "risc:cb_poll": 2,
+    "risc:fence": 4,
+    "tt:STALLWAIT[CFG<-THCON|PACK0]": 2,
+    "tt:STALLWAIT[CFG<-PACK0]": 2,
+    "tt:STALLWAIT[SYNC<-PACK0]": 2
+   }
+  }
+ ],
+ "8b-bf16": [
+  {
+   "kernel": "argmax",
+   "risc": "brisc",
+   "insns": 570,
+   "tensix_sync": 0,
+   "risc_sync": 30,
+   "kinds": {
+    "risc:cb_reserve_back(acked)": 1,
+    "risc:fence": 7,
+    "risc:cb_poll": 1,
+    "risc:noc_poll": 20,
+    "risc:l1_flag_spin": 1
+   }
+  },
+  {
+   "kernel": "argmax",
+   "risc": "trisc0",
+   "insns": 314,
+   "tensix_sync": 16,
+   "risc_sync": 12,
+   "kinds": {
+    "risc:cb_wait_front(received)": 1,
+    "risc:fence": 2,
+    "tt:SEMWAIT[MATH_DONE]": 2,
+    "tt:SEMGET[MATH_DONE]": 2,
+    "risc:sem_poll(UNPACK_SYNC)": 4,
+    "risc:sem_post(UNPACK_SYNC)": 2,
+    "tt:STALLWAIT[UNPACK<-SRCA_CLR|SRCB_CLR]": 2,
+    "risc:mop_drain(PC_BUF_MOP_SYNC)": 1,
+    "tpl:UNPACR.set_dvalid": 4,
+    "tt:STALLWAIT[UNPACK<-UNPACK0|UNPACK1]": 2,
+    "tt:SEMGET[UNPACK_SYNC]": 2,
+    "risc:tensix_drain(PC_BUF_SYNC)": 2,
+    "tt:SEMPOST[UNPACK_TO_DEST]": 2
+   }
+  },
+  {
+   "kernel": "argmax",
+   "risc": "trisc1",
+   "insns": 500,
+   "tensix_sync": 19,
+   "risc_sync": 0,
+   "kinds": {
+    "tt:SEMWAIT[MATH_PACK]": 1,
+    "tt:STALLWAIT[CFG<-MATH|SFPU]": 1,
+    "tt:STALLWAIT[SYNC<-MATH|SFPU]": 3,
+    "tt:SEMPOST[MATH_DONE]": 2,
+    "tt:SEMWAIT[UNPACK_TO_DEST]": 2,
+    "tt:SEMGET[UNPACK_TO_DEST]": 2,
+    "tt:STALLWAIT[MATH<-SRCA_VLD|SRCB_VLD]": 2,
+    "tt:SETRWC.clear_ab_vld": 2,
+    "tt:STALLWAIT[SYNC<-MATH]": 2,
+    "tt:STALLWAIT[SFPU<-MATH]": 1,
+    "tt:SEMPOST[MATH_PACK]": 1
+   }
+  },
+  {
+   "kernel": "argmax",
+   "risc": "trisc2",
+   "insns": 172,
+   "tensix_sync": 6,
+   "risc_sync": 6,
+   "kinds": {
+    "tt:SEMWAIT[MATH_PACK]": 1,
+    "risc:cb_poll": 1,
+    "risc:fence": 2,
+    "risc:mop_drain(PC_BUF_MOP_SYNC)": 1,
+    "risc:tensix_drain(PC_BUF_SYNC)": 2,
+    "tt:STALLWAIT[CFG<-THCON|PACK0]": 1,
+    "tt:STALLWAIT[CFG<-PACK0]": 1,
+    "tt:STALLWAIT[SYNC<-PACK0]": 1,
+    "tt:ZEROACC": 1,
+    "tt:SEMGET[MATH_PACK]": 1
+   }
+  },
+  {
+   "kernel": "attention",
+   "risc": "brisc",
+   "insns": 941,
+   "tensix_sync": 0,
+   "risc_sync": 19,
+   "kinds": {
+    "risc:l1_flag_spin": 2,
+    "risc:fence": 9,
+    "risc:cb_poll": 3,
+    "risc:noc_poll": 5
+   }
+  },
+  {
+   "kernel": "attention",
+   "risc": "ncrisc",
+   "insns": 776,
+   "tensix_sync": 0,
+   "risc_sync": 19,
+   "kinds": {
+    "risc:cb_poll": 2,
+    "risc:fence": 7,
+    "risc:noc_poll": 10
+   }
+  },
+  {
+   "kernel": "attention",
+   "risc": "trisc0",
+   "insns": 970,
+   "tensix_sync": 28,
+   "risc_sync": 50,
+   "kinds": {
+    "risc:cb_wait_front(received)": 1,
+    "risc:fence": 16,
+    "risc:sem_poll(UNPACK_SYNC)": 13,
+    "risc:sem_post(UNPACK_SYNC)": 6,
+    "risc:cb_poll": 7,
+    "tt:STALLWAIT[UNPACK<-SRCA_CLR|SRCB_CLR]": 5,
+    "tt:STALLWAIT[UNPACK<-TRISC_CFG]": 6,
+    "tt:STALLWAIT[UNPACK<-UNPACK0|UNPACK1]": 5,
+    "tt:SEMGET[UNPACK_SYNC]": 6,
+    "risc:tensix_drain(PC_BUF_SYNC)": 6,
+    "risc:mop_drain(PC_BUF_MOP_SYNC)": 1,
+    "tpl:UNPACR.set_dvalid": 4,
+    "tt:STALLWAIT[UNPACK<-SRCA_CLR]": 1,
+    "tt:STALLWAIT[UNPACK<-UNPACK0]": 1
+   }
+  },
+  {
+   "kernel": "attention",
+   "risc": "trisc1",
+   "insns": 814,
+   "tensix_sync": 84,
+   "risc_sync": 6,
+   "kinds": {
+    "tt:SEMWAIT[MATH_PACK]": 17,
+    "risc:mop_drain(PC_BUF_MOP_SYNC)": 5,
+    "tpl:SETRWC.clear_ab_vld": 3,
+    "tt:STALLWAIT[CFG<-MATH|SFPU]": 12,
+    "tt:STALLWAIT[MATH<-SRCA_VLD]": 4,
+    "tt:STALLWAIT[CFG<-SFPU]": 14,
+    "tt:STALLWAIT[SFPU<-MATH]": 9,
+    "tt:STALLWAIT[SYNC<-MATH|SFPU]": 12,
+    "tt:SEMPOST[MATH_PACK]": 3,
+    "tt:ZEROACC": 1,
+    "risc:tensix_drain(PC_BUF_SYNC)": 1,
+    "tt:SETRWC.clear_ab_vld": 8,
+    "tt:STALLWAIT[SYNC<-SFPU]": 1
+   }
+  },
+  {
+   "kernel": "attention",
+   "risc": "trisc2",
+   "insns": 574,
+   "tensix_sync": 17,
+   "risc_sync": 18,
+   "kinds": {
+    "tt:SEMWAIT[MATH_PACK]": 3,
+    "risc:mop_drain(PC_BUF_MOP_SYNC)": 3,
+    "risc:tensix_drain(PC_BUF_SYNC)": 6,
+    "risc:cb_poll": 3,
+    "risc:fence": 6,
+    "tt:STALLWAIT[CFG<-THCON|PACK0]": 3,
+    "tt:STALLWAIT[CFG<-PACK0]": 3,
+    "tt:STALLWAIT[SYNC<-PACK0]": 3,
+    "tt:ZEROACC": 2,
+    "tt:SEMGET[MATH_PACK]": 3
+   }
+  },
+  {
+   "kernel": "attention_merge",
+   "risc": "brisc",
+   "insns": 355,
+   "tensix_sync": 0,
+   "risc_sync": 13,
+   "kinds": {
+    "risc:cb_reserve_back(acked)": 2,
+    "risc:fence": 6,
+    "risc:noc_poll": 5
+   }
+  },
+  {
+   "kernel": "attention_merge",
+   "risc": "ncrisc",
+   "insns": 484,
+   "tensix_sync": 0,
+   "risc_sync": 11,
+   "kinds": {
+    "risc:cb_poll": 1,
+    "risc:fence": 4,
+    "risc:noc_poll": 6
+   }
+  },
+  {
+   "kernel": "attention_merge",
+   "risc": "trisc0",
+   "insns": 167,
+   "tensix_sync": 8,
+   "risc_sync": 7,
+   "kinds": {
+    "risc:sem_poll(UNPACK_SYNC)": 1,
+    "risc:sem_post(UNPACK_SYNC)": 1,
+    "risc:mop_drain(PC_BUF_MOP_SYNC)": 1,
+    "tpl:UNPACR.set_dvalid": 4,
+    "risc:cb_wait_front(received)": 1,
+    "risc:fence": 2,
+    "tt:STALLWAIT[UNPACK<-SRCA_CLR]": 1,
+    "tt:STALLWAIT[UNPACK<-TRISC_CFG]": 1,
+    "tt:STALLWAIT[UNPACK<-UNPACK0]": 1,
+    "tt:SEMGET[UNPACK_SYNC]": 1,
+    "risc:tensix_drain(PC_BUF_SYNC)": 1
+   }
+  },
+  {
+   "kernel": "attention_merge",
+   "risc": "trisc1",
+   "insns": 565,
+   "tensix_sync": 73,
+   "risc_sync": 2,
+   "kinds": {
+    "tt:SEMWAIT[MATH_PACK]": 6,
+    "risc:mop_drain(PC_BUF_MOP_SYNC)": 2,
+    "tpl:SETRWC.clear_ab_vld": 2,
+    "tt:STALLWAIT[CFG<-MATH|SFPU]": 12,
+    "tt:STALLWAIT[MATH<-SRCA_VLD]": 12,
+    "tt:STALLWAIT[CFG<-SFPU]": 13,
+    "tt:STALLWAIT[SFPU<-MATH]": 13,
+    "tt:STALLWAIT[SYNC<-MATH|SFPU]": 14,
+    "tt:SEMPOST[MATH_PACK]": 1
+   }
+  },
+  {
+   "kernel": "attention_merge",
+   "risc": "trisc2",
+   "insns": 183,
+   "tensix_sync": 6,
+   "risc_sync": 6,
+   "kinds": {
+    "tt:SEMWAIT[MATH_PACK]": 1,
+    "risc:mop_drain(PC_BUF_MOP_SYNC)": 1,
+    "risc:tensix_drain(PC_BUF_SYNC)": 2,
+    "tt:ZEROACC": 1,
+    "tt:SEMGET[MATH_PACK]": 1,
+    "risc:cb_poll": 1,
+    "risc:fence": 2,
+    "tt:STALLWAIT[CFG<-THCON|PACK0]": 1,
+    "tt:STALLWAIT[CFG<-PACK0]": 1,
+    "tt:STALLWAIT[SYNC<-PACK0]": 1
+   }
+  },
+  {
+   "kernel": "down",
+   "risc": "brisc.v0",
+   "insns": 391,
+   "tensix_sync": 0,
+   "risc_sync": 13,
+   "kinds": {
+    "risc:cb_reserve_back(acked)": 1,
+    "risc:fence": 4,
+    "risc:noc_poll": 8
+   }
+  },
+  {
+   "kernel": "down",
+   "risc": "brisc.v1",
+   "insns": 391,
+   "tensix_sync": 0,
+   "risc_sync": 13,
+   "kinds": {
+    "risc:cb_reserve_back(acked)": 1,
+    "risc:fence": 4,
+    "risc:noc_poll": 8
+   }
+  },
+  {
+   "kernel": "down",
+   "risc": "ncrisc.v0",
+   "insns": 378,
+   "tensix_sync": 0,
+   "risc_sync": 16,
+   "kinds": {
+    "risc:cb_poll": 2,
+    "risc:fence": 8,
+    "risc:noc_poll": 6
+   }
+  },
+  {
+   "kernel": "down",
+   "risc": "ncrisc.v1",
+   "insns": 378,
+   "tensix_sync": 0,
+   "risc_sync": 16,
+   "kinds": {
+    "risc:cb_poll": 2,
+    "risc:fence": 8,
+    "risc:noc_poll": 6
+   }
+  },
+  {
+   "kernel": "down",
+   "risc": "trisc0",
+   "insns": 472,
+   "tensix_sync": 16,
+   "risc_sync": 20,
+   "kinds": {
+    "risc:sem_poll(UNPACK_SYNC)": 5,
+    "risc:mop_drain(PC_BUF_MOP_SYNC)": 2,
+    "tpl:UNPACR.set_dvalid": 8,
+    "risc:sem_post(UNPACK_SYNC)": 2,
+    "risc:cb_wait_front(received)": 1,
+    "risc:fence": 6,
+    "tt:STALLWAIT[UNPACK<-SRCA_CLR|SRCB_CLR]": 2,
+    "tt:STALLWAIT[UNPACK<-TRISC_CFG]": 2,
+    "tt:STALLWAIT[UNPACK<-UNPACK0|UNPACK1]": 2,
+    "tt:SEMGET[UNPACK_SYNC]": 2,
+    "risc:tensix_drain(PC_BUF_SYNC)": 2,
+    "risc:cb_poll": 2
+   }
+  },
+  {
+   "kernel": "down",
+   "risc": "trisc1",
+   "insns": 192,
+   "tensix_sync": 19,
+   "risc_sync": 2,
+   "kinds": {
+    "tt:STALLWAIT[CFG<-MATH|SFPU]": 2,
+    "tt:STALLWAIT[CFG<-SFPU]": 1,
+    "risc:mop_drain(PC_BUF_MOP_SYNC)": 2,
+    "tpl:FPU.clear_dvalid": 1,
+    "tt:SEMWAIT[MATH_PACK]": 2,
+    "tt:ZEROACC": 4,
+    "tt:STALLWAIT[MATH<-SRCA_VLD|SRCB_VLD]": 2,
+    "tt:STALLWAIT[SFPU<-MATH]": 1,
+    "tt:STALLWAIT[SYNC<-MATH|SFPU]": 3,
+    "tt:SEMPOST[MATH_PACK]": 2,
+    "tpl:SETRWC.clear_ab_vld": 1
+   }
+  },
+  {
+   "kernel": "down",
+   "risc": "trisc2",
+   "insns": 357,
+   "tensix_sync": 12,
+   "risc_sync": 12,
+   "kinds": {
+    "risc:mop_drain(PC_BUF_MOP_SYNC)": 2,
+    "risc:tensix_drain(PC_BUF_SYNC)": 4,
+    "tt:SEMWAIT[MATH_PACK]": 2,
+    "risc:cb_poll": 2,
+    "risc:fence": 4,
+    "tt:STALLWAIT[CFG<-THCON|PACK0]": 2,
+    "tt:STALLWAIT[CFG<-PACK0]": 2,
+    "tt:STALLWAIT[SYNC<-PACK0]": 2,
+    "tt:ZEROACC": 2,
+    "tt:SEMGET[MATH_PACK]": 2
+   }
+  },
+  {
+   "kernel": "embedding",
+   "risc": "brisc",
+   "insns": 389,
+   "tensix_sync": 0,
+   "risc_sync": 22,
+   "kinds": {
+    "risc:noc_poll": 8,
+    "risc:cb_reserve_back(acked)": 4,
+    "risc:fence": 10
+   }
+  },
+  {
+   "kernel": "embedding",
+   "risc": "ncrisc",
+   "insns": 183,
+   "tensix_sync": 0,
+   "risc_sync": 11,
+   "kinds": {
+    "risc:cb_wait_front(received)": 1,
+    "risc:fence": 4,
+    "risc:noc_poll": 6
+   }
+  },
+  {
+   "kernel": "gate",
+   "risc": "brisc",
+   "insns": 470,
+   "tensix_sync": 0,
+   "risc_sync": 19,
+   "kinds": {
+    "risc:cb_poll": 1,
+    "risc:fence": 8,
+    "risc:cb_reserve_back(acked)": 2,
+    "risc:noc_poll": 8
+   }
+  },
+  {
+   "kernel": "gate",
+   "risc": "ncrisc",
+   "insns": 441,
+   "tensix_sync": 0,
+   "risc_sync": 19,
+   "kinds": {
+    "risc:cb_poll": 3,
+    "risc:fence": 10,
+    "risc:noc_poll": 6
+   }
+  },
+  {
+   "kernel": "gate",
+   "risc": "trisc0",
+   "insns": 797,
+   "tensix_sync": 40,
+   "risc_sync": 39,
+   "kinds": {
+    "risc:sem_poll(UNPACK_SYNC)": 7,
+    "risc:sem_post(UNPACK_SYNC)": 5,
+    "risc:mop_drain(PC_BUF_MOP_SYNC)": 5,
+    "tpl:UNPACR.set_dvalid": 20,
+    "risc:cb_poll": 5,
+    "risc:fence": 11,
+    "tt:STALLWAIT[UNPACK<-SRCA_CLR]": 4,
+    "tt:STALLWAIT[UNPACK<-TRISC_CFG]": 5,
+    "tt:STALLWAIT[UNPACK<-UNPACK0]": 4,
+    "tt:SEMGET[UNPACK_SYNC]": 5,
+    "risc:tensix_drain(PC_BUF_SYNC)": 5,
+    "risc:cb_wait_front(received)": 1,
+    "tt:STALLWAIT[UNPACK<-SRCA_CLR|SRCB_CLR]": 1,
+    "tt:STALLWAIT[UNPACK<-UNPACK0|UNPACK1]": 1
+   }
+  },
+  {
+   "kernel": "gate",
+   "risc": "trisc1",
+   "insns": 630,
+   "tensix_sync": 77,
+   "risc_sync": 6,
+   "kinds": {
+    "tt:SEMWAIT[MATH_PACK]": 6,
+    "risc:mop_drain(PC_BUF_MOP_SYNC)": 6,
+    "tpl:SETRWC.clear_ab_vld": 2,
+    "tt:STALLWAIT[CFG<-MATH|SFPU]": 11,
+    "tt:STALLWAIT[MATH<-SRCA_VLD]": 10,
+    "tt:STALLWAIT[CFG<-SFPU]": 11,
+    "tt:STALLWAIT[SFPU<-MATH]": 11,
+    "tt:STALLWAIT[SYNC<-MATH|SFPU]": 16,
+    "tt:SEMPOST[MATH_PACK]": 4,
+    "tpl:FPU.clear_dvalid": 1,
+    "tt:ZEROACC": 4,
+    "tt:STALLWAIT[MATH<-SRCA_VLD|SRCB_VLD]": 1
+   }
+  },
+  {
+   "kernel": "gate",
+   "risc": "trisc2",
+   "insns": 545,
+   "tensix_sync": 18,
+   "risc_sync": 18,
+   "kinds": {
+    "tt:SEMWAIT[MATH_PACK]": 3,
+    "risc:mop_drain(PC_BUF_MOP_SYNC)": 3,
+    "risc:tensix_drain(PC_BUF_SYNC)": 6,
+    "tt:ZEROACC": 3,
+    "tt:SEMGET[MATH_PACK]": 3,
+    "risc:cb_poll": 3,
+    "risc:fence": 6,
+    "tt:STALLWAIT[CFG<-THCON|PACK0]": 3,
+    "tt:STALLWAIT[CFG<-PACK0]": 3,
+    "tt:STALLWAIT[SYNC<-PACK0]": 3
+   }
+  },
+  {
+   "kernel": "lm",
+   "risc": "brisc",
+   "insns": 396,
+   "tensix_sync": 0,
+   "risc_sync": 16,
+   "kinds": {
+    "risc:cb_poll": 1,
+    "risc:fence": 6,
+    "risc:cb_reserve_back(acked)": 1,
+    "risc:noc_poll": 8
+   }
+  },
+  {
+   "kernel": "lm",
+   "risc": "ncrisc",
+   "insns": 206,
+   "tensix_sync": 0,
+   "risc_sync": 11,
+   "kinds": {
+    "risc:cb_poll": 1,
+    "risc:fence": 4,
+    "risc:noc_poll": 6
+   }
+  },
+  {
+   "kernel": "lm",
+   "risc": "trisc0",
+   "insns": 497,
+   "tensix_sync": 24,
+   "risc_sync": 25,
+   "kinds": {
+    "risc:sem_poll(UNPACK_SYNC)": 5,
+    "risc:sem_post(UNPACK_SYNC)": 3,
+    "risc:mop_drain(PC_BUF_MOP_SYNC)": 3,
+    "tpl:UNPACR.set_dvalid": 12,
+    "risc:cb_poll": 3,
+    "risc:fence": 7,
+    "tt:STALLWAIT[UNPACK<-SRCA_CLR]": 2,
+    "tt:STALLWAIT[UNPACK<-TRISC_CFG]": 3,
+    "tt:STALLWAIT[UNPACK<-UNPACK0]": 2,
+    "tt:SEMGET[UNPACK_SYNC]": 3,
+    "risc:tensix_drain(PC_BUF_SYNC)": 3,
+    "risc:cb_wait_front(received)": 1,
+    "tt:STALLWAIT[UNPACK<-SRCA_CLR|SRCB_CLR]": 1,
+    "tt:STALLWAIT[UNPACK<-UNPACK0|UNPACK1]": 1
+   }
+  },
+  {
+   "kernel": "lm",
+   "risc": "trisc1",
+   "insns": 481,
+   "tensix_sync": 59,
+   "risc_sync": 5,
+   "kinds": {
+    "tt:SEMWAIT[MATH_PACK]": 3,
+    "risc:mop_drain(PC_BUF_MOP_SYNC)": 5,
+    "tpl:SETRWC.clear_ab_vld": 1,
+    "tt:STALLWAIT[CFG<-MATH|SFPU]": 9,
+    "tt:STALLWAIT[MATH<-SRCA_VLD]": 8,
+    "tt:STALLWAIT[CFG<-SFPU]": 9,
+    "tt:STALLWAIT[SFPU<-MATH]": 9,
+    "tt:STALLWAIT[SYNC<-MATH|SFPU]": 12,
+    "tt:SEMPOST[MATH_PACK]": 2,
+    "tpl:FPU.clear_dvalid": 1,
+    "tt:ZEROACC": 4,
+    "tt:STALLWAIT[MATH<-SRCA_VLD|SRCB_VLD]": 1
+   }
+  },
+  {
+   "kernel": "lm",
+   "risc": "trisc2",
+   "insns": 365,
+   "tensix_sync": 12,
+   "risc_sync": 12,
+   "kinds": {
+    "tt:SEMWAIT[MATH_PACK]": 2,
+    "risc:mop_drain(PC_BUF_MOP_SYNC)": 2,
+    "risc:tensix_drain(PC_BUF_SYNC)": 4,
+    "tt:ZEROACC": 2,
+    "tt:SEMGET[MATH_PACK]": 2,
+    "risc:cb_poll": 2,
+    "risc:fence": 4,
+    "tt:STALLWAIT[CFG<-THCON|PACK0]": 2,
+    "tt:STALLWAIT[CFG<-PACK0]": 2,
+    "tt:STALLWAIT[SYNC<-PACK0]": 2
+   }
+  },
+  {
+   "kernel": "o",
+   "risc": "brisc",
+   "insns": 348,
+   "tensix_sync": 0,
+   "risc_sync": 13,
+   "kinds": {
+    "risc:cb_reserve_back(acked)": 1,
+    "risc:fence": 4,
+    "risc:noc_poll": 8
+   }
+  },
+  {
+   "kernel": "o",
+   "risc": "ncrisc",
+   "insns": 392,
+   "tensix_sync": 0,
+   "risc_sync": 16,
+   "kinds": {
+    "risc:cb_poll": 2,
+    "risc:fence": 8,
+    "risc:noc_poll": 6
+   }
+  },
+  {
+   "kernel": "o",
+   "risc": "trisc0",
+   "insns": 472,
+   "tensix_sync": 16,
+   "risc_sync": 20,
+   "kinds": {
+    "risc:sem_poll(UNPACK_SYNC)": 5,
+    "risc:mop_drain(PC_BUF_MOP_SYNC)": 2,
+    "tpl:UNPACR.set_dvalid": 8,
+    "risc:sem_post(UNPACK_SYNC)": 2,
+    "risc:cb_wait_front(received)": 1,
+    "risc:fence": 6,
+    "tt:STALLWAIT[UNPACK<-SRCA_CLR|SRCB_CLR]": 2,
+    "tt:STALLWAIT[UNPACK<-TRISC_CFG]": 2,
+    "tt:STALLWAIT[UNPACK<-UNPACK0|UNPACK1]": 2,
+    "tt:SEMGET[UNPACK_SYNC]": 2,
+    "risc:tensix_drain(PC_BUF_SYNC)": 2,
+    "risc:cb_poll": 2
+   }
+  },
+  {
+   "kernel": "o",
+   "risc": "trisc1",
+   "insns": 192,
+   "tensix_sync": 19,
+   "risc_sync": 2,
+   "kinds": {
+    "tt:STALLWAIT[CFG<-MATH|SFPU]": 2,
+    "tt:STALLWAIT[CFG<-SFPU]": 1,
+    "risc:mop_drain(PC_BUF_MOP_SYNC)": 2,
+    "tpl:FPU.clear_dvalid": 1,
+    "tt:SEMWAIT[MATH_PACK]": 2,
+    "tt:ZEROACC": 4,
+    "tt:STALLWAIT[MATH<-SRCA_VLD|SRCB_VLD]": 2,
+    "tt:STALLWAIT[SFPU<-MATH]": 1,
+    "tt:STALLWAIT[SYNC<-MATH|SFPU]": 3,
+    "tt:SEMPOST[MATH_PACK]": 2,
+    "tpl:SETRWC.clear_ab_vld": 1
+   }
+  },
+  {
+   "kernel": "o",
+   "risc": "trisc2",
+   "insns": 357,
+   "tensix_sync": 12,
+   "risc_sync": 12,
+   "kinds": {
+    "risc:mop_drain(PC_BUF_MOP_SYNC)": 2,
+    "risc:tensix_drain(PC_BUF_SYNC)": 4,
+    "tt:SEMWAIT[MATH_PACK]": 2,
+    "risc:cb_poll": 2,
+    "risc:fence": 4,
+    "tt:STALLWAIT[CFG<-THCON|PACK0]": 2,
+    "tt:STALLWAIT[CFG<-PACK0]": 2,
+    "tt:STALLWAIT[SYNC<-PACK0]": 2,
+    "tt:ZEROACC": 2,
+    "tt:SEMGET[MATH_PACK]": 2
+   }
+  },
+  {
+   "kernel": "qkv",
+   "risc": "brisc",
+   "insns": 546,
+   "tensix_sync": 0,
+   "risc_sync": 22,
+   "kinds": {
+    "risc:cb_poll": 1,
+    "risc:fence": 10,
+    "risc:cb_reserve_back(acked)": 3,
+    "risc:noc_poll": 8
+   }
+  },
+  {
+   "kernel": "qkv",
+   "risc": "ncrisc",
+   "insns": 444,
+   "tensix_sync": 0,
+   "risc_sync": 17,
+   "kinds": {
+    "risc:cb_poll": 3,
+    "risc:fence": 8,
+    "risc:noc_poll": 6
+   }
+  },
+  {
+   "kernel": "qkv",
+   "risc": "trisc0",
+   "insns": 508,
+   "tensix_sync": 24,
+   "risc_sync": 25,
+   "kinds": {
+    "risc:sem_poll(UNPACK_SYNC)": 5,
+    "risc:sem_post(UNPACK_SYNC)": 3,
+    "risc:mop_drain(PC_BUF_MOP_SYNC)": 3,
+    "tpl:UNPACR.set_dvalid": 12,
+    "risc:cb_poll": 3,
+    "risc:fence": 7,
+    "tt:STALLWAIT[UNPACK<-SRCA_CLR]": 2,
+    "tt:STALLWAIT[UNPACK<-TRISC_CFG]": 3,
+    "tt:STALLWAIT[UNPACK<-UNPACK0]": 2,
+    "tt:SEMGET[UNPACK_SYNC]": 3,
+    "risc:tensix_drain(PC_BUF_SYNC)": 3,
+    "risc:cb_wait_front(received)": 1,
+    "tt:STALLWAIT[UNPACK<-SRCA_CLR|SRCB_CLR]": 1,
+    "tt:STALLWAIT[UNPACK<-UNPACK0|UNPACK1]": 1
+   }
+  },
+  {
+   "kernel": "qkv",
+   "risc": "trisc1",
+   "insns": 510,
+   "tensix_sync": 63,
+   "risc_sync": 5,
+   "kinds": {
+    "tt:SEMWAIT[MATH_PACK]": 3,
+    "risc:mop_drain(PC_BUF_MOP_SYNC)": 5,
+    "tpl:SETRWC.clear_ab_vld": 1,
+    "tt:STALLWAIT[CFG<-MATH|SFPU]": 9,
+    "tt:STALLWAIT[MATH<-SRCA_VLD]": 8,
+    "tt:STALLWAIT[CFG<-SFPU]": 9,
+    "tt:STALLWAIT[SFPU<-MATH]": 9,
+    "tt:STALLWAIT[SYNC<-MATH|SFPU]": 14,
+    "tt:SEMPOST[MATH_PACK]": 4,
+    "tpl:FPU.clear_dvalid": 1,
+    "tt:ZEROACC": 4,
+    "tt:STALLWAIT[MATH<-SRCA_VLD|SRCB_VLD]": 1
+   }
+  },
+  {
+   "kernel": "qkv",
+   "risc": "trisc2",
+   "insns": 373,
+   "tensix_sync": 12,
+   "risc_sync": 12,
+   "kinds": {
+    "tt:SEMWAIT[MATH_PACK]": 2,
+    "risc:mop_drain(PC_BUF_MOP_SYNC)": 2,
+    "risc:tensix_drain(PC_BUF_SYNC)": 4,
+    "tt:ZEROACC": 2,
+    "tt:SEMGET[MATH_PACK]": 2,
+    "risc:cb_poll": 2,
+    "risc:fence": 4,
+    "tt:STALLWAIT[CFG<-THCON|PACK0]": 2,
+    "tt:STALLWAIT[CFG<-PACK0]": 2,
+    "tt:STALLWAIT[SYNC<-PACK0]": 2
+   }
+  }
+ ],
+ "8b-fp8": [
+  {
+   "kernel": "argmax",
+   "risc": "brisc",
+   "insns": 554,
+   "tensix_sync": 0,
+   "risc_sync": 30,
+   "kinds": {
+    "risc:cb_reserve_back(acked)": 1,
+    "risc:fence": 7,
+    "risc:cb_poll": 1,
+    "risc:noc_poll": 20,
+    "risc:l1_flag_spin": 1
+   }
+  },
+  {
+   "kernel": "argmax",
+   "risc": "trisc0",
+   "insns": 316,
+   "tensix_sync": 16,
+   "risc_sync": 12,
+   "kinds": {
+    "risc:cb_wait_front(received)": 1,
+    "risc:fence": 2,
+    "tt:SEMWAIT[MATH_DONE]": 2,
+    "tt:SEMGET[MATH_DONE]": 2,
+    "risc:sem_poll(UNPACK_SYNC)": 4,
+    "risc:sem_post(UNPACK_SYNC)": 2,
+    "tt:STALLWAIT[UNPACK<-SRCA_CLR|SRCB_CLR]": 2,
+    "risc:mop_drain(PC_BUF_MOP_SYNC)": 1,
+    "tpl:UNPACR.set_dvalid": 4,
+    "tt:STALLWAIT[UNPACK<-UNPACK0|UNPACK1]": 2,
+    "tt:SEMGET[UNPACK_SYNC]": 2,
+    "risc:tensix_drain(PC_BUF_SYNC)": 2,
+    "tt:SEMPOST[UNPACK_TO_DEST]": 2
+   }
+  },
+  {
+   "kernel": "argmax",
+   "risc": "trisc1",
+   "insns": 500,
+   "tensix_sync": 19,
+   "risc_sync": 0,
+   "kinds": {
+    "tt:SEMWAIT[MATH_PACK]": 1,
+    "tt:STALLWAIT[CFG<-MATH|SFPU]": 1,
+    "tt:STALLWAIT[SYNC<-MATH|SFPU]": 3,
+    "tt:SEMPOST[MATH_DONE]": 2,
+    "tt:SEMWAIT[UNPACK_TO_DEST]": 2,
+    "tt:SEMGET[UNPACK_TO_DEST]": 2,
+    "tt:STALLWAIT[MATH<-SRCA_VLD|SRCB_VLD]": 2,
+    "tt:SETRWC.clear_ab_vld": 2,
+    "tt:STALLWAIT[SYNC<-MATH]": 2,
+    "tt:STALLWAIT[SFPU<-MATH]": 1,
+    "tt:SEMPOST[MATH_PACK]": 1
+   }
+  },
+  {
+   "kernel": "argmax",
+   "risc": "trisc2",
+   "insns": 174,
+   "tensix_sync": 6,
+   "risc_sync": 6,
+   "kinds": {
+    "tt:SEMWAIT[MATH_PACK]": 1,
+    "risc:cb_poll": 1,
+    "risc:fence": 2,
+    "risc:mop_drain(PC_BUF_MOP_SYNC)": 1,
+    "risc:tensix_drain(PC_BUF_SYNC)": 2,
+    "tt:STALLWAIT[CFG<-THCON|PACK0]": 1,
+    "tt:STALLWAIT[CFG<-PACK0]": 1,
+    "tt:STALLWAIT[SYNC<-PACK0]": 1,
+    "tt:ZEROACC": 1,
+    "tt:SEMGET[MATH_PACK]": 1
+   }
+  },
+  {
+   "kernel": "attention",
+   "risc": "brisc",
+   "insns": 955,
+   "tensix_sync": 0,
+   "risc_sync": 19,
+   "kinds": {
+    "risc:l1_flag_spin": 2,
+    "risc:fence": 9,
+    "risc:cb_poll": 3,
+    "risc:noc_poll": 5
+   }
+  },
+  {
+   "kernel": "attention",
+   "risc": "ncrisc",
+   "insns": 781,
+   "tensix_sync": 0,
+   "risc_sync": 19,
+   "kinds": {
+    "risc:cb_poll": 2,
+    "risc:fence": 7,
+    "risc:noc_poll": 10
+   }
+  },
+  {
+   "kernel": "attention",
+   "risc": "trisc0",
+   "insns": 983,
+   "tensix_sync": 28,
+   "risc_sync": 50,
+   "kinds": {
+    "risc:cb_wait_front(received)": 1,
+    "risc:fence": 16,
+    "risc:sem_poll(UNPACK_SYNC)": 13,
+    "risc:sem_post(UNPACK_SYNC)": 6,
+    "risc:cb_poll": 7,
+    "tt:STALLWAIT[UNPACK<-SRCA_CLR|SRCB_CLR]": 5,
+    "tt:STALLWAIT[UNPACK<-TRISC_CFG]": 6,
+    "tt:STALLWAIT[UNPACK<-UNPACK0|UNPACK1]": 5,
+    "tt:SEMGET[UNPACK_SYNC]": 6,
+    "risc:tensix_drain(PC_BUF_SYNC)": 6,
+    "risc:mop_drain(PC_BUF_MOP_SYNC)": 1,
+    "tpl:UNPACR.set_dvalid": 4,
+    "tt:STALLWAIT[UNPACK<-SRCA_CLR]": 1,
+    "tt:STALLWAIT[UNPACK<-UNPACK0]": 1
+   }
+  },
+  {
+   "kernel": "attention",
+   "risc": "trisc1",
+   "insns": 814,
+   "tensix_sync": 84,
+   "risc_sync": 6,
+   "kinds": {
+    "tt:SEMWAIT[MATH_PACK]": 17,
+    "risc:mop_drain(PC_BUF_MOP_SYNC)": 5,
+    "tpl:SETRWC.clear_ab_vld": 3,
+    "tt:STALLWAIT[CFG<-MATH|SFPU]": 12,
+    "tt:STALLWAIT[MATH<-SRCA_VLD]": 4,
+    "tt:STALLWAIT[CFG<-SFPU]": 14,
+    "tt:STALLWAIT[SFPU<-MATH]": 9,
+    "tt:STALLWAIT[SYNC<-MATH|SFPU]": 12,
+    "tt:SEMPOST[MATH_PACK]": 3,
+    "tt:ZEROACC": 1,
+    "risc:tensix_drain(PC_BUF_SYNC)": 1,
+    "tt:SETRWC.clear_ab_vld": 8,
+    "tt:STALLWAIT[SYNC<-SFPU]": 1
+   }
+  },
+  {
+   "kernel": "attention",
+   "risc": "trisc2",
+   "insns": 576,
+   "tensix_sync": 17,
+   "risc_sync": 18,
+   "kinds": {
+    "tt:SEMWAIT[MATH_PACK]": 3,
+    "risc:mop_drain(PC_BUF_MOP_SYNC)": 3,
+    "risc:tensix_drain(PC_BUF_SYNC)": 6,
+    "risc:cb_poll": 3,
+    "risc:fence": 6,
+    "tt:STALLWAIT[CFG<-THCON|PACK0]": 3,
+    "tt:STALLWAIT[CFG<-PACK0]": 3,
+    "tt:STALLWAIT[SYNC<-PACK0]": 3,
+    "tt:ZEROACC": 2,
+    "tt:SEMGET[MATH_PACK]": 3
+   }
+  },
+  {
+   "kernel": "attention_merge",
+   "risc": "brisc",
+   "insns": 358,
+   "tensix_sync": 0,
+   "risc_sync": 13,
+   "kinds": {
+    "risc:cb_reserve_back(acked)": 2,
+    "risc:fence": 6,
+    "risc:noc_poll": 5
+   }
+  },
+  {
+   "kernel": "attention_merge",
+   "risc": "ncrisc",
+   "insns": 488,
+   "tensix_sync": 0,
+   "risc_sync": 11,
+   "kinds": {
+    "risc:cb_poll": 1,
+    "risc:fence": 4,
+    "risc:noc_poll": 6
+   }
+  },
+  {
+   "kernel": "attention_merge",
+   "risc": "trisc0",
+   "insns": 169,
+   "tensix_sync": 8,
+   "risc_sync": 7,
+   "kinds": {
+    "risc:sem_poll(UNPACK_SYNC)": 1,
+    "risc:sem_post(UNPACK_SYNC)": 1,
+    "risc:mop_drain(PC_BUF_MOP_SYNC)": 1,
+    "tpl:UNPACR.set_dvalid": 4,
+    "risc:cb_wait_front(received)": 1,
+    "risc:fence": 2,
+    "tt:STALLWAIT[UNPACK<-SRCA_CLR]": 1,
+    "tt:STALLWAIT[UNPACK<-TRISC_CFG]": 1,
+    "tt:STALLWAIT[UNPACK<-UNPACK0]": 1,
+    "tt:SEMGET[UNPACK_SYNC]": 1,
+    "risc:tensix_drain(PC_BUF_SYNC)": 1
+   }
+  },
+  {
+   "kernel": "attention_merge",
+   "risc": "trisc1",
+   "insns": 565,
+   "tensix_sync": 73,
+   "risc_sync": 2,
+   "kinds": {
+    "tt:SEMWAIT[MATH_PACK]": 6,
+    "risc:mop_drain(PC_BUF_MOP_SYNC)": 2,
+    "tpl:SETRWC.clear_ab_vld": 2,
+    "tt:STALLWAIT[CFG<-MATH|SFPU]": 12,
+    "tt:STALLWAIT[MATH<-SRCA_VLD]": 12,
+    "tt:STALLWAIT[CFG<-SFPU]": 13,
+    "tt:STALLWAIT[SFPU<-MATH]": 13,
+    "tt:STALLWAIT[SYNC<-MATH|SFPU]": 14,
+    "tt:SEMPOST[MATH_PACK]": 1
+   }
+  },
+  {
+   "kernel": "attention_merge",
+   "risc": "trisc2",
+   "insns": 185,
+   "tensix_sync": 6,
+   "risc_sync": 6,
+   "kinds": {
+    "tt:SEMWAIT[MATH_PACK]": 1,
+    "risc:mop_drain(PC_BUF_MOP_SYNC)": 1,
+    "risc:tensix_drain(PC_BUF_SYNC)": 2,
+    "tt:ZEROACC": 1,
+    "tt:SEMGET[MATH_PACK]": 1,
+    "risc:cb_poll": 1,
+    "risc:fence": 2,
+    "tt:STALLWAIT[CFG<-THCON|PACK0]": 1,
+    "tt:STALLWAIT[CFG<-PACK0]": 1,
+    "tt:STALLWAIT[SYNC<-PACK0]": 1
+   }
+  },
+  {
+   "kernel": "down",
+   "risc": "brisc.v0",
+   "insns": 453,
+   "tensix_sync": 0,
+   "risc_sync": 16,
+   "kinds": {
+    "risc:cb_poll": 1,
+    "risc:fence": 6,
+    "risc:cb_reserve_back(acked)": 1,
+    "risc:noc_poll": 8
+   }
+  },
+  {
+   "kernel": "down",
+   "risc": "brisc.v1",
+   "insns": 453,
+   "tensix_sync": 0,
+   "risc_sync": 16,
+   "kinds": {
+    "risc:cb_poll": 1,
+    "risc:fence": 6,
+    "risc:cb_reserve_back(acked)": 1,
+    "risc:noc_poll": 8
+   }
+  },
+  {
+   "kernel": "down",
+   "risc": "ncrisc.v0",
+   "insns": 385,
+   "tensix_sync": 0,
+   "risc_sync": 16,
+   "kinds": {
+    "risc:cb_poll": 2,
+    "risc:fence": 8,
+    "risc:noc_poll": 6
+   }
+  },
+  {
+   "kernel": "down",
+   "risc": "ncrisc.v1",
+   "insns": 385,
+   "tensix_sync": 0,
+   "risc_sync": 16,
+   "kinds": {
+    "risc:cb_poll": 2,
+    "risc:fence": 8,
+    "risc:noc_poll": 6
+   }
+  },
+  {
+   "kernel": "down",
+   "risc": "trisc0",
+   "insns": 650,
+   "tensix_sync": 24,
+   "risc_sync": 29,
+   "kinds": {
+    "risc:sem_poll(UNPACK_SYNC)": 6,
+    "risc:sem_post(UNPACK_SYNC)": 3,
+    "risc:mop_drain(PC_BUF_MOP_SYNC)": 3,
+    "tpl:UNPACR.set_dvalid": 12,
+    "risc:cb_poll": 4,
+    "risc:fence": 9,
+    "tt:STALLWAIT[UNPACK<-SRCA_CLR]": 1,
+    "tt:STALLWAIT[UNPACK<-TRISC_CFG]": 3,
+    "tt:STALLWAIT[UNPACK<-UNPACK0]": 1,
+    "tt:SEMGET[UNPACK_SYNC]": 3,
+    "risc:tensix_drain(PC_BUF_SYNC)": 3,
+    "risc:cb_wait_front(received)": 1,
+    "tt:STALLWAIT[UNPACK<-SRCA_CLR|SRCB_CLR]": 2,
+    "tt:STALLWAIT[UNPACK<-UNPACK0|UNPACK1]": 2
+   }
+  },
+  {
+   "kernel": "down",
+   "risc": "trisc1",
+   "insns": 375,
+   "tensix_sync": 35,
+   "risc_sync": 5,
+   "kinds": {
+    "tt:SEMWAIT[MATH_PACK]": 5,
+    "risc:mop_drain(PC_BUF_MOP_SYNC)": 5,
+    "tpl:SETRWC.clear_ab_vld": 2,
+    "tt:STALLWAIT[CFG<-MATH|SFPU]": 3,
+    "tt:STALLWAIT[MATH<-SRCA_VLD]": 1,
+    "tt:STALLWAIT[SYNC<-MATH|SFPU]": 8,
+    "tt:STALLWAIT[CFG<-SFPU]": 3,
+    "tt:STALLWAIT[SFPU<-MATH]": 3,
+    "tt:SEMPOST[MATH_PACK]": 3,
+    "tpl:FPU.clear_dvalid": 1,
+    "tt:ZEROACC": 4,
+    "tt:STALLWAIT[MATH<-SRCA_VLD|SRCB_VLD]": 2
+   }
+  },
+  {
+   "kernel": "down",
+   "risc": "trisc2",
+   "insns": 540,
+   "tensix_sync": 18,
+   "risc_sync": 18,
+   "kinds": {
+    "tt:SEMWAIT[MATH_PACK]": 3,
+    "risc:cb_poll": 3,
+    "risc:fence": 6,
+    "risc:mop_drain(PC_BUF_MOP_SYNC)": 3,
+    "risc:tensix_drain(PC_BUF_SYNC)": 6,
+    "tt:STALLWAIT[CFG<-THCON|PACK0]": 3,
+    "tt:STALLWAIT[CFG<-PACK0]": 3,
+    "tt:STALLWAIT[SYNC<-PACK0]": 3,
+    "tt:ZEROACC": 3,
+    "tt:SEMGET[MATH_PACK]": 3
+   }
+  },
+  {
+   "kernel": "embedding",
+   "risc": "brisc",
+   "insns": 396,
+   "tensix_sync": 0,
+   "risc_sync": 22,
+   "kinds": {
+    "risc:noc_poll": 8,
+    "risc:cb_reserve_back(acked)": 4,
+    "risc:fence": 10
+   }
+  },
+  {
+   "kernel": "embedding",
+   "risc": "ncrisc",
+   "insns": 185,
+   "tensix_sync": 0,
+   "risc_sync": 11,
+   "kinds": {
+    "risc:cb_wait_front(received)": 1,
+    "risc:fence": 4,
+    "risc:noc_poll": 6
+   }
+  },
+  {
+   "kernel": "gate",
+   "risc": "brisc",
+   "insns": 479,
+   "tensix_sync": 0,
+   "risc_sync": 19,
+   "kinds": {
+    "risc:cb_poll": 1,
+    "risc:fence": 8,
+    "risc:cb_reserve_back(acked)": 2,
+    "risc:noc_poll": 8
+   }
+  },
+  {
+   "kernel": "gate",
+   "risc": "ncrisc",
+   "insns": 449,
+   "tensix_sync": 0,
+   "risc_sync": 19,
+   "kinds": {
+    "risc:cb_poll": 3,
+    "risc:fence": 10,
+    "risc:noc_poll": 6
+   }
+  },
+  {
+   "kernel": "gate",
+   "risc": "trisc0",
+   "insns": 804,
+   "tensix_sync": 40,
+   "risc_sync": 39,
+   "kinds": {
+    "risc:sem_poll(UNPACK_SYNC)": 7,
+    "risc:sem_post(UNPACK_SYNC)": 5,
+    "risc:mop_drain(PC_BUF_MOP_SYNC)": 5,
+    "tpl:UNPACR.set_dvalid": 20,
+    "risc:cb_poll": 5,
+    "risc:fence": 11,
+    "tt:STALLWAIT[UNPACK<-SRCA_CLR]": 4,
+    "tt:STALLWAIT[UNPACK<-TRISC_CFG]": 5,
+    "tt:STALLWAIT[UNPACK<-UNPACK0]": 4,
+    "tt:SEMGET[UNPACK_SYNC]": 5,
+    "risc:tensix_drain(PC_BUF_SYNC)": 5,
+    "risc:cb_wait_front(received)": 1,
+    "tt:STALLWAIT[UNPACK<-SRCA_CLR|SRCB_CLR]": 1,
+    "tt:STALLWAIT[UNPACK<-UNPACK0|UNPACK1]": 1
+   }
+  },
+  {
+   "kernel": "gate",
+   "risc": "trisc1",
+   "insns": 818,
+   "tensix_sync": 100,
+   "risc_sync": 7,
+   "kinds": {
+    "tt:SEMWAIT[MATH_PACK]": 14,
+    "risc:mop_drain(PC_BUF_MOP_SYNC)": 7,
+    "tpl:SETRWC.clear_ab_vld": 2,
+    "tt:STALLWAIT[CFG<-MATH|SFPU]": 11,
+    "tt:STALLWAIT[MATH<-SRCA_VLD]": 10,
+    "tt:STALLWAIT[CFG<-SFPU]": 19,
+    "tt:STALLWAIT[SFPU<-MATH]": 13,
+    "tt:STALLWAIT[SYNC<-MATH|SFPU]": 21,
+    "tt:SEMPOST[MATH_PACK]": 4,
+    "tpl:FPU.clear_dvalid": 1,
+    "tt:ZEROACC": 4,
+    "tt:STALLWAIT[MATH<-SRCA_VLD|SRCB_VLD]": 1
+   }
+  },
+  {
+   "kernel": "gate",
+   "risc": "trisc2",
+   "insns": 548,
+   "tensix_sync": 18,
+   "risc_sync": 18,
+   "kinds": {
+    "tt:SEMWAIT[MATH_PACK]": 3,
+    "risc:mop_drain(PC_BUF_MOP_SYNC)": 3,
+    "risc:tensix_drain(PC_BUF_SYNC)": 6,
+    "tt:ZEROACC": 3,
+    "tt:SEMGET[MATH_PACK]": 3,
+    "risc:cb_poll": 3,
+    "risc:fence": 6,
+    "tt:STALLWAIT[CFG<-THCON|PACK0]": 3,
+    "tt:STALLWAIT[CFG<-PACK0]": 3,
+    "tt:STALLWAIT[SYNC<-PACK0]": 3
+   }
+  },
+  {
+   "kernel": "lm",
+   "risc": "brisc",
+   "insns": 403,
+   "tensix_sync": 0,
+   "risc_sync": 16,
+   "kinds": {
+    "risc:cb_poll": 1,
+    "risc:fence": 6,
+    "risc:cb_reserve_back(acked)": 1,
+    "risc:noc_poll": 8
+   }
+  },
+  {
+   "kernel": "lm",
+   "risc": "ncrisc",
+   "insns": 210,
+   "tensix_sync": 0,
+   "risc_sync": 11,
+   "kinds": {
+    "risc:cb_poll": 1,
+    "risc:fence": 4,
+    "risc:noc_poll": 6
+   }
+  },
+  {
+   "kernel": "lm",
+   "risc": "trisc0",
+   "insns": 503,
+   "tensix_sync": 24,
+   "risc_sync": 25,
+   "kinds": {
+    "risc:sem_poll(UNPACK_SYNC)": 5,
+    "risc:sem_post(UNPACK_SYNC)": 3,
+    "risc:mop_drain(PC_BUF_MOP_SYNC)": 3,
+    "tpl:UNPACR.set_dvalid": 12,
+    "risc:cb_poll": 3,
+    "risc:fence": 7,
+    "tt:STALLWAIT[UNPACK<-SRCA_CLR]": 2,
+    "tt:STALLWAIT[UNPACK<-TRISC_CFG]": 3,
+    "tt:STALLWAIT[UNPACK<-UNPACK0]": 2,
+    "tt:SEMGET[UNPACK_SYNC]": 3,
+    "risc:tensix_drain(PC_BUF_SYNC)": 3,
+    "risc:cb_wait_front(received)": 1,
+    "tt:STALLWAIT[UNPACK<-SRCA_CLR|SRCB_CLR]": 1,
+    "tt:STALLWAIT[UNPACK<-UNPACK0|UNPACK1]": 1
+   }
+  },
+  {
+   "kernel": "lm",
+   "risc": "trisc1",
+   "insns": 480,
+   "tensix_sync": 59,
+   "risc_sync": 5,
+   "kinds": {
+    "tt:SEMWAIT[MATH_PACK]": 3,
+    "risc:mop_drain(PC_BUF_MOP_SYNC)": 5,
+    "tpl:SETRWC.clear_ab_vld": 1,
+    "tt:STALLWAIT[CFG<-MATH|SFPU]": 9,
+    "tt:STALLWAIT[MATH<-SRCA_VLD]": 8,
+    "tt:STALLWAIT[CFG<-SFPU]": 9,
+    "tt:STALLWAIT[SFPU<-MATH]": 9,
+    "tt:STALLWAIT[SYNC<-MATH|SFPU]": 12,
+    "tt:SEMPOST[MATH_PACK]": 2,
+    "tpl:FPU.clear_dvalid": 1,
+    "tt:ZEROACC": 4,
+    "tt:STALLWAIT[MATH<-SRCA_VLD|SRCB_VLD]": 1
+   }
+  },
+  {
+   "kernel": "lm",
+   "risc": "trisc2",
+   "insns": 368,
+   "tensix_sync": 12,
+   "risc_sync": 12,
+   "kinds": {
+    "tt:SEMWAIT[MATH_PACK]": 2,
+    "risc:mop_drain(PC_BUF_MOP_SYNC)": 2,
+    "risc:tensix_drain(PC_BUF_SYNC)": 4,
+    "tt:ZEROACC": 2,
+    "tt:SEMGET[MATH_PACK]": 2,
+    "risc:cb_poll": 2,
+    "risc:fence": 4,
+    "tt:STALLWAIT[CFG<-THCON|PACK0]": 2,
+    "tt:STALLWAIT[CFG<-PACK0]": 2,
+    "tt:STALLWAIT[SYNC<-PACK0]": 2
+   }
+  },
+  {
+   "kernel": "o",
+   "risc": "brisc",
+   "insns": 404,
+   "tensix_sync": 0,
+   "risc_sync": 16,
+   "kinds": {
+    "risc:cb_poll": 1,
+    "risc:fence": 6,
+    "risc:cb_reserve_back(acked)": 1,
+    "risc:noc_poll": 8
+   }
+  },
+  {
+   "kernel": "o",
+   "risc": "ncrisc",
+   "insns": 399,
+   "tensix_sync": 0,
+   "risc_sync": 16,
+   "kinds": {
+    "risc:cb_poll": 2,
+    "risc:fence": 8,
+    "risc:noc_poll": 6
+   }
+  },
+  {
+   "kernel": "o",
+   "risc": "trisc0",
+   "insns": 650,
+   "tensix_sync": 24,
+   "risc_sync": 29,
+   "kinds": {
+    "risc:sem_poll(UNPACK_SYNC)": 6,
+    "risc:sem_post(UNPACK_SYNC)": 3,
+    "risc:mop_drain(PC_BUF_MOP_SYNC)": 3,
+    "tpl:UNPACR.set_dvalid": 12,
+    "risc:cb_poll": 4,
+    "risc:fence": 9,
+    "tt:STALLWAIT[UNPACK<-SRCA_CLR]": 1,
+    "tt:STALLWAIT[UNPACK<-TRISC_CFG]": 3,
+    "tt:STALLWAIT[UNPACK<-UNPACK0]": 1,
+    "tt:SEMGET[UNPACK_SYNC]": 3,
+    "risc:tensix_drain(PC_BUF_SYNC)": 3,
+    "risc:cb_wait_front(received)": 1,
+    "tt:STALLWAIT[UNPACK<-SRCA_CLR|SRCB_CLR]": 2,
+    "tt:STALLWAIT[UNPACK<-UNPACK0|UNPACK1]": 2
+   }
+  },
+  {
+   "kernel": "o",
+   "risc": "trisc1",
+   "insns": 375,
+   "tensix_sync": 35,
+   "risc_sync": 5,
+   "kinds": {
+    "tt:SEMWAIT[MATH_PACK]": 5,
+    "risc:mop_drain(PC_BUF_MOP_SYNC)": 5,
+    "tpl:SETRWC.clear_ab_vld": 2,
+    "tt:STALLWAIT[CFG<-MATH|SFPU]": 3,
+    "tt:STALLWAIT[MATH<-SRCA_VLD]": 1,
+    "tt:STALLWAIT[SYNC<-MATH|SFPU]": 8,
+    "tt:STALLWAIT[CFG<-SFPU]": 3,
+    "tt:STALLWAIT[SFPU<-MATH]": 3,
+    "tt:SEMPOST[MATH_PACK]": 3,
+    "tpl:FPU.clear_dvalid": 1,
+    "tt:ZEROACC": 4,
+    "tt:STALLWAIT[MATH<-SRCA_VLD|SRCB_VLD]": 2
+   }
+  },
+  {
+   "kernel": "o",
+   "risc": "trisc2",
+   "insns": 539,
+   "tensix_sync": 18,
+   "risc_sync": 18,
+   "kinds": {
+    "tt:SEMWAIT[MATH_PACK]": 3,
+    "risc:cb_poll": 3,
+    "risc:fence": 6,
+    "risc:mop_drain(PC_BUF_MOP_SYNC)": 3,
+    "risc:tensix_drain(PC_BUF_SYNC)": 6,
+    "tt:STALLWAIT[CFG<-THCON|PACK0]": 3,
+    "tt:STALLWAIT[CFG<-PACK0]": 3,
+    "tt:STALLWAIT[SYNC<-PACK0]": 3,
+    "tt:ZEROACC": 3,
+    "tt:SEMGET[MATH_PACK]": 3
+   }
+  },
+  {
+   "kernel": "qkv",
+   "risc": "brisc",
+   "insns": 554,
+   "tensix_sync": 0,
+   "risc_sync": 22,
+   "kinds": {
+    "risc:cb_poll": 1,
+    "risc:fence": 10,
+    "risc:cb_reserve_back(acked)": 3,
+    "risc:noc_poll": 8
+   }
+  },
+  {
+   "kernel": "qkv",
+   "risc": "ncrisc",
+   "insns": 454,
+   "tensix_sync": 0,
+   "risc_sync": 17,
+   "kinds": {
+    "risc:cb_poll": 3,
+    "risc:fence": 8,
+    "risc:noc_poll": 6
+   }
+  },
+  {
+   "kernel": "qkv",
+   "risc": "trisc0",
+   "insns": 510,
+   "tensix_sync": 24,
+   "risc_sync": 25,
+   "kinds": {
+    "risc:sem_poll(UNPACK_SYNC)": 5,
+    "risc:sem_post(UNPACK_SYNC)": 3,
+    "risc:mop_drain(PC_BUF_MOP_SYNC)": 3,
+    "tpl:UNPACR.set_dvalid": 12,
+    "risc:cb_poll": 3,
+    "risc:fence": 7,
+    "tt:STALLWAIT[UNPACK<-SRCA_CLR]": 2,
+    "tt:STALLWAIT[UNPACK<-TRISC_CFG]": 3,
+    "tt:STALLWAIT[UNPACK<-UNPACK0]": 2,
+    "tt:SEMGET[UNPACK_SYNC]": 3,
+    "risc:tensix_drain(PC_BUF_SYNC)": 3,
+    "risc:cb_wait_front(received)": 1,
+    "tt:STALLWAIT[UNPACK<-SRCA_CLR|SRCB_CLR]": 1,
+    "tt:STALLWAIT[UNPACK<-UNPACK0|UNPACK1]": 1
+   }
+  },
+  {
+   "kernel": "qkv",
+   "risc": "trisc1",
+   "insns": 709,
+   "tensix_sync": 87,
+   "risc_sync": 6,
+   "kinds": {
+    "tt:SEMWAIT[MATH_PACK]": 11,
+    "risc:mop_drain(PC_BUF_MOP_SYNC)": 6,
+    "tpl:SETRWC.clear_ab_vld": 1,
+    "tt:STALLWAIT[CFG<-MATH|SFPU]": 9,
+    "tt:STALLWAIT[MATH<-SRCA_VLD]": 8,
+    "tt:STALLWAIT[CFG<-SFPU]": 17,
+    "tt:STALLWAIT[SFPU<-MATH]": 11,
+    "tt:STALLWAIT[SYNC<-MATH|SFPU]": 20,
+    "tt:SEMPOST[MATH_PACK]": 4,
+    "tpl:FPU.clear_dvalid": 1,
+    "tt:ZEROACC": 4,
+    "tt:STALLWAIT[MATH<-SRCA_VLD|SRCB_VLD]": 1
+   }
+  },
+  {
+   "kernel": "qkv",
+   "risc": "trisc2",
+   "insns": 375,
+   "tensix_sync": 12,
+   "risc_sync": 12,
+   "kinds": {
+    "tt:SEMWAIT[MATH_PACK]": 2,
+    "risc:mop_drain(PC_BUF_MOP_SYNC)": 2,
+    "risc:tensix_drain(PC_BUF_SYNC)": 4,
+    "tt:ZEROACC": 2,
+    "tt:SEMGET[MATH_PACK]": 2,
+    "risc:cb_poll": 2,
+    "risc:fence": 4,
+    "tt:STALLWAIT[CFG<-THCON|PACK0]": 2,
+    "tt:STALLWAIT[CFG<-PACK0]": 2,
+    "tt:STALLWAIT[SYNC<-PACK0]": 2
+   }
+  }
+ ]
+}

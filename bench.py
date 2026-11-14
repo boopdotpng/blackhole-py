@@ -1,7 +1,8 @@
 # Decode benchmarks: 64 tokens after the default prompt, and 64 tokens after a 4096-token context.
 # The long context skips prefill: the KV caches get random bf16 and decode starts at position 4096 (timing does not
-# depend on the cached values). % DRAM is the share of 512 GB/s needed to read weights, LM head and KV once per token.
-import json, sys
+# depend on the cached values). --prefill N additionally runs N real prompt positions before decoding.
+# % DRAM is the share of 512 GB/s needed to read weights, LM head and KV once per token.
+import argparse, json
 import numpy as np
 from helpers import safe_load
 from llama3 import Llama3, ChatTokenizer
@@ -13,8 +14,8 @@ def weight_bytes(model) -> int:  # the embedding is read one row per token, unle
   t = safe_load(path if path.exists() else model.checkpoint / "model.safetensors")
   return sum(x.nbytes for n, x in t.items() if not (n.endswith("embed_tokens.weight") and "lm_head.weight" in t))
 
-def bench(key):
-  model = Llama3(key)
+def bench(key, device=0, prefill=0):
+  model = Llama3(key, device=device)
   try:
     cfg = json.loads((model.checkpoint / "config.json").read_text())
     head_dim = cfg.get("head_dim", cfg["hidden_size"] // cfg["num_attention_heads"])
@@ -25,6 +26,11 @@ def bench(key):
     ids = ChatTokenizer(model.checkpoint).chat([{"role": "user", "content": "Write a story about a robot learning to paint."}])
     _, s = model.generate(ids, TOKENS)
     rows.append(("short", len(ids), s["period_us"]))
+    if prefill:
+      prompt = (ids * ((prefill + len(ids) - 1) // len(ids)))[:prefill]
+      _, s = model.generate(prompt, TOKENS)
+      print(f"{key:<8} prefill {prefill} positions + {s['tokens']} decode tokens: {s['wall_us'] / 1e6:.2f} s", flush=True)
+      rows.append((f"real{prefill}", prefill, s["period_us"]))
     caches = [b for b in model.m["uploads"] if b["kind"] == "zeros"]
     rand = (np.random.default_rng(0).standard_normal(max(b["size"] for b in caches) // 2, np.float32).view(np.uint32) >> 16).astype(np.uint16)
     for b in caches: model.dev.allocator._copyin(model.buffer(b), rand[:b["size"] // 2])
@@ -36,5 +42,11 @@ def bench(key):
     model.close()
 
 if __name__ == "__main__":
-  for key in sys.argv[1:] or ("1b", "8b-fp8", "8b-bf16"):
-    for ctx, us, frac in bench(key): print(f"{key:<8} {ctx:<6} {us / 1e3:6.2f} ms/token {1e6 / us:6.1f} tok/s {frac:4.0%} DRAM")
+  ap = argparse.ArgumentParser(description="Decode benchmarks, with optional real prefill coverage.")
+  ap.add_argument("models", nargs="*", choices=("1b", "8b-fp8", "8b-bf16"))
+  ap.add_argument("--device", type=int, default=0)
+  ap.add_argument("--prefill", type=int, default=0, metavar="N", help="also run N prompt positions from start=0")
+  args = ap.parse_args()
+  if args.prefill < 0: ap.error("--prefill must be nonnegative")
+  for key in args.models or ("1b", "8b-fp8", "8b-bf16"):
+    for ctx, us, frac in bench(key, args.device, args.prefill): print(f"{key:<8} {ctx:<6} {us / 1e3:6.2f} ms/token {1e6 / us:6.1f} tok/s {frac:4.0%} DRAM")

@@ -1,0 +1,68 @@
+{
+ "model": "1b",
+ "variant": "t0semfix+t1nosync",
+ "device": 0,
+ "tokens": 24,
+ "period_us": 6273.742469135803,
+ "tokens_match": "24/24",
+ "patches": [
+  "down/trisc0: hot loop 0x228-0x3a8, 5 words patched (strict)",
+  "gate/trisc0: hot loop 0x684-0x804, 5 words patched (strict)",
+  "lm/trisc0: hot loop 0x638-0x7b8, 5 words patched (strict)",
+  "o/trisc0: hot loop 0x228-0x3a8, 5 words patched (strict)",
+  "qkv/trisc0: hot loop 0x664-0x7e4, 5 words patched (strict)",
+  "down/trisc1: 1 per-tile STALLWAIT[SYNC<-MATH|SFPU] -> NOP",
+  "gate/trisc1: 1 per-tile STALLWAIT[SYNC<-MATH|SFPU] -> NOP",
+  "lm/trisc1: 1 per-tile STALLWAIT[SYNC<-MATH|SFPU] -> NOP",
+  "o/trisc1: 1 per-tile STALLWAIT[SYNC<-MATH|SFPU] -> NOP",
+  "qkv/trisc1: 1 per-tile STALLWAIT[SYNC<-MATH|SFPU] -> NOP"
+ ],
+ "kernels": {
+  "embedding": {
+   "us_per_launch": 3.961358024691357,
+   "launches_per_token": 1,
+   "us_per_token": 3.961358024691357
+  },
+  "qkv": {
+   "us_per_launch": 38.12744020061728,
+   "launches_per_token": 16,
+   "us_per_token": 610.0390432098765
+  },
+  "attention": {
+   "us_per_launch": 27.23433449074074,
+   "launches_per_token": 16,
+   "us_per_token": 435.7493518518518
+  },
+  "attention_merge": {
+   "us_per_launch": 5.681128472222222,
+   "launches_per_token": 16,
+   "us_per_token": 90.89805555555556
+  },
+  "o": {
+   "us_per_launch": 29.239461805555553,
+   "launches_per_token": 16,
+   "us_per_token": 467.83138888888885
+  },
+  "gate": {
+   "us_per_launch": 146.51640817901236,
+   "launches_per_token": 16,
+   "us_per_token": 2344.2625308641977
+  },
+  "down": {
+   "us_per_launch": 77.84327546296295,
+   "launches_per_token": 16,
+   "us_per_token": 1245.4924074074072
+  },
+  "lm": {
+   "us_per_launch": 1048.3493827160494,
+   "launches_per_token": 1,
+   "us_per_token": 1048.3493827160494
+  },
+  "argmax": {
+   "us_per_launch": 8.828456790123456,
+   "launches_per_token": 1,
+   "us_per_token": 8.828456790123456
+  }
+ },
+ "when": "2026-11-13 02:35:53"
+}

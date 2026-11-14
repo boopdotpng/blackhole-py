@@ -1,0 +1,69 @@
+{
+ "model": "8b-fp8",
+ "variant": "nodram+t0semfix",
+ "device": 0,
+ "tokens": 24,
+ "period_us": 14311.243796296296,
+ "tokens_match": "0/24",
+ "patches": [
+  "down/brisc.v0: read length 0x00000800 -> 64 B at 0x6a8",
+  "down/brisc.v1: read length 0x00000800 -> 64 B at 0x6a8",
+  "gate/brisc: read length 0x00000800 -> 64 B at 0x6f0",
+  "lm/brisc: read length 0x00000800 -> 64 B at 0x5c0",
+  "o/brisc: read length 0x00000800 -> 64 B at 0x5c4",
+  "qkv/brisc: read length 0x00000800 -> 64 B at 0x81c",
+  "down/trisc0: hot loop 0x4ec-0x66c, 5 words patched (strict)",
+  "gate/trisc0: hot loop 0x69c-0x81c, 5 words patched (strict)",
+  "lm/trisc0: hot loop 0x64c-0x7d0, 5 words patched (strict)",
+  "o/trisc0: hot loop 0x4ec-0x66c, 5 words patched (strict)",
+  "qkv/trisc0: hot loop 0x66c-0x7ec, 5 words patched (strict)"
+ ],
+ "kernels": {
+  "embedding": {
+   "us_per_launch": 5.20395061728395,
+   "launches_per_token": 1,
+   "us_per_token": 5.20395061728395
+  },
+  "qkv": {
+   "us_per_launch": 50.96989969135802,
+   "launches_per_token": 32,
+   "us_per_token": 1631.0367901234567
+  },
+  "attention": {
+   "us_per_launch": 40.02964699074074,
+   "launches_per_token": 32,
+   "us_per_token": 1280.9487037037036
+  },
+  "attention_merge": {
+   "us_per_launch": 8.549414544753086,
+   "launches_per_token": 32,
+   "us_per_token": 273.58126543209875
+  },
+  "o": {
+   "us_per_launch": 39.60720100308642,
+   "launches_per_token": 32,
+   "us_per_token": 1267.4304320987656
+  },
+  "gate": {
+   "us_per_launch": 183.09643325617284,
+   "launches_per_token": 32,
+   "us_per_token": 5859.085864197531
+  },
+  "down": {
+   "us_per_launch": 94.8242081404321,
+   "launches_per_token": 32,
+   "us_per_token": 3034.3746604938274
+  },
+  "lm": {
+   "us_per_launch": 920.4181481481481,
+   "launches_per_token": 1,
+   "us_per_token": 920.4181481481481
+  },
+  "argmax": {
+   "us_per_launch": 9.205833333333333,
+   "launches_per_token": 1,
+   "us_per_token": 9.205833333333333
+  }
+ },
+ "when": "2026-11-13 02:27:53"
+}

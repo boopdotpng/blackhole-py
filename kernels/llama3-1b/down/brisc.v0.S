@@ -1,13 +1,13 @@
 # llama3 1b decode: down, brisc. Exported from blackhole-py/examples/llama3/kernels.py by tools/rewrite_export/export_llama3.py.
 # cores (48): 1,2 2,2 3,2 4,2 5,2 6,2 1,3 2,3 3,3 4,3 5,3 6,3 1,4 2,4 3,4 4,4 5,4 6,4 1,5 2,5 3,5 4,5 5,5 6,5 1,6 2,6 3,6 4,6 5,6 6,6 1,7 2,7 3,7 4,7 5,7 6,7 1,8 2,8 3,8 4,8 5,8 6,8 1,9 2,9 3,9 4,9 5,9 6,9
-# params: 0x780=e2e_hidden_dense_decode_token, 0x784=e2e_l0_down, 0x788=e2e_x_a, 0x78c=e2e_x_b, 0xe980=e2e_q_compact, 0xe984=e2e_l0_down_row_start, 0xe988=dense_start, 0xe98c=e2e_l0_down_rows
-#   0x780.. uniform, sent with every EXEC; 0xe840.. this core's resident per-core table
+# params: 0x780=e2e_hidden_dense_decode_token, 0x784=e2e_l0_down, 0x788=e2e_x_a, 0x78c=e2e_x_b, 0x11980=e2e_q_compact, 0x11984=e2e_l0_down_row_start, 0x11988=dense_start, 0x1198c=e2e_l0_down_rows
+#   0x780.. uniform, sent with every EXEC; 0x11840.. this core's resident per-core table
 # pcs are offsets from the image start; position-independent, llama3.py runs it from either code slot.
 
       0: ffb014b7  lui          x9, 0xffb01  # x9 = 0xffb01000
       4: 87848493  addi         x9, x9, -1928  # x9 = 0xffb00878 · riscv_local_mem + 0x878
-      8: 0000f537  lui          x10, 0x0000f  # x10 = 0x0000f000
-      c: 00a4a023  sw           x10, 0(x9)  # riscv_local_mem + 0x878 · 0xffb00878; write 0x0000f000
+      8: 00012537  lui          x10, 0x00012  # x10 = 0x00012000 · TensixL1.KERNEL_CACHE_BASE
+      c: 00a4a023  sw           x10, 0(x9)  # riscv_local_mem + 0x878 · 0xffb00878; write 0x00012000
      10: ffb014b7  lui          x9, 0xffb01  # x9 = 0xffb01000
      14: 87c48493  addi         x9, x9, -1924  # x9 = 0xffb0087c · riscv_local_mem + 0x87c
      18: 0004a023  sw           x0, 0(x9)  # riscv_local_mem + 0x87c · 0xffb0087c; write 0x00000000
@@ -19,7 +19,7 @@
      30: 000b0293  addi         x5, x22, 0
      34: 00020f93  addi         x31, x4, 0
      38: 00028f13  addi         x30, x5, 0
-     3c: 00018eb7  lui          x29, 0x00018  # x29 = 0x00018000
+     3c: 0001beb7  lui          x29, 0x0001b  # x29 = 0x0001b000
      40: 2ec000ef  jal          x1, 0x0000032c  # target 0x0000032c; x1 = 0x00000044
      44: 00100f93  addi         x31, x0, 1  # x31 = 0x00000001
      48: 298000ef  jal          x1, 0x000002e0  # target 0x000002e0; x1 = 0x0000004c
@@ -27,8 +27,8 @@
      50: 000b0293  addi         x5, x22, 0
      54: 00020f93  addi         x31, x4, 0
      58: 00028f13  addi         x30, x5, 0
-     5c: 00019eb7  lui          x29, 0x00019  # x29 = 0x00019000
-     60: 800e8e93  addi         x29, x29, -2048  # x29 = 0x00018800
+     5c: 0001ceb7  lui          x29, 0x0001c  # x29 = 0x0001c000
+     60: 800e8e93  addi         x29, x29, -2048  # x29 = 0x0001b800
      64: 2c8000ef  jal          x1, 0x0000032c  # target 0x0000032c; x1 = 0x00000068
      68: 00200f93  addi         x31, x0, 2  # x31 = 0x00000002
      6c: 274000ef  jal          x1, 0x000002e0  # target 0x000002e0; x1 = 0x00000070
@@ -36,7 +36,7 @@
      74: 000b0293  addi         x5, x22, 0
      78: 00020f93  addi         x31, x4, 0
      7c: 00028f13  addi         x30, x5, 0
-     80: 00019eb7  lui          x29, 0x00019  # x29 = 0x00019000
+     80: 0001ceb7  lui          x29, 0x0001c  # x29 = 0x0001c000
      84: 2a8000ef  jal          x1, 0x0000032c  # target 0x0000032c; x1 = 0x00000088
      88: 00300f93  addi         x31, x0, 3  # x31 = 0x00000003
      8c: 254000ef  jal          x1, 0x000002e0  # target 0x000002e0; x1 = 0x00000090
@@ -44,8 +44,8 @@
      94: 000b0293  addi         x5, x22, 0
      98: 00020f93  addi         x31, x4, 0
      9c: 00028f13  addi         x30, x5, 0
-     a0: 0001aeb7  lui          x29, 0x0001a  # x29 = 0x0001a000
-     a4: 800e8e93  addi         x29, x29, -2048  # x29 = 0x00019800
+     a0: 0001deb7  lui          x29, 0x0001d  # x29 = 0x0001d000
+     a4: 800e8e93  addi         x29, x29, -2048  # x29 = 0x0001c800
      a8: 284000ef  jal          x1, 0x0000032c  # target 0x0000032c; x1 = 0x000000ac
      ac: 00400f93  addi         x31, x0, 4  # x31 = 0x00000004
      b0: 230000ef  jal          x1, 0x000002e0  # target 0x000002e0; x1 = 0x000000b4
@@ -53,7 +53,7 @@
      b8: 000b0293  addi         x5, x22, 0
      bc: 00020f93  addi         x31, x4, 0
      c0: 00028f13  addi         x30, x5, 0
-     c4: 0001aeb7  lui          x29, 0x0001a  # x29 = 0x0001a000
+     c4: 0001deb7  lui          x29, 0x0001d  # x29 = 0x0001d000
      c8: 264000ef  jal          x1, 0x0000032c  # target 0x0000032c; x1 = 0x000000cc
      cc: 00500f93  addi         x31, x0, 5  # x31 = 0x00000005
      d0: 210000ef  jal          x1, 0x000002e0  # target 0x000002e0; x1 = 0x000000d4
@@ -61,8 +61,8 @@
      d8: 000b0293  addi         x5, x22, 0
      dc: 00020f93  addi         x31, x4, 0
      e0: 00028f13  addi         x30, x5, 0
-     e4: 0001beb7  lui          x29, 0x0001b  # x29 = 0x0001b000
-     e8: 800e8e93  addi         x29, x29, -2048  # x29 = 0x0001a800
+     e4: 0001eeb7  lui          x29, 0x0001e  # x29 = 0x0001e000
+     e8: 800e8e93  addi         x29, x29, -2048  # x29 = 0x0001d800
      ec: 240000ef  jal          x1, 0x0000032c  # target 0x0000032c; x1 = 0x000000f0
      f0: 00600f93  addi         x31, x0, 6  # x31 = 0x00000006
      f4: 1ec000ef  jal          x1, 0x000002e0  # target 0x000002e0; x1 = 0x000000f8
@@ -70,7 +70,7 @@
      fc: 000b0293  addi         x5, x22, 0
     100: 00020f93  addi         x31, x4, 0
     104: 00028f13  addi         x30, x5, 0
-    108: 0001beb7  lui          x29, 0x0001b  # x29 = 0x0001b000
+    108: 0001eeb7  lui          x29, 0x0001e  # x29 = 0x0001e000
     10c: 220000ef  jal          x1, 0x0000032c  # target 0x0000032c; x1 = 0x00000110
     110: 00700f93  addi         x31, x0, 7  # x31 = 0x00000007
     114: 1cc000ef  jal          x1, 0x000002e0  # target 0x000002e0; x1 = 0x00000118
@@ -78,8 +78,8 @@
     11c: 000b0293  addi         x5, x22, 0
     120: 00020f93  addi         x31, x4, 0
     124: 00028f13  addi         x30, x5, 0
-    128: 0001ceb7  lui          x29, 0x0001c  # x29 = 0x0001c000
-    12c: 800e8e93  addi         x29, x29, -2048  # x29 = 0x0001b800
+    128: 0001feb7  lui          x29, 0x0001f  # x29 = 0x0001f000
+    12c: 800e8e93  addi         x29, x29, -2048  # x29 = 0x0001e800
     130: 1fc000ef  jal          x1, 0x0000032c  # target 0x0000032c; x1 = 0x00000134
     134: 00000f93  addi         x31, x0, 0  # x31 = 0x00000000
     138: 298000ef  jal          x1, 0x000003d0  # target 0x000003d0; x1 = 0x0000013c
@@ -87,8 +87,8 @@
     140: 000b0293  addi         x5, x22, 0
     144: 00020f93  addi         x31, x4, 0
     148: 00028f13  addi         x30, x5, 0
-    14c: 0001deb7  lui          x29, 0x0001d  # x29 = 0x0001d000
-    150: 800e8e93  addi         x29, x29, -2048  # x29 = 0x0001c800
+    14c: 00020eb7  lui          x29, 0x00020  # x29 = 0x00020000
+    150: 800e8e93  addi         x29, x29, -2048  # x29 = 0x0001f800
     154: 1d8000ef  jal          x1, 0x0000032c  # target 0x0000032c; x1 = 0x00000158
     158: 00100f93  addi         x31, x0, 1  # x31 = 0x00000001
     15c: 274000ef  jal          x1, 0x000003d0  # target 0x000003d0; x1 = 0x00000160
@@ -96,18 +96,18 @@
     164: 000b0293  addi         x5, x22, 0
     168: 00020f93  addi         x31, x4, 0
     16c: 00028f13  addi         x30, x5, 0
-    170: 0001deb7  lui          x29, 0x0001d  # x29 = 0x0001d000
+    170: 00020eb7  lui          x29, 0x00020  # x29 = 0x00020000
     174: 1b8000ef  jal          x1, 0x0000032c  # target 0x0000032c; x1 = 0x00000178
     178: 14c000ef  jal          x1, 0x000002c4  # target 0x000002c4; x1 = 0x0000017c
-    17c: 0000f2b7  lui          x5, 0x0000f  # x5 = 0x0000f000
-    180: 98c28293  addi         x5, x5, -1652  # x5 = 0x0000e98c
-    184: 0002a203  lw           x4, 0(x5)  # param e2e_l0_down_rows; 0x0000e98c
+    17c: 000122b7  lui          x5, 0x00012  # x5 = 0x00012000 · TensixL1.KERNEL_CACHE_BASE
+    180: 98c28293  addi         x5, x5, -1652  # x5 = 0x0001198c
+    184: 0002a203  lw           x4, 0(x5)  # param e2e_l0_down_rows; 0x0001198c
     188: 78400393  addi         x7, x0, 1924  # x7 = 0x00000784
     18c: 0003a283  lw           x5, 0(x7)  # param e2e_l0_down; 0x00000784
     190: ff82f293  andi         x5, x5, -8
-    194: 0000f4b7  lui          x9, 0x0000f  # x9 = 0x0000f000
-    198: 98448493  addi         x9, x9, -1660  # x9 = 0x0000e984
-    19c: 0004a383  lw           x7, 0(x9)  # param e2e_l0_down_row_start; 0x0000e984
+    194: 000124b7  lui          x9, 0x00012  # x9 = 0x00012000 · TensixL1.KERNEL_CACHE_BASE
+    198: 98448493  addi         x9, x9, -1660  # x9 = 0x00011984
+    19c: 0004a383  lw           x7, 0(x9)  # param e2e_l0_down_row_start; 0x00011984
     1a0: 00800413  addi         x8, x0, 8  # x8 = 0x00000008
     1a4: 028383b3  mul          x7, x7, x8
     1a8: 0073f313  andi         x6, x7, 7
@@ -154,7 +154,7 @@ loc_200:
     240: 0006a483  lw           x9, 0(x13)  # riscv_local_mem + 0x878 · 0xffb00878
     244: 00004537  lui          x10, 0x00004  # x10 = 0x00004000
     248: 00a484b3  add          x9, x9, x10
-    24c: 000175b7  lui          x11, 0x00017  # x11 = 0x00017000
+    24c: 0001a5b7  lui          x11, 0x0001a  # x11 = 0x0001a000
     250: 00b4e663  bltu         x9, x11, 0x0000025c  # target 0x0000025c
     254: 00008637  lui          x12, 0x00008  # x12 = 0x00008000
     258: 40c484b3  sub          x9, x9, x12

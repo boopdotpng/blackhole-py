@@ -1,0 +1,68 @@
+{
+ "model": "8b-fp8",
+ "variant": "t0semfix+t1nosync",
+ "device": 1,
+ "tokens": 24,
+ "period_us": 19763.412037037033,
+ "tokens_match": "24/24",
+ "patches": [
+  "down/trisc0: hot loop 0x4ec-0x66c, 5 words patched (strict)",
+  "gate/trisc0: hot loop 0x69c-0x81c, 5 words patched (strict)",
+  "lm/trisc0: hot loop 0x64c-0x7d0, 5 words patched (strict)",
+  "o/trisc0: hot loop 0x4ec-0x66c, 5 words patched (strict)",
+  "qkv/trisc0: hot loop 0x66c-0x7ec, 5 words patched (strict)",
+  "down/trisc1: 1 per-tile STALLWAIT[SYNC<-MATH|SFPU] -> NOP",
+  "gate/trisc1: 1 per-tile STALLWAIT[SYNC<-MATH|SFPU] -> NOP",
+  "lm/trisc1: 1 per-tile STALLWAIT[SYNC<-MATH|SFPU] -> NOP",
+  "o/trisc1: 1 per-tile STALLWAIT[SYNC<-MATH|SFPU] -> NOP",
+  "qkv/trisc1: 1 per-tile STALLWAIT[SYNC<-MATH|SFPU] -> NOP"
+ ],
+ "kernels": {
+  "embedding": {
+   "us_per_launch": 5.233796296296297,
+   "launches_per_token": 1,
+   "us_per_token": 5.233796296296297
+  },
+  "qkv": {
+   "us_per_launch": 63.296963734567896,
+   "launches_per_token": 32,
+   "us_per_token": 2025.5028395061727
+  },
+  "attention": {
+   "us_per_launch": 40.02338155864197,
+   "launches_per_token": 32,
+   "us_per_token": 1280.7482098765431
+  },
+  "attention_merge": {
+   "us_per_launch": 8.546121720679013,
+   "launches_per_token": 32,
+   "us_per_token": 273.4758950617284
+  },
+  "o": {
+   "us_per_launch": 47.23015721450617,
+   "launches_per_token": 32,
+   "us_per_token": 1511.3650308641975
+  },
+  "gate": {
+   "us_per_launch": 248.1900607638889,
+   "launches_per_token": 32,
+   "us_per_token": 7942.081944444445
+  },
+  "down": {
+   "us_per_launch": 144.05130883487655,
+   "launches_per_token": 32,
+   "us_per_token": 4609.64188271605
+  },
+  "lm": {
+   "us_per_launch": 2074.5514814814815,
+   "launches_per_token": 1,
+   "us_per_token": 2074.5514814814815
+  },
+  "argmax": {
+   "us_per_launch": 9.22216049382716,
+   "launches_per_token": 1,
+   "us_per_token": 9.22216049382716
+  }
+ },
+ "when": "2026-11-13 02:36:53"
+}
