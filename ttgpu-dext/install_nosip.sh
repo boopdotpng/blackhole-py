@@ -20,6 +20,7 @@ fi
 echo "SIP is disabled, proceeding with dev build..."
 
 cd "$(dirname "$0")"
+[[ -d /Applications/Xcode.app ]] && export DEVELOPER_DIR="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}"
 
 # Build without code signing
 xcodebuild clean build CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO -alltargets -configuration Debug build
