@@ -11,6 +11,7 @@ class Device:
     try:
       cols = (self._telemetry(fw.TAG_ENABLED_TENSIX_COL) & 0x3FFF).bit_count()
       if cols not in (12, 14): raise RuntimeError(f"unsupported {self.pci_dev.card}: {cols} Tensix columns enabled")
+      fw.set_dram_banks(7 if self.pci_dev.card == "p100a" else 8)
       right = 2 + cols
       self.all = ((1, 2), (right, 11))
       self.cq_core, self.dma_core = (right, 2), (right, 3)  # the top of the rightmost column
@@ -19,7 +20,7 @@ class Device:
       self._boot()
       # one pinned buffer: [arena (rings, signals, heap) | stage 0 | stage 1]
       self.arena_size, self.stage_size = 16 << 20, 8 << 20
-      self.sysmem = Sysmem(self.pci_dev.fd, self.arena_size + 2 * self.stage_size)
+      self.sysmem = Sysmem(self.pci_dev, self.arena_size + 2 * self.stage_size)
       self.signals = 2 * fw.RING_SIZE
       self.heap, self.transfers, self.dram_top = self.signals + PAGE, 0, 0
       self.transfer_signal = 255  # copied: transfers the copy queue has finished (copyin, copyout, load, zero)

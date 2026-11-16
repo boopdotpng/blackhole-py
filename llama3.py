@@ -44,12 +44,13 @@ class ChatTokenizer:
 
 class Llama3:
   def __init__(self, model="1b", device=0, weights=None, *, profile=False):
-    self.profile, self.kdir = profile, KERNELS / f"llama3-{model}"
-    self.m = m = json.loads((self.kdir / "manifest.json").read_text())
-    self.checkpoint = Path(weights) if weights else ROOT / m["checkpoint"]  # weights/llama3-<model> by default
-    self.launches = m["launches"]
-    self.dev = dev = Device(device)
+    self.profile, self.dev = profile, (dev := Device(device))
     try:
+      # p100a has 7 DRAM banks: its kernels interleave weights differently, so they are exported separately
+      self.kdir = KERNELS / (f"llama3-{model}" + ("-p100a" if fw.DRAM_BANKS == 7 else ""))
+      self.m = m = json.loads((self.kdir / "manifest.json").read_text())
+      self.checkpoint = Path(weights) if weights else ROOT / m["checkpoint"]  # weights/llama3-<model> by default
+      self.launches = m["launches"]
       dev.dram_top = round_up(fw.DRAM_BANKS * m["dram_top"], 1 << 30)  # our heap goes above the old layout
       t = time.perf_counter()
       self._upload_weights(self.checkpoint)
@@ -289,27 +290,25 @@ def main():
 
     print(f"\n{MODELS[a.model]} on {model.dev.pci_dev.card}, device {a.device}\n")
     row("startup", f"{t_start:.2f} s")
-    row("  weights", f"{gb:.2f} GB in {model.t_weights:.2f} s ({gb / model.t_weights:.1f} GB/s)")
-    row("  kernels", f"{len(m['programs'])} programs, {model.code_slot_bytes / 1024:.1f} KB of double-buffered code slots per core, "
-                     f"{model.npos} position graphs built in {model.t_build:.2f} s")
+    if a.profile:
+      row("  weights", f"{gb:.2f} GB in {model.t_weights:.2f} s ({gb / model.t_weights:.1f} GB/s)")
+      row("  kernels", f"{len(m['programs'])} programs, {len(model.launches)} launches per token, "
+                       f"{model.code_slot_bytes / 2048:.1f} KB of code per core")
 
     eos = next((i for i, t in enumerate(gen) if t in m["eos"]), len(gen))
     print()
-    row("prompt", f"{a.prompt!r} ({len(ids)} tokens with the chat template)")
-    row("output", tok.decode(gen[:eos]).strip())
-    if eos < len(gen): row("", "(stopped at EOS; timing includes the EOS token)")
-    elif s["positions"] == model.npos: row("", "(stopped at context limit)")
-    else: row("", "(stopped at token limit)")
+    print(a.prompt)
+    print()
+    print(tok.decode(gen[:eos]).strip())
     if ref and ref["prompt_ids"] == ids:
       want = ref["generated_ids"]
       n = min(len(gen), len(want))
       same = next((i for i, (x, y) in enumerate(zip(gen, want)) if x != y), n)
-      row("reference", f"{same}/{n} tokens match blackhole-py ({'OK' if same == n else 'MISMATCH'}; "
-                       f"it runs {1e6 / ref['mean_wall_us']:.1f} tok/s)")
-
+      print()
+      print("output matches reference" if same == n else f"output MISMATCH at token {same} of {n}")
     print()
-    row("decode", f"{1e6 / s['period_us']:.1f} tok/s, {s['period_us'] / 1e3:.3f} ms/token "
-                  f"({s['tokens']} tokens, device clock, {model.nts} timestamps per token)")
+    row("decode", f"{1e6 / s['period_us']:.1f} tok/s, {s['period_us'] / 1e3:.2f} ms/token ({s['tokens']} tokens)")
+    if not a.profile: return
     row("  device", f"{s['busy_us']:.1f} us per token in the graph, {s['gap_us']:.2f} us between graphs")
     row("  host", f"{(s['wall_us'] - s['device_us']) / s['positions']:.1f} us per position on top of the device "
                   f"(submit {s['submit_us'] / s['positions']:.1f} us/position, args upload {s['args_upload_us']:.0f} us once)")
@@ -320,9 +319,6 @@ def main():
       print(f"{q + ' ring':<16}{fmt(model.startup_ops[q]):<36}{fmt(s['ops'][q])}")
     print(f"{'graph (DRAM)':<16}{'':<36}{fmt(model.graph_ops)} per position, run by the CQ from DRAM")
 
-    if not a.profile:
-      print("\nUse --profile for per-kernel and dispatch timings.")
-      return
     ks, tokens = s["kernels"], s["tokens"]
     tot = sum(v.sum() for v in ks.values()) / tokens
     print(f"\n{'kernel':<12}{'launches':>9}{'us/launch':>11}{'min':>9}{'max':>9}{'us/token':>11}{'share':>8}")

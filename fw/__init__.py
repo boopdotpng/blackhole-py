@@ -31,6 +31,14 @@ SOFT_RESET, RESET_BRISC, RESET_ALL = 0xFFB121B0, 1 << 11, 0x47800  # brisc 11, t
 
 def noc(core): return core[0] | core[1] << 6
 
+def set_dram_banks(n:int):
+  """8 on p150, 7 on p100a (its harvested bank is the last in translated space). Call before images() or alloc."""
+  global DRAM_BANKS
+  assert n in (7, 8), n
+  DRAM_BANKS = n
+  CFLAGS[:] = [f for f in CFLAGS if not f.startswith("-DBANKS=")] + ([f"-DBANKS={n}"] if n != 8 else [])
+  images.cache_clear()
+
 HERE = Path(__file__).resolve().parent
 CACHE = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "blackhole-py"
 CFLAGS = ["--target=riscv32-none-unknown-elf", "-march=rv32im_zicsr", "-mabi=ilp32", "-std=c11", "-Wall", "-Wextra",

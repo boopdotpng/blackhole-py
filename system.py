@@ -1,4 +1,4 @@
-import ctypes, fcntl, functools, mmap, os
+import ctypes, fcntl, functools, mmap, os, sys
 from ctypes import c_uint8 as u8, c_uint16 as u16, c_uint32 as u32, c_uint64 as u64
 from pathlib import Path
 from helpers import PAGE, libc_mmap, libc_munmap, view_at
@@ -83,12 +83,12 @@ def _pin(fd, addr, size): return PIN_PAGES(fd, virtual_address=addr, size=size).
 def _unpin(fd, addr, size): UNPIN_PAGES(fd, virtual_address=addr, size=size)
 
 class Sysmem:
-  def __init__(self, fd, size):
+  def __init__(self, dev:"PCIDevice", size):
     assert size % PAGE == 0
-    self.fd, self.size, self.addr = fd, size, libc_mmap(size, flags=mmap.MAP_PRIVATE)
+    self.fd, self.size, self.addr = dev.fd, size, libc_mmap(size, flags=mmap.MAP_PRIVATE)
     try:
       self.mem = view_at(self.addr, size)
-      self.noc_addr = _pin(fd, self.addr, size)
+      self.noc_addr = _pin(self.fd, self.addr, size)
     except BaseException:
       libc_munmap(self.addr, size)
       raise
@@ -103,7 +103,7 @@ class PCIDevice:
     if not iommu.exists() or not iommu.read_text().startswith("DMA"):
       raise RuntimeError("enable iommu")
     self.card = Path(f"/sys/class/tenstorrent/tenstorrent!{index}/tt_card_type").read_text().strip()
-    if self.card not in ("p150a", "p150b"): raise RuntimeError(f"unsupported card {self.card}, only p150 for now")
+    if self.card not in ("p100a", "p150a", "p150b"): raise RuntimeError(f"unsupported card {self.card}, only p100a and p150")
     self.fd = os.open(f"/dev/tenstorrent/{index}", os.O_RDWR | os.O_CLOEXEC | os.O_APPEND)
     try:
       SET_POWER_STATE(self.fd, power_flags=TT_POWER_FLAG_MAX_AI_CLK |
@@ -161,3 +161,6 @@ class PCIDevice:
 
   def write32(self, core, addr, v): self.tlb32[self._target(core, addr) // 4] = v
   def read32(self, core, addr): return self.tlb32[self._target(core, addr) // 4]
+
+if sys.platform == "darwin":  # no tt-kmd: TTGPU.app's DriverKit extension, and the kmd's work done here
+  from system_darwin import PCIDevice, Sysmem  # noqa: F401,F811

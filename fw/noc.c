@@ -1,9 +1,14 @@
 #include "noc.h"
 
-/* p150: first NoC endpoint of each DRAM bank, and PCIe */
+/* First NoC endpoint of each DRAM bank in translated coordinates (bank b's three ports are x=17+b/4, y=12+3*(b%4)..+2),
+ * and PCIe. p150 has 8 banks. p100a has 7: its harvested bank is translated to the last one (x=18, y=21..23), so it
+ * builds with -DBANKS=7 and the last entry is never selected. */
 static const u32 dram_coords[] = {17 | 14 << 6, 17 | 15 << 6, 17 | 18 << 6, 17 | 21 << 6,
                                   18 | 14 << 6, 18 | 17 << 6, 18 | 20 << 6, 18 | 23 << 6};
+#ifndef BANKS
 #define BANKS 8
+#endif
+_Static_assert(BANKS == 7 || BANKS == 8, "Blackhole has 8 DRAM banks, 7 on p100a");
 #define PCIE_COORD (1u << 24 | 24 << 6 | 19)
 
 /* Writes: TARG is the local source, RET the remote destination. Reads and atomics: TARG is the remote. */
