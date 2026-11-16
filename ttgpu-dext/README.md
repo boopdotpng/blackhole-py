@@ -14,9 +14,33 @@ TinyGPU dext; the app is `TTGPU.app`, the extension `com.boopapps.ttgpu.driver`.
 
 The Debug configuration signs automatically with team `7AMV998SSP`, using Xcode's team provisioning profiles
 ("Mac Team Provisioning Profile: com.boopapps.ttgpu" and "DriverKit Team Provisioning Profile: com.boopapps.ttgpu.driver").
-The dext needs `com.apple.developer.driverkit`, `driverkit.transport.pci` and `driverkit.allow-any-userclient-access`
-on its profile, and the app needs `system-extension.install`. A dext signed this way loads with SIP enabled, and you
-don't need `systemextensionsctl developer on`.
+A dext signed this way loads with SIP enabled, and you don't need `systemextensionsctl developer on`.
+
+### Entitlements
+
+Both the signature and the provisioning profile have to carry these (Xcode adds the `application-identifier`,
+`team-identifier` and `get-task-allow` keys itself).
+
+The driver, `com.boopapps.ttgpu.driver` (`TinyGPUDriverExtension/TinyGPUDriver.entitlements`):
+
+| Entitlement | Value | Why |
+| --- | --- | --- |
+| `com.apple.developer.driverkit` | `true` | it's a DriverKit extension |
+| `com.apple.developer.driverkit.transport.pci` | `[{IOPCIPrimaryMatch: "0xFFFFFFFF&0x00000000"}]` | open the PCI device; this matches any device, while `Info.plist` matches only Blackhole (`0xb1401e52`) |
+| `com.apple.developer.driverkit.allow-any-userclient-access` | `true` | let blackhole-py (python, unsigned) open the user client without an entitlement of its own |
+
+The app, `com.boopapps.ttgpu` (`macOS/macOS.entitlements`):
+
+| Entitlement | Value | Why |
+| --- | --- | --- |
+| `com.apple.developer.system-extension.install` | `true` | activate the dext (`TTGPU install`) |
+| `com.apple.security.app-sandbox` | `false` | it shells out to `systemextensionsctl` |
+| `com.apple.security.files.user-selected.read-only` | `true` | sandbox leftover, harmless |
+
+Only Debug is set up. `TinyGPUDriver.Release.entitlements` and `.NV.Release.entitlements` are still tinygrad's (their
+team, NVIDIA/AMD vendor IDs). `.NoSIP.entitlements` is for the ad-hoc build below.
+
+### Steps
 
 1. Install full Xcode and sign in to an account on the team (Xcode > Settings > Accounts). `install.sh` uses
    `/Applications/Xcode.app` even if `xcode-select` points at the command line tools.
@@ -34,8 +58,8 @@ don't need `systemextensionsctl developer on`.
 
 On a different team: in Xcode, set the team on both targets (TinyGPU and TinyGPUDriver) and change the bundle IDs
 to ones you own. Keep the driver's ID the app's ID plus a suffix, and update `dextID` in `Shared/TinyGPUApp.swift`.
-If Xcode can't add the DriverKit entitlements to the profile, request them for your team from Apple
-(developer.apple.com/system-extensions).
+If Xcode can't add the DriverKit entitlements above to the profile, request them for your team from Apple
+(developer.apple.com/system-extensions). Ask for PCI vendor `0x1e52`.
 
 To remove it: `/Applications/TTGPU.app/Contents/MacOS/TTGPU uninstall`.
 
