@@ -76,10 +76,10 @@
 #define STATE_SIZE        0x140
 _Static_assert(STATE + STATE_SIZE <= 0x12000, "service-core state must end below GRAPH_L1");
 
-/* CQ descriptor: 8 u32 header words {cores, go_rects, args_bytes, payload_bytes,
- * payload_lo, payload_hi, transfers, reserved}, followed by GO rectangles, then transfers.
- * Each transfer is {payload_offset, worker_address, bytes, rect_count}, followed by its rectangles.
- * Rectangle = start | end << 12. Descriptors are immutable until all referencing work retires. */
+/* CQ descriptor: 8 u32 header words {cores, rect, args_bytes, payload_bytes, payload_lo, payload_hi, transfers, exclude},
+ * then transfers of 5 words {payload_offset, worker_address, bytes, rect, exclude}. Every multicast is one rectangle
+ * (start | end << 12) minus at most one corner quadrant (exclude = NoC0 BRCST_EXCLUDE, 0 = none); args and GO go to
+ * the header's. Descriptors are immutable until all referencing work retires. */
 #define DESCRIPTOR_L1     0x40000
 #define DESCRIPTOR_END    0x80000
 #define CQ_PACKETS        0x10000  /* ring packets fetched by dispatch */

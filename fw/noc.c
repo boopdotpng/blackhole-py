@@ -106,9 +106,9 @@ void noc_write(u32 niu, u32 lo, u32 hi, u32 local, u32 size) {
   noc_wait(niu, 5, 1);
 }
 
-void noc_mcast(u32 niu, u32 local, u32 remote, u32 start, u32 end, u32 size) {
+void noc_mcast(u32 niu, u32 local, u32 remote, u32 rect, u32 exclude, u32 size) {
   volatile u32 *c = CMD_BUF(niu, MCAST_BUF);
-  u32 rect = niu == 0 ? end | start << 12 : start | end << 12;
+  if (niu == 0) rect = rect >> 12 | (rect & 0xFFF) << 12;  /* NoC0 wants the end first */
   for (u32 done = 0; done < size; done += NOC_MAX_BURST) {
     while (read32(OUTGOING(niu, 1)) > 128) {}
     wait_idle(c);
@@ -117,7 +117,7 @@ void noc_mcast(u32 niu, u32 local, u32 remote, u32 start, u32 end, u32 size) {
     c[PACKET_TAG] = 1 << 10;
     c[CTRL] = WRITE | BROADCAST | STATIC_VC(4);
     c[AT_LEN_BE] = MIN(size - done, NOC_MAX_BURST);
-    c[AT_LEN_BE_1] = 0; c[AT_DATA] = 0; c[BRCST_EXCLUDE] = 0;
+    c[AT_LEN_BE_1] = 0; c[AT_DATA] = 0; c[BRCST_EXCLUDE] = exclude;
     send(c);
   }
   wait_idle(c);

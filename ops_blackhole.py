@@ -10,17 +10,22 @@ def dram(offset:int, page:int=fw.DRAM_PAGE_MAX) -> int:  # a DRAM address, page-
   assert page in (1024, 2048, 4096) and offset < 1 << 56, (offset, page)
   return 1 << 63 | page.bit_length() - 1 << 56 | offset
 
-def rects(cores) -> list[tuple[tuple[int, int], tuple[int, int]]]:  # cover cores with multicast rectangles
-  gap = lambda x: x - 2 if x >= 10 else x
-  left, out = {(gap(x), y) for x, y in cores}, []
-  for x, y in sorted(left, key=lambda c: (c[1], c[0])):
-    if (x, y) not in left: continue
-    x1, y1 = x, y
-    while (x1 + 1, y) in left: x1 += 1
-    while all((i, y1 + 1) in left for i in range(x, x1 + 1)): y1 += 1
-    left -= {(i, j) for i in range(x, x1 + 1) for j in range(y, y1 + 1)}
-    out.append(((x + 2 * (x >= 8), y), (x1 + 2 * (x1 >= 8), y1)))
-  return out
+def cover(cores) -> tuple[int, int]:
+  """One multicast to exactly these cores: (start | end << 12, NoC0 BRCST_EXCLUDE). The rectangle is the bounding box
+  (columns 8 and 9 have no Tensix cores, so spanning them is free) and the exclusion word carves off one corner
+  quadrant: enough for a column-major grid, which is full columns then a partial one filled from the top, with the
+  CQ and DMA cores at the bottom of the last column. Measured on p150: bits 8-13 anchor x, 14-19 anchor y,
+  20 x >= anchor (else <=), 21 y >= anchor (else <=), 22 enable. The anchor itself is excluded."""
+  cores = set(cores)
+  x0, x1, y0, y1 = min(x for x, _ in cores), max(x for x, _ in cores), min(y for _, y in cores), max(y for _, y in cores)
+  box = {(x, y) for x in range(x0, x1 + 1) if x not in (8, 9) for y in range(y0, y1 + 1)}
+  rect, missing = fw.noc((x0, y0)) | fw.noc((x1, y1)) << 12, box - cores
+  if not missing: return rect, 0
+  dx, dy = any(x == x1 for x, _ in missing), any(y == y1 for _, y in missing)
+  ax, ay = (min if dx else max)(x for x, _ in missing), (min if dy else max)(y for _, y in missing)
+  assert missing == {(x, y) for x, y in box if (x >= ax if dx else x <= ax) and (y >= ay if dy else y <= ay)}, \
+    f"{len(cores)} cores are not a rectangle minus one corner"
+  return rect, 1 << 22 | dy << 21 | dx << 20 | ay << 14 | ax << 8
 
 class BlackholeSignal:  # 16 bytes of pinned host memory: [value, timestamp]
   def __init__(self, dev, offset:int): self.mem, self.offset, self.addr = dev.sysmem.mem, offset, dev.sysmem.noc_addr + offset
@@ -110,16 +115,15 @@ def blackhole_build_program(dev, images:dict, args_size:int=0) -> BlackholeProgr
       assert 0 < len(image) <= fw.CODE_SIZE[role] and len(image) % 4 == 0
       groups.setdefault((fw.CODE[role], image), []).append(core)
     groups.setdefault((fw.LAUNCH, struct.pack('<I', sum(1 << fw.ROLES.index(r) for r in roles))), []).append(core)
-  encode = lambda cores: [fw.noc(s) | fw.noc(e) << 12 for s, e in rects(cores)]
   payload, transfers = bytearray(), []
   for (addr, image), cores in groups.items():
     payload += bytes(-len(payload) % 64)
-    transfers += [len(payload), addr, len(image), len(rs := encode(cores)), *rs]
+    transfers += [len(payload), addr, len(image), *cover(cores)]
     payload += image
   payload += bytes(-len(payload) % 64)
   assert len(payload) <= fw.STAGE_SIZE, f"program payload too large: {len(payload)}"
-  code, rs = dev.allocator.upload(payload), encode(images)
-  words = [len(images), len(rs), args_size, len(payload), code & 0xFFFFFFFF, code >> 32, len(groups), 0, *rs, *transfers]
+  code, (rect, exclude) = dev.allocator.upload(payload), cover(images)
+  words = [len(images), rect, args_size, len(payload), code & 0xFFFFFFFF, code >> 32, len(groups), exclude, *transfers]
   if (at := dev.descriptor_top) + 4 * len(words) > fw.DESCRIPTOR_END: raise MemoryError("dispatcher descriptor arena full")
   dev.iface.write(dev.cq_core, at, struct.pack(f'<{len(words)}I', *words))
   dev.descriptor_top = round_up(at + 4 * len(words), 64)
@@ -173,7 +177,7 @@ class BlackholeDevice:
       cols = (self._telemetry(fw.TAG_ENABLED_TENSIX_COL) & 0x3FFF).bit_count()
       if cols not in (12, 14): raise RuntimeError(f"unsupported {self.iface.card}: {cols} Tensix columns enabled")
       right = 2 + cols
-      self.all, self.cq_core, self.dma_core = ((1, 2), (right, 11)), (right, 2), (right, 3)  # CQ, DMA: top of the last column
+      self.all, self.cq_core, self.dma_core = ((1, 2), (right, 11)), (right, 10), (right, 11)  # CQ, DMA: bottom of the last column
       self.workers = [(x, y) for x in range(1, right + 1) if x not in (8, 9) for y in range(2, 12)
                       if (x, y) not in (self.cq_core, self.dma_core)]
       self._boot()

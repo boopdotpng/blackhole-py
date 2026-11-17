@@ -4,9 +4,6 @@
 #define PARAMS(b) (PARAMS_L1 + (b) * PARAM_SIZE)
 #define TID(b) (3 + (b))
 
-#define START(r) ((r) & 0xFFF)
-#define END(r) ((r) >> 12)
-
 static u32 buf, go;
 static packet *installed;  /* the EXEC whose code is already in worker slot buf, or 0 */
 
@@ -20,15 +17,9 @@ static void fetch(packet *p, u32 b) {
 /* Multicast p's code and LAUNCH masks into worker slot b. Slot b's previous launch has returned and the one running now
  * is in the other slot, so this can overlap it too. Everything goes out on NoC0, so the flush before the GO covers it. */
 static void install(packet *p, u32 b) {
-  const u32 *d = (const u32 *)p->a_lo, *transfer = d + 8 + d[1];
+  const u32 *d = (const u32 *)p->a_lo, *t = d + 8;
   noc_wait(0, TID(b), 1);
-  for (u32 j = 0; j < d[6]; j++) {
-    for (u32 i = 0; i < transfer[3]; i++) {
-      u32 r = transfer[4 + i];
-      noc_mcast(0, STAGE(b) + transfer[0], transfer[1] + b * SLOT_STRIDE, START(r), END(r), transfer[2]);
-    }
-    transfer += 4 + transfer[3];
-  }
+  for (u32 j = 0; j < d[6]; j++, t += 5) noc_mcast(0, STAGE(b) + t[0], t[1] + b * SLOT_STRIDE, t[3], t[4], t[2]);
 }
 
 static void profile(packet *p, u32 offset) {
@@ -44,13 +35,13 @@ static void exec(packet *p, packet *next) {
     fetch(p, b);
     install(p, b);
   }
-  const u32 *d = (const u32 *)p->a_lo, *rects = d + 8;
+  const u32 *d = (const u32 *)p->a_lo;
   write32(DONE_COUNT, 0);
   /* Params have one fixed home, which the previous launch may have been reading until it returned */
-  if (d[2]) for (u32 i = 0; i < d[1]; i++) noc_mcast(0, PARAMS(b), L1_PARAM_BASE, START(rects[i]), END(rects[i]), d[2]);
+  if (d[2]) noc_mcast(0, PARAMS(b), L1_PARAM_BASE, d[1], d[7], d[2]);
   noc_mcast_flush(0);
   write32(GO_WORD, go | b << GO_SLOT_BIT);
-  for (u32 i = 0; i < d[1]; i++) noc_mcast(0, GO_WORD, GO_SIGNAL, START(rects[i]), END(rects[i]), 4);
+  noc_mcast(0, GO_WORD, GO_SIGNAL, d[1], d[7], 4);
   noc_mcast_flush(0);
   queue_flush(0, 0);
   buf ^= 1;

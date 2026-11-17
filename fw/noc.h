@@ -12,7 +12,9 @@ void noc_wait(u32 niu, u32 tid, u32 acked);
 void noc_read(u32 niu, u32 lo, u32 hi, u32 local, u32 size);
 void noc_write(u32 niu, u32 lo, u32 hi, u32 local, u32 size);
 
-void noc_mcast(u32 niu, u32 local, u32 remote, u32 start, u32 end, u32 size);
+/* rect = start | end << 12. exclude is the NIU's BRCST_EXCLUDE word, which removes one corner quadrant (0 = none); its
+ * anchor is in that NoC's frame, so NoC1 mirrors it. */
+void noc_mcast(u32 niu, u32 local, u32 remote, u32 rect, u32 exclude, u32 size);
 void noc_mcast_flush(u32 niu);
 
 void noc_atomic_inc(u32 niu, u32 remote, u32 coord, u32 value);
