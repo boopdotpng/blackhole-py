@@ -118,67 +118,56 @@ loc_64:
     1b4: 00008b37  lui          x22, 0x00008  # x22 = 0x00008000
     1b8: 015b6b33  or           x22, x22, x21
     1bc: 008b1c13  slli         x24, x22, 8
-    1c0: 01000cb7  lui          x25, 0x01000  # x25 = 0x01000000
-    1c4: f00c8c93  addi         x25, x25, -256  # x25 = 0x00ffff00
-    1c8: 019c7c33  and          x24, x24, x25
-    1cc: 45000d37  lui          x26, 0x45000  # x26 = 0x45000000
-    1d0: 019d0d13  addi         x26, x26, 25  # x26 = 0x45000019
-    1d4: 01ac6c33  or           x24, x24, x26
-    1d8: ffe40db7  lui          x27, 0xffe40  # x27 = 0xffe40000 · TensixMMIO.INSTRN_BUF_BASE
-    1dc: 018da023  sw           x24, 0(x27)  # TensixMMIO.INSTRN_BUF_BASE · 0xffe40000; write runtime value
-    1e0: 89000026  STALLWAIT    stall_res=128, wait_res=9  # stall_res: Stall.CFG; wait_res: Wait.THCON | Wait.PACK0
-    1e4: c0300116  WRCFG        GprAddress=12, wr128b=0, CfgReg=69  # cfg[69] (current thread StateID); THCON_SEC0_REG1_L1_Dest_addr = runtime
-    1e8: 008a9c13  slli         x24, x21, 8
-    1ec: 01000cb7  lui          x25, 0x01000  # x25 = 0x01000000
-    1f0: f00c8c93  addi         x25, x25, -256  # x25 = 0x00ffff00
-    1f4: 019c7c33  and          x24, x24, x25
-    1f8: 45000d37  lui          x26, 0x45000  # x26 = 0x45000000
-    1fc: 019d0d13  addi         x26, x26, 25  # x26 = 0x45000019
-    200: 01ac6c33  or           x24, x24, x26
-    204: ffe40db7  lui          x27, 0xffe40  # x27 = 0xffe40000 · TensixMMIO.INSTRN_BUF_BASE
-    208: 018da023  sw           x24, 0(x27)  # TensixMMIO.INSTRN_BUF_BASE · 0xffe40000; write runtime value
-    20c: 80000001  DMANOP
-    210: 7a00f001  SETADCXX     CntSetMask=4, x_end2=15, x_start=0
-    214: 52000015  SETADCZW     CntSetMask=4, Ch1_W=0, Ch1_Z=0, Ch0_W=0, Ch0_Z=0, BitMask=5
-    218: ffef0a37  lui          x20, 0xffef0  # x20 = 0xffef0000 · cfg[0] (bank 0) · ALU_FORMAT_SPEC_REG_SrcA_val, ALU_FORMAT_SPEC_REG_SrcA_override, ALU_FORMAT_SPEC_REG_SrcB_val, ALU_FORMAT_SPEC_REG_SrcB_override, ALU_FORMAT_SPEC_REG_Dstacc_val, ALU_FORMAT_SPEC_REG_Dstacc_override
-    21c: 2d0a0a13  addi         x20, x20, 720  # x20 = 0xffef02d0 · cfg[180] (bank 0) · DEST_TARGET_REG_CFG_PACK_SEC0_Offset, DEST_TARGET_REG_CFG_PACK_SEC0_ZOffset
-    220: 00000a93  addi         x21, x0, 0  # x21 = 0x00000000
-    224: 015a2023  sw           x21, 0(x20)  # cfg[180] (bank 0) · DEST_TARGET_REG_CFG_PACK_SEC0_Offset, DEST_TARGET_REG_CFG_PACK_SEC0_ZOffset · 0xffef02d0; write 0x00000000; cfg[180] (bank 0); DEST_TARGET_REG_CFG_PACK_SEC0_Offset = 0; DEST_TARGET_REG_CFG_PACK_SEC0_ZOffset = 0
-    228: 89000022  STALLWAIT    stall_res=128, wait_res=8  # stall_res: Stall.CFG; wait_res: Wait.PACK0
-    22c: 06000000  MOP          mop_type=1, loop_count=0, zmask_lo16_or_loop_count=0
-    230: 88040022  STALLWAIT    stall_res=2, wait_res=8  # stall_res: Stall.SYNC; wait_res: Wait.PACK0
-    234: ffe80a37  lui          x20, 0xffe80  # x20 = 0xffe80000 · tensix_pc_buf + 0x0
-    238: 004a0a13  addi         x20, x20, 4  # x20 = 0xffe80004 · TensixMMIO.PC_BUF_SYNC
-    23c: 000a2023  sw           x0, 0(x20)  # TensixMMIO.PC_BUF_SYNC · 0xffe80004; write 0x00000000
-    240: 000a2a83  lw           x21, 0(x20)  # TensixMMIO.PC_BUF_SYNC · 0xffe80004
-    244: 01507033  and          x0, x0, x21
-    248: ffb01c37  lui          x24, 0xffb01  # x24 = 0xffb01000
-    24c: 8c0c0c13  addi         x24, x24, -1856  # x24 = 0xffb008c0 · riscv_local_mem + 0x8c0
-    250: 000c2a03  lw           x20, 0(x24)  # riscv_local_mem + 0x8c0 · 0xffb008c0
-    254: 00001ab7  lui          x21, 0x00001  # x21 = 0x00001000 · F32_TILE_BYTES · Wait.CFGEXU
-    258: 015a0a33  add          x20, x20, x21
-    25c: 00014b37  lui          x22, 0x00014  # x22 = 0x00014000
-    260: 080b0b13  addi         x22, x22, 128  # x22 = 0x00014080
-    264: 016a6663  bltu         x20, x22, 0x00000270  # target 0x00000270
-    268: 00001bb7  lui          x23, 0x00001  # x23 = 0x00001000 · F32_TILE_BYTES · Wait.CFGEXU
-    26c: 417a0a33  sub          x20, x20, x23
-loc_270:
-    270: ffb01c37  lui          x24, 0xffb01  # x24 = 0xffb01000
-    274: 8c0c0c13  addi         x24, x24, -1856  # x24 = 0xffb008c0 · riscv_local_mem + 0x8c0
-    278: 014c2023  sw           x20, 0(x24)  # riscv_local_mem + 0x8c0 · 0xffb008c0; write runtime value
-    27c: ffb01ab7  lui          x21, 0xffb01  # x21 = 0xffb01000
-    280: 8c4a8a93  addi         x21, x21, -1852  # x21 = 0xffb008c4 · riscv_local_mem + 0x8c4
-    284: 000aaa03  lw           x20, 0(x21)  # riscv_local_mem + 0x8c4 · 0xffb008c4
-    288: 001a0a13  addi         x20, x20, 1
-    28c: 010a1a13  slli         x20, x20, 16
-    290: 010a5a13  srli         x20, x20, 16
-    294: ffb01ab7  lui          x21, 0xffb01  # x21 = 0xffb01000
-    298: 8c4a8a93  addi         x21, x21, -1852  # x21 = 0xffb008c4 · riscv_local_mem + 0x8c4
-    29c: 014aa023  sw           x20, 0(x21)  # riscv_local_mem + 0x8c4 · 0xffb008c4; write runtime value
-    2a0: ffb49ab7  lui          x21, 0xffb49  # x21 = 0xffb49000
-    2a4: 028a8a93  addi         x21, x21, 40  # x21 = 0xffb49028
-    2a8: 014aa023  sw           x20, 0(x21)  # 0xffb49028; write runtime value
-    2ac: 0ff0000f  fence        0xf, 0xf
-    2b0: 40710000  ZEROACC      clear_mode=3, use_32_bit_mode=1, clear_zero_flags=0, addr_mode=1, where=0
-    2b4: 94000022  SEMGET       sem_sel=2  # sem_sel: Sem.MATH_PACK
-    2b8:           j FW_TRISC2+4   # return to firmware, linked at install
+    1c0: 019c7c33  and          x24, x24, x25
+    1c4: 45000d37  lui          x26, 0x45000  # x26 = 0x45000000
+    1c8: 019d0d13  addi         x26, x26, 25  # x26 = 0x45000019
+    1cc: 01ac6c33  or           x24, x24, x26
+    1d0: 018da023  sw           x24, 0(x27)  # TensixMMIO.INSTRN_BUF_BASE · 0xffe40000; write runtime value
+    1d4: 89000026  STALLWAIT    stall_res=128, wait_res=9  # stall_res: Stall.CFG; wait_res: Wait.THCON | Wait.PACK0
+    1d8: c0300116  WRCFG        GprAddress=12, wr128b=0, CfgReg=69  # cfg[69] (current thread StateID); THCON_SEC0_REG1_L1_Dest_addr = runtime
+    1dc: 008a9c13  slli         x24, x21, 8
+    1e0: 019c7c33  and          x24, x24, x25
+    1e4: 01ac6c33  or           x24, x24, x26
+    1e8: 018da023  sw           x24, 0(x27)  # TensixMMIO.INSTRN_BUF_BASE · 0xffe40000; write runtime value
+    1ec: 80000001  DMANOP
+    1f0: 7a00f001  SETADCXX     CntSetMask=4, x_end2=15, x_start=0
+    1f4: 52000015  SETADCZW     CntSetMask=4, Ch1_W=0, Ch1_Z=0, Ch0_W=0, Ch0_Z=0, BitMask=5
+    1f8: ffef0a37  lui          x20, 0xffef0  # x20 = 0xffef0000 · cfg[0] (bank 0) · ALU_FORMAT_SPEC_REG_SrcA_val, ALU_FORMAT_SPEC_REG_SrcA_override, ALU_FORMAT_SPEC_REG_SrcB_val, ALU_FORMAT_SPEC_REG_SrcB_override, ALU_FORMAT_SPEC_REG_Dstacc_val, ALU_FORMAT_SPEC_REG_Dstacc_override
+    1fc: 2d0a0a13  addi         x20, x20, 720  # x20 = 0xffef02d0 · cfg[180] (bank 0) · DEST_TARGET_REG_CFG_PACK_SEC0_Offset, DEST_TARGET_REG_CFG_PACK_SEC0_ZOffset
+    200: 000a2023  sw           x0, 0(x20)  # cfg[180] (bank 0) · DEST_TARGET_REG_CFG_PACK_SEC0_Offset, DEST_TARGET_REG_CFG_PACK_SEC0_ZOffset · 0xffef02d0; write 0x00000000; cfg[180] (bank 0); DEST_TARGET_REG_CFG_PACK_SEC0_Offset = 0; DEST_TARGET_REG_CFG_PACK_SEC0_ZOffset = 0
+    204: 89000022  STALLWAIT    stall_res=128, wait_res=8  # stall_res: Stall.CFG; wait_res: Wait.PACK0
+    208: 06000000  MOP          mop_type=1, loop_count=0, zmask_lo16_or_loop_count=0
+    20c: 88040022  STALLWAIT    stall_res=2, wait_res=8  # stall_res: Stall.SYNC; wait_res: Wait.PACK0
+    210: ffe80a37  lui          x20, 0xffe80  # x20 = 0xffe80000 · tensix_pc_buf + 0x0
+    214: 004a0a13  addi         x20, x20, 4  # x20 = 0xffe80004 · TensixMMIO.PC_BUF_SYNC
+    218: 000a2023  sw           x0, 0(x20)  # TensixMMIO.PC_BUF_SYNC · 0xffe80004; write 0x00000000
+    21c: 000a2a83  lw           x21, 0(x20)  # TensixMMIO.PC_BUF_SYNC · 0xffe80004
+    220: 01507033  and          x0, x0, x21
+    224: ffb01c37  lui          x24, 0xffb01  # x24 = 0xffb01000
+    228: 8c0c0c13  addi         x24, x24, -1856  # x24 = 0xffb008c0 · riscv_local_mem + 0x8c0
+    22c: 000c2a03  lw           x20, 0(x24)  # riscv_local_mem + 0x8c0 · 0xffb008c0
+    230: 00001ab7  lui          x21, 0x00001  # x21 = 0x00001000 · F32_TILE_BYTES · Wait.CFGEXU
+    234: 015a0a33  add          x20, x20, x21
+    238: 00014b37  lui          x22, 0x00014  # x22 = 0x00014000
+    23c: 080b0b13  addi         x22, x22, 128  # x22 = 0x00014080
+    240: 016a6663  bltu         x20, x22, 0x0000024c  # target 0x0000024c
+    244: 00001bb7  lui          x23, 0x00001  # x23 = 0x00001000 · F32_TILE_BYTES · Wait.CFGEXU
+    248: 417a0a33  sub          x20, x20, x23
+loc_24c:
+    24c: ffb01c37  lui          x24, 0xffb01  # x24 = 0xffb01000
+    250: 8c0c0c13  addi         x24, x24, -1856  # x24 = 0xffb008c0 · riscv_local_mem + 0x8c0
+    254: 014c2023  sw           x20, 0(x24)  # riscv_local_mem + 0x8c0 · 0xffb008c0; write runtime value
+    258: ffb01ab7  lui          x21, 0xffb01  # x21 = 0xffb01000
+    25c: 8c4a8a93  addi         x21, x21, -1852  # x21 = 0xffb008c4 · riscv_local_mem + 0x8c4
+    260: 000aaa03  lw           x20, 0(x21)  # riscv_local_mem + 0x8c4 · 0xffb008c4
+    264: 001a0a13  addi         x20, x20, 1
+    268: 010a1a13  slli         x20, x20, 16
+    26c: 010a5a13  srli         x20, x20, 16
+    270: 014aa023  sw           x20, 0(x21)  # riscv_local_mem + 0x8c4 · 0xffb008c4; write runtime value
+    274: ffb49ab7  lui          x21, 0xffb49  # x21 = 0xffb49000
+    278: 028a8a93  addi         x21, x21, 40  # x21 = 0xffb49028
+    27c: 014aa023  sw           x20, 0(x21)  # 0xffb49028; write runtime value
+    280: 0ff0000f  fence        0xf, 0xf
+    284: 40710000  ZEROACC      clear_mode=3, use_32_bit_mode=1, clear_zero_flags=0, addr_mode=1, where=0
+    288: 94000022  SEMGET       sem_sel=2  # sem_sel: Sem.MATH_PACK
+    28c:           j FW_TRISC2+4   # return to firmware, linked at install

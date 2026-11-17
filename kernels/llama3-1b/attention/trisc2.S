@@ -48,7 +48,7 @@
      a4: 0063f463  bgeu         x7, x6, 0x000000ac  # target 0x000000ac
      a8: 00800293  addi         x5, x0, 8  # x5 = 0x00000008
 loc_ac:
-     ac: 7e527e63  bgeu         x4, x5, 0x000008a8  # target 0x000008a8
+     ac: 60527663  bgeu         x4, x5, 0x000006b8  # target 0x000006b8
      b0: 98020026  SEMWAIT      stall_res=1, sem_sel=2, wait_sem_cond=1  # stall_res: Stall.TDMA; sem_sel: Sem.MATH_PACK; wait_sem_cond: SemWait.ON_ZERO
      b4: c8000002  SETC16       setc16_reg=0, setc16_value=0  # thread_cfg[0] (current thread); CFG_STATE_ID_StateID = 0
      b8: d600011e  RMWCIB2      Mask=128, Data=0, CfgRegAddr=71  # cfg[71] (current thread StateID); THCON_SEC0_REG1_Pac_LF8_4b_exp = 0
@@ -156,625 +156,479 @@ loc_1f8:
     248: 00008b37  lui          x22, 0x00008  # x22 = 0x00008000
     24c: 015b6b33  or           x22, x22, x21
     250: 008b1c13  slli         x24, x22, 8
-    254: 01000cb7  lui          x25, 0x01000  # x25 = 0x01000000
-    258: f00c8c93  addi         x25, x25, -256  # x25 = 0x00ffff00
-    25c: 019c7c33  and          x24, x24, x25
-    260: 45000d37  lui          x26, 0x45000  # x26 = 0x45000000
-    264: 019d0d13  addi         x26, x26, 25  # x26 = 0x45000019
-    268: 01ac6c33  or           x24, x24, x26
-    26c: ffe40db7  lui          x27, 0xffe40  # x27 = 0xffe40000 · TensixMMIO.INSTRN_BUF_BASE
-    270: 018da023  sw           x24, 0(x27)  # TensixMMIO.INSTRN_BUF_BASE · 0xffe40000; write runtime value
-    274: 89000026  STALLWAIT    stall_res=128, wait_res=9  # stall_res: Stall.CFG; wait_res: Wait.THCON | Wait.PACK0
-    278: c0300116  WRCFG        GprAddress=12, wr128b=0, CfgReg=69  # cfg[69] (current thread StateID); THCON_SEC0_REG1_L1_Dest_addr = runtime
-    27c: 008a9c13  slli         x24, x21, 8
-    280: 01000cb7  lui          x25, 0x01000  # x25 = 0x01000000
-    284: f00c8c93  addi         x25, x25, -256  # x25 = 0x00ffff00
-    288: 019c7c33  and          x24, x24, x25
-    28c: 45000d37  lui          x26, 0x45000  # x26 = 0x45000000
-    290: 019d0d13  addi         x26, x26, 25  # x26 = 0x45000019
-    294: 01ac6c33  or           x24, x24, x26
-    298: ffe40db7  lui          x27, 0xffe40  # x27 = 0xffe40000 · TensixMMIO.INSTRN_BUF_BASE
-    29c: 018da023  sw           x24, 0(x27)  # TensixMMIO.INSTRN_BUF_BASE · 0xffe40000; write runtime value
-    2a0: 80000001  DMANOP
-    2a4: 7a00f001  SETADCXX     CntSetMask=4, x_end2=15, x_start=0
-    2a8: 52000015  SETADCZW     CntSetMask=4, Ch1_W=0, Ch1_Z=0, Ch0_W=0, Ch0_Z=0, BitMask=5
-    2ac: ffef0a37  lui          x20, 0xffef0  # x20 = 0xffef0000 · cfg[0] (bank 0) · ALU_FORMAT_SPEC_REG_SrcA_val, ALU_FORMAT_SPEC_REG_SrcA_override, ALU_FORMAT_SPEC_REG_SrcB_val, ALU_FORMAT_SPEC_REG_SrcB_override, ALU_FORMAT_SPEC_REG_Dstacc_val, ALU_FORMAT_SPEC_REG_Dstacc_override
-    2b0: 2d0a0a13  addi         x20, x20, 720  # x20 = 0xffef02d0 · cfg[180] (bank 0) · DEST_TARGET_REG_CFG_PACK_SEC0_Offset, DEST_TARGET_REG_CFG_PACK_SEC0_ZOffset
-    2b4: 00000a93  addi         x21, x0, 0  # x21 = 0x00000000
-    2b8: 015a2023  sw           x21, 0(x20)  # cfg[180] (bank 0) · DEST_TARGET_REG_CFG_PACK_SEC0_Offset, DEST_TARGET_REG_CFG_PACK_SEC0_ZOffset · 0xffef02d0; write 0x00000000; cfg[180] (bank 0); DEST_TARGET_REG_CFG_PACK_SEC0_Offset = 0; DEST_TARGET_REG_CFG_PACK_SEC0_ZOffset = 0
-    2bc: 89000022  STALLWAIT    stall_res=128, wait_res=8  # stall_res: Stall.CFG; wait_res: Wait.PACK0
-    2c0: 06000000  MOP          mop_type=1, loop_count=0, zmask_lo16_or_loop_count=0
-    2c4: 88040022  STALLWAIT    stall_res=2, wait_res=8  # stall_res: Stall.SYNC; wait_res: Wait.PACK0
-    2c8: ffe80a37  lui          x20, 0xffe80  # x20 = 0xffe80000 · tensix_pc_buf + 0x0
-    2cc: 004a0a13  addi         x20, x20, 4  # x20 = 0xffe80004 · TensixMMIO.PC_BUF_SYNC
-    2d0: 000a2023  sw           x0, 0(x20)  # TensixMMIO.PC_BUF_SYNC · 0xffe80004; write 0x00000000
-    2d4: 000a2a83  lw           x21, 0(x20)  # TensixMMIO.PC_BUF_SYNC · 0xffe80004
-    2d8: 01507033  and          x0, x0, x21
-    2dc: ffb01c37  lui          x24, 0xffb01  # x24 = 0xffb01000
-    2e0: 8c0c0c13  addi         x24, x24, -1856  # x24 = 0xffb008c0 · riscv_local_mem + 0x8c0
-    2e4: 000c2a03  lw           x20, 0(x24)  # riscv_local_mem + 0x8c0 · 0xffb008c0
-    2e8: 00001ab7  lui          x21, 0x00001  # x21 = 0x00001000 · F32_TILE_BYTES · Wait.CFGEXU
-    2ec: 800a8a93  addi         x21, x21, -2048  # x21 = 0x00000800
-    2f0: 015a0a33  add          x20, x20, x21
-    2f4: 0001eb37  lui          x22, 0x0001e  # x22 = 0x0001e000
-    2f8: 016a6863  bltu         x20, x22, 0x00000308  # target 0x00000308
-    2fc: 00001bb7  lui          x23, 0x00001  # x23 = 0x00001000 · F32_TILE_BYTES · Wait.CFGEXU
-    300: 800b8b93  addi         x23, x23, -2048  # x23 = 0x00000800
-    304: 417a0a33  sub          x20, x20, x23
-loc_308:
-    308: ffb01c37  lui          x24, 0xffb01  # x24 = 0xffb01000
-    30c: 8c0c0c13  addi         x24, x24, -1856  # x24 = 0xffb008c0 · riscv_local_mem + 0x8c0
-    310: 014c2023  sw           x20, 0(x24)  # riscv_local_mem + 0x8c0 · 0xffb008c0; write runtime value
-    314: ffb01ab7  lui          x21, 0xffb01  # x21 = 0xffb01000
-    318: 8c4a8a93  addi         x21, x21, -1852  # x21 = 0xffb008c4 · riscv_local_mem + 0x8c4
-    31c: 000aaa03  lw           x20, 0(x21)  # riscv_local_mem + 0x8c4 · 0xffb008c4
-    320: 001a0a13  addi         x20, x20, 1
-    324: 010a1a13  slli         x20, x20, 16
-    328: 010a5a13  srli         x20, x20, 16
-    32c: ffb01ab7  lui          x21, 0xffb01  # x21 = 0xffb01000
-    330: 8c4a8a93  addi         x21, x21, -1852  # x21 = 0xffb008c4 · riscv_local_mem + 0x8c4
-    334: 014aa023  sw           x20, 0(x21)  # riscv_local_mem + 0x8c4 · 0xffb008c4; write runtime value
-    338: ffb4eab7  lui          x21, 0xffb4e  # x21 = 0xffb4e000
-    33c: 028a8a93  addi         x21, x21, 40  # x21 = 0xffb4e028
-    340: 014aa023  sw           x20, 0(x21)  # 0xffb4e028; write runtime value
-    344: 0ff0000f  fence        0xf, 0xf
-    348: 40710000  ZEROACC      clear_mode=3, use_32_bit_mode=1, clear_zero_flags=0, addr_mode=1, where=0
-    34c: 94000022  SEMGET       sem_sel=2  # sem_sel: Sem.MATH_PACK
-    350: 79000293  addi         x5, x0, 1936  # x5 = 0x00000790
-    354: 0002a203  lw           x4, 0(x5)  # param kv_blocks; 0x00000790
-    358: 000123b7  lui          x7, 0x00012  # x7 = 0x00012000 · TensixL1.KERNEL_CACHE_BASE
-    35c: 90438393  addi         x7, x7, -1788  # x7 = 0x00011904
-    360: 0003a283  lw           x5, 0(x7)  # param attention_phase; 0x00011904
-    364: 79000493  addi         x9, x0, 1936  # x9 = 0x00000790
-    368: 0004a383  lw           x7, 0(x9)  # param kv_blocks; 0x00000790
-    36c: 00100313  addi         x6, x0, 1  # x6 = 0x00000001
-    370: 00400413  addi         x8, x0, 4  # x8 = 0x00000004
-    374: 00747a63  bgeu         x8, x7, 0x00000388  # target 0x00000388
-    378: 00400313  addi         x6, x0, 4  # x6 = 0x00000004
-    37c: 05000413  addi         x8, x0, 80  # x8 = 0x00000050
-    380: 00747463  bgeu         x8, x7, 0x00000388  # target 0x00000388
-    384: 00800313  addi         x6, x0, 8  # x6 = 0x00000008
-loc_388:
-    388: 00620233  add          x4, x4, x6
-    38c: fff20213  addi         x4, x4, -1
-    390: 40520233  sub          x4, x4, x5
-    394: 02625233  divu         x4, x4, x6
-    398: 00000293  addi         x5, x0, 0  # x5 = 0x00000000
-    39c: 00020313  addi         x6, x4, 0
-loc_3a0:
-    3a0: 2a62f663  bgeu         x5, x6, 0x0000064c  # target 0x0000064c
-    3a4: 98020026  SEMWAIT      stall_res=1, sem_sel=2, wait_sem_cond=1  # stall_res: Stall.TDMA; sem_sel: Sem.MATH_PACK; wait_sem_cond: SemWait.ON_ZERO
-    3a8: 00000f93  addi         x31, x0, 0  # x31 = 0x00000000
-    3ac: ffb01cb7  lui          x25, 0xffb01  # x25 = 0xffb01000
-    3b0: 8ccc8c93  addi         x25, x25, -1844  # x25 = 0xffb008cc · riscv_local_mem + 0x8cc
-    3b4: 000caa03  lw           x20, 0(x25)  # riscv_local_mem + 0x8cc · 0xffb008cc
-loc_3b8:
-    3b8: ffb4bcb7  lui          x25, 0xffb4b  # x25 = 0xffb4b000
-    3bc: 020c8c93  addi         x25, x25, 32  # x25 = 0xffb4b020
-    3c0: 000cda83  lhu          x21, 0(x25)  # 0xffb4b020
-    3c4: 415a0b33  sub          x22, x20, x21
-    3c8: 010b1b13  slli         x22, x22, 16
-    3cc: 010b5b13  srli         x22, x22, 16
-    3d0: 00100b93  addi         x23, x0, 1  # x23 = 0x00000001
-    3d4: 416b8bb3  sub          x23, x23, x22
-    3d8: 00100c13  addi         x24, x0, 1  # x24 = 0x00000001
-    3dc: 018bf663  bgeu         x23, x24, 0x000003e8  # target 0x000003e8
-    3e0: 0ff0000f  fence        0xf, 0xf
-    3e4: fd5ff06f  jal          x0, 0x000003b8  # target 0x000003b8
-loc_3e8:
-    3e8: 0ff0000f  fence        0xf, 0xf
-    3ec: c8000002  SETC16       setc16_reg=0, setc16_value=0  # thread_cfg[0] (current thread); CFG_STATE_ID_StateID = 0
-    3f0: d600011e  RMWCIB2      Mask=128, Data=0, CfgRegAddr=71  # cfg[71] (current thread StateID); THCON_SEC0_REG1_Pac_LF8_4b_exp = 0
-    3f4: d8780006  RMWCIB3      Mask=30, Data=0, CfgRegAddr=1  # cfg[1] (current thread StateID); ALU_FORMAT_SPEC_REG2_Dstacc = 0
-    3f8: cff0000a  RMWCIB0      Mask=252, Data=0, CfgRegAddr=2  # cfg[2] (current thread StateID); STACC_RELU_ApplyRelu = 0; STACC_RELU_ReluThreshold = 0 (masked bits only)
-    3fc: d3fc000a  RMWCIB1      Mask=255, Data=0, CfgRegAddr=2  # cfg[2] (current thread StateID); STACC_RELU_ReluThreshold = 0 (masked bits only)
-    400: d4fc000a  RMWCIB2      Mask=63, Data=0, CfgRegAddr=2  # cfg[2] (current thread StateID); STACC_RELU_ReluThreshold = 0 (masked bits only)
-    404: ffef0a37  lui          x20, 0xffef0  # x20 = 0xffef0000 · cfg[0] (bank 0) · ALU_FORMAT_SPEC_REG_SrcA_val, ALU_FORMAT_SPEC_REG_SrcA_override, ALU_FORMAT_SPEC_REG_SrcB_val, ALU_FORMAT_SPEC_REG_SrcB_override, ALU_FORMAT_SPEC_REG_Dstacc_val, ALU_FORMAT_SPEC_REG_Dstacc_override
-    408: 110a0a13  addi         x20, x20, 272  # x20 = 0xffef0110 · cfg[68] (bank 0) · THCON_SEC0_REG1_Row_start_section_size, THCON_SEC0_REG1_Exp_section_size
-    40c: 00040ab7  lui          x21, 0x00040  # x21 = 0x00040000
-    410: 015a2023  sw           x21, 0(x20)  # cfg[68] (bank 0) · THCON_SEC0_REG1_Row_start_section_size, THCON_SEC0_REG1_Exp_section_size · 0xffef0110; write 0x00040000; cfg[68] (bank 0); THCON_SEC0_REG1_Row_start_section_size = 0; THCON_SEC0_REG1_Exp_section_size = 4
-    414: 05100a93  addi         x21, x0, 81  # x21 = 0x00000051
-    418: 015a2423  sw           x21, 8(x20)  # cfg[70] (bank 0) · THCON_SEC0_REG1_Disable_zero_compress, THCON_SEC0_REG1_Add_l1_dest_addr_offset, THCON_SEC0_REG1_Disable_pack_zero_flags, THCON_SEC0_REG1_ovrd_default_throttle_mode, THCON_SEC0_REG1_Out_data_format, THCON_SEC0_REG1_In_data_format, THCON_SEC0_REG1_Dis_shared_exp_assembler, THCON_SEC0_REG1_Auto_set_last_pacr_intf_sel, THCON_SEC0_REG1_Enable_out_fifo, THCON_SEC0_REG1_Sub_l1_tile_header_size, THCON_SEC0_REG1_Source_interface_selection, THCON_SEC0_REG1_pack_start_intf_pos, THCON_SEC0_REG1_All_pack_disable_zero_compress_ovrd, THCON_SEC0_REG1_Add_tile_header_size, THCON_SEC0_REG1_pack_dis_y_pos_start_offset, THCON_SEC0_REG1_L1_source_addr · 0xffef0118; write 0x00000051; cfg[70] (bank 0); THCON_SEC0_REG1_Disable_zero_compress = 1; THCON_SEC0_REG1_Add_l1_dest_addr_offset = 0; THCON_SEC0_REG1_Disable_pack_zero_flags = 0; THCON_SEC0_REG1_ovrd_default_throttle_mode = 0; THCON_SEC0_REG1_Out_data_format = 5; THCON_SEC0_REG1_In_data_format = 0; THCON_SEC0_REG1_Dis_shared_exp_assembler = 0; THCON_SEC0_REG1_Auto_set_last_pacr_intf_sel = 0; THCON_SEC0_REG1_Enable_out_fifo = 0; THCON_SEC0_REG1_Sub_l1_tile_header_size = 0; THCON_SEC0_REG1_Source_interface_selection = 0; THCON_SEC0_REG1_pack_start_intf_pos = 0; THCON_SEC0_REG1_All_pack_disable_zero_compress_ovrd = 0; THCON_SEC0_REG1_Add_tile_header_size = 0; THCON_SEC0_REG1_pack_dis_y_pos_start_offset = 0; THCON_SEC0_REG1_L1_source_addr = 0
-    41c: 00100a93  addi         x21, x0, 1  # x21 = 0x00000001
-    420: f35a2c23  sw           x21, -200(x20)  # cfg[18] (bank 0) · PCK_DEST_RD_CTRL_Read_32b_data, PCK_DEST_RD_CTRL_Read_unsigned, PCK_DEST_RD_CTRL_Read_int8, PCK_DEST_RD_CTRL_Round_10b_mant · 0xffef0048; write 0x00000001; cfg[18] (bank 0); PCK_DEST_RD_CTRL_Read_32b_data = 1; PCK_DEST_RD_CTRL_Read_unsigned = 0; PCK_DEST_RD_CTRL_Read_int8 = 0; PCK_DEST_RD_CTRL_Round_10b_mant = 0
-    424: 00400ab7  lui          x21, 0x00400  # x21 = 0x00400000
-    428: f35a2023  sw           x21, -224(x20)  # cfg[12] (bank 0) · PCK0_ADDR_CTRL_XY_REG_0_Xstride, PCK0_ADDR_CTRL_XY_REG_0_Ystride · 0xffef0030; write 0x00400000; cfg[12] (bank 0); PCK0_ADDR_CTRL_XY_REG_0_Xstride = 0; PCK0_ADDR_CTRL_XY_REG_0_Ystride = 64
-    42c: 10000ab7  lui          x21, 0x10000  # x21 = 0x10000000 · CQConfig.PCIE_MID
-    430: 400a8a93  addi         x21, x21, 1024  # x21 = 0x10000400 · arc_csm + 0x400
-    434: f35a2223  sw           x21, -220(x20)  # cfg[13] (bank 0) · PCK0_ADDR_CTRL_ZW_REG_0_Zstride, PCK0_ADDR_CTRL_ZW_REG_0_Wstride · 0xffef0034; write 0x10000400; cfg[13] (bank 0); PCK0_ADDR_CTRL_ZW_REG_0_Zstride = 1024; PCK0_ADDR_CTRL_ZW_REG_0_Wstride = 4096
-    438: 00001ab7  lui          x21, 0x00001  # x21 = 0x00001000 · F32_TILE_BYTES · Wait.CFGEXU
-    43c: f75a2023  sw           x21, -160(x20)  # cfg[28] (bank 0) · PACK_COUNTERS_SEC0_pack_per_xy_plane, PACK_COUNTERS_SEC0_pack_reads_per_xy_plane, PACK_COUNTERS_SEC0_pack_xys_per_tile, PACK_COUNTERS_SEC0_pack_yz_transposed, PACK_COUNTERS_SEC0_auto_ctxt_inc_xys_cnt · 0xffef0070; write 0x00001000; cfg[28] (bank 0); PACK_COUNTERS_SEC0_pack_per_xy_plane = 0; PACK_COUNTERS_SEC0_pack_reads_per_xy_plane = 16; PACK_COUNTERS_SEC0_pack_xys_per_tile = 0; PACK_COUNTERS_SEC0_pack_yz_transposed = 0; PACK_COUNTERS_SEC0_auto_ctxt_inc_xys_cnt = 0
-    440: 00010ab7  lui          x21, 0x00010  # x21 = 0x00010000
-    444: fffa8a93  addi         x21, x21, -1  # x21 = 0x0000ffff
-    448: f55a2823  sw           x21, -176(x20)  # cfg[24] (bank 0) · PCK_EDGE_OFFSET_SEC0_mask, PCK_EDGE_MODE_mode, PCK_EDGE_TILE_ROW_SET_SELECT_select · 0xffef0060; write 0x0000ffff; cfg[24] (bank 0); PCK_EDGE_OFFSET_SEC0_mask = 65535; PCK_EDGE_MODE_mode = 0; PCK_EDGE_TILE_ROW_SET_SELECT_select = 0
-    44c: f40a2a23  sw           x0, -172(x20)  # cfg[25] (bank 0) · PCK_EDGE_OFFSET_SEC1_mask · 0xffef0064; write 0x00000000; cfg[25] (bank 0); PCK_EDGE_OFFSET_SEC1_mask = 0
-    450: f40a2023  sw           x0, -192(x20)  # cfg[20] (bank 0) · TILE_ROW_SET_MAPPING_0_row_set_mapping_0, TILE_ROW_SET_MAPPING_0_row_set_mapping_1, TILE_ROW_SET_MAPPING_0_row_set_mapping_2, TILE_ROW_SET_MAPPING_0_row_set_mapping_3, TILE_ROW_SET_MAPPING_0_row_set_mapping_4, TILE_ROW_SET_MAPPING_0_row_set_mapping_5, TILE_ROW_SET_MAPPING_0_row_set_mapping_6, TILE_ROW_SET_MAPPING_0_row_set_mapping_7, TILE_ROW_SET_MAPPING_0_row_set_mapping_8, TILE_ROW_SET_MAPPING_0_row_set_mapping_9, TILE_ROW_SET_MAPPING_0_row_set_mapping_10, TILE_ROW_SET_MAPPING_0_row_set_mapping_11, TILE_ROW_SET_MAPPING_0_row_set_mapping_12, TILE_ROW_SET_MAPPING_0_row_set_mapping_13, TILE_ROW_SET_MAPPING_0_row_set_mapping_14, TILE_ROW_SET_MAPPING_0_row_set_mapping_15 · 0xffef0050; write 0x00000000; cfg[20] (bank 0); TILE_ROW_SET_MAPPING_0_row_set_mapping_0 = 0; TILE_ROW_SET_MAPPING_0_row_set_mapping_1 = 0; TILE_ROW_SET_MAPPING_0_row_set_mapping_2 = 0; TILE_ROW_SET_MAPPING_0_row_set_mapping_3 = 0; TILE_ROW_SET_MAPPING_0_row_set_mapping_4 = 0; TILE_ROW_SET_MAPPING_0_row_set_mapping_5 = 0; TILE_ROW_SET_MAPPING_0_row_set_mapping_6 = 0; TILE_ROW_SET_MAPPING_0_row_set_mapping_7 = 0; TILE_ROW_SET_MAPPING_0_row_set_mapping_8 = 0; TILE_ROW_SET_MAPPING_0_row_set_mapping_9 = 0; TILE_ROW_SET_MAPPING_0_row_set_mapping_10 = 0; TILE_ROW_SET_MAPPING_0_row_set_mapping_11 = 0; TILE_ROW_SET_MAPPING_0_row_set_mapping_12 = 0; TILE_ROW_SET_MAPPING_0_row_set_mapping_13 = 0; TILE_ROW_SET_MAPPING_0_row_set_mapping_14 = 0; TILE_ROW_SET_MAPPING_0_row_set_mapping_15 = 0
-    454: f40a2223  sw           x0, -188(x20)  # cfg[21] (bank 0) · TILE_ROW_SET_MAPPING_1_row_set_mapping_0, TILE_ROW_SET_MAPPING_1_row_set_mapping_1, TILE_ROW_SET_MAPPING_1_row_set_mapping_2, TILE_ROW_SET_MAPPING_1_row_set_mapping_3, TILE_ROW_SET_MAPPING_1_row_set_mapping_4, TILE_ROW_SET_MAPPING_1_row_set_mapping_5, TILE_ROW_SET_MAPPING_1_row_set_mapping_6, TILE_ROW_SET_MAPPING_1_row_set_mapping_7, TILE_ROW_SET_MAPPING_1_row_set_mapping_8, TILE_ROW_SET_MAPPING_1_row_set_mapping_9, TILE_ROW_SET_MAPPING_1_row_set_mapping_10, TILE_ROW_SET_MAPPING_1_row_set_mapping_11, TILE_ROW_SET_MAPPING_1_row_set_mapping_12, TILE_ROW_SET_MAPPING_1_row_set_mapping_13, TILE_ROW_SET_MAPPING_1_row_set_mapping_14, TILE_ROW_SET_MAPPING_1_row_set_mapping_15 · 0xffef0054; write 0x00000000; cfg[21] (bank 0); TILE_ROW_SET_MAPPING_1_row_set_mapping_0 = 0; TILE_ROW_SET_MAPPING_1_row_set_mapping_1 = 0; TILE_ROW_SET_MAPPING_1_row_set_mapping_2 = 0; TILE_ROW_SET_MAPPING_1_row_set_mapping_3 = 0; TILE_ROW_SET_MAPPING_1_row_set_mapping_4 = 0; TILE_ROW_SET_MAPPING_1_row_set_mapping_5 = 0; TILE_ROW_SET_MAPPING_1_row_set_mapping_6 = 0; TILE_ROW_SET_MAPPING_1_row_set_mapping_7 = 0; TILE_ROW_SET_MAPPING_1_row_set_mapping_8 = 0; TILE_ROW_SET_MAPPING_1_row_set_mapping_9 = 0; TILE_ROW_SET_MAPPING_1_row_set_mapping_10 = 0; TILE_ROW_SET_MAPPING_1_row_set_mapping_11 = 0; TILE_ROW_SET_MAPPING_1_row_set_mapping_12 = 0; TILE_ROW_SET_MAPPING_1_row_set_mapping_13 = 0; TILE_ROW_SET_MAPPING_1_row_set_mapping_14 = 0; TILE_ROW_SET_MAPPING_1_row_set_mapping_15 = 0
-    458: ffe00a37  lui          x20, 0xffe00  # x20 = 0xffe00000 · TensixMMIO.REGFILE_BASE
-    45c: 040a0a13  addi         x20, x20, 64  # x20 = 0xffe00040 · tensix_regfile + 0x40
-    460: 08000a93  addi         x21, x0, 128  # x21 = 0x00000080
-    464: 015a2023  sw           x21, 0(x20)  # tensix_regfile + 0x40 · 0xffe00040; write 0x00000080
-    468: 00040ab7  lui          x21, 0x00040  # x21 = 0x00040000
-    46c: 095a2823  sw           x21, 144(x20)  # tensix_regfile + 0xd0 · 0xffe000d0; write 0x00040000
-    470: c8940412  SETC16       setc16_reg=37, setc16_value=260  # thread_cfg[37] (current thread); ADDR_MOD_PACK_SEC0_YsrcIncr = 4; ADDR_MOD_PACK_SEC0_YsrcCR = 0; ADDR_MOD_PACK_SEC0_YsrcClear = 0; ADDR_MOD_PACK_SEC0_YdstIncr = 4; ADDR_MOD_PACK_SEC0_YdstCR = 0; ADDR_MOD_PACK_SEC0_YdstClear = 0; ADDR_MOD_PACK_SEC0_ZsrcIncr = 0; ADDR_MOD_PACK_SEC0_ZsrcClear = 0; ADDR_MOD_PACK_SEC0_ZdstIncr = 0; ADDR_MOD_PACK_SEC0_ZdstClear = 0
-    474: c898a082  SETC16       setc16_reg=38, setc16_value=10272  # thread_cfg[38] (current thread); ADDR_MOD_PACK_SEC1_YsrcIncr = 0; ADDR_MOD_PACK_SEC1_YsrcCR = 0; ADDR_MOD_PACK_SEC1_YsrcClear = 1; ADDR_MOD_PACK_SEC1_YdstIncr = 0; ADDR_MOD_PACK_SEC1_YdstCR = 0; ADDR_MOD_PACK_SEC1_YdstClear = 1; ADDR_MOD_PACK_SEC1_ZsrcIncr = 0; ADDR_MOD_PACK_SEC1_ZsrcClear = 1; ADDR_MOD_PACK_SEC1_ZdstIncr = 0; ADDR_MOD_PACK_SEC1_ZdstClear = 0
-    478: c89c4482  SETC16       setc16_reg=39, setc16_value=4384  # thread_cfg[39] (current thread); ADDR_MOD_PACK_SEC2_YsrcIncr = 0; ADDR_MOD_PACK_SEC2_YsrcCR = 0; ADDR_MOD_PACK_SEC2_YsrcClear = 1; ADDR_MOD_PACK_SEC2_YdstIncr = 4; ADDR_MOD_PACK_SEC2_YdstCR = 0; ADDR_MOD_PACK_SEC2_YdstClear = 0; ADDR_MOD_PACK_SEC2_ZsrcIncr = 1; ADDR_MOD_PACK_SEC2_ZsrcClear = 0; ADDR_MOD_PACK_SEC2_ZdstIncr = 0; ADDR_MOD_PACK_SEC2_ZdstClear = 0
-    47c: 4600002d  SETADCXY     CntSetMask=4, Ch1_Y=0, Ch1_X=0, Ch0_Y=0, Ch0_X=0, BitMask=11
-    480: 5200003d  SETADCZW     CntSetMask=4, Ch1_W=0, Ch1_Z=0, Ch0_W=0, Ch0_Z=0, BitMask=15
-    484: ffe80a37  lui          x20, 0xffe80  # x20 = 0xffe80000 · tensix_pc_buf + 0x0
-    488: 008a0a13  addi         x20, x20, 8  # x20 = 0xffe80008 · TensixMMIO.PC_BUF_MOP_SYNC
-    48c: 000a2023  sw           x0, 0(x20)  # TensixMMIO.PC_BUF_MOP_SYNC · 0xffe80008; write 0x00000000
-    490: 000a2a83  lw           x21, 0(x20)  # TensixMMIO.PC_BUF_MOP_SYNC · 0xffe80008
-    494: 01507033  and          x0, x0, x21
-    498: ffb80a37  lui          x20, 0xffb80  # x20 = 0xffb80000 · MOP_CFG
-    49c: 00400a93  addi         x21, x0, 4  # x21 = 0x00000004
-    4a0: 015a2023  sw           x21, 0(x20)  # MOP_CFG · 0xffb80000; write 0x00000004
-    4a4: 015a2223  sw           x21, 4(x20)  # MopCfg[1] · InnerCount / Flags · 0xffb80004; write 0x00000004
-    4a8: 02000ab7  lui          x21, 0x02000  # x21 = 0x02000000
-    4ac: 015a2423  sw           x21, 8(x20)  # MopCfg[2] · StartOp / InsnB · 0xffb80008; write 0x02000000; MOP template instruction · NOP
-    4b0: 015a2623  sw           x21, 12(x20)  # MopCfg[3] · EndOp0 / InsnA0 · 0xffb8000c; write 0x02000000; MOP template instruction · NOP
-    4b4: 015a2823  sw           x21, 16(x20)  # MopCfg[4] · EndOp1 / InsnA1 · 0xffb80010; write 0x02000000; MOP template instruction · NOP
-    4b8: 41000ab7  lui          x21, 0x41000  # x21 = 0x41000000
-    4bc: 015a2a23  sw           x21, 20(x20)  # MopCfg[5] · LoopOp / InsnA2 · 0xffb80014; write 0x41000000; MOP template instruction · PACR CfgContext=0, RowPadZero=0, DstAccessMode=0, AddrMode=0, AddrCntContext=0, ZeroWrite=0, ReadIntfSel=0, OvrdThreadId=0, Concat=0, CtxtCtrl=0, Flush=0, Last=0
-    4c0: 02000ab7  lui          x21, 0x02000  # x21 = 0x02000000
-    4c4: 015a2c23  sw           x21, 24(x20)  # MopCfg[6] · LoopOp1 / InsnA3 · 0xffb80018; write 0x02000000; MOP template instruction · NOP
-    4c8: 41008ab7  lui          x21, 0x41008  # x21 = 0x41008000
-    4cc: 001a8a93  addi         x21, x21, 1  # x21 = 0x41008001
-    4d0: 015a2e23  sw           x21, 28(x20)  # MopCfg[7] · Loop0Last / SkipA0 · 0xffb8001c; write 0x41008001; MOP template instruction · PACR CfgContext=0, RowPadZero=0, DstAccessMode=0, AddrMode=1, AddrCntContext=0, ZeroWrite=0, ReadIntfSel=0, OvrdThreadId=0, Concat=0, CtxtCtrl=0, Flush=0, Last=1
-    4d4: 41010ab7  lui          x21, 0x41010  # x21 = 0x41010000
-    4d8: 035a2023  sw           x21, 32(x20)  # MopCfg[8] · Loop1Last / SkipB · 0xffb80020; write 0x41010000; MOP template instruction · PACR CfgContext=0, RowPadZero=0, DstAccessMode=0, AddrMode=2, AddrCntContext=0, ZeroWrite=0, ReadIntfSel=0, OvrdThreadId=0, Concat=0, CtxtCtrl=0, Flush=0, Last=0
-    4dc: ffe80a37  lui          x20, 0xffe80  # x20 = 0xffe80000 · tensix_pc_buf + 0x0
-    4e0: 004a0a13  addi         x20, x20, 4  # x20 = 0xffe80004 · TensixMMIO.PC_BUF_SYNC
-    4e4: 000a2023  sw           x0, 0(x20)  # TensixMMIO.PC_BUF_SYNC · 0xffe80004; write 0x00000000
-    4e8: 000a2a83  lw           x21, 0(x20)  # TensixMMIO.PC_BUF_SYNC · 0xffe80004
-    4ec: 01507033  and          x0, x0, x21
-    4f0: ffb01bb7  lui          x23, 0xffb01  # x23 = 0xffb01000
-    4f4: 8c8b8b93  addi         x23, x23, -1848  # x23 = 0xffb008c8 · riscv_local_mem + 0x8c8
-    4f8: 000baa03  lw           x20, 0(x23)  # riscv_local_mem + 0x8c8 · 0xffb008c8
-    4fc: 004a5a13  srli         x20, x20, 4
-    500: fffa0a13  addi         x20, x20, -1
-    504: 508c0bb7  lui          x23, 0x508c0  # x23 = 0x508c0000
-    508: 01fbebb3  or           x23, x23, x31  # x23 = 0x508c0000
-    50c: ffe40c37  lui          x24, 0xffe40  # x24 = 0xffe40000 · TensixMMIO.INSTRN_BUF_BASE
-    510: 017c2023  sw           x23, 0(x24)  # TensixMMIO.INSTRN_BUF_BASE · 0xffe40000; write 0x508c0000; MMIO instruction · SETADC CntSetMask=4, ChannelIndex=0, DimensionIndex=3, Value=0
-    514: 008a1c13  slli         x24, x20, 8
-    518: 01000cb7  lui          x25, 0x01000  # x25 = 0x01000000
-    51c: f00c8c93  addi         x25, x25, -256  # x25 = 0x00ffff00
-    520: 019c7c33  and          x24, x24, x25
-    524: 45000d37  lui          x26, 0x45000  # x26 = 0x45000000
-    528: 018d0d13  addi         x26, x26, 24  # x26 = 0x45000018
-    52c: 01ac6c33  or           x24, x24, x26
-    530: ffe40db7  lui          x27, 0xffe40  # x27 = 0xffe40000 · TensixMMIO.INSTRN_BUF_BASE
-    534: 018da023  sw           x24, 0(x27)  # TensixMMIO.INSTRN_BUF_BASE · 0xffe40000; write runtime value
-    538: 010a5a93  srli         x21, x20, 16
-    53c: 00008b37  lui          x22, 0x00008  # x22 = 0x00008000
-    540: 015b6b33  or           x22, x22, x21
-    544: 008b1c13  slli         x24, x22, 8
-    548: 01000cb7  lui          x25, 0x01000  # x25 = 0x01000000
-    54c: f00c8c93  addi         x25, x25, -256  # x25 = 0x00ffff00
-    550: 019c7c33  and          x24, x24, x25
-    554: 45000d37  lui          x26, 0x45000  # x26 = 0x45000000
-    558: 019d0d13  addi         x26, x26, 25  # x26 = 0x45000019
-    55c: 01ac6c33  or           x24, x24, x26
-    560: ffe40db7  lui          x27, 0xffe40  # x27 = 0xffe40000 · TensixMMIO.INSTRN_BUF_BASE
-    564: 018da023  sw           x24, 0(x27)  # TensixMMIO.INSTRN_BUF_BASE · 0xffe40000; write runtime value
-    568: 89000026  STALLWAIT    stall_res=128, wait_res=9  # stall_res: Stall.CFG; wait_res: Wait.THCON | Wait.PACK0
-    56c: c0300116  WRCFG        GprAddress=12, wr128b=0, CfgReg=69  # cfg[69] (current thread StateID); THCON_SEC0_REG1_L1_Dest_addr = runtime
-    570: 008a9c13  slli         x24, x21, 8
-    574: 01000cb7  lui          x25, 0x01000  # x25 = 0x01000000
-    578: f00c8c93  addi         x25, x25, -256  # x25 = 0x00ffff00
-    57c: 019c7c33  and          x24, x24, x25
-    580: 45000d37  lui          x26, 0x45000  # x26 = 0x45000000
-    584: 019d0d13  addi         x26, x26, 25  # x26 = 0x45000019
-    588: 01ac6c33  or           x24, x24, x26
-    58c: ffe40db7  lui          x27, 0xffe40  # x27 = 0xffe40000 · TensixMMIO.INSTRN_BUF_BASE
-    590: 018da023  sw           x24, 0(x27)  # TensixMMIO.INSTRN_BUF_BASE · 0xffe40000; write runtime value
-    594: 80000001  DMANOP
-    598: 7a00f001  SETADCXX     CntSetMask=4, x_end2=15, x_start=0
-    59c: 52000015  SETADCZW     CntSetMask=4, Ch1_W=0, Ch1_Z=0, Ch0_W=0, Ch0_Z=0, BitMask=5
-    5a0: ffef0a37  lui          x20, 0xffef0  # x20 = 0xffef0000 · cfg[0] (bank 0) · ALU_FORMAT_SPEC_REG_SrcA_val, ALU_FORMAT_SPEC_REG_SrcA_override, ALU_FORMAT_SPEC_REG_SrcB_val, ALU_FORMAT_SPEC_REG_SrcB_override, ALU_FORMAT_SPEC_REG_Dstacc_val, ALU_FORMAT_SPEC_REG_Dstacc_override
-    5a4: 2d0a0a13  addi         x20, x20, 720  # x20 = 0xffef02d0 · cfg[180] (bank 0) · DEST_TARGET_REG_CFG_PACK_SEC0_Offset, DEST_TARGET_REG_CFG_PACK_SEC0_ZOffset
-    5a8: 00000a93  addi         x21, x0, 0  # x21 = 0x00000000
-    5ac: 015a2023  sw           x21, 0(x20)  # cfg[180] (bank 0) · DEST_TARGET_REG_CFG_PACK_SEC0_Offset, DEST_TARGET_REG_CFG_PACK_SEC0_ZOffset · 0xffef02d0; write 0x00000000; cfg[180] (bank 0); DEST_TARGET_REG_CFG_PACK_SEC0_Offset = 0; DEST_TARGET_REG_CFG_PACK_SEC0_ZOffset = 0
-    5b0: 89000022  STALLWAIT    stall_res=128, wait_res=8  # stall_res: Stall.CFG; wait_res: Wait.PACK0
-    5b4: 06000000  MOP          mop_type=1, loop_count=0, zmask_lo16_or_loop_count=0
-    5b8: 88040022  STALLWAIT    stall_res=2, wait_res=8  # stall_res: Stall.SYNC; wait_res: Wait.PACK0
-    5bc: ffe80a37  lui          x20, 0xffe80  # x20 = 0xffe80000 · tensix_pc_buf + 0x0
-    5c0: 004a0a13  addi         x20, x20, 4  # x20 = 0xffe80004 · TensixMMIO.PC_BUF_SYNC
-    5c4: 000a2023  sw           x0, 0(x20)  # TensixMMIO.PC_BUF_SYNC · 0xffe80004; write 0x00000000
-    5c8: 000a2a83  lw           x21, 0(x20)  # TensixMMIO.PC_BUF_SYNC · 0xffe80004
-    5cc: 01507033  and          x0, x0, x21
-    5d0: ffb01c37  lui          x24, 0xffb01  # x24 = 0xffb01000
-    5d4: 8c8c0c13  addi         x24, x24, -1848  # x24 = 0xffb008c8 · riscv_local_mem + 0x8c8
-    5d8: 000c2a03  lw           x20, 0(x24)  # riscv_local_mem + 0x8c8 · 0xffb008c8
-    5dc: 00001ab7  lui          x21, 0x00001  # x21 = 0x00001000 · F32_TILE_BYTES · Wait.CFGEXU
-    5e0: 800a8a93  addi         x21, x21, -2048  # x21 = 0x00000800
-    5e4: 015a0a33  add          x20, x20, x21
-    5e8: 00018b37  lui          x22, 0x00018  # x22 = 0x00018000
-    5ec: 800b0b13  addi         x22, x22, -2048  # x22 = 0x00017800
-    5f0: 016a6863  bltu         x20, x22, 0x00000600  # target 0x00000600
-    5f4: 00001bb7  lui          x23, 0x00001  # x23 = 0x00001000 · F32_TILE_BYTES · Wait.CFGEXU
-    5f8: 800b8b93  addi         x23, x23, -2048  # x23 = 0x00000800
-    5fc: 417a0a33  sub          x20, x20, x23
-loc_600:
-    600: ffb01c37  lui          x24, 0xffb01  # x24 = 0xffb01000
-    604: 8c8c0c13  addi         x24, x24, -1848  # x24 = 0xffb008c8 · riscv_local_mem + 0x8c8
-    608: 014c2023  sw           x20, 0(x24)  # riscv_local_mem + 0x8c8 · 0xffb008c8; write runtime value
-    60c: ffb01ab7  lui          x21, 0xffb01  # x21 = 0xffb01000
-    610: 8cca8a93  addi         x21, x21, -1844  # x21 = 0xffb008cc · riscv_local_mem + 0x8cc
-    614: 000aaa03  lw           x20, 0(x21)  # riscv_local_mem + 0x8cc · 0xffb008cc
-    618: 001a0a13  addi         x20, x20, 1
-    61c: 010a1a13  slli         x20, x20, 16
-    620: 010a5a13  srli         x20, x20, 16
-    624: ffb01ab7  lui          x21, 0xffb01  # x21 = 0xffb01000
-    628: 8cca8a93  addi         x21, x21, -1844  # x21 = 0xffb008cc · riscv_local_mem + 0x8cc
-    62c: 014aa023  sw           x20, 0(x21)  # riscv_local_mem + 0x8cc · 0xffb008cc; write runtime value
-    630: ffb4bab7  lui          x21, 0xffb4b  # x21 = 0xffb4b000
-    634: 028a8a93  addi         x21, x21, 40  # x21 = 0xffb4b028
-    638: 014aa023  sw           x20, 0(x21)  # 0xffb4b028; write runtime value
-    63c: 0ff0000f  fence        0xf, 0xf
-    640: 94000022  SEMGET       sem_sel=2  # sem_sel: Sem.MATH_PACK
-    644: 00128293  addi         x5, x5, 1
-    648: d59ff06f  jal          x0, 0x000003a0  # target 0x000003a0
-loc_64c:
-    64c: 98020026  SEMWAIT      stall_res=1, sem_sel=2, wait_sem_cond=1  # stall_res: Stall.TDMA; sem_sel: Sem.MATH_PACK; wait_sem_cond: SemWait.ON_ZERO
-    650: c8000002  SETC16       setc16_reg=0, setc16_value=0  # thread_cfg[0] (current thread); CFG_STATE_ID_StateID = 0
-    654: d600011e  RMWCIB2      Mask=128, Data=0, CfgRegAddr=71  # cfg[71] (current thread StateID); THCON_SEC0_REG1_Pac_LF8_4b_exp = 0
-    658: d8780006  RMWCIB3      Mask=30, Data=0, CfgRegAddr=1  # cfg[1] (current thread StateID); ALU_FORMAT_SPEC_REG2_Dstacc = 0
-    65c: cff0000a  RMWCIB0      Mask=252, Data=0, CfgRegAddr=2  # cfg[2] (current thread StateID); STACC_RELU_ApplyRelu = 0; STACC_RELU_ReluThreshold = 0 (masked bits only)
-    660: d3fc000a  RMWCIB1      Mask=255, Data=0, CfgRegAddr=2  # cfg[2] (current thread StateID); STACC_RELU_ReluThreshold = 0 (masked bits only)
-    664: d4fc000a  RMWCIB2      Mask=63, Data=0, CfgRegAddr=2  # cfg[2] (current thread StateID); STACC_RELU_ReluThreshold = 0 (masked bits only)
-    668: ffef0a37  lui          x20, 0xffef0  # x20 = 0xffef0000 · cfg[0] (bank 0) · ALU_FORMAT_SPEC_REG_SrcA_val, ALU_FORMAT_SPEC_REG_SrcA_override, ALU_FORMAT_SPEC_REG_SrcB_val, ALU_FORMAT_SPEC_REG_SrcB_override, ALU_FORMAT_SPEC_REG_Dstacc_val, ALU_FORMAT_SPEC_REG_Dstacc_override
-    66c: 110a0a13  addi         x20, x20, 272  # x20 = 0xffef0110 · cfg[68] (bank 0) · THCON_SEC0_REG1_Row_start_section_size, THCON_SEC0_REG1_Exp_section_size
-    670: 00040ab7  lui          x21, 0x00040  # x21 = 0x00040000
-    674: 015a2023  sw           x21, 0(x20)  # cfg[68] (bank 0) · THCON_SEC0_REG1_Row_start_section_size, THCON_SEC0_REG1_Exp_section_size · 0xffef0110; write 0x00040000; cfg[68] (bank 0); THCON_SEC0_REG1_Row_start_section_size = 0; THCON_SEC0_REG1_Exp_section_size = 4
-    678: 00100a93  addi         x21, x0, 1  # x21 = 0x00000001
-    67c: 015a2423  sw           x21, 8(x20)  # cfg[70] (bank 0) · THCON_SEC0_REG1_Disable_zero_compress, THCON_SEC0_REG1_Add_l1_dest_addr_offset, THCON_SEC0_REG1_Disable_pack_zero_flags, THCON_SEC0_REG1_ovrd_default_throttle_mode, THCON_SEC0_REG1_Out_data_format, THCON_SEC0_REG1_In_data_format, THCON_SEC0_REG1_Dis_shared_exp_assembler, THCON_SEC0_REG1_Auto_set_last_pacr_intf_sel, THCON_SEC0_REG1_Enable_out_fifo, THCON_SEC0_REG1_Sub_l1_tile_header_size, THCON_SEC0_REG1_Source_interface_selection, THCON_SEC0_REG1_pack_start_intf_pos, THCON_SEC0_REG1_All_pack_disable_zero_compress_ovrd, THCON_SEC0_REG1_Add_tile_header_size, THCON_SEC0_REG1_pack_dis_y_pos_start_offset, THCON_SEC0_REG1_L1_source_addr · 0xffef0118; write 0x00000001; cfg[70] (bank 0); THCON_SEC0_REG1_Disable_zero_compress = 1; THCON_SEC0_REG1_Add_l1_dest_addr_offset = 0; THCON_SEC0_REG1_Disable_pack_zero_flags = 0; THCON_SEC0_REG1_ovrd_default_throttle_mode = 0; THCON_SEC0_REG1_Out_data_format = 0; THCON_SEC0_REG1_In_data_format = 0; THCON_SEC0_REG1_Dis_shared_exp_assembler = 0; THCON_SEC0_REG1_Auto_set_last_pacr_intf_sel = 0; THCON_SEC0_REG1_Enable_out_fifo = 0; THCON_SEC0_REG1_Sub_l1_tile_header_size = 0; THCON_SEC0_REG1_Source_interface_selection = 0; THCON_SEC0_REG1_pack_start_intf_pos = 0; THCON_SEC0_REG1_All_pack_disable_zero_compress_ovrd = 0; THCON_SEC0_REG1_Add_tile_header_size = 0; THCON_SEC0_REG1_pack_dis_y_pos_start_offset = 0; THCON_SEC0_REG1_L1_source_addr = 0
-    680: f35a2c23  sw           x21, -200(x20)  # cfg[18] (bank 0) · PCK_DEST_RD_CTRL_Read_32b_data, PCK_DEST_RD_CTRL_Read_unsigned, PCK_DEST_RD_CTRL_Read_int8, PCK_DEST_RD_CTRL_Round_10b_mant · 0xffef0048; write 0x00000001; cfg[18] (bank 0); PCK_DEST_RD_CTRL_Read_32b_data = 1; PCK_DEST_RD_CTRL_Read_unsigned = 0; PCK_DEST_RD_CTRL_Read_int8 = 0; PCK_DEST_RD_CTRL_Round_10b_mant = 0
-    684: 00400ab7  lui          x21, 0x00400  # x21 = 0x00400000
-    688: f35a2023  sw           x21, -224(x20)  # cfg[12] (bank 0) · PCK0_ADDR_CTRL_XY_REG_0_Xstride, PCK0_ADDR_CTRL_XY_REG_0_Ystride · 0xffef0030; write 0x00400000; cfg[12] (bank 0); PCK0_ADDR_CTRL_XY_REG_0_Xstride = 0; PCK0_ADDR_CTRL_XY_REG_0_Ystride = 64
-    68c: 10000ab7  lui          x21, 0x10000  # x21 = 0x10000000 · CQConfig.PCIE_MID
-    690: 400a8a93  addi         x21, x21, 1024  # x21 = 0x10000400 · arc_csm + 0x400
-    694: f35a2223  sw           x21, -220(x20)  # cfg[13] (bank 0) · PCK0_ADDR_CTRL_ZW_REG_0_Zstride, PCK0_ADDR_CTRL_ZW_REG_0_Wstride · 0xffef0034; write 0x10000400; cfg[13] (bank 0); PCK0_ADDR_CTRL_ZW_REG_0_Zstride = 1024; PCK0_ADDR_CTRL_ZW_REG_0_Wstride = 4096
-    698: 00001ab7  lui          x21, 0x00001  # x21 = 0x00001000 · F32_TILE_BYTES · Wait.CFGEXU
-    69c: f75a2023  sw           x21, -160(x20)  # cfg[28] (bank 0) · PACK_COUNTERS_SEC0_pack_per_xy_plane, PACK_COUNTERS_SEC0_pack_reads_per_xy_plane, PACK_COUNTERS_SEC0_pack_xys_per_tile, PACK_COUNTERS_SEC0_pack_yz_transposed, PACK_COUNTERS_SEC0_auto_ctxt_inc_xys_cnt · 0xffef0070; write 0x00001000; cfg[28] (bank 0); PACK_COUNTERS_SEC0_pack_per_xy_plane = 0; PACK_COUNTERS_SEC0_pack_reads_per_xy_plane = 16; PACK_COUNTERS_SEC0_pack_xys_per_tile = 0; PACK_COUNTERS_SEC0_pack_yz_transposed = 0; PACK_COUNTERS_SEC0_auto_ctxt_inc_xys_cnt = 0
-    6a0: 00010ab7  lui          x21, 0x00010  # x21 = 0x00010000
-    6a4: fffa8a93  addi         x21, x21, -1  # x21 = 0x0000ffff
-    6a8: f55a2823  sw           x21, -176(x20)  # cfg[24] (bank 0) · PCK_EDGE_OFFSET_SEC0_mask, PCK_EDGE_MODE_mode, PCK_EDGE_TILE_ROW_SET_SELECT_select · 0xffef0060; write 0x0000ffff; cfg[24] (bank 0); PCK_EDGE_OFFSET_SEC0_mask = 65535; PCK_EDGE_MODE_mode = 0; PCK_EDGE_TILE_ROW_SET_SELECT_select = 0
-    6ac: f40a2a23  sw           x0, -172(x20)  # cfg[25] (bank 0) · PCK_EDGE_OFFSET_SEC1_mask · 0xffef0064; write 0x00000000; cfg[25] (bank 0); PCK_EDGE_OFFSET_SEC1_mask = 0
-    6b0: f40a2023  sw           x0, -192(x20)  # cfg[20] (bank 0) · TILE_ROW_SET_MAPPING_0_row_set_mapping_0, TILE_ROW_SET_MAPPING_0_row_set_mapping_1, TILE_ROW_SET_MAPPING_0_row_set_mapping_2, TILE_ROW_SET_MAPPING_0_row_set_mapping_3, TILE_ROW_SET_MAPPING_0_row_set_mapping_4, TILE_ROW_SET_MAPPING_0_row_set_mapping_5, TILE_ROW_SET_MAPPING_0_row_set_mapping_6, TILE_ROW_SET_MAPPING_0_row_set_mapping_7, TILE_ROW_SET_MAPPING_0_row_set_mapping_8, TILE_ROW_SET_MAPPING_0_row_set_mapping_9, TILE_ROW_SET_MAPPING_0_row_set_mapping_10, TILE_ROW_SET_MAPPING_0_row_set_mapping_11, TILE_ROW_SET_MAPPING_0_row_set_mapping_12, TILE_ROW_SET_MAPPING_0_row_set_mapping_13, TILE_ROW_SET_MAPPING_0_row_set_mapping_14, TILE_ROW_SET_MAPPING_0_row_set_mapping_15 · 0xffef0050; write 0x00000000; cfg[20] (bank 0); TILE_ROW_SET_MAPPING_0_row_set_mapping_0 = 0; TILE_ROW_SET_MAPPING_0_row_set_mapping_1 = 0; TILE_ROW_SET_MAPPING_0_row_set_mapping_2 = 0; TILE_ROW_SET_MAPPING_0_row_set_mapping_3 = 0; TILE_ROW_SET_MAPPING_0_row_set_mapping_4 = 0; TILE_ROW_SET_MAPPING_0_row_set_mapping_5 = 0; TILE_ROW_SET_MAPPING_0_row_set_mapping_6 = 0; TILE_ROW_SET_MAPPING_0_row_set_mapping_7 = 0; TILE_ROW_SET_MAPPING_0_row_set_mapping_8 = 0; TILE_ROW_SET_MAPPING_0_row_set_mapping_9 = 0; TILE_ROW_SET_MAPPING_0_row_set_mapping_10 = 0; TILE_ROW_SET_MAPPING_0_row_set_mapping_11 = 0; TILE_ROW_SET_MAPPING_0_row_set_mapping_12 = 0; TILE_ROW_SET_MAPPING_0_row_set_mapping_13 = 0; TILE_ROW_SET_MAPPING_0_row_set_mapping_14 = 0; TILE_ROW_SET_MAPPING_0_row_set_mapping_15 = 0
-    6b4: f40a2223  sw           x0, -188(x20)  # cfg[21] (bank 0) · TILE_ROW_SET_MAPPING_1_row_set_mapping_0, TILE_ROW_SET_MAPPING_1_row_set_mapping_1, TILE_ROW_SET_MAPPING_1_row_set_mapping_2, TILE_ROW_SET_MAPPING_1_row_set_mapping_3, TILE_ROW_SET_MAPPING_1_row_set_mapping_4, TILE_ROW_SET_MAPPING_1_row_set_mapping_5, TILE_ROW_SET_MAPPING_1_row_set_mapping_6, TILE_ROW_SET_MAPPING_1_row_set_mapping_7, TILE_ROW_SET_MAPPING_1_row_set_mapping_8, TILE_ROW_SET_MAPPING_1_row_set_mapping_9, TILE_ROW_SET_MAPPING_1_row_set_mapping_10, TILE_ROW_SET_MAPPING_1_row_set_mapping_11, TILE_ROW_SET_MAPPING_1_row_set_mapping_12, TILE_ROW_SET_MAPPING_1_row_set_mapping_13, TILE_ROW_SET_MAPPING_1_row_set_mapping_14, TILE_ROW_SET_MAPPING_1_row_set_mapping_15 · 0xffef0054; write 0x00000000; cfg[21] (bank 0); TILE_ROW_SET_MAPPING_1_row_set_mapping_0 = 0; TILE_ROW_SET_MAPPING_1_row_set_mapping_1 = 0; TILE_ROW_SET_MAPPING_1_row_set_mapping_2 = 0; TILE_ROW_SET_MAPPING_1_row_set_mapping_3 = 0; TILE_ROW_SET_MAPPING_1_row_set_mapping_4 = 0; TILE_ROW_SET_MAPPING_1_row_set_mapping_5 = 0; TILE_ROW_SET_MAPPING_1_row_set_mapping_6 = 0; TILE_ROW_SET_MAPPING_1_row_set_mapping_7 = 0; TILE_ROW_SET_MAPPING_1_row_set_mapping_8 = 0; TILE_ROW_SET_MAPPING_1_row_set_mapping_9 = 0; TILE_ROW_SET_MAPPING_1_row_set_mapping_10 = 0; TILE_ROW_SET_MAPPING_1_row_set_mapping_11 = 0; TILE_ROW_SET_MAPPING_1_row_set_mapping_12 = 0; TILE_ROW_SET_MAPPING_1_row_set_mapping_13 = 0; TILE_ROW_SET_MAPPING_1_row_set_mapping_14 = 0; TILE_ROW_SET_MAPPING_1_row_set_mapping_15 = 0
-    6b8: ffe00a37  lui          x20, 0xffe00  # x20 = 0xffe00000 · TensixMMIO.REGFILE_BASE
-    6bc: 040a0a13  addi         x20, x20, 64  # x20 = 0xffe00040 · tensix_regfile + 0x40
-    6c0: 10000a93  addi         x21, x0, 256  # x21 = 0x00000100
-    6c4: 015a2023  sw           x21, 0(x20)  # tensix_regfile + 0x40 · 0xffe00040; write 0x00000100
-    6c8: 00040ab7  lui          x21, 0x00040  # x21 = 0x00040000
-    6cc: 095a2823  sw           x21, 144(x20)  # tensix_regfile + 0xd0 · 0xffe000d0; write 0x00040000
-    6d0: c8940412  SETC16       setc16_reg=37, setc16_value=260  # thread_cfg[37] (current thread); ADDR_MOD_PACK_SEC0_YsrcIncr = 4; ADDR_MOD_PACK_SEC0_YsrcCR = 0; ADDR_MOD_PACK_SEC0_YsrcClear = 0; ADDR_MOD_PACK_SEC0_YdstIncr = 4; ADDR_MOD_PACK_SEC0_YdstCR = 0; ADDR_MOD_PACK_SEC0_YdstClear = 0; ADDR_MOD_PACK_SEC0_ZsrcIncr = 0; ADDR_MOD_PACK_SEC0_ZsrcClear = 0; ADDR_MOD_PACK_SEC0_ZdstIncr = 0; ADDR_MOD_PACK_SEC0_ZdstClear = 0
-    6d4: c898a082  SETC16       setc16_reg=38, setc16_value=10272  # thread_cfg[38] (current thread); ADDR_MOD_PACK_SEC1_YsrcIncr = 0; ADDR_MOD_PACK_SEC1_YsrcCR = 0; ADDR_MOD_PACK_SEC1_YsrcClear = 1; ADDR_MOD_PACK_SEC1_YdstIncr = 0; ADDR_MOD_PACK_SEC1_YdstCR = 0; ADDR_MOD_PACK_SEC1_YdstClear = 1; ADDR_MOD_PACK_SEC1_ZsrcIncr = 0; ADDR_MOD_PACK_SEC1_ZsrcClear = 1; ADDR_MOD_PACK_SEC1_ZdstIncr = 0; ADDR_MOD_PACK_SEC1_ZdstClear = 0
-    6d8: c89c4482  SETC16       setc16_reg=39, setc16_value=4384  # thread_cfg[39] (current thread); ADDR_MOD_PACK_SEC2_YsrcIncr = 0; ADDR_MOD_PACK_SEC2_YsrcCR = 0; ADDR_MOD_PACK_SEC2_YsrcClear = 1; ADDR_MOD_PACK_SEC2_YdstIncr = 4; ADDR_MOD_PACK_SEC2_YdstCR = 0; ADDR_MOD_PACK_SEC2_YdstClear = 0; ADDR_MOD_PACK_SEC2_ZsrcIncr = 1; ADDR_MOD_PACK_SEC2_ZsrcClear = 0; ADDR_MOD_PACK_SEC2_ZdstIncr = 0; ADDR_MOD_PACK_SEC2_ZdstClear = 0
-    6dc: 4600002d  SETADCXY     CntSetMask=4, Ch1_Y=0, Ch1_X=0, Ch0_Y=0, Ch0_X=0, BitMask=11
-    6e0: 5200003d  SETADCZW     CntSetMask=4, Ch1_W=0, Ch1_Z=0, Ch0_W=0, Ch0_Z=0, BitMask=15
-    6e4: ffe80a37  lui          x20, 0xffe80  # x20 = 0xffe80000 · tensix_pc_buf + 0x0
-    6e8: 008a0a13  addi         x20, x20, 8  # x20 = 0xffe80008 · TensixMMIO.PC_BUF_MOP_SYNC
-    6ec: 000a2023  sw           x0, 0(x20)  # TensixMMIO.PC_BUF_MOP_SYNC · 0xffe80008; write 0x00000000
-    6f0: 000a2a83  lw           x21, 0(x20)  # TensixMMIO.PC_BUF_MOP_SYNC · 0xffe80008
-    6f4: 01507033  and          x0, x0, x21
-    6f8: ffb80a37  lui          x20, 0xffb80  # x20 = 0xffb80000 · MOP_CFG
-    6fc: 00400a93  addi         x21, x0, 4  # x21 = 0x00000004
-    700: 015a2023  sw           x21, 0(x20)  # MOP_CFG · 0xffb80000; write 0x00000004
-    704: 015a2223  sw           x21, 4(x20)  # MopCfg[1] · InnerCount / Flags · 0xffb80004; write 0x00000004
-    708: 02000ab7  lui          x21, 0x02000  # x21 = 0x02000000
-    70c: 015a2423  sw           x21, 8(x20)  # MopCfg[2] · StartOp / InsnB · 0xffb80008; write 0x02000000; MOP template instruction · NOP
-    710: 015a2623  sw           x21, 12(x20)  # MopCfg[3] · EndOp0 / InsnA0 · 0xffb8000c; write 0x02000000; MOP template instruction · NOP
-    714: 015a2823  sw           x21, 16(x20)  # MopCfg[4] · EndOp1 / InsnA1 · 0xffb80010; write 0x02000000; MOP template instruction · NOP
-    718: 41000ab7  lui          x21, 0x41000  # x21 = 0x41000000
-    71c: 015a2a23  sw           x21, 20(x20)  # MopCfg[5] · LoopOp / InsnA2 · 0xffb80014; write 0x41000000; MOP template instruction · PACR CfgContext=0, RowPadZero=0, DstAccessMode=0, AddrMode=0, AddrCntContext=0, ZeroWrite=0, ReadIntfSel=0, OvrdThreadId=0, Concat=0, CtxtCtrl=0, Flush=0, Last=0
-    720: 02000ab7  lui          x21, 0x02000  # x21 = 0x02000000
-    724: 015a2c23  sw           x21, 24(x20)  # MopCfg[6] · LoopOp1 / InsnA3 · 0xffb80018; write 0x02000000; MOP template instruction · NOP
-    728: 41008ab7  lui          x21, 0x41008  # x21 = 0x41008000
-    72c: 001a8a93  addi         x21, x21, 1  # x21 = 0x41008001
-    730: 015a2e23  sw           x21, 28(x20)  # MopCfg[7] · Loop0Last / SkipA0 · 0xffb8001c; write 0x41008001; MOP template instruction · PACR CfgContext=0, RowPadZero=0, DstAccessMode=0, AddrMode=1, AddrCntContext=0, ZeroWrite=0, ReadIntfSel=0, OvrdThreadId=0, Concat=0, CtxtCtrl=0, Flush=0, Last=1
-    734: 41010ab7  lui          x21, 0x41010  # x21 = 0x41010000
-    738: 035a2023  sw           x21, 32(x20)  # MopCfg[8] · Loop1Last / SkipB · 0xffb80020; write 0x41010000; MOP template instruction · PACR CfgContext=0, RowPadZero=0, DstAccessMode=0, AddrMode=2, AddrCntContext=0, ZeroWrite=0, ReadIntfSel=0, OvrdThreadId=0, Concat=0, CtxtCtrl=0, Flush=0, Last=0
-    73c: ffe80a37  lui          x20, 0xffe80  # x20 = 0xffe80000 · tensix_pc_buf + 0x0
-    740: 004a0a13  addi         x20, x20, 4  # x20 = 0xffe80004 · TensixMMIO.PC_BUF_SYNC
-    744: 000a2023  sw           x0, 0(x20)  # TensixMMIO.PC_BUF_SYNC · 0xffe80004; write 0x00000000
-    748: 000a2a83  lw           x21, 0(x20)  # TensixMMIO.PC_BUF_SYNC · 0xffe80004
-    74c: 01507033  and          x0, x0, x21
-    750: 00100f93  addi         x31, x0, 1  # x31 = 0x00000001
-    754: 158000ef  jal          x1, 0x000008ac  # target 0x000008ac; x1 = 0x00000758
-    758: 00200f93  addi         x31, x0, 2  # x31 = 0x00000002
-    75c: 150000ef  jal          x1, 0x000008ac  # target 0x000008ac; x1 = 0x00000760
-    760: 00300f93  addi         x31, x0, 3  # x31 = 0x00000003
-    764: 148000ef  jal          x1, 0x000008ac  # target 0x000008ac; x1 = 0x00000768
-    768: 00400f93  addi         x31, x0, 4  # x31 = 0x00000004
-    76c: 140000ef  jal          x1, 0x000008ac  # target 0x000008ac; x1 = 0x00000770
-    770: 40710000  ZEROACC      clear_mode=3, use_32_bit_mode=1, clear_zero_flags=0, addr_mode=1, where=0
-    774: 94000022  SEMGET       sem_sel=2  # sem_sel: Sem.MATH_PACK
-    778: 000122b7  lui          x5, 0x00012  # x5 = 0x00012000 · TensixL1.KERNEL_CACHE_BASE
-    77c: 90428293  addi         x5, x5, -1788  # x5 = 0x00011904
-    780: 0002a203  lw           x4, 0(x5)  # param attention_phase; 0x00011904
-    784: 12021263  bne          x4, x0, 0x000008a8  # target 0x000008a8
-    788: 98020026  SEMWAIT      stall_res=1, sem_sel=2, wait_sem_cond=1  # stall_res: Stall.TDMA; sem_sel: Sem.MATH_PACK; wait_sem_cond: SemWait.ON_ZERO
-    78c: c8000002  SETC16       setc16_reg=0, setc16_value=0  # thread_cfg[0] (current thread); CFG_STATE_ID_StateID = 0
-    790: d600011e  RMWCIB2      Mask=128, Data=0, CfgRegAddr=71  # cfg[71] (current thread StateID); THCON_SEC0_REG1_Pac_LF8_4b_exp = 0
-    794: d8780006  RMWCIB3      Mask=30, Data=0, CfgRegAddr=1  # cfg[1] (current thread StateID); ALU_FORMAT_SPEC_REG2_Dstacc = 0
-    798: cff0000a  RMWCIB0      Mask=252, Data=0, CfgRegAddr=2  # cfg[2] (current thread StateID); STACC_RELU_ApplyRelu = 0; STACC_RELU_ReluThreshold = 0 (masked bits only)
-    79c: d3fc000a  RMWCIB1      Mask=255, Data=0, CfgRegAddr=2  # cfg[2] (current thread StateID); STACC_RELU_ReluThreshold = 0 (masked bits only)
-    7a0: d4fc000a  RMWCIB2      Mask=63, Data=0, CfgRegAddr=2  # cfg[2] (current thread StateID); STACC_RELU_ReluThreshold = 0 (masked bits only)
-    7a4: ffef0a37  lui          x20, 0xffef0  # x20 = 0xffef0000 · cfg[0] (bank 0) · ALU_FORMAT_SPEC_REG_SrcA_val, ALU_FORMAT_SPEC_REG_SrcA_override, ALU_FORMAT_SPEC_REG_SrcB_val, ALU_FORMAT_SPEC_REG_SrcB_override, ALU_FORMAT_SPEC_REG_Dstacc_val, ALU_FORMAT_SPEC_REG_Dstacc_override
-    7a8: 110a0a13  addi         x20, x20, 272  # x20 = 0xffef0110 · cfg[68] (bank 0) · THCON_SEC0_REG1_Row_start_section_size, THCON_SEC0_REG1_Exp_section_size
-    7ac: 00040ab7  lui          x21, 0x00040  # x21 = 0x00040000
-    7b0: 015a2023  sw           x21, 0(x20)  # cfg[68] (bank 0) · THCON_SEC0_REG1_Row_start_section_size, THCON_SEC0_REG1_Exp_section_size · 0xffef0110; write 0x00040000; cfg[68] (bank 0); THCON_SEC0_REG1_Row_start_section_size = 0; THCON_SEC0_REG1_Exp_section_size = 4
-    7b4: 05100a93  addi         x21, x0, 81  # x21 = 0x00000051
-    7b8: 015a2423  sw           x21, 8(x20)  # cfg[70] (bank 0) · THCON_SEC0_REG1_Disable_zero_compress, THCON_SEC0_REG1_Add_l1_dest_addr_offset, THCON_SEC0_REG1_Disable_pack_zero_flags, THCON_SEC0_REG1_ovrd_default_throttle_mode, THCON_SEC0_REG1_Out_data_format, THCON_SEC0_REG1_In_data_format, THCON_SEC0_REG1_Dis_shared_exp_assembler, THCON_SEC0_REG1_Auto_set_last_pacr_intf_sel, THCON_SEC0_REG1_Enable_out_fifo, THCON_SEC0_REG1_Sub_l1_tile_header_size, THCON_SEC0_REG1_Source_interface_selection, THCON_SEC0_REG1_pack_start_intf_pos, THCON_SEC0_REG1_All_pack_disable_zero_compress_ovrd, THCON_SEC0_REG1_Add_tile_header_size, THCON_SEC0_REG1_pack_dis_y_pos_start_offset, THCON_SEC0_REG1_L1_source_addr · 0xffef0118; write 0x00000051; cfg[70] (bank 0); THCON_SEC0_REG1_Disable_zero_compress = 1; THCON_SEC0_REG1_Add_l1_dest_addr_offset = 0; THCON_SEC0_REG1_Disable_pack_zero_flags = 0; THCON_SEC0_REG1_ovrd_default_throttle_mode = 0; THCON_SEC0_REG1_Out_data_format = 5; THCON_SEC0_REG1_In_data_format = 0; THCON_SEC0_REG1_Dis_shared_exp_assembler = 0; THCON_SEC0_REG1_Auto_set_last_pacr_intf_sel = 0; THCON_SEC0_REG1_Enable_out_fifo = 0; THCON_SEC0_REG1_Sub_l1_tile_header_size = 0; THCON_SEC0_REG1_Source_interface_selection = 0; THCON_SEC0_REG1_pack_start_intf_pos = 0; THCON_SEC0_REG1_All_pack_disable_zero_compress_ovrd = 0; THCON_SEC0_REG1_Add_tile_header_size = 0; THCON_SEC0_REG1_pack_dis_y_pos_start_offset = 0; THCON_SEC0_REG1_L1_source_addr = 0
-    7bc: 00100a93  addi         x21, x0, 1  # x21 = 0x00000001
-    7c0: f35a2c23  sw           x21, -200(x20)  # cfg[18] (bank 0) · PCK_DEST_RD_CTRL_Read_32b_data, PCK_DEST_RD_CTRL_Read_unsigned, PCK_DEST_RD_CTRL_Read_int8, PCK_DEST_RD_CTRL_Round_10b_mant · 0xffef0048; write 0x00000001; cfg[18] (bank 0); PCK_DEST_RD_CTRL_Read_32b_data = 1; PCK_DEST_RD_CTRL_Read_unsigned = 0; PCK_DEST_RD_CTRL_Read_int8 = 0; PCK_DEST_RD_CTRL_Round_10b_mant = 0
-    7c4: 00400ab7  lui          x21, 0x00400  # x21 = 0x00400000
-    7c8: f35a2023  sw           x21, -224(x20)  # cfg[12] (bank 0) · PCK0_ADDR_CTRL_XY_REG_0_Xstride, PCK0_ADDR_CTRL_XY_REG_0_Ystride · 0xffef0030; write 0x00400000; cfg[12] (bank 0); PCK0_ADDR_CTRL_XY_REG_0_Xstride = 0; PCK0_ADDR_CTRL_XY_REG_0_Ystride = 64
-    7cc: 10000ab7  lui          x21, 0x10000  # x21 = 0x10000000 · CQConfig.PCIE_MID
-    7d0: 400a8a93  addi         x21, x21, 1024  # x21 = 0x10000400 · arc_csm + 0x400
-    7d4: f35a2223  sw           x21, -220(x20)  # cfg[13] (bank 0) · PCK0_ADDR_CTRL_ZW_REG_0_Zstride, PCK0_ADDR_CTRL_ZW_REG_0_Wstride · 0xffef0034; write 0x10000400; cfg[13] (bank 0); PCK0_ADDR_CTRL_ZW_REG_0_Zstride = 1024; PCK0_ADDR_CTRL_ZW_REG_0_Wstride = 4096
-    7d8: 00001ab7  lui          x21, 0x00001  # x21 = 0x00001000 · F32_TILE_BYTES · Wait.CFGEXU
-    7dc: f75a2023  sw           x21, -160(x20)  # cfg[28] (bank 0) · PACK_COUNTERS_SEC0_pack_per_xy_plane, PACK_COUNTERS_SEC0_pack_reads_per_xy_plane, PACK_COUNTERS_SEC0_pack_xys_per_tile, PACK_COUNTERS_SEC0_pack_yz_transposed, PACK_COUNTERS_SEC0_auto_ctxt_inc_xys_cnt · 0xffef0070; write 0x00001000; cfg[28] (bank 0); PACK_COUNTERS_SEC0_pack_per_xy_plane = 0; PACK_COUNTERS_SEC0_pack_reads_per_xy_plane = 16; PACK_COUNTERS_SEC0_pack_xys_per_tile = 0; PACK_COUNTERS_SEC0_pack_yz_transposed = 0; PACK_COUNTERS_SEC0_auto_ctxt_inc_xys_cnt = 0
-    7e0: 00010ab7  lui          x21, 0x00010  # x21 = 0x00010000
-    7e4: fffa8a93  addi         x21, x21, -1  # x21 = 0x0000ffff
-    7e8: f55a2823  sw           x21, -176(x20)  # cfg[24] (bank 0) · PCK_EDGE_OFFSET_SEC0_mask, PCK_EDGE_MODE_mode, PCK_EDGE_TILE_ROW_SET_SELECT_select · 0xffef0060; write 0x0000ffff; cfg[24] (bank 0); PCK_EDGE_OFFSET_SEC0_mask = 65535; PCK_EDGE_MODE_mode = 0; PCK_EDGE_TILE_ROW_SET_SELECT_select = 0
-    7ec: f40a2a23  sw           x0, -172(x20)  # cfg[25] (bank 0) · PCK_EDGE_OFFSET_SEC1_mask · 0xffef0064; write 0x00000000; cfg[25] (bank 0); PCK_EDGE_OFFSET_SEC1_mask = 0
-    7f0: f40a2023  sw           x0, -192(x20)  # cfg[20] (bank 0) · TILE_ROW_SET_MAPPING_0_row_set_mapping_0, TILE_ROW_SET_MAPPING_0_row_set_mapping_1, TILE_ROW_SET_MAPPING_0_row_set_mapping_2, TILE_ROW_SET_MAPPING_0_row_set_mapping_3, TILE_ROW_SET_MAPPING_0_row_set_mapping_4, TILE_ROW_SET_MAPPING_0_row_set_mapping_5, TILE_ROW_SET_MAPPING_0_row_set_mapping_6, TILE_ROW_SET_MAPPING_0_row_set_mapping_7, TILE_ROW_SET_MAPPING_0_row_set_mapping_8, TILE_ROW_SET_MAPPING_0_row_set_mapping_9, TILE_ROW_SET_MAPPING_0_row_set_mapping_10, TILE_ROW_SET_MAPPING_0_row_set_mapping_11, TILE_ROW_SET_MAPPING_0_row_set_mapping_12, TILE_ROW_SET_MAPPING_0_row_set_mapping_13, TILE_ROW_SET_MAPPING_0_row_set_mapping_14, TILE_ROW_SET_MAPPING_0_row_set_mapping_15 · 0xffef0050; write 0x00000000; cfg[20] (bank 0); TILE_ROW_SET_MAPPING_0_row_set_mapping_0 = 0; TILE_ROW_SET_MAPPING_0_row_set_mapping_1 = 0; TILE_ROW_SET_MAPPING_0_row_set_mapping_2 = 0; TILE_ROW_SET_MAPPING_0_row_set_mapping_3 = 0; TILE_ROW_SET_MAPPING_0_row_set_mapping_4 = 0; TILE_ROW_SET_MAPPING_0_row_set_mapping_5 = 0; TILE_ROW_SET_MAPPING_0_row_set_mapping_6 = 0; TILE_ROW_SET_MAPPING_0_row_set_mapping_7 = 0; TILE_ROW_SET_MAPPING_0_row_set_mapping_8 = 0; TILE_ROW_SET_MAPPING_0_row_set_mapping_9 = 0; TILE_ROW_SET_MAPPING_0_row_set_mapping_10 = 0; TILE_ROW_SET_MAPPING_0_row_set_mapping_11 = 0; TILE_ROW_SET_MAPPING_0_row_set_mapping_12 = 0; TILE_ROW_SET_MAPPING_0_row_set_mapping_13 = 0; TILE_ROW_SET_MAPPING_0_row_set_mapping_14 = 0; TILE_ROW_SET_MAPPING_0_row_set_mapping_15 = 0
-    7f4: f40a2223  sw           x0, -188(x20)  # cfg[21] (bank 0) · TILE_ROW_SET_MAPPING_1_row_set_mapping_0, TILE_ROW_SET_MAPPING_1_row_set_mapping_1, TILE_ROW_SET_MAPPING_1_row_set_mapping_2, TILE_ROW_SET_MAPPING_1_row_set_mapping_3, TILE_ROW_SET_MAPPING_1_row_set_mapping_4, TILE_ROW_SET_MAPPING_1_row_set_mapping_5, TILE_ROW_SET_MAPPING_1_row_set_mapping_6, TILE_ROW_SET_MAPPING_1_row_set_mapping_7, TILE_ROW_SET_MAPPING_1_row_set_mapping_8, TILE_ROW_SET_MAPPING_1_row_set_mapping_9, TILE_ROW_SET_MAPPING_1_row_set_mapping_10, TILE_ROW_SET_MAPPING_1_row_set_mapping_11, TILE_ROW_SET_MAPPING_1_row_set_mapping_12, TILE_ROW_SET_MAPPING_1_row_set_mapping_13, TILE_ROW_SET_MAPPING_1_row_set_mapping_14, TILE_ROW_SET_MAPPING_1_row_set_mapping_15 · 0xffef0054; write 0x00000000; cfg[21] (bank 0); TILE_ROW_SET_MAPPING_1_row_set_mapping_0 = 0; TILE_ROW_SET_MAPPING_1_row_set_mapping_1 = 0; TILE_ROW_SET_MAPPING_1_row_set_mapping_2 = 0; TILE_ROW_SET_MAPPING_1_row_set_mapping_3 = 0; TILE_ROW_SET_MAPPING_1_row_set_mapping_4 = 0; TILE_ROW_SET_MAPPING_1_row_set_mapping_5 = 0; TILE_ROW_SET_MAPPING_1_row_set_mapping_6 = 0; TILE_ROW_SET_MAPPING_1_row_set_mapping_7 = 0; TILE_ROW_SET_MAPPING_1_row_set_mapping_8 = 0; TILE_ROW_SET_MAPPING_1_row_set_mapping_9 = 0; TILE_ROW_SET_MAPPING_1_row_set_mapping_10 = 0; TILE_ROW_SET_MAPPING_1_row_set_mapping_11 = 0; TILE_ROW_SET_MAPPING_1_row_set_mapping_12 = 0; TILE_ROW_SET_MAPPING_1_row_set_mapping_13 = 0; TILE_ROW_SET_MAPPING_1_row_set_mapping_14 = 0; TILE_ROW_SET_MAPPING_1_row_set_mapping_15 = 0
-    7f8: ffe00a37  lui          x20, 0xffe00  # x20 = 0xffe00000 · TensixMMIO.REGFILE_BASE
-    7fc: 040a0a13  addi         x20, x20, 64  # x20 = 0xffe00040 · tensix_regfile + 0x40
-    800: 08000a93  addi         x21, x0, 128  # x21 = 0x00000080
-    804: 015a2023  sw           x21, 0(x20)  # tensix_regfile + 0x40 · 0xffe00040; write 0x00000080
-    808: 00040ab7  lui          x21, 0x00040  # x21 = 0x00040000
-    80c: 095a2823  sw           x21, 144(x20)  # tensix_regfile + 0xd0 · 0xffe000d0; write 0x00040000
-    810: c8940412  SETC16       setc16_reg=37, setc16_value=260  # thread_cfg[37] (current thread); ADDR_MOD_PACK_SEC0_YsrcIncr = 4; ADDR_MOD_PACK_SEC0_YsrcCR = 0; ADDR_MOD_PACK_SEC0_YsrcClear = 0; ADDR_MOD_PACK_SEC0_YdstIncr = 4; ADDR_MOD_PACK_SEC0_YdstCR = 0; ADDR_MOD_PACK_SEC0_YdstClear = 0; ADDR_MOD_PACK_SEC0_ZsrcIncr = 0; ADDR_MOD_PACK_SEC0_ZsrcClear = 0; ADDR_MOD_PACK_SEC0_ZdstIncr = 0; ADDR_MOD_PACK_SEC0_ZdstClear = 0
-    814: c898a082  SETC16       setc16_reg=38, setc16_value=10272  # thread_cfg[38] (current thread); ADDR_MOD_PACK_SEC1_YsrcIncr = 0; ADDR_MOD_PACK_SEC1_YsrcCR = 0; ADDR_MOD_PACK_SEC1_YsrcClear = 1; ADDR_MOD_PACK_SEC1_YdstIncr = 0; ADDR_MOD_PACK_SEC1_YdstCR = 0; ADDR_MOD_PACK_SEC1_YdstClear = 1; ADDR_MOD_PACK_SEC1_ZsrcIncr = 0; ADDR_MOD_PACK_SEC1_ZsrcClear = 1; ADDR_MOD_PACK_SEC1_ZdstIncr = 0; ADDR_MOD_PACK_SEC1_ZdstClear = 0
-    818: c89c4482  SETC16       setc16_reg=39, setc16_value=4384  # thread_cfg[39] (current thread); ADDR_MOD_PACK_SEC2_YsrcIncr = 0; ADDR_MOD_PACK_SEC2_YsrcCR = 0; ADDR_MOD_PACK_SEC2_YsrcClear = 1; ADDR_MOD_PACK_SEC2_YdstIncr = 4; ADDR_MOD_PACK_SEC2_YdstCR = 0; ADDR_MOD_PACK_SEC2_YdstClear = 0; ADDR_MOD_PACK_SEC2_ZsrcIncr = 1; ADDR_MOD_PACK_SEC2_ZsrcClear = 0; ADDR_MOD_PACK_SEC2_ZdstIncr = 0; ADDR_MOD_PACK_SEC2_ZdstClear = 0
-    81c: 4600002d  SETADCXY     CntSetMask=4, Ch1_Y=0, Ch1_X=0, Ch0_Y=0, Ch0_X=0, BitMask=11
-    820: 5200003d  SETADCZW     CntSetMask=4, Ch1_W=0, Ch1_Z=0, Ch0_W=0, Ch0_Z=0, BitMask=15
-    824: ffe80a37  lui          x20, 0xffe80  # x20 = 0xffe80000 · tensix_pc_buf + 0x0
-    828: 008a0a13  addi         x20, x20, 8  # x20 = 0xffe80008 · TensixMMIO.PC_BUF_MOP_SYNC
-    82c: 000a2023  sw           x0, 0(x20)  # TensixMMIO.PC_BUF_MOP_SYNC · 0xffe80008; write 0x00000000
-    830: 000a2a83  lw           x21, 0(x20)  # TensixMMIO.PC_BUF_MOP_SYNC · 0xffe80008
-    834: 01507033  and          x0, x0, x21
-    838: ffb80a37  lui          x20, 0xffb80  # x20 = 0xffb80000 · MOP_CFG
-    83c: 00400a93  addi         x21, x0, 4  # x21 = 0x00000004
-    840: 015a2023  sw           x21, 0(x20)  # MOP_CFG · 0xffb80000; write 0x00000004
-    844: 015a2223  sw           x21, 4(x20)  # MopCfg[1] · InnerCount / Flags · 0xffb80004; write 0x00000004
-    848: 02000ab7  lui          x21, 0x02000  # x21 = 0x02000000
-    84c: 015a2423  sw           x21, 8(x20)  # MopCfg[2] · StartOp / InsnB · 0xffb80008; write 0x02000000; MOP template instruction · NOP
-    850: 015a2623  sw           x21, 12(x20)  # MopCfg[3] · EndOp0 / InsnA0 · 0xffb8000c; write 0x02000000; MOP template instruction · NOP
-    854: 015a2823  sw           x21, 16(x20)  # MopCfg[4] · EndOp1 / InsnA1 · 0xffb80010; write 0x02000000; MOP template instruction · NOP
-    858: 41000ab7  lui          x21, 0x41000  # x21 = 0x41000000
-    85c: 015a2a23  sw           x21, 20(x20)  # MopCfg[5] · LoopOp / InsnA2 · 0xffb80014; write 0x41000000; MOP template instruction · PACR CfgContext=0, RowPadZero=0, DstAccessMode=0, AddrMode=0, AddrCntContext=0, ZeroWrite=0, ReadIntfSel=0, OvrdThreadId=0, Concat=0, CtxtCtrl=0, Flush=0, Last=0
-    860: 02000ab7  lui          x21, 0x02000  # x21 = 0x02000000
-    864: 015a2c23  sw           x21, 24(x20)  # MopCfg[6] · LoopOp1 / InsnA3 · 0xffb80018; write 0x02000000; MOP template instruction · NOP
-    868: 41008ab7  lui          x21, 0x41008  # x21 = 0x41008000
-    86c: 001a8a93  addi         x21, x21, 1  # x21 = 0x41008001
-    870: 015a2e23  sw           x21, 28(x20)  # MopCfg[7] · Loop0Last / SkipA0 · 0xffb8001c; write 0x41008001; MOP template instruction · PACR CfgContext=0, RowPadZero=0, DstAccessMode=0, AddrMode=1, AddrCntContext=0, ZeroWrite=0, ReadIntfSel=0, OvrdThreadId=0, Concat=0, CtxtCtrl=0, Flush=0, Last=1
-    874: 41010ab7  lui          x21, 0x41010  # x21 = 0x41010000
-    878: 035a2023  sw           x21, 32(x20)  # MopCfg[8] · Loop1Last / SkipB · 0xffb80020; write 0x41010000; MOP template instruction · PACR CfgContext=0, RowPadZero=0, DstAccessMode=0, AddrMode=2, AddrCntContext=0, ZeroWrite=0, ReadIntfSel=0, OvrdThreadId=0, Concat=0, CtxtCtrl=0, Flush=0, Last=0
-    87c: ffe80a37  lui          x20, 0xffe80  # x20 = 0xffe80000 · tensix_pc_buf + 0x0
-    880: 004a0a13  addi         x20, x20, 4  # x20 = 0xffe80004 · TensixMMIO.PC_BUF_SYNC
-    884: 000a2023  sw           x0, 0(x20)  # TensixMMIO.PC_BUF_SYNC · 0xffe80004; write 0x00000000
-    888: 000a2a83  lw           x21, 0(x20)  # TensixMMIO.PC_BUF_SYNC · 0xffe80004
-    88c: 01507033  and          x0, x0, x21
-    890: 00000f93  addi         x31, x0, 0  # x31 = 0x00000000
-    894: 1a4000ef  jal          x1, 0x00000a38  # target 0x00000a38; x1 = 0x00000898
-    898: 00100f93  addi         x31, x0, 1  # x31 = 0x00000001
-    89c: 19c000ef  jal          x1, 0x00000a38  # target 0x00000a38; x1 = 0x000008a0
-    8a0: 40710000  ZEROACC      clear_mode=3, use_32_bit_mode=1, clear_zero_flags=0, addr_mode=1, where=0
-    8a4: 94000022  SEMGET       sem_sel=2  # sem_sel: Sem.MATH_PACK
-loc_8a8:
-    8a8: 3200006f  jal          x0, 0x00000bc8  # target 0x00000bc8
-loc_8ac:
-    8ac: ffb01cb7  lui          x25, 0xffb01  # x25 = 0xffb01000
-    8b0: 8d4c8c93  addi         x25, x25, -1836  # x25 = 0xffb008d4 · riscv_local_mem + 0x8d4
-    8b4: 000caa03  lw           x20, 0(x25)  # riscv_local_mem + 0x8d4 · 0xffb008d4
-loc_8b8:
-    8b8: ffb4ccb7  lui          x25, 0xffb4c  # x25 = 0xffb4c000
-    8bc: 020c8c93  addi         x25, x25, 32  # x25 = 0xffb4c020
-    8c0: 000cda83  lhu          x21, 0(x25)  # 0xffb4c020
-    8c4: 415a0b33  sub          x22, x20, x21
-    8c8: 010b1b13  slli         x22, x22, 16
-    8cc: 010b5b13  srli         x22, x22, 16
-    8d0: 00400b93  addi         x23, x0, 4  # x23 = 0x00000004
-    8d4: 416b8bb3  sub          x23, x23, x22
-    8d8: 00100c13  addi         x24, x0, 1  # x24 = 0x00000001
-    8dc: 018bf663  bgeu         x23, x24, 0x000008e8  # target 0x000008e8
-    8e0: 0ff0000f  fence        0xf, 0xf
-    8e4: fd5ff06f  jal          x0, 0x000008b8  # target 0x000008b8
-loc_8e8:
-    8e8: 0ff0000f  fence        0xf, 0xf
-    8ec: ffb01bb7  lui          x23, 0xffb01  # x23 = 0xffb01000
-    8f0: 8d0b8b93  addi         x23, x23, -1840  # x23 = 0xffb008d0 · riscv_local_mem + 0x8d0
-    8f4: 000baa03  lw           x20, 0(x23)  # riscv_local_mem + 0x8d0 · 0xffb008d0
-    8f8: 004a5a13  srli         x20, x20, 4
-    8fc: fffa0a13  addi         x20, x20, -1
-    900: 508c0bb7  lui          x23, 0x508c0  # x23 = 0x508c0000
-    904: 01fbebb3  or           x23, x23, x31
-    908: ffe40c37  lui          x24, 0xffe40  # x24 = 0xffe40000 · TensixMMIO.INSTRN_BUF_BASE
-    90c: 017c2023  sw           x23, 0(x24)  # TensixMMIO.INSTRN_BUF_BASE · 0xffe40000; write runtime value
-    910: 008a1c13  slli         x24, x20, 8
-    914: 01000cb7  lui          x25, 0x01000  # x25 = 0x01000000
-    918: f00c8c93  addi         x25, x25, -256  # x25 = 0x00ffff00
-    91c: 019c7c33  and          x24, x24, x25
-    920: 45000d37  lui          x26, 0x45000  # x26 = 0x45000000
-    924: 018d0d13  addi         x26, x26, 24  # x26 = 0x45000018
-    928: 01ac6c33  or           x24, x24, x26
-    92c: ffe40db7  lui          x27, 0xffe40  # x27 = 0xffe40000 · TensixMMIO.INSTRN_BUF_BASE
-    930: 018da023  sw           x24, 0(x27)  # TensixMMIO.INSTRN_BUF_BASE · 0xffe40000; write runtime value
-    934: 010a5a93  srli         x21, x20, 16
-    938: 00008b37  lui          x22, 0x00008  # x22 = 0x00008000
-    93c: 015b6b33  or           x22, x22, x21
-    940: 008b1c13  slli         x24, x22, 8
-    944: 01000cb7  lui          x25, 0x01000  # x25 = 0x01000000
-    948: f00c8c93  addi         x25, x25, -256  # x25 = 0x00ffff00
-    94c: 019c7c33  and          x24, x24, x25
-    950: 45000d37  lui          x26, 0x45000  # x26 = 0x45000000
-    954: 019d0d13  addi         x26, x26, 25  # x26 = 0x45000019
-    958: 01ac6c33  or           x24, x24, x26
-    95c: ffe40db7  lui          x27, 0xffe40  # x27 = 0xffe40000 · TensixMMIO.INSTRN_BUF_BASE
-    960: 018da023  sw           x24, 0(x27)  # TensixMMIO.INSTRN_BUF_BASE · 0xffe40000; write runtime value
-    964: 89000026  STALLWAIT    stall_res=128, wait_res=9  # stall_res: Stall.CFG; wait_res: Wait.THCON | Wait.PACK0
-    968: c0300116  WRCFG        GprAddress=12, wr128b=0, CfgReg=69  # cfg[69] (current thread StateID); THCON_SEC0_REG1_L1_Dest_addr = runtime
-    96c: 008a9c13  slli         x24, x21, 8
-    970: 01000cb7  lui          x25, 0x01000  # x25 = 0x01000000
-    974: f00c8c93  addi         x25, x25, -256  # x25 = 0x00ffff00
-    978: 019c7c33  and          x24, x24, x25
-    97c: 45000d37  lui          x26, 0x45000  # x26 = 0x45000000
-    980: 019d0d13  addi         x26, x26, 25  # x26 = 0x45000019
-    984: 01ac6c33  or           x24, x24, x26
-    988: ffe40db7  lui          x27, 0xffe40  # x27 = 0xffe40000 · TensixMMIO.INSTRN_BUF_BASE
-    98c: 018da023  sw           x24, 0(x27)  # TensixMMIO.INSTRN_BUF_BASE · 0xffe40000; write runtime value
-    990: 80000001  DMANOP
-    994: 7a00f001  SETADCXX     CntSetMask=4, x_end2=15, x_start=0
-    998: 52000015  SETADCZW     CntSetMask=4, Ch1_W=0, Ch1_Z=0, Ch0_W=0, Ch0_Z=0, BitMask=5
-    99c: ffef0a37  lui          x20, 0xffef0  # x20 = 0xffef0000 · cfg[0] (bank 0) · ALU_FORMAT_SPEC_REG_SrcA_val, ALU_FORMAT_SPEC_REG_SrcA_override, ALU_FORMAT_SPEC_REG_SrcB_val, ALU_FORMAT_SPEC_REG_SrcB_override, ALU_FORMAT_SPEC_REG_Dstacc_val, ALU_FORMAT_SPEC_REG_Dstacc_override
-    9a0: 2d0a0a13  addi         x20, x20, 720  # x20 = 0xffef02d0 · cfg[180] (bank 0) · DEST_TARGET_REG_CFG_PACK_SEC0_Offset, DEST_TARGET_REG_CFG_PACK_SEC0_ZOffset
-    9a4: 00000a93  addi         x21, x0, 0  # x21 = 0x00000000
-    9a8: 015a2023  sw           x21, 0(x20)  # cfg[180] (bank 0) · DEST_TARGET_REG_CFG_PACK_SEC0_Offset, DEST_TARGET_REG_CFG_PACK_SEC0_ZOffset · 0xffef02d0; write 0x00000000; cfg[180] (bank 0); DEST_TARGET_REG_CFG_PACK_SEC0_Offset = 0; DEST_TARGET_REG_CFG_PACK_SEC0_ZOffset = 0
-    9ac: 89000022  STALLWAIT    stall_res=128, wait_res=8  # stall_res: Stall.CFG; wait_res: Wait.PACK0
-    9b0: 06000000  MOP          mop_type=1, loop_count=0, zmask_lo16_or_loop_count=0
-    9b4: 88040022  STALLWAIT    stall_res=2, wait_res=8  # stall_res: Stall.SYNC; wait_res: Wait.PACK0
-    9b8: ffe80a37  lui          x20, 0xffe80  # x20 = 0xffe80000 · tensix_pc_buf + 0x0
-    9bc: 004a0a13  addi         x20, x20, 4  # x20 = 0xffe80004 · TensixMMIO.PC_BUF_SYNC
-    9c0: 000a2023  sw           x0, 0(x20)  # TensixMMIO.PC_BUF_SYNC · 0xffe80004; write 0x00000000
-    9c4: 000a2a83  lw           x21, 0(x20)  # TensixMMIO.PC_BUF_SYNC · 0xffe80004
-    9c8: 01507033  and          x0, x0, x21
-    9cc: ffb01c37  lui          x24, 0xffb01  # x24 = 0xffb01000
-    9d0: 8d0c0c13  addi         x24, x24, -1840  # x24 = 0xffb008d0 · riscv_local_mem + 0x8d0
-    9d4: 000c2a03  lw           x20, 0(x24)  # riscv_local_mem + 0x8d0 · 0xffb008d0
-    9d8: 00001ab7  lui          x21, 0x00001  # x21 = 0x00001000 · F32_TILE_BYTES · Wait.CFGEXU
-    9dc: 015a0a33  add          x20, x20, x21
-    9e0: 0001cb37  lui          x22, 0x0001c  # x22 = 0x0001c000
-    9e4: 800b0b13  addi         x22, x22, -2048  # x22 = 0x0001b800
-    9e8: 016a6663  bltu         x20, x22, 0x000009f4  # target 0x000009f4
-    9ec: 00004bb7  lui          x23, 0x00004  # x23 = 0x00004000
-    9f0: 417a0a33  sub          x20, x20, x23
-loc_9f4:
-    9f4: ffb01c37  lui          x24, 0xffb01  # x24 = 0xffb01000
-    9f8: 8d0c0c13  addi         x24, x24, -1840  # x24 = 0xffb008d0 · riscv_local_mem + 0x8d0
-    9fc: 014c2023  sw           x20, 0(x24)  # riscv_local_mem + 0x8d0 · 0xffb008d0; write runtime value
-    a00: ffb01ab7  lui          x21, 0xffb01  # x21 = 0xffb01000
-    a04: 8d4a8a93  addi         x21, x21, -1836  # x21 = 0xffb008d4 · riscv_local_mem + 0x8d4
-    a08: 000aaa03  lw           x20, 0(x21)  # riscv_local_mem + 0x8d4 · 0xffb008d4
-    a0c: 001a0a13  addi         x20, x20, 1
-    a10: 010a1a13  slli         x20, x20, 16
-    a14: 010a5a13  srli         x20, x20, 16
-    a18: ffb01ab7  lui          x21, 0xffb01  # x21 = 0xffb01000
-    a1c: 8d4a8a93  addi         x21, x21, -1836  # x21 = 0xffb008d4 · riscv_local_mem + 0x8d4
-    a20: 014aa023  sw           x20, 0(x21)  # riscv_local_mem + 0x8d4 · 0xffb008d4; write runtime value
-    a24: ffb4cab7  lui          x21, 0xffb4c  # x21 = 0xffb4c000
-    a28: 028a8a93  addi         x21, x21, 40  # x21 = 0xffb4c028
-    a2c: 014aa023  sw           x20, 0(x21)  # 0xffb4c028; write runtime value
-    a30: 0ff0000f  fence        0xf, 0xf
-    a34: 00008067  jalr         x0, 0(x1)
-loc_a38:
-    a38: ffb01cb7  lui          x25, 0xffb01  # x25 = 0xffb01000
-    a3c: 8dcc8c93  addi         x25, x25, -1828  # x25 = 0xffb008dc · riscv_local_mem + 0x8dc
-    a40: 000caa03  lw           x20, 0(x25)  # riscv_local_mem + 0x8dc · 0xffb008dc
-loc_a44:
-    a44: ffb51cb7  lui          x25, 0xffb51  # x25 = 0xffb51000
-    a48: 020c8c93  addi         x25, x25, 32  # x25 = 0xffb51020
-    a4c: 000cda83  lhu          x21, 0(x25)  # 0xffb51020
-    a50: 415a0b33  sub          x22, x20, x21
-    a54: 010b1b13  slli         x22, x22, 16
-    a58: 010b5b13  srli         x22, x22, 16
-    a5c: 00200b93  addi         x23, x0, 2  # x23 = 0x00000002
-    a60: 416b8bb3  sub          x23, x23, x22
-    a64: 00100c13  addi         x24, x0, 1  # x24 = 0x00000001
-    a68: 018bf663  bgeu         x23, x24, 0x00000a74  # target 0x00000a74
-    a6c: 0ff0000f  fence        0xf, 0xf
-    a70: fd5ff06f  jal          x0, 0x00000a44  # target 0x00000a44
-loc_a74:
-    a74: 0ff0000f  fence        0xf, 0xf
-    a78: ffb01bb7  lui          x23, 0xffb01  # x23 = 0xffb01000
-    a7c: 8d8b8b93  addi         x23, x23, -1832  # x23 = 0xffb008d8 · riscv_local_mem + 0x8d8
-    a80: 000baa03  lw           x20, 0(x23)  # riscv_local_mem + 0x8d8 · 0xffb008d8
-    a84: 004a5a13  srli         x20, x20, 4
-    a88: fffa0a13  addi         x20, x20, -1
-    a8c: 508c0bb7  lui          x23, 0x508c0  # x23 = 0x508c0000
-    a90: 01fbebb3  or           x23, x23, x31
-    a94: ffe40c37  lui          x24, 0xffe40  # x24 = 0xffe40000 · TensixMMIO.INSTRN_BUF_BASE
-    a98: 017c2023  sw           x23, 0(x24)  # TensixMMIO.INSTRN_BUF_BASE · 0xffe40000; write runtime value
-    a9c: 008a1c13  slli         x24, x20, 8
-    aa0: 01000cb7  lui          x25, 0x01000  # x25 = 0x01000000
-    aa4: f00c8c93  addi         x25, x25, -256  # x25 = 0x00ffff00
-    aa8: 019c7c33  and          x24, x24, x25
-    aac: 45000d37  lui          x26, 0x45000  # x26 = 0x45000000
-    ab0: 018d0d13  addi         x26, x26, 24  # x26 = 0x45000018
-    ab4: 01ac6c33  or           x24, x24, x26
-    ab8: ffe40db7  lui          x27, 0xffe40  # x27 = 0xffe40000 · TensixMMIO.INSTRN_BUF_BASE
-    abc: 018da023  sw           x24, 0(x27)  # TensixMMIO.INSTRN_BUF_BASE · 0xffe40000; write runtime value
-    ac0: 010a5a93  srli         x21, x20, 16
-    ac4: 00008b37  lui          x22, 0x00008  # x22 = 0x00008000
-    ac8: 015b6b33  or           x22, x22, x21
-    acc: 008b1c13  slli         x24, x22, 8
-    ad0: 01000cb7  lui          x25, 0x01000  # x25 = 0x01000000
-    ad4: f00c8c93  addi         x25, x25, -256  # x25 = 0x00ffff00
-    ad8: 019c7c33  and          x24, x24, x25
-    adc: 45000d37  lui          x26, 0x45000  # x26 = 0x45000000
-    ae0: 019d0d13  addi         x26, x26, 25  # x26 = 0x45000019
-    ae4: 01ac6c33  or           x24, x24, x26
-    ae8: ffe40db7  lui          x27, 0xffe40  # x27 = 0xffe40000 · TensixMMIO.INSTRN_BUF_BASE
-    aec: 018da023  sw           x24, 0(x27)  # TensixMMIO.INSTRN_BUF_BASE · 0xffe40000; write runtime value
-    af0: 89000026  STALLWAIT    stall_res=128, wait_res=9  # stall_res: Stall.CFG; wait_res: Wait.THCON | Wait.PACK0
-    af4: c0300116  WRCFG        GprAddress=12, wr128b=0, CfgReg=69  # cfg[69] (current thread StateID); THCON_SEC0_REG1_L1_Dest_addr = runtime
-    af8: 008a9c13  slli         x24, x21, 8
-    afc: 01000cb7  lui          x25, 0x01000  # x25 = 0x01000000
-    b00: f00c8c93  addi         x25, x25, -256  # x25 = 0x00ffff00
-    b04: 019c7c33  and          x24, x24, x25
-    b08: 45000d37  lui          x26, 0x45000  # x26 = 0x45000000
-    b0c: 019d0d13  addi         x26, x26, 25  # x26 = 0x45000019
-    b10: 01ac6c33  or           x24, x24, x26
-    b14: ffe40db7  lui          x27, 0xffe40  # x27 = 0xffe40000 · TensixMMIO.INSTRN_BUF_BASE
-    b18: 018da023  sw           x24, 0(x27)  # TensixMMIO.INSTRN_BUF_BASE · 0xffe40000; write runtime value
-    b1c: 80000001  DMANOP
-    b20: 7a00f001  SETADCXX     CntSetMask=4, x_end2=15, x_start=0
-    b24: 52000015  SETADCZW     CntSetMask=4, Ch1_W=0, Ch1_Z=0, Ch0_W=0, Ch0_Z=0, BitMask=5
-    b28: ffef0a37  lui          x20, 0xffef0  # x20 = 0xffef0000 · cfg[0] (bank 0) · ALU_FORMAT_SPEC_REG_SrcA_val, ALU_FORMAT_SPEC_REG_SrcA_override, ALU_FORMAT_SPEC_REG_SrcB_val, ALU_FORMAT_SPEC_REG_SrcB_override, ALU_FORMAT_SPEC_REG_Dstacc_val, ALU_FORMAT_SPEC_REG_Dstacc_override
-    b2c: 2d0a0a13  addi         x20, x20, 720  # x20 = 0xffef02d0 · cfg[180] (bank 0) · DEST_TARGET_REG_CFG_PACK_SEC0_Offset, DEST_TARGET_REG_CFG_PACK_SEC0_ZOffset
-    b30: 00000a93  addi         x21, x0, 0  # x21 = 0x00000000
-    b34: 015a2023  sw           x21, 0(x20)  # cfg[180] (bank 0) · DEST_TARGET_REG_CFG_PACK_SEC0_Offset, DEST_TARGET_REG_CFG_PACK_SEC0_ZOffset · 0xffef02d0; write 0x00000000; cfg[180] (bank 0); DEST_TARGET_REG_CFG_PACK_SEC0_Offset = 0; DEST_TARGET_REG_CFG_PACK_SEC0_ZOffset = 0
-    b38: 89000022  STALLWAIT    stall_res=128, wait_res=8  # stall_res: Stall.CFG; wait_res: Wait.PACK0
-    b3c: 06000000  MOP          mop_type=1, loop_count=0, zmask_lo16_or_loop_count=0
-    b40: 88040022  STALLWAIT    stall_res=2, wait_res=8  # stall_res: Stall.SYNC; wait_res: Wait.PACK0
-    b44: ffe80a37  lui          x20, 0xffe80  # x20 = 0xffe80000 · tensix_pc_buf + 0x0
-    b48: 004a0a13  addi         x20, x20, 4  # x20 = 0xffe80004 · TensixMMIO.PC_BUF_SYNC
-    b4c: 000a2023  sw           x0, 0(x20)  # TensixMMIO.PC_BUF_SYNC · 0xffe80004; write 0x00000000
-    b50: 000a2a83  lw           x21, 0(x20)  # TensixMMIO.PC_BUF_SYNC · 0xffe80004
-    b54: 01507033  and          x0, x0, x21
-    b58: ffb01c37  lui          x24, 0xffb01  # x24 = 0xffb01000
-    b5c: 8d8c0c13  addi         x24, x24, -1832  # x24 = 0xffb008d8 · riscv_local_mem + 0x8d8
-    b60: 000c2a03  lw           x20, 0(x24)  # riscv_local_mem + 0x8d8 · 0xffb008d8
-    b64: 00001ab7  lui          x21, 0x00001  # x21 = 0x00001000 · F32_TILE_BYTES · Wait.CFGEXU
-    b68: 800a8a93  addi         x21, x21, -2048  # x21 = 0x00000800
-    b6c: 015a0a33  add          x20, x20, x21
-    b70: 00040b37  lui          x22, 0x00040  # x22 = 0x00040000
-    b74: 880b0b13  addi         x22, x22, -1920  # x22 = 0x0003f880 · arc_apb_reset_unit + 0xf880
-    b78: 016a6663  bltu         x20, x22, 0x00000b84  # target 0x00000b84
-    b7c: 00001bb7  lui          x23, 0x00001  # x23 = 0x00001000 · F32_TILE_BYTES · Wait.CFGEXU
-    b80: 417a0a33  sub          x20, x20, x23
-loc_b84:
-    b84: ffb01c37  lui          x24, 0xffb01  # x24 = 0xffb01000
-    b88: 8d8c0c13  addi         x24, x24, -1832  # x24 = 0xffb008d8 · riscv_local_mem + 0x8d8
-    b8c: 014c2023  sw           x20, 0(x24)  # riscv_local_mem + 0x8d8 · 0xffb008d8; write runtime value
-    b90: ffb01ab7  lui          x21, 0xffb01  # x21 = 0xffb01000
-    b94: 8dca8a93  addi         x21, x21, -1828  # x21 = 0xffb008dc · riscv_local_mem + 0x8dc
-    b98: 000aaa03  lw           x20, 0(x21)  # riscv_local_mem + 0x8dc · 0xffb008dc
-    b9c: 001a0a13  addi         x20, x20, 1
-    ba0: 010a1a13  slli         x20, x20, 16
-    ba4: 010a5a13  srli         x20, x20, 16
-    ba8: ffb01ab7  lui          x21, 0xffb01  # x21 = 0xffb01000
-    bac: 8dca8a93  addi         x21, x21, -1828  # x21 = 0xffb008dc · riscv_local_mem + 0x8dc
-    bb0: 014aa023  sw           x20, 0(x21)  # riscv_local_mem + 0x8dc · 0xffb008dc; write runtime value
-    bb4: ffb51ab7  lui          x21, 0xffb51  # x21 = 0xffb51000
-    bb8: 028a8a93  addi         x21, x21, 40  # x21 = 0xffb51028
-    bbc: 014aa023  sw           x20, 0(x21)  # 0xffb51028; write runtime value
-    bc0: 0ff0000f  fence        0xf, 0xf
-    bc4: 00008067  jalr         x0, 0(x1)
-    bc8:           j FW_TRISC2+4   # return to firmware, linked at install
+    254: 019c7c33  and          x24, x24, x25
+    258: 45000d37  lui          x26, 0x45000  # x26 = 0x45000000
+    25c: 019d0d13  addi         x26, x26, 25  # x26 = 0x45000019
+    260: 01ac6c33  or           x24, x24, x26
+    264: 018da023  sw           x24, 0(x27)  # TensixMMIO.INSTRN_BUF_BASE · 0xffe40000; write runtime value
+    268: 89000026  STALLWAIT    stall_res=128, wait_res=9  # stall_res: Stall.CFG; wait_res: Wait.THCON | Wait.PACK0
+    26c: c0300116  WRCFG        GprAddress=12, wr128b=0, CfgReg=69  # cfg[69] (current thread StateID); THCON_SEC0_REG1_L1_Dest_addr = runtime
+    270: 008a9c13  slli         x24, x21, 8
+    274: 019c7c33  and          x24, x24, x25
+    278: 01ac6c33  or           x24, x24, x26
+    27c: 018da023  sw           x24, 0(x27)  # TensixMMIO.INSTRN_BUF_BASE · 0xffe40000; write runtime value
+    280: 80000001  DMANOP
+    284: 7a00f001  SETADCXX     CntSetMask=4, x_end2=15, x_start=0
+    288: 52000015  SETADCZW     CntSetMask=4, Ch1_W=0, Ch1_Z=0, Ch0_W=0, Ch0_Z=0, BitMask=5
+    28c: ffef0a37  lui          x20, 0xffef0  # x20 = 0xffef0000 · cfg[0] (bank 0) · ALU_FORMAT_SPEC_REG_SrcA_val, ALU_FORMAT_SPEC_REG_SrcA_override, ALU_FORMAT_SPEC_REG_SrcB_val, ALU_FORMAT_SPEC_REG_SrcB_override, ALU_FORMAT_SPEC_REG_Dstacc_val, ALU_FORMAT_SPEC_REG_Dstacc_override
+    290: 2d0a0a13  addi         x20, x20, 720  # x20 = 0xffef02d0 · cfg[180] (bank 0) · DEST_TARGET_REG_CFG_PACK_SEC0_Offset, DEST_TARGET_REG_CFG_PACK_SEC0_ZOffset
+    294: 000a2023  sw           x0, 0(x20)  # cfg[180] (bank 0) · DEST_TARGET_REG_CFG_PACK_SEC0_Offset, DEST_TARGET_REG_CFG_PACK_SEC0_ZOffset · 0xffef02d0; write 0x00000000; cfg[180] (bank 0); DEST_TARGET_REG_CFG_PACK_SEC0_Offset = 0; DEST_TARGET_REG_CFG_PACK_SEC0_ZOffset = 0
+    298: 89000022  STALLWAIT    stall_res=128, wait_res=8  # stall_res: Stall.CFG; wait_res: Wait.PACK0
+    29c: 06000000  MOP          mop_type=1, loop_count=0, zmask_lo16_or_loop_count=0
+    2a0: 88040022  STALLWAIT    stall_res=2, wait_res=8  # stall_res: Stall.SYNC; wait_res: Wait.PACK0
+    2a4: ffe80a37  lui          x20, 0xffe80  # x20 = 0xffe80000 · tensix_pc_buf + 0x0
+    2a8: 004a0a13  addi         x20, x20, 4  # x20 = 0xffe80004 · TensixMMIO.PC_BUF_SYNC
+    2ac: 000a2023  sw           x0, 0(x20)  # TensixMMIO.PC_BUF_SYNC · 0xffe80004; write 0x00000000
+    2b0: 000a2a83  lw           x21, 0(x20)  # TensixMMIO.PC_BUF_SYNC · 0xffe80004
+    2b4: 01507033  and          x0, x0, x21
+    2b8: ffb01c37  lui          x24, 0xffb01  # x24 = 0xffb01000
+    2bc: 8c0c0c13  addi         x24, x24, -1856  # x24 = 0xffb008c0 · riscv_local_mem + 0x8c0
+    2c0: 000c2a03  lw           x20, 0(x24)  # riscv_local_mem + 0x8c0 · 0xffb008c0
+    2c4: 00001ab7  lui          x21, 0x00001  # x21 = 0x00001000 · F32_TILE_BYTES · Wait.CFGEXU
+    2c8: 800a8a93  addi         x21, x21, -2048  # x21 = 0x00000800
+    2cc: 015a0a33  add          x20, x20, x21
+    2d0: 0001eb37  lui          x22, 0x0001e  # x22 = 0x0001e000
+    2d4: 016a6863  bltu         x20, x22, 0x000002e4  # target 0x000002e4
+    2d8: 00001bb7  lui          x23, 0x00001  # x23 = 0x00001000 · F32_TILE_BYTES · Wait.CFGEXU
+    2dc: 800b8b93  addi         x23, x23, -2048  # x23 = 0x00000800
+    2e0: 417a0a33  sub          x20, x20, x23
+loc_2e4:
+    2e4: ffb01c37  lui          x24, 0xffb01  # x24 = 0xffb01000
+    2e8: 8c0c0c13  addi         x24, x24, -1856  # x24 = 0xffb008c0 · riscv_local_mem + 0x8c0
+    2ec: 014c2023  sw           x20, 0(x24)  # riscv_local_mem + 0x8c0 · 0xffb008c0; write runtime value
+    2f0: ffb01ab7  lui          x21, 0xffb01  # x21 = 0xffb01000
+    2f4: 8c4a8a93  addi         x21, x21, -1852  # x21 = 0xffb008c4 · riscv_local_mem + 0x8c4
+    2f8: 000aaa03  lw           x20, 0(x21)  # riscv_local_mem + 0x8c4 · 0xffb008c4
+    2fc: 001a0a13  addi         x20, x20, 1
+    300: 010a1a13  slli         x20, x20, 16
+    304: 010a5a13  srli         x20, x20, 16
+    308: 014aa023  sw           x20, 0(x21)  # riscv_local_mem + 0x8c4 · 0xffb008c4; write runtime value
+    30c: ffb4eab7  lui          x21, 0xffb4e  # x21 = 0xffb4e000
+    310: 028a8a93  addi         x21, x21, 40  # x21 = 0xffb4e028
+    314: 014aa023  sw           x20, 0(x21)  # 0xffb4e028; write runtime value
+    318: 0ff0000f  fence        0xf, 0xf
+    31c: 40710000  ZEROACC      clear_mode=3, use_32_bit_mode=1, clear_zero_flags=0, addr_mode=1, where=0
+    320: 94000022  SEMGET       sem_sel=2  # sem_sel: Sem.MATH_PACK
+    324: 79000293  addi         x5, x0, 1936  # x5 = 0x00000790
+    328: 0002a203  lw           x4, 0(x5)  # param kv_blocks; 0x00000790
+    32c: 000123b7  lui          x7, 0x00012  # x7 = 0x00012000 · TensixL1.KERNEL_CACHE_BASE
+    330: 90438393  addi         x7, x7, -1788  # x7 = 0x00011904
+    334: 0003a283  lw           x5, 0(x7)  # param attention_phase; 0x00011904
+    338: 79000493  addi         x9, x0, 1936  # x9 = 0x00000790
+    33c: 0004a383  lw           x7, 0(x9)  # param kv_blocks; 0x00000790
+    340: 00100313  addi         x6, x0, 1  # x6 = 0x00000001
+    344: 00400413  addi         x8, x0, 4  # x8 = 0x00000004
+    348: 00747a63  bgeu         x8, x7, 0x0000035c  # target 0x0000035c
+    34c: 00400313  addi         x6, x0, 4  # x6 = 0x00000004
+    350: 05000413  addi         x8, x0, 80  # x8 = 0x00000050
+    354: 00747463  bgeu         x8, x7, 0x0000035c  # target 0x0000035c
+    358: 00800313  addi         x6, x0, 8  # x6 = 0x00000008
+loc_35c:
+    35c: 00620233  add          x4, x4, x6
+    360: fff20213  addi         x4, x4, -1
+    364: 40520233  sub          x4, x4, x5
+    368: 02625233  divu         x4, x4, x6
+    36c: 00000293  addi         x5, x0, 0  # x5 = 0x00000000
+    370: 00020313  addi         x6, x4, 0
+loc_374:
+    374: 1a62f263  bgeu         x5, x6, 0x00000518  # target 0x00000518
+    378: 98020026  SEMWAIT      stall_res=1, sem_sel=2, wait_sem_cond=1  # stall_res: Stall.TDMA; sem_sel: Sem.MATH_PACK; wait_sem_cond: SemWait.ON_ZERO
+    37c: 00000f93  addi         x31, x0, 0  # x31 = 0x00000000
+    380: ffb01cb7  lui          x25, 0xffb01  # x25 = 0xffb01000
+    384: 8ccc8c93  addi         x25, x25, -1844  # x25 = 0xffb008cc · riscv_local_mem + 0x8cc
+    388: 000caa03  lw           x20, 0(x25)  # riscv_local_mem + 0x8cc · 0xffb008cc
+loc_38c:
+    38c: ffb4bcb7  lui          x25, 0xffb4b  # x25 = 0xffb4b000
+    390: 020c8c93  addi         x25, x25, 32  # x25 = 0xffb4b020
+    394: 000cda83  lhu          x21, 0(x25)  # 0xffb4b020
+    398: 415a0b33  sub          x22, x20, x21
+    39c: 010b1b13  slli         x22, x22, 16
+    3a0: 010b5b13  srli         x22, x22, 16
+    3a4: 00100b93  addi         x23, x0, 1  # x23 = 0x00000001
+    3a8: 416b8bb3  sub          x23, x23, x22
+    3ac: 00100c13  addi         x24, x0, 1  # x24 = 0x00000001
+    3b0: 018bf663  bgeu         x23, x24, 0x000003bc  # target 0x000003bc
+    3b4: 0ff0000f  fence        0xf, 0xf
+    3b8: fd5ff06f  jal          x0, 0x0000038c  # target 0x0000038c
+loc_3bc:
+    3bc: 0ff0000f  fence        0xf, 0xf
+    3c0: ffe00a37  lui          x20, 0xffe00  # x20 = 0xffe00000 · TensixMMIO.REGFILE_BASE
+    3c4: 040a0a13  addi         x20, x20, 64  # x20 = 0xffe00040 · tensix_regfile + 0x40
+    3c8: 08000a93  addi         x21, x0, 128  # x21 = 0x00000080
+    3cc: 015a2023  sw           x21, 0(x20)  # tensix_regfile + 0x40 · 0xffe00040; write 0x00000080
+    3d0: 00040ab7  lui          x21, 0x00040  # x21 = 0x00040000
+    3d4: 095a2823  sw           x21, 144(x20)  # tensix_regfile + 0xd0 · 0xffe000d0; write 0x00040000
+    3d8: 4600002d  SETADCXY     CntSetMask=4, Ch1_Y=0, Ch1_X=0, Ch0_Y=0, Ch0_X=0, BitMask=11
+    3dc: 5200003d  SETADCZW     CntSetMask=4, Ch1_W=0, Ch1_Z=0, Ch0_W=0, Ch0_Z=0, BitMask=15
+    3e0: ffe80a37  lui          x20, 0xffe80  # x20 = 0xffe80000 · tensix_pc_buf + 0x0
+    3e4: 004a0a13  addi         x20, x20, 4  # x20 = 0xffe80004 · TensixMMIO.PC_BUF_SYNC
+    3e8: 000a2023  sw           x0, 0(x20)  # TensixMMIO.PC_BUF_SYNC · 0xffe80004; write 0x00000000
+    3ec: 000a2a83  lw           x21, 0(x20)  # TensixMMIO.PC_BUF_SYNC · 0xffe80004
+    3f0: 01507033  and          x0, x0, x21
+    3f4: ffb01bb7  lui          x23, 0xffb01  # x23 = 0xffb01000
+    3f8: 8c8b8b93  addi         x23, x23, -1848  # x23 = 0xffb008c8 · riscv_local_mem + 0x8c8
+    3fc: 000baa03  lw           x20, 0(x23)  # riscv_local_mem + 0x8c8 · 0xffb008c8
+    400: 004a5a13  srli         x20, x20, 4
+    404: fffa0a13  addi         x20, x20, -1
+    408: 508c0bb7  lui          x23, 0x508c0  # x23 = 0x508c0000
+    40c: 01fbebb3  or           x23, x23, x31  # x23 = 0x508c0000
+    410: ffe40c37  lui          x24, 0xffe40  # x24 = 0xffe40000 · TensixMMIO.INSTRN_BUF_BASE
+    414: 017c2023  sw           x23, 0(x24)  # TensixMMIO.INSTRN_BUF_BASE · 0xffe40000; write 0x508c0000; MMIO instruction · SETADC CntSetMask=4, ChannelIndex=0, DimensionIndex=3, Value=0
+    418: 008a1c13  slli         x24, x20, 8
+    41c: 01000cb7  lui          x25, 0x01000  # x25 = 0x01000000
+    420: f00c8c93  addi         x25, x25, -256  # x25 = 0x00ffff00
+    424: 019c7c33  and          x24, x24, x25
+    428: 45000d37  lui          x26, 0x45000  # x26 = 0x45000000
+    42c: 018d0d13  addi         x26, x26, 24  # x26 = 0x45000018
+    430: 01ac6c33  or           x24, x24, x26
+    434: ffe40db7  lui          x27, 0xffe40  # x27 = 0xffe40000 · TensixMMIO.INSTRN_BUF_BASE
+    438: 018da023  sw           x24, 0(x27)  # TensixMMIO.INSTRN_BUF_BASE · 0xffe40000; write runtime value
+    43c: 010a5a93  srli         x21, x20, 16
+    440: 00008b37  lui          x22, 0x00008  # x22 = 0x00008000
+    444: 015b6b33  or           x22, x22, x21
+    448: 008b1c13  slli         x24, x22, 8
+    44c: 019c7c33  and          x24, x24, x25
+    450: 45000d37  lui          x26, 0x45000  # x26 = 0x45000000
+    454: 019d0d13  addi         x26, x26, 25  # x26 = 0x45000019
+    458: 01ac6c33  or           x24, x24, x26
+    45c: 018da023  sw           x24, 0(x27)  # TensixMMIO.INSTRN_BUF_BASE · 0xffe40000; write runtime value
+    460: 89000026  STALLWAIT    stall_res=128, wait_res=9  # stall_res: Stall.CFG; wait_res: Wait.THCON | Wait.PACK0
+    464: c0300116  WRCFG        GprAddress=12, wr128b=0, CfgReg=69  # cfg[69] (current thread StateID); THCON_SEC0_REG1_L1_Dest_addr = runtime
+    468: 008a9c13  slli         x24, x21, 8
+    46c: 019c7c33  and          x24, x24, x25
+    470: 01ac6c33  or           x24, x24, x26
+    474: 018da023  sw           x24, 0(x27)  # TensixMMIO.INSTRN_BUF_BASE · 0xffe40000; write runtime value
+    478: 80000001  DMANOP
+    47c: 7a00f001  SETADCXX     CntSetMask=4, x_end2=15, x_start=0
+    480: 52000015  SETADCZW     CntSetMask=4, Ch1_W=0, Ch1_Z=0, Ch0_W=0, Ch0_Z=0, BitMask=5
+    484: 89000022  STALLWAIT    stall_res=128, wait_res=8  # stall_res: Stall.CFG; wait_res: Wait.PACK0
+    488: 06000000  MOP          mop_type=1, loop_count=0, zmask_lo16_or_loop_count=0
+    48c: 88040022  STALLWAIT    stall_res=2, wait_res=8  # stall_res: Stall.SYNC; wait_res: Wait.PACK0
+    490: ffe80a37  lui          x20, 0xffe80  # x20 = 0xffe80000 · tensix_pc_buf + 0x0
+    494: 004a0a13  addi         x20, x20, 4  # x20 = 0xffe80004 · TensixMMIO.PC_BUF_SYNC
+    498: 000a2023  sw           x0, 0(x20)  # TensixMMIO.PC_BUF_SYNC · 0xffe80004; write 0x00000000
+    49c: 000a2a83  lw           x21, 0(x20)  # TensixMMIO.PC_BUF_SYNC · 0xffe80004
+    4a0: 01507033  and          x0, x0, x21
+    4a4: ffb01c37  lui          x24, 0xffb01  # x24 = 0xffb01000
+    4a8: 8c8c0c13  addi         x24, x24, -1848  # x24 = 0xffb008c8 · riscv_local_mem + 0x8c8
+    4ac: 000c2a03  lw           x20, 0(x24)  # riscv_local_mem + 0x8c8 · 0xffb008c8
+    4b0: 00001ab7  lui          x21, 0x00001  # x21 = 0x00001000 · F32_TILE_BYTES · Wait.CFGEXU
+    4b4: 800a8a93  addi         x21, x21, -2048  # x21 = 0x00000800
+    4b8: 015a0a33  add          x20, x20, x21
+    4bc: 00018b37  lui          x22, 0x00018  # x22 = 0x00018000
+    4c0: 800b0b13  addi         x22, x22, -2048  # x22 = 0x00017800
+    4c4: 016a6863  bltu         x20, x22, 0x000004d4  # target 0x000004d4
+    4c8: 00001bb7  lui          x23, 0x00001  # x23 = 0x00001000 · F32_TILE_BYTES · Wait.CFGEXU
+    4cc: 800b8b93  addi         x23, x23, -2048  # x23 = 0x00000800
+    4d0: 417a0a33  sub          x20, x20, x23
+loc_4d4:
+    4d4: ffb01c37  lui          x24, 0xffb01  # x24 = 0xffb01000
+    4d8: 8c8c0c13  addi         x24, x24, -1848  # x24 = 0xffb008c8 · riscv_local_mem + 0x8c8
+    4dc: 014c2023  sw           x20, 0(x24)  # riscv_local_mem + 0x8c8 · 0xffb008c8; write runtime value
+    4e0: ffb01ab7  lui          x21, 0xffb01  # x21 = 0xffb01000
+    4e4: 8cca8a93  addi         x21, x21, -1844  # x21 = 0xffb008cc · riscv_local_mem + 0x8cc
+    4e8: 000aaa03  lw           x20, 0(x21)  # riscv_local_mem + 0x8cc · 0xffb008cc
+    4ec: 001a0a13  addi         x20, x20, 1
+    4f0: 010a1a13  slli         x20, x20, 16
+    4f4: 010a5a13  srli         x20, x20, 16
+    4f8: 014aa023  sw           x20, 0(x21)  # riscv_local_mem + 0x8cc · 0xffb008cc; write runtime value
+    4fc: ffb4bab7  lui          x21, 0xffb4b  # x21 = 0xffb4b000
+    500: 028a8a93  addi         x21, x21, 40  # x21 = 0xffb4b028
+    504: 014aa023  sw           x20, 0(x21)  # 0xffb4b028; write runtime value
+    508: 0ff0000f  fence        0xf, 0xf
+    50c: 94000022  SEMGET       sem_sel=2  # sem_sel: Sem.MATH_PACK
+    510: 00128293  addi         x5, x5, 1
+    514: e61ff06f  jal          x0, 0x00000374  # target 0x00000374
+loc_518:
+    518: 98020026  SEMWAIT      stall_res=1, sem_sel=2, wait_sem_cond=1  # stall_res: Stall.TDMA; sem_sel: Sem.MATH_PACK; wait_sem_cond: SemWait.ON_ZERO
+    51c: ffef0a37  lui          x20, 0xffef0  # x20 = 0xffef0000 · cfg[0] (bank 0) · ALU_FORMAT_SPEC_REG_SrcA_val, ALU_FORMAT_SPEC_REG_SrcA_override, ALU_FORMAT_SPEC_REG_SrcB_val, ALU_FORMAT_SPEC_REG_SrcB_override, ALU_FORMAT_SPEC_REG_Dstacc_val, ALU_FORMAT_SPEC_REG_Dstacc_override
+    520: 118a0a13  addi         x20, x20, 280  # x20 = 0xffef0118 · cfg[70] (bank 0) · THCON_SEC0_REG1_Disable_zero_compress, THCON_SEC0_REG1_Add_l1_dest_addr_offset, THCON_SEC0_REG1_Disable_pack_zero_flags, THCON_SEC0_REG1_ovrd_default_throttle_mode, THCON_SEC0_REG1_Out_data_format, THCON_SEC0_REG1_In_data_format, THCON_SEC0_REG1_Dis_shared_exp_assembler, THCON_SEC0_REG1_Auto_set_last_pacr_intf_sel, THCON_SEC0_REG1_Enable_out_fifo, THCON_SEC0_REG1_Sub_l1_tile_header_size, THCON_SEC0_REG1_Source_interface_selection, THCON_SEC0_REG1_pack_start_intf_pos, THCON_SEC0_REG1_All_pack_disable_zero_compress_ovrd, THCON_SEC0_REG1_Add_tile_header_size, THCON_SEC0_REG1_pack_dis_y_pos_start_offset, THCON_SEC0_REG1_L1_source_addr
+    524: 00100a93  addi         x21, x0, 1  # x21 = 0x00000001
+    528: 015a2023  sw           x21, 0(x20)  # cfg[70] (bank 0) · THCON_SEC0_REG1_Disable_zero_compress, THCON_SEC0_REG1_Add_l1_dest_addr_offset, THCON_SEC0_REG1_Disable_pack_zero_flags, THCON_SEC0_REG1_ovrd_default_throttle_mode, THCON_SEC0_REG1_Out_data_format, THCON_SEC0_REG1_In_data_format, THCON_SEC0_REG1_Dis_shared_exp_assembler, THCON_SEC0_REG1_Auto_set_last_pacr_intf_sel, THCON_SEC0_REG1_Enable_out_fifo, THCON_SEC0_REG1_Sub_l1_tile_header_size, THCON_SEC0_REG1_Source_interface_selection, THCON_SEC0_REG1_pack_start_intf_pos, THCON_SEC0_REG1_All_pack_disable_zero_compress_ovrd, THCON_SEC0_REG1_Add_tile_header_size, THCON_SEC0_REG1_pack_dis_y_pos_start_offset, THCON_SEC0_REG1_L1_source_addr · 0xffef0118; write 0x00000001; cfg[70] (bank 0); THCON_SEC0_REG1_Disable_zero_compress = 1; THCON_SEC0_REG1_Add_l1_dest_addr_offset = 0; THCON_SEC0_REG1_Disable_pack_zero_flags = 0; THCON_SEC0_REG1_ovrd_default_throttle_mode = 0; THCON_SEC0_REG1_Out_data_format = 0; THCON_SEC0_REG1_In_data_format = 0; THCON_SEC0_REG1_Dis_shared_exp_assembler = 0; THCON_SEC0_REG1_Auto_set_last_pacr_intf_sel = 0; THCON_SEC0_REG1_Enable_out_fifo = 0; THCON_SEC0_REG1_Sub_l1_tile_header_size = 0; THCON_SEC0_REG1_Source_interface_selection = 0; THCON_SEC0_REG1_pack_start_intf_pos = 0; THCON_SEC0_REG1_All_pack_disable_zero_compress_ovrd = 0; THCON_SEC0_REG1_Add_tile_header_size = 0; THCON_SEC0_REG1_pack_dis_y_pos_start_offset = 0; THCON_SEC0_REG1_L1_source_addr = 0
+    52c: ffe00a37  lui          x20, 0xffe00  # x20 = 0xffe00000 · TensixMMIO.REGFILE_BASE
+    530: 040a0a13  addi         x20, x20, 64  # x20 = 0xffe00040 · tensix_regfile + 0x40
+    534: 10000a93  addi         x21, x0, 256  # x21 = 0x00000100
+    538: 015a2023  sw           x21, 0(x20)  # tensix_regfile + 0x40 · 0xffe00040; write 0x00000100
+    53c: 00040ab7  lui          x21, 0x00040  # x21 = 0x00040000
+    540: 095a2823  sw           x21, 144(x20)  # tensix_regfile + 0xd0 · 0xffe000d0; write 0x00040000
+    544: 4600002d  SETADCXY     CntSetMask=4, Ch1_Y=0, Ch1_X=0, Ch0_Y=0, Ch0_X=0, BitMask=11
+    548: 5200003d  SETADCZW     CntSetMask=4, Ch1_W=0, Ch1_Z=0, Ch0_W=0, Ch0_Z=0, BitMask=15
+    54c: ffe80a37  lui          x20, 0xffe80  # x20 = 0xffe80000 · tensix_pc_buf + 0x0
+    550: 004a0a13  addi         x20, x20, 4  # x20 = 0xffe80004 · TensixMMIO.PC_BUF_SYNC
+    554: 000a2023  sw           x0, 0(x20)  # TensixMMIO.PC_BUF_SYNC · 0xffe80004; write 0x00000000
+    558: 000a2a83  lw           x21, 0(x20)  # TensixMMIO.PC_BUF_SYNC · 0xffe80004
+    55c: 01507033  and          x0, x0, x21
+    560: 00100f93  addi         x31, x0, 1  # x31 = 0x00000001
+    564: 158000ef  jal          x1, 0x000006bc  # target 0x000006bc; x1 = 0x00000568
+    568: 00200f93  addi         x31, x0, 2  # x31 = 0x00000002
+    56c: 150000ef  jal          x1, 0x000006bc  # target 0x000006bc; x1 = 0x00000570
+    570: 00300f93  addi         x31, x0, 3  # x31 = 0x00000003
+    574: 148000ef  jal          x1, 0x000006bc  # target 0x000006bc; x1 = 0x00000578
+    578: 00400f93  addi         x31, x0, 4  # x31 = 0x00000004
+    57c: 140000ef  jal          x1, 0x000006bc  # target 0x000006bc; x1 = 0x00000580
+    580: 40710000  ZEROACC      clear_mode=3, use_32_bit_mode=1, clear_zero_flags=0, addr_mode=1, where=0
+    584: 94000022  SEMGET       sem_sel=2  # sem_sel: Sem.MATH_PACK
+    588: 000122b7  lui          x5, 0x00012  # x5 = 0x00012000 · TensixL1.KERNEL_CACHE_BASE
+    58c: 90428293  addi         x5, x5, -1788  # x5 = 0x00011904
+    590: 0002a203  lw           x4, 0(x5)  # param attention_phase; 0x00011904
+    594: 12021263  bne          x4, x0, 0x000006b8  # target 0x000006b8
+    598: 98020026  SEMWAIT      stall_res=1, sem_sel=2, wait_sem_cond=1  # stall_res: Stall.TDMA; sem_sel: Sem.MATH_PACK; wait_sem_cond: SemWait.ON_ZERO
+    59c: c8000002  SETC16       setc16_reg=0, setc16_value=0  # thread_cfg[0] (current thread); CFG_STATE_ID_StateID = 0
+    5a0: d600011e  RMWCIB2      Mask=128, Data=0, CfgRegAddr=71  # cfg[71] (current thread StateID); THCON_SEC0_REG1_Pac_LF8_4b_exp = 0
+    5a4: d8780006  RMWCIB3      Mask=30, Data=0, CfgRegAddr=1  # cfg[1] (current thread StateID); ALU_FORMAT_SPEC_REG2_Dstacc = 0
+    5a8: cff0000a  RMWCIB0      Mask=252, Data=0, CfgRegAddr=2  # cfg[2] (current thread StateID); STACC_RELU_ApplyRelu = 0; STACC_RELU_ReluThreshold = 0 (masked bits only)
+    5ac: d3fc000a  RMWCIB1      Mask=255, Data=0, CfgRegAddr=2  # cfg[2] (current thread StateID); STACC_RELU_ReluThreshold = 0 (masked bits only)
+    5b0: d4fc000a  RMWCIB2      Mask=63, Data=0, CfgRegAddr=2  # cfg[2] (current thread StateID); STACC_RELU_ReluThreshold = 0 (masked bits only)
+    5b4: ffef0a37  lui          x20, 0xffef0  # x20 = 0xffef0000 · cfg[0] (bank 0) · ALU_FORMAT_SPEC_REG_SrcA_val, ALU_FORMAT_SPEC_REG_SrcA_override, ALU_FORMAT_SPEC_REG_SrcB_val, ALU_FORMAT_SPEC_REG_SrcB_override, ALU_FORMAT_SPEC_REG_Dstacc_val, ALU_FORMAT_SPEC_REG_Dstacc_override
+    5b8: 110a0a13  addi         x20, x20, 272  # x20 = 0xffef0110 · cfg[68] (bank 0) · THCON_SEC0_REG1_Row_start_section_size, THCON_SEC0_REG1_Exp_section_size
+    5bc: 00040ab7  lui          x21, 0x00040  # x21 = 0x00040000
+    5c0: 015a2023  sw           x21, 0(x20)  # cfg[68] (bank 0) · THCON_SEC0_REG1_Row_start_section_size, THCON_SEC0_REG1_Exp_section_size · 0xffef0110; write 0x00040000; cfg[68] (bank 0); THCON_SEC0_REG1_Row_start_section_size = 0; THCON_SEC0_REG1_Exp_section_size = 4
+    5c4: 05100a93  addi         x21, x0, 81  # x21 = 0x00000051
+    5c8: 015a2423  sw           x21, 8(x20)  # cfg[70] (bank 0) · THCON_SEC0_REG1_Disable_zero_compress, THCON_SEC0_REG1_Add_l1_dest_addr_offset, THCON_SEC0_REG1_Disable_pack_zero_flags, THCON_SEC0_REG1_ovrd_default_throttle_mode, THCON_SEC0_REG1_Out_data_format, THCON_SEC0_REG1_In_data_format, THCON_SEC0_REG1_Dis_shared_exp_assembler, THCON_SEC0_REG1_Auto_set_last_pacr_intf_sel, THCON_SEC0_REG1_Enable_out_fifo, THCON_SEC0_REG1_Sub_l1_tile_header_size, THCON_SEC0_REG1_Source_interface_selection, THCON_SEC0_REG1_pack_start_intf_pos, THCON_SEC0_REG1_All_pack_disable_zero_compress_ovrd, THCON_SEC0_REG1_Add_tile_header_size, THCON_SEC0_REG1_pack_dis_y_pos_start_offset, THCON_SEC0_REG1_L1_source_addr · 0xffef0118; write 0x00000051; cfg[70] (bank 0); THCON_SEC0_REG1_Disable_zero_compress = 1; THCON_SEC0_REG1_Add_l1_dest_addr_offset = 0; THCON_SEC0_REG1_Disable_pack_zero_flags = 0; THCON_SEC0_REG1_ovrd_default_throttle_mode = 0; THCON_SEC0_REG1_Out_data_format = 5; THCON_SEC0_REG1_In_data_format = 0; THCON_SEC0_REG1_Dis_shared_exp_assembler = 0; THCON_SEC0_REG1_Auto_set_last_pacr_intf_sel = 0; THCON_SEC0_REG1_Enable_out_fifo = 0; THCON_SEC0_REG1_Sub_l1_tile_header_size = 0; THCON_SEC0_REG1_Source_interface_selection = 0; THCON_SEC0_REG1_pack_start_intf_pos = 0; THCON_SEC0_REG1_All_pack_disable_zero_compress_ovrd = 0; THCON_SEC0_REG1_Add_tile_header_size = 0; THCON_SEC0_REG1_pack_dis_y_pos_start_offset = 0; THCON_SEC0_REG1_L1_source_addr = 0
+    5cc: 00100a93  addi         x21, x0, 1  # x21 = 0x00000001
+    5d0: f35a2c23  sw           x21, -200(x20)  # cfg[18] (bank 0) · PCK_DEST_RD_CTRL_Read_32b_data, PCK_DEST_RD_CTRL_Read_unsigned, PCK_DEST_RD_CTRL_Read_int8, PCK_DEST_RD_CTRL_Round_10b_mant · 0xffef0048; write 0x00000001; cfg[18] (bank 0); PCK_DEST_RD_CTRL_Read_32b_data = 1; PCK_DEST_RD_CTRL_Read_unsigned = 0; PCK_DEST_RD_CTRL_Read_int8 = 0; PCK_DEST_RD_CTRL_Round_10b_mant = 0
+    5d4: 00400ab7  lui          x21, 0x00400  # x21 = 0x00400000
+    5d8: f35a2023  sw           x21, -224(x20)  # cfg[12] (bank 0) · PCK0_ADDR_CTRL_XY_REG_0_Xstride, PCK0_ADDR_CTRL_XY_REG_0_Ystride · 0xffef0030; write 0x00400000; cfg[12] (bank 0); PCK0_ADDR_CTRL_XY_REG_0_Xstride = 0; PCK0_ADDR_CTRL_XY_REG_0_Ystride = 64
+    5dc: 10000ab7  lui          x21, 0x10000  # x21 = 0x10000000 · CQConfig.PCIE_MID
+    5e0: 400a8a93  addi         x21, x21, 1024  # x21 = 0x10000400 · arc_csm + 0x400
+    5e4: f35a2223  sw           x21, -220(x20)  # cfg[13] (bank 0) · PCK0_ADDR_CTRL_ZW_REG_0_Zstride, PCK0_ADDR_CTRL_ZW_REG_0_Wstride · 0xffef0034; write 0x10000400; cfg[13] (bank 0); PCK0_ADDR_CTRL_ZW_REG_0_Zstride = 1024; PCK0_ADDR_CTRL_ZW_REG_0_Wstride = 4096
+    5e8: 00001ab7  lui          x21, 0x00001  # x21 = 0x00001000 · F32_TILE_BYTES · Wait.CFGEXU
+    5ec: f75a2023  sw           x21, -160(x20)  # cfg[28] (bank 0) · PACK_COUNTERS_SEC0_pack_per_xy_plane, PACK_COUNTERS_SEC0_pack_reads_per_xy_plane, PACK_COUNTERS_SEC0_pack_xys_per_tile, PACK_COUNTERS_SEC0_pack_yz_transposed, PACK_COUNTERS_SEC0_auto_ctxt_inc_xys_cnt · 0xffef0070; write 0x00001000; cfg[28] (bank 0); PACK_COUNTERS_SEC0_pack_per_xy_plane = 0; PACK_COUNTERS_SEC0_pack_reads_per_xy_plane = 16; PACK_COUNTERS_SEC0_pack_xys_per_tile = 0; PACK_COUNTERS_SEC0_pack_yz_transposed = 0; PACK_COUNTERS_SEC0_auto_ctxt_inc_xys_cnt = 0
+    5f0: 00010ab7  lui          x21, 0x00010  # x21 = 0x00010000
+    5f4: fffa8a93  addi         x21, x21, -1  # x21 = 0x0000ffff
+    5f8: f55a2823  sw           x21, -176(x20)  # cfg[24] (bank 0) · PCK_EDGE_OFFSET_SEC0_mask, PCK_EDGE_MODE_mode, PCK_EDGE_TILE_ROW_SET_SELECT_select · 0xffef0060; write 0x0000ffff; cfg[24] (bank 0); PCK_EDGE_OFFSET_SEC0_mask = 65535; PCK_EDGE_MODE_mode = 0; PCK_EDGE_TILE_ROW_SET_SELECT_select = 0
+    5fc: f40a2a23  sw           x0, -172(x20)  # cfg[25] (bank 0) · PCK_EDGE_OFFSET_SEC1_mask · 0xffef0064; write 0x00000000; cfg[25] (bank 0); PCK_EDGE_OFFSET_SEC1_mask = 0
+    600: f40a2023  sw           x0, -192(x20)  # cfg[20] (bank 0) · TILE_ROW_SET_MAPPING_0_row_set_mapping_0, TILE_ROW_SET_MAPPING_0_row_set_mapping_1, TILE_ROW_SET_MAPPING_0_row_set_mapping_2, TILE_ROW_SET_MAPPING_0_row_set_mapping_3, TILE_ROW_SET_MAPPING_0_row_set_mapping_4, TILE_ROW_SET_MAPPING_0_row_set_mapping_5, TILE_ROW_SET_MAPPING_0_row_set_mapping_6, TILE_ROW_SET_MAPPING_0_row_set_mapping_7, TILE_ROW_SET_MAPPING_0_row_set_mapping_8, TILE_ROW_SET_MAPPING_0_row_set_mapping_9, TILE_ROW_SET_MAPPING_0_row_set_mapping_10, TILE_ROW_SET_MAPPING_0_row_set_mapping_11, TILE_ROW_SET_MAPPING_0_row_set_mapping_12, TILE_ROW_SET_MAPPING_0_row_set_mapping_13, TILE_ROW_SET_MAPPING_0_row_set_mapping_14, TILE_ROW_SET_MAPPING_0_row_set_mapping_15 · 0xffef0050; write 0x00000000; cfg[20] (bank 0); TILE_ROW_SET_MAPPING_0_row_set_mapping_0 = 0; TILE_ROW_SET_MAPPING_0_row_set_mapping_1 = 0; TILE_ROW_SET_MAPPING_0_row_set_mapping_2 = 0; TILE_ROW_SET_MAPPING_0_row_set_mapping_3 = 0; TILE_ROW_SET_MAPPING_0_row_set_mapping_4 = 0; TILE_ROW_SET_MAPPING_0_row_set_mapping_5 = 0; TILE_ROW_SET_MAPPING_0_row_set_mapping_6 = 0; TILE_ROW_SET_MAPPING_0_row_set_mapping_7 = 0; TILE_ROW_SET_MAPPING_0_row_set_mapping_8 = 0; TILE_ROW_SET_MAPPING_0_row_set_mapping_9 = 0; TILE_ROW_SET_MAPPING_0_row_set_mapping_10 = 0; TILE_ROW_SET_MAPPING_0_row_set_mapping_11 = 0; TILE_ROW_SET_MAPPING_0_row_set_mapping_12 = 0; TILE_ROW_SET_MAPPING_0_row_set_mapping_13 = 0; TILE_ROW_SET_MAPPING_0_row_set_mapping_14 = 0; TILE_ROW_SET_MAPPING_0_row_set_mapping_15 = 0
+    604: f40a2223  sw           x0, -188(x20)  # cfg[21] (bank 0) · TILE_ROW_SET_MAPPING_1_row_set_mapping_0, TILE_ROW_SET_MAPPING_1_row_set_mapping_1, TILE_ROW_SET_MAPPING_1_row_set_mapping_2, TILE_ROW_SET_MAPPING_1_row_set_mapping_3, TILE_ROW_SET_MAPPING_1_row_set_mapping_4, TILE_ROW_SET_MAPPING_1_row_set_mapping_5, TILE_ROW_SET_MAPPING_1_row_set_mapping_6, TILE_ROW_SET_MAPPING_1_row_set_mapping_7, TILE_ROW_SET_MAPPING_1_row_set_mapping_8, TILE_ROW_SET_MAPPING_1_row_set_mapping_9, TILE_ROW_SET_MAPPING_1_row_set_mapping_10, TILE_ROW_SET_MAPPING_1_row_set_mapping_11, TILE_ROW_SET_MAPPING_1_row_set_mapping_12, TILE_ROW_SET_MAPPING_1_row_set_mapping_13, TILE_ROW_SET_MAPPING_1_row_set_mapping_14, TILE_ROW_SET_MAPPING_1_row_set_mapping_15 · 0xffef0054; write 0x00000000; cfg[21] (bank 0); TILE_ROW_SET_MAPPING_1_row_set_mapping_0 = 0; TILE_ROW_SET_MAPPING_1_row_set_mapping_1 = 0; TILE_ROW_SET_MAPPING_1_row_set_mapping_2 = 0; TILE_ROW_SET_MAPPING_1_row_set_mapping_3 = 0; TILE_ROW_SET_MAPPING_1_row_set_mapping_4 = 0; TILE_ROW_SET_MAPPING_1_row_set_mapping_5 = 0; TILE_ROW_SET_MAPPING_1_row_set_mapping_6 = 0; TILE_ROW_SET_MAPPING_1_row_set_mapping_7 = 0; TILE_ROW_SET_MAPPING_1_row_set_mapping_8 = 0; TILE_ROW_SET_MAPPING_1_row_set_mapping_9 = 0; TILE_ROW_SET_MAPPING_1_row_set_mapping_10 = 0; TILE_ROW_SET_MAPPING_1_row_set_mapping_11 = 0; TILE_ROW_SET_MAPPING_1_row_set_mapping_12 = 0; TILE_ROW_SET_MAPPING_1_row_set_mapping_13 = 0; TILE_ROW_SET_MAPPING_1_row_set_mapping_14 = 0; TILE_ROW_SET_MAPPING_1_row_set_mapping_15 = 0
+    608: ffe00a37  lui          x20, 0xffe00  # x20 = 0xffe00000 · TensixMMIO.REGFILE_BASE
+    60c: 040a0a13  addi         x20, x20, 64  # x20 = 0xffe00040 · tensix_regfile + 0x40
+    610: 08000a93  addi         x21, x0, 128  # x21 = 0x00000080
+    614: 015a2023  sw           x21, 0(x20)  # tensix_regfile + 0x40 · 0xffe00040; write 0x00000080
+    618: 00040ab7  lui          x21, 0x00040  # x21 = 0x00040000
+    61c: 095a2823  sw           x21, 144(x20)  # tensix_regfile + 0xd0 · 0xffe000d0; write 0x00040000
+    620: c8940412  SETC16       setc16_reg=37, setc16_value=260  # thread_cfg[37] (current thread); ADDR_MOD_PACK_SEC0_YsrcIncr = 4; ADDR_MOD_PACK_SEC0_YsrcCR = 0; ADDR_MOD_PACK_SEC0_YsrcClear = 0; ADDR_MOD_PACK_SEC0_YdstIncr = 4; ADDR_MOD_PACK_SEC0_YdstCR = 0; ADDR_MOD_PACK_SEC0_YdstClear = 0; ADDR_MOD_PACK_SEC0_ZsrcIncr = 0; ADDR_MOD_PACK_SEC0_ZsrcClear = 0; ADDR_MOD_PACK_SEC0_ZdstIncr = 0; ADDR_MOD_PACK_SEC0_ZdstClear = 0
+    624: c898a082  SETC16       setc16_reg=38, setc16_value=10272  # thread_cfg[38] (current thread); ADDR_MOD_PACK_SEC1_YsrcIncr = 0; ADDR_MOD_PACK_SEC1_YsrcCR = 0; ADDR_MOD_PACK_SEC1_YsrcClear = 1; ADDR_MOD_PACK_SEC1_YdstIncr = 0; ADDR_MOD_PACK_SEC1_YdstCR = 0; ADDR_MOD_PACK_SEC1_YdstClear = 1; ADDR_MOD_PACK_SEC1_ZsrcIncr = 0; ADDR_MOD_PACK_SEC1_ZsrcClear = 1; ADDR_MOD_PACK_SEC1_ZdstIncr = 0; ADDR_MOD_PACK_SEC1_ZdstClear = 0
+    628: c89c4482  SETC16       setc16_reg=39, setc16_value=4384  # thread_cfg[39] (current thread); ADDR_MOD_PACK_SEC2_YsrcIncr = 0; ADDR_MOD_PACK_SEC2_YsrcCR = 0; ADDR_MOD_PACK_SEC2_YsrcClear = 1; ADDR_MOD_PACK_SEC2_YdstIncr = 4; ADDR_MOD_PACK_SEC2_YdstCR = 0; ADDR_MOD_PACK_SEC2_YdstClear = 0; ADDR_MOD_PACK_SEC2_ZsrcIncr = 1; ADDR_MOD_PACK_SEC2_ZsrcClear = 0; ADDR_MOD_PACK_SEC2_ZdstIncr = 0; ADDR_MOD_PACK_SEC2_ZdstClear = 0
+    62c: 4600002d  SETADCXY     CntSetMask=4, Ch1_Y=0, Ch1_X=0, Ch0_Y=0, Ch0_X=0, BitMask=11
+    630: 5200003d  SETADCZW     CntSetMask=4, Ch1_W=0, Ch1_Z=0, Ch0_W=0, Ch0_Z=0, BitMask=15
+    634: ffe80a37  lui          x20, 0xffe80  # x20 = 0xffe80000 · tensix_pc_buf + 0x0
+    638: 008a0a13  addi         x20, x20, 8  # x20 = 0xffe80008 · TensixMMIO.PC_BUF_MOP_SYNC
+    63c: 000a2023  sw           x0, 0(x20)  # TensixMMIO.PC_BUF_MOP_SYNC · 0xffe80008; write 0x00000000
+    640: 000a2a83  lw           x21, 0(x20)  # TensixMMIO.PC_BUF_MOP_SYNC · 0xffe80008
+    644: 01507033  and          x0, x0, x21
+    648: ffb80a37  lui          x20, 0xffb80  # x20 = 0xffb80000 · MOP_CFG
+    64c: 00400a93  addi         x21, x0, 4  # x21 = 0x00000004
+    650: 015a2023  sw           x21, 0(x20)  # MOP_CFG · 0xffb80000; write 0x00000004
+    654: 015a2223  sw           x21, 4(x20)  # MopCfg[1] · InnerCount / Flags · 0xffb80004; write 0x00000004
+    658: 02000ab7  lui          x21, 0x02000  # x21 = 0x02000000
+    65c: 015a2423  sw           x21, 8(x20)  # MopCfg[2] · StartOp / InsnB · 0xffb80008; write 0x02000000; MOP template instruction · NOP
+    660: 015a2623  sw           x21, 12(x20)  # MopCfg[3] · EndOp0 / InsnA0 · 0xffb8000c; write 0x02000000; MOP template instruction · NOP
+    664: 015a2823  sw           x21, 16(x20)  # MopCfg[4] · EndOp1 / InsnA1 · 0xffb80010; write 0x02000000; MOP template instruction · NOP
+    668: 41000ab7  lui          x21, 0x41000  # x21 = 0x41000000
+    66c: 015a2a23  sw           x21, 20(x20)  # MopCfg[5] · LoopOp / InsnA2 · 0xffb80014; write 0x41000000; MOP template instruction · PACR CfgContext=0, RowPadZero=0, DstAccessMode=0, AddrMode=0, AddrCntContext=0, ZeroWrite=0, ReadIntfSel=0, OvrdThreadId=0, Concat=0, CtxtCtrl=0, Flush=0, Last=0
+    670: 02000ab7  lui          x21, 0x02000  # x21 = 0x02000000
+    674: 015a2c23  sw           x21, 24(x20)  # MopCfg[6] · LoopOp1 / InsnA3 · 0xffb80018; write 0x02000000; MOP template instruction · NOP
+    678: 41008ab7  lui          x21, 0x41008  # x21 = 0x41008000
+    67c: 001a8a93  addi         x21, x21, 1  # x21 = 0x41008001
+    680: 015a2e23  sw           x21, 28(x20)  # MopCfg[7] · Loop0Last / SkipA0 · 0xffb8001c; write 0x41008001; MOP template instruction · PACR CfgContext=0, RowPadZero=0, DstAccessMode=0, AddrMode=1, AddrCntContext=0, ZeroWrite=0, ReadIntfSel=0, OvrdThreadId=0, Concat=0, CtxtCtrl=0, Flush=0, Last=1
+    684: 41010ab7  lui          x21, 0x41010  # x21 = 0x41010000
+    688: 035a2023  sw           x21, 32(x20)  # MopCfg[8] · Loop1Last / SkipB · 0xffb80020; write 0x41010000; MOP template instruction · PACR CfgContext=0, RowPadZero=0, DstAccessMode=0, AddrMode=2, AddrCntContext=0, ZeroWrite=0, ReadIntfSel=0, OvrdThreadId=0, Concat=0, CtxtCtrl=0, Flush=0, Last=0
+    68c: ffe80a37  lui          x20, 0xffe80  # x20 = 0xffe80000 · tensix_pc_buf + 0x0
+    690: 004a0a13  addi         x20, x20, 4  # x20 = 0xffe80004 · TensixMMIO.PC_BUF_SYNC
+    694: 000a2023  sw           x0, 0(x20)  # TensixMMIO.PC_BUF_SYNC · 0xffe80004; write 0x00000000
+    698: 000a2a83  lw           x21, 0(x20)  # TensixMMIO.PC_BUF_SYNC · 0xffe80004
+    69c: 01507033  and          x0, x0, x21
+    6a0: 00000f93  addi         x31, x0, 0  # x31 = 0x00000000
+    6a4: 178000ef  jal          x1, 0x0000081c  # target 0x0000081c; x1 = 0x000006a8
+    6a8: 00100f93  addi         x31, x0, 1  # x31 = 0x00000001
+    6ac: 170000ef  jal          x1, 0x0000081c  # target 0x0000081c; x1 = 0x000006b0
+    6b0: 40710000  ZEROACC      clear_mode=3, use_32_bit_mode=1, clear_zero_flags=0, addr_mode=1, where=0
+    6b4: 94000022  SEMGET       sem_sel=2  # sem_sel: Sem.MATH_PACK
+loc_6b8:
+    6b8: 2c80006f  jal          x0, 0x00000980  # target 0x00000980
+loc_6bc:
+    6bc: ffb01cb7  lui          x25, 0xffb01  # x25 = 0xffb01000
+    6c0: 8d4c8c93  addi         x25, x25, -1836  # x25 = 0xffb008d4 · riscv_local_mem + 0x8d4
+    6c4: 000caa03  lw           x20, 0(x25)  # riscv_local_mem + 0x8d4 · 0xffb008d4
+loc_6c8:
+    6c8: ffb4ccb7  lui          x25, 0xffb4c  # x25 = 0xffb4c000
+    6cc: 020c8c93  addi         x25, x25, 32  # x25 = 0xffb4c020
+    6d0: 000cda83  lhu          x21, 0(x25)  # 0xffb4c020
+    6d4: 415a0b33  sub          x22, x20, x21
+    6d8: 010b1b13  slli         x22, x22, 16
+    6dc: 010b5b13  srli         x22, x22, 16
+    6e0: 00400b93  addi         x23, x0, 4  # x23 = 0x00000004
+    6e4: 416b8bb3  sub          x23, x23, x22
+    6e8: 00100c13  addi         x24, x0, 1  # x24 = 0x00000001
+    6ec: 018bf663  bgeu         x23, x24, 0x000006f8  # target 0x000006f8
+    6f0: 0ff0000f  fence        0xf, 0xf
+    6f4: fd5ff06f  jal          x0, 0x000006c8  # target 0x000006c8
+loc_6f8:
+    6f8: 0ff0000f  fence        0xf, 0xf
+    6fc: ffb01bb7  lui          x23, 0xffb01  # x23 = 0xffb01000
+    700: 8d0b8b93  addi         x23, x23, -1840  # x23 = 0xffb008d0 · riscv_local_mem + 0x8d0
+    704: 000baa03  lw           x20, 0(x23)  # riscv_local_mem + 0x8d0 · 0xffb008d0
+    708: 004a5a13  srli         x20, x20, 4
+    70c: fffa0a13  addi         x20, x20, -1
+    710: 508c0bb7  lui          x23, 0x508c0  # x23 = 0x508c0000
+    714: 01fbebb3  or           x23, x23, x31
+    718: ffe40c37  lui          x24, 0xffe40  # x24 = 0xffe40000 · TensixMMIO.INSTRN_BUF_BASE
+    71c: 017c2023  sw           x23, 0(x24)  # TensixMMIO.INSTRN_BUF_BASE · 0xffe40000; write runtime value
+    720: 008a1c13  slli         x24, x20, 8
+    724: 01000cb7  lui          x25, 0x01000  # x25 = 0x01000000
+    728: f00c8c93  addi         x25, x25, -256  # x25 = 0x00ffff00
+    72c: 019c7c33  and          x24, x24, x25
+    730: 45000d37  lui          x26, 0x45000  # x26 = 0x45000000
+    734: 018d0d13  addi         x26, x26, 24  # x26 = 0x45000018
+    738: 01ac6c33  or           x24, x24, x26
+    73c: ffe40db7  lui          x27, 0xffe40  # x27 = 0xffe40000 · TensixMMIO.INSTRN_BUF_BASE
+    740: 018da023  sw           x24, 0(x27)  # TensixMMIO.INSTRN_BUF_BASE · 0xffe40000; write runtime value
+    744: 010a5a93  srli         x21, x20, 16
+    748: 00008b37  lui          x22, 0x00008  # x22 = 0x00008000
+    74c: 015b6b33  or           x22, x22, x21
+    750: 008b1c13  slli         x24, x22, 8
+    754: 019c7c33  and          x24, x24, x25
+    758: 45000d37  lui          x26, 0x45000  # x26 = 0x45000000
+    75c: 019d0d13  addi         x26, x26, 25  # x26 = 0x45000019
+    760: 01ac6c33  or           x24, x24, x26
+    764: 018da023  sw           x24, 0(x27)  # TensixMMIO.INSTRN_BUF_BASE · 0xffe40000; write runtime value
+    768: 89000026  STALLWAIT    stall_res=128, wait_res=9  # stall_res: Stall.CFG; wait_res: Wait.THCON | Wait.PACK0
+    76c: c0300116  WRCFG        GprAddress=12, wr128b=0, CfgReg=69  # cfg[69] (current thread StateID); THCON_SEC0_REG1_L1_Dest_addr = runtime
+    770: 008a9c13  slli         x24, x21, 8
+    774: 019c7c33  and          x24, x24, x25
+    778: 01ac6c33  or           x24, x24, x26
+    77c: 018da023  sw           x24, 0(x27)  # TensixMMIO.INSTRN_BUF_BASE · 0xffe40000; write runtime value
+    780: 80000001  DMANOP
+    784: 7a00f001  SETADCXX     CntSetMask=4, x_end2=15, x_start=0
+    788: 52000015  SETADCZW     CntSetMask=4, Ch1_W=0, Ch1_Z=0, Ch0_W=0, Ch0_Z=0, BitMask=5
+    78c: ffef0a37  lui          x20, 0xffef0  # x20 = 0xffef0000 · cfg[0] (bank 0) · ALU_FORMAT_SPEC_REG_SrcA_val, ALU_FORMAT_SPEC_REG_SrcA_override, ALU_FORMAT_SPEC_REG_SrcB_val, ALU_FORMAT_SPEC_REG_SrcB_override, ALU_FORMAT_SPEC_REG_Dstacc_val, ALU_FORMAT_SPEC_REG_Dstacc_override
+    790: 2d0a0a13  addi         x20, x20, 720  # x20 = 0xffef02d0 · cfg[180] (bank 0) · DEST_TARGET_REG_CFG_PACK_SEC0_Offset, DEST_TARGET_REG_CFG_PACK_SEC0_ZOffset
+    794: 000a2023  sw           x0, 0(x20)  # cfg[180] (bank 0) · DEST_TARGET_REG_CFG_PACK_SEC0_Offset, DEST_TARGET_REG_CFG_PACK_SEC0_ZOffset · 0xffef02d0; write 0x00000000; cfg[180] (bank 0); DEST_TARGET_REG_CFG_PACK_SEC0_Offset = 0; DEST_TARGET_REG_CFG_PACK_SEC0_ZOffset = 0
+    798: 89000022  STALLWAIT    stall_res=128, wait_res=8  # stall_res: Stall.CFG; wait_res: Wait.PACK0
+    79c: 06000000  MOP          mop_type=1, loop_count=0, zmask_lo16_or_loop_count=0
+    7a0: 88040022  STALLWAIT    stall_res=2, wait_res=8  # stall_res: Stall.SYNC; wait_res: Wait.PACK0
+    7a4: ffe80a37  lui          x20, 0xffe80  # x20 = 0xffe80000 · tensix_pc_buf + 0x0
+    7a8: 004a0a13  addi         x20, x20, 4  # x20 = 0xffe80004 · TensixMMIO.PC_BUF_SYNC
+    7ac: 000a2023  sw           x0, 0(x20)  # TensixMMIO.PC_BUF_SYNC · 0xffe80004; write 0x00000000
+    7b0: 000a2a83  lw           x21, 0(x20)  # TensixMMIO.PC_BUF_SYNC · 0xffe80004
+    7b4: 01507033  and          x0, x0, x21
+    7b8: ffb01c37  lui          x24, 0xffb01  # x24 = 0xffb01000
+    7bc: 8d0c0c13  addi         x24, x24, -1840  # x24 = 0xffb008d0 · riscv_local_mem + 0x8d0
+    7c0: 000c2a03  lw           x20, 0(x24)  # riscv_local_mem + 0x8d0 · 0xffb008d0
+    7c4: 00001ab7  lui          x21, 0x00001  # x21 = 0x00001000 · F32_TILE_BYTES · Wait.CFGEXU
+    7c8: 015a0a33  add          x20, x20, x21
+    7cc: 0001cb37  lui          x22, 0x0001c  # x22 = 0x0001c000
+    7d0: 800b0b13  addi         x22, x22, -2048  # x22 = 0x0001b800
+    7d4: 016a6663  bltu         x20, x22, 0x000007e0  # target 0x000007e0
+    7d8: 00004bb7  lui          x23, 0x00004  # x23 = 0x00004000
+    7dc: 417a0a33  sub          x20, x20, x23
+loc_7e0:
+    7e0: ffb01c37  lui          x24, 0xffb01  # x24 = 0xffb01000
+    7e4: 8d0c0c13  addi         x24, x24, -1840  # x24 = 0xffb008d0 · riscv_local_mem + 0x8d0
+    7e8: 014c2023  sw           x20, 0(x24)  # riscv_local_mem + 0x8d0 · 0xffb008d0; write runtime value
+    7ec: ffb01ab7  lui          x21, 0xffb01  # x21 = 0xffb01000
+    7f0: 8d4a8a93  addi         x21, x21, -1836  # x21 = 0xffb008d4 · riscv_local_mem + 0x8d4
+    7f4: 000aaa03  lw           x20, 0(x21)  # riscv_local_mem + 0x8d4 · 0xffb008d4
+    7f8: 001a0a13  addi         x20, x20, 1
+    7fc: 010a1a13  slli         x20, x20, 16
+    800: 010a5a13  srli         x20, x20, 16
+    804: 014aa023  sw           x20, 0(x21)  # riscv_local_mem + 0x8d4 · 0xffb008d4; write runtime value
+    808: ffb4cab7  lui          x21, 0xffb4c  # x21 = 0xffb4c000
+    80c: 028a8a93  addi         x21, x21, 40  # x21 = 0xffb4c028
+    810: 014aa023  sw           x20, 0(x21)  # 0xffb4c028; write runtime value
+    814: 0ff0000f  fence        0xf, 0xf
+    818: 00008067  jalr         x0, 0(x1)
+loc_81c:
+    81c: ffb01cb7  lui          x25, 0xffb01  # x25 = 0xffb01000
+    820: 8dcc8c93  addi         x25, x25, -1828  # x25 = 0xffb008dc · riscv_local_mem + 0x8dc
+    824: 000caa03  lw           x20, 0(x25)  # riscv_local_mem + 0x8dc · 0xffb008dc
+loc_828:
+    828: ffb51cb7  lui          x25, 0xffb51  # x25 = 0xffb51000
+    82c: 020c8c93  addi         x25, x25, 32  # x25 = 0xffb51020
+    830: 000cda83  lhu          x21, 0(x25)  # 0xffb51020
+    834: 415a0b33  sub          x22, x20, x21
+    838: 010b1b13  slli         x22, x22, 16
+    83c: 010b5b13  srli         x22, x22, 16
+    840: 00200b93  addi         x23, x0, 2  # x23 = 0x00000002
+    844: 416b8bb3  sub          x23, x23, x22
+    848: 00100c13  addi         x24, x0, 1  # x24 = 0x00000001
+    84c: 018bf663  bgeu         x23, x24, 0x00000858  # target 0x00000858
+    850: 0ff0000f  fence        0xf, 0xf
+    854: fd5ff06f  jal          x0, 0x00000828  # target 0x00000828
+loc_858:
+    858: 0ff0000f  fence        0xf, 0xf
+    85c: ffb01bb7  lui          x23, 0xffb01  # x23 = 0xffb01000
+    860: 8d8b8b93  addi         x23, x23, -1832  # x23 = 0xffb008d8 · riscv_local_mem + 0x8d8
+    864: 000baa03  lw           x20, 0(x23)  # riscv_local_mem + 0x8d8 · 0xffb008d8
+    868: 004a5a13  srli         x20, x20, 4
+    86c: fffa0a13  addi         x20, x20, -1
+    870: 508c0bb7  lui          x23, 0x508c0  # x23 = 0x508c0000
+    874: 01fbebb3  or           x23, x23, x31
+    878: ffe40c37  lui          x24, 0xffe40  # x24 = 0xffe40000 · TensixMMIO.INSTRN_BUF_BASE
+    87c: 017c2023  sw           x23, 0(x24)  # TensixMMIO.INSTRN_BUF_BASE · 0xffe40000; write runtime value
+    880: 008a1c13  slli         x24, x20, 8
+    884: 01000cb7  lui          x25, 0x01000  # x25 = 0x01000000
+    888: f00c8c93  addi         x25, x25, -256  # x25 = 0x00ffff00
+    88c: 019c7c33  and          x24, x24, x25
+    890: 45000d37  lui          x26, 0x45000  # x26 = 0x45000000
+    894: 018d0d13  addi         x26, x26, 24  # x26 = 0x45000018
+    898: 01ac6c33  or           x24, x24, x26
+    89c: ffe40db7  lui          x27, 0xffe40  # x27 = 0xffe40000 · TensixMMIO.INSTRN_BUF_BASE
+    8a0: 018da023  sw           x24, 0(x27)  # TensixMMIO.INSTRN_BUF_BASE · 0xffe40000; write runtime value
+    8a4: 010a5a93  srli         x21, x20, 16
+    8a8: 00008b37  lui          x22, 0x00008  # x22 = 0x00008000
+    8ac: 015b6b33  or           x22, x22, x21
+    8b0: 008b1c13  slli         x24, x22, 8
+    8b4: 019c7c33  and          x24, x24, x25
+    8b8: 45000d37  lui          x26, 0x45000  # x26 = 0x45000000
+    8bc: 019d0d13  addi         x26, x26, 25  # x26 = 0x45000019
+    8c0: 01ac6c33  or           x24, x24, x26
+    8c4: 018da023  sw           x24, 0(x27)  # TensixMMIO.INSTRN_BUF_BASE · 0xffe40000; write runtime value
+    8c8: 89000026  STALLWAIT    stall_res=128, wait_res=9  # stall_res: Stall.CFG; wait_res: Wait.THCON | Wait.PACK0
+    8cc: c0300116  WRCFG        GprAddress=12, wr128b=0, CfgReg=69  # cfg[69] (current thread StateID); THCON_SEC0_REG1_L1_Dest_addr = runtime
+    8d0: 008a9c13  slli         x24, x21, 8
+    8d4: 019c7c33  and          x24, x24, x25
+    8d8: 01ac6c33  or           x24, x24, x26
+    8dc: 018da023  sw           x24, 0(x27)  # TensixMMIO.INSTRN_BUF_BASE · 0xffe40000; write runtime value
+    8e0: 80000001  DMANOP
+    8e4: 7a00f001  SETADCXX     CntSetMask=4, x_end2=15, x_start=0
+    8e8: 52000015  SETADCZW     CntSetMask=4, Ch1_W=0, Ch1_Z=0, Ch0_W=0, Ch0_Z=0, BitMask=5
+    8ec: ffef0a37  lui          x20, 0xffef0  # x20 = 0xffef0000 · cfg[0] (bank 0) · ALU_FORMAT_SPEC_REG_SrcA_val, ALU_FORMAT_SPEC_REG_SrcA_override, ALU_FORMAT_SPEC_REG_SrcB_val, ALU_FORMAT_SPEC_REG_SrcB_override, ALU_FORMAT_SPEC_REG_Dstacc_val, ALU_FORMAT_SPEC_REG_Dstacc_override
+    8f0: 2d0a0a13  addi         x20, x20, 720  # x20 = 0xffef02d0 · cfg[180] (bank 0) · DEST_TARGET_REG_CFG_PACK_SEC0_Offset, DEST_TARGET_REG_CFG_PACK_SEC0_ZOffset
+    8f4: 000a2023  sw           x0, 0(x20)  # cfg[180] (bank 0) · DEST_TARGET_REG_CFG_PACK_SEC0_Offset, DEST_TARGET_REG_CFG_PACK_SEC0_ZOffset · 0xffef02d0; write 0x00000000; cfg[180] (bank 0); DEST_TARGET_REG_CFG_PACK_SEC0_Offset = 0; DEST_TARGET_REG_CFG_PACK_SEC0_ZOffset = 0
+    8f8: 89000022  STALLWAIT    stall_res=128, wait_res=8  # stall_res: Stall.CFG; wait_res: Wait.PACK0
+    8fc: 06000000  MOP          mop_type=1, loop_count=0, zmask_lo16_or_loop_count=0
+    900: 88040022  STALLWAIT    stall_res=2, wait_res=8  # stall_res: Stall.SYNC; wait_res: Wait.PACK0
+    904: ffe80a37  lui          x20, 0xffe80  # x20 = 0xffe80000 · tensix_pc_buf + 0x0
+    908: 004a0a13  addi         x20, x20, 4  # x20 = 0xffe80004 · TensixMMIO.PC_BUF_SYNC
+    90c: 000a2023  sw           x0, 0(x20)  # TensixMMIO.PC_BUF_SYNC · 0xffe80004; write 0x00000000
+    910: 000a2a83  lw           x21, 0(x20)  # TensixMMIO.PC_BUF_SYNC · 0xffe80004
+    914: 01507033  and          x0, x0, x21
+    918: ffb01c37  lui          x24, 0xffb01  # x24 = 0xffb01000
+    91c: 8d8c0c13  addi         x24, x24, -1832  # x24 = 0xffb008d8 · riscv_local_mem + 0x8d8
+    920: 000c2a03  lw           x20, 0(x24)  # riscv_local_mem + 0x8d8 · 0xffb008d8
+    924: 00001ab7  lui          x21, 0x00001  # x21 = 0x00001000 · F32_TILE_BYTES · Wait.CFGEXU
+    928: 800a8a93  addi         x21, x21, -2048  # x21 = 0x00000800
+    92c: 015a0a33  add          x20, x20, x21
+    930: 00040b37  lui          x22, 0x00040  # x22 = 0x00040000
+    934: 880b0b13  addi         x22, x22, -1920  # x22 = 0x0003f880 · arc_apb_reset_unit + 0xf880
+    938: 016a6663  bltu         x20, x22, 0x00000944  # target 0x00000944
+    93c: 00001bb7  lui          x23, 0x00001  # x23 = 0x00001000 · F32_TILE_BYTES · Wait.CFGEXU
+    940: 417a0a33  sub          x20, x20, x23
+loc_944:
+    944: ffb01c37  lui          x24, 0xffb01  # x24 = 0xffb01000
+    948: 8d8c0c13  addi         x24, x24, -1832  # x24 = 0xffb008d8 · riscv_local_mem + 0x8d8
+    94c: 014c2023  sw           x20, 0(x24)  # riscv_local_mem + 0x8d8 · 0xffb008d8; write runtime value
+    950: ffb01ab7  lui          x21, 0xffb01  # x21 = 0xffb01000
+    954: 8dca8a93  addi         x21, x21, -1828  # x21 = 0xffb008dc · riscv_local_mem + 0x8dc
+    958: 000aaa03  lw           x20, 0(x21)  # riscv_local_mem + 0x8dc · 0xffb008dc
+    95c: 001a0a13  addi         x20, x20, 1
+    960: 010a1a13  slli         x20, x20, 16
+    964: 010a5a13  srli         x20, x20, 16
+    968: 014aa023  sw           x20, 0(x21)  # riscv_local_mem + 0x8dc · 0xffb008dc; write runtime value
+    96c: ffb51ab7  lui          x21, 0xffb51  # x21 = 0xffb51000
+    970: 028a8a93  addi         x21, x21, 40  # x21 = 0xffb51028
+    974: 014aa023  sw           x20, 0(x21)  # 0xffb51028; write runtime value
+    978: 0ff0000f  fence        0xf, 0xf
+    97c: 00008067  jalr         x0, 0(x1)
+    980:           j FW_TRISC2+4   # return to firmware, linked at install
