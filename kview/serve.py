@@ -22,7 +22,7 @@ MIME = {".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=ut
 class Library:
   def __init__(self, kernels):
     self.dir = Path(kernels).resolve()
-    self.abi = decode.parse_abi(ROOT / "fw" / "abi.h")
+    self.abi = decode.ABI
     self.lock = threading.Lock()
     self.manifests, self.cache = {}, {}
 
@@ -42,9 +42,10 @@ class Library:
       out.append(dict(name=b["name"], addr=b["addr"], size=b["size"], tile=b["tile"], kind=b.get("kind"), src=b.get("src")))
     return sorted(out, key=lambda b: (b["addr"], -b["size"]))
 
-  def resolve(self, value, buffers):
-    """What a launch-parameter word is: a DRAM buffer (low 3 bits = first bank), a Tensix instruction, or a number."""
+  def resolve(self, value, buffers, coord=False):
+    """What a launch-parameter word is: a NoC coordinate, a DRAM buffer (low 3 bits = first bank), a Tensix instruction, or a number."""
     if isinstance(value, str): return dict(text=value, kind="dynamic", note="filled in by the host for every token")
+    if coord: return dict(text=f"({value & 0x3F},{value >> 6 & 0x3F})", kind="coord", note=f"NoC coordinate {value} = x | y << 6: {decode.coord_name(value)}")
     if value >> 24 == 0x71:
       d = decode.tt_decode(value)
       return dict(text=decode.hex8(value), kind="instr", note=f"{d['op']}: {d['gist']}")
@@ -65,45 +66,47 @@ class Library:
     for model in self.models():
       m = self.manifest(model)
       buffers = self.buffers(m)
-      order = list(dict.fromkeys(name for name, _ in m["launches"])) + [n for n in m["programs"] if n not in {x for x, _ in m["launches"]}]
-      programs = []
-      for name in order:
-        p = m["programs"][name]
-        launches = [words for n, words in m["launches"] if n == name]
-        uniform = []
-        for i, pname in enumerate(p["uniform"]):
-          values = [w[i] for w in launches if i < len(w)]
-          distinct = list(dict.fromkeys(map(json.dumps, values)))
-          uniform.append(dict(name=pname, addr=m["l1_param_base"] + 4 * i, kind="uniform", varies=len(distinct) > 1,
-                              values=[self.resolve(json.loads(v), buffers) for v in distinct[:40]]))
-        for a, b in zip(uniform, uniform[1:]):  # FP8 scales travel as two SFPLOADI words: low half, then high half
-          if a["name"].endswith("_0") and b["name"] == a["name"][:-1] + "1":
-            ia, ib = p["uniform"].index(a["name"]), p["uniform"].index(b["name"])
-            pairs = [(w[ia], w[ib]) for w in launches if isinstance(w[ia], int) and isinstance(w[ib], int) and w[ia] >> 16 == 0x716A and w[ib] >> 16 == 0x7168]
-            if pairs:
-              floats = [decode.fnum(decode.f32((hi & 0xFFFF) << 16 | lo & 0xFFFF)) for lo, hi in pairs]
-              a["combined"] = b["combined"] = dict(name=a["name"][:-2], values=floats)
-        static = []
-        for j, pname in enumerate(p["static"]):
-          values = [c["params"][j] for c in p["per_core"]]
-          static.append(dict(name=pname, addr=m["static_base"] + 0x40 * p["k"] + 4 * j, kind="per-core", per_core=values,
-                             varies=len(set(values)) > 1, values=[self.resolve(v, buffers) for v in list(dict.fromkeys(values))[:3]]))
-        kernels = []
-        for r, role in enumerate(m["roles"]):
-          for v, rel in enumerate(p["files"][role]):
-            path = self.dir / model / rel
-            cores = [c["core"] for c in p["per_core"] if c["variants"][r] == v]
-            kernels.append(dict(role=role, file=Path(rel).stem, variant=v if len(p["files"][role]) > 1 else None,
-                                size=path.stat().st_size if path.exists() else 0, cores=cores))
-        programs.append(dict(name=name, k=p["k"], cores=p["cores"], params=uniform + static, kernels=kernels, launches=len(launches)))
-      seq, runs = [n for n, _ in m["launches"]], []
+      launched = list(dict.fromkeys(name for name, _ in m["launches"]))
+      order = launched + [n for n in m["programs"] if n not in launched]
       ref = {}
       try: ref = json.loads((self.dir / model / "reference.json").read_text())
       except (OSError, ValueError): pass
-      out.append(dict(id=model, model=m.get("model", model), note=ref.get("note", ""), programs=programs, sequence=compress(seq),
+      out.append(dict(id=model, model=m.get("model", model), note=ref.get("note", ""), programs=[self.program(model, m, name, buffers) for name in order],
+                      sequence=compress([n for n, _ in m["launches"]]),
                       layout={k: m[k] for k in ("static_base", "l1_param_base", "l1_data_base", "dram_top", "kv_block", "max_tokens") if k in m},
-                      persistent=m.get("persistent", []), buffers=[b for b in buffers if b["kind"] == "buffer" or b["kind"] == "history"]))
+                      persistent=decode.group_persistent(m.get("persistent", [])), buffers=[b for b in buffers if b["kind"] in ("buffer", "history")]))
     return dict(models=out, roles={r: decode.RISC_ROLE[r] for r in ROLE_ORDER}, abi={k: v for k, v in self.abi.items() if k.startswith(("FW_", "CODE_", "L1_", "DATA_", "SLOT_", "GO_", "LAUNCH", "SUBORD", "PARAM"))})
+
+  def program(self, model, m, name, buffers):
+    """One program's launch parameters, kernels and cores for the overview page."""
+    p = m["programs"][name]
+    launches = [words for n, words in m["launches"] if n == name]
+    files = [(r, role, v, rel) for r, role in enumerate(m["roles"]) for v, rel in enumerate(p["files"][role])]
+    coords = {c for _, _, _, rel in files if (self.dir / model / rel).exists()  # params the kernels use as NoC coordinates
+              for c in self.kernel(model, name, Path(rel).stem)["coord_params"]}
+    uniform = []
+    for i, pname in enumerate(p["uniform"]):
+      distinct = list(dict.fromkeys(json.dumps(w[i]) for w in launches if i < len(w)))
+      uniform.append(dict(name=pname, addr=m["l1_param_base"] + 4 * i, kind="uniform", varies=len(distinct) > 1, coord=pname in coords,
+                          values=[self.resolve(json.loads(v), buffers, pname in coords) for v in distinct[:40]]))
+    for a, b in zip(uniform, uniform[1:]):  # FP8 scales travel as two SFPLOADI words: low half, then high half
+      if a["name"].endswith("_0") and b["name"] == a["name"][:-1] + "1":
+        ia, ib = p["uniform"].index(a["name"]), p["uniform"].index(b["name"])
+        pairs = [(w[ia], w[ib]) for w in launches if isinstance(w[ia], int) and isinstance(w[ib], int) and w[ia] >> 16 == 0x716A and w[ib] >> 16 == 0x7168]
+        if pairs:
+          floats = [decode.fnum(decode.f32((hi & 0xFFFF) << 16 | lo & 0xFFFF)) for lo, hi in pairs]
+          a["combined"] = b["combined"] = dict(name=a["name"][:-2], values=floats)
+    static = []
+    for j, pname in enumerate(p["static"]):
+      values = [c["params"][j] for c in p["per_core"]]
+      static.append(dict(name=pname, addr=m["static_base"] + 0x40 * p["k"] + 4 * j, kind="per-core", per_core=values, varies=len(set(values)) > 1,
+                         coord=pname in coords, values=[self.resolve(v, buffers, pname in coords) for v in list(dict.fromkeys(values))[:3]]))
+    kernels = []
+    for r, role, v, rel in files:
+      path = self.dir / model / rel
+      kernels.append(dict(role=role, file=Path(rel).stem, variant=v if len(p["files"][role]) > 1 else None,
+                          size=path.stat().st_size if path.exists() else 0, cores=[c["core"] for c in p["per_core"] if c["variants"][r] == v]))
+    return dict(name=name, k=p["k"], cores=p["cores"], params=uniform + static, kernels=kernels, launches=len(launches))
 
   def kernel(self, model, program, file):
     if not all(re.fullmatch(r"[\w.\-]+", x) for x in (model, program, file)): raise ValueError("bad kernel name")
@@ -139,7 +142,7 @@ class Library:
 
 def row_text(row):
   if row["kind"] == "tt": ops = ", ".join(f"{n}={v}" for n, v, _ in row["args"])
-  else: ops = row.get("operands", "") + row.get("tlabel", "")
+  else: ops = row.get("operands", "") + (row.get("tlabel", "") if "back" in row or row.get("call") else "")  # jump target, as the listing shows it
   ann = "; ".join(" ← ".join(str(x) for x in a[1:] if x != "") if a[0] == "store" else str(a[1]) for a in row["ann"])
   return f"{row['op']} {ops}" + (f"  # {ann}" if ann else "")
 

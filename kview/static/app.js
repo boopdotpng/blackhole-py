@@ -3,6 +3,10 @@ const $ = s => document.querySelector(s);
 const hex = n => "0x" + (n >>> 0).toString(16);
 const fmtSize = n => n >= 1 << 30 ? +(n / 2 ** 30).toFixed(1) + " GiB" : n >= 1 << 20 ? +(n / 2 ** 20).toFixed(1) + " MiB" : n >= 1 << 10 ? +(n / 1024).toFixed(1) + " KiB" : n + " B";
 const hex8 = n => (n >>> 0).toString(16).padStart(8, "0");
+// A launch-parameter value as the overview shows it: NoC coordinates as (x,y), big numbers (DRAM addresses) in hex
+const paramText = (q, v) => q.coord ? `(${v & 63},${v >> 6 & 63})` : v > 99999 ? hex(v) : String(v);
+// Operands as the listing shows them: jumps and calls name their target, other rows (an addi that points at a table) do not
+const opsText = row => (row.operands || "") + (row.back != null || row.call ? row.tlabel || "" : "");
 const ROLE_SHORT = { brisc: "br", ncrisc: "nc", trisc0: "t0", trisc1: "t1", trisc2: "t2" };
 const ROLE_JOB = { brisc: "data movement, NoC 0", ncrisc: "data movement, NoC 1", trisc0: "unpack thread", trisc1: "math thread", trisc2: "pack thread" };
 
@@ -120,7 +124,7 @@ function renderCrumbs() {
 
 // ------------------------------------------------------------------------------------------------------------- listing
 function rowText(row) {
-  const ops = row.kind === "tt" ? row.args.map(a => `${a[0]}=${a[1]}`).join(", ") : (row.operands || "") + (row.tlabel || "");
+  const ops = row.kind === "tt" ? row.args.map(a => `${a[0]}=${a[1]}`).join(", ") : opsText(row);
   const ann = row.ann.map(a => a[0] === "store" ? `${a[1]} ← ${a[2]}` : a[1]).join("; ");
   return `${row.pc.toString(16)} ${row.op} ${ops} ${ann} ${row.label || ""} ${row.func ? row.func.title || "" : ""}`;
 }
@@ -187,7 +191,7 @@ function opsNode(row) {
     return h("span", { class: "ops", title }, row.args.flatMap((a, i) => [i ? ", " : "", a[0] + "=", h("b", {}, String(a[1]))]));
   }
   const kids = [row.operands || ""];
-  if (row.tlabel && row.target != null && row.back != null || row.call) kids.push(h("span", { class: "jump", "data-target": row.target }, row.tlabel));
+  if (row.tlabel && (row.back != null || row.call)) kids.push(h("span", { class: "jump", "data-target": row.target }, row.tlabel));
   return h("span", { class: "ops" }, kids);
 }
 function rowNodes(row) {
@@ -366,8 +370,9 @@ function paramBlock(name) {
     h("div", { class: "kv" }, h("span", { class: "k" }, "kind"), h("span", {}, p.kind === "uniform" ? "uniform, the same on every core, sent with each launch" : "per core, read from the core's resident table"),
       h("span", { class: "k" }, "L1 address"), h("span", {}, hex(p.addr)))];
   if (p.kind === "per-core") {
-    const vs = p.per_core, lo = Math.min(...vs), hi = Math.max(...vs);
-    out.push(h("p", { class: "sub" }, p.varies ? `Differs between cores: ${lo > 99999 ? hex(lo) : lo} to ${hi > 99999 ? hex(hi) : hi} over ${vs.length} cores.` : "The same on every core."));
+    const vs = p.per_core, range = `${paramText(p, Math.min(...vs))} to ${paramText(p, Math.max(...vs))}`;
+    out.push(h("p", { class: "sub" }, !p.varies ? "The same on every core." :
+      `Differs between cores: ${p.coord ? `${new Set(vs).size} different NoC coordinates` : range} over ${vs.length} cores.`));
   } else if (p.varies) out.push(h("p", { class: "sub" }, `Changes between the ${curProgram().launches} launches of one token. First values:`));
   out.push(h("table", { class: "t" }, p.values.slice(0, 8).map(v => h("tr", {}, h("td", {}, v.text), h("td", { class: "note" }, v.note)))));
   if (p.combined) out.push(h("p", { class: "sub" }, `Together with its partner word this loads ${p.combined.name} as an FP32 constant: ${p.combined.values.slice(0, 6).join(", ")}${p.combined.values.length > 6 ? ", …" : ""}`));
@@ -378,13 +383,13 @@ function renderSide() {
   if (!S.kernel) return;
   const row = S.byPc.get(S.sel);
   if (!row) return side.replaceChildren(...kernelSummary());
-  const out = [h("h2", {}, row.op + " " + (row.kind === "tt" ? "" : (row.operands || "") + (row.tlabel || ""))),
+  const out = [h("h2", {}, row.op + " " + (row.kind === "tt" ? "" : opsText(row))),
     h("p", { class: "sub big" }, `pc ${hex(row.pc)}   word ${hex8(row.word)}` + (row.kind === "tt" ? `   Tensix ${hex8(row.tword)}` : ""))];
   if (row.ann.length) out.push(h("div", { class: "gistbox" }, row.ann.map(a => h("div", {}, annNodes({ ...row, ann: [a] })))));
   if (row.func) out.push(h("p", { class: "sub" }, `Entry of ${row.func.name}` + (row.func.title ? `: ${row.func.title}.` : ".")));
   if (row.kind === "rv" && rvMeaning(row)) out.push(h("p", { class: "sub" }, rvMeaning(row)));
   if (row.kind === "tt") out.push(...ttBlock(row, "Tensix instruction"));
-  if (row.kind === "data" && row.detail?.table) out.push(h("h3", {}, "Embedded data"), h("p", { class: "sub" }, `Part of the table at ${hex(row.detail.table.start)}: 16-bit NoC coordinates (x | y << 6), one per DRAM bank, indexed by the bank a tile lives in.`));
+  if (row.kind === "data" && row.detail?.table) out.push(h("h3", {}, "Embedded data"), h("p", { class: "sub" }, `Part of the table at ${hex(row.detail.table.start)}: 16-bit NoC coordinates (x | y << 6), one per DRAM bank, indexed by the bank a tile lives in. The port is which of the bank's three NoC endpoints the access goes to; tables that mix ports spread reads over all three.`));
   if (row.mem) {
     const m = row.mem;
     out.push(h("h3", {}, m.rw === "w" ? `Stores ${m.width * 8} bits to` : `Loads ${m.width * 8} bits from`));
@@ -492,18 +497,24 @@ function renderOverview() {
     if (x === 8 || x === 9) return h("div", { class: "c gap" });
     const i = inProg.get(`${x},${y}`);
     if (i == null) return h("div", { class: "c", title: `(${x},${y}) not used by ${p.name}` });
-    const tip = `(${x},${y})\n` + p.params.filter(q => q.kind === "per-core").map(q => `${q.name} = ${q.per_core[i] > 99999 ? hex(q.per_core[i]) : q.per_core[i]}`).join("\n");
-    const text = pick ? (base > 99999 ? "+" + (pick.per_core[i] - base) : String(pick.per_core[i])) : "";
+    const tip = `(${x},${y})\n` + p.params.filter(q => q.kind === "per-core").map(q => `${q.name} = ${paramText(q, q.per_core[i])}`).join("\n");
+    const v = pick?.per_core[i];
+    const text = !pick ? "" : pick.coord ? paramText(pick, v).slice(1, -1) : base > 99999 ? "+" + (v - base) : String(v);
     return h("div", { class: "c on" + (variantOf.get(`${x},${y}`) ? " v1" : ""), title: tip }, text);
   };
   const grid = h("div", { class: "grid", style: "grid-template-columns: repeat(17, max-content)" },
     h("div", { class: "c ax" }), xs.map(x => h("div", { class: "c ax" }, x === 8 || x === 9 ? "" : String(x))),
     ys.map(y => [h("div", { class: "c ax" }, String(y)), xs.map(x => cell(x, y))]));
-  const valueCell = q => q.kind === "per-core"
-    ? (q.varies ? `${Math.min(...q.per_core) > 99999 ? hex(Math.min(...q.per_core)) : Math.min(...q.per_core)} … ${Math.max(...q.per_core) > 99999 ? hex(Math.max(...q.per_core)) : Math.max(...q.per_core)}` : q.values[0].text)
-    : q.values[0]?.text + (q.varies ? "  …" : "");
-  const noteCell = q => (q.combined ? `${q.combined.name} = ${q.combined.values.slice(0, 3).join(", ")}${q.combined.values.length > 3 ? ", …" : ""}; ` : "") + (q.values[0]?.note || "") +
-    (q.kind === "uniform" && q.varies ? `  (changes per layer, ${q.values.length}${q.values.length === 40 ? "+" : ""} distinct values)` : "");
+  const valueCell = q => {
+    if (q.kind !== "per-core" || !q.varies) return q.values[0]?.text + (q.varies ? "  …" : "");
+    if (q.coord) return q.values.map(v => v.text).join(" ") + (new Set(q.per_core).size > q.values.length ? " …" : "");
+    return `${paramText(q, Math.min(...q.per_core))} … ${paramText(q, Math.max(...q.per_core))}`;
+  };
+  const noteCell = q => {
+    if (q.coord) return "NoC coordinate of a core, stored as x | y << 6" + (q.kind === "per-core" && q.varies ? `; ${new Set(q.per_core).size} different cores` : "");
+    return (q.combined ? `${q.combined.name} = ${q.combined.values.slice(0, 3).join(", ")}${q.combined.values.length > 3 ? ", …" : ""}; ` : "") + (q.values[0]?.note || "") +
+      (q.kind === "uniform" && q.varies ? `  (changes per layer, ${q.values.length}${q.values.length === 40 ? "+" : ""} distinct values)` : "");
+  };
   const view = h("div", { id: "overview" },
     h("h2", {}, p.name),
     h("p", { class: "lede" }, `Runs on ${p.cores.length} Tensix cores, launched ${p.launches} time${p.launches === 1 ? "" : "s"} per token. Each core runs up to five kernels at once, one per RISC-V: two move data over the NoC, three drive the Tensix unpack, math and pack threads.`),
@@ -517,22 +528,31 @@ function renderOverview() {
         h("td", {}, hex(q.addr)), h("td", {}, h("span", { class: "nm param" }, q.name)), h("td", { class: "scope" }, q.kind === "uniform" ? "every core" : "per core"),
         h("td", {}, valueCell(q)), h("td", { class: "note" }, noteCell(q))))),
     h("p", { class: "gridnote" }, "DRAM addresses are per-bank offsets; the low three bits pick the bank the first tile sits in. Click a per-core row to see its values on the map."),
-    h("h3", {}, "Cores" + (pick ? `, showing ${pick.name}` + (base > 99999 ? ` relative to ${hex(base)}` : "") : "")),
+    h("h3", {}, "Cores" + (pick ? `, showing ${pick.name}` + (!pick.coord && base > 99999 ? ` relative to ${hex(base)}` : "") : "")),
     grid,
     h("p", { class: "gridnote" }, "NoC coordinates, x across and y down. Columns 8 and 9 are not Tensix." + (variantOf.size ? " The two colours are the two BRISC/NCRISC image variants." : "")),
     h("h3", {}, "L1 layout shared by every kernel of this model"),
-    h("table", { class: "t" }, [["FW_BRISC … FW_TRISC2", hex(S.index.abi.FW_BRISC ?? 0x20), "resident firmware, one image per RISC"],
-      ["L1_PARAM_BASE", hex(mm.layout.l1_param_base), "uniform parameters, 16 words"],
-      ["code slot 0, slot 1", `${hex(S.index.abi.CODE_BRISC ?? 0x800)}, ${hex((S.index.abi.CODE_BRISC ?? 0x800) + (S.index.abi.SLOT_STRIDE ?? 0x7040))}`, "kernel images, double buffered; kernels are position independent"],
-      ["per-core tables", hex(mm.layout.static_base), `0x40 bytes per program; ${p.name} is table ${p.k} at ${hex(mm.layout.static_base + 0x40 * p.k)}`],
-      ...mm.persistent.map(x => [x.name, hex(x.addr), `${x.size} bytes that survive across launches`]),
-      ["kernel data", hex(mm.layout.l1_data_base), "circular buffers and scratch tiles, up to the top of L1 (0x180000)"]]
-      .map(([a, b, c]) => h("tr", {}, h("td", {}, a), h("td", {}, b), h("td", { class: "note" }, c)))));
+    h("table", { class: "t" }, layoutRows(mm, p).map(([a, b, c]) => h("tr", {}, h("td", {}, a), h("td", {}, b), h("td", { class: "note" }, c)))));
   $("#view").replaceChildren(view);
   $("#view").scrollTop = 0;
   $("#side-body").replaceChildren(h("h2", {}, mm.id), h("p", { class: "sub" }, mm.note || ""),
     h("h3", {}, "DRAM buffers the kernels pass around"),
     h("table", { class: "t buffers" }, mm.buffers.map(b => h("tr", { title: `${b.size} bytes` + (b.src ? `\n${b.src}` : "") }, h("td", {}, hex(b.addr)), h("td", { class: "name" }, b.name), h("td", { class: "size" }, fmtSize(b.size))))));
+}
+
+function layoutRows(mm, p) {
+  const abi = S.index.abi, L = mm.layout, rows = [];
+  if (abi.FW_BRISC != null) rows.push(["FW_BRISC … FW_TRISC2", hex(abi.FW_BRISC), "resident firmware, one image per RISC"]);
+  rows.push(["L1_PARAM_BASE", hex(L.l1_param_base), `uniform parameters, ${(abi.PARAM_SIZE ?? 0x40) / 4} words`]);
+  if (abi.CODE_BRISC != null && abi.SLOT_STRIDE != null)
+    rows.push(["code slot 0, slot 1", `${hex(abi.CODE_BRISC)}, ${hex(abi.CODE_BRISC + abi.SLOT_STRIDE)}`, "kernel images, double buffered; kernels are position independent"]);
+  rows.push(["per-core tables", hex(L.static_base), `0x40 bytes per program; ${p.name} is table ${p.k} at ${hex(L.static_base + 0x40 * p.k)}`]);
+  for (const x of mm.persistent) {
+    const where = x.cores.length === 1 ? `core (${x.cores[0]})` : `${x.cores.length} cores: ` + x.cores.map(c => `(${c})`).join(" ");
+    rows.push([x.name, hex(x.addr), `${fmtSize(x.size)} on ${where}; survives across launches`]);
+  }
+  rows.push(["kernel data", hex(L.l1_data_base), "circular buffers and scratch tiles, up to the top of L1 (0x180000)"]);
+  return rows;
 }
 
 // ---------------------------------------------------------------------------------------------------------------- find

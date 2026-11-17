@@ -54,7 +54,8 @@ MOP_SLOTS = ("outer loop count", "inner loop count", "start op", "end op 0", "en
              "last op, final outer iteration", "last op, other outer iterations")
 MOP_SLOTS_T0 = ("unused by template 0", "flags (bit0: +B/skipB, bit1: +A1..A3)", "insn B", "insn A0", "insn A1", "insn A2",
                 "insn A3", "skip A (zmask bit set)", "skip B (zmask bit set)")
-# p150: NoC endpoints of each DRAM bank ([0] NoC 0 default, [1] NoC 1 default, [2] spare port)
+# p150: NoC endpoints (ports) of each DRAM bank: [0] NoC 0 default, [1] NoC 1 default, [2] spare. Kernels that stream
+# a lot from DRAM spread their reads over all three to get past the bandwidth of one port.
 DRAM_ENDPOINTS = (((17, 14), (17, 13), (17, 12)), ((17, 15), (17, 16), (17, 17)), ((17, 18), (17, 19), (17, 20)),
                   ((17, 21), (17, 22), (17, 23)), ((18, 14), (18, 13), (18, 12)), ((18, 17), (18, 16), (18, 15)),
                   ((18, 20), (18, 19), (18, 18)), ((18, 23), (18, 22), (18, 21)))
@@ -64,7 +65,7 @@ DEBUG_NOTES = {"soft_reset_0": "bit set = held in reset: 11 BRISC, 12-14 TRISC0-
 def coord_name(v):
   x, y = v & 0x3F, (v >> 6) & 0x3F
   for bank, ports in enumerate(DRAM_ENDPOINTS):
-    if (x, y) in ports: return f"({x},{y}) DRAM bank {bank}"
+    if (x, y) in ports: return f"({x},{y}) DRAM bank {bank} port {ports.index((x, y))}"
   if (x, y) == (19, 24): return f"({x},{y}) PCIe / host"
   if (1 <= x <= 7 or 10 <= x <= 16) and 2 <= y <= 11: return f"({x},{y}) Tensix"
   return f"({x},{y})"
@@ -372,7 +373,7 @@ def rv_decode(w, pc):
 # ---------------------------------------------------------------------------------------------------------------------
 # Abstract values: int (known constant), str (symbolic expression), None (unknown)
 
-def is_addr(v): return isinstance(v, int) and (0xE000 <= v < L1_SIZE or v >= 0xFFB00000)
+def is_addr(v): return isinstance(v, int) and (KERNEL_L1 <= v < L1_SIZE or v >= 0xFFB00000)
 def is_off(v): return isinstance(v, tuple)
 
 def join(x, y):
@@ -468,6 +469,21 @@ def parse_abi(path):
       except Exception: pass
   return out
 
+ABI = parse_abi(HERE.parent / "fw" / "abi.h")
+KERNEL_L1 = ABI.get("DATA_BASE", 0x11840)  # L1 below this is firmware, launch words and code slots, never a kernel pointer
+
+def group_persistent(regions):
+  """The manifest lists a persistent region once per core; merge entries that share a name, address and size."""
+  out = {}
+  for p in regions:
+    key = (p["name"], p["addr"], p["size"])
+    out.setdefault(key, dict(name=p["name"], addr=p["addr"], size=p["size"], cores=[]))["cores"].append(tuple(p["core"]))
+  return list(out.values())
+
+def cores_text(cores, limit=4):
+  shown = " ".join(f"({x},{y})" for x, y in cores[:limit])
+  return shown + (f" and {len(cores) - limit} more" if len(cores) > limit else "")
+
 class Context:
   """Everything needed to name addresses in one kernel: its role, its program's params and the model's L1 layout."""
   def __init__(self, role, manifest=None, program=None, abi=None):
@@ -476,12 +492,16 @@ class Context:
     self.tables = []      # (lo, hi, program name)
     self.locals = {}      # local-RAM address -> name, filled in by CB inference
     m = self.manifest
+    self.persistent = group_persistent(m.get("persistent", []))
     for pname, p in m.get("programs", {}).items():
       base = m["static_base"] + 0x40 * p["k"]
       self.tables.append((base, base + 0x40, pname))
       if pname == program:
         for i, n in enumerate(p["uniform"]): self.params[m["l1_param_base"] + 4 * i] = (n, "uniform")
         for j, n in enumerate(p["static"]): self.params[base + 4 * j] = (n, "per-core")
+
+  def persistent_at(self, addr):
+    return next((p for p in self.persistent if p["addr"] <= addr < p["addr"] + p["size"]), None)
 
   def l1(self, addr):
     """(name, description) of an L1 address."""
@@ -491,9 +511,9 @@ class Context:
       return f"param {n}", f"{kind} launch parameter" + (", sent with every EXEC" if kind == "uniform" else ", from this core's resident table")
     for lo, hi, pname in self.tables:
       if lo <= addr < hi: return f"{pname} per-core table + {hx(addr - lo)}", "resident per-core parameter table of another program"
-    for p in m.get("persistent", []):
-      if p["addr"] <= addr < p["addr"] + p["size"]:
-        return f"{p['name']} + {hx(addr - p['addr'])}", f"persistent L1 region on core {tuple(p['core'])}, survives across launches"
+    if (p := self.persistent_at(addr)):
+      where = f"core {cores_text(p['cores'])}" if len(p["cores"]) == 1 else f"{len(p['cores'])} cores, {cores_text(p['cores'])}"
+      return p["name"] + (f" + {hx(addr - p['addr'])}" if addr != p["addr"] else ""), f"persistent L1 region on {where}; survives across launches"
     if a:
       fixed = (("GO_SIGNAL", 4, "launch word: byte 0 = 0x80 to launch, cleared when every RISC returns"),
                ("SUBORDINATE_SYNC", 4, "per-RISC run state bytes for ncrisc, trisc0-2"), ("LAUNCH", 0x40, "active-role bitmask of the launch"))
@@ -683,9 +703,12 @@ def name_function(rows, body, ctx, states):
   """A readable title for a subroutine, from what it touches."""
   ctrl = tag = length = niu = None
   status, params, table, copies = [], [], False, 0
+  pushed, popped, tensix, mop_setup = [], [], [], False  # CBs it advances, Tensix ops it issues, whether it writes MOP_CFG
+  sends = []  # rows that send a staged NoC command
   for i in sorted(body):
     r, st = rows[i], states[i]
     if st is None: continue
+    if r["kind"] == "tt": tensix.append(tt_decode(r["tword"])["op"])
     if r.get("op") == "auipc": table = True
     if not r.get("mem"): continue
     base = st[r["rs1"]]
@@ -702,19 +725,63 @@ def name_function(rows, body, ctx, states):
       if t == "noc.ctrl" and isinstance(v, int): ctrl = v
       if t == "noc.tag" and isinstance(v, int): tag = v >> 10
       if t == "noc.len": length = v
+      if t == "noc.cmd": sends.append(i)
+      if t == "stream": (pushed if d["name"].endswith("tiles_received") else popped).append(d["cb"])
+      if t.startswith("mop."): mop_setup = True
+      if t == "instr" and isinstance(v, int): tensix.append(tt_decode(v)["op"])
   if ctrl is not None:
     kind = "atomic increment" if ctrl & 1 else ("multicast write" if ctrl >> 5 & 1 else "write") if ctrl & 2 else "read"
-    title = f"NoC {niu} {kind}"
+    looped = any(rows[j].get("branch") and rows[j]["target"] // 4 <= s < j for j in body for s in sends)  # a back edge around the send
+    title = f"NoC {niu} {kind}" + ("s in a loop" if looped else "")
     if tag is not None: title += f", tid {tag}"
-    if isinstance(length, int) and not ctrl & 1: title += f", {length} B"
-    elif isinstance(length, str) and not ctrl & 1: title += f", {length} B"
+    if isinstance(length, (int, str)) and not ctrl & 1: title += f", {length} B" + (" each" if looped else "")
     return title, ("noc_" + kind.split()[0])
   if params and table: return f"DRAM tile address of {params[0]}", "dram_tile"
   if status and len(body) <= 10:
     what, tid = status[0]
     return (f"wait until NoC {niu} tid {tid} " + ("writes have left L1" if what == "outgoing" else "responses have arrived")), "noc_wait"
-  if copies >= 2 and len(body) <= 16: return "copy words in L1", "copy"
-  return None, "sub"
+  if copies >= 2 and 2 * copies >= len(body): return "copy words in L1", "copy"
+  if pushed or popped:
+    pop = "unpack from" if ctx.role == "trisc0" else "pop"
+    push = "pack into" if ctx.role == "trisc2" else "push"
+    return ", ".join([f"{pop} CB{cb}" for cb in dict.fromkeys(popped)] + [f"{push} CB{cb}" for cb in dict.fromkeys(pushed)]), "cb"
+  runs = tensix.count("MOP")
+  if mop_setup: return "set up a MOP template" + (f", run it {runs}×" if runs > 1 else ", run it" if runs else ""), "mop"
+  ops = [op for op in dict.fromkeys(tensix) if op not in ("NOP", "SFPNOP", "DMANOP", "STALLWAIT")]
+  if not ops: return None, "sub"
+  if not all(op.startswith("SFP") for op in ops): return "Tensix: " + " ".join(ops[:5]) + (" …" if len(ops) > 5 else ""), "tensix"
+  words = [tt_decode(rows[i]["tword"]) for i in sorted(body) if rows[i]["kind"] == "tt"]
+  if (formula := sfpu_formula(words, len(words) == len(body) - 1)): return "SFPU: " + formula, "sfpu"
+  dst = lambda op: sorted({a[1] for d in words if d["op"] == op for a in d["args"] if a[0] == "dest_reg_addr"})
+  read, written = dst("SFPLOAD"), dst("SFPSTORE")
+  where = f"Dst{written} in place" if read == written else f"Dst{read} → Dst{written}"
+  return f"SFPU, {where}: " + " ".join(ops[:4]) + (" …" if len(ops) > 4 else ""), "sfpu"
+
+def sfpu_formula(words, straight):
+  """What a straight-line run of SFPU arithmetic stores, as formulas over Dst rows: "Dst[0] = Dst[0] × Dst[320]".
+  None when the code branches or uses anything beyond load, store, multiply and multiply-add."""
+  if not straight: return None
+  regs = {9: ("0", False), 10: ("1", False)}  # register -> (text, is a sum); L9 and L10 are the constants 0 and 1
+  stores = []
+  def term(r, neg=False):
+    text, is_sum = regs[r]
+    return ("-" if neg else "") + (f"({text})" if is_sum else text)
+  for d in words:
+    v = {a[0]: a[1] for a in d["args"]}
+    op = d["op"]
+    if op in ("SFPNOP", "STALLWAIT", "NOP"): continue
+    if op == "SFPLOAD": regs[v["lreg_ind"]] = (f"Dst[{v['dest_reg_addr']}]", False)
+    elif op == "SFPLOADI" and v["instr_mod0"] == 0: regs[v["lreg_ind"]] = (fnum(f32(v["imm16"] << 16)), False)
+    elif op == "SFPMOV" and v["instr_mod1"] == 0 and v["lreg_c"] in regs: regs[v["lreg_dest"]] = regs[v["lreg_c"]]
+    elif op in ("SFPMUL", "SFPMAD") and v["instr_mod1"] & ~3 == 0 and {v["lreg_src_a"], v["lreg_src_b"], v["lreg_src_c"]} <= set(regs):
+      a, b, c, m = v["lreg_src_a"], v["lreg_src_b"], v["lreg_src_c"], v["instr_mod1"]
+      product = term(b, m & 1) if a == 10 else f"{term(a, m & 1)} × {term(b)}"
+      if c == 9 and not m & 2: regs[v["lreg_dest"]] = (product, False)
+      else: regs[v["lreg_dest"]] = (f"{product} {'-' if m & 2 else '+'} {term(c) if m & 2 else regs[c][0]}", True)
+    elif op == "SFPSTORE" and v["lreg_ind"] in regs: stores.append(f"Dst[{v['dest_reg_addr']}] = {regs[v['lreg_ind']][0]}")
+    else: return None
+  text = "; ".join(stores)
+  return text if stores and len(text) <= 100 else None
 
 def infer_cbs(rows, states, ctx):
   """Circular-buffer state lives in local RAM as {pointer, count}. Tie each pair to its CB index and L1 base."""
@@ -809,7 +876,11 @@ def disassemble(image, ctx):
     if rows[i - 1].get("op") == "auipc" and isinstance(v, int) and v % 4 == 0 and v // 4 < n and states[v // 4] is None:
       tables[v] = r["pc"]
       labels.setdefault(v, f"tbl_{v:x}")
+  for e, f in funcs.items():  # tile-address helpers of one buffer differ only in the DRAM port their bank table picks
+    for t, ref in tables.items():
+      if f["kind"] == "dram_tile" and ref // 4 in bodies[e] and t + 16 <= len(image): f["title"] += port_note(struct.unpack_from("<8H", image, t))
   out = []
+  param_names, coord_params ={n for n, _ in ctx.params.values()}, set()  # params stored straight into a NoC coordinate register
   tcfg, mopcfg, replay = {}, {}, {}
   recording = None  # [slot, remaining, execute]
   pending_loadi = {}
@@ -826,7 +897,8 @@ def disassemble(image, ctx):
       o.update(kind="data", op=".half", operands=f"{hx(lo)}, {hx(hi)}")
       if table_at:
         idx = (pc - table_at[0]) // 2
-        o["ann"].append(["note", f"[{idx}] {coord_name(lo)}   [{idx + 1}] {coord_name(hi)}"])
+        entry = lambda i, v: coord_name(v).replace(f" DRAM bank {i} ", " ")  # entry i is bank i, so only the port is news
+        o["ann"].append(["note", f"[{idx}] {entry(idx, lo)}   [{idx + 1}] {entry(idx + 1, hi)}"])
         o["detail"] = dict(table=dict(start=table_at[0], ref=tables.get(table_at[0]), entries=[[idx, lo, coord_name(lo)], [idx + 1, hi, coord_name(hi)]]))
       out.append(o); recording = None
       continue
@@ -902,6 +974,7 @@ def disassemble(image, ctx):
           if d: text += f"  {d['name']}"; o["sym"] = sym_key(v, d)
           elif v in ctx.params: text += f"  &{ctx.params[v][0]}"; o["sym"] = "param:" + ctx.params[v][0]
           elif v in tables: text += f"  table {labels[v]}"; o["target"] = v; o["tlabel"] = labels[v]
+          elif ctx.persistent_at(v): text += f"  {ctx.l1(v)[0]}"; o["sym"] = f"a:{v:x}"
           elif 10 <= v < 100000 and r["op"] != "li": text += f"  ({v})"
           elif v >= 0x80000000 and v < 0xFF000000: text += f"  ({signed(v, 32)})"
           o["ann"].append(["val", text])
@@ -922,6 +995,7 @@ def disassemble(image, ctx):
         o["sym"] = sym_key(addr, d)
         o["mem"] = dict(rw=r["mem"], addr=addr, name=d["name"], region=d["region"], desc=d["desc"], width=r["width"])
         if write:
+          if d["type"] == "noc.coord" and val in param_names: coord_params.add(val)
           text, extra = value_note(d, val, r["width"], ctx, tcfg)
           o["ann"].append(["store", d["name"], text])
           o["mem"]["value"] = show(val) if not isinstance(val, int) else val & MASK
@@ -964,7 +1038,16 @@ def disassemble(image, ctx):
   if cbs:
     for cb in cbs.values(): cb["sides"] = sorted(set(cb["sides"]))
   return dict(rows=out, funcs=sorted(funcs.values(), key=lambda f: f["pc"]), cbs={str(k): v for k, v in sorted(cbs.items())}, size=len(image),
-              locals={hx(a - 0xFFB00000): nme for a, nme in sorted(ctx.locals.items())})
+              locals={hx(a - 0xFFB00000): nme for a, nme in sorted(ctx.locals.items())}, coord_params=sorted(coord_params))
+
+def port_note(coords):
+  """Which DRAM port a bank-indexed coordinate table uses for each bank, e.g. ", port (bank + 1) mod 3". Empty for port 0."""
+  ports = [next((p.index((v & 0x3F, v >> 6 & 0x3F)) for p in DRAM_ENDPOINTS if (v & 0x3F, v >> 6 & 0x3F) in p), None) for v in coords]
+  if None in ports or ports == [0] * 8: return ""
+  if len(set(ports)) == 1: return f", port {ports[0]}"
+  for k in range(3):
+    if ports == [(bank + k) % 3 for bank in range(8)]: return ", port bank mod 3" if k == 0 else f", port (bank + {k}) mod 3"
+  return ", ports " + " ".join(map(str, ports))
 
 def sym_key(addr, d):
   t = d.get("type", "")
