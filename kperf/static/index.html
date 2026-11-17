@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>kperf</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header id="top">
+  <h1>kperf</h1>
+  <select id="bundle" aria-label="Profile bundle"></select>
+  <div id="stats"></div>
+  <button id="theme" title="Switch between dark and light">theme</button>
+</header>
+<main id="grid">
+  <section id="left">
+    <div class="panel">
+      <div class="phead"><h2>Chip</h2><select id="metric" aria-label="Color cores by"></select></div>
+      <canvas id="map"></canvas>
+      <div id="map-scale" class="scale"></div>
+      <p class="hint">Physical NoC grid. Click a core to show its lanes. D<i>n</i> = DRAM tile (port) of bank <i>n</i>, colored by the GB/s through that port; dashed = unused; <span class="obs-key">◦</span> observer cores.</p>
+    </div>
+    <div class="panel grow">
+      <div class="phead"><h2>Findings</h2></div>
+      <ol id="findings"></ol>
+    </div>
+  </section>
+  <section id="right">
+    <div class="panel">
+      <div class="phead"><h2>Launch timeline</h2><div id="pick" role="tablist"></div></div>
+      <div id="legend"></div>
+      <canvas id="tl"></canvas>
+    </div>
+    <div class="panel">
+      <div class="phead"><h2>DRAM read bandwidth</h2><select id="dram-rows" aria-label="Heatmap rows"><option value="ports">per port (24 tiles)</option><option value="banks">per bank (8 controllers)</option></select><span class="sub" id="dram-sub"></span></div>
+      <canvas id="dram"></canvas>
+      <div id="dram-scale" class="scale"></div>
+    </div>
+    <div class="panel">
+      <div class="phead"><h2>Where the time goes</h2><span class="sub" id="table-sub"></span></div>
+      <table id="table"></table>
+    </div>
+  </section>
+</main>
+<div id="tip" role="tooltip" hidden></div>
+<script src="app.js"></script>
+</body>
+</html>
