@@ -4,7 +4,7 @@ Llama 3 on a Tenstorrent Blackhole card, from Python. The kernels in `kernels/` 
 
 ## Requirements
 
-- `tt-kmd` > 2.9.0
+- `tt-kmd` >= 2.12.0 (`smi.py` reads telemetry with the `NOC_READ` ioctl, added in 2.12.0)
 - Python with `numpy` and `tiktoken`
 - `clang` and `llvm-objcopy`
 - Weights in `weights/llama3-1b/`, `weights/llama3-8b-bf16/` or `weights/llama3-8b-fp8/`
