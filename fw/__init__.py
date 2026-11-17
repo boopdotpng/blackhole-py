@@ -9,8 +9,8 @@ class Op(IntEnum): EXEC = 0; COPY = 1; WAIT = 2; STORE = 3; TIMESTAMP = 4; CALL 
 
 ROLES = ("brisc", "ncrisc", "trisc0", "trisc1", "trisc2")
 GO_SIGNAL = 0x10
-FW = {"brisc": (0x20, 0x360), "ncrisc": (0x380, 0x100), "trisc0": (0x480, 0x100), "trisc1": (0x580, 0x100),
-      "trisc2": (0x680, 0x100)}
+FW = {"brisc": (0x20, 0x310), "ncrisc": (0x330, 0xB0), "trisc0": (0x3E0, 0x130), "trisc1": (0x510, 0x130),
+      "trisc2": (0x640, 0x130)}
 RETURN = {r: base + 4 for r, (base, _) in FW.items()}
 L1_PARAM_BASE, PARAM_SIZE, LAUNCH = 0x780, 0x40, 0x7C0
 assert all(a + n <= b for (a, n), (b, _) in zip(FW.values(), [*list(FW.values())[1:], (L1_PARAM_BASE, 0)])), "firmware slots overlap"

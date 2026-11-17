@@ -9,16 +9,18 @@
 #define SUBORDINATE_SYNC  0x14     /* u8 each for ncrisc, trisc0-2. 2 = booted, 0x80 = go, 0 = returned */
 
 /* Resident firmware, one image per RISC. FW_x + 0 boots, FW_x + 4 is where a kernel jumps when it is done. */
+/* [0x20, L1_PARAM_BASE) is nearly full. Growing it means moving L1_PARAM_BASE and DATA_BASE, which the exported
+ * kernels have compiled in (llama3.py checks the manifest), so they would need exporting again. */
 #define FW_BRISC          0x20
-#define FW_BRISC_SIZE     0x360
-#define FW_NCRISC         0x380
-#define FW_NCRISC_SIZE    0x100
-#define FW_TRISC0         0x480
-#define FW_TRISC0_SIZE    0x100
-#define FW_TRISC1         0x580
-#define FW_TRISC1_SIZE    0x100
-#define FW_TRISC2         0x680
-#define FW_TRISC2_SIZE    0x100
+#define FW_BRISC_SIZE     0x310
+#define FW_NCRISC         0x330
+#define FW_NCRISC_SIZE    0xB0
+#define FW_TRISC0         0x3E0
+#define FW_TRISC0_SIZE    0x130
+#define FW_TRISC1         0x510
+#define FW_TRISC1_SIZE    0x130
+#define FW_TRISC2         0x640
+#define FW_TRISC2_SIZE    0x130
 
 /* Two execution slots, double buffered: while one launch runs from slot b, dispatch installs the next one into slot b ^ 1.
  * Slot 1 is slot 0 moved up by SLOT_STRIDE, LAUNCH mask included, and starts where slot 0 ends; the GO word says which

@@ -3,10 +3,11 @@
 
 FIRMWARE_ENTRY(SET_SP(STACK_TOP))
 
+static __attribute__((noinline)) void reset(void) { reset_tensix(); }  /* boot and resume share one copy */
+
 static NORETURN launch(void) {
   wait8(GO_SIGNAL, 0x80);
   u32 slot = SLOT_OFFSET(read32(GO_SIGNAL));
-  reset_tensix();
   invalidate_icache();  /* every RISC: the slot may hold lines from the launch before last */
   for (u32 i = 0; i < 4; i++) write8(SUBORDINATE_SYNC + i, 0x80);
   fence();
@@ -26,6 +27,7 @@ NORETURN firmware_boot(void) {
   fence();
   write32(SOFT_RESET, 0);
   for (u32 i = 0; i < 4; i++) wait8(SUBORDINATE_SYNC + i, 2);
+  reset();
   launch();
 }
 
@@ -35,5 +37,7 @@ NORETURN firmware_resume(void) {
   write8(GO_SIGNAL, 0);
   fence();
   noc_atomic_inc(1, DONE_COUNT, dispatch, 1);
+  reset();  /* off the critical path: overlaps the dispatcher collecting done counts and sending the next GO.
+                    * Safe because every TRISC drained its Tensix thread before returning. */
   launch();
 }

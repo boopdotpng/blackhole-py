@@ -10,7 +10,7 @@ typedef unsigned int u32;
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
 
 #define KERNEL __attribute__((section(".entry"))) NORETURN
-#define JUMP(address) (((__attribute__((noreturn)) void (*)(void))(address))())
+#define JUMP(address) do { __asm__ volatile("jr %0" :: "r"(address)); __builtin_unreachable(); } while (0)  /* no frame */
 
 INLINE void fence(void) { __asm__ volatile("fence" ::: "memory"); }
 INLINE u32 read32(u32 a) { return *(volatile u32 *)a; }
@@ -56,16 +56,27 @@ INLINE void reset_cb_counters(void) {  /* every launch starts with empty CBs */
 }
 
 INLINE void tensix_push(u32 instruction) { write32(INSTRN_BUF, instruction); }
+#define PC_BUF_SYNC 0xFFE80004  /* TRISC only (CoprocessorDoneCheck): a load returns once this thread's instructions finish */
+INLINE void tensix_drain(void) {
+  write32(PC_BUF_SYNC, 0);
+  u32 v = read32(PC_BUF_SYNC);
+  __asm__ volatile("andi %0, %0, 0" : "+r"(v));  /* wait for the load here: no other PC_BUF load may start before */
+}
+
+/* .ttinsn: a constant push as one 4-byte instruction (the word rotated left by 2), exactly an sw to INSTRN_BUF. */
+#define TTINSN(w) __asm__ volatile(".word %0" :: "i"((((u32)(w)) << 2) | (((u32)(w)) >> 30)) : "memory")
 
 #define ZEROACC_ALL     0x10180000  /* clear all of Dst */
 #define SFPENCC_RESET   0x8A00300A  /* enable every SFPU lane, clear condition codes */
 #define NOP             0x02000000
 #define SFPLOADI_MINUS1 0x7100BF80  /* LREG0 = -1.0 (bf16 0xBF80) */
 #define SFPCONFIG_L11   0x910000B0  /* LREG11 (constant) = LREG0 */
-#define SEMINIT(sem)    (0xA3100000 | 1 << ((sem) + 2))  /* semaphore sem: max 1, value 0 */
+#define SEMINIT_ALL     0xA31003FC  /* all eight semaphores: max 1, value 0 */
+#define CLEARDVALID_RESET 0x36000001  /* SrcA/SrcB bank pointers (math and both unpackers) -> 0, every bank to the unpackers */
 
 /* Every launch starts from the same Tensix state: config zeroed (except the self-clearing icache invalidate and the
- * PRNG seed), Dst cleared, SFPU and semaphores reinitialised, CBs empty. BRISC runs this before releasing the others. */
+ * PRNG seed), Dst cleared, Src banks reset, SFPU and semaphores reinitialised, CBs empty. BRISC runs this at boot and
+ * after each launch, once every RISC is back (TRISCs drain their Tensix threads first) and done is signalled. */
 INLINE void reset_tensix(void) {
   /* Any write to STATE_RESET_EN clears the bank's words [0, 180) in hardware.
    * Reset both banks, then clear the shared globals without touching icache invalidate or PRNG seed.
@@ -74,18 +85,41 @@ INLINE void reset_tensix(void) {
   write32(TENSIX_CFG + (CFG_BANK_WORDS + CFG_STATE_RESET) * 4, 0);
   for (u32 i = CFG_GLOBAL_BASE; i < 185; i++) write32(TENSIX_CFG + i * 4, 0);
   for (u32 i = 187; i < CFG_BANK_WORDS; i++) write32(TENSIX_CFG + i * 4, 0);
-  tensix_push(ZEROACC_ALL);
-  tensix_push(SFPENCC_RESET);
-  tensix_push(NOP);
-  tensix_push(SFPLOADI_MINUS1);
-  tensix_push(SFPCONFIG_L11);
+  TTINSN(ZEROACC_ALL);
+  /* The Src bank pointers survive between launches. A kernel whose math releases a bank that its unpacker never filled
+   * (SETRWC clear_ab_vld=3 with only unpacker B active) leaves math one bank ahead of unpacker A, so every later
+   * launch reads faces 1,0,3,2. The ISA calls Reset mode unsupported because it drops banks under an in-flight unpack;
+   * here the Tensix is idle. */
+  TTINSN(CLEARDVALID_RESET);
+  TTINSN(SFPENCC_RESET);
+  TTINSN(NOP);
+  TTINSN(SFPLOADI_MINUS1);
+  TTINSN(SFPCONFIG_L11);
   write32(CFG_ECC_SCRUBBER, 0x803);  /* enable, scrub on error, delay 256 */
-  tensix_push(SEMINIT(0));
-  tensix_push(SEMINIT(1));
-  tensix_push(SEMINIT(2));
-  tensix_push(SEMINIT(7));
+  TTINSN(SEMINIT_ALL);  /* kernels spin on UNPACK_SYNC (5) < 2 at entry: a leftover 2 would hang them */
   reset_cb_counters();
   write32(CFG_RISC_PREFETCH_CTRL, 0x11F);  /* instruction prefetch on for all five RISCs, 8 requests */
+}
+
+#define SETC16(i, v)    (0xB2000000 | (i) << 16 | (v))
+#define THD_CFG_TTSYNC  56          /* TENSIX_TRISC_SYNC: Auto TTSync, never enabled, so left alone */
+#define THD_CFG_RESET   67          /* ThreadConfig [0, 67) zeroed; 67 (TENSIX_CSR_CONFIG_RawBusyStatus) is undocumented */
+#define SETRWC_ZERO     0x3700000F  /* this thread's SrcA/SrcB/Dst/fidelity RWCs -> 0, no bank release */
+#define SETADCXY_ZERO   0x51E0000F  /* this thread's unpacker 0/1 and packer ADCs: X, Y -> 0 */
+#define SETADCZW_ZERO   0x54E0000F  /* ... Z, W -> 0 */
+
+/* Thread-private state that only the owning TRISC can write, reset by each TRISC at launch before its kernel, in the
+ * same loop as its 64 GPRs (the firmware slot is 256 bytes). ThreadConfig holds CFG_STATE_ID, ADDR_MODs,
+ * SRCA/SRCB_SET, CLR_DVALID, SCBD masks and Dst offsets. */
+INLINE void reset_thread(void) {
+  #pragma clang loop unroll(disable)
+  for (u32 i = 0; i < THD_CFG_RESET; i++) {
+    if (i < 64) write32(REGFILE + 4 * i, 0);  /* kernels assume zeroed Tensix GPRs */
+    if (i != THD_CFG_TTSYNC) tensix_push(SETC16(i, 0));
+  }
+  TTINSN(SETRWC_ZERO);
+  TTINSN(SETADCXY_ZERO);
+  TTINSN(SETADCZW_ZERO);
 }
 
 /* Custom CSR 0x7c0, set once per RISC at boot as tt-metal does on Blackhole: bit 18 set on BRISC/NCRISC, clear on TRISCs. */
