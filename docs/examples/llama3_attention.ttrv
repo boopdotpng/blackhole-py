@@ -1,0 +1,690 @@
+// Llama3 decode attention, split over cache partitions: RoPE(q, k), KV-cache append,
+// softmax(q kᵀ / sqrt(d)) v streamed over 32-token cache blocks, then each KV head's
+// first worker merges its partitions' (O, m, l) states and writes the context.
+// Port of blackhole-py-old/examples/llama3/kernels.py, _attention_program (split path).
+//
+// One source for all three models; attention is BF16 in each:
+//   1B:              -D HEAD_TILES=2
+//   8B, 8B FP8:      -D HEAD_TILES=4
+// PARTITIONS is 4 or 8 (12 needs a non-power-of-two state ring, see the states CB).
+// The unsplit baseline (partitions=0) is not ported.
+// Grid: KV_HEADS * PARTITIONS workers (64 by default), as the old split attention.
+// Params: buffers q_in, k_in, v_in, cos, sin, key_cache, value_cache, context;
+// integer start_pos (the position of this launch's token, bound per launch).
+//
+// Worker w handles KV head w / PARTITIONS and all four of its query heads (GQA group 4).
+// Its phase p = w % PARTITIONS visits cache blocks p, p + live, p + 2*live, ... where
+// live is how many partitions the context length uses (1, 4 or PARTITIONS). Workers
+// with p >= live exit at once. The worker owning the block that holds the current token
+// patches this launch's K/V row into that block in L1 and appends it to the cache.
+//
+// Differences from the old kernel, all visible below:
+// - The only position input is start_pos. The block count, live partitions, the
+//   mask tail (valid columns) and the token's cache row are derived from it in
+//   `shared`, on every RISC.
+// - BRISC, not NCRISC, appends the K/V row: it already holds the row for the patch.
+// - Senders keep their state's tile order (O..., m, l); the merger's unpack reorders.
+// - The merged context is rearranged into one dense L1 row and written with one request.
+
+const HEAD_TILES = 2                         // 1B: 2 (head_dim 64), 8B: 4 (head_dim 128)
+const HEAD_DIM = HEAD_TILES * 32
+const HALF = HEAD_DIM / 2
+const GROUP = 4                              // query heads per KV head
+const KV_HEADS = 8
+const PARTITIONS = 8
+const MAX_TOKENS = 8192
+const SCALE = 1.0 / sqrt(HEAD_DIM)           // softmax scale
+const CACHE_TILES_PER_HEAD = MAX_TOKENS / 32 * HEAD_TILES
+const STATE_TILES = HEAD_TILES + 2           // O tiles, then m, then l
+const STATE_ELEMS = STATE_TILES * 1024
+
+// Dst tiles while attending: 0 scores / probabilities, 1..HEAD_TILES O, then m, l, alpha.
+const S = 0
+const M = (HEAD_TILES + 1) * dst.tile
+const L = (HEAD_TILES + 2) * dst.tile
+const ALPHA = (HEAD_TILES + 3) * dst.tile
+// Dst tiles while merging: 0..HEAD_TILES-1 O, then m, l, then the incoming state's
+// m' and l' (and each O' tile in turn, reusing m''s tile). alpha and beta live in
+// rows of the m tile that hold no query row.
+const MM = HEAD_TILES * dst.tile
+const ML = (HEAD_TILES + 1) * dst.tile
+const MNEW = (HEAD_TILES + 2) * dst.tile
+const MNEW_L = (HEAD_TILES + 3) * dst.tile
+const MALPHA = MM + 8
+const MBETA = MM + 32
+
+// The four query rows are tile rows 0..3. One SFPU address covers four rows and eight
+// columns (§10 lanes), so addresses 0, 2, 16, 18 cover rows 0..3 in all 32 columns:
+// chunk i is (i & 1) * ODD + (i >> 1) * RIGHT.
+const ODD = 2
+const RIGHT = dst.face
+
+grid KV_HEADS * PARTITIONS
+
+param q_in: bf16[]         // dense q [32 * HEAD_DIM]
+param k_in: bf16[]         // dense k [8 * HEAD_DIM]
+param v_in: bf16[]         // dense v [8 * HEAD_DIM]
+param cos: bf16[]          // [MAX_TOKENS, HEAD_DIM] by position
+param sin: bf16[]          // [MAX_TOKENS, HEAD_DIM], -sin over the first half of each row
+param key_cache: bf16[]    // per KV head: 256 blocks x HEAD_TILES tiles of 32 tokens x 32 features
+param value_cache: bf16[]
+param context: bf16[]      // dense [32 * HEAD_DIM]
+param start_pos: u32 in 0..MAX_TOKENS   // this token's position
+
+shared {
+    head = core.id / PARTITIONS
+    phase = core.id % PARTITIONS
+    merger = head * PARTITIONS                // phase 0 of this head merges
+    merger_x = merger / 10                    // core.id = core.x * 10 + core.y (§4)
+    merger_y = merger % 10
+
+    // Work split. Partitions in use: 1 through 128 tokens, 4 through 2560, then all.
+    blocks = start_pos / 32 + 1               // cache blocks holding tokens 0..start_pos
+    live = 1 + 3 * (blocks > 4) + (PARTITIONS - 4) * (blocks > 80)
+    // This phase visits blocks phase, phase + live, ...; meaningful only if phase < live.
+    visits = (blocks + live - 1 - phase) / live
+    owns = (blocks - 1) % live == phase       // owns the block holding the token
+    tail_visit = (blocks - 1) / live          // that block's visit index
+    token_row = start_pos & 31                // the token's row in its block
+    valid_columns = token_row + 1             // mask tail: valid score columns in that block
+}
+
+// RoPE operands, row-major: rows 0..3 the group's query heads, row 4 its key head.
+// Elementwise math does not care that these 1024-value pages are not tilized.
+cb operands: bf16[1024], pages=4            // x, swapped halves, cos, sin
+cb result: bf16[1024], pages=1              // rotated rows, same layout
+cb query: bf16[1024], pages=HEAD_TILES      // tiled q: tile f row g = head g, features 32f..
+cb rows: bf16[2 * HEAD_DIM], pages=1        // rotated k row, then the v row
+cb keys: bf16[1024], pages=2 * HEAD_TILES
+cb values: bf16[1024], pages=2 * HEAD_TILES
+cb probs: bf16[1024], pages=1               // P of one block
+cb state: fp32[STATE_ELEMS], pages=1        // this worker's (O, m, l)
+cb states: fp32[STATE_ELEMS], pages=PARTITIONS  // merger: every partition's state, filled remotely
+cb merged: bf16[HEAD_TILES * 1024], pages=1 // merger: normalized O
+
+l1 dense: bf16[GROUP * HEAD_DIM]
+l1 ret: u32[4]                              // noc.inc response slot
+l1 arrived: u32[4], keep                    // merger: states received; rearmed after use
+
+sem dst_ready = math_pack, max=1             // math -> pack: Dst holds a result
+
+// ---- engine templates
+
+mop matmul, outer=1, inner=2 {          // two fidelity phases of one 32x32 product
+    loop0: replay.run mm_first
+    loop1: replay.run mm_second
+    last_inner: replay.run mm_second
+    last: replay.run mm_second
+    end0: math.rwc reset, release=a
+}
+
+// 16 MVMULs per phase: four output faces x two K faces x two 8-row halves.
+replay mm_first {
+    math.mvmul addr=mm_b; math.mvmul addr=mm_k; math.mvmul addr=mm_b; math.mvmul addr=mm_col
+    math.mvmul addr=mm_b; math.mvmul addr=mm_k; math.mvmul addr=mm_b; math.mvmul addr=mm_row
+}
+replay mm_second {
+    math.mvmul addr=mm_b; math.mvmul addr=mm_k; math.mvmul addr=mm_b; math.mvmul addr=mm_col
+    math.mvmul addr=mm_b; math.mvmul addr=mm_k; math.mvmul addr=mm_b; math.mvmul addr=mm_phase
+}
+
+// x * cos + swapped * sin at one SFPU address of the four operand tiles.
+replay rope_step {
+    sfp.load l0, dst[0], fmt=fp32
+    sfp.load l1, dst[dst.tile], fmt=fp32
+    sfp.load l2, dst[2 * dst.tile], fmt=fp32
+    sfp.load l3, dst[3 * dst.tile], fmt=fp32
+    sfp.mul l0, l0, l2
+    sfp.mad l0, l1, l3, l0
+    sfp.rnd l0, l0, to=bf16
+    sfp.store dst[0], l0, fmt=fp32, addr=sfp_step
+}
+
+// A transposed right operand (Q @ Kᵀ) exchanges the off-diagonal faces by stepping
+// SrcA by 32 between K faces and by 16 between output columns (§10 matrix products).
+macro matmul_addrmods(k_step, column_step) {
+    math.addrmod mm_k, slot=1, srca+=k_step, srcb=cr+0, dst+=8
+    math.addrmod mm_row, slot=4, srca=cr+column_step, srcb=cr+48, dst=cr+0
+}
+
+// One full-tile product into the Dst tile selected by math.cfg dst_offset.
+macro product() {
+    math.rwc reset
+    tensix.stall math, srca_vld|srcb_vld
+    mop.run matmul
+    math.rwc reset, release=b
+}
+
+// Copy the next SrcA tile into Dst tile t.
+macro copy_tile(t) {
+    tensix.stall math, srca_vld|sfpu
+    math.rwc reset
+    repeat r in 0..8 { math.mova2d dst[t * dst.tile + r * 8], src=r * 8 }
+    math.rwc reset, release=a
+}
+
+macro fill_tile(t, value) {
+    repeat a in 0..32 { sfp.store dst[t * dst.tile + 2 * a], value, fmt=fp32 }
+}
+
+// ---- SFPU arithmetic
+
+// Constants for exp_l0: l4 = 127, l5 = c1, l6 = c0, l12 = log2(e), l13 = c2.
+macro exp_setup() {
+    sfp.const l12, 1.4426950216293335
+    sfp.const l13, 4.791750143340323e-15
+    sfp.li l4, 127.0
+    sfp.li l5, 7.839635491371155e-08
+    sfp.li l6, 1.0017248
+}
+
+// l0 = exp(l0). Clobbers l1-l3.
+macro exp_l0() {
+    alias x = l0
+    alias exponent = l1
+    alias poly = l2
+    alias xlog2 = l3
+    sfp.mad xlog2, x, l12, l4              // x log2(e) + 127
+    sfp.li exponent, 255.0
+    sfp.minmax xlog2, exponent             // xlog2 = min(xlog2, 255)
+    sfp.exexp exponent, xlog2
+    sfp.exman x, xlog2
+    sfp.shift x, x, exponent
+    sfp.exman exponent, x, hidden=0
+    sfp.cast exponent, exponent
+    sfp.mad poly, exponent, l13, l5
+    sfp.mad exponent, poly, exponent, l6
+    // GAP: the old kernel builds an all-ones mask with SFPGT's set-VD mode and ANDs it
+    // in (two instructions); the spec only offers compares as sfp.if conditions.
+    sfp.if xlog2 <= zero { sfp.li x, 0, fmt=u32 }
+    sfp.setexp x, exponent, x, from=fp32
+}
+
+macro exp_at(a) {
+    sfp.load l0, dst[a], fmt=fp32
+    exp_l0!()
+    sfp.store dst[a], l0, fmt=fp32
+}
+
+// exp(0) must be exactly one: the polynomial is not, and the running state would
+// compound the error at every unchanged maximum.
+macro exp_exact_at(a) {
+    sfp.load l0, dst[a], fmt=fp32
+    exp_l0!()
+    sfp.load l1, dst[a], fmt=fp32          // the original delta
+    sfp.setsgn l1, l1, 0
+    sfp.if l1 == 0 { sfp.mov l0, one }
+    sfp.store dst[a], l0, fmt=fp32
+}
+
+// l0 = 1 / l0 for finite positive l0. Clobbers l1-l3.
+macro recip_l0() {
+    alias x = l0
+    alias y = l1
+    alias error = l2
+    alias correction = l3
+    sfp.recip y, x
+    sfp.mad error, x, y, one, neg_ab       // 1 - x y
+    sfp.mad correction, error, error, error
+    sfp.mad correction, correction, error, error
+    sfp.minmax correction, one             // correction = min(correction, 1)
+    sfp.mad x, correction, y, y
+}
+
+// Rotate-and-reduce l0 within each eight-lane row; max or add.
+macro row_max_l0() {
+    repeat stage in 0..3 {
+        sfp.mov l1, l0
+        repeat 4 >> stage { sfp.shft2 l1, l1, rotate; sfp.nop }
+        sfp.minmax l1, l0; sfp.nop
+    }
+}
+macro row_sum_l0() {
+    repeat stage in 0..3 {
+        sfp.mov l1, l0
+        repeat 4 >> stage { sfp.shft2 l1, l1, rotate; sfp.nop }
+        sfp.add l0, l0, l1; sfp.nop
+    }
+}
+
+// Scores at or beyond the valid column count become -inf.
+macro mask_tail(valid) {
+    alias column = l1
+    alias tail = l2
+    alias neg_inf = l4
+    alias low_bits = l5
+    sfp.li tail, valid, fmt=u32
+    sfp.li neg_inf, -inf
+    sfp.li low_bits, 15, fmt=u32
+    repeat i in 0..4 {
+        sfp.and column, low_bits, lane_x2              // 2 * (lane % 8)
+        sfp.iadd column, column, (i >> 1) * 16 + (i & 1) // this chunk's tile column
+        sfp.if column >= tail {
+            sfp.store dst[S + (i & 1) * ODD + (i >> 1) * RIGHT], neg_inf, fmt=fp32
+        }
+    }
+}
+
+// One online-softmax step after the scores matmul:
+//   s *= 1/sqrt(d); m' = max(m, max s); alpha = exp(m - m'); P = exp(s - m')
+//   l = l alpha + sum P; O *= alpha  (P V is added afterwards)
+macro online_softmax() {
+    alias scale = l4
+    sfp.li scale, SCALE
+    sfp.load l0, dst[S], fmt=fp32; sfp.mul l0, l0, scale; sfp.nop; sfp.store dst[S], l0, fmt=fp32
+    sfp.load l1, dst[S + ODD], fmt=fp32; sfp.mul l1, l1, scale; sfp.nop; sfp.store dst[S + ODD], l1, fmt=fp32
+    sfp.load l2, dst[S + RIGHT], fmt=fp32; sfp.mul l2, l2, scale; sfp.nop; sfp.store dst[S + RIGHT], l2, fmt=fp32
+    sfp.load l3, dst[S + RIGHT + ODD], fmt=fp32; sfp.mul l3, l3, scale; sfp.nop
+    sfp.store dst[S + RIGHT + ODD], l3, fmt=fp32
+
+    // l0 becomes each live row's maximum, broadcast across its lanes.
+    sfp.minmax l2, l0; sfp.nop
+    sfp.minmax l3, l1; sfp.nop
+    sfp.minmax l1, l0; sfp.nop
+    row_max_l0!()
+
+    alias m_new = l0
+    alias m_old = l3
+    alias delta = l5
+    sfp.load l2, dst[M], fmt=fp32
+    sfp.mov m_old, l2
+    sfp.minmax l2, m_new; sfp.nop
+    repeat i in 0..4 { sfp.store dst[M + (i & 1) * ODD + (i >> 1) * RIGHT], m_new, fmt=fp32 }
+    sfp.mad delta, m_new, neg_one, m_old; sfp.nop
+    repeat i in 0..4 { sfp.store dst[ALPHA + (i & 1) * ODD + (i >> 1) * RIGHT], delta, fmt=fp32 }
+
+    repeat i in 0..4 {
+        sfp.load l0, dst[S + (i & 1) * ODD + (i >> 1) * RIGHT], fmt=fp32
+        sfp.load l1, dst[M + (i & 1) * ODD + (i >> 1) * RIGHT], fmt=fp32
+        sfp.mad l0, l1, neg_one, l0; sfp.nop
+        sfp.store dst[S + (i & 1) * ODD + (i >> 1) * RIGHT], l0, fmt=fp32
+    }
+
+    tensix.stall sync, math|sfpu
+    exp_setup!()
+    repeat i in 0..4 { exp_exact_at!(ALPHA + (i & 1) * ODD + (i >> 1) * RIGHT) }
+    repeat i in 0..4 { exp_at!(S + (i & 1) * ODD + (i >> 1) * RIGHT) }
+
+    // l = l * alpha + row sum of P
+    sfp.load l0, dst[S], fmt=fp32
+    sfp.load l1, dst[S + ODD], fmt=fp32
+    sfp.load l2, dst[S + RIGHT], fmt=fp32
+    sfp.load l3, dst[S + RIGHT + ODD], fmt=fp32
+    sfp.add l0, l0, l2; sfp.nop
+    sfp.add l1, l1, l3; sfp.nop
+    sfp.add l0, l0, l1; sfp.nop
+    row_sum_l0!()
+    sfp.load l2, dst[L], fmt=fp32
+    sfp.load l3, dst[ALPHA], fmt=fp32
+    sfp.mad l0, l2, l3, l0; sfp.nop
+    repeat i in 0..4 { sfp.store dst[L + (i & 1) * ODD + (i >> 1) * RIGHT], l0, fmt=fp32 }
+
+    // Rescale O before this block's P V accumulates into it.
+    repeat t in 1..HEAD_TILES + 1 {
+        repeat i in 0..4 {
+            sfp.load l0, dst[t * dst.tile + (i & 1) * ODD + (i >> 1) * RIGHT], fmt=fp32
+            sfp.load l1, dst[ALPHA + (i & 1) * ODD + (i >> 1) * RIGHT], fmt=fp32
+            sfp.mul l0, l0, l1; sfp.nop
+            sfp.store dst[t * dst.tile + (i & 1) * ODD + (i >> 1) * RIGHT], l0, fmt=fp32
+        }
+    }
+    tensix.stall sync, math|sfpu
+}
+
+// old = old * alpha + new * beta at one merge address pair.
+macro merge_rows(old, new) {
+    sfp.load l0, dst[old], fmt=fp32
+    sfp.load l1, dst[MALPHA + (old & 31)], fmt=fp32
+    sfp.mul l0, l0, l1
+    sfp.load l2, dst[new], fmt=fp32
+    sfp.load l3, dst[MBETA + (old & 31)], fmt=fp32
+    sfp.mad l0, l2, l3, l0
+    sfp.store dst[old], l0, fmt=fp32
+}
+
+macro pack_tile(q, t) {
+    sem.stall tdma|pack|sync, dst_ready, nonzero
+    p = cb.reserve q
+    pack.move p, dst[t * dst.tile]
+    tensix.stall sync, pack0
+    tensix.wait
+    cb.push q
+    sem.dec dst_ready
+}
+
+// ---- BRISC: RoPE operands, cache blocks, token row patch and append
+
+fn brisc() {
+    if phase >= live { return }
+
+    // RoPE operands; every read offset is a multiple of 64 bytes on both sides.
+    o = cb.reserve operands, n=4
+    x = o
+    swapped = o + 1024
+    t = noc.read x, q_in[head * GROUP * HEAD_DIM], n=GROUP * HEAD_DIM
+    noc.read x + GROUP * HEAD_DIM, k_in[head * HEAD_DIM], n=HEAD_DIM, tid=t
+    for r in 0..GROUP {
+        row = (head * GROUP + r) * HEAD_DIM
+        noc.read swapped + r * HEAD_DIM, q_in[row + HALF], n=HALF, tid=t
+        noc.read swapped + r * HEAD_DIM + HALF, q_in[row], n=HALF, tid=t
+    }
+    noc.read swapped + GROUP * HEAD_DIM, k_in[head * HEAD_DIM + HALF], n=HALF, tid=t
+    noc.read swapped + GROUP * HEAD_DIM + HALF, k_in[head * HEAD_DIM], n=HALF, tid=t
+    for r in 0..GROUP + 1 {
+        noc.read o + 2048 + r * HEAD_DIM, cos[start_pos * HEAD_DIM], n=HEAD_DIM, tid=t
+        noc.read o + 3072 + r * HEAD_DIM, sin[start_pos * HEAD_DIM], n=HEAD_DIM, tid=t
+    }
+    noc.wait t
+    cb.push operands, n=4
+
+    // Stream this phase's K and V blocks; spread reads over a bank's three ports.
+    for i in 0..visits {
+        block = phase + i * live
+        first = (head * CACHE_TILES_PER_HEAD + block * HEAD_TILES) * 1024
+        kp = cb.reserve keys, n=HEAD_TILES
+        vp = cb.reserve values, n=HEAD_TILES
+        // GAP: a handle exists only from a request statement, so the first tile's
+        // reads are peeled out of the loop to name the handles the loop then joins.
+        kr = noc.read kp, key_cache[first], n=1024, port=0
+        vr = noc.read vp, value_cache[first], n=1024, port=HEAD_TILES % 3
+        for f in 1..HEAD_TILES {
+            noc.read kp + f * 1024, key_cache[first + f * 1024], n=1024, port=f % 3, tid=kr
+            noc.read vp + f * 1024, value_cache[first + f * 1024], n=1024, port=(f + HEAD_TILES) % 3, tid=vr
+        }
+        noc.wait kr, vr
+        if owns && i == tail_visit {
+            // This launch's rotated K and V replace token row token_row of every tile,
+            // whatever the cache held there (its append may still be in flight).
+            r = token_row
+            rw = cb.wait rows
+            for f in 0..HEAD_TILES {
+                for c in 0..32 {
+                    at = f * 1024 + (r >> 4) * 512 + (c >> 4) * 256 + (r & 15) * 16 + (c & 15)
+                    kp[at] = rw[f * 32 + c]
+                    vp[at] = rw[HEAD_DIM + f * 32 + c]
+                }
+            }
+            // Append the row to the caches: 16 features per face row.
+            // GAP: 32-byte DRAM writes whose L1 and DRAM offsets differ modulo 64 (§12 item 4).
+            for f in 0..HEAD_TILES {
+                for h in 0..2 {
+                    at = first + f * 1024 + (r >> 4) * 512 + h * 256 + (r & 15) * 16
+                    noc.write key_cache[at], rw + f * 32 + h * 16, n=16, wait
+                    noc.write value_cache[at], rw + HEAD_DIM + f * 32 + h * 16, n=16, wait
+                }
+            }
+            cb.pop rows
+        }
+        cb.push keys, n=HEAD_TILES
+        cb.push values, n=HEAD_TILES
+    }
+
+    // Merger: wait for every live state, rearm the counter, publish the states.
+    if phase == 0 {
+        loop {
+            if arrived[0] == live { break }
+            fence
+        }
+        fence
+        arrived[0] = 0
+        cb.reserve states, n=live
+        cb.push states, n=live
+    }
+}
+
+// ---- TRISC0: unpack
+
+fn trisc0() {
+    if phase >= live { return }
+
+    unpack.fmt a|b, in=bf16
+    o = cb.wait operands, n=4
+    repeat t in 0..4 { unpack.move a, o + t * 1024, dvalid }
+    tensix.wait
+    cb.pop operands, n=4
+
+    q = cb.wait query, n=HEAD_TILES  // kept for every block
+    for i in 0..visits {
+        k = cb.wait keys, n=HEAD_TILES
+        unpack.fmt a, in=bf16, transpose
+        repeat f in 0..HEAD_TILES {
+            unpack.move b, q + f * 1024, dvalid
+            unpack.move a, k + f * 1024, dvalid
+        }
+        tensix.wait
+        cb.pop keys, n=HEAD_TILES
+
+        p = cb.wait probs
+        v = cb.wait values, n=HEAD_TILES
+        unpack.fmt a, in=bf16  // GAP: does .fmt without `transpose` clear it? Booleans have no "off" spelling (§2 rule 3)
+        repeat f in 0..HEAD_TILES {
+            unpack.move b, p, dvalid
+            unpack.move a, v + f * 1024, dvalid
+        }
+        tensix.wait
+        cb.pop values, n=HEAD_TILES
+        cb.pop probs
+    }
+    cb.pop query, n=HEAD_TILES
+
+    // Merger: the first state in order, then each further state's m', l' and O' tiles.
+    if phase == 0 {
+        unpack.fmt a, in=fp32  // GAP: §9 requires out=bf16|fp16 for fp32 input; FP32 states want TF32 or better (§12 item 6)
+        st = cb.wait states, n=live
+        repeat t in 0..STATE_TILES { unpack.move a, st + t * 1024, dvalid }
+        for s in 1..live {
+            p = st + s * STATE_ELEMS
+            unpack.move a, p + HEAD_TILES * 1024, dvalid
+            unpack.move a, p + (HEAD_TILES + 1) * 1024, dvalid
+            repeat f in 0..HEAD_TILES { unpack.move a, p + f * 1024, dvalid }
+        }
+        tensix.wait
+        cb.pop states, n=live
+    }
+}
+
+// ---- TRISC1: RoPE, attention, merge
+
+fn trisc1() {
+    if phase >= live { return }
+
+    math.fmt dst=fp32, sfp=fp32
+    math.cfg dst_offset=0
+    matmul_addrmods!(32, 16)
+    math.addrmod mm_col, slot=2, srca=cr+0, srcb=cr+32, dst+=8
+    math.addrmod mm_b, slot=3, srcb+=8, dst+=8
+    math.addrmod mm_phase, slot=5, srca=0, srcb=0, dst=0, fidelity+=1
+    math.addrmod sfp_step, slot=6, dst+=2
+    replay.load mm_first
+    replay.load mm_second
+    replay.load rope_step
+    mop.load matmul
+
+    // RoPE: Dst tiles 0..3 = x, swapped, cos, sin; the rotated rows overwrite tile 0.
+    sem.stall math|sfpu|sync, dst_ready, notmax
+    repeat t in 0..4 { copy_tile!(t) }
+    tensix.stall sfpu, math
+    math.rwc reset
+    loop 32 { replay.run rope_step }
+    math.rwc reset
+    tensix.stall sync, math|sfpu
+    sem.inc dst_ready
+
+    // O = 0, m = -inf, l = 0 in the live rows; every other row stays finite.
+    sem.stall math|sfpu|sync, dst_ready, notmax
+    sfp.li l0, 0.0
+    repeat t in 1..HEAD_TILES + 2 { fill_tile!(t, l0) }
+    fill_tile!(HEAD_TILES + 3, l0)
+    sfp.li l1, 1.0
+    fill_tile!(HEAD_TILES + 2, l1)
+    sfp.li l0, -inf
+    repeat i in 0..4 { sfp.store dst[M + (i & 1) * ODD + (i >> 1) * RIGHT], l0, fmt=fp32 }
+    sfp.li l0, 0.0
+    repeat i in 0..4 { sfp.store dst[L + (i & 1) * ODD + (i >> 1) * RIGHT], l0, fmt=fp32 }
+    tensix.stall sync, math|sfpu
+
+    for i in 0..visits {
+        // scores = q kᵀ into tile 0, once pack has finished with the previous P
+        sem.stall math|sfpu|sync, dst_ready, notmax
+        matmul_addrmods!(32, 16)
+        math.cfg dst_offset=0
+        repeat face in 0..4 { math.zero face=face, fmt=fp32 }
+        repeat f in 0..HEAD_TILES { product!() }
+
+        tensix.stall sync, math|sfpu
+        if owns && i == tail_visit {
+            mask_tail!(valid_columns)
+            tensix.stall sync, sfpu
+        }
+        online_softmax!()
+        sem.inc dst_ready
+
+        // O += P v, once P is packed (unpack needs it anyway)
+        sem.stall math|sfpu|sync, dst_ready, notmax
+        matmul_addrmods!(16, 32)
+        repeat f in 0..HEAD_TILES {
+            math.cfg dst_offset=(1 + f) * dst.tile
+            product!()
+        }
+        math.cfg dst_offset=0
+    }
+
+    // Publish (O, m, l): Dst tiles 1..HEAD_TILES + 2.
+    sem.stall math|sfpu|sync, dst_ready, notmax
+    tensix.stall sync, math|sfpu
+    sem.inc dst_ready
+
+    if phase == 0 {
+        // m_new = max(m, m'), alpha = exp(m - m_new), beta = exp(m' - m_new),
+        // l = l alpha + l' beta, O = O alpha + O' beta; finally O /= l.
+        sem.stall math|sfpu|sync, dst_ready, notmax
+        repeat t in 0..STATE_TILES { copy_tile!(t) }
+        for s in 1..live {
+            copy_tile!(HEAD_TILES + 2)
+            copy_tile!(HEAD_TILES + 3)
+            tensix.stall sfpu, math
+            repeat i in 0..4 {
+                sfp.load l0, dst[MM + (i & 1) * ODD + (i >> 1) * RIGHT], fmt=fp32
+                sfp.load l1, dst[MNEW + (i & 1) * ODD + (i >> 1) * RIGHT], fmt=fp32
+                sfp.mov l2, l0
+                sfp.mov l3, l1
+                sfp.minmax l1, l0; sfp.nop
+                sfp.store dst[MM + (i & 1) * ODD + (i >> 1) * RIGHT], l0, fmt=fp32
+                sfp.mad l2, l0, neg_one, l2; sfp.nop
+                sfp.mad l3, l0, neg_one, l3; sfp.nop
+                sfp.store dst[MALPHA + (i & 1) * ODD + (i >> 1) * RIGHT], l2, fmt=fp32
+                sfp.store dst[MBETA + (i & 1) * ODD + (i >> 1) * RIGHT], l3, fmt=fp32
+            }
+            tensix.stall sync, math|sfpu
+            exp_setup!()
+            repeat i in 0..4 { exp_exact_at!(MALPHA + (i & 1) * ODD + (i >> 1) * RIGHT) }
+            repeat i in 0..4 { exp_exact_at!(MBETA + (i & 1) * ODD + (i >> 1) * RIGHT) }
+            repeat i in 0..4 { merge_rows!(ML + (i & 1) * ODD + (i >> 1) * RIGHT, MNEW_L + (i & 1) * ODD + (i >> 1) * RIGHT) }
+            repeat f in 0..HEAD_TILES {
+                copy_tile!(HEAD_TILES + 2)  // O'_f
+                tensix.stall sfpu, math
+                repeat i in 0..4 {
+                    merge_rows!(f * dst.tile + (i & 1) * ODD + (i >> 1) * RIGHT, MNEW + (i & 1) * ODD + (i >> 1) * RIGHT)
+                }
+            }
+            tensix.stall sync, math|sfpu
+        }
+        repeat i in 0..4 {
+            sfp.load l0, dst[ML + (i & 1) * ODD + (i >> 1) * RIGHT], fmt=fp32
+            recip_l0!()
+            sfp.store dst[ML + (i & 1) * ODD + (i >> 1) * RIGHT], l0, fmt=fp32
+        }
+        repeat f in 0..HEAD_TILES {
+            repeat i in 0..4 {
+                sfp.load l0, dst[f * dst.tile + (i & 1) * ODD + (i >> 1) * RIGHT], fmt=fp32
+                sfp.load l1, dst[ML + (i & 1) * ODD + (i >> 1) * RIGHT], fmt=fp32
+                sfp.mul l0, l0, l1; sfp.nop
+                sfp.store dst[f * dst.tile + (i & 1) * ODD + (i >> 1) * RIGHT], l0, fmt=fp32
+            }
+        }
+        tensix.stall sync, math|sfpu
+        sem.inc dst_ready
+    }
+}
+
+// ---- TRISC2: pack
+
+fn trisc2() {
+    if phase >= live { return }
+
+    pack.fmt in=fp32, out=bf16
+    pack_tile!(result, 0)
+    loop visits { pack_tile!(probs, 0) }
+
+    sem.stall tdma|pack|sync, dst_ready, nonzero
+    tensix.wait
+    pack.fmt in=fp32, out=fp32
+    p = cb.reserve state
+    repeat t in 0..STATE_TILES { pack.move p + t * 1024, dst[(1 + t) * dst.tile] }
+    tensix.stall sync, pack0
+    tensix.wait
+    cb.push state
+    sem.dec dst_ready
+
+    if phase == 0 {
+        sem.stall tdma|pack|sync, dst_ready, nonzero
+        pack.fmt in=fp32, out=bf16
+        p = cb.reserve merged
+        repeat t in 0..HEAD_TILES { pack.move p + t * 1024, dst[t * dst.tile] }
+        tensix.stall sync, pack0
+        tensix.wait
+        cb.push merged
+        sem.dec dst_ready
+    }
+}
+
+// ---- NCRISC: query tiles, the token row, state to the merger, context
+
+fn ncrisc() {
+    if phase >= live { return }
+
+    // Query tiles: row g of tile f is head g's features 32f..32f+31; other rows zero.
+    q = cb.reserve query, n=HEAD_TILES
+    for i in 0..HEAD_TILES * 1024 { q[i] = 0.0 }  // GAP: float literal stored to a bf16 element (§2 allows floats only in device-op operands)
+    res = cb.wait result
+    for g in 0..GROUP {
+        for f in 0..HEAD_TILES {
+            for c in 0..32 {
+                q[f * 1024 + (c >> 4) * 256 + g * 16 + (c & 15)] = res[g * HEAD_DIM + f * 32 + c]
+            }
+        }
+    }
+    cb.push query, n=HEAD_TILES
+
+    // The token's owner: rotated k row and raw v row for BRISC's patch and append.
+    if owns {
+        rw = cb.reserve rows
+        for c in 0..HEAD_DIM { rw[c] = res[GROUP * HEAD_DIM + c] }
+        noc.read rw + HEAD_DIM, v_in[head * HEAD_DIM], n=HEAD_DIM, wait
+        cb.push rows
+    }
+    cb.pop result
+
+    // Send (O, m, l) to slot `phase` of the merger's states ring, then count it.
+    st = cb.wait state
+    slot = states + phase * STATE_ELEMS
+    for t in 0..STATE_TILES {
+        noc.write remote(merger_x, merger_y, slot + t * 1024), st + t * 1024, n=1024, wait
+    }
+    noc.inc remote(merger_x, merger_y, arrived), by=1, ret=ret, wait
+    cb.pop state
+
+    // Merger: four query heads' rows, dense, in one write.
+    if phase == 0 {
+        o = cb.wait merged
+        for g in 0..GROUP {
+            for f in 0..HEAD_TILES {
+                for c in 0..32 {
+                    dense[g * HEAD_DIM + f * 32 + c] = o[f * 1024 + (c >> 4) * 256 + g * 16 + (c & 15)]
+                }
+            }
+        }
+        noc.write context[head * GROUP * HEAD_DIM], dense, n=GROUP * HEAD_DIM, wait
+        cb.pop merged
+    }
+}

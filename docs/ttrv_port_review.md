@@ -2,8 +2,7 @@
 
 The single language reference is [ttrv_spec.md](ttrv_spec.md).
 The [complete BF16 O projection source](examples/llama3_o.ttrv) computes
-`output = residual + matrix @ context` on all five RISCs. It is a design port,
-not a compiled, numerically validated, or benchmarked replacement.
+`output = residual + matrix @ context` on all five RISCs. The original design assessment below predates the backend. Hardware results are recorded under Validation.
 
 ## What the source exercises
 
@@ -23,7 +22,7 @@ kernel, it never tilizes the 1-D vectors (see below).
 The calls/macros are fully written; there is no hidden projection, reduction,
 matmul, or residual-add helper supplied by the compiler.
 
-The source is 206 lines including whitespace/comments. Scalar code (partitioning,
+Scalar code (partitioning,
 addresses, the BRISC/NCRISC loops) is ordinary expressions and control flow; the
 device operations are explicit statements. The native 32-lane reduction macro
 expands to 34 instructions. Most of the kernel is explicit movement and handoff,
@@ -98,11 +97,13 @@ example nor consolidation proves that all Llama3 variants are now implementable.
 
 ## Validation
 
-None beyond review. No compiler exists and no device was run. Full validation
-requires compiled output, existing Llama references, repeated launches, both model
-dimensions, and measurements against the current implementation.
+The hardware regression compiles this source and runs it on 88 workers of a p150.
+It checks every BF16 output at dimensions 2048 and 4096 against an independent CPU
+reference, using sparse weights, sign changes between launches, dense signed integer
+weights, and dense fractional inputs. The fractional reference models the FP32-to-BF16
+pack and ELWADD's shared-exponent significand alignment. The mixed decode graph also runs compiled embedding and BF16 down. With the reference prompt on p150a, 1B and 8B BF16 each matched all 64 reference tokens. The FP8 checkpoint matched 64 tokens with compiled embedding and prebuilt compute kernels.
 
-## How complicated is the compiler?
+## Original implementation estimate
 
 The front end is modest. Structured statements, constant folding, hygienic expansion,
 name resolution and table-driven instruction operands do not require a general
@@ -132,3 +133,22 @@ preconditions. Do not turn a compiler for explicit instruction streams into a
 proof system for arbitrary distributed protocols. Start with the O fixture's subset,
 then extend the schema for attention and argmax. The design is manageable; the
 hardware-specific semantics and verification are the work, not parsing the syntax.
+
+### DRAM ports (2026-11-18)
+
+The compiled O and down first ran slower than the exported kernels (1B: down 126.6 vs
+77.6 µs per launch, 148 vs 168 tok/s). Every worker read its weights through the same
+port of each DRAM bank. Rotating the port by worker, `port=core.id % 3` on the weight
+read (a runtime `port=`, spec §7), as the exported O does, brings them to parity:
+
+| p150a, per launch | exported | TTRV |
+| --- | --- | --- |
+| 1B O | 29.0 µs | 26.2 µs |
+| 1B down | 77.6 µs | 83.1 µs |
+| 8B O | 80.4 µs | 80.1 µs |
+| 8B down | 253.3 µs | 256.9 µs |
+
+Decode: 1B 167.2 vs 168.3 tok/s, 8B BF16 30.8 vs 30.9 tok/s, all 64 reference tokens
+matching. The remaining down difference is the exported down's spatial NoC split (half
+the workers read on NoC1); TTRV fixes BRISC to NoC0 (§7).
+

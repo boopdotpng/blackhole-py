@@ -1,9 +1,9 @@
 # ttrv language specification
 
 Consolidated v1 design, 2026-11-15. This is the canonical language document.
-The compiler is not implemented end to end. The final section identifies the
-remaining hardware/API audits; proposed behavior here is a contract for the
-implementation, not a claim that it has been measured.
+The backend emits firmware-ready RISC images. The O-projection fixture runs on p150
+at both BF16 dimensions. The final section also describes design targets and open
+hardware audits beyond this validated path.
 
 [O projection with residual](examples/llama3_o.ttrv) exercises all five workers.
 [Port review](ttrv_port_review.md) explains its limitations and compiler complexity.
@@ -49,7 +49,7 @@ Every statement has one of three shapes:
 
 | Shape | Form | Examples |
 | --- | --- | --- |
-| Declaration (file level) | `kind name[: type \| = target][, options] [{ body }]` | `grid 88`, `param x: bf16`, `cb w: bf16[1024], pages=4`, `sem s = math_pack, max=1`, `fn f(a) { }`, `mop m, outer=2 { }` |
+| Declaration (file level) | `kind name[: type \| = target][, options] [{ body }]` | `grid 88`, `param x: bf16[]`, `cb w: bf16[1024], pages=4`, `sem s = math_pack, max=1`, `fn f(a) { }`, `mop m, outer=2 { }`, `shared { }` |
 | Scalar statement | assignment, element store, call, or keyword | `lead = first & 31`, `y[i] = d[0]`, `for i in 0..n { }`, `fence` |
 | Device operation | `[result =] space.op operands, options` | `w = cb.reserve weights, n=2`, `noc.wait t`, `tensix.stall math, srca_vld` |
 
@@ -104,12 +104,55 @@ repeat face in 0..4 {
 }
 ```
 
-`const NAME = expr` declares a compile-time integer. A host `-D NAME=value`
-overrides a `const` of that name; other duplicates are errors. `-D` never
-changes `grid` (§4). An `if` whose
-condition is constant is resolved at compile time, at file level or in a function;
-the untaken branch is parsed but not compiled. There is no preprocessor, no
-includes and no textual substitution.
+`const NAME = expr` declares a compile-time constant. A host `-D NAME=value`
+overrides a `const` of that name; other duplicates are errors.
+
+An `if` whose condition is constant is a **compile-time `if`**, at file level or
+in a function, and works like C's `#if`: the taken branch's statements are
+spliced in place of the whole `if`, and the other branches are dropped. It opens
+no scope, so names assigned or declared in the taken branch are visible after it,
+exactly as if the braces were not there. The untaken branches must parse (so the
+braces match) but are otherwise ignored: no name resolution, type checking or
+lowering. `else if` chains are resolved the same way. Whether an `if` is
+compile-time is decided by its condition alone: if every name in it is a
+constant, it is. There are no includes and no textual substitution.
+
+```text
+const FP8 = 0
+if FP8 {
+    grid 96
+    type ACT = e4m3
+    const SCALE = 1.0 / 448.0
+} else {
+    grid 88
+    type ACT = bf16
+}
+cb x: ACT[1024], pages=2
+```
+
+**Constant kinds.** A constant is an integer, a float, or a type:
+
+- Integer constants are exact integers (folded as mathematical integers, then
+  checked against the type they are used as).
+- A constant whose expression contains a float literal, a float constant, or
+  `sqrt` is a float constant: `const EPS = 1e-5`,
+  `const SCALE = 1.0 / sqrt(HEAD_DIM)`, `const INV_DIM = 1.0 / DIM`. Float
+  constants are folded in IEEE double precision with `+ - * /`, unary `-`, and
+  `sqrt(x)`; integer operands convert exactly. A float constant may appear only
+  where a float literal may (float operands such as `sfp.li`, `sfp.const`,
+  `sfp.addi`), where it is rounded once, to nearest even, to the operand's
+  format. An operand that requires an exact value (`sfp.addi`/`sfp.muli` need a
+  value exact in BF16) rejects one that does not round exactly. Floats never mix
+  with integer expressions: `DIM * 0.5` is a float constant, not usable as a count.
+- `type NAME = T` names a type (§4). It is usable anywhere a type is written
+  (`param`, `l1`, `cb`, `fn` parameters, `fmt=`, `in=`/`out=`, `T.size`,
+  `T.tile`). Types are not values and cannot appear in expressions.
+
+`-D NAME=value` overrides an integer, float or type constant with a value of the
+same kind (`-D FP8=1`, `-D EPS=1e-6`, `-D ACT=e4m3`). It applies to a constant of
+that name wherever it is declared, including inside a compile-time `if` branch; if
+no taken branch declares it, the override is unused (an error only if no branch
+anywhere declares the name).
 
 `macro name(args) { ... }` is file-level; `name!(args)` expands it inline at that
 use. `repeat i in a..b { ... }` emits one copy per constant `i` from a to b-1, and
@@ -128,6 +171,8 @@ Diagnostics include definition and invocation sites. Expansion size is bounded.
 Data types are built-in names: float encodings `bf16 fp16 fp32 e4m3 e5m2 bfp8 bfp4`
 and integers `u8 u32 i32 u64`. Engine formats (§9, §10) use the same names. A type
 is an encoding and a size, not a tensor shape; nothing converts implicitly.
+`type NAME = T` (§3) names one of these types, typically chosen by a compile-time
+`if`.
 
 `T[n]` is n elements of T, and plain `T` is one. Its size in bytes is n × `T.size`;
 BFP has no per-element size, so `bfp8[n]` / `bfp4[n]` (n a multiple of 16) are an
@@ -136,32 +181,60 @@ arithmetic, `T.size` is bytes per element (an error for BFP) and `T.tile` is the
 size of `T[1024]`: bf16 2048, fp32 4096, e4m3 1024, bfp8 1088, bfp4 576.
 
 ```text
-param weights: bf16
-param positions: u32
-param result: u64
+param weights: bf16[]               // a DRAM buffer of bf16
+param token: u32[], host            // a buffer in pinned host memory
+param start_pos: u32 in 0..8192     // an integer value
 ```
 
-`param name: T` declares a launch-bound address. A parameter is a DRAM buffer of T
-elements, except that `u64` means a device-visible host address (not a CPU virtual
-pointer); DRAM buffers of u64 are not supported in v1. There are no scalar launch
-values; runtime values such as a token position live in a DRAM buffer and are read
-with the NoC. Slots are assigned in declaration order, one word per DRAM buffer and
-two per host address, 16 words in all. The build manifest maps names to slots for
-the host. Fixed firmware addresses are a backend detail. A NoC request that uses a
-parameter loads its slot then; the listing shows the load.
+Parameters are a kernel's arguments, as in a CUDA or OpenCL kernel signature: the
+host supplies a value for each one at every launch, and every worker and every CPU
+sees the same values. There are two kinds:
+
+- **Buffer parameters**, `param name: T[]`: the value is the buffer's address. A
+  plain buffer is in DRAM; `host` marks a device-visible host buffer (pinned
+  memory, not a CPU virtual pointer). A buffer parameter is used only as a NoC
+  endpoint (`name[i]`, §7), never as a scalar or a pointer. Its length is not
+  part of the type; bounds are the host's binding.
+- **Integer parameters**, `param name: u32 in lo..hi` or `i32`: a scalar value,
+  like tinygrad's `Variable(name, lo, hi - 1)`. The range is required, its bounds
+  are constant expressions, and `hi` is exclusive. The host must bind a value in
+  range, and the runtime checks it when binding. The kernel reads the value as a
+  read-only variable of that type, anywhere an expression may appear, including
+  `shared` (§4) and loop bounds. Each read is one load from the launch's argument
+  block, shown in the listing. The compiler may use the range: constant arithmetic
+  over it must fit the type, and it bounds loop counts in diagnostics.
+
+There are no float parameters. Float launch data, such as FP8 scales, lives in a
+buffer like any other tensor data. Values derived from a parameter (a block count,
+a mask tail) are computed by the kernel, usually in `shared`, not passed separately.
+
+Parameters are placed in declaration order in the launch's argument block: one
+word per integer parameter and per DRAM buffer, two per host buffer, 16 words in
+all. The build manifest maps names to slots. The dispatcher copies the block into
+every worker's L1 before the launch starts.
+
+**Binding (runtime model).** Launches are recorded once into a graph, with their
+parameters left symbolic, as tinygrad does. There is one argument set per graph.
+Before each run, the host waits for the previous run to retire, writes the current
+values (integer parameters such as `start_pos`, and any rebound buffer addresses)
+into that set in place, and resubmits the same command buffer without waiting.
+Values never change while a run is in flight: the dispatcher reads each launch's
+arguments when it reaches that launch, so a mid-run write would give one run mixed
+values. A prompt runs one position per run, like tinygrad's prefill. There are no
+precomputed per-position argument tables.
 
 A DRAM buffer is interleaved across banks page by page. A page is one `T.tile`
-unless `page=n` declares n whole tiles. Bank mapping/rotation come from the host
-binding and are resolved by the NoC helper. Parameters are NoC endpoints (§7), not
-scalar values or pointers.
+unless `page=n` declares n whole tiles (`param w: e4m3[], page=2`). Bank
+mapping/rotation come from the host binding and are resolved by the NoC helper.
 
 ```text
 grid 88
 ```
 
-`grid N` declares how many workers the kernel runs on. It is required, appears
-once at file level, and N is a constant expression (it is not a `const` and
-cannot be overridden from the host). The launch is always the **first N workers
+`grid N` declares how many workers the kernel runs on. It is required, and
+exactly one `grid` remains at file level after compile-time `if`s are resolved
+(§3), so variants choose their grid with `if`. N is an integer constant
+expression and may use `const`s. The launch is always the **first N workers
 in column-major order**; which physical cores those are is not the kernel's
 choice. The build manifest records N.
 
@@ -199,6 +272,37 @@ u32 expression; the intermediate products must fit u32 (constant n is checked).
 It is a builtin, not a device operation. It compiles to the scalar code above,
 shown in the listing. Other splits are ordinary scalar code over `core.*` and `grid.size`.
 
+```text
+shared {
+    first, count = split(DIM)
+    lo = first & ~31
+    lead = first & 31
+}
+```
+
+`shared { ... }` declares per-core values that every entry function can read, so
+the five programs don't each repeat the same partitioning code. There is at most one,
+at file level. It holds only assignments, each of which is evaluated the same way on
+every RISC:
+
+- right-hand sides use integer expressions over constants, integer parameters,
+  `grid.size`, `core.*` and earlier shared names, plus builtin calls (`split`);
+- no element access, device operations, `fn` calls, control flow or compound
+  assignment.
+
+Every RISC therefore computes identical values. Shared values use the ordinary
+wrapping arithmetic of §5, and computing one that a given worker never uses (for
+instance a count that wraps on a worker that exits early) is not an error. Shared names are file-level names
+(§2): read-only, and locals cannot shadow them. They are visible in entry functions
+only; pass them to other functions as arguments.
+
+An entry function that reads a shared name gets that name's assignment, and those of
+the shared names it depends on, copied into the start of its body in source order.
+Assignments it doesn't need are omitted, and a RISC that reads none gets nothing.
+Each copied name holds a register for the whole entry function, as if it were
+assigned in the function's outermost block (§5). If register pressure matters, compute
+the value locally where it is used instead. The listing shows the copies per RISC.
+
 There are no per-core launch tables and no per-core images. Every worker in a
 launch runs the same binary with the same parameters. Per-core values (row ranges,
 DRAM ports, addresses) are formulas over `core.*` in the kernel, visible in the
@@ -213,7 +317,8 @@ not part of v1.
 A variable is created by its first assignment, `name = expr`, and lives until the
 end of the enclosing block. Later assignments in scope (`=`, `+=`, `-=`, `*=`,
 `&=`, `|=`, `^=`, `<<=`, `>>=`) update it. Its type is its initializer's and never
-changes. A variable first assigned inside a block is not visible after it: assign
+changes. A variable first assigned inside a block is not visible after it (a
+compile-time `if` is not a block, §3): assign
 it before the block to use it afterwards. Reading a name before it exists is an error.
 
 - `u32` is the integer type by default; `i32` holds signed values. A literal takes
@@ -439,23 +544,22 @@ packet-count/counter-wrap limits, rather than a universal “in-flight” counte
 
 | Endpoint | Meaning |
 | --- | --- |
-| `buffer[i]` | Element i of a DRAM buffer parameter, its pages concatenated |
+| `buffer[i]` | Element i of a buffer parameter (DRAM: its pages concatenated) |
 | `remote(x, y, p)` | L1 pointer p in another worker |
 | `rect(x0, y0, x1, y1, p)` | L1 pointer p in every worker of a rectangle (multicast only) |
-| a `u64` parameter | Host address, encoded by the helper |
 
 The local side of a transfer is an L1 pointer expression. `n=` counts elements of
 that pointer's type; when the other side is a typed DRAM buffer, the element sizes
 must match (a `u8` pointer counts bytes). Endpoint components may be constants or
 scalar expressions. DRAM lookup, bank rotation, and coordinate encoding are inside
-the helper. `port=` optionally selects a DRAM port; default is the binding's
-preferred port. Remote L1 and host operands have no DRAM port option.
+the helper. `port=` optionally selects a DRAM port, 0..2, as a constant or scalar expression;
+default is the binding's preferred port. Remote L1 and host operands have no DRAM port option.
 
 ```text
 a = noc.read  w, matrix[row * DIM], n=DIM              // one weight row
 b = noc.read  r, residual[lo], n=first + count - lo
 c = noc.write output[first], s + lead, n=count
-d = noc.write result, token, n=4, posted              // host result
+d = noc.write result[0], token, n=4, posted           // into a host buffer
 e = noc.write remote(x, y, inbox), message, n=4
 f = noc.inc   remote(x, y, arrived), by=1, ret=old
 g = noc.mcast rect(x0, y0, x1, y1, x), x, n=DIM        // to x on every target
@@ -610,6 +714,18 @@ at the exponent section. A Src bank holds up to a tile; A/B each have two banks.
 Math waits for valid banks and releases them explicitly. For face-at-a-time code,
 `n=256, dvalid` publishes each face separately; the next face starts at Src row zero.
 
+SrcA and SrcB banks are independent (measured,
+`blackhole-py-old/tests/probes/probe_srcb_release.py`): an unpack to A neither
+publishes nor overwrites a B bank, and `math.mova2d` does not wait for B. A copy
+to Dst is therefore `unpack.move a, ..., dvalid` on the unpack side and
+`math.mova2d` followed by `math.rwc release=a` on the math side; nothing is
+published to or released from B. **Release only banks that were published.**
+Releasing B when math holds no valid B bank does not wait and does not fail: it
+moves math's B bank pointer one bank out of step with the unpacker, and the error
+persists into later kernels (an odd number of such releases leaves it, an even
+number cancels it). Every `release=` must match a `dvalid` publication on the same
+path; the checker rejects a `release=b` with no B publication it can see.
+
 The helper must acquire the selected base context before writing it and return
 credit only when safe. A global “at most two outstanding” count is not sufficient
 for repeated use of the same context. The exact context-update recipe still needs
@@ -630,8 +746,7 @@ BFP input selectors `bfp4`/`bfp2` are rejected. For BFP output, input `fp32` mea
 prerounding, `bf16` seven bits, `bfp8` six bits; these are hardware conversion modes,
 not a declaration that all three use the same Dst storage width.
 
-Plain pack emits inline PACRs, resetting its counters at the end. BF16/FP32 results
-support this recipe; BFP output with the uniform addrmods remains unconfirmed.
+Plain pack emits inline PACRs, resetting its counters at the end. The hardware regression checks BF16/FP32 and constant-one BFP8, BFP4 and E4M3 outputs. The block-format checks use 128 and 1024 datums.
 
 `pack.gather` packs individual datums: one single-datum PACR per row, all one tile,
 written to consecutive elements starting at p. `row` is a logical Dst row across
@@ -662,33 +777,145 @@ No compiler-generated numerical conversion or layout conversion is implicit.
 
 Native instructions have named operands and enum values; integer modifier codes
 and complete instruction words are backend details. Fields accepting runtime values
-build words explicitly. Complete signatures for the remaining ISA are still required.
-The following subset is used by the O port:
+build words explicitly. Each `math.*` / `sfp.*` statement below emits exactly the
+native instruction(s) its row names. Nothing is inserted between statements: no
+NOPs, stalls or reordering (§10, Scheduling).
 
-| Operation | Meaning / defaults |
-| --- | --- |
-| `math.fmt dst=fp32\|bf16, sfp=fp32\|bf16` | Dst storage and default SFPU transfer format; sfp defaults to the Dst format |
-| `math.cfg dst_offset=rows` | Add logical row offset to math Dst addressing |
-| `math.elwmul [dst[row]]`, `math.elwadd [dst[row]]` | Optional destination, default `dst[0]`; `addr=0`, `release=none`, `accumulate` off, `broadcast=none` |
-| `math.zero face=i, fmt=fp32\|bf16` | ZEROACC face invalidation for accumulation identity, not physical zero fill |
-| `sfp.load rd, dst[row]` | `fmt=` overrides configured transfer format, `addr=0` |
-| `sfp.store dst[row], rs` | Same format/address-modifier rules |
-| `sfp.mov rd, rs` | Native vector move |
-| `sfp.add rd, a, b` | Native SFPADD with fixed multiplicand one |
-| `sfp.mul rd, a, b` / `sfp.mad rd, a, b, c` | Native arithmetic |
-| `sfp.shft2 rd, rs, rotate` | Rotate right within each eight-lane group |
-| `sfp.transp` | Native L0–L3 transpose, fixed zero modifiers |
-| `sfp.nop` | Explicit SFPU scheduling delay |
+### Math (FPU)
+
+| Operation | Native | Meaning / defaults |
+| --- | --- | --- |
+| `math.fmt dst=fp32\|bf16, sfp=fp32\|bf16` | `RMWCIB`, `SETC16` | Dst storage and default SFPU transfer format; sfp defaults to the Dst format |
+| `math.cfg dst_offset=rows` | `SETC16` | Add logical row offset to math and SFPU Dst addressing |
+| `math.elwmul [dst[row]]`, `math.elwadd`, `math.elwsub` | `ELWMUL` / `ELWADD` / `ELWSUB` | Optional destination, default `dst[0]`; `addr=hold`, `release=none`, `accumulate` off, `broadcast=none\|column\|row\|scalar` |
+| `math.mvmul [dst[row]]` | `MVMUL` | `Dst[row..row+8] += SrcB[8 rows] @ SrcA[16×16]`; `addr=hold`, `release=none` |
+| `math.mova2d [dst[row]], src=r` | `MOVA2D` | Copy SrcA rows to Dst; `rows=8` (default) or `1`; `src=0`, `addr=hold` |
+| `math.zero face=i, fmt=fp32\|bf16` | `ZEROACC` | Face invalidation for accumulation identity, not physical zero fill |
 
 ZEROACC marks rows invalid; SFPU loads need actual valid data. Its named lowering
 must preserve the working face-clear recipe until the encoder/manual discrepancy
-is resolved. Do not change that encoding by guessing from raw argument names.
+is resolved. Do not change that encoding by guessing from raw argument names. A
+whole-tile clear is `repeat f in 0..4 { math.zero face=f, ... }`.
+
+`math.mova2d` with `rows=8` moves an aligned 8-row block (`dst` row and SrcA row
+are rounded down to multiples of 8); `rows=1` moves one row. On Blackhole an odd
+address-modifier slot turns the one-row form into an undocumented four-row move, so
+`rows=1` with an odd `addr` slot is an error. With `math.fmt dst=fp32` the move
+writes 32-bit Dst datums, but SrcA holds at most TF32: FP32 data that reaches Dst
+through SrcA keeps 10 mantissa bits (open item, §12).
+
+#### Matrix products
+
+`math.mvmul` computes `Dst += SrcB @ SrcA` on one 8×16 block of the left operand
+and one 16×16 face of the right: the **left** operand of a product is unpacked to
+**SrcB** (`unpack.move b`), the **right** operand to **SrcA** (`unpack.move a`).
+Blackhole aligns the SrcA row counter to 16 (one face); SrcB and Dst step by 8.
+A 32×32 tile product per fidelity phase is 16 instructions: for each of the four
+output faces, two K faces × two 8-row halves. The counter order that visits them
+is author-written with `math.addrmod` (reference recipe:
+`blackhole-py-old/ttko/fpu.py`, `matmul`). Each instruction consumes at most 5
+mantissa bits of SrcA and 7 of SrcB; further fidelity phases (fidelity counter
+0..3, advanced by an addrmod) add precision. The number of phases is the author's
+precision choice. `math.zero` beforehand gives `=` instead of `+=`.
+
+`unpack.fmt a, transpose` transposes **within** each 16×16 face and leaves the
+faces in place. A whole-tile transposed right operand, as in `Q @ Kᵀ`, also needs
+the off-diagonal faces (1 and 2) exchanged, which the author does by stepping the
+SrcA counter by 32 instead of 16 between K faces (and by 16 instead of 32 between
+output columns). Acceptance test: an asymmetric 32×32 input, where a swapped
+operand or a missing face exchange changes the result.
+
+### SFPU registers
 
 L0–L7 are physical working registers. Named constants: `zero` (L9), `one` (L10),
 `neg_one` (L11), `const_0_8373` (L8). L12–L14 are programmable via `sfp.const`.
 `lane_x2` (L15) is the read-only lane sequence 0,2,...,62, not a fourth programmable
 constant. L16 is available only within SFPMACRO. These names are SFPU operands
 only; scalar code has no register names.
+
+```text
+alias m = l0
+alias scale = l12
+```
+
+`alias name = reg` names a physical SFPU register for the rest of the enclosing
+block (a function, macro or `{}`); it is a statement, not a declaration. It renames
+only: nothing is allocated, saved or checked, and two aliases may name one
+register. An alias follows variable scoping (§5) and shares the local namespace.
+
+### SFPU lanes and Dst
+
+The SFPU has 32 lanes. A Dst address `a` (the instruction's row, plus
+`math.cfg dst_offset`, plus the Dst counter, plus the SFPU base) selects an aligned
+group of four Dst rows, `a & ~3`, and a column parity, bit 1 of `a`; bit 0 is
+ignored. Lane `l` reads or writes
+
+```text
+Dst row    = (a & ~3) + l / 8
+Dst column = 2 * (l % 8) + ((a >> 1) & 1)
+```
+
+so one `sfp.load` covers 4 rows × 8 columns, the even or the odd columns of a
+16-wide Dst row. A 32×32 tile occupies 64 Dst rows as four 16×16 faces in order
+(top-left, top-right, bottom-left, bottom-right). With `t = a % 64`, `F = t / 16`:
+
+```text
+tile row    = (F / 2) * 16 + (t % 16 & ~3) + l / 8
+tile column = (F % 2) * 16 + 2 * (l % 8) + ((a >> 1) & 1)
+```
+
+A full tile is 32 addresses: 4 faces × 4 row groups × 2 parities, i.e.
+`a = 16*F + 4*g + 2*p`. `dst.tile` (64) and `dst.face` (16) are read-only
+constants for writing these addresses. `lane_x2 & 15` is `2 * (l % 8)`; adding the
+parity and `16 * (F % 2)` gives each lane's tile column. Lane `l` is in SFPU row
+`l / 8` (an eight-lane group): `sfp.shft2 rotate`, `sfp.transp` and the reduction
+butterflies work on these groups.
+
+### SFPU instructions
+
+Operands: `rd` is written, `a b c` are read. Registers are any of L0–L15 when read
+and L0–L7 when written, unless the row says otherwise. Where the native instruction
+reads its destination, the row writes `rd` in that source position and the
+compiler checks that the same register is given there. Integer instructions work
+on two's-complement 32-bit lanes; float instructions on FP32. Every instruction
+writes only enabled lanes (§10, Predication) unless the row says otherwise.
+
+| Operation | Native | Meaning |
+| --- | --- | --- |
+| `sfp.load rd, dst[a]` | `SFPLOAD` | `fmt=` `fp32 bf16 fp16 i32` overrides the configured transfer format; `addr=hold` |
+| `sfp.store dst[a], a` | `SFPSTORE` | Same `fmt`/`addr` rules. Marks all four rows of the group defined, even lanes it does not write |
+| `sfp.li rd, value` | `SFPLOADI` ×1–2 | Below |
+| `sfp.mov rd, a` | `SFPMOV` | `neg` flips the sign bit; `all` writes every lane regardless of predication |
+| `sfp.mad rd, a, b, c` | `SFPMAD` | `rd = ±(a·b) ± c`; `neg_ab`, `neg_c` |
+| `sfp.mul rd, a, b` | `SFPMUL` | `rd = ±(a·b) + 0` (−0 becomes +0); `neg` |
+| `sfp.add rd, a, b` / `sfp.sub rd, a, b` | `SFPADD` | `rd = 1·a ± b` |
+| `sfp.addi rd, rd, k` | `SFPADDI` | `rd = k + rd`; k a float constant exact in BF16; `neg` negates rd first |
+| `sfp.muli rd, rd, k` | `SFPMULI` | `rd = rd·k + 0`; k exact in BF16; `neg` |
+| `sfp.recip rd, a` | `SFPARECIP` | Approximate `1/a` (refine with `sfp.mad`) |
+| `sfp.aexp rd, a` | `SFPARECIP` | Approximate `e^a` |
+| `sfp.rnd rd, a, to=bf16\|fp16` | `SFPSTOCHRND` | Round the FP32 mantissa to 7 / 10 bits, result stays FP32; `mode=nearest` (default) `\|zero\|stoch`; zero/denormal → 0, Inf/NaN → ±Inf |
+| `sfp.cast rd, a` | `SFPCAST` | Sign-magnitude integer → FP32, round to nearest even; `stoch` |
+| `sfp.abs rd, a, int\|float` | `SFPABS` | Two's-complement or FP32 absolute value |
+| `sfp.iadd rd, a, rd` / `sfp.iadd rd, a, k` | `SFPIADD` | `rd = a + rd` / `rd = a + k`, k in −2048..2047. Never changes lane flags |
+| `sfp.isub rd, a, rd` | `SFPIADD` | `rd = a − rd`. Never changes lane flags |
+| `sfp.shl rd, a, n` / `sfp.shr` / `sfp.sar` | `SFPSHFT` | Shift by constant n in 0..31: left, logical right, arithmetic right |
+| `sfp.shift rd, rd, a` | `SFPSHFT` | Shift rd by a's signed lane value: left if ≥ 0, logical right by −a otherwise; `arith` for arithmetic right |
+| `sfp.and rd, a, b` / `sfp.or rd, a, b` | `SFPAND` / `SFPOR` | Bitwise |
+| `sfp.xor rd, rd, a` / `sfp.not rd, a` | `SFPXOR` / `SFPNOT` | Bitwise |
+| `sfp.exexp rd, a` | `SFPEXEXP` | Exponent field as an integer, minus 127; `raw` for 0..255 |
+| `sfp.exman rd, a` | `SFPEXMAN` | Mantissa in bits 0–22, hidden bit 23 set; `hidden=0` clears it |
+| `sfp.setexp rd, a, e` | `SFPSETEXP` | Sign and mantissa of a, exponent e: a constant 0..255, or `rd` with `from=int` (low 8 bits, default) or `from=fp32` (rd's exponent field) |
+| `sfp.setsgn rd, a, s` | `SFPSETSGN` | Exponent and mantissa of a, sign s: constant 0/1, or `rd` (its bit 31) |
+| `sfp.minmax lo, hi` | `SFPSWAP` | `lo = min`, `hi = max` in FP32 / sign-magnitude total order; equal values may be exchanged. `hi` may be a constant register (L8–L15), which is read but not written: `sfp.minmax x, one` clamps x to ≤ 1. Both in L0–L3 under `sfp.index` |
+| `sfp.swap x, y` | `SFPSWAP` | Exchange x and y |
+| `sfp.shft2 rd, a, rotate` | `SFPSHFT2` | Rotate right by one lane within each eight-lane group |
+| `sfp.transp` | `SFPTRANSP` | Transpose the 4×4 lane groups of L0–L3 and of L4–L7 |
+| `sfp.const rd, value` | `SFPLOADI` ×2, `SFPCONFIG` | Program L12–L14 (via L0, which it overwrites) |
+| `sfp.nop` | `SFPNOP` | One idle SFPU cycle |
+
+Comparisons and compare-against-zero are not separate operations; they exist only
+as `sfp.if` conditions, so lane flags change only where the source shows a
+predicate.
 
 ```text
 sfp.li l0, 1.0
@@ -704,10 +931,102 @@ float bits, with no integer-to-float conversion. Both halves obey current lane
 predication; inactive lanes retain their old values. The operation does not change
 predicate state. Unsupported forms/ranges are errors, not truncation.
 
-A readable lane/mask helper is required but not frozen: audit lane-row mapping,
-condition-code enable/set/push/pop, index capture/swap, and their independent state.
-Argmax and attention masks are its acceptance cases. Keep explicit NOPs and syncs
-from working kernels until hazards are audited; do not insert arbitrary padding.
+### Predication
+
+```text
+sfp.if col >= tail {
+    sfp.store dst[a], neg_inf_reg, fmt=fp32
+}
+sfp.if delta == 0 { sfp.mov value, one } else { sfp.mov value, value }
+```
+
+`sfp.if cond { ... } [else { ... }]` runs its body with only the lanes where `cond`
+holds enabled; `else` runs with the remaining previously enabled lanes; `else if`
+nests. Conditions:
+
+| Condition | Native | Meaning |
+| --- | --- | --- |
+| `a < 0`, `a >= 0`, `a == 0`, `a != 0` | `SFPSETCC` | Tests a's 32 bits as a two's-complement integer: sign bit, all-zero. For FP32, −0 is `< 0` and not `== 0` |
+| `a > b`, `a <= b`, `a < b`, `a >= b` | `SFPGT` / `SFPLE` | FP32 total order (−NaN < −Inf < … < −0 < +0 < … < +NaN), which is also sign-magnitude integer order. Agrees with two's-complement order only when both are ≥ 0 |
+
+The operand the native compare reads through its destination field (the left
+operand of `>` and `<=`, the right operand of `<` and `>=`) must be L0–L11: with
+L12–L14 there the instruction is a backdoor template write, not a compare.
+
+An outermost `sfp.if` lowers to `SFPENCC` (enable predication, all flags set), the
+compare, the body, `SFPCOMPC` and the else body, then `SFPENCC` (disable, all flags
+set). A nested `sfp.if` lowers to `SFPPUSHC`, the compare, the body, `SFPCOMPC`
+and the else body, `SFPPOPC`. A compare updates only enabled lanes, so nested
+conditions narrow the outer ones. At most eight `sfp.if` are nested inside an
+outermost one (the flag stack holds eight). The listing shows every instruction.
+
+Every SFPU instruction writes only enabled lanes, except `sfp.mov all`. The body
+may contain SFPU operations, `repeat`, macro uses and nested `sfp.if`. It may not
+contain `sfp.cfg`, `sfp.index`, `sfp.const` (SFPCONFIG uses lane flags differently),
+non-SFPU device operations, or a `break`, `continue` or `return` that leaves it.
+Predication is SFPU-local state that a function call does not change; an `sfp.if`
+may contain a call only if the callee's body obeys the same rules.
+
+`sfp.store` under predication still marks all four rows of its group defined
+(table above): store to rows that hold valid data, or write them first.
+
+Acceptance test: the attention tail. For every valid-column count 1..32, masked
+columns become `-inf`, live columns keep their exact bits, and an instruction after
+the `sfp.if` reaches every lane.
+
+### Lane configuration and index capture
+
+`sfp.cfg` writes named fields of the per-lane SFPU configuration (`LaneConfig`):
+
+| Field | Meaning |
+| --- | --- |
+| `load_odd` / `store_odd` | `sfp.load` / `sfp.store` always use odd columns |
+| `block_load` / `block_store` | `sfp.load` does not write LRegs / `sfp.store` does not write Dst |
+| `invert_minmax` | `sfp.minmax` computes `lo = max`, `hi = min` |
+| `fp16_inf` | FP16 loads interpret the max exponent as infinity |
+| `row_mask=m` | Disable SFPU row `r` (lanes 8r..8r+7) where bit r of m (0..15) is set |
+
+Booleans are `name` / `name=0`; as with `.cfg` (§8), a write changes only the
+fields it names: one `SFPCONFIG` AND clearing them, then one OR setting them,
+omitting either when it would do nothing. The launch value of every field is 0.
+`sfp.cfg` may not appear inside `sfp.if`.
+
+```text
+sfp.index capture {
+    repeat ... { sfp.load l1, dst[a], fmt=fp32; ...; sfp.minmax l1, l0 }
+}
+```
+
+`sfp.index paired|capture { ... }` enables index mode for its body (an `SFPCONFIG`
+OR at entry, AND at exit; the index bits are not `sfp.cfg` fields). Each value
+register L0–L3 has an index register L4–L7 (`l0`↔`l4`, …):
+
+- `paired`: `sfp.minmax lo, hi` with both operands in L0–L3 moves the paired index
+  registers with the values, so each index follows its value.
+- `capture`: additionally, `sfp.load` into L0–L3 writes the physical Dst index of
+  each lane's datum, `row * 16 + column` (absolute Dst row and column, §10 lanes),
+  into the paired register. Which logical element that is depends on the tensor
+  layout, and converting it is the kernel's job.
+
+Inside the body, only `sfp.load`, `sfp.li`, `sfp.minmax`, `sfp.swap` and
+`sfp.transp` may write L4–L7 (hardware restriction TEN-2932); `sfp.minmax` and
+`sfp.swap` operands must be in L0–L3. `sfp.index` cannot nest, may not appear
+inside `sfp.if`, and its body follows the `sfp.if` body rules otherwise.
+
+Acceptance test: argmax with equal winning BF16 keys placed in different lanes,
+faces, tiles and workers; the lowest logical token ID must win.
+
+### Scheduling
+
+The compiler inserts no `sfp.nop` and no stall. Blackhole stalls automatically
+after `SFPMAD`-family results (mad, mul, add, addi, muli), `SFPSWAP` and the
+rotating `SFPSHFT2` modes, except in the cases the ISA lists as undetected:
+an `SFPMAD` result read by `sfp.iadd`/`sfp.isub`/`sfp.shift`/`sfp.shl`-family,
+`sfp.setexp`/`sfp.setsgn` (reading rd), `sfp.and`/`sfp.or`, `sfp.recip`, the
+compare of `sfp.minmax`, `sfp.shft2`, or `SFPCONFIG` reading L0 (`sfp.const`,
+`sfp.cfg`); and nothing is automatic inside `sfpmacro`. In those cases the author
+writes `sfp.nop`. Existing kernels' NOPs are kept until a hazard probe shows they
+are unneeded. A later checker may reject missing ones; it will not insert them.
 
 ### Counters and address modifiers
 
@@ -722,8 +1041,15 @@ Each position counter has a carriage-return copy `cr`:
 | `c=cr+n` | Set current and cr to old cr+n |
 | `dst=c+n` | Set current and cr to old current+n |
 
-`math.addrmod name, slot=0..7, ...` writes the slot at its source location and names
+`math.addrmod name, slot=1..7, ...` writes the slot at its source location and names
 it. Use `addr=name` or `addr=slot` on the consuming instruction. Omitted counters mean +=0.
+
+Slot 0 is reserved as `hold`: it changes no counter. Its launch value is all-zero
+(§12) and `math.addrmod` cannot write it, so it needs no setup and emits nothing.
+Every instruction with an address-modifier field (math instructions, `sfp.load`,
+`sfp.store`, `sfpmacro.run`, and the same instructions inside templates) uses
+`hold` when `addr=` is omitted. Slot 0 is also even, so it is valid for
+`math.mova2d rows=1`.
 Addrmods accept src increments 0..63, dst 0..1023, fidelity 0..3; absolute assignments
 are =0 only. CR forms are allowed; current-to-CR is Dst-only. SFPU never updates fidelity.
 Template addrmod names resolve at load in the using function; ambiguous bindings error.
@@ -745,7 +1071,7 @@ use to be finished; loads implement their documented resource-safety waits.
 | --- | --- |
 | `replay name { ... }`, `replay.load name`, `replay.run name` | Record/replay a constant instruction body; per-TRISC buffer, at most 32 words |
 | `mop name, outer=, inner= { ... }`, `mop.load name`, `mop.run name` | Per-TRISC MOP state; load waits for prior MOP, then writes config |
-| `sfpmacro name, slot=0..3 { ... }`, `sfpmacro.load name`, `sfpmacro.run name, reg, dst[row]` | Configure delayed SFPU operations |
+| `sfpmacro name, slot=0..3 { ... }`, `sfpmacro.load name`, `sfpmacro.run name, reg, dst[row]` (`addr=`, default `hold`) | Configure delayed SFPU operations |
 
 Bodies are one `label: instruction` per line (replay bodies are plain instructions).
 
@@ -768,6 +1094,9 @@ skip_a/skip_b instead. Run with `mop.run name, n=1..128, mask=value`; n and mask
 be runtime expressions. The mask is 32 bits; steps beyond 31 read zero. Required
 MOP_CFG updates are shown in the listing. Loop-MOP counts are fixed at installation.
 
+In SFPMACRO bodies `x` is a contextual operand keyword for the loaded register, like
+`a`/`b` elsewhere (§2); it does not clash with a file-level `x`.
+
 SFPMACRO labels are the units `simple mad round store`, one line per unit, with `delay=0..7`
 (cycles after load, plus one) or `after=n` (subsequent SFPU instructions). Timing
 mode is shared per unit. Enough SFPU instructions must follow an `after` schedule
@@ -783,7 +1112,8 @@ to the load only. Detailed timing/encoding limits remain in the hardware referen
 
 Before any entry runs, runtime establishes zero config/thread-config/counters,
 empty CBs, Src banks owned by unpack, semaphores value 0/max 1 except reserved
-helper credits, all SFPU lanes enabled and predicates reset. Dst is invalidated
+helper credits, all SFPU lanes enabled, predicates reset, the flag stack empty and every
+`sfp.cfg` / `sfp.index` field 0. Dst is invalidated
 for accumulation, not initialized for arbitrary SFPU loads. SFPU working registers
 and scratch are undefined; programmable constants/templates are not loaded. `keep`
 regions retain their contents. Firmware initializes named fixed SFPU constants.
@@ -798,17 +1128,30 @@ runtime bounds or distributed liveness. Debug runs and correctness tests cover t
 
 The consolidated design intentionally leaves these audits open:
 
-1. Complete native math/SFPU signatures, lane/mask/index helpers, and hazard rules.
-2. Pack/unpack advanced named fields, base-context reuse and BFP pack confirmation;
+1. SFPU hazards: probe the undetected-stall cases of §10 Scheduling and the
+   existing kernels' NOPs. Hardware-probe each §10 instruction row, `sfp.if` and
+   `sfp.index` against its acceptance test.
+2. Pack/unpack advanced named fields, base-context reuse and BFP exponent variation;
    `pack.gather` with fp16 output, 16-bit Dst, and −0/NaN/denormal neighbours under
    `acc`; a packer zero-fill (`ZeroWrite`, whole rows) for preparing `acc` targets.
 3. ZEROACC's encoder/manual discrepancy and exact format-dependent Dst address
    interpretation.
 4. Multicast payload/notification ordering and partial NoC-write alignment rules,
    including whether DRAM writes must split at 16-element boundaries as the
-   existing scatter does.
+   existing scatter does. The KV-cache append (32-byte rows into tiled cache pages)
+   and the attention context write depend on it.
 5. The endpoint ABI, resource reservations, code-slot limits and numerical/performance
    validation of actual compiled Llama3 ports.
+6. FP32 data into Dst. Unpack offers FP32 only as `out=bf16|fp16`, and SrcA holds
+   at most TF32, so the attention merge's FP32 (O, m, l) states lose mantissa bits
+   on the way into Dst. Decide between an unpack-to-Dst path and accepting TF32.
+7. Decided: parameters are host-bound per graph run (§4), so the old argmax's
+   device-side publication of next-token parameters is dropped. Its per-launch
+   zeroing of partial slots becomes `keep` slots with generation counters. Audit
+   remaining: the cost of one host round trip per token versus the old autonomous
+   replay.
+8. `sfpmacro` coverage of the RMSNorm apply macro, which installs an `SFPMUL`
+   template through the backdoor `CONFIG0` write.
 
 No raw instruction-word construction is required in accepted application source.
 Backend encoding tools remain available for probes. An unreviewed hardware field

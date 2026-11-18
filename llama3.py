@@ -8,7 +8,7 @@ from helpers import round_up, safe_load
 ROOT = Path(__file__).resolve().parent
 KERNELS = ROOT / "kernels"
 MODELS = {"1b": "Llama 3.2 1B", "8b-bf16": "Llama 3 8B BF16", "8b-fp8": "Llama 3 8B FP8"}
-ARGS = 64  # up to 16 dynamic words per launch
+ARGS = 64  # one launch's argument block: 16 words, bound per run
 
 def mean(xs): return sum(xs) / len(xs) if xs else float("nan")
 
@@ -48,11 +48,12 @@ class ChatTokenizer:
     return text
 
 class Llama3:
-  def __init__(self, model="1b", device=0, weights=None, *, profile=False):
+  def __init__(self, model="1b", device=0, weights=None, *, profile=False, ttrv=False):
     self.profile, self.kdir = profile, KERNELS / f"llama3-{model}"
     self.m = m = json.loads((self.kdir / "manifest.json").read_text())
     self.checkpoint = Path(weights) if weights else ROOT / m["checkpoint"]  # weights/llama3-<model> by default
-    self.launches = m["launches"]
+    self.launches = list(m["launches"])
+    self.ttrv = ttrv
     self.dev = dev = BlackholeDevice(f"BLACKHOLE:{device}")
     try:
       dev.allocator.dram_top = round_up(fw.DRAM_BANKS * m["dram_top"], 1 << 30)  # our heap goes above the old layout
@@ -106,7 +107,25 @@ class Llama3:
     self.prog = {}
     assert m['static_base'] == fw.DATA_BASE and m['l1_param_base'] == fw.L1_PARAM_BASE, "kernels exported for another L1 layout"
     tables_end = max(m['static_base'] + 0x40 * (p['k'] + 1) for p in m['programs'].values())
+    compiled = set()
+    if self.ttrv:
+      compiled = {"embedding"} if m["model"] == "8b-fp8" else {"embedding", "o", "down"}
+    if compiled:
+      from ttrv import build
+      embed_tiles = m["buffers"]["e2e_x_a"]["size"] // 2048
+      for name in sorted(compiled):
+        source = "o" if name == "down" else name
+        path = ROOT / "docs" / "examples" / f"llama3_{source}.ttrv"
+        defines = {"EMBED_TILES": embed_tiles}
+        if name == "down": defines["INPUT_TILES"] = m["buffers"]["e2e_hidden_dense"]["size"] // 2048
+        if name == "embedding": defines["MAX_TOKENS"] = m["max_tokens"]
+        kernel = build(path.read_text(), defines, str(path))
+        # Exported kernels keep their tables and attention flags below l1_data_base.
+        self.prog[name] = kernel.install(dev, scratch_base=m["l1_data_base"])
+      # TTRV kernels take the exported kernels' argument words in the same order: per-bank base words for
+      # stripe-aligned DRAM buffers, then integer parameters (embedding's token_pos) bound per run.
     for name, p in m['programs'].items():
+      if name in compiled: continue
       assert not p["pre"], "export kernels with resident state instead of per-launch L1 writes"
       files = {role: [(self.kdir / f).read_bytes() for f in fs] for role, fs in p['files'].items()}
       images = {}
@@ -125,7 +144,12 @@ class Llama3:
       assert tables_end <= state['addr'] and state['addr'] + state['size'] <= m['l1_data_base'], state
       dev.iface.write(tuple(state['core']), state['addr'], bytes(state['size']))
 
-  # ---- per-position args and graphs
+  # ---- arguments and graph, built once
+  # Launch arguments are bound per run, as tinygrad binds a captured graph's Variables: one argument set for the
+  # whole launch list, in pinned host memory, which the dispatcher reads as it reaches each EXEC. Buffer addresses
+  # never change, so they are written once here. Each run waits for the previous run to retire (the dispatcher
+  # reads arguments ahead, so they must not change while a run is in flight), writes this position's integers in
+  # place and submits without waiting.
   def _build(self):
     m, dev = self.m, self.dev
     self.npos = m["max_tokens"] - 1
@@ -133,48 +157,52 @@ class Llama3:
     noc = dev.sysmem.noc_addr + self.host
     assert noc >> 32 == 0x10000000, "argmax's PCIe mid address is compiled in"
     self.host_lo = noc & 0xFFFFFFFF
-    # args template for one position; dyn = (word offset, name) of the per-position words
-    tpl, self.dyn = bytearray(), []
+    self.args = np.zeros(len(self.launches) * ARGS // 4, np.uint32)
+    at = dev.alloc_host(self.args.nbytes)
+    self.args_base = dev.sysmem.noc_addr + at
+    self.args, dyn = np.ndarray(self.args.shape, np.uint32, dev.sysmem.mem, at), {}
+    self.args[:] = 0
     for i, (_, words) in enumerate(self.launches):
       assert len(words) * 4 <= ARGS
-      tpl += bytes(ARGS)
       for j, w in enumerate(words):
-        at = ARGS * i + 4 * j
-        if isinstance(w, str): self.dyn.append((at // 4, w))
-        else: struct.pack_into("<I", tpl, at, w)
-    self.args_tpl = np.frombuffer(bytes(tpl), np.uint32)
-    self.args_stride = len(tpl)
-    self.args_base = dev.allocator._alloc(self.npos * self.args_stride)
-    # one position: boundary timestamps and optional paired timestamps fused into EXEC
+        if isinstance(w, str): dyn.setdefault(w, []).append(ARGS // 4 * i + j)
+        else: self.args[ARGS // 4 * i + j] = w
+    self.dyn = {name: np.array(cols) for name, cols in dyn.items()}
+    # one run: boundary timestamps and optional paired timestamps fused into EXEC, also in pinned host memory
     self.nts = 2 * len(self.launches) + 2 if self.profile else 2
-    self.ts_stride = round_up(16 * self.nts, 64)
-    self.ts_base = dev.allocator._alloc(self.npos * self.ts_stride)
-    self.graph = self._graph(self.prog, self.ts_base, self.npos)
+    at = dev.alloc_host(16 * self.nts)
+    self.ts_base = dev.sysmem.noc_addr + at
+    self.ts = np.ndarray((2 * self.nts,), np.uint64, dev.sysmem.mem, at)
+    self.graph = self._graph(self.prog, self.ts_base)
+    self.in_flight = None  # timeline value that retires the last submitted run
 
-  def _graph(self, programs, ts_base, count=1):
-    q, patches = BlackholeComputeQueue().timestamp(ts_base), [(8, self.ts_stride)]
+  def _graph(self, programs, ts_base):
+    q = BlackholeComputeQueue().timestamp(ts_base)
     for i, (name, _) in enumerate(self.launches):
-      patches.append((len(q._q) + 16, self.args_stride))
-      if self.profile: patches.append((len(q._q) + 24, self.ts_stride))
       q.exec(programs[name], self.args_base + ARGS * i, ts_base + 16 * (1 + 2 * i) if self.profile else 0)
-    patches.append((len(q._q) + 8, self.ts_stride))
     q.timestamp(ts_base + 16 * (self.nts - 1))
-    return BlackholeGraph(self.dev, q, count, patches)
+    return BlackholeGraph(self.dev, q)
 
   # ---- a request
-  def _upload_args(self, n, prompt_len):
-    pos = np.arange(n, dtype=np.uint32)
-    kvb = self.m["kv_block"]
-    val = dict(token_pos=pos, write_pos=pos + 1, write_token=(pos >= prompt_len - 1).astype(np.uint32), start_pos=pos,
-               kv_blocks=pos // kvb + 1, valid_columns=pos % kvb + 1, argmax_host_address=np.full(n, self.host_lo, np.uint32))
-    a = np.tile(self.args_tpl, (n, 1))
-    for col, name in self.dyn: a[:, col] = val[name]
-    self.dev.allocator._copyin(self.args_base, a.view(np.uint8))
+  def _retire(self, rows, timeout=10.0):
+    """Wait for the run in flight, if any, and keep its timestamps (the next run overwrites them)."""
+    if self.in_flight is None: return
+    self.dev.timeline_signal.wait(self.in_flight, timeout)
+    self.in_flight = None
+    rows.append(self.ts[1:2 * self.nts:2].astype(np.int64))
 
-  def _timestamps(self, base, n):
-    raw = bytearray(n * self.ts_stride)
-    self.dev.allocator._copyout(raw, base)
-    return np.frombuffer(bytes(raw), np.uint64).reshape(n, -1)[:, 1:2 * self.nts:2].astype(np.int64)
+  def _run(self, pos, prompt_len, rows):
+    """One position: wait for the previous run, bind this position's integer arguments in place, submit.
+    Returns (bind ns, submit ns)."""
+    self._retire(rows)
+    t = time.perf_counter_ns()
+    kvb = self.m["kv_block"]
+    val = dict(token_pos=pos, write_pos=pos + 1, write_token=int(pos >= prompt_len - 1), start_pos=pos,
+               kv_blocks=pos // kvb + 1, valid_columns=pos % kvb + 1, argmax_host_address=self.host_lo)
+    for name, cols in self.dyn.items(): self.args[cols] = val[name]
+    bind = time.perf_counter_ns() - t
+    self.in_flight, submit = self.graph.submit()
+    return bind, submit
 
   def generate(self, ids, tokens=None, *, start=0, on_token=None):
     """Generate until EOS, the optional new-token limit, or the context limit. Returns (generated ids, stats).
@@ -188,24 +216,23 @@ class Llama3:
     hist = np.zeros(self.m["max_tokens"], "<u4")
     hist[:P] = ids
     self.dev.allocator._copyin(self.buffer(self.m["history"]), hist)
+    gen, submit, bind, rows = [], 0, 0, []
     t = time.perf_counter_ns()
-    self._upload_args(n, P)
-    t_args = time.perf_counter_ns() - t
-    gen, submit = [], 0
-    t = time.perf_counter_ns()
-    for p in range(P - 1, n):
-      # Batch the uncached prompt; thereafter wait for each token before submitting the next position.
-      first = start if p == P - 1 else p
-      submit += self.graph(first, p + 1 - first, timeout=10.0 + 0.1 * (p + 1 - first))
+    for p in range(start, n):
+      # Prompt positions run back to back, each waiting only for the previous run, as tinygrad's prefill does.
+      bd, sub = self._run(p, P, rows)
+      bind, submit = bind + bd, submit + sub
+      if p < P - 1: continue
+      self._retire(rows)  # the token at p + 1 is needed now
       token = struct.unpack_from("<I", self.dev.sysmem.mem, self.host + 16 * (p + 1))[0]
       gen.append(token)
       if on_token: on_token(token)
       if token in self.m["eos"]: break
     wall, n = time.perf_counter_ns() - t, P - 1 + len(gen)
-    ts = self._timestamps(self.ts_base, n)[start:]  # the positions run by this request
+    ts = np.stack(rows)  # one row of timestamps per position run by this request, in order
     tick = self.ns_per_tick
     g = ts[P - 1 - start:]  # the positions that generate a token
-    stats = dict(positions=n - start, tokens=len(gen), args_upload_us=t_args / 1e3, submit_us=submit / 1e3, wall_us=wall / 1e3,
+    stats = dict(positions=n - start, tokens=len(gen), bind_us=bind / 1e3, submit_us=submit / 1e3, wall_us=wall / 1e3,
                  period_us=(g[-1, -1] - g[0, 0]) * tick / 1e3 / len(g),            # start of first to end of last
                  busy_us=mean((g[:, -1] - g[:, 0]).tolist()) * tick / 1e3,         # inside one position's graph
                  gap_us=mean((g[1:, 0] - g[:-1, -1]).tolist()) * tick / 1e3 if len(g) > 1 else 0.0,
@@ -219,17 +246,15 @@ class Llama3:
 
   def dispatch_baseline(self, reps=20):
     """us per EXEC for the same launch list with no-op kernels (no STOREs): the cost of dispatch alone."""
-    self._upload_args(1, 1)
+    self._retire([])
     if not hasattr(self, "_noop_graph"):
-      ts = self.dev.allocator._alloc(self.ts_stride)
       noop = {name: blackhole_build_program(self.dev, {tuple(c['core']): {} for c in p['per_core']}, self.prog[name].args_size)
               for name, p in self.m['programs'].items()}
-      self._noop_graph = self._graph(noop, ts), ts
-    graph, ts = self._noop_graph
+      self._noop_graph = self._graph(noop, self.ts_base)
     per = []
     for _ in range(reps):
-      graph()
-      t = self._timestamps(ts, 1)[0]
+      self._noop_graph()
+      t = self.ts[1:2 * self.nts:2].astype(np.int64)
       per.append((t[-1] - t[0]) * self.ns_per_tick / 1e3)
     return mean(per) / len(self.launches), mean(per)
 
@@ -240,6 +265,7 @@ def main():
   ap.add_argument("--prompt", default="Write a story about a robot learning to paint.")
   ap.add_argument("--tokens", type=int, help="maximum new tokens (default: generate until EOS or context limit)")
   ap.add_argument("--weights", help="checkpoint directory (default: the one the kernels were exported with)")
+  ap.add_argument("--ttrv", action="store_true", help="compile embedding and the BF16 O and down projections from TTRV source")
   ap.add_argument("--profile", action="store_true", help="record per-launch timestamps and report kernel/dispatch timings")
   ap.add_argument("--chat", action="store_true", help="serve the web chat (chat/) instead of running --prompt")
   ap.add_argument("--host", default="0.0.0.0", help="--chat: address to listen on")
@@ -249,7 +275,7 @@ def main():
   if a.chat:
     import chat.server
     def load(key):  # the page picks the model; --weights replaces the checkpoint of --model only
-      model = Llama3(key, a.device, a.weights if key == a.model else None, profile=a.profile)
+      model = Llama3(key, a.device, a.weights if key == a.model else None, profile=a.profile, ttrv=a.ttrv)
       try: tok = ChatTokenizer(model.checkpoint)
       except BaseException:
         model.close()
@@ -258,7 +284,7 @@ def main():
       return tok, generate, model.npos, model.m["eos"], model.close
     return chat.server.serve(MODELS, load, a.host, a.port)
   t0 = time.perf_counter()
-  model = Llama3(a.model, a.device, a.weights, profile=a.profile)
+  model = Llama3(a.model, a.device, a.weights, profile=a.profile, ttrv=a.ttrv)
   try:
     m = model.m
     tok = ChatTokenizer(model.checkpoint)
@@ -274,7 +300,7 @@ def main():
     print(f"\n{MODELS[a.model]} on {model.dev.iface.card}, device {a.device}\n")
     row("startup", f"{t_start:.2f} s")
     row("  weights", f"{gb:.2f} GB in {model.t_weights:.2f} s ({gb / model.t_weights:.1f} GB/s)")
-    row("  kernels", f"{len(m['programs'])} programs, {model.npos} position graphs built in {model.t_build:.2f} s")
+    row("  kernels", f"{len(m['programs'])} programs, one launch graph built in {model.t_build:.2f} s")
 
     eos = next((i for i, t in enumerate(gen) if t in m["eos"]), len(gen))
     print()
@@ -295,7 +321,7 @@ def main():
                   f"({s['tokens']} tokens, device clock, {model.nts} timestamps per token)")
     row("  device", f"{s['busy_us']:.1f} us per token in the graph, {s['gap_us']:.2f} us between graphs")
     row("  host", f"{(s['wall_us'] - s['device_us']) / s['positions']:.1f} us per position on top of the device "
-                  f"(submit {s['submit_us'] / s['positions']:.1f} us/position, args upload {s['args_upload_us']:.0f} us once)")
+                  f"(submit {s['submit_us'] / s['positions']:.1f} us/position, binding args {s['bind_us'] / s['positions']:.1f} us/position)")
 
     if not a.profile:
       print("\nUse --profile for per-kernel and dispatch timings.")

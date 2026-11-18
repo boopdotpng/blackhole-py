@@ -1,6 +1,9 @@
-// Llama3 BF16 O projection + residual: output = residual + W @ context.
-// Complete five-RISC design port, NOT compiled or hardware validated.
-// 1B: EMBED_TILES=2, 8B BF16: EMBED_TILES=4. FP8 is not included.
+// Llama3 O and down projections: output = residual + W @ context.
+// Compiled and checked on p150 by test_ttrv_hardware.py at both BF16 dimensions.
+// 1B: EMBED_TILES=2, 8B BF16: EMBED_TILES=4, 8B FP8: EMBED_TILES=4 FP8=1.
+// FP8 (not yet compiled: needs math.mova2d and the §10 SFPU instructions):
+// E4M3 weights; x is scaled by input_scale and rounded to E4M3 on the SFPU
+// before the dot products, and each dot result is multiplied by output_scale.
 // Runs on the first 88 workers; split() spreads the rows over them.
 // Uses full-tile pack for each scalar result; pack.gather can replace it (spec §9).
 // Numerical/layout/lowering obligations are in ../ttrv_port_review.md.
@@ -14,27 +17,55 @@ grid 88
 
 const EMBED_TILES = 2
 const DIM = EMBED_TILES * 1024
+const INPUT_TILES = EMBED_TILES  // down uses 8 (1B) or 14 (8B)
+const INPUT_DIM = INPUT_TILES * 1024
+// Power-of-two CB capacity; each contiguous reservation divides a weight row.
+const BATCH_TILES = INPUT_TILES & -INPUT_TILES
+const FP8 = 0
 
-param context: bf16
-param matrix: bf16
-param output: bf16
-param residual: bf16
+// W is the weight element type: E4M3 for FP8, else BF16.
+if FP8 { type W = e4m3 } else { type W = bf16 }
 
-cb x: bf16[DIM], pages=1                       // the whole context vector, read for every row
-cb weights: bf16[1024], pages=2 * EMBED_TILES  // two weight rows in flight
+param context: bf16[]
+param matrix: W[]
+param output: bf16[]
+param residual: bf16[]
+// FP8: [input_scale, output_scale] for this layer. Float data lives in buffers (§4).
+if FP8 { param scales: fp32[] }
+
+shared {
+    first, count = split(DIM)
+    lo = first & ~31   // residual elements [lo, first + count): lo starts first's 64-byte line
+    lead = first & 31  // row first + i is datum lead + i of the result, residual and summed pages
+}
+
+cb x: bf16[INPUT_DIM], pages=1                       // the whole context vector, read for every row
+cb weights: W[1024], pages=2 * BATCH_TILES      // two contiguous reads in flight
 cb dot: bf16[1024], pages=2                    // one packed dot result per page
 cb result: bf16[1024], pages=1                 // this core's dot results, element lead + i
 cb residual_slice: bf16[1024], pages=1         // this core's residual, same placement
 cb summed: bf16[1024], pages=1                 // result + residual
+if FP8 {
+    cb xq: e4m3[INPUT_DIM], pages=1            // FP8: quantized x, packed by TRISC2
+    cb scale_page: fp32[16], pages=1           // FP8: [input_scale, output_scale]
+}
 
 sem dst_full = math_pack, max=1                // math -> pack; max=1: one Dst result in flight
 sem dst_bf16 = math_done, max=1                // math -> pack: Dst now holds bf16
 
-// Same two-fidelity-phase face schedule as the current BF16 projection.
-mop dot_face, outer=2, inner=2 {
-    loop0: math.elwmul addr=step
-    last_inner: math.elwmul addr=rewind
-    last: math.elwmul addr=next_face, release=a|b
+if FP8 {
+    // E4M3 operands need one fidelity phase.
+    mop dot_face, outer=1, inner=2 {
+        loop0: math.elwmul addr=step
+        last: math.elwmul addr=next_face, release=a|b
+    }
+} else {
+    // Same two-fidelity-phase face schedule as the current BF16 projection.
+    mop dot_face, outer=2, inner=2 {
+        loop0: math.elwmul addr=step
+        last_inner: math.elwmul addr=rewind
+        last: math.elwmul addr=next_face, release=a|b
+    }
 }
 
 mop add_face, outer=1, inner=2 {
@@ -43,9 +74,47 @@ mop add_face, outer=1, inner=2 {
 }
 
 replay accumulate {
-    sfp.load l0, dst[0], fmt=fp32, addr=still
+    sfp.load l0, dst[0], fmt=fp32
     sfp.mad l7, l0, one, l7
     math.rwc dst+=2
+}
+
+if FP8 {
+    // One 4x8 footprint of x: scale by l12, round to E4M3 in FP32 form, store.
+    // The packer truncates, so rounding (half to even), clamping to ±448 and
+    // flushing E4M3 subnormals happen here. Constants: l1 = 0x7ffff, l2 = 1,
+    // l3 = 0xfff00000, l5 = 448.0, l6 = -448.0, l13 = 2^-6 (smallest normal).
+    // 23 words; with accumulate's 3 this fills 26 of the 32 replay words.
+    replay to_fp8 {
+        sfp.load l0, dst[0], fmt=fp32
+        sfp.mul l0, l0, l12; sfp.nop
+        sfp.shr l4, l0, 20          // bit 0: lowest kept mantissa bit
+        sfp.and l4, l4, l2
+        sfp.iadd l4, l1, l4         // 0x7ffff + lsb: ties to even
+        sfp.iadd l0, l4, l0
+        sfp.and l0, l0, l3          // keep 3 mantissa bits
+        sfp.mov l7, l5
+        sfp.minmax l0, l7; sfp.nop  // l0 = min(x, 448)
+        sfp.mov l7, l6
+        sfp.minmax l7, l0; sfp.nop  // l0 = max(x, -448)
+        sfp.abs l4, l0, float
+        sfp.mov l7, l13
+        sfp.isub l7, l4, l7         // negative iff |x| < 2^-6
+        sfp.shr l7, l7, 31
+        sfp.iadd l7, l7, -1         // 0 for subnormals, all ones otherwise
+        sfp.and l0, l0, l7
+        sfp.store dst[0], l0, fmt=fp32
+        math.rwc dst+=2
+    }
+
+    // Pack Dst row 0 to p without publishing; the caller pushes the whole vector.
+    macro pack_tile(p) {
+        sem.stall tdma|pack|sync, dst_full, nonzero
+        pack.move p, dst[0]
+        tensix.stall sync, pack0
+        tensix.wait
+        sem.dec dst_full
+    }
 }
 
 // Reduce 32 running lane sums to one value in l0; clobbers l0-l3.
@@ -85,38 +154,51 @@ macro pack_dst(q) {
 }
 
 fn brisc() {
-    first, count = split(DIM)
-
-    // Residual elements [lo, first + count); lo starts the 64-byte line holding first.
-    lo = first & ~31
     r = cb.reserve residual_slice
     a = noc.read r, residual[lo], n=first + count - lo
 
     v = cb.reserve x
-    b = noc.read v, context[0], n=DIM
+    b = noc.read v, context[0], n=INPUT_DIM
     noc.wait a, b
     cb.push residual_slice
     cb.push x
+    if FP8 {
+        sc = cb.reserve scale_page
+        noc.read sc, scales[0], n=2, wait
+        cb.push scale_page
+    }
 
     for row in first..first + count {
-        w = cb.reserve weights, n=EMBED_TILES
-        noc.read w, matrix[row * DIM], n=DIM, wait
-        cb.push weights, n=EMBED_TILES
+        for batch in 0..INPUT_TILES / BATCH_TILES {
+            w = cb.reserve weights, n=BATCH_TILES
+            noc.read w, matrix[row * INPUT_DIM + batch * BATCH_TILES * 1024], n=BATCH_TILES * 1024, port=core.id % 3, wait
+            cb.push weights, n=BATCH_TILES
+        }
     }
 }
 
 fn trisc0() {
     unpack.fmt a|b, in=bf16
-    first, count = split(DIM)
-    v = cb.wait x  // kept for the whole kernel, never popped
+    v = cb.wait x  // BF16: kept for the whole kernel, never popped
+    if FP8 {
+        // Each context tile goes to SrcA whole; math copies it to Dst for the SFPU.
+        for tile in 0..INPUT_TILES {
+            unpack.move a, v + tile * 1024, n=1024, dvalid
+        }
+        tensix.wait
+        cb.pop x
+        unpack.fmt a|b, in=e4m3
+        v = cb.wait xq               // the quantized vector replaces x from here on
+    }
     loop count {
-        for tile in 0..EMBED_TILES {
+        for tile in 0..INPUT_TILES {
             w = cb.wait weights
             unpack_pair!(w, v + tile * 1024)
             tensix.wait
             cb.pop weights
         }
     }
+    if FP8 { unpack.fmt a|b, in=bf16 }
 
     y = cb.wait result
     r = cb.wait residual_slice
@@ -129,18 +211,43 @@ fn trisc0() {
 fn trisc1() {
     math.fmt dst=fp32, sfp=fp32
     math.cfg dst_offset=0
-    math.addrmod step, slot=0, srca+=8, srcb+=8, dst+=8
+    math.addrmod step, slot=1, srca+=8, srcb+=8, dst+=8
     math.addrmod rewind, slot=2, srca=0, srcb=0, dst=cr+0, fidelity+=1
     math.addrmod next_face, slot=3, srca=0, srcb=0, dst=c+8, fidelity=0
-    math.addrmod still, slot=7
     mop.load dot_face
     replay.load accumulate
-    first, count = split(DIM)
+
+    if FP8 {
+        // x = round_e4m3(x * input_scale), one tile at a time through Dst tile 0.
+        math.addrmod copy, slot=4, srca+=8, dst+=8
+        replay.load to_fp8
+        sc = cb.wait scale_page      // retained; launch state resets it
+        sfp.const l12, sc[0], fmt=fp32
+        sfp.const l13, 0.015625
+        sfp.li l1, 0x7ffff, fmt=u32
+        sfp.li l2, 1, fmt=u32
+        sfp.li l3, 0xfff00000, fmt=u32
+        sfp.li l5, 448.0
+        sfp.li l6, -448.0
+        loop INPUT_TILES {
+            sem.stall math|sfpu|sync, dst_full, notmax
+            math.rwc reset
+            tensix.stall math, srca_vld
+            repeat 8 { math.mova2d dst[0], addr=copy }
+            math.rwc reset, release=a
+            tensix.stall sfpu, math
+            repeat 32 { replay.run to_fp8 }
+            math.rwc dst=0
+            tensix.stall sync, math|sfpu
+            sem.inc dst_full
+        }
+        sfp.const l12, sc[1], fmt=fp32   // output_scale for every dot result
+    }
 
     loop count {
         sem.stall math|sfpu|sync, dst_full, notmax
         sfp.li l7, 0.0
-        loop EMBED_TILES {
+        loop INPUT_TILES {
             repeat face in 0..4 { math.zero face=face, fmt=fp32 }
             math.rwc reset
             repeat 4 { tensix.stall math, srca_vld|srcb_vld; mop.run dot_face }
@@ -155,7 +262,8 @@ fn trisc1() {
             tensix.stall sync, math|sfpu
         }
         reduce_lanes!(l7)
-        sfp.store dst[0], l0, fmt=fp32, addr=still; sfp.nop
+        if FP8 { sfp.mul l0, l0, l12; sfp.nop }
+        sfp.store dst[0], l0, fmt=fp32; sfp.nop
         tensix.stall sync, math|sfpu
         sem.inc dst_full
     }
@@ -176,8 +284,14 @@ fn trisc1() {
 }
 
 fn trisc2() {
+    if FP8 {
+        // E4M3 output reads Dst as fp16; the SFPU already rounded, so this is exact.
+        pack.fmt in=fp16, out=e4m3
+        q = cb.reserve xq
+        for tile in 0..INPUT_TILES { pack_tile!(q + tile * 1024) }
+        cb.push xq
+    }
     pack.fmt in=fp32, out=bf16
-    first, count = split(DIM)
     loop count { pack_dst!(dot) }
 
     // Math has switched Dst to bf16; switch pack's input to match.
@@ -191,9 +305,6 @@ fn trisc2() {
 // Elements outside [lead, lead + count) are never initialized or written out;
 // the residual add is elementwise, so they cannot affect valid rows.
 fn ncrisc() {
-    first, count = split(DIM)
-    lead = first & 31
-
     y = cb.reserve result
     for i in 0..count {
         d = cb.wait dot

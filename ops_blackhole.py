@@ -7,8 +7,10 @@ from helpers import PAGE, round_up
 from system import PCIIface, Sysmem
 
 def dram(offset:int, page:int=fw.DRAM_PAGE_MAX) -> int:  # a DRAM address, page-interleaved over the 8 banks
-  assert page in (1024, 2048, 4096) and offset < 1 << 56, (offset, page)
-  return 1 << 63 | page.bit_length() - 1 << 56 | offset
+  if not (0 <= offset < fw.DRAM_BANKS * fw.DRAM_BANK_SIZE and 64 <= page <= 16384 and page % 64 == 0):
+    raise ValueError(f"invalid DRAM offset {offset} or page size {page}")
+  tag = (page.bit_length() - 1) << 56 if page & (page - 1) == 0 else (page // 64 - 1) << 48
+  return 1 << 63 | tag | offset
 
 def cover(cores) -> tuple[int, int]:
   """One multicast to exactly these cores: (start | end << 12, NoC0 BRCST_EXCLUDE). The rectangle is the bounding box
@@ -72,14 +74,18 @@ class BlackholeGraph:
     for offset, step in patches: rows[:, offset // 8] += np.arange(count, dtype=np.uint64) * np.uint64(step)
     self.addr = dev.allocator.upload(rows.tobytes())
 
-  def __call__(self, start:int=0, count:int=1, timeout=10.0) -> int:
-    """Run instances start..start+count and wait. Returns the host submission time in ns."""
+  def submit(self, start:int=0, count:int=1, timeout=10.0) -> tuple[int, int]:
+    """Queue instances start..start+count without waiting. Returns (timeline value that marks them retired, submit ns)."""
     assert 0 <= start and 0 < count and start + count <= self.count
     t = time.perf_counter_ns()
     q = BlackholeComputeQueue().call(self.addr + start * self.stride, self.size, count, self.stride)
     # Honor the execution timeout if earlier work is still occupying the ring.
-    q.signal(self.dev.timeline_signal, self.dev.next_timeline()).submit(self.dev, timeout=timeout)
-    elapsed = time.perf_counter_ns() - t
+    q.signal(self.dev.timeline_signal, value := self.dev.next_timeline()).submit(self.dev, timeout=timeout)
+    return value, time.perf_counter_ns() - t
+
+  def __call__(self, start:int=0, count:int=1, timeout=10.0) -> int:
+    """Run instances start..start+count and wait. Returns the host submission time in ns."""
+    _, elapsed = self.submit(start, count, timeout)
     self.dev.synchronize(timeout)
     return elapsed
 
@@ -115,6 +121,18 @@ def blackhole_build_program(dev, images:dict, args_size:int=0) -> BlackholeProgr
       assert 0 < len(image) <= fw.CODE_SIZE[role] and len(image) % 4 == 0
       groups.setdefault((fw.CODE[role], image), []).append(core)
     groups.setdefault((fw.LAUNCH, struct.pack('<I', sum(1 << fw.ROLES.index(r) for r in roles))), []).append(core)
+  return _install_program(dev, images, groups, args_size)
+
+def blackhole_build_grid_program(dev, grid:int, roles:dict, args_size:int=0) -> BlackholeProgramData:
+  """Multicast one set of role images to the first grid workers."""
+  if not 1 <= grid <= len(dev.workers): raise ValueError(f"invalid worker count {grid}")
+  workers = dev.workers[:grid]
+  groups = {(fw.CODE[r], image): workers for r,image in roles.items()}
+  mask = sum(1 << fw.ROLES.index(r) for r in roles)
+  groups[fw.LAUNCH, struct.pack("<I", mask)] = workers
+  return _install_program(dev, workers, groups, args_size)
+
+def _install_program(dev, workers, groups, args_size):
   payload, transfers = bytearray(), []
   for (addr, image), cores in groups.items():
     payload += bytes(-len(payload) % 64)
@@ -122,8 +140,8 @@ def blackhole_build_program(dev, images:dict, args_size:int=0) -> BlackholeProgr
     payload += image
   payload += bytes(-len(payload) % 64)
   assert len(payload) <= fw.STAGE_SIZE, f"program payload too large: {len(payload)}"
-  code, (rect, exclude) = dev.allocator.upload(payload), cover(images)
-  words = [len(images), rect, args_size, len(payload), code & 0xFFFFFFFF, code >> 32, len(groups), exclude, *transfers]
+  code, (rect, exclude) = dev.allocator.upload(payload), cover(workers)
+  words = [len(workers), rect, args_size, len(payload), code & 0xFFFFFFFF, code >> 32, len(groups), exclude, *transfers]
   if (at := dev.descriptor_top) + 4 * len(words) > fw.DESCRIPTOR_END: raise MemoryError("dispatcher descriptor arena full")
   dev.iface.write(dev.cq_core, at, struct.pack(f'<{len(words)}I', *words))
   dev.descriptor_top = round_up(at + 4 * len(words), 64)
@@ -134,9 +152,14 @@ class BlackholeAllocator:
   def __init__(self, dev): self.dev, self.dram_top, self.stage_next, self.stage_done = dev, 0, 0, [0, 0]
 
   def _alloc(self, size:int, page:int=fw.DRAM_PAGE_MAX) -> int:
-    offset, self.dram_top = self.dram_top, self.dram_top + round_up(size, fw.DRAM_BANKS * fw.DRAM_PAGE_MAX)
-    if self.dram_top > fw.DRAM_BANKS * fw.DRAM_BANK_SIZE: raise MemoryError(f"DRAM is full: {size} bytes requested")
-    return dram(offset, page)
+    stripe = fw.DRAM_BANKS * page
+    if size < 0 or page <= 0: raise ValueError("invalid allocation")
+    offset = round_up(self.dram_top, stripe)
+    end = round_up(offset + round_up(size, stripe), fw.DRAM_BANKS * fw.DRAM_PAGE_MAX)
+    if end > fw.DRAM_BANKS * fw.DRAM_BANK_SIZE: raise MemoryError(f"DRAM is full: {size} bytes requested")
+    addr = dram(offset, page)
+    self.dram_top = end
+    return addr
 
   def _stage(self, timeout) -> tuple[int, int]:  # the next staging slot, once the copy that last used it is done
     i, self.stage_next = self.stage_next, self.stage_next ^ 1
@@ -186,6 +209,7 @@ class BlackholeDevice:
       self.sysmem = Sysmem(self.iface.fd, self.stage_base + 2 * self.stage_size)
       self.heap = 2 * fw.RING_SIZE + PAGE
       self.timeline_signal, self.timeline_value = BlackholeSignal(self, 2 * fw.RING_SIZE), 1
+      self.ttrv_keep_base, self.ttrv_scratch_end = 0x180000, fw.DATA_BASE
       self.allocator, self.descriptor_top = BlackholeAllocator(self), fw.DESCRIPTOR_L1
       self.compute_queue = self._create_queue(self.cq_core, 0, "dispatch")
       self.dma_queue = self._create_queue(self.dma_core, fw.RING_SIZE, "dma")

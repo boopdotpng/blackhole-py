@@ -27,8 +27,13 @@
  * one to run. Kernels must therefore be position-independent and return through an absolute jump (see fw.ret).
  * L1_PARAM_BASE is shared, below both slots: it is only written when the launch that reads it is released. LAUNCH is an
  * active-role bitmask. Worker L1: firmware, params, slot 0, slot 1, then DATA_BASE.. for kernels. */
+/* Published in worker L1 by the startup program, before the first user kernel. */
+#define WORKER_X          0x770
+#define WORKER_Y          0x774
+#define WORKER_ID         0x778
+_Static_assert(FW_TRISC2 + FW_TRISC2_SIZE <= WORKER_X, "worker coordinates overlap resident firmware");
 #define L1_PARAM_BASE     0x780
-#define PARAM_SIZE        0x40     /* 16 words: DRAM addresses of the kernel's inputs and outputs, everything else is compiled in */
+#define PARAM_SIZE        0x40     /* 16 words: the launch's arguments (buffer addresses and integer values), bound per run */
 #define LAUNCH            0x7C0
 #define CODE_BRISC        0x800
 #define CODE_NCRISC       0x2800
@@ -62,6 +67,7 @@
                              * Each buffer finishes before the next starts. CQ only, not nested. */
 
 /* Addresses in packets are 64-bit: bit 63 set = DRAM, bits 56-61 log2(page), banks interleaved by page.
+ * For non-power-of-two pages bits 56-61 are zero and bits 48-55 encode page / 64 - 1.
  * Otherwise bits 32-43 are a NoC coordinate (bits 60+ set = PCIe/host) and 0-31 the address there. */
 
 #define STATE             DATA_BASE

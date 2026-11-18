@@ -55,11 +55,22 @@ void noc_move(u32 niu, u32 write, u32 lo, u32 hi, u32 offset, u32 size, u32 loca
   hi += lo < offset;
   u32 dram = hi >> 31, page = NOC_MAX_BURST, within = 0, bank = 0, coord = hi;
   if (dram) {
-    u32 shift = hi >> 24 & 63, index = lo >> shift | (hi & 0xFFFFFF) << (32 - shift);
-    page = 1u << shift;
-    within = lo & (page - 1);
+    u32 shift = hi >> 24 & 63, index;
+    if (shift) {
+      index = lo >> shift | (hi & 0xFFFFFF) << (32 - shift);
+      page = 1u << shift;
+      within = lo & (page - 1);
+    } else {
+      /* Irregular pages (e.g. 1088-byte BFP8). Divide a 35-bit byte offset on RV32:
+       * 2^32 = (UINT32_MAX / page) * page + (UINT32_MAX % page + 1). */
+      u32 upper = hi & 0xFFFF;
+      page = ((hi >> 16 & 255) + 1) * 64;
+      u32 rem = lo % page + upper * (0xFFFFFFFFu % page + 1);
+      index = lo / page + upper * (0xFFFFFFFFu / page) + rem / page;
+      within = rem % page;
+    }
     bank = index % BANKS;
-    lo = index / BANKS << shift;
+    lo = index / BANKS * page;
     hi = 0;
     coord = dram_coords[bank];
   } else if (hi >> 28) {
