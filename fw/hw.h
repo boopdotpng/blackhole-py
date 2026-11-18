@@ -122,7 +122,10 @@ INLINE void reset_thread(void) {
   TTINSN(SETADCZW_ZERO);
 }
 
-/* Custom CSR 0x7c0, set once per RISC at boot as tt-metal does on Blackhole: bit 18 set on BRISC/NCRISC, clear on TRISCs. */
+/* Custom CSR 0x7c0 (cfg0), set once per RISC at boot: bit 18 (DisTriscCache) set on BRISC/NCRISC, clear on TRISCs, as
+ * tt-metal does on Blackhole. Bit 3 (DisLowCash) is cleared: the L0 data cache (4 lines of 16 bytes) is on, unlike
+ * tt-metal's default. L0 is not coherent with NoC writes to L1, so every poll of an L1 word must fence (wait8 does, and
+ * noc.c's wait_zero fences after NoC completion); the hardware's periodic L0 flush (bit 24 clear) is left on. */
 INLINE void configure_csr(int trisc) {
   u32 v = 2;
   __asm__ volatile("csrs 0x7c0, %0" :: "r"(v) : "memory");
@@ -134,7 +137,7 @@ INLINE void configure_csr(int trisc) {
   __asm__ volatile("csrc 0x7c0, %0" :: "r"(v) : "memory");
   fence();
   v = 8;
-  __asm__ volatile("csrs 0x7c0, %0" :: "r"(v) : "memory");
+  __asm__ volatile("csrc 0x7c0, %0" :: "r"(v) : "memory");
 }
 
 INLINE void invalidate_icache(void) {
