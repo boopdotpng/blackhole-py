@@ -2,7 +2,7 @@
 #include "hw.h"
 
 KERNEL kernel_main(void) {
-  /* Three words between the last resident firmware slot and L1_PARAM_BASE. */
+  /* Three words between the last resident firmware slot and L1_PARAM_BASE (fw/abi.h WORKER_X). */
   u32 node = read32(0xFFB20148), x = node & 63, y = ((node >> 6) & 63) - 2;
   x -= 1 + 2 * (x >= 10);
   write32(WORKER_X, x); write32(WORKER_Y, y); write32(WORKER_ID, x * 10 + y);

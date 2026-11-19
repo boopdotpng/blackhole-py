@@ -18,11 +18,6 @@ INLINE u8 read8(u32 a) { return *(volatile u8 *)a; }
 INLINE void write32(u32 a, u32 v) { *(volatile u32 *)a = v; }
 INLINE void write8(u32 a, u8 v) { *(volatile u8 *)a = v; }
 
-INLINE void wait8(u32 a, u8 v) {
-  while (read8(a) != v) fence();
-  fence();
-}
-
 #define TDMA_CLK_GATE_EN         0xFFB11024  /* clock gating per TDMA block, 0x3F = all */
 #define SOFT_RESET               0xFFB121B0  /* bit set = held in reset: 11 BRISC, 12-14 TRISC0-2, 18 NCRISC */
 #define WALL_CLOCK_L             0xFFB121F0  /* reading this latches the high word into WALL_CLOCK_H */
@@ -109,7 +104,7 @@ INLINE void reset_tensix(void) {
 #define SETADCZW_ZERO   0x54E0000F  /* ... Z, W -> 0 */
 
 /* Thread-private state that only the owning TRISC can write, reset by each TRISC at launch before its kernel, in the
- * same loop as its 64 GPRs (the firmware slot is 256 bytes). ThreadConfig holds CFG_STATE_ID, ADDR_MODs,
+ * same loop as its 64 GPRs (the firmware slot is 304 bytes). ThreadConfig holds CFG_STATE_ID, ADDR_MODs,
  * SRCA/SRCB_SET, CLR_DVALID, SCBD masks and Dst offsets. */
 INLINE void reset_thread(void) {
   #pragma clang loop unroll(disable)
@@ -124,7 +119,7 @@ INLINE void reset_thread(void) {
 
 /* Custom CSR 0x7c0 (cfg0), set once per RISC at boot: bit 18 (DisTriscCache) set on BRISC/NCRISC, clear on TRISCs, as
  * tt-metal does on Blackhole. Bit 3 (DisLowCash) is cleared: the L0 data cache (4 lines of 16 bytes) is on, unlike
- * tt-metal's default. L0 is not coherent with NoC writes to L1, so every poll of an L1 word must fence (wait8 does, and
+ * tt-metal's default. L0 is not coherent with NoC writes to L1, so every poll of an L1 word must fence (WAIT_FAST does, and
  * noc.c's wait_zero fences after NoC completion); the hardware's periodic L0 flush (bit 24 clear) is left on. */
 INLINE void configure_csr(int trisc) {
   u32 v = 2;

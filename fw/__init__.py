@@ -1,6 +1,6 @@
 # Builds the firmware in this directory and mirrors the parts of fw/abi.h the host needs. Images are cached in
 # ~/.cache/blackhole-py, keyed by a hash of the sources and flags.
-import functools, hashlib, os, shutil, struct, subprocess, tempfile
+import functools, hashlib, os, re, shutil, struct, subprocess, tempfile, threading
 from concurrent.futures import ThreadPoolExecutor
 from enum import IntEnum
 from pathlib import Path
@@ -9,17 +9,20 @@ class Op(IntEnum): EXEC = 0; COPY = 1; WAIT = 2; STORE = 3; TIMESTAMP = 4; CALL 
 
 ROLES = ("brisc", "ncrisc", "trisc0", "trisc1", "trisc2")
 GO_SIGNAL = 0x10
-FW = {"brisc": (0x20, 0x310), "ncrisc": (0x330, 0xB0), "trisc0": (0x3E0, 0x130), "trisc1": (0x510, 0x130),
-      "trisc2": (0x640, 0x130)}
+FW = {"brisc": (0x20, 0x380), "ncrisc": (0x3A0, 0x100), "trisc0": (0x4A0, 0x150), "trisc1": (0x5F0, 0x150),
+      "trisc2": (0x740, 0x150)}
 RETURN = {r: base + 4 for r, (base, _) in FW.items()}
-L1_PARAM_BASE, PARAM_SIZE, LAUNCH = 0x780, 0x40, 0x7C0
-assert all(a + n <= b for (a, n), (b, _) in zip(FW.values(), [*list(FW.values())[1:], (L1_PARAM_BASE, 0)])), "firmware slots overlap"
-CODE = dict(zip(ROLES, (0x800, 0x2800, 0x4800, 0x6000, 0x7800)))
-CODE_SIZE = dict(zip(ROLES, (0x2000, 0x2000, 0x1800, 0x1800, 0x1800)))
+WORKER_X, WORKER_Y, WORKER_ID = 0x8A0, 0x8A4, 0x8A8  # published by init.c: this core's NoC x, y and x * 10 + y
+L1_PARAM_BASE, PARAM_SIZE, LAUNCH = 0x8B0, 0x40, 0x8F0
+assert all(a + n <= b for (a, n), (b, _) in zip(FW.values(), [*list(FW.values())[1:], (WORKER_X, 0)])), "firmware slots overlap"
+assert WORKER_ID + 4 <= L1_PARAM_BASE
+CODE = dict(zip(ROLES, (0x900, 0x2800, 0x4800, 0x6000, 0x7800)))
+CODE_SIZE = dict(zip(ROLES, (0x1F00, 0x2000, 0x1800, 0x1800, 0x1800)))
 CODE_END = CODE["trisc2"] + CODE_SIZE["trisc2"]
 SLOT_STRIDE, GO_SLOT_BIT = CODE_END - LAUNCH, 20  # slot 1 = slot 0 + SLOT_STRIDE, right after it; GO_SIGNAL bit GO_SLOT_BIT picks
 DATA_BASE = CODE_END + SLOT_STRIDE  # worker L1 from here up belongs to kernels
-assert L1_PARAM_BASE + PARAM_SIZE <= LAUNCH < CODE["brisc"] and (CODE_END, SLOT_STRIDE, DATA_BASE) == (0x9000, 0x8840, 0x11840)
+assert L1_PARAM_BASE + PARAM_SIZE <= LAUNCH < CODE["brisc"] and (CODE_END, SLOT_STRIDE, DATA_BASE) == (0x9000, 0x8710, 0x11710)
+assert all(CODE[a] + CODE_SIZE[a] <= CODE[b] for a, b in zip(ROLES, ROLES[1:]))
 DESCRIPTOR_L1, DESCRIPTOR_END, STAGE_SIZE = 0x40000, 0x80000, 0x10000
 PACKET, RING_SIZE = 32, 64 << 10
 STATE, STATE_SIZE = DATA_BASE, 0x140
@@ -53,10 +56,26 @@ PROGRAMS = {  # ordinary programs, see program()
   "dma": {"brisc": (["dma.c", *SERVICE], ["-Os", "-DDMA_ENGINE=0"]), "ncrisc": (["dma.c", *SERVICE], ["-Os", "-DDMA_ENGINE=1"])},
 }
 
+_INCLUDE = re.compile(rb'^[ \t]*#[ \t]*include[ \t]*"([^"]+)"', re.M)
+
+def _deps(srcs:list[Path], flags:list[str]) -> list[Path]:
+  """srcs and every file they #include "..." (recursively), resolved like clang: the including file's directory, then
+  the -I directories. The cache key hashes exactly these, so editing a header rebuilds only what includes it."""
+  args = [*CFLAGS, *flags]
+  dirs = [Path(a[2:] or b) for a, b in zip(args, [*args[1:], ""]) if a.startswith("-I")]
+  seen, todo = set(), list(srcs)
+  while todo:
+    if (p := todo.pop()) in seen: continue
+    seen.add(p)
+    for inc in _INCLUDE.findall(p.read_bytes()):
+      for d in (p.parent, *dirs):
+        if (q := (d / inc.decode()).resolve()).is_file(): todo.append(q); break
+  return sorted(seen | {HERE / "link.ld"})
+
 def compile(srcs:list, slot:tuple[int, int], flags:list[str]=["-Os"]) -> bytes:
   """Link srcs (paths, or file names in fw/) so that section .entry starts at slot's base. Cached."""
-  srcs = [Path(s) if Path(s).is_absolute() else HERE / s for s in srcs]
-  deps = sorted({*srcs, *HERE.glob("*.h"), HERE / "link.ld"})
+  srcs = [(Path(s) if Path(s).is_absolute() else HERE / s).resolve() for s in srcs]
+  deps = _deps(srcs, flags)
   key = hashlib.sha256(repr((CFLAGS, flags, slot, [str(p) for p in srcs])).encode() + b"".join(p.read_bytes() for p in deps))
   if (out := CACHE / f"{key.hexdigest()[:24]}.bin").exists(): return out.read_bytes()
   with tempfile.TemporaryDirectory() as d:
@@ -65,7 +84,7 @@ def compile(srcs:list, slot:tuple[int, int], flags:list[str]=["-Os"]) -> bytes:
     for c in (cmd, [shutil.which("llvm-objcopy") or "llvm-objcopy", "-O", "binary", f"{d}/fw.elf", f"{d}/fw.bin"]):
       if (r := subprocess.run(c, capture_output=True, text=True)).returncode: raise RuntimeError(r.stderr or r.stdout)
     CACHE.mkdir(parents=True, exist_ok=True)
-    os.replace(shutil.copy(f"{d}/fw.bin", f"{out}.tmp"), out)
+    os.replace(shutil.copy(f"{d}/fw.bin", f"{out}.{os.getpid()}.{threading.get_ident()}.tmp"), out)
   return out.read_bytes()
 
 def program(kernels:dict[str, tuple[list, list[str]]]) -> dict[str, bytes]:

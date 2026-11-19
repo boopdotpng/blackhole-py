@@ -6,21 +6,25 @@
 #define GO_SIGNAL         0x10     /* u32. byte 0: 0x80 = launch, cleared when every RISC returns. bits 8-19: dispatch's NoC coordinate,
                                     * bit 20: which execution slot to run (GO_SLOT) */
 #define GO_SLOT_BIT       20
-#define SUBORDINATE_SYNC  0x14     /* u8 each for ncrisc, trisc0-2. 2 = booted, 0x80 = go, 0 = returned */
+#define SUBORDINATE_SYNC  0x14     /* u8 each for ncrisc, trisc0-2: 2 once booted. NCRISC's byte is also its launch handshake:
+                                    * BRISC writes 0x80 = go, NCRISC writes 0 = returned */
+#define LAUNCH_TOKEN      0x18     /* u32: the current launch's token. BRISC writes it, then pushes it to each TRISC's PCBuf;
+                                    * TRISC i writes it back to its mailbox when done. A TRISC starts only on a token that
+                                    * matches, so a token left in a FIFO by an aborted run is dropped. */
 
 /* Resident firmware, one image per RISC. FW_x + 0 boots, FW_x + 4 is where a kernel jumps when it is done. */
-/* [0x20, L1_PARAM_BASE) is nearly full. Growing it means moving L1_PARAM_BASE and DATA_BASE, which the exported
- * kernels have compiled in (llama3.py checks the manifest), so they would need exporting again. */
+/* [0x20, WORKER_X) holds the five images. Growing it means moving WORKER_X, L1_PARAM_BASE, LAUNCH and so DATA_BASE,
+ * which compiled kernels have built in (ttrv reads them from fw/__init__.py). */
 #define FW_BRISC          0x20
-#define FW_BRISC_SIZE     0x310
-#define FW_NCRISC         0x330
-#define FW_NCRISC_SIZE    0xB0
-#define FW_TRISC0         0x3E0
-#define FW_TRISC0_SIZE    0x130
-#define FW_TRISC1         0x510
-#define FW_TRISC1_SIZE    0x130
-#define FW_TRISC2         0x640
-#define FW_TRISC2_SIZE    0x130
+#define FW_BRISC_SIZE     0x380
+#define FW_NCRISC         0x3A0
+#define FW_NCRISC_SIZE    0x100
+#define FW_TRISC0         0x4A0
+#define FW_TRISC0_SIZE    0x150
+#define FW_TRISC1         0x5F0
+#define FW_TRISC1_SIZE    0x150
+#define FW_TRISC2         0x740
+#define FW_TRISC2_SIZE    0x150
 
 /* Two execution slots, double buffered: while one launch runs from slot b, dispatch installs the next one into slot b ^ 1.
  * Slot 1 is slot 0 moved up by SLOT_STRIDE, LAUNCH mask included, and starts where slot 0 ends; the GO word says which
@@ -28,23 +32,23 @@
  * L1_PARAM_BASE is shared, below both slots: it is only written when the launch that reads it is released. LAUNCH is an
  * active-role bitmask. Worker L1: firmware, params, slot 0, slot 1, then DATA_BASE.. for kernels. */
 /* Published in worker L1 by the startup program, before the first user kernel. */
-#define WORKER_X          0x770
-#define WORKER_Y          0x774
-#define WORKER_ID         0x778
+#define WORKER_X          0x8A0
+#define WORKER_Y          0x8A4
+#define WORKER_ID         0x8A8
 _Static_assert(FW_TRISC2 + FW_TRISC2_SIZE <= WORKER_X, "worker coordinates overlap resident firmware");
-#define L1_PARAM_BASE     0x780
+#define L1_PARAM_BASE     0x8B0
 #define PARAM_SIZE        0x40     /* 16 words: the launch's arguments (buffer addresses and integer values), bound per run */
-#define LAUNCH            0x7C0
-#define CODE_BRISC        0x800
+#define LAUNCH            0x8F0
+#define CODE_BRISC        0x900    /* BRISC slot 0x1F00 bytes, to CODE_NCRISC */
 #define CODE_NCRISC       0x2800
 #define CODE_TRISC0       0x4800
 #define CODE_TRISC1       0x6000
 #define CODE_TRISC2       0x7800
 #define CODE_TRISC_SIZE   0x1800   /* each TRISC slot; fused attention (RoPE, split KV, merge) needs more than 4 KiB */
 #define CODE_END          0x9000
-#define SLOT_STRIDE       (CODE_END - LAUNCH)  /* 0x8840: slot 1 = [LAUNCH, CODE_END) + SLOT_STRIDE = [0x9000, 0x11840) */
+#define SLOT_STRIDE       (CODE_END - LAUNCH)  /* 0x8710: slot 1 = [LAUNCH, CODE_END) + SLOT_STRIDE = [0x9000, 0x11710) */
 #define SLOT_OFFSET(go)   ((go) >> GO_SLOT_BIT & 1 ? SLOT_STRIDE : 0)
-#define DATA_BASE         (CODE_END + SLOT_STRIDE)  /* 0x11840: everything from here up is free for kernels */
+#define DATA_BASE         (CODE_END + SLOT_STRIDE)  /* 0x11710: everything from here up is free for kernels */
 
 /* Stacks live in each RISC's private local memory, not L1 */
 #define STACK_TOP         0xFFB01FF0

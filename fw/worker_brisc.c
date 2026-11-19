@@ -6,10 +6,14 @@ FIRMWARE_ENTRY(SET_SP(STACK_TOP))
 static __attribute__((noinline)) void reset(void) { reset_tensix(); }  /* boot and resume share one copy */
 
 static NORETURN launch(void) {
-  wait8(GO_SIGNAL, 0x80);
+  WAIT_FAST(read8(GO_SIGNAL) == 0x80);  /* every RISC of this core has returned: nothing to contend with */
   u32 slot = SLOT_OFFSET(read32(GO_SIGNAL));
   invalidate_icache();  /* every RISC: the slot may hold lines from the launch before last */
-  for (u32 i = 0; i < 4; i++) write8(SUBORDINATE_SYNC + i, 0x80);
+  u32 token = read32(LAUNCH_TOKEN) + 1;
+  write32(LAUNCH_TOKEN, token);
+  fence();
+  write8(SUBORDINATE_SYNC, 0x80);                 /* NCRISC */
+  for (u32 i = 0; i < 3; i++) write32(PCBUF(i), token);  /* TRISCs */
   fence();
   if (read32(LAUNCH + slot) & 1) JUMP(CODE_BRISC + slot);
   JUMP(FW_BRISC + 4);
@@ -24,15 +28,20 @@ NORETURN firmware_boot(void) {
   write32(NCRISC_RESET_PC, FW_NCRISC);
   write32(NCRISC_RESET_PC_OVERRIDE, 1);
   write32(SUBORDINATE_SYNC, 0x40404040);
+  write32(LAUNCH_TOKEN, read32(WALL_CLOCK_L) | 1);  /* fresh per boot: a token from before cannot match */
   fence();
   write32(SOFT_RESET, 0);
-  for (u32 i = 0; i < 4; i++) wait8(SUBORDINATE_SYNC + i, 2);
+  WAIT_FAST(read32(SUBORDINATE_SYNC) == 0x02020202);
   reset();
   launch();
 }
 
 NORETURN firmware_resume(void) {
-  for (u32 i = 0; i < 4; i++) wait8(SUBORDINATE_SYNC + i, 0);
+  WAIT_SLOW(read8(SUBORDINATE_SYNC) == 0);  /* NCRISC back in firmware */
+  u32 token = read32(LAUNCH_TOKEN);
+  for (u32 i = 0; i < 3; i++)       /* blocking mailbox reads; a value from an aborted run does not match */
+    while (read32(MAILBOX_FROM(i)) != token) {}
+  fence();
   u32 dispatch = read32(GO_SIGNAL) >> 8 & 0xFFF;
   write8(GO_SIGNAL, 0);
   fence();
