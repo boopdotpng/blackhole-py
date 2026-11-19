@@ -74,3 +74,15 @@ def tokenizer(path):
   return tiktoken.Encoding("llama3", pat_str=tok["pre_tokenizer"]["pretokenizers"][0]["pattern"]["Regex"],
                            mergeable_ranks={bytes(byte[c] for c in k): v for k, v in tok["model"]["vocab"].items()},
                            special_tokens={t["content"]: t["id"] for t in tok["added_tokens"]})
+
+def rope(cfg, head_dim, length):
+  """cos and sin [length, head_dim] in float32 as HF has them, sin negated in each first half. Applies llama3 scaling."""
+  import numpy as np
+  inv = 1 / cfg["rope_theta"] ** (np.arange(0, head_dim, 2, dtype=np.float32) / head_dim)
+  if (s := cfg.get("rope_scaling")) and s.get("rope_type", s.get("type")) == "llama3":  # stretch long wavelengths
+    f, lo, hi, old = s["factor"], s["low_freq_factor"], s["high_freq_factor"], s["original_max_position_embeddings"]
+    wavelen = 2 * np.pi / inv
+    smooth = (old / wavelen - lo) / (hi - lo)
+    inv = np.where(wavelen > old / lo, inv / f, np.where(wavelen < old / hi, inv, (1 - smooth) * inv / f + smooth * inv))
+  angle = np.tile(np.arange(length, dtype=np.float32)[:, None] * inv.astype(np.float32), 2)
+  return np.cos(angle), np.sin(angle) * np.repeat(np.float32([-1, 1]), head_dim // 2)

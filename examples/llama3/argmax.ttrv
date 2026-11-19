@@ -1,9 +1,8 @@
 // Llama3 greedy sampling: token = argmax(logits), lowest token ID on ties.
 // Port of blackhole-py-old/examples/llama3/kernels.py argmax and ttko/argmax.py.
 //
-// One source for 1B, 8B and 8B FP8: the vocabulary (128256) and the BF16 logits are
-// the same in all three; -D FP8=1 only selects the 96-worker grid the old FP8
-// argmax ran on (88 otherwise, as the old projection_cores). ASSUMPTION: the lm kernel
+// One source for 1B and 8B: the vocabulary (128256) and the BF16 logits are the same
+// in both. The grid is 88 workers, as the old projection_cores. ASSUMPTION: the lm kernel
 // writes logits as one dense row-major BF16 vector of VOCAB elements (the old lm
 // wrote per-core compact tiles instead). Argmax therefore picks its own split.
 //
@@ -27,8 +26,7 @@
 // lane keeps its first maximum. BRISC and worker 0 then prefer the lower token on
 // equal keys / the lower worker (whose slice comes first).
 
-const FP8 = 0                         // selects the grid only
-if FP8 { grid 96 } else { grid 88 }
+grid 88
 
 const VOCAB = 128256
 const MAX_TOKENS = 8192

@@ -8,7 +8,7 @@ from time import perf_counter
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from examples.llama3 import Llama3, ROOT
+from examples.llama3 import ROOT, load
 from examples.nanbeige import DEFAULT, Nanbeige
 from examples.qwen38 import DEFAULT as QWEN_CHECKPOINT, METADATA as QWEN_METADATA, Qwen38
 from ttrv import Device
@@ -16,7 +16,7 @@ from ttrv import Device
 
 def main():
   parser = argparse.ArgumentParser(description=__doc__)
-  parser.add_argument("model", choices=("1b", "8b-fp8", "8b-bf16", "nanbeige", "qwen38"))
+  parser.add_argument("model", choices=("1b", "8b-bf16", "8b-bfp8", "nanbeige", "qwen38"))
   parser.add_argument("--device", type=int, default=0)
   args = parser.parse_args()
   prefix, steps = 320, 32
@@ -26,12 +26,12 @@ def main():
     # Disable early stopping so each model executes the same number of steps.
     if args.model == "nanbeige":
       model = Nanbeige(DEFAULT, dev, prefix + steps + 1)
-      model.cfg["eos_token_id"] = -1
+      model.eos = set()
     elif args.model == "qwen38":
       model = Qwen38(QWEN_CHECKPOINT, QWEN_METADATA, dev, prefix + steps + 1)
       model.eos = set()
     else:
-      model = Llama3(ROOT / "weights" / ("llama3-" + args.model), dev)
+      model = load(ROOT / "weights" / ("llama3-" + args.model), dev)
       model.eos = set()
 
     prefill, decode = [], []

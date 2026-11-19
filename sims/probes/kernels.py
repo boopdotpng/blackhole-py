@@ -45,7 +45,7 @@ ops_blackhole.blackhole_build_grid_program = _record
 def main():
   ap = argparse.ArgumentParser()
   ap.add_argument("--device", type=int, required=True)
-  ap.add_argument("--model", default="1b", choices=["1b", "8b-bf16", "8b-fp8"])
+  ap.add_argument("--model", default="1b", choices=["1b", "8b-bf16"])
   ap.add_argument("--output", required=True)
   ap.add_argument("--positions", default="0,127,1023,4095")
   ap.add_argument("--repeats", type=int, default=5)

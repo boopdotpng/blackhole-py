@@ -1,51 +1,35 @@
 """Llama 3 on a Blackhole card: load a safetensors checkpoint onto the device, compile the kernels in llama3/, capture
-one decode step as a graph and replay it once per position.      python examples/llama3.py --model 1b"""
+one decode step as a graph and replay it once per position. BFP8 checkpoints run on the packed projection graph in
+nanbeige.py.      python examples/llama3.py --model 1b"""
 import argparse, json, sys, time
 from pathlib import Path
 import numpy as np
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from helpers import safe_load, tokenizer
+from helpers import rope, safe_load, tokenizer
 from ttrv import Device, Var
 from examples.prefill import MAX_CHUNK, DEFAULT_CHUNK, PromptChunks, grouped_llama_weights
 
 KERNELS, MAX_TOKENS = Path(__file__).resolve().parent / "llama3", 8192  # the kernels' default context length
-
-def rope(cfg, head_dim):  # cos and sin [MAX_TOKENS, head_dim] in float32 as HF has them; sin negated in each first half
-  inv = 1 / cfg["rope_theta"] ** (np.arange(0, head_dim, 2, dtype=np.float32) / head_dim)
-  if s := cfg.get("rope_scaling"):  # llama3: stretch long wavelengths by factor, blending across the middle band
-    f, lo, hi, old = s["factor"], s["low_freq_factor"], s["high_freq_factor"], s["original_max_position_embeddings"]
-    wavelen = 2 * np.pi / inv
-    smooth = (old / wavelen - lo) / (hi - lo)
-    inv = np.where(wavelen > old / lo, inv / f, np.where(wavelen < old / hi, inv, (1 - smooth) * inv / f + smooth * inv))
-  angle = np.tile(np.arange(MAX_TOKENS, dtype=np.float32)[:, None] * inv.astype(np.float32), 2)
-  return np.cos(angle), np.sin(angle) * np.repeat(np.float32([-1, 1]), head_dim // 2)
 
 class Llama3:
   def __init__(self, path, dev):
     cfg, eos = (json.loads((path / f).read_text()) for f in ("config.json", "generation_config.json"))
     self.eos = set(np.atleast_1d(eos["eos_token_id"]).tolist())
     tensors = safe_load(path)
-    w = {name: dev.array(t) for name, t in tensors.items() if t.shape}  # as stored; FP8 scale scalars are folded below
+    w = {name: dev.array(t) for name, t in tensors.items()}
     dim, mlp_dim, head_dim = cfg["hidden_size"], cfg["intermediate_size"], cfg["hidden_size"] // cfg["num_attention_heads"]
-    kv_dim, fp8 = cfg["num_key_value_heads"] * head_dim, int("quantization_config" in cfg)
-    def kernel(name, **defines):
-      if fp8 and name in ("qkv", "o"):
-        defines["WORKERS"] = len(dev.dev.workers)
-      return dev.kernel(KERNELS / f"{name}.ttrv", **defines)
-    sizes = dict(EMBED_TILES=dim // 1024, FP8=fp8)
-    qkv, o, lm = (kernel(name, **sizes) for name in ("qkv", "o", "lm"))
-    gate, down = kernel("gate", **sizes, MLP_TILES=mlp_dim // 1024), kernel("o", **sizes, INPUT_TILES=mlp_dim // 1024)
-    embedding, attention = kernel("embedding", EMBED_TILES=dim // 1024), kernel("attention", HEAD_TILES=head_dim // 32)
-    argmax = kernel("argmax", FP8=fp8)
-    def scales(layer, *projections):  # FP8: [1 / input scale, then input scale * weight scale per projection]
-      if not fp8: return {}
-      s = [[tensors[f"model.layers.{layer}.{p}.{k}_scale"].numpy()[()] for k in ("input", "weight")] for p in projections]
-      return dict(scales=dev.array(np.float32([1 / s[0][0], *(i * ws for i, ws in s)] + [0] * (15 - len(s)))))
+    kv_dim, embed_tiles = cfg["num_key_value_heads"] * head_dim, dim // 1024
+    def kernel(name, **defines): return dev.kernel(KERNELS / f"{name}.ttrv", **defines)
+    qkv, o, lm = (kernel(name, EMBED_TILES=embed_tiles) for name in ("qkv", "o", "lm"))
+    gate = kernel("gate", EMBED_TILES=embed_tiles, MLP_TILES=mlp_dim // 1024)
+    down = kernel("o", EMBED_TILES=embed_tiles, INPUT_TILES=mlp_dim // 1024)
+    embedding, attention = kernel("embedding", EMBED_TILES=embed_tiles), kernel("attention", HEAD_TILES=head_dim // 32)
+    argmax = kernel("argmax")
 
     x, x2, q, context = (dev.empty(dim, "bf16") for _ in range(4))
     k, v, hidden, logits = (dev.empty(n, "bf16") for n in (kv_dim, kv_dim, mlp_dim, cfg["vocab_size"]))
-    cos, sin = (dev.array(table, "bf16") for table in rope(cfg, head_dim))
+    cos, sin = (dev.array(table, "bf16") for table in rope(cfg, head_dim, MAX_TOKENS))
     self.history, self.tokens = dev.zeros(MAX_TOKENS, "u32"), dev.zeros((MAX_TOKENS + 1, 4), "u32", host=True)
     pos = Var("pos")
     caches = []
@@ -54,14 +38,13 @@ class Llama3:
       for i in range(cfg["num_hidden_layers"]):
         W = lambda name: w[f"model.layers.{i}.{name}.weight"]
         qkv(x=x, norm=W("input_layernorm"), wq=W("self_attn.q_proj"), wk=W("self_attn.k_proj"), wv=W("self_attn.v_proj"),
-            q_out=q, k_out=k, v_out=v, **scales(i, "self_attn.q_proj", "self_attn.k_proj", "self_attn.v_proj"))
+            q_out=q, k_out=k, v_out=v)
         keys, values = (dev.zeros(MAX_TOKENS * kv_dim, "bf16") for _ in range(2))
         caches.append((keys, values))
         attention(q_in=q, k_in=k, v_in=v, cos=cos, sin=sin, key_cache=keys, value_cache=values, context=context, start_pos=pos)
-        o(context=context, matrix=W("self_attn.o_proj"), output=x2, residual=x, **scales(i, "self_attn.o_proj"))
-        gate(x=x2, gamma=W("post_attention_layernorm"), hidden=hidden, gate_w=W("mlp.gate_proj"), up_w=W("mlp.up_proj"),
-             **scales(i, "mlp.gate_proj", "mlp.up_proj"))
-        down(context=hidden, matrix=W("mlp.down_proj"), output=x, residual=x2, **scales(i, "mlp.down_proj"))
+        o(context=context, matrix=W("self_attn.o_proj"), output=x2, residual=x)
+        gate(x=x2, gamma=W("post_attention_layernorm"), hidden=hidden, gate_w=W("mlp.gate_proj"), up_w=W("mlp.up_proj"))
+        down(context=hidden, matrix=W("mlp.down_proj"), output=x, residual=x2)
       lm(x=x, norm=w["model.norm.weight"], wlm=w.get("lm_head.weight", w["model.embed_tokens.weight"]), logits=logits)
       argmax(logits=logits, history=self.history, tokens=self.tokens, start_pos=pos, write_token=Var("write_token"))
 
@@ -87,9 +70,16 @@ class Llama3:
         yield token
       done = after
 
+def load(path, dev):
+  """BF16 checkpoints run on the row-major Llama kernels; BFP8 checkpoints on the packed projection graph."""
+  if (path / "model.safetensors").exists() and any(t.packed_format for t in safe_load(path).values()):
+    from examples.nanbeige import Nanbeige
+    return Nanbeige(path / "model.safetensors", dev, max_tokens=MAX_TOKENS)
+  return Llama3(path, dev)
+
 if __name__ == "__main__":
   ap = argparse.ArgumentParser()
-  ap.add_argument("--model", default="1b", choices=["1b", "8b-bf16", "8b-fp8"])
+  ap.add_argument("--model", default="1b", choices=["1b", "8b-bf16", "8b-bfp8"])
   ap.add_argument("--prompt", default="Write a story about a robot learning to paint.")
   ap.add_argument("--tokens", type=int, default=256)
   ap.add_argument("--device", type=int, default=0)
@@ -100,7 +90,7 @@ if __name__ == "__main__":
                    "<|start_header_id|>assistant<|end_header_id|>\n\n", allowed_special="all")
   dev = Device(a.device)
   try:
-    model = Llama3(path, dev)
+    model = load(path, dev)
     count = 0
     for token in model.generate(ids, a.tokens, chunk_size=a.prefill_chunk):
       if count == 0: start = time.perf_counter()

@@ -35,17 +35,17 @@ Batch-one greedy inference on one Blackhole p150a (card 0, 138 workers). Higher 
 | --- | --- | ---: | ---: |
 | Llama 3.2 1B | BF16 | 7,368 | 161.6 |
 | Llama 3 8B | BF16 | 2,020 | 29.9 |
-| Llama 3 8B | FP8 | 1,882 | 45.8 |
+| Llama 3 8B | BFP8_B | 2,492 | 45.3 |
 | Qwen3.8-27B | Mixed BFP | 130 | 11.4 |
 | Nanbeige4.3-33B | Mixed BFP | 1,004 | 18.2 |
 
-Each rate is the median of three warm runs on the same fixed token IDs. Prefill measures KV-cache construction for 320 prefix tokens, in one chunk for Llama and Nanbeige and ten 32-token chunks for Qwen. Decode measures the next 32 streamed tokens after the first output. Timings exclude checkpoint loading, compilation, and graph capture. Mixed BFP uses BFP8_B attention and BFP4_B MLP projections.
+Each rate is the median of three warm runs on the same fixed token IDs. Prefill measures KV-cache construction for 320 prefix tokens, in one chunk for Llama and Nanbeige and ten 32-token chunks for Qwen. Decode measures the next 32 streamed tokens after the first output. Timings exclude checkpoint loading, compilation, and graph capture. Mixed BFP uses BFP8_B attention and BFP4_B MLP projections. Llama 3 8B BFP8_B packs every attention and MLP projection as BFP8_B and keeps embeddings, norms and the LM head in BF16.
 
-Reproduce a row with `python sims/probes/model_rates.py 8b-fp8 --device 0`. The other checkpoint options are `1b`, `8b-bf16`, `nanbeige`, and `qwen38`.
+Reproduce a row with `python sims/probes/model_rates.py 8b-bfp8 --device 0`. The other checkpoint options are `1b`, `8b-bf16`, `nanbeige`, and `qwen38`.
 
 ## Examples
 
-[examples/llama3.py](examples/llama3.py) runs chunked prefill and greedy decode with the kernels in [examples/llama3](examples/llama3). Weights go in `weights/llama3-1b/`, `weights/llama3-8b-bf16/` or `weights/llama3-8b-fp8/`.
+[examples/llama3.py](examples/llama3.py) runs chunked prefill and greedy decode with the kernels in [examples/llama3](examples/llama3). Weights go in `weights/llama3-1b/`, `weights/llama3-8b-bf16/` or `weights/llama3-8b-bfp8/`. BF16 checkpoints use the row-major kernels in `examples/llama3`; the BFP8_B checkpoint is a single packed safetensors file and runs on the Nanbeige projection graph.
 
 ```sh
 python examples/llama3.py --model 1b --tokens 64

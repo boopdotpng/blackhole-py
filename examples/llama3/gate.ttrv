@@ -1,13 +1,12 @@
 // Llama3 gate/up projection with SwiGLU:
 //     hidden = silu(rmsnorm(x) @ Wgate) * (rmsnorm(x) @ Wup)
 // One source for every model:
-//     1B BF16:  -D EMBED_TILES=2 -D MLP_TILES=8
-//     8B BF16:  -D EMBED_TILES=4 -D MLP_TILES=14
-//     8B FP8:   -D EMBED_TILES=4 -D MLP_TILES=14 -D FP8=1
+//     1B:  -D EMBED_TILES=2 -D MLP_TILES=8
+//     8B:  -D EMBED_TILES=4 -D MLP_TILES=14
 // Ported from blackhole-py-old/examples/llama3/kernels.py: projection(swiglu_output=...),
-// _rmsnorm, _projection_dot_math, _swiglu_math, _scatter_dense, _round_fp8_program.
-// Grid: 88 workers (BF16), 96 (FP8), as the old projection_cores.
-// Params: buffers x, gamma, hidden, gate_w, up_w, (FP8) scales; no integer params.
+// _rmsnorm, _projection_dot_math, _swiglu_math, _scatter_dense.
+// Grid: 88 workers, as the old projection_cores.
+// Params: buffers x, gamma, hidden, gate_w, up_w; no integer params.
 //
 // Vectors stay in element order, as in llama3_o.ttrv. A core owns hidden rows
 // [first, first + count) of both Wgate and Wup. With lead = first & 31, row first + i
@@ -17,40 +16,28 @@
 // through unpack and MOVA2D, never as invalid Dst read by the SFPU.
 //
 // Phases, all on one Dst (FP32):
-//   1. x and gamma -> Dst tiles 0..2E-1; RMSNorm on the SFPU; (FP8: scale, round
-//      to E4M3); pack the normalized x to `normalized`.
+//   1. x and gamma -> Dst tiles 0..2E-1; RMSNorm on the SFPU; pack the
+//      normalized x to `normalized`.
 //   2. For every gate row, then every up row: Wrow * x on the FPU, lane sums on the
-//      SFPU, one scalar per row (FP8: times the output scale).
+//      SFPU, one scalar per row.
 //   3. gate -> Dst tile 0, up -> Dst tile 1; silu(gate) * up on the SFPU; pack.
 
-const FP8 = 0
 const EMBED_TILES = 2
 const MLP_TILES = 8
 const DIM = EMBED_TILES * 1024
 const MLP_DIM = MLP_TILES * 1024
-const PHASES = 2 - FP8                 // BF16 multiplies in two fidelity phases, FP8 in one
-// Two whole weight rows in flight (BF16); FP8 rows are half the bytes, keep 16.
-const WEIGHT_PAGES = (2 * EMBED_TILES) << (3 * FP8)
+const WEIGHT_PAGES = 2 * EMBED_TILES  // two whole weight rows in flight
 const GAMMA = EMBED_TILES * dst.tile   // gamma's first Dst row during RMSNorm
 const INV_DIM = 1.0 / DIM
 const EPS = 1e-5
 
-if FP8 {
-    grid 96
-    type ACT = e4m3                    // weights and the normalized x
-} else {
-    grid 88
-    type ACT = bf16
-}
+grid 88
 
 param x: bf16[]                        // dense [DIM]
 param gamma: bf16[]                    // post-attention RMSNorm weight, dense [DIM]
 param hidden: bf16[]                   // dense [MLP_DIM], always BF16
-param gate_w: ACT[]                    // [MLP_DIM, DIM] row-major
-param up_w: ACT[]
-// [input_scale, output_scale_gate, output_scale_up]: 1 / checkpoint input
-// scale, then input scale * weight scale. Rebound per layer like the weights.
-if FP8 { param scales: fp32[] }
+param gate_w: bf16[]                    // [MLP_DIM, DIM] row-major
+param up_w: bf16[]
 
 shared {
     first, count = split(MLP_DIM)
@@ -58,9 +45,8 @@ shared {
 }
 
 cb operands: bf16[1024], pages=2 * EMBED_TILES   // x tiles, then gamma tiles
-cb normalized: ACT[1024], pages=EMBED_TILES      // rmsnorm(x) (FP8: * input_scale)
-cb weights: ACT[1024], pages=WEIGHT_PAGES
-if FP8 { cb scale_page: fp32[16], pages=1 }      // the three scales; never popped
+cb normalized: bf16[1024], pages=EMBED_TILES     // rmsnorm(x)
+cb weights: bf16[1024], pages=WEIGHT_PAGES
 cb dot: bf16[1024], pages=2          // one packed dot result per page
 cb gate_rows: bf16[1024], pages=1    // gate results, element lead + i
 cb up_rows: bf16[1024], pages=1      // up results, same placement
@@ -68,8 +54,8 @@ cb hidden_page: bf16[1024], pages=1  // silu(gate) * up, same placement
 
 sem dst_full = math_pack, max=1      // math -> pack: one Dst result in flight
 
-// Same face schedule as the BF16 projection; FP8 runs a single fidelity phase.
-mop dot_face, outer=PHASES, inner=2 {
+// Same face schedule as the BF16 projection: two fidelity phases.
+mop dot_face, outer=2, inner=2 {
     loop0: math.elwmul addr=step
     last_inner: math.elwmul addr=rewind
     last: math.elwmul addr=next_face, release=a|b
@@ -106,14 +92,6 @@ replay rms_apply {
     sfp.store dst[0], l1, fmt=fp32
     sfp.store dst[2], l3, fmt=fp32
     math.rwc dst+=2
-    math.rwc dst+=2
-}
-
-// FP8: x *= input scale (l6).
-replay scale_input {
-    sfp.load l0, dst[0], fmt=fp32
-    sfp.mul l0, l0, l6; sfp.nop
-    sfp.store dst[0], l0, fmt=fp32
     math.rwc dst+=2
 }
 
@@ -185,27 +163,6 @@ macro rsqrt() {
     sfp.li half, 0.5
     sfp.mul half, y, half; sfp.nop
     sfp.mad l0, t, half, y             // one Newton step
-}
-
-// FP8: round the FP32 value in l0 to the nearest E4M3 value (ties to even),
-// clamp to +-448, flush E4M3 subnormals; the packer then truncates exactly.
-// Needs l1 = 0x7ffff, l2 = 1, l3 = 0xfff00000, l5 = 448, l6 = -448; clobbers l4, l7.
-macro round_e4m3() {
-    sfp.mov l4, l0
-    sfp.shr l4, l4, 20
-    sfp.and l4, l4, l2                 // lowest kept mantissa bit
-    sfp.iadd l4, l1, l4                // half - 1 + that bit
-    sfp.iadd l0, l4, l0
-    sfp.and l0, l0, l3                 // drop the 20 discarded bits
-    sfp.mov l7, l5
-    sfp.minmax l0, l7; sfp.nop         // l0 = min(l0, 448)
-    sfp.mov l7, l6
-    sfp.minmax l7, l0; sfp.nop         // l0 = max(l0, -448)
-    // The native unpacker is not IEEE for subnormals: flush |x| < 2^-6.
-    // The compare's destination-field operand (l7, right of `<`) must be L0-L11 (§10).
-    sfp.abs l4, l0, float
-    sfp.li l7, 0.015625
-    sfp.if l4 < l7 { sfp.mov l0, zero }
 }
 
 // l0 = e^l0 (ttko exp). Needs l4 = 127.0, l5 = c1, l6 = c0, l12 = log2(e),
@@ -295,11 +252,6 @@ fn brisc() {
     o = cb.reserve operands, n=2 * EMBED_TILES
     a = noc.read o, x[0], n=DIM
     b = noc.read o + DIM, gamma[0], n=DIM
-    if FP8 {
-        s = cb.reserve scale_page
-        noc.read s, scales[0], n=3, wait
-        cb.push scale_page
-    }
     noc.wait a, b
     cb.push operands, n=2 * EMBED_TILES
 
@@ -318,7 +270,7 @@ fn trisc0() {
     cb.pop operands, n=2 * EMBED_TILES
 
     // 2. Weight tile to SrcA, normalized x tile to SrcB, for every row.
-    unpack.fmt a|b, in=ACT
+    unpack.fmt a|b, in=bf16
     unpack.shape a|b, n=256, faces=4
     mop.load dot_inputs
     v = cb.wait normalized, n=EMBED_TILES  // kept for the whole kernel, never popped
@@ -362,7 +314,6 @@ fn trisc1() {
     replay.load accumulate
     replay.load square
     replay.load rms_apply
-    if FP8 { replay.load scale_input }
 
     // 1. RMSNorm: x * gamma / sqrt(mean(x^2) + EPS), in FP32.
     sem.stall math|sfpu|sync, dst_full, notmax
@@ -386,39 +337,11 @@ fn trisc1() {
         faces!(rms_apply, 4)
     }
 
-    if FP8 {
-        sc = cb.wait scale_page            // kept for the whole kernel; sc stays visible (§3)
-        sfp.li l6, sc[0], fmt=fp32
-        repeat t in 0..EMBED_TILES {
-            select_tile!(t)
-            faces!(scale_input, 8)
-        }
-        sfp.li l1, 0x7ffff, fmt=u32
-        sfp.li l2, 1, fmt=u32
-        sfp.li l3, 0xfff00000, fmt=u32
-        sfp.li l5, 448.0
-        sfp.li l6, -448.0
-        repeat t in 0..EMBED_TILES {
-            select_tile!(t)
-            loop 4 {
-                loop 8 {
-                    sfp.load l0, dst[0], fmt=fp32
-                    round_e4m3!()
-                    sfp.store dst[0], l0, fmt=fp32
-                    math.rwc dst+=2
-                }
-                math.rwc dst=cr+8
-                math.rwc dst=cr+8
-            }
-            math.rwc dst=0
-        }
-    }
     select_tile!(0)
     sem.inc dst_full
 
     // 2. One dot product per row: gate rows, then up rows.
     repeat proj in 0..2 {
-        if FP8 { sfp.const l14, sc[1 + proj], fmt=fp32 }  // output scale survives sfp.transp
         loop count {
             sem.stall math|sfpu|sync, dst_full, notmax
             sfp.li l7, 0.0
@@ -432,7 +355,6 @@ fn trisc1() {
             }
             sfp.mov l0, l7
             reduce_lanes!()
-            if FP8 { sfp.mul l0, l0, l14; sfp.nop }
             sfp.store dst[0], l0, fmt=fp32; sfp.nop
             tensix.stall sync, math|sfpu
             sem.inc dst_full
@@ -469,9 +391,7 @@ fn trisc1() {
 
 fn trisc2() {
     // 1. Normalized x, all tiles in one Dst ownership.
-    // GAP: E4M3 output needs an fp16 packer input reading the fp32 Dst (the old
-    // kernel's choice); §9 lists neither that pair nor its prerounding.
-    if FP8 { pack.fmt in=fp16, out=e4m3 } else { pack.fmt in=fp32, out=bf16 }
+    pack.fmt in=fp32, out=bf16
     sem.stall tdma|pack|sync, dst_full, nonzero
     nx = cb.reserve normalized, n=EMBED_TILES
     repeat t in 0..EMBED_TILES { pack.move nx + t * 1024, dst[t * dst.tile] }

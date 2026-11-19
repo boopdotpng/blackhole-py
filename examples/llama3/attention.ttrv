@@ -5,7 +5,7 @@
 //
 // One source for all three models; attention is BF16 in each:
 //   1B:              -D HEAD_TILES=2
-//   8B, 8B FP8:      -D HEAD_TILES=4
+//   8B:              -D HEAD_TILES=4
 // Decode uses 4 or 8 cache partitions. Prompt groups use one partition per query position and KV head.
 // The unsplit baseline (partitions=0) is not ported.
 // Grid: KV_HEADS * PARTITIONS workers (64 by default), as the old split attention.

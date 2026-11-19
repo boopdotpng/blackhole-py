@@ -2,12 +2,10 @@
 // Port of blackhole-py-old/examples/llama3/kernels.py: projection(norm_weight=final_norm)
 // for the "lm" program, with _rmsnorm / _rms_* / _projection_dot_math.
 //
-// One source, three builds:
-//   1B BF16    -D EMBED_TILES=2   (Wlm is the tied embedding table)
-//   8B BF16    -D EMBED_TILES=4
-//   8B FP8     -D EMBED_TILES=4 -D FP8=1   (the LM head stays BF16; FP8 only
-//              selects the 96-worker grid of the old FP8 projections)
-// Grid: 88 workers (BF16), 96 (FP8), as the old projection_cores.
+// One source, two builds:
+//   1B    -D EMBED_TILES=2   (Wlm is the tied embedding table)
+//   8B    -D EMBED_TILES=4
+// Grid: 88 workers, as the old projection_cores.
 // Params: buffers x, norm, wlm, logits; no integer params.
 //
 // Output layout (read by llama3_argmax.ttrv): logits is a dense row-major BF16
@@ -25,11 +23,10 @@ const EMBED_TILES = 2
 const DIM = EMBED_TILES * 1024
 const VOCAB = 128256
 const PORT_COUNT = 3
-const FP8 = 0                 // selects the grid only
 const INV_DIM = 1.0 / DIM
 const EPS = 1e-5
 
-if FP8 { grid 96 } else { grid 88 }
+grid 88
 
 param x: bf16[]               // dense token, DIM
 param norm: bf16[]            // final RMSNorm gamma, DIM

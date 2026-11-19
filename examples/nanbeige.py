@@ -1,4 +1,5 @@
-"""Nanbeige4.3-33B decode. A TTRV graph runs one greedy decode step on Blackhole."""
+"""Nanbeige4.3-33B decode. A TTRV graph runs one greedy decode step on Blackhole. Any Llama-architecture checkpoint
+with BFP-packed projections runs here too (examples/llama3.py --model 8b-bfp8)."""
 import argparse
 import json
 import sys
@@ -9,7 +10,7 @@ import numpy as np
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from helpers import safe_load
+from helpers import rope, safe_load
 from ttrv import Device, Var
 from examples.prefill import MAX_CHUNK, DEFAULT_CHUNK, PromptChunks
 
@@ -20,6 +21,9 @@ DEFAULT = ROOT.parent / "weights/nanbeige4.3-33b/mixed_bfp4mlp_bfp8attn/model.sa
 class Nanbeige:
   def __init__(self, file, dev, max_tokens=8192):
     self.cfg = json.loads((file.parent / "config.json").read_text())
+    generation = file.parent / "generation_config.json"
+    eos = json.loads(generation.read_text())["eos_token_id"] if generation.exists() else self.cfg["eos_token_id"]
+    self.eos = set(np.atleast_1d(eos).tolist())
     tensors = safe_load(file)
     cfg = self.cfg
     if not 1 <= max_tokens <= cfg["max_position_embeddings"]:
@@ -31,7 +35,7 @@ class Nanbeige:
     for name, t in tensors.items():
       second = third = 0
       if t.packed_format:
-        stem, proj, _ = name.rsplit(".", 2)
+        stem, _, proj = name.removesuffix(".weight").rpartition(".")
         if proj in ("k_proj", "v_proj", "up_proj"): continue
         parts = [t]
         if proj == "q_proj": parts += [tensors[f"{stem}.{v}_proj.weight"] for v in ("k", "v")]
@@ -51,28 +55,19 @@ class Nanbeige:
             strip = np.ascontiguousarray(matrix[first:first + group].swapaxes(0, 1))
             dev.dev.allocator._copyin(offset, strip)
             offset += strip.nbytes
-      elif name == "lm_head.weight":
-        n, k = t.shape
-        bits, group = 16, 4
-        buf = dev.empty(n * k, "bf16", tiles_per_page=group)
-        w = t.numpy()
-        for col in range(0, k, group * 32):
-          strip = w[:, col:col + group * 32].reshape(n//32, 2, 16, group, 2, 16)
-          strip = strip.transpose(0, 3, 4, 1, 5, 2).copy()
-          dev.dev.allocator._copyin(buf.addr + col * n * 2, strip)
       else:
         weights[name] = dev.array(t)
         continue
       key = k, n, bits, second, third
       if key not in kernels:
-        workers = 96 if second or bits == 16 else 112
+        workers = 96 if second else 112
         kernels[key] = dev.kernel(KERNEL, K=k, N=n, BITS=bits, GROUP=group, SECOND=second, THIRD=third,
                                   WORKERS=min(n // 32, workers, len(dev.dev.workers)))
       projections[name] = kernels[key], buf
-      if t.packed_format: prompt_weights[name] = (buf, k, n, bits, group, second, third, None, None)
+      if stem: prompt_weights[name] = (buf, k, n, bits, group, second, third)
 
     dim, mlp, vocab = cfg["hidden_size"], cfg["intermediate_size"], cfg["vocab_size"]
-    d, kv = cfg["head_dim"], cfg["num_key_value_heads"]
+    d, kv = cfg.get("head_dim", dim // cfg["num_attention_heads"]), cfg["num_key_value_heads"]
     group = cfg["num_attention_heads"] // kv
     vector = KERNEL.with_name("vector.ttrv")
     rms = dev.kernel(vector, DIM=dim, RMS=1, EPS=cfg["rms_norm_eps"])
@@ -83,10 +78,7 @@ class Nanbeige:
     argmax = dev.kernel(llama / "argmax.ttrv", VOCAB=vocab, MAX_TOKENS=capacity)
     attend = dev.kernel(llama / "attention.ttrv", HEAD_TILES=d // 32, KV_HEADS=kv, GROUP=group,
                         PACK_CONTEXT=1, MAX_TOKENS=capacity)
-    inv = cfg["rope_theta"] ** (-np.arange(0, d, 2, dtype=np.float32) / d)
-    angle = np.tile(np.arange(capacity, dtype=np.float32)[:, None] * inv, 2)
-    cos = dev.array(np.cos(angle), "bf16")
-    sin = dev.array(np.sin(angle) * np.repeat(np.float32([-1, 1]), d//2), "bf16")
+    cos, sin = (dev.array(table, "bf16") for table in rope(cfg, d, capacity))
     self.history = dev.zeros(capacity, "u32")
     self.tokens = dev.zeros((capacity + 1, 4), "u32", host=True)
     x, norm, q, ctx = (dev.empty(dim, "bf16") for _ in range(4))
@@ -142,7 +134,7 @@ class Nanbeige:
         continue
       self.readout(pos=pos, write_token=int(pos + 1 < end)).wait()
       token = int(out[pos + 1, 0])
-      if token == self.cfg["eos_token_id"]: return
+      if token in self.eos: return
       yield token
 
 

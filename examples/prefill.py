@@ -2,7 +2,6 @@
 from pathlib import Path
 from time import perf_counter
 
-import numpy as np
 from ttrv import Var
 
 HERE = Path(__file__).resolve().parent
@@ -11,10 +10,8 @@ DEFAULT_CHUNK = MAX_CHUNK
 
 
 def grouped_llama_weights(dev, tensors, cfg):
-  """Tile the row-major Llama projections for the prompt matrix unit; retain the original decode buffers."""
-  fp8 = "quantization_config" in cfg
-  group, bits, dtype = (8, 8, "e4m3") if fp8 else (4, 16, "bf16")
-  tables, projections = {}, {}
+  """Tile the row-major BF16 Llama projections for the prompt matrix unit; retain the original decode buffers."""
+  group, projections = 4, {}
   for i in range(cfg["num_hidden_layers"]):
     layer = f"model.layers.{i}."
     for names in (("self_attn.q_proj", "self_attn.k_proj", "self_attn.v_proj"), ("self_attn.o_proj",),
@@ -22,33 +19,15 @@ def grouped_llama_weights(dev, tensors, cfg):
       mats = [tensors[layer + p + ".weight"].numpy() for p in names]
       widths = [m.shape[0] for m in mats]
       k, n = mats[0].shape[1], sum(widths)
-      buf = dev.empty(n * k, dtype, tiles_per_page=group)
+      buf = dev.empty(n * k, "bf16", tiles_per_page=group)
       offset = buf.addr
       for col in range(0, k, group * 32):
         for m in mats:
           strip = m[:, col:col + group * 32].reshape(-1, 2, 16, group, 2, 16).transpose(0, 3, 4, 1, 5, 2).copy()
           dev.dev.allocator._copyin(offset, strip)
           offset += strip.nbytes
-      table = scales = None
-      if fp8:
-        def scale(name, kind): return np.float32(tensors[layer + name + "." + kind + "_scale"].numpy()[()])
-        inp = scale(names[0], "input")
-        if any(scale(p, "input") != inp for p in names):
-          raise ValueError("fused FP8 projections require equal activation scales")
-        if inp not in tables:
-          # Exact map for BF16 input bits: scale, RNE to three fraction bits, saturate, flush subnormals.
-          raw = np.arange(65536, dtype=np.uint32) << 16
-          with np.errstate(invalid="ignore", over="ignore"):
-            x = raw.view(np.float32) * (np.float32(1) / inp)
-          u = x.view(np.uint32)
-          mag = ((u & 0x7fffffff) + 0x7ffff + ((u >> 20) & 1)) >> 20
-          code = np.clip(mag.astype(np.int32) - 120 * 8, 0, 126)
-          code[mag < (121 * 8)] = 0
-          tables[inp] = dev.array(((u >> 24 & 128) | code).astype(np.uint8), "e4m3")
-        table = tables[inp]
-        scales = dev.array(np.array([1/inp] + [inp * scale(p, "weight") for p in names] + [0]*(15-len(names)), np.float32))
       second, third = (widths + [0, 0])[1:3]
-      projections[layer + names[0] + ".weight"] = (buf, k, n, bits, group, second, third, table, scales)
+      projections[layer + names[0] + ".weight"] = (buf, k, n, 16, group, second, third)
   return projections
 
 
@@ -68,8 +47,7 @@ class PromptChunks:
     x, norm, q, ctx = [matrix(dim) for _ in range(4)]
     k, v = matrix(kv * d), matrix(kv * d)
     gate, up, hidden = [matrix(mlp) for _ in range(3)]
-    fp8 = "quantization_config" in cfg
-    packed = dev.empty(max(dim, mlp) * MAX_CHUNK, "e4m3" if fp8 else "bf16")
+    packed = dev.empty(max(dim, mlp) * MAX_CHUNK, "bf16")
     vector = HERE / "nanbeige/vector.ttrv"
     llama = HERE / "llama3"
     vectors, embeds = {}, {}
@@ -105,24 +83,24 @@ class PromptChunks:
         if (width, tile_rows, panels) not in pack:
           pack_workers = min(panels * (width // 128), embedding_lanes)
           pack[width, tile_rows, panels] = dev.kernel(HERE / "prefill/pack.ttrv", K=width, WORKERS=pack_workers,
-                                                       TILE_ROWS=tile_rows, FP8=int(fp8), PANELS=panels)
-      for _, width, n, bits, group, second, third, _, _ in projections.values():
+                                                       TILE_ROWS=tile_rows, PANELS=panels)
+      for _, width, n, bits, group, second, third in projections.values():
         key = width, n, bits, group, second, third, tile_rows, short, panels
         if key not in kernels:
           limit = embedding_lanes
           if panels < 5:
-            limit = min(128 if panels == 2 and bits in (4, 8) and not fp8 else 96, embedding_lanes)
+            limit = min(128 if panels == 2 and bits in (4, 8) else 96, embedding_lanes)
           workers = min(n // 32, limit // panels) * panels
           kernels[key] = dev.kernel(HERE / "nanbeige/projection.ttrv", K=width, N=n, BITS=bits, GROUP=group,
-                                    SECOND=second, THIRD=third, WORKERS=workers, PREFILL=1, FP8=int(fp8),
+                                    SECOND=second, THIRD=third, WORKERS=workers, PREFILL=1,
                                     TILE_ROWS=tile_rows, SHORT_M=short, SHARE_A=1, PANELS=panels)
       def project(layer, name, src, dst, **outs):
-        w, width, n, bits, group, second, third, table, scales = projections[layer + name + ".weight"]
+        w, width, n, bits, group, second, third = projections[layer + name + ".weight"]
         panel_rows = min(rows, 32)
-        pack[width, tile_rows, panels](x=src[0], output=packed, rows=panel_rows, **({"quant": table} if fp8 else {}))
+        pack[width, tile_rows, panels](x=src[0], output=packed, rows=panel_rows)
         kernel = kernels[width, n, bits, group, second, third, tile_rows, short, panels]
         outputs = {name: matrix[0] for name, matrix in outs.items()}
-        kernel(x=packed, weights=w, output=dst[0], rows=panel_rows, **outputs, **({"scales": scales} if fp8 else {}))
+        kernel(x=packed, weights=w, output=dst[0], rows=panel_rows, **outputs)
       self.offsets[rows] = sorted(set(range(0, rows, embedding_lanes)) | set(range(0, rows, attention_lanes)))
       positions = {offset: Var(f"p{offset}") for offset in self.offsets[rows]}
       with dev.graph() as graph:
