@@ -26,7 +26,7 @@ def movement(g, s):
       "shape": ("src", "n faces ctx", ""),
       "base": ("src p", "ctx", ""),
       "reset_zw": ("src", "", ""),
-      "face": ("src", "ctx", "next_l1_face dvalid"),
+      "face": ("src", "ctx", "next_l1_face next_tile_face dvalid"),
       "fmt": ("src", "in out shared_exp", "transpose"),
       "move": ("src p", "n ctx", "dvalid"),
       "ctx": ("src", "count", "reset"),
@@ -227,7 +227,7 @@ def unpack(g, s, d, i):
   elif s.name in ("shape", "face", "base"):
     ctx = number(d.get("ctx", Num(0)), 0, 1 if i else 7)
     if s.name == "face":
-      g.tt("UNPACR", Unpack_block_selection=i, AddrMode=int("next_l1_face" in d),
+      g.tt("UNPACR", Unpack_block_selection=i, AddrMode=0x11 if "next_tile_face" in d else int("next_l1_face" in d),
            CfgContextId=ctx, OvrdThreadId=1, SetDatValid=int("dvalid" in d), Last=1)
     elif s.name == "shape":
       x = number(required(d, "n", s), 1, 1024)

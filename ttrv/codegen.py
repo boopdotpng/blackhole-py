@@ -157,6 +157,17 @@ class Generator(Emitter):
         if t not in ("i32", "u32") and not (fn == "u32" and t.endswith("*")):
           self.fail("type.cast", t)
         return r, fn
+      case Call("bits_u32", [value]):
+        r, t = self.expr(value)
+        if t not in ("bf16", "fp16", "fp32", "e4m3", "e5m2"):
+          self.fail("type.bits", "expected a floating-point storage value")
+        return r, "u32"
+      case Call("tileptr", [base, index]):
+        p, t = self.expr(base)
+        i, it = self.expr(index)
+        if not t.endswith("*") or it not in ("i32", "u32"):
+          self.fail("type.tileptr", "expected a local pointer and an integer tile index")
+        return self.calc("add", p, self.calc("mul", i, self.li(TYPES[t[:-1]][1]))), t
       case Call("mulh", [a, b]):
         x, t = self.expr(a)
         y, u = self.expr(b, t)
@@ -241,6 +252,11 @@ class Generator(Emitter):
     """Resolve a constant pointer as (storage record, byte displacement)."""
     if isinstance(e, Name) and e.id in self.m["storage"]:
       return self.m["storage"][e.id], 0
+    if isinstance(e, Call) and e.fn == "tileptr" and isinstance(e.args[1], Num):
+      resolved = self.storage_pointer(e.args[0])
+      if resolved:
+        item, off = resolved
+        return item, off + e.args[1].value * TYPES[item["type"]][1]
     if isinstance(e, Bin) and e.op in ("+", "-") and isinstance(e.b, Num):
       resolved = self.storage_pointer(e.a)
       if resolved:

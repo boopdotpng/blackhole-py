@@ -1,0 +1,243 @@
+// One token times face-packed W[K,N]. Each worker owns complete 32-column output tiles.
+const WORKERS = 112
+grid WORKERS
+const K = 7168
+const N = 7168
+const PREFILL = 0
+const TILE_ROWS = 16
+const SHORT_M = 1
+const BITS = 8
+const FP8 = 0
+if FP8 { type ACT = e4m3 } else { type ACT = bf16 }
+if FP8 { type W = e4m3 } else { if BITS == 4 { type W = bfp4 } else { if BITS == 8 { type W = bfp8 } else { type W = bf16 } } }
+
+param x: ACT[]
+if FP8 { param scales: fp32[]
+    cb scale_page: fp32[16], pages=1
+}
+const GROUP = 8
+param weights: W[], tiles_per_page=GROUP
+param output: bf16[]
+const SECOND = 0
+const THIRD = 0
+if SECOND { param output2: bf16[] }
+if THIRD { param output3: bf16[] }
+// Stripe output columns over adjacent workers so adjacent workers fetch from different DRAM banks.
+const KT = K / 32
+const NT = N / 32
+const BATCH = 16
+const PORT_WORKERS = 8
+shared { port_id = core.id / PORT_WORKERS % 3
+    count = (NT + grid.size - 1 - core.id) / grid.size }
+if PREFILL { param rows: u32 }
+l1 line: bf16[32 * (1 + PREFILL * (TILE_ROWS - 1))]
+cb activations: ACT[(1 + (TILE_ROWS - 1) * PREFILL) * K + 1024], pages=1
+cb matrices: W[1024], pages=2 * BATCH
+cb results: bf16[1024], pages=2
+sem ready = math_pack, max=1
+
+mop matmul, outer=1, inner=2 {          // two fidelity phases of one 32x32 product
+    loop0: replay.run mm_first
+    loop1: replay.run mm_second
+    last_inner: replay.run mm_second
+    last: replay.run mm_second
+    end0: math.rwc reset, release=a
+}
+
+// 16 MVMULs per phase: four output faces x two K faces x two 8-row halves.
+replay mm_first {
+    math.mvmul addr=mm_b; math.mvmul addr=mm_k; math.mvmul addr=mm_b; math.mvmul addr=mm_col
+    math.mvmul addr=mm_b; math.mvmul addr=mm_k; math.mvmul addr=mm_b; math.mvmul addr=mm_row
+}
+replay mm_second {
+    math.mvmul addr=mm_b; math.mvmul addr=mm_k; math.mvmul addr=mm_b; math.mvmul addr=mm_col
+    math.mvmul addr=mm_b; math.mvmul addr=mm_k; math.mvmul addr=mm_b; math.mvmul addr=mm_phase
+}
+
+
+// One 8-row MVMUL per input/output face pair. The second pass accumulates the low fidelity bits.
+if PREFILL {
+    replay prompt_phase {
+        math.mvmul addr=prompt_col
+        math.mvmul addr=prompt_k
+        math.mvmul addr=prompt_col
+        math.mvmul addr=mm_phase
+    }
+}
+
+fn brisc() {
+    for j in 0..count {
+        col = core.id + j * grid.size
+        for block in 0..KT / BATCH {
+            w = cb.reserve matrices, n=BATCH
+            tile = ((block * (BATCH / GROUP)) * NT + col) * GROUP
+            if BITS == 16 || FP8 {
+                r = noc.read w, weights[tile * 1024], port=port_id, n=GROUP * 1024
+                for i in 1..BATCH / GROUP {
+                    noc.read tileptr(w, i * GROUP), weights[(tile + i * NT * GROUP) * 1024], port=port_id, n=GROUP * 1024, tid=r
+                }
+            } else {
+                r = noc.read w, weights[tile], port=port_id, n=GROUP * 1024
+                for i in 1..BATCH / GROUP {
+                    noc.read tileptr(w, i * GROUP), weights[tile + i * NT * GROUP], port=port_id, n=GROUP * 1024, tid=r
+                }
+            }
+            noc.wait r
+            cb.push matrices, n=BATCH
+        }
+    }
+}
+
+fn trisc0() {
+    if FP8 { unpack.fmt a, in=e4m3 } else { if BITS == 4 { unpack.fmt a, in=bfp4 } else {
+        if BITS == 8 { unpack.fmt a, in=bfp8 } else { unpack.fmt a, in=bf16 }
+    }
+    }
+    if FP8 { unpack.fmt b, in=e4m3 } else { unpack.fmt b, in=bf16 }
+    if BITS == 16 || FP8 { unpack.shape a, n=1024, faces=1 } else { unpack.shape a, n=256, faces=4 }
+    unpack.shape b, n=1024, faces=1
+    a = cb.wait activations
+    for j in 0..count {
+        for block in 0..KT / BATCH {
+            w = cb.wait matrices, n=BATCH
+            for i in 0..BATCH {
+                k = block * BATCH + i
+                unpack.acquire
+                if PREFILL { unpack.base b, a + k * TILE_ROWS * 32 }
+                else { unpack.base b, a + (k / 16) * 512 + (k & 15) * 16 }
+                unpack.base a, tileptr(w, i)
+                unpack.post
+                tensix.stall unpack, srca_clr|srcb_clr
+                unpack.reset_zw a|b
+                tensix.stall unpack, trisc_cfg
+                unpack.face b, dvalid
+                if BITS == 16 || FP8 { unpack.face a, dvalid } else {
+                    repeat 3 { unpack.face a, next_tile_face }
+                    unpack.face a, next_tile_face, dvalid
+                }
+                tensix.stall sync, unpack0|unpack1
+                unpack.release
+            }
+            tensix.wait
+            cb.pop matrices, n=BATCH
+        }
+    }
+    cb.pop activations
+}
+
+fn trisc1() {
+    math.fmt dst=fp32, sfp=fp32
+    if FP8 { sc = cb.wait scale_page }
+    math.cfg dst_offset=0
+    math.addrmod mm_k, slot=1, srca+=16, srcb=cr+0, dst+=8
+    math.addrmod mm_col, slot=2, srca=cr+0, srcb=cr+32, dst+=8
+    math.addrmod mm_b, slot=3, srcb+=8, dst+=8
+    math.addrmod mm_row, slot=4, srca=cr+32, srcb=cr+48, dst=cr+0
+    math.addrmod mm_phase, slot=5, srca=0, srcb=0, dst=0, fidelity+=1
+    if PREFILL {
+        math.addrmod prompt_col, slot=6, srca+=16, dst+=16
+        math.addrmod prompt_k, slot=7, srca+=16, srcb+=16, dst=0
+        replay.load prompt_phase
+    }
+    replay.load mm_first
+    replay.load mm_second
+    mop.load matmul
+    for j in 0..count {
+        sem.stall math|sync, ready, notmax
+        repeat face in 0..4 { math.zero face=face, fmt=fp32 }
+        for k in 0..K / 32 {
+            math.rwc reset
+            tensix.stall math, srca_vld|srcb_vld
+            if PREFILL && SHORT_M {
+                replay.run prompt_phase
+                if FP8 == 0 { replay.run prompt_phase }
+                math.rwc reset, release=a|b
+            } else {
+                mop.run matmul
+                math.rwc reset, release=b
+            }
+        }
+        if FP8 {
+            col = (core.id + j * grid.size) * 32
+            index = 1 + (col >= N - SECOND - THIRD) + (col >= N - THIRD)
+            sfp.const l12, sc[index], fmt=fp32
+            tensix.stall sfpu, math
+            repeat r in 0..TILE_ROWS / 4 {
+                repeat h in 0..2 {
+                    repeat c in 0..2 {
+                        sfp.load l0, dst[(r / 4) * 2 * dst.face + (r % 4) * 4 + h * dst.face + c * 2], fmt=fp32
+                        sfp.mul l0, l0, l12; sfp.nop
+                        sfp.store dst[(r / 4) * 2 * dst.face + (r % 4) * 4 + h * dst.face + c * 2], l0, fmt=fp32
+                    }
+                }
+            }
+            tensix.stall sync, sfpu
+        }
+        tensix.stall sync, math
+        sem.inc ready
+    }
+}
+
+fn trisc2() {
+    pack.fmt in=fp32, out=bf16
+    for j in 0..count {
+        sem.stall tdma|pack|sync, ready, nonzero
+        p = cb.reserve results
+        pack.move p, dst[0]
+        tensix.stall sync, pack0
+        tensix.wait
+        cb.push results
+        sem.dec ready
+    }
+}
+
+macro store_rows(dest, col, width, p) {
+    if PREFILL {
+        // Keep all live row slices in L1 until their shared transaction completes.
+        for r in 0..rows {
+            for i in 0..16 {
+                line[r * 32 + i] = p[(r / 16) * 512 + (r % 16) * 16 + i]
+                line[r * 32 + i + 16] = p[(r / 16) * 512 + 256 + (r % 16) * 16 + i]
+            }
+        }
+        tx = noc.write dest[col], line, n=32
+        for r in 1..rows {
+            noc.write dest[r * (((width + 1023) / 1024) * 1024) + col], line + r * 32, n=32, tid=tx
+        }
+        noc.wait tx
+    } else { noc.write dest[col], line, n=32, wait }
+}
+
+fn ncrisc() {
+    if FP8 {
+        s = cb.reserve scale_page
+        noc.read s, scales[0], n=16, wait
+        cb.push scale_page
+    }
+    a = cb.reserve activations
+    noc.read a, x[0], n=K * (1 + (TILE_ROWS - 1) * PREFILL), wait
+    cb.push activations
+    for j in 0..count {
+        p = cb.wait results
+        if PREFILL == 0 {
+            for i in 0..16 {
+                line[i] = p[i]
+                line[i + 16] = p[256 + i]
+            }
+        }
+        col = (core.id + j * grid.size) * 32
+        if THIRD {
+            if col >= N - THIRD { store_rows!(output3, col - (N - THIRD), THIRD, p) }
+            else {
+                if col >= N - THIRD - SECOND { store_rows!(output2, col - (N - THIRD - SECOND), SECOND, p) }
+                else { store_rows!(output, col, N - SECOND - THIRD, p) }
+            }
+        } else {
+            if SECOND {
+                if col >= N - SECOND { store_rows!(output2, col - (N - SECOND), SECOND, p) }
+                else { store_rows!(output, col, N - SECOND - THIRD, p) }
+            } else { store_rows!(output, col, N - SECOND - THIRD, p) }
+        }
+        cb.pop results
+    }
+}

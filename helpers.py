@@ -28,6 +28,13 @@ class Tensor:
   path: Path
   offset: int
   nbytes: int
+  packed_format: str | None = None
+
+  @property
+  def logical_shape(self):
+    """HF weight shape [output, input] for transposed, face-packed projection tiles."""
+    return (32 * self.shape[1], 32 * self.shape[0]) if self.packed_format else self.shape
+
   def numpy(self):  # a read-only memmap; types numpy lacks (BF16, F8) come back as raw unsigned integers
     import numpy as np
     raw = f"u{self.nbytes // max(1, math.prod(self.shape))}"
@@ -43,9 +50,20 @@ def safe_load(path) -> dict[str, Tensor]:
   with open(path, "rb") as f:
     n, = struct.unpack("<Q", f.read(8))
     header = json.loads(f.read(n))
-  header.pop("__metadata__", None)
-  return {name: Tensor(name, h["dtype"], tuple(h["shape"]), path, 8 + n + h["data_offsets"][0],
-                       h["data_offsets"][1] - h["data_offsets"][0]) for name, h in header.items()}
+  metadata = header.pop("__metadata__", {})
+  packed = json.loads(metadata.get("blackhole.formats", "{}"))
+  if packed and (metadata.get("blackhole.layout") != "kn_tiles_32x32_v1" or not packed.keys() <= header.keys()):
+    raise ValueError(f"{path}: invalid packed weight metadata")
+  tensors = {}
+  for name, h in header.items():
+    start, end = h["data_offsets"]
+    shape = tuple(h["shape"])
+    fmt = packed.get(name)
+    if name in packed and (fmt not in ("bfp4_b", "bfp8_b") or h["dtype"] != "U8" or len(shape) != 3
+                           or shape[2] != (576 if fmt == "bfp4_b" else 1088) or end - start != math.prod(shape)):
+      raise ValueError(f"{path}: invalid packed tensor {name}")
+    tensors[name] = Tensor(name, h["dtype"], shape, path, 8 + n + start, end - start, fmt)
+  return tensors
 
 def tokenizer(path):
   """A Hugging Face byte-level BPE tokenizer.json as a tiktoken Encoding."""

@@ -125,7 +125,15 @@ def noc(g, s):
       g.fail("noc.length", "invalid transfer length")
     if isinstance(count, Num) and size:
       g.check_pointer(local_expr, length=count.value * size)
-    g.mov(left, g.scale(g.condition(count), t[:-1]))
+    if size is None:
+      # A block-floating DRAM index addresses a packed tile. Transfers contain whole tiles.
+      if not isinstance(remote, Index) or not isinstance(count, Num) or count.value <= 0 or count.value % 1024:
+        g.fail("noc.length", "BFP transfers require whole 1024-element tiles")
+      nbytes = count.value // 1024 * TYPES[t[:-1]][1]
+      g.check_pointer(local_expr, length=nbytes)
+      g.li(nbytes, left)
+    else:
+      g.mov(left, g.scale(g.condition(count), t[:-1]))
 
   def worker(x, y):  # hw.worker_coord at runtime: column x + lo below the gap, x + hi after it; row y + WORKER_ROW0
     lo = hw.WORKER_COLUMNS[0]
@@ -150,12 +158,12 @@ def noc(g, s):
     param = g.m["params"].get(remote.base.id)
     if param and param["kind"] == "host":
       g.fail("noc.endpoint", "internal: host endpoint")
-    if not param or param["kind"] != "dram" or TYPES[param["type"]][0] != TYPES[t[:-1]][0]:
+    if not param or param["kind"] != "dram" or TYPES[param["type"]] != TYPES[t[:-1]]:
       g.fail("noc.endpoint", "incompatible DRAM endpoint")
     known = g.check_pointer(local_expr)
     if (
       not write
-      and known is not None
+      and known is not None and TYPES[t[:-1]][0] is not None
       and isinstance(remote.idx[0], Num)
       and (known - remote.idx[0].value * TYPES[t[:-1]][0]) % 64
     ):
@@ -165,13 +173,21 @@ def noc(g, s):
     # Divide the element index before converting to bytes: a u32 index can address
     # more than 4 GiB. Carry page and intra-page cursors separately across requests.
     element_size = TYPES[param["type"]][0]
-    if element_size is None:
-      g.fail("type.size", "BFP elements cannot be indexed")
     page_index = g.alloc()
     index = g.condition(remote.idx[0])
-    elements = g.li(page // element_size)
-    g.rv("divu", page_index, index, elements)
-    g.mov(offset, g.scale(g.calc("remu", index, elements), param["type"]))
+    if element_size is None:
+      tile_bytes = TYPES[param["type"]][1]
+      if page == tile_bytes:
+        g.mov(page_index, index)
+        g.mov(offset, 0)
+      else:
+        per_page = g.li(page // tile_bytes)
+        g.rv("divu", page_index, index, per_page)
+        g.rv("mul", offset, g.calc("remu", index, per_page), g.li(tile_bytes))
+    else:
+      elements = g.li(page // element_size)
+      g.rv("divu", page_index, index, elements)
+      g.mov(offset, g.scale(g.calc("remu", index, elements), param["type"]))
     def table(port):  # packed y offsets from DRAM_Y0, one nibble per bank; port rotates with the bank
       return sum((ys[int(g.role == "ncrisc") if port is None else (port + bank) % 3] - hw.DRAM_Y0) << (4 * bank)
                  for bank, ys in enumerate(hw.DRAM_PORTS))

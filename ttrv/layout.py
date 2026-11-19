@@ -34,8 +34,11 @@ def layout(p, ceiling=hw.L1_SIZE, scratch_base=fw.DATA_BASE):
       params[name] = dict(slot=slots, kind="host", type=d.type.name)
       slots += 2
     else:
-      options(d, set())  # a DRAM buffer takes no options: it interleaves over the banks one tile of its type at a time
-      params[name] = dict(slot=slots, kind="dram", type=d.type.name, page=TYPES[d.type.name][1])
+      tiles = options(d, {"tiles_per_page"}).get("tiles_per_page", 1)
+      page = TYPES[d.type.name][1] * tiles
+      if tiles < 1 or page > hw.NOC_MAX_BURST:
+        raise Error(d.loc, "param.page", "DRAM pages must hold whole tiles and fit a NoC burst")
+      params[name] = dict(slot=slots, kind="dram", type=d.type.name, page=page)
       slots += 1
     if slots > fw.PARAM_SIZE // 4:
       raise Error(d.loc, "param.slots", "parameter block exceeds 16 words")

@@ -39,7 +39,7 @@ TYPES = {"bf16": (2, 2048), "fp16": (2, 2048), "fp32": (4, 4096), "e4m3": (1, 10
 SEMS = ("fpu_sfpu", "math_pack", "unpack_to_dest", "unpack_operand_sync", "pack_done", "unpack_sync",
         "unpack_math_done", "math_done")
 ENTRIES = ("brisc", "ncrisc", "trisc0", "trisc1", "trisc2")
-EXPR_BUILTINS = {"i32": 1, "u32": 1, "mulh": 2}     # name: arity; one result, usable inside expressions
+EXPR_BUILTINS = {"i32": 1, "u32": 1, "mulh": 2, "tileptr": 2, "bits_u32": 1}     # name: arity; one result, usable inside expressions
 STMT_BUILTINS = {"split": (1, 2)}                  # name: (arity, results); whole statements only, like fn calls
 ENDPOINTS = {"remote": 3, "rect": 5}               # NoC endpoint constructors, device operands only (spec §7)
 CORE_ATTRS = ("x", "y", "id")

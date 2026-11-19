@@ -13,12 +13,13 @@
   g(k=3).wait()                                # replay with k bound to 3
 """
 
-import atexit, mmap
+import atexit, copy, math, mmap
 from pathlib import Path
 import numpy as np
 import fw
 from ops_blackhole import BlackholeDevice, BlackholeComputeQueue, BlackholeGraph, dram
 from helpers import Tensor
+from . import hw
 from .expand import TYPES
 
 NUMPY = {"bf16": np.uint16, "fp16": np.float16, "fp32": np.float32, "e4m3": np.uint8, "e5m2": np.uint8, "u8": np.uint8,
@@ -46,18 +47,33 @@ class Event:
 
 
 class Buffer:
-  """shape elements of a TTRV type. DRAM buffers interleave over the 8 banks one tile of their type at a time; host
+  """shape elements of a TTRV type. DRAM buffers interleave over 8 banks in pages of one or more tiles; host
   buffers live in pinned host memory that kernels can write."""
-  def __init__(self, device, shape, dtype, host=False):
+  def __init__(self, device, shape, dtype, host=False, tiles_per_page=1):
     if dtype not in TYPES: raise ValueError(f"unknown type {dtype!r}")
     self.device, self.shape, self.dtype, self.host = device, tuple(shape), dtype, host
     self.nbytes = int(np.prod(self.shape, dtype=np.int64)) * np.dtype(NUMPY[dtype]).itemsize
     dev = device.dev
+    if tiles_per_page < 1 or tiles_per_page * TYPES[dtype][1] > hw.NOC_MAX_BURST or (host and tiles_per_page != 1):
+      raise ValueError("invalid tiles_per_page")
     if host:
       self.offset = dev.alloc_host(self.nbytes)
       self.addr = dev.sysmem.noc_addr + self.offset
     else:
-      self.addr = dev.allocator._alloc(self.nbytes, TYPES[dtype][1])
+      self.addr = dev.allocator._alloc(self.nbytes, tiles_per_page * TYPES[dtype][1])
+
+  def page_view(self, byte_offset, shape):
+    """Alias an aligned region of this DRAM allocation, preserving its bank interleave."""
+    if self.host: raise ValueError("expected a DRAM buffer")
+    view = copy.copy(self)
+    view.shape = (shape,) if isinstance(shape, int) else tuple(shape)
+    view.nbytes = math.prod(view.shape) * np.dtype(NUMPY[self.dtype]).itemsize
+    shift = self.addr >> 56 & 63
+    page = 1 << shift if shift else ((self.addr >> 48 & 255) + 1) * 64
+    if byte_offset < 0 or byte_offset % page or byte_offset + view.nbytes > self.nbytes or any(n < 0 for n in view.shape):
+      raise ValueError("invalid DRAM page view")
+    view.addr = self.addr + byte_offset
+    return view
 
   def numpy(self) -> np.ndarray:
     """A DRAM buffer waits for queued work and returns a copy. A host buffer returns a live view without waiting,
@@ -171,7 +187,8 @@ class Device:
     at = self.dev.alloc_host(ARGS * RING)
     self._ring, self._ring_at, self._ring_used = at, 0, [0] * RING
 
-  def empty(self, shape, dtype, host=False) -> Buffer: return Buffer(self, (shape,) if isinstance(shape, int) else shape, dtype, host)
+  def empty(self, shape, dtype, host=False, *, tiles_per_page=1) -> Buffer:
+    return Buffer(self, (shape,) if isinstance(shape, int) else shape, dtype, host, tiles_per_page)
 
   def zeros(self, shape, dtype, host=False) -> Buffer:
     b = self.empty(shape, dtype, host)
@@ -184,7 +201,9 @@ class Device:
   def array(self, x, dtype=None) -> Buffer:
     """A DRAM buffer holding x: a numpy array or a safetensors Tensor. dtype names the TTRV type when numpy has none:
     bf16 takes uint16 bits, or floats to round."""
-    if isinstance(x, Tensor): return self.empty(x.shape, dtype or SAFETENSORS[x.dtype]).copy_from(x)
+    if isinstance(x, Tensor):
+      storage_type = x.packed_format.removesuffix("_b") if x.packed_format else SAFETENSORS[x.dtype]
+      return self.empty(x.shape, dtype or storage_type).copy_from(x)
     x = np.asarray(x)
     if dtype == "bf16" and x.dtype.kind == "f":  # round to nearest even
       u = x.astype(np.float32).view(np.uint32).astype(np.uint64)
