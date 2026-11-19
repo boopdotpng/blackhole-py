@@ -58,7 +58,9 @@ def layout(p, ceiling=hw.L1_SIZE, scratch_base=fw.DATA_BASE):
     item = dict(address=address, size=page * pages, type=d.type.name, count=n)
     if name in p.cbs:
       cb = list(p.cbs).index(name)
-      if cb >= 32 or not 1 <= pages <= 32768 or pages & (pages - 1) or page % 4:
+      # Any page count works: occupancy is a 16-bit counter difference and the pointer wraps by comparison with the
+      # end of the CB. A reservation of n pages is contiguous only if n divides the page count.
+      if cb >= 32 or not 1 <= pages <= 32768 or page % 4:
         raise Error(d.loc, "cb.layout", "invalid CB capacity, page size or stream index")
       item.update(cb=cb, pages=pages, page=page)
     storage[name] = item

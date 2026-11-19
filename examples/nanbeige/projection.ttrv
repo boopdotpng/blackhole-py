@@ -29,6 +29,9 @@ if SECOND { param output2: bf16[] }
 if THIRD { param output3: bf16[] }
 // Stripe output columns over adjacent workers so adjacent workers fetch from different DRAM banks.
 const KT = K / 32
+// Activations are face-packed in 512-element blocks (a 32-element chunk's high half sits 256 after its low half). When K
+// ends in a partial block, a decode read covers the rest of that block too; the x buffer must be allocated that long.
+const X_TAIL = (512 - K % 512) % 512
 const NT = N / 32
 const BATCH = 16
 const PORT_WORKERS = 8
@@ -258,7 +261,7 @@ fn ncrisc() {
             received[peer] = 0
         }
     } else {
-        noc.read a, x[panel * TILE_ROWS * K], n=K * (1 + (TILE_ROWS - 1) * PREFILL), wait
+        noc.read a, x[panel * TILE_ROWS * K], n=K * (1 + (TILE_ROWS - 1) * PREFILL) + X_TAIL * (1 - PREFILL), wait
     }
     cb.push activations
     for j in 0..count {

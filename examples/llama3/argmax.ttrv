@@ -39,6 +39,11 @@ param history: u32[]                  // token ids by position, MAX_TOKENS
 param tokens: u32[], host             // one 16-byte slot per position, MAX_TOKENS + 1 slots
 param start_pos: u32
 param write_token: u32                // 1: append the token to history (0 when write_pos == MAX_TOKENS)
+// Tensor parallel: this card holds vocabulary rows [VOCAB_BASE, VOCAB_BASE + VOCAB). Worker 0 writes its
+// (key, global token) to winner and a cross-card pick writes the token to the host and history.
+const TP = 0
+const VOCAB_BASE = 0
+if TP { param winner: u32[] }
 
 shared {
     first, count = split(VOCAB)
@@ -112,7 +117,7 @@ fn brisc() {
 
     // To worker 0: payload acknowledged, then counted (§7 remote publication).
     local[0] = best_key
-    local[1] = best
+    local[1] = best + VOCAB_BASE
     noc.write remote(0, 0, partials + 4 * core.id), local, n=2, wait
     noc.inc remote(0, 0, arrived), by=1, ret=ack, wait
 
@@ -130,6 +135,12 @@ fn brisc() {
         }
     }
 
+    if TP {
+        local[0] = best_key
+        local[1] = best
+        noc.write winner[0], local, n=4, wait
+        return
+    }
     local[0] = best
     noc.write tokens[4 * write_pos], local, n=4, wait     // 16 bytes to the host slot
 

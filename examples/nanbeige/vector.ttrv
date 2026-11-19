@@ -281,7 +281,9 @@ fn ncrisc() {
                 row[offset + 256 + i] = r[k * 32 + i + 16]
             }
         }
-        noc.write output[token_base + first], row, n=count, wait
+        // A partial last block still spans 512 elements: its high halves start 256 in. The output buffer must reach
+        // the end of that block.
+        noc.write output[token_base + first], row, n=(count + 511) / 512 * 512, wait
     } else { noc.write output[token_base + first], r, n=count, wait }
     cb.pop result
 }

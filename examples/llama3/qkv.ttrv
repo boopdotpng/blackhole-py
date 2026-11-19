@@ -20,6 +20,7 @@
 const EMBED_TILES = 2
 const DIM = EMBED_TILES * 1024
 const KV_DIM = 256 * EMBED_TILES
+const Q_DIM = DIM                       // tensor parallel: this card's query rows
 const WEIGHT_PAGES = 2 * EMBED_TILES      // two weight rows in flight
 const PORT_COUNT = 3
 const INV_DIM = 1.0 / DIM
@@ -30,15 +31,15 @@ grid WORKERS
 
 param x: bf16[]                         // dense token, DIM
 param norm: bf16[]                      // RMSNorm gamma, DIM
-param wq: bf16[]                         // [DIM, DIM]
+param wq: bf16[]                         // [Q_DIM, DIM]
 param wk: bf16[]                         // [KV_DIM, DIM]
 param wv: bf16[]
-param q_out: bf16[]                     // dense, DIM
+param q_out: bf16[]                     // dense, Q_DIM
 param k_out: bf16[]                     // dense, KV_DIM
 param v_out: bf16[]                     // dense, KV_DIM
 
 shared {
-    q_first, q_count = split(DIM)
+    q_first, q_count = split(Q_DIM)
     kv_first, kv_count = split(KV_DIM)
     q_lead = q_first & 31
     kv_lead = kv_first & 31

@@ -17,7 +17,8 @@ const EMBED_TILES = 2
 const DIM = EMBED_TILES * 1024
 const INPUT_TILES = EMBED_TILES  // down uses 8 (1B) or 14 (8B)
 const INPUT_DIM = INPUT_TILES * 1024
-// Power-of-two CB capacity; each contiguous reservation divides a weight row.
+// Weight tiles per NoC read and per CB page; must divide INPUT_TILES. The default is the largest power of two that
+// does; tensor-parallel down (7 tiles per card) sets 7 so each row is one 14 KiB read.
 const BATCH_TILES = INPUT_TILES & -INPUT_TILES
 
 param context: bf16[]
@@ -32,7 +33,7 @@ shared {
 }
 
 cb x: bf16[INPUT_DIM], pages=1                       // the whole context vector, read for every row
-cb weights: bf16[1024], pages=2 * BATCH_TILES      // two contiguous reads in flight
+cb weights: bf16[BATCH_TILES * 1024], pages=2      // two batch reads in flight
 cb dot: bf16[1024], pages=2                    // one packed dot result per page
 cb result: bf16[1024], pages=1                 // this core's dot results, element lead + i
 cb residual_slice: bf16[1024], pages=1         // this core's residual, same placement
@@ -107,9 +108,9 @@ fn brisc() {
 
     for row in first..first + count {
         for batch in 0..INPUT_TILES / BATCH_TILES {
-            w = cb.reserve weights, n=BATCH_TILES
+            w = cb.reserve weights
             noc.read w, matrix[row * INPUT_DIM + batch * BATCH_TILES * 1024], n=BATCH_TILES * 1024, port=core.id % 3, wait
-            cb.push weights, n=BATCH_TILES
+            cb.push weights
         }
     }
 }
@@ -118,9 +119,11 @@ fn trisc0() {
     unpack.fmt a|b, in=bf16
     v = cb.wait x
     loop count {
-        for tile in 0..INPUT_TILES {
+        for batch in 0..INPUT_TILES / BATCH_TILES {
             w = cb.wait weights
-            unpack_pair!(w, v + tile * 1024)
+            for tile in 0..BATCH_TILES {
+                unpack_pair!(w + tile * 1024, v + (batch * BATCH_TILES + tile) * 1024)
+            }
             tensix.wait
             cb.pop weights
         }
