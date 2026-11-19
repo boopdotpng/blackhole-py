@@ -91,16 +91,12 @@ class Llama3:
     for dst, file, offset, size in sources:  # mmap keeps safetensors offsets unaligned; only the staging slots need alignment
       with open(file, "rb") as f, mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ) as mm, memoryview(mm) as view:
         self.dev.allocator._copyin(dst, view[offset:offset + size])
-    # Startup-only kernel: its L1 scratch is free until _install() writes the model's resident tables.
-    if zeros:
-      images = {core: {"brisc": (KERNELS / "zero" / f"brisc{i}.bin").read_bytes()} for i, core in enumerate(self.dev.workers[:8])}
-      zero = blackhole_build_program(self.dev, images, 16)
-      q = BlackholeComputeQueue()
-      for b in zeros:
-        assert b["addr"] % 64 == 0 and b["size"] % (fw.DRAM_BANKS * 16384) == 0
-        q.exec(zero, self.dev.allocator.upload(struct.pack("<4I", b["addr"], b["size"] // fw.DRAM_BANKS, 0, 0)))
-      q.signal(self.dev.timeline_signal, self.dev.next_timeline()).submit(self.dev)
-      self.dev.synchronize(60.0)
+    # KV caches start zeroed. Written from the host like the weights, so startup runs no device kernel whose image
+    # would be tied to one firmware L1 layout.
+    chunk = bytes(16 << 20)
+    for b in zeros:
+      for off in range(0, b["size"], len(chunk)):
+        self.dev.allocator._copyin(self.buffer(b) + off, memoryview(chunk)[:min(len(chunk), b["size"] - off)])
 
   # ---- fixed execution slots, immutable descriptors and per-core parameter tables
   def _install(self):
