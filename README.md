@@ -40,3 +40,16 @@ python examples/llama3.py --model 1b --tokens 64
 | 1B BF16 | 157.6 |
 | 8B FP8 | 38.1 |
 | 8B BF16 | 29.3 |
+
+## Qwen3.8-27B decode
+
+Run batch-one greedy text generation from the mixed BFP4 MLP / BFP8 attention checkpoint.
+The prompt is processed one token at a time. The GDN recurrent matrix stays in FP32 on the device.
+Use `--checkpoint` for the packed safetensors file and `--metadata` for its original config and tokenizer directory.
+
+```sh
+python examples/qwen38.py --device 0 --prompt 'The capital of France is' --tokens 8 --profile
+```
+
+The throughput excludes loading, prompt processing and the first generated token.
+`--profile` reports dispatcher timings grouped by kernel for the last decode position.

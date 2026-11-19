@@ -1,0 +1,37 @@
+// T2's 128-bit RISC-V vector unit processes one stripe of value channels at a time.
+// Keep the 16 independent dot products in registers across all 128 key channels.
+#include <riscv_vector.h>
+#include "worker.h"
+#include "state.h"
+
+KERNEL kernel_main(void) {
+  Scratch *s = (Scratch *)SCRATCH_ADDR;
+  unsigned live = read32(PC_BUF_BASE);
+  fence();
+  size_t vl = __riscv_vsetvl_e32m4(16);
+  for (int block = 0; block < 8; block++) {
+    vfloat32m4_t sum = __riscv_vfmv_v_f_f32m4(0, vl);
+    if (live)
+      for (int k = 0; k < 128; k++) {
+        vfloat32m4_t old = __riscv_vle32_v_f32m4(s->state[block][k], vl);
+        sum = __riscv_vfmacc_vf_f32m4(sum, s->act[1][k], old, vl);
+      }
+    vfloat32m4_t value = __riscv_vle32_v_f32m4(s->act[2] + 16 * block, vl);
+    value = __riscv_vfnmsac_vf_f32m4(value, s->decay, sum, vl);
+    vfloat32m4_t delta = __riscv_vfmul_vf_f32m4(value, s->beta, vl);
+    vfloat32m4_t context = __riscv_vfmv_v_f_f32m4(0, vl);
+    for (int k = 0; k < 128; k++) {
+      vfloat32m4_t next = __riscv_vfmul_vf_f32m4(delta, s->act[1][k], vl);
+      if (live) {
+        vfloat32m4_t old = __riscv_vle32_v_f32m4(s->state[block][k], vl);
+        next = __riscv_vfmacc_vf_f32m4(next, s->decay, old, vl);
+      }
+      __riscv_vse32_v_f32m4(s->state[block][k], next, vl);
+      context = __riscv_vfmacc_vf_f32m4(context, s->act[0][k], next, vl);
+    }
+    __riscv_vse32_v_f32m4(s->context + 16 * block, context, vl);
+  }
+  fence();
+  write32(MAILBOX_TO_BRISC, 1);
+  JUMP(FW_TRISC2 + 4);
+}
