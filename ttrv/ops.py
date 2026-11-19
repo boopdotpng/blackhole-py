@@ -564,6 +564,20 @@ def templates(g, s):
 
 def lower(g, s):
   ns, n = s.ns, s.name
+  if ns == "l1" and n == "copy_words":
+    operands = bind(s, "dst src", "n")
+    words = number(required(operands, "n", s), 1, 512)
+    dst, src = (required(operands, key, s) for key in ("dst", "src"))
+    out, dtype = g.expr(dst)
+    data, stype = g.expr(src)
+    if dtype != stype or not dtype.endswith("*"):
+      g.fail("l1.copy", "expected two L1 pointers of the same type")
+    for ptr in (dst, src): g.check_pointer(ptr, align=4, length=4 * words)
+    for i in range(words):
+      reg = g.alloc()
+      g.rv("lw", reg, data, imm=4*i)
+      g.rv("sw", 0, out, reg, imm=4*i)
+    return []
   if ns == "cb":
     return cb(g, s)
   if ns == "noc":

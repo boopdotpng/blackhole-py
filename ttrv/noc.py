@@ -127,9 +127,11 @@ def noc(g, s):
       g.check_pointer(local_expr, length=count.value * size)
     if size is None:
       # A block-floating DRAM index addresses a packed tile. Transfers contain whole tiles.
-      if not isinstance(remote, Index) or not isinstance(count, Num) or count.value <= 0 or count.value % 1024:
+      if not (isinstance(remote, Index) or multicast) or not isinstance(count, Num) or count.value <= 0 or count.value % 1024:
         g.fail("noc.length", "BFP transfers require whole 1024-element tiles")
       nbytes = count.value // 1024 * TYPES[t[:-1]][1]
+      if multicast and nbytes > hw.NOC_MAX_BURST:
+        g.fail("noc.length", "packed multicast exceeds the NoC burst limit")
       g.check_pointer(local_expr, length=nbytes)
       g.li(nbytes, left)
     else:
@@ -219,6 +221,8 @@ def noc(g, s):
       ptr, typ = g.expr(p)
       if not typ.endswith("*"):
         g.fail("noc.endpoint", "expected remote pointer")
+      if typ != t:
+        g.fail("noc.endpoint", "multicast source and destination types must match")
       g.mov(offset, ptr)
       coord = g.alloc()
       g.mov(coord, worker(x0, y0))

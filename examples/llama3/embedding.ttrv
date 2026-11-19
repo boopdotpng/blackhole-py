@@ -1,6 +1,7 @@
 // Gather one row from the checkpoint embedding table: output = weights[history[token_pos]].
 // token_pos is an integer kernel argument; the host queues a new value before each graph run (spec §4).
-grid 1
+const ROW_LANES = 1
+grid ROW_LANES
 const EMBED_TILES = 2
 const MAX_TOKENS = 8192
 const DIM = 1024 * EMBED_TILES
@@ -14,9 +15,9 @@ l1 ids: u32[16]
 l1 row: bf16[DIM]
 
 fn brisc() {
-    i = token_pos
+    i = token_pos + core.id
     noc.read ids, history[i & ~15], n=16, wait
     token = ids[i & 15]
     noc.read row, weights[token * DIM], n=DIM, wait
-    noc.write output[0], row, n=DIM, wait
+    noc.write output[core.id * DIM], row, n=DIM, wait
 }

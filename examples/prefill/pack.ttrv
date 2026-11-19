@@ -1,0 +1,40 @@
+// Assemble the live prompt rows into the face layout of each activation tile.
+const K = 7168
+const STRIDE = ((K + 1023) / 1024) * 1024
+const WORKERS = 32
+const BLOCK = 128
+const TILE_ROWS = 16
+const PAGE = TILE_ROWS * 32
+grid WORKERS
+param x: bf16[]
+const FP8 = 0
+if FP8 { type ACT = e4m3
+    param quant: e4m3[]
+    l1 table: e4m3[65536]
+} else { type ACT = bf16 }
+param output: ACT[]
+param rows: u32
+l1 raw: bf16[BLOCK]
+l1 tiles: ACT[(BLOCK / 32) * PAGE]
+shared { first, count = split(K / BLOCK) }
+fn brisc() {
+    if FP8 { noc.read table, quant[0], n=65536, wait }
+    for block in first..first + count {
+        for r in 0..rows {
+            noc.read raw, x[r * STRIDE + block * BLOCK], n=BLOCK, wait
+            for k in 0..BLOCK / 32 {
+                dest = tiles + k * PAGE + (r / 16) * 512 + (r % 16) * 16
+                if FP8 {
+                    repeat c in 0..16 {
+                        dest[c] = table[bits_u32(raw[k * 32 + c])]
+                        dest[256 + c] = table[bits_u32(raw[k * 32 + 16 + c])]
+                    }
+                } else {
+                    l1.copy_words dest, raw + k * 32, n=8
+                    l1.copy_words dest + 256, raw + k * 32 + 16, n=8
+                }
+            }
+        }
+        noc.write output[block * (BLOCK / 32) * PAGE], tiles, n=(BLOCK / 32) * PAGE, wait
+    }
+}

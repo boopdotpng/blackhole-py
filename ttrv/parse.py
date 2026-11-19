@@ -269,7 +269,7 @@ class Shared:
   loc: Loc = None
 
 KEYWORDS = {"if", "else", "while", "for", "loop", "repeat", "break", "continue", "return", "fence"}
-NAMESPACES = {"noc", "cb", "tensix", "sem", "unpack", "pack", "math", "sfp", "mop", "replay", "sfpmacro"}
+NAMESPACES = {"l1", "noc", "cb", "tensix", "sem", "unpack", "pack", "math", "sfp", "mop", "replay", "sfpmacro"}
 DECLS = {"grid", "const", "type", "param", "l1", "cb", "sem", "macro", "fn", "mop", "replay", "sfpmacro", "shared"}
 BINARY = {"||": 1, "&&": 2, "|": 3, "^": 4, "&": 5, "==": 6, "!=": 6, "<": 7, "<=": 7, ">": 7, ">=": 7,
           "<<": 8, ">>": 8, "+": 9, "-": 9, "*": 10, "/": 10, "%": 10}
