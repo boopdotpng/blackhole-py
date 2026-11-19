@@ -8,7 +8,7 @@
 //   8B BF16    -D EMBED_TILES=4
 //   8B FP8     -D EMBED_TILES=4 -D FP8=1
 // KV_DIM = 8 KV heads * head_dim = 256 * EMBED_TILES (512 / 1024).
-// Grid: 88 workers (BF16), 96 (FP8), as the old projection_cores.
+// Default grid: 88 workers (BF16), 96 (FP8). The decode graph can override WORKERS.
 // Params: buffers x, norm, wq, wk, wv, (FP8) scales, q_out, k_out, v_out; no
 // integer params.
 //
@@ -34,11 +34,12 @@ const PORT_COUNT = 3
 const INV_DIM = 1.0 / DIM
 const EPS = 1e-5
 
+const WORKERS = 88 + 8 * FP8
+grid WORKERS
+
 if FP8 {
-    grid 96
     type ACT = e4m3                        // weights and the normalized x
 } else {
-    grid 88
     type ACT = bf16
 }
 

@@ -4,7 +4,7 @@
 // FP8:
 // E4M3 weights; x is scaled by input_scale and rounded to E4M3 on the SFPU
 // before the dot products, and each dot result is multiplied by output_scale.
-// Runs on the first 88 workers; split() spreads the rows over them.
+// split() spreads output rows across WORKERS for both O and down projections.
 // Uses full-tile pack for each scalar result; pack.gather can replace it (spec §9).
 // Numerical/layout/lowering obligations are in ../ttrv_port_review.md.
 //
@@ -13,7 +13,8 @@
 // lead + i of the result, residual and summed pages, so the residual read and the
 // output write are single ranges at the same offset modulo 64 bytes.
 
-grid 88
+const WORKERS = 88
+grid WORKERS
 
 const EMBED_TILES = 2
 const DIM = EMBED_TILES * 1024

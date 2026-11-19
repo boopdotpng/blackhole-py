@@ -8,7 +8,9 @@ const TILE_ROWS = 16
 const SHORT_M = 1
 const SHARE_A = 0
 const PANELS = 1
-if PANELS > 1 {
+const SHARE_W = 1
+const MULTICAST_W = SHARE_W && PANELS > 1   // one DRAM reader per group of token panels
+if MULTICAST_W {
     l1 b_ready: u32[4], keep
     l1 b_sent: u32[4], keep
     l1 ack: u32[4]
@@ -81,7 +83,7 @@ fn brisc() {
         col = column_id + j * column_workers
         for block in 0..KT / BATCH {
             w = cb.reserve matrices, n=BATCH
-            if PANELS > 1 {
+            if MULTICAST_W {
                 // Receivers reserve the same ring pages before the sender multicasts into them.
                 if panel {
                     noc.inc remote(core.x, core.y - panel, b_ready), by=1, ret=ack, wait
@@ -89,7 +91,7 @@ fn brisc() {
                     b_sent[0] = 0
                 }
             }
-            if panel == 0 {
+            if MULTICAST_W == 0 || panel == 0 {
                 tile = ((block * (BATCH / GROUP)) * NT + col) * GROUP
                 if BITS == 16 || FP8 {
                     r = noc.read w, weights[tile * 1024], port=port_id, n=GROUP * 1024
@@ -103,7 +105,7 @@ fn brisc() {
                     }
                 }
                 noc.wait r
-                if PANELS > 1 {
+                if MULTICAST_W {
                     loop { if b_ready[0] == PANELS - 1 { break }; fence }
                     b_ready[0] = 0
                     for i in 0..BATCH / GROUP {

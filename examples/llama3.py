@@ -29,7 +29,10 @@ class Llama3:
     w = {name: dev.array(t) for name, t in tensors.items() if t.shape}  # as stored; FP8 scale scalars are folded below
     dim, mlp_dim, head_dim = cfg["hidden_size"], cfg["intermediate_size"], cfg["hidden_size"] // cfg["num_attention_heads"]
     kv_dim, fp8 = cfg["num_key_value_heads"] * head_dim, int("quantization_config" in cfg)
-    kernel = lambda name, **defines: dev.kernel(KERNELS / f"{name}.ttrv", **defines)
+    def kernel(name, **defines):
+      if fp8 and name in ("qkv", "o"):
+        defines["WORKERS"] = len(dev.dev.workers)
+      return dev.kernel(KERNELS / f"{name}.ttrv", **defines)
     sizes = dict(EMBED_TILES=dim // 1024, FP8=fp8)
     qkv, o, lm = (kernel(name, **sizes) for name in ("qkv", "o", "lm"))
     gate, down = kernel("gate", **sizes, MLP_TILES=mlp_dim // 1024), kernel("o", **sizes, INPUT_TILES=mlp_dim // 1024)

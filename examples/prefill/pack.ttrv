@@ -12,6 +12,7 @@ const FP8 = 0
 if FP8 { type ACT = e4m3
     param quant: e4m3[]
     l1 table: e4m3[65536]
+    l1 table_ready: u32[1], keep
 } else { type ACT = bf16 }
 param output: ACT[]
 param rows: u32
@@ -19,7 +20,25 @@ l1 raw: bf16[BLOCK]
 l1 tiles: ACT[(BLOCK / 32) * PAGE]
 shared { first, count = split(PANELS * (K / BLOCK)) }
 fn brisc() {
-    if FP8 { noc.read table, quant[0], n=65536, wait }
+    if FP8 {
+        // All blocks use the same quantization table. One reader feeds each worker column.
+        if core.y == 0 {
+            noc.read table, quant[0], n=65536, wait
+            peers = WORKERS - core.id
+            if peers > 10 { peers = 10 }
+            if peers > 1 {
+                for page in 0..4 {
+                    addr = table + page * 16384
+                    noc.mcast rect(core.x, 0, core.x, peers - 1, addr), addr, n=16384, wait
+                }
+                table_ready[0] = 1
+                noc.mcast rect(core.x, 0, core.x, peers - 1, table_ready), table_ready, n=1, wait
+            }
+        } else {
+            loop { if table_ready[0] { break }; fence }
+        }
+        table_ready[0] = 0
+    }
     for task in first..first + count {
         panel = task / (K / BLOCK)
         block = task % (K / BLOCK)
