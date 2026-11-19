@@ -15,7 +15,6 @@ static NORETURN launch(void) {
    * installed in the slot of an earlier one ran the earlier one's cached instructions. */
   write32(CFG_RISCV_IC_INVALIDATE, 2 << TRISC);
   fence();
-  reset_thread();
   u32 slot = SLOT_OFFSET(read32(GO_SIGNAL));  /* stays put until every RISC has returned */
   if (read32(LAUNCH + slot) & (4 << TRISC)) JUMP(CODE_TRISC0 + TRISC * CODE_TRISC_SIZE + slot);
   JUMP(FW + 4);
@@ -23,13 +22,14 @@ static NORETURN launch(void) {
 
 NORETURN firmware_boot(void) {
   configure_csr(1);
+  reset_thread();
   write8(SYNC, 2);
   fence();
   launch();
 }
 
 NORETURN firmware_resume(void) {
-  tensix_drain();  /* kernels return with Tensix work queued; BRISC resets the Tensix as soon as every RISC is back */
+  tensix_drain();  /* kernels return with Tensix work queued: finish it before reporting done */
   fence();
   write32(MAILBOX_TO_BRISC, read32(LAUNCH_TOKEN));  /* done with this launch */
   launch();

@@ -69,9 +69,10 @@ INLINE void tensix_drain(void) {
 #define SEMINIT_ALL     0xA31003FC  /* all eight semaphores: max 1, value 0 */
 #define CLEARDVALID_RESET 0x36000001  /* SrcA/SrcB bank pointers (math and both unpackers) -> 0, every bank to the unpackers */
 
-/* Every launch starts from the same Tensix state: config zeroed (except the self-clearing icache invalidate and the
- * PRNG seed), Dst cleared, Src banks reset, SFPU and semaphores reinitialised, CBs empty. BRISC runs this at boot and
- * after each launch, once every RISC is back (TRISCs drain their Tensix threads first) and done is signalled. */
+/* The Tensix state at boot: config zeroed (except the self-clearing icache invalidate and the PRNG seed), Dst cleared,
+ * Src banks reset, SFPU and semaphores reinitialised, CBs empty. BRISC runs this once, at boot. Between launches it
+ * resets only the CB counters (reset_cb_counters), which kernels count from zero; every model in examples/ produces the
+ * same output without resetting the rest. */
 INLINE void reset_tensix(void) {
   /* Any write to STATE_RESET_EN clears the bank's words [0, 180) in hardware.
    * Reset both banks, then clear the shared globals without touching icache invalidate or PRNG seed.
@@ -103,9 +104,9 @@ INLINE void reset_tensix(void) {
 #define SETADCXY_ZERO   0x51E0000F  /* this thread's unpacker 0/1 and packer ADCs: X, Y -> 0 */
 #define SETADCZW_ZERO   0x54E0000F  /* ... Z, W -> 0 */
 
-/* Thread-private state that only the owning TRISC can write, reset by each TRISC at launch before its kernel, in the
- * same loop as its 64 GPRs (the firmware slot is 304 bytes). ThreadConfig holds CFG_STATE_ID, ADDR_MODs,
- * SRCA/SRCB_SET, CLR_DVALID, SCBD masks and Dst offsets. */
+/* Thread-private state that only the owning TRISC can write, reset by each TRISC at boot, in the same loop as its 64
+ * GPRs (the firmware slot is 336 bytes). Not repeated per launch: it held each TRISC ~575 cycles behind BRISC.
+ * ThreadConfig holds CFG_STATE_ID, ADDR_MODs, SRCA/SRCB_SET, CLR_DVALID, SCBD masks and Dst offsets. */
 INLINE void reset_thread(void) {
   #pragma clang loop unroll(disable)
   for (u32 i = 0; i < THD_CFG_RESET; i++) {

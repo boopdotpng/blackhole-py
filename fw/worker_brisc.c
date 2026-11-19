@@ -3,8 +3,6 @@
 
 FIRMWARE_ENTRY(SET_SP(STACK_TOP))
 
-static __attribute__((noinline)) void reset(void) { reset_tensix(); }  /* boot and resume share one copy */
-
 static const unsigned short banks[] = {PERF_INSTRN, PERF_UNPACK, PERF_FPU, PERF_PACK};
 #define RECORD(i) (PROFILE_RECORD + 4 * (i))
 
@@ -90,7 +88,7 @@ NORETURN firmware_boot(void) {
   fence();
   write32(SOFT_RESET, 0);
   WAIT_FAST(read32(SUBORDINATE_SYNC) == 0x02020202);
-  reset();
+  reset_tensix();
   launch();
 }
 
@@ -105,7 +103,6 @@ NORETURN firmware_resume(void) {
   write8(GO_SIGNAL, 0);
   fence();
   noc_atomic_inc(1, DONE_COUNT, dispatch, 1);
-  reset();  /* off the critical path: overlaps the dispatcher collecting done counts and sending the next GO.
-                    * Safe because every TRISC drained its Tensix thread before returning. */
+  reset_cb_counters();  /* off the critical path: overlaps the dispatcher collecting done counts and sending the next GO */
   launch();
 }
