@@ -3,53 +3,23 @@
 #include "noc.h"
 #include "worker.h"
 
-typedef unsigned short bf16;
-typedef union {
-  float f;
-  u32 u;
-} FloatBits;
-static float load(bf16 x) { return (FloatBits){.u = (u32)x << 16}.f; }
-static bf16 store(float x) {
-  u32 u = (FloatBits){.f = x}.u;
-  return (u + 0x7fff + ((u >> 16) & 1)) >> 16;
-}
-static float rsqrt(float x) {
-  float y = (FloatBits){.u = 0x5f3759df - ((FloatBits){.f = x}.u >> 1)}.f;
-  for (int i = 0; i < 3; ++i)
-    y *= 1.5f - 0.5f * x * y * y;
-  return y;
-}
-static float exponential(float x) {
-  if (x < -80.f)
-    return 0;
-  if (x > 80.f)
-    x = 80.f;
-  int n = (int)(x * 1.44269504f + (x < 0 ? -0.5f : 0.5f));
-  float r = x - n * 0.69314718f;
-  float p = 1 + r * (1 + r * (0.5f + r * (1.f / 6 + r * (1.f / 24 + r * (1.f / 120)))));
-  return p * (FloatBits){.u = (u32)(127 + n) << 23}.f;
-}
-// Blackhole implements FP32 multiply and add in hardware. Division needs a reciprocal refinement.
-static float reciprocal(float x) {
-  float y = (FloatBits){.u = 0x7ef311c3 - (FloatBits){.f = x}.u}.f;
-  for (int i = 0; i < 3; ++i)
-    y *= 2.f - x * y;
-  return y;
-}
-static float sigmoid(float x) { return reciprocal(1.f + exponential(-x)); }
-#ifdef GDN
+#include "head_math.h"
+#if defined(GDN) && !GDN_FINISH
 static float softplus(float x) {
   // log(1+t) = 2 atanh(t/(2+t)), 0 <= t <= 1.
   float t = exponential(x < 0 ? x : -x), y = t * reciprocal(2 + t), s = y * y;
   return (x > 0 ? x : 0) + 2 * y * (1 + s * (1.f / 3 + s * (1.f / 5 + s * (1.f / 7 + s * (1.f / 9)))));
 }
 #endif
-static void transfer(int write, int slot, int shift, u32 offset, void *local, u32 bytes) {
+static void issue(int write, int slot, int shift, u32 offset, void *local, u32 bytes) {
   u32 base = read32(L1_PARAM_BASE + 4 * slot);
   // TTRV encodes per-bank byte address + starting bank in one parameter word.
   u32 low = ((base & ~7u) << 3) + ((base & 7) << shift);
   u32 high = (1u << 31) | ((u32)shift << 24) | (base >> 29);
   noc_move(0, write, low, high, offset, bytes, (u32)local, 1);
+}
+static void transfer(int write, int slot, int shift, u32 offset, void *local, u32 bytes) {
+  issue(write, slot, shift, offset, local, bytes);
   noc_wait(0, 1, 1);
 }
 #define GET(slot, offset, arr) transfer(0, slot, 11, 2 * (offset), arr, sizeof(arr))
@@ -71,17 +41,31 @@ static void emit(int slot, int first, bf16 *x, int count) {
 #ifdef GDN
 #include "state.h"
 static void head(Scratch *s, int h, u32 pos, u32 row, u32 rows) {
+#if GDN_FINISH
+  (void)pos;
+  if (row + 1 == rows) {
+    GET(9, h * 9 * 128, s->history);
+    PUT(6, h * 9 * 128, s->history);
+  }
+  GET(8, row * 6144 + h * 128, s->out);
+  GET(1, row * 6144 + h * 128, s->z);
+  GET(5, 0, s->weights);
+  for (int i = 0; i < 128; i++) s->context[i] = load(s->out[i]);
+#else
+  const unsigned half = PROMPT ? read32(WORKER_ID) % 2 : 0;
+  const unsigned state_bytes = sizeof(s->state) / (PROMPT ? 2 : 1);
+  const unsigned state_offset = h * sizeof(s->state) + half * state_bytes;
   int channel[3] = {(h / 3) * 128, 2048 + (h / 3) * 128, 4096 + h * 128};
   for (int p = 0; p < 3; p++) {
     GET(0, row * 10240 + channel[p], s->raw[p]);
     if (!row)
       GET(3, 4 * channel[p], s->taps[p]);
   }
-  GET(1, row * 6144 + h * 128, s->z);
+  if (!PROMPT) GET(1, row * 6144 + h * 128, s->z);
   GET(2, row * 1024, s->ab);
   if (!row)
     GET(4, 0, s->params); // exp(A_log), dt_bias
-  if (!row)
+  if (!row && !PROMPT)
     GET(5, 0, s->weights);
   if (!row && pos)
     GET(6, h * 3 * 3 * 128, s->history);
@@ -99,13 +83,13 @@ static void head(Scratch *s, int h, u32 pos, u32 row, u32 rows) {
       if (p < 2)
         sums[p] += x * x;
     }
-  if (row + 1 == rows)
-    PUT(6, h * 3 * 3 * 128, s->history);
+  if (row + 1 == rows && !half)
+    PUT(PROMPT ? 9 : 6, h * 9 * 128, s->history);
   float scaleq = rsqrt(sums[0] + 1e-6f) * 0.08838834765f, scalek = rsqrt(sums[1] + 1e-6f);
   float decay = exponential(-load(s->params[h]) * softplus(load(s->ab[h]) + load(s->params[48 + h])));
   float beta = sigmoid(load(s->ab[64 + h]));
   if (!row && pos)
-    transfer(0, 7, 12, h * sizeof(s->state), s->state, sizeof(s->state));
+    transfer(0, 7, 12, state_offset, s->state, state_bytes);
   for (int k = 0; k < 128; k++) {
     s->act[0][k] *= scaleq;
     s->act[1][k] *= scalek;
@@ -117,7 +101,13 @@ static void head(Scratch *s, int h, u32 pos, u32 row, u32 rows) {
   (void)read32(MAILBOX_FROM(2));
   fence();
   if (row + 1 == rows)
-    transfer(1, 7, 12, h * sizeof(s->state), s->state, sizeof(s->state));
+    transfer(1, 7, 12, state_offset, s->state, state_bytes);
+#if PROMPT
+  for (int i = 0; i < 64; i++) s->out[i] = store(s->context[i]);
+  emit(8, row * 6144 + h * 128 + half * 64, s->out, 64);
+  return;
+#endif
+#endif
   float sum = 0;
   for (int i = 0; i < 128; i++) {
     float x = load(store(s->context[i]));
@@ -132,10 +122,7 @@ static void head(Scratch *s, int h, u32 pos, u32 row, u32 rows) {
   emit(8, row * 6144 + h * 128, s->out, 128);
 }
 #else
-typedef struct {
-  bf16 q[256], gate[256], k[256], v[256], qnorm[256], knorm[256], angles[64], out[256];
-  float accum[256];
-} Scratch;
+#include "gqa.h"
 static void norm_rope(bf16 *x, const bf16 *gamma, const bf16 *angles) {
   float sum = 0;
   for (int i = 0; i < 256; i++) {
@@ -164,9 +151,6 @@ static void head(Scratch *s, int h, u32 pos, u32 row, u32 rows) {
     PUT(6, (pos * 4 + kv) * 256, s->k);
     PUT(7, (pos * 4 + kv) * 256, s->v);
   }
-#else
-  GET(6, (pos * 4 + kv) * 256, s->k);
-  GET(7, (pos * 4 + kv) * 256, s->v);
 #endif
 #if CACHE_ONLY
   return;
@@ -175,6 +159,25 @@ static void head(Scratch *s, int h, u32 pos, u32 row, u32 rows) {
   GET(0, row * 12288 + h * 512 + 256, s->gate);
   GET(3, 0, s->qnorm);
   norm_rope(s->q, s->qnorm, s->angles);
+#if PROMPT && !CACHE_ONLY
+  for (u32 first = 0; first <= pos; first += KEY_BLOCK) {
+    u32 count = pos + 1 - first;
+    if (count > KEY_BLOCK) count = KEY_BLOCK;
+    for (u32 j = 0; j < count; j++) {
+      // Keep the decode reduction order: current token, then the historical prefix.
+      u32 t = first + j ? first + j - 1 : pos;
+      u32 off = (t * 4 + kv) * 512;
+      issue(0, 6, 11, off, s->keys[j], 512);
+      issue(0, 7, 11, off, s->values[j], 512);
+    }
+    noc_wait(0, 1, 1);
+    fence();
+    write32(PCBUF(2), count);
+    (void)read32(MAILBOX_FROM(2));
+    fence();
+  }
+  float total = s->total;
+#else
   // The current row is already local. Other workers only read earlier cache rows.
   float maxscore = 0, total = 0;
   for (int i = 0; i < 256; i++)
@@ -195,6 +198,7 @@ static void head(Scratch *s, int h, u32 pos, u32 row, u32 rows) {
     total = total * prev + w;
     maxscore = next;
   }
+#endif
   float inv = reciprocal(total);
   for (int i = 0; i < 256; i++)
     s->out[i] = store(s->accum[i] * inv * sigmoid(load(s->gate[i])));
@@ -213,12 +217,20 @@ KERNEL kernel_main(void) {
 #endif
 #if CACHE_ONLY
   u32 h = (worker % 4) * 6, first = worker / 4, lanes = GRID / 4;
+#elif GDN_FINISH
+  for (u32 task = worker; task < rows * 48; task += GRID)
+    head((Scratch *)SCRATCH_ADDR, task % 48, pos + task / 48, task / 48, rows);
+  JUMP(FW_BRISC + 4);
+#elif PROMPT && defined(GDN)
+  u32 h = worker / 2, first = 0, lanes = 1;
 #elif PROMPT && !defined(GDN)
   u32 h = worker % 24, first = worker / 24, lanes = GRID / 24;
 #else
   u32 h = worker, first = 0, lanes = 1;
 #endif
+#if !GDN_FINISH
   for (u32 r = first; r < rows; r += lanes)
     head((Scratch *)SCRATCH_ADDR, h, pos + r, r, rows);
   JUMP(FW_BRISC + 4);
+#endif
 }

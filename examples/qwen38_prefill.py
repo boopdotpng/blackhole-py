@@ -26,10 +26,11 @@ class QwenPrompt:
       return compiled
 
     gdn = head_kernel(linear=True, prompt=True)
+    finish = head_kernel(linear=True, prompt=True, finish=True)
     cache = head_kernel(linear=False, prompt=True, cache_only=True)
     attention = head_kernel(linear=False, prompt=True)
 
-    labels.update({gdn: "GDN", cache: "KV append", attention: "GQA"})
+    labels.update({gdn: "GDN", finish: "GDN output", cache: "KV append", attention: "GQA"})
 
     def capture(rows):
       tile_rows = 16 if rows <= 16 else 32
@@ -64,7 +65,12 @@ class QwenPrompt:
           elif kind in ("gdn", "attention"):
             if kind == "attention":
               cache(**args, rows=rows)
-            (gdn if kind == "gdn" else attention)(**args, rows=rows)
+            if kind == "gdn":
+              # Both half-heads read the old history. Publish the new history after their graph barrier.
+              gdn(**args, rows=rows, next_history=packed)
+              finish(**args, rows=rows, next_history=packed)
+            else:
+              attention(**args, rows=rows)
           else:
             dim = args["x"].shape[0] // CHUNK
             lanes = min(rows, workers // (dim // 1024))

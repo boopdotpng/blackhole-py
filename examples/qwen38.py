@@ -51,18 +51,19 @@ def upload_bf16(dev, matrix, group):
   return buf
 
 
-def head_kernel(dev, linear, *, prompt=False, cache_only=False):
+def head_kernel(dev, linear, *, prompt=False, cache_only=False, finish=False):
   # Use the runtime's ordinary parameter binding, scratch allocator and graph dispatch
   # for a C worker image. Blackhole supports scalar FP32 arithmetic on the worker.
   names = (
     "qkv z ab conv dynamics gamma history state output" if linear else "q k v qnorm knorm rope keys values output"
   ).split()
+  if linear and prompt: names.append("next_history")
   params = [f"param {name}: {'fp32' if name == 'state' else 'bf16'}[]" for name in names]
-  scratch = 81920 if linear else 8192
+  scratch = 81920 if linear else 16384 if prompt and not cache_only else 8192
   params.append("param pos: u32")
   if prompt:
     params.append("param rows: u32")
-  grid = 48 if linear else (96 if prompt else 24)
+  grid = (120 if finish else 96 if prompt else 48) if linear else (96 if prompt else 24)
   source = "\n".join([f"grid {grid}", *params, f"l1 scratch: u8[{scratch}]", "fn brisc() { }"])
   spec = ttrv.build(source)
   flags = [
@@ -74,14 +75,18 @@ def head_kernel(dev, linear, *, prompt=False, cache_only=False):
   ]
   if prompt:
     flags.extend(["-DPROMPT=1", f"-DGRID={grid}", f"-DROWS_SLOT={spec.manifest['params']['rows']['slot']}"])
+  if finish:
+    flags.append("-DGDN_FINISH=1")
   if cache_only:
     flags.append("-DCACHE_ONLY=1")
   if linear:
     flags.append("-DGDN")
   directory = Path(__file__).with_name("qwen38")
   roles = {"brisc": ([directory / "head.c", "noc.c"], flags)}
-  if linear:
+  if linear and not finish:
     roles["trisc2"] = ([directory / "state.c"], [*flags, "-march=rv32imf_zve32f_zvl128b_zicsr_zba_zbb"])
+  elif not linear and prompt and not cache_only:
+    roles["trisc2"] = ([directory / "gqa.c"], [*flags, "-march=rv32imf_zve32f_zvl128b_zicsr_zba_zbb"])
   spec.images = fw.program(roles)
   return Kernel(dev, spec)
 
