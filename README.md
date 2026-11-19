@@ -35,11 +35,13 @@ prof.launches                                      # Launch(name, grid, start_ns
 ```
 
 `PROFILE=1 python examples/llama3.py` prints the table when the device closes; `PROFILE=2` also prints each launch to
-stderr. Each core records cycles, FPU, SFPU, unpacker 0 and packer busy cycles, math-thread stall cycles, and the
-64-byte NoC flits it read and wrote (`fw.PROFILE_FIELDS`). `%` columns are busy cycles over core cycles; GB/s is
-flits over the launch's dispatcher time. Stall counts only Tensix-side stalls, not RISC-V polling. Kernels run
-unchanged, but each launch's records are read before the next replay of its graph, so profiled decode runs slower
-(Llama 1B: 162 -> 137 tok/s).
+stderr. Each core sends a 128-byte record (`fw.PROFILE_FIELDS`): cycles; NoC read and write flits (64 B); FPU, SFPU,
+unpacker 0 and 1, and packer busy cycles; stall cycles for the unpack, math and pack threads; math waiting on SrcA and
+SrcB; cycles each thread waits on a Tensix semaphore for data (`sem_wait`) or space (`sem_full`); and Tensix
+instructions issued per thread. Table `%` columns are over core cycles (`sem%` is the busiest thread), `ipc` is
+instructions issued per cycle over all three threads, and GB/s is flits over the launch's dispatcher time. Stall and
+semaphore counts see only Tensix-side waits, not RISC-V polling. Kernels run unchanged, but a launch's records are read
+before its graph is replayed again, so profiled decode is slower (Llama 1B: 162 -> 130 tok/s).
 
 ## Requirements
 

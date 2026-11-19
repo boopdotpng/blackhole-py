@@ -313,12 +313,25 @@ class Launch:
   @property
   def us(self): return (self.end_ns - self.start_ns) / 1e3
 
-  def __str__(self):
-    c, cyc = self.cores, max(int(self.cores.cycles.sum()), 1)
-    busy = " ".join(f"{f} {100 * int(c[f].sum()) / cyc:4.1f}%" for f in ("fpu", "sfpu", "unpack", "pack", "math_stall"))
-    t = max(self.end_ns - self.start_ns, 1)
-    return (f"{self.name:<14} {self.us:9.1f} us  {self.grid:3d} cores  {busy}  "
-            f"rd {64 * int(c.noc_read.sum()) / t:7.1f} GB/s  wr {64 * int(c.noc_write.sum()) / t:7.1f} GB/s")
+  def __str__(self): return f"{self.name:<14} {self.us:9.1f} us {self.grid:4d} cores " + _row(self.cores, self.end_ns - self.start_ns)
+
+
+COLUMNS = (f"{'fpu%':>5} {'sfpu%':>5} {'unp0%':>5} {'unp1%':>5} {'pack%':>5} {'stall u/m/p %':>13} {'srcA%':>5} "
+           f"{'srcB%':>5} {'sem%':>5} {'ipc':>5} {'rd GB/s':>8} {'wr GB/s':>8}")
+
+
+def _row(c, ns):
+  """Counter summary of core records c over ns of dispatcher time: busy and wait columns are % of core cycles; sem% is
+  the thread with the most SEMWAIT cycles; ipc is Tensix instructions issued per cycle, all three threads."""
+  cyc = max(int(c.cycles.sum()), 1)
+  pct = lambda *fs: 100 * sum(int(c[f].sum()) for f in fs) / cyc
+  sem = max(pct(f"{t}_sem_wait", f"{t}_sem_full") for t in ("unpack", "math", "pack"))
+  stall = "/".join(f"{pct(f'{t}_stall'):.0f}" for t in ("unpack", "math", "pack"))
+  ipc = pct("unpack_instrs", "math_instrs", "pack_instrs") / 100
+  ns = max(ns, 1)
+  return (f"{pct('fpu'):>5.1f} {pct('sfpu'):>5.1f} {pct('unpack'):>5.1f} {pct('unpack1'):>5.1f} {pct('pack'):>5.1f} "
+          f"{stall:>13} {pct('srca_wait'):>5.1f} {pct('srcb_wait'):>5.1f} {sem:>5.1f} {ipc:>5.2f} "
+          f"{64 * int(c.noc_read.sum()) / ns:>8.1f} {64 * int(c.noc_write.sum()) / ns:>8.1f}")
 
 
 def _ns(ticks): return int(ticks) * 1e3 / fw.AICLK_MHZ
@@ -409,16 +422,11 @@ class Profiler:
   def table(self):
     rows = {}
     for l in self.launches: rows.setdefault(l.name, []).append(l)
-    out = [f"{'kernel':<14} {'calls':>6} {'total ms':>9} {'mean us':>8} {'cores':>5} {'fpu%':>5} {'sfpu%':>5} "
-           f"{'unpack%':>7} {'pack%':>5} {'stall%':>6} {'rd GB/s':>8} {'wr GB/s':>8}"]
+    out = [f"{'kernel':<14} {'calls':>6} {'total ms':>9} {'mean us':>8} {'cores':>5} " + COLUMNS]
     for name, ls in sorted(rows.items(), key=lambda kv: -sum(l.end_ns - l.start_ns for l in kv[1])):
       t = sum(l.end_ns - l.start_ns for l in ls)
       c = np.concatenate([l.cores for l in ls]).view(np.recarray)
-      cyc = max(int(c.cycles.sum()), 1)
-      pct = [100 * int(c[f].sum()) / cyc for f in ("fpu", "sfpu", "unpack", "pack", "math_stall")]
-      out.append(f"{name:<14} {len(ls):>6} {t / 1e6:>9.2f} {t / 1e3 / len(ls):>8.1f} {max(l.grid for l in ls):>5} "
-                 f"{pct[0]:>5.1f} {pct[1]:>5.1f} {pct[2]:>7.1f} {pct[3]:>5.1f} {pct[4]:>6.1f} "
-                 f"{64 * int(c.noc_read.sum()) / max(t, 1):>8.1f} {64 * int(c.noc_write.sum()) / max(t, 1):>8.1f}")
+      out.append(f"{name:<14} {len(ls):>6} {t / 1e6:>9.2f} {t / 1e3 / len(ls):>8.1f} {max(l.grid for l in ls):>5} " + _row(c, t))
     return "\n".join(out)
 
   def __str__(self): return self.table()

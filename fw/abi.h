@@ -14,7 +14,7 @@
                                     * matches, so a token left in a FIFO by an aborted run is dropped. */
 
 /* Resident firmware, one image per RISC. FW_x + 0 boots, FW_x + 4 is where a kernel jumps when it is done. */
-/* [0x20, PROFILE_ADDR) holds the five images. Growing it means moving everything after it, and so DATA_BASE,
+/* [0x20, PROFILE_RECORD) holds the five images. Growing it means moving everything after it, and so DATA_BASE,
  * which compiled kernels have built in (ttrv reads them from fw/__init__.py). Move it in steps of 0x400 so kernel code
  * and data keep their alignment (the profile record moved it from WORKER_X = 0x8A0). */
 /* Kernels return through jalr x0, imm(x0) (fw.ret), so every FW_x + 4 must be below 0x800: BRISC, the largest, goes last. */
@@ -27,20 +27,28 @@
 #define FW_TRISC2         0x3C0
 #define FW_TRISC2_SIZE    0x150
 #define FW_BRISC          0x510
-#define FW_BRISC_SIZE     0x700
+#define FW_BRISC_SIZE     0x6B0
 _Static_assert(FW_BRISC + 4 < 0x800, "kernels cannot return to BRISC firmware");
 
 /* Hardware counters of a profiled launch (GO_PROFILE). Dispatch multicasts PROFILE_ADDR, the NoC address of the
  * launch's per-core records (host memory), before the GO. BRISC starts the counters before it releases the other RISCs,
  * stops them once every RISC has returned, fills PROFILE_RECORD and writes it to PROFILE_ADDR + WORKER_ID * 64 before it
  * signals done. Kernels never see any of this; only the gap between launches grows. Record layout: PROFILE_* below. */
-#define PROFILE_ADDR      0xC10    /* u64 */
-#define PROFILE_RECORD    0xC40    /* 64 bytes, 64-aligned: staged here, written to the host in one NoC write */
-#define PROFILE_RECORD_SIZE 64
-enum { PROFILE_ID, PROFILE_CYCLES, PROFILE_FPU, PROFILE_SFPU, PROFILE_UNPACK, PROFILE_PACK, PROFILE_MATH_STALL,
-       PROFILE_NOC_READ, PROFILE_NOC_WRITE, PROFILE_WORDS };
-_Static_assert(FW_BRISC + FW_BRISC_SIZE <= PROFILE_ADDR, "profile words overlap resident firmware");
+#define PROFILE_RECORD    0xBC0    /* 128 bytes, 64-aligned: staged here, written to the host in one NoC write */
+#define PROFILE_RECORD_SIZE 128
+#define PROFILE_ADDR      0xC40    /* u64 */
+/* Counter words from PROFILE_EVENTS on are read from the Tensix banks in this order (worker_brisc.c events[]). Thread
+ * 0, 1, 2 = unpack, math, pack TRISC. sem_wait: stalled on a Tensix SEMWAIT for a nonzero semaphore (data), sem_full:
+ * for a non-full one (space). srca/srcb_wait: math waiting for the unpacker to fill the source register. */
+enum { PROFILE_ID, PROFILE_CYCLES, PROFILE_NOC_READ, PROFILE_NOC_WRITE, PROFILE_EVENTS,
+       PROFILE_FPU = PROFILE_EVENTS, PROFILE_SFPU, PROFILE_UNPACK, PROFILE_UNPACK1, PROFILE_PACK,
+       PROFILE_UNPACK_STALL, PROFILE_MATH_STALL, PROFILE_PACK_STALL, PROFILE_SRCA_WAIT, PROFILE_SRCB_WAIT,
+       PROFILE_UNPACK_SEM_WAIT, PROFILE_MATH_SEM_WAIT, PROFILE_PACK_SEM_WAIT,
+       PROFILE_UNPACK_SEM_FULL, PROFILE_MATH_SEM_FULL, PROFILE_PACK_SEM_FULL,
+       PROFILE_UNPACK_INSTRS, PROFILE_MATH_INSTRS, PROFILE_PACK_INSTRS, PROFILE_WORDS };
+_Static_assert(FW_BRISC + FW_BRISC_SIZE <= PROFILE_RECORD, "profile record overlaps resident firmware");
 _Static_assert(PROFILE_RECORD % 64 == 0 && PROFILE_WORDS * 4 <= PROFILE_RECORD_SIZE, "profile record");
+_Static_assert(PROFILE_RECORD + PROFILE_RECORD_SIZE <= PROFILE_ADDR, "profile address overlaps the record");
 
 /* Two execution slots, double buffered: while one launch runs from slot b, dispatch installs the next one into slot b ^ 1.
  * Slot 1 is slot 0 moved up by SLOT_STRIDE, LAUNCH mask included, and starts where slot 0 ends; the GO word says which
@@ -51,7 +59,7 @@ _Static_assert(PROFILE_RECORD % 64 == 0 && PROFILE_WORDS * 4 <= PROFILE_RECORD_S
 #define WORKER_X          0xCA0
 #define WORKER_Y          0xCA4
 #define WORKER_ID         0xCA8
-_Static_assert(PROFILE_RECORD + PROFILE_RECORD_SIZE <= WORKER_X, "worker coordinates overlap the profile record");
+_Static_assert(PROFILE_ADDR + 8 <= WORKER_X, "worker coordinates overlap the profile address");
 #define L1_PARAM_BASE     0xCB0
 #define PARAM_SIZE        0x40     /* 16 words: the launch's arguments (buffer addresses and integer values), bound per run */
 #define LAUNCH            0xCF0

@@ -9,14 +9,14 @@ class Op(IntEnum): EXEC = 0; COPY = 1; WAIT = 2; STORE = 3; TIMESTAMP = 4; CALL 
 
 ROLES = ("brisc", "ncrisc", "trisc0", "trisc1", "trisc2")
 GO_SIGNAL = 0x10
-FW = {"brisc": (0x510, 0x700), "ncrisc": (0x20, 0x100), "trisc0": (0x120, 0x150), "trisc1": (0x270, 0x150),
+FW = {"brisc": (0x510, 0x6B0), "ncrisc": (0x20, 0x100), "trisc0": (0x120, 0x150), "trisc1": (0x270, 0x150),
       "trisc2": (0x3C0, 0x150)}  # abi.h: BRISC last, so every return address (base + 4) is below 0x800 for fw.ret
 RETURN = {r: base + 4 for r, (base, _) in FW.items()}
-PROFILE_ADDR, PROFILE_RECORD = 0xC10, 0xC40  # abi.h: a profiled launch's record address, and the record staged in L1
+PROFILE_RECORD, PROFILE_ADDR = 0xBC0, 0xC40  # abi.h: the record staged in L1, and a profiled launch's record address
 WORKER_X, WORKER_Y, WORKER_ID = 0xCA0, 0xCA4, 0xCA8  # published by init.c: this core's NoC x, y and x * 10 + y
 L1_PARAM_BASE, PARAM_SIZE, LAUNCH = 0xCB0, 0x40, 0xCF0
 _slots = sorted(FW.values())
-assert all(a + n <= b for (a, n), (b, _) in zip(_slots, [*_slots[1:], (PROFILE_ADDR, 0)])), "firmware slots overlap"
+assert all(a + n <= b for (a, n), (b, _) in zip(_slots, [*_slots[1:], (PROFILE_RECORD, 0)])), "firmware slots overlap"
 assert WORKER_ID + 4 <= L1_PARAM_BASE
 CODE = dict(zip(ROLES, (0xD00, 0x2C00, 0x4C00, 0x6400, 0x7C00)))
 CODE_SIZE = dict(zip(ROLES, (0x1F00, 0x2000, 0x1800, 0x1800, 0x1800)))
@@ -29,8 +29,11 @@ DESCRIPTOR_L1, DESCRIPTOR_END, STAGE_SIZE = 0x40000, 0x80000, 0x10000
 PACKET, RING_SIZE = 32, 64 << 10
 # OP_EXEC's profile block (abi.h): 64-byte header with dispatch's start and end wall clocks at +8 and +24, then one record
 # per worker, indexed by WORKER_ID (= its index in the column-major worker list), of these u32 words
-PROFILE_HEADER, PROFILE_RECORD_SIZE = 64, 64
-PROFILE_FIELDS = ("id", "cycles", "fpu", "sfpu", "unpack", "pack", "math_stall", "noc_read", "noc_write")
+PROFILE_HEADER, PROFILE_RECORD_SIZE = 64, 128
+PROFILE_FIELDS = ("id", "cycles", "noc_read", "noc_write", "fpu", "sfpu", "unpack", "unpack1", "pack",
+                  "unpack_stall", "math_stall", "pack_stall", "srca_wait", "srcb_wait",
+                  "unpack_sem_wait", "math_sem_wait", "pack_sem_wait", "unpack_sem_full", "math_sem_full", "pack_sem_full",
+                  "unpack_instrs", "math_instrs", "pack_instrs")  # abi.h PROFILE_* order
 STATE, STATE_SIZE = DATA_BASE, 0x140
 WPTR, RPTR, RING_LO = STATE, STATE + 4, STATE + 8
 

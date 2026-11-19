@@ -22,10 +22,19 @@ static __attribute__((noinline)) void profile_start(void) {
   }
 }
 
-/* {bank, its output, select} of each record word from PROFILE_FPU on (blackhole.h): FPU, SFPU, UNPACK0_BUSY_THREAD0,
- * PACKER_BUSY, THREAD_STALLS_1 (math thread) */
-static const unsigned short events[][3] = {{PERF_FPU, PERF_OUT_FPU, 0}, {PERF_FPU, PERF_OUT_FPU, 1},
-  {PERF_UNPACK, PERF_OUT_UNPACK, 7}, {PERF_PACK, PERF_OUT_PACK, 18}, {PERF_INSTRN, PERF_OUT_INSTRN, 25}};
+/* Each bank's output offset from PERF_BASE + PERF_OUT_INSTRN, in banks[] order */
+static const unsigned char outs[] = {0, PERF_OUT_UNPACK - PERF_OUT_INSTRN, PERF_OUT_FPU - PERF_OUT_INSTRN,
+                                     PERF_OUT_PACK - PERF_OUT_INSTRN};
+/* Record word PROFILE_EVENTS + i: banks[] index << 12 | select (tt-llk blackhole.h), in abi.h's order */
+#define EV(bank, select) ((bank) << 12 | (select))
+static const unsigned short events[PROFILE_WORDS - PROFILE_EVENTS] = {
+  EV(2, 0), EV(2, 1),                          /* FPU, SFPU */
+  EV(1, 7), EV(1, 8), EV(3, 18),               /* UNPACK0_BUSY_THREAD0, UNPACK1_BUSY_THREAD0, PACKER_BUSY */
+  EV(0, 24), EV(0, 25), EV(0, 26),             /* THREAD_STALLS_0-2 */
+  EV(0, 29), EV(0, 30),                        /* WAITING_FOR_SRCA_VALID, WAITING_FOR_SRCB_VALID */
+  EV(0, 35), EV(0, 44), EV(0, 53),             /* WAITING_FOR_NONZERO_SEM_0-2 */
+  EV(0, 36), EV(0, 45), EV(0, 54),             /* WAITING_FOR_NONFULL_SEM_0-2 */
+  EV(0, 256), EV(0, 264), EV(0, 272)};         /* THREAD_INSTRUCTIONS_0-2 */
 
 /* After every RISC has returned and before done is signalled: stop, read, send the record and wait for its ack, so it
  * is in host memory before dispatch can retire the launch. */
@@ -35,12 +44,12 @@ static __attribute__((noinline)) void profile_finish(void) {
     write32(r, 0);
     write32(r, PERF_STOP);
   }
-  for (u32 i = 0; i < 5; i++) {
-    u32 mode = PERF_BASE + events[i][0] + 4, out = PERF_BASE + events[i][1], select = (u32)events[i][2] << 8;
+  write32(RECORD(PROFILE_CYCLES), read32(PERF_BASE + PERF_OUT_INSTRN));  /* reference cycles, whatever the select */
+  for (u32 i = 0; i < PROFILE_WORDS - PROFILE_EVENTS; i++) {
+    u32 e = events[i], mode = PERF_BASE + banks[e >> 12] + 4, select = (e & 0x1FF) << 8;
     write32(mode, select);
     while (read32(mode) != select) {}  /* the new select has taken effect */
-    if (!i) write32(RECORD(PROFILE_CYCLES), read32(out));
-    write32(RECORD(PROFILE_FPU + i), read32(out + 4));
+    write32(RECORD(PROFILE_EVENTS + i), read32(PERF_BASE + PERF_OUT_INSTRN + outs[e >> 12] + 4));
   }
   write32(RECORD(PROFILE_NOC_READ), NIU_READ_FLITS(0) + NIU_READ_FLITS(1) - read32(RECORD(PROFILE_NOC_READ)));
   write32(RECORD(PROFILE_NOC_WRITE), NIU_WRITE_FLITS(0) + NIU_WRITE_FLITS(1) - read32(RECORD(PROFILE_NOC_WRITE)));
