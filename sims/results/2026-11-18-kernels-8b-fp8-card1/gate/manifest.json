@@ -1,0 +1,133 @@
+{
+ "grid": 96,
+ "params": {
+  "x": {
+   "slot": 0,
+   "kind": "dram",
+   "type": "bf16",
+   "page": 2048
+  },
+  "gamma": {
+   "slot": 1,
+   "kind": "dram",
+   "type": "bf16",
+   "page": 2048
+  },
+  "hidden": {
+   "slot": 2,
+   "kind": "dram",
+   "type": "bf16",
+   "page": 2048
+  },
+  "gate_w": {
+   "slot": 3,
+   "kind": "dram",
+   "type": "e4m3",
+   "page": 1024
+  },
+  "up_w": {
+   "slot": 4,
+   "kind": "dram",
+   "type": "e4m3",
+   "page": 1024
+  },
+  "scales": {
+   "slot": 5,
+   "kind": "dram",
+   "type": "fp32",
+   "page": 4096
+  }
+ },
+ "storage": {
+  "operands": {
+   "address": 71488,
+   "size": 16384,
+   "type": "bf16",
+   "count": 1024,
+   "cb": 0,
+   "pages": 8,
+   "page": 2048,
+   "producer": "brisc",
+   "consumer": "trisc0"
+  },
+  "normalized": {
+   "address": 87872,
+   "size": 4096,
+   "type": "e4m3",
+   "count": 1024,
+   "cb": 1,
+   "pages": 4,
+   "page": 1024,
+   "producer": "trisc2",
+   "consumer": "trisc0"
+  },
+  "weights": {
+   "address": 91968,
+   "size": 65536,
+   "type": "e4m3",
+   "count": 1024,
+   "cb": 2,
+   "pages": 64,
+   "page": 1024,
+   "producer": "brisc",
+   "consumer": "trisc0"
+  },
+  "scale_page": {
+   "address": 157504,
+   "size": 64,
+   "type": "fp32",
+   "count": 16,
+   "cb": 3,
+   "pages": 1,
+   "page": 64,
+   "producer": "brisc",
+   "consumer": "trisc1"
+  },
+  "dot": {
+   "address": 157568,
+   "size": 4096,
+   "type": "bf16",
+   "count": 1024,
+   "cb": 4,
+   "pages": 2,
+   "page": 2048,
+   "producer": "trisc2",
+   "consumer": "ncrisc"
+  },
+  "gate_rows": {
+   "address": 161664,
+   "size": 2048,
+   "type": "bf16",
+   "count": 1024,
+   "cb": 5,
+   "pages": 1,
+   "page": 2048,
+   "producer": "ncrisc",
+   "consumer": "trisc0"
+  },
+  "up_rows": {
+   "address": 163712,
+   "size": 2048,
+   "type": "bf16",
+   "count": 1024,
+   "cb": 6,
+   "pages": 1,
+   "page": 2048,
+   "producer": "ncrisc",
+   "consumer": "trisc0"
+  },
+  "hidden_page": {
+   "address": 165760,
+   "size": 2048,
+   "type": "bf16",
+   "count": 1024,
+   "cb": 7,
+   "pages": 1,
+   "page": 2048,
+   "producer": "trisc2",
+   "consumer": "ncrisc"
+  }
+ },
+ "scratch_end": 167808,
+ "keep_base": 1572864
+}

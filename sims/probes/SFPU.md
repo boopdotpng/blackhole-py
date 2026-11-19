@@ -16,6 +16,17 @@ results stay in `sims/results/2026-11-18-{sfpu,icache}-*.jsonl` and every new ca
 | `k_sfpu_dst.c` | trisc0 unpack A/B -> trisc1 ELWMUL + SFPU -> trisc2 pack (dst) |
 | `k_icache.c` | any role, straight-line loop |
 
+## Status (2026-11-18, card 1, current firmware: `results/2026-11-18-fw3-{sfpu,icache}-card1.jsonl`)
+
+- **SFPU: done.** 3521 of 3551 cases match the old values exactly. The other 30 have no old value for this card.
+- **I-cache: the old values no longer apply.** 48 of 70 cases "differ from expect" because the expected values were
+  measured under the old firmware. With the current firmware (prefetch 0x11F set in `reset_tensix`, L0 on):
+  - Steady state is **1.00 cycle per instruction up to n = 512 on every role**; the old ~1.5% knee above 128 is gone.
+    A 1024-instruction loop is 1.007 (`riscsync` fetch cases).
+  - The cold first pass costs less: excess ≈ 24-33 + ~0.1 x n cycles on the TRISCs (n = 32: 24, 128: 29-33,
+    512: 77-78), against 35-50 + ~0.17 x n before. BRISC and NCRISC are similar (27-121).
+  - Use the fw3 file. `hw.py` ICACHE still holds the old values.
+
 ## Run
 
 The cards must be free. One output file per group and card, as before:

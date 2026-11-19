@@ -451,10 +451,58 @@ def _misc_cases(role):
       expect=_hyp(16 * 2 + 1, BODY, model='as mul_dep'))
 
 
+# ---- 7. predictor fit (2026-11-18, after the first full run): a counter-driven branch with run length K, so the
+# patterns are not limited to periods dividing 32 (the rori patterns). 'rare': taken once every K iterations;
+# 'often': not taken once every K. Same arithmetic in every case (branchless reset with mul), so the controls
+# (bpk-ctl-never / bpk-ctl-always) give the perfectly predicted cost and the excess / 4 = mispredicts per iteration.
+# jalr: one indirect jump whose target alternates (or stays put) every iteration.
+BPK = (1, 2, 3, 4, 5, 6, 7, 8, 10, 12, 16, 24, 32, 48, 64)
+
+
+def _bpfit_cases(role):
+  def body(br):
+    return ('addi a5, a5, -1\nseqz t3, a5\nmul t4, t3, a7\nadd a5, a5, t4\n' + br + '\naddi a6, a6, 1\n1:\n')
+  for K in BPK:
+    s = lines(li('a5', K), li('a7', K), li('a6', 0))
+    add(f'bpk-rare-K{K}', role, 'bpfit', body('bnez t3, 1f'), ops=7, setup=s, finish=SINK_A6,
+        sink=lambda n, K=K: n - n // K, note=f'taken once per {K} iterations')
+    add(f'bpk-often-K{K}', role, 'bpfit', body('beqz t3, 1f'), ops=7, setup=s, finish=SINK_A6,
+        sink=lambda n, K=K: n // K, note=f'not taken once per {K} iterations')
+  s = lines(li('a5', 5), li('a7', 5), li('a6', 0))
+  add('bpk-ctl-never', role, 'bpfit', body('bnez zero, 1f'), ops=7, setup=s, finish=SINK_A6, sink=lambda n: n)
+  add('bpk-ctl-always', role, 'bpfit', body('beqz zero, 1f'), ops=7, setup=s, finish=SINK_A6, sink=0)
+  ind = 'auipc t3, 0\nadd t3, t3, a4\njalr zero, 0(t3)\naddi a6, a6, 1\nxori a4, a4, {x}\n'
+  for name, a4, x, sink in (('jalr-alt', 12, 12 ^ 16, lambda n: (n + 1) // 2), ('jalr-const12', 12, 0, lambda n: n),
+                            ('jalr-const16', 16, 0, 0)):
+    add(f'bpk-{name}', role, 'bpfit', ind.format(x=x), ops=5, setup=lines(li('a4', a4), li('a6', 0)),
+        finish=SINK_A6, sink=sink)
+  # the rori patterns of the branch group (bp1-p32_1 mispredicts every iteration, the counter form does not):
+  # gap instructions between the rori and the bltz, and the same direction through srli + bnez
+  for pname in ('p32_1', 'p32', 'p32_31', 'p16', 'p8_1'):
+    pat = PATTERNS[pname]
+    s = lines(li('a1', 3), li('a5', pat), li('a6', 0))
+    for g in (0, 1, 2, 4, 8):
+      add(f'bpr-{pname}-gap{g}', role, 'bpfit', 'rori a5, a5, 31\n' + 'addi a1, a1, 1\n' * g + 'bltz a5, 1f\naddi a6, a6, 1\n1:\n'
+          + 'addi a1, a1, 1\n' * (14 - g), setup=s, finish=SINK_A6, sink=lambda n, pat=pat: _not_taken(pat, n, 1))
+    add(f'bpr-{pname}-srli', role, 'bpfit', 'rori a5, a5, 31\nsrli t3, a5, 31\n' + 'addi a1, a1, 1\n' * 2
+        + 'bnez t3, 1f\naddi a6, a6, 1\n1:\n' + 'addi a1, a1, 1\n' * 10, setup=s, finish=SINK_A6,
+        sink=lambda n, pat=pat: _not_taken(pat, n, 1))
+    add(f'bpr-{pname}-slli', role, 'bpfit', 'slli t3, a5, 1\nsrli t4, a5, 31\nor a5, t3, t4\n' + 'addi a1, a1, 1\n' * 2
+        + 'bltz a5, 1f\naddi a6, a6, 1\n1:\n' + 'addi a1, a1, 1\n' * 9, setup=s, finish=SINK_A6,
+        sink=lambda n, pat=pat: _not_taken(pat, n, 1), note='rotate without rori')
+  # aliasing: an always-taken branch (to the next instruction) and a never-taken one d instructions later, in a loop of
+  # fixed length (72 instructions + loop control). No aliasing: 74 cycles per iteration. Shared entry: both mispredict.
+  for d in (*range(1, 34), 40, 48, 56, 63, 64, 65):
+    body = 'beq zero, zero, 1f\n1:\n' + 'addi a1, a1, 1\n' * (d - 1) + 'bne zero, zero, 89f\n' + 'addi a1, a1, 1\n' * (70 - d)
+    add(f'bpa-d{d}', role, 'bpfit', body, ops=72, setup=lines(li('a1', 3)), tail='89:\nj 99f\n',
+        sink=lambda n, d=d: 3 + 69 * n, note=f'taken and not-taken branch {4 * d} bytes apart')
+
+
 # order: the ported cases first, then plain-memory groups, branches, and the MMIO targets last (a run stops at the
 # first hard failure, so the cases most likely to upset the tile run after everything else is recorded)
 for _gen in (_old_cases, _l1_cases, _store_cases, _misc_cases, _branch_cases, _mmio_cases):
   for _r in ROLES: _gen(_r)
+for _r in ('brisc', 'trisc1'): _bpfit_cases(_r)
 assert len({c['id'] for c in CASES}) == len(CASES), 'duplicate case ids'
 
 

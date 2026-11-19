@@ -1,0 +1,44 @@
+{
+ "grid": 1,
+ "params": {
+  "history": {
+   "slot": 0,
+   "kind": "dram",
+   "type": "u32",
+   "page": 4096
+  },
+  "weights": {
+   "slot": 1,
+   "kind": "dram",
+   "type": "bf16",
+   "page": 2048
+  },
+  "output": {
+   "slot": 2,
+   "kind": "dram",
+   "type": "bf16",
+   "page": 2048
+  },
+  "token_pos": {
+   "slot": 4,
+   "kind": "int",
+   "type": "u32"
+  }
+ },
+ "storage": {
+  "ids": {
+   "address": 71488,
+   "size": 64,
+   "type": "u32",
+   "count": 16
+  },
+  "row": {
+   "address": 71552,
+   "size": 4096,
+   "type": "bf16",
+   "count": 2048
+  }
+ },
+ "scratch_end": 75648,
+ "keep_base": 1572864
+}

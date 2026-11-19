@@ -149,7 +149,7 @@ programs and GO.
 ## L1 contention
 - A DRAM read stream into L1 (53 B/c) is unchanged while the other RISC hammers the same L1 with loads or stores.
   Seen from NCRISC: ~5.7 cycles per load, ~3 per store, loop included.
-- **Not measured:** contention from the unpacker or packer (needs a TRISC kernel).
+- Contention from the unpacker or packer, and its effect on RISC loads: measured since (see Still open, item 2).
 
 ## Dispatch (one EXEC through fw/dispatch.c, do-nothing kernels)
 - Launch to launch (period): 1 core, no code 1559; 88 cores no code 1903; 88 cores × 5 roles × 1 KiB 2265;
@@ -161,4 +161,7 @@ programs and GO.
 ## Still open, for llama only
 1. The exact DRAM address mapping (bit-level, including any hashing), only needed if llama's slice starts fall
    between the measured cases.
-2. Unpacker/packer L1 contention with NoC traffic (needs a TRISC kernel).
+2. ~~Unpacker/packer L1 contention with NoC traffic~~ **done** (card 1, 2026-11-18). NoC traffic into or out of a
+   tile's L1 slows that tile's unpacker by up to ~1.9x on raw streams (`probes/UNPACK.md`, contention group) and its
+   packer by up to ~20% (`probes/PACK.md`, contend group). The ttrv `move` lowering hardly changes (563 → 568-579 per
+   tile), because it is RISC-bound. RISC loads and instruction fetch are not slowed (≤ 2%, `probes/RISCSYNC.md`).

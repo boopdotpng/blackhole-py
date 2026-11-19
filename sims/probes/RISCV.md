@@ -1,9 +1,58 @@
 # RISC-V core probes (riscv.py, k_riscv.c)
 
-Status, 2026-11-18: written and checked offline, **not run yet** (the cards were busy). Every case builds for every
-role it targets, and the bytes of every timed region match the case's asm exactly (`riscv.py --verify`).
-No result in this file comes from hardware yet. Expected values are either old measurements (2026-09-09) or
-hypotheses.
+Status, 2026-11-18: **run on hardware.** All 1203 cases ran on card 1
+(`results/2026-11-18-fw3-riscv-card1.jsonl`, the current firmware) and on card 0 (`c-riscv-card0`). The branch
+group was rerun with a fresh tile boot per case (`branch-isolated-card1`). The predictor-fit group was added and run
+(`bpfit-card1`). The measured results are directly below. The sections after them are the original plan, with
+`expect` = what the case expected before it ran.
+
+## Results (card 1, firmware as of fw3: L0 data cache ON, predictor ON)
+
+Every role is identical except where noted. Cycles per operation, loop overhead removed.
+
+| what | measured | notes |
+|---|---|---|
+| ALU / mul / mulhu | 1 / 2 / 2 | as the old suite |
+| div, divu, rem | **2 + 4 x ceil(bits / 4), capped at 33**, where bits = significant bits of \|dividend\| | b2-4 → 6, b6-8 → 10, b12 → 14 ... b28 → 30, b31-32 → 33. Divisor does not matter. /0 and INT_MIN/-1 → 2 |
+| CSR read or write | 4 | `DisCsrSync`: 1 |
+| L1 load, L0 data cache hit | 2 (load-use) | the firmware default; ~0.8% of loads see the L0's periodic flush and pay 8 (`l1_ld-*` 3.21 vs 3.125 with the flush off) |
+| L1 load, L0 miss | 8 | L0 = 4 lines of 16 B, fully associative (ring of 4 lines hits, 5+ misses; stride does not matter) |
+| independent L1 loads | 1 per load on the same line, **1.76** over 8 different lines | `l1_ldtput-*` |
+| MMIO load latency | wall clock / NIU / overlay **7**; TDMA / Tensix cfg / GPR **4**; PC_BUF / semaphore **3**; local RAM **2**; local "slow" alias **9** | `mmio_lat-*` minus the 2 ALU ops |
+| back-to-back MMIO loads | 1.5 per load to wall clock / NIU / overlay; 1 per load elsewhere | `mmio_ldtput-*` |
+| store, then load of the same MMIO word | latency + 1 (L1: 16 per pair) | `mmio_rw-*`; TRISC2 local RAM +1 |
+| L1 stores | 1 per store while they fill whole 16 B blocks; otherwise **5 per store** (16 B stride, 64, 128) | alt8 (two words in one block, alternating) 6; pairs16 5.5; mixing local stores between L1 stores halves the average (2.5) |
+| fence, nothing outstanding | 4 | |
+| fence after one L1 store | 10.25 per (sw + fence) | after 4 sequential stores 13.5, 4 strided 20.1; after a local / NIU / cfg store 9.25 (TRISC2 local 10.25); after an L1 load 12.25; after a wall-clock load 11.25 |
+| store → load, no byte overlap (same or other line) | 2.47 per pair | the load bypasses the store queue |
+| store → load of the same word | **15.0** per pair (L1), 4.06 local RAM | the load waits for the store to drain |
+| `DisLdBufByp` | 19.4 per pair | not used by firmware |
+| AMO (`amoadd.w`) | 12 latency and 12 issue | |
+| timer: two back-to-back wall-clock reads | 1 apart; data-dependent 9; with a fence between 11; with a CSR read between 10 | `tm-pair-*` |
+| `.ttinsn` (fused) Tensix push | 1.0 per instruction (loop overhead hidden) | `sw` to INSTRN_BUF: 1 per store |
+
+### Branch predictor (`bpfit-card1`, `branch-isolated-card1`)
+
+**Model: one bit of last outcome per branch, no global history and no aliasing seen. A mispredict costs 4 cycles.**
+- Conditional branches: each change of a branch's direction costs 2 mispredicts (the first iteration in the new
+  direction, and the first back in the old one). Counter-driven run lengths K = 2..64 give 2.0 mispredicts per period
+  at every K (`bpk-rare-K*`, `bpk-often-K*`). A loop of L iterations entered repeatedly: 2 mispredicts (8 cycles) per
+  entry (`bp_inner-L*`). Every rotate pattern in the branch group, with 1 or 15 branches, matches this model exactly in
+  the isolated rerun.
+- No aliasing: an always-taken branch and a never-taken branch 4 to 260 bytes apart in one loop never mispredict
+  (`bpa-d*`).
+- Indirect `jalr`: predicted to its last target. Alternating between two targets costs 4 per jump
+  (`bpk-jalr-alt` 10.5 against 6.5).
+- A call/return through **one shared leaf** (the `ret` sees 16 different return addresses): 10.75 per call + return,
+  against 3 when each call has its own leaf. There is no return-address stack, and a mispredicted `ret` costs about
+  7.75 rather than 4 (`call_ret_shared` vs `call_ret_private`).
+- Predictor off (`DisBp`): static not-taken, +4 per taken branch.
+- **Caveat (artifact, not a hardware model):** a launch that runs with `DisBp` set leaves predictor state that costs
+  about +4 cycles per loop iteration in the next kernel or two on that core, until it is retrained. A fresh tile boot
+  clears it. In the long single-process runs this inflated `bp1-p32`, `bp1-p32_1`, `bp15-never`, `bp15-p32*` and a few
+  `histsel` cases. Use `branch-isolated-card1.jsonl` for the branch group. Firmware never sets `DisBp`, so this does
+  not affect real kernels: in the test, ordinary kernels left no stale state.
+- `BpHistSel` (cfg0 bits 26-27, undocumented) changes timing slightly but is not used by firmware. Not modelled.
 
 ## Run
 

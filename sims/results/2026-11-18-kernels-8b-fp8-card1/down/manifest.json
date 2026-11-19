@@ -1,0 +1,127 @@
+{
+ "grid": 88,
+ "params": {
+  "context": {
+   "slot": 0,
+   "kind": "dram",
+   "type": "bf16",
+   "page": 2048
+  },
+  "matrix": {
+   "slot": 1,
+   "kind": "dram",
+   "type": "e4m3",
+   "page": 1024
+  },
+  "output": {
+   "slot": 2,
+   "kind": "dram",
+   "type": "bf16",
+   "page": 2048
+  },
+  "residual": {
+   "slot": 3,
+   "kind": "dram",
+   "type": "bf16",
+   "page": 2048
+  },
+  "scales": {
+   "slot": 4,
+   "kind": "dram",
+   "type": "fp32",
+   "page": 4096
+  }
+ },
+ "storage": {
+  "x": {
+   "address": 71488,
+   "size": 28672,
+   "type": "bf16",
+   "count": 14336,
+   "cb": 0,
+   "pages": 1,
+   "page": 28672,
+   "producer": "brisc",
+   "consumer": "trisc0"
+  },
+  "weights": {
+   "address": 100160,
+   "size": 4096,
+   "type": "e4m3",
+   "count": 1024,
+   "cb": 1,
+   "pages": 4,
+   "page": 1024,
+   "producer": "brisc",
+   "consumer": "trisc0"
+  },
+  "dot": {
+   "address": 104256,
+   "size": 4096,
+   "type": "bf16",
+   "count": 1024,
+   "cb": 2,
+   "pages": 2,
+   "page": 2048,
+   "producer": "trisc2",
+   "consumer": "ncrisc"
+  },
+  "result": {
+   "address": 108352,
+   "size": 2048,
+   "type": "bf16",
+   "count": 1024,
+   "cb": 3,
+   "pages": 1,
+   "page": 2048,
+   "producer": "ncrisc",
+   "consumer": "trisc0"
+  },
+  "residual_slice": {
+   "address": 110400,
+   "size": 2048,
+   "type": "bf16",
+   "count": 1024,
+   "cb": 4,
+   "pages": 1,
+   "page": 2048,
+   "producer": "brisc",
+   "consumer": "trisc0"
+  },
+  "summed": {
+   "address": 112448,
+   "size": 2048,
+   "type": "bf16",
+   "count": 1024,
+   "cb": 5,
+   "pages": 1,
+   "page": 2048,
+   "producer": "trisc2",
+   "consumer": "ncrisc"
+  },
+  "xq": {
+   "address": 114496,
+   "size": 14336,
+   "type": "e4m3",
+   "count": 14336,
+   "cb": 6,
+   "pages": 1,
+   "page": 14336,
+   "producer": "trisc2",
+   "consumer": "trisc0"
+  },
+  "scale_page": {
+   "address": 128832,
+   "size": 64,
+   "type": "fp32",
+   "count": 16,
+   "cb": 7,
+   "pages": 1,
+   "page": 64,
+   "producer": "brisc",
+   "consumer": "trisc1"
+  }
+ },
+ "scratch_end": 128896,
+ "keep_base": 1572864
+}

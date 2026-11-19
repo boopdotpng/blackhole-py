@@ -2,7 +2,24 @@
 
 Timing and correctness probes for the Tensix unpackers: `UNPACR` on unpacker A (SrcA) and B (SrcB), the address
 counters, the config writes and `UNPACK_SYNC` credit that the llama kernels emit per block, and the dvalid hand-off
-to the math thread. **None of this has run on hardware yet**: every number below is a hypothesis with its source.
+to the math thread.
+
+**Status, 2026-11-18: run on hardware.** All 239 cases ran on card 1 (`results/2026-11-18-fw3-unpack-card1.jsonl`).
+All 18 `verify-` cases pass. The hypothesis tables further down are the pre-run expectations. The measured values:
+
+| quantity | measured (card 1) |
+|---|---|
+| UNPACR issue, 16 datums | 2 cycles from a MOP, 3 pushed one by one; A+B pair 4 |
+| one unpacker, n datums per UNPACR | max(2, L1 bytes / 128): bf16 face (256) 4, bf16 tile (1024) **16**, fp8 tile **8**; fp32→SrcA n/32 + 1 (tile 33); transpose free (16.0); A and B the same |
+| bfp8 / bfp4 | n = 128: 2.0-2.04; n = 256: 2.2-2.3 |
+| A + B interleaved (the llama pair), cycles per pair | bf16: n ≤ 256 → 4, tile → **16** (A and B overlap completely); fp8 tile → 16 (not the 8 of one unpacker); bfp8/bfp4 face 4 |
+| throttle override (word 70 bit 3) | bf16 tile x1 128, x2 64, x4 16 (= default); fp8 tile x1 64, x2 32, x4 16 (default 8). A and B with different settings: the pair takes the slower one's time (+1) |
+| `move` (the full ttrv lowering per block, cycles per tile) | pair_face bf16 **563**, fp8 539; a_face bf16 263; a_tile bf16 73, fp32→SrcA 91, bfp8/bfp4 82; ba_tile bf16 163 (transpose the same); b_tile bf16 87, bfp 94 |
+| `pipe` (the same with dvalid and T1 consuming) | identical to `move`: the unpack side is the bottleneck. Raw pairs: release 7.6, ELWMUL 12, MOVA2D 28, MVMUL x16 33 per pair |
+| extra ops before one UNPACR (on top of 10) | SETADCZW -1, SETADCXX+ZW +1, 4 x RMWCIB +2, STALLWAIT(TRISC_CFG\|CLR) +3, STALLWAIT(SYNC) after +1-3, RISC base sw+lw +7, **UNPACK_SYNC credit round trip +25-31**, WRCFG -1, SETC16 +1, UNPACR_NOP wake +2 |
+| dvalid handoff latency (UNPACR issue → T1 STALLWAIT passes) | 34 (n=16), 37 (256), 49 (bf16 1024), 41 (fp8 1024) |
+| both banks full → resume after T1 releases | 19 (n=256), 31 (n=1024), whatever the delay |
+| **NoC contention** (raw A bf16 tile) | none 16.0 → NoC self-loop 8 KiB 29.8, two NoCs 28.2, incoming writes 30.5, outgoing reads 29.2, packer only 16.6, packer + NoC 24.0. Self-loop 512 B 18.8, 2 KiB 27.6. Raw fp8 tile 8.0 → 14.3. **The ttrv `move` barely changes** (563 → 568-579), because the move is RISC-bound |
 
 Files: `unpack.py` (cases, data/reference models, `run`), `unpack.h` (encodings, config helpers, ttrv lowering),
 `k_unpack.c` (TRISC0), `k_unpack_math.c` (TRISC1), `k_unpack_pack.c` (TRISC2), `k_unpack_noc.c` (BRISC/NCRISC or a

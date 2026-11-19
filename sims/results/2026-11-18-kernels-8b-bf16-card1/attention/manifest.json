@@ -1,0 +1,191 @@
+{
+ "grid": 64,
+ "params": {
+  "q_in": {
+   "slot": 0,
+   "kind": "dram",
+   "type": "bf16",
+   "page": 2048
+  },
+  "k_in": {
+   "slot": 1,
+   "kind": "dram",
+   "type": "bf16",
+   "page": 2048
+  },
+  "v_in": {
+   "slot": 2,
+   "kind": "dram",
+   "type": "bf16",
+   "page": 2048
+  },
+  "cos": {
+   "slot": 3,
+   "kind": "dram",
+   "type": "bf16",
+   "page": 2048
+  },
+  "sin": {
+   "slot": 4,
+   "kind": "dram",
+   "type": "bf16",
+   "page": 2048
+  },
+  "key_cache": {
+   "slot": 5,
+   "kind": "dram",
+   "type": "bf16",
+   "page": 2048
+  },
+  "value_cache": {
+   "slot": 6,
+   "kind": "dram",
+   "type": "bf16",
+   "page": 2048
+  },
+  "context": {
+   "slot": 7,
+   "kind": "dram",
+   "type": "bf16",
+   "page": 2048
+  },
+  "start_pos": {
+   "slot": 8,
+   "kind": "int",
+   "type": "u32"
+  }
+ },
+ "storage": {
+  "operands": {
+   "address": 71488,
+   "size": 8192,
+   "type": "bf16",
+   "count": 1024,
+   "cb": 0,
+   "pages": 4,
+   "page": 2048,
+   "producer": "brisc",
+   "consumer": "trisc0"
+  },
+  "result": {
+   "address": 79680,
+   "size": 2048,
+   "type": "bf16",
+   "count": 1024,
+   "cb": 1,
+   "pages": 1,
+   "page": 2048,
+   "producer": "trisc2",
+   "consumer": "ncrisc"
+  },
+  "query": {
+   "address": 81728,
+   "size": 8192,
+   "type": "bf16",
+   "count": 1024,
+   "cb": 2,
+   "pages": 4,
+   "page": 2048,
+   "producer": "ncrisc",
+   "consumer": "trisc0"
+  },
+  "rows": {
+   "address": 89920,
+   "size": 512,
+   "type": "bf16",
+   "count": 256,
+   "cb": 3,
+   "pages": 1,
+   "page": 512,
+   "producer": "ncrisc",
+   "consumer": "brisc"
+  },
+  "keys": {
+   "address": 90432,
+   "size": 16384,
+   "type": "bf16",
+   "count": 1024,
+   "cb": 4,
+   "pages": 8,
+   "page": 2048,
+   "producer": "brisc",
+   "consumer": "trisc0"
+  },
+  "values": {
+   "address": 106816,
+   "size": 16384,
+   "type": "bf16",
+   "count": 1024,
+   "cb": 5,
+   "pages": 8,
+   "page": 2048,
+   "producer": "brisc",
+   "consumer": "trisc0"
+  },
+  "probs": {
+   "address": 123200,
+   "size": 2048,
+   "type": "bf16",
+   "count": 1024,
+   "cb": 6,
+   "pages": 1,
+   "page": 2048,
+   "producer": "trisc2",
+   "consumer": "trisc0"
+  },
+  "state": {
+   "address": 125248,
+   "size": 24576,
+   "type": "fp32",
+   "count": 6144,
+   "cb": 7,
+   "pages": 1,
+   "page": 24576,
+   "producer": "trisc2",
+   "consumer": "ncrisc"
+  },
+  "states": {
+   "address": 149824,
+   "size": 196608,
+   "type": "fp32",
+   "count": 6144,
+   "cb": 8,
+   "pages": 8,
+   "page": 24576,
+   "producer": "brisc",
+   "consumer": "trisc0"
+  },
+  "merged": {
+   "address": 346432,
+   "size": 8192,
+   "type": "bf16",
+   "count": 4096,
+   "cb": 9,
+   "pages": 1,
+   "page": 8192,
+   "producer": "trisc2",
+   "consumer": "ncrisc"
+  },
+  "dense": {
+   "address": 354624,
+   "size": 1024,
+   "type": "bf16",
+   "count": 512
+  },
+  "ret": {
+   "address": 355648,
+   "size": 16,
+   "type": "u32",
+   "count": 4
+  },
+  "arrived": {
+   "address": 1572800,
+   "size": 16,
+   "type": "u32",
+   "count": 4,
+   "keep": true
+  }
+ },
+ "scratch_end": 355664,
+ "keep_base": 1572800
+}

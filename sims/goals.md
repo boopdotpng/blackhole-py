@@ -38,3 +38,5 @@ resident firmware by `tile.py`, driven by `run.py`.
 - The card is never reset automatically. A run stops at the first host-side failure, so a person
   looks at the card and resets it by hand if needed.
 - Results go to `sims/results/*.jsonl`, one line per case. A rerun resumes from that file.
+
+Status of every measurement category, and what is still open: `STATUS.md`. Ground truth for the simulator: `KERNELS.md`.

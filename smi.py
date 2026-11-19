@@ -17,6 +17,7 @@ card down after idle_power_down_grace_ms (5 s). The live view flags that state a
   board  12V-2x6 cable (INA228) + a fixed 20 W fw_table allowance for the unmeasured PCIe slot
   core   VCORE rail only (what hwmon power1 shows)
   state  idle = parked (min aiclk, L2CPU gated) · awake = a client voted for power · boot = never parked
+  eth    ports per QSFP-DD cage (● link up ○ down · unused × harvested) and who is on the far end of each link
 """
 import argparse, csv, fcntl, glob, os, re, select, shutil, signal, struct, sys, termios, time, tty
 from collections import deque
@@ -32,12 +33,21 @@ RESET_PCIE_LINK, ASIC_RESET, ASIC_DMC_RESET, POST_RESET = 1, 4, 5, 6
 LOCK_TEST, CHIP_IN_USE = 2, 20  # tt-umd lock_manager.cpp: CHIP_IN_USE is resource lock 20
 
 # tt-system-firmware lib/tenstorrent/bh_arc/telemetry.h
-TAGS = dict(vcore_mv=6, core_w=7, asic_raw=11, aiclk=14, l2cpuclk=17, eth_live=21, hb=32, fan_rpm=41,
+TAGS = dict(vcore_mv=6, core_w=7, asic_raw=11, aiclk=14, l2cpuclk=17, eth_live=21, hb=32, eth_on=35, fan_rpm=41,
             gddr_ue=50, gddr_c=51, board_limit_w=53, board_w=54, throttle_c=56, trips=60, aiclk_max=63,
             core_limit_w=64, arb_min=65, arb_max=66)
 ARB_MAX = ["fmax", "TDP", "fast TDC", "TDC", "thermal", "board power", "voltage", "GDDR thermal",
            "di/dt slow", "di/dt critical", "host fmax"]
 PCIE_GEN = {2.5: 1, 5.0: 2, 8.0: 3, 16.0: 4, 32.0: 5, 64.0: 6}
+
+# Ethernet: eth_on is the unharvested channel mask; eth_live is [31:16] link up (PCS_STATUS), [15:0] heartbeat
+# changed since ARC's last poll (bh_arc/eth.c), so only the top half is stable.
+# Each channel's L1 holds base firmware's boot_results_t (tt-metal tt-1xx/blackhole/eth_fw_api.h):
+# +4 port_status (1 up, 2 down, 3 unused), +12 train_speed, +960 local chip_info_t, +992 remote chip_info_t;
+# chip_info_t is u8 pcb_type, asic_location, eth_id, logical_eth_id, then u32 board_id hi/lo, mac org/id, asic_id hi/lo.
+ETH_X = [1, 16, 2, 15, 3, 14, 4, 13, 5, 12, 6, 11, 7, 10]  # channel -> NOC0 x, all at y=1 (tt-umd ETH_CORES_NOC0)
+BOOT_RESULTS = 0x7CC00
+P150_QSFP = {11: 1, 9: 1, 8: 2, 10: 2, 7: 3, 5: 3, 4: 4, 6: 4}  # logical eth -> QSFP-DD (tt-metal scaleout board.cpp)
 
 def ioctl(fd, req, fmt, *args):
   b = bytearray(struct.pack("<" + fmt, *args))
@@ -58,8 +68,19 @@ class Card:
     self.idx, self.addr = idx, None
     self.fd = os.open(f"/dev/tenstorrent/{idx}", os.O_RDWR | os.O_APPEND | os.O_CLOEXEC)
 
-  def noc_read(self, addr):  # argsz, flags, x, y, noc, width, addr, value
-    return ioctl(self.fd, NOC_READ, "IIHHBB2xQQ", 32, 0, *ARC, 0, 4, addr, 0)[-1]
+  def noc_read(self, addr, xy=ARC):  # argsz, flags, x, y, noc, width, addr, value
+    return ioctl(self.fd, NOC_READ, "IIHHBB2xQQ", 32, 0, *xy, 0, 4, addr, 0)[-1]
+
+  def eth(self, on):  # read-only L1 peek at every unharvested channel; {ch: (status, logical, speed, peer)}
+    out = {}
+    for ch in (c for c in range(14) if on >> c & 1):
+      r = lambda off: self.noc_read(BOOT_RESULTS + off, (ETH_X[ch], 1))
+      st, peer = r(4), None
+      if st == 1:
+        w = r(992)
+        peer = (r(992 + 20) << 32 | r(992 + 24), w >> 16 & 0xFF, w >> 24)  # remote asic id, eth_id, logical id
+      out[ch] = (st, r(960) >> 24, r(12) if st == 1 else 0, peer)
+    return out
 
   def telemetry(self):
     if self.addr is None:
@@ -96,6 +117,7 @@ class Mon:
     self.type = rd(f"{SYS}/tenstorrent!{idx}/tt_card_type") or "?"
     self.bdf = bdf(idx)
     self.hist = deque(maxlen=120)
+    self.eth, self.eth_live, self.eth_at = {}, None, 0.0
 
   def sample(self):
     t = time.monotonic()
@@ -105,9 +127,13 @@ class Mon:
       try: self.card, self.err = Card(self.idx), None
       except OSError as e: self.err, self.retry_at = e.strerror or str(e), t + 5
     if self.card is not None:
-      try: s.update(self.card.telemetry())
+      try:
+        s.update(self.card.telemetry())
+        if (k := (s["eth_on"], s["eth_live"] >> 16)) != self.eth_live or t >= self.eth_at:  # on change, else every 10 s
+          self.eth, self.eth_live, self.eth_at = self.card.eth(k[0]), k, t + 10
       except OSError as e:  # reset or removed: reopen later
-        self.card.close(); self.card, self.err, self.retry_at = None, e.strerror or str(e), t + 2
+        self.card.close(); self.card, self.err, self.retry_at, self.eth_live = None, e.strerror or str(e), t + 2, None
+    s["eth_links"] = " ".join(f"{ch}>{p[0]}:{p[1]}" for ch, p in self.links())
     if s.get("asic_raw") is None: return s
     a = s.pop("asic_raw")
     s["asic_c"] = round((a - (1 << 32) if a & 0x80000000 else a) / 65536, 1)
@@ -119,6 +145,14 @@ class Mon:
     s["throttle"] = s["throttle"] if s["state"] == "awake" and (arb & 0xFFFF) < s["aiclk_max"] else ""
     self.hist.append(s["board_w"])
     return s
+
+  def links(self):  # [(ch, (card idx or remote asic hex, remote ch, remote qsfp or None))] for links that are up
+    ids = {int(rd(f"{SYS}/tenstorrent!{i}/tt_asic_id") or "0", 16): i for i in cards()}
+    def peer(asic, ch, lg):
+      i = ids.get(asic)
+      p150 = i is not None and (rd(f"{SYS}/tenstorrent!{i}/tt_card_type") or "").startswith("p150")
+      return (f"{asic:x}" if i is None else i, ch, P150_QSFP.get(lg) if p150 else None)
+    return [(ch, peer(*e[3])) for ch, e in sorted(self.eth.items()) if e[3]]
 
   def close(self):
     if self.card: self.card.close()
@@ -173,7 +207,24 @@ def render_card(m, s, width):
   if s["trips"]: alerts.append(f"{s['trips']} thermal trips")
   if s["gddr_ue"]: alerts.append(f"{s['gddr_ue']} uncorrected GDDR errors")
   if alerts: line2 += "   " + WARN + " · ".join(alerts) + RST
-  return [head, line1, line2, ""]
+  return [head, line1, line2] + ([render_eth(m)] if m.eth else []) + [""]
+
+def render_eth(m):  # p150: ports grouped by QSFP-DD cage, else a strip of all 14 channels; ● up ○ down · unused × off
+  def glyph(ch):
+    st = m.eth[ch][0] if ch in m.eth else None
+    return (OK + "●" if st == 1 else DIM + {None: "×", 2: "○"}.get(st, "·")) + RST
+  q = {ch: P150_QSFP.get(e[1]) for ch, e in m.eth.items()} if m.type.startswith("p150") else {}
+  if q: ports = "  ".join(f"{i} " + "".join(glyph(ch) for ch in sorted(c for c in q if q[c] == i)) for i in range(1, 5))
+  else: ports = "".join(glyph(ch) for ch in range(14))
+  groups = {}
+  for ch, (card, rch, rq) in m.links(): groups.setdefault((q.get(ch), card, rq), []).append((ch, rch))
+  links = []
+  for (lq, card, rq), chs in groups.items():
+    speed = {m.eth[ch][2] for ch, _ in chs}
+    links.append(f"{f'qsfp{lq} ' if lq else ''}⇄ {BOLD}{'card ' if isinstance(card, int) else 'asic '}{card}{RST}"
+                 f"{f' qsfp{rq}' if rq else ''}  {DIM}{len(chs)}×{'/'.join(map(str, sorted(speed)))}G  "
+                 + " ".join(f"ch{a}↔{b}" for a, b in chs) + RST)
+  return f"     {DIM}eth {'qsfp' if q else 'ch'}{RST} {ports}   " + ("   ".join(links) or DIM + "no links" + RST)
 
 def render(mons, samples, args, live=True):
   width = max(72, min(shutil.get_terminal_size((100, 30)).columns, 120))
@@ -242,7 +293,7 @@ def reset(idxs, sbr=True, dmc=False, force=False):
 # ---------------------------------------------------------------- main ---------
 
 CSV = ["time", "card", "state", "board_w", "core_w", "asic_c", "gddr_c", "fan_rpm", "aiclk", "vcore_mv",
-       "pcie_gen", "pcie_width", "pcie_max_gen", "pcie_max_width", "throttle", "gddr_ue", "trips"]
+       "pcie_gen", "pcie_width", "pcie_max_gen", "pcie_max_width", "throttle", "gddr_ue", "trips", "eth_links"]
 
 def watch(mons, args):
   live = sys.stdout.isatty() and not args.csv

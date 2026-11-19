@@ -1,0 +1,119 @@
+{
+ "grid": 88,
+ "params": {
+  "x": {
+   "slot": 0,
+   "kind": "dram",
+   "type": "bf16",
+   "page": 2048
+  },
+  "norm": {
+   "slot": 1,
+   "kind": "dram",
+   "type": "bf16",
+   "page": 2048
+  },
+  "wq": {
+   "slot": 2,
+   "kind": "dram",
+   "type": "bf16",
+   "page": 2048
+  },
+  "wk": {
+   "slot": 3,
+   "kind": "dram",
+   "type": "bf16",
+   "page": 2048
+  },
+  "wv": {
+   "slot": 4,
+   "kind": "dram",
+   "type": "bf16",
+   "page": 2048
+  },
+  "q_out": {
+   "slot": 5,
+   "kind": "dram",
+   "type": "bf16",
+   "page": 2048
+  },
+  "k_out": {
+   "slot": 6,
+   "kind": "dram",
+   "type": "bf16",
+   "page": 2048
+  },
+  "v_out": {
+   "slot": 7,
+   "kind": "dram",
+   "type": "bf16",
+   "page": 2048
+  }
+ },
+ "storage": {
+  "operands": {
+   "address": 71488,
+   "size": 16384,
+   "type": "bf16",
+   "count": 1024,
+   "cb": 0,
+   "pages": 8,
+   "page": 2048,
+   "producer": "brisc",
+   "consumer": "trisc0"
+  },
+  "normalized": {
+   "address": 87872,
+   "size": 8192,
+   "type": "bf16",
+   "count": 1024,
+   "cb": 1,
+   "pages": 4,
+   "page": 2048,
+   "producer": "trisc2",
+   "consumer": "trisc0"
+  },
+  "weights": {
+   "address": 96064,
+   "size": 16384,
+   "type": "bf16",
+   "count": 1024,
+   "cb": 2,
+   "pages": 8,
+   "page": 2048,
+   "producer": "brisc",
+   "consumer": "trisc0"
+  },
+  "dot": {
+   "address": 112448,
+   "size": 4096,
+   "type": "bf16",
+   "count": 1024,
+   "cb": 3,
+   "pages": 2,
+   "page": 2048,
+   "producer": "trisc2",
+   "consumer": "ncrisc"
+  },
+  "q_result": {
+   "address": 116544,
+   "size": 2048,
+   "type": "bf16",
+   "count": 1024
+  },
+  "k_result": {
+   "address": 118592,
+   "size": 2048,
+   "type": "bf16",
+   "count": 1024
+  },
+  "v_result": {
+   "address": 120640,
+   "size": 2048,
+   "type": "bf16",
+   "count": 1024
+  }
+ },
+ "scratch_end": 122688,
+ "keep_base": 1572864
+}

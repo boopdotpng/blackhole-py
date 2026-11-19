@@ -36,8 +36,11 @@ not Tensix columns.
   the middle. Edge rows at x = 4, 7, 12 and 15 sometimes take the neighbouring level, so a per-column constant is
   close but not exact. Use the per-tile table.
 - **Precision.** Within ±0.5 cycle of the levels above: repeated pairs agree to 0.25–0.5 cycles.
-- **Not yet known:** whether the offsets stay the same after a card reset or power cycle, and whether they are the
-  same on other cards (card 0, other p150s, p100). Until someone checks, measure them on the card in use.
+- **The offsets survive a card reset** (card 1, 2026-11-18: `smi.py -r 1`, then remeasured). Over all 140 tiles the
+  largest change was 1.25 cycles (mean +0.03), no more than the scatter between two runs without a reset (1.0).
+  Data: `results/2026-11-18-clockmap-{prereset,postreset}-card1.jsonl`.
+- **Not yet known:** whether they survive a full power cycle, and whether other cards (card 0, other p150s, p100)
+  have the same offsets. Until someone checks, measure them on the card in use.
 
 ## How it was measured
 

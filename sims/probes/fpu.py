@@ -495,6 +495,7 @@ def _cases():
                     note="every MVMUL flips both banks (clear_dvalid=3, release disabled)"))
   C += handoff_cases()
   C += multithread_cases()
+  C += overhead_cases(o_mop, o_mods)
   # ---------------- data dependence
   C.append(mathcase("data-mvmul-lofi-bf16-zero", "data", rot(mv), data="zero", model=False))
   C.append(mathcase("data-mvmul-lofi-bf16-rand", "data", rot(mv), data="rand", model=False))
@@ -549,6 +550,42 @@ def multithread_cases():
                     expect="other half / register-only: no interference; same half: Dst-half arbitration"))
   return out
 
+
+
+def overhead_cases(o_mop, o_mods):
+  """Per-tile math-thread overhead, built from the exact words of llama-1b o/trisc1 (o.ttrv:248-262) on one thread.
+  Src banks stay valid (two banks, flips do not release), MATH_PACK (semaphore 1) is posted and taken back at once.
+  unit = 1 per loop iteration, so the slope is cycles per iteration."""
+  C = []
+  sfpu = [isa.SFPLOAD(lreg_ind=0, instr_mod0=3, sfpu_addr_mode=0, dest_reg_addr=0),
+          isa.SFPMAD(lreg_src_a=0, lreg_src_b=10, lreg_src_c=7, lreg_dest=7, instr_mod1=0), isa.INCRWC(rwc_d=2)]
+  ext = lambda p: load_replay(p, 0, sfpu)  # noqa: E731
+  MOP = isa.MOP(mop_type=1)
+  stall_vld = isa.STALLWAIT(64, 384)           # o.ttrv:253 STALLWAIT(MATH, SRCA_VLD|SRCB_VLD) before each MOP
+  fpu_to_sfpu = isa.STALLWAIT(256, 16)         # o.ttrv:254 block SFPU until MATH idle
+  end_sync = isa.STALLWAIT(2, 2064)            # o.ttrv:262
+  semwait = isa.SEMWAIT(stall_res=322, sem_sel=2, wait_sem_cond=2)
+  zero4 = [isa.ZEROACC(clear_mode=1, use_32_bit_mode=1, addr_mode=1, where=i) for i in range(4)]
+  rwc_all, rwc_face, rwc_d0 = isa.SETRWC(BitMask=15), isa.SETRWC(rwc_cr=4, rwc_d=8, BitMask=4), isa.SETRWC(BitMask=4)
+  sfpu_faces = [w for _ in range(4) for w in [isa.REPLAY(start_idx=0, len=3)] * 8 + [rwc_face, rwc_face]]
+  pass_ = zero4 + [rwc_all] + [stall_vld, MOP] * 4 + [fpu_to_sfpu, rwc_all] + sfpu_faces + [rwc_d0, end_sync]
+  sem = [semwait, isa.SEMPOST(sem_sel=2), isa.SEMGET(sem_sel=2)]
+  kw = dict(unit=1, mop=o_mop, addr_mods=o_mods, banks=2, keep_flip=True, model=False, extra=ext)
+  bodies = {
+    "ovh-mop4": [MOP] * 4,
+    "ovh-stallvld-mop4": [stall_vld, MOP] * 4,
+    "ovh-zeroacc4": zero4 + [rwc_all],
+    "ovh-mop4-drain": [MOP] * 4 + [fpu_to_sfpu, rwc_all],
+    "ovh-sfpu-faces": sfpu_faces + [rwc_d0],
+    "ovh-sfpu-faces-sync": sfpu_faces + [rwc_d0, end_sync],
+    "ovh-sem": sem,
+    "ovh-setc16-dest-mop": [isa.SETC16(1, 0), MOP, isa.SETC16(1, 64), MOP, isa.SETC16(1, 128), MOP, isa.SETC16(1, 192), MOP],
+    "ovh-o-pass": pass_,
+    "ovh-o-pass-sem": [semwait] + pass_ + [isa.SEMPOST(sem_sel=2), isa.SEMGET(sem_sel=2)],
+  }
+  for cid, body in bodies.items():
+    C.append(mathcase(cid, "ovh", body, **kw, note="cycles per iteration; words from llama-1b o/trisc1"))
+  return C
 
 CASES = _cases()
 

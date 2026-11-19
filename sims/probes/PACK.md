@@ -1,9 +1,19 @@
 # Packer probes (pack.py)
 
-Not run yet. Everything below was written while the cards were busy: the kernels compile for every role they use,
-`pack.py`'s self-test passes (encodings match `ttrv.isa`, the reference is self-consistent), `run.py --list` lists
-165 cases, and a fake card exercised `run()`. Expect the first run to turn up configuration bugs. Each case reads back
-its packed bytes, so a broken configuration shows up as `verify: FAIL` instead of a believable timing.
+**Status, 2026-11-18: run on hardware.** All 165 cases ran on card 1 (`results/2026-11-18-fw3-pack-card1.jsonl`).
+147 pass `verify`; the 18 handoff cases have nothing to verify. The hypotheses further down are the pre-run
+expectations. The measured values:
+
+| quantity | measured (card 1) |
+|---|---|
+| tile, f32→bf16 or f32→f32, MOP, back to back | **34** per tile; 16 inline PACRs 67.6 |
+| tile, f16→e4m3 | 18 per tile (MOP); inline 78 |
+| per-tile L1 address by WRCFG (its STALLWAIT serialises tiles) | 96.6 per tile; by ADC 34.3 (f32) / 20.7 (e4m3) |
+| llama per-tile sequence built up | +PRE 102.6, +POST (STALLWAIT + drain per tile) 160-162, +CB MMIO 176-178, full llama tile **179-181** (f32), 164 (e4m3); ttrv `move` 172, with post 198-200; re-writing the MOP template every tile 284-302 |
+| last PACR → data visible to a RISC load or a NoC read | 104-121, about the packer-idle time |
+| math SEMPOST → pack done | SEMWAIT (as llama) **82**, RISC poll of the semaphore 127 |
+| pipeline, math delay d per tile then post, MATH_PACK max 1 | period = max(192, d + ~145): d 0 → 192, 200 → 344, 1600 → 1748. Max 2: 192 until d ≈ 100, then d + ~42 |
+| contention | own-NIU NoC writes near the output +1.4 to +7 per tile; remote writes +1.3; unpacker reading L1 +0; unpacker + NoC writes +6.7; llama tile with NoC writes 184 (+3) |
 
 ```
 python3 sims/probes/pack.py                       # self-test, no hardware

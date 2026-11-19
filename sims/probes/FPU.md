@@ -1,7 +1,52 @@
 # FPU (matrix unit) probes
 
 Files: `fpu.py` (cases, setup programs, functional model, analysis), `k_fpu.c` (one generic TRISC kernel),
-`fpu.h` (Tensix encodings, bounded fence, RISC Dst window, config RMW). Nothing here has run on hardware yet.
+`fpu.h` (Tensix encodings, bounded fence, RISC Dst window, config RMW).
+
+**Status, 2026-11-18: run on hardware.** All 103 cases ran on card 1 (`results/2026-11-18-fw3-fpu-card1.jsonl`).
+67 value checks pass, 26 have no check, 2 mismatch (below). The `ovh` group (math-thread per-tile overhead from
+llama-o's exact words) was added and run (`results/2026-11-18-fpu-ovh-card1.jsonl`).
+
+## Results (card 1)
+
+| quantity | measured |
+|---|---|
+| MVMUL, ELWMUL, ELWADD/SUB, GAPOOL, GMPOOL, MOVA2D 1-row, MOVB2D, MOVD2A/B, MOVB2A, ZEROACC, ZEROSRC, SETRWC, INCRWC, NOP: independent issue | **1.0 per instruction** (per fidelity phase), every Src/Dst format |
+| HiFi2/3/4 with the phases outer | 1.0 per phase |
+| HiFi2/3/4 with the phases inner on one block | 3.5 / 4.33 / 4.75 per phase |
+| MOVA2D 8-row | **1.5** per instruction (bf16, fp8 into fp32 or fp16 Dst) |
+| same 8x16 Dst block, accumulate after accumulate (MVMUL, ELWMUL, ELWADD+=, GAPOOL, GMPOOL) | **6 cycles**; with n blocks rotating: max(1, 6/n) (n = 1..8: 6, 3, 2, 1.5, 1.2, 1, 1) |
+| MOVA2D, then MVMUL on the same or other rows | 5 per pair |
+| FPU (MVMUL/ELWMUL) → SFPLOAD of the same rows | **10.5 per pair, any gap of 0-6 NOPs**, correct value (interlocked) |
+| MOVA2D → SFPLOAD | 5.5 (gap 0), 6.5 (gap 3) |
+| FPU → SFPLOAD/SFPSTORE on the other Dst half | 6 per pair; batch 8 FPU + 8 SFPLOAD: 3.5 per pair same half, 2.0 other half |
+| REPLAY | 1/cycle out; a REPLAY of length 1 or 2 is RISC-push bound: 1.78 and 1.33 per instruction |
+| MOP | 1/cycle; MOP followed by direct instructions +1 per transition (1.056 per instruction for 8 MVMUL + SETRWC) |
+| llama-o HiFi2 ELWMUL MOP (outer 2 x inner 2) | 8 cycles per MOP (1.94 per issued instruction) |
+| loop overhead (addi/bne) | hidden from 4 instructions per iteration (1: 3.0, 2: 1.5 per instruction) |
+| Src bank flip | k MVMUL then a SETRWC flip: k = 1: 2.0, k = 4: 1.25 per MVMUL; flip inside every MVMUL is free |
+| unpacker give → math | handoff stream k = 1: 6, k = 4: 1.5, k = 16: 1.06 per MVMUL; single handoff latency 8 |
+| two threads | MVMUL on both threads: 2.0 (one FPU); MVMUL + SFPLOAD/SFPMAD on the other thread: 1.0 (they overlap) |
+| data dependence | none: zero and random Src give the constant-data timing |
+
+Value mismatches (both value checks, not timing): `tput-mova2d-8row-fp8-dst32` (the fp8→fp32 conversion of MOVA2D
+does not match the model; it treats moved FP16 as TF32, as an old note warned) and `dep-sfpstore-mvmul-same` (the MVMUL
+does not see the SFPSTORE written just before it on the same rows; SFPU→FPU needs a gap or a wait).
+
+### Math-thread per-tile overhead (`ovh-*`, words of llama-1b o/trisc1 o.ttrv:248-262, cycles per iteration)
+
+| body | cycles |
+|---|---|
+| 4 x MOP (HiFi2 ELWMUL, outer 2 x inner 2) | 32 |
+| 4 x (STALLWAIT(MATH, SRCA_VLD\|SRCB_VLD), MOP), Src banks already valid | 40 (**+2 per STALLWAIT**) |
+| 4 x ZEROACC (face) + SETRWC | 5 |
+| 4 x MOP + STALLWAIT(SFPU, MATH) + SETRWC (FPU → SFPU drain) | 37.5 (**+5.5** for the drain) |
+| 4 faces x (8 x REPLAY of [SFPLOAD, SFPMAD, INCRWC] + 2 SETRWC) + SETRWC | 105 (1 per instruction) |
+| the same + STALLWAIT(SYNC, MATH\|SFPU) | 109 (+4) |
+| SEMWAIT(MATH_PACK, not full) + SEMPOST + SEMGET | 4 |
+| SETC16(DEST_TARGET offset) before each of 4 MOPs | 36 (+1 per SETC16) |
+| a whole pass (ZEROACC x4, 4 x stall + MOP, drain, SFPU faces, sync) | **166** (the parts sum to ~160) |
+| the same with the MATH_PACK semaphore | 168 |
 
 ```
 python3 sims/probes/run.py --device 1 --output sims/results/<date>-fpu-card1.jsonl fpu --list   # no card
