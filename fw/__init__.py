@@ -28,7 +28,8 @@ PACKET, RING_SIZE = 32, 64 << 10
 STATE, STATE_SIZE = DATA_BASE, 0x140
 WPTR, RPTR, RING_LO = STATE, STATE + 4, STATE + 8
 
-DRAM_BANKS, DRAM_BANK_SIZE, DRAM_PAGE_MAX = 8, 4 << 30, 4096
+# NoC addresses 0xff000000 and above reach the DRAM tile registers (tt-umd blackhole_implementation.hpp).
+DRAM_BANKS, DRAM_BANK_SIZE, DRAM_PAGE_MAX = 8, 0xff000000, 4096
 ARC = (8, 0)
 AICLK_MHZ = 1350  # set at boot and never changed; the Tensix wall clock counts these cycles
 TELEMETRY_PTR, TAG_ENABLED_TENSIX_COL = 0x80030434, 34
