@@ -94,6 +94,8 @@ On card 0 the single-token path fits 176,640 context positions with this checkpo
 Sixteen full-attention layers consume a total of 64 KiB of BF16 KV storage per position.
 The 48 GDN layers use fixed-size state. Chunked prefill also reserves activation buffers and captured graphs.
 
+Generated-token throughput depends on context length. With 1, 96, and 320 cached prefix tokens, Qwen decoded the next 32 timed tokens at 17.3, 15.0, and 11.4 tok/s respectively. Across the 16 full-attention layers, grouped-query attention took 3.84 ms at position 33 and 33.89 ms at position 352. The 48 recurrent GDN layers took 6.47 and 6.46 ms at those positions.
+
 Card 0 processed a 98-token prefix at 99.4 prompt tokens/s, versus 17.8 with serial decode.
 At 512 prefix tokens it reached 67.7 prompt tokens/s. These timings exclude graph capture.
 
