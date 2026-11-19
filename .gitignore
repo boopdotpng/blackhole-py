@@ -5,8 +5,3 @@ __pycache__/
 /weights
 .zed/
 *.bak
-# profiler output (regenerate with kperf / play scripts)
-kperf/bundles/
-play/*.json
-play/*.npz
-play/*.folded
