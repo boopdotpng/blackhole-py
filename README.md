@@ -17,6 +17,17 @@ embed(history=history, weights=weights, output=out, token_pos=3)       # queued;
 print(out.numpy())                                                     # waits, copies back: row 3 as BF16 bits
 ```
 
+## Writing model kernels
+
+- `include ../common/attention` loads declarations from a path relative to the including file. Each kernel expands a
+  shared module once. The module uses the kernel's constants, types and resource declarations.
+- `const ROW_OFFSETS = [0, 2, dst.face, dst.face + 2]` names an ordered list of compile-time values.
+  `repeat offset in ROW_OFFSETS` unrolls the body in that order. `ROW_OFFSETS[i]` accepts a compile-time index.
+- `tileptr(weights, tile)` addresses a DRAM tile by its ordinal for both scalar and packed formats.
+  For example, `noc.read page, tileptr(weights, tile), n=1024, wait` reads one tile. The length counts elements.
+- `reads = noc.group read` allocates a transaction ID without issuing a request. Use `tid=reads` on the reads that
+  can overlap, then `noc.wait reads` before consuming the data or reusing its storage. A group may be empty.
+
 ## Benchmarks
 
 | Model | Weights | Prefill 1× (tok/s) | Decode 1× (tok/s) | Decode 2× (tok/s) | Speedup |

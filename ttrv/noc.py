@@ -48,6 +48,19 @@ def noc(g, s):
     _, kind, tid = g.env[k][1].split(":")
     return kind, int(tid)
 
+  def allocate_tid():
+    g.tid += 1
+    if g.tid >= hw.NOC_TIDS:
+      g.fail("noc.tids", "no free transaction IDs")
+    return g.tid
+
+  if s.name == "group":
+    d = bind(s, "kind")
+    kind = keyword(required(d, "kind", s))
+    if kind not in BUFFERS:
+      g.fail("noc.kind", f"unknown transaction kind {kind!r}")
+    return [(0, f"tid:{kind}:{allocate_tid()}")]
+
   def wait(kind, tid, sent):
     if not sent or kind in ("posted", "mcast"):
       g.event("set", f"transaction {tid}")
@@ -94,10 +107,7 @@ def noc(g, s):
     if kind != previous:
       g.fail("noc.kind", "incompatible transaction ID")
   else:
-    g.tid += 1
-    tid = g.tid
-    if tid >= hw.NOC_TIDS:
-      g.fail("noc.tids", "no free transaction IDs")
+    tid = allocate_tid()
   fact = f"transaction {tid}"
   g.initial.add(fact)
   g.completions.add(fact)
@@ -106,6 +116,14 @@ def noc(g, s):
   offset = g.alloc()
   left = g.alloc()
   remote = required(d, "dst" if write or atomic else "src", s)
+  # Accept a tile index directly at a DRAM endpoint. Keep the index in tile units
+  # through page selection, so a large BF16 tensor never needs a 32-bit byte offset.
+  tile_address = isinstance(remote, Call) and remote.fn == "tileptr"
+  if tile_address:
+    base, index = remote.args
+    if not isinstance(base, Name) or g.m["params"].get(base.id, {}).get("kind") != "dram":
+      g.fail("noc.endpoint", "a remote tileptr requires a DRAM buffer")
+    remote = Index(base, [index], remote.loc)
   local_expr = required(d, "ret" if atomic else "src" if write else "dst", s)
   r, t = g.expr(local_expr)
   if not t.endswith("*"):
@@ -162,12 +180,13 @@ def noc(g, s):
       g.fail("noc.endpoint", "internal: host endpoint")
     if not param or param["kind"] != "dram" or TYPES[param["type"]] != TYPES[t[:-1]]:
       g.fail("noc.endpoint", "incompatible DRAM endpoint")
-    known = g.check_pointer(local_expr)
+    # A DRAM tile always starts on a 64-byte boundary, even for a dynamic tile index.
+    known = g.check_pointer(local_expr, align=64 if tile_address and not write else 1)
     if (
       not write
       and known is not None and TYPES[t[:-1]][0] is not None
       and isinstance(remote.idx[0], Num)
-      and (known - remote.idx[0].value * TYPES[t[:-1]][0]) % 64
+      and not tile_address and (known - remote.idx[0].value * TYPES[t[:-1]][0]) % 64
     ):
       g.fail("noc.align", "DRAM and L1 read offsets must match modulo 64")
     page = param["page"]
@@ -188,14 +207,17 @@ def noc(g, s):
         n = g.li(per_page)
         g.rv("divu", page_index, index, n)
         g.mov(offset, g.calc("remu", index, n))
-    if element_size is None:
+    if tile_address or element_size is None:
       tile_bytes = TYPES[param["type"]][1]
       if page == tile_bytes:
         g.mov(page_index, index)
         g.mov(offset, 0)
       else:
         split(page // tile_bytes)
-        g.rv("mul", offset, offset, g.li(tile_bytes))
+        if tile_bytes & (tile_bytes - 1):
+          g.rv("mul", offset, offset, g.li(tile_bytes))
+        else:
+          g.rv("slli", offset, offset, imm=tile_bytes.bit_length() - 1)
     else:
       split(page // element_size)
       g.mov(offset, g.scale(offset, param["type"]))

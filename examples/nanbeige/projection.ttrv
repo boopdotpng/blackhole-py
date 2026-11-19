@@ -62,23 +62,7 @@ sem ready = math_pack, max=1
 
 // BFP4 weights have three mantissa bits, all inside the first fidelity phase: the second would multiply zeros.
 const PHASES = 2 - (BITS == 4)
-mop matmul, outer=1, inner=PHASES {     // PHASES fidelity phases of one 32x32 product
-    loop0: replay.run mm_first
-    loop1: replay.run mm_second
-    last_inner: replay.run mm_second
-    last: replay.run mm_second
-    end0: math.rwc reset, release=a
-}
-
-// 16 MVMULs per phase: four output faces x two K faces x two 8-row halves.
-replay mm_first {
-    math.mvmul addr=mm_b; math.mvmul addr=mm_k; math.mvmul addr=mm_b; math.mvmul addr=mm_col
-    math.mvmul addr=mm_b; math.mvmul addr=mm_k; math.mvmul addr=mm_b; math.mvmul addr=mm_row
-}
-replay mm_second {
-    math.mvmul addr=mm_b; math.mvmul addr=mm_k; math.mvmul addr=mm_b; math.mvmul addr=mm_col
-    math.mvmul addr=mm_b; math.mvmul addr=mm_k; math.mvmul addr=mm_b; math.mvmul addr=mm_phase
-}
+include ../common/matmul_phases
 
 
 // One 8-row MVMUL per input/output face pair. The second pass accumulates the low fidelity bits.
@@ -91,18 +75,12 @@ if PREFILL {
     }
 }
 
-// Reads W block m (BATCH K tiles of this column's output tile m / BLOCKS) into dst under transaction r.
-macro fetch(dst, m) {
+// Reads W block m (BATCH K tiles of this column's output tile m / BLOCKS) into dst under the given read group.
+macro fetch(dst, m, reads) {
     fcol = first_col + ((m / BLOCKS + rot) % count) * col_step
     tile = (((m % BLOCKS) * (BATCH / GROUP)) * NT + fcol) * GROUP
-    if BITS == 16 {
-        for i in 0..BATCH / GROUP {
-            noc.read tileptr(dst, i * GROUP), weights[(tile + i * NT * GROUP) * 1024], port=port_id, n=GROUP * 1024, tid=r
-        }
-    } else {
-        for i in 0..BATCH / GROUP {
-            noc.read tileptr(dst, i * GROUP), weights[tile + i * NT * GROUP], port=port_id, n=GROUP * 1024, tid=r
-        }
+    for i in 0..BATCH / GROUP {
+        noc.read tileptr(dst, i * GROUP), tileptr(weights, tile + i * NT * GROUP), port=port_id, n=GROUP * 1024, tid=reads
     }
 }
 
@@ -115,23 +93,14 @@ fn brisc() {
         y0 = core.y - panel
         total = count * BLOCKS
         one[0] = 1
-        m = panel
-        if m >= total { m = 0 }
-        fcol = 0   // a group without output columns still declares the transaction below
-        if count { fcol = first_col + ((m / BLOCKS + rot) % count) * col_step }
-        tile = (((m % BLOCKS) * (BATCH / GROUP)) * NT + fcol) * GROUP
-        if BITS == 16 { r = noc.read stage, weights[tile * 1024], port=port_id, n=GROUP * 1024 }
-        else { r = noc.read stage, weights[tile], port=port_id, n=GROUP * 1024 }
-        for i in 1..BATCH / GROUP {
-            if BITS == 16 { noc.read tileptr(stage, i * GROUP), weights[(tile + i * NT * GROUP) * 1024], port=port_id, n=GROUP * 1024, tid=r }
-            else { noc.read tileptr(stage, i * GROUP), weights[tile + i * NT * GROUP], port=port_id, n=GROUP * 1024, tid=r }
-        }
+        reads = noc.group read
+        if panel < total { fetch!(stage, panel, reads) }
         sends = 0
         for n in 0..total {
             w = cb.reserve matrices, n=BATCH
             sender = n % PANELS
             if sender == panel {
-                noc.wait r
+                noc.wait reads
                 sends = sends + 1
                 // The count only grows during a launch, so an early reservation for a later block cannot be lost.
                 loop { if b_ready[0] >= sends * (PANELS - 1) { break }; fence }
@@ -141,13 +110,13 @@ fn brisc() {
                 // Same route and virtual channel as the data, so the flag lands after it.
                 noc.mcast rect(core.x, y0, core.x, y0 + PANELS - 1, b_sent + n % DEPTH), one, n=1, include_sender, wait
                 m = n + PANELS
-                if m < total { fetch!(stage, m) }
+                if m < total { fetch!(stage, m, reads) }
             } else {
                 noc.inc remote(core.x, y0 + sender, b_ready), by=1, ret=ack, wait
             }
             cb.push matrices, n=BATCH
         }
-        noc.wait r   // every prefetch is consumed above; this only satisfies the checker
+        noc.wait reads   // every prefetch is consumed above; this only satisfies the checker
         b_ready[0] = 0   // every reservation for this worker's blocks has arrived
     } else {
         for j in 0..count {
@@ -155,16 +124,9 @@ fn brisc() {
             for block in 0..BLOCKS {
                 w = cb.reserve matrices, n=BATCH
                 tile = ((block * (BATCH / GROUP)) * NT + col) * GROUP
-                if BITS == 16 {
-                    r = noc.read w, weights[tile * 1024], port=port_id, n=GROUP * 1024
-                    for i in 1..BATCH / GROUP {
-                        noc.read tileptr(w, i * GROUP), weights[(tile + i * NT * GROUP) * 1024], port=port_id, n=GROUP * 1024, tid=r
-                    }
-                } else {
-                    r = noc.read w, weights[tile], port=port_id, n=GROUP * 1024
-                    for i in 1..BATCH / GROUP {
-                        noc.read tileptr(w, i * GROUP), weights[tile + i * NT * GROUP], port=port_id, n=GROUP * 1024, tid=r
-                    }
+                r = noc.read w, tileptr(weights, tile), port=port_id, n=GROUP * 1024
+                for i in 1..BATCH / GROUP {
+                    noc.read tileptr(w, i * GROUP), tileptr(weights, tile + i * NT * GROUP), port=port_id, n=GROUP * 1024, tid=r
                 }
                 noc.wait r
                 cb.push matrices, n=BATCH
@@ -174,7 +136,7 @@ fn brisc() {
 }
 
 fn trisc0() {
-    if BITS == 4 { unpack.fmt a, in=bfp4 } else { if BITS == 8 { unpack.fmt a, in=bfp8 } else { unpack.fmt a, in=bf16 } }
+    unpack.fmt a, in=W
     unpack.fmt b, in=bf16
     if BITS == 16 { unpack.shape a, n=1024, faces=1 } else { unpack.shape a, n=256, faces=4 }
     unpack.shape b, n=1024, faces=1

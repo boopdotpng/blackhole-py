@@ -214,6 +214,12 @@ class Const:
   loc: Loc = None
 
 @dataclass
+class ConstList:
+  name: str
+  values: list
+  loc: Loc = None
+
+@dataclass
 class Param:      # param x: T[] (buffer) or param n: u32 (integer value)
   name: str
   type: Type
@@ -377,6 +383,11 @@ class Parser:
     name = self.name(f"a name after {w!r}")
     if w == "const":
       self.expect("=")
+      if self.at("["):
+        self.next()
+        values = [] if self.at("]") else self.expr_list()
+        self.expect("]")
+        return ConstList(name, values, loc)
       return Const(name, self.expr(), loc)
     if w == "type":
       self.expect("=")
@@ -467,7 +478,8 @@ class Parser:
         if self.peek().kind == "name" and self.at_word("in", 1):
           var = self.next().value
           self.next()
-          lo, hi = self.range()
+          source = self.expr_or_range()
+          lo, hi = (source.lo, source.hi) if isinstance(source, Range) else (None, source)
         else: var, lo, hi = None, Num(0, loc), self.expr()
         return Repeat(var, lo, hi, self.block(lambda: self.stmt(labels)), loc)
       if w == "break": return Break(loc)
@@ -586,26 +598,38 @@ class Parser:
       return e
     self.fail("expected an expression", t)
 
-def parse(src: str, file: str = "<input>", *, _parents=()) -> list:
-  """A top-level 'include name' imports declarations from the sibling name.ttrv."""
+def parse(src: str, file: str = "<input>", *, _parents=(), _included=None) -> list:
+  """Include each module once per translation unit, relative to its importer, with an implicit .ttrv suffix."""
+  if _included is None: _included = set()
   p = Parser(lex(src, file))
   p.skip_nl()
   out = []
   while p.peek().kind != "eof":
     if p.at_word("include"):
       loc = p.next().loc
-      name = p.name("a sibling module name")
+      directory = Path()
+      while p.at(".."):
+        p.next()
+        p.expect("/")
+        directory /= ".."
+      name = p.name("a module name")
+      while p.at("/"):
+        p.next()
+        directory /= name
+        name = p.name("a module name")
       if str(file).startswith("<"):
         raise Error(loc, "include.path", "an include needs a source file path")
       parent = Path(file).resolve()
-      path = parent.with_name(name + ".ttrv")
+      path = (parent.parent / directory / (name + ".ttrv")).resolve()
       if path in (*_parents, parent):
         raise Error(loc, "include.cycle", str(path))
-      try:
-        included = path.read_text()
-      except OSError as err:
-        raise Error(loc, "include.read", str(err)) from err
-      out.extend(parse(included, str(path), _parents=(*_parents, parent)))
+      if path not in _included:
+        _included.add(path)
+        try:
+          included = path.read_text()
+        except OSError as err:
+          raise Error(loc, "include.read", str(err)) from err
+        out.extend(parse(included, str(path), _parents=(*_parents, parent), _included=_included))
     else:
       out.append(p.decl())
     p.end_stmt()
@@ -661,7 +685,9 @@ def show(node, ind: int = 0) -> str:
     case For(): return f"{pad}for {node.var} in {show_expr(node.lo, 1)}..{show_expr(node.hi, 1)} {blk(node.body)}"
     case Loop(): return f"{pad}loop {'' if node.count is None else show_expr(node.count) + ' '}{blk(node.body)}"
     case Repeat():
-      head = show_expr(node.hi) if node.var is None else f"{node.var} in {show_expr(node.lo, 1)}..{show_expr(node.hi, 1)}"
+      head = show_expr(node.hi)
+      if node.lo is not None and node.var is not None: head = f"{show_expr(node.lo)}..{head}"
+      if node.var is not None: head = f"{node.var} in {head}"
       return f"{pad}repeat {head} {blk(node.body)}"
     case Break(): return pad + "break"
     case Continue(): return pad + "continue"
@@ -670,6 +696,7 @@ def show(node, ind: int = 0) -> str:
     case Label(): return f"{pad}{node.label}: {show(node.stmt).lstrip()}"
     case Block(): return pad + (f"// {node.macro}!\n{pad}" if node.macro else "") + blk(node.body)
     case Grid(): return f"{pad}grid {show_expr(node.n) if not isinstance(node.n, int) else node.n}"
+    case ConstList(): return f"{pad}const {node.name} = [{', '.join(map(show_expr, node.values))}]"
     case Const(): return f"{pad}const {node.name} = {show_expr(node.value)}"
     case Param():
       return f"{pad}param {node.name}: {show_type(node.type)}{show_args(node.opts, ', ')}"

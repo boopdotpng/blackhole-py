@@ -1,0 +1,12 @@
+replay copy_rows { repeat r in 0..8 { math.mova2d dst[r * 8], src=r * 8 } }
+
+// Copy the next SrcA tile into Dst tile t.
+macro copy_tile(t) {
+    tensix.stall math, srca_vld|sfpu
+    math.rwc reset
+    math.cfg dst_offset=t * dst.tile
+    replay.run copy_rows
+    tensix.stall sync, math
+    math.cfg dst_offset=0
+    math.rwc reset, release=a
+}

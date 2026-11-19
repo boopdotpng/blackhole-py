@@ -27,34 +27,8 @@ if PACKED { l1 row: bf16[1024] }
 cb result: bf16[1024], pages=1
 sem ready = math_pack, max=1
 
-replay copy_rows { repeat r in 0..8 { math.mova2d dst[r * 8], src=r * 8 } }
-
-macro copy_tile(t) {
-    tensix.stall math, srca_vld|sfpu
-    math.rwc reset
-    math.cfg dst_offset=t * dst.tile
-    replay.run copy_rows
-    tensix.stall sync, math
-    math.cfg dst_offset=0
-    math.rwc reset, release=a
-}
-
-// Reduce 32 lane values in l0 to their sum broadcast to every lane; clobbers l0-l3.
-macro reduce_lanes() {
-    repeat stage in 0..3 {
-        sfp.mov l1, l0
-        repeat 4 >> stage { sfp.shft2 l1, l1, rotate; sfp.nop }
-        sfp.add l0, l0, l1; sfp.nop
-    }
-    sfp.mov l1, l0
-    sfp.mov l2, l0
-    sfp.mov l3, l0
-    sfp.transp
-    sfp.add l0, l0, l1; sfp.nop
-    sfp.add l0, l0, l2; sfp.nop
-    sfp.add l0, l0, l3; sfp.nop
-}
-
+include ../common/copy_tile
+include ../common/reduce_lanes
 include gdn_math
 
 // The head at the current Dst counter: 1 / sqrt(mean(o²) + eps) into tile 3 at its four addresses. Advances 8.

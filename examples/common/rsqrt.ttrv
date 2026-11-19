@@ -1,0 +1,27 @@
+// l0 = 1 / sqrt(l0) for finite positive FP32 l0; clobbers l1-l6.
+macro rsqrt() {
+    alias v = l6
+    alias y = l1
+    alias t = l2
+    alias c1 = l3
+    alias c2 = l4
+    alias half = l5
+    sfp.mov v, l0
+    sfp.mov y, v
+    sfp.shr y, y, 1
+    sfp.li t, 0x5f1110a0, fmt=u32
+    sfp.isub y, t, y                   // magic - (bits >> 1)
+    sfp.mul t, v, y; sfp.nop
+    sfp.mul t, y, t, neg
+    sfp.li c1, 2.2825186
+    sfp.li c2, 2.2533049
+    sfp.add c2, c2, t; sfp.nop
+    sfp.mad t, t, c2, c1; sfp.nop
+    sfp.mul y, y, t; sfp.nop
+    sfp.mul t, v, y; sfp.nop
+    sfp.mul t, y, t, neg; sfp.nop
+    sfp.add t, one, t                  // 1 - v * y * y
+    sfp.li half, 0.5
+    sfp.mul half, y, half; sfp.nop
+    sfp.mad l0, t, half, y             // one Newton step
+}

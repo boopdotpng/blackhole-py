@@ -56,117 +56,9 @@ l1 v_result: bf16[1024]
 
 sem dst_full = math_pack, max=1                  // math -> pack: one Dst result in flight
 
-// ---- templates
-
-mop dot_face, outer=2, inner=2 {
-    loop0: math.elwmul addr=step
-    last_inner: math.elwmul addr=rewind
-    last: math.elwmul addr=next_face, release=a|b
-}
-
-replay accumulate {                    // dot: l7 += products, one 4x8 footprint
-    sfp.load l0, dst[0], fmt=fp32
-    sfp.mad l7, l0, one, l7
-    math.rwc dst+=2
-}
-
-replay square {                        // rmsnorm: l0 += x * x
-    sfp.load l1, dst[0], fmt=fp32
-    sfp.mad l0, l1, l1, l0
-    math.rwc dst+=2
-}
-
-// x * scale, applied by the MAD unit to each SFPLOADMACRO-loaded value.
-// GAP (spec §12 item 8): the old kernel installs this as an SFPMUL template through
-// the backdoor CONFIG0 write; confirm sfpmacro expresses it.
-sfpmacro scale_x, slot=0 {
-    mad: sfp.mul x, l0, x, delay=0
-}
-
-// Two footprints per step: x = (x * scale) * gamma. Gamma is EMBED_TILES tiles on.
-replay apply_pair {
-    sfpmacro.run scale_x, l1, dst[0]
-    sfp.load l2, dst[EMBED_TILES * dst.tile], fmt=fp32
-    sfpmacro.run scale_x, l3, dst[2]
-    sfp.load l4, dst[EMBED_TILES * dst.tile + 2], fmt=fp32
-    sfp.mul l1, l1, l2
-    sfp.mul l3, l3, l4
-    sfp.store dst[0], l1, fmt=fp32
-    sfp.store dst[2], l3, fmt=fp32
-    math.rwc dst+=4
-}
-
-// ---- macros
-
-// Run a replay over the four faces of the Dst tile selected by math.cfg dst_offset.
-// n steps per face; the replay advances the Dst counter 16 / n rows per step.
-macro over_tile(body, n) {
-    math.rwc reset
-    repeat 4 {
-        repeat n { replay.run body }
-        math.rwc dst=cr+8
-        math.rwc dst=cr+8
-    }
-    math.rwc dst=0
-}
-
-// Sum l0's 32 lanes; every lane of l0 ends with the total. Clobbers l1-l3.
-macro reduce_l0() {
-    repeat stage in 0..3 {
-        sfp.mov l1, l0
-        repeat 4 >> stage { sfp.shft2 l1, l1, rotate; sfp.nop }
-        sfp.add l0, l0, l1; sfp.nop
-    }
-    sfp.mov l1, l0
-    sfp.mov l2, l0
-    sfp.mov l3, l0
-    sfp.transp
-    sfp.add l0, l0, l1; sfp.nop
-    sfp.add l0, l0, l2; sfp.nop
-    sfp.add l0, l0, l3; sfp.nop
-}
-
-// l0 = 1 / sqrt(l0 / DIM + EPS) for finite positive l0. Clobbers l1-l6.
-macro rms_scale() {
-    sfp.li l4, INV_DIM
-    sfp.mul l0, l0, l4
-    sfp.li l4, EPS
-    sfp.add l0, l0, l4; sfp.nop
-
-    // Accurate Blackhole reciprocal square root (magic-constant start, two corrections).
-    alias v = l6
-    alias y = l1
-    alias t = l2
-    alias c1 = l3
-    alias c2 = l4
-    alias half = l5
-    sfp.mov v, l0
-    sfp.mov y, v
-    sfp.shr y, y, 1
-    sfp.li t, 0x5f1110a0, fmt=u32
-    sfp.isub y, t, y                  // y = magic - (bits >> 1)
-    sfp.mul t, v, y; sfp.nop
-    sfp.mul t, y, t, neg              // t = -(y * v * y)
-    sfp.li c1, 2.2825186
-    sfp.li c2, 2.2533049
-    sfp.add c2, c2, t; sfp.nop
-    sfp.mad t, t, c2, c1; sfp.nop
-    sfp.mul y, y, t; sfp.nop
-    sfp.mul t, v, y; sfp.nop
-    sfp.mul t, y, t, neg; sfp.nop
-    sfp.add t, one, t                 // t = 1 - v * y * y
-    sfp.li half, 0.5
-    sfp.mul half, y, half; sfp.nop
-    sfp.mad l0, t, half, y            // y + y/2 * (1 - v y^2)
-}
-
-// Face-by-face Src publication matches the compute MOP's release granularity.
-macro unpack_pair(left, right) {
-    repeat face in 0..4 {
-        unpack.move a, left + face * 256, n=256, dvalid
-        unpack.move b, right + face * 256, n=256, dvalid
-    }
-}
+include dot_product
+include rms_norm
+include unpack_pair
 
 // n dot products: Dst row 0 = sum(weight_row * normalized).
 macro dot_rows(n) {
@@ -182,7 +74,7 @@ macro dot_rows(n) {
             tensix.stall sync, math|sfpu
         }
         sfp.mov l0, l7
-        reduce_l0!()
+        reduce_lanes!()
         sfp.store dst[0], l0, fmt=fp32; sfp.nop
         tensix.stall sync, math|sfpu
         sem.inc dst_full
@@ -197,17 +89,6 @@ macro stream_rows(w, first, count) {
     }
 }
 
-// Pack Dst row 0 into a fresh page of q, then hand Dst back to math.
-macro pack_dst(q) {
-    sem.stall tdma|pack|sync, dst_full, nonzero
-    p = cb.reserve q
-    pack.move p, dst[0]
-    tensix.stall sync, pack0
-    tensix.wait
-    cb.push q
-    sem.dec dst_full
-}
-
 macro scatter(out, result, first, lead, count) {
     for i in 0..count {
         d = cb.wait dot
@@ -216,8 +97,6 @@ macro scatter(out, result, first, lead, count) {
     }
     noc.write out[first], result + lead, n=count, wait
 }
-
-// ---- programs
 
 fn brisc() {
     o = cb.reserve operands, n=2 * EMBED_TILES
@@ -286,7 +165,7 @@ fn trisc1() {
         over_tile!(square, 8)
         tensix.stall sync, math|sfpu
     }
-    reduce_l0!()
+    reduce_lanes!()
     rms_scale!()
     tensix.stall sync, math|sfpu
 

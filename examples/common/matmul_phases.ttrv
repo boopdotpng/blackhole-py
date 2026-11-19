@@ -1,0 +1,19 @@
+// The caller selects PHASES for the input format and required fidelity.
+mop matmul, outer=1, inner=PHASES {
+    loop0: replay.run mm_first
+    loop1: replay.run mm_second
+    last_inner: replay.run mm_second
+    last: replay.run mm_second
+    end0: math.rwc reset, release=a
+}
+
+// 16 MVMULs per phase: four output faces x two K faces x two 8-row halves.
+replay mm_first {
+    math.mvmul addr=mm_b; math.mvmul addr=mm_k; math.mvmul addr=mm_b; math.mvmul addr=mm_col
+    math.mvmul addr=mm_b; math.mvmul addr=mm_k; math.mvmul addr=mm_b; math.mvmul addr=mm_row
+}
+
+replay mm_second {
+    math.mvmul addr=mm_b; math.mvmul addr=mm_k; math.mvmul addr=mm_b; math.mvmul addr=mm_col
+    math.mvmul addr=mm_b; math.mvmul addr=mm_k; math.mvmul addr=mm_b; math.mvmul addr=mm_phase
+}

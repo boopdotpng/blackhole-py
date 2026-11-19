@@ -1,0 +1,5 @@
+replay square {                        // rmsnorm: l0 += x * x
+    sfp.load l1, dst[0], fmt=fp32
+    sfp.mad l0, l1, l1, l0
+    math.rwc dst+=2
+}

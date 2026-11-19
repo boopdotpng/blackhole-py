@@ -42,59 +42,15 @@ cb summed: bf16[1024], pages=1                 // result + residual
 sem dst_full = math_pack, max=1                // math -> pack; max=1: one Dst result in flight
 sem dst_bf16 = math_done, max=1                // math -> pack: Dst now holds bf16
 
-// Two fidelity phases per face, as in the BF16 projection.
-mop dot_face, outer=2, inner=2 {
-    loop0: math.elwmul addr=step
-    last_inner: math.elwmul addr=rewind
-    last: math.elwmul addr=next_face, release=a|b
-}
+include dot_product
 
 mop add_face, outer=1, inner=2 {
     loop0: math.elwadd addr=step
     last: math.elwadd addr=next_face, release=a|b
 }
 
-replay accumulate {
-    sfp.load l0, dst[0], fmt=fp32
-    sfp.mad l7, l0, one, l7
-    math.rwc dst+=2
-}
-
-// Reduce 32 running lane sums to one value in l0; clobbers l0-l3.
-macro reduce_lanes(sum) {
-    sfp.mov l0, sum
-    repeat stage in 0..3 {
-        sfp.mov l1, l0
-        repeat 4 >> stage { sfp.shft2 l1, l1, rotate; sfp.nop }
-        sfp.add l0, l0, l1; sfp.nop
-    }
-    sfp.mov l1, l0
-    sfp.mov l2, l0
-    sfp.mov l3, l0
-    sfp.transp
-    sfp.add l0, l0, l1; sfp.nop
-    sfp.add l0, l0, l2; sfp.nop
-    sfp.add l0, l0, l3; sfp.nop
-}
-
-// Face-by-face Src publication matches the compute MOP's release granularity.
-macro unpack_pair(left, right) {
-    repeat face in 0..4 {
-        unpack.move a, left + face * 256, n=256, dvalid
-        unpack.move b, right + face * 256, n=256, dvalid
-    }
-}
-
-// Pack Dst row 0 into a fresh page of q, then hand Dst back to math.
-macro pack_dst(q) {
-    sem.stall tdma|pack|sync, dst_full, nonzero
-    p = cb.reserve q
-    pack.move p, dst[0]
-    tensix.stall sync, pack0
-    tensix.wait
-    cb.push q
-    sem.dec dst_full
-}
+include ../common/reduce_lanes
+include unpack_pair
 
 fn brisc() {
     r = cb.reserve residual_slice
@@ -163,7 +119,8 @@ fn trisc1() {
             math.rwc dst=0
             tensix.stall sync, math|sfpu
         }
-        reduce_lanes!(l7)
+        sfp.mov l0, l7
+        reduce_lanes!()
         sfp.store dst[0], l0, fmt=fp32; sfp.nop
         tensix.stall sync, math|sfpu
         sem.inc dst_full

@@ -1,0 +1,21 @@
+mop dot_face, outer=2, inner=2 {
+    loop0: math.elwmul addr=step
+    last_inner: math.elwmul addr=rewind
+    last: math.elwmul addr=next_face, release=a|b
+}
+
+replay accumulate {                    // dot: l7 += products, one 4x8 footprint
+    sfp.load l0, dst[0], fmt=fp32
+    sfp.mad l7, l0, one, l7
+    math.rwc dst+=2
+}
+
+macro pack_dst(q) {
+    sem.stall tdma|pack|sync, dst_full, nonzero
+    p = cb.reserve q
+    pack.move p, dst[0]
+    tensix.stall sync, pack0
+    tensix.wait
+    cb.push q
+    sem.dec dst_full
+}

@@ -29,19 +29,7 @@ cb inputs: bf16[1024], pages=8                // raw, h0, h1, h2, w0, w1, w2, w3
 cb result: bf16[1024], pages=1
 sem ready = math_pack, max=1
 
-replay copy_rows { repeat r in 0..8 { math.mova2d dst[r * 8], src=r * 8 } }
-
-// Copy the next SrcA tile into Dst tile t.
-macro copy_tile(t) {
-    tensix.stall math, srca_vld|sfpu
-    math.rwc reset
-    math.cfg dst_offset=t * dst.tile
-    replay.run copy_rows
-    tensix.stall sync, math
-    math.cfg dst_offset=0
-    math.rwc reset, release=a
-}
-
+include ../common/copy_tile
 include gdn_math
 
 // One SFPU address (32 channels): the four-tap sum into l7, then SiLU, stored over the raw value.

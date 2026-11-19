@@ -29,7 +29,7 @@ import math
 import operator
 from dataclasses import dataclass, field, replace
 from ttrv.parse import (Alias, SfpRegion, Error, Num, Name, Attr, Unary, Bin, Index, Call, Range, Arg, Op, Assign, MacroCall, If, While,
-                        For, Loop, Repeat, Break, Continue, Fence, Return, Label, Block, Grid, Const, Param, TypeDecl, Storage,
+                        For, Loop, Repeat, Break, Continue, Fence, Return, Label, Block, Grid, Const, ConstList, Param, TypeDecl, Storage,
                         Sem, Macro, Fn, Template, Shared, KEYWORDS, NAMESPACES, DECLS, show, show_expr)
 
 # name: (bytes per element or None for BFP, T.tile)
@@ -124,6 +124,7 @@ class Expander:
     self.defines = dict(defines)
     self.p = Program(grid=None)
     self.macros = {}
+    self.const_lists = {}
     self.sites = ()            # macro invocation locs, innermost first
     self.macro_stack = []
     self.template = None       # kind while expanding a template body
@@ -161,6 +162,12 @@ class Expander:
           if self.p.grid is not None: _err(d, "grid.dup", "grid declared twice")
           self.p.grid = self.const_int(d.n, "grid")
           if self.p.grid < 1: _err(d, "grid.range", "grid must be at least 1")
+        case ConstList():
+          self.declare(d.name, d)
+          values = [self.expr(item, {}) for item in d.values]
+          if not all(isinstance(v, Num) for v in values):
+            _err(d, "const.required", "list elements must be constants")
+          self.const_lists[d.name] = values
         case Const():
           self.declare(d.name, d)
           value = self.expr(d.value, {})
@@ -251,7 +258,15 @@ class Expander:
         _err(e, "attr.unknown", f"unknown attribute {e.base}.{e.attr}")
       case Unary(): return self.fold(Unary(e.op, self.expr(e.x, env), loc))
       case Bin(): return self.fold(Bin(e.op, self.expr(e.a, env), self.expr(e.b, env), loc))
-      case Index(): return Index(self.expr(e.base, env), [self.expr(i, env) for i in e.idx], loc)
+      case Index():
+        base = self.expr(e.base, env)
+        if isinstance(base, Name) and base.id in self.const_lists:
+          values = self.const_lists[base.id]
+          if len(e.idx) != 1: _err(e, "const.index", "a constant list takes one index")
+          index = self.const_int_env(e.idx[0], env, "a constant list index")
+          if not 0 <= index < len(values): _err(e, "const.index", f"index {index} outside {base.id}[{len(values)}]")
+          return replace(values[index], loc=loc)
+        return Index(base, [self.expr(i, env) for i in e.idx], loc)
       case Call(): return self.fold(Call(e.fn, [self.expr(a, env) for a in e.args], loc))
       case Range(): return Range(self.expr(e.lo, env), self.expr(e.hi, env), loc)
     _err(e, "expr.bad", f"not an expression: {type(e).__name__}")
@@ -362,11 +377,18 @@ class Expander:
         self.runtime(s, "loop")
         return [Loop(None if s.count is None else self.expr(s.count, env), self.block(s.body, env), loc)]
       case Repeat():
-        lo, hi = self.const_int_env(s.lo, env, "a repeat bound"), self.const_int_env(s.hi, env, "a repeat count")
+        if s.lo is None:
+          source = self.expr(s.hi, env)
+          if not isinstance(source, Name) or source.id not in self.const_lists:
+            _err(s, "repeat.list", "repeat expects a range or a named constant list")
+          values = self.const_lists[source.id]
+        else:
+          lo, hi = self.const_int_env(s.lo, env, "a repeat bound"), self.const_int_env(s.hi, env, "a repeat count")
+          values = (Num(i) for i in range(lo, hi))
         if s.var is not None and (s.var in self.p.names or s.var in RESERVED): _err(s, "repeat.var", f"repeat index {s.var!r} shadows a file-level or reserved name")
         out = []
-        for k in range(lo, hi):
-          inner = env if s.var is None else env | {s.var: Num(k)}
+        for value in values:
+          inner = env if s.var is None else env | {s.var: value}
           out.append(Block(self.block(s.body, inner), None, loc))
         return out
       case Break() | Continue() | Fence(): return [type(s)(loc)]
