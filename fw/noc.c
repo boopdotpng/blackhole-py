@@ -126,7 +126,8 @@ void noc_mcast(u32 niu, u32 local, u32 remote, u32 rect, u32 exclude, u32 size) 
     c[TARG_LO] = local + done; c[TARG_MID] = 0; c[TARG_COORD] = noc_coord(niu);
     c[RET_LO] = remote + done; c[RET_MID] = 0; c[RET_COORD] = rect;
     c[PACKET_TAG] = 1 << 10;
-    c[CTRL] = WRITE | BROADCAST | STATIC_VC(4);
+    /* Dispatch overlaps worker multicast on VC4 while it installs the next image. */
+    c[CTRL] = WRITE | BROADCAST | STATIC_VC(5);
     c[AT_LEN_BE] = MIN(size - done, NOC_MAX_BURST);
     c[AT_LEN_BE_1] = 0; c[AT_DATA] = 0; c[BRCST_EXCLUDE] = exclude;
     send(c);

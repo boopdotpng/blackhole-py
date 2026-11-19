@@ -29,24 +29,56 @@ g(k=3).wait()                                      # replay with k bound to 3
 
 ## Examples
 
-[examples/llama3.py](examples/llama3.py) runs Llama 3 decode in 90 lines: it loads the checkpoint, compiles the kernels in [examples/llama3](examples/llama3), captures one decode step as a graph and replays it per position. Weights go in `weights/llama3-1b/`, `weights/llama3-8b-bf16/` or `weights/llama3-8b-fp8/`.
+[examples/llama3.py](examples/llama3.py) runs chunked prefill and greedy decode with the kernels in [examples/llama3](examples/llama3). Weights go in `weights/llama3-1b/`, `weights/llama3-8b-bf16/` or `weights/llama3-8b-fp8/`.
 
 ```sh
 python examples/llama3.py --model 1b --tokens 64
 ```
 
-| Model | tok/s (p150a) |
+| Model | Decode tok/s (p150a) |
 | --- | ---: |
 | 1B BF16 | 157.6 |
 | 8B FP8 | 38.1 |
 | 8B BF16 | 29.3 |
 
+[Nanbeige4.3-33B](examples/nanbeige.py) runs greedy decode on one Blackhole card with BFP8_B attention projections,
+BFP4_B MLP projections, and BF16 embeddings, normalization weights, and LM head. Pass the packed safetensors file
+from a directory containing its config.json and tokenizer.json. The example requires the Python tokenizers package.
+
+```sh
+python examples/nanbeige.py --checkpoint ../weights/nanbeige4.3-33b/mixed_bfp4mlp_bfp8attn/model.safetensors --device 0 --prompt "The capital of France is" --tokens 64 --timing
+```
+
+The CLI allocates its BF16 KV cache for the prompt and requested output. The transformer graph handles RoPE, attention, residuals, RMSNorm, and SwiGLU on the card. Generated tokens
+also run the LM head and argmax on the card. The timing option reports cached prompt tokens per second and generated tokens per second separately.
+
+Both runners build the KV cache in chunks. Each chunk runs through all layers, with absolute positions and a causal mask for every query. The final prompt token runs the decode graph and produces the first output token. The Llama runners lazily create a second, tiled copy of the projection weights on the first chunked prompt. Nanbeige reuses the packed decode weights directly.
+
+To compare chunk sizes at a fixed sequence length on card 0, run:
+
+```sh
+python sims/probes/prefill.py nanbeige --length 320 --chunks 32 64 160 320
+```
+
+The probe warms each graph and reports the median of three complete prefix runs. Checkpoint loading, one-time layout conversion, graph capture and first-token readout are excluded. Both example CLIs accept `--prefill-chunk` to set the maximum chunk size.
+
+Warm prefill measured on card 0 (138 worker cores) with a 320-token prefix and one 320-row chunk:
+
+| Model | Prompt tok/s |
+| --- | ---: |
+| Nanbeige4.3-33B mixed BFP | 1,002 |
+| Llama 3 8B BF16 | 2,021 |
+| Llama 3 8B FP8 | 1,861 |
+| Llama 3 1B BF16 | 7,348 |
+
+For a 320-row projection, a sender reads each packed weight block once and multicasts it to the other nine workers computing that output column. Workers computing the same prompt panel share activations across columns. The data movers stage blocks in L1 while the matrix unit consumes the previous block. Short tails of up to eight tokens use an eight-row matrix schedule.
+
 ## Qwen3.8-27B prefill and decode
 
 Run batch-one greedy text generation from the mixed BFP4 MLP / BFP8 attention checkpoint.
 Prefill batches up to 32 prompt tokens per graph and reuses the decode projection weights.
-Each GDN head keeps its FP32 recurrent matrix in worker L1 across the chunk, then saves it for the next chunk or decode.
-Full attention appends the chunk's normalized, rotated keys and its values before evaluating causal queries.
+During prefill, two workers per GDN head update independent halves of its FP32 recurrent matrix in L1. An output kernel normalizes the combined head and applies its gate.
+Full attention appends the chunk’s normalized, rotated keys and its values. BRISC gathers blocks from the KV cache and TRISC2 evaluates the causal queries using FP32 vector arithmetic.
 The last prompt token enters the single-token decoder. Use `--serial` for token-at-a-time prompt processing.
 Use `--checkpoint` for the packed safetensors file and `--metadata` for its original config and tokenizer directory.
 
@@ -63,3 +95,8 @@ The 48 GDN layers use fixed-size state. Chunked prefill also reserves activation
 
 Card 0 processed a 98-token prefix at 99.4 prompt tokens/s, versus 17.8 with serial decode.
 At 512 prefix tokens it reached 67.7 prompt tokens/s. These timings exclude graph capture.
+
+On card 0, a warm 320-token Qwen prefix takes 2.46 s (130 prompt tok/s).
+Dispatcher timings attribute 1.24 s to GDN including its output kernel, 0.61 s to grouped-query attention,
+and 0.48 s to matrix projections. Reproduce the throughput measurement with
+`python sims/probes/prefill.py qwen38 --length 320`.

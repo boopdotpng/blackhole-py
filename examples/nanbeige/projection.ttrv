@@ -82,6 +82,7 @@ fn brisc() {
         for block in 0..KT / BATCH {
             w = cb.reserve matrices, n=BATCH
             if PANELS > 1 {
+                // Receivers reserve the same ring pages before the sender multicasts into them.
                 if panel {
                     noc.inc remote(core.x, core.y - panel, b_ready), by=1, ret=ack, wait
                     loop { if b_sent[0] { break }; fence }
@@ -246,7 +247,7 @@ fn ncrisc() {
     }
     a = cb.reserve activations
     if SHARE_A {
-        // Workers in a column gather disjoint 8K-element stripes into the same L1 layout.
+        // Peers covering the same prompt panel gather disjoint stripes into the same L1 layout.
         // Every sender uses one ordered multicast stream for its data followed by its flag.
         lanes = 10
         if core.x * 10 + 10 > grid.size { lanes = grid.size - core.x * 10 }
