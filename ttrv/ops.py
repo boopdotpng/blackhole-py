@@ -581,10 +581,14 @@ def lower(g, s):
     if dtype != stype or not dtype.endswith("*"):
       g.fail("l1.copy", "expected two L1 pointers of the same type")
     for ptr in (dst, src): g.check_pointer(ptr, align=4, length=4 * words)
-    for i in range(words):
-      reg = g.alloc()
-      g.rv("lw", reg, data, imm=4*i)
-      g.rv("sw", 0, out, reg, imm=4*i)
+    # Up to four loads go out before their stores so the L1 latencies overlap; dst must not overlap src.
+    for first in range(0, words, 4):
+      regs = []
+      for i in range(first, min(first + 4, words)):
+        regs.append(g.alloc())
+        g.rv("lw", regs[-1], data, imm=4*i)
+      for i, reg in zip(range(first, words), regs):
+        g.rv("sw", 0, out, reg, imm=4*i)
     return []
   if ns == "cb":
     return cb(g, s)

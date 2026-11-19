@@ -10,10 +10,12 @@ const SHARE_A = 0
 const PANELS = 1
 const SHARE_W = 1
 const MULTICAST_W = SHARE_W && PANELS > 1   // one DRAM reader per group of token panels
+const DEPTH = 2   // ring blocks in flight per worker; at most PANELS, so a reservation count cannot run a block ahead
 if MULTICAST_W {
-    l1 b_ready: u32[4], keep
-    l1 b_sent: u32[4], keep
+    l1 b_ready: u32[4], keep                 // ring reservations received for the blocks this worker sends
+    l1 b_sent: u32[4], keep                  // per ring slot: the block has landed here (cleared by trisc0)
     l1 ack: u32[4]
+    l1 one: u32[4]
 }
 if SHARE_A { l1 received: u32[16], keep }
 const BITS = 8
@@ -34,20 +36,33 @@ const KT = K / 32
 const X_TAIL = (512 - K % 512) % 512
 const NT = N / 32
 const BATCH = 16
+const BLOCKS = KT / BATCH
+if MULTICAST_W { l1 stage: W[BATCH * 1024] }   // the next block this panel multicasts
 const PORT_WORKERS = 8
+// Decode stripes output columns over adjacent workers so they fetch from different DRAM banks. A multicast prompt
+// gives each column group a contiguous range instead, so a row of RUN adjacent output tiles leaves in one write.
+// Groups start at different points of their ranges so that concurrent weight reads spread over the DRAM banks.
+const RUN = 1 + 3 * MULTICAST_W
 shared { port_id = core.id / PORT_WORKERS % 3
     column_id = core.id / PANELS
     column_workers = grid.size / PANELS
     panel = core.id % PANELS
-    count = (NT + column_workers - 1 - column_id) / column_workers }
+    per = (NT + column_workers - 1) / column_workers
+    first_col = column_id * (1 + (per - 1) * MULTICAST_W)
+    col_step = column_workers - (column_workers - 1) * MULTICAST_W
+    left = (NT - first_col) * (first_col < NT)
+    count = MULTICAST_W * (left - (left - per) * (left > per)) + (1 - MULTICAST_W) * ((NT + column_workers - 1 - column_id) / column_workers)
+    rot = column_id * MULTICAST_W }
 if PREFILL { param rows: u32 }
-l1 line: bf16[32 * (1 + PREFILL * (TILE_ROWS - 1))]
+l1 line: bf16[32 * RUN * (1 + PREFILL * (TILE_ROWS - 1))]
 cb activations: bf16[(1 + (TILE_ROWS - 1) * PREFILL) * K + 1024], pages=1
-cb matrices: W[1024], pages=2 * BATCH
+cb matrices: W[1024], pages=DEPTH * BATCH
 cb results: bf16[1024], pages=2
 sem ready = math_pack, max=1
 
-mop matmul, outer=1, inner=2 {          // two fidelity phases of one 32x32 product
+// BFP4 weights have three mantissa bits, all inside the first fidelity phase: the second would multiply zeros.
+const PHASES = 2 - (BITS == 4)
+mop matmul, outer=1, inner=PHASES {     // PHASES fidelity phases of one 32x32 product
     loop0: replay.run mm_first
     loop1: replay.run mm_second
     last_inner: replay.run mm_second
@@ -76,20 +91,69 @@ if PREFILL {
     }
 }
 
+// Reads W block m (BATCH K tiles of this column's output tile m / BLOCKS) into dst under transaction r.
+macro fetch(dst, m) {
+    fcol = first_col + ((m / BLOCKS + rot) % count) * col_step
+    tile = (((m % BLOCKS) * (BATCH / GROUP)) * NT + fcol) * GROUP
+    if BITS == 16 {
+        for i in 0..BATCH / GROUP {
+            noc.read tileptr(dst, i * GROUP), weights[(tile + i * NT * GROUP) * 1024], port=port_id, n=GROUP * 1024, tid=r
+        }
+    } else {
+        for i in 0..BATCH / GROUP {
+            noc.read tileptr(dst, i * GROUP), weights[tile + i * NT * GROUP], port=port_id, n=GROUP * 1024, tid=r
+        }
+    }
+}
+
 fn brisc() {
-    for j in 0..count {
-        col = column_id + j * column_workers
-        for block in 0..KT / BATCH {
+    if MULTICAST_W {
+        // Block n goes to every panel of the column from panel n % PANELS. Each panel prefetches the next block it
+        // sends into its staging buffer as soon as the last one has left, so all PANELS workers of a column read DRAM.
+        // BRISC only reserves ring slots and tells each block's sender; trisc0 waits for the block's flag. Receivers
+        // therefore run up to DEPTH blocks ahead, and senders multicast as soon as every slot is free.
+        y0 = core.y - panel
+        total = count * BLOCKS
+        one[0] = 1
+        m = panel
+        if m >= total { m = 0 }
+        fcol = 0   // a group without output columns still declares the transaction below
+        if count { fcol = first_col + ((m / BLOCKS + rot) % count) * col_step }
+        tile = (((m % BLOCKS) * (BATCH / GROUP)) * NT + fcol) * GROUP
+        if BITS == 16 { r = noc.read stage, weights[tile * 1024], port=port_id, n=GROUP * 1024 }
+        else { r = noc.read stage, weights[tile], port=port_id, n=GROUP * 1024 }
+        for i in 1..BATCH / GROUP {
+            if BITS == 16 { noc.read tileptr(stage, i * GROUP), weights[(tile + i * NT * GROUP) * 1024], port=port_id, n=GROUP * 1024, tid=r }
+            else { noc.read tileptr(stage, i * GROUP), weights[tile + i * NT * GROUP], port=port_id, n=GROUP * 1024, tid=r }
+        }
+        sends = 0
+        for n in 0..total {
             w = cb.reserve matrices, n=BATCH
-            if MULTICAST_W {
-                // Receivers reserve the same ring pages before the sender multicasts into them.
-                if panel {
-                    noc.inc remote(core.x, core.y - panel, b_ready), by=1, ret=ack, wait
-                    loop { if b_sent[0] { break }; fence }
-                    b_sent[0] = 0
+            sender = n % PANELS
+            if sender == panel {
+                noc.wait r
+                sends = sends + 1
+                // The count only grows during a launch, so an early reservation for a later block cannot be lost.
+                loop { if b_ready[0] >= sends * (PANELS - 1) { break }; fence }
+                for i in 0..BATCH / GROUP {
+                    noc.mcast rect(core.x, y0, core.x, y0 + PANELS - 1, tileptr(w, i * GROUP)), tileptr(stage, i * GROUP), n=GROUP * 1024, include_sender, wait
                 }
+                // Same route and virtual channel as the data, so the flag lands after it.
+                noc.mcast rect(core.x, y0, core.x, y0 + PANELS - 1, b_sent + n % DEPTH), one, n=1, include_sender, wait
+                m = n + PANELS
+                if m < total { fetch!(stage, m) }
+            } else {
+                noc.inc remote(core.x, y0 + sender, b_ready), by=1, ret=ack, wait
             }
-            if MULTICAST_W == 0 || panel == 0 {
+            cb.push matrices, n=BATCH
+        }
+        noc.wait r   // every prefetch is consumed above; this only satisfies the checker
+        b_ready[0] = 0   // every reservation for this worker's blocks has arrived
+    } else {
+        for j in 0..count {
+            col = first_col + j * col_step
+            for block in 0..BLOCKS {
+                w = cb.reserve matrices, n=BATCH
                 tile = ((block * (BATCH / GROUP)) * NT + col) * GROUP
                 if BITS == 16 {
                     r = noc.read w, weights[tile * 1024], port=port_id, n=GROUP * 1024
@@ -103,18 +167,8 @@ fn brisc() {
                     }
                 }
                 noc.wait r
-                if MULTICAST_W {
-                    loop { if b_ready[0] == PANELS - 1 { break }; fence }
-                    b_ready[0] = 0
-                    for i in 0..BATCH / GROUP {
-                        page = tileptr(w, i * GROUP)
-                        noc.mcast rect(core.x, core.y, core.x, core.y + PANELS - 1, page), page, n=GROUP * 1024, wait
-                    }
-                    ack[0] = 1
-                    noc.mcast rect(core.x, core.y, core.x, core.y + PANELS - 1, b_sent), ack, n=1, wait
-                }
+                cb.push matrices, n=BATCH
             }
-            cb.push matrices, n=BATCH
         }
     }
 }
@@ -125,9 +179,38 @@ fn trisc0() {
     if BITS == 16 { unpack.shape a, n=1024, faces=1 } else { unpack.shape a, n=256, faces=4 }
     unpack.shape b, n=1024, faces=1
     a = cb.wait activations
+    landed = 0
     for j in 0..count {
         for block in 0..KT / BATCH {
             w = cb.wait matrices, n=BATCH
+            if MULTICAST_W {
+                loop { if b_sent[landed % DEPTH] { break }; fence }
+                b_sent[landed % DEPTH] = 0
+                landed = landed + 1
+            }
+            if PREFILL {
+                // Bases go through the Tensix stream, so the RISC never waits on an unpack. Prompt tiles are
+                // contiguous in L1 for each k: 32-row activation tiles step by one tile per Z, and so do BF16 weights.
+                // BFP weight tiles each carry their own exponents, so their base is written per tile.
+                if TILE_ROWS == 32 { unpack.base b, a + block * BATCH * 1024, stream }
+                if BITS == 16 { unpack.base a, w, stream }
+                unpack.reset_zw a|b
+                for i in 0..BATCH {
+                    if TILE_ROWS != 32 { unpack.base b, a + (block * BATCH + i) * TILE_ROWS * 32, stream }
+                    if BITS != 16 {
+                        unpack.base a, tileptr(w, i), stream
+                        unpack.reset_zw a
+                    }
+                    if TILE_ROWS != 32 { unpack.reset_zw b }
+                    tensix.stall unpack, srca_clr|srcb_clr
+                    unpack.face b, next_l1_face, dvalid
+                    if BITS == 16 { unpack.face a, next_l1_face, dvalid } else {
+                        repeat 3 { unpack.face a, next_tile_face }
+                        unpack.face a, next_tile_face, dvalid
+                    }
+                }
+                tensix.stall sync, unpack0|unpack1
+            } else {
             for i in 0..BATCH {
                 k = block * BATCH + i
                 unpack.acquire
@@ -145,6 +228,7 @@ fn trisc0() {
                 }
                 tensix.stall sync, unpack0|unpack1
                 unpack.release
+            }
             }
             tensix.wait
             cb.pop matrices, n=BATCH
@@ -177,7 +261,7 @@ fn trisc1() {
             tensix.stall math, srca_vld|srcb_vld
             if PREFILL && SHORT_M {
                 replay.run prompt_phase
-                replay.run prompt_phase
+                if PHASES == 2 { replay.run prompt_phase }
                 math.rwc reset, release=a|b
             } else {
                 mop.run matmul
@@ -202,21 +286,23 @@ fn trisc2() {
     }
 }
 
-macro store_rows(dest, col, width, p) {
-    if PREFILL {
-        // Keep all live row slices in L1 until their shared transaction completes.
-        for r in 0..rows {
-            src = p + (r / 16) * 512 + (r % 16) * 16
-            l1.copy_words line + r * 32, src, n=8
-            l1.copy_words line + r * 32 + 16, src + 256, n=8
-        }
-        base = panel * TILE_ROWS * (((width + 1023) / 1024) * 1024)
-        tx = noc.write dest[base + col], line, n=32
-        for r in 1..rows {
-            noc.write dest[base + r * (((width + 1023) / 1024) * 1024) + col], line + r * 32, n=32, tid=tx
-        }
-        noc.wait tx
-    } else { noc.write dest[col], line, n=32, wait }
+macro store_row(dest, col) { noc.write dest[col], line, n=32, wait }
+
+// Write the gathered run of `run` adjacent output tiles: one request per prompt row.
+macro flush_rows(dest, width) {
+    stride = ((width + 1023) / 1024) * 1024
+    base = panel * TILE_ROWS * stride + run_col
+    tx = noc.write dest[base], line, n=run * 32
+    for r in 1..rows {
+        noc.write dest[base + r * stride], line + r * (32 * RUN), n=run * 32, tid=tx
+    }
+    noc.wait tx
+}
+
+macro flush() {
+    if THIRD { if run_out == 2 { flush_rows!(output3, THIRD) } }
+    if SECOND { if run_out == 1 { flush_rows!(output2, SECOND) } }
+    if run_out == 0 { flush_rows!(output, N - SECOND - THIRD) }
 }
 
 fn ncrisc() {
@@ -264,27 +350,49 @@ fn ncrisc() {
         noc.read a, x[panel * TILE_ROWS * K], n=K * (1 + (TILE_ROWS - 1) * PREFILL) + X_TAIL * (1 - PREFILL), wait
     }
     cb.push activations
-    for j in 0..count {
-        p = cb.wait results
-        if PREFILL == 0 {
+    if PREFILL {
+        run = 0       // output tiles gathered in line
+        run_col = 0   // the run's first column within its output
+        run_out = 0   // which output the run belongs to
+        for j in 0..count {
+            p = cb.wait results
+            col = (first_col + ((j + rot) % count) * col_step) * 32
+            out = 0
+            dcol = col
+            if THIRD { if col >= N - THIRD { out = 2; dcol = col - (N - THIRD) } }
+            if SECOND { if out == 0 { if col >= N - THIRD - SECOND { out = 1; dcol = col - (N - THIRD - SECOND) } } }
+            if run { if out != run_out || run == RUN || dcol != run_col + run * 32 { flush!(); run = 0 } }
+            if run == 0 { run_col = dcol; run_out = out }
+            for r in 0..rows {
+                src = p + (r / 16) * 512 + (r % 16) * 16
+                l1.copy_words line + r * (32 * RUN) + run * 32, src, n=8
+                l1.copy_words line + r * (32 * RUN) + run * 32 + 16, src + 256, n=8
+            }
+            run = run + 1
+            cb.pop results
+        }
+        if run { flush!() }
+    } else {
+        for j in 0..count {
+            p = cb.wait results
             for i in 0..16 {
                 line[i] = p[i]
                 line[i + 16] = p[256 + i]
             }
-        }
-        col = (column_id + j * column_workers) * 32
-        if THIRD {
-            if col >= N - THIRD { store_rows!(output3, col - (N - THIRD), THIRD, p) }
-            else {
-                if col >= N - THIRD - SECOND { store_rows!(output2, col - (N - THIRD - SECOND), SECOND, p) }
-                else { store_rows!(output, col, N - SECOND - THIRD, p) }
+            col = (first_col + j * col_step) * 32
+            if THIRD {
+                if col >= N - THIRD { store_row!(output3, col - (N - THIRD)) }
+                else {
+                    if col >= N - THIRD - SECOND { store_row!(output2, col - (N - THIRD - SECOND)) }
+                    else { store_row!(output, col) }
+                }
+            } else {
+                if SECOND {
+                    if col >= N - SECOND { store_row!(output2, col - (N - SECOND)) }
+                    else { store_row!(output, col) }
+                } else { store_row!(output, col) }
             }
-        } else {
-            if SECOND {
-                if col >= N - SECOND { store_rows!(output2, col - (N - SECOND), SECOND, p) }
-                else { store_rows!(output, col, N - SECOND - THIRD, p) }
-            } else { store_rows!(output, col, N - SECOND - THIRD, p) }
+            cb.pop results
         }
-        cb.pop results
     }
 }

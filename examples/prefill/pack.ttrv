@@ -10,19 +10,24 @@ grid WORKERS
 param x: bf16[]
 param output: bf16[]
 param rows: u32
-l1 raw: bf16[BLOCK]
+l1 raw: bf16[TILE_ROWS * BLOCK]
 l1 tiles: bf16[(BLOCK / 32) * PAGE]
 shared { first, count = split(PANELS * (K / BLOCK)) }
 fn brisc() {
     for task in first..first + count {
         panel = task / (K / BLOCK)
         block = task % (K / BLOCK)
+        // All of the panel's row reads are in flight at once; one wait covers them.
+        rx = noc.read raw, x[panel * TILE_ROWS * STRIDE + block * BLOCK], n=BLOCK
+        for r in 1..rows {
+            noc.read raw + r * BLOCK, x[(panel * TILE_ROWS + r) * STRIDE + block * BLOCK], n=BLOCK, tid=rx
+        }
+        noc.wait rx
         for r in 0..rows {
-            noc.read raw, x[(panel * TILE_ROWS + r) * STRIDE + block * BLOCK], n=BLOCK, wait
             for k in 0..BLOCK / 32 {
                 dest = tiles + k * PAGE + (r / 16) * 512 + (r % 16) * 16
-                l1.copy_words dest, raw + k * 32, n=8
-                l1.copy_words dest + 256, raw + k * 32 + 16, n=8
+                l1.copy_words dest, raw + r * BLOCK + k * 32, n=8
+                l1.copy_words dest + 256, raw + r * BLOCK + k * 32 + 16, n=8
             }
         }
         noc.write output[task * (BLOCK / 32) * PAGE], tiles, n=(BLOCK / 32) * PAGE, wait

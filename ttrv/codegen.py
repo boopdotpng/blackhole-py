@@ -29,6 +29,13 @@ from .emit import Emitter
 from .regalloc import Instruction, allocate
 
 
+def pow2(v):
+  """log2 of a positive power-of-two integer constant, else None."""
+  if isinstance(v, bool) or not isinstance(v, int) or v <= 0 or v & (v - 1):
+    return None
+  return v.bit_length() - 1
+
+
 class Generator(Emitter):
   def __init__(self, p, m, role):
     super().__init__(role)
@@ -199,6 +206,21 @@ class Generator(Emitter):
               self.branch("beq" if op == "&&" else "bne", r, 0, end)
           self.mark(end)
           return r, "u32"
+        if op == "*" and isinstance(a, Num) and not isinstance(b, Num):
+          a, b = b, a
+        if op in ("*", "/", "%") and isinstance(b, Num) and pow2(b.value) is not None and not isinstance(a, Num):
+          # A power-of-two constant: shift or mask instead of mul/divu/remu (divu and remu take up to 33 cycles).
+          x, t = self.expr(a, want)
+          k = pow2(b.value)
+          if op == "*" and t in ("u32", "i32"):
+            return (self.imm("slli", x, k) if k else x), t
+          if t == "u32" and op == "/":
+            return (self.imm("srli", x, k) if k else x), t
+          if t == "u32" and op == "%":
+            mask = b.value - 1
+            return (self.imm("andi", x, mask) if mask < 2048 else self.calc("and", x, self.li(mask))), t
+          y, u = self.expr(b, t if not t.endswith("*") else None)
+          return self.binary(op, x, t, y, u)
         if isinstance(a, Num) and not isinstance(b, Num):
           y, u = self.expr(b)
           x, t = self.expr(a, u)

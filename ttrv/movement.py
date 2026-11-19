@@ -27,7 +27,7 @@ def movement(g, s):
       return
     opts = {
       "shape": ("src", "n faces ctx", ""),
-      "base": ("src p", "ctx", ""),
+      "base": ("src p", "ctx", "stream"),
       "reset_zw": ("src", "", ""),
       "face": ("src", "ctx", "next_l1_face next_tile_face dvalid"),
       "fmt": ("src", "in out shared_exp", "transpose"),
@@ -242,7 +242,8 @@ def unpack(g, s, d, i):
       if not t.endswith("*"):
         g.fail("unpack.pointer", t)
       g.check_pointer(d["p"], 16)
-      unpack_base(g, i, ctx, p)
+      if "stream" in d: unpack_base_stream(g, i, ctx, p)
+      else: unpack_base(g, i, ctx, p)
   elif s.name == "ctx":
     if "count" in d:
       count = number(d["count"], 1, len(u.context_in_format))
@@ -327,6 +328,20 @@ def unpack_shape(g, i, ctx, x, faces):
   if not i:  # TTRV sets the per-context overrides on unpacker A only
     rmw(g, u.dest_address[ctx % 4](64))
     rmw(g, u.tile_x_dim[ctx % 4](x))
+
+
+def unpack_base_stream(g, i, ctx, pointer):
+  """Write the base from the Tensix instruction stream, so no RISC round trip or unpack credit is needed. The config
+  write waits until this unpacker is idle (its earlier UNPACRs have read the old base); later UNPACRs see the new one."""
+  a = g.imm("addi", g.imm("srli", pointer, 4), -1)
+  gpr = hw.GPR_UNPACK_BASE[i]
+  g.mem("sw", hw.INSTRN_BUF, g.calc("or", g.li(isa.tensix("SETDMAREG", RegIndex16b=2 * gpr)), g.imm("slli", g.zext16(a), 8)))
+  runtime_word(g, "SETDMAREG", dict(Payload_SigSelSize=2, RegIndex16b=2 * gpr + 1), "Payload_SigSel", g.imm("srli", a, 16))
+  # C0 (THCON) orders the WRCFG after the SETDMAREGs on Blackhole; UNPACKi keeps it behind this unpacker's work.
+  g.tt("STALLWAIT", isa.Stall.CFG, isa.Wait.THCON | (isa.Wait.UNPACK1 if i else isa.Wait.UNPACK0))
+  g.tt("WRCFG", gpr, 0, hw.UNPACKER[i].base_address[ctx].word)
+  g.tt("NOP")  # an UNPACR needs two instructions between it and the WRCFG of its THCON config
+  g.tt("NOP")
 
 
 def unpack_base(g, i, ctx, pointer):

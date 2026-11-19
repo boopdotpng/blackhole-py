@@ -33,11 +33,11 @@ Batch-one greedy inference on one Blackhole p150a (card 0, 138 workers). Higher 
 
 | Model | Weights | Prefill (tok/s) | Decode (tok/s) |
 | --- | --- | ---: | ---: |
-| Llama 3.2 1B | BF16 | 7,359 | 159.0 |
-| Llama 3 8B | BF16 | 2,019 | 30.1 |
-| Llama 3 8B | BFP8_B | 2,493 | 47.4 |
-| Qwen3.8-27B | Mixed BFP, BFP8_B down | 181 | 17.3 |
-| Nanbeige4.3-33B | Mixed BFP | 1,003 | 19.0 |
+| Llama 3.2 1B | BF16 | 8,555 | 160.6 |
+| Llama 3 8B | BF16 | 2,351 | 30.3 |
+| Llama 3 8B | BFP8_B | 2,981 | 48.3 |
+| Qwen3.8-27B | Mixed BFP, BFP8_B down | 186 | 17.5 |
+| Nanbeige4.3-33B | Mixed BFP | 1,294 | 19.3 |
 
 Each rate is the median of three warm runs on the same fixed token IDs. Prefill measures KV-cache construction for 320 prefix tokens, in one chunk for Llama and Nanbeige and ten 32-token chunks for Qwen. Decode measures the next 32 streamed tokens after the first output. Timings exclude checkpoint loading, compilation, and graph capture. Both mixed checkpoints use BFP8_B attention and BFP4_B MLP gate and up projections. Qwen uses BFP8_B down projections and a BF16 LM head. Nanbeige uses BFP4_B down projections and a BFP8_B LM head. Llama 3 8B BFP8_B packs every attention and MLP projection and the LM head as BFP8_B and keeps embeddings and norms in BF16.
 
@@ -51,11 +51,11 @@ output, median of three warm runs); the one-card column is the table above.
 
 | Model | Weights | 1× p150a decode (tok/s) | 2× p150a decode (tok/s) | Speedup |
 | --- | --- | ---: | ---: | ---: |
-| Llama 3.2 1B | BF16 | 159.0 | 258.1 | 1.62× |
-| Llama 3 8B | BF16 | 30.1 | 52.4 | 1.74× |
-| Llama 3 8B | BFP8_B | 47.4 | 74.3 | 1.57× |
-| Nanbeige4.3-33B | Mixed BFP | 19.0 | 31.3 | 1.65× |
-| Qwen3.8-27B | Mixed BFP, BFP8_B down | 17.3 | 28.8 | 1.66× |
+| Llama 3.2 1B | BF16 | 160.6 | 262.0 | 1.63× |
+| Llama 3 8B | BF16 | 30.3 | 52.7 | 1.74× |
+| Llama 3 8B | BFP8_B | 48.3 | 75.7 | 1.57× |
+| Nanbeige4.3-33B | Mixed BFP | 19.3 | 31.8 | 1.65× |
+| Qwen3.8-27B | Mixed BFP, BFP8_B down | 17.5 | 29.1 | 1.66× |
 
 Reproduce a row with `python eth/tp_rates.py 8b-bfp8`; the other options are `1b`, `8b-bf16`, `nanbeige` and `qwen38`. To generate
 text, run `python eth/llama3_tp.py --model 8b-bf16` (BF16 Llama) or `python eth/nanbeige_tp.py --checkpoint ...` (packed
@@ -105,7 +105,7 @@ python sims/probes/prefill.py nanbeige --length 320 --chunks 32 64 160 320
 
 The probe warms each graph and reports the median of three complete prefix runs. Checkpoint loading, one-time layout conversion, graph capture and first-token readout are excluded. Both example CLIs accept `--prefill-chunk` to set the maximum chunk size.
 
-For a 320-row projection, a sender reads each packed weight block once and multicasts it to the other nine workers computing that output column. Workers computing the same prompt panel share activations across columns. The data movers stage blocks in L1 while the matrix unit consumes the previous block. Short tails of up to eight tokens use an eight-row matrix schedule.
+For a 320-row projection, the ten workers computing an output column take turns reading packed weight blocks: block n is read ahead of time by worker n mod 10 and multicast to the other nine, and the unpacker waits on a per-slot flag, so a column's reads overlap instead of running one block at a time. Each column group owns a contiguous range of output tiles and writes up to four adjacent tiles per prompt row in one request. Workers computing the same prompt panel share activations across columns. The data movers stage blocks in L1 while the matrix unit consumes the previous block. Short tails of up to eight tokens use an eight-row matrix schedule.
 
 ## Qwen3.8-27B prefill and decode
 

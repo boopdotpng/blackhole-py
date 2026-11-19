@@ -177,19 +177,28 @@ def noc(g, s):
     element_size = TYPES[param["type"]][0]
     page_index = g.alloc()
     index = g.condition(remote.idx[0])
+
+    def split(per_page):  # page_index, offset = divmod(index, per_page); offset in units, scaled by the caller
+      if per_page & (per_page - 1) == 0:
+        k = per_page.bit_length() - 1
+        g.rv("srli", page_index, index, imm=k)
+        mask = per_page - 1
+        g.mov(offset, g.imm("andi", index, mask) if mask < 2048 else g.calc("and", index, g.li(mask)))
+      else:
+        n = g.li(per_page)
+        g.rv("divu", page_index, index, n)
+        g.mov(offset, g.calc("remu", index, n))
     if element_size is None:
       tile_bytes = TYPES[param["type"]][1]
       if page == tile_bytes:
         g.mov(page_index, index)
         g.mov(offset, 0)
       else:
-        per_page = g.li(page // tile_bytes)
-        g.rv("divu", page_index, index, per_page)
-        g.rv("mul", offset, g.calc("remu", index, per_page), g.li(tile_bytes))
+        split(page // tile_bytes)
+        g.rv("mul", offset, offset, g.li(tile_bytes))
     else:
-      elements = g.li(page // element_size)
-      g.rv("divu", page_index, index, elements)
-      g.mov(offset, g.scale(g.calc("remu", index, elements), param["type"]))
+      split(page // element_size)
+      g.mov(offset, g.scale(offset, param["type"]))
     def table(port):  # packed y offsets from DRAM_Y0, one nibble per bank; port rotates with the bank
       return sum((ys[int(g.role == "ncrisc") if port is None else (port + bank) % 3] - hw.DRAM_Y0) << (4 * bank)
                  for bank, ys in enumerate(hw.DRAM_PORTS))

@@ -175,6 +175,7 @@ MOP_CFG_WORDS = 9  # MOP expander template: outer, inner, start, end0, end1, loo
 
 # Tensix GPRs (REGFILE) the TTRV lowering reserves. SETDMAREG addresses 16-bit halves (index 2g, 2g+1 = GPR g).
 GPR_PACK_L1_ADDRESS = 12  # packer L1 destination, copied to THCON_SEC0_REG1_L1_Dest_addr by WRCFG
+GPR_UNPACK_BASE = (13, 14)  # unpacker A / B L1 base for `unpack.base ..., stream`, copied to REG3 by WRCFG
 
 # ---------------------------------------------------------------------------------------------------------------------
 # Overlay streams as circular-buffer counters (fw/hw.h). CB n uses stream CB_STREAM0 + n; the producer bumps register
