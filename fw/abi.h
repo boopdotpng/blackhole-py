@@ -4,8 +4,9 @@
 
 /* ---- L1, every Tensix core ---- */
 #define GO_SIGNAL         0x10     /* u32. byte 0: 0x80 = launch, cleared when every RISC returns. bits 8-19: dispatch's NoC coordinate,
-                                    * bit 20: which execution slot to run (GO_SLOT) */
+                                    * bit 20: which execution slot to run (GO_SLOT), bit 21: profile this launch (GO_PROFILE) */
 #define GO_SLOT_BIT       20
+#define GO_PROFILE_BIT    21
 #define SUBORDINATE_SYNC  0x14     /* u8 each for ncrisc, trisc0-2: 2 once booted. NCRISC's byte is also its launch handshake:
                                     * BRISC writes 0x80 = go, NCRISC writes 0 = returned */
 #define LAUNCH_TOKEN      0x18     /* u32: the current launch's token. BRISC writes it, then pushes it to each TRISC's PCBuf;
@@ -13,42 +14,57 @@
                                     * matches, so a token left in a FIFO by an aborted run is dropped. */
 
 /* Resident firmware, one image per RISC. FW_x + 0 boots, FW_x + 4 is where a kernel jumps when it is done. */
-/* [0x20, WORKER_X) holds the five images. Growing it means moving WORKER_X, L1_PARAM_BASE, LAUNCH and so DATA_BASE,
- * which compiled kernels have built in (ttrv reads them from fw/__init__.py). */
-#define FW_BRISC          0x20
-#define FW_BRISC_SIZE     0x380
-#define FW_NCRISC         0x3A0
+/* [0x20, PROFILE_ADDR) holds the five images. Growing it means moving everything after it, and so DATA_BASE,
+ * which compiled kernels have built in (ttrv reads them from fw/__init__.py). Move it in steps of 0x400 so kernel code
+ * and data keep their alignment (the profile record moved it from WORKER_X = 0x8A0). */
+/* Kernels return through jalr x0, imm(x0) (fw.ret), so every FW_x + 4 must be below 0x800: BRISC, the largest, goes last. */
+#define FW_NCRISC         0x20
 #define FW_NCRISC_SIZE    0x100
-#define FW_TRISC0         0x4A0
+#define FW_TRISC0         0x120
 #define FW_TRISC0_SIZE    0x150
-#define FW_TRISC1         0x5F0
+#define FW_TRISC1         0x270
 #define FW_TRISC1_SIZE    0x150
-#define FW_TRISC2         0x740
+#define FW_TRISC2         0x3C0
 #define FW_TRISC2_SIZE    0x150
+#define FW_BRISC          0x510
+#define FW_BRISC_SIZE     0x700
+_Static_assert(FW_BRISC + 4 < 0x800, "kernels cannot return to BRISC firmware");
+
+/* Hardware counters of a profiled launch (GO_PROFILE). Dispatch multicasts PROFILE_ADDR, the NoC address of the
+ * launch's per-core records (host memory), before the GO. BRISC starts the counters before it releases the other RISCs,
+ * stops them once every RISC has returned, fills PROFILE_RECORD and writes it to PROFILE_ADDR + WORKER_ID * 64 before it
+ * signals done. Kernels never see any of this; only the gap between launches grows. Record layout: PROFILE_* below. */
+#define PROFILE_ADDR      0xC10    /* u64 */
+#define PROFILE_RECORD    0xC40    /* 64 bytes, 64-aligned: staged here, written to the host in one NoC write */
+#define PROFILE_RECORD_SIZE 64
+enum { PROFILE_ID, PROFILE_CYCLES, PROFILE_FPU, PROFILE_SFPU, PROFILE_UNPACK, PROFILE_PACK, PROFILE_MATH_STALL,
+       PROFILE_NOC_READ, PROFILE_NOC_WRITE, PROFILE_WORDS };
+_Static_assert(FW_BRISC + FW_BRISC_SIZE <= PROFILE_ADDR, "profile words overlap resident firmware");
+_Static_assert(PROFILE_RECORD % 64 == 0 && PROFILE_WORDS * 4 <= PROFILE_RECORD_SIZE, "profile record");
 
 /* Two execution slots, double buffered: while one launch runs from slot b, dispatch installs the next one into slot b ^ 1.
  * Slot 1 is slot 0 moved up by SLOT_STRIDE, LAUNCH mask included, and starts where slot 0 ends; the GO word says which
  * one to run. Kernels must therefore be position-independent and return through an absolute jump (see fw.ret).
  * L1_PARAM_BASE is shared, below both slots: it is only written when the launch that reads it is released. LAUNCH is an
- * active-role bitmask. Worker L1: firmware, params, slot 0, slot 1, then DATA_BASE.. for kernels. */
+ * active-role bitmask. Worker L1: firmware, profile, params, slot 0, slot 1, then DATA_BASE.. for kernels. */
 /* Published in worker L1 by the startup program, before the first user kernel. */
-#define WORKER_X          0x8A0
-#define WORKER_Y          0x8A4
-#define WORKER_ID         0x8A8
-_Static_assert(FW_TRISC2 + FW_TRISC2_SIZE <= WORKER_X, "worker coordinates overlap resident firmware");
-#define L1_PARAM_BASE     0x8B0
+#define WORKER_X          0xCA0
+#define WORKER_Y          0xCA4
+#define WORKER_ID         0xCA8
+_Static_assert(PROFILE_RECORD + PROFILE_RECORD_SIZE <= WORKER_X, "worker coordinates overlap the profile record");
+#define L1_PARAM_BASE     0xCB0
 #define PARAM_SIZE        0x40     /* 16 words: the launch's arguments (buffer addresses and integer values), bound per run */
-#define LAUNCH            0x8F0
-#define CODE_BRISC        0x900    /* BRISC slot 0x1F00 bytes, to CODE_NCRISC */
-#define CODE_NCRISC       0x2800
-#define CODE_TRISC0       0x4800
-#define CODE_TRISC1       0x6000
-#define CODE_TRISC2       0x7800
+#define LAUNCH            0xCF0
+#define CODE_BRISC        0xD00    /* BRISC slot 0x1F00 bytes, to CODE_NCRISC */
+#define CODE_NCRISC       0x2C00
+#define CODE_TRISC0       0x4C00
+#define CODE_TRISC1       0x6400
+#define CODE_TRISC2       0x7C00
 #define CODE_TRISC_SIZE   0x1800   /* each TRISC slot; fused attention (RoPE, split KV, merge) needs more than 4 KiB */
-#define CODE_END          0x9000
-#define SLOT_STRIDE       (CODE_END - LAUNCH)  /* 0x8710: slot 1 = [LAUNCH, CODE_END) + SLOT_STRIDE = [0x9000, 0x11710) */
+#define CODE_END          0x9400
+#define SLOT_STRIDE       (CODE_END - LAUNCH)  /* 0x8710: slot 1 = [LAUNCH, CODE_END) + SLOT_STRIDE = [0x9400, 0x11B10) */
 #define SLOT_OFFSET(go)   ((go) >> GO_SLOT_BIT & 1 ? SLOT_STRIDE : 0)
-#define DATA_BASE         (CODE_END + SLOT_STRIDE)  /* 0x11710: everything from here up is free for kernels */
+#define DATA_BASE         (CODE_END + SLOT_STRIDE)  /* 0x11B10: everything from here up is free for kernels */
 
 /* Stacks live in each RISC's private local memory, not L1 */
 #define STACK_TOP         0xFFB01FF0
@@ -62,7 +78,12 @@ _Static_assert(FW_TRISC2 + FW_TRISC2_SIZE <= WORKER_X, "worker coordinates overl
 #define PACKET            32
 #define RING_SIZE         0x10000
 
-#define OP_EXEC           0  /* a = dispatcher-local descriptor address, b = dynamic args, c = optional pair of 16-byte profile slots */
+#define OP_EXEC           0  /* a = dispatcher-local descriptor address, b = dynamic args, c = optional pair of 16-byte profile
+                              * slots: dispatch's start and end wall clocks at c + 8 and c + 24. With op_arg EXEC_COUNTERS,
+                              * c is 64-aligned host memory and each worker also writes its PROFILE_RECORD_SIZE counter
+                              * record to c + PROFILE_HEADER + WORKER_ID * PROFILE_RECORD_SIZE. */
+#define EXEC_COUNTERS     1
+#define PROFILE_HEADER    64
 #define OP_COPY           1  /* a = dst, b = src, c = bytes */
 #define OP_WAIT           2  /* until *a >= b, or *a == b if c */
 #define OP_STORE          3  /* *a = b */
@@ -97,6 +118,7 @@ _Static_assert(STATE + STATE_SIZE <= 0x12000, "service-core state must end below
 #define GRAPH_L1          0x12000  /* two GRAPH_CHUNK buffers for OP_CALL */
 #define GRAPH_CHUNK       0x1000
 #define PARAMS_L1         0x14000  /* two PARAM_SIZE dynamic-argument buffers */
+#define PROFILE_L1        (0x14100 + (PROFILE_ADDR & 63))  /* the PROFILE_ADDR word dispatch multicasts */
 #define STAMP_L1          0x15000  /* deferred TIMESTAMPs (dispatch and DMA): STAMP_SLOTS x 64 bytes per NIU */
 #define STAMP_SLOTS       32
 #define STAGE_L1          0x18000  /* two packed program payload buffers, prefetched from DRAM */

@@ -3,7 +3,7 @@
 #include "noc.h"
 
 typedef volatile struct {
-  u32 op, op_arg;  /* op_arg reserved */
+  u32 op, op_arg;  /* op_arg: EXEC flags, else reserved */
   u32 a_lo, a_hi, b_lo, b_hi, c, c_hi;
 } packet;
 

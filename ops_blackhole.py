@@ -53,10 +53,13 @@ class HWQueue:  # 32-byte packets, run in order: each finishes before the next s
   def timestamp(self, addr:int): return self.q(Op.TIMESTAMP, addr + 8)  # same [value, timestamp] layout as a signal
 
 class BlackholeComputeQueue(HWQueue):
-  def exec(self, prg:"BlackholeProgramData", args:int=0, profile:int=0):
-    """Copy code to the workers, launch, and wait for all of them. profile names two 16-byte timestamp slots."""
+  def exec(self, prg:"BlackholeProgramData", args:int=0, profile:int=0, counters:bool=False):
+    """Copy code to the workers, launch, and wait for all of them. profile names two 16-byte timestamp slots. With
+    counters it names a 64-aligned block of host memory: the slots, then from fw.PROFILE_HEADER one fw.PROFILE_RECORD_SIZE
+    record of hardware counters per worker (by WORKER_ID). Counters slow the gap between launches, not the kernel."""
     assert args % 64 == 0 and (args or not prg.args_size) and profile % 16 == 0
-    return self.q(Op.EXEC, prg.addr, args, profile)
+    assert not counters or (profile % 64 == 0 and profile >> 60), "counters need a 64-aligned host profile block"
+    return self.q(Op.EXEC | counters << 32, prg.addr, args, profile)
   def call(self, addr:int, size:int, count:int=1, stride:int=0):
     """Run count command buffers at addr + i * stride. Each buffer contains size bytes of packets."""
     assert 0 < count < 1 << 32 and 0 <= stride < 1 << 32 and (count == 1 or stride >= size and stride % 64 == 0)

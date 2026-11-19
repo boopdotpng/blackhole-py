@@ -149,3 +149,18 @@ void noc_atomic_inc(u32 niu, u32 remote, u32 coord, u32 value) {
   send(c);
   wait_idle(c);
 }
+
+/* Transaction ID 0: TTRV kernels number theirs from 1. */
+void noc_write_host(u32 niu, u32 local, u32 lo, u32 hi, u32 size) {
+  volatile u32 *c = CMD_BUF(niu, WRITE_BUF);
+  wait_idle(c);
+  c[TARG_LO] = local; c[TARG_MID] = 0; c[TARG_COORD] = noc_coord(niu);
+  c[RET_LO] = lo; c[RET_MID] = hi; c[RET_COORD] = PCIE_COORD;
+  c[PACKET_TAG] = 0;
+  c[CTRL] = WRITE | RESP_MARKED | STATIC_VC(1);
+  c[AT_LEN_BE] = size;
+  c[AT_LEN_BE_1] = 0; c[AT_DATA] = 0; c[BRCST_EXCLUDE] = 0;
+  send(c);
+  wait_idle(c);
+  wait_zero(OUTSTANDING(niu, 0));
+}

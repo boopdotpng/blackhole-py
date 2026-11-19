@@ -39,8 +39,15 @@ static void exec(packet *p, packet *next) {
   write32(DONE_COUNT, 0);
   /* Params have one fixed home, which the previous launch may have been reading until it returned */
   if (d[2]) noc_mcast(0, PARAMS(b), L1_PARAM_BASE, d[1], d[7], d[2]);
+  u32 profiled = p->op_arg & EXEC_COUNTERS;
+  if (profiled) {  /* where each worker writes its counter record */
+    u32 lo = p->c + PROFILE_HEADER;
+    write32(PROFILE_L1, lo);
+    write32(PROFILE_L1 + 4, p->c_hi + (lo < PROFILE_HEADER));
+    noc_mcast(0, PROFILE_L1, PROFILE_ADDR, d[1], d[7], 8);
+  }
   noc_mcast_flush(0);
-  write32(GO_WORD, go | b << GO_SLOT_BIT);
+  write32(GO_WORD, go | b << GO_SLOT_BIT | profiled << GO_PROFILE_BIT);
   noc_mcast(0, GO_WORD, GO_SIGNAL, d[1], d[7], 4);
   noc_mcast_flush(0);
   queue_flush(0, 0);

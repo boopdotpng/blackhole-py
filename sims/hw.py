@@ -20,7 +20,7 @@ SYNC, MOP_SYNC, SEMAPHORE = PC_BUFFER + 4, PC_BUFFER + 8, PC_BUFFER + 32
 UNPACK_CREDIT = SEMAPHORE + 5 * 4
 STREAM = 0xFFB40000
 NOC = {"brisc": 0xFFB20000, "ncrisc": 0xFFB30000}
-CORE = {"x": 0x8A0, "y": 0x8A4, "id": 0x8A8}  # fw/abi.h WORKER_X/Y/ID
+CORE = {"x": 0xCA0, "y": 0xCA4, "id": 0xCA8}  # fw/abi.h WORKER_X/Y/ID
 DEBUG_TIMESTAMP = 0xFFB121FC  # kperf/stamps.py: one store appends {token, u64 wall clock} to the L1 ring
 
 AICLK_MHZ = 1350

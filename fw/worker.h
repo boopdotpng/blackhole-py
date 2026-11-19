@@ -34,6 +34,25 @@
  * queues. Polling one back to back slowed the other RISC's NIU register accesses ~5%, and with a backoff between polls
  * a BRISC write of the launch token was lost (NCRISC never saw it; the core hung). */
 
+/* Tensix performance counters (tt-llk tools/include/perf_counters: registers.h, hw.h, blackhole.h). Each bank has three
+ * control registers {reference period, mode | select << 8, start/stop} and two outputs {reference cycles, count}. Every
+ * event of a bank counts at once; the select only picks which one the output shows, so it is written at read time. */
+#define PERF_BASE          0xFFB12000
+#define PERF_INSTRN        0x000     /* bank control offsets */
+#define PERF_UNPACK        0x00C
+#define PERF_FPU           0x018
+#define PERF_PACK          0x0F0
+#define PERF_OUT_INSTRN    0x100     /* bank output offsets: reference cycles, then the selected count */
+#define PERF_OUT_UNPACK    0x108
+#define PERF_OUT_PACK      0x110
+#define PERF_OUT_FPU       0x120
+#define PERF_START         1         /* rising edges: start (and clear), stop */
+#define PERF_STOP          2
+/* NIU_MST status counters, free running: 64-byte flits of read data received, non-posted and posted write data sent */
+#define NIU_COUNTER(niu, i) (0xFFB20200 + (niu) * 0x10000 + (i) * 4)
+#define NIU_READ_FLITS(niu)  read32(NIU_COUNTER(niu, 0x3))
+#define NIU_WRITE_FLITS(niu) (read32(NIU_COUNTER(niu, 0x8)) + read32(NIU_COUNTER(niu, 0x9)))
+
 #define STR_(x) #x
 #define STR(x) STR_(x)
 
