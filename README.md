@@ -35,7 +35,7 @@ then the 32 tokens after the first output, excluding loading and compilation.
 | Model | Checkpoint | Format |
 | --- | --- | --- |
 | Llama 3.2 1B | `weights/llama3-1b/` (2.4 GB) | Hugging Face BF16 |
-| Llama 3 8B | `weights/llama3-8b-bf16/` (15 GB) | Hugging Face BF16, sharded |
+| Llama 3 8B | `weights/llama3-8b-bf16/` (15 GB) | Hugging Face BF16 |
 | Llama 3 8B | `weights/llama3-8b-bfp8/model.safetensors` (8.5 GB) | packed: all projections and LM head BFP8_B |
 | Qwen3.8-27B | `../weights/qwen3.8-27b/mixed_bfp4mlp_bfp8down_bfp8attn/model.safetensors` (25 GB) | packed: attention, linear attention, MLP down BFP8_B; gate, up BFP4_B; LM head BF16 |
 | Nanbeige4.3-33B | `../weights/nanbeige4.3-33b/mixed_bfp4mlp_bfp8attn/model.safetensors` (23 GB) | packed: attention, LM head BFP8_B; all MLP BFP4_B |
