@@ -37,7 +37,7 @@ compile-time `if`, and there are float constants (`1.0 / sqrt(HEAD_DIM)`) and
 
 Resolved in the spec (§4): items 7, 9 and 10. Parameters are now one kind of
 thing, like CUDA kernel arguments: `param x: bf16[]` (buffer address, `host` for
-pinned host memory, indexable as an endpoint) or `param start_pos: u32 in 0..8192`
+pinned host memory, indexable as an endpoint) or `param start_pos: u32`
 (an integer value, like tinygrad's `Variable`, readable on every CPU). The runtime
 binds them per graph run, tinygrad-style. The kernels still use the old forms.
 

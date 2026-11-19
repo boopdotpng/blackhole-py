@@ -1,5 +1,5 @@
 // Gather one row from the checkpoint embedding table: output = weights[history[token_pos]].
-// token_pos is an integer kernel argument, bound by the host before each run (spec §4).
+// token_pos is an integer kernel argument; the host queues a new value before each graph run (spec §4).
 grid 1
 const EMBED_TILES = 2
 const MAX_TOKENS = 8192
@@ -8,7 +8,7 @@ const DIM = 1024 * EMBED_TILES
 param history: u32[]
 param weights: bf16[]
 param output: bf16[]
-param token_pos: u32 in 0..MAX_TOKENS
+param token_pos: u32
 
 l1 ids: u32[16]
 l1 row: bf16[DIM]

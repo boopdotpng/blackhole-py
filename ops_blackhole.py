@@ -44,7 +44,12 @@ class HWQueue:  # 32-byte packets, run in order: each finishes before the next s
     self._q += struct.pack("<4Q", op, a, b, c)
     return self
   def wait(self, signal:BlackholeSignal, value:int): return self.q(Op.WAIT, signal.addr, value)
-  def signal(self, signal:BlackholeSignal, value:int): return self.q(Op.STORE, signal.addr, value)
+  def store(self, addr:int, value:int):
+    """Write 8 bytes to an 8-byte aligned NoC address once every earlier packet has finished, like cuStreamWriteValue64.
+    Used for signals and for argument words that change between graph runs."""
+    assert addr % 8 == 0 and 0 <= value < 1 << 64
+    return self.q(Op.STORE, addr, value)
+  def signal(self, signal:BlackholeSignal, value:int): return self.store(signal.addr, value)
   def timestamp(self, addr:int): return self.q(Op.TIMESTAMP, addr + 8)  # same [value, timestamp] layout as a signal
 
 class BlackholeComputeQueue(HWQueue):
@@ -74,11 +79,14 @@ class BlackholeGraph:
     for offset, step in patches: rows[:, offset // 8] += np.arange(count, dtype=np.uint64) * np.uint64(step)
     self.addr = dev.allocator.upload(rows.tobytes())
 
-  def submit(self, start:int=0, count:int=1, timeout=10.0) -> tuple[int, int]:
-    """Queue instances start..start+count without waiting. Returns (timeline value that marks them retired, submit ns)."""
+  def submit(self, start:int=0, count:int=1, timeout=10.0, before:BlackholeComputeQueue|None=None) -> tuple[int, int]:
+    """Queue instances start..start+count without waiting, after the packets in before (say STOREs of argument
+    words that change between runs). Returns (timeline value that marks them retired, submit ns)."""
     assert 0 <= start and 0 < count and start + count <= self.count
     t = time.perf_counter_ns()
-    q = BlackholeComputeQueue().call(self.addr + start * self.stride, self.size, count, self.stride)
+    q = BlackholeComputeQueue()
+    if before is not None: q._q += before._q
+    q.call(self.addr + start * self.stride, self.size, count, self.stride)
     # Honor the execution timeout if earlier work is still occupying the ring.
     q.signal(self.dev.timeline_signal, value := self.dev.next_timeline()).submit(self.dev, timeout=timeout)
     return value, time.perf_counter_ns() - t

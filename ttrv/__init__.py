@@ -47,7 +47,7 @@ class Kernel:
 
   @property
   def args_size(self):
-    n = sum(2 if d["kind"] == "host" else 1 for d in self.manifest["params"].values())
+    n = max((d["slot"] + (d["kind"] != "dram") + 1 for d in self.manifest["params"].values()), default=0)
     return (n * 4 + 15) & -16
 
   def arguments(self, bindings):
@@ -58,8 +58,8 @@ class Kernel:
     return bytes(blob)
 
   def bind(self, mem, base, bindings):
-    """Write bindings into an argument block at mem[base:]. Rebinding only some parameters (say the integers
-    before each run, tinygrad style) leaves the others as they were."""
+    """Write bindings into an argument block at mem[base:]. Parameters not named keep their current words.
+    Integer values that change between graph runs are written by the queue instead (BlackholeComputeQueue.store_arg)."""
     params = self.manifest["params"]
     if not bindings.keys() <= params.keys():
       raise ValueError(f"unknown parameters {sorted(bindings.keys() - params.keys())}; expected {list(params)}")
@@ -67,10 +67,7 @@ class Kernel:
       d = params[k]
       off = base + d["slot"] * 4
       if d["kind"] == "int":
-        lo, hi = d["range"]
-        if not lo <= v < hi:
-          raise ValueError(f"{k}={v} is outside its range {lo}..{hi}")
-        struct.pack_into("<i" if d["type"] == "i32" else "<I", mem, off, v)
+        struct.pack_into("<Q", mem, off, v & 0xFFFFFFFF)
       elif d["kind"] == "host":
         struct.pack_into("<Q", mem, off, v)
       else:

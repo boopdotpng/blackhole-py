@@ -50,7 +50,7 @@ MAX_STMTS = 200_000
 class Program:
   grid: int
   consts: dict = field(default_factory=dict)      # name -> int
-  params: dict = field(default_factory=dict)      # name -> Param, declaration order (= slot order); range set for integers
+  params: dict = field(default_factory=dict)      # name -> Param, declaration order (= slot order)
   types: dict = field(default_factory=dict)       # type NAME = T: name -> element type name
   l1: dict = field(default_factory=dict)          # name -> Storage
   cbs: dict = field(default_factory=dict)         # name -> Storage
@@ -179,19 +179,13 @@ class Expander:
         case Param():
           self.declare(d.name, d)
           t = self.type(d.type)
-          if t.count is not None or t.ptr: _err(d.type, "param.type", "a parameter is a buffer `T[]` or an integer `u32 in lo..hi`")
+          if t.count is not None or t.ptr: _err(d.type, "param.type", "a parameter is a buffer `T[]` or an integer `u32`/`i32`")
           if t.buf:
-            if d.range is not None: _err(d, "param.range", "a buffer parameter has no range")
             self.p.params[d.name] = replace(d, type=t, opts=self.opts(d.opts))
           else:
             if t.name not in ("u32", "i32"): _err(d.type, "param.type", f"`param {d.name}: {t.name}` is not allowed: a buffer is `{t.name}[]`, an integer is u32 or i32")
-            if d.range is None: _err(d, "param.range", f"integer parameter {d.name} needs a range: `{t.name} in lo..hi`")
-            lo, hi = (self.const_int(e, "a parameter bound") for e in d.range)
-            if not lo < hi: _err(d, "param.range", "empty parameter range")
-            if t.name == "u32" and not (0 <= lo and hi - 1 < 1 << 32) or t.name == "i32" and not (-(1 << 31) <= lo and hi - 1 < 1 << 31):
-              _err(d, "param.range", f"range does not fit {t.name}")
             if d.opts: _err(d, "param.opts", "an integer parameter takes no options")
-            self.p.params[d.name] = replace(d, type=t, opts=[], range=(lo, hi))
+            self.p.params[d.name] = replace(d, type=t, opts=[])
         case Storage():
           self.declare(d.name, d)
           if d.type.count is None or d.type.ptr: _err(d.type, "storage.type", f"{d.kind} storage is declared T[n]")
@@ -431,7 +425,7 @@ class Expander:
           match x:
             case Num() | Attr() | Unary() | Bin(): pass
             case Name() if isinstance(self.p.names.get(x.id), Assign): pass
-            case Name() if (d := self.p.params.get(x.id)) is not None and d.range is not None: pass
+            case Name() if (d := self.p.params.get(x.id)) is not None and not d.type.buf: pass
             case Name(): _err(x, "shared.uniform", f"shared values may read only constants, integer parameters, grid.size, core.* and earlier shared names, not {x.id!r}")
             case Call() if x.fn in EXPR_BUILTINS: self.check_builtin(x)
             case _: _err(x, "shared.uniform", f"`{show_expr(x)}` is not allowed in shared (no element access, device ops or fn calls)")

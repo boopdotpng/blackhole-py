@@ -24,9 +24,10 @@ def options(decl, allowed):
 def layout(p, ceiling=hw.L1_SIZE, scratch_base=fw.DATA_BASE):
   slots, cursor, storage, params = 0, scratch_base, {}, {}
   for name, d in p.params.items():
-    if d.range is not None:  # integer parameter: its value is the slot word
-      params[name] = dict(slot=slots, kind="int", type=d.type.name, range=list(d.range))
-      slots += 1
+    if not d.type.buf:  # integer parameter: its value is the low word of an 8-byte-aligned pair, so one STORE sets it
+      slots += slots & 1
+      params[name] = dict(slot=slots, kind="int", type=d.type.name)
+      slots += 2
     elif "host" in {a.value.id for a in d.opts if a.name is None and hasattr(a.value, "id")}:
       if any(a.name is not None for a in d.opts):
         raise Error(d.loc, "param.opts", "a host buffer takes no options besides `host`")

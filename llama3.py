@@ -1,4 +1,5 @@
 import argparse, json, mmap, struct, time
+from collections import deque
 from pathlib import Path
 import numpy as np
 import fw
@@ -8,7 +9,7 @@ from helpers import round_up, safe_load
 ROOT = Path(__file__).resolve().parent
 KERNELS = ROOT / "kernels"
 MODELS = {"1b": "Llama 3.2 1B", "8b-bf16": "Llama 3 8B BF16", "8b-fp8": "Llama 3 8B FP8"}
-ARGS = 64  # one launch's argument block: 16 words, bound per run
+ARGS = 64  # one launch's argument block: 16 words
 
 def mean(xs): return sum(xs) / len(xs) if xs else float("nan")
 
@@ -166,64 +167,77 @@ class Llama3:
     self.launches = [(name, arguments(name, words)) for name, words in self.launches]
 
   # ---- arguments and graph, built once
-  # Launch arguments are bound per run, as tinygrad binds a captured graph's Variables: one argument set for the
-  # whole launch list, in pinned host memory, which the dispatcher reads as it reaches each EXEC. Buffer addresses
-  # never change, so they are written once here. Each run waits for the previous run to retire (the dispatcher
-  # reads arguments ahead, so they must not change while a run is in flight), writes this position's integers in
-  # place and submits without waiting.
+  # One argument block per launch, in pinned host memory, which the dispatcher copies to the workers as it reaches
+  # each EXEC. Buffer addresses never change and are written once here. The host never writes the blocks again:
+  # each run queues STOREs of the 8-byte argument words whose integers changed (the position and values derived
+  # from it) ahead of its CALL, as cuStreamWriteValue64 before cudaGraphLaunch. They land in queue order, so the host
+  # queues the next run without waiting for the previous one.
   def _build(self):
     m, dev = self.m, self.dev
     self.npos = m["max_tokens"] - 1
     self.host = dev.alloc_host(16 * m["max_tokens"])  # argmax posts token pos + 1 to slot pos + 1
     noc = dev.sysmem.noc_addr + self.host
     assert noc >> 32 == 0x10000000, "argmax's PCIe mid address is compiled in"
-    self.host_lo, self.host_hi = noc & 0xFFFFFFFF, noc >> 32
-    self.args = np.zeros(len(self.launches) * ARGS // 4, np.uint32)
-    at = dev.alloc_host(self.args.nbytes)
+    fixed = dict(argmax_host_address=noc & 0xFFFFFFFF, host_hi=noc >> 32)
+    words, dyn = np.zeros(len(self.launches) * ARGS // 4, np.uint32), {}
+    for i, (_, ws) in enumerate(self.launches):
+      assert len(ws) * 4 <= ARGS
+      for j, w in enumerate(ws):
+        if isinstance(w, str) and w not in fixed: dyn.setdefault(w, []).append(ARGS // 4 * i + j)
+        else: words[ARGS // 4 * i + j] = fixed[w] if isinstance(w, str) else w
+    at = dev.alloc_host(words.nbytes)
     self.args_base = dev.sysmem.noc_addr + at
-    self.args, dyn = np.ndarray(self.args.shape, np.uint32, dev.sysmem.mem, at), {}
-    self.args[:] = 0
-    for i, (_, words) in enumerate(self.launches):
-      assert len(words) * 4 <= ARGS
-      for j, w in enumerate(words):
-        if isinstance(w, str): dyn.setdefault(w, []).append(ARGS // 4 * i + j)
-        else: self.args[ARGS // 4 * i + j] = w
+    np.ndarray(words.shape, np.uint32, dev.sysmem.mem, at)[:] = words
+    self.words = words  # what the argument blocks hold once every queued STORE has landed
     self.dyn = {name: np.array(cols) for name, cols in dyn.items()}
-    # one run: boundary timestamps and optional paired timestamps fused into EXEC, also in pinned host memory
+    # one run: boundary timestamps and optional paired timestamps fused into EXEC, also in pinned host memory. Two
+    # sets, used by alternate runs (graph instances 0 and 1), so one run can be in flight while the host reads the other.
     self.nts = 2 * len(self.launches) + 2 if self.profile else 2
-    at = dev.alloc_host(16 * self.nts)
+    at = dev.alloc_host(2 * 16 * self.nts)
     self.ts_base = dev.sysmem.noc_addr + at
-    self.ts = np.ndarray((2 * self.nts,), np.uint64, dev.sysmem.mem, at)
+    self.ts = np.ndarray((2, 2 * self.nts), np.uint64, dev.sysmem.mem, at)
     self.graph = self._graph(self.prog, self.ts_base)
-    self.in_flight = None  # timeline value that retires the last submitted run
+    self.pending, self.runs = deque(), 0  # (position, instance, timeline value) of queued runs not yet collected
 
   def _graph(self, programs, ts_base):
-    q = BlackholeComputeQueue().timestamp(ts_base)
+    q, patches, step = BlackholeComputeQueue(), [], 16 * self.nts
+    patches.append((len(q._q) + 8, step))
+    q.timestamp(ts_base)
     for i, (name, _) in enumerate(self.launches):
+      if self.profile: patches.append((len(q._q) + 24, step))
       q.exec(programs[name], self.args_base + ARGS * i, ts_base + 16 * (1 + 2 * i) if self.profile else 0)
+    patches.append((len(q._q) + 8, step))
     q.timestamp(ts_base + 16 * (self.nts - 1))
-    return BlackholeGraph(self.dev, q)
+    return BlackholeGraph(self.dev, q, 2, patches)
 
   # ---- a request
-  def _retire(self, rows, timeout=10.0):
-    """Wait for the run in flight, if any, and keep its timestamps (the next run overwrites them)."""
-    if self.in_flight is None: return
-    self.dev.timeline_signal.wait(self.in_flight, timeout)
-    self.in_flight = None
-    rows.append(self.ts[1:2 * self.nts:2].astype(np.int64))
-
-  def _run(self, pos, prompt_len, rows):
-    """One position: wait for the previous run, bind this position's integer arguments in place, submit.
-    Returns (bind ns, submit ns)."""
-    self._retire(rows)
+  def _submit(self, pos, prompt_len):
+    """Queue one position: STOREs for the argument words that change, then the graph. Returns (STORE ns, submit ns)."""
     t = time.perf_counter_ns()
     kvb = self.m["kv_block"]
     val = dict(token_pos=pos, write_pos=pos + 1, write_token=int(pos >= prompt_len - 1), start_pos=pos,
-               kv_blocks=pos // kvb + 1, valid_columns=pos % kvb + 1, argmax_host_address=self.host_lo, host_hi=self.host_hi)
-    for name, cols in self.dyn.items(): self.args[cols] = val[name]
-    bind = time.perf_counter_ns() - t
-    self.in_flight, submit = self.graph.submit()
-    return bind, submit
+               kv_blocks=pos // kvb + 1, valid_columns=pos % kvb + 1)
+    new = self.words.copy()
+    for name, cols in self.dyn.items(): new[cols] = val[name]
+    q = BlackholeComputeQueue()
+    for pair in np.flatnonzero((new != self.words).reshape(-1, 2).any(1)):
+      q.store(self.args_base + 8 * int(pair), int(new[2 * pair]) | int(new[2 * pair + 1]) << 32)
+    self.words, inst = new, self.runs % 2
+    stores = time.perf_counter_ns() - t
+    value, submit = self.graph.submit(inst, before=q)
+    self.pending.append((pos, inst, value))
+    self.runs += 1
+    return stores, submit
+
+  def _collect(self, rows, timeout=10.0):
+    """Wait for the oldest queued run and keep its timestamps (the run after next reuses them). Returns its position."""
+    pos, inst, value = self.pending.popleft()
+    self.dev.timeline_signal.wait(value, timeout)
+    rows.append(self.ts[inst, 1:2 * self.nts:2].astype(np.int64))
+    return pos
+
+  def _drain(self, timeout=10.0):
+    while self.pending: self.dev.timeline_signal.wait(self.pending.popleft()[2], timeout)
 
   def generate(self, ids, tokens=None, *, start=0, on_token=None):
     """Generate until EOS, the optional new-token limit, or the context limit. Returns (generated ids, stats).
@@ -239,17 +253,22 @@ class Llama3:
     self.dev.allocator._copyin(self.buffer(self.m["history"]), hist)
     gen, submit, bind, rows = [], 0, 0, []
     t = time.perf_counter_ns()
-    for p in range(start, n):
-      # Prompt positions run back to back, each waiting only for the previous run, as tinygrad's prefill does.
-      bd, sub = self._run(p, P, rows)
-      bind, submit = bind + bd, submit + sub
-      if p < P - 1: continue
-      self._retire(rows)  # the token at p + 1 is needed now
-      token = struct.unpack_from("<I", self.dev.sysmem.mem, self.host + 16 * (p + 1))[0]
+    p, done = start, False
+    # Two runs in flight: the next position's run reads its token from history on the device, so the host queues it
+    # before reading the current token. After EOS the run already queued finishes and its token is dropped.
+    while not done and (p < n or self.pending):
+      if p < n and len(self.pending) < 2:
+        bd, sub = self._submit(p, P)
+        bind, submit, p = bind + bd, submit + sub, p + 1
+        continue
+      q = self._collect(rows)
+      if q < P - 1: continue
+      token = struct.unpack_from("<I", self.dev.sysmem.mem, self.host + 16 * (q + 1))[0]
       gen.append(token)
       if on_token: on_token(token)
-      if token in self.m["eos"]: break
+      done = token in self.m["eos"]
     wall, n = time.perf_counter_ns() - t, P - 1 + len(gen)
+    self._drain()
     ts = np.stack(rows)  # one row of timestamps per position run by this request, in order
     tick = self.ns_per_tick
     g = ts[P - 1 - start:]  # the positions that generate a token
@@ -267,7 +286,7 @@ class Llama3:
 
   def dispatch_baseline(self, reps=20):
     """us per EXEC for the same launch list with no-op kernels (no STOREs): the cost of dispatch alone."""
-    self._retire([])
+    self._drain()
     if not hasattr(self, "_noop_graph"):
       noop = {name: blackhole_build_program(self.dev, {tuple(c['core']): {} for c in p['per_core']}, self.prog[name].args_size)
               for name, p in self.m['programs'].items()}
@@ -275,7 +294,7 @@ class Llama3:
     per = []
     for _ in range(reps):
       self._noop_graph()
-      t = self.ts[1:2 * self.nts:2].astype(np.int64)
+      t = self.ts[0, 1:2 * self.nts:2].astype(np.int64)  # instance 0
       per.append((t[-1] - t[0]) * self.ns_per_tick / 1e3)
     return mean(per) / len(self.launches), mean(per)
 

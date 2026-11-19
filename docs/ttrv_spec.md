@@ -183,7 +183,7 @@ size of `T[1024]`: bf16 2048, fp32 4096, e4m3 1024, bfp8 1088, bfp4 576.
 ```text
 param weights: bf16[]               // a DRAM buffer of bf16
 param token: u32[], host            // a buffer in pinned host memory
-param start_pos: u32 in 0..8192     // an integer value
+param start_pos: u32                // an integer value
 ```
 
 Parameters are a kernel's arguments, as in a CUDA or OpenCL kernel signature: the
@@ -195,33 +195,28 @@ sees the same values. There are two kinds:
   memory, not a CPU virtual pointer). A buffer parameter is used only as a NoC
   endpoint (`name[i]`, §7), never as a scalar or a pointer. Its length is not
   part of the type; bounds are the host's binding.
-- **Integer parameters**, `param name: u32 in lo..hi` or `i32`: a scalar value,
-  like tinygrad's `Variable(name, lo, hi - 1)`. The range is required, its bounds
-  are constant expressions, and `hi` is exclusive. The host must bind a value in
-  range, and the runtime checks it when binding. The kernel reads the value as a
-  read-only variable of that type, anywhere an expression may appear, including
-  `shared` (§4) and loop bounds. Each read is one load from the launch's argument
-  block, shown in the listing. The compiler may use the range: constant arithmetic
-  over it must fit the type, and it bounds loop counts in diagnostics.
+- **Integer parameters**, `param name: u32` or `i32`: a scalar value, like an
+  `int` argument of a CUDA kernel. The kernel reads it as a read-only variable of
+  that type, anywhere an expression may appear, including `shared` (§4) and loop
+  bounds. Each read is one load from the launch's argument block, shown in the
+  listing.
 
 There are no float parameters. Float launch data, such as FP8 scales, lives in a
 buffer like any other tensor data. Values derived from a parameter (a block count,
 a mask tail) are computed by the kernel, usually in `shared`, not passed separately.
 
 Parameters are placed in declaration order in the launch's argument block: one
-word per integer parameter and per DRAM buffer, two per host buffer, 16 words in
-all. The build manifest maps names to slots. The dispatcher copies the block into
+word per DRAM buffer, two per host buffer, and an 8-byte-aligned pair per integer
+parameter (the value, then zero), 16 words in all. The build manifest maps names to slots. The dispatcher copies the block into
 every worker's L1 before the launch starts.
 
-**Binding (runtime model).** Launches are recorded once into a graph, with their
-parameters left symbolic, as tinygrad does. There is one argument set per graph.
-Before each run, the host waits for the previous run to retire, writes the current
-values (integer parameters such as `start_pos`, and any rebound buffer addresses)
-into that set in place, and resubmits the same command buffer without waiting.
-Values never change while a run is in flight: the dispatcher reads each launch's
-arguments when it reaches that launch, so a mid-run write would give one run mixed
-values. A prompt runs one position per run, like tinygrad's prefill. There are no
-precomputed per-position argument tables.
+**Binding (runtime model).** Launches are recorded once into a graph, each with
+its argument block, as in a CUDA graph. The host writes the blocks once. An integer
+that changes between runs (such as `start_pos`) is updated by a STORE packet queued
+ahead of the run's CALL, like `cuStreamWriteValue64` before `cudaGraphLaunch`: it
+lands after every earlier packet has finished, so the host never waits for a run
+before queuing the next, and a run never sees mixed values. This is why an integer
+parameter occupies an aligned 8-byte pair: one STORE sets it.
 
 A DRAM buffer is interleaved across banks page by page. A page is one `T.tile`
 unless `page=n` declares n whole tiles (`param w: e4m3[], page=2`). Bank
@@ -1146,11 +1141,11 @@ The consolidated design intentionally leaves these audits open:
 6. FP32 data into Dst. Unpack offers FP32 only as `out=bf16|fp16`, and SrcA holds
    at most TF32, so the attention merge's FP32 (O, m, l) states lose mantissa bits
    on the way into Dst. Decide between an unpack-to-Dst path and accepting TF32.
-7. Decided: parameters are host-bound per graph run (§4), so the old argmax's
-   device-side publication of next-token parameters is dropped. Its per-launch
-   zeroing of partial slots becomes `keep` slots with generation counters. Audit
-   remaining: the cost of one host round trip per token versus the old autonomous
-   replay.
+7. Decided: integers that change per graph run are queued STOREs into the
+   argument blocks (§4), so the old argmax's device-side publication of next-token
+   parameters is dropped. Its per-launch zeroing of partial slots becomes `keep`
+   slots with generation counters. Each STORE costs about 0.3 us on the dispatcher,
+   and a value used by L launches needs L STOREs.
 8. `sfpmacro` coverage of the RMSNorm apply macro, which installs an `SFPMUL`
    template through the backdoor `CONFIG0` write.
 

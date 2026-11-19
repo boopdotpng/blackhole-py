@@ -85,12 +85,10 @@ def test_const_if_splices():
   assert prog("grid 1\ntype W = bf16\nconst S = W.size", W="fp32").consts["S"] == 4
 
 def test_params():
-  p = prog("grid 1\nparam a: bf16[]\nparam h: u32[], host\nparam pos: u32 in 0..8192\nshared { blocks = pos / 32 + 1 }\nfn trisc1() { x = blocks }")
-  assert p.params["pos"].range == (0, 8192) and p.params["a"].type.buf
+  p = prog("grid 1\nparam a: bf16[]\nparam h: u32[], host\nparam pos: u32\nshared { blocks = pos / 32 + 1 }\nfn trisc1() { x = blocks }")
+  assert not p.params["pos"].type.buf and p.params["a"].type.buf
   fails("grid 1\nparam a: bf16", "param.type")
-  fails("grid 1\nparam n: u32", "param.range")
-  fails("grid 1\nparam n: u32 in 5..5", "param.range")
-  fails("grid 1\nparam a: bf16[] in 0..4", "param.range")
+  fails("grid 1\nparam n: u32 in 0..8", "parse.syntax")
 
 def test_macro_hygiene():
   p = prog("""
@@ -166,13 +164,10 @@ def test_build_projection():
     assert kernel.manifest["params"]["residual"]["slot"]==3
   emb = pathlib.Path(__file__).parent / "docs/examples/llama3_embedding.ttrv"
   kernel = build(emb.read_text(), {}, str(emb))
-  assert kernel.manifest["params"]["token_pos"] == dict(slot=3, kind="int", type="u32", range=[0, 8192])
+  assert kernel.manifest["params"]["token_pos"] == dict(slot=4, kind="int", type="u32")  # 8-byte aligned for STORE
   blob = bytearray(kernel.args_size)
   kernel.bind(blob, 0, dict(token_pos=77))
-  assert blob[12:16] == (77).to_bytes(4, "little")
-  try: kernel.bind(blob, 0, dict(token_pos=8192))
-  except ValueError: pass
-  else: raise AssertionError("out-of-range binding accepted")
+  assert blob[16:24] == (77).to_bytes(8, "little")
 
 def test_native_unpack_face():
   from ttrv import build, isa

@@ -21,7 +21,7 @@ try:
   obs.start()
   m.generate(ids, 1, start=len(ids) - 1)
   t, v = obs.stop()
-  disp = m.ts[1:2 * m.nts:2].astype(np.int64)  # the last run: position len(ids) - 1
+  disp = m.ts[(m.runs - 1) % 2, 1:2 * m.nts:2].astype(np.int64)  # the last run: position len(ids) - 1
   v, bad = clean(v)
   print(f"rejected {bad} of {v.size} counter reads as misreads")
   tm, bw = bandwidth(t, v)

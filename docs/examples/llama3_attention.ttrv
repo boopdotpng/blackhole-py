@@ -10,7 +10,7 @@
 // The unsplit baseline (partitions=0) is not ported.
 // Grid: KV_HEADS * PARTITIONS workers (64 by default), as the old split attention.
 // Params: buffers q_in, k_in, v_in, cos, sin, key_cache, value_cache, context;
-// integer start_pos (the position of this launch's token, bound per launch).
+// integer start_pos (the position of this launch's token, queued by the host before each run).
 //
 // Worker w handles KV head w / PARTITIONS and all four of its query heads (GQA group 4).
 // Its phase p = w % PARTITIONS visits cache blocks p, p + live, p + 2*live, ... where
@@ -69,7 +69,7 @@ param sin: bf16[]          // [MAX_TOKENS, HEAD_DIM], -sin over the first half o
 param key_cache: bf16[]    // per KV head: 256 blocks x HEAD_TILES tiles of 32 tokens x 32 features
 param value_cache: bf16[]
 param context: bf16[]      // dense [32 * HEAD_DIM]
-param start_pos: u32 in 0..MAX_TOKENS   // this token's position
+param start_pos: u32   // this token's position
 
 shared {
     head = core.id / PARTITIONS

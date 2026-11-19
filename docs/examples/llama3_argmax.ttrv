@@ -19,7 +19,7 @@
 //
 // Params: buffers logits, history, tokens (host); integers start_pos (the position
 // being processed; the token generated here belongs at start_pos + 1) and
-// write_token (nonzero: append it to history). Bound per launch by the runtime.
+// write_token (nonzero: append it to history). Queued by the host before each run.
 //
 // Ties: keys are nonnegative. sfp.minmax keeps the old maximum on equal
 // nonnegative values, and each lane visits its datums in increasing index order
@@ -39,8 +39,8 @@ const TILES = (SPAN + 1023) / 1024    // 2; FP32 Dst holds at most 8 tiles
 param logits: bf16[]                  // dense, VOCAB (written by llama3_lm.ttrv)
 param history: u32[]                  // token ids by position, MAX_TOKENS
 param tokens: u32[], host             // one 16-byte slot per position, MAX_TOKENS + 1 slots
-param start_pos: u32 in 0..MAX_TOKENS
-param write_token: u32 in 0..2        // 1: append the token to history (0 when write_pos == MAX_TOKENS)
+param start_pos: u32
+param write_token: u32                // 1: append the token to history (0 when write_pos == MAX_TOKENS)
 
 shared {
     first, count = split(VOCAB)

@@ -213,12 +213,11 @@ class Const:
   loc: Loc = None
 
 @dataclass
-class Param:      # param x: T[] (buffer) or param n: u32 in lo..hi (integer value)
+class Param:      # param x: T[] (buffer) or param n: u32 (integer value)
   name: str
   type: Type
   opts: list
   loc: Loc = None
-  range: object = None   # (lo, hi) expressions for an integer parameter
 
 @dataclass
 class TypeDecl:   # type NAME = T
@@ -384,12 +383,8 @@ class Parser:
     if w in ("param", "l1", "cb"):
       self.expect(":")
       ty = self.type()
-      rng = None
-      if w == "param" and self.peek().kind == "name" and self.peek().value == "in":
-        self.next()
-        rng = self.range()
       opts = self.opts()
-      return Param(name, ty, opts, loc, rng) if w == "param" else Storage(w, name, ty, opts, loc)
+      return Param(name, ty, opts, loc) if w == "param" else Storage(w, name, ty, opts, loc)
     if w == "sem":
       self.expect("=")
       return Sem(name, self.name("a hardware semaphore name"), self.opts(), loc)
@@ -660,8 +655,7 @@ def show(node, ind: int = 0) -> str:
     case Grid(): return f"{pad}grid {show_expr(node.n) if not isinstance(node.n, int) else node.n}"
     case Const(): return f"{pad}const {node.name} = {show_expr(node.value)}"
     case Param():
-      rng = "" if node.range is None else f" in {show_expr(node.range[0], 1)}..{show_expr(node.range[1], 1)}"
-      return f"{pad}param {node.name}: {show_type(node.type)}{rng}{show_args(node.opts, ', ')}"
+      return f"{pad}param {node.name}: {show_type(node.type)}{show_args(node.opts, ', ')}"
     case TypeDecl(): return f"{pad}type {node.name} = {show_type(node.type)}"
     case Storage(): return f"{pad}{node.kind} {node.name}: {show_type(node.type)}{show_args(node.opts, ', ')}"
     case Sem(): return f"{pad}sem {node.name} = {node.hw}{show_args(node.opts, ', ')}"
