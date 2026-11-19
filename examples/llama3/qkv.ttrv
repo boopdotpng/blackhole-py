@@ -37,18 +37,16 @@ const EPS = 1e-5
 if FP8 {
     grid 96
     type ACT = e4m3                        // weights and the normalized x
-    const WEIGHT_PAGE = 2                  // E4M3 weights: 2 tiles per DRAM page
 } else {
     grid 88
     type ACT = bf16
-    const WEIGHT_PAGE = 1
 }
 
 param x: bf16[]                         // dense token, DIM
 param norm: bf16[]                      // RMSNorm gamma, DIM
-param wq: ACT[], page=WEIGHT_PAGE       // [DIM, DIM]
-param wk: ACT[], page=WEIGHT_PAGE       // [KV_DIM, DIM]
-param wv: ACT[], page=WEIGHT_PAGE
+param wq: ACT[]                         // [DIM, DIM]
+param wk: ACT[]                         // [KV_DIM, DIM]
+param wv: ACT[]
 if FP8 { param scales: fp32[] }         // [input, q, k, v] per-tensor scales, 16 elements read
 param q_out: bf16[]                     // dense, DIM
 param k_out: bf16[]                     // dense, KV_DIM

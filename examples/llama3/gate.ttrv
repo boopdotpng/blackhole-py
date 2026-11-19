@@ -29,7 +29,6 @@ const MLP_TILES = 8
 const DIM = EMBED_TILES * 1024
 const MLP_DIM = MLP_TILES * 1024
 const PHASES = 2 - FP8                 // BF16 multiplies in two fidelity phases, FP8 in one
-const FP8_PAGE_TILES = 2               // FP8 weights: two tiles per 2 KiB DRAM page
 // Two whole weight rows in flight (BF16); FP8 rows are half the bytes, keep 16.
 const WEIGHT_PAGES = (2 * EMBED_TILES) << (3 * FP8)
 const GAMMA = EMBED_TILES * dst.tile   // gamma's first Dst row during RMSNorm
@@ -39,18 +38,16 @@ const EPS = 1e-5
 if FP8 {
     grid 96
     type ACT = e4m3                    // weights and the normalized x
-    const WEIGHT_PAGE = FP8_PAGE_TILES
 } else {
     grid 88
     type ACT = bf16
-    const WEIGHT_PAGE = 1
 }
 
 param x: bf16[]                        // dense [DIM]
 param gamma: bf16[]                    // post-attention RMSNorm weight, dense [DIM]
 param hidden: bf16[]                   // dense [MLP_DIM], always BF16
-param gate_w: ACT[], page=WEIGHT_PAGE  // [MLP_DIM, DIM] row-major
-param up_w: ACT[], page=WEIGHT_PAGE
+param gate_w: ACT[]                    // [MLP_DIM, DIM] row-major
+param up_w: ACT[]
 // [input_scale, output_scale_gate, output_scale_up]: 1 / checkpoint input
 // scale, then input scale * weight scale. Rebound per layer like the weights.
 if FP8 { param scales: fp32[] }

@@ -27,7 +27,7 @@ const FP8 = 0
 if FP8 { type W = e4m3 } else { type W = bf16 }
 
 param context: bf16[]
-param matrix: W[], page=1 + FP8
+param matrix: W[]
 param output: bf16[]
 param residual: bf16[]
 // FP8: [input_scale, output_scale] for this layer. Float data lives in buffers (§4).

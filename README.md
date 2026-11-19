@@ -1,45 +1,42 @@
 # blackhole-py
 
-Llama 3 on a Tenstorrent Blackhole card, from Python. Every decode kernel is written in TTRV (`kernels/*.ttrv`) and compiled at startup against the current firmware.
+Write kernels in TTRV, run them on a Tenstorrent Blackhole card from Python, CUDA style.
+
+```python
+import numpy as np
+from ttrv import Device, Var
+
+with Device(0) as dev:
+  x = dev.array(np.ones(1024, np.float32))           # DRAM buffer, filled from the host
+  y = dev.empty(1024, "fp32")
+  scale = dev.kernel("scale.ttrv", N=1024)           # compile with N defined, install
+  scale(x=x, y=y, k=2)                               # queued; returns at once
+  print(y.numpy())                                   # waits for the device, copies back
+
+  k = Var("k")
+  with dev.graph() as g:                             # launches are recorded, not run
+    scale(x=x, y=y, k=k)
+  g(k=3).wait()                                      # replay with k bound to 3
+```
+
+`dev.array` also takes safetensors tensors (`helpers.safe_load`), so a checkpoint goes to the card as stored.
 
 ## Requirements
 
 - `tt-kmd` >= 2.12.0 (`smi.py` reads telemetry with the `NOC_READ` ioctl, added in 2.12.0)
 - Python with `numpy` and `tiktoken`
 - `clang` and `llvm-objcopy`
-- Weights in `weights/llama3-1b/`, `weights/llama3-8b-bf16/` or `weights/llama3-8b-fp8/`
 
-## Run
+## Examples
+
+[examples/llama3.py](examples/llama3.py) runs Llama 3 decode in 90 lines: it loads the checkpoint, compiles the kernels in [examples/llama3](examples/llama3), captures one decode step as a graph and replays it per position. Weights go in `weights/llama3-1b/`, `weights/llama3-8b-bf16/` or `weights/llama3-8b-fp8/`.
 
 ```sh
-python llama3.py --model 1b --device 0 --tokens 64
-python test_ttrv.py
-python test_ttrv_hardware.py --device 0
-python -m ttrv build kernels/o.ttrv -D EMBED_TILES=4 -o /tmp/llama3-o
+python examples/llama3.py --model 1b --tokens 64
 ```
 
-`models/llama3-<model>/model.json` holds the DRAM buffer layout, the uploads, and the launch list: one entry per launch, naming a kernel and binding its parameters by name. `pos` and `write_token` are bound per run by STOREs queued ahead of the graph's CALL. The O kernel serves both the attention output and the MLP down projection.
-
-A build directory holds a binary and a source-mapped instruction listing for each active RISC, plus a JSON manifest with parameter slots, grid size and L1 placement.
-
-## Use from Python
-
-```python
-kernel = ttrv.build(source)
-program = kernel.install(dev)
-args = dev.allocator.upload(kernel.arguments(bindings)) if kernel.args_size else 0
-BlackholeComputeQueue().exec(program, args).signal(dev.timeline_signal, dev.next_timeline()).submit(dev)
-dev.synchronize()
-```
-
-DRAM buffer parameters bind to allocator addresses with the page size declared in the manifest, host buffers to device-visible pinned addresses, and integer parameters to 32-bit values.
-
-## Performance
-
-Decode on a p150a, 64 tokens after the default prompt (device clock).
-
-| Model | ms/token | tok/s |
-| --- | ---: | ---: |
-| 1B BF16 | 6.35 | 157.6 |
-| 8B FP8 | 26.15 | 38.2 |
-| 8B BF16 | 34.11 | 29.3 |
+| Model | tok/s (p150a) |
+| --- | ---: |
+| 1B BF16 | 157.6 |
+| 8B FP8 | 38.1 |
+| 8B BF16 | 29.3 |

@@ -118,3 +118,10 @@ def compile_program(p, ceiling=hw.L1_SIZE, scratch_base=fw.DATA_BASE):
         raise Error(p.cbs[q].loc, "cb.owner", f"{q} has no {end}")
       m["storage"][q][end] = owners[q, end]
   return Kernel(images, m, listings, p)
+
+
+def __getattr__(name):  # the runtime opens devices; importing ttrv to compile does not need it
+  if name in ("Device", "Var", "Buffer"):
+    from . import runtime
+    return getattr(runtime, name)
+  raise AttributeError(name)
