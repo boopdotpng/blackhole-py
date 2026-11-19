@@ -74,7 +74,7 @@ def floats(t):
 
 
 class Qwen38:
-  def __init__(self, file, metadata, dev, max_tokens, profile=False, tensix=False, *, rank=0, link=None):
+  def __init__(self, file, metadata, dev, max_tokens, profile=False, *, rank=0, link=None):
     cfg = json.loads((metadata / "config.json").read_text())["text_config"]
     self.eos = set(np.atleast_1d(json.loads((metadata / "generation_config.json").read_text())["eos_token_id"]))
     self.vocab_size = cfg["vocab_size"]
@@ -284,8 +284,7 @@ class Qwen38:
     self.prompt = None
     prompt_recipe = tuple(recipe)
     self.slots = 2 * len(cfg["layer_types"])
-    # The former tensix=True API requested serial prompt processing.
-    self.make_prompt = None if tensix else lambda: QwenPrompt(
+    self.make_prompt = lambda: QwenPrompt(
       dev,
       scratch,
       prompt_recipe,
@@ -319,7 +318,7 @@ class Qwen38:
       labels.update({conv: "GDN conv", gated: "GDN gated norm"})
       self.measure = [profile_graph(dev, graph, labels) for graph in (self.step, self.readout)]
 
-  def generate(self, ids, count, *, chunked=True):
+  def generate(self, ids, count):
     end = len(ids) + count - 1
     if not ids or count < 1 or end > self.max_tokens:
       raise ValueError("invalid prompt or generation length")
@@ -327,7 +326,7 @@ class Qwen38:
       raise ValueError("token ID outside checkpoint vocabulary")
     self.history.copy_from(np.pad(np.uint32(ids), (0, self.history.shape[0] - len(ids))))
     out = self.tokens.numpy()
-    prefix = len(ids) - 1 if chunked and self.make_prompt and len(ids) > 2 else 0
+    prefix = len(ids) - 1 if len(ids) > 2 else 0
     if prefix:
       if self.prompt is None:
         self.prompt = self.make_prompt()
@@ -351,14 +350,14 @@ class Qwen38TP:
     self.prompt = None
     self.measure = self.ranks[0].measure
 
-  def generate(self, ids, count, *, chunked=True):
+  def generate(self, ids, count):
     first = self.ranks[0]
     end = len(ids) + count - 1
     if not ids or count < 1 or end > first.max_tokens or any(t < 0 or t >= first.vocab_size for t in ids):
       raise ValueError("invalid tokens or generation length")
     for rank in self.ranks:
       rank.history.copy_from(np.pad(np.uint32(ids), (0, rank.history.shape[0] - len(ids))))
-    prefix = len(ids) - 1 if chunked and len(ids) > 2 else 0
+    prefix = len(ids) - 1 if len(ids) > 2 else 0
     if prefix:
       from examples.qwen38_prefill import CHUNK
       for rank in self.ranks:
@@ -396,11 +395,9 @@ if __name__ == "__main__":
   ap.add_argument("--metadata", type=Path, default=METADATA, help="directory with config and tokenizer")
   ap.add_argument("--prompt", default="The capital of France is")
   ap.add_argument("--tokens", type=int, default=8)
-  ap.add_argument("--serial", action="store_true", help="use single-token decode for the prompt")
   ap.add_argument("--profile", action="store_true", help="print dispatcher timings for the prefix and last decode step")
   ap.add_argument("--tp", type=int, choices=(1, 2), default=1, help="tensor-parallel ranks (two uses TT-link)")
   ap.add_argument("--device", type=int, default=0)
-  ap.add_argument("--tensix", action="store_true", help=argparse.SUPPRESS)  # former serial Tensix mode
   args = ap.parse_args()
   tok = Tokenizer.from_file(str(args.metadata / "tokenizer.json"))
   ids = tok.encode(args.prompt, add_special_tokens=False).ids
@@ -425,7 +422,7 @@ if __name__ == "__main__":
     else:
       model = Qwen38(args.checkpoint, args.metadata, dev, capacity, args.profile)
     generated = []
-    for token in model.generate(ids, args.tokens, chunked=not (args.serial or args.tensix)):
+    for token in model.generate(ids, args.tokens):
       last = time.perf_counter()
       if not generated:
         start = last
