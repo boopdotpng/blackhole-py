@@ -40,7 +40,7 @@ TENSIX_CFG = 0xFFEF0000           # TENSIX_CFG_BASE: Config words, u32 each (wor
 # lowering indexes UNPACKER[i].out_data_format instead of building a name. These views look names up once, at import:
 # a wrong name fails when the module loads.
 
-UNPACK_A_CONTEXTS, UNPACK_B_CONTEXTS = 8, 2   # unpacker B on contexts 2..7 hangs the card (docs/ttrv_cfg.md)
+UNPACK_A_CONTEXTS, UNPACK_B_CONTEXTS = 8, 2   # unpacker B on contexts 2..7 hangs the card
 
 
 class Unpacker(NamedTuple):

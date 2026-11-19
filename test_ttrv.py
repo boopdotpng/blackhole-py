@@ -3,7 +3,7 @@ import pathlib
 from ttrv.parse import Error, parse, show, Assign, Op, Block, Name
 from ttrv.expand import expand
 
-EXAMPLE = pathlib.Path(__file__).parent / "docs/examples/llama3_o.ttrv"
+EXAMPLE = pathlib.Path(__file__).parent / "kernels/o.ttrv"
 
 def prog(src, **defines): return expand(parse(src, "t.ttrv"), defines)
 
@@ -162,7 +162,7 @@ def test_build_projection():
     assert kernel.manifest["storage"]["weights"]["pages"]==tiles*2
     assert kernel.manifest["storage"]["dot"]["consumer"]=="ncrisc"
     assert kernel.manifest["params"]["residual"]["slot"]==3
-  emb = pathlib.Path(__file__).parent / "docs/examples/llama3_embedding.ttrv"
+  emb = pathlib.Path(__file__).parent / "kernels/embedding.ttrv"
   kernel = build(emb.read_text(), {}, str(emb))
   assert kernel.manifest["params"]["token_pos"] == dict(slot=4, kind="int", type="u32")  # 8-byte aligned for STORE
   blob = bytearray(kernel.args_size)

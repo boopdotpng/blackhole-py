@@ -12,7 +12,7 @@ def bf16(a):
 
 
 def projection(dev, tiles):
-  path = Path(__file__).parent / "docs/examples/llama3_o.ttrv"
+  path = Path(__file__).parent / "kernels/o.ttrv"
   kernel = build(path.read_text(), {"EMBED_TILES": tiles}, str(path))
   program = kernel.install(dev)
   dim = 1024 * tiles

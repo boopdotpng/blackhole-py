@@ -52,14 +52,14 @@ class Kernel:
 
   def arguments(self, bindings):
     """The launch's argument block: DRAM buffer addresses from the device allocator, device-visible host addresses,
-    and integer values (checked against their declared range)."""
+    and integer values."""
     blob = bytearray(self.args_size)
     self.bind(blob, 0, bindings)
     return bytes(blob)
 
   def bind(self, mem, base, bindings):
     """Write bindings into an argument block at mem[base:]. Parameters not named keep their current words.
-    Integer values that change between graph runs are written by the queue instead (BlackholeComputeQueue.store_arg)."""
+    Integer values that change between graph runs are written by queued STOREs instead (BlackholeComputeQueue.store)."""
     params = self.manifest["params"]
     if not bindings.keys() <= params.keys():
       raise ValueError(f"unknown parameters {sorted(bindings.keys() - params.keys())}; expected {list(params)}")
