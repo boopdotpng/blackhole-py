@@ -7,6 +7,7 @@ from .parse import parse, Error
 from .expand import expand, Program
 from .layout import layout
 from .codegen import Generator
+from . import hw
 
 
 @dataclass
@@ -27,7 +28,7 @@ class Kernel:
     if not fw.DATA_BASE <= scratch_base <= ceiling:
       raise ValueError("invalid worker scratch base")
     if scratch_base != fw.DATA_BASE or (
-      any(v.get("keep") for v in self.manifest["storage"].values()) and ceiling != 0x180000
+      any(v.get("keep") for v in self.manifest["storage"].values()) and ceiling != hw.L1_SIZE
     ):
       kernel = compile_program(self.program, ceiling, scratch_base)
     m = kernel.manifest
@@ -94,7 +95,7 @@ def build(source, defines=None, file="<string>"):
   return compile_program(p)
 
 
-def compile_program(p, ceiling=0x180000, scratch_base=fw.DATA_BASE):
+def compile_program(p, ceiling=hw.L1_SIZE, scratch_base=fw.DATA_BASE):
   m = layout(p, ceiling, scratch_base)
   images = {}
   listings = {}
@@ -113,7 +114,7 @@ def compile_program(p, ceiling=0x180000, scratch_base=fw.DATA_BASE):
         raise Error(p.cbs[end[0]].loc, "cb.owner", f"{end} has multiple owners")
       owners[end] = role
   if unpack_credit and application_credit:
-    raise Error(application_credit, "sem.reserved", "unpack.move owns unpack_sync")
+    raise Error(application_credit, "sem.reserved", "unpack credit operations own unpack_sync")
   for q in p.cbs:
     for end in ("producer", "consumer"):
       if (q, end) not in owners:

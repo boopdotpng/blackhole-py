@@ -174,6 +174,17 @@ def test_build_projection():
   except ValueError: pass
   else: raise AssertionError("out-of-range binding accepted")
 
+def test_native_unpack_face():
+  from ttrv import build, isa
+  ops = "unpack.face a, next_l1_face, dvalid; unpack.face b, next_l1_face, dvalid"
+  image = build("grid 1\nfn trisc0() { " + ops + " }").images["trisc0"]
+  # Exported gate UNPACR words for SrcA and SrcB. Each face is exactly one slot.
+  words = (0x420080c1, 0x428080c1)
+  assert b"".join(isa.inline(w).to_bytes(4, "little") for w in words) in image
+  src = "grid 1\nmop pair, outer=4, inner=1 { start: " + ops.replace("; ", "; loop0: ") + " }"
+  kernel = build(src + "\nfn trisc0() { mop.load pair; mop.run pair }")
+  assert kernel.listing["trisc0"].count("  MOP ") == 1
+
 def test_backend_checks():
   from ttrv import build
   replay="replay r { sfp.nop }\n"
@@ -181,6 +192,9 @@ def test_backend_checks():
     (replay+"fn trisc1(){ if core.x { replay.load r }; replay.run r }","state.required"),
     (replay+"fn f(){ replay.run r }\nfn trisc1(){ f() }","state.required"),
     ("fn f(){ if core.x { return core.y } }\nfn brisc(){ x=f() }","state.required"),
+    ("fn trisc0(){ unpack.face a|b }","unpack.face"),
+    ("fn trisc0(){ unpack.face b, ctx=2 }","arg.range"),
+    ("mop m { loop0: unpack.move a, core.x }\nfn trisc0(){ mop.load m }","template.body"),
     ("fn brisc(){ sfp.nop }","op.role"),
     ("l1 a: u32[16]\nparam b: u32[]\nfn trisc1(){ noc.read a, b[0], n=1, wait }","op.role"),
     ("fn trisc1(){ math.addrmod s, slot=0, dst+=2 }","math.addrmod"),

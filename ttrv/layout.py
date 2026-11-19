@@ -1,6 +1,7 @@
 """Allocate the firmware parameter block and worker L1 in declaration order."""
 
 import fw
+from . import hw
 from .expand import TYPES
 from .parse import Error, Num, Name
 
@@ -20,7 +21,7 @@ def options(decl, allowed):
   return out
 
 
-def layout(p, ceiling=0x180000, scratch_base=fw.DATA_BASE):
+def layout(p, ceiling=hw.L1_SIZE, scratch_base=fw.DATA_BASE):
   slots, cursor, storage, params = 0, scratch_base, {}, {}
   for name, d in p.params.items():
     if d.range is not None:  # integer parameter: its value is the slot word
@@ -33,7 +34,7 @@ def layout(p, ceiling=0x180000, scratch_base=fw.DATA_BASE):
       slots += 2
     else:
       page = options(d, {"page"}).get("page", 1) * TYPES[d.type.name][1]
-      if page <= 0 or page > 16384:
+      if page <= 0 or page > hw.NOC_MAX_BURST:
         raise Error(d.loc, "param.page", "invalid DRAM page size")
       params[name] = dict(slot=slots, kind="dram", type=d.type.name, page=page)
       slots += 1

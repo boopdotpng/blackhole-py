@@ -220,7 +220,7 @@ macro round_fp8_step() {
 // Too long for the 32-word replay buffer next to the others: a RISC loop issues it.
 macro round_fp8_tile() {
     math.rwc reset
-    repeat 4 {
+    loop 4 {
         loop 8 { round_fp8_step!() }
         math.rwc dst=cr+8
         math.rwc dst=cr+8
@@ -251,7 +251,7 @@ macro dot_rows(n) {
         }
         sfp.mov l0, l7
         reduce_l0!()
-        if FP8 { sfp.mul l0, l0, l6; sfp.nop }
+        if FP8 { sfp.mul l0, l0, l14; sfp.nop }
         sfp.store dst[0], l0, fmt=fp32; sfp.nop
         tensix.stall sync, math|sfpu
         sem.inc dst_full
@@ -334,11 +334,11 @@ fn trisc1() {
     math.addrmod step, slot=1, srca+=8, srcb+=8, dst+=8
     math.addrmod rewind, slot=2, srca=0, srcb=0, dst=cr+0, fidelity+=1
     math.addrmod next_face, slot=3, srca=0, srcb=0, dst=c+8, fidelity=0
+    sfpmacro.load scale_x
     replay.load square
     replay.load apply_pair
     replay.load accumulate
     if FP8 { replay.load scale_input }
-    sfpmacro.load scale_x
 
     // RMSNorm. Dst tiles [0, E) = x, [E, 2E) = gamma, FP32.
     sem.stall math|sfpu|sync, dst_full, notmax
@@ -395,12 +395,12 @@ fn trisc1() {
     // Projections: one dot product per owned row, q then k then v.
     math.cfg dst_offset=0
     mop.load dot_face
-    // FP8: l6 = this projection's output scale; the dot loop leaves l6 alone.
-    if FP8 { sfp.li l6, sc[1], fmt=fp32 }
+    // FP8: keep the output scale in l14 across the lane reduction's transpose.
+    if FP8 { sfp.const l14, sc[1], fmt=fp32 }
     dot_rows!(q_count)
-    if FP8 { sfp.li l6, sc[2], fmt=fp32 }
+    if FP8 { sfp.const l14, sc[2], fmt=fp32 }
     dot_rows!(kv_count)
-    if FP8 { sfp.li l6, sc[3], fmt=fp32 }
+    if FP8 { sfp.const l14, sc[3], fmt=fp32 }
     dot_rows!(kv_count)
 }
 

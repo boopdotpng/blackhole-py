@@ -164,7 +164,9 @@ macro copy_tile(t) {
 }
 
 macro fill_tile(t, value) {
-    repeat a in 0..32 { sfp.store dst[t * dst.tile + 2 * a], value, fmt=fp32 }
+    math.rwc reset
+    loop 32 { sfp.store dst[t * dst.tile], value, fmt=fp32, addr=sfp_step }
+    math.rwc reset
 }
 
 // ---- SFPU arithmetic
@@ -405,12 +407,12 @@ fn brisc() {
                 }
             }
             // Append the row to the caches: 16 features per face row.
-            // GAP: 32-byte DRAM writes whose L1 and DRAM offsets differ modulo 64 (§12 item 4).
+            // Write from the patched tile so the L1 and DRAM offsets agree modulo 64.
             for f in 0..HEAD_TILES {
                 for h in 0..2 {
-                    at = first + f * 1024 + (r >> 4) * 512 + h * 256 + (r & 15) * 16
-                    noc.write key_cache[at], rw + f * 32 + h * 16, n=16, wait
-                    noc.write value_cache[at], rw + HEAD_DIM + f * 32 + h * 16, n=16, wait
+                    at = f * 1024 + (r >> 4) * 512 + h * 256 + (r & 15) * 16
+                    noc.write key_cache[first + at], kp + at, n=16, wait
+                    noc.write value_cache[first + at], vp + at, n=16, wait
                 }
             }
             cb.pop rows
@@ -629,8 +631,8 @@ fn trisc2() {
     if phase == 0 {
         sem.stall tdma|pack|sync, dst_ready, nonzero
         pack.fmt in=fp32, out=bf16
-        p = cb.reserve merged
-        repeat t in 0..HEAD_TILES { pack.move p + t * 1024, dst[t * dst.tile] }
+        out = cb.reserve merged
+        repeat t in 0..HEAD_TILES { pack.move out + t * 1024, dst[t * dst.tile] }
         tensix.stall sync, pack0
         tensix.wait
         cb.push merged
@@ -645,7 +647,7 @@ fn ncrisc() {
 
     // Query tiles: row g of tile f is head g's features 32f..32f+31; other rows zero.
     q = cb.reserve query, n=HEAD_TILES
-    for i in 0..HEAD_TILES * 1024 { q[i] = 0.0 }  // GAP: float literal stored to a bf16 element (§2 allows floats only in device-op operands)
+    for i in 0..HEAD_TILES * 1024 { q[i] = 0.0 }
     res = cb.wait result
     for g in 0..GROUP {
         for f in 0..HEAD_TILES {

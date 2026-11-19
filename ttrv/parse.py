@@ -121,6 +121,20 @@ class If:        # also a file-level declaration whose branches hold declaration
   loc: Loc = None
 
 @dataclass
+class Alias:
+  name: str
+  value: object
+  loc: Loc = None
+
+@dataclass
+class SfpRegion:
+  kind: str
+  operand: object
+  body: list
+  orelse: list
+  loc: Loc = None
+
+@dataclass
 class While:
   cond: object
   body: list
@@ -428,6 +442,17 @@ class Parser:
     if labels and self.at(":", 1):
       self.next(); self.next()
       return Label(w, self.stmt(False), loc)
+    if w == "alias":
+      self.next()
+      name = self.name("an alias")
+      self.expect("=")
+      return Alias(name, self.expr(), loc)
+    if w == "sfp" and self.at(".", 1) and self.peek(2).value in ("if", "index"):
+      self.next(); self.next()
+      kind = self.next().value
+      if kind == "if":
+        return self.if_(self.stmt, loc, lambda c, b, o, l: SfpRegion("if", c, b, o, l))
+      return SfpRegion(kind, self.expr(), self.block(self.stmt), [], loc)
     if w in KEYWORDS:
       self.next()
       if w == "if": return self.if_(lambda: self.stmt(labels), loc)
@@ -470,7 +495,7 @@ class Parser:
     if len(targets) == 1 and isinstance(targets[0], Call): return targets[0]
     self.fail("expected an assignment, call, device operation or keyword", t)
 
-  def if_(self, item, loc):
+  def if_(self, item, loc, node=If):
     cond, body, orelse = self.expr(), self.block(item), []
     save = self.i
     self.skip_nl()
@@ -478,10 +503,10 @@ class Parser:
       eloc = self.next().loc
       if self.at_word("if"):
         self.next()
-        orelse = [self.if_(item, eloc)]
+        orelse = [self.if_(item, eloc, node)]
       else: orelse = self.block(item)
     else: self.i = save
-    return If(cond, body, orelse, loc)
+    return node(cond, body, orelse, loc)
 
   def at_op(self): return self.peek().kind == "name" and self.peek().value in NAMESPACES and self.at(".", 1)
 
@@ -609,6 +634,9 @@ def show(node, ind: int = 0) -> str:
   pad = "  " * ind
   def blk(body): return "{\n" + "".join(show(s, ind + 1) + "\n" for s in body) + pad + "}"
   match node:
+    case Alias(): return f"{pad}alias {node.name} = {show_expr(node.value)}"
+    case SfpRegion():
+      return f"{pad}sfp.{node.kind} {show_expr(node.operand)} {blk(node.body)}" + (f" else {blk(node.orelse)}" if node.orelse else "")
     case Assign(): return f"{pad}{', '.join(show_expr(t) for t in node.targets)} {node.op} {show_expr(node.value)}"
     case Op(): return pad + show_op(node)
     case Call(): return pad + show_expr(node)

@@ -1,6 +1,6 @@
 # blackhole-py
 
-Llama 3 on a Tenstorrent Blackhole card, from Python. The default runner uses the prebuilt RISC-V images in `kernels/`. Pass `--ttrv` to compile the embedding and BF16 residual projections from source.
+Llama 3 on a Tenstorrent Blackhole card, from Python. The default runner uses the prebuilt RISC-V images in `kernels/`. Pass `--ttrv` to compile all eight decode stages from source.
 
 ## Requirements
 
@@ -11,13 +11,13 @@ Llama 3 on a Tenstorrent Blackhole card, from Python. The default runner uses th
 
 ## Compile and run a TTRV kernel
 
-TTRV is in progress. The [language specification](docs/ttrv_spec.md) is being finished first and the compiler will be rewritten after it. Today the compiler builds the embedding and O/down kernels; the other Llama 3 kernels in [docs/examples](docs/examples) are written against the spec but do not compile yet, and [the gaps doc](docs/ttrv_gaps.md) lists the open language questions.
+The compiler builds the Llama 3 decode kernels for the 1B, 8B BF16 and 8B FP8 checkpoints. The [kernel sources](docs/examples) use the same O projection for the attention output and MLP down stages.
 
 ```sh
 python -m ttrv build docs/examples/llama3_o.ttrv -D EMBED_TILES=4 -o /tmp/llama3-o
 python test_ttrv.py
 python test_ttrv_hardware.py --device 1
-python llama3.py --model 1b --device 1 --tokens 64 --ttrv
+python llama3.py --model 1b --device 0 --tokens 64 --ttrv
 ```
 
 The build directory contains a binary and a source-mapped instruction listing for each active RISC, plus a JSON manifest with parameter slots, grid size, and L1 placement. Building and inspecting the images requires only Python. The hardware regression runs the O projection on 88 workers, compares every output row with a CPU reference, and checks persistent storage, remote atomics, multicast, SFPU macros and pack formats.
@@ -31,8 +31,6 @@ args = dev.allocator.upload(kernel.arguments(bindings)) if kernel.args_size else
 BlackholeComputeQueue().exec(program, args).signal(dev.timeline_signal, dev.next_timeline()).submit(dev)
 dev.synchronize()
 ```
-
-The mixed Llama3 graph uses TTRV for embedding, O, and down on the BF16 checkpoints. On the FP8 checkpoint it uses TTRV for embedding. Compiled scratch starts above the resident tables and attention state used by the other kernels.
 
 Workers read their column, row and index from firmware and their arguments from one parameter block per launch. `llama3.py` binds the integer arguments (the token position and values derived from it) before each run, as tinygrad binds a graph's Variables. The [language specification](docs/ttrv_spec.md) describes device operations and the remaining hardware audits.
 

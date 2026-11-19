@@ -1,6 +1,5 @@
 // Llama3 greedy sampling: token = argmax(logits), lowest token ID on ties.
 // Port of blackhole-py-old/examples/llama3/kernels.py argmax and ttko/argmax.py.
-// Not compiled yet: uses the §10 SFPU operations (sfp.if, sfp.index) the backend lacks.
 //
 // One source for 1B, 8B and 8B FP8: the vocabulary (128256) and the BF16 logits are
 // the same in all three; -D FP8=1 only selects the 96-worker grid the old FP8

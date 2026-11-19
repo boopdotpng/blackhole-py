@@ -1,6 +1,6 @@
-"""Lexically allocated RV32IM code. Operands are (register, scalar or pointer type)."""
+"""Virtual-register RV32IM code. Operands are (register, scalar or pointer type)."""
 
-from contextlib import contextmanager
+import struct
 import fw
 from . import hw, isa
 from .parse import (
@@ -26,6 +26,7 @@ from .parse import (
 )
 from .expand import TYPES
 from .emit import Emitter
+from .regalloc import Instruction, allocate
 
 
 class Generator(Emitter):
@@ -34,9 +35,10 @@ class Generator(Emitter):
     self.p, self.m, self.base = p, m, hw.bases(role)
     self.functions, self.owners, self.addrmods, self.replays = {}, {}, {}, {}
     self.events, self.initial, self.completions, self.ends = {}, set(), set(), {}
-    self.call_sites, self.moves, self.allocations = [], {}, []
+    self.next_register, self.allocations = 32, []
     self.app_unpack_sem = None
     self.unpack_credit = False
+    self.predicate_depth = 0
     self.tid = 0
     from .sfpmacro import prepare
 
@@ -52,22 +54,13 @@ class Generator(Emitter):
     raise Error(self.loc, id, msg)
 
   def alloc(self, name="temporary"):
-    for r in range(1, 32):
-      if r not in self.busy:
-        self.busy[r] = name
-        self.used.add(r)
-        if name != "temporary":
-          self.allocations.append((len(self.items), self.fn_name, r, name))
-        return r
-    self.fail("register.full", f"no free register: {self.busy}")
+    r = self.next_register
+    self.next_register += 1
+    if name != "temporary": self.allocations.append((len(self.items), r, name))
+    return r
 
-  @contextmanager
-  def temps(self):
-    old = self.busy.copy()
-    try:
-      yield
-    finally:
-      self.busy = old
+  def rv(self, op, rd=0, a=0, b=0, imm=0):
+    self.items.append((Instruction(op, rd, a, b, imm), self.loc))
 
   def li(self, n, rd=None):
     if rd is None:
@@ -94,21 +87,18 @@ class Generator(Emitter):
     return r
 
   def mem(self, op, addr, r=None):
-    scratch = None
     for base, value in {0: 0, **self.base}.items():
       if -2048 <= addr - value < 2048:
         break
     else:
       off = (addr + 2048) % 4096 - 2048
-      base = scratch = self.li(addr - off)
+      base = self.li(addr - off)
       value = addr - off
     if r is None:
       r = self.alloc()
       self.rv(op, r, base, imm=addr - value)
     else:
       self.rv(op, 0, base, r, imm=addr - value)
-    if scratch:
-      del self.busy[scratch]
     return r
 
   def tt(self, op, *args, **kw):
@@ -117,10 +107,18 @@ class Generator(Emitter):
     except ValueError as e:
       self.fail("arg.range", str(e))
 
+  def ttsync(self, check):
+    """Wait on a ManualTTSync check register: store (orders earlier stores), load, then consume the load with an ALU
+    instruction so no other PC_BUF load starts before it returns (hardware bug, ManualTTSync.md)."""
+    self.mem("sw", check, 0)
+    self.imm("andi", self.mem("lw", check), 0)
+
   def drain(self):
-    with self.temps():
-      self.mem("sw", hw.SYNC, 0)
-      self.imm("andi", self.mem("lw", hw.SYNC), 0)
+    """Block until every Tensix instruction this thread has issued has finished."""
+    self.ttsync(hw.COPROCESSOR_DONE_CHECK)
+
+  def zext16(self, r):
+    return self.imm("srli", self.imm("slli", r, 16), 16)
 
   def mov(self, d, s):
     if d != s:
@@ -129,6 +127,10 @@ class Generator(Emitter):
   def expr(self, e, want=None):
     match e:
       case Num(n):
+        if want in ("bf16", "fp32", "fp16"):
+          bits = int.from_bytes(struct.pack("<e" if want == "fp16" else "<f", n), "little")
+          if want == "bf16": bits = (bits + 0x7fff + ((bits >> 16) & 1)) >> 16
+          return self.li(bits), want
         if type(n) != int:
           self.fail("type.literal", "integer expected")
         t = e.dtype or want or "u32"
@@ -302,35 +304,25 @@ class Generator(Emitter):
       end = self.calc("divu", self.calc("mul", self.imm("addi", core, 1), n), grid)
       return [(first, "u32"), (self.calc("sub", end, first), "u32")]
     if isinstance(e, Call) and e.fn in self.functions:
-      args, returns, link, _ = self.functions[e.fn]
-
-      def move(dst_fn, dst, src_fn, src):
-        self.moves[len(self.items)] = (dst_fn, dst, src_fn, src)
-        self.rv("addi")  # filled after all call sites have been collected
-
+      args, returns, link = self.functions[e.fn]
       for expr, (dest, t) in zip(e.args, args):
         r, u = self.expr(expr, t)
-        if u != t:
-          self.fail("call.type", f"expected {t}, got {u}")
-        move(e.fn, dest, self.fn_name, r)
+        if u != t: self.fail("call.type", f"expected {t}, got {u}")
+        self.mov(dest, r)
       self.jump(e.fn, link)
       values = []
       for source, t in returns:
         dest = self.alloc()
-        move(self.fn_name, dest, e.fn, source)
+        self.mov(dest, source)
         values.append((dest, t))
-      self.call_sites.append((self.fn_name, e.fn, self.busy.copy(), self.loc))
       return values
     return [self.expr(e)]
 
   def block(self, body):
     old = self.env.copy()
-    with self.temps():
-      for s in body:
-        self.loc = s.loc
-        with self.temps():
-          self.stmt(s)
-        self.busy.update({r: k for k, (r, t) in self.env.items()})
+    for s in body:
+      self.loc = s.loc
+      self.stmt(s)
     self.env = old
 
   def stmt(self, s):
@@ -393,8 +385,7 @@ class Generator(Emitter):
         self.jump(self.exit)
       case If(c, body, other):
         alt, end = object(), object()
-        with self.temps():
-          self.branch("beq", self.condition(c), 0, alt)
+        self.branch("beq", self.condition(c), 0, alt)
         self.block(body)
         self.jump(end)
         self.mark(alt)
@@ -410,17 +401,15 @@ class Generator(Emitter):
         count = isinstance(s, For) or isinstance(s, Loop) and s.count is not None
         if count:
           i, limit = self.alloc(), self.alloc()
-          with self.temps():
-            self.mov(i, self.condition(s.lo) if isinstance(s, For) else 0)
-            self.mov(limit, self.condition(s.hi if isinstance(s, For) else s.count))
+          self.mov(i, self.condition(s.lo) if isinstance(s, For) else 0)
+          self.mov(limit, self.condition(s.hi if isinstance(s, For) else s.count))
           if isinstance(s, For):
             self.env[s.var] = i, "u32"
         self.mark(start)
         if count:
           self.branch("bgeu", i, limit, end)
         elif isinstance(s, While):
-          with self.temps():
-            self.branch("beq", self.condition(s.cond), 0, end)
+          self.branch("beq", self.condition(s.cond), 0, end)
         self.loops.append((end, step))
         self.block(s.body)
         self.loops.pop()
@@ -438,7 +427,7 @@ class Generator(Emitter):
     return r
 
   def generate(self):
-    # Callees first for result types. Physical assignment runs in reverse order.
+    # Emit callees first to establish their parameter and result registers.
     order = []
 
     def visit(k):
@@ -477,8 +466,6 @@ class Generator(Emitter):
       self.mark(name)
       self.loc = fn.loc
       self.env = {}
-      self.used = set()
-      self.busy = {r: "base" for r in self.base}
       self.loops = []
       self.exit = object()
       link = 0 if name == self.role else self.alloc("link")
@@ -491,9 +478,8 @@ class Generator(Emitter):
 
         init_buffers(self, noc_kinds)
         for cursor, address in sorted(cursors.items()):
-          with self.temps():
-            self.mem("sw", cursor, self.li(address))
-            self.mem("sw", cursor + 4, 0)
+          self.mem("sw", cursor, self.li(address))
+          self.mem("sw", cursor + 4, 0)
       for k, t in fn.params:
         self.env[k] = self.alloc(k), t.name + ("*" if t.ptr else "")
       args = list(self.env.values())
@@ -510,44 +496,9 @@ class Generator(Emitter):
         self.rv("jalr", 0, link)
       else:
         self.word(int.from_bytes(fw.ret(self.role), "little"))
-      self.functions[name] = args, list(zip(self.results, self.return_types or [])), link, self.used
-    self.resolve_registers(order)
+      self.functions[name] = args, list(zip(self.results, self.return_types or [])), link
     from .state import verify
 
     verify(self)
+    allocate(self)
     return self.finish()
-
-  def resolve_registers(self, order):
-    """Choose physical registers from the complement of every live caller (including ancestors)."""
-    fixed = {r: r for r in (0, *self.base)}
-    unavailable = {name: set(fixed) for name in order}
-    mapping = {}
-    for name in reversed(order):
-      available = sorted(set(range(1, 32)) - unavailable[name])
-      used = sorted(self.functions[name][3])
-      if len(used) > len(available):
-        raise Error(
-          self.p.fns[name].loc,
-          "register.full",
-          f"{name} needs {len(used)} registers; callers reserve {sorted(unavailable[name])}",
-        )
-      regs = mapping[name] = fixed | dict(zip(used, available))
-      for caller, callee, live, _ in self.call_sites:
-        if name == caller:
-          unavailable[callee].update(unavailable[name] | {regs[r] for r in live})
-    for name in order:
-      regs = mapping[name]
-      for pc in range(self.labels[name], self.ends[name] + 1):
-        item, loc = self.items[pc]
-        if pc in self.moves:
-          dst, d, src, r = self.moves[pc]
-          item = isa.rv("addi", mapping[dst][d], mapping[src][r])
-        elif isinstance(item, tuple):
-          op, a, b, target = item
-          item = op, (mapping[target][a] if op == "jal" and a else regs[a]), regs[b], target
-        elif isinstance(item, int) and item & 3 == 3 and name != self.role:
-          op, fields = isa.rv_decode(item)
-          item = isa.rv(op, **{k: regs[v] if k in ("rd", "rs1", "rs2") else v for k, v in fields.items()})
-        self.items[pc] = item, loc
-    for pc, fn, r, var in self.allocations:
-      self.notes.setdefault(pc, []).append(f"{var}=x{mapping[fn][r]}")

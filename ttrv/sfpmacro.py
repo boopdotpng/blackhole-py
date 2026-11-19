@@ -3,10 +3,9 @@
 from . import isa
 from .layout import options
 from .parse import Name, Num, Index
-from .ops import bind, number, keyword, required, operand, REG, addr, row, field_word
+from .ops import bind, number, keyword, required, operand, REG, addr, row, field_word, SFP_FORMAT as FORMATS
 
 UNITS = ("simple", "mad", "round", "store")
-FORMATS = {"fp32": 3, "bf16": 2, "fp16": 1, "i32": 4}
 
 
 def prepare(g):

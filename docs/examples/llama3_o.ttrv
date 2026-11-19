@@ -1,7 +1,7 @@
 // Llama3 O and down projections: output = residual + W @ context.
 // Compiled and checked on p150 by test_ttrv_hardware.py at both BF16 dimensions.
 // 1B: EMBED_TILES=2, 8B BF16: EMBED_TILES=4, 8B FP8: EMBED_TILES=4 FP8=1.
-// FP8 (not yet compiled: needs math.mova2d and the §10 SFPU instructions):
+// FP8:
 // E4M3 weights; x is scaled by input_scale and rounded to E4M3 on the SFPU
 // before the dot products, and each dot result is multiplied by output_scale.
 // Runs on the first 88 workers; split() spreads the rows over them.
@@ -27,7 +27,7 @@ const FP8 = 0
 if FP8 { type W = e4m3 } else { type W = bf16 }
 
 param context: bf16[]
-param matrix: W[]
+param matrix: W[], page=1 + FP8
 param output: bf16[]
 param residual: bf16[]
 // FP8: [input_scale, output_scale] for this layer. Float data lives in buffers (§4).
@@ -179,17 +179,17 @@ fn brisc() {
 
 fn trisc0() {
     unpack.fmt a|b, in=bf16
-    v = cb.wait x  // BF16: kept for the whole kernel, never popped
     if FP8 {
+        input = cb.wait x
         // Each context tile goes to SrcA whole; math copies it to Dst for the SFPU.
         for tile in 0..INPUT_TILES {
-            unpack.move a, v + tile * 1024, n=1024, dvalid
+            unpack.move a, input + tile * 1024, n=1024, dvalid
         }
         tensix.wait
         cb.pop x
         unpack.fmt a|b, in=e4m3
         v = cb.wait xq               // the quantized vector replaces x from here on
-    }
+    } else { v = cb.wait x }
     loop count {
         for tile in 0..INPUT_TILES {
             w = cb.wait weights

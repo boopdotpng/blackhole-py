@@ -130,6 +130,35 @@ fn brisc() {
   print("multicast and remote atomic: exact", flush=True)
 
 
+def register_pressure(dev):
+  # Keep 40 independent values live through two calls, a branch and a back edge.
+  definitions = "\n".join(f"v{i} = words[{i}]" for i in range(40))
+  total = " + ".join(f"v{i}" for i in range(40))
+  kernel = build(f"""grid 2
+l1 words: u32[41]
+fn increment(x) {{ return x + 1 }}
+fn twice(x) {{ y = increment(x); z = increment(y); return z }}
+fn brisc() {{
+  {definitions}
+  n = 0
+  loop 3 {{
+    if core.id {{ n = twice(n) }} else {{ n = increment(n) }}
+  }}
+  words[40] = n + {total}
+}}
+""")
+  program = kernel.install(dev)
+  assert "spill[" in kernel.listing["brisc"]
+  base = program.manifest["storage"]["words"]["address"]
+  for core in dev.workers[:2]:
+    dev.iface.write(core, base, np.arange(40, dtype="<u4").tobytes())
+  BlackholeComputeQueue().exec(program).signal(dev.timeline_signal, dev.next_timeline()).submit(dev)
+  dev.synchronize()
+  for i, core in enumerate(dev.workers[:2]):
+    assert dev.iface.read32(core, base + 160) == sum(range(40)) + 3 * (1 + i)
+  print("register spills across nested calls and loop branches: exact", flush=True)
+
+
 def persistent_storage(dev):
   kernel = build("""grid 3
 l1 visits: u32[2], keep
@@ -228,6 +257,7 @@ if __name__ == "__main__":
   args = parser.parse_args()
   dev = BlackholeDevice(f"BLACKHOLE:{args.device}")
   try:
+    register_pressure(dev)
     persistent_storage(dev)
     paged_transfer(dev)
     device_protocols(dev)

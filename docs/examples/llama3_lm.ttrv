@@ -206,10 +206,10 @@ fn trisc1() {
     math.addrmod step, slot=1, srca+=8, srcb+=8, dst+=8
     math.addrmod rewind, slot=2, srca=0, srcb=0, dst=cr+0, fidelity+=1
     math.addrmod next_face, slot=3, srca=0, srcb=0, dst=c+8, fidelity=0
+    sfpmacro.load scale_x
     replay.load square
     replay.load apply_pair
     replay.load accumulate
-    sfpmacro.load scale_x
 
     // RMSNorm. Dst tiles [0, E) = x, [E, 2E) = gamma, FP32.
     sem.stall math|sfpu|sync, dst_full, notmax

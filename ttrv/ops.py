@@ -1,7 +1,8 @@
 """Device operand binding and Blackhole instruction recipes."""
 
 import struct
-from . import isa, hw
+from . import isa, hw, cfg
+from .field import Space, words
 from .parse import Name, Bin, Index, Num, Error
 from .expand import SEMS
 from .layout import options
@@ -69,14 +70,13 @@ def cb_resource(g, s):
     g.fail("cb.name", q)
   item = g.m["storage"][q]
   producer = s.name in ("reserve", "push")
-  return d, item, q, hw.PRIVATE + 16 * item["cb"] + 8 * int(producer)
+  return d, item, q, hw.cb_cursor(item["cb"], producer)
 
 
 def cb(g, s):
   d, item, q, cursor = cb_resource(g, s)
   cap = item["pages"]
-  pushed = hw.STREAM + ((8 + item["cb"]) << 12) + 32
-  popped = pushed + 8
+  pushed, popped = hw.cb_pushed(item["cb"]), hw.cb_popped(item["cb"])
   if s.name == "read":
     mode = flags(required(d, "mode", s), {"pushed": 0, "popped": 1})
     return [(g.mem("lhu", popped if mode else pushed), "u32")]
@@ -91,8 +91,7 @@ def cb(g, s):
   n = g.condition(n)
   own = g.mem("lw", cursor + 4)
   if s.name in ("push", "pop"):
-    new = g.calc("add", own, n)
-    new = g.imm("srli", g.imm("slli", new, 16), 16)
+    new = g.zext16(g.calc("add", own, n))  # stream counters are 16 bits
     g.mem("sw", cursor + 4, new)
     ptr = g.calc("add", g.mem("lw", cursor), g.calc("mul", n, g.li(item["page"])))
     inside = object()
@@ -108,7 +107,7 @@ def cb(g, s):
   g.mark(loop)
   other = g.mem("lhu", popped if producer else pushed)
   occ = g.calc("sub", own, other) if producer else g.calc("sub", other, own)
-  occ = g.imm("srli", g.imm("slli", occ, 16), 16)
+  occ = g.zext16(occ)
   free = g.calc("sub", g.li(cap), occ) if producer else occ
   g.branch("bltu", free, n, loop)
   g.rv("fence")
@@ -119,7 +118,9 @@ SRC = {"none": 0, "a": 1, "b": 2}
 UNITS = {k.lower(): v for k, v in isa.Stall.__members__.items()}
 WAIT = {k.lower(): v for k, v in isa.Wait.__members__.items()}
 REG = {k.lower(): v for k, v in isa.LReg.__members__.items() if v < 16} | {f"l{i}": i for i in range(12, 15)}
-FMT = {"bf16": 5, "fp16": 1, "fp32": 0, "bfp8": 6, "bfp4": 7, "e4m3": 10, "e5m2": 10}
+FMT = hw.FORMAT
+SFP_FORMAT = {"fp32": isa.SfpuFormat.FP32, "bf16": isa.SfpuFormat.BF16, "fp16": isa.SfpuFormat.FP16,
+              "i32": isa.SfpuFormat.INT32}  # SFPLOAD / SFPSTORE instr_mod0
 
 
 def operand(e, table):
@@ -148,10 +149,42 @@ def sfp(g, s):
     "store": "dst a",
     "li": "rd value",
     "const": "rd value",
+    "shr": "rd a n", "sar": "rd a n", "shift": "rd a b", "abs": "rd a mode",
+    "minmax": "rd a", "and": "rd a b", "or": "rd a b", "xor": "rd a b",
+    "iadd": "rd a n", "isub": "rd a n", "cast": "rd a", "recip": "rd a",
+    "exexp": "rd a", "exman": "rd a", "setexp": "rd a n", "setsgn": "rd a n",
+    "rnd": "rd a", "addi": "rd a n",
   }
+  if name in ("begin_if", "otherwise", "end_if", "begin_index", "end_index"):
+    if name == "begin_if":
+      e = s.args[0].value
+      if not isinstance(e, Bin): g.fail("sfp.condition", "expected a comparison")
+      if g.predicate_depth: g.tt("SFPPUSHC")
+      else: g.tt("SFPENCC", 1, 0, 0, 2)
+      g.predicate_depth += 1
+      a = operand(e.a, REG)
+      if isinstance(e.b, Num) and e.b.value == 0:
+        g.tt("SFPSETCC", 0, a, 0, {"<":0, "!=":2, ">=":4, "==":6}[e.op])
+      else:
+        b = operand(e.b, REG)
+        vc, vd = (a,b) if e.op in ("<", ">=") else (b,a)
+        g.tt("SFPGT" if e.op in ("<", ">") else "SFPLE", 0, vc, vd, 1)
+    elif name == "otherwise": g.tt("SFPCOMPC")
+    elif name == "end_if":
+      g.predicate_depth -= 1
+      if g.predicate_depth: g.tt("SFPPOPC")
+      else: g.tt("SFPENCC", 0, 0, 0, 2)
+    elif name == "begin_index":
+      # LaneConfig bit 2 pairs the index registers, bit 3 captures Dst addresses.
+      g.index_bits = operand(s.args[0].value, {"capture":0x0c, "paired":4})
+      g.tt("SFPCONFIG", g.index_bits, 15, 3)
+    else: g.tt("SFPCONFIG", 65535 ^ g.index_bits, 15, 5)
+    return
   if name not in signatures:
     g.fail("sfp.op", name)
-  d = bind(s, signatures[name], "fmt addr" if name in ("load", "store") else "fmt" if name in ("li", "const") else "")
+  optional = {"load":"fmt addr", "store":"fmt addr", "li":"fmt", "const":"fmt", "rnd":"to", "exman":"hidden", "setexp":"from"}
+  switches = {"mul":"neg", "mad":"neg_ab neg_c"}
+  d = bind(s, signatures[name], optional.get(name, ""), switches.get(name, ""))
   for k in signatures[name].split():
     required(d, k, s)
   regs = {k: operand(d[k], REG) for k in ("rd", "a", "b", "c") if k in d}
@@ -164,16 +197,47 @@ def sfp(g, s):
   if rd > 7:
     g.fail("sfp.dest", "destination must be l0..l7")
   a, b, c = (regs.get(k, 0) for k in "abc")
-  if name == "mov":
+  if name in ("shr", "sar"):
+    g.tt("SFPSHFT", -number(d["n"], 0, 31) & 4095, a, rd, 7 if name == "sar" else 5)
+  elif name == "shift":
+    if a != rd: g.fail("sfp.operand", "shift requires its destination as first input")
+    g.tt("SFPSHFT", 0, b, rd)
+  elif name in ("and", "or"): g.tt("SFP" + name.upper(), a, b, rd, 1)
+  elif name == "xor":
+    if a != rd: g.fail("sfp.operand", "xor requires its destination as first input")
+    g.tt("SFPXOR", 0, b, rd)
+  elif name == "minmax": g.tt("SFPSWAP", 0, a, rd, 1)
+  elif name == "abs": g.tt("SFPABS", 0, a, rd, operand(d["mode"], {"int":0, "float":1}))
+  elif name in ("iadd", "isub", "setexp", "setsgn"):
+    e = d["n"]
+    imm = isinstance(e, Num)
+    if not imm and operand(e, REG) != rd: g.fail("sfp.operand", "expected destination register")
+    if name in ("iadd", "isub"):
+      if imm and name == "isub": g.fail("sfp.operand", "isub requires a register")
+      g.tt("SFPIADD", number(e,-2048,2047) & 4095 if imm else 0, a, rd, 4 | int(imm) | (name == "isub") << 1)
+    else:
+      mode = operand(d["from"], {"fp32":2, "int":0}) if "from" in d else 0
+      g.tt("SFP" + name.upper(), number(e,0,255 if name == "setexp" else 1) if imm else 0, a, rd, mode | int(imm))
+  elif name == "cast": g.tt("SFPCAST", a, rd)
+  elif name == "recip": g.tt("SFPARECIP", 0, a, rd)
+  elif name == "exexp": g.tt("SFPEXEXP", 0, a, rd)
+  elif name == "exman": g.tt("SFPEXMAN", 0, a, rd, 1 - number(d.get("hidden",Num(1)),0,1))
+  elif name == "rnd": g.tt("SFP_STOCH_RND", 0, 0, 0, a, rd, operand(d["to"], {"bf16":1, "fp16":0}))
+  elif name == "addi":
+    if rd != a or not isinstance(d["n"], Num): g.fail("sfp.operand", "addi requires rd, rd, immediate")
+    bits = int.from_bytes(struct.pack("<f", d["n"].value), "little")
+    if bits & 65535: g.fail("sfp.operand", "expected exact BF16 immediate")
+    g.tt("SFPADDI", bits >> 16, rd)
+  elif name == "mov":
     g.tt("SFPMOV", 0, a, rd)
   elif name == "shft2":
     g.tt("SFPSHFT2", 0, a, rd, operand(d["mode"], {"rotate": 3}))
   elif name == "add":
     g.tt("SFPADD", 10, a, b, rd)
   elif name == "mul":
-    g.tt("SFPMUL", a, b, 9, rd)
+    g.tt("SFPMUL", a, b, 9, rd, int("neg" in d))
   elif name == "mad":
-    g.tt("SFPMAD", a, b, c, rd)
+    g.tt("SFPMAD", a, b, c, rd, int("neg_ab" in d) | int("neg_c" in d) << 1)
   elif name in ("nop", "transp"):
     g.tt("SFP" + name.upper())
   elif name in ("li", "const"):
@@ -199,10 +263,37 @@ def sfp(g, s):
       g.tt("SFPCONFIG", 0, dest, 0)
       g.tt("SFPNOP")
   else:
-    fmt = operand(d["fmt"], {"fp32": 3, "bf16": 2, "fp16": 1, "i32": 4}) if "fmt" in d else 0
+    fmt = operand(d["fmt"], SFP_FORMAT) if "fmt" in d else isa.SfpuFormat.DEFAULT
     e = row(d["dst"])
     fields = dict(lreg_ind=rd if name == "load" else a, instr_mod0=fmt, sfpu_addr_mode=addr(g, d.get("addr", Num(0))))
     field_word(g, "SFP" + name.upper(), fields, "dest_reg_addr", e)
+
+
+def setc16(g, *sets):
+  """Write one ThreadConfig word with SETC16: cfg.FIELD(value), ... all in the same word. The rest of the word becomes
+  zero."""
+  if any(s.field.space is not Space.THREAD for s in sets):
+    raise ValueError("SETC16 writes ThreadConfig fields")
+  placed = words(sets)
+  if len(placed) != 1:
+    raise ValueError(f"SETC16 writes one word, got {sorted(placed)}")
+  (word, v), = placed.items()
+  g.tt("SETC16", word, v)
+
+
+def rmw(g, *sets):
+  """Read-modify-write Config fields with RMWCIB<byte>: one instruction per byte the fields touch, other bits kept."""
+  by_byte = {}
+  for s in sets:
+    if s.field.space is not Space.CONFIG:
+      raise ValueError(f"{s.field.name} is not a Config field")
+    for i in range(4):
+      mask = s.field.mask >> (8 * i) & 255
+      if mask:
+        m, v = by_byte.get((s.field.word, i), (0, 0))
+        by_byte[(s.field.word, i)] = (m | mask, v | (s.bits >> (8 * i) & mask))
+  for (word, i), (mask, v) in by_byte.items():
+    g.tt("RMWCIB" + str(i), mask, v, word)
 
 
 def runtime_word(g, op, fields, field, r):
@@ -210,7 +301,7 @@ def runtime_word(g, op, fields, field, r):
   r = g.calc("and", r, g.li((1 << width) - 1))
   if shift:
     r = g.imm("slli", r, shift)
-  g.mem("sw", hw.FIFO, g.calc("or", r, g.li(isa.tensix(op, **fields))))
+  g.mem("sw", hw.INSTRN_BUF, g.calc("or", r, g.li(isa.tensix(op, **fields))))
 
 
 def field_word(g, op, fields, field, e):
@@ -223,7 +314,8 @@ def field_word(g, op, fields, field, e):
 def math(g, s):
   if s.name == "addrmod" or s.name == "rwc":
     mod = s.name == "addrmod"
-    ab = dst = mask = cr = release = 0
+    mask = cr = release = 0
+    counters = []  # (counter index, mode, n): srca, srcb, dst, fidelity
     val = [0, 0, 0, 0]
     modes = set()
     seen = set()
@@ -270,12 +362,7 @@ def math(g, s):
         if mode == "=" and n and mod:
           g.fail("math.counter", "absolute addrmod must be zero")
         if mod:
-          if i < 2:
-            ab |= (n | int(mode == "cr") << 6 | int(mode == "=") << 7) << (8 * i)
-          elif i == 2:
-            dst |= n | int(mode == "cr") << 10 | int(mode == "=") << 11 | int(mode == "c") << 12
-          else:
-            dst |= n << 13 | int(mode == "=") << 15
+          counters.append((i, mode, n))
         else:
           modes.add(mode == "+=")
           mask |= 1 << i
@@ -288,8 +375,17 @@ def math(g, s):
         g.fail("math.addrmod", "`hold` is the reserved slot 0")
       if g.addrmods.setdefault(label, slot) != slot:
         g.fail("math.addrmod", "ambiguous slot name")
-      for reg, v in ((12, ab), (20, 0), (28, dst)):
-        g.tt("SETC16", reg + slot, v)
+      m = hw.ADDR_MOD[slot]
+      sets = []
+      for i, mode, n in counters:
+        sets += [m.incr[i](n), m.clear[i](mode == "=")]
+        if i < 3:
+          sets.append(m.cr[i](mode == "cr"))
+        if i == 2:
+          sets.append(m.c_to_cr(mode == "c"))
+      placed = words(sets)
+      for word in m.words:  # whole words: AB2 (the 1-bit increments) is always cleared
+        g.tt("SETC16", word, placed.get(word, 0))
     elif True in modes:
       if len(modes) > 1 or release or val[3]:
         g.fail("math.rwc", "invalid mixed increment")
@@ -301,18 +397,27 @@ def math(g, s):
         g.tt("SETRWC", release, cr, val[2], val[1], val[0], mask)
   elif s.name == "fmt":
     d = bind(s, "", "dst sfp")
-    f = operand(required(d, "dst", s), {"fp32": 0, "bf16": 5})
-    sf = operand(d.get("sfp", d["dst"]), {"fp32": 0, "bf16": 5})
-    g.tt("RMWCIB3", 0x7E, (f << 1) | (int(f == 0) << 5) | (int(sf == 0) << 6), 1)
+    dst_formats = {"fp32": hw.DataFormat.FLOAT32, "bf16": hw.DataFormat.FLOAT16_B}
+    f = operand(required(d, "dst", s), dst_formats)
+    sf = operand(d.get("sfp", d["dst"]), dst_formats)
+    fp32 = hw.DataFormat.FLOAT32
+    rmw(g, cfg.ALU_FORMAT_SPEC_REG2_Dstacc(f), cfg.ALU_ACC_CTRL_Fp32_enabled(f == fp32),
+        cfg.ALU_ACC_CTRL_SFPU_Fp32_enabled(sf == fp32))
     # The packer reads the same physical Dst width, independently of its input conversion.
-    g.tt("RMWCIB0", 1, int(f == 0), 18)
-    g.tt("SETC16", 4, 1 | sf << 1)
+    rmw(g, cfg.PCK_DEST_RD_CTRL_Read_32b_data(f == fp32))
+    setc16(g, cfg.SFPU_DEST_FMT_Enable(1), cfg.SFPU_DEST_FMT_Base(sf))
   elif s.name == "cfg":
     d = bind(s, "", "dst_offset")
-    g.tt("SETC16", 1, number(required(d, "dst_offset", s), 0, 4095))
+    setc16(g, cfg.DEST_TARGET_REG_CFG_MATH_Offset(number(required(d, "dst_offset", s), 0, 4095)))
   elif s.name == "zero":
     d = bind(s, "", "face fmt")
     g.tt("ZEROACC", 1, operand(required(d, "fmt", s), {"fp32": 1, "bf16": 0}), 0, 1, number(required(d, "face", s), 0, 3))
+  elif s.name == "mova2d":
+    d = bind(s, "dst", "addr src rows")
+    rows = number(d.get("rows", Num(8)), 1, 8)
+    if rows not in (1, 8): g.fail("math.rows", "expected 1 or 8")
+    fields = dict(src=number(d.get("src", Num(0)),0,63), addr_mode=addr(g,d.get("addr", Num(0))), instr_mod=2 if rows == 8 else 0)
+    field_word(g, "MOVA2D", fields, "dst", row(d["dst"]) if "dst" in d else Num(0))
   elif s.name == "mvmul":
     d = bind(s, "dst", "addr release")
     fields = dict(addr_mode=addr(g, d.get("addr", Num(0))), clear_dvalid=flags(d.get("release", Name("none")), SRC))
@@ -363,7 +468,7 @@ def templates(g, s):
           runtime_word(g, "MOP_CFG", {}, "zmask_hi16", g.imm("srli", v, 16))
           lo = g.imm("srli", g.imm("slli", v, 16), 16)
           bits = g.calc("or", g.imm("slli", g.imm("andi", cnt, 127), 16), lo)
-          g.mem("sw", hw.FIFO, g.calc("or", g.li(isa.tensix("MOP")), bits))
+          g.mem("sw", hw.INSTRN_BUF, g.calc("or", g.li(isa.tensix("MOP")), bits))
       else:
         if len(d) != 1:
           g.fail("mop.run", "n and mask require a mask MOP")
@@ -378,7 +483,8 @@ def templates(g, s):
   words = []
   for line in t.body:
     op = line.stmt if t.kind == "mop" else line
-    if op.ns not in ("math", "sfp", "tensix", "replay") or op.ns == "replay" and (t.kind != "mop" or op.name != "run"):
+    native = op.ns in ("math", "sfp", "tensix", "sfpmacro") or (op.ns, op.name) == ("unpack", "face")
+    if not (native or (t.kind, op.ns, op.name) == ("mop", "replay", "run")):
       g.fail("template.body", "expected a native instruction")
     start = len(g.items)
     g.loc = op.loc
@@ -447,11 +553,10 @@ def templates(g, s):
         labels.get("last", last),
         last,
       ]
-    g.mem("sw", hw.MOP_SYNC, 0)
-    g.imm("andi", g.mem("lw", hw.MOP_SYNC), 0)
+    g.ttsync(hw.MOP_EXPANDER_DONE_CHECK)  # the expander must be idle before its template changes
+    assert len(config) == hw.MOP_CFG_WORDS
     for i, w in enumerate(config):
-      with g.temps():
-        g.mem("sw", 0xFFB80000 + 4 * i, g.li(w))
+      g.mem("sw", hw.MOP_CFG + 4 * i, g.li(w))
     g.rv("fence")
     g.event("clear", *("loaded " + x for x, t in g.p.templates.items() if t.kind == "mop"))
   g.event("set", "loaded " + k)
@@ -507,7 +612,7 @@ def lower(g, s):
     names = {k: 1 << i for i, k in enumerate(SEMS)}
     names.update({k: names[t.hw] for k, t in g.p.sems.items()})
     mask = flags(required(d, "sems", s), names)
-    if mask & (1 << 5):
+    if mask & (1 << hw.Sem.UNPACK_SYNC):
       g.app_unpack_sem = s.loc
     for alias in g.p.sems.values():
       if not mask & names[alias.hw]:
@@ -531,10 +636,10 @@ def lower(g, s):
         g.fail("sem.read", "expected one semaphore")
       for i in range(8):
         if mask & 1 << i:
-          a = hw.SEMAPHORE + i * 4
+          a = hw.semaphore(i)
           if n == "read":
             return [(g.mem("lw", a), "u32")]
-          g.mem("sw", a, g.li(0 if n == "inc" else 1))
+          g.mem("sw", a, g.li(hw.SEM_POST if n == "inc" else hw.SEM_GET))
     elif n in ("inc", "dec"):
       g.tt("SEMPOST" if n == "inc" else "SEMGET", mask)
     else:

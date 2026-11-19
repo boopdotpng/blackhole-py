@@ -105,27 +105,12 @@ class Llama3:
   def _install(self):
     m, dev = self.m, self.dev
     self.prog = {}
+    if self.ttrv:  # compiled here against the current fw layout; the exported binaries' layout does not matter
+      self._install_ttrv()
+      return
     assert m['static_base'] == fw.DATA_BASE and m['l1_param_base'] == fw.L1_PARAM_BASE, "kernels exported for another L1 layout"
     tables_end = max(m['static_base'] + 0x40 * (p['k'] + 1) for p in m['programs'].values())
-    compiled = set()
-    if self.ttrv:
-      compiled = {"embedding"} if m["model"] == "8b-fp8" else {"embedding", "o", "down"}
-    if compiled:
-      from ttrv import build
-      embed_tiles = m["buffers"]["e2e_x_a"]["size"] // 2048
-      for name in sorted(compiled):
-        source = "o" if name == "down" else name
-        path = ROOT / "docs" / "examples" / f"llama3_{source}.ttrv"
-        defines = {"EMBED_TILES": embed_tiles}
-        if name == "down": defines["INPUT_TILES"] = m["buffers"]["e2e_hidden_dense"]["size"] // 2048
-        if name == "embedding": defines["MAX_TOKENS"] = m["max_tokens"]
-        kernel = build(path.read_text(), defines, str(path))
-        # Exported kernels keep their tables and attention flags below l1_data_base.
-        self.prog[name] = kernel.install(dev, scratch_base=m["l1_data_base"])
-      # TTRV kernels take the exported kernels' argument words in the same order: per-bank base words for
-      # stripe-aligned DRAM buffers, then integer parameters (embedding's token_pos) bound per run.
     for name, p in m['programs'].items():
-      if name in compiled: continue
       assert not p["pre"], "export kernels with resident state instead of per-launch L1 writes"
       files = {role: [(self.kdir / f).read_bytes() for f in fs] for role, fs in p['files'].items()}
       images = {}
@@ -144,6 +129,42 @@ class Llama3:
       assert tables_end <= state['addr'] and state['addr'] + state['size'] <= m['l1_data_base'], state
       dev.iface.write(tuple(state['core']), state['addr'], bytes(state['size']))
 
+  def _install_ttrv(self):
+    from ttrv import build
+    m = self.m
+    embed = m["buffers"]["e2e_x_a"]["size"] // 2048
+    hidden = m["buffers"]["e2e_hidden_dense"]["size"] // 2048
+    fp8 = int(m["model"] == "8b-fp8")
+    projection = dict(EMBED_TILES=embed, FP8=fp8)
+    variants = dict(embedding=dict(EMBED_TILES=embed, MAX_TOKENS=m["max_tokens"]),
+                    attention=dict(HEAD_TILES=embed, MAX_TOKENS=m["max_tokens"]),
+                    qkv=projection, gate=dict(projection, MLP_TILES=hidden), o=projection,
+                    down=dict(projection, INPUT_TILES=hidden), lm=projection,
+                    argmax=dict(FP8=fp8, MAX_TOKENS=m["max_tokens"]))
+    for name in m["programs"]:
+      path = ROOT / "docs" / "examples" / f"llama3_{'o' if name == 'down' else name}.ttrv"
+      self.prog[name] = build(path.read_text(), variants[name], str(path)).install(self.dev)
+
+    logits = m["buffers"]["e2e_logits"]["addr"]
+    def arguments(name, w):
+      # The exported graph stores stripe-aligned bank addresses and encodes
+      # FP8 scales as pairs of SFPLOADI instructions (low and high halfwords).
+      if name == "embedding": return w
+      if name == "attention": return [*w[6:11], w[1], w[2], w[3], w[11]]
+      if name == "lm": return [w[0], w[2], w[1], logits]
+      if name == "argmax": return [logits, w[0], "argmax_host_address", "host_hi", "start_pos", "write_token"]
+      scale = []
+      if fp8:
+        names = m["programs"][name]["uniform"]
+        encoded = [v for k,v in zip(names, w) if k.startswith(("input_scale_", "output_scale_"))]
+        bits = [(hi & 65535) << 16 | (lo & 65535) for lo, hi in zip(encoded[::2], encoded[1::2])]
+        buf = self.dev.allocator.upload(struct.pack(f"<{len(bits)}I", *bits).ljust(64, b"\0"))
+        scale = [(buf & ((1 << 48) - 1)) // fw.DRAM_BANKS]
+      if name == "qkv": return [w[0], w[-1], w[1], w[3], w[5], *scale, w[2], w[4], w[6]]
+      if name == "gate": return [w[0], w[-1], w[-2], w[1], w[2], *scale]
+      return [w[0], w[1], w[-2], w[-1], *scale]
+    self.launches = [(name, arguments(name, words)) for name, words in self.launches]
+
   # ---- arguments and graph, built once
   # Launch arguments are bound per run, as tinygrad binds a captured graph's Variables: one argument set for the
   # whole launch list, in pinned host memory, which the dispatcher reads as it reaches each EXEC. Buffer addresses
@@ -156,7 +177,7 @@ class Llama3:
     self.host = dev.alloc_host(16 * m["max_tokens"])  # argmax posts token pos + 1 to slot pos + 1
     noc = dev.sysmem.noc_addr + self.host
     assert noc >> 32 == 0x10000000, "argmax's PCIe mid address is compiled in"
-    self.host_lo = noc & 0xFFFFFFFF
+    self.host_lo, self.host_hi = noc & 0xFFFFFFFF, noc >> 32
     self.args = np.zeros(len(self.launches) * ARGS // 4, np.uint32)
     at = dev.alloc_host(self.args.nbytes)
     self.args_base = dev.sysmem.noc_addr + at
@@ -198,7 +219,7 @@ class Llama3:
     t = time.perf_counter_ns()
     kvb = self.m["kv_block"]
     val = dict(token_pos=pos, write_pos=pos + 1, write_token=int(pos >= prompt_len - 1), start_pos=pos,
-               kv_blocks=pos // kvb + 1, valid_columns=pos % kvb + 1, argmax_host_address=self.host_lo)
+               kv_blocks=pos // kvb + 1, valid_columns=pos % kvb + 1, argmax_host_address=self.host_lo, host_hi=self.host_hi)
     for name, cols in self.dyn.items(): self.args[cols] = val[name]
     bind = time.perf_counter_ns() - t
     self.in_flight, submit = self.graph.submit()
@@ -265,7 +286,7 @@ def main():
   ap.add_argument("--prompt", default="Write a story about a robot learning to paint.")
   ap.add_argument("--tokens", type=int, help="maximum new tokens (default: generate until EOS or context limit)")
   ap.add_argument("--weights", help="checkpoint directory (default: the one the kernels were exported with)")
-  ap.add_argument("--ttrv", action="store_true", help="compile embedding and the BF16 O and down projections from TTRV source")
+  ap.add_argument("--ttrv", action="store_true", help="compile every decode kernel from TTRV source")
   ap.add_argument("--profile", action="store_true", help="record per-launch timestamps and report kernel/dispatch timings")
   ap.add_argument("--chat", action="store_true", help="serve the web chat (chat/) instead of running --prompt")
   ap.add_argument("--host", default="0.0.0.0", help="--chat: address to listen on")

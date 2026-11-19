@@ -23,10 +23,12 @@ macro expansion with Block.macro set); codegen treats Block as a nested scope. M
 Constant folding uses mathematical integers and requires every intermediate to fit 32 bits as u32 or i32
 (-2^31 .. 2^32-1). `/` and `%` truncate toward zero (RV32M), shift counts must be 0..31. `~c` of a non-negative
 constant is its u32 complement (`~31` = 0xFFFFFFE0), since u32 is the default type; codegen does the type-exact
-check where the operand type is known. Floats (incl. inf) fold only under unary minus."""
+check where the operand type is known. Float constants support arithmetic and sqrt."""
 from __future__ import annotations
+import math
+import operator
 from dataclasses import dataclass, field, replace
-from ttrv.parse import (Error, Num, Name, Attr, Unary, Bin, Index, Call, Range, Arg, Op, Assign, MacroCall, If, While,
+from ttrv.parse import (Alias, SfpRegion, Error, Num, Name, Attr, Unary, Bin, Index, Call, Range, Arg, Op, Assign, MacroCall, If, While,
                         For, Loop, Repeat, Break, Continue, Fence, Return, Label, Block, Grid, Const, Param, TypeDecl, Storage,
                         Sem, Macro, Fn, Template, Shared, KEYWORDS, NAMESPACES, DECLS, show, show_expr)
 
@@ -161,10 +163,14 @@ class Expander:
           if self.p.grid < 1: _err(d, "grid.range", "grid must be at least 1")
         case Const():
           self.declare(d.name, d)
+          value = self.expr(d.value, {})
+          if not isinstance(value, Num): _err(d, "const.required", f"expected constant {d.name}")
+          v = value.value
           if d.name in self.defines:
-            v = self.defines[d.name]
-            self.p.consts[d.name] = _fit(int(v, 0) if isinstance(v, str) else int(v), d)
-          else: self.p.consts[d.name] = self.const_int(d.value, f"const {d.name}")
+            override = self.defines[d.name]
+            if isinstance(v, float): v = float(override)
+            else: v = _fit(int(override, 0) if isinstance(override, str) else int(override), d)
+          self.p.consts[d.name] = v
         case TypeDecl():
           self.declare(d.name, d)
           if d.type.count is not None or d.type.ptr or d.type.buf: _err(d.type, "type.decl", "type NAME = T names an element type")
@@ -242,6 +248,7 @@ class Expander:
           if self.p.grid is None: _err(e, "grid.order", "grid.size used before `grid`")
           return Num(self.p.grid, loc)
         if e.base == "core" and e.attr in CORE_ATTRS: return Attr(e.base, e.attr, loc)
+        if e.base == "dst" and e.attr in ("tile", "face"): return Num(64 if e.attr == "tile" else 16, loc)
         base = self.p.types.get(e.base, e.base)
         if base in TYPES and e.attr in ("size", "tile"):
           size, tile = TYPES[base]
@@ -257,6 +264,9 @@ class Expander:
 
   def fold(self, e):
     match e:
+      case Call(fn="sqrt", args=[Num(value=v)]):
+        if v < 0: _err(e, "const.sqrt", "negative square root")
+        return Num(math.sqrt(v), e.loc)
       case Unary(x=Num(value=float() as v)):
         if e.op != "-": _err(e, "const.float", f"{e.op} on a float literal")
         return Num(-v, e.loc)
@@ -264,7 +274,11 @@ class Expander:
         r = {"-": -v, "!": int(v == 0), "~": (~v) & 0xFFFFFFFF if v >= 0 else ~v}[e.op]
         return Num(_fit(r, e), e.loc, "u32" if e.op=="!" else e.x.dtype)
       case Bin(a=Num(value=a), b=Num(value=b)):
-        if isinstance(a, float) or isinstance(b, float): _err(e, "const.float", "floats cannot be used in arithmetic")
+        if isinstance(a, float) or isinstance(b, float):
+          ops = {"+": operator.add, "-": operator.sub, "*": operator.mul, "/": operator.truediv}
+          if e.op not in ops: _err(e, "const.float", f"invalid floating-point operator {e.op}")
+          if e.op == "/" and b == 0: _err(e, "const.div0", "constant division by zero")
+          return Num(ops[e.op](a, b), e.loc)
         op = e.op
         if e.a.dtype and e.b.dtype and e.a.dtype!=e.b.dtype: _err(e,"type.binary","mixed signed and unsigned operands")
         dtype=e.a.dtype or e.b.dtype
@@ -295,9 +309,12 @@ class Expander:
 
   # ---- statements ----
 
-  def block(self, body, env):
+  def block(self, body, env, splice=False):
     out = []
-    for s in body: out += self.stmt(s, env)
+    if not splice: env = env.copy()
+    for s in body:
+      if isinstance(s, Alias): env[s.name] = self.expr(s.value, env)
+      else: out += self.stmt(s, env)
     return out
 
   def target(self, t, env):
@@ -324,6 +341,13 @@ class Expander:
       case Assign():
         value = self.op(s.value, env) if isinstance(s.value, Op) else self.expr(s.value, env)
         return [Assign([self.target(t, env) for t in s.targets], s.op, value, loc)]
+      case SfpRegion():
+        def marker(name, args=()):
+          return Op("sfp", name, [Arg(None, None, e, loc) for e in args], loc)
+        operand = self.expr(s.operand, env)
+        body = self.block(s.body, env)
+        otherwise = [marker("otherwise"), *self.block(s.orelse, env)] if s.orelse else []
+        return [marker("begin_" + s.kind, [operand]), *body, *otherwise, marker("end_" + s.kind)]
       case Op(): return [self.op(s, env)]
       case Call(): return [self.expr(s, env)]
       case MacroCall(): return [self.macro(s, env)]
@@ -331,7 +355,7 @@ class Expander:
         cond = self.expr(s.cond, env)
         if isinstance(cond, Num):
           # A compile-time if splices its taken branch in place, like C's #if: no scope (spec §3).
-          return self.block(s.body if cond.value else s.orelse, env)
+          return self.block(s.body if cond.value else s.orelse, env, splice=True)
         self.runtime(s, "a runtime if")
         return [If(cond, self.block(s.body, env), self.block(s.orelse, env), loc)]
       case While():

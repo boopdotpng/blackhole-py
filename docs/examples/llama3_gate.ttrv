@@ -268,12 +268,10 @@ macro silu_combine() {
     math.rwc dst+=2
 }
 
-// Face-by-face Src publication matches the dot MOP's release granularity.
-macro unpack_pair(left, right) {
-    repeat face in 0..4 {
-        unpack.move a, left + face * 256, n=256, dvalid
-        unpack.move b, right + face * 256, n=256, dvalid
-    }
+// Publish one weight face and one activation face per math-bank handoff.
+mop dot_inputs, outer=4, inner=1 {
+    start: unpack.face a, next_l1_face, dvalid
+    loop0: unpack.face b, next_l1_face, dvalid
 }
 
 // Pack Dst row 0 into a fresh page of q, then hand Dst back to math.
@@ -324,11 +322,22 @@ fn trisc0() {
 
     // 2. Weight tile to SrcA, normalized x tile to SrcB, for every row.
     unpack.fmt a|b, in=ACT
+    unpack.shape a|b, n=256, faces=4
+    mop.load dot_inputs
     v = cb.wait normalized, n=EMBED_TILES  // kept for the whole kernel, never popped
     loop 2 * count {
         for tile in 0..EMBED_TILES {
             w = cb.wait weights
-            unpack_pair!(w, v + tile * 1024)
+            unpack.acquire
+            unpack.base a, w
+            unpack.base b, v + tile * 1024
+            unpack.post
+            tensix.stall unpack, srca_clr|srcb_clr
+            unpack.reset_zw a|b
+            tensix.stall unpack, trisc_cfg
+            mop.run dot_inputs
+            tensix.stall sync, unpack0|unpack1
+            unpack.release
             tensix.wait
             cb.pop weights
         }
@@ -352,10 +361,10 @@ fn trisc1() {
     math.addrmod rewind, slot=2, srca=0, srcb=0, dst=cr+0, fidelity+=1
     math.addrmod next_face, slot=3, srca=0, srcb=0, dst=c+8, fidelity=0
     mop.load dot_face
+    sfpmacro.load rms_scale
     replay.load accumulate
     replay.load square
     replay.load rms_apply
-    sfpmacro.load rms_scale
     if FP8 { replay.load scale_input }
 
     // 1. RMSNorm: x * gamma / sqrt(mean(x^2) + EPS), in FP32.
@@ -412,7 +421,7 @@ fn trisc1() {
 
     // 2. One dot product per row: gate rows, then up rows.
     repeat proj in 0..2 {
-        if FP8 { sfp.li l6, sc[1 + proj], fmt=fp32 }  // output scale; nothing below clobbers l6
+        if FP8 { sfp.const l14, sc[1 + proj], fmt=fp32 }  // output scale survives sfp.transp
         loop count {
             sem.stall math|sfpu|sync, dst_full, notmax
             sfp.li l7, 0.0
@@ -426,7 +435,7 @@ fn trisc1() {
             }
             sfp.mov l0, l7
             reduce_lanes!()
-            if FP8 { sfp.mul l0, l0, l6; sfp.nop }
+            if FP8 { sfp.mul l0, l0, l14; sfp.nop }
             sfp.store dst[0], l0, fmt=fp32; sfp.nop
             tensix.stall sync, math|sfpu
             sem.inc dst_full

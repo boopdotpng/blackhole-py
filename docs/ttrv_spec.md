@@ -14,7 +14,7 @@ are supporting references, not competing language specifications.
 
 A kernel is up to five programs, one per RISC. BRISC and NCRISC run scalar code
 and NoC transfers. TRISC0 drives unpack, TRISC1 math/SFPU, and TRISC2 pack. There
-is no automatic thread splitting, tiling, fusion, scheduling or spilling.
+is no automatic thread splitting, tiling, fusion or scheduling.
 
 ```
 L1 --unpack--> SrcA / SrcB --math--> Dst --pack--> L1
@@ -299,9 +299,7 @@ only; pass them to other functions as arguments.
 An entry function that reads a shared name gets that name's assignment, and those of
 the shared names it depends on, copied into the start of its body in source order.
 Assignments it doesn't need are omitted, and a RISC that reads none gets nothing.
-Each copied name holds a register for the whole entry function, as if it were
-assigned in the function's outermost block (§5). If register pressure matters, compute
-the value locally where it is used instead. The listing shows the copies per RISC.
+The allocator tracks the live range of each copied value. The listing shows the copies per RISC.
 
 There are no per-core launch tables and no per-core images. Every worker in a
 launch runs the same binary with the same parameters. Per-core values (row ranges,
@@ -397,30 +395,19 @@ device state, and engine restrictions apply through calls.
 
 ### Registers
 
-There is no stack, no spilling and no RISC-V calling convention: `ra`, `sp`, `gp`
-and `tp` are ordinary registers here. A kernel owns x1–x31; firmware reloads its own
-`sp`/`gp` when the kernel returns.
+The compiler lowers scalar variables, expressions and device recipes to virtual RV32
+registers. After lowering each RISC's reachable functions, it computes liveness
+over the emitted branches, loop back edges, calls and returns. Values whose
+lifetimes overlap receive different physical registers. A function has a fixed
+link register and uses ordinary register moves for arguments and results.
+Firmware reloads its own stack and global pointers on kernel return.
 
-Some registers are base registers. Each RISC has a fixed table of hot MMIO blocks
-in `hw.py` (for example RISC-local memory, the RISC's NoC registers, Tensix config):
-the entry prologue loads each base once (two instructions), and the compiler never
-allocates those registers. A load or store whose constant address lies within
-−2048..+2047 bytes of a base is one instruction, `offset(base)`; any other constant
-address costs one `lui` first, with the low 12 bits in the access's offset. Whether an access is one instruction
-follows from its address alone. The rest of x1–x31 hold variables:
-
-- A variable holds its register from its first assignment to the end of its block;
-  expression temporaries are released at the end of their statement. Lifetimes are
-  lexical, so there is no liveness analysis.
-- Functions are compiled after all their callers. A callee's registers (parameters,
-  locals, temporaries, and the register it returns through) are chosen from those
-  free at every one of its call sites, so a call saves nothing. A call moves the
-  arguments into the callee's parameter registers, jumps with `jal` through the
-  callee's return register, and copies the results out.
-- Exhaustion is a compile error naming the statement or call site and the variables
-  holding registers there. Narrow a scope or split an expression.
-
-The listing shows the base registers, each variable's register and every temporary.
+The allocator reserves x0 and each RISC's MMIO base registers listed in
+`hw.py`. When register pressure requires spills, two registers handle reloads
+and stores. Spill slots occupy words in RISC-private memory between byte offsets
+512 and 2048, above the CB cursors. Values with disjoint live ranges can share
+a slot. The listing identifies the register or spill slot assigned to each
+named scalar.
 
 ## 6. L1 and CBs
 
@@ -703,10 +690,24 @@ specified by the move/descriptor; byte storage alone does not imply a layout.
 | --- | --- |
 | `unpack.fmt a\|b, in=T` | `a`, `b` or both (`a\|b`); `out=bf16\|fp16` for fp32 input, `transpose` for A only, `shared_exp=` for BFP without exponent storage |
 | `unpack.move a\|b, p` | From L1 pointer p; `n=1024` datums, `dvalid` off by default, `ctx=0` |
+| `unpack.shape a\|b, n=, faces=, ctx=0` | Set descriptor width (1..1024 datums), face count (1..4), and X counter range 0..n−1 on the selected unpackers |
+| `unpack.base a\|b, p, ctx=0` | Write the aligned L1 base address for each selected context and read it back |
+| `unpack.reset_zw a\|b` | Zero both channels’ Z/W counters on the selected unpackers with one SETADCZW |
+| `unpack.face a, ctx=0` or `unpack.face b, ctx=0` | One native UNPACR using the configured geometry and address. Optional `next_l1_face` advances L1 Z by one and `dvalid` publishes the bank. Valid in a MOP slot |
+| `unpack.acquire` / `unpack.post` / `unpack.release` | Poll unpack credit until zero on the RISC / post the credit from the RISC / queue its return on Tensix |
 | `unpack.dvalid a\|b` | Publish a Src bank without moving data |
 | `pack.fmt in=T, out=T` | Set pack conversion; input interpretation includes documented prerounding |
 | `pack.move p, dst[row]` | To L1 pointer p from Dst row (64 per tile); `n=1024` datums; enqueue packing, do not release/clear Dst |
 | `pack.gather p, dst[row, col]` | `n=1` datums from one Dst column, rows `row`, `row+step`, ...; `step=1`, `acc` off |
+
+For an explicit face loop, configure shape and load the MOP before streaming tiles.
+For each tile, acquire credit, bind the bases, and post credit. Stall unpack on
+the required cleared Src banks, reset Z/W, stall unpack on TRISC_CFG, and run the
+MOP. Stall sync on the participating unpackers before releasing credit. Drain
+before returning input storage to its producer. `unpack.move` uses the same
+reserved credit internally. Its descriptor and counter writes replace previous
+shape settings on that unpacker. The [gate projection](examples/llama3_gate.ttrv)
+uses both forms in separate phases. Contexts are 0..7 on A and 0..1 on B.
 
 The unpack pointer is 16-byte aligned. Non-BFP n is 1..1024; BFP n is 128, 256, 512 or
 1024, with one UNPACR per face and dvalid only on the final face. BFP address begins
