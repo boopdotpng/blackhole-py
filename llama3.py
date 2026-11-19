@@ -160,7 +160,16 @@ class Llama3:
       if name == "qkv": return [w[0], w[-1], w[1], w[3], w[5], *scale, w[2], w[4], w[6]]
       if name == "gate": return [w[0], w[-1], w[-2], w[1], w[2], *scale]
       return [w[0], w[1], w[-2], w[-1], *scale]
-    self.launches = [(name, arguments(name, words)) for name, words in self.launches]
+    def place(name, w):
+      # arguments() lists one word per parameter in declaration order (two for a host address); put each at its
+      # manifest slot, since integer parameters sit in 8-byte-aligned pairs.
+      out, it = [0] * (self.prog[name].args_size // 4), iter(w)
+      for d in self.prog[name].manifest["params"].values():
+        out[d["slot"]] = next(it)
+        if d["kind"] == "host": out[d["slot"] + 1] = next(it)
+      assert next(it, None) is None, (name, w)
+      return out
+    self.launches = [(name, place(name, arguments(name, words))) for name, words in self.launches]
 
   # ---- arguments and graph, built once
   # One argument block per launch, in pinned host memory, which the dispatcher copies to the workers as it reaches
