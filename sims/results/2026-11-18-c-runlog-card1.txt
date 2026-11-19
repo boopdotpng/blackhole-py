@@ -1,0 +1,3910 @@
+### 18:46:05 STEP pack  -> sims/results/2026-11-18-c-pack-card1.jsonl
+165 selected, 18 done, 0 failed before, 147 to run
+card 1: state=idle aiclk=800 asic_c=50.4 board_w=86 pcie_gen=3 pcie_width=1
+[1/147] shape-f32-bf16-r4-k1  median 31.071428571428573
+[2/147] shape-f32-bf16-r4-k2  median 13.071428571428571
+[3/147] shape-f32-bf16-r4-k4  median 8.071428571428571
+[4/147] shape-f32-bf16-r16-k1  median 67.71428571428571
+[5/147] shape-f32-bf16-r16-k2  median 43.714285714285715
+[6/147] shape-f32-bf16-r16-k4  median 31.714285714285715
+[7/147] shape-f32-bf16-r64-k1  median 211.71428571428572
+[8/147] shape-f32-bf16-r64-k2  median 115.71428571428571
+[9/147] shape-f32-bf16-r64-k4  median 67.71428571428571
+[10/147] shape-f32-f32-r4-k1  median 31.071428571428573
+[11/147] shape-f32-f32-r4-k2  median 13.071428571428571
+[12/147] shape-f32-f32-r4-k4  median 8.071428571428571
+[13/147] shape-f32-f32-r16-k1  median 67.71428571428571
+[14/147] shape-f32-f32-r16-k2  median 43.714285714285715
+[15/147] shape-f32-f32-r16-k4  median 31.714285714285715
+[16/147] shape-f32-f32-r64-k1  median 211.71428571428572
+[17/147] shape-f32-f32-r64-k2  median 115.71428571428571
+[18/147] shape-f32-f32-r64-k4  median 67.71428571428571
+[19/147] shape-bf16-bf16-d16-r4-k1  median 31.071428571428573
+[20/147] shape-bf16-bf16-d16-r4-k2  median 13.071428571428571
+[21/147] shape-bf16-bf16-d16-r4-k4  median 8.071428571428571
+[22/147] shape-bf16-bf16-d16-r16-k1  median 67.71428571428571
+[23/147] shape-bf16-bf16-d16-r16-k2  median 43.714285714285715
+[24/147] shape-bf16-bf16-d16-r16-k4  median 31.714285714285715
+[25/147] shape-bf16-bf16-d16-r64-k1  median 211.71428571428572
+[26/147] shape-bf16-bf16-d16-r64-k2  median 115.71428571428571
+[27/147] shape-bf16-bf16-d16-r64-k4  median 67.71428571428571
+[28/147] shape-f16-e4m3-r4-k1  median 31.071428571428573
+[29/147] shape-f16-e4m3-r4-k2  median 13.071428571428571
+[30/147] shape-f16-e4m3-r4-k4  median 8.071428571428571
+[31/147] shape-f16-e4m3-r16-k1  median 67.71428571428571
+[32/147] shape-f16-e4m3-r16-k2  median 43.714285714285715
+[33/147] shape-f16-e4m3-r16-k4  median 31.714285714285715
+[34/147] shape-f16-e4m3-r64-k1  median 211.71428571428572
+[35/147] shape-f16-e4m3-r64-k2  median 115.71428571428571
+[36/147] shape-f16-e4m3-r64-k4  median 67.71428571428571
+[37/147] shape-f32-bfp8-r16-k1  median 67.71428571428571
+[38/147] shape-f32-bfp8-r16-k2  median 43.714285714285715
+[39/147] shape-f32-bfp8-r16-k4  median 31.714285714285715
+[40/147] shape-f32-bfp8-r64-k1  median 211.71428571428572
+[41/147] shape-f32-bfp8-r64-k2  median 115.71428571428571
+[42/147] shape-f32-bfp8-r64-k4  median 67.71428571428571
+[43/147] shape-f32-bfp4-r16-k1  median 67.71428571428571
+[44/147] shape-f32-bfp4-r16-k2  median 43.714285714285715
+[45/147] shape-f32-bfp4-r16-k4  median 31.714285714285715
+[46/147] shape-f32-bfp4-r64-k1  median 211.71428571428572
+[47/147] shape-f32-bfp4-r64-k2  median 115.71428571428571
+[48/147] shape-f32-bfp4-r64-k4  median 67.71428571428571
+[49/147] tiny-f32-bf16-x1-lasteach  median 3.857142857142857
+[50/147] tiny-f32-bf16-x1-lastonce  median 1.6607142857142858
+[51/147] tiny-f32-bf16-x16-lasteach  median 3.857142857142857
+[52/147] tiny-f32-bf16-x16-lastonce  median 1.6607142857142858
+[53/147] tiny-f32-f32-x1-lasteach  median 3.857142857142857
+[54/147] tiny-f32-f32-x1-lastonce  median 1.6607142857142858
+[55/147] tiny-f32-f32-x16-lasteach  median 3.857142857142857
+[56/147] tiny-f32-f32-x16-lastonce  median 1.6607142857142858
+[57/147] tiny-bf16-bf16-d16-x1-lasteach  median 2.767857142857143
+[58/147] tiny-bf16-bf16-d16-x1-lastonce  median 1.6071428571428572
+[59/147] tiny-bf16-bf16-d16-x16-lasteach  median 2.767857142857143
+[60/147] tiny-bf16-bf16-d16-x16-lastonce  median 1.6071428571428572
+[61/147] l1acc-f32-f32-mop  median 36.0
+[62/147] l1acc-f32-f32-inline  median 67.71428571428571
+[63/147] l1acc-f32-f32-mop-selfwr-near  median 52.142857142857146
+[64/147] l1acc-f32-bf16-mop  median 34.285714285714285
+[65/147] l1acc-f32-bf16-inline  median 67.71428571428571
+[66/147] l1acc-f32-bf16-mop-selfwr-near  median 38.142857142857146
+[67/147] overhead-f32-bf16-bare-mop  median 34.142857142857146
+[68/147] overhead-f32-bf16-bare-inline  median 67.71428571428571
+[69/147] overhead-f32-bf16-setw  median 33.857142857142854
+[70/147] overhead-f32-bf16-addr-wrcfg  median 96.57142857142857
+[71/147] overhead-f32-bf16-addr-adc  median 34.142857142857146
+[72/147] overhead-f32-bf16-llama-pre  median 102.71428571428571
+[73/147] overhead-f32-bf16-llama-post  median 162.57142857142858
+[74/147] overhead-f32-bf16-llama-cb  median 178.71428571428572
+[75/147] overhead-f32-bf16-llama-tile  median 181.42857142857142
+[76/147] overhead-f32-bf16-llama-tile-nozero  median 181.42857142857142
+[77/147] overhead-f32-bf16-ttrv-move  median 171.71428571428572
+[78/147] overhead-f32-bf16-ttrv-move-post  median 200.0
+[79/147] overhead-f32-bf16-recfg-tile  median 324.2857142857143
+[80/147] overhead-f32-bf16-edge-llama  median 34.142857142857146
+[81/147] overhead-f16-e4m3-bare-mop  median 18.0
+[82/147] overhead-f16-e4m3-addr-wrcfg  median 96.57142857142857
+[83/147] overhead-f16-e4m3-addr-adc  median 20.714285714285715
+[84/147] overhead-f16-e4m3-llama-pre  median 102.42857142857143
+[85/147] overhead-f16-e4m3-llama-post  median 145.14285714285714
+[86/147] overhead-f16-e4m3-llama-cb  median 161.14285714285714
+[87/147] overhead-f16-e4m3-llama-tile  median 164.42857142857142
+[88/147] overhead-f16-e4m3-llama-tile-nozero  median 164.42857142857142
+[89/147] overhead-f16-e4m3-ttrv-move  median 171.71428571428572
+[90/147] overhead-f16-e4m3-ttrv-move-post  median 198.0
+[91/147] overhead-f16-e4m3-recfg-tile  median 306.85714285714283
+[92/147] overhead-f32-f32-bare-mop  median 34.57142857142857
+[93/147] overhead-f32-f32-addr-wrcfg  median 96.57142857142857
+[94/147] overhead-f32-f32-addr-adc  median 35.0
+[95/147] overhead-f32-f32-llama-pre  median 102.42857142857143
+[96/147] overhead-f32-f32-llama-post  median 162.0
+[97/147] overhead-f32-f32-llama-cb  median 177.0
+[98/147] overhead-f32-f32-llama-tile  median 179.42857142857142
+[99/147] overhead-f32-f32-llama-tile-nozero  median 179.42857142857142
+[100/147] overhead-f32-f32-ttrv-move  median 171.71428571428572
+[101/147] overhead-f32-f32-ttrv-move-post  median 198.0
+[102/147] overhead-f32-f32-recfg-tile  median 323.0
+[103/147] vis-f32-bf16-r64-poll  median 118
+[104/147] vis-f32-bf16-r64-drainfirst  median 118
+[105/147] vis-f32-bf16-r64-noc  median 118
+[106/147] vis-f32-bf16-r4-poll  median 108
+[107/147] vis-f32-bf16-r4-drainfirst  median 100
+[108/147] vis-f32-bf16-r4-noc  median 108
+[109/147] vis-f32-f32-r64-poll  median 118
+[110/147] vis-f32-f32-r64-drainfirst  median 116
+[111/147] vis-f32-f32-r64-noc  median 119
+[112/147] vis-f16-e4m3-r64-poll  median 107
+[113/147] vis-f16-e4m3-r64-drainfirst  median 100
+[114/147] vis-f16-e4m3-r64-noc  median 107
+[115/147] handoff-lat-semwait  median 82.0
+[116/147] handoff-lat-sempoll  median 127.0
+[117/147] handoff-lat-selfsem  median 131
+[118/147] handoff-pipe-max1-d0  median 192
+[119/147] handoff-pipe-max1-d100  median 245
+[120/147] handoff-pipe-max1-d200  median 344
+[121/147] handoff-pipe-max1-d400  median 542
+[122/147] handoff-pipe-max1-d800  median 947
+[123/147] handoff-pipe-max1-d1600  median 1748
+[124/147] handoff-pipe-max1-d200-poll  median 414
+[125/147] handoff-pipe-max2-d0  median 192
+[126/147] handoff-pipe-max2-d100  median 192
+[127/147] handoff-pipe-max2-d200  median 247
+[128/147] handoff-pipe-max2-d400  median 445
+[129/147] handoff-pipe-max2-d800  median 841
+[130/147] handoff-pipe-max2-d1600  median 1642
+[131/147] handoff-pipe-max2-d200-poll  median 242
+[132/147] contend-f32-bf16-none  median 34.285714285714285
+[133/147] contend-f32-bf16-selfwr-near  median 39.285714285714285
+[134/147] contend-f32-bf16-selfwr-far  median 38.857142857142854
+[135/147] contend-f32-bf16-selfrd-near  median 34.714285714285715
+[136/147] contend-f32-bf16-selfrd-far  median 35.0
+[137/147] contend-f32-bf16-remotewr-near  median 36.0
+[138/147] contend-f32-bf16-remotewr-far  median 36.142857142857146
+[139/147] contend-f32-bf16-llama-tile-selfwr-near  median 185.42857142857142
+[140/147] contend-f32-f32-none  median 35.0
+[141/147] contend-f32-f32-selfwr-near  median 41.0
+[142/147] contend-f32-f32-remotewr-near  median 35.0
+[143/147] contend-f32-f32-llama-tile-selfwr-near  median 189.0
+[144/147] contend-f32-bf16-unpack-near  median 34.285714285714285
+[145/147] contend-f32-bf16-unpack-far  median 34.285714285714285
+[146/147] contend-f32-bf16-unpack+selfwr-near  median 40.57142857142857
+[147/147] contend-f32-f32-unpack-near  median 37.0
+
+147 recorded, 0 soft failures, no hard failure; 0.34 s
+### 18:46:05 STEP unpack  -> sims/results/2026-11-18-c-unpack-card1.jsonl
+239 selected, 18 done, 0 failed before, 221 to run
+card 1: state=idle aiclk=800 asic_c=50.4 board_w=92 pcie_gen=3 pcie_width=1
+[1/221] issue-unpacr-a-mop  median 2.0
+[2/221] issue-nop-a-mop  median 2.0
+[3/221] issue-unpacr-a-direct  median 3.0
+[4/221] issue-nop-a-direct  median 3.0
+[5/221] issue-unpacr-b-mop  median 2.0
+[6/221] issue-nop-b-mop  median 2.0
+[7/221] issue-unpacr-b-direct  median 3.0
+[8/221] issue-nop-b-direct  median 3.0
+[9/221] issue-unpacr-ab-mop  median 4.0
+[10/221] issue-unpacr-ab-direct  median 4.0
+[11/221] size-bf16-a-n16  median 2.0
+[12/221] size-bf16-a-n64  median 2.0
+[13/221] size-bf16-a-n128  median 2.1666666666666665
+[14/221] size-bf16-a-n256  median 4.354166666666667
+[15/221] size-bf16-a-n512  median 8.666666666666666
+[16/221] size-bf16-a-n1024  median 17.333333333333332
+[17/221] size-bf16-b-n16  median 2.0
+[18/221] size-bf16-b-n64  median 2.0
+[19/221] size-bf16-b-n128  median 2.1458333333333335
+[20/221] size-bf16-b-n256  median 4.354166666666667
+[21/221] size-bf16-b-n512  median 8.666666666666666
+[22/221] size-bf16-b-n1024  median 17.354166666666668
+[23/221] size-fp8-a-n16  median 2.0
+[24/221] size-fp8-a-n64  median 2.0
+[25/221] size-fp8-a-n128  median 2.0
+[26/221] size-fp8-a-n256  median 2.1666666666666665
+[27/221] size-fp8-a-n512  median 4.333333333333333
+[28/221] size-fp8-a-n1024  median 8.666666666666666
+[29/221] size-fp8-b-n16  median 2.0
+[30/221] size-fp8-b-n64  median 2.0
+[31/221] size-fp8-b-n128  median 2.0
+[32/221] size-fp8-b-n256  median 2.1458333333333335
+[33/221] size-fp8-b-n512  median 4.354166666666667
+[34/221] size-fp8-b-n1024  median 8.708333333333334
+[35/221] size-bfp8-a-n128  median 2.1666666666666665
+[36/221] size-bfp8-a-n256  median 2.3541666666666665
+[37/221] size-bfp8-b-n128  median 2.0833333333333335
+[38/221] size-bfp8-b-n256  median 2.2708333333333335
+[39/221] size-bfp4-a-n128  median 2.0625
+[40/221] size-bfp4-a-n256  median 2.2708333333333335
+[41/221] size-bfp4-b-n128  median 2.0833333333333335
+[42/221] size-bfp4-b-n256  median 2.2708333333333335
+[43/221] size-fp32-srca-a-n16  median 2.0208333333333335
+[44/221] size-fp32-srca-a-n64  median 3.0
+[45/221] size-fp32-srca-a-n256  median 9.0
+[46/221] size-fp32-srca-a-n512  median 17.333333333333332
+[47/221] size-fp32-srca-a-n1024  median 34.6875
+[48/221] size-bf16-a-n256-transpose  median 4.333333333333333
+[49/221] size-bf16-a-n1024-transpose  median 17.333333333333332
+[50/221] size-bf16-a-n1024-nostep  median 17.333333333333332
+[51/221] throttle-bf16-a-n1024-x1  median 130.0
+[52/221] throttle-bf16-a-n1024-x2  median 65.0
+[53/221] throttle-bf16-a-n1024-x4  median 17.333333333333332
+[54/221] throttle-bf16-b-n1024-x1  median 130.04166666666666
+[55/221] throttle-bf16-b-n1024-x2  median 64.97916666666667
+[56/221] throttle-bf16-b-n1024-x4  median 17.354166666666668
+[57/221] throttle-fp8-a-n1024-x1  median 65.0
+[58/221] throttle-fp8-a-n1024-x2  median 32.5
+[59/221] throttle-fp8-a-n1024-x4  median 17.270833333333332
+[60/221] throttle-bf16-ab-n1024-a1x-b1x  median 130.0
+[61/221] throttle-bf16-ab-n1024-a1x-b2x  median 130.0
+[62/221] throttle-bf16-ab-n1024-a1x-b4x  median 130.02083333333334
+[63/221] throttle-bf16-ab-n1024-a2x-b1x  median 130.0625
+[64/221] throttle-bf16-ab-n1024-a2x-b2x  median 65.02083333333333
+[65/221] throttle-bf16-ab-n1024-a2x-b4x  median 65.02083333333333
+[66/221] throttle-bf16-ab-n1024-a4x-b1x  median 130.0
+[67/221] throttle-bf16-ab-n1024-a4x-b2x  median 65.04166666666667
+[68/221] throttle-bf16-ab-n1024-a4x-b4x  median 17.333333333333332
+[69/221] dual-bf16-n16  median 4.0
+[70/221] dual-bf16-n256  median 4.333333333333333
+[71/221] dual-bf16-n1024  median 17.333333333333332
+[72/221] dual-fp8-n256  median 4.0
+[73/221] dual-fp8-n1024  median 16.0
+[74/221] dual-bfp8-n256  median 4.020833333333333
+[75/221] dual-bfp4-n256  median 4.0
+[76/221] place-bf16-n256-off0x0  median 4.3125
+[77/221] place-bf16-n256-off0x10  median 4.333333333333333
+[78/221] place-bf16-n256-off0x20  median 4.333333333333333
+[79/221] place-bf16-n256-off0x30  median 4.333333333333333
+[80/221] place-bf16-n256-off0x40  median 4.333333333333333
+[81/221] place-bf16-n256-off0x80  median 4.354166666666667
+[82/221] place-bf16-n256-off0x100  median 4.375
+[83/221] place-bf16-n256-off0x200  median 4.3125
+[84/221] place-bf16-n256-off0x400  median 4.3125
+[85/221] place-bf16-n256-off0x800  median 4.3125
+[86/221] place-bf16-n256-off0x1000  median 4.3125
+[87/221] place-bf16-n256-off0x2000  median 4.3125
+[88/221] place-bf16-n256-off0x10000  median 4.3125
+[89/221] place-bf16-n1024-off0x0  median 17.3125
+[90/221] place-bf16-n1024-off0x10  median 17.333333333333332
+[91/221] place-bf16-n1024-off0x20  median 17.333333333333332
+[92/221] place-bf16-n1024-off0x30  median 17.333333333333332
+[93/221] place-bf16-n1024-off0x40  median 17.354166666666668
+[94/221] place-bf16-n1024-off0x80  median 17.354166666666668
+[95/221] place-bf16-n1024-off0x100  median 17.3125
+[96/221] place-bf16-n1024-off0x200  median 17.3125
+[97/221] place-bf16-n1024-off0x400  median 17.333333333333332
+[98/221] place-bf16-n1024-off0x800  median 17.333333333333332
+[99/221] place-bf16-n1024-off0x1000  median 17.333333333333332
+[100/221] place-bf16-n1024-off0x2000  median 17.3125
+[101/221] place-bf16-n1024-off0x10000  median 17.3125
+[102/221] align-bf16-a-n256-off0  median 4.354166666666667
+[103/221] align-bf16-a-n256-off16  median 4.354166666666667
+[104/221] align-bf16-a-n256-off32  median 4.354166666666667
+[105/221] align-bf16-a-n256-off48  median 4.354166666666667
+[106/221] align-bf16-a-n256-off64  median 4.354166666666667
+[107/221] align-bf16-a-n256-off128  median 4.333333333333333
+[108/221] align-bf16-a-n256-off256  median 4.395833333333333
+[109/221] align-bf16-a-n256-off512  median 4.333333333333333
+[110/221] align-bf16-a-n1024-off0  median 17.333333333333332
+[111/221] align-bf16-a-n1024-off16  median 17.333333333333332
+[112/221] align-bf16-a-n1024-off32  median 17.375
+[113/221] align-bf16-a-n1024-off48  median 17.354166666666668
+[114/221] align-bf16-a-n1024-off64  median 17.3125
+[115/221] align-bf16-a-n1024-off128  median 17.354166666666668
+[116/221] align-bf16-a-n1024-off256  median 17.354166666666668
+[117/221] align-bf16-a-n1024-off512  median 17.333333333333332
+[118/221] align-fp8-a-n1024-off0  median 8.666666666666666
+[119/221] align-fp8-a-n1024-off16  median 8.666666666666666
+[120/221] align-fp8-a-n1024-off32  median 8.6875
+[121/221] align-fp8-a-n1024-off64  median 8.6875
+[122/221] extra-none-a-n16  median 10.0
+[123/221] extra-setadczw-a-n16  median 9.0
+[124/221] extra-setadcxx_zw-a-n16  median 11.0
+[125/221] extra-rmwcib4-a-n16  median 12.0
+[126/221] extra-stall_cfg-a-n16  median 13.0
+[127/221] extra-stall_done-a-n16  median 11.0
+[128/221] extra-risc_base-a-n16  median 17.0
+[129/221] extra-credit-a-n16  median 35.0
+[130/221] extra-wrcfg-a-n16  median 9.0
+[131/221] extra-setc16-a-n16  median 11.0
+[132/221] extra-nop_wake-a-n16  median 12.0
+[133/221] extra-none-a-n256  median 10.0
+[134/221] extra-setadczw-a-n256  median 9.0
+[135/221] extra-setadcxx_zw-a-n256  median 11.0
+[136/221] extra-rmwcib4-a-n256  median 12.0
+[137/221] extra-stall_cfg-a-n256  median 13.0
+[138/221] extra-stall_done-a-n256  median 13.0
+[139/221] extra-risc_base-a-n256  median 17.0
+[140/221] extra-credit-a-n256  median 41.0
+[141/221] extra-wrcfg-a-n256  median 9.0
+[142/221] extra-setc16-a-n256  median 11.0
+[143/221] extra-nop_wake-a-n256  median 12.0
+[144/221] extra-none-b-n256  median 10.0
+[145/221] extra-rmwcib4-b-n256  median 12.0
+[146/221] extra-credit-b-n256  median 41.0
+[147/221] move-pair_face-bf16  median 563.0
+[148/221] move-pair_face-fp8  median 539.0
+[149/221] move-a_face-bf16  median 263.0
+[150/221] move-a_tile-bf16  median 74.5
+[151/221] move-a_tile-fp32-srca  median 91.91666666666667
+[152/221] move-a_tile-bfp8  median 82.0
+[153/221] move-a_tile-bfp4  median 82.0
+[154/221] move-ba_tile-bf16-transpose  median 169.08333333333334
+[155/221] move-ba_tile-bf16  median 169.0
+[156/221] move-b_tile-bf16  median 86.91666666666667
+[157/221] move-b_tile-bfp8  median 94.0
+[158/221] move-b_tile-bfp4  median 94.0
+[159/221] pipe-move-pair_face-bf16-release  median 563.0
+[160/221] pipe-move-pair_face-bf16-elwmul  median 562.9166666666666
+[161/221] pipe-move-pair_face-fp8-release  median 539.0
+[162/221] pipe-move-pair_face-fp8-elwmul  median 539.0
+[163/221] pipe-move-a_face-bf16-release  median 263.0
+[164/221] pipe-move-a_face-bf16-mova2d  median 263.0
+[165/221] pipe-move-a_tile-bf16-release  median 73.0
+[166/221] pipe-move-a_tile-bf16-mova2d  median 73.0
+[167/221] pipe-move-a_tile-fp32-srca-release  median 91.5
+[168/221] pipe-move-a_tile-fp32-srca-mova2d  median 91.08333333333333
+[169/221] pipe-move-a_tile-bfp8-release  median 82.0
+[170/221] pipe-move-a_tile-bfp4-release  median 82.0
+[171/221] pipe-move-ba_tile-bf16-transpose-release  median 163.5
+[172/221] pipe-move-ba_tile-bf16-transpose-mvmul  median 163.41666666666666
+[173/221] pipe-move-ba_tile-bf16-mvmul  median 163.0
+[174/221] pipe-raw-ab-n256-bf16-release  median 7.520833333333333
+[175/221] pipe-raw-ab-n256-bf16-elwmul  median 11.979166666666666
+[176/221] pipe-raw-ab-n256-bf16-mvmul  median 33.125
+[177/221] pipe-raw-a-n256-bf16-release  median 7.625
+[178/221] pipe-raw-a-n256-bf16-mova2d  median 28.0
+[179/221] pipe-raw-a-n1024-bf16-release  median 17.333333333333332
+[180/221] pipe-raw-ab-n256-fp8-elwmul  median 12.0
+[181/221] handoff-lat-bf16-a-n16  median 34
+[182/221] handoff-lat-bf16-a-n256  median 37
+[183/221] handoff-lat-bf16-a-n1024  median 49
+[184/221] handoff-lat-bf16-b-n16  median 34
+[185/221] handoff-lat-bf16-b-n256  median 37
+[186/221] handoff-lat-bf16-b-n1024  median 49
+[187/221] handoff-lat-fp8-a-n1024  median 41
+[188/221] handoff-full-bf16-a-n256-d200  median 19
+[189/221] handoff-full-bf16-a-n256-d1000  median 19
+[190/221] handoff-full-bf16-a-n256-d5000  median 19
+[191/221] handoff-full-bf16-a-n1024-d1000  median 31
+[192/221] contention-rawA-bf16-n1024-none  median 17.333333333333332
+[193/221] contention-rawA-bf16-n1024-self8k  median 25.625
+[194/221] contention-rawA-bf16-n1024-self8k-2noc  median 26.104166666666668
+[195/221] contention-rawA-bf16-n1024-wr_in8k  median 31.604166666666668
+[196/221] contention-rawA-bf16-n1024-rd_out8k  median 30.3125
+[197/221] contention-rawA-bf16-n1024-pack  median 17.333333333333332
+[198/221] contention-rawA-bf16-n1024-pack-self8k  median 23.25
+[199/221] contention-rawAB-bf16-n256-none  median 4.3125
+[200/221] contention-rawAB-bf16-n256-self8k  median 5.479166666666667
+[201/221] contention-rawAB-bf16-n256-self8k-2noc  median 6.5625
+[202/221] contention-rawAB-bf16-n256-wr_in8k  median 6.979166666666667
+[203/221] contention-rawAB-bf16-n256-rd_out8k  median 6.333333333333333
+[204/221] contention-rawAB-bf16-n256-pack  median 4.3125
+[205/221] contention-rawAB-bf16-n256-pack-self8k  median 5.520833333333333
+[206/221] contention-rawA-fp8-n1024-none  median 8.666666666666666
+[207/221] contention-rawA-fp8-n1024-self8k  median 12.75
+[208/221] contention-rawA-fp8-n1024-self8k-2noc  median 12.979166666666666
+[209/221] contention-rawA-fp8-n1024-wr_in8k  median 16.958333333333332
+[210/221] contention-rawA-fp8-n1024-rd_out8k  median 14.791666666666666
+[211/221] contention-rawA-fp8-n1024-pack  median 8.6875
+[212/221] contention-rawA-fp8-n1024-pack-self8k  median 11.645833333333334
+[213/221] contention-move-pair_face-bf16-none  median 563.0
+[214/221] contention-move-pair_face-bf16-self8k  median 570.3333333333334
+[215/221] contention-move-pair_face-bf16-self8k-2noc  median 576.9166666666666
+[216/221] contention-move-pair_face-bf16-wr_in8k  median 564.4166666666666
+[217/221] contention-move-pair_face-bf16-rd_out8k  median 564.5833333333334
+[218/221] contention-move-pair_face-bf16-pack  median 563.5
+[219/221] contention-move-pair_face-bf16-pack-self8k  median 574.5
+[220/221] contention-rawA-bf16-n1024-self512  median 19.854166666666668
+[221/221] contention-rawA-bf16-n1024-self2048  median 23.541666666666668
+
+221 recorded, 0 soft failures, no hard failure; 1.04 s
+### 18:46:07 STEP fpu  -> sims/results/2026-11-18-c-fpu-card1.jsonl
+103 selected, 1 done, 0 failed before, 102 to run
+card 1: state=idle aiclk=800 asic_c=51.4 board_w=87 pcie_gen=3 pcie_width=1
+[1/102] tput-mvmul-lofi-bfp8-dst32  median 1.0
+[2/102] tput-mvmul-lofi-bfp4-dst32  median 1.0
+[3/102] tput-mvmul-lofi-fp8-dst32  median 0.9997
+[4/102] tput-mvmul-lofi-fp8-dst16  median 1.0
+[5/102] tput-mvmul-hifi2-outer-bf16-dst32  median 1.0
+[6/102] dep-mvmul-hifi2-inner-bf16-dst32  median 3.5
+[7/102] tput-mvmul-hifi3-outer-bf16-dst32  median 1.0
+[8/102] dep-mvmul-hifi3-inner-bf16-dst32  median 4.3333
+[9/102] tput-mvmul-hifi4-outer-bf16-dst32  median 1.0
+[10/102] dep-mvmul-hifi4-inner-bf16-dst32  median 4.75
+[11/102] tput-elwmul-lofi-bf16-dst32  median 1.0
+[12/102] tput-elwmul-hifi2-outer-bf16-dst32  median 1.0
+[13/102] tput-elwmul-lofi-fp8-dst32  median 1.0
+[14/102] tput-elwadd-bf16-dst32  median 1.0
+[15/102] tput-elwadd-acc-bf16-dst32  median 1.0
+[16/102] tput-elwadd-bf16-dst16  median 1.0
+[17/102] tput-elwsub-bf16-dst32  median 1.0
+[18/102] tput-gapool-bf16-dst32  median 1.0
+[19/102] tput-gmpool-bf16-dst32  median 1.0
+[20/102] tput-mova2d-8row-bf16-dst32  median 1.5
+[21/102] tput-mova2d-8row-fp8-dst32  median 1.5
+[22/102] tput-mova2d-8row-fp8-dst16  median 1.5
+[23/102] tput-mova2d-1row-bf16-dst32  median 1.0
+[24/102] tput-movb2d-4row-bf16-dst32  median 1.0
+[25/102] tput-movb2d-bcast8-bf16-dst32  median 1.0
+[26/102] tput-movd2a-4row-bf16-dst32  median 1.0
+[27/102] tput-movd2b-4row-bf16-dst32  median 1.0
+[28/102] tput-movb2a-4row-bf16-dst32  median 1.0
+[29/102] tput-zeroacc-face-dst32  median 1.0
+[30/102] tput-zeroacc-all-dst32  median 1.0
+[31/102] tput-zeroacc-half-dst32  median 1.0
+[32/102] tput-zeroacc-row-dst32  median 1.0
+[33/102] tput-zerosrc-matrixbank  median 1.0
+[34/102] tput-setrwc  median 1.0
+[35/102] tput-incrwc  median 1.0
+[36/102] tput-setrwc-flip-noclear  median 1.0
+[37/102] tput-nop  median 1.0
+[38/102] dep-mvmul-chain-n1  median 6.0
+[39/102] dep-mvmul-chain-n2  median 3.0
+[40/102] dep-mvmul-chain-n3  median 2.0
+[41/102] dep-mvmul-chain-n4  median 1.5
+[42/102] dep-mvmul-chain-n5  median 1.2
+[43/102] dep-mvmul-chain-n6  median 1.0
+[44/102] dep-mvmul-chain-n8  median 1.0
+[45/102] dep-elwmul-chain-n1  median 6.0
+[46/102] dep-elwmul-chain-n2  median 3.0
+[47/102] dep-elwmul-chain-n3  median 2.0
+[48/102] dep-elwmul-chain-n6  median 1.0
+[49/102] dep-elwadd-acc-chain-n1  median 6.0
+[50/102] dep-elwadd-acc-chain-n2  median 3.0
+[51/102] dep-elwadd-acc-chain-n6  median 1.0
+[52/102] dep-gapool-chain-n1  median 6.0
+[53/102] dep-gmpool-chain-n1  median 6.0
+[54/102] dep-mova2d-mvmul-same  median 5.0
+[55/102] dep-mova2d-mvmul-other  median 5.0
+[56/102] dep-mvmul-sfpload-gap0  median 10.5
+[57/102] dep-mvmul-sfpload-gap1  median 10.5
+[58/102] dep-mvmul-sfpload-gap2  median 10.5
+[59/102] dep-mvmul-sfpload-gap3  median 10.5
+[60/102] dep-mvmul-sfpload-gap4  median 10.5
+[61/102] dep-mvmul-sfpload-gap6  median 10.5
+[62/102] dep-elwmul-sfpload-gap0  median 10.5
+[63/102] dep-elwmul-sfpload-gap3  median 10.5
+[64/102] dep-mova2d-sfpload-gap0  median 5.5
+[65/102] dep-mova2d-sfpload-gap3  median 6.5
+[66/102] dep-mvmul-sfpload-otherhalf  median 6.0
+[67/102] dep-sfpstore-mvmul-same  median 10.5
+[68/102] dep-sfpstore-mvmul-otherhalf  median 6.0
+[69/102] dep-mvmul8-sfpload8-samehalf  median 3.5
+[70/102] dep-mvmul8-sfpload8-otherhalf  median 2.0
+[71/102] issue-direct  median 1.0
+[72/102] issue-replay9  median 1.0
+[73/102] issue-replay-len1  median 1.7778
+[74/102] issue-replay-len2  median 1.3333
+[75/102] issue-replay-len4  median 1.0
+[76/102] issue-replay-len8  median 1.0
+[77/102] issue-mop  median 1.0
+[78/102] issue-mop-then-direct  median 1.0556
+[79/102] issue-mop-replay  median 1.0
+[80/102] issue-mop-replay-then-direct  median 1.0
+[81/102] issue-mop-alt-replay  median 1.0
+[82/102] issue-llama-o-elwmul-mop  median 1.9412
+[83/102] issue-loop-nop1  median 3.0
+[84/102] issue-loop-nop2  median 1.5
+[85/102] issue-loop-nop4  median 1.0
+[86/102] issue-loop-nop8  median 1.0
+[87/102] issue-loop-nop16  median 1.0
+[88/102] src-flip-ready-k1  median 2.0
+[89/102] src-flip-ready-k4  median 1.25
+[90/102] src-mvmul-flip-inline  median 1.0
+[91/102] src-handoff-stream-k1  median 6.0
+[92/102] src-handoff-stream-k4  median 1.5
+[93/102] src-handoff-stream-k16  median 1.0625
+[94/102] src-handoff-latency  median 9.5
+[95/102] mt-mvmul-t1-sfpload-otherhalf-t0  median 1.0
+[96/102] mt-mvmul-t1-sfpload-samehalf-t0  median 1.0
+[97/102] mt-mvmul-t1-sfpmad-t0  median 1.0
+[98/102] mt-mvmul-t1-mvmul-t0  median 2.0
+[99/102] data-mvmul-lofi-bf16-zero  median 1.0
+[100/102] data-mvmul-lofi-bf16-rand  median 1.0
+[101/102] data-elwmul-lofi-bf16-zero  median 1.0
+[102/102] data-elwmul-lofi-bf16-rand  median 1.0
+
+102 recorded, 0 soft failures, no hard failure; 0.09 s
+### 18:46:07 STEP sfpu -k hazards -> sims/results/2026-11-18-c-sfpu-hazards-card1.jsonl
+130 selected, 0 done, 0 failed before, 130 to run
+card 1: state=idle aiclk=800 asic_c=51.2 board_w=85 pcie_gen=3 pcie_width=1
+[1/130] hazards-timing-nop  ok
+[2/130] hazards-timing-mad_chain  ok
+[3/130] hazards-timing-mad_nop_chain  ok
+[4/130] hazards-timing-mad_ind4  ok
+[5/130] hazards-timing-mad_indep_mov  ok
+[6/130] hazards-timing-mad_dep_mov  ok
+[7/130] hazards-timing-mad_nop_dep_mov  ok
+[8/130] hazards-timing-mad_nop_indep_mov  ok
+[9/130] hazards-timing-mad_iadd_vc  ok
+[10/130] hazards-timing-mad_iadd_vd  ok
+[11/130] hazards-timing-mad_setsgn_vd  ok
+[12/130] hazards-timing-mad_and_vb  ok
+[13/130] hazards-timing-mad_minmax  ok
+[14/130] hazards-timing-mad_nop_minmax  ok
+[15/130] hazards-timing-mad_swap  ok
+[16/130] hazards-timing-mad_shuf  ok
+[17/130] hazards-timing-mad_loadi_lo  ok
+[18/130] hazards-timing-swap_mov  ok
+[19/130] hazards-timing-swap_nop_mov  ok
+[20/130] hazards-timing-swap_nop2_mov  ok
+[21/130] hazards-timing-shuf_mov  ok
+[22/130] hazards-timing-shuf_nop_mov  ok
+[23/130] hazards-timing-shft2_lreg_mov  ok
+[24/130] hazards-timing-loadi_pair  ok
+[25/130] hazards-timing-sfpload  ok
+[26/130] hazards-timing-sfpstore  ok
+[27/130] hazards-timing-load_mad_store  ok
+[28/130] hazards-timing-load_mad_nop_store  ok
+[29/130] hazards-timing-arecip_mad  ok
+[30/130] hazards-timing-tt_nop_mad_dep  ok
+[31/130] hazards-value-mov_detected-gap0  ok
+[32/130] hazards-value-mov_detected-gap1  ok
+[33/130] hazards-value-iadd_vd-gap0  ok
+[34/130] hazards-value-iadd_vd-gap1  ok
+[35/130] hazards-value-iadd_vc_imm-gap0  ok
+[36/130] hazards-value-iadd_vc_imm-gap1  ok
+[37/130] hazards-value-and_vb-gap0  ok
+[38/130] hazards-value-and_vb-gap1  ok
+[39/130] hazards-value-setsgn_vd-gap0  ok
+[40/130] hazards-value-setsgn_vd-gap1  ok
+[41/130] hazards-value-minmax_min-gap0  ok
+[42/130] hazards-value-minmax_min-gap1  ok
+[43/130] hazards-value-minmax_max-gap0  ok
+[44/130] hazards-value-minmax_max-gap1  ok
+[45/130] hazards-value-shuffle-gap0  ok
+[46/130] hazards-value-shuffle-gap1  ok
+[47/130] hazards-value-loadi_lower-gap0  ok
+[48/130] hazards-value-loadi_lower-gap1  ok
+[49/130] hazards-value-minmax5_min-gap0  ok
+[50/130] hazards-value-minmax5_min-gap1  ok
+[51/130] hazards-value-minmax5_max-gap0  ok
+[52/130] hazards-value-minmax5_max-gap1  ok
+[53/130] hazards-timing-prefetchoff-nop  ok
+[54/130] hazards-timing-prefetchoff-mad_chain  ok
+[55/130] hazards-timing-prefetchoff-mad_nop_chain  ok
+[56/130] hazards-timing-prefetchoff-mad_ind4  ok
+[57/130] hazards-timing-prefetchoff-mad_indep_mov  ok
+[58/130] hazards-timing-prefetchoff-mad_dep_mov  ok
+[59/130] hazards-timing-prefetchoff-mad_nop_dep_mov  ok
+[60/130] hazards-timing-prefetchoff-mad_nop_indep_mov  ok
+[61/130] hazards-timing-prefetchoff-mad_iadd_vc  ok
+[62/130] hazards-timing-prefetchoff-mad_iadd_vd  ok
+[63/130] hazards-timing-prefetchoff-mad_setsgn_vd  ok
+[64/130] hazards-timing-prefetchoff-mad_and_vb  ok
+[65/130] hazards-timing-prefetchoff-mad_minmax  ok
+[66/130] hazards-timing-prefetchoff-mad_nop_minmax  ok
+[67/130] hazards-timing-prefetchoff-mad_swap  ok
+[68/130] hazards-timing-prefetchoff-mad_shuf  ok
+[69/130] hazards-timing-prefetchoff-mad_loadi_lo  ok
+[70/130] hazards-timing-prefetchoff-swap_mov  ok
+[71/130] hazards-timing-prefetchoff-swap_nop_mov  ok
+[72/130] hazards-timing-prefetchoff-swap_nop2_mov  ok
+[73/130] hazards-timing-prefetchoff-shuf_mov  ok
+[74/130] hazards-timing-prefetchoff-shuf_nop_mov  ok
+[75/130] hazards-timing-prefetchoff-shft2_lreg_mov  ok
+[76/130] hazards-timing-prefetchoff-loadi_pair  ok
+[77/130] hazards-timing-prefetchoff-sfpload  ok
+[78/130] hazards-timing-prefetchoff-sfpstore  ok
+[79/130] hazards-timing-prefetchoff-load_mad_store  ok
+[80/130] hazards-timing-prefetchoff-load_mad_nop_store  ok
+[81/130] hazards-timing-prefetchoff-arecip_mad  ok
+[82/130] hazards-timing-prefetchoff-tt_nop_mad_dep  ok
+[83/130] hazards-value-prefetchoff-mov_detected-gap0  ok
+[84/130] hazards-value-prefetchoff-mov_detected-gap1  ok
+[85/130] hazards-value-prefetchoff-iadd_vd-gap0  ok
+[86/130] hazards-value-prefetchoff-iadd_vd-gap1  ok
+[87/130] hazards-value-prefetchoff-iadd_vc_imm-gap0  ok
+[88/130] hazards-value-prefetchoff-iadd_vc_imm-gap1  ok
+[89/130] hazards-value-prefetchoff-and_vb-gap0  ok
+[90/130] hazards-value-prefetchoff-and_vb-gap1  ok
+[91/130] hazards-value-prefetchoff-setsgn_vd-gap0  ok
+[92/130] hazards-value-prefetchoff-setsgn_vd-gap1  ok
+[93/130] hazards-value-prefetchoff-minmax_min-gap0  ok
+[94/130] hazards-value-prefetchoff-minmax_min-gap1  ok
+[95/130] hazards-value-prefetchoff-minmax_max-gap0  ok
+[96/130] hazards-value-prefetchoff-minmax_max-gap1  ok
+[97/130] hazards-value-prefetchoff-shuffle-gap0  ok
+[98/130] hazards-value-prefetchoff-shuffle-gap1  ok
+[99/130] hazards-value-prefetchoff-loadi_lower-gap0  ok
+[100/130] hazards-value-prefetchoff-loadi_lower-gap1  ok
+[101/130] hazards-timing-prefetchoff-clr40000-nop  ok
+[102/130] hazards-timing-prefetchoff-clr40000-mad_chain  ok
+[103/130] hazards-timing-prefetchoff-clr40000-mad_nop_chain  ok
+[104/130] hazards-timing-prefetchoff-clr40000-mad_ind4  ok
+[105/130] hazards-timing-prefetchoff-clr40000-mad_indep_mov  ok
+[106/130] hazards-timing-prefetchoff-clr40000-mad_dep_mov  ok
+[107/130] hazards-timing-prefetchoff-clr40000-mad_nop_dep_mov  ok
+[108/130] hazards-timing-prefetchoff-clr40000-mad_nop_indep_mov  ok
+[109/130] hazards-timing-prefetchoff-clr40000-mad_iadd_vc  ok
+[110/130] hazards-timing-prefetchoff-clr40000-mad_iadd_vd  ok
+[111/130] hazards-timing-prefetchoff-clr40000-mad_setsgn_vd  ok
+[112/130] hazards-timing-prefetchoff-clr40000-mad_and_vb  ok
+[113/130] hazards-timing-prefetchoff-clr40000-mad_minmax  ok
+[114/130] hazards-timing-prefetchoff-clr40000-mad_nop_minmax  ok
+[115/130] hazards-timing-prefetchoff-clr40000-mad_swap  ok
+[116/130] hazards-timing-prefetchoff-clr40000-mad_shuf  ok
+[117/130] hazards-timing-prefetchoff-clr40000-mad_loadi_lo  ok
+[118/130] hazards-timing-prefetchoff-clr40000-swap_mov  ok
+[119/130] hazards-timing-prefetchoff-clr40000-swap_nop_mov  ok
+[120/130] hazards-timing-prefetchoff-clr40000-swap_nop2_mov  ok
+[121/130] hazards-timing-prefetchoff-clr40000-shuf_mov  ok
+[122/130] hazards-timing-prefetchoff-clr40000-shuf_nop_mov  ok
+[123/130] hazards-timing-prefetchoff-clr40000-shft2_lreg_mov  ok
+[124/130] hazards-timing-prefetchoff-clr40000-loadi_pair  ok
+[125/130] hazards-timing-prefetchoff-clr40000-sfpload  ok
+[126/130] hazards-timing-prefetchoff-clr40000-sfpstore  ok
+[127/130] hazards-timing-prefetchoff-clr40000-load_mad_store  ok
+[128/130] hazards-timing-prefetchoff-clr40000-load_mad_nop_store  ok
+[129/130] hazards-timing-prefetchoff-clr40000-arecip_mad  ok
+[130/130] hazards-timing-prefetchoff-clr40000-tt_nop_mad_dep  ok
+
+130 recorded, 0 soft failures, no hard failure; 0.70 s
+### 18:46:08 STEP sfpu -k matrix -> sims/results/2026-11-18-c-sfpu-matrix-card1.jsonl
+3284 selected, 0 done, 0 failed before, 3284 to run
+card 1: state=idle aiclk=800 asic_c=51.6 board_w=90 pcie_gen=3 pcie_width=1
+[1/3284] matrix-single-MAD  ok
+[2/3284] matrix-pair-MAD-MOV.vc  ok
+[3/3284] matrix-pair-MAD-ABS.vc  ok
+[4/3284] matrix-pair-MAD-MAD.va  ok
+[5/3284] matrix-pair-MAD-MAD.vb  ok
+[6/3284] matrix-pair-MAD-MAD.vc  ok
+[7/3284] matrix-pair-MAD-MUL.va  ok
+[8/3284] matrix-pair-MAD-ADD.vc  ok
+[9/3284] matrix-pair-MAD-ADDI.vd  ok
+[10/3284] matrix-pair-MAD-MULI.vd  ok
+[11/3284] matrix-pair-MAD-MUL24.va  ok
+[12/3284] matrix-pair-MAD-MUL24.vb  ok
+[13/3284] matrix-pair-MAD-LUT.impl  ok
+[14/3284] matrix-pair-MAD-LUTFP32.impl  ok
+[15/3284] matrix-pair-MAD-LUTFP32.mirror8  ok
+[16/3284] matrix-pair-MAD-IADD.vc.imm  ok
+[17/3284] matrix-pair-MAD-IADD.vc.reg  ok
+[18/3284] matrix-pair-MAD-IADD.vd.reg  ok
+[19/3284] matrix-pair-MAD-IADD.vd.sub  ok
+[20/3284] matrix-pair-MAD-SHFT.vd.imm  ok
+[21/3284] matrix-pair-MAD-SHFT.vd.reg  ok
+[22/3284] matrix-pair-MAD-SHFT.vc.reg  ok
+[23/3284] matrix-pair-MAD-SHFT.vc.immvc  ok
+[24/3284] matrix-pair-MAD-AND.vc  ok
+[25/3284] matrix-pair-MAD-AND.vd  ok
+[26/3284] matrix-pair-MAD-AND.vb  ok
+[27/3284] matrix-pair-MAD-OR.vb  ok
+[28/3284] matrix-pair-MAD-OR.vd  ok
+[29/3284] matrix-pair-MAD-XOR.vc  ok
+[30/3284] matrix-pair-MAD-XOR.vd  ok
+[31/3284] matrix-pair-MAD-NOT.vc  ok
+[32/3284] matrix-pair-MAD-LZ.vc  ok
+[33/3284] matrix-pair-MAD-EXEXP.vc  ok
+[34/3284] matrix-pair-MAD-EXMAN.vc  ok
+[35/3284] matrix-pair-MAD-SETEXP.vc.imm  ok
+[36/3284] matrix-pair-MAD-SETEXP.vd  ok
+[37/3284] matrix-pair-MAD-SETEXP.vc.reg  ok
+[38/3284] matrix-pair-MAD-SETMAN.vc.imm  ok
+[39/3284] matrix-pair-MAD-SETMAN.vd  ok
+[40/3284] matrix-pair-MAD-SETSGN.vc.imm  ok
+[41/3284] matrix-pair-MAD-SETSGN.vd  ok
+[42/3284] matrix-pair-MAD-DIVP2.vc  ok
+[43/3284] matrix-pair-MAD-ARECIP.vc  ok
+[44/3284] matrix-pair-MAD-ARECIP.cond.vb  ok
+[45/3284] matrix-pair-MAD-ARECIP.cond.vc  ok
+[46/3284] matrix-pair-MAD-CAST.vc  ok
+[47/3284] matrix-pair-MAD-STOCHRND.vc  ok
+[48/3284] matrix-pair-MAD-STOCHRND.vb  ok
+[49/3284] matrix-pair-MAD-SETCC.vc  ok
+[50/3284] matrix-pair-MAD-GT.vc  ok
+[51/3284] matrix-pair-MAD-GT.vd  ok
+[52/3284] matrix-pair-MAD-LE.vd  ok
+[53/3284] matrix-pair-MAD-SWAP.m0.vd  ok
+[54/3284] matrix-pair-MAD-SWAP.m0.vc  ok
+[55/3284] matrix-pair-MAD-SWAP.m1.vd  ok
+[56/3284] matrix-pair-MAD-SWAP.m1.vc  ok
+[57/3284] matrix-pair-MAD-SHFT2.m0.impl  ok
+[58/3284] matrix-pair-MAD-SHFT2.m1.impl  ok
+[59/3284] matrix-pair-MAD-SHFT2.m2.vc  ok
+[60/3284] matrix-pair-MAD-SHFT2.m3.vc  ok
+[61/3284] matrix-pair-MAD-SHFT2.m4.vc  ok
+[62/3284] matrix-pair-MAD-SHFT2.m5.vb  ok
+[63/3284] matrix-pair-MAD-SHFT2.m5.vc  ok
+[64/3284] matrix-pair-MAD-SHFT2.m6.vb  ok
+[65/3284] matrix-pair-MAD-TRANSP.impl  ok
+[66/3284] matrix-pair-MAD-STORE  ok
+[67/3284] matrix-pair-MAD-CONFIG.L12  ok
+[68/3284] matrix-pair-MAD-LOADI.lower  ok
+[69/3284] matrix-pair-MAD-LOADI.upper  ok
+[70/3284] matrix-pair-MAD-LOAD.lo16  ok
+[71/3284] matrix-pair-MAD-LOAD.hi16  ok
+[72/3284] matrix-pair-MAD-LOADI.full  ok
+[73/3284] matrix-pair-MAD-MOV.waw  ok
+[74/3284] matrix-single-MUL  ok
+[75/3284] matrix-pair-MUL-MOV.vc  ok
+[76/3284] matrix-pair-MUL-ABS.vc  ok
+[77/3284] matrix-pair-MUL-MAD.va  ok
+[78/3284] matrix-pair-MUL-MAD.vb  ok
+[79/3284] matrix-pair-MUL-MAD.vc  ok
+[80/3284] matrix-pair-MUL-MUL.va  ok
+[81/3284] matrix-pair-MUL-ADD.vc  ok
+[82/3284] matrix-pair-MUL-ADDI.vd  ok
+[83/3284] matrix-pair-MUL-MULI.vd  ok
+[84/3284] matrix-pair-MUL-MUL24.va  ok
+[85/3284] matrix-pair-MUL-MUL24.vb  ok
+[86/3284] matrix-pair-MUL-LUT.impl  ok
+[87/3284] matrix-pair-MUL-LUTFP32.impl  ok
+[88/3284] matrix-pair-MUL-LUTFP32.mirror8  ok
+[89/3284] matrix-pair-MUL-IADD.vc.imm  ok
+[90/3284] matrix-pair-MUL-IADD.vc.reg  ok
+[91/3284] matrix-pair-MUL-IADD.vd.reg  ok
+[92/3284] matrix-pair-MUL-IADD.vd.sub  ok
+[93/3284] matrix-pair-MUL-SHFT.vd.imm  ok
+[94/3284] matrix-pair-MUL-SHFT.vd.reg  ok
+[95/3284] matrix-pair-MUL-SHFT.vc.reg  ok
+[96/3284] matrix-pair-MUL-SHFT.vc.immvc  ok
+[97/3284] matrix-pair-MUL-AND.vc  ok
+[98/3284] matrix-pair-MUL-AND.vd  ok
+[99/3284] matrix-pair-MUL-AND.vb  ok
+[100/3284] matrix-pair-MUL-OR.vb  ok
+[101/3284] matrix-pair-MUL-OR.vd  ok
+[102/3284] matrix-pair-MUL-XOR.vc  ok
+[103/3284] matrix-pair-MUL-XOR.vd  ok
+[104/3284] matrix-pair-MUL-NOT.vc  ok
+[105/3284] matrix-pair-MUL-LZ.vc  ok
+[106/3284] matrix-pair-MUL-EXEXP.vc  ok
+[107/3284] matrix-pair-MUL-EXMAN.vc  ok
+[108/3284] matrix-pair-MUL-SETEXP.vc.imm  ok
+[109/3284] matrix-pair-MUL-SETEXP.vd  ok
+[110/3284] matrix-pair-MUL-SETEXP.vc.reg  ok
+[111/3284] matrix-pair-MUL-SETMAN.vc.imm  ok
+[112/3284] matrix-pair-MUL-SETMAN.vd  ok
+[113/3284] matrix-pair-MUL-SETSGN.vc.imm  ok
+[114/3284] matrix-pair-MUL-SETSGN.vd  ok
+[115/3284] matrix-pair-MUL-DIVP2.vc  ok
+[116/3284] matrix-pair-MUL-ARECIP.vc  ok
+[117/3284] matrix-pair-MUL-ARECIP.cond.vb  ok
+[118/3284] matrix-pair-MUL-ARECIP.cond.vc  ok
+[119/3284] matrix-pair-MUL-CAST.vc  ok
+[120/3284] matrix-pair-MUL-STOCHRND.vc  ok
+[121/3284] matrix-pair-MUL-STOCHRND.vb  ok
+[122/3284] matrix-pair-MUL-SETCC.vc  ok
+[123/3284] matrix-pair-MUL-GT.vc  ok
+[124/3284] matrix-pair-MUL-GT.vd  ok
+[125/3284] matrix-pair-MUL-LE.vd  ok
+[126/3284] matrix-pair-MUL-SWAP.m0.vd  ok
+[127/3284] matrix-pair-MUL-SWAP.m0.vc  ok
+[128/3284] matrix-pair-MUL-SWAP.m1.vd  ok
+[129/3284] matrix-pair-MUL-SWAP.m1.vc  ok
+[130/3284] matrix-pair-MUL-SHFT2.m0.impl  ok
+[131/3284] matrix-pair-MUL-SHFT2.m1.impl  ok
+[132/3284] matrix-pair-MUL-SHFT2.m2.vc  ok
+[133/3284] matrix-pair-MUL-SHFT2.m3.vc  ok
+[134/3284] matrix-pair-MUL-SHFT2.m4.vc  ok
+[135/3284] matrix-pair-MUL-SHFT2.m5.vb  ok
+[136/3284] matrix-pair-MUL-SHFT2.m5.vc  ok
+[137/3284] matrix-pair-MUL-SHFT2.m6.vb  ok
+[138/3284] matrix-pair-MUL-TRANSP.impl  ok
+[139/3284] matrix-pair-MUL-STORE  ok
+[140/3284] matrix-pair-MUL-CONFIG.L12  ok
+[141/3284] matrix-pair-MUL-LOADI.lower  ok
+[142/3284] matrix-pair-MUL-LOADI.upper  ok
+[143/3284] matrix-pair-MUL-LOAD.lo16  ok
+[144/3284] matrix-pair-MUL-LOAD.hi16  ok
+[145/3284] matrix-pair-MUL-LOADI.full  ok
+[146/3284] matrix-pair-MUL-MOV.waw  ok
+[147/3284] matrix-single-ADD  ok
+[148/3284] matrix-pair-ADD-MOV.vc  ok
+[149/3284] matrix-pair-ADD-ABS.vc  ok
+[150/3284] matrix-pair-ADD-MAD.va  ok
+[151/3284] matrix-pair-ADD-MAD.vb  ok
+[152/3284] matrix-pair-ADD-MAD.vc  ok
+[153/3284] matrix-pair-ADD-MUL.va  ok
+[154/3284] matrix-pair-ADD-ADD.vc  ok
+[155/3284] matrix-pair-ADD-ADDI.vd  ok
+[156/3284] matrix-pair-ADD-MULI.vd  ok
+[157/3284] matrix-pair-ADD-MUL24.va  ok
+[158/3284] matrix-pair-ADD-MUL24.vb  ok
+[159/3284] matrix-pair-ADD-LUT.impl  ok
+[160/3284] matrix-pair-ADD-LUTFP32.impl  ok
+[161/3284] matrix-pair-ADD-LUTFP32.mirror8  ok
+[162/3284] matrix-pair-ADD-IADD.vc.imm  ok
+[163/3284] matrix-pair-ADD-IADD.vc.reg  ok
+[164/3284] matrix-pair-ADD-IADD.vd.reg  ok
+[165/3284] matrix-pair-ADD-IADD.vd.sub  ok
+[166/3284] matrix-pair-ADD-SHFT.vd.imm  ok
+[167/3284] matrix-pair-ADD-SHFT.vd.reg  ok
+[168/3284] matrix-pair-ADD-SHFT.vc.reg  ok
+[169/3284] matrix-pair-ADD-SHFT.vc.immvc  ok
+[170/3284] matrix-pair-ADD-AND.vc  ok
+[171/3284] matrix-pair-ADD-AND.vd  ok
+[172/3284] matrix-pair-ADD-AND.vb  ok
+[173/3284] matrix-pair-ADD-OR.vb  ok
+[174/3284] matrix-pair-ADD-OR.vd  ok
+[175/3284] matrix-pair-ADD-XOR.vc  ok
+[176/3284] matrix-pair-ADD-XOR.vd  ok
+[177/3284] matrix-pair-ADD-NOT.vc  ok
+[178/3284] matrix-pair-ADD-LZ.vc  ok
+[179/3284] matrix-pair-ADD-EXEXP.vc  ok
+[180/3284] matrix-pair-ADD-EXMAN.vc  ok
+[181/3284] matrix-pair-ADD-SETEXP.vc.imm  ok
+[182/3284] matrix-pair-ADD-SETEXP.vd  ok
+[183/3284] matrix-pair-ADD-SETEXP.vc.reg  ok
+[184/3284] matrix-pair-ADD-SETMAN.vc.imm  ok
+[185/3284] matrix-pair-ADD-SETMAN.vd  ok
+[186/3284] matrix-pair-ADD-SETSGN.vc.imm  ok
+[187/3284] matrix-pair-ADD-SETSGN.vd  ok
+[188/3284] matrix-pair-ADD-DIVP2.vc  ok
+[189/3284] matrix-pair-ADD-ARECIP.vc  ok
+[190/3284] matrix-pair-ADD-ARECIP.cond.vb  ok
+[191/3284] matrix-pair-ADD-ARECIP.cond.vc  ok
+[192/3284] matrix-pair-ADD-CAST.vc  ok
+[193/3284] matrix-pair-ADD-STOCHRND.vc  ok
+[194/3284] matrix-pair-ADD-STOCHRND.vb  ok
+[195/3284] matrix-pair-ADD-SETCC.vc  ok
+[196/3284] matrix-pair-ADD-GT.vc  ok
+[197/3284] matrix-pair-ADD-GT.vd  ok
+[198/3284] matrix-pair-ADD-LE.vd  ok
+[199/3284] matrix-pair-ADD-SWAP.m0.vd  ok
+[200/3284] matrix-pair-ADD-SWAP.m0.vc  ok
+[201/3284] matrix-pair-ADD-SWAP.m1.vd  ok
+[202/3284] matrix-pair-ADD-SWAP.m1.vc  ok
+[203/3284] matrix-pair-ADD-SHFT2.m0.impl  ok
+[204/3284] matrix-pair-ADD-SHFT2.m1.impl  ok
+[205/3284] matrix-pair-ADD-SHFT2.m2.vc  ok
+[206/3284] matrix-pair-ADD-SHFT2.m3.vc  ok
+[207/3284] matrix-pair-ADD-SHFT2.m4.vc  ok
+[208/3284] matrix-pair-ADD-SHFT2.m5.vb  ok
+[209/3284] matrix-pair-ADD-SHFT2.m5.vc  ok
+[210/3284] matrix-pair-ADD-SHFT2.m6.vb  ok
+[211/3284] matrix-pair-ADD-TRANSP.impl  ok
+[212/3284] matrix-pair-ADD-STORE  ok
+[213/3284] matrix-pair-ADD-CONFIG.L12  ok
+[214/3284] matrix-pair-ADD-LOADI.lower  ok
+[215/3284] matrix-pair-ADD-LOADI.upper  ok
+[216/3284] matrix-pair-ADD-LOAD.lo16  ok
+[217/3284] matrix-pair-ADD-LOAD.hi16  ok
+[218/3284] matrix-pair-ADD-LOADI.full  ok
+[219/3284] matrix-pair-ADD-MOV.waw  ok
+[220/3284] matrix-single-ADDI  ok
+[221/3284] matrix-pair-ADDI-MOV.vc  ok
+[222/3284] matrix-pair-ADDI-ABS.vc  ok
+[223/3284] matrix-pair-ADDI-MAD.va  ok
+[224/3284] matrix-pair-ADDI-MAD.vb  ok
+[225/3284] matrix-pair-ADDI-MAD.vc  ok
+[226/3284] matrix-pair-ADDI-MUL.va  ok
+[227/3284] matrix-pair-ADDI-ADD.vc  ok
+[228/3284] matrix-pair-ADDI-ADDI.vd  ok
+[229/3284] matrix-pair-ADDI-MULI.vd  ok
+[230/3284] matrix-pair-ADDI-MUL24.va  ok
+[231/3284] matrix-pair-ADDI-MUL24.vb  ok
+[232/3284] matrix-pair-ADDI-LUT.impl  ok
+[233/3284] matrix-pair-ADDI-LUTFP32.impl  ok
+[234/3284] matrix-pair-ADDI-LUTFP32.mirror8  ok
+[235/3284] matrix-pair-ADDI-IADD.vc.imm  ok
+[236/3284] matrix-pair-ADDI-IADD.vc.reg  ok
+[237/3284] matrix-pair-ADDI-IADD.vd.reg  ok
+[238/3284] matrix-pair-ADDI-IADD.vd.sub  ok
+[239/3284] matrix-pair-ADDI-SHFT.vd.imm  ok
+[240/3284] matrix-pair-ADDI-SHFT.vd.reg  ok
+[241/3284] matrix-pair-ADDI-SHFT.vc.reg  ok
+[242/3284] matrix-pair-ADDI-SHFT.vc.immvc  ok
+[243/3284] matrix-pair-ADDI-AND.vc  ok
+[244/3284] matrix-pair-ADDI-AND.vd  ok
+[245/3284] matrix-pair-ADDI-AND.vb  ok
+[246/3284] matrix-pair-ADDI-OR.vb  ok
+[247/3284] matrix-pair-ADDI-OR.vd  ok
+[248/3284] matrix-pair-ADDI-XOR.vc  ok
+[249/3284] matrix-pair-ADDI-XOR.vd  ok
+[250/3284] matrix-pair-ADDI-NOT.vc  ok
+[251/3284] matrix-pair-ADDI-LZ.vc  ok
+[252/3284] matrix-pair-ADDI-EXEXP.vc  ok
+[253/3284] matrix-pair-ADDI-EXMAN.vc  ok
+[254/3284] matrix-pair-ADDI-SETEXP.vc.imm  ok
+[255/3284] matrix-pair-ADDI-SETEXP.vd  ok
+[256/3284] matrix-pair-ADDI-SETEXP.vc.reg  ok
+[257/3284] matrix-pair-ADDI-SETMAN.vc.imm  ok
+[258/3284] matrix-pair-ADDI-SETMAN.vd  ok
+[259/3284] matrix-pair-ADDI-SETSGN.vc.imm  ok
+[260/3284] matrix-pair-ADDI-SETSGN.vd  ok
+[261/3284] matrix-pair-ADDI-DIVP2.vc  ok
+[262/3284] matrix-pair-ADDI-ARECIP.vc  ok
+[263/3284] matrix-pair-ADDI-ARECIP.cond.vb  ok
+[264/3284] matrix-pair-ADDI-ARECIP.cond.vc  ok
+[265/3284] matrix-pair-ADDI-CAST.vc  ok
+[266/3284] matrix-pair-ADDI-STOCHRND.vc  ok
+[267/3284] matrix-pair-ADDI-STOCHRND.vb  ok
+[268/3284] matrix-pair-ADDI-SETCC.vc  ok
+[269/3284] matrix-pair-ADDI-GT.vc  ok
+[270/3284] matrix-pair-ADDI-GT.vd  ok
+[271/3284] matrix-pair-ADDI-LE.vd  ok
+[272/3284] matrix-pair-ADDI-SWAP.m0.vd  ok
+[273/3284] matrix-pair-ADDI-SWAP.m0.vc  ok
+[274/3284] matrix-pair-ADDI-SWAP.m1.vd  ok
+[275/3284] matrix-pair-ADDI-SWAP.m1.vc  ok
+[276/3284] matrix-pair-ADDI-SHFT2.m0.impl  ok
+[277/3284] matrix-pair-ADDI-SHFT2.m1.impl  ok
+[278/3284] matrix-pair-ADDI-SHFT2.m2.vc  ok
+[279/3284] matrix-pair-ADDI-SHFT2.m3.vc  ok
+[280/3284] matrix-pair-ADDI-SHFT2.m4.vc  ok
+[281/3284] matrix-pair-ADDI-SHFT2.m5.vb  ok
+[282/3284] matrix-pair-ADDI-SHFT2.m5.vc  ok
+[283/3284] matrix-pair-ADDI-SHFT2.m6.vb  ok
+[284/3284] matrix-pair-ADDI-TRANSP.impl  ok
+[285/3284] matrix-pair-ADDI-STORE  ok
+[286/3284] matrix-pair-ADDI-CONFIG.L12  ok
+[287/3284] matrix-pair-ADDI-LOADI.lower  ok
+[288/3284] matrix-pair-ADDI-LOADI.upper  ok
+[289/3284] matrix-pair-ADDI-LOAD.lo16  ok
+[290/3284] matrix-pair-ADDI-LOAD.hi16  ok
+[291/3284] matrix-pair-ADDI-LOADI.full  ok
+[292/3284] matrix-pair-ADDI-MOV.waw  ok
+[293/3284] matrix-single-MULI  ok
+[294/3284] matrix-pair-MULI-MOV.vc  ok
+[295/3284] matrix-pair-MULI-ABS.vc  ok
+[296/3284] matrix-pair-MULI-MAD.va  ok
+[297/3284] matrix-pair-MULI-MAD.vb  ok
+[298/3284] matrix-pair-MULI-MAD.vc  ok
+[299/3284] matrix-pair-MULI-MUL.va  ok
+[300/3284] matrix-pair-MULI-ADD.vc  ok
+[301/3284] matrix-pair-MULI-ADDI.vd  ok
+[302/3284] matrix-pair-MULI-MULI.vd  ok
+[303/3284] matrix-pair-MULI-MUL24.va  ok
+[304/3284] matrix-pair-MULI-MUL24.vb  ok
+[305/3284] matrix-pair-MULI-LUT.impl  ok
+[306/3284] matrix-pair-MULI-LUTFP32.impl  ok
+[307/3284] matrix-pair-MULI-LUTFP32.mirror8  ok
+[308/3284] matrix-pair-MULI-IADD.vc.imm  ok
+[309/3284] matrix-pair-MULI-IADD.vc.reg  ok
+[310/3284] matrix-pair-MULI-IADD.vd.reg  ok
+[311/3284] matrix-pair-MULI-IADD.vd.sub  ok
+[312/3284] matrix-pair-MULI-SHFT.vd.imm  ok
+[313/3284] matrix-pair-MULI-SHFT.vd.reg  ok
+[314/3284] matrix-pair-MULI-SHFT.vc.reg  ok
+[315/3284] matrix-pair-MULI-SHFT.vc.immvc  ok
+[316/3284] matrix-pair-MULI-AND.vc  ok
+[317/3284] matrix-pair-MULI-AND.vd  ok
+[318/3284] matrix-pair-MULI-AND.vb  ok
+[319/3284] matrix-pair-MULI-OR.vb  ok
+[320/3284] matrix-pair-MULI-OR.vd  ok
+[321/3284] matrix-pair-MULI-XOR.vc  ok
+[322/3284] matrix-pair-MULI-XOR.vd  ok
+[323/3284] matrix-pair-MULI-NOT.vc  ok
+[324/3284] matrix-pair-MULI-LZ.vc  ok
+[325/3284] matrix-pair-MULI-EXEXP.vc  ok
+[326/3284] matrix-pair-MULI-EXMAN.vc  ok
+[327/3284] matrix-pair-MULI-SETEXP.vc.imm  ok
+[328/3284] matrix-pair-MULI-SETEXP.vd  ok
+[329/3284] matrix-pair-MULI-SETEXP.vc.reg  ok
+[330/3284] matrix-pair-MULI-SETMAN.vc.imm  ok
+[331/3284] matrix-pair-MULI-SETMAN.vd  ok
+[332/3284] matrix-pair-MULI-SETSGN.vc.imm  ok
+[333/3284] matrix-pair-MULI-SETSGN.vd  ok
+[334/3284] matrix-pair-MULI-DIVP2.vc  ok
+[335/3284] matrix-pair-MULI-ARECIP.vc  ok
+[336/3284] matrix-pair-MULI-ARECIP.cond.vb  ok
+[337/3284] matrix-pair-MULI-ARECIP.cond.vc  ok
+[338/3284] matrix-pair-MULI-CAST.vc  ok
+[339/3284] matrix-pair-MULI-STOCHRND.vc  ok
+[340/3284] matrix-pair-MULI-STOCHRND.vb  ok
+[341/3284] matrix-pair-MULI-SETCC.vc  ok
+[342/3284] matrix-pair-MULI-GT.vc  ok
+[343/3284] matrix-pair-MULI-GT.vd  ok
+[344/3284] matrix-pair-MULI-LE.vd  ok
+[345/3284] matrix-pair-MULI-SWAP.m0.vd  ok
+[346/3284] matrix-pair-MULI-SWAP.m0.vc  ok
+[347/3284] matrix-pair-MULI-SWAP.m1.vd  ok
+[348/3284] matrix-pair-MULI-SWAP.m1.vc  ok
+[349/3284] matrix-pair-MULI-SHFT2.m0.impl  ok
+[350/3284] matrix-pair-MULI-SHFT2.m1.impl  ok
+[351/3284] matrix-pair-MULI-SHFT2.m2.vc  ok
+[352/3284] matrix-pair-MULI-SHFT2.m3.vc  ok
+[353/3284] matrix-pair-MULI-SHFT2.m4.vc  ok
+[354/3284] matrix-pair-MULI-SHFT2.m5.vb  ok
+[355/3284] matrix-pair-MULI-SHFT2.m5.vc  ok
+[356/3284] matrix-pair-MULI-SHFT2.m6.vb  ok
+[357/3284] matrix-pair-MULI-TRANSP.impl  ok
+[358/3284] matrix-pair-MULI-STORE  ok
+[359/3284] matrix-pair-MULI-CONFIG.L12  ok
+[360/3284] matrix-pair-MULI-LOADI.lower  ok
+[361/3284] matrix-pair-MULI-LOADI.upper  ok
+[362/3284] matrix-pair-MULI-LOAD.lo16  ok
+[363/3284] matrix-pair-MULI-LOAD.hi16  ok
+[364/3284] matrix-pair-MULI-LOADI.full  ok
+[365/3284] matrix-pair-MULI-MOV.waw  ok
+[366/3284] matrix-single-MUL24  ok
+[367/3284] matrix-pair-MUL24-MOV.vc  ok
+[368/3284] matrix-pair-MUL24-ABS.vc  ok
+[369/3284] matrix-pair-MUL24-MAD.va  ok
+[370/3284] matrix-pair-MUL24-MAD.vb  ok
+[371/3284] matrix-pair-MUL24-MAD.vc  ok
+[372/3284] matrix-pair-MUL24-MUL.va  ok
+[373/3284] matrix-pair-MUL24-ADD.vc  ok
+[374/3284] matrix-pair-MUL24-ADDI.vd  ok
+[375/3284] matrix-pair-MUL24-MULI.vd  ok
+[376/3284] matrix-pair-MUL24-MUL24.va  ok
+[377/3284] matrix-pair-MUL24-MUL24.vb  ok
+[378/3284] matrix-pair-MUL24-LUT.impl  ok
+[379/3284] matrix-pair-MUL24-LUTFP32.impl  ok
+[380/3284] matrix-pair-MUL24-LUTFP32.mirror8  ok
+[381/3284] matrix-pair-MUL24-IADD.vc.imm  ok
+[382/3284] matrix-pair-MUL24-IADD.vc.reg  ok
+[383/3284] matrix-pair-MUL24-IADD.vd.reg  ok
+[384/3284] matrix-pair-MUL24-IADD.vd.sub  ok
+[385/3284] matrix-pair-MUL24-SHFT.vd.imm  ok
+[386/3284] matrix-pair-MUL24-SHFT.vd.reg  ok
+[387/3284] matrix-pair-MUL24-SHFT.vc.reg  ok
+[388/3284] matrix-pair-MUL24-SHFT.vc.immvc  ok
+[389/3284] matrix-pair-MUL24-AND.vc  ok
+[390/3284] matrix-pair-MUL24-AND.vd  ok
+[391/3284] matrix-pair-MUL24-AND.vb  ok
+[392/3284] matrix-pair-MUL24-OR.vb  ok
+[393/3284] matrix-pair-MUL24-OR.vd  ok
+[394/3284] matrix-pair-MUL24-XOR.vc  ok
+[395/3284] matrix-pair-MUL24-XOR.vd  ok
+[396/3284] matrix-pair-MUL24-NOT.vc  ok
+[397/3284] matrix-pair-MUL24-LZ.vc  ok
+[398/3284] matrix-pair-MUL24-EXEXP.vc  ok
+[399/3284] matrix-pair-MUL24-EXMAN.vc  ok
+[400/3284] matrix-pair-MUL24-SETEXP.vc.imm  ok
+[401/3284] matrix-pair-MUL24-SETEXP.vd  ok
+[402/3284] matrix-pair-MUL24-SETEXP.vc.reg  ok
+[403/3284] matrix-pair-MUL24-SETMAN.vc.imm  ok
+[404/3284] matrix-pair-MUL24-SETMAN.vd  ok
+[405/3284] matrix-pair-MUL24-SETSGN.vc.imm  ok
+[406/3284] matrix-pair-MUL24-SETSGN.vd  ok
+[407/3284] matrix-pair-MUL24-DIVP2.vc  ok
+[408/3284] matrix-pair-MUL24-ARECIP.vc  ok
+[409/3284] matrix-pair-MUL24-ARECIP.cond.vb  ok
+[410/3284] matrix-pair-MUL24-ARECIP.cond.vc  ok
+[411/3284] matrix-pair-MUL24-CAST.vc  ok
+[412/3284] matrix-pair-MUL24-STOCHRND.vc  ok
+[413/3284] matrix-pair-MUL24-STOCHRND.vb  ok
+[414/3284] matrix-pair-MUL24-SETCC.vc  ok
+[415/3284] matrix-pair-MUL24-GT.vc  ok
+[416/3284] matrix-pair-MUL24-GT.vd  ok
+[417/3284] matrix-pair-MUL24-LE.vd  ok
+[418/3284] matrix-pair-MUL24-SWAP.m0.vd  ok
+[419/3284] matrix-pair-MUL24-SWAP.m0.vc  ok
+[420/3284] matrix-pair-MUL24-SWAP.m1.vd  ok
+[421/3284] matrix-pair-MUL24-SWAP.m1.vc  ok
+[422/3284] matrix-pair-MUL24-SHFT2.m0.impl  ok
+[423/3284] matrix-pair-MUL24-SHFT2.m1.impl  ok
+[424/3284] matrix-pair-MUL24-SHFT2.m2.vc  ok
+[425/3284] matrix-pair-MUL24-SHFT2.m3.vc  ok
+[426/3284] matrix-pair-MUL24-SHFT2.m4.vc  ok
+[427/3284] matrix-pair-MUL24-SHFT2.m5.vb  ok
+[428/3284] matrix-pair-MUL24-SHFT2.m5.vc  ok
+[429/3284] matrix-pair-MUL24-SHFT2.m6.vb  ok
+[430/3284] matrix-pair-MUL24-TRANSP.impl  ok
+[431/3284] matrix-pair-MUL24-STORE  ok
+[432/3284] matrix-pair-MUL24-CONFIG.L12  ok
+[433/3284] matrix-pair-MUL24-LOADI.lower  ok
+[434/3284] matrix-pair-MUL24-LOADI.upper  ok
+[435/3284] matrix-pair-MUL24-LOAD.lo16  ok
+[436/3284] matrix-pair-MUL24-LOAD.hi16  ok
+[437/3284] matrix-pair-MUL24-LOADI.full  ok
+[438/3284] matrix-pair-MUL24-MOV.waw  ok
+[439/3284] matrix-single-MUL24.upper  ok
+[440/3284] matrix-pair-MUL24.upper-MOV.vc  ok
+[441/3284] matrix-pair-MUL24.upper-ABS.vc  ok
+[442/3284] matrix-pair-MUL24.upper-MAD.va  ok
+[443/3284] matrix-pair-MUL24.upper-MAD.vb  ok
+[444/3284] matrix-pair-MUL24.upper-MAD.vc  ok
+[445/3284] matrix-pair-MUL24.upper-MUL.va  ok
+[446/3284] matrix-pair-MUL24.upper-ADD.vc  ok
+[447/3284] matrix-pair-MUL24.upper-ADDI.vd  ok
+[448/3284] matrix-pair-MUL24.upper-MULI.vd  ok
+[449/3284] matrix-pair-MUL24.upper-MUL24.va  ok
+[450/3284] matrix-pair-MUL24.upper-MUL24.vb  ok
+[451/3284] matrix-pair-MUL24.upper-LUT.impl  ok
+[452/3284] matrix-pair-MUL24.upper-LUTFP32.impl  ok
+[453/3284] matrix-pair-MUL24.upper-LUTFP32.mirror8  ok
+[454/3284] matrix-pair-MUL24.upper-IADD.vc.imm  ok
+[455/3284] matrix-pair-MUL24.upper-IADD.vc.reg  ok
+[456/3284] matrix-pair-MUL24.upper-IADD.vd.reg  ok
+[457/3284] matrix-pair-MUL24.upper-IADD.vd.sub  ok
+[458/3284] matrix-pair-MUL24.upper-SHFT.vd.imm  ok
+[459/3284] matrix-pair-MUL24.upper-SHFT.vd.reg  ok
+[460/3284] matrix-pair-MUL24.upper-SHFT.vc.reg  ok
+[461/3284] matrix-pair-MUL24.upper-SHFT.vc.immvc  ok
+[462/3284] matrix-pair-MUL24.upper-AND.vc  ok
+[463/3284] matrix-pair-MUL24.upper-AND.vd  ok
+[464/3284] matrix-pair-MUL24.upper-AND.vb  ok
+[465/3284] matrix-pair-MUL24.upper-OR.vb  ok
+[466/3284] matrix-pair-MUL24.upper-OR.vd  ok
+[467/3284] matrix-pair-MUL24.upper-XOR.vc  ok
+[468/3284] matrix-pair-MUL24.upper-XOR.vd  ok
+[469/3284] matrix-pair-MUL24.upper-NOT.vc  ok
+[470/3284] matrix-pair-MUL24.upper-LZ.vc  ok
+[471/3284] matrix-pair-MUL24.upper-EXEXP.vc  ok
+[472/3284] matrix-pair-MUL24.upper-EXMAN.vc  ok
+[473/3284] matrix-pair-MUL24.upper-SETEXP.vc.imm  ok
+[474/3284] matrix-pair-MUL24.upper-SETEXP.vd  ok
+[475/3284] matrix-pair-MUL24.upper-SETEXP.vc.reg  ok
+[476/3284] matrix-pair-MUL24.upper-SETMAN.vc.imm  ok
+[477/3284] matrix-pair-MUL24.upper-SETMAN.vd  ok
+[478/3284] matrix-pair-MUL24.upper-SETSGN.vc.imm  ok
+[479/3284] matrix-pair-MUL24.upper-SETSGN.vd  ok
+[480/3284] matrix-pair-MUL24.upper-DIVP2.vc  ok
+[481/3284] matrix-pair-MUL24.upper-ARECIP.vc  ok
+[482/3284] matrix-pair-MUL24.upper-ARECIP.cond.vb  ok
+[483/3284] matrix-pair-MUL24.upper-ARECIP.cond.vc  ok
+[484/3284] matrix-pair-MUL24.upper-CAST.vc  ok
+[485/3284] matrix-pair-MUL24.upper-STOCHRND.vc  ok
+[486/3284] matrix-pair-MUL24.upper-STOCHRND.vb  ok
+[487/3284] matrix-pair-MUL24.upper-SETCC.vc  ok
+[488/3284] matrix-pair-MUL24.upper-GT.vc  ok
+[489/3284] matrix-pair-MUL24.upper-GT.vd  ok
+[490/3284] matrix-pair-MUL24.upper-LE.vd  ok
+[491/3284] matrix-pair-MUL24.upper-SWAP.m0.vd  ok
+[492/3284] matrix-pair-MUL24.upper-SWAP.m0.vc  ok
+[493/3284] matrix-pair-MUL24.upper-SWAP.m1.vd  ok
+[494/3284] matrix-pair-MUL24.upper-SWAP.m1.vc  ok
+[495/3284] matrix-pair-MUL24.upper-SHFT2.m0.impl  ok
+[496/3284] matrix-pair-MUL24.upper-SHFT2.m1.impl  ok
+[497/3284] matrix-pair-MUL24.upper-SHFT2.m2.vc  ok
+[498/3284] matrix-pair-MUL24.upper-SHFT2.m3.vc  ok
+[499/3284] matrix-pair-MUL24.upper-SHFT2.m4.vc  ok
+[500/3284] matrix-pair-MUL24.upper-SHFT2.m5.vb  ok
+[501/3284] matrix-pair-MUL24.upper-SHFT2.m5.vc  ok
+[502/3284] matrix-pair-MUL24.upper-SHFT2.m6.vb  ok
+[503/3284] matrix-pair-MUL24.upper-TRANSP.impl  ok
+[504/3284] matrix-pair-MUL24.upper-STORE  ok
+[505/3284] matrix-pair-MUL24.upper-CONFIG.L12  ok
+[506/3284] matrix-pair-MUL24.upper-LOADI.lower  ok
+[507/3284] matrix-pair-MUL24.upper-LOADI.upper  ok
+[508/3284] matrix-pair-MUL24.upper-LOAD.lo16  ok
+[509/3284] matrix-pair-MUL24.upper-LOAD.hi16  ok
+[510/3284] matrix-pair-MUL24.upper-LOADI.full  ok
+[511/3284] matrix-pair-MUL24.upper-MOV.waw  ok
+[512/3284] matrix-single-LUT  ok
+[513/3284] matrix-pair-LUT-MOV.vc  ok
+[514/3284] matrix-pair-LUT-ABS.vc  ok
+[515/3284] matrix-pair-LUT-MAD.va  ok
+[516/3284] matrix-pair-LUT-MAD.vb  ok
+[517/3284] matrix-pair-LUT-MAD.vc  ok
+[518/3284] matrix-pair-LUT-MUL.va  ok
+[519/3284] matrix-pair-LUT-ADD.vc  ok
+[520/3284] matrix-pair-LUT-ADDI.vd  ok
+[521/3284] matrix-pair-LUT-MULI.vd  ok
+[522/3284] matrix-pair-LUT-MUL24.va  ok
+[523/3284] matrix-pair-LUT-MUL24.vb  ok
+[524/3284] matrix-pair-LUT-LUT.impl  ok
+[525/3284] matrix-pair-LUT-LUTFP32.impl  ok
+[526/3284] matrix-pair-LUT-LUTFP32.mirror8  ok
+[527/3284] matrix-pair-LUT-IADD.vc.imm  ok
+[528/3284] matrix-pair-LUT-IADD.vc.reg  ok
+[529/3284] matrix-pair-LUT-IADD.vd.reg  ok
+[530/3284] matrix-pair-LUT-IADD.vd.sub  ok
+[531/3284] matrix-pair-LUT-SHFT.vd.imm  ok
+[532/3284] matrix-pair-LUT-SHFT.vd.reg  ok
+[533/3284] matrix-pair-LUT-SHFT.vc.reg  ok
+[534/3284] matrix-pair-LUT-SHFT.vc.immvc  ok
+[535/3284] matrix-pair-LUT-AND.vc  ok
+[536/3284] matrix-pair-LUT-AND.vd  ok
+[537/3284] matrix-pair-LUT-AND.vb  ok
+[538/3284] matrix-pair-LUT-OR.vb  ok
+[539/3284] matrix-pair-LUT-OR.vd  ok
+[540/3284] matrix-pair-LUT-XOR.vc  ok
+[541/3284] matrix-pair-LUT-XOR.vd  ok
+[542/3284] matrix-pair-LUT-NOT.vc  ok
+[543/3284] matrix-pair-LUT-LZ.vc  ok
+[544/3284] matrix-pair-LUT-EXEXP.vc  ok
+[545/3284] matrix-pair-LUT-EXMAN.vc  ok
+[546/3284] matrix-pair-LUT-SETEXP.vc.imm  ok
+[547/3284] matrix-pair-LUT-SETEXP.vd  ok
+[548/3284] matrix-pair-LUT-SETEXP.vc.reg  ok
+[549/3284] matrix-pair-LUT-SETMAN.vc.imm  ok
+[550/3284] matrix-pair-LUT-SETMAN.vd  ok
+[551/3284] matrix-pair-LUT-SETSGN.vc.imm  ok
+[552/3284] matrix-pair-LUT-SETSGN.vd  ok
+[553/3284] matrix-pair-LUT-DIVP2.vc  ok
+[554/3284] matrix-pair-LUT-ARECIP.vc  ok
+[555/3284] matrix-pair-LUT-ARECIP.cond.vb  ok
+[556/3284] matrix-pair-LUT-ARECIP.cond.vc  ok
+[557/3284] matrix-pair-LUT-CAST.vc  ok
+[558/3284] matrix-pair-LUT-STOCHRND.vc  ok
+[559/3284] matrix-pair-LUT-STOCHRND.vb  ok
+[560/3284] matrix-pair-LUT-SETCC.vc  ok
+[561/3284] matrix-pair-LUT-GT.vc  ok
+[562/3284] matrix-pair-LUT-GT.vd  ok
+[563/3284] matrix-pair-LUT-LE.vd  ok
+[564/3284] matrix-pair-LUT-SWAP.m0.vd  ok
+[565/3284] matrix-pair-LUT-SWAP.m0.vc  ok
+[566/3284] matrix-pair-LUT-SWAP.m1.vd  ok
+[567/3284] matrix-pair-LUT-SWAP.m1.vc  ok
+[568/3284] matrix-pair-LUT-SHFT2.m0.impl  ok
+[569/3284] matrix-pair-LUT-SHFT2.m1.impl  ok
+[570/3284] matrix-pair-LUT-SHFT2.m2.vc  ok
+[571/3284] matrix-pair-LUT-SHFT2.m3.vc  ok
+[572/3284] matrix-pair-LUT-SHFT2.m4.vc  ok
+[573/3284] matrix-pair-LUT-SHFT2.m5.vb  ok
+[574/3284] matrix-pair-LUT-SHFT2.m5.vc  ok
+[575/3284] matrix-pair-LUT-SHFT2.m6.vb  ok
+[576/3284] matrix-pair-LUT-TRANSP.impl  ok
+[577/3284] matrix-pair-LUT-STORE  ok
+[578/3284] matrix-pair-LUT-CONFIG.L12  ok
+[579/3284] matrix-pair-LUT-LOADI.lower  ok
+[580/3284] matrix-pair-LUT-LOADI.upper  ok
+[581/3284] matrix-pair-LUT-LOAD.lo16  ok
+[582/3284] matrix-pair-LUT-LOAD.hi16  ok
+[583/3284] matrix-pair-LUT-LOADI.full  ok
+[584/3284] matrix-pair-LUT-MOV.waw  ok
+[585/3284] matrix-single-LUTFP32.m0  ok
+[586/3284] matrix-pair-LUTFP32.m0-MOV.vc  ok
+[587/3284] matrix-pair-LUTFP32.m0-ABS.vc  ok
+[588/3284] matrix-pair-LUTFP32.m0-MAD.va  ok
+[589/3284] matrix-pair-LUTFP32.m0-MAD.vb  ok
+[590/3284] matrix-pair-LUTFP32.m0-MAD.vc  ok
+[591/3284] matrix-pair-LUTFP32.m0-MUL.va  ok
+[592/3284] matrix-pair-LUTFP32.m0-ADD.vc  ok
+[593/3284] matrix-pair-LUTFP32.m0-ADDI.vd  ok
+[594/3284] matrix-pair-LUTFP32.m0-MULI.vd  ok
+[595/3284] matrix-pair-LUTFP32.m0-MUL24.va  ok
+[596/3284] matrix-pair-LUTFP32.m0-MUL24.vb  ok
+[597/3284] matrix-pair-LUTFP32.m0-LUT.impl  ok
+[598/3284] matrix-pair-LUTFP32.m0-LUTFP32.impl  ok
+[599/3284] matrix-pair-LUTFP32.m0-LUTFP32.mirror8  ok
+[600/3284] matrix-pair-LUTFP32.m0-IADD.vc.imm  ok
+[601/3284] matrix-pair-LUTFP32.m0-IADD.vc.reg  ok
+[602/3284] matrix-pair-LUTFP32.m0-IADD.vd.reg  ok
+[603/3284] matrix-pair-LUTFP32.m0-IADD.vd.sub  ok
+[604/3284] matrix-pair-LUTFP32.m0-SHFT.vd.imm  ok
+[605/3284] matrix-pair-LUTFP32.m0-SHFT.vd.reg  ok
+[606/3284] matrix-pair-LUTFP32.m0-SHFT.vc.reg  ok
+[607/3284] matrix-pair-LUTFP32.m0-SHFT.vc.immvc  ok
+[608/3284] matrix-pair-LUTFP32.m0-AND.vc  ok
+[609/3284] matrix-pair-LUTFP32.m0-AND.vd  ok
+[610/3284] matrix-pair-LUTFP32.m0-AND.vb  ok
+[611/3284] matrix-pair-LUTFP32.m0-OR.vb  ok
+[612/3284] matrix-pair-LUTFP32.m0-OR.vd  ok
+[613/3284] matrix-pair-LUTFP32.m0-XOR.vc  ok
+[614/3284] matrix-pair-LUTFP32.m0-XOR.vd  ok
+[615/3284] matrix-pair-LUTFP32.m0-NOT.vc  ok
+[616/3284] matrix-pair-LUTFP32.m0-LZ.vc  ok
+[617/3284] matrix-pair-LUTFP32.m0-EXEXP.vc  ok
+[618/3284] matrix-pair-LUTFP32.m0-EXMAN.vc  ok
+[619/3284] matrix-pair-LUTFP32.m0-SETEXP.vc.imm  ok
+[620/3284] matrix-pair-LUTFP32.m0-SETEXP.vd  ok
+[621/3284] matrix-pair-LUTFP32.m0-SETEXP.vc.reg  ok
+[622/3284] matrix-pair-LUTFP32.m0-SETMAN.vc.imm  ok
+[623/3284] matrix-pair-LUTFP32.m0-SETMAN.vd  ok
+[624/3284] matrix-pair-LUTFP32.m0-SETSGN.vc.imm  ok
+[625/3284] matrix-pair-LUTFP32.m0-SETSGN.vd  ok
+[626/3284] matrix-pair-LUTFP32.m0-DIVP2.vc  ok
+[627/3284] matrix-pair-LUTFP32.m0-ARECIP.vc  ok
+[628/3284] matrix-pair-LUTFP32.m0-ARECIP.cond.vb  ok
+[629/3284] matrix-pair-LUTFP32.m0-ARECIP.cond.vc  ok
+[630/3284] matrix-pair-LUTFP32.m0-CAST.vc  ok
+[631/3284] matrix-pair-LUTFP32.m0-STOCHRND.vc  ok
+[632/3284] matrix-pair-LUTFP32.m0-STOCHRND.vb  ok
+[633/3284] matrix-pair-LUTFP32.m0-SETCC.vc  ok
+[634/3284] matrix-pair-LUTFP32.m0-GT.vc  ok
+[635/3284] matrix-pair-LUTFP32.m0-GT.vd  ok
+[636/3284] matrix-pair-LUTFP32.m0-LE.vd  ok
+[637/3284] matrix-pair-LUTFP32.m0-SWAP.m0.vd  ok
+[638/3284] matrix-pair-LUTFP32.m0-SWAP.m0.vc  ok
+[639/3284] matrix-pair-LUTFP32.m0-SWAP.m1.vd  ok
+[640/3284] matrix-pair-LUTFP32.m0-SWAP.m1.vc  ok
+[641/3284] matrix-pair-LUTFP32.m0-SHFT2.m0.impl  ok
+[642/3284] matrix-pair-LUTFP32.m0-SHFT2.m1.impl  ok
+[643/3284] matrix-pair-LUTFP32.m0-SHFT2.m2.vc  ok
+[644/3284] matrix-pair-LUTFP32.m0-SHFT2.m3.vc  ok
+[645/3284] matrix-pair-LUTFP32.m0-SHFT2.m4.vc  ok
+[646/3284] matrix-pair-LUTFP32.m0-SHFT2.m5.vb  ok
+[647/3284] matrix-pair-LUTFP32.m0-SHFT2.m5.vc  ok
+[648/3284] matrix-pair-LUTFP32.m0-SHFT2.m6.vb  ok
+[649/3284] matrix-pair-LUTFP32.m0-TRANSP.impl  ok
+[650/3284] matrix-pair-LUTFP32.m0-STORE  ok
+[651/3284] matrix-pair-LUTFP32.m0-CONFIG.L12  ok
+[652/3284] matrix-pair-LUTFP32.m0-LOADI.lower  ok
+[653/3284] matrix-pair-LUTFP32.m0-LOADI.upper  ok
+[654/3284] matrix-pair-LUTFP32.m0-LOAD.lo16  ok
+[655/3284] matrix-pair-LUTFP32.m0-LOAD.hi16  ok
+[656/3284] matrix-pair-LUTFP32.m0-LOADI.full  ok
+[657/3284] matrix-pair-LUTFP32.m0-MOV.waw  ok
+[658/3284] matrix-single-LUTFP32.m2  ok
+[659/3284] matrix-pair-LUTFP32.m2-MOV.vc  ok
+[660/3284] matrix-pair-LUTFP32.m2-ABS.vc  ok
+[661/3284] matrix-pair-LUTFP32.m2-MAD.va  ok
+[662/3284] matrix-pair-LUTFP32.m2-MAD.vb  ok
+[663/3284] matrix-pair-LUTFP32.m2-MAD.vc  ok
+[664/3284] matrix-pair-LUTFP32.m2-MUL.va  ok
+[665/3284] matrix-pair-LUTFP32.m2-ADD.vc  ok
+[666/3284] matrix-pair-LUTFP32.m2-ADDI.vd  ok
+[667/3284] matrix-pair-LUTFP32.m2-MULI.vd  ok
+[668/3284] matrix-pair-LUTFP32.m2-MUL24.va  ok
+[669/3284] matrix-pair-LUTFP32.m2-MUL24.vb  ok
+[670/3284] matrix-pair-LUTFP32.m2-LUT.impl  ok
+[671/3284] matrix-pair-LUTFP32.m2-LUTFP32.impl  ok
+[672/3284] matrix-pair-LUTFP32.m2-LUTFP32.mirror8  ok
+[673/3284] matrix-pair-LUTFP32.m2-IADD.vc.imm  ok
+[674/3284] matrix-pair-LUTFP32.m2-IADD.vc.reg  ok
+[675/3284] matrix-pair-LUTFP32.m2-IADD.vd.reg  ok
+[676/3284] matrix-pair-LUTFP32.m2-IADD.vd.sub  ok
+[677/3284] matrix-pair-LUTFP32.m2-SHFT.vd.imm  ok
+[678/3284] matrix-pair-LUTFP32.m2-SHFT.vd.reg  ok
+[679/3284] matrix-pair-LUTFP32.m2-SHFT.vc.reg  ok
+[680/3284] matrix-pair-LUTFP32.m2-SHFT.vc.immvc  ok
+[681/3284] matrix-pair-LUTFP32.m2-AND.vc  ok
+[682/3284] matrix-pair-LUTFP32.m2-AND.vd  ok
+[683/3284] matrix-pair-LUTFP32.m2-AND.vb  ok
+[684/3284] matrix-pair-LUTFP32.m2-OR.vb  ok
+[685/3284] matrix-pair-LUTFP32.m2-OR.vd  ok
+[686/3284] matrix-pair-LUTFP32.m2-XOR.vc  ok
+[687/3284] matrix-pair-LUTFP32.m2-XOR.vd  ok
+[688/3284] matrix-pair-LUTFP32.m2-NOT.vc  ok
+[689/3284] matrix-pair-LUTFP32.m2-LZ.vc  ok
+[690/3284] matrix-pair-LUTFP32.m2-EXEXP.vc  ok
+[691/3284] matrix-pair-LUTFP32.m2-EXMAN.vc  ok
+[692/3284] matrix-pair-LUTFP32.m2-SETEXP.vc.imm  ok
+[693/3284] matrix-pair-LUTFP32.m2-SETEXP.vd  ok
+[694/3284] matrix-pair-LUTFP32.m2-SETEXP.vc.reg  ok
+[695/3284] matrix-pair-LUTFP32.m2-SETMAN.vc.imm  ok
+[696/3284] matrix-pair-LUTFP32.m2-SETMAN.vd  ok
+[697/3284] matrix-pair-LUTFP32.m2-SETSGN.vc.imm  ok
+[698/3284] matrix-pair-LUTFP32.m2-SETSGN.vd  ok
+[699/3284] matrix-pair-LUTFP32.m2-DIVP2.vc  ok
+[700/3284] matrix-pair-LUTFP32.m2-ARECIP.vc  ok
+[701/3284] matrix-pair-LUTFP32.m2-ARECIP.cond.vb  ok
+[702/3284] matrix-pair-LUTFP32.m2-ARECIP.cond.vc  ok
+[703/3284] matrix-pair-LUTFP32.m2-CAST.vc  ok
+[704/3284] matrix-pair-LUTFP32.m2-STOCHRND.vc  ok
+[705/3284] matrix-pair-LUTFP32.m2-STOCHRND.vb  ok
+[706/3284] matrix-pair-LUTFP32.m2-SETCC.vc  ok
+[707/3284] matrix-pair-LUTFP32.m2-GT.vc  ok
+[708/3284] matrix-pair-LUTFP32.m2-GT.vd  ok
+[709/3284] matrix-pair-LUTFP32.m2-LE.vd  ok
+[710/3284] matrix-pair-LUTFP32.m2-SWAP.m0.vd  ok
+[711/3284] matrix-pair-LUTFP32.m2-SWAP.m0.vc  ok
+[712/3284] matrix-pair-LUTFP32.m2-SWAP.m1.vd  ok
+[713/3284] matrix-pair-LUTFP32.m2-SWAP.m1.vc  ok
+[714/3284] matrix-pair-LUTFP32.m2-SHFT2.m0.impl  ok
+[715/3284] matrix-pair-LUTFP32.m2-SHFT2.m1.impl  ok
+[716/3284] matrix-pair-LUTFP32.m2-SHFT2.m2.vc  ok
+[717/3284] matrix-pair-LUTFP32.m2-SHFT2.m3.vc  ok
+[718/3284] matrix-pair-LUTFP32.m2-SHFT2.m4.vc  ok
+[719/3284] matrix-pair-LUTFP32.m2-SHFT2.m5.vb  ok
+[720/3284] matrix-pair-LUTFP32.m2-SHFT2.m5.vc  ok
+[721/3284] matrix-pair-LUTFP32.m2-SHFT2.m6.vb  ok
+[722/3284] matrix-pair-LUTFP32.m2-TRANSP.impl  ok
+[723/3284] matrix-pair-LUTFP32.m2-STORE  ok
+[724/3284] matrix-pair-LUTFP32.m2-CONFIG.L12  ok
+[725/3284] matrix-pair-LUTFP32.m2-LOADI.lower  ok
+[726/3284] matrix-pair-LUTFP32.m2-LOADI.upper  ok
+[727/3284] matrix-pair-LUTFP32.m2-LOAD.lo16  ok
+[728/3284] matrix-pair-LUTFP32.m2-LOAD.hi16  ok
+[729/3284] matrix-pair-LUTFP32.m2-LOADI.full  ok
+[730/3284] matrix-pair-LUTFP32.m2-MOV.waw  ok
+[731/3284] matrix-single-MOV  ok
+[732/3284] matrix-pair-MOV-MOV.vc  ok
+[733/3284] matrix-pair-MOV-ABS.vc  ok
+[734/3284] matrix-pair-MOV-MAD.va  ok
+[735/3284] matrix-pair-MOV-MAD.vb  ok
+[736/3284] matrix-pair-MOV-MAD.vc  ok
+[737/3284] matrix-pair-MOV-MUL.va  ok
+[738/3284] matrix-pair-MOV-ADD.vc  ok
+[739/3284] matrix-pair-MOV-ADDI.vd  ok
+[740/3284] matrix-pair-MOV-MULI.vd  ok
+[741/3284] matrix-pair-MOV-MUL24.va  ok
+[742/3284] matrix-pair-MOV-MUL24.vb  ok
+[743/3284] matrix-pair-MOV-LUT.impl  ok
+[744/3284] matrix-pair-MOV-LUTFP32.impl  ok
+[745/3284] matrix-pair-MOV-LUTFP32.mirror8  ok
+[746/3284] matrix-pair-MOV-IADD.vc.imm  ok
+[747/3284] matrix-pair-MOV-IADD.vc.reg  ok
+[748/3284] matrix-pair-MOV-IADD.vd.reg  ok
+[749/3284] matrix-pair-MOV-IADD.vd.sub  ok
+[750/3284] matrix-pair-MOV-SHFT.vd.imm  ok
+[751/3284] matrix-pair-MOV-SHFT.vd.reg  ok
+[752/3284] matrix-pair-MOV-SHFT.vc.reg  ok
+[753/3284] matrix-pair-MOV-SHFT.vc.immvc  ok
+[754/3284] matrix-pair-MOV-AND.vc  ok
+[755/3284] matrix-pair-MOV-AND.vd  ok
+[756/3284] matrix-pair-MOV-AND.vb  ok
+[757/3284] matrix-pair-MOV-OR.vb  ok
+[758/3284] matrix-pair-MOV-OR.vd  ok
+[759/3284] matrix-pair-MOV-XOR.vc  ok
+[760/3284] matrix-pair-MOV-XOR.vd  ok
+[761/3284] matrix-pair-MOV-NOT.vc  ok
+[762/3284] matrix-pair-MOV-LZ.vc  ok
+[763/3284] matrix-pair-MOV-EXEXP.vc  ok
+[764/3284] matrix-pair-MOV-EXMAN.vc  ok
+[765/3284] matrix-pair-MOV-SETEXP.vc.imm  ok
+[766/3284] matrix-pair-MOV-SETEXP.vd  ok
+[767/3284] matrix-pair-MOV-SETEXP.vc.reg  ok
+[768/3284] matrix-pair-MOV-SETMAN.vc.imm  ok
+[769/3284] matrix-pair-MOV-SETMAN.vd  ok
+[770/3284] matrix-pair-MOV-SETSGN.vc.imm  ok
+[771/3284] matrix-pair-MOV-SETSGN.vd  ok
+[772/3284] matrix-pair-MOV-DIVP2.vc  ok
+[773/3284] matrix-pair-MOV-ARECIP.vc  ok
+[774/3284] matrix-pair-MOV-ARECIP.cond.vb  ok
+[775/3284] matrix-pair-MOV-ARECIP.cond.vc  ok
+[776/3284] matrix-pair-MOV-CAST.vc  ok
+[777/3284] matrix-pair-MOV-STOCHRND.vc  ok
+[778/3284] matrix-pair-MOV-STOCHRND.vb  ok
+[779/3284] matrix-pair-MOV-SETCC.vc  ok
+[780/3284] matrix-pair-MOV-GT.vc  ok
+[781/3284] matrix-pair-MOV-GT.vd  ok
+[782/3284] matrix-pair-MOV-LE.vd  ok
+[783/3284] matrix-pair-MOV-SWAP.m0.vd  ok
+[784/3284] matrix-pair-MOV-SWAP.m0.vc  ok
+[785/3284] matrix-pair-MOV-SWAP.m1.vd  ok
+[786/3284] matrix-pair-MOV-SWAP.m1.vc  ok
+[787/3284] matrix-pair-MOV-SHFT2.m0.impl  ok
+[788/3284] matrix-pair-MOV-SHFT2.m1.impl  ok
+[789/3284] matrix-pair-MOV-SHFT2.m2.vc  ok
+[790/3284] matrix-pair-MOV-SHFT2.m3.vc  ok
+[791/3284] matrix-pair-MOV-SHFT2.m4.vc  ok
+[792/3284] matrix-pair-MOV-SHFT2.m5.vb  ok
+[793/3284] matrix-pair-MOV-SHFT2.m5.vc  ok
+[794/3284] matrix-pair-MOV-SHFT2.m6.vb  ok
+[795/3284] matrix-pair-MOV-TRANSP.impl  ok
+[796/3284] matrix-pair-MOV-STORE  ok
+[797/3284] matrix-pair-MOV-CONFIG.L12  ok
+[798/3284] matrix-pair-MOV-LOADI.lower  ok
+[799/3284] matrix-pair-MOV-LOADI.upper  ok
+[800/3284] matrix-pair-MOV-LOAD.lo16  ok
+[801/3284] matrix-pair-MOV-LOAD.hi16  ok
+[802/3284] matrix-pair-MOV-LOADI.full  ok
+[803/3284] matrix-pair-MOV-MOV.waw  ok
+[804/3284] matrix-single-ABS.f  ok
+[805/3284] matrix-pair-ABS.f-MOV.vc  ok
+[806/3284] matrix-pair-ABS.f-ABS.vc  ok
+[807/3284] matrix-pair-ABS.f-MAD.va  ok
+[808/3284] matrix-pair-ABS.f-MAD.vb  ok
+[809/3284] matrix-pair-ABS.f-MAD.vc  ok
+[810/3284] matrix-pair-ABS.f-MUL.va  ok
+[811/3284] matrix-pair-ABS.f-ADD.vc  ok
+[812/3284] matrix-pair-ABS.f-ADDI.vd  ok
+[813/3284] matrix-pair-ABS.f-MULI.vd  ok
+[814/3284] matrix-pair-ABS.f-MUL24.va  ok
+[815/3284] matrix-pair-ABS.f-MUL24.vb  ok
+[816/3284] matrix-pair-ABS.f-LUT.impl  ok
+[817/3284] matrix-pair-ABS.f-LUTFP32.impl  ok
+[818/3284] matrix-pair-ABS.f-LUTFP32.mirror8  ok
+[819/3284] matrix-pair-ABS.f-IADD.vc.imm  ok
+[820/3284] matrix-pair-ABS.f-IADD.vc.reg  ok
+[821/3284] matrix-pair-ABS.f-IADD.vd.reg  ok
+[822/3284] matrix-pair-ABS.f-IADD.vd.sub  ok
+[823/3284] matrix-pair-ABS.f-SHFT.vd.imm  ok
+[824/3284] matrix-pair-ABS.f-SHFT.vd.reg  ok
+[825/3284] matrix-pair-ABS.f-SHFT.vc.reg  ok
+[826/3284] matrix-pair-ABS.f-SHFT.vc.immvc  ok
+[827/3284] matrix-pair-ABS.f-AND.vc  ok
+[828/3284] matrix-pair-ABS.f-AND.vd  ok
+[829/3284] matrix-pair-ABS.f-AND.vb  ok
+[830/3284] matrix-pair-ABS.f-OR.vb  ok
+[831/3284] matrix-pair-ABS.f-OR.vd  ok
+[832/3284] matrix-pair-ABS.f-XOR.vc  ok
+[833/3284] matrix-pair-ABS.f-XOR.vd  ok
+[834/3284] matrix-pair-ABS.f-NOT.vc  ok
+[835/3284] matrix-pair-ABS.f-LZ.vc  ok
+[836/3284] matrix-pair-ABS.f-EXEXP.vc  ok
+[837/3284] matrix-pair-ABS.f-EXMAN.vc  ok
+[838/3284] matrix-pair-ABS.f-SETEXP.vc.imm  ok
+[839/3284] matrix-pair-ABS.f-SETEXP.vd  ok
+[840/3284] matrix-pair-ABS.f-SETEXP.vc.reg  ok
+[841/3284] matrix-pair-ABS.f-SETMAN.vc.imm  ok
+[842/3284] matrix-pair-ABS.f-SETMAN.vd  ok
+[843/3284] matrix-pair-ABS.f-SETSGN.vc.imm  ok
+[844/3284] matrix-pair-ABS.f-SETSGN.vd  ok
+[845/3284] matrix-pair-ABS.f-DIVP2.vc  ok
+[846/3284] matrix-pair-ABS.f-ARECIP.vc  ok
+[847/3284] matrix-pair-ABS.f-ARECIP.cond.vb  ok
+[848/3284] matrix-pair-ABS.f-ARECIP.cond.vc  ok
+[849/3284] matrix-pair-ABS.f-CAST.vc  ok
+[850/3284] matrix-pair-ABS.f-STOCHRND.vc  ok
+[851/3284] matrix-pair-ABS.f-STOCHRND.vb  ok
+[852/3284] matrix-pair-ABS.f-SETCC.vc  ok
+[853/3284] matrix-pair-ABS.f-GT.vc  ok
+[854/3284] matrix-pair-ABS.f-GT.vd  ok
+[855/3284] matrix-pair-ABS.f-LE.vd  ok
+[856/3284] matrix-pair-ABS.f-SWAP.m0.vd  ok
+[857/3284] matrix-pair-ABS.f-SWAP.m0.vc  ok
+[858/3284] matrix-pair-ABS.f-SWAP.m1.vd  ok
+[859/3284] matrix-pair-ABS.f-SWAP.m1.vc  ok
+[860/3284] matrix-pair-ABS.f-SHFT2.m0.impl  ok
+[861/3284] matrix-pair-ABS.f-SHFT2.m1.impl  ok
+[862/3284] matrix-pair-ABS.f-SHFT2.m2.vc  ok
+[863/3284] matrix-pair-ABS.f-SHFT2.m3.vc  ok
+[864/3284] matrix-pair-ABS.f-SHFT2.m4.vc  ok
+[865/3284] matrix-pair-ABS.f-SHFT2.m5.vb  ok
+[866/3284] matrix-pair-ABS.f-SHFT2.m5.vc  ok
+[867/3284] matrix-pair-ABS.f-SHFT2.m6.vb  ok
+[868/3284] matrix-pair-ABS.f-TRANSP.impl  ok
+[869/3284] matrix-pair-ABS.f-STORE  ok
+[870/3284] matrix-pair-ABS.f-CONFIG.L12  ok
+[871/3284] matrix-pair-ABS.f-LOADI.lower  ok
+[872/3284] matrix-pair-ABS.f-LOADI.upper  ok
+[873/3284] matrix-pair-ABS.f-LOAD.lo16  ok
+[874/3284] matrix-pair-ABS.f-LOAD.hi16  ok
+[875/3284] matrix-pair-ABS.f-LOADI.full  ok
+[876/3284] matrix-pair-ABS.f-MOV.waw  ok
+[877/3284] matrix-single-IADD.imm  ok
+[878/3284] matrix-pair-IADD.imm-MOV.vc  ok
+[879/3284] matrix-pair-IADD.imm-ABS.vc  ok
+[880/3284] matrix-pair-IADD.imm-MAD.va  ok
+[881/3284] matrix-pair-IADD.imm-MAD.vb  ok
+[882/3284] matrix-pair-IADD.imm-MAD.vc  ok
+[883/3284] matrix-pair-IADD.imm-MUL.va  ok
+[884/3284] matrix-pair-IADD.imm-ADD.vc  ok
+[885/3284] matrix-pair-IADD.imm-ADDI.vd  ok
+[886/3284] matrix-pair-IADD.imm-MULI.vd  ok
+[887/3284] matrix-pair-IADD.imm-MUL24.va  ok
+[888/3284] matrix-pair-IADD.imm-MUL24.vb  ok
+[889/3284] matrix-pair-IADD.imm-LUT.impl  ok
+[890/3284] matrix-pair-IADD.imm-LUTFP32.impl  ok
+[891/3284] matrix-pair-IADD.imm-LUTFP32.mirror8  ok
+[892/3284] matrix-pair-IADD.imm-IADD.vc.imm  ok
+[893/3284] matrix-pair-IADD.imm-IADD.vc.reg  ok
+[894/3284] matrix-pair-IADD.imm-IADD.vd.reg  ok
+[895/3284] matrix-pair-IADD.imm-IADD.vd.sub  ok
+[896/3284] matrix-pair-IADD.imm-SHFT.vd.imm  ok
+[897/3284] matrix-pair-IADD.imm-SHFT.vd.reg  ok
+[898/3284] matrix-pair-IADD.imm-SHFT.vc.reg  ok
+[899/3284] matrix-pair-IADD.imm-SHFT.vc.immvc  ok
+[900/3284] matrix-pair-IADD.imm-AND.vc  ok
+[901/3284] matrix-pair-IADD.imm-AND.vd  ok
+[902/3284] matrix-pair-IADD.imm-AND.vb  ok
+[903/3284] matrix-pair-IADD.imm-OR.vb  ok
+[904/3284] matrix-pair-IADD.imm-OR.vd  ok
+[905/3284] matrix-pair-IADD.imm-XOR.vc  ok
+[906/3284] matrix-pair-IADD.imm-XOR.vd  ok
+[907/3284] matrix-pair-IADD.imm-NOT.vc  ok
+[908/3284] matrix-pair-IADD.imm-LZ.vc  ok
+[909/3284] matrix-pair-IADD.imm-EXEXP.vc  ok
+[910/3284] matrix-pair-IADD.imm-EXMAN.vc  ok
+[911/3284] matrix-pair-IADD.imm-SETEXP.vc.imm  ok
+[912/3284] matrix-pair-IADD.imm-SETEXP.vd  ok
+[913/3284] matrix-pair-IADD.imm-SETEXP.vc.reg  ok
+[914/3284] matrix-pair-IADD.imm-SETMAN.vc.imm  ok
+[915/3284] matrix-pair-IADD.imm-SETMAN.vd  ok
+[916/3284] matrix-pair-IADD.imm-SETSGN.vc.imm  ok
+[917/3284] matrix-pair-IADD.imm-SETSGN.vd  ok
+[918/3284] matrix-pair-IADD.imm-DIVP2.vc  ok
+[919/3284] matrix-pair-IADD.imm-ARECIP.vc  ok
+[920/3284] matrix-pair-IADD.imm-ARECIP.cond.vb  ok
+[921/3284] matrix-pair-IADD.imm-ARECIP.cond.vc  ok
+[922/3284] matrix-pair-IADD.imm-CAST.vc  ok
+[923/3284] matrix-pair-IADD.imm-STOCHRND.vc  ok
+[924/3284] matrix-pair-IADD.imm-STOCHRND.vb  ok
+[925/3284] matrix-pair-IADD.imm-SETCC.vc  ok
+[926/3284] matrix-pair-IADD.imm-GT.vc  ok
+[927/3284] matrix-pair-IADD.imm-GT.vd  ok
+[928/3284] matrix-pair-IADD.imm-LE.vd  ok
+[929/3284] matrix-pair-IADD.imm-SWAP.m0.vd  ok
+[930/3284] matrix-pair-IADD.imm-SWAP.m0.vc  ok
+[931/3284] matrix-pair-IADD.imm-SWAP.m1.vd  ok
+[932/3284] matrix-pair-IADD.imm-SWAP.m1.vc  ok
+[933/3284] matrix-pair-IADD.imm-SHFT2.m0.impl  ok
+[934/3284] matrix-pair-IADD.imm-SHFT2.m1.impl  ok
+[935/3284] matrix-pair-IADD.imm-SHFT2.m2.vc  ok
+[936/3284] matrix-pair-IADD.imm-SHFT2.m3.vc  ok
+[937/3284] matrix-pair-IADD.imm-SHFT2.m4.vc  ok
+[938/3284] matrix-pair-IADD.imm-SHFT2.m5.vb  ok
+[939/3284] matrix-pair-IADD.imm-SHFT2.m5.vc  ok
+[940/3284] matrix-pair-IADD.imm-SHFT2.m6.vb  ok
+[941/3284] matrix-pair-IADD.imm-TRANSP.impl  ok
+[942/3284] matrix-pair-IADD.imm-STORE  ok
+[943/3284] matrix-pair-IADD.imm-CONFIG.L12  ok
+[944/3284] matrix-pair-IADD.imm-LOADI.lower  ok
+[945/3284] matrix-pair-IADD.imm-LOADI.upper  ok
+[946/3284] matrix-pair-IADD.imm-LOAD.lo16  ok
+[947/3284] matrix-pair-IADD.imm-LOAD.hi16  ok
+[948/3284] matrix-pair-IADD.imm-LOADI.full  ok
+[949/3284] matrix-pair-IADD.imm-MOV.waw  ok
+[950/3284] matrix-single-IADD.reg  ok
+[951/3284] matrix-pair-IADD.reg-MOV.vc  ok
+[952/3284] matrix-pair-IADD.reg-ABS.vc  ok
+[953/3284] matrix-pair-IADD.reg-MAD.va  ok
+[954/3284] matrix-pair-IADD.reg-MAD.vb  ok
+[955/3284] matrix-pair-IADD.reg-MAD.vc  ok
+[956/3284] matrix-pair-IADD.reg-MUL.va  ok
+[957/3284] matrix-pair-IADD.reg-ADD.vc  ok
+[958/3284] matrix-pair-IADD.reg-ADDI.vd  ok
+[959/3284] matrix-pair-IADD.reg-MULI.vd  ok
+[960/3284] matrix-pair-IADD.reg-MUL24.va  ok
+[961/3284] matrix-pair-IADD.reg-MUL24.vb  ok
+[962/3284] matrix-pair-IADD.reg-LUT.impl  ok
+[963/3284] matrix-pair-IADD.reg-LUTFP32.impl  ok
+[964/3284] matrix-pair-IADD.reg-LUTFP32.mirror8  ok
+[965/3284] matrix-pair-IADD.reg-IADD.vc.imm  ok
+[966/3284] matrix-pair-IADD.reg-IADD.vc.reg  ok
+[967/3284] matrix-pair-IADD.reg-IADD.vd.reg  ok
+[968/3284] matrix-pair-IADD.reg-IADD.vd.sub  ok
+[969/3284] matrix-pair-IADD.reg-SHFT.vd.imm  ok
+[970/3284] matrix-pair-IADD.reg-SHFT.vd.reg  ok
+[971/3284] matrix-pair-IADD.reg-SHFT.vc.reg  ok
+[972/3284] matrix-pair-IADD.reg-SHFT.vc.immvc  ok
+[973/3284] matrix-pair-IADD.reg-AND.vc  ok
+[974/3284] matrix-pair-IADD.reg-AND.vd  ok
+[975/3284] matrix-pair-IADD.reg-AND.vb  ok
+[976/3284] matrix-pair-IADD.reg-OR.vb  ok
+[977/3284] matrix-pair-IADD.reg-OR.vd  ok
+[978/3284] matrix-pair-IADD.reg-XOR.vc  ok
+[979/3284] matrix-pair-IADD.reg-XOR.vd  ok
+[980/3284] matrix-pair-IADD.reg-NOT.vc  ok
+[981/3284] matrix-pair-IADD.reg-LZ.vc  ok
+[982/3284] matrix-pair-IADD.reg-EXEXP.vc  ok
+[983/3284] matrix-pair-IADD.reg-EXMAN.vc  ok
+[984/3284] matrix-pair-IADD.reg-SETEXP.vc.imm  ok
+[985/3284] matrix-pair-IADD.reg-SETEXP.vd  ok
+[986/3284] matrix-pair-IADD.reg-SETEXP.vc.reg  ok
+[987/3284] matrix-pair-IADD.reg-SETMAN.vc.imm  ok
+[988/3284] matrix-pair-IADD.reg-SETMAN.vd  ok
+[989/3284] matrix-pair-IADD.reg-SETSGN.vc.imm  ok
+[990/3284] matrix-pair-IADD.reg-SETSGN.vd  ok
+[991/3284] matrix-pair-IADD.reg-DIVP2.vc  ok
+[992/3284] matrix-pair-IADD.reg-ARECIP.vc  ok
+[993/3284] matrix-pair-IADD.reg-ARECIP.cond.vb  ok
+[994/3284] matrix-pair-IADD.reg-ARECIP.cond.vc  ok
+[995/3284] matrix-pair-IADD.reg-CAST.vc  ok
+[996/3284] matrix-pair-IADD.reg-STOCHRND.vc  ok
+[997/3284] matrix-pair-IADD.reg-STOCHRND.vb  ok
+[998/3284] matrix-pair-IADD.reg-SETCC.vc  ok
+[999/3284] matrix-pair-IADD.reg-GT.vc  ok
+[1000/3284] matrix-pair-IADD.reg-GT.vd  ok
+[1001/3284] matrix-pair-IADD.reg-LE.vd  ok
+[1002/3284] matrix-pair-IADD.reg-SWAP.m0.vd  ok
+[1003/3284] matrix-pair-IADD.reg-SWAP.m0.vc  ok
+[1004/3284] matrix-pair-IADD.reg-SWAP.m1.vd  ok
+[1005/3284] matrix-pair-IADD.reg-SWAP.m1.vc  ok
+[1006/3284] matrix-pair-IADD.reg-SHFT2.m0.impl  ok
+[1007/3284] matrix-pair-IADD.reg-SHFT2.m1.impl  ok
+[1008/3284] matrix-pair-IADD.reg-SHFT2.m2.vc  ok
+[1009/3284] matrix-pair-IADD.reg-SHFT2.m3.vc  ok
+[1010/3284] matrix-pair-IADD.reg-SHFT2.m4.vc  ok
+[1011/3284] matrix-pair-IADD.reg-SHFT2.m5.vb  ok
+[1012/3284] matrix-pair-IADD.reg-SHFT2.m5.vc  ok
+[1013/3284] matrix-pair-IADD.reg-SHFT2.m6.vb  ok
+[1014/3284] matrix-pair-IADD.reg-TRANSP.impl  ok
+[1015/3284] matrix-pair-IADD.reg-STORE  ok
+[1016/3284] matrix-pair-IADD.reg-CONFIG.L12  ok
+[1017/3284] matrix-pair-IADD.reg-LOADI.lower  ok
+[1018/3284] matrix-pair-IADD.reg-LOADI.upper  ok
+[1019/3284] matrix-pair-IADD.reg-LOAD.lo16  ok
+[1020/3284] matrix-pair-IADD.reg-LOAD.hi16  ok
+[1021/3284] matrix-pair-IADD.reg-LOADI.full  ok
+[1022/3284] matrix-pair-IADD.reg-MOV.waw  ok
+[1023/3284] matrix-single-SHFT.imm  ok
+[1024/3284] matrix-pair-SHFT.imm-MOV.vc  ok
+[1025/3284] matrix-pair-SHFT.imm-ABS.vc  ok
+[1026/3284] matrix-pair-SHFT.imm-MAD.va  ok
+[1027/3284] matrix-pair-SHFT.imm-MAD.vb  ok
+[1028/3284] matrix-pair-SHFT.imm-MAD.vc  ok
+[1029/3284] matrix-pair-SHFT.imm-MUL.va  ok
+[1030/3284] matrix-pair-SHFT.imm-ADD.vc  ok
+[1031/3284] matrix-pair-SHFT.imm-ADDI.vd  ok
+[1032/3284] matrix-pair-SHFT.imm-MULI.vd  ok
+[1033/3284] matrix-pair-SHFT.imm-MUL24.va  ok
+[1034/3284] matrix-pair-SHFT.imm-MUL24.vb  ok
+[1035/3284] matrix-pair-SHFT.imm-LUT.impl  ok
+[1036/3284] matrix-pair-SHFT.imm-LUTFP32.impl  ok
+[1037/3284] matrix-pair-SHFT.imm-LUTFP32.mirror8  ok
+[1038/3284] matrix-pair-SHFT.imm-IADD.vc.imm  ok
+[1039/3284] matrix-pair-SHFT.imm-IADD.vc.reg  ok
+[1040/3284] matrix-pair-SHFT.imm-IADD.vd.reg  ok
+[1041/3284] matrix-pair-SHFT.imm-IADD.vd.sub  ok
+[1042/3284] matrix-pair-SHFT.imm-SHFT.vd.imm  ok
+[1043/3284] matrix-pair-SHFT.imm-SHFT.vd.reg  ok
+[1044/3284] matrix-pair-SHFT.imm-SHFT.vc.reg  ok
+[1045/3284] matrix-pair-SHFT.imm-SHFT.vc.immvc  ok
+[1046/3284] matrix-pair-SHFT.imm-AND.vc  ok
+[1047/3284] matrix-pair-SHFT.imm-AND.vd  ok
+[1048/3284] matrix-pair-SHFT.imm-AND.vb  ok
+[1049/3284] matrix-pair-SHFT.imm-OR.vb  ok
+[1050/3284] matrix-pair-SHFT.imm-OR.vd  ok
+[1051/3284] matrix-pair-SHFT.imm-XOR.vc  ok
+[1052/3284] matrix-pair-SHFT.imm-XOR.vd  ok
+[1053/3284] matrix-pair-SHFT.imm-NOT.vc  ok
+[1054/3284] matrix-pair-SHFT.imm-LZ.vc  ok
+[1055/3284] matrix-pair-SHFT.imm-EXEXP.vc  ok
+[1056/3284] matrix-pair-SHFT.imm-EXMAN.vc  ok
+[1057/3284] matrix-pair-SHFT.imm-SETEXP.vc.imm  ok
+[1058/3284] matrix-pair-SHFT.imm-SETEXP.vd  ok
+[1059/3284] matrix-pair-SHFT.imm-SETEXP.vc.reg  ok
+[1060/3284] matrix-pair-SHFT.imm-SETMAN.vc.imm  ok
+[1061/3284] matrix-pair-SHFT.imm-SETMAN.vd  ok
+[1062/3284] matrix-pair-SHFT.imm-SETSGN.vc.imm  ok
+[1063/3284] matrix-pair-SHFT.imm-SETSGN.vd  ok
+[1064/3284] matrix-pair-SHFT.imm-DIVP2.vc  ok
+[1065/3284] matrix-pair-SHFT.imm-ARECIP.vc  ok
+[1066/3284] matrix-pair-SHFT.imm-ARECIP.cond.vb  ok
+[1067/3284] matrix-pair-SHFT.imm-ARECIP.cond.vc  ok
+[1068/3284] matrix-pair-SHFT.imm-CAST.vc  ok
+[1069/3284] matrix-pair-SHFT.imm-STOCHRND.vc  ok
+[1070/3284] matrix-pair-SHFT.imm-STOCHRND.vb  ok
+[1071/3284] matrix-pair-SHFT.imm-SETCC.vc  ok
+[1072/3284] matrix-pair-SHFT.imm-GT.vc  ok
+[1073/3284] matrix-pair-SHFT.imm-GT.vd  ok
+[1074/3284] matrix-pair-SHFT.imm-LE.vd  ok
+[1075/3284] matrix-pair-SHFT.imm-SWAP.m0.vd  ok
+[1076/3284] matrix-pair-SHFT.imm-SWAP.m0.vc  ok
+[1077/3284] matrix-pair-SHFT.imm-SWAP.m1.vd  ok
+[1078/3284] matrix-pair-SHFT.imm-SWAP.m1.vc  ok
+[1079/3284] matrix-pair-SHFT.imm-SHFT2.m0.impl  ok
+[1080/3284] matrix-pair-SHFT.imm-SHFT2.m1.impl  ok
+[1081/3284] matrix-pair-SHFT.imm-SHFT2.m2.vc  ok
+[1082/3284] matrix-pair-SHFT.imm-SHFT2.m3.vc  ok
+[1083/3284] matrix-pair-SHFT.imm-SHFT2.m4.vc  ok
+[1084/3284] matrix-pair-SHFT.imm-SHFT2.m5.vb  ok
+[1085/3284] matrix-pair-SHFT.imm-SHFT2.m5.vc  ok
+[1086/3284] matrix-pair-SHFT.imm-SHFT2.m6.vb  ok
+[1087/3284] matrix-pair-SHFT.imm-TRANSP.impl  ok
+[1088/3284] matrix-pair-SHFT.imm-STORE  ok
+[1089/3284] matrix-pair-SHFT.imm-CONFIG.L12  ok
+[1090/3284] matrix-pair-SHFT.imm-LOADI.lower  ok
+[1091/3284] matrix-pair-SHFT.imm-LOADI.upper  ok
+[1092/3284] matrix-pair-SHFT.imm-LOAD.lo16  ok
+[1093/3284] matrix-pair-SHFT.imm-LOAD.hi16  ok
+[1094/3284] matrix-pair-SHFT.imm-LOADI.full  ok
+[1095/3284] matrix-pair-SHFT.imm-MOV.waw  ok
+[1096/3284] matrix-single-AND.vb  ok
+[1097/3284] matrix-pair-AND.vb-MOV.vc  ok
+[1098/3284] matrix-pair-AND.vb-ABS.vc  ok
+[1099/3284] matrix-pair-AND.vb-MAD.va  ok
+[1100/3284] matrix-pair-AND.vb-MAD.vb  ok
+[1101/3284] matrix-pair-AND.vb-MAD.vc  ok
+[1102/3284] matrix-pair-AND.vb-MUL.va  ok
+[1103/3284] matrix-pair-AND.vb-ADD.vc  ok
+[1104/3284] matrix-pair-AND.vb-ADDI.vd  ok
+[1105/3284] matrix-pair-AND.vb-MULI.vd  ok
+[1106/3284] matrix-pair-AND.vb-MUL24.va  ok
+[1107/3284] matrix-pair-AND.vb-MUL24.vb  ok
+[1108/3284] matrix-pair-AND.vb-LUT.impl  ok
+[1109/3284] matrix-pair-AND.vb-LUTFP32.impl  ok
+[1110/3284] matrix-pair-AND.vb-LUTFP32.mirror8  ok
+[1111/3284] matrix-pair-AND.vb-IADD.vc.imm  ok
+[1112/3284] matrix-pair-AND.vb-IADD.vc.reg  ok
+[1113/3284] matrix-pair-AND.vb-IADD.vd.reg  ok
+[1114/3284] matrix-pair-AND.vb-IADD.vd.sub  ok
+[1115/3284] matrix-pair-AND.vb-SHFT.vd.imm  ok
+[1116/3284] matrix-pair-AND.vb-SHFT.vd.reg  ok
+[1117/3284] matrix-pair-AND.vb-SHFT.vc.reg  ok
+[1118/3284] matrix-pair-AND.vb-SHFT.vc.immvc  ok
+[1119/3284] matrix-pair-AND.vb-AND.vc  ok
+[1120/3284] matrix-pair-AND.vb-AND.vd  ok
+[1121/3284] matrix-pair-AND.vb-AND.vb  ok
+[1122/3284] matrix-pair-AND.vb-OR.vb  ok
+[1123/3284] matrix-pair-AND.vb-OR.vd  ok
+[1124/3284] matrix-pair-AND.vb-XOR.vc  ok
+[1125/3284] matrix-pair-AND.vb-XOR.vd  ok
+[1126/3284] matrix-pair-AND.vb-NOT.vc  ok
+[1127/3284] matrix-pair-AND.vb-LZ.vc  ok
+[1128/3284] matrix-pair-AND.vb-EXEXP.vc  ok
+[1129/3284] matrix-pair-AND.vb-EXMAN.vc  ok
+[1130/3284] matrix-pair-AND.vb-SETEXP.vc.imm  ok
+[1131/3284] matrix-pair-AND.vb-SETEXP.vd  ok
+[1132/3284] matrix-pair-AND.vb-SETEXP.vc.reg  ok
+[1133/3284] matrix-pair-AND.vb-SETMAN.vc.imm  ok
+[1134/3284] matrix-pair-AND.vb-SETMAN.vd  ok
+[1135/3284] matrix-pair-AND.vb-SETSGN.vc.imm  ok
+[1136/3284] matrix-pair-AND.vb-SETSGN.vd  ok
+[1137/3284] matrix-pair-AND.vb-DIVP2.vc  ok
+[1138/3284] matrix-pair-AND.vb-ARECIP.vc  ok
+[1139/3284] matrix-pair-AND.vb-ARECIP.cond.vb  ok
+[1140/3284] matrix-pair-AND.vb-ARECIP.cond.vc  ok
+[1141/3284] matrix-pair-AND.vb-CAST.vc  ok
+[1142/3284] matrix-pair-AND.vb-STOCHRND.vc  ok
+[1143/3284] matrix-pair-AND.vb-STOCHRND.vb  ok
+[1144/3284] matrix-pair-AND.vb-SETCC.vc  ok
+[1145/3284] matrix-pair-AND.vb-GT.vc  ok
+[1146/3284] matrix-pair-AND.vb-GT.vd  ok
+[1147/3284] matrix-pair-AND.vb-LE.vd  ok
+[1148/3284] matrix-pair-AND.vb-SWAP.m0.vd  ok
+[1149/3284] matrix-pair-AND.vb-SWAP.m0.vc  ok
+[1150/3284] matrix-pair-AND.vb-SWAP.m1.vd  ok
+[1151/3284] matrix-pair-AND.vb-SWAP.m1.vc  ok
+[1152/3284] matrix-pair-AND.vb-SHFT2.m0.impl  ok
+[1153/3284] matrix-pair-AND.vb-SHFT2.m1.impl  ok
+[1154/3284] matrix-pair-AND.vb-SHFT2.m2.vc  ok
+[1155/3284] matrix-pair-AND.vb-SHFT2.m3.vc  ok
+[1156/3284] matrix-pair-AND.vb-SHFT2.m4.vc  ok
+[1157/3284] matrix-pair-AND.vb-SHFT2.m5.vb  ok
+[1158/3284] matrix-pair-AND.vb-SHFT2.m5.vc  ok
+[1159/3284] matrix-pair-AND.vb-SHFT2.m6.vb  ok
+[1160/3284] matrix-pair-AND.vb-TRANSP.impl  ok
+[1161/3284] matrix-pair-AND.vb-STORE  ok
+[1162/3284] matrix-pair-AND.vb-CONFIG.L12  ok
+[1163/3284] matrix-pair-AND.vb-LOADI.lower  ok
+[1164/3284] matrix-pair-AND.vb-LOADI.upper  ok
+[1165/3284] matrix-pair-AND.vb-LOAD.lo16  ok
+[1166/3284] matrix-pair-AND.vb-LOAD.hi16  ok
+[1167/3284] matrix-pair-AND.vb-LOADI.full  ok
+[1168/3284] matrix-pair-AND.vb-MOV.waw  ok
+[1169/3284] matrix-single-OR.vb  ok
+[1170/3284] matrix-pair-OR.vb-MOV.vc  ok
+[1171/3284] matrix-pair-OR.vb-ABS.vc  ok
+[1172/3284] matrix-pair-OR.vb-MAD.va  ok
+[1173/3284] matrix-pair-OR.vb-MAD.vb  ok
+[1174/3284] matrix-pair-OR.vb-MAD.vc  ok
+[1175/3284] matrix-pair-OR.vb-MUL.va  ok
+[1176/3284] matrix-pair-OR.vb-ADD.vc  ok
+[1177/3284] matrix-pair-OR.vb-ADDI.vd  ok
+[1178/3284] matrix-pair-OR.vb-MULI.vd  ok
+[1179/3284] matrix-pair-OR.vb-MUL24.va  ok
+[1180/3284] matrix-pair-OR.vb-MUL24.vb  ok
+[1181/3284] matrix-pair-OR.vb-LUT.impl  ok
+[1182/3284] matrix-pair-OR.vb-LUTFP32.impl  ok
+[1183/3284] matrix-pair-OR.vb-LUTFP32.mirror8  ok
+[1184/3284] matrix-pair-OR.vb-IADD.vc.imm  ok
+[1185/3284] matrix-pair-OR.vb-IADD.vc.reg  ok
+[1186/3284] matrix-pair-OR.vb-IADD.vd.reg  ok
+[1187/3284] matrix-pair-OR.vb-IADD.vd.sub  ok
+[1188/3284] matrix-pair-OR.vb-SHFT.vd.imm  ok
+[1189/3284] matrix-pair-OR.vb-SHFT.vd.reg  ok
+[1190/3284] matrix-pair-OR.vb-SHFT.vc.reg  ok
+[1191/3284] matrix-pair-OR.vb-SHFT.vc.immvc  ok
+[1192/3284] matrix-pair-OR.vb-AND.vc  ok
+[1193/3284] matrix-pair-OR.vb-AND.vd  ok
+[1194/3284] matrix-pair-OR.vb-AND.vb  ok
+[1195/3284] matrix-pair-OR.vb-OR.vb  ok
+[1196/3284] matrix-pair-OR.vb-OR.vd  ok
+[1197/3284] matrix-pair-OR.vb-XOR.vc  ok
+[1198/3284] matrix-pair-OR.vb-XOR.vd  ok
+[1199/3284] matrix-pair-OR.vb-NOT.vc  ok
+[1200/3284] matrix-pair-OR.vb-LZ.vc  ok
+[1201/3284] matrix-pair-OR.vb-EXEXP.vc  ok
+[1202/3284] matrix-pair-OR.vb-EXMAN.vc  ok
+[1203/3284] matrix-pair-OR.vb-SETEXP.vc.imm  ok
+[1204/3284] matrix-pair-OR.vb-SETEXP.vd  ok
+[1205/3284] matrix-pair-OR.vb-SETEXP.vc.reg  ok
+[1206/3284] matrix-pair-OR.vb-SETMAN.vc.imm  ok
+[1207/3284] matrix-pair-OR.vb-SETMAN.vd  ok
+[1208/3284] matrix-pair-OR.vb-SETSGN.vc.imm  ok
+[1209/3284] matrix-pair-OR.vb-SETSGN.vd  ok
+[1210/3284] matrix-pair-OR.vb-DIVP2.vc  ok
+[1211/3284] matrix-pair-OR.vb-ARECIP.vc  ok
+[1212/3284] matrix-pair-OR.vb-ARECIP.cond.vb  ok
+[1213/3284] matrix-pair-OR.vb-ARECIP.cond.vc  ok
+[1214/3284] matrix-pair-OR.vb-CAST.vc  ok
+[1215/3284] matrix-pair-OR.vb-STOCHRND.vc  ok
+[1216/3284] matrix-pair-OR.vb-STOCHRND.vb  ok
+[1217/3284] matrix-pair-OR.vb-SETCC.vc  ok
+[1218/3284] matrix-pair-OR.vb-GT.vc  ok
+[1219/3284] matrix-pair-OR.vb-GT.vd  ok
+[1220/3284] matrix-pair-OR.vb-LE.vd  ok
+[1221/3284] matrix-pair-OR.vb-SWAP.m0.vd  ok
+[1222/3284] matrix-pair-OR.vb-SWAP.m0.vc  ok
+[1223/3284] matrix-pair-OR.vb-SWAP.m1.vd  ok
+[1224/3284] matrix-pair-OR.vb-SWAP.m1.vc  ok
+[1225/3284] matrix-pair-OR.vb-SHFT2.m0.impl  ok
+[1226/3284] matrix-pair-OR.vb-SHFT2.m1.impl  ok
+[1227/3284] matrix-pair-OR.vb-SHFT2.m2.vc  ok
+[1228/3284] matrix-pair-OR.vb-SHFT2.m3.vc  ok
+[1229/3284] matrix-pair-OR.vb-SHFT2.m4.vc  ok
+[1230/3284] matrix-pair-OR.vb-SHFT2.m5.vb  ok
+[1231/3284] matrix-pair-OR.vb-SHFT2.m5.vc  ok
+[1232/3284] matrix-pair-OR.vb-SHFT2.m6.vb  ok
+[1233/3284] matrix-pair-OR.vb-TRANSP.impl  ok
+[1234/3284] matrix-pair-OR.vb-STORE  ok
+[1235/3284] matrix-pair-OR.vb-CONFIG.L12  ok
+[1236/3284] matrix-pair-OR.vb-LOADI.lower  ok
+[1237/3284] matrix-pair-OR.vb-LOADI.upper  ok
+[1238/3284] matrix-pair-OR.vb-LOAD.lo16  ok
+[1239/3284] matrix-pair-OR.vb-LOAD.hi16  ok
+[1240/3284] matrix-pair-OR.vb-LOADI.full  ok
+[1241/3284] matrix-pair-OR.vb-MOV.waw  ok
+[1242/3284] matrix-single-XOR  ok
+[1243/3284] matrix-pair-XOR-MOV.vc  ok
+[1244/3284] matrix-pair-XOR-ABS.vc  ok
+[1245/3284] matrix-pair-XOR-MAD.va  ok
+[1246/3284] matrix-pair-XOR-MAD.vb  ok
+[1247/3284] matrix-pair-XOR-MAD.vc  ok
+[1248/3284] matrix-pair-XOR-MUL.va  ok
+[1249/3284] matrix-pair-XOR-ADD.vc  ok
+[1250/3284] matrix-pair-XOR-ADDI.vd  ok
+[1251/3284] matrix-pair-XOR-MULI.vd  ok
+[1252/3284] matrix-pair-XOR-MUL24.va  ok
+[1253/3284] matrix-pair-XOR-MUL24.vb  ok
+[1254/3284] matrix-pair-XOR-LUT.impl  ok
+[1255/3284] matrix-pair-XOR-LUTFP32.impl  ok
+[1256/3284] matrix-pair-XOR-LUTFP32.mirror8  ok
+[1257/3284] matrix-pair-XOR-IADD.vc.imm  ok
+[1258/3284] matrix-pair-XOR-IADD.vc.reg  ok
+[1259/3284] matrix-pair-XOR-IADD.vd.reg  ok
+[1260/3284] matrix-pair-XOR-IADD.vd.sub  ok
+[1261/3284] matrix-pair-XOR-SHFT.vd.imm  ok
+[1262/3284] matrix-pair-XOR-SHFT.vd.reg  ok
+[1263/3284] matrix-pair-XOR-SHFT.vc.reg  ok
+[1264/3284] matrix-pair-XOR-SHFT.vc.immvc  ok
+[1265/3284] matrix-pair-XOR-AND.vc  ok
+[1266/3284] matrix-pair-XOR-AND.vd  ok
+[1267/3284] matrix-pair-XOR-AND.vb  ok
+[1268/3284] matrix-pair-XOR-OR.vb  ok
+[1269/3284] matrix-pair-XOR-OR.vd  ok
+[1270/3284] matrix-pair-XOR-XOR.vc  ok
+[1271/3284] matrix-pair-XOR-XOR.vd  ok
+[1272/3284] matrix-pair-XOR-NOT.vc  ok
+[1273/3284] matrix-pair-XOR-LZ.vc  ok
+[1274/3284] matrix-pair-XOR-EXEXP.vc  ok
+[1275/3284] matrix-pair-XOR-EXMAN.vc  ok
+[1276/3284] matrix-pair-XOR-SETEXP.vc.imm  ok
+[1277/3284] matrix-pair-XOR-SETEXP.vd  ok
+[1278/3284] matrix-pair-XOR-SETEXP.vc.reg  ok
+[1279/3284] matrix-pair-XOR-SETMAN.vc.imm  ok
+[1280/3284] matrix-pair-XOR-SETMAN.vd  ok
+[1281/3284] matrix-pair-XOR-SETSGN.vc.imm  ok
+[1282/3284] matrix-pair-XOR-SETSGN.vd  ok
+[1283/3284] matrix-pair-XOR-DIVP2.vc  ok
+[1284/3284] matrix-pair-XOR-ARECIP.vc  ok
+[1285/3284] matrix-pair-XOR-ARECIP.cond.vb  ok
+[1286/3284] matrix-pair-XOR-ARECIP.cond.vc  ok
+[1287/3284] matrix-pair-XOR-CAST.vc  ok
+[1288/3284] matrix-pair-XOR-STOCHRND.vc  ok
+[1289/3284] matrix-pair-XOR-STOCHRND.vb  ok
+[1290/3284] matrix-pair-XOR-SETCC.vc  ok
+[1291/3284] matrix-pair-XOR-GT.vc  ok
+[1292/3284] matrix-pair-XOR-GT.vd  ok
+[1293/3284] matrix-pair-XOR-LE.vd  ok
+[1294/3284] matrix-pair-XOR-SWAP.m0.vd  ok
+[1295/3284] matrix-pair-XOR-SWAP.m0.vc  ok
+[1296/3284] matrix-pair-XOR-SWAP.m1.vd  ok
+[1297/3284] matrix-pair-XOR-SWAP.m1.vc  ok
+[1298/3284] matrix-pair-XOR-SHFT2.m0.impl  ok
+[1299/3284] matrix-pair-XOR-SHFT2.m1.impl  ok
+[1300/3284] matrix-pair-XOR-SHFT2.m2.vc  ok
+[1301/3284] matrix-pair-XOR-SHFT2.m3.vc  ok
+[1302/3284] matrix-pair-XOR-SHFT2.m4.vc  ok
+[1303/3284] matrix-pair-XOR-SHFT2.m5.vb  ok
+[1304/3284] matrix-pair-XOR-SHFT2.m5.vc  ok
+[1305/3284] matrix-pair-XOR-SHFT2.m6.vb  ok
+[1306/3284] matrix-pair-XOR-TRANSP.impl  ok
+[1307/3284] matrix-pair-XOR-STORE  ok
+[1308/3284] matrix-pair-XOR-CONFIG.L12  ok
+[1309/3284] matrix-pair-XOR-LOADI.lower  ok
+[1310/3284] matrix-pair-XOR-LOADI.upper  ok
+[1311/3284] matrix-pair-XOR-LOAD.lo16  ok
+[1312/3284] matrix-pair-XOR-LOAD.hi16  ok
+[1313/3284] matrix-pair-XOR-LOADI.full  ok
+[1314/3284] matrix-pair-XOR-MOV.waw  ok
+[1315/3284] matrix-single-NOT  ok
+[1316/3284] matrix-pair-NOT-MOV.vc  ok
+[1317/3284] matrix-pair-NOT-ABS.vc  ok
+[1318/3284] matrix-pair-NOT-MAD.va  ok
+[1319/3284] matrix-pair-NOT-MAD.vb  ok
+[1320/3284] matrix-pair-NOT-MAD.vc  ok
+[1321/3284] matrix-pair-NOT-MUL.va  ok
+[1322/3284] matrix-pair-NOT-ADD.vc  ok
+[1323/3284] matrix-pair-NOT-ADDI.vd  ok
+[1324/3284] matrix-pair-NOT-MULI.vd  ok
+[1325/3284] matrix-pair-NOT-MUL24.va  ok
+[1326/3284] matrix-pair-NOT-MUL24.vb  ok
+[1327/3284] matrix-pair-NOT-LUT.impl  ok
+[1328/3284] matrix-pair-NOT-LUTFP32.impl  ok
+[1329/3284] matrix-pair-NOT-LUTFP32.mirror8  ok
+[1330/3284] matrix-pair-NOT-IADD.vc.imm  ok
+[1331/3284] matrix-pair-NOT-IADD.vc.reg  ok
+[1332/3284] matrix-pair-NOT-IADD.vd.reg  ok
+[1333/3284] matrix-pair-NOT-IADD.vd.sub  ok
+[1334/3284] matrix-pair-NOT-SHFT.vd.imm  ok
+[1335/3284] matrix-pair-NOT-SHFT.vd.reg  ok
+[1336/3284] matrix-pair-NOT-SHFT.vc.reg  ok
+[1337/3284] matrix-pair-NOT-SHFT.vc.immvc  ok
+[1338/3284] matrix-pair-NOT-AND.vc  ok
+[1339/3284] matrix-pair-NOT-AND.vd  ok
+[1340/3284] matrix-pair-NOT-AND.vb  ok
+[1341/3284] matrix-pair-NOT-OR.vb  ok
+[1342/3284] matrix-pair-NOT-OR.vd  ok
+[1343/3284] matrix-pair-NOT-XOR.vc  ok
+[1344/3284] matrix-pair-NOT-XOR.vd  ok
+[1345/3284] matrix-pair-NOT-NOT.vc  ok
+[1346/3284] matrix-pair-NOT-LZ.vc  ok
+[1347/3284] matrix-pair-NOT-EXEXP.vc  ok
+[1348/3284] matrix-pair-NOT-EXMAN.vc  ok
+[1349/3284] matrix-pair-NOT-SETEXP.vc.imm  ok
+[1350/3284] matrix-pair-NOT-SETEXP.vd  ok
+[1351/3284] matrix-pair-NOT-SETEXP.vc.reg  ok
+[1352/3284] matrix-pair-NOT-SETMAN.vc.imm  ok
+[1353/3284] matrix-pair-NOT-SETMAN.vd  ok
+[1354/3284] matrix-pair-NOT-SETSGN.vc.imm  ok
+[1355/3284] matrix-pair-NOT-SETSGN.vd  ok
+[1356/3284] matrix-pair-NOT-DIVP2.vc  ok
+[1357/3284] matrix-pair-NOT-ARECIP.vc  ok
+[1358/3284] matrix-pair-NOT-ARECIP.cond.vb  ok
+[1359/3284] matrix-pair-NOT-ARECIP.cond.vc  ok
+[1360/3284] matrix-pair-NOT-CAST.vc  ok
+[1361/3284] matrix-pair-NOT-STOCHRND.vc  ok
+[1362/3284] matrix-pair-NOT-STOCHRND.vb  ok
+[1363/3284] matrix-pair-NOT-SETCC.vc  ok
+[1364/3284] matrix-pair-NOT-GT.vc  ok
+[1365/3284] matrix-pair-NOT-GT.vd  ok
+[1366/3284] matrix-pair-NOT-LE.vd  ok
+[1367/3284] matrix-pair-NOT-SWAP.m0.vd  ok
+[1368/3284] matrix-pair-NOT-SWAP.m0.vc  ok
+[1369/3284] matrix-pair-NOT-SWAP.m1.vd  ok
+[1370/3284] matrix-pair-NOT-SWAP.m1.vc  ok
+[1371/3284] matrix-pair-NOT-SHFT2.m0.impl  ok
+[1372/3284] matrix-pair-NOT-SHFT2.m1.impl  ok
+[1373/3284] matrix-pair-NOT-SHFT2.m2.vc  ok
+[1374/3284] matrix-pair-NOT-SHFT2.m3.vc  ok
+[1375/3284] matrix-pair-NOT-SHFT2.m4.vc  ok
+[1376/3284] matrix-pair-NOT-SHFT2.m5.vb  ok
+[1377/3284] matrix-pair-NOT-SHFT2.m5.vc  ok
+[1378/3284] matrix-pair-NOT-SHFT2.m6.vb  ok
+[1379/3284] matrix-pair-NOT-TRANSP.impl  ok
+[1380/3284] matrix-pair-NOT-STORE  ok
+[1381/3284] matrix-pair-NOT-CONFIG.L12  ok
+[1382/3284] matrix-pair-NOT-LOADI.lower  ok
+[1383/3284] matrix-pair-NOT-LOADI.upper  ok
+[1384/3284] matrix-pair-NOT-LOAD.lo16  ok
+[1385/3284] matrix-pair-NOT-LOAD.hi16  ok
+[1386/3284] matrix-pair-NOT-LOADI.full  ok
+[1387/3284] matrix-pair-NOT-MOV.waw  ok
+[1388/3284] matrix-single-LZ  ok
+[1389/3284] matrix-pair-LZ-MOV.vc  ok
+[1390/3284] matrix-pair-LZ-ABS.vc  ok
+[1391/3284] matrix-pair-LZ-MAD.va  ok
+[1392/3284] matrix-pair-LZ-MAD.vb  ok
+[1393/3284] matrix-pair-LZ-MAD.vc  ok
+[1394/3284] matrix-pair-LZ-MUL.va  ok
+[1395/3284] matrix-pair-LZ-ADD.vc  ok
+[1396/3284] matrix-pair-LZ-ADDI.vd  ok
+[1397/3284] matrix-pair-LZ-MULI.vd  ok
+[1398/3284] matrix-pair-LZ-MUL24.va  ok
+[1399/3284] matrix-pair-LZ-MUL24.vb  ok
+[1400/3284] matrix-pair-LZ-LUT.impl  ok
+[1401/3284] matrix-pair-LZ-LUTFP32.impl  ok
+[1402/3284] matrix-pair-LZ-LUTFP32.mirror8  ok
+[1403/3284] matrix-pair-LZ-IADD.vc.imm  ok
+[1404/3284] matrix-pair-LZ-IADD.vc.reg  ok
+[1405/3284] matrix-pair-LZ-IADD.vd.reg  ok
+[1406/3284] matrix-pair-LZ-IADD.vd.sub  ok
+[1407/3284] matrix-pair-LZ-SHFT.vd.imm  ok
+[1408/3284] matrix-pair-LZ-SHFT.vd.reg  ok
+[1409/3284] matrix-pair-LZ-SHFT.vc.reg  ok
+[1410/3284] matrix-pair-LZ-SHFT.vc.immvc  ok
+[1411/3284] matrix-pair-LZ-AND.vc  ok
+[1412/3284] matrix-pair-LZ-AND.vd  ok
+[1413/3284] matrix-pair-LZ-AND.vb  ok
+[1414/3284] matrix-pair-LZ-OR.vb  ok
+[1415/3284] matrix-pair-LZ-OR.vd  ok
+[1416/3284] matrix-pair-LZ-XOR.vc  ok
+[1417/3284] matrix-pair-LZ-XOR.vd  ok
+[1418/3284] matrix-pair-LZ-NOT.vc  ok
+[1419/3284] matrix-pair-LZ-LZ.vc  ok
+[1420/3284] matrix-pair-LZ-EXEXP.vc  ok
+[1421/3284] matrix-pair-LZ-EXMAN.vc  ok
+[1422/3284] matrix-pair-LZ-SETEXP.vc.imm  ok
+[1423/3284] matrix-pair-LZ-SETEXP.vd  ok
+[1424/3284] matrix-pair-LZ-SETEXP.vc.reg  ok
+[1425/3284] matrix-pair-LZ-SETMAN.vc.imm  ok
+[1426/3284] matrix-pair-LZ-SETMAN.vd  ok
+[1427/3284] matrix-pair-LZ-SETSGN.vc.imm  ok
+[1428/3284] matrix-pair-LZ-SETSGN.vd  ok
+[1429/3284] matrix-pair-LZ-DIVP2.vc  ok
+[1430/3284] matrix-pair-LZ-ARECIP.vc  ok
+[1431/3284] matrix-pair-LZ-ARECIP.cond.vb  ok
+[1432/3284] matrix-pair-LZ-ARECIP.cond.vc  ok
+[1433/3284] matrix-pair-LZ-CAST.vc  ok
+[1434/3284] matrix-pair-LZ-STOCHRND.vc  ok
+[1435/3284] matrix-pair-LZ-STOCHRND.vb  ok
+[1436/3284] matrix-pair-LZ-SETCC.vc  ok
+[1437/3284] matrix-pair-LZ-GT.vc  ok
+[1438/3284] matrix-pair-LZ-GT.vd  ok
+[1439/3284] matrix-pair-LZ-LE.vd  ok
+[1440/3284] matrix-pair-LZ-SWAP.m0.vd  ok
+[1441/3284] matrix-pair-LZ-SWAP.m0.vc  ok
+[1442/3284] matrix-pair-LZ-SWAP.m1.vd  ok
+[1443/3284] matrix-pair-LZ-SWAP.m1.vc  ok
+[1444/3284] matrix-pair-LZ-SHFT2.m0.impl  ok
+[1445/3284] matrix-pair-LZ-SHFT2.m1.impl  ok
+[1446/3284] matrix-pair-LZ-SHFT2.m2.vc  ok
+[1447/3284] matrix-pair-LZ-SHFT2.m3.vc  ok
+[1448/3284] matrix-pair-LZ-SHFT2.m4.vc  ok
+[1449/3284] matrix-pair-LZ-SHFT2.m5.vb  ok
+[1450/3284] matrix-pair-LZ-SHFT2.m5.vc  ok
+[1451/3284] matrix-pair-LZ-SHFT2.m6.vb  ok
+[1452/3284] matrix-pair-LZ-TRANSP.impl  ok
+[1453/3284] matrix-pair-LZ-STORE  ok
+[1454/3284] matrix-pair-LZ-CONFIG.L12  ok
+[1455/3284] matrix-pair-LZ-LOADI.lower  ok
+[1456/3284] matrix-pair-LZ-LOADI.upper  ok
+[1457/3284] matrix-pair-LZ-LOAD.lo16  ok
+[1458/3284] matrix-pair-LZ-LOAD.hi16  ok
+[1459/3284] matrix-pair-LZ-LOADI.full  ok
+[1460/3284] matrix-pair-LZ-MOV.waw  ok
+[1461/3284] matrix-single-EXEXP  ok
+[1462/3284] matrix-pair-EXEXP-MOV.vc  ok
+[1463/3284] matrix-pair-EXEXP-ABS.vc  ok
+[1464/3284] matrix-pair-EXEXP-MAD.va  ok
+[1465/3284] matrix-pair-EXEXP-MAD.vb  ok
+[1466/3284] matrix-pair-EXEXP-MAD.vc  ok
+[1467/3284] matrix-pair-EXEXP-MUL.va  ok
+[1468/3284] matrix-pair-EXEXP-ADD.vc  ok
+[1469/3284] matrix-pair-EXEXP-ADDI.vd  ok
+[1470/3284] matrix-pair-EXEXP-MULI.vd  ok
+[1471/3284] matrix-pair-EXEXP-MUL24.va  ok
+[1472/3284] matrix-pair-EXEXP-MUL24.vb  ok
+[1473/3284] matrix-pair-EXEXP-LUT.impl  ok
+[1474/3284] matrix-pair-EXEXP-LUTFP32.impl  ok
+[1475/3284] matrix-pair-EXEXP-LUTFP32.mirror8  ok
+[1476/3284] matrix-pair-EXEXP-IADD.vc.imm  ok
+[1477/3284] matrix-pair-EXEXP-IADD.vc.reg  ok
+[1478/3284] matrix-pair-EXEXP-IADD.vd.reg  ok
+[1479/3284] matrix-pair-EXEXP-IADD.vd.sub  ok
+[1480/3284] matrix-pair-EXEXP-SHFT.vd.imm  ok
+[1481/3284] matrix-pair-EXEXP-SHFT.vd.reg  ok
+[1482/3284] matrix-pair-EXEXP-SHFT.vc.reg  ok
+[1483/3284] matrix-pair-EXEXP-SHFT.vc.immvc  ok
+[1484/3284] matrix-pair-EXEXP-AND.vc  ok
+[1485/3284] matrix-pair-EXEXP-AND.vd  ok
+[1486/3284] matrix-pair-EXEXP-AND.vb  ok
+[1487/3284] matrix-pair-EXEXP-OR.vb  ok
+[1488/3284] matrix-pair-EXEXP-OR.vd  ok
+[1489/3284] matrix-pair-EXEXP-XOR.vc  ok
+[1490/3284] matrix-pair-EXEXP-XOR.vd  ok
+[1491/3284] matrix-pair-EXEXP-NOT.vc  ok
+[1492/3284] matrix-pair-EXEXP-LZ.vc  ok
+[1493/3284] matrix-pair-EXEXP-EXEXP.vc  ok
+[1494/3284] matrix-pair-EXEXP-EXMAN.vc  ok
+[1495/3284] matrix-pair-EXEXP-SETEXP.vc.imm  ok
+[1496/3284] matrix-pair-EXEXP-SETEXP.vd  ok
+[1497/3284] matrix-pair-EXEXP-SETEXP.vc.reg  ok
+[1498/3284] matrix-pair-EXEXP-SETMAN.vc.imm  ok
+[1499/3284] matrix-pair-EXEXP-SETMAN.vd  ok
+[1500/3284] matrix-pair-EXEXP-SETSGN.vc.imm  ok
+[1501/3284] matrix-pair-EXEXP-SETSGN.vd  ok
+[1502/3284] matrix-pair-EXEXP-DIVP2.vc  ok
+[1503/3284] matrix-pair-EXEXP-ARECIP.vc  ok
+[1504/3284] matrix-pair-EXEXP-ARECIP.cond.vb  ok
+[1505/3284] matrix-pair-EXEXP-ARECIP.cond.vc  ok
+[1506/3284] matrix-pair-EXEXP-CAST.vc  ok
+[1507/3284] matrix-pair-EXEXP-STOCHRND.vc  ok
+[1508/3284] matrix-pair-EXEXP-STOCHRND.vb  ok
+[1509/3284] matrix-pair-EXEXP-SETCC.vc  ok
+[1510/3284] matrix-pair-EXEXP-GT.vc  ok
+[1511/3284] matrix-pair-EXEXP-GT.vd  ok
+[1512/3284] matrix-pair-EXEXP-LE.vd  ok
+[1513/3284] matrix-pair-EXEXP-SWAP.m0.vd  ok
+[1514/3284] matrix-pair-EXEXP-SWAP.m0.vc  ok
+[1515/3284] matrix-pair-EXEXP-SWAP.m1.vd  ok
+[1516/3284] matrix-pair-EXEXP-SWAP.m1.vc  ok
+[1517/3284] matrix-pair-EXEXP-SHFT2.m0.impl  ok
+[1518/3284] matrix-pair-EXEXP-SHFT2.m1.impl  ok
+[1519/3284] matrix-pair-EXEXP-SHFT2.m2.vc  ok
+[1520/3284] matrix-pair-EXEXP-SHFT2.m3.vc  ok
+[1521/3284] matrix-pair-EXEXP-SHFT2.m4.vc  ok
+[1522/3284] matrix-pair-EXEXP-SHFT2.m5.vb  ok
+[1523/3284] matrix-pair-EXEXP-SHFT2.m5.vc  ok
+[1524/3284] matrix-pair-EXEXP-SHFT2.m6.vb  ok
+[1525/3284] matrix-pair-EXEXP-TRANSP.impl  ok
+[1526/3284] matrix-pair-EXEXP-STORE  ok
+[1527/3284] matrix-pair-EXEXP-CONFIG.L12  ok
+[1528/3284] matrix-pair-EXEXP-LOADI.lower  ok
+[1529/3284] matrix-pair-EXEXP-LOADI.upper  ok
+[1530/3284] matrix-pair-EXEXP-LOAD.lo16  ok
+[1531/3284] matrix-pair-EXEXP-LOAD.hi16  ok
+[1532/3284] matrix-pair-EXEXP-LOADI.full  ok
+[1533/3284] matrix-pair-EXEXP-MOV.waw  ok
+[1534/3284] matrix-single-EXMAN  ok
+[1535/3284] matrix-pair-EXMAN-MOV.vc  ok
+[1536/3284] matrix-pair-EXMAN-ABS.vc  ok
+[1537/3284] matrix-pair-EXMAN-MAD.va  ok
+[1538/3284] matrix-pair-EXMAN-MAD.vb  ok
+[1539/3284] matrix-pair-EXMAN-MAD.vc  ok
+[1540/3284] matrix-pair-EXMAN-MUL.va  ok
+[1541/3284] matrix-pair-EXMAN-ADD.vc  ok
+[1542/3284] matrix-pair-EXMAN-ADDI.vd  ok
+[1543/3284] matrix-pair-EXMAN-MULI.vd  ok
+[1544/3284] matrix-pair-EXMAN-MUL24.va  ok
+[1545/3284] matrix-pair-EXMAN-MUL24.vb  ok
+[1546/3284] matrix-pair-EXMAN-LUT.impl  ok
+[1547/3284] matrix-pair-EXMAN-LUTFP32.impl  ok
+[1548/3284] matrix-pair-EXMAN-LUTFP32.mirror8  ok
+[1549/3284] matrix-pair-EXMAN-IADD.vc.imm  ok
+[1550/3284] matrix-pair-EXMAN-IADD.vc.reg  ok
+[1551/3284] matrix-pair-EXMAN-IADD.vd.reg  ok
+[1552/3284] matrix-pair-EXMAN-IADD.vd.sub  ok
+[1553/3284] matrix-pair-EXMAN-SHFT.vd.imm  ok
+[1554/3284] matrix-pair-EXMAN-SHFT.vd.reg  ok
+[1555/3284] matrix-pair-EXMAN-SHFT.vc.reg  ok
+[1556/3284] matrix-pair-EXMAN-SHFT.vc.immvc  ok
+[1557/3284] matrix-pair-EXMAN-AND.vc  ok
+[1558/3284] matrix-pair-EXMAN-AND.vd  ok
+[1559/3284] matrix-pair-EXMAN-AND.vb  ok
+[1560/3284] matrix-pair-EXMAN-OR.vb  ok
+[1561/3284] matrix-pair-EXMAN-OR.vd  ok
+[1562/3284] matrix-pair-EXMAN-XOR.vc  ok
+[1563/3284] matrix-pair-EXMAN-XOR.vd  ok
+[1564/3284] matrix-pair-EXMAN-NOT.vc  ok
+[1565/3284] matrix-pair-EXMAN-LZ.vc  ok
+[1566/3284] matrix-pair-EXMAN-EXEXP.vc  ok
+[1567/3284] matrix-pair-EXMAN-EXMAN.vc  ok
+[1568/3284] matrix-pair-EXMAN-SETEXP.vc.imm  ok
+[1569/3284] matrix-pair-EXMAN-SETEXP.vd  ok
+[1570/3284] matrix-pair-EXMAN-SETEXP.vc.reg  ok
+[1571/3284] matrix-pair-EXMAN-SETMAN.vc.imm  ok
+[1572/3284] matrix-pair-EXMAN-SETMAN.vd  ok
+[1573/3284] matrix-pair-EXMAN-SETSGN.vc.imm  ok
+[1574/3284] matrix-pair-EXMAN-SETSGN.vd  ok
+[1575/3284] matrix-pair-EXMAN-DIVP2.vc  ok
+[1576/3284] matrix-pair-EXMAN-ARECIP.vc  ok
+[1577/3284] matrix-pair-EXMAN-ARECIP.cond.vb  ok
+[1578/3284] matrix-pair-EXMAN-ARECIP.cond.vc  ok
+[1579/3284] matrix-pair-EXMAN-CAST.vc  ok
+[1580/3284] matrix-pair-EXMAN-STOCHRND.vc  ok
+[1581/3284] matrix-pair-EXMAN-STOCHRND.vb  ok
+[1582/3284] matrix-pair-EXMAN-SETCC.vc  ok
+[1583/3284] matrix-pair-EXMAN-GT.vc  ok
+[1584/3284] matrix-pair-EXMAN-GT.vd  ok
+[1585/3284] matrix-pair-EXMAN-LE.vd  ok
+[1586/3284] matrix-pair-EXMAN-SWAP.m0.vd  ok
+[1587/3284] matrix-pair-EXMAN-SWAP.m0.vc  ok
+[1588/3284] matrix-pair-EXMAN-SWAP.m1.vd  ok
+[1589/3284] matrix-pair-EXMAN-SWAP.m1.vc  ok
+[1590/3284] matrix-pair-EXMAN-SHFT2.m0.impl  ok
+[1591/3284] matrix-pair-EXMAN-SHFT2.m1.impl  ok
+[1592/3284] matrix-pair-EXMAN-SHFT2.m2.vc  ok
+[1593/3284] matrix-pair-EXMAN-SHFT2.m3.vc  ok
+[1594/3284] matrix-pair-EXMAN-SHFT2.m4.vc  ok
+[1595/3284] matrix-pair-EXMAN-SHFT2.m5.vb  ok
+[1596/3284] matrix-pair-EXMAN-SHFT2.m5.vc  ok
+[1597/3284] matrix-pair-EXMAN-SHFT2.m6.vb  ok
+[1598/3284] matrix-pair-EXMAN-TRANSP.impl  ok
+[1599/3284] matrix-pair-EXMAN-STORE  ok
+[1600/3284] matrix-pair-EXMAN-CONFIG.L12  ok
+[1601/3284] matrix-pair-EXMAN-LOADI.lower  ok
+[1602/3284] matrix-pair-EXMAN-LOADI.upper  ok
+[1603/3284] matrix-pair-EXMAN-LOAD.lo16  ok
+[1604/3284] matrix-pair-EXMAN-LOAD.hi16  ok
+[1605/3284] matrix-pair-EXMAN-LOADI.full  ok
+[1606/3284] matrix-pair-EXMAN-MOV.waw  ok
+[1607/3284] matrix-single-SETEXP.imm  ok
+[1608/3284] matrix-pair-SETEXP.imm-MOV.vc  ok
+[1609/3284] matrix-pair-SETEXP.imm-ABS.vc  ok
+[1610/3284] matrix-pair-SETEXP.imm-MAD.va  ok
+[1611/3284] matrix-pair-SETEXP.imm-MAD.vb  ok
+[1612/3284] matrix-pair-SETEXP.imm-MAD.vc  ok
+[1613/3284] matrix-pair-SETEXP.imm-MUL.va  ok
+[1614/3284] matrix-pair-SETEXP.imm-ADD.vc  ok
+[1615/3284] matrix-pair-SETEXP.imm-ADDI.vd  ok
+[1616/3284] matrix-pair-SETEXP.imm-MULI.vd  ok
+[1617/3284] matrix-pair-SETEXP.imm-MUL24.va  ok
+[1618/3284] matrix-pair-SETEXP.imm-MUL24.vb  ok
+[1619/3284] matrix-pair-SETEXP.imm-LUT.impl  ok
+[1620/3284] matrix-pair-SETEXP.imm-LUTFP32.impl  ok
+[1621/3284] matrix-pair-SETEXP.imm-LUTFP32.mirror8  ok
+[1622/3284] matrix-pair-SETEXP.imm-IADD.vc.imm  ok
+[1623/3284] matrix-pair-SETEXP.imm-IADD.vc.reg  ok
+[1624/3284] matrix-pair-SETEXP.imm-IADD.vd.reg  ok
+[1625/3284] matrix-pair-SETEXP.imm-IADD.vd.sub  ok
+[1626/3284] matrix-pair-SETEXP.imm-SHFT.vd.imm  ok
+[1627/3284] matrix-pair-SETEXP.imm-SHFT.vd.reg  ok
+[1628/3284] matrix-pair-SETEXP.imm-SHFT.vc.reg  ok
+[1629/3284] matrix-pair-SETEXP.imm-SHFT.vc.immvc  ok
+[1630/3284] matrix-pair-SETEXP.imm-AND.vc  ok
+[1631/3284] matrix-pair-SETEXP.imm-AND.vd  ok
+[1632/3284] matrix-pair-SETEXP.imm-AND.vb  ok
+[1633/3284] matrix-pair-SETEXP.imm-OR.vb  ok
+[1634/3284] matrix-pair-SETEXP.imm-OR.vd  ok
+[1635/3284] matrix-pair-SETEXP.imm-XOR.vc  ok
+[1636/3284] matrix-pair-SETEXP.imm-XOR.vd  ok
+[1637/3284] matrix-pair-SETEXP.imm-NOT.vc  ok
+[1638/3284] matrix-pair-SETEXP.imm-LZ.vc  ok
+[1639/3284] matrix-pair-SETEXP.imm-EXEXP.vc  ok
+[1640/3284] matrix-pair-SETEXP.imm-EXMAN.vc  ok
+[1641/3284] matrix-pair-SETEXP.imm-SETEXP.vc.imm  ok
+[1642/3284] matrix-pair-SETEXP.imm-SETEXP.vd  ok
+[1643/3284] matrix-pair-SETEXP.imm-SETEXP.vc.reg  ok
+[1644/3284] matrix-pair-SETEXP.imm-SETMAN.vc.imm  ok
+[1645/3284] matrix-pair-SETEXP.imm-SETMAN.vd  ok
+[1646/3284] matrix-pair-SETEXP.imm-SETSGN.vc.imm  ok
+[1647/3284] matrix-pair-SETEXP.imm-SETSGN.vd  ok
+[1648/3284] matrix-pair-SETEXP.imm-DIVP2.vc  ok
+[1649/3284] matrix-pair-SETEXP.imm-ARECIP.vc  ok
+[1650/3284] matrix-pair-SETEXP.imm-ARECIP.cond.vb  ok
+[1651/3284] matrix-pair-SETEXP.imm-ARECIP.cond.vc  ok
+[1652/3284] matrix-pair-SETEXP.imm-CAST.vc  ok
+[1653/3284] matrix-pair-SETEXP.imm-STOCHRND.vc  ok
+[1654/3284] matrix-pair-SETEXP.imm-STOCHRND.vb  ok
+[1655/3284] matrix-pair-SETEXP.imm-SETCC.vc  ok
+[1656/3284] matrix-pair-SETEXP.imm-GT.vc  ok
+[1657/3284] matrix-pair-SETEXP.imm-GT.vd  ok
+[1658/3284] matrix-pair-SETEXP.imm-LE.vd  ok
+[1659/3284] matrix-pair-SETEXP.imm-SWAP.m0.vd  ok
+[1660/3284] matrix-pair-SETEXP.imm-SWAP.m0.vc  ok
+[1661/3284] matrix-pair-SETEXP.imm-SWAP.m1.vd  ok
+[1662/3284] matrix-pair-SETEXP.imm-SWAP.m1.vc  ok
+[1663/3284] matrix-pair-SETEXP.imm-SHFT2.m0.impl  ok
+[1664/3284] matrix-pair-SETEXP.imm-SHFT2.m1.impl  ok
+[1665/3284] matrix-pair-SETEXP.imm-SHFT2.m2.vc  ok
+[1666/3284] matrix-pair-SETEXP.imm-SHFT2.m3.vc  ok
+[1667/3284] matrix-pair-SETEXP.imm-SHFT2.m4.vc  ok
+[1668/3284] matrix-pair-SETEXP.imm-SHFT2.m5.vb  ok
+[1669/3284] matrix-pair-SETEXP.imm-SHFT2.m5.vc  ok
+[1670/3284] matrix-pair-SETEXP.imm-SHFT2.m6.vb  ok
+[1671/3284] matrix-pair-SETEXP.imm-TRANSP.impl  ok
+[1672/3284] matrix-pair-SETEXP.imm-STORE  ok
+[1673/3284] matrix-pair-SETEXP.imm-CONFIG.L12  ok
+[1674/3284] matrix-pair-SETEXP.imm-LOADI.lower  ok
+[1675/3284] matrix-pair-SETEXP.imm-LOADI.upper  ok
+[1676/3284] matrix-pair-SETEXP.imm-LOAD.lo16  ok
+[1677/3284] matrix-pair-SETEXP.imm-LOAD.hi16  ok
+[1678/3284] matrix-pair-SETEXP.imm-LOADI.full  ok
+[1679/3284] matrix-pair-SETEXP.imm-MOV.waw  ok
+[1680/3284] matrix-single-SETMAN.imm  ok
+[1681/3284] matrix-pair-SETMAN.imm-MOV.vc  ok
+[1682/3284] matrix-pair-SETMAN.imm-ABS.vc  ok
+[1683/3284] matrix-pair-SETMAN.imm-MAD.va  ok
+[1684/3284] matrix-pair-SETMAN.imm-MAD.vb  ok
+[1685/3284] matrix-pair-SETMAN.imm-MAD.vc  ok
+[1686/3284] matrix-pair-SETMAN.imm-MUL.va  ok
+[1687/3284] matrix-pair-SETMAN.imm-ADD.vc  ok
+[1688/3284] matrix-pair-SETMAN.imm-ADDI.vd  ok
+[1689/3284] matrix-pair-SETMAN.imm-MULI.vd  ok
+[1690/3284] matrix-pair-SETMAN.imm-MUL24.va  ok
+[1691/3284] matrix-pair-SETMAN.imm-MUL24.vb  ok
+[1692/3284] matrix-pair-SETMAN.imm-LUT.impl  ok
+[1693/3284] matrix-pair-SETMAN.imm-LUTFP32.impl  ok
+[1694/3284] matrix-pair-SETMAN.imm-LUTFP32.mirror8  ok
+[1695/3284] matrix-pair-SETMAN.imm-IADD.vc.imm  ok
+[1696/3284] matrix-pair-SETMAN.imm-IADD.vc.reg  ok
+[1697/3284] matrix-pair-SETMAN.imm-IADD.vd.reg  ok
+[1698/3284] matrix-pair-SETMAN.imm-IADD.vd.sub  ok
+[1699/3284] matrix-pair-SETMAN.imm-SHFT.vd.imm  ok
+[1700/3284] matrix-pair-SETMAN.imm-SHFT.vd.reg  ok
+[1701/3284] matrix-pair-SETMAN.imm-SHFT.vc.reg  ok
+[1702/3284] matrix-pair-SETMAN.imm-SHFT.vc.immvc  ok
+[1703/3284] matrix-pair-SETMAN.imm-AND.vc  ok
+[1704/3284] matrix-pair-SETMAN.imm-AND.vd  ok
+[1705/3284] matrix-pair-SETMAN.imm-AND.vb  ok
+[1706/3284] matrix-pair-SETMAN.imm-OR.vb  ok
+[1707/3284] matrix-pair-SETMAN.imm-OR.vd  ok
+[1708/3284] matrix-pair-SETMAN.imm-XOR.vc  ok
+[1709/3284] matrix-pair-SETMAN.imm-XOR.vd  ok
+[1710/3284] matrix-pair-SETMAN.imm-NOT.vc  ok
+[1711/3284] matrix-pair-SETMAN.imm-LZ.vc  ok
+[1712/3284] matrix-pair-SETMAN.imm-EXEXP.vc  ok
+[1713/3284] matrix-pair-SETMAN.imm-EXMAN.vc  ok
+[1714/3284] matrix-pair-SETMAN.imm-SETEXP.vc.imm  ok
+[1715/3284] matrix-pair-SETMAN.imm-SETEXP.vd  ok
+[1716/3284] matrix-pair-SETMAN.imm-SETEXP.vc.reg  ok
+[1717/3284] matrix-pair-SETMAN.imm-SETMAN.vc.imm  ok
+[1718/3284] matrix-pair-SETMAN.imm-SETMAN.vd  ok
+[1719/3284] matrix-pair-SETMAN.imm-SETSGN.vc.imm  ok
+[1720/3284] matrix-pair-SETMAN.imm-SETSGN.vd  ok
+[1721/3284] matrix-pair-SETMAN.imm-DIVP2.vc  ok
+[1722/3284] matrix-pair-SETMAN.imm-ARECIP.vc  ok
+[1723/3284] matrix-pair-SETMAN.imm-ARECIP.cond.vb  ok
+[1724/3284] matrix-pair-SETMAN.imm-ARECIP.cond.vc  ok
+[1725/3284] matrix-pair-SETMAN.imm-CAST.vc  ok
+[1726/3284] matrix-pair-SETMAN.imm-STOCHRND.vc  ok
+[1727/3284] matrix-pair-SETMAN.imm-STOCHRND.vb  ok
+[1728/3284] matrix-pair-SETMAN.imm-SETCC.vc  ok
+[1729/3284] matrix-pair-SETMAN.imm-GT.vc  ok
+[1730/3284] matrix-pair-SETMAN.imm-GT.vd  ok
+[1731/3284] matrix-pair-SETMAN.imm-LE.vd  ok
+[1732/3284] matrix-pair-SETMAN.imm-SWAP.m0.vd  ok
+[1733/3284] matrix-pair-SETMAN.imm-SWAP.m0.vc  ok
+[1734/3284] matrix-pair-SETMAN.imm-SWAP.m1.vd  ok
+[1735/3284] matrix-pair-SETMAN.imm-SWAP.m1.vc  ok
+[1736/3284] matrix-pair-SETMAN.imm-SHFT2.m0.impl  ok
+[1737/3284] matrix-pair-SETMAN.imm-SHFT2.m1.impl  ok
+[1738/3284] matrix-pair-SETMAN.imm-SHFT2.m2.vc  ok
+[1739/3284] matrix-pair-SETMAN.imm-SHFT2.m3.vc  ok
+[1740/3284] matrix-pair-SETMAN.imm-SHFT2.m4.vc  ok
+[1741/3284] matrix-pair-SETMAN.imm-SHFT2.m5.vb  ok
+[1742/3284] matrix-pair-SETMAN.imm-SHFT2.m5.vc  ok
+[1743/3284] matrix-pair-SETMAN.imm-SHFT2.m6.vb  ok
+[1744/3284] matrix-pair-SETMAN.imm-TRANSP.impl  ok
+[1745/3284] matrix-pair-SETMAN.imm-STORE  ok
+[1746/3284] matrix-pair-SETMAN.imm-CONFIG.L12  ok
+[1747/3284] matrix-pair-SETMAN.imm-LOADI.lower  ok
+[1748/3284] matrix-pair-SETMAN.imm-LOADI.upper  ok
+[1749/3284] matrix-pair-SETMAN.imm-LOAD.lo16  ok
+[1750/3284] matrix-pair-SETMAN.imm-LOAD.hi16  ok
+[1751/3284] matrix-pair-SETMAN.imm-LOADI.full  ok
+[1752/3284] matrix-pair-SETMAN.imm-MOV.waw  ok
+[1753/3284] matrix-single-SETSGN.imm  ok
+[1754/3284] matrix-pair-SETSGN.imm-MOV.vc  ok
+[1755/3284] matrix-pair-SETSGN.imm-ABS.vc  ok
+[1756/3284] matrix-pair-SETSGN.imm-MAD.va  ok
+[1757/3284] matrix-pair-SETSGN.imm-MAD.vb  ok
+[1758/3284] matrix-pair-SETSGN.imm-MAD.vc  ok
+[1759/3284] matrix-pair-SETSGN.imm-MUL.va  ok
+[1760/3284] matrix-pair-SETSGN.imm-ADD.vc  ok
+[1761/3284] matrix-pair-SETSGN.imm-ADDI.vd  ok
+[1762/3284] matrix-pair-SETSGN.imm-MULI.vd  ok
+[1763/3284] matrix-pair-SETSGN.imm-MUL24.va  ok
+[1764/3284] matrix-pair-SETSGN.imm-MUL24.vb  ok
+[1765/3284] matrix-pair-SETSGN.imm-LUT.impl  ok
+[1766/3284] matrix-pair-SETSGN.imm-LUTFP32.impl  ok
+[1767/3284] matrix-pair-SETSGN.imm-LUTFP32.mirror8  ok
+[1768/3284] matrix-pair-SETSGN.imm-IADD.vc.imm  ok
+[1769/3284] matrix-pair-SETSGN.imm-IADD.vc.reg  ok
+[1770/3284] matrix-pair-SETSGN.imm-IADD.vd.reg  ok
+[1771/3284] matrix-pair-SETSGN.imm-IADD.vd.sub  ok
+[1772/3284] matrix-pair-SETSGN.imm-SHFT.vd.imm  ok
+[1773/3284] matrix-pair-SETSGN.imm-SHFT.vd.reg  ok
+[1774/3284] matrix-pair-SETSGN.imm-SHFT.vc.reg  ok
+[1775/3284] matrix-pair-SETSGN.imm-SHFT.vc.immvc  ok
+[1776/3284] matrix-pair-SETSGN.imm-AND.vc  ok
+[1777/3284] matrix-pair-SETSGN.imm-AND.vd  ok
+[1778/3284] matrix-pair-SETSGN.imm-AND.vb  ok
+[1779/3284] matrix-pair-SETSGN.imm-OR.vb  ok
+[1780/3284] matrix-pair-SETSGN.imm-OR.vd  ok
+[1781/3284] matrix-pair-SETSGN.imm-XOR.vc  ok
+[1782/3284] matrix-pair-SETSGN.imm-XOR.vd  ok
+[1783/3284] matrix-pair-SETSGN.imm-NOT.vc  ok
+[1784/3284] matrix-pair-SETSGN.imm-LZ.vc  ok
+[1785/3284] matrix-pair-SETSGN.imm-EXEXP.vc  ok
+[1786/3284] matrix-pair-SETSGN.imm-EXMAN.vc  ok
+[1787/3284] matrix-pair-SETSGN.imm-SETEXP.vc.imm  ok
+[1788/3284] matrix-pair-SETSGN.imm-SETEXP.vd  ok
+[1789/3284] matrix-pair-SETSGN.imm-SETEXP.vc.reg  ok
+[1790/3284] matrix-pair-SETSGN.imm-SETMAN.vc.imm  ok
+[1791/3284] matrix-pair-SETSGN.imm-SETMAN.vd  ok
+[1792/3284] matrix-pair-SETSGN.imm-SETSGN.vc.imm  ok
+[1793/3284] matrix-pair-SETSGN.imm-SETSGN.vd  ok
+[1794/3284] matrix-pair-SETSGN.imm-DIVP2.vc  ok
+[1795/3284] matrix-pair-SETSGN.imm-ARECIP.vc  ok
+[1796/3284] matrix-pair-SETSGN.imm-ARECIP.cond.vb  ok
+[1797/3284] matrix-pair-SETSGN.imm-ARECIP.cond.vc  ok
+[1798/3284] matrix-pair-SETSGN.imm-CAST.vc  ok
+[1799/3284] matrix-pair-SETSGN.imm-STOCHRND.vc  ok
+[1800/3284] matrix-pair-SETSGN.imm-STOCHRND.vb  ok
+[1801/3284] matrix-pair-SETSGN.imm-SETCC.vc  ok
+[1802/3284] matrix-pair-SETSGN.imm-GT.vc  ok
+[1803/3284] matrix-pair-SETSGN.imm-GT.vd  ok
+[1804/3284] matrix-pair-SETSGN.imm-LE.vd  ok
+[1805/3284] matrix-pair-SETSGN.imm-SWAP.m0.vd  ok
+[1806/3284] matrix-pair-SETSGN.imm-SWAP.m0.vc  ok
+[1807/3284] matrix-pair-SETSGN.imm-SWAP.m1.vd  ok
+[1808/3284] matrix-pair-SETSGN.imm-SWAP.m1.vc  ok
+[1809/3284] matrix-pair-SETSGN.imm-SHFT2.m0.impl  ok
+[1810/3284] matrix-pair-SETSGN.imm-SHFT2.m1.impl  ok
+[1811/3284] matrix-pair-SETSGN.imm-SHFT2.m2.vc  ok
+[1812/3284] matrix-pair-SETSGN.imm-SHFT2.m3.vc  ok
+[1813/3284] matrix-pair-SETSGN.imm-SHFT2.m4.vc  ok
+[1814/3284] matrix-pair-SETSGN.imm-SHFT2.m5.vb  ok
+[1815/3284] matrix-pair-SETSGN.imm-SHFT2.m5.vc  ok
+[1816/3284] matrix-pair-SETSGN.imm-SHFT2.m6.vb  ok
+[1817/3284] matrix-pair-SETSGN.imm-TRANSP.impl  ok
+[1818/3284] matrix-pair-SETSGN.imm-STORE  ok
+[1819/3284] matrix-pair-SETSGN.imm-CONFIG.L12  ok
+[1820/3284] matrix-pair-SETSGN.imm-LOADI.lower  ok
+[1821/3284] matrix-pair-SETSGN.imm-LOADI.upper  ok
+[1822/3284] matrix-pair-SETSGN.imm-LOAD.lo16  ok
+[1823/3284] matrix-pair-SETSGN.imm-LOAD.hi16  ok
+[1824/3284] matrix-pair-SETSGN.imm-LOADI.full  ok
+[1825/3284] matrix-pair-SETSGN.imm-MOV.waw  ok
+[1826/3284] matrix-single-DIVP2  ok
+[1827/3284] matrix-pair-DIVP2-MOV.vc  ok
+[1828/3284] matrix-pair-DIVP2-ABS.vc  ok
+[1829/3284] matrix-pair-DIVP2-MAD.va  ok
+[1830/3284] matrix-pair-DIVP2-MAD.vb  ok
+[1831/3284] matrix-pair-DIVP2-MAD.vc  ok
+[1832/3284] matrix-pair-DIVP2-MUL.va  ok
+[1833/3284] matrix-pair-DIVP2-ADD.vc  ok
+[1834/3284] matrix-pair-DIVP2-ADDI.vd  ok
+[1835/3284] matrix-pair-DIVP2-MULI.vd  ok
+[1836/3284] matrix-pair-DIVP2-MUL24.va  ok
+[1837/3284] matrix-pair-DIVP2-MUL24.vb  ok
+[1838/3284] matrix-pair-DIVP2-LUT.impl  ok
+[1839/3284] matrix-pair-DIVP2-LUTFP32.impl  ok
+[1840/3284] matrix-pair-DIVP2-LUTFP32.mirror8  ok
+[1841/3284] matrix-pair-DIVP2-IADD.vc.imm  ok
+[1842/3284] matrix-pair-DIVP2-IADD.vc.reg  ok
+[1843/3284] matrix-pair-DIVP2-IADD.vd.reg  ok
+[1844/3284] matrix-pair-DIVP2-IADD.vd.sub  ok
+[1845/3284] matrix-pair-DIVP2-SHFT.vd.imm  ok
+[1846/3284] matrix-pair-DIVP2-SHFT.vd.reg  ok
+[1847/3284] matrix-pair-DIVP2-SHFT.vc.reg  ok
+[1848/3284] matrix-pair-DIVP2-SHFT.vc.immvc  ok
+[1849/3284] matrix-pair-DIVP2-AND.vc  ok
+[1850/3284] matrix-pair-DIVP2-AND.vd  ok
+[1851/3284] matrix-pair-DIVP2-AND.vb  ok
+[1852/3284] matrix-pair-DIVP2-OR.vb  ok
+[1853/3284] matrix-pair-DIVP2-OR.vd  ok
+[1854/3284] matrix-pair-DIVP2-XOR.vc  ok
+[1855/3284] matrix-pair-DIVP2-XOR.vd  ok
+[1856/3284] matrix-pair-DIVP2-NOT.vc  ok
+[1857/3284] matrix-pair-DIVP2-LZ.vc  ok
+[1858/3284] matrix-pair-DIVP2-EXEXP.vc  ok
+[1859/3284] matrix-pair-DIVP2-EXMAN.vc  ok
+[1860/3284] matrix-pair-DIVP2-SETEXP.vc.imm  ok
+[1861/3284] matrix-pair-DIVP2-SETEXP.vd  ok
+[1862/3284] matrix-pair-DIVP2-SETEXP.vc.reg  ok
+[1863/3284] matrix-pair-DIVP2-SETMAN.vc.imm  ok
+[1864/3284] matrix-pair-DIVP2-SETMAN.vd  ok
+[1865/3284] matrix-pair-DIVP2-SETSGN.vc.imm  ok
+[1866/3284] matrix-pair-DIVP2-SETSGN.vd  ok
+[1867/3284] matrix-pair-DIVP2-DIVP2.vc  ok
+[1868/3284] matrix-pair-DIVP2-ARECIP.vc  ok
+[1869/3284] matrix-pair-DIVP2-ARECIP.cond.vb  ok
+[1870/3284] matrix-pair-DIVP2-ARECIP.cond.vc  ok
+[1871/3284] matrix-pair-DIVP2-CAST.vc  ok
+[1872/3284] matrix-pair-DIVP2-STOCHRND.vc  ok
+[1873/3284] matrix-pair-DIVP2-STOCHRND.vb  ok
+[1874/3284] matrix-pair-DIVP2-SETCC.vc  ok
+[1875/3284] matrix-pair-DIVP2-GT.vc  ok
+[1876/3284] matrix-pair-DIVP2-GT.vd  ok
+[1877/3284] matrix-pair-DIVP2-LE.vd  ok
+[1878/3284] matrix-pair-DIVP2-SWAP.m0.vd  ok
+[1879/3284] matrix-pair-DIVP2-SWAP.m0.vc  ok
+[1880/3284] matrix-pair-DIVP2-SWAP.m1.vd  ok
+[1881/3284] matrix-pair-DIVP2-SWAP.m1.vc  ok
+[1882/3284] matrix-pair-DIVP2-SHFT2.m0.impl  ok
+[1883/3284] matrix-pair-DIVP2-SHFT2.m1.impl  ok
+[1884/3284] matrix-pair-DIVP2-SHFT2.m2.vc  ok
+[1885/3284] matrix-pair-DIVP2-SHFT2.m3.vc  ok
+[1886/3284] matrix-pair-DIVP2-SHFT2.m4.vc  ok
+[1887/3284] matrix-pair-DIVP2-SHFT2.m5.vb  ok
+[1888/3284] matrix-pair-DIVP2-SHFT2.m5.vc  ok
+[1889/3284] matrix-pair-DIVP2-SHFT2.m6.vb  ok
+[1890/3284] matrix-pair-DIVP2-TRANSP.impl  ok
+[1891/3284] matrix-pair-DIVP2-STORE  ok
+[1892/3284] matrix-pair-DIVP2-CONFIG.L12  ok
+[1893/3284] matrix-pair-DIVP2-LOADI.lower  ok
+[1894/3284] matrix-pair-DIVP2-LOADI.upper  ok
+[1895/3284] matrix-pair-DIVP2-LOAD.lo16  ok
+[1896/3284] matrix-pair-DIVP2-LOAD.hi16  ok
+[1897/3284] matrix-pair-DIVP2-LOADI.full  ok
+[1898/3284] matrix-pair-DIVP2-MOV.waw  ok
+[1899/3284] matrix-single-ARECIP  ok
+[1900/3284] matrix-pair-ARECIP-MOV.vc  ok
+[1901/3284] matrix-pair-ARECIP-ABS.vc  ok
+[1902/3284] matrix-pair-ARECIP-MAD.va  ok
+[1903/3284] matrix-pair-ARECIP-MAD.vb  ok
+[1904/3284] matrix-pair-ARECIP-MAD.vc  ok
+[1905/3284] matrix-pair-ARECIP-MUL.va  ok
+[1906/3284] matrix-pair-ARECIP-ADD.vc  ok
+[1907/3284] matrix-pair-ARECIP-ADDI.vd  ok
+[1908/3284] matrix-pair-ARECIP-MULI.vd  ok
+[1909/3284] matrix-pair-ARECIP-MUL24.va  ok
+[1910/3284] matrix-pair-ARECIP-MUL24.vb  ok
+[1911/3284] matrix-pair-ARECIP-LUT.impl  ok
+[1912/3284] matrix-pair-ARECIP-LUTFP32.impl  ok
+[1913/3284] matrix-pair-ARECIP-LUTFP32.mirror8  ok
+[1914/3284] matrix-pair-ARECIP-IADD.vc.imm  ok
+[1915/3284] matrix-pair-ARECIP-IADD.vc.reg  ok
+[1916/3284] matrix-pair-ARECIP-IADD.vd.reg  ok
+[1917/3284] matrix-pair-ARECIP-IADD.vd.sub  ok
+[1918/3284] matrix-pair-ARECIP-SHFT.vd.imm  ok
+[1919/3284] matrix-pair-ARECIP-SHFT.vd.reg  ok
+[1920/3284] matrix-pair-ARECIP-SHFT.vc.reg  ok
+[1921/3284] matrix-pair-ARECIP-SHFT.vc.immvc  ok
+[1922/3284] matrix-pair-ARECIP-AND.vc  ok
+[1923/3284] matrix-pair-ARECIP-AND.vd  ok
+[1924/3284] matrix-pair-ARECIP-AND.vb  ok
+[1925/3284] matrix-pair-ARECIP-OR.vb  ok
+[1926/3284] matrix-pair-ARECIP-OR.vd  ok
+[1927/3284] matrix-pair-ARECIP-XOR.vc  ok
+[1928/3284] matrix-pair-ARECIP-XOR.vd  ok
+[1929/3284] matrix-pair-ARECIP-NOT.vc  ok
+[1930/3284] matrix-pair-ARECIP-LZ.vc  ok
+[1931/3284] matrix-pair-ARECIP-EXEXP.vc  ok
+[1932/3284] matrix-pair-ARECIP-EXMAN.vc  ok
+[1933/3284] matrix-pair-ARECIP-SETEXP.vc.imm  ok
+[1934/3284] matrix-pair-ARECIP-SETEXP.vd  ok
+[1935/3284] matrix-pair-ARECIP-SETEXP.vc.reg  ok
+[1936/3284] matrix-pair-ARECIP-SETMAN.vc.imm  ok
+[1937/3284] matrix-pair-ARECIP-SETMAN.vd  ok
+[1938/3284] matrix-pair-ARECIP-SETSGN.vc.imm  ok
+[1939/3284] matrix-pair-ARECIP-SETSGN.vd  ok
+[1940/3284] matrix-pair-ARECIP-DIVP2.vc  ok
+[1941/3284] matrix-pair-ARECIP-ARECIP.vc  ok
+[1942/3284] matrix-pair-ARECIP-ARECIP.cond.vb  ok
+[1943/3284] matrix-pair-ARECIP-ARECIP.cond.vc  ok
+[1944/3284] matrix-pair-ARECIP-CAST.vc  ok
+[1945/3284] matrix-pair-ARECIP-STOCHRND.vc  ok
+[1946/3284] matrix-pair-ARECIP-STOCHRND.vb  ok
+[1947/3284] matrix-pair-ARECIP-SETCC.vc  ok
+[1948/3284] matrix-pair-ARECIP-GT.vc  ok
+[1949/3284] matrix-pair-ARECIP-GT.vd  ok
+[1950/3284] matrix-pair-ARECIP-LE.vd  ok
+[1951/3284] matrix-pair-ARECIP-SWAP.m0.vd  ok
+[1952/3284] matrix-pair-ARECIP-SWAP.m0.vc  ok
+[1953/3284] matrix-pair-ARECIP-SWAP.m1.vd  ok
+[1954/3284] matrix-pair-ARECIP-SWAP.m1.vc  ok
+[1955/3284] matrix-pair-ARECIP-SHFT2.m0.impl  ok
+[1956/3284] matrix-pair-ARECIP-SHFT2.m1.impl  ok
+[1957/3284] matrix-pair-ARECIP-SHFT2.m2.vc  ok
+[1958/3284] matrix-pair-ARECIP-SHFT2.m3.vc  ok
+[1959/3284] matrix-pair-ARECIP-SHFT2.m4.vc  ok
+[1960/3284] matrix-pair-ARECIP-SHFT2.m5.vb  ok
+[1961/3284] matrix-pair-ARECIP-SHFT2.m5.vc  ok
+[1962/3284] matrix-pair-ARECIP-SHFT2.m6.vb  ok
+[1963/3284] matrix-pair-ARECIP-TRANSP.impl  ok
+[1964/3284] matrix-pair-ARECIP-STORE  ok
+[1965/3284] matrix-pair-ARECIP-CONFIG.L12  ok
+[1966/3284] matrix-pair-ARECIP-LOADI.lower  ok
+[1967/3284] matrix-pair-ARECIP-LOADI.upper  ok
+[1968/3284] matrix-pair-ARECIP-LOAD.lo16  ok
+[1969/3284] matrix-pair-ARECIP-LOAD.hi16  ok
+[1970/3284] matrix-pair-ARECIP-LOADI.full  ok
+[1971/3284] matrix-pair-ARECIP-MOV.waw  ok
+[1972/3284] matrix-single-ARECIP.exp  ok
+[1973/3284] matrix-pair-ARECIP.exp-MOV.vc  ok
+[1974/3284] matrix-pair-ARECIP.exp-ABS.vc  ok
+[1975/3284] matrix-pair-ARECIP.exp-MAD.va  ok
+[1976/3284] matrix-pair-ARECIP.exp-MAD.vb  ok
+[1977/3284] matrix-pair-ARECIP.exp-MAD.vc  ok
+[1978/3284] matrix-pair-ARECIP.exp-MUL.va  ok
+[1979/3284] matrix-pair-ARECIP.exp-ADD.vc  ok
+[1980/3284] matrix-pair-ARECIP.exp-ADDI.vd  ok
+[1981/3284] matrix-pair-ARECIP.exp-MULI.vd  ok
+[1982/3284] matrix-pair-ARECIP.exp-MUL24.va  ok
+[1983/3284] matrix-pair-ARECIP.exp-MUL24.vb  ok
+[1984/3284] matrix-pair-ARECIP.exp-LUT.impl  ok
+[1985/3284] matrix-pair-ARECIP.exp-LUTFP32.impl  ok
+[1986/3284] matrix-pair-ARECIP.exp-LUTFP32.mirror8  ok
+[1987/3284] matrix-pair-ARECIP.exp-IADD.vc.imm  ok
+[1988/3284] matrix-pair-ARECIP.exp-IADD.vc.reg  ok
+[1989/3284] matrix-pair-ARECIP.exp-IADD.vd.reg  ok
+[1990/3284] matrix-pair-ARECIP.exp-IADD.vd.sub  ok
+[1991/3284] matrix-pair-ARECIP.exp-SHFT.vd.imm  ok
+[1992/3284] matrix-pair-ARECIP.exp-SHFT.vd.reg  ok
+[1993/3284] matrix-pair-ARECIP.exp-SHFT.vc.reg  ok
+[1994/3284] matrix-pair-ARECIP.exp-SHFT.vc.immvc  ok
+[1995/3284] matrix-pair-ARECIP.exp-AND.vc  ok
+[1996/3284] matrix-pair-ARECIP.exp-AND.vd  ok
+[1997/3284] matrix-pair-ARECIP.exp-AND.vb  ok
+[1998/3284] matrix-pair-ARECIP.exp-OR.vb  ok
+[1999/3284] matrix-pair-ARECIP.exp-OR.vd  ok
+[2000/3284] matrix-pair-ARECIP.exp-XOR.vc  ok
+[2001/3284] matrix-pair-ARECIP.exp-XOR.vd  ok
+[2002/3284] matrix-pair-ARECIP.exp-NOT.vc  ok
+[2003/3284] matrix-pair-ARECIP.exp-LZ.vc  ok
+[2004/3284] matrix-pair-ARECIP.exp-EXEXP.vc  ok
+[2005/3284] matrix-pair-ARECIP.exp-EXMAN.vc  ok
+[2006/3284] matrix-pair-ARECIP.exp-SETEXP.vc.imm  ok
+[2007/3284] matrix-pair-ARECIP.exp-SETEXP.vd  ok
+[2008/3284] matrix-pair-ARECIP.exp-SETEXP.vc.reg  ok
+[2009/3284] matrix-pair-ARECIP.exp-SETMAN.vc.imm  ok
+[2010/3284] matrix-pair-ARECIP.exp-SETMAN.vd  ok
+[2011/3284] matrix-pair-ARECIP.exp-SETSGN.vc.imm  ok
+[2012/3284] matrix-pair-ARECIP.exp-SETSGN.vd  ok
+[2013/3284] matrix-pair-ARECIP.exp-DIVP2.vc  ok
+[2014/3284] matrix-pair-ARECIP.exp-ARECIP.vc  ok
+[2015/3284] matrix-pair-ARECIP.exp-ARECIP.cond.vb  ok
+[2016/3284] matrix-pair-ARECIP.exp-ARECIP.cond.vc  ok
+[2017/3284] matrix-pair-ARECIP.exp-CAST.vc  ok
+[2018/3284] matrix-pair-ARECIP.exp-STOCHRND.vc  ok
+[2019/3284] matrix-pair-ARECIP.exp-STOCHRND.vb  ok
+[2020/3284] matrix-pair-ARECIP.exp-SETCC.vc  ok
+[2021/3284] matrix-pair-ARECIP.exp-GT.vc  ok
+[2022/3284] matrix-pair-ARECIP.exp-GT.vd  ok
+[2023/3284] matrix-pair-ARECIP.exp-LE.vd  ok
+[2024/3284] matrix-pair-ARECIP.exp-SWAP.m0.vd  ok
+[2025/3284] matrix-pair-ARECIP.exp-SWAP.m0.vc  ok
+[2026/3284] matrix-pair-ARECIP.exp-SWAP.m1.vd  ok
+[2027/3284] matrix-pair-ARECIP.exp-SWAP.m1.vc  ok
+[2028/3284] matrix-pair-ARECIP.exp-SHFT2.m0.impl  ok
+[2029/3284] matrix-pair-ARECIP.exp-SHFT2.m1.impl  ok
+[2030/3284] matrix-pair-ARECIP.exp-SHFT2.m2.vc  ok
+[2031/3284] matrix-pair-ARECIP.exp-SHFT2.m3.vc  ok
+[2032/3284] matrix-pair-ARECIP.exp-SHFT2.m4.vc  ok
+[2033/3284] matrix-pair-ARECIP.exp-SHFT2.m5.vb  ok
+[2034/3284] matrix-pair-ARECIP.exp-SHFT2.m5.vc  ok
+[2035/3284] matrix-pair-ARECIP.exp-SHFT2.m6.vb  ok
+[2036/3284] matrix-pair-ARECIP.exp-TRANSP.impl  ok
+[2037/3284] matrix-pair-ARECIP.exp-STORE  ok
+[2038/3284] matrix-pair-ARECIP.exp-CONFIG.L12  ok
+[2039/3284] matrix-pair-ARECIP.exp-LOADI.lower  ok
+[2040/3284] matrix-pair-ARECIP.exp-LOADI.upper  ok
+[2041/3284] matrix-pair-ARECIP.exp-LOAD.lo16  ok
+[2042/3284] matrix-pair-ARECIP.exp-LOAD.hi16  ok
+[2043/3284] matrix-pair-ARECIP.exp-LOADI.full  ok
+[2044/3284] matrix-pair-ARECIP.exp-MOV.waw  ok
+[2045/3284] matrix-single-CAST  ok
+[2046/3284] matrix-pair-CAST-MOV.vc  ok
+[2047/3284] matrix-pair-CAST-ABS.vc  ok
+[2048/3284] matrix-pair-CAST-MAD.va  ok
+[2049/3284] matrix-pair-CAST-MAD.vb  ok
+[2050/3284] matrix-pair-CAST-MAD.vc  ok
+[2051/3284] matrix-pair-CAST-MUL.va  ok
+[2052/3284] matrix-pair-CAST-ADD.vc  ok
+[2053/3284] matrix-pair-CAST-ADDI.vd  ok
+[2054/3284] matrix-pair-CAST-MULI.vd  ok
+[2055/3284] matrix-pair-CAST-MUL24.va  ok
+[2056/3284] matrix-pair-CAST-MUL24.vb  ok
+[2057/3284] matrix-pair-CAST-LUT.impl  ok
+[2058/3284] matrix-pair-CAST-LUTFP32.impl  ok
+[2059/3284] matrix-pair-CAST-LUTFP32.mirror8  ok
+[2060/3284] matrix-pair-CAST-IADD.vc.imm  ok
+[2061/3284] matrix-pair-CAST-IADD.vc.reg  ok
+[2062/3284] matrix-pair-CAST-IADD.vd.reg  ok
+[2063/3284] matrix-pair-CAST-IADD.vd.sub  ok
+[2064/3284] matrix-pair-CAST-SHFT.vd.imm  ok
+[2065/3284] matrix-pair-CAST-SHFT.vd.reg  ok
+[2066/3284] matrix-pair-CAST-SHFT.vc.reg  ok
+[2067/3284] matrix-pair-CAST-SHFT.vc.immvc  ok
+[2068/3284] matrix-pair-CAST-AND.vc  ok
+[2069/3284] matrix-pair-CAST-AND.vd  ok
+[2070/3284] matrix-pair-CAST-AND.vb  ok
+[2071/3284] matrix-pair-CAST-OR.vb  ok
+[2072/3284] matrix-pair-CAST-OR.vd  ok
+[2073/3284] matrix-pair-CAST-XOR.vc  ok
+[2074/3284] matrix-pair-CAST-XOR.vd  ok
+[2075/3284] matrix-pair-CAST-NOT.vc  ok
+[2076/3284] matrix-pair-CAST-LZ.vc  ok
+[2077/3284] matrix-pair-CAST-EXEXP.vc  ok
+[2078/3284] matrix-pair-CAST-EXMAN.vc  ok
+[2079/3284] matrix-pair-CAST-SETEXP.vc.imm  ok
+[2080/3284] matrix-pair-CAST-SETEXP.vd  ok
+[2081/3284] matrix-pair-CAST-SETEXP.vc.reg  ok
+[2082/3284] matrix-pair-CAST-SETMAN.vc.imm  ok
+[2083/3284] matrix-pair-CAST-SETMAN.vd  ok
+[2084/3284] matrix-pair-CAST-SETSGN.vc.imm  ok
+[2085/3284] matrix-pair-CAST-SETSGN.vd  ok
+[2086/3284] matrix-pair-CAST-DIVP2.vc  ok
+[2087/3284] matrix-pair-CAST-ARECIP.vc  ok
+[2088/3284] matrix-pair-CAST-ARECIP.cond.vb  ok
+[2089/3284] matrix-pair-CAST-ARECIP.cond.vc  ok
+[2090/3284] matrix-pair-CAST-CAST.vc  ok
+[2091/3284] matrix-pair-CAST-STOCHRND.vc  ok
+[2092/3284] matrix-pair-CAST-STOCHRND.vb  ok
+[2093/3284] matrix-pair-CAST-SETCC.vc  ok
+[2094/3284] matrix-pair-CAST-GT.vc  ok
+[2095/3284] matrix-pair-CAST-GT.vd  ok
+[2096/3284] matrix-pair-CAST-LE.vd  ok
+[2097/3284] matrix-pair-CAST-SWAP.m0.vd  ok
+[2098/3284] matrix-pair-CAST-SWAP.m0.vc  ok
+[2099/3284] matrix-pair-CAST-SWAP.m1.vd  ok
+[2100/3284] matrix-pair-CAST-SWAP.m1.vc  ok
+[2101/3284] matrix-pair-CAST-SHFT2.m0.impl  ok
+[2102/3284] matrix-pair-CAST-SHFT2.m1.impl  ok
+[2103/3284] matrix-pair-CAST-SHFT2.m2.vc  ok
+[2104/3284] matrix-pair-CAST-SHFT2.m3.vc  ok
+[2105/3284] matrix-pair-CAST-SHFT2.m4.vc  ok
+[2106/3284] matrix-pair-CAST-SHFT2.m5.vb  ok
+[2107/3284] matrix-pair-CAST-SHFT2.m5.vc  ok
+[2108/3284] matrix-pair-CAST-SHFT2.m6.vb  ok
+[2109/3284] matrix-pair-CAST-TRANSP.impl  ok
+[2110/3284] matrix-pair-CAST-STORE  ok
+[2111/3284] matrix-pair-CAST-CONFIG.L12  ok
+[2112/3284] matrix-pair-CAST-LOADI.lower  ok
+[2113/3284] matrix-pair-CAST-LOADI.upper  ok
+[2114/3284] matrix-pair-CAST-LOAD.lo16  ok
+[2115/3284] matrix-pair-CAST-LOAD.hi16  ok
+[2116/3284] matrix-pair-CAST-LOADI.full  ok
+[2117/3284] matrix-pair-CAST-MOV.waw  ok
+[2118/3284] matrix-single-STOCHRND.f16b  ok
+[2119/3284] matrix-pair-STOCHRND.f16b-MOV.vc  ok
+[2120/3284] matrix-pair-STOCHRND.f16b-ABS.vc  ok
+[2121/3284] matrix-pair-STOCHRND.f16b-MAD.va  ok
+[2122/3284] matrix-pair-STOCHRND.f16b-MAD.vb  ok
+[2123/3284] matrix-pair-STOCHRND.f16b-MAD.vc  ok
+[2124/3284] matrix-pair-STOCHRND.f16b-MUL.va  ok
+[2125/3284] matrix-pair-STOCHRND.f16b-ADD.vc  ok
+[2126/3284] matrix-pair-STOCHRND.f16b-ADDI.vd  ok
+[2127/3284] matrix-pair-STOCHRND.f16b-MULI.vd  ok
+[2128/3284] matrix-pair-STOCHRND.f16b-MUL24.va  ok
+[2129/3284] matrix-pair-STOCHRND.f16b-MUL24.vb  ok
+[2130/3284] matrix-pair-STOCHRND.f16b-LUT.impl  ok
+[2131/3284] matrix-pair-STOCHRND.f16b-LUTFP32.impl  ok
+[2132/3284] matrix-pair-STOCHRND.f16b-LUTFP32.mirror8  ok
+[2133/3284] matrix-pair-STOCHRND.f16b-IADD.vc.imm  ok
+[2134/3284] matrix-pair-STOCHRND.f16b-IADD.vc.reg  ok
+[2135/3284] matrix-pair-STOCHRND.f16b-IADD.vd.reg  ok
+[2136/3284] matrix-pair-STOCHRND.f16b-IADD.vd.sub  ok
+[2137/3284] matrix-pair-STOCHRND.f16b-SHFT.vd.imm  ok
+[2138/3284] matrix-pair-STOCHRND.f16b-SHFT.vd.reg  ok
+[2139/3284] matrix-pair-STOCHRND.f16b-SHFT.vc.reg  ok
+[2140/3284] matrix-pair-STOCHRND.f16b-SHFT.vc.immvc  ok
+[2141/3284] matrix-pair-STOCHRND.f16b-AND.vc  ok
+[2142/3284] matrix-pair-STOCHRND.f16b-AND.vd  ok
+[2143/3284] matrix-pair-STOCHRND.f16b-AND.vb  ok
+[2144/3284] matrix-pair-STOCHRND.f16b-OR.vb  ok
+[2145/3284] matrix-pair-STOCHRND.f16b-OR.vd  ok
+[2146/3284] matrix-pair-STOCHRND.f16b-XOR.vc  ok
+[2147/3284] matrix-pair-STOCHRND.f16b-XOR.vd  ok
+[2148/3284] matrix-pair-STOCHRND.f16b-NOT.vc  ok
+[2149/3284] matrix-pair-STOCHRND.f16b-LZ.vc  ok
+[2150/3284] matrix-pair-STOCHRND.f16b-EXEXP.vc  ok
+[2151/3284] matrix-pair-STOCHRND.f16b-EXMAN.vc  ok
+[2152/3284] matrix-pair-STOCHRND.f16b-SETEXP.vc.imm  ok
+[2153/3284] matrix-pair-STOCHRND.f16b-SETEXP.vd  ok
+[2154/3284] matrix-pair-STOCHRND.f16b-SETEXP.vc.reg  ok
+[2155/3284] matrix-pair-STOCHRND.f16b-SETMAN.vc.imm  ok
+[2156/3284] matrix-pair-STOCHRND.f16b-SETMAN.vd  ok
+[2157/3284] matrix-pair-STOCHRND.f16b-SETSGN.vc.imm  ok
+[2158/3284] matrix-pair-STOCHRND.f16b-SETSGN.vd  ok
+[2159/3284] matrix-pair-STOCHRND.f16b-DIVP2.vc  ok
+[2160/3284] matrix-pair-STOCHRND.f16b-ARECIP.vc  ok
+[2161/3284] matrix-pair-STOCHRND.f16b-ARECIP.cond.vb  ok
+[2162/3284] matrix-pair-STOCHRND.f16b-ARECIP.cond.vc  ok
+[2163/3284] matrix-pair-STOCHRND.f16b-CAST.vc  ok
+[2164/3284] matrix-pair-STOCHRND.f16b-STOCHRND.vc  ok
+[2165/3284] matrix-pair-STOCHRND.f16b-STOCHRND.vb  ok
+[2166/3284] matrix-pair-STOCHRND.f16b-SETCC.vc  ok
+[2167/3284] matrix-pair-STOCHRND.f16b-GT.vc  ok
+[2168/3284] matrix-pair-STOCHRND.f16b-GT.vd  ok
+[2169/3284] matrix-pair-STOCHRND.f16b-LE.vd  ok
+[2170/3284] matrix-pair-STOCHRND.f16b-SWAP.m0.vd  ok
+[2171/3284] matrix-pair-STOCHRND.f16b-SWAP.m0.vc  ok
+[2172/3284] matrix-pair-STOCHRND.f16b-SWAP.m1.vd  ok
+[2173/3284] matrix-pair-STOCHRND.f16b-SWAP.m1.vc  ok
+[2174/3284] matrix-pair-STOCHRND.f16b-SHFT2.m0.impl  ok
+[2175/3284] matrix-pair-STOCHRND.f16b-SHFT2.m1.impl  ok
+[2176/3284] matrix-pair-STOCHRND.f16b-SHFT2.m2.vc  ok
+[2177/3284] matrix-pair-STOCHRND.f16b-SHFT2.m3.vc  ok
+[2178/3284] matrix-pair-STOCHRND.f16b-SHFT2.m4.vc  ok
+[2179/3284] matrix-pair-STOCHRND.f16b-SHFT2.m5.vb  ok
+[2180/3284] matrix-pair-STOCHRND.f16b-SHFT2.m5.vc  ok
+[2181/3284] matrix-pair-STOCHRND.f16b-SHFT2.m6.vb  ok
+[2182/3284] matrix-pair-STOCHRND.f16b-TRANSP.impl  ok
+[2183/3284] matrix-pair-STOCHRND.f16b-STORE  ok
+[2184/3284] matrix-pair-STOCHRND.f16b-CONFIG.L12  ok
+[2185/3284] matrix-pair-STOCHRND.f16b-LOADI.lower  ok
+[2186/3284] matrix-pair-STOCHRND.f16b-LOADI.upper  ok
+[2187/3284] matrix-pair-STOCHRND.f16b-LOAD.lo16  ok
+[2188/3284] matrix-pair-STOCHRND.f16b-LOAD.hi16  ok
+[2189/3284] matrix-pair-STOCHRND.f16b-LOADI.full  ok
+[2190/3284] matrix-pair-STOCHRND.f16b-MOV.waw  ok
+[2191/3284] matrix-single-STOCHRND.u8  ok
+[2192/3284] matrix-pair-STOCHRND.u8-MOV.vc  ok
+[2193/3284] matrix-pair-STOCHRND.u8-ABS.vc  ok
+[2194/3284] matrix-pair-STOCHRND.u8-MAD.va  ok
+[2195/3284] matrix-pair-STOCHRND.u8-MAD.vb  ok
+[2196/3284] matrix-pair-STOCHRND.u8-MAD.vc  ok
+[2197/3284] matrix-pair-STOCHRND.u8-MUL.va  ok
+[2198/3284] matrix-pair-STOCHRND.u8-ADD.vc  ok
+[2199/3284] matrix-pair-STOCHRND.u8-ADDI.vd  ok
+[2200/3284] matrix-pair-STOCHRND.u8-MULI.vd  ok
+[2201/3284] matrix-pair-STOCHRND.u8-MUL24.va  ok
+[2202/3284] matrix-pair-STOCHRND.u8-MUL24.vb  ok
+[2203/3284] matrix-pair-STOCHRND.u8-LUT.impl  ok
+[2204/3284] matrix-pair-STOCHRND.u8-LUTFP32.impl  ok
+[2205/3284] matrix-pair-STOCHRND.u8-LUTFP32.mirror8  ok
+[2206/3284] matrix-pair-STOCHRND.u8-IADD.vc.imm  ok
+[2207/3284] matrix-pair-STOCHRND.u8-IADD.vc.reg  ok
+[2208/3284] matrix-pair-STOCHRND.u8-IADD.vd.reg  ok
+[2209/3284] matrix-pair-STOCHRND.u8-IADD.vd.sub  ok
+[2210/3284] matrix-pair-STOCHRND.u8-SHFT.vd.imm  ok
+[2211/3284] matrix-pair-STOCHRND.u8-SHFT.vd.reg  ok
+[2212/3284] matrix-pair-STOCHRND.u8-SHFT.vc.reg  ok
+[2213/3284] matrix-pair-STOCHRND.u8-SHFT.vc.immvc  ok
+[2214/3284] matrix-pair-STOCHRND.u8-AND.vc  ok
+[2215/3284] matrix-pair-STOCHRND.u8-AND.vd  ok
+[2216/3284] matrix-pair-STOCHRND.u8-AND.vb  ok
+[2217/3284] matrix-pair-STOCHRND.u8-OR.vb  ok
+[2218/3284] matrix-pair-STOCHRND.u8-OR.vd  ok
+[2219/3284] matrix-pair-STOCHRND.u8-XOR.vc  ok
+[2220/3284] matrix-pair-STOCHRND.u8-XOR.vd  ok
+[2221/3284] matrix-pair-STOCHRND.u8-NOT.vc  ok
+[2222/3284] matrix-pair-STOCHRND.u8-LZ.vc  ok
+[2223/3284] matrix-pair-STOCHRND.u8-EXEXP.vc  ok
+[2224/3284] matrix-pair-STOCHRND.u8-EXMAN.vc  ok
+[2225/3284] matrix-pair-STOCHRND.u8-SETEXP.vc.imm  ok
+[2226/3284] matrix-pair-STOCHRND.u8-SETEXP.vd  ok
+[2227/3284] matrix-pair-STOCHRND.u8-SETEXP.vc.reg  ok
+[2228/3284] matrix-pair-STOCHRND.u8-SETMAN.vc.imm  ok
+[2229/3284] matrix-pair-STOCHRND.u8-SETMAN.vd  ok
+[2230/3284] matrix-pair-STOCHRND.u8-SETSGN.vc.imm  ok
+[2231/3284] matrix-pair-STOCHRND.u8-SETSGN.vd  ok
+[2232/3284] matrix-pair-STOCHRND.u8-DIVP2.vc  ok
+[2233/3284] matrix-pair-STOCHRND.u8-ARECIP.vc  ok
+[2234/3284] matrix-pair-STOCHRND.u8-ARECIP.cond.vb  ok
+[2235/3284] matrix-pair-STOCHRND.u8-ARECIP.cond.vc  ok
+[2236/3284] matrix-pair-STOCHRND.u8-CAST.vc  ok
+[2237/3284] matrix-pair-STOCHRND.u8-STOCHRND.vc  ok
+[2238/3284] matrix-pair-STOCHRND.u8-STOCHRND.vb  ok
+[2239/3284] matrix-pair-STOCHRND.u8-SETCC.vc  ok
+[2240/3284] matrix-pair-STOCHRND.u8-GT.vc  ok
+[2241/3284] matrix-pair-STOCHRND.u8-GT.vd  ok
+[2242/3284] matrix-pair-STOCHRND.u8-LE.vd  ok
+[2243/3284] matrix-pair-STOCHRND.u8-SWAP.m0.vd  ok
+[2244/3284] matrix-pair-STOCHRND.u8-SWAP.m0.vc  ok
+[2245/3284] matrix-pair-STOCHRND.u8-SWAP.m1.vd  ok
+[2246/3284] matrix-pair-STOCHRND.u8-SWAP.m1.vc  ok
+[2247/3284] matrix-pair-STOCHRND.u8-SHFT2.m0.impl  ok
+[2248/3284] matrix-pair-STOCHRND.u8-SHFT2.m1.impl  ok
+[2249/3284] matrix-pair-STOCHRND.u8-SHFT2.m2.vc  ok
+[2250/3284] matrix-pair-STOCHRND.u8-SHFT2.m3.vc  ok
+[2251/3284] matrix-pair-STOCHRND.u8-SHFT2.m4.vc  ok
+[2252/3284] matrix-pair-STOCHRND.u8-SHFT2.m5.vb  ok
+[2253/3284] matrix-pair-STOCHRND.u8-SHFT2.m5.vc  ok
+[2254/3284] matrix-pair-STOCHRND.u8-SHFT2.m6.vb  ok
+[2255/3284] matrix-pair-STOCHRND.u8-TRANSP.impl  ok
+[2256/3284] matrix-pair-STOCHRND.u8-STORE  ok
+[2257/3284] matrix-pair-STOCHRND.u8-CONFIG.L12  ok
+[2258/3284] matrix-pair-STOCHRND.u8-LOADI.lower  ok
+[2259/3284] matrix-pair-STOCHRND.u8-LOADI.upper  ok
+[2260/3284] matrix-pair-STOCHRND.u8-LOAD.lo16  ok
+[2261/3284] matrix-pair-STOCHRND.u8-LOAD.hi16  ok
+[2262/3284] matrix-pair-STOCHRND.u8-LOADI.full  ok
+[2263/3284] matrix-pair-STOCHRND.u8-MOV.waw  ok
+[2264/3284] matrix-single-LOADI  ok
+[2265/3284] matrix-pair-LOADI-MOV.vc  ok
+[2266/3284] matrix-pair-LOADI-ABS.vc  ok
+[2267/3284] matrix-pair-LOADI-MAD.va  ok
+[2268/3284] matrix-pair-LOADI-MAD.vb  ok
+[2269/3284] matrix-pair-LOADI-MAD.vc  ok
+[2270/3284] matrix-pair-LOADI-MUL.va  ok
+[2271/3284] matrix-pair-LOADI-ADD.vc  ok
+[2272/3284] matrix-pair-LOADI-ADDI.vd  ok
+[2273/3284] matrix-pair-LOADI-MULI.vd  ok
+[2274/3284] matrix-pair-LOADI-MUL24.va  ok
+[2275/3284] matrix-pair-LOADI-MUL24.vb  ok
+[2276/3284] matrix-pair-LOADI-LUT.impl  ok
+[2277/3284] matrix-pair-LOADI-LUTFP32.impl  ok
+[2278/3284] matrix-pair-LOADI-LUTFP32.mirror8  ok
+[2279/3284] matrix-pair-LOADI-IADD.vc.imm  ok
+[2280/3284] matrix-pair-LOADI-IADD.vc.reg  ok
+[2281/3284] matrix-pair-LOADI-IADD.vd.reg  ok
+[2282/3284] matrix-pair-LOADI-IADD.vd.sub  ok
+[2283/3284] matrix-pair-LOADI-SHFT.vd.imm  ok
+[2284/3284] matrix-pair-LOADI-SHFT.vd.reg  ok
+[2285/3284] matrix-pair-LOADI-SHFT.vc.reg  ok
+[2286/3284] matrix-pair-LOADI-SHFT.vc.immvc  ok
+[2287/3284] matrix-pair-LOADI-AND.vc  ok
+[2288/3284] matrix-pair-LOADI-AND.vd  ok
+[2289/3284] matrix-pair-LOADI-AND.vb  ok
+[2290/3284] matrix-pair-LOADI-OR.vb  ok
+[2291/3284] matrix-pair-LOADI-OR.vd  ok
+[2292/3284] matrix-pair-LOADI-XOR.vc  ok
+[2293/3284] matrix-pair-LOADI-XOR.vd  ok
+[2294/3284] matrix-pair-LOADI-NOT.vc  ok
+[2295/3284] matrix-pair-LOADI-LZ.vc  ok
+[2296/3284] matrix-pair-LOADI-EXEXP.vc  ok
+[2297/3284] matrix-pair-LOADI-EXMAN.vc  ok
+[2298/3284] matrix-pair-LOADI-SETEXP.vc.imm  ok
+[2299/3284] matrix-pair-LOADI-SETEXP.vd  ok
+[2300/3284] matrix-pair-LOADI-SETEXP.vc.reg  ok
+[2301/3284] matrix-pair-LOADI-SETMAN.vc.imm  ok
+[2302/3284] matrix-pair-LOADI-SETMAN.vd  ok
+[2303/3284] matrix-pair-LOADI-SETSGN.vc.imm  ok
+[2304/3284] matrix-pair-LOADI-SETSGN.vd  ok
+[2305/3284] matrix-pair-LOADI-DIVP2.vc  ok
+[2306/3284] matrix-pair-LOADI-ARECIP.vc  ok
+[2307/3284] matrix-pair-LOADI-ARECIP.cond.vb  ok
+[2308/3284] matrix-pair-LOADI-ARECIP.cond.vc  ok
+[2309/3284] matrix-pair-LOADI-CAST.vc  ok
+[2310/3284] matrix-pair-LOADI-STOCHRND.vc  ok
+[2311/3284] matrix-pair-LOADI-STOCHRND.vb  ok
+[2312/3284] matrix-pair-LOADI-SETCC.vc  ok
+[2313/3284] matrix-pair-LOADI-GT.vc  ok
+[2314/3284] matrix-pair-LOADI-GT.vd  ok
+[2315/3284] matrix-pair-LOADI-LE.vd  ok
+[2316/3284] matrix-pair-LOADI-SWAP.m0.vd  ok
+[2317/3284] matrix-pair-LOADI-SWAP.m0.vc  ok
+[2318/3284] matrix-pair-LOADI-SWAP.m1.vd  ok
+[2319/3284] matrix-pair-LOADI-SWAP.m1.vc  ok
+[2320/3284] matrix-pair-LOADI-SHFT2.m0.impl  ok
+[2321/3284] matrix-pair-LOADI-SHFT2.m1.impl  ok
+[2322/3284] matrix-pair-LOADI-SHFT2.m2.vc  ok
+[2323/3284] matrix-pair-LOADI-SHFT2.m3.vc  ok
+[2324/3284] matrix-pair-LOADI-SHFT2.m4.vc  ok
+[2325/3284] matrix-pair-LOADI-SHFT2.m5.vb  ok
+[2326/3284] matrix-pair-LOADI-SHFT2.m5.vc  ok
+[2327/3284] matrix-pair-LOADI-SHFT2.m6.vb  ok
+[2328/3284] matrix-pair-LOADI-TRANSP.impl  ok
+[2329/3284] matrix-pair-LOADI-STORE  ok
+[2330/3284] matrix-pair-LOADI-CONFIG.L12  ok
+[2331/3284] matrix-pair-LOADI-LOADI.lower  ok
+[2332/3284] matrix-pair-LOADI-LOADI.upper  ok
+[2333/3284] matrix-pair-LOADI-LOAD.lo16  ok
+[2334/3284] matrix-pair-LOADI-LOAD.hi16  ok
+[2335/3284] matrix-pair-LOADI-LOADI.full  ok
+[2336/3284] matrix-pair-LOADI-MOV.waw  ok
+[2337/3284] matrix-single-LOAD  ok
+[2338/3284] matrix-pair-LOAD-MOV.vc  ok
+[2339/3284] matrix-pair-LOAD-ABS.vc  ok
+[2340/3284] matrix-pair-LOAD-MAD.va  ok
+[2341/3284] matrix-pair-LOAD-MAD.vb  ok
+[2342/3284] matrix-pair-LOAD-MAD.vc  ok
+[2343/3284] matrix-pair-LOAD-MUL.va  ok
+[2344/3284] matrix-pair-LOAD-ADD.vc  ok
+[2345/3284] matrix-pair-LOAD-ADDI.vd  ok
+[2346/3284] matrix-pair-LOAD-MULI.vd  ok
+[2347/3284] matrix-pair-LOAD-MUL24.va  ok
+[2348/3284] matrix-pair-LOAD-MUL24.vb  ok
+[2349/3284] matrix-pair-LOAD-LUT.impl  ok
+[2350/3284] matrix-pair-LOAD-LUTFP32.impl  ok
+[2351/3284] matrix-pair-LOAD-LUTFP32.mirror8  ok
+[2352/3284] matrix-pair-LOAD-IADD.vc.imm  ok
+[2353/3284] matrix-pair-LOAD-IADD.vc.reg  ok
+[2354/3284] matrix-pair-LOAD-IADD.vd.reg  ok
+[2355/3284] matrix-pair-LOAD-IADD.vd.sub  ok
+[2356/3284] matrix-pair-LOAD-SHFT.vd.imm  ok
+[2357/3284] matrix-pair-LOAD-SHFT.vd.reg  ok
+[2358/3284] matrix-pair-LOAD-SHFT.vc.reg  ok
+[2359/3284] matrix-pair-LOAD-SHFT.vc.immvc  ok
+[2360/3284] matrix-pair-LOAD-AND.vc  ok
+[2361/3284] matrix-pair-LOAD-AND.vd  ok
+[2362/3284] matrix-pair-LOAD-AND.vb  ok
+[2363/3284] matrix-pair-LOAD-OR.vb  ok
+[2364/3284] matrix-pair-LOAD-OR.vd  ok
+[2365/3284] matrix-pair-LOAD-XOR.vc  ok
+[2366/3284] matrix-pair-LOAD-XOR.vd  ok
+[2367/3284] matrix-pair-LOAD-NOT.vc  ok
+[2368/3284] matrix-pair-LOAD-LZ.vc  ok
+[2369/3284] matrix-pair-LOAD-EXEXP.vc  ok
+[2370/3284] matrix-pair-LOAD-EXMAN.vc  ok
+[2371/3284] matrix-pair-LOAD-SETEXP.vc.imm  ok
+[2372/3284] matrix-pair-LOAD-SETEXP.vd  ok
+[2373/3284] matrix-pair-LOAD-SETEXP.vc.reg  ok
+[2374/3284] matrix-pair-LOAD-SETMAN.vc.imm  ok
+[2375/3284] matrix-pair-LOAD-SETMAN.vd  ok
+[2376/3284] matrix-pair-LOAD-SETSGN.vc.imm  ok
+[2377/3284] matrix-pair-LOAD-SETSGN.vd  ok
+[2378/3284] matrix-pair-LOAD-DIVP2.vc  ok
+[2379/3284] matrix-pair-LOAD-ARECIP.vc  ok
+[2380/3284] matrix-pair-LOAD-ARECIP.cond.vb  ok
+[2381/3284] matrix-pair-LOAD-ARECIP.cond.vc  ok
+[2382/3284] matrix-pair-LOAD-CAST.vc  ok
+[2383/3284] matrix-pair-LOAD-STOCHRND.vc  ok
+[2384/3284] matrix-pair-LOAD-STOCHRND.vb  ok
+[2385/3284] matrix-pair-LOAD-SETCC.vc  ok
+[2386/3284] matrix-pair-LOAD-GT.vc  ok
+[2387/3284] matrix-pair-LOAD-GT.vd  ok
+[2388/3284] matrix-pair-LOAD-LE.vd  ok
+[2389/3284] matrix-pair-LOAD-SWAP.m0.vd  ok
+[2390/3284] matrix-pair-LOAD-SWAP.m0.vc  ok
+[2391/3284] matrix-pair-LOAD-SWAP.m1.vd  ok
+[2392/3284] matrix-pair-LOAD-SWAP.m1.vc  ok
+[2393/3284] matrix-pair-LOAD-SHFT2.m0.impl  ok
+[2394/3284] matrix-pair-LOAD-SHFT2.m1.impl  ok
+[2395/3284] matrix-pair-LOAD-SHFT2.m2.vc  ok
+[2396/3284] matrix-pair-LOAD-SHFT2.m3.vc  ok
+[2397/3284] matrix-pair-LOAD-SHFT2.m4.vc  ok
+[2398/3284] matrix-pair-LOAD-SHFT2.m5.vb  ok
+[2399/3284] matrix-pair-LOAD-SHFT2.m5.vc  ok
+[2400/3284] matrix-pair-LOAD-SHFT2.m6.vb  ok
+[2401/3284] matrix-pair-LOAD-TRANSP.impl  ok
+[2402/3284] matrix-pair-LOAD-STORE  ok
+[2403/3284] matrix-pair-LOAD-CONFIG.L12  ok
+[2404/3284] matrix-pair-LOAD-LOADI.lower  ok
+[2405/3284] matrix-pair-LOAD-LOADI.upper  ok
+[2406/3284] matrix-pair-LOAD-LOAD.lo16  ok
+[2407/3284] matrix-pair-LOAD-LOAD.hi16  ok
+[2408/3284] matrix-pair-LOAD-LOADI.full  ok
+[2409/3284] matrix-pair-LOAD-MOV.waw  ok
+[2410/3284] matrix-single-GT.setvd  ok
+[2411/3284] matrix-pair-GT.setvd-MOV.vc  ok
+[2412/3284] matrix-pair-GT.setvd-ABS.vc  ok
+[2413/3284] matrix-pair-GT.setvd-MAD.va  ok
+[2414/3284] matrix-pair-GT.setvd-MAD.vb  ok
+[2415/3284] matrix-pair-GT.setvd-MAD.vc  ok
+[2416/3284] matrix-pair-GT.setvd-MUL.va  ok
+[2417/3284] matrix-pair-GT.setvd-ADD.vc  ok
+[2418/3284] matrix-pair-GT.setvd-ADDI.vd  ok
+[2419/3284] matrix-pair-GT.setvd-MULI.vd  ok
+[2420/3284] matrix-pair-GT.setvd-MUL24.va  ok
+[2421/3284] matrix-pair-GT.setvd-MUL24.vb  ok
+[2422/3284] matrix-pair-GT.setvd-LUT.impl  ok
+[2423/3284] matrix-pair-GT.setvd-LUTFP32.impl  ok
+[2424/3284] matrix-pair-GT.setvd-LUTFP32.mirror8  ok
+[2425/3284] matrix-pair-GT.setvd-IADD.vc.imm  ok
+[2426/3284] matrix-pair-GT.setvd-IADD.vc.reg  ok
+[2427/3284] matrix-pair-GT.setvd-IADD.vd.reg  ok
+[2428/3284] matrix-pair-GT.setvd-IADD.vd.sub  ok
+[2429/3284] matrix-pair-GT.setvd-SHFT.vd.imm  ok
+[2430/3284] matrix-pair-GT.setvd-SHFT.vd.reg  ok
+[2431/3284] matrix-pair-GT.setvd-SHFT.vc.reg  ok
+[2432/3284] matrix-pair-GT.setvd-SHFT.vc.immvc  ok
+[2433/3284] matrix-pair-GT.setvd-AND.vc  ok
+[2434/3284] matrix-pair-GT.setvd-AND.vd  ok
+[2435/3284] matrix-pair-GT.setvd-AND.vb  ok
+[2436/3284] matrix-pair-GT.setvd-OR.vb  ok
+[2437/3284] matrix-pair-GT.setvd-OR.vd  ok
+[2438/3284] matrix-pair-GT.setvd-XOR.vc  ok
+[2439/3284] matrix-pair-GT.setvd-XOR.vd  ok
+[2440/3284] matrix-pair-GT.setvd-NOT.vc  ok
+[2441/3284] matrix-pair-GT.setvd-LZ.vc  ok
+[2442/3284] matrix-pair-GT.setvd-EXEXP.vc  ok
+[2443/3284] matrix-pair-GT.setvd-EXMAN.vc  ok
+[2444/3284] matrix-pair-GT.setvd-SETEXP.vc.imm  ok
+[2445/3284] matrix-pair-GT.setvd-SETEXP.vd  ok
+[2446/3284] matrix-pair-GT.setvd-SETEXP.vc.reg  ok
+[2447/3284] matrix-pair-GT.setvd-SETMAN.vc.imm  ok
+[2448/3284] matrix-pair-GT.setvd-SETMAN.vd  ok
+[2449/3284] matrix-pair-GT.setvd-SETSGN.vc.imm  ok
+[2450/3284] matrix-pair-GT.setvd-SETSGN.vd  ok
+[2451/3284] matrix-pair-GT.setvd-DIVP2.vc  ok
+[2452/3284] matrix-pair-GT.setvd-ARECIP.vc  ok
+[2453/3284] matrix-pair-GT.setvd-ARECIP.cond.vb  ok
+[2454/3284] matrix-pair-GT.setvd-ARECIP.cond.vc  ok
+[2455/3284] matrix-pair-GT.setvd-CAST.vc  ok
+[2456/3284] matrix-pair-GT.setvd-STOCHRND.vc  ok
+[2457/3284] matrix-pair-GT.setvd-STOCHRND.vb  ok
+[2458/3284] matrix-pair-GT.setvd-SETCC.vc  ok
+[2459/3284] matrix-pair-GT.setvd-GT.vc  ok
+[2460/3284] matrix-pair-GT.setvd-GT.vd  ok
+[2461/3284] matrix-pair-GT.setvd-LE.vd  ok
+[2462/3284] matrix-pair-GT.setvd-SWAP.m0.vd  ok
+[2463/3284] matrix-pair-GT.setvd-SWAP.m0.vc  ok
+[2464/3284] matrix-pair-GT.setvd-SWAP.m1.vd  ok
+[2465/3284] matrix-pair-GT.setvd-SWAP.m1.vc  ok
+[2466/3284] matrix-pair-GT.setvd-SHFT2.m0.impl  ok
+[2467/3284] matrix-pair-GT.setvd-SHFT2.m1.impl  ok
+[2468/3284] matrix-pair-GT.setvd-SHFT2.m2.vc  ok
+[2469/3284] matrix-pair-GT.setvd-SHFT2.m3.vc  ok
+[2470/3284] matrix-pair-GT.setvd-SHFT2.m4.vc  ok
+[2471/3284] matrix-pair-GT.setvd-SHFT2.m5.vb  ok
+[2472/3284] matrix-pair-GT.setvd-SHFT2.m5.vc  ok
+[2473/3284] matrix-pair-GT.setvd-SHFT2.m6.vb  ok
+[2474/3284] matrix-pair-GT.setvd-TRANSP.impl  ok
+[2475/3284] matrix-pair-GT.setvd-STORE  ok
+[2476/3284] matrix-pair-GT.setvd-CONFIG.L12  ok
+[2477/3284] matrix-pair-GT.setvd-LOADI.lower  ok
+[2478/3284] matrix-pair-GT.setvd-LOADI.upper  ok
+[2479/3284] matrix-pair-GT.setvd-LOAD.lo16  ok
+[2480/3284] matrix-pair-GT.setvd-LOAD.hi16  ok
+[2481/3284] matrix-pair-GT.setvd-LOADI.full  ok
+[2482/3284] matrix-pair-GT.setvd-MOV.waw  ok
+[2483/3284] matrix-single-LE.setvd  ok
+[2484/3284] matrix-pair-LE.setvd-MOV.vc  ok
+[2485/3284] matrix-pair-LE.setvd-ABS.vc  ok
+[2486/3284] matrix-pair-LE.setvd-MAD.va  ok
+[2487/3284] matrix-pair-LE.setvd-MAD.vb  ok
+[2488/3284] matrix-pair-LE.setvd-MAD.vc  ok
+[2489/3284] matrix-pair-LE.setvd-MUL.va  ok
+[2490/3284] matrix-pair-LE.setvd-ADD.vc  ok
+[2491/3284] matrix-pair-LE.setvd-ADDI.vd  ok
+[2492/3284] matrix-pair-LE.setvd-MULI.vd  ok
+[2493/3284] matrix-pair-LE.setvd-MUL24.va  ok
+[2494/3284] matrix-pair-LE.setvd-MUL24.vb  ok
+[2495/3284] matrix-pair-LE.setvd-LUT.impl  ok
+[2496/3284] matrix-pair-LE.setvd-LUTFP32.impl  ok
+[2497/3284] matrix-pair-LE.setvd-LUTFP32.mirror8  ok
+[2498/3284] matrix-pair-LE.setvd-IADD.vc.imm  ok
+[2499/3284] matrix-pair-LE.setvd-IADD.vc.reg  ok
+[2500/3284] matrix-pair-LE.setvd-IADD.vd.reg  ok
+[2501/3284] matrix-pair-LE.setvd-IADD.vd.sub  ok
+[2502/3284] matrix-pair-LE.setvd-SHFT.vd.imm  ok
+[2503/3284] matrix-pair-LE.setvd-SHFT.vd.reg  ok
+[2504/3284] matrix-pair-LE.setvd-SHFT.vc.reg  ok
+[2505/3284] matrix-pair-LE.setvd-SHFT.vc.immvc  ok
+[2506/3284] matrix-pair-LE.setvd-AND.vc  ok
+[2507/3284] matrix-pair-LE.setvd-AND.vd  ok
+[2508/3284] matrix-pair-LE.setvd-AND.vb  ok
+[2509/3284] matrix-pair-LE.setvd-OR.vb  ok
+[2510/3284] matrix-pair-LE.setvd-OR.vd  ok
+[2511/3284] matrix-pair-LE.setvd-XOR.vc  ok
+[2512/3284] matrix-pair-LE.setvd-XOR.vd  ok
+[2513/3284] matrix-pair-LE.setvd-NOT.vc  ok
+[2514/3284] matrix-pair-LE.setvd-LZ.vc  ok
+[2515/3284] matrix-pair-LE.setvd-EXEXP.vc  ok
+[2516/3284] matrix-pair-LE.setvd-EXMAN.vc  ok
+[2517/3284] matrix-pair-LE.setvd-SETEXP.vc.imm  ok
+[2518/3284] matrix-pair-LE.setvd-SETEXP.vd  ok
+[2519/3284] matrix-pair-LE.setvd-SETEXP.vc.reg  ok
+[2520/3284] matrix-pair-LE.setvd-SETMAN.vc.imm  ok
+[2521/3284] matrix-pair-LE.setvd-SETMAN.vd  ok
+[2522/3284] matrix-pair-LE.setvd-SETSGN.vc.imm  ok
+[2523/3284] matrix-pair-LE.setvd-SETSGN.vd  ok
+[2524/3284] matrix-pair-LE.setvd-DIVP2.vc  ok
+[2525/3284] matrix-pair-LE.setvd-ARECIP.vc  ok
+[2526/3284] matrix-pair-LE.setvd-ARECIP.cond.vb  ok
+[2527/3284] matrix-pair-LE.setvd-ARECIP.cond.vc  ok
+[2528/3284] matrix-pair-LE.setvd-CAST.vc  ok
+[2529/3284] matrix-pair-LE.setvd-STOCHRND.vc  ok
+[2530/3284] matrix-pair-LE.setvd-STOCHRND.vb  ok
+[2531/3284] matrix-pair-LE.setvd-SETCC.vc  ok
+[2532/3284] matrix-pair-LE.setvd-GT.vc  ok
+[2533/3284] matrix-pair-LE.setvd-GT.vd  ok
+[2534/3284] matrix-pair-LE.setvd-LE.vd  ok
+[2535/3284] matrix-pair-LE.setvd-SWAP.m0.vd  ok
+[2536/3284] matrix-pair-LE.setvd-SWAP.m0.vc  ok
+[2537/3284] matrix-pair-LE.setvd-SWAP.m1.vd  ok
+[2538/3284] matrix-pair-LE.setvd-SWAP.m1.vc  ok
+[2539/3284] matrix-pair-LE.setvd-SHFT2.m0.impl  ok
+[2540/3284] matrix-pair-LE.setvd-SHFT2.m1.impl  ok
+[2541/3284] matrix-pair-LE.setvd-SHFT2.m2.vc  ok
+[2542/3284] matrix-pair-LE.setvd-SHFT2.m3.vc  ok
+[2543/3284] matrix-pair-LE.setvd-SHFT2.m4.vc  ok
+[2544/3284] matrix-pair-LE.setvd-SHFT2.m5.vb  ok
+[2545/3284] matrix-pair-LE.setvd-SHFT2.m5.vc  ok
+[2546/3284] matrix-pair-LE.setvd-SHFT2.m6.vb  ok
+[2547/3284] matrix-pair-LE.setvd-TRANSP.impl  ok
+[2548/3284] matrix-pair-LE.setvd-STORE  ok
+[2549/3284] matrix-pair-LE.setvd-CONFIG.L12  ok
+[2550/3284] matrix-pair-LE.setvd-LOADI.lower  ok
+[2551/3284] matrix-pair-LE.setvd-LOADI.upper  ok
+[2552/3284] matrix-pair-LE.setvd-LOAD.lo16  ok
+[2553/3284] matrix-pair-LE.setvd-LOAD.hi16  ok
+[2554/3284] matrix-pair-LE.setvd-LOADI.full  ok
+[2555/3284] matrix-pair-LE.setvd-MOV.waw  ok
+[2556/3284] matrix-single-SWAP.m0  ok
+[2557/3284] matrix-pair-SWAP.m0-MOV.vc  ok
+[2558/3284] matrix-pair-SWAP.m0-ABS.vc  ok
+[2559/3284] matrix-pair-SWAP.m0-MAD.va  ok
+[2560/3284] matrix-pair-SWAP.m0-MAD.vb  ok
+[2561/3284] matrix-pair-SWAP.m0-MAD.vc  ok
+[2562/3284] matrix-pair-SWAP.m0-MUL.va  ok
+[2563/3284] matrix-pair-SWAP.m0-ADD.vc  ok
+[2564/3284] matrix-pair-SWAP.m0-ADDI.vd  ok
+[2565/3284] matrix-pair-SWAP.m0-MULI.vd  ok
+[2566/3284] matrix-pair-SWAP.m0-MUL24.va  ok
+[2567/3284] matrix-pair-SWAP.m0-MUL24.vb  ok
+[2568/3284] matrix-pair-SWAP.m0-LUT.impl  ok
+[2569/3284] matrix-pair-SWAP.m0-LUTFP32.impl  ok
+[2570/3284] matrix-pair-SWAP.m0-LUTFP32.mirror8  ok
+[2571/3284] matrix-pair-SWAP.m0-IADD.vc.imm  ok
+[2572/3284] matrix-pair-SWAP.m0-IADD.vc.reg  ok
+[2573/3284] matrix-pair-SWAP.m0-IADD.vd.reg  ok
+[2574/3284] matrix-pair-SWAP.m0-IADD.vd.sub  ok
+[2575/3284] matrix-pair-SWAP.m0-SHFT.vd.imm  ok
+[2576/3284] matrix-pair-SWAP.m0-SHFT.vd.reg  ok
+[2577/3284] matrix-pair-SWAP.m0-SHFT.vc.reg  ok
+[2578/3284] matrix-pair-SWAP.m0-SHFT.vc.immvc  ok
+[2579/3284] matrix-pair-SWAP.m0-AND.vc  ok
+[2580/3284] matrix-pair-SWAP.m0-AND.vd  ok
+[2581/3284] matrix-pair-SWAP.m0-AND.vb  ok
+[2582/3284] matrix-pair-SWAP.m0-OR.vb  ok
+[2583/3284] matrix-pair-SWAP.m0-OR.vd  ok
+[2584/3284] matrix-pair-SWAP.m0-XOR.vc  ok
+[2585/3284] matrix-pair-SWAP.m0-XOR.vd  ok
+[2586/3284] matrix-pair-SWAP.m0-NOT.vc  ok
+[2587/3284] matrix-pair-SWAP.m0-LZ.vc  ok
+[2588/3284] matrix-pair-SWAP.m0-EXEXP.vc  ok
+[2589/3284] matrix-pair-SWAP.m0-EXMAN.vc  ok
+[2590/3284] matrix-pair-SWAP.m0-SETEXP.vc.imm  ok
+[2591/3284] matrix-pair-SWAP.m0-SETEXP.vd  ok
+[2592/3284] matrix-pair-SWAP.m0-SETEXP.vc.reg  ok
+[2593/3284] matrix-pair-SWAP.m0-SETMAN.vc.imm  ok
+[2594/3284] matrix-pair-SWAP.m0-SETMAN.vd  ok
+[2595/3284] matrix-pair-SWAP.m0-SETSGN.vc.imm  ok
+[2596/3284] matrix-pair-SWAP.m0-SETSGN.vd  ok
+[2597/3284] matrix-pair-SWAP.m0-DIVP2.vc  ok
+[2598/3284] matrix-pair-SWAP.m0-ARECIP.vc  ok
+[2599/3284] matrix-pair-SWAP.m0-ARECIP.cond.vb  ok
+[2600/3284] matrix-pair-SWAP.m0-ARECIP.cond.vc  ok
+[2601/3284] matrix-pair-SWAP.m0-CAST.vc  ok
+[2602/3284] matrix-pair-SWAP.m0-STOCHRND.vc  ok
+[2603/3284] matrix-pair-SWAP.m0-STOCHRND.vb  ok
+[2604/3284] matrix-pair-SWAP.m0-SETCC.vc  ok
+[2605/3284] matrix-pair-SWAP.m0-GT.vc  ok
+[2606/3284] matrix-pair-SWAP.m0-GT.vd  ok
+[2607/3284] matrix-pair-SWAP.m0-LE.vd  ok
+[2608/3284] matrix-pair-SWAP.m0-SWAP.m0.vd  ok
+[2609/3284] matrix-pair-SWAP.m0-SWAP.m0.vc  ok
+[2610/3284] matrix-pair-SWAP.m0-SWAP.m1.vd  ok
+[2611/3284] matrix-pair-SWAP.m0-SWAP.m1.vc  ok
+[2612/3284] matrix-pair-SWAP.m0-SHFT2.m0.impl  ok
+[2613/3284] matrix-pair-SWAP.m0-SHFT2.m1.impl  ok
+[2614/3284] matrix-pair-SWAP.m0-SHFT2.m2.vc  ok
+[2615/3284] matrix-pair-SWAP.m0-SHFT2.m3.vc  ok
+[2616/3284] matrix-pair-SWAP.m0-SHFT2.m4.vc  ok
+[2617/3284] matrix-pair-SWAP.m0-SHFT2.m5.vb  ok
+[2618/3284] matrix-pair-SWAP.m0-SHFT2.m5.vc  ok
+[2619/3284] matrix-pair-SWAP.m0-SHFT2.m6.vb  ok
+[2620/3284] matrix-pair-SWAP.m0-TRANSP.impl  ok
+[2621/3284] matrix-pair-SWAP.m0-STORE  ok
+[2622/3284] matrix-pair-SWAP.m0-CONFIG.L12  ok
+[2623/3284] matrix-pair-SWAP.m0-LOADI.lower  ok
+[2624/3284] matrix-pair-SWAP.m0-LOADI.upper  ok
+[2625/3284] matrix-pair-SWAP.m0-LOAD.lo16  ok
+[2626/3284] matrix-pair-SWAP.m0-LOAD.hi16  ok
+[2627/3284] matrix-pair-SWAP.m0-LOADI.full  ok
+[2628/3284] matrix-pair-SWAP.m0-MOV.waw  ok
+[2629/3284] matrix-single-SWAP.m1  ok
+[2630/3284] matrix-pair-SWAP.m1-MOV.vc  ok
+[2631/3284] matrix-pair-SWAP.m1-ABS.vc  ok
+[2632/3284] matrix-pair-SWAP.m1-MAD.va  ok
+[2633/3284] matrix-pair-SWAP.m1-MAD.vb  ok
+[2634/3284] matrix-pair-SWAP.m1-MAD.vc  ok
+[2635/3284] matrix-pair-SWAP.m1-MUL.va  ok
+[2636/3284] matrix-pair-SWAP.m1-ADD.vc  ok
+[2637/3284] matrix-pair-SWAP.m1-ADDI.vd  ok
+[2638/3284] matrix-pair-SWAP.m1-MULI.vd  ok
+[2639/3284] matrix-pair-SWAP.m1-MUL24.va  ok
+[2640/3284] matrix-pair-SWAP.m1-MUL24.vb  ok
+[2641/3284] matrix-pair-SWAP.m1-LUT.impl  ok
+[2642/3284] matrix-pair-SWAP.m1-LUTFP32.impl  ok
+[2643/3284] matrix-pair-SWAP.m1-LUTFP32.mirror8  ok
+[2644/3284] matrix-pair-SWAP.m1-IADD.vc.imm  ok
+[2645/3284] matrix-pair-SWAP.m1-IADD.vc.reg  ok
+[2646/3284] matrix-pair-SWAP.m1-IADD.vd.reg  ok
+[2647/3284] matrix-pair-SWAP.m1-IADD.vd.sub  ok
+[2648/3284] matrix-pair-SWAP.m1-SHFT.vd.imm  ok
+[2649/3284] matrix-pair-SWAP.m1-SHFT.vd.reg  ok
+[2650/3284] matrix-pair-SWAP.m1-SHFT.vc.reg  ok
+[2651/3284] matrix-pair-SWAP.m1-SHFT.vc.immvc  ok
+[2652/3284] matrix-pair-SWAP.m1-AND.vc  ok
+[2653/3284] matrix-pair-SWAP.m1-AND.vd  ok
+[2654/3284] matrix-pair-SWAP.m1-AND.vb  ok
+[2655/3284] matrix-pair-SWAP.m1-OR.vb  ok
+[2656/3284] matrix-pair-SWAP.m1-OR.vd  ok
+[2657/3284] matrix-pair-SWAP.m1-XOR.vc  ok
+[2658/3284] matrix-pair-SWAP.m1-XOR.vd  ok
+[2659/3284] matrix-pair-SWAP.m1-NOT.vc  ok
+[2660/3284] matrix-pair-SWAP.m1-LZ.vc  ok
+[2661/3284] matrix-pair-SWAP.m1-EXEXP.vc  ok
+[2662/3284] matrix-pair-SWAP.m1-EXMAN.vc  ok
+[2663/3284] matrix-pair-SWAP.m1-SETEXP.vc.imm  ok
+[2664/3284] matrix-pair-SWAP.m1-SETEXP.vd  ok
+[2665/3284] matrix-pair-SWAP.m1-SETEXP.vc.reg  ok
+[2666/3284] matrix-pair-SWAP.m1-SETMAN.vc.imm  ok
+[2667/3284] matrix-pair-SWAP.m1-SETMAN.vd  ok
+[2668/3284] matrix-pair-SWAP.m1-SETSGN.vc.imm  ok
+[2669/3284] matrix-pair-SWAP.m1-SETSGN.vd  ok
+[2670/3284] matrix-pair-SWAP.m1-DIVP2.vc  ok
+[2671/3284] matrix-pair-SWAP.m1-ARECIP.vc  ok
+[2672/3284] matrix-pair-SWAP.m1-ARECIP.cond.vb  ok
+[2673/3284] matrix-pair-SWAP.m1-ARECIP.cond.vc  ok
+[2674/3284] matrix-pair-SWAP.m1-CAST.vc  ok
+[2675/3284] matrix-pair-SWAP.m1-STOCHRND.vc  ok
+[2676/3284] matrix-pair-SWAP.m1-STOCHRND.vb  ok
+[2677/3284] matrix-pair-SWAP.m1-SETCC.vc  ok
+[2678/3284] matrix-pair-SWAP.m1-GT.vc  ok
+[2679/3284] matrix-pair-SWAP.m1-GT.vd  ok
+[2680/3284] matrix-pair-SWAP.m1-LE.vd  ok
+[2681/3284] matrix-pair-SWAP.m1-SWAP.m0.vd  ok
+[2682/3284] matrix-pair-SWAP.m1-SWAP.m0.vc  ok
+[2683/3284] matrix-pair-SWAP.m1-SWAP.m1.vd  ok
+[2684/3284] matrix-pair-SWAP.m1-SWAP.m1.vc  ok
+[2685/3284] matrix-pair-SWAP.m1-SHFT2.m0.impl  ok
+[2686/3284] matrix-pair-SWAP.m1-SHFT2.m1.impl  ok
+[2687/3284] matrix-pair-SWAP.m1-SHFT2.m2.vc  ok
+[2688/3284] matrix-pair-SWAP.m1-SHFT2.m3.vc  ok
+[2689/3284] matrix-pair-SWAP.m1-SHFT2.m4.vc  ok
+[2690/3284] matrix-pair-SWAP.m1-SHFT2.m5.vb  ok
+[2691/3284] matrix-pair-SWAP.m1-SHFT2.m5.vc  ok
+[2692/3284] matrix-pair-SWAP.m1-SHFT2.m6.vb  ok
+[2693/3284] matrix-pair-SWAP.m1-TRANSP.impl  ok
+[2694/3284] matrix-pair-SWAP.m1-STORE  ok
+[2695/3284] matrix-pair-SWAP.m1-CONFIG.L12  ok
+[2696/3284] matrix-pair-SWAP.m1-LOADI.lower  ok
+[2697/3284] matrix-pair-SWAP.m1-LOADI.upper  ok
+[2698/3284] matrix-pair-SWAP.m1-LOAD.lo16  ok
+[2699/3284] matrix-pair-SWAP.m1-LOAD.hi16  ok
+[2700/3284] matrix-pair-SWAP.m1-LOADI.full  ok
+[2701/3284] matrix-pair-SWAP.m1-MOV.waw  ok
+[2702/3284] matrix-single-SHFT2.m0  ok
+[2703/3284] matrix-pair-SHFT2.m0-MOV.vc  ok
+[2704/3284] matrix-pair-SHFT2.m0-ABS.vc  ok
+[2705/3284] matrix-pair-SHFT2.m0-MAD.va  ok
+[2706/3284] matrix-pair-SHFT2.m0-MAD.vb  ok
+[2707/3284] matrix-pair-SHFT2.m0-MAD.vc  ok
+[2708/3284] matrix-pair-SHFT2.m0-MUL.va  ok
+[2709/3284] matrix-pair-SHFT2.m0-ADD.vc  ok
+[2710/3284] matrix-pair-SHFT2.m0-ADDI.vd  ok
+[2711/3284] matrix-pair-SHFT2.m0-MULI.vd  ok
+[2712/3284] matrix-pair-SHFT2.m0-MUL24.va  ok
+[2713/3284] matrix-pair-SHFT2.m0-MUL24.vb  ok
+[2714/3284] matrix-pair-SHFT2.m0-LUT.impl  ok
+[2715/3284] matrix-pair-SHFT2.m0-LUTFP32.impl  ok
+[2716/3284] matrix-pair-SHFT2.m0-LUTFP32.mirror8  ok
+[2717/3284] matrix-pair-SHFT2.m0-IADD.vc.imm  ok
+[2718/3284] matrix-pair-SHFT2.m0-IADD.vc.reg  ok
+[2719/3284] matrix-pair-SHFT2.m0-IADD.vd.reg  ok
+[2720/3284] matrix-pair-SHFT2.m0-IADD.vd.sub  ok
+[2721/3284] matrix-pair-SHFT2.m0-SHFT.vd.imm  ok
+[2722/3284] matrix-pair-SHFT2.m0-SHFT.vd.reg  ok
+[2723/3284] matrix-pair-SHFT2.m0-SHFT.vc.reg  ok
+[2724/3284] matrix-pair-SHFT2.m0-SHFT.vc.immvc  ok
+[2725/3284] matrix-pair-SHFT2.m0-AND.vc  ok
+[2726/3284] matrix-pair-SHFT2.m0-AND.vd  ok
+[2727/3284] matrix-pair-SHFT2.m0-AND.vb  ok
+[2728/3284] matrix-pair-SHFT2.m0-OR.vb  ok
+[2729/3284] matrix-pair-SHFT2.m0-OR.vd  ok
+[2730/3284] matrix-pair-SHFT2.m0-XOR.vc  ok
+[2731/3284] matrix-pair-SHFT2.m0-XOR.vd  ok
+[2732/3284] matrix-pair-SHFT2.m0-NOT.vc  ok
+[2733/3284] matrix-pair-SHFT2.m0-LZ.vc  ok
+[2734/3284] matrix-pair-SHFT2.m0-EXEXP.vc  ok
+[2735/3284] matrix-pair-SHFT2.m0-EXMAN.vc  ok
+[2736/3284] matrix-pair-SHFT2.m0-SETEXP.vc.imm  ok
+[2737/3284] matrix-pair-SHFT2.m0-SETEXP.vd  ok
+[2738/3284] matrix-pair-SHFT2.m0-SETEXP.vc.reg  ok
+[2739/3284] matrix-pair-SHFT2.m0-SETMAN.vc.imm  ok
+[2740/3284] matrix-pair-SHFT2.m0-SETMAN.vd  ok
+[2741/3284] matrix-pair-SHFT2.m0-SETSGN.vc.imm  ok
+[2742/3284] matrix-pair-SHFT2.m0-SETSGN.vd  ok
+[2743/3284] matrix-pair-SHFT2.m0-DIVP2.vc  ok
+[2744/3284] matrix-pair-SHFT2.m0-ARECIP.vc  ok
+[2745/3284] matrix-pair-SHFT2.m0-ARECIP.cond.vb  ok
+[2746/3284] matrix-pair-SHFT2.m0-ARECIP.cond.vc  ok
+[2747/3284] matrix-pair-SHFT2.m0-CAST.vc  ok
+[2748/3284] matrix-pair-SHFT2.m0-STOCHRND.vc  ok
+[2749/3284] matrix-pair-SHFT2.m0-STOCHRND.vb  ok
+[2750/3284] matrix-pair-SHFT2.m0-SETCC.vc  ok
+[2751/3284] matrix-pair-SHFT2.m0-GT.vc  ok
+[2752/3284] matrix-pair-SHFT2.m0-GT.vd  ok
+[2753/3284] matrix-pair-SHFT2.m0-LE.vd  ok
+[2754/3284] matrix-pair-SHFT2.m0-SWAP.m0.vd  ok
+[2755/3284] matrix-pair-SHFT2.m0-SWAP.m0.vc  ok
+[2756/3284] matrix-pair-SHFT2.m0-SWAP.m1.vd  ok
+[2757/3284] matrix-pair-SHFT2.m0-SWAP.m1.vc  ok
+[2758/3284] matrix-pair-SHFT2.m0-SHFT2.m0.impl  ok
+[2759/3284] matrix-pair-SHFT2.m0-SHFT2.m1.impl  ok
+[2760/3284] matrix-pair-SHFT2.m0-SHFT2.m2.vc  ok
+[2761/3284] matrix-pair-SHFT2.m0-SHFT2.m3.vc  ok
+[2762/3284] matrix-pair-SHFT2.m0-SHFT2.m4.vc  ok
+[2763/3284] matrix-pair-SHFT2.m0-SHFT2.m5.vb  ok
+[2764/3284] matrix-pair-SHFT2.m0-SHFT2.m5.vc  ok
+[2765/3284] matrix-pair-SHFT2.m0-SHFT2.m6.vb  ok
+[2766/3284] matrix-pair-SHFT2.m0-TRANSP.impl  ok
+[2767/3284] matrix-pair-SHFT2.m0-STORE  ok
+[2768/3284] matrix-pair-SHFT2.m0-CONFIG.L12  ok
+[2769/3284] matrix-pair-SHFT2.m0-LOADI.lower  ok
+[2770/3284] matrix-pair-SHFT2.m0-LOADI.upper  ok
+[2771/3284] matrix-pair-SHFT2.m0-LOAD.lo16  ok
+[2772/3284] matrix-pair-SHFT2.m0-LOAD.hi16  ok
+[2773/3284] matrix-pair-SHFT2.m0-LOADI.full  ok
+[2774/3284] matrix-pair-SHFT2.m0-MOV.waw  ok
+[2775/3284] matrix-single-SHFT2.m2  ok
+[2776/3284] matrix-pair-SHFT2.m2-MOV.vc  ok
+[2777/3284] matrix-pair-SHFT2.m2-ABS.vc  ok
+[2778/3284] matrix-pair-SHFT2.m2-MAD.va  ok
+[2779/3284] matrix-pair-SHFT2.m2-MAD.vb  ok
+[2780/3284] matrix-pair-SHFT2.m2-MAD.vc  ok
+[2781/3284] matrix-pair-SHFT2.m2-MUL.va  ok
+[2782/3284] matrix-pair-SHFT2.m2-ADD.vc  ok
+[2783/3284] matrix-pair-SHFT2.m2-ADDI.vd  ok
+[2784/3284] matrix-pair-SHFT2.m2-MULI.vd  ok
+[2785/3284] matrix-pair-SHFT2.m2-MUL24.va  ok
+[2786/3284] matrix-pair-SHFT2.m2-MUL24.vb  ok
+[2787/3284] matrix-pair-SHFT2.m2-LUT.impl  ok
+[2788/3284] matrix-pair-SHFT2.m2-LUTFP32.impl  ok
+[2789/3284] matrix-pair-SHFT2.m2-LUTFP32.mirror8  ok
+[2790/3284] matrix-pair-SHFT2.m2-IADD.vc.imm  ok
+[2791/3284] matrix-pair-SHFT2.m2-IADD.vc.reg  ok
+[2792/3284] matrix-pair-SHFT2.m2-IADD.vd.reg  ok
+[2793/3284] matrix-pair-SHFT2.m2-IADD.vd.sub  ok
+[2794/3284] matrix-pair-SHFT2.m2-SHFT.vd.imm  ok
+[2795/3284] matrix-pair-SHFT2.m2-SHFT.vd.reg  ok
+[2796/3284] matrix-pair-SHFT2.m2-SHFT.vc.reg  ok
+[2797/3284] matrix-pair-SHFT2.m2-SHFT.vc.immvc  ok
+[2798/3284] matrix-pair-SHFT2.m2-AND.vc  ok
+[2799/3284] matrix-pair-SHFT2.m2-AND.vd  ok
+[2800/3284] matrix-pair-SHFT2.m2-AND.vb  ok
+[2801/3284] matrix-pair-SHFT2.m2-OR.vb  ok
+[2802/3284] matrix-pair-SHFT2.m2-OR.vd  ok
+[2803/3284] matrix-pair-SHFT2.m2-XOR.vc  ok
+[2804/3284] matrix-pair-SHFT2.m2-XOR.vd  ok
+[2805/3284] matrix-pair-SHFT2.m2-NOT.vc  ok
+[2806/3284] matrix-pair-SHFT2.m2-LZ.vc  ok
+[2807/3284] matrix-pair-SHFT2.m2-EXEXP.vc  ok
+[2808/3284] matrix-pair-SHFT2.m2-EXMAN.vc  ok
+[2809/3284] matrix-pair-SHFT2.m2-SETEXP.vc.imm  ok
+[2810/3284] matrix-pair-SHFT2.m2-SETEXP.vd  ok
+[2811/3284] matrix-pair-SHFT2.m2-SETEXP.vc.reg  ok
+[2812/3284] matrix-pair-SHFT2.m2-SETMAN.vc.imm  ok
+[2813/3284] matrix-pair-SHFT2.m2-SETMAN.vd  ok
+[2814/3284] matrix-pair-SHFT2.m2-SETSGN.vc.imm  ok
+[2815/3284] matrix-pair-SHFT2.m2-SETSGN.vd  ok
+[2816/3284] matrix-pair-SHFT2.m2-DIVP2.vc  ok
+[2817/3284] matrix-pair-SHFT2.m2-ARECIP.vc  ok
+[2818/3284] matrix-pair-SHFT2.m2-ARECIP.cond.vb  ok
+[2819/3284] matrix-pair-SHFT2.m2-ARECIP.cond.vc  ok
+[2820/3284] matrix-pair-SHFT2.m2-CAST.vc  ok
+[2821/3284] matrix-pair-SHFT2.m2-STOCHRND.vc  ok
+[2822/3284] matrix-pair-SHFT2.m2-STOCHRND.vb  ok
+[2823/3284] matrix-pair-SHFT2.m2-SETCC.vc  ok
+[2824/3284] matrix-pair-SHFT2.m2-GT.vc  ok
+[2825/3284] matrix-pair-SHFT2.m2-GT.vd  ok
+[2826/3284] matrix-pair-SHFT2.m2-LE.vd  ok
+[2827/3284] matrix-pair-SHFT2.m2-SWAP.m0.vd  ok
+[2828/3284] matrix-pair-SHFT2.m2-SWAP.m0.vc  ok
+[2829/3284] matrix-pair-SHFT2.m2-SWAP.m1.vd  ok
+[2830/3284] matrix-pair-SHFT2.m2-SWAP.m1.vc  ok
+[2831/3284] matrix-pair-SHFT2.m2-SHFT2.m0.impl  ok
+[2832/3284] matrix-pair-SHFT2.m2-SHFT2.m1.impl  ok
+[2833/3284] matrix-pair-SHFT2.m2-SHFT2.m2.vc  ok
+[2834/3284] matrix-pair-SHFT2.m2-SHFT2.m3.vc  ok
+[2835/3284] matrix-pair-SHFT2.m2-SHFT2.m4.vc  ok
+[2836/3284] matrix-pair-SHFT2.m2-SHFT2.m5.vb  ok
+[2837/3284] matrix-pair-SHFT2.m2-SHFT2.m5.vc  ok
+[2838/3284] matrix-pair-SHFT2.m2-SHFT2.m6.vb  ok
+[2839/3284] matrix-pair-SHFT2.m2-TRANSP.impl  ok
+[2840/3284] matrix-pair-SHFT2.m2-STORE  ok
+[2841/3284] matrix-pair-SHFT2.m2-CONFIG.L12  ok
+[2842/3284] matrix-pair-SHFT2.m2-LOADI.lower  ok
+[2843/3284] matrix-pair-SHFT2.m2-LOADI.upper  ok
+[2844/3284] matrix-pair-SHFT2.m2-LOAD.lo16  ok
+[2845/3284] matrix-pair-SHFT2.m2-LOAD.hi16  ok
+[2846/3284] matrix-pair-SHFT2.m2-LOADI.full  ok
+[2847/3284] matrix-pair-SHFT2.m2-MOV.waw  ok
+[2848/3284] matrix-single-SHFT2.m3  ok
+[2849/3284] matrix-pair-SHFT2.m3-MOV.vc  ok
+[2850/3284] matrix-pair-SHFT2.m3-ABS.vc  ok
+[2851/3284] matrix-pair-SHFT2.m3-MAD.va  ok
+[2852/3284] matrix-pair-SHFT2.m3-MAD.vb  ok
+[2853/3284] matrix-pair-SHFT2.m3-MAD.vc  ok
+[2854/3284] matrix-pair-SHFT2.m3-MUL.va  ok
+[2855/3284] matrix-pair-SHFT2.m3-ADD.vc  ok
+[2856/3284] matrix-pair-SHFT2.m3-ADDI.vd  ok
+[2857/3284] matrix-pair-SHFT2.m3-MULI.vd  ok
+[2858/3284] matrix-pair-SHFT2.m3-MUL24.va  ok
+[2859/3284] matrix-pair-SHFT2.m3-MUL24.vb  ok
+[2860/3284] matrix-pair-SHFT2.m3-LUT.impl  ok
+[2861/3284] matrix-pair-SHFT2.m3-LUTFP32.impl  ok
+[2862/3284] matrix-pair-SHFT2.m3-LUTFP32.mirror8  ok
+[2863/3284] matrix-pair-SHFT2.m3-IADD.vc.imm  ok
+[2864/3284] matrix-pair-SHFT2.m3-IADD.vc.reg  ok
+[2865/3284] matrix-pair-SHFT2.m3-IADD.vd.reg  ok
+[2866/3284] matrix-pair-SHFT2.m3-IADD.vd.sub  ok
+[2867/3284] matrix-pair-SHFT2.m3-SHFT.vd.imm  ok
+[2868/3284] matrix-pair-SHFT2.m3-SHFT.vd.reg  ok
+[2869/3284] matrix-pair-SHFT2.m3-SHFT.vc.reg  ok
+[2870/3284] matrix-pair-SHFT2.m3-SHFT.vc.immvc  ok
+[2871/3284] matrix-pair-SHFT2.m3-AND.vc  ok
+[2872/3284] matrix-pair-SHFT2.m3-AND.vd  ok
+[2873/3284] matrix-pair-SHFT2.m3-AND.vb  ok
+[2874/3284] matrix-pair-SHFT2.m3-OR.vb  ok
+[2875/3284] matrix-pair-SHFT2.m3-OR.vd  ok
+[2876/3284] matrix-pair-SHFT2.m3-XOR.vc  ok
+[2877/3284] matrix-pair-SHFT2.m3-XOR.vd  ok
+[2878/3284] matrix-pair-SHFT2.m3-NOT.vc  ok
+[2879/3284] matrix-pair-SHFT2.m3-LZ.vc  ok
+[2880/3284] matrix-pair-SHFT2.m3-EXEXP.vc  ok
+[2881/3284] matrix-pair-SHFT2.m3-EXMAN.vc  ok
+[2882/3284] matrix-pair-SHFT2.m3-SETEXP.vc.imm  ok
+[2883/3284] matrix-pair-SHFT2.m3-SETEXP.vd  ok
+[2884/3284] matrix-pair-SHFT2.m3-SETEXP.vc.reg  ok
+[2885/3284] matrix-pair-SHFT2.m3-SETMAN.vc.imm  ok
+[2886/3284] matrix-pair-SHFT2.m3-SETMAN.vd  ok
+[2887/3284] matrix-pair-SHFT2.m3-SETSGN.vc.imm  ok
+[2888/3284] matrix-pair-SHFT2.m3-SETSGN.vd  ok
+[2889/3284] matrix-pair-SHFT2.m3-DIVP2.vc  ok
+[2890/3284] matrix-pair-SHFT2.m3-ARECIP.vc  ok
+[2891/3284] matrix-pair-SHFT2.m3-ARECIP.cond.vb  ok
+[2892/3284] matrix-pair-SHFT2.m3-ARECIP.cond.vc  ok
+[2893/3284] matrix-pair-SHFT2.m3-CAST.vc  ok
+[2894/3284] matrix-pair-SHFT2.m3-STOCHRND.vc  ok
+[2895/3284] matrix-pair-SHFT2.m3-STOCHRND.vb  ok
+[2896/3284] matrix-pair-SHFT2.m3-SETCC.vc  ok
+[2897/3284] matrix-pair-SHFT2.m3-GT.vc  ok
+[2898/3284] matrix-pair-SHFT2.m3-GT.vd  ok
+[2899/3284] matrix-pair-SHFT2.m3-LE.vd  ok
+[2900/3284] matrix-pair-SHFT2.m3-SWAP.m0.vd  ok
+[2901/3284] matrix-pair-SHFT2.m3-SWAP.m0.vc  ok
+[2902/3284] matrix-pair-SHFT2.m3-SWAP.m1.vd  ok
+[2903/3284] matrix-pair-SHFT2.m3-SWAP.m1.vc  ok
+[2904/3284] matrix-pair-SHFT2.m3-SHFT2.m0.impl  ok
+[2905/3284] matrix-pair-SHFT2.m3-SHFT2.m1.impl  ok
+[2906/3284] matrix-pair-SHFT2.m3-SHFT2.m2.vc  ok
+[2907/3284] matrix-pair-SHFT2.m3-SHFT2.m3.vc  ok
+[2908/3284] matrix-pair-SHFT2.m3-SHFT2.m4.vc  ok
+[2909/3284] matrix-pair-SHFT2.m3-SHFT2.m5.vb  ok
+[2910/3284] matrix-pair-SHFT2.m3-SHFT2.m5.vc  ok
+[2911/3284] matrix-pair-SHFT2.m3-SHFT2.m6.vb  ok
+[2912/3284] matrix-pair-SHFT2.m3-TRANSP.impl  ok
+[2913/3284] matrix-pair-SHFT2.m3-STORE  ok
+[2914/3284] matrix-pair-SHFT2.m3-CONFIG.L12  ok
+[2915/3284] matrix-pair-SHFT2.m3-LOADI.lower  ok
+[2916/3284] matrix-pair-SHFT2.m3-LOADI.upper  ok
+[2917/3284] matrix-pair-SHFT2.m3-LOAD.lo16  ok
+[2918/3284] matrix-pair-SHFT2.m3-LOAD.hi16  ok
+[2919/3284] matrix-pair-SHFT2.m3-LOADI.full  ok
+[2920/3284] matrix-pair-SHFT2.m3-MOV.waw  ok
+[2921/3284] matrix-single-SHFT2.m4  ok
+[2922/3284] matrix-pair-SHFT2.m4-MOV.vc  ok
+[2923/3284] matrix-pair-SHFT2.m4-ABS.vc  ok
+[2924/3284] matrix-pair-SHFT2.m4-MAD.va  ok
+[2925/3284] matrix-pair-SHFT2.m4-MAD.vb  ok
+[2926/3284] matrix-pair-SHFT2.m4-MAD.vc  ok
+[2927/3284] matrix-pair-SHFT2.m4-MUL.va  ok
+[2928/3284] matrix-pair-SHFT2.m4-ADD.vc  ok
+[2929/3284] matrix-pair-SHFT2.m4-ADDI.vd  ok
+[2930/3284] matrix-pair-SHFT2.m4-MULI.vd  ok
+[2931/3284] matrix-pair-SHFT2.m4-MUL24.va  ok
+[2932/3284] matrix-pair-SHFT2.m4-MUL24.vb  ok
+[2933/3284] matrix-pair-SHFT2.m4-LUT.impl  ok
+[2934/3284] matrix-pair-SHFT2.m4-LUTFP32.impl  ok
+[2935/3284] matrix-pair-SHFT2.m4-LUTFP32.mirror8  ok
+[2936/3284] matrix-pair-SHFT2.m4-IADD.vc.imm  ok
+[2937/3284] matrix-pair-SHFT2.m4-IADD.vc.reg  ok
+[2938/3284] matrix-pair-SHFT2.m4-IADD.vd.reg  ok
+[2939/3284] matrix-pair-SHFT2.m4-IADD.vd.sub  ok
+[2940/3284] matrix-pair-SHFT2.m4-SHFT.vd.imm  ok
+[2941/3284] matrix-pair-SHFT2.m4-SHFT.vd.reg  ok
+[2942/3284] matrix-pair-SHFT2.m4-SHFT.vc.reg  ok
+[2943/3284] matrix-pair-SHFT2.m4-SHFT.vc.immvc  ok
+[2944/3284] matrix-pair-SHFT2.m4-AND.vc  ok
+[2945/3284] matrix-pair-SHFT2.m4-AND.vd  ok
+[2946/3284] matrix-pair-SHFT2.m4-AND.vb  ok
+[2947/3284] matrix-pair-SHFT2.m4-OR.vb  ok
+[2948/3284] matrix-pair-SHFT2.m4-OR.vd  ok
+[2949/3284] matrix-pair-SHFT2.m4-XOR.vc  ok
+[2950/3284] matrix-pair-SHFT2.m4-XOR.vd  ok
+[2951/3284] matrix-pair-SHFT2.m4-NOT.vc  ok
+[2952/3284] matrix-pair-SHFT2.m4-LZ.vc  ok
+[2953/3284] matrix-pair-SHFT2.m4-EXEXP.vc  ok
+[2954/3284] matrix-pair-SHFT2.m4-EXMAN.vc  ok
+[2955/3284] matrix-pair-SHFT2.m4-SETEXP.vc.imm  ok
+[2956/3284] matrix-pair-SHFT2.m4-SETEXP.vd  ok
+[2957/3284] matrix-pair-SHFT2.m4-SETEXP.vc.reg  ok
+[2958/3284] matrix-pair-SHFT2.m4-SETMAN.vc.imm  ok
+[2959/3284] matrix-pair-SHFT2.m4-SETMAN.vd  ok
+[2960/3284] matrix-pair-SHFT2.m4-SETSGN.vc.imm  ok
+[2961/3284] matrix-pair-SHFT2.m4-SETSGN.vd  ok
+[2962/3284] matrix-pair-SHFT2.m4-DIVP2.vc  ok
+[2963/3284] matrix-pair-SHFT2.m4-ARECIP.vc  ok
+[2964/3284] matrix-pair-SHFT2.m4-ARECIP.cond.vb  ok
+[2965/3284] matrix-pair-SHFT2.m4-ARECIP.cond.vc  ok
+[2966/3284] matrix-pair-SHFT2.m4-CAST.vc  ok
+[2967/3284] matrix-pair-SHFT2.m4-STOCHRND.vc  ok
+[2968/3284] matrix-pair-SHFT2.m4-STOCHRND.vb  ok
+[2969/3284] matrix-pair-SHFT2.m4-SETCC.vc  ok
+[2970/3284] matrix-pair-SHFT2.m4-GT.vc  ok
+[2971/3284] matrix-pair-SHFT2.m4-GT.vd  ok
+[2972/3284] matrix-pair-SHFT2.m4-LE.vd  ok
+[2973/3284] matrix-pair-SHFT2.m4-SWAP.m0.vd  ok
+[2974/3284] matrix-pair-SHFT2.m4-SWAP.m0.vc  ok
+[2975/3284] matrix-pair-SHFT2.m4-SWAP.m1.vd  ok
+[2976/3284] matrix-pair-SHFT2.m4-SWAP.m1.vc  ok
+[2977/3284] matrix-pair-SHFT2.m4-SHFT2.m0.impl  ok
+[2978/3284] matrix-pair-SHFT2.m4-SHFT2.m1.impl  ok
+[2979/3284] matrix-pair-SHFT2.m4-SHFT2.m2.vc  ok
+[2980/3284] matrix-pair-SHFT2.m4-SHFT2.m3.vc  ok
+[2981/3284] matrix-pair-SHFT2.m4-SHFT2.m4.vc  ok
+[2982/3284] matrix-pair-SHFT2.m4-SHFT2.m5.vb  ok
+[2983/3284] matrix-pair-SHFT2.m4-SHFT2.m5.vc  ok
+[2984/3284] matrix-pair-SHFT2.m4-SHFT2.m6.vb  ok
+[2985/3284] matrix-pair-SHFT2.m4-TRANSP.impl  ok
+[2986/3284] matrix-pair-SHFT2.m4-STORE  ok
+[2987/3284] matrix-pair-SHFT2.m4-CONFIG.L12  ok
+[2988/3284] matrix-pair-SHFT2.m4-LOADI.lower  ok
+[2989/3284] matrix-pair-SHFT2.m4-LOADI.upper  ok
+[2990/3284] matrix-pair-SHFT2.m4-LOAD.lo16  ok
+[2991/3284] matrix-pair-SHFT2.m4-LOAD.hi16  ok
+[2992/3284] matrix-pair-SHFT2.m4-LOADI.full  ok
+[2993/3284] matrix-pair-SHFT2.m4-MOV.waw  ok
+[2994/3284] matrix-single-SHFT2.m5  ok
+[2995/3284] matrix-pair-SHFT2.m5-MOV.vc  ok
+[2996/3284] matrix-pair-SHFT2.m5-ABS.vc  ok
+[2997/3284] matrix-pair-SHFT2.m5-MAD.va  ok
+[2998/3284] matrix-pair-SHFT2.m5-MAD.vb  ok
+[2999/3284] matrix-pair-SHFT2.m5-MAD.vc  ok
+[3000/3284] matrix-pair-SHFT2.m5-MUL.va  ok
+[3001/3284] matrix-pair-SHFT2.m5-ADD.vc  ok
+[3002/3284] matrix-pair-SHFT2.m5-ADDI.vd  ok
+[3003/3284] matrix-pair-SHFT2.m5-MULI.vd  ok
+[3004/3284] matrix-pair-SHFT2.m5-MUL24.va  ok
+[3005/3284] matrix-pair-SHFT2.m5-MUL24.vb  ok
+[3006/3284] matrix-pair-SHFT2.m5-LUT.impl  ok
+[3007/3284] matrix-pair-SHFT2.m5-LUTFP32.impl  ok
+[3008/3284] matrix-pair-SHFT2.m5-LUTFP32.mirror8  ok
+[3009/3284] matrix-pair-SHFT2.m5-IADD.vc.imm  ok
+[3010/3284] matrix-pair-SHFT2.m5-IADD.vc.reg  ok
+[3011/3284] matrix-pair-SHFT2.m5-IADD.vd.reg  ok
+[3012/3284] matrix-pair-SHFT2.m5-IADD.vd.sub  ok
+[3013/3284] matrix-pair-SHFT2.m5-SHFT.vd.imm  ok
+[3014/3284] matrix-pair-SHFT2.m5-SHFT.vd.reg  ok
+[3015/3284] matrix-pair-SHFT2.m5-SHFT.vc.reg  ok
+[3016/3284] matrix-pair-SHFT2.m5-SHFT.vc.immvc  ok
+[3017/3284] matrix-pair-SHFT2.m5-AND.vc  ok
+[3018/3284] matrix-pair-SHFT2.m5-AND.vd  ok
+[3019/3284] matrix-pair-SHFT2.m5-AND.vb  ok
+[3020/3284] matrix-pair-SHFT2.m5-OR.vb  ok
+[3021/3284] matrix-pair-SHFT2.m5-OR.vd  ok
+[3022/3284] matrix-pair-SHFT2.m5-XOR.vc  ok
+[3023/3284] matrix-pair-SHFT2.m5-XOR.vd  ok
+[3024/3284] matrix-pair-SHFT2.m5-NOT.vc  ok
+[3025/3284] matrix-pair-SHFT2.m5-LZ.vc  ok
+[3026/3284] matrix-pair-SHFT2.m5-EXEXP.vc  ok
+[3027/3284] matrix-pair-SHFT2.m5-EXMAN.vc  ok
+[3028/3284] matrix-pair-SHFT2.m5-SETEXP.vc.imm  ok
+[3029/3284] matrix-pair-SHFT2.m5-SETEXP.vd  ok
+[3030/3284] matrix-pair-SHFT2.m5-SETEXP.vc.reg  ok
+[3031/3284] matrix-pair-SHFT2.m5-SETMAN.vc.imm  ok
+[3032/3284] matrix-pair-SHFT2.m5-SETMAN.vd  ok
+[3033/3284] matrix-pair-SHFT2.m5-SETSGN.vc.imm  ok
+[3034/3284] matrix-pair-SHFT2.m5-SETSGN.vd  ok
+[3035/3284] matrix-pair-SHFT2.m5-DIVP2.vc  ok
+[3036/3284] matrix-pair-SHFT2.m5-ARECIP.vc  ok
+[3037/3284] matrix-pair-SHFT2.m5-ARECIP.cond.vb  ok
+[3038/3284] matrix-pair-SHFT2.m5-ARECIP.cond.vc  ok
+[3039/3284] matrix-pair-SHFT2.m5-CAST.vc  ok
+[3040/3284] matrix-pair-SHFT2.m5-STOCHRND.vc  ok
+[3041/3284] matrix-pair-SHFT2.m5-STOCHRND.vb  ok
+[3042/3284] matrix-pair-SHFT2.m5-SETCC.vc  ok
+[3043/3284] matrix-pair-SHFT2.m5-GT.vc  ok
+[3044/3284] matrix-pair-SHFT2.m5-GT.vd  ok
+[3045/3284] matrix-pair-SHFT2.m5-LE.vd  ok
+[3046/3284] matrix-pair-SHFT2.m5-SWAP.m0.vd  ok
+[3047/3284] matrix-pair-SHFT2.m5-SWAP.m0.vc  ok
+[3048/3284] matrix-pair-SHFT2.m5-SWAP.m1.vd  ok
+[3049/3284] matrix-pair-SHFT2.m5-SWAP.m1.vc  ok
+[3050/3284] matrix-pair-SHFT2.m5-SHFT2.m0.impl  ok
+[3051/3284] matrix-pair-SHFT2.m5-SHFT2.m1.impl  ok
+[3052/3284] matrix-pair-SHFT2.m5-SHFT2.m2.vc  ok
+[3053/3284] matrix-pair-SHFT2.m5-SHFT2.m3.vc  ok
+[3054/3284] matrix-pair-SHFT2.m5-SHFT2.m4.vc  ok
+[3055/3284] matrix-pair-SHFT2.m5-SHFT2.m5.vb  ok
+[3056/3284] matrix-pair-SHFT2.m5-SHFT2.m5.vc  ok
+[3057/3284] matrix-pair-SHFT2.m5-SHFT2.m6.vb  ok
+[3058/3284] matrix-pair-SHFT2.m5-TRANSP.impl  ok
+[3059/3284] matrix-pair-SHFT2.m5-STORE  ok
+[3060/3284] matrix-pair-SHFT2.m5-CONFIG.L12  ok
+[3061/3284] matrix-pair-SHFT2.m5-LOADI.lower  ok
+[3062/3284] matrix-pair-SHFT2.m5-LOADI.upper  ok
+[3063/3284] matrix-pair-SHFT2.m5-LOAD.lo16  ok
+[3064/3284] matrix-pair-SHFT2.m5-LOAD.hi16  ok
+[3065/3284] matrix-pair-SHFT2.m5-LOADI.full  ok
+[3066/3284] matrix-pair-SHFT2.m5-MOV.waw  ok
+[3067/3284] matrix-single-SHFT2.m6  ok
+[3068/3284] matrix-pair-SHFT2.m6-MOV.vc  ok
+[3069/3284] matrix-pair-SHFT2.m6-ABS.vc  ok
+[3070/3284] matrix-pair-SHFT2.m6-MAD.va  ok
+[3071/3284] matrix-pair-SHFT2.m6-MAD.vb  ok
+[3072/3284] matrix-pair-SHFT2.m6-MAD.vc  ok
+[3073/3284] matrix-pair-SHFT2.m6-MUL.va  ok
+[3074/3284] matrix-pair-SHFT2.m6-ADD.vc  ok
+[3075/3284] matrix-pair-SHFT2.m6-ADDI.vd  ok
+[3076/3284] matrix-pair-SHFT2.m6-MULI.vd  ok
+[3077/3284] matrix-pair-SHFT2.m6-MUL24.va  ok
+[3078/3284] matrix-pair-SHFT2.m6-MUL24.vb  ok
+[3079/3284] matrix-pair-SHFT2.m6-LUT.impl  ok
+[3080/3284] matrix-pair-SHFT2.m6-LUTFP32.impl  ok
+[3081/3284] matrix-pair-SHFT2.m6-LUTFP32.mirror8  ok
+[3082/3284] matrix-pair-SHFT2.m6-IADD.vc.imm  ok
+[3083/3284] matrix-pair-SHFT2.m6-IADD.vc.reg  ok
+[3084/3284] matrix-pair-SHFT2.m6-IADD.vd.reg  ok
+[3085/3284] matrix-pair-SHFT2.m6-IADD.vd.sub  ok
+[3086/3284] matrix-pair-SHFT2.m6-SHFT.vd.imm  ok
+[3087/3284] matrix-pair-SHFT2.m6-SHFT.vd.reg  ok
+[3088/3284] matrix-pair-SHFT2.m6-SHFT.vc.reg  ok
+[3089/3284] matrix-pair-SHFT2.m6-SHFT.vc.immvc  ok
+[3090/3284] matrix-pair-SHFT2.m6-AND.vc  ok
+[3091/3284] matrix-pair-SHFT2.m6-AND.vd  ok
+[3092/3284] matrix-pair-SHFT2.m6-AND.vb  ok
+[3093/3284] matrix-pair-SHFT2.m6-OR.vb  ok
+[3094/3284] matrix-pair-SHFT2.m6-OR.vd  ok
+[3095/3284] matrix-pair-SHFT2.m6-XOR.vc  ok
+[3096/3284] matrix-pair-SHFT2.m6-XOR.vd  ok
+[3097/3284] matrix-pair-SHFT2.m6-NOT.vc  ok
+[3098/3284] matrix-pair-SHFT2.m6-LZ.vc  ok
+[3099/3284] matrix-pair-SHFT2.m6-EXEXP.vc  ok
+[3100/3284] matrix-pair-SHFT2.m6-EXMAN.vc  ok
+[3101/3284] matrix-pair-SHFT2.m6-SETEXP.vc.imm  ok
+[3102/3284] matrix-pair-SHFT2.m6-SETEXP.vd  ok
+[3103/3284] matrix-pair-SHFT2.m6-SETEXP.vc.reg  ok
+[3104/3284] matrix-pair-SHFT2.m6-SETMAN.vc.imm  ok
+[3105/3284] matrix-pair-SHFT2.m6-SETMAN.vd  ok
+[3106/3284] matrix-pair-SHFT2.m6-SETSGN.vc.imm  ok
+[3107/3284] matrix-pair-SHFT2.m6-SETSGN.vd  ok
+[3108/3284] matrix-pair-SHFT2.m6-DIVP2.vc  ok
+[3109/3284] matrix-pair-SHFT2.m6-ARECIP.vc  ok
+[3110/3284] matrix-pair-SHFT2.m6-ARECIP.cond.vb  ok
+[3111/3284] matrix-pair-SHFT2.m6-ARECIP.cond.vc  ok
+[3112/3284] matrix-pair-SHFT2.m6-CAST.vc  ok
+[3113/3284] matrix-pair-SHFT2.m6-STOCHRND.vc  ok
+[3114/3284] matrix-pair-SHFT2.m6-STOCHRND.vb  ok
+[3115/3284] matrix-pair-SHFT2.m6-SETCC.vc  ok
+[3116/3284] matrix-pair-SHFT2.m6-GT.vc  ok
+[3117/3284] matrix-pair-SHFT2.m6-GT.vd  ok
+[3118/3284] matrix-pair-SHFT2.m6-LE.vd  ok
+[3119/3284] matrix-pair-SHFT2.m6-SWAP.m0.vd  ok
+[3120/3284] matrix-pair-SHFT2.m6-SWAP.m0.vc  ok
+[3121/3284] matrix-pair-SHFT2.m6-SWAP.m1.vd  ok
+[3122/3284] matrix-pair-SHFT2.m6-SWAP.m1.vc  ok
+[3123/3284] matrix-pair-SHFT2.m6-SHFT2.m0.impl  ok
+[3124/3284] matrix-pair-SHFT2.m6-SHFT2.m1.impl  ok
+[3125/3284] matrix-pair-SHFT2.m6-SHFT2.m2.vc  ok
+[3126/3284] matrix-pair-SHFT2.m6-SHFT2.m3.vc  ok
+[3127/3284] matrix-pair-SHFT2.m6-SHFT2.m4.vc  ok
+[3128/3284] matrix-pair-SHFT2.m6-SHFT2.m5.vb  ok
+[3129/3284] matrix-pair-SHFT2.m6-SHFT2.m5.vc  ok
+[3130/3284] matrix-pair-SHFT2.m6-SHFT2.m6.vb  ok
+[3131/3284] matrix-pair-SHFT2.m6-TRANSP.impl  ok
+[3132/3284] matrix-pair-SHFT2.m6-STORE  ok
+[3133/3284] matrix-pair-SHFT2.m6-CONFIG.L12  ok
+[3134/3284] matrix-pair-SHFT2.m6-LOADI.lower  ok
+[3135/3284] matrix-pair-SHFT2.m6-LOADI.upper  ok
+[3136/3284] matrix-pair-SHFT2.m6-LOAD.lo16  ok
+[3137/3284] matrix-pair-SHFT2.m6-LOAD.hi16  ok
+[3138/3284] matrix-pair-SHFT2.m6-LOADI.full  ok
+[3139/3284] matrix-pair-SHFT2.m6-MOV.waw  ok
+[3140/3284] matrix-single-TRANSP  ok
+[3141/3284] matrix-pair-TRANSP-MOV.vc  ok
+[3142/3284] matrix-pair-TRANSP-ABS.vc  ok
+[3143/3284] matrix-pair-TRANSP-MAD.va  ok
+[3144/3284] matrix-pair-TRANSP-MAD.vb  ok
+[3145/3284] matrix-pair-TRANSP-MAD.vc  ok
+[3146/3284] matrix-pair-TRANSP-MUL.va  ok
+[3147/3284] matrix-pair-TRANSP-ADD.vc  ok
+[3148/3284] matrix-pair-TRANSP-ADDI.vd  ok
+[3149/3284] matrix-pair-TRANSP-MULI.vd  ok
+[3150/3284] matrix-pair-TRANSP-MUL24.va  ok
+[3151/3284] matrix-pair-TRANSP-MUL24.vb  ok
+[3152/3284] matrix-pair-TRANSP-LUT.impl  ok
+[3153/3284] matrix-pair-TRANSP-LUTFP32.impl  ok
+[3154/3284] matrix-pair-TRANSP-LUTFP32.mirror8  ok
+[3155/3284] matrix-pair-TRANSP-IADD.vc.imm  ok
+[3156/3284] matrix-pair-TRANSP-IADD.vc.reg  ok
+[3157/3284] matrix-pair-TRANSP-IADD.vd.reg  ok
+[3158/3284] matrix-pair-TRANSP-IADD.vd.sub  ok
+[3159/3284] matrix-pair-TRANSP-SHFT.vd.imm  ok
+[3160/3284] matrix-pair-TRANSP-SHFT.vd.reg  ok
+[3161/3284] matrix-pair-TRANSP-SHFT.vc.reg  ok
+[3162/3284] matrix-pair-TRANSP-SHFT.vc.immvc  ok
+[3163/3284] matrix-pair-TRANSP-AND.vc  ok
+[3164/3284] matrix-pair-TRANSP-AND.vd  ok
+[3165/3284] matrix-pair-TRANSP-AND.vb  ok
+[3166/3284] matrix-pair-TRANSP-OR.vb  ok
+[3167/3284] matrix-pair-TRANSP-OR.vd  ok
+[3168/3284] matrix-pair-TRANSP-XOR.vc  ok
+[3169/3284] matrix-pair-TRANSP-XOR.vd  ok
+[3170/3284] matrix-pair-TRANSP-NOT.vc  ok
+[3171/3284] matrix-pair-TRANSP-LZ.vc  ok
+[3172/3284] matrix-pair-TRANSP-EXEXP.vc  ok
+[3173/3284] matrix-pair-TRANSP-EXMAN.vc  ok
+[3174/3284] matrix-pair-TRANSP-SETEXP.vc.imm  ok
+[3175/3284] matrix-pair-TRANSP-SETEXP.vd  ok
+[3176/3284] matrix-pair-TRANSP-SETEXP.vc.reg  ok
+[3177/3284] matrix-pair-TRANSP-SETMAN.vc.imm  ok
+[3178/3284] matrix-pair-TRANSP-SETMAN.vd  ok
+[3179/3284] matrix-pair-TRANSP-SETSGN.vc.imm  ok
+[3180/3284] matrix-pair-TRANSP-SETSGN.vd  ok
+[3181/3284] matrix-pair-TRANSP-DIVP2.vc  ok
+[3182/3284] matrix-pair-TRANSP-ARECIP.vc  ok
+[3183/3284] matrix-pair-TRANSP-ARECIP.cond.vb  ok
+[3184/3284] matrix-pair-TRANSP-ARECIP.cond.vc  ok
+[3185/3284] matrix-pair-TRANSP-CAST.vc  ok
+[3186/3284] matrix-pair-TRANSP-STOCHRND.vc  ok
+[3187/3284] matrix-pair-TRANSP-STOCHRND.vb  ok
+[3188/3284] matrix-pair-TRANSP-SETCC.vc  ok
+[3189/3284] matrix-pair-TRANSP-GT.vc  ok
+[3190/3284] matrix-pair-TRANSP-GT.vd  ok
+[3191/3284] matrix-pair-TRANSP-LE.vd  ok
+[3192/3284] matrix-pair-TRANSP-SWAP.m0.vd  ok
+[3193/3284] matrix-pair-TRANSP-SWAP.m0.vc  ok
+[3194/3284] matrix-pair-TRANSP-SWAP.m1.vd  ok
+[3195/3284] matrix-pair-TRANSP-SWAP.m1.vc  ok
+[3196/3284] matrix-pair-TRANSP-SHFT2.m0.impl  ok
+[3197/3284] matrix-pair-TRANSP-SHFT2.m1.impl  ok
+[3198/3284] matrix-pair-TRANSP-SHFT2.m2.vc  ok
+[3199/3284] matrix-pair-TRANSP-SHFT2.m3.vc  ok
+[3200/3284] matrix-pair-TRANSP-SHFT2.m4.vc  ok
+[3201/3284] matrix-pair-TRANSP-SHFT2.m5.vb  ok
+[3202/3284] matrix-pair-TRANSP-SHFT2.m5.vc  ok
+[3203/3284] matrix-pair-TRANSP-SHFT2.m6.vb  ok
+[3204/3284] matrix-pair-TRANSP-TRANSP.impl  ok
+[3205/3284] matrix-pair-TRANSP-STORE  ok
+[3206/3284] matrix-pair-TRANSP-CONFIG.L12  ok
+[3207/3284] matrix-pair-TRANSP-LOADI.lower  ok
+[3208/3284] matrix-pair-TRANSP-LOADI.upper  ok
+[3209/3284] matrix-pair-TRANSP-LOAD.lo16  ok
+[3210/3284] matrix-pair-TRANSP-LOAD.hi16  ok
+[3211/3284] matrix-pair-TRANSP-LOADI.full  ok
+[3212/3284] matrix-pair-TRANSP-MOV.waw  ok
+[3213/3284] matrix-consumer-MOV.vc  ok
+[3214/3284] matrix-consumer-ABS.vc  ok
+[3215/3284] matrix-consumer-MAD.va  ok
+[3216/3284] matrix-consumer-MAD.vb  ok
+[3217/3284] matrix-consumer-MAD.vc  ok
+[3218/3284] matrix-consumer-MUL.va  ok
+[3219/3284] matrix-consumer-ADD.vc  ok
+[3220/3284] matrix-consumer-ADDI.vd  ok
+[3221/3284] matrix-consumer-MULI.vd  ok
+[3222/3284] matrix-consumer-MUL24.va  ok
+[3223/3284] matrix-consumer-MUL24.vb  ok
+[3224/3284] matrix-consumer-LUT.impl  ok
+[3225/3284] matrix-consumer-LUTFP32.impl  ok
+[3226/3284] matrix-consumer-LUTFP32.mirror8  ok
+[3227/3284] matrix-consumer-IADD.vc.imm  ok
+[3228/3284] matrix-consumer-IADD.vc.reg  ok
+[3229/3284] matrix-consumer-IADD.vd.reg  ok
+[3230/3284] matrix-consumer-IADD.vd.sub  ok
+[3231/3284] matrix-consumer-SHFT.vd.imm  ok
+[3232/3284] matrix-consumer-SHFT.vd.reg  ok
+[3233/3284] matrix-consumer-SHFT.vc.reg  ok
+[3234/3284] matrix-consumer-SHFT.vc.immvc  ok
+[3235/3284] matrix-consumer-AND.vc  ok
+[3236/3284] matrix-consumer-AND.vd  ok
+[3237/3284] matrix-consumer-AND.vb  ok
+[3238/3284] matrix-consumer-OR.vb  ok
+[3239/3284] matrix-consumer-OR.vd  ok
+[3240/3284] matrix-consumer-XOR.vc  ok
+[3241/3284] matrix-consumer-XOR.vd  ok
+[3242/3284] matrix-consumer-NOT.vc  ok
+[3243/3284] matrix-consumer-LZ.vc  ok
+[3244/3284] matrix-consumer-EXEXP.vc  ok
+[3245/3284] matrix-consumer-EXMAN.vc  ok
+[3246/3284] matrix-consumer-SETEXP.vc.imm  ok
+[3247/3284] matrix-consumer-SETEXP.vd  ok
+[3248/3284] matrix-consumer-SETEXP.vc.reg  ok
+[3249/3284] matrix-consumer-SETMAN.vc.imm  ok
+[3250/3284] matrix-consumer-SETMAN.vd  ok
+[3251/3284] matrix-consumer-SETSGN.vc.imm  ok
+[3252/3284] matrix-consumer-SETSGN.vd  ok
+[3253/3284] matrix-consumer-DIVP2.vc  ok
+[3254/3284] matrix-consumer-ARECIP.vc  ok
+[3255/3284] matrix-consumer-ARECIP.cond.vb  ok
+[3256/3284] matrix-consumer-ARECIP.cond.vc  ok
+[3257/3284] matrix-consumer-CAST.vc  ok
+[3258/3284] matrix-consumer-STOCHRND.vc  ok
+[3259/3284] matrix-consumer-STOCHRND.vb  ok
+[3260/3284] matrix-consumer-SETCC.vc  ok
+[3261/3284] matrix-consumer-GT.vc  ok
+[3262/3284] matrix-consumer-GT.vd  ok
+[3263/3284] matrix-consumer-LE.vd  ok
+[3264/3284] matrix-consumer-SWAP.m0.vd  ok
+[3265/3284] matrix-consumer-SWAP.m0.vc  ok
+[3266/3284] matrix-consumer-SWAP.m1.vd  ok
+[3267/3284] matrix-consumer-SWAP.m1.vc  ok
+[3268/3284] matrix-consumer-SHFT2.m0.impl  ok
+[3269/3284] matrix-consumer-SHFT2.m1.impl  ok
+[3270/3284] matrix-consumer-SHFT2.m2.vc  ok
+[3271/3284] matrix-consumer-SHFT2.m3.vc  ok
+[3272/3284] matrix-consumer-SHFT2.m4.vc  ok
+[3273/3284] matrix-consumer-SHFT2.m5.vb  ok
+[3274/3284] matrix-consumer-SHFT2.m5.vc  ok
+[3275/3284] matrix-consumer-SHFT2.m6.vb  ok
+[3276/3284] matrix-consumer-TRANSP.impl  ok
+[3277/3284] matrix-consumer-STORE  ok
+[3278/3284] matrix-consumer-CONFIG.L12  ok
+[3279/3284] matrix-consumer-LOADI.lower  ok
+[3280/3284] matrix-consumer-LOADI.upper  ok
+[3281/3284] matrix-consumer-LOAD.lo16  ok
+[3282/3284] matrix-consumer-LOAD.hi16  ok
+[3283/3284] matrix-consumer-LOADI.full  ok
+[3284/3284] matrix-consumer-MOV.waw  ok
+
+3284 recorded, 0 soft failures, no hard failure; 32.70 s
+### 18:46:41 ALL DONE card 1

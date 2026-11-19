@@ -1,0 +1,88 @@
+{"config": "none", "kind": "loadmacro_timing", "slope": 0.9990234375, "unit": "lm"}
+{"config": "none", "kind": "loadmacro_timing", "slope": 2.0, "unit": "lm_nop"}
+{"config": "none", "kind": "loadmacro_timing", "slope": 2.0, "unit": "lm_mov"}
+{"config": "none", "kind": "loadmacro_timing", "slope": 2.0, "unit": "lm_mul"}
+{"config": "none", "kind": "loadmacro_timing", "slope": 2.0, "unit": "lm_load"}
+{"config": "simple", "kind": "loadmacro_timing", "slope": 0.9990234375, "unit": "lm"}
+{"config": "simple", "kind": "loadmacro_timing", "slope": 2.0, "unit": "lm_nop"}
+{"config": "simple", "kind": "loadmacro_timing", "slope": 2.0, "unit": "lm_mov"}
+{"config": "simple", "kind": "loadmacro_timing", "slope": 2.0, "unit": "lm_mul"}
+{"config": "simple", "kind": "loadmacro_timing", "slope": 2.0009765625, "unit": "lm_load"}
+{"config": "mad", "kind": "loadmacro_timing", "slope": 1.0, "unit": "lm"}
+{"config": "mad", "kind": "loadmacro_timing", "slope": 2.0, "unit": "lm_nop"}
+{"config": "mad", "kind": "loadmacro_timing", "slope": 2.0, "unit": "lm_mov"}
+{"config": "mad", "kind": "loadmacro_timing", "slope": 2.0, "unit": "lm_mul"}
+{"config": "mad", "kind": "loadmacro_timing", "slope": 2.0, "unit": "lm_load"}
+{"config": "round", "kind": "loadmacro_timing", "slope": 0.9990234375, "unit": "lm"}
+{"config": "round", "kind": "loadmacro_timing", "slope": 2.0, "unit": "lm_nop"}
+{"config": "round", "kind": "loadmacro_timing", "slope": 2.0, "unit": "lm_mov"}
+{"config": "round", "kind": "loadmacro_timing", "slope": 2.0, "unit": "lm_mul"}
+{"config": "round", "kind": "loadmacro_timing", "slope": 2.0009765625, "unit": "lm_load"}
+{"config": "store", "kind": "loadmacro_timing", "slope": 1.0009765625, "unit": "lm"}
+{"config": "store", "kind": "loadmacro_timing", "slope": 1.9990234375, "unit": "lm_nop"}
+{"config": "store", "kind": "loadmacro_timing", "slope": 2.0, "unit": "lm_mov"}
+{"config": "store", "kind": "loadmacro_timing", "slope": 2.0009765625, "unit": "lm_mul"}
+{"config": "store", "kind": "loadmacro_timing", "slope": 1.9990234375, "unit": "lm_load"}
+{"config": "simple+store", "kind": "loadmacro_timing", "slope": 0.9990234375, "unit": "lm"}
+{"config": "simple+store", "kind": "loadmacro_timing", "slope": 2.0009765625, "unit": "lm_nop"}
+{"config": "simple+store", "kind": "loadmacro_timing", "slope": 1.9990234375, "unit": "lm_mov"}
+{"config": "simple+store", "kind": "loadmacro_timing", "slope": 1.9990234375, "unit": "lm_mul"}
+{"config": "simple+store", "kind": "loadmacro_timing", "slope": 2.0, "unit": "lm_load"}
+{"config": "simple+mad", "kind": "loadmacro_timing", "slope": 1.0, "unit": "lm"}
+{"config": "simple+mad", "kind": "loadmacro_timing", "slope": 2.0, "unit": "lm_nop"}
+{"config": "simple+mad", "kind": "loadmacro_timing", "slope": 1.9990234375, "unit": "lm_mov"}
+{"config": "simple+mad", "kind": "loadmacro_timing", "slope": 1.9990234375, "unit": "lm_mul"}
+{"config": "simple+mad", "kind": "loadmacro_timing", "slope": 2.0029296875, "unit": "lm_load"}
+{"config": "all4", "kind": "loadmacro_timing", "slope": 1.0009765625, "unit": "lm"}
+{"config": "all4", "kind": "loadmacro_timing", "slope": 2.0, "unit": "lm_nop"}
+{"config": "all4", "kind": "loadmacro_timing", "slope": 2.0, "unit": "lm_mov"}
+{"config": "all4", "kind": "loadmacro_timing", "slope": 1.998046875, "unit": "lm_mul"}
+{"config": "all4", "kind": "loadmacro_timing", "slope": 1.998046875, "unit": "lm_load"}
+{"L0": "0xc0000000", "L1": "0x40200001", "L2": "0xbf400000", "L3": "0x3fc00000", "L4": "0x12345678", "L5": "0x0", "L6": "0x3f000000", "L7": "0x0", "delay": 0, "dst0": ["0x40000000"], "k": 1, "kind": "loadmacro_exec", "unit": "simple"}
+{"L0": "0xc0000000", "L1": "0x40200001", "L2": "0xbf400000", "L3": "0x3fc00000", "L4": "0xc0000000", "L5": "0x0", "L6": "0x3f000000", "L7": "0x0", "delay": 0, "dst0": ["0x40000000"], "k": 2, "kind": "loadmacro_exec", "unit": "simple"}
+{"L0": "0xc0000000", "L1": "0x40200001", "L2": "0xbf400000", "L3": "0x3fc00000", "L4": "0xc0000000", "L5": "0x0", "L6": "0x3f000000", "L7": "0x0", "delay": 0, "dst0": ["0x40000000"], "k": 3, "kind": "loadmacro_exec", "unit": "simple"}
+{"L0": "0xc0000000", "L1": "0x40200001", "L2": "0xbf400000", "L3": "0x3fc00000", "L4": "0xc0000000", "L5": "0x0", "L6": "0x3f000000", "L7": "0x0", "delay": 0, "dst0": ["0x40000000"], "k": 4, "kind": "loadmacro_exec", "unit": "simple"}
+{"L0": "0xc0000000", "L1": "0x40200001", "L2": "0xbf400000", "L3": "0x3fc00000", "L4": "0xc0000000", "L5": "0x0", "L6": "0x3f000000", "L7": "0x0", "delay": 0, "dst0": ["0x40000000"], "k": 5, "kind": "loadmacro_exec", "unit": "simple"}
+{"L0": "0xc0000000", "L1": "0x40200001", "L2": "0xbf400000", "L3": "0x3fc00000", "L4": "0xc0000000", "L5": "0x0", "L6": "0x3f000000", "L7": "0x0", "delay": 0, "dst0": ["0x40000000"], "k": 6, "kind": "loadmacro_exec", "unit": "simple"}
+{"L0": "0xc0000000", "L1": "0x40200001", "L2": "0xbf400000", "L3": "0x3fc00000", "L4": "0x40000000", "L5": "0x0", "L6": "0x3f000000", "L7": "0x0", "delay": 1, "dst0": ["0x40000000"], "k": 1, "kind": "loadmacro_exec", "unit": "simple"}
+{"L0": "0xc0000000", "L1": "0x40200001", "L2": "0xbf400000", "L3": "0x3fc00000", "L4": "0x12345678", "L5": "0x0", "L6": "0x3f000000", "L7": "0x0", "delay": 1, "dst0": ["0x40000000"], "k": 2, "kind": "loadmacro_exec", "unit": "simple"}
+{"L0": "0xc0000000", "L1": "0x40200001", "L2": "0xbf400000", "L3": "0x3fc00000", "L4": "0xc0000000", "L5": "0x0", "L6": "0x3f000000", "L7": "0x0", "delay": 1, "dst0": ["0x40000000"], "k": 3, "kind": "loadmacro_exec", "unit": "simple"}
+{"L0": "0xc0000000", "L1": "0x40200001", "L2": "0xbf400000", "L3": "0x3fc00000", "L4": "0xc0000000", "L5": "0x0", "L6": "0x3f000000", "L7": "0x0", "delay": 1, "dst0": ["0x40000000"], "k": 4, "kind": "loadmacro_exec", "unit": "simple"}
+{"L0": "0xc0000000", "L1": "0x40200001", "L2": "0xbf400000", "L3": "0x3fc00000", "L4": "0xc0000000", "L5": "0x0", "L6": "0x3f000000", "L7": "0x0", "delay": 1, "dst0": ["0x40000000"], "k": 5, "kind": "loadmacro_exec", "unit": "simple"}
+{"L0": "0xc0000000", "L1": "0x40200001", "L2": "0xbf400000", "L3": "0x3fc00000", "L4": "0xc0000000", "L5": "0x0", "L6": "0x3f000000", "L7": "0x0", "delay": 1, "dst0": ["0x40000000"], "k": 6, "kind": "loadmacro_exec", "unit": "simple"}
+{"L0": "0xc0000000", "L1": "0x40200001", "L2": "0xbf400000", "L3": "0x3fc00000", "L4": "0x40000000", "L5": "0x0", "L6": "0x3f000000", "L7": "0x0", "delay": 2, "dst0": ["0x40000000"], "k": 1, "kind": "loadmacro_exec", "unit": "simple"}
+{"L0": "0xc0000000", "L1": "0x40200001", "L2": "0xbf400000", "L3": "0x3fc00000", "L4": "0x40000000", "L5": "0x0", "L6": "0x3f000000", "L7": "0x0", "delay": 2, "dst0": ["0x40000000"], "k": 2, "kind": "loadmacro_exec", "unit": "simple"}
+{"L0": "0xc0000000", "L1": "0x40200001", "L2": "0xbf400000", "L3": "0x3fc00000", "L4": "0x12345678", "L5": "0x0", "L6": "0x3f000000", "L7": "0x0", "delay": 2, "dst0": ["0x40000000"], "k": 3, "kind": "loadmacro_exec", "unit": "simple"}
+{"L0": "0xc0000000", "L1": "0x40200001", "L2": "0xbf400000", "L3": "0x3fc00000", "L4": "0xc0000000", "L5": "0x0", "L6": "0x3f000000", "L7": "0x0", "delay": 2, "dst0": ["0x40000000"], "k": 4, "kind": "loadmacro_exec", "unit": "simple"}
+{"L0": "0xc0000000", "L1": "0x40200001", "L2": "0xbf400000", "L3": "0x3fc00000", "L4": "0xc0000000", "L5": "0x0", "L6": "0x3f000000", "L7": "0x0", "delay": 2, "dst0": ["0x40000000"], "k": 5, "kind": "loadmacro_exec", "unit": "simple"}
+{"L0": "0xc0000000", "L1": "0x40200001", "L2": "0xbf400000", "L3": "0x3fc00000", "L4": "0xc0000000", "L5": "0x0", "L6": "0x3f000000", "L7": "0x0", "delay": 2, "dst0": ["0x40000000"], "k": 6, "kind": "loadmacro_exec", "unit": "simple"}
+{"L0": "0xc0000000", "L1": "0x40200001", "L2": "0xbf400000", "L3": "0x3fc00000", "L4": "0x40000000", "L5": "0x0", "L6": "0x3f000000", "L7": "0x0", "delay": 3, "dst0": ["0x40000000"], "k": 1, "kind": "loadmacro_exec", "unit": "simple"}
+{"L0": "0xc0000000", "L1": "0x40200001", "L2": "0xbf400000", "L3": "0x3fc00000", "L4": "0x40000000", "L5": "0x0", "L6": "0x3f000000", "L7": "0x0", "delay": 3, "dst0": ["0x40000000"], "k": 2, "kind": "loadmacro_exec", "unit": "simple"}
+{"L0": "0xc0000000", "L1": "0x40200001", "L2": "0xbf400000", "L3": "0x3fc00000", "L4": "0x40000000", "L5": "0x0", "L6": "0x3f000000", "L7": "0x0", "delay": 3, "dst0": ["0x40000000"], "k": 3, "kind": "loadmacro_exec", "unit": "simple"}
+{"L0": "0xc0000000", "L1": "0x40200001", "L2": "0xbf400000", "L3": "0x3fc00000", "L4": "0x12345678", "L5": "0x0", "L6": "0x3f000000", "L7": "0x0", "delay": 3, "dst0": ["0x40000000"], "k": 4, "kind": "loadmacro_exec", "unit": "simple"}
+{"L0": "0xc0000000", "L1": "0x40200001", "L2": "0xbf400000", "L3": "0x3fc00000", "L4": "0xc0000000", "L5": "0x0", "L6": "0x3f000000", "L7": "0x0", "delay": 3, "dst0": ["0x40000000"], "k": 5, "kind": "loadmacro_exec", "unit": "simple"}
+{"L0": "0xc0000000", "L1": "0x40200001", "L2": "0xbf400000", "L3": "0x3fc00000", "L4": "0xc0000000", "L5": "0x0", "L6": "0x3f000000", "L7": "0x0", "delay": 3, "dst0": ["0x40000000"], "k": 6, "kind": "loadmacro_exec", "unit": "simple"}
+{"L0": "0x3f800000", "L1": "0x40200001", "L2": "0xbf400000", "L3": "0x3fc00000", "L4": "0x40000000", "L5": "0x0", "L6": "0x3f000000", "L7": "0x0", "delay": 0, "dst0": ["0x40000000"], "k": 1, "kind": "loadmacro_exec", "unit": "mad"}
+{"L0": "0x3f800000", "L1": "0x40200001", "L2": "0xbf400000", "L3": "0x3fc00000", "L4": "0x40000000", "L5": "0x0", "L6": "0x3f000000", "L7": "0x0", "delay": 0, "dst0": ["0x40000000"], "k": 2, "kind": "loadmacro_exec", "unit": "mad"}
+{"L0": "0x3f800000", "L1": "0x40200001", "L2": "0xbf400000", "L3": "0x3fc00000", "L4": "0x3f800000", "L5": "0x0", "L6": "0x3f000000", "L7": "0x0", "delay": 0, "dst0": ["0x40000000"], "k": 3, "kind": "loadmacro_exec", "unit": "mad"}
+{"L0": "0x3f800000", "L1": "0x40200001", "L2": "0xbf400000", "L3": "0x3fc00000", "L4": "0x3f800000", "L5": "0x0", "L6": "0x3f000000", "L7": "0x0", "delay": 0, "dst0": ["0x40000000"], "k": 4, "kind": "loadmacro_exec", "unit": "mad"}
+{"L0": "0x3f800000", "L1": "0x40200001", "L2": "0xbf400000", "L3": "0x3fc00000", "L4": "0x3f800000", "L5": "0x0", "L6": "0x3f000000", "L7": "0x0", "delay": 0, "dst0": ["0x40000000"], "k": 5, "kind": "loadmacro_exec", "unit": "mad"}
+{"L0": "0x3f800000", "L1": "0x40200001", "L2": "0xbf400000", "L3": "0x3fc00000", "L4": "0x3f800000", "L5": "0x0", "L6": "0x3f000000", "L7": "0x0", "delay": 0, "dst0": ["0x40000000"], "k": 6, "kind": "loadmacro_exec", "unit": "mad"}
+{"L0": "0x3f800000", "L1": "0x40200001", "L2": "0xbf400000", "L3": "0x3fc00000", "L4": "0x40000000", "L5": "0x0", "L6": "0x3f000000", "L7": "0x0", "delay": 1, "dst0": ["0x40000000"], "k": 1, "kind": "loadmacro_exec", "unit": "mad"}
+{"L0": "0x3f800000", "L1": "0x40200001", "L2": "0xbf400000", "L3": "0x3fc00000", "L4": "0x40000000", "L5": "0x0", "L6": "0x3f000000", "L7": "0x0", "delay": 1, "dst0": ["0x40000000"], "k": 2, "kind": "loadmacro_exec", "unit": "mad"}
+{"L0": "0x3f800000", "L1": "0x40200001", "L2": "0xbf400000", "L3": "0x3fc00000", "L4": "0x40000000", "L5": "0x0", "L6": "0x3f000000", "L7": "0x0", "delay": 1, "dst0": ["0x40000000"], "k": 3, "kind": "loadmacro_exec", "unit": "mad"}
+{"L0": "0x3f800000", "L1": "0x40200001", "L2": "0xbf400000", "L3": "0x3fc00000", "L4": "0x3f800000", "L5": "0x0", "L6": "0x3f000000", "L7": "0x0", "delay": 1, "dst0": ["0x40000000"], "k": 4, "kind": "loadmacro_exec", "unit": "mad"}
+{"L0": "0x3f800000", "L1": "0x40200001", "L2": "0xbf400000", "L3": "0x3fc00000", "L4": "0x3f800000", "L5": "0x0", "L6": "0x3f000000", "L7": "0x0", "delay": 1, "dst0": ["0x40000000"], "k": 5, "kind": "loadmacro_exec", "unit": "mad"}
+{"L0": "0x3f800000", "L1": "0x40200001", "L2": "0xbf400000", "L3": "0x3fc00000", "L4": "0x3f800000", "L5": "0x0", "L6": "0x3f000000", "L7": "0x0", "delay": 1, "dst0": ["0x40000000"], "k": 6, "kind": "loadmacro_exec", "unit": "mad"}
+{"L0": "0x3f800000", "L1": "0x40200001", "L2": "0xbf400000", "L3": "0x3fc00000", "L4": "0x40000000", "L5": "0x0", "L6": "0x3f000000", "L7": "0x0", "delay": 2, "dst0": ["0x40000000"], "k": 1, "kind": "loadmacro_exec", "unit": "mad"}
+{"L0": "0x3f800000", "L1": "0x40200001", "L2": "0xbf400000", "L3": "0x3fc00000", "L4": "0x40000000", "L5": "0x0", "L6": "0x3f000000", "L7": "0x0", "delay": 2, "dst0": ["0x40000000"], "k": 2, "kind": "loadmacro_exec", "unit": "mad"}
+{"L0": "0x3f800000", "L1": "0x40200001", "L2": "0xbf400000", "L3": "0x3fc00000", "L4": "0x40000000", "L5": "0x0", "L6": "0x3f000000", "L7": "0x0", "delay": 2, "dst0": ["0x40000000"], "k": 3, "kind": "loadmacro_exec", "unit": "mad"}
+{"L0": "0x3f800000", "L1": "0x40200001", "L2": "0xbf400000", "L3": "0x3fc00000", "L4": "0x40000000", "L5": "0x0", "L6": "0x3f000000", "L7": "0x0", "delay": 2, "dst0": ["0x40000000"], "k": 4, "kind": "loadmacro_exec", "unit": "mad"}
+{"L0": "0x3f800000", "L1": "0x40200001", "L2": "0xbf400000", "L3": "0x3fc00000", "L4": "0x3f800000", "L5": "0x0", "L6": "0x3f000000", "L7": "0x0", "delay": 2, "dst0": ["0x40000000"], "k": 5, "kind": "loadmacro_exec", "unit": "mad"}
+{"L0": "0x3f800000", "L1": "0x40200001", "L2": "0xbf400000", "L3": "0x3fc00000", "L4": "0x3f800000", "L5": "0x0", "L6": "0x3f000000", "L7": "0x0", "delay": 2, "dst0": ["0x40000000"], "k": 6, "kind": "loadmacro_exec", "unit": "mad"}
+{"L0": "0xc0000000", "L1": "0x40200001", "L2": "0xbf400000", "L3": "0x3fc00000", "L4": "0x12345678", "L5": "0x0", "L6": "0x3f000000", "L7": "0x0", "case": "simple_vs_regular_simple", "dst0": ["0x40000000"], "kind": "loadmacro_collision"}
+{"L0": "0xc0000000", "L1": "0x40200001", "L2": "0xbf400000", "L3": "0x3fc00000", "L4": "0x3e800000", "L5": "0x0", "L6": "0x3f000000", "L7": "0x0", "case": "simple_vs_regular_mad", "dst0": ["0x40000000"], "kind": "loadmacro_collision"}
+{"L0": "0x3f800000", "L1": "0x40200001", "L2": "0xbf400000", "L3": "0x3fc00000", "L4": "0x12345678", "L5": "0x0", "L6": "0x3f000000", "L7": "0x0", "case": "mad_vs_regular_mad", "dst0": ["0x40000000"], "kind": "loadmacro_collision"}
+{"L0": "0x3f800000", "L1": "0x40200001", "L2": "0xbf400000", "L3": "0x3fc00000", "L4": "0x3f000000", "L5": "0x0", "L6": "0x3f000000", "L7": "0x0", "case": "mad_vs_regular_simple", "dst0": ["0x40000000"], "kind": "loadmacro_collision"}
+{"L0": "0x40000000", "L1": "0x40200001", "L2": "0xbf400000", "L3": "0x3fc00000", "L4": "0x12345678", "L5": "0x0", "L6": "0x3f000000", "L7": "0x0", "case": "store_d0_vs_regular_store", "dst0": ["0x40000000"], "kind": "loadmacro_collision"}
+{"L0": "0x40000000", "L1": "0x40200001", "L2": "0xbf400000", "L3": "0x3fc00000", "L4": "0x3f000000", "L5": "0x0", "L6": "0x3f000000", "L7": "0x0", "case": "none_regular_mov", "dst0": ["0x40000000"], "kind": "loadmacro_collision"}

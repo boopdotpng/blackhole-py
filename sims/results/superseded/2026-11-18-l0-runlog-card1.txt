@@ -1,0 +1,1204 @@
+### 18:58:25 STEP fpu  -> sims/results/2026-11-18-l0-fpu-card1.jsonl
+103 selected, 0 done, 0 failed before, 103 to run
+card 1: state=idle aiclk=800 asic_c=49.9 board_w=85 pcie_gen=3 pcie_width=1
+[1/103] tput-mvmul-lofi-bf16-dst32  median 1.0
+[2/103] tput-mvmul-lofi-bfp8-dst32  median 1.0
+[3/103] tput-mvmul-lofi-bfp4-dst32  median 1.0
+[4/103] tput-mvmul-lofi-fp8-dst32  median 1.0
+[5/103] tput-mvmul-lofi-fp8-dst16  median 1.0
+[6/103] tput-mvmul-hifi2-outer-bf16-dst32  median 1.0
+[7/103] dep-mvmul-hifi2-inner-bf16-dst32  median 3.5
+[8/103] tput-mvmul-hifi3-outer-bf16-dst32  median 1.0
+[9/103] dep-mvmul-hifi3-inner-bf16-dst32  median 4.3333
+[10/103] tput-mvmul-hifi4-outer-bf16-dst32  median 1.0
+[11/103] dep-mvmul-hifi4-inner-bf16-dst32  median 4.75
+[12/103] tput-elwmul-lofi-bf16-dst32  median 1.0
+[13/103] tput-elwmul-hifi2-outer-bf16-dst32  median 1.0
+[14/103] tput-elwmul-lofi-fp8-dst32  median 1.0
+[15/103] tput-elwadd-bf16-dst32  median 1.0
+[16/103] tput-elwadd-acc-bf16-dst32  median 1.0
+[17/103] tput-elwadd-bf16-dst16  median 1.0
+[18/103] tput-elwsub-bf16-dst32  median 1.0
+[19/103] tput-gapool-bf16-dst32  median 1.0
+[20/103] tput-gmpool-bf16-dst32  median 1.0
+[21/103] tput-mova2d-8row-bf16-dst32  median 1.5
+[22/103] tput-mova2d-8row-fp8-dst32  median 1.5
+[23/103] tput-mova2d-8row-fp8-dst16  median 1.5
+[24/103] tput-mova2d-1row-bf16-dst32  median 1.0
+[25/103] tput-movb2d-4row-bf16-dst32  median 1.0
+[26/103] tput-movb2d-bcast8-bf16-dst32  median 1.0
+[27/103] tput-movd2a-4row-bf16-dst32  median 1.0
+[28/103] tput-movd2b-4row-bf16-dst32  median 1.0
+[29/103] tput-movb2a-4row-bf16-dst32  median 1.0
+[30/103] tput-zeroacc-face-dst32  median 1.0
+[31/103] tput-zeroacc-all-dst32  median 1.0
+[32/103] tput-zeroacc-half-dst32  median 1.0
+[33/103] tput-zeroacc-row-dst32  median 1.0
+[34/103] tput-zerosrc-matrixbank  median 1.0
+[35/103] tput-setrwc  median 1.0
+[36/103] tput-incrwc  median 1.0
+[37/103] tput-setrwc-flip-noclear  median 1.0
+[38/103] tput-nop  median 1.0
+[39/103] dep-mvmul-chain-n1  median 6.0
+[40/103] dep-mvmul-chain-n2  median 3.0
+[41/103] dep-mvmul-chain-n3  median 2.0
+[42/103] dep-mvmul-chain-n4  median 1.5
+[43/103] dep-mvmul-chain-n5  median 1.2
+[44/103] dep-mvmul-chain-n6  median 1.0
+[45/103] dep-mvmul-chain-n8  median 1.0
+[46/103] dep-elwmul-chain-n1  median 6.0
+[47/103] dep-elwmul-chain-n2  median 3.0
+[48/103] dep-elwmul-chain-n3  median 2.0
+[49/103] dep-elwmul-chain-n6  median 1.0
+[50/103] dep-elwadd-acc-chain-n1  median 6.0
+[51/103] dep-elwadd-acc-chain-n2  median 3.0
+[52/103] dep-elwadd-acc-chain-n6  median 1.0
+[53/103] dep-gapool-chain-n1  median 6.0
+[54/103] dep-gmpool-chain-n1  median 6.0
+[55/103] dep-mova2d-mvmul-same  median 5.0
+[56/103] dep-mova2d-mvmul-other  median 5.0
+[57/103] dep-mvmul-sfpload-gap0  median 10.5
+[58/103] dep-mvmul-sfpload-gap1  median 10.5
+[59/103] dep-mvmul-sfpload-gap2  median 10.5
+[60/103] dep-mvmul-sfpload-gap3  median 10.5
+[61/103] dep-mvmul-sfpload-gap4  median 10.5
+[62/103] dep-mvmul-sfpload-gap6  median 10.5
+[63/103] dep-elwmul-sfpload-gap0  median 10.5
+[64/103] dep-elwmul-sfpload-gap3  median 10.5
+[65/103] dep-mova2d-sfpload-gap0  median 5.5
+[66/103] dep-mova2d-sfpload-gap3  median 6.5
+[67/103] dep-mvmul-sfpload-otherhalf  median 6.0
+[68/103] dep-sfpstore-mvmul-same  median 10.5
+[69/103] dep-sfpstore-mvmul-otherhalf  median 6.0
+[70/103] dep-mvmul8-sfpload8-samehalf  median 3.5
+[71/103] dep-mvmul8-sfpload8-otherhalf  median 2.0
+[72/103] issue-direct  median 1.0
+[73/103] issue-replay9  median 1.0
+[74/103] issue-replay-len1  median 1.7778
+[75/103] issue-replay-len2  median 1.3333
+[76/103] issue-replay-len4  median 1.0
+[77/103] issue-replay-len8  median 1.0
+[78/103] issue-mop  median 1.0
+[79/103] issue-mop-then-direct  median 1.0556
+[80/103] issue-mop-replay  median 1.0
+[81/103] issue-mop-replay-then-direct  median 1.0
+[82/103] issue-mop-alt-replay  median 1.0
+[83/103] issue-llama-o-elwmul-mop  median 1.9412
+[84/103] issue-loop-nop1  median 3.0
+[85/103] issue-loop-nop2  median 1.5
+[86/103] issue-loop-nop4  median 1.0
+[87/103] issue-loop-nop8  median 1.0
+[88/103] issue-loop-nop16  median 1.0
+[89/103] src-flip-ready-k1  median 2.0
+[90/103] src-flip-ready-k4  median 1.25
+[91/103] src-mvmul-flip-inline  median 1.0
+[92/103] src-handoff-stream-k1  median 6.0
+[93/103] src-handoff-stream-k4  median 1.5
+[94/103] src-handoff-stream-k16  median 1.0628
+[95/103] src-handoff-latency  median 6.5
+[96/103] mt-mvmul-t1-sfpload-otherhalf-t0  median 1.0
+[97/103] mt-mvmul-t1-sfpload-samehalf-t0  median 1.0
+[98/103] mt-mvmul-t1-sfpmad-t0  median 1.0
+[99/103] mt-mvmul-t1-mvmul-t0  median 2.0
+[100/103] data-mvmul-lofi-bf16-zero  median 1.0
+[101/103] data-mvmul-lofi-bf16-rand  median 1.0
+[102/103] data-elwmul-lofi-bf16-zero  median 1.0
+[103/103] data-elwmul-lofi-bf16-rand  median 1.0
+
+103 recorded, 0 soft failures, no hard failure; 9.75 s
+### 18:58:35 STEP unpack  -> sims/results/2026-11-18-l0-unpack-card1.jsonl
+239 selected, 0 done, 0 failed before, 239 to run
+card 1: state=idle aiclk=800 asic_c=54.1 board_w=89 pcie_gen=3 pcie_width=1
+[1/239] issue-unpacr-a-mop  median 2.0
+[2/239] issue-nop-a-mop  median 2.0
+[3/239] issue-unpacr-a-direct  median 3.0
+[4/239] issue-nop-a-direct  median 3.0
+[5/239] issue-unpacr-b-mop  median 2.0
+[6/239] issue-nop-b-mop  median 2.0
+[7/239] issue-unpacr-b-direct  median 3.0
+[8/239] issue-nop-b-direct  median 3.0
+[9/239] issue-unpacr-ab-mop  median 4.0
+[10/239] issue-unpacr-ab-direct  median 4.0
+[11/239] size-bf16-a-n16  median 2.0
+[12/239] size-bf16-a-n64  median 2.0
+[13/239] size-bf16-a-n128  median 2.1458333333333335
+[14/239] size-bf16-a-n256  median 4.333333333333333
+[15/239] size-bf16-a-n512  median 8.645833333333334
+[16/239] size-bf16-a-n1024  median 17.333333333333332
+[17/239] size-bf16-b-n16  median 2.0
+[18/239] size-bf16-b-n64  median 2.0
+[19/239] size-bf16-b-n128  median 2.125
+[20/239] size-bf16-b-n256  median 4.354166666666667
+[21/239] size-bf16-b-n512  median 8.708333333333334
+[22/239] size-bf16-b-n1024  median 17.395833333333332
+[23/239] size-fp8-a-n16  median 2.0
+[24/239] size-fp8-a-n64  median 2.0
+[25/239] size-fp8-a-n128  median 2.0
+[26/239] size-fp8-a-n256  median 2.1458333333333335
+[27/239] size-fp8-a-n512  median 4.333333333333333
+[28/239] size-fp8-a-n1024  median 8.666666666666666
+[29/239] size-fp8-b-n16  median 2.0
+[30/239] size-fp8-b-n64  median 2.0
+[31/239] size-fp8-b-n128  median 2.0
+[32/239] size-fp8-b-n256  median 2.1875
+[33/239] size-fp8-b-n512  median 4.354166666666667
+[34/239] size-fp8-b-n1024  median 8.708333333333334
+[35/239] size-bfp8-a-n128  median 2.1041666666666665
+[36/239] size-bfp8-a-n256  median 2.3541666666666665
+[37/239] size-bfp8-b-n128  median 2.0833333333333335
+[38/239] size-bfp8-b-n256  median 2.2708333333333335
+[39/239] size-bfp4-a-n128  median 2.0625
+[40/239] size-bfp4-a-n256  median 2.3125
+[41/239] size-bfp4-b-n128  median 2.0833333333333335
+[42/239] size-bfp4-b-n256  median 2.25
+[43/239] size-fp32-srca-a-n16  median 2.0208333333333335
+[44/239] size-fp32-srca-a-n64  median 3.0
+[45/239] size-fp32-srca-a-n256  median 9.0
+[46/239] size-fp32-srca-a-n512  median 17.333333333333332
+[47/239] size-fp32-srca-a-n1024  median 34.666666666666664
+[48/239] size-bf16-a-n256-transpose  median 4.333333333333333
+[49/239] size-bf16-a-n1024-transpose  median 17.333333333333332
+[50/239] size-bf16-a-n1024-nostep  median 17.333333333333332
+[51/239] throttle-bf16-a-n1024-x1  median 130.02083333333334
+[52/239] throttle-bf16-a-n1024-x2  median 64.97916666666667
+[53/239] throttle-bf16-a-n1024-x4  median 17.333333333333332
+[54/239] throttle-bf16-b-n1024-x1  median 130.02083333333334
+[55/239] throttle-bf16-b-n1024-x2  median 65.0
+[56/239] throttle-bf16-b-n1024-x4  median 17.333333333333332
+[57/239] throttle-fp8-a-n1024-x1  median 65.0
+[58/239] throttle-fp8-a-n1024-x2  median 32.5
+[59/239] throttle-fp8-a-n1024-x4  median 17.333333333333332
+[60/239] throttle-bf16-ab-n1024-a1x-b1x  median 129.97916666666666
+[61/239] throttle-bf16-ab-n1024-a1x-b2x  median 130.0
+[62/239] throttle-bf16-ab-n1024-a1x-b4x  median 130.10416666666666
+[63/239] throttle-bf16-ab-n1024-a2x-b1x  median 130.0625
+[64/239] throttle-bf16-ab-n1024-a2x-b2x  median 65.04166666666667
+[65/239] throttle-bf16-ab-n1024-a2x-b4x  median 65.10416666666667
+[66/239] throttle-bf16-ab-n1024-a4x-b1x  median 130.0
+[67/239] throttle-bf16-ab-n1024-a4x-b2x  median 65.0
+[68/239] throttle-bf16-ab-n1024-a4x-b4x  median 17.333333333333332
+[69/239] dual-bf16-n16  median 4.0
+[70/239] dual-bf16-n256  median 4.3125
+[71/239] dual-bf16-n1024  median 17.333333333333332
+[72/239] dual-fp8-n256  median 4.020833333333333
+[73/239] dual-fp8-n1024  median 16.0
+[74/239] dual-bfp8-n256  median 4.020833333333333
+[75/239] dual-bfp4-n256  median 4.0
+[76/239] place-bf16-n256-off0x0  median 4.3125
+[77/239] place-bf16-n256-off0x10  median 4.333333333333333
+[78/239] place-bf16-n256-off0x20  median 4.354166666666667
+[79/239] place-bf16-n256-off0x30  median 4.333333333333333
+[80/239] place-bf16-n256-off0x40  median 4.333333333333333
+[81/239] place-bf16-n256-off0x80  median 4.333333333333333
+[82/239] place-bf16-n256-off0x100  median 4.375
+[83/239] place-bf16-n256-off0x200  median 4.3125
+[84/239] place-bf16-n256-off0x400  median 4.3125
+[85/239] place-bf16-n256-off0x800  median 4.3125
+[86/239] place-bf16-n256-off0x1000  median 4.333333333333333
+[87/239] place-bf16-n256-off0x2000  median 4.3125
+[88/239] place-bf16-n256-off0x10000  median 4.3125
+[89/239] place-bf16-n1024-off0x0  median 17.354166666666668
+[90/239] place-bf16-n1024-off0x10  median 17.333333333333332
+[91/239] place-bf16-n1024-off0x20  median 17.354166666666668
+[92/239] place-bf16-n1024-off0x30  median 17.354166666666668
+[93/239] place-bf16-n1024-off0x40  median 17.354166666666668
+[94/239] place-bf16-n1024-off0x80  median 17.354166666666668
+[95/239] place-bf16-n1024-off0x100  median 17.333333333333332
+[96/239] place-bf16-n1024-off0x200  median 17.3125
+[97/239] place-bf16-n1024-off0x400  median 17.3125
+[98/239] place-bf16-n1024-off0x800  median 17.333333333333332
+[99/239] place-bf16-n1024-off0x1000  median 17.333333333333332
+[100/239] place-bf16-n1024-off0x2000  median 17.3125
+[101/239] place-bf16-n1024-off0x10000  median 17.3125
+[102/239] align-bf16-a-n256-off0  median 4.333333333333333
+[103/239] align-bf16-a-n256-off16  median 4.354166666666667
+[104/239] align-bf16-a-n256-off32  median 4.354166666666667
+[105/239] align-bf16-a-n256-off48  median 4.333333333333333
+[106/239] align-bf16-a-n256-off64  median 4.375
+[107/239] align-bf16-a-n256-off128  median 4.333333333333333
+[108/239] align-bf16-a-n256-off256  median 4.395833333333333
+[109/239] align-bf16-a-n256-off512  median 4.333333333333333
+[110/239] align-bf16-a-n1024-off0  median 17.333333333333332
+[111/239] align-bf16-a-n1024-off16  median 17.375
+[112/239] align-bf16-a-n1024-off32  median 17.354166666666668
+[113/239] align-bf16-a-n1024-off48  median 17.354166666666668
+[114/239] align-bf16-a-n1024-off64  median 17.395833333333332
+[115/239] align-bf16-a-n1024-off128  median 17.375
+[116/239] align-bf16-a-n1024-off256  median 17.354166666666668
+[117/239] align-bf16-a-n1024-off512  median 17.333333333333332
+[118/239] align-fp8-a-n1024-off0  median 8.645833333333334
+[119/239] align-fp8-a-n1024-off16  median 8.708333333333334
+[120/239] align-fp8-a-n1024-off32  median 8.6875
+[121/239] align-fp8-a-n1024-off64  median 8.6875
+[122/239] extra-none-a-n16  median 10.0
+[123/239] extra-setadczw-a-n16  median 9.0
+[124/239] extra-setadcxx_zw-a-n16  median 11.0
+[125/239] extra-rmwcib4-a-n16  median 12.0
+[126/239] extra-stall_cfg-a-n16  median 13.0
+[127/239] extra-stall_done-a-n16  median 11.0
+[128/239] extra-risc_base-a-n16  median 17.0
+[129/239] extra-credit-a-n16  median 45.0
+[130/239] extra-wrcfg-a-n16  median 9.0
+[131/239] extra-setc16-a-n16  median 11.0
+[132/239] extra-nop_wake-a-n16  median 12.0
+[133/239] extra-none-a-n256  median 10.0
+[134/239] extra-setadczw-a-n256  median 9.0
+[135/239] extra-setadcxx_zw-a-n256  median 11.0
+[136/239] extra-rmwcib4-a-n256  median 12.0
+[137/239] extra-stall_cfg-a-n256  median 13.0
+[138/239] extra-stall_done-a-n256  median 13.0
+[139/239] extra-risc_base-a-n256  median 17.0
+[140/239] extra-credit-a-n256  median 45.0
+[141/239] extra-wrcfg-a-n256  median 9.0
+[142/239] extra-setc16-a-n256  median 11.0
+[143/239] extra-nop_wake-a-n256  median 12.0
+[144/239] extra-none-b-n256  median 10.0
+[145/239] extra-rmwcib4-b-n256  median 12.0
+[146/239] extra-credit-b-n256  median 45.0
+[147/239] move-pair_face-bf16  median 629.0
+[148/239] move-pair_face-fp8  median 581.0
+[149/239] move-a_face-bf16  median 294.0
+[150/239] move-a_tile-bf16  median 82.91666666666667
+[151/239] move-a_tile-fp32-srca  median 100.5
+[152/239] move-a_tile-bfp8  median 87.0
+[153/239] move-a_tile-bfp4  median 87.0
+[154/239] move-ba_tile-bf16-transpose  median 182.0
+[155/239] move-ba_tile-bf16  median 182.0
+[156/239] move-b_tile-bf16  median 97.16666666666667
+[157/239] move-b_tile-bfp8  median 99.0
+[158/239] move-b_tile-bfp4  median 99.0
+[159/239] pipe-move-pair_face-bf16-release  median 629.0
+[160/239] pipe-move-pair_face-bf16-elwmul  median 629.0
+[161/239] pipe-move-pair_face-fp8-release  median 581.0
+[162/239] pipe-move-pair_face-fp8-elwmul  median 581.0
+[163/239] pipe-move-a_face-bf16-release  median 294.0
+[164/239] pipe-move-a_face-bf16-mova2d  median 294.0
+[165/239] pipe-move-a_tile-bf16-release  median 83.08333333333333
+[166/239] pipe-move-a_tile-bf16-mova2d  median 83.0
+[167/239] pipe-move-a_tile-fp32-srca-release  median 99.5
+[168/239] pipe-move-a_tile-fp32-srca-mova2d  median 99.66666666666667
+[169/239] pipe-move-a_tile-bfp8-release  median 87.08333333333333
+[170/239] pipe-move-a_tile-bfp4-release  median 87.0
+[171/239] pipe-move-ba_tile-bf16-transpose-release  median 182.0
+[172/239] pipe-move-ba_tile-bf16-transpose-mvmul  median 182.0
+[173/239] pipe-move-ba_tile-bf16-mvmul  median 182.0
+[174/239] pipe-raw-ab-n256-bf16-release  median 7.520833333333333
+[175/239] pipe-raw-ab-n256-bf16-elwmul  median 12.0
+[176/239] pipe-raw-ab-n256-bf16-mvmul  median 33.125
+[177/239] pipe-raw-a-n256-bf16-release  median 7.604166666666667
+[178/239] pipe-raw-a-n256-bf16-mova2d  median 28.0
+[179/239] pipe-raw-a-n1024-bf16-release  median 17.333333333333332
+[180/239] pipe-raw-ab-n256-fp8-elwmul  median 11.9375
+[181/239] handoff-lat-bf16-a-n16  median 34
+[182/239] handoff-lat-bf16-a-n256  median 37
+[183/239] handoff-lat-bf16-a-n1024  median 49
+[184/239] handoff-lat-bf16-b-n16  median 34
+[185/239] handoff-lat-bf16-b-n256  median 37
+[186/239] handoff-lat-bf16-b-n1024  median 50
+[187/239] handoff-lat-fp8-a-n1024  median 41
+[188/239] handoff-full-bf16-a-n256-d200  median 19
+[189/239] handoff-full-bf16-a-n256-d1000  median 19
+[190/239] handoff-full-bf16-a-n256-d5000  median 19
+[191/239] handoff-full-bf16-a-n1024-d1000  median 31
+[192/239] contention-rawA-bf16-n1024-none  median 17.333333333333332
+[193/239] contention-rawA-bf16-n1024-self8k  median 25.333333333333332
+[194/239] contention-rawA-bf16-n1024-self8k-2noc  median 26.083333333333332
+[195/239] contention-rawA-bf16-n1024-wr_in8k  median 34.520833333333336
+[196/239] contention-rawA-bf16-n1024-rd_out8k  median 32.708333333333336
+[197/239] contention-rawA-bf16-n1024-pack  median 16.666666666666668
+[198/239] contention-rawA-bf16-n1024-pack-self8k  median 23.625
+[199/239] contention-rawAB-bf16-n256-none  median 4.333333333333333
+[200/239] contention-rawAB-bf16-n256-self8k  median 5.5
+[201/239] contention-rawAB-bf16-n256-self8k-2noc  median 6.708333333333333
+[202/239] contention-rawAB-bf16-n256-wr_in8k  median 7.229166666666667
+[203/239] contention-rawAB-bf16-n256-rd_out8k  median 6.25
+[204/239] contention-rawAB-bf16-n256-pack  median 4.333333333333333
+[205/239] contention-rawAB-bf16-n256-pack-self8k  median 5.5625
+[206/239] contention-rawA-fp8-n1024-none  median 8.645833333333334
+[207/239] contention-rawA-fp8-n1024-self8k  median 12.895833333333334
+[208/239] contention-rawA-fp8-n1024-self8k-2noc  median 12.916666666666666
+[209/239] contention-rawA-fp8-n1024-wr_in8k  median 16.25
+[210/239] contention-rawA-fp8-n1024-rd_out8k  median 14.854166666666666
+[211/239] contention-rawA-fp8-n1024-pack  median 8.666666666666666
+[212/239] contention-rawA-fp8-n1024-pack-self8k  median 11.541666666666666
+[213/239] contention-move-pair_face-bf16-none  median 629.0
+[214/239] contention-move-pair_face-bf16-self8k  median 646.1666666666666
+[215/239] contention-move-pair_face-bf16-self8k-2noc  median 648.8333333333334
+[216/239] contention-move-pair_face-bf16-wr_in8k  median 630.0
+[217/239] contention-move-pair_face-bf16-rd_out8k  median 630.0
+[218/239] contention-move-pair_face-bf16-pack  median 629.0833333333334
+[219/239] contention-move-pair_face-bf16-pack-self8k  median 644.6666666666666
+[220/239] contention-rawA-bf16-n1024-self512  median 19.395833333333332
+[221/239] contention-rawA-bf16-n1024-self2048  median 23.0
+[222/239] verify-bf16-a_face  ok
+[223/239] verify-bf16-b_face  ok
+[224/239] verify-bf16-a_tile  ok
+[225/239] verify-bf16-b_tile  ok
+[226/239] verify-fp8-a_face  ok
+[227/239] verify-fp8-b_face  ok
+[228/239] verify-fp8-a_tile  ok
+[229/239] verify-fp8-b_tile  ok
+[230/239] verify-bfp8-a_tile  ok
+[231/239] verify-bfp8-b_tile  ok
+[232/239] verify-bfp4-a_tile  ok
+[233/239] verify-bfp4-b_tile  ok
+[234/239] verify-fp32-srca-a_face  ok
+[235/239] verify-fp32-srca-a_tile  ok
+[236/239] verify-bf16-a_tile-transpose  ok
+[237/239] verify-bf16-a_tile-x1  ok
+[238/239] verify-bf16-a_tile-x2  ok
+[239/239] verify-bf16-a_tile-x4  ok
+
+239 recorded, 0 soft failures, no hard failure; 2.12 s
+### 18:58:37 STEP pack  -> sims/results/2026-11-18-l0-pack-card1.jsonl
+165 selected, 0 done, 0 failed before, 165 to run
+card 1: state=idle aiclk=800 asic_c=54.8 board_w=87 pcie_gen=3 pcie_width=1
+[1/165] fmt-f32-f32-mop  median 34.714285714285715
+[2/165] fmt-f32-f32-inline  median 78.28571428571429
+[3/165] fmt-f32-f32-mop-adv  median 35.0
+[4/165] fmt-f32-bf16-mop  median 33.857142857142854
+[5/165] fmt-f32-bf16-inline  median 78.28571428571429
+[6/165] fmt-f32-bf16-mop-adv  median 34.142857142857146
+[7/165] fmt-bf16-bf16-d16-mop  median 19.428571428571427
+[8/165] fmt-bf16-bf16-d16-inline  median 78.28571428571429
+[9/165] fmt-bf16-bf16-d16-mop-adv  median 20.714285714285715
+[10/165] fmt-f16-e4m3-mop  median 19.571428571428573
+[11/165] fmt-f16-e4m3-inline  median 78.28571428571429
+[12/165] fmt-f16-e4m3-mop-adv  median 20.571428571428573
+[13/165] fmt-f32-bfp8-mop  median 35.0
+[14/165] fmt-f32-bfp8-inline  median 78.28571428571429
+[15/165] fmt-f32-bfp8-mop-adv  median 35.142857142857146
+[16/165] fmt-f32-bfp4-mop  median 35.0
+[17/165] fmt-f32-bfp4-inline  median 78.28571428571429
+[18/165] fmt-f32-bfp4-mop-adv  median 35.142857142857146
+[19/165] shape-f32-bf16-r4-k1  median 31.071428571428573
+[20/165] shape-f32-bf16-r4-k2  median 13.071428571428571
+[21/165] shape-f32-bf16-r4-k4  median 8.071428571428571
+[22/165] shape-f32-bf16-r16-k1  median 67.57142857142857
+[23/165] shape-f32-bf16-r16-k2  median 43.57142857142857
+[24/165] shape-f32-bf16-r16-k4  median 31.571428571428573
+[25/165] shape-f32-bf16-r64-k1  median 211.57142857142858
+[26/165] shape-f32-bf16-r64-k2  median 115.57142857142857
+[27/165] shape-f32-bf16-r64-k4  median 67.57142857142857
+[28/165] shape-f32-f32-r4-k1  median 31.0
+[29/165] shape-f32-f32-r4-k2  median 13.0
+[30/165] shape-f32-f32-r4-k4  median 8.071428571428571
+[31/165] shape-f32-f32-r16-k1  median 67.57142857142857
+[32/165] shape-f32-f32-r16-k2  median 43.57142857142857
+[33/165] shape-f32-f32-r16-k4  median 31.571428571428573
+[34/165] shape-f32-f32-r64-k1  median 211.57142857142858
+[35/165] shape-f32-f32-r64-k2  median 115.57142857142857
+[36/165] shape-f32-f32-r64-k4  median 67.57142857142857
+[37/165] shape-bf16-bf16-d16-r4-k1  median 31.0
+[38/165] shape-bf16-bf16-d16-r4-k2  median 13.0
+[39/165] shape-bf16-bf16-d16-r4-k4  median 8.071428571428571
+[40/165] shape-bf16-bf16-d16-r16-k1  median 67.57142857142857
+[41/165] shape-bf16-bf16-d16-r16-k2  median 43.57142857142857
+[42/165] shape-bf16-bf16-d16-r16-k4  median 31.571428571428573
+[43/165] shape-bf16-bf16-d16-r64-k1  median 211.57142857142858
+[44/165] shape-bf16-bf16-d16-r64-k2  median 115.57142857142857
+[45/165] shape-bf16-bf16-d16-r64-k4  median 67.57142857142857
+[46/165] shape-f16-e4m3-r4-k1  median 31.0
+[47/165] shape-f16-e4m3-r4-k2  median 13.0
+[48/165] shape-f16-e4m3-r4-k4  median 8.071428571428571
+[49/165] shape-f16-e4m3-r16-k1  median 67.57142857142857
+[50/165] shape-f16-e4m3-r16-k2  median 43.57142857142857
+[51/165] shape-f16-e4m3-r16-k4  median 31.571428571428573
+[52/165] shape-f16-e4m3-r64-k1  median 211.57142857142858
+[53/165] shape-f16-e4m3-r64-k2  median 115.57142857142857
+[54/165] shape-f16-e4m3-r64-k4  median 67.57142857142857
+[55/165] shape-f32-bfp8-r16-k1  median 67.57142857142857
+[56/165] shape-f32-bfp8-r16-k2  median 43.57142857142857
+[57/165] shape-f32-bfp8-r16-k4  median 31.571428571428573
+[58/165] shape-f32-bfp8-r64-k1  median 211.57142857142858
+[59/165] shape-f32-bfp8-r64-k2  median 115.57142857142857
+[60/165] shape-f32-bfp8-r64-k4  median 67.57142857142857
+[61/165] shape-f32-bfp4-r16-k1  median 67.57142857142857
+[62/165] shape-f32-bfp4-r16-k2  median 43.57142857142857
+[63/165] shape-f32-bfp4-r16-k4  median 31.571428571428573
+[64/165] shape-f32-bfp4-r64-k1  median 211.57142857142858
+[65/165] shape-f32-bfp4-r64-k2  median 115.57142857142857
+[66/165] shape-f32-bfp4-r64-k4  median 67.57142857142857
+[67/165] tiny-f32-bf16-x1-lasteach  median 3.857142857142857
+[68/165] tiny-f32-bf16-x1-lastonce  median 1.6607142857142858
+[69/165] tiny-f32-bf16-x16-lasteach  median 3.857142857142857
+[70/165] tiny-f32-bf16-x16-lastonce  median 1.6607142857142858
+[71/165] tiny-f32-f32-x1-lasteach  median 3.857142857142857
+[72/165] tiny-f32-f32-x1-lastonce  median 1.6607142857142858
+[73/165] tiny-f32-f32-x16-lasteach  median 3.857142857142857
+[74/165] tiny-f32-f32-x16-lastonce  median 1.6607142857142858
+[75/165] tiny-bf16-bf16-d16-x1-lasteach  median 2.767857142857143
+[76/165] tiny-bf16-bf16-d16-x1-lastonce  median 1.6071428571428572
+[77/165] tiny-bf16-bf16-d16-x16-lasteach  median 2.767857142857143
+[78/165] tiny-bf16-bf16-d16-x16-lastonce  median 1.6071428571428572
+[79/165] l1acc-f32-f32-mop  median 36.0
+[80/165] l1acc-f32-f32-inline  median 67.57142857142857
+[81/165] l1acc-f32-f32-mop-selfwr-near  median 49.42857142857143
+[82/165] l1acc-f32-bf16-mop  median 34.285714285714285
+[83/165] l1acc-f32-bf16-inline  median 67.57142857142857
+[84/165] l1acc-f32-bf16-mop-selfwr-near  median 36.42857142857143
+[85/165] overhead-f32-bf16-bare-mop  median 34.142857142857146
+[86/165] overhead-f32-bf16-bare-inline  median 67.57142857142857
+[87/165] overhead-f32-bf16-setw  median 34.142857142857146
+[88/165] overhead-f32-bf16-addr-wrcfg  median 96.71428571428571
+[89/165] overhead-f32-bf16-addr-adc  median 34.285714285714285
+[90/165] overhead-f32-bf16-llama-pre  median 102.85714285714286
+[91/165] overhead-f32-bf16-llama-post  median 162.57142857142858
+[92/165] overhead-f32-bf16-llama-cb  median 178.71428571428572
+[93/165] overhead-f32-bf16-llama-tile  median 181.42857142857142
+[94/165] overhead-f32-bf16-llama-tile-nozero  median 181.42857142857142
+[95/165] overhead-f32-bf16-ttrv-move  median 171.71428571428572
+[96/165] overhead-f32-bf16-ttrv-move-post  median 200.0
+[97/165] overhead-f32-bf16-recfg-tile  median 301.0
+[98/165] overhead-f32-bf16-edge-llama  median 34.142857142857146
+[99/165] overhead-f16-e4m3-bare-mop  median 18.142857142857142
+[100/165] overhead-f16-e4m3-addr-wrcfg  median 96.57142857142857
+[101/165] overhead-f16-e4m3-addr-adc  median 20.571428571428573
+[102/165] overhead-f16-e4m3-llama-pre  median 102.42857142857143
+[103/165] overhead-f16-e4m3-llama-post  median 145.14285714285714
+[104/165] overhead-f16-e4m3-llama-cb  median 161.14285714285714
+[105/165] overhead-f16-e4m3-llama-tile  median 164.42857142857142
+[106/165] overhead-f16-e4m3-llama-tile-nozero  median 164.42857142857142
+[107/165] overhead-f16-e4m3-ttrv-move  median 171.71428571428572
+[108/165] overhead-f16-e4m3-ttrv-move-post  median 198.0
+[109/165] overhead-f16-e4m3-recfg-tile  median 285.57142857142856
+[110/165] overhead-f32-f32-bare-mop  median 34.57142857142857
+[111/165] overhead-f32-f32-addr-wrcfg  median 96.57142857142857
+[112/165] overhead-f32-f32-addr-adc  median 35.0
+[113/165] overhead-f32-f32-llama-pre  median 102.42857142857143
+[114/165] overhead-f32-f32-llama-post  median 162.0
+[115/165] overhead-f32-f32-llama-cb  median 177.0
+[116/165] overhead-f32-f32-llama-tile  median 179.42857142857142
+[117/165] overhead-f32-f32-llama-tile-nozero  median 179.71428571428572
+[118/165] overhead-f32-f32-ttrv-move  median 171.71428571428572
+[119/165] overhead-f32-f32-ttrv-move-post  median 198.0
+[120/165] overhead-f32-f32-recfg-tile  median 302.0
+[121/165] vis-f32-bf16-r64-poll  median 120
+[122/165] vis-f32-bf16-r64-drainfirst  median 121
+[123/165] vis-f32-bf16-r64-noc  median 135
+[124/165] vis-f32-bf16-r4-poll  median 116
+[125/165] vis-f32-bf16-r4-drainfirst  median 104
+[126/165] vis-f32-bf16-r4-noc  median 117
+[127/165] vis-f32-f32-r64-poll  median 120
+[128/165] vis-f32-f32-r64-drainfirst  median 119
+[129/165] vis-f32-f32-r64-noc  median 121
+[130/165] vis-f16-e4m3-r64-poll  median 104
+[131/165] vis-f16-e4m3-r64-drainfirst  median 104
+[132/165] vis-f16-e4m3-r64-noc  median 104
+[133/165] handoff-lat-semwait  median 82.0
+[134/165] handoff-lat-sempoll  median 131.5
+[135/165] handoff-lat-selfsem  median 130
+[136/165] handoff-pipe-max1-d0  median 192
+[137/165] handoff-pipe-max1-d100  median 245
+[138/165] handoff-pipe-max1-d200  median 344
+[139/165] handoff-pipe-max1-d400  median 542
+[140/165] handoff-pipe-max1-d800  median 947
+[141/165] handoff-pipe-max1-d1600  median 1748
+[142/165] handoff-pipe-max1-d200-poll  median 426
+[143/165] handoff-pipe-max2-d0  median 192
+[144/165] handoff-pipe-max2-d100  median 192
+[145/165] handoff-pipe-max2-d200  median 247
+[146/165] handoff-pipe-max2-d400  median 445
+[147/165] handoff-pipe-max2-d800  median 841
+[148/165] handoff-pipe-max2-d1600  median 1642
+[149/165] handoff-pipe-max2-d200-poll  median 246
+[150/165] contend-f32-bf16-none  median 34.285714285714285
+[151/165] contend-f32-bf16-selfwr-near  median 37.0
+[152/165] contend-f32-bf16-selfwr-far  median 37.857142857142854
+[153/165] contend-f32-bf16-selfrd-near  median 34.857142857142854
+[154/165] contend-f32-bf16-selfrd-far  median 34.857142857142854
+[155/165] contend-f32-bf16-remotewr-near  median 34.714285714285715
+[156/165] contend-f32-bf16-remotewr-far  median 36.42857142857143
+[157/165] contend-f32-bf16-llama-tile-selfwr-near  median 185.0
+[158/165] contend-f32-f32-none  median 35.0
+[159/165] contend-f32-f32-selfwr-near  median 41.142857142857146
+[160/165] contend-f32-f32-remotewr-near  median 35.0
+[161/165] contend-f32-f32-llama-tile-selfwr-near  median 188.0
+[162/165] contend-f32-bf16-unpack-near  median 34.142857142857146
+[163/165] contend-f32-bf16-unpack-far  median 34.285714285714285
+[164/165] contend-f32-bf16-unpack+selfwr-near  median 39.857142857142854
+[165/165] contend-f32-f32-unpack-near  median 36.57142857142857
+
+165 recorded, 0 soft failures, no hard failure; 0.62 s
+### 18:58:38 STEP sfpu  -> sims/results/2026-11-18-l0-sfpu-card1.jsonl
+3551 selected, 0 done, 0 failed before, 3551 to run
+card 1: state=idle aiclk=800 asic_c=54.9 board_w=90 pcie_gen=3 pcie_width=1
+[1/3551] hazards-timing-nop  ok
+[2/3551] hazards-timing-mad_chain  ok
+[3/3551] hazards-timing-mad_nop_chain  ok
+[4/3551] hazards-timing-mad_ind4  ok
+[5/3551] hazards-timing-mad_indep_mov  ok
+[6/3551] hazards-timing-mad_dep_mov  ok
+[7/3551] hazards-timing-mad_nop_dep_mov  ok
+[8/3551] hazards-timing-mad_nop_indep_mov  ok
+[9/3551] hazards-timing-mad_iadd_vc  ok
+[10/3551] hazards-timing-mad_iadd_vd  ok
+[11/3551] hazards-timing-mad_setsgn_vd  ok
+[12/3551] hazards-timing-mad_and_vb  ok
+[13/3551] hazards-timing-mad_minmax  ok
+[14/3551] hazards-timing-mad_nop_minmax  ok
+[15/3551] hazards-timing-mad_swap  ok
+[16/3551] hazards-timing-mad_shuf  ok
+[17/3551] hazards-timing-mad_loadi_lo  ok
+[18/3551] hazards-timing-swap_mov  ok
+[19/3551] hazards-timing-swap_nop_mov  ok
+[20/3551] hazards-timing-swap_nop2_mov  ok
+[21/3551] hazards-timing-shuf_mov  ok
+[22/3551] hazards-timing-shuf_nop_mov  ok
+[23/3551] hazards-timing-shft2_lreg_mov  ok
+[24/3551] hazards-timing-loadi_pair  ok
+[25/3551] hazards-timing-sfpload  ok
+[26/3551] hazards-timing-sfpstore  ok
+[27/3551] hazards-timing-load_mad_store  ok
+[28/3551] hazards-timing-load_mad_nop_store  ok
+[29/3551] hazards-timing-arecip_mad  ok
+[30/3551] hazards-timing-tt_nop_mad_dep  ok
+[31/3551] hazards-value-mov_detected-gap0  ok
+[32/3551] hazards-value-mov_detected-gap1  ok
+[33/3551] hazards-value-iadd_vd-gap0  ok
+[34/3551] hazards-value-iadd_vd-gap1  ok
+[35/3551] hazards-value-iadd_vc_imm-gap0  ok
+[36/3551] hazards-value-iadd_vc_imm-gap1  ok
+[37/3551] hazards-value-and_vb-gap0  ok
+[38/3551] hazards-value-and_vb-gap1  ok
+[39/3551] hazards-value-setsgn_vd-gap0  ok
+[40/3551] hazards-value-setsgn_vd-gap1  ok
+[41/3551] hazards-value-minmax_min-gap0  ok
+[42/3551] hazards-value-minmax_min-gap1  ok
+[43/3551] hazards-value-minmax_max-gap0  ok
+[44/3551] hazards-value-minmax_max-gap1  ok
+[45/3551] hazards-value-shuffle-gap0  ok
+[46/3551] hazards-value-shuffle-gap1  ok
+[47/3551] hazards-value-loadi_lower-gap0  ok
+[48/3551] hazards-value-loadi_lower-gap1  ok
+[49/3551] hazards-value-minmax5_min-gap0  ok
+[50/3551] hazards-value-minmax5_min-gap1  ok
+[51/3551] hazards-value-minmax5_max-gap0  ok
+[52/3551] hazards-value-minmax5_max-gap1  ok
+[53/3551] hazards-timing-prefetchoff-nop  ok
+[54/3551] hazards-timing-prefetchoff-mad_chain  ok
+[55/3551] hazards-timing-prefetchoff-mad_nop_chain  ok
+[56/3551] hazards-timing-prefetchoff-mad_ind4  ok
+[57/3551] hazards-timing-prefetchoff-mad_indep_mov  ok
+[58/3551] hazards-timing-prefetchoff-mad_dep_mov  ok
+[59/3551] hazards-timing-prefetchoff-mad_nop_dep_mov  ok
+[60/3551] hazards-timing-prefetchoff-mad_nop_indep_mov  ok
+[61/3551] hazards-timing-prefetchoff-mad_iadd_vc  ok
+[62/3551] hazards-timing-prefetchoff-mad_iadd_vd  ok
+[63/3551] hazards-timing-prefetchoff-mad_setsgn_vd  ok
+[64/3551] hazards-timing-prefetchoff-mad_and_vb  ok
+[65/3551] hazards-timing-prefetchoff-mad_minmax  ok
+[66/3551] hazards-timing-prefetchoff-mad_nop_minmax  ok
+[67/3551] hazards-timing-prefetchoff-mad_swap  ok
+[68/3551] hazards-timing-prefetchoff-mad_shuf  ok
+[69/3551] hazards-timing-prefetchoff-mad_loadi_lo  ok
+[70/3551] hazards-timing-prefetchoff-swap_mov  ok
+[71/3551] hazards-timing-prefetchoff-swap_nop_mov  ok
+[72/3551] hazards-timing-prefetchoff-swap_nop2_mov  ok
+[73/3551] hazards-timing-prefetchoff-shuf_mov  ok
+[74/3551] hazards-timing-prefetchoff-shuf_nop_mov  ok
+[75/3551] hazards-timing-prefetchoff-shft2_lreg_mov  ok
+[76/3551] hazards-timing-prefetchoff-loadi_pair  ok
+[77/3551] hazards-timing-prefetchoff-sfpload  ok
+[78/3551] hazards-timing-prefetchoff-sfpstore  ok
+[79/3551] hazards-timing-prefetchoff-load_mad_store  ok
+[80/3551] hazards-timing-prefetchoff-load_mad_nop_store  ok
+[81/3551] hazards-timing-prefetchoff-arecip_mad  ok
+[82/3551] hazards-timing-prefetchoff-tt_nop_mad_dep  ok
+[83/3551] hazards-value-prefetchoff-mov_detected-gap0  ok
+[84/3551] hazards-value-prefetchoff-mov_detected-gap1  ok
+[85/3551] hazards-value-prefetchoff-iadd_vd-gap0  ok
+[86/3551] hazards-value-prefetchoff-iadd_vd-gap1  ok
+[87/3551] hazards-value-prefetchoff-iadd_vc_imm-gap0  ok
+[88/3551] hazards-value-prefetchoff-iadd_vc_imm-gap1  ok
+[89/3551] hazards-value-prefetchoff-and_vb-gap0  ok
+[90/3551] hazards-value-prefetchoff-and_vb-gap1  ok
+[91/3551] hazards-value-prefetchoff-setsgn_vd-gap0  ok
+[92/3551] hazards-value-prefetchoff-setsgn_vd-gap1  ok
+[93/3551] hazards-value-prefetchoff-minmax_min-gap0  ok
+[94/3551] hazards-value-prefetchoff-minmax_min-gap1  ok
+[95/3551] hazards-value-prefetchoff-minmax_max-gap0  ok
+[96/3551] hazards-value-prefetchoff-minmax_max-gap1  ok
+[97/3551] hazards-value-prefetchoff-shuffle-gap0  ok
+[98/3551] hazards-value-prefetchoff-shuffle-gap1  ok
+[99/3551] hazards-value-prefetchoff-loadi_lower-gap0  ok
+[100/3551] hazards-value-prefetchoff-loadi_lower-gap1  ok
+[101/3551] hazards-timing-prefetchoff-clr40000-nop  ok
+[102/3551] hazards-timing-prefetchoff-clr40000-mad_chain  ok
+[103/3551] hazards-timing-prefetchoff-clr40000-mad_nop_chain  ok
+[104/3551] hazards-timing-prefetchoff-clr40000-mad_ind4  ok
+[105/3551] hazards-timing-prefetchoff-clr40000-mad_indep_mov  ok
+[106/3551] hazards-timing-prefetchoff-clr40000-mad_dep_mov  ok
+[107/3551] hazards-timing-prefetchoff-clr40000-mad_nop_dep_mov  ok
+[108/3551] hazards-timing-prefetchoff-clr40000-mad_nop_indep_mov  ok
+[109/3551] hazards-timing-prefetchoff-clr40000-mad_iadd_vc  ok
+[110/3551] hazards-timing-prefetchoff-clr40000-mad_iadd_vd  ok
+[111/3551] hazards-timing-prefetchoff-clr40000-mad_setsgn_vd  ok
+[112/3551] hazards-timing-prefetchoff-clr40000-mad_and_vb  ok
+[113/3551] hazards-timing-prefetchoff-clr40000-mad_minmax  ok
+[114/3551] hazards-timing-prefetchoff-clr40000-mad_nop_minmax  ok
+[115/3551] hazards-timing-prefetchoff-clr40000-mad_swap  ok
+[116/3551] hazards-timing-prefetchoff-clr40000-mad_shuf  ok
+[117/3551] hazards-timing-prefetchoff-clr40000-mad_loadi_lo  ok
+[118/3551] hazards-timing-prefetchoff-clr40000-swap_mov  ok
+[119/3551] hazards-timing-prefetchoff-clr40000-swap_nop_mov  ok
+[120/3551] hazards-timing-prefetchoff-clr40000-swap_nop2_mov  ok
+[121/3551] hazards-timing-prefetchoff-clr40000-shuf_mov  ok
+[122/3551] hazards-timing-prefetchoff-clr40000-shuf_nop_mov  ok
+[123/3551] hazards-timing-prefetchoff-clr40000-shft2_lreg_mov  ok
+[124/3551] hazards-timing-prefetchoff-clr40000-loadi_pair  ok
+[125/3551] hazards-timing-prefetchoff-clr40000-sfpload  ok
+[126/3551] hazards-timing-prefetchoff-clr40000-sfpstore  ok
+[127/3551] hazards-timing-prefetchoff-clr40000-load_mad_store  ok
+[128/3551] hazards-timing-prefetchoff-clr40000-load_mad_nop_store  ok
+[129/3551] hazards-timing-prefetchoff-clr40000-arecip_mad  ok
+[130/3551] hazards-timing-prefetchoff-clr40000-tt_nop_mad_dep  ok
+[131/3551] matrix-single-MAD  ok
+[132/3551] matrix-pair-MAD-MOV.vc  ok
+[133/3551] matrix-pair-MAD-ABS.vc  ok
+[134/3551] matrix-pair-MAD-MAD.va  ok
+[135/3551] matrix-pair-MAD-MAD.vb  ok
+[136/3551] matrix-pair-MAD-MAD.vc  ok
+[137/3551] matrix-pair-MAD-MUL.va  ok
+[138/3551] matrix-pair-MAD-ADD.vc  ok
+[139/3551] matrix-pair-MAD-ADDI.vd  ok
+[140/3551] matrix-pair-MAD-MULI.vd  ok
+[141/3551] matrix-pair-MAD-MUL24.va  ok
+[142/3551] matrix-pair-MAD-MUL24.vb  ok
+[143/3551] matrix-pair-MAD-LUT.impl  ok
+[144/3551] matrix-pair-MAD-LUTFP32.impl  ok
+[145/3551] matrix-pair-MAD-LUTFP32.mirror8  ok
+[146/3551] matrix-pair-MAD-IADD.vc.imm  ok
+[147/3551] matrix-pair-MAD-IADD.vc.reg  ok
+[148/3551] matrix-pair-MAD-IADD.vd.reg  ok
+[149/3551] matrix-pair-MAD-IADD.vd.sub  ok
+[150/3551] matrix-pair-MAD-SHFT.vd.imm  ok
+[151/3551] matrix-pair-MAD-SHFT.vd.reg  ok
+[152/3551] matrix-pair-MAD-SHFT.vc.reg  ok
+[153/3551] matrix-pair-MAD-SHFT.vc.immvc  ok
+[154/3551] matrix-pair-MAD-AND.vc  ok
+[155/3551] matrix-pair-MAD-AND.vd  ok
+[156/3551] matrix-pair-MAD-AND.vb  ok
+[157/3551] matrix-pair-MAD-OR.vb  ok
+[158/3551] matrix-pair-MAD-OR.vd  ok
+[159/3551] matrix-pair-MAD-XOR.vc  ok
+[160/3551] matrix-pair-MAD-XOR.vd  ok
+[161/3551] matrix-pair-MAD-NOT.vc  ok
+[162/3551] matrix-pair-MAD-LZ.vc  ok
+[163/3551] matrix-pair-MAD-EXEXP.vc  ok
+[164/3551] matrix-pair-MAD-EXMAN.vc  ok
+[165/3551] matrix-pair-MAD-SETEXP.vc.imm  ok
+[166/3551] matrix-pair-MAD-SETEXP.vd  ok
+[167/3551] matrix-pair-MAD-SETEXP.vc.reg  ok
+[168/3551] matrix-pair-MAD-SETMAN.vc.imm  ok
+[169/3551] matrix-pair-MAD-SETMAN.vd  ok
+[170/3551] matrix-pair-MAD-SETSGN.vc.imm  ok
+[171/3551] matrix-pair-MAD-SETSGN.vd  ok
+[172/3551] matrix-pair-MAD-DIVP2.vc  ok
+[173/3551] matrix-pair-MAD-ARECIP.vc  ok
+[174/3551] matrix-pair-MAD-ARECIP.cond.vb  ok
+[175/3551] matrix-pair-MAD-ARECIP.cond.vc  ok
+[176/3551] matrix-pair-MAD-CAST.vc  ok
+[177/3551] matrix-pair-MAD-STOCHRND.vc  ok
+[178/3551] matrix-pair-MAD-STOCHRND.vb  ok
+[179/3551] matrix-pair-MAD-SETCC.vc  ok
+[180/3551] matrix-pair-MAD-GT.vc  ok
+[181/3551] matrix-pair-MAD-GT.vd  ok
+[182/3551] matrix-pair-MAD-LE.vd  ok
+[183/3551] matrix-pair-MAD-SWAP.m0.vd  ok
+[184/3551] matrix-pair-MAD-SWAP.m0.vc  ok
+[185/3551] matrix-pair-MAD-SWAP.m1.vd  ok
+[186/3551] matrix-pair-MAD-SWAP.m1.vc  ok
+[187/3551] matrix-pair-MAD-SHFT2.m0.impl  ok
+[188/3551] matrix-pair-MAD-SHFT2.m1.impl  ok
+[189/3551] matrix-pair-MAD-SHFT2.m2.vc  ok
+[190/3551] matrix-pair-MAD-SHFT2.m3.vc  ok
+[191/3551] matrix-pair-MAD-SHFT2.m4.vc  ok
+[192/3551] matrix-pair-MAD-SHFT2.m5.vb  ok
+[193/3551] matrix-pair-MAD-SHFT2.m5.vc  ok
+[194/3551] matrix-pair-MAD-SHFT2.m6.vb  ok
+[195/3551] matrix-pair-MAD-TRANSP.impl  ok
+[196/3551] matrix-pair-MAD-STORE  ok
+[197/3551] matrix-pair-MAD-CONFIG.L12  ok
+[198/3551] matrix-pair-MAD-LOADI.lower  ok
+[199/3551] matrix-pair-MAD-LOADI.upper  ok
+[200/3551] matrix-pair-MAD-LOAD.lo16  ok
+[201/3551] matrix-pair-MAD-LOAD.hi16  ok
+[202/3551] matrix-pair-MAD-LOADI.full  ok
+[203/3551] matrix-pair-MAD-MOV.waw  ok
+[204/3551] matrix-single-MUL  ok
+[205/3551] matrix-pair-MUL-MOV.vc  ok
+[206/3551] matrix-pair-MUL-ABS.vc  ok
+[207/3551] matrix-pair-MUL-MAD.va  ok
+[208/3551] matrix-pair-MUL-MAD.vb  ok
+[209/3551] matrix-pair-MUL-MAD.vc  ok
+[210/3551] matrix-pair-MUL-MUL.va  ok
+[211/3551] matrix-pair-MUL-ADD.vc  ok
+[212/3551] matrix-pair-MUL-ADDI.vd  ok
+[213/3551] matrix-pair-MUL-MULI.vd  ok
+[214/3551] matrix-pair-MUL-MUL24.va  ok
+[215/3551] matrix-pair-MUL-MUL24.vb  ok
+[216/3551] matrix-pair-MUL-LUT.impl  ok
+[217/3551] matrix-pair-MUL-LUTFP32.impl  ok
+[218/3551] matrix-pair-MUL-LUTFP32.mirror8  ok
+[219/3551] matrix-pair-MUL-IADD.vc.imm  ok
+[220/3551] matrix-pair-MUL-IADD.vc.reg  ok
+[221/3551] matrix-pair-MUL-IADD.vd.reg  ok
+[222/3551] matrix-pair-MUL-IADD.vd.sub  ok
+[223/3551] matrix-pair-MUL-SHFT.vd.imm  ok
+[224/3551] matrix-pair-MUL-SHFT.vd.reg  ok
+[225/3551] matrix-pair-MUL-SHFT.vc.reg  ok
+[226/3551] matrix-pair-MUL-SHFT.vc.immvc  ok
+[227/3551] matrix-pair-MUL-AND.vc  ok
+[228/3551] matrix-pair-MUL-AND.vd  ok
+[229/3551] matrix-pair-MUL-AND.vb  ok
+[230/3551] matrix-pair-MUL-OR.vb  ok
+[231/3551] matrix-pair-MUL-OR.vd  ok
+[232/3551] matrix-pair-MUL-XOR.vc  ok
+[233/3551] matrix-pair-MUL-XOR.vd  ok
+[234/3551] matrix-pair-MUL-NOT.vc  ok
+[235/3551] matrix-pair-MUL-LZ.vc  ok
+[236/3551] matrix-pair-MUL-EXEXP.vc  ok
+[237/3551] matrix-pair-MUL-EXMAN.vc  ok
+[238/3551] matrix-pair-MUL-SETEXP.vc.imm  ok
+[239/3551] matrix-pair-MUL-SETEXP.vd  ok
+[240/3551] matrix-pair-MUL-SETEXP.vc.reg  ok
+[241/3551] matrix-pair-MUL-SETMAN.vc.imm  ok
+[242/3551] matrix-pair-MUL-SETMAN.vd  ok
+[243/3551] matrix-pair-MUL-SETSGN.vc.imm  ok
+[244/3551] matrix-pair-MUL-SETSGN.vd  ok
+[245/3551] matrix-pair-MUL-DIVP2.vc  ok
+[246/3551] matrix-pair-MUL-ARECIP.vc  ok
+[247/3551] matrix-pair-MUL-ARECIP.cond.vb  ok
+[248/3551] matrix-pair-MUL-ARECIP.cond.vc  ok
+[249/3551] matrix-pair-MUL-CAST.vc  ok
+[250/3551] matrix-pair-MUL-STOCHRND.vc  ok
+[251/3551] matrix-pair-MUL-STOCHRND.vb  ok
+[252/3551] matrix-pair-MUL-SETCC.vc  ok
+[253/3551] matrix-pair-MUL-GT.vc  ok
+[254/3551] matrix-pair-MUL-GT.vd  ok
+[255/3551] matrix-pair-MUL-LE.vd  ok
+[256/3551] matrix-pair-MUL-SWAP.m0.vd  ok
+[257/3551] matrix-pair-MUL-SWAP.m0.vc  ok
+[258/3551] matrix-pair-MUL-SWAP.m1.vd  ok
+[259/3551] matrix-pair-MUL-SWAP.m1.vc  ok
+[260/3551] matrix-pair-MUL-SHFT2.m0.impl  ok
+[261/3551] matrix-pair-MUL-SHFT2.m1.impl  ok
+[262/3551] matrix-pair-MUL-SHFT2.m2.vc  ok
+[263/3551] matrix-pair-MUL-SHFT2.m3.vc  ok
+[264/3551] matrix-pair-MUL-SHFT2.m4.vc  ok
+[265/3551] matrix-pair-MUL-SHFT2.m5.vb  ok
+[266/3551] matrix-pair-MUL-SHFT2.m5.vc  ok
+[267/3551] matrix-pair-MUL-SHFT2.m6.vb  ok
+[268/3551] matrix-pair-MUL-TRANSP.impl  ok
+[269/3551] matrix-pair-MUL-STORE  ok
+[270/3551] matrix-pair-MUL-CONFIG.L12  ok
+[271/3551] matrix-pair-MUL-LOADI.lower  ok
+[272/3551] matrix-pair-MUL-LOADI.upper  ok
+[273/3551] matrix-pair-MUL-LOAD.lo16  ok
+[274/3551] matrix-pair-MUL-LOAD.hi16  ok
+[275/3551] matrix-pair-MUL-LOADI.full  ok
+[276/3551] matrix-pair-MUL-MOV.waw  ok
+[277/3551] matrix-single-ADD  ok
+[278/3551] matrix-pair-ADD-MOV.vc  ok
+[279/3551] matrix-pair-ADD-ABS.vc  ok
+[280/3551] matrix-pair-ADD-MAD.va  ok
+[281/3551] matrix-pair-ADD-MAD.vb  ok
+[282/3551] matrix-pair-ADD-MAD.vc  ok
+[283/3551] matrix-pair-ADD-MUL.va  ok
+[284/3551] matrix-pair-ADD-ADD.vc  ok
+[285/3551] matrix-pair-ADD-ADDI.vd  ok
+[286/3551] matrix-pair-ADD-MULI.vd  ok
+[287/3551] matrix-pair-ADD-MUL24.va  ok
+[288/3551] matrix-pair-ADD-MUL24.vb  ok
+[289/3551] matrix-pair-ADD-LUT.impl  ok
+[290/3551] matrix-pair-ADD-LUTFP32.impl  ok
+[291/3551] matrix-pair-ADD-LUTFP32.mirror8  ok
+[292/3551] matrix-pair-ADD-IADD.vc.imm  ok
+[293/3551] matrix-pair-ADD-IADD.vc.reg  ok
+[294/3551] matrix-pair-ADD-IADD.vd.reg  ok
+[295/3551] matrix-pair-ADD-IADD.vd.sub  ok
+[296/3551] matrix-pair-ADD-SHFT.vd.imm  ok
+[297/3551] matrix-pair-ADD-SHFT.vd.reg  ok
+[298/3551] matrix-pair-ADD-SHFT.vc.reg  ok
+[299/3551] matrix-pair-ADD-SHFT.vc.immvc  ok
+[300/3551] matrix-pair-ADD-AND.vc  ok
+[301/3551] matrix-pair-ADD-AND.vd  ok
+[302/3551] matrix-pair-ADD-AND.vb  ok
+[303/3551] matrix-pair-ADD-OR.vb  ok
+[304/3551] matrix-pair-ADD-OR.vd  ok
+[305/3551] matrix-pair-ADD-XOR.vc  ok
+[306/3551] matrix-pair-ADD-XOR.vd  ok
+[307/3551] matrix-pair-ADD-NOT.vc  ok
+[308/3551] matrix-pair-ADD-LZ.vc  ok
+[309/3551] matrix-pair-ADD-EXEXP.vc  ok
+[310/3551] matrix-pair-ADD-EXMAN.vc  ok
+[311/3551] matrix-pair-ADD-SETEXP.vc.imm  ok
+[312/3551] matrix-pair-ADD-SETEXP.vd  ok
+[313/3551] matrix-pair-ADD-SETEXP.vc.reg  ok
+[314/3551] matrix-pair-ADD-SETMAN.vc.imm  ok
+[315/3551] matrix-pair-ADD-SETMAN.vd  ok
+[316/3551] matrix-pair-ADD-SETSGN.vc.imm  ok
+[317/3551] matrix-pair-ADD-SETSGN.vd  ok
+[318/3551] matrix-pair-ADD-DIVP2.vc  ok
+[319/3551] matrix-pair-ADD-ARECIP.vc  ok
+[320/3551] matrix-pair-ADD-ARECIP.cond.vb  ok
+[321/3551] matrix-pair-ADD-ARECIP.cond.vc  ok
+[322/3551] matrix-pair-ADD-CAST.vc  ok
+[323/3551] matrix-pair-ADD-STOCHRND.vc  ok
+[324/3551] matrix-pair-ADD-STOCHRND.vb  ok
+[325/3551] matrix-pair-ADD-SETCC.vc  ok
+[326/3551] matrix-pair-ADD-GT.vc  ok
+[327/3551] matrix-pair-ADD-GT.vd  ok
+[328/3551] matrix-pair-ADD-LE.vd  ok
+[329/3551] matrix-pair-ADD-SWAP.m0.vd  ok
+[330/3551] matrix-pair-ADD-SWAP.m0.vc  ok
+[331/3551] matrix-pair-ADD-SWAP.m1.vd  ok
+[332/3551] matrix-pair-ADD-SWAP.m1.vc  ok
+[333/3551] matrix-pair-ADD-SHFT2.m0.impl  ok
+[334/3551] matrix-pair-ADD-SHFT2.m1.impl  ok
+[335/3551] matrix-pair-ADD-SHFT2.m2.vc  ok
+[336/3551] matrix-pair-ADD-SHFT2.m3.vc  ok
+[337/3551] matrix-pair-ADD-SHFT2.m4.vc  ok
+[338/3551] matrix-pair-ADD-SHFT2.m5.vb  ok
+[339/3551] matrix-pair-ADD-SHFT2.m5.vc  ok
+[340/3551] matrix-pair-ADD-SHFT2.m6.vb  ok
+[341/3551] matrix-pair-ADD-TRANSP.impl  ok
+[342/3551] matrix-pair-ADD-STORE  ok
+[343/3551] matrix-pair-ADD-CONFIG.L12  ok
+[344/3551] matrix-pair-ADD-LOADI.lower  ok
+[345/3551] matrix-pair-ADD-LOADI.upper  ok
+[346/3551] matrix-pair-ADD-LOAD.lo16  ok
+[347/3551] matrix-pair-ADD-LOAD.hi16  ok
+[348/3551] matrix-pair-ADD-LOADI.full  ok
+[349/3551] matrix-pair-ADD-MOV.waw  ok
+[350/3551] matrix-single-ADDI  ok
+[351/3551] matrix-pair-ADDI-MOV.vc  ok
+[352/3551] matrix-pair-ADDI-ABS.vc  ok
+[353/3551] matrix-pair-ADDI-MAD.va  ok
+[354/3551] matrix-pair-ADDI-MAD.vb  ok
+[355/3551] matrix-pair-ADDI-MAD.vc  ok
+[356/3551] matrix-pair-ADDI-MUL.va  ok
+[357/3551] matrix-pair-ADDI-ADD.vc  ok
+[358/3551] matrix-pair-ADDI-ADDI.vd  ok
+[359/3551] matrix-pair-ADDI-MULI.vd  ok
+[360/3551] matrix-pair-ADDI-MUL24.va  ok
+[361/3551] matrix-pair-ADDI-MUL24.vb  ok
+[362/3551] matrix-pair-ADDI-LUT.impl  ok
+[363/3551] matrix-pair-ADDI-LUTFP32.impl  ok
+[364/3551] matrix-pair-ADDI-LUTFP32.mirror8  ok
+[365/3551] matrix-pair-ADDI-IADD.vc.imm  ok
+[366/3551] matrix-pair-ADDI-IADD.vc.reg  ok
+[367/3551] matrix-pair-ADDI-IADD.vd.reg  ok
+[368/3551] matrix-pair-ADDI-IADD.vd.sub  ok
+[369/3551] matrix-pair-ADDI-SHFT.vd.imm  ok
+[370/3551] matrix-pair-ADDI-SHFT.vd.reg  ok
+[371/3551] matrix-pair-ADDI-SHFT.vc.reg  ok
+[372/3551] matrix-pair-ADDI-SHFT.vc.immvc  ok
+[373/3551] matrix-pair-ADDI-AND.vc  ok
+[374/3551] matrix-pair-ADDI-AND.vd  ok
+[375/3551] matrix-pair-ADDI-AND.vb  ok
+[376/3551] matrix-pair-ADDI-OR.vb  ok
+[377/3551] matrix-pair-ADDI-OR.vd  ok
+[378/3551] matrix-pair-ADDI-XOR.vc  ok
+[379/3551] matrix-pair-ADDI-XOR.vd  ok
+[380/3551] matrix-pair-ADDI-NOT.vc  ok
+[381/3551] matrix-pair-ADDI-LZ.vc  ok
+[382/3551] matrix-pair-ADDI-EXEXP.vc  ok
+[383/3551] matrix-pair-ADDI-EXMAN.vc  ok
+[384/3551] matrix-pair-ADDI-SETEXP.vc.imm  ok
+[385/3551] matrix-pair-ADDI-SETEXP.vd  ok
+[386/3551] matrix-pair-ADDI-SETEXP.vc.reg  ok
+[387/3551] matrix-pair-ADDI-SETMAN.vc.imm  ok
+[388/3551] matrix-pair-ADDI-SETMAN.vd  ok
+[389/3551] matrix-pair-ADDI-SETSGN.vc.imm  ok
+[390/3551] matrix-pair-ADDI-SETSGN.vd  ok
+[391/3551] matrix-pair-ADDI-DIVP2.vc  ok
+[392/3551] matrix-pair-ADDI-ARECIP.vc  ok
+[393/3551] matrix-pair-ADDI-ARECIP.cond.vb  ok
+[394/3551] matrix-pair-ADDI-ARECIP.cond.vc  ok
+[395/3551] matrix-pair-ADDI-CAST.vc  ok
+[396/3551] matrix-pair-ADDI-STOCHRND.vc  ok
+[397/3551] matrix-pair-ADDI-STOCHRND.vb  ok
+[398/3551] matrix-pair-ADDI-SETCC.vc  ok
+[399/3551] matrix-pair-ADDI-GT.vc  ok
+[400/3551] matrix-pair-ADDI-GT.vd  ok
+[401/3551] matrix-pair-ADDI-LE.vd  ok
+[402/3551] matrix-pair-ADDI-SWAP.m0.vd  ok
+[403/3551] matrix-pair-ADDI-SWAP.m0.vc  ok
+[404/3551] matrix-pair-ADDI-SWAP.m1.vd  ok
+[405/3551] matrix-pair-ADDI-SWAP.m1.vc  ok
+[406/3551] matrix-pair-ADDI-SHFT2.m0.impl  ok
+[407/3551] matrix-pair-ADDI-SHFT2.m1.impl  ok
+[408/3551] matrix-pair-ADDI-SHFT2.m2.vc  ok
+[409/3551] matrix-pair-ADDI-SHFT2.m3.vc  ok
+[410/3551] matrix-pair-ADDI-SHFT2.m4.vc  ok
+[411/3551] matrix-pair-ADDI-SHFT2.m5.vb  ok
+[412/3551] matrix-pair-ADDI-SHFT2.m5.vc  ok
+[413/3551] matrix-pair-ADDI-SHFT2.m6.vb  ok
+[414/3551] matrix-pair-ADDI-TRANSP.impl  ok
+[415/3551] matrix-pair-ADDI-STORE  ok
+[416/3551] matrix-pair-ADDI-CONFIG.L12  ok
+[417/3551] matrix-pair-ADDI-LOADI.lower  ok
+[418/3551] matrix-pair-ADDI-LOADI.upper  ok
+[419/3551] matrix-pair-ADDI-LOAD.lo16  ok
+[420/3551] matrix-pair-ADDI-LOAD.hi16  ok
+[421/3551] matrix-pair-ADDI-LOADI.full  ok
+[422/3551] matrix-pair-ADDI-MOV.waw  ok
+[423/3551] matrix-single-MULI  ok
+[424/3551] matrix-pair-MULI-MOV.vc  ok
+[425/3551] matrix-pair-MULI-ABS.vc  ok
+[426/3551] matrix-pair-MULI-MAD.va  ok
+[427/3551] matrix-pair-MULI-MAD.vb  ok
+[428/3551] matrix-pair-MULI-MAD.vc  ok
+[429/3551] matrix-pair-MULI-MUL.va  ok
+[430/3551] matrix-pair-MULI-ADD.vc  ok
+[431/3551] matrix-pair-MULI-ADDI.vd  ok
+[432/3551] matrix-pair-MULI-MULI.vd  ok
+[433/3551] matrix-pair-MULI-MUL24.va  ok
+[434/3551] matrix-pair-MULI-MUL24.vb  ok
+[435/3551] matrix-pair-MULI-LUT.impl  ok
+[436/3551] matrix-pair-MULI-LUTFP32.impl  ok
+[437/3551] matrix-pair-MULI-LUTFP32.mirror8  ok
+[438/3551] matrix-pair-MULI-IADD.vc.imm  ok
+[439/3551] matrix-pair-MULI-IADD.vc.reg  ok
+[440/3551] matrix-pair-MULI-IADD.vd.reg  ok
+[441/3551] matrix-pair-MULI-IADD.vd.sub  ok
+[442/3551] matrix-pair-MULI-SHFT.vd.imm  ok
+[443/3551] matrix-pair-MULI-SHFT.vd.reg  ok
+[444/3551] matrix-pair-MULI-SHFT.vc.reg  ok
+[445/3551] matrix-pair-MULI-SHFT.vc.immvc  ok
+[446/3551] matrix-pair-MULI-AND.vc  ok
+[447/3551] matrix-pair-MULI-AND.vd  ok
+[448/3551] matrix-pair-MULI-AND.vb  ok
+[449/3551] matrix-pair-MULI-OR.vb  ok
+[450/3551] matrix-pair-MULI-OR.vd  ok
+[451/3551] matrix-pair-MULI-XOR.vc  ok
+[452/3551] matrix-pair-MULI-XOR.vd  ok
+[453/3551] matrix-pair-MULI-NOT.vc  ok
+[454/3551] matrix-pair-MULI-LZ.vc  ok
+[455/3551] matrix-pair-MULI-EXEXP.vc  ok
+[456/3551] matrix-pair-MULI-EXMAN.vc  ok
+[457/3551] matrix-pair-MULI-SETEXP.vc.imm  ok
+[458/3551] matrix-pair-MULI-SETEXP.vd  ok
+[459/3551] matrix-pair-MULI-SETEXP.vc.reg  ok
+[460/3551] matrix-pair-MULI-SETMAN.vc.imm  ok
+[461/3551] matrix-pair-MULI-SETMAN.vd  ok
+[462/3551] matrix-pair-MULI-SETSGN.vc.imm  ok
+[463/3551] matrix-pair-MULI-SETSGN.vd  ok
+[464/3551] matrix-pair-MULI-DIVP2.vc  ok
+[465/3551] matrix-pair-MULI-ARECIP.vc  ok
+[466/3551] matrix-pair-MULI-ARECIP.cond.vb  ok
+[467/3551] matrix-pair-MULI-ARECIP.cond.vc  ok
+[468/3551] matrix-pair-MULI-CAST.vc  ok
+[469/3551] matrix-pair-MULI-STOCHRND.vc  ok
+[470/3551] matrix-pair-MULI-STOCHRND.vb  ok
+[471/3551] matrix-pair-MULI-SETCC.vc  ok
+[472/3551] matrix-pair-MULI-GT.vc  ok
+[473/3551] matrix-pair-MULI-GT.vd  ok
+[474/3551] matrix-pair-MULI-LE.vd  ok
+[475/3551] matrix-pair-MULI-SWAP.m0.vd  ok
+[476/3551] matrix-pair-MULI-SWAP.m0.vc  ok
+[477/3551] matrix-pair-MULI-SWAP.m1.vd  ok
+[478/3551] matrix-pair-MULI-SWAP.m1.vc  ok
+[479/3551] matrix-pair-MULI-SHFT2.m0.impl  ok
+[480/3551] matrix-pair-MULI-SHFT2.m1.impl  ok
+[481/3551] matrix-pair-MULI-SHFT2.m2.vc  ok
+[482/3551] matrix-pair-MULI-SHFT2.m3.vc  ok
+[483/3551] matrix-pair-MULI-SHFT2.m4.vc  ok
+[484/3551] matrix-pair-MULI-SHFT2.m5.vb  ok
+[485/3551] matrix-pair-MULI-SHFT2.m5.vc  ok
+[486/3551] matrix-pair-MULI-SHFT2.m6.vb  ok
+[487/3551] matrix-pair-MULI-TRANSP.impl  ok
+[488/3551] matrix-pair-MULI-STORE  ok
+[489/3551] matrix-pair-MULI-CONFIG.L12  ok
+[490/3551] matrix-pair-MULI-LOADI.lower  ok
+[491/3551] matrix-pair-MULI-LOADI.upper  ok
+[492/3551] matrix-pair-MULI-LOAD.lo16  ok
+[493/3551] matrix-pair-MULI-LOAD.hi16  ok
+[494/3551] matrix-pair-MULI-LOADI.full  ok
+[495/3551] matrix-pair-MULI-MOV.waw  ok
+[496/3551] matrix-single-MUL24  ok
+[497/3551] matrix-pair-MUL24-MOV.vc  ok
+[498/3551] matrix-pair-MUL24-ABS.vc  ok
+[499/3551] matrix-pair-MUL24-MAD.va  ok
+[500/3551] matrix-pair-MUL24-MAD.vb  ok
+[501/3551] matrix-pair-MUL24-MAD.vc  ok
+[502/3551] matrix-pair-MUL24-MUL.va  ok
+[503/3551] matrix-pair-MUL24-ADD.vc  ok
+[504/3551] matrix-pair-MUL24-ADDI.vd  ok
+[505/3551] matrix-pair-MUL24-MULI.vd  ok
+[506/3551] matrix-pair-MUL24-MUL24.va  ok
+[507/3551] matrix-pair-MUL24-MUL24.vb  ok
+[508/3551] matrix-pair-MUL24-LUT.impl  ok
+[509/3551] matrix-pair-MUL24-LUTFP32.impl  ok
+[510/3551] matrix-pair-MUL24-LUTFP32.mirror8  ok
+[511/3551] matrix-pair-MUL24-IADD.vc.imm  ok
+[512/3551] matrix-pair-MUL24-IADD.vc.reg  ok
+[513/3551] matrix-pair-MUL24-IADD.vd.reg  ok
+[514/3551] matrix-pair-MUL24-IADD.vd.sub  ok
+[515/3551] matrix-pair-MUL24-SHFT.vd.imm  ok
+[516/3551] matrix-pair-MUL24-SHFT.vd.reg  ok
+[517/3551] matrix-pair-MUL24-SHFT.vc.reg  ok
+[518/3551] matrix-pair-MUL24-SHFT.vc.immvc  ok
+[519/3551] matrix-pair-MUL24-AND.vc  ok
+[520/3551] matrix-pair-MUL24-AND.vd  ok
+[521/3551] matrix-pair-MUL24-AND.vb  ok
+[522/3551] matrix-pair-MUL24-OR.vb  ok
+[523/3551] matrix-pair-MUL24-OR.vd  ok
+[524/3551] matrix-pair-MUL24-XOR.vc  ok
+[525/3551] matrix-pair-MUL24-XOR.vd  ok
+[526/3551] matrix-pair-MUL24-NOT.vc  ok
+[527/3551] matrix-pair-MUL24-LZ.vc  ok
+[528/3551] matrix-pair-MUL24-EXEXP.vc  ok
+[529/3551] matrix-pair-MUL24-EXMAN.vc  ok
+[530/3551] matrix-pair-MUL24-SETEXP.vc.imm  ok
+[531/3551] matrix-pair-MUL24-SETEXP.vd  ok
+[532/3551] matrix-pair-MUL24-SETEXP.vc.reg  ok
+[533/3551] matrix-pair-MUL24-SETMAN.vc.imm  ok
+[534/3551] matrix-pair-MUL24-SETMAN.vd  ok
+[535/3551] matrix-pair-MUL24-SETSGN.vc.imm  ok
+[536/3551] matrix-pair-MUL24-SETSGN.vd  ok
+[537/3551] matrix-pair-MUL24-DIVP2.vc  ok
+[538/3551] matrix-pair-MUL24-ARECIP.vc  ok
+[539/3551] matrix-pair-MUL24-ARECIP.cond.vb  ok
+[540/3551] matrix-pair-MUL24-ARECIP.cond.vc  ok
+[541/3551] matrix-pair-MUL24-CAST.vc  ok
+[542/3551] matrix-pair-MUL24-STOCHRND.vc  ok
+[543/3551] matrix-pair-MUL24-STOCHRND.vb  ok
+[544/3551] matrix-pair-MUL24-SETCC.vc  ok
+[545/3551] matrix-pair-MUL24-GT.vc  ok
+[546/3551] matrix-pair-MUL24-GT.vd  ok
+[547/3551] matrix-pair-MUL24-LE.vd  ok
+[548/3551] matrix-pair-MUL24-SWAP.m0.vd  ok
+[549/3551] matrix-pair-MUL24-SWAP.m0.vc  ok
+[550/3551] matrix-pair-MUL24-SWAP.m1.vd  ok
+[551/3551] matrix-pair-MUL24-SWAP.m1.vc  ok
+[552/3551] matrix-pair-MUL24-SHFT2.m0.impl  ok
+[553/3551] matrix-pair-MUL24-SHFT2.m1.impl  ok
+[554/3551] matrix-pair-MUL24-SHFT2.m2.vc  ok
+[555/3551] matrix-pair-MUL24-SHFT2.m3.vc  ok
+[556/3551] matrix-pair-MUL24-SHFT2.m4.vc  ok
+[557/3551] matrix-pair-MUL24-SHFT2.m5.vb  ok
+[558/3551] matrix-pair-MUL24-SHFT2.m5.vc  ok
+[559/3551] matrix-pair-MUL24-SHFT2.m6.vb  ok
+[560/3551] matrix-pair-MUL24-TRANSP.impl  ok
+[561/3551] matrix-pair-MUL24-STORE  ok
+[562/3551] matrix-pair-MUL24-CONFIG.L12  ok
+[563/3551] matrix-pair-MUL24-LOADI.lower  ok
+[564/3551] matrix-pair-MUL24-LOADI.upper  ok
+[565/3551] matrix-pair-MUL24-LOAD.lo16  ok
+[566/3551] matrix-pair-MUL24-LOAD.hi16  ok
+[567/3551] matrix-pair-MUL24-LOADI.full  ok
+[568/3551] matrix-pair-MUL24-MOV.waw  ok
+[569/3551] matrix-single-MUL24.upper  ok
+[570/3551] matrix-pair-MUL24.upper-MOV.vc  ok
+[571/3551] matrix-pair-MUL24.upper-ABS.vc  ok
+[572/3551] matrix-pair-MUL24.upper-MAD.va  ok
+[573/3551] matrix-pair-MUL24.upper-MAD.vb  ok
+[574/3551] matrix-pair-MUL24.upper-MAD.vc  ok
+[575/3551] matrix-pair-MUL24.upper-MUL.va  ok
+[576/3551] matrix-pair-MUL24.upper-ADD.vc  ok
+[577/3551] matrix-pair-MUL24.upper-ADDI.vd  ok
+[578/3551] matrix-pair-MUL24.upper-MULI.vd  ok
+[579/3551] matrix-pair-MUL24.upper-MUL24.va  ok
+[580/3551] matrix-pair-MUL24.upper-MUL24.vb  ok
+[581/3551] matrix-pair-MUL24.upper-LUT.impl  ok
+[582/3551] matrix-pair-MUL24.upper-LUTFP32.impl  ok
+[583/3551] matrix-pair-MUL24.upper-LUTFP32.mirror8  ok
+[584/3551] matrix-pair-MUL24.upper-IADD.vc.imm  ok
+[585/3551] matrix-pair-MUL24.upper-IADD.vc.reg  ok
+[586/3551] matrix-pair-MUL24.upper-IADD.vd.reg  ok
+[587/3551] matrix-pair-MUL24.upper-IADD.vd.sub  ok
+[588/3551] matrix-pair-MUL24.upper-SHFT.vd.imm  ok
+[589/3551] matrix-pair-MUL24.upper-SHFT.vd.reg  ok
+[590/3551] matrix-pair-MUL24.upper-SHFT.vc.reg  ok
+[591/3551] matrix-pair-MUL24.upper-SHFT.vc.immvc  ok
+[592/3551] matrix-pair-MUL24.upper-AND.vc  ok
+[593/3551] matrix-pair-MUL24.upper-AND.vd  ok
+[594/3551] matrix-pair-MUL24.upper-AND.vb  ok
+[595/3551] matrix-pair-MUL24.upper-OR.vb  ok
+[596/3551] matrix-pair-MUL24.upper-OR.vd  ok
+[597/3551] matrix-pair-MUL24.upper-XOR.vc  ok
+[598/3551] matrix-pair-MUL24.upper-XOR.vd  ok
+[599/3551] matrix-pair-MUL24.upper-NOT.vc  ok
+[600/3551] matrix-pair-MUL24.upper-LZ.vc  ok
+[601/3551] matrix-pair-MUL24.upper-EXEXP.vc  ok
+[602/3551] matrix-pair-MUL24.upper-EXMAN.vc  ok
+[603/3551] matrix-pair-MUL24.upper-SETEXP.vc.imm  ok
+[604/3551] matrix-pair-MUL24.upper-SETEXP.vd  ok
+[605/3551] matrix-pair-MUL24.upper-SETEXP.vc.reg  ok
+[606/3551] matrix-pair-MUL24.upper-SETMAN.vc.imm  ok
+[607/3551] matrix-pair-MUL24.upper-SETMAN.vd  ok
+[608/3551] matrix-pair-MUL24.upper-SETSGN.vc.imm  ok
+[609/3551] matrix-pair-MUL24.upper-SETSGN.vd  ok
+[610/3551] matrix-pair-MUL24.upper-DIVP2.vc  ok
+[611/3551] matrix-pair-MUL24.upper-ARECIP.vc  ok
+[612/3551] matrix-pair-MUL24.upper-ARECIP.cond.vb  ok
+[613/3551] matrix-pair-MUL24.upper-ARECIP.cond.vc  ok
+[614/3551] matrix-pair-MUL24.upper-CAST.vc  ok
+[615/3551] matrix-pair-MUL24.upper-STOCHRND.vc  ok
+[616/3551] matrix-pair-MUL24.upper-STOCHRND.vb  ok
+[617/3551] matrix-pair-MUL24.upper-SETCC.vc  ok
+[618/3551] matrix-pair-MUL24.upper-GT.vc  ok
+[619/3551] matrix-pair-MUL24.upper-GT.vd  ok
+[620/3551] matrix-pair-MUL24.upper-LE.vd  ok
+[621/3551] matrix-pair-MUL24.upper-SWAP.m0.vd  ok
+[622/3551] matrix-pair-MUL24.upper-SWAP.m0.vc  ok
+[623/3551] matrix-pair-MUL24.upper-SWAP.m1.vd  ok
+[624/3551] matrix-pair-MUL24.upper-SWAP.m1.vc  ok
+[625/3551] matrix-pair-MUL24.upper-SHFT2.m0.impl  ok
+[626/3551] matrix-pair-MUL24.upper-SHFT2.m1.impl  ok
+[627/3551] matrix-pair-MUL24.upper-SHFT2.m2.vc  ok
+[628/3551] matrix-pair-MUL24.upper-SHFT2.m3.vc  ok
+[629/3551] matrix-pair-MUL24.upper-SHFT2.m4.vc  ok
+[630/3551] matrix-pair-MUL24.upper-SHFT2.m5.vb  ok
+[631/3551] matrix-pair-MUL24.upper-SHFT2.m5.vc  ok
+[632/3551] matrix-pair-MUL24.upper-SHFT2.m6.vb  ok
+[633/3551] matrix-pair-MUL24.upper-TRANSP.impl  ok
+[634/3551] matrix-pair-MUL24.upper-STORE  ok
+[635/3551] matrix-pair-MUL24.upper-CONFIG.L12  ok
+Traceback (most recent call last):
+  File "/home/boop/tenstorrent/blackhole-py/sims/probes/run.py", line 98, in main
+    rec = mod.run(card, case, case.get('timeout', a.timeout))
+  File "/home/boop/tenstorrent/blackhole-py/sims/probes/sfpu.py", line 627, in run
+    return RUN[case['group']](card, case, timeout)
+           ~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^
+  File "/home/boop/tenstorrent/blackhole-py/sims/probes/sfpu.py", line 427, in run_matrix
+    s, spread, rows = m_slope(card, [prod, *[NOP] * gap, cons], timeout)
+                      ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/boop/tenstorrent/blackhole-py/sims/probes/sfpu.py", line 361, in m_slope
+    image = _loop_image(m_setup() if setup is None else setup, [w for _ in range(BODY) for w in unit], tail)
+  File "/home/boop/tenstorrent/blackhole-py/sims/probes/sfpu.py", line 112, in _loop_image
+    return build('k_sfpu_loop.c', 'trisc1', **defines)
+  File "/home/boop/tenstorrent/blackhole-py/sims/probes/tile.py", line 41, in build
+    return fw.program({role: ([str(HERE / src)], flags)})[role]
+           ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/boop/tenstorrent/blackhole-py/fw/__init__.py", line 76, in program
+    a, b = (compile(srcs, (CODE[role] + s, CODE_SIZE[role]), ["-mcmodel=medany", *flags]) for s in (0, SLOT_STRIDE))
+    ^^^^
+  File "/home/boop/tenstorrent/blackhole-py/fw/__init__.py", line 76, in <genexpr>
+    a, b = (compile(srcs, (CODE[role] + s, CODE_SIZE[role]), ["-mcmodel=medany", *flags]) for s in (0, SLOT_STRIDE))
+            ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/boop/tenstorrent/blackhole-py/fw/__init__.py", line 68, in compile
+    os.replace(shutil.copy(f"{d}/fw.bin", f"{out}.{os.getpid()}.{threading.get_ident()}.tmp"), out)
+               ~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.14/shutil.py", line 489, in copy
+    copyfile(src, dst, follow_symlinks=follow_symlinks)
+    ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.14/shutil.py", line 328, in copyfile
+    _fastcopy_copy_file_range(fsrc, fdst)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^
+  File "/usr/local/lib/python3.14/shutil.py", line 150, in _fastcopy_copy_file_range
+    blocksize = _determine_linux_fastcopy_blocksize(infd)
+  File "/usr/local/lib/python3.14/shutil.py", line 128, in _determine_linux_fastcopy_blocksize
+    blocksize = max(os.fstat(infd).st_size, 2 ** 23)  # min 8 MiB
+                    ~~~~~~~~^^^^^^
+KeyboardInterrupt
+
+635 recorded, 0 soft failures, 1 hard failure; 122.19 s
+STOPPED at matrix-pair-MUL24.upper-LOADI.lower: KeyboardInterrupt: 
+card 1: telemetry ok (state=idle aiclk=800 asic_c=70.0 board_w=99 pcie_gen=3 pcie_width=1). Nothing was reset.
+  watch:   python3 smi.py -d 1
+  reset:   python3 smi.py -r 1   (by hand, only if needed)
+  resume:  rerun the same command (the broken case is skipped; --retry-failed to rerun it)

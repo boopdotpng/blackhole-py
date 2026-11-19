@@ -1,0 +1,1924 @@
+### 18:58:25 STEP riscv  -> sims/results/2026-11-18-l0-riscv-card0.jsonl
+1203 selected, 0 done, 0 failed before, 1203 to run
+card 0: state=idle aiclk=800 asic_c=53.2 board_w=91 pcie_gen=5 pcie_width=16
+[1/1203] empty-brisc  median 0.125
+[2/1203] addi_dep-brisc  median 1.125
+[3/1203] add_dep-brisc  median 1.125
+[4/1203] xor_dep-brisc  median 1.125
+[5/1203] mul_dep-brisc  median 2.0625
+[6/1203] mul_ind4-brisc  median 1.125
+[7/1203] divu_one-brisc  median 2.125
+[8/1203] divu_large-brisc  median 33.125
+[9/1203] remu_large-brisc  median 33.125
+[10/1203] fence-brisc  median 4.125
+[11/1203] csr_cycle-brisc  median 4.125
+[12/1203] load_l1_hot_dep-brisc  median 2.1521
+[13/1203] load_l1_miss_dep-brisc  median 8.22
+[14/1203] store_l1_same-brisc  median 1.125
+[15/1203] store_l1_coalesced-brisc  median 1.125
+[16/1203] fadd_dep-brisc  median 2.125
+[17/1203] fadd_ind4-brisc  median 1.125
+[18/1203] fmul_dep-brisc  median 2.125
+[19/1203] fmadd_dep-brisc  median 2.125
+[20/1203] load_l1_hot_dep-l0on-brisc  median 2.158
+[21/1203] load_l1_hot_dep-l0on-noflush-brisc  median 2.0625
+[22/1203] load_l1_miss_dep-l0on-brisc  median 8.2214
+[23/1203] load_l1_miss_dep-l0on-noflush-brisc  median 8.2983
+[24/1203] local_load_dep-brisc  median 2.0625
+[25/1203] empty-ncrisc  median 0.125
+[26/1203] addi_dep-ncrisc  median 1.125
+[27/1203] add_dep-ncrisc  median 1.125
+[28/1203] xor_dep-ncrisc  median 1.125
+[29/1203] mul_dep-ncrisc  median 2.0625
+[30/1203] mul_ind4-ncrisc  median 1.125
+[31/1203] divu_one-ncrisc  median 2.125
+[32/1203] divu_large-ncrisc  median 33.125
+[33/1203] remu_large-ncrisc  median 33.125
+[34/1203] fence-ncrisc  median 4.125
+[35/1203] csr_cycle-ncrisc  median 4.125
+[36/1203] load_l1_hot_dep-ncrisc  median 2.1404
+[37/1203] load_l1_miss_dep-ncrisc  median 8.2205
+[38/1203] store_l1_same-ncrisc  median 1.125
+[39/1203] store_l1_coalesced-ncrisc  median 1.125
+[40/1203] fadd_dep-ncrisc  median 2.125
+[41/1203] fadd_ind4-ncrisc  median 1.125
+[42/1203] fmul_dep-ncrisc  median 2.125
+[43/1203] fmadd_dep-ncrisc  median 2.125
+[44/1203] load_l1_hot_dep-l0on-ncrisc  median 2.155
+[45/1203] load_l1_hot_dep-l0on-noflush-ncrisc  median 2.0625
+  load_l1_miss_dep-l0on-ncrisc: differs from expect (got 8.249, expect 7.9993 [riscv-l0-enabled-card0.jsonl], sinks [[229632], [229632], [229632]])
+[46/1203] load_l1_miss_dep-l0on-ncrisc  median 8.249
+[47/1203] load_l1_miss_dep-l0on-noflush-ncrisc  median 8.2417
+[48/1203] local_load_dep-ncrisc  median 2.0625
+[49/1203] empty-trisc0  median 0.125
+[50/1203] addi_dep-trisc0  median 1.125
+[51/1203] add_dep-trisc0  median 1.125
+[52/1203] xor_dep-trisc0  median 1.125
+[53/1203] mul_dep-trisc0  median 2.0625
+[54/1203] mul_ind4-trisc0  median 1.125
+[55/1203] divu_one-trisc0  median 2.125
+[56/1203] divu_large-trisc0  median 33.125
+[57/1203] remu_large-trisc0  median 33.125
+[58/1203] fence-trisc0  median 4.125
+[59/1203] csr_cycle-trisc0  median 4.125
+[60/1203] load_l1_hot_dep-trisc0  median 2.1487
+  load_l1_miss_dep-trisc0: differs from expect (got 8.2566, expect 7.9998 [riscv-l0-enabled-card0.jsonl], sinks [[360704], [360704], [360704]])
+[61/1203] load_l1_miss_dep-trisc0  median 8.2566
+[62/1203] store_l1_same-trisc0  median 1.125
+[63/1203] store_l1_coalesced-trisc0  median 1.125
+[64/1203] fadd_dep-trisc0  median 2.125
+[65/1203] fadd_ind4-trisc0  median 1.125
+[66/1203] fmul_dep-trisc0  median 2.125
+[67/1203] fmadd_dep-trisc0  median 2.125
+[68/1203] load_l1_hot_dep-l0on-trisc0  median 2.137
+[69/1203] load_l1_hot_dep-l0on-noflush-trisc0  median 2.0625
+[70/1203] load_l1_miss_dep-l0on-trisc0  median 8.1909
+[71/1203] load_l1_miss_dep-l0on-noflush-trisc0  median 8.2539
+[72/1203] local_load_dep-trisc0  median 2.0625
+[73/1203] empty-trisc1  median 0.125
+[74/1203] addi_dep-trisc1  median 1.125
+[75/1203] add_dep-trisc1  median 1.125
+[76/1203] xor_dep-trisc1  median 1.125
+[77/1203] mul_dep-trisc1  median 2.0625
+[78/1203] mul_ind4-trisc1  median 1.125
+[79/1203] divu_one-trisc1  median 2.125
+[80/1203] divu_large-trisc1  median 33.125
+[81/1203] remu_large-trisc1  median 33.125
+[82/1203] fence-trisc1  median 4.125
+[83/1203] csr_cycle-trisc1  median 4.125
+[84/1203] load_l1_hot_dep-trisc1  median 2.1516
+[85/1203] load_l1_miss_dep-trisc1  median 8.125
+[86/1203] store_l1_same-trisc1  median 1.125
+[87/1203] store_l1_coalesced-trisc1  median 1.125
+[88/1203] fadd_dep-trisc1  median 2.125
+[89/1203] fadd_ind4-trisc1  median 1.125
+[90/1203] fmul_dep-trisc1  median 2.125
+[91/1203] fmadd_dep-trisc1  median 2.125
+[92/1203] load_l1_hot_dep-l0on-trisc1  median 2.158
+[93/1203] load_l1_hot_dep-l0on-noflush-trisc1  median 2.0625
+[94/1203] load_l1_miss_dep-l0on-trisc1  median 8.125
+[95/1203] load_l1_miss_dep-l0on-noflush-trisc1  median 8.1245
+[96/1203] local_load_dep-trisc1  median 2.0625
+[97/1203] empty-trisc2  median 0.125
+[98/1203] addi_dep-trisc2  median 1.125
+[99/1203] add_dep-trisc2  median 1.125
+[100/1203] xor_dep-trisc2  median 1.125
+[101/1203] mul_dep-trisc2  median 2.0625
+[102/1203] mul_ind4-trisc2  median 1.125
+[103/1203] divu_one-trisc2  median 2.125
+[104/1203] divu_large-trisc2  median 33.125
+[105/1203] remu_large-trisc2  median 33.125
+[106/1203] fence-trisc2  median 4.125
+[107/1203] csr_cycle-trisc2  median 4.125
+[108/1203] load_l1_hot_dep-trisc2  median 2.1641
+[109/1203] load_l1_miss_dep-trisc2  median 8.125
+[110/1203] store_l1_same-trisc2  median 1.125
+[111/1203] store_l1_coalesced-trisc2  median 1.125
+[112/1203] fadd_dep-trisc2  median 2.125
+[113/1203] fadd_ind4-trisc2  median 1.125
+[114/1203] fmul_dep-trisc2  median 2.125
+[115/1203] fmadd_dep-trisc2  median 2.125
+[116/1203] load_l1_hot_dep-l0on-trisc2  median 2.1636
+[117/1203] load_l1_hot_dep-l0on-noflush-trisc2  median 2.0625
+[118/1203] load_l1_miss_dep-l0on-trisc2  median 8.125
+[119/1203] load_l1_miss_dep-l0on-noflush-trisc2  median 8.125
+[120/1203] local_load_dep-trisc2  median 2.0625
+  l1_ld-lw-o0-brisc: differs from expect (got 3.2297, expect 9.125 [DOC], sinks [[164608], [164608], [164608]])
+[121/1203] l1_ld-lw-o0-brisc  median 3.2297
+  l1_ld-lw-o4-brisc: differs from expect (got 3.218, expect 9.125 [DOC], sinks [[164608], [164608], [164608]])
+[122/1203] l1_ld-lw-o4-brisc  median 3.218
+  l1_ld-lw-o12-brisc: differs from expect (got 3.2197, expect 9.125 [DOC], sinks [[164608], [164608], [164608]])
+[123/1203] l1_ld-lw-o12-brisc  median 3.2197
+  l1_ld-lh-o0-brisc: differs from expect (got 3.2009, expect 9.125 [DOC], sinks [[164608], [164608], [164608]])
+[124/1203] l1_ld-lh-o0-brisc  median 3.2009
+  l1_ld-lh-o2-brisc: differs from expect (got 3.2317, expect 9.125 [DOC], sinks [[164608], [164608], [164608]])
+[125/1203] l1_ld-lh-o2-brisc  median 3.2317
+  l1_ld-lh-o14-brisc: differs from expect (got 3.2415, expect 9.125 [DOC], sinks [[164608], [164608], [164608]])
+[126/1203] l1_ld-lh-o14-brisc  median 3.2415
+  l1_ld-lhu-o0-brisc: differs from expect (got 3.2214, expect 9.125 [DOC], sinks [[164608], [164608], [164608]])
+[127/1203] l1_ld-lhu-o0-brisc  median 3.2214
+  l1_ld-lb-o0-brisc: differs from expect (got 3.2346, expect 9.125 [DOC], sinks [[164608], [164608], [164608]])
+[128/1203] l1_ld-lb-o0-brisc  median 3.2346
+  l1_ld-lb-o1-brisc: differs from expect (got 3.207, expect 9.125 [DOC], sinks [[164608], [164608], [164608]])
+[129/1203] l1_ld-lb-o1-brisc  median 3.207
+  l1_ld-lb-o15-brisc: differs from expect (got 3.2202, expect 9.125 [DOC], sinks [[164608], [164608], [164608]])
+[130/1203] l1_ld-lb-o15-brisc  median 3.2202
+  l1_ld-lbu-o0-brisc: differs from expect (got 3.1873, expect 9.125 [DOC], sinks [[164608], [164608], [164608]])
+[131/1203] l1_ld-lbu-o0-brisc  median 3.1873
+[132/1203] l1_ldtput-same-brisc  median 1.1489
+  l1_ldtput-lines-brisc: differs from expect (got 1.7898, expect 1.125 [HYP], sinks [[3], [3], [3]])
+[133/1203] l1_ldtput-lines-brisc  median 1.7898
+[134/1203] l1_ld-lw-o0-l0on-brisc  median 3.125
+[135/1203] l1_ld-lw-o4-l0on-brisc  median 3.125
+[136/1203] l1_ld-lw-o12-l0on-brisc  median 3.125
+[137/1203] l1_ld-lh-o0-l0on-brisc  median 3.125
+[138/1203] l1_ld-lh-o2-l0on-brisc  median 3.125
+[139/1203] l1_ld-lh-o14-l0on-brisc  median 3.125
+[140/1203] l1_ld-lhu-o0-l0on-brisc  median 3.125
+[141/1203] l1_ld-lb-o0-l0on-brisc  median 3.125
+[142/1203] l1_ld-lb-o1-l0on-brisc  median 3.125
+[143/1203] l1_ld-lb-o15-l0on-brisc  median 3.125
+[144/1203] l1_ld-lbu-o0-l0on-brisc  median 3.125
+[145/1203] l1_ldtput-same-l0on-brisc  median 1.125
+  l1_ldtput-lines-l0on-brisc: differs from expect (got 1.8093, expect 1.125 [HYP], sinks [[3], [3], [3]])
+[146/1203] l1_ldtput-lines-l0on-brisc  median 1.8093
+[147/1203] l0_ring-n1-s16-brisc  median 2.0625
+[148/1203] l0_ring-n2-s16-brisc  median 2.0625
+  l0_ring-n3-s16-brisc: differs from expect (got 2.5627, expect 2.0625 [HYP], sinks [[165904], [165920], [165904]])
+[149/1203] l0_ring-n3-s16-brisc  median 2.5627
+[150/1203] l0_ring-n4-s16-brisc  median 2.0632
+  l0_ring-n5-s16-brisc: differs from expect (got 8.4614, expect 8.125 [HYP], sinks [[165952], [165936], [165904]])
+[151/1203] l0_ring-n5-s16-brisc  median 8.4614
+[152/1203] l0_ring-n6-s16-brisc  median 8.2244
+[153/1203] l0_ring-n8-s16-brisc  median 8.1519
+[154/1203] l0_ring-n4-s64-brisc  median 2.0627
+[155/1203] l0_ring-n4-s1024-brisc  median 2.0625
+  l0_store_inval-brisc: differs from expect (got 3.061, expect 8.125 [HYP], sinks [[165888], [165888], [165888]])
+[156/1203] l0_store_inval-brisc  median 3.061
+  l1_ld-lw-o0-ncrisc: differs from expect (got 3.2275, expect 9.125 [DOC], sinks [[230144], [230144], [230144]])
+[157/1203] l1_ld-lw-o0-ncrisc  median 3.2275
+  l1_ld-lw-o4-ncrisc: differs from expect (got 3.2197, expect 9.125 [DOC], sinks [[230144], [230144], [230144]])
+[158/1203] l1_ld-lw-o4-ncrisc  median 3.2197
+  l1_ld-lw-o12-ncrisc: differs from expect (got 3.1951, expect 9.125 [DOC], sinks [[230144], [230144], [230144]])
+[159/1203] l1_ld-lw-o12-ncrisc  median 3.1951
+  l1_ld-lh-o0-ncrisc: differs from expect (got 3.2041, expect 9.125 [DOC], sinks [[230144], [230144], [230144]])
+[160/1203] l1_ld-lh-o0-ncrisc  median 3.2041
+  l1_ld-lh-o2-ncrisc: differs from expect (got 3.1997, expect 9.125 [DOC], sinks [[230144], [230144], [230144]])
+[161/1203] l1_ld-lh-o2-ncrisc  median 3.1997
+  l1_ld-lh-o14-ncrisc: differs from expect (got 3.2246, expect 9.125 [DOC], sinks [[230144], [230144], [230144]])
+[162/1203] l1_ld-lh-o14-ncrisc  median 3.2246
+  l1_ld-lhu-o0-ncrisc: differs from expect (got 3.2175, expect 9.125 [DOC], sinks [[230144], [230144], [230144]])
+[163/1203] l1_ld-lhu-o0-ncrisc  median 3.2175
+  l1_ld-lb-o0-ncrisc: differs from expect (got 3.2302, expect 9.125 [DOC], sinks [[230144], [230144], [230144]])
+[164/1203] l1_ld-lb-o0-ncrisc  median 3.2302
+  l1_ld-lb-o1-ncrisc: differs from expect (got 3.1938, expect 9.125 [DOC], sinks [[230144], [230144], [230144]])
+[165/1203] l1_ld-lb-o1-ncrisc  median 3.1938
+  l1_ld-lb-o15-ncrisc: differs from expect (got 3.2244, expect 9.125 [DOC], sinks [[230144], [230144], [230144]])
+[166/1203] l1_ld-lb-o15-ncrisc  median 3.2244
+  l1_ld-lbu-o0-ncrisc: differs from expect (got 3.2026, expect 9.125 [DOC], sinks [[230144], [230144], [230144]])
+[167/1203] l1_ld-lbu-o0-ncrisc  median 3.2026
+[168/1203] l1_ldtput-same-ncrisc  median 1.1438
+  l1_ldtput-lines-ncrisc: differs from expect (got 1.8081, expect 1.125 [HYP], sinks [[3], [3], [3]])
+[169/1203] l1_ldtput-lines-ncrisc  median 1.8081
+[170/1203] l1_ld-lw-o0-l0on-ncrisc  median 3.125
+[171/1203] l1_ld-lw-o4-l0on-ncrisc  median 3.125
+[172/1203] l1_ld-lw-o12-l0on-ncrisc  median 3.125
+[173/1203] l1_ld-lh-o0-l0on-ncrisc  median 3.125
+[174/1203] l1_ld-lh-o2-l0on-ncrisc  median 3.125
+[175/1203] l1_ld-lh-o14-l0on-ncrisc  median 3.125
+[176/1203] l1_ld-lhu-o0-l0on-ncrisc  median 3.125
+[177/1203] l1_ld-lb-o0-l0on-ncrisc  median 3.125
+[178/1203] l1_ld-lb-o1-l0on-ncrisc  median 3.125
+[179/1203] l1_ld-lb-o15-l0on-ncrisc  median 3.125
+[180/1203] l1_ld-lbu-o0-l0on-ncrisc  median 3.125
+[181/1203] l1_ldtput-same-l0on-ncrisc  median 1.125
+  l1_ldtput-lines-l0on-ncrisc: differs from expect (got 1.8079, expect 1.125 [HYP], sinks [[3], [3], [3]])
+[182/1203] l1_ldtput-lines-l0on-ncrisc  median 1.8079
+[183/1203] l0_ring-n1-s16-ncrisc  median 2.0625
+[184/1203] l0_ring-n2-s16-ncrisc  median 2.0625
+  l0_ring-n3-s16-ncrisc: differs from expect (got 2.5627, expect 2.0625 [HYP], sinks [[231440], [231456], [231440]])
+[185/1203] l0_ring-n3-s16-ncrisc  median 2.5627
+[186/1203] l0_ring-n4-s16-ncrisc  median 2.063
+  l0_ring-n5-s16-ncrisc: differs from expect (got 8.3838, expect 8.125 [HYP], sinks [[231488], [231472], [231440]])
+[187/1203] l0_ring-n5-s16-ncrisc  median 8.3838
+  l0_ring-n6-s16-ncrisc: differs from expect (got 8.3726, expect 8.125 [HYP], sinks [[231488], [231456], [231488]])
+[188/1203] l0_ring-n6-s16-ncrisc  median 8.3726
+[189/1203] l0_ring-n8-s16-ncrisc  median 8.2317
+[190/1203] l0_ring-n4-s64-ncrisc  median 2.0625
+[191/1203] l0_ring-n4-s1024-ncrisc  median 2.0625
+  l0_store_inval-ncrisc: differs from expect (got 3.061, expect 8.125 [HYP], sinks [[231424], [231424], [231424]])
+[192/1203] l0_store_inval-ncrisc  median 3.061
+  l1_ld-lw-o0-trisc0: differs from expect (got 3.2183, expect 9.125 [DOC], sinks [[361216], [361216], [361216]])
+[193/1203] l1_ld-lw-o0-trisc0  median 3.2183
+  l1_ld-lw-o4-trisc0: differs from expect (got 3.2056, expect 9.125 [DOC], sinks [[361216], [361216], [361216]])
+[194/1203] l1_ld-lw-o4-trisc0  median 3.2056
+  l1_ld-lw-o12-trisc0: differs from expect (got 3.217, expect 9.125 [DOC], sinks [[361216], [361216], [361216]])
+[195/1203] l1_ld-lw-o12-trisc0  median 3.217
+  l1_ld-lh-o0-trisc0: differs from expect (got 3.2407, expect 9.125 [DOC], sinks [[361216], [361216], [361216]])
+[196/1203] l1_ld-lh-o0-trisc0  median 3.2407
+  l1_ld-lh-o2-trisc0: differs from expect (got 3.2151, expect 9.125 [DOC], sinks [[361216], [361216], [361216]])
+[197/1203] l1_ld-lh-o2-trisc0  median 3.2151
+  l1_ld-lh-o14-trisc0: differs from expect (got 3.2236, expect 9.125 [DOC], sinks [[361216], [361216], [361216]])
+[198/1203] l1_ld-lh-o14-trisc0  median 3.2236
+  l1_ld-lhu-o0-trisc0: differs from expect (got 3.2144, expect 9.125 [DOC], sinks [[361216], [361216], [361216]])
+[199/1203] l1_ld-lhu-o0-trisc0  median 3.2144
+  l1_ld-lb-o0-trisc0: differs from expect (got 3.2268, expect 9.125 [DOC], sinks [[361216], [361216], [361216]])
+[200/1203] l1_ld-lb-o0-trisc0  median 3.2268
+  l1_ld-lb-o1-trisc0: differs from expect (got 3.2046, expect 9.125 [DOC], sinks [[361216], [361216], [361216]])
+[201/1203] l1_ld-lb-o1-trisc0  median 3.2046
+  l1_ld-lb-o15-trisc0: differs from expect (got 3.2158, expect 9.125 [DOC], sinks [[361216], [361216], [361216]])
+[202/1203] l1_ld-lb-o15-trisc0  median 3.2158
+  l1_ld-lbu-o0-trisc0: differs from expect (got 3.2229, expect 9.125 [DOC], sinks [[361216], [361216], [361216]])
+[203/1203] l1_ld-lbu-o0-trisc0  median 3.2229
+[204/1203] l1_ldtput-same-trisc0  median 1.1455
+  l1_ldtput-lines-trisc0: differs from expect (got 1.8091, expect 1.125 [HYP], sinks [[3], [3], [3]])
+[205/1203] l1_ldtput-lines-trisc0  median 1.8091
+[206/1203] l1_ld-lw-o0-l0on-trisc0  median 3.125
+[207/1203] l1_ld-lw-o4-l0on-trisc0  median 3.125
+[208/1203] l1_ld-lw-o12-l0on-trisc0  median 3.125
+[209/1203] l1_ld-lh-o0-l0on-trisc0  median 3.125
+[210/1203] l1_ld-lh-o2-l0on-trisc0  median 3.125
+[211/1203] l1_ld-lh-o14-l0on-trisc0  median 3.125
+[212/1203] l1_ld-lhu-o0-l0on-trisc0  median 3.125
+[213/1203] l1_ld-lb-o0-l0on-trisc0  median 3.125
+[214/1203] l1_ld-lb-o1-l0on-trisc0  median 3.125
+[215/1203] l1_ld-lb-o15-l0on-trisc0  median 3.125
+[216/1203] l1_ld-lbu-o0-l0on-trisc0  median 3.125
+[217/1203] l1_ldtput-same-l0on-trisc0  median 1.125
+  l1_ldtput-lines-l0on-trisc0: differs from expect (got 1.8059, expect 1.125 [HYP], sinks [[3], [3], [3]])
+[218/1203] l1_ldtput-lines-l0on-trisc0  median 1.8059
+[219/1203] l0_ring-n1-s16-trisc0  median 2.0625
+[220/1203] l0_ring-n2-s16-trisc0  median 2.0625
+  l0_ring-n3-s16-trisc0: differs from expect (got 2.5627, expect 2.0625 [HYP], sinks [[362512], [362528], [362512]])
+[221/1203] l0_ring-n3-s16-trisc0  median 2.5627
+[222/1203] l0_ring-n4-s16-trisc0  median 2.063
+  l0_ring-n5-s16-trisc0: differs from expect (got 8.5073, expect 8.125 [HYP], sinks [[362560], [362544], [362512]])
+[223/1203] l0_ring-n5-s16-trisc0  median 8.5073
+  l0_ring-n6-s16-trisc0: differs from expect (got 8.5081, expect 8.125 [HYP], sinks [[362560], [362528], [362560]])
+[224/1203] l0_ring-n6-s16-trisc0  median 8.5081
+[225/1203] l0_ring-n8-s16-trisc0  median 8.2131
+[226/1203] l0_ring-n4-s64-trisc0  median 2.062
+[227/1203] l0_ring-n4-s1024-trisc0  median 2.0625
+  l0_store_inval-trisc0: differs from expect (got 3.061, expect 8.125 [HYP], sinks [[362496], [362496], [362496]])
+[228/1203] l0_store_inval-trisc0  median 3.061
+  l1_ld-lw-o0-trisc1: differs from expect (got 3.2163, expect 9.125 [DOC], sinks [[426752], [426752], [426752]])
+[229/1203] l1_ld-lw-o0-trisc1  median 3.2163
+  l1_ld-lw-o4-trisc1: differs from expect (got 3.2314, expect 9.125 [DOC], sinks [[426752], [426752], [426752]])
+[230/1203] l1_ld-lw-o4-trisc1  median 3.2314
+  l1_ld-lw-o12-trisc1: differs from expect (got 3.2295, expect 9.125 [DOC], sinks [[426752], [426752], [426752]])
+[231/1203] l1_ld-lw-o12-trisc1  median 3.2295
+  l1_ld-lh-o0-trisc1: differs from expect (got 3.2407, expect 9.125 [DOC], sinks [[426752], [426752], [426752]])
+[232/1203] l1_ld-lh-o0-trisc1  median 3.2407
+  l1_ld-lh-o2-trisc1: differs from expect (got 3.1985, expect 9.125 [DOC], sinks [[426752], [426752], [426752]])
+[233/1203] l1_ld-lh-o2-trisc1  median 3.1985
+  l1_ld-lh-o14-trisc1: differs from expect (got 3.2178, expect 9.125 [DOC], sinks [[426752], [426752], [426752]])
+[234/1203] l1_ld-lh-o14-trisc1  median 3.2178
+  l1_ld-lhu-o0-trisc1: differs from expect (got 3.2397, expect 9.125 [DOC], sinks [[426752], [426752], [426752]])
+[235/1203] l1_ld-lhu-o0-trisc1  median 3.2397
+  l1_ld-lb-o0-trisc1: differs from expect (got 3.2146, expect 9.125 [DOC], sinks [[426752], [426752], [426752]])
+[236/1203] l1_ld-lb-o0-trisc1  median 3.2146
+  l1_ld-lb-o1-trisc1: differs from expect (got 3.2029, expect 9.125 [DOC], sinks [[426752], [426752], [426752]])
+[237/1203] l1_ld-lb-o1-trisc1  median 3.2029
+  l1_ld-lb-o15-trisc1: differs from expect (got 3.2305, expect 9.125 [DOC], sinks [[426752], [426752], [426752]])
+[238/1203] l1_ld-lb-o15-trisc1  median 3.2305
+  l1_ld-lbu-o0-trisc1: differs from expect (got 3.2061, expect 9.125 [DOC], sinks [[426752], [426752], [426752]])
+[239/1203] l1_ld-lbu-o0-trisc1  median 3.2061
+[240/1203] l1_ldtput-same-trisc1  median 1.1414
+  l1_ldtput-lines-trisc1: differs from expect (got 1.7727, expect 1.125 [HYP], sinks [[3], [3], [3]])
+[241/1203] l1_ldtput-lines-trisc1  median 1.7727
+[242/1203] l1_ld-lw-o0-l0on-trisc1  median 3.125
+[243/1203] l1_ld-lw-o4-l0on-trisc1  median 3.125
+[244/1203] l1_ld-lw-o12-l0on-trisc1  median 3.125
+[245/1203] l1_ld-lh-o0-l0on-trisc1  median 3.125
+[246/1203] l1_ld-lh-o2-l0on-trisc1  median 3.125
+[247/1203] l1_ld-lh-o14-l0on-trisc1  median 3.125
+[248/1203] l1_ld-lhu-o0-l0on-trisc1  median 3.125
+[249/1203] l1_ld-lb-o0-l0on-trisc1  median 3.125
+[250/1203] l1_ld-lb-o1-l0on-trisc1  median 3.125
+[251/1203] l1_ld-lb-o15-l0on-trisc1  median 3.125
+[252/1203] l1_ld-lbu-o0-l0on-trisc1  median 3.125
+[253/1203] l1_ldtput-same-l0on-trisc1  median 1.125
+  l1_ldtput-lines-l0on-trisc1: differs from expect (got 1.7727, expect 1.125 [HYP], sinks [[3], [3], [3]])
+[254/1203] l1_ldtput-lines-l0on-trisc1  median 1.7727
+[255/1203] l0_ring-n1-s16-trisc1  median 2.0625
+[256/1203] l0_ring-n2-s16-trisc1  median 2.0625
+  l0_ring-n3-s16-trisc1: differs from expect (got 2.5625, expect 2.0625 [HYP], sinks [[428048], [428064], [428048]])
+[257/1203] l0_ring-n3-s16-trisc1  median 2.5625
+[258/1203] l0_ring-n4-s16-trisc1  median 2.0625
+[259/1203] l0_ring-n5-s16-trisc1  median 7.9751
+[260/1203] l0_ring-n6-s16-trisc1  median 8.1426
+[261/1203] l0_ring-n8-s16-trisc1  median 8.1252
+[262/1203] l0_ring-n4-s64-trisc1  median 2.0625
+[263/1203] l0_ring-n4-s1024-trisc1  median 2.0623
+  l0_store_inval-trisc1: differs from expect (got 3.061, expect 8.125 [HYP], sinks [[428032], [428032], [428032]])
+[264/1203] l0_store_inval-trisc1  median 3.061
+  l1_ld-lw-o0-trisc2: differs from expect (got 3.2188, expect 9.125 [DOC], sinks [[492288], [492288], [492288]])
+[265/1203] l1_ld-lw-o0-trisc2  median 3.2188
+  l1_ld-lw-o4-trisc2: differs from expect (got 3.231, expect 9.125 [DOC], sinks [[492288], [492288], [492288]])
+[266/1203] l1_ld-lw-o4-trisc2  median 3.231
+  l1_ld-lw-o12-trisc2: differs from expect (got 3.2168, expect 9.125 [DOC], sinks [[492288], [492288], [492288]])
+[267/1203] l1_ld-lw-o12-trisc2  median 3.2168
+  l1_ld-lh-o0-trisc2: differs from expect (got 3.2144, expect 9.125 [DOC], sinks [[492288], [492288], [492288]])
+[268/1203] l1_ld-lh-o0-trisc2  median 3.2144
+  l1_ld-lh-o2-trisc2: differs from expect (got 3.1958, expect 9.125 [DOC], sinks [[492288], [492288], [492288]])
+[269/1203] l1_ld-lh-o2-trisc2  median 3.1958
+  l1_ld-lh-o14-trisc2: differs from expect (got 3.22, expect 9.125 [DOC], sinks [[492288], [492288], [492288]])
+[270/1203] l1_ld-lh-o14-trisc2  median 3.22
+  l1_ld-lhu-o0-trisc2: differs from expect (got 3.2212, expect 9.125 [DOC], sinks [[492288], [492288], [492288]])
+[271/1203] l1_ld-lhu-o0-trisc2  median 3.2212
+  l1_ld-lb-o0-trisc2: differs from expect (got 3.2468, expect 9.125 [DOC], sinks [[492288], [492288], [492288]])
+[272/1203] l1_ld-lb-o0-trisc2  median 3.2468
+  l1_ld-lb-o1-trisc2: differs from expect (got 3.2161, expect 9.125 [DOC], sinks [[492288], [492288], [492288]])
+[273/1203] l1_ld-lb-o1-trisc2  median 3.2161
+  l1_ld-lb-o15-trisc2: differs from expect (got 3.2371, expect 9.125 [DOC], sinks [[492288], [492288], [492288]])
+[274/1203] l1_ld-lb-o15-trisc2  median 3.2371
+  l1_ld-lbu-o0-trisc2: differs from expect (got 3.2249, expect 9.125 [DOC], sinks [[492288], [492288], [492288]])
+[275/1203] l1_ld-lbu-o0-trisc2  median 3.2249
+[276/1203] l1_ldtput-same-trisc2  median 1.1445
+  l1_ldtput-lines-trisc2: differs from expect (got 1.7727, expect 1.125 [HYP], sinks [[3], [3], [3]])
+[277/1203] l1_ldtput-lines-trisc2  median 1.7727
+[278/1203] l1_ld-lw-o0-l0on-trisc2  median 3.125
+[279/1203] l1_ld-lw-o4-l0on-trisc2  median 3.125
+[280/1203] l1_ld-lw-o12-l0on-trisc2  median 3.125
+[281/1203] l1_ld-lh-o0-l0on-trisc2  median 3.125
+[282/1203] l1_ld-lh-o2-l0on-trisc2  median 3.125
+[283/1203] l1_ld-lh-o14-l0on-trisc2  median 3.125
+[284/1203] l1_ld-lhu-o0-l0on-trisc2  median 3.125
+[285/1203] l1_ld-lb-o0-l0on-trisc2  median 3.125
+[286/1203] l1_ld-lb-o1-l0on-trisc2  median 3.125
+[287/1203] l1_ld-lb-o15-l0on-trisc2  median 3.125
+[288/1203] l1_ld-lbu-o0-l0on-trisc2  median 3.125
+[289/1203] l1_ldtput-same-l0on-trisc2  median 1.125
+  l1_ldtput-lines-l0on-trisc2: differs from expect (got 1.7729, expect 1.125 [HYP], sinks [[3], [3], [3]])
+[290/1203] l1_ldtput-lines-l0on-trisc2  median 1.7729
+[291/1203] l0_ring-n1-s16-trisc2  median 2.0625
+[292/1203] l0_ring-n2-s16-trisc2  median 2.0625
+  l0_ring-n3-s16-trisc2: differs from expect (got 2.5625, expect 2.0625 [HYP], sinks [[493584], [493600], [493584]])
+[293/1203] l0_ring-n3-s16-trisc2  median 2.5625
+[294/1203] l0_ring-n4-s16-trisc2  median 2.0625
+[295/1203] l0_ring-n5-s16-trisc2  median 7.9658
+[296/1203] l0_ring-n6-s16-trisc2  median 8.1414
+[297/1203] l0_ring-n8-s16-trisc2  median 8.125
+[298/1203] l0_ring-n4-s64-trisc2  median 2.0625
+[299/1203] l0_ring-n4-s1024-trisc2  median 2.0625
+  l0_store_inval-trisc2: differs from expect (got 3.061, expect 8.125 [HYP], sinks [[493568], [493568], [493568]])
+[300/1203] l0_store_inval-trisc2  median 3.061
+[301/1203] st-seq64-brisc  median 1.125
+[302/1203] st-rev64-brisc  median 1.125
+  st-stride16-brisc: differs from expect (got 5.5796, expect 5.125 [DOC], sinks [[64], [128], [256]])
+[303/1203] st-stride16-brisc  median 5.5796
+  st-stride64-brisc: differs from expect (got 5.5901, expect 5.125 [DOC], sinks [[64], [128], [256]])
+[304/1203] st-stride64-brisc  median 5.5901
+  st-stride128-brisc: differs from expect (got 5.5891, expect 5.125 [DOC], sinks [[64], [128], [256]])
+[305/1203] st-stride128-brisc  median 5.5891
+  st-alt8-brisc: differs from expect (got 6.0, expect 5.125 [DOC], sinks [[64], [128], [256]])
+[306/1203] st-alt8-brisc  median 6.0
+  st-pairs16-brisc: differs from expect (got 5.8779, expect 2.625 [DOC], sinks [[64], [128], [256]])
+[307/1203] st-pairs16-brisc  median 5.8779
+[308/1203] st-seqbyte-brisc  median 1.1255
+[309/1203] st-seqhalf-brisc  median 1.1252
+  st-stride16-gap1-brisc: differs from expect (got 5.5791, expect 5.125 [HYP], sinks [[1027], [2051], [4099]])
+[310/1203] st-stride16-gap1-brisc  median 5.5791
+  st-stride16-gap2-brisc: differs from expect (got 5.5808, expect 5.125 [HYP], sinks [[2051], [4099], [8195]])
+[311/1203] st-stride16-gap2-brisc  median 5.5808
+  st-stride16-gap4-brisc: differs from expect (got 6.125, expect 5.125 [HYP], sinks [[4099], [8195], [16387]])
+[312/1203] st-stride16-gap4-brisc  median 6.125
+[313/1203] st-local-same-brisc  median 1.125
+[314/1203] st-local-seq-brisc  median 1.125
+  st-mixed-l1-local-brisc: differs from expect (got 2.8711, expect 2.625 [HYP], sinks [[64], [128], [256]])
+[315/1203] st-mixed-l1-local-brisc  median 2.8711
+  fe-st_l1-brisc: differs from expect (got 10.25, expect 5.25 [HYP], sinks [[3], [3], [3]])
+[316/1203] fe-st_l1-brisc  median 10.25
+  fe-st4seq_l1-brisc: differs from expect (got 13.501, expect 8.5 [HYP], sinks [[3], [3], [3]])
+[317/1203] fe-st4seq_l1-brisc  median 13.501
+  fe-st4stride_l1-brisc: differs from expect (got 23.0, expect 24.5 [HYP], sinks [[3], [3], [3]])
+[318/1203] fe-st4stride_l1-brisc  median 23.0
+  fe-st_local-brisc: differs from expect (got 9.25, expect 5.25 [HYP], sinks [[3], [3], [3]])
+[319/1203] fe-st_local-brisc  median 9.25
+  fe-st_niu-brisc: differs from expect (got 9.25, expect 5.25 [HYP], sinks [[3], [3], [3]])
+[320/1203] fe-st_niu-brisc  median 9.25
+  fe-ld_l1-brisc: differs from expect (got 13.0034, expect 12.25 [HYP], sinks [[3], [3], [3]])
+[321/1203] fe-ld_l1-brisc  median 13.0034
+[322/1203] fe-ld_wall-brisc  median 11.25
+  fe-st_cfg-brisc: differs from expect (got 9.25, expect 5.25 [HYP], sinks [[3], [3], [3]])
+[323/1203] fe-st_cfg-brisc  median 9.25
+  fence-nosync-brisc: differs from expect (got 4.0, expect 4.125 [HYP], sinks [[3], [3], [3]])
+[324/1203] fence-nosync-brisc  median 4.0
+  stld-bypass-brisc: differs from expect (got 2.4675, expect 8.125 [DOC], sinks [[165120], [165120], [165120]])
+[325/1203] stld-bypass-brisc  median 2.4675
+  stld-sameline-brisc: differs from expect (got 2.4641, expect 8.125 [DOC], sinks [[165120], [165120], [165120]])
+[326/1203] stld-sameline-brisc  median 2.4641
+  stld-overlap-brisc: differs from expect (got 16.7432, expect 9.125 [HYP], sinks [[165120], [165120], [165120]])
+[327/1203] stld-overlap-brisc  median 16.7432
+  stld-overlap-local-brisc: differs from expect (got 4.0625, expect 3.125 [HYP], sinks [[4289724544], [4289724544], [4289724544]])
+[328/1203] stld-overlap-local-brisc  median 4.0625
+  ldbuf_bypass_off-brisc: differs from expect (got 19.4353, expect 9.125 [HYP], sinks [[165120], [165120], [165120]])
+[329/1203] ldbuf_bypass_off-brisc  median 19.4353
+  amo_dep-brisc: differs from expect (got 13.0022, expect 12.125 [DOC], sinks [[165120], [165120], [165120]])
+[330/1203] amo_dep-brisc  median 13.0022
+  amo_tput-brisc: differs from expect (got 13.0007, expect 12.125 [HYP], sinks [[1024], [2048], [4096]])
+[331/1203] amo_tput-brisc  median 13.0007
+[332/1203] st-seq64-ncrisc  median 1.125
+[333/1203] st-rev64-ncrisc  median 1.125
+  st-stride16-ncrisc: differs from expect (got 5.5781, expect 5.125 [DOC], sinks [[64], [128], [256]])
+[334/1203] st-stride16-ncrisc  median 5.5781
+  st-stride64-ncrisc: differs from expect (got 5.5891, expect 5.125 [DOC], sinks [[64], [128], [256]])
+[335/1203] st-stride64-ncrisc  median 5.5891
+  st-stride128-ncrisc: differs from expect (got 5.5891, expect 5.125 [DOC], sinks [[64], [128], [256]])
+[336/1203] st-stride128-ncrisc  median 5.5891
+  st-alt8-ncrisc: differs from expect (got 6.0, expect 5.125 [DOC], sinks [[64], [128], [256]])
+[337/1203] st-alt8-ncrisc  median 6.0
+  st-pairs16-ncrisc: differs from expect (got 5.8777, expect 2.625 [DOC], sinks [[64], [128], [256]])
+[338/1203] st-pairs16-ncrisc  median 5.8777
+[339/1203] st-seqbyte-ncrisc  median 1.1255
+[340/1203] st-seqhalf-ncrisc  median 1.125
+  st-stride16-gap1-ncrisc: differs from expect (got 5.5789, expect 5.125 [HYP], sinks [[1027], [2051], [4099]])
+[341/1203] st-stride16-gap1-ncrisc  median 5.5789
+  st-stride16-gap2-ncrisc: differs from expect (got 5.5786, expect 5.125 [HYP], sinks [[2051], [4099], [8195]])
+[342/1203] st-stride16-gap2-ncrisc  median 5.5786
+  st-stride16-gap4-ncrisc: differs from expect (got 6.125, expect 5.125 [HYP], sinks [[4099], [8195], [16387]])
+[343/1203] st-stride16-gap4-ncrisc  median 6.125
+[344/1203] st-local-same-ncrisc  median 1.125
+[345/1203] st-local-seq-ncrisc  median 1.125
+  st-mixed-l1-local-ncrisc: differs from expect (got 2.8687, expect 2.625 [HYP], sinks [[64], [128], [256]])
+[346/1203] st-mixed-l1-local-ncrisc  median 2.8687
+  fe-st_l1-ncrisc: differs from expect (got 10.25, expect 5.25 [HYP], sinks [[3], [3], [3]])
+[347/1203] fe-st_l1-ncrisc  median 10.25
+  fe-st4seq_l1-ncrisc: differs from expect (got 13.501, expect 8.5 [HYP], sinks [[3], [3], [3]])
+[348/1203] fe-st4seq_l1-ncrisc  median 13.501
+  fe-st4stride_l1-ncrisc: differs from expect (got 23.001, expect 24.5 [HYP], sinks [[3], [3], [3]])
+[349/1203] fe-st4stride_l1-ncrisc  median 23.001
+  fe-st_local-ncrisc: differs from expect (got 9.25, expect 5.25 [HYP], sinks [[3], [3], [3]])
+[350/1203] fe-st_local-ncrisc  median 9.25
+  fe-st_niu-ncrisc: differs from expect (got 9.25, expect 5.25 [HYP], sinks [[3], [3], [3]])
+[351/1203] fe-st_niu-ncrisc  median 9.25
+  fe-ld_l1-ncrisc: differs from expect (got 12.9995, expect 12.25 [HYP], sinks [[3], [3], [3]])
+[352/1203] fe-ld_l1-ncrisc  median 12.9995
+[353/1203] fe-ld_wall-ncrisc  median 11.25
+  fence-nosync-ncrisc: differs from expect (got 4.0, expect 4.125 [HYP], sinks [[3], [3], [3]])
+[354/1203] fence-nosync-ncrisc  median 4.0
+  stld-bypass-ncrisc: differs from expect (got 2.4482, expect 8.125 [DOC], sinks [[230656], [230656], [230656]])
+[355/1203] stld-bypass-ncrisc  median 2.4482
+  stld-sameline-ncrisc: differs from expect (got 2.5056, expect 8.125 [DOC], sinks [[230656], [230656], [230656]])
+[356/1203] stld-sameline-ncrisc  median 2.5056
+  stld-overlap-ncrisc: differs from expect (got 16.7466, expect 9.125 [HYP], sinks [[230656], [230656], [230656]])
+[357/1203] stld-overlap-ncrisc  median 16.7466
+  stld-overlap-local-ncrisc: differs from expect (got 4.0625, expect 3.125 [HYP], sinks [[4289724544], [4289724544], [4289724544]])
+[358/1203] stld-overlap-local-ncrisc  median 4.0625
+  ldbuf_bypass_off-ncrisc: differs from expect (got 19.4355, expect 9.125 [HYP], sinks [[230656], [230656], [230656]])
+[359/1203] ldbuf_bypass_off-ncrisc  median 19.4355
+  amo_dep-ncrisc: differs from expect (got 13.0015, expect 12.125 [DOC], sinks [[230656], [230656], [230656]])
+[360/1203] amo_dep-ncrisc  median 13.0015
+  amo_tput-ncrisc: differs from expect (got 13.002, expect 12.125 [HYP], sinks [[1024], [2048], [4096]])
+[361/1203] amo_tput-ncrisc  median 13.002
+[362/1203] st-seq64-trisc0  median 1.125
+[363/1203] st-rev64-trisc0  median 1.125
+  st-stride16-trisc0: differs from expect (got 5.5786, expect 5.125 [DOC], sinks [[64], [128], [256]])
+[364/1203] st-stride16-trisc0  median 5.5786
+  st-stride64-trisc0: differs from expect (got 5.5889, expect 5.125 [DOC], sinks [[64], [128], [256]])
+[365/1203] st-stride64-trisc0  median 5.5889
+  st-stride128-trisc0: differs from expect (got 5.5894, expect 5.125 [DOC], sinks [[64], [128], [256]])
+[366/1203] st-stride128-trisc0  median 5.5894
+  st-alt8-trisc0: differs from expect (got 6.0, expect 5.125 [DOC], sinks [[64], [128], [256]])
+[367/1203] st-alt8-trisc0  median 6.0
+  st-pairs16-trisc0: differs from expect (got 5.8772, expect 2.625 [DOC], sinks [[64], [128], [256]])
+[368/1203] st-pairs16-trisc0  median 5.8772
+[369/1203] st-seqbyte-trisc0  median 1.125
+[370/1203] st-seqhalf-trisc0  median 1.125
+  st-stride16-gap1-trisc0: differs from expect (got 5.5781, expect 5.125 [HYP], sinks [[1027], [2051], [4099]])
+[371/1203] st-stride16-gap1-trisc0  median 5.5781
+  st-stride16-gap2-trisc0: differs from expect (got 5.5791, expect 5.125 [HYP], sinks [[2051], [4099], [8195]])
+[372/1203] st-stride16-gap2-trisc0  median 5.5791
+  st-stride16-gap4-trisc0: differs from expect (got 6.125, expect 5.125 [HYP], sinks [[4099], [8195], [16387]])
+[373/1203] st-stride16-gap4-trisc0  median 6.125
+[374/1203] st-local-same-trisc0  median 1.125
+[375/1203] st-local-seq-trisc0  median 1.125
+  st-mixed-l1-local-trisc0: differs from expect (got 2.8726, expect 2.625 [HYP], sinks [[64], [128], [256]])
+[376/1203] st-mixed-l1-local-trisc0  median 2.8726
+  fe-st_l1-trisc0: differs from expect (got 10.25, expect 5.25 [HYP], sinks [[3], [3], [3]])
+[377/1203] fe-st_l1-trisc0  median 10.25
+  fe-st4seq_l1-trisc0: differs from expect (got 13.501, expect 8.5 [HYP], sinks [[3], [3], [3]])
+[378/1203] fe-st4seq_l1-trisc0  median 13.501
+  fe-st4stride_l1-trisc0: differs from expect (got 22.999, expect 24.5 [HYP], sinks [[3], [3], [3]])
+[379/1203] fe-st4stride_l1-trisc0  median 22.999
+  fe-st_local-trisc0: differs from expect (got 9.25, expect 5.25 [HYP], sinks [[3], [3], [3]])
+[380/1203] fe-st_local-trisc0  median 9.25
+  fe-st_niu-trisc0: differs from expect (got 9.25, expect 5.25 [HYP], sinks [[3], [3], [3]])
+[381/1203] fe-st_niu-trisc0  median 9.25
+  fe-ld_l1-trisc0: differs from expect (got 13.0044, expect 12.25 [HYP], sinks [[3], [3], [3]])
+[382/1203] fe-ld_l1-trisc0  median 13.0044
+[383/1203] fe-ld_wall-trisc0  median 11.25
+  fe-st_cfg-trisc0: differs from expect (got 9.25, expect 5.25 [HYP], sinks [[3], [3], [3]])
+[384/1203] fe-st_cfg-trisc0  median 9.25
+  fence-nosync-trisc0: differs from expect (got 4.0, expect 4.125 [HYP], sinks [[3], [3], [3]])
+[385/1203] fence-nosync-trisc0  median 4.0
+  stld-bypass-trisc0: differs from expect (got 2.4526, expect 8.125 [DOC], sinks [[361728], [361728], [361728]])
+[386/1203] stld-bypass-trisc0  median 2.4526
+  stld-sameline-trisc0: differs from expect (got 2.4521, expect 8.125 [DOC], sinks [[361728], [361728], [361728]])
+[387/1203] stld-sameline-trisc0  median 2.4521
+  stld-overlap-trisc0: differs from expect (got 16.7444, expect 9.125 [HYP], sinks [[361728], [361728], [361728]])
+[388/1203] stld-overlap-trisc0  median 16.7444
+  stld-overlap-local-trisc0: differs from expect (got 4.0625, expect 3.125 [HYP], sinks [[4289724544], [4289724544], [4289724544]])
+[389/1203] stld-overlap-local-trisc0  median 4.0625
+  ldbuf_bypass_off-trisc0: differs from expect (got 19.436, expect 9.125 [HYP], sinks [[361728], [361728], [361728]])
+[390/1203] ldbuf_bypass_off-trisc0  median 19.436
+  amo_dep-trisc0: differs from expect (got 13.0022, expect 12.125 [DOC], sinks [[361728], [361728], [361728]])
+[391/1203] amo_dep-trisc0  median 13.0022
+  amo_tput-trisc0: differs from expect (got 13.0012, expect 12.125 [HYP], sinks [[1024], [2048], [4096]])
+[392/1203] amo_tput-trisc0  median 13.0012
+[393/1203] st-seq64-trisc1  median 1.125
+[394/1203] st-rev64-trisc1  median 1.125
+[395/1203] st-stride16-trisc1  median 5.25
+[396/1203] st-stride64-trisc1  median 5.25
+[397/1203] st-stride128-trisc1  median 5.25
+  st-alt8-trisc1: differs from expect (got 6.0, expect 5.125 [DOC], sinks [[64], [128], [256]])
+[398/1203] st-alt8-trisc1  median 6.0
+  st-pairs16-trisc1: differs from expect (got 5.7468, expect 2.625 [DOC], sinks [[64], [128], [256]])
+[399/1203] st-pairs16-trisc1  median 5.7468
+[400/1203] st-seqbyte-trisc1  median 1.125
+[401/1203] st-seqhalf-trisc1  median 1.125
+[402/1203] st-stride16-gap1-trisc1  median 5.2495
+[403/1203] st-stride16-gap2-trisc1  median 5.2512
+  st-stride16-gap4-trisc1: differs from expect (got 6.125, expect 5.125 [HYP], sinks [[4099], [8195], [16387]])
+[404/1203] st-stride16-gap4-trisc1  median 6.125
+[405/1203] st-local-same-trisc1  median 1.125
+[406/1203] st-local-seq-trisc1  median 1.125
+[407/1203] st-mixed-l1-local-trisc1  median 2.6252
+  fe-st_l1-trisc1: differs from expect (got 10.25, expect 5.25 [HYP], sinks [[3], [3], [3]])
+[408/1203] fe-st_l1-trisc1  median 10.25
+  fe-st4seq_l1-trisc1: differs from expect (got 13.5, expect 8.5 [HYP], sinks [[3], [3], [3]])
+[409/1203] fe-st4seq_l1-trisc1  median 13.5
+  fe-st4stride_l1-trisc1: differs from expect (got 21.0029, expect 24.5 [HYP], sinks [[3], [3], [3]])
+[410/1203] fe-st4stride_l1-trisc1  median 21.0029
+  fe-st_local-trisc1: differs from expect (got 9.25, expect 5.25 [HYP], sinks [[3], [3], [3]])
+[411/1203] fe-st_local-trisc1  median 9.25
+  fe-st_niu-trisc1: differs from expect (got 9.25, expect 5.25 [HYP], sinks [[3], [3], [3]])
+[412/1203] fe-st_niu-trisc1  median 9.25
+  fe-ld_l1-trisc1: differs from expect (got 13.0, expect 12.25 [HYP], sinks [[3], [3], [3]])
+[413/1203] fe-ld_l1-trisc1  median 13.0
+[414/1203] fe-ld_wall-trisc1  median 11.25
+  fe-st_cfg-trisc1: differs from expect (got 9.25, expect 5.25 [HYP], sinks [[3], [3], [3]])
+[415/1203] fe-st_cfg-trisc1  median 9.25
+  fence-nosync-trisc1: differs from expect (got 4.0, expect 4.125 [HYP], sinks [[3], [3], [3]])
+[416/1203] fence-nosync-trisc1  median 4.0
+  stld-bypass-trisc1: differs from expect (got 2.4587, expect 8.125 [DOC], sinks [[427264], [427264], [427264]])
+[417/1203] stld-bypass-trisc1  median 2.4587
+  stld-sameline-trisc1: differs from expect (got 2.4797, expect 8.125 [DOC], sinks [[427264], [427264], [427264]])
+[418/1203] stld-sameline-trisc1  median 2.4797
+  stld-overlap-trisc1: differs from expect (got 16.0, expect 9.125 [HYP], sinks [[427264], [427264], [427264]])
+[419/1203] stld-overlap-trisc1  median 16.0
+  stld-overlap-local-trisc1: differs from expect (got 4.0625, expect 3.125 [HYP], sinks [[4289724544], [4289724544], [4289724544]])
+[420/1203] stld-overlap-local-trisc1  median 4.0625
+  ldbuf_bypass_off-trisc1: differs from expect (got 19.4355, expect 9.125 [HYP], sinks [[427264], [427264], [427264]])
+[421/1203] ldbuf_bypass_off-trisc1  median 19.4355
+  amo_dep-trisc1: differs from expect (got 13.0002, expect 12.125 [DOC], sinks [[427264], [427264], [427264]])
+[422/1203] amo_dep-trisc1  median 13.0002
+  amo_tput-trisc1: differs from expect (got 13.0, expect 12.125 [HYP], sinks [[1024], [2048], [4096]])
+[423/1203] amo_tput-trisc1  median 13.0
+[424/1203] st-seq64-trisc2  median 1.125
+[425/1203] st-rev64-trisc2  median 1.125
+[426/1203] st-stride16-trisc2  median 5.25
+[427/1203] st-stride64-trisc2  median 5.25
+[428/1203] st-stride128-trisc2  median 5.25
+  st-alt8-trisc2: differs from expect (got 6.0, expect 5.125 [DOC], sinks [[64], [128], [256]])
+[429/1203] st-alt8-trisc2  median 6.0
+  st-pairs16-trisc2: differs from expect (got 5.7476, expect 2.625 [DOC], sinks [[64], [128], [256]])
+[430/1203] st-pairs16-trisc2  median 5.7476
+[431/1203] st-seqbyte-trisc2  median 1.125
+[432/1203] st-seqhalf-trisc2  median 1.125
+[433/1203] st-stride16-gap1-trisc2  median 5.2485
+[434/1203] st-stride16-gap2-trisc2  median 5.2483
+  st-stride16-gap4-trisc2: differs from expect (got 6.125, expect 5.125 [HYP], sinks [[4099], [8195], [16387]])
+[435/1203] st-stride16-gap4-trisc2  median 6.125
+[436/1203] st-local-same-trisc2  median 1.125
+[437/1203] st-local-seq-trisc2  median 1.125
+[438/1203] st-mixed-l1-local-trisc2  median 2.625
+  fe-st_l1-trisc2: differs from expect (got 10.25, expect 5.25 [HYP], sinks [[3], [3], [3]])
+[439/1203] fe-st_l1-trisc2  median 10.25
+  fe-st4seq_l1-trisc2: differs from expect (got 13.5, expect 8.5 [HYP], sinks [[3], [3], [3]])
+[440/1203] fe-st4seq_l1-trisc2  median 13.5
+  fe-st4stride_l1-trisc2: differs from expect (got 21.0156, expect 24.5 [HYP], sinks [[3], [3], [3]])
+[441/1203] fe-st4stride_l1-trisc2  median 21.0156
+  fe-st_local-trisc2: differs from expect (got 10.25, expect 5.25 [HYP], sinks [[3], [3], [3]])
+[442/1203] fe-st_local-trisc2  median 10.25
+  fe-st_niu-trisc2: differs from expect (got 9.25, expect 5.25 [HYP], sinks [[3], [3], [3]])
+[443/1203] fe-st_niu-trisc2  median 9.25
+  fe-ld_l1-trisc2: differs from expect (got 13.0005, expect 12.25 [HYP], sinks [[3], [3], [3]])
+[444/1203] fe-ld_l1-trisc2  median 13.0005
+[445/1203] fe-ld_wall-trisc2  median 11.25
+  fe-st_cfg-trisc2: differs from expect (got 9.25, expect 5.25 [HYP], sinks [[3], [3], [3]])
+[446/1203] fe-st_cfg-trisc2  median 9.25
+  fence-nosync-trisc2: differs from expect (got 4.0, expect 4.125 [HYP], sinks [[3], [3], [3]])
+[447/1203] fence-nosync-trisc2  median 4.0
+  stld-bypass-trisc2: differs from expect (got 2.4612, expect 8.125 [DOC], sinks [[492800], [492800], [492800]])
+[448/1203] stld-bypass-trisc2  median 2.4612
+  stld-sameline-trisc2: differs from expect (got 2.4675, expect 8.125 [DOC], sinks [[492800], [492800], [492800]])
+[449/1203] stld-sameline-trisc2  median 2.4675
+  stld-overlap-trisc2: differs from expect (got 16.0, expect 9.125 [HYP], sinks [[492800], [492800], [492800]])
+[450/1203] stld-overlap-trisc2  median 16.0
+  stld-overlap-local-trisc2: differs from expect (got 5.0625, expect 3.125 [HYP], sinks [[4289724544], [4289724544], [4289724544]])
+[451/1203] stld-overlap-local-trisc2  median 5.0625
+  ldbuf_bypass_off-trisc2: differs from expect (got 19.4368, expect 9.125 [HYP], sinks [[492800], [492800], [492800]])
+[452/1203] ldbuf_bypass_off-trisc2  median 19.4368
+  amo_dep-trisc2: differs from expect (got 13.0015, expect 12.125 [DOC], sinks [[492800], [492800], [492800]])
+[453/1203] amo_dep-trisc2  median 13.0015
+  amo_tput-trisc2: differs from expect (got 13.0, expect 12.125 [HYP], sinks [[1024], [2048], [4096]])
+[454/1203] amo_tput-trisc2  median 13.0
+[455/1203] csr_instret-brisc  median 4.125
+[456/1203] csr_cfg0-brisc  median 4.125
+[457/1203] csr_misa-brisc  median 4.125
+[458/1203] csr_mhartid-brisc  median 4.125
+[459/1203] csr_fcsr-brisc  median 4.125
+[460/1203] csr_mcycle-brisc  median 4.125
+[461/1203] csr_cycle-nosync-brisc  median 1.125
+[462/1203] csrw_cfg1-brisc  median 4.125
+[463/1203] csrrwi_cfg1-brisc  median 4.125
+[464/1203] csr_cycle_alu-brisc  median 1.5
+[465/1203] tm-pair-none-brisc  median 1
+[466/1203] tm-pair-dep-brisc  median 9
+[467/1203] tm-pair-fence-brisc  median 11
+  tm-pair-csr-brisc: differs from expect (got 10, expect 5 [HYP], sinks [[3], [3], [3]])
+[468/1203] tm-pair-csr-brisc  median 10
+[469/1203] tm-cycle_ratio-brisc  median 1.125
+[470/1203] divu_mag-b2-brisc  median 6.125
+[471/1203] divu_mag-b3-brisc  median 6.125
+[472/1203] divu_mag-b4-brisc  median 6.125
+  divu_mag-b6-brisc: differs from expect (got 10.125, expect 7.125 [HYP], sinks [[21], [21], [21]])
+[473/1203] divu_mag-b6-brisc  median 10.125
+  divu_mag-b8-brisc: differs from expect (got 10.125, expect 9.125 [HYP], sinks [[85], [85], [85]])
+[474/1203] divu_mag-b8-brisc  median 10.125
+  divu_mag-b12-brisc: differs from expect (got 14.125, expect 13.125 [HYP], sinks [[1365], [1365], [1365]])
+[475/1203] divu_mag-b12-brisc  median 14.125
+  divu_mag-b16-brisc: differs from expect (got 18.125, expect 17.125 [HYP], sinks [[21845], [21845], [21845]])
+[476/1203] divu_mag-b16-brisc  median 18.125
+  divu_mag-b20-brisc: differs from expect (got 22.125, expect 21.125 [HYP], sinks [[349525], [349525], [349525]])
+[477/1203] divu_mag-b20-brisc  median 22.125
+  divu_mag-b24-brisc: differs from expect (got 26.125, expect 25.125 [HYP], sinks [[5592405], [5592405], [5592405]])
+[478/1203] divu_mag-b24-brisc  median 26.125
+  divu_mag-b28-brisc: differs from expect (got 30.125, expect 29.125 [HYP], sinks [[89478485], [89478485], [89478485]])
+[479/1203] divu_mag-b28-brisc  median 30.125
+  divu_mag-b31-brisc: differs from expect (got 33.125, expect 32.125 [HYP], sinks [[715827882], [715827882], [715827882]])
+[480/1203] divu_mag-b31-brisc  median 33.125
+[481/1203] divu_mag-b32-brisc  median 33.125
+[482/1203] divu_dvsr-b2-brisc  median 33.125
+[483/1203] divu_dvsr-b8-brisc  median 33.125
+[484/1203] divu_dvsr-b16-brisc  median 33.125
+[485/1203] divu_dvsr-b24-brisc  median 33.125
+[486/1203] divu_dvsr-b31-brisc  median 33.125
+[487/1203] divu_zero-brisc  median 2.125
+[488/1203] div_intmin_m1-brisc  median 2.125
+[489/1203] rem_intmin_m1-brisc  median 2.125
+[490/1203] div_m1_3-brisc  median 6.125
+[491/1203] div_m2p31_3-brisc  median 33.125
+  rem_large-brisc: differs from expect (got 33.125, expect 32.125 [HYP], sinks [[1], [1], [1]])
+[492/1203] rem_large-brisc  median 33.125
+[493/1203] mulhu_dep-brisc  median 2.0625
+[494/1203] csr_instret-ncrisc  median 4.125
+[495/1203] csr_cfg0-ncrisc  median 4.125
+[496/1203] csr_misa-ncrisc  median 4.125
+[497/1203] csr_mhartid-ncrisc  median 4.125
+[498/1203] csr_fcsr-ncrisc  median 4.125
+[499/1203] csr_mcycle-ncrisc  median 4.125
+[500/1203] csr_cycle-nosync-ncrisc  median 1.125
+[501/1203] csrw_cfg1-ncrisc  median 4.125
+[502/1203] csrrwi_cfg1-ncrisc  median 4.125
+[503/1203] csr_cycle_alu-ncrisc  median 1.5
+[504/1203] tm-pair-none-ncrisc  median 1
+[505/1203] tm-pair-dep-ncrisc  median 9
+[506/1203] tm-pair-fence-ncrisc  median 11
+  tm-pair-csr-ncrisc: differs from expect (got 10, expect 5 [HYP], sinks [[3], [3], [3]])
+[507/1203] tm-pair-csr-ncrisc  median 10
+[508/1203] tm-cycle_ratio-ncrisc  median 1.125
+[509/1203] divu_mag-b2-ncrisc  median 6.125
+[510/1203] divu_mag-b3-ncrisc  median 6.125
+[511/1203] divu_mag-b4-ncrisc  median 6.125
+  divu_mag-b6-ncrisc: differs from expect (got 10.125, expect 7.125 [HYP], sinks [[21], [21], [21]])
+[512/1203] divu_mag-b6-ncrisc  median 10.125
+  divu_mag-b8-ncrisc: differs from expect (got 10.125, expect 9.125 [HYP], sinks [[85], [85], [85]])
+[513/1203] divu_mag-b8-ncrisc  median 10.125
+  divu_mag-b12-ncrisc: differs from expect (got 14.125, expect 13.125 [HYP], sinks [[1365], [1365], [1365]])
+[514/1203] divu_mag-b12-ncrisc  median 14.125
+  divu_mag-b16-ncrisc: differs from expect (got 18.125, expect 17.125 [HYP], sinks [[21845], [21845], [21845]])
+[515/1203] divu_mag-b16-ncrisc  median 18.125
+  divu_mag-b20-ncrisc: differs from expect (got 22.125, expect 21.125 [HYP], sinks [[349525], [349525], [349525]])
+[516/1203] divu_mag-b20-ncrisc  median 22.125
+  divu_mag-b24-ncrisc: differs from expect (got 26.125, expect 25.125 [HYP], sinks [[5592405], [5592405], [5592405]])
+[517/1203] divu_mag-b24-ncrisc  median 26.125
+  divu_mag-b28-ncrisc: differs from expect (got 30.125, expect 29.125 [HYP], sinks [[89478485], [89478485], [89478485]])
+[518/1203] divu_mag-b28-ncrisc  median 30.125
+  divu_mag-b31-ncrisc: differs from expect (got 33.125, expect 32.125 [HYP], sinks [[715827882], [715827882], [715827882]])
+[519/1203] divu_mag-b31-ncrisc  median 33.125
+[520/1203] divu_mag-b32-ncrisc  median 33.125
+[521/1203] divu_dvsr-b2-ncrisc  median 33.125
+[522/1203] divu_dvsr-b8-ncrisc  median 33.125
+[523/1203] divu_dvsr-b16-ncrisc  median 33.125
+[524/1203] divu_dvsr-b24-ncrisc  median 33.125
+[525/1203] divu_dvsr-b31-ncrisc  median 33.125
+[526/1203] divu_zero-ncrisc  median 2.125
+[527/1203] div_intmin_m1-ncrisc  median 2.125
+[528/1203] rem_intmin_m1-ncrisc  median 2.125
+[529/1203] div_m1_3-ncrisc  median 6.125
+[530/1203] div_m2p31_3-ncrisc  median 33.125
+  rem_large-ncrisc: differs from expect (got 33.125, expect 32.125 [HYP], sinks [[1], [1], [1]])
+[531/1203] rem_large-ncrisc  median 33.125
+[532/1203] mulhu_dep-ncrisc  median 2.0625
+[533/1203] csr_instret-trisc0  median 4.125
+[534/1203] csr_cfg0-trisc0  median 4.125
+[535/1203] csr_misa-trisc0  median 4.125
+[536/1203] csr_mhartid-trisc0  median 4.125
+[537/1203] csr_fcsr-trisc0  median 4.125
+[538/1203] csr_mcycle-trisc0  median 4.125
+[539/1203] csr_qstatus-trisc0  median 4.125
+[540/1203] csr_cycle-nosync-trisc0  median 1.125
+[541/1203] csrw_cfg1-trisc0  median 4.125
+[542/1203] csrrwi_cfg1-trisc0  median 4.125
+[543/1203] csr_cycle_alu-trisc0  median 1.5
+[544/1203] tm-pair-none-trisc0  median 1
+[545/1203] tm-pair-dep-trisc0  median 9
+[546/1203] tm-pair-fence-trisc0  median 11
+  tm-pair-csr-trisc0: differs from expect (got 10, expect 5 [HYP], sinks [[3], [3], [3]])
+[547/1203] tm-pair-csr-trisc0  median 10
+[548/1203] tm-cycle_ratio-trisc0  median 1.125
+[549/1203] divu_mag-b2-trisc0  median 6.125
+[550/1203] divu_mag-b3-trisc0  median 6.125
+[551/1203] divu_mag-b4-trisc0  median 6.125
+  divu_mag-b6-trisc0: differs from expect (got 10.125, expect 7.125 [HYP], sinks [[21], [21], [21]])
+[552/1203] divu_mag-b6-trisc0  median 10.125
+  divu_mag-b8-trisc0: differs from expect (got 10.125, expect 9.125 [HYP], sinks [[85], [85], [85]])
+[553/1203] divu_mag-b8-trisc0  median 10.125
+  divu_mag-b12-trisc0: differs from expect (got 14.125, expect 13.125 [HYP], sinks [[1365], [1365], [1365]])
+[554/1203] divu_mag-b12-trisc0  median 14.125
+  divu_mag-b16-trisc0: differs from expect (got 18.125, expect 17.125 [HYP], sinks [[21845], [21845], [21845]])
+[555/1203] divu_mag-b16-trisc0  median 18.125
+  divu_mag-b20-trisc0: differs from expect (got 22.125, expect 21.125 [HYP], sinks [[349525], [349525], [349525]])
+[556/1203] divu_mag-b20-trisc0  median 22.125
+  divu_mag-b24-trisc0: differs from expect (got 26.125, expect 25.125 [HYP], sinks [[5592405], [5592405], [5592405]])
+[557/1203] divu_mag-b24-trisc0  median 26.125
+  divu_mag-b28-trisc0: differs from expect (got 30.125, expect 29.125 [HYP], sinks [[89478485], [89478485], [89478485]])
+[558/1203] divu_mag-b28-trisc0  median 30.125
+  divu_mag-b31-trisc0: differs from expect (got 33.125, expect 32.125 [HYP], sinks [[715827882], [715827882], [715827882]])
+[559/1203] divu_mag-b31-trisc0  median 33.125
+[560/1203] divu_mag-b32-trisc0  median 33.125
+[561/1203] divu_dvsr-b2-trisc0  median 33.125
+[562/1203] divu_dvsr-b8-trisc0  median 33.125
+[563/1203] divu_dvsr-b16-trisc0  median 33.125
+[564/1203] divu_dvsr-b24-trisc0  median 33.125
+[565/1203] divu_dvsr-b31-trisc0  median 33.125
+[566/1203] divu_zero-trisc0  median 2.125
+[567/1203] div_intmin_m1-trisc0  median 2.125
+[568/1203] rem_intmin_m1-trisc0  median 2.125
+[569/1203] div_m1_3-trisc0  median 6.125
+[570/1203] div_m2p31_3-trisc0  median 33.125
+  rem_large-trisc0: differs from expect (got 33.125, expect 32.125 [HYP], sinks [[1], [1], [1]])
+[571/1203] rem_large-trisc0  median 33.125
+[572/1203] mulhu_dep-trisc0  median 2.0625
+[573/1203] csr_instret-trisc1  median 4.125
+[574/1203] csr_cfg0-trisc1  median 4.125
+[575/1203] csr_misa-trisc1  median 4.125
+[576/1203] csr_mhartid-trisc1  median 4.125
+[577/1203] csr_fcsr-trisc1  median 4.125
+[578/1203] csr_mcycle-trisc1  median 4.125
+[579/1203] csr_qstatus-trisc1  median 4.125
+[580/1203] csr_cycle-nosync-trisc1  median 1.125
+[581/1203] csrw_cfg1-trisc1  median 4.125
+[582/1203] csrrwi_cfg1-trisc1  median 4.125
+[583/1203] csr_cycle_alu-trisc1  median 1.5
+[584/1203] tm-pair-none-trisc1  median 1
+[585/1203] tm-pair-dep-trisc1  median 9
+[586/1203] tm-pair-fence-trisc1  median 11
+  tm-pair-csr-trisc1: differs from expect (got 10, expect 5 [HYP], sinks [[3], [3], [3]])
+[587/1203] tm-pair-csr-trisc1  median 10
+[588/1203] tm-cycle_ratio-trisc1  median 1.125
+[589/1203] divu_mag-b2-trisc1  median 6.125
+[590/1203] divu_mag-b3-trisc1  median 6.125
+[591/1203] divu_mag-b4-trisc1  median 6.125
+  divu_mag-b6-trisc1: differs from expect (got 10.125, expect 7.125 [HYP], sinks [[21], [21], [21]])
+[592/1203] divu_mag-b6-trisc1  median 10.125
+  divu_mag-b8-trisc1: differs from expect (got 10.125, expect 9.125 [HYP], sinks [[85], [85], [85]])
+[593/1203] divu_mag-b8-trisc1  median 10.125
+  divu_mag-b12-trisc1: differs from expect (got 14.125, expect 13.125 [HYP], sinks [[1365], [1365], [1365]])
+[594/1203] divu_mag-b12-trisc1  median 14.125
+  divu_mag-b16-trisc1: differs from expect (got 18.125, expect 17.125 [HYP], sinks [[21845], [21845], [21845]])
+[595/1203] divu_mag-b16-trisc1  median 18.125
+  divu_mag-b20-trisc1: differs from expect (got 22.125, expect 21.125 [HYP], sinks [[349525], [349525], [349525]])
+[596/1203] divu_mag-b20-trisc1  median 22.125
+  divu_mag-b24-trisc1: differs from expect (got 26.125, expect 25.125 [HYP], sinks [[5592405], [5592405], [5592405]])
+[597/1203] divu_mag-b24-trisc1  median 26.125
+  divu_mag-b28-trisc1: differs from expect (got 30.125, expect 29.125 [HYP], sinks [[89478485], [89478485], [89478485]])
+[598/1203] divu_mag-b28-trisc1  median 30.125
+  divu_mag-b31-trisc1: differs from expect (got 33.125, expect 32.125 [HYP], sinks [[715827882], [715827882], [715827882]])
+[599/1203] divu_mag-b31-trisc1  median 33.125
+[600/1203] divu_mag-b32-trisc1  median 33.125
+[601/1203] divu_dvsr-b2-trisc1  median 33.125
+[602/1203] divu_dvsr-b8-trisc1  median 33.125
+[603/1203] divu_dvsr-b16-trisc1  median 33.125
+[604/1203] divu_dvsr-b24-trisc1  median 33.125
+[605/1203] divu_dvsr-b31-trisc1  median 33.125
+[606/1203] divu_zero-trisc1  median 2.125
+[607/1203] div_intmin_m1-trisc1  median 2.125
+[608/1203] rem_intmin_m1-trisc1  median 2.125
+[609/1203] div_m1_3-trisc1  median 6.125
+[610/1203] div_m2p31_3-trisc1  median 33.125
+  rem_large-trisc1: differs from expect (got 33.125, expect 32.125 [HYP], sinks [[1], [1], [1]])
+[611/1203] rem_large-trisc1  median 33.125
+[612/1203] mulhu_dep-trisc1  median 2.0625
+[613/1203] csr_instret-trisc2  median 4.125
+[614/1203] csr_cfg0-trisc2  median 4.125
+[615/1203] csr_misa-trisc2  median 4.125
+[616/1203] csr_mhartid-trisc2  median 4.125
+[617/1203] csr_fcsr-trisc2  median 4.125
+[618/1203] csr_mcycle-trisc2  median 4.125
+[619/1203] csr_qstatus-trisc2  median 4.125
+[620/1203] csr_cycle-nosync-trisc2  median 1.125
+[621/1203] csrw_cfg1-trisc2  median 4.125
+[622/1203] csrrwi_cfg1-trisc2  median 4.125
+[623/1203] csr_cycle_alu-trisc2  median 1.5
+[624/1203] tm-pair-none-trisc2  median 1
+[625/1203] tm-pair-dep-trisc2  median 9
+[626/1203] tm-pair-fence-trisc2  median 11
+  tm-pair-csr-trisc2: differs from expect (got 10, expect 5 [HYP], sinks [[3], [3], [3]])
+[627/1203] tm-pair-csr-trisc2  median 10
+[628/1203] tm-cycle_ratio-trisc2  median 1.125
+[629/1203] divu_mag-b2-trisc2  median 6.125
+[630/1203] divu_mag-b3-trisc2  median 6.125
+[631/1203] divu_mag-b4-trisc2  median 6.125
+  divu_mag-b6-trisc2: differs from expect (got 10.125, expect 7.125 [HYP], sinks [[21], [21], [21]])
+[632/1203] divu_mag-b6-trisc2  median 10.125
+  divu_mag-b8-trisc2: differs from expect (got 10.125, expect 9.125 [HYP], sinks [[85], [85], [85]])
+[633/1203] divu_mag-b8-trisc2  median 10.125
+  divu_mag-b12-trisc2: differs from expect (got 14.125, expect 13.125 [HYP], sinks [[1365], [1365], [1365]])
+[634/1203] divu_mag-b12-trisc2  median 14.125
+  divu_mag-b16-trisc2: differs from expect (got 18.125, expect 17.125 [HYP], sinks [[21845], [21845], [21845]])
+[635/1203] divu_mag-b16-trisc2  median 18.125
+  divu_mag-b20-trisc2: differs from expect (got 22.125, expect 21.125 [HYP], sinks [[349525], [349525], [349525]])
+[636/1203] divu_mag-b20-trisc2  median 22.125
+  divu_mag-b24-trisc2: differs from expect (got 26.125, expect 25.125 [HYP], sinks [[5592405], [5592405], [5592405]])
+[637/1203] divu_mag-b24-trisc2  median 26.125
+  divu_mag-b28-trisc2: differs from expect (got 30.125, expect 29.125 [HYP], sinks [[89478485], [89478485], [89478485]])
+[638/1203] divu_mag-b28-trisc2  median 30.125
+  divu_mag-b31-trisc2: differs from expect (got 33.125, expect 32.125 [HYP], sinks [[715827882], [715827882], [715827882]])
+[639/1203] divu_mag-b31-trisc2  median 33.125
+[640/1203] divu_mag-b32-trisc2  median 33.125
+[641/1203] divu_dvsr-b2-trisc2  median 33.125
+[642/1203] divu_dvsr-b8-trisc2  median 33.125
+[643/1203] divu_dvsr-b16-trisc2  median 33.125
+[644/1203] divu_dvsr-b24-trisc2  median 33.125
+[645/1203] divu_dvsr-b31-trisc2  median 33.125
+[646/1203] divu_zero-trisc2  median 2.125
+[647/1203] div_intmin_m1-trisc2  median 2.125
+[648/1203] rem_intmin_m1-trisc2  median 2.125
+[649/1203] div_m1_3-trisc2  median 6.125
+[650/1203] div_m2p31_3-trisc2  median 33.125
+  rem_large-trisc2: differs from expect (got 33.125, expect 32.125 [HYP], sinks [[1], [1], [1]])
+[651/1203] rem_large-trisc2  median 33.125
+[652/1203] mulhu_dep-trisc2  median 2.0625
+[653/1203] br_taken_skip-brisc  median 1.125
+[654/1203] br_taken_next-brisc  median 1.125
+[655/1203] br_nottaken-brisc  median 1.125
+[656/1203] jal_skip-brisc  median 1.125
+[657/1203] jal_next-brisc  median 1.125
+[658/1203] br_taken_skip-disbp-brisc  median 5.375
+[659/1203] br_nottaken-disbp-brisc  median 1.375
+[660/1203] jal_next-disbp-brisc  median 5.375
+[661/1203] empty-disbp-brisc  median 0.375
+[662/1203] jalr_next-brisc  median 1.125
+[663/1203] jalr_skip-brisc  median 1.125
+  call_ret_shared-brisc: differs from expect (got 10.875, expect 7.125 [HYP], sinks [[1024], [2048], [4096]])
+[664/1203] call_ret_shared-brisc  median 10.875
+[665/1203] call_ret_private-brisc  median 3.125
+[666/1203] call_ret_private-disbp-brisc  median 11.375
+[667/1203] call_ret_one-brisc  median 1.25
+[668/1203] bd_taken-k1-brisc  median 1.125
+[669/1203] bd_nottaken-k1-brisc  median 1.125
+[670/1203] bd_taken-k2-brisc  median 1.125
+[671/1203] bd_nottaken-k2-brisc  median 1.125
+[672/1203] bd_taken-k4-brisc  median 1.125
+[673/1203] bd_nottaken-k4-brisc  median 1.125
+[674/1203] bd_taken-k8-brisc  median 1.125
+[675/1203] bd_nottaken-k8-brisc  median 1.125
+[676/1203] bp15-always-brisc  median 1.125
+[677/1203] bp1-always-brisc  median 1.125
+[678/1203] bp1-always-disbp-brisc  median 1.625
+  bp15-never-brisc: differs from expect (got 2.3125, expect 2.0625 [HYP], sinks [[960], [1920], [3840]])
+[679/1203] bp15-never-brisc  median 2.3125
+[680/1203] bp1-never-brisc  median 1.1875
+[681/1203] bp1-never-disbp-brisc  median 1.4375
+  bp15-alt-brisc: differs from expect (got 5.3438, expect 1.5938 [HYP], sinks [[480], [960], [1920]])
+[682/1203] bp15-alt-brisc  median 5.3438
+  bp1-alt-brisc: differs from expect (got 1.4062, expect 1.1562 [HYP], sinks [[32], [64], [128]])
+[683/1203] bp1-alt-brisc  median 1.4062
+[684/1203] bp1-alt-disbp-brisc  median 1.5312
+  bp15-alt-histsel1-brisc: differs from expect (got 3.5322, expect 1.5938 [HYP], sinks [[480], [960], [1920]])
+[685/1203] bp15-alt-histsel1-brisc  median 3.5322
+  bp15-alt-histsel2-brisc: differs from expect (got 4.3945, expect 1.5938 [HYP], sinks [[480], [960], [1920]])
+[686/1203] bp15-alt-histsel2-brisc  median 4.3945
+  bp15-alt-histsel3-brisc: differs from expect (got 4.1885, expect 1.5938 [HYP], sinks [[480], [960], [1920]])
+[687/1203] bp15-alt-histsel3-brisc  median 4.1885
+  bp15-p4-brisc: differs from expect (got 3.5312, expect 1.5938 [HYP], sinks [[480], [960], [1920]])
+[688/1203] bp15-p4-brisc  median 3.5312
+  bp1-p4-brisc: differs from expect (got 1.2812, expect 1.1562 [HYP], sinks [[32], [64], [128]])
+[689/1203] bp1-p4-brisc  median 1.2812
+[690/1203] bp1-p4-disbp-brisc  median 1.5312
+  bp15-p4-histsel1-brisc: differs from expect (got 2.5762, expect 1.5938 [HYP], sinks [[480], [960], [1920]])
+[691/1203] bp15-p4-histsel1-brisc  median 2.5762
+  bp15-p4-histsel2-brisc: differs from expect (got 3.6504, expect 1.5938 [HYP], sinks [[480], [960], [1920]])
+[692/1203] bp15-p4-histsel2-brisc  median 3.6504
+  bp15-p4-histsel3-brisc: differs from expect (got 3.5312, expect 1.5938 [HYP], sinks [[480], [960], [1920]])
+[693/1203] bp15-p4-histsel3-brisc  median 3.5312
+  bp15-p4_1-brisc: differs from expect (got 3.7031, expect 1.8281 [HYP], sinks [[720], [1440], [2880]])
+[694/1203] bp15-p4_1-brisc  median 3.7031
+  bp1-p4_1-brisc: differs from expect (got 1.2969, expect 1.1719 [HYP], sinks [[48], [96], [192]])
+[695/1203] bp1-p4_1-brisc  median 1.2969
+  bp15-p8-brisc: differs from expect (got 2.5312, expect 1.5938 [HYP], sinks [[480], [960], [1920]])
+[696/1203] bp15-p8-brisc  median 2.5312
+  bp1-p8-brisc: differs from expect (got 1.2188, expect 1.1562 [HYP], sinks [[32], [64], [128]])
+[697/1203] bp1-p8-brisc  median 1.2188
+  bp15-p8-histsel1-brisc: differs from expect (got 2.0312, expect 1.5938 [HYP], sinks [[480], [960], [1920]])
+[698/1203] bp15-p8-histsel1-brisc  median 2.0312
+  bp15-p8-histsel2-brisc: differs from expect (got 2.7017, expect 1.5938 [HYP], sinks [[480], [960], [1920]])
+[699/1203] bp15-p8-histsel2-brisc  median 2.7017
+  bp15-p8-histsel3-brisc: differs from expect (got 2.6853, expect 1.5938 [HYP], sinks [[480], [960], [1920]])
+[700/1203] bp15-p8-histsel3-brisc  median 2.6853
+  bp15-p8_1-brisc: differs from expect (got 2.8828, expect 1.9453 [HYP], sinks [[840], [1680], [3360]])
+[701/1203] bp15-p8_1-brisc  median 2.8828
+  bp1-p8_1-brisc: differs from expect (got 1.2422, expect 1.1797 [HYP], sinks [[56], [112], [224]])
+[702/1203] bp1-p8_1-brisc  median 1.2422
+  bp15-p16-brisc: differs from expect (got 2.0625, expect 1.5938 [HYP], sinks [[480], [960], [1920]])
+[703/1203] bp15-p16-brisc  median 2.0625
+[704/1203] bp1-p16-brisc  median 1.1875
+  bp15-p32-brisc: differs from expect (got 2.1797, expect 1.5938 [HYP], sinks [[480], [960], [1920]])
+[705/1203] bp15-p32-brisc  median 2.1797
+  bp1-p32-brisc: differs from expect (got 1.2891, expect 1.1562 [HYP], sinks [[32], [64], [128]])
+[706/1203] bp1-p32-brisc  median 1.2891
+  bp15-p32_1-brisc: differs from expect (got 2.502, expect 2.0332 [HYP], sinks [[930], [1860], [3720]])
+[707/1203] bp15-p32_1-brisc  median 2.502
+  bp1-p32_1-brisc: differs from expect (got 1.4355, expect 1.1855 [HYP], sinks [[62], [124], [248]])
+[708/1203] bp1-p32_1-brisc  median 1.4355
+  bp15-p32_31-brisc: differs from expect (got 1.3887, expect 1.1543 [HYP], sinks [[30], [60], [120]])
+[709/1203] bp15-p32_31-brisc  median 1.3887
+[710/1203] bp1-p32_31-brisc  median 1.1426
+  bp15-rand32-brisc: differs from expect (got 3.1172, expect 1.4766 [HYP], sinks [[360], [720], [1440]])
+[711/1203] bp15-rand32-brisc  median 3.1172
+  bp1-rand32-brisc: differs from expect (got 1.2578, expect 1.1484 [HYP], sinks [[24], [48], [96]])
+[712/1203] bp1-rand32-brisc  median 1.2578
+  bp15-rand32-histsel1-brisc: differs from expect (got 3.1719, expect 1.4766 [HYP], sinks [[360], [720], [1440]])
+[713/1203] bp15-rand32-histsel1-brisc  median 3.1719
+  bp15-rand32-histsel2-brisc: differs from expect (got 3.0347, expect 1.4766 [HYP], sinks [[360], [720], [1440]])
+[714/1203] bp15-rand32-histsel2-brisc  median 3.0347
+  bp15-rand32-histsel3-brisc: differs from expect (got 3.1855, expect 1.4766 [HYP], sinks [[360], [720], [1440]])
+[715/1203] bp15-rand32-histsel3-brisc  median 3.1855
+[716/1203] bp_inner-L1-brisc  median 1.5
+  bp_inner-L2-brisc: differs from expect (got 2.4286, expect 1.8571 [HYP], sinks [[128], [256], [512]])
+[717/1203] bp_inner-L2-brisc  median 2.4286
+  bp_inner-L3-brisc: differs from expect (got 2.0, expect 1.6 [HYP], sinks [[192], [384], [768]])
+[718/1203] bp_inner-L3-brisc  median 2.0
+  bp_inner-L4-brisc: differs from expect (got 1.7692, expect 1.4615 [HYP], sinks [[256], [512], [1024]])
+[719/1203] bp_inner-L4-brisc  median 1.7692
+  bp_inner-L6-brisc: differs from expect (got 1.5263, expect 1.3158 [HYP], sinks [[384], [768], [1536]])
+[720/1203] bp_inner-L6-brisc  median 1.5263
+  bp_inner-L8-brisc: differs from expect (got 1.4, expect 1.24 [HYP], sinks [[512], [1024], [2048]])
+[721/1203] bp_inner-L8-brisc  median 1.4
+  bp_inner-L16-brisc: differs from expect (got 1.2041, expect 1.1224 [HYP], sinks [[1024], [2048], [4096]])
+[722/1203] bp_inner-L16-brisc  median 1.2041
+[723/1203] br_taken_skip-ncrisc  median 1.125
+[724/1203] br_taken_next-ncrisc  median 1.125
+[725/1203] br_nottaken-ncrisc  median 1.125
+[726/1203] jal_skip-ncrisc  median 1.125
+[727/1203] jal_next-ncrisc  median 1.125
+[728/1203] br_taken_skip-disbp-ncrisc  median 5.375
+[729/1203] br_nottaken-disbp-ncrisc  median 1.375
+[730/1203] jal_next-disbp-ncrisc  median 5.375
+[731/1203] empty-disbp-ncrisc  median 0.375
+[732/1203] jalr_next-ncrisc  median 1.125
+[733/1203] jalr_skip-ncrisc  median 1.125
+  call_ret_shared-ncrisc: differs from expect (got 10.875, expect 7.125 [HYP], sinks [[1024], [2048], [4096]])
+[734/1203] call_ret_shared-ncrisc  median 10.875
+[735/1203] call_ret_private-ncrisc  median 3.125
+[736/1203] call_ret_private-disbp-ncrisc  median 11.375
+[737/1203] call_ret_one-ncrisc  median 1.25
+[738/1203] bd_taken-k1-ncrisc  median 1.125
+[739/1203] bd_nottaken-k1-ncrisc  median 1.125
+[740/1203] bd_taken-k2-ncrisc  median 1.125
+[741/1203] bd_nottaken-k2-ncrisc  median 1.125
+[742/1203] bd_taken-k4-ncrisc  median 1.125
+[743/1203] bd_nottaken-k4-ncrisc  median 1.125
+[744/1203] bd_taken-k8-ncrisc  median 1.125
+[745/1203] bd_nottaken-k8-ncrisc  median 1.125
+[746/1203] bp15-always-ncrisc  median 1.125
+[747/1203] bp1-always-ncrisc  median 1.125
+[748/1203] bp1-always-disbp-ncrisc  median 1.625
+  bp15-never-ncrisc: differs from expect (got 2.3125, expect 2.0625 [HYP], sinks [[960], [1920], [3840]])
+[749/1203] bp15-never-ncrisc  median 2.3125
+[750/1203] bp1-never-ncrisc  median 1.1875
+[751/1203] bp1-never-disbp-ncrisc  median 1.4375
+  bp15-alt-ncrisc: differs from expect (got 5.3438, expect 1.5938 [HYP], sinks [[480], [960], [1920]])
+[752/1203] bp15-alt-ncrisc  median 5.3438
+  bp1-alt-ncrisc: differs from expect (got 1.4062, expect 1.1562 [HYP], sinks [[32], [64], [128]])
+[753/1203] bp1-alt-ncrisc  median 1.4062
+[754/1203] bp1-alt-disbp-ncrisc  median 1.5312
+  bp15-alt-histsel1-ncrisc: differs from expect (got 3.5332, expect 1.5938 [HYP], sinks [[480], [960], [1920]])
+[755/1203] bp15-alt-histsel1-ncrisc  median 3.5332
+  bp15-alt-histsel2-ncrisc: differs from expect (got 3.5002, expect 1.5938 [HYP], sinks [[480], [960], [1920]])
+[756/1203] bp15-alt-histsel2-ncrisc  median 3.5002
+  bp15-alt-histsel3-ncrisc: differs from expect (got 3.5312, expect 1.5938 [HYP], sinks [[480], [960], [1920]])
+[757/1203] bp15-alt-histsel3-ncrisc  median 3.5312
+  bp15-p4-ncrisc: differs from expect (got 3.5312, expect 1.5938 [HYP], sinks [[480], [960], [1920]])
+[758/1203] bp15-p4-ncrisc  median 3.5312
+  bp1-p4-ncrisc: differs from expect (got 1.2812, expect 1.1562 [HYP], sinks [[32], [64], [128]])
+[759/1203] bp1-p4-ncrisc  median 1.2812
+[760/1203] bp1-p4-disbp-ncrisc  median 1.5312
+  bp15-p4-histsel1-ncrisc: differs from expect (got 2.5771, expect 1.5938 [HYP], sinks [[480], [960], [1920]])
+[761/1203] bp15-p4-histsel1-ncrisc  median 2.5771
+  bp15-p4-histsel2-ncrisc: differs from expect (got 3.6025, expect 1.5938 [HYP], sinks [[480], [960], [1920]])
+[762/1203] bp15-p4-histsel2-ncrisc  median 3.6025
+  bp15-p4-histsel3-ncrisc: differs from expect (got 2.1917, expect 1.5938 [HYP], sinks [[480], [960], [1920]])
+[763/1203] bp15-p4-histsel3-ncrisc  median 2.1917
+  bp15-p4_1-ncrisc: differs from expect (got 3.7031, expect 1.8281 [HYP], sinks [[720], [1440], [2880]])
+[764/1203] bp15-p4_1-ncrisc  median 3.7031
+  bp1-p4_1-ncrisc: differs from expect (got 1.2969, expect 1.1719 [HYP], sinks [[48], [96], [192]])
+[765/1203] bp1-p4_1-ncrisc  median 1.2969
+  bp15-p8-ncrisc: differs from expect (got 2.5312, expect 1.5938 [HYP], sinks [[480], [960], [1920]])
+[766/1203] bp15-p8-ncrisc  median 2.5312
+  bp1-p8-ncrisc: differs from expect (got 1.2188, expect 1.1562 [HYP], sinks [[32], [64], [128]])
+[767/1203] bp1-p8-ncrisc  median 1.2188
+  bp15-p8-histsel1-ncrisc: differs from expect (got 2.002, expect 1.5938 [HYP], sinks [[480], [960], [1920]])
+[768/1203] bp15-p8-histsel1-ncrisc  median 2.002
+  bp15-p8-histsel2-ncrisc: differs from expect (got 2.6628, expect 1.5938 [HYP], sinks [[480], [960], [1920]])
+[769/1203] bp15-p8-histsel2-ncrisc  median 2.6628
+  bp15-p8-histsel3-ncrisc: differs from expect (got 2.6663, expect 1.5938 [HYP], sinks [[480], [960], [1920]])
+[770/1203] bp15-p8-histsel3-ncrisc  median 2.6663
+  bp15-p8_1-ncrisc: differs from expect (got 2.8828, expect 1.9453 [HYP], sinks [[840], [1680], [3360]])
+[771/1203] bp15-p8_1-ncrisc  median 2.8828
+  bp1-p8_1-ncrisc: differs from expect (got 1.2422, expect 1.1797 [HYP], sinks [[56], [112], [224]])
+[772/1203] bp1-p8_1-ncrisc  median 1.2422
+  bp15-p16-ncrisc: differs from expect (got 2.0625, expect 1.5938 [HYP], sinks [[480], [960], [1920]])
+[773/1203] bp15-p16-ncrisc  median 2.0625
+[774/1203] bp1-p16-ncrisc  median 1.1875
+  bp15-p32-ncrisc: differs from expect (got 2.1797, expect 1.5938 [HYP], sinks [[480], [960], [1920]])
+[775/1203] bp15-p32-ncrisc  median 2.1797
+  bp1-p32-ncrisc: differs from expect (got 1.2891, expect 1.1562 [HYP], sinks [[32], [64], [128]])
+[776/1203] bp1-p32-ncrisc  median 1.2891
+  bp15-p32_1-ncrisc: differs from expect (got 2.502, expect 2.0332 [HYP], sinks [[930], [1860], [3720]])
+[777/1203] bp15-p32_1-ncrisc  median 2.502
+  bp1-p32_1-ncrisc: differs from expect (got 1.4355, expect 1.1855 [HYP], sinks [[62], [124], [248]])
+[778/1203] bp1-p32_1-ncrisc  median 1.4355
+  bp15-p32_31-ncrisc: differs from expect (got 1.3887, expect 1.1543 [HYP], sinks [[30], [60], [120]])
+[779/1203] bp15-p32_31-ncrisc  median 1.3887
+[780/1203] bp1-p32_31-ncrisc  median 1.1426
+  bp15-rand32-ncrisc: differs from expect (got 3.1172, expect 1.4766 [HYP], sinks [[360], [720], [1440]])
+[781/1203] bp15-rand32-ncrisc  median 3.1172
+  bp1-rand32-ncrisc: differs from expect (got 1.2578, expect 1.1484 [HYP], sinks [[24], [48], [96]])
+[782/1203] bp1-rand32-ncrisc  median 1.2578
+  bp15-rand32-histsel1-ncrisc: differs from expect (got 3.1719, expect 1.4766 [HYP], sinks [[360], [720], [1440]])
+[783/1203] bp15-rand32-histsel1-ncrisc  median 3.1719
+  bp15-rand32-histsel2-ncrisc: differs from expect (got 3.1191, expect 1.4766 [HYP], sinks [[360], [720], [1440]])
+[784/1203] bp15-rand32-histsel2-ncrisc  median 3.1191
+  bp15-rand32-histsel3-ncrisc: differs from expect (got 3.1484, expect 1.4766 [HYP], sinks [[360], [720], [1440]])
+[785/1203] bp15-rand32-histsel3-ncrisc  median 3.1484
+[786/1203] bp_inner-L1-ncrisc  median 1.5
+  bp_inner-L2-ncrisc: differs from expect (got 2.4286, expect 1.8571 [HYP], sinks [[128], [256], [512]])
+[787/1203] bp_inner-L2-ncrisc  median 2.4286
+  bp_inner-L3-ncrisc: differs from expect (got 2.0, expect 1.6 [HYP], sinks [[192], [384], [768]])
+[788/1203] bp_inner-L3-ncrisc  median 2.0
+  bp_inner-L4-ncrisc: differs from expect (got 1.7692, expect 1.4615 [HYP], sinks [[256], [512], [1024]])
+[789/1203] bp_inner-L4-ncrisc  median 1.7692
+  bp_inner-L6-ncrisc: differs from expect (got 1.5263, expect 1.3158 [HYP], sinks [[384], [768], [1536]])
+[790/1203] bp_inner-L6-ncrisc  median 1.5263
+  bp_inner-L8-ncrisc: differs from expect (got 1.4, expect 1.24 [HYP], sinks [[512], [1024], [2048]])
+[791/1203] bp_inner-L8-ncrisc  median 1.4
+  bp_inner-L16-ncrisc: differs from expect (got 1.2041, expect 1.1224 [HYP], sinks [[1024], [2048], [4096]])
+[792/1203] bp_inner-L16-ncrisc  median 1.2041
+[793/1203] br_taken_skip-trisc0  median 1.125
+[794/1203] br_taken_next-trisc0  median 1.125
+[795/1203] br_nottaken-trisc0  median 1.125
+[796/1203] jal_skip-trisc0  median 1.125
+[797/1203] jal_next-trisc0  median 1.125
+[798/1203] br_taken_skip-disbp-trisc0  median 5.375
+[799/1203] br_nottaken-disbp-trisc0  median 1.375
+[800/1203] jal_next-disbp-trisc0  median 5.375
+[801/1203] empty-disbp-trisc0  median 0.375
+[802/1203] jalr_next-trisc0  median 1.125
+[803/1203] jalr_skip-trisc0  median 1.125
+  call_ret_shared-trisc0: differs from expect (got 10.875, expect 7.125 [HYP], sinks [[1024], [2048], [4096]])
+[804/1203] call_ret_shared-trisc0  median 10.875
+[805/1203] call_ret_private-trisc0  median 3.125
+[806/1203] call_ret_private-disbp-trisc0  median 11.375
+[807/1203] call_ret_one-trisc0  median 1.25
+[808/1203] bd_taken-k1-trisc0  median 1.125
+[809/1203] bd_nottaken-k1-trisc0  median 1.125
+[810/1203] bd_taken-k2-trisc0  median 1.125
+[811/1203] bd_nottaken-k2-trisc0  median 1.125
+[812/1203] bd_taken-k4-trisc0  median 1.125
+[813/1203] bd_nottaken-k4-trisc0  median 1.125
+[814/1203] bd_taken-k8-trisc0  median 1.125
+[815/1203] bd_nottaken-k8-trisc0  median 1.125
+[816/1203] bp15-always-trisc0  median 1.125
+[817/1203] bp1-always-trisc0  median 1.125
+[818/1203] bp1-always-disbp-trisc0  median 1.625
+  bp15-never-trisc0: differs from expect (got 2.3125, expect 2.0625 [HYP], sinks [[960], [1920], [3840]])
+[819/1203] bp15-never-trisc0  median 2.3125
+[820/1203] bp1-never-trisc0  median 1.1875
+[821/1203] bp1-never-disbp-trisc0  median 1.4375
+  bp15-alt-trisc0: differs from expect (got 5.3438, expect 1.5938 [HYP], sinks [[480], [960], [1920]])
+[822/1203] bp15-alt-trisc0  median 5.3438
+  bp1-alt-trisc0: differs from expect (got 1.4062, expect 1.1562 [HYP], sinks [[32], [64], [128]])
+[823/1203] bp1-alt-trisc0  median 1.4062
+[824/1203] bp1-alt-disbp-trisc0  median 1.5312
+  bp15-alt-histsel1-trisc0: differs from expect (got 3.5332, expect 1.5938 [HYP], sinks [[480], [960], [1920]])
+[825/1203] bp15-alt-histsel1-trisc0  median 3.5332
+  bp15-alt-histsel2-trisc0: differs from expect (got 4.3662, expect 1.5938 [HYP], sinks [[480], [960], [1920]])
+[826/1203] bp15-alt-histsel2-trisc0  median 4.3662
+  bp15-alt-histsel3-trisc0: differs from expect (got 3.7532, expect 1.5938 [HYP], sinks [[480], [960], [1920]])
+[827/1203] bp15-alt-histsel3-trisc0  median 3.7532
+  bp15-p4-trisc0: differs from expect (got 3.5312, expect 1.5938 [HYP], sinks [[480], [960], [1920]])
+[828/1203] bp15-p4-trisc0  median 3.5312
+  bp1-p4-trisc0: differs from expect (got 1.2812, expect 1.1562 [HYP], sinks [[32], [64], [128]])
+[829/1203] bp1-p4-trisc0  median 1.2812
+[830/1203] bp1-p4-disbp-trisc0  median 1.5312
+  bp15-p4-histsel1-trisc0: differs from expect (got 3.5234, expect 1.5938 [HYP], sinks [[480], [960], [1920]])
+[831/1203] bp15-p4-histsel1-trisc0  median 3.5234
+  bp15-p4-histsel2-trisc0: differs from expect (got 3.6091, expect 1.5938 [HYP], sinks [[480], [960], [1920]])
+[832/1203] bp15-p4-histsel2-trisc0  median 3.6091
+  bp15-p4-histsel3-trisc0: differs from expect (got 3.5913, expect 1.5938 [HYP], sinks [[480], [960], [1920]])
+[833/1203] bp15-p4-histsel3-trisc0  median 3.5913
+  bp15-p4_1-trisc0: differs from expect (got 3.7031, expect 1.8281 [HYP], sinks [[720], [1440], [2880]])
+[834/1203] bp15-p4_1-trisc0  median 3.7031
+  bp1-p4_1-trisc0: differs from expect (got 1.2969, expect 1.1719 [HYP], sinks [[48], [96], [192]])
+[835/1203] bp1-p4_1-trisc0  median 1.2969
+  bp15-p8-trisc0: differs from expect (got 2.5312, expect 1.5938 [HYP], sinks [[480], [960], [1920]])
+[836/1203] bp15-p8-trisc0  median 2.5312
+  bp1-p8-trisc0: differs from expect (got 1.2188, expect 1.1562 [HYP], sinks [[32], [64], [128]])
+[837/1203] bp1-p8-trisc0  median 1.2188
+  bp15-p8-histsel1-trisc0: differs from expect (got 2.5576, expect 1.5938 [HYP], sinks [[480], [960], [1920]])
+[838/1203] bp15-p8-histsel1-trisc0  median 2.5576
+  bp15-p8-histsel2-trisc0: differs from expect (got 2.6724, expect 1.5938 [HYP], sinks [[480], [960], [1920]])
+[839/1203] bp15-p8-histsel2-trisc0  median 2.6724
+  bp15-p8-histsel3-trisc0: differs from expect (got 2.6702, expect 1.5938 [HYP], sinks [[480], [960], [1920]])
+[840/1203] bp15-p8-histsel3-trisc0  median 2.6702
+  bp15-p8_1-trisc0: differs from expect (got 2.8828, expect 1.9453 [HYP], sinks [[840], [1680], [3360]])
+[841/1203] bp15-p8_1-trisc0  median 2.8828
+  bp1-p8_1-trisc0: differs from expect (got 1.2422, expect 1.1797 [HYP], sinks [[56], [112], [224]])
+[842/1203] bp1-p8_1-trisc0  median 1.2422
+  bp15-p16-trisc0: differs from expect (got 2.0625, expect 1.5938 [HYP], sinks [[480], [960], [1920]])
+[843/1203] bp15-p16-trisc0  median 2.0625
+[844/1203] bp1-p16-trisc0  median 1.1875
+  bp15-p32-trisc0: differs from expect (got 2.1797, expect 1.5938 [HYP], sinks [[480], [960], [1920]])
+[845/1203] bp15-p32-trisc0  median 2.1797
+  bp1-p32-trisc0: differs from expect (got 1.2891, expect 1.1562 [HYP], sinks [[32], [64], [128]])
+[846/1203] bp1-p32-trisc0  median 1.2891
+  bp15-p32_1-trisc0: differs from expect (got 2.502, expect 2.0332 [HYP], sinks [[930], [1860], [3720]])
+[847/1203] bp15-p32_1-trisc0  median 2.502
+  bp1-p32_1-trisc0: differs from expect (got 1.4355, expect 1.1855 [HYP], sinks [[62], [124], [248]])
+[848/1203] bp1-p32_1-trisc0  median 1.4355
+  bp15-p32_31-trisc0: differs from expect (got 1.3887, expect 1.1543 [HYP], sinks [[30], [60], [120]])
+[849/1203] bp15-p32_31-trisc0  median 1.3887
+[850/1203] bp1-p32_31-trisc0  median 1.1426
+  bp15-rand32-trisc0: differs from expect (got 3.1172, expect 1.4766 [HYP], sinks [[360], [720], [1440]])
+[851/1203] bp15-rand32-trisc0  median 3.1172
+  bp1-rand32-trisc0: differs from expect (got 1.2578, expect 1.1484 [HYP], sinks [[24], [48], [96]])
+[852/1203] bp1-rand32-trisc0  median 1.2578
+  bp15-rand32-histsel1-trisc0: differs from expect (got 3.1797, expect 1.4766 [HYP], sinks [[360], [720], [1440]])
+[853/1203] bp15-rand32-histsel1-trisc0  median 3.1797
+  bp15-rand32-histsel2-trisc0: differs from expect (got 3.1973, expect 1.4766 [HYP], sinks [[360], [720], [1440]])
+[854/1203] bp15-rand32-histsel2-trisc0  median 3.1973
+  bp15-rand32-histsel3-trisc0: differs from expect (got 3.2109, expect 1.4766 [HYP], sinks [[360], [720], [1440]])
+[855/1203] bp15-rand32-histsel3-trisc0  median 3.2109
+[856/1203] bp_inner-L1-trisc0  median 1.5
+  bp_inner-L2-trisc0: differs from expect (got 2.4286, expect 1.8571 [HYP], sinks [[128], [256], [512]])
+[857/1203] bp_inner-L2-trisc0  median 2.4286
+  bp_inner-L3-trisc0: differs from expect (got 2.0, expect 1.6 [HYP], sinks [[192], [384], [768]])
+[858/1203] bp_inner-L3-trisc0  median 2.0
+  bp_inner-L4-trisc0: differs from expect (got 1.7692, expect 1.4615 [HYP], sinks [[256], [512], [1024]])
+[859/1203] bp_inner-L4-trisc0  median 1.7692
+  bp_inner-L6-trisc0: differs from expect (got 1.5263, expect 1.3158 [HYP], sinks [[384], [768], [1536]])
+[860/1203] bp_inner-L6-trisc0  median 1.5263
+  bp_inner-L8-trisc0: differs from expect (got 1.4, expect 1.24 [HYP], sinks [[512], [1024], [2048]])
+[861/1203] bp_inner-L8-trisc0  median 1.4
+  bp_inner-L16-trisc0: differs from expect (got 1.2041, expect 1.1224 [HYP], sinks [[1024], [2048], [4096]])
+[862/1203] bp_inner-L16-trisc0  median 1.2041
+[863/1203] br_taken_skip-trisc1  median 1.125
+[864/1203] br_taken_next-trisc1  median 1.125
+[865/1203] br_nottaken-trisc1  median 1.125
+[866/1203] jal_skip-trisc1  median 1.125
+[867/1203] jal_next-trisc1  median 1.125
+[868/1203] br_taken_skip-disbp-trisc1  median 5.375
+[869/1203] br_nottaken-disbp-trisc1  median 1.375
+[870/1203] jal_next-disbp-trisc1  median 5.375
+[871/1203] empty-disbp-trisc1  median 0.375
+[872/1203] jalr_next-trisc1  median 1.125
+[873/1203] jalr_skip-trisc1  median 1.125
+  call_ret_shared-trisc1: differs from expect (got 10.875, expect 7.125 [HYP], sinks [[1024], [2048], [4096]])
+[874/1203] call_ret_shared-trisc1  median 10.875
+[875/1203] call_ret_private-trisc1  median 3.125
+[876/1203] call_ret_private-disbp-trisc1  median 11.375
+[877/1203] call_ret_one-trisc1  median 1.25
+[878/1203] bd_taken-k1-trisc1  median 1.125
+[879/1203] bd_nottaken-k1-trisc1  median 1.125
+[880/1203] bd_taken-k2-trisc1  median 1.125
+[881/1203] bd_nottaken-k2-trisc1  median 1.125
+[882/1203] bd_taken-k4-trisc1  median 1.125
+[883/1203] bd_nottaken-k4-trisc1  median 1.125
+[884/1203] bd_taken-k8-trisc1  median 1.125
+[885/1203] bd_nottaken-k8-trisc1  median 1.125
+[886/1203] bp15-always-trisc1  median 1.125
+[887/1203] bp1-always-trisc1  median 1.125
+[888/1203] bp1-always-disbp-trisc1  median 1.625
+  bp15-never-trisc1: differs from expect (got 2.3125, expect 2.0625 [HYP], sinks [[960], [1920], [3840]])
+[889/1203] bp15-never-trisc1  median 2.3125
+[890/1203] bp1-never-trisc1  median 1.1875
+[891/1203] bp1-never-disbp-trisc1  median 1.4375
+  bp15-alt-trisc1: differs from expect (got 5.3438, expect 1.5938 [HYP], sinks [[480], [960], [1920]])
+[892/1203] bp15-alt-trisc1  median 5.3438
+  bp1-alt-trisc1: differs from expect (got 1.4062, expect 1.1562 [HYP], sinks [[32], [64], [128]])
+[893/1203] bp1-alt-trisc1  median 1.4062
+[894/1203] bp1-alt-disbp-trisc1  median 1.5312
+  bp15-alt-histsel1-trisc1: differs from expect (got 3.5332, expect 1.5938 [HYP], sinks [[480], [960], [1920]])
+[895/1203] bp15-alt-histsel1-trisc1  median 3.5332
+  bp15-alt-histsel2-trisc1: differs from expect (got 3.3909, expect 1.5938 [HYP], sinks [[480], [960], [1920]])
+[896/1203] bp15-alt-histsel2-trisc1  median 3.3909
+  bp15-alt-histsel3-trisc1: differs from expect (got 3.7451, expect 1.5938 [HYP], sinks [[480], [960], [1920]])
+[897/1203] bp15-alt-histsel3-trisc1  median 3.7451
+  bp15-p4-trisc1: differs from expect (got 3.5312, expect 1.5938 [HYP], sinks [[480], [960], [1920]])
+[898/1203] bp15-p4-trisc1  median 3.5312
+  bp1-p4-trisc1: differs from expect (got 1.2812, expect 1.1562 [HYP], sinks [[32], [64], [128]])
+[899/1203] bp1-p4-trisc1  median 1.2812
+[900/1203] bp1-p4-disbp-trisc1  median 1.5312
+  bp15-p4-histsel1-trisc1: differs from expect (got 3.5225, expect 1.5938 [HYP], sinks [[480], [960], [1920]])
+[901/1203] bp15-p4-histsel1-trisc1  median 3.5225
+  bp15-p4-histsel2-trisc1: differs from expect (got 2.75, expect 1.5938 [HYP], sinks [[480], [960], [1920]])
+[902/1203] bp15-p4-histsel2-trisc1  median 2.75
+  bp15-p4-histsel3-trisc1: differs from expect (got 3.5933, expect 1.5938 [HYP], sinks [[480], [960], [1920]])
+[903/1203] bp15-p4-histsel3-trisc1  median 3.5933
+  bp15-p4_1-trisc1: differs from expect (got 3.7031, expect 1.8281 [HYP], sinks [[720], [1440], [2880]])
+[904/1203] bp15-p4_1-trisc1  median 3.7031
+  bp1-p4_1-trisc1: differs from expect (got 1.2969, expect 1.1719 [HYP], sinks [[48], [96], [192]])
+[905/1203] bp1-p4_1-trisc1  median 1.2969
+  bp15-p8-trisc1: differs from expect (got 2.5312, expect 1.5938 [HYP], sinks [[480], [960], [1920]])
+[906/1203] bp15-p8-trisc1  median 2.5312
+  bp1-p8-trisc1: differs from expect (got 1.2188, expect 1.1562 [HYP], sinks [[32], [64], [128]])
+[907/1203] bp1-p8-trisc1  median 1.2188
+  bp15-p8-histsel1-trisc1: differs from expect (got 2.2188, expect 1.5938 [HYP], sinks [[480], [960], [1920]])
+[908/1203] bp15-p8-histsel1-trisc1  median 2.2188
+  bp15-p8-histsel2-trisc1: differs from expect (got 2.689, expect 1.5938 [HYP], sinks [[480], [960], [1920]])
+[909/1203] bp15-p8-histsel2-trisc1  median 2.689
+  bp15-p8-histsel3-trisc1: differs from expect (got 2.6838, expect 1.5938 [HYP], sinks [[480], [960], [1920]])
+[910/1203] bp15-p8-histsel3-trisc1  median 2.6838
+  bp15-p8_1-trisc1: differs from expect (got 2.8828, expect 1.9453 [HYP], sinks [[840], [1680], [3360]])
+[911/1203] bp15-p8_1-trisc1  median 2.8828
+  bp1-p8_1-trisc1: differs from expect (got 1.2422, expect 1.1797 [HYP], sinks [[56], [112], [224]])
+[912/1203] bp1-p8_1-trisc1  median 1.2422
+  bp15-p16-trisc1: differs from expect (got 2.0625, expect 1.5938 [HYP], sinks [[480], [960], [1920]])
+[913/1203] bp15-p16-trisc1  median 2.0625
+[914/1203] bp1-p16-trisc1  median 1.1875
+  bp15-p32-trisc1: differs from expect (got 2.1797, expect 1.5938 [HYP], sinks [[480], [960], [1920]])
+[915/1203] bp15-p32-trisc1  median 2.1797
+  bp1-p32-trisc1: differs from expect (got 1.2891, expect 1.1562 [HYP], sinks [[32], [64], [128]])
+[916/1203] bp1-p32-trisc1  median 1.2891
+  bp15-p32_1-trisc1: differs from expect (got 2.502, expect 2.0332 [HYP], sinks [[930], [1860], [3720]])
+[917/1203] bp15-p32_1-trisc1  median 2.502
+  bp1-p32_1-trisc1: differs from expect (got 1.4355, expect 1.1855 [HYP], sinks [[62], [124], [248]])
+[918/1203] bp1-p32_1-trisc1  median 1.4355
+  bp15-p32_31-trisc1: differs from expect (got 1.3887, expect 1.1543 [HYP], sinks [[30], [60], [120]])
+[919/1203] bp15-p32_31-trisc1  median 1.3887
+[920/1203] bp1-p32_31-trisc1  median 1.1426
+  bp15-rand32-trisc1: differs from expect (got 3.1172, expect 1.4766 [HYP], sinks [[360], [720], [1440]])
+[921/1203] bp15-rand32-trisc1  median 3.1172
+  bp1-rand32-trisc1: differs from expect (got 1.2578, expect 1.1484 [HYP], sinks [[24], [48], [96]])
+[922/1203] bp1-rand32-trisc1  median 1.2578
+  bp15-rand32-histsel1-trisc1: differs from expect (got 3.1719, expect 1.4766 [HYP], sinks [[360], [720], [1440]])
+[923/1203] bp15-rand32-histsel1-trisc1  median 3.1719
+  bp15-rand32-histsel2-trisc1: differs from expect (got 3.0186, expect 1.4766 [HYP], sinks [[360], [720], [1440]])
+[924/1203] bp15-rand32-histsel2-trisc1  median 3.0186
+  bp15-rand32-histsel3-trisc1: differs from expect (got 3.1846, expect 1.4766 [HYP], sinks [[360], [720], [1440]])
+[925/1203] bp15-rand32-histsel3-trisc1  median 3.1846
+[926/1203] bp_inner-L1-trisc1  median 1.5
+  bp_inner-L2-trisc1: differs from expect (got 2.4286, expect 1.8571 [HYP], sinks [[128], [256], [512]])
+[927/1203] bp_inner-L2-trisc1  median 2.4286
+  bp_inner-L3-trisc1: differs from expect (got 2.0, expect 1.6 [HYP], sinks [[192], [384], [768]])
+[928/1203] bp_inner-L3-trisc1  median 2.0
+  bp_inner-L4-trisc1: differs from expect (got 1.7692, expect 1.4615 [HYP], sinks [[256], [512], [1024]])
+[929/1203] bp_inner-L4-trisc1  median 1.7692
+  bp_inner-L6-trisc1: differs from expect (got 1.5263, expect 1.3158 [HYP], sinks [[384], [768], [1536]])
+[930/1203] bp_inner-L6-trisc1  median 1.5263
+  bp_inner-L8-trisc1: differs from expect (got 1.4, expect 1.24 [HYP], sinks [[512], [1024], [2048]])
+[931/1203] bp_inner-L8-trisc1  median 1.4
+  bp_inner-L16-trisc1: differs from expect (got 1.2041, expect 1.1224 [HYP], sinks [[1024], [2048], [4096]])
+[932/1203] bp_inner-L16-trisc1  median 1.2041
+[933/1203] br_taken_skip-trisc2  median 1.125
+[934/1203] br_taken_next-trisc2  median 1.125
+[935/1203] br_nottaken-trisc2  median 1.125
+[936/1203] jal_skip-trisc2  median 1.125
+[937/1203] jal_next-trisc2  median 1.125
+[938/1203] br_taken_skip-disbp-trisc2  median 5.375
+[939/1203] br_nottaken-disbp-trisc2  median 1.375
+[940/1203] jal_next-disbp-trisc2  median 5.375
+[941/1203] empty-disbp-trisc2  median 0.375
+[942/1203] jalr_next-trisc2  median 1.125
+[943/1203] jalr_skip-trisc2  median 1.125
+  call_ret_shared-trisc2: differs from expect (got 10.875, expect 7.125 [HYP], sinks [[1024], [2048], [4096]])
+[944/1203] call_ret_shared-trisc2  median 10.875
+[945/1203] call_ret_private-trisc2  median 3.125
+[946/1203] call_ret_private-disbp-trisc2  median 11.375
+[947/1203] call_ret_one-trisc2  median 1.25
+[948/1203] bd_taken-k1-trisc2  median 1.125
+[949/1203] bd_nottaken-k1-trisc2  median 1.125
+[950/1203] bd_taken-k2-trisc2  median 1.125
+[951/1203] bd_nottaken-k2-trisc2  median 1.125
+[952/1203] bd_taken-k4-trisc2  median 1.125
+[953/1203] bd_nottaken-k4-trisc2  median 1.125
+[954/1203] bd_taken-k8-trisc2  median 1.125
+[955/1203] bd_nottaken-k8-trisc2  median 1.125
+[956/1203] bp15-always-trisc2  median 1.125
+[957/1203] bp1-always-trisc2  median 1.125
+[958/1203] bp1-always-disbp-trisc2  median 1.625
+  bp15-never-trisc2: differs from expect (got 2.3125, expect 2.0625 [HYP], sinks [[960], [1920], [3840]])
+[959/1203] bp15-never-trisc2  median 2.3125
+[960/1203] bp1-never-trisc2  median 1.1875
+[961/1203] bp1-never-disbp-trisc2  median 1.4375
+  bp15-alt-trisc2: differs from expect (got 5.3438, expect 1.5938 [HYP], sinks [[480], [960], [1920]])
+[962/1203] bp15-alt-trisc2  median 5.3438
+  bp1-alt-trisc2: differs from expect (got 1.4062, expect 1.1562 [HYP], sinks [[32], [64], [128]])
+[963/1203] bp1-alt-trisc2  median 1.4062
+[964/1203] bp1-alt-disbp-trisc2  median 1.5312
+  bp15-alt-histsel1-trisc2: differs from expect (got 3.6865, expect 1.5938 [HYP], sinks [[480], [960], [1920]])
+[965/1203] bp15-alt-histsel1-trisc2  median 3.6865
+  bp15-alt-histsel2-trisc2: differs from expect (got 4.1438, expect 1.5938 [HYP], sinks [[480], [960], [1920]])
+[966/1203] bp15-alt-histsel2-trisc2  median 4.1438
+  bp15-alt-histsel3-trisc2: differs from expect (got 3.4766, expect 1.5938 [HYP], sinks [[480], [960], [1920]])
+[967/1203] bp15-alt-histsel3-trisc2  median 3.4766
+  bp15-p4-trisc2: differs from expect (got 3.5312, expect 1.5938 [HYP], sinks [[480], [960], [1920]])
+[968/1203] bp15-p4-trisc2  median 3.5312
+  bp1-p4-trisc2: differs from expect (got 1.2812, expect 1.1562 [HYP], sinks [[32], [64], [128]])
+[969/1203] bp1-p4-trisc2  median 1.2812
+[970/1203] bp1-p4-disbp-trisc2  median 1.5312
+  bp15-p4-histsel1-trisc2: differs from expect (got 3.6567, expect 1.5938 [HYP], sinks [[480], [960], [1920]])
+[971/1203] bp15-p4-histsel1-trisc2  median 3.6567
+  bp15-p4-histsel2-trisc2: differs from expect (got 3.6504, expect 1.5938 [HYP], sinks [[480], [960], [1920]])
+[972/1203] bp15-p4-histsel2-trisc2  median 3.6504
+  bp15-p4-histsel3-trisc2: differs from expect (got 2.2368, expect 1.5938 [HYP], sinks [[480], [960], [1920]])
+[973/1203] bp15-p4-histsel3-trisc2  median 2.2368
+  bp15-p4_1-trisc2: differs from expect (got 3.7031, expect 1.8281 [HYP], sinks [[720], [1440], [2880]])
+[974/1203] bp15-p4_1-trisc2  median 3.7031
+  bp1-p4_1-trisc2: differs from expect (got 1.2969, expect 1.1719 [HYP], sinks [[48], [96], [192]])
+[975/1203] bp1-p4_1-trisc2  median 1.2969
+  bp15-p8-trisc2: differs from expect (got 2.5312, expect 1.5938 [HYP], sinks [[480], [960], [1920]])
+[976/1203] bp15-p8-trisc2  median 2.5312
+  bp1-p8-trisc2: differs from expect (got 1.2188, expect 1.1562 [HYP], sinks [[32], [64], [128]])
+[977/1203] bp1-p8-trisc2  median 1.2188
+  bp15-p8-histsel1-trisc2: differs from expect (got 2.0312, expect 1.5938 [HYP], sinks [[480], [960], [1920]])
+[978/1203] bp15-p8-histsel1-trisc2  median 2.0312
+  bp15-p8-histsel2-trisc2: differs from expect (got 2.6333, expect 1.5938 [HYP], sinks [[480], [960], [1920]])
+[979/1203] bp15-p8-histsel2-trisc2  median 2.6333
+  bp15-p8-histsel3-trisc2: differs from expect (got 2.6475, expect 1.5938 [HYP], sinks [[480], [960], [1920]])
+[980/1203] bp15-p8-histsel3-trisc2  median 2.6475
+  bp15-p8_1-trisc2: differs from expect (got 2.8828, expect 1.9453 [HYP], sinks [[840], [1680], [3360]])
+[981/1203] bp15-p8_1-trisc2  median 2.8828
+  bp1-p8_1-trisc2: differs from expect (got 1.2422, expect 1.1797 [HYP], sinks [[56], [112], [224]])
+[982/1203] bp1-p8_1-trisc2  median 1.2422
+  bp15-p16-trisc2: differs from expect (got 2.0625, expect 1.5938 [HYP], sinks [[480], [960], [1920]])
+[983/1203] bp15-p16-trisc2  median 2.0625
+[984/1203] bp1-p16-trisc2  median 1.1875
+  bp15-p32-trisc2: differs from expect (got 2.1797, expect 1.5938 [HYP], sinks [[480], [960], [1920]])
+[985/1203] bp15-p32-trisc2  median 2.1797
+  bp1-p32-trisc2: differs from expect (got 1.2891, expect 1.1562 [HYP], sinks [[32], [64], [128]])
+[986/1203] bp1-p32-trisc2  median 1.2891
+  bp15-p32_1-trisc2: differs from expect (got 2.502, expect 2.0332 [HYP], sinks [[930], [1860], [3720]])
+[987/1203] bp15-p32_1-trisc2  median 2.502
+  bp1-p32_1-trisc2: differs from expect (got 1.4355, expect 1.1855 [HYP], sinks [[62], [124], [248]])
+[988/1203] bp1-p32_1-trisc2  median 1.4355
+  bp15-p32_31-trisc2: differs from expect (got 1.3887, expect 1.1543 [HYP], sinks [[30], [60], [120]])
+[989/1203] bp15-p32_31-trisc2  median 1.3887
+[990/1203] bp1-p32_31-trisc2  median 1.1426
+  bp15-rand32-trisc2: differs from expect (got 3.1172, expect 1.4766 [HYP], sinks [[360], [720], [1440]])
+[991/1203] bp15-rand32-trisc2  median 3.1172
+  bp1-rand32-trisc2: differs from expect (got 1.2578, expect 1.1484 [HYP], sinks [[24], [48], [96]])
+[992/1203] bp1-rand32-trisc2  median 1.2578
+  bp15-rand32-histsel1-trisc2: differs from expect (got 3.1807, expect 1.4766 [HYP], sinks [[360], [720], [1440]])
+[993/1203] bp15-rand32-histsel1-trisc2  median 3.1807
+  bp15-rand32-histsel2-trisc2: differs from expect (got 3.1145, expect 1.4766 [HYP], sinks [[360], [720], [1440]])
+[994/1203] bp15-rand32-histsel2-trisc2  median 3.1145
+  bp15-rand32-histsel3-trisc2: differs from expect (got 3.1562, expect 1.4766 [HYP], sinks [[360], [720], [1440]])
+[995/1203] bp15-rand32-histsel3-trisc2  median 3.1562
+[996/1203] bp_inner-L1-trisc2  median 1.5
+  bp_inner-L2-trisc2: differs from expect (got 2.4286, expect 1.8571 [HYP], sinks [[128], [256], [512]])
+[997/1203] bp_inner-L2-trisc2  median 2.4286
+  bp_inner-L3-trisc2: differs from expect (got 2.0, expect 1.6 [HYP], sinks [[192], [384], [768]])
+[998/1203] bp_inner-L3-trisc2  median 2.0
+  bp_inner-L4-trisc2: differs from expect (got 1.7692, expect 1.4615 [HYP], sinks [[256], [512], [1024]])
+[999/1203] bp_inner-L4-trisc2  median 1.7692
+  bp_inner-L6-trisc2: differs from expect (got 1.5263, expect 1.3158 [HYP], sinks [[384], [768], [1536]])
+[1000/1203] bp_inner-L6-trisc2  median 1.5263
+  bp_inner-L8-trisc2: differs from expect (got 1.4, expect 1.24 [HYP], sinks [[512], [1024], [2048]])
+[1001/1203] bp_inner-L8-trisc2  median 1.4
+  bp_inner-L16-trisc2: differs from expect (got 1.2041, expect 1.1224 [HYP], sinks [[1024], [2048], [4096]])
+[1002/1203] bp_inner-L16-trisc2  median 1.2041
+[1003/1203] mmio_lat-wallclock-brisc  median 9.125
+  mmio_ldtput-wallclock-brisc: differs from expect (got 1.5, expect 1.125 [HYP], sinks [[3], [3], [3]])
+[1004/1203] mmio_ldtput-wallclock-brisc  median 1.5
+[1005/1203] mmio_lat-niu0_id-brisc  median 9.125
+  mmio_ldtput-niu0_id-brisc: differs from expect (got 1.5, expect 1.125 [HYP], sinks [[3], [3], [3]])
+[1006/1203] mmio_ldtput-niu0_id-brisc  median 1.5
+[1007/1203] mmio_lat-niu1_id-brisc  median 9.125
+  mmio_ldtput-niu1_id-brisc: differs from expect (got 1.5, expect 1.125 [HYP], sinks [[3], [3], [3]])
+[1008/1203] mmio_ldtput-niu1_id-brisc  median 1.5
+[1009/1203] mmio_lat-niu0_status-brisc  median 9.125
+  mmio_ldtput-niu0_status-brisc: differs from expect (got 1.5, expect 1.125 [HYP], sinks [[3], [3], [3]])
+[1010/1203] mmio_ldtput-niu0_status-brisc  median 1.5
+[1011/1203] mmio_lat-niu0_cmdbuf-brisc  median 9.125
+  mmio_ldtput-niu0_cmdbuf-brisc: differs from expect (got 1.5, expect 1.125 [HYP], sinks [[3], [3], [3]])
+[1012/1203] mmio_ldtput-niu0_cmdbuf-brisc  median 1.5
+[1013/1203] mmio_st-niu0_cmdbuf-brisc  median 1.125
+  mmio_rw-niu0_cmdbuf-brisc: differs from expect (got 10.125, expect 9.125 [HYP], sinks [[1027], [2051], [4099]])
+[1014/1203] mmio_rw-niu0_cmdbuf-brisc  median 10.125
+[1015/1203] mmio_lat-overlay-brisc  median 9.125
+  mmio_ldtput-overlay-brisc: differs from expect (got 1.5, expect 1.125 [HYP], sinks [[3], [3], [3]])
+[1016/1203] mmio_ldtput-overlay-brisc  median 1.5
+[1017/1203] mmio_st-overlay-brisc  median 1.125
+  mmio_rw-overlay-brisc: differs from expect (got 10.125, expect 9.125 [HYP], sinks [[1027], [2051], [4099]])
+[1018/1203] mmio_rw-overlay-brisc  median 10.125
+[1019/1203] mmio_lat-tdma-brisc  median 6.125
+[1020/1203] mmio_ldtput-tdma-brisc  median 1.125
+[1021/1203] mmio_lat-cfg-brisc  median 6.125
+[1022/1203] mmio_ldtput-cfg-brisc  median 1.125
+[1023/1203] mmio_st-cfg-brisc  median 1.125
+  mmio_rw-cfg-brisc: differs from expect (got 7.125, expect 6.125 [HYP], sinks [[1027], [2051], [4099]])
+[1024/1203] mmio_rw-cfg-brisc  median 7.125
+[1025/1203] mmio_lat-gpr-brisc  median 6.125
+[1026/1203] mmio_ldtput-gpr-brisc  median 1.125
+[1027/1203] mmio_st-gpr-brisc  median 1.125
+  mmio_rw-gpr-brisc: differs from expect (got 7.125, expect 6.125 [HYP], sinks [[974, 1027], [2051], [4099]])
+[1028/1203] mmio_rw-gpr-brisc  median 7.125
+[1029/1203] mmio_lat-local-brisc  median 4.125
+[1030/1203] mmio_ldtput-local-brisc  median 1.125
+[1031/1203] mmio_st-local-brisc  median 1.125
+  mmio_rw-local-brisc: differs from expect (got 5.125, expect 4.125 [HYP], sinks [[1027], [2051], [4099]])
+[1032/1203] mmio_rw-local-brisc  median 5.125
+[1033/1203] mmio_lat-local_slow-brisc  median 10.125
+  mmio_ldtput-local_slow-brisc: differs from expect (got 4.0, expect 1.125 [HYP], sinks [[3], [3], [3]])
+[1034/1203] mmio_ldtput-local_slow-brisc  median 4.0
+[1035/1203] mmio_st-local_slow-brisc  median 1.125
+  mmio_rw-local_slow-brisc: differs from expect (got 11.125, expect 10.125 [HYP], sinks [[1027], [2051], [4099]])
+[1036/1203] mmio_rw-local_slow-brisc  median 11.125
+  mmio_lat-l1-brisc: differs from expect (got 4.2229, expect 10.125 [DOC], sinks [[164352], [164352], [164352]])
+[1037/1203] mmio_lat-l1-brisc  median 4.2229
+[1038/1203] mmio_ldtput-l1-brisc  median 1.1477
+[1039/1203] mmio_st-l1-brisc  median 1.125
+  mmio_rw-l1-brisc: differs from expect (got 17.6521, expect 10.125 [HYP], sinks [[1027], [2051], [4099]])
+[1040/1203] mmio_rw-l1-brisc  median 17.6521
+[1041/1203] mmio_lat-wallclock-ncrisc  median 9.125
+  mmio_ldtput-wallclock-ncrisc: differs from expect (got 1.5, expect 1.125 [HYP], sinks [[3], [3], [3]])
+[1042/1203] mmio_ldtput-wallclock-ncrisc  median 1.5
+[1043/1203] mmio_lat-niu0_id-ncrisc  median 9.125
+  mmio_ldtput-niu0_id-ncrisc: differs from expect (got 1.5, expect 1.125 [HYP], sinks [[3], [3], [3]])
+[1044/1203] mmio_ldtput-niu0_id-ncrisc  median 1.5
+[1045/1203] mmio_lat-niu1_id-ncrisc  median 9.125
+  mmio_ldtput-niu1_id-ncrisc: differs from expect (got 1.5, expect 1.125 [HYP], sinks [[3], [3], [3]])
+[1046/1203] mmio_ldtput-niu1_id-ncrisc  median 1.5
+[1047/1203] mmio_lat-niu0_status-ncrisc  median 9.125
+  mmio_ldtput-niu0_status-ncrisc: differs from expect (got 1.5, expect 1.125 [HYP], sinks [[3], [3], [3]])
+[1048/1203] mmio_ldtput-niu0_status-ncrisc  median 1.5
+[1049/1203] mmio_lat-niu0_cmdbuf-ncrisc  median 9.125
+  mmio_ldtput-niu0_cmdbuf-ncrisc: differs from expect (got 1.5, expect 1.125 [HYP], sinks [[3], [3], [3]])
+[1050/1203] mmio_ldtput-niu0_cmdbuf-ncrisc  median 1.5
+[1051/1203] mmio_st-niu0_cmdbuf-ncrisc  median 1.125
+  mmio_rw-niu0_cmdbuf-ncrisc: differs from expect (got 10.125, expect 9.125 [HYP], sinks [[1027], [2051], [4099]])
+[1052/1203] mmio_rw-niu0_cmdbuf-ncrisc  median 10.125
+[1053/1203] mmio_lat-overlay-ncrisc  median 9.125
+  mmio_ldtput-overlay-ncrisc: differs from expect (got 1.5, expect 1.125 [HYP], sinks [[3], [3], [3]])
+[1054/1203] mmio_ldtput-overlay-ncrisc  median 1.5
+[1055/1203] mmio_st-overlay-ncrisc  median 1.125
+  mmio_rw-overlay-ncrisc: differs from expect (got 10.125, expect 9.125 [HYP], sinks [[1027], [2051], [4099]])
+[1056/1203] mmio_rw-overlay-ncrisc  median 10.125
+[1057/1203] mmio_lat-local-ncrisc  median 4.125
+[1058/1203] mmio_ldtput-local-ncrisc  median 1.125
+[1059/1203] mmio_st-local-ncrisc  median 1.125
+  mmio_rw-local-ncrisc: differs from expect (got 5.125, expect 4.125 [HYP], sinks [[1027], [2051], [4099]])
+[1060/1203] mmio_rw-local-ncrisc  median 5.125
+[1061/1203] mmio_lat-local_slow-ncrisc  median 10.125
+  mmio_ldtput-local_slow-ncrisc: differs from expect (got 4.0, expect 1.125 [HYP], sinks [[3], [3], [3]])
+[1062/1203] mmio_ldtput-local_slow-ncrisc  median 4.0
+[1063/1203] mmio_st-local_slow-ncrisc  median 1.125
+  mmio_rw-local_slow-ncrisc: differs from expect (got 11.125, expect 10.125 [HYP], sinks [[1027], [2051], [4099]])
+[1064/1203] mmio_rw-local_slow-ncrisc  median 11.125
+  mmio_lat-l1-ncrisc: differs from expect (got 4.2158, expect 10.125 [DOC], sinks [[229888], [229888], [229888]])
+[1065/1203] mmio_lat-l1-ncrisc  median 4.2158
+[1066/1203] mmio_ldtput-l1-ncrisc  median 1.1448
+[1067/1203] mmio_st-l1-ncrisc  median 1.125
+  mmio_rw-l1-ncrisc: differs from expect (got 17.6553, expect 10.125 [HYP], sinks [[1027], [2051], [4099]])
+[1068/1203] mmio_rw-l1-ncrisc  median 17.6553
+[1069/1203] mmio_lat-wallclock-trisc0  median 9.125
+  mmio_ldtput-wallclock-trisc0: differs from expect (got 1.5, expect 1.125 [HYP], sinks [[3], [3], [3]])
+[1070/1203] mmio_ldtput-wallclock-trisc0  median 1.5
+[1071/1203] mmio_lat-niu0_id-trisc0  median 9.125
+  mmio_ldtput-niu0_id-trisc0: differs from expect (got 1.5, expect 1.125 [HYP], sinks [[3], [3], [3]])
+[1072/1203] mmio_ldtput-niu0_id-trisc0  median 1.5
+[1073/1203] mmio_lat-niu1_id-trisc0  median 9.125
+  mmio_ldtput-niu1_id-trisc0: differs from expect (got 1.5, expect 1.125 [HYP], sinks [[3], [3], [3]])
+[1074/1203] mmio_ldtput-niu1_id-trisc0  median 1.5
+[1075/1203] mmio_lat-niu0_status-trisc0  median 9.125
+  mmio_ldtput-niu0_status-trisc0: differs from expect (got 1.5, expect 1.125 [HYP], sinks [[3], [3], [3]])
+[1076/1203] mmio_ldtput-niu0_status-trisc0  median 1.5
+[1077/1203] mmio_lat-niu0_cmdbuf-trisc0  median 9.125
+  mmio_ldtput-niu0_cmdbuf-trisc0: differs from expect (got 1.5, expect 1.125 [HYP], sinks [[3], [3], [3]])
+[1078/1203] mmio_ldtput-niu0_cmdbuf-trisc0  median 1.5
+[1079/1203] mmio_st-niu0_cmdbuf-trisc0  median 1.125
+  mmio_rw-niu0_cmdbuf-trisc0: differs from expect (got 10.125, expect 9.125 [HYP], sinks [[1027], [2051], [4099]])
+[1080/1203] mmio_rw-niu0_cmdbuf-trisc0  median 10.125
+[1081/1203] mmio_lat-overlay-trisc0  median 9.125
+  mmio_ldtput-overlay-trisc0: differs from expect (got 1.5, expect 1.125 [HYP], sinks [[3], [3], [3]])
+[1082/1203] mmio_ldtput-overlay-trisc0  median 1.5
+[1083/1203] mmio_st-overlay-trisc0  median 1.125
+  mmio_rw-overlay-trisc0: differs from expect (got 10.125, expect 9.125 [HYP], sinks [[1027], [2051], [4099]])
+[1084/1203] mmio_rw-overlay-trisc0  median 10.125
+[1085/1203] mmio_lat-tdma-trisc0  median 6.125
+[1086/1203] mmio_ldtput-tdma-trisc0  median 1.125
+[1087/1203] mmio_lat-cfg-trisc0  median 6.125
+[1088/1203] mmio_ldtput-cfg-trisc0  median 1.125
+[1089/1203] mmio_st-cfg-trisc0  median 1.125
+  mmio_rw-cfg-trisc0: differs from expect (got 7.125, expect 6.125 [HYP], sinks [[1027], [2051], [4099]])
+[1090/1203] mmio_rw-cfg-trisc0  median 7.125
+[1091/1203] mmio_lat-gpr-trisc0  median 6.125
+[1092/1203] mmio_ldtput-gpr-trisc0  median 1.125
+[1093/1203] mmio_st-gpr-trisc0  median 1.125
+  mmio_rw-gpr-trisc0: differs from expect (got 7.125, expect 6.125 [HYP], sinks [[1027], [2051], [4099]])
+[1094/1203] mmio_rw-gpr-trisc0  median 7.125
+[1095/1203] mmio_lat-pcbuf_sync-trisc0  median 5.125
+[1096/1203] mmio_lat-mop_sync-trisc0  median 5.125
+[1097/1203] mmio_lat-sem-trisc0  median 5.125
+[1098/1203] mmio_lat-local-trisc0  median 4.125
+[1099/1203] mmio_ldtput-local-trisc0  median 1.125
+[1100/1203] mmio_st-local-trisc0  median 1.125
+  mmio_rw-local-trisc0: differs from expect (got 5.125, expect 4.125 [HYP], sinks [[1027], [2051], [4099]])
+[1101/1203] mmio_rw-local-trisc0  median 5.125
+[1102/1203] mmio_lat-local_slow-trisc0  median 10.125
+  mmio_ldtput-local_slow-trisc0: differs from expect (got 4.0, expect 1.125 [HYP], sinks [[3], [3], [3]])
+[1103/1203] mmio_ldtput-local_slow-trisc0  median 4.0
+[1104/1203] mmio_st-local_slow-trisc0  median 1.125
+  mmio_rw-local_slow-trisc0: differs from expect (got 11.125, expect 10.125 [HYP], sinks [[1027], [2051], [4099]])
+[1105/1203] mmio_rw-local_slow-trisc0  median 11.125
+  mmio_lat-l1-trisc0: differs from expect (got 4.2314, expect 10.125 [DOC], sinks [[360960], [360960], [360960]])
+[1106/1203] mmio_lat-l1-trisc0  median 4.2314
+[1107/1203] mmio_ldtput-l1-trisc0  median 1.1375
+[1108/1203] mmio_st-l1-trisc0  median 1.125
+  mmio_rw-l1-trisc0: differs from expect (got 17.655, expect 10.125 [HYP], sinks [[1027], [2051], [4099]])
+[1109/1203] mmio_rw-l1-trisc0  median 17.655
+[1110/1203] mmio_st-instrn_buf-trisc0  median 1.125
+  mmio_st-ttinsn-trisc0: differs from expect (got 1.0, expect 1.125 [DOC], sinks [[3], [3], [3]])
+[1111/1203] mmio_st-ttinsn-trisc0  median 1.0
+[1112/1203] mmio_st-instrn_buf-drain-trisc0  median 1.125
+[1113/1203] mmio_st-pcbuf_sync-trisc0  median 1.125
+[1114/1203] mmio_lat-wallclock-trisc1  median 9.125
+  mmio_ldtput-wallclock-trisc1: differs from expect (got 1.5, expect 1.125 [HYP], sinks [[3], [3], [3]])
+[1115/1203] mmio_ldtput-wallclock-trisc1  median 1.5
+[1116/1203] mmio_lat-niu0_id-trisc1  median 9.125
+  mmio_ldtput-niu0_id-trisc1: differs from expect (got 1.5, expect 1.125 [HYP], sinks [[3], [3], [3]])
+[1117/1203] mmio_ldtput-niu0_id-trisc1  median 1.5
+[1118/1203] mmio_lat-niu1_id-trisc1  median 9.125
+  mmio_ldtput-niu1_id-trisc1: differs from expect (got 1.5, expect 1.125 [HYP], sinks [[3], [3], [3]])
+[1119/1203] mmio_ldtput-niu1_id-trisc1  median 1.5
+[1120/1203] mmio_lat-niu0_status-trisc1  median 9.125
+  mmio_ldtput-niu0_status-trisc1: differs from expect (got 1.5, expect 1.125 [HYP], sinks [[3], [3], [3]])
+[1121/1203] mmio_ldtput-niu0_status-trisc1  median 1.5
+[1122/1203] mmio_lat-niu0_cmdbuf-trisc1  median 9.125
+  mmio_ldtput-niu0_cmdbuf-trisc1: differs from expect (got 1.5, expect 1.125 [HYP], sinks [[3], [3], [3]])
+[1123/1203] mmio_ldtput-niu0_cmdbuf-trisc1  median 1.5
+[1124/1203] mmio_st-niu0_cmdbuf-trisc1  median 1.125
+  mmio_rw-niu0_cmdbuf-trisc1: differs from expect (got 10.125, expect 9.125 [HYP], sinks [[1027], [2051], [4099]])
+[1125/1203] mmio_rw-niu0_cmdbuf-trisc1  median 10.125
+[1126/1203] mmio_lat-overlay-trisc1  median 9.125
+  mmio_ldtput-overlay-trisc1: differs from expect (got 1.5, expect 1.125 [HYP], sinks [[3], [3], [3]])
+[1127/1203] mmio_ldtput-overlay-trisc1  median 1.5
+[1128/1203] mmio_st-overlay-trisc1  median 1.125
+  mmio_rw-overlay-trisc1: differs from expect (got 10.125, expect 9.125 [HYP], sinks [[1027], [2051], [4099]])
+[1129/1203] mmio_rw-overlay-trisc1  median 10.125
+[1130/1203] mmio_lat-tdma-trisc1  median 6.125
+[1131/1203] mmio_ldtput-tdma-trisc1  median 1.125
+[1132/1203] mmio_lat-cfg-trisc1  median 6.125
+[1133/1203] mmio_ldtput-cfg-trisc1  median 1.125
+[1134/1203] mmio_st-cfg-trisc1  median 1.125
+  mmio_rw-cfg-trisc1: differs from expect (got 7.125, expect 6.125 [HYP], sinks [[1027], [2051], [4099]])
+[1135/1203] mmio_rw-cfg-trisc1  median 7.125
+[1136/1203] mmio_lat-gpr-trisc1  median 6.125
+[1137/1203] mmio_ldtput-gpr-trisc1  median 1.125
+[1138/1203] mmio_st-gpr-trisc1  median 1.125
+  mmio_rw-gpr-trisc1: differs from expect (got 7.125, expect 6.125 [HYP], sinks [[1027], [2051], [4099]])
+[1139/1203] mmio_rw-gpr-trisc1  median 7.125
+[1140/1203] mmio_lat-pcbuf_sync-trisc1  median 5.125
+[1141/1203] mmio_lat-mop_sync-trisc1  median 5.125
+[1142/1203] mmio_lat-sem-trisc1  median 5.125
+[1143/1203] mmio_lat-local-trisc1  median 4.125
+[1144/1203] mmio_ldtput-local-trisc1  median 1.125
+[1145/1203] mmio_st-local-trisc1  median 1.125
+  mmio_rw-local-trisc1: differs from expect (got 5.125, expect 4.125 [HYP], sinks [[1027], [2051], [4099]])
+[1146/1203] mmio_rw-local-trisc1  median 5.125
+[1147/1203] mmio_lat-local_slow-trisc1  median 10.125
+  mmio_ldtput-local_slow-trisc1: differs from expect (got 4.0, expect 1.125 [HYP], sinks [[3], [3], [3]])
+[1148/1203] mmio_ldtput-local_slow-trisc1  median 4.0
+[1149/1203] mmio_st-local_slow-trisc1  median 1.125
+  mmio_rw-local_slow-trisc1: differs from expect (got 11.125, expect 10.125 [HYP], sinks [[1027], [2051], [4099]])
+[1150/1203] mmio_rw-local_slow-trisc1  median 11.125
+  mmio_lat-l1-trisc1: differs from expect (got 4.2007, expect 10.125 [DOC], sinks [[426496], [426496], [426496]])
+[1151/1203] mmio_lat-l1-trisc1  median 4.2007
+[1152/1203] mmio_ldtput-l1-trisc1  median 1.1455
+[1153/1203] mmio_st-l1-trisc1  median 1.125
+  mmio_rw-l1-trisc1: differs from expect (got 16.9426, expect 10.125 [HYP], sinks [[1027], [2051], [4099]])
+[1154/1203] mmio_rw-l1-trisc1  median 16.9426
+[1155/1203] mmio_st-instrn_buf-trisc1  median 1.125
+  mmio_st-ttinsn-trisc1: differs from expect (got 1.0, expect 1.125 [DOC], sinks [[3], [3], [3]])
+[1156/1203] mmio_st-ttinsn-trisc1  median 1.0
+[1157/1203] mmio_st-instrn_buf-drain-trisc1  median 1.125
+[1158/1203] mmio_st-pcbuf_sync-trisc1  median 1.125
+[1159/1203] mmio_lat-wallclock-trisc2  median 9.125
+  mmio_ldtput-wallclock-trisc2: differs from expect (got 1.5, expect 1.125 [HYP], sinks [[3], [3], [3]])
+[1160/1203] mmio_ldtput-wallclock-trisc2  median 1.5
+[1161/1203] mmio_lat-niu0_id-trisc2  median 9.125
+  mmio_ldtput-niu0_id-trisc2: differs from expect (got 1.5, expect 1.125 [HYP], sinks [[3], [3], [3]])
+[1162/1203] mmio_ldtput-niu0_id-trisc2  median 1.5
+[1163/1203] mmio_lat-niu1_id-trisc2  median 9.125
+  mmio_ldtput-niu1_id-trisc2: differs from expect (got 1.5, expect 1.125 [HYP], sinks [[3], [3], [3]])
+[1164/1203] mmio_ldtput-niu1_id-trisc2  median 1.5
+[1165/1203] mmio_lat-niu0_status-trisc2  median 9.125
+  mmio_ldtput-niu0_status-trisc2: differs from expect (got 1.5, expect 1.125 [HYP], sinks [[3], [3], [3]])
+[1166/1203] mmio_ldtput-niu0_status-trisc2  median 1.5
+[1167/1203] mmio_lat-niu0_cmdbuf-trisc2  median 9.125
+  mmio_ldtput-niu0_cmdbuf-trisc2: differs from expect (got 1.5, expect 1.125 [HYP], sinks [[3], [3], [3]])
+[1168/1203] mmio_ldtput-niu0_cmdbuf-trisc2  median 1.5
+[1169/1203] mmio_st-niu0_cmdbuf-trisc2  median 1.125
+  mmio_rw-niu0_cmdbuf-trisc2: differs from expect (got 10.125, expect 9.125 [HYP], sinks [[1027], [2051], [4099]])
+[1170/1203] mmio_rw-niu0_cmdbuf-trisc2  median 10.125
+[1171/1203] mmio_lat-overlay-trisc2  median 9.125
+  mmio_ldtput-overlay-trisc2: differs from expect (got 1.5, expect 1.125 [HYP], sinks [[3], [3], [3]])
+[1172/1203] mmio_ldtput-overlay-trisc2  median 1.5
+[1173/1203] mmio_st-overlay-trisc2  median 1.125
+  mmio_rw-overlay-trisc2: differs from expect (got 10.125, expect 9.125 [HYP], sinks [[1027], [2051], [4099]])
+[1174/1203] mmio_rw-overlay-trisc2  median 10.125
+[1175/1203] mmio_lat-tdma-trisc2  median 6.125
+[1176/1203] mmio_ldtput-tdma-trisc2  median 1.125
+[1177/1203] mmio_lat-cfg-trisc2  median 6.125
+[1178/1203] mmio_ldtput-cfg-trisc2  median 1.125
+[1179/1203] mmio_st-cfg-trisc2  median 1.125
+  mmio_rw-cfg-trisc2: differs from expect (got 7.125, expect 6.125 [HYP], sinks [[1027], [2051], [4099]])
+[1180/1203] mmio_rw-cfg-trisc2  median 7.125
+[1181/1203] mmio_lat-gpr-trisc2  median 6.125
+[1182/1203] mmio_ldtput-gpr-trisc2  median 1.125
+[1183/1203] mmio_st-gpr-trisc2  median 1.125
+  mmio_rw-gpr-trisc2: differs from expect (got 7.125, expect 6.125 [HYP], sinks [[1027], [2051], [4099]])
+[1184/1203] mmio_rw-gpr-trisc2  median 7.125
+[1185/1203] mmio_lat-pcbuf_sync-trisc2  median 5.125
+[1186/1203] mmio_lat-mop_sync-trisc2  median 5.125
+[1187/1203] mmio_lat-sem-trisc2  median 5.125
+[1188/1203] mmio_lat-local-trisc2  median 4.125
+[1189/1203] mmio_ldtput-local-trisc2  median 1.125
+[1190/1203] mmio_st-local-trisc2  median 1.125
+  mmio_rw-local-trisc2: differs from expect (got 6.125, expect 4.125 [HYP], sinks [[1027], [2051], [4099]])
+[1191/1203] mmio_rw-local-trisc2  median 6.125
+[1192/1203] mmio_lat-local_slow-trisc2  median 10.125
+  mmio_ldtput-local_slow-trisc2: differs from expect (got 4.0, expect 1.125 [HYP], sinks [[3], [3], [3]])
+[1193/1203] mmio_ldtput-local_slow-trisc2  median 4.0
+[1194/1203] mmio_st-local_slow-trisc2  median 1.125
+  mmio_rw-local_slow-trisc2: differs from expect (got 11.125, expect 10.125 [HYP], sinks [[1027], [2051], [4099]])
+[1195/1203] mmio_rw-local_slow-trisc2  median 11.125
+  mmio_lat-l1-trisc2: differs from expect (got 4.2227, expect 10.125 [DOC], sinks [[492032], [492032], [492032]])
+[1196/1203] mmio_lat-l1-trisc2  median 4.2227
+[1197/1203] mmio_ldtput-l1-trisc2  median 1.1411
+[1198/1203] mmio_st-l1-trisc2  median 1.125
+  mmio_rw-l1-trisc2: differs from expect (got 16.9412, expect 10.125 [HYP], sinks [[1027], [2051], [4099]])
+[1199/1203] mmio_rw-l1-trisc2  median 16.9412
+[1200/1203] mmio_st-instrn_buf-trisc2  median 1.125
+  mmio_st-ttinsn-trisc2: differs from expect (got 1.0, expect 1.125 [DOC], sinks [[3], [3], [3]])
+[1201/1203] mmio_st-ttinsn-trisc2  median 1.0
+[1202/1203] mmio_st-instrn_buf-drain-trisc2  median 1.125
+[1203/1203] mmio_st-pcbuf_sync-trisc2  median 1.125
+
+1203 recorded, 0 soft failures, no hard failure; 0.69 s
+### 18:58:26 STEP sfpu -k hazards -> sims/results/2026-11-18-l0-sfpu-hazards-card0.jsonl
+130 selected, 0 done, 0 failed before, 130 to run
+card 0: state=idle aiclk=800 asic_c=54.4 board_w=90 pcie_gen=5 pcie_width=16
+[1/130] hazards-timing-nop  ok
+[2/130] hazards-timing-mad_chain  ok
+[3/130] hazards-timing-mad_nop_chain  ok
+[4/130] hazards-timing-mad_ind4  ok
+[5/130] hazards-timing-mad_indep_mov  ok
+[6/130] hazards-timing-mad_dep_mov  ok
+[7/130] hazards-timing-mad_nop_dep_mov  ok
+[8/130] hazards-timing-mad_nop_indep_mov  ok
+[9/130] hazards-timing-mad_iadd_vc  ok
+[10/130] hazards-timing-mad_iadd_vd  ok
+[11/130] hazards-timing-mad_setsgn_vd  ok
+[12/130] hazards-timing-mad_and_vb  ok
+[13/130] hazards-timing-mad_minmax  ok
+[14/130] hazards-timing-mad_nop_minmax  ok
+[15/130] hazards-timing-mad_swap  ok
+[16/130] hazards-timing-mad_shuf  ok
+[17/130] hazards-timing-mad_loadi_lo  ok
+[18/130] hazards-timing-swap_mov  ok
+[19/130] hazards-timing-swap_nop_mov  ok
+[20/130] hazards-timing-swap_nop2_mov  ok
+[21/130] hazards-timing-shuf_mov  ok
+[22/130] hazards-timing-shuf_nop_mov  ok
+[23/130] hazards-timing-shft2_lreg_mov  ok
+[24/130] hazards-timing-loadi_pair  ok
+[25/130] hazards-timing-sfpload  ok
+[26/130] hazards-timing-sfpstore  ok
+[27/130] hazards-timing-load_mad_store  ok
+[28/130] hazards-timing-load_mad_nop_store  ok
+[29/130] hazards-timing-arecip_mad  ok
+[30/130] hazards-timing-tt_nop_mad_dep  ok
+[31/130] hazards-value-mov_detected-gap0  ok
+[32/130] hazards-value-mov_detected-gap1  ok
+[33/130] hazards-value-iadd_vd-gap0  ok
+[34/130] hazards-value-iadd_vd-gap1  ok
+[35/130] hazards-value-iadd_vc_imm-gap0  ok
+[36/130] hazards-value-iadd_vc_imm-gap1  ok
+[37/130] hazards-value-and_vb-gap0  ok
+[38/130] hazards-value-and_vb-gap1  ok
+[39/130] hazards-value-setsgn_vd-gap0  ok
+[40/130] hazards-value-setsgn_vd-gap1  ok
+[41/130] hazards-value-minmax_min-gap0  ok
+[42/130] hazards-value-minmax_min-gap1  ok
+[43/130] hazards-value-minmax_max-gap0  ok
+[44/130] hazards-value-minmax_max-gap1  ok
+[45/130] hazards-value-shuffle-gap0  ok
+[46/130] hazards-value-shuffle-gap1  ok
+[47/130] hazards-value-loadi_lower-gap0  ok
+[48/130] hazards-value-loadi_lower-gap1  ok
+[49/130] hazards-value-minmax5_min-gap0  ok
+[50/130] hazards-value-minmax5_min-gap1  ok
+[51/130] hazards-value-minmax5_max-gap0  ok
+[52/130] hazards-value-minmax5_max-gap1  ok
+[53/130] hazards-timing-prefetchoff-nop  ok
+[54/130] hazards-timing-prefetchoff-mad_chain  ok
+[55/130] hazards-timing-prefetchoff-mad_nop_chain  ok
+[56/130] hazards-timing-prefetchoff-mad_ind4  ok
+[57/130] hazards-timing-prefetchoff-mad_indep_mov  ok
+[58/130] hazards-timing-prefetchoff-mad_dep_mov  ok
+[59/130] hazards-timing-prefetchoff-mad_nop_dep_mov  ok
+[60/130] hazards-timing-prefetchoff-mad_nop_indep_mov  ok
+[61/130] hazards-timing-prefetchoff-mad_iadd_vc  ok
+[62/130] hazards-timing-prefetchoff-mad_iadd_vd  ok
+[63/130] hazards-timing-prefetchoff-mad_setsgn_vd  ok
+[64/130] hazards-timing-prefetchoff-mad_and_vb  ok
+[65/130] hazards-timing-prefetchoff-mad_minmax  ok
+[66/130] hazards-timing-prefetchoff-mad_nop_minmax  ok
+[67/130] hazards-timing-prefetchoff-mad_swap  ok
+[68/130] hazards-timing-prefetchoff-mad_shuf  ok
+[69/130] hazards-timing-prefetchoff-mad_loadi_lo  ok
+[70/130] hazards-timing-prefetchoff-swap_mov  ok
+[71/130] hazards-timing-prefetchoff-swap_nop_mov  ok
+[72/130] hazards-timing-prefetchoff-swap_nop2_mov  ok
+[73/130] hazards-timing-prefetchoff-shuf_mov  ok
+[74/130] hazards-timing-prefetchoff-shuf_nop_mov  ok
+[75/130] hazards-timing-prefetchoff-shft2_lreg_mov  ok
+[76/130] hazards-timing-prefetchoff-loadi_pair  ok
+[77/130] hazards-timing-prefetchoff-sfpload  ok
+[78/130] hazards-timing-prefetchoff-sfpstore  ok
+[79/130] hazards-timing-prefetchoff-load_mad_store  ok
+[80/130] hazards-timing-prefetchoff-load_mad_nop_store  ok
+[81/130] hazards-timing-prefetchoff-arecip_mad  ok
+[82/130] hazards-timing-prefetchoff-tt_nop_mad_dep  ok
+[83/130] hazards-value-prefetchoff-mov_detected-gap0  ok
+[84/130] hazards-value-prefetchoff-mov_detected-gap1  ok
+[85/130] hazards-value-prefetchoff-iadd_vd-gap0  ok
+[86/130] hazards-value-prefetchoff-iadd_vd-gap1  ok
+[87/130] hazards-value-prefetchoff-iadd_vc_imm-gap0  ok
+[88/130] hazards-value-prefetchoff-iadd_vc_imm-gap1  ok
+[89/130] hazards-value-prefetchoff-and_vb-gap0  ok
+[90/130] hazards-value-prefetchoff-and_vb-gap1  ok
+[91/130] hazards-value-prefetchoff-setsgn_vd-gap0  ok
+[92/130] hazards-value-prefetchoff-setsgn_vd-gap1  ok
+[93/130] hazards-value-prefetchoff-minmax_min-gap0  ok
+[94/130] hazards-value-prefetchoff-minmax_min-gap1  ok
+[95/130] hazards-value-prefetchoff-minmax_max-gap0  ok
+[96/130] hazards-value-prefetchoff-minmax_max-gap1  ok
+[97/130] hazards-value-prefetchoff-shuffle-gap0  ok
+[98/130] hazards-value-prefetchoff-shuffle-gap1  ok
+[99/130] hazards-value-prefetchoff-loadi_lower-gap0  ok
+[100/130] hazards-value-prefetchoff-loadi_lower-gap1  ok
+[101/130] hazards-timing-prefetchoff-clr40000-nop  ok
+[102/130] hazards-timing-prefetchoff-clr40000-mad_chain  ok
+[103/130] hazards-timing-prefetchoff-clr40000-mad_nop_chain  ok
+[104/130] hazards-timing-prefetchoff-clr40000-mad_ind4  ok
+[105/130] hazards-timing-prefetchoff-clr40000-mad_indep_mov  ok
+[106/130] hazards-timing-prefetchoff-clr40000-mad_dep_mov  ok
+[107/130] hazards-timing-prefetchoff-clr40000-mad_nop_dep_mov  ok
+[108/130] hazards-timing-prefetchoff-clr40000-mad_nop_indep_mov  ok
+[109/130] hazards-timing-prefetchoff-clr40000-mad_iadd_vc  ok
+[110/130] hazards-timing-prefetchoff-clr40000-mad_iadd_vd  ok
+[111/130] hazards-timing-prefetchoff-clr40000-mad_setsgn_vd  ok
+[112/130] hazards-timing-prefetchoff-clr40000-mad_and_vb  ok
+[113/130] hazards-timing-prefetchoff-clr40000-mad_minmax  ok
+[114/130] hazards-timing-prefetchoff-clr40000-mad_nop_minmax  ok
+[115/130] hazards-timing-prefetchoff-clr40000-mad_swap  ok
+[116/130] hazards-timing-prefetchoff-clr40000-mad_shuf  ok
+[117/130] hazards-timing-prefetchoff-clr40000-mad_loadi_lo  ok
+[118/130] hazards-timing-prefetchoff-clr40000-swap_mov  ok
+[119/130] hazards-timing-prefetchoff-clr40000-swap_nop_mov  ok
+[120/130] hazards-timing-prefetchoff-clr40000-swap_nop2_mov  ok
+[121/130] hazards-timing-prefetchoff-clr40000-shuf_mov  ok
+[122/130] hazards-timing-prefetchoff-clr40000-shuf_nop_mov  ok
+[123/130] hazards-timing-prefetchoff-clr40000-shft2_lreg_mov  ok
+[124/130] hazards-timing-prefetchoff-clr40000-loadi_pair  ok
+[125/130] hazards-timing-prefetchoff-clr40000-sfpload  ok
+[126/130] hazards-timing-prefetchoff-clr40000-sfpstore  ok
+[127/130] hazards-timing-prefetchoff-clr40000-load_mad_store  ok
+[128/130] hazards-timing-prefetchoff-clr40000-load_mad_nop_store  ok
+[129/130] hazards-timing-prefetchoff-clr40000-arecip_mad  ok
+[130/130] hazards-timing-prefetchoff-clr40000-tt_nop_mad_dep  ok
+
+130 recorded, 0 soft failures, no hard failure; 4.78 s
+### 18:58:31 STEP icache  -> sims/results/2026-11-18-l0-icache-card0.jsonl
+70 selected, 0 done, 0 failed before, 70 to run
+card 0: state=idle aiclk=800 asic_c=56.0 board_w=92 pcie_gen=5 pcie_width=16
+[1/70] icache-brisc-addi-n32  ok
+[2/70] icache-brisc-addi-n64  ok
+[3/70] icache-brisc-addi-n96  ok
+[4/70] icache-brisc-addi-n120  ok
+[5/70] icache-brisc-addi-n128  ok
+[6/70] icache-brisc-addi-n160  ok
+[7/70] icache-brisc-addi-n256  ok
+[8/70] icache-brisc-addi-n480  ok
+[9/70] icache-brisc-addi-n512  ok
+[10/70] icache-brisc-addi-n1024  ok
+[11/70] icache-ncrisc-addi-n32  ok
+[12/70] icache-ncrisc-addi-n64  ok
+[13/70] icache-ncrisc-addi-n96  ok
+[14/70] icache-ncrisc-addi-n120  ok
+[15/70] icache-ncrisc-addi-n128  ok
+[16/70] icache-ncrisc-addi-n160  ok
+[17/70] icache-ncrisc-addi-n256  ok
+[18/70] icache-ncrisc-addi-n480  ok
+[19/70] icache-ncrisc-addi-n512  ok
+[20/70] icache-ncrisc-addi-n1024  ok
+[21/70] icache-trisc0-addi-n32  ok
+[22/70] icache-trisc0-addi-n64  ok
+[23/70] icache-trisc0-addi-n96  ok
+[24/70] icache-trisc0-addi-n120  ok
+[25/70] icache-trisc0-addi-n128  ok
+[26/70] icache-trisc0-addi-n160  ok
+[27/70] icache-trisc0-addi-n256  ok
+[28/70] icache-trisc0-addi-n480  ok
+[29/70] icache-trisc0-addi-n512  ok
+[30/70] icache-trisc0-addi-n1024  ok
+[31/70] icache-trisc1-addi-n32  ok
+[32/70] icache-trisc1-addi-n64  ok
+[33/70] icache-trisc1-addi-n96  ok
+[34/70] icache-trisc1-addi-n120  ok
+[35/70] icache-trisc1-addi-n128  ok
+[36/70] icache-trisc1-addi-n160  ok
+[37/70] icache-trisc1-addi-n256  ok
+[38/70] icache-trisc1-addi-n480  ok
+[39/70] icache-trisc1-addi-n512  ok
+[40/70] icache-trisc1-addi-n1024  ok
+[41/70] icache-trisc2-addi-n32  ok
+[42/70] icache-trisc2-addi-n64  ok
+[43/70] icache-trisc2-addi-n96  ok
+[44/70] icache-trisc2-addi-n120  ok
+[45/70] icache-trisc2-addi-n128  ok
+[46/70] icache-trisc2-addi-n160  ok
+[47/70] icache-trisc2-addi-n256  ok
+[48/70] icache-trisc2-addi-n480  ok
+[49/70] icache-trisc2-addi-n512  ok
+[50/70] icache-trisc2-addi-n1024  ok
+[51/70] icache-trisc1-sfpnop-n32  ok
+[52/70] icache-trisc1-sfpnop-n64  ok
+[53/70] icache-trisc1-sfpnop-n96  ok
+[54/70] icache-trisc1-sfpnop-n120  ok
+[55/70] icache-trisc1-sfpnop-n128  ok
+[56/70] icache-trisc1-sfpnop-n160  ok
+[57/70] icache-trisc1-sfpnop-n256  ok
+[58/70] icache-trisc1-sfpnop-n480  ok
+[59/70] icache-trisc1-sfpnop-n512  ok
+[60/70] icache-trisc1-sfpnop-n1024  ok
+[61/70] icache-trisc0-ttnop-n32  ok
+[62/70] icache-trisc0-ttnop-n64  ok
+[63/70] icache-trisc0-ttnop-n96  ok
+[64/70] icache-trisc0-ttnop-n120  ok
+[65/70] icache-trisc0-ttnop-n128  ok
+[66/70] icache-trisc0-ttnop-n160  ok
+[67/70] icache-trisc0-ttnop-n256  ok
+[68/70] icache-trisc0-ttnop-n480  ok
+[69/70] icache-trisc0-ttnop-n512  ok
+[70/70] icache-trisc0-ttnop-n1024  ok
+
+70 recorded, 0 soft failures, no hard failure; 5.61 s
+### 18:58:37 ALL DONE card 0
