@@ -23,7 +23,7 @@ class Llama3:
     def kernel(name, **defines): return dev.kernel(KERNELS / f"{name}.ttrv", **defines)
     qkv, o, lm = (kernel(name, EMBED_TILES=embed_tiles) for name in ("qkv", "o", "lm"))
     gate = kernel("gate", EMBED_TILES=embed_tiles, MLP_TILES=mlp_dim // 1024)
-    down = kernel("o", EMBED_TILES=embed_tiles, INPUT_TILES=mlp_dim // 1024)
+    down = dev.kernel(KERNELS / "o.ttrv", name="down", EMBED_TILES=embed_tiles, INPUT_TILES=mlp_dim // 1024)
     embedding, attention = kernel("embedding", EMBED_TILES=embed_tiles), kernel("attention", HEAD_TILES=head_dim // 32)
     argmax = kernel("argmax")
 

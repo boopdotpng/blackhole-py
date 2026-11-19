@@ -44,7 +44,7 @@ class Llama3TP:
       o = kernel("o", EMBED_TILES=et, INPUT_TILES=q_dim // 1024 or 1)
       if q_dim % 1024: raise ValueError("o_proj input must be whole 1024-element tiles per card")
       gate = kernel("gate", EMBED_TILES=et, MLP_TILES=mlp // 1024)
-      down = kernel("o", EMBED_TILES=et, INPUT_TILES=mlp // 1024, BATCH_TILES=mlp // 1024)
+      down = dev.kernel(KERNELS / "o.ttrv", name="down", EMBED_TILES=et, INPUT_TILES=mlp // 1024, BATCH_TILES=mlp // 1024)
       vocab = cfg["vocab_size"] // 2
       lm = kernel("lm", EMBED_TILES=et, VOCAB=vocab)
       argmax = kernel("argmax", TP=1, VOCAB=vocab, VOCAB_BASE=r * vocab)

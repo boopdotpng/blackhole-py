@@ -21,6 +21,26 @@ g(k=3).wait()                                      # replay with k bound to 3
 
 `d.array` also takes safetensors tensors (`helpers.safe_load`), so a checkpoint goes to the card as stored.
 
+## Profiling
+
+```python
+start, end = d.event(), d.event()                  # device wall clock, torch.cuda.Event style
+start.record(); scale(x=x, y=y, k=2); end.record()
+print(start.elapsed_time(end))                     # ms
+
+with d.profile() as prof:                          # hardware counters from every core of every launch inside
+  g(k=3)
+print(prof)                                        # one row per kernel name (d.kernel(..., name=); default: file stem)
+prof.launches                                      # Launch(name, grid, start_ns, end_ns, cores: recarray per core)
+```
+
+`PROFILE=1 python examples/llama3.py` prints the table when the device closes; `PROFILE=2` also prints each launch to
+stderr. Each core records cycles, FPU, SFPU, unpacker 0 and packer busy cycles, math-thread stall cycles, and the
+64-byte NoC flits it read and wrote (`fw.PROFILE_FIELDS`). `%` columns are busy cycles over core cycles; GB/s is
+flits over the launch's dispatcher time. Stall counts only Tensix-side stalls, not RISC-V polling. Kernels run
+unchanged, but each launch's records are read before the next replay of its graph, so profiled decode runs slower
+(Llama 1B: 162 -> 137 tok/s).
+
 ## Requirements
 
 - `tt-kmd` >= 2.12.0 (`smi.py` reads telemetry with the `NOC_READ` ioctl, added in 2.12.0)
