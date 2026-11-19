@@ -1,0 +1,123 @@
+// Qwen3.8 gated delta-net decode, step 1 of 3: the short causal convolution and SiLU over every q/k/v channel.
+//
+// Channel c of token pos (depthwise, kernel 4, left-padded with zeros):
+//   x = w3[c] raw[pos][c] + w0[c] raw[pos-3][c] + w1[c] raw[pos-2][c] + w2[c] raw[pos-1][c]
+//   out[c] = bf16(x * sigmoid(x))
+// The sum runs in that order in FP32 before rounding to BF16. Tokens before 0 read as zero.
+//
+// History: a ring of four raw BF16 rows, history[(p % 4) * CHANNELS + c] holds token p. Each worker owns the same
+// 1024 channels in every slot, so writing this token's slot races with no other worker's reads.
+//
+// Grid: CHANNELS / 1024 workers, one 1024-channel page each.
+// Dst tiles: 0 raw, 1..3 the three earlier tokens (oldest first), 4..7 taps w0..w3. The result replaces tile 0.
+// Pages are not tilized: every operation here is elementwise, so the face layout does not matter.
+
+const CHANNELS = 10240                         // q (2048) | k (2048) | v (6144)
+grid CHANNELS / 1024
+
+param qkv: bf16[]       // raw in_proj_qkv output of this token, dense [CHANNELS]
+param taps: bf16[]      // conv1d weight [CHANNELS, 1, 4] transposed by the host to [4][CHANNELS]; tap 3 is the current token
+param history: bf16[]   // [4][CHANNELS] ring of raw rows
+param output: bf16[]    // [CHANNELS]
+param pos: u32
+
+shared {
+    first = core.id * 1024
+}
+
+cb inputs: bf16[1024], pages=8                // raw, h0, h1, h2, w0, w1, w2, w3
+cb result: bf16[1024], pages=1
+sem ready = math_pack, max=1
+
+replay copy_rows { repeat r in 0..8 { math.mova2d dst[r * 8], src=r * 8 } }
+
+// Copy the next SrcA tile into Dst tile t.
+macro copy_tile(t) {
+    tensix.stall math, srca_vld|sfpu
+    math.rwc reset
+    math.cfg dst_offset=t * dst.tile
+    replay.run copy_rows
+    tensix.stall sync, math
+    math.cfg dst_offset=0
+    math.rwc reset, release=a
+}
+
+include gdn_math
+
+// One SFPU address (32 channels): the four-tap sum into l7, then SiLU, stored over the raw value.
+macro conv_step() {
+    sfp.load l0, dst[0], fmt=fp32
+    sfp.load l1, dst[7 * dst.tile], fmt=fp32
+    sfp.mul l7, l0, l1; sfp.nop
+    repeat i in 0..3 {
+        sfp.load l0, dst[(1 + i) * dst.tile], fmt=fp32
+        sfp.load l1, dst[(4 + i) * dst.tile], fmt=fp32
+        sfp.mad l7, l0, l1, l7; sfp.nop
+    }
+    sfp.mul l0, l7, neg_one; sfp.nop
+    exp_l0!()
+    sfp.addi l0, l0, 1.0; sfp.nop
+    recip_l0!()
+    sfp.mul l0, l0, l7; sfp.nop             // x * sigmoid(x)
+    sfp.rnd l0, l0, to=bf16
+    sfp.store dst[0], l0, fmt=fp32
+    math.rwc dst+=2
+}
+
+fn brisc() {
+    p = cb.reserve inputs, n=8
+    t = noc.read p, qkv[first], n=1024
+    for i in 0..3 {
+        // Tap i reads token pos - 3 + i, which lives in slot (pos + 1 + i) % 4.
+        if pos + i >= 3 {
+            noc.read p + (1 + i) * 1024, history[((pos + 1 + i) & 3) * CHANNELS + first], n=1024, tid=t
+        } else {
+            h = p + (1 + i) * 1024
+            for j in 0..1024 { h[j] = 0.0 }
+        }
+    }
+    for i in 0..4 { noc.read p + (4 + i) * 1024, taps[i * CHANNELS + first], n=1024, tid=t }
+    noc.wait t
+    // This token's raw row becomes slot pos % 4 for the next three tokens.
+    noc.write history[(pos & 3) * CHANNELS + first], p, n=1024, wait
+    cb.push inputs, n=8
+}
+
+fn trisc0() {
+    unpack.fmt a, in=bf16
+    p = cb.wait inputs, n=8
+    repeat t in 0..8 { unpack.move a, p + t * 1024, dvalid }
+    tensix.wait
+    cb.pop inputs, n=8
+}
+
+fn trisc1() {
+    math.fmt dst=fp32, sfp=fp32
+    math.cfg dst_offset=0
+    replay.load copy_rows
+    sem.stall math|sfpu|sync, ready, notmax
+    repeat t in 0..8 { copy_tile!(t) }
+    tensix.stall sfpu, math
+    math.rwc reset
+    loop 32 { conv_step!() }
+    math.rwc reset
+    tensix.stall sync, math|sfpu
+    sem.inc ready
+}
+
+fn trisc2() {
+    pack.fmt in=fp32, out=bf16
+    sem.stall tdma|pack|sync, ready, nonzero
+    p = cb.reserve result
+    pack.move p, dst[0]
+    tensix.stall sync, pack0
+    tensix.wait
+    cb.push result
+    sem.dec ready
+}
+
+fn ncrisc() {
+    r = cb.wait result
+    noc.write output[first], r, n=1024, wait
+    cb.pop result
+}

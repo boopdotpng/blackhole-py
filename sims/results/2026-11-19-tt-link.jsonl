@@ -1,0 +1,13 @@
+{"case": "clock", "e1_cycles": 29401592, "host_s": 0.021876229999179486, "e1_mhz": 1343.9972061503636}
+{"case": "one_way", "ch": 11, "src_card": 1, "size": 1024, "transfers": 65536, "e1_cycles": 4094476, "seconds": 0.003046491451963568, "gbyte_s": 22.028246282045547, "cycles_per_transfer": 62.47674560546875, "data_ok": true}
+{"case": "one_way", "ch": 11, "src_card": 1, "size": 4096, "transfers": 16384, "e1_cycles": 1836650, "seconds": 0.0013665579002658428, "gbyte_s": 49.10795509428836, "cycles_per_transfer": 112.1002197265625, "data_ok": true}
+{"case": "one_way", "ch": 11, "src_card": 1, "size": 16384, "transfers": 4096, "e1_cycles": 1836317, "seconds": 0.0013663101318936496, "gbyte_s": 49.11686039171054, "cycles_per_transfer": 448.319580078125, "data_ok": true}
+{"case": "one_way", "ch": 11, "src_card": 1, "size": 65536, "transfers": 1024, "e1_cycles": 1834978, "seconds": 0.0013653138500607169, "gbyte_s": 49.152701407823265, "cycles_per_transfer": 1791.970703125, "data_ok": true}
+{"case": "one_way", "ch": 11, "src_card": 1, "size": 131072, "transfers": 512, "e1_cycles": 1833208, "seconds": 0.001363996883037348, "gbyte_s": 49.2001593512164, "cycles_per_transfer": 3580.484375, "data_ok": true}
+{"case": "duplex", "size": 16384, "transfers": 4096, "gbyte_s": {"card1_ch11": 49.11675340200581, "card0_ch11": 49.1164859297832}, "total_gbyte_s": 98.23323933178901, "data_ok": true}
+{"case": "two_links", "size": 16384, "transfers": 4096, "gbyte_s": {"card1_ch11": 49.11686039171054, "card1_ch13": 49.11645918272116}, "total_gbyte_s": 98.2333195744317, "data_ok": true}
+{"case": "two_links_duplex", "size": 16384, "transfers": 4096, "gbyte_s": {"card0_ch11": 49.1170743725183, "card0_ch13": 49.11696738188137, "card1_ch11": 49.11672665465246, "card1_ch13": 49.11675340200581}, "total_gbyte_s": 196.46752181105796, "data_ok": true}
+{"case": "duplex", "size": 65536, "transfers": 1024, "gbyte_s": {"card1_ch11": 49.152487116481936, "card0_ch11": 49.1526210483513}, "total_gbyte_s": 98.30510816483323, "data_ok": true}
+{"case": "two_links", "size": 65536, "transfers": 1024, "gbyte_s": {"card1_ch11": 49.152487116481936, "card1_ch13": 49.152513902797416}, "total_gbyte_s": 98.30500101927936, "data_ok": true}
+{"case": "two_links_duplex", "size": 65536, "transfers": 1024, "gbyte_s": {"card0_ch11": 49.15283534086044, "card0_ch13": 49.15264783481277, "card1_ch11": 49.15232639920213, "card1_ch13": 49.152728194372315}, "total_gbyte_s": 196.61053776924766, "data_ok": true}
+{"case": "ping_pong", "ch": 11, "round_trips": 10000, "e1_cycles": 8563494, "round_trip_us": 0.6371660566563657}

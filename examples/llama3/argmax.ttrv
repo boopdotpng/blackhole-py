@@ -43,6 +43,11 @@ param write_token: u32                // 1: append the token to history (0 when 
 // (key, global token) to winner and a cross-card pick writes the token to the host and history.
 const TP = 0
 const VOCAB_BASE = 0
+// A linked rank exchanges its local winner through the E1 mailbox, then publishes the global token.
+const LINK_PICK = 0
+const ETH_X = 0
+const ETH_Y = 1
+if LINK_PICK { param step: u32 }
 if TP { param winner: u32[] }
 
 shared {
@@ -140,6 +145,23 @@ fn brisc() {
         local[1] = best
         noc.write winner[0], local, n=4, wait
         return
+    }
+    if LINK_PICK {
+        parity = step & 1
+        local[0] = best_key
+        local[1] = best
+        noc.write noc_xy(ETH_X, ETH_Y, 0x40000 + parity * 0x8000), local, n=4, wait
+        ack[0] = step
+        ack[1] = 16
+        ack[2] = 1
+        ack[3] = 0
+        noc.write noc_xy(ETH_X, ETH_Y, 0x30400), ack, n=4, wait
+        loop {
+            noc.read ack, noc_xy(ETH_X, ETH_Y, 0x60000 + parity * 16), n=4, wait
+            if ack[0] == step { break }
+        }
+        noc.read ack, noc_xy(ETH_X, ETH_Y, 0x50000 + parity * 0x8000), n=4, wait
+        if ack[0] > best_key || (ack[0] == best_key && ack[1] < best) { best = ack[1] }
     }
     local[0] = best
     noc.write tokens[4 * write_pos], local, n=4, wait     // 16 bytes to the host slot

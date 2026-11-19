@@ -214,6 +214,11 @@ def noc(g, s):
         g.fail("noc.endpoint", "invalid remote pointer")
       g.mov(offset, ptr)
       coord = worker(x, y)
+    elif isinstance(remote, Call) and remote.fn == "noc_xy":
+      # A physical NoC endpoint (e.g. Ethernet L1), addressed in bytes.
+      x, y, addr = remote.args
+      coord = g.li(number(x, 0, 63) | number(y, 0, 63) << 6)
+      g.mov(offset, g.condition(addr))
     elif multicast:
       if len(remote.args) != 5:
         g.fail("noc.mcast", "expected rect(x0, y0, x1, y1, pointer)")

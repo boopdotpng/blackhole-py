@@ -36,10 +36,10 @@ Batch-one greedy inference on one Blackhole p150a (card 0, 138 workers). Higher 
 | Llama 3.2 1B | BF16 | 7,359 | 159.0 |
 | Llama 3 8B | BF16 | 2,019 | 30.1 |
 | Llama 3 8B | BFP8_B | 2,493 | 47.4 |
-| Qwen3.8-27B | Mixed BFP | 130 | 11.4 |
+| Qwen3.8-27B | Mixed BFP, BFP8_B down | 181 | 17.3 |
 | Nanbeige4.3-33B | Mixed BFP | 1,003 | 19.0 |
 
-Each rate is the median of three warm runs on the same fixed token IDs. Prefill measures KV-cache construction for 320 prefix tokens, in one chunk for Llama and Nanbeige and ten 32-token chunks for Qwen. Decode measures the next 32 streamed tokens after the first output. Timings exclude checkpoint loading, compilation, and graph capture. Mixed BFP uses BFP8_B attention and BFP4_B MLP projections; Nanbeige's LM head is BFP8_B and Qwen's BF16. Llama 3 8B BFP8_B packs every attention and MLP projection and the LM head as BFP8_B and keeps embeddings and norms in BF16.
+Each rate is the median of three warm runs on the same fixed token IDs. Prefill measures KV-cache construction for 320 prefix tokens, in one chunk for Llama and Nanbeige and ten 32-token chunks for Qwen. Decode measures the next 32 streamed tokens after the first output. Timings exclude checkpoint loading, compilation, and graph capture. Both mixed checkpoints use BFP8_B attention and BFP4_B MLP gate and up projections. Qwen uses BFP8_B down projections and a BF16 LM head. Nanbeige uses BFP4_B down projections and a BFP8_B LM head. Llama 3 8B BFP8_B packs every attention and MLP projection and the LM head as BFP8_B and keeps embeddings and norms in BF16.
 
 Reproduce a row with `python sims/probes/model_rates.py 8b-bfp8 --device 0`. The other checkpoint options are `1b`, `8b-bf16`, `nanbeige`, and `qwen38`.
 
@@ -55,8 +55,9 @@ output, median of three warm runs); the one-card column is the table above.
 | Llama 3 8B | BF16 | 30.1 | 52.4 | 1.74× |
 | Llama 3 8B | BFP8_B | 47.4 | 74.3 | 1.57× |
 | Nanbeige4.3-33B | Mixed BFP | 19.0 | 31.3 | 1.65× |
+| Qwen3.8-27B | Mixed BFP, BFP8_B down | 17.3 | 28.8 | 1.66× |
 
-Reproduce a row with `python eth/tp_rates.py 8b-bfp8`; the other options are `1b`, `8b-bf16` and `nanbeige`. To generate
+Reproduce a row with `python eth/tp_rates.py 8b-bfp8`; the other options are `1b`, `8b-bf16`, `nanbeige` and `qwen38`. To generate
 text, run `python eth/llama3_tp.py --model 8b-bf16` (BF16 Llama) or `python eth/nanbeige_tp.py --checkpoint ...` (packed
 checkpoints, including Llama 3 8B BFP8_B).
 
@@ -69,8 +70,7 @@ the device fd closes, so a crash or kill leaves nothing running.
 After o_proj and down_proj each card writes a BF16 partial sum. A 16-worker kernel ([eth/allreduce.c](eth/allreduce.c))
 stages it in the Ethernet tile, waits for the peer's half and writes `(p0 + p1) + residual`, summed in FP32 in card order
 so both cards hold the same bits. Each all-reduce takes 10 to 15 µs including its launch. After the vocabulary-split LM
-head, [eth/pick.c](eth/pick.c) exchanges the two argmax winners. Prompts run one token at a time on two cards; chunked
-prefill and Qwen are single-card only.
+head, [eth/pick.c](eth/pick.c) exchanges the two argmax winners. Llama and Nanbeige process two-card prompts one token at a time. Qwen supports chunked prefill on both one and two cards.
 
 Both cards pick the same token at every step. Llama matches single-card output token for token. Nanbeige matches for the
 first dozen tokens of a sample prompt and then picks the runner-up at a one-logit margin: splitting o_proj and down_proj
@@ -109,30 +109,25 @@ For a 320-row projection, a sender reads each packed weight block once and multi
 
 ## Qwen3.8-27B prefill and decode
 
-Run batch-one greedy text generation from the mixed BFP4 MLP / BFP8 attention checkpoint.
-Prefill batches up to 32 prompt tokens per graph and reuses the decode projection weights.
-During prefill, two workers per GDN head update independent halves of its FP32 recurrent matrix in L1. An output kernel normalizes the combined head and applies its gate.
-Full attention appends the chunk’s normalized, rotated keys and its values. BRISC gathers blocks from the KV cache and TRISC2 evaluates the causal queries using FP32 vector arithmetic.
-The last prompt token enters the single-token decoder. Use `--serial` for token-at-a-time prompt processing.
-Use `--checkpoint` for the packed safetensors file and `--metadata` for its original config and tokenizer directory.
+The default checkpoint stores attention and MLP down projections in BFP8_B, gate and up projections in BFP4_B, and the vocabulary head in BF16. The loader also accepts the earlier BFP4_B-down checkpoint with `--checkpoint`. To build the new checkpoint from the original packed and BF16 snapshots, run `python -I examples/qwen38_repack.py`.
+
+All Qwen compute kernels are TTRV. The SFPU performs the depthwise convolution, SiLU, FP32 gated delta recurrence and gated RMSNorm. Each worker retains 64 value channels of a head. The unpacker moves the FP32 state directly into Dst. The SFPU computes the correction against the previous state, updates each row, and accumulates the context from the updated rows in key order.
+
+Prefill batches up to 32 prompt rows for projections. The recurrent and causal attention kernels consume those rows in sequence and share their state with decode. Use `--serial` for token-at-a-time prompt processing.
+
+| Qwen3.8-27B throughput | 1× P150a | 2× P150a | Speedup |
+| --- | ---: | ---: | ---: |
+| Prefill (tok/s) | 180.7 | 186.2 | 1.03× |
+| Decode (tok/s) | 17.3 | 28.8 | 1.66× |
+
+These are medians of three warm runs with the BFP8_B-down checkpoint, a 320-token prefix in ten chunks, and 32 timed decode steps after the first output.
+
+In a 64-step GDN comparison, 99.991% of 393,216 BF16 outputs matched the original C worker bit for bit. The FP32 state check also passed over 1,024 recurrent steps. On 5-token and 41-token prompts, serial and chunked prefill on both card configurations produced the same 12 greedy tokens as the C decoder.
 
 ```sh
-python examples/qwen38.py --device 0 --prompt 'The capital of France is' --tokens 8 --profile
+python examples/qwen38.py --prompt 'The capital of France is' --tokens 12
+python examples/qwen38.py --tp 2 --prompt 'The capital of France is' --tokens 12
+python examples/qwen38_check.py --device 0 --tokens 256
 ```
 
-Prompt throughput measures execution of the captured prefix graphs. Decode throughput excludes loading, prompt processing and the first generated token.
-`--profile` reports dispatcher timings grouped by kernel for the prefix and the last decode position.
-
-On card 0 the single-token path fits 176,640 context positions with this checkpoint.
-Sixteen full-attention layers consume a total of 64 KiB of BF16 KV storage per position.
-The 48 GDN layers use fixed-size state. Chunked prefill also reserves activation buffers and captured graphs.
-
-Generated-token throughput depends on context length. With 1, 96, and 320 cached prefix tokens, Qwen decoded the next 32 timed tokens at 17.3, 15.0, and 11.4 tok/s respectively. Across the 16 full-attention layers, grouped-query attention took 3.84 ms at position 33 and 33.89 ms at position 352. The 48 recurrent GDN layers took 6.47 and 6.46 ms at those positions.
-
-Card 0 processed a 98-token prefix at 99.4 prompt tokens/s, versus 17.8 with serial decode.
-At 512 prefix tokens it reached 67.7 prompt tokens/s. These timings exclude graph capture.
-
-On card 0, a warm 320-token Qwen prefix takes 2.46 s (130 prompt tok/s).
-Dispatcher timings attribute 1.24 s to GDN including its output kernel, 0.61 s to grouped-query attention,
-and 0.48 s to matrix projections. Reproduce the throughput measurement with
-`python sims/probes/prefill.py qwen38 --length 320`.
+Two-card TP splits each Q, K and V projection by head, the MLP by intermediate channel, and the LM head by vocabulary row. The TTRV residual kernel exchanges the attention and MLP partial sums on TT-link channel 11, then adds them on the SFPU. The argmax workers exchange their candidates and publish the winning token on both cards. `--profile` reports rank 0 dispatcher timings in TP mode.

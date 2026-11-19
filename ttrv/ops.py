@@ -222,7 +222,7 @@ def sfp(g, s):
   elif name == "recip": g.tt("SFPARECIP", 0, a, rd)
   elif name == "exexp": g.tt("SFPEXEXP", 0, a, rd)
   elif name == "exman": g.tt("SFPEXMAN", 0, a, rd, 1 - number(d.get("hidden",Num(1)),0,1))
-  elif name == "rnd": g.tt("SFP_STOCH_RND", 0, 0, 0, a, rd, operand(d["to"], {"bf16":1, "fp16":0}))
+  elif name == "rnd": g.tt("SFP_STOCH_RND", 0, 0, 0, a, rd, operand(d["to"], {"bf16":1, "fp16":0, "u16":6}))
   elif name == "addi":
     if rd != a or not isinstance(d["n"], Num): g.fail("sfp.operand", "addi requires rd, rd, immediate")
     bits = int.from_bytes(struct.pack("<f", d["n"].value), "little")
@@ -243,9 +243,17 @@ def sfp(g, s):
   elif name in ("li", "const"):
     e = d["value"]
     fmt = keyword(d.get("fmt", Name("fp32")))
-    if fmt not in ("i32", "u32", "fp32"):
+    if fmt not in ("i32", "u32", "fp32", "bf16"):
       g.fail("sfp.fmt", fmt)
-    if isinstance(e, Num):
+    if fmt == "bf16":
+      if isinstance(e, Num):
+        bits = int.from_bytes(struct.pack("<f", e.value), "little")
+        g.tt("SFPLOADI", rd, 0, ((bits + 0x7fff + ((bits >> 16) & 1)) >> 16) & 0xffff)
+      else:
+        r, t = g.expr(e)
+        if t != fmt: g.fail("sfp.type", "expected bf16")
+        runtime_word(g, "SFPLOADI", dict(lreg_ind=rd, instr_mod0=0), "imm16", r)
+    elif isinstance(e, Num):
       bits = (
         int.from_bytes(struct.pack("<f", e.value), "little")
         if fmt == "fp32"

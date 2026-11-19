@@ -3,6 +3,15 @@
 const DIM = 7168
 const RMS = 0
 const SWIGLU = 0
+// Optional two-rank residual addition over the E1 forwarder (eth/link.h).
+const TP = 0
+const ETH_X = 0
+const ETH_Y = 1
+if TP {
+    param step: u32
+    param slot: u32
+    l1 notice: u32[4]
+}
 const PACKED = RMS + SWIGLU
 const EPS = 1e-5
 const TILES = (DIM + 1023) / 1024
@@ -180,7 +189,26 @@ fn brisc() {
     }
     a = cb.reserve inputs
     noc.read a, x[token_base + first], n=count, wait
+    if TP {
+        tag = step + slot
+        parity = tag & 1
+        noc.write noc_xy(ETH_X, ETH_Y, 0x40000 + parity * 0x8000 + first * 2), a, n=count, wait
+        notice[0] = tag
+        notice[1] = DIM * 2
+        notice[2] = TILES
+        notice[3] = 0
+        noc.write noc_xy(ETH_X, ETH_Y, 0x30400 + core.id * 16), notice, n=4, wait
+    }
     cb.push inputs
+    if TP {
+        loop {
+            noc.read notice, noc_xy(ETH_X, ETH_Y, 0x60000 + ((step + slot) & 1) * 16), n=4, wait
+            if notice[0] == step + slot { break }
+        }
+        peer = cb.reserve inputs
+        noc.read peer, noc_xy(ETH_X, ETH_Y, 0x50000 + ((step + slot) & 1) * 0x8000 + first * 2), n=count, wait
+        cb.push inputs
+    }
     b = cb.reserve inputs
     noc.read b, other[(1 - RMS) * token_base + first], n=count, wait
     cb.push inputs
@@ -188,7 +216,7 @@ fn brisc() {
 
 fn trisc0() {
     unpack.fmt a, in=bf16
-    loop 2 + RMS * TILES {
+    loop 2 + TP + RMS * TILES {
         p = cb.wait inputs
         unpack.move a, p, dvalid
         tensix.wait
@@ -218,6 +246,7 @@ fn trisc1() {
     }
     copy_tile!(0)
     copy_tile!(1)
+    if TP { copy_tile!(2) }
     select_tile!(0)
     if RMS { faces!(rms_apply, 4) }
     if SWIGLU {
@@ -248,6 +277,10 @@ fn trisc1() {
                 sfp.load l0, dst[0], fmt=fp32
                 sfp.load l1, dst[dst.tile], fmt=fp32
                 sfp.add l0, l0, l1; sfp.nop
+                if TP {
+                    sfp.load l2, dst[2 * dst.tile], fmt=fp32
+                    sfp.add l0, l0, l2; sfp.nop
+                }
                 sfp.store dst[0], l0, fmt=fp32
                 math.rwc dst+=2
             }

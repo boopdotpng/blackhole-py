@@ -1,0 +1,61 @@
+// The scalar reference uses the worker's nearest-even integer conversion
+// after adding a signed half, then a fifth-degree polynomial on the residual.
+macro exp_l0() {
+    sfp.li l1, 80.0
+    sfp.minmax l0, l1
+    sfp.li l5, -80.0
+    sfp.mov l6, l0
+    sfp.minmax l5, l0
+    sfp.abs l2, l0, float
+    sfp.li l1, 1.44269504
+    sfp.li l3, 0.5
+    sfp.mad l2, l2, l1, l3; sfp.nop
+    sfp.rnd l2, l2, to=u16
+    sfp.cast l2, l2
+    sfp.if l0 < zero { sfp.mul l2, l2, neg_one; sfp.nop }
+    sfp.li l1, -0.69314718
+    sfp.mad l3, l2, l1, l0; sfp.nop
+    sfp.addi l2, l2, 127.0; sfp.nop
+    sfp.rnd l2, l2, to=u16
+    sfp.setexp l2, one, l2
+    sfp.li l0, 1.0 / 120
+    sfp.li l1, 1.0 / 24
+    sfp.mad l0, l0, l3, l1; sfp.nop
+    sfp.li l1, 1.0 / 6
+    sfp.mad l0, l0, l3, l1; sfp.nop
+    sfp.li l1, 0.5
+    sfp.mad l0, l0, l3, l1; sfp.nop
+    sfp.mad l0, l0, l3, one; sfp.nop
+    sfp.mad l0, l0, l3, one; sfp.nop
+    sfp.mul l0, l0, l2; sfp.nop
+    sfp.li l5, -80.0
+    sfp.if l6 < l5 { sfp.mov l0, zero }
+}
+
+macro recip_l0() {
+    sfp.mov l1, l0
+    sfp.li l2, 0x7ef311c3, fmt=u32
+    sfp.isub l1, l2, l1
+    sfp.li l2, 2.0
+    repeat 3 {
+        sfp.mad l3, l0, l1, l2, neg_ab; sfp.nop
+        sfp.mul l1, l1, l3; sfp.nop
+    }
+    sfp.mov l0, l1
+}
+
+macro rsqrt_l0() {
+    sfp.mov l1, l0
+    sfp.shr l1, l1, 1
+    sfp.li l2, 0x5f3759df, fmt=u32
+    sfp.isub l1, l2, l1
+    sfp.li l2, -0.5
+    sfp.mul l0, l0, l2; sfp.nop
+    sfp.li l2, 1.5
+    repeat 3 {
+        sfp.mul l3, l0, l1; sfp.nop
+        sfp.mad l3, l3, l1, l2; sfp.nop
+        sfp.mul l1, l1, l3; sfp.nop
+    }
+    sfp.mov l0, l1
+}

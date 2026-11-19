@@ -12,6 +12,9 @@ UNPACK_CREDIT = hw.semaphore(hw.Sem.UNPACK_SYNC)
 
 def movement(g, s):
   if s.ns == "unpack":
+    if s.name == "dest":
+      unpack_dest(g, s)
+      return
     if s.name in ("acquire", "post", "release"):
       bind(s)
       g.unpack_credit = True
@@ -274,6 +277,41 @@ def unpack(g, s, d, i):
       g.tt("UNPACR", i, 0x11 if bfp else 0, 0, ctx, 0, 1, int("dvalid" in d and j + 1 == faces), 0, 0, 0, 0, 0, 1)
     g.tt("STALLWAIT", isa.Stall.SYNC, isa.Wait.UNPACK1 if i else isa.Wait.UNPACK0)
     g.tt("SEMGET", UNPACK_SYNC)
+
+
+def unpack_dest(g, s):
+  """Synchronously move a full FP32 tile directly into Dst. The caller owns the destination until packed."""
+  d = bind(s, "p dst")
+  ptr, ty = g.expr(required(d, "p", s))
+  tile_row = number(row(required(d, "dst", s)), 0, 448)
+  if ty not in ("fp32*", "u32*") or tile_row % 64:
+    g.fail("unpack.dest", "expected a 32-bit L1 tile and tile-aligned FP32 Dst")
+  g.check_pointer(d["p"], 16, 4096)
+  u = hw.UNPACKER[0]
+  fp = FMT["fp32"]
+  g.drain()
+  rmw(g, u.in_data_format(fp), u.y_dim(1))
+  rmw(g, u.out_data_format(fp), u.throttle_mode(2), u.haloize_mode(0))
+  rmw(g, *(f(1) for f in u.disable_zero_compress[:4]))
+  rmw(g, *(f(1) for f in u.disable_zero_compress[4:]))
+  rmw(g, u.context_in_format[0](fp), u.context_out_format[0](fp))
+  rmw(g, u.ovrd_data_format(1))
+  rmw(g, u.row_stride(64))
+  rmw(g, u.face_stride(1024))
+  rmw(g, cfg.UNP0_ADD_DEST_ADDR_CNTR_add_dest_addr_cntr(1))
+  unpack_shape(g, 0, 0, 256, 4)
+  rmw(g, u.dest_address[0](64 + tile_row * 16))
+  rmw(g, cfg.THCON_SEC0_REG2_Unpack_if_sel_cntx0(1))
+  setc16(g, cfg.SRCA_SET_SetOvrdWithAddr(0))
+  unpack_base(g, 0, 0, ptr)
+  g.tt("SETADCXX", 1, 255, 0)
+  g.tt("SETADCZW", 1, 0, 0, 0, 0, 15)
+  g.tt("STALLWAIT", isa.Stall.UNPACK, isa.Wait.TRISC_CFG)
+  for _ in range(4): g.tt("UNPACR", 0, 0x11, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1)
+  g.drain()
+  rmw(g, cfg.THCON_SEC0_REG2_Unpack_if_sel_cntx0(0))
+  rmw(g, u.dest_address[0](64))
+  setc16(g, cfg.SRCA_SET_SetOvrdWithAddr(1))
 
 
 def wait_unpack_credit(g):

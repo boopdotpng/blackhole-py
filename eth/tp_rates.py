@@ -1,7 +1,5 @@
 """Warm batch-one decode on two p150a cards (tensor parallel over TT-link), measured like sims/probes/model_rates.py:
-a fixed 320-token prefix, then the 32 streamed tokens after the first output; median of three warm runs. The prefix
-runs one token at a time through the decode graph (two-card chunked prefill is not implemented), so only decode is
-reported.      python eth/tp_rates.py 8b-bfp8"""
+a fixed 320-token prefix, then the 32 streamed tokens after the first output; median of three warm runs. Only streamed decode is reported.      python eth/tp_rates.py 8b-bfp8"""
 import argparse, sys
 from pathlib import Path
 from statistics import median
@@ -13,7 +11,7 @@ from ttrv import Device
 from tp import Link
 
 ap = argparse.ArgumentParser(description=__doc__)
-ap.add_argument("model", choices=("1b", "8b-bf16", "8b-bfp8", "nanbeige"))
+ap.add_argument("model", choices=("1b", "8b-bf16", "8b-bfp8", "nanbeige", "qwen38"))
 a = ap.parse_args()
 prefix, steps = 320, 32
 ids = np.random.default_rng(42).integers(100, 32000, size=prefix + 1).tolist()
@@ -23,6 +21,9 @@ weights = HERE.parent / "weights"
 if a.model in ("1b", "8b-bf16"):
   from llama3_tp import Llama3TP
   model = Llama3TP(weights / f"llama3-{a.model}", devs, link)
+elif a.model == "qwen38":
+  from examples.qwen38 import DEFAULT, METADATA, Qwen38TP
+  model = Qwen38TP(DEFAULT, METADATA, devs, link, prefix + steps + 1)
 else:
   from nanbeige_tp import NanbeigeTP, DEFAULT
   ckpt = DEFAULT if a.model == "nanbeige" else weights / "llama3-8b-bfp8" / "model.safetensors"

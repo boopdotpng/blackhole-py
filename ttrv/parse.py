@@ -17,6 +17,7 @@ expanded into templates) accept `label: statement` lines. Errors are Error(loc, 
 from __future__ import annotations
 import math, re
 from dataclasses import dataclass
+from pathlib import Path
 
 class Error(Exception):
   def __init__(self, loc: Loc | None, id: str, msg: str):
@@ -585,12 +586,28 @@ class Parser:
       return e
     self.fail("expected an expression", t)
 
-def parse(src: str, file: str = "<input>") -> list:
+def parse(src: str, file: str = "<input>", *, _parents=()) -> list:
+  """A top-level 'include name' imports declarations from the sibling name.ttrv."""
   p = Parser(lex(src, file))
   p.skip_nl()
   out = []
   while p.peek().kind != "eof":
-    out.append(p.decl())
+    if p.at_word("include"):
+      loc = p.next().loc
+      name = p.name("a sibling module name")
+      if str(file).startswith("<"):
+        raise Error(loc, "include.path", "an include needs a source file path")
+      parent = Path(file).resolve()
+      path = parent.with_name(name + ".ttrv")
+      if path in (*_parents, parent):
+        raise Error(loc, "include.cycle", str(path))
+      try:
+        included = path.read_text()
+      except OSError as err:
+        raise Error(loc, "include.read", str(err)) from err
+      out.extend(parse(included, str(path), _parents=(*_parents, parent)))
+    else:
+      out.append(p.decl())
     p.end_stmt()
   return out
 
