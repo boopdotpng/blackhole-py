@@ -27,6 +27,22 @@ g(k=3).wait()                                      # replay with k bound to 3
 - Python with `numpy` and `tiktoken`
 - `clang` and `llvm-objcopy`
 
+## Inference throughput
+
+Batch-one greedy inference on one Blackhole p150a (card 0, 138 workers). Higher is faster.
+
+| Model | Weights | Prefill (tok/s) | Decode (tok/s) |
+| --- | --- | ---: | ---: |
+| Llama 3.2 1B | BF16 | 7,368 | 161.6 |
+| Llama 3 8B | BF16 | 2,020 | 29.9 |
+| Llama 3 8B | FP8 | 1,882 | 45.8 |
+| Qwen3.8-27B | Mixed BFP | 130 | 11.4 |
+| Nanbeige4.3-33B | Mixed BFP | 1,004 | 18.2 |
+
+Each rate is the median of three warm runs on the same fixed token IDs. Prefill measures KV-cache construction for 320 prefix tokens, in one chunk for Llama and Nanbeige and ten 32-token chunks for Qwen. Decode measures the next 32 streamed tokens after the first output. Timings exclude checkpoint loading, compilation, and graph capture. Mixed BFP uses BFP8_B attention and BFP4_B MLP projections.
+
+Reproduce a row with `python sims/probes/model_rates.py 8b-fp8 --device 0`. The other checkpoint options are `1b`, `8b-bf16`, `nanbeige`, and `qwen38`.
+
 ## Examples
 
 [examples/llama3.py](examples/llama3.py) runs chunked prefill and greedy decode with the kernels in [examples/llama3](examples/llama3). Weights go in `weights/llama3-1b/`, `weights/llama3-8b-bf16/` or `weights/llama3-8b-fp8/`.
@@ -34,12 +50,6 @@ g(k=3).wait()                                      # replay with k bound to 3
 ```sh
 python examples/llama3.py --model 1b --tokens 64
 ```
-
-| Model | Decode tok/s (p150a) |
-| --- | ---: |
-| 1B BF16 | 157.6 |
-| 8B FP8 | 38.1 |
-| 8B BF16 | 29.3 |
 
 [Nanbeige4.3-33B](examples/nanbeige.py) runs greedy decode on one Blackhole card with BFP8_B attention projections,
 BFP4_B MLP projections, and BF16 embeddings, normalization weights, and LM head. Pass the packed safetensors file
@@ -61,15 +71,6 @@ python sims/probes/prefill.py nanbeige --length 320 --chunks 32 64 160 320
 ```
 
 The probe warms each graph and reports the median of three complete prefix runs. Checkpoint loading, one-time layout conversion, graph capture and first-token readout are excluded. Both example CLIs accept `--prefill-chunk` to set the maximum chunk size.
-
-Warm prefill measured on card 0 (138 worker cores) with a 320-token prefix and one 320-row chunk:
-
-| Model | Prompt tok/s |
-| --- | ---: |
-| Nanbeige4.3-33B mixed BFP | 1,002 |
-| Llama 3 8B BF16 | 2,021 |
-| Llama 3 8B FP8 | 1,861 |
-| Llama 3 1B BF16 | 7,348 |
 
 For a 320-row projection, a sender reads each packed weight block once and multicasts it to the other nine workers computing that output column. Workers computing the same prompt panel share activations across columns. The data movers stage blocks in L1 while the matrix unit consumes the previous block. Short tails of up to eight tokens use an eight-row matrix schedule.
 
