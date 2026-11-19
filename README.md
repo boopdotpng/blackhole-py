@@ -41,15 +41,25 @@ python examples/llama3.py --model 1b --tokens 64
 | 8B FP8 | 38.1 |
 | 8B BF16 | 29.3 |
 
-## Qwen3.8-27B decode
+## Qwen3.8-27B prefill and decode
 
 Run batch-one greedy text generation from the mixed BFP4 MLP / BFP8 attention checkpoint.
-The prompt is processed one token at a time. The GDN recurrent matrix stays in FP32 on the device.
+Prefill batches up to 32 prompt tokens per graph and reuses the decode projection weights.
+Each GDN head keeps its FP32 recurrent matrix in worker L1 across the chunk, then saves it for the next chunk or decode.
+Full attention appends the chunk's normalized, rotated keys and its values before evaluating causal queries.
+The last prompt token enters the single-token decoder. Use `--serial` for token-at-a-time prompt processing.
 Use `--checkpoint` for the packed safetensors file and `--metadata` for its original config and tokenizer directory.
 
 ```sh
 python examples/qwen38.py --device 0 --prompt 'The capital of France is' --tokens 8 --profile
 ```
 
-The throughput excludes loading, prompt processing and the first generated token.
-`--profile` reports dispatcher timings grouped by kernel for the last decode position.
+Prompt throughput measures execution of the captured prefix graphs. Decode throughput excludes loading, prompt processing and the first generated token.
+`--profile` reports dispatcher timings grouped by kernel for the prefix and the last decode position.
+
+On card 0 the single-token path fits 176,640 context positions with this checkpoint.
+Sixteen full-attention layers consume a total of 64 KiB of BF16 KV storage per position.
+The 48 GDN layers use fixed-size state. Chunked prefill also reserves activation buffers and captured graphs.
+
+Card 0 processed a 98-token prefix at 99.4 prompt tokens/s, versus 17.8 with serial decode.
+At 512 prefix tokens it reached 67.7 prompt tokens/s. These timings exclude graph capture.

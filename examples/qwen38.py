@@ -11,10 +11,10 @@ import numpy as np
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-import fw
-import ttrv
-from helpers import safe_load
-from ttrv.runtime import Device, Kernel, Var
+import fw  # noqa: E402
+import ttrv  # noqa: E402
+from helpers import safe_load  # noqa: E402
+from ttrv.runtime import Device, Kernel, Var  # noqa: E402
 
 KERNEL = Path(__file__).with_name("nanbeige") / "projection.ttrv"
 
@@ -51,7 +51,7 @@ def upload_bf16(dev, matrix, group):
   return buf
 
 
-def head_kernel(dev, linear):
+def head_kernel(dev, linear, *, prompt=False, cache_only=False):
   # Use the runtime's ordinary parameter binding, scratch allocator and graph dispatch
   # for a C worker image. Blackhole supports scalar FP32 arithmetic on the worker.
   names = (
@@ -59,9 +59,11 @@ def head_kernel(dev, linear):
   ).split()
   params = [f"param {name}: {'fp32' if name == 'state' else 'bf16'}[]" for name in names]
   scratch = 81920 if linear else 8192
-  source = "\n".join(
-    [f"grid {48 if linear else 24}", *params, "param pos: u32", f"l1 scratch: u8[{scratch}]", "fn brisc() { }"]
-  )
+  params.append("param pos: u32")
+  if prompt:
+    params.append("param rows: u32")
+  grid = 48 if linear else (96 if prompt else 24)
+  source = "\n".join([f"grid {grid}", *params, f"l1 scratch: u8[{scratch}]", "fn brisc() { }"])
   spec = ttrv.build(source)
   flags = [
     "-O2",
@@ -70,6 +72,10 @@ def head_kernel(dev, linear):
     f"-DSCRATCH_BYTES={scratch}",
     f"-DPOS_SLOT={spec.manifest['params']['pos']['slot']}",
   ]
+  if prompt:
+    flags.extend(["-DPROMPT=1", f"-DGRID={grid}", f"-DROWS_SLOT={spec.manifest['params']['rows']['slot']}"])
+  if cache_only:
+    flags.append("-DCACHE_ONLY=1")
   if linear:
     flags.append("-DGDN")
   directory = Path(__file__).with_name("qwen38")
@@ -131,6 +137,11 @@ class Qwen38:
     dim, mlp, vocab = cfg["hidden_size"], cfg["intermediate_size"], cfg["vocab_size"]
     tensors = safe_load(file)
     kernels, labels = {}, {}
+    projections, recipe = {}, []
+
+    def launch(kernel, **args):
+      recipe.append((kernel, args))
+      kernel(**args)
 
     def projection(parts, dense=None, second=0, third=0):
       if dense is None:
@@ -156,8 +167,10 @@ class Qwen38:
         )
       labels[kernels[key]] = f"projection {k}x{n} {bits}b"
 
+      projections[kernels[key]] = (k, n, bits, group, second, third)
+
       def run(x, output, **extra):
-        kernels[key](x=x, weights=matrix, output=output, **extra)
+        launch(kernels[key], x=x, weights=matrix, output=output, **extra)
 
       return run
 
@@ -194,14 +207,14 @@ class Qwen38:
     emb = dev.array(tensors[PREFIX + "embed_tokens.weight"])
     pos = Var("pos")
     with dev.graph() as self.step:
-      embed(history=self.history, weights=emb, output=x, token_pos=pos)
+      launch(embed, history=self.history, weights=emb, output=x, token_pos=pos)
       for i, kind in enumerate(cfg["layer_types"]):
         layer = PREFIX + f"layers.{i}."
 
         def weight(name):
           return tensors[layer + name + ".weight"]
 
-        rms(x=x, other=gamma(weight("input_layernorm")), output=norm)
+        launch(rms, x=x, other=gamma(weight("input_layernorm")), output=norm)
         if kind == "linear_attention":
 
           def lin(name):
@@ -213,7 +226,8 @@ class Qwen38:
           abw[:48], abw[64:112] = lin("in_proj_a").numpy(), lin("in_proj_b").numpy()
           projection([], dense=abw)(norm, ab)
           alog, bias = (floats(tensors[layer + "linear_attn." + key]) for key in ("A_log", "dt_bias"))
-          gdn(
+          launch(
+            gdn,
             qkv=qkv,
             z=z,
             ab=ab,
@@ -234,7 +248,8 @@ class Qwen38:
           projection([att("q_proj"), att("k_proj"), att("v_proj")], second=1024, third=1024)(
             norm, qkv, output2=k, output3=v
           )
-          attention(
+          launch(
+            attention,
             q=qkv,
             k=k,
             v=v,
@@ -250,13 +265,29 @@ class Qwen38:
         else:
           raise ValueError(f"unknown layer type {kind}")
         projection([output_weight])(ctx, tmp)
-        add(x=x, other=tmp, output=x)
-        rms(x=x, other=gamma(weight("post_attention_layernorm")), output=norm)
+        launch(add, x=x, other=tmp, output=x)
+        launch(rms, x=x, other=gamma(weight("post_attention_layernorm")), output=norm)
         projection([weight("mlp.gate_proj"), weight("mlp.up_proj")], second=mlp)(norm, gate, output2=up)
-        swiglu(x=gate, other=up, output=hidden)
+        launch(swiglu, x=gate, other=up, output=hidden)
         projection([weight("mlp.down_proj")])(hidden, tmp)
-        add(x=x, other=tmp, output=x)
+        launch(add, x=x, other=tmp, output=x)
 
+    from examples.qwen38_prefill import QwenPrompt
+
+    scratch = (x, norm, tmp, qkv, z, ab, k, v, ctx, gate, up, hidden)
+    kinds = {embed: "embed", rms: "rms", add: "add", swiglu: "swiglu", gdn: "gdn", attention: "attention"}
+    self.prompt = None
+    prompt_recipe = tuple(recipe)
+    self.make_prompt = lambda: QwenPrompt(
+      dev,
+      scratch,
+      prompt_recipe,
+      projections,
+      kinds,
+      cfg["rms_norm_eps"],
+      lambda **kw: head_kernel(dev, **kw),
+      profile_graph if profile else None,
+    )
     logits = buf(vocab)
     with dev.graph() as self.readout:
       rms(x=x, other=gamma(tensors[PREFIX + "norm.weight"]), output=norm)
@@ -278,7 +309,7 @@ class Qwen38:
       )
       self.measure = [profile_graph(dev, graph, labels) for graph in (self.step, self.readout)]
 
-  def generate(self, ids, count):
+  def generate(self, ids, count, *, chunked=True):
     end = len(ids) + count - 1
     if not ids or count < 1 or end > self.max_tokens:
       raise ValueError("invalid prompt or generation length")
@@ -286,7 +317,12 @@ class Qwen38:
       raise ValueError("token ID outside checkpoint vocabulary")
     self.history.copy_from(np.pad(np.uint32(ids), (0, self.history.shape[0] - len(ids))))
     out = self.tokens.numpy()
-    for pos in range(end):
+    prefix = len(ids) - 1 if chunked and len(ids) > 2 else 0
+    if prefix:
+      if self.prompt is None:
+        self.prompt = self.make_prompt()
+      self.prompt.run(prefix)
+    for pos in range(prefix, end):
       self.step(pos=pos).wait(120)
       if pos >= len(ids) - 1:
         self.readout(pos=pos, write_token=int(pos + 1 < end)).wait()
@@ -304,7 +340,8 @@ if __name__ == "__main__":
   ap.add_argument("--metadata", type=Path, default=METADATA, help="directory with config and tokenizer")
   ap.add_argument("--prompt", default="The capital of France is")
   ap.add_argument("--tokens", type=int, default=8)
-  ap.add_argument("--profile", action="store_true", help="print dispatcher timings for the last decode step")
+  ap.add_argument("--serial", action="store_true", help="use single-token decode for the prompt")
+  ap.add_argument("--profile", action="store_true", help="print dispatcher timings for the prefix and last decode step")
   ap.add_argument("--device", type=int, default=0)
   args = ap.parse_args()
   tok = Tokenizer.from_file(str(args.metadata / "tokenizer.json"))
@@ -315,13 +352,21 @@ if __name__ == "__main__":
   try:
     model = Qwen38(args.checkpoint, args.metadata, dev, len(ids) + args.tokens - 1, args.profile)
     generated = []
-    for token in model.generate(ids, args.tokens):
+    for token in model.generate(ids, args.tokens, chunked=not args.serial):
       last = time.perf_counter()
       if not generated:
         start = last
       generated.append(token)
     elapsed = last - start if len(generated) > 1 else 0
     print(tok.decode(generated))
+    if model.prompt is not None:
+      print(
+        f"{(len(ids) - 1) / model.prompt.elapsed:.1f} prompt tok/s ({len(ids) - 1} prefix tokens, device execution)",
+        file=sys.stderr,
+      )
+    if model.prompt is not None and model.prompt.timings:
+      for name, ms in model.prompt.timings.most_common():
+        print(f"{ms:8.3f} ms  prefill {name}", file=sys.stderr)
     if model.measure:
       for name, ms in sum((f() for f in model.measure), Counter()).most_common():
         print(f"{ms:8.3f} ms  {name}", file=sys.stderr)
