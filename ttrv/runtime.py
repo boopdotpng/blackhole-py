@@ -1,19 +1,19 @@
 """A CUDA-style runtime for TTRV kernels: device buffers, kernel launches, captured graphs.
 
-  dev = Device(0)
-  x = dev.array(np.ones(1024, np.float32))     # DRAM buffer, filled from the host
-  y = dev.empty(1024, "fp32")
-  scale = dev.kernel("scale.ttrv", N=1024)     # compile with N defined, install
+  d = Device(0)                                # open card 0; it closes at exit
+  x = d.array(np.ones(1024, np.float32))       # DRAM buffer, filled from the host
+  y = d.empty(1024, "fp32")
+  scale = d.kernel("scale.ttrv", N=1024)       # compile with N defined, install
   scale(x=x, y=y, k=2)                         # queued; returns at once
   y.numpy()                                    # waits for the device, copies back
 
   k = Var("k")
-  with dev.graph() as g:                       # launches are recorded, not run
+  with d.graph() as g:                         # launches are recorded, not run
     scale(x=x, y=y, k=k)
   g(k=3).wait()                                # replay with k bound to 3
 """
 
-import mmap
+import atexit, mmap
 from pathlib import Path
 import numpy as np
 import fw
@@ -164,8 +164,10 @@ class _Capture:
 
 
 class Device:
+  """One card, open until close() or process exit."""
   def __init__(self, index=0):
     self.dev, self._capture = BlackholeDevice(f"BLACKHOLE:{index}"), None
+    atexit.register(self.close)
     at = self.dev.alloc_host(ARGS * RING)
     self._ring, self._ring_at, self._ring_used = at, 0, [0] * RING
 
@@ -202,9 +204,7 @@ class Device:
 
   def synchronize(self, timeout=10.0): self.dev.synchronize(timeout)
 
-  def close(self): self.dev.close()
-  def __enter__(self): return self
-  def __exit__(self, *exc): self.close()
+  def close(self): self.dev.close()  # stops the cores and unpins host memory; safe to call twice
 
   def _launch(self, program, block):
     i = self._ring_at

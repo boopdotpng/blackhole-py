@@ -82,9 +82,9 @@ if __name__ == "__main__":
   enc = tokenizer(path := ROOT / "weights" / f"llama3-{a.model}")
   ids = enc.encode(f"<|begin_of_text|><|start_header_id|>user<|end_header_id|>\n\n{a.prompt}<|eot_id|>"
                    "<|start_header_id|>assistant<|end_header_id|>\n\n", allowed_special="all")
-  with Device(a.device) as dev:
-    for n, token in enumerate(Llama3(path, dev).generate(ids, a.tokens)):
-      if n == 0: start = time.perf_counter()
-      sys.stdout.buffer.write(enc.decode_single_token_bytes(token))
-      sys.stdout.flush()
-    print(f"\n\n{n + 1} tokens, {n / (time.perf_counter() - start):.1f} tok/s")
+  model = Llama3(path, Device(a.device))
+  for n, token in enumerate(model.generate(ids, a.tokens)):
+    if n == 0: start = time.perf_counter()
+    sys.stdout.buffer.write(enc.decode_single_token_bytes(token))
+    sys.stdout.flush()
+  print(f"\n\n{n + 1} tokens, {n / (time.perf_counter() - start):.1f} tok/s")

@@ -6,20 +6,20 @@ Write kernels in TTRV, run them on a Tenstorrent Blackhole card from Python, CUD
 import numpy as np
 from ttrv import Device, Var
 
-with Device(0) as dev:
-  x = dev.array(np.ones(1024, np.float32))           # DRAM buffer, filled from the host
-  y = dev.empty(1024, "fp32")
-  scale = dev.kernel("scale.ttrv", N=1024)           # compile with N defined, install
-  scale(x=x, y=y, k=2)                               # queued; returns at once
-  print(y.numpy())                                   # waits for the device, copies back
+d = Device(0)                                      # open card 0; it closes at exit
+x = d.array(np.ones(1024, np.float32))             # DRAM buffer, filled from the host
+y = d.empty(1024, "fp32")
+scale = d.kernel("scale.ttrv", N=1024)             # compile with N defined, install
+scale(x=x, y=y, k=2)                               # queued; returns at once
+print(y.numpy())                                   # waits for the device, copies back
 
-  k = Var("k")
-  with dev.graph() as g:                             # launches are recorded, not run
-    scale(x=x, y=y, k=k)
-  g(k=3).wait()                                      # replay with k bound to 3
+k = Var("k")
+with d.graph() as g:                               # launches are recorded, not run
+  scale(x=x, y=y, k=k)
+g(k=3).wait()                                      # replay with k bound to 3
 ```
 
-`dev.array` also takes safetensors tensors (`helpers.safe_load`), so a checkpoint goes to the card as stored.
+`d.array` also takes safetensors tensors (`helpers.safe_load`), so a checkpoint goes to the card as stored.
 
 ## Requirements
 
