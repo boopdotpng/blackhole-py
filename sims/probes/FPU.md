@@ -19,7 +19,7 @@ llama-o's exact words) was added and run (`results/2026-11-18-fpu-ovh-card1.json
 | MOVA2D, then MVMUL on the same or other rows | 5 per pair |
 | FPU (MVMUL/ELWMUL) → SFPLOAD of the same rows | **10.5 per pair, any gap of 0-6 NOPs**, correct value (interlocked) |
 | MOVA2D → SFPLOAD | 5.5 (gap 0), 6.5 (gap 3) |
-| FPU → SFPLOAD/SFPSTORE on the other Dst half | 6 per pair; batch 8 FPU + 8 SFPLOAD: 3.5 per pair same half, 2.0 other half |
+| FPU → SFPLOAD/SFPSTORE on the other Dst half | 6 per pair, but that case repeats MVMUL on block 0 (the 6-cycle accumulate chain); with rotating blocks it is 2.0 per pair at any batch size (ovl.py, 2026-11-19). Batch 8 FPU + 8 SFPLOAD: 3.5 per pair same half, 2.0 other half |
 | REPLAY | 1/cycle out; a REPLAY of length 1 or 2 is RISC-push bound: 1.78 and 1.33 per instruction |
 | MOP | 1/cycle; MOP followed by direct instructions +1 per transition (1.056 per instruction for 8 MVMUL + SETRWC) |
 | llama-o HiFi2 ELWMUL MOP (outer 2 x inner 2) | 8 cycles per MOP (1.94 per issued instruction) |

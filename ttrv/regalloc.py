@@ -123,6 +123,11 @@ def allocate(g):
       g.items.append((item, loc))
   offsets.append(len(g.items))
   g.labels = {label: offsets[pc] for label, pc in g.labels.items()}
+  g.shared_marks = [
+    (offsets[pc], name, ("x", colors[r]) if colors.get(r) is not None else ("mem", hw.SPILL_FRAME + 4 * slots[r]))
+    for pc, r, name in g.shared_marks
+    if colors.get(r) is not None or r in slots
+  ]
   for pc, r, name in g.allocations:
     where = f"spill[{slots[r]}]" if r in slots else f"x{colors[r]}" if r in colors else "unused"
     g.notes.setdefault(offsets[pc], []).append(f"{name}={where}")

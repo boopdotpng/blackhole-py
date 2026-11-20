@@ -11,6 +11,7 @@ Convention: an op issued at t with latency L has its result readable at t + L; L
 """
 
 from dataclasses import dataclass
+from functools import lru_cache
 
 # ---------------------------------------------------------------- MMIO and firmware ABI (unchanged from ttrv/hw.py)
 
@@ -120,6 +121,7 @@ SUBUNIT = {**{op: "simple" for op in ("ABS", "AND", "ARECIP", "CAST", "COMPC", "
            "LOAD": "load", "LOADI": "load", "LOADMACRO": "load", "NOP": "load"}
 
 
+@lru_cache(maxsize=8192)
 def sfpu_decode(w):
   """SfpuInsn for an unrotated Tensix word, or None if it is not an SFPU instruction."""
   op = SFPU_OPS.get(w >> 24)

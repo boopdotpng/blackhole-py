@@ -1,0 +1,13 @@
+{
+  "card": 0,
+  "grid": 88,
+  "repeats": 31,
+  "firmware_sha256": "98e8d1e8678a8073f96c3b729bcb45b40cf33aa96b866e8da1eafa2f5bf9c56b",
+  "role_offsets": {
+    "brisc": 0,
+    "ncrisc": 112,
+    "trisc0": 30,
+    "trisc1": 31,
+    "trisc2": 32
+  }
+}

@@ -16,6 +16,7 @@ class Kernel:
   manifest: dict
   listing: dict
   program: Program
+  timing: dict = None  # cycle-model metadata: where shared values live and which bound runtime loops (cycles.py)
 
   def install(self, dev, *, scratch_base=fw.DATA_BASE):
     from ops_blackhole import blackhole_build_grid_program
@@ -96,6 +97,7 @@ def compile_program(p, ceiling=hw.L1_SIZE, scratch_base=fw.DATA_BASE):
   m = layout(p, ceiling, scratch_base)
   images = {}
   listings = {}
+  shared = {}
   owners = {}
   unpack_credit = False
   application_credit = None
@@ -104,6 +106,7 @@ def compile_program(p, ceiling=hw.L1_SIZE, scratch_base=fw.DATA_BASE):
       continue
     gen = Generator(p, m, role)
     images[role], listings[role] = gen.generate()
+    shared[role] = {name: {"pc": gen.offsets[i], "loc": list(loc)} for i, name, loc in gen.shared_marks}
     unpack_credit |= gen.unpack_credit
     application_credit = gen.app_unpack_sem or application_credit
     for end in gen.owners:
@@ -117,7 +120,44 @@ def compile_program(p, ceiling=hw.L1_SIZE, scratch_base=fw.DATA_BASE):
       if (q, end) not in owners:
         raise Error(p.cbs[q].loc, "cb.owner", f"{q} has no {end}")
       m["storage"][q][end] = owners[q, end]
-  return Kernel(images, m, listings, p)
+  return Kernel(images, m, listings, p, {"shared": shared, "trip_counts": sorted(trip_names(p))})
+
+
+def trip_names(p):
+  """Shared values that set how many times a runtime loop runs, directly or through local integer assignments.
+
+  A `for i in lo..hi` loop counts the names in hi that lo does not read, so `first..first + count` names count."""
+  from .expand import _walk_stmts, _walk_expr
+  from .parse import Assign, For, Loop, Name
+
+  shared = {t.id for a in p.shared for t in a.targets}
+  found = set()
+  for fn in p.fns.values():
+    stmts = list(_walk_stmts(fn.body))
+    deps = {}
+    for st in stmts:
+      if isinstance(st, Assign) and not any(st is a for a in p.shared):
+        for t in st.targets:
+          if isinstance(t, Name):
+            deps.setdefault(t.id, set()).update(x.id for x in _walk_expr(st.value) if isinstance(x, Name))
+
+    def names(e, seen=()):
+      out = set()
+      for x in _walk_expr(e):
+        if isinstance(x, Name):
+          if x.id in shared:
+            out.add(x.id)
+          elif x.id in deps and x.id not in seen:
+            for d in deps[x.id]:
+              out |= names(Name(d, None), (*seen, x.id))
+      return out
+
+    for st in stmts:
+      if isinstance(st, Loop) and st.count is not None:
+        found |= names(st.count)
+      elif isinstance(st, For):
+        found |= names(st.hi) - names(st.lo)
+  return found
 
 
 def __getattr__(name):  # the runtime opens devices; importing ttrv to compile does not need it

@@ -43,6 +43,7 @@ class Emitter:
             changed = True
       if not changed:
         break
+    self.offsets = offsets
     if offsets[-1] > fw.CODE_SIZE[self.role]:
       raise Error(self.loc, "image.size", f"{self.role} needs {offsets[-1]} bytes")
     words, lines = [], []

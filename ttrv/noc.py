@@ -278,6 +278,38 @@ def noc(g, s):
     else:
       g.fail("noc.endpoint", "expected DRAM, host or remote endpoint")
   loop, end = object(), object()
+  # Workers that split a matrix by rows all start their rows on the same few banks and then step through the
+  # banks together. A transfer of a constant number of whole pages starts at page core.id % pages instead, runs to
+  # the end, then wraps around for the pages it skipped. Every page still lands at its own L1 address.
+  # A packed (block-float) tile is one page, exponents included, so a packed transfer is a whole number of pages too.
+  rotate_pages = 0
+  if dram and isinstance(count, Num):
+    nbytes = count.value * size if size else count.value // 1024 * TYPES[t[:-1]][1]
+    if nbytes % page == 0 and nbytes >= 2 * page:
+      rotate_pages = nbytes // page
+  if rotate_pages:
+    begin = object()
+    wrapped, skip = g.alloc(), g.alloc()
+    first_page, first_local = g.alloc(), g.alloc()
+    g.li(1, wrapped)
+    g.branch("bne", offset, 0, begin)  # an unaligned transfer touches one more page; issue it in order
+    core = g.mem("lw", hw.CORE["id"])
+    if rotate_pages & (rotate_pages - 1) == 0:
+      rotate = g.imm("andi", core, rotate_pages - 1)
+    else:
+      rotate = g.calc("remu", core, g.li(rotate_pages))
+    g.branch("beq", rotate, 0, begin)
+    g.li(0, wrapped)
+    g.mov(first_page, page_index)
+    g.mov(first_local, local)
+    if page & (page - 1) == 0:
+      g.rv("slli", skip, rotate, imm=page.bit_length() - 1)
+    else:
+      g.rv("mul", skip, rotate, g.li(page))
+    g.rv("add", page_index, page_index, rotate)
+    g.rv("add", local, local, skip)
+    g.rv("sub", left, left, skip)
+    g.mark(begin)
   g.mark(loop)
   g.branch("beq", left, 0, end)
   length = g.alloc()
@@ -356,6 +388,15 @@ def noc(g, s):
     g.rv("sub", left, left, length)
     g.jump(loop)
   g.mark(end)
+  if rotate_pages:
+    done = object()
+    g.branch("bne", wrapped, 0, done)
+    g.li(1, wrapped)
+    g.mov(page_index, first_page)
+    g.mov(local, first_local)
+    g.mov(left, skip)
+    g.jump(loop)
+    g.mark(done)
   if "wait" in d:
     wait(kind, tid, False)
   return [(0, f"tid:{kind}:{tid}")]

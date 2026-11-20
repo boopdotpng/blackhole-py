@@ -1,0 +1,26 @@
+blackhole-py 1b 1x: 1b  prefill 8,629 tok/s  decode 160.5 tok/s
+blackhole-py 1b 2x: 1b  2x p150a decode 261.8 tok/s
+blackhole-py-cycles 1b 1x: 1b  prefill 8,630 tok/s  decode 163.7 tok/s
+blackhole-py-cycles 1b 2x: 1b  2x p150a decode 263.9 tok/s
+blackhole-py 8b-bf16 1x: 8b-bf16  prefill 2,362 tok/s  decode 30.3 tok/s
+blackhole-py 8b-bf16 2x: 8b-bf16  2x p150a decode 52.7 tok/s
+blackhole-py-cycles 8b-bf16 1x: 8b-bf16  prefill 2,362 tok/s  decode 30.5 tok/s
+blackhole-py-cycles 8b-bf16 2x: 8b-bf16  2x p150a decode 53.9 tok/s
+blackhole-py 8b-bfp8 1x: 8b-bfp8  prefill 2,986 tok/s  decode 48.3 tok/s
+blackhole-py 8b-bfp8 2x: 8b-bfp8  2x p150a decode 76.4 tok/s
+blackhole-py-cycles 8b-bfp8 1x: 8b-bfp8  prefill 2,986 tok/s  decode 48.0 tok/s
+blackhole-py-cycles 8b-bfp8 2x: 8b-bfp8  2x p150a decode 76.1 tok/s
+blackhole-py qwen38 1x: qwen38  prefill 191 tok/s  decode 17.5 tok/s
+blackhole-py qwen38 2x: qwen38  2x p150a decode 29.3 tok/s
+blackhole-py-cycles qwen38 1x: qwen38  prefill 193 tok/s  decode 17.6 tok/s
+blackhole-py-cycles qwen38 2x: qwen38  2x p150a decode 29.3 tok/s
+blackhole-py nanbeige 1x: nanbeige  prefill 1,296 tok/s  decode 19.3 tok/s
+blackhole-py nanbeige 2x: nanbeige  2x p150a decode 31.9 tok/s
+blackhole-py-cycles nanbeige 1x: nanbeige  prefill 1,296 tok/s  decode 19.4 tok/s
+blackhole-py-cycles nanbeige 2x: nanbeige  2x p150a decode 31.9 tok/s
+DONE
+blackhole-py 8b-bfp8 1x: 8b-bfp8  prefill 2,988 tok/s  decode 48.3 tok/s
+blackhole-py-cycles 8b-bfp8 1x: 8b-bfp8  prefill 2,986 tok/s  decode 48.0 tok/s
+blackhole-py nanbeige 1x: nanbeige  prefill 1,294 tok/s  decode 19.3 tok/s
+blackhole-py-cycles nanbeige 1x: nanbeige  prefill 1,296 tok/s  decode 19.4 tok/s
+DONE

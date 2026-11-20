@@ -43,6 +43,7 @@ class Generator(Emitter):
     self.functions, self.owners, self.addrmods, self.replays = {}, {}, {}, {}
     self.events, self.initial, self.completions, self.ends = {}, set(), set(), {}
     self.next_register, self.allocations = 32, []
+    self.shared_marks = []  # (item index after the assignment, virtual register, name) for shared prelude values
     self.app_unpack_sem = None
     self.unpack_credit = False
     self.predicate_depth = 0
@@ -402,6 +403,9 @@ class Generator(Emitter):
           self.fail("assign.count", "wrong result count")
         for target, v in zip(targets, vals):
           self.assign(target, v)
+        if any(s is a for a in self.p.shared):
+          for target in targets:
+            self.shared_marks.append((len(self.items), self.env[target.id][0], target.id))
       case Op() | Call():
         values = self.values(s)
         if (

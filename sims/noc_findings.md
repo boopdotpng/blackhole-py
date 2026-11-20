@@ -20,9 +20,10 @@ programs and GO.
 - The command rate is RISC-loop bound. Per command: ~41 cycles for a bare loop (ready poll, clock read, CMD_CTRL
   store); +7 to rewrite address and coordinate; with a fence on each side, 49 (bare) / 59 (with the rewrite).
   This is the same for every op and size.
-- A command buffer stays busy for **22 cycles** after the send (fenced) or **32** (unfenced, which includes the store's own
-  latency), whatever the op or size. Polling ready right after the send, as the llama exports do, puts that time
-  on the critical path.
+- The original timed polling loop measured 22 cycles fenced and 32 unfenced. A single status load on card 0
+  resolved the command-buffer acceptance interval. After the strobe, loads issued one through four instructions
+  later see busy. The fifth sees ready. A fence before the load also suffices.
+  [Single-read probe results](results/2026-11-19-cmd-accept-card0.jsonl.gz)
 - **More command buffers don't help.** 2 or 4 buffers on one NoC give exactly the 1-buffer rate, because the RISC
   is the limit. With large packets they share the NIU's injection (16 KiB posted: 1 buffer 59.8 B/c, 2 buffers 59.1 total).
 - **Separate NoCs and separate RISCs do help.** One RISC using both NoCs: 120 B/c (2 × 60). BRISC on NoC0 and
