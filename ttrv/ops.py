@@ -416,10 +416,18 @@ def math(g, s):
     setc16(g, cfg.SFPU_DEST_FMT_Enable(1), cfg.SFPU_DEST_FMT_Base(sf))
   elif s.name == "cfg":
     d = bind(s, "", "dst_offset")
-    setc16(g, cfg.DEST_TARGET_REG_CFG_MATH_Offset(number(required(d, "dst_offset", s), 0, 4095)))
+    e = required(d, "dst_offset", s)
+    if isinstance(e, Num):
+      setc16(g, cfg.DEST_TARGET_REG_CFG_MATH_Offset(number(e, 0, 4095)))
+    else:  # a runtime offset: build the SETC16 word on the RISC (the field is alone in its ThreadConfig word)
+      f = cfg.DEST_TARGET_REG_CFG_MATH_Offset
+      r = g.calc("and", g.condition(e), g.li((1 << f.width) - 1))
+      if f.shift: r = g.imm("slli", r, f.shift)
+      runtime_word(g, "SETC16", dict(setc16_reg=f.word), "setc16_value", r)
   elif s.name == "zero":
     d = bind(s, "", "face fmt")
-    g.tt("ZEROACC", 1, operand(required(d, "fmt", s), {"fp32": 1, "bf16": 0}), 0, 1, number(required(d, "face", s), 0, 3))
+    # face counts 16-row faces of the whole Dst from row 0 (not from the dst_offset); tile t is faces 4t..4t+3.
+    g.tt("ZEROACC", 1, operand(required(d, "fmt", s), {"fp32": 1, "bf16": 0}), 0, 1, number(required(d, "face", s), 0, 63))
   elif s.name == "mova2d":
     d = bind(s, "dst", "addr src rows")
     rows = number(d.get("rows", Num(8)), 1, 8)
@@ -443,11 +451,17 @@ def math(g, s):
     g.fail("math.op", s.name)
 
 
-def allocate_replay(g, t):
-  length = sum(2 if op.ns == "sfp" and op.name == "li" else 1 for op in t.body)
-  start = sum(n for _, n in g.replays.values())
+def allocate_replay(g, t, length=None):
+  """Replays pack into the thread's 32-word buffer in load order. `replay name, at=N` pins one at word N instead, and
+  may overlap others: the kernel reloads whatever it overwrote before running that again. length: the lowered word
+  count when known (a load), else an estimate from the ops."""
+  if length is None: length = sum(2 if op.ns == "sfp" and op.name == "li" else 1 for op in t.body)
+  at = options(t, {"at"}).get("at")
+  pinned = g.__dict__.setdefault("pinned_replays", set())
+  start = at if at is not None else sum(n for k, (_, n) in g.replays.items() if k not in pinned)
   if not length or start + length > 32:
     g.fail("replay.size", "replay exceeds 32 words")
+  if at is not None: pinned.add(t.name)
   g.replays[t.name] = start, length
 
 
@@ -511,7 +525,7 @@ def templates(g, s):
   g.loc = s.loc
   if t.kind == "replay":
     if k not in g.replays:
-      allocate_replay(g, t)
+      allocate_replay(g, t, len(words))
     start, n = g.replays[k]
     if n != len(words):
       g.fail("replay.body", "expected native replay instructions")
@@ -598,10 +612,13 @@ def lower(g, s):
     if g.role not in ("brisc", "ncrisc"):
       g.fail("op.role", "NoC requires a data-movement RISC")
     return noc(g, s)
+  # Unpack and pack stay on their threads (their CBs and semaphores belong to them). Any TRISC may issue math and
+  # SFPU instructions: RWCs, ADDR_MODs and the Dst offset are per-thread state, and an SFPU stream from another
+  # thread overlaps the math thread's FPU work.
   if (
     not g.role.startswith("trisc")
-    or ns in ("unpack", "math", "sfp", "pack")
-    and g.role != {"unpack": "trisc0", "math": "trisc1", "sfp": "trisc1", "pack": "trisc2"}[ns]
+    or ns in ("unpack", "pack")
+    and g.role != {"unpack": "trisc0", "pack": "trisc2"}[ns]
   ):
     g.fail("op.role", f"{ns}.{n} cannot run on {g.role}")
   if ns == "math":

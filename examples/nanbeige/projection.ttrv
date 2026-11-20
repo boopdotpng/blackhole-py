@@ -9,6 +9,7 @@ const SHORT_M = 1
 const SHARE_A = 0
 const PANELS = 1
 const SHARE_W = 1
+const TILED_OUT = 0   // prompt outputs as panel tiles (requires PREFILL, TILE_ROWS 32)
 const MULTICAST_W = SHARE_W && PANELS > 1   // one DRAM reader per group of token panels
 const DEPTH = 2   // ring blocks in flight per worker; at most PANELS, so a reservation count cannot run a block ahead
 if MULTICAST_W {
@@ -35,6 +36,10 @@ const KT = K / 32
 // ends in a partial block, a decode read covers the rest of that block too; the x buffer must be allocated that long.
 const X_TAIL = (512 - K % 512) % 512
 const NT = N / 32
+// Weight page (k group g, output column c) is page g * NT_PITCH + c. With PAD an even NT gets one blank page per
+// k group, so a column's K pages rotate over the eight DRAM banks (bank = page % 8) instead of sharing one.
+const PAD = 0
+const NT_PITCH = NT + PAD * (1 - NT % 2)
 const BATCH = 16
 const BLOCKS = KT / BATCH
 if MULTICAST_W { l1 stage: W[BATCH * 1024] }   // the next block this panel multicasts
@@ -54,7 +59,7 @@ shared { port_id = core.id / PORT_WORKERS % 3
     count = MULTICAST_W * (left - (left - per) * (left > per)) + (1 - MULTICAST_W) * ((NT + column_workers - 1 - column_id) / column_workers)
     rot = column_id * MULTICAST_W }
 if PREFILL { param rows: u32 }
-l1 line: bf16[32 * RUN * (1 + PREFILL * (TILE_ROWS - 1))]
+l1 line: bf16[32 * RUN * (1 + PREFILL * (TILE_ROWS - 1)) * (1 - TILED_OUT) + 16 * TILED_OUT]
 cb activations: bf16[(1 + (TILE_ROWS - 1) * PREFILL) * K + 1024], pages=1
 cb matrices: W[1024], pages=DEPTH * BATCH
 cb results: bf16[1024], pages=2
@@ -78,9 +83,9 @@ if PREFILL {
 // Reads W block m (BATCH K tiles of this column's output tile m / BLOCKS) into dst under the given read group.
 macro fetch(dst, m, reads) {
     fcol = first_col + ((m / BLOCKS + rot) % count) * col_step
-    tile = (((m % BLOCKS) * (BATCH / GROUP)) * NT + fcol) * GROUP
+    tile = (((m % BLOCKS) * (BATCH / GROUP)) * NT_PITCH + fcol) * GROUP
     for i in 0..BATCH / GROUP {
-        noc.read tileptr(dst, i * GROUP), tileptr(weights, tile + i * NT * GROUP), port=port_id, n=GROUP * 1024, tid=reads
+        noc.read tileptr(dst, i * GROUP), tileptr(weights, tile + i * NT_PITCH * GROUP), port=port_id, n=GROUP * 1024, tid=reads
     }
 }
 
@@ -92,7 +97,7 @@ fn brisc() {
         // therefore run up to DEPTH blocks ahead, and senders multicast as soon as every slot is free.
         y0 = core.y - panel
         total = count * BLOCKS
-        one[0] = 1
+        for i in 0..4 { one[i] = 1 }   // a 4-byte NoC write keeps its 16-byte offset: every word is the flag
         reads = noc.group read
         if panel < total { fetch!(stage, panel, reads) }
         sends = 0
@@ -123,10 +128,10 @@ fn brisc() {
             col = first_col + j * col_step
             for block in 0..BLOCKS {
                 w = cb.reserve matrices, n=BATCH
-                tile = ((block * (BATCH / GROUP)) * NT + col) * GROUP
+                tile = ((block * (BATCH / GROUP)) * NT_PITCH + col) * GROUP
                 r = noc.read w, tileptr(weights, tile), port=port_id, n=GROUP * 1024
                 for i in 1..BATCH / GROUP {
-                    noc.read tileptr(w, i * GROUP), tileptr(weights, tile + i * NT * GROUP), port=port_id, n=GROUP * 1024, tid=r
+                    noc.read tileptr(w, i * GROUP), tileptr(weights, tile + i * NT_PITCH * GROUP), port=port_id, n=GROUP * 1024, tid=r
                 }
                 noc.wait r
                 cb.push matrices, n=BATCH
@@ -312,6 +317,29 @@ fn ncrisc() {
         noc.read a, x[panel * TILE_ROWS * K], n=K * (1 + (TILE_ROWS - 1) * PREFILL) + X_TAIL * (1 - PREFILL), wait
     }
     cb.push activations
+    if TILED_OUT {
+        // Prompt outputs stay in panel tile layout: each result tile leaves in one write.
+        for j in 0..count {
+            p = cb.wait results
+            col = first_col + ((j + rot) % count) * col_step
+            if THIRD {
+                if col >= (N - THIRD) / 32 {
+                    noc.write output3[(panel * (THIRD / 32) + col - (N - THIRD) / 32) * 1024], p, n=1024, wait
+                } else {
+                    if col >= (N - THIRD - SECOND) / 32 {
+                        noc.write output2[(panel * (SECOND / 32) + col - (N - THIRD - SECOND) / 32) * 1024], p, n=1024, wait
+                    } else { noc.write output[(panel * ((N - SECOND - THIRD) / 32) + col) * 1024], p, n=1024, wait }
+                }
+            } else {
+                if SECOND {
+                    if col >= (N - SECOND) / 32 {
+                        noc.write output2[(panel * (SECOND / 32) + col - (N - SECOND) / 32) * 1024], p, n=1024, wait
+                    } else { noc.write output[(panel * ((N - SECOND) / 32) + col) * 1024], p, n=1024, wait }
+                } else { noc.write output[(panel * (N / 32) + col) * 1024], p, n=1024, wait }
+            }
+            cb.pop results
+        }
+    } else {
     if PREFILL {
         run = 0       // output tiles gathered in line
         run_col = 0   // the run's first column within its output
@@ -356,5 +384,6 @@ fn ncrisc() {
             }
             cb.pop results
         }
+    }
     }
 }

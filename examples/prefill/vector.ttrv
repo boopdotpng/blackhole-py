@@ -1,0 +1,327 @@
+// Prompt-panel vector ops on tiled activations: every operand is PANELS 32-row panels of 32x32 face-layout tiles.
+//   OP 0: output = x + other                     (TILES tiles, split over the cores)
+//   OP 1: output = silu(x) * other                (gate, up)
+//   OP 2: output = rmsnorm(x) * gamma             (other holds KT gamma tiles, every row the same 32 values)
+// RMSNorm splits each panel's KT tiles over PEERS cores. Each sums the squares of its tiles position by position,
+// sends that FP32 tile to every peer, adds the PEERS partial tiles, reduces each row and scales its tiles.
+const OP = 0
+const PANELS = 10
+const KT = 128
+const DIM = KT * 32
+const TILES = PANELS * KT
+const PEERS = 13
+const EPS = 1e-5
+const WORKERS = 130
+grid WORKERS
+param x: bf16[]
+param other: bf16[]
+param output: bf16[]
+
+const RMS = OP == 2
+const MAXT = (KT + PEERS - 1) / PEERS   // rms: most tiles one core owns
+shared {
+    first, count = split(TILES)
+    panel = core.id / PEERS
+    peer = core.id % PEERS
+    lo = KT * peer / PEERS
+    hi = KT * (peer + 1) / PEERS
+}
+if RMS == 0 { cb pair: bf16[1024], pages=4 }   // x tile, then the other tile
+cb result: bf16[1024], pages=2
+if RMS {
+    cb single: bf16[1024], pages=MAXT   // this core's x tiles, read at once and kept for both passes
+    cb gammas: bf16[1024], pages=MAXT
+    cb mine: fp32[1024], pages=1    // this core's partial sums of squares
+    cb partials: fp32[1024], pages=PEERS  // every peer's partial, written remotely
+    l1 arrived: u32[4], keep
+    l1 ret: u32[4]
+}
+sem ready = math_pack, max=1
+
+const ACC = 3 * dst.tile           // rms: sum of squares, then 1 / rms per row
+const ODD = 2
+const RIGHT = dst.face
+const GAMMA = dst.tile
+include ../common/vector_math
+
+
+macro row_sum_l0() {
+    repeat stage in 0..3 {
+        sfp.mov l1, l0
+        repeat 4 >> stage { sfp.shft2 l1, l1, rotate; sfp.nop }
+        sfp.add l0, l0, l1; sfp.nop
+    }
+}
+
+fn brisc() {
+    if RMS {
+        if 1 {
+            p = cb.reserve single, n=hi - lo
+            noc.read p, x[(panel * KT + lo) * 1024], n=(hi - lo) * 1024, wait
+            cb.push single, n=hi - lo
+            q = cb.reserve gammas, n=hi - lo
+            noc.read q, other[lo * 1024], n=(hi - lo) * 1024, wait
+            cb.push gammas, n=hi - lo
+        }
+        // Every peer's partial has landed in `partials`: hand them to the unpacker.
+        loop { if arrived[0] == PEERS { break }; fence }
+        fence
+        arrived[0] = 0
+        cb.reserve partials, n=PEERS
+        cb.push partials, n=PEERS
+    } else {
+        for t in first..first + count {
+            p = cb.reserve pair, n=2
+            r = noc.read p, x[t * 1024], n=1024
+            noc.read p + 1024, other[t * 1024], n=1024, tid=r
+            noc.wait r
+            cb.push pair, n=2
+        }
+    }
+}
+
+fn trisc0() {
+    unpack.fmt a, in=bf16
+    if RMS {
+        xs = cb.wait single, n=hi - lo   // PEERS <= KT: every core owns at least one tile
+        for t in 0..hi - lo {
+            unpack.move a, xs + t * 1024, dvalid
+        }
+        tensix.wait
+        unpack.fmt a, in=fp32
+        s = cb.wait partials, n=PEERS
+        for q in 0..PEERS { unpack.move a, s + q * 1024, dvalid }
+        tensix.wait
+        cb.pop partials, n=PEERS
+        unpack.fmt a, in=bf16
+        gs = cb.wait gammas, n=hi - lo
+        for t in 0..hi - lo {
+            unpack.move a, xs + t * 1024, dvalid
+            unpack.move a, gs + t * 1024, dvalid
+        }
+        tensix.wait
+        cb.pop single, n=hi - lo
+        cb.pop gammas, n=hi - lo
+    } else {
+        for t in first..first + count {
+            p = cb.wait pair, n=2
+            unpack.move a, p, dvalid
+            unpack.move a, p + 1024, dvalid
+            tensix.wait
+            cb.pop pair, n=2
+        }
+    }
+}
+
+fn trisc1() {
+    math.fmt dst=fp32, sfp=fp32
+    math.addrmod step, slot=1, srca+=8, dst+=8
+    if RMS {
+        // Pass 1: ACC = sum over this core's tiles of x * x, position by position.
+        select_tile!(0)
+        sfp.li l0, 0.0
+        loop 4 {
+            loop 8 { sfp.store dst[ACC], l0, fmt=fp32; math.rwc dst+=2 }
+            math.rwc dst=cr+8
+            math.rwc dst=cr+8
+        }
+        math.rwc dst=0
+        for t in lo..hi {
+            copy_tile!(0)
+            select_tile!(0)
+            loop 4 {
+                loop 8 {
+                    sfp.load l0, dst[0], fmt=fp32
+                    sfp.load l1, dst[ACC], fmt=fp32
+                    sfp.mad l1, l0, l0, l1; sfp.nop
+                    sfp.store dst[ACC], l1, fmt=fp32
+                    math.rwc dst+=2
+                }
+                math.rwc dst=cr+8
+                math.rwc dst=cr+8
+            }
+            math.rwc dst=0
+        }
+        tensix.stall sync, math|sfpu
+        sem.stall math|sfpu|sync, ready, notmax
+        sem.inc ready                              // pack sends ACC to the peers
+
+        // ACC = the sum of every peer's partial.
+        sem.stall math|sfpu|sync, ready, notmax
+        copy_tile!(3)
+        for q in 1..PEERS {
+            copy_tile!(4)
+            select_tile!(0)
+            loop 4 {
+                loop 8 {
+                    sfp.load l0, dst[ACC], fmt=fp32
+                    sfp.load l1, dst[4 * dst.tile], fmt=fp32
+                    sfp.add l0, l0, l1; sfp.nop
+                    sfp.store dst[ACC], l0, fmt=fp32
+                    math.rwc dst+=2
+                }
+                math.rwc dst=cr+8
+                math.rwc dst=cr+8
+            }
+            math.rwc dst=0
+        }
+        select_tile!(0)
+        // Each row's total, then 1 / sqrt(mean + eps) across all of its positions.
+        for g in 0..8 {
+            if g == 4 { math.rwc dst+=8; math.rwc dst+=8 }
+            sfp.load l0, dst[ACC], fmt=fp32
+            sfp.load l1, dst[ACC + ODD], fmt=fp32
+            sfp.load l2, dst[ACC + RIGHT], fmt=fp32
+            sfp.load l3, dst[ACC + RIGHT + ODD], fmt=fp32
+            sfp.add l0, l0, l2; sfp.nop
+            sfp.add l1, l1, l3; sfp.nop
+            sfp.add l0, l0, l1; sfp.nop
+            row_sum_l0!()
+            sfp.li l4, 1.0 / DIM
+            sfp.mul l0, l0, l4; sfp.nop
+            sfp.li l4, EPS
+            sfp.add l0, l0, l4; sfp.nop
+            rsqrt!()
+            sfp.store dst[ACC], l0, fmt=fp32
+            sfp.store dst[ACC + ODD], l0, fmt=fp32
+            sfp.store dst[ACC + RIGHT], l0, fmt=fp32
+            sfp.store dst[ACC + RIGHT + ODD], l0, fmt=fp32
+            math.rwc dst+=4
+        }
+        math.rwc dst=0
+        tensix.stall sync, math|sfpu
+
+        // Pass 2: x * (1 / rms) * gamma.
+        for t in lo..hi {
+            sem.stall math|sfpu|sync, ready, notmax
+            copy_tile!(0)
+            copy_tile!(1)
+            select_tile!(0)
+            loop 4 {
+                loop 8 {
+                    sfp.load l0, dst[0], fmt=fp32
+                    sfp.load l1, dst[dst.tile], fmt=fp32
+                    sfp.load l2, dst[ACC], fmt=fp32
+                    sfp.mul l0, l0, l1; sfp.nop
+                    sfp.mul l0, l0, l2; sfp.nop
+                    sfp.store dst[0], l0, fmt=fp32
+                    math.rwc dst+=2
+                }
+                math.rwc dst=cr+8
+                math.rwc dst=cr+8
+            }
+            math.rwc dst=0
+            tensix.stall sync, math|sfpu
+            sem.inc ready
+        }
+    } else {
+        if OP == 1 {
+            sfp.const l12, 1.4426950216293335    // log2(e)
+            sfp.const l13, 4.791750143340323e-15
+        }
+        for t in first..first + count {
+            sem.stall math|sfpu|sync, ready, notmax
+            copy_tile!(0)
+            copy_tile!(1)
+            select_tile!(0)
+            if OP == 1 {
+                sfp.li l4, 127.0
+                sfp.li l5, 7.839635491371155e-08
+                sfp.li l6, 1.0017248
+                loop 4 {
+                    loop 8 { silu_exp!() }
+                    math.rwc dst=cr+8
+                    math.rwc dst=cr+8
+                }
+                math.rwc dst=0
+                tensix.stall sync, math|sfpu
+                loop 4 {
+                    loop 8 { silu_combine!() }
+                    math.rwc dst=cr+8
+                    math.rwc dst=cr+8
+                }
+                math.rwc dst=0
+            } else {
+                loop 4 {
+                    loop 8 {
+                        sfp.load l0, dst[0], fmt=fp32
+                        sfp.load l1, dst[dst.tile], fmt=fp32
+                        sfp.add l0, l0, l1; sfp.nop
+                        sfp.store dst[0], l0, fmt=fp32
+                        math.rwc dst+=2
+                    }
+                    math.rwc dst=cr+8
+                    math.rwc dst=cr+8
+                }
+                math.rwc dst=0
+            }
+            tensix.stall sync, math|sfpu
+            sem.inc ready
+        }
+    }
+}
+
+fn trisc2() {
+    if RMS {
+        pack.fmt in=fp32, out=fp32
+        sem.stall tdma|pack|sync, ready, nonzero
+        m = cb.reserve mine
+        pack.move m, dst[ACC]
+        tensix.stall sync, pack0
+        tensix.wait
+        cb.push mine
+        sem.dec ready
+        pack.fmt in=fp32, out=bf16
+        for t in lo..hi {
+            sem.stall tdma|pack|sync, ready, nonzero
+            p = cb.reserve result
+            pack.move p, dst[0]
+            tensix.stall sync, pack0
+            tensix.wait
+            cb.push result
+            sem.dec ready
+        }
+    } else {
+        pack.fmt in=fp32, out=bf16
+        for t in first..first + count {
+            sem.stall tdma|pack|sync, ready, nonzero
+            p = cb.reserve result
+            pack.move p, dst[0]
+            tensix.stall sync, pack0
+            tensix.wait
+            cb.push result
+            sem.dec ready
+        }
+    }
+}
+
+fn ncrisc() {
+    if RMS {
+        m = cb.wait mine
+        // All partial writes in flight at once; every one is acknowledged before any peer is told.
+        w = noc.group write
+        for q in 0..PEERS {
+            id = panel * PEERS + q
+            noc.write remote(id / 10, id % 10, partials + peer * 1024), m, n=1024, tid=w
+        }
+        noc.wait w
+        c = noc.group inc
+        for q in 0..PEERS {
+            id = panel * PEERS + q
+            noc.inc remote(id / 10, id % 10, arrived), by=1, ret=ret, tid=c
+        }
+        noc.wait c
+        cb.pop mine
+        for t in lo..hi {
+            p = cb.wait result
+            noc.write output[(panel * KT + t) * 1024], p, n=1024, wait
+            cb.pop result
+        }
+    } else {
+        for t in first..first + count {
+            p = cb.wait result
+            noc.write output[t * 1024], p, n=1024, wait
+            cb.pop result
+        }
+    }
+}

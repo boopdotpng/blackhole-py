@@ -46,11 +46,13 @@ class Nanbeige:
         bits = {"bfp4_b": 4, "bfp8_b": 8}[t.packed_format]
         group = 16 if bits == 4 else 8
         tiles = [part.numpy() for part in parts]
-        row_bytes = n // 32 * t.shape[-1]
-        buf = dev.empty(k // 32 * row_bytes, f"bfp{bits}", tiles_per_page=group)
-        # Keep the file's native tile bytes. Each DRAM page streams one output column over group K tiles.
+        # Keep the file's native tile bytes. Each DRAM page streams one output column over group K tiles. Rows of
+        # pages (one per k group) are padded to an odd page count so a column's pages rotate over the DRAM banks.
+        pitch = n // 32 + (n // 32 + 1) % 2
+        row_bytes = pitch * group * t.shape[-1]
+        buf = dev.empty(k // 32 // group * row_bytes, f"bfp{bits}", tiles_per_page=group)  # packed sizes are bytes
         for first in range(0, k // 32, group):
-          offset = buf.addr + first * row_bytes
+          offset = buf.addr + first // group * row_bytes
           for matrix in tiles:
             strip = np.ascontiguousarray(matrix[first:first + group].swapaxes(0, 1))
             dev.dev.allocator._copyin(offset, strip)
@@ -61,10 +63,10 @@ class Nanbeige:
       key = k, n, bits, second, third
       if key not in kernels:
         workers = 96 if second else 112
-        kernels[key] = dev.kernel(KERNEL, K=k, N=n, BITS=bits, GROUP=group, SECOND=second, THIRD=third,
+        kernels[key] = dev.kernel(KERNEL, K=k, N=n, BITS=bits, GROUP=group, SECOND=second, THIRD=third, PAD=1,
                                   WORKERS=min(n // 32, workers, len(dev.dev.workers)))
       projections[name] = kernels[key], buf
-      if stem: prompt_weights[name] = (buf, k, n, bits, group, second, third)
+      if stem: prompt_weights[name] = (buf, k, n, bits, group, second, third, 1)
 
     dim, mlp, vocab = cfg["hidden_size"], cfg["intermediate_size"], cfg["vocab_size"]
     d, kv = cfg.get("head_dim", dim // cfg["num_attention_heads"]), cfg["num_key_value_heads"]
