@@ -21,17 +21,17 @@ class DType:
   def __repr__(self): return f"dtypes.{self.name}"
 
 class dtypes:
+  """Only formats our kernels store or compute in. FP32 that passes through SrcA/SrcB is truncated to 19 bits (TF32);
+  lowering routes FP32 L1 data to Dst with an unpack to Dst instead, so TF32 never appears as a dtype."""
   void = DType("void", 0)
-  bool = DType("bool", 1)
+  bool = DType("bool", 1)      # comparison results (SFPU lane conditions)
   int32 = DType("int32", 32)
   uint32 = DType("uint32", 32)
   bf16 = DType("bf16", 16)
-  fp16 = DType("fp16", 16)
   fp32 = DType("fp32", 32)
-  tf32 = DType("tf32", 19)              # SrcA/SrcB's 19-bit datums
   bfp8 = DType("bfp8", 8, block=16)
   bfp4 = DType("bfp4", 4, block=16)
-  floats = (bf16, fp16, fp32, tf32, bfp8, bfp4)
+  floats = (bf16, fp32, bfp8, bfp4)
 
 # ---- ops ----
 
