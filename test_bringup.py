@@ -1,7 +1,7 @@
 import os, struct, tempfile, time
 from pathlib import Path
 import fw
-from device import Device, Queue, cover, dram_read_cap
+from device import Device, Queue, dram_read_cap
 
 def load(dev:Device, src:str, roles=("brisc",)) -> int:
   with tempfile.TemporaryDirectory() as d:
@@ -67,13 +67,13 @@ void trisc_step(void) { write32(COUNTS + 4 * (1 + ROLE_TRISC), ++steps); }
 
 def test_bare_metal_and_barrier(dev:Device, steps:int=5):
   size = load(dev, BARRIER, fw.ROLES)
-  rect, excl = cover(dev.workers)
+  rect, excl = dev.cover(dev.workers)
   out, args = dev.alloc_host(steps * 64), dev.alloc_host(steps * 64)
   q = Queue()
   for s in range(steps):
     host = dev.host.noc_addr + out + s * 64
     struct.pack_into("<6I", dev.host.mem, args + s * 64, s + 1, rect, excl, fw.noc(dev.workers[0]), host & 0xFFFFFFFF, host >> 32)
-    q.kick(dev.workers, dev.host.noc_addr + args + s * 64, 64)
+    q.kick(dev, dev.workers, dev.host.noc_addr + args + s * 64, 64)
   q.signal(dev.timeline_signal, val := dev.next_timeline()).submit(dev)
   dev.timeline_signal.wait(val)
 

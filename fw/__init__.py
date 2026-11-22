@@ -19,6 +19,7 @@ ARC = (8, 0)
 AICLK_MHZ = 1350
 TELEMETRY_DATA, TELEMETRY_PTR, TAG_ENABLED_TENSIX_COL = 0x80030430, 0x80030434, 34
 SOFT_RESET, RESET_BRISC, RESET_ALL = 0xFFB121B0, 1 << 11, 0x47800
+NOC_NODE_ID = 0xFFB20044  # physical NoC0 coords; NOC_ID_LOGICAL (0xFFB20148) is the translated one
 
 def noc(core:tuple[int, int]) -> int: return core[0] | core[1] << 6
 

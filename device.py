@@ -15,18 +15,6 @@ def dram(offset:int, page:int=fw.DRAM_PAGE_MAX, banks:int=8) -> int:
   tag = (page.bit_length() - 1) << 56 if page & (page - 1) == 0 else (page // 64 - 1) << 48
   return 1 << 63 | tag | offset
 
-def cover(cores) -> tuple[int, int]:
-  cores = set(cores)
-  x0, x1, y0, y1 = min(x for x, _ in cores), max(x for x, _ in cores), min(y for _, y in cores), max(y for _, y in cores)
-  box = {(x, y) for x in range(x0, x1 + 1) if x not in (8, 9) for y in range(y0, y1 + 1)}
-  rect, missing = fw.noc((x0, y0)) | fw.noc((x1, y1)) << 12, box - cores
-  if not missing: return rect, 0
-  dx, dy = any(x == x1 for x, _ in missing), any(y == y1 for _, y in missing)
-  ax, ay = (min if dx else max)(x for x, _ in missing), (min if dy else max)(y for _, y in missing)
-  assert missing == {(x, y) for x, y in box if (x >= ax if dx else x <= ax) and (y >= ay if dy else y <= ay)}, \
-    f"{len(cores)} cores are not a rectangle minus one corner"
-  return rect, 1 << 22 | dy << 21 | dx << 20 | ay << 14 | ax << 8
-
 class Signal:
   def __init__(self, dev, offset:int): self.mem, self.offset, self.addr = dev.host.mem, offset, dev.host.noc_addr + offset
   @property
@@ -41,9 +29,9 @@ class Queue:
   def q(self, op:Op, a:int=0, b:int=0, c:int=0):
     self.packets += struct.pack("<4Q", op, a, b, c)
     return self
-  def kick(self, cores, args:int=0, args_size:int=0):
+  def kick(self, dev:"Device", cores, args:int=0, args_size:int=0):
     assert 0 <= args_size <= fw.STEP_ARGS_SIZE and args_size % 16 == 0 and args % 64 == 0 and (args or not args_size)
-    rect, exclude = cover(cores)
+    rect, exclude = dev.cover(cores)
     return self.q(Op.KICK, rect | exclude << 32, args, len(cores) | args_size << 16)
   def copy(self, dst:int, src:int, size:int):
     assert dst % 64 == src % 64 == 0 and 0 <= size < 1 << 32, "DMA needs 64-byte aligned addresses and a u32 size"
@@ -127,6 +115,11 @@ class Device:
       self.service_core, self.grid = (right, 11), ((1, 2), (right, 11))
       self.worker_rects = (((1, 2), (right - 1, 11)), ((right, 2), (right, 10)))
       self.workers = [(x, y) for x in range(1, right + 1) if x not in (8, 9) for y in range(2, 12) if (x, y) != self.service_core]
+      # Cores are addressed in translated coords (harvested columns moved past the right edge), but BRCST_EXCLUDE is
+      # matched against physical coords, so cover() needs each column's physical x. Translation keeps good columns in
+      # order, so a translated exclude quadrant maps to the same physical quadrant.
+      self.phys_x = {x: self.card.read32((x, 2), fw.NOC_NODE_ID) & 63 for x in sorted({x for x, _ in self.workers})}
+      if list(self.phys_x.values()) != sorted(self.phys_x.values()): raise RuntimeError(f"non-monotonic column translation {self.phys_x}")
       self._reset(self.grid)
       self.booted = True
       self.stage_base, self.stage_size = 16 << 20, 8 << 20
@@ -163,9 +156,22 @@ class Device:
       self.card.write(rect, 0, header + image)
       self.card.write32(rect, fw.SOFT_RESET, fw.RESET_ALL & ~fw.RESET_BRISC)
 
+  def cover(self, cores) -> tuple[int, int]:
+    """Multicast (rect, exclude) for cores: a translated rectangle, minus at most one corner quadrant."""
+    cores = set(cores)
+    x0, x1, y0, y1 = min(x for x, _ in cores), max(x for x, _ in cores), min(y for _, y in cores), max(y for _, y in cores)
+    box = {(x, y) for x in range(x0, x1 + 1) if x not in (8, 9) for y in range(y0, y1 + 1)}
+    rect, missing = fw.noc((x0, y0)) | fw.noc((x1, y1)) << 12, box - cores
+    if not missing: return rect, 0
+    dx, dy = any(x == x1 for x, _ in missing), any(y == y1 for _, y in missing)
+    ax, ay = (min if dx else max)(x for x, _ in missing), (min if dy else max)(y for _, y in missing)
+    assert missing == {(x, y) for x, y in box if (x >= ax if dx else x <= ax) and (y >= ay if dy else y <= ay)}, \
+      f"{len(cores)} cores are not a rectangle minus one corner"
+    return rect, 1 << 22 | dy << 21 | dx << 20 | ay << 14 | self.phys_x[ax] << 8
+
   def kick(self, args:int=0, args_size:int=0, cores=None, sync:bool=False, timeout:float=10.0) -> int:
     val = self.next_timeline()
-    Queue().kick(cores or self.workers, args, args_size).signal(self.timeline_signal, val).submit(self, timeout)
+    Queue().kick(self, cores or self.workers, args, args_size).signal(self.timeline_signal, val).submit(self, timeout)
     if sync: self.timeline_signal.wait(val, timeout)
     return val
 
