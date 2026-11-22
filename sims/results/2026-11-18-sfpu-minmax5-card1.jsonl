@@ -1,4 +1,0 @@
-{"card": 1, "case": "minmax5_min", "core": [1, 2], "expect_new": "0x40400000", "expect_old": "0x40a00000", "gap": 0, "kind": "value", "seen": ["0x40a00000"], "verdict": "old"}
-{"card": 1, "case": "minmax5_min", "core": [1, 2], "expect_new": "0x40400000", "expect_old": "0x40a00000", "gap": 1, "kind": "value", "seen": ["0x40400000"], "verdict": "new"}
-{"card": 1, "case": "minmax5_max", "core": [1, 2], "expect_new": "0x40a00000", "expect_old": "0x40400000", "gap": 0, "kind": "value", "seen": ["0x40400000"], "verdict": "old"}
-{"card": 1, "case": "minmax5_max", "core": [1, 2], "expect_new": "0x40a00000", "expect_old": "0x40400000", "gap": 1, "kind": "value", "seen": ["0x40a00000"], "verdict": "new"}

@@ -1,6 +1,0 @@
-macro unpack_pair(left, right) {
-    repeat face in 0..4 {
-        unpack.move a, left + face * 256, n=256, dvalid
-        unpack.move b, right + face * 256, n=256, dvalid
-    }
-}

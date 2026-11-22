@@ -1,141 +1,67 @@
-/* The contract between the host and the firmware. fw/__init__.py mirrors what the host needs. */
 #ifndef ABI_H
 #define ABI_H
 
-/* ---- L1, every Tensix core ---- */
-#define GO_SIGNAL         0x10     /* u32. byte 0: 0x80 = launch, cleared when every RISC returns. bits 8-19: dispatch's NoC coordinate,
-                                    * bit 20: which execution slot to run (GO_SLOT), bit 21: profile this launch (GO_PROFILE) */
-#define GO_SLOT_BIT       20
-#define GO_PROFILE_BIT    21
-#define SUBORDINATE_SYNC  0x14     /* u8 each for ncrisc, trisc0-2: 2 once booted. NCRISC's byte is also its launch handshake:
-                                    * BRISC writes 0x80 = go, NCRISC writes 0 = returned */
-#define LAUNCH_TOKEN      0x18     /* u32: the current launch's token. BRISC writes it, then pushes it to each TRISC's PCBuf;
-                                    * TRISC i writes it back to its mailbox when done. A TRISC starts only on a token that
-                                    * matches, so a token left in a FIFO by an aborted run is dropped. */
+#define STEP_EPOCH        0x10
+#define SUBORDINATE_SYNC  0x14
+#define STEP_TOKEN        0x18
+#define SERVICE_COORD     0x1C
+#define WORKER_X          0x20
+#define WORKER_Y          0x24
+#define WORKER_ID         0x28
+#define NUM_WORKERS       0x2C
+#define DRAM_BANKS_L1     0x30
+#define GRID_COLS_L1      0x34
+#define SYNC_ARRIVED      0x40
+#define SYNC_EPOCH        0x50
+#define ROLE_PC           0x60
+#define STEP_ARGS         0x80
+#define STEP_ARGS_SIZE    0x80
+#define CODE_BASE         0x100
 
-/* Resident firmware, one image per RISC. FW_x + 0 boots, FW_x + 4 is where a kernel jumps when it is done. */
-/* [0x20, PROFILE_RECORD) holds the five images. Growing it means moving everything after it, and so DATA_BASE,
- * which compiled kernels have built in (ttrv reads them from fw/__init__.py). Move it in steps of 0x400 so kernel code
- * and data keep their alignment (the profile record moved it from WORKER_X = 0x8A0). */
-/* Kernels return through jalr x0, imm(x0) (fw.ret), so every FW_x + 4 must be below 0x800: BRISC, the largest, goes last. */
-#define FW_NCRISC         0x20
-#define FW_NCRISC_SIZE    0x100
-#define FW_TRISC0         0x120
-#define FW_TRISC0_SIZE    0x150
-#define FW_TRISC1         0x270
-#define FW_TRISC1_SIZE    0x150
-#define FW_TRISC2         0x3C0
-#define FW_TRISC2_SIZE    0x150
-#define FW_BRISC          0x510
-#define FW_BRISC_SIZE     0x6B0
-_Static_assert(FW_BRISC + 4 < 0x800, "kernels cannot return to BRISC firmware");
-
-/* Hardware counters of a profiled launch (GO_PROFILE). Dispatch multicasts PROFILE_ADDR, the NoC address of the
- * launch's per-core records (host memory), before the GO. BRISC starts the counters before it releases the other RISCs,
- * stops them once every RISC has returned, fills PROFILE_RECORD and writes it to PROFILE_ADDR + WORKER_ID * 64 before it
- * signals done. Kernels never see any of this; only the gap between launches grows. Record layout: PROFILE_* below. */
-#define PROFILE_RECORD    0xBC0    /* 128 bytes, 64-aligned: staged here, written to the host in one NoC write */
-#define PROFILE_RECORD_SIZE 128
-#define PROFILE_ADDR      0xC40    /* u64 */
-/* Counter words from PROFILE_EVENTS on are read from the Tensix banks in this order (worker_brisc.c events[]). Thread
- * 0, 1, 2 = unpack, math, pack TRISC. sem_wait: stalled on a Tensix SEMWAIT for a nonzero semaphore (data), sem_full:
- * for a non-full one (space). srca/srcb_wait: math waiting for the unpacker to fill the source register. */
-enum { PROFILE_ID, PROFILE_CYCLES, PROFILE_NOC_READ, PROFILE_NOC_WRITE, PROFILE_EVENTS,
-       PROFILE_FPU = PROFILE_EVENTS, PROFILE_SFPU, PROFILE_UNPACK, PROFILE_UNPACK1, PROFILE_PACK,
-       PROFILE_UNPACK_STALL, PROFILE_MATH_STALL, PROFILE_PACK_STALL, PROFILE_SRCA_WAIT, PROFILE_SRCB_WAIT,
-       PROFILE_UNPACK_SEM_WAIT, PROFILE_MATH_SEM_WAIT, PROFILE_PACK_SEM_WAIT,
-       PROFILE_UNPACK_SEM_FULL, PROFILE_MATH_SEM_FULL, PROFILE_PACK_SEM_FULL,
-       PROFILE_UNPACK_INSTRS, PROFILE_MATH_INSTRS, PROFILE_PACK_INSTRS, PROFILE_WORDS };
-_Static_assert(FW_BRISC + FW_BRISC_SIZE <= PROFILE_RECORD, "profile record overlaps resident firmware");
-_Static_assert(PROFILE_RECORD % 64 == 0 && PROFILE_WORDS * 4 <= PROFILE_RECORD_SIZE, "profile record");
-_Static_assert(PROFILE_RECORD + PROFILE_RECORD_SIZE <= PROFILE_ADDR, "profile address overlaps the record");
-
-/* Two execution slots, double buffered: while one launch runs from slot b, dispatch installs the next one into slot b ^ 1.
- * Slot 1 is slot 0 moved up by SLOT_STRIDE, LAUNCH mask included, and starts where slot 0 ends; the GO word says which
- * one to run. Kernels must therefore be position-independent and return through an absolute jump (see fw.ret).
- * L1_PARAM_BASE is shared, below both slots: it is only written when the launch that reads it is released. LAUNCH is an
- * active-role bitmask. Worker L1: firmware, profile, params, slot 0, slot 1, then DATA_BASE.. for kernels. */
-/* Published in worker L1 by the startup program, before the first user kernel. */
-#define WORKER_X          0xCA0
-#define WORKER_Y          0xCA4
-#define WORKER_ID         0xCA8
-_Static_assert(PROFILE_ADDR + 8 <= WORKER_X, "worker coordinates overlap the profile address");
-#define L1_PARAM_BASE     0xCB0
-#define PARAM_SIZE        0x40     /* 16 words: the launch's arguments (buffer addresses and integer values), bound per run */
-#define LAUNCH            0xCF0
-#define CODE_BRISC        0xD00    /* BRISC slot 0x1F00 bytes, to CODE_NCRISC */
-#define CODE_NCRISC       0x2C00
-#define CODE_TRISC0       0x4C00
-#define CODE_TRISC1       0x6400
-#define CODE_TRISC2       0x7C00
-#define CODE_TRISC_SIZE   0x1800   /* each TRISC slot; fused attention (RoPE, split KV, merge) needs more than 4 KiB */
-#define CODE_END          0x9400
-#define SLOT_STRIDE       (CODE_END - LAUNCH)  /* 0x8710: slot 1 = [LAUNCH, CODE_END) + SLOT_STRIDE = [0x9400, 0x11B10) */
-#define SLOT_OFFSET(go)   ((go) >> GO_SLOT_BIT & 1 ? SLOT_STRIDE : 0)
-#define DATA_BASE         (CODE_END + SLOT_STRIDE)  /* 0x11B10: everything from here up is free for kernels */
-
-/* Stacks live in each RISC's private local memory, not L1 */
 #define STACK_TOP         0xFFB01FF0
 #define TRISC_STACK_TOP   0xFFB00FF0
 #define TRISC_GP          0xFFB007F0
 
-/* ---- Service cores: CQ (dispatch on BRISC) and DMA (two copy engines) ---- */
-/* Each queue is a ring of 32-byte packets {op, a, b, c} (u64 each) in host memory. The host submits compute work as a
- * CALL to a command buffer of the same packets. Programs and args must not change between submit and retire:
- * dispatch reads them ahead. */
 #define PACKET            32
 #define RING_SIZE         0x10000
 
-#define OP_EXEC           0  /* a = dispatcher-local descriptor address, b = dynamic args, c = optional pair of 16-byte profile
-                              * slots: dispatch's start and end wall clocks at c + 8 and c + 24. With op_arg EXEC_COUNTERS,
-                              * c is 64-aligned host memory and each worker also writes its PROFILE_RECORD_SIZE counter
-                              * record to c + PROFILE_HEADER + WORKER_ID * PROFILE_RECORD_SIZE. */
-#define EXEC_COUNTERS     1
-#define PROFILE_HEADER    64
-#define OP_COPY           1  /* a = dst, b = src, c = bytes */
-#define OP_WAIT           2  /* until *a >= b, or *a == b if c */
-#define OP_STORE          3  /* *a = b */
-#define OP_TIMESTAMP      4  /* *a = wall clock */
-#define OP_CALL           5  /* run c bytes of packets at a (DRAM or host), b_lo times (0 = 1), advancing by b_hi bytes.
-                             * Each buffer finishes before the next starts. CQ only, not nested. */
+#define OP_KICK           0
+#define OP_COPY           1
+#define OP_WAIT           2
+#define OP_STORE          3
 
-/* Addresses in packets are 64-bit: bit 63 set = DRAM, bits 56-61 log2(page), banks interleaved by page.
- * For non-power-of-two pages bits 56-61 are zero and bits 48-55 encode page / 64 - 1.
- * Otherwise bits 32-43 are a NoC coordinate (bits 60+ set = PCIe/host) and 0-31 the address there. */
+#define SVC_NCRISC_SYNC   0x10
+#define SVC_COPY_GO       0x20
+#define SVC_COPY_DONE     0x30
+#define SVC_PIPE_PROD     0x40
+#define SVC_PIPE_CONS     0x50
 
-#define STATE             DATA_BASE
-#define WPTR              (STATE + 0x00)  /* host -> fw: bytes pushed. The doorbell */
-#define RPTR              (STATE + 0x04)  /* fw -> host: bytes retired */
-#define RING_LO           (STATE + 0x08)  /* NoC address of this queue's ring in host memory */
-#define RING_HI           (STATE + 0x0C)
-#define GO_WORD           (STATE + 0x10)  /* CQ: the word multicast to GO_SIGNAL */
-#define DMA_DONE          (STATE + 0x24)  /* DMA: packets finished, one word per engine */
-#define DONE_COUNT        (STATE + 0x30)  /* CQ: each worker core increments this when its kernels return */
-#define SCRATCH           (STATE + 0x40)  /* 0x80 per RISC, staging for 8-byte signal reads and writes */
-#define STATE_SIZE        0x140
-_Static_assert(STATE + STATE_SIZE <= 0x12000, "service-core state must end below GRAPH_L1");
+#define SVC_STATE         0x80
+#define SVC_WPTR          (SVC_STATE + 0x00)
+#define SVC_RPTR          (SVC_STATE + 0x04)
+#define SVC_RING_LO       (SVC_STATE + 0x08)
+#define SVC_RING_HI       (SVC_STATE + 0x0C)
+#define SVC_EPOCH         (SVC_STATE + 0x10)
+#define SVC_DONE_COUNT    (SVC_STATE + 0x20)
+#define SVC_COPY_DESC     (SVC_STATE + 0x30)
+#define SVC_SCRATCH       (SVC_STATE + 0x80)
+#define SVC_STATE_SIZE    0x100
 
-/* CQ descriptor: 8 u32 header words {cores, rect, args_bytes, payload_bytes, payload_lo, payload_hi, transfers, exclude},
- * then transfers of 5 words {payload_offset, worker_address, bytes, rect, exclude}. Every multicast is one rectangle
- * (start | end << 12) minus at most one corner quadrant (exclude = NoC0 BRCST_EXCLUDE, 0 = none); args and GO go to
- * the header's. Descriptors are immutable until all referencing work retires. */
-#define DESCRIPTOR_L1     0x40000
-#define DESCRIPTOR_END    0x80000
-#define CQ_PACKETS        0x10000  /* ring packets fetched by dispatch */
-#define CQ_PACKETS_MAX    0x1000
-#define GRAPH_L1          0x12000  /* two GRAPH_CHUNK buffers for OP_CALL */
-#define GRAPH_CHUNK       0x1000
-#define PARAMS_L1         0x14000  /* two PARAM_SIZE dynamic-argument buffers */
-#define PROFILE_L1        (0x14100 + (PROFILE_ADDR & 63))  /* the PROFILE_ADDR word dispatch multicasts */
-#define STAMP_L1          0x15000  /* deferred TIMESTAMPs (dispatch and DMA): STAMP_SLOTS x 64 bytes per NIU */
-#define STAMP_SLOTS       32
-#define STAGE_L1          0x18000  /* two packed program payload buffers, prefetched from DRAM */
-#define STAGE_SIZE        0x10000
-
-/* DMA core, per engine: two staging buffers, then the fetched packets */
+#define SVC_BRISC_BASE    0x200
+#define SVC_BRISC_SIZE    0x3E00
+#define SVC_NCRISC_BASE   0x4000
+#define SVC_NCRISC_SIZE   0x4000
+#define SVC_ARGS_L1       0x8000
+#define SVC_PACKETS       0x9000
+#define SVC_PACKETS_MAX   0x1000
+#define SVC_DMA_STAGING   0x10000
 #define DMA_BATCH         0x20000
-#define DMA_PACKETS_MAX   0x800
-#define DMA_STAGING       0x20000
-#define DMA_STAGING_STRIDE 0x48000
+
+_Static_assert((SVC_EPOCH & 63) == (STEP_EPOCH & 63), "SVC_EPOCH and STEP_EPOCH must align mod 64");
+_Static_assert((SVC_ARGS_L1 & 63) == (STEP_ARGS & 63), "SVC_ARGS_L1 and STEP_ARGS must align mod 64");
+_Static_assert((SVC_SCRATCH & 63) == 0, "SVC_SCRATCH must be 64-aligned");
+_Static_assert((SVC_DONE_COUNT & 15) == 0 && (SYNC_ARRIVED & 15) == 0, "NoC atomics need 16-byte alignment");
+_Static_assert(SVC_STATE + SVC_STATE_SIZE <= SVC_BRISC_BASE, "service state overlaps BRISC image");
+_Static_assert(SVC_PACKETS + 64 + SVC_PACKETS_MAX <= SVC_DMA_STAGING, "packet buffer overlaps DMA staging");
 
 #endif

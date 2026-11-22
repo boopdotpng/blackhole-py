@@ -9,41 +9,58 @@ typedef unsigned int u32;
 #define NORETURN __attribute__((noreturn)) void
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
 
-#define KERNEL __attribute__((section(".entry"))) NORETURN
-#define JUMP(address) do { __asm__ volatile("jr %0" :: "r"(address)); __builtin_unreachable(); } while (0)  /* no frame */
-
 INLINE void fence(void) { __asm__ volatile("fence" ::: "memory"); }
 INLINE u32 read32(u32 a) { return *(volatile u32 *)a; }
 INLINE u8 read8(u32 a) { return *(volatile u8 *)a; }
 INLINE void write32(u32 a, u32 v) { *(volatile u32 *)a = v; }
 INLINE void write8(u32 a, u8 v) { *(volatile u8 *)a = v; }
 
-#define TDMA_CLK_GATE_EN         0xFFB11024  /* clock gating per TDMA block, 0x3F = all */
-#define SOFT_RESET               0xFFB121B0  /* bit set = held in reset: 11 BRISC, 12-14 TRISC0-2, 18 NCRISC */
-#define WALL_CLOCK_L             0xFFB121F0  /* reading this latches the high word into WALL_CLOCK_H */
+#define WAIT_FAST(cond) do { while (!(cond)) fence(); fence(); } while (0)
+#ifndef POLL_BACKOFF
+#define POLL_BACKOFF 64
+#endif
+#define WAIT_SLOW(cond) do { \
+    while (!(cond)) { \
+      fence(); \
+      u32 n_ = POLL_BACKOFF; \
+      __asm__ volatile("1: addi %0, %0, -1\n bnez %0, 1b" : "+r"(n_)); \
+    } \
+    fence(); \
+  } while (0)
+
+#define TDMA_CLK_GATE_EN         0xFFB11024
+#define SOFT_RESET               0xFFB121B0
+#define RESET_BRISC              (1u << 11)
+#define RESET_TRISC0             (1u << 12)
+#define RESET_NCRISC             (1u << 18)
+#define RESET_ALL                0x47800u
+#define WALL_CLOCK_L             0xFFB121F0
 #define WALL_CLOCK_H             0xFFB121F8
-#define TRISC0_RESET_PC          0xFFB12228  /* +4 per TRISC: where it starts when released from reset */
-#define TRISC_RESET_PC_OVERRIDE  0xFFB12234  /* bit n: TRISCn uses its RESET_PC rather than the hardwired one */
+#define TRISC0_RESET_PC          0xFFB12228
+#define TRISC_RESET_PC_OVERRIDE  0xFFB12234
 #define NCRISC_RESET_PC          0xFFB12238
 #define NCRISC_RESET_PC_OVERRIDE 0xFFB1223C
-#define DEST_CG_CTRL             0xFFB12240  /* Dst clock gating control, tt-metal writes 0 */
+#define DEST_CG_CTRL             0xFFB12240
 
-#define REGFILE      0xFFE00000  /* this TRISC's 64 Tensix GPRs, u32 each */
-#define INSTRN_BUF   0xFFE40000  /* a store here pushes one instruction to this RISC's Tensix thread */
-#define TENSIX_CFG   0xFFEF0000  /* shared config registers, u32 each */
-#define CFG_ECC_SCRUBBER        (TENSIX_CFG + 3 * 4)
-#define CFG_RISCV_IC_INVALIDATE (TENSIX_CFG + 185 * 4)  /* bit per RISC: brisc, trisc0-2, ncrisc. Self-clearing */
-#define CFG_PRNG_SEED           (TENSIX_CFG + 186 * 4)
-#define CFG_RISC_PREFETCH_CTRL  (TENSIX_CFG + 208 * 4)
-#define CFG_BANK_WORDS 224
-#define CFG_GLOBAL_BASE 180
-#define CFG_STATE_RESET 4
+#define PC_BUF_BASE              0xFFE80000
+#define PCBUF(i)                 (PC_BUF_BASE + (i) * 0x10000)
+#define PC_BUF_SYNC              0xFFE80004
+#define MAILBOX_TO_BRISC         0xFFEC0000
+#define MAILBOX_FROM(i)          (0xFFEC1000 + (i) * 0x1000)
 
-/* Overlay stream registers. Kernels use streams 8-39 as circular-buffer counters (regs 8 received, 10 acked). */
-#define STREAM_REG(stream, reg) (0xFFB40000 + (stream) * 0x1000 + (reg) * 4)
+#define REGFILE                  0xFFE00000
+#define INSTRN_BUF               0xFFE40000
+#define TENSIX_CFG               0xFFEF0000
+#define CFG_ECC_SCRUBBER         (TENSIX_CFG + 3 * 4)
+#define CFG_RISCV_IC_INVALIDATE  (TENSIX_CFG + 185 * 4)
+#define CFG_RISC_PREFETCH_CTRL   (TENSIX_CFG + 208 * 4)
+#define CFG_BANK_WORDS           224
+#define CFG_GLOBAL_BASE          180
+#define CFG_STATE_RESET          4
 
+#define STREAM_REG(stream, reg)  (0xFFB40000 + (stream) * 0x1000 + (reg) * 4)
 
-INLINE void reset_cb_counters(void) {  /* every launch starts with empty CBs */
+INLINE void reset_cb_counters(void) {
   for (u32 cb = 0; cb < 32; cb++) {
     write32(STREAM_REG(8 + cb, 8), 0);
     write32(STREAM_REG(8 + cb, 10), 0);
@@ -51,66 +68,60 @@ INLINE void reset_cb_counters(void) {  /* every launch starts with empty CBs */
 }
 
 INLINE void tensix_push(u32 instruction) { write32(INSTRN_BUF, instruction); }
-#define PC_BUF_SYNC 0xFFE80004  /* TRISC only (CoprocessorDoneCheck): a load returns once this thread's instructions finish */
 INLINE void tensix_drain(void) {
   write32(PC_BUF_SYNC, 0);
   u32 v = read32(PC_BUF_SYNC);
-  __asm__ volatile("andi %0, %0, 0" : "+r"(v));  /* wait for the load here: no other PC_BUF load may start before */
+  __asm__ volatile("andi %0, %0, 0" : "+r"(v));
 }
 
-/* .ttinsn: a constant push as one 4-byte instruction (the word rotated left by 2), exactly an sw to INSTRN_BUF. */
 #define TTINSN(w) __asm__ volatile(".word %0" :: "i"((((u32)(w)) << 2) | (((u32)(w)) >> 30)) : "memory")
 
-#define ZEROACC_ALL     0x10180000  /* clear all of Dst */
-#define SFPENCC_RESET   0x8A00300A  /* enable every SFPU lane, clear condition codes */
-#define NOP             0x02000000
-#define SFPLOADI_MINUS1 0x7100BF80  /* LREG0 = -1.0 (bf16 0xBF80) */
-#define SFPCONFIG_L11   0x910000B0  /* LREG11 (constant) = LREG0 */
-#define SEMINIT_ALL     0xA31003FC  /* all eight semaphores: max 1, value 0 */
-#define CLEARDVALID_RESET 0x36000001  /* SrcA/SrcB bank pointers (math and both unpackers) -> 0, every bank to the unpackers */
+#define ZEROACC_ALL       0x10180000
+#define SFPENCC_RESET     0x8A00300A
+#define NOP               0x02000000
+#define SFPLOADI_MINUS1   0x7100BF80
+#define SFPCONFIG_L11     0x910000B0
+#define SEMINIT_ALL       0xA31003FC
+#define CLEARDVALID_RESET 0x36000001
 
-/* The Tensix state at boot: config zeroed (except the self-clearing icache invalidate and the PRNG seed), Dst cleared,
- * Src banks reset, SFPU and semaphores reinitialised, CBs empty. BRISC runs this once, at boot. Between launches it
- * resets only the CB counters (reset_cb_counters), which kernels count from zero; every model in examples/ produces the
- * same output without resetting the rest. */
+INLINE void enable_clock_gating(void) {
+  write32(DEST_CG_CTRL, 0);
+  write32(TDMA_CLK_GATE_EN, 0x3F);
+  for (u32 niu = 0; niu < 2; niu++) {
+    u32 cfg = 0xFFB20100 + niu * 0x10000;
+    write32(cfg, read32(cfg) | 1);
+    write32(cfg + 4, read32(cfg + 4) | 1);
+  }
+}
+
 INLINE void reset_tensix(void) {
-  /* Any write to STATE_RESET_EN clears the bank's words [0, 180) in hardware.
-   * Reset both banks, then clear the shared globals without touching icache invalidate or PRNG seed.
-   * Blackhole cfg_defines.h: STATE_RESET_EN_ADDR32=4, CFG_STATE_SIZE=56 (128-bit units), globals at 180. */
   write32(TENSIX_CFG + CFG_STATE_RESET * 4, 0);
   write32(TENSIX_CFG + (CFG_BANK_WORDS + CFG_STATE_RESET) * 4, 0);
   for (u32 i = CFG_GLOBAL_BASE; i < 185; i++) write32(TENSIX_CFG + i * 4, 0);
   for (u32 i = 187; i < CFG_BANK_WORDS; i++) write32(TENSIX_CFG + i * 4, 0);
   TTINSN(ZEROACC_ALL);
-  /* The Src bank pointers survive between launches. A kernel whose math releases a bank that its unpacker never filled
-   * (SETRWC clear_ab_vld=3 with only unpacker B active) leaves math one bank ahead of unpacker A, so every later
-   * launch reads faces 1,0,3,2. The ISA calls Reset mode unsupported because it drops banks under an in-flight unpack;
-   * here the Tensix is idle. */
   TTINSN(CLEARDVALID_RESET);
   TTINSN(SFPENCC_RESET);
   TTINSN(NOP);
   TTINSN(SFPLOADI_MINUS1);
   TTINSN(SFPCONFIG_L11);
-  write32(CFG_ECC_SCRUBBER, 0x803);  /* enable, scrub on error, delay 256 */
-  TTINSN(SEMINIT_ALL);  /* kernels spin on UNPACK_SYNC (5) < 2 at entry: a leftover 2 would hang them */
+  write32(CFG_ECC_SCRUBBER, 0x803);
+  TTINSN(SEMINIT_ALL);
   reset_cb_counters();
-  write32(CFG_RISC_PREFETCH_CTRL, 0x11F);  /* instruction prefetch on for all five RISCs, 8 requests */
+  write32(CFG_RISC_PREFETCH_CTRL, 0x11F);
 }
 
-#define SETC16(i, v)    (0xB2000000 | (i) << 16 | (v))
-#define THD_CFG_TTSYNC  56          /* TENSIX_TRISC_SYNC: Auto TTSync, never enabled, so left alone */
-#define THD_CFG_RESET   67          /* ThreadConfig [0, 67) zeroed; 67 (TENSIX_CSR_CONFIG_RawBusyStatus) is undocumented */
-#define SETRWC_ZERO     0x3700000F  /* this thread's SrcA/SrcB/Dst/fidelity RWCs -> 0, no bank release */
-#define SETADCXY_ZERO   0x51E0000F  /* this thread's unpacker 0/1 and packer ADCs: X, Y -> 0 */
-#define SETADCZW_ZERO   0x54E0000F  /* ... Z, W -> 0 */
+#define SETC16(i, v)   (0xB2000000 | (i) << 16 | (v))
+#define THD_CFG_TTSYNC 56
+#define THD_CFG_RESET  67
+#define SETRWC_ZERO    0x3700000F
+#define SETADCXY_ZERO  0x51E0000F
+#define SETADCZW_ZERO  0x54E0000F
 
-/* Thread-private state that only the owning TRISC can write, reset by each TRISC at boot, in the same loop as its 64
- * GPRs (the firmware slot is 336 bytes). Not repeated per launch: it held each TRISC ~575 cycles behind BRISC.
- * ThreadConfig holds CFG_STATE_ID, ADDR_MODs, SRCA/SRCB_SET, CLR_DVALID, SCBD masks and Dst offsets. */
 INLINE void reset_thread(void) {
   #pragma clang loop unroll(disable)
   for (u32 i = 0; i < THD_CFG_RESET; i++) {
-    if (i < 64) write32(REGFILE + 4 * i, 0);  /* kernels assume zeroed Tensix GPRs */
+    if (i < 64) write32(REGFILE + 4 * i, 0);
     if (i != THD_CFG_TTSYNC) tensix_push(SETC16(i, 0));
   }
   TTINSN(SETRWC_ZERO);
@@ -118,27 +129,26 @@ INLINE void reset_thread(void) {
   TTINSN(SETADCZW_ZERO);
 }
 
-/* Custom CSR 0x7c0 (cfg0), set once per RISC at boot: bit 18 (DisTriscCache) set on BRISC/NCRISC, clear on TRISCs, as
- * tt-metal does on Blackhole. Bit 3 (DisLowCash) is cleared: the L0 data cache (4 lines of 16 bytes) is on, unlike
- * tt-metal's default. L0 is not coherent with NoC writes to L1, so every poll of an L1 word must fence (WAIT_FAST does, and
- * noc.c's wait_zero fences after NoC completion); the hardware's periodic L0 flush (bit 24 clear) is left on. */
+#define CFG0_SET(v) __asm__ volatile("csrs 0x7c0, %0" :: "r"(v) : "memory")
+#define CFG0_CLEAR(v) __asm__ volatile("csrc 0x7c0, %0" :: "r"(v) : "memory")
 INLINE void configure_csr(int trisc) {
-  u32 v = 2;
-  __asm__ volatile("csrs 0x7c0, %0" :: "r"(v) : "memory");
-  v = 1u << 18;
+  CFG0_SET(2u);
   fence();
-  if (trisc) __asm__ volatile("csrc 0x7c0, %0" :: "r"(v) : "memory");
-  else __asm__ volatile("csrs 0x7c0, %0" :: "r"(v) : "memory");
-  v = 2;
-  __asm__ volatile("csrc 0x7c0, %0" :: "r"(v) : "memory");
+  if (trisc) CFG0_CLEAR(1u << 18);
+  else CFG0_SET(1u << 18);
+  CFG0_CLEAR(2u);
   fence();
-  v = 8;
-  __asm__ volatile("csrc 0x7c0, %0" :: "r"(v) : "memory");
+  CFG0_CLEAR(8u);
 }
 
 INLINE void invalidate_icache(void) {
   write32(CFG_RISCV_IC_INVALIDATE, 0x1F);
   fence();
 }
+
+#define STR_(x) #x
+#define STR(x) STR_(x)
+#define SET_SP(stack) "li sp, " STR(stack) "\n"
+#define SET_GP(gp) "li gp, " STR(gp) "\n"
 
 #endif

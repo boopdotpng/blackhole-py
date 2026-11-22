@@ -1,26 +1,10 @@
-#!/usr/bin/env python3
-"""smi - tiny tt-smi for Blackhole cards that doesn't wake them up. Press q to quit.
-
-  ./smi.py                 live view of every card (1 s refresh; -n 0.25 for faster, -d 0 for one card)
-  ./smi.py --csv           one CSV sample per card and exit (-c N samples, -c 0 forever) - for scripts/agents
-  ./smi.py -r [IDX ...]    reset cards (default all) without waiting for eth training, then park them idle
-  ./smi.py --park          vote idle on every card (see below); harmless if a process is using the card
-
-tt-smi opens /dev/tenstorrent/N without O_APPEND, so tt-kmd treats it as a legacy client and votes the
-card to full power (~+90 W) while it's open. Every fd here is O_APPEND and asks for nothing, so watching
-doesn't change power. Telemetry is the ARC table read through the NOC_READ ioctl (no TLB, no locks).
-
-After an in-place reset the KMD sends no power vote, so the card stays in firmware's boot state (GDDR PHY,
-Tensix and L2CPU on: ~150 W) until something opens it. -r and --park vote idle, and the KMD powers the
-card down after idle_power_down_grace_ms (5 s). The live view flags that state as "boot".
-
-  board  12V-2x6 cable (INA228) + a fixed 20 W fw_table allowance for the unmeasured PCIe slot
-  core   VCORE rail only (what hwmon power1 shows)
-  state  idle = parked (min aiclk, L2CPU gated) · awake = a client voted for power · boot = never parked
-  eth    ports per QSFP-DD cage (● link up ○ down · unused × harvested) and who is on the far end of each link
-"""
 import argparse, csv, fcntl, glob, os, re, select, shutil, signal, struct, sys, termios, time, tty
 from collections import deque
+
+MAC = sys.platform == "darwin"
+if MAC:
+  sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+  import pci_macos
 
 SYS = "/sys/class/tenstorrent"
 ARC = (8, 0)
@@ -30,9 +14,8 @@ BOOT_STATUS, TELEM_DATA, TELEM_PTR = SCRATCH(2), SCRATCH(12), SCRATCH(13)
 IOCTL = lambda nr: 0xFA00 | nr
 RESET_DEVICE, LOCK_CTL, SET_POWER_STATE, NOC_READ = IOCTL(6), IOCTL(8), IOCTL(15), IOCTL(18)
 RESET_PCIE_LINK, ASIC_RESET, ASIC_DMC_RESET, POST_RESET = 1, 4, 5, 6
-LOCK_TEST, CHIP_IN_USE = 2, 20  # tt-umd lock_manager.cpp: CHIP_IN_USE is resource lock 20
+LOCK_TEST, CHIP_IN_USE = 2, 20
 
-# tt-system-firmware lib/tenstorrent/bh_arc/telemetry.h
 TAGS = dict(vcore_mv=6, core_w=7, asic_raw=11, aiclk=14, l2cpuclk=17, eth_live=21, hb=32, eth_on=35, fan_rpm=41,
             gddr_ue=50, gddr_c=51, board_limit_w=53, board_w=54, throttle_c=56, trips=60, aiclk_max=63,
             core_limit_w=64, arb_min=65, arb_max=66)
@@ -40,14 +23,9 @@ ARB_MAX = ["fmax", "TDP", "fast TDC", "TDC", "thermal", "board power", "voltage"
            "di/dt slow", "di/dt critical", "host fmax"]
 PCIE_GEN = {2.5: 1, 5.0: 2, 8.0: 3, 16.0: 4, 32.0: 5, 64.0: 6}
 
-# Ethernet: eth_on is the unharvested channel mask; eth_live is [31:16] link up (PCS_STATUS), [15:0] heartbeat
-# changed since ARC's last poll (bh_arc/eth.c), so only the top half is stable.
-# Each channel's L1 holds base firmware's boot_results_t (tt-metal tt-1xx/blackhole/eth_fw_api.h):
-# +4 port_status (1 up, 2 down, 3 unused), +12 train_speed, +960 local chip_info_t, +992 remote chip_info_t;
-# chip_info_t is u8 pcb_type, asic_location, eth_id, logical_eth_id, then u32 board_id hi/lo, mac org/id, asic_id hi/lo.
-ETH_X = [1, 16, 2, 15, 3, 14, 4, 13, 5, 12, 6, 11, 7, 10]  # channel -> NOC0 x, all at y=1 (tt-umd ETH_CORES_NOC0)
+ETH_X = [1, 16, 2, 15, 3, 14, 4, 13, 5, 12, 6, 11, 7, 10]
 BOOT_RESULTS = 0x7CC00
-P150_QSFP = {11: 1, 9: 1, 8: 2, 10: 2, 7: 3, 5: 3, 4: 4, 6: 4}  # logical eth -> QSFP-DD (tt-metal scaleout board.cpp)
+P150_QSFP = {11: 1, 9: 1, 8: 2, 10: 2, 7: 3, 5: 3, 4: 4, 6: 4}
 
 def ioctl(fd, req, fmt, *args):
   b = bytearray(struct.pack("<" + fmt, *args))
@@ -59,8 +37,16 @@ def rd(path):
     with open(path) as f: return f.read().strip()
   except OSError: return None
 
-def bdf(idx): return os.path.basename(os.path.realpath(f"{SYS}/tenstorrent!{idx}/device"))
-def cards(): return sorted(int(p.rsplit("!", 1)[1]) for p in glob.glob(f"{SYS}/tenstorrent!*"))
+def mac_cards():
+  try: return [0] if "ttgpu" in __import__("subprocess").run(["ioreg", "-n", "ttgpu"], capture_output=True, text=True).stdout else []
+  except OSError: return []
+
+def bdf(idx):
+  if MAC: return "thunderbolt"
+  return os.path.basename(os.path.realpath(f"{SYS}/tenstorrent!{idx}/device"))
+def cards():
+  if MAC: return mac_cards()
+  return sorted(int(p.rsplit("!", 1)[1]) for p in glob.glob(f"{SYS}/tenstorrent!*"))
 def ports(mask): return ",".join(str(i) for i in range(16) if mask >> i & 1) or "none"
 
 class Card:
@@ -68,17 +54,17 @@ class Card:
     self.idx, self.addr = idx, None
     self.fd = os.open(f"/dev/tenstorrent/{idx}", os.O_RDWR | os.O_APPEND | os.O_CLOEXEC)
 
-  def noc_read(self, addr, xy=ARC):  # argsz, flags, x, y, noc, width, addr, value
+  def noc_read(self, addr, xy=ARC):
     return ioctl(self.fd, NOC_READ, "IIHHBB2xQQ", 32, 0, *xy, 0, 4, addr, 0)[-1]
 
-  def eth(self, on):  # read-only L1 peek at every unharvested channel; {ch: (status, logical, speed, peer)}
+  def eth(self, on):
     out = {}
     for ch in (c for c in range(14) if on >> c & 1):
       r = lambda off: self.noc_read(BOOT_RESULTS + off, (ETH_X[ch], 1))
       st, peer = r(4), None
       if st == 1:
         w = r(992)
-        peer = (r(992 + 20) << 32 | r(992 + 24), w >> 16 & 0xFF, w >> 24)  # remote asic id, eth_id, logical id
+        peer = (r(992 + 20) << 32 | r(992 + 24), w >> 16 & 0xFF, w >> 24)
       out[ch] = (st, r(960) >> 24, r(12) if st == 1 else 0, peer)
     return out
 
@@ -92,19 +78,46 @@ class Card:
       self.addr = {e & 0xFFFF: data + 4 * (e >> 16) for e in ents}
     return {k: self.noc_read(self.addr[t]) if t in self.addr else None for k, t in TAGS.items()}
 
+  def board_type(self):
+    self.telemetry()
+    kind = self.noc_read(self.addr[1]) >> 4 & 0xFFFF if 1 in self.addr else None
+    return pci_macos.CARDS.get(kind, f"{kind:#x}" if kind is not None else "?")
+
   def in_use(self): return bool(ioctl(self.fd, LOCK_CTL, "IIB3xB3x", 4, LOCK_TEST, CHIP_IN_USE, 0)[-1] & 2)
   def reset(self, flag): return ioctl(self.fd, RESET_DEVICE, "IIII", 8, flag, 0, 0)[-1] == 0
-  def vote_idle(self): ioctl(self.fd, SET_POWER_STATE, "IIBBH28x", 40, 0, 0, 15, 0)  # 15 flags valid, all off
+  def vote_idle(self): ioctl(self.fd, SET_POWER_STATE, "IIBBH28x", 40, 0, 0, 15, 0)
   def close(self): os.close(self.fd)
+
+class MacCard(Card):
+  def __init__(self, idx):
+    self.idx, self.addr = idx, None
+    try: self.noc = pci_macos.Noc()
+    except (RuntimeError, ConnectionError) as e: raise OSError(str(e)) from None
+
+  def noc_read(self, addr, xy=ARC):
+    try: v = self.noc.read32(addr, xy)
+    except RuntimeError as e: raise OSError(str(e)) from None
+    if v == 0xFFFFFFFF: raise OSError("NoC read returned all ones: card reset or gone")
+    return v
+
+  def in_use(self):
+    if (lk := pci_macos.lock()) is None: return True
+    os.close(lk)
+    return False
+
+  def close(self): self.noc.close()
+
+if MAC: Card = MacCard  # noqa: F811
 
 def one(idx, fn):
   c = Card(idx)
   try: return fn(c)
   finally: c.close()
 
-# ---------------------------------------------------------------- sampling -----
-
-def pcie(idx):
+def pcie(idx, card=None):
+  if MAC:
+    try: return pci_macos.pcie_link(card.noc.io if card else None)
+    except (OSError, RuntimeError): return (None, None), (None, None)
   dev = f"{SYS}/tenstorrent!{idx}/device"
   def link(kind):
     try: return PCIE_GEN.get(float(rd(f"{dev}/{kind}_link_speed").split()[0])), int(rd(f"{dev}/{kind}_link_width"))
@@ -121,18 +134,19 @@ class Mon:
 
   def sample(self):
     t = time.monotonic()
-    (gen, width), (max_gen, max_width) = pcie(self.idx)
+    (gen, width), (max_gen, max_width) = pcie(self.idx, self.card)
     s = dict(card=self.idx, pcie_gen=gen, pcie_width=width, pcie_max_gen=max_gen, pcie_max_width=max_width)
     if self.card is None and t >= self.retry_at:
       try: self.card, self.err = Card(self.idx), None
-      except OSError as e: self.err, self.retry_at = e.strerror or str(e), t + 5
+      except OSError as e: self.err, self.retry_at = getattr(e, "strerror", None) or str(e), t + 5
     if self.card is not None:
       try:
         s.update(self.card.telemetry())
-        if (k := (s["eth_on"], s["eth_live"] >> 16)) != self.eth_live or t >= self.eth_at:  # on change, else every 10 s
+        if MAC and self.type == "?": self.type = self.card.board_type()
+        if (k := (s["eth_on"], s["eth_live"] >> 16)) != self.eth_live or t >= self.eth_at:
           self.eth, self.eth_live, self.eth_at = self.card.eth(k[0]), k, t + 10
-      except OSError as e:  # reset or removed: reopen later
-        self.card.close(); self.card, self.err, self.retry_at, self.eth_live = None, e.strerror or str(e), t + 2, None
+      except OSError as e:
+        self.card.close(); self.card, self.err, self.retry_at, self.eth_live = None, getattr(e, "strerror", None) or str(e), t + 2, None
     s["eth_links"] = " ".join(f"{ch}>{p[0]}:{p[1]}" for ch, p in self.links())
     if s.get("asic_raw") is None: return s
     a = s.pop("asic_raw")
@@ -146,8 +160,8 @@ class Mon:
     self.hist.append(s["board_w"])
     return s
 
-  def links(self):  # [(ch, (card idx or remote asic hex, remote ch, remote qsfp or None))] for links that are up
-    ids = {int(rd(f"{SYS}/tenstorrent!{i}/tt_asic_id") or "0", 16): i for i in cards()}
+  def links(self):
+    ids = {} if MAC else {int(rd(f"{SYS}/tenstorrent!{i}/tt_asic_id") or "0", 16): i for i in cards()}
     def peer(asic, ch, lg):
       i = ids.get(asic)
       p150 = i is not None and (rd(f"{SYS}/tenstorrent!{i}/tt_card_type") or "").startswith("p150")
@@ -156,8 +170,6 @@ class Mon:
 
   def close(self):
     if self.card: self.card.close()
-
-# ---------------------------------------------------------------- drawing ------
 
 E = "\x1b["
 RST, BOLD = E + "0m", E + "1m"
@@ -178,7 +190,7 @@ def spark(vals, width):
   vals = list(vals)[-width:]
   if not vals: return ""
   lo, hi = min(vals), max(vals)
-  if hi - lo < 10: mid = (hi + lo) / 2; lo, hi = mid - 5, mid + 5  # don't amplify 1 W noise
+  if hi - lo < 10: mid = (hi + lo) / 2; lo, hi = mid - 5, mid + 5
   return ACC + "".join(SPARK[max(0, min(7, int((v - lo) / (hi - lo) * 8)))] for v in vals) + RST
 
 def temp(v, limit):
@@ -202,14 +214,14 @@ def render_card(m, s, width):
            f"{DIM}fan{RST} {s['fan_rpm']} rpm  {DIM}aiclk{RST} {s['aiclk']} MHz  {DIM}vcore{RST} {s['vcore_mv']} mV")
   alerts = []
   if s["throttle"]: alerts.append(f"aiclk capped at {s['arb_max'] & 0xFFFF} MHz by {s['throttle']}")
-  if s["state"] == "boot": alerts.append("never parked: ./smi.py --park")
+  if s["state"] == "boot": alerts.append("never parked: ./smi.py -r")
   if s.get("alive") is False: alerts.append("heartbeat stalled")
   if s["trips"]: alerts.append(f"{s['trips']} thermal trips")
   if s["gddr_ue"]: alerts.append(f"{s['gddr_ue']} uncorrected GDDR errors")
   if alerts: line2 += "   " + WARN + " · ".join(alerts) + RST
   return [head, line1, line2] + ([render_eth(m)] if m.eth else []) + [""]
 
-def render_eth(m):  # p150: ports grouped by QSFP-DD cage, else a strip of all 14 channels; ● up ○ down · unused × off
+def render_eth(m):
   def glyph(ch):
     st = m.eth[ch][0] if ch in m.eth else None
     return (OK + "●" if st == 1 else DIM + {None: "×", 2: "○"}.get(st, "·")) + RST
@@ -237,8 +249,6 @@ def render(mons, samples, args, live=True):
 
 ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
 
-# ---------------------------------------------------------------- reset --------
-
 def wait_for(what, cond, timeout, step=0.05):
   end = time.monotonic() + timeout
   while (r := cond()) is None:
@@ -246,7 +256,26 @@ def wait_for(what, cond, timeout, step=0.05):
     time.sleep(step)
   return r
 
+def reset_mac(force=False):
+  t0 = time.monotonic()
+  try:
+    pci_macos.reset(force=force)
+    c = MacCard(0)
+    try:
+      def heartbeat():
+        try: t = c.telemetry()
+        except OSError: c.addr = None; return None
+        return t if t["hb"] else None
+      t = wait_for("ARC telemetry", heartbeat, 15)
+    finally: c.close()
+    pci_macos.park(force=force)
+  except (OSError, RuntimeError, TimeoutError) as e: sys.exit(f"card 0: {e}")
+  print(f"card 0: up in {time.monotonic() - t0:.1f}s, board {t['board_w']} W, eth link up {ports(t['eth_live'] >> 16)}; idle vote sent")
+
 def reset(idxs, sbr=True, dmc=False, force=False):
+  if MAC:
+    if dmc or not sbr: sys.exit("--dmc and --no-sbr aren't supported on macOS")
+    return reset_mac(force)
   bdfs = {i: bdf(i) for i in idxs}
   busy = [i for i in idxs if one(i, Card.in_use)]
   if busy and not force:
@@ -260,7 +289,7 @@ def reset(idxs, sbr=True, dmc=False, force=False):
     if not one(i, lambda c: c.reset(ASIC_DMC_RESET if dmc else ASIC_RESET)):
       sys.exit(f"card {i}: {'ASIC+DMC' if dmc else 'ASIC'} reset ioctl failed")
   print(f"reset issued to {', '.join(f'{i} ({bdfs[i]})' for i in idxs)}")
-  time.sleep(20 if dmc else max(2, 0.4 * len(idxs)))  # let a hotplug removal happen if it's going to
+  time.sleep(20 if dmc else max(2, 0.4 * len(idxs)))
 
   failed = []
   for i, b in bdfs.items():
@@ -270,7 +299,7 @@ def reset(idxs, sbr=True, dmc=False, force=False):
         n = int(m[0].rsplit("!", 1)[1]) if m else None
         return n if n is not None and os.path.exists(f"/dev/tenstorrent/{n}") else None
       n = wait_for(f"{b} to reappear", back, 30)
-      def marker_clear():  # KMD sets PCI_COMMAND_PARITY (bit 6) before reset; the chip's reset clears it
+      def marker_clear():
         with open(f"/sys/bus/pci/devices/{b}/config", "rb") as f: return True if not os.pread(f.fileno(), 1, 4)[0] & 0x40 else None
       wait_for(f"{b} reset marker to clear", marker_clear, 30)
       if not one(n,lambda c: c.reset(POST_RESET)): raise OSError(f"POST_RESET failed for /dev/tenstorrent/{n}")
@@ -282,15 +311,13 @@ def reset(idxs, sbr=True, dmc=False, force=False):
           except OSError: c.addr = None; return None
           return t if t["hb"] else None
         t = wait_for("ARC telemetry", heartbeat, 15)
-        c.vote_idle()  # nothing else will: the KMD only votes on probe and legacy opens
+        c.vote_idle()
       finally: c.close()
       print(f"card {i} -> /dev/tenstorrent/{n}: up in {time.monotonic() - t0:.1f}s, board {t['board_w']} W, "
             f"eth link up {ports(t['eth_live'] >> 16)} (not waited for); idle vote sent")
     except (OSError, TimeoutError) as e:
       print(f"card {i} ({b}): {e}"); failed.append(i)
   if failed: sys.exit(1)
-
-# ---------------------------------------------------------------- main ---------
 
 CSV = ["time", "card", "state", "board_w", "core_w", "asic_c", "gddr_c", "fan_rpm", "aiclk", "vcore_mv",
        "pcie_gen", "pcie_width", "pcie_max_gen", "pcie_max_width", "throttle", "gddr_ue", "trips", "eth_links"]
@@ -299,14 +326,14 @@ def watch(mons, args):
   live = sys.stdout.isatty() and not args.csv
   keys = live and sys.stdin.isatty()
   count = args.count if args.count is not None else (0 if live else 1)
-  if not live:  # one-shot output still wants a heartbeat delta, so prime once
+  if not live:
     for m in mons: m.sample()
     time.sleep(0.25)
   signal.signal(signal.SIGTERM, lambda *_: (_ for _ in ()).throw(KeyboardInterrupt))
   old_tc = termios.tcgetattr(sys.stdin) if keys else None
   w = csv.writer(sys.stdout, lineterminator="\n")
   if args.csv: w.writerow(CSV)
-  if live: sys.stdout.write(E + "?1049h" + E + "?25l")  # alt screen, hide cursor
+  if live: sys.stdout.write(E + "?1049h" + E + "?25l")
   if keys: tty.setcbreak(sys.stdin)
   try:
     n, nxt = 0, time.monotonic()
@@ -339,21 +366,20 @@ def main():
   ap.add_argument("-d", "--device", type=int, action="append", help="card index (repeatable; default all)")
   ap.add_argument("--csv", action="store_true", help="CSV rows instead of the live view (default: 1 sample)")
   ap.add_argument("-c", "--count", type=int, help="number of samples, 0 = forever (default: live forever, else 1)")
-  ap.add_argument("-r", "--reset", nargs="*", type=int, metavar="IDX", help="reset these cards (default all)")
+  ap.add_argument("-r", "--reset", action="store_true", help="reset all cards together (cabled cards must reset together)")
   ap.add_argument("--dmc", action="store_true", help="with -r: also reset the board-management MCU (~20 s)")
   ap.add_argument("--no-sbr", action="store_true", help="with -r: skip the PCIe secondary bus reset")
   ap.add_argument("--force", action="store_true", help="with -r: reset even if another process holds the card")
-  ap.add_argument("--park", action="store_true", help="vote idle so the KMD powers the cards down")
   args = ap.parse_args()
 
   all_idx = cards()
-  if not all_idx: sys.exit(f"no cards under {SYS} (is tt-kmd loaded?)")
-  idxs = sorted(set(args.reset or args.device or all_idx))
+  if not all_idx: sys.exit("no ttgpu device (is the card connected and the TTGPU driver enabled? ioreg -n ttgpu)" if MAC
+                           else f"no cards under {SYS} (is tt-kmd loaded?)")
+  if args.reset:
+    if args.device: ap.error("-r/--reset always resets all cards; cannot combine with -d/--device")
+    return reset(all_idx, sbr=not args.no_sbr, dmc=args.dmc, force=args.force)
+  idxs = sorted(set(args.device or all_idx))
   if bad := [i for i in idxs if i not in all_idx]: sys.exit(f"no such card(s): {bad}")
-  if args.reset is not None: return reset(idxs, sbr=not args.no_sbr, dmc=args.dmc, force=args.force)
-  if args.park:
-    for i in idxs: one(i, Card.vote_idle)
-    return print(f"idle vote sent to {idxs}; the KMD powers them down in ~5 s unless a client wants power")
   watch([Mon(i) for i in idxs], args)
 
 if __name__ == "__main__":

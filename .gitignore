@@ -2,6 +2,4 @@ __pycache__/
 *.pyc
 *.elf
 *.o
-/weights
-.zed/
-*.bak
+.DS_Store
