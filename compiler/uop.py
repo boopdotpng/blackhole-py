@@ -16,12 +16,12 @@ from typing import Any, Callable, Sequence
 @dataclass(frozen=True, eq=True)
 class DType:
   name: str
-  bits: int        # per datum; block formats count the datum only (BFP8: 8, its shared exponent is per 16 datums)
+  bits: int        # per datum; BFP8 counts the datum only, its shared exponent is per 16 datums
   block: int = 0   # datums sharing one exponent, 0 if none
   def __repr__(self): return f"dtypes.{self.name}"
 
 class dtypes:
-  """Only formats our kernels store or compute in. FP32 that passes through SrcA/SrcB is truncated to 19 bits (TF32);
+  """Only formats our kernels store or compute in. No BFP4: converting NVFP4/MXFP4 checkpoints to it loses too much. FP32 that passes through SrcA/SrcB is truncated to 19 bits (TF32);
   lowering routes FP32 L1 data to Dst with an unpack to Dst instead, so TF32 never appears as a dtype."""
   void = DType("void", 0)
   bool = DType("bool", 1)      # comparison results (SFPU lane conditions)
@@ -30,8 +30,7 @@ class dtypes:
   bf16 = DType("bf16", 16)
   fp32 = DType("fp32", 32)
   bfp8 = DType("bfp8", 8, block=16)
-  bfp4 = DType("bfp4", 4, block=16)
-  floats = (bf16, fp32, bfp8, bfp4)
+  floats = (bf16, fp32, bfp8)
 
 # ---- ops ----
 
