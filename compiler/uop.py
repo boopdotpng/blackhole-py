@@ -36,7 +36,7 @@ class dtypes:
 
 class Ops(Enum):
   # graph structure
-  SINK = auto(); NOOP = auto(); GROUP = auto(); AFTER = auto()
+  SINK = auto(); AFTER = auto()   # AFTER: src[0], once the effects in src[1:] (e.g. STOREs) have happened
   # values and storage
   CONST = auto(); PARAM = auto(); DEFINE_VAR = auto()
   # loops
