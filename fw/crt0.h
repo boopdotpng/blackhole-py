@@ -1,5 +1,4 @@
-#ifndef CRT0_H
-#define CRT0_H
+#pragma once
 #include "noc.h"
 
 #ifdef ROLE_BRISC
@@ -136,6 +135,4 @@ NORETURN _crt0_trisc(void) {
     write32(MAILBOX_TO_BRISC, tok);
   }
 }
-#endif
-
 #endif

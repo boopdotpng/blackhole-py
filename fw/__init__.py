@@ -2,23 +2,27 @@ import functools, hashlib, os, re, subprocess, tempfile
 from enum import IntEnum
 from pathlib import Path
 
-class Op(IntEnum): KICK = 0; COPY = 1; WAIT = 2; STORE = 3
+HERE = Path(__file__).resolve().parent
+
+def _defines(*headers:str) -> dict[str, int]:
+  """Object-like integer #defines from the firmware headers, so Python and C share one layout."""
+  out = {}
+  for h in headers:
+    for name, expr in re.findall(r"^#define\s+(\w+)\s+([\w\s()+*<>|&~-]+?)\s*(?://.*)?$", (HERE / h).read_text(), re.M):
+      try: out[name] = eval(re.sub(r"(?<=[0-9a-fA-F])u\b", "", expr), {}, dict(out))
+      except (NameError, SyntaxError): pass
+  return out
+
+globals().update(DEFINES := _defines("abi.h", "hw.h"))
+Op = IntEnum("Op", {k[3:]: v for k, v in DEFINES.items() if k.startswith("OP_")})
 
 ROLE_FLAGS = {"brisc": "-DROLE_BRISC", "ncrisc": "-DROLE_NCRISC", **{f"trisc{i}": f"-DROLE_TRISC={i}" for i in range(3)}}
 ROLES = tuple(ROLE_FLAGS)
-
-SERVICE_COORD, NUM_WORKERS, ROLE_PC = 0x1C, 0x2C, 0x60
-STEP_ARGS_SIZE, CODE_BASE = 0x80, 0x100
-SVC_STATE, SVC_STATE_SIZE = 0x80, 0x100
-SVC_WPTR, SVC_RPTR, SVC_RING_LO = SVC_STATE, SVC_STATE + 4, SVC_STATE + 8
-SVC_BRISC, SVC_NCRISC = (0x200, 0x3E00), (0x4000, 0x4000)
-RING_SIZE = 64 << 10
 
 DRAM_BANK_SIZE, DRAM_PAGE_MAX = 0xFF000000, 4096
 ARC = (8, 0)
 AICLK_MHZ = 1350
 TELEMETRY_DATA, TELEMETRY_PTR, TAG_ENABLED_TENSIX_COL = 0x80030430, 0x80030434, 34
-SOFT_RESET, RESET_BRISC, RESET_ALL = 0xFFB121B0, 1 << 11, 0x47800
 NOC_NODE_ID = 0xFFB20044  # physical NoC0 coords; NOC_ID_LOGICAL (0xFFB20148) is the translated one
 
 def noc(core:tuple[int, int]) -> int: return core[0] | core[1] << 6
@@ -26,7 +30,6 @@ def noc(core:tuple[int, int]) -> int: return core[0] | core[1] << 6
 def jal(offset:int) -> int:
   return (offset >> 20 & 1) << 31 | (offset >> 1 & 0x3FF) << 21 | (offset >> 11 & 1) << 20 | (offset >> 12 & 0xFF) << 12 | 0x6F
 
-HERE = Path(__file__).resolve().parent
 CACHE = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "blackhole-py-rewrite"
 CFLAGS = ["--target=riscv32-none-unknown-elf", "-march=rv32im_zicsr", "-mabi=ilp32", "-std=c11", "-Os", "-Wall", "-Wextra",
           "-Werror", "-ffreestanding", "-fno-builtin", "-fno-pic", "-fno-common", "-fno-jump-tables", "-fno-stack-protector",
@@ -60,7 +63,7 @@ def compile(srcs:list, base:int, size:int, flags:list[str]=[]) -> bytes:
 @functools.cache
 def service_images(dram_banks:int) -> tuple[bytes, bytes]:
   return tuple(compile(["service.c", "noc.c"], *slot, [f"-DSVC_ENGINE={i}", f"-DBANKS={dram_banks}"])
-               for i, slot in enumerate((SVC_BRISC, SVC_NCRISC)))
+               for i, slot in enumerate(((SVC_BRISC_BASE, SVC_BRISC_SIZE), (SVC_NCRISC_BASE, SVC_NCRISC_SIZE))))
 
 def build_worker(srcs:list, roles=("brisc",), dram_banks:int=8, max_size:int=0x40000) -> tuple[bytes, dict[str, int], int]:
   assert "brisc" in roles

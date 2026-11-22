@@ -1,5 +1,4 @@
-#ifndef NOC_H
-#define NOC_H
+#pragma once
 #include "hw.h"
 
 #define NOC_MAX_BURST 0x4000
@@ -19,5 +18,3 @@ void noc_mcast_flush(u32 niu);
 
 void noc_atomic_inc(u32 niu, u32 remote, u32 coord, u32 value);
 void noc_write_host(u32 niu, u32 local, u32 lo, u32 hi, u32 size);
-
-#endif

@@ -73,7 +73,7 @@ def test_bare_metal_and_barrier(dev:Device, steps:int=5):
   for s in range(steps):
     host = dev.host.noc_addr + out + s * 64
     struct.pack_into("<6I", dev.host.mem, args + s * 64, s + 1, rect, excl, fw.noc(dev.workers[0]), host & 0xFFFFFFFF, host >> 32)
-    q.kick(dev, dev.workers, dev.host.noc_addr + args + s * 64, 64)
+    q.launch(dev, dev.workers, dev.host.noc_addr + args + s * 64, 64)
   q.signal(dev.timeline_signal, val := dev.next_timeline()).submit(dev)
   dev.timeline_signal.wait(val)
 
@@ -111,7 +111,7 @@ def test_reload_and_dram_bandwidth(dev:Device):
   host = dev.host.noc_addr + cycles
   for cap in (0, dram_read_cap(n)):
     struct.pack_into("<5I", dev.host.mem, args, pages, page, cap, host & 0xFFFFFFFF, host >> 32)
-    dev.kick(dev.host.noc_addr + args, 64, sync=True)
+    dev.launch(dev.host.noc_addr + args, 64, sync=True)
     c = sorted(struct.unpack_from("<I", dev.host.mem, cycles + i * 64)[0] for i in range(n))
     gbs = n * pages * page / (c[-1] / (fw.AICLK_MHZ * 1e6)) / 1e9
     print(f"[BENCH] {n} cores reading DRAM in 2 KiB pages, cap {cap}: {gbs:.1f} GB/s, max/med {c[-1] / c[n // 2]:.2f}x, max/min {c[-1] / c[0]:.2f}x")

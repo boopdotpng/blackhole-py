@@ -29,10 +29,10 @@ class Queue:
   def q(self, op:Op, a:int=0, b:int=0, c:int=0):
     self.packets += struct.pack("<4Q", op, a, b, c)
     return self
-  def kick(self, dev:"Device", cores, args:int=0, args_size:int=0):
+  def launch(self, dev:"Device", cores, args:int=0, args_size:int=0):
     assert 0 <= args_size <= fw.STEP_ARGS_SIZE and args_size % 16 == 0 and args % 64 == 0 and (args or not args_size)
     rect, exclude = dev.cover(cores)
-    return self.q(Op.KICK, rect | exclude << 32, args, len(cores) | args_size << 16)
+    return self.q(Op.LAUNCH, rect | exclude << 32, args, len(cores) | args_size << 16)
   def copy(self, dst:int, src:int, size:int):
     assert dst % 64 == src % 64 == 0 and 0 <= size < 1 << 32, "DMA needs 64-byte aligned addresses and a u32 size"
     return self.q(Op.COPY, dst, src, size)
@@ -169,9 +169,9 @@ class Device:
       f"{len(cores)} cores are not a rectangle minus one corner"
     return rect, 1 << 22 | dy << 21 | dx << 20 | ay << 14 | self.phys_x[ax] << 8
 
-  def kick(self, args:int=0, args_size:int=0, cores=None, sync:bool=False, timeout:float=10.0) -> int:
+  def launch(self, args:int=0, args_size:int=0, cores=None, sync:bool=False, timeout:float=10.0) -> int:
     val = self.next_timeline()
-    Queue().kick(self, cores or self.workers, args, args_size).signal(self.timeline_signal, val).submit(self, timeout)
+    Queue().launch(self, cores or self.workers, args, args_size).signal(self.timeline_signal, val).submit(self, timeout)
     if sync: self.timeline_signal.wait(val, timeout)
     return val
 
@@ -199,8 +199,8 @@ class Device:
     state = bytearray(fw.SVC_STATE_SIZE)
     struct.pack_into("<Q", state, fw.SVC_RING_LO - fw.SVC_STATE, ring.addr)
     self.card.write(core, fw.SVC_STATE, state)
-    self.card.write(core, fw.SVC_BRISC[0], brisc)
-    self.card.write(core, fw.SVC_NCRISC[0], ncrisc)
-    self.card.write32(core, 0, fw.jal(fw.SVC_BRISC[0]))
+    self.card.write(core, fw.SVC_BRISC_BASE, brisc)
+    self.card.write(core, fw.SVC_NCRISC_BASE, ncrisc)
+    self.card.write32(core, 0, fw.jal(fw.SVC_BRISC_BASE))
     self.card.write32(core, fw.SOFT_RESET, fw.RESET_ALL & ~fw.RESET_BRISC)
     return ring

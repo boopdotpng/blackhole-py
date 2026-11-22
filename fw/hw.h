@@ -1,5 +1,4 @@
-#ifndef HW_H
-#define HW_H
+#pragma once
 #include "abi.h"
 
 typedef unsigned char u8;
@@ -15,6 +14,7 @@ INLINE u8 read8(u32 a) { return *(volatile u8 *)a; }
 INLINE void write32(u32 a, u32 v) { *(volatile u32 *)a = v; }
 INLINE void write8(u32 a, u8 v) { *(volatile u8 *)a = v; }
 
+// WAIT_FAST spins hard; WAIT_SLOW backs off between polls to keep L1 traffic down.
 #define WAIT_FAST(cond) do { while (!(cond)) fence(); fence(); } while (0)
 #ifndef POLL_BACKOFF
 #define POLL_BACKOFF 64
@@ -35,13 +35,13 @@ INLINE void write8(u32 a, u8 v) { *(volatile u8 *)a = v; }
 #define RESET_NCRISC             (1u << 18)
 #define RESET_ALL                0x47800u
 #define WALL_CLOCK_L             0xFFB121F0
-#define WALL_CLOCK_H             0xFFB121F8
 #define TRISC0_RESET_PC          0xFFB12228
 #define TRISC_RESET_PC_OVERRIDE  0xFFB12234
 #define NCRISC_RESET_PC          0xFFB12238
 #define NCRISC_RESET_PC_OVERRIDE 0xFFB1223C
 #define DEST_CG_CTRL             0xFFB12240
 
+// PC buffers / mailboxes: BRISC <-> TRISC hand-off for the step token.
 #define PC_BUF_BASE              0xFFE80000
 #define PCBUF(i)                 (PC_BUF_BASE + (i) * 0x10000)
 #define PC_BUF_SYNC              0xFFE80004
@@ -60,6 +60,7 @@ INLINE void write8(u32 a, u8 v) { *(volatile u8 *)a = v; }
 
 #define STREAM_REG(stream, reg)  (0xFFB40000 + (stream) * 0x1000 + (reg) * 4)
 
+// Zero the tiles-received/acked counters of the 32 circular buffers (streams 8..39).
 INLINE void reset_cb_counters(void) {
   for (u32 cb = 0; cb < 32; cb++) {
     write32(STREAM_REG(8 + cb, 8), 0);
@@ -68,14 +69,18 @@ INLINE void reset_cb_counters(void) {
 }
 
 INLINE void tensix_push(u32 instruction) { write32(INSTRN_BUF, instruction); }
+// Block until this thread's Tensix instructions retire: the PC_BUF_SYNC read stalls until idle, and the andi
+// consumes the loaded value so the core actually waits for it.
 INLINE void tensix_drain(void) {
   write32(PC_BUF_SYNC, 0);
   u32 v = read32(PC_BUF_SYNC);
   __asm__ volatile("andi %0, %0, 0" : "+r"(v));
 }
 
+// Emit a Tensix instruction inline in the RISC-V stream (Tensix opcodes are stored rotated left by 2).
 #define TTINSN(w) __asm__ volatile(".word %0" :: "i"((((u32)(w)) << 2) | (((u32)(w)) >> 30)) : "memory")
 
+// Pre-encoded Tensix instructions used by reset_tensix() / reset_thread().
 #define ZEROACC_ALL       0x10180000
 #define SFPENCC_RESET     0x8A00300A
 #define NOP               0x02000000
@@ -84,6 +89,7 @@ INLINE void tensix_drain(void) {
 #define SEMINIT_ALL       0xA31003FC
 #define CLEARDVALID_RESET 0x36000001
 
+// Enable Tensix/TDMA/dest clock gating and both NIUs' clock gating.
 INLINE void enable_clock_gating(void) {
   write32(DEST_CG_CTRL, 0);
   write32(TDMA_CLK_GATE_EN, 0x3F);
@@ -94,6 +100,7 @@ INLINE void enable_clock_gating(void) {
   }
 }
 
+// Put Tensix config, accumulators, SFPU, semaphores and CBs into a known state (BRISC, once per boot).
 INLINE void reset_tensix(void) {
   write32(TENSIX_CFG + CFG_STATE_RESET * 4, 0);
   write32(TENSIX_CFG + (CFG_BANK_WORDS + CFG_STATE_RESET) * 4, 0);
@@ -118,6 +125,7 @@ INLINE void reset_tensix(void) {
 #define SETADCXY_ZERO  0x51E0000F
 #define SETADCZW_ZERO  0x54E0000F
 
+// Per-TRISC reset: zero its GPRs and thread config (except TTSYNC), and its RWC/ADC counters.
 INLINE void reset_thread(void) {
   #pragma clang loop unroll(disable)
   for (u32 i = 0; i < THD_CFG_RESET; i++) {
@@ -129,6 +137,8 @@ INLINE void reset_thread(void) {
   TTINSN(SETADCZW_ZERO);
 }
 
+// Blackhole chicken-bit CSR 0x7c0. Bit 1 is held set around the bit-18 change (as tt-metal does); bit 18 disables Tensix instruction gathering
+// (left on for TRISCs, off elsewhere; see tt-metal#16439), and clearing bit 3 enables the L1 data cache.
 #define CFG0_SET(v) __asm__ volatile("csrs 0x7c0, %0" :: "r"(v) : "memory")
 #define CFG0_CLEAR(v) __asm__ volatile("csrc 0x7c0, %0" :: "r"(v) : "memory")
 INLINE void configure_csr(int trisc) {
@@ -150,5 +160,3 @@ INLINE void invalidate_icache(void) {
 #define STR(x) STR_(x)
 #define SET_SP(stack) "li sp, " STR(stack) "\n"
 #define SET_GP(gp) "li gp, " STR(gp) "\n"
-
-#endif

@@ -91,7 +91,7 @@ typedef struct {
 static u32 scratch(u32 lo) { return SVC_SCRATCH + (lo & 63); }
 
 static void run_packet(packet *p, u32 *copy_seq) {
-  if (p->op == OP_KICK) {
+  if (p->op == OP_LAUNCH) {
     u32 rect = p->a_lo, exclude = p->a_hi;
     u32 workers = p->c_lo & 0xFFFF, args_bytes = p->c_lo >> 16;
     if (args_bytes) {
