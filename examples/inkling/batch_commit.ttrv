@@ -1,0 +1,33 @@
+// After a prompt chunk's convolution launch (batch_prep.ttrv or batch_resconv.ttrv with PROMPT = 1): append the
+// chunk's last four rows of src (and src2) to the slot's history ring. The chunk is rows 0 .. n - 1 of the step table,
+// consecutive positions of one slot; row 0's entry holds n in word 4.
+//   history[slot * HIST_SLOT + s * SECOND + (pos & 3) * RING + page]  <-  source s's row at pos
+const PAGES = 3
+const SRC_STEP = 3072
+const HIST_SLOT = 4 * 3072
+const RING = 3072
+const SOURCES = 1
+const SECOND = 4096      // the second source's ring, after the first's
+grid SOURCES * 4 * PAGES
+
+param src: bf16[]
+if SOURCES == 2 { param src2: bf16[] }
+param history: bf16[]
+param table: u32[]          // the step table, staged in DRAM by batch_embedding.ttrv
+
+l1 meta: u32[16]
+l1 page: bf16[1024]
+
+fn brisc() {
+    s = core.id / (4 * PAGES)
+    i = (core.id / PAGES) % 4
+    pg = core.id % PAGES
+    noc.read meta, table[0], n=16, wait
+    n = meta[4]
+    if n + i < 4 { return }
+    r = n - 4 + i
+    noc.read meta, table[r * 16], n=16, wait
+    if s { if SOURCES == 2 { noc.read page, src2[r * SRC_STEP + pg * 1024], n=1024, wait } }
+    else { noc.read page, src[r * SRC_STEP + pg * 1024], n=1024, wait }
+    noc.write history[meta[2] * HIST_SLOT + s * SECOND + (meta[0] & 3) * RING + pg * 1024], page, n=1024, wait
+}

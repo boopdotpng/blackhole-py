@@ -1,0 +1,820 @@
+// Qwen3.8 gated delta rule over a prompt chunk, 32 positions (one panel) at a time on the matrix unit: the chunked
+// (UT-transform) form of gdn_state.ttrv's recurrence. Per value head h, chunk of rows t = 0..31 and state S0 [128 keys
+// x 128 values] (S0 is the state before the chunk):
+//   nk_t = 1/sqrt(|k_t|² + 1e-6), nq_t = 1/sqrt(|q_t|² + 1e-6)/sqrt(128), g_t = -exp(A_log) softplus(a_t + dt_bias),
+//   b_t = sigmoid(b_t), gam_t = g_0 + .. + g_t, D[t,s] = exp(gam_t - gam_s)
+//   A[t,s] = b_t nk_t nk_s D[t,s] k_t.k_s (s < t),  T = (I + A)^-1
+//   R_t = b_t (v_t - exp(gam_t) nk_t k_t S0),  U = T R
+//   o_t = exp(gam_t) nq_t q_t S0 + sum_{s <= t} nq_t nk_s D[t,s] (q_t.k_s) U_s
+//   S = exp(gam_31) S0 + sum_s nk_s exp(gam_31 - gam_s) k_s U_sᵀ
+// which equals the sequential S_t = d_t S_{t-1} + k̂_t (b_t (v_t - d_t S_{t-1}ᵀ k̂_t))ᵀ, o_t = S_tᵀ q̂_t.
+// Rows at or past `valid` have g = b = 0: they leave the state alone (their outputs are garbage).
+//
+// Precision: the matrix unit rounds each product to about 11 significant bits. Operands that carry FP32 values (the
+// state, T and its powers, R and the state update) go in as BF16 hi/lo pairs, so their products keep ~2^-16; q, k, v
+// are BF16 already. The per-row scalars, exponentials and the state scaling are FP32 on the SFPU. T is the Neumann
+// product (I - A)(I + A²)(I + A⁴)(I + A⁸)(I + A¹⁶) (A is strictly lower triangular, so A³² = 0).
+//
+// Grid: 96 workers, worker w = value head w / 2 and its value half w % 2 (64 values, two value tiles). Each worker
+// keeps its state slice in L1 as tiles S[key tile kt][value tile vt] (FP32, plus BF16 hi and lo copies) across the
+// launch's chunks; the DRAM state uses gdn_state.ttrv's layout and is converted on load and store.
+//
+// Layouts: qkv is the causal conv's output in panel tiles, [PANELS][320 tiles]: q tiles 0..63 (16 key heads x 4),
+// k tiles 64..127, v tiles 128..319 (48 heads x 4). ab is [PANELS][4 tiles]: a in columns 0..47, b in 64..111.
+// output is [PANELS][192 tiles], head h's value tiles at 4h.. .
+//
+// Work per chunk runs as a fixed sequence of Dst sessions: TRISC0 fills Dst (unpack.dest) and the source registers,
+// TRISC1 multiplies and runs the SFPU, TRISC2 packs the session's results into L1, where later sessions read them.
+// Tokens: `ld` (TRISC0 -> TRISC1, this session's Dst loads are in), `free` (TRISC2 -> TRISC0, the last session is
+// packed). NCRISC turns per-row scalars into per-column tiles between sessions and writes the outputs.
+
+const HEADS = 48
+const PANELS = 10
+const WORKERS = HEADS * 2
+const QKV_TILES = 320
+grid WORKERS
+
+param qkv: bf16[]
+param ab: bf16[]
+param dynamics: bf16[]       // exp(A_log) [48], dt_bias [48]
+param state: fp32[]          // [96 workers][8192], gdn_state.ttrv's layout
+param output: bf16[]
+param start: u32             // position of row 0; position 0 starts from a zero state
+param valid: u32             // rows of the launch that hold prompt positions
+
+shared {
+    h = core.id / 2
+    vh = core.id % 2
+    kh = h / 3
+    acol = h % 32
+}
+
+const ODD = 2
+const RIGHT = dst.face
+const ROW_OFFSETS = [0, ODD, RIGHT, RIGHT + ODD]
+const PHASES = 4
+const T = dst.tile
+
+// L1 working set (tiles of 1024)
+l1 qin: bf16[4 * 1024]
+l1 kin: bf16[4 * 1024]
+l1 vin: bf16[2 * 1024]
+l1 abin: bf16[2 * 1024]
+l1 dyn: bf16[2 * HEADS]
+l1 kt: bf16[4 * 1024]            // Kᵀ tiles
+l1 rowv: fp32[4 * 1024]          // per-row nk, nq, g, b (every column the same)
+l1 colg: fp32[1024]              // per-column g
+l1 gam: fp32[1024]               // per-row gam
+l1 gamc: fp32[1024]              // gam_31 everywhere
+l1 cols: fp32[2 * 1024]          // per-column gam, nk
+l1 pw: bf16[2 * 1024]            // the current power of A, hi and lo
+l1 tf: fp32[1024]                // T
+l1 thl: bf16[2 * 1024]           // T hi and lo
+l1 pq: bf16[1024]                // nq_t nk_s D[t,s] q_t.k_s, s <= t
+l1 rhl: bf16[4 * 1024]           // R hi (two value tiles), R lo
+l1 ubf: bf16[2 * 1024]           // U
+l1 u2: bf16[4 * 1024]            // nk_s exp(gam_31 - gam_s) U_s: hi, lo
+l1 sf: fp32[8 * 1024]            // state tiles S[kt * 2 + vt]
+l1 shi: bf16[8 * 1024]
+l1 slo: bf16[8 * 1024]
+l1 staged: fp32[8192]            // DRAM layout staging
+l1 line: fp32[32]
+
+cb ld: u32[16], pages=2
+cb free: u32[16], pages=2
+cb intok: u32[16], pages=1       // BRISC -> TRISC0: a chunk's inputs are in L1
+cb inret: u32[16], pages=1       // TRISC0 -> BRISC: they are unpacked
+cb stok: u32[16], pages=1        // BRISC -> TRISC0: the state is in sf
+cb rowtok: u32[16], pages=1      // TRISC2 -> NCRISC: rowv packed
+cb coltok: u32[16], pages=1      // NCRISC -> TRISC0: colg built
+cb gamtok: u32[16], pages=1      // TRISC2 -> NCRISC: gam packed
+cb colstok: u32[16], pages=1     // NCRISC -> TRISC0: cols built
+cb fintok: u32[16], pages=1      // TRISC2 -> NCRISC: the final state is in sf
+cb outq: bf16[1024], pages=4     // TRISC2 -> NCRISC: a chunk's two output tiles
+sem dst_ready = math_pack, max=1
+
+include ../common/matmul_phases
+include ../common/copy_tile
+include gdn_math
+
+// Copy the next (transposed) SrcA tile into Dst tile t: the unpacker transposes each face, faces 1 and 2 trade places.
+replay copy_swap {
+    math.mova2d dst[0], src=0
+    math.mova2d dst[8], src=8
+    math.mova2d dst[16], src=32
+    math.mova2d dst[24], src=40
+    math.mova2d dst[32], src=16
+    math.mova2d dst[40], src=24
+    math.mova2d dst[48], src=48
+    math.mova2d dst[56], src=56
+}
+
+// ---- TRISC1 helpers
+
+macro matmul_addrmods(k_step, column_step) {
+    math.addrmod mm_k, slot=1, srca+=k_step, srcb=cr+0, dst+=8
+    math.addrmod mm_row, slot=4, srca=cr+column_step, srcb=cr+48, dst=cr+0
+}
+
+macro product(t) {
+    math.cfg dst_offset=t * T
+    math.rwc reset
+    tensix.stall math, srca_vld|srcb_vld
+    mop.run matmul
+    math.rwc reset, release=b
+    math.cfg dst_offset=0
+}
+
+macro zero_tile(t) { repeat f in 0..4 { math.zero face=4 * t + f, fmt=fp32 } }
+
+macro begin1() {
+    sem.stall math|sfpu|sync, dst_ready, notmax
+    cb.wait ld; cb.pop ld
+    math.rwc reset
+}
+
+macro end1() {
+    math.rwc reset
+    tensix.stall sync, math|sfpu
+    sem.inc dst_ready
+}
+
+// Before an SFPU pass over results of the matrix unit.
+macro to_sfpu() {
+    tensix.stall sync, math
+    math.rwc reset
+}
+
+// Before more products on Dst the SFPU wrote.
+macro to_math() {
+    tensix.stall sync, sfpu
+    math.rwc reset
+}
+
+macro row_sum_l0() {
+    repeat stage in 0..3 {
+        sfp.mov l1, l0
+        repeat 4 >> stage { sfp.shft2 l1, l1, rotate; sfp.nop }
+        sfp.add l0, l0, l1; sfp.nop
+    }
+}
+
+// The lane's tile column at row offset i (into l6) and tile row (into l7) in row group `base` / 4.
+macro coords(i, base) {
+    sfp.li l6, 15, fmt=u32
+    sfp.and l6, l6, lane_x2
+    sfp.iadd l6, l6, (i >> 1) * 16 + (i & 1)
+    sfp.shr l7, lane_x2, n=4
+    sfp.li l5, base, fmt=u32
+    sfp.iadd l7, l5, l7
+}
+
+// Step the Dst counter to the next of the eight four-row groups (rows 16.. are faces 2 and 3).
+macro next_group(g) {
+    math.rwc dst+=4
+    if g == 3 { math.rwc dst+=8; math.rwc dst+=8 }
+}
+
+// ---- TRISC0 helpers
+
+macro begin0() {
+    cb.wait free; cb.pop free
+}
+
+macro go() {
+    tensix.wait
+    cb.reserve ld; cb.push ld
+    unpack.fmt a|b, in=bf16
+}
+
+macro pair(bp, ap) {
+    unpack.move b, bp, dvalid
+    unpack.move a, ap, dvalid
+}
+
+// ---- TRISC2 helpers
+
+macro begin2() { sem.stall tdma|pack|sync, dst_ready, nonzero }
+
+macro end2() {
+    tensix.stall sync, pack0
+    tensix.wait
+    sem.dec dst_ready
+    cb.reserve free; cb.push free
+}
+
+// ---- the state sessions (kt: key tile; update: 1 with the chunk's update, 0 for the launch's initial split)
+
+macro state0(k, update) {
+    begin0!()
+    unpack.dest sf + k * 2048, dst[0]
+    unpack.dest sf + k * 2048 + 1024, dst[T]
+    go!()
+    if update {
+        repeat vt in 0..2 {
+            pair!(kt + k * 1024, u2 + vt * 1024)
+            pair!(kt + k * 1024, u2 + (2 + vt) * 1024)
+        }
+    }
+}
+
+macro state1(update) {
+    begin1!()
+    if update {
+        // S *= exp(gam_31), then += Kᵀ U''
+        sfp.li l0, gamc[0], fmt=fp32
+        exp_l0!()
+        sfp.mov l4, l0
+        loop 64 {
+            sfp.load l0, dst[0], fmt=fp32
+            sfp.mul l0, l0, l4; sfp.nop
+            sfp.store dst[0], l0, fmt=fp32
+            math.rwc dst+=2
+        }
+        to_math!()
+        matmul_addrmods!(16, 32)
+        repeat vt in 0..2 {
+            product!(vt)
+            product!(vt)
+        }
+        to_sfpu!()
+    }
+    loop 64 {
+        sfp.load l0, dst[0], fmt=fp32
+        sfp.rnd l1, l0, to=bf16
+        sfp.store dst[2 * T], l1, fmt=fp32
+        sfp.mad l0, l1, neg_one, l0; sfp.nop
+        sfp.store dst[4 * T], l0, fmt=fp32
+        math.rwc dst+=2
+    }
+    end1!()
+}
+
+macro state2(k) {
+    begin2!()
+    pack.fmt in=fp32, out=fp32
+    pack.move sf + k * 2048, dst[0]
+    pack.move sf + k * 2048 + 1024, dst[T]
+    pack.fmt in=fp32, out=bf16
+    pack.move shi + k * 2048, dst[2 * T]
+    pack.move shi + k * 2048 + 1024, dst[3 * T]
+    pack.move slo + k * 2048, dst[4 * T]
+    pack.move slo + k * 2048 + 1024, dst[5 * T]
+    end2!()
+}
+
+fn brisc() {
+    noc.read dyn, dynamics[0], n=2 * HEADS, wait
+    // The state slice, converted from gdn_state.ttrv's layout to tiles: word ((v % 2) * 64 + k / 2) * 64 +
+    // (v / 2) * 2 + k % 2 holds key k, value v.
+    if start {
+        noc.read staged, state[core.id * 8192], n=8192, wait
+        for k in 0..128 {
+            for v in 0..64 {
+                sf[((k / 32) * 2 + v / 32) * 1024 + ((k / 16) & 1) * 512 + ((v / 16) & 1) * 256 + (k & 15) * 16 + (v & 15)] = staged[((v & 1) * 64 + k / 2) * 64 + (v / 2) * 2 + (k & 1)]
+            }
+        }
+    } else {
+        for i in 0..8192 { sf[i] = 0.0 }
+    }
+    cb.reserve stok; cb.push stok
+    for j in 0..PANELS {
+        if j { cb.wait inret; cb.pop inret }
+        r = noc.group read
+        noc.read qin, qkv[(j * QKV_TILES + kh * 4) * 1024], n=4096, tid=r
+        noc.read kin, qkv[(j * QKV_TILES + 64 + kh * 4) * 1024], n=4096, tid=r
+        noc.read vin, qkv[(j * QKV_TILES + 128 + h * 4 + vh * 2) * 1024], n=2048, tid=r
+        noc.read abin, ab[(j * 4 + h / 32) * 1024], n=1024, tid=r
+        noc.read abin + 1024, ab[(j * 4 + 2 + h / 32) * 1024], n=1024, tid=r
+        noc.wait r
+        cb.reserve intok; cb.push intok
+    }
+    cb.wait inret; cb.pop inret
+}
+
+fn trisc0() {
+    cb.wait stok; cb.pop stok
+    // The initial hi/lo split of the state.
+    repeat k in 0..4 {
+        if k { begin0!() } else { unpack.fmt a|b, in=bf16 }
+        unpack.dest sf + k * 2048, dst[0]
+        unpack.dest sf + k * 2048 + 1024, dst[T]
+        go!()
+    }
+    for j in 0..PANELS {
+        cb.wait intok; cb.pop intok
+        // S1: scalars from K, Q, a, b
+        begin0!()
+        go!()
+        repeat f in 0..4 { unpack.move a, kin + f * 1024, dvalid }
+        repeat f in 0..4 { unpack.move a, qin + f * 1024, dvalid }
+        unpack.move a, abin, dvalid
+        unpack.move a, abin + 1024, dvalid
+        // S1b: Kᵀ
+        begin0!()
+        go!()
+        unpack.fmt a, in=bf16, transpose
+        repeat f in 0..4 { unpack.move a, kin + f * 1024, dvalid }
+        unpack.fmt a, in=bf16
+        // S2: cumulative decay
+        begin0!()
+        cb.wait coltok; cb.pop coltok
+        unpack.dest colg, dst[0]
+        go!()
+        // S3: A and P
+        begin0!()
+        cb.wait colstok; cb.pop colstok
+        unpack.dest rowv + 3 * 1024, dst[2 * T]
+        unpack.dest rowv, dst[3 * T]
+        unpack.dest gam, dst[4 * T]
+        unpack.dest cols, dst[5 * T]
+        unpack.dest cols + 1024, dst[6 * T]
+        unpack.dest rowv + 1024, dst[7 * T]
+        go!()
+        unpack.fmt a, in=bf16, transpose
+        repeat f in 0..4 { pair!(kin + f * 1024, kin + f * 1024) }
+        repeat f in 0..4 { pair!(qin + f * 1024, kin + f * 1024) }
+        unpack.fmt a, in=bf16
+        // Neumann rounds: power = power², T = T + T power
+        repeat round in 0..4 {
+            begin0!()
+            go!()
+            pair!(pw, pw)
+            pair!(pw, pw + 1024)
+            pair!(pw + 1024, pw)
+            begin0!()
+            unpack.dest tf, dst[0]
+            go!()
+            pair!(thl, pw)
+            pair!(thl, pw + 1024)
+            pair!(thl + 1024, pw)
+        }
+        // S5: K S0 and R
+        begin0!()
+        unpack.dest rowv + 3 * 1024, dst[4 * T]
+        unpack.dest gam, dst[5 * T]
+        unpack.dest rowv, dst[6 * T]
+        go!()
+        repeat vt in 0..2 {
+            repeat f in 0..4 {
+                pair!(kin + f * 1024, shi + (f * 2 + vt) * 1024)
+                pair!(kin + f * 1024, slo + (f * 2 + vt) * 1024)
+            }
+        }
+        unpack.move a, vin, dvalid
+        unpack.move a, vin + 1024, dvalid
+        // S6: U = T R
+        begin0!()
+        unpack.dest rowv, dst[2 * T]
+        unpack.dest gam, dst[3 * T]
+        unpack.dest gamc, dst[4 * T]
+        go!()
+        repeat vt in 0..2 {
+            pair!(thl, rhl + vt * 1024)
+            pair!(thl, rhl + (2 + vt) * 1024)
+            pair!(thl + 1024, rhl + vt * 1024)
+        }
+        // S7: outputs
+        begin0!()
+        unpack.dest rowv + 1024, dst[2 * T]
+        unpack.dest gam, dst[3 * T]
+        go!()
+        repeat vt in 0..2 {
+            repeat f in 0..4 {
+                pair!(qin + f * 1024, shi + (f * 2 + vt) * 1024)
+                pair!(qin + f * 1024, slo + (f * 2 + vt) * 1024)
+            }
+        }
+        repeat vt in 0..2 { pair!(pq, ubf + vt * 1024) }
+        tensix.wait
+        cb.reserve inret; cb.push inret
+        // S8: the state
+        repeat k in 0..4 { state0!(k, 1) }
+    }
+    begin0!()
+}
+
+fn trisc1() {
+    math.fmt dst=fp32, sfp=fp32
+    math.cfg dst_offset=0
+    math.addrmod mm_col, slot=2, srca=cr+0, srcb=cr+32, dst+=8
+    math.addrmod mm_b, slot=3, srcb+=8, dst+=8
+    math.addrmod mm_phase, slot=5, srca=0, srcb=0, dst=0, fidelity+=1
+    replay.load mm_first
+    replay.load mm_second
+    replay.load copy_rows
+    replay.load copy_swap
+    mop.load matmul
+    repeat k in 0..4 { state1!(0) }
+    for j in 0..PANELS {
+        lim = 0
+        if valid > j * 32 { lim = valid - j * 32 }
+        if lim > 32 { lim = 32 }
+        // S1: nk (tile 4), nq (5), g (6), b (7)
+        begin1!()
+        repeat which in 0..2 {
+            repeat t in 0..4 { copy_tile!(t) }
+            tensix.stall sfpu, math
+            math.rwc reset
+            for g in 0..8 {
+                sfp.li l0, 0.0
+                repeat t in 0..4 {
+                    repeat o in ROW_OFFSETS {
+                        sfp.load l1, dst[t * T + o], fmt=fp32
+                        sfp.mad l0, l1, l1, l0; sfp.nop
+                    }
+                }
+                row_sum_l0!()
+                sfp.li l1, 1e-6
+                sfp.add l0, l0, l1; sfp.nop
+                rsqrt_l0!()
+                if which {
+                    sfp.li l1, 0.08838834765
+                    sfp.mul l0, l0, l1; sfp.nop
+                }
+                repeat o in ROW_OFFSETS { sfp.store dst[(4 + which) * T + o], l0, fmt=fp32 }
+                math.rwc dst+=4
+                if g == 3 { math.rwc dst+=8; math.rwc dst+=8 }
+            }
+            math.rwc reset
+            tensix.stall sync, sfpu
+        }
+        copy_tile!(0)
+        copy_tile!(1)
+        tensix.stall sfpu, math
+        math.rwc reset
+        for g in 0..8 {
+            base = g * 4
+            // a_t and b_t: column acol of the a and b tiles, broadcast along the row.
+            repeat which in 0..2 {
+                sfp.li l0, 0.0
+                repeat i in 0..4 {
+                    coords!(i, base)
+                    sfp.li l5, acol, fmt=u32
+                    sfp.isub l5, l6, l5
+                    sfp.load l1, dst[which * T + ROW_OFFSETS[i]], fmt=fp32
+                    sfp.if l5 == 0 { sfp.add l0, l0, l1; sfp.nop }
+                }
+                row_sum_l0!()
+                sfp.store dst[(6 + which) * T], l0, fmt=fp32
+            }
+            // g = -exp(A_log) softplus(a + dt_bias); softplus(x) = max(x, 0) + log(1 + e^-|x|) (gdn_state.ttrv)
+            sfp.load l0, dst[6 * T], fmt=fp32
+            sfp.li l1, dyn[h + HEADS], fmt=bf16
+            sfp.add l7, l0, l1; sfp.nop
+            sfp.abs l0, l7, float
+            sfp.mul l0, l0, neg_one; sfp.nop
+            exp_l0!()
+            sfp.store dst[6 * T + ODD], l0, fmt=fp32
+            sfp.addi l0, l0, 2.0; sfp.nop
+            recip_l0!()
+            sfp.load l1, dst[6 * T + ODD], fmt=fp32
+            sfp.mul l0, l0, l1; sfp.nop
+            sfp.mul l1, l0, l0; sfp.nop
+            sfp.li l2, 1.0 / 9
+            sfp.li l3, 1.0 / 7
+            sfp.mad l2, l2, l1, l3; sfp.nop
+            sfp.li l3, 1.0 / 5
+            sfp.mad l2, l2, l1, l3; sfp.nop
+            sfp.li l3, 1.0 / 3
+            sfp.mad l2, l2, l1, l3; sfp.nop
+            sfp.mad l2, l2, l1, one; sfp.nop
+            sfp.mul l0, l0, l2; sfp.nop
+            sfp.add l0, l0, l0; sfp.nop
+            sfp.li l2, 0.0
+            sfp.minmax l2, l7
+            sfp.add l0, l0, l7; sfp.nop
+            sfp.li l1, dyn[h], fmt=bf16
+            sfp.mul l0, l0, l1, neg; sfp.nop
+            sfp.store dst[6 * T + ODD], l0, fmt=fp32
+            // b = sigmoid(b)
+            sfp.load l0, dst[7 * T], fmt=fp32
+            sfp.mul l0, l0, neg_one; sfp.nop
+            exp_l0!()
+            sfp.addi l0, l0, 1.0; sfp.nop
+            recip_l0!()
+            sfp.mov l4, l0
+            sfp.load l3, dst[6 * T + ODD], fmt=fp32
+            // rows at or past the valid count: g = b = 0
+            sfp.shr l7, lane_x2, n=4
+            sfp.li l5, base, fmt=u32
+            sfp.iadd l7, l5, l7
+            sfp.li l5, lim, fmt=u32
+            sfp.if l7 >= l5 {
+                sfp.li l3, 0.0
+                sfp.li l4, 0.0
+            }
+            repeat o in ROW_OFFSETS {
+                sfp.store dst[6 * T + o], l3, fmt=fp32
+                sfp.store dst[7 * T + o], l4, fmt=fp32
+            }
+            math.rwc dst+=4
+            if g == 3 { math.rwc dst+=8; math.rwc dst+=8 }
+        }
+        end1!()
+        // S1b: Kᵀ
+        begin1!()
+        repeat t in 0..4 {
+            tensix.stall math, srca_vld|sfpu
+            math.rwc reset
+            math.cfg dst_offset=t * T
+            replay.run copy_swap
+            tensix.stall sync, math
+            math.cfg dst_offset=0
+            math.rwc reset, release=a
+        }
+        end1!()
+        // S2: gam_t = sum_{s <= t} g_s (tile 1), gam_31 (tile 2)
+        begin1!()
+        for g in 0..8 {
+            base = g * 4
+            sfp.li l0, 0.0
+            sfp.li l4, 0.0
+            repeat i in 0..4 {
+                coords!(i, base)
+                sfp.load l1, dst[ROW_OFFSETS[i]], fmt=fp32
+                sfp.add l4, l4, l1; sfp.nop
+                sfp.if l6 <= l7 { sfp.add l0, l0, l1; sfp.nop }
+            }
+            row_sum_l0!()
+            repeat o in ROW_OFFSETS { sfp.store dst[T + o], l0, fmt=fp32 }
+            sfp.mov l0, l4
+            row_sum_l0!()
+            repeat o in ROW_OFFSETS { sfp.store dst[2 * T + o], l0, fmt=fp32 }
+            math.rwc dst+=4
+            if g == 3 { math.rwc dst+=8; math.rwc dst+=8 }
+        }
+        end1!()
+        // S3: A (tile 0) and P (tile 1) from KKᵀ, QKᵀ; then A hi/lo (2, 3), T = I - A (4), T hi/lo (5, 6)
+        // Dst in: 2 b, 3 nk, 4 gam, 5 gam per column, 6 nk per column, 7 nq
+        begin1!()
+        zero_tile!(0)
+        zero_tile!(1)
+        matmul_addrmods!(32, 16)
+        repeat f in 0..4 { product!(0) }
+        repeat f in 0..4 { product!(1) }
+        to_sfpu!()
+        for g in 0..8 {
+            base = g * 4
+            repeat i in 0..4 {
+                sfp.load l0, dst[4 * T + ROW_OFFSETS[i]], fmt=fp32
+                sfp.load l1, dst[5 * T + ROW_OFFSETS[i]], fmt=fp32
+                sfp.mad l0, l1, neg_one, l0; sfp.nop
+                exp_l0!()
+                coords!(i, base)
+                sfp.if l6 > l7 { sfp.li l0, 0.0 }
+                sfp.store dst[5 * T + ROW_OFFSETS[i]], l0, fmt=fp32
+                sfp.load l1, dst[6 * T + ROW_OFFSETS[i]], fmt=fp32
+                sfp.mul l0, l0, l1; sfp.nop
+                sfp.load l2, dst[ROW_OFFSETS[i]], fmt=fp32
+                sfp.load l3, dst[2 * T + ROW_OFFSETS[i]], fmt=fp32
+                sfp.mul l2, l2, l3; sfp.nop
+                sfp.load l3, dst[3 * T + ROW_OFFSETS[i]], fmt=fp32
+                sfp.mul l2, l2, l3; sfp.nop
+                sfp.mul l2, l2, l0; sfp.nop
+                sfp.if l6 >= l7 { sfp.li l2, 0.0 }
+                sfp.store dst[ROW_OFFSETS[i]], l2, fmt=fp32
+                sfp.load l2, dst[T + ROW_OFFSETS[i]], fmt=fp32
+                sfp.load l3, dst[7 * T + ROW_OFFSETS[i]], fmt=fp32
+                sfp.mul l2, l2, l3; sfp.nop
+                sfp.mul l2, l2, l0; sfp.nop
+                sfp.store dst[T + ROW_OFFSETS[i]], l2, fmt=fp32
+            }
+            math.rwc dst+=4
+            if g == 3 { math.rwc dst+=8; math.rwc dst+=8 }
+        }
+        math.rwc reset
+        for g in 0..8 {
+            base = g * 4
+            repeat i in 0..4 {
+                coords!(i, base)
+                sfp.load l0, dst[ROW_OFFSETS[i]], fmt=fp32
+                sfp.rnd l1, l0, to=bf16
+                sfp.store dst[2 * T + ROW_OFFSETS[i]], l1, fmt=fp32
+                sfp.mad l1, l1, neg_one, l0; sfp.nop
+                sfp.store dst[3 * T + ROW_OFFSETS[i]], l1, fmt=fp32
+                sfp.mul l0, l0, neg_one; sfp.nop
+                sfp.isub l7, l6, l7
+                sfp.if l7 == 0 { sfp.addi l0, l0, 1.0; sfp.nop }
+                sfp.store dst[4 * T + ROW_OFFSETS[i]], l0, fmt=fp32
+                sfp.rnd l1, l0, to=bf16
+                sfp.store dst[5 * T + ROW_OFFSETS[i]], l1, fmt=fp32
+                sfp.mad l1, l1, neg_one, l0; sfp.nop
+                sfp.store dst[6 * T + ROW_OFFSETS[i]], l1, fmt=fp32
+            }
+            math.rwc dst+=4
+            if g == 3 { math.rwc dst+=8; math.rwc dst+=8 }
+        }
+        end1!()
+        // Neumann rounds
+        repeat round in 0..4 {
+            repeat which in 0..2 {
+                begin1!()
+                if which == 0 { zero_tile!(0) }
+                matmul_addrmods!(16, 32)
+                repeat p in 0..3 { product!(0) }
+                to_sfpu!()
+                loop 32 {
+                    sfp.load l0, dst[0], fmt=fp32
+                    sfp.rnd l1, l0, to=bf16
+                    sfp.store dst[T], l1, fmt=fp32
+                    sfp.mad l1, l1, neg_one, l0; sfp.nop
+                    sfp.store dst[2 * T], l1, fmt=fp32
+                    math.rwc dst+=2
+                }
+                end1!()
+            }
+        }
+        // S5: K S0 (tiles 0, 1); V (2, 3); R = b (V - exp(gam) nk K S0): hi (2, 3), lo (0, 1)
+        // Dst in: 4 b, 5 gam, 6 nk
+        begin1!()
+        zero_tile!(0)
+        zero_tile!(1)
+        matmul_addrmods!(16, 32)
+        repeat vt in 0..2 { repeat p in 0..8 { product!(vt) } }
+        copy_tile!(2)
+        copy_tile!(3)
+        to_sfpu!()
+        tensix.stall sfpu, math
+        loop 32 {
+            sfp.load l0, dst[5 * T], fmt=fp32
+            exp_l0!()
+            sfp.load l1, dst[6 * T], fmt=fp32
+            sfp.mul l4, l0, l1; sfp.nop
+            sfp.load l5, dst[4 * T], fmt=fp32
+            repeat vt in 0..2 {
+                sfp.load l1, dst[vt * T], fmt=fp32
+                sfp.mul l1, l1, l4; sfp.nop
+                sfp.load l2, dst[(2 + vt) * T], fmt=fp32
+                sfp.mad l2, l1, neg_one, l2; sfp.nop
+                sfp.mul l2, l2, l5; sfp.nop
+                sfp.rnd l3, l2, to=bf16
+                sfp.store dst[(2 + vt) * T], l3, fmt=fp32
+                sfp.mad l2, l3, neg_one, l2; sfp.nop
+                sfp.store dst[vt * T], l2, fmt=fp32
+            }
+            math.rwc dst+=2
+        }
+        end1!()
+        // S6: U = T R (tiles 0, 1); f = nk exp(gam_31 - gam); U copy (5, 6), U'' = f U hi (3, 4), lo (0, 1)
+        // Dst in: 2 nk, 3 gam, 4 gam_31
+        begin1!()
+        zero_tile!(0)
+        zero_tile!(1)
+        matmul_addrmods!(16, 32)
+        repeat vt in 0..2 { repeat p in 0..3 { product!(vt) } }
+        to_sfpu!()
+        loop 32 {
+            sfp.load l0, dst[4 * T], fmt=fp32
+            sfp.load l1, dst[3 * T], fmt=fp32
+            sfp.mad l0, l1, neg_one, l0; sfp.nop
+            exp_l0!()
+            sfp.load l1, dst[2 * T], fmt=fp32
+            sfp.mul l4, l0, l1; sfp.nop
+            repeat vt in 0..2 {
+                sfp.load l0, dst[vt * T], fmt=fp32
+                sfp.store dst[(5 + vt) * T], l0, fmt=fp32
+                sfp.mul l0, l0, l4; sfp.nop
+                sfp.rnd l1, l0, to=bf16
+                sfp.store dst[(3 + vt) * T], l1, fmt=fp32
+                sfp.mad l0, l1, neg_one, l0; sfp.nop
+                sfp.store dst[vt * T], l0, fmt=fp32
+            }
+            math.rwc dst+=2
+        }
+        end1!()
+        // S7: O = exp(gam) nq Q S0 + P U (tiles 0, 1); Dst in: 2 nq, 3 gam
+        begin1!()
+        zero_tile!(0)
+        zero_tile!(1)
+        matmul_addrmods!(16, 32)
+        repeat vt in 0..2 { repeat p in 0..8 { product!(vt) } }
+        to_sfpu!()
+        loop 32 {
+            sfp.load l0, dst[3 * T], fmt=fp32
+            exp_l0!()
+            sfp.load l1, dst[2 * T], fmt=fp32
+            sfp.mul l4, l0, l1; sfp.nop
+            repeat vt in 0..2 {
+                sfp.load l0, dst[vt * T], fmt=fp32
+                sfp.mul l0, l0, l4; sfp.nop
+                sfp.store dst[vt * T], l0, fmt=fp32
+            }
+            math.rwc dst+=2
+        }
+        to_math!()
+        repeat vt in 0..2 { product!(vt) }
+        end1!()
+        // S8: the state
+        repeat k in 0..4 { state1!(1) }
+    }
+}
+
+fn trisc2() {
+    repeat k in 0..4 { state2!(k) }
+    for j in 0..PANELS {
+        // S1
+        begin2!()
+        pack.fmt in=fp32, out=fp32
+        repeat t in 0..4 { pack.move rowv + t * 1024, dst[(4 + t) * T] }
+        end2!()
+        cb.reserve rowtok; cb.push rowtok
+        // S1b
+        begin2!()
+        pack.fmt in=fp32, out=bf16
+        repeat t in 0..4 { pack.move kt + t * 1024, dst[t * T] }
+        end2!()
+        // S2
+        begin2!()
+        pack.fmt in=fp32, out=fp32
+        pack.move gam, dst[T]
+        pack.move gamc, dst[2 * T]
+        end2!()
+        cb.reserve gamtok; cb.push gamtok
+        // S3
+        begin2!()
+        pack.fmt in=fp32, out=bf16
+        pack.move pw, dst[2 * T]
+        pack.move pw + 1024, dst[3 * T]
+        pack.move thl, dst[5 * T]
+        pack.move thl + 1024, dst[6 * T]
+        pack.move pq, dst[T]
+        pack.fmt in=fp32, out=fp32
+        pack.move tf, dst[4 * T]
+        end2!()
+        // Neumann rounds
+        repeat round in 0..4 {
+            begin2!()
+            pack.fmt in=fp32, out=bf16
+            pack.move pw, dst[T]
+            pack.move pw + 1024, dst[2 * T]
+            end2!()
+            begin2!()
+            pack.fmt in=fp32, out=fp32
+            pack.move tf, dst[0]
+            pack.fmt in=fp32, out=bf16
+            pack.move thl, dst[T]
+            pack.move thl + 1024, dst[2 * T]
+            end2!()
+        }
+        // S5
+        begin2!()
+        pack.fmt in=fp32, out=bf16
+        repeat vt in 0..2 {
+            pack.move rhl + vt * 1024, dst[(2 + vt) * T]
+            pack.move rhl + (2 + vt) * 1024, dst[vt * T]
+        }
+        end2!()
+        // S6
+        begin2!()
+        pack.fmt in=fp32, out=bf16
+        repeat vt in 0..2 {
+            pack.move ubf + vt * 1024, dst[(5 + vt) * T]
+            pack.move u2 + vt * 1024, dst[(3 + vt) * T]
+            pack.move u2 + (2 + vt) * 1024, dst[vt * T]
+        }
+        end2!()
+        // S7
+        begin2!()
+        pack.fmt in=fp32, out=bf16
+        o = cb.reserve outq, n=2
+        pack.move o, dst[0]
+        pack.move o + 1024, dst[T]
+        end2!()
+        cb.push outq, n=2
+        // S8
+        repeat k in 0..4 { state2!(k) }
+    }
+    cb.reserve fintok; cb.push fintok
+}
+
+// A per-column tile from a per-row one: column s of every row = row s's value.
+macro columns(dst, src, off) {
+    for t in 0..32 { line[t] = src[off + (t / 16) * 512 + (t & 15) * 16] }
+    for r in 0..32 {
+        l1.copy_words dst + (r / 16) * 512 + (r & 15) * 16, line, n=16
+        l1.copy_words dst + (r / 16) * 512 + 256 + (r & 15) * 16, line + 16, n=16
+    }
+}
+
+fn ncrisc() {
+    for j in 0..PANELS {
+        cb.wait rowtok; cb.pop rowtok
+        columns!(colg, rowv, 2 * 1024)
+        cb.reserve coltok; cb.push coltok
+        cb.wait gamtok; cb.pop gamtok
+        columns!(cols, gam, 0)
+        columns!(cols + 1024, rowv, 0)
+        cb.reserve colstok; cb.push colstok
+        o = cb.wait outq, n=2
+        noc.write output[(j * HEADS * 4 + h * 4 + vh * 2) * 1024], o, n=2048, wait
+        cb.pop outq, n=2
+    }
+    cb.wait fintok; cb.pop fintok
+    for k in 0..128 {
+        for v in 0..64 {
+            staged[((v & 1) * 64 + k / 2) * 64 + (v / 2) * 2 + (k & 1)] = sf[((k / 32) * 2 + v / 32) * 1024 + ((k / 16) & 1) * 512 + ((v / 16) & 1) * 256 + (k & 15) * 16 + (v & 15)]
+        }
+    }
+    noc.write state[core.id * 8192], staged, n=8192, wait
+}

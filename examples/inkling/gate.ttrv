@@ -1,0 +1,96 @@
+// Inkling cross-pass message gate (reference.message_gate), after its projections:
+//   out = (1 - tanh(f)) h + tanh(a) m,   [f | a] = [forget; gain] (down [rms(h), rms(m)])
+// h, m and out are FP32 rows of PAGES * 1024; fa is the dense FP32 [f (D) | a (D)] projection output, allocated
+// to PAGES * 1024 past a's start. One worker per 1024-element page.
+const D = 2304
+const PAGES = (D + 1023) / 1024
+const ROW = PAGES * 1024
+const NG = 1           // gates in one launch: gate g reads h[g * H_STRIDE], m[g * ROW], fa[g * 2 D], writes out[g * ROW]
+const H_STRIDE = ROW
+const ROWS = 1
+const H_STEP = 0
+const M_STEP = 0
+const FA_STEP = 0
+const OUT_STEP = 0
+grid ROWS * NG * PAGES
+
+param h: fp32[]
+param m: fp32[]
+param fa: fp32[]
+param out: fp32[]
+
+shared {
+    token_row = core.id / (NG * PAGES)
+    g = (core.id / PAGES) % NG
+    first = (core.id % PAGES) * 1024
+    fa_first = g * 2 * D + first
+}
+
+cb pages_in: u32[1024], pages=4                // h, m, f, a
+cb loaded: u32[16], pages=1
+cb result: fp32[1024], pages=1
+sem ready = math_pack, max=1
+
+include math
+
+fn brisc() {
+    // f's last page runs into a: those lanes meet zero h and m.
+    p = cb.reserve pages_in, n=4
+    t = noc.read p, h[token_row * H_STEP + g * H_STRIDE + first], n=1024
+    noc.read p + 1024, m[token_row * M_STEP + g * ROW + first], n=1024, tid=t
+    noc.read p + 2048, fa[token_row * FA_STEP + fa_first], n=1024, tid=t
+    noc.read p + 3072, fa[token_row * FA_STEP + fa_first + D], n=1024, tid=t
+    noc.wait t
+    cb.push pages_in, n=4
+}
+
+fn trisc0() {
+    p = cb.wait pages_in, n=4
+    repeat t in 0..4 { unpack.dest p + t * 1024, dst[t * dst.tile] }
+    cb.pop pages_in, n=4
+    cb.reserve loaded
+    cb.push loaded
+}
+
+fn trisc1() {
+    math.fmt dst=fp32, sfp=fp32
+    math.cfg dst_offset=0
+    math.rwc reset
+    cb.wait loaded
+    cb.pop loaded
+    sem.stall math|sfpu|sync, ready, notmax
+    exp_setup!()
+    loop 32 {
+        sfp.load l0, dst[2 * dst.tile], fmt=fp32
+        tanh_l0!()
+        sfp.mad l0, l0, neg_one, one; sfp.nop      // 1 - tanh(f)
+        sfp.load l1, dst[0], fmt=fp32
+        sfp.mul l7, l0, l1; sfp.nop
+        sfp.load l0, dst[3 * dst.tile], fmt=fp32
+        tanh_l0!()
+        sfp.load l1, dst[dst.tile], fmt=fp32
+        sfp.mad l0, l0, l1, l7; sfp.nop
+        sfp.store dst[0], l0, fmt=fp32
+        math.rwc dst+=2
+    }
+    math.rwc reset
+    tensix.stall sync, math|sfpu
+    sem.inc ready
+}
+
+fn trisc2() {
+    pack.fmt in=fp32, out=fp32
+    sem.stall tdma|pack|sync, ready, nonzero
+    p = cb.reserve result
+    pack.move p, dst[0]
+    tensix.stall sync, pack0
+    tensix.wait
+    cb.push result
+    sem.dec ready
+}
+
+fn ncrisc() {
+    r = cb.wait result
+    noc.write out[token_row * OUT_STEP + g * ROW + first], r, n=1024, wait
+    cb.pop result
+}

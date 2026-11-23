@@ -1,0 +1,29 @@
+// Batched embedding gather: row r of output = weights[token], where (pos, active, slot, token) is row r's 64-byte
+// entry in the host step table (see batch_attention.ttrv). Inactive rows are skipped. Every row's entry is also copied
+// to table in DRAM, where the step's other kernels read it.
+const ROWS = 32
+const WORKERS = 32
+grid WORKERS
+const D = 2304
+const STRIDE = 3072
+
+param weights: bf16[]
+param output: bf16[]          // [ROWS, STRIDE], D valid
+param host_table: u32[], host
+param table: u32[]
+
+l1 meta: u32[16]
+l1 row: bf16[D]
+
+fn brisc() {
+    for j in 0..(ROWS + WORKERS - 1 - core.id) / WORKERS {
+        r = core.id + j * WORKERS
+        noc.read meta, host_table[r * 16], n=16, wait
+        t = noc.write table[r * 16], meta, n=16
+        if meta[1] {
+            noc.read row, weights[meta[3] * D], n=D, wait
+            noc.write output[r * STRIDE], row, n=D, tid=t
+        }
+        noc.wait t
+    }
+}

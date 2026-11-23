@@ -1,0 +1,164 @@
+// Prompt RoPE and cache fill for one chunk of whole 32-row panels that starts on a 32-token block boundary.
+// q_in, k_in and v_in are the QKV projection's panel tiles. Unit (j, head) covers panel j of one head:
+//   query: rotate, write to q_tiles[(head * TILES_Q + j) * HEAD_TILES ..]
+//   key:   rotate, write over cache block start_pos / 32 + j
+//   value: copy over the same value-cache block
+// Feature tile f rotates against tile f + HEAD_TILES / 2 (mod HEAD_TILES): the half swap is a whole-tile swap.
+// cos_tiles and sin_tiles hold the tables as tiles: block b's tile f covers positions 32b.. and features 32f..
+
+const HEAD_TILES = 4
+const GROUP = 4
+const KV_HEADS = 8
+const Q_HEADS = KV_HEADS * GROUP
+const MAX_TOKENS = 8192
+const CACHE_TILES_PER_HEAD = MAX_TOKENS / 32 * HEAD_TILES
+const TILES_Q = 10
+const HEADS = Q_HEADS + 2 * KV_HEADS
+const UNITS = TILES_Q * HEADS
+const WORKERS = 130
+const PASSES = (UNITS + WORKERS - 1) / WORKERS
+const HALF_TILES = HEAD_TILES / 2
+grid WORKERS
+
+param q_in: bf16[]
+param k_in: bf16[]
+param v_in: bf16[]
+param cos_tiles: bf16[]
+param sin_tiles: bf16[]
+param key_cache: bf16[]
+param value_cache: bf16[]
+param q_tiles: bf16[]
+param start_pos: u32
+
+cb heads: bf16[1024], pages=2 * HEAD_TILES    // one head's feature tiles
+cb tables: bf16[1024], pages=4 * HEAD_TILES   // cos tiles, then sin tiles
+cb result: bf16[1024], pages=2
+l1 copy: bf16[HEAD_TILES * 1024]
+sem dst_ready = math_pack, max=1
+
+replay rope_step {
+    sfp.load l0, dst[0], fmt=fp32
+    sfp.load l1, dst[dst.tile], fmt=fp32
+    sfp.load l2, dst[2 * dst.tile], fmt=fp32
+    sfp.load l3, dst[3 * dst.tile], fmt=fp32
+    sfp.mul l0, l0, l2
+    sfp.mad l0, l1, l3, l0
+    sfp.rnd l0, l0, to=bf16
+    sfp.store dst[0], l0, fmt=fp32, addr=sfp_step
+}
+
+include ../common/copy_tile
+
+fn brisc() {
+    for n in 0..PASSES {
+        u = n * WORKERS + core.id
+        j = u / HEADS
+        h = u % HEADS
+        if u < UNITS && h < Q_HEADS + KV_HEADS {
+            x = cb.reserve heads, n=HEAD_TILES
+            t = cb.reserve tables, n=2 * HEAD_TILES
+            block = start_pos / 32 + j
+            r = noc.group read
+            if h < Q_HEADS {
+                noc.read x, q_in[(j * Q_HEADS + h) * HEAD_TILES * 1024], n=HEAD_TILES * 1024, tid=r
+            } else {
+                noc.read x, k_in[(j * KV_HEADS + h - Q_HEADS) * HEAD_TILES * 1024], n=HEAD_TILES * 1024, tid=r
+            }
+            noc.read t, cos_tiles[block * HEAD_TILES * 1024], n=HEAD_TILES * 1024, tid=r
+            noc.read t + HEAD_TILES * 1024, sin_tiles[block * HEAD_TILES * 1024], n=HEAD_TILES * 1024, tid=r
+            noc.wait r
+            cb.push heads, n=HEAD_TILES
+            cb.push tables, n=2 * HEAD_TILES
+        }
+    }
+}
+
+fn trisc0() {
+    unpack.fmt a|b, in=bf16
+    for n in 0..PASSES {
+        u = n * WORKERS + core.id
+        h = u % HEADS
+        if u < UNITS && h < Q_HEADS + KV_HEADS {
+            x = cb.wait heads, n=HEAD_TILES
+            t = cb.wait tables, n=2 * HEAD_TILES
+            repeat f in 0..HEAD_TILES {
+                unpack.move a, x + f * 1024, dvalid
+                unpack.move a, x + ((f + HALF_TILES) % HEAD_TILES) * 1024, dvalid
+                unpack.move a, t + f * 1024, dvalid
+                unpack.move a, t + (HEAD_TILES + f) * 1024, dvalid
+            }
+            tensix.wait
+            cb.pop heads, n=HEAD_TILES
+            cb.pop tables, n=2 * HEAD_TILES
+        }
+    }
+}
+
+fn trisc1() {
+    math.fmt dst=fp32, sfp=fp32
+    math.cfg dst_offset=0
+    math.addrmod sfp_step, slot=6, dst+=2
+    replay.load copy_rows
+    replay.load rope_step
+    for n in 0..PASSES {
+        u = n * WORKERS + core.id
+        h = u % HEADS
+        if u < UNITS && h < Q_HEADS + KV_HEADS {
+            repeat f in 0..HEAD_TILES {
+                sem.stall math|sfpu|sync, dst_ready, notmax
+                repeat t in 0..4 { copy_tile!(t) }
+                tensix.stall sfpu, math
+                math.rwc reset
+                loop 32 { replay.run rope_step }
+                math.rwc reset
+                tensix.stall sync, math|sfpu
+                sem.inc dst_ready
+            }
+        }
+    }
+}
+
+fn trisc2() {
+    pack.fmt in=fp32, out=bf16
+    for n in 0..PASSES {
+        u = n * WORKERS + core.id
+        h = u % HEADS
+        if u < UNITS && h < Q_HEADS + KV_HEADS {
+            repeat f in 0..HEAD_TILES {
+                sem.stall tdma|pack|sync, dst_ready, nonzero
+                p = cb.reserve result
+                pack.move p, dst[0]
+                tensix.stall sync, pack0
+                tensix.wait
+                cb.push result
+                sem.dec dst_ready
+            }
+        }
+    }
+}
+
+fn ncrisc() {
+    for n in 0..PASSES {
+        u = n * WORKERS + core.id
+        j = u / HEADS
+        h = u % HEADS
+        block = start_pos / 32 + j
+        if u < UNITS {
+            if h < Q_HEADS + KV_HEADS {
+                for f in 0..HEAD_TILES {
+                    p = cb.wait result
+                    if h < Q_HEADS {
+                        noc.write q_tiles[((h * TILES_Q + j) * HEAD_TILES + f) * 1024], p, n=1024, wait
+                    } else {
+                        noc.write key_cache[((h - Q_HEADS) * CACHE_TILES_PER_HEAD + block * HEAD_TILES + f) * 1024], p, n=1024, wait
+                    }
+                    cb.pop result
+                }
+            } else {
+                g = h - Q_HEADS - KV_HEADS
+                noc.read copy, v_in[(j * KV_HEADS + g) * HEAD_TILES * 1024], n=HEAD_TILES * 1024, wait
+                noc.write value_cache[(g * CACHE_TILES_PER_HEAD + block * HEAD_TILES) * 1024], copy, n=HEAD_TILES * 1024, wait
+            }
+        }
+    }
+}

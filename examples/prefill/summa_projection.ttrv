@@ -1,0 +1,572 @@
+// Prompt projection for chunks of 2 or more 32-row panels, after examples/matmul/summa.ttrv: output in 64x64 blocks,
+// K streamed in slabs, FP32 partials accumulated in L1 by the packer (Pack_L1_Acc), activations multicast along grid
+// rows (BRISC, NoC0) and weights down grid columns (NCRISC, NoC1). Weights and activations stay in their usual
+// layouts: face-packed W[K, N] tiles in pages of GROUP K tiles per output column (BF16, BFP8_B or BFP4_B), and panel
+// tiles of 32 rows.
+// Grid: ROWS x COLS workers, one 64-row block row (two panels) per worker. Each physical column is cut into SEG
+// segments of R workers, one per block row (R = MB block rows, SEG = ROWS / R): segment s of column c is logical
+// column c * SEG + s, which owns a range of 64-column output units (a unit is one block, or with SWIGLU a gate block
+// and its up block). Every worker computes its block row times its logical column's units, so each weight byte is
+// read from DRAM once: per slab, a logical column's blocks are read by its R workers in rotation and multicast to
+// the segment. With ILEAVE the segments interleave (grid row r is in segment r % SEG), so a block row's SEG grid rows
+// are adjacent: its activations are read once, by its corner worker, and multicast over those rows, while weight
+// multicasts cover the whole column (each segment into its own buffers). Without, segments are consecutive rows and
+// each grid row's activations are read by one of its workers in rotation and multicast along the row. A multicast
+// into a rectangle not containing the sender, or into a 2D rectangle from several senders, deadlocked the NoC.
+// The matrix unit works on 64x16 by 16x64 panels, as in summa.ttrv: SrcB holds 64 activation rows x 16 K (faces kh
+// and kh + 2 of the two panels' tiles at one K tile, gathered by the unpacker's face counter), SrcA 16 K x 64 output
+// columns (faces 2 kh, 2 kh + 1 of the two weight tiles at that K tile, one unpacker context each).
+// Epilogues: SECOND/THIRD split the output columns over output, output2, output3 (fused q/k/v); SWIGLU makes each
+// output silu(gate) * up from weight columns c and c + N / 2.
+const ROWS = 10
+const COLS = 13
+grid ROWS * COLS
+const K = 4096
+const N = 4096
+const BITS = 8
+const GROUP = 8
+const PAD = 1
+const PANELS = 10
+const SECOND = 0
+const THIRD = 0
+const SWIGLU = 0
+const SG = 8         // K tiles per slab: a multiple of 4, dividing K / 32 at least twice, SG <= GROUP or a multiple
+const NSLOT = 2      // slab buffers, 2 or more
+const PACE = 3       // reads run at most PACE slabs ahead of this worker's unpacking (and NSLOT - 1 by credits)
+if BITS == 4 { type W = bfp4 } else { if BITS == 8 { type W = bfp8 } else { type W = bf16 } }
+const PHASES = 2 - (BITS == 4)
+
+param x: bf16[]
+param weights: W[], tiles_per_page=GROUP
+param output: bf16[]
+if SECOND { param output2: bf16[] }
+if THIRD { param output3: bf16[] }
+
+const KT = K / 32
+const NT = N / 32
+const NT_PITCH = NT + PAD * (1 - NT % 2)
+const SLABS = KT / SG
+const MB = (PANELS + 1) / 2          // block rows
+const R = MB                         // grid rows per segment
+const SEG = ROWS / R
+const LC = COLS * SEG                // logical columns
+const HALVES = 1 + SWIGLU
+const NBU = NT / 2 / HALVES          // output units
+const UMAX = (NBU + LC - 1) / LC
+const BLK = UMAX * HALVES            // most blocks per worker
+const NOUT = NT / HALVES             // output tile columns
+const CH = GROUP - (GROUP - SG) * (SG < GROUP)   // tiles per weight read: min(SG, GROUP)
+const PANEL = 1024
+const ILEAVE = 1     // 1: segments interleave (grid row r in segment r % SEG), one activation read per block row;
+                     // 0: segments are R consecutive grid rows, activations read per grid row (half the weight buffers)
+const WS = ILEAVE * (SEG - (SEG - 1) * (R == 1)) + 1 - ILEAVE   // weight buffer sets (ILEAVE: one per segment)
+const WROWS = ILEAVE * SEG * R + (1 - ILEAVE) * R    // grid rows a weight multicast covers
+const RSTEP = ILEAVE * SEG + 1 - ILEAVE              // grid rows between a segment's workers
+const AROWS = ILEAVE * SEG + 1 - ILEAVE              // grid rows an activation multicast covers
+const ASTEP = ILEAVE + (1 - ILEAVE) * COLS           // slabs between one activation sender's slabs
+const ACRED = AROWS * COLS                           // credits per activation slab (its receivers)
+
+shared {
+    row = core.id % ROWS
+    col = core.id / ROWS
+    seg = ILEAVE * (row % SEG) + (1 - ILEAVE) * (row / R)
+    lrow = ILEAVE * (row / SEG) + (1 - ILEAVE) * (row % R)
+    active = row < SEG * R
+    lcol = col * SEG + seg
+    u0 = lcol * NBU / LC
+    nu = (lcol + 1) * NBU / LC - u0
+    nblk = nu * HALVES
+    wy0 = core.y - ILEAVE * row - (1 - ILEAVE) * lrow    // the first grid row a weight multicast covers
+    wfirst = wy0 + ILEAVE * seg                           // this segment's first worker
+    ya = core.y - ILEAVE * (row - lrow * SEG)             // the first grid row an activation multicast covers
+    wseg = ILEAVE * seg * (R > 1)
+    afirst = ILEAVE * (SLABS - (col == 0 && seg == 0) * SLABS) + (1 - ILEAVE) * col   // first activation slab sent
+    p0 = 2 * lrow
+    p1 = p0 + (p0 + 1 < PANELS)
+    port_id = core.id % 3
+}
+
+// Activation slab: [slot][SG K tiles][2 panels] tiles. Weight slab: [segment set][slot][block][2 columns][SG K tiles].
+l1 abuf: bf16[NSLOT * SG * 2 * PANEL]
+l1 wbuf: W[WS * NSLOT * BLK * 2 * SG * PANEL]
+l1 cblk: fp32[BLK * 4096]             // FP32 partials, block b at b * 4096
+l1 obuf: bf16[UMAX * 4096]            // finished BF16 units
+l1 a_flag: u32[4 * NSLOT], keep       // slot s: 1 + the last slab whose activations landed (word 4 * s)
+l1 w_flag: u32[4 * WS * NSLOT * BLK], keep // segment g, slot s, block b: 1 + the last slab whose weights landed
+                                      // (word 4 * ((g * NSLOT + s) * BLK + b))
+l1 a_cred: u32[4 * NSLOT], keep       // activation sender: credits per slot from the block row's grid rows
+l1 w_cred: u32[4 * NSLOT], keep       // weight credits per slot from the segment
+l1 staged: u32[4], keep               // BRISC -> NCRISC: weight blocks read (in send order)
+l1 consumed: u32[4], keep             // TRISC0 -> NCRISC: 1 + the last slab unpacked
+l1 packed: u32[4], keep               // TRISC2 -> NCRISC: output units finished
+l1 pk_blk: u32[4], keep               // TRISC2 -> TRISC0: blocks packed (their Dst half is free)
+l1 ld_blk: u32[4], keep               // TRISC0 -> TRISC1: blocks whose partial is loaded into Dst
+l1 one: u32[8]
+l1 ack: u32[4]
+l1 aone: u32[4 * NSLOT]               // activation flag values, per slot
+l1 acnt: u32[4 * NSLOT]               // activation sender: credits needed per slot
+l1 sem_ready: u32[4], keep
+sem ready = math_pack, max=2
+
+// BRISC runs two independent tracks without blocking: the activation slabs this worker sends (each read, then
+// multicast once its reads land) and its share of each slab's weight blocks (read one block at a time; NCRISC
+// multicasts it). Each track waits for the credits of the slot it refills.
+fn brisc() {
+    if active {
+        ra0 = noc.group read
+        ra1 = noc.group read
+        ma = noc.group mcast
+        rw = noc.group read
+        for i in 0..NSLOT { acnt[4 * i] = 0 }
+        // Activations: each sender (ILEAVE: the block row's corner worker, for every slab; else every COLS-th slab
+        // of its grid row) reads a slab and multicasts it, keeping the reads of two of its slabs in flight.
+        sa = afirst       // next activation slab to read (SLABS or more: none)
+        sm = sa                                         // next activation slab to multicast
+        sw = 0            // weight slab being read
+        wb = lrow         // next block of slab sw read by this worker: (lrow + R - sw % R) % R, + R ...
+        wst = 0           // 0: waiting for slab sw's credits, 1: issue block wb, 2: block wb in flight
+        sent = 0
+        loop {
+            busy = 0
+            if sa < SLABS && sa < sm + 2 * ASTEP {
+                busy = 1
+                aslot = sa % NSLOT
+                ok = sa <= consumed[0] + PACE
+                if sa >= NSLOT { ok = ok && a_cred[4 * aslot] >= acnt[4 * aslot] + ACRED }
+                if ok {
+                    if sa >= NSLOT { acnt[4 * aslot] = acnt[4 * aslot] + ACRED }
+                    for k in 0..SG {
+                        if (sa / ASTEP) % 2 {
+                            noc.read tileptr(abuf, (aslot * SG + k) * 2), tileptr(x, p0 * KT + sa * SG + k), n=PANEL, port=port_id, tid=ra1
+                            noc.read tileptr(abuf, (aslot * SG + k) * 2 + 1), tileptr(x, p1 * KT + sa * SG + k), n=PANEL, port=port_id, tid=ra1
+                        } else {
+                            noc.read tileptr(abuf, (aslot * SG + k) * 2), tileptr(x, p0 * KT + sa * SG + k), n=PANEL, port=port_id, tid=ra0
+                            noc.read tileptr(abuf, (aslot * SG + k) * 2 + 1), tileptr(x, p1 * KT + sa * SG + k), n=PANEL, port=port_id, tid=ra0
+                        }
+                    }
+                    sa = sa + ASTEP
+                }
+            }
+            if sm < sa {
+                busy = 1
+                left = noc.status ra0, outstanding
+                if (sm / ASTEP) % 2 { left = noc.status ra1, outstanding }
+                if left == 0 {
+                    if (sm / ASTEP) % 2 { noc.wait ra1 } else { noc.wait ra0 }
+                    mslot = sm % NSLOT
+                    repeat q in 0..SG / 4 {
+                        noc.mcast rect(0, ya, COLS - 1, ya + AROWS - 1, tileptr(abuf, (mslot * SG + q * 4) * 2)), tileptr(abuf, (mslot * SG + q * 4) * 2), n=8 * PANEL, tid=ma
+                    }
+                    // Same route and virtual channel as the data, so the flag lands after it. The slot's flag word
+                    // is next rewritten NSLOT slabs on, after every receiver has credited it.
+                    aone[4 * mslot] = sm + 1
+                    fence
+                    a_flag[4 * mslot] = sm + 1
+                    noc.mcast rect(0, ya, COLS - 1, ya + AROWS - 1, a_flag + 4 * mslot), aone + 4 * mslot, n=1, tid=ma
+                    sm = sm + ASTEP
+                }
+            } else {
+                if sm < SLABS { busy = 1 }
+            }
+            if sw < SLABS {
+                busy = 1
+                wslot = sw % NSLOT
+                if wst == 0 {
+                    ok = sw <= consumed[0] + PACE
+                    if sw >= NSLOT { ok = ok && w_cred[4 * wslot] >= ((sw - NSLOT) / NSLOT + 1) * R }
+                    if ok { wst = 1 }
+                }
+                if wst == 1 {
+                    if wb >= nblk {
+                        sw = sw + 1
+                        wb = (lrow + R - sw % R) % R
+                        wst = 0
+                    } else {
+                        // Weight column of block wb: unit u0 + wb / HALVES; a SWIGLU unit's up half is N / 2 on.
+                        c = 2 * (u0 + wb / HALVES + (wb % HALVES) * NBU)
+                        repeat h in 0..2 {
+                            repeat q in 0..SG / CH {
+                                noc.read tileptr(wbuf, (((wseg * NSLOT + wslot) * BLK + wb) * 2 + h) * SG + q * CH), tileptr(weights, (((sw * SG + q * CH) / GROUP) * NT_PITCH + c + h) * GROUP + (sw * SG + q * CH) % GROUP), n=CH * PANEL, port=port_id, tid=rw
+                            }
+                        }
+                        wst = 2
+                    }
+                } else {
+                    if wst == 2 {
+                        left = noc.status rw, outstanding
+                        if left == 0 {
+                            noc.wait rw
+                            fence
+                            sent = sent + 1
+                            staged[0] = sent
+                            wb = wb + R
+                            wst = 1
+                        }
+                    }
+                }
+            }
+            if busy == 0 { break }
+            fence
+        }
+        noc.wait ra0, ra1, rw, ma
+        // Every credit this worker is owed has arrived before its last send; reset for the next launch.
+        for sl in 0..NSLOT {
+            total = 0
+            for t in NSLOT..SLABS { if t % NSLOT == sl { total = total + R } }
+            loop { if w_cred[4 * sl] >= total { break }; fence }
+            w_cred[4 * sl] = 0
+            a_cred[4 * sl] = 0
+        }
+    }
+}
+
+// In the last slab each block first loads its FP32 partial into its Dst half (after every earlier block is packed:
+// writes to Dst from two clients at once can lose bits, Dst.md), then the matrix unit adds the last slab to it. A
+// SWIGLU unit loads both halves before its gate block. The first unpack to Dst after unpacks to SrcA has been seen to
+// miss its rows, so tile 0 goes twice (summa.ttrv).
+macro preload(q, half) {
+    unpack.dest cblk + q * 4 * 1024, dst[half * 256]
+    repeat t in 0..4 { unpack.dest cblk + (q * 4 + t) * 1024, dst[half * 256 + t * 64] }
+}
+
+macro restore_unpack() {
+    unpack.fmt a, in=W
+    unpack.shape a, n=256, faces=4
+    unpack.shape a, n=256, faces=4, ctx=1
+}
+
+fn trisc0() {
+    unpack.fmt a, in=W
+    unpack.fmt b, in=bf16
+    unpack.shape a, n=256, faces=4
+    unpack.shape a, n=256, faces=4, ctx=1
+    unpack.shape b, n=256, faces=4
+    blk = 0
+    if active {
+        for s in 0..SLABS {
+            slot = s % NSLOT
+            loop { if a_flag[4 * slot] > s { break }; fence }
+            for b in 0..nblk { loop { if w_flag[4 * ((wseg * NSLOT + slot) * BLK + b)] > s { break }; fence } }
+            for b in 0..nblk {
+                if s == SLABS - 1 {
+                    if SWIGLU {
+                        if blk % 2 == 0 {
+                            loop { if pk_blk[0] >= blk { break }; fence }
+                            preload!(b, 0)
+                            preload!(b + 1, 1)
+                            restore_unpack!()
+                            ld_blk[0] = blk + 2
+                        }
+                    } else {
+                        loop { if pk_blk[0] >= blk { break }; fence }
+                        if blk % 2 { preload!(b, 1) } else { preload!(b, 0) }
+                        restore_unpack!()
+                        ld_blk[0] = blk + 1
+                    }
+                }
+                blk = blk + 1
+                for k in 0..SG {
+                    // SrcA: faces 2 kh, 2 kh + 1 of the block's two weight tiles at K tile k; SrcB: faces kh, kh + 2
+                    // of the two panel tiles, which sit next to each other.
+                    unpack.base a, tileptr(wbuf, (((wseg * NSLOT + slot) * BLK + b) * 2) * SG + k), ctx=0, stream
+                    unpack.base a, tileptr(wbuf, (((wseg * NSLOT + slot) * BLK + b) * 2 + 1) * SG + k), ctx=1, stream
+                    unpack.base b, tileptr(abuf, (slot * SG + k) * 2), stream
+                    repeat h in 0..2 {
+                        unpack.zw a, zin=2 * h, zout=0
+                        unpack.face a, ctx=0, next_tile_face
+                        unpack.face a, ctx=0, next_tile_face
+                        unpack.zw a, zin=2 * h, zout=2
+                        unpack.face a, ctx=1, next_tile_face
+                        unpack.face a, ctx=1, next_tile_face, dvalid
+                        unpack.zw b, zin=h, zout=0
+                        repeat 3 { unpack.face b, zin=2, zout=1 }
+                        unpack.face b, zin=2, zout=1, dvalid
+                    }
+                }
+            }
+            tensix.stall sync, unpack0|unpack1
+            tensix.wait
+            consumed[0] = s + 1
+        }
+        for i in 0..NSLOT { a_flag[4 * i] = 0 }
+        // Only this segment's flags: the other segments' (multicast here too, never read) may still be landing.
+        for i in 0..NSLOT * BLK { w_flag[4 * (wseg * NSLOT * BLK + i)] = 0 }
+    }
+}
+
+// One k-step: 32 MVMULs, eight 8-row groups g of the activation panel (SrcB rows 8g) by four 16-column groups j of
+// the weight panel (SrcA rows 16j), into Dst tile (g / 4) * 2 + j / 2, face ((g % 4) / 2) * 2 + j % 2, rows (g % 2) * 8.
+replay mm {
+    math.mvmul dst[0], addr=p_g; math.mvmul dst[8], addr=p_g; math.mvmul dst[32], addr=p_g; math.mvmul dst[40], addr=p_g
+    math.mvmul dst[128], addr=p_g; math.mvmul dst[136], addr=p_g; math.mvmul dst[160], addr=p_g; math.mvmul dst[168], addr=p_j
+    math.mvmul dst[16], addr=p_g; math.mvmul dst[24], addr=p_g; math.mvmul dst[48], addr=p_g; math.mvmul dst[56], addr=p_g
+    math.mvmul dst[144], addr=p_g; math.mvmul dst[152], addr=p_g; math.mvmul dst[176], addr=p_g; math.mvmul dst[184], addr=p_j
+    math.mvmul dst[64], addr=p_g; math.mvmul dst[72], addr=p_g; math.mvmul dst[96], addr=p_g; math.mvmul dst[104], addr=p_g
+    math.mvmul dst[192], addr=p_g; math.mvmul dst[200], addr=p_g; math.mvmul dst[224], addr=p_g; math.mvmul dst[232], addr=p_j
+    math.mvmul dst[80], addr=p_g; math.mvmul dst[88], addr=p_g; math.mvmul dst[112], addr=p_g; math.mvmul dst[120], addr=p_g
+    math.mvmul dst[208], addr=p_g; math.mvmul dst[216], addr=p_g; math.mvmul dst[240], addr=p_g; math.mvmul dst[248], addr=p_end
+}
+
+mop kstep, outer=1, inner=PHASES {
+    loop0: replay.run mm
+    end0: math.rwc reset, release=a|b
+}
+
+// l0 = e^l0. Needs l4 = 127.0, l5 = c1, l6 = c0, l12 = log2(e), l13 = c2; clobbers l1-l3 (prefill/projection.ttrv).
+macro exp_l0() {
+    sfp.mad l3, l0, l12, l4
+    sfp.li l1, 255.0
+    sfp.minmax l3, l1
+    sfp.exexp l1, l3
+    sfp.exman l0, l3
+    sfp.shift l0, l0, l1
+    sfp.exman l1, l0, hidden=0
+    sfp.cast l1, l1
+    sfp.mad l2, l1, l13, l5
+    sfp.mad l1, l2, l1, l6
+    sfp.if l3 <= zero { sfp.mov l0, zero }
+    sfp.setexp l0, l1, l0, from=fp32
+}
+
+// SwiGLU, part 1, gate in Dst half 0 and up in half 1: up becomes gate * up, gate becomes e^-gate.
+macro swiglu_exp() {
+    sfp.load l0, dst[0], fmt=fp32
+    sfp.load l7, dst[4 * dst.tile], fmt=fp32
+    sfp.mul l7, l7, l0
+    sfp.nop
+    sfp.store dst[4 * dst.tile], l7, fmt=fp32
+    sfp.mul l0, l0, neg_one
+    exp_l0!()
+    sfp.store dst[0], l0, fmt=fp32, addr=sfp_step
+}
+
+// Part 2: gate * up / (1 + e^-gate) into half 0.
+macro swiglu_combine() {
+    sfp.load l0, dst[0], fmt=fp32
+    sfp.addi l0, l0, 1.0
+    sfp.recip l1, l0
+    sfp.mad l2, l0, l1, one, neg_ab
+    sfp.mad l3, l2, l2, l2
+    sfp.mad l3, l3, l2, l2
+    sfp.minmax l3, one
+    sfp.mad l0, l3, l1, l1
+    sfp.load l4, dst[4 * dst.tile], fmt=fp32
+    sfp.mul l4, l4, l0
+    sfp.nop
+    sfp.store dst[0], l4, fmt=fp32, addr=sfp_step
+}
+
+fn trisc1() {
+    // Both threads must initialize the semaphore; TRISC2 goes first, then TRISC1 (before it posts anything).
+    loop { if sem_ready[0] { break }; fence }
+    sem.init ready, max=2
+    sem_ready[0] = 0
+    math.fmt dst=fp32, sfp=fp32
+    math.cfg dst_offset=0
+    math.addrmod p_g, slot=1, srcb+=8
+    math.addrmod p_j, slot=2, srcb=0, srca+=16
+    math.addrmod p_end, slot=3, srca=0, srcb=0, fidelity+=1
+    math.addrmod sfp_step, slot=6, dst+=2
+    if SWIGLU {
+        sfp.const l12, 1.4426950216293335    // log2(e)
+        sfp.const l13, 4.791750143340323e-15
+    }
+    replay.load mm
+    mop.load kstep
+    blk = 0
+    if active {
+        for s in 0..SLABS {
+            for b in 0..nblk {
+                half = blk % 2
+                // A SWIGLU unit's gate and up blocks share one semaphore post in the last slab.
+                if s < SLABS - 1 || SWIGLU == 0 || half == 0 { sem.stall math|sync, ready, notmax }
+                // ZEROACC's faces count from the base of the half the math offset points into: offset first.
+                math.cfg dst_offset=half * 256
+                if s == SLABS - 1 {
+                    loop { if ld_blk[0] > blk { break }; fence }   // the partial is in this half already
+                } else {
+                    repeat f in 0..16 { math.zero face=f, fmt=fp32 }
+                }
+                math.rwc reset
+                for k in 0..2 * SG { mop.run kstep }
+                tensix.stall sync, math
+                if SWIGLU && s == SLABS - 1 {
+                    if half {
+                        math.cfg dst_offset=0
+                        math.rwc reset
+                        sfp.li l4, 127.0
+                        sfp.li l5, 7.839635491371155e-08
+                        sfp.li l6, 1.0017248
+                        repeat t in 0..4 { loop 32 { swiglu_exp!() } }
+                        math.rwc reset
+                        tensix.stall sync, sfpu
+                        repeat t in 0..4 { loop 32 { swiglu_combine!() } }
+                        math.rwc reset
+                        tensix.stall sync, math|sfpu
+                        sem.inc ready
+                    }
+                } else {
+                    sem.inc ready
+                }
+                blk = blk + 1
+            }
+        }
+    }
+    ld_blk[0] = 0
+}
+
+// Block b's FP32 partial: the first slab writes it, later ones add to it.
+macro pack_block(half, accumulate) {
+    repeat t in 0..4 {
+        if accumulate {
+            pack.move cblk + (b * 4 + t) * 1024, dst[half * 256 + t * 64], acc
+        } else {
+            pack.move cblk + (b * 4 + t) * 1024, dst[half * 256 + t * 64]
+        }
+    }
+}
+
+macro pack_out(half) {
+    repeat t in 0..4 { pack.move obuf + ((b / HALVES) * 4 + t) * 1024, dst[half * 256 + t * 64] }
+}
+
+fn trisc2() {
+    sem.init ready, max=2
+    sem_ready[0] = 1
+    pack.fmt in=fp32, out=fp32
+    blk = 0
+    if active {
+        for s in 0..SLABS {
+            if s == SLABS - 1 {
+                pack.fmt in=bf16, out=bf16
+                for b in 0..nblk {
+                    if SWIGLU == 0 || b % 2 == 1 {
+                        sem.stall tdma|pack|sync, ready, nonzero
+                        // With SWIGLU the unit's result is in half 0 (its gate block's half).
+                        if SWIGLU { pack_out!(0) } else { if blk % 2 { pack_out!(1) } else { pack_out!(0) } }
+                        tensix.stall sync, pack0
+                        tensix.wait
+                        sem.dec ready
+                        pk_blk[0] = blk + 1
+                        packed[0] = b / HALVES + 1
+                    }
+                    blk = blk + 1
+                }
+                pack.fmt in=fp32, out=fp32
+            } else {
+                for b in 0..nblk {
+                    sem.stall tdma|pack|sync, ready, nonzero
+                    if s == 0 {
+                        if blk % 2 { pack_block!(1, 0) } else { pack_block!(0, 0) }
+                    } else {
+                        if blk % 2 { pack_block!(1, 1) } else { pack_block!(0, 1) }
+                    }
+                    tensix.stall sync, pack0
+                    tensix.wait
+                    sem.dec ready
+                    blk = blk + 1
+                    pk_blk[0] = blk
+                }
+            }
+        }
+    }
+    pk_blk[0] = 0
+    // Back to the boot state (max 1): kernels with a max=1 semaphore rely on it without initializing it.
+    sem.init ready, max=1
+}
+
+// Write output unit j's four tiles (panels p0 and p1, its two output columns) into the panel tiles of its output.
+macro write_unit(j) {
+    repeat t in 0..4 {
+        p = p0 + t / 2
+        if t < 2 || p0 + 1 < PANELS {
+            oc = 2 * (u0 + j) + t % 2
+            o = obuf + (j * 4 + t) * 1024
+            if SWIGLU {
+                noc.write output[(p * NOUT + oc) * 1024], o, n=1024, tid=wr
+            } else {
+            if THIRD {
+                if oc >= (N - THIRD) / 32 {
+                    noc.write output3[(p * (THIRD / 32) + oc - (N - THIRD) / 32) * 1024], o, n=1024, tid=wr
+                } else {
+                    if oc >= (N - THIRD - SECOND) / 32 {
+                        noc.write output2[(p * (SECOND / 32) + oc - (N - THIRD - SECOND) / 32) * 1024], o, n=1024, tid=wr
+                    } else { noc.write output[(p * ((N - SECOND - THIRD) / 32) + oc) * 1024], o, n=1024, tid=wr }
+                }
+            } else {
+                if SECOND {
+                    if oc >= (N - SECOND) / 32 {
+                        noc.write output2[(p * (SECOND / 32) + oc - (N - SECOND) / 32) * 1024], o, n=1024, tid=wr
+                    } else { noc.write output[(p * ((N - SECOND) / 32) + oc) * 1024], o, n=1024, tid=wr }
+                } else { noc.write output[(p * (N / 32) + oc) * 1024], o, n=1024, tid=wr }
+            }
+            }
+        }
+    }
+}
+
+// NCRISC multicasts this worker's weight blocks down the segment as BRISC reads them, each followed by its flag, and
+// credits the senders of slab t once slab t - NSLOT is unpacked here; then it writes the outputs.
+fn ncrisc() {
+    wr = noc.group write
+    m = noc.group mcast
+    ci = noc.group inc
+    if active {
+        sent = 0
+        ms = 0              // slab of the next multicast
+        mb = lrow           // its block
+        cs = 1              // slab cs - 1 unpacked here releases credits for slab cs + NSLOT - 1
+        loop {
+            busy = 0
+            if ms < SLABS {
+                busy = 1
+                if mb >= nblk {
+                    ms = ms + 1
+                    mb = (lrow + R - ms % R) % R
+                } else {
+                    if staged[0] > sent {
+                        sent = sent + 1
+                        slot = ms % NSLOT
+                        if R > 1 {
+                            noc.wait m, sent          // the previous flag's source word has left
+                            one[4] = ms + 1
+                            fence
+                            w_flag[4 * ((wseg * NSLOT + slot) * BLK + mb)] = ms + 1
+                            repeat h in 0..2 {
+                                noc.mcast rect(core.x, wy0, core.x, wy0 + WROWS - 1, tileptr(wbuf, (((wseg * NSLOT + slot) * BLK + mb) * 2 + h) * SG)), tileptr(wbuf, (((wseg * NSLOT + slot) * BLK + mb) * 2 + h) * SG), n=SG * PANEL, tid=m
+                            }
+                            // Same route and virtual channel as the data, so the flag lands after it.
+                            noc.mcast rect(core.x, wy0, core.x, wy0 + WROWS - 1, w_flag + 4 * ((wseg * NSLOT + slot) * BLK + mb)), one + 4, n=1, tid=m
+                        } else {
+                            w_flag[4 * ((wseg * NSLOT + slot) * BLK + mb)] = ms + 1
+                        }
+                        mb = mb + R
+                    }
+                }
+            }
+            if cs + NSLOT - 1 < SLABS {
+                busy = 1
+                if consumed[0] >= cs {
+                    t = cs + NSLOT - 1
+                    noc.inc remote((1 - ILEAVE) * (t % COLS), ya, a_cred + 4 * (t % NSLOT)), by=1, ret=ack, tid=ci
+                    for r in 0..R { noc.inc remote(core.x, wfirst + r * RSTEP, w_cred + 4 * (t % NSLOT)), by=1, ret=ack, tid=ci }
+                    noc.wait ci
+                    cs = cs + 1
+                }
+            }
+            if busy == 0 { break }
+            fence
+        }
+        noc.wait m
+        // Outputs, unit by unit as they are packed.
+        for j in 0..nu {
+            loop { if packed[0] > j { break }; fence }
+            write_unit!(j)
+        }
+        noc.wait wr
+        loop { if consumed[0] >= SLABS { break }; fence }
+    }
+    packed[0] = 0
+    consumed[0] = 0
+    staged[0] = 0
+}

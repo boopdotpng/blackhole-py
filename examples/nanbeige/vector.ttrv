@@ -1,0 +1,153 @@
+// Dense BF16 token operations. Each worker writes up to 1024 consecutive elements.
+// RMSNorm streams the whole token through Dst before applying this worker's gamma slice.
+const DIM = 7168
+const RMS = 0
+const SWIGLU = 0
+const PACKED_SHARD = 0
+if PACKED_SHARD { l1 packed_shard: bf16[1024], at=PACKED_SHARD }
+const RESIDUAL = 0
+if RESIDUAL { l1 shard: bf16[1024], at=RESIDUAL }
+const PACKED = RMS + SWIGLU
+const EPS = 1e-5
+const TILES = (DIM + 1023) / 1024
+const ROW_LANES = 1
+grid TILES * ROW_LANES
+param x: bf16[]
+param other: bf16[]  // gamma, up projection, or residual
+param output: bf16[]
+shared {
+    token_base = (core.id / TILES) * TILES * 1024
+    first = (core.id % TILES) * 1024
+    count = 1024 - (core.id % TILES == TILES - 1) * (TILES * 1024 - DIM)
+}
+cb inputs: bf16[1024], pages=2
+cb result: bf16[1024], pages=1
+if PACKED { l1 row: bf16[1024] }
+sem ready = math_pack, max=1
+const GAMMA = dst.tile
+include ../common/vector_math
+
+fn brisc() {
+    if RMS {
+        for i in 0..TILES {
+            p = cb.reserve inputs
+            if RESIDUAL { noc.read p, remote(i / 10, i % 10, shard), n=1024, wait }
+            else { noc.read p, x[token_base + i * 1024], n=1024, wait }
+            cb.push inputs
+        }
+    }
+    a = cb.reserve inputs
+    if RESIDUAL && RMS { noc.read a, remote(core.x, core.y, shard), n=count, wait }
+    else { noc.read a, x[token_base + first], n=count, wait }
+    cb.push inputs
+    b = cb.reserve inputs
+    if RESIDUAL && (1 - RMS) { noc.read b, remote(core.x, core.y, shard), n=count, wait }
+    else { noc.read b, other[(1 - RMS) * token_base + first], n=count, wait }
+    cb.push inputs
+}
+
+fn trisc0() {
+    unpack.fmt a, in=bf16
+    loop 2 + RMS * TILES {
+        p = cb.wait inputs
+        unpack.move a, p, dvalid
+        tensix.wait
+        cb.pop inputs
+    }
+}
+
+fn trisc1() {
+    math.fmt dst=fp32, sfp=fp32
+    math.addrmod step, slot=1, srca+=8, dst+=8
+    if RMS {
+        replay.load square
+        sfpmacro.load rms_scale
+        replay.load rms_apply
+        sfp.li l0, 0.0
+        loop TILES {
+            copy_tile!(0)
+            select_tile!(0)
+            faces!(square, 8)
+        }
+        reduce_lanes!()
+        sfp.li l4, 1.0 / DIM
+        sfp.mul l0, l0, l4
+        sfp.li l4, EPS
+        sfp.add l0, l0, l4; sfp.nop
+        rsqrt!()
+    }
+    copy_tile!(0)
+    copy_tile!(1)
+    select_tile!(0)
+    if RMS { faces!(rms_apply, 4) }
+    if SWIGLU {
+        sfp.const l12, 1.4426950216293335    // log2(e); overwrites l0
+        sfp.const l13, 4.791750143340323e-15
+        sfp.li l4, 127.0
+        sfp.li l5, 7.839635491371155e-08
+        sfp.li l6, 1.0017248
+        // These bodies exceed the replay buffer; loop on the TRISC instead.
+        loop 4 {
+            loop 8 { silu_exp!() }
+            math.rwc dst=cr+8
+            math.rwc dst=cr+8
+        }
+        math.rwc dst=0
+        tensix.stall sync, math|sfpu
+        loop 4 {
+            loop 8 { silu_combine!() }
+            math.rwc dst=cr+8
+            math.rwc dst=cr+8
+        }
+        math.rwc dst=0
+        tensix.stall sync, math|sfpu
+    }
+    if RMS + SWIGLU == 0 {
+        loop 4 {
+            loop 8 {
+                sfp.load l0, dst[0], fmt=fp32
+                sfp.load l1, dst[dst.tile], fmt=fp32
+                sfp.add l0, l0, l1; sfp.nop
+                sfp.store dst[0], l0, fmt=fp32
+                math.rwc dst+=2
+            }
+            math.rwc dst=cr+8
+            math.rwc dst=cr+8
+        }
+    }
+    tensix.stall sync, math|sfpu
+    sem.inc ready
+}
+
+fn trisc2() {
+    pack.fmt in=fp32, out=bf16
+    sem.stall tdma|pack|sync, ready, nonzero
+    p = cb.reserve result
+    pack.move p, dst[0]
+    tensix.stall sync, pack0
+    tensix.wait
+    cb.push result
+    sem.dec ready
+}
+
+fn ncrisc() {
+    r = cb.wait result
+    if PACKED {
+        // Put the two 16-wide halves 256 elements apart for the matrix unit's face layout.
+        for k in 0..count / 32 {
+            offset = (k / 16) * 512 + (k & 15) * 16
+            repeat i in 0..16 {
+                row[offset + i] = r[k * 32 + i]
+                row[offset + 256 + i] = r[k * 32 + i + 16]
+            }
+        }
+        // A partial last block still spans 512 elements: its high halves start 256 in. The output buffer must reach
+        // the end of that block.
+        if PACKED_SHARD { noc.write remote(core.x, core.y, packed_shard), row, n=(count + 511) / 512 * 512, wait }
+        else { noc.write output[token_base + first], row, n=(count + 511) / 512 * 512, wait }
+    } else {
+        if RESIDUAL { noc.write remote(core.x, core.y, shard), r, n=count, wait }
+        else { noc.write output[token_base + first], r, n=count, wait }
+    }
+    cb.pop result
+}

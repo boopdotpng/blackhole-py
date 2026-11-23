@@ -1,0 +1,144 @@
+// Inkling query preparation (reference.attention, before the cache):
+//   q = l2clip(q * q_scale, Q_CLIP) / sqrt(HEAD_DIM)  per 128-value head (the attention kernel's softmax scale)
+//   r = l2clip(r * rel_scale, R_CLIP)                  per 16-value head
+//   l2clip(x, c) = x * min(c / (|x| + 1e-6), 1)
+// from the q projection output (q | gate | r | sink). Workers 0..2 take q pages (8 heads each); worker 3 takes the
+// page holding r, whose 16-value heads are single Dst rows (eight even and eight odd columns per SFPU address pair).
+const HEAD_DIM = 128
+const H = 24                         // query heads on this card
+const Q_PAGES = (H * HEAD_DIM + 1023) / 1024
+const R_PAGE = 2 * H * HEAD_DIM / 1024   // r follows q and the gate logits
+const Q_CLIP = 22.627416997969522
+const R_CLIP = 8.0
+grid Q_PAGES + 1
+
+param proj: bf16[]       // the q projection output
+param q_scale: bf16[]    // [Q_PAGES * 1024]
+param r_scale: bf16[]    // [1024]: 384 valid, zeros after
+param q_out: bf16[]      // [Q_PAGES * 1024]
+param r_out: bf16[]      // [1024]
+
+shared {
+    is_r = core.id == Q_PAGES
+    page = core.id + (R_PAGE - Q_PAGES) * is_r
+}
+
+cb inputs: bf16[1024], pages=2
+cb result: bf16[1024], pages=1
+sem ready = math_pack, max=1
+
+include ../common/copy_tile
+include math
+
+// l0 = min(clip / (sqrt(l0) + 1e-6), 1) * post for the sum of squares in l0. Clobbers l1-l3.
+macro clip_factor(clip, post) {
+    sfp.li l1, 1e-30
+    sfp.add l0, l0, l1; sfp.nop
+    sfp.mov l7, l0
+    rsqrt_l0!()
+    sfp.mul l0, l0, l7; sfp.nop          // sqrt
+    sfp.li l1, 1e-6
+    sfp.add l0, l0, l1; sfp.nop
+    recip_l0!()
+    sfp.li l1, clip
+    sfp.mul l0, l0, l1; sfp.nop
+    sfp.minmax l0, one                   // l0 = min(l0, 1)
+    sfp.li l1, post
+    sfp.mul l0, l0, l1; sfp.nop
+}
+
+fn brisc() {
+    p = cb.reserve inputs, n=2
+    t = noc.read p, proj[page * 1024], n=1024
+    if is_r { noc.read p + 1024, r_scale[0], n=1024, tid=t }
+    else { noc.read p + 1024, q_scale[page * 1024], n=1024, tid=t }
+    noc.wait t
+    cb.push inputs, n=2
+}
+
+fn trisc0() {
+    unpack.fmt a, in=bf16
+    p = cb.wait inputs, n=2
+    unpack.move a, p, dvalid
+    unpack.move a, p + 1024, dvalid
+    tensix.wait
+    cb.pop inputs, n=2
+}
+
+fn trisc1() {
+    math.fmt dst=fp32, sfp=fp32
+    math.cfg dst_offset=0
+    replay.load copy_rows
+    sem.stall math|sfpu|sync, ready, notmax
+    copy_tile!(0)
+    copy_tile!(1)
+    tensix.stall sfpu, math
+    math.rwc reset
+    loop 32 {
+        sfp.load l0, dst[0], fmt=fp32
+        sfp.load l1, dst[dst.tile], fmt=fp32
+        sfp.mul l0, l0, l1; sfp.nop
+        sfp.store dst[0], l0, fmt=fp32
+        math.rwc dst+=2
+    }
+    math.rwc reset
+    if is_r {
+        // Per Dst row: the even and odd column sums of squares.
+        loop 16 {
+            sfp.load l0, dst[0], fmt=fp32
+            sfp.mul l0, l0, l0; sfp.nop
+            row_sum_l0!()
+            sfp.mov l6, l0
+            sfp.load l0, dst[2], fmt=fp32
+            sfp.mul l0, l0, l0; sfp.nop
+            row_sum_l0!()
+            sfp.add l0, l0, l6; sfp.nop
+            clip_factor!(R_CLIP, 1.0)
+            sfp.load l1, dst[0], fmt=fp32
+            sfp.mul l1, l1, l0; sfp.nop
+            sfp.store dst[0], l1, fmt=fp32
+            sfp.load l1, dst[2], fmt=fp32
+            sfp.mul l1, l1, l0; sfp.nop
+            sfp.store dst[2], l1, fmt=fp32
+            math.rwc dst+=4
+        }
+    } else {
+        // Per head: addresses 8h + {0, 2, 4, 6}.
+        loop 8 {
+            sfp.li l0, 0.0
+            repeat i in 0..4 {
+                sfp.load l1, dst[2 * i], fmt=fp32
+                sfp.mad l0, l1, l1, l0; sfp.nop
+            }
+            reduce_lanes!()
+            clip_factor!(Q_CLIP, 1.0 / sqrt(HEAD_DIM))
+            repeat i in 0..4 {
+                sfp.load l1, dst[2 * i], fmt=fp32
+                sfp.mul l1, l1, l0; sfp.nop
+                sfp.store dst[2 * i], l1, fmt=fp32
+            }
+            math.rwc dst+=8
+        }
+    }
+    math.rwc reset
+    tensix.stall sync, math|sfpu
+    sem.inc ready
+}
+
+fn trisc2() {
+    pack.fmt in=fp32, out=bf16
+    sem.stall tdma|pack|sync, ready, nonzero
+    p = cb.reserve result
+    pack.move p, dst[0]
+    tensix.stall sync, pack0
+    tensix.wait
+    cb.push result
+    sem.dec ready
+}
+
+fn ncrisc() {
+    r = cb.wait result
+    if is_r { noc.write r_out[0], r, n=1024, wait }
+    else { noc.write q_out[page * 1024], r, n=1024, wait }
+    cb.pop result
+}

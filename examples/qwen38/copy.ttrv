@@ -1,0 +1,27 @@
+// Copy `runs` runs of `count` elements between DRAM buffers: run r reads src[src_at + r * stride ..] and writes
+// dst[dst_at + r * stride ..]. Moves per-slot recurrent state and KV cache blocks between the batched decode's slots
+// and the single-sequence prompt buffers (examples/qwen38_batch.py). Offsets and counts are multiples of CHUNK.
+type T = bf16
+const CHUNK = 8192
+const WORKERS = 128
+grid WORKERS
+
+param src: T[]
+param dst: T[]
+param src_at: u32
+param dst_at: u32
+param runs: u32
+param stride: u32
+param count: u32
+
+l1 buf: T[CHUNK]
+
+fn brisc() {
+    per = count / CHUNK
+    for j in 0..(runs * per + WORKERS - 1 - core.id) / WORKERS {
+        c = core.id + j * WORKERS
+        at = (c / per) * stride + (c % per) * CHUNK
+        noc.read buf, src[src_at + at], n=CHUNK, wait
+        noc.write dst[dst_at + at], buf, n=CHUNK, wait
+    }
+}

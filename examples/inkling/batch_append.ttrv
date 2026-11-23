@@ -1,0 +1,54 @@
+// Append each active row's k and v rows (one per KV head, from batch_prep.ttrv) to its slot's caches at its position,
+// before batch_attention.ttrv reads them. Rows from the host step table (see batch_attention.ttrv). Cache layout as
+// attention.ttrv per slot: per KV head BLOCKS blocks of HEAD_TILES tiles (32 tokens x 32 features); a SLIDING layer's
+// caches are rings of BLOCKS blocks (block b of the sequence at b % BLOCKS).
+const ROWS = 32
+const WORKERS = 128
+grid WORKERS
+const HEAD_TILES = 4
+const HEAD_DIM = HEAD_TILES * 32
+const KV_HEADS = 8
+const BLOCKS = 64
+const SLOT_ELEMS = KV_HEADS * BLOCKS * HEAD_TILES * 1024
+const KV_STEP = 1024        // row pitch of k_in and v_in
+
+param k_in: bf16[]
+param v_in: bf16[]
+param key_cache: bf16[]
+param value_cache: bf16[]
+param table: u32[]          // the step table, staged in DRAM by batch_embedding.ttrv
+
+l1 meta: u32[16]
+l1 rows: bf16[2 * HEAD_DIM]
+l1 kt: bf16[HEAD_TILES * 1024]
+l1 vt: bf16[HEAD_TILES * 1024]
+
+fn brisc() {
+    for j in 0..(ROWS * KV_HEADS + WORKERS - 1 - core.id) / WORKERS {
+        u = core.id + j * WORKERS
+        row = u / KV_HEADS
+        head = u % KV_HEADS
+        noc.read meta, table[row * 16], n=16, wait
+        if meta[1] {
+            pos = meta[0]
+            t = noc.read rows, k_in[row * KV_STEP + head * HEAD_DIM], n=HEAD_DIM
+            noc.read rows + HEAD_DIM, v_in[row * KV_STEP + head * HEAD_DIM], n=HEAD_DIM, tid=t
+            noc.wait t
+            r = pos & 31
+            at = meta[2] * SLOT_ELEMS + (head * BLOCKS + (pos / 32) % BLOCKS) * HEAD_TILES * 1024
+            // Row r of tile f: features 32 f .. 32 f + 15 in the left face, the next 16 in the right one. The staging
+            // tiles keep the cache's offsets, so L1 and DRAM addresses agree modulo 64.
+            cw = noc.group write
+            for f in 0..HEAD_TILES {
+                for h in 0..2 {
+                    a = f * 1024 + (r >> 4) * 512 + h * 256 + (r & 15) * 16
+                    l1.copy_words kt + a, rows + f * 32 + h * 16, n=8
+                    l1.copy_words vt + a, rows + HEAD_DIM + f * 32 + h * 16, n=8
+                    noc.write key_cache[at + a], kt + a, n=16, tid=cw
+                    noc.write value_cache[at + a], vt + a, n=16, tid=cw
+                }
+            }
+            noc.wait cw
+        }
+    }
+}

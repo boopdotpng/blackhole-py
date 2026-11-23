@@ -1,0 +1,152 @@
+// Batched Qwen3.8 gated delta-net decode, step 1 of 3: gdn_conv.ttrv for one token per row, every row its own
+// sequence. Row r's (pos, active, slot) come from the host step table (see ../batch/attention.ttrv); the four-row
+// history ring of slot s is history[s * 4 * CHANNELS ..], laid out as gdn_conv.ttrv's. Inactive rows do nothing.
+//
+// Grid: LANES lanes of CHANNELS / 1024 workers; lane l serves rows l, l + LANES, ...
+// BRISC copies the whole table into L1 and bumps `ready`; the other RISCs wait for it to move past the count they
+// saw last launch, then walk the same rows.
+
+const CHANNELS = 10240
+const PAGES = CHANNELS / 1024
+const ROWS = 64
+const LANES = 13
+grid LANES * PAGES
+
+param qkv: bf16[]       // [ROWS, CHANNELS] raw in_proj_qkv rows
+param taps: bf16[]      // [4][CHANNELS], tap 3 is the current token
+param history: bf16[]   // [slots][4][CHANNELS]
+param output: bf16[]    // [ROWS, CHANNELS]
+param table: u32[]       // the step table, staged in DRAM (stage_table.ttrv)
+
+shared {
+    first = (core.id % PAGES) * 1024
+    lane = core.id / PAGES
+    turns = (ROWS + LANES - 1 - lane) / LANES
+}
+
+cb inputs: bf16[1024], pages=8
+cb result: bf16[1024], pages=1
+sem ready = math_pack, max=1
+
+l1 meta: u32[ROWS * 16]
+l1 published: u32[4], keep
+l1 seen0: u32[4], keep
+l1 seen1: u32[4], keep
+l1 seen2: u32[4], keep
+l1 seen3: u32[4], keep
+
+include ../common/copy_tile
+include gdn_math
+
+macro conv_step() {
+    sfp.load l0, dst[0], fmt=fp32
+    sfp.load l1, dst[7 * dst.tile], fmt=fp32
+    sfp.mul l7, l0, l1; sfp.nop
+    repeat i in 0..3 {
+        sfp.load l0, dst[(1 + i) * dst.tile], fmt=fp32
+        sfp.load l1, dst[(4 + i) * dst.tile], fmt=fp32
+        sfp.mad l7, l0, l1, l7; sfp.nop
+    }
+    sfp.mul l0, l7, neg_one; sfp.nop
+    exp_l0!()
+    sfp.addi l0, l0, 1.0; sfp.nop
+    recip_l0!()
+    sfp.mul l0, l0, l7; sfp.nop
+    sfp.rnd l0, l0, to=bf16
+    sfp.store dst[0], l0, fmt=fp32
+    math.rwc dst+=2
+}
+
+fn brisc() {
+    noc.read meta, table[0], n=ROWS * 16, wait
+    fence
+    published[0] = published[0] + 1
+    for k in 0..turns {
+        row = lane + k * LANES
+        if meta[row * 16 + 1] {
+            pos = meta[row * 16]
+            ring = meta[row * 16 + 2] * 4 * CHANNELS + first
+            p = cb.reserve inputs, n=8
+            t = noc.read p, qkv[row * CHANNELS + first], n=1024
+            for i in 0..3 {
+                if pos + i >= 3 {
+                    noc.read p + (1 + i) * 1024, history[ring + ((pos + 1 + i) & 3) * CHANNELS], n=1024, tid=t
+                } else {
+                    h = p + (1 + i) * 1024
+                    for j in 0..1024 { h[j] = 0.0 }
+                }
+            }
+            for i in 0..4 { noc.read p + (4 + i) * 1024, taps[i * CHANNELS + first], n=1024, tid=t }
+            noc.wait t
+            noc.write history[ring + (pos & 3) * CHANNELS], p, n=1024, wait
+            cb.push inputs, n=8
+        }
+    }
+}
+
+fn trisc0() {
+    loop { if published[0] != seen0[0] { break }; fence }
+    seen0[0] = published[0]
+    for k in 0..turns {
+        row = lane + k * LANES
+        if meta[row * 16 + 1] {
+            unpack.fmt a, in=bf16
+            p = cb.wait inputs, n=8
+            repeat t in 0..8 { unpack.move a, p + t * 1024, dvalid }
+            tensix.wait
+            cb.pop inputs, n=8
+        }
+    }
+}
+
+fn trisc1() {
+    loop { if published[0] != seen1[0] { break }; fence }
+    seen1[0] = published[0]
+    for k in 0..turns {
+        row = lane + k * LANES
+        if meta[row * 16 + 1] {
+            math.fmt dst=fp32, sfp=fp32
+            math.cfg dst_offset=0
+            replay.load copy_rows
+            sem.stall math|sfpu|sync, ready, notmax
+            repeat t in 0..8 { copy_tile!(t) }
+            tensix.stall sfpu, math
+            math.rwc reset
+            loop 32 { conv_step!() }
+            math.rwc reset
+            tensix.stall sync, math|sfpu
+            sem.inc ready
+        }
+    }
+}
+
+fn trisc2() {
+    loop { if published[0] != seen2[0] { break }; fence }
+    seen2[0] = published[0]
+    for k in 0..turns {
+        row = lane + k * LANES
+        if meta[row * 16 + 1] {
+            pack.fmt in=fp32, out=bf16
+            sem.stall tdma|pack|sync, ready, nonzero
+            p = cb.reserve result
+            pack.move p, dst[0]
+            tensix.stall sync, pack0
+            tensix.wait
+            cb.push result
+            sem.dec ready
+        }
+    }
+}
+
+fn ncrisc() {
+    loop { if published[0] != seen3[0] { break }; fence }
+    seen3[0] = published[0]
+    for k in 0..turns {
+        row = lane + k * LANES
+        if meta[row * 16 + 1] {
+            r = cb.wait result
+            noc.write output[row * CHANNELS + first], r, n=1024, wait
+            cb.pop result
+        }
+    }
+}

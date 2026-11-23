@@ -1,0 +1,128 @@
+// Qwen3.8 gated delta-net decode, step 3 of 3: the gated RMSNorm of each value head's output.
+//
+// Per value head h, over its 128 values (o already rounded to BF16 by gdn_state):
+//   out[i] = bf16(o[i] / sqrt(mean(o²) + 1e-6) * w[i] * z[i] * sigmoid(z[i]))
+//
+// Grid: 6 workers, 8 heads (1024 values) each. Pages are not tilized: head j of a page is elements 128j.., which the
+// unpacker places in face j / 2, rows (j % 2) * 8 .. + 8, i.e. SFPU addresses 8j + {0, 2, 4, 6}.
+// Dst tiles: 0 o (then the result), 1 z, 2 w (the 128 weights repeated 8 times by the host), 3 each head's scale at
+// its own four addresses, so both passes walk the tile with relative addresses.
+
+const HEADS = 48
+const EPS = 1e-6
+const ROWS = 1
+grid ROWS * HEADS * 128 / 1024
+
+param x: bf16[]          // gdn_state output [48 * 128]
+param z: bf16[]          // in_proj_z output [48 * 128]
+param gamma: bf16[]      // norm weight [128] tiled to [1024]
+param output: bf16[]     // [48 * 128]
+
+shared {
+    first = core.id * 1024
+}
+
+const PACKED = 1                             // output in the o projection's input order (else dense)
+cb inputs: bf16[1024], pages=3
+if PACKED { l1 row: bf16[1024] }
+cb result: bf16[1024], pages=1
+sem ready = math_pack, max=1
+
+include ../common/copy_tile
+include ../common/reduce_lanes
+include gdn_math
+
+// The head at the current Dst counter: 1 / sqrt(mean(o²) + eps) into tile 3 at its four addresses. Advances 8.
+macro head_scale() {
+    sfp.li l0, 0.0
+    repeat i in 0..4 {
+        sfp.load l1, dst[2 * i], fmt=fp32
+        sfp.mad l0, l1, l1, l0; sfp.nop
+    }
+    reduce_lanes!()
+    sfp.li l1, 1.0 / 128
+    sfp.li l2, EPS
+    sfp.mad l0, l0, l1, l2; sfp.nop
+    rsqrt_l0!()
+    repeat i in 0..4 { sfp.store dst[3 * dst.tile + 2 * i], l0, fmt=fp32 }
+    math.rwc dst+=8
+}
+
+// The SFPU address at the Dst counter: o * scale * w * silu(z). Advances 2.
+macro gate_step() {
+    sfp.load l0, dst[dst.tile], fmt=fp32
+    sfp.mov l7, l0
+    sfp.mul l0, l0, neg_one; sfp.nop
+    exp_l0!()
+    sfp.addi l0, l0, 1.0; sfp.nop
+    recip_l0!()
+    sfp.mov l2, l0                                             // sigmoid(z)
+    sfp.load l0, dst[0], fmt=fp32
+    sfp.load l1, dst[3 * dst.tile], fmt=fp32
+    sfp.mul l0, l0, l1; sfp.nop
+    sfp.load l1, dst[2 * dst.tile], fmt=fp32
+    sfp.mul l0, l0, l1; sfp.nop
+    sfp.mul l0, l0, l7; sfp.nop
+    sfp.mul l0, l0, l2; sfp.nop
+    sfp.rnd l0, l0, to=bf16
+    sfp.store dst[0], l0, fmt=fp32
+    math.rwc dst+=2
+}
+
+fn brisc() {
+    p = cb.reserve inputs, n=3
+    t = noc.read p, x[first], n=1024
+    noc.read p + 1024, z[first], n=1024, tid=t
+    noc.read p + 2048, gamma[0], n=1024, tid=t
+    noc.wait t
+    cb.push inputs, n=3
+}
+
+fn trisc0() {
+    unpack.fmt a, in=bf16
+    p = cb.wait inputs, n=3
+    repeat t in 0..3 { unpack.move a, p + t * 1024, dvalid }
+    tensix.wait
+    cb.pop inputs, n=3
+}
+
+fn trisc1() {
+    math.fmt dst=fp32, sfp=fp32
+    math.cfg dst_offset=0
+    replay.load copy_rows
+    sem.stall math|sfpu|sync, ready, notmax
+    repeat t in 0..3 { copy_tile!(t) }
+    tensix.stall sfpu, math
+    math.rwc reset
+    loop 8 { head_scale!() }
+    math.rwc reset
+    loop 32 { gate_step!() }
+    math.rwc reset
+    tensix.stall sync, math|sfpu
+    sem.inc ready
+}
+
+fn trisc2() {
+    pack.fmt in=fp32, out=bf16
+    sem.stall tdma|pack|sync, ready, nonzero
+    p = cb.reserve result
+    pack.move p, dst[0]
+    tensix.stall sync, pack0
+    tensix.wait
+    cb.push result
+    sem.dec ready
+}
+
+fn ncrisc() {
+    r = cb.wait result
+    if PACKED {
+        // In each 512-element block, the low 16 of every 32 values, then the high 16 (as nanbeige/vector.ttrv).
+        for k in 0..32 {
+            offset = (k / 16) * 512 + (k & 15) * 16
+            l1.copy_words row + offset, r + k * 32, n=8
+            l1.copy_words row + offset + 256, r + k * 32 + 16, n=8
+        }
+        noc.write output[first], row, n=1024, wait
+    } else { noc.write output[first], r, n=1024, wait }
+    cb.pop result
+}

@@ -1,0 +1,16 @@
+// Commit the last four inputs after every worker has consumed the previous ring.
+const ROWS = 8
+const PAGES = 3
+const Y_STEP = 3072
+const KEEP = 4
+grid KEEP * PAGES
+param y: bf16[]
+param history: bf16[]
+param pos: u32
+l1 page: bf16[1024]
+fn brisc() {
+    row = ROWS - KEEP + core.id / PAGES
+    offset = core.id % PAGES * 1024
+    noc.read page, y[row * Y_STEP + offset], n=1024, wait
+    noc.write history[((pos + row) & 3) * PAGES * 1024 + offset], page, n=1024, wait
+}

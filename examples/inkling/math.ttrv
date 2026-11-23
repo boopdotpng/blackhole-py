@@ -1,0 +1,108 @@
+// FP32 SFPU math shared by the Inkling kernels. Every macro works on l0 and documents what it clobbers.
+
+// Constants for exp_l0: l4 = 127, l5 = c1, l6 = c0, l12 = log2(e), l13 = c2.
+macro exp_setup() {
+    sfp.const l12, 1.4426950216293335
+    sfp.const l13, 4.791750143340323e-15
+    sfp.li l4, 127.0
+    sfp.li l5, 7.839635491371155e-08
+    sfp.li l6, 1.0017248
+}
+
+// l0 = exp(l0) (ttko exp; -inf and large negative inputs give 0). Needs exp_setup; clobbers l1-l3.
+macro exp_l0() {
+    alias x = l0
+    alias exponent = l1
+    alias poly = l2
+    alias xlog2 = l3
+    sfp.mad xlog2, x, l12, l4              // x log2(e) + 127
+    sfp.li exponent, 255.0
+    sfp.minmax xlog2, exponent             // xlog2 = min(xlog2, 255)
+    sfp.exexp exponent, xlog2
+    sfp.exman x, xlog2
+    sfp.shift x, x, exponent
+    sfp.exman exponent, x, hidden=0
+    sfp.cast exponent, exponent
+    sfp.mad poly, exponent, l13, l5
+    sfp.mad exponent, poly, exponent, l6
+    sfp.if xlog2 <= zero { sfp.li x, 0, fmt=u32 }
+    sfp.setexp x, exponent, x, from=fp32
+}
+
+// l0 = 1 / l0 for finite positive l0. Clobbers l1-l3.
+macro recip_l0() {
+    alias x = l0
+    alias y = l1
+    alias error = l2
+    alias correction = l3
+    sfp.recip y, x
+    sfp.mad error, x, y, one, neg_ab       // 1 - x y
+    sfp.mad correction, error, error, error
+    sfp.mad correction, correction, error, error
+    sfp.minmax correction, one             // correction = min(correction, 1)
+    sfp.mad x, correction, y, y
+}
+
+// l0 = 1 / sqrt(l0) for finite positive l0 (three Newton steps). Clobbers l1-l3.
+macro rsqrt_l0() {
+    sfp.mov l1, l0
+    sfp.shr l1, l1, 1
+    sfp.li l2, 0x5f3759df, fmt=u32
+    sfp.isub l1, l2, l1
+    sfp.li l2, -0.5
+    sfp.mul l0, l0, l2; sfp.nop
+    sfp.li l2, 1.5
+    repeat 3 {
+        sfp.mul l3, l0, l1; sfp.nop
+        sfp.mad l3, l3, l1, l2; sfp.nop
+        sfp.mul l1, l1, l3; sfp.nop
+    }
+    sfp.mov l0, l1
+}
+
+// l0 = sigmoid(l0) = 1 / (1 + exp(-l0)). Needs exp_setup; clobbers l1-l3.
+macro sigmoid_l0() {
+    sfp.mul l0, l0, neg_one; sfp.nop
+    sfp.li l1, 80.0
+    sfp.minmax l0, l1                      // exp argument at most 80: finite
+    exp_l0!()
+    sfp.addi l0, l0, 1.0; sfp.nop
+    recip_l0!()
+}
+
+// l0 = tanh(l0) = 1 - 2 / (exp(2 l0) + 1). Needs exp_setup; clobbers l1-l3.
+macro tanh_l0() {
+    sfp.add l0, l0, l0; sfp.nop
+    sfp.li l1, 80.0
+    sfp.minmax l0, l1                      // exp argument at most 80: finite
+    exp_l0!()
+    sfp.addi l0, l0, 1.0; sfp.nop
+    recip_l0!()
+    sfp.add l0, l0, l0; sfp.nop
+    sfp.mad l0, l0, neg_one, one; sfp.nop  // 1 - 2 / (e + 1)
+}
+
+// Reduce 32 lane sums in l0 to one value broadcast to every lane; clobbers l0-l3 and transposes l4-l7 (sfp.transp).
+macro reduce_lanes() {
+    repeat stage in 0..3 {
+        sfp.mov l1, l0
+        repeat 4 >> stage { sfp.shft2 l1, l1, rotate; sfp.nop }
+        sfp.add l0, l0, l1; sfp.nop
+    }
+    sfp.mov l1, l0
+    sfp.mov l2, l0
+    sfp.mov l3, l0
+    sfp.transp
+    sfp.add l0, l0, l1; sfp.nop
+    sfp.add l0, l0, l2; sfp.nop
+    sfp.add l0, l0, l3; sfp.nop
+}
+
+// Sum l0 within each eight-lane row (one Dst row of eight even or odd columns); clobbers l1.
+macro row_sum_l0() {
+    repeat stage in 0..3 {
+        sfp.mov l1, l0
+        repeat 4 >> stage { sfp.shft2 l1, l1, rotate; sfp.nop }
+        sfp.add l0, l0, l1; sfp.nop
+    }
+}

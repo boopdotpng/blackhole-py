@@ -1,0 +1,275 @@
+// Batched Qwen3.8 gated delta-net decode, step 2 of 3: gdn_state.ttrv for one token per row, every row its own
+// sequence. Row r's (pos, active, slot) come from the host step table (see ../batch/attention.ttrv). Slot s's FP32
+// recurrent state is state[s * HEADS * 16384 ..], laid out as gdn_state.ttrv's; position 0 starts from zero.
+//
+// Work: a job is one row's 64 value channels of one head (gdn_state.ttrv's worker), UNITS jobs per row. Worker w
+// takes jobs w, w + WORKERS, ..., so a step with n live rows (a prefix of the table) spreads n * UNITS jobs evenly.
+// Jobs of inactive rows do nothing. BRISC loads a job's q, k, v, a and b into L1 only after NCRISC has written
+// the previous job out (TRISC1 reads them directly as SFPU immediates).
+
+const HEADS = 48
+const UNITS = HEADS * 2
+const ROWS = 64
+const WORKERS = 128
+const INPUT_WIDTH = (HEADS / 3 * 2 + HEADS) * 128
+const SLOT_STATE = HEADS * 128 * 128
+grid WORKERS
+
+param conv: bf16[]       // [ROWS, INPUT_WIDTH] gdn_conv rows
+param ab: bf16[]         // [ROWS, 1024]: a at 0.., b at 64..
+param dynamics: bf16[]   // exp(A_log) [HEADS], dt_bias [HEADS]
+param state: fp32[]      // [slots][HEADS * 2][8192]
+param output: bf16[]     // [ROWS, HEADS * 128]
+param table: u32[]       // the step table, staged in DRAM (stage_table.ttrv)
+
+shared { jobs = (ROWS * UNITS + WORKERS - 1 - core.id) / WORKERS }
+
+l1 qk: bf16[256]
+l1 val: bf16[64]
+l1 abv: bf16[128]
+l1 dyn: bf16[2 * HEADS]
+l1 meta: u32[ROWS * 16]
+l1 published: u32[4], keep
+l1 seen0: u32[4], keep
+l1 seen1: u32[4], keep
+l1 seen2: u32[4], keep
+l1 seen3: u32[4], keep
+cb values: u32[1024], pages=1
+cb prior: fp32[4096], pages=2
+cb loaded: u32[16], pages=1
+cb updated: u32[16], pages=1
+cb packed: u32[16], pages=1
+cb new_state: fp32[4096], pages=2
+cb result: bf16[1024], pages=1
+cb written: u32[16], pages=1
+const V = 4 * dst.tile
+const SK = 5 * dst.tile
+const SQ = SK + 2
+const DECAY = SK + 4
+const BETA = SK + 6
+const SPILL = SK + 8
+include gdn_math
+
+// As gdn_state.ttrv; h is the caller's head.
+macro scalars() {
+    sfp.li l0, 0.0
+    sfp.li l2, 0.0
+    for i in 0..128 {
+        sfp.li l1, qk[i], fmt=bf16
+        sfp.mad l0, l1, l1, l0; sfp.nop
+        sfp.li l1, qk[128 + i], fmt=bf16
+        sfp.mad l2, l1, l1, l2; sfp.nop
+    }
+    sfp.store dst[SPILL], l2, fmt=fp32
+    sfp.li l1, 1e-6
+    sfp.add l0, l0, l1; sfp.nop
+    rsqrt_l0!()
+    sfp.li l1, 0.08838834765
+    sfp.mul l0, l0, l1; sfp.nop
+    sfp.store dst[SQ], l0, fmt=fp32
+    sfp.load l0, dst[SPILL], fmt=fp32
+    sfp.li l1, 1e-6
+    sfp.add l0, l0, l1; sfp.nop
+    rsqrt_l0!()
+    sfp.store dst[SK], l0, fmt=fp32
+    sfp.li l0, abv[h], fmt=bf16
+    sfp.li l1, dyn[h + HEADS], fmt=bf16
+    sfp.add l7, l0, l1; sfp.nop
+    sfp.abs l0, l7, float
+    sfp.mul l0, l0, neg_one; sfp.nop
+    exp_l0!()
+    sfp.store dst[SPILL], l0, fmt=fp32
+    sfp.addi l0, l0, 2.0; sfp.nop
+    recip_l0!()
+    sfp.load l1, dst[SPILL], fmt=fp32
+    sfp.mul l0, l0, l1; sfp.nop
+    sfp.mul l1, l0, l0; sfp.nop
+    sfp.li l2, 1.0 / 9
+    sfp.li l3, 1.0 / 7
+    sfp.mad l2, l2, l1, l3; sfp.nop
+    sfp.li l3, 1.0 / 5
+    sfp.mad l2, l2, l1, l3; sfp.nop
+    sfp.li l3, 1.0 / 3
+    sfp.mad l2, l2, l1, l3; sfp.nop
+    sfp.mad l2, l2, l1, one; sfp.nop
+    sfp.mul l0, l0, l2; sfp.nop
+    sfp.add l0, l0, l0; sfp.nop
+    sfp.li l2, 0.0
+    sfp.minmax l2, l7
+    sfp.add l0, l0, l7; sfp.nop
+    sfp.li l1, dyn[h], fmt=bf16
+    sfp.mul l0, l0, l1, neg; sfp.nop
+    exp_l0!()
+    sfp.store dst[DECAY], l0, fmt=fp32
+
+    sfp.li l0, abv[64 + h], fmt=bf16
+    sfp.mul l0, l0, neg_one; sfp.nop
+    exp_l0!()
+    sfp.addi l0, l0, 1.0; sfp.nop
+    recip_l0!()
+    sfp.store dst[BETA], l0, fmt=fp32
+}
+
+macro update_stripe(live, stripe) {
+    sfp.load l4, dst[SK], fmt=fp32
+    sfp.load l5, dst[SQ], fmt=fp32
+    sfp.load l6, dst[DECAY], fmt=fp32
+    sfp.load l7, dst[BETA], fmt=fp32
+    sfp.li l0, 0.0
+    if live {
+        for i in 0..128 {
+            sfp.li l1, qk[128 + i], fmt=bf16
+            sfp.mul l1, l1, l4; sfp.nop
+            sfp.load l2, dst[0], fmt=fp32
+            sfp.mad l0, l1, l2, l0; sfp.nop
+            math.rwc dst+=2
+        }
+        math.rwc reset
+    }
+    sfp.load l1, dst[V + 2 * stripe], fmt=fp32
+    sfp.mad l1, l0, l6, l1, neg_ab; sfp.nop
+    sfp.mul l7, l7, l1; sfp.nop
+    sfp.li l3, 0.0
+    for i in 0..128 {
+        sfp.li l1, qk[128 + i], fmt=bf16
+        sfp.mul l1, l1, l4; sfp.nop
+        sfp.mul l0, l1, l7; sfp.nop
+        if live {
+            sfp.load l2, dst[0], fmt=fp32
+            sfp.mad l0, l2, l6, l0; sfp.nop
+        }
+        sfp.store dst[0], l0, fmt=fp32
+        sfp.li l1, qk[i], fmt=bf16
+        sfp.mul l1, l1, l5; sfp.nop
+        sfp.mad l3, l1, l0, l3; sfp.nop
+        math.rwc dst+=2
+    }
+    math.rwc reset
+    sfp.rnd l3, l3, to=bf16
+    sfp.store dst[V + 2 * stripe], l3, fmt=fp32
+}
+
+fn brisc() {
+    noc.read meta, table[0], n=ROWS * 16, wait
+    fence
+    published[0] = published[0] + 1
+    started = 0
+    for k in 0..jobs {
+        j = core.id + k * WORKERS
+        row = j / UNITS
+        unit = j % UNITS
+        if meta[row * 16 + 1] {
+            if started { cb.wait written; cb.pop written }
+            started = 1
+            pos = meta[row * 16]
+            h = unit / 2
+            t = noc.read qk, conv[row * INPUT_WIDTH + (h / 3) * 128], n=128
+            noc.read qk + 128, conv[row * INPUT_WIDTH + (HEADS / 3) * 128 + (h / 3) * 128], n=128, tid=t
+            noc.read val, conv[row * INPUT_WIDTH + 2 * (HEADS / 3) * 128 + unit * 64], n=64, tid=t
+            noc.read abv, ab[row * 1024], n=128, tid=t
+            noc.read dyn, dynamics[0], n=2 * HEADS, tid=t
+            noc.wait t
+            v = cb.reserve values
+            for i in 0..64 { v[i] = bits_u32(val[i]) << 16 }
+            cb.push values
+            if pos {
+                p = cb.reserve prior, n=2
+                noc.read p, state[meta[row * 16 + 2] * SLOT_STATE + unit * 8192], n=8192, wait
+                cb.push prior, n=2
+            }
+        }
+    }
+    if started { cb.wait written; cb.pop written }
+}
+
+fn trisc0() {
+    loop { if published[0] != seen0[0] { break }; fence }
+    seen0[0] = published[0]
+    for k in 0..jobs {
+        row = (core.id + k * WORKERS) / UNITS
+        if meta[row * 16 + 1] {
+            pos = meta[row * 16]
+            v = cb.wait values
+            unpack.dest v, dst[V]
+            cb.pop values
+            for stripe in 0..2 {
+                if stripe { cb.wait packed; cb.pop packed }
+                if pos {
+                    p = cb.wait prior
+                    repeat t in 0..4 { unpack.dest p + 1024 * t, dst[t * dst.tile] }
+                    cb.pop prior
+                }
+                cb.reserve loaded; cb.push loaded
+            }
+        }
+    }
+}
+
+fn trisc1() {
+    loop { if published[0] != seen1[0] { break }; fence }
+    seen1[0] = published[0]
+    for k in 0..jobs {
+        j = core.id + k * WORKERS
+        row = j / UNITS
+        if meta[row * 16 + 1] {
+            pos = meta[row * 16]
+            h = (j % UNITS) / 2
+            math.fmt dst=fp32, sfp=fp32
+            math.cfg dst_offset=0
+            math.rwc reset
+            repeat stripe in 0..2 {
+                cb.wait loaded; cb.pop loaded
+                if stripe == 0 { scalars!() }
+                if pos { update_stripe!(1, stripe) } else { update_stripe!(0, stripe) }
+                tensix.wait
+                cb.reserve updated; cb.push updated
+            }
+        }
+    }
+}
+
+fn trisc2() {
+    loop { if published[0] != seen2[0] { break }; fence }
+    seen2[0] = published[0]
+    for k in 0..jobs {
+        row = (core.id + k * WORKERS) / UNITS
+        if meta[row * 16 + 1] {
+            pack.fmt in=fp32, out=fp32
+            for stripe in 0..2 {
+                cb.wait updated; cb.pop updated
+                p = cb.reserve new_state
+                repeat t in 0..4 { pack.move p + 1024 * t, dst[t * dst.tile] }
+                tensix.wait
+                cb.push new_state
+                if stripe == 0 { cb.reserve packed; cb.push packed }
+            }
+            pack.fmt in=fp32, out=bf16
+            v = cb.reserve result
+            pack.move v, dst[V]
+            tensix.wait
+            cb.push result
+        }
+    }
+}
+
+fn ncrisc() {
+    loop { if published[0] != seen3[0] { break }; fence }
+    seen3[0] = published[0]
+    for k in 0..jobs {
+        j = core.id + k * WORKERS
+        row = j / UNITS
+        unit = j % UNITS
+        if meta[row * 16 + 1] {
+            base = meta[row * 16 + 2] * SLOT_STATE + unit * 8192
+            for stripe in 0..2 {
+                p = cb.wait new_state
+                noc.write state[base + stripe * 4096], p, n=4096, wait
+                cb.pop new_state
+            }
+            v = cb.wait result
+            noc.write output[row * HEADS * 128 + unit * 64], v, n=64, wait
+            cb.pop result
+            cb.reserve written; cb.push written
+        }
+    }
+}

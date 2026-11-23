@@ -1,0 +1,32 @@
+// Gather one row from the checkpoint embedding table: output = weights[history[token_pos]].
+// token_pos is an integer kernel argument; the host queues a new value before each graph run (spec §4).
+const ROW_LANES = 1
+grid ROW_LANES
+const EMBED_TILES = 2
+const MAX_TOKENS = 8192
+const DIM = 1024 * EMBED_TILES
+
+const STRIDE = DIM
+const RESIDUAL = 0
+if RESIDUAL { l1 shard: bf16[1024], at=RESIDUAL }
+param history: u32[]
+param weights: bf16[]
+param output: bf16[]
+param token_pos: u32
+
+l1 ids: u32[16]
+const SHARDS = (DIM + 1023) / 1024
+l1 row: bf16[1024 * SHARDS]
+
+fn brisc() {
+    i = token_pos + core.id
+    noc.read ids, history[i & ~15], n=16, wait
+    token = ids[i & 15]
+    noc.read row, weights[token * DIM], n=DIM, wait
+    if RESIDUAL {
+        if DIM % 1024 { for i in DIM..1024 * SHARDS { row[i] = 0.0 } }
+        for tile in 0..SHARDS {
+            noc.write remote(tile / 10, tile % 10, shard), row + tile * 1024, n=1024, wait
+        }
+    } else { noc.write output[core.id * STRIDE], row, n=DIM, wait }
+}

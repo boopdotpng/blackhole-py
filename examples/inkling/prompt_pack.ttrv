@@ -1,0 +1,28 @@
+// Convert one or three face-packed Inkling projection inputs per token into prompt tiles.
+const K = 2304
+const ROW_STRIDE = 3072
+const SEG_STRIDE = 3072
+const SEGMENTS = 1
+const ROWS = 8
+const TILE_ROWS = 16
+const BLOCKS = (K + 511) / 512
+grid SEGMENTS * BLOCKS
+param x: bf16[]
+param output: bf16[]
+l1 raw: bf16[512]
+l1 tiles: bf16[16 * TILE_ROWS * 32]
+fn brisc() {
+    segment = core.id / BLOCKS
+    block = core.id % BLOCKS
+    live = 16
+    if block + 1 == BLOCKS { live = K / 32 - block * 16 }
+    for r in 0..ROWS {
+        noc.read raw, x[r * ROW_STRIDE + segment * SEG_STRIDE + block * 512], n=512, wait
+        for k in 0..live {
+            dest = tiles + k * TILE_ROWS * 32 + (r / 16) * 512 + (r % 16) * 16
+            l1.copy_words dest, raw + k * 16, n=8
+            l1.copy_words dest + 256, raw + 256 + k * 16, n=8
+        }
+    }
+    noc.write output[(segment * K + block * 512) * TILE_ROWS], tiles, n=live * TILE_ROWS * 32, wait
+}

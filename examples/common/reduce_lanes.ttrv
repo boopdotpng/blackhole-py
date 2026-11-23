@@ -1,0 +1,15 @@
+// Reduce 32 lane sums in l0 to one value broadcast to every lane; clobbers l0-l3.
+macro reduce_lanes() {
+    repeat stage in 0..3 {
+        sfp.mov l1, l0
+        repeat 4 >> stage { sfp.shft2 l1, l1, rotate; sfp.nop }
+        sfp.add l0, l0, l1; sfp.nop
+    }
+    sfp.mov l1, l0
+    sfp.mov l2, l0
+    sfp.mov l3, l0
+    sfp.transp
+    sfp.add l0, l0, l1; sfp.nop
+    sfp.add l0, l0, l2; sfp.nop
+    sfp.add l0, l0, l3; sfp.nop
+}

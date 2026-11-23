@@ -1,0 +1,14 @@
+// Copy the host step table (one 64-byte entry per row, see ../batch/attention.ttrv) into DRAM at the start of a
+// batched step, so the many workers that read it fetch it from DRAM instead of over PCIe.
+const ROWS = 64
+grid 1
+
+param table: u32[], host
+param output: u32[]
+
+l1 rows: u32[ROWS * 16]
+
+fn brisc() {
+    noc.read rows, table[0], n=ROWS * 16, wait
+    noc.write output[0], rows, n=ROWS * 16, wait
+}

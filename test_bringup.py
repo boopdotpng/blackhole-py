@@ -1,7 +1,17 @@
 import os, struct, tempfile, time
 from pathlib import Path
 import fw
-from device import Device, Queue, dram_read_cap
+from device import Device, dram_read_cap
+
+if __name__ != "__main__":
+  import pytest
+
+  @pytest.fixture(scope="module")
+  def dev():
+    if not Path("/dev/tenstorrent/0").exists(): pytest.skip("Blackhole card 0 is unavailable")
+    device = Device(0)
+    try: yield device
+    finally: device.close()
 
 def load(dev:Device, src:str, roles=("brisc",)) -> int:
   with tempfile.TemporaryDirectory() as d:
@@ -69,13 +79,11 @@ def test_bare_metal_and_barrier(dev:Device, steps:int=5):
   size = load(dev, BARRIER, fw.ROLES)
   rect, excl = dev.cover(dev.workers)
   out, args = dev.alloc_host(steps * 64), dev.alloc_host(steps * 64)
-  q = Queue()
   for s in range(steps):
     host = dev.host.noc_addr + out + s * 64
     struct.pack_into("<6I", dev.host.mem, args + s * 64, s + 1, rect, excl, fw.noc(dev.workers[0]), host & 0xFFFFFFFF, host >> 32)
-    q.launch(dev, dev.workers, dev.host.noc_addr + args + s * 64, 64)
-  q.signal(dev.timeline_signal, val := dev.next_timeline()).submit(dev)
-  dev.timeline_signal.wait(val)
+    dev.launch(dev.host.noc_addr + args + s * 64, 64)
+  dev.synchronize()
 
   n = len(dev.workers)
   for s in range(1, steps + 1):
@@ -83,7 +91,7 @@ def test_bare_metal_and_barrier(dev:Device, steps:int=5):
     assert got == want, f"step {s}: got {got}, expected {want}"
   for core in (dev.workers[0], dev.workers[-1]):
     assert (counts := struct.unpack("<4I", dev.card.read(core, 0x40100, 16))) == (steps,) * 4, f"{core} ran steps {counts}"
-  print(f"[PASS] 5-RISC kernel, barrier_all() x {steps} async steps across {n} workers (code {size} B)")
+  print(f"[PASS] 5-RISC kernel, barrier_all() x {steps} steps across {n} workers (code {size} B)")
 
 DRAM_READ = r"""
 #include "crt0.h"
@@ -123,7 +131,7 @@ def test_reload_and_dram_bandwidth(dev:Device):
 if __name__ == "__main__":
   dev = Device(0)
   try:
-    print(f"Opened {dev.card.name}: {dev.cols} cols, {dev.dram_banks} DRAM banks, {len(dev.workers)} workers, service core {dev.service_core}")
+    print(f"Opened {dev.card.name}: {dev.cols} cols, {dev.dram_banks} DRAM banks, {len(dev.workers)} workers, DMA core {dev.dma_core}")
     test_dma_roundtrip(dev)
     test_bare_metal_and_barrier(dev)
     test_reload_and_dram_bandwidth(dev)

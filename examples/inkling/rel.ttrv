@@ -1,0 +1,87 @@
+// Inkling relative attention logits: rel[h, d] = Σ_r r[h, r] P[r, d] for H heads, R = 16, d < EXTENT
+// (reference: r @ rel_logits_proj.proj). One matrix-unit product per worker, as attention's P V:
+// the left tile holds r (row h, column r), the right tile P's 32 distances 32w.. (row r, column d).
+// proj_tiles: P as EXTENT / 32 tiles in face layout, rows 16..31 zero. Output rows are dense [H][EXTENT].
+const H = 24
+const EXTENT = 1024
+grid EXTENT / 32
+
+param r_in: bf16[]        // [H * 16] (qprep.ttrv's r_out)
+param proj_tiles: bf16[]  // [EXTENT / 32][1024]
+param rel: bf16[]         // [H][EXTENT]
+
+cb operands: bf16[1024], pages=2
+cb result: bf16[1024], pages=1
+l1 lines: bf16[H * 32]
+sem dst_ready = math_pack, max=1
+
+const PHASES = 2
+include ../common/matmul_phases
+
+fn brisc() {
+    p = cb.reserve operands, n=2
+    for i in 0..1024 { p[i] = 0.0 }
+    t = noc.group read
+    if H > 16 {
+        noc.read p, r_in[0], n=256, tid=t
+        noc.read p + 512, r_in[256], n=H * 16 - 256, tid=t
+    } else { noc.read p, r_in[0], n=H * 16, tid=t }
+    noc.read p + 1024, proj_tiles[core.id * 1024], n=1024, tid=t
+    noc.wait t
+    cb.push operands, n=2
+}
+
+fn trisc0() {
+    unpack.fmt a|b, in=bf16
+    p = cb.wait operands, n=2
+    unpack.move b, p, dvalid
+    unpack.move a, p + 1024, dvalid
+    tensix.wait
+    cb.pop operands, n=2
+}
+
+fn trisc1() {
+    math.fmt dst=fp32, sfp=fp32
+    math.cfg dst_offset=0
+    math.addrmod mm_k, slot=1, srca+=16, srcb=cr+0, dst+=8
+    math.addrmod mm_col, slot=2, srca=cr+0, srcb=cr+32, dst+=8
+    math.addrmod mm_b, slot=3, srcb+=8, dst+=8
+    math.addrmod mm_row, slot=4, srca=cr+32, srcb=cr+48, dst=cr+0
+    math.addrmod mm_phase, slot=5, srca=0, srcb=0, dst=0, fidelity+=1
+    replay.load mm_first
+    replay.load mm_second
+    mop.load matmul
+    sem.stall math|sfpu|sync, dst_ready, notmax
+    repeat face in 0..4 { math.zero face=face, fmt=fp32 }
+    math.rwc reset
+    tensix.stall math, srca_vld|srcb_vld
+    mop.run matmul
+    math.rwc reset, release=b
+    tensix.stall sync, math
+    sem.inc dst_ready
+}
+
+fn trisc2() {
+    pack.fmt in=fp32, out=bf16
+    sem.stall tdma|pack|sync, dst_ready, nonzero
+    p = cb.reserve result
+    pack.move p, dst[0]
+    tensix.stall sync, pack0
+    tensix.wait
+    cb.push result
+    sem.dec dst_ready
+}
+
+fn ncrisc() {
+    o = cb.wait result
+    w = noc.group write
+    for h in 0..H {
+        at = (h / 16) * 512 + (h & 15) * 16
+        line = lines + h * 32
+        l1.copy_words line, o + at, n=8
+        l1.copy_words line + 16, o + at + 256, n=8
+        noc.write rel[h * EXTENT + core.id * 32], line, n=32, tid=w
+    }
+    noc.wait w
+    cb.pop result
+}

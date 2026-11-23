@@ -36,7 +36,6 @@ NORETURN _crt0_brisc(void) {
   x -= 1 + 2 * (x >= 10);
   write32(WORKER_X, x); write32(WORKER_Y, y); write32(WORKER_ID, x * 10 + y);
   enable_clock_gating();
-  reset_tensix();
   noc_init(0);
 
   u32 expect = 0x40404040, reset = RESET_ALL & ~RESET_BRISC, en_nc = read32(ROLE_PC) != 0, en_tr = 0;
@@ -60,7 +59,10 @@ NORETURN _crt0_brisc(void) {
   fence();
   write32(SOFT_RESET, reset);
   WAIT_FAST(read32(SUBORDINATE_SYNC) == expect);
+  reset_tensix();
   brisc_init();
+  write32(WORK_READY, 1);
+  fence();
   for (u32 last_epoch = 0;;) {
     u32 ep;
     WAIT_FAST((ep = read32(STEP_EPOCH)) != last_epoch);
@@ -78,7 +80,7 @@ NORETURN _crt0_brisc(void) {
         while (read32(MAILBOX_FROM(i)) != tok) {}
     fence();
     reset_cb_counters();
-    noc_atomic_inc(1, SVC_DONE_COUNT, read32(SERVICE_COORD), 1);
+    noc_atomic_inc(1, WORK_DONE, read32(LEADER_COORD), 1);
   }
 }
 #endif

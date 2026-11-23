@@ -1,5 +1,4 @@
 import functools, hashlib, os, re, subprocess, tempfile
-from enum import IntEnum
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -14,7 +13,6 @@ def _defines(*headers:str) -> dict[str, int]:
   return out
 
 globals().update(DEFINES := _defines("abi.h", "hw.h"))
-Op = IntEnum("Op", {k[3:]: v for k, v in DEFINES.items() if k.startswith("OP_")})
 
 ROLE_FLAGS = {"brisc": "-DROLE_BRISC", "ncrisc": "-DROLE_NCRISC", **{f"trisc{i}": f"-DROLE_TRISC={i}" for i in range(3)}}
 ROLES = tuple(ROLE_FLAGS)
@@ -73,3 +71,9 @@ def build_worker(srcs:list, roles=("brisc",), dram_banks:int=8, max_size:int=0x4
     image += compile([*srcs, "noc.c"], base, CODE_BASE + max_size - base, [f"-DBANKS={dram_banks}", ROLE_FLAGS[role]])
     image += bytes(-len(image) % 16)
   return bytes(image), pcs, (CODE_BASE + len(image) + 63) & ~63
+
+# TTRV kernels preload gp at the midpoint of private memory. The worker call
+# trampoline stores its return PC there before entering the register allocator's ABI.
+DRAM_BANKS = 8
+def ret(role):
+  return bytes.fromhex("83a20100 67800200")  # lw t0,0(gp); jr t0

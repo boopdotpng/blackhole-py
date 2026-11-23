@@ -1,0 +1,60 @@
+// Rows of K activations -> 32-row panel tiles for the prompt projection (batch_projection.ttrv). Source rows are
+// face-packed (FACE = 1: in each 512-element block, the low 16 of every 32 values, then the high 16) or dense, SRC_STEP
+// apart. Row r goes to panel r / 32, tile row r % 32, tiles TILE0 .. TILE0 + K / 32 of that panel, whose tiles start
+// PANEL_TILES apart (a projection's segments, or the halves of a concatenated input, are packed by separate launches).
+// A worker takes (panel, SUB-tile group) units: per row two reads (the group's low and high halves, or one dense run).
+// Face-packed sources need an even SUB: NoC reads keep L1 and DRAM addresses equal modulo 64 bytes.
+const K = 2304
+const ROWS = 32
+const SRC_STEP = 3072
+const FACE = 1
+const TILE0 = 0
+const PANEL_TILES = K / 32
+const SUB = 4
+const WORKERS = 32
+grid WORKERS
+const PANELS = (ROWS + 31) / 32
+const KT = K / 32
+const GROUPS = (KT + SUB - 1) / SUB
+
+param x: bf16[]
+param output: bf16[]
+
+l1 raw: bf16[32 * SUB * 32]
+l1 tiles: bf16[SUB * 1024]
+
+fn brisc() {
+    for j in 0..(PANELS * GROUPS + WORKERS - 1 - core.id) / WORKERS {
+        u = core.id + j * WORKERS
+        panel = u / GROUPS
+        k0 = (u % GROUPS) * SUB                     // first tile
+        live = KT - k0
+        if live > SUB { live = SUB }
+        rows = ROWS - panel * 32
+        if rows > 32 { rows = 32 }
+        rx = noc.group read
+        for r in 0..rows {
+            src = (panel * 32 + r) * SRC_STEP
+            if FACE {
+                at = src + (k0 / 16) * 512 + (k0 & 15) * 16
+                noc.read raw + r * SUB * 32, x[at], n=live * 16, tid=rx
+                noc.read raw + r * SUB * 32 + SUB * 16, x[at + 256], n=live * 16, tid=rx
+            } else { noc.read raw + r * SUB * 32, x[src + k0 * 32], n=live * 32, tid=rx }
+        }
+        noc.wait rx
+        for r in 0..rows {
+            s = raw + r * SUB * 32
+            for k in 0..live {
+                dest = tiles + k * 1024 + (r / 16) * 512 + (r % 16) * 16
+                if FACE {
+                    l1.copy_words dest, s + k * 16, n=8
+                    l1.copy_words dest + 256, s + SUB * 16 + k * 16, n=8
+                } else {
+                    l1.copy_words dest, s + k * 32, n=8
+                    l1.copy_words dest + 256, s + k * 32 + 16, n=8
+                }
+            }
+        }
+        noc.write output[(panel * PANEL_TILES + TILE0 + k0) * 1024], tiles, n=live * 1024, wait
+    }
+}

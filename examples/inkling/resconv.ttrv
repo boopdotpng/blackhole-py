@@ -1,0 +1,137 @@
+// Inkling residual-branch short convolution (reference.conv on the attention and MoE outputs) and residual add:
+//   out = residual + (Σ_l w_l y[pos - l] + y) / sqrt(5)     (RESID = 0: no residual)
+// y is a dense BF16 projection output; taps arrive in lag order (conv1d tap 3 is lag 0). history is a ring of four
+// raw rows, history[(p % 4) * ROW] holds token p's y. One worker per 1024-channel page.
+const D = 2304
+const PAGES = (D + 1023) / 1024
+const ROW = PAGES * 1024
+const RESID = 1
+const NORM = 0.4472135954999579
+const ROWS = 1
+const Y_STEP = ROW
+const RESIDUAL_STEP = ROW
+const OUT_STEP = ROW
+grid ROWS * PAGES
+
+param y: bf16[]          // [ROW], D valid
+param taps: bf16[]       // [4 lags][ROW]
+param history: bf16[]    // [4][ROW]
+if RESID { param residual: fp32[] }
+param out: fp32[]        // [ROW]
+param pos: u32
+
+shared {
+    row = core.id / PAGES
+    first = (core.id % PAGES) * 1024
+}
+
+cb inputs: bf16[1024], pages=8           // y, lags 1..3, weights of lags 0..3
+if RESID {
+    cb resid: u32[1024], pages=1
+    cb loaded: u32[16], pages=1
+    cb freed: u32[16], pages=1
+}
+cb result: fp32[1024], pages=1
+sem ready = math_pack, max=1
+
+include ../common/copy_tile
+
+fn brisc() {
+    p = cb.reserve inputs, n=8
+    t = noc.read p, y[row * Y_STEP + first], n=1024
+    for l in 1..4 {
+        if pos + row >= l {
+            if row >= l {
+                noc.read p + l * 1024, y[(row - l) * Y_STEP + first], n=1024, tid=t
+            } else {
+                noc.read p + l * 1024, history[((pos + row + 4 - l) & 3) * ROW + first], n=1024, tid=t
+            }
+        } else {
+            z = p + l * 1024
+            for j in 0..1024 { z[j] = 0.0 }
+        }
+    }
+    for l in 0..4 { noc.read p + (4 + l) * 1024, taps[l * ROW + first], n=1024, tid=t }
+    noc.wait t
+    if ROWS == 1 { noc.write history[(pos & 3) * ROW + first], p, n=1024, wait }
+    cb.push inputs, n=8
+    if RESID {
+        r = cb.reserve resid
+        noc.read r, residual[row * RESIDUAL_STEP + first], n=1024, wait
+        cb.push resid
+    }
+}
+
+fn trisc0() {
+    unpack.fmt a, in=bf16
+    p = cb.wait inputs, n=8
+    repeat t in 0..8 { unpack.move a, p + t * 1024, dvalid }
+    tensix.wait
+    cb.pop inputs, n=8
+    if RESID {
+        r = cb.wait resid
+        cb.wait freed
+        cb.pop freed
+        unpack.dest r, dst[5 * dst.tile]
+        cb.pop resid
+        cb.reserve loaded
+        cb.push loaded
+    }
+}
+
+fn trisc1() {
+    math.fmt dst=fp32, sfp=fp32
+    math.cfg dst_offset=0
+    replay.load copy_rows
+    sem.stall math|sfpu|sync, ready, notmax
+    repeat t in 0..8 { copy_tile!(t) }
+    tensix.stall sfpu, math
+    math.rwc reset
+    loop 32 {
+        sfp.load l0, dst[0], fmt=fp32
+        repeat l in 0..4 {
+            sfp.load l1, dst[(4 + l) * dst.tile], fmt=fp32
+            sfp.load l2, dst[l * dst.tile], fmt=fp32
+            sfp.mad l0, l1, l2, l0; sfp.nop
+        }
+        sfp.li l1, NORM
+        sfp.mul l0, l0, l1; sfp.nop
+        sfp.store dst[4 * dst.tile], l0, fmt=fp32
+        math.rwc dst+=2
+    }
+    math.rwc reset
+    if RESID {
+        tensix.wait
+        cb.reserve freed
+        cb.push freed
+        cb.wait loaded
+        cb.pop loaded
+        loop 32 {
+            sfp.load l0, dst[4 * dst.tile], fmt=fp32
+            sfp.load l1, dst[5 * dst.tile], fmt=fp32
+            sfp.add l0, l0, l1; sfp.nop
+            sfp.store dst[4 * dst.tile], l0, fmt=fp32
+            math.rwc dst+=2
+        }
+        math.rwc reset
+    }
+    tensix.stall sync, math|sfpu
+    sem.inc ready
+}
+
+fn trisc2() {
+    pack.fmt in=fp32, out=fp32
+    sem.stall tdma|pack|sync, ready, nonzero
+    p = cb.reserve result
+    pack.move p, dst[4 * dst.tile]
+    tensix.stall sync, pack0
+    tensix.wait
+    cb.push result
+    sem.dec ready
+}
+
+fn ncrisc() {
+    r = cb.wait result
+    noc.write out[row * OUT_STEP + first], r, n=1024, wait
+    cb.pop result
+}

@@ -1,0 +1,754 @@
+// Qwen3.8 decode attention for the 16 full-attention layers, on Tensix. Adapted from shared/attention.ttrv.
+//   per-head RMSNorm(q, k) -> partial RoPE(q, k) -> KV-cache append ->
+//   softmax(q kᵀ / 16) v over 32-token cache blocks split across partitions -> merge -> * sigmoid(gate)
+//
+// Shapes: 24 query heads, 4 KV heads (GROUP = 6 query heads per KV head; query head 6h+g), HEAD_DIM 256.
+// FP32 Dst holds 8 tiles, so each (KV head, partition) runs as two workers, half = 0 and 1. Both compute the full
+// 8-tile scores; each accumulates O for its 128 value dims (4 tiles). Same m and l on both halves.
+//
+// Grid: KV_HEADS * 2 * PARTITIONS. core.id = (head * 2 + half) * PARTITIONS + phase.
+// PARTITIONS is 1, 4 or 8. Live partitions: 1 through 128 tokens, 4 through 2560, then 8 (capped at PARTITIONS).
+// Phase 0 of each (head, half) merges its partitions' (O, m, l) states and writes that half of the context.
+//
+// Params:
+//   q_in         bf16 [24 x 512], dense: head h's q at h*512, its output gate at h*512 + 256
+//   k_in, v_in   bf16 [4 x 256], dense
+//   qnorm, knorm bf16 [256]: RMSNorm multipliers with the unit offset already folded in (1 + gamma)
+//   cos, sin     bf16 [MAX_TOKENS x 256], one row per position. With theta_i = pos * rope_theta^(-2i/64), i < 32:
+//                  cos[p, i] = cos[p, i + 32] = cos(theta_i);  cos[p, 64:] = 1
+//                  sin[p, i] = -sin(theta_i);  sin[p, i + 32] = +sin(theta_i);  sin[p, 64:] = 0
+//                so x' = x * cos + swapped * sin, where swapped exchanges dims 0..31 with 32..63 and keeps 64.. as is.
+//                numpy:
+//                  ang = np.arange(T)[:, None] * theta ** (-np.arange(0, 64, 2) / 64)        # [T, 32]
+//                  c, s = np.cos(ang), np.sin(ang)
+//                  cos = np.concatenate([c, c, np.ones((T, 192))], 1)
+//                  sin = np.concatenate([-s, s, np.zeros((T, 192))], 1)
+//   key_cache, value_cache  bf16, per KV head: MAX_TOKENS / 32 blocks x 8 tiles of 32 tokens x 32 features
+//                (tile f of a block holds features 32f..32f+31; standard 4-face tile layout). Must be zeroed or
+//                otherwise finite before first use: masked columns are overwritten with -inf, never read as NaN.
+//   context      bf16 [24 x 256], dense; this worker writes (6h+g)*256 + half*128 for g < 6
+//   start_pos    u32, this token's position
+//
+// Reference rounding: normed q, k rounded to bf16, rotated and rounded to bf16 again.
+// Scores and P V use the matrix unit at HiFi4 as on Llama; the C reference used FP32 dot products.
+
+const HEAD_TILES = 8
+const HEAD_DIM = HEAD_TILES * 32
+const O_TILES = HEAD_TILES / 2              // value tiles of this worker's half
+const HALF_DIM = O_TILES * 32
+const GROUP = 6
+const KV_HEADS = 4
+const PARTITIONS = 8
+const PROMPT_ROWS = 1
+const ACTIVE_PARTITIONS = 1 + (PARTITIONS - 1) * (PROMPT_ROWS == 1)
+const Q_ROW = 2 * HEAD_DIM                  // q_in pitch per query head: q, then the gate
+const MAX_TOKENS = 8192
+const SCALE = 0.0625                        // 1 / sqrt(256)
+const EPS = 1e-6
+const CACHE_TILES_PER_HEAD = MAX_TOKENS / 32 * HEAD_TILES
+const STATE_TILES = O_TILES + 2             // O tiles, then m, then l
+const STATE_ELEMS = STATE_TILES * 1024
+const NORM_ROWS = 8                         // six q rows, the k row, a duplicate k row (pads the second page)
+
+// Dst tiles while attending: 0 scores / probabilities, 1..O_TILES O, then m, l, alpha.
+const S = 0
+const M = (O_TILES + 1) * dst.tile
+const L = (O_TILES + 2) * dst.tile
+const ALPHA = (O_TILES + 3) * dst.tile
+// Dst tiles while merging: 0..O_TILES-1 O, then m, l, then the incoming m' and l' (and each O' in m''s tile).
+const MM = O_TILES * dst.tile
+const ML = (O_TILES + 1) * dst.tile
+const MNEW = (O_TILES + 2) * dst.tile
+const MNEW_L = (O_TILES + 3) * dst.tile
+const MALPHA = MM + 8
+const MBETA = MM + 32
+// After the merge the O tiles start at OUT (the merge moves them to 0; ACTIVE_PARTITIONS == 1 leaves them at 1).
+const OUT = (ACTIVE_PARTITIONS == 1)
+
+// See shared/attention.ttrv: chunk i of a row group is (i & 1) * ODD + (i >> 1) * RIGHT.
+const ROW_GROUPS = (GROUP + 3) / 4
+const ODD = 2
+const RIGHT = dst.face
+
+grid PROMPT_ROWS * KV_HEADS * 2 * ACTIVE_PARTITIONS
+
+param q_in: bf16[]
+param k_in: bf16[]
+param v_in: bf16[]
+param qnorm: bf16[]
+param knorm: bf16[]
+param cos: bf16[]
+param sin: bf16[]
+param key_cache: bf16[]
+param value_cache: bf16[]
+param context: bf16[]
+param start_pos: u32
+
+shared {
+    prompt_row = core.id / (KV_HEADS * 2 * ACTIVE_PARTITIONS)
+    pos = start_pos + prompt_row
+    head = (core.id / (2 * ACTIVE_PARTITIONS)) % KV_HEADS
+    half = (core.id / ACTIVE_PARTITIONS) % 2
+    phase = core.id % ACTIVE_PARTITIONS
+    merger = (core.id / ACTIVE_PARTITIONS) * ACTIVE_PARTITIONS   // phase 0 of this (head, half)
+    merger_x = merger / 10                       // core.id = core.x * 10 + core.y
+    merger_y = merger % 10
+
+    blocks = pos / 32 + 1
+    live = 1 + (ACTIVE_PARTITIONS >= 4) * 3 * (blocks > 4) + (ACTIVE_PARTITIONS / 8) * 4 * (blocks > 80)
+    visits = (blocks + live - 1 - phase) / live
+    owns = (blocks - 1) % live == phase
+    tail_visit = (blocks - 1) / live
+    token_row = pos & 31
+    valid_columns = token_row + 1
+}
+
+// Norm and RoPE operands are untilized pages: 256-element head row r is face r % 4 of page r / 4.
+cb operands: bf16[1024], pages=8            // BRISC: x, x, gamma, gamma; then cos, cos, sin, sin
+cb normed: bf16[1024], pages=2              // pack -> NCRISC: normed rows
+cb rope_x: bf16[1024], pages=4              // NCRISC -> unpack: normed rows, then their swapped copy
+cb result: bf16[1024], pages=2              // pack -> NCRISC: rotated rows
+cb query: bf16[1024], pages=HEAD_TILES      // tiled q: tile f row g = head g, features 32f..
+cb rows: bf16[2 * HEAD_DIM], pages=1        // rotated k row, then the v row
+cb keys: bf16[1024], pages=2 * HEAD_TILES
+cb values: bf16[1024], pages=2 * O_TILES
+cb probs: bf16[1024], pages=1
+if ACTIVE_PARTITIONS > 1 {
+cb state: fp32[STATE_ELEMS], pages=1
+cb states: fp32[STATE_ELEMS], pages=ACTIVE_PARTITIONS
+}
+cb gates: bf16[1024], pages=O_TILES         // merger: tiled gate, same layout as O
+cb merged: bf16[O_TILES * 1024], pages=1    // merger: gated O
+
+const PACK_CONTEXT = 1                       // context in the o projection's input order (else dense)
+l1 dense: bf16[GROUP * HALF_DIM]
+l1 ret: u32[4]
+l1 arrived: u32[4], keep
+if PROMPT_ROWS > 1 {
+    l1 committed: u32[4], keep
+    l1 go: u32[4], keep
+    l1 face_buf: bf16[32]
+}
+
+sem dst_ready = math_pack, max=1
+
+// ---- engine templates (as shared/attention.ttrv)
+
+const PHASES = 4
+include ../common/matmul_phases
+
+// x * cos + swapped * sin over two-tile operands: x 0-1, swapped 2-3, cos 4-5, sin 6-7.
+replay rope_step {
+    sfp.load l0, dst[0], fmt=fp32
+    sfp.load l1, dst[2 * dst.tile], fmt=fp32
+    sfp.load l2, dst[4 * dst.tile], fmt=fp32
+    sfp.load l3, dst[6 * dst.tile], fmt=fp32
+    sfp.mul l0, l0, l2
+    sfp.mad l0, l1, l3, l0
+    sfp.rnd l0, l0, to=bf16
+    sfp.store dst[0], l0, fmt=fp32, addr=sfp_step
+}
+
+include ../common/attention
+include ../common/copy_tile
+
+// Copy the next SrcA tile into the Dst tile at the Dst counter, then step the counter (and cr) one tile.
+// Lets a runtime loop fill consecutive tiles; copy_tile needs a constant dst_offset per call.
+// UNVERIFIED: `math.rwc release=a` (no counter mask) releases SrcA without moving the counters.
+macro copy_next() {
+    tensix.stall math, srca_vld|sfpu
+    replay.run copy_rows
+    tensix.stall sync, math
+    math.rwc release=a
+    repeat 8 { math.rwc dst=cr+8 }
+}
+
+// Walks below visit the live chunk addresses: 0, 2, .., 4 * ROW_GROUPS - 2 of the left face, then the same plus
+// RIGHT. Those are the addresses g * 4 + (i & 1) * ODD + (i >> 1) * RIGHT of the shared kernel's `loop ROW_GROUPS { repeat i in
+// 0..4 }`, with one copy of the body instead of four.
+
+// Step the Dst counter (and cr) n tiles.
+macro skip_tiles(n) { loop n * 8 { math.rwc dst=cr+8 } }
+
+// ---- SFPU arithmetic
+
+include ../common/rsqrt
+include ../common/reduce_lanes
+
+// RMSNorm of the 256-value row in the face at the Dst counter; its multiplier is two tiles later.
+// x = bf16(x * rsqrt(mean(x²) + eps) * gamma).
+macro norm_face() {
+    sfp.li l0, 0.0
+    repeat j in 0..8 {
+        sfp.load l1, dst[2 * j], fmt=fp32
+        sfp.mad l0, l1, l1, l0
+    }
+    sfp.nop
+    reduce_lanes!()
+    sfp.li l4, 1.0 / HEAD_DIM
+    sfp.mul l0, l0, l4; sfp.nop
+    sfp.li l4, EPS
+    sfp.add l0, l0, l4; sfp.nop
+    rsqrt!()
+    repeat j in 0..8 {
+        sfp.load l1, dst[2 * j], fmt=fp32
+        sfp.load l2, dst[2 * dst.tile + 2 * j], fmt=fp32
+        sfp.mul l1, l1, l0; sfp.nop
+        sfp.mul l1, l1, l2; sfp.nop
+        sfp.rnd l1, l1, to=bf16
+        sfp.store dst[2 * j], l1, fmt=fp32
+    }
+}
+
+// o *= sigmoid(gate) at one chunk; gate = 1 / (1 + exp(-gate)). Needs exp_setup; clobbers l0-l3.
+macro gate_at(o, gt) {
+    sfp.load l0, dst[gt], fmt=fp32
+    sfp.mul l0, l0, neg_one; sfp.nop
+    exp_l0!()
+    sfp.addi l0, l0, 1.0; sfp.nop
+    recip_l0!()
+    sfp.load l1, dst[o], fmt=fp32
+    sfp.mul l1, l1, l0; sfp.nop
+    sfp.rnd l1, l1, to=bf16
+    sfp.store dst[o], l1, fmt=fp32
+}
+
+// Dst tiles 0 and 1 (eight untilized head rows) to two pages of q.
+macro pack_rows(q) {
+    sem.stall tdma|pack|sync, dst_ready, nonzero
+    p = cb.reserve q, n=2
+    pack.move p, dst[0]
+    pack.move p + 1024, dst[dst.tile]
+    tensix.stall sync, pack0
+    tensix.wait
+    cb.push q, n=2
+    sem.dec dst_ready
+}
+
+fn brisc() {
+    if phase >= live { return }
+
+    // Rows 0..5 the group's q heads, row 6 the k head, row 7 k again (keeps the pad face finite).
+    xo = cb.reserve operands, n=4
+    t = noc.read xo + GROUP * HEAD_DIM, k_in[prompt_row * KV_HEADS * HEAD_DIM + head * HEAD_DIM], n=HEAD_DIM
+    noc.read xo + (GROUP + 1) * HEAD_DIM, k_in[prompt_row * KV_HEADS * HEAD_DIM + head * HEAD_DIM], n=HEAD_DIM, tid=t
+    for g in 0..GROUP {
+        noc.read xo + g * HEAD_DIM, q_in[prompt_row * KV_HEADS * GROUP * Q_ROW + (head * GROUP + g) * Q_ROW], n=HEAD_DIM, tid=t
+        noc.read xo + 2048 + g * HEAD_DIM, qnorm[0], n=HEAD_DIM, tid=t
+    }
+    noc.read xo + 2048 + GROUP * HEAD_DIM, knorm[0], n=HEAD_DIM, tid=t
+    noc.read xo + 2048 + (GROUP + 1) * HEAD_DIM, knorm[0], n=HEAD_DIM, tid=t
+    noc.wait t
+    cb.push operands, n=4
+
+    trig = cb.reserve operands, n=4
+    c = noc.read trig, cos[pos * HEAD_DIM], n=HEAD_DIM
+    noc.read trig + 2048, sin[pos * HEAD_DIM], n=HEAD_DIM, tid=c
+    for r in 1..NORM_ROWS {
+        noc.read trig + r * HEAD_DIM, cos[pos * HEAD_DIM], n=HEAD_DIM, tid=c
+        noc.read trig + 2048 + r * HEAD_DIM, sin[pos * HEAD_DIM], n=HEAD_DIM, tid=c
+    }
+    noc.wait c
+    cb.push operands, n=4
+
+    if PROMPT_ROWS > 1 {
+        // Publish this query position's KV face rows. Both halves of every
+        // position in this head must land before any query streams the cache.
+        rw = cb.wait rows
+        dest = (head * CACHE_TILES_PER_HEAD + (pos / 32) * HEAD_TILES) * 1024
+        for j in 0..O_TILES {
+            f = half * O_TILES + j
+            for side in 0..2 {
+                at = (token_row >> 4) * 512 + side * 256 + (token_row & 15) * 16
+                tmp = face_buf + (token_row & 1) * 16
+                l1.copy_words tmp, rw + f * 32 + side * 16, n=8
+                noc.write key_cache[dest + f * 1024 + at], tmp, n=16, wait
+                l1.copy_words tmp, rw + HEAD_DIM + f * 32 + side * 16, n=8
+                noc.write value_cache[dest + f * 1024 + at], tmp, n=16, wait
+            }
+        }
+        cb.pop rows
+        leader = head * 2
+        noc.inc remote(leader / 10, leader % 10, committed), by=1, ret=ret, wait
+        if core.id == leader {
+            loop { if committed[0] == 2 * PROMPT_ROWS { break }; fence }
+            committed[0] = 0
+            for r in 0..PROMPT_ROWS {
+                for h in 0..2 {
+                    peer = r * KV_HEADS * 2 + leader + h
+                    noc.inc remote(peer / 10, peer % 10, go), by=1, ret=ret, wait
+                }
+            }
+        }
+        loop { if go[0] { break }; fence }
+        go[0] = 0
+    }
+
+    // Stream this phase's blocks: all 8 key tiles, this half's 4 value tiles.
+    for i in 0..visits {
+        block = phase + i * live
+        first = (head * CACHE_TILES_PER_HEAD + block * HEAD_TILES) * 1024
+        vfirst = first + half * O_TILES * 1024
+        kp = cb.reserve keys, n=HEAD_TILES
+        vp = cb.reserve values, n=O_TILES
+        kr = noc.read kp, key_cache[first], n=1024, port=0
+        vr = noc.read vp, value_cache[vfirst], n=1024, port=1
+        for f in 1..HEAD_TILES {
+            noc.read kp + f * 1024, key_cache[first + f * 1024], n=1024, port=f % 3, tid=kr
+        }
+        for f in 1..O_TILES {
+            noc.read vp + f * 1024, value_cache[vfirst + f * 1024], n=1024, port=(f + 1) % 3, tid=vr
+        }
+        noc.wait kr, vr
+        if PROMPT_ROWS == 1 && owns && i == tail_visit {
+            // This launch's rotated k and v replace token row token_row of every tile both halves hold.
+            r = token_row
+            rw = cb.wait rows
+            for f in 0..HEAD_TILES {
+                for c2 in 0..32 {
+                    at = f * 1024 + (r >> 4) * 512 + (c2 >> 4) * 256 + (r & 15) * 16 + (c2 & 15)
+                    kp[at] = rw[f * 32 + c2]
+                }
+            }
+            for f in 0..O_TILES {
+                for c2 in 0..32 {
+                    at = f * 1024 + (r >> 4) * 512 + (c2 >> 4) * 256 + (r & 15) * 16 + (c2 & 15)
+                    vp[at] = rw[HEAD_DIM + (half * O_TILES + f) * 32 + c2]
+                }
+            }
+            // Append: each half writes its four key tiles and its four value tiles, 16 features per face row.
+            for j in 0..O_TILES {
+                f = half * O_TILES + j
+                for h in 0..2 {
+                    at = (r >> 4) * 512 + h * 256 + (r & 15) * 16
+                    noc.write key_cache[first + f * 1024 + at], kp + f * 1024 + at, n=16, wait
+                    noc.write value_cache[vfirst + j * 1024 + at], vp + j * 1024 + at, n=16, wait
+                }
+            }
+            cb.pop rows
+        }
+        cb.push keys, n=HEAD_TILES
+        cb.push values, n=O_TILES
+    }
+
+    if ACTIVE_PARTITIONS > 1 {
+        if phase == 0 {
+            loop {
+                if arrived[0] == live { break }
+                fence
+            }
+            fence
+            arrived[0] = 0
+            cb.reserve states, n=live
+            cb.push states, n=live
+        }
+    }
+}
+
+fn trisc0() {
+    if phase >= live { return }
+
+    unpack.fmt a|b, in=bf16
+    no = cb.wait operands, n=4
+    for t in 0..4 { unpack.move a, no + t * 1024, dvalid }
+    tensix.wait
+    cb.pop operands, n=4
+
+    rx = cb.wait rope_x, n=4
+    tr = cb.wait operands, n=4
+    for t in 0..4 { unpack.move a, rx + t * 1024, dvalid }
+    for t in 0..4 { unpack.move a, tr + t * 1024, dvalid }
+    tensix.wait
+    cb.pop rope_x, n=4
+    cb.pop operands, n=4
+
+    q = cb.wait query, n=HEAD_TILES
+    for i in 0..visits {
+        k = cb.wait keys, n=HEAD_TILES
+        unpack.fmt a, in=bf16, transpose
+        for f in 0..HEAD_TILES {
+            unpack.move b, q + f * 1024, dvalid
+            unpack.move a, k + f * 1024, dvalid
+        }
+        tensix.wait
+        cb.pop keys, n=HEAD_TILES
+
+        p = cb.wait probs
+        v = cb.wait values, n=O_TILES
+        unpack.fmt a, in=bf16
+        for f in 0..O_TILES {
+            unpack.move b, p, dvalid
+            unpack.move a, v + f * 1024, dvalid
+        }
+        tensix.wait
+        cb.pop values, n=O_TILES
+        cb.pop probs
+    }
+    cb.pop query, n=HEAD_TILES
+
+    if phase == 0 {
+        if ACTIVE_PARTITIONS > 1 {
+            unpack.fmt a, in=fp32
+            st = cb.wait states, n=live
+            for t in 0..STATE_TILES { unpack.move a, st + t * 1024, dvalid }
+            for s in 1..live {
+                sp = st + s * STATE_ELEMS
+                unpack.move a, sp + O_TILES * 1024, dvalid
+                unpack.move a, sp + (O_TILES + 1) * 1024, dvalid
+                for f in 0..O_TILES { unpack.move a, sp + f * 1024, dvalid }
+            }
+            tensix.wait
+            cb.pop states, n=live
+        }
+        unpack.fmt a, in=bf16
+        gt = cb.wait gates, n=O_TILES
+        for f in 0..O_TILES { unpack.move a, gt + f * 1024, dvalid }
+        tensix.wait
+        cb.pop gates, n=O_TILES
+    }
+}
+
+fn trisc1() {
+    if phase >= live { return }
+
+    math.fmt dst=fp32, sfp=fp32
+    math.cfg dst_offset=0
+    matmul_addrmods!(32, 16)
+    math.addrmod mm_col, slot=2, srca=cr+0, srcb=cr+32, dst+=8
+    math.addrmod mm_b, slot=3, srcb+=8, dst+=8
+    math.addrmod mm_phase, slot=5, srca=0, srcb=0, dst=0, fidelity+=1
+    math.addrmod sfp_step, slot=6, dst+=2
+    replay.load mm_first
+    replay.load mm_second
+    replay.load copy_rows
+    replay.load rope_step
+    mop.load matmul
+
+    // RMSNorm: Dst tiles 0-1 rows, 2-3 multipliers; the normed rows overwrite tiles 0-1.
+    sem.stall math|sfpu|sync, dst_ready, notmax
+    math.rwc reset
+    loop 4 { copy_next!() }
+    tensix.stall sfpu, math
+    math.rwc reset
+    loop NORM_ROWS {
+        norm_face!()
+        math.rwc dst=cr+8
+        math.rwc dst=cr+8
+    }
+    math.rwc reset
+    tensix.stall sync, math|sfpu
+    sem.inc dst_ready
+
+    // RoPE: tiles 0-1 normed rows, 2-3 swapped, 4-5 cos, 6-7 sin; the result overwrites tiles 0-1.
+    sem.stall math|sfpu|sync, dst_ready, notmax
+    math.rwc reset
+    loop 8 { copy_next!() }
+    tensix.stall sfpu, math
+    math.rwc reset
+    loop 64 { replay.run rope_step }
+    math.rwc reset
+    tensix.stall sync, math|sfpu
+    sem.inc dst_ready
+
+    // O = 0, m = -inf, l = 0 in the live rows; every other row stays finite.
+    sem.stall math|sfpu|sync, dst_ready, notmax
+    sfp.li l0, 0.0
+    repeat t in 1..O_TILES + 2 { fill_tile!(t, l0) }
+    fill_tile!(O_TILES + 3, l0)
+    sfp.li l1, 1.0
+    fill_tile!(O_TILES + 2, l1)
+    sfp.li l0, -inf
+    loop ROW_GROUPS {
+        repeat offset in ROW_OFFSETS { sfp.store dst[M + offset], l0, fmt=fp32 }
+        math.rwc dst+=4
+    }
+    math.rwc dst=0
+    sfp.li l0, 0.0
+    loop ROW_GROUPS {
+        repeat offset in ROW_OFFSETS { sfp.store dst[L + offset], l0, fmt=fp32 }
+        math.rwc dst+=4
+    }
+    math.rwc dst=0
+    tensix.stall sync, math|sfpu
+
+    for i in 0..visits {
+        sem.stall math|sfpu|sync, dst_ready, notmax
+        matmul_addrmods!(32, 16)
+        math.cfg dst_offset=0
+        repeat face in 0..4 { math.zero face=face, fmt=fp32 }
+        loop HEAD_TILES { product!() }
+
+        tensix.stall sync, math|sfpu
+        if owns && i == tail_visit {
+            loop ROW_GROUPS { mask_tail!(valid_columns); math.rwc dst+=4 }
+            math.rwc dst=0
+            tensix.stall sync, sfpu
+        }
+        loop ROW_GROUPS { online_softmax!(O_TILES); math.rwc dst+=4 }
+        math.rwc dst=0
+        sem.inc dst_ready
+
+        sem.stall math|sfpu|sync, dst_ready, notmax
+        matmul_addrmods!(16, 32)
+        repeat f in 0..O_TILES {
+            math.cfg dst_offset=(1 + f) * dst.tile
+            product!()
+        }
+        math.cfg dst_offset=0
+    }
+
+    if ACTIVE_PARTITIONS > 1 {
+        sem.stall math|sfpu|sync, dst_ready, notmax
+        tensix.stall sync, math|sfpu
+        sem.inc dst_ready
+    }
+    if phase == 0 {
+        sem.stall math|sfpu|sync, dst_ready, notmax
+        if ACTIVE_PARTITIONS > 1 {
+            math.rwc reset
+            loop STATE_TILES { copy_next!() }
+            math.rwc reset
+            for s in 1..live {
+                copy_tile!(O_TILES + 2)
+                copy_tile!(O_TILES + 3)
+                tensix.stall sfpu, math
+                merge_maxima!()
+                exp_setup!()
+                math.rwc dst=0
+                loop 2 {
+                    loop 2 * ROW_GROUPS {
+                        exp_exact_at!(MALPHA)
+                        math.rwc dst+=2
+                    }
+                    math.rwc dst+=RIGHT - 4 * ROW_GROUPS
+                }
+                math.rwc dst=0
+                math.rwc dst=0
+                loop 2 {
+                    loop 2 * ROW_GROUPS {
+                        exp_exact_at!(MBETA)
+                        math.rwc dst+=2
+                    }
+                    math.rwc dst+=RIGHT - 4 * ROW_GROUPS
+                }
+                math.rwc dst=0
+                math.rwc dst=0
+                loop 2 {
+                    loop 2 * ROW_GROUPS {
+                        merge_rows!(ML, MNEW_L)
+                        math.rwc dst+=2
+                    }
+                    math.rwc dst+=RIGHT - 4 * ROW_GROUPS
+                }
+                math.rwc dst=0
+                repeat f in 0..O_TILES {
+                    copy_tile!(O_TILES + 2)
+                    tensix.stall sfpu, math
+                    math.rwc dst=0
+                    loop 2 {
+                        loop 2 * ROW_GROUPS {
+                            merge_rows!(f * dst.tile, MNEW)
+                            math.rwc dst+=2
+                        }
+                        math.rwc dst+=RIGHT - 4 * ROW_GROUPS
+                    }
+                    math.rwc dst=0
+                }
+                tensix.stall sync, math|sfpu
+            }
+        }
+        // O /= l
+        math.rwc dst=0
+        loop 2 {
+            loop 2 * ROW_GROUPS {
+                sfp.load l0, dst[ML + OUT * dst.tile], fmt=fp32
+                recip_l0!()
+                sfp.store dst[ML + OUT * dst.tile], l0, fmt=fp32
+                math.rwc dst+=2
+            }
+            math.rwc dst+=RIGHT - 4 * ROW_GROUPS
+        }
+        math.rwc dst=0
+        repeat f in 0..O_TILES {
+            math.rwc dst=0
+            loop 2 {
+                loop 2 * ROW_GROUPS {
+                    sfp.load l0, dst[(f + OUT) * dst.tile], fmt=fp32
+                    sfp.load l1, dst[ML + OUT * dst.tile], fmt=fp32
+                    sfp.mul l0, l0, l1; sfp.nop
+                    sfp.store dst[(f + OUT) * dst.tile], l0, fmt=fp32
+                    math.rwc dst+=2
+                }
+                math.rwc dst+=RIGHT - 4 * ROW_GROUPS
+            }
+            math.rwc dst=0
+        }
+        tensix.stall sync, math|sfpu
+        // O *= sigmoid(gate). Gate tile f goes O_TILES tiles after O tile f, wrapping into the free scores
+        // tile when ACTIVE_PARTITIONS == 1. One gate body walks the tiles: `dst=cr+8` eight times steps a whole tile.
+        math.rwc reset
+        skip_tiles!(OUT + O_TILES)
+        loop O_TILES - OUT { copy_next!() }
+        math.rwc reset
+        if OUT { copy_tile!(0) }
+        tensix.stall sfpu, math
+        exp_setup!()
+        // Live rows 0..4*ROW_GROUPS-1 are addresses 0, 2, .. of the left face, then the same of the right face.
+        math.rwc reset
+        loop O_TILES - OUT {
+            loop 2 {
+                loop 2 * ROW_GROUPS {
+                    gate_at!(OUT * dst.tile, (OUT + O_TILES) * dst.tile)
+                    math.rwc dst+=2
+                }
+                math.rwc dst+=RIGHT - 4 * ROW_GROUPS
+            }
+            repeat 8 { math.rwc dst=cr+8 }
+        }
+        math.rwc reset
+        if OUT {
+            loop 2 {
+                loop 2 * ROW_GROUPS {
+                    gate_at!(O_TILES * dst.tile, 0)
+                    math.rwc dst+=2
+                }
+                math.rwc dst+=RIGHT - 4 * ROW_GROUPS
+            }
+            math.rwc reset
+        }
+        tensix.stall sync, math|sfpu
+        sem.inc dst_ready
+    }
+}
+
+fn trisc2() {
+    if phase >= live { return }
+
+    pack.fmt in=fp32, out=bf16
+    pack_rows!(normed)
+    pack_rows!(result)
+    loop visits { pack_tile!(probs, 0) }
+
+    if ACTIVE_PARTITIONS > 1 {
+        sem.stall tdma|pack|sync, dst_ready, nonzero
+        tensix.wait
+        pack.fmt in=fp32, out=fp32
+        p = cb.reserve state
+        repeat t in 0..STATE_TILES { pack.move p + t * 1024, dst[(1 + t) * dst.tile] }
+        tensix.stall sync, pack0
+        tensix.wait
+        cb.push state
+        sem.dec dst_ready
+    }
+    if phase == 0 {
+        sem.stall tdma|pack|sync, dst_ready, nonzero
+        pack.fmt in=fp32, out=bf16
+        out = cb.reserve merged
+        repeat t in 0..O_TILES { pack.move out + t * 1024, dst[(t + OUT) * dst.tile] }
+        tensix.stall sync, pack0
+        tensix.wait
+        cb.push merged
+        sem.dec dst_ready
+    }
+}
+
+fn ncrisc() {
+    if phase >= live { return }
+
+    // RoPE input: the normed rows, then a copy with dims 0..31 and 32..63 exchanged.
+    nr = cb.wait normed, n=2
+    rx = cb.reserve rope_x, n=4
+    for i in 0..NORM_ROWS * HEAD_DIM / 32 { l1.copy_words rx + i * 32, nr + i * 32, n=16 }
+    sw = rx + 2048
+    for r in 0..NORM_ROWS {
+        row = r * HEAD_DIM
+        l1.copy_words sw + row, nr + row + 32, n=16
+        l1.copy_words sw + row + 32, nr + row, n=16
+        for j in 2..HEAD_DIM / 32 { l1.copy_words sw + row + j * 32, nr + row + j * 32, n=16 }
+    }
+    cb.push rope_x, n=4
+    cb.pop normed, n=2
+
+    // Query tiles: row g of tile f is head g's features 32f..32f+31; other rows zero.
+    q = cb.reserve query, n=HEAD_TILES
+    for i in 0..HEAD_TILES * 1024 { q[i] = 0.0 }
+    res = cb.wait result, n=2
+    for g in 0..GROUP {
+        for f in 0..HEAD_TILES {
+            l1.copy_words q + f * 1024 + g * 16, res + g * HEAD_DIM + f * 32, n=8
+            l1.copy_words q + f * 1024 + g * 16 + 256, res + g * HEAD_DIM + f * 32 + 16, n=8
+        }
+    }
+    cb.push query, n=HEAD_TILES
+
+    if owns {
+        rw = cb.reserve rows
+        for j in 0..HEAD_DIM / 32 { l1.copy_words rw + j * 32, res + GROUP * HEAD_DIM + j * 32, n=16 }
+        noc.read rw + HEAD_DIM, v_in[prompt_row * KV_HEADS * HEAD_DIM + head * HEAD_DIM], n=HEAD_DIM, wait
+        cb.push rows
+    }
+    cb.pop result, n=2
+
+    // Merger: this half's gate in the O tile layout (row g of tile f = head g, gate dims half*128 + 32f..).
+    if phase == 0 {
+        gr = noc.read dense, q_in[prompt_row * KV_HEADS * GROUP * Q_ROW + head * GROUP * Q_ROW + HEAD_DIM + half * HALF_DIM], n=HALF_DIM
+        for g in 1..GROUP {
+            noc.read dense + g * HALF_DIM, q_in[prompt_row * KV_HEADS * GROUP * Q_ROW + (head * GROUP + g) * Q_ROW + HEAD_DIM + half * HALF_DIM], n=HALF_DIM, tid=gr
+        }
+        noc.wait gr
+        gt = cb.reserve gates, n=O_TILES
+        // UNVERIFIED: rows GROUP..31 keep stale L1; only rows < 4 * ROW_GROUPS reach the SFPU and only rows
+        // < GROUP are written out, so stale values there should be harmless.
+        for g in 0..GROUP {
+            for f in 0..O_TILES {
+                l1.copy_words gt + f * 1024 + g * 16, dense + g * HALF_DIM + f * 32, n=8
+                l1.copy_words gt + f * 1024 + g * 16 + 256, dense + g * HALF_DIM + f * 32 + 16, n=8
+            }
+        }
+        cb.push gates, n=O_TILES
+    }
+
+    if ACTIVE_PARTITIONS > 1 {
+        st = cb.wait state
+        slot = states + phase * STATE_ELEMS
+        for t in 0..STATE_TILES {
+            noc.write remote(merger_x, merger_y, slot + t * 1024), st + t * 1024, n=1024, wait
+        }
+        noc.inc remote(merger_x, merger_y, arrived), by=1, ret=ret, wait
+        cb.pop state
+    }
+
+    if phase == 0 {
+        o = cb.wait merged
+        if PACK_CONTEXT {
+            // Projection input order: in each 512-element block, the low 16 of every 32 values, then the high 16.
+            // This worker's 128 values are four 32-groups of one block: 64 low values at lo, 64 high at lo + 256.
+            for g in 0..GROUP {
+                for f in 0..O_TILES {
+                    l1.copy_words dense + g * HALF_DIM + f * 16, o + f * 1024 + g * 16, n=8
+                    l1.copy_words dense + g * HALF_DIM + HALF_DIM / 2 + f * 16, o + f * 1024 + 256 + g * 16, n=8
+                }
+            }
+            for g in 0..GROUP {
+                start = (head * GROUP + g) * HEAD_DIM + half * HALF_DIM
+                lo = (start / 512) * 512 + (start & 511) / 2
+                w = noc.write context[lo], dense + g * HALF_DIM, n=HALF_DIM / 2
+                noc.write context[lo + 256], dense + g * HALF_DIM + HALF_DIM / 2, n=HALF_DIM / 2, tid=w
+                noc.wait w
+            }
+        } else {
+            for g in 0..GROUP {
+                for f in 0..O_TILES {
+                    l1.copy_words dense + g * HALF_DIM + f * 32, o + f * 1024 + g * 16, n=8
+                    l1.copy_words dense + g * HALF_DIM + f * 32 + 16, o + f * 1024 + 256 + g * 16, n=8
+                }
+            }
+            w = noc.write context[prompt_row * KV_HEADS * GROUP * HEAD_DIM + head * GROUP * HEAD_DIM + half * HALF_DIM], dense, n=HALF_DIM
+            for g in 1..GROUP {
+                noc.write context[prompt_row * KV_HEADS * GROUP * HEAD_DIM + (head * GROUP + g) * HEAD_DIM + half * HALF_DIM], dense + g * HALF_DIM, n=HALF_DIM, tid=w
+            }
+            noc.wait w
+        }
+        cb.pop merged
+    }
+}

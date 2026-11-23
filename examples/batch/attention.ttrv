@@ -1,0 +1,513 @@
+// Batched decode attention: one token per row, every row its own sequence (cache slot) and position.
+// Derived from ../llama3/attention.ttrv (split path): RoPE(q, k), append the rotated k and the v row to the slot's
+// cache, softmax(q kᵀ / sqrt(d)) v streamed over the slot's 32-token cache blocks split over PARTITIONS workers,
+// then the first worker of each (row, KV head) merges the partitions' (O, m, l) states and writes the context row.
+//
+// Grid: ROWS * KV_HEADS * PARTITIONS workers; worker w serves row row_base + w / (KV_HEADS * PARTITIONS), KV head
+// (w / PARTITIONS) % KV_HEADS and phase w % PARTITIONS. Phase p visits cache blocks p, p + live, ... where live is
+// how many partitions the row's context uses (1 up to 128 tokens, up to 4 up to 2560, then PARTITIONS); phases at
+// or past live do nothing. A step with more rows than fit on the grid launches once per group of ROWS rows.
+//
+// Positions and slots change every step, so they are not kernel arguments: the host writes one 64-byte entry
+// per row into a pinned table before the step, [pos, active, slot, token, 0...]. BRISC reads its row's entry into L1
+// and bumps `ready`; the other RISCs wait for `ready` to move past the value they saw last launch, then read the
+// same L1 entry. Rows with active = 0 do nothing (their context row keeps stale data, which only feeds that row).
+//
+// q_in, k_in, v_in and context are row-major matrices with one row per batch row (pitches Q_PITCH, KV_PITCH,
+// Q_PITCH), as the row-major projection writes them. key_cache and value_cache hold slots of
+// KV_HEADS * CACHE_TILES_PER_HEAD tiles each, in the layout of ../llama3/attention.ttrv.
+
+const HEAD_TILES = 4
+const HEAD_DIM = HEAD_TILES * 32
+const HALF = HEAD_DIM / 2
+const GROUP = 4                              // query heads per KV head
+const KV_HEADS = 8
+const ROWS = 16
+const PARTITIONS = 1
+const LIVE4 = PARTITIONS - (PARTITIONS - 4) * (PARTITIONS > 4)   // partitions in use from 129 to 2560 tokens
+const Q_PITCH = ((KV_HEADS * GROUP * HEAD_DIM + 1023) / 1024) * 1024
+const KV_PITCH = ((KV_HEADS * HEAD_DIM + 1023) / 1024) * 1024
+const MAX_TOKENS = 2048
+const SCALE = 1.0 / sqrt(HEAD_DIM)
+const CACHE_TILES_PER_HEAD = MAX_TOKENS / 32 * HEAD_TILES
+const SLOT_ELEMS = KV_HEADS * CACHE_TILES_PER_HEAD * 1024
+const STATE_TILES = HEAD_TILES + 2           // O tiles, then m, then l
+const STATE_ELEMS = STATE_TILES * 1024
+
+// Dst tiles while attending: 0 scores / probabilities, 1..HEAD_TILES O, then m, l, alpha.
+const S = 0
+const M = (HEAD_TILES + 1) * dst.tile
+const L = (HEAD_TILES + 2) * dst.tile
+const ALPHA = (HEAD_TILES + 3) * dst.tile
+// Dst tiles while merging: 0..HEAD_TILES-1 O, then m, l, then the incoming state's m' and l' (and each O' tile in
+// turn, reusing m''s tile). alpha and beta live in rows of the m tile that hold no query row.
+const MM = HEAD_TILES * dst.tile
+const ML = (HEAD_TILES + 1) * dst.tile
+const MNEW = (HEAD_TILES + 2) * dst.tile
+const MNEW_L = (HEAD_TILES + 3) * dst.tile
+const MALPHA = MM + 8
+const MBETA = MM + 32
+const ROW_GROUPS = (GROUP + 3) / 4
+const ODD = 2
+const RIGHT = dst.face
+
+grid KV_HEADS * PARTITIONS * ROWS
+
+param q_in: bf16[]         // [rows, Q_PITCH]
+param k_in: bf16[]         // [rows, KV_PITCH]
+param v_in: bf16[]         // [rows, KV_PITCH]
+param cos: bf16[]          // [MAX_TOKENS, HEAD_DIM] by position
+param sin: bf16[]          // [MAX_TOKENS, HEAD_DIM], -sin over the first half of each row
+param key_cache: bf16[]    // [slots, KV_HEADS, CACHE_TILES_PER_HEAD tiles]
+param value_cache: bf16[]
+param context: bf16[]      // [rows, Q_PITCH]
+param table: u32[], host   // per row: pos, active, slot, token (16 words)
+param row_base: u32
+
+shared {
+    row = row_base + core.id / (PARTITIONS * KV_HEADS)
+    head = (core.id / PARTITIONS) % KV_HEADS
+    phase = core.id % PARTITIONS
+    q_base = row * Q_PITCH
+    kv_base = row * KV_PITCH
+    merger = (core.id / PARTITIONS) * PARTITIONS                // phase 0 of this (row, head) merges
+    merger_x = merger / 10                    // core.id = core.x * 10 + core.y (§4)
+    merger_y = merger % 10
+}
+
+cb operands: bf16[1024], pages=4            // x, swapped halves, cos, sin
+cb result: bf16[1024], pages=1              // rotated rows, same layout
+cb query: bf16[1024], pages=HEAD_TILES      // tiled q: tile f row g = head g, features 32f..
+cb rows: bf16[2 * HEAD_DIM], pages=1        // rotated k row, then the v row
+cb keys: bf16[1024], pages=2 * HEAD_TILES
+cb values: bf16[1024], pages=2 * HEAD_TILES
+cb probs: bf16[1024], pages=1               // P of one block
+if PARTITIONS > 1 {
+cb state: fp32[STATE_ELEMS], pages=1        // this worker's (O, m, l)
+cb states: fp32[STATE_ELEMS], pages=PARTITIONS  // merger: every partition's state, filled remotely
+}
+cb merged: bf16[HEAD_TILES * 1024], pages=1 // merger: normalized O
+
+l1 dense: bf16[GROUP * HEAD_DIM]
+l1 ret: u32[4]                              // noc.inc response slot
+l1 arrived: u32[4], keep                    // merger: states received; rearmed after use
+l1 meta: u32[16]                            // this row's table entry
+l1 ready: u32[4], keep                      // BRISC: entries published, counting launches
+l1 seen0: u32[4], keep                      // each consumer: the last count it saw
+l1 seen1: u32[4], keep
+l1 seen2: u32[4], keep
+l1 seen3: u32[4], keep
+
+sem dst_ready = math_pack, max=1
+
+const PHASES = 2
+include ../common/matmul_phases
+
+replay rope_step {
+    sfp.load l0, dst[0], fmt=fp32
+    sfp.load l1, dst[dst.tile], fmt=fp32
+    sfp.load l2, dst[2 * dst.tile], fmt=fp32
+    sfp.load l3, dst[3 * dst.tile], fmt=fp32
+    sfp.mul l0, l0, l2
+    sfp.mad l0, l1, l3, l0
+    sfp.rnd l0, l0, to=bf16
+    sfp.store dst[0], l0, fmt=fp32, addr=sfp_step
+}
+
+include ../common/attention
+include ../common/copy_tile
+
+fn brisc() {
+    noc.read meta, table[row * 16], n=16, wait
+    fence
+    ready[0] = ready[0] + 1
+    if meta[1] == 0 { return }
+    pos = meta[0]
+    cache = meta[2] * SLOT_ELEMS
+    blocks = pos / 32 + 1
+    live = 1 + (LIVE4 - 1) * (blocks > 4) + (PARTITIONS - LIVE4) * (blocks > 80)
+    if phase >= live { return }
+    visits = (blocks + live - 1 - phase) / live
+    owns = (blocks - 1) % live == phase
+    tail_visit = (blocks - 1) / live
+    token_row = pos & 31
+
+    o = cb.reserve operands, n=4
+    x = o
+    swapped = o + 1024
+    t = noc.read x, q_in[q_base + head * GROUP * HEAD_DIM], n=GROUP * HEAD_DIM
+    noc.read x + GROUP * HEAD_DIM, k_in[kv_base + head * HEAD_DIM], n=HEAD_DIM, tid=t
+    for r in 0..GROUP {
+        at = q_base + (head * GROUP + r) * HEAD_DIM
+        noc.read swapped + r * HEAD_DIM, q_in[at + HALF], n=HALF, tid=t
+        noc.read swapped + r * HEAD_DIM + HALF, q_in[at], n=HALF, tid=t
+    }
+    noc.read swapped + GROUP * HEAD_DIM, k_in[kv_base + head * HEAD_DIM + HALF], n=HALF, tid=t
+    noc.read swapped + GROUP * HEAD_DIM + HALF, k_in[kv_base + head * HEAD_DIM], n=HALF, tid=t
+    for r in 0..GROUP + 1 {
+        noc.read o + 2048 + r * HEAD_DIM, cos[pos * HEAD_DIM], n=HEAD_DIM, tid=t
+        noc.read o + 3072 + r * HEAD_DIM, sin[pos * HEAD_DIM], n=HEAD_DIM, tid=t
+    }
+    noc.wait t
+    cb.push operands, n=4
+
+    for i in 0..visits {
+        block = phase + i * live
+        first = cache + (head * CACHE_TILES_PER_HEAD + block * HEAD_TILES) * 1024
+        kp = cb.reserve keys, n=HEAD_TILES
+        vp = cb.reserve values, n=HEAD_TILES
+        kr = noc.read kp, key_cache[first], n=1024, port=0
+        vr = noc.read vp, value_cache[first], n=1024, port=HEAD_TILES % 3
+        for f in 1..HEAD_TILES {
+            noc.read kp + f * 1024, key_cache[first + f * 1024], n=1024, port=f % 3, tid=kr
+            noc.read vp + f * 1024, value_cache[first + f * 1024], n=1024, port=(f + HEAD_TILES) % 3, tid=vr
+        }
+        noc.wait kr, vr
+        if owns && i == tail_visit {
+            // This step's rotated K and V replace token row token_row of every tile, then append to the cache.
+            r = token_row
+            rw = cb.wait rows
+            for f in 0..HEAD_TILES {
+                for c in 0..32 {
+                    at = f * 1024 + (r >> 4) * 512 + (c >> 4) * 256 + (r & 15) * 16 + (c & 15)
+                    kp[at] = rw[f * 32 + c]
+                    vp[at] = rw[HEAD_DIM + f * 32 + c]
+                }
+            }
+            for f in 0..HEAD_TILES {
+                for h in 0..2 {
+                    at = f * 1024 + (r >> 4) * 512 + h * 256 + (r & 15) * 16
+                    noc.write key_cache[first + at], kp + at, n=16, wait
+                    noc.write value_cache[first + at], vp + at, n=16, wait
+                }
+            }
+            cb.pop rows
+        }
+        cb.push keys, n=HEAD_TILES
+        cb.push values, n=HEAD_TILES
+    }
+
+    if PARTITIONS > 1 {
+        // Merger: wait for every live state, rearm the counter, publish the states.
+        if phase == 0 {
+            loop {
+                if arrived[0] == live { break }
+                fence
+            }
+            fence
+            arrived[0] = 0
+            cb.reserve states, n=live
+            cb.push states, n=live
+        }
+    }
+}
+
+fn trisc0() {
+    loop { if ready[0] != seen0[0] { break }; fence }
+    seen0[0] = ready[0]
+    if meta[1] == 0 { return }
+    pos = meta[0]
+    blocks = pos / 32 + 1
+    live = 1 + (LIVE4 - 1) * (blocks > 4) + (PARTITIONS - LIVE4) * (blocks > 80)
+    visits = (blocks + live - 1 - phase) / live
+    owns = (blocks - 1) % live == phase
+    tail_visit = (blocks - 1) / live
+    if phase >= live { return }
+
+    unpack.fmt a|b, in=bf16
+    o = cb.wait operands, n=4
+    repeat t in 0..4 { unpack.move a, o + t * 1024, dvalid }
+    tensix.wait
+    cb.pop operands, n=4
+
+    q = cb.wait query, n=HEAD_TILES
+    for i in 0..visits {
+        k = cb.wait keys, n=HEAD_TILES
+        unpack.fmt a, in=bf16, transpose
+        repeat f in 0..HEAD_TILES {
+            unpack.move b, q + f * 1024, dvalid
+            unpack.move a, k + f * 1024, dvalid
+        }
+        tensix.wait
+        cb.pop keys, n=HEAD_TILES
+
+        p = cb.wait probs
+        v = cb.wait values, n=HEAD_TILES
+        unpack.fmt a, in=bf16
+        repeat f in 0..HEAD_TILES {
+            unpack.move b, p, dvalid
+            unpack.move a, v + f * 1024, dvalid
+        }
+        tensix.wait
+        cb.pop values, n=HEAD_TILES
+        cb.pop probs
+    }
+    cb.pop query, n=HEAD_TILES
+
+    if PARTITIONS > 1 {
+        if phase == 0 {
+            unpack.fmt a, in=fp32
+            st = cb.wait states, n=live
+            repeat t in 0..STATE_TILES { unpack.move a, st + t * 1024, dvalid }
+            for s in 1..live {
+                p = st + s * STATE_ELEMS
+                unpack.move a, p + HEAD_TILES * 1024, dvalid
+                unpack.move a, p + (HEAD_TILES + 1) * 1024, dvalid
+                repeat f in 0..HEAD_TILES { unpack.move a, p + f * 1024, dvalid }
+            }
+            tensix.wait
+            cb.pop states, n=live
+        }
+    }
+}
+
+fn trisc1() {
+    loop { if ready[0] != seen1[0] { break }; fence }
+    seen1[0] = ready[0]
+    if meta[1] == 0 { return }
+    pos = meta[0]
+    blocks = pos / 32 + 1
+    live = 1 + (LIVE4 - 1) * (blocks > 4) + (PARTITIONS - LIVE4) * (blocks > 80)
+    visits = (blocks + live - 1 - phase) / live
+    owns = (blocks - 1) % live == phase
+    tail_visit = (blocks - 1) / live
+    if phase >= live { return }
+    valid_columns = (pos & 31) + 1
+
+    math.fmt dst=fp32, sfp=fp32
+    math.cfg dst_offset=0
+    matmul_addrmods!(32, 16)
+    math.addrmod mm_col, slot=2, srca=cr+0, srcb=cr+32, dst+=8
+    math.addrmod mm_b, slot=3, srcb+=8, dst+=8
+    math.addrmod mm_phase, slot=5, srca=0, srcb=0, dst=0, fidelity+=1
+    math.addrmod sfp_step, slot=6, dst+=2
+    replay.load mm_first
+    replay.load mm_second
+    replay.load copy_rows
+    replay.load rope_step
+    mop.load matmul
+
+    // RoPE: Dst tiles 0..3 = x, swapped, cos, sin; the rotated rows overwrite tile 0.
+    sem.stall math|sfpu|sync, dst_ready, notmax
+    repeat t in 0..4 { copy_tile!(t) }
+    tensix.stall sfpu, math
+    math.rwc reset
+    loop 32 { replay.run rope_step }
+    math.rwc reset
+    tensix.stall sync, math|sfpu
+    sem.inc dst_ready
+
+    // O = 0, m = -inf, l = 0 in the live rows; every other row stays finite.
+    sem.stall math|sfpu|sync, dst_ready, notmax
+    sfp.li l0, 0.0
+    repeat t in 1..HEAD_TILES + 2 { fill_tile!(t, l0) }
+    fill_tile!(HEAD_TILES + 3, l0)
+    sfp.li l1, 1.0
+    fill_tile!(HEAD_TILES + 2, l1)
+    sfp.li l0, -inf
+    loop ROW_GROUPS {
+        repeat offset in ROW_OFFSETS { sfp.store dst[M + offset], l0, fmt=fp32 }
+        math.rwc dst+=4
+    }
+    math.rwc dst=0
+    sfp.li l0, 0.0
+    loop ROW_GROUPS {
+        repeat offset in ROW_OFFSETS { sfp.store dst[L + offset], l0, fmt=fp32 }
+        math.rwc dst+=4
+    }
+    math.rwc dst=0
+    tensix.stall sync, math|sfpu
+
+    for i in 0..visits {
+        sem.stall math|sfpu|sync, dst_ready, notmax
+        matmul_addrmods!(32, 16)
+        math.cfg dst_offset=0
+        repeat face in 0..4 { math.zero face=face, fmt=fp32 }
+        repeat f in 0..HEAD_TILES { product!() }
+
+        tensix.stall sync, math|sfpu
+        if owns && i == tail_visit {
+            loop ROW_GROUPS { mask_tail!(valid_columns); math.rwc dst+=4 }
+            math.rwc dst=0
+            tensix.stall sync, sfpu
+        }
+        loop ROW_GROUPS { online_softmax!(HEAD_TILES); math.rwc dst+=4 }
+        math.rwc dst=0
+        sem.inc dst_ready
+
+        sem.stall math|sfpu|sync, dst_ready, notmax
+        matmul_addrmods!(16, 32)
+        repeat f in 0..HEAD_TILES {
+            math.cfg dst_offset=(1 + f) * dst.tile
+            product!()
+        }
+        math.cfg dst_offset=0
+    }
+
+    if PARTITIONS > 1 {
+        // Publish (O, m, l): Dst tiles 1..HEAD_TILES + 2.
+        sem.stall math|sfpu|sync, dst_ready, notmax
+        tensix.stall sync, math|sfpu
+        sem.inc dst_ready
+    }
+    if phase == 0 {
+        // m_new = max(m, m'), alpha = exp(m - m_new), beta = exp(m' - m_new),
+        // l = l alpha + l' beta, O = O alpha + O' beta; finally O /= l.
+        sem.stall math|sfpu|sync, dst_ready, notmax
+        if PARTITIONS > 1 {
+            repeat t in 0..STATE_TILES { copy_tile!(t) }
+            for s in 1..live {
+                copy_tile!(HEAD_TILES + 2)
+                copy_tile!(HEAD_TILES + 3)
+                tensix.stall sfpu, math
+                merge_maxima!()
+                exp_setup!()
+                loop ROW_GROUPS {
+                    repeat offset in ROW_OFFSETS { exp_exact_at!(MALPHA + offset) }
+                    math.rwc dst+=4
+                }
+                math.rwc dst=0
+                loop ROW_GROUPS {
+                    repeat offset in ROW_OFFSETS { exp_exact_at!(MBETA + offset) }
+                    math.rwc dst+=4
+                }
+                math.rwc dst=0
+                loop ROW_GROUPS {
+                    repeat offset in ROW_OFFSETS { merge_rows!(ML + offset, MNEW_L + offset) }
+                    math.rwc dst+=4
+                }
+                math.rwc dst=0
+                repeat f in 0..HEAD_TILES {
+                    copy_tile!(HEAD_TILES + 2)  // O'_f
+                    tensix.stall sfpu, math
+                    loop ROW_GROUPS {
+                        repeat offset in ROW_OFFSETS {
+                            merge_rows!(f * dst.tile + offset, MNEW + offset)
+                        }
+                        math.rwc dst+=4
+                    }
+                    math.rwc dst=0
+                }
+                tensix.stall sync, math|sfpu
+            }
+        }
+        loop ROW_GROUPS {
+            repeat offset in ROW_OFFSETS {
+                sfp.load l0, dst[ML + (PARTITIONS == 1) * dst.tile + offset], fmt=fp32
+                recip_l0!()
+                sfp.store dst[ML + (PARTITIONS == 1) * dst.tile + offset], l0, fmt=fp32
+            }
+            math.rwc dst+=4
+        }
+        math.rwc dst=0
+        repeat f in 0..HEAD_TILES {
+            loop ROW_GROUPS {
+                repeat offset in ROW_OFFSETS {
+                    sfp.load l0, dst[(f + (PARTITIONS == 1)) * dst.tile + offset], fmt=fp32
+                    sfp.load l1, dst[ML + (PARTITIONS == 1) * dst.tile + offset], fmt=fp32
+                    sfp.mul l0, l0, l1; sfp.nop
+                    sfp.store dst[(f + (PARTITIONS == 1)) * dst.tile + offset], l0, fmt=fp32
+                }
+                math.rwc dst+=4
+            }
+            math.rwc dst=0
+        }
+        tensix.stall sync, math|sfpu
+        sem.inc dst_ready
+    }
+}
+
+fn trisc2() {
+    loop { if ready[0] != seen2[0] { break }; fence }
+    seen2[0] = ready[0]
+    if meta[1] == 0 { return }
+    pos = meta[0]
+    blocks = pos / 32 + 1
+    live = 1 + (LIVE4 - 1) * (blocks > 4) + (PARTITIONS - LIVE4) * (blocks > 80)
+    visits = (blocks + live - 1 - phase) / live
+    owns = (blocks - 1) % live == phase
+    tail_visit = (blocks - 1) / live
+    if phase >= live { return }
+
+    pack.fmt in=fp32, out=bf16
+    pack_tile!(result, 0)
+    loop visits { pack_tile!(probs, 0) }
+
+    if PARTITIONS > 1 {
+        sem.stall tdma|pack|sync, dst_ready, nonzero
+        tensix.wait
+        pack.fmt in=fp32, out=fp32
+        p = cb.reserve state
+        repeat t in 0..STATE_TILES { pack.move p + t * 1024, dst[(1 + t) * dst.tile] }
+        tensix.stall sync, pack0
+        tensix.wait
+        cb.push state
+        sem.dec dst_ready
+    }
+    if phase == 0 {
+        sem.stall tdma|pack|sync, dst_ready, nonzero
+        pack.fmt in=fp32, out=bf16
+        out = cb.reserve merged
+        repeat t in 0..HEAD_TILES { pack.move out + t * 1024, dst[(t + (PARTITIONS == 1)) * dst.tile] }
+        tensix.stall sync, pack0
+        tensix.wait
+        cb.push merged
+        sem.dec dst_ready
+    }
+}
+
+fn ncrisc() {
+    loop { if ready[0] != seen3[0] { break }; fence }
+    seen3[0] = ready[0]
+    if meta[1] == 0 { return }
+    pos = meta[0]
+    blocks = pos / 32 + 1
+    live = 1 + (LIVE4 - 1) * (blocks > 4) + (PARTITIONS - LIVE4) * (blocks > 80)
+    visits = (blocks + live - 1 - phase) / live
+    owns = (blocks - 1) % live == phase
+    tail_visit = (blocks - 1) / live
+    if phase >= live { return }
+
+    // Query tiles: row g of tile f is head g's features 32f..32f+31; other rows zero.
+    q = cb.reserve query, n=HEAD_TILES
+    if PARTITIONS > 1 { for i in 0..HEAD_TILES * 1024 { q[i] = 0.0 } }
+    res = cb.wait result
+    for g in 0..GROUP {
+        for f in 0..HEAD_TILES {
+            l1.copy_words q + f * 1024 + g * 16, res + g * HEAD_DIM + f * 32, n=8
+            l1.copy_words q + f * 1024 + g * 16 + 256, res + g * HEAD_DIM + f * 32 + 16, n=8
+        }
+    }
+    cb.push query, n=HEAD_TILES
+
+    // The token's owner: rotated k row and raw v row for BRISC's patch and append.
+    if owns {
+        rw = cb.reserve rows
+        l1.copy_words rw, res + GROUP * HEAD_DIM, n=HEAD_DIM / 2
+        noc.read rw + HEAD_DIM, v_in[kv_base + head * HEAD_DIM], n=HEAD_DIM, wait
+        cb.push rows
+    }
+    cb.pop result
+
+    if PARTITIONS > 1 {
+        // Send (O, m, l) to slot `phase` of the merger's states ring, then count it.
+        st = cb.wait state
+        slot = states + phase * STATE_ELEMS
+        for t in 0..STATE_TILES {
+            noc.write remote(merger_x, merger_y, slot + t * 1024), st + t * 1024, n=1024, wait
+        }
+        noc.inc remote(merger_x, merger_y, arrived), by=1, ret=ret, wait
+        cb.pop state
+    }
+    if phase == 0 {
+        o = cb.wait merged
+        for g in 0..GROUP {
+            for f in 0..HEAD_TILES {
+                l1.copy_words dense + g * HEAD_DIM + f * 32, o + f * 1024 + g * 16, n=8
+                l1.copy_words dense + g * HEAD_DIM + f * 32 + 16, o + f * 1024 + 256 + g * 16, n=8
+            }
+        }
+        noc.write context[q_base + head * GROUP * HEAD_DIM], dense, n=GROUP * HEAD_DIM, wait
+        cb.pop merged
+    }
+}

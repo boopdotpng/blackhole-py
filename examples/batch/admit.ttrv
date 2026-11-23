@@ -1,0 +1,39 @@
+// Copy cache blocks [0, blocks) of every KV head of one layer from slot src_slot to slot dst_slot of the batched
+// caches (layout of ../llama3/attention.ttrv per slot). Used to start a sequence from another slot's cached prefix.
+const WORKERS = 64
+grid WORKERS
+const HEAD_TILES = 4
+const KV_HEADS = 8
+const MAX_TOKENS = 2048
+const CACHE_TILES_PER_HEAD = MAX_TOKENS / 32 * HEAD_TILES
+const SLOT_ELEMS = KV_HEADS * CACHE_TILES_PER_HEAD * 1024
+const CHUNK = 4                    // tiles per transfer
+
+param keys: bf16[]
+param values: bf16[]
+param src_slot: u32
+param dst_slot: u32
+param blocks: u32
+
+l1 buf: bf16[CHUNK * 1024]
+
+fn brisc() {
+    n = blocks * HEAD_TILES
+    chunks = (n + CHUNK - 1) / CHUNK
+    total = 2 * KV_HEADS * chunks
+    for j in 0..(total + WORKERS - 1 - core.id) / WORKERS {
+        c = core.id + j * WORKERS
+        run = c / chunks
+        start = (c % chunks) * CHUNK
+        count = n - start
+        if count > CHUNK { count = CHUNK }
+        at = ((run % KV_HEADS) * CACHE_TILES_PER_HEAD + start) * 1024
+        if run < KV_HEADS {
+            noc.read buf, keys[src_slot * SLOT_ELEMS + at], n=count * 1024, wait
+            noc.write keys[dst_slot * SLOT_ELEMS + at], buf, n=count * 1024, wait
+        } else {
+            noc.read buf, values[src_slot * SLOT_ELEMS + at], n=count * 1024, wait
+            noc.write values[dst_slot * SLOT_ELEMS + at], buf, n=count * 1024, wait
+        }
+    }
+}

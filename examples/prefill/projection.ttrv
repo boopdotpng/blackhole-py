@@ -1,0 +1,411 @@
+// Prompt projection: PANELS 32-row panels of tiled activations times face-packed W[K, N], tiled outputs.
+// Workers form column groups of PANELS (one physical column, one worker per panel); a group owns a contiguous
+// range of 32-column output tiles. Per group, panel 0 is the reader: its BRISC streams the weight blocks from DRAM
+// with STAGES blocks in flight, and its NCRISC multicasts each block down the column on NoC1, followed by the
+// block's landed flag. Every worker's BRISC grants a credit to the reader as soon as its ring slot for a block is
+// free, so no worker's send or compute sits on another's critical path. One sender per column means multicasts
+// in a column never overlap.
+// Epilogues: SWIGLU makes each output tile silu(gate) * up from output columns c and c + N / 2, accumulated back to
+// back in Dst. RESIDUAL adds a residual tile to each output tile (output may be the residual buffer itself); it is
+// NOT reliable yet: with few staged blocks (STAGES 2, or BATCH 16) some output tiles differ from run to run. The
+// residual's unpack.move between the stream-mode weight unpacks is the suspect. prefill.py does not use it.
+const WORKERS = 130
+grid WORKERS
+const K = 4096
+const N = 4096
+const BITS = 8
+const GROUP = 8
+const SECOND = 0
+const THIRD = 0
+const PANELS = 10
+const BATCH = 32   // K tiles per block
+const DEPTH = 2    // ring blocks per worker (at most 4)
+const STAGES = 4   // reader: DRAM blocks in flight, 3 to 6. With 2, some output columns differ from run to run (a
+                   // stage slot seems to be refilled before its multicast has read it); the cause is not found yet.
+const RESIDUAL = 0
+const SWIGLU = 0
+if BITS == 4 { type W = bfp4 } else { if BITS == 8 { type W = bfp8 } else { type W = bf16 } }
+
+param x: bf16[]
+param weights: W[], tiles_per_page=GROUP
+param output: bf16[]
+if SECOND { param output2: bf16[] }
+if THIRD { param output3: bf16[] }
+if RESIDUAL { param residual: bf16[] }
+const KT = K / 32
+const NT = N / 32
+const BLOCKS = KT / BATCH
+const HALVES = 1 + SWIGLU          // weight columns per output tile
+const NU = NT / HALVES             // output tiles per panel
+const UNIT = BLOCKS * HALVES       // blocks per output tile
+// Weight pages: page (k group g, output column c) sits at g * NT_PITCH + c and banks interleave by page. With PAD the
+// pitch is odd, so one column's K pages rotate over all eight banks instead of sharing one (NT is usually even).
+const PAD = 0
+const NT_PITCH = NT + PAD * (1 - NT % 2)
+shared {
+    column_id = core.id / PANELS
+    column_workers = grid.size / PANELS
+    panel = core.id % PANELS
+    y0 = core.y - panel
+    per = (NU + column_workers - 1) / column_workers
+    first_col = column_id * per
+    left = (NU - first_col) * (first_col < NU)
+    count = left - (left - per) * (left > per)
+    total = count * UNIT
+    port_id = column_id % 3
+    // Groups start at different points of their ranges so that concurrent weight reads spread over the banks.
+    rot = (column_id - first_col) & 7
+}
+l1 b_ready: u32[16], keep     // reader: credits per ring slot (word 4 * slot), one per worker per block
+l1 b_sent: u32[16], keep      // ring slot s: 1 + the last block landed there, at word 4 * s (16-byte aligned)
+l1 staged: u32[4], keep       // reader: blocks whose DRAM reads are complete (BRISC -> NCRISC)
+l1 drained: u32[4], keep      // reader: blocks multicast from the stage (NCRISC -> BRISC)
+l1 ack: u32[4]
+l1 one: u32[4]                // the flag value in every word: a 4-byte NoC write keeps its 16-byte offset
+l1 received: u32[16], keep
+l1 stage: W[STAGES * BATCH * 1024]
+cb activations: bf16[32 * K], pages=1   // produced by BRISC
+cb matrices: W[1024], pages=DEPTH * BATCH
+cb results: bf16[1024], pages=2
+if RESIDUAL { cb residuals: bf16[1024], pages=2 }
+sem ready = math_pack, max=1
+
+const PHASES = 2 - (BITS == 4)
+include ../common/matmul_phases
+include ../common/copy_tile
+
+// l0 = e^l0. Needs l4 = 127.0, l5 = c1, l6 = c0, l12 = log2(e), l13 = c2; clobbers l1-l3 (vector_math's exp).
+macro exp_l0() {
+    sfp.mad l3, l0, l12, l4
+    sfp.li l1, 255.0
+    sfp.minmax l3, l1
+    sfp.exexp l1, l3
+    sfp.exman l0, l3
+    sfp.shift l0, l0, l1
+    sfp.exman l1, l0, hidden=0
+    sfp.cast l1, l1
+    sfp.mad l2, l1, l13, l5
+    sfp.mad l1, l2, l1, l6
+    sfp.if l3 <= zero { sfp.mov l0, zero }
+    sfp.setexp l0, l1, l0, from=fp32
+}
+
+// silu, part 1, at one SFPU address: keep gate in tile 2, store e^-gate in tile 0.
+macro silu_exp() {
+    sfp.load l0, dst[0], fmt=fp32
+    sfp.store dst[2 * dst.tile], l0, fmt=fp32
+    sfp.mul l0, l0, neg_one
+    exp_l0!()
+    sfp.store dst[0], l0, fmt=fp32, addr=sfp_step
+}
+
+// silu, part 2: gate / (1 + e^-gate) * up.
+macro silu_combine() {
+    sfp.load l0, dst[0], fmt=fp32
+    sfp.addi l0, l0, 1.0
+    sfp.recip l1, l0
+    sfp.mad l2, l0, l1, one, neg_ab
+    sfp.mad l3, l2, l2, l2
+    sfp.mad l3, l3, l2, l2
+    sfp.minmax l3, one
+    sfp.mad l0, l3, l1, l1
+    sfp.load l4, dst[2 * dst.tile], fmt=fp32
+    sfp.load l5, dst[dst.tile], fmt=fp32
+    sfp.mul l4, l4, l0
+    sfp.mul l4, l4, l5
+    sfp.store dst[0], l4, fmt=fp32, addr=sfp_step
+}
+
+
+// Read block m (BATCH K tiles of one weight column) into stage slot s under read group g.
+macro fetch(s, m, g) {
+    col = first_col + (m / UNIT + rot) % count + ((m / BLOCKS) % HALVES) * NU
+    tile = (((m % BLOCKS) * (BATCH / GROUP)) * NT_PITCH + col) * GROUP
+    for i in 0..BATCH / GROUP {
+        noc.read tileptr(stage, s * BATCH + i * GROUP), tileptr(weights, tile + i * NT_PITCH * GROUP), port=port_id, n=GROUP * 1024, tid=g
+    }
+}
+
+// Block m into its stage slot m % STAGES, under that slot's read group.
+macro fetch_slot(m) {
+    slot = m % STAGES
+    if slot == 0 { fetch!(0, m, g0) }
+    if slot == 1 { fetch!(1, m, g1) }
+    if slot == 2 { fetch!(2, m, g2) }
+    if slot == 3 { fetch!(3, m, g3) }
+    if slot == 4 { fetch!(4, m, g4) }
+    if slot == 5 { fetch!(5, m, g5) }
+}
+
+// Peers covering the same prompt panel (the same y in each half of the grid) gather disjoint stripes of it into
+// the same L1 layout over NoC0, while weight blocks go down the columns over NoC1: multicasts from different
+// senders never share a NoC unless their rectangles are identical.
+macro gather() {
+    a = cb.reserve activations
+    x0 = (core.x / 7) * 7
+    lanes = (grid.size + 9 - core.y) / 10 - x0
+    if lanes > 7 { lanes = 7 }
+    lane = core.x - x0
+    chunks = K * 32 / 8192
+    lo = chunks * lane / lanes
+    hi = chunks * (lane + 1) / lanes
+    if hi > lo {
+        noc.read a + lo * 8192, x[panel * 32 * K + lo * 8192], n=(hi - lo) * 8192, wait
+        for b in lo..hi {
+            noc.mcast rect(x0, core.y, x0 + lanes - 1, core.y, a + b * 8192), a + b * 8192, n=8192, wait
+        }
+    }
+    received[lane] = 1
+    noc.mcast rect(x0, core.y, x0 + lanes - 1, core.y, received + lane), received + lane, n=1, wait
+    for peer in 0..lanes {
+        loop {
+            if received[peer] { break }
+            fence
+        }
+        received[peer] = 0
+    }
+    cb.push activations
+}
+
+fn brisc() {
+    reader = panel == 0
+    g0 = noc.group read
+    g1 = noc.group read
+    g2 = noc.group read
+    g3 = noc.group read
+    g4 = noc.group read
+    g5 = noc.group read
+    fetched = 0
+    if total == 0 { gather!() }
+    for n in 0..total {
+        if reader {
+            // Refill every stage slot whose block NCRISC has sent (all of them at first), without waiting.
+            loop {
+                if fetched >= total { break }
+                if drained[0] + STAGES <= fetched { break }
+                fetch_slot!(fetched)
+                fetched = fetched + 1
+            }
+        }
+        if n == 0 { gather!() }
+        if RESIDUAL {
+            if n % UNIT == 0 {
+                r = cb.reserve residuals
+                noc.read r, residual[(panel * NT + first_col + (n / UNIT + rot) % count) * 1024], n=1024, wait
+                cb.push residuals
+            }
+        }
+        cb.reserve matrices, n=BATCH
+        // One counter per ring slot: a worker's credit for block n + DEPTH needs block n, which needs every worker's
+        // credit for n, so a slot's count never runs ahead. A single counter could be fooled by a fast worker.
+        noc.inc remote(core.x, y0, b_ready + 4 * (n % DEPTH)), by=1, ret=ack, wait
+        if reader {
+            slot = n % STAGES
+            if slot == 0 { noc.wait g0 }
+            if slot == 1 { noc.wait g1 }
+            if slot == 2 { noc.wait g2 }
+            if slot == 3 { noc.wait g3 }
+            if slot == 4 { noc.wait g4 }
+            if slot == 5 { noc.wait g5 }
+            fence
+            staged[0] = n + 1
+        }
+        cb.push matrices, n=BATCH
+    }
+    noc.wait g0, g1, g2, g3, g4, g5
+    if reader {
+        loop { if drained[0] >= total { break }; fence }
+        staged[0] = 0
+        drained[0] = 0
+    }
+}
+
+fn trisc0() {
+    unpack.fmt a, in=W
+    unpack.fmt b, in=bf16
+    if BITS == 16 { unpack.shape a, n=1024, faces=1 } else { unpack.shape a, n=256, faces=4 }
+    unpack.shape b, n=1024, faces=1
+    a = cb.wait activations
+    landed = 0
+    for j in 0..count {
+        for half_block in 0..UNIT {
+            block = half_block % BLOCKS
+            w = cb.wait matrices, n=BATCH
+            // Block n's flag is n + 1. Flags are never cleared mid-launch: a RISC store clearing one could land
+            // after the NoC write of the next flag to that slot and erase it.
+            loop { if b_sent[4 * (landed % DEPTH)] > landed { break }; fence }
+            landed = landed + 1
+            // Bases go through the Tensix stream: 32-row activation tiles step by one tile per Z, and so do BF16
+            // weights. BFP weight tiles each carry their own exponents, so their base is written per tile.
+            unpack.base b, a + block * BATCH * 1024, stream
+            if BITS == 16 { unpack.base a, w, stream }
+            unpack.reset_zw a|b
+            for i in 0..BATCH {
+                if BITS != 16 {
+                    unpack.base a, tileptr(w, i), stream
+                    unpack.reset_zw a
+                }
+                tensix.stall unpack, srca_clr|srcb_clr
+                unpack.face b, next_l1_face, dvalid
+                if BITS == 16 { unpack.face a, next_l1_face, dvalid } else {
+                    repeat 3 { unpack.face a, next_tile_face }
+                    unpack.face a, next_tile_face, dvalid
+                }
+            }
+            tensix.stall sync, unpack0|unpack1
+            tensix.wait
+            cb.pop matrices, n=BATCH
+        }
+        if RESIDUAL {
+            r = cb.wait residuals
+            unpack.fmt a, in=bf16
+            unpack.move a, r, dvalid
+            tensix.wait
+            cb.pop residuals
+            unpack.fmt a, in=W
+            if BITS == 16 { unpack.shape a, n=1024, faces=1 } else { unpack.shape a, n=256, faces=4 }
+        }
+    }
+    cb.pop activations
+    // Every flag of this launch has arrived and been read.
+    for i in 0..DEPTH { b_sent[4 * i] = 0 }
+}
+
+fn trisc1() {
+    math.fmt dst=fp32, sfp=fp32
+    math.cfg dst_offset=0
+    math.addrmod mm_k, slot=1, srca+=16, srcb=cr+0, dst+=8
+    math.addrmod mm_col, slot=2, srca=cr+0, srcb=cr+32, dst+=8
+    math.addrmod mm_b, slot=3, srcb+=8, dst+=8
+    math.addrmod mm_row, slot=4, srca=cr+32, srcb=cr+48, dst=cr+0
+    math.addrmod mm_phase, slot=5, srca=0, srcb=0, dst=0, fidelity+=1
+    math.addrmod sfp_step, slot=6, dst+=2
+    if SWIGLU {
+        sfp.const l12, 1.4426950216293335    // log2(e)
+        sfp.const l13, 4.791750143340323e-15
+    }
+    replay.load mm_first
+    replay.load mm_second
+    if RESIDUAL { replay.load copy_rows }
+    mop.load matmul
+    for j in 0..count {
+        sem.stall math|sync, ready, notmax
+        repeat face in 0..4 { math.zero face=face, fmt=fp32 }
+        if SWIGLU {
+            // ZEROACC names absolute faces from row 0 (not from the Dst offset): clear the up tile through the SFPU.
+            math.rwc reset
+            sfp.li l0, 0.0
+            loop 32 { sfp.store dst[dst.tile], l0, fmt=fp32, addr=sfp_step }
+            math.rwc reset
+            tensix.stall sync, sfpu
+        }
+        // Dst tile h accumulates weight column half h.
+        repeat h in 0..HALVES {
+            math.cfg dst_offset=h * dst.tile
+            for k in 0..KT {
+                math.rwc reset
+                tensix.stall math, srca_vld|srcb_vld
+                mop.run matmul
+                math.rwc reset, release=b
+            }
+        }
+        math.cfg dst_offset=0
+        if RESIDUAL {
+            copy_tile!(1)
+            tensix.stall sfpu, math
+            math.rwc reset
+            loop 32 {
+                sfp.load l0, dst[0], fmt=fp32
+                sfp.load l1, dst[dst.tile], fmt=fp32
+                sfp.add l0, l0, l1; sfp.nop
+                sfp.store dst[0], l0, fmt=fp32, addr=sfp_step
+            }
+            math.rwc reset
+        }
+        if SWIGLU {
+            tensix.stall sfpu, math
+            math.rwc reset
+            sfp.li l4, 127.0
+            sfp.li l5, 7.839635491371155e-08
+            sfp.li l6, 1.0017248
+            loop 32 { silu_exp!() }
+            math.rwc reset
+            tensix.stall sync, sfpu
+            loop 32 { silu_combine!() }
+            math.rwc reset
+        }
+        tensix.stall sync, math|sfpu
+        sem.inc ready
+    }
+}
+
+fn trisc2() {
+    pack.fmt in=fp32, out=bf16
+    for j in 0..count {
+        sem.stall tdma|pack|sync, ready, nonzero
+        p = cb.reserve results
+        pack.move p, dst[0]
+        tensix.stall sync, pack0
+        tensix.wait
+        cb.push results
+        sem.dec ready
+    }
+}
+
+// Write the group's j-th result tile into its output's panel tiles.
+macro store(j) {
+    p = cb.wait results
+    col = first_col + (j + rot) % count
+    if SWIGLU {
+        noc.write output[(panel * NU + col) * 1024], p, n=1024, wait
+    } else {
+    if THIRD {
+        if col >= (N - THIRD) / 32 {
+            noc.write output3[(panel * (THIRD / 32) + col - (N - THIRD) / 32) * 1024], p, n=1024, wait
+        } else {
+            if col >= (N - THIRD - SECOND) / 32 {
+                noc.write output2[(panel * (SECOND / 32) + col - (N - THIRD - SECOND) / 32) * 1024], p, n=1024, wait
+            } else { noc.write output[(panel * ((N - SECOND - THIRD) / 32) + col) * 1024], p, n=1024, wait }
+        }
+    } else {
+        if SECOND {
+            if col >= (N - SECOND) / 32 {
+                noc.write output2[(panel * (SECOND / 32) + col - (N - SECOND) / 32) * 1024], p, n=1024, wait
+            } else { noc.write output[(panel * ((N - SECOND) / 32) + col) * 1024], p, n=1024, wait }
+        } else { noc.write output[(panel * (N / 32) + col) * 1024], p, n=1024, wait }
+    }
+    }
+    cb.pop results
+}
+
+fn ncrisc() {
+
+    if panel == 0 {
+        written = 0
+        m = noc.group mcast
+        for n in 0..total {
+            loop { if staged[0] > n { break }; fence }
+            loop { if b_ready[4 * (n % DEPTH)] >= (n / DEPTH + 1) * PANELS { break }; fence }
+            s = n % STAGES
+            for i in 0..BATCH / GROUP {
+                noc.mcast rect(core.x, y0, core.x, y0 + PANELS - 1, tileptr(matrices, (n % DEPTH) * BATCH + i * GROUP)), tileptr(stage, s * BATCH + i * GROUP), n=GROUP * 1024, include_sender, tid=m
+            }
+            // Same route and virtual channel as the data, so the flag lands after it. The previous flag has left.
+            for i in 0..4 { one[i] = n + 1 }
+            fence
+            noc.mcast rect(core.x, y0, core.x, y0 + PANELS - 1, b_sent + 4 * (n % DEPTH)), one, n=1, include_sender, tid=m
+            noc.wait m
+            fence
+            drained[0] = n + 1
+            // A column's result is ready long after its blocks have gone; store the previous one.
+            if n % UNIT == UNIT - 1 && n >= UNIT {
+                store!(written)
+                written = written + 1
+            }
+        }
+        for i in 0..DEPTH { b_ready[4 * i] = 0 }
+        for j in written..count { store!(j) }
+    } else {
+        for j in 0..count { store!(j) }
+    }
+}

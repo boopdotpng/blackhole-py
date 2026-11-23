@@ -1,0 +1,266 @@
+// Causal prompt attention for one chunk that starts on a 32-token block boundary (flash attention).
+// Run prompt_rope first: it leaves the chunk's rotated queries in q_tiles and its keys and values in the caches.
+// Item (h, j) is query head h over the chunk's 32-row tile j: it streams KV head h / GROUP's cache blocks
+// 0 .. start_pos / 32 + j once, keeps (O, m, l) for all 32 rows in Dst, masks the diagonal block causally, and
+// writes its output tiles into panel j of the tiled context (the o projection's input). Items go to cores largest first, snaking each pass.
+
+const HEAD_TILES = 4
+const HEAD_DIM = HEAD_TILES * 32
+const GROUP = 4
+const KV_HEADS = 8
+const Q_HEADS = KV_HEADS * GROUP
+const MAX_TOKENS = 8192
+const CACHE_TILES_PER_HEAD = MAX_TOKENS / 32 * HEAD_TILES
+const TILES_Q = 10
+const ROWS = TILES_Q * 32                    // valid rows in the chunk
+const ITEMS = Q_HEADS * TILES_Q
+const WORKERS = 130
+const PASSES = (ITEMS + WORKERS - 1) / WORKERS
+const SCALE = 1.0 / sqrt(HEAD_DIM)
+grid WORKERS
+
+// Dst tiles: scores, O..., m, l, alpha (the decode kernel's layout).
+const S = 0
+const M = (HEAD_TILES + 1) * dst.tile
+const L = (HEAD_TILES + 2) * dst.tile
+const ALPHA = (HEAD_TILES + 3) * dst.tile
+const MM = HEAD_TILES * dst.tile
+const ML = (HEAD_TILES + 1) * dst.tile
+const MNEW = (HEAD_TILES + 2) * dst.tile
+const MNEW_L = (HEAD_TILES + 3) * dst.tile
+const MALPHA = MM + 8
+const MBETA = MM + 32
+const ODD = 2
+const RIGHT = dst.face
+
+param q_tiles: bf16[]
+param key_cache: bf16[]
+param value_cache: bf16[]
+param context: bf16[]
+param start_pos: u32
+
+cb query: bf16[1024], pages=HEAD_TILES
+cb keys: bf16[1024], pages=2 * HEAD_TILES
+cb values: bf16[1024], pages=2 * HEAD_TILES
+cb probs: bf16[1024], pages=1
+cb merged: bf16[HEAD_TILES * 1024], pages=1
+sem dst_ready = math_pack, max=1
+
+const PHASES = 2
+include ../common/matmul_phases
+include ../common/attention
+include ../common/copy_tile
+
+// Scores right of the diagonal (column > row) become -inf in all 32 rows.
+macro causal_mask() {
+    alias column = l1
+    alias limit = l2
+    alias neg_inf = l4
+    alias low_bits = l5
+    sfp.li neg_inf, -inf
+    sfp.li low_bits, 15, fmt=u32
+    sfp.shr limit, lane_x2, n=4                        // lane / 8: the row within four
+    sfp.iadd limit, limit, 1                           // first masked column of that row
+    math.rwc dst=0
+    for g in 0..8 {
+        if g == 4 { math.rwc dst+=8; math.rwc dst+=8 }  // rows 16..31 are faces 2 and 3
+        repeat i in 0..4 {
+            sfp.and column, low_bits, lane_x2              // 2 * (lane % 8)
+            sfp.iadd column, column, (i >> 1) * 16 + (i & 1)
+            sfp.if column >= limit { sfp.store dst[S + ROW_OFFSETS[i]], neg_inf, fmt=fp32 }
+        }
+        sfp.iadd limit, limit, 4
+        math.rwc dst+=4
+    }
+    math.rwc dst=0
+}
+
+macro recip_l() {
+    repeat offset in ROW_OFFSETS {
+        sfp.load l0, dst[L + offset], fmt=fp32
+        recip_l0!()
+        sfp.store dst[L + offset], l0, fmt=fp32
+    }
+}
+
+macro scale_o(f) {
+    repeat offset in ROW_OFFSETS {
+        sfp.load l0, dst[(f + 1) * dst.tile + offset], fmt=fp32
+        sfp.load l1, dst[L + offset], fmt=fp32
+        sfp.mul l0, l0, l1; sfp.nop
+        sfp.store dst[(f + 1) * dst.tile + offset], l0, fmt=fp32
+    }
+}
+
+fn brisc() {
+    for n in 0..PASSES {
+        idx = n * WORKERS + core.id
+        if n & 1 { idx = n * WORKERS + WORKERS - 1 - core.id }
+        if idx < ITEMS {
+            j = TILES_Q - 1 - idx / Q_HEADS
+            h = idx % Q_HEADS
+            q = cb.reserve query, n=HEAD_TILES
+            noc.read q, q_tiles[(h * TILES_Q + j) * HEAD_TILES * 1024], n=HEAD_TILES * 1024, wait
+            cb.push query, n=HEAD_TILES
+            base = (h / GROUP) * CACHE_TILES_PER_HEAD
+            for b in 0..start_pos / 32 + j + 1 {
+                first = (base + b * HEAD_TILES) * 1024
+                kp = cb.reserve keys, n=HEAD_TILES
+                vp = cb.reserve values, n=HEAD_TILES
+                kr = noc.read kp, key_cache[first], n=1024, port=0
+                vr = noc.read vp, value_cache[first], n=1024, port=HEAD_TILES % 3
+                for f in 1..HEAD_TILES {
+                    noc.read kp + f * 1024, key_cache[first + f * 1024], n=1024, port=f % 3, tid=kr
+                    noc.read vp + f * 1024, value_cache[first + f * 1024], n=1024, port=(f + HEAD_TILES) % 3, tid=vr
+                }
+                noc.wait kr, vr
+                cb.push keys, n=HEAD_TILES
+                cb.push values, n=HEAD_TILES
+            }
+        }
+    }
+}
+
+fn trisc0() {
+    unpack.fmt a|b, in=bf16
+    for n in 0..PASSES {
+        idx = n * WORKERS + core.id
+        if n & 1 { idx = n * WORKERS + WORKERS - 1 - core.id }
+        if idx < ITEMS {
+            j = TILES_Q - 1 - idx / Q_HEADS
+            q = cb.wait query, n=HEAD_TILES
+            for b in 0..start_pos / 32 + j + 1 {
+                k = cb.wait keys, n=HEAD_TILES
+                unpack.fmt a, in=bf16, transpose
+                repeat f in 0..HEAD_TILES {
+                    unpack.move b, q + f * 1024, dvalid
+                    unpack.move a, k + f * 1024, dvalid
+                }
+                tensix.wait
+                cb.pop keys, n=HEAD_TILES
+
+                p = cb.wait probs
+                v = cb.wait values, n=HEAD_TILES
+                unpack.fmt a, in=bf16
+                repeat f in 0..HEAD_TILES {
+                    unpack.move b, p, dvalid
+                    unpack.move a, v + f * 1024, dvalid
+                }
+                tensix.wait
+                cb.pop values, n=HEAD_TILES
+                cb.pop probs
+            }
+            cb.pop query, n=HEAD_TILES
+        }
+    }
+}
+
+fn trisc1() {
+    math.fmt dst=fp32, sfp=fp32
+    math.cfg dst_offset=0
+    matmul_addrmods!(32, 16)
+    math.addrmod mm_col, slot=2, srca=cr+0, srcb=cr+32, dst+=8
+    math.addrmod mm_b, slot=3, srcb+=8, dst+=8
+    math.addrmod mm_phase, slot=5, srca=0, srcb=0, dst=0, fidelity+=1
+    math.addrmod sfp_step, slot=6, dst+=2
+    replay.load mm_first
+    replay.load mm_second
+    replay.load copy_rows
+    mop.load matmul
+    for n in 0..PASSES {
+        idx = n * WORKERS + core.id
+        if n & 1 { idx = n * WORKERS + WORKERS - 1 - core.id }
+        if idx < ITEMS {
+            j = TILES_Q - 1 - idx / Q_HEADS
+            blocks = start_pos / 32 + j + 1
+
+            // O = 0, l = 0, m = -inf in every row.
+            sem.stall math|sfpu|sync, dst_ready, notmax
+            sfp.li l0, 0.0
+            repeat t in 1..HEAD_TILES + 1 { fill_tile!(t, l0) }
+            fill_tile!(HEAD_TILES + 2, l0)
+            fill_tile!(HEAD_TILES + 3, l0)
+            sfp.li l0, -inf
+            fill_tile!(HEAD_TILES + 1, l0)
+            tensix.stall sync, math|sfpu
+
+            for b in 0..blocks {
+                sem.stall math|sfpu|sync, dst_ready, notmax
+                matmul_addrmods!(32, 16)
+                math.cfg dst_offset=0
+                repeat face in 0..4 { math.zero face=face, fmt=fp32 }
+                repeat f in 0..HEAD_TILES { product!() }
+                tensix.stall sync, math|sfpu
+                if b == blocks - 1 {
+                    causal_mask!()
+                    tensix.stall sync, sfpu
+                }
+                math.rwc dst=0
+                for g in 0..8 {
+                    if g == 4 { math.rwc dst+=8; math.rwc dst+=8 }
+                    online_softmax!(HEAD_TILES)
+                    math.rwc dst+=4
+                }
+                math.rwc dst=0
+                sem.inc dst_ready
+
+                // O += P v once P is packed.
+                sem.stall math|sfpu|sync, dst_ready, notmax
+                matmul_addrmods!(16, 32)
+                repeat f in 0..HEAD_TILES {
+                    math.cfg dst_offset=(1 + f) * dst.tile
+                    product!()
+                }
+                math.cfg dst_offset=0
+            }
+
+            // O /= l.
+            sem.stall math|sfpu|sync, dst_ready, notmax
+            tensix.stall sync, math
+            math.rwc dst=0
+            for g in 0..8 {
+                if g == 4 { math.rwc dst+=8; math.rwc dst+=8 }
+                recip_l!()
+                repeat f in 0..HEAD_TILES { scale_o!(f) }
+                math.rwc dst+=4
+            }
+            math.rwc dst=0
+            tensix.stall sync, math|sfpu
+            sem.inc dst_ready
+        }
+    }
+}
+
+fn trisc2() {
+    for n in 0..PASSES {
+        idx = n * WORKERS + core.id
+        if n & 1 { idx = n * WORKERS + WORKERS - 1 - core.id }
+        if idx < ITEMS {
+            j = TILES_Q - 1 - idx / Q_HEADS
+            pack.fmt in=fp32, out=bf16
+            loop start_pos / 32 + j + 1 { pack_tile!(probs, 0) }
+            sem.stall tdma|pack|sync, dst_ready, nonzero
+            out = cb.reserve merged
+            repeat t in 0..HEAD_TILES { pack.move out + t * 1024, dst[(t + 1) * dst.tile] }
+            tensix.stall sync, pack0
+            tensix.wait
+            cb.push merged
+            sem.dec dst_ready
+        }
+    }
+}
+
+fn ncrisc() {
+    for n in 0..PASSES {
+        idx = n * WORKERS + core.id
+        if n & 1 { idx = n * WORKERS + WORKERS - 1 - core.id }
+        if idx < ITEMS {
+            j = TILES_Q - 1 - idx / Q_HEADS
+            h = idx % Q_HEADS
+            // Panel j's tiles h * HEAD_TILES.. of the o projection's input: one contiguous write.
+            o = cb.wait merged
+            noc.write context[(j * Q_HEADS + h) * HEAD_TILES * 1024], o, n=HEAD_TILES * 1024, wait
+            cb.pop merged
+        }
+    }
+}

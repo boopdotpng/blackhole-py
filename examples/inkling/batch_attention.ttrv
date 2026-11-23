@@ -1,0 +1,551 @@
+// Batched attention.ttrv: rows of a batch step, each its own sequence (cache slot) and position, from the step table
+// (64-byte entries [pos, active, slot, token, n, 0...], staged in DRAM by batch_embedding.ttrv). The rows' k and v are
+// already in the caches (batch_append.ttrv), so a prompt chunk's rows see each other causally. Caches hold SLOT_ELEMS
+// per slot; a SLIDING layer's are rings of BLOCKS blocks (block b at b % BLOCKS). q_in, proj, rel and context have row
+// pitches. One partition: workers take (row, KV head) units in turn, each visiting all of its row's blocks. BRISC
+// reads each unit's entry and hands it to the other RISCs through one small CB each. Inactive rows do nothing.
+//
+// attention.ttrv:
+// Inkling decode attention (reference.attention after the projections), split over cache partitions like
+// examples/shared/attention.ttrv, which this is derived from:
+//   scores = q kᵀ + bias,  p = softmax([scores, sink]) without the sink column,  ctx = (p v) * sigmoid(gate)
+// q arrives clipped and scaled by 1/sqrt(d) (qprep.ttrv); k and v rows arrive clipped/normalized (kvconv.ttrv).
+// bias[h, t] = rel[h, pos - t] for pos - t < 1024 (rel.ttrv), else 0. SLIDING layers visit only the cache blocks
+// inside their window and mask its first block's older keys.
+//
+// The bias enters the scores product as one more K tile: an identity query tile (row g, column g = 1) times a
+// per-block key tile whose row c column g holds bias[g, c]. The merger starts its softmax state from the sink
+// (m = sink, l = 1: a key of value 0) and applies the output gate before it writes the context, face-packed for
+// the o projection.
+//
+// Grid: KV_HEADS * PARTITIONS workers. Worker w handles KV head w / PARTITIONS and its GROUP query heads; phase
+// p = w % PARTITIONS visits window blocks p, p + live, ... Workers with p >= live exit at once.
+
+const HEAD_TILES = 4
+const HEAD_DIM = HEAD_TILES * 32
+const GROUP = 3                              // query heads per KV head
+const KV_HEADS = 8
+const PARTITIONS = 8
+const MAX_TOKENS = 8192
+const BLOCKS = MAX_TOKENS / 32               // cache blocks per KV head and slot (a ring for SLIDING)
+const ROWS = 4
+const WORKERS = 128
+const Q_STEP = 3072
+const PROJ_STEP = 7168
+const REL_STEP = 24 * 1024
+const CTX_STEP = 3072
+const SLIDING = 0
+const WINDOW = 1024
+const EXTENT = 1024                          // relative bias distances
+const GATE_OFFSET = 3072                     // in the q projection output: gate logits, then rel, then sinks
+const SINK_OFFSET = 6528
+const CORE_BASE = 0                          // first worker (an async launch runs at the end of the worker list)
+const SIGNAL = 0                             // mergers write token to flag[head * 16] once the context has landed
+const SINK_BASE = 0                          // global index of this card's first query head (sinks: all heads)
+const SCALE = 1.0
+const CACHE_TILES_PER_HEAD = BLOCKS * HEAD_TILES
+const SLOT_ELEMS = KV_HEADS * CACHE_TILES_PER_HEAD * 1024
+const STATE_TILES = HEAD_TILES + 2           // O tiles, then m, then l
+const STATE_ELEMS = STATE_TILES * 1024
+const QUERY_TILES = HEAD_TILES + 1           // q, then the bias identity
+const EXTRA_TILES = HEAD_TILES               // merger: the gate tiles
+
+const S = 0
+const M = (HEAD_TILES + 1) * dst.tile
+const L = (HEAD_TILES + 2) * dst.tile
+const ALPHA = (HEAD_TILES + 3) * dst.tile
+const MM = HEAD_TILES * dst.tile
+const ML = (HEAD_TILES + 1) * dst.tile
+const MNEW = (HEAD_TILES + 2) * dst.tile
+const MNEW_L = (HEAD_TILES + 3) * dst.tile
+const MALPHA = MM + 8
+const MBETA = MM + 32
+
+const ROW_GROUPS = (GROUP + 3) / 4
+const ODD = 2
+const RIGHT = dst.face
+
+grid WORKERS
+
+param q_in: bf16[]         // [H * HEAD_DIM], clipped and scaled
+param proj: bf16[]         // the q projection output: q | gate | rel | sink
+param rel: bf16[]          // [H][EXTENT]
+param key_cache: bf16[]    // per KV head: MAX_TOKENS / 32 blocks x HEAD_TILES tiles of 32 tokens x 32 features
+param value_cache: bf16[]
+param context: bf16[]      // face-packed [H * HEAD_DIM]
+param table: u32[]          // the step table, staged in DRAM by batch_embedding.ttrv
+
+shared {
+    units = (ROWS * KV_HEADS + WORKERS - 1 - core.id) / WORKERS
+    phase = 0
+    merger_x = core.x
+    merger_y = core.y
+}
+
+
+cb query: bf16[1024], pages=QUERY_TILES
+cb extras: bf16[1024], pages=EXTRA_TILES
+cb sink: bf16[1024], pages=1
+cb keys: bf16[1024], pages=2 * QUERY_TILES
+cb values: bf16[1024], pages=2 * HEAD_TILES
+cb probs: bf16[1024], pages=1
+cb merged: bf16[HEAD_TILES * 1024], pages=1
+
+l1 dense: bf16[GROUP * HEAD_DIM]
+l1 gates: bf16[GROUP * HEAD_DIM]
+l1 sinks: bf16[32]
+l1 bias_rows: bf16[GROUP * EXTENT]
+l1 ret: u32[4]
+l1 meta: u32[16]                            // BRISC: this unit's table entry
+cb entry0: u32[16], pages=2                 // the unit's entry for trisc0, trisc1, trisc2, ncrisc
+cb entry1: u32[16], pages=2
+cb entry2: u32[16], pages=2
+cb entry3: u32[16], pages=2
+
+sem dst_ready = math_pack, max=1
+
+const PHASES = 2
+include ../common/matmul_phases
+include ../common/attention
+include ../common/copy_tile
+
+// Scores in columns below first_valid become -inf.
+macro mask_head(first_valid) {
+    alias column = l1
+    alias head = l2
+    alias neg_inf = l4
+    alias low_bits = l5
+    sfp.li head, first_valid, fmt=u32
+    sfp.li neg_inf, -inf
+    sfp.li low_bits, 15, fmt=u32
+    repeat i in 0..4 {
+        sfp.and column, low_bits, lane_x2              // 2 * (lane % 8)
+        sfp.iadd column, column, (i >> 1) * 16 + (i & 1) // this chunk's tile column
+        sfp.if column < head {
+            sfp.store dst[S + ROW_OFFSETS[i]], neg_inf, fmt=fp32
+        }
+    }
+}
+
+// Zero rows GROUP..3 (the rest of the SFPU's first four-row group) of every tile at t. Rows past 3 may hold anything:
+// every product and softmax step is row-wise, and only rows below GROUP are read back.
+macro zero_pad_rows(t, tiles) {
+    for f in 0..tiles {
+        for r in GROUP..4 {
+            for c in 0..16 {
+                t[f * 1024 + r * 16 + c] = 0.0
+                t[f * 1024 + 256 + r * 16 + c] = 0.0
+            }
+        }
+    }
+}
+
+// Tiles of GROUP rows from GROUP dense rows of HEAD_DIM: row g of tile f is src[g * HEAD_DIM + 32 f ..].
+macro rows_to_tiles(t, src) {
+    zero_pad_rows!(t, HEAD_TILES)
+    for g in 0..GROUP {
+        for f in 0..HEAD_TILES {
+            l1.copy_words t + f * 1024 + g * 16, src + g * HEAD_DIM + f * 32, n=8
+            l1.copy_words t + f * 1024 + g * 16 + 256, src + g * HEAD_DIM + f * 32 + 16, n=8
+        }
+    }
+}
+
+fn brisc() {
+    for j in 0..units {
+        u = core.id + j * WORKERS
+        row = u / KV_HEADS
+        head = u % KV_HEADS
+        noc.read meta, table[row * 16], n=16, wait
+        x0 = cb.reserve entry0
+        x1 = cb.reserve entry1
+        x2 = cb.reserve entry2
+        x3 = cb.reserve entry3
+        for i in 0..16 {
+            x0[i] = meta[i]
+            x1[i] = meta[i]
+            x2[i] = meta[i]
+            x3[i] = meta[i]
+        }
+        cb.push entry0
+        cb.push entry1
+        cb.push entry2
+        cb.push entry3
+        e = meta
+      if e[1] {
+      pos = e[0]
+      cache = e[2] * SLOT_ELEMS
+      last = pos / 32                                        // the block holding the token
+      oldest = (pos - (WINDOW - 1)) * (pos >= WINDOW - 1)    // the window's first token
+      first = (oldest / 32) * SLIDING
+      blocks = last - first + 1
+      live = 1
+      visits = blocks
+      owns = 1
+      tail_visit = blocks - 1
+      token_row = pos & 31
+      valid_columns = token_row + 1
+        noc.read bias_rows, rel[row * REL_STEP + head * GROUP * EXTENT], n=GROUP * EXTENT, wait
+        for i in 0..visits {
+            block = first + phase + i * live
+            at = cache + (head * CACHE_TILES_PER_HEAD + (block % BLOCKS) * HEAD_TILES) * 1024
+            kp = cb.reserve keys, n=QUERY_TILES
+            vp = cb.reserve values, n=HEAD_TILES
+            kr = noc.read kp, key_cache[at], n=1024, port=0
+            vr = noc.read vp, value_cache[at], n=1024, port=HEAD_TILES % 3
+            for f in 1..HEAD_TILES {
+                noc.read kp + f * 1024, key_cache[at + f * 1024], n=1024, port=f % 3, tid=kr
+                noc.read vp + f * 1024, value_cache[at + f * 1024], n=1024, port=(f + HEAD_TILES) % 3, tid=vr
+            }
+            // The bias key tile: row c (key 32 block + c), column g = rel[g, pos - key], zero past EXTENT (a gather;
+            // the SFPU masks keys outside the window).
+            bp = kp + HEAD_TILES * 1024
+            d0 = pos - block * 32                          // distance of the block's first key
+            for c in 0..32 {
+                o = (c / 16) * 512 + (c & 15) * 16
+                distance = d0 - c                          // keys past pos wrap to large values; mask_tail drops them
+                if distance < EXTENT {
+                    repeat g in 0..GROUP { bp[o + g] = bias_rows[g * EXTENT + distance] }
+                } else {
+                    repeat g in 0..GROUP { bp[o + g] = 0.0 }
+                }
+            }
+            noc.wait kr, vr
+            cb.push keys, n=QUERY_TILES
+            cb.push values, n=HEAD_TILES
+        }
+      }
+    }
+}
+
+fn trisc0() {
+    for j in 0..units {
+        u = core.id + j * WORKERS
+        row = u / KV_HEADS
+        head = u % KV_HEADS
+        e = cb.wait entry0
+      if e[1] {
+      pos = e[0]
+      cache = e[2] * SLOT_ELEMS
+      last = pos / 32                                        // the block holding the token
+      oldest = (pos - (WINDOW - 1)) * (pos >= WINDOW - 1)    // the window's first token
+      first = (oldest / 32) * SLIDING
+      blocks = last - first + 1
+      live = 1
+      visits = blocks
+      owns = 1
+      tail_visit = blocks - 1
+      token_row = pos & 31
+      valid_columns = token_row + 1
+        unpack.fmt a|b, in=bf16
+        if phase == 0 {
+            sk = cb.wait sink
+            unpack.move a, sk, dvalid
+            tensix.wait
+            cb.pop sink
+        }
+        q = cb.wait query, n=QUERY_TILES
+        for i in 0..visits {
+            k = cb.wait keys, n=QUERY_TILES
+            unpack.fmt a, in=bf16, transpose
+            repeat f in 0..QUERY_TILES {
+                unpack.move b, q + f * 1024, dvalid
+                unpack.move a, k + f * 1024, dvalid
+            }
+            tensix.wait
+            cb.pop keys, n=QUERY_TILES
+
+            p = cb.wait probs
+            v = cb.wait values, n=HEAD_TILES
+            unpack.fmt a, in=bf16
+            repeat f in 0..HEAD_TILES {
+                unpack.move b, p, dvalid
+                unpack.move a, v + f * 1024, dvalid
+            }
+            tensix.wait
+            cb.pop values, n=HEAD_TILES
+            cb.pop probs
+        }
+        cb.pop query, n=QUERY_TILES
+
+        if phase == 0 {
+            unpack.fmt a, in=bf16
+            x = cb.wait extras, n=EXTRA_TILES
+            repeat t in 0..EXTRA_TILES { unpack.move a, x + t * 1024, dvalid }
+            tensix.wait
+            cb.pop extras, n=EXTRA_TILES
+        }
+      }
+        cb.pop entry0
+    }
+}
+
+fn trisc1() {
+    for j in 0..units {
+        u = core.id + j * WORKERS
+        row = u / KV_HEADS
+        head = u % KV_HEADS
+        e = cb.wait entry1
+      if e[1] {
+      pos = e[0]
+      cache = e[2] * SLOT_ELEMS
+      last = pos / 32                                        // the block holding the token
+      oldest = (pos - (WINDOW - 1)) * (pos >= WINDOW - 1)    // the window's first token
+      first = (oldest / 32) * SLIDING
+      blocks = last - first + 1
+      live = 1
+      visits = blocks
+      owns = 1
+      tail_visit = blocks - 1
+      token_row = pos & 31
+      valid_columns = token_row + 1
+
+        math.fmt dst=fp32, sfp=fp32
+        math.cfg dst_offset=0
+        matmul_addrmods!(32, 16)
+        math.addrmod mm_col, slot=2, srca=cr+0, srcb=cr+32, dst+=8
+        math.addrmod mm_b, slot=3, srcb+=8, dst+=8
+        math.addrmod mm_phase, slot=5, srca=0, srcb=0, dst=0, fidelity+=1
+        math.addrmod sfp_step, slot=6, dst+=2
+        replay.load mm_first
+        replay.load mm_second
+        replay.load copy_rows
+        mop.load matmul
+
+        // O = 0, m = -inf, l = 0 in the live rows; every other row stays finite.
+        sem.stall math|sfpu|sync, dst_ready, notmax
+        sfp.li l0, 0.0
+        for t in 1..HEAD_TILES + 4 { fill_tile!(t, l0) }
+        sfp.li l1, 1.0
+        fill_tile!(HEAD_TILES + 2, l1)
+        sfp.li l0, -inf
+        loop ROW_GROUPS {
+            repeat offset in ROW_OFFSETS { sfp.store dst[M + offset], l0, fmt=fp32 }
+            math.rwc dst+=4
+        }
+        math.rwc dst=0
+        sfp.li l0, 0.0
+        loop ROW_GROUPS {
+            repeat offset in ROW_OFFSETS { sfp.store dst[L + offset], l0, fmt=fp32 }
+            math.rwc dst+=4
+        }
+        math.rwc dst=0
+        if phase == 0 {
+            // The merger starts from the sink as a key of value 0: m = sink (row g of the sink tile), l = 1.
+            copy_tile!(HEAD_TILES + 1)
+            tensix.stall sfpu, math
+            sfp.li l0, 1.0
+            loop ROW_GROUPS {
+                repeat offset in ROW_OFFSETS { sfp.store dst[L + offset], l0, fmt=fp32 }
+                math.rwc dst+=4
+            }
+            math.rwc dst=0
+        }
+        tensix.stall sync, math|sfpu
+
+        for i in 0..visits {
+            // scores = q kᵀ + bias into tile 0, once pack has finished with the previous P
+            sem.stall math|sfpu|sync, dst_ready, notmax
+            matmul_addrmods!(32, 16)
+            math.cfg dst_offset=0
+            repeat face in 0..4 { math.zero face=face, fmt=fp32 }
+            repeat f in 0..QUERY_TILES { product!() }
+
+            tensix.stall sync, math|sfpu
+            if owns && i == tail_visit {
+                loop ROW_GROUPS { mask_tail!(valid_columns); math.rwc dst+=4 }
+                math.rwc dst=0
+                tensix.stall sync, sfpu
+            }
+            if SLIDING && phase == 0 && i == 0 {
+                // The window's first block: keys before its oldest token.
+                loop ROW_GROUPS { mask_head!(oldest & 31); math.rwc dst+=4 }
+                math.rwc dst=0
+                tensix.stall sync, sfpu
+            }
+            loop ROW_GROUPS { online_softmax!(HEAD_TILES); math.rwc dst+=4 }
+            math.rwc dst=0
+            sem.inc dst_ready
+
+            // O += P v, once P is packed
+            sem.stall math|sfpu|sync, dst_ready, notmax
+            matmul_addrmods!(16, 32)
+            repeat f in 0..HEAD_TILES {
+                math.cfg dst_offset=(1 + f) * dst.tile
+                product!()
+            }
+            math.cfg dst_offset=0
+        }
+
+        // Publish (O, m, l): Dst tiles 1..HEAD_TILES + 2. The merger keeps its own.
+        sem.stall math|sfpu|sync, dst_ready, notmax
+        tensix.stall sync, math|sfpu
+
+        if phase == 0 {
+            // Merge: m_new = max(m, m'), alpha = exp(m - m_new), beta = exp(m' - m_new), l = l alpha + l' beta,
+            // O = O alpha + O' beta. Then l += exp(sink - m), O /= l, O *= sigmoid(gate).
+            // Own state: tiles 1..STATE_TILES down to 0..STATE_TILES - 1, the live rows only.
+            loop ROW_GROUPS {
+                repeat t in 0..STATE_TILES {
+                    repeat offset in ROW_OFFSETS {
+                        sfp.load l0, dst[(t + 1) * dst.tile + offset], fmt=fp32
+                        sfp.store dst[t * dst.tile + offset], l0, fmt=fp32
+                    }
+                }
+                math.rwc dst+=4
+            }
+            math.rwc dst=0
+            tensix.stall sync, sfpu
+            loop ROW_GROUPS {
+                repeat offset in ROW_OFFSETS {
+                    sfp.load l0, dst[ML + offset], fmt=fp32
+                    recip_l0!()
+                    sfp.store dst[ML + offset], l0, fmt=fp32
+                }
+                math.rwc dst+=4
+            }
+            math.rwc dst=0
+            exp_setup!()
+            for f in 0..HEAD_TILES {
+                copy_tile!(HEAD_TILES + 2)                     // gate logits of feature tile f
+                tensix.stall sfpu, math
+                loop ROW_GROUPS {
+                    for o in 0..4 {
+                        offset = (o & 1) * ODD + (o >> 1) * RIGHT
+                        sfp.load l0, dst[MNEW + offset], fmt=fp32
+                        sfp.mul l0, l0, neg_one; sfp.nop
+                        sfp.li l1, 80.0
+                        sfp.minmax l0, l1
+                        exp_l0!()
+                        sfp.addi l0, l0, 1.0; sfp.nop
+                        recip_l0!()                            // sigmoid(gate)
+                        sfp.load l1, dst[ML + offset], fmt=fp32
+                        sfp.mul l0, l0, l1; sfp.nop
+                        sfp.load l1, dst[f * dst.tile + offset], fmt=fp32
+                        sfp.mul l0, l0, l1; sfp.nop
+                        sfp.store dst[f * dst.tile + offset], l0, fmt=fp32
+                    }
+                    math.rwc dst+=4
+                }
+                math.rwc dst=0
+            }
+            tensix.stall sync, math|sfpu
+            sem.inc dst_ready
+        }
+      }
+        cb.pop entry1
+    }
+}
+
+fn trisc2() {
+    for j in 0..units {
+        u = core.id + j * WORKERS
+        row = u / KV_HEADS
+        head = u % KV_HEADS
+        e = cb.wait entry2
+      if e[1] {
+      pos = e[0]
+      cache = e[2] * SLOT_ELEMS
+      last = pos / 32                                        // the block holding the token
+      oldest = (pos - (WINDOW - 1)) * (pos >= WINDOW - 1)    // the window's first token
+      first = (oldest / 32) * SLIDING
+      blocks = last - first + 1
+      live = 1
+      visits = blocks
+      owns = 1
+      tail_visit = blocks - 1
+      token_row = pos & 31
+      valid_columns = token_row + 1
+        pack.fmt in=fp32, out=bf16
+        loop visits { pack_tile!(probs, 0) }
+
+
+        if phase == 0 {
+            sem.stall tdma|pack|sync, dst_ready, nonzero
+            pack.fmt in=fp32, out=bf16
+            out = cb.reserve merged
+            repeat t in 0..HEAD_TILES { pack.move out + t * 1024, dst[t * dst.tile] }
+            tensix.stall sync, pack0
+            tensix.wait
+            cb.push merged
+            sem.dec dst_ready
+        }
+      }
+        cb.pop entry2
+    }
+}
+
+fn ncrisc() {
+    for j in 0..units {
+        u = core.id + j * WORKERS
+        row = u / KV_HEADS
+        head = u % KV_HEADS
+        e = cb.wait entry3
+      if e[1] {
+      pos = e[0]
+      cache = e[2] * SLOT_ELEMS
+      last = pos / 32                                        // the block holding the token
+      oldest = (pos - (WINDOW - 1)) * (pos >= WINDOW - 1)    // the window's first token
+      first = (oldest / 32) * SLIDING
+      blocks = last - first + 1
+      live = 1
+      visits = blocks
+      owns = 1
+      tail_visit = blocks - 1
+      token_row = pos & 31
+      valid_columns = token_row + 1
+
+        // Query tiles: row g of tile f is head g's features 32f..32f+31; then the bias identity tile.
+        q = cb.reserve query, n=QUERY_TILES
+        noc.read dense, q_in[row * Q_STEP + head * GROUP * HEAD_DIM], n=GROUP * HEAD_DIM, wait
+        rows_to_tiles!(q, dense)
+        b = q + HEAD_TILES * 1024
+        for i in 0..64 {                                // rows 0..3 of faces 0 and 1
+            b[i] = 0.0
+            b[256 + i] = 0.0
+        }
+        for g in 0..GROUP { b[g * 17] = 1.0 }
+        cb.push query, n=QUERY_TILES
+
+        if phase == 0 {
+            // The sink tile (row g: head g's sink logit in all 32 columns), then the gate tiles.
+            sk = cb.reserve sink
+            t = noc.read sinks, proj[row * PROJ_STEP + SINK_OFFSET], n=32
+            noc.read gates, proj[row * PROJ_STEP + GATE_OFFSET + head * GROUP * HEAD_DIM], n=GROUP * HEAD_DIM, tid=t
+            noc.wait t
+            zero_pad_rows!(sk, 1)
+            for g in 0..GROUP {
+                for c in 0..16 {
+                    sk[g * 16 + c] = sinks[SINK_BASE + head * GROUP + g]
+                    sk[256 + g * 16 + c] = sinks[SINK_BASE + head * GROUP + g]
+                }
+            }
+            cb.push sink
+            x = cb.reserve extras, n=EXTRA_TILES
+            rows_to_tiles!(x, gates)
+            cb.push extras, n=EXTRA_TILES
+        }
+
+
+        if phase == 0 {
+            o = cb.wait merged
+            for g in 0..GROUP {
+                for f in 0..HEAD_TILES {
+                    l1.copy_words dense + g * HEAD_DIM + f * 16, o + f * 1024 + g * 16, n=8
+                    l1.copy_words dense + g * HEAD_DIM + HEAD_DIM / 2 + f * 16, o + f * 1024 + 256 + g * 16, n=8
+                }
+            }
+            for g in 0..GROUP {
+                start = (head * GROUP + g) * HEAD_DIM
+                lo = (start / 512) * 512 + (start & 511) / 2
+                r = noc.write context[row * CTX_STEP + lo], dense + g * HEAD_DIM, n=HEAD_DIM / 2
+                noc.write context[row * CTX_STEP + lo + 256], dense + g * HEAD_DIM + HEAD_DIM / 2, n=HEAD_DIM / 2, tid=r
+                noc.wait r
+            }
+            cb.pop merged
+        }
+      }
+        cb.pop entry3
+    }
+}
+

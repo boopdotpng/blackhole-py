@@ -1,0 +1,81 @@
+// Grouped routed experts, step 1: group the batch's (row, choice) pairs by expert. One worker reads every active row's
+// eight choices (router.ttrv's select words: FP32 id + 2^23, the id in the low byte) and writes the plan:
+//   plan[0]               G, the number of groups
+//   plan[P_EXPERT + g]    group g's expert (an expert used by more than 32 rows gets consecutive groups)
+//   plan[P_COUNT + g]     its row count, at most 32
+//   plan[P_ROWS + e]      entry e = 32 g + i: the batch row of group g's i-th activation row
+//   plan[P_MAP + 8 r + k] the entry holding row r's k-th choice (0 for inactive rows)
+// Groups are in expert order. moe_pack.ttrv gathers each group's rows into 32-row tiles, moe_matmul.ttrv runs the
+// experts on them, moe_combine.ttrv sums each row's eight outputs with its routing weights.
+const ROWS = 32
+const EXPERTS = 128
+const TOP = 8
+const G_MAX = 144
+const P_EXPERT = 16
+const P_COUNT = P_EXPERT + G_MAX
+const P_ROWS = P_COUNT + G_MAX
+const P_MAP = P_ROWS + 32 * G_MAX
+grid 1
+
+param select: u32[]       // [ROWS][1024]
+param table: u32[]          // the step table, staged in DRAM by batch_embedding.ttrv  // the step table: row r's entry at 16 r, active in word 1
+param plan: u32[]
+
+l1 entries: u32[ROWS * 16]
+l1 sel: u32[ROWS * 16]
+l1 count: u32[EXPERTS]
+l1 cursor: u32[EXPERTS]
+l1 gexp: u32[G_MAX]
+l1 gcount: u32[G_MAX]
+l1 grows: u32[32 * G_MAX]
+l1 rmap: u32[ROWS * TOP]
+l1 head: u32[16]
+
+fn brisc() {
+    t = noc.read entries, table[0], n=ROWS * 16
+    for r in 0..ROWS { noc.read sel + r * 16, select[r * 1024], n=16, tid=t }
+    noc.wait t
+    for e in 0..EXPERTS { count[e] = 0 }
+    for r in 0..ROWS {
+        if entries[r * 16 + 1] {
+            for k in 0..TOP {
+                e = sel[r * 16 + k] & 255
+                count[e] = count[e] + 1
+            }
+        }
+    }
+    g = 0
+    for e in 0..EXPERTS {
+        cursor[e] = g * 32
+        n = count[e]
+        loop {
+            if n == 0 { break }
+            c = n
+            if c > 32 { c = 32 }
+            gexp[g] = e
+            gcount[g] = c
+            g = g + 1
+            n = n - c
+        }
+    }
+    for r in 0..ROWS {
+        for k in 0..TOP { rmap[r * TOP + k] = 0 }
+        if entries[r * 16 + 1] {
+            for k in 0..TOP {
+                e = sel[r * 16 + k] & 255
+                p = cursor[e]                  // groups of one expert are consecutive: 32 g + i runs on into the next
+                grows[p] = r
+                rmap[r * TOP + k] = p
+                cursor[e] = p + 1
+            }
+        }
+    }
+    for i in 0..16 { head[i] = 0 }
+    head[0] = g
+    w = noc.write plan[0], head, n=16
+    noc.write plan[P_EXPERT], gexp, n=G_MAX, tid=w
+    noc.write plan[P_COUNT], gcount, n=G_MAX, tid=w
+    if g { noc.write plan[P_ROWS], grows, n=32 * g, tid=w }
+    noc.write plan[P_MAP], rmap, n=ROWS * TOP, tid=w
+    noc.wait w
+}

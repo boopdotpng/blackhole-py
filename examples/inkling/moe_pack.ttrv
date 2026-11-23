@@ -1,0 +1,53 @@
+// Grouped routed experts, step 2: gather each group's activation rows (face-packed rows of x, SRC_STEP apart) into
+// 32-row tiles, output[g][K / 32 tiles]. Rows past the group's count keep whatever the tile buffer held: every product
+// row depends on its own activation row only, and moe_combine.ttrv reads only the groups' real rows. See moe_plan.ttrv.
+const K = 2304
+const SRC_STEP = 3072
+const G_MAX = 144
+const P_COUNT = 16 + G_MAX
+const P_ROWS = P_COUNT + G_MAX
+const SUB = 4
+const WORKERS = 128
+grid WORKERS
+const KT = K / 32
+const SUBS = KT / SUB
+
+param x: bf16[]
+param plan: u32[]
+param output: bf16[]
+
+l1 head: u32[16]
+l1 counts: u32[G_MAX]
+l1 rows: u32[32]
+l1 raw: bf16[32 * SUB * 32]
+l1 tiles: bf16[SUB * 1024]
+
+fn brisc() {
+    t = noc.read head, plan[0], n=16
+    noc.read counts, plan[P_COUNT], n=G_MAX, tid=t
+    noc.wait t
+    total = head[0] * SUBS
+    for j in 0..(total + WORKERS - 1 - core.id) / WORKERS {
+        u = core.id + j * WORKERS
+        g = u / SUBS
+        k0 = (u % SUBS) * SUB
+        n = counts[g]
+        noc.read rows, plan[P_ROWS + g * 32], n=32, wait
+        rx = noc.group read
+        for i in 0..n {
+            at = rows[i] * SRC_STEP + (k0 / 16) * 512 + (k0 & 15) * 16
+            noc.read raw + i * SUB * 32, x[at], n=SUB * 16, tid=rx
+            noc.read raw + i * SUB * 32 + SUB * 16, x[at + 256], n=SUB * 16, tid=rx
+        }
+        noc.wait rx
+        for i in 0..n {
+            s = raw + i * SUB * 32
+            for k in 0..SUB {
+                dest = tiles + k * 1024 + (i / 16) * 512 + (i % 16) * 16
+                l1.copy_words dest, s + k * 16, n=8
+                l1.copy_words dest + 256, s + SUB * 16 + k * 16, n=8
+            }
+        }
+        noc.write output[(g * KT + k0) * 1024], tiles, n=SUB * 1024, wait
+    }
+}

@@ -1,0 +1,116 @@
+// Grouped routed experts, step 5: out[r] = Σ_k w_k y[entry(r, k)], w_k = score_k / Σ score * SCALE, for every row r
+// of the batch (moe_plan.ttrv's map; router.ttrv's scores). y rows are the down projections of the groups' rows
+// (moe_matmul.ttrv), YS apart, zero past D. Workers take (row, 1024-column page) units in turn.
+const ROWS = 32
+const PAGES = 3
+const TOP = 8
+const YS = 3072
+const OUT_STEP = 3072
+const SCALE = 8.0
+const G_MAX = 144
+const P_MAP = 16 + 2 * G_MAX + 32 * G_MAX
+const WORKERS = 96
+grid WORKERS
+
+param y: bf16[]
+param plan: u32[]
+param score: fp32[]       // row r's scores at r * 1024
+param out: bf16[]
+
+shared { units = (ROWS * PAGES + WORKERS - 1 - core.id) / WORKERS }
+
+l1 map: u32[16]
+l1 sc: fp32[32]           // by unit parity: brisc fetches the next unit's while math reads these
+cb scores: u32[16], pages=2
+cb inputs: bf16[1024], pages=TOP
+cb result: bf16[1024], pages=1
+sem ready = math_pack, max=1
+
+include math
+include ../common/copy_tile
+
+fn brisc() {
+    for j in 0..units {
+        u = core.id + j * WORKERS
+        r = u / PAGES
+        s = u % PAGES
+        cb.reserve scores
+        t = noc.read map, plan[P_MAP + (r & ~1) * TOP], n=16
+        noc.read sc + (j & 1) * 16, score[r * 1024], n=16, tid=t
+        noc.wait t
+        cb.push scores
+        p = cb.reserve inputs, n=TOP
+        t2 = noc.group read
+        for k in 0..TOP { noc.read p + k * 1024, y[map[(r & 1) * TOP + k] * YS + s * 1024], n=1024, tid=t2 }
+        noc.wait t2
+        cb.push inputs, n=TOP
+    }
+}
+
+fn trisc0() {
+    for j in 0..units {
+        unpack.fmt a, in=bf16
+        p = cb.wait inputs, n=TOP
+        repeat k in 0..TOP { unpack.move a, p + k * 1024, dvalid }
+        tensix.wait
+        cb.pop inputs, n=TOP
+    }
+}
+
+fn trisc1() {
+    math.fmt dst=fp32, sfp=fp32
+    math.cfg dst_offset=0
+    replay.load copy_rows
+    for j in 0..units {
+        sem.stall math|sfpu|sync, ready, notmax
+        repeat k in 0..TOP { copy_tile!(k) }
+        tensix.stall sfpu, math
+        math.rwc reset
+        cb.wait scores
+        sfp.li l0, sc[(j & 1) * 16], fmt=fp32
+        for k in 1..TOP {
+            sfp.li l1, sc[(j & 1) * 16 + k], fmt=fp32
+            sfp.add l0, l0, l1; sfp.nop
+        }
+        recip_l0!()
+        sfp.li l1, SCALE
+        sfp.mul l7, l0, l1; sfp.nop
+        loop 32 {
+            sfp.li l0, 0.0
+            for k in 0..TOP {
+                sfp.li l1, sc[(j & 1) * 16 + k], fmt=fp32
+                sfp.load l2, dst[k * dst.tile], fmt=fp32
+                sfp.mad l0, l1, l2, l0; sfp.nop
+            }
+            sfp.mul l0, l0, l7; sfp.nop
+            sfp.store dst[0], l0, fmt=fp32
+            math.rwc dst+=2
+        }
+        math.rwc reset
+        tensix.stall sync, math|sfpu
+        cb.pop scores
+        sem.inc ready
+    }
+}
+
+fn trisc2() {
+    pack.fmt in=fp32, out=bf16
+    for j in 0..units {
+        sem.stall tdma|pack|sync, ready, nonzero
+        p = cb.reserve result
+        pack.move p, dst[0]
+        tensix.stall sync, pack0
+        tensix.wait
+        cb.push result
+        sem.dec ready
+    }
+}
+
+fn ncrisc() {
+    for j in 0..units {
+        u = core.id + j * WORKERS
+        p = cb.wait result
+        noc.write out[(u / PAGES) * OUT_STEP + (u % PAGES) * 1024], p, n=1024, wait
+        cb.pop result
+    }
+}

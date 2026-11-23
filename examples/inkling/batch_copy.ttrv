@@ -1,0 +1,24 @@
+// Copy the first N FP32 elements of each row of src (row pitch STEP) to the same place in dst and dst2.
+const ROWS = 32
+const N = 6144
+const STEP = 12288
+const WORKERS = 96
+grid WORKERS
+
+param src: fp32[]
+param dst: fp32[]
+param dst2: fp32[]
+
+l1 page: fp32[1024]
+
+fn brisc() {
+    pages = N / 1024
+    for j in 0..(ROWS * pages + WORKERS - 1 - core.id) / WORKERS {
+        u = core.id + j * WORKERS
+        at = (u / pages) * STEP + (u % pages) * 1024
+        noc.read page, src[at], n=1024, wait
+        t = noc.write dst[at], page, n=1024
+        noc.write dst2[at], page, n=1024, tid=t
+        noc.wait t
+    }
+}
