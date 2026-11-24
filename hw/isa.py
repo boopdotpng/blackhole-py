@@ -1,31 +1,3 @@
-"""Instruction encodings: RV32IM + Zicsr, the RISC-V extensions the Blackhole baby cores implement, and the Blackhole
-Tensix ISA. RISC-V by mnemonic through rv()/v(); Tensix one function per instruction.
-
-  from hw import isa
-  isa.rv('addi', 5, 0, imm=1)                  # addi x5, x0, 1  -> 32-bit word
-  isa.rv('sw', rs1=6, rs2=5, imm=8)            # sw x5, 8(x6)
-  isa.rv('sh2add', 5, 6, 7)                    # x5 = x7 + (x6 << 2)                     (Zba, every core)
-  isa.rv('fadd.s', 1, 2, 3)                    # f1 = f2 + f3                            (F, every core)
-  isa.v('vsetvli', 5, 6, isa.vtype(32, 8))     # vsetvli x5, x6, e32, m8, tu, mu         (V, TRISC2 only)
-  isa.v('vadd.vv', 1, 2, 3, masked=True)       # vadd.vv v1, v2, v3, v0.t
-  isa.ELWMUL(dest_accum_en=1, dst=64)          # Tensix word, unrotated; hover for what each field means
-  isa.inline(isa.SFPNOP())                     # as stored inline in a TRISC instruction stream (.ttinsn)
-  isa.STALLWAIT(isa.Stall.CFG, isa.Wait.UNPACK0 | isa.Wait.MATH)
-
-Registers are physical numbers and fields are raw values; nothing here knows about ttrv source. Encoders raise
-ValueError when a value does not fit. rv_decode/tensix_decode invert them (None for anything else).
-
-Sources: the Tensix layouts are tt-llk tt_llk_blackhole/common/inc/ckernel_ops.h (field names, shifts, and widths
-from its _VALID macros). TENSIX holds the 97 of its 137 instructions that ttrv emits or that a lowering has a use for;
-the rest are listed under "Not covered" with the reason. What each instruction and field does is from
-tt-isa-documentation (BlackholeA0, and the WormholeB0 pages it shares), corrected by the cfgprobe hardware runs
-of 2026-11-23 where they measured something; `UNCERTAIN:` in a docstring marks what is still unmeasured. The RISC-V
-extension encodings were checked against llvm-mc, and which core runs what against a p150 (see "RISC-V beyond RV32IM"
-below).
-
-Tensix words placed inline in a TRISC stream are rotated left by 2 (`.ttinsn`, see BabyRISCV/PushTensixInstruction.md
-in tt-isa-documentation); words stored to INSTRN_BUF with sw and MOP_CFG words are not. Every Tensix opcode is below
-0xC0, so an inline word never has its low two bits set and cannot be mistaken for an RV32 instruction."""
 from enum import IntEnum
 
 # ---- RV32IM ----

@@ -1,18 +1,3 @@
-"""Blackhole Tensix configuration fields the compiler writes, grouped by hardware engine with human-readable names.
-
-Two separate register spaces exist inside each Tensix tile:
-  - T (Space.THREAD): per-thread ThreadConfig bank (private to TRISC0/1/2, written whole-word via SETC16).
-  - C (Space.CONFIG): shared Config bank (written via RMWCIB masked byte, WRCFG, or MMIO at TENSIX_CFG).
-
-Calling any field produces a checked write descriptor: `PACK.ctx[0].l1_acc(1)`, `UNPACK[0].transpose(1)`.
-
-This is a subset of tt-metal's blackhole/cfg_defines.h: the fields ttrv programs today, plus the ones worth lowering
-to later. Comments say what the silicon does, as measured on a p150 by the cfgprobe runs of 2026-11-23 or as
-exercised by every ttrv kernel. Fields that were probed and left out (no effect, or nothing a lowering would want)
-are listed at the bottom so their bits stay known.
-
-DataFormat codes are 4 bits wide in every format field. Code 30 (UInt8) does not fit and wedged a core.
-"""
 from dataclasses import dataclass
 from enum import Enum, IntEnum
 from typing import NamedTuple
