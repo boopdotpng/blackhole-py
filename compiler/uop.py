@@ -60,8 +60,8 @@ class Space(Enum):
   def __repr__(self) -> str: return f"Space.{self.name}"
 
 
+# each phase multiplies 5 bits of SrcA by 7 bits of SrcB
 class Fidelity(IntEnum):
-  """Blackhole FPU math fidelity phases (5-bit SrcA x 7-bit SrcB multiplier per phase)."""
   LOFI  = 1
   HIFI2 = 2
   HIFI3 = 3
@@ -71,7 +71,6 @@ class Fidelity(IntEnum):
 
 
 def default_fidelity(a: DType, b: DType) -> Fidelity:
-  """Auto-select FPU fidelity phases from operand dtypes (overrideable per op)."""
   if dtypes.fp32 in (a, b): return Fidelity.HIFI4
   if dtypes.bf16 in (a, b): return Fidelity.HIFI2
   return Fidelity.LOFI
@@ -149,9 +148,9 @@ class GroupOp:
 
 # ---- typed UOp.arg specs (all frozen & hashable; UOp dependencies always live in UOp.src) ----
 
+# runs on the first `cores` workers, numbered column-major (hw.WORKER_ROWS per column)
 @dataclass(frozen=True)
 class KernelArg:
-  """SINK arg of a kernel: it runs on the first `cores` workers, numbered column-major (hw.WORKER_ROWS per column)."""
   name: str
   cores: int
 
@@ -311,8 +310,8 @@ def _infer_space(op: Ops, src: tuple[UOp, ...], arg: Any) -> Space:
   return Space.DST if op is Ops.SFPU else Space.SCALAR
 
 
+# hash-consed: structurally equal UOps are the same object
 class UOp(metaclass=_UOpMeta):
-  """Immutable, hash-consed SSA graph node. Structurally equal nodes are identical objects."""
   __slots__ = ("op", "dtype", "src", "arg", "space", "_src_ops", "__weakref__")
 
   def __init__(self, op: Ops, dtype: DType = dtypes.void, src: tuple[UOp, ...] = (), arg: Any = None):
@@ -337,8 +336,8 @@ class UOp(metaclass=_UOpMeta):
     if not isinstance(src, tuple): src = tuple(src)
     return self if (op is self.op and dtype == self.dtype and src == self.src and _arg_key(arg) == _arg_key(self.arg)) else UOp(op, dtype, src, arg)
 
+  # sources before users; gate(u) == False skips u and its subtree
   def toposort(self, gate: Callable[[UOp], bool] | None = None) -> list[UOp]:
-    """Post-order traversal (sources before users). gate(u) == False skips u and its subtree."""
     order: list[UOp] = []
     seen: set[UOp] = set()
     stack: list[tuple[UOp, bool]] = [(self, False)]
@@ -406,7 +405,6 @@ class UOp(metaclass=_UOpMeta):
 
   @property
   def is_fpu(self) -> bool:
-    """True if this UOp executes on the Matrix Unit (FPU): MVMUL or any op reading SrcA/SrcB."""
     return self.op is Ops.MVMUL or any(s.space in _SRC_BANKS for s in self.src)
 
   @property
@@ -416,7 +414,6 @@ class UOp(metaclass=_UOpMeta):
     return None
 
   def with_fidelity(self, fidelity: Fidelity | int) -> UOp:
-    """Override FPU fidelity (LoFi/HiFi2/HiFi3/HiFi4) on an FPU UOp."""
     f = Fidelity(fidelity)
     if not self.is_fpu: raise ValueError(f"with_fidelity() only applies to FPU ops, got {self.op.name} ({self.space})")
     if self.op is Ops.MVMUL:
@@ -510,7 +507,6 @@ class UOp(metaclass=_UOpMeta):
 
   @staticmethod
   def special(end: UOp | int, name: str) -> UOp:
-    """Hardware coordinate with a known bound: core_id, core_x (column) or core_y (row, < hw.WORKER_ROWS)."""
     return UOp(Ops.SPECIAL, dtypes.i32, (UOp._i32(end),), name)
 
   @staticmethod
@@ -538,14 +534,13 @@ class UOp(metaclass=_UOpMeta):
   @staticmethod
   def lane_id(dtype: DType | str = dtypes.i32) -> UOp: return UOp(Ops.LANE_ID, dtypes.from_name(dtype), ())
 
+  # raw Tensix words live in arg; src only carries dataflow edges
   @staticmethod
   def replay(insns: Sequence[int], *deps: UOp, dtype: DType | str = dtypes.fp32, dest: Space = Space.DST, name: str = "") -> UOp:
-    """Explicit Tensix REPLAY block carrying ordered raw instruction words in arg and live dataflow edges in src."""
     return UOp(Ops.REPLAY, dtypes.from_name(dtype), deps, ReplayArg(tuple(int(w) for w in insns), dest, name))
 
   @staticmethod
   def mop(cfg: Sequence[int], *deps: UOp, dtype: DType | str = dtypes.fp32, dest: Space = Space.DST, name: str = "") -> UOp:
-    """Explicit Tensix MOP config (9 words) carrying live dataflow edges in src."""
     return UOp(Ops.MOP, dtypes.from_name(dtype), deps, MopArg(tuple(int(w) for w in cfg), dest, name))
 
   def end(self, *ranges: UOp) -> UOp:
@@ -567,17 +562,15 @@ class UOp(metaclass=_UOpMeta):
     return UOp(Ops.REDUCE, self.dtype, (self, *ranges), ReduceArg(op, sp))
 
   def carry(self, rng: UOp, index: int = 0, *, space: Space | None = None, name: str = "") -> UOp:
-    """Loop-carried state placeholder (SSA iter_arg) for `rng`, initialized by self before the loop."""
     if rng.op is not Ops.RANGE: raise TypeError(f"carry() requires a RANGE, got {rng.op.name}")
     sp = self.space if space is None else space
     if sp not in (Space.DST, Space.LREG, Space.L1, Space.SCALAR):
       raise ValueError(f"carry residency must be DST, LREG, L1, or SCALAR, got {sp}")
     return UOp(Ops.CARRY, self.dtype, (self, rng), CarryArg(index, sp, name))
 
+  # body(*carries) yields the next values; returns one GET per carry with its value after the loop
   def loop(self, inits: Sequence[UOp], body, *, spaces: Sequence[Space | None] | None = None,
            names: Sequence[str] | None = None) -> tuple[UOp, ...]:
-    """Loop over this RANGE with explicit carried values; body(*carries) yields their next values.
-    Returns the final post-loop values (Ops.GET), one per carried state."""
     if self.op is not Ops.RANGE: raise TypeError(f"loop() requires a RANGE, got {self.op.name}")
     if not inits: raise ValueError("loop() requires at least one initial carried value")
     sps = [None] * len(inits) if spaces is None else list(spaces)
@@ -626,9 +619,9 @@ class UOp(metaclass=_UOpMeta):
     dt = (dtypes.fp32 if dest is Space.DST else self.dtype) if dtype is None else dtypes.from_name(dtype)
     return UOp(Ops.UNPACK, dt, (self,), UnpackArg(dest, shape, transpose, allow_tf32))
 
+  # self is SrcB, srca is SrcA
   def mvmul(self, srca: UOp, tile: tuple[int, int, int] = (32, 32, 32), fidelity: Fidelity | int | None = None,
             dtype: DType | str = dtypes.fp32) -> UOp:
-    """FPU matmul with self as SrcB. Elementwise FPU ops use +, -, *, maximum on SRCA/SRCB values directly."""
     f = default_fidelity(self.dtype, srca.dtype) if fidelity is None else Fidelity(fidelity)
     return UOp(Ops.MVMUL, dtypes.from_name(dtype), (self, srca), MvmulArg(tile, f))
 

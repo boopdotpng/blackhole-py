@@ -8,7 +8,6 @@ from compiler import (
 
 
 def _eval_sfpu_expr(fn, inputs_np: dict[str, np.ndarray], *, precision=dtypes.fp32, out_dt=dtypes.fp32):
-  """Build a single-tile Layer 1 kernel, run Pass A lower_sfpu_uops, verify, and evaluate against NumPy."""
   bufs = {name: UOp.buffer(name, (1, 32, 32), dtypes.fp32 if arr.dtype == np.float32 else dtypes.i32)
           for name, arr in inputs_np.items()}
   dst_vars = {name: b.noc_read(0).unpack(Space.DST, b.dtype) for name, b in bufs.items()}
@@ -75,7 +74,7 @@ class TestSfpuHazardModel(unittest.TestCase):
         self.assertEqual(fix_sfpu_hazards(stream), stream)
 
   def test_verify_rejects_backdoor_and_illegal_writes(self):
-    # VD >= 12 on non-CONFIG/LOADMACRO becomes a silent backdoor template write!
+    # VD >= 12 on non-CONFIG/LOADMACRO becomes a silent backdoor template write
     with self.assertRaises(SfpuCompileError):
       verify_sfpu_words([isa.SFPSTORE(12, isa.SfpuFormat.FP32, 0, 0)])
     with self.assertRaises(SfpuCompileError):
@@ -89,7 +88,7 @@ class TestSfpuHazardModel(unittest.TestCase):
     verify_sfpu_words([isa.SFPSTORE(9, isa.SfpuFormat.FP32, 0, 0)])
 
   def test_loop_wraparound_hazard_detection_and_fix(self):
-    # Body starts with IADD reg reading L0 and ends with MAD writing L0: safe once, stale on 2nd iteration!
+    # Body starts with IADD reg reading L0 and ends with MAD writing L0: safe once, stale on 2nd iteration
     body = [isa.SFPIADD(0, 1, 0, 4), isa.SFPMAD(1, 2, 3, 0, 0)]
     self.assertEqual(sfpu_hazards(body), [])
     with self.assertRaises(SfpuCompileError):
@@ -150,7 +149,7 @@ class TestSfpuDecompositions(unittest.TestCase):
     rng = np.random.default_rng(7)
     a = rng.standard_normal((32, 32)).astype(np.float32) * 3.0
     b = rng.standard_normal((32, 32)).astype(np.float32)
-    a[0, 0], a[0, 1] = -100.0, 100.0  # extreme clamp check (no NaN/Inf!)
+    a[0, 0], a[0, 1] = -100.0, 100.0  # extreme clamp check (no NaN/Inf)
 
     out_silu_f32, lowered = _eval_sfpu_expr(lambda a, b: a.silu() * b, {"a": a, "b": b}, precision=dtypes.fp32)
     ref_silu = (a / (1.0 + np.exp(-np.clip(a, -80.0, 80.0)))) * b
@@ -202,7 +201,7 @@ class TestSfpuCompiler(unittest.TestCase):
     b = self._make_dst("b")
     y = a.silu() * b
 
-    # BF16 precision, full 8 regs (L11 available as 4th constant -> fits in 1 pass!)
+    # BF16 precision, full 8 regs (L11 available as 4th constant -> fits in 1 pass)
     comp_bf16 = compile_sfpu(y, {a: 0, b: 1}, precision=dtypes.bf16, output_tiles={y: 0}, addr_mode=6)
     self._check_compiled(comp_bf16, max_regs=8, addr_mode=6)
     self.assertEqual(comp_bf16.output_tiles[lower_sfpu_uops(y, precision=dtypes.bf16)], 0)
@@ -214,7 +213,7 @@ class TestSfpuCompiler(unittest.TestCase):
     for p in comp_f32_keep11.passes:
       self.assertFalse(p.l11_used)
 
-    # Tight 4-reg budget (for 2x even/odd interleaving): forces clean Dst pass splitting!
+    # Tight 4-reg budget (for 2x even/odd interleaving): forces clean Dst pass splitting
     comp_4reg = compile_sfpu(y, {a: 0, b: 1}, precision=dtypes.fp32, max_regs=4, output_tiles={y: 0})
     self._check_compiled(comp_4reg, max_regs=4)
     self.assertGreaterEqual(len(comp_4reg.passes), 2)
@@ -242,7 +241,7 @@ class TestSfpuCompiler(unittest.TestCase):
     b = self._make_dst("b")
     c = self._make_dst("c")
 
-    # 1. Direct single-use comparison WHERE -> SFPENCC + SFPGT/SFPLE + SFPMOV (no mask reg!)
+    # 1. Direct single-use comparison WHERE -> SFPENCC + SFPGT/SFPLE + SFPMOV (no mask reg)
     w_lt = (a < b).where(a + 1.0, b)
     comp_lt = compile_sfpu(w_lt, {a: 0, b: 1}, output_tiles={w_lt: 0})
     self._check_compiled(comp_lt, max_regs=8)
@@ -256,7 +255,7 @@ class TestSfpuCompiler(unittest.TestCase):
     ops_ge = [isa.tensix_decode(w)[0] for w in comp_ge.passes[0].body]
     self.assertIn("SFPLE", ops_ge)
 
-    # 2. Composed boolean mask with b == 0.0 -> 3-address SFPAND fast path (zero SFPENCC!)
+    # 2. Composed boolean mask with b == 0.0 -> 3-address SFPAND fast path (zero SFPENCC)
     mask = (a < b) & (b < c)
     w_zero = mask.where(a, 0.0)
     comp_and = compile_sfpu(w_zero, {a: 0, b: 1, c: 2}, output_tiles={w_zero: 0})
@@ -280,7 +279,7 @@ class TestSfpuCompiler(unittest.TestCase):
     self.assertIn("SFPSHFT", ops_lane)
     self.assertIn("SFPGT", ops_lane)
 
-    # 5. Integer / boolean output stores with SfpuFormat.INT32 (never FP32 which flushes small ints!)
+    # 5. Integer / boolean output stores with SfpuFormat.INT32 (never FP32 which flushes small ints)
     mask_out = a < b
     comp_mask = compile_sfpu(mask_out, {a: 0, b: 1}, output_tiles={mask_out: 0})
     self._check_compiled(comp_mask, max_regs=8)
@@ -320,7 +319,7 @@ class TestSfpuCompiler(unittest.TestCase):
     b = self._make_dst("b")
 
     # Bug #1 regression: two inputs (tiles 0, 1), early output depends only on `a`, second depends on `b`.
-    # Must NEVER store over tile 1 before loading `b` from tile 1!
+    # Must NEVER store over tile 1 before loading `b` from tile 1
     out0 = a + 1.0
     out1 = b + 2.0
     comp = compile_sfpu([out0, out1], {a: 0, b: 1}, output_tiles=[1, 0])
@@ -353,7 +352,7 @@ class TestSfpuCompiler(unittest.TestCase):
     x = self._make_dst("x")
     gamma = self._make_dst("gamma")
 
-    # Stage 1: LReg accumulator loop: l0 += x * x (2-word body, zero SFPSTOREs, SFPLOAD steps addr_mode=6!)
+    # Stage 1: LReg accumulator loop: l0 += x * x (2-word body, zero SFPSTOREs, SFPLOAD steps addr_mode=6)
     acc = (x * x).reduce(r, op=Ops.ADD, space=Space.LREG)
     sq_loop = compile_sfpu_loop(acc, {x: 0}, addr_mode=6)
     self.assertEqual(len(sq_loop.init_passes), 1)
@@ -368,7 +367,7 @@ class TestSfpuCompiler(unittest.TestCase):
     self.assertEqual(isa.tensix_decode(sq_pass.body[1])[1]["lreg_dest"], 0)
     verify_sfpu_words(sq_pass.body, is_loop=True)
 
-    # Stage 2: 1-shot LReg reduce_lanes + rsqrt (runs ONCE, stays in L0, zero Dst traffic!)
+    # Stage 2: 1-shot LReg reduce_lanes + rsqrt (runs ONCE, stays in L0, zero Dst traffic)
     inv_rms = (acc.reduce_lanes(Ops.ADD, "all") * (1.0 / 4096.0) + 1e-5).rsqrt()
     rms_comp = compile_sfpu(inv_rms, reg_inputs=sq_loop.reg_carries, reg_outputs={inv_rms: 0})
     self.assertEqual(len(rms_comp.passes), 1)
@@ -381,7 +380,7 @@ class TestSfpuCompiler(unittest.TestCase):
     self.assertIn("SFPTRANSP", rms_ops)
     verify_sfpu_words(rms_pass.prologue + rms_pass.body)
 
-    # Stage 3: rms_apply with read-only pinned L0 across 32 footprints (L0 never overwritten!)
+    # Stage 3: rms_apply with read-only pinned L0 across 32 footprints (L0 never overwritten)
     out = x * inv_rms * gamma
     apply_comp = compile_sfpu(out, {x: 0, gamma: 1}, reg_inputs={inv_rms: 0}, output_tiles={out: 0}, addr_mode=6)
     self._check_compiled(apply_comp, max_regs=8, addr_mode=6)
@@ -393,7 +392,7 @@ class TestSfpuCompiler(unittest.TestCase):
     r = UOp.range(4, axis=0, name="t")
     x = self._make_dst("x")
 
-    # Single Dst accumulator: Dst[1] += x * x updated in-place in 1 pass with 0 scratch tiles!
+    # Single Dst accumulator: Dst[1] += x * x updated in-place in 1 pass with 0 scratch tiles
     acc_dst = (x * x).reduce(r, op=Ops.ADD, space=Space.DST)
     lp1 = compile_sfpu_loop(acc_dst, {x: 0}, addr_mode=6)
     self.assertEqual(lp1.dst_carries[acc_dst], 1)
@@ -401,7 +400,7 @@ class TestSfpuCompiler(unittest.TestCase):
     self.assertEqual(len(lp1.body_passes), 1)
     self._check_compiled(type("C", (), {"passes": lp1.body_passes})(), max_regs=8, addr_mode=6)
 
-    # Dual coupled Dst accumulators: sum + max both updated in-place in 1 pass with 0 scratch tiles!
+    # Dual coupled Dst accumulators: sum + max both updated in-place in 1 pass with 0 scratch tiles
     s_out, m_out = r.loop((UOp.const(dtypes.fp32, 0.0), UOp.const(dtypes.fp32, -math.inf)), lambda s, m: (s + x, m.maximum(x)), spaces=(Space.DST, Space.DST))
     lp2 = compile_sfpu_loop(s_out, {x: 0}, addr_mode=6)
     self.assertEqual(lp2.dst_carries[s_out], 1)
@@ -416,7 +415,7 @@ class TestSfpuCompiler(unittest.TestCase):
     y = x.sin() * scale
     comp = compile_sfpu(y, {x: 0}, reg_inputs={scale: 0}, output_tiles={y: 0}, addr_mode=6)
     self._check_compiled(comp, max_regs=8, addr_mode=6)
-    # Prologue programs L12..L14 via L0, so it must save L0 before and restore L0 after!
+    # Prologue programs L12..L14 via L0, so it must save L0 before and restore L0 after
     pro_ops = [isa.tensix_decode(w)[0] for w in comp.passes[0].prologue]
     self.assertIn("SFPCONFIG", pro_ops)
     self.assertEqual(pro_ops[0], "SFPMOV")

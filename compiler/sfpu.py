@@ -39,7 +39,6 @@ _DEFAULTS_L11_14 = {11: 0xBF800000, 12: 0x3B000000, 13: 0xBF2CC4C7, 14: 0xBEB08F
 
 @dataclass(frozen=True)
 class SfpuPrim:
-  """Low-level Blackhole SFPU primitive arg for Ops.SFPU UOps."""
   op: str
   mod: int = 0
   imm: int = 0
@@ -70,8 +69,8 @@ _SIN_POLY_FP32 = (1.0, -0.16666658222675323, 0.008333049714565277, -0.0001980901
 _PI_CW1, _PI_CW2, _PI_CW3 = 3.1416015625, -8.907169103622437e-06, -1.741103261565513e-09
 
 
+# terms of y*(1 + e + e^2 + ...) needed to reach `bits` + 3 guard bits from `seed_err`
 def newton_terms(seed_err: float, bits: int) -> int:
-  """Terms of y*(1 + e + e^2 + ...) to reach `bits` + 3 guard bits from `seed_err`."""
   k = 1
   while seed_err ** (k + 1) > 2.0 ** -(bits + 3): k += 1
   return k
@@ -213,7 +212,6 @@ pm_sfpu_fma = pm_simplify + PatternMatcher([
 
 
 def lower_sfpu_uops(root: UOp, *, precision: DType = dtypes.fp32) -> UOp:
-  """Pass A: expand Space.DST / Space.LREG transcendentals and fuse MULACC/SFPMAD in pure UOps."""
   bits = 8 if precision is dtypes.bf16 else 24
   if bits == 8:
     # Keep explicit FP32 predicate inputs at FP32 accuracy so approximation error never flips a branch.
@@ -263,12 +261,12 @@ def _emit_loadi32(out: list[int], rd: int, u: UOp) -> None:
     out.append(isa.SFPLOADI(rd, isa.LoadImm.LOWER, lo))
 
 
+# preserves L0 when it is live-in
 def _emit_prologue_consts(
   const_regs: dict[UOp, int],
   live_in_regs: set[int],
   max_regs: int,
 ) -> list[int]:
-  """Program L11..L14 constants in the prologue, preserving L0 if L0 is live-in."""
   prog = [(r, c) for c, r in sorted(const_regs.items(), key=lambda kv: kv[1]) if 11 <= r <= 14]
   if not prog: return []
   needs_l0 = any(_DEFAULTS_L11_14.get(r) != _const_u32(c) for r, c in prog)
@@ -289,8 +287,8 @@ def _emit_prologue_consts(
   return fix_sfpu_hazards(out)
 
 
+# INT32 for non-floats, so FP32 denormal flushing never corrupts integers or masks
 def _sfpu_fmt(dt: DType) -> isa.SfpuFormat:
-  """Use INT32 for non-floats so FP32 denormal flush never corrupts integers/masks."""
   return isa.SfpuFormat.FP32 if dt.is_float else isa.SfpuFormat.INT32
 
 
@@ -304,6 +302,7 @@ def _iadd_immediate(u: UOp) -> tuple[UOp, UOp, int] | None:
   return None
 
 
+# fixed hardware constants in L8..L10, up to 4 SFPCONFIG-programmed ones in L11..L14
 def _assign_const_regs(
   nodes: Sequence[UOp],
   *,
@@ -311,7 +310,6 @@ def _assign_const_regs(
   allow_non_default_cfg: bool = True,
   min_uses_for_cfg: int = 1,
 ) -> tuple[dict[UOp, int], bool]:
-  """Tier constants into fixed hardware regs (L8..L10) and up to 4 programmable SFPCONFIG regs (L11..L14)."""
   counts: dict[UOp, int] = {}
   for u in nodes:
     immediate = _iadd_immediate(u)
@@ -394,7 +392,6 @@ def _is_direct_cmp(u: UOp) -> bool:
 
 
 def _verify_dst_store_load_order(body: Sequence[int], *, retryable: bool = False) -> None:
-  """Ensure no SFPSTORE overwrites a Dst tile that a later SFPLOAD in the same footprint still reads."""
   written: set[int] = set()
   for idx, w in enumerate(body):
     match w >> 24:
@@ -429,7 +426,6 @@ def _verify_compiled_pass(
 
 
 class _PassLowerer:
-  """Lowers one SFPU pass to exact physical L0..L7 Tensix instructions within `max_regs`."""
 
   def __init__(
     self,
@@ -582,10 +578,10 @@ class _PassLowerer:
       return r, False
     raise SfpuCompileError(f"operand {u.op.name} not available in pass")
 
+  # never clobbers a live or pinned_ro register
   def _writable_copy(
     self, u: UOp, src_r: int, src_is_temp: bool, protect: set[int], count: int = 1, prefer: int | None = None,
   ) -> tuple[int, bool]:
-    """Obtain a writable L0..L7 holding `u` without clobbering any still-live or pinned_ro register."""
     if src_is_temp and src_r < 8 and src_r not in self.pinned_ro:
       return src_r, True
     if src_r < 8 and src_r not in self.pinned_ro and u in self.reg and self.reg[u] == src_r and self.is_last_use(u, count):
@@ -1043,7 +1039,6 @@ class _PassLowerer:
     self.drop_use(u)
 
   def _place_reg_outputs(self):
-    """Move/swap reg_outputs into their exact target L0..L7 registers at pass exit."""
     if not self.reg_outputs: return
     loc: dict[UOp, int] = {}
     prot: set[int] = set()
@@ -1198,7 +1193,6 @@ def partition_sfpu(
   addr_mode: int = 0,
   footprints: int | None = None,
 ) -> CompiledSfpu:
-  """Pass B + C + D: split a lowered SFPU UOp DAG into <= max_regs passes, emit & verify Tensix words."""
   roots_t = tuple(roots)
   rin = dict(reg_inputs or {})
   rout = dict(reg_outputs or {})
@@ -1406,7 +1400,6 @@ def compile_sfpu(
   addr_mode: int = 0,
   footprints: int | None = None,
 ) -> CompiledSfpu:
-  """End-to-end SFPU compiler: Layer 1 Space.DST / Space.LREG UOp(s) -> verified Tensix instruction streams."""
   roots_list = [roots] if isinstance(roots, UOp) else list(roots)
   din = dict(dst_inputs or {})
   rin = dict(reg_inputs or {})

@@ -142,6 +142,7 @@ def _init_carry_val(val: Any, space: Space, dt: DType) -> Any:
 
 
 
+# writes outputs into `buffers` in place
 def evaluate(
   sink: UOp,
   buffers: dict[str, np.ndarray],
@@ -149,8 +150,6 @@ def evaluate(
   cores: int | None = None,
   check: bool = True,
 ) -> dict[str, np.ndarray]:
-  """Functional reference evaluator for Layer 1 UOp graphs across a simulated worker grid.
-  Modifies output arrays in `buffers` in-place and returns `buffers`."""
   if check: verify(sink)
   if cores is None:
     if not isinstance(sink.arg, KernelArg): raise ValueError("evaluate needs cores= for a sink without a KernelArg")

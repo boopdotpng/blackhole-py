@@ -48,7 +48,6 @@ pm_lower_reduce = PatternMatcher([
 
 
 def lower_reduce_to_loop(root: UOp) -> UOp:
-  """Lower DST / LREG / SCALAR Ops.REDUCE nodes into explicit carried-state Ops.LOOP graphs."""
   return graph_rewrite(root, pm_lower_reduce)
 
 
@@ -132,7 +131,6 @@ def simplify(root: UOp) -> UOp:
 # ---- Analysis helpers ----
 
 def open_ranges(root: UOp) -> dict[UOp, frozenset[UOp]]:
-  """Compute the set of active RANGE nodes at every UOp reachable from root."""
   active: dict[UOp, frozenset[UOp]] = {}
   for u in root.toposort():
     match u.op:
@@ -153,7 +151,6 @@ def open_ranges(root: UOp) -> dict[UOp, frozenset[UOp]]:
 
 
 def special_axes(root: UOp) -> set[str]:
-  """Return the set of Ops.SPECIAL names (e.g. 'core_id', 'core_x', 'core_y') that root depends on."""
   return {u.arg for u in root.toposort() if u.op is Ops.SPECIAL}
 
 
@@ -172,7 +169,6 @@ def _check_gate(gate: UOp, op_name: str):
 
 
 def verify(root: UOp) -> None:
-  """Validate Layer 1 structural, dtype, memory-space, Blackhole hardware, and RANGE-scoping invariants."""
   nodes = root.toposort()
   active = open_ranges(root)
 

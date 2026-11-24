@@ -23,7 +23,6 @@ ADDR_MOD_STEP = 6  # dst += 2
 
 
 class _Asm:
-  """Minimal RV32 + inline Tensix emitter for the 1-core silicon SFPU test harness."""
   def __init__(self): self.words: list[int] = []
   def rv(self, name: str, **kw): self.words.append(isa.rv(name, **kw))
   def tt(self, word: int): self.words.append(isa.inline(word))
@@ -283,7 +282,7 @@ class TestSfpuSilicon(unittest.TestCase):
     [out_bf16], c2 = run_sfpu_on_silicon(self.dev, lambda a, b: a.silu() * b, {"a": a, "b": b}, precision=dtypes.bf16)
     np.testing.assert_allclose(out_bf16, ref, rtol=2e-2, atol=2e-2)
 
-    # FP32 forced 4-reg Dst pass-splitting!
+    # FP32 forced 4-reg Dst pass-splitting
     [out_4r], c3 = run_sfpu_on_silicon(
       self.dev, lambda a, b: a.silu() * b, {"a": a, "b": b}, precision=dtypes.fp32, max_regs=4,
     )
@@ -341,12 +340,12 @@ class TestSfpuSilicon(unittest.TestCase):
     [out_eq], _ = run_sfpu_on_silicon(self.dev, lambda a, b, c: a.eq(b).where(c, a), {"a": a, "b": b, "c": c})
     np.testing.assert_allclose(out_eq, np.where(a == b, c, a), rtol=1e-6, atol=1e-6)
 
-    # UOp.lane_id() < 16 -> rows 0, 1 of every 4-row group in each 16x16 face!
+    # UOp.lane_id() < 16 -> rows 0, 1 of every 4-row group in each 16x16 face
     [out_lane], _ = run_sfpu_on_silicon(self.dev, lambda a: (UOp.lane_id() < 16).where(a, 0.0), {"a": a})
     row_in_face = (np.arange(1024) % 256) // 16
     np.testing.assert_allclose(out_lane, np.where((row_in_face % 4) < 2, a, 0.0), rtol=1e-6, atol=1e-6)
 
-    # Bug #1 silicon test: multi-output swapping Dst tiles [1, 0] with early output!
+    # Bug #1 silicon test: multi-output swapping Dst tiles [1, 0] with early output
     [o0, o1], _ = run_sfpu_on_silicon(
       self.dev, lambda a, b: [a + 1.0, b + 2.0], {"a": a, "b": b}, multi_out=True, output_tiles=[1, 0],
     )

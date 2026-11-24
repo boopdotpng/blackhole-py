@@ -1,4 +1,3 @@
-"""Seeded differential tests of compiled SFPU words on Blackhole silicon."""
 import os, random, unittest
 import numpy as np
 from compiler import UOp, dtypes

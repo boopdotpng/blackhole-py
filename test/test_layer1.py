@@ -205,7 +205,7 @@ class TestLayer1OpsAndVerify(unittest.TestCase):
 
 class TestLayer1Evaluation(unittest.TestCase):
   def test_slice1_silu_mul_full_p100a_grid(self):
-    # Slice 1 target kernel using gated noc_read / noc_write (no if_uop needed!)
+    # Gated noc_read / noc_write
     num_tiles = 300
     cores = 119
     tiles_per_core = math.ceil(num_tiles / cores)
@@ -299,7 +299,7 @@ class TestLayer1Evaluation(unittest.TestCase):
 
     sa = A.noc_read(0).unpack(Space.SRCA)
     sb = B.noc_read(0).unpack(Space.SRCB)
-    # Plain Python + on SRCA/SRCB -> FPU ELWADD into DST!
+    # Plain Python + on SRCA/SRCB -> FPU ELWADD into DST
     added = (sa + sb).cast(dtypes.fp32)
     a_dst = A.noc_read(0).unpack(Space.DST, dtypes.fp32)
     y = (added - a_dst).gelu()
