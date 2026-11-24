@@ -4,7 +4,7 @@
 #include <DriverKit/OSSharedPtr.h>
 #include <PCIDriverKit/PCIDriverKit.h>
 
-#define MAX_SEGMENTS 32
+#define MAX_SEGMENTS 32  // fixed by PrepareForDMA's IPC signature; it returns kIOReturnOverrun beyond that
 #define MAX_DMAS 256
 
 struct TinyGPUDriverUserClient_IVars
@@ -58,20 +58,18 @@ static kern_return_t DoPrepareDMA(TinyGPUDriver *provider, TinyGPUDriverUserClie
 	uint64_t size = 0, outSize = 0;
 	args->structureInputDescriptor->GetLength(&size);
 	args->structureOutputDescriptor->GetLength(&outSize);
-	if (outSize < (MAX_SEGMENTS + 1) * 16) return kIOReturnBadArgument;
+	if (!size || outSize < (MAX_SEGMENTS + 1) * 16) return kIOReturnBadArgument;
 
-	IODMACommand *dmaCmd = nullptr;
 	IOAddressSegment segments[MAX_SEGMENTS];
+	IODMACommand *dmaCmd = nullptr;
+	IOMemoryMap *map = nullptr;
 	uint32_t segCount = MAX_SEGMENTS;
 	kern_return_t err = provider->SetupDMA(args->structureInputDescriptor, size, &dmaCmd, segments, &segCount);
-	if (err) return err;
-
-	IOMemoryMap *map = nullptr;
-	err = args->structureOutputDescriptor->CreateMapping(0, 0, 0, 0, 0, &map);
-	if (err || !map) {
-		dmaCmd->CompleteDMA(kIODMACommandCompleteDMANoOptions);
-		dmaCmd->release();
-		return err ?: kIOReturnNoMemory;
+	if (!err) err = args->structureOutputDescriptor->CreateMapping(0, 0, 0, 0, 0, &map);
+	if (!err && !map) err = kIOReturnNoMemory;
+	if (err) {
+		if (dmaCmd) { dmaCmd->CompleteDMA(kIODMACommandCompleteDMANoOptions); dmaCmd->release(); }
+		return err;
 	}
 	uint64_t *out = (uint64_t *)map->GetAddress();
 	for (uint32_t i = 0; i < segCount; i++) { out[2 * i] = segments[i].address; out[2 * i + 1] = segments[i].length; }

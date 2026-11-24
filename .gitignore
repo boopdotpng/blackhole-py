@@ -3,4 +3,4 @@ __pycache__/
 *.elf
 *.o
 .DS_Store
-weights/
+build/

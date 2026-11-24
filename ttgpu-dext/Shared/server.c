@@ -20,7 +20,6 @@
 #include <mach/mach.h>
 
 enum {
-  CMD_PROBE = 0,
   CMD_MAP_BAR = 1,
   CMD_MAP_SYSMEM_FD = 2,
   CMD_CFG_READ = 3,
@@ -28,8 +27,6 @@ enum {
   CMD_RESET = 5,
   CMD_MMIO_READ = 6,
   CMD_MMIO_WRITE = 7,
-  CMD_RESIZE_BAR = 11,
-  CMD_PING = 12,
   CMD_NOC_READ32 = 13,
 };
 enum { RESP_OK = 0, RESP_ERR = 1 };
@@ -42,7 +39,6 @@ typedef struct { uint8_t status; uint64_t resp0, resp1; } __attribute__((packed)
 #define MAX_CLIENTS 8
 #define MAX_BARS 6
 #define MAX_SYSMEM 128
-#define MAX_SYSMEM_SIZE (1ull << 40)
 #define DMA_TABLE_SIZE 8192
 #define DMA_BAR 2
 #define TLB_REGS 0x1FC00000ull
@@ -217,7 +213,6 @@ static int map_bar(client_t *c, uint32_t bar, response_t *resp) {
 
 static int map_sysmem_fd(client_t *c, uint64_t size, response_t *resp, int *out_fd) {
   if (c->sysmem_count >= MAX_SYSMEM) { snprintf(c->error, sizeof(c->error), "too many DMA buffers"); return -1; }
-  if (size > MAX_SYSMEM_SIZE) { snprintf(c->error, sizeof(c->error), "DMA buffer of %#llx bytes is too large", size); return -1; }
   size_t alloc_sz = (size + 0x3fff) & ~(size_t)0x3fff;
   if (alloc_sz < 0x4000) alloc_sz = 0x4000;
   int fd = -1;
@@ -311,7 +306,6 @@ static void serve(client_t *c) {
       }
       break;
     case CMD_NOC_READ32: { uint64_t v = 0; ok = !noc_read32(c, req.arg0, req.arg1, &v); resp.resp0 = v; break; }
-    case CMD_RESIZE_BAR: case CMD_PING: break;
     default: ok = 0; snprintf(c->error, sizeof(c->error), "unknown command %u", req.cmd);
     }
     char err[sizeof(c->error)];

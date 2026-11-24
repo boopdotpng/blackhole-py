@@ -23,7 +23,6 @@ class Py_buffer(ctypes.Structure):
               ("strides", ctypes.c_void_p), ("suboffsets", ctypes.c_void_p), ("internal", ctypes.c_void_p)]
 
 def buffer_address(obj) -> int:
-  """Address of a contiguous buffer's first byte, read-only buffers (bytes, read-only mmaps) included."""
   view = Py_buffer()
   ctypes.pythonapi.PyObject_GetBuffer(ctypes.py_object(obj), ctypes.byref(view), 0)
   try: return view.buf or 0
@@ -39,9 +38,6 @@ class HostMemory:
     assert size % mmap.PAGESIZE == 0
     self.fd, self.size, self.addr = card.fd, size, map_memory(size, flags=mmap.MAP_PRIVATE)
     try:
-      # 2 MiB pages, before the pin faults them in: back-to-back 8 MiB DMAs out of the staging slots measured 55.7 GB/s
-      # against 53.3 with 4 KiB pages. Best effort; transparent hugepages may be off.
-      libc.madvise(ctypes.c_void_p(self.addr), ctypes.c_size_t(size), 14)  # MADV_HUGEPAGE
       self.mem = view_at(self.addr, size)
       self.noc_addr = ioctl(self.fd, 7, "IIQQQQ", 16, 2, self.addr, size, 0, 0)[-1]
     except BaseException:
@@ -92,8 +88,6 @@ class Card:
     ioctl(self.fd, 15, "IIBBH28x", 40, 0, 0, 15, flags)
 
   def pin(self, va:int, size:int, read_only:bool=False) -> int:
-    """Pin page-aligned host memory for NoC DMA; returns its NoC address. read_only: the device may only read it
-    (IOMMU-enforced), which also allows read-only mappings such as an mmap'd weights file."""
     return ioctl(self.fd, 7, "IIQQQQ", 16, 2 | (8 if read_only else 0), va, size, 0, 0)[-1]
 
   def unpin(self, va:int, size:int): ioctl(self.fd, 10, "QQQ", va, size, 0)

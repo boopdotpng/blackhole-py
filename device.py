@@ -1,5 +1,5 @@
 import collections, concurrent.futures, ctypes, mmap, struct, sys, time
-import fw
+import fw, hw
 if sys.platform == "darwin": from pci_macos import Card, HostMemory
 else: from pci import Card, HostMemory
 from pci import buffer_address
@@ -9,8 +9,8 @@ def round_up(x:int, n:int) -> int: return -(-x // n) * n
 def dram_read_cap(readers:int) -> int:
   return 2 if readers >= 88 else 8 if readers >= 42 else 0
 
-def dram(offset:int, page:int=fw.DRAM_PAGE_MAX, banks:int=8) -> int:
-  if not (0 <= offset < banks * fw.DRAM_BANK_SIZE and 64 <= page <= 16384 and page % 64 == 0):
+def dram(offset:int, page:int=hw.DRAM_PAGE_MAX, banks:int=8) -> int:
+  if not (0 <= offset < banks * hw.DRAM_BANK_SIZE and 64 <= page <= 16384 and page % 64 == 0):
     raise ValueError(f"invalid DRAM offset {offset} or page size {page}")
   tag = (page.bit_length() - 1) << 56 if page & (page - 1) == 0 else (page // 64 - 1) << 48
   return 1 << 63 | tag | offset
@@ -28,7 +28,7 @@ class Allocator:
   COPY_THREADS = 4
   def __init__(self, dev:"Device"):
     self.dev, self.top, self.slot, self.slot_done, self.pool = dev, 0, 0, [0, 0], None
-    self.pending_pins = []  # in-flight mappings retained after a DMA timeout
+    self.pending_pins = []  # still mapped after a DMA timeout; unpinned once the device catches up
 
   def release_pins(self, reset=False):
     if not self.pending_pins: return
@@ -39,11 +39,11 @@ class Allocator:
       view.release()
       self.pending_pins.pop(0)
 
-  def alloc(self, size:int, page:int=fw.DRAM_PAGE_MAX) -> int:
+  def alloc(self, size:int, page:int=hw.DRAM_PAGE_MAX) -> int:
     banks = self.dev.dram_banks
     offset = round_up(self.top, banks * page)
-    end = round_up(offset + round_up(size, banks * page), banks * fw.DRAM_PAGE_MAX)
-    if size < 0 or end > banks * fw.DRAM_BANK_SIZE: raise MemoryError(f"can't allocate {size} bytes of DRAM")
+    end = round_up(offset + round_up(size, banks * page), banks * hw.DRAM_PAGE_MAX)
+    if size < 0 or end > banks * hw.DRAM_BANK_SIZE: raise MemoryError(f"can't allocate {size} bytes of DRAM")
     self.top = end
     return dram(offset, page, banks)
 
@@ -57,9 +57,7 @@ class Allocator:
   PIN_CHUNK, PIN_DEPTH, COPY_MAX = 64 << 20, 3, 1 << 30
 
   def _direct(self, dev_addr:int, host:memoryview, to_device:bool, timeout:float) -> bool:
-    """DMA between DRAM and the caller's memory with no staging copy. A buffer from Device.pinned() is used as is;
-    any other large buffer is pinned 64 MiB at a time, a few chunks ahead of the device, so pinning overlaps the copies.
-    False (nothing copied) if the buffer isn't 64-byte aligned or can't be pinned: the NoC can't shift bytes."""
+    # Zero-copy DMA. Returns False (nothing copied) if the buffer is unaligned or unpinnable, so the caller stages it.
     dev, page, n = self.dev, mmap.PAGESIZE, len(host)
     if (va := buffer_address(host)) % 64: return False
     def copy(at:int, noc:int, size:int) -> int:
@@ -71,10 +69,9 @@ class Allocator:
       dev.timeline_signal.wait(dev.timeline_value, timeout)
       return True
     if n < self.PIN_CHUNK // 4 or not hasattr(dev.card, "pin"): return False
-    # Pinning and unpinning cost ~2 ms of CPU per 64 MiB, as long as the DMA itself, so both run on the thread pool
-    # (ioctl drops the GIL): the next PIN_DEPTH chunks are being pinned while one is copied.
+    # Pinning costs about as much as the DMA, so the next PIN_DEPTH chunks are pinned on the pool while one copies.
     chunks, at = [], va
-    while at < va + n:                     # boundaries after the first are page-aligned, so no two pins share a page
+    while at < va + n:
       stop, pin_va = min(va + n, at // page * page + self.PIN_CHUNK), at // page * page
       chunks.append((at, stop, pin_va, round_up(stop, page) - pin_va))
       at = stop
@@ -95,7 +92,7 @@ class Allocator:
       for k, c in enumerate(chunks):
         try: noc = pins.popleft()[1].result()
         except OSError:
-          if k == 0: return False          # can't pin this buffer at all: let the caller stage it
+          if k == 0: return False
           raise
         if k + self.PIN_DEPTH < len(chunks): pins.append((nxt := chunks[k + self.PIN_DEPTH], pool.submit(pin, nxt)))
         try: val = copy(c[0], noc + (c[0] - c[2]), c[1] - c[0])
@@ -108,7 +105,7 @@ class Allocator:
       try:
         while copying: retire()
       finally:
-        for c, f in pins:                  # pinned ahead of a failure, never copied
+        for c, f in pins:
           try: f.result()
           except OSError: continue
           unpins.append(pool.submit(dev.card.unpin, c[2], c[3]))
@@ -120,13 +117,10 @@ class Allocator:
     return self.pool
 
   def _memcpy(self, dst:int, src:int, n:int):
-    """Host memcpy split over threads: ctypes calls drop the GIL, and one core can't saturate host memory."""
     part = round_up(-(-n // self.COPY_THREADS), 64)
     list(self._pool().map(lambda at: ctypes.memmove(dst + at, src + at, min(part, n - at)), range(0, n, part)))
 
   def copyin(self, dest:int, src, timeout:float=60.0):
-    """Host -> DRAM. Fastest from a Device.pinned() buffer (~56 GB/s on Gen5 x16), then from any other 64-byte aligned
-    buffer of 16 MiB or more (pinned on the fly, ~35-50 GB/s); anything else is staged through a memcpy (~24 GB/s)."""
     dev = self.dev
     with memoryview(src).cast("B") as host:
       if self._direct(dest, host, True, timeout): return
@@ -137,7 +131,6 @@ class Allocator:
     dev.synchronize(timeout)
 
   def copyout(self, dest, src:int, timeout:float=60.0):
-    """DRAM -> host, with the same fast paths as copyin."""
     dev = self.dev
     with memoryview(dest).cast("B") as host:
       if host.readonly: raise ValueError("copyout needs a writable buffer")
@@ -153,7 +146,7 @@ class Allocator:
         pending = off, n, buf, val
       if pending: drain(*pending)
 
-  def upload(self, blob, page:int=fw.DRAM_PAGE_MAX) -> int:
+  def upload(self, blob, page:int=hw.DRAM_PAGE_MAX) -> int:
     self.copyin(addr := self.alloc(len(blob), page), blob)
     return addr
 
@@ -161,29 +154,25 @@ class Device:
   def __init__(self, index:int=0):
     self.card, self.host, self.booted, self.pinned_buffers, self.allocator = Card(index), None, False, [], None
     try:
-      self.cols = (self._telemetry(fw.TAG_ENABLED_TENSIX_COL) & 0x3FFF).bit_count()
+      self.cols = (self._telemetry(hw.TAG_ENABLED_TENSIX_COL) & 0x3FFF).bit_count()
       if self.cols not in (12, 14): raise RuntimeError(f"unsupported {self.card.name}: {self.cols} Tensix columns")
       self.dram_banks = 7 if self.card.name == "p100a" else 8
       right = 2 + self.cols
       self.dma_core, self.grid = (right, 11), ((1, 2), (right, 11))
       self.worker_rects = (((1, 2), (right - 1, 11)), ((right, 2), (right, 10)))
       self.workers = [(x, y) for x in range(1, right + 1) if x not in (8, 9) for y in range(2, 12) if (x, y) != self.dma_core]
-      # Cores are addressed in translated coords (harvested columns moved past the right edge), but BRCST_EXCLUDE is
-      # matched against physical coords, so cover() needs each column's physical x. Translation keeps good columns in
-      # order, so a translated exclude quadrant maps to the same physical quadrant.
-      self.phys_x = {x: self.card.read32((x, 2), fw.NOC_NODE_ID) & 63 for x in sorted({x for x, _ in self.workers})}
+      # BRCST_EXCLUDE matches physical coords, not translated ones; cover() relies on translation preserving column order.
+      self.phys_x = {x: self.card.read32((x, 2), hw.NOC_NODE_ID) & 63 for x in sorted({x for x, _ in self.workers})}
       if list(self.phys_x.values()) != sorted(self.phys_x.values()): raise RuntimeError(f"non-monotonic column translation {self.phys_x}")
       self._reset(self.grid)
       self.booted = True
       self.stage_base, self.stage_size = 16 << 20, 8 << 20
-      # With the slots in the last 16 MiB of this pin, DMAs from them ran at ~33 GB/s instead of ~56 (p150a, Gen5 x16,
-      # repeatable; cause not found). An unused 32 MiB tail keeps them out of it.
+      # Unused 32 MiB tail: DMA from the last 16 MiB of a pin runs at ~33 GB/s instead of ~56 (cause unknown).
       self.host = HostMemory(self.card, self.stage_base + 2 * self.stage_size + (32 << 20))
       self.heap = mmap.PAGESIZE
       self.timeline_signal, self.timeline_value = Signal(self, 0), 0
       self.allocator = Allocator(self)
       self.dma_window = self._boot_dma()
-      self.compute_epoch, self.pending_workers = 0, 0
     except BaseException:
       self.close()
       raise
@@ -202,28 +191,12 @@ class Device:
   def synchronize(self, timeout:float=10.0):
     self.timeline_signal.wait(self.timeline_value, timeout)
     self.allocator.release_pins()
-    self.wait_workers(timeout)
 
-  def wait_workers(self, timeout=10.0):
-    deadline = time.monotonic() + timeout
-    while self.pending_workers:
-      if self.card.read32(self.workers[0], fw.WORK_DONE) == self.pending_workers:
-        self.pending_workers = 0
-      elif time.monotonic() > deadline:
-        groups = collections.defaultdict(list)
-        for xy in self.workers:
-          epoch = self.card.read32(xy, fw.SYNC_EPOCH)
-          cursors = struct.unpack("<5I", self.card.read(xy, fw.ROLE_PROGRESS, 20))
-          groups[(epoch, cursors)].append(xy)
-        sample = [(state, len(cores), cores[:2]) for state, cores in groups.items()]
-        raise TimeoutError(f"worker epoch {self.compute_epoch} timed out, arrived={self.card.read32(self.workers[0], fw.SYNC_ARRIVED)}, "
-                           f"done={self.card.read32(self.workers[0], fw.WORK_DONE)}, epochs and role cursors={sample}")
+  def stop_workers(self):
+    for rect in self.worker_rects: self._reset(rect)
 
   def pinned(self, size:int) -> HostMemory:
-    """Host memory the device can DMA to and from directly, pinned for the device's lifetime. copyin/copyout from a
-    buffer inside one (h.mem or any slice of it) skip both the staging memcpy and per-call pinning. An unused 32 MiB
-    tail keeps the usable part out of the pin's last 16 MiB, which was slow for the staging buffer (see __init__)."""
-    self.pinned_buffers.append(h := HostMemory(self.card, round_up(size, 2 << 20) + (32 << 20)))
+    self.pinned_buffers.append(h := HostMemory(self.card, round_up(size, mmap.PAGESIZE) + (32 << 20)))  # slow tail, see __init__
     return h
 
   def alloc_host(self, size:int, align:int=64) -> int:
@@ -232,53 +205,34 @@ class Device:
     self.heap = offset + size
     return offset
 
-  def load(self, image:bytes, role_pcs:dict[str, int]):
+  def run_workers(self, image:bytes, role_pcs:dict[str, int], data:dict[int, bytes]|None=None, cores=None):
     self.synchronize()
-    for rect in self.worker_rects: self._reset(rect)
-    header = bytearray(fw.CODE_BASE)
-    struct.pack_into("<I", header, 0, fw.jal(fw.CODE_BASE))
-    struct.pack_into("<I", header, fw.LEADER_COORD, fw.noc(self.workers[0]))
-    struct.pack_into("<3I", header, fw.NUM_WORKERS, len(self.workers), self.dram_banks, self.cols)
-    struct.pack_into("<4I", header, fw.ROLE_PC, *(role_pcs.get(r, 0) for r in fw.ROLES[1:]))
-    for rect in self.worker_rects:
-      self.card.write(rect, 0, header + image)
-      self.card.write32(rect, fw.SOFT_RESET, fw.RESET_ALL & ~fw.RESET_BRISC)
-
-    deadline = time.monotonic() + 2
-    for xy in self.workers:
-      while not self.card.read32(xy, fw.WORK_READY):
-        if time.monotonic() > deadline: raise TimeoutError(f"worker {xy} failed to boot")
+    self.stop_workers()
+    header = bytearray(hw.CODE_BASE)
+    struct.pack_into("<I", header, 0, hw.jal(hw.CODE_BASE))
+    struct.pack_into("<I", header, hw.LEADER_COORD, hw.noc(self.workers[0]))
+    struct.pack_into("<3I", header, hw.NUM_WORKERS, len(self.workers), self.dram_banks, self.cols)
+    struct.pack_into("<4I", header, hw.ROLE_PC, *(role_pcs.get(r, 0) for r in hw.ROLES[1:]))
+    targets = self.worker_rects if cores is None else list(cores)
+    payload = bytes(header) + image
+    for target in targets:
+      self.card.write(target, 0, payload)
+      if data:
+        for addr, blob in data.items(): self.card.write(target, addr, blob)
+      self.card.write32(target, hw.SOFT_RESET, hw.RESET_ALL & ~hw.RESET_BRISC)
 
   def cover(self, cores) -> tuple[int, int]:
-    """Multicast (rect, exclude) for cores: a translated rectangle, minus at most one corner quadrant."""
+    # Multicast (rect, exclude): a rectangle minus at most one corner quadrant.
     cores = set(cores)
     x0, x1, y0, y1 = min(x for x, _ in cores), max(x for x, _ in cores), min(y for _, y in cores), max(y for _, y in cores)
     box = {(x, y) for x in range(x0, x1 + 1) if x not in (8, 9) for y in range(y0, y1 + 1)}
-    rect, missing = fw.noc((x0, y0)) | fw.noc((x1, y1)) << 12, box - cores
+    rect, missing = hw.noc((x0, y0)) | hw.noc((x1, y1)) << 12, box - cores
     if not missing: return rect, 0
     dx, dy = any(x == x1 for x, _ in missing), any(y == y1 for _, y in missing)
     ax, ay = (min if dx else max)(x for x, _ in missing), (min if dy else max)(y for _, y in missing)
     assert missing == {(x, y) for x, y in box if (x >= ax if dx else x <= ax) and (y >= ay if dy else y <= ay)}, \
       f"{len(cores)} cores are not a rectangle minus one corner"
     return rect, 1 << 22 | dy << 21 | dx << 20 | ay << 14 | self.phys_x[ax] << 8
-
-  def launch(self, args:int=0, args_size:int=0, cores=None, sync:bool=False, timeout:float=10.0) -> int:
-    self.synchronize(timeout)
-    selected = self.workers if cores is None else list(cores)
-    if not selected or len(set(selected)) != len(selected) or not set(selected) <= set(self.workers):
-      raise ValueError("invalid worker set")
-    offset = args - self.host.noc_addr
-    if args_size and not (0 <= offset <= self.host.size - args_size and 0 < args_size <= fw.STEP_ARGS_SIZE):
-      raise ValueError("step args must be in the pinned host buffer")
-    targets = self.worker_rects if selected == self.workers else selected
-    self.card.write32(self.workers[0], fw.WORK_DONE, 0)
-    self.compute_epoch = self.compute_epoch % 0xffffffff + 1
-    if args_size:
-      for rect in targets: self.card.write(rect, fw.STEP_ARGS, self.host.mem[offset:offset + args_size])
-    self.pending_workers = len(selected)
-    for rect in targets: self.card.write32(rect, fw.STEP_EPOCH, self.compute_epoch)
-    if sync: self.wait_workers(timeout)
-    return self.compute_epoch
 
   def close(self):
     if self.card is None: return
@@ -293,14 +247,14 @@ class Device:
       self.card = None
 
   def _telemetry(self, tag:int) -> int:
-    rd = lambda addr: self.card.read32(fw.ARC, addr)
-    table, data = rd(fw.TELEMETRY_PTR), rd(fw.TELEMETRY_DATA)
+    rd = lambda addr: self.card.read32(hw.ARC, addr)
+    table, data = rd(hw.TELEMETRY_PTR), rd(hw.TELEMETRY_DATA)
     assert 0 < (n := rd(table + 4)) <= 256, f"bad ARC telemetry entry count {n}"
     for i in range(n):
       if (e := rd(table + 8 + 4 * i)) & 0xFFFF == tag: return rd(data + 4 * (e >> 16))
     raise RuntimeError(f"ARC telemetry has no tag {tag}")
 
-  def _reset(self, rect): self.card.write32(rect, fw.SOFT_RESET, fw.RESET_ALL)
+  def _reset(self, rect): self.card.write32(rect, hw.SOFT_RESET, hw.RESET_ALL)
 
   def _boot_dma(self):
     core, (brisc, ncrisc) = self.dma_core, fw.service_images(self.dram_banks)
@@ -309,6 +263,6 @@ class Device:
     self.card.write(core, fw.SVC_STATE, state)
     self.card.write(core, fw.SVC_BRISC_BASE, brisc)
     self.card.write(core, fw.SVC_NCRISC_BASE, ncrisc)
-    self.card.write32(core, 0, fw.jal(fw.SVC_BRISC_BASE))
-    self.card.write32(core, fw.SOFT_RESET, fw.RESET_ALL & ~fw.RESET_BRISC)
+    self.card.write32(core, 0, hw.jal(fw.SVC_BRISC_BASE))
+    self.card.write32(core, hw.SOFT_RESET, hw.RESET_ALL & ~hw.RESET_BRISC)
     return self.card.window(core)

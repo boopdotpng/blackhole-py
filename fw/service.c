@@ -3,16 +3,15 @@
 #define NIU SVC_ENGINE
 #define DMA_CAP 32
 #define STAGING(slot) (SVC_DMA_STAGING + (slot) * DMA_BATCH)
-#define RD_TID(s) (8 + (s))                   // tids 8..8+DMA_SLOTS-1: reads into slot s
-#define WR_TID(s) (8 + DMA_SLOTS + (s))       // the writes out of slot s
+#define RD_TID(s) (8 + (s))
+#define WR_TID(s) (8 + DMA_SLOTS + (s))
 
 __asm__(".section .entry, \"ax\", @progbits\n"
         SET_SP(STACK_TOP)
         "j _svc_boot\n");
 
-/* Host <-> DRAM/L1 copy. Engine e (BRISC on NIU0, NCRISC on NIU1) moves chunks e, e+2, e+4, ... through its own ring of
- * DMA_SLOTS staging slots, keeping DMA_SLOTS-1 reads in flight while it writes out the oldest. One read and one write
- * per chunk at a time cannot cover the PCIe round trip; a deeper ring does. */
+// Engine e moves chunks e, e+2, ... through a ring of DMA_SLOTS staging slots, keeping DMA_SLOTS-1 reads in flight:
+// one read and one write at a time can't cover the PCIe round trip.
 static void dma_copy_parallel(u32 dst_lo, u32 dst_hi, u32 src_lo, u32 src_hi, u32 size) {
   u32 stride = 2 * DMA_BATCH, first = SVC_ENGINE * DMA_BATCH, base = SVC_ENGINE * DMA_SLOTS;
   if (first >= size) return;

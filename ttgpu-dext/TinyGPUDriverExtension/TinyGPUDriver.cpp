@@ -193,7 +193,9 @@ kern_return_t TinyGPUDriver::NewUserClient_Impl(uint32_t in_type, IOUserClient**
 	IOService* service = nullptr;
 	kern_return_t err = Create(this, "TinyGPUDriverUserClientProperties", &service);
 	if (err) { os_log(OS_LOG_DEFAULT, "tinygpu: failed to create user client 0x%x", err); return err; }
-	*out_user_client = OSDynamicCast(IOUserClient, service);
+	IOUserClient *client = OSDynamicCast(IOUserClient, service);
+	if (!client) { service->release(); return kIOReturnUnsupported; }
+	*out_user_client = client;
 	return kIOReturnSuccess;
 }
 
@@ -211,10 +213,11 @@ static bool CfgArgsOK(uint32_t off, uint32_t size) { return (size == 1 || size =
 kern_return_t TinyGPUDriver::MapBar(uint32_t bar, IOMemoryDescriptor** memory)
 {
 	return WithPCI(ivars, [&](IOPCIDevice *pci) {
-		ivars->mapped = true;
 		uint8_t idx, type; uint64_t size;
 		kern_return_t err = pci->GetBARInfo(bar, &idx, &size, &type);
-		return err ? err : pci->_CopyDeviceMemoryWithIndex(idx, memory, this);
+		if (!err) err = pci->_CopyDeviceMemoryWithIndex(idx, memory, this);
+		if (!err) ivars->mapped = true;
+		return err;
 	});
 }
 
@@ -222,7 +225,6 @@ kern_return_t TinyGPUDriver::SetupDMA(IOMemoryDescriptor* memory, uint64_t size,
                                       IOAddressSegment* segments, uint32_t* segCount)
 {
 	return WithPCI(ivars, [&](IOPCIDevice *pci) {
-		ivars->mapped = true;
 		IODMACommandSpecification spec = {.options = 0, .maxAddressBits = 40};
 		IODMACommand* dmaCmd = nullptr;
 		kern_return_t err = IODMACommand::Create(pci, kIODMACommandCreateNoOptions, &spec, &dmaCmd);
@@ -230,6 +232,7 @@ kern_return_t TinyGPUDriver::SetupDMA(IOMemoryDescriptor* memory, uint64_t size,
 		uint64_t flags = kIOMemoryDirectionInOut;
 		err = dmaCmd->PrepareForDMA(kIODMACommandPrepareForDMANoOptions, memory, 0, size, &flags, segCount, segments);
 		if (err) { os_log(OS_LOG_DEFAULT, "tinygpu: PrepareForDMA failed 0x%x", err); dmaCmd->release(); return err; }
+		ivars->mapped = true;
 		*outCmd = dmaCmd;
 		return kIOReturnSuccess;
 	});

@@ -1,5 +1,5 @@
 #!/bin/bash
-# macOS: uninstall the old TTGPU dext, build + install the new one, and wait for the card to answer again.
+# Reinstall the macOS TTGPU dext and wait for the card to come back.
 set -e
 cd "$(dirname "$0")"
 APP=/Applications/TTGPU.app/Contents/MacOS/TTGPU
