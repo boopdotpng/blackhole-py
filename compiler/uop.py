@@ -283,39 +283,32 @@ class _UOpMeta(type):
     return obj
 
 
-_VOID_OPS = frozenset({Ops.SINK, Ops.END, Ops.LOOP, Ops.STORE, Ops.NOC_WRITE, Ops.BARRIER})
-_SCALAR_OPS = frozenset({Ops.CONST, Ops.SPECIAL, Ops.RANGE})
-_L1_OPS = frozenset({Ops.NOC_READ, Ops.NOC_MCAST, Ops.NOC_GATHER, Ops.NOC_ALLGATHER, Ops.PACK})
-_DST_OPS = frozenset({Ops.MVMUL, Ops.LANE_ID, Ops.REDUCE_ROW, Ops.ARGMAX})
 _SRC_BANKS = frozenset({Space.SRCA, Space.SRCB})
 _TENSIX_VAL_SPACES = frozenset({Space.DST, Space.SRCA, Space.SRCB})
 
 
 def _infer_space(op: Ops, src: tuple[UOp, ...], arg: Any) -> Space:
-  if op in _VOID_OPS: return Space.NONE
-  if op in _SCALAR_OPS: return Space.SCALAR
-  if op in _L1_OPS: return Space.L1
-  if op in _DST_OPS: return Space.DST
-  if op in (Ops.BUFFER, Ops.ALLOC, Ops.CARRY): return arg.space
-  if op in (Ops.UNPACK, Ops.REPLAY, Ops.MOP): return arg.dest
-  if op is Ops.REDUCE: return arg.space
-  if op is Ops.GET: return src[0].src[1 + 2 * arg].space
-  if op is Ops.REDUCE_LANES: return src[0].space
-  if op is Ops.AFTER: return src[0].space
-  if op is Ops.IF: return src[1].space if len(src) >= 2 else Space.NONE
-  if op is Ops.LOAD:
-    s = src[0].space
-    return Space.SCALAR if s in (Space.DRAM, Space.HOST, Space.SCALAR) else s
-  if op is Ops.SFPU:
-    if (sp := getattr(arg, "space", None)) is not None: return sp
-    if any(s.space in _TENSIX_VAL_SPACES for s in src): return Space.DST
-    if any(s.space is Space.LREG for s in src): return Space.LREG
-    return Space.DST
-  if op in GroupOp.ALU or op in (Ops.CAST, Ops.BITCAST):
-    if any(s.space in _TENSIX_VAL_SPACES for s in src): return Space.DST
-    if any(s.space is Space.LREG for s in src): return Space.LREG
-    return Space.SCALAR
-  raise ValueError(f"cannot infer space for {op}")
+  match op:
+    case Ops.SINK | Ops.END | Ops.LOOP | Ops.STORE | Ops.NOC_WRITE | Ops.BARRIER: return Space.NONE
+    case Ops.CONST | Ops.SPECIAL | Ops.RANGE: return Space.SCALAR
+    case Ops.NOC_READ | Ops.NOC_MCAST | Ops.NOC_GATHER | Ops.NOC_ALLGATHER | Ops.PACK: return Space.L1
+    case Ops.MVMUL | Ops.LANE_ID | Ops.REDUCE_ROW | Ops.ARGMAX: return Space.DST
+    case Ops.BUFFER | Ops.ALLOC | Ops.CARRY | Ops.REDUCE: return arg.space
+    case Ops.UNPACK | Ops.REPLAY | Ops.MOP: return arg.dest
+    case Ops.GET: return src[0].src[1 + 2 * arg].space
+    case Ops.REDUCE_LANES | Ops.AFTER: return src[0].space
+    case Ops.IF: return src[1].space if len(src) >= 2 else Space.NONE
+    case Ops.LOAD:
+      s = src[0].space
+      return Space.SCALAR if s in (Space.DRAM, Space.HOST, Space.SCALAR) else s
+    case Ops.SFPU if (sp := getattr(arg, "space", None)) is not None: return sp
+    case Ops.SFPU | Ops.CAST | Ops.BITCAST: pass
+    case _ if op in GroupOp.ALU: pass
+    case _: raise ValueError(f"cannot infer space for {op}")
+  # SFPU primitives and ALU ops take their operands' space; an SFPU primitive on scalars still runs in Dst.
+  if any(s.space in _TENSIX_VAL_SPACES for s in src): return Space.DST
+  if any(s.space is Space.LREG for s in src): return Space.LREG
+  return Space.DST if op is Ops.SFPU else Space.SCALAR
 
 
 class UOp(metaclass=_UOpMeta):
@@ -682,23 +675,16 @@ class UPat:
     self.space = _as_tuple(space, Space)
     self.arg, self.name, self.allow_any_len, self.is_any = arg, name, allow_any_len, is_any
 
-    if is_any:
-      self.src_mode, self.src = "any", tuple(src or ())
-      self.req_ops: frozenset[Ops] = frozenset()
-    elif src is None:
-      self.src_mode, self.src = "none", ()
-      self.req_ops = frozenset()
-    elif isinstance(src, UPat):
-      self.src_mode, self.src = "repeat", (src,)
-      self.req_ops = frozenset()
-    elif isinstance(src, list):
-      self.src_mode, self.src = "perm", tuple(src)
-      self.req_ops = frozenset(p.op[0] for p in src if p.op is not None and len(p.op) == 1)
-    elif isinstance(src, tuple):
-      self.src_mode, self.src = "exact", src
-      self.req_ops = frozenset(p.op[0] for p in src if p.op is not None and len(p.op) == 1)
-    else:
-      raise TypeError(f"invalid UPat src: {type(src).__name__}")
+    self.req_ops: frozenset[Ops] = frozenset()
+    match src:
+      case _ if is_any: self.src_mode, self.src = "any", tuple(src or ())
+      case None: self.src_mode, self.src = "none", ()
+      case UPat(): self.src_mode, self.src = "repeat", (src,)
+      case list(): self.src_mode, self.src = "perm", tuple(src)
+      case tuple(): self.src_mode, self.src = "exact", src
+      case _: raise TypeError(f"invalid UPat src: {type(src).__name__}")
+    if self.src_mode in ("perm", "exact"):
+      self.req_ops = frozenset(p.op[0] for p in self.src if p.op is not None and len(p.op) == 1)
 
   @staticmethod
   def any(*pats: UPat) -> UPat: return UPat(src=pats, is_any=True)
@@ -836,58 +822,59 @@ def graph_rewrite(
     orig, phase, cur = stack.pop()
     if orig in memo: continue
 
-    if phase == 0:
-      if bot_pm is not None:
-        seen: set[UOp] = set()
-        nxt: UOp | None = cur
-        while nxt is not None:
-          if nxt in seen: raise RuntimeError(f"bottom-up rewrite cycle at {nxt.op}")
-          seen.add(nxt)
-          cur = nxt
-          if cur in bot_cache: nxt = bot_cache[cur]
-          else: nxt = bot_cache[cur] = bot_pm.rewrite(cur, ctx)
-      if cur is not orig:
-        stack.append((orig, 2, cur))
-        if cur not in memo and cur not in started:
-          started.add(cur)
-          stack.append((cur, 0, cur))
-        continue
-      stack.append((orig, 1, cur))
-      for s in reversed(cur.src):
-        if s not in memo and s not in started:
-          started.add(s)
-          stack.append((s, 0, s))
-
-    elif phase == 1:
-      new_src: list[UOp] = []
-      blocked: UOp | None = None
-      for s in cur.src:
-        if (rs := memo.get(s)) is None:
-          blocked = s
-          break
-        new_src.append(rs)
-      if blocked is not None:
-        waiting[blocked].append((orig, 1, cur))
-        continue
-
-      new_src_t = tuple(new_src)
-      if new_src_t != cur.src:
-        nxt = UOp(cur.op, cur.dtype, new_src_t, cur.arg)
-      else:
-        nxt = top_pm.rewrite(cur, ctx) if top_pm is not None else None
-        if nxt is None or nxt is cur:
-          finish(orig, cur)
+    match phase:
+      case 0:
+        if bot_pm is not None:
+          seen: set[UOp] = set()
+          nxt: UOp | None = cur
+          while nxt is not None:
+            if nxt in seen: raise RuntimeError(f"bottom-up rewrite cycle at {nxt.op}")
+            seen.add(nxt)
+            cur = nxt
+            if cur in bot_cache: nxt = bot_cache[cur]
+            else: nxt = bot_cache[cur] = bot_pm.rewrite(cur, ctx)
+        if cur is not orig:
+          stack.append((orig, 2, cur))
+          if cur not in memo and cur not in started:
+            started.add(cur)
+            stack.append((cur, 0, cur))
           continue
-      stack.append((orig, 2, nxt))
-      if nxt not in memo and nxt not in started:
-        started.add(nxt)
-        stack.append((nxt, 0, nxt))
+        stack.append((orig, 1, cur))
+        for s in reversed(cur.src):
+          if s not in memo and s not in started:
+            started.add(s)
+            stack.append((s, 0, s))
 
-    else:  # phase == 2: forward orig -> memo[cur]
-      if (res := memo.get(cur)) is not None:
-        finish(orig, res)
-      else:
-        waiting[cur].append((orig, 2, cur))
+      case 1:
+        new_src: list[UOp] = []
+        blocked: UOp | None = None
+        for s in cur.src:
+          if (rs := memo.get(s)) is None:
+            blocked = s
+            break
+          new_src.append(rs)
+        if blocked is not None:
+          waiting[blocked].append((orig, 1, cur))
+          continue
+
+        new_src_t = tuple(new_src)
+        if new_src_t != cur.src:
+          nxt = UOp(cur.op, cur.dtype, new_src_t, cur.arg)
+        else:
+          nxt = top_pm.rewrite(cur, ctx) if top_pm is not None else None
+          if nxt is None or nxt is cur:
+            finish(orig, cur)
+            continue
+        stack.append((orig, 2, nxt))
+        if nxt not in memo and nxt not in started:
+          started.add(nxt)
+          stack.append((nxt, 0, nxt))
+
+      case _:  # phase 2: forward orig -> memo[cur]
+        if (res := memo.get(cur)) is not None:
+          finish(orig, res)
+        else:
+          waiting[cur].append((orig, 2, cur))
 
   if root not in memo:
     raise RuntimeError("graph_rewrite stalled: cyclic dependency between rewritten nodes")
