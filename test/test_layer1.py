@@ -4,10 +4,10 @@ import hw
 from hw import isa
 from compiler import (
   Fidelity, Grid, Kernel, Ops, PatternMatcher, Space, UOp, UPat, VerifyError,
-  alloc, argmax, barrier, dram_buf, dtypes, end, evaluate, graph_rewrite,
-  host_buf, if_uop, lane_id, load, mop, mvmul, noc_mcast, noc_read, noc_write,
-  pack, pretty, range_uop, reduce, reduce_row, replay, simplify, special,
-  special_axes, store, substitute, unpack, verify,
+  alloc, argmax, barrier, carry, dram_buf, dtypes, end, evaluate, graph_rewrite,
+  host_buf, if_uop, lane_id, load, loop_carry, lower_reduce_to_loop, mop, mvmul,
+  noc_mcast, noc_read, noc_write, pack, pretty, range_uop, reduce, reduce_lanes,
+  reduce_row, replay, simplify, special, special_axes, store, substitute, unpack, verify,
 )
 
 
@@ -331,6 +331,65 @@ class TestLayer1Evaluation(unittest.TestCase):
     ref = 0.5 * b_np * (1.0 + np.tanh(c * (b_np + 0.044715 * (b_np ** 3))))
     np.testing.assert_allclose(out_np, ref, rtol=2e-2, atol=2e-2)
     np.testing.assert_array_equal(idx_np[0, :, 0], np.argmax(out_np[0], axis=-1))
+
+  def test_loop_carry_coupled_state_and_lreg_decode_rmsnorm(self):
+    # 1. Coupled multi-tile carried Dst state (online softmax-like max + rescaled sum over 3 tiles)
+    X = dram_buf("X", (3, 32, 32), dtypes.fp32)
+    M_OUT = dram_buf("M", (1, 32, 32), dtypes.fp32)
+    L_OUT = dram_buf("L", (1, 32, 32), dtypes.fp32)
+    k = Kernel("coupled_carry", grid=1)
+    r = k.range(3, "t")
+    xt = unpack(noc_read(X, r), Space.DST, dtypes.fp32)
+    m_fin, l_fin = loop_carry(
+      r,
+      (UOp.const(dtypes.fp32, -math.inf), UOp.const(dtypes.fp32, 0.0)),
+      lambda m, l: (
+        (m_new := m.maximum(xt)),
+        l * (m - m_new).exp() + (xt - m_new).exp(),
+      ),
+      spaces=(Space.DST, Space.DST),
+    )
+    k.emit(noc_write(M_OUT, 0, pack(m_fin, dtypes.fp32)), noc_write(L_OUT, 0, pack(l_fin, dtypes.fp32)))
+    sink = k.build()
+
+    rng = np.random.default_rng(11)
+    x_np = rng.uniform(-2.0, 2.0, (3, 32, 32)).astype(np.float32)
+    m_np, l_np = np.zeros((1, 32, 32), dtype=np.float32), np.zeros((1, 32, 32), dtype=np.float32)
+    evaluate(sink, {"X": x_np, "M": m_np, "L": l_np})
+    ref_m = np.max(x_np, axis=0)
+    ref_l = np.sum(np.exp(x_np - ref_m), axis=0)
+    np.testing.assert_allclose(m_np[0], ref_m, rtol=1e-5, atol=1e-5)
+    np.testing.assert_allclose(l_np[0], ref_l, rtol=1e-5, atol=1e-5)
+
+    # 2. Decode RMSNorm with Space.LREG reduction + lower_reduce_to_loop + reduce_lanes
+    G = dram_buf("G", (1, 32, 32), dtypes.fp32)
+    Y = dram_buf("Y", (1, 32, 32), dtypes.fp32)
+    k2 = Kernel("decode_rmsnorm", grid=1)
+    rt = k2.range(3, "t")
+    x_tile = unpack(noc_read(X, rt), Space.DST, dtypes.fp32)
+    acc_lreg = reduce(x_tile * x_tile, rt, op=Ops.ADD, space=Space.LREG)
+    inv_rms = (reduce_lanes(acc_lreg, Ops.ADD, "all") * (1.0 / (3 * 1024)) + 1e-5).rsqrt()
+    self.assertEqual(inv_rms.space, Space.LREG)
+    x0 = unpack(noc_read(X, 0), Space.DST, dtypes.fp32)
+    g0 = unpack(noc_read(G, 0), Space.DST, dtypes.fp32)
+    k2.emit(noc_write(Y, 0, pack(x0 * inv_rms * g0, dtypes.fp32)))
+    sink_red = k2.build()
+    sink_loop = lower_reduce_to_loop(sink_red)
+    verify(sink_loop)
+    self.assertNotIn(Ops.REDUCE, {u.op for u in sink_loop.toposort()})
+    self.assertIn(Ops.LOOP, {u.op for u in sink_loop.toposort()})
+
+    g_np = rng.uniform(0.5, 1.5, (1, 32, 32)).astype(np.float32)
+    ref_rms = x_np[0] / np.sqrt(np.mean(x_np ** 2) + 1e-5) * g_np[0]
+    for s in (sink_red, sink_loop):
+      y_np = np.zeros((1, 32, 32), dtype=np.float32)
+      evaluate(s, {"X": x_np, "G": g_np, "Y": y_np})
+      np.testing.assert_allclose(y_np[0], ref_rms, rtol=1e-5, atol=1e-5)
+
+    # 3. Verify catches CARRY init depending on its own RANGE and leaked CARRY
+    bad_r = range_uop(4, axis=9)
+    with self.assertRaises(VerifyError):
+      verify(UOp.sink(carry(bad_r + 1, bad_r, space=Space.SCALAR)))
 
 
 if __name__ == "__main__":

@@ -64,6 +64,13 @@ class ReduceArg:
 
 
 @dataclass(frozen=True)
+class CarryArg:
+  index: int
+  space: Space
+  name: str = ""
+
+
+@dataclass(frozen=True)
 class BarrierArg:
   scope: str | tuple[tuple[int, int], tuple[int, int]] = "all"
   tag: int = 0
@@ -179,8 +186,8 @@ def from_device_buffer(name: str, buf) -> UOp:
 
 
 def alloc(name: str, space: Space, dtype: DType | str, shape: tuple[int, ...] | int = (32, 32)) -> UOp:
-  if space not in (Space.DST, Space.L1, Space.SCALAR):
-    raise ValueError(f"alloc space must be DST, L1, or SCALAR, got {space}")
+  if space not in (Space.DST, Space.LREG, Space.L1, Space.SCALAR):
+    raise ValueError(f"alloc space must be DST, LREG, L1, or SCALAR, got {space}")
   dt = dtypes.from_name(dtype)
   sh = (shape,) if isinstance(shape, int) else tuple(shape)
   return UOp(Ops.ALLOC, dt, (), AllocArg(name, space, sh, dt))
@@ -209,9 +216,91 @@ def reduce(val: UOp, *ranges: UOp, op: Ops = Ops.ADD, space: Space | None = None
   if op not in (Ops.ADD, Ops.MUL, Ops.MAX, Ops.MIN):
     raise ValueError(f"unsupported reduce op {op}")
   sp = val.space if space is None else space
-  if sp not in (Space.DST, Space.L1, Space.SCALAR):
-    raise ValueError(f"reduce residency must be DST, L1, or SCALAR, got {sp}")
+  if sp not in (Space.DST, Space.LREG, Space.L1, Space.SCALAR):
+    raise ValueError(f"reduce residency must be DST, LREG, L1, or SCALAR, got {sp}")
   return UOp(Ops.REDUCE, val.dtype, (val, *ranges), ReduceArg(op, sp))
+
+
+def carry(init: UOp, range_op: UOp, index: int = 0, *, space: Space | None = None, name: str = "") -> UOp:
+  """Loop-carried state placeholder (SSA iter_arg) for `range_op`, initialized by `init` before the loop."""
+  if range_op.op is not Ops.RANGE: raise TypeError(f"carry() requires a RANGE, got {range_op.op.name}")
+  sp = init.space if space is None else space
+  if sp not in (Space.DST, Space.LREG, Space.L1, Space.SCALAR):
+    raise ValueError(f"carry residency must be DST, LREG, L1, or SCALAR, got {sp}")
+  return UOp(Ops.CARRY, init.dtype, (init, range_op), CarryArg(index, sp, name))
+
+
+def loop_carry(
+  range_op: UOp,
+  inits: Sequence[UOp],
+  body,
+  *,
+  spaces: Sequence[Space | None] | None = None,
+  names: Sequence[str] | None = None,
+) -> tuple[UOp, ...]:
+  """Build a loop over `range_op` with explicit carried values and yielded replacements.
+  Returns a tuple of final post-loop values (Ops.GET), one per carried state."""
+  if range_op.op is not Ops.RANGE: raise TypeError(f"loop_carry() requires a RANGE, got {range_op.op.name}")
+  if not inits: raise ValueError("loop_carry() requires at least one initial carried value")
+  sps = [None] * len(inits) if spaces is None else list(spaces)
+  nms = [""] * len(inits) if names is None else list(names)
+  if len(sps) != len(inits) or len(nms) != len(inits):
+    raise ValueError("loop_carry() spaces/names length must match inits")
+  carries = tuple(carry(init, range_op, i, space=sp, name=nm) for i, (init, sp, nm) in enumerate(zip(inits, sps, nms)))
+  res = body(*carries)
+  next_vals = (res,) if isinstance(res, UOp) else tuple(res)
+  if len(next_vals) != len(carries):
+    raise ValueError(f"loop_carry() body yielded {len(next_vals)} values, expected {len(carries)}")
+  pairs = tuple(x for pair in zip(carries, next_vals) for x in pair)
+  lp = UOp(Ops.LOOP, dtypes.void, (range_op, *pairs))
+  return tuple(UOp(Ops.GET, c.dtype, (lp,), i) for i, c in enumerate(carries))
+
+
+def _reduce_identity(op: Ops, dt: DType) -> UOp:
+  match op:
+    case Ops.ADD: return UOp.const(dt, 0.0 if dt.is_float else 0)
+    case Ops.MUL: return UOp.const(dt, 1.0 if dt.is_float else 1)
+    case Ops.MAX:
+      if dt.is_float: return UOp.const(dt, -math.inf)
+      return UOp.const(dt, -(1 << (dt.bits - 1)) if dt.is_signed else 0)
+    case Ops.MIN:
+      if dt.is_float: return UOp.const(dt, math.inf)
+      return UOp.const(dt, (1 << (dt.bits - 1)) - 1 if dt.is_signed else (1 << dt.bits) - 1)
+    case _: raise ValueError(f"unsupported reduce op {op}")
+
+
+def _reduce_combine(op: Ops, acc: UOp, val: UOp) -> UOp:
+  match op:
+    case Ops.ADD: return acc + val
+    case Ops.MUL: return acc * val
+    case Ops.MAX: return acc.maximum(val)
+    case Ops.MIN: return acc.minimum(val)
+    case _: raise ValueError(f"unsupported reduce op {op}")
+
+
+def _lower_reduce_node(u: UOp) -> UOp | None:
+  arg = u.arg
+  if arg.space is Space.L1: return None  # Pack_L1_Acc stays a hardware L1 reduction
+  val, *ranges = u.src
+  init = _reduce_identity(arg.op, u.dtype)
+  def wrap(idx: int, cur_init: UOp) -> UOp:
+    r = ranges[idx]
+    if idx == len(ranges) - 1:
+      (out,) = loop_carry(r, (cur_init,), lambda acc: _reduce_combine(arg.op, acc, val), spaces=(arg.space,))
+      return out
+    (out,) = loop_carry(r, (cur_init,), lambda acc: wrap(idx + 1, acc), spaces=(arg.space,))
+    return out
+  return wrap(0, init)
+
+
+pm_lower_reduce = PatternMatcher([
+  (UPat(Ops.REDUCE, name="u"), _lower_reduce_node),
+])
+
+
+def lower_reduce_to_loop(root: UOp) -> UOp:
+  """Lower DST / LREG / SCALAR Ops.REDUCE nodes into explicit carried-state Ops.LOOP graphs."""
+  return graph_rewrite(root, pm_lower_reduce)
 
 
 def load(buf: UOp, offset: UOp | int | None = None, *, gate: UOp | None = None) -> UOp:
@@ -346,6 +435,7 @@ def lane_id(dtype: DType | str = dtypes.i32) -> UOp:
 
 
 def reduce_row(x: UOp, op: Ops = Ops.ADD) -> UOp: return x.reduce_row(op)
+def reduce_lanes(x: UOp, op: Ops = Ops.ADD, scope: str = "all") -> UOp: return x.reduce_lanes(op, scope)
 def argmax(x: UOp) -> UOp: return x.argmax()
 
 
@@ -498,6 +588,12 @@ def open_ranges(root: UOp) -> dict[UOp, frozenset[UOp]]:
     elif u.op in (Ops.END, Ops.REDUCE):
       closed = frozenset(u.src[1:])
       active[u] = (active[u.src[0]] - closed) | frozenset().union(*(active[r.src[0]] for r in u.src[1:] if r.op is Ops.RANGE))
+    elif u.op is Ops.LOOP:
+      r = u.src[0]
+      closed = frozenset({r}) if r.op is Ops.RANGE else frozenset()
+      body_ranges = frozenset().union(*(active[s] for s in u.src[1:])) if len(u.src) > 1 else frozenset()
+      bound_ranges = active[r.src[0]] if r.op is Ops.RANGE else frozenset()
+      active[u] = (body_ranges - closed) | bound_ranges
     else:
       active[u] = frozenset().union(*(active[s] for s in u.src)) if u.src else frozenset()
   return active
@@ -548,6 +644,39 @@ def verify(root: UOp) -> None:
         if not isinstance(arg, ReduceArg): raise VerifyError("REDUCE arg must be ReduceArg")
         if arg.space is Space.L1 and src[0].op is Ops.PACK and not src[0].arg.l1_acc:
           raise VerifyError("L1 REDUCE over PACK requires pack(..., l1_acc=True)")
+
+    elif op is Ops.CARRY:
+      if len(src) != 2 or not isinstance(arg, CarryArg) or src[1].op is not Ops.RANGE:
+        raise VerifyError(f"CARRY expects (init, RANGE) with CarryArg, got {src}, {arg}")
+      if src[1] in active[src[0]]:
+        raise VerifyError("CARRY initial value cannot depend on its own RANGE")
+      if arg.space not in (Space.DST, Space.LREG, Space.L1, Space.SCALAR):
+        raise VerifyError(f"CARRY residency must be DST/LREG/L1/SCALAR, got {arg.space}")
+
+    elif op is Ops.LOOP:
+      if len(src) < 3 or (len(src) - 1) % 2 != 0 or src[0].op is not Ops.RANGE:
+        raise VerifyError("LOOP expects (RANGE, carry0, next0, ...)")
+      r = src[0]
+      for i in range(1, len(src), 2):
+        c, nxt = src[i], src[i + 1]
+        if c.op is not Ops.CARRY or c.src[1] is not r:
+          raise VerifyError(f"LOOP carry {i // 2} must be a CARRY bound to the loop RANGE")
+        if nxt.dtype != c.dtype:
+          raise VerifyError(f"LOOP carry {i // 2} dtype mismatch: {c.dtype} vs {nxt.dtype}")
+        ok_space = (
+          nxt.space is c.space
+          or (c.space is Space.LREG and nxt.space in (Space.DST, Space.SCALAR))
+          or (c.space is Space.DST and nxt.space in (Space.LREG, Space.SCALAR))
+        )
+        if not ok_space:
+          raise VerifyError(f"LOOP carry {i // 2} space mismatch: {c.space} vs {nxt.space}")
+
+    elif op is Ops.GET:
+      if len(src) != 1 or src[0].op is not Ops.LOOP or not isinstance(arg, int):
+        raise VerifyError(f"GET expects (LOOP,) with int index, got {src}, {arg}")
+      n_carries = (len(src[0].src) - 1) // 2
+      if not (0 <= arg < n_carries):
+        raise VerifyError(f"GET index {arg} out of range for LOOP with {n_carries} carries")
 
     elif op is Ops.IF:
       if len(src) not in (2, 3): raise VerifyError(f"IF expects 2 or 3 srcs, got {len(src)}")
@@ -611,16 +740,22 @@ def verify(root: UOp) -> None:
       if len(src) != 1 or src[0].space is not Space.DST:
         raise VerifyError(f"{op.name} operand must be in DST, got {src[0].space if src else None}")
 
+    elif op is Ops.REDUCE_LANES:
+      if len(src) != 1 or src[0].space not in (Space.DST, Space.LREG):
+        raise VerifyError(f"REDUCE_LANES operand must be in DST or LREG, got {src[0].space if src else None}")
+      if not (isinstance(arg, tuple) and len(arg) == 2 and arg[0] in (Ops.ADD, Ops.MAX, Ops.MIN) and arg[1] in ("all", "row8")):
+        raise VerifyError(f"invalid REDUCE_LANES arg {arg!r}")
+
     elif op is Ops.SFPU:
       for s in src:
-        if s.space not in (Space.DST, Space.SCALAR):
-          raise VerifyError(f"SFPU primitive operand must be in DST/SCALAR, got {s.space}")
+        if s.space not in (Space.DST, Space.LREG, Space.SCALAR):
+          raise VerifyError(f"SFPU primitive operand must be in DST/LREG/SCALAR, got {s.space}")
 
     elif op in GroupOp.ALU or op in (Ops.CAST, Ops.BITCAST):
       uses_src_bank = any(s.space in (Space.SRCA, Space.SRCB) for s in src)
       for s in src:
-        if s.space not in (Space.DST, Space.SRCA, Space.SRCB, Space.SCALAR):
-          raise VerifyError(f"{op.name} operand must be in DST/SRCA/SRCB/SCALAR, got {s.space} (missing unpack()?)")
+        if s.space not in (Space.DST, Space.LREG, Space.SRCA, Space.SRCB, Space.SCALAR):
+          raise VerifyError(f"{op.name} operand must be in DST/LREG/SRCA/SRCB/SCALAR, got {s.space} (missing unpack()?)")
       if uses_src_bank and op not in _FPU_ELW_OPS:
         raise VerifyError(f"SRCA/SRCB operands only support FPU elementwise {_FPU_ELW_OPS}, got {op.name}")
       if op is Ops.WHERE and src[0].dtype is not dtypes.bool:
@@ -640,5 +775,5 @@ def verify(root: UOp) -> None:
       if len(src) >= 3 and (src[1].space is not Space.SCALAR or not src[1].dtype.is_int):
         raise VerifyError(f"STORE offset must be scalar int, got ({src[1].space}, {src[1].dtype})")
       if len(src) == 4: _check_gate(src[3], "STORE")
-      if src[0].space in (Space.DST, Space.L1, Space.SCALAR) and val.space is not src[0].space:
+      if src[0].space in (Space.DST, Space.LREG, Space.L1, Space.SCALAR) and val.space is not src[0].space:
         raise VerifyError(f"STORE into {src[0].space} requires value in {src[0].space}, got {val.space}")

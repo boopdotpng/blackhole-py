@@ -94,6 +94,52 @@ def _tile_view(arr: np.ndarray, shape: tuple[int, int] = (32, 32)) -> np.ndarray
   raise ValueError(f"array of shape {arr.shape} cannot be viewed as {shape} tiles")
 
 
+_FP_IDX = np.arange(32, dtype=np.int32)[:, None]
+_LN_IDX = np.arange(32, dtype=np.int32)[None, :]
+_FP_ROW = ((_FP_IDX // 8) // 2) * 16 + ((_FP_IDX % 8) // 2) * 4 + (_LN_IDX // 8)
+_FP_COL = ((_FP_IDX // 8) % 2) * 16 + (_LN_IDX % 8) * 2 + (_FP_IDX % 2)
+_TILE_LANE = (np.arange(32, dtype=np.int32)[:, None] % 4) * 8 + (np.arange(32, dtype=np.int32)[None, :] % 16) // 2
+
+
+def _tile_to_footprints(tile: np.ndarray) -> np.ndarray:
+  return tile[_FP_ROW, _FP_COL]
+
+
+def _footprints_to_tile(fps: np.ndarray) -> np.ndarray:
+  out = np.empty((32, 32), dtype=fps.dtype)
+  out[_FP_ROW, _FP_COL] = fps
+  return out
+
+
+def _bcast_lreg_to_tile(lreg: np.ndarray) -> np.ndarray:
+  return lreg[_TILE_LANE]
+
+
+def _reduce_lanes_np(v: np.ndarray, op: Ops, scope: str) -> np.ndarray:
+  def fold(a: np.ndarray, axis: int) -> np.ndarray:
+    match op:
+      case Ops.ADD: return np.broadcast_to(a.sum(axis=axis, keepdims=True), a.shape).copy()
+      case Ops.MAX: return np.broadcast_to(a.max(axis=axis, keepdims=True), a.shape).copy()
+      case Ops.MIN: return np.broadcast_to(a.min(axis=axis, keepdims=True), a.shape).copy()
+      case _: raise ValueError(f"unsupported lane reduce op {op}")
+  if v.ndim == 1:
+    return fold(v, 0) if scope == "all" else fold(v.reshape(4, 8), -1).reshape(32)
+  fps = _tile_to_footprints(v)
+  reduced = fold(fps, -1) if scope == "all" else fold(fps.reshape(32, 4, 8), -1).reshape(32, 32)
+  return _footprints_to_tile(reduced)
+
+
+def _init_carry_val(val: Any, space: Space, dt: DType) -> Any:
+  if space is Space.DST:
+    if isinstance(val, np.ndarray) and val.shape == (32, 32): return _cast_value(val.copy(), dt)
+    if isinstance(val, np.ndarray) and val.shape == (32,): return _cast_value(_bcast_lreg_to_tile(val), dt)
+    return _cast_value(np.full((32, 32), val, dtype=np.float32 if dt.is_float else np.int32), dt)
+  if space is Space.LREG:
+    if isinstance(val, np.ndarray) and val.shape == (32,): return _cast_value(val.copy(), dt)
+    return _cast_value(np.full((32,), val, dtype=np.float32 if dt.is_float else np.int32), dt)
+  return _cast_value(val.copy() if isinstance(val, np.ndarray) else val, dt)
+
+
 def _grid_workers(grid: Grid) -> list[tuple[int, int]]:
   # Column-major: (x, y) with grid.rows per column.
   return [(i // grid.rows, i % grid.rows) for i in range(grid.cores)]
@@ -162,15 +208,20 @@ def evaluate(
       ranges = src[1:]
       bounds = [int(eval_node(r.src[0], cid, env, cache)) for r in ranges]
       acc = None
+      def _comb(a, b):
+        if arg.op is Ops.ADD: return a + b
+        if arg.op is Ops.MUL: return a * b
+        if arg.op is Ops.MAX: return np.maximum(a, b) if isinstance(a, np.ndarray) else max(a, b)
+        return np.minimum(a, b) if isinstance(a, np.ndarray) else min(a, b)
       def run_red(idx: int, cur_env: dict[UOp, Any]):
         nonlocal acc
         if idx == len(ranges):
           v = eval_node(src[0], cid, cur_env, {})
-          if acc is None: acc = v.copy() if isinstance(v, np.ndarray) else v
-          elif arg.op is Ops.ADD: acc = acc + v
-          elif arg.op is Ops.MUL: acc = acc * v
-          elif arg.op is Ops.MAX: acc = np.maximum(acc, v) if isinstance(acc, np.ndarray) else max(acc, v)
-          elif arg.op is Ops.MIN: acc = np.minimum(acc, v) if isinstance(acc, np.ndarray) else min(acc, v)
+          if arg.space is Space.LREG and isinstance(v, np.ndarray) and v.ndim == 2:
+            for fp_vec in _tile_to_footprints(v):
+              acc = fp_vec.copy() if acc is None else _comb(acc, fp_vec)
+          else:
+            acc = (v.copy() if isinstance(v, np.ndarray) else v) if acc is None else _comb(acc, v)
           return
         r = ranges[idx]
         for i in range(bounds[idx]):
@@ -180,8 +231,59 @@ def evaluate(
       run_red(0, env)
       if acc is None:
         init = {Ops.ADD: 0.0, Ops.MUL: 1.0, Ops.MAX: -math.inf, Ops.MIN: math.inf}[arg.op]
-        acc = np.full((32, 32), init, dtype=np.float32) if arg.space in (Space.DST, Space.L1) else _cast_value(init, u.dtype)
+        if arg.space in (Space.DST, Space.L1): acc = np.full((32, 32), init, dtype=np.float32)
+        elif arg.space is Space.LREG: acc = np.full((32,), init, dtype=np.float32)
+        else: acc = _cast_value(init, u.dtype)
       res = _cast_value(acc, u.dtype)
+    elif op is Ops.LOOP:
+      r = src[0]
+      carries = src[1::2]
+      nexts = src[2::2]
+      bound = int(eval_node(r.src[0], cid, env, cache))
+      state = [_init_carry_val(eval_node(c.src[0], cid, env, cache), c.space, c.dtype) for c in carries]
+      has_fp_sweep = any(c.space is Space.LREG and n.space is Space.DST for c, n in zip(carries, nexts))
+      for i in range(bound):
+        iter_env = {**env, r: i}
+        if has_fp_sweep:
+          # Footprint-sweep mode: evaluate outer tile leaves once, then step 32 footprints in hardware order.
+          carry_set = set(carries)
+          tile_cache: dict[UOp, Any] = {}
+          fp_tiles: dict[UOp, np.ndarray] = {}
+          # Pre-evaluate every DST/LREG node that does NOT depend on any carry in this loop.
+          dep_on_carry: dict[UOp, bool] = {}
+          for node in UOp.sink(*nexts).toposort():
+            dep_on_carry[node] = (node in carry_set) or any(dep_on_carry.get(s, False) for s in node.src)
+          frontier = {s for n in UOp.sink(*nexts).toposort() if dep_on_carry[n] for s in n.src
+                      if not dep_on_carry.get(s, False) and s.space is Space.DST}
+          for leaf in frontier:
+            fp_tiles[leaf] = _tile_to_footprints(eval_node(leaf, cid, iter_env, tile_cache))
+          dst_state_fps = {idx: _tile_to_footprints(state[idx]) for idx, c in enumerate(carries) if c.space is Space.DST}
+          lreg_state = {idx: state[idx].copy() for idx, c in enumerate(carries) if c.space is Space.LREG}
+          scalar_state = {idx: state[idx] for idx, c in enumerate(carries) if c.space not in (Space.DST, Space.LREG)}
+          new_dst_fps = {idx: np.empty_like(fps) for idx, fps in dst_state_fps.items()}
+          for fp in range(32):
+            fp_env = {**iter_env, **{leaf: fps[fp] for leaf, fps in fp_tiles.items()}}
+            for idx, c in enumerate(carries):
+              if idx in lreg_state: fp_env[c] = lreg_state[idx]
+              elif idx in dst_state_fps: fp_env[c] = dst_state_fps[idx][fp]
+              else: fp_env[c] = scalar_state[idx]
+            fp_cache: dict[UOp, Any] = {}
+            nxt_vals = [eval_node(n, cid, fp_env, fp_cache) for n in nexts]
+            for idx, (c, nv) in enumerate(zip(carries, nxt_vals)):
+              if idx in lreg_state: lreg_state[idx] = _init_carry_val(nv, Space.LREG, c.dtype)
+              elif idx in dst_state_fps: new_dst_fps[idx][fp] = _init_carry_val(nv, Space.LREG, c.dtype)
+              else: scalar_state[idx] = _cast_value(nv, c.dtype)
+          for idx, c in enumerate(carries):
+            if idx in lreg_state: state[idx] = lreg_state[idx]
+            elif idx in new_dst_fps: state[idx] = _footprints_to_tile(new_dst_fps[idx])
+            else: state[idx] = scalar_state[idx]
+        else:
+          nxt_env = {**iter_env, **{c: (v.copy() if isinstance(v, np.ndarray) else v) for c, v in zip(carries, state)}}
+          iter_cache: dict[UOp, Any] = {}
+          state = [_init_carry_val(eval_node(n, cid, nxt_env, iter_cache), c.space, c.dtype) for c, n in zip(carries, nexts)]
+      res = tuple(state)
+    elif op is Ops.GET:
+      res = eval_node(src[0], cid, env, cache)[arg]
     elif op is Ops.LOAD:
       if len(src) == 3 and not bool(eval_node(src[2], cid, env, cache)):
         res = np.zeros((32, 32), dtype=np.float32) if u.space in (Space.DST, Space.L1) else _cast_value(0, u.dtype)
@@ -274,6 +376,10 @@ def evaluate(
       v = eval_node(src[0], cid, env, cache)
       r = v.sum(axis=-1, keepdims=True) if arg is Ops.ADD else v.max(axis=-1, keepdims=True)
       res = _cast_value(np.broadcast_to(r, v.shape).copy(), u.dtype)
+    elif op is Ops.REDUCE_LANES:
+      v = eval_node(src[0], cid, env, cache)
+      red_op, scope = arg
+      res = _cast_value(_reduce_lanes_np(np.asarray(v), red_op, scope), u.dtype)
     elif op is Ops.ARGMAX:
       v = eval_node(src[0], cid, env, cache)
       idx = np.argmax(v, axis=-1, keepdims=True).astype(np.int32)
@@ -287,11 +393,16 @@ def evaluate(
       if not isinstance(v, np.ndarray): res = res.item()
     elif op is Ops.SFPU:
       vals = [eval_node(s, cid, env, cache) for s in src]
+      if any(isinstance(v, np.ndarray) and v.ndim == 2 for v in vals):
+        vals = [_bcast_lreg_to_tile(v) if (isinstance(v, np.ndarray) and v.shape == (32,)) else v for v in vals]
       res = _cast_value(_eval_sfpu_prim(arg, vals, u.dtype), u.dtype)
     elif op in (Ops.REPLAY, Ops.MOP):
       raise NotImplementedError("REPLAY/MOP escape hatches hold raw Tensix words and cannot be functionally evaluated in Python")
     else:
       vals = [eval_node(s, cid, env, cache) for s in src]
+      # Broadcast (32,) LREG operands into (32, 32) DST operands by exact Blackhole SFPU lane.
+      if any(isinstance(v, np.ndarray) and v.ndim == 2 for v in vals):
+        vals = [_bcast_lreg_to_tile(v) if (isinstance(v, np.ndarray) and v.shape == (32,)) else v for v in vals]
       is_vec = any(isinstance(v, np.ndarray) for v in vals)
       if op is Ops.ADD:   out = vals[0] + vals[1]
       elif op is Ops.SUB: out = vals[0] - vals[1]

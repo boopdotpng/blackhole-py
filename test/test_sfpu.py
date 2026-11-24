@@ -3,9 +3,10 @@ import numpy as np
 from hw import isa
 from compiler import (
   Kernel, Ops, SfpuCompileError, SfpuPrim, Space, UOp,
-  compile_sfpu, disasm_sfpu, dram_buf, dtypes, end, evaluate, fix_sfpu_hazards,
-  lane_id, lower_sfpu_uops, noc_read, noc_write, pack, sfpu_hazards, sfpu_prim,
-  sfpu_slope, unpack, verify, verify_sfpu_words,
+  carry, compile_sfpu, compile_sfpu_loop, disasm_sfpu, dram_buf, dtypes, end, evaluate,
+  fix_sfpu_hazards, lane_id, loop_carry, lower_sfpu_uops, noc_read, noc_write, pack,
+  range_uop, reduce, reduce_lanes, sfpu_hazards, sfpu_prim, sfpu_slope, unpack, verify,
+  verify_sfpu_words,
 )
 
 
@@ -351,6 +352,94 @@ class TestSfpuCompiler(unittest.TestCase):
     self.assertEqual(comp_dup.root_tiles, (2, 3))
     stored_tiles = {(w & 0x3FF) // 64 for p in comp_dup.passes for w in p.body if (w >> 24) == 0x72}
     self.assertTrue({2, 3} <= stored_tiles)
+
+  def test_pinned_lreg_accumulator_and_decode_rmsnorm(self):
+    r = range_uop(4, axis=0, name="t")
+    x = self._make_dst("x")
+    gamma = self._make_dst("gamma")
+
+    # Stage 1: LReg accumulator loop: l0 += x * x (2-word body, zero SFPSTOREs, SFPLOAD steps addr_mode=6!)
+    acc = reduce(x * x, r, op=Ops.ADD, space=Space.LREG)
+    sq_loop = compile_sfpu_loop(acc, {x: 0}, addr_mode=6)
+    self.assertEqual(len(sq_loop.init_passes), 1)
+    self.assertEqual(sq_loop.init_passes[0].footprints, 1)
+    self.assertEqual(sq_loop.reg_carries[acc], 0)
+    self.assertEqual(len(sq_loop.body_passes), 1)
+    sq_pass = sq_loop.body_passes[0]
+    self.assertEqual(sq_pass.footprints, 32)
+    sq_ops = [isa.tensix_decode(w)[0] for w in sq_pass.body]
+    self.assertEqual(sq_ops, ["SFPLOAD", "SFPMAD"])
+    self.assertEqual(isa.tensix_decode(sq_pass.body[0])[1]["sfpu_addr_mode"], 6)
+    self.assertEqual(isa.tensix_decode(sq_pass.body[1])[1]["lreg_dest"], 0)
+    verify_sfpu_words(sq_pass.body, is_loop=True)
+
+    # Stage 2: 1-shot LReg reduce_lanes + rsqrt (runs ONCE, stays in L0, zero Dst traffic!)
+    inv_rms = (reduce_lanes(acc, Ops.ADD, "all") * (1.0 / 4096.0) + 1e-5).rsqrt()
+    rms_comp = compile_sfpu(inv_rms, reg_inputs=sq_loop.reg_carries, reg_outputs={inv_rms: 0})
+    self.assertEqual(len(rms_comp.passes), 1)
+    rms_pass = rms_comp.passes[0]
+    self.assertEqual(rms_pass.footprints, 1)
+    rms_ops = [isa.tensix_decode(w)[0] for w in rms_pass.body]
+    self.assertNotIn("SFPLOAD", rms_ops)
+    self.assertNotIn("SFPSTORE", rms_ops)
+    self.assertIn("SFPSHFT2", rms_ops)
+    self.assertIn("SFPTRANSP", rms_ops)
+    verify_sfpu_words(rms_pass.prologue + rms_pass.body)
+
+    # Stage 3: rms_apply with read-only pinned L0 across 32 footprints (L0 never overwritten!)
+    out = x * inv_rms * gamma
+    apply_comp = compile_sfpu(out, {x: 0, gamma: 1}, reg_inputs={inv_rms: 0}, output_tiles={out: 0}, addr_mode=6)
+    self._check_compiled(apply_comp, max_regs=8, addr_mode=6)
+    apply_pass = apply_comp.passes[0]
+    self.assertEqual(apply_pass.footprints, 32)
+    self.assertEqual([isa.tensix_decode(w)[0] for w in apply_pass.body].count("SFPLOAD"), 2)
+
+  def test_dst_accumulator_single_and_dual_in_place_loop(self):
+    r = range_uop(4, axis=0, name="t")
+    x = self._make_dst("x")
+
+    # Single Dst accumulator: Dst[1] += x * x updated in-place in 1 pass with 0 scratch tiles!
+    acc_dst = reduce(x * x, r, op=Ops.ADD, space=Space.DST)
+    lp1 = compile_sfpu_loop(acc_dst, {x: 0}, addr_mode=6)
+    self.assertEqual(lp1.dst_carries[acc_dst], 1)
+    self.assertEqual(lp1.dst_tiles, 2)
+    self.assertEqual(len(lp1.body_passes), 1)
+    self._check_compiled(type("C", (), {"passes": lp1.body_passes})(), max_regs=8, addr_mode=6)
+
+    # Dual coupled Dst accumulators: sum + max both updated in-place in 1 pass with 0 scratch tiles!
+    s_out, m_out = loop_carry(
+      r,
+      (UOp.const(dtypes.fp32, 0.0), UOp.const(dtypes.fp32, -math.inf)),
+      lambda s, m: (s + x, m.maximum(x)),
+      spaces=(Space.DST, Space.DST),
+    )
+    lp2 = compile_sfpu_loop(s_out, {x: 0}, addr_mode=6)
+    self.assertEqual(lp2.dst_carries[s_out], 1)
+    self.assertEqual(lp2.dst_carries[m_out], 2)
+    self.assertEqual(lp2.dst_tiles, 3)
+    self.assertEqual(len(lp2.body_passes), 1)
+    self._check_compiled(type("C", (), {"passes": lp2.body_passes})(), max_regs=8, addr_mode=6)
+
+  def test_prologue_preserves_live_in_l0_and_reg_output_swap(self):
+    x = self._make_dst("x")
+    scale = carry(UOp.const(dtypes.fp32, 1.0), range_uop(1, axis=5), space=Space.LREG)
+    y = x.sin() * scale
+    comp = compile_sfpu(y, {x: 0}, reg_inputs={scale: 0}, output_tiles={y: 0}, addr_mode=6)
+    self._check_compiled(comp, max_regs=8, addr_mode=6)
+    # Prologue programs L12..L14 via L0, so it must save L0 before and restore L0 after!
+    pro_ops = [isa.tensix_decode(w)[0] for w in comp.passes[0].prologue]
+    self.assertIn("SFPCONFIG", pro_ops)
+    self.assertEqual(pro_ops[0], "SFPMOV")
+    self.assertEqual(pro_ops[-1], "SFPMOV")
+    self.assertEqual(isa.tensix_decode(comp.passes[0].prologue[0])[1]["lreg_c"], 0)
+    self.assertEqual(isa.tensix_decode(comp.passes[0].prologue[-1])[1]["lreg_dest"], 0)
+
+    # Register output swap cycle (L0 <-> L1) uses 1-insn SFPSWAP(mod=0)
+    a = carry(UOp.const(dtypes.fp32, 1.0), range_uop(1, axis=6), space=Space.LREG)
+    b = carry(UOp.const(dtypes.fp32, 2.0), range_uop(1, axis=7), space=Space.LREG)
+    swap_comp = compile_sfpu([b, a], reg_inputs={a: 0, b: 1}, reg_outputs={b: 0, a: 1})
+    self.assertEqual(swap_comp.passes[0].footprints, 1)
+    self.assertEqual([isa.tensix_decode(w)[0] for w in swap_comp.passes[0].body], ["SFPSWAP"])
 
 
 if __name__ == "__main__":

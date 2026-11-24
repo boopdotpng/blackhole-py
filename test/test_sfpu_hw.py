@@ -13,7 +13,10 @@ import numpy as np
 import hw
 from hw import cfg, isa
 from device import Device
-from compiler import Space, UOp, compile_sfpu, dram_buf, dtypes, lane_id, mulacc, noc_read, unpack
+from compiler import (
+  Ops, Space, UOp, compile_sfpu, compile_sfpu_loop, dram_buf, dtypes, lane_id,
+  loop_carry, mulacc, noc_read, range_uop, reduce, reduce_lanes, unpack,
+)
 
 L1_DONE = 0x1F000
 L1_IN_BASE = 0x20000
@@ -109,7 +112,7 @@ def _build_trisc0(num_inputs: int) -> bytes:
   return a.to_bytes()
 
 
-def _build_trisc1(comp) -> bytes:
+def _build_trisc1(passes) -> bytes:
   a = _Asm()
   fp = hw.DataFormat.FLOAT32
   a.rmw(
@@ -125,16 +128,19 @@ def _build_trisc1(comp) -> bytes:
   a.tt(isa.SEMPOST(SEM_CFG_READY))
   a.tt(isa.SEMWAIT(isa.Stall.MATH | isa.Stall.SYNC | isa.Stall.SFPU, SEM_UNPACK_DONE, isa.SemWait.STALL_ON_ZERO))
 
-  for p in comp.passes:
+  pass_list = passes.passes if hasattr(passes, "passes") else passes
+  for p in pass_list:
     a.tt(isa.SETRWC(BitMask=15))
     for w in p.prologue: a.tt(w)
-    # 32 footprints (each footprint = 32 lanes; final SFPSTORE advances Dst RWC by +2 via addr_mode=6)
-    a.rv("addi", rd=5, rs1=0, imm=32)
-    loop_start = len(a.words)
-    for w in p.body: a.tt(w)
-    a.rv("addi", rd=5, rs1=5, imm=-1)
-    offset = (loop_start - len(a.words)) * 4
-    a.rv("bne", rs1=5, rs2=0, imm=offset)
+    if p.footprints == 1:
+      for w in p.body: a.tt(w)
+    else:
+      a.rv("addi", rd=5, rs1=0, imm=p.footprints)
+      loop_start = len(a.words)
+      for w in p.body: a.tt(w)
+      a.rv("addi", rd=5, rs1=5, imm=-1)
+      offset = (loop_start - len(a.words)) * 4
+      a.rv("bne", rs1=5, rs2=0, imm=offset)
     a.tt(isa.SETRWC(BitMask=15))
     a.tt(isa.STALLWAIT(isa.Stall.SYNC, isa.Wait.SFPU))
     for w in p.epilogue: a.tt(w)
@@ -182,6 +188,32 @@ def _build_trisc2(out_tiles: list[int]) -> bytes:
   a.store32(L1_DONE, 1)
   a.rv("fence", imm=0xFF)
   return a.to_bytes()
+
+
+def run_sfpu_passes_on_silicon(
+  dev: Device,
+  passes,
+  input_tiles: list[np.ndarray],
+  out_tile_list: list[int],
+) -> list[np.ndarray]:
+  data: dict[int, bytes] = {L1_DONE: struct.pack("<I", 0)}
+  for i, arr in enumerate(input_tiles):
+    data[L1_IN_BASE + i * 4096] = np.ascontiguousarray(arr, dtype=np.float32).reshape(1024).tobytes()
+  images = {
+    "brisc": b"",
+    "trisc0": _build_trisc0(len(input_tiles)),
+    "trisc1": _build_trisc1(passes),
+    "trisc2": _build_trisc2(out_tile_list),
+  }
+  core = dev.workers[0]
+  dev.run(images, data=data, cores=[core])
+  deadline = time.monotonic() + 5.0
+  while struct.unpack("<I", dev.read_l1(core, L1_DONE, 4))[0] != 1:
+    if time.monotonic() > deadline:
+      raise TimeoutError("p100a SFPU kernel timed out")
+    time.sleep(0.001)
+  return [np.frombuffer(dev.read_l1(core, L1_OUT_BASE + idx * 4096, 4096), dtype=np.float32).copy()
+          for idx in range(len(out_tile_list))]
 
 
 def run_sfpu_on_silicon(
@@ -404,6 +436,87 @@ class TestSfpuSilicon(unittest.TestCase):
     [out], comp = run_sfpu_on_silicon(self.dev, expr, {"a": a, "b": b})
     self.assertGreaterEqual(len(comp.passes), 2)
     np.testing.assert_allclose(out, ref_fn(a, b), rtol=5e-5, atol=5e-5)
+
+  def test_reduce_lanes_row8_and_all_on_silicon(self):
+    rng = np.random.default_rng(101)
+    x_raw = rng.uniform(-2.0, 2.0, 1024).astype(np.float32)
+    # 4 faces of 16x16; within each face, 4 row-groups of 4 rows x 8 even/odd pairs
+    faces = x_raw.reshape(4, 4, 4, 8, 2)  # (face, rg, lane_row, lane_col, odd)
+    for op, np_fn in ((Ops.ADD, np.sum), (Ops.MAX, np.max)):
+      for scope in ("row8", "all"):
+        with self.subTest(op=op.name, scope=scope):
+          [out], _ = run_sfpu_on_silicon(self.dev, lambda x: reduce_lanes(x, op, scope), {"x": x_raw})
+          axis = 3 if scope == "row8" else (2, 3)
+          ref = np.broadcast_to(np_fn(faces, axis=axis, keepdims=True), faces.shape).reshape(1024)
+          np.testing.assert_allclose(out, ref, rtol=1e-5, atol=1e-5)
+
+  def test_decode_rmsnorm_pinned_lreg_on_silicon(self):
+    rng = np.random.default_rng(102)
+    x0 = rng.standard_normal(1024).astype(np.float32)
+    x1 = rng.standard_normal(1024).astype(np.float32)
+    gamma = rng.uniform(0.5, 1.5, 1024).astype(np.float32)
+    eps = 1e-5
+
+    # Stage 1: pinned L0 accumulator across 2 tiles (x0 in Dst[0], x1 in Dst[1])
+    r = range_uop(2, axis=0, name="t")
+    x_u = unpack(noc_read(dram_buf("x", (2, 32, 32), dtypes.fp32), r), Space.DST, dtypes.fp32)
+    g_u = unpack(noc_read(dram_buf("g", (1, 32, 32), dtypes.fp32), 0), Space.DST, dtypes.fp32)
+    acc = reduce(x_u * x_u, r, op=Ops.ADD, space=Space.LREG)
+    lp0 = compile_sfpu_loop(acc, {x_u: 0}, addr_mode=ADDR_MOD_STEP)
+    lp1 = compile_sfpu_loop(acc, {x_u: 1}, reg_carries={0: 0}, addr_mode=ADDR_MOD_STEP)
+
+    # Stage 2: 1-shot LReg reduce_lanes + rsqrt (runs ONCE in L0, zero Dst loads/stores)
+    inv_rms = (reduce_lanes(acc, Ops.ADD, "all") * (1.0 / 2048.0) + eps).rsqrt()
+    rms_stage = compile_sfpu(inv_rms, reg_inputs=lp0.reg_carries, reg_outputs={inv_rms: 0})
+    self.assertEqual(rms_stage.passes[0].footprints, 1)
+
+    # Stage 3: rms_apply with read-only pinned L0 across all 32 footprints
+    out_u = x_u * inv_rms * g_u
+    apply_stage = compile_sfpu(
+      out_u, {x_u: 0, g_u: 2}, reg_inputs={inv_rms: 0}, output_tiles={out_u: 0}, addr_mode=ADDR_MOD_STEP,
+    )
+
+    passes = [*lp0.init_passes, *lp0.body_passes, *lp1.body_passes, *rms_stage.passes, *apply_stage.passes]
+    [out] = run_sfpu_passes_on_silicon(self.dev, passes, [x0, x1, gamma], [0])
+    ref = x0 / np.sqrt(np.mean(np.concatenate([x0, x1]) ** 2) + eps) * gamma
+    np.testing.assert_allclose(out, ref, rtol=1e-5, atol=1e-5)
+
+  def test_dst_accumulator_dual_carry_on_silicon(self):
+    rng = np.random.default_rng(103)
+    tiles = [rng.uniform(-2.0, 2.0, 1024).astype(np.float32) for _ in range(3)]
+    r = range_uop(3, axis=0, name="t")
+    x_u = unpack(noc_read(dram_buf("x", (3, 32, 32), dtypes.fp32), r), Space.DST, dtypes.fp32)
+    s_out, m_out = loop_carry(
+      r,
+      (UOp.const(dtypes.fp32, 0.0), UOp.const(dtypes.fp32, -math.inf)),
+      lambda s, m: (s + x_u, m.maximum(x_u)),
+      spaces=(Space.DST, Space.DST),
+    )
+    # Pin carried Dst[3] (sum) and Dst[4] (max) across all 3 iterations (input tiles sit in Dst[0..2])
+    lp_iter = [
+      compile_sfpu_loop(s_out, {x_u: t}, dst_carries={0: 3, 1: 4}, addr_mode=ADDR_MOD_STEP)
+      for t in range(3)
+    ]
+    passes = [*lp_iter[0].init_passes, *(p for lp in lp_iter for p in lp.body_passes)]
+    out_sum, out_max = run_sfpu_passes_on_silicon(self.dev, passes, tiles, [3, 4])
+    np.testing.assert_allclose(out_sum, tiles[0] + tiles[1] + tiles[2], rtol=1e-5, atol=1e-5)
+    np.testing.assert_array_equal(out_max, np.maximum(np.maximum(tiles[0], tiles[1]), tiles[2]))
+
+  def test_prologue_l0_preserved_with_sfpconfig_on_silicon(self):
+    from compiler import carry
+    rng = np.random.default_rng(104)
+    x = rng.uniform(-3.0, 3.0, 1024).astype(np.float32)
+    x_u = unpack(noc_read(dram_buf("x", (1, 32, 32), dtypes.fp32), 0), Space.DST, dtypes.fp32)
+    scale_init = UOp.const(dtypes.fp32, 1.75)
+    scale_u = carry(scale_init, range_uop(1, axis=0), space=Space.LREG)
+    init_scale = compile_sfpu(scale_init, reg_outputs={scale_init: 0}, footprints=1)
+    y_u = x_u.sin() * scale_u
+    body_stage = compile_sfpu(
+      y_u, {x_u: 0}, reg_inputs={scale_u: 0}, output_tiles={y_u: 0}, addr_mode=ADDR_MOD_STEP,
+    )
+    self.assertIn("SFPCONFIG", [isa.tensix_decode(w)[0] for w in body_stage.passes[0].prologue])
+    [out] = run_sfpu_passes_on_silicon(self.dev, [*init_scale.passes, *body_stage.passes], [x], [0])
+    np.testing.assert_allclose(out, np.sin(x) * 1.75, rtol=1e-5, atol=1e-5)
 
 
 if __name__ == "__main__":

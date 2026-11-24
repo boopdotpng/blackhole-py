@@ -4,7 +4,7 @@
 # Names follow tt-metal (blackhole tensix.h, cfg_defines.h, noc_parameters.h, tensix_types.h) and tt-llk.
 
 from enum import IntEnum
-from . import cfg, isa
+from . import cfg, isa, sfpu_lat
 
 ADDR_MODS = len(cfg.ADDR_MOD)
 

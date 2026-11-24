@@ -55,6 +55,7 @@ class Space(Enum):
   SRCA   = auto()  # Tensix SrcA register bank
   SRCB   = auto()  # Tensix SrcB register bank
   DST    = auto()  # Tensix Dst register tiles (FPU / SFPU)
+  LREG   = auto()  # SFPU 32-lane vector register (L0..L7)
 
   def __repr__(self) -> str: return f"Space.{self.name}"
 
@@ -93,6 +94,9 @@ class Ops(Enum):
   END = auto()
   IF = auto()
   REDUCE = auto()
+  CARRY = auto()
+  LOOP = auto()
+  GET = auto()
   LOAD = auto()
   STORE = auto()
 
@@ -124,6 +128,7 @@ class Ops(Enum):
   # SFPU tile/lane & lowered hardware primitives
   LANE_ID = auto()
   REDUCE_ROW = auto()
+  REDUCE_LANES = auto()
   ARGMAX = auto()
   SFPU = auto()
 
@@ -163,10 +168,10 @@ class _UOpMeta(type):
     return obj
 
 
-_VOID_OPS = frozenset({Ops.SINK, Ops.END, Ops.STORE, Ops.NOC_WRITE, Ops.BARRIER})
+_VOID_OPS = frozenset({Ops.SINK, Ops.END, Ops.LOOP, Ops.STORE, Ops.NOC_WRITE, Ops.BARRIER})
 _SCALAR_OPS = frozenset({Ops.CONST, Ops.SPECIAL, Ops.RANGE})
 _L1_OPS = frozenset({Ops.NOC_READ, Ops.NOC_MCAST, Ops.NOC_GATHER, Ops.NOC_ALLGATHER, Ops.PACK})
-_DST_OPS = frozenset({Ops.MVMUL, Ops.LANE_ID, Ops.REDUCE_ROW, Ops.ARGMAX, Ops.SFPU})
+_DST_OPS = frozenset({Ops.MVMUL, Ops.LANE_ID, Ops.REDUCE_ROW, Ops.ARGMAX})
 _SRC_BANKS = frozenset({Space.SRCA, Space.SRCB})
 _TENSIX_VAL_SPACES = frozenset({Space.DST, Space.SRCA, Space.SRCB})
 
@@ -176,16 +181,25 @@ def _infer_space(op: Ops, src: tuple[UOp, ...], arg: Any) -> Space:
   if op in _SCALAR_OPS: return Space.SCALAR
   if op in _L1_OPS: return Space.L1
   if op in _DST_OPS: return Space.DST
-  if op in (Ops.BUFFER, Ops.ALLOC): return arg.space
+  if op in (Ops.BUFFER, Ops.ALLOC, Ops.CARRY): return arg.space
   if op in (Ops.UNPACK, Ops.REPLAY, Ops.MOP): return arg.dest
   if op is Ops.REDUCE: return arg.space
+  if op is Ops.GET: return src[0].src[1 + 2 * arg].space
+  if op is Ops.REDUCE_LANES: return src[0].space
   if op is Ops.AFTER: return src[0].space
   if op is Ops.IF: return src[1].space if len(src) >= 2 else Space.NONE
   if op is Ops.LOAD:
     s = src[0].space
     return Space.SCALAR if s in (Space.DRAM, Space.HOST, Space.SCALAR) else s
+  if op is Ops.SFPU:
+    if (sp := getattr(arg, "space", None)) is not None: return sp
+    if any(s.space in _TENSIX_VAL_SPACES for s in src): return Space.DST
+    if any(s.space is Space.LREG for s in src): return Space.LREG
+    return Space.DST
   if op in GroupOp.ALU or op in (Ops.CAST, Ops.BITCAST):
-    return Space.DST if any(s.space in _TENSIX_VAL_SPACES for s in src) else Space.SCALAR
+    if any(s.space in _TENSIX_VAL_SPACES for s in src): return Space.DST
+    if any(s.space is Space.LREG for s in src): return Space.LREG
+    return Space.SCALAR
   raise ValueError(f"cannot infer space for {op}")
 
 
@@ -372,6 +386,11 @@ class UOp(metaclass=_UOpMeta):
   def reduce_row(self, op: Ops = Ops.ADD) -> UOp:
     if op not in (Ops.ADD, Ops.MAX): raise ValueError(f"reduce_row supports ADD or MAX, got {op}")
     return UOp(Ops.REDUCE_ROW, self.dtype, (self,), op)
+
+  def reduce_lanes(self, op: Ops = Ops.ADD, scope: str = "all") -> UOp:
+    if op not in (Ops.ADD, Ops.MAX, Ops.MIN): raise ValueError(f"reduce_lanes supports ADD/MAX/MIN, got {op}")
+    if scope not in ("all", "row8"): raise ValueError(f"reduce_lanes scope must be 'all' or 'row8', got {scope!r}")
+    return UOp(Ops.REDUCE_LANES, self.dtype, (self,), (op, scope))
 
   def argmax(self) -> UOp:
     return UOp(Ops.ARGMAX, dtypes.i32, (self,))
