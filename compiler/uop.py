@@ -147,6 +147,121 @@ class GroupOp:
   Effect = frozenset({Ops.STORE, Ops.NOC_WRITE, Ops.BARRIER, Ops.END})
 
 
+# ---- typed UOp.arg specs (all frozen & hashable; UOp dependencies always live in UOp.src) ----
+
+@dataclass(frozen=True)
+class KernelArg:
+  """SINK arg of a kernel: it runs on the first `cores` workers, numbered column-major (hw.WORKER_ROWS per column)."""
+  name: str
+  cores: int
+
+
+@dataclass(frozen=True)
+class BufferArg:
+  name: str
+  space: Space
+  shape: tuple[int, ...]
+  dtype: DType
+  addr: int | None = None
+  tiles_per_page: int = 1
+
+
+@dataclass(frozen=True)
+class AllocArg:
+  name: str
+  space: Space
+  shape: tuple[int, ...]
+  dtype: DType
+
+
+@dataclass(frozen=True)
+class RangeArg:
+  axis: int
+  name: str = ""
+
+
+@dataclass(frozen=True)
+class ReduceArg:
+  op: Ops
+  space: Space
+
+
+@dataclass(frozen=True)
+class CarryArg:
+  index: int
+  space: Space
+  name: str = ""
+
+
+@dataclass(frozen=True)
+class BarrierArg:
+  scope: str | tuple[tuple[int, int], tuple[int, int]] = "all"
+  tag: int = 0
+
+
+@dataclass(frozen=True)
+class NocHint:
+  depth: int = 2
+  stages: int = 1
+  cap: int = 0
+  port: int | None = None
+
+
+@dataclass(frozen=True)
+class NocArg:
+  tiles: int = 1
+  nbytes: int | None = None
+  hint: NocHint = NocHint()
+
+
+@dataclass(frozen=True)
+class McastArg:
+  rect: str | tuple[tuple[int, int], tuple[int, int]]
+  include_self: bool = True
+  hint: NocHint = NocHint()
+
+
+@dataclass(frozen=True)
+class CollectiveArg:
+  group: str | tuple[int, ...]
+  count: int = 1
+  hint: NocHint = NocHint()
+
+
+@dataclass(frozen=True)
+class UnpackArg:
+  dest: Space
+  shape: tuple[int, int] = (32, 32)
+  transpose: bool = False
+  allow_tf32: bool = False
+
+
+@dataclass(frozen=True)
+class MvmulArg:
+  tile: tuple[int, int, int] = (32, 32, 32)
+  fidelity: Fidelity = Fidelity.HIFI2
+
+
+@dataclass(frozen=True)
+class PackArg:
+  shape: tuple[int, int] = (32, 32)
+  l1_acc: bool = False
+
+
+@dataclass(frozen=True)
+class ReplayArg:
+  insns: tuple[int, ...]
+  dest: Space = Space.DST
+  name: str = ""
+
+
+@dataclass(frozen=True)
+class MopArg:
+  cfg: tuple[int, ...]
+  dest: Space = Space.DST
+  name: str = ""
+
+
 # ---- hash-consed UOp ----
 
 def _arg_key(arg: Any) -> Any:
@@ -394,6 +509,138 @@ class UOp(metaclass=_UOpMeta):
 
   def argmax(self) -> UOp:
     return UOp(Ops.ARGMAX, dtypes.i32, (self,))
+
+  # ---- builders: kernels are built bottom-up from SPECIAL / RANGE / BUFFER leaves and wrapped in a SINK last ----
+
+  @staticmethod
+  def _i32(x: UOp | int) -> UOp: return x if isinstance(x, UOp) else UOp.const(dtypes.i32, int(x))
+
+  @staticmethod
+  def special(end: UOp | int, name: str) -> UOp:
+    """Hardware coordinate with a known bound: core_id, core_x (column) or core_y (row, < hw.WORKER_ROWS)."""
+    return UOp(Ops.SPECIAL, dtypes.i32, (UOp._i32(end),), name)
+
+  @staticmethod
+  def range(end: UOp | int, axis: int, name: str = "") -> UOp:
+    return UOp(Ops.RANGE, dtypes.i32, (UOp._i32(end),), RangeArg(axis, name))
+
+  @staticmethod
+  def buffer(name: str, shape: tuple[int, ...] | int, dtype: DType | str, space: Space = Space.DRAM,
+             addr: int | None = None, tiles_per_page: int = 1) -> UOp:
+    if space not in (Space.DRAM, Space.HOST, Space.L1, Space.SCALAR): raise ValueError(f"invalid buffer space {space}")
+    dt = dtypes.from_name(dtype)
+    return UOp(Ops.BUFFER, dt, (), BufferArg(name, space, (shape,) if isinstance(shape, int) else tuple(shape), dt, addr, tiles_per_page))
+
+  @staticmethod
+  def alloc(name: str, space: Space, dtype: DType | str, shape: tuple[int, ...] | int = (32, 32)) -> UOp:
+    if space not in (Space.DST, Space.LREG, Space.L1, Space.SCALAR):
+      raise ValueError(f"alloc space must be DST, LREG, L1, or SCALAR, got {space}")
+    dt = dtypes.from_name(dtype)
+    return UOp(Ops.ALLOC, dt, (), AllocArg(name, space, (shape,) if isinstance(shape, int) else tuple(shape), dt))
+
+  @staticmethod
+  def barrier(scope: str | tuple[tuple[int, int], tuple[int, int]] = "all", tag: int = 0) -> UOp:
+    return UOp(Ops.BARRIER, dtypes.void, (), BarrierArg(scope, tag))
+
+  @staticmethod
+  def lane_id(dtype: DType | str = dtypes.i32) -> UOp: return UOp(Ops.LANE_ID, dtypes.from_name(dtype), ())
+
+  @staticmethod
+  def replay(insns: Sequence[int], *deps: UOp, dtype: DType | str = dtypes.fp32, dest: Space = Space.DST, name: str = "") -> UOp:
+    """Explicit Tensix REPLAY block carrying ordered raw instruction words in arg and live dataflow edges in src."""
+    return UOp(Ops.REPLAY, dtypes.from_name(dtype), deps, ReplayArg(tuple(int(w) for w in insns), dest, name))
+
+  @staticmethod
+  def mop(cfg: Sequence[int], *deps: UOp, dtype: DType | str = dtypes.fp32, dest: Space = Space.DST, name: str = "") -> UOp:
+    """Explicit Tensix MOP config (9 words) carrying live dataflow edges in src."""
+    return UOp(Ops.MOP, dtypes.from_name(dtype), deps, MopArg(tuple(int(w) for w in cfg), dest, name))
+
+  def end(self, *ranges: UOp) -> UOp:
+    if not ranges: raise ValueError("end() requires at least one RANGE")
+    return UOp(Ops.END, dtypes.void, (self, *ranges))
+
+  def if_(self, body: UOp, else_body: UOp | None = None) -> UOp:
+    if self.dtype is not dtypes.bool: raise TypeError(f"if condition must be bool, got {self.dtype}")
+    if else_body is None: return UOp(Ops.IF, body.dtype, (self, body))
+    if body.dtype != else_body.dtype: raise TypeError(f"if/else dtype mismatch: {body.dtype} vs {else_body.dtype}")
+    return UOp(Ops.IF, body.dtype, (self, body, else_body))
+
+  def reduce(self, *ranges: UOp, op: Ops = Ops.ADD, space: Space | None = None) -> UOp:
+    if not ranges: raise ValueError("reduce() requires at least one RANGE")
+    if op not in (Ops.ADD, Ops.MUL, Ops.MAX, Ops.MIN): raise ValueError(f"unsupported reduce op {op}")
+    sp = self.space if space is None else space
+    if sp not in (Space.DST, Space.LREG, Space.L1, Space.SCALAR):
+      raise ValueError(f"reduce residency must be DST, LREG, L1, or SCALAR, got {sp}")
+    return UOp(Ops.REDUCE, self.dtype, (self, *ranges), ReduceArg(op, sp))
+
+  def carry(self, rng: UOp, index: int = 0, *, space: Space | None = None, name: str = "") -> UOp:
+    """Loop-carried state placeholder (SSA iter_arg) for `rng`, initialized by self before the loop."""
+    if rng.op is not Ops.RANGE: raise TypeError(f"carry() requires a RANGE, got {rng.op.name}")
+    sp = self.space if space is None else space
+    if sp not in (Space.DST, Space.LREG, Space.L1, Space.SCALAR):
+      raise ValueError(f"carry residency must be DST, LREG, L1, or SCALAR, got {sp}")
+    return UOp(Ops.CARRY, self.dtype, (self, rng), CarryArg(index, sp, name))
+
+  def loop(self, inits: Sequence[UOp], body, *, spaces: Sequence[Space | None] | None = None,
+           names: Sequence[str] | None = None) -> tuple[UOp, ...]:
+    """Loop over this RANGE with explicit carried values; body(*carries) yields their next values.
+    Returns the final post-loop values (Ops.GET), one per carried state."""
+    if self.op is not Ops.RANGE: raise TypeError(f"loop() requires a RANGE, got {self.op.name}")
+    if not inits: raise ValueError("loop() requires at least one initial carried value")
+    sps = [None] * len(inits) if spaces is None else list(spaces)
+    nms = [""] * len(inits) if names is None else list(names)
+    if len(sps) != len(inits) or len(nms) != len(inits): raise ValueError("loop() spaces/names length must match inits")
+    carries = tuple(init.carry(self, i, space=sp, name=nm) for i, (init, sp, nm) in enumerate(zip(inits, sps, nms)))
+    res = body(*carries)
+    next_vals = (res,) if isinstance(res, UOp) else tuple(res)
+    if len(next_vals) != len(carries): raise ValueError(f"loop() body yielded {len(next_vals)} values, expected {len(carries)}")
+    lp = UOp(Ops.LOOP, dtypes.void, (self, *(x for pair in zip(carries, next_vals) for x in pair)))
+    return tuple(UOp(Ops.GET, c.dtype, (lp,), i) for i, c in enumerate(carries))
+
+  def load(self, offset: UOp | int | None = None, *, gate: UOp | None = None) -> UOp:
+    if gate is not None: return UOp(Ops.LOAD, self.dtype, (self, UOp._i32(0 if offset is None else offset), gate))
+    return UOp(Ops.LOAD, self.dtype, (self,) if offset is None else (self, UOp._i32(offset)))
+
+  def store(self, val: UOp, offset: UOp | int | None = None, *, gate: UOp | None = None) -> UOp:
+    if gate is not None: return UOp(Ops.STORE, dtypes.void, (self, UOp._i32(0 if offset is None else offset), val, gate))
+    return UOp(Ops.STORE, dtypes.void, (self, val) if offset is None else (self, UOp._i32(offset), val))
+
+  def noc_read(self, offset: UOp | int, tiles: int = 1, nbytes: int | None = None, *, gate: UOp | None = None,
+               depth: int = 2, stages: int = 1, cap: int = 0, port: int | None = None) -> UOp:
+    src = (self, UOp._i32(offset)) if gate is None else (self, UOp._i32(offset), gate)
+    return UOp(Ops.NOC_READ, self.dtype, src, NocArg(tiles, nbytes, NocHint(depth, stages, cap, port)))
+
+  def noc_write(self, offset: UOp | int, val: UOp, tiles: int = 1, nbytes: int | None = None, *, gate: UOp | None = None,
+                depth: int = 2, stages: int = 1, cap: int = 0, port: int | None = None) -> UOp:
+    src = (self, UOp._i32(offset), val) if gate is None else (self, UOp._i32(offset), val, gate)
+    return UOp(Ops.NOC_WRITE, dtypes.void, src, NocArg(tiles, nbytes, NocHint(depth, stages, cap, port)))
+
+  def noc_mcast(self, rect: str | tuple[tuple[int, int], tuple[int, int]], sender: UOp | int, include_self: bool = True, *,
+                depth: int = 2, stages: int = 1, cap: int = 0, port: int | None = None) -> UOp:
+    return UOp(Ops.NOC_MCAST, self.dtype, (self, UOp._i32(sender)), McastArg(rect, include_self, NocHint(depth, stages, cap, port)))
+
+  def noc_gather(self, group: str | tuple[int, ...], root: UOp | int, count: int = 1, *,
+                 depth: int = 2, stages: int = 1, cap: int = 0, port: int | None = None) -> UOp:
+    return UOp(Ops.NOC_GATHER, self.dtype, (self, UOp._i32(root)), CollectiveArg(group, count, NocHint(depth, stages, cap, port)))
+
+  def noc_allgather(self, group: str | tuple[int, ...], count: int = 1, *,
+                    depth: int = 2, stages: int = 1, cap: int = 0, port: int | None = None) -> UOp:
+    return UOp(Ops.NOC_ALLGATHER, self.dtype, (self,), CollectiveArg(group, count, NocHint(depth, stages, cap, port)))
+
+  def unpack(self, dest: Space = Space.DST, dtype: DType | str | None = None, shape: tuple[int, int] = (32, 32),
+             transpose: bool = False, allow_tf32: bool = False) -> UOp:
+    if dest not in (Space.SRCA, Space.SRCB, Space.DST): raise ValueError(f"unpack dest must be SRCA, SRCB, or DST, got {dest}")
+    dt = (dtypes.fp32 if dest is Space.DST else self.dtype) if dtype is None else dtypes.from_name(dtype)
+    return UOp(Ops.UNPACK, dt, (self,), UnpackArg(dest, shape, transpose, allow_tf32))
+
+  def mvmul(self, srca: UOp, tile: tuple[int, int, int] = (32, 32, 32), fidelity: Fidelity | int | None = None,
+            dtype: DType | str = dtypes.fp32) -> UOp:
+    """FPU matmul with self as SrcB. Elementwise FPU ops use +, -, *, maximum on SRCA/SRCB values directly."""
+    f = default_fidelity(self.dtype, srca.dtype) if fidelity is None else Fidelity(fidelity)
+    return UOp(Ops.MVMUL, dtypes.from_name(dtype), (self, srca), MvmulArg(tile, f))
+
+  def pack(self, dtype: DType | str = dtypes.bf16, shape: tuple[int, int] = (32, 32), l1_acc: bool = False) -> UOp:
+    return UOp(Ops.PACK, dtypes.from_name(dtype), (self,), PackArg(shape, l1_acc))
 
   def __repr__(self) -> str: return pretty(self)
 

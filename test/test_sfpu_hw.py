@@ -13,10 +13,7 @@ import numpy as np
 import hw
 from hw import cfg, isa
 from device import Device
-from compiler import (
-  Ops, Space, UOp, compile_sfpu, compile_sfpu_loop, dram_buf, dtypes, lane_id,
-  loop_carry, mulacc, noc_read, range_uop, reduce, reduce_lanes, unpack,
-)
+from compiler import Ops, Space, UOp, compile_sfpu, compile_sfpu_loop, dtypes, mulacc
 
 L1_DONE = 0x1F000
 L1_IN_BASE = 0x20000
@@ -228,7 +225,7 @@ def run_sfpu_on_silicon(
   output_tiles=None,
 ) -> tuple[list[np.ndarray], object]:
   names = list(inputs.keys())
-  dst_uops = {n: unpack(noc_read(dram_buf(n, (1, 32, 32), dtypes.fp32), 0), Space.DST, dtypes.fp32) for n in names}
+  dst_uops = {n: UOp.buffer(n, (1, 32, 32), dtypes.fp32).noc_read(0).unpack(Space.DST, dtypes.fp32) for n in names}
   dst_inputs = {dst_uops[n]: i for i, n in enumerate(names)}
   res = fn(**dst_uops)
   roots = list(res) if multi_out else [res]
@@ -346,8 +343,8 @@ class TestSfpuSilicon(unittest.TestCase):
     [out_eq], _ = run_sfpu_on_silicon(self.dev, lambda a, b, c: a.eq(b).where(c, a), {"a": a, "b": b, "c": c})
     np.testing.assert_allclose(out_eq, np.where(a == b, c, a), rtol=1e-6, atol=1e-6)
 
-    # lane_id() < 16 -> rows 0, 1 of every 4-row group in each 16x16 face!
-    [out_lane], _ = run_sfpu_on_silicon(self.dev, lambda a: (lane_id() < 16).where(a, 0.0), {"a": a})
+    # UOp.lane_id() < 16 -> rows 0, 1 of every 4-row group in each 16x16 face!
+    [out_lane], _ = run_sfpu_on_silicon(self.dev, lambda a: (UOp.lane_id() < 16).where(a, 0.0), {"a": a})
     row_in_face = (np.arange(1024) % 256) // 16
     np.testing.assert_allclose(out_lane, np.where((row_in_face % 4) < 2, a, 0.0), rtol=1e-6, atol=1e-6)
 
@@ -367,7 +364,7 @@ class TestSfpuSilicon(unittest.TestCase):
     np.testing.assert_array_equal(out, np.where(np.exp2(-a) < a, a, -a))
 
   def test_lane_id_layout(self):
-    [out], _ = run_sfpu_on_silicon(self.dev, lambda: lane_id().cast(dtypes.fp32), {})
+    [out], _ = run_sfpu_on_silicon(self.dev, lambda: UOp.lane_id().cast(dtypes.fp32), {})
     # Packed output consists of four 16x16 faces in TL, TR, BL, BR order.
     logical = out.reshape(2, 2, 16, 16).transpose(0, 2, 1, 3).reshape(32, 32)
     rows, cols = np.indices((32, 32))
@@ -445,7 +442,7 @@ class TestSfpuSilicon(unittest.TestCase):
     for op, np_fn in ((Ops.ADD, np.sum), (Ops.MAX, np.max)):
       for scope in ("row8", "all"):
         with self.subTest(op=op.name, scope=scope):
-          [out], _ = run_sfpu_on_silicon(self.dev, lambda x: reduce_lanes(x, op, scope), {"x": x_raw})
+          [out], _ = run_sfpu_on_silicon(self.dev, lambda x: x.reduce_lanes(op, scope), {"x": x_raw})
           axis = 3 if scope == "row8" else (2, 3)
           ref = np.broadcast_to(np_fn(faces, axis=axis, keepdims=True), faces.shape).reshape(1024)
           np.testing.assert_allclose(out, ref, rtol=1e-5, atol=1e-5)
@@ -458,15 +455,15 @@ class TestSfpuSilicon(unittest.TestCase):
     eps = 1e-5
 
     # Stage 1: pinned L0 accumulator across 2 tiles (x0 in Dst[0], x1 in Dst[1])
-    r = range_uop(2, axis=0, name="t")
-    x_u = unpack(noc_read(dram_buf("x", (2, 32, 32), dtypes.fp32), r), Space.DST, dtypes.fp32)
-    g_u = unpack(noc_read(dram_buf("g", (1, 32, 32), dtypes.fp32), 0), Space.DST, dtypes.fp32)
-    acc = reduce(x_u * x_u, r, op=Ops.ADD, space=Space.LREG)
+    r = UOp.range(2, axis=0, name="t")
+    x_u = UOp.buffer("x", (2, 32, 32), dtypes.fp32).noc_read(r).unpack(Space.DST, dtypes.fp32)
+    g_u = UOp.buffer("g", (1, 32, 32), dtypes.fp32).noc_read(0).unpack(Space.DST, dtypes.fp32)
+    acc = (x_u * x_u).reduce(r, op=Ops.ADD, space=Space.LREG)
     lp0 = compile_sfpu_loop(acc, {x_u: 0}, addr_mode=ADDR_MOD_STEP)
     lp1 = compile_sfpu_loop(acc, {x_u: 1}, reg_carries={0: 0}, addr_mode=ADDR_MOD_STEP)
 
     # Stage 2: 1-shot LReg reduce_lanes + rsqrt (runs ONCE in L0, zero Dst loads/stores)
-    inv_rms = (reduce_lanes(acc, Ops.ADD, "all") * (1.0 / 2048.0) + eps).rsqrt()
+    inv_rms = (acc.reduce_lanes(Ops.ADD, "all") * (1.0 / 2048.0) + eps).rsqrt()
     rms_stage = compile_sfpu(inv_rms, reg_inputs=lp0.reg_carries, reg_outputs={inv_rms: 0})
     self.assertEqual(rms_stage.passes[0].footprints, 1)
 
@@ -484,14 +481,9 @@ class TestSfpuSilicon(unittest.TestCase):
   def test_dst_accumulator_dual_carry_on_silicon(self):
     rng = np.random.default_rng(103)
     tiles = [rng.uniform(-2.0, 2.0, 1024).astype(np.float32) for _ in range(3)]
-    r = range_uop(3, axis=0, name="t")
-    x_u = unpack(noc_read(dram_buf("x", (3, 32, 32), dtypes.fp32), r), Space.DST, dtypes.fp32)
-    s_out, m_out = loop_carry(
-      r,
-      (UOp.const(dtypes.fp32, 0.0), UOp.const(dtypes.fp32, -math.inf)),
-      lambda s, m: (s + x_u, m.maximum(x_u)),
-      spaces=(Space.DST, Space.DST),
-    )
+    r = UOp.range(3, axis=0, name="t")
+    x_u = UOp.buffer("x", (3, 32, 32), dtypes.fp32).noc_read(r).unpack(Space.DST, dtypes.fp32)
+    s_out, m_out = r.loop((UOp.const(dtypes.fp32, 0.0), UOp.const(dtypes.fp32, -math.inf)), lambda s, m: (s + x_u, m.maximum(x_u)), spaces=(Space.DST, Space.DST))
     # Pin carried Dst[3] (sum) and Dst[4] (max) across all 3 iterations (input tiles sit in Dst[0..2])
     lp_iter = [
       compile_sfpu_loop(s_out, {x_u: t}, dst_carries={0: 3, 1: 4}, addr_mode=ADDR_MOD_STEP)
@@ -503,12 +495,11 @@ class TestSfpuSilicon(unittest.TestCase):
     np.testing.assert_array_equal(out_max, np.maximum(np.maximum(tiles[0], tiles[1]), tiles[2]))
 
   def test_prologue_l0_preserved_with_sfpconfig_on_silicon(self):
-    from compiler import carry
     rng = np.random.default_rng(104)
     x = rng.uniform(-3.0, 3.0, 1024).astype(np.float32)
-    x_u = unpack(noc_read(dram_buf("x", (1, 32, 32), dtypes.fp32), 0), Space.DST, dtypes.fp32)
+    x_u = UOp.buffer("x", (1, 32, 32), dtypes.fp32).noc_read(0).unpack(Space.DST, dtypes.fp32)
     scale_init = UOp.const(dtypes.fp32, 1.75)
-    scale_u = carry(scale_init, range_uop(1, axis=0), space=Space.LREG)
+    scale_u = scale_init.carry(UOp.range(1, axis=0), space=Space.LREG)
     init_scale = compile_sfpu(scale_init, reg_outputs={scale_init: 0}, footprints=1)
     y_u = x_u.sin() * scale_u
     body_stage = compile_sfpu(

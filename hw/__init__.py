@@ -12,6 +12,7 @@ ROLES = ("brisc", "ncrisc", "trisc0", "trisc1", "trisc2")
 DRAM_BANK_SIZE, DRAM_PAGE_MAX = 0xFF000000, 4096
 ARC = (8, 0)
 AICLK_MHZ = 1350
+WORKER_ROWS = 10  # Tensix rows per column; firmware numbers workers column-major, x * WORKER_ROWS + y
 TELEMETRY_DATA, TELEMETRY_PTR, TAG_ENABLED_TENSIX_COL = 0x80030430, 0x80030434, 34
 NOC_NODE_ID = 0xFFB20044  # physical NoC0 coords; NOC_ID_LOGICAL (0xFFB20148) is translated
 

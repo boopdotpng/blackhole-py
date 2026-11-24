@@ -2,8 +2,9 @@ from __future__ import annotations
 import math
 from typing import Any
 import numpy as np
-from .ops import Grid, KernelArg, verify
-from .uop import DType, Ops, Space, UOp, dtypes
+import hw
+from .ops import verify
+from .uop import DType, KernelArg, Ops, Space, UOp, dtypes
 
 
 def _round_bf16(arr: np.ndarray) -> np.ndarray:
@@ -140,25 +141,22 @@ def _init_carry_val(val: Any, space: Space, dt: DType) -> Any:
   return _cast_value(val.copy() if isinstance(val, np.ndarray) else val, dt)
 
 
-def _grid_workers(grid: Grid) -> list[tuple[int, int]]:
-  # Column-major: (x, y) with grid.rows per column.
-  return [(i // grid.rows, i % grid.rows) for i in range(grid.cores)]
 
 
 def evaluate(
   sink: UOp,
   buffers: dict[str, np.ndarray],
   *,
-  grid: Grid | int | None = None,
+  cores: int | None = None,
   check: bool = True,
 ) -> dict[str, np.ndarray]:
   """Functional reference evaluator for Layer 1 UOp graphs across a simulated worker grid.
   Modifies output arrays in `buffers` in-place and returns `buffers`."""
   if check: verify(sink)
-  if isinstance(grid, int): grid = Grid(grid)
-  elif grid is None:
-    grid = sink.arg.grid if isinstance(sink.arg, KernelArg) else Grid.p100a()
-  workers = _grid_workers(grid)
+  if cores is None:
+    if not isinstance(sink.arg, KernelArg): raise ValueError("evaluate needs cores= for a sink without a KernelArg")
+    cores = sink.arg.cores
+  workers = [divmod(i, hw.WORKER_ROWS) for i in range(cores)]  # column-major (x, y), as firmware numbers them
   coord_to_id = {xy: i for i, xy in enumerate(workers)}
   core_allocs: list[dict[UOp, Any]] = [{} for _ in workers]
 
@@ -167,275 +165,281 @@ def evaluate(
     if u in cache: return cache[u]
     op, src, arg = u.op, u.src, u.arg
 
-    if op is Ops.CONST:
-      res = arg
-    elif op is Ops.SPECIAL:
-      x, y = workers[cid]
-      if arg == "core_id": res = cid
-      elif arg == "core_x": res = x
-      elif arg == "core_y": res = y
-      else: raise ValueError(f"unknown SPECIAL {arg!r}")
-    elif op in (Ops.BUFFER, Ops.ALLOC):
-      res = u
-    elif op is Ops.SINK:
-      for s in src: eval_node(s, cid, env, cache)
-      res = None
-    elif op is Ops.BARRIER:
-      res = None
-    elif op is Ops.AFTER:
-      for dep in src[1:]: eval_node(dep, cid, env, cache)
-      res = eval_node(src[0], cid, env, cache)
-    elif op is Ops.IF:
-      cond = bool(eval_node(src[0], cid, env, cache))
-      if cond: res = eval_node(src[1], cid, env, cache)
-      elif len(src) == 3: res = eval_node(src[2], cid, env, cache)
-      else: res = None
-    elif op is Ops.END:
-      ranges = src[1:]
-      bounds = [int(eval_node(r.src[0], cid, env, cache)) for r in ranges]
-      def run_loops(idx: int, cur_env: dict[UOp, Any]):
-        if idx == len(ranges):
-          eval_node(src[0], cid, cur_env, {})
-          return
-        r = ranges[idx]
-        for i in range(bounds[idx]):
-          nxt_env = dict(cur_env)
-          nxt_env[r] = i
-          run_loops(idx + 1, nxt_env)
-      run_loops(0, env)
-      res = None
-    elif op is Ops.REDUCE:
-      ranges = src[1:]
-      bounds = [int(eval_node(r.src[0], cid, env, cache)) for r in ranges]
-      acc = None
-      def _comb(a, b):
-        if arg.op is Ops.ADD: return a + b
-        if arg.op is Ops.MUL: return a * b
-        if arg.op is Ops.MAX: return np.maximum(a, b) if isinstance(a, np.ndarray) else max(a, b)
-        return np.minimum(a, b) if isinstance(a, np.ndarray) else min(a, b)
-      def run_red(idx: int, cur_env: dict[UOp, Any]):
-        nonlocal acc
-        if idx == len(ranges):
-          v = eval_node(src[0], cid, cur_env, {})
-          if arg.space is Space.LREG and isinstance(v, np.ndarray) and v.ndim == 2:
-            for fp_vec in _tile_to_footprints(v):
-              acc = fp_vec.copy() if acc is None else _comb(acc, fp_vec)
-          else:
-            acc = (v.copy() if isinstance(v, np.ndarray) else v) if acc is None else _comb(acc, v)
-          return
-        r = ranges[idx]
-        for i in range(bounds[idx]):
-          nxt_env = dict(cur_env)
-          nxt_env[r] = i
-          run_red(idx + 1, nxt_env)
-      run_red(0, env)
-      if acc is None:
-        init = {Ops.ADD: 0.0, Ops.MUL: 1.0, Ops.MAX: -math.inf, Ops.MIN: math.inf}[arg.op]
-        if arg.space in (Space.DST, Space.L1): acc = np.full((32, 32), init, dtype=np.float32)
-        elif arg.space is Space.LREG: acc = np.full((32,), init, dtype=np.float32)
-        else: acc = _cast_value(init, u.dtype)
-      res = _cast_value(acc, u.dtype)
-    elif op is Ops.LOOP:
-      r = src[0]
-      carries = src[1::2]
-      nexts = src[2::2]
-      bound = int(eval_node(r.src[0], cid, env, cache))
-      state = [_init_carry_val(eval_node(c.src[0], cid, env, cache), c.space, c.dtype) for c in carries]
-      has_fp_sweep = any(c.space is Space.LREG and n.space is Space.DST for c, n in zip(carries, nexts))
-      for i in range(bound):
-        iter_env = {**env, r: i}
-        if has_fp_sweep:
-          # Footprint-sweep mode: evaluate outer tile leaves once, then step 32 footprints in hardware order.
-          carry_set = set(carries)
-          tile_cache: dict[UOp, Any] = {}
-          fp_tiles: dict[UOp, np.ndarray] = {}
-          # Pre-evaluate every DST/LREG node that does NOT depend on any carry in this loop.
-          dep_on_carry: dict[UOp, bool] = {}
-          for node in UOp.sink(*nexts).toposort():
-            dep_on_carry[node] = (node in carry_set) or any(dep_on_carry.get(s, False) for s in node.src)
-          frontier = {s for n in UOp.sink(*nexts).toposort() if dep_on_carry[n] for s in n.src
-                      if not dep_on_carry.get(s, False) and s.space is Space.DST}
-          for leaf in frontier:
-            fp_tiles[leaf] = _tile_to_footprints(eval_node(leaf, cid, iter_env, tile_cache))
-          dst_state_fps = {idx: _tile_to_footprints(state[idx]) for idx, c in enumerate(carries) if c.space is Space.DST}
-          lreg_state = {idx: state[idx].copy() for idx, c in enumerate(carries) if c.space is Space.LREG}
-          scalar_state = {idx: state[idx] for idx, c in enumerate(carries) if c.space not in (Space.DST, Space.LREG)}
-          new_dst_fps = {idx: np.empty_like(fps) for idx, fps in dst_state_fps.items()}
-          for fp in range(32):
-            fp_env = {**iter_env, **{leaf: fps[fp] for leaf, fps in fp_tiles.items()}}
+    match op:
+      case Ops.CONST:
+        res = arg
+      case Ops.SPECIAL:
+        x, y = workers[cid]
+        match arg:
+          case "core_id": res = cid
+          case "core_x": res = x
+          case "core_y": res = y
+          case _: raise ValueError(f"unknown SPECIAL {arg!r}")
+      case Ops.BUFFER | Ops.ALLOC:
+        res = u
+      case Ops.SINK:
+        for s in src: eval_node(s, cid, env, cache)
+        res = None
+      case Ops.BARRIER:
+        res = None
+      case Ops.AFTER:
+        for dep in src[1:]: eval_node(dep, cid, env, cache)
+        res = eval_node(src[0], cid, env, cache)
+      case Ops.IF:
+        cond = bool(eval_node(src[0], cid, env, cache))
+        if cond: res = eval_node(src[1], cid, env, cache)
+        elif len(src) == 3: res = eval_node(src[2], cid, env, cache)
+        else: res = None
+      case Ops.END:
+        ranges = src[1:]
+        bounds = [int(eval_node(r.src[0], cid, env, cache)) for r in ranges]
+        def run_loops(idx: int, cur_env: dict[UOp, Any]):
+          if idx == len(ranges):
+            eval_node(src[0], cid, cur_env, {})
+            return
+          r = ranges[idx]
+          for i in range(bounds[idx]):
+            nxt_env = dict(cur_env)
+            nxt_env[r] = i
+            run_loops(idx + 1, nxt_env)
+        run_loops(0, env)
+        res = None
+      case Ops.REDUCE:
+        ranges = src[1:]
+        bounds = [int(eval_node(r.src[0], cid, env, cache)) for r in ranges]
+        acc = None
+        def _comb(a, b):
+          match arg.op:
+            case Ops.ADD: return a + b
+            case Ops.MUL: return a * b
+            case Ops.MAX: return np.maximum(a, b) if isinstance(a, np.ndarray) else max(a, b)
+          return np.minimum(a, b) if isinstance(a, np.ndarray) else min(a, b)
+        def run_red(idx: int, cur_env: dict[UOp, Any]):
+          nonlocal acc
+          if idx == len(ranges):
+            v = eval_node(src[0], cid, cur_env, {})
+            if arg.space is Space.LREG and isinstance(v, np.ndarray) and v.ndim == 2:
+              for fp_vec in _tile_to_footprints(v):
+                acc = fp_vec.copy() if acc is None else _comb(acc, fp_vec)
+            else:
+              acc = (v.copy() if isinstance(v, np.ndarray) else v) if acc is None else _comb(acc, v)
+            return
+          r = ranges[idx]
+          for i in range(bounds[idx]):
+            nxt_env = dict(cur_env)
+            nxt_env[r] = i
+            run_red(idx + 1, nxt_env)
+        run_red(0, env)
+        if acc is None:
+          init = {Ops.ADD: 0.0, Ops.MUL: 1.0, Ops.MAX: -math.inf, Ops.MIN: math.inf}[arg.op]
+          if arg.space in (Space.DST, Space.L1): acc = np.full((32, 32), init, dtype=np.float32)
+          elif arg.space is Space.LREG: acc = np.full((32,), init, dtype=np.float32)
+          else: acc = _cast_value(init, u.dtype)
+        res = _cast_value(acc, u.dtype)
+      case Ops.LOOP:
+        r = src[0]
+        carries = src[1::2]
+        nexts = src[2::2]
+        bound = int(eval_node(r.src[0], cid, env, cache))
+        state = [_init_carry_val(eval_node(c.src[0], cid, env, cache), c.space, c.dtype) for c in carries]
+        has_fp_sweep = any(c.space is Space.LREG and n.space is Space.DST for c, n in zip(carries, nexts))
+        for i in range(bound):
+          iter_env = {**env, r: i}
+          if has_fp_sweep:
+            # Footprint-sweep mode: evaluate outer tile leaves once, then step 32 footprints in hardware order.
+            carry_set = set(carries)
+            tile_cache: dict[UOp, Any] = {}
+            fp_tiles: dict[UOp, np.ndarray] = {}
+            # Pre-evaluate every DST/LREG node that does NOT depend on any carry in this loop.
+            dep_on_carry: dict[UOp, bool] = {}
+            for node in UOp.sink(*nexts).toposort():
+              dep_on_carry[node] = (node in carry_set) or any(dep_on_carry.get(s, False) for s in node.src)
+            frontier = {s for n in UOp.sink(*nexts).toposort() if dep_on_carry[n] for s in n.src
+                        if not dep_on_carry.get(s, False) and s.space is Space.DST}
+            for leaf in frontier:
+              fp_tiles[leaf] = _tile_to_footprints(eval_node(leaf, cid, iter_env, tile_cache))
+            dst_state_fps = {idx: _tile_to_footprints(state[idx]) for idx, c in enumerate(carries) if c.space is Space.DST}
+            lreg_state = {idx: state[idx].copy() for idx, c in enumerate(carries) if c.space is Space.LREG}
+            scalar_state = {idx: state[idx] for idx, c in enumerate(carries) if c.space not in (Space.DST, Space.LREG)}
+            new_dst_fps = {idx: np.empty_like(fps) for idx, fps in dst_state_fps.items()}
+            for fp in range(32):
+              fp_env = {**iter_env, **{leaf: fps[fp] for leaf, fps in fp_tiles.items()}}
+              for idx, c in enumerate(carries):
+                if idx in lreg_state: fp_env[c] = lreg_state[idx]
+                elif idx in dst_state_fps: fp_env[c] = dst_state_fps[idx][fp]
+                else: fp_env[c] = scalar_state[idx]
+              fp_cache: dict[UOp, Any] = {}
+              nxt_vals = [eval_node(n, cid, fp_env, fp_cache) for n in nexts]
+              for idx, (c, nv) in enumerate(zip(carries, nxt_vals)):
+                if idx in lreg_state: lreg_state[idx] = _init_carry_val(nv, Space.LREG, c.dtype)
+                elif idx in dst_state_fps: new_dst_fps[idx][fp] = _init_carry_val(nv, Space.LREG, c.dtype)
+                else: scalar_state[idx] = _cast_value(nv, c.dtype)
             for idx, c in enumerate(carries):
-              if idx in lreg_state: fp_env[c] = lreg_state[idx]
-              elif idx in dst_state_fps: fp_env[c] = dst_state_fps[idx][fp]
-              else: fp_env[c] = scalar_state[idx]
-            fp_cache: dict[UOp, Any] = {}
-            nxt_vals = [eval_node(n, cid, fp_env, fp_cache) for n in nexts]
-            for idx, (c, nv) in enumerate(zip(carries, nxt_vals)):
-              if idx in lreg_state: lreg_state[idx] = _init_carry_val(nv, Space.LREG, c.dtype)
-              elif idx in dst_state_fps: new_dst_fps[idx][fp] = _init_carry_val(nv, Space.LREG, c.dtype)
-              else: scalar_state[idx] = _cast_value(nv, c.dtype)
-          for idx, c in enumerate(carries):
-            if idx in lreg_state: state[idx] = lreg_state[idx]
-            elif idx in new_dst_fps: state[idx] = _footprints_to_tile(new_dst_fps[idx])
-            else: state[idx] = scalar_state[idx]
-        else:
-          nxt_env = {**iter_env, **{c: (v.copy() if isinstance(v, np.ndarray) else v) for c, v in zip(carries, state)}}
-          iter_cache: dict[UOp, Any] = {}
-          state = [_init_carry_val(eval_node(n, cid, nxt_env, iter_cache), c.space, c.dtype) for c, n in zip(carries, nexts)]
-      res = tuple(state)
-    elif op is Ops.GET:
-      res = eval_node(src[0], cid, env, cache)[arg]
-    elif op is Ops.LOAD:
-      if len(src) == 3 and not bool(eval_node(src[2], cid, env, cache)):
-        res = np.zeros((32, 32), dtype=np.float32) if u.space in (Space.DST, Space.L1) else _cast_value(0, u.dtype)
-      else:
-        target = src[0]
-        idx = int(eval_node(src[1], cid, env, cache)) if len(src) >= 2 else None
-        if target.op is Ops.ALLOC:
-          slot = core_allocs[cid].get(target)
-          if slot is None:
-            slot = _cast_value(0, target.dtype) if target.space is Space.SCALAR else np.zeros(target.arg.shape, dtype=np.float32)
-            core_allocs[cid][target] = slot
-          res = slot[idx] if idx is not None else (slot.copy() if isinstance(slot, np.ndarray) else slot)
-        else:
-          arr = buffers[target.arg.name]
-          val = arr.reshape(-1)[0 if idx is None else idx]
-          res = _cast_value(val.item() if hasattr(val, "item") else val, u.dtype)
-    elif op is Ops.STORE:
-      if len(src) == 4 and not bool(eval_node(src[3], cid, env, cache)):
-        res = None
-      else:
-        target = src[0]
-        if len(src) == 2: idx, val = None, eval_node(src[1], cid, env, cache)
-        else: idx, val = int(eval_node(src[1], cid, env, cache)), eval_node(src[2], cid, env, cache)
-        if target.op is Ops.ALLOC:
-          if idx is None:
-            core_allocs[cid][target] = val.copy() if isinstance(val, np.ndarray) else val
+              if idx in lreg_state: state[idx] = lreg_state[idx]
+              elif idx in new_dst_fps: state[idx] = _footprints_to_tile(new_dst_fps[idx])
+              else: state[idx] = scalar_state[idx]
           else:
-            slot = core_allocs[cid].setdefault(target, np.zeros(target.arg.shape, dtype=np.float32))
-            slot[idx] = val
+            nxt_env = {**iter_env, **{c: (v.copy() if isinstance(v, np.ndarray) else v) for c, v in zip(carries, state)}}
+            iter_cache: dict[UOp, Any] = {}
+            state = [_init_carry_val(eval_node(n, cid, nxt_env, iter_cache), c.space, c.dtype) for c, n in zip(carries, nexts)]
+        res = tuple(state)
+      case Ops.GET:
+        res = eval_node(src[0], cid, env, cache)[arg]
+      case Ops.LOAD:
+        if len(src) == 3 and not bool(eval_node(src[2], cid, env, cache)):
+          res = np.zeros((32, 32), dtype=np.float32) if u.space in (Space.DST, Space.L1) else _cast_value(0, u.dtype)
         else:
-          arr = buffers[target.arg.name]
-          arr.reshape(-1)[0 if idx is None else idx] = val
-        res = None
-    elif op is Ops.NOC_READ:
-      if len(src) == 3 and not bool(eval_node(src[2], cid, env, cache)):
-        shape = (32, 32) if arg.tiles == 1 else (arg.tiles, 32, 32)
-        res = _cast_value(np.zeros(shape, dtype=np.float32), u.dtype)
-      else:
-        buf_uop, off_uop = src[0], src[1]
-        off = int(eval_node(off_uop, cid, env, cache))
-        tiles = _tile_view(buffers[buf_uop.arg.name])
-        chunk = tiles[off] if arg.tiles == 1 else tiles[off : off + arg.tiles]
-        res = _cast_value(chunk.copy(), u.dtype)
-    elif op is Ops.NOC_WRITE:
-      if len(src) == 4 and not bool(eval_node(src[3], cid, env, cache)):
-        res = None
-      else:
-        buf_uop, off_uop, val_uop = src[0], src[1], src[2]
-        off = int(eval_node(off_uop, cid, env, cache))
-        val = eval_node(val_uop, cid, env, cache)
-        arr = buffers[buf_uop.arg.name]
-        if val_uop.space is Space.SCALAR:
-          arr.reshape(-1)[off] = val
+          target = src[0]
+          idx = int(eval_node(src[1], cid, env, cache)) if len(src) >= 2 else None
+          if target.op is Ops.ALLOC:
+            slot = core_allocs[cid].get(target)
+            if slot is None:
+              slot = _cast_value(0, target.dtype) if target.space is Space.SCALAR else np.zeros(target.arg.shape, dtype=np.float32)
+              core_allocs[cid][target] = slot
+            res = slot[idx] if idx is not None else (slot.copy() if isinstance(slot, np.ndarray) else slot)
+          else:
+            arr = buffers[target.arg.name]
+            val = arr.reshape(-1)[0 if idx is None else idx]
+            res = _cast_value(val.item() if hasattr(val, "item") else val, u.dtype)
+      case Ops.STORE:
+        if len(src) == 4 and not bool(eval_node(src[3], cid, env, cache)):
+          res = None
         else:
-          tiles = _tile_view(arr)
-          v = _cast_value(val, buf_uop.dtype)
-          if arg.tiles == 1: tiles[off] = v
-          else: tiles[off : off + arg.tiles] = v
-        res = None
-    elif op is Ops.NOC_MCAST:
-      val_uop, sender_uop = src
-      sender_val = int(eval_node(sender_uop, cid, env, cache))
-      x, y = workers[cid]
-      if arg.rect == "col": sender_cid = coord_to_id[(x, sender_val)]
-      elif arg.rect == "row": sender_cid = coord_to_id[(sender_val, y)]
-      else: sender_cid = sender_val
-      res = eval_node(val_uop, sender_cid, env, {})
-    elif op in (Ops.NOC_GATHER, Ops.NOC_ALLGATHER):
-      val_uop = src[0]
-      x, y = workers[cid]
-      if arg.group == "row": peers = [i for i, (px, py) in enumerate(workers) if py == y]
-      elif arg.group == "col": peers = [i for i, (px, py) in enumerate(workers) if px == x]
-      elif arg.group == "all": peers = list(range(len(workers)))
-      else: peers = list(arg.group)
-      res = np.stack([eval_node(val_uop, p, env, {}) for p in peers], axis=0)
-    elif op is Ops.UNPACK:
-      v = eval_node(src[0], cid, env, cache)
-      if arg.transpose: v = v.T
-      res = _cast_value(v.copy(), u.dtype)
-    elif op is Ops.MVMUL:
-      b = eval_node(src[0], cid, env, cache).astype(np.float32)
-      a = eval_node(src[1], cid, env, cache).astype(np.float32)
-      res = _cast_value(b @ a, u.dtype)
-    elif op is Ops.PACK:
-      res = _cast_value(eval_node(src[0], cid, env, cache), u.dtype)
-    elif op is Ops.LANE_ID:
-      row, col = np.indices((32, 32), dtype=np.int32)
-      res = _cast_value((row % 4) * 8 + (col % 16) // 2, u.dtype)
-    elif op is Ops.REDUCE_ROW:
-      v = eval_node(src[0], cid, env, cache)
-      r = v.sum(axis=-1, keepdims=True) if arg is Ops.ADD else v.max(axis=-1, keepdims=True)
-      res = _cast_value(np.broadcast_to(r, v.shape).copy(), u.dtype)
-    elif op is Ops.REDUCE_LANES:
-      v = eval_node(src[0], cid, env, cache)
-      red_op, scope = arg
-      res = _cast_value(_reduce_lanes_np(np.asarray(v), red_op, scope), u.dtype)
-    elif op is Ops.ARGMAX:
-      v = eval_node(src[0], cid, env, cache)
-      idx = np.argmax(v, axis=-1, keepdims=True).astype(np.int32)
-      res = np.broadcast_to(idx, v.shape).copy()
-    elif op is Ops.CAST:
-      res = _cast_value(eval_node(src[0], cid, env, cache), u.dtype)
-    elif op is Ops.BITCAST:
-      v = eval_node(src[0], cid, env, cache)
-      np_dt = {dtypes.fp32: np.float32, dtypes.i32: np.int32, dtypes.u32: np.uint32}[u.dtype]
-      res = np.asarray(v).view(np_dt)
-      if not isinstance(v, np.ndarray): res = res.item()
-    elif op is Ops.SFPU:
-      vals = [eval_node(s, cid, env, cache) for s in src]
-      if any(isinstance(v, np.ndarray) and v.ndim == 2 for v in vals):
-        vals = [_bcast_lreg_to_tile(v) if (isinstance(v, np.ndarray) and v.shape == (32,)) else v for v in vals]
-      res = _cast_value(_eval_sfpu_prim(arg, vals, u.dtype), u.dtype)
-    elif op in (Ops.REPLAY, Ops.MOP):
-      raise NotImplementedError("REPLAY/MOP escape hatches hold raw Tensix words and cannot be functionally evaluated in Python")
-    else:
-      vals = [eval_node(s, cid, env, cache) for s in src]
-      # Broadcast (32,) LREG operands into (32, 32) DST operands by exact Blackhole SFPU lane.
-      if any(isinstance(v, np.ndarray) and v.ndim == 2 for v in vals):
-        vals = [_bcast_lreg_to_tile(v) if (isinstance(v, np.ndarray) and v.shape == (32,)) else v for v in vals]
-      is_vec = any(isinstance(v, np.ndarray) for v in vals)
-      if op is Ops.ADD:   out = vals[0] + vals[1]
-      elif op is Ops.SUB: out = vals[0] - vals[1]
-      elif op is Ops.MUL: out = vals[0] * vals[1]
-      elif op is Ops.MULACC:
-        neg_ab, neg_c = arg if isinstance(arg, tuple) else (False, False)
-        ab = -(vals[0] * vals[1]) if neg_ab else (vals[0] * vals[1])
-        c = -vals[2] if neg_c else vals[2]
-        out = ab + c
-      elif op is Ops.DIV: out = (vals[0] / vals[1]) if u.dtype.is_float else (vals[0] // vals[1])
-      elif op is Ops.MOD: out = vals[0] % vals[1]
-      elif op is Ops.MAX: out = np.maximum(vals[0], vals[1]) if is_vec else max(vals[0], vals[1])
-      elif op is Ops.MIN: out = np.minimum(vals[0], vals[1]) if is_vec else min(vals[0], vals[1])
-      elif op is Ops.NEG: out = -vals[0]
-      elif op is Ops.ABS: out = np.abs(vals[0]) if is_vec else abs(vals[0])
-      elif op is Ops.NOT: out = (np.logical_not(vals[0]) if u.dtype is dtypes.bool else np.bitwise_not(vals[0])) if is_vec else ((not vals[0]) if u.dtype is dtypes.bool else ~vals[0])
-      elif op is Ops.EXP2:  out = np.exp2(vals[0]) if is_vec else math.exp2(vals[0])
-      elif op is Ops.LOG2:  out = np.log2(vals[0]) if is_vec else math.log2(vals[0])
-      elif op is Ops.SIN:   out = np.sin(vals[0]) if is_vec else math.sin(vals[0])
-      elif op is Ops.SQRT:  out = np.sqrt(vals[0]) if is_vec else math.sqrt(vals[0])
-      elif op is Ops.RSQRT: out = (1.0 / np.sqrt(vals[0])) if is_vec else (1.0 / math.sqrt(vals[0]))
-      elif op is Ops.RECIP: out = (1.0 / vals[0]) if is_vec else (1.0 / vals[0])
-      elif op is Ops.CMPLT: out = vals[0] < vals[1]
-      elif op is Ops.CMPEQ: out = vals[0] == vals[1]
-      elif op is Ops.CMPNE: out = vals[0] != vals[1]
-      elif op is Ops.WHERE: out = np.where(vals[0], vals[1], vals[2]) if is_vec else (vals[1] if vals[0] else vals[2])
-      elif op is Ops.AND:   out = (np.logical_and(vals[0], vals[1]) if u.dtype is dtypes.bool else np.bitwise_and(vals[0], vals[1])) if is_vec else ((vals[0] and vals[1]) if u.dtype is dtypes.bool else (vals[0] & vals[1]))
-      elif op is Ops.OR:    out = (np.logical_or(vals[0], vals[1]) if u.dtype is dtypes.bool else np.bitwise_or(vals[0], vals[1])) if is_vec else ((vals[0] or vals[1]) if u.dtype is dtypes.bool else (vals[0] | vals[1]))
-      elif op is Ops.XOR:   out = (np.logical_xor(vals[0], vals[1]) if u.dtype is dtypes.bool else np.bitwise_xor(vals[0], vals[1])) if is_vec else ((vals[0] != vals[1]) if u.dtype is dtypes.bool else (vals[0] ^ vals[1]))
-      elif op is Ops.SHL:   out = vals[0] << vals[1]
-      elif op is Ops.SHR:   out = vals[0] >> vals[1]
-      else: raise NotImplementedError(f"eval not implemented for {op}")
-      res = _cast_value(out, u.dtype)
+          target = src[0]
+          if len(src) == 2: idx, val = None, eval_node(src[1], cid, env, cache)
+          else: idx, val = int(eval_node(src[1], cid, env, cache)), eval_node(src[2], cid, env, cache)
+          if target.op is Ops.ALLOC:
+            if idx is None:
+              core_allocs[cid][target] = val.copy() if isinstance(val, np.ndarray) else val
+            else:
+              slot = core_allocs[cid].setdefault(target, np.zeros(target.arg.shape, dtype=np.float32))
+              slot[idx] = val
+          else:
+            arr = buffers[target.arg.name]
+            arr.reshape(-1)[0 if idx is None else idx] = val
+          res = None
+      case Ops.NOC_READ:
+        if len(src) == 3 and not bool(eval_node(src[2], cid, env, cache)):
+          shape = (32, 32) if arg.tiles == 1 else (arg.tiles, 32, 32)
+          res = _cast_value(np.zeros(shape, dtype=np.float32), u.dtype)
+        else:
+          buf_uop, off_uop = src[0], src[1]
+          off = int(eval_node(off_uop, cid, env, cache))
+          tiles = _tile_view(buffers[buf_uop.arg.name])
+          chunk = tiles[off] if arg.tiles == 1 else tiles[off : off + arg.tiles]
+          res = _cast_value(chunk.copy(), u.dtype)
+      case Ops.NOC_WRITE:
+        if len(src) == 4 and not bool(eval_node(src[3], cid, env, cache)):
+          res = None
+        else:
+          buf_uop, off_uop, val_uop = src[0], src[1], src[2]
+          off = int(eval_node(off_uop, cid, env, cache))
+          val = eval_node(val_uop, cid, env, cache)
+          arr = buffers[buf_uop.arg.name]
+          if val_uop.space is Space.SCALAR:
+            arr.reshape(-1)[off] = val
+          else:
+            tiles = _tile_view(arr)
+            v = _cast_value(val, buf_uop.dtype)
+            if arg.tiles == 1: tiles[off] = v
+            else: tiles[off : off + arg.tiles] = v
+          res = None
+      case Ops.NOC_MCAST:
+        val_uop, sender_uop = src
+        sender_val = int(eval_node(sender_uop, cid, env, cache))
+        x, y = workers[cid]
+        match arg.rect:
+          case "col": sender_cid = coord_to_id[(x, sender_val)]
+          case "row": sender_cid = coord_to_id[(sender_val, y)]
+          case _: sender_cid = sender_val
+        res = eval_node(val_uop, sender_cid, env, {})
+      case Ops.NOC_GATHER | Ops.NOC_ALLGATHER:
+        val_uop = src[0]
+        x, y = workers[cid]
+        match arg.group:
+          case "row": peers = [i for i, (px, py) in enumerate(workers) if py == y]
+          case "col": peers = [i for i, (px, py) in enumerate(workers) if px == x]
+          case "all": peers = list(range(len(workers)))
+          case _: peers = list(arg.group)
+        res = np.stack([eval_node(val_uop, p, env, {}) for p in peers], axis=0)
+      case Ops.UNPACK:
+        v = eval_node(src[0], cid, env, cache)
+        if arg.transpose: v = v.T
+        res = _cast_value(v.copy(), u.dtype)
+      case Ops.MVMUL:
+        b = eval_node(src[0], cid, env, cache).astype(np.float32)
+        a = eval_node(src[1], cid, env, cache).astype(np.float32)
+        res = _cast_value(b @ a, u.dtype)
+      case Ops.PACK:
+        res = _cast_value(eval_node(src[0], cid, env, cache), u.dtype)
+      case Ops.LANE_ID:
+        row, col = np.indices((32, 32), dtype=np.int32)
+        res = _cast_value((row % 4) * 8 + (col % 16) // 2, u.dtype)
+      case Ops.REDUCE_ROW:
+        v = eval_node(src[0], cid, env, cache)
+        r = v.sum(axis=-1, keepdims=True) if arg is Ops.ADD else v.max(axis=-1, keepdims=True)
+        res = _cast_value(np.broadcast_to(r, v.shape).copy(), u.dtype)
+      case Ops.REDUCE_LANES:
+        v = eval_node(src[0], cid, env, cache)
+        red_op, scope = arg
+        res = _cast_value(_reduce_lanes_np(np.asarray(v), red_op, scope), u.dtype)
+      case Ops.ARGMAX:
+        v = eval_node(src[0], cid, env, cache)
+        idx = np.argmax(v, axis=-1, keepdims=True).astype(np.int32)
+        res = np.broadcast_to(idx, v.shape).copy()
+      case Ops.CAST:
+        res = _cast_value(eval_node(src[0], cid, env, cache), u.dtype)
+      case Ops.BITCAST:
+        v = eval_node(src[0], cid, env, cache)
+        np_dt = {dtypes.fp32: np.float32, dtypes.i32: np.int32, dtypes.u32: np.uint32}[u.dtype]
+        res = np.asarray(v).view(np_dt)
+        if not isinstance(v, np.ndarray): res = res.item()
+      case Ops.SFPU:
+        vals = [eval_node(s, cid, env, cache) for s in src]
+        if any(isinstance(v, np.ndarray) and v.ndim == 2 for v in vals):
+          vals = [_bcast_lreg_to_tile(v) if (isinstance(v, np.ndarray) and v.shape == (32,)) else v for v in vals]
+        res = _cast_value(_eval_sfpu_prim(arg, vals, u.dtype), u.dtype)
+      case Ops.REPLAY | Ops.MOP:
+        raise NotImplementedError("REPLAY/MOP escape hatches hold raw Tensix words and cannot be functionally evaluated in Python")
+      case _:
+        vals = [eval_node(s, cid, env, cache) for s in src]
+        # Broadcast (32,) LREG operands into (32, 32) DST operands by exact Blackhole SFPU lane.
+        if any(isinstance(v, np.ndarray) and v.ndim == 2 for v in vals):
+          vals = [_bcast_lreg_to_tile(v) if (isinstance(v, np.ndarray) and v.shape == (32,)) else v for v in vals]
+        is_vec = any(isinstance(v, np.ndarray) for v in vals)
+        match op:
+          case Ops.ADD: out = vals[0] + vals[1]
+          case Ops.SUB: out = vals[0] - vals[1]
+          case Ops.MUL: out = vals[0] * vals[1]
+          case Ops.MULACC:
+            neg_ab, neg_c = arg if isinstance(arg, tuple) else (False, False)
+            ab = -(vals[0] * vals[1]) if neg_ab else (vals[0] * vals[1])
+            c = -vals[2] if neg_c else vals[2]
+            out = ab + c
+          case Ops.DIV: out = (vals[0] / vals[1]) if u.dtype.is_float else (vals[0] // vals[1])
+          case Ops.MOD: out = vals[0] % vals[1]
+          case Ops.MAX: out = np.maximum(vals[0], vals[1]) if is_vec else max(vals[0], vals[1])
+          case Ops.MIN: out = np.minimum(vals[0], vals[1]) if is_vec else min(vals[0], vals[1])
+          case Ops.NEG: out = -vals[0]
+          case Ops.ABS: out = np.abs(vals[0]) if is_vec else abs(vals[0])
+          case Ops.NOT: out = (np.logical_not(vals[0]) if u.dtype is dtypes.bool else np.bitwise_not(vals[0])) if is_vec else ((not vals[0]) if u.dtype is dtypes.bool else ~vals[0])
+          case Ops.EXP2: out = np.exp2(vals[0]) if is_vec else math.exp2(vals[0])
+          case Ops.LOG2: out = np.log2(vals[0]) if is_vec else math.log2(vals[0])
+          case Ops.SIN: out = np.sin(vals[0]) if is_vec else math.sin(vals[0])
+          case Ops.SQRT: out = np.sqrt(vals[0]) if is_vec else math.sqrt(vals[0])
+          case Ops.RSQRT: out = (1.0 / np.sqrt(vals[0])) if is_vec else (1.0 / math.sqrt(vals[0]))
+          case Ops.RECIP: out = (1.0 / vals[0]) if is_vec else (1.0 / vals[0])
+          case Ops.CMPLT: out = vals[0] < vals[1]
+          case Ops.CMPEQ: out = vals[0] == vals[1]
+          case Ops.CMPNE: out = vals[0] != vals[1]
+          case Ops.WHERE: out = np.where(vals[0], vals[1], vals[2]) if is_vec else (vals[1] if vals[0] else vals[2])
+          case Ops.AND: out = (np.logical_and(vals[0], vals[1]) if u.dtype is dtypes.bool else np.bitwise_and(vals[0], vals[1])) if is_vec else ((vals[0] and vals[1]) if u.dtype is dtypes.bool else (vals[0] & vals[1]))
+          case Ops.OR: out = (np.logical_or(vals[0], vals[1]) if u.dtype is dtypes.bool else np.bitwise_or(vals[0], vals[1])) if is_vec else ((vals[0] or vals[1]) if u.dtype is dtypes.bool else (vals[0] | vals[1]))
+          case Ops.XOR: out = (np.logical_xor(vals[0], vals[1]) if u.dtype is dtypes.bool else np.bitwise_xor(vals[0], vals[1])) if is_vec else ((vals[0] != vals[1]) if u.dtype is dtypes.bool else (vals[0] ^ vals[1]))
+          case Ops.SHL: out = vals[0] << vals[1]
+          case Ops.SHR: out = vals[0] >> vals[1]
+          case _: raise NotImplementedError(f"eval not implemented for {op}")
+        res = _cast_value(out, u.dtype)
 
     if op not in (Ops.LOAD, Ops.STORE, Ops.NOC_WRITE, Ops.END, Ops.SINK, Ops.BARRIER, Ops.AFTER):
       cache[u] = res
