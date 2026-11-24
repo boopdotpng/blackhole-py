@@ -5,10 +5,12 @@ from hw import isa
 LOCAL_BASE_REG = 3                   # x3 points at the middle of the RISC's local memory block
 SPILL_FRAME, SPILL_SLOTS = 0xFFB00200, 384
 
+def _rv(op:str, **regs) -> int:
+  f, regs = isa.RV32[op], regs | {"shamt": regs["imm"]}
+  return f(**{k: v for k, v in regs.items() if k in {x.name for x in getattr(f.func, "_fields")} - f.keywords.keys()})
 
 class RegAllocError(RuntimeError):
   pass
-
 
 @dataclass(frozen=True)
 class Instruction:
@@ -17,7 +19,6 @@ class Instruction:
   a: int
   b: int
   imm: int
-
 
 def allocate(g):
   # Virtual registers are unique across functions, so calls and returns are just CFG edges.
@@ -107,16 +108,16 @@ def allocate(g):
         return colors[r]
       if r not in loaded:
         p = loaded[r] = scratch[len(loaded)]
-        g.items.append((isa.rv("lw", p, LOCAL_BASE_REG, imm=frame + 4 * slots[r]), loc))
+        g.items.append((isa.lw(rd=p, rs1=LOCAL_BASE_REG, imm=frame + 4 * slots[r]), loc))
       return loaded[r]
 
     if isinstance(item, Instruction):
       a, b = physical(item.a), physical(item.b)
       d = scratch[0] if item.rd in slots else physical(item.rd)
       if item.op != "addi" or item.imm or d != a:
-        g.items.append((isa.rv(item.op, d, a, b, item.imm), loc))
+        g.items.append((_rv(item.op, rd=d, rs1=a, rs2=b, imm=item.imm), loc))
       if item.rd in slots:
-        g.items.append((isa.rv("sw", 0, LOCAL_BASE_REG, d, frame + 4 * slots[item.rd]), loc))
+        g.items.append((isa.sw(rs1=LOCAL_BASE_REG, rs2=d, imm=frame + 4 * slots[item.rd]), loc))
     elif isinstance(item, tuple):
       op, a, b, target = item
       g.items.append(((op, physical(a), physical(b), target), loc))

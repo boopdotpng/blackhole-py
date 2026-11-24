@@ -7,7 +7,6 @@ from compiler import (
   lower_reduce_to_loop, pretty, simplify, special_axes, substitute, verify,
 )
 
-
 class TestUOpCore(unittest.TestCase):
   def test_hash_consing_and_arg_distinction(self):
     c_i = UOp.const(dtypes.i32, 1)
@@ -72,7 +71,6 @@ class TestUOpCore(unittest.TestCase):
     pm_cycle = PatternMatcher([(UPat(Ops.NEG, src=(UPat.var("x"),)), lambda x: -(-x))])
     with self.assertRaises(RuntimeError):
       graph_rewrite(-cid, pm_cycle, limit=200)
-
 
 class TestLayer1OpsAndVerify(unittest.TestCase):
   def test_simplify_identities_and_float_safety(self):
@@ -139,7 +137,7 @@ class TestLayer1OpsAndVerify(unittest.TestCase):
     r = UOp.range(4, 0, "k")
     sa = a_buf.noc_read(r).unpack(Space.SRCA)
     sb = b_buf.noc_read(r).unpack(Space.SRCB)
-    w = isa.MVMUL(addr_mode=0)
+    w = isa.MVMUL()
     rep1 = UOp.replay([w, w, w, w], sb, sa, r, name="mm4")
     rep2 = UOp.replay([w, w, w, w], sb, sa, r, name="mm4")
     self.assertIs(rep1, rep2)
@@ -201,7 +199,6 @@ class TestLayer1OpsAndVerify(unittest.TestCase):
       verify(UOp.sink(p_no_acc.reduce(rk, op=Ops.ADD, space=Space.L1)))
     p_acc = a_bf16.noc_read(rk).unpack(Space.DST, dtypes.fp32).pack(dtypes.fp32, l1_acc=True)
     verify(UOp.sink(p_acc.reduce(rk, op=Ops.ADD, space=Space.L1)))
-
 
 class TestLayer1Evaluation(unittest.TestCase):
   def test_slice1_silu_mul_full_p100a_grid(self):
@@ -369,7 +366,6 @@ class TestLayer1Evaluation(unittest.TestCase):
     bad_r = UOp.range(4, axis=9)
     with self.assertRaises(VerifyError):
       verify(UOp.sink((bad_r + 1).carry(bad_r, space=Space.SCALAR)))
-
 
 if __name__ == "__main__":
   unittest.main()

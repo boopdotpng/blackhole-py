@@ -1,8 +1,10 @@
-import ctypes, ctypes.util, fcntl, mmap, os, struct
-from pathlib import Path
+import ctypes, ctypes.util, mmap, os, sys
 
 TLB_SIZE = 1 << 21
 SUPPORTED = ("p100a", "p150a", "p150b")
+ARC = (8, 0)
+TELEMETRY_DATA, TELEMETRY_PTR = 0x80030430, 0x80030434
+CARDS = {0x36: "p100", 0x40: "p150a", 0x41: "p150b", 0x42: "p150c", 0x43: "p100a"}  # telemetry board id -> name
 
 libc = ctypes.CDLL(ctypes.util.find_library("c"), use_errno=True)
 libc.mmap.argtypes = [ctypes.c_void_p, ctypes.c_size_t, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int64]
@@ -28,105 +30,59 @@ def buffer_address(obj) -> int:
   try: return view.buf or 0
   finally: ctypes.pythonapi.PyBuffer_Release(ctypes.byref(view))
 
-def ioctl(fd, nr, fmt, *args):
-  data = bytearray(struct.pack("<" + fmt, *args))
-  fcntl.ioctl(fd, 0xFA00 | nr, data)
-  return struct.unpack("<" + fmt, data)
+def rect(core) -> tuple[int, int, int, int, int]:
+  # (x, y) or a multicast ((x0, y0), (x1, y1)) -> (x0, y0, x1, y1, mcast)
+  return (*core[0], *core[1], 1) if isinstance(core[0], tuple) else (*core, *core, 0)
 
-class HostMemory:
-  def __init__(self, card:"Card", size:int):
-    assert size % mmap.PAGESIZE == 0
-    self.fd, self.size, self.addr = card.fd, size, map_memory(size, flags=mmap.MAP_PRIVATE)
-    try:
-      self.mem = view_at(self.addr, size)
-      self.noc_addr = ioctl(self.fd, 7, "IIQQQQ", 16, 2, self.addr, size, 0, 0)[-1]
-    except BaseException:
-      libc.munmap(self.addr, size)
-      raise
-
-  def close(self):
-    if self.addr is None: return
-    try: ioctl(self.fd, 10, "QQQ", self.addr, self.size, 0)
-    finally:
-      libc.munmap(self.addr, self.size)
-      self.addr = None
+def telemetry_table(rd) -> dict[int, int]:
+  # ARC telemetry: tag -> address of its value. rd reads one ARC word.
+  table, data = rd(TELEMETRY_PTR), rd(TELEMETRY_DATA)
+  if not table or rd(table) >> 16 & 0xFF > 1 or not 0 < (n := rd(table + 4)) <= 256: raise OSError("bad ARC telemetry table")
+  return {e & 0xFFFF: data + 4 * (e >> 16) for e in (rd(table + 8 + 4 * i) for i in range(n))}
 
 class Card:
-  def __init__(self, index:int=0):
-    sysfs = Path(f"/sys/class/tenstorrent/tenstorrent!{index}")
-    if not (iommu := sysfs / "device/iommu_group/type").exists() or not iommu.read_text().startswith("DMA"):
-      raise RuntimeError("enable iommu")
-    if (name := (sysfs / "tt_card_type").read_text().strip()) not in SUPPORTED:
-      raise RuntimeError(f"unsupported card {name}, expected one of {SUPPORTED}")
-    self.name, self.fd = name, os.open(f"/dev/tenstorrent/{index}", os.O_RDWR | os.O_CLOEXEC | os.O_APPEND)
-    try:
-      if not ioctl(self.fd, 8, "IIB3xB3x", 4, 0, 20, 0)[-1]:
-        raise RuntimeError(f"/dev/tenstorrent/{index} is in use by another process")
-    except BaseException:
-      os.close(self.fd)
-      raise
-    self.windows, self.tlb_cfg = [], None
-    try:
-      self.power(7)
-      self.tlb_id, tlb_addr = self._window()
-    except BaseException:
-      self.close()
-      raise
-    self.tlb = view_at(tlb_addr, TLB_SIZE)
-    self.tlb32 = self.tlb.cast("I")
+  # A backend sets name and tlb_id and implements power(flags), window(core) -> u32-indexed view of a core's L1,
+  # alloc_host(size) -> HostMemory (mem, addr, size, noc_addr, close()), close(), and the TLB primitives below.
+  # Backends with can_pin also implement pin(va, size, read_only) -> NoC address and unpin(va, size).
+  can_pin, tlb_cfg = False, None
 
-  def close(self):
-    if self.fd is None: return
-    for addr in self.windows: libc.munmap(addr, TLB_SIZE)
-    self.windows = []
-    try: self.power(0)
-    finally:
-      os.close(self.fd)
-      self.fd = None
+  def _configure(self, tlb:int, core, addr:int): raise NotImplementedError  # point TLB `tlb` at core (or rect), addr
+  def _wread(self, off:int, n:int) -> bytes: raise NotImplementedError     # access at `off` in TLB tlb_id
+  def _wwrite(self, off:int, data): raise NotImplementedError
+  def _wread32(self, off:int) -> int: raise NotImplementedError
+  def _wwrite32(self, off:int, v:int): raise NotImplementedError
 
-  def power(self, flags:int):
-    ioctl(self.fd, 15, "IIBBH28x", 40, 0, 0, 15, flags)
-
-  def pin(self, va:int, size:int, read_only:bool=False) -> int:
-    return ioctl(self.fd, 7, "IIQQQQ", 16, 2 | (8 if read_only else 0), va, size, 0, 0)[-1]
-
-  def unpin(self, va:int, size:int): ioctl(self.fd, 10, "QQQ", va, size, 0)
-
-  def _window(self) -> tuple[int, int]:
-    _, _, tlb, _, offset, _, _ = ioctl(self.fd, 11, "QQIIQQQ", TLB_SIZE, 0, 0, 0, 0, 0, 0)
-    self.windows.append(addr := map_memory(TLB_SIZE, self.fd, offset))
-    return tlb, addr
-
-  def _configure(self, tlb, core, addr):
-    mcast = isinstance(core[0], tuple)
-    (x0, y0), (x1, y1) = core if mcast else (core, core)
-    ioctl(self.fd, 13, "IIQ4HBBB21x", tlb, 0, addr, x1, y1, x0, y0, 0, mcast, 1)
-
-  def window(self, core) -> memoryview:
-    tlb, addr = self._window()
-    self._configure(tlb, core, 0)
-    return view_at(addr, TLB_SIZE).cast("I")
-
-  def _target(self, core, addr) -> int:
+  def _target(self, core, addr:int) -> int:
     base = addr & -TLB_SIZE
     if self.tlb_cfg != (core, base):
       self._configure(self.tlb_id, core, base)
       self.tlb_cfg = (core, base)
     return addr - base
 
-  def write(self, core, addr, data):
+  def write(self, core, addr:int, data):
     data = memoryview(data).cast("B")
     while len(data):
       off = self._target(core, addr)
       n = min(len(data), TLB_SIZE - off)
-      self.tlb[off:off + n], addr, data = data[:n], addr + n, data[n:]
+      self._wwrite(off, data[:n])
+      addr, data = addr + n, data[n:]
 
-  def read(self, core, addr, n) -> bytes:
+  def read(self, core, addr:int, n:int) -> bytes:
     out = bytearray()
     while len(out) < n:
       off = self._target(core, addr + len(out))
-      out += self.tlb[off:off + min(n - len(out), TLB_SIZE - off)]
+      out += self._wread(off, min(n - len(out), TLB_SIZE - off))
     return bytes(out)
 
-  def write32(self, core, addr, v): self.tlb32[self._target(core, addr) // 4] = v
-  def read32(self, core, addr): return self.tlb32[self._target(core, addr) // 4]
+  def write32(self, core, addr:int, v:int): self._wwrite32(self._target(core, addr), v)
+  def read32(self, core, addr:int) -> int: return self._wread32(self._target(core, addr))
+  def arc_read32(self, addr:int) -> int: return self.read32(ARC, addr)
+
+  def telemetry(self, tag:int) -> int:
+    if (addr := telemetry_table(self.arc_read32).get(tag)) is None: raise RuntimeError(f"ARC telemetry has no tag {tag}")
+    return self.arc_read32(addr)
+
+def open_card(index:int=0) -> Card:
+  if sys.platform == "darwin": from pci_macos import MacCard as backend
+  else: from pci_linux import LinuxCard as backend
+  return backend(index)

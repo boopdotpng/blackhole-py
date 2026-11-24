@@ -1,5 +1,5 @@
 import fcntl, os, socket, struct, subprocess, sys, tempfile, time
-from pci import SUPPORTED, TLB_SIZE, libc, map_memory, view_at
+from pci import ARC, CARDS, SUPPORTED, TLB_SIZE, Card, libc, map_memory, rect, view_at
 
 APP = "/Applications/TTGPU.app/Contents/MacOS/TTGPU"
 SOCK_PATH = os.environ.get("TTGPU_SOCK", os.path.join(tempfile.gettempdir(), "ttgpu.sock"))
@@ -15,12 +15,10 @@ IATU_CTRL1, IATU_CTRL2, IATU_LOWER_BASE, IATU_UPPER_BASE, IATU_LOWER_LIMIT = 0x0
 IATU_LOWER_TARGET, IATU_UPPER_TARGET, IATU_CTRL3, IATU_UPPER_LIMIT = 0x14, 0x18, 0x1C, 0x20
 IATU_INCREASE_REGION_SIZE, IATU_REGION_EN = 1 << 13, 1 << 31
 NOC_PCIE_OFFSET = 4 << 58
-ARC = (8, 0)
-ARC_BOOT_STATUS, ARC_MSG_QCB_PTR, ARC_TELEMETRY_DATA, ARC_TELEMETRY_PTR = 0x80030408, 0x8003042C, 0x80030430, 0x80030434
+ARC_BOOT_STATUS, ARC_MSG_QCB_PTR = 0x80030408, 0x8003042C
 ARC_MSI_FIFO, ARC_MSG_QUEUE_HEADER = 0x800B0000, 32
 ARC_MSG_ASIC_STATE0, ARC_MSG_POWER_SETTING = 0xA0, 0x21
 TELEMETRY_BOARD_ID = 1
-CARDS = {0x36: "p100", 0x40: "p150a", 0x41: "p150b", 0x42: "p150c", 0x43: "p100a"}
 POWER_VALIDITY = 15
 
 class Server:
@@ -114,7 +112,7 @@ class Window:
   def __getitem__(self, i:int) -> int: return self.io.read32(0, self.base + 4 * i)
   def __setitem__(self, i:int, v:int): self.io.write32(0, self.base + 4 * i, v)
 
-class Card:
+class MacCard(Card):
   def __init__(self, index:int=0):
     if index != 0: raise RuntimeError("macOS: the TTGPU driver exposes one device, index 0")
     if (lk := lock()) is None: raise RuntimeError("the card is in use by another process")
@@ -124,10 +122,11 @@ class Card:
       if (size := self.io.map_bar(0)) < TLB_REGS + 0x1000: raise RuntimeError(f"BAR0 is {size:#x} bytes, expected 512 MiB")
       self.io.map_bar(2)
       self.free_tlbs = [t for t in range(TLB_2M_COUNT) if t not in (ARC_TLB, NOC_TLB, DEXT_TLB)]
-      self.arc_base, self.tlb_cfg = None, None
+      self.arc_base = None
       self.tlb_id = self.free_tlbs.pop(0)
       self._arc_msg(ARC_MSG_ASIC_STATE0)
-      self.name = os.environ.get("BH_CARD") or self._card()
+      self.name = os.environ.get("BH_CARD") or CARDS.get(kind := self.telemetry(TELEMETRY_BOARD_ID) >> 4 & 0xFFFF,
+                                                         f"unknown board type {kind:#x}")
       if self.name not in SUPPORTED: raise RuntimeError(f"unsupported card {self.name}, expected one of {SUPPORTED}")
       self.power(7)
     except BaseException:
@@ -149,7 +148,10 @@ class Card:
     self._arc_msg(ARC_MSG_POWER_SETTING | POWER_VALIDITY << 8 | flags << 16)
     self.powered = bool(flags)
 
-  def _configure_tlb(self, tlb:int, addr:int, x0:int, y0:int, x1:int, y1:int, mcast:int=0):
+  def alloc_host(self, size:int) -> "HostMemory": return HostMemory(self, size)
+
+  def _configure(self, tlb:int, core, addr:int):
+    x0, y0, x1, y1, mcast = rect(core)
     assert addr % TLB_SIZE == 0 and 0 <= tlb < TLB_2M_COUNT
     v = addr >> 21 | x1 << 43 | y1 << 49 | x0 << 55 | y0 << 61 | mcast << 69 | 1 << 70
     self.io.write(0, TLB_REGS + tlb * TLB_REG_SIZE, struct.pack("<3I", v & 0xFFFFFFFF, v >> 32 & 0xFFFFFFFF, v >> 64))
@@ -158,85 +160,61 @@ class Card:
   def window(self, core) -> Window:
     if not self.free_tlbs: raise RuntimeError("no free 2M TLB windows")
     tlb = self.free_tlbs.pop(0)
-    self._configure_tlb(tlb, 0, *core, *core)
+    self._configure(tlb, core, 0)
     return Window(self.io, tlb * TLB_SIZE)
 
-  def _target(self, core, addr) -> int:
-    base = addr & -TLB_SIZE
-    if self.tlb_cfg != (core, base):
-      mcast = isinstance(core[0], tuple)
-      (x0, y0), (x1, y1) = core if mcast else (core, core)
-      self._configure_tlb(self.tlb_id, base, x0, y0, x1, y1, int(mcast))
-      self.tlb_cfg = (core, base)
-    return self.tlb_id * TLB_SIZE + addr - base
+  def _wread(self, off, n): return self.io.read(0, self.tlb_id * TLB_SIZE + off, n)
+  def _wwrite(self, off, data): self.io.write(0, self.tlb_id * TLB_SIZE + off, data)
+  def _wread32(self, off): return self.io.read32(0, self.tlb_id * TLB_SIZE + off)
+  def _wwrite32(self, off, v): self.io.write32(0, self.tlb_id * TLB_SIZE + off, v)
 
   def write(self, core, addr, data):
     assert addr % 4 == 0, "MMIO writes must be 4-byte aligned"
     data = bytes(memoryview(data).cast("B"))
     if tail := len(data) % 4:
       assert not isinstance(core[0], tuple), "multicast writes must be a multiple of 4 bytes"
-      last = addr + len(data) - tail
-      data += struct.pack("<I", self.read32(core, last))[tail:]
-    while data:
-      off = self._target(core, addr)
-      n = min(len(data), TLB_SIZE - off % TLB_SIZE)
-      self.io.write(0, off, data[:n])
-      addr, data = addr + n, data[n:]
+      data += struct.pack("<I", self.read32(core, addr + len(data) - tail))[tail:]
+    super().write(core, addr, data)
 
   def read(self, core, addr, n) -> bytes:
-    out, start, end = bytearray(), addr & ~3, -(-(addr + n) // 4) * 4
-    while start + len(out) < end:
-      off = self._target(core, start + len(out))
-      out += self.io.read(0, off, min(end - start - len(out), TLB_SIZE - off % TLB_SIZE))
-    return bytes(out[addr - start:addr - start + n])
-
-  def write32(self, core, addr, v): self.io.write32(0, self._target(core, addr), v)
-  def read32(self, core, addr): return self.io.read32(0, self._target(core, addr))
+    start = addr & ~3
+    return super().read(core, start, -(-(addr + n) // 4) * 4 - start)[addr - start:addr - start + n]
 
   def _arc_off(self, addr:int) -> int:
     base = addr & -TLB_SIZE
     if self.arc_base != base:
-      self._configure_tlb(ARC_TLB, base, *ARC, *ARC)
+      self._configure(ARC_TLB, ARC, base)
       self.arc_base = base
     return ARC_TLB * TLB_SIZE + addr - base
 
-  def _arc_read32(self, addr:int) -> int:
+  def arc_read32(self, addr:int) -> int:
     if (v := self.io.read32(0, self._arc_off(addr))) == 0xFFFFFFFF:
       raise RuntimeError(f"ARC read of {addr:#x} returned all ones: NoC hung or device gone")
     return v
 
   def _arc_write32(self, addr:int, v:int): self.io.write32(0, self._arc_off(addr), v)
 
-  def _card(self) -> str:
-    table, data = self._arc_read32(ARC_TELEMETRY_PTR), self._arc_read32(ARC_TELEMETRY_DATA)
-    assert 0 < (n := self._arc_read32(table + 4)) <= 256, f"bad ARC telemetry entry count {n}"
-    for i in range(n):
-      if (e := self._arc_read32(table + 8 + 4 * i)) & 0xFFFF == TELEMETRY_BOARD_ID:
-        kind = self._arc_read32(data + 4 * (e >> 16)) >> 4 & 0xFFFF
-        return CARDS.get(kind, f"unknown board type {kind:#x}")
-    raise RuntimeError("ARC telemetry has no board id")
-
   def _arc_msg(self, header:int, payload:tuple[int, ...]=(), timeout:float=1.0) -> tuple[int, ...]:
     deadline = time.monotonic() + 0.5
-    while not self._arc_read32(ARC_BOOT_STATUS) & 1:
+    while not self.arc_read32(ARC_BOOT_STATUS) & 1:
       if time.monotonic() > deadline: raise RuntimeError("ARC isn't ready for messages")
       time.sleep(0.001)
-    qcb = self._arc_read32(ARC_MSG_QCB_PTR)
-    q, entries = self._arc_read32(qcb), self._arc_read32(qcb + 4) & 0xFF
+    qcb = self.arc_read32(ARC_MSG_QCB_PTR)
+    q, entries = self.arc_read32(qcb), self.arc_read32(qcb + 4) & 0xFF
     if not entries: raise RuntimeError("ARC message queue has no entries")
     wrap, responses = 2 * entries, q + ARC_MSG_QUEUE_HEADER + entries * 32
 
     def pop() -> tuple[int, ...] | None:
-      rptr, wptr = self._arc_read32(q + 0x04), self._arc_read32(q + 0x14)
+      rptr, wptr = self.arc_read32(q + 0x04), self.arc_read32(q + 0x14)
       if (wptr - rptr) % wrap == 0: return None
       slot = responses + rptr % entries * 32
-      resp = tuple(self._arc_read32(slot + 4 * i) for i in range(8))
+      resp = tuple(self.arc_read32(slot + 4 * i) for i in range(8))
       self._arc_write32(q + 0x04, (rptr + 1) % wrap)
       return resp
 
     for _ in range(entries):
       if pop() is None: break
-    wptr, rptr = self._arc_read32(q + 0x00), self._arc_read32(q + 0x10)
+    wptr, rptr = self.arc_read32(q + 0x00), self.arc_read32(q + 0x10)
     if (wptr - rptr) % wrap >= entries: raise RuntimeError("ARC request queue is full")
     slot = q + ARC_MSG_QUEUE_HEADER + wptr % entries * 32
     for i, w in enumerate((header, *payload, 0, 0, 0, 0, 0, 0, 0)[:8]): self._arc_write32(slot + 4 * i, w)
@@ -271,7 +249,7 @@ class Card:
     for r in regions: self._iatu(r, 0, 0, 0)
 
 class HostMemory:
-  def __init__(self, card:Card, size:int):
+  def __init__(self, card:MacCard, size:int):
     self.card, self.addr = card, None
     fd, self.size, _ = card.io.alloc_dma(size)
     try: self.addr = map_memory(self.size, fd)
@@ -365,7 +343,7 @@ def _reset(timeout:float):
 
 def park(force:bool=False):
   if (lk := lock()) is None and not force: raise RuntimeError("the card is in use by another process")
-  card = Card.__new__(Card)
+  card = MacCard.__new__(MacCard)
   card.io, card.arc_base, card.lock = Server(), None, lk
   try:
     card.io.map_bar(0)

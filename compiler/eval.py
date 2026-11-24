@@ -5,13 +5,11 @@ import hw
 from .ops import verify
 from .uop import DType, KernelArg, Ops, Space, UOp, dtypes
 
-
 def _round_bf16(arr: np.ndarray) -> np.ndarray:
   f32 = np.asarray(arr, dtype=np.float32)
   u = f32.view(np.uint32).astype(np.uint64)
   r = ((u + 0x7FFF + ((u >> 16) & 1)) & ~np.uint64(0xFFFF)).astype(np.uint32)
   return r.view(np.float32)
-
 
 # Exact Blackhole SFPARECIP 128-entry LUT (from ttsim/src/tensix.cpp:approx_recip).
 _ARECIP_LUT = np.array([
@@ -23,7 +21,6 @@ _ARECIP_LUT = np.array([
   15, 14, 14, 13, 12, 12, 11, 11, 10, 9, 9, 8, 8, 7, 7, 6, 5, 5, 4, 4, 3, 3, 2, 2, 1,
   1, 0,
 ], dtype=np.uint32)
-
 
 def _eval_sfpu_prim(prim, vals: list[Any], out_dt: DType) -> Any:
   p = prim.op
@@ -68,7 +65,6 @@ def _eval_sfpu_prim(prim, vals: list[Any], out_dt: DType) -> Any:
     return np.where((c & np.uint32(0x80000000)) != 0, -mag, mag).astype(np.float32)
   raise NotImplementedError(f"eval not implemented for SfpuPrim {p!r}")
 
-
 def _cast_value(val: Any, dt: DType) -> Any:
   if isinstance(val, np.ndarray):
     if dt is dtypes.bf16: return _round_bf16(val)
@@ -84,7 +80,6 @@ def _cast_value(val: Any, dt: DType) -> Any:
   if dt.is_float: return float(np.float32(val))
   return val
 
-
 def _tile_view(arr: np.ndarray, shape: tuple[int, int] = (32, 32)) -> np.ndarray:
   th, tw = shape
   if arr.ndim >= 2 and arr.shape[-2:] == (th, tw):
@@ -93,27 +88,22 @@ def _tile_view(arr: np.ndarray, shape: tuple[int, int] = (32, 32)) -> np.ndarray
     return arr.reshape(-1, th, tw)
   raise ValueError(f"array of shape {arr.shape} cannot be viewed as {shape} tiles")
 
-
 _FP_IDX = np.arange(32, dtype=np.int32)[:, None]
 _LN_IDX = np.arange(32, dtype=np.int32)[None, :]
 _FP_ROW = ((_FP_IDX // 8) // 2) * 16 + ((_FP_IDX % 8) // 2) * 4 + (_LN_IDX // 8)
 _FP_COL = ((_FP_IDX // 8) % 2) * 16 + (_LN_IDX % 8) * 2 + (_FP_IDX % 2)
 _TILE_LANE = (np.arange(32, dtype=np.int32)[:, None] % 4) * 8 + (np.arange(32, dtype=np.int32)[None, :] % 16) // 2
 
-
 def _tile_to_footprints(tile: np.ndarray) -> np.ndarray:
   return tile[_FP_ROW, _FP_COL]
-
 
 def _footprints_to_tile(fps: np.ndarray) -> np.ndarray:
   out = np.empty((32, 32), dtype=fps.dtype)
   out[_FP_ROW, _FP_COL] = fps
   return out
 
-
 def _bcast_lreg_to_tile(lreg: np.ndarray) -> np.ndarray:
   return lreg[_TILE_LANE]
-
 
 def _reduce_lanes_np(v: np.ndarray, op: Ops, scope: str) -> np.ndarray:
   def fold(a: np.ndarray, axis: int) -> np.ndarray:
@@ -128,7 +118,6 @@ def _reduce_lanes_np(v: np.ndarray, op: Ops, scope: str) -> np.ndarray:
   reduced = fold(fps, -1) if scope == "all" else fold(fps.reshape(32, 4, 8), -1).reshape(32, 32)
   return _footprints_to_tile(reduced)
 
-
 def _init_carry_val(val: Any, space: Space, dt: DType) -> Any:
   if space is Space.DST:
     if isinstance(val, np.ndarray) and val.shape == (32, 32): return _cast_value(val.copy(), dt)
@@ -138,9 +127,6 @@ def _init_carry_val(val: Any, space: Space, dt: DType) -> Any:
     if isinstance(val, np.ndarray) and val.shape == (32,): return _cast_value(val.copy(), dt)
     return _cast_value(np.full((32,), val, dtype=np.float32 if dt.is_float else np.int32), dt)
   return _cast_value(val.copy() if isinstance(val, np.ndarray) else val, dt)
-
-
-
 
 # writes outputs into `buffers` in place
 def evaluate(

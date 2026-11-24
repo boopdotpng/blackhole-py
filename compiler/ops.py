@@ -17,7 +17,6 @@ def _reduce_identity(op: Ops, dt: DType) -> UOp:
       return UOp.const(dt, (1 << (dt.bits - 1)) - 1 if dt.is_signed else (1 << dt.bits) - 1)
     case _: raise ValueError(f"unsupported reduce op {op}")
 
-
 def _reduce_combine(op: Ops, acc: UOp, val: UOp) -> UOp:
   match op:
     case Ops.ADD: return acc + val
@@ -25,7 +24,6 @@ def _reduce_combine(op: Ops, acc: UOp, val: UOp) -> UOp:
     case Ops.MAX: return acc.maximum(val)
     case Ops.MIN: return acc.minimum(val)
     case _: raise ValueError(f"unsupported reduce op {op}")
-
 
 def _lower_reduce_node(u: UOp) -> UOp | None:
   arg = u.arg
@@ -41,15 +39,12 @@ def _lower_reduce_node(u: UOp) -> UOp | None:
     return out
   return wrap(0, init)
 
-
 pm_lower_reduce = PatternMatcher([
   (UPat(Ops.REDUCE, name="u"), _lower_reduce_node),
 ])
 
-
 def lower_reduce_to_loop(root: UOp) -> UOp:
   return graph_rewrite(root, pm_lower_reduce)
-
 
 # ---- Minimal algebraic simplification & constant folding ----
 
@@ -65,7 +60,6 @@ def _eval_const_unary(op: Ops, dt: DType, a: Any) -> UOp | None:
     case Ops.RSQRT if a > 0: return UOp.const(dt, 1.0 / math.sqrt(a))
     case Ops.RECIP if a != 0: return UOp.const(dt, 1.0 / a)
   return None
-
 
 def _eval_const_binary(op: Ops, dt: DType, a: Any, b: Any) -> UOp | None:
   match op:
@@ -89,7 +83,6 @@ def _eval_const_binary(op: Ops, dt: DType, a: Any, b: Any) -> UOp | None:
     case Ops.SHL: return UOp.const(dt, a << b)
     case Ops.SHR: return UOp.const(dt, a >> b)
   return None
-
 
 pm_simplify = PatternMatcher([
   # constant folding
@@ -123,10 +116,8 @@ pm_simplify = PatternMatcher([
   (UPat(Ops.IF, src=(UPat.const(arg=False), UPat.var(), UPat.var("else_body"))), lambda else_body: else_body),
 ])
 
-
 def simplify(root: UOp) -> UOp:
   return graph_rewrite(root, pm_simplify)
-
 
 # ---- Analysis helpers ----
 
@@ -149,24 +140,19 @@ def open_ranges(root: UOp) -> dict[UOp, frozenset[UOp]]:
         active[u] = frozenset().union(*(active[s] for s in u.src)) if u.src else frozenset()
   return active
 
-
 def special_axes(root: UOp) -> set[str]:
   return {u.arg for u in root.toposort() if u.op is Ops.SPECIAL}
-
 
 # ---- Hardware invariant verifier ----
 
 class VerifyError(ValueError):
   pass
 
-
 _FPU_ELW_OPS = frozenset({Ops.ADD, Ops.SUB, Ops.MUL, Ops.MAX})
-
 
 def _check_gate(gate: UOp, op_name: str):
   if gate.dtype is not dtypes.bool or gate.space is not Space.SCALAR:
     raise VerifyError(f"{op_name} gate must be scalar bool, got ({gate.space}, {gate.dtype})")
-
 
 def verify(root: UOp) -> None:
   nodes = root.toposort()

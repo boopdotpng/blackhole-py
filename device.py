@@ -1,10 +1,8 @@
-import atexit, collections, concurrent.futures, copy, ctypes, math, mmap, struct, sys, time
+import atexit, collections, concurrent.futures, copy, ctypes, math, mmap, struct, time
 import numpy as np
 import fw
 from hw import isa
-if sys.platform == "darwin": from pci_macos import Card, HostMemory
-else: from pci import Card, HostMemory
-from pci import buffer_address
+from pci import buffer_address, open_card
 
 # name: (numpy type the host sees, bytes per 1024-element tile). bf16, e4m3, e5m2 and bfp8 are raw bits on the host.
 DTYPES = {
@@ -14,8 +12,7 @@ DTYPES = {
 }
 FROM_NUMPY = {"float32": "fp32", "uint8": "u8", "uint32": "u32", "int32": "i32", "uint64": "u64"}
 
-ARC = (8, 0)
-TELEMETRY_DATA, TELEMETRY_PTR, TAG_ENABLED_TENSIX_COL = 0x80030430, 0x80030434, 34
+TAG_ENABLED_TENSIX_COL = 34
 DRAM_BANK_SIZE, DRAM_PAGE_MAX = 0xFF000000, 4096
 NOC_MAX_BURST = 0x4000
 NOC_NODE_ID = 0xFFB20044  # physical NoC0 coords; NOC_ID_LOGICAL (0xFFB20148) is translated
@@ -87,7 +84,7 @@ class Allocator:
         copy(at, hm.noc_addr + (at - hm.addr), min(self.COPY_MAX, va + n - at))
       dev.timeline_signal.wait(dev.timeline_value, timeout)
       return True
-    if n < self.PIN_CHUNK // 4 or not hasattr(dev.card, "pin"): return False
+    if n < self.PIN_CHUNK // 4 or not dev.card.can_pin: return False
     # Pinning costs about as much as the DMA, so the next PIN_DEPTH chunks are pinned on the pool while one copies.
     chunks, at = [], va
     while at < va + n:
@@ -213,7 +210,6 @@ class Buffer:
 
   def __repr__(self): return f"Buffer({self.shape}, {self.dtype}{', host' if self.host else ''})"
 
-
 class HostStream:
   def __init__(self, device: Device, capacity: int):
     # u32[0] is the written counter, padded to 64 bytes; the payload ring starts at u32[16].
@@ -243,9 +239,9 @@ class HostStream:
 
 class Device:
   def __init__(self, index:int=0):
-    self.card, self.host, self.booted, self.pinned_buffers, self.allocator = Card(index), None, False, [], None
+    self.card, self.host, self.booted, self.pinned_buffers, self.allocator = open_card(index), None, False, [], None
     try:
-      self.cols = (self._telemetry(TAG_ENABLED_TENSIX_COL) & 0x3FFF).bit_count()
+      self.cols = (self.card.telemetry(TAG_ENABLED_TENSIX_COL) & 0x3FFF).bit_count()
       if self.cols not in (12, 14): raise RuntimeError(f"unsupported {self.card.name}: {self.cols} Tensix columns")
       self.dram_banks = 7 if self.card.name == "p100a" else 8
       right = 2 + self.cols
@@ -259,7 +255,7 @@ class Device:
       self.booted = True
       self.stage_base, self.stage_size = 16 << 20, 8 << 20
       # Unused 32 MiB tail: DMA from the last 16 MiB of a pin runs at ~33 GB/s instead of ~56 (cause unknown).
-      self.host = HostMemory(self.card, self.stage_base + 2 * self.stage_size + (32 << 20))
+      self.host = self.card.alloc_host(self.stage_base + 2 * self.stage_size + (32 << 20))
       self.heap = mmap.PAGESIZE
       self.timeline_signal, self.timeline_value = Signal(self, 0), 0
       self.allocator = Allocator(self)
@@ -321,8 +317,8 @@ class Device:
   def stop(self):
     for rect in self.worker_rects: self._reset(rect)
 
-  def pinned(self, size:int) -> HostMemory:
-    self.pinned_buffers.append(h := HostMemory(self.card, round_up(size, mmap.PAGESIZE) + (32 << 20)))  # slow tail, see __init__
+  def pinned(self, size:int):
+    self.pinned_buffers.append(h := self.card.alloc_host(round_up(size, mmap.PAGESIZE) + (32 << 20)))  # slow tail, see __init__
     return h
 
   def alloc_host(self, size:int, align:int=64) -> int:
@@ -338,7 +334,7 @@ class Device:
     self.synchronize()
     self.stop()
     header = bytearray(fw.CODE_BASE)
-    struct.pack_into("<I", header, 0, isa.rv("jal", imm=fw.CODE_BASE))
+    struct.pack_into("<I", header, 0, isa.jal(imm=fw.CODE_BASE))
     struct.pack_into("<I", header, fw.LEADER_COORD, coord(*self.workers[0]))
     struct.pack_into("<3I", header, fw.NUM_WORKERS, len(self.workers), self.dram_banks, self.cols)
     struct.pack_into("<4I", header, fw.ROLE_PC, *(role_pcs.get(r, 0) for r in fw.ROLES[1:]))
@@ -376,14 +372,6 @@ class Device:
       self.card.close()
       self.card = None
 
-  def _telemetry(self, tag:int) -> int:
-    rd = lambda addr: self.card.read32(ARC, addr)
-    table, data = rd(TELEMETRY_PTR), rd(TELEMETRY_DATA)
-    assert 0 < (n := rd(table + 4)) <= 256, f"bad ARC telemetry entry count {n}"
-    for i in range(n):
-      if (e := rd(table + 8 + 4 * i)) & 0xFFFF == tag: return rd(data + 4 * (e >> 16))
-    raise RuntimeError(f"ARC telemetry has no tag {tag}")
-
   def _reset(self, rect): self.card.write32(rect, SOFT_RESET, RESET_ALL)
 
   def _boot_dma(self):
@@ -393,6 +381,6 @@ class Device:
     self.card.write(core, fw.DMA_STATE, state)
     self.card.write(core, fw.DMA_BRISC_BASE, brisc)
     self.card.write(core, fw.DMA_NCRISC_BASE, ncrisc)
-    self.card.write32(core, 0, isa.rv("jal", imm=fw.DMA_BRISC_BASE))
+    self.card.write32(core, 0, isa.jal(imm=fw.DMA_BRISC_BASE))
     self.card.write32(core, SOFT_RESET, RESET_ALL & ~RESET_BRISC)
     return self.card.window(core)

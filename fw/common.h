@@ -1,6 +1,5 @@
 #pragma once
-#include "hw.h"  // addresses and layouts; hand-written, host-side copies live in fw/__init__.py and device.py
-
+#include "hw.h"
 typedef unsigned char u8;
 typedef unsigned int u32;
 
@@ -52,7 +51,6 @@ INLINE void invalidate_icache(void) {
   fence();
 }
 
-// A Tensix instruction inlined into the RISC instruction stream (hw.isa.inline)
 #define TT(w) __asm__ volatile(".word %0" :: "i"((u32)(w) << 2 | (u32)(w) >> 30) : "memory")
 
 #define STR_(x) #x

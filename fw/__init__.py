@@ -20,7 +20,6 @@ DMA_BRISC_BASE, DMA_BRISC_SIZE = 0x200, 0x3E00
 DMA_NCRISC_BASE, DMA_NCRISC_SIZE = 0x4000, 0x4000
 DMA_PACKETS = 0x9000
 
-
 CACHE = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "blackhole-py-rewrite"
 CFLAGS = [
   "--target=riscv32-none-unknown-elf", "-march=rv32im_zicsr", "-mabi=ilp32", "-std=c11", "-Os", "-Wall", "-Wextra",
@@ -30,7 +29,6 @@ CFLAGS = [
   "-nostdlib", "-static", "-fuse-ld=lld", "-Wl,--gc-sections,--no-relax,--build-id=none", "-I", str(HERE),
 ]
 
-
 def _deps(srcs: list[Path]) -> list[Path]:
   seen, todo = set(), list(srcs)
   while todo:
@@ -39,7 +37,6 @@ def _deps(srcs: list[Path]) -> list[Path]:
     for inc in re.findall(rb'^\s*#\s*include\s*"([^"]+)"', p.read_bytes(), re.M):
       todo += [q for d in (p.parent, HERE) if (q := (d / inc.decode()).resolve()).is_file()][:1]
   return sorted(seen)
-
 
 def compile(srcs: list, base: int, size: int, flags: tuple[str, ...] = (), ld: str = "link.ld") -> bytes:
   srcs = [(HERE / s).resolve() for s in srcs]
@@ -57,7 +54,6 @@ def compile(srcs: list, base: int, size: int, flags: tuple[str, ...] = (), ld: s
     os.replace(f"{d}/fw.bin", out)
   return out.read_bytes()
 
-
 @functools.cache
 def dma_images(dram_banks: int) -> tuple[bytes, bytes]:
   return tuple(
@@ -65,25 +61,16 @@ def dma_images(dram_banks: int) -> tuple[bytes, bytes]:
     for i, slot in enumerate(((DMA_BRISC_BASE, DMA_BRISC_SIZE), (DMA_NCRISC_BASE, DMA_NCRISC_SIZE)))
   )
 
-
-# ---- worker megakernels: [boot stub][kernel body][park epilogue] per launched role, see boot.c ----
-
 def _piece(srcs: list, role: str, flags: tuple[str, ...] = ()) -> bytes:
-  # Position independent: linked at 0, placed wherever pack_megakernel puts it.
   return compile(srcs, 0, L1_SIZE, ("-mcmodel=medany", f"-DROLE={ROLES.index(role)}", *flags), ld="boot.ld")
-
 
 @functools.cache
 def boot_stub(role: str) -> bytes: return _piece(["boot.c"], role)
 
-
 @functools.cache
 def park_epilogue(role: str) -> bytes: return _piece(["boot.c"], role, ("-DPARK",))
 
-
 def pack_megakernel(images: dict[str, bytes]) -> tuple[bytes, dict[str, int], int]:
-  # -> (image at CODE_BASE, boot pc per role, 64-aligned end of code in L1). BRISC always boots; it releases the
-  # subordinates whose ROLE_PC (written by Device.run from these pcs) is nonzero.
   if unknown := set(images) - set(ROLES): raise ValueError(f"unknown RISC roles: {unknown}")
   for role, code in images.items():
     if len(code) % 4: raise ValueError(f"{role} image size {len(code)} is not 4-byte aligned")

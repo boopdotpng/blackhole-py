@@ -2,15 +2,13 @@
 import argparse, csv, fcntl, glob, os, re, select, shutil, signal, struct, sys, termios, time, tty
 from collections import deque
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from pci import ARC, CARDS, telemetry_table
 MAC = sys.platform == "darwin"
-if MAC:
-  sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-  import pci_macos
+if MAC: import pci_macos
 
 SYS = "/sys/class/tenstorrent"
-ARC = (8, 0)
-SCRATCH = lambda n: 0x80030400 + 4 * n
-BOOT_STATUS, TELEM_DATA, TELEM_PTR = SCRATCH(2), SCRATCH(12), SCRATCH(13)
+BOOT_STATUS = 0x80030408
 
 IOCTL = lambda nr: 0xFA00 | nr
 RESET_DEVICE, LOCK_CTL, SET_POWER_STATE, NOC_READ = IOCTL(6), IOCTL(8), IOCTL(15), IOCTL(18)
@@ -70,19 +68,13 @@ class Card:
     return out
 
   def telemetry(self):
-    if self.addr is None:
-      base, data = self.noc_read(TELEM_PTR), self.noc_read(TELEM_DATA)
-      if not base or (self.noc_read(base) >> 16) & 0xFF > 1: raise OSError("no telemetry table")
-      n = self.noc_read(base + 4)
-      if not 0 < n < 1024: raise OSError("bad telemetry table")
-      ents = [self.noc_read(base + 8 + 4 * i) for i in range(n)]
-      self.addr = {e & 0xFFFF: data + 4 * (e >> 16) for e in ents}
+    if self.addr is None: self.addr = telemetry_table(self.noc_read)
     return {k: self.noc_read(self.addr[t]) if t in self.addr else None for k, t in TAGS.items()}
 
   def board_type(self):
     self.telemetry()
     kind = self.noc_read(self.addr[1]) >> 4 & 0xFFFF if 1 in self.addr else None
-    return pci_macos.CARDS.get(kind, f"{kind:#x}" if kind is not None else "?")
+    return CARDS.get(kind, f"{kind:#x}" if kind is not None else "?")
 
   def in_use(self): return bool(ioctl(self.fd, LOCK_CTL, "IIB3xB3x", 4, LOCK_TEST, CHIP_IN_USE, 0)[-1] & 2)
   def reset(self, flag): return ioctl(self.fd, RESET_DEVICE, "IIII", 8, flag, 0, 0)[-1] == 0

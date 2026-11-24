@@ -12,6 +12,7 @@ import numpy as np
 from hw import cfg, isa
 from device import Device
 from compiler import Ops, Space, UOp, compile_sfpu, compile_sfpu_loop, dtypes, mulacc
+from compiler.eval import _footprints_to_tile, _tile_to_footprints
 
 L1_DONE = 0x1F000
 L1_IN_BASE = 0x20000
@@ -21,10 +22,9 @@ SEM_UNPACK_DONE = 1 << 2
 SEM_CFG_READY = 1 << 3
 ADDR_MOD_STEP = 6  # dst += 2
 
-
 class _Asm:
   def __init__(self): self.words: list[int] = []
-  def rv(self, name: str, **kw): self.words.append(isa.rv(name, **kw))
+  def rv(self, word: int): self.words.append(word)
   def tt(self, word: int): self.words.append(isa.inline(word))
 
   def li(self, rd: int, val: int):
@@ -33,33 +33,33 @@ class _Asm:
     if lo >= 0x800: lo -= 0x1000
     hi = ((val - lo) >> 12) & 0xFFFFF
     if hi:
-      self.rv("lui", rd=rd, imm=hi)
-      if lo: self.rv("addi", rd=rd, rs1=rd, imm=lo)
+      self.rv(isa.lui(rd=rd, imm=hi))
+      if lo: self.rv(isa.addi(rd=rd, rs1=rd, imm=lo))
     else:
-      self.rv("addi", rd=rd, rs1=0, imm=lo)
+      self.rv(isa.addi(rd=rd, rs1=0, imm=lo))
 
   def store32(self, addr: int, val: int):
     self.li(5, addr)
     self.li(6, val)
-    self.rv("sw", rs1=5, rs2=6, imm=0)
+    self.rv(isa.sw(rs1=5, rs2=6, imm=0))
 
   def store32_readback(self, addr: int, val: int):
     self.store32(addr, val)
-    self.rv("lw", rd=6, rs1=5, imm=0)
-    self.rv("andi", rd=6, rs1=6, imm=0)
+    self.rv(isa.lw(rd=6, rs1=5, imm=0))
+    self.rv(isa.andi(rd=6, rs1=6, imm=0))
 
   def drain(self):
     # COPROCESSOR_DONE_CHECK (PC_BUF + 4): store, load, consume
     self.li(5, 0xFFE80004)
-    self.rv("sw", rs1=5, rs2=0, imm=0)
-    self.rv("lw", rd=6, rs1=5, imm=0)
-    self.rv("andi", rd=6, rs1=6, imm=0)
+    self.rv(isa.sw(rs1=5, rs2=0, imm=0))
+    self.rv(isa.lw(rd=6, rs1=5, imm=0))
+    self.rv(isa.andi(rd=6, rs1=6, imm=0))
 
   def setc16(self, *sets):
     placed = cfg.words(sets)
     assert len(placed) == 1
     (word, val), = placed.items()
-    self.tt(isa.SETC16(word, val))
+    self.tt(isa.SETC16(word=word, value=val))
 
   def rmw(self, *sets):
     by_byte: dict[tuple[int, int], tuple[int, int]] = {}
@@ -71,17 +71,16 @@ class _Asm:
           m, v = by_byte.get((s.field.word, i), (0, 0))
           by_byte[(s.field.word, i)] = (m | mask, v | ((s.bits >> (8 * i)) & mask))
     for (word, i), (mask, v) in by_byte.items():
-      self.tt(isa.tensix(f"RMWCIB{i}", mask, v, word))
+      self.tt((isa.RMWCIB0, isa.RMWCIB1, isa.RMWCIB2, isa.RMWCIB3)[i](mask=mask, data=v, word=word))
 
   def to_bytes(self) -> bytes:
     return struct.pack(f"<{len(self.words)}I", *self.words)
-
 
 def _build_trisc0(num_inputs: int) -> bytes:
   a = _Asm()
   fp = cfg.DataFormat.FLOAT32
   u = cfg.UNPACK[0]
-  a.tt(isa.SEMWAIT(isa.Stall.UNPACK | isa.Stall.CFG | isa.Stall.SYNC, SEM_CFG_READY, isa.SemWait.STALL_ON_ZERO))
+  a.tt(isa.SEMWAIT(stall=isa.Stall.UNPACK | isa.Stall.CFG | isa.Stall.SYNC, sems=SEM_CFG_READY, cond=isa.SemWait.STALL_ON_ZERO))
   a.drain()
   a.rmw(
     u.in_fmt(fp), u.uncompressed(1), u.y_dim(1), u.out_fmt(fp), u.transpose(0),
@@ -96,15 +95,14 @@ def _build_trisc0(num_inputs: int) -> bytes:
     a.rmw(u.dst_addr[0](64 + (t * 64) * 16))
     a.drain()
     a.store32_readback(cfg.TENSIX_CFG + 4 * u.base_addr[0].word, (l1_addr >> 4) - 1)
-    a.tt(isa.SETADCXX(1, 255, 0))
-    a.tt(isa.SETADCZW(1, 0, 0, 0, 0, 15))
-    a.tt(isa.STALLWAIT(isa.Stall.UNPACK, isa.Wait.TRISC_CFG))
+    a.tt(isa.SETADCXX(counters=1, x_end=255))
+    a.tt(isa.SETADCZW(counters=1, mask=15))
+    a.tt(isa.STALLWAIT(stall=isa.Stall.UNPACK, wait=isa.Wait.TRISC_CFG))
     for _ in range(4):
-      a.tt(isa.UNPACR(Unpack_block_selection=0, AddrMode=0x11, CfgContextId=0, OvrdThreadId=1, Last=1))
+      a.tt(isa.UNPACR(steps=0x11, per_ctx=1, last=1))
     a.drain()
-  a.tt(isa.SEMPOST(SEM_UNPACK_DONE))
+  a.tt(isa.SEMPOST(sems=SEM_UNPACK_DONE))
   return a.to_bytes()
-
 
 def _build_trisc1(passes) -> bytes:
   a = _Asm()
@@ -116,40 +114,39 @@ def _build_trisc1(passes) -> bytes:
   a.setc16(cfg.THREAD.sfpu_dst_fmt_en(1), cfg.THREAD.sfpu_dst_fmt(fp))
   a.setc16(cfg.THREAD.dst_offset(0))
   m = cfg.ADDR_MOD[ADDR_MOD_STEP]
-  a.tt(isa.SETC16(m.words[0], 0))
+  a.tt(isa.SETC16(word=m.words[0]))
   a.setc16(m.dst_incr(2))
-  a.tt(isa.STALLWAIT(isa.Stall.SYNC, isa.Wait.TRISC_CFG))
-  a.tt(isa.SEMPOST(SEM_CFG_READY))
-  a.tt(isa.SEMWAIT(isa.Stall.MATH | isa.Stall.SYNC | isa.Stall.SFPU, SEM_UNPACK_DONE, isa.SemWait.STALL_ON_ZERO))
+  a.tt(isa.STALLWAIT(stall=isa.Stall.SYNC, wait=isa.Wait.TRISC_CFG))
+  a.tt(isa.SEMPOST(sems=SEM_CFG_READY))
+  a.tt(isa.SEMWAIT(stall=isa.Stall.MATH | isa.Stall.SYNC | isa.Stall.SFPU, sems=SEM_UNPACK_DONE, cond=isa.SemWait.STALL_ON_ZERO))
 
   pass_list = passes.passes if hasattr(passes, "passes") else passes
   for p in pass_list:
-    a.tt(isa.SETRWC(BitMask=15))
+    a.tt(isa.SETRWC(mask=15))
     for w in p.prologue: a.tt(w)
     if p.footprints == 1:
       for w in p.body: a.tt(w)
     else:
-      a.rv("addi", rd=5, rs1=0, imm=p.footprints)
+      a.rv(isa.addi(rd=5, rs1=0, imm=p.footprints))
       loop_start = len(a.words)
       for w in p.body: a.tt(w)
-      a.rv("addi", rd=5, rs1=5, imm=-1)
+      a.rv(isa.addi(rd=5, rs1=5, imm=-1))
       offset = (loop_start - len(a.words)) * 4
-      a.rv("bne", rs1=5, rs2=0, imm=offset)
-    a.tt(isa.SETRWC(BitMask=15))
-    a.tt(isa.STALLWAIT(isa.Stall.SYNC, isa.Wait.SFPU))
+      a.rv(isa.bne(rs1=5, rs2=0, imm=offset))
+    a.tt(isa.SETRWC(mask=15))
+    a.tt(isa.STALLWAIT(stall=isa.Stall.SYNC, wait=isa.Wait.SFPU))
     for w in p.epilogue: a.tt(w)
 
-  a.tt(isa.STALLWAIT(isa.Stall.SYNC, isa.Wait.MATH | isa.Wait.SFPU))
-  a.tt(isa.SEMPOST(SEM_MATH_PACK))
+  a.tt(isa.STALLWAIT(stall=isa.Stall.SYNC, wait=isa.Wait.MATH | isa.Wait.SFPU))
+  a.tt(isa.SEMPOST(sems=SEM_MATH_PACK))
   return a.to_bytes()
-
 
 def _build_trisc2(out_tiles: list[int]) -> bytes:
   a = _Asm()
   fp = cfg.DataFormat.FLOAT32
   p = cfg.PACK
   ctx = p.ctx[0]
-  a.tt(isa.SEMWAIT(isa.Stall.TDMA | isa.Stall.PACK | isa.Stall.SYNC, SEM_MATH_PACK, isa.SemWait.STALL_ON_ZERO))
+  a.tt(isa.SEMWAIT(stall=isa.Stall.TDMA | isa.Stall.PACK | isa.Stall.SYNC, sems=SEM_MATH_PACK, cond=isa.SemWait.STALL_ON_ZERO))
   a.rmw(
     ctx.disable_zero_compress(1), ctx.out_fmt(fp), ctx.in_fmt(fp), ctx.exp_section_size(0),
     ctx.pack_per_xy_plane(0), ctx.pack_reads_per_xy_plane(16),
@@ -162,27 +159,26 @@ def _build_trisc2(out_tiles: list[int]) -> bytes:
 
   for idx, tile in enumerate(out_tiles):
     l1_out = L1_OUT_BASE + idx * 4096
-    a.tt(isa.SETADC(CntSetMask=4, ChannelIndex=0, DimensionIndex=3, Value=tile))
+    a.tt(isa.SETADC(counters=4, dim=3, value=tile))
     # Set L1 dest address via SETDMAREG + WRCFG
     addr16 = (l1_out >> 4) - 1
     gpr = 16
-    a.tt(isa.SETDMAREG(Payload_SigSelSize=0, Payload_SigSel=addr16 & 0xFFFF, RegIndex16b=2 * gpr))
-    a.tt(isa.SETDMAREG(Payload_SigSelSize=2, Payload_SigSel=(addr16 >> 16) & 0xFFFF, RegIndex16b=2 * gpr + 1))
-    a.tt(isa.STALLWAIT(isa.Stall.CFG, isa.Wait.THCON | isa.Wait.PACK0))
-    a.tt(isa.WRCFG(gpr, 0, ctx.l1_dest_addr.word))
-    a.tt(isa.SETADCXX(4, 15, 0))
-    a.tt(isa.SETADCXY(4, 0, 0, 0, 0, 11))
-    a.tt(isa.SETADCZW(4, 0, 0, 0, 0, 5))
-    a.tt(isa.STALLWAIT(isa.Stall.CFG, isa.Wait.PACK0))
+    a.tt(isa.SETDMAREG(imm=addr16 & 0xFFFF, half_reg=2 * gpr))
+    a.tt(isa.SETDMAREG(imm=2 << 14 | (addr16 >> 16) & 0xFFFF, half_reg=2 * gpr + 1))
+    a.tt(isa.STALLWAIT(stall=isa.Stall.CFG, wait=isa.Wait.THCON | isa.Wait.PACK0))
+    a.tt(isa.WRCFG(gpr=gpr, word=ctx.l1_dest_addr.word))
+    a.tt(isa.SETADCXX(counters=4, x_end=15))
+    a.tt(isa.SETADCXY(counters=4, mask=11))
+    a.tt(isa.SETADCZW(counters=4, mask=5))
+    a.tt(isa.STALLWAIT(stall=isa.Stall.CFG, wait=isa.Wait.PACK0))
     for j in range(16):
-      a.tt(isa.PACR(AddrMode=1 if j == 15 else 0, Last=int(j == 15)))
-    a.tt(isa.STALLWAIT(isa.Stall.SYNC, isa.Wait.PACK0))
+      a.tt(isa.PACR(addr_mod=1 if j == 15 else 0, last=int(j == 15)))
+    a.tt(isa.STALLWAIT(stall=isa.Stall.SYNC, wait=isa.Wait.PACK0))
 
   a.drain()
   a.store32(L1_DONE, 1)
-  a.rv("fence", imm=0xFF)
+  a.rv(isa.fence())
   return a.to_bytes()
-
 
 def run_sfpu_passes_on_silicon(
   dev: Device,
@@ -208,7 +204,6 @@ def run_sfpu_passes_on_silicon(
     time.sleep(0.001)
   return [np.frombuffer(dev.read_l1(core, L1_OUT_BASE + idx * 4096, 4096), dtype=np.float32).copy()
           for idx in range(len(out_tile_list))]
-
 
 def run_sfpu_on_silicon(
   dev: Device,
@@ -257,6 +252,35 @@ def run_sfpu_on_silicon(
     outs.append(np.frombuffer(raw, dtype=np.float32).copy())
   return outs, comp
 
+# Packed tiles are four 16x16 faces (TL, TR, BL, BR); the compiler's footprint maps use the logical 32x32 layout.
+def _to_logical(a: np.ndarray) -> np.ndarray: return a.reshape(2, 2, 16, 16).transpose(0, 2, 1, 3).reshape(32, 32)
+def _to_packed(t: np.ndarray) -> np.ndarray: return t.reshape(2, 16, 2, 16).transpose(0, 2, 1, 3).reshape(1024)
+def _footprints(a: np.ndarray) -> np.ndarray: return _tile_to_footprints(_to_logical(a))  # (32 footprints, 32 lanes)
+def _lane_tile(v: np.ndarray) -> np.ndarray: return _to_packed(_footprints_to_tile(np.tile(v, (32, 1))))
+
+def run_accumulator_loop_on_silicon(dev, make_root, inputs: list[list[np.ndarray]], space: Space, nacc: int, *, max_regs=8):
+  """Two outer iterations of a carried SFPU loop. inputs[k][t] is input k at iteration t.
+
+  Iteration 0 reads Dst[0..k), iteration 1 reads Dst[8-k..8); iteration 0 is compiled with dst_budget=8-k so its
+  scratch tiles cannot clobber iteration 1's preloaded inputs. Dst carries live in Dst[k..k+nacc).
+  Returns the final carries as packed tiles (LReg carries are stored broadcast over every footprint).
+  """
+  k = len(inputs)
+  r = UOp.range(2, axis=0, name="t")
+  bufs = [UOp.buffer(f"in{i}", (2, 32, 32), dtypes.fp32).noc_read(r).unpack(Space.DST, dtypes.fp32) for i in range(k)]
+  root = make_root(r, *bufs)
+  pins = {"dst_carries": {i: k + i for i in range(nacc)}} if space is Space.DST else {"reg_carries": {i: i for i in range(nacc)}}
+  lp0 = compile_sfpu_loop(root, {b: i for i, b in enumerate(bufs)}, addr_mode=ADDR_MOD_STEP, max_regs=max_regs,
+                          dst_budget=8 - k, **pins)
+  lp1 = compile_sfpu_loop(root, {b: 8 - k + i for i, b in enumerate(bufs)}, addr_mode=ADDR_MOD_STEP, max_regs=max_regs, **pins)
+  passes = [*lp0.init_passes, *lp0.body_passes, *lp1.body_passes]
+  if space is Space.LREG:
+    vals = list(lp0.reg_carries)
+    passes += compile_sfpu(vals, reg_inputs=lp0.reg_carries, output_tiles={v: k + i for i, v in enumerate(vals)},
+                           addr_mode=ADDR_MOD_STEP).passes
+  zero = np.zeros(1024, np.float32)
+  dst = [inputs[i][0] for i in range(k)] + [zero] * (8 - 2 * k) + [inputs[i][1] for i in range(k)]
+  return run_sfpu_passes_on_silicon(dev, passes, dst, list(range(k, k + nacc))), lp0
 
 class TestSfpuSilicon(unittest.TestCase):
   @classmethod
@@ -502,10 +526,61 @@ class TestSfpuSilicon(unittest.TestCase):
     body_stage = compile_sfpu(
       y_u, {x_u: 0}, reg_inputs={scale_u: 0}, output_tiles={y_u: 0}, addr_mode=ADDR_MOD_STEP,
     )
-    self.assertIn("SFPCONFIG", [isa.tensix_decode(w)[0] for w in body_stage.passes[0].prologue])
+    self.assertIn("SFPCONFIG", [isa.decode(w).name for w in body_stage.passes[0].prologue])
     [out] = run_sfpu_passes_on_silicon(self.dev, [*init_scale.passes, *body_stage.passes], [x], [0])
     np.testing.assert_allclose(out, np.sin(x) * 1.75, rtol=1e-5, atol=1e-5)
 
+  def test_accumulators_both_spaces_on_silicon(self):
+    rng = np.random.default_rng(105)
+    xs = [rng.uniform(-3.0, 3.0, 1024).astype(np.float32) for _ in range(2)]
+    ys = [rng.uniform(-2.0, 2.0, 1024).astype(np.float32) for _ in range(2)]
+    fx, fy = [_footprints(x) for x in xs], [_footprints(y) for y in ys]
+    # Dst carries are per element; LReg carries additionally fold the 32 footprints of every tile into 32 lanes.
+    def online_softmax(r, x, sp):
+      return r.loop((UOp.const(dtypes.fp32, -math.inf), UOp.const(dtypes.fp32, 0.0)),
+                    lambda m, s: (m.maximum(x), s * (m - m.maximum(x)).exp() + (x - m.maximum(x)).exp()), spaces=(sp, sp))[0]
+    def stats(r, x, sp):
+      return r.loop((UOp.const(dtypes.fp32, 0.0), UOp.const(dtypes.fp32, -math.inf), UOp.const(dtypes.fp32, 0.0)),
+                    lambda a, b, c: (a + x, b.maximum(x), c + x * x), spaces=(sp,) * 3)[0]
+    def lreg_online_softmax():
+      m, s = np.full(32, -np.inf, np.float32), np.zeros(32, np.float32)
+      for f in (row for t in fx for row in t):
+        mn = np.maximum(m, f)
+        s, m = s * np.exp(m - mn) + np.exp(f - mn), mn
+      return [m, s]
+    def lreg_ema():
+      a = np.zeros(32, np.float32)
+      for f in (row for t in fx for row in t): a = a * np.float32(0.9) + f
+      return [a]
+    m_dst = np.maximum(xs[0], xs[1])
+    cases = [
+      ("sum_exp", lambda r, x: x.exp().reduce(r, op=Ops.ADD, space=Space.DST), Space.DST, 1, [xs], {},
+       [np.exp(xs[0]) + np.exp(xs[1])]),
+      ("sum_exp", lambda r, x: x.exp().reduce(r, op=Ops.ADD, space=Space.LREG), Space.LREG, 1, [xs], {},
+       [_lane_tile(sum(np.exp(f).sum(0) for f in fx))]),
+      ("online_softmax", lambda r, x: online_softmax(r, x, Space.DST), Space.DST, 2, [xs], {},
+       [m_dst, np.exp(xs[0] - m_dst) + np.exp(xs[1] - m_dst)]),
+      ("online_softmax", lambda r, x: online_softmax(r, x, Space.LREG), Space.LREG, 2, [xs], {},
+       [_lane_tile(v) for v in lreg_online_softmax()]),
+      ("ema", lambda r, x: r.loop((UOp.const(dtypes.fp32, 0.0),), lambda a: (a * 0.9 + x,), spaces=(Space.LREG,))[0],
+       Space.LREG, 1, [xs], {}, [_lane_tile(v) for v in lreg_ema()]),
+      ("stats", lambda r, x: stats(r, x, Space.DST), Space.DST, 3, [xs], {},
+       [xs[0] + xs[1], m_dst, xs[0] ** 2 + xs[1] ** 2]),
+      ("stats", lambda r, x: stats(r, x, Space.LREG), Space.LREG, 3, [xs], {},
+       [_lane_tile(v) for v in (fx[0].sum(0) + fx[1].sum(0), np.maximum(fx[0].max(0), fx[1].max(0)),
+                                (fx[0] ** 2).sum(0) + (fx[1] ** 2).sum(0))]),
+      # max_regs=4 splits the body into several passes; the pinned carry must survive the earlier ones.
+      ("split_body", lambda r, x, y: (x.exp() * y).reduce(r, op=Ops.ADD, space=Space.DST), Space.DST, 1, [xs, ys],
+       {"max_regs": 4}, [np.exp(xs[0]) * ys[0] + np.exp(xs[1]) * ys[1]]),
+      ("split_body", lambda r, x, y: (x.exp() * y).reduce(r, op=Ops.ADD, space=Space.LREG), Space.LREG, 1, [xs, ys],
+       {"max_regs": 4}, [_lane_tile(sum((np.exp(a) * b).sum(0) for a, b in zip(fx, fy)))]),
+    ]
+    for name, make_root, space, nacc, inputs, kw, refs in cases:
+      with self.subTest(name=name, space=space.name):
+        outs, lp = run_accumulator_loop_on_silicon(self.dev, make_root, inputs, space, nacc, **kw)
+        if name == "split_body": self.assertGreater(len(lp.body_passes), 1)
+        for got, ref in zip(outs, refs, strict=True):
+          np.testing.assert_allclose(got, ref, rtol=1e-4, atol=1e-4)
 
 if __name__ == "__main__":
   unittest.main()

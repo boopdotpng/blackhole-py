@@ -6,7 +6,6 @@ from compiler import (
   evaluate, fix_sfpu_hazards, lower_sfpu_uops, sfpu_hazards, sfpu_prim, verify, verify_sfpu_words,
 )
 
-
 def _eval_sfpu_expr(fn, inputs_np: dict[str, np.ndarray], *, precision=dtypes.fp32, out_dt=dtypes.fp32):
   bufs = {name: UOp.buffer(name, (1, 32, 32), dtypes.fp32 if arr.dtype == np.float32 else dtypes.i32)
           for name, arr in inputs_np.items()}
@@ -26,27 +25,26 @@ def _eval_sfpu_expr(fn, inputs_np: dict[str, np.ndarray], *, precision=dtypes.fp
   evaluate(lowered, data)
   return out_np[0], lowered
 
-
 class TestSfpuHazardModel(unittest.TestCase):
   def test_measured_undetected_hazards_and_safe_pairs(self):
-    mad_l0 = isa.SFPMAD(1, 2, 3, 0, 0)  # 2-cycle write to L0
+    mad_l0 = isa.SFPMAD(a=1, b=2, c=3)  # 2-cycle write to L0
 
     # Every undetected RAW hazard measured on Blackhole A0 card 1
     bad_consumers = [
-      ("IADD reg VD",       isa.SFPIADD(0, 1, 0, 4)),
-      ("SHFT reg VD",       isa.SFPSHFT(0, 1, 0, 0)),
-      ("AND USE_VB",        isa.SFPAND(0, 1, 2, 1)),
-      ("OR USE_VB",         isa.SFPOR(0, 1, 2, 1)),
-      ("SETEXP non-imm VD", isa.SFPSETEXP(0, 1, 0, 2)),
-      ("SETMAN non-imm VD", isa.SFPSETMAN(0, 1, 0, 0)),
-      ("SETSGN non-imm VD", isa.SFPSETSGN(0, 1, 0, 0)),
-      ("ARECIP mode 1 VB",  isa.SFPARECIP(0, 1, 2, 1)),
-      ("SWAP mode 1 VD",    isa.SFPSWAP(0, 1, 0, 1)),
-      ("SHFT2 mode 3 VC",   isa.SFPSHFT2(0, 0, 1, 3)),
-      ("SHFT2 mode 6 VB",   isa.SFPSHFT2(0, 1, 2, 6)),
-      ("CONFIG non-imm L0", isa.SFPCONFIG(0, 12, 0)),
-      ("LOADI LOWER L0",    isa.SFPLOADI(0, isa.LoadImm.LOWER, 0x1234)),
-      ("LOAD LO16_ONLY L0", isa.SFPLOAD(0, isa.SfpuFormat.LO16_ONLY, 0, 0)),
+      ("IADD reg VD",       isa.SFPIADD(src=1, mode=4)),
+      ("SHFT reg VD",       isa.SFPSHFT(src=1)),
+      ("AND USE_VB",        isa.SFPAND(src=1, dest=2, mode=1)),
+      ("OR USE_VB",         isa.SFPOR(src=1, dest=2, mode=1)),
+      ("SETEXP non-imm VD", isa.SFPSETEXP(src=1, mode=2)),
+      ("SETMAN non-imm VD", isa.SFPSETMAN(src=1)),
+      ("SETSGN non-imm VD", isa.SFPSETSGN(src=1)),
+      ("ARECIP mode 1 VB",  isa.SFPARECIP(src=1, dest=2, mode=1)),
+      ("SWAP mode 1 VD",    isa.SFPSWAP(src=1, mode=1)),
+      ("SHFT2 mode 3 VC",   isa.SFPSHFT2(dest=1, mode=3)),
+      ("SHFT2 mode 6 VB",   isa.SFPSHFT2(src=1, dest=2, mode=6)),
+      ("CONFIG non-imm L0", isa.SFPCONFIG(target=12)),
+      ("LOADI LOWER L0",    isa.SFPLOADI(mode=isa.LoadImm.LOWER, imm=0x1234)),
+      ("LOAD LO16_ONLY L0", isa.SFPLOAD(format=isa.SfpuFormat.LO16_ONLY)),
     ]
     for label, cons in bad_consumers:
       with self.subTest(label=label):
@@ -60,13 +58,13 @@ class TestSfpuHazardModel(unittest.TestCase):
 
     # Safe pairs (hardware stalls or no dependency) must NOT get spurious SFPNOPs
     safe_pairs = [
-      ("MAD -> MAD",          [mad_l0, isa.SFPMAD(0, 1, 2, 3, 0)]),
-      ("MAD -> SHFT imm",     [mad_l0, isa.SFPSHFT(3, 0, 1, 5)]),
-      ("MAD -> SWAP mode 0",  [mad_l0, isa.SFPSWAP(0, 0, 1, 0)]),
-      ("MAD -> LOADI FLOATB", [mad_l0, isa.SFPLOADI(0, isa.LoadImm.FLOATB, 0x3F80)]),
-      ("LOADI FLOATB->LOWER", [isa.SFPLOADI(0, isa.LoadImm.FLOATB, 0x3F80), isa.SFPLOADI(0, isa.LoadImm.LOWER, 0x1234)]),
-      ("SWAP -> ADD",         [isa.SFPSWAP(0, 1, 0, 1), isa.SFPADD(10, 0, 1, 2, 0)]),
-      ("SHFT2 -> ADD",        [isa.SFPSHFT2(0, 1, 0, 3), isa.SFPADD(10, 0, 1, 2, 0)]),
+      ("MAD -> MAD",          [mad_l0, isa.SFPMAD(b=1, c=2, dest=3)]),
+      ("MAD -> SHFT imm",     [mad_l0, isa.SFPSHFT(imm=3, dest=1, mode=5)]),
+      ("MAD -> SWAP mode 0",  [mad_l0, isa.SFPSWAP(dest=1)]),
+      ("MAD -> LOADI FLOATB", [mad_l0, isa.SFPLOADI(mode=isa.LoadImm.FLOATB, imm=0x3F80)]),
+      ("LOADI FLOATB->LOWER", [isa.SFPLOADI(mode=isa.LoadImm.FLOATB, imm=0x3F80), isa.SFPLOADI(mode=isa.LoadImm.LOWER, imm=0x1234)]),
+      ("SWAP -> ADD",         [isa.SFPSWAP(src=1, mode=1), isa.SFPADD(a=10, c=1, dest=2)]),
+      ("SHFT2 -> ADD",        [isa.SFPSHFT2(src=1, mode=3), isa.SFPADD(a=10, c=1, dest=2)]),
     ]
     for label, stream in safe_pairs:
       with self.subTest(label=label):
@@ -76,27 +74,26 @@ class TestSfpuHazardModel(unittest.TestCase):
   def test_verify_rejects_backdoor_and_illegal_writes(self):
     # VD >= 12 on non-CONFIG/LOADMACRO becomes a silent backdoor template write
     with self.assertRaises(SfpuCompileError):
-      verify_sfpu_words([isa.SFPSTORE(12, isa.SfpuFormat.FP32, 0, 0)])
+      verify_sfpu_words([isa.SFPSTORE(lreg=12, format=isa.SfpuFormat.FP32)])
     with self.assertRaises(SfpuCompileError):
-      verify_sfpu_words([isa.SFPTRANSP(0, 0, 12, 0)])
+      verify_sfpu_words([isa.SFPTRANSP(dest=12)])
     with self.assertRaises(SfpuCompileError):
-      verify_sfpu_words([isa.SFPGT(0, 0, 12, 1)])
+      verify_sfpu_words([isa.SFPGT(dest=12, mode=1)])
     # Writing read-only L9/L10 fails
     with self.assertRaises(SfpuCompileError):
-      verify_sfpu_words([isa.SFPMOV(0, 0, 9, 0)])
+      verify_sfpu_words([isa.SFPMOV(dest=9)])
     # Storing L9 (0.0) or L10 (1.0) is safe (VD < 12)
-    verify_sfpu_words([isa.SFPSTORE(9, isa.SfpuFormat.FP32, 0, 0)])
+    verify_sfpu_words([isa.SFPSTORE(lreg=9, format=isa.SfpuFormat.FP32)])
 
   def test_loop_wraparound_hazard_detection_and_fix(self):
     # Body starts with IADD reg reading L0 and ends with MAD writing L0: safe once, stale on 2nd iteration
-    body = [isa.SFPIADD(0, 1, 0, 4), isa.SFPMAD(1, 2, 3, 0, 0)]
+    body = [isa.SFPIADD(src=1, mode=4), isa.SFPMAD(a=1, b=2, c=3)]
     self.assertEqual(sfpu_hazards(body), [])
     with self.assertRaises(SfpuCompileError):
       verify_sfpu_words(body, is_loop=True)
     fixed = fix_sfpu_hazards(body, is_loop=True)
     self.assertEqual(fixed[-1], isa.SFPNOP())
     verify_sfpu_words(fixed, is_loop=True)
-
 
 class TestSfpuDecompositions(unittest.TestCase):
   def test_exp2_and_exp_bf16_and_fp32(self):
@@ -167,7 +164,6 @@ class TestSfpuDecompositions(unittest.TestCase):
     ref_gelu = 0.5 * a_mild * (1.0 + np.tanh(c * (a_mild + 0.044715 * a_mild ** 3)))
     np.testing.assert_allclose(out_gelu, ref_gelu, rtol=2e-4, atol=1e-4)
 
-
 class TestSfpuCompiler(unittest.TestCase):
   def _make_dst(self, name: str, dt=dtypes.fp32) -> UOp:
     return UOp.buffer(name, (1, 32, 32), dt).noc_read(0).unpack(Space.DST, dt)
@@ -180,21 +176,21 @@ class TestSfpuCompiler(unittest.TestCase):
       verify_sfpu_words(all_words)
       # Every word must decode cleanly through hw.isa
       for w in all_words:
-        self.assertIsNotNone(isa.tensix_decode(w))
+        self.assertIsNotNone(isa.decode(w))
       # Every L11..L14 read in body must have been explicitly programmed via SFPCONFIG in prologue
       cfg_written = {(w >> 4) & 15 for w in p.prologue if (w >> 24) == 0x91}
       for w in p.body:
         info = sfpu_hazards([w])
         self.assertEqual(info, [])
-        dec = isa.tensix_decode(w)
+        dec = isa.decode(w)
         assert dec is not None
-        for k, v in dec[1].items():
-          if k.startswith("lreg_") and 12 <= v <= 14:
+        for k, v in dec.fields().items():
+          if k in ("lreg", "a", "b", "c", "src", "dest") and 12 <= v <= 14:
             self.assertIn(v, cfg_written, f"L{v} read in body without SFPCONFIG init in prologue")
       if addr_mode:
-        stores = [isa.tensix_decode(w) for w in p.body if (w >> 24) == 0x72]
+        stores = [isa.decode(w) for w in p.body if (w >> 24) == 0x72]
         self.assertTrue(stores)
-        self.assertEqual(stores[-1][1]["sfpu_addr_mode"], addr_mode)
+        self.assertEqual(stores[-1].addr_mod, addr_mode)
 
   def test_slice1_silu_mul_compilation_and_l11_usage(self):
     a = self._make_dst("a")
@@ -245,14 +241,14 @@ class TestSfpuCompiler(unittest.TestCase):
     w_lt = (a < b).where(a + 1.0, b)
     comp_lt = compile_sfpu(w_lt, {a: 0, b: 1}, output_tiles={w_lt: 0})
     self._check_compiled(comp_lt, max_regs=8)
-    ops_lt = [isa.tensix_decode(w)[0] for w in comp_lt.passes[0].body]
+    ops_lt = [isa.decode(w).name for w in comp_lt.passes[0].body]
     self.assertIn("SFPENCC", ops_lt)
     self.assertIn("SFPGT", ops_lt)
 
     w_ge = (a >= b).where(a, b)
     comp_ge = compile_sfpu(w_ge, {a: 0, b: 1}, output_tiles={w_ge: 0})
     self._check_compiled(comp_ge, max_regs=8)
-    ops_ge = [isa.tensix_decode(w)[0] for w in comp_ge.passes[0].body]
+    ops_ge = [isa.decode(w).name for w in comp_ge.passes[0].body]
     self.assertIn("SFPLE", ops_ge)
 
     # 2. Composed boolean mask with b == 0.0 -> 3-address SFPAND fast path (zero SFPENCC)
@@ -260,7 +256,7 @@ class TestSfpuCompiler(unittest.TestCase):
     w_zero = mask.where(a, 0.0)
     comp_and = compile_sfpu(w_zero, {a: 0, b: 1, c: 2}, output_tiles={w_zero: 0})
     self._check_compiled(comp_and, max_regs=8)
-    ops_and = [isa.tensix_decode(w)[0] for w in comp_and.passes[0].body]
+    ops_and = [isa.decode(w).name for w in comp_and.passes[0].body]
     self.assertIn("SFPAND", ops_and)
     self.assertNotIn("SFPENCC", ops_and)
 
@@ -268,14 +264,14 @@ class TestSfpuCompiler(unittest.TestCase):
     w_eq = a.eq(b).where(c, a)
     comp_eq = compile_sfpu(w_eq, {a: 0, b: 1, c: 2}, output_tiles={w_eq: 0})
     self._check_compiled(comp_eq, max_regs=8)
-    ops_eq = [isa.tensix_decode(w)[0] for w in comp_eq.passes[0].body]
+    ops_eq = [isa.decode(w).name for w in comp_eq.passes[0].body]
     self.assertIn("SFPSETCC", ops_eq)
 
     # 4. Integer UOp.lane_id() < 16 comparison -> uses L15 (LANE_X2) and nonnegative sign-magnitude keys
     w_lane = (UOp.lane_id() < 16).where(a, 0.0)
     comp_lane = compile_sfpu(w_lane, {a: 0}, output_tiles={w_lane: 0})
     self._check_compiled(comp_lane, max_regs=8)
-    ops_lane = [isa.tensix_decode(w)[0] for w in comp_lane.passes[0].body]
+    ops_lane = [isa.decode(w).name for w in comp_lane.passes[0].body]
     self.assertIn("SFPSHFT", ops_lane)
     self.assertIn("SFPGT", ops_lane)
 
@@ -283,8 +279,8 @@ class TestSfpuCompiler(unittest.TestCase):
     mask_out = a < b
     comp_mask = compile_sfpu(mask_out, {a: 0, b: 1}, output_tiles={mask_out: 0})
     self._check_compiled(comp_mask, max_regs=8)
-    stores = [isa.tensix_decode(w)[1] for w in comp_mask.passes[-1].body if (w >> 24) == 0x72]
-    self.assertEqual(stores[-1]["instr_mod0"], isa.SfpuFormat.INT32)
+    stores = [isa.decode(w) for w in comp_mask.passes[-1].body if (w >> 24) == 0x72]
+    self.assertEqual(stores[-1].format, isa.SfpuFormat.INT32)
 
   def test_transpose_requires_explicit_register_group(self):
     a = self._make_dst("a")
@@ -295,7 +291,7 @@ class TestSfpuCompiler(unittest.TestCase):
     a, b = self._make_dst("a"), self._make_dst("b")
     product = a * b
     comp = compile_sfpu(product + 2, {product: 0})
-    ops = [isa.tensix_decode(w)[0] for w in comp.passes[0].body]
+    ops = [isa.decode(w).name for w in comp.passes[0].body]
     self.assertEqual(ops.count("SFPLOAD"), 1)
     self.assertNotIn("SFPMAD", ops)
 
@@ -304,7 +300,7 @@ class TestSfpuCompiler(unittest.TestCase):
     for root in (UOp.const(dtypes.i32, 1999) + a, a - 2048):
       p, = compile_sfpu(root, {a: 0}).passes
       self.assertFalse(p.prologue)
-      self.assertEqual([isa.tensix_decode(w)[0] for w in p.body], ["SFPLOAD", "SFPIADD", "SFPSTORE"])
+      self.assertEqual([isa.decode(w).name for w in p.body], ["SFPLOAD", "SFPIADD", "SFPSTORE"])
 
   def test_output_tile_contract(self):
     a, b = self._make_dst("a"), self._make_dst("b")
@@ -361,10 +357,10 @@ class TestSfpuCompiler(unittest.TestCase):
     self.assertEqual(len(sq_loop.body_passes), 1)
     sq_pass = sq_loop.body_passes[0]
     self.assertEqual(sq_pass.footprints, 32)
-    sq_ops = [isa.tensix_decode(w)[0] for w in sq_pass.body]
+    sq_ops = [isa.decode(w).name for w in sq_pass.body]
     self.assertEqual(sq_ops, ["SFPLOAD", "SFPMAD"])
-    self.assertEqual(isa.tensix_decode(sq_pass.body[0])[1]["sfpu_addr_mode"], 6)
-    self.assertEqual(isa.tensix_decode(sq_pass.body[1])[1]["lreg_dest"], 0)
+    self.assertEqual(isa.decode(sq_pass.body[0]).addr_mod, 6)
+    self.assertEqual(isa.decode(sq_pass.body[1]).dest, 0)
     verify_sfpu_words(sq_pass.body, is_loop=True)
 
     # Stage 2: 1-shot LReg reduce_lanes + rsqrt (runs ONCE, stays in L0, zero Dst traffic)
@@ -373,7 +369,7 @@ class TestSfpuCompiler(unittest.TestCase):
     self.assertEqual(len(rms_comp.passes), 1)
     rms_pass = rms_comp.passes[0]
     self.assertEqual(rms_pass.footprints, 1)
-    rms_ops = [isa.tensix_decode(w)[0] for w in rms_pass.body]
+    rms_ops = [isa.decode(w).name for w in rms_pass.body]
     self.assertNotIn("SFPLOAD", rms_ops)
     self.assertNotIn("SFPSTORE", rms_ops)
     self.assertIn("SFPSHFT2", rms_ops)
@@ -386,7 +382,30 @@ class TestSfpuCompiler(unittest.TestCase):
     self._check_compiled(apply_comp, max_regs=8, addr_mode=6)
     apply_pass = apply_comp.passes[0]
     self.assertEqual(apply_pass.footprints, 32)
-    self.assertEqual([isa.tensix_decode(w)[0] for w in apply_pass.body].count("SFPLOAD"), 2)
+    self.assertEqual([isa.decode(w).name for w in apply_pass.body].count("SFPLOAD"), 2)
+
+  def test_pinned_lreg_survives_multi_pass_body(self):
+    # A spilled body splits into several passes; only the last reads the carried L0, but none may clobber it.
+    from compiler.sfpu import _verify_compiled_pass
+    r = UOp.range(2, axis=0, name="t")
+    x, y = self._make_dst("x"), self._make_dst("y")
+    lp = compile_sfpu_loop((x.exp() * y).reduce(r, op=Ops.ADD, space=Space.LREG), {x: 0, y: 1}, addr_mode=6, max_regs=4)
+    self.assertEqual(lp.reg_carries[next(iter(lp.reg_carries))], 0)
+    self.assertGreater(len(lp.body_passes), 1)
+    for p in lp.body_passes[:-1]:
+      _verify_compiled_pass(p.prologue, p.body, p.epilogue, footprints=p.footprints, pinned_ro={0})
+      if any(isa.decode(w).name == "SFPCONFIG" for w in p.prologue):
+        self.assertEqual(isa.decode(p.prologue[0]).name, "SFPMOV")
+        self.assertEqual(isa.decode(p.prologue[0]).src, 0)
+        self.assertEqual(isa.decode(p.prologue[-1]).dest, 0)
+
+    # Duplicate-output copy passes must not use a pinned register as scratch either
+    s = UOp.const(dtypes.fp32, 2.0).carry(UOp.range(1, axis=9), space=Space.LREG)
+    out = x * s
+    comp = compile_sfpu([out, out], {x: 0}, reg_inputs={s: 0}, output_tiles=[1, 2], addr_mode=6)
+    self.assertGreater(len(comp.passes), 1)
+    for p in comp.passes:
+      _verify_compiled_pass(p.prologue, p.body, p.epilogue, footprints=p.footprints, pinned_ro={0})
 
   def test_dst_accumulator_single_and_dual_in_place_loop(self):
     r = UOp.range(4, axis=0, name="t")
@@ -416,20 +435,19 @@ class TestSfpuCompiler(unittest.TestCase):
     comp = compile_sfpu(y, {x: 0}, reg_inputs={scale: 0}, output_tiles={y: 0}, addr_mode=6)
     self._check_compiled(comp, max_regs=8, addr_mode=6)
     # Prologue programs L12..L14 via L0, so it must save L0 before and restore L0 after
-    pro_ops = [isa.tensix_decode(w)[0] for w in comp.passes[0].prologue]
+    pro_ops = [isa.decode(w).name for w in comp.passes[0].prologue]
     self.assertIn("SFPCONFIG", pro_ops)
     self.assertEqual(pro_ops[0], "SFPMOV")
     self.assertEqual(pro_ops[-1], "SFPMOV")
-    self.assertEqual(isa.tensix_decode(comp.passes[0].prologue[0])[1]["lreg_c"], 0)
-    self.assertEqual(isa.tensix_decode(comp.passes[0].prologue[-1])[1]["lreg_dest"], 0)
+    self.assertEqual(isa.decode(comp.passes[0].prologue[0]).src, 0)
+    self.assertEqual(isa.decode(comp.passes[0].prologue[-1]).dest, 0)
 
     # Register output swap cycle (L0 <-> L1) uses 1-insn SFPSWAP(mod=0)
     a = UOp.const(dtypes.fp32, 1.0).carry(UOp.range(1, axis=6), space=Space.LREG)
     b = UOp.const(dtypes.fp32, 2.0).carry(UOp.range(1, axis=7), space=Space.LREG)
     swap_comp = compile_sfpu([b, a], reg_inputs={a: 0, b: 1}, reg_outputs={b: 0, a: 1})
     self.assertEqual(swap_comp.passes[0].footprints, 1)
-    self.assertEqual([isa.tensix_decode(w)[0] for w in swap_comp.passes[0].body], ["SFPSWAP"])
-
+    self.assertEqual([isa.decode(w).name for w in swap_comp.passes[0].body], ["SFPSWAP"])
 
 if __name__ == "__main__":
   unittest.main()

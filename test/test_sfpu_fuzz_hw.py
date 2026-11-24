@@ -4,7 +4,6 @@ from compiler import UOp, dtypes
 from device import Device
 from test.test_sfpu_hw import run_sfpu_on_silicon
 
-
 def expression(steps, a, b):
   values = [a, b]
   for op, left, right in steps:
@@ -24,7 +23,6 @@ def expression(steps, a, b):
       case 11: z = x * x + y
     values.append(z)
   return values[-2:]
-
 
 class TestSfpuFuzz(unittest.TestCase):
   def test_seeded_expression_chains(self):

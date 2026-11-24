@@ -32,7 +32,6 @@ DST_TILE_ROWS = 64  # FP32 Dst tile stride (64 rows x 16 cols = 1024 elements)
 _SFPU_SPACES = (Space.DST, Space.LREG)
 _DEFAULTS_L11_14 = {11: 0xBF800000, 12: 0x3B000000, 13: 0xBF2CC4C7, 14: 0xBEB08FF9}
 
-
 # ---------------------------------------------------------------------------------------------------------------------
 # Pass A: Pure UOp lowering (PatternMatcher + graph_rewrite)
 # ---------------------------------------------------------------------------------------------------------------------
@@ -44,14 +43,11 @@ class SfpuPrim:
   imm: int = 0
   space: Space | None = None
 
-
 def sfpu_prim(op: str, dtype: DType, *srcs: UOp, mod: int = 0, imm: int = 0, space: Space | None = None) -> UOp:
   return UOp(Ops.SFPU, dtype, srcs, SfpuPrim(op, mod, imm, space))
 
-
 def mulacc(a: UOp, b: UOp, c: UOp, *, neg_ab: bool = False, neg_c: bool = False) -> UOp:
   return UOp(Ops.MULACC, a.dtype, (a, b, c), (neg_ab, neg_c))
-
 
 ARECIP_ERR = 0.0056       # SFPARECIP: worst-case relative error ~0.0056
 RSQRT_SEED_ERR = 2.1e-5   # magic + quadratic seed relative error ~2.02e-5
@@ -68,20 +64,17 @@ _SIN_POLY_BF16 = (1.0, -0.16666658222675323, 0.008333049714565277, -0.0001980901
 _SIN_POLY_FP32 = (1.0, -0.16666658222675323, 0.008333049714565277, -0.0001980901724891737, 2.6051077384181553e-06)
 _PI_CW1, _PI_CW2, _PI_CW3 = 3.1416015625, -8.907169103622437e-06, -1.741103261565513e-09
 
-
 # terms of y*(1 + e + e^2 + ...) needed to reach `bits` + 3 guard bits from `seed_err`
 def newton_terms(seed_err: float, bits: int) -> int:
   k = 1
   while seed_err ** (k + 1) > 2.0 ** -(bits + 3): k += 1
   return k
 
-
 def _horner(x: UOp, coeffs: Sequence[float]) -> UOp:
   acc = UOp.const(x.dtype, coeffs[-1])
   for c in reversed(coeffs[:-1]):
     acc = acc * x + UOp.const(x.dtype, c)
   return acc
-
 
 def _decomp_exp2(x: UOp, bits: int) -> UOp:
   dt = x.dtype
@@ -101,7 +94,6 @@ def _decomp_exp2(x: UOp, bits: int) -> UOp:
   scale = sfpu_prim("SETEXP", dt, e, UOp.const(dt, 1.0), mod=0)
   return (x < UOp.const(dt, -126.0)).where(UOp.const(dt, 0.0), scale * _horner(f, _EXP2_POLY_FP32))
 
-
 def _decomp_recip(x: UOp, bits: int) -> UOp:
   dt = x.dtype
   y = sfpu_prim("ARECIP", dt, x, mod=0)
@@ -111,13 +103,11 @@ def _decomp_recip(x: UOp, bits: int) -> UOp:
     c = mulacc(c, e, e)
   return mulacc(c.minimum(UOp.const(dt, 1.0)), y, y)
 
-
 def _rsqrt_seed(x: UOp) -> UOp:
   dt = x.dtype
   y = (UOp.const(dtypes.u32, 0x5F1110A0) - (x.bitcast(dtypes.u32) >> UOp.const(dtypes.u32, 1))).bitcast(dt)
   t = -(x * y) * y
   return y * mulacc(t, t + UOp.const(dt, 2.2533049), UOp.const(dt, 2.2825186))
-
 
 def _decomp_rsqrt(x: UOp, bits: int) -> UOp:
   dt = x.dtype
@@ -126,7 +116,6 @@ def _decomp_rsqrt(x: UOp, bits: int) -> UOp:
     e = mulacc(x * y, y, UOp.const(dt, 1.0), neg_ab=True)
     y = mulacc(e, y * UOp.const(dt, 0.5), y)
   return y
-
 
 def _decomp_sqrt(x: UOp, bits: int) -> UOp:
   dt = x.dtype
@@ -137,14 +126,12 @@ def _decomp_sqrt(x: UOp, bits: int) -> UOp:
     s = mulacc(r, y * UOp.const(dt, 0.5), s)
   return s
 
-
 def _decomp_log2(x: UOp, bits: int) -> UOp:
   dt = x.dtype
   e_f = sfpu_prim("EXEXP", dtypes.i32, x, mod=0).cast(dt)
   m = sfpu_prim("SETEXP", dt, x, mod=1, imm=127)
   t = (m - UOp.const(dt, 1.0)) * _decomp_recip(m + UOp.const(dt, 1.0), bits)
   return mulacc(t, _horner(t * t, _LOG2_POLY_BF16 if bits <= 11 else _LOG2_POLY_FP32), e_f)
-
 
 def _decomp_sin(x: UOp, bits: int) -> UOp:
   dt = x.dtype
@@ -160,7 +147,6 @@ def _decomp_sin(x: UOp, bits: int) -> UOp:
   s = r * _horner(r * r, _SIN_POLY_BF16 if bits <= 11 else _SIN_POLY_FP32)
   sign_flip = u.bitcast(dtypes.u32) << UOp.const(dtypes.u32, 31)
   return (s.bitcast(dtypes.u32) ^ sign_flip).bitcast(dt)
-
 
 @lru_cache(maxsize=2)
 def _make_pm_sfpu_decomp(bits: int) -> PatternMatcher:
@@ -188,10 +174,8 @@ def _make_pm_sfpu_decomp(bits: int) -> PatternMatcher:
     (UPat(Ops.SIN,   dtype=sfpu_f, space=_SFPU_SPACES, src=(UPat.var("x"),)), lambda x: _decomp_sin(x, bits)),
   ])
 
-
 def _is_sfpu_mul(u: UOp) -> bool:
   return u.op is Ops.MUL and u.space in _SFPU_SPACES and not u.is_fpu and u.dtype.is_float
-
 
 pm_sfpu_fma = pm_simplify + PatternMatcher([
   (UPat(Ops.ADD, space=_SFPU_SPACES, src=[UPat(Ops.MUL, src=(UPat.var("a"), UPat.var("b"))).named("m"), UPat.var("c")]),
@@ -210,7 +194,6 @@ pm_sfpu_fma = pm_simplify + PatternMatcher([
    lambda u, a, b, c: mulacc(a, b, c, neg_ab=u.arg[0], neg_c=not u.arg[1])),
 ])
 
-
 def lower_sfpu_uops(root: UOp, *, precision: DType = dtypes.fp32) -> UOp:
   bits = 8 if precision is dtypes.bf16 else 24
   if bits == 8:
@@ -223,7 +206,6 @@ def lower_sfpu_uops(root: UOp, *, precision: DType = dtypes.fp32) -> UOp:
       root = root.substitute(dict(zip(sensitive, precise.src, strict=True)))
   return graph_rewrite(graph_rewrite(root, _make_pm_sfpu_decomp(bits)), pm_sfpu_fma)
 
-
 # ---------------------------------------------------------------------------------------------------------------------
 # Constant encoding & L8..L14 tiering
 # ---------------------------------------------------------------------------------------------------------------------
@@ -233,33 +215,29 @@ def _const_u32(u: UOp) -> int:
   if u.dtype is dtypes.bool: return 0xFFFFFFFF if u.arg else 0
   return int(u.arg) & 0xFFFFFFFF
 
-
 def _is_bf16_exact(u: UOp) -> bool:
   return u.dtype.is_float and (_const_u32(u) & 0xFFFF) == 0
 
-
 def _hw_const_reg(u: UOp) -> int | None:
   bits = _const_u32(u)
-  if bits == 0: return int(isa.LReg.ZERO)
-  if u.dtype.is_float and bits == 0x3F800000: return int(isa.LReg.ONE)
-  if u.dtype.is_float and bits == 0x3F56594B: return int(isa.LReg.CONST_0_8373)
+  if bits == 0: return isa.LReg.ZERO
+  if u.dtype.is_float and bits == 0x3F800000: return isa.LReg.ONE
+  if u.dtype.is_float and bits == 0x3F56594B: return isa.LReg.CONST_0_8373
   return None
-
 
 def _emit_loadi32(out: list[int], rd: int, u: UOp) -> None:
   assert 0 <= rd < 8, f"SFPLOADI requires L0..L7, got L{rd}"
   bits = _const_u32(u)
   hi, lo = (bits >> 16) & 0xFFFF, bits & 0xFFFF
   if not u.dtype.is_float and 0 <= bits <= 0xFFFF:
-    out.append(isa.SFPLOADI(rd, isa.LoadImm.USHORT, bits))
+    out.append(isa.SFPLOADI(lreg=rd, mode=isa.LoadImm.USHORT, imm=bits))
   elif not u.dtype.is_float and -0x8000 <= (bits - (1 << 32) if bits >= (1 << 31) else bits) < 0:
-    out.append(isa.SFPLOADI(rd, isa.LoadImm.SHORT, bits & 0xFFFF))
+    out.append(isa.SFPLOADI(lreg=rd, mode=isa.LoadImm.SHORT, imm=bits & 0xFFFF))
   elif lo == 0:
-    out.append(isa.SFPLOADI(rd, isa.LoadImm.FLOATB, hi))
+    out.append(isa.SFPLOADI(lreg=rd, mode=isa.LoadImm.FLOATB, imm=hi))
   else:
-    out.append(isa.SFPLOADI(rd, isa.LoadImm.FLOATB, hi))
-    out.append(isa.SFPLOADI(rd, isa.LoadImm.LOWER, lo))
-
+    out.append(isa.SFPLOADI(lreg=rd, mode=isa.LoadImm.FLOATB, imm=hi))
+    out.append(isa.SFPLOADI(lreg=rd, mode=isa.LoadImm.LOWER, imm=lo))
 
 # preserves L0 when it is live-in
 def _emit_prologue_consts(
@@ -275,22 +253,20 @@ def _emit_prologue_consts(
   if needs_l0 and 0 in live_in_regs:
     save_reg = next((r for r in range(1, max_regs) if r not in live_in_regs), None)
     assert save_reg is not None, "no free register to preserve live-in L0 across SFPCONFIG"
-    out.append(isa.SFPMOV(0, 0, save_reg, 0))
+    out.append(isa.SFPMOV(dest=save_reg))
   for r, c in prog:
     if _DEFAULTS_L11_14.get(r) == _const_u32(c):
-      out.append(isa.SFPCONFIG(0, r, 1))
+      out.append(isa.SFPCONFIG(target=r, mode=1))
     else:
       _emit_loadi32(out, 0, c)
-      out.append(isa.SFPCONFIG(0, r, 0))
+      out.append(isa.SFPCONFIG(target=r))
   if save_reg is not None:
-    out.append(isa.SFPMOV(0, save_reg, 0, 0))
+    out.append(isa.SFPMOV(src=save_reg))
   return fix_sfpu_hazards(out)
-
 
 # INT32 for non-floats, so FP32 denormal flushing never corrupts integers or masks
 def _sfpu_fmt(dt: DType) -> isa.SfpuFormat:
   return isa.SfpuFormat.FP32 if dt.is_float else isa.SfpuFormat.INT32
-
 
 def _iadd_immediate(u: UOp) -> tuple[UOp, UOp, int] | None:
   if not u.dtype.is_int or u.op not in (Ops.ADD, Ops.SUB): return None
@@ -300,7 +276,6 @@ def _iadd_immediate(u: UOp) -> tuple[UOp, UOp, int] | None:
     imm = int(const.arg) if u.op is Ops.ADD else -int(const.arg)
     if -2048 <= imm < 2048: return var, const, imm
   return None
-
 
 # fixed hardware constants in L8..L10, up to 4 SFPCONFIG-programmed ones in L11..L14
 def _assign_const_regs(
@@ -340,7 +315,6 @@ def _assign_const_regs(
       if slot == 11: l11_repurposed = True
   return const_regs, l11_repurposed
 
-
 # ---------------------------------------------------------------------------------------------------------------------
 # Pass C: Single-pass physical L0..L7 register allocation & Tensix SFPU emission
 # ---------------------------------------------------------------------------------------------------------------------
@@ -348,10 +322,8 @@ def _assign_const_regs(
 class _OutOfRegs(Exception):
   pass
 
-
 class _DstAliasConflict(Exception):
   pass
-
 
 @dataclass(frozen=True)
 class CompiledSfpuPass:
@@ -367,7 +339,6 @@ class CompiledSfpuPass:
   reg_outputs: dict[UOp, int] = field(default_factory=dict)
   footprints: int = 32
 
-
 @dataclass(frozen=True)
 class CompiledSfpu:
   passes: tuple[CompiledSfpuPass, ...]
@@ -375,7 +346,6 @@ class CompiledSfpu:
   output_tiles: dict[UOp, int]
   root_tiles: tuple[int, ...] = ()
   output_regs: dict[UOp, int] = field(default_factory=dict)
-
 
 @dataclass(frozen=True)
 class CompiledSfpuLoop:
@@ -386,10 +356,8 @@ class CompiledSfpuLoop:
   reg_carries: dict[UOp, int]
   dst_tiles: int
 
-
 def _is_direct_cmp(u: UOp) -> bool:
   return u.op in GroupOp.Comparison or (u.op is Ops.NOT and u.dtype is dtypes.bool and u.src[0].op in GroupOp.Comparison)
-
 
 def _verify_dst_store_load_order(body: Sequence[int], *, retryable: bool = False) -> None:
   written: set[int] = set()
@@ -400,7 +368,6 @@ def _verify_dst_store_load_order(body: Sequence[int], *, retryable: bool = False
         if (t := (w & 0x3FF) // DST_TILE_ROWS) in written:
           cls = _DstAliasConflict if retryable else SfpuCompileError
           raise cls(f"Dst tile {t} read by SFPLOAD at word {idx} after already overwritten by SFPSTORE")
-
 
 def _verify_compiled_pass(
   pro: Sequence[int],
@@ -423,7 +390,6 @@ def _verify_compiled_pass(
       if (info := sfpu_decode(w)) is not None and (hit := info.writes & ro_mask):
         reg = (hit & -hit).bit_length() - 1
         raise SfpuCompileError(f"word {idx} ({info.op}) clobbers read-only pinned register L{reg}")
-
 
 class _PassLowerer:
 
@@ -573,7 +539,7 @@ class _PassLowerer:
     if u in self.dst_inputs:
       tile = self.dst_inputs[u]
       r = self.alloc(protect)
-      self.body.append(isa.SFPLOAD(r, _sfpu_fmt(u.dtype), 0, tile * DST_TILE_ROWS))
+      self.body.append(isa.SFPLOAD(lreg=r, format=_sfpu_fmt(u.dtype), addr=tile * DST_TILE_ROWS))
       self.bind(u, r)
       return r, False
     raise SfpuCompileError(f"operand {u.op.name} not available in pass")
@@ -589,7 +555,7 @@ class _PassLowerer:
       self.reg.pop(u, None)
       return src_r, True
     dst_r = self.alloc(protect | {src_r}, prefer=prefer)
-    self.body.append(isa.SFPMOV(0, src_r, dst_r, 0))
+    self.body.append(isa.SFPMOV(src=src_r, dest=dst_r))
     return dst_r, True
 
   def _release(self, srcs: Sequence[UOp], regs: Sequence[int], temps: Sequence[bool], keep: set[int] = frozenset()):
@@ -601,12 +567,12 @@ class _PassLowerer:
 
   def _int_order_key(self, value: UOp, src: int, dst: int):
     if value.dtype.is_signed and (value.op is Ops.LANE_ID or (value.op is Ops.CONST and 0 <= value.arg < 2**31)):
-      self.body.append(isa.SFPMOV(0, src, dst, 0))
+      self.body.append(isa.SFPMOV(src=src, dest=dst))
       return
-    self.body.append(isa.SFPSHFT((-31) & 0xFFF, src, dst, 7))
-    self.body.append(isa.SFPSHFT((-1) & 0xFFF, dst, dst, 5))
-    if not value.dtype.is_signed: self.body.append(isa.SFPNOT(0, dst, dst, 0))
-    self.body.append(isa.SFPXOR(0, src, dst, 0))
+    self.body.append(isa.SFPSHFT(imm=(-31) & 0xFFF, src=src, dest=dst, mode=7))
+    self.body.append(isa.SFPSHFT(imm=(-1) & 0xFFF, src=dst, dest=dst, mode=5))
+    if not value.dtype.is_signed: self.body.append(isa.SFPNOT(src=dst, dest=dst))
+    self.body.append(isa.SFPXOR(src=src, dest=dst))
 
   def _emit_cmp_set_cc(self, cmp_u: UOp, invert: bool, protect: set[int]) -> None:
     op, (a, b) = cmp_u.op, cmp_u.src
@@ -615,22 +581,22 @@ class _PassLowerer:
       mod = 6 if ((op is Ops.CMPEQ) ^ invert) else 2
       if b.op is Ops.CONST and _const_u32(b) == 0:
         ra, ta = self.ensure(a, prot)
-        self.body.append(isa.SFPSETCC(0, ra, 0, mod))
+        self.body.append(isa.SFPSETCC(src=ra, mode=mod))
         if ta: self.free_reg(ra)
       elif a.op is Ops.CONST and _const_u32(a) == 0:
         rb, tb = self.ensure(b, prot)
-        self.body.append(isa.SFPSETCC(0, rb, 0, mod))
+        self.body.append(isa.SFPSETCC(src=rb, mode=mod))
         if tb: self.free_reg(rb)
       else:
         ra, ta = self.ensure(a, prot)
         rb, tb = self.ensure(b, prot | {ra})
         diff = self.alloc(prot | {ra, rb})
         if a.dtype.is_float:
-          self.body.append(isa.SFPADD(int(isa.LReg.ONE), ra, rb, diff, 2))
+          self.body.append(isa.SFPADD(a=isa.LReg.ONE, b=ra, c=rb, dest=diff, mode=2))
         else:
-          self.body.append(isa.SFPMOV(0, ra, diff, 0))
-          self.body.append(isa.SFPXOR(0, rb, diff, 0))
-        self.body.append(isa.SFPSETCC(0, diff, 0, mod))
+          self.body.append(isa.SFPMOV(src=ra, dest=diff))
+          self.body.append(isa.SFPXOR(src=rb, dest=diff))
+        self.body.append(isa.SFPSETCC(src=diff, mode=mod))
         self.free_reg(diff)
         if ta: self.free_reg(ra)
         if tb: self.free_reg(rb)
@@ -640,7 +606,7 @@ class _PassLowerer:
     if a.dtype.is_float:
       ra, ta = self.ensure(a, prot)
       rb, tb = self.ensure(b, prot | {ra}, need_lt12=True)
-      self.body.append(isa.SFPLE(0, ra, rb, 1) if invert else isa.SFPGT(0, ra, rb, 1))
+      self.body.append(isa.SFPLE(src=ra, dest=rb, mode=1) if invert else isa.SFPGT(src=ra, dest=rb, mode=1))
       if ta: self.free_reg(ra)
       if tb: self.free_reg(rb)
     else:
@@ -650,7 +616,7 @@ class _PassLowerer:
       sm_b = self.alloc(prot | {ra, rb, sm_a})
       self._int_order_key(a, ra, sm_a)
       self._int_order_key(b, rb, sm_b)
-      self.body.append(isa.SFPLE(0, sm_a, sm_b, 1) if invert else isa.SFPGT(0, sm_a, sm_b, 1))
+      self.body.append(isa.SFPLE(src=sm_a, dest=sm_b, mode=1) if invert else isa.SFPGT(src=sm_a, dest=sm_b, mode=1))
       self.free_reg(sm_b)
       self.free_reg(sm_a)
       if ta: self.free_reg(ra)
@@ -662,7 +628,7 @@ class _PassLowerer:
       ra, ta = self.ensure(a, set())
       rb, tb = self.ensure(b, {ra})
       vd, _ = self._writable_copy(b, rb, tb, {ra}, count=(2 if a is b else 1), prefer=prefer)
-      self.body.append(isa.SFPGT(0, ra, vd, 8))
+      self.body.append(isa.SFPGT(src=ra, dest=vd, mode=8))
       self._release((a, b), (ra, rb), (ta, False if vd == rb else tb), keep={vd})
       return vd
     if op is Ops.CMPLT:
@@ -672,16 +638,16 @@ class _PassLowerer:
       sm_b = self.alloc({ra, rb, sm_a}, prefer=prefer)
       self._int_order_key(a, ra, sm_a)
       self._int_order_key(b, rb, sm_b)
-      self.body.append(isa.SFPGT(0, sm_a, sm_b, 8))
+      self.body.append(isa.SFPGT(src=sm_a, dest=sm_b, mode=8))
       self.free_reg(sm_a)
       self._release((a, b), (ra, rb), (ta, tb), keep={sm_b})
       return sm_b
     rd = self.alloc(prefer=prefer)
-    self.body.append(isa.SFPMOV(0, int(isa.LReg.ZERO), rd, 0))
-    self.body.append(isa.SFPENCC(1, 0, 0, 2))
+    self.body.append(isa.SFPMOV(src=isa.LReg.ZERO, dest=rd))
+    self.body.append(isa.SFPENCC(imm=1, mode=2))
     self._emit_cmp_set_cc(u, False, {rd})
-    self.body.append(isa.SFPLOADI(rd, isa.LoadImm.SHORT, 0xFFFF))
-    self.body.append(isa.SFPENCC(0, 0, 0, 2))
+    self.body.append(isa.SFPLOADI(lreg=rd, mode=isa.LoadImm.SHORT, imm=0xFFFF))
+    self.body.append(isa.SFPENCC(mode=2))
     self.drop_use(a)
     self.drop_use(b)
     return rd
@@ -699,16 +665,16 @@ class _PassLowerer:
 
     def combine(dst_r: int, src_r: int):
       match red_op:
-        case Ops.ADD if u.dtype.is_float: self.body.append(isa.SFPADD(int(isa.LReg.ONE), dst_r, src_r, dst_r, 0))
-        case Ops.ADD: self.body.append(isa.SFPIADD(0, src_r, dst_r, 4))
-        case Ops.MAX: self.body.append(isa.SFPSWAP(0, src_r, dst_r, 9))
-        case Ops.MIN: self.body.append(isa.SFPSWAP(0, src_r, dst_r, 1))
+        case Ops.ADD if u.dtype.is_float: self.body.append(isa.SFPADD(a=isa.LReg.ONE, b=dst_r, c=src_r, dest=dst_r))
+        case Ops.ADD: self.body.append(isa.SFPIADD(src=src_r, dest=dst_r, mode=4))
+        case Ops.MAX: self.body.append(isa.SFPSWAP(src=src_r, dest=dst_r, mode=9))
+        case Ops.MIN: self.body.append(isa.SFPSWAP(src=src_r, dest=dst_r, mode=1))
 
     # Stage 1: reduce each 8-lane physical row via rotate-right butterfly (4, 2, 1).
     tmp = self.alloc({vd})
     for shift in (4, 2, 1):
-      self.body.append(isa.SFPMOV(0, vd, tmp, 0))
-      for _ in range(shift): self.body.append(isa.SFPSHFT2(0, tmp, tmp, 3))
+      self.body.append(isa.SFPMOV(src=vd, dest=tmp))
+      for _ in range(shift): self.body.append(isa.SFPSHFT2(src=tmp, dest=tmp, mode=3))
       combine(vd, tmp)
     self.free_reg(tmp)
     if scope == "row8": return vd
@@ -718,12 +684,12 @@ class _PassLowerer:
     if self.max_regs < 4 or self.pinned_ro or any(r != vd for r in self.owner):
       raise _OutOfRegs()
     if vd != 0:
-      self.body.append(isa.SFPMOV(0, vd, 0, 0))
+      self.body.append(isa.SFPMOV(src=vd))
       self.free_reg(vd)
       self.free.remove(0)
       vd = 0
-    for r in (1, 2, 3): self.body.append(isa.SFPMOV(0, 0, r, 0))
-    self.body.append(isa.SFPTRANSP(0, 0, 0, 0))
+    for r in (1, 2, 3): self.body.append(isa.SFPMOV(dest=r))
+    self.body.append(isa.SFPTRANSP())
     combine(0, 1)
     combine(2, 3)
     combine(0, 2)
@@ -748,13 +714,13 @@ class _PassLowerer:
           self.uses[src[0]] -= 1
           return ra
         rd = self.alloc({ra}, prefer=prefer)
-        self.body.append(isa.SFPMOV(0, ra, rd, 0))
+        self.body.append(isa.SFPMOV(src=ra, dest=rd))
         self.drop_use(src[0])
         return rd
 
       case Ops.LANE_ID:
         rd = self.alloc(prefer=prefer)
-        self.body.append(isa.SFPSHFT((-1) & 0xFFF, int(isa.LReg.LANE_X2), rd, 5))
+        self.body.append(isa.SFPSHFT(imm=(-1) & 0xFFF, src=isa.LReg.LANE_X2, dest=rd, mode=5))
         return rd
 
       case Ops.REDUCE_LANES:
@@ -766,7 +732,7 @@ class _PassLowerer:
           rm, tm = self.ensure(cond, set())
           ra, ta = self.ensure(a, {rm})
           rd = self.alloc({rm, ra}, prefer=prefer)
-          self.body.append(isa.SFPAND(ra, rm, rd, 1))
+          self.body.append(isa.SFPAND(imm=ra, src=rm, dest=rd, mode=1))
           self._release((cond, a, b), (rm, ra), (tm, ta), keep={rd})
           return rd
 
@@ -791,12 +757,12 @@ class _PassLowerer:
           rd = rb
         else:
           rd = self.alloc(prot | {rb}, prefer=prefer)
-          self.body.append(isa.SFPMOV(0, rb, rd, 0))
-        self.body.append(isa.SFPENCC(1, 0, 0, 2))
+          self.body.append(isa.SFPMOV(src=rb, dest=rd))
+        self.body.append(isa.SFPENCC(imm=1, mode=2))
         if fused: self._emit_cmp_set_cc(cmp_u, invert, prot | {rd})
-        else: self.body.append(isa.SFPSETCC(0, rm, 0, 2))
-        self.body.append(isa.SFPMOV(0, ra, rd, 0))
-        self.body.append(isa.SFPENCC(0, 0, 0, 2))
+        else: self.body.append(isa.SFPSETCC(src=rm, mode=2))
+        self.body.append(isa.SFPMOV(src=ra, dest=rd))
+        self.body.append(isa.SFPENCC(mode=2))
         if tm and rm is not None: self.free_reg(rm)
         if ta: self.free_reg(ra)
         if tb and rb != rd: self.free_reg(rb)
@@ -814,7 +780,7 @@ class _PassLowerer:
         rc, tc = self.ensure(c, {ra, rb})
         self._release((a, b, c), (ra, rb, rc), (ta, tb, tc))
         rd = self.alloc(prefer=prefer)
-        self.body.append(isa.SFPMAD(ra, rb, rc, rd, (1 if neg_ab else 0) | (2 if neg_c else 0)))
+        self.body.append(isa.SFPMAD(a=ra, b=rb, c=rc, dest=rd, mode=(1 if neg_ab else 0) | (2 if neg_c else 0)))
         return rd
 
       case Ops.ADD | Ops.SUB | Ops.MUL if dt.is_float:
@@ -828,7 +794,7 @@ class _PassLowerer:
               if can_steal:
                 rd, _ = self._writable_copy(var, rv, tv, set(), prefer=prefer)
                 imm16 = (_const_u32(cst) >> 16) & 0xFFFF
-                self.body.append(isa.SFPADDI(imm16, rd, 0) if op is Ops.ADD else isa.SFPMULI(imm16, rd, 0))
+                self.body.append(isa.SFPADDI(imm=imm16, dest=rd) if op is Ops.ADD else isa.SFPMULI(imm=imm16, dest=rd))
                 self.drop_use(var)
                 self.drop_use(cst)
                 return rd
@@ -837,9 +803,9 @@ class _PassLowerer:
         self._release((a, b), (ra, rb), (ta, tb))
         rd = self.alloc(prefer=prefer)
         match op:
-          case Ops.ADD: self.body.append(isa.SFPADD(int(isa.LReg.ONE), ra, rb, rd, 0))
-          case Ops.SUB: self.body.append(isa.SFPADD(int(isa.LReg.ONE), ra, rb, rd, 2))
-          case Ops.MUL: self.body.append(isa.SFPMUL(ra, rb, int(isa.LReg.ZERO), rd, 0))
+          case Ops.ADD: self.body.append(isa.SFPADD(a=isa.LReg.ONE, b=ra, c=rb, dest=rd))
+          case Ops.SUB: self.body.append(isa.SFPADD(a=isa.LReg.ONE, b=ra, c=rb, dest=rd, mode=2))
+          case Ops.MUL: self.body.append(isa.SFPMUL(a=ra, b=rb, c=isa.LReg.ZERO, dest=rd))
         return rd
 
       case Ops.ADD | Ops.SUB if dt.is_int:
@@ -849,12 +815,12 @@ class _PassLowerer:
           rv, temp = self.ensure(var, set())
           self._release((var, const), (rv,), (temp,))
           rd = self.alloc(prefer=prefer)
-          self.body.append(isa.SFPIADD(imm & 0xFFF, rv, rd, 5))
+          self.body.append(isa.SFPIADD(imm=imm & 0xFFF, src=rv, dest=rd, mode=5))
           return rd
         ra, ta = self.ensure(a, set())
         rb, tb = self.ensure(b, {ra})
         vd, _ = self._writable_copy(b, rb, tb, {ra}, count=(2 if a is b else 1), prefer=prefer)
-        self.body.append(isa.SFPIADD(0, ra, vd, 4 if op is Ops.ADD else 6))
+        self.body.append(isa.SFPIADD(src=ra, dest=vd, mode=4 if op is Ops.ADD else 6))
         self._release((a, b), (ra, rb), (ta, False if vd == rb else tb), keep={vd})
         return vd
 
@@ -867,12 +833,12 @@ class _PassLowerer:
         if (ra >= 8) ^ (rb >= 8):
           if ra >= 8: a, b, ra, rb, ta, tb = b, a, rb, ra, tb, ta
           vd, _ = self._writable_copy(a, ra, ta, {rb}, prefer=prefer)
-          self.body.append(isa.SFPSWAP(0, rb, vd, mod1))
+          self.body.append(isa.SFPSWAP(src=rb, dest=vd, mode=mod1))
           self._release((a, b), (ra, rb), (False if vd == ra else ta, tb), keep={vd})
           return vd
         vd, _ = self._writable_copy(a, ra, ta, {rb}, count=(2 if a is b else 1), prefer=prefer)
         vc, _ = self._writable_copy(b, rb, tb, {vd}, count=(2 if a is b else 1))
-        self.body.append(isa.SFPSWAP(0, vc, vd, mod1))
+        self.body.append(isa.SFPSWAP(src=vc, dest=vd, mode=mod1))
         self.free_reg(vc)
         self._release((a, b), (ra, rb), (False if vd == ra else ta, False if vc == rb else tb), keep={vd})
         return vd
@@ -882,10 +848,10 @@ class _PassLowerer:
         if dt.is_float:
           self._release(src, (ra,), (ta,))
           rd = self.alloc(prefer=prefer)
-          self.body.append(isa.SFPMOV(0, ra, rd, 1))
+          self.body.append(isa.SFPMOV(src=ra, dest=rd, mode=1))
           return rd
         vd, _ = self._writable_copy(src[0], ra, ta, set(), prefer=prefer)
-        self.body.append(isa.SFPIADD(0, int(isa.LReg.ZERO), vd, 6))
+        self.body.append(isa.SFPIADD(src=isa.LReg.ZERO, dest=vd, mode=6))
         self._release(src, (ra,), (False if vd == ra else ta,), keep={vd})
         return vd
 
@@ -893,7 +859,7 @@ class _PassLowerer:
         ra, ta = self.ensure(src[0], set())
         self._release(src, (ra,), (ta,))
         rd = self.alloc(prefer=prefer)
-        self.body.append(isa.SFPABS(0, ra, rd, 1 if dt.is_float else 0) if op is Ops.ABS else isa.SFPNOT(0, ra, rd, 0))
+        self.body.append(isa.SFPABS(src=ra, dest=rd, mode=1 if dt.is_float else 0) if op is Ops.ABS else isa.SFPNOT(src=ra, dest=rd))
         return rd
 
       case Ops.AND | Ops.OR:
@@ -902,7 +868,7 @@ class _PassLowerer:
         rb, tb = self.ensure(b, {ra})
         self._release((a, b), (ra, rb), (ta, tb))
         rd = self.alloc(prefer=prefer)
-        self.body.append(isa.SFPAND(ra, rb, rd, 1) if op is Ops.AND else isa.SFPOR(ra, rb, rd, 1))
+        self.body.append(isa.SFPAND(imm=ra, src=rb, dest=rd, mode=1) if op is Ops.AND else isa.SFPOR(imm=ra, src=rb, dest=rd, mode=1))
         return rd
 
       case Ops.XOR:
@@ -910,7 +876,7 @@ class _PassLowerer:
         ra, ta = self.ensure(a, set())
         rb, tb = self.ensure(b, {ra})
         vd, _ = self._writable_copy(a, ra, ta, {rb}, count=(2 if a is b else 1), prefer=prefer)
-        self.body.append(isa.SFPXOR(0, rb, vd, 0))
+        self.body.append(isa.SFPXOR(src=rb, dest=vd))
         self._release((a, b), (ra, rb), (False if vd == ra else ta, tb), keep={vd})
         return vd
 
@@ -923,18 +889,18 @@ class _PassLowerer:
           ra, ta = self.ensure(a, set())
           self._release((a, b), (ra,), (ta,))
           rd = self.alloc(prefer=prefer)
-          self.body.append(isa.SFPSHFT(imm, ra, rd, mod))
+          self.body.append(isa.SFPSHFT(imm=imm, src=ra, dest=rd, mode=mod))
           return rd
         ra, ta = self.ensure(a, set())
         rb, tb = self.ensure(b, {ra})
         vd, _ = self._writable_copy(a, ra, ta, {rb}, count=(2 if a is b else 1), prefer=prefer)
         if op is Ops.SHL:
-          self.body.append(isa.SFPSHFT(0, rb, vd, 0))
+          self.body.append(isa.SFPSHFT(src=rb, dest=vd))
         else:
           neg_b = self.alloc({vd, rb})
-          self.body.append(isa.SFPMOV(0, rb, neg_b, 0))
-          self.body.append(isa.SFPIADD(0, int(isa.LReg.ZERO), neg_b, 6))
-          self.body.append(isa.SFPSHFT(0, neg_b, vd, 2 if dt.is_signed else 0))
+          self.body.append(isa.SFPMOV(src=rb, dest=neg_b))
+          self.body.append(isa.SFPIADD(src=isa.LReg.ZERO, dest=neg_b, mode=6))
+          self.body.append(isa.SFPSHFT(src=neg_b, dest=vd, mode=2 if dt.is_signed else 0))
           self.free_reg(neg_b)
         self._release((a, b), (ra, rb), (False if vd == ra else ta, tb), keep={vd})
         return vd
@@ -947,22 +913,22 @@ class _PassLowerer:
             self.drop_use(x)
             return rx
           rd = self.alloc({rx}, prefer=prefer)
-          self.body.append(isa.SFPMOV(0, rx, rd, 0))
+          self.body.append(isa.SFPMOV(src=rx, dest=rd))
           self.drop_use(x)
           return rd
         self._release(src, (rx,), (tx,))
         rd = self.alloc(prefer=prefer)
         match (x.dtype, dt):
           case (sx, _) if sx.is_int and dt.is_float:
-            self.body.append(isa.SFPCAST(rx, rd, 3))
-            self.body.append(isa.SFPCAST(rd, rd, 0))
+            self.body.append(isa.SFPCAST(src=rx, dest=rd, mode=3))
+            self.body.append(isa.SFPCAST(src=rd, dest=rd))
           case (dtypes.fp32, dtypes.bf16):
-            self.body.append(isa.SFP_STOCH_RND(0, 0, int(isa.LReg.ZERO), rx, rd, 1))
+            self.body.append(isa.SFP_STOCH_RND(b=isa.LReg.ZERO, src=rx, dest=rd, mode=1))
           case (dtypes.bf16, dtypes.fp32):
-            self.body.append(isa.SFPMOV(0, rx, rd, 0))
+            self.body.append(isa.SFPMOV(src=rx, dest=rd))
           case (sx, _) if sx.is_float and dt.is_int:
-            self.body.append(isa.SFP_STOCH_RND(2, 0, int(isa.LReg.ZERO), rx, rd, 7))
-            self.body.append(isa.SFPCAST(rd, rd, 3))
+            self.body.append(isa.SFP_STOCH_RND(rounding=2, b=isa.LReg.ZERO, src=rx, dest=rd, mode=7))
+            self.body.append(isa.SFPCAST(src=rd, dest=rd, mode=3))
           case _:
             raise SfpuCompileError(f"unsupported SFPU cast {x.dtype} -> {dt}")
         return rd
@@ -975,11 +941,11 @@ class _PassLowerer:
             self._release(src, (rx,), (tx,))
             rd = self.alloc(prefer=prefer)
             match arg.op:
-              case "ARECIP": word = isa.SFPARECIP(0, rx, rd, arg.mod)
-              case "EXEXP": word = isa.SFPEXEXP(0, rx, rd, arg.mod)
-              case "EXMAN": word = isa.SFPEXMAN(0, rx, rd, arg.mod)
-              case "DIVP2": word = isa.SFPDIVP2(arg.imm & 0xFF, rx, rd, arg.mod)
-              case "CAST_SM2F" | "CAST_TC2SM": word = isa.SFPCAST(rx, rd, 0 if arg.op == "CAST_SM2F" else 3)
+              case "ARECIP": word = isa.SFPARECIP(src=rx, dest=rd, mode=arg.mod)
+              case "EXEXP": word = isa.SFPEXEXP(src=rx, dest=rd, mode=arg.mod)
+              case "EXMAN": word = isa.SFPEXMAN(src=rx, dest=rd, mode=arg.mod)
+              case "DIVP2": word = isa.SFPDIVP2(imm=arg.imm & 0xFF, src=rx, dest=rd, mode=arg.mod)
+              case "CAST_SM2F" | "CAST_TC2SM": word = isa.SFPCAST(src=rx, dest=rd, mode=0 if arg.op == "CAST_SM2F" else 3)
             self.body.append(word)
             return rd
           case "SETEXP":
@@ -987,19 +953,19 @@ class _PassLowerer:
               rc, tc = self.ensure(src[0], set())
               self._release(src, (rc,), (tc,))
               rd = self.alloc(prefer=prefer)
-              self.body.append(isa.SFPSETEXP(arg.imm & 0xFF, rc, rd, 1))
+              self.body.append(isa.SFPSETEXP(imm=arg.imm & 0xFF, src=rc, dest=rd, mode=1))
               return rd
             re, te = self.ensure(src[0], set())
             rm, tm = self.ensure(src[1], {re})
             vd, _ = self._writable_copy(src[0], re, te, {rm}, count=(2 if src[0] is src[1] else 1), prefer=prefer)
-            self.body.append(isa.SFPSETEXP(0, rm, vd, arg.mod))
+            self.body.append(isa.SFPSETEXP(src=rm, dest=vd, mode=arg.mod))
             self._release(src, (re, rm), (False if vd == re else te, tm), keep={vd})
             return vd
           case "SHFT_VAR":
             rv, tv = self.ensure(src[0], set())
             rs, ts = self.ensure(src[1], {rv})
             vd, _ = self._writable_copy(src[0], rv, tv, {rs}, count=(2 if src[0] is src[1] else 1), prefer=prefer)
-            self.body.append(isa.SFPSHFT(0, rs, vd, arg.mod))
+            self.body.append(isa.SFPSHFT(src=rs, dest=vd, mode=arg.mod))
             self._release(src, (rv, rs), (False if vd == rv else tv, ts), keep={vd})
             return vd
           case "TRANSP":
@@ -1020,11 +986,11 @@ class _PassLowerer:
   def _emit_store(self, u: UOp, r: int, tile: int):
     if r >= 12:
       tmp = self.alloc({r})
-      self.body.append(isa.SFPMOV(0, r, tmp, 0))
-      self.body.append(isa.SFPSTORE(tmp, _sfpu_fmt(u.dtype), 0, tile * DST_TILE_ROWS))
+      self.body.append(isa.SFPMOV(src=r, dest=tmp))
+      self.body.append(isa.SFPSTORE(lreg=tmp, format=_sfpu_fmt(u.dtype), addr=tile * DST_TILE_ROWS))
       self.free_reg(tmp)
     else:
-      self.body.append(isa.SFPSTORE(r, _sfpu_fmt(u.dtype), 0, tile * DST_TILE_ROWS))
+      self.body.append(isa.SFPSTORE(lreg=r, format=_sfpu_fmt(u.dtype), addr=tile * DST_TILE_ROWS))
     self._stored.add(u)
     self._written_tiles.add(tile)
 
@@ -1046,7 +1012,7 @@ class _PassLowerer:
       r, _ = self.ensure(u, prot, need_writable=True)
       if r >= 8:
         dst_r = self.alloc(prot | {r}, prefer=self.reg_outputs[u])
-        self.body.append(isa.SFPMOV(0, r, dst_r, 0))
+        self.body.append(isa.SFPMOV(src=r, dest=dst_r))
         r = dst_r
       loc[u] = r
       prot.add(r)
@@ -1058,14 +1024,14 @@ class _PassLowerer:
       ready = next(((u, tgt) for u, tgt in pending.items() if tgt not in occupied), None)
       if ready is not None:
         u, tgt = ready
-        self.body.append(isa.SFPMOV(0, loc[u], tgt, 0))
+        self.body.append(isa.SFPMOV(src=loc[u], dest=tgt))
         loc[u] = tgt
         pending.pop(u)
       else:
         u, tgt = next(iter(pending.items()))
         src_r = loc[u]
         # Swap src_r <-> tgt in place (updates any other output currently sitting in tgt!).
-        self.body.append(isa.SFPSWAP(0, src_r, tgt, 0))
+        self.body.append(isa.SFPSWAP(src=src_r, dest=tgt))
         for k, v in list(loc.items()):
           if v == src_r: loc[k] = tgt
           elif v == tgt: loc[k] = src_r
@@ -1101,18 +1067,15 @@ class _PassLowerer:
 
     self._place_reg_outputs()
 
-    # Attach sfpu_addr_mode (e.g. dst+=2) to the final SFPSTORE or SFPLOAD in multi-footprint sweeps.
+    # Attach addr_mod (e.g. dst+=2) to the final SFPSTORE or SFPLOAD in multi-footprint sweeps.
     if self.addr_mode and self.footprints > 1:
       for i in range(len(self.body) - 1, -1, -1):
         if (self.body[i] >> 24) in (0x72, 0x70):
-          dec = isa.tensix_decode(self.body[i])
-          assert dec is not None
-          name, fields = dec
-          fields["sfpu_addr_mode"] = self.addr_mode
-          self.body[i] = isa.tensix(name, **fields)
+          inst = isa.decode(self.body[i])
+          assert inst is not None
+          self.body[i] = inst.replace(addr_mod=self.addr_mode)
           break
     return self.body, self.peak_regs
-
 
 def _try_lower_pass(
   nodes: Sequence[UOp],
@@ -1146,7 +1109,6 @@ def _try_lower_pass(
   _verify_dst_store_load_order(body, retryable=True)
   return prologue, body, [], const_regs, l11_used, peak
 
-
 # ---------------------------------------------------------------------------------------------------------------------
 # Pass B: Sethi-Ullman ordering & Dst-intermediate pass splitting
 # ---------------------------------------------------------------------------------------------------------------------
@@ -1178,7 +1140,6 @@ def _ershov_order(roots: Sequence[UOp], stop: set[UOp]) -> list[UOp]:
 
   for r in roots: visit(r)
   return order
-
 
 def partition_sfpu(
   roots: Sequence[UOp],
@@ -1275,8 +1236,9 @@ def partition_sfpu(
       cand, rest = remaining[:k], remaining[k:]
       bouts, pass_reg_outs = boundary_outputs(cand, rest)
       used_inputs = {s: live_dst[s] for n in cand for s in n.src if s in live_dst}
-      used_rin = {u: r for u, r in rin.items()
-                  if any(u in n.src for n in cand) or (not rest and u in rout)}
+      # Every reg_input stays bound in every pass: a pinned LReg (e.g. a loop carry read only by a later pass) must
+      # not be used as scratch or as the SFPCONFIG staging register by an earlier pass.
+      used_rin = dict(rin)
       # Try in-place Dst reuse first (zero scratch tiles for single/multi-tile accumulators!), fallback to scratch.
       modes = (True, False) if (not rest or len(bouts) == 1) else (False,)
       lowered = None
@@ -1340,6 +1302,10 @@ def partition_sfpu(
     if live_dst.get(r) != tile and (r, tile) not in pending_copies:
       pending_copies.append((r, tile))
 
+  # LRegs still holding live values (unconsumed reg_inputs, placed reg_outputs): cleanup passes must not clobber them.
+  placed_regs = {rout[u] for u in placed_reg_outs}
+  live_regs = {**{u: r for u, r in rin.items() if r not in placed_regs}, **{u: rout[u] for u in placed_reg_outs}}
+
   while pending_copies:
     batch: dict[UOp, int] = {}
     rest_copies: list[tuple[UOp, int]] = []
@@ -1347,7 +1313,7 @@ def partition_sfpu(
       if src_u not in batch: batch[src_u] = dst_t
       else: rest_copies.append((src_u, dst_t))
     in_map = {u: live_dst[u] for u in batch if u in live_dst}
-    r_in = {u: rin[u] for u in batch if u in rin}
+    r_in = {**live_regs, **{u: rin[u] for u in batch if u in rin}}
     try:
       pro, body, epi, _, l11_used, peak = _try_lower_pass(
         (), in_map, batch, reg_inputs=r_in, max_regs=max_regs,
@@ -1369,6 +1335,7 @@ def partition_sfpu(
   if missing_routs:
     in_map = {u: live_dst[u] for u in missing_routs if u in live_dst}
     r_in = {u: rin[u] for u in missing_routs if u in rin}
+    r_in = {**{u: r for u, r in live_regs.items() if r not in missing_routs.values()}, **r_in}
     pass_fp = 1 if not in_map else footprints
     pro, body, epi, _, l11_used, peak = _try_lower_pass(
       (), in_map, {}, reg_inputs=r_in, reg_outputs=missing_routs,
@@ -1384,7 +1351,6 @@ def partition_sfpu(
   dst_roots = [r for r in roots_t if r in explicit_dst_roots]
   final_output_tiles = {r: t for r, t in zip(dst_roots, final_root_tiles)}
   return CompiledSfpu(tuple(compiled_passes), max_dst_used, final_output_tiles, tuple(final_root_tiles), dict(rout))
-
 
 def compile_sfpu(
   roots: UOp | Sequence[UOp],
@@ -1429,7 +1395,6 @@ def compile_sfpu(
     output_tiles=out_tiles_arg, preserve_l11=preserve_l11,
     addr_mode=addr_mode, footprints=footprints,
   )
-
 
 def compile_sfpu_loop(
   loop_or_get: UOp,

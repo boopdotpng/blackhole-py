@@ -22,7 +22,6 @@ class DType:
   def is_int(self) -> bool: return not self.is_float and self.bits >= 8
   def __repr__(self) -> str: return f"dtypes.{self.name}"
 
-
 class dtypes:
   void = DType("void", 0)
   bool = DType("bool", 1)
@@ -45,7 +44,6 @@ class dtypes:
     if name not in cls._by_name: raise ValueError(f"unknown dtype {name!r}")
     return cls._by_name[name]
 
-
 class Space(Enum):
   NONE   = auto()  # void / side effects
   SCALAR = auto()  # RV32 scalar glue & indices
@@ -59,7 +57,6 @@ class Space(Enum):
 
   def __repr__(self) -> str: return f"Space.{self.name}"
 
-
 # each phase multiplies 5 bits of SrcA by 7 bits of SrcB
 class Fidelity(IntEnum):
   LOFI  = 1
@@ -69,12 +66,10 @@ class Fidelity(IntEnum):
 
   def __repr__(self) -> str: return f"Fidelity.{self.name}"
 
-
 def default_fidelity(a: DType, b: DType) -> Fidelity:
   if dtypes.fp32 in (a, b): return Fidelity.HIFI4
   if dtypes.bf16 in (a, b): return Fidelity.HIFI2
   return Fidelity.LOFI
-
 
 # ---- opcodes ----
 
@@ -131,7 +126,6 @@ class Ops(Enum):
   ARGMAX = auto()
   SFPU = auto()
 
-
 class GroupOp:
   Unary = frozenset({Ops.NEG, Ops.ABS, Ops.NOT, Ops.EXP2, Ops.LOG2, Ops.SIN, Ops.SQRT, Ops.RSQRT, Ops.RECIP})
   Binary = frozenset({
@@ -145,7 +139,6 @@ class GroupOp:
   NoC = frozenset({Ops.NOC_READ, Ops.NOC_WRITE, Ops.NOC_MCAST, Ops.NOC_GATHER, Ops.NOC_ALLGATHER})
   Effect = frozenset({Ops.STORE, Ops.NOC_WRITE, Ops.BARRIER, Ops.END})
 
-
 # ---- typed UOp.arg specs (all frozen & hashable; UOp dependencies always live in UOp.src) ----
 
 # runs on the first `cores` workers, numbered column-major (hw.WORKER_ROWS per column)
@@ -153,7 +146,6 @@ class GroupOp:
 class KernelArg:
   name: str
   cores: int
-
 
 @dataclass(frozen=True)
 class BufferArg:
@@ -164,7 +156,6 @@ class BufferArg:
   addr: int | None = None
   tiles_per_page: int = 1
 
-
 @dataclass(frozen=True)
 class AllocArg:
   name: str
@@ -172,18 +163,15 @@ class AllocArg:
   shape: tuple[int, ...]
   dtype: DType
 
-
 @dataclass(frozen=True)
 class RangeArg:
   axis: int
   name: str = ""
 
-
 @dataclass(frozen=True)
 class ReduceArg:
   op: Ops
   space: Space
-
 
 @dataclass(frozen=True)
 class CarryArg:
@@ -191,12 +179,10 @@ class CarryArg:
   space: Space
   name: str = ""
 
-
 @dataclass(frozen=True)
 class BarrierArg:
   scope: str | tuple[tuple[int, int], tuple[int, int]] = "all"
   tag: int = 0
-
 
 @dataclass(frozen=True)
 class NocHint:
@@ -205,13 +191,11 @@ class NocHint:
   cap: int = 0
   port: int | None = None
 
-
 @dataclass(frozen=True)
 class NocArg:
   tiles: int = 1
   nbytes: int | None = None
   hint: NocHint = NocHint()
-
 
 @dataclass(frozen=True)
 class McastArg:
@@ -219,13 +203,11 @@ class McastArg:
   include_self: bool = True
   hint: NocHint = NocHint()
 
-
 @dataclass(frozen=True)
 class CollectiveArg:
   group: str | tuple[int, ...]
   count: int = 1
   hint: NocHint = NocHint()
-
 
 @dataclass(frozen=True)
 class UnpackArg:
@@ -234,18 +216,15 @@ class UnpackArg:
   transpose: bool = False
   allow_tf32: bool = False
 
-
 @dataclass(frozen=True)
 class MvmulArg:
   tile: tuple[int, int, int] = (32, 32, 32)
   fidelity: Fidelity = Fidelity.HIFI2
 
-
 @dataclass(frozen=True)
 class PackArg:
   shape: tuple[int, int] = (32, 32)
   l1_acc: bool = False
-
 
 @dataclass(frozen=True)
 class ReplayArg:
@@ -253,13 +232,11 @@ class ReplayArg:
   dest: Space = Space.DST
   name: str = ""
 
-
 @dataclass(frozen=True)
 class MopArg:
   cfg: tuple[int, ...]
   dest: Space = Space.DST
   name: str = ""
-
 
 # ---- hash-consed UOp ----
 
@@ -268,7 +245,6 @@ def _arg_key(arg: Any) -> Any:
   t = type(arg)
   if t is float: return (float, struct.pack("<d", arg))
   return (t, arg)
-
 
 class _UOpMeta(type):
   _pool: weakref.WeakValueDictionary[tuple, UOp] = weakref.WeakValueDictionary()
@@ -281,10 +257,8 @@ class _UOpMeta(type):
     cls._pool[key] = obj
     return obj
 
-
 _SRC_BANKS = frozenset({Space.SRCA, Space.SRCB})
 _TENSIX_VAL_SPACES = frozenset({Space.DST, Space.SRCA, Space.SRCB})
-
 
 def _infer_space(op: Ops, src: tuple[UOp, ...], arg: Any) -> Space:
   match op:
@@ -308,7 +282,6 @@ def _infer_space(op: Ops, src: tuple[UOp, ...], arg: Any) -> Space:
   if any(s.space in _TENSIX_VAL_SPACES for s in src): return Space.DST
   if any(s.space is Space.LREG for s in src): return Space.LREG
   return Space.DST if op is Ops.SFPU else Space.SCALAR
-
 
 # hash-consed: structurally equal UOps are the same object
 class UOp(metaclass=_UOpMeta):
@@ -630,7 +603,6 @@ class UOp(metaclass=_UOpMeta):
 
   def __repr__(self) -> str: return pretty(self)
 
-
 def pretty(root: UOp, limit: int = 200) -> str:
   nodes = root.toposort()
   idx = {u: i for i, u in enumerate(nodes)}
@@ -640,13 +612,11 @@ def pretty(root: UOp, limit: int = 200) -> str:
   ]
   return "\n".join(lines if len(lines) <= limit else lines[:limit] + [f"... ({len(lines) - limit} more)"])
 
-
 # ---- pattern matching ----
 
 def _as_tuple(x, cls) -> tuple | None:
   if x is None: return None
   return (x,) if isinstance(x, cls) else tuple(x)
-
 
 class UPat:
   __slots__ = ("op", "dtype", "space", "arg", "name", "src_mode", "src", "allow_any_len", "is_any", "req_ops")
@@ -737,7 +707,6 @@ class UPat:
       results.extend(states)
     return results
 
-
 class PatternMatcher:
   def __init__(self, rules: Sequence[tuple[UPat, Callable]]):
     self.rules = list(rules)
@@ -780,7 +749,6 @@ class PatternMatcher:
         if req and not req <= src_ops: continue
         if (res := run(u, ctx)) is not None and res is not u: return res
     return None
-
 
 # ---- iterative graph rewriter ----
 
@@ -872,7 +840,6 @@ def graph_rewrite(
   if root not in memo:
     raise RuntimeError("graph_rewrite stalled: cyclic dependency between rewritten nodes")
   return memo[root]
-
 
 def substitute(root: UOp, mapping: dict[UOp, UOp]) -> UOp:
   if not mapping: return root

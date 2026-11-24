@@ -4,7 +4,6 @@
 #include <DriverKit/IODispatchQueue.h>
 #include <PCIDriverKit/PCIDriverKit.h>
 
-
 struct TinyGPUDriver_IVars
 {
 	IOPCIDevice *pci = nullptr;

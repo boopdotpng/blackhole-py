@@ -10,8 +10,6 @@ __asm__(".section .entry, \"ax\", @progbits\n"
         SET_SP(STACK_TOP)
         "j _dma_boot\n");
 
-// Engine e moves chunks e, e+2, ... through a ring of DMA_SLOTS staging slots, keeping DMA_SLOTS-1 reads in flight:
-// one read and one write at a time can't cover the PCIe round trip.
 static void dma_copy_parallel(u32 dst_lo, u32 dst_hi, u32 src_lo, u32 src_hi, u32 size) {
   u32 stride = 2 * DMA_BATCH, first = DMA_ENGINE * DMA_BATCH, base = DMA_ENGINE * DMA_SLOTS;
   if (first >= size) return;
@@ -23,7 +21,7 @@ static void dma_copy_parallel(u32 dst_lo, u32 dst_hi, u32 src_lo, u32 src_hi, u3
   for (u32 i = 0; i < chunks; i++) {
     u32 ahead = i + DMA_SLOTS - 1;
     if (ahead < chunks) {
-      if (i) noc_wait(NIU, WR_TID((i - 1) % DMA_SLOTS), 0);  // chunk i-1 has left the slot chunk `ahead` reuses
+      if (i) noc_wait(NIU, WR_TID((i - 1) % DMA_SLOTS), 0);
       READ(ahead);
     }
     u32 s = i % DMA_SLOTS;

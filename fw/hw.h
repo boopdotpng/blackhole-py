@@ -1,21 +1,16 @@
-// Blackhole addresses and layouts the firmware uses. Hand-written: the host side keeps its own copies of the few
-// values both sides need (the L1 header and DMA core layout in fw/__init__.py, reset registers in device.py).
 #pragma once
 
-// ---- RISC roles, numbered as fw/__init__.py ROLES ----
 #define ROLE_BRISC  0
 #define ROLE_NCRISC 1
 #define ROLE_TRISC0 2
 
-// ---- Worker L1 header, written by Device.run; 0x0 holds `jal CODE_BASE` ----
 #define SUBORDINATE_SYNC 0x14
 #define GO_FLAG          0x18
 #define WORKER_X         0x20
 #define WORKER_Y         0x24
 #define WORKER_ID        0x28
-#define ROLE_PC          0x60  // boot pc of ncrisc, trisc0..2; 0 leaves the role in reset
+#define ROLE_PC          0x60
 
-// ---- DMA core L1 layout (fw/dma.c on the core, Device.dma_copy on the host) ----
 #define PACKET           0x20     // bytes per host-written DMA descriptor
 #define DMA_DEPTH        4        // descriptor ring depth
 #define DMA_BATCH        0x20000  // bytes per chunk
@@ -33,7 +28,6 @@
 #define DMA_PACKETS      0x9000
 #define DMA_STAGING      0x10000  // 2 engines x DMA_SLOTS x DMA_BATCH
 
-// ---- RISC-local memory and control registers ----
 #define LOCAL_MEM                0xFFB00000  // each RISC's private data RAM
 #define STACK_TOP                0xFFB01FF0
 #define TRISC_STACK_TOP          0xFFB00FF0
