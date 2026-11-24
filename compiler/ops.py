@@ -1,6 +1,6 @@
 import math
 from typing import Any
-import hw
+from hw import isa
 from .uop import CarryArg, DType, GroupOp, Ops, PatternMatcher, ReduceArg, Space, UOp, UPat, dtypes, graph_rewrite
 
 # ---- REDUCE -> LOOP lowering ----
@@ -287,8 +287,8 @@ def verify(root: UOp) -> None:
           raise VerifyError(f"REPLAY holds 1..32 Tensix instructions, got {len(arg.insns)}")
 
       case Ops.MOP:
-        if len(arg.cfg) != hw.MOP_CFG_WORDS:
-          raise VerifyError(f"MOP config requires {hw.MOP_CFG_WORDS} words, got {len(arg.cfg)}")
+        if len(arg.cfg) != isa.MOP_CFG_WORDS:
+          raise VerifyError(f"MOP config requires {isa.MOP_CFG_WORDS} words, got {len(arg.cfg)}")
 
       case Ops.REDUCE_ROW | Ops.ARGMAX:
         if len(src) != 1 or src[0].space is not Space.DST:

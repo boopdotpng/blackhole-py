@@ -14,7 +14,7 @@ are listed at the bottom so their bits stay known.
 DataFormat codes are 4 bits wide in every format field. Code 30 (UInt8) does not fit and wedged a core.
 """
 from dataclasses import dataclass
-from enum import Enum
+from enum import Enum, IntEnum
 from typing import NamedTuple
 
 
@@ -58,6 +58,25 @@ def words(sets) -> dict[int, int]:
 
 
 T, C = Space.THREAD, Space.CONFIG
+TENSIX_CFG = 0xFFEF0000  # MMIO base of the Config bank, 4 bytes per word
+
+
+# E4M3 is LF8 plus the Unp/Pac_LF8_4b_exp flag.
+class DataFormat(IntEnum):
+  FLOAT32 = 0
+  FLOAT16 = 1
+  BFP8 = 2
+  BFP4 = 3
+  TF32 = 4
+  FLOAT16_B = 5
+  BFP8_B = 6
+  BFP4_B = 7
+  INT32 = 8
+  UINT16 = 9
+  LF8 = 10
+  BFP2 = 11
+  INT8 = 14
+  BFP2_B = 15
 
 
 def _t(word: int, shift: int, width: int, name: str) -> Field: return Field(T, word, shift, width, name)

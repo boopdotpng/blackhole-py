@@ -146,7 +146,7 @@ class TestLayer1OpsAndVerify(unittest.TestCase):
     self.assertEqual(len(rep1.arg.insns), 4)
     self.assertEqual(rep1.src, (sb, sa, r))
 
-    m = UOp.mop([0] * hw.MOP_CFG_WORDS, rep1, name="mm_mop")
+    m = UOp.mop([0] * isa.MOP_CFG_WORDS, rep1, name="mm_mop")
     acc = m.reduce(r, op=Ops.ADD, space=Space.DST)
     sink = UOp.sink(out_buf.noc_write(0, acc.pack(dtypes.bf16)), arg=KernelArg("replay_test", 119))
     verify(sink)

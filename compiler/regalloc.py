@@ -1,7 +1,9 @@
 from collections import defaultdict, deque
 from dataclasses import dataclass
-import hw
 from hw import isa
+
+LOCAL_BASE_REG = 3                   # x3 points at the middle of the RISC's local memory block
+SPILL_FRAME, SPILL_SLOTS = 0xFFB00200, 384
 
 
 class RegAllocError(RuntimeError):
@@ -86,11 +88,11 @@ def allocate(g):
         continue
       occupied = {slots[n] for n in neighbors[r] if n in slots}
       slot = next(i for i in range(len(occupied) + 1) if i not in occupied)
-      if slot >= hw.SPILL_SLOTS or r in links:
+      if slot >= SPILL_SLOTS or r in links:
         raise RegAllocError("static spill frame exceeds private memory or link registers")
       slots[r] = slot
 
-  frame = hw.SPILL_FRAME - g.base[hw.LOCAL_BASE_REG]
+  frame = SPILL_FRAME - g.base[LOCAL_BASE_REG]
 
   old_items, g.items = g.items, []
   offsets = []
@@ -105,7 +107,7 @@ def allocate(g):
         return colors[r]
       if r not in loaded:
         p = loaded[r] = scratch[len(loaded)]
-        g.items.append((isa.rv("lw", p, hw.LOCAL_BASE_REG, imm=frame + 4 * slots[r]), loc))
+        g.items.append((isa.rv("lw", p, LOCAL_BASE_REG, imm=frame + 4 * slots[r]), loc))
       return loaded[r]
 
     if isinstance(item, Instruction):
@@ -114,7 +116,7 @@ def allocate(g):
       if item.op != "addi" or item.imm or d != a:
         g.items.append((isa.rv(item.op, d, a, b, item.imm), loc))
       if item.rd in slots:
-        g.items.append((isa.rv("sw", 0, hw.LOCAL_BASE_REG, d, frame + 4 * slots[item.rd]), loc))
+        g.items.append((isa.rv("sw", 0, LOCAL_BASE_REG, d, frame + 4 * slots[item.rd]), loc))
     elif isinstance(item, tuple):
       op, a, b, target = item
       g.items.append(((op, physical(a), physical(b), target), loc))

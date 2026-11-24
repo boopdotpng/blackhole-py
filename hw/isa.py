@@ -605,9 +605,11 @@ def NOP():
   it. It is not a wait: use STALLWAIT to order units."""
   return tensix('NOP')
 
+MOP_CFG_WORDS = 9  # outer, inner, start, end0, end1, loop0, loop1, last_inner, last
+
 def MOP(mop_type=0, loop_count=0, zmask_lo16_or_loop_count=0):
   """Expand a macro-op template (control, 0x01). The thread's MOP expander turns this one word into a looped sequence
-  of instructions taken from the 9 MOP_CFG words (MMIO at hw.MOP_CFG, written by the RISC).
+  of instructions taken from the 9 MOP_CFG words (MMIO at 0xFFB80000, written by the RISC).
 
   mop_type                 [23]    Template: 0 mask-driven, 1 nested loop.
   loop_count               [22:16] Template 0: iterations minus 1.
@@ -619,7 +621,7 @@ def MOP(mop_type=0, loop_count=0, zmask_lo16_or_loop_count=0):
   Template 0, words (-, flags, b, a0, a1, a2, a3, skip_a, skip_b): for i in 0..loop_count, if bit i of the 32-bit mask
     is clear emit a0 (then a1..a3 with flags bit 1) then b (with flags bit 0); if set emit skip_a then skip_b. The mask
     is MOP_CFG's 16 bits above this word's 16.
-  Wait for hw.MOP_EXPANDER_DONE_CHECK before rewriting the template words. A template-1 MOP whose start slot is NOP
+  Wait for a load from 0xFFE80008 (returns once the expander is idle) before rewriting the template words. A template-1 MOP whose start slot is NOP
   with an inner count of 0 hits a hardware bug."""
   return tensix('MOP', mop_type, loop_count, zmask_lo16_or_loop_count)
 
@@ -654,7 +656,7 @@ def SEMINIT(max_value=0, init_value=0, sem_sel=0):
 
   max_value  [23:20] Maximum value (4 bits).
   init_value [19:16] Initial value (4 bits).
-  sem_sel    [15:2]  Semaphore mask, 1 << number, for the 8 semaphores (hw.Sem)."""
+  sem_sel    [15:2]  Semaphore mask, 1 << number, for the 8 semaphores."""
   return tensix('SEMINIT', max_value, init_value, sem_sel)
 
 def SEMPOST(sem_sel=0):
@@ -753,7 +755,7 @@ def CFGSHIFTMASK(disable_mask_on_old_val=0, operation=0, mask_width=0, right_csh
 
 # ---- scalar unit ----
 #
-# Each thread has 64 32-bit Tensix GPRs (MMIO at hw.REGFILE). These instructions compute in them, so a value such as
+# Each thread has 64 32-bit Tensix GPRs (MMIO at 0xFFE00000). These instructions compute in them, so a value such as
 # an L1 address can be stepped and written to config (WRCFG) without the RISC. They take 3 or 4 cycles. On Blackhole
 # they do not hold back the thread's other units: STALLWAIT on Wait.THCON before another unit reads the result.
 

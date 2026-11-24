@@ -15,7 +15,7 @@ A Tensix UOp compiler and bare-metal megakernel runtime for Tenstorrent Blackhol
 3. **Bare-metal execution (no function table, no worker C runtime)**:
    - Upload the entire compiled megakernel (5 RISC images wrapped by tiny position-independent `fw/boot.c` stubs) directly to worker L1 and release `SOFT_RESET`.
    - Static buffer addresses (weights, KV cache, L1 arenas) are baked in at compile time; dynamic per-step state (`pos`, `token_id`, history) lives in DRAM/L1 updated by the megakernel itself.
-   - Zero-stall host I/O: workers stream outputs (e.g. generated tokens) directly into pinned host sysmem (`HostStream`) via NoC PCIe writes without ever pausing or syncing the megakernel. Only the 1 dedicated DMA core runs C firmware (`fw/service.c`) for high-throughput Host $\leftrightarrow$ DRAM copies.
+   - Zero-stall host I/O: workers stream outputs (e.g. generated tokens) directly into pinned host sysmem (`HostStream`) via NoC PCIe writes without ever pausing or syncing the megakernel. Only the 1 dedicated DMA core runs C firmware (`fw/dma.c`) for high-throughput Host $\leftrightarrow$ DRAM copies.
 
 ---
 

@@ -1,6 +1,7 @@
 import atexit, collections, concurrent.futures, copy, ctypes, math, mmap, struct, sys, time
 import numpy as np
-import fw, hw
+import fw
+from hw import isa
 if sys.platform == "darwin": from pci_macos import Card, HostMemory
 else: from pci import Card, HostMemory
 from pci import buffer_address
@@ -13,13 +14,22 @@ DTYPES = {
 }
 FROM_NUMPY = {"float32": "fp32", "uint8": "u8", "uint32": "u32", "int32": "i32", "uint64": "u64"}
 
+ARC = (8, 0)
+TELEMETRY_DATA, TELEMETRY_PTR, TAG_ENABLED_TENSIX_COL = 0x80030430, 0x80030434, 34
+DRAM_BANK_SIZE, DRAM_PAGE_MAX = 0xFF000000, 4096
+NOC_MAX_BURST = 0x4000
+NOC_NODE_ID = 0xFFB20044  # physical NoC0 coords; NOC_ID_LOGICAL (0xFFB20148) is translated
+SOFT_RESET, RESET_BRISC, RESET_ALL = 0xFFB121B0, 1 << 11, 0x47800
+
+def coord(x:int, y:int) -> int: return y << 6 | x
+
 def round_up(x:int, n:int) -> int: return -(-x // n) * n
 
 def dram_read_cap(readers:int) -> int:
   return 2 if readers >= 88 else 8 if readers >= 42 else 0
 
-def dram(offset:int, page:int=hw.DRAM_PAGE_MAX, banks:int=8) -> int:
-  if not (0 <= offset < banks * hw.DRAM_BANK_SIZE and 64 <= page <= 16384 and page % 64 == 0):
+def dram(offset:int, page:int=DRAM_PAGE_MAX, banks:int=8) -> int:
+  if not (0 <= offset < banks * DRAM_BANK_SIZE and 64 <= page <= 16384 and page % 64 == 0):
     raise ValueError(f"invalid DRAM offset {offset} or page size {page}")
   tag = (page.bit_length() - 1) << 56 if page & (page - 1) == 0 else (page // 64 - 1) << 48
   return 1 << 63 | tag | offset
@@ -48,11 +58,11 @@ class Allocator:
       view.release()
       self.pending_pins.pop(0)
 
-  def alloc(self, size:int, page:int=hw.DRAM_PAGE_MAX) -> int:
+  def alloc(self, size:int, page:int=DRAM_PAGE_MAX) -> int:
     banks = self.dev.dram_banks
     offset = round_up(self.top, banks * page)
-    end = round_up(offset + round_up(size, banks * page), banks * hw.DRAM_PAGE_MAX)
-    if size < 0 or end > banks * hw.DRAM_BANK_SIZE: raise MemoryError(f"can't allocate {size} bytes of DRAM")
+    end = round_up(offset + round_up(size, banks * page), banks * DRAM_PAGE_MAX)
+    if size < 0 or end > banks * DRAM_BANK_SIZE: raise MemoryError(f"can't allocate {size} bytes of DRAM")
     self.top = end
     return dram(offset, page, banks)
 
@@ -155,7 +165,7 @@ class Allocator:
         pending = off, n, buf, val
       if pending: drain(*pending)
 
-  def upload(self, blob, page:int=hw.DRAM_PAGE_MAX) -> int:
+  def upload(self, blob, page:int=DRAM_PAGE_MAX) -> int:
     self.copyin(addr := self.alloc(len(blob), page), blob)
     return addr
 
@@ -165,7 +175,7 @@ class Buffer:
     self.device, self.shape, self.dtype, self.host = device, tuple(shape), dtype, host
     self.numpy_type, tile_bytes = DTYPES[dtype]
     self.nbytes = math.prod(self.shape) * np.dtype(self.numpy_type).itemsize
-    if tiles_per_page < 1 or tiles_per_page * tile_bytes > hw.NOC_MAX_BURST or (host and tiles_per_page != 1):
+    if tiles_per_page < 1 or tiles_per_page * tile_bytes > NOC_MAX_BURST or (host and tiles_per_page != 1):
       raise ValueError("invalid tiles_per_page")
     if host:
       self.offset = device.alloc_host(max(self.nbytes, 64))
@@ -235,7 +245,7 @@ class Device:
   def __init__(self, index:int=0):
     self.card, self.host, self.booted, self.pinned_buffers, self.allocator = Card(index), None, False, [], None
     try:
-      self.cols = (self._telemetry(hw.TAG_ENABLED_TENSIX_COL) & 0x3FFF).bit_count()
+      self.cols = (self._telemetry(TAG_ENABLED_TENSIX_COL) & 0x3FFF).bit_count()
       if self.cols not in (12, 14): raise RuntimeError(f"unsupported {self.card.name}: {self.cols} Tensix columns")
       self.dram_banks = 7 if self.card.name == "p100a" else 8
       right = 2 + self.cols
@@ -243,7 +253,7 @@ class Device:
       self.worker_rects = (((1, 2), (right - 1, 11)), ((right, 2), (right, 10)))
       self.workers = [(x, y) for x in range(1, right + 1) if x not in (8, 9) for y in range(2, 12) if (x, y) != self.dma_core]
       # BRCST_EXCLUDE matches physical coords, not translated ones; cover() relies on translation preserving column order.
-      self.phys_x = {x: self.card.read32((x, 2), hw.NOC_NODE_ID) & 63 for x in sorted({x for x, _ in self.workers})}
+      self.phys_x = {x: self.card.read32((x, 2), NOC_NODE_ID) & 63 for x in sorted({x for x, _ in self.workers})}
       if list(self.phys_x.values()) != sorted(self.phys_x.values()): raise RuntimeError(f"non-monotonic column translation {self.phys_x}")
       self._reset(self.grid)
       self.booted = True
@@ -296,11 +306,11 @@ class Device:
   def dma_copy(self, dst, src, size, timeout=60.0):
     if dst % 64 or src % 64 or not 0 <= size < 1 << 32: raise ValueError("invalid DMA descriptor")
     value = self.timeline_value + 1
-    self.timeline_signal.wait(max(0, value - hw.DMA_DEPTH), timeout)
-    at = (hw.SVC_PACKETS + (value % hw.DMA_DEPTH) * hw.PACKET) // 4
+    self.timeline_signal.wait(max(0, value - fw.DMA_DEPTH), timeout)
+    at = (fw.DMA_PACKETS + (value % fw.DMA_DEPTH) * fw.PACKET) // 4
     for i, word in enumerate((dst & 0xffffffff, dst >> 32, src & 0xffffffff, src >> 32, size, value >> 32)):
       self.dma_window[at + i] = word
-    self.dma_window[hw.SVC_WPTR // 4] = value & 0xffffffff
+    self.dma_window[fw.DMA_WPTR // 4] = value & 0xffffffff
     self.timeline_value = value
     return value
 
@@ -327,18 +337,18 @@ class Device:
     image, role_pcs, code_end = fw.pack_megakernel(images)
     self.synchronize()
     self.stop()
-    header = bytearray(hw.CODE_BASE)
-    struct.pack_into("<I", header, 0, hw.jal(hw.CODE_BASE))
-    struct.pack_into("<I", header, hw.LEADER_COORD, hw.coord(*self.workers[0]))
-    struct.pack_into("<3I", header, hw.NUM_WORKERS, len(self.workers), self.dram_banks, self.cols)
-    struct.pack_into("<4I", header, hw.ROLE_PC, *(role_pcs.get(r, 0) for r in hw.ROLES[1:]))
+    header = bytearray(fw.CODE_BASE)
+    struct.pack_into("<I", header, 0, isa.rv("jal", imm=fw.CODE_BASE))
+    struct.pack_into("<I", header, fw.LEADER_COORD, coord(*self.workers[0]))
+    struct.pack_into("<3I", header, fw.NUM_WORKERS, len(self.workers), self.dram_banks, self.cols)
+    struct.pack_into("<4I", header, fw.ROLE_PC, *(role_pcs.get(r, 0) for r in fw.ROLES[1:]))
     targets = self.worker_rects if cores is None else list(cores)
     payload = bytes(header) + image
     for target in targets:
       self.card.write(target, 0, payload)
       if data:
         for addr, blob in data.items(): self.card.write(target, addr, blob)
-      self.card.write32(target, hw.SOFT_RESET, hw.RESET_ALL & ~hw.RESET_BRISC)
+      self.card.write32(target, SOFT_RESET, RESET_ALL & ~RESET_BRISC)
     return code_end
 
   def cover(self, cores) -> tuple[int, int]:
@@ -346,7 +356,7 @@ class Device:
     cores = set(cores)
     x0, x1, y0, y1 = min(x for x, _ in cores), max(x for x, _ in cores), min(y for _, y in cores), max(y for _, y in cores)
     box = {(x, y) for x in range(x0, x1 + 1) if x not in (8, 9) for y in range(y0, y1 + 1)}
-    rect, missing = hw.coord(x0, y0) | hw.coord(x1, y1) << 12, box - cores
+    rect, missing = coord(x0, y0) | coord(x1, y1) << 12, box - cores
     if not missing: return rect, 0
     dx, dy = any(x == x1 for x, _ in missing), any(y == y1 for _, y in missing)
     ax, ay = (min if dx else max)(x for x, _ in missing), (min if dy else max)(y for _, y in missing)
@@ -367,22 +377,22 @@ class Device:
       self.card = None
 
   def _telemetry(self, tag:int) -> int:
-    rd = lambda addr: self.card.read32(hw.ARC, addr)
-    table, data = rd(hw.TELEMETRY_PTR), rd(hw.TELEMETRY_DATA)
+    rd = lambda addr: self.card.read32(ARC, addr)
+    table, data = rd(TELEMETRY_PTR), rd(TELEMETRY_DATA)
     assert 0 < (n := rd(table + 4)) <= 256, f"bad ARC telemetry entry count {n}"
     for i in range(n):
       if (e := rd(table + 8 + 4 * i)) & 0xFFFF == tag: return rd(data + 4 * (e >> 16))
     raise RuntimeError(f"ARC telemetry has no tag {tag}")
 
-  def _reset(self, rect): self.card.write32(rect, hw.SOFT_RESET, hw.RESET_ALL)
+  def _reset(self, rect): self.card.write32(rect, SOFT_RESET, RESET_ALL)
 
   def _boot_dma(self):
-    core, (brisc, ncrisc) = self.dma_core, fw.service_images(self.dram_banks)
-    state = bytearray(hw.SVC_STATE_SIZE)
-    struct.pack_into("<Q", state, hw.SVC_SIGNAL - hw.SVC_STATE, self.timeline_signal.addr)
-    self.card.write(core, hw.SVC_STATE, state)
-    self.card.write(core, hw.SVC_BRISC_BASE, brisc)
-    self.card.write(core, hw.SVC_NCRISC_BASE, ncrisc)
-    self.card.write32(core, 0, hw.jal(hw.SVC_BRISC_BASE))
-    self.card.write32(core, hw.SOFT_RESET, hw.RESET_ALL & ~hw.RESET_BRISC)
+    core, (brisc, ncrisc) = self.dma_core, fw.dma_images(self.dram_banks)
+    state = bytearray(fw.DMA_STATE_SIZE)
+    struct.pack_into("<Q", state, fw.DMA_SIGNAL - fw.DMA_STATE, self.timeline_signal.addr)
+    self.card.write(core, fw.DMA_STATE, state)
+    self.card.write(core, fw.DMA_BRISC_BASE, brisc)
+    self.card.write(core, fw.DMA_NCRISC_BASE, ncrisc)
+    self.card.write32(core, 0, isa.rv("jal", imm=fw.DMA_BRISC_BASE))
+    self.card.write32(core, SOFT_RESET, RESET_ALL & ~RESET_BRISC)
     return self.card.window(core)

@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from enum import Enum, IntEnum, auto
 from collections.abc import Callable, Sequence
 from typing import Any
-import hw
+from hw import cfg
 
 # ---- dtypes & memory spaces ----
 
@@ -14,7 +14,7 @@ class DType:
   tile_bytes: int = 0   # bytes per 32x32 (1024-element) tile
   is_float: bool = False
   is_signed: bool = False
-  fmt: hw.DataFormat | None = None
+  fmt: cfg.DataFormat | None = None
 
   @property
   def itemsize(self) -> int: return self.bits // 8
@@ -27,13 +27,13 @@ class dtypes:
   void = DType("void", 0)
   bool = DType("bool", 1)
   u8   = DType("u8",   8,  tile_bytes=1024)
-  i32  = DType("i32",  32, tile_bytes=4096, is_signed=True, fmt=hw.DataFormat.INT32)
+  i32  = DType("i32",  32, tile_bytes=4096, is_signed=True, fmt=cfg.DataFormat.INT32)
   u32  = DType("u32",  32, tile_bytes=4096)
   u64  = DType("u64",  64, tile_bytes=8192)
-  bf16 = DType("bf16", 16, tile_bytes=2048, is_float=True, is_signed=True, fmt=hw.DataFormat.FLOAT16_B)
-  fp32 = DType("fp32", 32, tile_bytes=4096, is_float=True, is_signed=True, fmt=hw.DataFormat.FLOAT32)
-  bfp8 = DType("bfp8", 8,  tile_bytes=1088, is_float=True, is_signed=True, fmt=hw.DataFormat.BFP8_B)
-  e4m3 = DType("e4m3", 8,  tile_bytes=1024, is_float=True, is_signed=True, fmt=hw.DataFormat.LF8)
+  bf16 = DType("bf16", 16, tile_bytes=2048, is_float=True, is_signed=True, fmt=cfg.DataFormat.FLOAT16_B)
+  fp32 = DType("fp32", 32, tile_bytes=4096, is_float=True, is_signed=True, fmt=cfg.DataFormat.FLOAT32)
+  bfp8 = DType("bfp8", 8,  tile_bytes=1088, is_float=True, is_signed=True, fmt=cfg.DataFormat.BFP8_B)
+  e4m3 = DType("e4m3", 8,  tile_bytes=1024, is_float=True, is_signed=True, fmt=cfg.DataFormat.LF8)
 
   floats = (bf16, fp32, bfp8, e4m3)
   ints = (u8, i32, u32, u64)

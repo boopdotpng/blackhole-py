@@ -9,7 +9,6 @@ Host compares output tiles bit-for-bit / within tolerance against NumPy.
 """
 import math, struct, time, unittest
 import numpy as np
-import hw
 from hw import cfg, isa
 from device import Device
 from compiler import Ops, Space, UOp, compile_sfpu, compile_sfpu_loop, dtypes, mulacc
@@ -51,8 +50,8 @@ class _Asm:
     self.rv("andi", rd=6, rs1=6, imm=0)
 
   def drain(self):
-    # COPROCESSOR_DONE_CHECK: store, load, consume (hw/__init__.py:109)
-    self.li(5, hw.COPROCESSOR_DONE_CHECK)
+    # COPROCESSOR_DONE_CHECK (PC_BUF + 4): store, load, consume
+    self.li(5, 0xFFE80004)
     self.rv("sw", rs1=5, rs2=0, imm=0)
     self.rv("lw", rd=6, rs1=5, imm=0)
     self.rv("andi", rd=6, rs1=6, imm=0)
@@ -81,7 +80,7 @@ class _Asm:
 
 def _build_trisc0(num_inputs: int) -> bytes:
   a = _Asm()
-  fp = hw.DataFormat.FLOAT32
+  fp = cfg.DataFormat.FLOAT32
   u = cfg.UNPACK[0]
   a.tt(isa.SEMWAIT(isa.Stall.UNPACK | isa.Stall.CFG | isa.Stall.SYNC, SEM_CFG_READY, isa.SemWait.STALL_ON_ZERO))
   a.drain()
@@ -97,7 +96,7 @@ def _build_trisc0(num_inputs: int) -> bytes:
     l1_addr = L1_IN_BASE + t * 4096
     a.rmw(u.dst_addr[0](64 + (t * 64) * 16))
     a.drain()
-    a.store32_readback(hw.TENSIX_CFG + 4 * u.base_addr[0].word, (l1_addr >> 4) - 1)
+    a.store32_readback(cfg.TENSIX_CFG + 4 * u.base_addr[0].word, (l1_addr >> 4) - 1)
     a.tt(isa.SETADCXX(1, 255, 0))
     a.tt(isa.SETADCZW(1, 0, 0, 0, 0, 15))
     a.tt(isa.STALLWAIT(isa.Stall.UNPACK, isa.Wait.TRISC_CFG))
@@ -110,7 +109,7 @@ def _build_trisc0(num_inputs: int) -> bytes:
 
 def _build_trisc1(passes) -> bytes:
   a = _Asm()
-  fp = hw.DataFormat.FLOAT32
+  fp = cfg.DataFormat.FLOAT32
   a.rmw(
     cfg.MATH.dst_fmt(fp), cfg.MATH.fp32_dst_acc(1), cfg.MATH.sfpu_fp32_acc(1),
     cfg.PACK.read_32b(1),
@@ -148,7 +147,7 @@ def _build_trisc1(passes) -> bytes:
 
 def _build_trisc2(out_tiles: list[int]) -> bytes:
   a = _Asm()
-  fp = hw.DataFormat.FLOAT32
+  fp = cfg.DataFormat.FLOAT32
   p = cfg.PACK
   ctx = p.ctx[0]
   a.tt(isa.SEMWAIT(isa.Stall.TDMA | isa.Stall.PACK | isa.Stall.SYNC, SEM_MATH_PACK, isa.SemWait.STALL_ON_ZERO))

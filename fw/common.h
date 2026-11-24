@@ -1,5 +1,5 @@
 #pragma once
-#include "hw.h"  // every address and layout constant: generated from hw/__init__.py by fw/__init__.py
+#include "hw.h"  // addresses and layouts; hand-written, host-side copies live in fw/__init__.py and device.py
 
 typedef unsigned char u8;
 typedef unsigned int u32;
