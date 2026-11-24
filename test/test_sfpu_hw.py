@@ -7,7 +7,6 @@ Runs compiled SFPU passes from `compile_sfpu()` directly on worker core 0 of a r
   trisc2 packs output Dst tile(s) back to L1 -> sets L1_DONE = 1
 Host compares output tiles bit-for-bit / within tolerance against NumPy.
 """
-from __future__ import annotations
 import math, struct, time, unittest
 import numpy as np
 import hw

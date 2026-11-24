@@ -1,8 +1,8 @@
-from __future__ import annotations
 import collections, inspect, itertools, math, struct, weakref
 from dataclasses import dataclass
 from enum import Enum, IntEnum, auto
-from typing import Any, Callable, Sequence
+from collections.abc import Callable, Sequence
+from typing import Any
 import hw
 
 # ---- dtypes & memory spaces ----

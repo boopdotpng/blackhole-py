@@ -13,7 +13,6 @@ are listed at the bottom so their bits stay known.
 
 DataFormat codes are 4 bits wide in every format field. Code 30 (UInt8) does not fit and wedged a core.
 """
-from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 from typing import NamedTuple

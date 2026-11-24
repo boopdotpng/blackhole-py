@@ -1,4 +1,3 @@
-from __future__ import annotations
 import atexit, collections, concurrent.futures, copy, ctypes, math, mmap, struct, sys, time
 import numpy as np
 import fw, hw

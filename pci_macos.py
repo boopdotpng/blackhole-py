@@ -1,4 +1,3 @@
-from __future__ import annotations
 import fcntl, os, socket, struct, subprocess, sys, tempfile, time
 from pci import SUPPORTED, TLB_SIZE, libc, map_memory, view_at
 
