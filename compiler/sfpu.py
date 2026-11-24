@@ -201,8 +201,9 @@ def sfpu_hazards(words: Sequence[int], macros: dict[int, int] | None = None) -> 
   return out
 
 
-def fix_sfpu_hazards(words: Sequence[int], macros: dict[int, int] | None = None) -> list[int]:
-  """Insert minimal SFPNOPs for every undetected RAW hazard (and documented SFPCONFIG macro/backdoor gaps)."""
+def fix_sfpu_hazards(words: Sequence[int], macros: dict[int, int] | None = None, *, is_loop: bool = False) -> list[int]:
+  """Insert minimal SFPNOPs for every undetected RAW hazard (and documented SFPCONFIG macro/backdoor gaps).
+  When `is_loop=True`, also ensures no hazard occurs across the wrap-around from the last instruction to the first."""
   nop = isa.SFPNOP()
   out: list[int] = []
   state = None
@@ -230,6 +231,10 @@ def fix_sfpu_hazards(words: Sequence[int], macros: dict[int, int] | None = None)
       prev_cfg_macro_or_lane = cfg_dest <= 8 or cfg_dest == 15
     else:
       prev_cfg_macro_or_lane = False
+  if is_loop and out and sfpu_hazards(out + out, macros):
+    out.append(nop)
+    if sfpu_hazards(out + out, macros):
+      raise SfpuCompileError(f"unresolvable SFPU loop wrap-around hazard: {sfpu_hazards(out + out, macros)}")
   return out
 
 
@@ -237,12 +242,20 @@ class SfpuCompileError(RuntimeError):
   pass
 
 
-def verify_sfpu_words(words: Sequence[int], *, allow_backdoor: bool = False, macros: dict[int, int] | None = None) -> None:
+def verify_sfpu_words(
+  words: Sequence[int],
+  *,
+  allow_backdoor: bool = False,
+  macros: dict[int, int] | None = None,
+  is_loop: bool = False,
+) -> None:
   """Verify Blackhole SFPU hardware invariants on an unrotated Tensix word stream."""
-  hz = sfpu_hazards(words, macros)
+  check_stream = list(words) + list(words) if (is_loop and words) else list(words)
+  hz = sfpu_hazards(check_stream, macros)
   if hz:
     idx, err = hz[0]
-    raise SfpuCompileError(f"SFPU hazard at word {idx} ({isa.tensix_decode(words[idx])}): {err}")
+    w = check_stream[idx]
+    raise SfpuCompileError(f"SFPU hazard at word {idx} ({isa.tensix_decode(w)}): {err}")
   for idx, w in enumerate(words):
     info = sfpu_decode(w)
     if info is None: continue
@@ -263,6 +276,19 @@ def verify_sfpu_words(words: Sequence[int], *, allow_backdoor: bool = False, mac
       for r in info.writes:
         if r >= 8:
           raise SfpuCompileError(f"word {idx} ({op}) writes read-only/const register L{r}")
+
+
+def _verify_dst_store_load_order(body: Sequence[int]) -> None:
+  """Ensure no SFPSTORE overwrites a Dst tile that a later SFPLOAD in the same footprint still reads."""
+  written_tiles: set[int] = set()
+  for idx, w in enumerate(body):
+    opcode = w >> 24
+    if opcode == 0x72:  # SFPSTORE
+      written_tiles.add((w & 0x3FF) // DST_TILE_ROWS)
+    elif opcode == 0x70:  # SFPLOAD
+      t = (w & 0x3FF) // DST_TILE_ROWS
+      if t in written_tiles:
+        raise SfpuCompileError(f"Dst tile {t} read by SFPLOAD at word {idx} after already overwritten by SFPSTORE")
 
 
 def disasm_sfpu(words: Sequence[int]) -> str:
@@ -409,13 +435,24 @@ def _decomp_log2(x: UOp, bits: int) -> UOp:
   return mulacc(t, poly, e_f)
 
 
+# 3-part Cody-Waite split of pi (12-bit hi parts => exact n*pi_1, n*pi_2 for |n| < 4096, <2e-7 err on |x| <= 5000)
+_PI_CW1 = 3.1416015625
+_PI_CW2 = -8.907169103622437e-06
+_PI_CW3 = -1.741103261565513e-09
+
+
 def _decomp_sin(x: UOp, bits: int) -> UOp:
   dt = x.dtype
-  # n = round(x / pi) via FP32 magic 1.5 * 2^23; bit 0 of (x/pi + magic) is parity of n.
+  # n = round(x / pi) via FP32 magic 1.5 * 2^23 (valid for |x/pi| < 2^21); bit 0 of u is parity of n.
   magic = UOp.const(dt, 12582912.0)
   u = mulacc(x, UOp.const(dt, 1.0 / math.pi), magic)
   n_f = u - magic
-  r = mulacc(n_f, UOp.const(dt, math.pi), x, neg_ab=True)  # x - n * pi in [-pi/2, pi/2]
+  if bits <= 11:
+    r = mulacc(n_f, UOp.const(dt, math.pi), x, neg_ab=True)
+  else:
+    r = mulacc(n_f, UOp.const(dt, _PI_CW1), x, neg_ab=True)
+    r = mulacc(n_f, UOp.const(dt, _PI_CW2), r, neg_ab=True)
+    r = mulacc(n_f, UOp.const(dt, _PI_CW3), r, neg_ab=True)
   s = r * _horner(r * r, _SIN_POLY_BF16 if bits <= 11 else _SIN_POLY_FP32)
   sign_flip = u.bitcast(dtypes.u32) << UOp.const(dtypes.u32, 31)
   return (s.bitcast(dtypes.u32) ^ sign_flip).bitcast(dt)
@@ -424,15 +461,13 @@ def _decomp_sin(x: UOp, bits: int) -> UOp:
 def _make_pm_sfpu_decomp(bits: int) -> PatternMatcher:
   dst_f = (dtypes.fp32, dtypes.bf16)
   return pm_simplify + PatternMatcher([
-    # Algebraic cleanup (DST float): collapse chained constants & division -> reciprocal multiply
+    # Algebraic cleanup (DST float): collapse chained const muls & division -> reciprocal multiply.
+    # NOTE: intentionally do NOT re-associate float additions ((x + c1) + c2) so (x + magic) - magic rounding is safe!
     (UPat(Ops.DIV, dtype=dst_f, space=Space.DST, src=(UPat.var("a"), UPat.var("b"))),
      lambda a, b: a * b.recip()),
     (UPat(Ops.MUL, dtype=dst_f, space=Space.DST,
           src=[UPat(Ops.MUL, src=[UPat.var("x"), UPat.const("c1")]), UPat.const("c2")]),
      lambda x, c1, c2: x * UOp.const(x.dtype, float(c1.arg) * float(c2.arg))),
-    (UPat(Ops.ADD, dtype=dst_f, space=Space.DST,
-          src=[UPat(Ops.ADD, src=[UPat.var("x"), UPat.const("c1")]), UPat.const("c2")]),
-     lambda x, c1, c2: x + UOp.const(x.dtype, float(c1.arg) + float(c2.arg))),
     (UPat(Ops.ADD, dtype=dst_f, space=Space.DST, src=[UPat.var("a"), UPat(Ops.NEG, src=(UPat.var("b"),))]),
      lambda a, b: a - b),
     (UPat(Ops.SUB, dtype=dst_f, space=Space.DST, src=(UPat.var("a"), UPat(Ops.NEG, src=(UPat.var("b"),)))),
@@ -551,19 +586,10 @@ class _OutOfRegs(Exception):
 
 
 @dataclass(frozen=True)
-class SfpuPass:
-  inputs: dict[UOp, int]          # UOp -> Dst tile index to SFPLOAD
-  outputs: dict[UOp, int]         # UOp -> Dst tile index to SFPSTORE
-  nodes: tuple[UOp, ...]          # ordered compute UOps inside this pass
-  const_regs: dict[UOp, int]      # CONST UOp -> L8..L14
-  l11_used: bool                  # True if L11 was programmed with a non-(-1.0) constant
-
-
-@dataclass(frozen=True)
 class CompiledSfpuPass:
   prologue: tuple[int, ...]       # SFPCONFIG / hoisted setup (once before 32-footprint loop)
-  body: tuple[int, ...]           # 1 footprint (32 lanes), hazard-fixed
-  epilogue: tuple[int, ...]       # optional post-pass cleanup (e.g. L11 restore)
+  body: tuple[int, ...]           # 1 footprint (32 lanes), hazard-fixed (incl. loop wrap-around)
+  epilogue: tuple[int, ...]       # post-pass cleanup
   inputs: dict[UOp, int]
   outputs: dict[UOp, int]
   l11_used: bool
@@ -576,6 +602,7 @@ class CompiledSfpu:
   passes: tuple[CompiledSfpuPass, ...]
   dst_tiles: int
   output_tiles: dict[UOp, int]
+  root_tiles: tuple[int, ...] = ()
 
 
 def _is_direct_cmp(u: UOp) -> bool:
@@ -658,6 +685,7 @@ class _PassLowerer:
     self.peak_regs: int = 0
     self.body: list[int] = []
     self._stored: set[UOp] = set()
+    self._written_tiles: set[int] = set()
 
     # Identify single-use comparisons fused directly into WHERE (avoiding a materialized mask reg!)
     # Only fuse if the comparison is inside this pass and not itself an output.
@@ -705,11 +733,13 @@ class _PassLowerer:
 
   def alloc(self, protect: set[int] | None = None) -> int:
     if not self.free:
-      # Before giving up, evict any rematerializable resident value (Dst input or CONST) not in `protect`.
+      # Before giving up, evict any rematerializable resident value (un-overwritten Dst input or CONST) not in `protect`.
       prot = protect or set()
       for r in range(self.max_regs):
         u = self.owner.get(r)
-        if u is not None and r not in prot and (u in self.dst_inputs or u.op is Ops.CONST):
+        if u is None or r in prot: continue
+        can_reload_dst = u in self.dst_inputs and self.dst_inputs[u] not in self._written_tiles
+        if can_reload_dst or u.op is Ops.CONST:
           self.reg.pop(u, None)
           self.owner.pop(r, None)
           self.free.append(r)
@@ -1272,20 +1302,42 @@ class _PassLowerer:
       self.body.append(isa.SFPSTORE(r, _store_fmt(u.dtype), 0, tile * DST_TILE_ROWS))
     if is_t: self.free_reg(r)
     self._stored.add(u)
+    self._written_tiles.add(tile)
     self.drop_use(u)
 
   def run(self) -> tuple[list[int], int]:
-    for u in self.nodes:
-      if u in self.fused_cmps: continue
-      rd = self.emit_uop(u)
-      if self.uses.get(u, 0) > 0:
-        self.bind(u, rd)
-        self._store_if_ready(u)
-      else:
-        self.free_reg(rd)
-    # Flush any outputs that were inputs/consts or still pending
-    for out_u in self.outputs:
-      self._store_if_ready(out_u, is_final=True)
+    if not self.nodes and self.outputs:
+      # Pure copy / constant-fill pass: load all Dst-backed sources first so overlapping/cyclic tile copies are safe.
+      loaded: list[tuple[UOp, int, bool]] = []
+      prot: set[int] = set()
+      for out_u in self.outputs:
+        r, is_t = self.ensure(out_u, prot)
+        loaded.append((out_u, r, is_t))
+        if r < 8: prot.add(r)
+      for out_u, r, is_t in loaded:
+        tile = self.outputs[out_u]
+        if r >= 12:
+          tmp = self.alloc(prot | {r})
+          self.body.append(isa.SFPMOV(0, r, tmp, 0))
+          self.body.append(isa.SFPSTORE(tmp, _store_fmt(out_u.dtype), 0, tile * DST_TILE_ROWS))
+          self.free_reg(tmp)
+        else:
+          self.body.append(isa.SFPSTORE(r, _store_fmt(out_u.dtype), 0, tile * DST_TILE_ROWS))
+        self._written_tiles.add(tile)
+        if is_t: self.free_reg(r)
+        self.drop_use(out_u)
+    else:
+      for u in self.nodes:
+        if u in self.fused_cmps: continue
+        rd = self.emit_uop(u)
+        if self.uses.get(u, 0) > 0:
+          self.bind(u, rd)
+          self._store_if_ready(u)
+        else:
+          self.free_reg(rd)
+      # Flush any outputs that were inputs/consts or still pending
+      for out_u in self.outputs:
+        self._store_if_ready(out_u, is_final=True)
     # Attach sfpu_addr_mode (e.g. sfp_step dst+=2) to the final SFPSTORE in the pass body
     if self.addr_mode:
       for i in range(len(self.body) - 1, -1, -1):
@@ -1315,13 +1367,9 @@ def _try_lower_pass(
   for c, r in sorted(const_regs.items(), key=lambda kv: kv[1]):
     if 11 <= r <= 14:
       _emit_sfpconfig_const(prologue, r, c)
-  epilogue: list[int] = []
-  if l11_used and preserve_l11:
-    epilogue.append(isa.SFPCONFIG(0, 11, 1))
   prologue = fix_sfpu_hazards(prologue)
-  body = fix_sfpu_hazards(raw_body)
-  epilogue = fix_sfpu_hazards(epilogue)
-  return prologue, body, epilogue, const_regs, l11_used, peak
+  body = fix_sfpu_hazards(raw_body, is_loop=True)
+  return prologue, body, [], const_regs, l11_used, peak
 
 
 # ---------------------------------------------------------------------------------------------------------------------
@@ -1362,13 +1410,21 @@ def _ershov_order(roots: Sequence[UOp], stop: set[UOp]) -> list[UOp]:
   return order
 
 
+def _verify_compiled_pass(pro: Sequence[int], body: Sequence[int], epi: Sequence[int]) -> None:
+  verify_sfpu_words(pro)
+  verify_sfpu_words(body, is_loop=True)
+  verify_sfpu_words(epi)
+  verify_sfpu_words(list(pro) + list(body) + list(epi))
+  _verify_dst_store_load_order(body)
+
+
 def partition_sfpu(
   roots: Sequence[UOp],
   dst_inputs: dict[UOp, int],
   *,
   max_regs: int = 8,
   dst_budget: int = 8,
-  output_tiles: dict[UOp, int] | None = None,
+  output_tiles: dict[UOp, int] | Sequence[int | None] | None = None,
   preserve_l11: bool = False,
   addr_mode: int = 0,
 ) -> CompiledSfpu:
@@ -1376,26 +1432,27 @@ def partition_sfpu(
   compile each pass to hazard-free Blackhole Tensix words, and verify all hardware invariants."""
   roots_t = tuple(roots)
   root_set = set(roots_t)
-  requested_out = dict(output_tiles or {})
 
-  # Build global consumer map for compute nodes
+  # Normalize requested output tiles per root position (handles duplicate/CSE-collapsed roots cleanly!)
+  if output_tiles is None:
+    req_per_root: list[int | None] = [None] * len(roots_t)
+  elif isinstance(output_tiles, dict):
+    req_per_root = [output_tiles.get(r) for r in roots_t]
+  else:
+    if len(output_tiles) != len(roots_t):
+      raise ValueError(f"output_tiles length {len(output_tiles)} != roots length {len(roots_t)}")
+    req_per_root = list(output_tiles)
+
+  # First requested tile per unique root UOp (used as preferred home during compute); extras handled by copy pass
+  preferred_out: dict[UOp, int] = {}
+  for r, t in zip(roots_t, req_per_root):
+    if t is not None and r not in preferred_out:
+      preferred_out[r] = t
+
   live_dst: dict[UOp, int] = dict(dst_inputs)
   remaining = _ershov_order(roots_t, set(dst_inputs))
-  max_dst_used = max(list(live_dst.values()) + list(requested_out.values()) + [0]) + 1 if (live_dst or requested_out) else 0
-
-  # Fast path: if all roots are already in dst_inputs/CONST and nothing to compute (just copies)
-  if not remaining:
-    needed_copies = {r: requested_out[r] for r in roots_t if r in requested_out and live_dst.get(r) != requested_out[r]}
-    if not needed_copies:
-      return CompiledSfpu((), max_dst_used, {r: live_dst[r] for r in roots_t if r in live_dst})
-    pro, body, epi, _, l11_used, peak = _try_lower_pass(
-      (), live_dst, needed_copies, max_regs=max_regs, preserve_l11=preserve_l11, addr_mode=addr_mode,
-    )
-    verify_sfpu_words(pro + body + epi)
-    cp = CompiledSfpuPass(tuple(pro), tuple(body), tuple(epi), dict(live_dst), needed_copies, l11_used, peak, sfpu_slope(body))
-    final_tiles = {r: needed_copies.get(r, live_dst[r]) for r in roots_t}
-    return CompiledSfpu((cp,), max(max_dst_used, max(final_tiles.values()) + 1), final_tiles)
-
+  req_vals = [t for t in req_per_root if t is not None]
+  max_dst_used = max(list(live_dst.values()) + req_vals + [0]) + 1 if (live_dst or req_vals) else 0
   compiled_passes: list[CompiledSfpuPass] = []
 
   def boundary_outputs(cand: Sequence[UOp], rest: Sequence[UOp]) -> list[UOp]:
@@ -1413,26 +1470,32 @@ def partition_sfpu(
         if s in live_dst: needed_uops.add(s)
     return {live_dst[u] for u in needed_uops if u in live_dst}
 
-  def assign_output_tiles(bouts: Sequence[UOp], rest: Sequence[UOp], pass_inputs: dict[UOp, int]) -> dict[UOp, int]:
+  def assign_output_tiles(
+    bouts: Sequence[UOp],
+    cand: Sequence[UOp],
+    rest: Sequence[UOp],
+    pass_inputs: dict[UOp, int],
+  ) -> dict[UOp, int]:
     nonlocal max_dst_used
-    # Keep tiles needed by future passes OR already finalized roots
     keep_uops = {r for r in root_set if r in live_dst and r not in bouts}
     reserved = dst_still_needed(rest, keep_uops)
-    assigned: dict[UOp, int] = {}
+    # Safety invariant (Bug #1 fix): never overwrite any Dst input tile of this pass UNLESS
+    # this is a single-output pass whose sole output is computed last (stored after all loads).
+    can_reuse_input_tile = (len(bouts) == 1 and bool(cand) and bouts[0] is cand[-1])
     used_here: set[int] = set(reserved)
+    if not can_reuse_input_tile:
+      used_here |= set(pass_inputs.values())
 
-    # First place explicitly requested root output tiles if safe (not needed later by another live UOp)
+    assigned: dict[UOp, int] = {}
     for u in bouts:
-      if u in requested_out:
-        t = requested_out[u]
+      if u in preferred_out:
+        t = preferred_out[u]
         if t not in used_here:
           assigned[u] = t
           used_here.add(t)
 
-    # Place remaining outputs into free Dst tiles (recycling dead input/scratch tiles first!)
     for u in bouts:
       if u in assigned: continue
-      # Prefer recycling an input tile consumed by this pass that is no longer needed later
       free_t = next((t for t in range(dst_budget) if t not in used_here), None)
       if free_t is None:
         raise SfpuCompileError(f"exceeded Dst tile budget ({dst_budget} tiles) while spilling SFPU pass")
@@ -1444,55 +1507,67 @@ def partition_sfpu(
     return assigned
 
   while remaining:
-    # Grow the longest prefix of `remaining` that compiles within `max_regs`.
-    # Track valid prefixes so on overflow we can choose the minimum-cut-width boundary!
-    valid_prefixes: list[tuple[int, int, list[UOp], dict[UOp, int], tuple]] = []  # (cut_width, length, cand, outs, compiled)
+    # Grow candidate prefixes of `remaining`. Allow a small fail_streak because register pressure
+    # is not strictly monotonic in prefix length (it can dip once a live value dies).
+    valid_prefixes: list[tuple[int, int, list[UOp]]] = []  # (cut_width, k, cand)
     pass_max = max_regs
+    fail_streak = 0
     for k in range(1, len(remaining) + 1):
       cand = remaining[:k]
       rest = remaining[k:]
       bouts = boundary_outputs(cand, rest)
-      # Fast check: dummy distinct tile indices for trial lowering (exact tile nums assigned once cut chosen)
       trial_outs = {u: i for i, u in enumerate(bouts)}
       try:
-        res = _try_lower_pass(cand, live_dst, trial_outs, max_regs=pass_max, preserve_l11=preserve_l11, addr_mode=addr_mode)
+        _try_lower_pass(cand, live_dst, trial_outs, max_regs=pass_max, preserve_l11=preserve_l11, addr_mode=addr_mode)
       except _OutOfRegs:
         if k == 1 and pass_max < 8:
-          # Retry single node at full 8-reg budget if caller asked for e.g. max_regs=4
           pass_max = 8
-          res = _try_lower_pass(cand, live_dst, trial_outs, max_regs=8, preserve_l11=preserve_l11, addr_mode=addr_mode)
+          try:
+            _try_lower_pass(cand, live_dst, trial_outs, max_regs=8, preserve_l11=preserve_l11, addr_mode=addr_mode)
+          except _OutOfRegs as exc:
+            raise SfpuCompileError(f"single SFPU op {remaining[0].op.name} exceeded 8 LRegs") from exc
         else:
-          break
-      valid_prefixes.append((len(bouts), k, cand, trial_outs, res))
+          fail_streak += 1
+          if fail_streak >= 4: break
+          continue
+      fail_streak = 0
+      valid_prefixes.append((len(bouts), k, cand))
 
     if not valid_prefixes:
       raise SfpuCompileError(f"single SFPU op {remaining[0].op.name} exceeded 8 LRegs")
 
-    # If the entire remaining DAG fit in one pass, take it!
     if valid_prefixes[-1][1] == len(remaining):
-      _, chosen_k, chosen_cand, _, _ = valid_prefixes[-1]
+      _, chosen_k, chosen_cand = valid_prefixes[-1]
     else:
-      # Choose the best cut point: prefer minimum spill width (fewest scratch Dst tiles),
-      # breaking ties toward the longest prefix (making forward progress and fewer passes).
-      # Only consider cuts that actually fit in `dst_budget`.
+      # Balance work done (+k) against spill cost (-4 * cut_w), ignoring cuts that cannot fit dst_budget.
       best = None
-      for cut_w, k, cand, _, _ in valid_prefixes:
-        # Score: prioritize smallest cut_w; among equal cut_w, take largest k
-        key = (-cut_w, k)
-        if best is None or key > best[0]:
-          best = (key, k, cand)
-      assert best is not None
-      _, chosen_k, chosen_cand = best
+      for cut_w, k, cand in valid_prefixes:
+        rest_k = remaining[k:]
+        bouts_k = boundary_outputs(cand, rest_k)
+        used_in_k = {live_dst[s] for n in cand for s in n.src if s in live_dst}
+        keep_k = {r for r in root_set if r in live_dst and r not in bouts_k}
+        res_k = dst_still_needed(rest_k, keep_k)
+        if not (len(bouts_k) == 1 and bouts_k[0] is cand[-1]):
+          res_k |= used_in_k
+        if len(res_k) + cut_w > dst_budget:
+          continue
+        score = (k - 4 * cut_w, -cut_w, k)
+        if best is None or score > best[0]:
+          best = (score, k, cand)
+      if best is None:
+        # Fall back to narrowest valid prefix if all hit dst_budget (assign_output_tiles will report clearly)
+        _, chosen_k, chosen_cand = min(valid_prefixes, key=lambda x: (x[0], -x[1]))
+      else:
+        _, chosen_k, chosen_cand = best
 
     rest = remaining[chosen_k:]
     bouts = boundary_outputs(chosen_cand, rest)
-    # Determine exact input UOps actually referenced by this pass
     used_inputs = {s: live_dst[s] for n in chosen_cand for s in n.src if s in live_dst}
-    out_map = assign_output_tiles(bouts, rest, used_inputs)
+    out_map = assign_output_tiles(bouts, chosen_cand, rest, used_inputs)
     pro, body, epi, _, l11_used, peak = _try_lower_pass(
       chosen_cand, used_inputs, out_map, max_regs=pass_max, preserve_l11=preserve_l11, addr_mode=addr_mode,
     )
-    verify_sfpu_words(pro + body + epi)
+    _verify_compiled_pass(pro, body, epi)
     compiled_passes.append(CompiledSfpuPass(
       prologue=tuple(pro),
       body=tuple(body),
@@ -1503,29 +1578,61 @@ def partition_sfpu(
       peak_regs=peak,
       cycles_per_footprint=sfpu_slope(body),
     ))
-    # Update live_dst: evict overwritten tiles, record newly spilled/produced outputs
     written_tiles = set(out_map.values())
     live_dst = {u: t for u, t in live_dst.items() if t not in written_tiles}
     live_dst.update(out_map)
     remaining = rest
 
-  # If a requested output tile couldn't be written in-place (e.g. was still live when produced),
-  # emit a clean final copy pass only if needed.
-  final_moves = {r: requested_out[r] for r in roots_t if r in requested_out and live_dst.get(r) != requested_out[r]}
-  if final_moves:
-    pro, body, epi, _, l11_used, peak = _try_lower_pass(
-      (), live_dst, final_moves, max_regs=max_regs, preserve_l11=preserve_l11, addr_mode=addr_mode,
-    )
-    verify_sfpu_words(pro + body + epi)
-    compiled_passes.append(CompiledSfpuPass(
-      tuple(pro), tuple(body), tuple(epi), {u: live_dst[u] for u in final_moves}, final_moves,
-      l11_used, peak, sfpu_slope(body),
-    ))
-    live_dst.update(final_moves)
-    max_dst_used = max(max_dst_used, max(final_moves.values()) + 1)
+  # Materialize any CONST roots, move any root whose tile differs from requested, and duplicate CSE-collapsed roots!
+  # Collect per-root final tile assignments.
+  final_root_tiles: list[int] = []
+  used_final: set[int] = {live_dst[r] for r in roots_t if r in live_dst}
+  pending_copies: list[tuple[UOp, int]] = []  # (src_uop, dest_tile)
+  for r, req_t in zip(roots_t, req_per_root):
+    if req_t is not None:
+      final_root_tiles.append(req_t)
+      if live_dst.get(r) != req_t:
+        pending_copies.append((r, req_t))
+      used_final.add(req_t)
+    elif r in live_dst:
+      final_root_tiles.append(live_dst[r])
+    else:
+      # Unmapped CONST root with no requested tile: allocate a free Dst tile
+      free_t = next((t for t in range(dst_budget) if t not in used_final), None)
+      if free_t is None:
+        raise SfpuCompileError(f"exceeded Dst tile budget ({dst_budget} tiles) for constant output")
+      final_root_tiles.append(free_t)
+      pending_copies.append((r, free_t))
+      used_final.add(free_t)
 
-  final_output_tiles = {r: live_dst[r] for r in roots_t}
-  return CompiledSfpu(tuple(compiled_passes), max_dst_used, final_output_tiles)
+  # Emit copy / const-fill passes cleanly (batching disjoint dest tiles, supporting duplicate sources via separate pass)
+  while pending_copies:
+    batch: dict[UOp, int] = {}
+    rest_copies: list[tuple[UOp, int]] = []
+    batch_tiles: set[int] = set()
+    for src_u, dst_t in pending_copies:
+      if src_u not in batch and dst_t not in batch_tiles:
+        batch[src_u] = dst_t
+        batch_tiles.add(dst_t)
+      else:
+        rest_copies.append((src_u, dst_t))
+    in_map = {u: live_dst[u] for u in batch if u in live_dst}
+    pro, body, epi, _, l11_used, peak = _try_lower_pass(
+      (), in_map, batch, max_regs=max_regs, preserve_l11=preserve_l11, addr_mode=addr_mode,
+    )
+    _verify_compiled_pass(pro, body, epi)
+    compiled_passes.append(CompiledSfpuPass(
+      tuple(pro), tuple(body), tuple(epi), in_map, batch, l11_used, peak, sfpu_slope(body),
+    ))
+    for u, t in batch.items():
+      if u not in live_dst: live_dst[u] = t
+    max_dst_used = max(max_dst_used, max(batch.values()) + 1)
+    pending_copies = rest_copies
+
+  if final_root_tiles:
+    max_dst_used = max(max_dst_used, max(final_root_tiles) + 1)
+  final_output_tiles = {r: t for r, t in zip(roots_t, final_root_tiles)}
+  return CompiledSfpu(tuple(compiled_passes), max_dst_used, final_output_tiles, tuple(final_root_tiles))
 
 
 def compile_sfpu(
@@ -1535,7 +1642,7 @@ def compile_sfpu(
   precision: DType = dtypes.fp32,
   max_regs: int = 8,
   dst_budget: int = 8,
-  output_tiles: dict[UOp, int] | None = None,
+  output_tiles: dict[UOp, int] | Sequence[int | None] | None = None,
   preserve_l11: bool = False,
   addr_mode: int = 0,
 ) -> CompiledSfpu:
@@ -1545,15 +1652,18 @@ def compile_sfpu(
   sink_in = UOp.sink(*roots_list)
   lowered_sink = lower_sfpu_uops(sink_in, precision=precision)
   lowered_roots = list(lowered_sink.src)
-  out_tiles_mapped = None
+  out_tiles_pos: list[int | None] | None = None
   if output_tiles is not None:
-    out_tiles_mapped = {lr: output_tiles[r] for r, lr in zip(roots_list, lowered_roots) if r in output_tiles}
+    if isinstance(output_tiles, dict):
+      out_tiles_pos = [output_tiles.get(r) for r in roots_list]
+    else:
+      out_tiles_pos = list(output_tiles)
   return partition_sfpu(
     lowered_roots,
     dst_inputs,
     max_regs=max_regs,
     dst_budget=dst_budget,
-    output_tiles=out_tiles_mapped,
+    output_tiles=out_tiles_pos,
     preserve_l11=preserve_l11,
     addr_mode=addr_mode,
   )

@@ -92,6 +92,16 @@ class TestSfpuHazardModel(unittest.TestCase):
     # Storing L9 (0.0) or L10 (1.0) is safe (VD < 12)
     verify_sfpu_words([isa.SFPSTORE(9, isa.SfpuFormat.FP32, 0, 0)])
 
+  def test_loop_wraparound_hazard_detection_and_fix(self):
+    # Body starts with IADD reg reading L0 and ends with MAD writing L0: safe once, stale on 2nd iteration!
+    body = [isa.SFPIADD(0, 1, 0, 4), isa.SFPMAD(1, 2, 3, 0, 0)]
+    self.assertEqual(sfpu_hazards(body), [])
+    with self.assertRaises(SfpuCompileError):
+      verify_sfpu_words(body, is_loop=True)
+    fixed = fix_sfpu_hazards(body, is_loop=True)
+    self.assertEqual(fixed[-1], isa.SFPNOP())
+    verify_sfpu_words(fixed, is_loop=True)
+
 
 class TestSfpuDecompositions(unittest.TestCase):
   def test_exp2_and_exp_bf16_and_fp32(self):
@@ -128,9 +138,17 @@ class TestSfpuDecompositions(unittest.TestCase):
     out_log2, _ = _eval_sfpu_expr(lambda x: x.log2(), {"x": pos}, precision=dtypes.fp32)
     np.testing.assert_allclose(out_log2, np.log2(pos), rtol=2e-5, atol=2e-5)
 
-    angles = rng.uniform(-50.0, 50.0, (32, 32)).astype(np.float32)
+    angles = rng.uniform(-5000.0, 5000.0, (32, 32)).astype(np.float32)
     out_sin, _ = _eval_sfpu_expr(lambda x: x.sin(), {"x": angles}, precision=dtypes.fp32)
-    np.testing.assert_allclose(out_sin, np.sin(angles), rtol=2e-5, atol=2e-5)
+    np.testing.assert_allclose(out_sin, np.sin(angles.astype(np.float64)), rtol=2e-6, atol=2e-6)
+
+  def test_exp2_magic_rounding_survives_rewrites(self):
+    # Ensure (x + 12582912.0) - 12582912.0 is NOT folded away by simplify / lower_sfpu_uops
+    xs = np.array([[0.3, -0.3, 1.7, -1.7] * 8] * 32, dtype=np.float32)
+    out_f32, lowered = _eval_sfpu_expr(lambda x: x.exp2(), {"x": xs}, precision=dtypes.fp32)
+    np.testing.assert_allclose(out_f32, np.exp2(xs), rtol=1e-6, atol=0.0)
+    consts = {u.arg for u in lowered.toposort() if u.op is Ops.CONST}
+    self.assertIn(12582912.0, consts)
 
   def test_silu_mul_and_gelu_and_tanh(self):
     rng = np.random.default_rng(7)
@@ -285,6 +303,39 @@ class TestSfpuCompiler(unittest.TestCase):
     transps = [isa.tensix_decode(w)[1] for w in all_body if (w >> 24) == 0x8C]
     self.assertEqual(len(transps), 1)
     self.assertEqual(transps[0]["lreg_dest"], 0)
+
+  def test_dst_no_store_before_load_aliasing_and_const_and_dup_roots(self):
+    a = self._make_dst("a")
+    b = self._make_dst("b")
+
+    # Bug #1 regression: two inputs (tiles 0, 1), early output depends only on `a`, second depends on `b`.
+    # Must NEVER store over tile 1 before loading `b` from tile 1!
+    out0 = a + 1.0
+    out1 = b + 2.0
+    comp = compile_sfpu([out0, out1], {a: 0, b: 1}, output_tiles=[1, 0])
+    self._check_compiled(comp, max_regs=8)
+    self.assertEqual(comp.root_tiles, (1, 0))
+    for p in comp.passes:
+      written: set[int] = set()
+      for w in p.body:
+        if (w >> 24) == 0x72: written.add((w & 0x3FF) // 64)
+        elif (w >> 24) == 0x70: self.assertNotIn((w & 0x3FF) // 64, written)
+
+    # Bug #6c: root simplifying to a CONST must materialize cleanly instead of KeyError
+    c_root = UOp.const(dtypes.fp32, 3.5)
+    comp_c = compile_sfpu(c_root, {a: 0}, output_tiles=[2])
+    self._check_compiled(comp_c, max_regs=8)
+    self.assertEqual(comp_c.root_tiles, (2,))
+    self.assertEqual(len(comp_c.passes), 1)
+
+    # Bug #6d: two roots that CSE to the same UOp but target two different Dst tiles
+    r0 = a + b
+    r1 = a + b
+    comp_dup = compile_sfpu([r0, r1], {a: 0, b: 1}, output_tiles=[2, 3])
+    self._check_compiled(comp_dup, max_regs=8)
+    self.assertEqual(comp_dup.root_tiles, (2, 3))
+    stored_tiles = {(w & 0x3FF) // 64 for p in comp_dup.passes for w in p.body if (w >> 24) == 0x72}
+    self.assertTrue({2, 3} <= stored_tiles)
 
 
 if __name__ == "__main__":

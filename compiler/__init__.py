@@ -12,7 +12,7 @@ from .ops import (
 )
 from .eval import evaluate
 from .sfpu import (
-  CompiledSfpu, CompiledSfpuPass, SfpuCompileError, SfpuInsn, SfpuPass, SfpuPrim,
+  CompiledSfpu, CompiledSfpuPass, SfpuCompileError, SfpuInsn, SfpuPrim,
   compile_sfpu, disasm_sfpu, fix_sfpu_hazards, loadmacro_units, lower_sfpu_uops, mulacc,
   newton_terms, partition_sfpu, sfpu_cost, sfpu_cycles, sfpu_decode, sfpu_hazards, sfpu_prim,
   sfpu_slope, verify_sfpu_words,
