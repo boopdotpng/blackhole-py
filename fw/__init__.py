@@ -4,23 +4,17 @@ import hw
 
 HERE = Path(__file__).resolve().parent
 
-def _defines(header: str) -> dict[str, int]:
-  out: dict[str, int] = {}
-  for name, expr in re.findall(r"^#define\s+(\w+)\s+([\w\s()+*<>|&~-]+?)\s*(?://.*)?$", (HERE / header).read_text(), re.M):
-    try: out[name] = eval(re.sub(r"(?<=[0-9a-fA-F])u\b", "", expr), {"__builtins__": {}}, dict(out))
-    except (NameError, SyntaxError): pass
-  return out
+def _write_header():
+  # fw/hw.h is hw/__init__.py as C: every int constant, the role indexes, and the NoC coordinate of each DRAM port.
+  ports = ", ".join("{" + ", ".join(f"{hw.dram_coord(b, p):#x}" for p in range(3)) + "}" for b in range(hw.DRAM_BANKS))
+  text = "// Generated from hw/__init__.py by fw/__init__.py. Do not edit.\n#pragma once\n" + "".join(
+    f"#define {k} {v}\n" for k, v in (
+      *((k, f"0x{v:X}") for k, v in vars(hw).items() if k.isupper() and type(v) is int),
+      *((f"ROLE_{r.upper()}", i) for i, r in enumerate(hw.ROLES)),
+      ("DRAM_PORT_COORDS", "{" + ports + "}"),
+    ))
+  if not (out := HERE / "hw.h").exists() or out.read_text() != text: out.write_text(text)
 
-_HW = _defines("hw.h")  # L1 layout shared with the firmware
-PACKET, DMA_DEPTH = _HW["PACKET"], _HW["DMA_DEPTH"]
-SVC_STATE, SVC_STATE_SIZE, SVC_WPTR, SVC_SIGNAL = _HW["SVC_STATE"], _HW["SVC_STATE_SIZE"], _HW["SVC_WPTR"], _HW["SVC_SIGNAL"]
-SVC_BRISC_BASE, SVC_BRISC_SIZE = _HW["SVC_BRISC_BASE"], _HW["SVC_BRISC_SIZE"]
-SVC_NCRISC_BASE, SVC_NCRISC_SIZE = _HW["SVC_NCRISC_BASE"], _HW["SVC_NCRISC_SIZE"]
-SVC_PACKETS = _HW["SVC_PACKETS"]
-_WORKER = _defines("worker.h")  # worker L1 header, also written by device.run_workers
-for _k in ("SUBORDINATE_SYNC", "GO_FLAG", "LEADER_COORD", "WORKER_X", "WORKER_Y", "WORKER_ID", "NUM_WORKERS",
-           "DRAM_BANKS_L1", "GRID_COLS_L1", "ROLE_PC", "CODE_BASE"):
-  assert _WORKER[_k] == getattr(hw, _k), f"fw/worker.h {_k} disagrees with hw/hw.py"
 
 CACHE = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "blackhole-py-rewrite"
 CFLAGS = [
@@ -43,6 +37,7 @@ def _deps(srcs: list[Path]) -> list[Path]:
 
 
 def compile(srcs: list, base: int, size: int, flags: tuple[str, ...] = (), ld: str = "link.ld") -> bytes:
+  _write_header()
   srcs = [(HERE / s).resolve() for s in srcs]
   key = hashlib.sha256(repr((CFLAGS, flags, base, size, ld)).encode())
   for p in [HERE / ld, *_deps(srcs)]: key.update(p.read_bytes())
@@ -61,11 +56,9 @@ def compile(srcs: list, base: int, size: int, flags: tuple[str, ...] = (), ld: s
 
 @functools.cache
 def service_images(dram_banks: int) -> tuple[bytes, bytes]:
-  prebuilt = tuple(HERE / "bins" / f"svc_b{dram_banks}_e{i}.bin" for i in (0, 1))
-  if all(p.is_file() for p in prebuilt): return tuple(p.read_bytes() for p in prebuilt)
   return tuple(
     compile(["service.c", "noc.c"], *slot, [f"-DSVC_ENGINE={i}", f"-DBANKS={dram_banks}"])
-    for i, slot in enumerate(((SVC_BRISC_BASE, SVC_BRISC_SIZE), (SVC_NCRISC_BASE, SVC_NCRISC_SIZE)))
+    for i, slot in enumerate(((hw.SVC_BRISC_BASE, hw.SVC_BRISC_SIZE), (hw.SVC_NCRISC_BASE, hw.SVC_NCRISC_SIZE)))
   )
 
 
@@ -86,7 +79,7 @@ def park_epilogue(role: str) -> bytes: return _piece(["boot.c"], role, ("-DPARK"
 
 def pack_megakernel(images: dict[str, bytes]) -> tuple[bytes, dict[str, int], int]:
   # -> (image at CODE_BASE, boot pc per role, 64-aligned end of code in L1). BRISC always boots; it releases the
-  # subordinates whose ROLE_PC (written by device.run_workers from these pcs) is nonzero.
+  # subordinates whose ROLE_PC (written by Device.run from these pcs) is nonzero.
   if unknown := set(images) - set(hw.ROLES): raise ValueError(f"unknown RISC roles: {unknown}")
   for role, code in images.items():
     if len(code) % 4: raise ValueError(f"{role} image size {len(code)} is not 4-byte aligned")

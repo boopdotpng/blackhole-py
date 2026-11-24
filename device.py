@@ -1,8 +1,18 @@
-import collections, concurrent.futures, ctypes, mmap, struct, sys, time
+from __future__ import annotations
+import atexit, collections, concurrent.futures, copy, ctypes, math, mmap, struct, sys, time
+import numpy as np
 import fw, hw
 if sys.platform == "darwin": from pci_macos import Card, HostMemory
 else: from pci import Card, HostMemory
 from pci import buffer_address
+
+# name: (numpy type the host sees, bytes per 1024-element tile). bf16, e4m3, e5m2 and bfp8 are raw bits on the host.
+DTYPES = {
+  "bf16": (np.uint16, 2048), "fp32": (np.float32, 4096), "e4m3": (np.uint8, 1024), "e5m2": (np.uint8, 1024),
+  "bfp8": (np.uint8, 1088), "u8": (np.uint8, 1024), "u32": (np.uint32, 4096), "i32": (np.int32, 4096),
+  "u64": (np.uint64, 8192),
+}
+FROM_NUMPY = {"float32": "fp32", "uint8": "u8", "uint32": "u32", "int32": "i32", "uint64": "u64"}
 
 def round_up(x:int, n:int) -> int: return -(-x // n) * n
 
@@ -26,7 +36,7 @@ class Signal:
 
 class Allocator:
   COPY_THREADS = 4
-  def __init__(self, dev:"Device"):
+  def __init__(self, dev:Device):
     self.dev, self.top, self.slot, self.slot_done, self.pool = dev, 0, 0, [0, 0], None
     self.pending_pins = []  # still mapped after a DMA timeout; unpinned once the device catches up
 
@@ -150,6 +160,78 @@ class Allocator:
     self.copyin(addr := self.alloc(len(blob), page), blob)
     return addr
 
+class Buffer:
+  def __init__(self, device: Device, shape, dtype: str, host: bool = False, tiles_per_page: int = 1):
+    if dtype not in DTYPES: raise ValueError(f"unknown type {dtype!r}")
+    self.device, self.shape, self.dtype, self.host = device, tuple(shape), dtype, host
+    self.numpy_type, tile_bytes = DTYPES[dtype]
+    self.nbytes = math.prod(self.shape) * np.dtype(self.numpy_type).itemsize
+    if tiles_per_page < 1 or tiles_per_page * tile_bytes > hw.NOC_MAX_BURST or (host and tiles_per_page != 1):
+      raise ValueError("invalid tiles_per_page")
+    if host:
+      self.offset = device.alloc_host(max(self.nbytes, 64))
+      self.addr = device.host.noc_addr + self.offset
+    else:
+      self.addr = device.allocator.alloc(self.nbytes, tiles_per_page * tile_bytes)
+
+  def page_view(self, byte_offset: int, shape):
+    if self.host: raise ValueError("expected a DRAM buffer")
+    view = copy.copy(self)
+    view.shape = (shape,) if isinstance(shape, int) else tuple(shape)
+    view.nbytes = math.prod(view.shape) * np.dtype(self.numpy_type).itemsize
+    shift = self.addr >> 56 & 63
+    page = 1 << shift if shift else ((self.addr >> 48 & 255) + 1) * 64
+    if byte_offset < 0 or byte_offset % page or byte_offset + view.nbytes > self.nbytes or any(n < 0 for n in view.shape):
+      raise ValueError("invalid DRAM page view")
+    view.addr = self.addr + byte_offset
+    return view
+
+  def numpy(self) -> np.ndarray:
+    # Host buffers return a live view: no copy and no synchronization with the device.
+    if self.host: return np.ndarray(self.shape, self.numpy_type, self.device.host.mem, self.offset)
+    out = np.empty(self.shape, self.numpy_type)
+    if self.nbytes: self.device.allocator.copyout(out, self.addr)
+    return out
+
+  def copy_from(self, x):
+    if self.host:
+      self.numpy().reshape(-1).view(np.uint8)[:] = np.frombuffer(np.ascontiguousarray(x), np.uint8)
+      return self
+    data = memoryview(np.ascontiguousarray(x)).cast("B")
+    if len(data) != self.nbytes: raise ValueError(f"{len(data)} bytes into a {self.nbytes}-byte buffer")
+    self.device.allocator.copyin(self.addr, data)
+    return self
+
+  def __repr__(self): return f"Buffer({self.shape}, {self.dtype}{', host' if self.host else ''})"
+
+
+class HostStream:
+  def __init__(self, device: Device, capacity: int):
+    # u32[0] is the written counter, padded to 64 bytes; the payload ring starts at u32[16].
+    self.capacity = capacity
+    self.buf = device.zeros(16 + capacity, "u32", host=True)
+    self.view = self.buf.numpy()
+    self.count_addr = self.buf.addr
+    self.data_addr = self.buf.addr + 64
+    self.read_idx = 0
+
+  @property
+  def written(self) -> int: return int(self.view[0])
+
+  def poll(self) -> np.ndarray:
+    w = self.written
+    if w <= self.read_idx: return np.empty(0, dtype=np.uint32)
+    idxs = np.arange(self.read_idx, w, dtype=np.int64) % self.capacity
+    self.read_idx = w
+    return self.view[16 + idxs].copy()
+
+  def wait(self, target: int, timeout: float = 10.0) -> np.ndarray:
+    deadline = time.monotonic() + timeout
+    while self.written < target:
+      if time.monotonic() > deadline:
+        raise TimeoutError(f"HostStream timed out at written={self.written}, waiting for {target}")
+    return self.poll()
+
 class Device:
   def __init__(self, index:int=0):
     self.card, self.host, self.booted, self.pinned_buffers, self.allocator = Card(index), None, False, [], None
@@ -176,15 +258,50 @@ class Device:
     except BaseException:
       self.close()
       raise
+    atexit.register(self.close)
+
+  @property
+  def num_workers(self) -> int: return len(self.workers)
+
+  def empty(self, shape, dtype:str, host:bool=False, *, tiles_per_page:int=1) -> Buffer:
+    return Buffer(self, (shape,) if isinstance(shape, int) else shape, dtype, host, tiles_per_page)
+
+  def zeros(self, shape, dtype:str, host:bool=False) -> Buffer:
+    b = self.empty(shape, dtype, host)
+    if host:
+      b.numpy().fill(0)
+      return b
+    chunk = bytes(min(b.nbytes, 16 << 20))
+    for off in range(0, b.nbytes, len(chunk) or 1):
+      self.allocator.copyin(b.addr + off, memoryview(chunk)[:min(len(chunk), b.nbytes - off)])
+    return b
+
+  def array(self, x, dtype:str|None=None) -> Buffer:
+    x = np.asarray(x)
+    if dtype == "bf16" and x.dtype.kind == "f":
+      u = x.astype(np.float32).view(np.uint32).astype(np.uint64)
+      x = ((u + 0x7FFF + (u >> 16 & 1)) >> 16).astype(np.uint16)
+    dtype = dtype or FROM_NUMPY.get(x.dtype.name)
+    if dtype is None: raise TypeError(f"no runtime type for {x.dtype}; pass dtype=")
+    return self.empty(x.shape, dtype).copy_from(x)
+
+  def stream(self, capacity:int=4096) -> HostStream: return HostStream(self, capacity)
+
+  def read_l1(self, core:int|tuple[int, int], addr:int, size:int) -> bytes:
+    return self.card.read(self.workers[core] if isinstance(core, int) else core, addr, size)
+
+  def write_l1(self, core:int|tuple[int, int]|None, addr:int, data:bytes):
+    targets = self.worker_rects if core is None else [self.workers[core] if isinstance(core, int) else core]
+    for target in targets: self.card.write(target, addr, data)
 
   def dma_copy(self, dst, src, size, timeout=60.0):
     if dst % 64 or src % 64 or not 0 <= size < 1 << 32: raise ValueError("invalid DMA descriptor")
     value = self.timeline_value + 1
-    self.timeline_signal.wait(max(0, value - fw.DMA_DEPTH), timeout)
-    at = (fw.SVC_PACKETS + (value % fw.DMA_DEPTH) * fw.PACKET) // 4
+    self.timeline_signal.wait(max(0, value - hw.DMA_DEPTH), timeout)
+    at = (hw.SVC_PACKETS + (value % hw.DMA_DEPTH) * hw.PACKET) // 4
     for i, word in enumerate((dst & 0xffffffff, dst >> 32, src & 0xffffffff, src >> 32, size, value >> 32)):
       self.dma_window[at + i] = word
-    self.dma_window[fw.SVC_WPTR // 4] = value & 0xffffffff
+    self.dma_window[hw.SVC_WPTR // 4] = value & 0xffffffff
     self.timeline_value = value
     return value
 
@@ -192,7 +309,7 @@ class Device:
     self.timeline_signal.wait(self.timeline_value, timeout)
     self.allocator.release_pins()
 
-  def stop_workers(self):
+  def stop(self):
     for rect in self.worker_rects: self._reset(rect)
 
   def pinned(self, size:int) -> HostMemory:
@@ -205,12 +322,15 @@ class Device:
     self.heap = offset + size
     return offset
 
-  def run_workers(self, image:bytes, role_pcs:dict[str, int], data:dict[int, bytes]|None=None, cores=None):
+  def run(self, images:dict[str, bytes], data:dict[int, bytes]|None=None, cores=None) -> int:
+    # Launch one kernel body per RISC role on every worker (or `cores`), with `data` written to L1 first.
+    # Returns the 64-aligned end of code in L1.
+    image, role_pcs, code_end = fw.pack_megakernel(images)
     self.synchronize()
-    self.stop_workers()
+    self.stop()
     header = bytearray(hw.CODE_BASE)
     struct.pack_into("<I", header, 0, hw.jal(hw.CODE_BASE))
-    struct.pack_into("<I", header, hw.LEADER_COORD, hw.noc(self.workers[0]))
+    struct.pack_into("<I", header, hw.LEADER_COORD, hw.coord(*self.workers[0]))
     struct.pack_into("<3I", header, hw.NUM_WORKERS, len(self.workers), self.dram_banks, self.cols)
     struct.pack_into("<4I", header, hw.ROLE_PC, *(role_pcs.get(r, 0) for r in hw.ROLES[1:]))
     targets = self.worker_rects if cores is None else list(cores)
@@ -220,13 +340,14 @@ class Device:
       if data:
         for addr, blob in data.items(): self.card.write(target, addr, blob)
       self.card.write32(target, hw.SOFT_RESET, hw.RESET_ALL & ~hw.RESET_BRISC)
+    return code_end
 
   def cover(self, cores) -> tuple[int, int]:
     # Multicast (rect, exclude): a rectangle minus at most one corner quadrant.
     cores = set(cores)
     x0, x1, y0, y1 = min(x for x, _ in cores), max(x for x, _ in cores), min(y for _, y in cores), max(y for _, y in cores)
     box = {(x, y) for x in range(x0, x1 + 1) if x not in (8, 9) for y in range(y0, y1 + 1)}
-    rect, missing = hw.noc((x0, y0)) | hw.noc((x1, y1)) << 12, box - cores
+    rect, missing = hw.coord(x0, y0) | hw.coord(x1, y1) << 12, box - cores
     if not missing: return rect, 0
     dx, dy = any(x == x1 for x, _ in missing), any(y == y1 for _, y in missing)
     ax, ay = (min if dx else max)(x for x, _ in missing), (min if dy else max)(y for _, y in missing)
@@ -258,11 +379,11 @@ class Device:
 
   def _boot_dma(self):
     core, (brisc, ncrisc) = self.dma_core, fw.service_images(self.dram_banks)
-    state = bytearray(fw.SVC_STATE_SIZE)
-    struct.pack_into("<Q", state, fw.SVC_SIGNAL - fw.SVC_STATE, self.timeline_signal.addr)
-    self.card.write(core, fw.SVC_STATE, state)
-    self.card.write(core, fw.SVC_BRISC_BASE, brisc)
-    self.card.write(core, fw.SVC_NCRISC_BASE, ncrisc)
-    self.card.write32(core, 0, hw.jal(fw.SVC_BRISC_BASE))
+    state = bytearray(hw.SVC_STATE_SIZE)
+    struct.pack_into("<Q", state, hw.SVC_SIGNAL - hw.SVC_STATE, self.timeline_signal.addr)
+    self.card.write(core, hw.SVC_STATE, state)
+    self.card.write(core, hw.SVC_BRISC_BASE, brisc)
+    self.card.write(core, hw.SVC_NCRISC_BASE, ncrisc)
+    self.card.write32(core, 0, hw.jal(hw.SVC_BRISC_BASE))
     self.card.write32(core, hw.SOFT_RESET, hw.RESET_ALL & ~hw.RESET_BRISC)
     return self.card.window(core)

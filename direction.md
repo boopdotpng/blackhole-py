@@ -95,7 +95,7 @@ FPU ops (`MVMUL`, `ELW*`) are direct and map cleanly to `ADDR_MOD` + `REPLAY` + 
    - Insert `cb.reserve/push/wait/pop`, collective credit/flag handshakes, `dvalid`/`STALLWAIT`/`SETRWC`, `math_pack` semaphores, and `noc.wait` from explicit per-inst resource reads/writes.
    - Project the single stream onto `brisc`, `ncrisc`, `trisc0`, `trisc1`, `trisc2`, pruning empty loops per RISC.
 3. **Per-TRISC Hardware Compression & Binary Emit** (reverse pipeline order):
-   - Expand FPU/SFPU tile ops $\to$ synthesize `ADDR_MOD` (slots `0..7`) $\to$ `SFPLOADMACRO` fusion $\to$ `REPLAY` packing (32-word budget) $\to$ `MOP` loop synthesis $\to$ RV32IM regalloc ([hw/regalloc.py](hw/regalloc.py)) + encoding ([hw/isa.py](hw/isa.py)).
+   - Expand FPU/SFPU tile ops $\to$ synthesize `ADDR_MOD` (slots `0..7`) $\to$ `SFPLOADMACRO` fusion $\to$ `REPLAY` packing (32-word budget) $\to$ `MOP` loop synthesis $\to$ RV32IM regalloc ([compiler/regalloc.py](compiler/regalloc.py)) + encoding ([hw/isa.py](hw/isa.py)).
 
 ---
 

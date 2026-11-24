@@ -7,6 +7,7 @@ APP=/Applications/TTGPU.app/Contents/MacOS/TTGPU
 pkill -f "TTGPU server" || true               # the server holds the dext's user client open
 systemextensionsctl list 2>/dev/null | grep -q com.boopapps.ttgpu.driver && "$APP" uninstall
 ./ttgpu-dext/install.sh
+cd ..  # the repo root, for pci_macos
 
 echo "waiting for the card..."
 for _ in $(seq 60); do

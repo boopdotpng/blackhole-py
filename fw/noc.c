@@ -1,15 +1,6 @@
 #include "noc.h"
 
-static const unsigned short dram_ports[8][3] = {
-  {17 | 14 << 6, 17 | 13 << 6, 17 | 12 << 6},
-  {17 | 15 << 6, 17 | 16 << 6, 17 | 17 << 6},
-  {17 | 18 << 6, 17 | 19 << 6, 17 | 20 << 6},
-  {17 | 21 << 6, 17 | 22 << 6, 17 | 23 << 6},
-  {18 | 14 << 6, 18 | 13 << 6, 18 | 12 << 6},
-  {18 | 17 << 6, 18 | 16 << 6, 18 | 15 << 6},
-  {18 | 20 << 6, 18 | 19 << 6, 18 | 18 << 6},
-  {18 | 23 << 6, 18 | 22 << 6, 18 | 21 << 6},
-};
+static const unsigned short dram_ports[DRAM_BANKS][3] = DRAM_PORT_COORDS;
 #ifndef BANKS
 #define BANKS 8
 #endif
@@ -33,8 +24,8 @@ static u32 noc_coord(u32 niu) { return read32(NODE_ID(niu)) & 0xFFF; }
 void noc_init(u32 niu) {
   volatile u32 *r = CMD_BUF(niu, READ_BUF), *w = CMD_BUF(niu, WRITE_BUF);
   u32 self = noc_coord(niu);
-  r[RET_MID] = 0; r[RET_COORD] = self; r[CTRL] = RESP_MARKED | STATIC_VC(1);
-  w[TARG_MID] = 0; w[TARG_COORD] = self; w[CTRL] = WRITE | RESP_MARKED | STATIC_VC(1);
+  r[RET_MID] = 0; r[RET_COORD] = self; r[CTRL] = CTRL_RESP_MARKED | STATIC_VC(1);
+  w[TARG_MID] = 0; w[TARG_COORD] = self; w[CTRL] = CTRL_WRITE | CTRL_RESP_MARKED | STATIC_VC(1);
   r[AT_LEN_BE_1] = w[AT_LEN_BE_1] = 0;
   r[AT_DATA] = w[AT_DATA] = 0;
   r[BRCST_EXCLUDE] = w[BRCST_EXCLUDE] = 0;

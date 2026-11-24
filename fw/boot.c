@@ -1,47 +1,17 @@
 // Megakernel boot stub for one RISC (-DROLE=hw.ROLES index), or with -DPARK the epilogue that parks it.
 // fw.pack_megakernel lays out each launched role as [stub][kernel body][epilogue]: the stub sets up the core, preloads
-// the TTRV base registers and jumps to _end, which is where the body starts.
-#include "worker.h"
+// the TTRV base registers and jumps to _end, which is where the body starts. Stubs and epilogues are linked by boot.ld
+// at address 0 and concatenated with the bodies, so they must be position independent: no data.
+#include "noc.h"
 
-#define TRISC_STACK_TOP          0xFFB00FF0
-#define RESET_TRISC0             (1u << 12)
-#define TRISC0_RESET_PC          0xFFB12228
-#define TRISC_RESET_PC_OVERRIDE  0xFFB12234
+// ROLE is the index in hw.ROLES
+#define IS_TRISC                 (ROLE >= ROLE_TRISC0)
+#define TRISC_ID                 (ROLE - ROLE_TRISC0)
 
-#define LOCAL_MEM                0xFFB00000
-#define OVERLAY_STREAMS          0xFFB40000
-#define STREAM_STRIDE            0x1000
-#define REGFILE                  0xFFE00000  // this thread's 64 Tensix GPRs
-#define INSTRN_BUF               0xFFE40000  // a store pushes one Tensix instruction
-#define PC_BUF                   0xFFE80000
-#define COPROCESSOR_DONE_CHECK   (PC_BUF + 4)
-
-#define CFG_ECC_SCRUBBER         (TENSIX_CFG + 3 * 4)
-#define CFG_RISC_PREFETCH_CTRL   (TENSIX_CFG + 208 * 4)
-#define CFG_BANK_WORDS           224
-#define CFG_GLOBAL_BASE          180
-#define CFG_STATE_RESET          4
-
-#define ZEROACC_ALL              0x10180000
-#define SFPENCC_RESET            0x8A00300A
-#define NOP                      0x02000000
-#define SFPLOADI_MINUS1          0x7100BF80
-#define SFPCONFIG_L11            0x910000B0
-#define SEMINIT_ALL              0xA31003FC
-#define CLEARDVALID_RESET        0x36000001
-#define SETRWC_ZERO              0x3700000F
-#define SETADCXY_ZERO            0x51E0000F
-#define SETADCZW_ZERO            0x54E0000F
 #define SETC16(reg)              (0xB2000000 | (reg) << 16)
-#define THD_CFG_TTSYNC           56
-#define THD_CFG_RESET            67
-
-#define CB_STREAM0               8
-#define CBS                      32
-#define CB_PUSHED                8
-#define CB_POPPED                10
 #define STREAM_REG(s, reg)       (OVERLAY_STREAMS + (s) * STREAM_STRIDE + 4 * (reg))
 
+// SUBORDINATE_SYNC holds a byte per subordinate RISC: 0x40 while held, 2 once booted
 #define SUBORDINATE_HELD         0x40404040u
 #define SUBORDINATE_UP           2
 

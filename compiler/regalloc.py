@@ -1,6 +1,7 @@
 from collections import defaultdict, deque
 from dataclasses import dataclass
-from . import hw, isa
+import hw
+from hw import isa
 
 
 class RegAllocError(RuntimeError):

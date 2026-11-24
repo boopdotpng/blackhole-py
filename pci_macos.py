@@ -38,7 +38,7 @@ class Server:
       try: return self.sock.connect(SOCK_PATH)
       except (ConnectionRefusedError, FileNotFoundError):
         if i == 0:
-          if not os.path.exists(APP): raise RuntimeError(f"{APP} not found: install it with ttgpu-dext/install.sh") from None
+          if not os.path.exists(APP): raise RuntimeError(f"{APP} not found: install it with macos/ttgpu-dext/install.sh") from None
           with open(os.path.join(tempfile.gettempdir(), "ttgpu-server.log"), "ab") as log:
             subprocess.Popen([APP, "server", SOCK_PATH], stdin=subprocess.DEVNULL, stdout=log, stderr=log, start_new_session=True)
         time.sleep(0.05)
