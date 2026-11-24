@@ -276,13 +276,13 @@ class TestSfpuCompiler(unittest.TestCase):
     ops_eq = [isa.tensix_decode(w)[0] for w in comp_eq.passes[0].body]
     self.assertIn("SFPSETCC", ops_eq)
 
-    # 4. Integer lane_id() < 16 comparison -> uses L15 (LANE_X2) + SFPCAST(mod=3) + SFPGT
+    # 4. Integer lane_id() < 16 comparison -> uses L15 (LANE_X2) and nonnegative sign-magnitude keys
     w_lane = (lane_id() < 16).where(a, 0.0)
     comp_lane = compile_sfpu(w_lane, {a: 0}, output_tiles={w_lane: 0})
     self._check_compiled(comp_lane, max_regs=8)
     ops_lane = [isa.tensix_decode(w)[0] for w in comp_lane.passes[0].body]
     self.assertIn("SFPSHFT", ops_lane)
-    self.assertIn("SFPCAST", ops_lane)
+    self.assertIn("SFPGT", ops_lane)
 
     # 5. Integer / boolean output stores with SfpuFormat.INT32 (never FP32 which flushes small ints!)
     mask_out = a < b
@@ -291,18 +291,33 @@ class TestSfpuCompiler(unittest.TestCase):
     stores = [isa.tensix_decode(w)[1] for w in comp_mask.passes[-1].body if (w >> 24) == 0x72]
     self.assertEqual(stores[-1]["instr_mod0"], isa.SfpuFormat.INT32)
 
-  def test_transp_clobber_barrier(self):
-    # SFPTRANSP permutes all of L0..L7; live values across it must be spilled into separate passes with VD=0.
+  def test_transpose_requires_explicit_register_group(self):
     a = self._make_dst("a")
-    b = self._make_dst("b")
-    t = sfpu_prim("TRANSP", dtypes.fp32, a + 1.0)
-    y = t + (b * 2.0)
-    comp = compile_sfpu(y, {a: 0, b: 1}, output_tiles={y: 0})
-    self._check_compiled(comp, max_regs=8)
-    all_body = [w for p in comp.passes for w in p.body]
-    transps = [isa.tensix_decode(w)[1] for w in all_body if (w >> 24) == 0x8C]
-    self.assertEqual(len(transps), 1)
-    self.assertEqual(transps[0]["lreg_dest"], 0)
+    with self.assertRaisesRegex(SfpuCompileError, "four explicit register inputs"):
+      compile_sfpu(sfpu_prim("TRANSP", dtypes.fp32, a + 1), {a: 0})
+
+  def test_resident_product_is_a_load(self):
+    a, b = self._make_dst("a"), self._make_dst("b")
+    product = a * b
+    comp = compile_sfpu(product + 2, {product: 0})
+    ops = [isa.tensix_decode(w)[0] for w in comp.passes[0].body]
+    self.assertEqual(ops.count("SFPLOAD"), 1)
+    self.assertNotIn("SFPMAD", ops)
+
+  def test_integer_immediates_skip_constant_setup(self):
+    a = self._make_dst("a", dtypes.i32)
+    for root in (UOp.const(dtypes.i32, 1999) + a, a - 2048):
+      p, = compile_sfpu(root, {a: 0}).passes
+      self.assertFalse(p.prologue)
+      self.assertEqual([isa.tensix_decode(w)[0] for w in p.body], ["SFPLOAD", "SFPIADD", "SFPSTORE"])
+
+  def test_output_tile_contract(self):
+    a, b = self._make_dst("a"), self._make_dst("b")
+    for slots in ([1, 1], [-1, 0], [0, 8]):
+      with self.subTest(slots=slots), self.assertRaises(ValueError):
+        compile_sfpu([a, b], {a: 0, b: 1}, output_tiles=slots)
+    with self.assertRaises(ValueError):
+      compile_sfpu(a, {a: 1}, dst_budget=1)
 
   def test_dst_no_store_before_load_aliasing_and_const_and_dup_roots(self):
     a = self._make_dst("a")

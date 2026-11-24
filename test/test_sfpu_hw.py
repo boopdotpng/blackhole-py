@@ -13,7 +13,7 @@ import numpy as np
 import hw
 from hw import cfg, isa
 from device import Device
-from compiler import Space, UOp, compile_sfpu, dram_buf, dtypes, lane_id, noc_read, unpack
+from compiler import Space, UOp, compile_sfpu, dram_buf, dtypes, lane_id, mulacc, noc_read, unpack
 
 L1_DONE = 0x1F000
 L1_IN_BASE = 0x20000
@@ -325,6 +325,60 @@ class TestSfpuSilicon(unittest.TestCase):
     )
     np.testing.assert_allclose(o0, a + 1.0, rtol=1e-6, atol=1e-6)
     np.testing.assert_allclose(o1, b + 2.0, rtol=1e-6, atol=1e-6)
+
+  def test_fp32_predicate_in_fast_math(self):
+    # The BF16 exp2 approximation crosses x near x=0.64. A gate can then
+    # select a completely different value even if exp2 itself is within tolerance.
+    a = np.linspace(0.60, 0.68, 1024, dtype=np.float32)
+    [out], _ = run_sfpu_on_silicon(self.dev, lambda a: ((-a).exp2() < a).where(a, -a),
+                                   {"a": a}, precision=dtypes.bf16)
+    np.testing.assert_array_equal(out, np.where(np.exp2(-a) < a, a, -a))
+
+  def test_lane_id_layout(self):
+    [out], _ = run_sfpu_on_silicon(self.dev, lambda: lane_id().cast(dtypes.fp32), {})
+    # Packed output consists of four 16x16 faces in TL, TR, BL, BR order.
+    logical = out.reshape(2, 2, 16, 16).transpose(0, 2, 1, 3).reshape(32, 32)
+    rows, cols = np.indices((32, 32))
+    np.testing.assert_array_equal(logical, 8 * (rows % 4) + (cols % 16) // 2)
+
+  def test_prompt_rope_step(self):
+    # shared/prompt_rope.ttrv rounds a*c first, then fuses b*d+product.
+    a, b, c, d = np.random.default_rng(81).uniform(-2, 2, (4, 1024)).astype(np.float32)
+    [out], comp = run_sfpu_on_silicon(self.dev, lambda a, b, c, d: mulacc(b, d, a*c).cast(dtypes.bf16),
+                                       dict(zip("abcd", (a, b, c, d))))
+    fp = (b.astype(np.float64)*d + a*c).astype(np.float32).view(np.uint32)
+    rounded = ((fp + 0x7fff + ((fp >> 16) & 1)) >> 16) << 16
+    np.testing.assert_array_equal(out.view(np.uint32), rounded)
+    self.assertEqual(len(comp.passes), 1)
+    self.assertEqual(len(comp.passes[0].body), 8)
+
+  def test_integer_keys(self):
+    words = np.array([0x80000000, 0xbf800000, 0, 0x40000000, 0xff000000, 0x7f000000], dtype=np.uint32)
+    a, b = (np.resize(x, 1024) for x in (np.repeat(words, words.size), np.tile(words, words.size)))
+    for dt, np_dt in ((dtypes.i32, np.int32), (dtypes.u32, np.uint32)):
+      def expr(a, b):
+        x, y = a.bitcast(dt), b.bitcast(dt)
+        return [(x < y).where(a + 0.25, b - 0.25), x.minimum(y).bitcast(dtypes.fp32)]
+      outs, _ = run_sfpu_on_silicon(self.dev, expr, {"a": a.view(np.float32), "b": b.view(np.float32)}, multi_out=True)
+      x, y = a.view(np_dt), b.view(np_dt)
+      np.testing.assert_array_equal(outs[0], np.where(x < y, a.view(np.float32) + 0.25, b.view(np.float32) - 0.25))
+      np.testing.assert_array_equal(outs[1].view(np.uint32), np.minimum(x, y).view(np.uint32))
+
+  def test_duplicate_output_after_swap(self):
+    a = np.arange(1024, dtype=np.float32)
+    for slots in ([1, 0, 2], [None, 0, 2]):
+      outs, comp = run_sfpu_on_silicon(self.dev, lambda a, b: (a, b, a), {"a": a, "b": -a},
+                                        multi_out=True, output_tiles=slots)
+      self.assertEqual(comp.root_tiles[1:], (0, 2))
+      for actual, expected in zip(outs, (a, -a, a), strict=True):
+        np.testing.assert_array_equal(actual, expected)
+
+  def test_parallel_copy_cycle_with_two_registers(self):
+    data = np.random.default_rng(90).uniform(-1, 1, (4, 1024)).astype(np.float32)
+    outputs, comp = run_sfpu_on_silicon(self.dev, lambda **inputs: tuple(inputs.values()), dict(zip("abcd", data)),
+                                        multi_out=True, output_tiles=[1, 2, 3, 0], max_regs=2)
+    np.testing.assert_array_equal(outputs, data)
+    self.assertEqual(comp.passes[0].peak_regs, 2)
 
   def test_deep_multi_pass_spill_on_silicon(self):
     rng = np.random.default_rng(40)

@@ -299,7 +299,7 @@ class TestLayer1Evaluation(unittest.TestCase):
 
     for cid in range(2):
       s = x_np[cid * 2] + x_np[cid * 2 + 1]
-      ref = np.where(np.arange(32)[None, :] < 16, s - s.max(axis=-1, keepdims=True), 0.0)
+      ref = np.where(np.arange(32)[:, None] % 4 < 2, s - s.max(axis=-1, keepdims=True), 0.0)
       np.testing.assert_allclose(y_np[cid], ref, rtol=1e-5, atol=1e-5)
     np.testing.assert_array_equal(tok_np, np.array([777, 0], dtype=np.int32))
 

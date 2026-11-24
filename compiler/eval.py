@@ -268,7 +268,8 @@ def evaluate(
     elif op is Ops.PACK:
       res = _cast_value(eval_node(src[0], cid, env, cache), u.dtype)
     elif op is Ops.LANE_ID:
-      res = np.broadcast_to(np.arange(32, dtype=np.int32)[None, :], (32, 32)).copy()
+      row, col = np.indices((32, 32), dtype=np.int32)
+      res = _cast_value((row % 4) * 8 + (col % 16) // 2, u.dtype)
     elif op is Ops.REDUCE_ROW:
       v = eval_node(src[0], cid, env, cache)
       r = v.sum(axis=-1, keepdims=True) if arg is Ops.ADD else v.max(axis=-1, keepdims=True)

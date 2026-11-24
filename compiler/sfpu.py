@@ -9,7 +9,7 @@ Pipeline (Layer 1 Space.DST UOps -> verified Blackhole SFPU Tensix instruction s
 Late compression passes (2x even/odd interleaving, SFPLOADMACRO, REPLAY, MOP) intentionally live in Layer 3.
 """
 from __future__ import annotations
-import math, struct
+import itertools, math, struct
 from dataclasses import dataclass
 from functools import lru_cache
 from typing import Iterable, Sequence
@@ -311,7 +311,7 @@ def disasm_sfpu(words: Sequence[int]) -> str:
 @dataclass(frozen=True)
 class SfpuPrim:
   """Low-level Blackhole SFPU primitive arg for Ops.SFPU UOps."""
-  op: str          # ARECIP | EXEXP | EXMAN | SETEXP | DIVP2 | CAST_SM2F | CAST_TC2SM | SHFT_VAR | TRANSP
+  op: str
   mod: int = 0
   imm: int = 0
 
@@ -427,8 +427,7 @@ def _decomp_sqrt(x: UOp, bits: int) -> UOp:
 def _decomp_log2(x: UOp, bits: int) -> UOp:
   dt = x.dtype
   e_tc = sfpu_prim("EXEXP", dtypes.i32, x, mod=0)
-  e_sm = sfpu_prim("CAST_TC2SM", dtypes.i32, e_tc, mod=3)
-  e_f = sfpu_prim("CAST_SM2F", dt, e_sm, mod=0)
+  e_f = e_tc.cast(dt)
   m = sfpu_prim("SETEXP", dt, x, mod=1, imm=127)     # m in [1.0, 2.0)
   t = (m - UOp.const(dt, 1.0)) * _decomp_recip(m + UOp.const(dt, 1.0), bits)
   poly = _horner(t * t, _LOG2_POLY_BF16 if bits <= 11 else _LOG2_POLY_FP32)
@@ -458,6 +457,7 @@ def _decomp_sin(x: UOp, bits: int) -> UOp:
   return (s.bitcast(dtypes.u32) ^ sign_flip).bitcast(dt)
 
 
+@lru_cache(maxsize=2)
 def _make_pm_sfpu_decomp(bits: int) -> PatternMatcher:
   dst_f = (dtypes.fp32, dtypes.bf16)
   return pm_simplify + PatternMatcher([
@@ -472,9 +472,9 @@ def _make_pm_sfpu_decomp(bits: int) -> PatternMatcher:
      lambda a, b: a - b),
     (UPat(Ops.SUB, dtype=dst_f, space=Space.DST, src=(UPat.var("a"), UPat(Ops.NEG, src=(UPat.var("b"),)))),
      lambda a, b: a + b),
-    # Fuse 1/sqrt(x) -> rsqrt(x) before expanding sqrt/recip separately
-    (UPat(Ops.RECIP, dtype=dst_f, space=Space.DST, src=(UPat(Ops.SQRT, src=(UPat.var("x"),)),)),
-     lambda x: x.rsqrt()),
+    (UPat((Ops.MIN, Ops.MAX), dtype=(dtypes.i32, dtypes.u32), space=Space.DST,
+          src=(UPat.var("a"), UPat.var("b")), name="u"),
+     lambda u, a, b: (a < b).where(a, b) if u.op is Ops.MIN else (a < b).where(b, a)),
     # Transcendental decompositions on Space.DST
     (UPat(Ops.EXP2,  dtype=dst_f, space=Space.DST, src=(UPat.var("x"),)), lambda x: _decomp_exp2(x, bits)),
     (UPat(Ops.RECIP, dtype=dst_f, space=Space.DST, src=(UPat.var("x"),)), lambda x: _decomp_recip(x, bits)),
@@ -512,6 +512,15 @@ pm_sfpu_fma = pm_simplify + PatternMatcher([
 def lower_sfpu_uops(root: UOp, *, precision: DType = dtypes.fp32) -> UOp:
   """Pass A: expand Space.DST transcendentals and fuse MULACC/SFPMAD in pure UOps (with free CSE)."""
   bits = 8 if precision is dtypes.bf16 else 24
+  if bits == 8:
+    # Small approximation errors can select an entirely different branch. Keep
+    # explicit FP32 predicate inputs at FP32 accuracy, including their other uses.
+    comparisons = [u for u in root.toposort() if u.op in GroupOp.Comparison and u.src[0].dtype is dtypes.fp32]
+    sensitive = [u for u in UOp.sink(*comparisons).toposort()
+                 if u.dtype is dtypes.fp32 and u.op in (Ops.DIV, Ops.EXP2, Ops.LOG2, Ops.RECIP, Ops.RSQRT, Ops.SQRT, Ops.SIN)]
+    if sensitive:
+      precise = graph_rewrite(UOp.sink(*sensitive), _make_pm_sfpu_decomp(24))
+      root = root.substitute(dict(zip(sensitive, precise.src, strict=True)))
   u = graph_rewrite(root, _make_pm_sfpu_decomp(bits))
   return graph_rewrite(u, pm_sfpu_fma)
 
@@ -611,6 +620,16 @@ def _is_direct_cmp(u: UOp) -> bool:
   return False
 
 
+def _iadd_immediate(u: UOp) -> tuple[UOp, UOp, int] | None:
+  if not u.dtype.is_int or u.op not in (Ops.ADD, Ops.SUB): return None
+  var, const = u.src
+  if u.op is Ops.ADD and var.op is Ops.CONST: var, const = const, var
+  if const.op is Ops.CONST:
+    imm = int(const.arg) if u.op is Ops.ADD else -int(const.arg)
+    if -2048 <= imm < 2048: return var, const, imm
+  return None
+
+
 def _assign_const_regs(
   nodes: Sequence[UOp],
   *,
@@ -620,11 +639,12 @@ def _assign_const_regs(
   counts: dict[UOp, int] = {}
   # Also track constants that can be folded directly as immediates (shift imm, iadd imm12, etc.)
   for u in nodes:
+    immediate = _iadd_immediate(u)
     for idx, s in enumerate(u.src):
       if s.op is not Ops.CONST: continue
       # Skip shift counts and iadd 12-bit immediates that don't need a register
       if u.op in (Ops.SHL, Ops.SHR) and idx == 1: continue
-      if u.op is Ops.ADD and u.dtype.is_int and idx == 1 and -2048 <= int(s.arg) <= 2047: continue
+      if immediate and s is immediate[1]: continue
       counts[s] = counts.get(s, 0) + 1
 
   const_regs: dict[UOp, int] = {}
@@ -822,6 +842,18 @@ class _PassLowerer:
 
   # ---- predication helpers ----
 
+  def _integer_order_key(self, value: UOp, src: int, dst: int):
+    # SFPGT orders sign-magnitude bit patterns, including -0 immediately before +0.
+    # Ordinary nonnegative signed values already have the same representation.
+    if value.dtype.is_signed and (value.op is Ops.LANE_ID or (value.op is Ops.CONST and 0 <= value.arg < 2**31)):
+      self.body.append(isa.SFPMOV(0, src, dst, 0))
+      return
+    self.body.append(isa.SFPSHFT((-31) & 0xfff, src, dst, 7))
+    self.body.append(isa.SFPSHFT((-1) & 0xfff, dst, dst, 5))
+    if not value.dtype.is_signed:
+      self.body.append(isa.SFPNOT(0, dst, dst, 0))
+    self.body.append(isa.SFPXOR(0, src, dst, 0))
+
   def _emit_cmp_set_cc(self, cmp_u: UOp, invert: bool, protect: set[int]) -> None:
     """Emit comparison setting LaneFlags[0..31] (assumes SFPENCC already enabled!)."""
     op = cmp_u.op
@@ -867,13 +899,13 @@ class _PassLowerer:
       if ta: self.free_reg(ra)
       if tb: self.free_reg(rb)
     else:
-      # Two's-complement integer compare: convert both to sign-mag (SFPCAST mod=3) -> SFPGT/SFPLE
+      # Convert both inputs to keys ordered by SFPGT/SFPLE.
       ra, ta = self.ensure(a, prot)
       rb, tb = self.ensure(b, prot | {ra})
       sm_a = self.alloc(prot | {ra, rb})
       sm_b = self.alloc(prot | {ra, rb, sm_a})
-      self.body.append(isa.SFPCAST(ra, sm_a, 3))
-      self.body.append(isa.SFPCAST(rb, sm_b, 3))
+      self._integer_order_key(a, ra, sm_a)
+      self._integer_order_key(b, rb, sm_b)
       self.body.append(isa.SFPLE(0, sm_a, sm_b, 1) if invert else isa.SFPGT(0, sm_a, sm_b, 1))
       self.free_reg(sm_b)
       self.free_reg(sm_a)
@@ -898,8 +930,8 @@ class _PassLowerer:
       rb, tb = self.ensure(b, {ra})
       sm_a = self.alloc({ra, rb})
       sm_b = self.alloc({ra, rb, sm_a})
-      self.body.append(isa.SFPCAST(ra, sm_a, 3))
-      self.body.append(isa.SFPCAST(rb, sm_b, 3))
+      self._integer_order_key(a, ra, sm_a)
+      self._integer_order_key(b, rb, sm_b)
       self.body.append(isa.SFPGT(0, sm_a, sm_b, 8))
       self.free_reg(sm_a)
       self._release_srcs((a, b), (ra, rb), (ta, tb), keep_regs={sm_b})
@@ -1063,17 +1095,12 @@ class _PassLowerer:
     # Integer arithmetic: ADD, SUB (two's-complement SFPIADD)
     if op in (Ops.ADD, Ops.SUB) and dt.is_int:
       a, b = src
-      if op is Ops.ADD and b.op is Ops.CONST and -2048 <= int(b.arg) <= 2047:
-        ra, ta = self.ensure(a, set())
-        self._release_srcs((a, b), (ra,), (ta,))
+      if immediate := _iadd_immediate(u):
+        var, const, imm = immediate
+        rv, temp = self.ensure(var, set())
+        self._release_srcs((var, const), (rv,), (temp,))
         rd = self.alloc()
-        self.body.append(isa.SFPIADD(int(b.arg) & 0xFFF, ra, rd, 5))  # VD = VC + imm12, no CC
-        return rd
-      if op is Ops.SUB and b.op is Ops.CONST and -2047 <= int(b.arg) <= 2048:
-        ra, ta = self.ensure(a, set())
-        self._release_srcs((a, b), (ra,), (ta,))
-        rd = self.alloc()
-        self.body.append(isa.SFPIADD((-int(b.arg)) & 0xFFF, ra, rd, 5))
+        self.body.append(isa.SFPIADD(imm & 0xfff, rv, rd, 5))
         return rd
       ra, ta = self.ensure(a, set())
       rb, tb = self.ensure(b, {ra})
@@ -1218,41 +1245,17 @@ class _PassLowerer:
     if op is Ops.SFPU:
       assert isinstance(arg, SfpuPrim)
       p = arg.op
-      if p == "ARECIP":
+      if p in ("ARECIP", "EXEXP", "EXMAN", "DIVP2", "CAST_SM2F", "CAST_TC2SM"):
         rx, tx = self.ensure(src[0], set())
         self._release_srcs(src, (rx,), (tx,))
         rd = self.alloc()
-        self.body.append(isa.SFPARECIP(0, rx, rd, arg.mod))
-        return rd
-      if p == "EXEXP":
-        rx, tx = self.ensure(src[0], set())
-        self._release_srcs(src, (rx,), (tx,))
-        rd = self.alloc()
-        self.body.append(isa.SFPEXEXP(0, rx, rd, arg.mod))
-        return rd
-      if p == "EXMAN":
-        rx, tx = self.ensure(src[0], set())
-        self._release_srcs(src, (rx,), (tx,))
-        rd = self.alloc()
-        self.body.append(isa.SFPEXMAN(0, rx, rd, arg.mod))
-        return rd
-      if p == "DIVP2":
-        rx, tx = self.ensure(src[0], set())
-        self._release_srcs(src, (rx,), (tx,))
-        rd = self.alloc()
-        self.body.append(isa.SFPDIVP2(arg.imm & 0xFF, rx, rd, arg.mod))
-        return rd
-      if p == "CAST_SM2F":
-        rx, tx = self.ensure(src[0], set())
-        self._release_srcs(src, (rx,), (tx,))
-        rd = self.alloc()
-        self.body.append(isa.SFPCAST(rx, rd, 0))
-        return rd
-      if p == "CAST_TC2SM":
-        rx, tx = self.ensure(src[0], set())
-        self._release_srcs(src, (rx,), (tx,))
-        rd = self.alloc()
-        self.body.append(isa.SFPCAST(rx, rd, 3))
+        match p:
+          case "ARECIP": word = isa.SFPARECIP(0, rx, rd, arg.mod)
+          case "EXEXP": word = isa.SFPEXEXP(0, rx, rd, arg.mod)
+          case "EXMAN": word = isa.SFPEXMAN(0, rx, rd, arg.mod)
+          case "DIVP2": word = isa.SFPDIVP2(arg.imm & 0xFF, rx, rd, arg.mod)
+          case "CAST_SM2F" | "CAST_TC2SM": word = isa.SFPCAST(rx, rd, 0 if p == "CAST_SM2F" else 3)
+        self.body.append(word)
         return rd
       if p == "SETEXP":
         if arg.mod & 1:  # immediate exponent: VD = setexp(imm, VC) (non-destructive)
@@ -1277,11 +1280,7 @@ class _PassLowerer:
         self._release_srcs(src, (rv, rs), (False if vd == rv else tv, ts), keep_regs={vd})
         return vd
       if p == "TRANSP":
-        # SFPTRANSP permutes ALL of L0..L7 (L0..L3 and L4..L7); keep VD=0.
-        if self.owner:
-          raise _OutOfRegs("SFPTRANSP clobbers all of L0..L7")
-        self.body.append(isa.SFPTRANSP(0, 0, 0, 0))
-        return 0
+        raise SfpuCompileError("TRANSP needs four explicit register inputs and a result selector")
       raise SfpuCompileError(f"unknown SfpuPrim {p!r}")
 
     raise SfpuCompileError(f"unsupported SFPU UOp {op.name}")
@@ -1307,25 +1306,24 @@ class _PassLowerer:
 
   def run(self) -> tuple[list[int], int]:
     if not self.nodes and self.outputs:
-      # Pure copy / constant-fill pass: load all Dst-backed sources first so overlapping/cyclic tile copies are safe.
-      loaded: list[tuple[UOp, int, bool]] = []
-      prot: set[int] = set()
-      for out_u in self.outputs:
-        r, is_t = self.ensure(out_u, prot)
-        loaded.append((out_u, r, is_t))
-        if r < 8: prot.add(r)
-      for out_u, r, is_t in loaded:
-        tile = self.outputs[out_u]
-        if r >= 12:
-          tmp = self.alloc(prot | {r})
-          self.body.append(isa.SFPMOV(0, r, tmp, 0))
-          self.body.append(isa.SFPSTORE(tmp, _store_fmt(out_u.dtype), 0, tile * DST_TILE_ROWS))
-          self.free_reg(tmp)
-        else:
-          self.body.append(isa.SFPSTORE(r, _store_fmt(out_u.dtype), 0, tile * DST_TILE_ROWS))
+      # Parallel copies. Write unneeded destinations first. Break each cycle by
+      # holding one old tile in a register until its destination becomes free.
+      pending = dict(self.outputs)
+      saved: dict[UOp, int] = {}
+      while pending:
+        unread = {self.dst_inputs[u] for u in pending if u in self.dst_inputs and u not in saved}
+        ready = next((u for u, t in pending.items() if t not in unread), None)
+        if ready is None:
+          u = next(u for u in pending if u in self.dst_inputs and u not in saved)
+          saved[u], _ = self.ensure(u, set(saved.values()))
+          continue
+        tile = pending.pop(ready)
+        r, temporary = self.ensure(ready, set(saved.values()))
+        self.body.append(isa.SFPSTORE(r, _store_fmt(ready.dtype), 0, tile * DST_TILE_ROWS))
         self._written_tiles.add(tile)
-        if is_t: self.free_reg(r)
-        self.drop_use(out_u)
+        saved.pop(ready, None)
+        if temporary: self.free_reg(r)
+        self.drop_use(ready)
     else:
       for u in self.nodes:
         if u in self.fused_cmps: continue
@@ -1443,6 +1441,15 @@ def partition_sfpu(
       raise ValueError(f"output_tiles length {len(output_tiles)} != roots length {len(roots_t)}")
     req_per_root = list(output_tiles)
 
+  if not 1 <= max_regs <= 8 or not 1 <= dst_budget <= 8:
+    raise ValueError("FP32 SFPU passes require 1..8 writable registers and 1..8 Dst tiles")
+  requested = {t: r for r, t in zip(roots_t, req_per_root) if t is not None}
+  for t in (*dst_inputs.values(), *requested):
+    if not 0 <= t < dst_budget:
+      raise ValueError(f"Dst tile {t} outside budget {dst_budget}")
+  if any(t is not None and requested[t] is not r for r, t in zip(roots_t, req_per_root)):
+    raise ValueError("distinct SFPU results requested the same Dst tile")
+
   # First requested tile per unique root UOp (used as preferred home during compute); extras handled by copy pass
   preferred_out: dict[UOp, int] = {}
   for r, t in zip(roots_t, req_per_root):
@@ -1475,8 +1482,7 @@ def partition_sfpu(
     cand: Sequence[UOp],
     rest: Sequence[UOp],
     pass_inputs: dict[UOp, int],
-  ) -> dict[UOp, int]:
-    nonlocal max_dst_used
+  ) -> dict[UOp, int] | None:
     keep_uops = {r for r in root_set if r in live_dst and r not in bouts}
     reserved = dst_still_needed(rest, keep_uops)
     # Safety invariant (Bug #1 fix): never overwrite any Dst input tile of this pass UNLESS
@@ -1497,76 +1503,40 @@ def partition_sfpu(
     for u in bouts:
       if u in assigned: continue
       free_t = next((t for t in range(dst_budget) if t not in used_here), None)
-      if free_t is None:
-        raise SfpuCompileError(f"exceeded Dst tile budget ({dst_budget} tiles) while spilling SFPU pass")
+      if free_t is None: return None
       assigned[u] = free_t
       used_here.add(free_t)
 
-    if assigned:
-      max_dst_used = max(max_dst_used, max(assigned.values()) + 1)
     return assigned
 
   while remaining:
-    # Grow candidate prefixes of `remaining`. Allow a small fail_streak because register pressure
-    # is not strictly monotonic in prefix length (it can dip once a live value dies).
-    valid_prefixes: list[tuple[int, int, list[UOp]]] = []  # (cut_width, k, cand)
-    pass_max = max_regs
+    # Try a single pass first. Otherwise trade prefix length against the number
+    # of spilled outputs. Trial the actual Dst addresses so reloads see aliases.
+    best = None
     fail_streak = 0
-    for k in range(1, len(remaining) + 1):
-      cand = remaining[:k]
-      rest = remaining[k:]
+    for k in itertools.chain((len(remaining),), range(1, len(remaining))):
+      cand, rest = remaining[:k], remaining[k:]
       bouts = boundary_outputs(cand, rest)
-      trial_outs = {u: i for i, u in enumerate(bouts)}
+      used_inputs = {s: live_dst[s] for n in cand for s in n.src if s in live_dst}
+      out_map = assign_output_tiles(bouts, cand, rest, used_inputs)
+      if out_map is None: continue
       try:
-        _try_lower_pass(cand, live_dst, trial_outs, max_regs=pass_max, preserve_l11=preserve_l11, addr_mode=addr_mode)
+        result = _try_lower_pass(cand, used_inputs, out_map, max_regs=max_regs,
+                                 preserve_l11=preserve_l11, addr_mode=addr_mode)
       except _OutOfRegs:
-        if k == 1 and pass_max < 8:
-          pass_max = 8
-          try:
-            _try_lower_pass(cand, live_dst, trial_outs, max_regs=8, preserve_l11=preserve_l11, addr_mode=addr_mode)
-          except _OutOfRegs as exc:
-            raise SfpuCompileError(f"single SFPU op {remaining[0].op.name} exceeded 8 LRegs") from exc
-        else:
+        if rest:
           fail_streak += 1
           if fail_streak >= 4: break
-          continue
+        continue
       fail_streak = 0
-      valid_prefixes.append((len(bouts), k, cand))
-
-    if not valid_prefixes:
-      raise SfpuCompileError(f"single SFPU op {remaining[0].op.name} exceeded 8 LRegs")
-
-    if valid_prefixes[-1][1] == len(remaining):
-      _, chosen_k, chosen_cand = valid_prefixes[-1]
-    else:
-      # Balance work done (+k) against spill cost (-4 * cut_w), ignoring cuts that cannot fit dst_budget.
-      best = None
-      for cut_w, k, cand in valid_prefixes:
-        rest_k = remaining[k:]
-        bouts_k = boundary_outputs(cand, rest_k)
-        used_in_k = {live_dst[s] for n in cand for s in n.src if s in live_dst}
-        keep_k = {r for r in root_set if r in live_dst and r not in bouts_k}
-        res_k = dst_still_needed(rest_k, keep_k)
-        if not (len(bouts_k) == 1 and bouts_k[0] is cand[-1]):
-          res_k |= used_in_k
-        if len(res_k) + cut_w > dst_budget:
-          continue
-        score = (k - 4 * cut_w, -cut_w, k)
-        if best is None or score > best[0]:
-          best = (score, k, cand)
-      if best is None:
-        # Fall back to narrowest valid prefix if all hit dst_budget (assign_output_tiles will report clearly)
-        _, chosen_k, chosen_cand = min(valid_prefixes, key=lambda x: (x[0], -x[1]))
-      else:
-        _, chosen_k, chosen_cand = best
-
-    rest = remaining[chosen_k:]
-    bouts = boundary_outputs(chosen_cand, rest)
-    used_inputs = {s: live_dst[s] for n in chosen_cand for s in n.src if s in live_dst}
-    out_map = assign_output_tiles(bouts, chosen_cand, rest, used_inputs)
-    pro, body, epi, _, l11_used, peak = _try_lower_pass(
-      chosen_cand, used_inputs, out_map, max_regs=pass_max, preserve_l11=preserve_l11, addr_mode=addr_mode,
-    )
+      score = (k - 4 * len(bouts), -len(bouts), k)
+      if best is None or score > best[0]:
+        best = score, rest, used_inputs, out_map, result
+      if not rest: break
+    if best is None:
+      raise SfpuCompileError(f"cannot schedule {remaining[0].op.name} within {max_regs} LRegs and {dst_budget} Dst tiles")
+    _, rest, used_inputs, out_map, (pro, body, epi, _, l11_used, peak) = best
+    max_dst_used = max(max_dst_used, max(out_map.values()) + 1)
     _verify_compiled_pass(pro, body, epi)
     compiled_passes.append(CompiledSfpuPass(
       prologue=tuple(pro),
@@ -1586,46 +1556,46 @@ def partition_sfpu(
   # Materialize any CONST roots, move any root whose tile differs from requested, and duplicate CSE-collapsed roots!
   # Collect per-root final tile assignments.
   final_root_tiles: list[int] = []
-  used_final: set[int] = {live_dst[r] for r in roots_t if r in live_dst}
-  pending_copies: list[tuple[UOp, int]] = []  # (src_uop, dest_tile)
+  homes = dict(preferred_out)
+  used_final = set(requested)
+  for r in roots_t:
+    if r not in homes and r in live_dst and live_dst[r] not in used_final:
+      homes[r] = live_dst[r]
+      used_final.add(homes[r])
+  pending_copies: list[tuple[UOp, int]] = []
   for r, req_t in zip(roots_t, req_per_root):
-    if req_t is not None:
-      final_root_tiles.append(req_t)
-      if live_dst.get(r) != req_t:
-        pending_copies.append((r, req_t))
-      used_final.add(req_t)
-    elif r in live_dst:
-      final_root_tiles.append(live_dst[r])
-    else:
-      # Unmapped CONST root with no requested tile: allocate a free Dst tile
-      free_t = next((t for t in range(dst_budget) if t not in used_final), None)
-      if free_t is None:
-        raise SfpuCompileError(f"exceeded Dst tile budget ({dst_budget} tiles) for constant output")
-      final_root_tiles.append(free_t)
-      pending_copies.append((r, free_t))
-      used_final.add(free_t)
+    if r not in homes:
+      tile = next((t for t in range(dst_budget) if t not in used_final), None)
+      if tile is None:
+        raise SfpuCompileError(f"exceeded Dst tile budget ({dst_budget} tiles) for outputs")
+      homes[r] = tile
+      used_final.add(tile)
+    tile = homes[r] if req_t is None else req_t
+    final_root_tiles.append(tile)
+    if live_dst.get(r) != tile and (r, tile) not in pending_copies:
+      pending_copies.append((r, tile))
 
   # Emit copy / const-fill passes cleanly (batching disjoint dest tiles, supporting duplicate sources via separate pass)
   while pending_copies:
     batch: dict[UOp, int] = {}
     rest_copies: list[tuple[UOp, int]] = []
-    batch_tiles: set[int] = set()
     for src_u, dst_t in pending_copies:
-      if src_u not in batch and dst_t not in batch_tiles:
+      if src_u not in batch:
         batch[src_u] = dst_t
-        batch_tiles.add(dst_t)
       else:
         rest_copies.append((src_u, dst_t))
     in_map = {u: live_dst[u] for u in batch if u in live_dst}
-    pro, body, epi, _, l11_used, peak = _try_lower_pass(
-      (), in_map, batch, max_regs=max_regs, preserve_l11=preserve_l11, addr_mode=addr_mode,
-    )
+    try:
+      pro, body, epi, _, l11_used, peak = _try_lower_pass(
+        (), in_map, batch, max_regs=max_regs, preserve_l11=preserve_l11, addr_mode=addr_mode,
+      )
+    except _OutOfRegs as exc:
+      raise SfpuCompileError(f"parallel output copies exceed {max_regs} LRegs") from exc
     _verify_compiled_pass(pro, body, epi)
     compiled_passes.append(CompiledSfpuPass(
       tuple(pro), tuple(body), tuple(epi), in_map, batch, l11_used, peak, sfpu_slope(body),
     ))
-    for u, t in batch.items():
-      if u not in live_dst: live_dst[u] = t
+    live_dst.update(batch)  # Later duplicates read the new home, even after a cyclic swap.
     max_dst_used = max(max_dst_used, max(batch.values()) + 1)
     pending_copies = rest_copies
 
@@ -1649,9 +1619,12 @@ def compile_sfpu(
   """End-to-end SFPU compiler: Layer 1 Space.DST UOp(s) -> verified multi-pass Blackhole SFPU Tensix streams."""
   roots_list = [roots] if isinstance(roots, UOp) else list(roots)
   # Lower each root through Pass A (sharing hash-consed UOps & CSE across all roots!)
-  sink_in = UOp.sink(*roots_list)
+  # A resident input can itself be an expression from an earlier stage. Hide its
+  # producer from decomposition and FMA matching until the pass boundary is bound.
+  leaves = {u: sfpu_prim("DST_INPUT", u.dtype, imm=i) for i, u in enumerate(dst_inputs)}
+  sink_in = UOp.sink(*roots_list).substitute(leaves)
   lowered_sink = lower_sfpu_uops(sink_in, precision=precision)
-  lowered_roots = list(lowered_sink.src)
+  lowered_roots = lowered_sink.substitute({leaf: u for u, leaf in leaves.items()}).src
   out_tiles_pos: list[int | None] | None = None
   if output_tiles is not None:
     if isinstance(output_tiles, dict):
