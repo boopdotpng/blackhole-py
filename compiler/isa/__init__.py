@@ -1,17 +1,20 @@
 import collections, itertools
 from typing import Any
-from ..dtype import DType, Space, dtypes
-from ..uop import Ops, PatternMatcher, UOp, graph_rewrite, line_rewrite, linearize, pretty
+from ..dtype import DType, dtypes
+from ..uir import render_uir
+from ..uop import Ops, PatternMatcher, UOp, graph_rewrite, line_rewrite, linearize
 
 # ---- Tinygrad-style virtual/physical register metadata on UOp.ins ----
 
-def vreg(slot: int, dtype: DType, choices: tuple[UOp, ...], name: str = "vreg", space: Space = Space.REG) -> tuple[UOp, ...]:
-  return UOp.param(slot, dtype, name=name, space=space), UOp.stack(*choices)
+def vreg(slot: int, dtype: DType, choices: tuple[UOp, ...], name: str = "vreg") -> tuple[UOp, ...]:
+  return UOp.param(slot, dtype, name=name, file=choices[0].arg.file), UOp.stack(*choices)
 
 class IselContext:
   def __init__(self, start: int = 0): self.reg_n = itertools.count(start)
-  def vreg(self, dtype: DType, choices: tuple[UOp, ...], name: str = "vreg", space: Space = Space.REG) -> tuple[UOp, ...]:
-    return vreg(next(self.reg_n), dtype, choices, name=name, space=space)
+  def vreg(self, dtype: DType, choices: tuple[UOp, ...], name: str = "vreg") -> tuple[UOp, ...]:
+    return vreg(next(self.reg_n), dtype, choices, name=name)
+
+def _is_reg(u: UOp) -> bool: return u.op is Ops.PARAM and u.arg.file != "" and u.arg.slot >= 0
 
 def regs(u: UOp) -> tuple[UOp, ...]:
   """Return the register metadata attached to a UOp.ins (from NATIVE.src[0])."""
@@ -22,9 +25,9 @@ def regs(u: UOp) -> tuple[UOp, ...]:
 def vdef(u: UOp) -> UOp | None:
   """Return the primary virtual/physical register defined by u, if any."""
   if u.op in (Ops.AFTER, Ops.BITCAST, Ops.CAST): return vdef(u.src[0])
-  if u.op is Ops.PARAM and u.space in (Space.REG, Space.LREG) and u.arg.slot >= 0: return u
+  if _is_reg(u): return u
   operands = regs(u)
-  if operands and operands[0].op is Ops.PARAM and operands[0].space in (Space.REG, Space.LREG) and operands[0].arg.slot >= 0:
+  if operands and _is_reg(operands[0]):
     return operands[0]
   return None
 
@@ -35,7 +38,7 @@ def register_choices(u: UOp, ren: "ISARenderer") -> dict[UOp, tuple[UOp, ...]]:
   operands = regs(u)
   out: dict[UOp, tuple[UOp, ...]] = {}
   for i, p in enumerate(operands):
-    if p.op is Ops.PARAM and p.space in (Space.REG, Space.LREG) and p.arg.slot >= 0:
+    if _is_reg(p):
       if (r := ren.physical_reg(p)) is not None:
         out[p] = (r,)
       elif i + 1 < len(operands) and operands[i + 1].op is Ops.STACK:
@@ -49,8 +52,8 @@ class LinearContext:
     self.ren = ren
     self.stack_size = 0
     self.vreg_n = itertools.count(1_000_000)
-  def vreg(self, dtype: DType, choices: tuple[UOp, ...], name: str = "vreg", space: Space = Space.REG) -> tuple[UOp, ...]:
-    return vreg(next(self.vreg_n), dtype, choices, name=name, space=space)
+  def vreg(self, dtype: DType, choices: tuple[UOp, ...], name: str = "vreg") -> tuple[UOp, ...]:
+    return vreg(next(self.vreg_n), dtype, choices, name=name)
   def insert_linearized(self, uops: list[UOp]) -> list[UOp]: return uops
   def assign_spill_slot(self, r: UOp) -> int:
     slot = self.stack_size
@@ -69,7 +72,7 @@ class ISARenderer:
   def physical_reg(self, u: UOp) -> UOp | None:
     if u.op is not Ops.PARAM: return None
     for r in self.physical_regs:
-      if r.space is u.space and r.arg.slot == u.arg.slot and r.arg.name == u.arg.name:
+      if r.arg.file == u.arg.file and r.arg.slot == u.arg.slot and r.arg.name == u.arg.name:
         return r
     return None
 
@@ -251,4 +254,4 @@ def to_program(sink: UOp, ren: ISARenderer) -> UOp:
   lst = linearize(s)
   lst, binary = compile_linear(lst, ren)
   lin = UOp.linear(*lst, arg=sink.arg.name if hasattr(sink.arg, "name") else "")
-  return UOp.program(sink, lin, UOp.source(pretty(lst)), UOp.binary(binary), arg=sink.arg)
+  return UOp.program(sink, lin, UOp.source(render_uir(lst)), UOp.binary(binary), arg=sink.arg)

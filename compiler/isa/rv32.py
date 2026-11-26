@@ -1,7 +1,7 @@
 import struct
 from enum import Enum, auto
 from hw import isa as hw_isa
-from ..dtype import DType, Space, dtypes
+from ..dtype import DType, dtypes
 from ..uop import Ops, PatternMatcher, UOp, UPat
 from . import ISARenderer, IselContext, LinearContext, rdef, regs, vdef, vreg
 
@@ -50,7 +50,7 @@ class RVGroupOp:
 
 # ---- RV32 physical registers ----
 
-X = tuple(UOp.param(i, dtypes.u32, name=f"x{i}", space=Space.REG) for i in range(32))
+X = tuple(UOp.param(i, dtypes.u32, name=f"x{i}", file="gpr") for i in range(32))
 X0, RA, SP = X[0], X[1], X[2]
 # Blackhole firmware ABI base registers (local mem, NoC/cfg, PC_BUF)
 LOCAL_BASE, NOC_BASE, PCBUF_BASE = X[3], X[4], X[5]
@@ -69,7 +69,7 @@ def rv_label(key: UOp, role: str = "") -> UOp:
 
 def rv_li(val: int, dtype: DType = dtypes.i32, *dst: UOp, role: str = "") -> UOp:
   if val == 0 and not dst: return X0.cast(dtype) if dtype != dtypes.u32 else X0
-  return UOp.ins(RVOps.LI, (UOp.const(dtypes.i32, val & 0xFFFFFFFF if val >= (1 << 31) else val),), dtype, *dst, role=role)
+  return UOp.ins(RVOps.LI, (UOp.const(val & 0xFFFFFFFF if val >= (1 << 31) else val),), dtype, *dst, role=role)
 
 def expand_li(u: UOp) -> list[UOp]:
   """Expand pseudo LI into ADDI or LUI + ADDI once its destination physical register is known."""
@@ -79,10 +79,10 @@ def expand_li(u: UOp) -> list[UOp]:
   lo = (n + 2048) % 4096 - 2048
   hi = ((n - lo) >> 12) & 0xFFFFF
   if hi == 0:
-    return [UOp.ins(RVOps.ADDI, (X0, UOp.const(dtypes.i32, lo)), u.dtype, rd, role=role)]
-  out = [UOp.ins(RVOps.LUI, (UOp.const(dtypes.u32, hi),), u.dtype, rd, role=role)]
+    return [UOp.ins(RVOps.ADDI, (X0, UOp.const(lo)), u.dtype, rd, role=role)]
+  out = [UOp.ins(RVOps.LUI, (UOp.const(hi),), u.dtype, rd, role=role)]
   if lo != 0:
-    out.append(UOp.ins(RVOps.ADDI, (out[0], UOp.const(dtypes.i32, lo)), u.dtype, rd, role=role))
+    out.append(UOp.ins(RVOps.ADDI, (out[0], UOp.const(lo)), u.dtype, rd, role=role))
   return out
 
 # ---- RV32 instruction selection (graph_rewrite) ----
@@ -92,7 +92,7 @@ def _bin_imm_or_reg(u: UOp, r_op: RVOps, i_op: RVOps | None, *, shift: bool = Fa
   if i_op is not None and is_int_const(b):
     v = const_int(b)
     if (fits_shamt(v) if shift else fits_simm12(v)):
-      return UOp.ins(i_op, (a, UOp.const(dtypes.i32, v)), u.dtype)
+      return UOp.ins(i_op, (a, UOp.const(v)), u.dtype)
   return UOp.ins(r_op, (a, b), u.dtype)
 
 def _fold_mem_addr(addr: UOp) -> tuple[UOp, UOp]:
@@ -101,13 +101,13 @@ def _fold_mem_addr(addr: UOp) -> tuple[UOp, UOp]:
     base, idx = addr.src
     elem_sz = max(1, addr.dtype.itemsize)
     if is_int_const(idx) and fits_simm12(off := const_int(idx) * elem_sz):
-      return base, UOp.const(dtypes.i32, off)
+      return base, UOp.const(off)
     if idx.op is Ops.ADD and is_int_const(idx.src[1]) and fits_simm12(off := const_int(idx.src[1]) * elem_sz):
-      scaled = idx.src[0] if elem_sz == 1 else UOp.ins(RVOps.SLLI, (idx.src[0], UOp.const(dtypes.i32, elem_sz.bit_length() - 1)), dtypes.u32)
-      return UOp.ins(RVOps.ADD, (base, scaled), dtypes.u32), UOp.const(dtypes.i32, off)
-    scaled = idx if elem_sz == 1 else UOp.ins(RVOps.SLLI, (idx, UOp.const(dtypes.i32, elem_sz.bit_length() - 1)), dtypes.u32)
-    return UOp.ins(RVOps.ADD, (base, scaled), dtypes.u32), UOp.const(dtypes.i32, 0)
-  return addr, UOp.const(dtypes.i32, 0)
+      scaled = idx.src[0] if elem_sz == 1 else UOp.ins(RVOps.SLLI, (idx.src[0], UOp.const(elem_sz.bit_length() - 1)), dtypes.u32)
+      return UOp.ins(RVOps.ADD, (base, scaled), dtypes.u32), UOp.const(off)
+    scaled = idx if elem_sz == 1 else UOp.ins(RVOps.SLLI, (idx, UOp.const(elem_sz.bit_length() - 1)), dtypes.u32)
+    return UOp.ins(RVOps.ADD, (base, scaled), dtypes.u32), UOp.const(0)
+  return addr, UOp.const(0)
 
 def _load_op(dt: DType) -> RVOps:
   if dt.bits <= 8: return RVOps.LBU
@@ -122,7 +122,7 @@ def _store_op(dt: DType) -> RVOps:
 def _load_const_operand(s: UOp) -> UOp:
   if not is_int_const(s): return s
   v = const_int(s)
-  return X0 if v == 0 else UOp.ins(RVOps.LI, (UOp.const(dtypes.i32, v),), s.dtype)
+  return X0 if v == 0 else UOp.ins(RVOps.LI, (UOp.const(v),), s.dtype)
 
 def _materialize_consts(x: UOp) -> UOp | None:
   if not x.is_ins: return None
@@ -145,9 +145,12 @@ def _make_alloc_vregs(wgpr: tuple[UOp, ...]):
 
 def make_rv32_isel(wgpr: tuple[UOp, ...] = DEFAULT_WGPR) -> PatternMatcher:
   return PatternMatcher([
+    # a typed integer constant is just its value in a 32-bit register
+    (UPat(Ops.CAST, src=(UPat(Ops.CONST, name="c"),), name="u"),
+     lambda u, c: UOp.const(int(c.arg)) if u.dtype.is_int or u.dtype is dtypes.bool else None),
     # arithmetic & bitwise
     (UPat(Ops.ADD, name="u"), lambda u: _bin_imm_or_reg(u, RVOps.ADD, RVOps.ADDI)),
-    (UPat(Ops.SUB, name="u"), lambda u: UOp.ins(RVOps.ADDI, (u.src[0], UOp.const(dtypes.i32, -const_int(u.src[1]))), u.dtype)
+    (UPat(Ops.SUB, name="u"), lambda u: UOp.ins(RVOps.ADDI, (u.src[0], UOp.const(-const_int(u.src[1]))), u.dtype)
      if is_int_const(u.src[1]) and fits_simm12(-const_int(u.src[1])) else UOp.ins(RVOps.SUB, u.src, u.dtype)),
     (UPat(Ops.MUL, name="u"), lambda u: UOp.ins(RVOps.MUL, u.src, u.dtype)),
     (UPat(Ops.DIV, name="u"), lambda u: UOp.ins(RVOps.DIV if u.dtype.is_signed else RVOps.DIVU, u.src, u.dtype)),
@@ -159,13 +162,12 @@ def make_rv32_isel(wgpr: tuple[UOp, ...] = DEFAULT_WGPR) -> PatternMatcher:
     (UPat(Ops.SHR, name="u"), lambda u: _bin_imm_or_reg(u, RVOps.SRA if u.dtype.is_signed else RVOps.SRL,
                                                         RVOps.SRAI if u.dtype.is_signed else RVOps.SRLI, shift=True)),
     (UPat(Ops.NEG, name="u"), lambda u: UOp.ins(RVOps.SUB, (X0, u.src[0]), u.dtype)),
-    (UPat(Ops.NOT, name="u"), lambda u: UOp.ins(RVOps.XORI, (u.src[0], UOp.const(dtypes.i32, 1 if u.dtype is dtypes.bool else -1)), u.dtype)),
 
     # comparisons (produce 0/1 in a GPR)
     (UPat(Ops.CMPLT, name="u"), lambda u: _bin_imm_or_reg(
       u, RVOps.SLT if u.src[0].dtype.is_signed else RVOps.SLTU,
       RVOps.SLTI if u.src[0].dtype.is_signed else RVOps.SLTIU)),
-    (UPat(Ops.CMPEQ, name="u"), lambda u: UOp.ins(RVOps.SLTIU, (UOp.ins(RVOps.XOR, u.src, dtypes.u32), UOp.const(dtypes.i32, 1)), dtypes.bool)),
+    (UPat(Ops.CMPEQ, name="u"), lambda u: UOp.ins(RVOps.SLTIU, (UOp.ins(RVOps.XOR, u.src, dtypes.u32), UOp.const(1)), dtypes.bool)),
     (UPat(Ops.CMPNE, name="u"), lambda u: UOp.ins(RVOps.SLTU, (X0, UOp.ins(RVOps.XOR, u.src, dtypes.u32)), dtypes.bool)),
 
     # branchless integer WHERE: b + (0 - cond) & (a - b)
@@ -198,7 +200,7 @@ def _make_pre_regalloc(wgpr: tuple[UOp, ...]):
     if extra and vdef(bound_r) is None:
       bound_r = UOp.ins(bound_r.ins_op, bound_r.src_without_body, bound_r.dtype, *ctx.vreg(bound_r.dtype, wgpr, name=f"bnd{x.arg.axis}"))
       extra = [bound_r]
-    idx = UOp.ins(RVOps.LI, (UOp.const(dtypes.i32, 0),), x.dtype, *ctx.vreg(x.dtype, wgpr, name=x.arg.name or f"r{x.arg.axis}"))
+    idx = UOp.ins(RVOps.LI, (UOp.const(0),), x.dtype, *ctx.vreg(x.dtype, wgpr, name=x.arg.name or f"r{x.arg.axis}"))
     start = rv_label(x)
     exit_key = start  # exit label is keyed by rv_label(x) (matches x86.py)
     cmp_op = RVOps.BGE if x.dtype.is_signed else RVOps.BGEU
@@ -207,7 +209,7 @@ def _make_pre_regalloc(wgpr: tuple[UOp, ...]):
 
   def lower_end(ctx: LinearContext, x: UOp, c: UOp) -> tuple[UOp, list[UOp]]:
     rng = c.src[1]
-    inc = UOp.ins(RVOps.ADDI, (c, UOp.const(dtypes.i32, 1)), c.dtype, *regs(c.src[0]))
+    inc = UOp.ins(RVOps.ADDI, (c, UOp.const(1)), c.dtype, *regs(c.src[0]))
     jmp = UOp.ins(RVOps.JAL, (rng,), dtypes.void)
     end_lbl = rv_label(rv_label(rng))
     return x.replace(src=(x.src[0], rng)), [inc, jmp, end_lbl]
@@ -308,13 +310,13 @@ class RV32Renderer(ISARenderer):
     return not (u.is_ins and u.ins_op in (RVOps.JAL, RVOps.JALR, RVOps.RET))
 
   def copy(self, x: UOp, reg: UOp) -> UOp:
-    return UOp.ins(RVOps.ADDI, (x, UOp.const(dtypes.i32, 0)), x.dtype, reg)
+    return UOp.ins(RVOps.ADDI, (x, UOp.const(0)), x.dtype, reg)
 
   def spill(self, spill_slot: int, x: UOp) -> UOp:
-    return UOp.ins(RVOps.SW, (self.spill_base, x, UOp.const(dtypes.i32, self.spill_offset + spill_slot)), dtypes.void)
+    return UOp.ins(RVOps.SW, (self.spill_base, x, UOp.const(self.spill_offset + spill_slot)), dtypes.void)
 
   def fill(self, spill_slot: int, x: UOp, reg: UOp) -> UOp:
-    return UOp.ins(RVOps.LW, (self.spill_base, UOp.const(dtypes.i32, self.spill_offset + spill_slot)), x.dtype, reg)
+    return UOp.ins(RVOps.LW, (self.spill_base, UOp.const(self.spill_offset + spill_slot)), x.dtype, reg)
 
   def assemble(self, uops: list[UOp]) -> bytes:
     targets: dict[UOp, int] = {}

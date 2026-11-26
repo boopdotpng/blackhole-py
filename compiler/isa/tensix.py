@@ -2,8 +2,8 @@ import struct
 from dataclasses import dataclass
 from hw import isa as hw_isa
 from hw.sfpu_lat import disasm_sfpu, sfpu_hazards
-from ..dtype import DType, Space, dtypes
-from ..uop import CallInfo, Ops, UOp, line_rewrite, pretty
+from ..dtype import DType, dtypes
+from ..uop import CallInfo, Ops, UOp, line_rewrite
 from . import ISARenderer, compile_linear, rdef, regalloc
 from .rv32 import DEFAULT_SCRATCH, DEFAULT_WGPR, LOCAL_BASE, RV_PHYSICAL_REGS, RVGroupOp, RVOps, RV32Renderer, encode_rv32
 
@@ -50,7 +50,7 @@ class TensixGroupOp:
 
 # ---- Physical Tensix SFPU registers (L0..L15) ----
 
-LREGS_ALL = tuple(UOp.param(i, dtypes.fp32, name=f"l{i}", space=Space.LREG) for i in range(16))
+LREGS_ALL = tuple(UOp.param(i, dtypes.fp32, name=f"l{i}", file="lreg") for i in range(16))
 LREGS = LREGS_ALL[:8]
 L0, L1, L2, L3, L4, L5, L6, L7 = LREGS
 L_CONST_0_8373, L_ZERO, L_ONE, L_NEG_ONE = LREGS_ALL[8:12]
@@ -122,12 +122,12 @@ _SFP_ALU_ENC = {
 def _lreg_num(u: UOp, ren: ISARenderer | None = None) -> int:
   if ren is not None:
     r = rdef(u, ren)
-    if r is not None and r.space is Space.LREG: return int(r.arg.slot)
-  if u.op is Ops.PARAM and u.space is Space.LREG and u.arg.slot >= 0: return int(u.arg.slot)
+    if r is not None and r.arg.file == "lreg": return int(r.arg.slot)
+  if u.op is Ops.PARAM and u.arg.file == "lreg" and u.arg.slot >= 0: return int(u.arg.slot)
   if u.is_ins and u.body.src:
     s = u.body.src[0]
     p = s.src[0] if s.op is Ops.AFTER else s
-    if p.op is Ops.PARAM and p.space is Space.LREG and p.arg.slot >= 0: return int(p.arg.slot)
+    if p.op is Ops.PARAM and p.arg.file == "lreg" and p.arg.slot >= 0: return int(p.arg.slot)
   raise RuntimeError(f"expected physical SFPU LReg, got {u.op.name} ({u.arg})")
 
 def encode_tensix(u: UOp, ren: ISARenderer | None = None) -> int:

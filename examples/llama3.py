@@ -1,7 +1,8 @@
 from __future__ import annotations
-import math
+import math, sys
 from pathlib import Path
-from compiler import Tensor, Variable, dtypes, load_state_dict, safe_load, simplify_tensor, sint
+if __name__ == "__main__": sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from compiler import Ops, Tensor, Variable, dtypes, function, load_state_dict, render_uir, safe_load, simplify_tensor, sint
 
 # Llama 3.2 1B config
 emb_dim = 2048
@@ -48,18 +49,22 @@ class Linear:
     self.weight = Tensor.empty(out_features, in_features, dtype=dtypes.bfloat16)
     self.bias = Tensor.empty(out_features, dtype=dtypes.bfloat16) if bias else None
   def __call__(self, x: Tensor) -> Tensor:
-    return x.linear(self.weight, self.bias)
+    out = x @ self.weight.T
+    return out if self.bias is None else out + self.bias
 
 class Embedding:
   def __init__(self, vocab: int, dim: int):
     self.weight = Tensor.empty(vocab, dim, dtype=dtypes.bfloat16)
+  # one-hot rows selected by a masked sum over the vocab axis
   def __call__(self, idx: Tensor) -> Tensor:
-    return self.weight[idx]
+    vocab, dim = self.weight.shape
+    hot = idx.unsqueeze(-1).eq(Tensor.arange(vocab)).unsqueeze(-1)  # (..., vocab, 1)
+    return hot.where(self.weight, 0.0).sum(-2)
 
 class RMSNorm:
   def __init__(self, dim: int, eps: float = norm_eps):
     self.eps = eps
-    self.weight = Tensor.ones(dim)
+    self.weight = Tensor.empty(dim, dtype=dtypes.bfloat16)
   def __call__(self, x: Tensor) -> Tensor:
     dtype = x.dtype
     xf = x.float()
@@ -85,6 +90,10 @@ class Attention:
     self.o_proj = Linear(n_heads * head_dim, emb_dim, bias=False)
     self.kv_cache: Tensor | None = None
 
+  def _init_cache(self) -> None:
+    if self.kv_cache is None:
+      self.kv_cache = Tensor.empty(2, 1, n_kv_heads, max_seq_len, head_dim, dtype=dtypes.bfloat16)
+
   def __call__(self, x: Tensor, start_pos: sint = 0) -> Tensor:
     B, S, _ = x.shape
     q = self.q_proj(x).reshape(B, S, n_heads, head_dim).transpose(1, 2)
@@ -94,14 +103,14 @@ class Attention:
     q = apply_rope(q, start_pos)
     k = apply_rope(k, start_pos)
 
-    if self.kv_cache is None:
-      self.kv_cache = Tensor.zeros(2, 1, n_kv_heads, max_seq_len, head_dim, dtype=dtypes.bfloat16, device=k.device).realize()
+    self._init_cache()
+    assert self.kv_cache is not None
+    st_k = self.kv_cache[0, :B, :, start_pos:start_pos + S, :].uop.store(k.cast(dtypes.bfloat16).uop)
+    st_v = self.kv_cache[1, :B, :, start_pos:start_pos + S, :].uop.store(v.cast(dtypes.bfloat16).uop)
+    kv = Tensor.from_uop(self.kv_cache.uop.after(st_k, st_v))
 
-    kv = Tensor.stack(k.cast(dtypes.bfloat16), v.cast(dtypes.bfloat16))
-    self.kv_cache[:, :B, :, start_pos:start_pos + S, :].assign(kv)
-
-    k = self.kv_cache[0, :B, :, :start_pos + S, :]
-    v = self.kv_cache[1, :B, :, :start_pos + S, :]
+    k = kv[0, :B, :, :start_pos + S, :]
+    v = kv[1, :B, :, :start_pos + S, :]
 
     k = k.repeat_interleave(n_heads // n_kv_heads, 1)
     v = v.repeat_interleave(n_heads // n_kv_heads, 1)
@@ -111,8 +120,9 @@ class Attention:
 
     T = start_pos + S
     if S != 1:
-      causal_mask = Tensor.full((1, 1, S, T), float("-inf"), buffer=False).triu(start_pos + 1)
-      scores = scores + causal_mask
+      # key t is visible to query s iff t <= start_pos + s
+      future = (Tensor.arange(T).reshape(1, T) - Tensor.arange(S).reshape(S, 1)) > start_pos
+      scores = future.where(float("-inf"), scores)
 
     attn = scores.cast(q.dtype).softmax(-1)
     out = attn @ v
@@ -127,9 +137,13 @@ class Block:
     self.self_attn = Attention()
 
   def __call__(self, x: Tensor, start_pos: sint = 0) -> Tensor:
-    x = x + self.self_attn(self.input_layernorm(x), start_pos)
-    x = x + self.mlp(self.post_attention_layernorm(x))
-    return x
+    self.self_attn._init_cache()
+    @function(allow_implicit=True)
+    def _block(x: Tensor, start_pos: sint) -> Tensor:
+      x = x + self.self_attn(self.input_layernorm(x), start_pos)
+      x = x + self.mlp(self.post_attention_layernorm(x))
+      return x
+    return _block(x, start_pos)
 
 class Model:
   def __init__(self, layers: int = n_layers):
@@ -145,9 +159,9 @@ class Model:
   def forward(self, x: Tensor, start_pos: sint = 0) -> Tensor:
     x = self.embed_tokens(x)
     for layer in self.layers: x = layer(x, start_pos)
-    x = self.norm(x)
+    x = self.norm(x[:, -1:])
     logits = x @ self.embed_tokens.weight.T
-    return logits[:, -1, :].flatten().argmax()
+    return logits.flatten().argmax()
 
   def __call__(self, x: Tensor, start_pos: sint = 0) -> Tensor:
     if x.shape[1] == 1 and isinstance(start_pos, int) and start_pos != 0:
@@ -170,15 +184,14 @@ def load_llama3(checkpoint: str | Path = "/Users/boop/code/ml/llama3-tinygrad/mo
   return model
 
 if __name__ == "__main__":
-  from collections import Counter
-  m = load_llama3()
-  prefill = simplify_tensor(m(Tensor([[128000, 15339, 11, 1268, 527, 499]], dtype=dtypes.i32), start_pos=0))
-  sp = Variable("start_pos", 1, max_seq_len - 1)
-  tok = Tensor.buffer("tok", (1, 1), dtypes.i32)
-  decode = simplify_tensor(m(tok, start_pos=sp))
-  for label, g in (("prefill (S=6)", prefill), ("symbolic decode (S=1, start_pos=1..8191)", decode)):
-    nodes = g.uop.toposort()
-    counts = Counter(u.op.name for u in nodes)
-    vars_ = [f"{v.arg.name}[{v.vmin}..{v.vmax}]" for v in g.variables()]
-    print(f"{label}: {len(nodes)} UOps, vars={vars_}, out={g.shape} {g.dtype.name}")
-    print("  ops:", dict(counts.most_common()))
+  mode = sys.argv[1] if len(sys.argv) > 1 else "decode"
+  m = Model()
+  if mode in ("prefill", "prefill-body"):
+    g = simplify_tensor(m(Tensor([[128000, 15339, 11, 1268, 527, 499]], dtype=dtypes.i32), start_pos=0))
+  elif mode in ("decode", "body"):
+    sp = Variable("start_pos", 1, max_seq_len - 1)
+    g = simplify_tensor(m(Tensor.buffer("tok", (1, 1), dtypes.i32), start_pos=sp))
+  else:
+    raise SystemExit(f"usage: {sys.argv[0]} [decode|prefill|body|prefill-body]")
+  root = next(u.body for u in g.uop.toposort() if u.op is Ops.CALL) if "body" in mode else g.uop
+  print(render_uir(root, color=sys.stdout.isatty()))

@@ -1,4 +1,3 @@
-from __future__ import annotations
 import itertools, math, struct
 from dataclasses import dataclass, field
 from functools import lru_cache
@@ -11,10 +10,9 @@ from hw.sfpu_lat import (
   verify_sfpu_words,
 )
 from .ops import lower_reduce_to_loop, pm_simplify
-from .uop import DType, GroupOp, Ops, PatternMatcher, Space, UOp, UPat, dtypes, graph_rewrite
+from .uop import DType, GroupOp, Ops, PatternMatcher, UOp, UPat, dtypes, graph_rewrite
 
 DST_TILE_ROWS = 64  # FP32 Dst tile stride (64 rows x 16 cols = 1024 elements)
-_SFPU_SPACES = (Space.DST, Space.LREG)
 _DEFAULTS_L11_14 = {11: 0xBF800000, 12: 0x3B000000, 13: 0xBF2CC4C7, 14: 0xBEB08FF9}
 
 # Pass A: Pure UOp lowering (PatternMatcher + graph_rewrite)
@@ -24,10 +22,9 @@ class SfpuPrim:
   op: str
   mod: int = 0
   imm: int = 0
-  space: Space | None = None
 
-def sfpu_prim(op: str, dtype: DType, *srcs: UOp, mod: int = 0, imm: int = 0, space: Space | None = None) -> UOp:
-  return UOp(Ops.SFPU, dtype, srcs, SfpuPrim(op, mod, imm, space))
+def sfpu_prim(op: str, dtype: DType, *srcs: UOp, mod: int = 0, imm: int = 0) -> UOp:
+  return UOp(Ops.SFPU, dtype, srcs, SfpuPrim(op, mod, imm))
 
 def mulacc(a: UOp, b: UOp, c: UOp, *, neg_ab: bool = False, neg_c: bool = False) -> UOp:
   return UOp(Ops.MULACC, a.dtype, (a, b, c), (neg_ab, neg_c))
@@ -136,44 +133,44 @@ def _make_pm_sfpu_decomp(bits: int) -> PatternMatcher:
   sfpu_f = (dtypes.fp32, dtypes.bf16)
   return pm_simplify + PatternMatcher([
     # Algebraic cleanup (do NOT re-associate float adds so (x + magic) - magic stays exact).
-    (UPat(Ops.DIV, dtype=sfpu_f, space=_SFPU_SPACES, src=(UPat.var("a"), UPat.var("b"))),
+    (UPat(Ops.DIV, dtype=sfpu_f, src=(UPat.var("a"), UPat.var("b"))),
      lambda a, b: a * b.recip()),
-    (UPat(Ops.MUL, dtype=sfpu_f, space=_SFPU_SPACES,
+    (UPat(Ops.MUL, dtype=sfpu_f,
           src=[UPat(Ops.MUL, src=[UPat.var("x"), UPat.const("c1")]), UPat.const("c2")]),
      lambda x, c1, c2: x * UOp.const(x.dtype, float(c1.arg) * float(c2.arg))),
-    (UPat(Ops.ADD, dtype=sfpu_f, space=_SFPU_SPACES, src=[UPat.var("a"), UPat(Ops.NEG, src=(UPat.var("b"),))]),
+    (UPat(Ops.ADD, dtype=sfpu_f, src=[UPat.var("a"), UPat(Ops.NEG, src=(UPat.var("b"),))]),
      lambda a, b: a - b),
-    (UPat(Ops.SUB, dtype=sfpu_f, space=_SFPU_SPACES, src=(UPat.var("a"), UPat(Ops.NEG, src=(UPat.var("b"),)))),
+    (UPat(Ops.SUB, dtype=sfpu_f, src=(UPat.var("a"), UPat(Ops.NEG, src=(UPat.var("b"),)))),
      lambda a, b: a + b),
-    (UPat((Ops.MIN, Ops.MAX), dtype=(dtypes.i32, dtypes.u32), space=_SFPU_SPACES,
+    (UPat((Ops.MIN, Ops.MAX), dtype=(dtypes.i32, dtypes.u32),
           src=(UPat.var("a"), UPat.var("b")), name="u"),
      lambda u, a, b: (a < b).where(a, b) if u.op is Ops.MIN else (a < b).where(b, a)),
-    # Transcendental decompositions on Space.DST and Space.LREG
-    (UPat(Ops.EXP2,  dtype=sfpu_f, space=_SFPU_SPACES, src=(UPat.var("x"),)), lambda x: _decomp_exp2(x, bits)),
-    (UPat(Ops.RECIP, dtype=sfpu_f, space=_SFPU_SPACES, src=(UPat.var("x"),)), lambda x: _decomp_recip(x, bits)),
-    (UPat(Ops.RSQRT, dtype=sfpu_f, space=_SFPU_SPACES, src=(UPat.var("x"),)), lambda x: _decomp_rsqrt(x, bits)),
-    (UPat(Ops.SQRT,  dtype=sfpu_f, space=_SFPU_SPACES, src=(UPat.var("x"),)), lambda x: _decomp_sqrt(x, bits)),
-    (UPat(Ops.LOG2,  dtype=sfpu_f, space=_SFPU_SPACES, src=(UPat.var("x"),)), lambda x: _decomp_log2(x, bits)),
-    (UPat(Ops.SIN,   dtype=sfpu_f, space=_SFPU_SPACES, src=(UPat.var("x"),)), lambda x: _decomp_sin(x, bits)),
+    # Transcendental decompositions
+    (UPat(Ops.EXP2,  dtype=sfpu_f, src=(UPat.var("x"),)), lambda x: _decomp_exp2(x, bits)),
+    (UPat(Ops.RECIP, dtype=sfpu_f, src=(UPat.var("x"),)), lambda x: _decomp_recip(x, bits)),
+    (UPat(Ops.RSQRT, dtype=sfpu_f, src=(UPat.var("x"),)), lambda x: _decomp_rsqrt(x, bits)),
+    (UPat(Ops.SQRT,  dtype=sfpu_f, src=(UPat.var("x"),)), lambda x: _decomp_sqrt(x, bits)),
+    (UPat(Ops.LOG2,  dtype=sfpu_f, src=(UPat.var("x"),)), lambda x: _decomp_log2(x, bits)),
+    (UPat(Ops.SIN,   dtype=sfpu_f, src=(UPat.var("x"),)), lambda x: _decomp_sin(x, bits)),
   ])
 
 def _is_sfpu_mul(u: UOp) -> bool:
-  return u.op is Ops.MUL and u.space in _SFPU_SPACES and not u.is_fpu and u.dtype.is_float
+  return u.op is Ops.MUL and u.dtype.is_float
 
 pm_sfpu_fma = pm_simplify + PatternMatcher([
-  (UPat(Ops.ADD, space=_SFPU_SPACES, src=[UPat(Ops.MUL, src=(UPat.var("a"), UPat.var("b"))).named("m"), UPat.var("c")]),
+  (UPat(Ops.ADD, src=[UPat(Ops.MUL, src=(UPat.var("a"), UPat.var("b"))).named("m"), UPat.var("c")]),
    lambda m, a, b, c: mulacc(a, b, c) if _is_sfpu_mul(m) and c.dtype.is_float else None),
-  (UPat(Ops.SUB, space=_SFPU_SPACES, src=(UPat(Ops.MUL, src=(UPat.var("a"), UPat.var("b"))).named("m"), UPat.var("c"))),
+  (UPat(Ops.SUB, src=(UPat(Ops.MUL, src=(UPat.var("a"), UPat.var("b"))).named("m"), UPat.var("c"))),
    lambda m, a, b, c: mulacc(a, b, c, neg_c=True) if _is_sfpu_mul(m) and c.dtype.is_float else None),
-  (UPat(Ops.SUB, space=_SFPU_SPACES, src=(UPat.var("c"), UPat(Ops.MUL, src=(UPat.var("a"), UPat.var("b"))).named("m"))),
+  (UPat(Ops.SUB, src=(UPat.var("c"), UPat(Ops.MUL, src=(UPat.var("a"), UPat.var("b"))).named("m"))),
    lambda m, a, b, c: mulacc(a, b, c, neg_ab=True) if _is_sfpu_mul(m) and c.dtype.is_float else None),
-  (UPat(Ops.NEG, space=_SFPU_SPACES, src=(UPat(Ops.MUL, src=(UPat.var("a"), UPat.var("b"))).named("m"),)),
+  (UPat(Ops.NEG, src=(UPat(Ops.MUL, src=(UPat.var("a"), UPat.var("b"))).named("m"),)),
    lambda m, a, b: mulacc(a, b, UOp.const(a.dtype, 0.0), neg_ab=True) if _is_sfpu_mul(m) else None),
-  (UPat(Ops.MULACC, space=_SFPU_SPACES, src=(UPat(Ops.NEG, src=(UPat.var("a"),)), UPat.var("b"), UPat.var("c")), name="u"),
+  (UPat(Ops.MULACC, src=(UPat(Ops.NEG, src=(UPat.var("a"),)), UPat.var("b"), UPat.var("c")), name="u"),
    lambda u, a, b, c: mulacc(a, b, c, neg_ab=not u.arg[0], neg_c=u.arg[1])),
-  (UPat(Ops.MULACC, space=_SFPU_SPACES, src=(UPat.var("a"), UPat(Ops.NEG, src=(UPat.var("b"),)), UPat.var("c")), name="u"),
+  (UPat(Ops.MULACC, src=(UPat.var("a"), UPat(Ops.NEG, src=(UPat.var("b"),)), UPat.var("c")), name="u"),
    lambda u, a, b, c: mulacc(a, b, c, neg_ab=not u.arg[0], neg_c=u.arg[1])),
-  (UPat(Ops.MULACC, space=_SFPU_SPACES, src=(UPat.var("a"), UPat.var("b"), UPat(Ops.NEG, src=(UPat.var("c"),))), name="u"),
+  (UPat(Ops.MULACC, src=(UPat.var("a"), UPat.var("b"), UPat(Ops.NEG, src=(UPat.var("c"),))), name="u"),
    lambda u, a, b, c: mulacc(a, b, c, neg_ab=u.arg[0], neg_c=not u.arg[1])),
 ])
 
@@ -1377,8 +1374,8 @@ def compile_sfpu(
 
   # Hide resident Dst and LReg inputs behind opaque leaves during Pass A so FMA/decomp cannot reach across stages.
   leaves = {
-    **{u: sfpu_prim("DST_INPUT", u.dtype, imm=i, space=Space.DST) for i, u in enumerate(din)},
-    **{u: sfpu_prim("REG_INPUT", u.dtype, imm=i, space=Space.LREG) for i, u in enumerate(rin)},
+    **{u: sfpu_prim("DST_INPUT", u.dtype, imm=i) for i, u in enumerate(din)},
+    **{u: sfpu_prim("REG_INPUT", u.dtype, imm=i) for i, u in enumerate(rin)},
   }
   sink_in = UOp.sink(*roots_list).substitute(leaves)
   lowered_roots = lower_sfpu_uops(sink_in, precision=precision).substitute({leaf: u for u, leaf in leaves.items()}).src
@@ -1413,10 +1410,11 @@ def compile_sfpu_loop(
   preserve_l11: bool = False,
   addr_mode: int = 0,
 ) -> CompiledSfpuLoop:
-  """Compile a Layer 1 Ops.LOOP (or Ops.REDUCE) with Space.DST / Space.LREG carried accumulators.
+  """Compile a Layer 1 Ops.LOOP (or Ops.REDUCE) with carried accumulators.
 
-  Returns init passes (run once before the outer loop) and body passes (run each outer iteration with
-  carried Dst slots updated in-place and carried LReg slots pinned across all footprints and iterations).
+  Carries listed in reg_carries are pinned in an LReg (accumulating across all footprints and iterations);
+  every other carry gets a Dst tile updated in place. Returns init passes (run once before the outer loop)
+  and body passes (run each outer iteration).
   """
   orig = loop_or_get
   u = lower_reduce_to_loop(loop_or_get) if loop_or_get.op is Ops.REDUCE else loop_or_get
@@ -1434,22 +1432,17 @@ def compile_sfpu_loop(
   carry_dst: dict[int, int] = {}
   carry_reg: dict[int, int] = {}
   for idx, c in enumerate(carries):
-    if c.space is Space.DST:
+    if not (reg_carries and idx in reg_carries):
       slot = dst_carries[idx] if (dst_carries and idx in dst_carries) else next(
         (t for t in range(dst_budget) if t not in used_dst), None
       )
       if slot is None: raise SfpuCompileError(f"exceeded Dst budget ({dst_budget}) pinning loop carry {idx}")
       carry_dst[idx] = slot
       used_dst.add(slot)
-    elif c.space is Space.LREG:
-      reg = reg_carries[idx] if (reg_carries and idx in reg_carries) else next(
-        (r for r in range(max_regs) if r not in used_reg), None
-      )
-      if reg is None: raise SfpuCompileError(f"exceeded LReg budget ({max_regs}) pinning loop carry {idx}")
+    else:
+      if (reg := reg_carries[idx]) in used_reg: raise SfpuCompileError(f"loop carry {idx} LReg L{reg} already in use")
       carry_reg[idx] = reg
       used_reg.add(reg)
-    else:
-      raise SfpuCompileError(f"SFPU loop carry {idx} must be DST or LREG, got {c.space}")
 
   # Compile init passes (run once before outer loop): 1-shot LReg inits + 32-footprint Dst inits.
   init_passes: list[CompiledSfpuPass] = []
