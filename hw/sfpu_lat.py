@@ -97,18 +97,6 @@ def sfpu_cost(prev, w: int, macros: dict[int, int] | None = None):
       if unit != "store": live += ((at + (2 if unit == "mad" else 1), 0, 1 << (16 if l16 else x)),)
   return t - t0, hazard, (t, t + 1 if i.block else blocked, live, sched)
 
-def sfpu_cycles(words: Sequence[int], repeat: int = 1, macros: dict[int, int] | None = None) -> int:
-  if not words or repeat <= 0: return 0
-  state = start = None
-  for _ in range(repeat):
-    for w in words:
-      _, _, state = sfpu_cost(state, w, macros)
-      if start is None: start = state[0]
-  return state[0] - start + 1
-
-def sfpu_slope(words: Sequence[int], macros: dict[int, int] | None = None) -> float:
-  return (sfpu_cycles(words, 64, macros) - sfpu_cycles(words, 32, macros)) / 32.0 if words else 0.0
-
 def sfpu_hazards(words: Sequence[int], macros: dict[int, int] | None = None) -> list[tuple[int, tuple]]:
   state, out = None, []
   for n, w in enumerate(words):

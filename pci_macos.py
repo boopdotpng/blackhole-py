@@ -1,5 +1,5 @@
 import fcntl, os, socket, struct, subprocess, sys, tempfile, time
-from pci import ARC, CARDS, SUPPORTED, TLB_SIZE, Card, libc, map_memory, rect, view_at
+from pci import ARC, CARDS, SUPPORTED, TELEMETRY_BOARD_ID, TLB_SIZE, Card, Monitor, libc, map_memory, rect, view_at
 
 APP = "/Applications/TTGPU.app/Contents/MacOS/TTGPU"
 SOCK_PATH = os.environ.get("TTGPU_SOCK", os.path.join(tempfile.gettempdir(), "ttgpu.sock"))
@@ -18,7 +18,6 @@ NOC_PCIE_OFFSET = 4 << 58
 ARC_BOOT_STATUS, ARC_MSG_QCB_PTR = 0x80030408, 0x8003042C
 ARC_MSI_FIFO, ARC_MSG_QUEUE_HEADER = 0x800B0000, 32
 ARC_MSG_ASIC_STATE0, ARC_MSG_POWER_SETTING = 0xA0, 0x21
-TELEMETRY_BOARD_ID = 1
 POWER_VALIDITY = 15
 
 class Server:
@@ -97,14 +96,29 @@ def lock(blocking:bool=False) -> int | None:
     return None
   return fd
 
-class Noc:
-  def __init__(self):
-    self.io = Server()
-    try: self.io.map_bar(0)
-    except BaseException:
-      self.io.close()
-      raise
-  def read32(self, addr:int, xy=ARC) -> int: return self.io.rpc(NOC_READ32, addr, xy[0] | xy[1] << 8)[0]
+class MacMonitor(Monitor):
+  # NoC reads that the TTGPU server performs itself, so they don't need the card lock.
+  def __init__(self, index:int=0):
+    if index != 0: raise OSError("macOS: the TTGPU driver exposes one device, index 0")
+    try:
+      self.io = Server()
+      try: self.io.map_bar(0)
+      except BaseException:
+        self.io.close()
+        raise
+    except (RuntimeError, ConnectionError) as e: raise OSError(str(e)) from None
+
+  def noc_read(self, addr:int, xy=ARC) -> int:
+    try: v = self.io.rpc(NOC_READ32, addr, xy[0] | xy[1] << 8)[0]
+    except RuntimeError as e: raise OSError(str(e)) from None
+    if v == 0xFFFFFFFF: raise OSError("NoC read returned all ones: card reset or gone")
+    return v
+
+  def in_use(self) -> bool:
+    if (lk := lock()) is None: return True
+    os.close(lk)
+    return False
+
   def close(self): self.io.close()
 
 class Window:
@@ -281,11 +295,11 @@ INTERFACE_TIMER_EN, INTERFACE_FORCE_PENDING = 0x1, 0x10
 TT_VENDOR = 0x1e52
 
 def _arc_boot_status() -> int:
-  noc = Noc()
   try:
-    if (v := noc.read32(ARC_BOOT_STATUS)) == 0xFFFFFFFF: raise RuntimeError("ARC boot status reads all ones")
-    return v
-  finally: noc.close()
+    mon = MacMonitor()
+    try: return mon.noc_read(ARC_BOOT_STATUS)
+    finally: mon.close()
+  except OSError as e: raise RuntimeError(str(e)) from None
 
 def _pcie_cap(io:Server) -> int:
   cap = io.cfg_read(PCI_CAP_PTR, 1)

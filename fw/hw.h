@@ -4,12 +4,19 @@
 #define ROLE_NCRISC 1
 #define ROLE_TRISC0 2
 
+// ---- Worker L1 header (host-written; 0x0 holds `jal CODE_BASE`) ----
+#define L1_SIZE          0x180000
 #define SUBORDINATE_SYNC 0x14
 #define GO_FLAG          0x18
 #define WORKER_X         0x20
 #define WORKER_Y         0x24
+#define LEADER_COORD     0x1C
 #define WORKER_ID        0x28
-#define ROLE_PC          0x60
+#define NUM_WORKERS      0x2C     // followed by the DRAM bank count and the Tensix column count
+#define ROLE_PC          0x60     // NCRISC, TRISC0..2 entry points; 0 leaves that RISC in reset
+#define CODE_BASE        0x100
+
+// ---- DMA core L1 ----
 
 #define PACKET           0x20     // bytes per host-written DMA descriptor
 #define DMA_DEPTH        4        // descriptor ring depth
@@ -20,11 +27,16 @@
 #define DMA_COPY_DONE    0x30     // NCRISC -> BRISC: copy sequence number finished
 #define DMA_PIPE_PROD    0x40     // DRAM-source copy: chunks BRISC has staged
 #define DMA_PIPE_CONS    0x50     // DRAM-source copy: chunks NCRISC has written out
-#define DMA_WPTR         0x80     // host-initialised state block starts here: latest submitted sequence
+#define DMA_STATE        0x80     // host-initialised state block, DMA_STATE_SIZE bytes
+#define DMA_STATE_SIZE   0x100
+#define DMA_WPTR         0x80     // latest submitted sequence
 #define DMA_SIGNAL       0x88     // host address of the completion counter
 #define DMA_COPY_DESC    0xB0
 #define DMA_SCRATCH      0x100
+#define DMA_BRISC_BASE   0x200
+#define DMA_BRISC_SIZE   0x3E00
 #define DMA_NCRISC_BASE  0x4000
+#define DMA_NCRISC_SIZE  0x4000
 #define DMA_PACKETS      0x9000
 #define DMA_STAGING      0x10000  // 2 engines x DMA_SLOTS x DMA_BATCH
 

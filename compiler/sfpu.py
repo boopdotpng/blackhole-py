@@ -1,11 +1,3 @@
-"""Blackhole SFPU compiler: UOp decomposition, Dst/LReg partitioning, L0..L7 allocation, and loop accumulators.
-
-Pipeline (Layer 1 Space.DST / Space.LREG UOps -> verified Blackhole SFPU Tensix instruction streams):
-  Pass A  lower_sfpu_uops()   Pure UOp PatternMatcher + graph_rewrite (EXP2, RECIP, RSQRT, SQRT, LOG2, SIN, MULACC).
-  Pass B  partition_sfpu()    Constant tiering (L8..L14) + exact-budget Dst-intermediate pass splitting.
-  Pass C  _PassLowerer        Per-pass L0..L7 allocation (with pinned reg_inputs/reg_outputs), predication, isa emit.
-  Pass D  fix_sfpu_hazards()  Silicon-measured hazard model (hw/sfpu_lat.py) + hard register/backdoor checks.
-"""
 from __future__ import annotations
 import itertools, math, struct
 from dataclasses import dataclass, field
@@ -14,15 +6,8 @@ from typing import Sequence
 from hw import isa
 from hw.sfpu_lat import (
   SfpuError as SfpuCompileError,
-  SfpuInsn,
-  disasm_sfpu,
   fix_sfpu_hazards,
-  loadmacro_units,
-  sfpu_cost,
-  sfpu_cycles,
   sfpu_decode,
-  sfpu_hazards,
-  sfpu_slope,
   verify_sfpu_words,
 )
 from .ops import lower_reduce_to_loop, pm_simplify
@@ -32,9 +17,7 @@ DST_TILE_ROWS = 64  # FP32 Dst tile stride (64 rows x 16 cols = 1024 elements)
 _SFPU_SPACES = (Space.DST, Space.LREG)
 _DEFAULTS_L11_14 = {11: 0xBF800000, 12: 0x3B000000, 13: 0xBF2CC4C7, 14: 0xBEB08FF9}
 
-# ---------------------------------------------------------------------------------------------------------------------
 # Pass A: Pure UOp lowering (PatternMatcher + graph_rewrite)
-# ---------------------------------------------------------------------------------------------------------------------
 
 @dataclass(frozen=True)
 class SfpuPrim:
@@ -315,9 +298,7 @@ def _assign_const_regs(
       if slot == 11: l11_repurposed = True
   return const_regs, l11_repurposed
 
-# ---------------------------------------------------------------------------------------------------------------------
 # Pass C: Single-pass physical L0..L7 register allocation & Tensix SFPU emission
-# ---------------------------------------------------------------------------------------------------------------------
 
 class _OutOfRegs(Exception):
   pass
@@ -334,10 +315,28 @@ class CompiledSfpuPass:
   outputs: dict[UOp, int]
   l11_used: bool
   peak_regs: int
-  cycles_per_footprint: float
   reg_inputs: dict[UOp, int] = field(default_factory=dict)
   reg_outputs: dict[UOp, int] = field(default_factory=dict)
   footprints: int = 32
+
+  def to_uops(self, role: str = "trisc1", *, axis: int = 0) -> list[UOp]:
+    """Emit this SFPU pass as a flat list[UOp] of Tensix UOp.ins + RV32 footprint RANGE/END."""
+    from .isa.tensix import tt_ins
+    dec = lambda w: tt_ins(isa.decode(w), role=role)
+    out: list[UOp] = [dec(w) for w in self.prologue]
+    if self.body:
+      out.append(tt_ins(isa.SETRWC(mask=0xF), role=role))
+      if self.footprints == 1:
+        out.extend(dec(w) for w in self.body)
+      else:
+        rng = UOp.range(self.footprints, axis, "fp")
+        out.append(rng)
+        out.extend(dec(w) for w in self.body)
+        out.append(tt_ins(isa.INCRWC(dst=2), role=role))
+        out.append(UOp.noop().end(rng))
+      out.append(tt_ins(isa.SETRWC(mask=0xF), role=role))
+    out.extend(dec(w) for w in self.epilogue)
+    return out
 
 @dataclass(frozen=True)
 class CompiledSfpu:
@@ -345,7 +344,12 @@ class CompiledSfpu:
   dst_tiles: int
   output_tiles: dict[UOp, int]
   root_tiles: tuple[int, ...] = ()
-  output_regs: dict[UOp, int] = field(default_factory=dict)
+
+  def to_linear(self, role: str = "trisc1") -> UOp:
+    uops: list[UOp] = []
+    for i, p in enumerate(self.passes):
+      uops.extend(p.to_uops(role=role, axis=i))
+    return UOp.linear(*uops, arg=role)
 
 @dataclass(frozen=True)
 class CompiledSfpuLoop:
@@ -1273,7 +1277,7 @@ def partition_sfpu(
     _verify_compiled_pass(pro, body, epi, footprints=footprints, pinned_ro=ro_regs)
     compiled_passes.append(CompiledSfpuPass(
       tuple(pro), tuple(body), tuple(epi), used_inputs, out_map, l11_used, peak,
-      sfpu_slope(body), reg_inputs=used_rin, reg_outputs=pass_reg_outs, footprints=footprints,
+      reg_inputs=used_rin, reg_outputs=pass_reg_outs, footprints=footprints,
     ))
     placed_reg_outs |= set(pass_reg_outs)
     written_tiles = set(out_map.values())
@@ -1324,7 +1328,7 @@ def partition_sfpu(
     _verify_compiled_pass(pro, body, epi, footprints=footprints)
     compiled_passes.append(CompiledSfpuPass(
       tuple(pro), tuple(body), tuple(epi), in_map, batch, l11_used, peak,
-      sfpu_slope(body), reg_inputs=r_in, footprints=footprints,
+      reg_inputs=r_in, footprints=footprints,
     ))
     live_dst.update(batch)
     max_dst_used = max(max_dst_used, max(batch.values()) + 1)
@@ -1344,13 +1348,13 @@ def partition_sfpu(
     _verify_compiled_pass(pro, body, epi, footprints=pass_fp)
     compiled_passes.append(CompiledSfpuPass(
       tuple(pro), tuple(body), tuple(epi), in_map, {}, l11_used, peak,
-      sfpu_slope(body), reg_inputs=r_in, reg_outputs=missing_routs, footprints=pass_fp,
+      reg_inputs=r_in, reg_outputs=missing_routs, footprints=pass_fp,
     ))
 
   if final_root_tiles: max_dst_used = max(max_dst_used, max(final_root_tiles) + 1)
   dst_roots = [r for r in roots_t if r in explicit_dst_roots]
   final_output_tiles = {r: t for r, t in zip(dst_roots, final_root_tiles)}
-  return CompiledSfpu(tuple(compiled_passes), max_dst_used, final_output_tiles, tuple(final_root_tiles), dict(rout))
+  return CompiledSfpu(tuple(compiled_passes), max_dst_used, final_output_tiles, tuple(final_root_tiles))
 
 def compile_sfpu(
   roots: UOp | Sequence[UOp],

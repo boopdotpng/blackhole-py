@@ -1,6 +1,5 @@
 import gc, math, unittest
 import numpy as np
-import hw
 from hw import isa
 from compiler import (
   Fidelity, KernelArg, Ops, PatternMatcher, Space, UOp, UPat, VerifyError, dtypes, evaluate, graph_rewrite,
@@ -229,7 +228,7 @@ class TestLayer1Evaluation(unittest.TestCase):
     np.testing.assert_allclose(out_np, expected, rtol=2e-2, atol=2e-2)
 
   def test_matmul_2d_multicast(self):
-    rows, cols = hw.WORKER_ROWS, 2
+    rows, cols = 10, 2
     MT, NT, KT = 10, 4, 4
     m_per, n_per = MT // rows, NT // cols
 

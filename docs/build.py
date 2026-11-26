@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # Builds docs/index.html: every Tensix instruction, config field and enum in hw/*.py, described by docs/notes.toml.
-import html, re, sys, tomllib, types
+import dataclasses, html, re, sys, tomllib
 from pathlib import Path
 DOCS = Path(__file__).resolve().parent
 sys.path.insert(0, str(DOCS.parent))
@@ -75,7 +75,7 @@ def cfg_fields() -> dict[str, list]:
     if isinstance(o, cfg.Field):
       if o not in seen: seen.add(o); out.setdefault(re.sub(r"(\w+)\[\d+\]", lambda m: f"{m[1]}[{LETTER.get(m[1], 'c')}]", p), []).append(o)
     elif isinstance(o, tuple): [walk(x, f"{p}[{i}]") for i, x in enumerate(o)]
-    elif isinstance(o, types.SimpleNamespace): [walk(v, f"{p}.{k}") for k, v in vars(o).items() if k not in ("incr", "clear", "cr", "words")]
+    elif dataclasses.is_dataclass(o): [walk(getattr(o, f.name), f"{p}.{f.name}") for f in dataclasses.fields(o) if f.name != "words"]
   for n in ("THREAD", "MATH", "UNPACK", "PACK", "GLOBAL", "MOVER"): walk(getattr(cfg, n), n)
   return out
 def span(xs):

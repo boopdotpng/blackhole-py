@@ -148,7 +148,7 @@ def special_axes(root: UOp) -> set[str]:
 class VerifyError(ValueError):
   pass
 
-_FPU_ELW_OPS = frozenset({Ops.ADD, Ops.SUB, Ops.MUL, Ops.MAX})
+_FPU_ELW_OPS = frozenset({Ops.ADD, Ops.SUB, Ops.MUL})
 
 def _check_gate(gate: UOp, op_name: str):
   if gate.dtype is not dtypes.bool or gate.space is not Space.SCALAR:
@@ -160,6 +160,8 @@ def verify(root: UOp) -> None:
 
   for u in nodes:
     op, src, arg = u.op, u.src, u.arg
+    if u.space is Space.TENSOR or op in GroupOp.TensorOnly:
+      raise VerifyError(f"Layer 0 tensor op {op.name} ({u.space}) must be lowered before Layer 1 verify()")
 
     match op:
       case Ops.SINK:
@@ -242,10 +244,6 @@ def verify(root: UOp) -> None:
           raise VerifyError(f"NOC_MCAST value must be in L1, got {src[0].space}")
         if src[1].space is not Space.SCALAR or not (src[1].dtype.is_int or src[1].dtype is dtypes.bool):
           raise VerifyError(f"NOC_MCAST sender must be scalar int/bool, got ({src[1].space}, {src[1].dtype})")
-
-      case Ops.NOC_GATHER | Ops.NOC_ALLGATHER:
-        if src[0].space is not Space.L1:
-          raise VerifyError(f"{op.name} value must be in L1, got {src[0].space}")
 
       case Ops.UNPACK:
         if len(src) != 1 or src[0].space is not Space.L1:

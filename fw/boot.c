@@ -9,20 +9,6 @@
 #define SUBORDINATE_HELD         0x40404040u
 #define SUBORDINATE_UP           2
 
-#ifdef PARK
-
-__asm__(".section .entry, \"ax\", @progbits\n"
-#if IS_TRISC
-        "li t0, " STR(COPROCESSOR_DONE_CHECK) "\n"
-        "sw zero, 0(t0)\n"
-        "lw t1, 0(t0)\n"
-        "andi t1, t1, 0\n"
-#endif
-        "fence\n"
-        "1: j 1b\n");
-
-#else
-
 #if ROLE == ROLE_BRISC
 #define SECOND NOC_REGS(0)
 #elif ROLE == ROLE_NCRISC
@@ -163,5 +149,4 @@ void boot(void) {
   signal_up_and_wait_go();
 }
 
-#endif
 #endif

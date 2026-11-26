@@ -1,19 +1,14 @@
-#!/Users/boop/code/tenstorrent/.venv/bin/python3.14
-import argparse, csv, fcntl, glob, os, re, select, shutil, signal, struct, sys, termios, time, tty
+import argparse, csv, glob, os, re, select, shutil, signal, sys, termios, time, tty
 from collections import deque
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from pci import ARC, CARDS, telemetry_table
+from pci import open_monitor
 MAC = sys.platform == "darwin"
 if MAC: import pci_macos
+else: from pci_linux import RESET_ASIC, RESET_ASIC_DMC, RESET_PCIE_LINK, RESET_POST
 
 SYS = "/sys/class/tenstorrent"
 BOOT_STATUS = 0x80030408
-
-IOCTL = lambda nr: 0xFA00 | nr
-RESET_DEVICE, LOCK_CTL, SET_POWER_STATE, NOC_READ = IOCTL(6), IOCTL(8), IOCTL(15), IOCTL(18)
-RESET_PCIE_LINK, ASIC_RESET, ASIC_DMC_RESET, POST_RESET = 1, 4, 5, 6
-LOCK_TEST, CHIP_IN_USE = 2, 20
 
 TAGS = dict(vcore_mv=6, core_w=7, asic_raw=11, aiclk=14, l2cpuclk=17, eth_live=21, hb=32, eth_on=35, fan_rpm=41,
             gddr_ue=50, gddr_c=51, board_limit_w=53, board_w=54, throttle_c=56, trips=60, aiclk_max=63,
@@ -25,11 +20,6 @@ PCIE_GEN = {2.5: 1, 5.0: 2, 8.0: 3, 16.0: 4, 32.0: 5, 64.0: 6}
 ETH_X = [1, 16, 2, 15, 3, 14, 4, 13, 5, 12, 6, 11, 7, 10]
 BOOT_RESULTS = 0x7CC00
 P150_QSFP = {11: 1, 9: 1, 8: 2, 10: 2, 7: 3, 5: 3, 4: 4, 6: 4}
-
-def ioctl(fd, req, fmt, *args):
-  b = bytearray(struct.pack("<" + fmt, *args))
-  fcntl.ioctl(fd, req, b)
-  return struct.unpack("<" + fmt, b)
 
 def rd(path):
   try:
@@ -48,68 +38,26 @@ def cards():
   return sorted(int(p.rsplit("!", 1)[1]) for p in glob.glob(f"{SYS}/tenstorrent!*"))
 def ports(mask): return ",".join(str(i) for i in range(16) if mask >> i & 1) or "none"
 
-class Card:
-  def __init__(self, idx):
-    self.idx, self.addr = idx, None
-    self.fd = os.open(f"/dev/tenstorrent/{idx}", os.O_RDWR | os.O_APPEND | os.O_CLOEXEC)
-
-  def noc_read(self, addr, xy=ARC):
-    return ioctl(self.fd, NOC_READ, "IIHHBB2xQQ", 32, 0, *xy, 0, 4, addr, 0)[-1]
-
-  def eth(self, on):
-    out = {}
-    for ch in (c for c in range(14) if on >> c & 1):
-      r = lambda off: self.noc_read(BOOT_RESULTS + off, (ETH_X[ch], 1))
-      st, peer = r(4), None
-      if st == 1:
-        w = r(992)
-        peer = (r(992 + 20) << 32 | r(992 + 24), w >> 16 & 0xFF, w >> 24)
-      out[ch] = (st, r(960) >> 24, r(12) if st == 1 else 0, peer)
-    return out
-
-  def telemetry(self):
-    if self.addr is None: self.addr = telemetry_table(self.noc_read)
-    return {k: self.noc_read(self.addr[t]) if t in self.addr else None for k, t in TAGS.items()}
-
-  def board_type(self):
-    self.telemetry()
-    kind = self.noc_read(self.addr[1]) >> 4 & 0xFFFF if 1 in self.addr else None
-    return CARDS.get(kind, f"{kind:#x}" if kind is not None else "?")
-
-  def in_use(self): return bool(ioctl(self.fd, LOCK_CTL, "IIB3xB3x", 4, LOCK_TEST, CHIP_IN_USE, 0)[-1] & 2)
-  def reset(self, flag): return ioctl(self.fd, RESET_DEVICE, "IIII", 8, flag, 0, 0)[-1] == 0
-  def vote_idle(self): ioctl(self.fd, SET_POWER_STATE, "IIBBH28x", 40, 0, 0, 15, 0)
-  def close(self): os.close(self.fd)
-
-class MacCard(Card):
-  def __init__(self, idx):
-    self.idx, self.addr = idx, None
-    try: self.noc = pci_macos.Noc()
-    except (RuntimeError, ConnectionError) as e: raise OSError(str(e)) from None
-
-  def noc_read(self, addr, xy=ARC):
-    try: v = self.noc.read32(addr, xy)
-    except RuntimeError as e: raise OSError(str(e)) from None
-    if v == 0xFFFFFFFF: raise OSError("NoC read returned all ones: card reset or gone")
-    return v
-
-  def in_use(self):
-    if (lk := pci_macos.lock()) is None: return True
-    os.close(lk)
-    return False
-
-  def close(self): self.noc.close()
-
-if MAC: Card = MacCard  # noqa: F811
+def eth(card, on):
+  # per enabled Ethernet channel: (training status, ?, retrain count, peer (asic id, channel, logical port) if up)
+  out = {}
+  for ch in (c for c in range(14) if on >> c & 1):
+    r = lambda off: card.noc_read(BOOT_RESULTS + off, (ETH_X[ch], 1))
+    st, peer = r(4), None
+    if st == 1:
+      w = r(992)
+      peer = (r(992 + 20) << 32 | r(992 + 24), w >> 16 & 0xFF, w >> 24)
+    out[ch] = (st, r(960) >> 24, r(12) if st == 1 else 0, peer)
+  return out
 
 def one(idx, fn):
-  c = Card(idx)
+  c = open_monitor(idx)
   try: return fn(c)
   finally: c.close()
 
 def pcie(idx, card=None):
   if MAC:
-    try: return pci_macos.pcie_link(card.noc.io if card else None)
+    try: return pci_macos.pcie_link(card.io if card else None)
     except (OSError, RuntimeError): return (None, None), (None, None)
   dev = f"{SYS}/tenstorrent!{idx}/device"
   def link(kind):
@@ -130,14 +78,14 @@ class Mon:
     (gen, width), (max_gen, max_width) = pcie(self.idx, self.card)
     s = dict(card=self.idx, pcie_gen=gen, pcie_width=width, pcie_max_gen=max_gen, pcie_max_width=max_width)
     if self.card is None and t >= self.retry_at:
-      try: self.card, self.err = Card(self.idx), None
+      try: self.card, self.err = open_monitor(self.idx), None
       except OSError as e: self.err, self.retry_at = getattr(e, "strerror", None) or str(e), t + 5
     if self.card is not None:
       try:
-        s.update(self.card.telemetry())
+        s.update(self.card.telemetry(TAGS))
         if MAC and self.type == "?": self.type = self.card.board_type()
         if (k := (s["eth_on"], s["eth_live"] >> 16)) != self.eth_live or t >= self.eth_at:
-          self.eth, self.eth_live, self.eth_at = self.card.eth(k[0]), k, t + 10
+          self.eth, self.eth_live, self.eth_at = eth(self.card, k[0]), k, t + 10
       except OSError as e:
         self.card.close(); self.card, self.err, self.retry_at, self.eth_live = None, getattr(e, "strerror", None) or str(e), t + 2, None
     s["eth_links"] = " ".join(f"{ch}>{p[0]}:{p[1]}" for ch, p in self.links())
@@ -253,11 +201,11 @@ def reset_mac(force=False):
   t0 = time.monotonic()
   try:
     pci_macos.reset(force=force)
-    c = MacCard(0)
+    c = pci_macos.MacMonitor(0)
     try:
       def heartbeat():
-        try: t = c.telemetry()
-        except OSError: c.addr = None; return None
+        try: t = c.telemetry(TAGS)
+        except OSError: c.table = None; return None
         return t if t["hb"] else None
       t = wait_for("ARC telemetry", heartbeat, 15)
     finally: c.close()
@@ -270,7 +218,7 @@ def reset(idxs, sbr=True, dmc=False, force=False):
     if dmc or not sbr: sys.exit("--dmc and --no-sbr aren't supported on macOS")
     return reset_mac(force)
   bdfs = {i: bdf(i) for i in idxs}
-  busy = [i for i in idxs if one(i, Card.in_use)]
+  busy = [i for i in idxs if one(i, lambda c: c.in_use())]
   if busy and not force:
     sys.exit(f"card(s) {busy} in use by another process (tt-metal / blackhole-py); stop it or pass --force")
 
@@ -279,7 +227,7 @@ def reset(idxs, sbr=True, dmc=False, force=False):
     for i in idxs:
       if not one(i, lambda c: c.reset(RESET_PCIE_LINK)): print(f"card {i}: secondary bus reset failed, continuing")
   for i in idxs:
-    if not one(i, lambda c: c.reset(ASIC_DMC_RESET if dmc else ASIC_RESET)):
+    if not one(i, lambda c: c.reset(RESET_ASIC_DMC if dmc else RESET_ASIC)):
       sys.exit(f"card {i}: {'ASIC+DMC' if dmc else 'ASIC'} reset ioctl failed")
   print(f"reset issued to {', '.join(f'{i} ({bdfs[i]})' for i in idxs)}")
   time.sleep(20 if dmc else max(2, 0.4 * len(idxs)))
@@ -295,13 +243,13 @@ def reset(idxs, sbr=True, dmc=False, force=False):
       def marker_clear():
         with open(f"/sys/bus/pci/devices/{b}/config", "rb") as f: return True if not os.pread(f.fileno(), 1, 4)[0] & 0x40 else None
       wait_for(f"{b} reset marker to clear", marker_clear, 30)
-      if not one(n,lambda c: c.reset(POST_RESET)): raise OSError(f"POST_RESET failed for /dev/tenstorrent/{n}")
-      c = Card(n)
+      if not one(n, lambda c: c.reset(RESET_POST)): raise OSError(f"POST_RESET failed for /dev/tenstorrent/{n}")
+      c = open_monitor(n)
       try:
         wait_for("ARC boot", lambda: True if c.noc_read(BOOT_STATUS) & 1 else None, 15)
         def heartbeat():
-          try: t = c.telemetry()
-          except OSError: c.addr = None; return None
+          try: t = c.telemetry(TAGS)
+          except OSError: c.table = None; return None
           return t if t["hb"] else None
         t = wait_for("ARC telemetry", heartbeat, 15)
         c.vote_idle()

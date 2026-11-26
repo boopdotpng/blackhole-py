@@ -1,7 +1,6 @@
 import math
 from typing import Any
 import numpy as np
-import hw
 from .ops import verify
 from .uop import DType, KernelArg, Ops, Space, UOp, dtypes
 
@@ -140,7 +139,7 @@ def evaluate(
   if cores is None:
     if not isinstance(sink.arg, KernelArg): raise ValueError("evaluate needs cores= for a sink without a KernelArg")
     cores = sink.arg.cores
-  workers = [divmod(i, hw.WORKER_ROWS) for i in range(cores)]  # column-major (x, y), as firmware numbers them
+  workers = [divmod(i, 10) for i in range(cores)]  # column-major (x, y), 10 rows per column, as firmware numbers them
   coord_to_id = {xy: i for i, xy in enumerate(workers)}
   core_allocs: list[dict[UOp, Any]] = [{} for _ in workers]
 
@@ -337,15 +336,6 @@ def evaluate(
           case "row": sender_cid = coord_to_id[(sender_val, y)]
           case _: sender_cid = sender_val
         res = eval_node(val_uop, sender_cid, env, {})
-      case Ops.NOC_GATHER | Ops.NOC_ALLGATHER:
-        val_uop = src[0]
-        x, y = workers[cid]
-        match arg.group:
-          case "row": peers = [i for i, (px, py) in enumerate(workers) if py == y]
-          case "col": peers = [i for i, (px, py) in enumerate(workers) if px == x]
-          case "all": peers = list(range(len(workers)))
-          case _: peers = list(arg.group)
-        res = np.stack([eval_node(val_uop, p, env, {}) for p in peers], axis=0)
       case Ops.UNPACK:
         v = eval_node(src[0], cid, env, cache)
         if arg.transpose: v = v.T

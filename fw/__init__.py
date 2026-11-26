@@ -4,44 +4,24 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 
 ROLES = ("brisc", "ncrisc", "trisc0", "trisc1", "trisc2")  # ROLE_* in hw.h
-L1_SIZE = 0x180000
 
-# Worker L1 header (hw.h). 0x0 holds `jal CODE_BASE`.
-LEADER_COORD = 0x1C
-NUM_WORKERS = 0x2C  # followed by the DRAM bank count and the Tensix column count
-ROLE_PC = 0x60
-CODE_BASE = 0x100
-
-# DMA core L1 layout (hw.h)
-PACKET, DMA_DEPTH = 0x20, 4
-DMA_STATE, DMA_STATE_SIZE = 0x80, 0x100  # host-initialised block
-DMA_WPTR, DMA_SIGNAL = 0x80, 0x88
-DMA_BRISC_BASE, DMA_BRISC_SIZE = 0x200, 0x3E00
-DMA_NCRISC_BASE, DMA_NCRISC_SIZE = 0x4000, 0x4000
-DMA_PACKETS = 0x9000
+# hw.h is the one copy of the L1 layout and MMIO addresses; its plain numeric #defines become fw.NAME here.
+for _name, _value in re.findall(r"^#define (\w+) +(0x[0-9A-F]+|\d+|\(1u << \d+\))u? *(?://.*)?$", (HERE / "hw.h").read_text(), re.M):
+  globals()[_name] = eval(_value.replace("u", ""), {})
 
 CACHE = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "blackhole-py-rewrite"
+# Pieces are concatenated without relocation (boot.ld rejects any data); -fno-jump-tables keeps switch tables out.
 CFLAGS = [
-  "--target=riscv32-none-unknown-elf", "-march=rv32im_zicsr", "-mabi=ilp32", "-std=c11", "-Os", "-Wall", "-Wextra",
-  "-Werror", "-ffreestanding", "-fno-builtin", "-fno-pic", "-fno-common", "-fno-jump-tables", "-fno-stack-protector",
-  "-fno-unwind-tables", "-fno-asynchronous-unwind-tables", "-fno-delete-null-pointer-checks", "-fno-ident",
-  "-msmall-data-limit=0", "-ffunction-sections", "-fdata-sections", "-mllvm", "-enable-machine-outliner=never",
-  "-nostdlib", "-static", "-fuse-ld=lld", "-Wl,--gc-sections,--no-relax,--build-id=none", "-I", str(HERE),
+  "--target=riscv32-none-unknown-elf", "-march=rv32im_zicsr", "-mabi=ilp32", "-Os", "-Wall", "-Wextra", "-Werror",
+  "-ffunction-sections", "-fno-jump-tables", "-nostdlib", "-fuse-ld=lld", "-Wl,--gc-sections,--no-relax,--build-id=none",
+  "-I", str(HERE),
 ]
-
-def _deps(srcs: list[Path]) -> list[Path]:
-  seen, todo = set(), list(srcs)
-  while todo:
-    if (p := todo.pop()) in seen: continue
-    seen.add(p)
-    for inc in re.findall(rb'^\s*#\s*include\s*"([^"]+)"', p.read_bytes(), re.M):
-      todo += [q for d in (p.parent, HERE) if (q := (d / inc.decode()).resolve()).is_file()][:1]
-  return sorted(seen)
+SOURCES = sorted(p for p in HERE.iterdir() if p.suffix in (".c", ".h", ".ld"))  # all of it goes in the cache key
 
 def compile(srcs: list, base: int, size: int, flags: tuple[str, ...] = (), ld: str = "link.ld") -> bytes:
-  srcs = [(HERE / s).resolve() for s in srcs]
-  key = hashlib.sha256(repr((CFLAGS, flags, base, size, ld)).encode())
-  for p in [HERE / ld, *_deps(srcs)]: key.update(p.read_bytes())
+  srcs = [HERE / s for s in srcs]
+  key = hashlib.sha256(repr((CFLAGS, flags, srcs, base, size, ld)).encode())
+  for p in SOURCES: key.update(p.read_bytes())
   if (out := CACHE / f"{key.hexdigest()[:24]}.bin").exists(): return out.read_bytes()
   CACHE.mkdir(parents=True, exist_ok=True)
   with tempfile.TemporaryDirectory(dir=CACHE) as d:
@@ -68,7 +48,7 @@ def _piece(srcs: list, role: str, flags: tuple[str, ...] = ()) -> bytes:
 def boot_stub(role: str) -> bytes: return _piece(["boot.c"], role)
 
 @functools.cache
-def park_epilogue(role: str) -> bytes: return _piece(["boot.c"], role, ("-DPARK",))
+def park_epilogue(role: str) -> bytes: return _piece(["park.c"], role)
 
 def pack_megakernel(images: dict[str, bytes]) -> tuple[bytes, dict[str, int], int]:
   if unknown := set(images) - set(ROLES): raise ValueError(f"unknown RISC roles: {unknown}")

@@ -4,6 +4,7 @@ TLB_SIZE = 1 << 21
 SUPPORTED = ("p100a", "p150a", "p150b")
 ARC = (8, 0)
 TELEMETRY_DATA, TELEMETRY_PTR = 0x80030430, 0x80030434
+TELEMETRY_BOARD_ID = 1
 CARDS = {0x36: "p100", 0x40: "p150a", 0x41: "p150b", 0x42: "p150c", 0x43: "p100a"}  # telemetry board id -> name
 
 libc = ctypes.CDLL(ctypes.util.find_library("c"), use_errno=True)
@@ -82,7 +83,27 @@ class Card:
     if (addr := telemetry_table(self.arc_read32).get(tag)) is None: raise RuntimeError(f"ARC telemetry has no tag {tag}")
     return self.arc_read32(addr)
 
+class Monitor:
+  # Read-only NoC access for tools like smi that run beside the process holding the card. A backend implements
+  # noc_read(addr, xy) -> u32, in_use() and close(); reads raise OSError when the card is gone.
+  table: dict[int, int] | None = None
+
+  def noc_read(self, addr:int, xy=ARC) -> int: raise NotImplementedError
+
+  def telemetry(self, tags:dict[str, int]) -> dict[str, int | None]:
+    if self.table is None: self.table = telemetry_table(self.noc_read)
+    return {k: self.noc_read(self.table[t]) if t in self.table else None for k, t in tags.items()}
+
+  def board_type(self) -> str:
+    kind = self.telemetry({"board": TELEMETRY_BOARD_ID})["board"]
+    return "?" if kind is None else CARDS.get(kind >> 4 & 0xFFFF, f"{kind >> 4 & 0xFFFF:#x}")
+
 def open_card(index:int=0) -> Card:
   if sys.platform == "darwin": from pci_macos import MacCard as backend
   else: from pci_linux import LinuxCard as backend
+  return backend(index)
+
+def open_monitor(index:int=0) -> Monitor:
+  if sys.platform == "darwin": from pci_macos import MacMonitor as backend
+  else: from pci_linux import LinuxMonitor as backend
   return backend(index)
