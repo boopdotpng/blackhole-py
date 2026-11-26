@@ -2,7 +2,7 @@ from enum import Enum, IntEnum, IntFlag
 from functools import partial
 from typing import Any, dataclass_transform
 
-# descriptions of every instruction and field are in docs/notes.toml (docs/index.html)
+# descriptions of every instruction and field are in docs/index.html
 
 # ---- DSL: one Inst subclass per encoding, fields declared as `name: type = bits[hi:lo]` ----
 

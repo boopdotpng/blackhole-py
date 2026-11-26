@@ -1,4 +1,4 @@
-# Tensix config register fields. Per-field notes: docs/notes.toml
+# Tensix config register fields. Per-field notes: docs/index.html
 from enum import Enum, IntEnum
 from dataclasses import dataclass
 from typing import NamedTuple
