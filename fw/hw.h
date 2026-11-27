@@ -3,6 +3,8 @@
 #define ROLE_BRISC  0
 #define ROLE_NCRISC 1
 #define ROLE_TRISC0 2
+#define ROLE_TRISC1 3
+#define ROLE_TRISC2 4
 
 // ---- Worker L1 layout (0x0 holds `jal WORKER_BRISC_BASE`) ----
 #define L1_SIZE          0x180000
@@ -115,6 +117,7 @@
 
 #define LOCAL_MEM                0xFFB00000  // each RISC's private data RAM
 #define NOC_BASELINE             (LOCAL_MEM + 0x100) // private pre-kernel transaction counters
+#define CB_RING_OFF              (LOCAL_MEM + 0x600) // 32 x u32 per-RISC CB ring byte offsets (-512(gp)..-388(gp))
 #define RETURN_VEC               (LOCAL_MEM + 0x7F0) // -16(gp): return PC; -12(gp): saved sp
 #define STACK_TOP                0xFFB01FF0
 #define TRISC_STACK_TOP          0xFFB00FF0

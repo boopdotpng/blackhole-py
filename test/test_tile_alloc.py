@@ -60,7 +60,51 @@ def test_phase_reuse_orders_producers():
     packed = instruction(PackOp(out), stored)
     dependency = instruction(NocWrite(1, out, 512), packed, UOp.const(0))
   stream = insert_syncs(linearize(UOp.sink(dependency)))
-  allocated, addresses = allocate_cb_stream(stream, sizes)
+  allocated, addresses, depths, pages = allocate_cb_stream(stream, sizes)
   verify_tile_stream(allocated)
   assert len(addresses) < 32
+  assert all(d == 1 for d in depths.values())
   assert any(u.is_ins and isinstance(u.ins_op, CbOp) and u.ins_op.kind == 'wait' and u.ins_op.role == 'brisc' for u in allocated)
+
+
+def test_streaming_cb_default_depth_and_l1_stepdown():
+  from compiler import UOp, dtypes, linearize
+  from compiler.blackhole.pipeline import instruction, insert_syncs, verify_tile_stream
+  from compiler.blackhole.alloc import allocate_cb_stream
+  from compiler.blackhole.specs import NocRead, UnpackOp, Space, SfpLoadOp, SfpStoreOp, PackOp, NocWrite, CbOp
+
+  def build_stream(a_size, w_size, iters=10):
+    outer = UOp.range(iters, 0, 'out')
+    r0 = instruction(NocRead(0, 0, a_size), outer)
+    r1 = instruction(NocRead(1, 1, w_size), outer)
+    u0 = instruction(UnpackOp(Space.DST, 0, dst_slot=0), r0)
+    u1 = instruction(UnpackOp(Space.DST, 1, dst_slot=1), r1)
+    fp = UOp.range(UOp.const(1).after(outer), 1, 'fp')
+    v0 = instruction(SfpLoadOp(0), u0, fp, dtype=dtypes.fp32)
+    v1 = instruction(SfpLoadOp(1), u1, fp, dtype=dtypes.fp32)
+    st = instruction(SfpStoreOp(0), v0 + v1, fp).end(fp)
+    pk = instruction(PackOp(2, dst_slot=0), st)
+    wr = instruction(NocWrite(2, 2, 512), pk, outer).end(outer)
+    return insert_syncs(linearize(UOp.sink(wr)))
+
+  # Normal streaming kernel: all 3 streaming CBs get depth 3 with no fence.
+  stream = build_stream(64 * 1024, 64 * 1024, iters=10)
+  allocated, addrs, depths, pages = allocate_cb_stream(stream, {0: 64 * 1024, 1: 64 * 1024, 2: 4096})
+  verify_tile_stream(allocated)
+  assert depths == {0: 3, 1: 3, 2: 3}
+  assert addrs[1] - addrs[0] == 3 * 64 * 1024
+  assert addrs[2] - addrs[1] == 3 * 64 * 1024
+  assert not any(u.is_ins and isinstance(u.ins_op, CbOp) and u.ins_op.kind == 'wait' and u.ins_op.role == 'brisc' for u in allocated)
+
+  # Tight L1 (like down_proj: 344 KiB + 200 KiB + 4 KiB): largest page steps down 3 -> 2.
+  stream = build_stream(344 * 1024, 200 * 1024, iters=4)
+  allocated, addrs, depths, pages = allocate_cb_stream(stream, {0: 344 * 1024, 1: 200 * 1024, 2: 4096})
+  verify_tile_stream(allocated)
+  assert depths == {0: 2, 1: 3, 2: 3}
+  assert max(addrs[i] + pages[i] * depths[i] for i in addrs) <= 0x180000
+
+  # Single-iteration loop: caps depth at 1 to avoid wasting L1.
+  stream = build_stream(64 * 1024, 64 * 1024, iters=1)
+  _, _, depths, _ = allocate_cb_stream(stream, {0: 64 * 1024, 1: 64 * 1024, 2: 4096})
+  assert depths == {0: 1, 1: 1, 2: 1}
+

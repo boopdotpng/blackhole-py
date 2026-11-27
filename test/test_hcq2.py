@@ -208,5 +208,34 @@ class TestHCQ2Hardware(unittest.TestCase):
             np.testing.assert_allclose(out, ref, rtol=5e-2, atol=5e-2)
         finally: dev.close()
 
+  def test_multi_depth_ring_wraparound(self):
+    """Exercise depth=3 ring CB wraparound (>10 tiles/core) across map, matmul, and fused SwiGLU."""
+    import numpy as np
+    from device import Device
+    rng = np.random.default_rng(7)
+    for card in _hw_cards():
+      with self.subTest(card=card):
+        dev = Device(card)
+        try:
+          # > 139 * 10 tiles so every worker wraps depth=3 ring CBs multiple times.
+          x_map = rng.standard_normal((16, 139 * 16 * 6)).astype(np.float32) * 0.5
+          y_map = rng.standard_normal(x_map.shape).astype(np.float32) * 0.5
+          out_map = (Tensor(x_map, dtype=dtypes.bf16) + Tensor(y_map, dtype=dtypes.bf16) * 2.0).numpy(device=dev)
+          np.testing.assert_allclose(out_map, x_map + y_map * 2.0, rtol=2e-2, atol=2e-2)
+
+          # Fused SwiGLU (gate.silu() * up) with N = 139 * 16 * 6 = 13344 (>10 tiles/core across 2 weight CBs + 2 act CBs + out CB)
+          k, n = 256, 139 * 16 * 5
+          a_np = (rng.standard_normal((1, k)) * 0.25).astype(np.float32)
+          wg_np = (rng.standard_normal((n, k)) * 0.25).astype(np.float32)
+          wu_np = (rng.standard_normal((n, k)) * 0.25).astype(np.float32)
+          a = Tensor(a_np, dtype=dtypes.bf16)
+          wg = Tensor(wg_np, dtype=dtypes.bf16)
+          wu = Tensor(wu_np, dtype=dtypes.bf16)
+          out_swiglu = ((a @ wg.T).silu() * (a @ wu.T)).numpy(device=dev)
+          g_ref = a_np @ wg_np.T
+          ref_swiglu = (g_ref / (1.0 + np.exp(-g_ref))) * (a_np @ wu_np.T)
+          np.testing.assert_allclose(out_swiglu, ref_swiglu, rtol=5e-2, atol=5e-2)
+        finally: dev.close()
+
 
 if __name__ == "__main__": unittest.main()

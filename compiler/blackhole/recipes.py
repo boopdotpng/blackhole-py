@@ -3,7 +3,8 @@ from dataclasses import replace
 from hw import cfg, isa
 from ..dtype import dtypes
 from ..uop import Ops, UOp
-from ..isa.rv32 import RVOps, X, X0, RA, rv_li, rv_arg, rv_label
+from ..isa import vreg
+from ..isa.rv32 import RVOps, X, X0, RA, LOCAL_BASE, DEFAULT_WGPR, rv_li, rv_arg, rv_label
 from ..isa.tensix import BlackholeRenderer, tt_ins
 from .specs import Space, UnpackOp, PackOp, SemOp, StallOp, SfpLoadOp, FpuOp, NocRead, NocGather, IndexTile, NocWrite, NocScatter, NocWait, CbOp, DstZero, MoveToDst
 from .sfpu import select_sfpu
@@ -46,14 +47,39 @@ def contiguous_group(operands, lanes, itemsize, axis):
 
 
 class Recipes:
-  def __init__(self, role, cb_addrs):
+  def __init__(self, role, cb_addrs, cb_depths=None, cb_pages=None):
     self.role, self.cb_addrs = role, cb_addrs
+    self.cb_depths, self.cb_pages = cb_depths or {}, cb_pages or {}
     self.out = []
     self.thread = {}
     self.config = {}
     self.label_id = 0
     self.fixed_unpack = set()
     self.fixed_fpu_dtype = None
+    self.cb_base = {}
+    self.cb_word = {}
+
+  def _load_cb_off(self, cb_id):
+    reg = vreg(2_000_000 + self.label_id, dtypes.i32, DEFAULT_WGPR, name=f"cb{cb_id}_off")
+    self.label_id += 1
+    off = UOp.ins(RVOps.LW, (LOCAL_BASE, UOp.const(-512 + 4 * cb_id)), dtypes.i32, *reg)
+    self.out.append(off)
+    return off
+
+  def cb_addr(self, cb_id):
+    if self.cb_depths.get(cb_id, 1) <= 1: return self.cb_addrs[cb_id]
+    if cb_id in self.cb_base: return self.cb_base[cb_id]
+    return self.cb_addrs[cb_id] + self._load_cb_off(cb_id)
+
+  def cb_word_addr(self, cb_id, offset=0):
+    off16 = (offset // 16).simplify() if isinstance(offset, UOp) else offset // 16
+    if self.cb_depths.get(cb_id, 1) <= 1:
+      base16 = (self.cb_addrs[cb_id] >> 4) - 1
+      return (base16 + off16).simplify() if isinstance(off16, UOp) else base16 + off16
+    if cb_id in self.cb_word:
+      w = self.cb_word[cb_id]
+      return w if (isinstance(off16, int) and off16 == 0) or (isinstance(off16, UOp) and off16.is_const and off16.val == 0) else w + off16
+    return (((self.cb_addr(cb_id) + offset) >> 4) - 1)
 
   def tt(self, instruction): self.out.append(tt_ins(instruction, role=self.role))
 
@@ -82,6 +108,7 @@ class Recipes:
     import fw
     niu = int(self.role == "ncrisc")
     if isinstance(spec, NocWait): return self.call(fw.FN_NOC_WAIT, (niu, spec.tid, int(spec.acked)))
+    base = self.cb_addr(spec.cb_id)
     if isinstance(spec, NocWrite) and spec.blocks != (1, 1):
       _, row, col, *batch = operands
       mf, nf = spec.shape_faces
@@ -90,7 +117,7 @@ class Recipes:
         for c in range(spec.blocks[1]):
           self.call(fw.FN_NOC_WRITE, (niu, rv_arg(spec.param_slot), rv_arg(spec.param_slot, high=True),
                     ((batch_row + row + r) * nf + col + c) * spec.nbytes, spec.nbytes,
-                    self.cb_addrs[spec.cb_id] + (r * spec.blocks[1] + c) * spec.nbytes, spec.tid))
+                    base + (r * spec.blocks[1] + c) * spec.nbytes, spec.tid))
           call = self.out.pop()
           done = self.label()
           self.out += [UOp.ins(RVOps.BEQ, (done, (row + r < mf) & (col + c < nf), X0), dtypes.void), call, rv_label(done)]
@@ -98,7 +125,7 @@ class Recipes:
     offset = operands[0] if isinstance(spec, NocRead) else operands[1]
     self.call(fw.FN_NOC_READ if isinstance(spec, NocRead) else fw.FN_NOC_WRITE,
               (niu, rv_arg(spec.param_slot), rv_arg(spec.param_slot, high=True), offset,
-               spec.nbytes, self.cb_addrs[spec.cb_id], spec.tid))
+               spec.nbytes, base, spec.tid))
 
   def label(self):
     key = UOp.const(self.label_id); self.label_id += 1
@@ -187,7 +214,8 @@ class Recipes:
     import fw
     lane, count, offset, valid = contiguous_group(operands, spec.lanes, spec.itemsize, 10000 + self.label_id)
     self.label_id += 1
-    address = self.cb_addrs[spec.cb_id] + lane * count * spec.itemsize
+    base = self.cb_addr(spec.cb_id)
+    address = base + lane * count * spec.itemsize
     zero, done = UOp.const(self.label_id), UOp.const(self.label_id + 1)
     self.label_id += 2
     self.out += [lane, address]
@@ -202,10 +230,10 @@ class Recipes:
       row, col = index // n % m, index % n
       face = (index // (m * n) * ((m + 7) // 8) + row // 8) * ((n + 15) // 16) + col // 16
       byte_offset = (face * 128 + row % 8 * 16 + col % 16) * size
-      scratch = self.cb_addrs[spec.cb_id] + 2048
+      scratch = base + 2048
       self.call(fw.FN_NOC_READ, (0, rv_arg(slot), rv_arg(slot, high=True), byte_offset, size, scratch, spec.tid))
       self.call(fw.FN_NOC_WAIT, (0, spec.tid, 1))
-      loaded = UOp.ins(RVOps.LW, (UOp.const(scratch), UOp.const(0)), u.dtype)
+      loaded = UOp.ins(RVOps.LW, (scratch if isinstance(scratch, UOp) else UOp.const(scratch), UOp.const(0)), u.dtype)
       self.out.append(loaded)
       indirect[u] = loaded
     offset, valid = offset.substitute(indirect), valid.substitute(indirect)
@@ -229,9 +257,10 @@ class Recipes:
     lane, count, offset, valid = contiguous_group(operands[1:], 128, spec.itemsize, 10000 + self.label_id)
     self.label_id += 1
     done = UOp.const(self.label_id); self.label_id += 1
+    base = self.cb_addr(spec.cb_id)
     self.out.append(lane)
     self.call(fw.FN_NOC_WRITE, (1, rv_arg(spec.param_slot), rv_arg(spec.param_slot, high=True),
-                              offset, count * spec.itemsize, self.cb_addrs[spec.cb_id] + lane * count * spec.itemsize, spec.tid))
+                              offset, count * spec.itemsize, base + lane * count * spec.itemsize, spec.tid))
     write_call = self.out.pop()
     self.out += [UOp.ins(RVOps.BEQ, (done, valid, X0), dtypes.void), write_call, rv_label(done)]
     self.call(fw.FN_NOC_WAIT, (1, spec.tid, 1))
@@ -240,16 +269,28 @@ class Recipes:
   def index_tile(self, spec, operands):
     lane = UOp.range(128, 10000 + self.label_id, "index")
     self.label_id += 1
+    base = self.cb_addr(spec.cb_id)
     value, valid = (u.substitute({UOp.special(128, "gather_lane"): lane}) for u in operands)
-    self.out += [lane, UOp.ins(RVOps.SW, (self.cb_addrs[spec.cb_id] + lane * 4, valid.where(value, 0), UOp.const(0)), dtypes.void),
+    self.out += [lane, UOp.ins(RVOps.SW, (base + lane * 4, valid.where(value, 0), UOp.const(0)), dtypes.void),
                  UOp.noop().end(lane)]
 
   def cb(self, spec):
-    # One-page CBs: the producer can overwrite the stage only after it is
-    # popped. Counters are 16-bit overlay registers reset by resident boot.
+    # Overlay stream registers hold 16-bit pushed/popped counters reset per
+    # dispatch; multi-page CBs track private byte offsets in LOCAL_MEM (-512(gp)).
     base = 0xFFB40000 + (8 + spec.cb_id) * 0x1000
+    depth = self.cb_depths.get(spec.cb_id, 1)
     self.out.append(rv_li(base, dtypes.u32, X[30]))
-    if spec.kind in ("reserve", "wait"):
+    if spec.kind == "reserve" and depth > 1:
+      key = UOp.const(self.label_id); self.label_id += 1
+      self.out += [rv_label(key),
+                   UOp.ins(RVOps.LHU, (X[30], UOp.const(32)), dtypes.u32, X[31]),
+                   UOp.ins(RVOps.LHU, (X[30], UOp.const(40)), dtypes.u32, X[29]),
+                   UOp.ins(RVOps.SUB, (X[31], X[29]), dtypes.u32, X[31]),
+                   UOp.ins(RVOps.SLLI, (X[31], UOp.const(16)), dtypes.u32, X[31]),
+                   UOp.ins(RVOps.SRLI, (X[31], UOp.const(16)), dtypes.u32, X[31]),
+                   UOp.ins(RVOps.ADDI, (X0, UOp.const(depth)), dtypes.u32, X[29]),
+                   UOp.ins(RVOps.BGEU, (key, X[31], X[29]), dtypes.void)]
+    elif spec.kind in ("reserve", "wait"):
       key = UOp.const(self.label_id); self.label_id += 1
       self.out += [rv_label(key),
                    UOp.ins(RVOps.LHU, (X[30], UOp.const(32)), dtypes.u32, X[31]),
@@ -261,8 +302,36 @@ class Recipes:
                    UOp.ins(RVOps.ADDI, (X[31], UOp.const(1)), dtypes.u32, X[31]),
                    UOp.ins(RVOps.FENCE, (), dtypes.void),
                    UOp.ins(RVOps.SW, (X[30], X[31], offset), dtypes.void)]
+      if depth > 1:
+        page = self.cb_pages[spec.cb_id]
+        slot_off = UOp.const(-512 + 4 * spec.cb_id)
+        keep = UOp.const(self.label_id); self.label_id += 1
+        self.out += [UOp.ins(RVOps.LW, (LOCAL_BASE, slot_off), dtypes.u32, X[31]),
+                     rv_li(page, dtypes.u32, X[29]),
+                     UOp.ins(RVOps.ADD, (X[31], X[29]), dtypes.u32, X[31]),
+                     rv_li(page * depth, dtypes.u32, X[29]),
+                     UOp.ins(RVOps.BLTU, (keep, X[31], X[29]), dtypes.void),
+                     UOp.ins(RVOps.ADDI, (X0, UOp.const(0)), dtypes.u32, X[31]),
+                     rv_label(keep),
+                     UOp.ins(RVOps.SW, (LOCAL_BASE, X[31], slot_off), dtypes.void)]
     else: raise ValueError(spec)
     self.out.append(UOp.ins(RVOps.FENCE, (), dtypes.void))
+    if depth > 1:
+      if spec.kind in ("reserve", "wait"):
+        # Load the ring offset once when acquiring the slot so inner loops
+        # (e.g. K-prefetched unpacks) reuse it with zero per-iteration overhead.
+        off = self._load_cb_off(spec.cb_id)
+        if self.role in ("trisc0", "trisc2"):
+          word = UOp.const((self.cb_addrs[spec.cb_id] >> 4) - 1) + (off >> 4)
+          self.out.append(word)
+          self.cb_word[spec.cb_id] = word
+        else:
+          addr = UOp.const(self.cb_addrs[spec.cb_id]) + off
+          self.out.append(addr)
+          self.cb_base[spec.cb_id] = addr
+      else:
+        self.cb_base.pop(spec.cb_id, None)
+        self.cb_word.pop(spec.cb_id, None)
 
   def setc(self, *sets):
     updates = {}
@@ -320,7 +389,7 @@ class Recipes:
              u.dst_addr[1](64 + spec.dst_slot * 8 * 16))
     self.setc(cfg.THREAD.srca_override_addr(0))
     self.drain()
-    self.store(cfg.TENSIX_CFG + 4 * u.base_addr[1].word, (self.cb_addrs[spec.cb_id] + offset) // 16 - 1, readback=True)
+    self.store(cfg.TENSIX_CFG + 4 * u.base_addr[1].word, self.cb_word_addr(spec.cb_id, offset), readback=True)
     self.tt(isa.SETADCXX(counters=1, x_end=127))
     self.tt(isa.SETADCZW(counters=1, mask=15))
     self.tt(isa.STALLWAIT(stall=isa.Stall.UNPACK, wait=isa.Wait.TRISC_CFG))
@@ -348,7 +417,7 @@ class Recipes:
     stride = spec.face_stride or (n * 2 if spec.src_dtype is dtypes.bf16 else 16 + n * spec.src_dtype.bits // 8)
     for face in range(spec.faces):
       self.store(cfg.TENSIX_CFG + 4 * u.base_addr[0].word,
-                 (self.cb_addrs[spec.cb_id] + offset + face * stride) // 16 - 1, readback=True)
+                 self.cb_word_addr(spec.cb_id, offset + face * stride), readback=True)
       self.tt(isa.SETADCXX(counters=1 << index, x_end=n - 1))
       self.tt(isa.SETADCZW(counters=1 << index, ch1_z=face, mask=15))
       self.tt(isa.STALLWAIT(stall=isa.Stall.UNPACK, wait=isa.Wait.TRISC_CFG))
@@ -390,7 +459,7 @@ class Recipes:
     self.setc(pm[1].ysrc_clear(1), pm[1].ydst_clear(1), pm[1].zsrc_clear(1))
     self.rmw(ctx.dst_target_offset(spec.dst_slot * 8))
     self.tt(isa.SETADC(counters=4, dim=3, value=0))
-    address = ((self.cb_addrs[spec.cb_id] + offset) >> 4) - 1
+    address = self.cb_word_addr(spec.cb_id, offset)
     if isinstance(address, UOp):
       self.tt(isa.STALLWAIT(stall=isa.Stall.CFG, wait=isa.Wait.THCON | isa.Wait.PACK0))
       self.drain()
@@ -496,5 +565,5 @@ class Recipes:
     return self.out
 
 
-def compile_core(stream, role, cb_addrs):
-  return BlackholeRenderer().compile_core(select_scalar(Recipes(role, cb_addrs).lower(stream)), fix_sfpu=role == "trisc1")
+def compile_core(stream, role, cb_addrs, cb_depths=None, cb_pages=None):
+  return BlackholeRenderer().compile_core(select_scalar(Recipes(role, cb_addrs, cb_depths, cb_pages).lower(stream)), fix_sfpu=role == "trisc1")

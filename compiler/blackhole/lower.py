@@ -50,11 +50,12 @@ def lower_kernel(kernel, args, max_workers=139, grid_shape=(13, 10)):
   # Code depends on layout/type/provenance, not on which layer owns its data.
   signature = tuple(arg.param_like(i) if arg.is_variable else UOp.param(i, arg.dtype, shape=arg.shape) for i, arg in enumerate(args))
   return _lower_kernel(kernel, signature, max_workers, grid_shape, os.environ.get("BH_MCAST", "1") != "0",
-                       tuple(i for i, arg in enumerate(args) if arg.op is not Ops.ALLOC and not arg.is_variable))
+                       tuple(i for i, arg in enumerate(args) if arg.op is not Ops.ALLOC and not arg.is_variable),
+                       max(1, int(os.environ.get("BH_CB_DEPTH", "3"))))
 
 
 @cache
-def _lower_kernel(kernel, args, max_workers, grid_shape, mcast, static_params=()):
+def _lower_kernel(kernel, args, max_workers, grid_shape, mcast, static_params=(), cb_depth=3):
   from .fpu import match_reductions, MatchedMvmul
   stages = normalize_stages(kernel)
   normalized = UOp.sink(*stages)
@@ -65,7 +66,7 @@ def _lower_kernel(kernel, args, max_workers, grid_shape, mcast, static_params=()
   written = {s.src[0].src[0].arg.slot for s in stages if s.src[0].src[0].op is Ops.PARAM}
   static_weights = tuple(slot for slot in static_params if slot not in written and all(u in weights for u in normalized.toposort()
                          if u.op is Ops.LOAD and u.src[0].src[0].op is Ops.PARAM and u.src[0].src[0].arg.slot == slot))
-  return TileLowerer(stages, args, matches, max_workers, static_weights, grid_shape, mcast).run()
+  return TileLowerer(stages, args, matches, max_workers, static_weights, grid_shape, mcast, cb_depth).run()
 
 
 def dimensions(shape):
@@ -109,9 +110,9 @@ def normalize_stages(kernel):
 
 class TileLowerer:
   """One expression walker for maps, reductions, contractions, and L1 stages."""
-  def __init__(self, stores, args, matches, max_workers, static_weights, grid_shape, mcast):
+  def __init__(self, stores, args, matches, max_workers, static_weights, grid_shape, mcast, cb_depth=3):
     import itertools
-    self.args, self.matches, self.stores = args, matches, stores
+    self.args, self.matches, self.stores, self.cb_depth = args, matches, stores, cb_depth
     self.alloc, self.axis, self.stages = TileAllocator(deferred=True), itertools.count(1), {}
     self.layouts = [8] * len(args)
     self.static_weights = static_weights
@@ -529,4 +530,5 @@ class TileLowerer:
     if self.schedule.grid:
       result = result.end(self.om)
       if self.batch > 1: result = result.end(self.batch_id)
-    return LoweredKernel(compile_tile_graph(UOp.sink(result), self.alloc.cb_addrs, self.alloc.cb_sizes), self.workers, tuple(self.layouts), self.schedule.grid)
+    return LoweredKernel(compile_tile_graph(UOp.sink(result), self.alloc.cb_addrs, self.alloc.cb_sizes, cb_depth=self.cb_depth),
+                         self.workers, tuple(self.layouts), self.schedule.grid)

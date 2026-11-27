@@ -12,6 +12,14 @@
 
 extern void run_kernel(u32 pc, u32 tp_val, u32 t0_val);
 
+#if ROLE == ROLE_NCRISC || ROLE == ROLE_TRISC0 || ROLE == ROLE_TRISC2
+INLINE void clear_cb_ring_offsets(u32 cb_mask) {
+  for (u32 m = cb_mask; m; m &= m - 1) {
+    write32(CB_RING_OFF + 4 * (u32)__builtin_ctz(m), 0);
+  }
+}
+#endif
+
 #if ROLE == ROLE_BRISC
 #define SECOND NOC_REGS(0)
 #elif ROLE == ROLE_NCRISC
@@ -224,6 +232,7 @@ NORETURN worker_main(void) {
       u32 cb = (u32)__builtin_ctz(m);
       write32(STREAM_REG(CB_STREAM0 + cb, CB_PUSHED), 0);
       write32(STREAM_REG(CB_STREAM0 + cb, CB_POPPED), 0);
+      write32(CB_RING_OFF + 4 * cb, 0);
     }
 
     if (any_trisc) reset_tensix_step();
@@ -272,7 +281,10 @@ NORETURN worker_main(void) {
     WAIT_SLOW(read8(SUBORDINATE_SYNC) == 0x80);
     for (u32 tid = 0; tid < 16; tid++) write32(NOC_BASELINE + 4 * tid, read32(OUTSTANDING(1, tid)));
     u32 pc = read32(KERNEL_PC + 4);
-    if (pc) run_kernel(pc, SECOND + 2048, 0);
+    if (pc) {
+      clear_cb_ring_offsets(read32(DISP_CB_MASK));
+      run_kernel(pc, SECOND + 2048, 0);
+    }
     noc_drain_all(1);
     fence();
     write8(SUBORDINATE_SYNC, 0);
@@ -328,6 +340,9 @@ NORETURN worker_main(void) {
 
     u32 pc = read32(KERNEL_PC + 8 + 4 * TRISC_ID);
     if (pc) {
+#if ROLE == ROLE_TRISC0 || ROLE == ROLE_TRISC2
+      clear_cb_ring_offsets(read32(DISP_CB_MASK));
+#endif
       run_kernel(pc, SECOND + 2048, ROLE == ROLE_TRISC0 ? PC_BUF + 2048 : 0);
       tensix_drain();
       reset_thread();

@@ -58,41 +58,105 @@ class TileAllocator:
     del self._dst[slot]
 
 
-def allocate_cb_stream(stream, sizes):
-  """Color CB lifetimes after synchronization has made last uses explicit.
+def allocate_cb_stream(stream, sizes, default_depth=3):
+  """Allocate physical CBs and multi-page ring depths after synchronization.
 
-  Only queues with the same producer/consumer roles may alias: lexical order
-  alone cannot order a BRISC producer against a TRISC2 producer. Multicast
-  rings keep dedicated allocations because their protocol is separate.
+  Streaming CBs (brisc->trisc0 and trisc2->ncrisc) inside loops default to
+  `default_depth` pages so producer and consumer overlap across iterations,
+  stepping down automatically when worker L1 capacity is tight. Lifetime
+  coloring (aliasing + producer fence) is only applied when logical CBs exceed
+  32 streams or worker L1 capacity. Multicast rings keep dedicated allocations
+  because their protocol is separate.
   """
   from dataclasses import replace
   from collections import defaultdict
+  from ..uop import Ops
   from .specs import CbOp, PackOp, StallOp, NocMcastRead, NocMcastForward, McastRelease
   from .pipeline import instruction
-  uses, producers, consumers, rings = defaultdict(list), defaultdict(set), defaultdict(set), set()
+  uses, producers, consumers, rings, push_scopes = defaultdict(list), defaultdict(set), defaultdict(set), set(), defaultdict(list)
+  stack = []
   for i, u in enumerate(stream):
+    if u.op is Ops.RANGE:
+      stack.append(u)
+      continue
+    if u.op is Ops.END:
+      for r in u.src[1:]: stack.remove(r)
+      continue
     if not u.is_ins: continue
     spec = u.ins_op
     if isinstance(spec, (NocMcastForward, McastRelease)): spec = spec.stream
     if hasattr(spec, 'cb_id'): uses[spec.cb_id].append(i)
     if isinstance(spec, NocMcastRead): rings.add(spec.cb_id)
     if isinstance(spec, CbOp):
-      if spec.kind == 'push': producers[spec.cb_id].add(spec.role)
+      if spec.kind == 'push':
+        producers[spec.cb_id].add(spec.role)
+        push_scopes[spec.cb_id].append(tuple(stack))
       if spec.kind == 'pop': consumers[spec.cb_id].add(spec.role)
-  mapping, physical = {}, []
-  for cb, refs in sorted(uses.items(), key=lambda item: item[1][0]):
+
+  def page_align(n): return (n + 4095) & ~4095
+
+  def desired_depth(cb):
+    if default_depth <= 1 or cb in rings: return 1
+    if (frozenset(producers[cb]), frozenset(consumers[cb])) not in (
+        (frozenset({"brisc"}), frozenset({"trisc0"})),
+        (frozenset({"trisc2"}), frozenset({"ncrisc"})),
+    ): return 1
+    total = 0
+    for scope in push_scopes[cb]:
+      iters = 1
+      for r in scope:
+        bound = r.src[0].without_after
+        if bound.is_const: hi = max(0, int(bound.val))
+        elif isinstance(bound.vmax, int): hi = max(0, bound.vmax)
+        else: return default_depth
+        iters *= hi
+        if iters >= default_depth: return default_depth
+      total += max(1, iters)
+      if total >= default_depth: return default_depth
+    return max(1, total)
+
+  ordered = sorted(uses.items(), key=lambda item: item[1][0])
+  need_alias = len(ordered) > 32 or sum(page_align(sizes[cb]) for cb, _ in ordered) > 0x160000
+  mapping, physical, members = {}, [], []
+  for cb, refs in ordered:
     key = (frozenset(producers[cb]), frozenset(consumers[cb])) if cb not in rings else ('ring', cb)
     # Queues without a complete protocol (e.g. external L1 test inputs) do
     # not have a proven lifetime and must remain dedicated.
     if not producers[cb] or not consumers[cb]: key = ('external', cb)
-    slot = next((j for j, (end, _, owner) in enumerate(physical) if end < refs[0] and owner == key), len(physical))
-    size = sizes[cb]
-    if slot == len(physical): physical.append((refs[-1], size, key))
-    else: physical[slot] = refs[-1], max(size, physical[slot][1]), key
+    if need_alias:
+      slot = next((j for j, (end, _, owner) in enumerate(physical) if end < refs[0] and owner == key), len(physical))
+    else:
+      slot = len(physical)
+    size = page_align(sizes[cb])
+    if slot == len(physical):
+      physical.append((refs[-1], size, key))
+      members.append([cb])
+    else:
+      physical[slot] = refs[-1], max(size, physical[slot][1]), key
+      members[slot].append(cb)
     mapping[cb] = slot
+
+  need_fence = len(physical) < len(uses)
+  budget = 0x160000 - (4096 if need_fence else 0)
+  depths = [desired_depth(cbs[0]) if len(cbs) == 1 else 1 for cbs in members]
+  pages = [size for _, size, _ in physical]
+  while sum(p * d for p, d in zip(pages, depths)) > budget:
+    candidates = [i for i, d in enumerate(depths) if d > 1]
+    if not candidates: break
+    # Step down the largest page first so smaller weight/output queues keep full ring depth.
+    victim = max(candidates, key=lambda i: (pages[i], depths[i]))
+    depths[victim] -= 1
+
   alloc = TileAllocator()
-  for _, size, _ in physical: alloc.cb(size)
-  fence = alloc.cb() if len(physical) < len(uses) else None
+  cb_depths, cb_pages = {}, {}
+  for slot, (page, depth) in enumerate(zip(pages, depths)):
+    alloc.cb(page * depth)
+    cb_depths[slot] = depth
+    cb_pages[slot] = page
+  fence = alloc.cb() if need_fence else None
+  if fence is not None:
+    cb_depths[fence] = 1
+    cb_pages[fence] = 4096
   rewritten, replacements = [], {}
   for u in stream:
     value = u.replace(src=tuple(replacements.get(s, s) for s in u.src))
@@ -111,4 +175,4 @@ def allocate_cb_stream(stream, sizes):
       rewritten.extend((instruction(StallOp("pack", "trisc2")),
                         instruction(CbOp("reserve", fence, "trisc2")), instruction(CbOp("push", fence, "trisc2")),
                         instruction(CbOp("wait", fence, "brisc")), instruction(CbOp("pop", fence, "brisc"))))
-  return rewritten, alloc.cb_addrs
+  return rewritten, alloc.cb_addrs, cb_depths, cb_pages

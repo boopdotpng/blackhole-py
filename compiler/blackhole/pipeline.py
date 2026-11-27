@@ -186,18 +186,18 @@ def verify_tile_stream(stream):
       raise ValueError(f"unbalanced CB {cb_id} in loop scope: {dict(counts)}")
 
 
-def compile_tile_graph(sink, cb_addrs, cb_sizes=None):
+def compile_tile_graph(sink, cb_addrs, cb_sizes=None, cb_depth=3, cb_depths=None, cb_pages=None):
   joint = linearize(sink)
   synced = insert_syncs(joint)
   verify_tile_stream(synced)
   if cb_sizes is not None:
     from .alloc import allocate_cb_stream
-    synced, cb_addrs = allocate_cb_stream(synced, cb_sizes)
+    synced, cb_addrs, cb_depths, cb_pages = allocate_cb_stream(synced, cb_sizes, default_depth=cb_depth)
     verify_tile_stream(synced)
   cores = split_roles(synced)
   compiled, images = [], {}
   for core in cores.src:
-    code, binary = compile_core(list(core.src), core.arg, cb_addrs)
+    code, binary = compile_core(list(core.src), core.arg, cb_addrs, cb_depths, cb_pages)
     compiled.append(UOp.linear(*code, arg=core.arg))
     images[core.arg] = binary
   return UOp.program(sink, UOp.linear(*compiled, arg="blackhole"), UOp.source(""), UOp.binary(pack_bundle(images)))
