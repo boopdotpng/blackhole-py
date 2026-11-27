@@ -64,7 +64,7 @@ def test_phase_reuse_orders_producers():
   verify_tile_stream(allocated)
   assert len(addresses) < 32
   assert all(d == 1 for d in depths.values())
-  assert any(u.is_ins and isinstance(u.ins_op, CbOp) and u.ins_op.kind == 'wait' and u.ins_op.role == 'brisc' for u in allocated)
+  assert len(addresses) == 2  # Input and output each reuse one single-page queue.
 
 
 def test_streaming_cb_default_depth_and_l1_stepdown():

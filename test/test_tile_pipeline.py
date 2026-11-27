@@ -196,8 +196,8 @@ def test_mixed_input_multiple_phases_sync():
   from compiler.blackhole.specs import SemOp
   stream = insert_syncs(linearize(mixed_phase_graph()))
   verify_tile_stream(stream)
-  fences = [u.ins_op for u in stream if u.is_ins and isinstance(u.ins_op, SemOp) and u.ins_op.sem_id == 5]
-  assert [s.kind for s in fences] == ["post", "wait", "get"]
+  grants = [u.ins_op for u in stream if u.is_ins and isinstance(u.ins_op, SemOp) and u.ins_op.sem_id == 0]
+  assert [s.kind for s in grants] == ["post", "wait", "get"] * 3
   compile_tile_graph(mixed_phase_graph(), {i: 0x20000 + 4096 * i for i in range(4)})
 
 

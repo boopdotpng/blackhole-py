@@ -353,7 +353,8 @@ class Recipes:
       fp = cfg.DataFormat.FLOAT32
       self.rmw(cfg.MATH.dst_fmt(fp), cfg.MATH.fp32_dst_acc(1), cfg.MATH.sfpu_fp32_acc(1), cfg.PACK.read_32b(1))
       self.setc(cfg.THREAD.sfpu_dst_fmt_en(1), cfg.THREAD.sfpu_dst_fmt(fp), cfg.THREAD.dst_offset(0))
-      self.tt(isa.SEMINIT(max=1, init=1, sems=17))  # free input and output ownership tokens
+      self.tt(isa.SEMINIT(max=1, init=0, sems=0b01111))
+      self.tt(isa.SEMINIT(max=1, init=1, sems=0b10000))  # Dst starts free
       self.tt(isa.STALLWAIT(stall=isa.Stall.SYNC, wait=isa.Wait.TRISC_CFG))
       self.tt(isa.SEMPOST(sems=8))
     elif self.role == "trisc0":

@@ -64,17 +64,17 @@ def allocate_cb_stream(stream, sizes, default_depth=3):
   Streaming CBs (brisc->trisc0 and trisc2->ncrisc) inside loops default to
   `default_depth` pages so producer and consumer overlap across iterations,
   stepping down automatically when worker L1 capacity is tight. Lifetime
-  coloring (aliasing + producer fence) is only applied when logical CBs exceed
+  coloring (single-page aliases) is only applied when logical CBs exceed
   32 streams or worker L1 capacity. Multicast rings keep dedicated allocations
   because their protocol is separate.
   """
   from dataclasses import replace
   from collections import defaultdict
   from ..uop import Ops
-  from .specs import CbOp, PackOp, StallOp, NocMcastRead, NocMcastForward, McastRelease
+  from .specs import CbOp, NocMcastRead, NocMcastForward, McastRelease
   from .pipeline import instruction
   uses, producers, consumers, rings, push_scopes = defaultdict(list), defaultdict(set), defaultdict(set), set(), defaultdict(list)
-  stack = []
+  stack, scopes = [], {}
   for i, u in enumerate(stream):
     if u.op is Ops.RANGE:
       stack.append(u)
@@ -85,7 +85,9 @@ def allocate_cb_stream(stream, sizes, default_depth=3):
     if not u.is_ins: continue
     spec = u.ins_op
     if isinstance(spec, (NocMcastForward, McastRelease)): spec = spec.stream
-    if hasattr(spec, 'cb_id'): uses[spec.cb_id].append(i)
+    if hasattr(spec, 'cb_id'):
+      uses[spec.cb_id].append(i)
+      scopes[i] = tuple(stack)
     if isinstance(spec, NocMcastRead): rings.add(spec.cb_id)
     if isinstance(spec, CbOp):
       if spec.kind == 'push':
@@ -122,7 +124,16 @@ def allocate_cb_stream(stream, sizes, default_depth=3):
     key = (frozenset(producers[cb]), frozenset(consumers[cb])) if cb not in rings else ('ring', cb)
     # Queues without a complete protocol (e.g. external L1 test inputs) do
     # not have a proven lifetime and must remain dedicated.
-    if not producers[cb] or not consumers[cb]: key = ('external', cb)
+    # A single-page reserve waits for the previous pop. Aliases can share
+    # that barrier when producer and consumer traverse the same sequence of
+    # queue lifetimes, including the backedge of their common owning loop.
+    scope = scopes[refs[0]]
+    protocol = stream[refs[0]].ins_op, stream[refs[-1]].ins_op
+    if (len(producers[cb]) != 1 or len(consumers[cb]) != 1 or scopes[refs[-1]] != scope or
+        not all(isinstance(op, CbOp) and op.kind == kind for op, kind in zip(protocol, ("reserve", "pop"))) or
+        any(scopes[i][:len(scope)] != scope for i in refs)):
+      key = ('dedicated', cb)
+    else: key = (*key, scope)
     if need_alias:
       slot = next((j for j, (end, _, owner) in enumerate(physical) if end < refs[0] and owner == key), len(physical))
     else:
@@ -136,8 +147,7 @@ def allocate_cb_stream(stream, sizes, default_depth=3):
       members[slot].append(cb)
     mapping[cb] = slot
 
-  need_fence = len(physical) < len(uses)
-  budget = 0x160000 - (4096 if need_fence else 0)
+  budget = 0x160000
   depths = [desired_depth(cbs[0]) if len(cbs) == 1 else 1 for cbs in members]
   pages = [size for _, size, _ in physical]
   while sum(p * d for p, d in zip(pages, depths)) > budget:
@@ -153,10 +163,6 @@ def allocate_cb_stream(stream, sizes, default_depth=3):
     alloc.cb(page * depth)
     cb_depths[slot] = depth
     cb_pages[slot] = page
-  fence = alloc.cb() if need_fence else None
-  if fence is not None:
-    cb_depths[fence] = 1
-    cb_pages[fence] = 4096
   rewritten, replacements = [], {}
   for u in stream:
     value = u.replace(src=tuple(replacements.get(s, s) for s in u.src))
@@ -168,11 +174,4 @@ def allocate_cb_stream(stream, sizes, default_depth=3):
       value = instruction(spec, *value.src_without_body, dtype=value.dtype)
     replacements[u] = value
     rewritten.append(value)
-    if fence is not None and value.is_ins and isinstance(value.ins_op, PackOp):
-      # Phase reuse also requires a producer-side barrier: BRISC can otherwise
-      # run ahead of TRISC2 and populate a later phase before an earlier pack
-      # has completed, despite the lexical lifetimes being disjoint.
-      rewritten.extend((instruction(StallOp("pack", "trisc2")),
-                        instruction(CbOp("reserve", fence, "trisc2")), instruction(CbOp("push", fence, "trisc2")),
-                        instruction(CbOp("wait", fence, "brisc")), instruction(CbOp("pop", fence, "brisc"))))
   return rewritten, alloc.cb_addrs, cb_depths, cb_pages
