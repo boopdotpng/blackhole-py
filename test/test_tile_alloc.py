@@ -108,3 +108,13 @@ def test_streaming_cb_default_depth_and_l1_stepdown():
   _, _, depths, _ = allocate_cb_stream(stream, {0: 64 * 1024, 1: 64 * 1024, 2: 4096})
   assert depths == {0: 1, 1: 1, 2: 1}
 
+
+def test_contiguous_group_strips_after():
+  from compiler import UOp, dtypes
+  from compiler.blackhole.recipes import contiguous_group
+  lane = UOp.special(128, "gather_lane")
+  dep = UOp.range(4, 0, "outer")
+  offset = ((lane // 16) * 16 + (lane % 16)) * 2
+  valid = lane // 16 < 8
+  _, count, _, _ = contiguous_group((offset.after(dep), valid), 128, 2, 100)
+  assert count == 16

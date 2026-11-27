@@ -18,11 +18,11 @@ FORMATS = {dtypes.fp32: cfg.DataFormat.FLOAT32, dtypes.bf16: cfg.DataFormat.FLOA
 
 def contiguous_group(operands, lanes, itemsize, axis):
   """Prove contiguous addresses and uniform validity for every lane in a run."""
-  original = operands
-  ranges = list(dict.fromkeys(u for operand in operands for u in operand.toposort() if u.op is Ops.RANGE))
+  original = tuple(u.without_after for u in operands)
+  ranges = list(dict.fromkeys(u for operand in original for u in operand.toposort() if u.op is Ops.RANGE))
   frozen = {u: UOp.variable(f"_gather_outer_{i}", u.vmin, u.vmax, u.dtype) for i, u in enumerate(ranges)}
   restore = {value: key for key, value in frozen.items()}
-  operands = tuple(u.substitute(frozen) for u in operands)
+  operands = tuple(u.substitute(frozen) for u in original)
   def terms(u, scale, result):
     if u.op in (Ops.ADD, Ops.SUB):
       terms(u.src[0], scale, result)
