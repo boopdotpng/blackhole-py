@@ -185,7 +185,8 @@ class Recipes:
 
   def gather(self, spec, operands):
     import fw
-    lane, count, offset, valid = contiguous_group(operands, spec.lanes, spec.itemsize, 10000 + spec.cb_id)
+    lane, count, offset, valid = contiguous_group(operands, spec.lanes, spec.itemsize, 10000 + self.label_id)
+    self.label_id += 1
     address = self.cb_addrs[spec.cb_id] + lane * count * spec.itemsize
     zero, done = UOp.const(self.label_id), UOp.const(self.label_id + 1)
     self.label_id += 2
@@ -225,7 +226,8 @@ class Recipes:
 
   def scatter(self, spec, operands):
     import fw
-    lane, count, offset, valid = contiguous_group(operands[1:], 128, spec.itemsize, 10000 + spec.cb_id)
+    lane, count, offset, valid = contiguous_group(operands[1:], 128, spec.itemsize, 10000 + self.label_id)
+    self.label_id += 1
     done = UOp.const(self.label_id); self.label_id += 1
     self.out.append(lane)
     self.call(fw.FN_NOC_WRITE, (1, rv_arg(spec.param_slot), rv_arg(spec.param_slot, high=True),
@@ -236,7 +238,8 @@ class Recipes:
     self.out.append(UOp.noop().end(lane))
 
   def index_tile(self, spec, operands):
-    lane = UOp.range(128, 10000 + spec.cb_id, "index")
+    lane = UOp.range(128, 10000 + self.label_id, "index")
+    self.label_id += 1
     value, valid = (u.substitute({UOp.special(128, "gather_lane"): lane}) for u in operands)
     self.out += [lane, UOp.ins(RVOps.SW, (self.cb_addrs[spec.cb_id] + lane * 4, valid.where(value, 0), UOp.const(0)), dtypes.void),
                  UOp.noop().end(lane)]
@@ -372,7 +375,7 @@ class Recipes:
 
   def pack(self, spec, offset=0):
     if spec.blocks != 1:
-      for block in range(spec.blocks): self.pack(replace(spec, blocks=1, dst_slot=spec.dst_slot + block), block * 128 * spec.dst_dtype.itemsize)
+      for block in range(spec.blocks): self.pack(replace(spec, blocks=1, dst_slot=spec.dst_slot + block), offset + block * 128 * spec.dst_dtype.itemsize)
       return
     if spec.untilize: raise NotImplementedError(f"pack recipe {spec}")
     p, ctx = cfg.PACK, cfg.PACK.ctx[0]
@@ -388,10 +391,15 @@ class Recipes:
     self.rmw(ctx.dst_target_offset(spec.dst_slot * 8))
     self.tt(isa.SETADC(counters=4, dim=3, value=0))
     address = ((self.cb_addrs[spec.cb_id] + offset) >> 4) - 1
-    self.tt(isa.SETDMAREG(imm=address & 0xFFFF, half_reg=32))
-    self.tt(isa.SETDMAREG(imm=2 << 14 | (address >> 16), half_reg=33))
-    self.tt(isa.STALLWAIT(stall=isa.Stall.CFG, wait=isa.Wait.THCON | isa.Wait.PACK0))
-    self.tt(isa.WRCFG(gpr=16, word=ctx.l1_dest_addr.word))
+    if isinstance(address, UOp):
+      self.tt(isa.STALLWAIT(stall=isa.Stall.CFG, wait=isa.Wait.THCON | isa.Wait.PACK0))
+      self.drain()
+      self.store(cfg.TENSIX_CFG + 4 * ctx.l1_dest_addr.word, address | (2 << 30), readback=True)
+    else:
+      self.tt(isa.SETDMAREG(imm=address & 0xFFFF, half_reg=32))
+      self.tt(isa.SETDMAREG(imm=2 << 14 | (address >> 16), half_reg=33))
+      self.tt(isa.STALLWAIT(stall=isa.Stall.CFG, wait=isa.Wait.THCON | isa.Wait.PACK0))
+      self.tt(isa.WRCFG(gpr=16, word=ctx.l1_dest_addr.word))
     self.tt(isa.SETADCXX(counters=4, x_end=15))
     self.tt(isa.SETADCXY(counters=4, mask=11))
     self.tt(isa.SETADCZW(counters=4, mask=5))
@@ -454,7 +462,7 @@ class Recipes:
         self.config.clear()
         self.thread.clear()
       if isinstance(spec, UnpackOp): self.unpack(spec, u.src_without_body[1] if len(u.src_without_body) > 1 else 0)
-      elif isinstance(spec, PackOp): self.pack(spec)
+      elif isinstance(spec, PackOp): self.pack(spec, u.src_without_body[1] if len(u.src_without_body) > 1 else 0)
       elif isinstance(spec, FpuOp): self.fpu(spec)
       elif isinstance(spec, DstZero): self.tt(isa.ZEROACC(mode=3))
       elif isinstance(spec, MoveToDst):

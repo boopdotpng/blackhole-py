@@ -6,7 +6,7 @@ import pytest
 
 from compiler import Tensor, UOp, dtypes, safe_load, lower_tensor, linearize_schedule
 from compiler.blackhole.lower import lower_kernel
-from compiler.blackhole.mcast import invariant_axis
+from compiler.blackhole.schedule import invariant_axis
 from test.test_packed_checkpoint import checkpoint
 
 
@@ -46,7 +46,9 @@ def test_batched_projections(card, monkeypatch):
         x, weight = Tensor(a, dtype=dtypes.bf16), Tensor(w, dtype=dtypes.bf16)
         expression = x.matmul(weight.transpose(-1, -2), dtype=dtypes.fp32)
         call, = linearize_schedule(lower_tensor(expression))
-        assert lower_kernel(call.kernel, call.args).grid is not None
+        lowered = lower_kernel(call.kernel, call.args)
+        assert (lowered.grid is not None) == shared
+        if not shared: assert all(rows == 8 for rows in lowered.face_rows)
         expected = a @ w.swapaxes(-1, -2)
         assert np.array_equal(expression.numpy(device=dev), expected), (card, shape, shared)
         residual = rng.integers(-2, 3, expected.shape).astype(np.float32) / 32

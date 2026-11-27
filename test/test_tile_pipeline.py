@@ -167,3 +167,85 @@ class TestTilePipeline(unittest.TestCase):
           np.testing.assert_allclose(actual, a / (1. + np.exp(-a)) * b, rtol=3e-6, atol=2e-6)
           self.assertEqual(dev.read_l1(0, 0x21200, 64), bytes(64))
         finally: dev.close()
+
+
+def mixed_phase_graph():
+  from compiler.blackhole.specs import MoveToDst
+  outer = UOp.range(3, 40, "out")
+  inputs = []
+  for i, dtype in enumerate((dtypes.bf16, dtypes.bf16, dtypes.fp32)):
+    read = instruction(NocRead(i, i, 256 if dtype is dtypes.bf16 else 512), outer * (256 if dtype is dtypes.bf16 else 512))
+    loaded = instruction(UnpackOp(Space.SRCA if dtype is dtypes.bf16 else Space.DST, i, src_dtype=dtype, dst_slot=i), read)
+    inputs.append(instruction(MoveToDst(i), loaded) if dtype is dtypes.bf16 else loaded)
+  fp = UOp.range(UOp.const(4).after(outer), 41, "fp")
+  a, b, c = [instruction(SfpLoadOp(i), source, fp, dtype=dtypes.fp32) for i, source in enumerate(inputs)]
+  first = instruction(SfpStoreOp(3), a + b + c, fp).end(fp)
+  fp2 = UOp.range(UOp.const(4).after(first), 42, "fp")
+  # Slot 0 stays live through a second phase, after the initial write-port
+  # handshake has already allowed the other two inputs to be unpacked.
+  a2, intermediate = [instruction(SfpLoadOp(i), fp2, dtype=dtypes.fp32) for i in (0, 3)]
+  second = instruction(SfpStoreOp(3), intermediate * a2, fp2).end(fp2)
+  packed = instruction(PackOp(3, dst_slot=3), second)
+  written = instruction(NocWrite(3, 3, 512), packed, outer * 512)
+  return UOp.sink(written.end(outer))
+
+
+def test_mixed_input_multiple_phases_sync():
+  from compiler import linearize
+  from compiler.blackhole.pipeline import insert_syncs, verify_tile_stream
+  from compiler.blackhole.specs import SemOp
+  stream = insert_syncs(linearize(mixed_phase_graph()))
+  verify_tile_stream(stream)
+  fences = [u.ins_op for u in stream if u.is_ins and isinstance(u.ins_op, SemOp) and u.ins_op.sem_id == 5]
+  assert [s.kind for s in fences] == ["post", "wait", "get"]
+  compile_tile_graph(mixed_phase_graph(), {i: 0x20000 + 4096 * i for i in range(4)})
+
+
+def test_verifier_rejects_missing_and_wrong_scope_credits():
+  import pytest
+  from compiler.blackhole.pipeline import verify_tile_stream
+  from compiler.blackhole.specs import SemOp, CbOp
+  loop = UOp.range(2, 0, "k")
+  with pytest.raises(ValueError, match="semaphore"):
+    verify_tile_stream([instruction(SemOp("wait", 0, "trisc0")), instruction(SemOp("get", 0, "trisc0"))])
+  with pytest.raises(ValueError, match="semaphore"):
+    verify_tile_stream([instruction(SemOp("post", 0, "trisc1")), loop,
+                        instruction(SemOp("wait", 0, "trisc0")), instruction(SemOp("get", 0, "trisc0")), UOp.noop().end(loop)])
+  with pytest.raises(ValueError, match="CB"):
+    verify_tile_stream([instruction(CbOp("reserve", 0, "brisc")), instruction(CbOp("push", 0, "brisc"))])
+  with pytest.raises(MemoryError, match="56"):
+    verify_tile_stream([instruction(SfpLoadOp(56))])
+
+
+@unittest.skipUnless(os.environ.get("BH_HW") == "1", "set BH_HW=1 for P150 execution")
+def test_mixed_input_multiple_phases_on_both_cards():
+  import struct
+  from device import Device
+  images = unpack_bundle(compile_tile_graph(mixed_phase_graph(), {i: 0x20000 + 4096 * i for i in range(4)}).src[3].arg)
+  rng = np.random.default_rng(715)
+  for card in (0, 1):
+    dev = Device(card)
+    try:
+      addresses = [dev.alloc_dram(1536) for _ in range(4)]
+      for _ in range(3):
+        a, b, c = [rng.integers(-8, 8, (3, 8, 16)).astype(np.float32) for _ in range(3)]
+        blobs = [(x.view(np.uint32) >> 16).astype(np.uint16).tobytes() for x in (a, b)] + [c.tobytes()]
+        for address, blob in zip(addresses, blobs): dev.dma.copyin(address, memoryview(blob))
+        dev.run(images, data={0x80: struct.pack("<4Q", *addresses)}, cores=dev.workers[:1])
+        dev.synchronize()
+        result = bytearray(1536)
+        dev.dma.copyout(result, addresses[3])
+        np.testing.assert_array_equal(np.frombuffer(result, np.float32).reshape(3, 8, 16), (a + b + c) * a)
+    finally: dev.close()
+
+
+def test_reused_cb_has_distinct_recipe_loop_labels():
+  from compiler.blackhole.recipes import Recipes
+  from compiler.blackhole.scalar import select_scalar
+  from compiler.blackhole.specs import IndexTile
+  from compiler.isa.rv32 import RVOps
+  recipes = Recipes('brisc', {0: 0x20000})
+  for value in (1, 2): recipes.index_tile(IndexTile(0), (UOp.const(value), UOp.const(True)))
+  code = select_scalar(recipes.out)
+  labels = [u.src_without_body[0] for u in code if u.is_ins and u.ins_op is RVOps.LABEL]
+  assert len(labels) == len(set(labels))

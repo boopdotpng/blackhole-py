@@ -40,10 +40,11 @@ class Linear:
     self.weight = Tensor.empty(out_features, in_features, dtype=dtypes.bfloat16)
     self.bias = Tensor.empty(out_features, dtype=dtypes.bfloat16) if bias else None
     self.materialize = False
+    self.materialize_output = True
   def __call__(self, x: Tensor) -> Tensor:
     out = (x.contiguous() if self.materialize else x) @ self.weight.T
     out = out if self.bias is None else out + self.bias
-    return out.contiguous() if self.materialize else out
+    return out.contiguous() if self.materialize and self.materialize_output else out
 
 class Embedding:
   def __init__(self, vocab: int, dim: int):
@@ -117,13 +118,13 @@ class Attention:
     k = boundary(k.repeat_interleave(n_heads // n_kv_heads, 1))
     v = boundary(v.repeat_interleave(n_heads // n_kv_heads, 1))
 
-    scores = boundary(q.matmul(k.transpose(-2, -1), dtype=dtypes.float32))
+    scores = q.matmul(k.transpose(-2, -1), dtype=dtypes.float32)
     scores = scores * (head_dim ** -0.5)
 
     if S != 1 or fixed_decode:
       # key t is visible to query s iff t <= start_pos + s
       future = (Tensor.arange(T).reshape(1, T) - Tensor.arange(S).reshape(S, 1)) > start_pos
-      scores = boundary(future.where(float("-inf"), scores))
+      scores = future.where(float("-inf"), scores)
 
     attn = boundary(scores.cast(q.dtype).softmax(-1))
     out = boundary(attn @ v)
@@ -153,14 +154,16 @@ class Model:
     self.norm = RMSNorm(emb_dim, eps=norm_eps)
     self.lm_head = Linear(emb_dim, vocab_size, bias=False)
     self._decode_graph = None
-    # The native execution path currently materializes projection and
-    # attention boundaries. Keep the fully fused graph available for IR work.
+    # Keep input/prologue and cache-layout boundaries. Projection epilogues
+    # and score normalization compose in the shared tile lowerer.
     self.lm_head.materialize = materialize
     for layer in self.layers:
       layer.self_attn.materialize = materialize
       for module in (layer.self_attn, layer.mlp):
         for value in vars(module).values():
           if isinstance(value, Linear): value.materialize = materialize
+      for projection in (layer.mlp.gate_proj, layer.mlp.up_proj, layer.mlp.down_proj, layer.self_attn.o_proj):
+        projection.materialize_output = False
 
   def reset_cache(self) -> None:
     self._decode_graph = None
