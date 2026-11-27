@@ -1,6 +1,8 @@
 import math, unittest
 from compiler import (
-  KernelArg, Ops, Tensor, UOp, Variable, dtypes, exec_alu, function, lower_tensor, render_uir, verify,
+  KernelArg, Ops, TLSFAllocator, Tensor, UOp, Variable,
+  apply_memory_plan, dtypes, exec_alu, function, linearize_schedule, lower_tensor, parse_uir,
+  plan_dram_memory, plan_l1_memory, render_uir, verify,
 )
 from compiler.uop import smax
 
@@ -10,6 +12,10 @@ def _eval_kernel(sink: UOp, arg_vals: list) -> None:
   """Execute one Layer 1 kernel SINK(body, arg=KernelArg) in Python over flat lists."""
   assert sink.op is Ops.SINK and isinstance(sink.arg, KernelArg)
   body = sink.src[0]
+  from compiler.ops import open_ranges
+  open_r = open_ranges(body)
+  l1_allocs: dict[UOp, list] = {}
+  ran_after: set[tuple[UOp, tuple[int, ...]]] = set()
   # collect active ranges per node so we can loop over END / REDUCE
   def eval_uop(u: UOp, env: dict[UOp, object]) -> object:
     if u in env: return env[u]
@@ -17,6 +23,18 @@ def _eval_kernel(sink: UOp, arg_vals: list) -> None:
     if op is Ops.CONST: return u.arg
     if op is Ops.NOOP: return None
     if op is Ops.PARAM: return arg_vals[u.arg.slot]
+    if op is Ops.ALLOC:
+      if u not in l1_allocs:
+        numel = math.prod(smax(d) for d in u.shape) if u.shape else 1
+        l1_allocs[u] = [0.0 if u.dtype.is_float else 0] * numel
+      return l1_allocs[u]
+    if op is Ops.AFTER:
+      for dep in src[1:]:
+        key = (dep, tuple(int(env[r]) for r in sorted(open_r[dep], key=lambda x: x.arg.axis)))
+        if key not in ran_after:
+          ran_after.add(key)
+          eval_uop(dep, env)
+      return eval_uop(src[0], env)
     if op is Ops.CAST:
       v = eval_uop(src[0], env)
       return bool(v) if u.dtype is dtypes.bool else float(v) if u.dtype.is_float else int(v)
@@ -274,6 +292,125 @@ class TestRangeifyAndCollapse(unittest.TestCase):
     # prefill
     kg_pre = lower_tensor(m(Tensor([[128000, 15339, 11, 1268, 527, 499]], dtype=dtypes.i32), start_pos=0))
     verify_all_kernels(kg_pre)
+
+
+class TestBlackholeFusionAndMemory(unittest.TestCase):
+  def test_rmsnorm_matmul_hoists_prologue_to_l1(self):
+    D, N = 8, 6
+    x = Tensor.buffer("x", (1, 1, D), dtypes.fp32)
+    nw = Tensor.buffer("nw", (D,), dtypes.fp32)
+    W = Tensor.buffer("W", (N, D), dtypes.fp32)
+    rms = (x.square().mean(-1, keepdim=True) + 1e-5).sqrt()
+    xn = (x / rms) * nw
+    out = xn.matmul(W.T, dtype=dtypes.fp32)
+
+    kg = lower_tensor(out)
+    ks = verify_all_kernels(kg)
+    self.assertEqual(len(ks), 1)
+    self.assertIs(parse_uir(render_uir(ks[0])), ks[0])
+    # xn (D,) and rms (1,) should be staged in L1 once outside the N loop
+    l1_shapes = sorted(u.shape for u in ks[0].toposort() if u.op is Ops.ALLOC and u.arg.space == "l1")
+    self.assertEqual(l1_shapes, [(1,), (D,)])
+
+    x_d = [float(i + 1) * 0.25 for i in range(D)]
+    nw_d = [1.0 + 0.1 * i for i in range(D)]
+    W_d = [float(((i * 7 + j * 3) % 11) - 5) * 0.2 for i in range(N) for j in range(D)]
+    got = run_kernel_graph(kg, {"x": x_d, "nw": nw_d, "W": W_d})
+    rms_v = math.sqrt(sum(v * v for v in x_d) / D + 1e-5)
+    xn_v = [(v / rms_v) * w for v, w in zip(x_d, nw_d)]
+    ref = [sum(xn_v[k] * W_d[n * D + k] for k in range(D)) for n in range(N)]
+    for g, r in zip(got, ref): self.assertAlmostEqual(g, r, places=5)
+
+  def test_multihead_attention_fuses_to_single_kernel(self):
+    H, T, D = 4, 6, 4
+    q = Tensor.buffer("q", (1, H, 1, D), dtypes.fp32)
+    k = Tensor.buffer("k", (1, H, T, D), dtypes.fp32)
+    v = Tensor.buffer("v", (1, H, T, D), dtypes.fp32)
+    scores = q.matmul(k.transpose(-2, -1), dtype=dtypes.fp32) * (1.0 / math.sqrt(D))
+    out = scores.softmax(-1).matmul(v, dtype=dtypes.fp32)
+
+    kg = lower_tensor(out)
+    ks = verify_all_kernels(kg)
+    self.assertEqual(len(ks), 1)
+    self.assertIs(parse_uir(render_uir(ks[0])), ks[0])
+    # All L1 buffers inside the fused attention kernel should be per-head (size <= T), never (H * T)
+    l1_allocs = [u for u in ks[0].toposort() if u.op is Ops.ALLOC and u.arg.space == "l1"]
+    self.assertTrue(len(l1_allocs) >= 2)
+    for a in l1_allocs:
+      self.assertLessEqual(a.shape[0], T)
+
+    q_d = [((h * 5 + d) % 7 - 3) * 0.3 for h in range(H) for d in range(D)]
+    k_d = [((h * 3 + t * 5 + d) % 9 - 4) * 0.2 for h in range(H) for t in range(T) for d in range(D)]
+    v_d = [((h * 2 + t * 3 + d * 7) % 11 - 5) * 0.1 for h in range(H) for t in range(T) for d in range(D)]
+    got = run_kernel_graph(kg, {"q": q_d, "k": k_d, "v": v_d})
+
+    ref = []
+    for h in range(H):
+      sc = [sum(q_d[h * D + d] * k_d[(h * T + t) * D + d] for d in range(D)) / math.sqrt(D) for t in range(T)]
+      m = max(sc)
+      ex = [math.exp(s - m) for s in sc]
+      inv = 1.0 / sum(ex)
+      pr = [e * inv for e in ex]
+      for d in range(D):
+        ref.append(sum(pr[t] * v_d[(h * T + t) * D + d] for t in range(T)))
+    for g, r in zip(got, ref): self.assertAlmostEqual(g, r, places=5)
+
+  def test_tlsf_allocator_split_coalesce_and_align(self):
+    a = TLSFAllocator(4096, base=0x1000, block_size=64, lv2_cnt=16)
+    p0 = a.alloc(128, align=64)
+    p1 = a.alloc(256, align=256)
+    p2 = a.alloc(128, align=64)
+    self.assertEqual(p0 % 64, 0)
+    self.assertEqual(p1 % 256, 0)
+    self.assertEqual(len({p0, p1, p2}), 3)
+    # Free all three; coalescing must recover the entire 4096-byte pool
+    a.free(p1)
+    a.free(p0)
+    a.free(p2)
+    p_all = a.alloc(4096)
+    self.assertEqual(p_all, 0x1000)
+    with self.assertRaises(MemoryError):
+      a.alloc(64)
+
+  def test_dram_and_l1_memory_planners(self):
+    import examples.nanbeige as nb
+    sp = Variable("start_pos", 1, nb.max_seq_len - 1)
+    kg = lower_tensor(nb.Model(layers=4)(Tensor.buffer("tok", (1, 1), dtypes.i32), start_pos=sp))
+    ks = verify_all_kernels(kg)
+    self.assertLessEqual(len(ks), 12)
+
+    # Plan DRAM across expanded 4-layer schedule
+    dram_plan = plan_dram_memory(kg, block_size=256, expand_functions=True)
+    self.assertLess(dram_plan.peak_bytes, dram_plan.orig_bytes)
+    self.assertGreater(dram_plan.n_allocs, 0)
+
+    # Verify no two simultaneously-live transient DRAM buffers overlap in the planned arena
+    sched = linearize_schedule(kg, expand_functions=True)
+    first_use, last_use = {}, {}
+    for i, sc in enumerate(sched):
+      for b in sc.args:
+        if b in dram_plan.offsets:
+          first_use.setdefault(b, i)
+          last_use[b] = i
+    planned = list(dram_plan.offsets.items())
+    for i in range(len(planned)):
+      b1, o1 = planned[i]
+      s1 = ((math.prod(smax(d) for d in b1.shape) * max(1, (b1.dtype.bits + 7) // 8) + 255) // 256) * 256
+      for j in range(i + 1, len(planned)):
+        b2, o2 = planned[j]
+        if first_use[b1] <= last_use[b2] and first_use[b2] <= last_use[b1]:
+          s2 = ((math.prod(smax(d) for d in b2.shape) * max(1, (b2.dtype.bits + 7) // 8) + 255) // 256) * 256
+          self.assertTrue(o1 + s1 <= o2 or o2 + s2 <= o1, f"overlapping live DRAM allocs {b1.arg.name} and {b2.arg.name}")
+
+    # Plan L1 per kernel and verify apply_memory_plan attaches addresses cleanly
+    for k in ks:
+      l1_plan = plan_l1_memory(k, block_size=64)
+      self.assertLessEqual(l1_plan.peak_bytes, 256 * 1024)
+      k_planned = apply_memory_plan(k, l1_plan)
+      for n in k_planned.toposort():
+        if n.op is Ops.ALLOC and n.arg.space == "l1":
+          self.assertIsNotNone(n.arg.addr)
+          self.assertEqual(n.arg.addr % 64, 0)
 
 
 if __name__ == "__main__":

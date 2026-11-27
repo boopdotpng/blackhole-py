@@ -7,7 +7,14 @@ from .mixin import Mixin  # after .uop: mixin imports uop lazily
 from .uir import parse_uir, render_uir
 from .ops import VerifyError, exec_alu, simplify, special_axes, verify
 from .symbolic import div_and_mod_symbolic, pm_simplify_valid, sym, symbolic, symbolic_simple
-from .rangeify import get_kernel_graph, pm_load_collapse, pm_reduce_simplify, run_rangeify
+from .rangeify import (
+  L1_PROLOGUE_BUDGET, L1_PROLOGUE_MAX_READ, L1_STAGE_BUDGET, MAX_INLINE_BUFFERS,
+  get_kernel_graph, pm_load_collapse, pm_reduce_simplify, run_rangeify,
+)
+from .memory import (
+  BumpAllocator, MemoryPlan, ScheduledCall, TLSFAllocator,
+  alloc_nbytes, apply_memory_plan, linearize_schedule, plan_dram_memory, plan_l1_memory,
+)
 from .tensor import Tensor, get_state_dict, load_state_dict, lower_tensor, pm_frontend, safe_load, simplify_tensor, verify_tensor
 from .function import function
 from .isa import ISARenderer, IselContext, LinearContext, compile_linear, rdef, regalloc, register_choices, regs, to_program, vdef, vreg

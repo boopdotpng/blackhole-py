@@ -281,6 +281,12 @@ def _simplify_call_body(ctx: dict[UOp, UOp] | None, c: UOp) -> UOp | None:
     ctx[c.src[0]] = ctx[nb] = nb
   return None if nb is c.src[0] else c.replace(src=(nb, *c.src[1:]))
 
+class _ShapePreserving(PatternMatcher):
+  # pm_simplify is written for scalars; at Layer 0 ALU ops broadcast implicitly, so a fold can return a smaller value
+  def rewrite(self, u: UOp, ctx: Any = None) -> Any:
+    r = super().rewrite(u, ctx)
+    return r.expand(u.shape) if r is not None and u.shape is not None and r.shape != u.shape else r
+
 pm_frontend = pm_simplify + PatternMatcher([
   # remove noop movement ops
   (UPat(Ops.RESHAPE, src=(UPat.var("x"), UPat()), name="u"), lambda u, x: x if x.shape == u.shape else None),
@@ -323,6 +329,7 @@ pm_frontend = pm_simplify + PatternMatcher([
   # simplify each unique CALL(SINK, ...) function body once
   (UPat(Ops.CALL, name="c"), _simplify_call_body),
 ])
+pm_frontend = _ShapePreserving(pm_frontend.rules)
 
 def simplify_tensor(root: Tensor | UOp) -> Tensor | UOp:
   ctx: dict[UOp, UOp] = {}
@@ -331,10 +338,10 @@ def simplify_tensor(root: Tensor | UOp) -> Tensor | UOp:
 
 # ---- Layer 0 -> Layer 1 lowering ----
 
-def lower_tensor(root: Tensor | UOp) -> UOp:
+def lower_tensor(root: Tensor | UOp, *, l1_budget: int | None = None) -> UOp:
   """lower a Layer 0 tensor graph to Layer 1 kernel SINKs"""
   u = root.uop if isinstance(root, Tensor) else root
   u = simplify_tensor(u)
   verify_tensor(u)
-  from .rangeify import get_kernel_graph
-  return get_kernel_graph(u)
+  from .rangeify import L1_STAGE_BUDGET, get_kernel_graph
+  return get_kernel_graph(u, l1_budget=L1_STAGE_BUDGET if l1_budget is None else l1_budget)

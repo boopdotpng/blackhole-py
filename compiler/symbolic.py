@@ -250,8 +250,7 @@ def fold_add_divmod_recombine(x: UOp) -> UOp | None:
 symbolic_simple = pm_data_invalid + PatternMatcher([
   # constant folding
   (UPat(GroupOp.ALU, name="u"), _fold_const_alu),
-  (UPat(Ops.CAST, src=(UPat(Ops.CAST, src=(UPat.cvar("c"),), name="mid"),), name="u"),
-   lambda u, mid, c: UOp.const(c.arg, u.dtype) if can_lossless_cast(mid.dtype, u.dtype) or mid.dtype in dtypes.weaks else None),
+  (UPat(Ops.CAST, src=(UPat(Ops.CAST, src=(UPat.cvar(),), name="c"),), name="u"), lambda u, c: UOp.const(c.val, u.dtype)),
   (UPat((Ops.CAST, Ops.BITCAST), src=(UPat.var("x"),), name="u"), lambda u, x: x if u.dtype == x.dtype else None),
   (UPat(Ops.CAST, src=(UPat(Ops.CAST, src=(UPat.var("x"),), name="mid"),), name="u"),
    lambda u, mid, x: x if u.dtype == x.dtype and can_lossless_cast(x.dtype, mid.dtype) else None),

@@ -39,7 +39,13 @@ class DType:
     return (1 << (self.bits - 1)) - 1 if self.is_signed else (1 << self.bits) - 1
   def const(self, v):
     if v is Invalid: return Invalid
-    return bool(v) if self is dtypes.bool else float(v) if self.is_float else int(v)
+    if self is dtypes.bool: return bool(v)
+    if self.is_float: return float(v)
+    v = int(v)
+    if self.is_int and self is not dtypes.weakint:
+      v &= (1 << self.bits) - 1
+      if self.is_signed and v >= 1 << (self.bits - 1): v -= 1 << self.bits
+    return v
   def __repr__(self) -> str: return f"dtypes.{self.name}"
 
 class dtypes:

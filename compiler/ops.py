@@ -68,9 +68,8 @@ def _fold_where(c: UOp, a: UOp, b: UOp) -> UOp | None:
 pm_simplify = PatternMatcher([
   # constant folding (a CONST is weak; CAST(CONST) is a typed constant)
   (UPat(GroupOp.ALU, name="u"), _fold),
-  (UPat(Ops.CAST, src=(UPat(Ops.CAST, src=(UPat(Ops.CONST, name="c"),), name="mid"),), name="u"),
-   lambda u, mid, c: UOp.const(c.arg, u.dtype) if can_lossless_cast(mid.dtype, u.dtype) or mid.dtype in dtypes.weaks else None),
   (UPat((Ops.CAST, Ops.BITCAST), src=(UPat.var("x"),), name="u"), lambda u, x: x if u.dtype == x.dtype else None),
+  (UPat(Ops.CAST, src=(UPat(Ops.CAST, src=(UPat(Ops.CONST),), name="c"),), name="u"), lambda u, c: UOp.const(c.val, u.dtype)),
   (UPat(Ops.CAST, src=(UPat(Ops.CAST, src=(UPat.var("x"),), name="mid"),), name="u"),
    lambda u, mid, x: x if u.dtype == x.dtype and can_lossless_cast(x.dtype, mid.dtype) else None),
   (UPat(Ops.BITCAST, src=(UPat(Ops.BITCAST, src=(UPat.var("x"),)),), name="u"), lambda u, x: x.bitcast(u.dtype)),
@@ -150,7 +149,7 @@ def verify(root: UOp) -> None:
     op, src = u.op, u.src
     if op in GroupOp.Movement or op is Ops.STAGE or (op is Ops.REDUCE and len(src) == 1):
       raise VerifyError(f"Layer 0 tensor op {op.name} must be lowered before Layer 1 verify()")
-    if op not in (Ops.BUFFER, Ops.ALLOC, Ops.STACK, Ops.PARAM) and u.shape not in (None, ()):
+    if op not in (Ops.BUFFER, Ops.ALLOC, Ops.STACK, Ops.PARAM, Ops.AFTER) and u.shape not in (None, ()):
       raise VerifyError(f"Layer 0 tensor value {op.name} {u.shape} must be lowered before Layer 1 verify()")
     match op:
       case Ops.SINK:

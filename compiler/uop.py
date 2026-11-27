@@ -84,6 +84,7 @@ class BufferArg:
   name: str
   dtype: DType
   addr: int | None = None
+  space: str = "dram"
 
 @dataclass(frozen=True)
 class RangeArg:
@@ -93,6 +94,8 @@ class RangeArg:
 @dataclass(frozen=True)
 class StageArg:
   removable: bool = True
+  space: str = "dram"
+  inline: bool = True
 
 _ALLOC_ID = itertools.count()
 
@@ -472,7 +475,7 @@ class UOp(Mixin, metaclass=_UOpMeta):
   @property
   def val(self) -> Any:
     if self.op is Ops.CONST: return self.arg
-    if self.op is Ops.CAST and self.src[0].op is Ops.CONST: return self.src[0].arg
+    if self.op is Ops.CAST and self.src[0].op is Ops.CONST: return self.dtype.const(self.src[0].arg)
     raise ValueError(f"val is only for constants, got {self.op}")
   @property
   def is_const(self) -> bool: return self.op is Ops.CONST or (self.op is Ops.CAST and self.src[0].op is Ops.CONST)
@@ -542,8 +545,7 @@ class UOp(Mixin, metaclass=_UOpMeta):
     if val is Invalid: return UOp(Ops.CONST, (), Invalid)
     c = UOp(Ops.CONST, (), val)
     if dtype is None or (dt := dtypes.from_name(dtype)) is c.dtype: return c
-    v = bool(val) if dt is dtypes.bool else float(val) if dt.is_float else int(val)
-    return UOp(Ops.CAST, (UOp(Ops.CONST, (), v),), dt)
+    return UOp(Ops.CAST, (UOp(Ops.CONST, (), dt.const(val)),), dt)
   def const_like(self, val: Any, dtype: DType | str | None = None) -> "UOp":
     if val is Invalid: return UOp.invalid()
     dt = self.dtype if dtype is None else dtypes.from_name(dtype)
@@ -742,13 +744,15 @@ class UOp(Mixin, metaclass=_UOpMeta):
     """unbounded loop RANGE (paired with BACKEDGE for while/polling loops)"""
     return UOp(Ops.RANGE, (UOp.noop(),), RangeArg(axis, name))
   @staticmethod
-  def buffer(name: str, shape: tuple[sint, ...] | int, dtype: DType | str, addr: int | None = None) -> "UOp":
+  def buffer(name: str, shape: tuple[sint, ...] | int, dtype: DType | str, addr: int | None = None, *, space: str = "dram") -> "UOp":
     sh = (shape,) if isinstance(shape, int) else tuple(shape)
-    return UOp(Ops.BUFFER, (shape_src(sh) if sh else UOp.stack(),), BufferArg(name, dtypes.from_name(dtype), addr))
+    return UOp(Ops.BUFFER, (shape_src(sh) if sh else UOp.stack(),), BufferArg(name, dtypes.from_name(dtype), addr, space))
   @staticmethod
-  def alloc(shape: tuple[sint, ...] | int, dtype: DType | str, name: str | None = None) -> "UOp":
+  def alloc(shape: tuple[sint, ...] | int, dtype: DType | str, name: str | None = None, *,
+            addr: int | None = None, space: str = "dram") -> "UOp":
     sh = (shape,) if isinstance(shape, int) else tuple(shape)
-    return UOp(Ops.ALLOC, (shape_src(sh) if sh else UOp.stack(),), BufferArg(f"a{next(_ALLOC_ID)}" if name is None else name, dtypes.from_name(dtype)))
+    return UOp(Ops.ALLOC, (shape_src(sh) if sh else UOp.stack(),),
+               BufferArg(f"a{next(_ALLOC_ID)}" if name is None else name, dtypes.from_name(dtype), addr, space))
   @staticmethod
   def barrier(arg: Any = None) -> "UOp": return UOp(Ops.BARRIER, (), arg)
 
