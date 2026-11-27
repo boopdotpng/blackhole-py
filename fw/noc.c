@@ -150,3 +150,43 @@ void noc_atomic_inc(u32 niu, u32 remote, u32 coord) {
   send(c);
   wait_idle(c);
 }
+
+// Send bytes from CP (outside worker rects) to a physical NoC0 rectangle (c0 << 12 | c1).
+// Uses unicast RESP_MARKED write when c0 == c1, and non-self-including multicast on STATIC_VC(5) otherwise.
+void noc_send_rect(u32 niu, u32 local, u32 remote, u32 phys_rect, u32 size, u32 tid) {
+  u32 c0 = (phys_rect >> 12) & 0xFFF, c1 = phys_rect & 0xFFF;
+  u32 self = noc_coord(niu);
+  if (c0 == c1) {
+    volatile u32 *c = CMD_BUF(niu, WRITE_BUF);
+    for (u32 done = 0; done < size; done += NOC_MAX_BURST) {
+      wait_idle(c);
+      c[TARG_LO] = local + done; c[TARG_MID] = 0; c[TARG_COORD] = self;
+      c[RET_LO] = remote + done; c[RET_MID] = 0; c[RET_COORD] = c0;
+      c[PACKET_TAG] = tid << 10;
+      c[CTRL] = CTRL_WRITE | CTRL_RESP_MARKED | STATIC_VC(5);
+      c[AT_LEN_BE] = MIN(size - done, NOC_MAX_BURST);
+      c[AT_LEN_BE_1] = 0; c[AT_DATA] = 0; c[BRCST_EXCLUDE] = 0;
+      send(c);
+    }
+    return;
+  }
+  volatile u32 *c = CMD_BUF(niu, MCAST_BUF);
+  for (u32 done = 0; done < size; done += NOC_MAX_BURST) {
+    while (read32(OUTGOING(niu, tid)) > 128) {}
+    wait_idle(c);
+    c[TARG_LO] = local + done; c[TARG_MID] = 0; c[TARG_COORD] = self;
+    c[RET_LO] = remote + done; c[RET_MID] = 0; c[RET_COORD] = phys_rect;
+    c[PACKET_TAG] = tid << 10;
+    c[CTRL] = CTRL_WRITE | CTRL_BRCST_PACKET | STATIC_VC(5);
+    c[AT_LEN_BE] = MIN(size - done, NOC_MAX_BURST);
+    c[AT_LEN_BE_1] = 0; c[AT_DATA] = 0; c[BRCST_EXCLUDE] = 0;
+    send(c);
+  }
+}
+
+void noc_send_rect_flush(u32 niu, u32 tid) {
+  wait_idle(CMD_BUF(niu, MCAST_BUF));
+  wait_idle(CMD_BUF(niu, WRITE_BUF));
+  wait_zero(OUTGOING(niu, tid));
+  wait_zero(OUTSTANDING(niu, tid));
+}

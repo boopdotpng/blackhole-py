@@ -9,7 +9,9 @@ typedef unsigned int u32;
 
 INLINE void fence(void) { __asm__ volatile("fence" ::: "memory"); }
 INLINE u32 read32(u32 a) { return *(volatile u32 *)a; }
+INLINE u8 read8(u32 a) { return *(volatile u8 *)a; }
 INLINE void write32(u32 a, u32 v) { *(volatile u32 *)a = v; }
+INLINE void write8(u32 a, u8 v) { *(volatile u8 *)a = v; }
 
 #define WAIT_FAST(cond) do { while (!(cond)) fence(); fence(); } while (0)
 #ifndef POLL_BACKOFF
@@ -52,6 +54,12 @@ INLINE void invalidate_icache(void) {
 }
 
 #define TT(w) __asm__ volatile(".word %0" :: "i"((u32)(w) << 2 | (u32)(w) >> 30) : "memory")
+
+INLINE void tensix_drain(void) {
+  write32(COPROCESSOR_DONE_CHECK, 0);
+  u32 v = read32(COPROCESSOR_DONE_CHECK);
+  __asm__ volatile("andi %0, %0, 0" : "+r"(v) :: "memory");
+}
 
 #define STR_(x) #x
 #define STR(x) STR_(x)

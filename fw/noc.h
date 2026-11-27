@@ -21,3 +21,5 @@ void noc_write(u32 niu, u32 lo, u32 hi, u32 local, u32 size);
 void noc_atomic_inc(u32 niu, u32 remote, u32 coord);
 void noc_mcast(u32 niu, u32 local, u32 remote, u32 rect_packed, u32 size, u32 tid, u32 include_sender);
 void noc_inc_worker(u32 niu, u32 remote, u32 target_xy_packed, u32 tid);
+void noc_send_rect(u32 niu, u32 local, u32 remote, u32 phys_rect, u32 size, u32 tid);
+void noc_send_rect_flush(u32 niu, u32 tid);

@@ -205,21 +205,30 @@ class Device:
       if self.cols not in (12, 14): raise RuntimeError(f"unsupported {self.card.name}: {self.cols} Tensix columns")
       self.dram_banks = 7 if self.card.name == "p100a" else 8
       right = 2 + self.cols
-      self.dma_core, self.grid = (right, 11), ((1, 2), (right, 11))
-      self.worker_rects = (((1, 2), (right - 1, 11)), ((right, 2), (right, 10)))
-      self.workers = [(x, y) for x in range(1, right + 1) if x not in (8, 9) for y in range(2, 12) if (x, y) != self.dma_core]
+      self.dma_core, self.cp_core, self.grid = (right, 11), (right, 10), ((1, 2), (right, 11))
+      self.worker_rects = (((1, 2), (7, 11)), ((10, 2), (right - 1, 11)), ((right, 2), (right, 9)))
+      self.workers = [(x, y) for x in range(1, right + 1) if x not in (8, 9) for y in range(2, 12)
+                      if (x, y) not in (self.dma_core, self.cp_core)]
       self._reset(self.grid)
       self.booted = True
-      # Host memory: [signal page | heap for host buffers | 2 DMA staging slots | unused 32 MiB tail]. DMA from the
-      # last 16 MiB of a pin runs at ~33 GB/s instead of ~56 (cause unknown), so nothing lives there.
+      # Host memory: [signal page | heap for host buffers/cmdbufs/progs | 2 DMA staging slots | unused 32 MiB tail].
+      # DMA from the last 16 MiB of a pin runs at ~33 GB/s instead of ~56 (cause unknown), so nothing lives there.
       stage_base, stage_size = 16 << 20, 8 << 20
       self.host = self.card.alloc_host(stage_base + 2 * stage_size + (32 << 20))
-      # NoC short writes require matching source/destination offsets within a
-      # 16-byte word. LAUNCH_SEQUENCE is 16-byte aligned in worker L1.
+      # NoC short writes require matching source/destination offsets within a 16-byte word.
       self.kernel_signal, self.kernel_sequence = Signal(self.host, 16), 0
       self.heap, self.heap_end, self.dram_top = mmap.PAGESIZE, stage_base, 0
+      self.dram_limit = self.dram_banks * DRAM_BANK_SIZE
+      self._arena_addr, self._arena_size, self._arena_gen = 0, 0, 0
+      self._linked_schedules: dict = {}
       self.dma = DMA(self.card, self.host, stage_base, stage_size)
+      self._prog_cache: dict[int, tuple[int, int]] = {}
+      self._cp_window, self._cp_submitted = None, 0
+      self._run_ring_off = self.alloc_host(fw.CP_DEPTH * (256 + 128), align=64)
+      self._run_ring_seq = [0] * fw.CP_DEPTH
       self._boot_dma()
+      self._boot_cp()
+      self._boot_workers()
     except BaseException:
       self.close()
       raise
@@ -268,15 +277,56 @@ class Device:
     banks = self.dram_banks
     offset = round_up(self.dram_top, banks * page)
     end = round_up(offset + round_up(size, banks * page), banks * DRAM_PAGE_MAX)
-    if size < 0 or end > banks * DRAM_BANK_SIZE: raise MemoryError(f"can't allocate {size} bytes of DRAM")
+    if size < 0 or end > self.dram_limit: raise MemoryError(f"can't allocate {size} bytes of DRAM")
     self.dram_top = end
     return dram(offset, page, banks)
+
+  def ensure_arena(self, size:int, page:int=DRAM_PAGE_MAX) -> int:
+    """Reusable transient DRAM arena carved from the top of DRAM so it never collides with persistent allocs."""
+    if size <= 0: return 0
+    if size <= self._arena_size: return self._arena_addr
+    if self._arena_size: self.synchronize()
+    banks = self.dram_banks
+    aligned = round_up(size, banks * DRAM_PAGE_MAX)
+    new_limit = (self.dram_banks * DRAM_BANK_SIZE - aligned) // (banks * DRAM_PAGE_MAX) * (banks * DRAM_PAGE_MAX)
+    if new_limit < self.dram_top: raise MemoryError(f"can't allocate {size}-byte DRAM arena")
+    self.dram_limit = new_limit
+    self._arena_size = aligned
+    self._arena_addr = dram(new_limit, page, banks)
+    self._arena_gen += 1
+    return self._arena_addr
 
   def alloc_host(self, size:int, align:int=64) -> int:
     offset = round_up(self.heap, align)
     if offset + size > self.heap_end: raise MemoryError(f"host heap is full: {size} bytes requested")
     self.heap = offset + size
     return offset
+
+  def upload_program(self, images:dict[str, bytes], cb_mask:int=0xFFFFFFFF) -> tuple[int, int, int]:
+    """Upload a packed kernel binary once to pinned host memory; CP caches it in worker L1."""
+    blob, key = fw.pack_kernel(images, cb_mask)
+    if key not in self._prog_cache:
+      off = self.alloc_host(len(blob), align=64)
+      self.host.mem[off:off + len(blob)] = blob
+      self._prog_cache[key] = (self.host.noc_addr + off, len(blob))
+    addr, nbytes = self._prog_cache[key]
+    return addr, nbytes, key
+
+  def submit_cp(self, cmdbuf_addr:int, cmdbuf_bytes:int, timeout:float=10.0) -> int:
+    """Enqueue one Indirect Buffer (cmdbuf_addr, cmdbuf_bytes) on the Command Processor ring."""
+    if cmdbuf_addr % 64 or cmdbuf_bytes % fw.CP_PKT_BYTES: raise ValueError("unaligned CP command buffer")
+    seq = self._cp_submitted + 1
+    deadline = time.monotonic() + timeout
+    while seq - self._cp_window[fw.CP_RPTR // 4] > fw.CP_DEPTH:
+      if time.monotonic() > deadline: raise TimeoutError("CP ring full")
+    at = (fw.CP_RING + (seq % fw.CP_DEPTH) * fw.CP_IB_BYTES) // 4
+    self._cp_window[at + 0] = cmdbuf_addr & 0xFFFFFFFF
+    self._cp_window[at + 1] = cmdbuf_addr >> 32
+    self._cp_window[at + 2] = cmdbuf_bytes
+    self._cp_window[at + 3] = 0
+    self._cp_window[fw.CP_WPTR // 4] = seq & 0xFFFFFFFF
+    self._cp_submitted = seq
+    return seq
 
   def _launch_layout(self, cores):
     targets = self.worker_rects if cores is None else tuple(cores)
@@ -312,32 +362,63 @@ class Device:
     return workers, rectangles
 
   def run(self, images:dict[str, bytes], data:dict[int, bytes]|None=None, cores=None) -> int:
-    # Launch one kernel body per RISC role on every worker (or `cores`), with `data` written to L1 first.
-    # Returns the 64-aligned end of code in L1.
-    image, role_pcs, code_end = fw.pack_megakernel(images)
-    self.synchronize()
-    self.stop()
+    # Single-kernel dispatch through the resident HCQ2 Command Processor (no SOFT_RESET,
+    # no per-launch firmware/code upload on L1 cache hits). Preserves full compatibility
+    # with tests passing arbitrary L1 `data={addr: blob}` staging blocks.
+    from compiler.blackhole.hcq import pack_phys_rect
     workers, targets = self._launch_layout(cores)
-    sequence = self.kernel_sequence + 1
-    header = bytearray(fw.CODE_BASE)
-    struct.pack_into("<I", header, 0, isa.jal(imm=fw.CODE_BASE))
-    struct.pack_into("<I", header, fw.LEADER_COORD, coord(*workers[0]))
-    struct.pack_into("<3I", header, fw.NUM_WORKERS, len(workers), self.dram_banks, self.cols)
-    struct.pack_into("<QQ", header, fw.HOST_SIGNAL_ADDR, self.kernel_signal.addr, sequence)
-    struct.pack_into("<4I", header, fw.ROLE_PC, *(role_pcs.get(r, 0) for r in fw.ROLES[1:]))
-    extra = data
-    if data and all(0 <= addr and addr + len(blob) <= len(header) for addr, blob in data.items()):
-      for addr, blob in data.items(): header[addr:addr + len(blob)] = blob
-      extra = None
-    payload = bytes(header) + image
-    for target in targets:
-      self.card.write(target, 0, payload)
-      if extra:
+    prog_addr, prog_bytes, prog_key = self.upload_program(images)
+
+    arg_blob = b""
+    extra = None
+    if data:
+      if list(data.keys()) == [fw.ARG_BASE] and len(data[fw.ARG_BASE]) <= 128:
+        arg_blob = data[fw.ARG_BASE]
+      else:
+        extra = {}
+        for addr, blob in data.items():
+          if addr == fw.ARG_BASE and len(blob) <= 128: arg_blob = blob
+          else: extra[addr] = blob
+    if extra:
+      self.synchronize()
+      for target in targets:
         for addr, blob in extra.items(): self.card.write(target, addr, blob)
+
+    slot = self.kernel_sequence % fw.CP_DEPTH
+    if prev := self._run_ring_seq[slot]: self.kernel_signal.wait(prev)
+    base_off = self._run_ring_off + slot * (256 + 128)
+    cmd_off, args_off = base_off, base_off + 256
+    args_addr, args_bytes = 0, 0
+    if arg_blob:
+      buf = bytearray(128)
+      buf[:len(arg_blob)] = arg_blob
+      self.host.mem[args_off:args_off + 128] = buf
+      args_addr, args_bytes = self.host.noc_addr + args_off, 128
+
+    rects = [pack_phys_rect(t) for t in targets]
+    sequence = self.kernel_sequence + 1
+    pkts = bytearray(128)
+    struct.pack_into(
+      "<16I", pkts, 0,
+      fw.PKT_EXEC, fw.FLAG_CLEAR_MCAST,
+      prog_addr & 0xFFFFFFFF, prog_addr >> 32,
+      prog_bytes, prog_key & 0xFFFFFFFF,
+      args_addr & 0xFFFFFFFF, args_addr >> 32,
+      len(workers), (args_bytes << 8) | len(rects),
+      *rects, *(0,) * (6 - len(rects)),
+    )
+    struct.pack_into(
+      "<16I", pkts, 64,
+      fw.PKT_SIGNAL, 0,
+      self.kernel_signal.addr & 0xFFFFFFFF, self.kernel_signal.addr >> 32,
+      sequence & 0xFFFFFFFF, sequence >> 32,
+      *(0,) * 10,
+    )
+    self.host.mem[cmd_off:cmd_off + 128] = pkts
     self.kernel_sequence = sequence
-    for target in targets:
-      self.card.write32(target, fw.SOFT_RESET, fw.RESET_ALL & ~fw.RESET_BRISC)
-    return code_end
+    self._run_ring_seq[slot] = sequence
+    self.submit_cp(self.host.noc_addr + cmd_off, 128)
+    return fw.CODE_CACHE_BASE + prog_bytes - fw.PROG_HDR_BYTES
 
   def close(self):
     if self.card is None: return
@@ -364,6 +445,40 @@ class Device:
     self.card.write32(core, 0, isa.jal(imm=fw.DMA_BRISC_BASE))
     self.card.write32(core, fw.SOFT_RESET, fw.RESET_ALL & ~fw.RESET_BRISC)
     self.dma.window = self.card.window(core)
+
+  def _boot_cp(self):
+    from compiler.blackhole.hcq import pack_phys_rect
+    core, image = self.cp_core, fw.cp_image(self.dram_banks)
+    state = bytearray(fw.CP_STATE_SIZE)
+    rects = [pack_phys_rect(r) for r in self.worker_rects]
+    struct.pack_into("<I", state, fw.CP_ALL_NRECTS - fw.CP_STATE, len(rects))
+    for i, r in enumerate(rects):
+      struct.pack_into("<I", state, fw.CP_ALL_RECTS - fw.CP_STATE + 4 * i, r)
+    self.card.write(core, fw.CP_STATE, state)
+    self.card.write(core, fw.CP_BRISC_BASE, image)
+    self.card.write32(core, 0, isa.jal(imm=fw.CP_BRISC_BASE))
+    self.card.write32(core, fw.SOFT_RESET, fw.RESET_ALL & ~fw.RESET_BRISC)
+    self._cp_window = self.card.window(core)
+    deadline = time.monotonic() + 5.0
+    while self._cp_window[fw.CP_READY // 4] != 1:
+      if time.monotonic() > deadline: raise TimeoutError("CP core failed to boot")
+
+  def _boot_workers(self):
+    image, pcs = fw.worker_images(self.dram_banks)
+    header = bytearray(fw.WORKER_FW_BASE)
+    struct.pack_into("<I", header, 0, isa.jal(imm=pcs["brisc"]))
+    struct.pack_into("<I", header, fw.LEADER_COORD, coord(*self.cp_core))
+    struct.pack_into("<3I", header, fw.NUM_WORKERS, len(self.workers), self.dram_banks, self.cols)
+    struct.pack_into("<4I", header, fw.ROLE_PC, *(pcs[r] for r in fw.ROLES[1:]))
+    payload = bytes(header) + image
+    for rect in self.worker_rects:
+      self.card.write(rect, 0, payload)
+    for rect in self.worker_rects:
+      self.card.write32(rect, fw.SOFT_RESET, fw.RESET_ALL & ~fw.RESET_BRISC)
+    deadline = time.monotonic() + 5.0
+    for core in self.workers:
+      while self.card.read32(core, fw.WORK_READY) != 1:
+        if time.monotonic() > deadline: raise TimeoutError(f"worker {core} failed to boot")
 
 
 class FaceBuffer:
