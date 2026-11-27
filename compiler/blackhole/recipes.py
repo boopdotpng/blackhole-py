@@ -87,7 +87,6 @@ class Recipes:
     self.label_id = 0
     self.fixed_settings = frozenset()
     self.fixed_fpu_dtype = None
-    self.stream_unpack = set()
     self.bank = None
     self.banks = 1
     self.cb_base = {}
@@ -420,21 +419,6 @@ class Recipes:
       self.tt(isa.SEMWAIT(stall=isa.Stall.UNPACK | isa.Stall.CFG | isa.Stall.SYNC, sems=8, cond=isa.SemWait.STALL_ON_ZERO))
       self.drain()
 
-  def unpack(self, spec, offset=0):
-    if self.configure(tile_settings(spec)): self.drain()
-    if spec.target is not Space.DST: return self.unpack_source(spec, offset)
-    u = cfg.UNPACK[0]
-    if self.bank is not None:
-      # Context 1's 16-bit destination address occupies the high halfword.
-      self.tt_field(isa.RMWCIB3(word=u.dst_addr[1].word, mask=16), isa.RmwCib.data, self.bank << 4)
-      self.drain()
-    self.store(cfg.TENSIX_CFG + 4 * u.base_addr[1].word, self.cb_word_addr(spec.cb_id, offset), readback=True)
-    self.tt(isa.SETADCXX(counters=1, x_end=127))
-    self.tt(isa.SETADCZW(counters=1, mask=15))
-    self.tt(isa.STALLWAIT(stall=isa.Stall.UNPACK, wait=isa.Wait.TRISC_CFG))
-    self.tt(isa.UNPACR(ctx=1, steps=0x11, per_ctx=1, last=1))
-    self.drain()
-
   def write_engine_address(self, address, gpr, word, engine):
     import fw
     for half in (0, 1):
@@ -445,20 +429,28 @@ class Recipes:
     self.tt(isa.STALLWAIT(stall=isa.Stall.CFG, wait=isa.Wait.THCON | engine))
     self.tt(isa.WRCFG(gpr=gpr, word=word))
 
-  def unpack_source(self, spec, offset=0):
-    index = 0 if spec.target is Space.SRCA else 1
+  def unpack(self, spec, offset=0):
+    dst = spec.target is Space.DST
+    index, ctx = int(spec.target is Space.SRCB), int(dst)
     u, n = cfg.UNPACK[index], spec.rows * 16
+    engine = isa.Wait.UNPACK1 if index else isa.Wait.UNPACK0
+    settings = tile_settings(spec)
+    if not self.fixed_settings.issuperset(settings) or dst and self.bank is not None:
+      self.tt(isa.STALLWAIT(stall=isa.Stall.CFG, wait=engine))
+      self.configure(settings)
+      if dst and self.bank is not None:
+        # Bit 12 of context 1's destination address selects the upper half.
+        self.tt_field(isa.RMWCIB3(word=u.dst_addr[1].word, mask=16), isa.RmwCib.data, self.bank << 4)
     stride = spec.face_stride or (n * 2 if spec.src_dtype is dtypes.bf16 else 16 + n * spec.src_dtype.bits // 8)
+    ready = isa.Wait.TRISC_CFG
+    if not dst: ready |= isa.Wait.SRCB_CLR if index else isa.Wait.SRCA_CLR
     for face in range(spec.faces):
       address = self.cb_word_addr(spec.cb_id, offset + face * stride)
-      if spec.target in self.stream_unpack:
-        self.write_engine_address(address, 13 + index, u.base_addr[0].word, isa.Wait.UNPACK1 if index else isa.Wait.UNPACK0)
-      else: self.store(cfg.TENSIX_CFG + 4 * u.base_addr[0].word, address, readback=True)
+      self.write_engine_address(address, 13 + index, u.base_addr[ctx].word, engine)
       self.tt(isa.SETADCXX(counters=1 << index, x_end=n - 1))
       self.tt(isa.SETADCZW(counters=1 << index, ch1_z=face, mask=15))
-      self.tt(isa.STALLWAIT(stall=isa.Stall.UNPACK, wait=isa.Wait.TRISC_CFG | (isa.Wait.SRCB_CLR if index else isa.Wait.SRCA_CLR)))
-      self.tt(isa.UNPACR(unpacker=index, steps=0x11, per_ctx=1, set_dvalid=int(face == spec.faces - 1), last=1))
-      if spec.target not in self.stream_unpack: self.drain()
+      self.tt(isa.STALLWAIT(stall=isa.Stall.UNPACK, wait=ready))
+      self.tt(isa.UNPACR(unpacker=index, ctx=ctx, steps=0x11, per_ctx=1, set_dvalid=int(not dst and face == spec.faces - 1), last=1))
 
   def zero_dst(self):
     if self.bank is None: self.tt(isa.ZEROACC(mode=3))
@@ -524,9 +516,6 @@ class Recipes:
     fixed = [next(iter(v)) for v in values.values() if len(v) == 1]
     if self.configure(fixed): self.drain()
     self.fixed_settings = frozenset(fixed)
-    unpacks = [u.ins_op for u in stream if u.is_ins and isinstance(u.ins_op, UnpackOp)]
-    self.stream_unpack = {spec.target for spec in unpacks if spec.target is not Space.DST and
-                          self.fixed_settings.issuperset(tile_settings(spec))}
     formats = {u.ins_op.src_dtype for u in stream if u.is_ins and isinstance(u.ins_op, FpuOp)}
     if len(formats) == 1:
       self.fixed_fpu_dtype = next(iter(formats))
@@ -587,7 +576,7 @@ class Recipes:
       elif isinstance(spec, (NocMcastRead, NocMcastForward, McastWait, McastConsumed, McastRelease)): self.mcast(spec, u.src_without_body)
       elif isinstance(spec, (NocRead, NocWrite, NocWait)): self.noc(spec, u.src_without_body)
       elif isinstance(spec, CbOp):
-        if self.stream_unpack and spec.kind == "pop": self.drain()
+        if self.role == "trisc0" and spec.kind == "pop": self.drain()
         self.cb(spec)
       elif isinstance(spec, SemOp):
         if spec.kind == "wait": self.tt(isa.SEMWAIT(stall=isa.Stall.SYNC, sems=1 << spec.sem_id, cond=isa.SemWait.STALL_ON_ZERO))
@@ -595,7 +584,8 @@ class Recipes:
         elif spec.kind == "post": self.tt(isa.SEMPOST(sems=1 << spec.sem_id))
         else: raise ValueError(spec)
       elif isinstance(spec, StallOp):
-        self.tt(isa.STALLWAIT(stall=isa.Stall.SYNC, wait={"math": isa.Wait.MATH | isa.Wait.SFPU, "pack": isa.Wait.PACK0}[spec.engine]))
+        self.tt(isa.STALLWAIT(stall=isa.Stall.SYNC, wait={"math": isa.Wait.MATH | isa.Wait.SFPU, "pack": isa.Wait.PACK0,
+                                                      "unpack": isa.Wait.UNPACK0 | isa.Wait.UNPACK1}[spec.engine]))
       elif u.op not in (Ops.RANGE, Ops.END) and any(n.op is Ops.LOAD or n.op is Ops.SPECIAL and n.arg == "gather_lane" for n in u.toposort()):
         # These scalar expressions are templates consumed by gather(), which
         # replaces the lane placeholder with its local RISC-V loop counter.

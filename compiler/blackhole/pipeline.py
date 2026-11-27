@@ -117,7 +117,7 @@ def insert_syncs(stream, double_buffer=True):
         # preceding that write (also on the loop backedge) has retired.
         add(before, pending[0], instruction(StallOp("math", "trisc1")), sem("post", 0, "trisc1"),
             sem("wait", 0, "trisc0"), sem("get", 0, "trisc0"))
-        add(after, pending[-1], sem("post", 2, "trisc0"))
+        add(after, pending[-1], instruction(StallOp("unpack", "trisc0")), sem("post", 2, "trisc0"))
         add(before, i, sem("wait", 2, "trisc1"), sem("get", 2, "trisc1"))
         pending.clear()
     if pending: raise ValueError("unpack without consuming math")
