@@ -76,7 +76,7 @@ Tensor / UOp  ──►  rangeify  ──►  tile DAG  ──►  joint lineari
 - [`hw/`](hw/) — Blackhole ISA encodings, Tensix config fields, and measured SFPU latency/hazard model
 - [`device.py`](device.py), [`pci.py`](pci.py), [`pci_linux.py`](pci_linux.py), [`pci_macos.py`](pci_macos.py) — host PCIe/TLB/DMA/FaceBuffer runtime
 - [`examples/`](examples/) — Nanbeige4.3-33B inference (`nanbeige.py`) and matmul/projection benchmarks
-- [`docs/`](docs/) — Blackhole hardware reference (`index.html`), compiler lowering spec (`lowering-spec.md`), and 2D multicast spec (`matmul-mcast-spec.md`)
+- [`docs/`](docs/) — Blackhole hardware reference (`index.html`) and unified middle-end lowering architecture (`lowering.md`)
 
 ---
 
