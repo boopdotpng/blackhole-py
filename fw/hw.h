@@ -14,7 +14,20 @@
 #define WORKER_ID        0x28
 #define NUM_WORKERS      0x2C     // followed by the DRAM bank count and the Tensix column count
 #define ROLE_PC          0x60     // NCRISC, TRISC0..2 entry points; 0 leaves that RISC in reset
+#define WORK_DONE        0x40     // completion arrival counter on the leader
+#define HOST_SIGNAL_ADDR 0x48     // u64 pinned host completion address
+#define LAUNCH_SEQUENCE  0x50     // u64 completion value
+#define TENSIX_READY     0x58     // boot's shared Tensix instructions have drained
+#define ARG_BASE         0x80     // sixteen 8-byte runtime argument slots
+#define FN_NOC_READ      0x70     // jal x0 trampolines to resident RV32 ABI functions
+#define FN_NOC_WRITE     0x74
+#define FN_NOC_WAIT      0x78
+#define FN_NOC_MCAST     0x7C
+#define FN_NOC_INC       0x38
 #define CODE_BASE        0x100
+#define MCAST_CTRL_BASE  0x1EC00  // 1 KiB, cleared before each worker launch
+#define NOC_READ_SCRATCH 0x1F000  // two private 2 KiB stages for unaligned resident transfers
+#define NOC_READ_STAGE   0x800
 
 // ---- DMA core L1 ----
 
@@ -41,6 +54,7 @@
 #define DMA_STAGING      0x10000  // 2 engines x DMA_SLOTS x DMA_BATCH
 
 #define LOCAL_MEM                0xFFB00000  // each RISC's private data RAM
+#define NOC_BASELINE             (LOCAL_MEM + 0x100) // private pre-kernel transaction counters
 #define STACK_TOP                0xFFB01FF0
 #define TRISC_STACK_TOP          0xFFB00FF0
 #define TDMA_CLK_GATE_EN         0xFFB11024
@@ -87,7 +101,6 @@
 #define SFPLOADI_MINUS1   0x7100BF80  // SFPLOADI(imm16=0xBF80): -1.0 as bf16
 #define SFPCONFIG_L11     0x910000B0  // SFPCONFIG(config_dest=LReg.NEG_ONE)
 #define SEMINIT_ALL       0xA31003FC  // SEMINIT(max_value=1, sem_sel=0xFF)
-#define CLEARDVALID_RESET 0x36000001  // CLEARDVALID(reset=1)
 #define SETRWC_ZERO       0x3700000F  // SETRWC(BitMask=15)
 #define SETADCXY_ZERO     0x51E0000F  // SETADCXY(CntSetMask=7, BitMask=15)
 #define SETADCZW_ZERO     0x54E0000F  // SETADCZW(CntSetMask=7, BitMask=15)
@@ -101,6 +114,8 @@
 #define NOC_OUTSTANDING     0x240  // + 4 * tid: reads and write acks in flight
 #define NOC_OUTGOING        0x280  // + 4 * tid: writes not yet sent out of L1
 #define CTRL_WRITE          (1u << 1)
+#define CTRL_BRCST_PACKET   (1u << 5)
+#define CTRL_BRCST_SRC_INCLUDE (1u << 17)
 #define CTRL_RESP_MARKED    (1u << 4)
 #define CTRL_VC_STATIC      (1u << 7)
 

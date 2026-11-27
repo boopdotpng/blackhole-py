@@ -6,11 +6,12 @@ SECTIONS
   .text : {
     KEEP(*(.entry))
     *(.text .text.*)
+    *(.rodata .rodata.* .srodata .srodata.*)
     . = ALIGN(16);
   }
   _end = .;
   .data : {
-    *(.rodata .rodata.* .srodata .srodata.* .data .data.* .sdata .sdata.* .bss .bss.* .sbss .sbss.* COMMON)
+    *(.data .data.* .sdata .sdata.* .bss .bss.* .sbss .sbss.* COMMON)
   }
   ASSERT(SIZEOF(.data) == 0, "megakernel pieces are relocated by plain concatenation: no data allowed")
   ASSERT(_end <= BASE + SIZE, "image exceeds its slot")

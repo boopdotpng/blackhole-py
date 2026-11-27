@@ -1,5 +1,6 @@
 import itertools, json, pathlib, struct, weakref
 from collections import OrderedDict
+from dataclasses import dataclass
 from typing import Any
 from .dtype import DType, dtypes
 from .mixin import Mixin, _argfix
@@ -8,7 +9,14 @@ from .uop import GroupOp, Ops, PatternMatcher, UOp, UPat, _broadcast_shape, grap
 
 # BUFFER UOps are immutable and hash-consed, so their contents live beside the graph, keyed by the UOp (weakly, so they die
 # together): host bytes already in the buffer's dtype, or a (path, offset, nbytes) file range read at upload
-_BUFFER_SOURCE: weakref.WeakKeyDictionary[UOp, bytes | tuple[pathlib.Path, int, int]] = weakref.WeakKeyDictionary()
+@dataclass(frozen=True)
+class PackedSource:
+  path: pathlib.Path
+  offset: int
+  shape: tuple[int, int, int]
+
+
+_BUFFER_SOURCE: weakref.WeakKeyDictionary[UOp, bytes | tuple[pathlib.Path, int, int] | PackedSource] = weakref.WeakKeyDictionary()
 # every live Tensor, so assign() can point the ones viewing the assigned buffer at the new value
 _ALL_TENSORS: weakref.WeakSet["Tensor"] = weakref.WeakSet()
 # BUFFERs are hash-consed by name, so two distinct buffers need distinct names
@@ -111,10 +119,14 @@ class Tensor(Mixin):
   def _ufix(self, x: Any) -> "Tensor":
     return x if isinstance(x, Tensor) else Tensor(x) if isinstance(x, (list, tuple)) else super()._ufix(x)
 
-  def realize(self) -> "Tensor":
-    if self.uop.op is Ops.BUFFER: return self
-    lower_tensor(self.uop)
-    raise AssertionError("unreachable")
+  def realize(self, *, device=None) -> "Tensor":
+    from .blackhole.runtime import realize
+    self.uop = realize(self.uop, device)
+    return self
+
+  def numpy(self, *, device=None):
+    from .blackhole.runtime import numpy
+    return numpy(self.uop, device)
 
   # ---- assign: a STORE into the (view of the) buffer, plus AFTER so readers see the new value ----
 
@@ -196,10 +208,24 @@ def safe_load(path: str | pathlib.Path) -> dict[str, Tensor]:
     header_len = int.from_bytes(f.read(8), "little")
     header = json.loads(f.read(header_len).decode("utf-8"))
   tensors: dict[str, Tensor] = {}
+  metadata = header.get("__metadata__", {})
+  packed = json.loads(metadata.get("blackhole.formats", "{}"))
+  if packed and (metadata.get("blackhole.layout") != "kn_tiles_32x32_v1" or not packed.keys() <= header.keys()):
+    raise ValueError(f"{p}: invalid packed tensor metadata")
   for name, info in header.items():
     if name == "__metadata__": continue
     if (dt := _SAFE_DTYPES.get(info["dtype"])) is None: raise ValueError(f"unsupported safetensors dtype {info['dtype']!r} for {name!r}")
     start, end = info["data_offsets"]
+    if name in packed:
+      fmt, shape = packed[name], tuple(info["shape"])
+      if (fmt not in ("bfp8_b", "bfp4_b") or info["dtype"] != "U8" or len(shape) != 3
+          or shape[-1] != (1088 if fmt == "bfp8_b" else 576) or end - start != shape[0] * shape[1] * shape[2]):
+        raise ValueError(f"{p}: invalid packed tensor {name}")
+      dt = dtypes.bfp8 if fmt == "bfp8_b" else dtypes.bfp4
+      tensor = Tensor.buffer(f"disk_{name}_{next(_BUF_ID)}", (shape[1] * 32, shape[0] * 32), dt)
+      _BUFFER_SOURCE[tensor.uop] = PackedSource(p, 8 + header_len + start, shape)
+      tensors[name] = tensor
+      continue
     tensors[name] = Tensor.from_disk(p, shape=tuple(info["shape"]), dtype=dt, offset=8 + header_len + start, nbytes=end - start, name=name)
   return tensors
 

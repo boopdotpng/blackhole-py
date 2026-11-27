@@ -105,6 +105,8 @@ def regalloc(ctx: LinearContext, uops: list[UOp], ren: ISARenderer) -> list[UOp]
 
   reads: list[set[UOp]] = []
   writes: list[set[UOp]] = []
+  fixed_reads: list[set[UOp]] = []
+  fixed_writes: list[set[UOp]] = []
   succs: list[list[int]] = []
   preds: dict[int, list[int]] = collections.defaultdict(list)
 
@@ -115,6 +117,8 @@ def regalloc(ctx: LinearContext, uops: list[UOp], ren: ISARenderer) -> list[UOp]
     wset = {v for v in defs_at[pc] if v in virtuals}
     reads.append(rset)
     writes.append(wset)
+    fixed_reads.append({r for s in u.src_without_body if (r := rdef(s, ren)) is not None})
+    fixed_writes.append({r for p in defs_at[pc] if (r := ren.physical_reg(p)) is not None})
 
     nxt: list[int] = []
     if ren.falls_through(u) and pc + 1 < n: nxt.append(pc + 1)
@@ -126,6 +130,8 @@ def regalloc(ctx: LinearContext, uops: list[UOp], ren: ISARenderer) -> list[UOp]
   # 2. Backward dataflow liveness
   live_in: list[set[UOp]] = [set() for _ in range(n)]
   live_out: list[set[UOp]] = [set() for _ in range(n)]
+  fixed_in: list[set[UOp]] = [set() for _ in range(n)]
+  fixed_out: list[set[UOp]] = [set() for _ in range(n)]
   work = collections.deque(reversed(range(n)))
   in_work = set(range(n))
   while work:
@@ -133,9 +139,13 @@ def regalloc(ctx: LinearContext, uops: list[UOp], ren: ISARenderer) -> list[UOp]
     in_work.discard(pc)
     out_s = set().union(*(live_in[s] for s in succs[pc])) if succs[pc] else set()
     in_s = reads[pc] | (out_s - writes[pc])
+    out_fixed = set().union(*(fixed_in[s] for s in succs[pc])) if succs[pc] else set()
+    in_fixed = fixed_reads[pc] | (out_fixed - fixed_writes[pc])
+    fixed_out[pc] = out_fixed
     live_out[pc] = out_s
-    if in_s != live_in[pc]:
+    if in_s != live_in[pc] or in_fixed != fixed_in[pc]:
       live_in[pc] = in_s
+      fixed_in[pc] = in_fixed
       for p in preds[pc]:
         if p not in in_work:
           in_work.add(p)
@@ -146,6 +156,10 @@ def regalloc(ctx: LinearContext, uops: list[UOp], ren: ISARenderer) -> list[UOp]
   fixed_conflict: dict[UOp, set[UOp]] = {v: set() for v in virtuals}
   for pc in range(n):
     live_after = live_out[pc]
+    # Explicit physical operands have live ranges too (e.g. SFPTRANSP's
+    # L0..L7 outputs). A virtual definition must not overwrite one whose next
+    # read is still ahead, even when that physical register has no later def.
+    for v in live_after | writes[pc]: fixed_conflict[v].update(fixed_out[pc])
     for w in writes[pc]:
       for other in (live_after | writes[pc]) - {w}:
         neighbors[w].add(other)
@@ -172,11 +186,21 @@ def regalloc(ctx: LinearContext, uops: list[UOp], ren: ISARenderer) -> list[UOp]
   if any(r is None for r in colors.values()):
     if len(ren.scratch_regs) < 2:
       raise RuntimeError("register allocation failed: out of registers and no scratch_regs configured for spilling")
-    scratch = ren.scratch_regs[:2]
+    scratch = ren.scratch_regs
     colors = try_color(set(scratch))
+    spill_pools: dict[str, list[int]] = collections.defaultdict(list)
     for v in order:
       if colors[v] is None:
-        spills[v] = ctx.assign_spill_slot(choices[v][0])
+        # Non-overlapping spilled values share storage just as they could
+        # share a register. This bounds SFPU scratch by peak live pressure,
+        # rather than the number of temporaries in a long fused expression.
+        occupied = {spills[n] for n in neighbors[v] if n in spills}
+        pool = spill_pools[choices[v][0].arg.file]
+        slot = next((s for s in pool if s not in occupied), None)
+        if slot is None:
+          slot = ctx.assign_spill_slot(choices[v][0])
+          pool.append(slot)
+        spills[v] = slot
 
   # 5. Rewrite UOps with allocated physical registers (inserting fills/spills for spilled virtuals)
   out_uops: list[UOp] = []
@@ -193,6 +217,7 @@ def regalloc(ctx: LinearContext, uops: list[UOp], ren: ISARenderer) -> list[UOp]
       if v is not None and v in virtuals:
         if v in spills:
           if v not in loaded:
+            if len(loaded) >= len(scratch): raise RuntimeError("instruction needs more spill scratch registers")
             sc = scratch[len(loaded)]
             fill_u = ren.fill(spills[v], s, sc)
             before.append(fill_u)
@@ -212,7 +237,7 @@ def regalloc(ctx: LinearContext, uops: list[UOp], ren: ISARenderer) -> list[UOp]
       for v in u_defs:
         if v in virtuals:
           if v in spills:
-            sc = scratch[0]
+            sc = rdef(loaded[v], ren) if v in loaded else scratch[0]
             phys_defs.append(sc)
             spilled_def = (v, sc)
           else:

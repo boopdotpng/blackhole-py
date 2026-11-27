@@ -1,4 +1,4 @@
-import fcntl, mmap, os, struct
+import ctypes, fcntl, functools, mmap, os, platform, struct
 from pathlib import Path
 from pci import ARC, SUPPORTED, TLB_SIZE, Card, Monitor, libc, map_memory, rect, view_at
 
@@ -14,6 +14,19 @@ def ioctl(fd, nr, fmt, *args):
 
 def open_dev(index:int) -> int: return os.open(f"/dev/tenstorrent/{index}", os.O_RDWR | os.O_CLOEXEC | os.O_APPEND)
 def set_power(fd:int, flags:int): ioctl(fd, SET_POWER_STATE, "IIBBH28x", 40, 0, 0, 15, flags)
+
+@functools.cache
+def store_fence():
+  # Flush x86 write-combining buffers before reconfiguring the TLB or
+  # releasing a worker. Keep the four-byte sfence; ret helper alive.
+  code = mmap.mmap(-1, mmap.PAGESIZE, prot=mmap.PROT_READ | mmap.PROT_WRITE)
+  code[:4] = b"\x0f\xae\xf8\xc3"
+  address = ctypes.addressof(ctypes.c_char.from_buffer(code))
+  if libc.mprotect(ctypes.c_void_p(address), ctypes.c_size_t(mmap.PAGESIZE), mmap.PROT_READ | mmap.PROT_EXEC):
+    error = ctypes.get_errno()
+    code.close()
+    raise OSError(error, "cannot protect store-fence helper")
+  return code, ctypes.CFUNCTYPE(None)(address)
 
 class HostMemory:
   def __init__(self, card:"LinuxCard", size:int):
@@ -53,11 +66,19 @@ class LinuxCard(Card):
     try:
       self.power(7)
       self.tlb_id, tlb_addr = self._window()
+      self.write_tlb_id, self.write_addr, self._store_fence = None, None, None
+      if platform.machine() == "x86_64":
+        try:
+          fence = store_fence()[1]
+          self.write_tlb_id, self.write_addr = self._window(write_combining=True)
+          self._store_fence = fence
+        except OSError: pass
     except BaseException:
       self.close()
       raise
     self.tlb = view_at(tlb_addr, TLB_SIZE)
     self.tlb32 = self.tlb.cast("I")
+    self.write_tlb_cfg = None
 
   def close(self):
     if self.fd is None: return
@@ -74,9 +95,9 @@ class LinuxCard(Card):
     return ioctl(self.fd, PIN_PAGES, "IIQQQQ", 16, 2 | (8 if read_only else 0), va, size, 0, 0)[-1]
   def unpin(self, va:int, size:int): ioctl(self.fd, UNPIN_PAGES, "QQQ", va, size, 0)
 
-  def _window(self) -> tuple[int, int]:
-    _, _, tlb, _, offset, _, _ = ioctl(self.fd, ALLOCATE_TLB, "QQIIQQQ", TLB_SIZE, 0, 0, 0, 0, 0, 0)
-    self.windows.append(addr := map_memory(TLB_SIZE, self.fd, offset))
+  def _window(self, write_combining=False) -> tuple[int, int]:
+    _, _, tlb, _, offset, wc_offset, _ = ioctl(self.fd, ALLOCATE_TLB, "QQIIQQQ", TLB_SIZE, 0, 0, 0, 0, 0, 0)
+    self.windows.append(addr := map_memory(TLB_SIZE, self.fd, wc_offset if write_combining else offset))
     return tlb, addr
 
   def window(self, core) -> memoryview:
@@ -92,6 +113,24 @@ class LinuxCard(Card):
   def _wwrite(self, off, data): self.tlb[off:off + len(data)] = data
   def _wread32(self, off): return self.tlb32[off // 4]
   def _wwrite32(self, off, v): self.tlb32[off // 4] = v
+
+  def write(self, core, addr, data):
+    from pci import buffer_address
+    data = memoryview(data).cast("B")
+    if self.write_addr is None or len(data) < 64 or not 0 <= addr <= 0x180000 - len(data):
+      return super().write(core, addr, data)
+    # Use a distinct TLB aperture: mapping the same BAR pages both UC and WC
+    # can force both aliases to UC through the host's memory-type tracking.
+    source, done = buffer_address(data), 0
+    while done < len(data):
+      base, off = addr & -TLB_SIZE, addr % TLB_SIZE
+      if self.write_tlb_cfg != (core, base):
+        self._configure(self.write_tlb_id, core, base)
+        self.write_tlb_cfg = core, base
+      count = min(len(data) - done, TLB_SIZE - off)
+      ctypes.memmove(self.write_addr + off, source + done, count)
+      self._store_fence()
+      addr, done = addr + count, done + count
 
 class LinuxMonitor(Monitor):
   # Read-only access through tt-kmd's NOC_READ: no lock and no power vote, so it works while another process owns the card.

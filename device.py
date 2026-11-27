@@ -8,6 +8,9 @@ from pci import buffer_address, open_card
 TAG_ENABLED_TENSIX_COL = 34
 DRAM_BANK_SIZE, DRAM_PAGE_MAX = 0xFF000000, 4096
 NOC_MAX_BURST = 0x4000
+HOST_DTYPES = {dtypes.bool: "bool", dtypes.u8: "uint8", dtypes.i32: "int32", dtypes.u32: "uint32",
+               dtypes.u64: "uint64", dtypes.bf16: "uint16", dtypes.fp32: "float32",
+               dtypes.bfp8: "uint8", dtypes.bfp4: "uint8", dtypes.e4m3: "uint8"}
 
 def coord(x:int, y:int) -> int: return y << 6 | x
 
@@ -160,27 +163,29 @@ class DMA:
       if pending: drain(*pending)
 
 class Buffer:
-  def __init__(self, device: Device, shape, dtype: str | DType, host: bool = False, tiles_per_page: int = 1):
+  def __init__(self, device: Device, shape, dtype: str | DType, host: bool = False, page: int = DRAM_PAGE_MAX):
     self.device, self.shape, self.dtype, self.host = device, tuple(shape), dtypes.from_name(dtype), host
-    if not self.dtype.host: raise ValueError(f"{self.dtype} has no host representation")
-    self.numpy_type = np.dtype(self.dtype.host)
+    if self.dtype not in HOST_DTYPES: raise ValueError(f"{self.dtype} has no host representation")
+    if self.dtype in (dtypes.bfp8, dtypes.bfp4): raise ValueError(f"{self.dtype} requires FaceBuffer")
+    self.numpy_type = np.dtype(HOST_DTYPES[self.dtype])
     self.nbytes = math.prod(self.shape) * self.numpy_type.itemsize
-    if tiles_per_page < 1 or tiles_per_page * self.dtype.tile_bytes > NOC_MAX_BURST or (host and tiles_per_page != 1):
-      raise ValueError("invalid tiles_per_page")
+    if not 64 <= page <= NOC_MAX_BURST or page % 64: raise ValueError("invalid DRAM page size")
     if host:
       self.offset = device.alloc_host(max(self.nbytes, 64))
       self.addr = device.host.noc_addr + self.offset
     else:
-      self.addr = device.alloc_dram(self.nbytes, tiles_per_page * self.dtype.tile_bytes)
+      self.addr = device.alloc_dram(self.nbytes, page)
 
   def numpy(self) -> np.ndarray:
     # Host buffers return a live view: no copy and no synchronization with the device.
     if self.host: return np.ndarray(self.shape, self.numpy_type, self.device.host.mem, self.offset)
+    self.device.synchronize()
     out = np.empty(self.shape, self.numpy_type)
     if self.nbytes: self.device.dma.copyout(out, self.addr)
     return out
 
   def copy_from(self, x):
+    self.device.synchronize()
     if self.host:
       self.numpy().reshape(-1).view(np.uint8)[:] = np.frombuffer(np.ascontiguousarray(x), np.uint8)
       return self
@@ -194,6 +199,7 @@ class Buffer:
 class Device:
   def __init__(self, index:int=0):
     self.card, self.host, self.booted, self.dma = open_card(index), None, False, None
+    self._launch_layouts = {}
     try:
       self.cols = (self.card.telemetry(TAG_ENABLED_TENSIX_COL) & 0x3FFF).bit_count()
       if self.cols not in (12, 14): raise RuntimeError(f"unsupported {self.card.name}: {self.cols} Tensix columns")
@@ -208,6 +214,9 @@ class Device:
       # last 16 MiB of a pin runs at ~33 GB/s instead of ~56 (cause unknown), so nothing lives there.
       stage_base, stage_size = 16 << 20, 8 << 20
       self.host = self.card.alloc_host(stage_base + 2 * stage_size + (32 << 20))
+      # NoC short writes require matching source/destination offsets within a
+      # 16-byte word. LAUNCH_SEQUENCE is 16-byte aligned in worker L1.
+      self.kernel_signal, self.kernel_sequence = Signal(self.host, 16), 0
       self.heap, self.heap_end, self.dram_top = mmap.PAGESIZE, stage_base, 0
       self.dma = DMA(self.card, self.host, stage_base, stage_size)
       self._boot_dma()
@@ -216,8 +225,8 @@ class Device:
       raise
     atexit.register(self.close)
 
-  def empty(self, shape, dtype:str|DType, host:bool=False, *, tiles_per_page:int=1) -> Buffer:
-    return Buffer(self, (shape,) if isinstance(shape, int) else shape, dtype, host, tiles_per_page)
+  def empty(self, shape, dtype:str|DType, host:bool=False, *, page:int=DRAM_PAGE_MAX) -> Buffer:
+    return Buffer(self, (shape,) if isinstance(shape, int) else shape, dtype, host, page)
 
   def zeros(self, shape, dtype:str|DType, host:bool=False) -> Buffer:
     b = self.empty(shape, dtype, host)
@@ -235,14 +244,21 @@ class Device:
     if dtype is dtypes.bf16 and x.dtype.kind == "f":
       u = x.astype(np.float32).view(np.uint32).astype(np.uint64)
       x = ((u + 0x7FFF + (u >> 16 & 1)) >> 16).astype(np.uint16)
-    dtype = dtype or dtypes.from_host(x.dtype.name)
+    dtype = dtype or {"bool": dtypes.bool, "uint8": dtypes.u8, "int32": dtypes.i32, "uint32": dtypes.u32,
+                      "uint64": dtypes.u64, "float32": dtypes.fp32}.get(x.dtype.name)
     if dtype is None: raise TypeError(f"no runtime type for {x.dtype}; pass dtype=")
     return self.empty(x.shape, dtype).copy_from(x)
 
   def read_l1(self, core:int|tuple[int, int], addr:int, size:int) -> bytes:
     return self.card.read(self.workers[core] if isinstance(core, int) else core, addr, size)
 
-  def synchronize(self, timeout:float=10.0): self.dma.synchronize(timeout)
+  def worker_grid(self, gcols:int, grows:int) -> list[tuple[int, int]]:
+    if not (1 <= gcols <= self.cols - 1 and 1 <= grows <= 10): raise ValueError("invalid worker grid")
+    return [(wx + (3 if wx >= 7 else 1), wy + 2) for wx in range(gcols) for wy in range(grows)]
+
+  def synchronize(self, timeout:float=10.0):
+    self.dma.synchronize(timeout)
+    self.kernel_signal.wait(self.kernel_sequence, timeout)
 
   def stop(self):
     for rect in self.worker_rects: self._reset(rect)
@@ -262,23 +278,64 @@ class Device:
     self.heap = offset + size
     return offset
 
+  def _launch_layout(self, cores):
+    targets = self.worker_rects if cores is None else tuple(cores)
+    key = tuple(tuple(t) if isinstance(t[0], int) else (tuple(t[0]), tuple(t[1])) for t in targets)
+    if key in self._launch_layouts: return self._launch_layouts[key]
+    def covers(target, core):
+      if isinstance(target[0], int): return tuple(target) == core
+      (x0, y0), (x1, y1) = target
+      return x0 <= core[0] <= x1 and y0 <= core[1] <= y1
+    if all(isinstance(target[0], int) for target in targets):
+      selected = {tuple(target) for target in targets}
+      workers = [core for core in self.workers if core in selected]
+    else:
+      workers = [core for core in self.workers if any(covers(t, core) for t in targets)]
+    if not workers: raise ValueError("kernel launch needs at least one worker")
+    # Identical code and arguments can be multicast to rectangular runs of
+    # selected cores. Keep every rectangle inside the requested worker set.
+    rectangles, previous = [], {}
+    for x in sorted({x for x, _ in workers}):
+      ys = sorted(y for cx, y in workers if cx == x)
+      runs = []
+      for y in ys:
+        if runs and runs[-1][1] + 1 == y: runs[-1] = (runs[-1][0], y)
+        else: runs.append((y, y))
+      for y0, y1 in runs:
+        index = previous.get((y0, y1))
+        if index is not None and rectangles[index][1][0] == x - 1:
+          rectangles[index] = (rectangles[index][0], (x, y1))
+        else:
+          previous[y0, y1] = len(rectangles)
+          rectangles.append(((x, y0), (x, y1)))
+    self._launch_layouts[key] = workers, rectangles
+    return workers, rectangles
+
   def run(self, images:dict[str, bytes], data:dict[int, bytes]|None=None, cores=None) -> int:
     # Launch one kernel body per RISC role on every worker (or `cores`), with `data` written to L1 first.
     # Returns the 64-aligned end of code in L1.
     image, role_pcs, code_end = fw.pack_megakernel(images)
     self.synchronize()
     self.stop()
+    workers, targets = self._launch_layout(cores)
+    sequence = self.kernel_sequence + 1
     header = bytearray(fw.CODE_BASE)
     struct.pack_into("<I", header, 0, isa.jal(imm=fw.CODE_BASE))
-    struct.pack_into("<I", header, fw.LEADER_COORD, coord(*self.workers[0]))
-    struct.pack_into("<3I", header, fw.NUM_WORKERS, len(self.workers), self.dram_banks, self.cols)
+    struct.pack_into("<I", header, fw.LEADER_COORD, coord(*workers[0]))
+    struct.pack_into("<3I", header, fw.NUM_WORKERS, len(workers), self.dram_banks, self.cols)
+    struct.pack_into("<QQ", header, fw.HOST_SIGNAL_ADDR, self.kernel_signal.addr, sequence)
     struct.pack_into("<4I", header, fw.ROLE_PC, *(role_pcs.get(r, 0) for r in fw.ROLES[1:]))
-    targets = self.worker_rects if cores is None else list(cores)
+    extra = data
+    if data and all(0 <= addr and addr + len(blob) <= len(header) for addr, blob in data.items()):
+      for addr, blob in data.items(): header[addr:addr + len(blob)] = blob
+      extra = None
     payload = bytes(header) + image
     for target in targets:
       self.card.write(target, 0, payload)
-      if data:
-        for addr, blob in data.items(): self.card.write(target, addr, blob)
+      if extra:
+        for addr, blob in extra.items(): self.card.write(target, addr, blob)
+    self.kernel_sequence = sequence
+    for target in targets:
       self.card.write32(target, fw.SOFT_RESET, fw.RESET_ALL & ~fw.RESET_BRISC)
     return code_end
 
@@ -292,7 +349,10 @@ class Device:
       self.card.close()
       self.card = None
 
-  def _reset(self, rect): self.card.write32(rect, fw.SOFT_RESET, fw.RESET_ALL)
+  def _reset(self, rect):
+    # Reset source ownership while every RISC is held, avoiding the unsafe
+    # asynchronous CLEARDVALID(reset=1) instruction in running Tensix code.
+    self.card.write32(rect, fw.SOFT_RESET, fw.RESET_ALL | (1 << 15) | (1 << 16))
 
   def _boot_dma(self):
     core, (brisc, ncrisc) = self.dma_core, fw.dma_images(self.dram_banks)
@@ -304,3 +364,71 @@ class Device:
     self.card.write32(core, 0, isa.jal(imm=fw.DMA_BRISC_BASE))
     self.card.write32(core, fw.SOFT_RESET, fw.RESET_ALL & ~fw.RESET_BRISC)
     self.dma.window = self.card.window(core)
+
+
+class FaceBuffer:
+  """Device tensor storage; pad/tilize and crop/untilize only at the host boundary."""
+  def __init__(self, device, shape, dtype, rows=8, *, address=None):
+    self.device, self.shape, self.dtype, self.rows = device, tuple(shape), dtype, rows
+    self.packed = dtype in (dtypes.bfp8, dtypes.bfp4)
+    if dtype not in (dtypes.fp32, dtypes.bf16, dtypes.i32, dtypes.u32, dtypes.bfp8, dtypes.bfp4):
+      raise NotImplementedError(f"host face staging for {dtype}")
+    if self.packed and rows != 16: raise NotImplementedError("packed activation staging")
+    self.host_dtype = np.dtype(HOST_DTYPES[dtype])
+    self.m, self.n = (1, 1) if not self.shape else (1, self.shape[0]) if len(self.shape) == 1 else self.shape[-2:]
+    self.batch = math.prod(self.shape[:-2]) if len(self.shape) > 2 else 1
+    self.mr, self.nc = round_up(self.m, rows) // rows, round_up(self.n, 16) // 16
+    self.face_bytes = 16 + 256 * dtype.bits // 8 if self.packed else rows * 16 * self.host_dtype.itemsize
+    self.nbytes = self.batch * self.mr * self.nc * self.face_bytes
+    self.addr = device.alloc_dram(self.nbytes) if address is None else address
+
+  def copy_from_raw(self, data):
+    if self.packed: raise ValueError("packed tensors require packed checkpoint staging")
+    values = np.frombuffer(data, self.host_dtype).reshape(self.batch, self.m, self.n)
+    stage = np.zeros((self.batch, self.mr * self.rows, self.nc * 16), self.host_dtype)
+    stage[:, :self.m, :self.n] = values
+    faces = stage.reshape(self.batch, self.mr, self.rows, self.nc, 16).transpose(0, 1, 3, 2, 4)
+    # Weight faces are consumed by MVMUL as [K_inner, N_inner]. This also
+    # preserves the checkpoint's shared exponent groups without requantizing.
+    if self.rows == 16: faces = faces.swapaxes(-1, -2)
+    faces = faces.copy()
+    self.device.dma.copyin(self.addr, faces)
+    return self
+
+  def copy_from_packed_kn(self, path, offset, shape):
+    if not self.packed or self.shape != (shape[1] * 32, shape[0] * 32): raise ValueError("packed checkpoint shape mismatch")
+    source = np.memmap(path, dtype=np.uint8, mode="r", offset=offset, shape=shape)
+    mantissa_bytes = self.face_bytes - 16
+    # Adapt the old on-disk envelope at the host boundary only. Exponents and
+    # mantissas are copied verbatim into [N/16, K/16, 16x16 face bytes].
+    for first in range(0, shape[1], 32):
+      part = source[:, first:first + 32]
+      exps = part[..., :64].reshape(shape[0], part.shape[1], 4, 16)
+      mant = part[..., 64:].reshape(shape[0], part.shape[1], 4, mantissa_bytes)
+      faces = np.concatenate((exps, mant), axis=-1).reshape(shape[0], part.shape[1], 2, 2, self.face_bytes)
+      faces = faces.transpose(1, 3, 0, 2, 4).copy()
+      self.device.dma.copyin(self.addr + first * 2 * self.nc * self.face_bytes, faces)
+    return self
+
+  def numpy(self):
+    self.device.synchronize()
+    if self.packed:
+      raw = np.empty((self.batch, self.mr, self.nc, self.face_bytes), np.uint8)
+      self.device.dma.copyout(raw, self.addr)
+      code = raw[..., 16:]
+      if self.dtype is dtypes.bfp4: code = np.stack((code & 15, code >> 4), axis=-1).reshape(*raw.shape[:-1], 256)
+      code = code.reshape(*raw.shape[:-1], 16, 16)
+      sign_bit = 1 << (self.dtype.bits - 1)
+      magnitude = (code & (sign_bit - 1)).astype(np.float32)
+      scale = np.exp2(raw[..., :16].astype(np.float32)[..., None] - 127 - (self.dtype.bits - 2))
+      sign = np.where((code & sign_bit) != 0, np.float32(-1), np.float32(1))
+      faces = sign * magnitude * scale
+      faces = np.where(code == sign_bit, -np.inf, faces)
+    else:
+      faces = np.empty((self.batch, self.mr, self.nc, self.rows, 16), self.host_dtype)
+      self.device.dma.copyout(faces, self.addr)
+    if self.rows == 16: faces = faces.swapaxes(-1, -2)
+    values = faces.transpose(0, 1, 3, 2, 4).reshape(self.batch, self.mr * self.rows, self.nc * 16)
+    values = values[:, :self.m, :self.n].copy().reshape(self.shape)
+    if self.dtype is dtypes.bf16: values = (values.astype(np.uint32) << 16).view(np.float32)
+    return values

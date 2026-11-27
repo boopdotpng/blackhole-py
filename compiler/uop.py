@@ -961,7 +961,11 @@ class PatternMatcher:
     return run
 
   def __add__(self, other: PatternMatcher) -> PatternMatcher:
-    return PatternMatcher(self.rules + other.rules)
+    combined = PatternMatcher.__new__(PatternMatcher)
+    combined.rules = self.rules + other.rules
+    combined._by_op = collections.defaultdict(list, {
+      op: self._by_op.get(op, []) + other._by_op.get(op, []) for op in self._by_op.keys() | other._by_op.keys()})
+    return combined
 
   def rewrite(self, u: UOp, ctx: Any = None) -> Any:
     buckets = (self._by_op.get(u.op), self._by_op.get(None))
@@ -1111,7 +1115,8 @@ def linearize(sink: UOp) -> list[UOp]:
   lst = sink.toposort()
   ranges = _open_ranges_for_lin(lst)
   out_degree: collections.defaultdict[UOp, int] = collections.defaultdict(int)
-  priorities: dict[UOp, tuple[int, int, int]] = {}
+  priorities: dict[UOp, tuple[tuple[int, ...], int, int]] = {}
+  range_order = {u: i for i, u in enumerate(lst) if u.op is Ops.RANGE}
 
   for pos, u in enumerate(lst):
     for s in u.src_without_body: out_degree[s] += 1
@@ -1123,7 +1128,7 @@ def linearize(sink: UOp) -> list[UOp]:
       case Ops.RANGE: prio = 5
       case Ops.END | Ops.BACKEDGE: prio = -5
       case _: prio = 0
-    priorities[u] = (len(ranges[u]), prio, pos)
+    priorities[u] = (tuple(sorted(range_order[r] for r in ranges[u])), prio, pos)
 
   nkey = {u: i for i, u in enumerate(sorted(lst, key=lambda x: priorities[x]))}
   heap = [(-nkey[sink], sink)]

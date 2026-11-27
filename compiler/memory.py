@@ -113,10 +113,11 @@ class MemoryPlan:
   @property
   def n_allocs(self) -> int: return len(self.offsets)
 
-def _plan_lifetimes(first_use: dict[UOp, int], last_use: dict[UOp, int], block_size: int) -> MemoryPlan:
+def _plan_lifetimes(first_use: dict[UOp, int], last_use: dict[UOp, int], block_size: int,
+                    physical_nbytes: dict[UOp, int] | None = None) -> MemoryPlan:
   if not first_use:
     return MemoryPlan({}, 0, 0, block_size)
-  nbytes = {b: round_up(alloc_nbytes(b), block_size) for b in first_use}
+  nbytes = {b: round_up(alloc_nbytes(b) if physical_nbytes is None else physical_nbytes[b], block_size) for b in first_use}
   # Close events (False) sort before open events (True) at the same timestamp so freed memory reuses immediately
   events = sorted(
     [(first_use[b], True, b) for b in first_use] +

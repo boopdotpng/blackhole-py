@@ -13,7 +13,8 @@ def _sext(val: int, bits: int) -> int:
   m = 1 << (bits - 1)
   return (val & (m - 1)) - (val & m)
 
-def run_rv32(code: bytes, regs_init: dict[int, int] | None = None, mem: bytearray | None = None, max_steps: int = 50_000) -> tuple[list[int], bytearray]:
+def run_rv32(code: bytes, regs_init: dict[int, int] | None = None, mem: bytearray | None = None, max_steps: int = 50_000,
+             on_call=None) -> tuple[list[int], bytearray]:
   r = [0] * 32
   if regs_init:
     for k, v in regs_init.items(): r[k] = v & 0xFFFFFFFF
@@ -67,6 +68,8 @@ def run_rv32(code: bytes, regs_init: dict[int, int] | None = None, mem: bytearra
     elif opc == 0x03:  # LOAD
       addr = (r[rs1] + _sext(w >> 20, 12)) & 0xFFFFFFFF
       if f3 == 2: r[rd] = struct.unpack_from("<I", memory, addr)[0]
+      elif f3 == 0: r[rd] = _sext(memory[addr], 8) & 0xFFFFFFFF
+      elif f3 == 1: r[rd] = _sext(struct.unpack_from("<H", memory, addr)[0], 16) & 0xFFFFFFFF
       elif f3 == 4: r[rd] = memory[addr]
       elif f3 == 5: r[rd] = struct.unpack_from("<H", memory, addr)[0]
       else: raise AssertionError(f"unknown LOAD f3={f3}")
@@ -91,7 +94,7 @@ def run_rv32(code: bytes, regs_init: dict[int, int] | None = None, mem: bytearra
       imm = _sext(w >> 20, 12)
       t = (r[rs1] + imm) & ~1
       if rd: r[rd] = nxt
-      nxt = t
+      if on_call is None or not on_call(t, r): nxt = t
     elif opc == 0x0F:  # FENCE
       pass
     else:
@@ -231,67 +234,6 @@ class TestTensixAndBlackholeBottomLayer(unittest.TestCase):
     fixed = fix_sfpu_hazards_uops([ld0, ld1, mad, iadd, st], ren)
     self.assertEqual(len(fixed), 6)
     self.assertEqual(fixed[3].ins_op, hw_isa.SFPNOP())
-
-  @unittest.skip("sfpu.py pending rewrite onto the dtype-free UOp core")
-  def test_end_to_end_tensor_to_5core_blackhole_binary(self):
-    from compiler.sfpu import compile_sfpu
-    # Start-to-finish UOp-only lowering of a Llama3-style silu*up elementwise op onto 5 Blackhole RISCs
-    # Layer 0 Tensor -> Layer 1 UOp -> SFPU UOp.ins + 5-core Ops.LINEAR -> Ops.PROGRAM / Ops.BINARY
-    x_t = Tensor.buffer("x", (1, 32, 32), dtypes.fp32)
-    y_t = Tensor.buffer("y", (1, 32, 32), dtypes.fp32)
-    z_t = x_t.silu() * y_t
-    self.assertEqual(z_t.shape, (1, 32, 32))
-
-    # Lower the tile expression via compile_sfpu -> UOp.ins stream on trisc1
-    bx = UOp.buffer("x", (1, 32, 32), dtypes.fp32)
-    by = UOp.buffer("y", (1, 32, 32), dtypes.fp32)
-    bo = UOp.buffer("out", (1, 32, 32), dtypes.fp32)
-    dx = bx.noc_read(0).unpack(dtypes.fp32)
-    dy = by.noc_read(0).unpack(dtypes.fp32)
-    sfpu_lin = compile_sfpu(dx.silu() * dy, {dx: 0, dy: 1}, precision=dtypes.fp32).to_linear(role="trisc1")
-
-    # Assemble a 5-core joint UOp.ins stream (each core's role-tagged ops -> split_roles -> compile_linear_bundle)
-    joint = [
-      # brisc: fence + ret
-      UOp.ins(RVOps.FENCE, (), dtypes.void, role="brisc"),
-      UOp.ins(RVOps.RET, (), dtypes.void, role="brisc"),
-      # ncrisc: fence + ret
-      UOp.ins(RVOps.FENCE, (), dtypes.void, role="ncrisc"),
-      UOp.ins(RVOps.RET, (), dtypes.void, role="ncrisc"),
-      # trisc0: unpack tile + stall + ret
-      tt_ins(hw_isa.SETADCXX(counters=hw_isa.Adc.UNPACK0, x_end=1023, x_start=0), role="trisc0"),
-      tt_ins(hw_isa.UNPACR(unpacker=0, set_dvalid=1, last=1), role="trisc0"),
-      UOp.ins(RVOps.RET, (), dtypes.void, role="trisc0"),
-      # trisc1: compiled SFPU silu*mul UOp.ins loop + sempost + ret
-      *sfpu_lin.src,
-      tt_ins(hw_isa.STALLWAIT(stall=hw_isa.Stall.SYNC, wait=hw_isa.Wait.SFPU), role="trisc1"),
-      tt_ins(hw_isa.SEMPOST(sems=2), role="trisc1"),
-      UOp.ins(RVOps.RET, (), dtypes.void, role="trisc1"),
-      # trisc2: semwait + pack tile + ret
-      tt_ins(hw_isa.SEMWAIT(stall=hw_isa.Stall.PACK, sems=2, cond=hw_isa.SemWait.STALL_ON_ZERO), role="trisc2"),
-      *([tt_ins(hw_isa.PACR(last=0), role="trisc2")] * 15),
-      tt_ins(hw_isa.PACR(addr_mod=1, last=1), role="trisc2"),
-      UOp.ins(RVOps.RET, (), dtypes.void, role="trisc2"),
-    ]
-    bundle_lin = split_roles(joint)
-    self.assertEqual(len(bundle_lin.src), 5)
-    self.assertEqual(tuple(s.arg for s in bundle_lin.src), ROLES)
-
-    ren = BlackholeRenderer()
-    prg = ren.compile_linear_bundle(bundle_lin)
-    self.assertEqual(prg.op, Ops.PROGRAM)
-    images = unpack_bundle(prg.src[3].arg)
-    self.assertEqual(tuple(images.keys()), ROLES)
-    # Every core has non-empty 4-byte-aligned machine code; trisc1 has the 32-footprint loop + SFPU instructions
-    for role, data in images.items():
-      self.assertGreater(len(data), 0, f"empty image for {role}")
-      self.assertEqual(len(data) % 4, 0)
-    self.assertGreater(len(images["trisc1"]), 40)
-    self.assertEqual(len(images["trisc2"]), 18 * 4)  # SEMWAIT + 16*PACR + RET
-    # Verify the UIR and disasm source are readable
-    self.assertIn("=== trisc1", prg.src[2].arg)
-    self.assertIn("SFPMAD", prg.src[2].arg)
-    self.assertIn("role=trisc1", render_uir(prg.src[1]))
 
 
 if __name__ == "__main__":

@@ -24,4 +24,3 @@ from .isa.tensix import (
   encode_tensix, encode_tensix_inline, fix_sfpu_hazards_uops, pack_bundle, sfp_ins, split_roles, tt_ins, unpack_bundle,
 )
 from hw.sfpu_lat import disasm_sfpu, fix_sfpu_hazards, sfpu_hazards, verify_sfpu_words
-# compiler.sfpu is not imported here: it predates the dtype-free UOp core and is being rewritten

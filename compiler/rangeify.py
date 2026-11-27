@@ -829,13 +829,17 @@ def _split_store(x: UOp) -> UOp | None:
   # anonymous KernelArg("") lets structurally identical kernels deduplicate via hash-consing
   return UOp.sink(ret, arg=KernelArg("")).call(*call_args)
 
+@functools.lru_cache(maxsize=128)
+def _lower_function_body(body: UOp, l1_budget: int) -> UOp:
+  return _lower_one_sink(body, {}, l1_budget=l1_budget)
+
 def _lower_one_sink(tsink: UOp, call_memo: dict[UOp, UOp], *, l1_budget: int = L1_STAGE_BUDGET) -> UOp:
   # recursively lower each unique CALL(SINK, ...) function body once
   def lower_call_body(c: UOp) -> UOp | None:
     body = c.src[0]
     if body.op is not Ops.SINK or isinstance(body.arg, KernelArg): return None
     if (lb := call_memo.get(body)) is None:
-      lb = _lower_one_sink(body, call_memo, l1_budget=l1_budget)
+      lb = _lower_function_body(body, l1_budget)
       call_memo[body] = call_memo[lb] = lb
     return None if lb is body else c.replace(src=(lb, *c.src[1:]))
 

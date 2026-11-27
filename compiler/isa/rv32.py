@@ -71,6 +71,12 @@ def rv_li(val: int, dtype: DType = dtypes.i32, *dst: UOp, role: str = "") -> UOp
   if val == 0 and not dst: return X0.cast(dtype) if dtype != dtypes.u32 else X0
   return UOp.ins(RVOps.LI, (UOp.const(val & 0xFFFFFFFF if val >= (1 << 31) else val),), dtype, *dst, role=role)
 
+def rv_arg(slot: int, *, high: bool = False, dtype: DType = dtypes.u32) -> UOp:
+  """Load one word of a firmware argument; DRAM pointers use low/high loads."""
+  if not 0 <= slot < 16: raise ValueError(f"argument slot {slot} is outside the 16-slot firmware ABI")
+  if dtype.bits > 32 or dtype.is_float: raise ValueError("RV32 argument words must be integers of at most 32 bits")
+  return UOp.ins(RVOps.LW, (X0, UOp.const(0x80 + 8 * slot + 4 * high)), dtype)
+
 def expand_li(u: UOp) -> list[UOp]:
   """Expand pseudo LI into ADDI or LUI + ADDI once its destination physical register is known."""
   n = const_int(u.src_without_body[0]) & 0xFFFFFFFF
@@ -110,8 +116,8 @@ def _fold_mem_addr(addr: UOp) -> tuple[UOp, UOp]:
   return addr, UOp.const(0)
 
 def _load_op(dt: DType) -> RVOps:
-  if dt.bits <= 8: return RVOps.LBU
-  if dt.bits == 16: return RVOps.LHU
+  if dt.bits <= 8: return RVOps.LB if dt.is_int and dt.is_signed else RVOps.LBU
+  if dt.bits == 16: return RVOps.LH if dt.is_int and dt.is_signed else RVOps.LHU
   return RVOps.LW
 
 def _store_op(dt: DType) -> RVOps:
@@ -120,6 +126,9 @@ def _store_op(dt: DType) -> RVOps:
   return RVOps.SW
 
 def _load_const_operand(s: UOp) -> UOp:
+  if s.op is Ops.AFTER:
+    base = _load_const_operand(s.src[0])
+    return base.after(*s.src[1:]) if base is not s.src[0] else s
   if not is_int_const(s): return s
   v = const_int(s)
   return X0 if v == 0 else UOp.ins(RVOps.LI, (UOp.const(v),), s.dtype)
@@ -129,7 +138,7 @@ def _materialize_consts(x: UOp) -> UOp | None:
   op = x.ins_op
   if op not in RVGroupOp.All or op in (RVOps.LABEL, RVOps.LI, RVOps.LUI, RVOps.AUIPC, RVOps.FENCE, RVOps.RET): return None
   src = x.src_without_body
-  imm_idx = len(src) - 1 if op in RVGroupOp.Immediate else -1
+  imm_idx = 1 if op is RVOps.JALR else len(src) - 1 if op in RVGroupOp.Immediate else -1
   keep_first = op in (RVGroupOp.Branch | {RVOps.JAL})
   nsrc = tuple(s if (i == imm_idx or (keep_first and i == 0)) else _load_const_operand(s) for i, s in enumerate(src))
   return None if nsrc == src else x.replace(src=(x.body, *nsrc))
@@ -145,6 +154,10 @@ def _make_alloc_vregs(wgpr: tuple[UOp, ...]):
 
 def make_rv32_isel(wgpr: tuple[UOp, ...] = DEFAULT_WGPR) -> PatternMatcher:
   return PatternMatcher([
+    (UPat(Ops.PARAM, name="u"), lambda u: rv_arg(u.arg.slot, dtype=u.dtype)
+     if not u.arg.file and u.arg.vmin_vmax is not None else None),
+    (UPat(Ops.SPECIAL, name="u"), lambda u: UOp.ins(RVOps.LW,
+      (X0, UOp.const({"worker_x": 0x20, "worker_y": 0x24, "worker_id": 0x28}[u.arg])), u.dtype)),
     # a typed integer constant is just its value in a 32-bit register
     (UPat(Ops.CAST, src=(UPat(Ops.CONST, name="c"),), name="u"),
      lambda u, c: UOp.const(int(c.arg)) if u.dtype.is_int or u.dtype is dtypes.bool else None),
@@ -274,10 +287,12 @@ def encode_rv32(u: UOp, ren: ISARenderer, targets: dict[UOp, int], pc: int) -> i
     return int(_RV_ENC[op](rs1=_reg_num(src[0], ren), rs2=_reg_num(src[1], ren), imm=const_int(src[2])))
   if op in RVGroupOp.Branch:
     off = targets[src[0]] - pc
+    if off % 2 or not -4096 <= off < 4096: raise ValueError(f"RV32 branch offset out of range: {off}")
     return int(_RV_ENC[op](rs1=_reg_num(src[1], ren), rs2=_reg_num(src[2], ren), imm=off))
   if op is RVOps.JAL:
     rd = _reg_num(u, ren) if rdef(u, ren) is not None else 0
     off = targets[src[0]] - pc
+    if off % 2 or not -(1 << 20) <= off < (1 << 20): raise ValueError(f"RV32 JAL offset out of range: {off}")
     return int(hw_isa.jal(rd=rd, imm=off))
   if op is RVOps.JALR:
     rd = _reg_num(u, ren) if rdef(u, ren) is not None else 0
@@ -307,6 +322,7 @@ class RV32Renderer(ISARenderer):
     return ()
 
   def falls_through(self, u: UOp) -> bool:
+    if u.is_ins and u.ins_op in (RVOps.JAL, RVOps.JALR) and rdef(u, self) == RA: return True
     return not (u.is_ins and u.ins_op in (RVOps.JAL, RVOps.JALR, RVOps.RET))
 
   def copy(self, x: UOp, reg: UOp) -> UOp:
@@ -319,6 +335,7 @@ class RV32Renderer(ISARenderer):
     return UOp.ins(RVOps.LW, (self.spill_base, UOp.const(self.spill_offset + spill_slot)), x.dtype, reg)
 
   def assemble(self, uops: list[UOp]) -> bytes:
+    uops = relax_branches(uops, self)
     targets: dict[UOp, int] = {}
     pc = 0
     for u in uops:
@@ -332,3 +349,30 @@ class RV32Renderer(ISARenderer):
       words.append(encode_rv32(u, self, targets, pc))
       pc += 4
     return struct.pack(f"<{len(words)}I", *words)
+
+def relax_branches(uops: list[UOp], ren: RV32Renderer) -> list[UOp]:
+  """Expand distant conditional jumps after register allocation and LI expansion.
+
+  Iterate because expanding one branch can put another beyond B-type reach.
+  New labels use the branch's position, so repeated instruction objects remain
+  distinct in linear streams.
+  """
+  inverse = {RVOps.BEQ: RVOps.BNE, RVOps.BNE: RVOps.BEQ, RVOps.BLT: RVOps.BGE,
+             RVOps.BGE: RVOps.BLT, RVOps.BLTU: RVOps.BGEU, RVOps.BGEU: RVOps.BLTU}
+  while True:
+    targets, pc = {}, 0
+    for u in uops:
+      if ren.is_label(u): targets[u.src_without_body[0]] = pc
+      elif u.is_ins: pc += 4
+    out, pc, changed = [], 0, False
+    for i, u in enumerate(uops):
+      if u.is_ins and u.ins_op in RVGroupOp.Branch and not -4096 <= targets[u.src_without_body[0]] - pc < 4096:
+        target, a, b, *deps = u.src_without_body
+        key = UOp(Ops.NOOP, arg=("long_branch", i, u))
+        out.extend((UOp.ins(inverse[u.ins_op], (key, a, b, *deps), dtypes.void, role=u.arg.role),
+                    UOp.ins(RVOps.JAL, (target,), dtypes.void, role=u.arg.role), rv_label(key)))
+        changed = True
+      else: out.append(u)
+      if u.is_ins and not ren.is_label(u): pc += 4
+    if not changed: return out
+    uops = out

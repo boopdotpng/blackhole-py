@@ -5,7 +5,7 @@ from hw.sfpu_lat import disasm_sfpu, sfpu_hazards
 from ..dtype import DType, dtypes
 from ..uop import CallInfo, Ops, UOp, line_rewrite
 from . import ISARenderer, compile_linear, rdef, regalloc
-from .rv32 import DEFAULT_SCRATCH, DEFAULT_WGPR, LOCAL_BASE, RV_PHYSICAL_REGS, RVGroupOp, RVOps, RV32Renderer, encode_rv32
+from .rv32 import DEFAULT_SCRATCH, DEFAULT_WGPR, LOCAL_BASE, RV_PHYSICAL_REGS, RVGroupOp, RVOps, RV32Renderer, encode_rv32, relax_branches
 
 # ---- Blackhole Tensix Opcodes & Blackhole-specific GroupOps ----
 
@@ -71,6 +71,7 @@ class SfpSpec:
   fmt: int = 0
   addr_mod: int = 0
   addr: int = 0
+  rounding: int = 0
 
   def __repr__(self) -> str:
     extra = [f"{k}={v}" for k, v in (("mod", self.mod), ("imm", self.imm), ("fmt", self.fmt),
@@ -91,10 +92,11 @@ def sfp_ins(
   fmt: int = 0,
   addr_mod: int = 0,
   addr: int = 0,
+  rounding: int = 0,
   role: str = "trisc1",
 ) -> UOp:
   """Build a register-level SFPU instruction as UOp.ins(SfpSpec(...), src, dtype, *dst_lregs)."""
-  return UOp.ins(SfpSpec(op, mod, imm, fmt, addr_mod, addr), src, dtype, *dst_lregs, role=role)
+  return UOp.ins(SfpSpec(op, mod, imm, fmt, addr_mod, addr, rounding), src, dtype, *dst_lregs, role=role)
 
 def is_tensix_ins(u: UOp) -> bool:
   return u.is_ins and isinstance(u.ins_op, (hw_isa.Tensix, SfpSpec))
@@ -143,6 +145,9 @@ def encode_tensix(u: UOp, ren: ISARenderer | None = None) -> int:
   if op is O.SFPADDI: return int(hw_isa.SFPADDI(imm=code.imm, dest=_lreg_num(u, ren), mode=code.mod))
   if op is O.SFPMULI: return int(hw_isa.SFPMULI(imm=code.imm, dest=_lreg_num(u, ren), mode=code.mod))
   if op is O.SFPCAST: return int(hw_isa.SFPCAST(src=_lreg_num(src[0], ren), dest=_lreg_num(u, ren), mode=code.mod))
+  if op is O.SFP_STOCH_RND:
+    return int(hw_isa.SFP_STOCH_RND(src=_lreg_num(src[0], ren), b=9, dest=_lreg_num(u, ren),
+                                   mode=code.mod, rounding=code.rounding, imm=code.imm))
   if op in (O.SFPMAD, O.SFPADD, O.SFPMUL, O.SFPMUL24):
     fn = {O.SFPMAD: hw_isa.SFPMAD, O.SFPADD: hw_isa.SFPADD, O.SFPMUL: hw_isa.SFPMUL, O.SFPMUL24: hw_isa.SFPMUL24}[op]
     a = _lreg_num(src[0], ren) if len(src) > 0 else 0
@@ -224,36 +229,45 @@ def unpack_bundle(blob: bytes) -> dict[str, bytes]:
   return out
 
 def split_roles(uops: list[UOp], roles: tuple[str, ...] = ROLES) -> UOp:
-  """Split a joint role-tagged list[UOp] into 5 per-core Ops.LINEARs, keeping RANGE/END only on cores with work inside."""
-  stack: list[tuple[UOp, set[str]]] = []
-  loop_roles: dict[UOp, set[str]] = {}
-  for u in uops:
-    if u.op is Ops.RANGE:
-      stack.append((u, set()))
-    elif u.op is Ops.END:
-      r = u.src[1]
-      if stack and stack[-1][0] is r:
-        _, rs = stack.pop()
-        loop_roles[r] = rs
-        loop_roles[u] = rs
-        if stack: stack[-1][1].update(rs)
-    else:
-      role = u.arg.role if isinstance(u.arg, CallInfo) else ""
-      if stack:
-        stack[-1][1].update((role,) if role else roles)
+  """Project owned effects and their scalar dependencies, preserving enclosing loops.
 
-  buckets: dict[str, list[UOp]] = {r: [] for r in roles}
+  Cross-core value edges express synchronization, not local computation. Their
+  producer must never be copied into the consumer's instruction stream.
+  """
+  stack: list[UOp] = []
+  enclosing: list[tuple[UOp, ...]] = []
+  ends: dict[UOp, UOp] = {}
+  def owner(u: UOp) -> str:
+    return u.arg.role if isinstance(u.arg, CallInfo) else ""
   for u in uops:
-    if u in loop_roles:
-      for r in roles:
-        if r in loop_roles[u]: buckets[r].append(u)
+    if (role := owner(u)) and role not in roles: raise ValueError(f"unknown Blackhole core role {role!r}")
+    if u.op is Ops.RANGE:
+      enclosing.append(tuple(stack))
+      stack.append(u)
+    elif u.op is Ops.END:
+      for r in u.src[1:]:
+        if not stack or stack[-1] is not r: raise ValueError("non-nested RANGE/END in joint stream")
+        ends[r] = u
+        stack.pop()
+      enclosing.append(tuple(stack))
     else:
-      role = u.arg.role if isinstance(u.arg, CallInfo) else ""
-      if role:
-        if role not in buckets: raise ValueError(f"unknown Blackhole core role {role!r}")
-        buckets[role].append(u)
-      else:
-        for r in roles: buckets[r].append(u)
+      enclosing.append(tuple(stack))
+  if stack: raise ValueError("unclosed RANGE in joint stream")
+
+  buckets: dict[str, list[UOp]] = {}
+  for role in roles:
+    needed: set[UOp] = set()
+    pending = [node for i, u in enumerate(uops) if owner(u) == role for node in (u, *enclosing[i])]
+    while pending:
+      u = pending.pop()
+      if u in needed or (owner(u) and owner(u) != role): continue
+      needed.add(u)
+      pending.extend(u.src_without_body)
+      if u.op is Ops.RANGE and u in ends:
+        # END's effect operand can belong to another core. Keep the marker,
+        # but do not follow that operand and import unrelated computation.
+        needed.add(ends[u])
+    buckets[role] = [u for u in uops if u in needed]
   return UOp.linear(*(UOp.linear(*buckets[r], arg=r) for r in roles), arg="blackhole")
 
 # ---- BlackholeRenderer (RV32IM + inline Tensix + 5-core Ops.LINEAR -> Ops.BINARY) ----
@@ -267,6 +281,7 @@ class BlackholeRenderer(RV32Renderer):
 
   def assemble(self, uops: list[UOp]) -> bytes:
     """Encode a mixed RV32IM + inline Tensix list[UOp] into little-endian 32-bit machine code."""
+    uops = relax_branches(uops, self)
     targets: dict[UOp, int] = {}
     pc = 0
     for u in uops:
@@ -284,6 +299,7 @@ class BlackholeRenderer(RV32Renderer):
 
   def disasm(self, uops: list[UOp]) -> str:
     """Format a .lst-style listing of a mixed RV32IM + inline Tensix instruction stream."""
+    uops = relax_branches(uops, self)
     targets: dict[UOp, int] = {}
     pc = 0
     for u in uops:

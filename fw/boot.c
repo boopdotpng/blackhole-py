@@ -10,6 +10,71 @@
 #define SUBORDINATE_UP           2
 
 #if ROLE == ROLE_BRISC
+
+// RV32 ABI: a0=NIU, a1/a2=flat pointer lo/hi, a3=byte offset,
+// a4=bytes, a5=local L1 address, a6=transaction id. Callers preserve
+// live caller-saved registers and ra across these normal C functions.
+void kernel_noc_wait(u32 niu, u32 tid, u32 acked);
+void kernel_noc_read(u32 niu, u32 lo, u32 hi, u32 off, u32 size, u32 local, u32 tid) {
+  // Blackhole DRAM reads require source and destination congruent modulo 64.
+  // Packed 16x16 faces are 144/272 bytes, so their source alignment changes
+  // from face to face. Keep the fast asynchronous path for congruent reads.
+  if (((lo + off) ^ local) & 63) {
+    for (u32 done = 0; done < size;) {
+      u32 chunk = MIN(size - done, NOC_READ_STAGE - 64);
+      u32 stage = NOC_READ_SCRATCH + niu * NOC_READ_STAGE + ((lo + off + done) & 63);
+      noc_move_paced(niu, 0, lo, hi, off + done, chunk, stage, tid, 0);
+      kernel_noc_wait(niu, tid, 1);
+      u32 i = 0;
+      if (!((stage | (local + done)) & 3)) {
+        for (; i + 4 <= chunk; i += 4) write32(local + done + i, read32(stage + i));
+      }
+      for (; i < chunk; i++) *(volatile u8 *)(local + done + i) = *(volatile u8 *)(stage + i);
+      done += chunk;
+    }
+    fence();
+  } else {
+    // Bound simultaneous DRAM responses as the number of readers grows.
+    // Counters can retain a baseline across worker resets; pace relative to
+    // the same baseline used by kernel_noc_wait.
+    u32 workers = read32(NUM_WORKERS), cap = workers >= 88 ? 2 : workers >= 42 ? 8 : 0;
+    noc_move_paced_base(niu, 0, lo, hi, off, size, local, tid, cap, read32(NOC_BASELINE + 4 * tid));
+  }
+}
+void kernel_noc_write(u32 niu, u32 lo, u32 hi, u32 off, u32 size, u32 local, u32 tid) {
+  // NoC writes require source/destination congruence within a 16-byte word.
+  // Indexed stores can target a different column than their staging slot.
+  if (((lo + off) ^ local) & 15) {
+    for (u32 done = 0; done < size;) {
+      u32 chunk = MIN(size - done, NOC_READ_STAGE - 16);
+      u32 stage = NOC_READ_SCRATCH + niu * NOC_READ_STAGE + ((lo + off + done) & 15);
+      for (u32 i = 0; i < chunk; i++) *(volatile u8 *)(stage + i) = *(volatile u8 *)(local + done + i);
+      fence();
+      noc_move_paced(niu, 1, lo, hi, off + done, chunk, stage, tid, 0);
+      kernel_noc_wait(niu, tid, 1);
+      done += chunk;
+    }
+  } else noc_move_paced(niu, 1, lo, hi, off, size, local, tid, 0);
+}
+void kernel_noc_wait(u32 niu, u32 tid, u32 acked) {
+  WAIT_SLOW(CMD_BUF(niu, READ_BUF)[CMD_CTRL] == 0);
+  WAIT_SLOW(CMD_BUF(niu, WRITE_BUF)[CMD_CTRL] == 0);
+  WAIT_SLOW(CMD_BUF(niu, MCAST_BUF)[CMD_CTRL] == 0);
+  WAIT_SLOW(CMD_BUF(niu, ATOMIC_BUF)[CMD_CTRL] == 0);
+  WAIT_SLOW(read32(OUTGOING(niu, tid)) == 0);
+  if (acked) WAIT_SLOW(read32(OUTSTANDING(niu, tid)) == read32(NOC_BASELINE + 4 * tid));
+}
+void kernel_noc_mcast(u32 niu, u32 local, u32 remote, u32 rect, u32 size, u32 tid, u32 include_sender) {
+  noc_mcast(niu, local, remote, rect, size, tid, include_sender);
+}
+void kernel_noc_inc(u32 niu, u32 remote, u32 target, u32 tid) {
+  noc_inc_worker(niu, remote, target, tid);
+}
+static void install_jump(u32 at, u32 target) {
+  u32 off = target - at;
+  write32(at, 0x6F | (off & 0x100000) << 11 | (off & 0x7FE) << 20 |
+               (off & 0x800) << 9 | (off & 0xFF000));
+}
 #define SECOND NOC_REGS(0)
 #elif ROLE == ROLE_NCRISC
 #define SECOND NOC_REGS(1)
@@ -48,6 +113,7 @@ static void noc_init_worker(u32 niu) {
     c[BRCST_EXCLUDE] = 0;
   }
   fence();
+  for (u32 tid = 0; tid < 16; tid++) write32(NOC_BASELINE + 4 * tid, read32(OUTSTANDING(niu, tid)));
 }
 #endif
 
@@ -68,7 +134,9 @@ static void reset_tensix(void) {
   for (u32 i = CFG_GLOBAL_BASE; i < 185; i++) write32(TENSIX_CFG + 4 * i, 0);
   for (u32 i = 187; i < CFG_BANK_WORDS; i++) write32(TENSIX_CFG + 4 * i, 0);
   TT(ZEROACC_ALL);
-  TT(CLEARDVALID_RESET);
+  // Do not reset Src bank ownership with CLEARDVALID(reset=1): Blackhole
+  // documents that mode as unsafe and prone to nondeterministic hangs.
+  // The host resets SrcA/SrcB ownership with SOFT_RESET while RISCs are held.
   TT(SFPENCC_RESET);
   TT(NOP);
   TT(SFPLOADI_MINUS1);
@@ -113,6 +181,13 @@ void boot(void) {
 
   enable_clock_gating();
   noc_init_worker(0);
+  noc_init(0);
+  install_jump(FN_NOC_READ, (u32)kernel_noc_read);
+  install_jump(FN_NOC_WRITE, (u32)kernel_noc_write);
+  install_jump(FN_NOC_WAIT, (u32)kernel_noc_wait);
+  install_jump(FN_NOC_MCAST, (u32)kernel_noc_mcast);
+  install_jump(FN_NOC_INC, (u32)kernel_noc_inc);
+  for (u32 at = MCAST_CTRL_BASE; at < MCAST_CTRL_BASE + 0x400; at += 4) write32(at, 0);
   boot_subordinates();
   reset_tensix();
   for (u32 s = CB_STREAM0; s < CB_STREAM0 + CBS; s++) {
@@ -130,6 +205,7 @@ void boot(void) {
 void boot(void) {
   configure_csr(0);
   noc_init_worker(1);
+  noc_init(1);
   signal_up_and_wait_go();
 }
 
@@ -147,6 +223,18 @@ void boot(void) {
   TT(SETADCXY_ZERO);
   TT(SETADCZW_ZERO);
   signal_up_and_wait_go();
+#if ROLE == ROLE_TRISC0
+  // BRISC's shared initialization is queued on Tensix thread 0. GO only
+  // orders its submission; other threads must not consume stale semaphore
+  // credits or SFPU state from the previous kernel before it finishes.
+  write32(COPROCESSOR_DONE_CHECK, 0);
+  u32 done = read32(COPROCESSOR_DONE_CHECK);
+  __asm__ volatile("andi %0, %0, 0" : "+r"(done) :: "memory");
+  write32(TENSIX_READY, 1);
+  fence();
+#else
+  if (read32(ROLE_PC + 4)) WAIT_FAST(read32(TENSIX_READY));
+#endif
 }
 
 #endif

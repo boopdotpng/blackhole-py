@@ -45,12 +45,17 @@ def _piece(srcs: list, role: str, flags: tuple[str, ...] = ()) -> bytes:
   return compile(srcs, 0, L1_SIZE, ("-mcmodel=medany", f"-DROLE={ROLES.index(role)}", *flags), ld="boot.ld")
 
 @functools.cache
-def boot_stub(role: str) -> bytes: return _piece(["boot.c"], role)
+def boot_stub(role: str) -> bytes: return _piece(["boot.c", "noc.c"], role)
 
 @functools.cache
-def park_epilogue(role: str) -> bytes: return _piece(["park.c"], role)
+def park_epilogue(role: str) -> bytes: return _piece(["park.c", "noc.c"], role)
 
 def pack_megakernel(images: dict[str, bytes]) -> tuple[bytes, dict[str, int], int]:
+  return _pack_megakernel(tuple(images.items()))
+
+@functools.lru_cache(maxsize=256)
+def _pack_megakernel(items: tuple[tuple[str, bytes], ...]) -> tuple[bytes, dict[str, int], int]:
+  images = dict(items)
   if unknown := set(images) - set(ROLES): raise ValueError(f"unknown RISC roles: {unknown}")
   for role, code in images.items():
     if len(code) % 4: raise ValueError(f"{role} image size {len(code)} is not 4-byte aligned")
@@ -62,4 +67,5 @@ def pack_megakernel(images: dict[str, bytes]) -> tuple[bytes, dict[str, int], in
     pcs[role] = CODE_BASE + len(out)
     out += boot_stub(role) + body + park_epilogue(role)
   out.extend(bytes(-len(out) % 16))
+  if CODE_BASE + len(out) > MCAST_CTRL_BASE: raise MemoryError("worker image overlaps multicast control words")
   return bytes(out), pcs, (CODE_BASE + len(out) + 63) & ~63
