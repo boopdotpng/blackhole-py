@@ -109,3 +109,29 @@ def test_explicit_row_stage():
     dev.synchronize()
     np.testing.assert_array_equal(out.numpy(), values * values.sum(-1, keepdims=True))
   finally: dev.close()
+
+
+@pytest.mark.parametrize('reverse', (False, True))
+def test_weight_layout_follows_output_column(reverse):
+  out = UOp.param(0, dtypes.fp32, shape=(32, 64))
+  act = UOp.param(1, dtypes.bf16, shape=(32, 48))
+  weight = UOp.param(2, dtypes.bf16, shape=(64, 48))
+  m, n, k = [UOp.range(bound, i) for i, bound in enumerate((32, 64, 48))]
+  a = act.index(m * 48 + k).load().cast(dtypes.fp32)
+  w = weight.index(n * 48 + k).load().cast(dtypes.fp32)
+  dot = (w * a if reverse else a * w).reduce(k)
+  kernel = UOp.sink(out.index(m * 64 + n).store(dot).end(m, n))
+  result = lower_kernel(kernel, (out, act, weight))
+  assert result.face_rows == (8, 8, 16)
+  assert result.grid == (1, 1)
+
+
+@pytest.mark.skipif(os.environ.get('BH_HW') != '1', reason='requires a card')
+def test_reduction_cast_roundtrip():
+  from device import Device
+  dev = Device(0)
+  try:
+    x = np.full((8, 16), np.float32(1.0031))
+    value = Tensor(x).sum(-1, keepdim=True).cast(dtypes.bf16).cast(dtypes.fp32)
+    np.testing.assert_array_equal(value.numpy(device=dev), np.full((8, 1), 16., np.float32))
+  finally: dev.close()

@@ -16,6 +16,35 @@ FORMATS = {dtypes.fp32: cfg.DataFormat.FLOAT32, dtypes.bf16: cfg.DataFormat.FLOA
            dtypes.bfp8: cfg.DataFormat.BFP8_B, dtypes.bfp4: cfg.DataFormat.BFP4_B, dtypes.i32: cfg.DataFormat.INT32, dtypes.u32: cfg.DataFormat.INT32}
 
 
+def tile_settings(spec):
+  if isinstance(spec, PackOp):
+    p, ctx, pm = cfg.PACK, cfg.PACK.ctx[0], cfg.PACK_ADDR_MOD
+    fmt = FORMATS[spec.dst_dtype]
+    fp = fmt if spec.dst_dtype.is_int else cfg.DataFormat.FLOAT32
+    return (ctx.disable_zero_compress(1), ctx.out_fmt(fmt), ctx.in_fmt(fp), ctx.exp_section_size(0),
+            ctx.pack_per_xy_plane(0), ctx.pack_reads_per_xy_plane(2), p.y_stride(64), p.z_stride(512), p.w_stride(512),
+            p.edge_mask[0](0xFFFF), pm[0].ysrc_incr(4), pm[0].ydst_incr(4), pm[1].ysrc_clear(1),
+            pm[1].ydst_clear(1), pm[1].zsrc_clear(1), ctx.dst_target_offset(spec.dst_slot * 8))
+  dst = spec.target is Space.DST
+  if dst and (spec.faces != 1 or spec.rows != 8): raise NotImplementedError(spec)
+  if not dst and (spec.target not in (Space.SRCA, Space.SRCB) or not 1 <= spec.faces <= 4 or
+                  spec.src_dtype not in (dtypes.bf16, dtypes.bfp8, dtypes.bfp4)): raise NotImplementedError(spec)
+  index, ctx = int(spec.target is Space.SRCB), int(dst)
+  u, fmt, n = cfg.UNPACK[index], FORMATS[spec.src_dtype], spec.rows * 16
+  out = cfg.DataFormat.FLOAT32 if dst and not spec.src_dtype.is_int else fmt
+  size = 4 if dst else 2 if spec.src_dtype is dtypes.bf16 else 1
+  return (u.in_fmt(fmt), u.uncompressed(1), u.y_dim(1), u.out_fmt(out), u.transpose(int(spec.transpose)),
+          *(f(1) for f in u.disable_zero_compress), u.context_in_fmt[ctx](fmt), u.context_out_fmt[ctx](out),
+          u.override_fmt(1), u.row_stride(16 * size), u.face_stride(n * size), u.add_dst_addr_cntr(1),
+          u.z_dim(1), u.x_dim(n), u.tile_x_dim[ctx](n), u.unpack_to_dst[ctx](ctx),
+          u.dst_addr[ctx](64 + (spec.dst_slot * 128 if dst else 0)),
+          *((cfg.THREAD.srca_override_addr(int(not dst)),) if index == 0 else ()))
+
+
+def pack_blocks(spec):
+  return (replace(spec, blocks=1, dst_slot=spec.dst_slot + i) for i in range(spec.blocks))
+
+
 def contiguous_group(operands, lanes, itemsize, axis):
   """Prove contiguous addresses and uniform validity for every lane in a run."""
   original = tuple(u.without_after for u in operands)
@@ -54,7 +83,7 @@ class Recipes:
     self.thread = {}
     self.config = {}
     self.label_id = 0
-    self.fixed_unpack = set()
+    self.fixed_settings = frozenset()
     self.fixed_fpu_dtype = None
     self.cb_base = {}
     self.cb_word = {}
@@ -362,25 +391,9 @@ class Recipes:
       self.drain()
 
   def unpack(self, spec, offset=0):
-    # Each input recipe establishes its complete configuration. The same
-    # recipe can be reached after different formats at a loop backedge.
-    self.config.clear()
-    if spec.target in (Space.SRCA, Space.SRCB):
-      return self.unpack_source(spec, offset)
-    if spec.target is not Space.DST or spec.faces != 1 or spec.rows != 8:
-      raise NotImplementedError(f"unpack recipe {spec}")
-    # Keep SrcA in context 0 and direct Dst writes in context 1. Switching
-    # one context between the two paths can leave SrcA holding stale data.
+    if self.configure(tile_settings(spec)): self.drain()
+    if spec.target is not Space.DST: return self.unpack_source(spec, offset)
     u = cfg.UNPACK[0]
-    fmt = FORMATS[spec.src_dtype]
-    fp = fmt if spec.src_dtype.is_int else cfg.DataFormat.FLOAT32
-    self.rmw(u.in_fmt(fmt), u.uncompressed(1), u.y_dim(1), u.out_fmt(fp), u.transpose(0),
-             *(f(1) for f in u.disable_zero_compress), u.context_in_fmt[1](fmt), u.context_out_fmt[1](fp),
-             u.override_fmt(1), u.row_stride(64), u.face_stride(512), u.add_dst_addr_cntr(1),
-             u.z_dim(1), u.x_dim(128), u.tile_x_dim[1](128), u.unpack_to_dst[1](1),
-             u.dst_addr[1](64 + spec.dst_slot * 8 * 16))
-    self.setc(cfg.THREAD.srca_override_addr(0))
-    self.drain()
     self.store(cfg.TENSIX_CFG + 4 * u.base_addr[1].word, self.cb_word_addr(spec.cb_id, offset), readback=True)
     self.tt(isa.SETADCXX(counters=1, x_end=127))
     self.tt(isa.SETADCZW(counters=1, mask=15))
@@ -388,22 +401,7 @@ class Recipes:
     self.tt(isa.UNPACR(ctx=1, steps=0x11, per_ctx=1, last=1))
     self.drain()
 
-  def configure_unpack_source(self, spec):
-    if not 1 <= spec.faces <= 4 or spec.src_dtype not in (dtypes.bf16, dtypes.bfp8, dtypes.bfp4): raise NotImplementedError(spec)
-    index = 0 if spec.target is Space.SRCA else 1
-    u, fmt = cfg.UNPACK[index], FORMATS[spec.src_dtype]
-    n = spec.rows * 16
-    size = 2 if spec.src_dtype is dtypes.bf16 else 1
-    self.rmw(u.in_fmt(fmt), u.uncompressed(1), u.y_dim(1), u.out_fmt(fmt), u.transpose(int(spec.transpose)),
-             *(f(1) for f in u.disable_zero_compress), u.context_in_fmt[0](fmt), u.context_out_fmt[0](fmt),
-             u.override_fmt(1), u.row_stride(16 * size), u.face_stride(n * size), u.add_dst_addr_cntr(1),
-             u.z_dim(1), u.x_dim(n), u.tile_x_dim[0](n), u.unpack_to_dst[0](0), u.dst_addr[0](64))
-    if index == 0: self.setc(cfg.THREAD.srca_override_addr(1))
-
   def unpack_source(self, spec, offset=0):
-    if spec.target not in self.fixed_unpack:
-      self.configure_unpack_source(spec)
-      self.drain()
     index = 0 if spec.target is Space.SRCA else 1
     u, n = cfg.UNPACK[index], spec.rows * 16
     stride = spec.face_stride or (n * 2 if spec.src_dtype is dtypes.bf16 else 16 + n * spec.src_dtype.bits // 8)
@@ -436,20 +434,11 @@ class Recipes:
 
   def pack(self, spec, offset=0):
     if spec.blocks != 1:
-      for block in range(spec.blocks): self.pack(replace(spec, blocks=1, dst_slot=spec.dst_slot + block), offset + block * 128 * spec.dst_dtype.itemsize)
+      for i, block in enumerate(pack_blocks(spec)): self.pack(block, offset + i * 128 * spec.dst_dtype.itemsize)
       return
     if spec.untilize: raise NotImplementedError(f"pack recipe {spec}")
-    p, ctx = cfg.PACK, cfg.PACK.ctx[0]
-    fmt = FORMATS[spec.dst_dtype]
-    fp = fmt if spec.dst_dtype.is_int else cfg.DataFormat.FLOAT32
-    size = 4  # Packer address strides describe FP32 Dst reads, not output bytes.
-    self.rmw(ctx.disable_zero_compress(1), ctx.out_fmt(fmt), ctx.in_fmt(fp), ctx.exp_section_size(0),
-             ctx.pack_per_xy_plane(0), ctx.pack_reads_per_xy_plane(2), p.y_stride(16 * size),
-             p.z_stride(128 * size), p.w_stride(128 * size), p.edge_mask[0](0xFFFF))
-    pm = cfg.PACK_ADDR_MOD
-    self.setc(pm[0].ysrc_incr(4), pm[0].ydst_incr(4))
-    self.setc(pm[1].ysrc_clear(1), pm[1].ydst_clear(1), pm[1].zsrc_clear(1))
-    self.rmw(ctx.dst_target_offset(spec.dst_slot * 8))
+    ctx = cfg.PACK.ctx[0]
+    self.configure(tile_settings(spec))
     self.tt(isa.SETADC(counters=4, dim=3, value=0))
     address = self.cb_word_addr(spec.cb_id, offset)
     if isinstance(address, UOp):
@@ -469,20 +458,26 @@ class Recipes:
     self.tt(isa.PACR(addr_mod=1, last=1))
     self.drain()
 
+  def configure(self, settings):
+    before = len(self.out)
+    varying = [s for s in settings if s not in self.fixed_settings]
+    self.setc(*(s for s in varying if s.field.space is cfg.T))
+    self.rmw(*(s for s in varying if s.field.space is cfg.C))
+    return len(self.out) != before
+
   def lower(self, stream):
     if not stream: return []
     self.prologue()
-    # A source unit with one format throughout this core never needs its
-    # format/geometry rewritten at a K-loop backedge. Establish it once,
-    # retaining per-face address updates and handshakes below.
-    unpacks = [u.ins_op for u in stream if u.is_ins and isinstance(u.ins_op, UnpackOp)]
-    for target in (Space.SRCA, Space.SRCB):
-      candidates = [spec for spec in unpacks if spec.target is target]
-      if not candidates or target is Space.SRCA and any(spec.target is Space.DST for spec in unpacks): continue
-      if len({(spec.src_dtype, spec.rows, spec.transpose, spec.faces) for spec in candidates}) == 1:
-        self.configure_unpack_source(candidates[0])
-        self.fixed_unpack.add(target)
-    if self.fixed_unpack: self.drain()
+    # Context-specific fields may be invariant even when the two contexts
+    # alternate. Shared geometry and format fields must agree across recipes.
+    values = {}
+    for u in stream:
+      if not u.is_ins or not isinstance(u.ins_op, (UnpackOp, PackOp)): continue
+      for spec in (pack_blocks(u.ins_op) if isinstance(u.ins_op, PackOp) else (u.ins_op,)):
+        for setting in tile_settings(spec): values.setdefault(setting.field, set()).add(setting)
+    fixed = [next(iter(v)) for v in values.values() if len(v) == 1]
+    if self.configure(fixed): self.drain()
+    self.fixed_settings = frozenset(fixed)
     formats = {u.ins_op.src_dtype for u in stream if u.is_ins and isinstance(u.ins_op, FpuOp)}
     if len(formats) == 1:
       self.fixed_fpu_dtype = next(iter(formats))

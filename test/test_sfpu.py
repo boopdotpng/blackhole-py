@@ -95,3 +95,15 @@ class TestSfpuSelection(unittest.TestCase):
 
 if __name__ == "__main__":
   unittest.main()
+
+
+def test_spilled_constrained_loads():
+  from compiler.isa import rdef
+  from compiler.isa.tensix import TensixOps, LREGS
+  loads = [UOp.ins(SfpLoadOp(i), (), dtypes.fp32, role="trisc1") for i in range(8)]
+  value = sum(loads[1:], loads[0])
+  store = UOp.ins(SfpStoreOp(8), (value,), dtypes.void, role="trisc1")
+  stream = select_sfpu([*loads, *(u for u in store.toposort() if u not in loads)])
+  reads = [u for u in stream if u.is_ins and getattr(u.ins_op, 'op', None) is TensixOps.SFPLOAD]
+  assert any(u.ins_op.addr >= 448 for u in reads)
+  assert all(rdef(u, SfpuRenderer()) in LREGS[:4] for u in reads if u.ins_op.addr < 448)

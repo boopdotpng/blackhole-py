@@ -100,3 +100,16 @@ class TestBackendControl(unittest.TestCase):
 
 
 if __name__ == "__main__": unittest.main()
+
+
+def test_scalar_expression_first_used_on_skipped_path():
+  from compiler.blackhole.scalar import select_scalar
+  done = UOp.const(987)
+  expr = X[11] * 7 + 3
+  def store(offset): return UOp.ins(RVOps.SW, (X0, expr, UOp.const(offset)), dtypes.void)
+  stream = [UOp.ins(RVOps.BEQ, (done, X[10], X0), dtypes.void), store(256), rv_label(done),
+            store(260), UOp.ins(RVOps.RET, (), dtypes.void)]
+  _, code = BlackholeRenderer().compile_core(select_scalar(stream))
+  for flag in (0, 1):
+    _, mem = run_rv32(code, {10: flag, 11: 13})
+    assert struct.unpack_from("<II", mem, 256) == (94 * flag, 94)

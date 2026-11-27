@@ -4,6 +4,10 @@ Release resources only after all consuming loops have ended. CB identifiers
 retain their address/size when reused because recipes configure them statically.
 """
 from dataclasses import dataclass
+from .schedule import CB_BASE, CB_CAPACITY, page_bytes
+
+
+class CbCapacityError(MemoryError): pass
 
 
 @dataclass(frozen=True)
@@ -21,18 +25,18 @@ class TileAllocator:
     self._cbs = {}
     self._live_cbs = set()
     self._dst = {}
-    self.next_addr = 0x20000
+    self.next_addr = CB_BASE
 
   def cb(self, size=4096):
     if size <= 0: raise ValueError("CB size must be positive")
-    size = (size + 4095) & ~4095
+    size = page_bytes(size)
     for cb_id, allocation in self._cbs.items():
       if cb_id not in self._live_cbs and allocation.size >= size:
         self._live_cbs.add(cb_id)
         return cb_id
     cb_id = len(self._cbs)
-    if cb_id == 32 and not self.deferred: raise MemoryError("kernel exceeds 32 live CB streams")
-    if self.next_addr + size > 0x180000 and not self.deferred: raise MemoryError("kernel exceeds worker L1 capacity")
+    if cb_id == 32 and not self.deferred: raise CbCapacityError("kernel exceeds 32 live CB streams")
+    if self.next_addr + size > CB_BASE + CB_CAPACITY and not self.deferred: raise CbCapacityError("kernel exceeds worker L1 capacity")
     self._cbs[cb_id] = CbAllocation(cb_id, self.next_addr, size)
     self.cb_sizes[cb_id] = size
     self.cb_addrs[cb_id] = self.next_addr
@@ -95,8 +99,6 @@ def allocate_cb_stream(stream, sizes, default_depth=3):
         push_scopes[spec.cb_id].append(tuple(stack))
       if spec.kind == 'pop': consumers[spec.cb_id].add(spec.role)
 
-  def page_align(n): return (n + 4095) & ~4095
-
   def desired_depth(cb):
     if default_depth <= 1 or cb in rings: return 1
     if (frozenset(producers[cb]), frozenset(consumers[cb])) not in (
@@ -118,7 +120,7 @@ def allocate_cb_stream(stream, sizes, default_depth=3):
     return max(1, total)
 
   ordered = sorted(uses.items(), key=lambda item: item[1][0])
-  need_alias = len(ordered) > 32 or sum(page_align(sizes[cb]) for cb, _ in ordered) > 0x160000
+  need_alias = len(ordered) > 32 or sum(page_bytes(sizes[cb]) for cb, _ in ordered) > CB_CAPACITY
   mapping, physical, members = {}, [], []
   for cb, refs in ordered:
     key = (frozenset(producers[cb]), frozenset(consumers[cb])) if cb not in rings else ('ring', cb)
@@ -138,7 +140,7 @@ def allocate_cb_stream(stream, sizes, default_depth=3):
       slot = next((j for j, (end, _, owner) in enumerate(physical) if end < refs[0] and owner == key), len(physical))
     else:
       slot = len(physical)
-    size = page_align(sizes[cb])
+    size = page_bytes(sizes[cb])
     if slot == len(physical):
       physical.append((refs[-1], size, key))
       members.append([cb])
@@ -147,7 +149,7 @@ def allocate_cb_stream(stream, sizes, default_depth=3):
       members[slot].append(cb)
     mapping[cb] = slot
 
-  budget = 0x160000
+  budget = CB_CAPACITY
   depths = [desired_depth(cbs[0]) if len(cbs) == 1 else 1 for cbs in members]
   pages = [size for _, size, _ in physical]
   while sum(p * d for p, d in zip(pages, depths)) > budget:
