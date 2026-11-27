@@ -442,14 +442,22 @@ class Recipes:
         # Bit 12 of context 1's destination address selects the upper half.
         self.tt_field(isa.RMWCIB3(word=u.dst_addr[1].word, mask=16), isa.RmwCib.data, self.bank << 4)
     stride = spec.face_stride or (n * 2 if spec.src_dtype is dtypes.bf16 else 16 + n * spec.src_dtype.bits // 8)
-    ready = isa.Wait.TRISC_CFG
-    if not dst: ready |= isa.Wait.SRCB_CLR if index else isa.Wait.SRCA_CLR
+    # Uncompressed fixed-size faces can share a base. The input Z counter
+    # selects a plane of n datums; block-float faces have separate headers.
+    planes, remainder = divmod(stride, n * dtypes.bf16.itemsize)
+    share_base = spec.src_dtype is dtypes.bf16 and remainder == 0 and planes * (spec.faces - 1) <= 255
     for face in range(spec.faces):
-      address = self.cb_word_addr(spec.cb_id, offset + face * stride)
-      self.write_engine_address(address, 13 + index, u.base_addr[ctx].word, engine)
-      self.tt(isa.SETADCXX(counters=1 << index, x_end=n - 1))
-      self.tt(isa.SETADCZW(counters=1 << index, ch1_z=face, mask=15))
-      self.tt(isa.STALLWAIT(stall=isa.Stall.UNPACK, wait=ready))
+      if face == 0 or not share_base:
+        address = self.cb_word_addr(spec.cb_id, offset + face * stride)
+        self.write_engine_address(address, 13 + index, u.base_addr[ctx].word, engine)
+      if face == 0: self.tt(isa.SETADCXX(counters=1 << index, x_end=n - 1))
+      z = planes * face if share_base else 0
+      self.tt(isa.SETADCZW(counters=1 << index, ch0_z=z if z < 8 else 0, ch1_z=face, mask=15))
+      if z >= 8: self.tt(isa.SETADC(counters=1 << index, channel=0, dim=2, value=z))
+      if face == 0 or not share_base:
+        ready = isa.Wait.TRISC_CFG
+        if face == 0 and not dst: ready |= isa.Wait.SRCB_CLR if index else isa.Wait.SRCA_CLR
+        self.tt(isa.STALLWAIT(stall=isa.Stall.UNPACK, wait=ready))
       self.tt(isa.UNPACR(unpacker=index, ctx=ctx, steps=0x11, per_ctx=1, set_dvalid=int(not dst and face == spec.faces - 1), last=1))
 
   def zero_dst(self):
