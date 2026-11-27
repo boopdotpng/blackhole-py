@@ -213,17 +213,25 @@ def regalloc(ctx: LinearContext, uops: list[UOp], ren: ISARenderer) -> list[UOp]
     after: list[UOp] = []
     loaded: dict[UOp, UOp] = {}
 
+    # A tied input/output must reload into a legal destination. Assign these
+    # first so an unconstrained source cannot take their only scratch register.
+    reloads = {}
+    busy = fixed_in[pc] | fixed_out[pc]
+    for v in sorted(reads[pc].intersection(spills), key=lambda v: (v not in writes[pc], len(choices[v]), v.arg.slot)):
+      preferred = ren.spill_choices(choices[v])
+      pool = preferred if v in writes[pc] else (*preferred, *scratch)
+      sc = next((r for r in pool if r not in busy), None)
+      if sc is None: raise RuntimeError("no compatible scratch for spilled operand")
+      reloads[v] = sc
+      busy.add(sc)
+
     nsrc: list[UOp] = []
     for s in u.src_without_body:
       v = vdef(s)
       if v is not None and v in virtuals:
         if v in spills:
           if v not in loaded:
-            if len(loaded) >= len(scratch): raise RuntimeError("instruction needs more spill scratch registers")
-            busy = fixed_in[pc] | fixed_out[pc] | {rdef(x, ren) for x in loaded.values()}
-            sc = next((r for r in scratch if r not in busy), None)
-            if sc is None: raise RuntimeError("no free scratch for spilled operand")
-            fill_u = ren.fill(spills[v], s, sc)
+            fill_u = ren.fill(spills[v], s, reloads[v])
             before.append(fill_u)
             loaded[v] = fill_u
           nsrc.append(loaded[v].cast(s.dtype) if loaded[v].dtype != s.dtype else loaded[v])
