@@ -237,15 +237,18 @@ def regalloc(ctx: LinearContext, uops: list[UOp], ren: ISARenderer) -> list[UOp]
     u_defs = list(defs_at[pc])
     if u.is_ins and u_defs:
       phys_defs: list[UOp] = []
-      spilled_def: tuple[UOp, UOp] | None = None
+      spilled_defs = []
+      tied = {v: rdef(loaded[v], ren) for v in u_defs if v in loaded}
+      unavailable = fixed_out[pc] | fixed_reads[pc] | fixed_writes[pc] | set(tied.values())
       for v in u_defs:
         if v in virtuals:
           if v in spills:
-            sc = rdef(loaded[v], ren) if v in loaded else next(
-              (r for r in ren.spill_choices(choices[v]) if r not in fixed_out[pc] | fixed_reads[pc]), None)
+            sc = tied[v] if v in tied else next(
+              (r for r in ren.spill_choices(choices[v]) if r not in unavailable), None)
             if sc is None: raise RuntimeError("no compatible scratch for spilled definition")
             phys_defs.append(sc)
-            spilled_def = (v, sc)
+            spilled_defs.append((v, sc))
+            unavailable.add(sc)
           else:
             p = colors[v]
             assert p is not None
@@ -254,8 +257,7 @@ def regalloc(ctx: LinearContext, uops: list[UOp], ren: ISARenderer) -> list[UOp]
           phys_defs.append(v)
       role = u.arg.role if hasattr(u.arg, "role") else ""
       nu = UOp.ins(u.ins_op, tuple(nsrc), u.dtype, *phys_defs, role=role)
-      if spilled_def is not None:
-        after.append(ren.spill(spills[spilled_def[0]], nu))
+      for v, sc in spilled_defs: after.append(ren.spill(spills[v], sc))
     elif u.op is Ops.CALL:
       nu = u.replace(src=(u.src[0], *nsrc))
     else:

@@ -135,3 +135,12 @@ def test_reduction_cast_roundtrip():
     value = Tensor(x).sum(-1, keepdim=True).cast(dtypes.bf16).cast(dtypes.fp32)
     np.testing.assert_array_equal(value.numpy(device=dev), np.full((8, 1), 16., np.float32))
   finally: dev.close()
+
+
+def test_contraction_preserves_explicit_rounding_requirement():
+  m, n, k = [UOp.range(16, i) for i in range(3)]
+  a, w = [UOp.param(i, dtypes.bf16, shape=(16, 16)).index(r * 16 + k).load().cast(dtypes.fp32)
+          for i, r in enumerate((m, n))]
+  rounded = (a * w).cast(dtypes.bf16).cast(dtypes.fp32)
+  with pytest.raises(NotImplementedError, match="rounding"):
+    match_reductions(UOp.sink(rounded.reduce(k)))

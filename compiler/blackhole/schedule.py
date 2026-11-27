@@ -5,7 +5,7 @@ from fw import L1_SIZE
 from .layout import access, affine, dimensions, expression_nodes, face_bytes
 from ..dtype import dtypes
 from ..uop import Ops, UOp
-from .fpu import MatchedMvmul, MatchedRowReduce, uncast
+from .fpu import MatchedMvmul, MatchedRowReduce
 
 
 @dataclass(frozen=True)
@@ -25,45 +25,53 @@ CB_CAPACITY = L1_SIZE - CB_BASE
 def page_bytes(size): return (size + 4095) & ~4095
 
 
+def direct_weight(load, nr, k_axes, args):
+  if len(k_axes) != 1 or load.op is not Ops.LOAD or len(load.src) != 1: return False
+  k, = k_axes
+  if not k.src[0].is_const: return False
+  extent = int(k.src[0].val)
+  try: slot, index = access(load.src[0])
+  except NotImplementedError: return False
+  rows = int(nr.src[0].val) if nr is not None else 1
+  return index == (0, {k: 1, **({nr: extent} if nr is not None else {})}) and args[slot].shape == (rows, extent)
+
+
 def plan_operands(matches, stores, args, static_params, columns, strides):
   oriented, weights, ordinary = {}, set(), set()
 
   def visit(expr, nr, axes):
     for u in expression_nodes(expr):
       if u.op is Ops.LOAD:
-        ordinary.add(u)
+        ordinary.update(v for v in u.toposort() if v.op is Ops.LOAD)
       if u.op is not Ops.REDUCE: continue
       match = matches[u]
       if isinstance(match, MatchedRowReduce):
         visit(match.body, match.k_axis, (axes - {nr}) | {match.k_axis})
         continue
-      a, w = uncast(match.act), uncast(match.weight)
-      if nr in a.ranges and nr not in w.ranges or nr is None and not a.ranges & axes and w.ranges & axes:
+      a, w = match.act, match.weight
+      if ((nr in a.ranges and nr not in w.ranges) or
+          (nr is None and not a.ranges & axes and w.ranges & axes)):
         match = replace(match, act=match.weight, weight=match.act, m_axes=match.n_axes, n_axes=match.m_axes)
         a, w = w, a
       if u in oriented and oriented[u] != match: raise NotImplementedError("incompatible contraction domains")
       oriented[u] = match
-      ordinary.add(a)
-      if len(match.k_axes) != 1 or w.op is not Ops.LOAD or len(w.src) != 1: ordinary.add(w); continue
-      k, = match.k_axes
-      if not k.src[0].is_const: ordinary.add(w); continue
-      extent = int(k.src[0].val)
-      try: slot, index = access(w.src[0])
-      except NotImplementedError: ordinary.add(w); continue
-      if (index == (0, {k: 1, **({nr: extent} if nr else {})}) and
-          args[slot].shape == (int(nr.src[0].val) if nr else 1, extent)): weights.add(w)
-      else: ordinary.add(w)
+      ordinary.update(v for v in a.toposort() if v.op is Ops.LOAD)
+      if direct_weight(w, nr, match.k_axes, args): weights.add(w)
+      else: ordinary.update(v for v in w.toposort() if v.op is Ops.LOAD)
 
   for store in stores:
     storage = store.src[0].src[0].without_after
     axis = columns
     if storage.op is Ops.ALLOC and prod(storage.shape) > 1 and storage.shape[-1] != 1:
-      axis = next(iter(affine(store.src[0].src[1])[1]))
-    visit(store.src[1], axis, (set(strides) - {columns}) | ({axis} if axis else set()))
+      _, terms = affine(store.src[0].src[1])
+      if len(terms) != 1: raise NotImplementedError("L1 vector stage requires one output axis")
+      axis = next(iter(terms))
+    visit(store.src[1], axis, (set(strides) - {columns}) | ({axis} if axis is not None else set()))
+
   def slots(loads):
-    return {v.src[0].src[0].arg.slot for v in loads if v.op is Ops.LOAD and v.src[0].src[0].op is Ops.PARAM}
+    return {v.src[0].src[0].arg.slot for v in loads if v.src[0].src[0].op is Ops.PARAM}
   written = {s.src[0].src[0].arg.slot for s in stores if s.src[0].src[0].op is Ops.PARAM}
-  return matches | oriented, slots(weights) & set(static_params) - written - slots(ordinary)
+  return matches | oriented, (slots(weights) & set(static_params)) - written - slots(ordinary)
 
 
 def invariant_axis(offset, gcols, grows):
@@ -81,11 +89,11 @@ def select_schedule(matches, args, shape, strides, static_weights, max_workers, 
     axis = match.k_axis if isinstance(match, MatchedRowReduce) else match.k_axes[0]
     if not axis.src[0].is_const: continue
     count = (int(axis.src[0].val) + 15) // 16
-    operands = match.body.toposort() if isinstance(match, MatchedRowReduce) else (uncast(match.act), uncast(match.weight))
+    operands = match.body.toposort() if isinstance(match, MatchedRowReduce) else (match.act, match.weight)
     for u in operands:
       if u.op is not Ops.LOAD or u.src[0].src[0].op is not Ops.PARAM: continue
       slot = u.src[0].src[0].arg.slot
-      rows = 16 if isinstance(match, MatchedMvmul) and u is uncast(match.weight) and slot in static_weights else 8
+      rows = 16 if isinstance(match, MatchedMvmul) and u is match.weight and slot in static_weights else 8
       strips[slot] = max(strips.get(slot, 0), page_bytes(count * face_bytes(args[slot].dtype, rows)))
   prefetch, available = set(), CB_CAPACITY
   for slot, size in sorted(strips.items()):
@@ -105,7 +113,7 @@ def select_schedule(matches, args, shape, strides, static_weights, max_workers, 
     kr, = match.k_axes
     if not kr.src[0].is_const: return fallback
     k = int(kr.src[0].val)
-    a, w = uncast(match.act), uncast(match.weight)
+    a, w = match.act, match.weight
     if any(u.op is not Ops.LOAD or len(u.src) != 1 for u in (a, w)): return fallback
     try: (ap, ai), (wp, wi) = access(a.src[0]), access(w.src[0])
     except NotImplementedError: return fallback

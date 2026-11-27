@@ -21,8 +21,14 @@ MVMUL = FpuRule("MVMUL", (16, 8, 16), (dtypes.bf16, dtypes.bfp8, dtypes.bfp4, dt
 FPU_RULES = (MVMUL,)
 
 
-def uncast(u):
-  while u.op is Ops.CAST: u = u.src[0]
+def unpack_value(u):
+  # BF16 and block-float significands fit in FP32. The unpacker performs
+  # these promotions while loading the face into a source bank.
+  while u.op is Ops.CAST:
+    src = u.src[0]
+    if not (u.dtype == src.dtype or src.dtype in (dtypes.bfp4, dtypes.bfp8, dtypes.bf16) and
+            u.dtype in (dtypes.bf16, dtypes.fp32)): break
+    u = src
   return u
 
 
@@ -61,14 +67,18 @@ def match_reductions(kernel):
   for red in nodes:
     if red.op is not Ops.REDUCE: continue
     body, reduced = red.src[0], frozenset(red.src[1:])
-    dot = uncast(body)
+    dot = body
+    while dot.op is Ops.CAST: dot = dot.src[0]
     if red.arg[0] is Ops.ADD and dot.op is Ops.MUL:
       a, b = dot.src
       common = a.ranges & b.ranges
       k = reduced & common
       m, n = a.ranges - b.ranges - reduced, b.ranges - a.ranges - reduced
       if k and (m or n):
-        if k != reduced or any(uncast(v).dtype not in MVMUL.dtypes_in for v in (a, b)):
+        a, b = unpack_value(a), unpack_value(b)
+        if unpack_value(body) is not dot or any(v.op is Ops.CAST for v in (a, b)):
+          raise NotImplementedError("MVMUL requires explicit rounding before accumulation")
+        if k != reduced or any(v.dtype not in MVMUL.dtypes_in for v in (a, b)):
           raise NotImplementedError(f"unsupported MVMUL reduction {red}")
         if not n: a, b, m, n = b, a, n, m
         matches[red] = MatchedMvmul(red, a, b, ordered(m), ordered(n), ordered(k), ordered(common - reduced))

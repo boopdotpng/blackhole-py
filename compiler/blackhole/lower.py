@@ -303,13 +303,12 @@ class TileLowerer:
 
   def mvmul(self, view, match):
     if self.schedule.grid: return self.mcast_mvmul(view, match)
-    from .fpu import uncast
     if len(match.k_axes) != 1: raise NotImplementedError("multi-axis MVMUL")
     kr, = match.k_axes
     extent = kr.src[0]
     k = int(extent.val if extent.is_const else extent.vmax)
     kf = (k + 15) // 16
-    act, weight = uncast(match.act), uncast(match.weight)
+    act, weight = match.act, match.weight
     nr = view.column
     if any(u.op is not Ops.LOAD or u.src[0].src[0].op is not Ops.PARAM for u in (act, weight)):
       raise NotImplementedError("fused MVMUL prologue")
@@ -329,7 +328,7 @@ class TileLowerer:
     self.dependency = zero
     rk = UOp.range(UOp.const(kf).after(zero), next(self.axis), "k")
     expected_a = (0, {kr: 1, **{r: stride // view.n * k for r, stride in view.strides.items() if r is not nr}})
-    try: direct_a = access(act.src[0])[1] == expected_a and dimensions(self.args[a_slot].shape) == (self.batch, self.m, k)
+    try: direct_a = len(act.src) == 1 and access(act.src[0])[1] == expected_a and dimensions(self.args[a_slot].shape) == (self.batch, self.m, k)
     except NotImplementedError: direct_a = False
     direct_w = self.layouts[w_slot] == 16
     if not extent.is_const: direct_a = direct_w = False
@@ -363,10 +362,9 @@ class TileLowerer:
 
 
   def mcast_mvmul(self, view, match):
-    from .fpu import uncast
     from .schedule import invariant_axis
     from .specs import NocMcastRead, NocMcastForward, McastWait, McastConsumed, McastRelease
-    act, weight = uncast(match.act), uncast(match.weight)
+    act, weight = match.act, match.weight
     a, w = act.src[0].src[0].arg.slot, weight.src[0].src[0].arg.slot
     kf = (int(match.k_axes[0].src[0].val) + 15) // 16
     cols, rows = self.schedule.grid
@@ -429,7 +427,7 @@ class TileLowerer:
         if u.op is Ops.REDUCE: self.reduce(view, self.matches[u])
       bm, bn = self.schedule.tile_m, self.schedule.tile_n
       tail = store.src[1]
-      if tail.op is Ops.CAST and tail.dtype == storage.dtype: tail = tail.src[0]
+      if tail.op is Ops.CAST and tail.dtype == storage.dtype and storage.dtype.is_float: tail = tail.src[0]
       if tail in self.bound and not tail.dtype.is_int:
         out_slot, result = self.bound[tail]
       else:
