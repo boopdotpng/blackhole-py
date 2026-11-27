@@ -1,9 +1,9 @@
-import collections, heapq, inspect, itertools, math, struct, weakref
+import collections, functools, heapq, inspect, itertools, math, operator, struct, weakref
 from dataclasses import dataclass
 from enum import Enum, auto
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from typing import Any, Union
-from .dtype import DType, dtypes, least_upper_dtype
+from .dtype import DType, Invalid, InvalidType, dtypes, least_upper_dtype
 from .mixin import Mixin
 
 # ---- opcodes ----
@@ -30,6 +30,7 @@ class Ops(Enum):
   NATIVE = auto(); CALL = auto(); LINEAR = auto(); SOURCE = auto(); BINARY = auto(); PROGRAM = auto()
 
 class GroupOp:
+  All = frozenset(Ops)
   Unary = frozenset({Ops.NEG, Ops.EXP2, Ops.LOG2, Ops.SIN, Ops.SQRT, Ops.RECIP})
   Binary = frozenset({Ops.ADD, Ops.SUB, Ops.MUL, Ops.DIV, Ops.MOD, Ops.MAX, Ops.CMPLT, Ops.CMPEQ, Ops.CMPNE,
                       Ops.AND, Ops.OR, Ops.XOR, Ops.SHL, Ops.SHR})
@@ -39,7 +40,10 @@ class GroupOp:
   Elementwise = ALU | frozenset({Ops.CAST, Ops.BITCAST})
   Comparison = frozenset({Ops.CMPLT, Ops.CMPEQ, Ops.CMPNE})
   Associative = frozenset({Ops.ADD, Ops.MUL, Ops.AND, Ops.OR, Ops.XOR, Ops.MAX})
+  Commutative = frozenset({Ops.ADD, Ops.MUL, Ops.MAX, Ops.CMPEQ, Ops.CMPNE, Ops.AND, Ops.OR, Ops.XOR})
   Idempotent = frozenset({Ops.AND, Ops.OR, Ops.MAX})
+  Irreducible = frozenset({Ops.CONST, Ops.PARAM, Ops.SPECIAL, Ops.RANGE})
+  Effect = frozenset({Ops.STORE, Ops.BARRIER, Ops.CALL})
   Movement = frozenset({Ops.RESHAPE, Ops.EXPAND, Ops.PERMUTE, Ops.PAD, Ops.SHRINK})
   Defines = frozenset({Ops.BUFFER, Ops.ALLOC, Ops.PARAM})
   Program = frozenset({Ops.NATIVE, Ops.CALL, Ops.LINEAR, Ops.SOURCE, Ops.BINARY, Ops.PROGRAM})
@@ -86,6 +90,10 @@ class RangeArg:
   axis: int
   name: str = ""
 
+@dataclass(frozen=True)
+class StageArg:
+  removable: bool = True
+
 _ALLOC_ID = itertools.count()
 
 # ---- dtype & shape: derived from (op, src, arg), computed on first use and cached ----
@@ -120,6 +128,8 @@ def dtype_from_uop(op: Ops, src: tuple["UOp", ...], arg: Any) -> DType:
       return dt if dt.is_float else dtypes.weakfloat if dt is dtypes.weakint else dtypes.fp32
     case Ops.WHERE:
       if src[0].dtype is not dtypes.bool: raise TypeError(f"WHERE condition must be bool, got {src[0].dtype}")
+      if src[1].is_invalid: return src[2].dtype
+      if src[2].is_invalid: return src[1].dtype
       return _promo(src[1:])
     case Ops.SHL | Ops.SHR: return src[0].dtype
     case Ops.STACK: return _promo(src) if src else dtypes.void
@@ -141,16 +151,27 @@ def _broadcast_shape(*shapes: tuple["sint", ...]) -> tuple["sint", ...]:
 
 def shape_from_uop(u: "UOp") -> tuple["sint", ...] | None:
   op, src = u.op, u.src
-  if op in GroupOp.Unary or op in (Ops.CAST, Ops.BITCAST, Ops.AFTER, Ops.STAGE): return src[0].shape
+  if op in GroupOp.Unary or op in (Ops.CAST, Ops.BITCAST, Ops.AFTER): return src[0].shape
   if op in GroupOp.Broadcastable:
     shapes = [s.shape for s in src]
     # shapeless (Layer 1 tile) operands make the result shapeless
     return None if any(s is None for s in shapes) else _broadcast_shape(*shapes)
   match op:
-    case Ops.CONST: return ()
+    case Ops.CONST | Ops.RANGE | Ops.SPECIAL: return ()
     case Ops.PARAM: return src[0].as_shape if src else (() if u.arg.vmin_vmax is not None else None)
     case Ops.BUFFER | Ops.ALLOC: return src[0].as_shape
     case Ops.STACK: return (len(src),) + src[0].shape if src else ()
+    case Ops.INDEX:
+      ps = src[0].shape
+      if ps is None: return None
+      return tuple(d for s in src[1:] for d in (s.shape or ())) + ps[len(src) - 1:]
+    case Ops.STAGE:
+      if len(src) == 1: return src[0].shape
+      ext = tuple((r.src[0].arg if r.src[0].op is Ops.CONST else simp_sint(r.src[0])) if r.op is Ops.RANGE else 1 for r in src[1:])
+      return ext + (src[0].shape or ())
+    case Ops.LOAD: return src[0].shape if len(src) == 1 else ()
+    case Ops.STORE: return src[0].shape if len(src) == 2 else ()
+    case Ops.END: return src[0].shape
     case Ops.REDUCE:
       ps = src[0].shape
       if ps is None: return None
@@ -224,29 +245,105 @@ def simp_sint(x: sint) -> sint:
   if (lin := _as_linear(x)) is not None: return _from_linear(*lin)
   return x
 
-def _min_max(x: sint) -> tuple[int, int]:
-  if isinstance(x, int): return x, x
-  match x.op:
-    case Ops.CONST: return x.arg, x.arg
-    case Ops.PARAM if _is_var(x): return x.arg.vmin_vmax
-    case Ops.CAST: return _min_max(x.src[0])
-    case Ops.NEG:
-      lo, hi = _min_max(x.src[0])
-      return -hi, -lo
-    case Ops.ADD | Ops.SUB | Ops.MUL | Ops.MAX:
-      (a0, a1), (b0, b1) = _min_max(x.src[0]), _min_max(x.src[1])
-      if x.op is Ops.ADD: return a0 + b0, a1 + b1
-      if x.op is Ops.SUB: return a0 - b1, a1 - b0
-      if x.op is Ops.MAX: return max(a0, b0), max(a1, b1)
-      c = (a0 * b0, a0 * b1, a1 * b0, a1 * b1)
-      return min(c), max(c)
-    case Ops.DIV:
-      (a0, a1), (b0, b1) = _min_max(x.src[0]), _min_max(x.src[1])
-      if b0 > 0: return a0 // b1 if a0 >= 0 else a0 // b0, a1 // b0 if a1 >= 0 else a1 // b1
-  raise ValueError(f"cannot bound symbolic int {x.op}")
+def identity_element(op: Ops, dt: DType) -> Any:
+  return dt.const({Ops.ADD: 0, Ops.MUL: 1, Ops.MAX: dt.min}[op])
 
-def smin(x: sint) -> int: return _min_max(x)[0]
-def smax(x: sint) -> int: return _min_max(x)[1]
+def _wrapped(dt: DType, lo: Any, hi: Any) -> tuple[Any, Any]:
+  return (lo, hi) if (not dt.is_int or dt.is_signed or (0 <= lo and hi <= dt.max)) else (dt.min, dt.max)
+
+def _uop_min_max(u: "UOp") -> tuple[Any, Any]:
+  op, src, dt = u.op, u.src, u.dtype
+  if op is Ops.CONST:
+    v = u.arg
+    if v is not Invalid and not (isinstance(v, float) and math.isnan(v)): return v, v
+    return dt.min, dt.max
+  if op is Ops.PARAM and _is_var(u): return u.arg.vmin_vmax
+  if op in (Ops.RANGE, Ops.SPECIAL):
+    if dt is dtypes.void or not src or src[0].op is Ops.NOOP: return dt.min, dt.max
+    return 0, src[0].vmax - 1
+  if op is Ops.NEG:
+    lo, hi = src[0]._min_max
+    return (-hi, -lo) if dt.is_float else _wrapped(dt, -hi, -lo)
+  if op in GroupOp.Binary and not dt.is_float:
+    cmp_dt = _promo(src) if op in GroupOp.Comparison else dt
+    (s0_vmin, s0_vmax), (s1_vmin, s1_vmax) = src[0]._min_max, src[1]._min_max
+    if op is Ops.ADD: return _wrapped(dt, s0_vmin + s1_vmin, s0_vmax + s1_vmax)
+    if op is Ops.SUB: return _wrapped(dt, s0_vmin - s1_vmax, s0_vmax - s1_vmin)
+    if op is Ops.MUL:
+      vals = (s0_vmin * s1_vmin, s0_vmin * s1_vmax, s0_vmax * s1_vmin, s0_vmax * s1_vmax)
+      return _wrapped(dt, min(vals), max(vals))
+    if op is Ops.SHL and s1_vmin == s1_vmax and isinstance(s0_vmin, int) and isinstance(s1_vmin, int) and s1_vmin >= 0:
+      return _wrapped(dt, s0_vmin << s1_vmin, s0_vmax << s1_vmin)
+    if op is Ops.SHR and s1_vmin == s1_vmax and isinstance(s0_vmin, int) and isinstance(s1_vmin, int) and s1_vmin >= 0:
+      return s0_vmin >> s1_vmin, s0_vmax >> s1_vmin
+    if op is Ops.DIV and isinstance(s0_vmin, int) and isinstance(s0_vmax, int) and isinstance(s1_vmin, int) and isinstance(s1_vmax, int):
+      if s0_vmin > s0_vmax: return 0, 0
+      if s1_vmin * s1_vmax > 0:
+        vals = (s0_vmin // s1_vmin, s0_vmin // s1_vmax, s0_vmax // s1_vmin, s0_vmax // s1_vmax)
+        return min(vals), max(vals)
+    if op is Ops.MOD and isinstance(s0_vmin, int) and isinstance(s0_vmax, int) and isinstance(s1_vmin, int) and isinstance(s1_vmax, int):
+      if s0_vmin > s0_vmax: return 0, 0
+      if (c := s1_vmin) == s1_vmax > 0: return (s0_vmin % c, s0_vmax % c) if s0_vmin // c == s0_vmax // c else (0, c - 1)
+      if (c := s1_vmin) == s1_vmax < 0: return (s0_vmin % c, s0_vmax % c) if s0_vmin // c == s0_vmax // c else (c + 1, 0)
+      if s1_vmin > 0: return 0, s1_vmax - 1
+      if s1_vmax < 0: return s1_vmin + 1, 0
+    if op is Ops.MAX: return max(s0_vmin, s1_vmin), max(s0_vmax, s1_vmax)
+    if op is Ops.CMPLT: return (s0_vmax < s1_vmin and not cmp_dt.is_float, s0_vmin < s1_vmax)
+    if op is Ops.CMPEQ:
+      return (s0_vmin == s0_vmax == s1_vmin == s1_vmax and not cmp_dt.is_float, not ((s0_vmax < s1_vmin) or (s1_vmax < s0_vmin)))
+    if op is Ops.CMPNE:
+      return ((s0_vmax < s1_vmin or s1_vmax < s0_vmin) and not cmp_dt.is_float, not (s0_vmin == s0_vmax == s1_vmin == s1_vmax and not cmp_dt.is_float))
+    if dt is dtypes.bool:
+      if op is Ops.AND: return bool(s0_vmin and s1_vmin), bool(s0_vmax and s1_vmax)
+      if op is Ops.OR: return bool(s0_vmin or s1_vmin), bool(s0_vmax or s1_vmax)
+      if op is Ops.XOR:
+        if s1_vmin == s1_vmax: return (not s0_vmax, not s0_vmin) if s1_vmin else (bool(s0_vmin), bool(s0_vmax))
+        if s0_vmin == s0_vmax: return (not s1_vmax, not s1_vmin) if s0_vmin else (bool(s1_vmin), bool(s1_vmax))
+        return False, True
+    if op is Ops.AND and dt.is_int and s1_vmin == s1_vmax and (s0_vmin >= 0 or s1_vmax >= 0):
+      return 0, s1_vmax if s0_vmin < 0 else min(s0_vmax, int(s1_vmax) & ((1 << int(s0_vmax).bit_length()) - 1))
+    if op is Ops.XOR and s1_vmin == s1_vmax == -1 and isinstance(s0_vmin, int) and isinstance(s0_vmax, int):
+      return _wrapped(dt, ~int(s0_vmax), ~int(s0_vmin))
+    if op in (Ops.OR, Ops.XOR) and dt.is_int and s0_vmin >= 0 and s1_vmin >= 0:
+      return 0, (1 << int(max(s0_vmax, s1_vmax)).bit_length()) - 1
+  if op is Ops.WHERE:
+    if src[2].is_invalid: return src[1]._min_max
+    if src[1].is_invalid: return src[2]._min_max
+    if dt.is_int and src[0].op is Ops.CMPLT and src[0].src == src[1:]:
+      return min(src[1].vmin, src[2].vmin), min(src[1].vmax, src[2].vmax)
+    return min(src[1].vmin, src[2].vmin), max(src[1].vmax, src[2].vmax)
+  if op is Ops.STACK and src: return min(x.vmin for x in src), max(x.vmax for x in src)
+  if op is Ops.PAD or (op is Ops.INDEX and not all(c.get_valid().op is Ops.CONST and c.get_valid().arg is True for c in src[1:])):
+    return min(src[0].vmin, 0), max(src[0].vmax, 0)
+  if op in GroupOp.Movement or op in (Ops.INDEX, Ops.STAGE, Ops.AFTER): return src[0]._min_max
+  if op is Ops.CAST:
+    s0_vmin, s0_vmax = src[0]._min_max
+    if dt.is_float:
+      if not (isinstance(s0_vmin, float) and math.isnan(s0_vmin)) and not (isinstance(s0_vmax, float) and math.isnan(s0_vmax)):
+        return float(s0_vmin), float(s0_vmax)
+    elif dt.is_int:
+      if isinstance(s0_vmin, (int, float)) and isinstance(s0_vmax, (int, float)) and math.isfinite(s0_vmin) and math.isfinite(s0_vmax):
+        lo, hi = int(math.trunc(s0_vmin)), int(math.trunc(s0_vmax))
+        if dt.min <= lo and hi <= dt.max: return lo, hi
+    elif dt is dtypes.bool:
+      return bool(s0_vmin != 0 and s0_vmax != 0 if s0_vmin == s0_vmax else False), bool(not (s0_vmin == 0 and s0_vmax == 0))
+  return dt.min, dt.max
+
+def smin(x: sint) -> int: return x if isinstance(x, int) else int(x.vmin)
+def smax(x: sint) -> int: return x if isinstance(x, int) else int(x.vmax)
+
+def resolve(x: "UOp | bool", default: bool = True) -> bool:
+  if isinstance(x, bool): return x
+  assert x.dtype is dtypes.bool, f"resolve expects bool UOp, got {x.dtype}"
+  sx = x.simplify()
+  return bool(sx.vmin) if sx.vmin == sx.vmax else default
+
+def broadcast_axes(src_shape: tuple[sint, ...], out_shape: tuple[sint, ...]) -> tuple[int, ...]:
+  if (nleft := len(out_shape) - len(src_shape)) < 0: raise RuntimeError(f"cannot broadcast {src_shape} into {out_shape}")
+  return tuple(range(nleft)) + tuple(
+    nleft + i for i, s in enumerate(src_shape)
+    if (s == 1 if isinstance(s, int) else resolve(s.eq(1), False)) and (out_shape[nleft + i] != 1 if isinstance(out_shape[nleft + i], int) else resolve(out_shape[nleft + i].ne(1), True))
+  )
 
 def sprod(xs: Sequence[sint]) -> sint:
   c, sym = 1, []
@@ -321,6 +418,33 @@ class UOp(Mixin, metaclass=_UOpMeta):
   # None for UOps without a tensor shape (Layer 1 tiles, effects, ISA)
   @recursive_property
   def shape(self) -> tuple[sint, ...] | None: return shape_from_uop(self)
+  @recursive_property
+  def _min_max(self) -> tuple[Any, Any]: return _uop_min_max(self)
+  @recursive_property
+  def ranges(self) -> frozenset["UOp"]:
+    match self.op:
+      case Ops.RANGE:
+        return frozenset({self}) | (self.src[0].ranges if self.src else frozenset())
+      case Ops.END | Ops.REDUCE | Ops.STAGE:
+        ended = self.src[1:]
+        if not ended: return self.src[0].ranges
+        closed = frozenset(r for s in ended for r in ((s,) if s.op is Ops.RANGE else s.ranges))
+        bound = frozenset().union(*(r.src[0].ranges for r in closed if r.src)) if closed else frozenset()
+        return (self.src[0].ranges - closed) | bound
+      case Ops.BACKEDGE:
+        return (self.src[0].ranges | self.src[2].ranges) - frozenset({self.src[1]})
+      case Ops.CALL:
+        return frozenset().union(*(s.ranges for s in self.src[1:])) if len(self.src) > 1 else frozenset()
+      case _:
+        return frozenset().union(*(s.ranges for s in self.src)) if self.src else frozenset()
+  @recursive_property
+  def tuplize(self) -> tuple:
+    # CONST sorts last so commutative canonicalization puts constants on the right (src[1])
+    return (1 if self.op is Ops.CONST else 0, self.op.value, repr(self.arg), self.dtype.name, *(x.tuplize for x in self.src))
+
+  @property
+  def ended_ranges(self) -> tuple["UOp", ...]:
+    return self.src[1:] if self.op in (Ops.END, Ops.REDUCE, Ops.STAGE) else ()
 
   def replace(self, **kwargs) -> "UOp":
     op, src, arg = kwargs.pop("op", self.op), kwargs.pop("src", self.src), kwargs.pop("arg", self.arg)
@@ -352,6 +476,8 @@ class UOp(Mixin, metaclass=_UOpMeta):
     raise ValueError(f"val is only for constants, got {self.op}")
   @property
   def is_const(self) -> bool: return self.op is Ops.CONST or (self.op is Ops.CAST and self.src[0].op is Ops.CONST)
+  @property
+  def is_invalid(self) -> bool: return self.op is Ops.CONST and self.arg is Invalid
 
   # ---- structure ----
 
@@ -374,6 +500,19 @@ class UOp(Mixin, metaclass=_UOpMeta):
   def is_ins(self) -> bool: return self.op is Ops.CALL and len(self.src) >= 1 and self.src[0].op is Ops.NATIVE
   @property
   def ins_op(self) -> Any: return self.src[0].arg.code if self.is_ins else None
+  @property
+  def backward_slice(self) -> list["UOp"]:
+    res = self.toposort()
+    res.pop()
+    return res
+  def op_in_backward_slice_with_self(self, *ops: Ops) -> bool:
+    seen, stack = set(), [self]
+    while stack:
+      if (x := stack.pop()) in seen: continue
+      if x.op in ops: return True
+      seen.add(x)
+      stack.extend(x.src_without_body)
+    return False
 
   # sources before users; gate(u) == False skips u and its subtree
   def toposort(self, gate: Callable[["UOp"], bool] | None = None, enter_calls: bool = False) -> list["UOp"]:
@@ -400,10 +539,90 @@ class UOp(Mixin, metaclass=_UOpMeta):
   def const(val: Any, dtype: DType | str | None = None) -> "UOp":
     """a weak CONST, or CAST(CONST) when dtype is given and isn't the value's own python dtype"""
     if isinstance(val, UOp): return val if dtype is None else val.cast(dtype)
+    if val is Invalid: return UOp(Ops.CONST, (), Invalid)
     c = UOp(Ops.CONST, (), val)
     if dtype is None or (dt := dtypes.from_name(dtype)) is c.dtype: return c
     v = bool(val) if dt is dtypes.bool else float(val) if dt.is_float else int(val)
     return UOp(Ops.CAST, (UOp(Ops.CONST, (), v),), dt)
+  def const_like(self, val: Any, dtype: DType | str | None = None) -> "UOp":
+    if val is Invalid: return UOp.invalid()
+    dt = self.dtype if dtype is None else dtypes.from_name(dtype)
+    return UOp.const(val, None if dt in dtypes.weaks else dt)
+  @staticmethod
+  def invalid() -> "UOp": return UOp(Ops.CONST, (), Invalid)
+  def valid(self, cond: "UOp") -> "UOp": return cond.where(self, UOp.invalid())
+  def get_idx(self) -> "UOp":
+    if self.op is Ops.STACK: return UOp.stack(*(x.get_idx() for x in self.src))
+    return self.src[1] if self.op is Ops.WHERE and self.src[2].is_invalid else self
+  def get_valid(self) -> "UOp":
+    if self.op is Ops.STACK: return UOp.stack(*(x.get_valid() for x in self.src))
+    return self.src[0] if self.op is Ops.WHERE and self.src[2].is_invalid else UOp.const(not self.is_invalid)
+  def logical_not(self) -> "UOp": return self ^ True
+  def overflows(self, dt: DType) -> bool: return self.vmin < dt.min or dt.max < self.vmax
+
+  def split_uop(self, sep: Ops) -> Iterator["UOp"]:
+    stack = [self]
+    while stack:
+      if (u := stack.pop()).op is sep: stack.extend(reversed(u.src))
+      else: yield u
+  def pop_const(self, op: Ops = Ops.ADD) -> tuple["UOp", Any]:
+    if self.op is op and self.src[1].op is Ops.CONST and not self.src[1].is_invalid: return self.src[0], self.src[1].arg
+    return self, identity_element(op, self.dtype)
+  def const_factor(self) -> int:
+    if self.op is Ops.CONST and isinstance(self.arg, int) and not isinstance(self.arg, bool): return self.arg
+    if self.op is Ops.ADD: return math.gcd(self.src[0].const_factor(), self.src[1].const_factor())
+    if self.op is Ops.MUL:
+      if self.src[0].op is Ops.CONST and isinstance(self.src[0].arg, int): return self.src[0].arg
+      if self.src[1].op is Ops.CONST and isinstance(self.src[1].arg, int): return self.src[1].arg
+    if self.op is Ops.NEG: return self.src[0].const_factor()
+    return 1
+  def divides(self, v: int) -> "UOp | None":
+    if v == 1: return self
+    if self.op is Ops.CONST and isinstance(self.arg, int) and not isinstance(self.arg, bool):
+      return self.const_like(self.arg // v) if self.arg % v == 0 else None
+    if self.op is Ops.NEG:
+      return -d if (d := self.src[0].divides(v)) is not None else None
+    if self.op is Ops.ADD:
+      return d0 + d1 if (d0 := self.src[0].divides(v)) is not None and (d1 := self.src[1].divides(v)) is not None else None
+    if self.op is Ops.MUL:
+      if (d0 := self.src[0].divides(v)) is not None: return d0 * self.src[1]
+      if (d1 := self.src[1].divides(v)) is not None: return self.src[0] * d1
+    return None
+  @staticmethod
+  def gcd(*uops: "UOp") -> "UOp":
+    terms, factors = zip(*(u.pop_const(Ops.MUL) for u in uops))
+    count = functools.reduce(operator.and_, [collections.Counter(t.split_uop(Ops.MUL)) for t in terms])
+    if not count: factors = tuple(u.const_factor() for u in uops)
+    return math.prod(count.elements(), start=uops[0].const_like(math.gcd(*factors)))
+  def divide_exact(self, v: "UOp") -> "UOp | None":
+    if self is v: return self.const_like(1)
+    if v.op is Ops.CONST and isinstance(v.arg, int) and not isinstance(v.arg, bool): return self.divides(v.arg)
+    if self.op is Ops.ADD:
+      return None if (s0 := self.src[0].divide_exact(v)) is None or (s1 := self.src[1].divide_exact(v)) is None else s0 + s1
+    if self.op is Ops.MUL:
+      (fac, const), (div_fac, div_const) = self.pop_const(Ops.MUL), v.pop_const(Ops.MUL)
+      new_count = collections.Counter(fac.split_uop(Ops.MUL))
+      new_count.subtract(div_fac.split_uop(Ops.MUL))
+      if div_const != 0 and const % div_const == 0 and all(cnt >= 0 for cnt in new_count.values()):
+        return math.prod(new_count.elements(), start=self.const_like(const // div_const))
+    return None
+  @staticmethod
+  def usum(*uops: "UOp") -> "UOp": return functools.reduce(operator.add, uops)
+  @staticmethod
+  def uprod(*uops: "UOp") -> "UOp": return functools.reduce(operator.mul, uops)
+  @staticmethod
+  def uand(*uops: "UOp") -> "UOp": return functools.reduce(operator.and_, uops) if uops else UOp.const(True)
+  @staticmethod
+  def uor(*uops: "UOp") -> "UOp": return functools.reduce(operator.or_, uops) if uops else UOp.const(False)
+  def simplify(self) -> "UOp":
+    if self.op is Ops.CONST: return self
+    from .symbolic import symbolic
+    return graph_rewrite(self, symbolic)
+  def ssimplify(self) -> Any:
+    ret = self.simplify()
+    if ret.op is Ops.CONST: return ret.arg
+    if ret.op is Ops.CAST and ret.src[0].op is Ops.CONST: return ret.dtype.const(ret.src[0].arg)
+    return ret
 
   @staticmethod
   def noop() -> "UOp": return UOp(Ops.NOOP)
@@ -469,7 +688,9 @@ class UOp(Mixin, metaclass=_UOpMeta):
   def program(*srcs: "UOp", arg: Any = None) -> "UOp": return UOp(Ops.PROGRAM, srcs, arg)
 
   def after(self, *deps: "UOp") -> "UOp": return UOp(Ops.AFTER, (self, *deps)) if deps else self
-  def index(self, idx: "UOp | int") -> "UOp": return UOp(Ops.INDEX, (self, UOp.const(idx)))
+  def index(self, *idxs: "UOp | int") -> "UOp": return UOp(Ops.INDEX, (self, *(UOp.const(i) for i in idxs)))
+  def stage(self, *ranges: "UOp", removable: bool = True) -> "UOp":
+    return UOp(Ops.STAGE, (self, *ranges), StageArg(removable=removable) if ranges else None)
   def backedge(self, loop: "UOp", cond: "UOp") -> "UOp": return UOp(Ops.BACKEDGE, (self, loop, cond))
 
   # Mixin hooks
@@ -489,9 +710,9 @@ class UOp(Mixin, metaclass=_UOpMeta):
   @property
   def is_bound_var(self) -> bool: return _is_var(self) and self.arg.val is not None
   @property
-  def vmin(self) -> int: return smin(self)
+  def vmin(self) -> Any: return self._min_max[0]
   @property
-  def vmax(self) -> int: return smax(self)
+  def vmax(self) -> Any: return self._min_max[1]
   def bind(self, val: int) -> "UOp":
     if not self.is_variable or self.is_bound_var: raise ValueError("bind() requires an unbound Variable")
     lo, hi = self.arg.vmin_vmax
@@ -596,6 +817,34 @@ class UPat:
   def var(name: str | None = None, dtype=None) -> UPat: return UPat(dtype=dtype, name=name)
   @staticmethod
   def const(name: str | None = None, dtype=None, arg=None) -> UPat: return UPat(Ops.CONST, dtype=dtype, arg=arg, name=name)
+  @staticmethod
+  def cvar(name: str | None = None, dtype=None, arg=None) -> UPat:
+    return UPat(Ops.CONST, dtype=dtype, arg=(lambda a: a is not Invalid) if arg is None else arg, name=name)
+  @staticmethod
+  def cval(val: Any, dtype=None, name: str | None = None) -> UPat: return UPat(Ops.CONST, dtype=dtype, arg=val, name=name)
+  @staticmethod
+  def _p(x: Any) -> UPat: return x if isinstance(x, UPat) else UPat(Ops.CONST, arg=x)
+
+  def or_casted(self, name: str | None = None) -> UPat:
+    return UPat.any(self if name is None else self.named(name), UPat(Ops.CAST, src=(self,), name=name))
+  def f(self, op: Ops, **kwargs) -> UPat: return UPat(op, src=(self,), **kwargs)
+  def cast(self, dtype=None, name: str | None = None) -> UPat: return UPat(Ops.CAST, dtype=dtype, src=(self,), name=name)
+  def where(self, a: Any, b: Any, name: str | None = None) -> UPat: return UPat(Ops.WHERE, src=(self, UPat._p(a), UPat._p(b)), name=name)
+  def eq(self, x: Any, name: str | None = None) -> UPat: return UPat(Ops.CMPEQ, src=[self, UPat._p(x)], name=name)
+  def ne(self, x: Any, name: str | None = None) -> UPat: return UPat(Ops.CMPNE, src=[self, UPat._p(x)], name=name)
+  def logical_not(self) -> UPat: return UPat(Ops.XOR, dtype=dtypes.bool, src=[self, UPat.cval(True)])
+  def maximum(self, x: Any, name: str | None = None) -> UPat: return UPat(Ops.MAX, src=[self, UPat._p(x)], name=name)
+  def reduce(self, *ranges: UPat, op: Ops | None = None, allow_any_len: bool = False, name: str | None = None) -> UPat:
+    return UPat(Ops.REDUCE, src=(self, *ranges), arg=(op, 0) if op is not None else None, allow_any_len=allow_any_len, name=name)
+  def index(self, *idxs: UPat, allow_any_len: bool = False, name: str | None = None) -> UPat:
+    return UPat(Ops.INDEX, src=(self, *idxs), allow_any_len=allow_any_len, name=name)
+  def load(self, name: str | None = None, allow_any_len: bool = False) -> UPat:
+    return UPat(Ops.LOAD, src=(self,), allow_any_len=allow_any_len, name=name)
+  def store(self, val: Any, name: str | None = None) -> UPat: return UPat(Ops.STORE, src=(self, UPat._p(val)), name=name)
+  def after(self, *deps: UPat, allow_any_len: bool = False, name: str | None = None) -> UPat:
+    return UPat(Ops.AFTER, src=(self, *deps), allow_any_len=allow_any_len, name=name)
+  def end(self, *ranges: UPat, allow_any_len: bool = False, name: str | None = None) -> UPat:
+    return UPat(Ops.END, src=(self, *ranges), allow_any_len=allow_any_len, name=name)
 
   @staticmethod
   def ins(code: Any = None, src: tuple[UPat, ...] | None = None, dtype=None, name: str | None = None,
@@ -620,10 +869,22 @@ class UPat:
     out.name = name
     return out
 
-  def __add__(self, x: UPat) -> UPat: return UPat(Ops.ADD, src=[self, x])
-  def __sub__(self, x: UPat) -> UPat: return UPat(Ops.SUB, src=(self, x))
-  def __mul__(self, x: UPat) -> UPat: return UPat(Ops.MUL, src=[self, x])
-  def __neg__(self) -> UPat:          return UPat(Ops.NEG, src=(self,))
+  def __add__(self, x: Any) -> UPat:       return UPat(Ops.ADD, src=[self, UPat._p(x)])
+  def __radd__(self, x: Any) -> UPat:      return UPat(Ops.ADD, src=[UPat._p(x), self])
+  def __sub__(self, x: Any) -> UPat:       return UPat(Ops.SUB, src=(self, UPat._p(x)))
+  def __rsub__(self, x: Any) -> UPat:      return UPat(Ops.SUB, src=(UPat._p(x), self))
+  def __mul__(self, x: Any) -> UPat:       return UPat(Ops.MUL, src=[self, UPat._p(x)])
+  def __rmul__(self, x: Any) -> UPat:      return UPat(Ops.MUL, src=[UPat._p(x), self])
+  def __floordiv__(self, x: Any) -> UPat:  return UPat(Ops.DIV, src=(self, UPat._p(x)))
+  def __mod__(self, x: Any) -> UPat:       return UPat(Ops.MOD, src=(self, UPat._p(x)))
+  def __lt__(self, x: Any) -> UPat:        return UPat(Ops.CMPLT, src=(self, UPat._p(x)))
+  def __and__(self, x: Any) -> UPat:       return UPat(Ops.AND, src=[self, UPat._p(x)])
+  def __or__(self, x: Any) -> UPat:        return UPat(Ops.OR, src=[self, UPat._p(x)])
+  def __xor__(self, x: Any) -> UPat:       return UPat(Ops.XOR, src=[self, UPat._p(x)])
+  def __lshift__(self, x: Any) -> UPat:    return UPat(Ops.SHL, src=(self, UPat._p(x)))
+  def __rshift__(self, x: Any) -> UPat:    return UPat(Ops.SHR, src=(self, UPat._p(x)))
+  def __neg__(self) -> UPat:               return UPat(Ops.NEG, src=(self,))
+  def __invert__(self) -> UPat:            return self.logical_not()
 
   def match(self, u: UOp, binds: dict[str, UOp]) -> list[dict[str, UOp]]:
     if self.name is not None:
@@ -663,6 +924,9 @@ class UPat:
       results.extend(states)
     return results
 
+class BottomUpGate(Exception):
+  """Raised by a bottom-up PatternMatcher rule to stop descending into the current node's srcs."""
+
 class PatternMatcher:
   def __init__(self, rules: Sequence[tuple[UPat, Callable]]):
     self.rules = list(rules)
@@ -670,10 +934,13 @@ class PatternMatcher:
     for pat, fn in self.rules:
       has_ctx = "ctx" in inspect.signature(fn).parameters
       runner = self._wrap(pat, fn, has_ctx)
-      if pat.op is None:
+      ops = pat.op
+      if ops is None and pat.is_any and pat.src and all(a.op is not None for a in pat.src):
+        ops = tuple(dict.fromkeys(o for a in pat.src for o in a.op))
+      if ops is None:
         self._by_op[None].append((runner, pat.req_ops))
       else:
-        for op in pat.op: self._by_op[op].append((runner, pat.req_ops))
+        for op in ops: self._by_op[op].append((runner, pat.req_ops))
 
   @staticmethod
   def _wrap(pat: UPat, fn: Callable, has_ctx: bool) -> Callable:
@@ -739,12 +1006,21 @@ def graph_rewrite(
         if bot_pm is not None:
           seen: set[UOp] = set()
           nxt: UOp | None = cur
+          gated = False
           while nxt is not None:
             if nxt in seen: raise RuntimeError(f"bottom-up rewrite cycle at {nxt.op}")
             seen.add(nxt)
             cur = nxt
             if cur in bot_cache: nxt = bot_cache[cur]
-            else: nxt = bot_cache[cur] = bot_pm.rewrite(cur, ctx)
+            else:
+              try:
+                nxt = bot_cache[cur] = bot_pm.rewrite(cur, ctx)
+              except BottomUpGate:
+                gated = True
+                break
+          if gated:
+            finish(orig, cur)
+            continue
         if cur is not orig:
           stack.append((orig, 2, cur))
           if cur not in memo and cur not in started:

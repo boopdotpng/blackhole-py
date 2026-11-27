@@ -16,8 +16,8 @@ from enum import Enum
 from dataclasses import fields, is_dataclass
 from typing import Any, Callable
 from . import dtype as dtype_mod, uop as uop_mod
-from .dtype import DType, dtypes
-from .uop import BufferArg, CallInfo, KernelArg, NativeInfo, Ops, ParamArg, RangeArg, UOp, _fmt_sint
+from .dtype import DType, Invalid, dtypes
+from .uop import BufferArg, CallInfo, KernelArg, NativeInfo, Ops, ParamArg, RangeArg, StageArg, UOp, _fmt_sint
 
 # ***** render *****
 
@@ -38,11 +38,11 @@ def ansistrip(s: str) -> str: return re.sub("\x1b\\[(K|.*?m)", "", s)
 
 # keys whose value is written by its name: dtype=fp32 op=add
 _named_keys = {"dtype", "op"}
-_keywords = {"true", "false", "inf", "nan"}
+_keywords = {"true", "false", "inf", "nan", "invalid"}
 # ops whose arg is one value with a name, ops whose arg is a dataclass written as key=value per field, ops whose arg is a tuple
 _arg_key = {Ops.SPECIAL: "name", Ops.CAST: "dtype", Ops.BITCAST: "dtype"}
 _struct_args: dict[Ops, type] = {Ops.BUFFER: BufferArg, Ops.ALLOC: BufferArg, Ops.PARAM: ParamArg, Ops.RANGE: RangeArg,
-                                 Ops.CALL: CallInfo, Ops.NATIVE: NativeInfo}
+                                 Ops.STAGE: StageArg, Ops.CALL: CallInfo, Ops.NATIVE: NativeInfo}
 _tuple_keys = {Ops.REDUCE: ("op", "n")}
 
 def _inline(u: UOp) -> bool:
@@ -50,6 +50,7 @@ def _inline(u: UOp) -> bool:
 
 def _const_str(x: UOp) -> str:
   v = x.arg
+  if v is Invalid: return "invalid"
   return str(v).lower() if isinstance(v, bool) or (isinstance(v, float) and not math.isfinite(v)) else repr(v)
 
 def _val(v: Any, named: bool, ref: Callable[[UOp], str | None]) -> str:
@@ -121,7 +122,8 @@ _ops = {o.name.lower(): o for o in Ops}
 _named_parse: dict[str, Callable[[str], Any]] = {"dtype": dtypes.from_name, "op": lambda v: _ops[v]}
 
 def _lit(t: str) -> Any:
-  """literals: true false 0x2a -3 1.5 1e+20 -inf nan. anything else is a bare word"""
+  """literals: true false invalid 0x2a -3 1.5 1e+20 -inf nan. anything else is a bare word"""
+  if t == "invalid": return Invalid
   if t in ("true", "false"): return t == "true"
   if re.fullmatch(r"-?0x[0-9a-fA-F]+", t): return int(t, 16)
   if re.fullmatch(r"-?[0-9]+", t): return int(t)

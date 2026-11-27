@@ -1,11 +1,13 @@
-from .dtype import DType, can_lossless_cast, dtypes, least_upper_dtype
+from .dtype import DType, Invalid, can_lossless_cast, dtypes, least_upper_dtype
 from .uop import (
-  CallInfo, GroupOp, KernelArg, NativeInfo, Ops, ParamArg, PatternMatcher, UOp, UPat, Variable,
+  CallInfo, GroupOp, KernelArg, NativeInfo, Ops, ParamArg, PatternMatcher, StageArg, UOp, UPat, Variable,
   graph_rewrite, line_rewrite, linearize, sint, substitute,
 )
 from .mixin import Mixin  # after .uop: mixin imports uop lazily
 from .uir import parse_uir, render_uir
 from .ops import VerifyError, exec_alu, simplify, special_axes, verify
+from .symbolic import div_and_mod_symbolic, pm_simplify_valid, sym, symbolic, symbolic_simple
+from .rangeify import get_kernel_graph, pm_load_collapse, pm_reduce_simplify, run_rangeify
 from .tensor import Tensor, get_state_dict, load_state_dict, lower_tensor, pm_frontend, safe_load, simplify_tensor, verify_tensor
 from .function import function
 from .isa import ISARenderer, IselContext, LinearContext, compile_linear, rdef, regalloc, register_choices, regs, to_program, vdef, vreg

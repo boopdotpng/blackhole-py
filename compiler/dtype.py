@@ -1,4 +1,18 @@
+import math
 from dataclasses import dataclass
+from typing import ClassVar
+
+class InvalidType:
+  _instance: ClassVar["InvalidType | None"] = None
+  def __new__(cls):
+    if cls._instance is None: cls._instance = super().__new__(cls)
+    return cls._instance
+  def __eq__(self, other): return self is other if isinstance(other, InvalidType) else NotImplemented
+  def __hash__(self): return hash("Invalid")
+  def __repr__(self): return "Invalid"
+  def __reduce__(self): return (InvalidType, ())
+
+Invalid = InvalidType()
 
 @dataclass(frozen=True)
 class DType:
@@ -11,6 +25,21 @@ class DType:
   def itemsize(self) -> int: return self.bits // 8
   @property
   def is_int(self) -> bool: return not self.is_float and self.bits >= 8
+  @property
+  def min(self):
+    if self is dtypes.bool: return False
+    if self.is_float: return -math.inf
+    if self is dtypes.weakint: return -(1 << 63)
+    return -(1 << (self.bits - 1)) if self.is_signed else 0
+  @property
+  def max(self):
+    if self is dtypes.bool: return True
+    if self.is_float: return math.inf
+    if self is dtypes.weakint: return (1 << 63) - 1
+    return (1 << (self.bits - 1)) - 1 if self.is_signed else (1 << self.bits) - 1
+  def const(self, v):
+    if v is Invalid: return Invalid
+    return bool(v) if self is dtypes.bool else float(v) if self.is_float else int(v)
   def __repr__(self) -> str: return f"dtypes.{self.name}"
 
 class dtypes:
@@ -42,6 +71,8 @@ class dtypes:
   ints = (u8, i32, u32, u64)
   sints = (i32,)
   uints = (u8, u32, u64)
+  wints = (u8, i32, u32, u64, weakint)
+  swints = (i32, weakint)
 
   _by_name = {d.name: d for d in (void, bool, u8, i32, u32, u64, bf16, fp32, bfp8, bfp4, e4m3, weakint, weakfloat)}
   _aliases = {"float32": fp32, "float": fp32, "bfloat16": bf16, "int32": i32, "int": i32, "uint32": u32, "uint64": u64, "uint8": u8}
@@ -56,6 +87,7 @@ class dtypes:
   @staticmethod
   def from_py(v) -> DType:
     if isinstance(v, (list, tuple)): return least_upper_dtype(*(dtypes.from_py(x) for x in v)) if v else dtypes.weakfloat
+    if v is Invalid: return dtypes.bool
     return dtypes.bool if isinstance(v, bool) else dtypes.weakint if isinstance(v, int) else dtypes.weakfloat
 
 _DTYPE_RANK = {

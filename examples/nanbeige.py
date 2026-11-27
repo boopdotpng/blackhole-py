@@ -1,39 +1,30 @@
 from __future__ import annotations
-import math, sys
+import sys
 from pathlib import Path
 if __name__ == "__main__": sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from compiler import Ops, Tensor, Variable, dtypes, function, load_state_dict, render_uir, safe_load, simplify_tensor, sint
 
-# Llama 3.2 1B config
-emb_dim = 2048
-n_layers = 16
-n_heads = 32
+# Nanbeige4.3-33B config (a plain Llama: LlamaForCausalLM, untied lm_head, no rope scaling)
+emb_dim = 7168
+n_layers = 52
+n_heads = 56
 n_kv_heads = 8
-head_dim = 64
-mlp_size = 8192
+head_dim = 128
+mlp_size = 22016
 
-vocab_size = 128256
+vocab_size = 166912
 norm_eps = 1e-5
-max_seq_len = 8192
+max_seq_len = 8192  # the checkpoint allows 524288; the RoPE table and KV cache are sized to this
 
-# official Llama 3.2 1B RoPE params
-rope_theta = 500000.0
-rope_factor = 32.0
-rope_low_freq_factor = 1.0
-rope_high_freq_factor = 4.0
-rope_original_max_position_embeddings = 8192
+rope_theta = 120000000.0
 
 def rope_table() -> tuple[Tensor, Tensor]:
   inv_freq = 1.0 / (rope_theta ** (Tensor.arange(0, head_dim, 2) / head_dim))
-  wavelen = 2 * math.pi / inv_freq
-  cycles = rope_original_max_position_embeddings / wavelen
-  smooth = ((cycles - rope_low_freq_factor) / (rope_high_freq_factor - rope_low_freq_factor)).clip(0.0, 1.0)
-  inv_freq = inv_freq * ((1.0 / rope_factor) + smooth * (1.0 - (1.0 / rope_factor)))
   angles = Tensor.arange(max_seq_len).unsqueeze(1) * inv_freq.unsqueeze(0)
   angles = angles.repeat(1, 2)
   return angles.cos().contiguous(), angles.sin().contiguous()
 
-COS, SIN = rope_table()  # both (8192, 64)
+COS, SIN = rope_table()  # both (8192, 128)
 
 def apply_rope(x: Tensor, pos: sint) -> Tensor:
   S = x.shape[2]
@@ -150,6 +141,7 @@ class Model:
     self.embed_tokens = Embedding(vocab_size, emb_dim)
     self.layers = [Block() for _ in range(layers)]
     self.norm = RMSNorm(emb_dim, eps=norm_eps)
+    self.lm_head = Linear(emb_dim, vocab_size, bias=False)
 
   def reset_cache(self) -> None:
     for layer in self.layers:
@@ -160,7 +152,7 @@ class Model:
     x = self.embed_tokens(x)
     for layer in self.layers: x = layer(x, start_pos)
     x = self.norm(x[:, -1:])
-    logits = x @ self.embed_tokens.weight.T
+    logits = self.lm_head(x)
     return logits.flatten().argmax()
 
   def __call__(self, x: Tensor, start_pos: sint = 0) -> Tensor:
@@ -173,11 +165,9 @@ def convert_from_huggingface_for_this_model(weights: dict[str, Tensor]) -> dict[
   return {
     (k[len("model."):] if k.startswith("model.") else k): v
     for k, v in weights.items()
-    if k != "lm_head.weight"
   }
 
-def load_llama3(checkpoint: str | Path = "/Users/boop/code/ml/llama3-tinygrad/model.safetensors",
-                layers: int = n_layers) -> Model:
+def load_nanbeige(checkpoint: str | Path, layers: int = n_layers) -> Model:
   weights = convert_from_huggingface_for_this_model(safe_load(checkpoint))
   model = Model(layers=layers)
   load_state_dict(model, weights, strict=False)
@@ -187,7 +177,7 @@ if __name__ == "__main__":
   mode = sys.argv[1] if len(sys.argv) > 1 else "decode"
   m = Model()
   if mode in ("prefill", "prefill-body"):
-    g = simplify_tensor(m(Tensor([[128000, 15339, 11, 1268, 527, 499]], dtype=dtypes.i32), start_pos=0))
+    g = simplify_tensor(m(Tensor([[166100, 1782, 6722, 315, 9625, 374]], dtype=dtypes.i32), start_pos=0))
   elif mode in ("decode", "body"):
     sp = Variable("start_pos", 1, max_seq_len - 1)
     g = simplify_tensor(m(Tensor.buffer("tok", (1, 1), dtypes.i32), start_pos=sp))

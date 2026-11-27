@@ -44,6 +44,7 @@ class Mixin:
   @property
   def dtype(self) -> DType: return self._uop.dtype
   def cast(self, dtype: DType | str) -> Self:
+    if self._uop.is_invalid: return self
     dt = dtypes.from_name(dtype)
     return self if self.dtype == dt else self._wrap_uop(U.UOp(U.Ops.CAST, (self._uop,), dt))
   def bitcast(self, dtype: DType | str) -> Self:
@@ -212,6 +213,20 @@ class Mixin:
   def abs(self) -> Self: return (self < 0).where(-self, self)
   def sigmoid(self) -> Self: return (1.0 + (-self).exp()).recip()
   def silu(self) -> Self: return self * self.sigmoid()
+  # log(1 + x) for x > -1: the Taylor series below 1e-4, where 1 + x rounds away x's low bits
+  def log1p(self) -> Self:
+    return (self.abs() < 1e-4).where(self * (1.0 + self * (-0.5 + self * (1.0 / 3.0))), (1.0 + self).log())
+  # max(x, 0) + log1p(exp(-|x|)): tinygrad's logaddexp(x, 0) form, which can't overflow, with log1p for the tail
+  def softplus(self) -> Self: return self.maximum(0.0) + (-self.abs()).exp().log1p()
+  # sign(x) (1 - e) / (1 + e) with e = exp(-2|x|) in (0, 1], which can't overflow; below |x| = 1/16, where 1 - e
+  # cancels, the odd Taylor series (truncation < 1e-12 relative). 2 sigmoid(2x) - 1 loses relative precision near 0.
+  def tanh(self) -> Self:
+    a = self.abs()
+    e = (-2.0 * a).exp()
+    a2 = a * a
+    small = a * (1.0 + a2 * (-1.0 / 3.0 + a2 * (2.0 / 15.0 + a2 * (-17.0 / 315.0))))
+    t = (a < 0.0625).where(small, (1.0 - e) / (1.0 + e))
+    return (self < 0).where(-t, t)
   def relu(self) -> Self: return self.maximum(0.0)
 
   def add(self, x: Any, reverse: bool = False) -> Self: return self._binop(U.Ops.ADD, x, reverse)

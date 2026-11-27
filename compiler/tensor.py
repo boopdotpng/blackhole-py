@@ -331,8 +331,10 @@ def simplify_tensor(root: Tensor | UOp) -> Tensor | UOp:
 
 # ---- Layer 0 -> Layer 1 lowering ----
 
-def lower_tensor(root: UOp) -> UOp:
+def lower_tensor(root: Tensor | UOp) -> UOp:
   """lower a Layer 0 tensor graph to Layer 1 kernel SINKs"""
-  root = simplify_tensor(root)
-  verify_tensor(root)
-  raise NotImplementedError("Layer 0 -> Layer 1 lowering is not built yet")
+  u = root.uop if isinstance(root, Tensor) else root
+  u = simplify_tensor(u)
+  verify_tensor(u)
+  from .rangeify import get_kernel_graph
+  return get_kernel_graph(u)
