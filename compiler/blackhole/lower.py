@@ -179,7 +179,11 @@ class TileLowerer:
     row_terms = {r: stride // view.n * width for r, stride in view.strides.items() if r is not nr}
     normal = (0, {**row_terms, **({cr: 1} if cr is not None else {})})
     broadcast = cr is not None and index == (0, {cr: 1}) and dimensions(self.args[param].shape) == (1, 1, width)
-    direct = index == normal and dimensions(self.args[param].shape) == (self.batch, self.m, width)
+    shape = dimensions(self.args[param].shape)
+    # Face-aligned chunks of one physical row have the same layout as a
+    # batch of single rows. No gather or layout conversion is needed.
+    row_chunks = self.m == 1 and width % 16 == 0 and shape == (1, 1, self.batch * width)
+    direct = index == normal and (shape == (self.batch, self.m, width) or row_chunks)
     if len(u.src) == 1 and (direct or broadcast):
       size, count = face_bytes(dtype), (width + 15) // 16
       row = UOp.const(0) if broadcast else view.tile // view.nf

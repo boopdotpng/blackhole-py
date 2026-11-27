@@ -829,6 +829,23 @@ def _split_store(x: UOp) -> UOp | None:
   # anonymous KernelArg("") lets structurally identical kernels deduplicate via hash-consing
   return UOp.sink(ret, arg=KernelArg("")).call(*call_args)
 
+def split_wide_max(x):
+  # Materialize independent partial maxima so the worker grid can distribute
+  # a reduction whose scalar output would otherwise occupy just one worker.
+  shape = x.shape
+  if shape is None or len(shape) != 1 or not isinstance(n := shape[0], int) or n < 4096: return None
+  if not x.dtype.is_float and not (x.dtype.is_int and -(2**24) <= x.vmin <= x.vmax <= 2**24): return None
+  width = 256
+  blocks = (n + width - 1) // width
+  value = x.cast(dtypes.fp32) if x.dtype.is_int else x
+  rows = value.pad(((0, -n % width),), value=-math.inf).reshape(blocks, 1, width)
+  partials = rows.max(-1, keepdim=True).contiguous()
+  return partials.reshape(blocks).max(0).cast(x.dtype).contiguous()
+
+
+pm_split_wide_max = PatternMatcher([(UPat(Ops.REDUCE, src=(UPat.var("x"),), arg=(Ops.MAX, 1)), split_wide_max)])
+
+
 @functools.lru_cache(maxsize=128)
 def _lower_function_body(body: UOp, l1_budget: int) -> UOp:
   return _lower_one_sink(body, {}, l1_budget=l1_budget)
@@ -844,6 +861,7 @@ def _lower_one_sink(tsink: UOp, call_memo: dict[UOp, UOp], *, l1_budget: int = L
     return None if lb is body else c.replace(src=(lb, *c.src[1:]))
 
   tsink = graph_rewrite(tsink, PatternMatcher([(UPat(Ops.CALL, name="c"), lower_call_body)]))
+  tsink = graph_rewrite(tsink, pm_split_wide_max, bottom_up=True)
   tsink = run_rangeify(tsink, l1_budget=l1_budget)
   tsink = graph_rewrite(tsink, symbolic + pm_reduce_simplify + pm_const_buffer_folding)
   if l1_budget > 0: tsink = _mark_keep_staged(tsink)

@@ -377,7 +377,7 @@ class TestBlackholeFusionAndMemory(unittest.TestCase):
     sp = Variable("start_pos", 1, nb.max_seq_len - 1)
     kg = lower_tensor(nb.Model(layers=4)(Tensor.buffer("tok", (1, 1), dtypes.i32), start_pos=sp))
     ks = verify_all_kernels(kg)
-    self.assertLessEqual(len(ks), 12)
+    self.assertLessEqual(len(ks), 15)  # Includes distributed max partials and their scalar merges.
 
     # Plan DRAM across expanded 4-layer schedule
     dram_plan = plan_dram_memory(kg, block_size=256, expand_functions=True)

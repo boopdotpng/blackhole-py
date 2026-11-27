@@ -264,6 +264,12 @@ def _uop_min_max(u: "UOp") -> tuple[Any, Any]:
   if op in (Ops.RANGE, Ops.SPECIAL):
     if dt is dtypes.void or not src or src[0].op is Ops.NOOP: return dt.min, dt.max
     return 0, src[0].vmax - 1
+  if op is Ops.REDUCE and u.arg[1] > 0 and u.arg[0] is Ops.ADD and dt.is_int and src[0].shape is not None:
+    dims = src[0].shape[:u.arg[1]]
+    if all(isinstance(d, int) for d in dims):
+      count = math.prod(dims)
+      lo, hi = count * src[0].vmin, count * src[0].vmax
+      if dt.min <= lo <= hi <= dt.max: return lo, hi
   if op is Ops.NEG:
     lo, hi = src[0]._min_max
     return (-hi, -lo) if dt.is_float else _wrapped(dt, -hi, -lo)

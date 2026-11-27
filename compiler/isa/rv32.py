@@ -176,6 +176,9 @@ def make_rv32_isel(wgpr: tuple[UOp, ...] = DEFAULT_WGPR) -> PatternMatcher:
                                                         RVOps.SRAI if u.dtype.is_signed else RVOps.SRLI, shift=True)),
     (UPat(Ops.NEG, name="u"), lambda u: UOp.ins(RVOps.SUB, (X0, u.src[0]), u.dtype)),
 
+    (UPat(Ops.MAX, src=(UPat.var("a"), UPat.var("b")), name="u"),
+     lambda u, a, b: UOp(Ops.WHERE, (UOp(Ops.CMPLT, (a, b)), b, a)) if u.dtype.is_int else None),
+
     # comparisons (produce 0/1 in a GPR)
     (UPat(Ops.CMPLT, name="u"), lambda u: _bin_imm_or_reg(
       u, RVOps.SLT if u.src[0].dtype.is_signed else RVOps.SLTU,

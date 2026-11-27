@@ -265,3 +265,14 @@ def test_dst_banking_requires_self_contained_phases():
     return [u for u in insert_syncs(seq) if u.is_ins and isinstance(u.ins_op, DstBank)]
   assert {u.ins_op.role for u in banks(value)} == {'trisc0', 'trisc1', 'trisc2'}
   assert not banks(instruction(SfpLoadOp(0), dtype=dtypes.fp32))
+
+
+def test_partial_maximum_split_distributes_work():
+  from compiler import Tensor, linearize_schedule, lower_tensor
+  from compiler.blackhole.lower import lower_kernel
+  # Direct max and the max inside argmax use the same reduction pass.
+  x = Tensor.buffer("values", (8193,), dtypes.fp32)
+  for expr in (x.max(), x.argmax()):
+    calls = linearize_schedule(lower_tensor(expr))
+    workers = [lower_kernel(c.kernel, c.args).workers for c in calls]
+    assert max(workers) > 1 and workers[-1] == 1

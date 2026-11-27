@@ -63,7 +63,7 @@ class TestMapBlackhole(unittest.TestCase):
       try:
         with self.subTest(card=card, operation="fp32 to i32"):
           np.testing.assert_array_equal(Tensor(values).cast(dtypes.i32).numpy(device=dev), values.astype(np.int32))
-        for size, dtype in ((128, dtypes.fp32), (128, dtypes.bf16), (166912, dtypes.bf16)):
+        for size, dtype in ((128, dtypes.fp32), (128, dtypes.bf16), (8193, dtypes.fp32), (166912, dtypes.bf16)):
           logits = np.full(size, -3, np.float32)
           logits[size // 3] = logits[-2] = -.5
           with self.subTest(card=card, size=size, operation="argmax"):

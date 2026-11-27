@@ -45,7 +45,7 @@ def pack_blocks(spec):
   return (replace(spec, blocks=1, dst_slot=spec.dst_slot + i) for i in range(spec.blocks))
 
 
-def contiguous_group(operands, lanes, itemsize, axis):
+def contiguous_group(operands, lanes, itemsize, axis, *, span=None):
   """Prove contiguous addresses and uniform validity for every lane in a run."""
   original = tuple(u.without_after for u in operands)
   ranges = list(dict.fromkeys(u for operand in original for u in operand.toposort() if u.op is Ops.RANGE))
@@ -61,8 +61,10 @@ def contiguous_group(operands, lanes, itemsize, axis):
       terms(value, scale * constant.val, result)
     else: result[u] = result.get(u, 0) + scale
   placeholder = UOp.special(lanes, "gather_lane")
+  span = lanes if span is None else span
   for count in (16, 8, 4, 2):
-    group = UOp.range(lanes // count, axis, "gather")
+    if span % count: continue
+    group = UOp.range(span // count, axis, "gather")
     within = UOp.range(count, axis + 1000, "within")
     base, valid = (u.substitute({placeholder: group * count}).simplify() for u in operands)
     offset, predicate = (u.substitute({placeholder: group * count + within}).simplify() for u in operands)
@@ -71,7 +73,7 @@ def contiguous_group(operands, lanes, itemsize, axis):
     terms(offset, 1, difference); terms(base, -1, difference); terms(within, -itemsize, difference)
     if all(coefficient == 0 for coefficient in difference.values()):
       return group, count, base.substitute(restore), valid.substitute(restore)
-  group = UOp.range(lanes, axis, "gather")
+  group = UOp.range(span, axis, "gather")
   return group, 1, *(u.substitute({placeholder: group}) for u in original)
 
 
@@ -240,9 +242,27 @@ class Recipes:
         self.call(fw.FN_NOC_WAIT, (niu, spec.tid_mcast, 0))
     self.out.append(rv_label(done))
 
+  def replicate(self, base, prefix, total):
+    size = 4 if prefix % 4 == 0 else 2
+    i = UOp.range((total - prefix) // size, 10000 + self.label_id, "replicate")
+    self.label_id += 1
+    src = UOp.ins(RVOps.LW if size == 4 else RVOps.LHU, (base + (i * size) % prefix, UOp.const(0)), dtypes.u32)
+    self.out += [i, src, UOp.ins(RVOps.SW if size == 4 else RVOps.SH,
+                                 (base + prefix + i * size, src, UOp.const(0)), dtypes.void), UOp.noop().end(i)]
+
   def gather(self, spec, operands):
     import fw
-    lane, count, offset, valid = contiguous_group(operands, spec.lanes, spec.itemsize, 10000 + self.label_id)
+    placeholder = UOp.special(spec.lanes, "gather_lane")
+    span = spec.lanes
+    for period in (1, 16):
+      if span % period: continue
+      hi = UOp.variable("_gather_repeat", 0, spec.lanes // period - 1)
+      lo = UOp.variable("_gather_within", 0, period - 1)
+      if all(u.without_after.substitute({placeholder: hi * period + lo}).simplify() is
+             u.without_after.substitute({placeholder: lo}).simplify() for u in operands):
+        span = period
+        break
+    lane, count, offset, valid = contiguous_group(operands, spec.lanes, spec.itemsize, 10000 + self.label_id, span=span)
     self.label_id += 1
     base = self.cb_addr(spec.cb_id)
     address = base + lane * count * spec.itemsize
@@ -276,8 +296,10 @@ class Recipes:
     self.out += [UOp.ins(RVOps.SH if spec.itemsize == 2 else RVOps.SW, (address, X0, UOp.const(i * spec.itemsize)), dtypes.void)
                  for i in range(count)]
     self.out.append(rv_label(done))
-    self.call(fw.FN_NOC_WAIT, (0, spec.tid, 1))
     self.out.append(UOp.noop().end(lane))
+    if span < spec.lanes:
+      self.call(fw.FN_NOC_WAIT, (0, spec.tid, 1))
+      self.replicate(base, span * spec.itemsize, spec.lanes * spec.itemsize)
 
   def scatter(self, spec, operands):
     import fw
@@ -286,11 +308,11 @@ class Recipes:
     done = UOp.const(self.label_id); self.label_id += 1
     base = self.cb_addr(spec.cb_id)
     self.out.append(lane)
+    self.out.append(UOp.ins(RVOps.BEQ, (done, valid, X0), dtypes.void))
     self.call(fw.FN_NOC_WRITE, (1, rv_arg(spec.param_slot), rv_arg(spec.param_slot, high=True),
                               offset, count * spec.itemsize, base + lane * count * spec.itemsize, spec.tid))
-    write_call = self.out.pop()
-    self.out += [UOp.ins(RVOps.BEQ, (done, valid, X0), dtypes.void), write_call, rv_label(done)]
     self.call(fw.FN_NOC_WAIT, (1, spec.tid, 1))
+    self.out.append(rv_label(done))
     self.out.append(UOp.noop().end(lane))
 
   def index_tile(self, spec, operands):
