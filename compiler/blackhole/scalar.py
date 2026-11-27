@@ -57,9 +57,17 @@ def select_scalar(stream):
       if s.is_ins:
         out.append(s)
         emitted.add(s)
+  incoming = {}
   for u in rewritten.src:
+    if renderer.is_label(u):
+      emitted.intersection_update(incoming.pop(renderer.label_key(u), emitted))
+    elif u.op is Ops.END:
+      for r in u.src[1:]: emitted.intersection_update(incoming.pop(r, emitted))
     if u in emitted and movable(u): continue
     dependencies(u)
     out.append(u)
     emitted.add(u)
+    for target in ((u,) if u.op is Ops.RANGE else renderer.jump_targets(u)):
+      if target in incoming: incoming[target].intersection_update(emitted)
+      else: incoming[target] = emitted.copy()
   return out

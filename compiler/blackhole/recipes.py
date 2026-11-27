@@ -91,7 +91,7 @@ class Recipes:
       loaded = self.load_word(address)
       # This dependency is a hardware completion fence, not a dead value.
       # Keep it explicit at every readback, including repeated loop drains.
-      self.out += [loaded, UOp.ins(RVOps.ANDI, (loaded, UOp.const(0)), dtypes.u32, X[28])]
+      self.out += [loaded, UOp.ins(RVOps.ANDI, (loaded, UOp.const(0)), dtypes.u32, X0)]
 
   def drain(self): self.store(0xFFE80004, 0, readback=True)
 
@@ -170,20 +170,14 @@ class Recipes:
       self.spin(base + 0x90, seq + 1)
       done = self.label()
       target = ((seq + spec.nslots) % length) | (wy << 6) if spec.axis == "x" else wx | (((seq + spec.nslots) % length) << 6) if spec.axis == "y" else wx | (wy << 6)
-      # Materialize call arguments on both sides of the conditional.
+      self.out.append(UOp.ins(RVOps.BEQ, (done, seq + spec.nslots < spec.total_slabs, X0), dtypes.void))
       self.call(fw.FN_NOC_INC, (1, base + 0x40 + at, target, 4))
-      call = self.out.pop()
-      self.out += [UOp.ins(RVOps.BEQ, (done, seq + spec.nslots < spec.total_slabs, X0), dtypes.void), call, rv_label(done)]
+      self.out.append(rv_label(done))
       self.call(fw.FN_NOC_WAIT, (1, 4, 0))
       return
-    # All address arithmetic used by either branch is materialized before
-    # branching, so scalar CSE cannot reuse an uninitialized register.
     offset, face, limit = operands[:3] if isinstance(op, NocMcastRead) else (UOp.const(0),) * 3
     rect = (wy << 6) | ((spec.gcols - 1) << 12) | (wy << 18) if spec.axis == "x" else wx | (wx << 12) | ((spec.grows - 1) << 18)
-    expressions = [seq, slot, at, local, me, seq % length, base + 0x40 + at, base + 0x60 + at,
-                   base + 0x20 + at, base + at, rect, seq + 1, seq >= spec.nslots]
     offsets = [(face + b < limit).where(offset + b * spec.strip_stride, 0) for b in range(spec.blocks)]
-    self.out += expressions + offsets + [local + b * spec.strip_bytes for b in range(spec.blocks)]
     done = self.label()
     self.out.append(UOp.ins(RVOps.BNE, (done, me, seq % length), dtypes.void))
     if isinstance(op, NocMcastRead):
@@ -230,21 +224,18 @@ class Recipes:
       row, col = index // n % m, index % n
       face = (index // (m * n) * ((m + 7) // 8) + row // 8) * ((n + 15) // 16) + col // 16
       byte_offset = (face * 128 + row % 8 * 16 + col % 16) * size
-      scratch = base + 2048
+      scratch = fw.GATHER_INDEX
       self.call(fw.FN_NOC_READ, (0, rv_arg(slot), rv_arg(slot, high=True), byte_offset, size, scratch, spec.tid))
       self.call(fw.FN_NOC_WAIT, (0, spec.tid, 1))
-      loaded = UOp.ins(RVOps.LW, (scratch if isinstance(scratch, UOp) else UOp.const(scratch), UOp.const(0)), u.dtype)
+      loaded = UOp.ins(RVOps.LW, (UOp.const(scratch), UOp.const(0)), u.dtype,
+                       *vreg(3_000_000 + self.label_id, u.dtype, DEFAULT_WGPR))
+      self.label_id += 1
       self.out.append(loaded)
       indirect[u] = loaded
     offset, valid = offset.substitute(indirect), valid.substitute(indirect)
-    # Materialize shared address arithmetic on both branch paths. A later
-    # gather can reuse it even when this gather's valid branch is skipped.
-    offset = UOp.ins(RVOps.ADDI, (offset, UOp.const(0)), dtypes.u32)
-    self.out.append(offset)
+    self.out.append(UOp.ins(RVOps.BEQ, (zero, valid, X0), dtypes.void))
     self.call(fw.FN_NOC_READ, (0, rv_arg(spec.param_slot), rv_arg(spec.param_slot, high=True),
                              offset, count * spec.itemsize, address, spec.tid))
-    read_call = self.out.pop()
-    self.out += [UOp.ins(RVOps.BEQ, (zero, valid, X0), dtypes.void), read_call]
     self.out += [UOp.ins(RVOps.JAL, (done,), dtypes.u32, X0), rv_label(zero)]
     self.out += [UOp.ins(RVOps.SH if spec.itemsize == 2 else RVOps.SW, (address, X0, UOp.const(i * spec.itemsize)), dtypes.void)
                  for i in range(count)]

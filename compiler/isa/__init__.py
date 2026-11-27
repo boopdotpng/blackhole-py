@@ -76,6 +76,8 @@ class ISARenderer:
         return r
     return None
 
+  def spill_choices(self, choices): return self.scratch_regs
+
   def is_label(self, u: UOp) -> bool: return False
   def label_key(self, u: UOp) -> UOp | None: return u.src[1] if self.is_label(u) and len(u.src) > 1 else None
   def jump_targets(self, u: UOp) -> tuple[UOp, ...]: return ()
@@ -218,7 +220,9 @@ def regalloc(ctx: LinearContext, uops: list[UOp], ren: ISARenderer) -> list[UOp]
         if v in spills:
           if v not in loaded:
             if len(loaded) >= len(scratch): raise RuntimeError("instruction needs more spill scratch registers")
-            sc = scratch[len(loaded)]
+            busy = fixed_in[pc] | fixed_out[pc] | {rdef(x, ren) for x in loaded.values()}
+            sc = next((r for r in scratch if r not in busy), None)
+            if sc is None: raise RuntimeError("no free scratch for spilled operand")
             fill_u = ren.fill(spills[v], s, sc)
             before.append(fill_u)
             loaded[v] = fill_u
@@ -237,7 +241,9 @@ def regalloc(ctx: LinearContext, uops: list[UOp], ren: ISARenderer) -> list[UOp]
       for v in u_defs:
         if v in virtuals:
           if v in spills:
-            sc = rdef(loaded[v], ren) if v in loaded else scratch[0]
+            sc = rdef(loaded[v], ren) if v in loaded else next(
+              (r for r in ren.spill_choices(choices[v]) if r not in fixed_out[pc] | fixed_reads[pc]), None)
+            if sc is None: raise RuntimeError("no compatible scratch for spilled definition")
             phys_defs.append(sc)
             spilled_def = (v, sc)
           else:

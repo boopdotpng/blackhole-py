@@ -56,7 +56,7 @@ X0, RA, SP = X[0], X[1], X[2]
 LOCAL_BASE, NOC_BASE, PCBUF_BASE = X[3], X[4], X[5]
 RV_PHYSICAL_REGS = frozenset(X)
 # Default allocatable pool (keeps x0, x1/ra, x2/sp, x3..x5 base regs intact; x30..x31 used as spill scratch)
-DEFAULT_WGPR = X[6:30]
+DEFAULT_WGPR = X[6:29]
 DEFAULT_SCRATCH = (X[30], X[31])
 
 def fits_simm12(v: int) -> bool: return -2048 <= v < 2048

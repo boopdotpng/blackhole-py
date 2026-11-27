@@ -66,8 +66,10 @@ class SfpuRenderer(BlackholeRenderer):
   """Use the shared allocator, with spills into explicitly reserved Dst rows."""
   def __init__(self, spill_row=448):
     super().__init__()
-    self.scratch_regs = LREGS[5:8]
+    self.scratch_regs = (LREGS[3], LREGS[6], LREGS[7])
     self.spill_row = spill_row
+
+  def spill_choices(self, choices): return tuple(r for r in self.scratch_regs if r in choices)
 
   def copy(self, x, reg): return sfp_ins(O.SFPMOV, (x,), x.dtype, reg)
 

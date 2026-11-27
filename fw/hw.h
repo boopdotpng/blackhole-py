@@ -45,6 +45,7 @@
 #define DISP_FLAGS       0x11C
 #define DISP_CACHE_EPOCH 0x120
 #define STEP_EPOCH       0x13C
+#define GATHER_INDEX     0x140    // private BRISC indirect-read result, after dispatch mailbox
 #define DISPATCH_BYTES   0xC0     // 0x80..0x13F (192 bytes)
 #define FLAG_CLEAR_MCAST 1u
 
