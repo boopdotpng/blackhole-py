@@ -62,12 +62,15 @@ def decompose(u):
   return None
 
 
+class SpillCapacityError(RuntimeError): pass
+
+
 class SfpuRenderer(BlackholeRenderer):
   """Use the shared allocator, with spills into explicitly reserved Dst rows."""
-  def __init__(self, spill_row=448):
+  def __init__(self, spill_row=448, end_row=512):
     super().__init__()
     self.scratch_regs = (LREGS[3], LREGS[6], LREGS[7])
-    self.spill_row = spill_row
+    self.spill_row, self.end_row = spill_row, end_row
 
   def spill_choices(self, choices): return tuple(r for r in self.scratch_regs if r in choices)
 
@@ -75,12 +78,12 @@ class SfpuRenderer(BlackholeRenderer):
 
   def spill(self, slot, x):
     row = self.spill_row + 2 * (slot // 4)
-    if row + 6 > 510: raise RuntimeError("SFPU spill exceeds reserved Dst rows")
+    if row + 6 > self.end_row - 2: raise SpillCapacityError("SFPU spill exceeds reserved Dst rows")
     return sfp_ins(O.SFPSTORE, (x,), dtypes.void, fmt=isa.SfpuFormat.INT32, addr=row)
 
   def fill(self, slot, x, reg):
     row = self.spill_row + 2 * (slot // 4)
-    if row + 6 > 510: raise RuntimeError("SFPU fill exceeds reserved Dst rows")
+    if row + 6 > self.end_row - 2: raise SpillCapacityError("SFPU fill exceeds reserved Dst rows")
     return sfp_ins(O.SFPLOAD, (), x.dtype, reg, fmt=isa.SfpuFormat.INT32, addr=row)
 
 
@@ -242,8 +245,8 @@ class Selector:
     return self.out
 
 
-def select_sfpu(stream: list[UOp], *, spill_row=448) -> list[UOp]:
-  ren = SfpuRenderer(spill_row)
+def select_sfpu(stream: list[UOp], *, spill_row=448, end_row=512) -> list[UOp]:
+  ren = SfpuRenderer(spill_row, end_row)
   selected = Selector().lower(stream)
   allocated = regalloc(LinearContext(ren), selected, ren)
   return fix_sfpu_hazards_uops(allocated, ren, is_loop=True)

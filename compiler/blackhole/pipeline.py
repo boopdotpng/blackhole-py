@@ -2,7 +2,7 @@
 from ..dtype import dtypes
 from ..uop import Ops, UOp, linearize
 from ..isa.tensix import split_roles, pack_bundle
-from .specs import Space, MoveToDst, SfpLoadOp, SfpStoreOp, UnpackOp, PackOp, SemOp, StallOp, FpuOp, NocRead, NocGather, IndexTile, NocWrite, NocScatter, NocWait, CbOp, DstZero
+from .specs import Space, MoveToDst, SfpLoadOp, SfpStoreOp, UnpackOp, PackOp, SemOp, StallOp, FpuOp, NocRead, NocGather, IndexTile, NocWrite, NocScatter, NocWait, CbOp, DstZero, DstBank
 from .recipes import compile_core
 
 
@@ -10,14 +10,53 @@ def instruction(spec, *src, dtype=dtypes.void):
   return UOp.ins(spec, src, dtype, role=spec.role)
 
 
-def insert_syncs(stream):
+def phase_defines_dst(stream, slots):
+  """A bank switch is legal only when this phase defines its own inputs.
+
+  Track even/odd column groups across footprint iterations. A possibly empty
+  loop cannot establish definitions for code following its exit.
+  """
+  defined, entries, writes, footprint = set(), {}, set(), None
+  for u in stream:
+    if u.op is Ops.RANGE:
+      entries[u] = defined.copy()
+      if u.arg.name == "fp": footprint = u
+      continue
+    if u.op is Ops.END:
+      for r in u.src[1:]:
+        if r is footprint:
+          defined.update(writes)
+          writes.clear()
+          footprint = None
+        if r in entries and r.src[0].without_after.vmin < 1: defined.intersection_update(entries[r])
+      continue
+    if not u.is_ins: continue
+    op = u.ins_op
+    if isinstance(op, DstZero): defined.update(range(4 * slots))
+    elif isinstance(op, (MoveToDst, UnpackOp)) and (isinstance(op, MoveToDst) or op.target is Space.DST):
+      defined.update(range(op.dst_slot * 4, (op.dst_slot + 1) * 4))
+    elif isinstance(op, (FpuOp, PackOp)):
+      rows = range(op.dst_slot * 4, (op.dst_slot + dst_count(op)) * 4)
+      if isinstance(op, FpuOp) and not op.accumulate: defined.update(rows)
+      elif not defined.issuperset(rows): return False
+    elif isinstance(op, (SfpLoadOp, SfpStoreOp)):
+      bound = footprint.src[0].without_after if footprint is not None else None
+      if bound is None or not bound.is_const: return False
+      start = op.dst_slot * 4 + op.sub_row // 2
+      rows = range(start, start + int(bound.val))
+      if start < 0 or rows.stop > 4 * slots: return False
+      if isinstance(op, SfpStoreOp): writes.update(rows)
+      elif not defined.issuperset(rows): return False
+  return True
+
+
+def insert_syncs(stream, double_buffer=True):
   """Match input credits and Dst ownership in the one joint ordered stream.
 
-  An output phase owns Dst until pack completes. Within it, each unpack/math
-  step returns its input credit independently, allowing K/reduction loops to
-  reuse scratch tiles without releasing the accumulated destination.
+  Math acquires a destination bank and pack releases it. Source operands use
+  hardware valid bits. Direct unpack writes to Dst also need a grant from
+  math because the two engines share the same write port.
   """
-  from .specs import MoveToDst
   before, after = {}, {}
   def add(table, at, *ops): table.setdefault(at, []).extend(ops)
   def sem(kind, index, role): return instruction(SemOp(kind, index, role))
@@ -41,8 +80,15 @@ def insert_syncs(stream):
                           for j in range(groups[-1][-1] + 1, i)):
       groups[-1].append(i)
     else: groups.append([i])
+  # Rows above the tile footprint in each half are available for SFPU spills.
+  # All participants derive bank parity from the same dynamic phase ordinal.
+  scope = active[packs[0]]
+  slots = max(u.ins_op.dst_slot + dst_count(u.ins_op) for u in stream if u.is_ins and hasattr(u.ins_op, "dst_slot"))
+  rectangular = all(not stream[r].src[0].without_after.ranges for r in scope[1:])
+  repeated = len(groups) > 1 or any(stream[r].src[0].without_after.vmax > 1 for r in scope)
+  banked = double_buffer and slots <= 32 and repeated and rectangular and all(active[p] == scope for p in packs)
   previous = -1
-  for group in groups:
+  for phase, group in enumerate(groups):
     first, last = group[0], group[-1]
     work = [i for i in range(previous + 1, first) if footprint(i) or spec_at(i, (UnpackOp, FpuOp, DstZero, MoveToDst))]
     if not work: raise ValueError("pack without a producing phase")
@@ -50,10 +96,23 @@ def insert_syncs(stream):
     inner = [r for r in active[begin] if r not in active[first]]
     if inner: begin = min(inner)
     add(before, begin, sem("wait", 4, "trisc1"), sem("get", 4, "trisc1"))
+    if banked and (active[begin] != scope or not phase_defines_dst(stream[begin:last+1], slots)):
+      return insert_syncs(stream, double_buffer=False)
+    if banked:
+      ordinal = UOp.const(0)
+      for r in scope: ordinal = ordinal * stream[r].src[0].without_after + stream[r]
+      bank = (ordinal * len(groups) + phase) & 1
+      for role in ("trisc1", "trisc2", "trisc0"):
+        if role == "trisc0" and not any(spec_at(j, UnpackOp) and stream[j].ins_op.target is Space.DST for j in work): continue
+        add(before, first if role == "trisc2" else begin, instruction(DstBank(role, slots), bank))
     pending = []
     for i in work:
       if spec_at(i, UnpackOp): pending.append(i)
       elif pending and (footprint(i) or spec_at(i, (FpuOp, MoveToDst))):
+        if spec_at(i, (FpuOp, MoveToDst)) and all(stream[j].ins_op.target is not Space.DST for j in pending):
+          # Src bank valid/clear handshakes are hardware double buffered.
+          pending.clear()
+          continue
         # Grant the shared write port at the next unpack, after all math
         # preceding that write (also on the loop backedge) has retired.
         add(before, pending[0], instruction(StallOp("math", "trisc1")), sem("post", 0, "trisc1"),
@@ -110,6 +169,12 @@ def insert_syncs(stream):
   return [item for i, u in enumerate(stream) for item in (*before.get(i, ()), u, *after.get(i, ()))]
 
 
+def dst_count(spec):
+  if isinstance(spec, PackOp): return spec.blocks
+  if isinstance(spec, FpuOp): return spec.m_blocks * spec.n_blocks
+  return 1
+
+
 def verify_tile_stream(stream):
   """Check lexical credit conservation before projecting onto concurrent cores.
 
@@ -138,7 +203,7 @@ def verify_tile_stream(stream):
       if spec.kind not in ("reserve", "push", "wait", "pop"): raise ValueError("unknown CB operation")
       buffers[scope, spec.cb_id][spec.kind] += 1
     if isinstance(spec, (UnpackOp, PackOp, MoveToDst, SfpLoadOp, SfpStoreOp, FpuOp)):
-      count = spec.blocks if isinstance(spec, PackOp) else spec.m_blocks * spec.n_blocks if isinstance(spec, FpuOp) else 1
+      count = dst_count(spec)
       if spec.dst_slot < 0 or spec.dst_slot + count > 56: raise MemoryError("tile stream exceeds 56 Dst slots")
   if stack: raise ValueError("unterminated tile loop")
   for (_, sem_id), counts in semaphores.items():
@@ -151,7 +216,13 @@ def verify_tile_stream(stream):
 
 def compile_tile_graph(sink, cb_addrs, cb_sizes=None, cb_depth=3, cb_depths=None, cb_pages=None):
   joint = linearize(sink)
-  synced = insert_syncs(joint)
+  from .sfpu import SpillCapacityError
+  try: return compile_stream(sink, insert_syncs(joint), cb_addrs, cb_sizes, cb_depth, cb_depths, cb_pages)
+  except SpillCapacityError:
+    return compile_stream(sink, insert_syncs(joint, double_buffer=False), cb_addrs, cb_sizes, cb_depth, cb_depths, cb_pages)
+
+
+def compile_stream(sink, synced, cb_addrs, cb_sizes, cb_depth, cb_depths, cb_pages):
   verify_tile_stream(synced)
   if cb_sizes is not None:
     from .alloc import allocate_cb_stream

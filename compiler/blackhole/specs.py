@@ -14,6 +14,12 @@ class Space(Enum):
 
 
 @dataclass(frozen=True)
+class DstBank:
+  role: str
+  slots: int
+
+
+@dataclass(frozen=True)
 class DstZero:
   role: str = "trisc1"
 

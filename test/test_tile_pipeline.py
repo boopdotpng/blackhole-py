@@ -197,7 +197,7 @@ def test_mixed_input_multiple_phases_sync():
   stream = insert_syncs(linearize(mixed_phase_graph()))
   verify_tile_stream(stream)
   grants = [u.ins_op for u in stream if u.is_ins and isinstance(u.ins_op, SemOp) and u.ins_op.sem_id == 0]
-  assert [s.kind for s in grants] == ["post", "wait", "get"] * 3
+  assert [s.kind for s in grants] == ["post", "wait", "get"]
   compile_tile_graph(mixed_phase_graph(), {i: 0x20000 + 4096 * i for i in range(4)})
 
 
@@ -249,3 +249,19 @@ def test_reused_cb_has_distinct_recipe_loop_labels():
   code = select_scalar(recipes.out)
   labels = [u.src_without_body[0] for u in code if u.is_ins and u.ins_op is RVOps.LABEL]
   assert len(labels) == len(set(labels))
+
+
+def test_dst_banking_requires_self_contained_phases():
+  from compiler.blackhole.pipeline import insert_syncs
+  from compiler.blackhole.specs import DstBank
+  outer = UOp.range(3, 0, 'out')
+  fp = UOp.range(4, 1, 'fp')
+  unpack = instruction(UnpackOp(Space.DST, 0, dst_slot=1))
+  value = instruction(SfpLoadOp(1), dtype=dtypes.fp32)
+  store = instruction(SfpStoreOp(2), value)
+  pack = instruction(PackOp(1, dst_slot=2))
+  def banks(src):
+    seq = [outer, unpack, fp, src, store, store.end(fp), pack, pack.end(outer)]
+    return [u for u in insert_syncs(seq) if u.is_ins and isinstance(u.ins_op, DstBank)]
+  assert {u.ins_op.role for u in banks(value)} == {'trisc0', 'trisc1', 'trisc2'}
+  assert not banks(instruction(SfpLoadOp(0), dtype=dtypes.fp32))
