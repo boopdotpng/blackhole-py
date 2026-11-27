@@ -76,7 +76,7 @@ class ISARenderer:
         return r
     return None
 
-  def spill_choices(self, choices): return self.scratch_regs
+  def spill_choices(self, choices): return tuple(r for r in self.scratch_regs if r in choices)
 
   def is_label(self, u: UOp) -> bool: return False
   def label_key(self, u: UOp) -> UOp | None: return u.src[1] if self.is_label(u) and len(u.src) > 1 else None

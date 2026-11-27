@@ -318,6 +318,11 @@ class RV32Renderer(ISARenderer):
     self.pre_regalloc_matcher = _make_pre_regalloc(wgpr)
     self.post_regalloc_matcher = post_regalloc_matcher
 
+  def spill_choices(self, choices):
+    # The ordinary GPR pool excludes dedicated spill temporaries. Narrower
+    # pools express a real register constraint and retain it on spilled defs.
+    return self.scratch_regs if choices == self.wgpr else super().spill_choices(choices)
+
   def is_label(self, u: UOp) -> bool: return u.is_ins and u.ins_op is RVOps.LABEL
 
   def jump_targets(self, u: UOp) -> tuple[UOp, ...]:

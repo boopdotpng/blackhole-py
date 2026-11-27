@@ -72,8 +72,6 @@ class SfpuRenderer(BlackholeRenderer):
     self.scratch_regs = (LREGS[3], LREGS[6], LREGS[7])
     self.spill_row, self.end_row = spill_row, end_row
 
-  def spill_choices(self, choices): return tuple(r for r in self.scratch_regs if r in choices)
-
   def copy(self, x, reg): return sfp_ins(O.SFPMOV, (x,), x.dtype, reg)
 
   def spill(self, slot, x):
