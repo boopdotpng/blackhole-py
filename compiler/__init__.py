@@ -17,6 +17,7 @@ from .memory import (
 )
 from .tensor import Tensor, get_state_dict, load_state_dict, lower_tensor, pm_frontend, safe_load, simplify_tensor, verify_tensor
 from .function import function
+from .blackhole.jit import TinyJit
 from .isa import ISARenderer, IselContext, LinearContext, compile_linear, rdef, regalloc, register_choices, regs, to_program, vdef, vreg
 from .isa.rv32 import RVGroupOp, RVOps, RV32Renderer, X, X0, RA, SP, LOCAL_BASE, NOC_BASE, PCBUF_BASE, rv_label, rv_li
 from .isa.tensix import (
