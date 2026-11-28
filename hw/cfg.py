@@ -1,4 +1,6 @@
 # Tensix config register fields. Per-field notes: docs/index.html
+from __future__ import annotations
+
 from enum import Enum, IntEnum
 from dataclasses import dataclass
 from typing import NamedTuple

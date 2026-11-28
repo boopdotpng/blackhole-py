@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import collections, functools, heapq, inspect, itertools, math, operator, struct, weakref
 from dataclasses import dataclass
 from enum import Enum, auto

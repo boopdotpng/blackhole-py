@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import atexit, collections, concurrent.futures, ctypes, math, mmap, struct, time
 import numpy as np
 import fw
