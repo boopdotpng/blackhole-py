@@ -1,4 +1,9 @@
+// The DMA core (COPY:0 queue): BRISC runs the HCQ2 queue and splits every copy with NCRISC, one NoC each.
+#if DMA_ENGINE == 0
+#include "hcq.h"
+#else
 #include "noc.h"
+#endif
 
 #define NIU DMA_ENGINE
 #define DMA_CAP 32
@@ -59,9 +64,31 @@ static void dma_copy_dram_src(u32 dst_lo, u32 dst_hi, u32 src_lo, u32 src_hi, u3
 #endif
 }
 
+// An end that is not 64-byte aligned: a NoC read keeps its offset in a 64-byte word and a write in a 16-byte word,
+// so BRISC alone reads each chunk at the source's offset and moves it over when the destination's differs.
+static void dma_copy_bytes(u32 dst_lo, u32 dst_hi, u32 src_lo, u32 src_hi, u32 size) {
+#if DMA_ENGINE == 0
+  for (u32 at = 0; at < size;) {
+    u32 n = MIN(size - at, DMA_BATCH - 64), rd = STAGING(0) + ((src_lo + at) & 63), wr = STAGING(1) + ((dst_lo + at) & 15);
+    noc_move_paced(0, 0, src_lo, src_hi, at, n, rd, 1, DMA_CAP);
+    noc_wait(0, 1, 1);
+    if (!((rd ^ wr) & 15)) wr = rd;
+    else if ((rd | wr) & 3) for (u32 i = 0; i < n; i++) write8(wr + i, read8(rd + i));
+    else for (u32 i = 0; i < n; i += 4) write32(wr + i, read32(rd + i));
+    fence();
+    noc_move_paced(0, 1, dst_lo, dst_hi, at, n, wr, 3, DMA_CAP);
+    noc_wait(0, 3, 1);
+    at += n;
+  }
+#else
+  (void)dst_lo; (void)dst_hi; (void)src_lo; (void)src_hi; (void)size;
+#endif
+}
+
 static void dma_copy(u32 dst_lo, u32 dst_hi, u32 src_lo, u32 src_hi, u32 size) {
   if (!size) return;
-  if (src_hi >> 31) dma_copy_dram_src(dst_lo, dst_hi, src_lo, src_hi, size);
+  if ((dst_lo | src_lo) & 63) dma_copy_bytes(dst_lo, dst_hi, src_lo, src_hi, size);
+  else if (src_hi >> 31) dma_copy_dram_src(dst_lo, dst_hi, src_lo, src_hi, size);
   else dma_copy_parallel(dst_lo, dst_hi, src_lo, src_hi, size);
 }
 
@@ -86,6 +113,24 @@ NORETURN _dma_boot(void) {
 
 #else
 
+// d is {dst, src, bytes}: publish it to NCRISC under a new sequence number and copy BRISC's share
+static void dma_run(u32 seq, const u32 *d) {
+  write32(DMA_PIPE_PROD, 0);
+  write32(DMA_PIPE_CONS, 0);
+  for (u32 i = 0; i < 5; i++) write32(DMA_COPY_DESC + 4*i, d[i]);
+  fence();
+  write32(DMA_COPY_GO, seq);
+  dma_copy(d[0], d[1], d[2], d[3], d[4]);
+  WAIT_SLOW(read32(DMA_COPY_DONE) == seq);
+}
+
+static void run_pkt(const u32 *p) {
+  static u32 copies;
+  if (p[0] == PKT_WAIT) hcq_wait(p, DMA_SCRATCH);
+  else if (p[0] == PKT_SIGNAL || p[0] == PKT_TIMESTAMP) hcq_signal(p, DMA_SCRATCH);
+  else if (p[0] == PKT_COPY) dma_run(++copies, p + 2);
+}
+
 NORETURN _dma_boot(void) {
   configure_csr(0);
   invalidate_icache();
@@ -100,21 +145,7 @@ NORETURN _dma_boot(void) {
   fence();
   write32(SOFT_RESET, RESET_ALL & ~(RESET_BRISC | RESET_NCRISC));
   WAIT_FAST(read32(DMA_NCRISC_SYNC) == 2);
-  for (u32 retired = 0;;) {
-    WAIT_FAST(read32(DMA_WPTR) != retired);
-    u32 seq = ++retired, p = DMA_PACKETS + (seq % DMA_DEPTH) * PACKET;
-    write32(DMA_PIPE_PROD, 0);
-    write32(DMA_PIPE_CONS, 0);
-    for (u32 i = 0; i < 5; i++) write32(DMA_COPY_DESC + 4*i, read32(p + 4*i));
-    fence();
-    write32(DMA_COPY_GO, seq);
-    dma_copy(read32(p), read32(p+4), read32(p+8), read32(p+12), read32(p+16));
-    WAIT_SLOW(read32(DMA_COPY_DONE) == seq);
-    write32(DMA_SCRATCH, seq);
-    write32(DMA_SCRATCH + 4, read32(p + 20));
-    fence();
-    noc_write(0, read32(DMA_SIGNAL), read32(DMA_SIGNAL + 4), DMA_SCRATCH, 8);
-  }
+  hcq_run(DMA_WPTR, DMA_RPTR, DMA_READY, DMA_RING, DMA_CMDBUF_STAGE);
 }
 
 #endif

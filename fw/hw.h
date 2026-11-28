@@ -89,13 +89,12 @@
 #define PKT_SIGNAL       4
 #define PKT_TIMESTAMP    5
 #define PKT_MEM_BARRIER  6
+#define PKT_COPY         7        // DMA core: dst, src, bytes
 
 // Program bundle header (first 64 bytes at prog_addr in DRAM/host)
 #define PROG_HDR_BYTES   64
 
 // ---- DMA core L1 (COPY:0 queue, core (right, 11)) ----
-#define PACKET           0x20     // bytes per host-written DMA descriptor
-#define DMA_DEPTH        4        // descriptor ring depth
 #define DMA_BATCH        0x20000  // bytes per chunk
 #define DMA_SLOTS        4        // staging slots per engine
 #define DMA_NCRISC_SYNC  0x10     // NCRISC boot handshake (writes 2 when up)
@@ -103,17 +102,17 @@
 #define DMA_COPY_DONE    0x30     // NCRISC -> BRISC: copy sequence number finished
 #define DMA_PIPE_PROD    0x40     // DRAM-source copy: chunks BRISC has staged
 #define DMA_PIPE_CONS    0x50     // DRAM-source copy: chunks NCRISC has written out
-#define DMA_STATE        0x80     // host-initialised state block, DMA_STATE_SIZE bytes
-#define DMA_STATE_SIZE   0x100
-#define DMA_WPTR         0x80     // latest submitted sequence
-#define DMA_SIGNAL       0x88     // host address of the completion counter
-#define DMA_COPY_DESC    0xB0
-#define DMA_SCRATCH      0x100
+#define DMA_WPTR         0x80     // host doorbell, DMA_RPTR and DMA_READY: as the CP's
+#define DMA_RPTR         0x84
+#define DMA_READY        0xA0
+#define DMA_COPY_DESC    0xB0     // the copy BRISC shares with NCRISC: dst, src, bytes
+#define DMA_SCRATCH      0x100    // 128 B (signal read/write, timestamps)
 #define DMA_BRISC_BASE   0x200
 #define DMA_BRISC_SIZE   0x3E00
 #define DMA_NCRISC_BASE  0x4000
 #define DMA_NCRISC_SIZE  0x4000
-#define DMA_PACKETS      0x9000
+#define DMA_RING         0x9000   // CP_DEPTH x CP_IB_BYTES indirect buffer ring
+#define DMA_CMDBUF_STAGE 0xA000   // CP_CMDBUF_CHUNK bytes of packets
 #define DMA_STAGING      0x10000  // 2 engines x DMA_SLOTS x DMA_BATCH
 
 #define LOCAL_MEM                0xFFB00000  // each RISC's private data RAM

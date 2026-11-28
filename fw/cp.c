@@ -2,7 +2,7 @@
 // Streams 64-byte packets from host/DRAM indirect command buffers, manages the worker L1
 // program cache (bump-allocated with flush-on-full + monotonic cache_epoch), overlaps
 // kernargs / program fetch with the running kernel, and executes WAIT/SIGNAL/TIMESTAMP/BARRIER.
-#include "noc.h"
+#include "hcq.h"
 
 __asm__(".section .entry, \"ax\", @progbits\n"
         SET_SP(STACK_TOP)
@@ -25,11 +25,6 @@ static void exec_barrier(void) {
   write32(CP_WORK_DONE, 0);
   fence();
   active_workers = 0;
-}
-
-static void noc_read_sync(u32 lo, u32 hi, u32 off, u32 size, u32 local) {
-  noc_move_paced(0, 0, lo, hi, off, size, local, 0, 0);
-  noc_wait(0, 0, 1);
 }
 
 static void mcast_all_workers(u32 local, u32 remote, u32 size) {
@@ -63,7 +58,7 @@ static CacheEntry *cache_load(u32 prog_lo, u32 prog_hi, u32 prog_bytes, u32 key)
 
   // Pull packed program bundle (64B header + code) from DRAM/host into CP_PROG_STAGE.
   // Can overlap with an active kernel running at < cache_top!
-  noc_read_sync(prog_lo, prog_hi, 0, prog_bytes, CP_PROG_STAGE);
+  hcq_read(prog_lo, prog_hi, 0, prog_bytes, CP_PROG_STAGE);
 
   u32 base = cache_top;
   if (aligned) mcast_all_workers(CP_PROG_STAGE + PROG_HDR_BYTES, base, aligned);
@@ -90,41 +85,11 @@ static void run_pkt(const u32 *p) {
     return;
   }
 
-  if (op == PKT_WAIT) {
-    u32 alo = p[2], ahi = p[3], tlo = p[4], thi = p[5];
-    u32 stage = CP_SCRATCH + (alo & 63u);
-    for (;;) {
-      noc_read_sync(alo, ahi, 0, 8, stage);
-      u32 vlo = read32(stage), vhi = read32(stage + 4);
-      int ok = (flags & 1u) ? (vlo == tlo && vhi == thi) : (vhi > thi || (vhi == thi && vlo >= tlo));
-      if (ok) break;
-      u32 n_ = POLL_BACKOFF;
-      __asm__ volatile("1: addi %0, %0, -1\n bnez %0, 1b" : "+r"(n_));
-    }
-    return;
-  }
+  if (op == PKT_WAIT) return hcq_wait(p, CP_SCRATCH);
 
-  if (op == PKT_SIGNAL) {
+  if (op == PKT_SIGNAL || op == PKT_TIMESTAMP) {
     exec_barrier();
-    u32 alo = p[2], ahi = p[3], vlo = p[4], vhi = p[5];
-    u32 stage = CP_SCRATCH + (alo & 15u);
-    write32(stage, vlo);
-    write32(stage + 4, vhi);
-    fence();
-    noc_write(0, alo, ahi, stage, 8);
-    return;
-  }
-
-  if (op == PKT_TIMESTAMP) {
-    exec_barrier();
-    u32 alo = p[2] + 8u, ahi = p[3] + (alo < p[2]);
-    u32 tlo = read32(WALL_CLOCK_L), thi = read32(WALL_CLOCK_H);
-    u32 stage = CP_SCRATCH + (alo & 15u);
-    write32(stage, tlo);
-    write32(stage + 4, thi);
-    fence();
-    noc_write(0, alo, ahi, stage, 8);
-    return;
+    return hcq_signal(p, CP_SCRATCH);
   }
 
   if (op == PKT_EXEC) {
@@ -135,7 +100,7 @@ static void run_pkt(const u32 *p) {
     // Overlap program cache fill and kernargs read with the currently executing kernel.
     CacheEntry *e = cache_load(prog_lo, prog_hi, prog_bytes, prog_key);
     if (args_bytes && (args_lo || args_hi)) {
-      noc_read_sync(args_lo, args_hi, 0, args_bytes, CP_DISPATCH_BUF);
+      hcq_read(args_lo, args_hi, 0, args_bytes, CP_DISPATCH_BUF);
     } else {
       for (u32 i = 0; i < 32; i++) write32(CP_DISPATCH_BUF + 4 * i, 0);
     }
@@ -172,31 +137,10 @@ NORETURN cp_main(void) {
   noc_init(0);
 
   write32(CP_WORK_DONE, 0);
-  write32(CP_RPTR, 0);
   cache_count = 0;
   cache_top = CODE_CACHE_BASE;
   cache_epoch = 0;
   active_workers = 0;
   step_epoch = 0;
-  fence();
-  write32(CP_READY, 1);
-  fence();
-
-  for (u32 retired = 0;;) {
-    WAIT_FAST(read32(CP_WPTR) != retired);
-    u32 seq = ++retired;
-    u32 desc = CP_RING + (seq % CP_DEPTH) * CP_IB_BYTES;
-    u32 ib_lo = read32(desc + 0), ib_hi = read32(desc + 4), ib_bytes = read32(desc + 8);
-
-    for (u32 off = 0; off < ib_bytes; off += CP_CMDBUF_CHUNK) {
-      u32 chunk = MIN(ib_bytes - off, CP_CMDBUF_CHUNK);
-      noc_read_sync(ib_lo, ib_hi, off, chunk, CP_CMDBUF_STAGE);
-      for (u32 at = 0; at < chunk; at += CP_PKT_BYTES) {
-        run_pkt((const u32 *)(CP_CMDBUF_STAGE + at));
-      }
-    }
-    fence();
-    write32(CP_RPTR, seq);
-    fence();
-  }
+  hcq_run(CP_WPTR, CP_RPTR, CP_READY, CP_RING, CP_CMDBUF_STAGE);
 }
